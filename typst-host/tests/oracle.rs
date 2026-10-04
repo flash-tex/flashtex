@@ -22,11 +22,19 @@ use flashtex_display_list::kind;
 use flashtex_display_list::page::{Item, Page};
 
 /// Glyph ids of a frame in painting order, the typst-pdf walk.
-fn oracle_glyphs(frame: &typst::layout::Frame, out: &mut Vec<u16>) {
+/// With `islands`, a run with a gradient or tiling fill or stroke is a PDF
+/// island (E5), not glyphs.
+fn oracle_glyphs(frame: &typst::layout::Frame, islands: bool, out: &mut Vec<u16>) {
     use typst::layout::FrameItem;
+    use typst::visualize::Paint;
+    let pattern = |p: &Paint| matches!(p, Paint::Gradient(_) | Paint::Tiling(_));
     for (_, item) in frame.items() {
         match item {
-            FrameItem::Group(g) => oracle_glyphs(&g.frame, out),
+            FrameItem::Group(g) => oracle_glyphs(&g.frame, islands, out),
+            FrameItem::Text(t)
+                if islands
+                    && (pattern(&t.fill)
+                        || t.stroke.as_ref().is_some_and(|s| pattern(&s.paint))) => {}
             FrameItem::Text(t) => out.extend(t.glyphs.iter().map(|g| g.id)),
             _ => {}
         }
@@ -54,6 +62,8 @@ pub struct Report {
     pub glyphs: usize,
     pub paths: usize,
     pub images: usize,
+    /// PDF islands drawn (E5), each checked against the page.
+    pub islands: usize,
     /// The IMAGE resources sent, and their IMAGE_DATA parts.
     pub image_info: Vec<flashtex_display_list::json::Json>,
     pub image_parts: Vec<Vec<Vec<u8>>>,
@@ -111,7 +121,9 @@ pub fn check_doc_with(
         oracle_pdf.len()
     );
     let mut reference = checker::reference(&oracle_pdf);
-    checker::device_only(&mut reference);
+    if !accept.contains(&"color-spaces") {
+        checker::device_only(&mut reference);
+    }
 
     let pages: Vec<Page> = frames
         .iter()
@@ -129,6 +141,7 @@ pub fn check_doc_with(
         glyphs: 0,
         paths: 0,
         images: 0,
+        islands: 0,
         image_info: vec![],
         image_parts: vec![],
         mismatches: 0,
@@ -178,12 +191,29 @@ pub fn check_doc_with(
         assert_eq!(p.width, sp(r.media_box[2]));
         assert_eq!(p.height, sp(r.media_box[3]));
         let mut ids = vec![];
-        oracle_glyphs(&doc.pages()[i].frame, &mut ids);
+        let islands_ok = accept.contains(&"image-data");
+        oracle_glyphs(&doc.pages()[i].frame, islands_ok, &mut ids);
+        // The PDF glyphs drawn as glyphs: those of runs that are not
+        // islands (the checker's own walk of the frame).
+        let tp = &doc.pages()[i];
+        let mut evs = vec![];
+        checker::events_with(
+            &tp.frame,
+            typst::layout::Transform::translate(tp.bleed.left, tp.bleed.top),
+            r.media_box[3],
+            islands_ok,
+            &mut evs,
+        );
+        let expected: Vec<&checker::RefGlyph> = if islands_ok {
+            checker::expected(&evs, &r.glyphs).unwrap()
+        } else {
+            r.glyphs.iter().collect()
+        };
         let g = drawn(p);
         assert_eq!(g.len(), ids.len(), "{name} page {i}: glyph count");
         assert_eq!(
             g.len(),
-            r.glyphs.len(),
+            expected.len(),
             "{name} page {i}: glyphs in the PDF"
         );
         assert_eq!(p.origins.len(), g.len());
@@ -192,7 +222,7 @@ pub fn check_doc_with(
         // line state.
         let colours = checker::host_glyph_paints(p);
         assert_eq!(colours.len(), g.len());
-        for (j, (rg, h)) in r.glyphs.iter().zip(&colours).enumerate() {
+        for (j, (rg, h)) in expected.iter().zip(&colours).enumerate() {
             if let Some(d) = checker::glyph_paint_mismatch(h, rg) {
                 if rep.mismatches < 5 {
                     eprintln!("{name} page {i} glyph {j}: {d}");
@@ -203,7 +233,7 @@ pub fn check_doc_with(
         for (j, ((d, o), (rg, id))) in g
             .iter()
             .zip(&p.origins)
-            .zip(r.glyphs.iter().zip(&ids))
+            .zip(expected.iter().zip(&ids))
             .enumerate()
         {
             assert_eq!(d.0, *id, "{name} page {i} glyph {j}: glyph id");
@@ -237,15 +267,33 @@ pub fn check_doc_with(
         // bit (spec §5.2, §11.5).
         let hi = checker::host_images(p);
         let missing = checker::unmatched_images(&hi, &image_info, &r.images);
+        // Islands: their content is the page's own (E5).
+        let mut islands = 0;
+        for (m, id) in &hi {
+            let (j, parts) = &image_info[id];
+            if j.get("island")
+                .and_then(flashtex_display_list::json::Json::as_bool)
+                != Some(true)
+            {
+                continue;
+            }
+            islands += 1;
+            if let Err(e) = checker::check_island(*m, &parts[0], r) {
+                eprintln!("{name} page {i}: island {id}: {e}");
+                rep.mismatches += 1;
+            }
+        }
+        rep.islands += islands;
+        let hi_raster = hi.len() - islands;
         let raster = r.images.iter().filter(|x| !x.form).count();
-        if missing > 0 || hi.len() != raster {
+        if missing > 0 || hi_raster != raster {
             eprintln!(
                 "{name} page {i}: {missing} of {} images are not the PDF's; the PDF draws {raster}",
                 hi.len()
             );
             rep.mismatches += missing.max(1);
         }
-        rep.images += hi.len();
+        rep.images += hi_raster;
     }
     eprintln!(
         "{name}: {} pages, {} glyphs, {} paths, {} images, {} position mismatches; DONE.pdf == typst-pdf ({} bytes)",
@@ -647,6 +695,83 @@ fn raster_images_match_typst() {
     assert_eq!(has("components", Json::Int(1)), 1);
     assert_eq!(has("type", Json::Str("jpeg".into())), 2);
     assert_eq!(has("interpolate", Json::Bool(true)), 1);
+}
+
+/// PDF islands (E5) for a client that accepts `image-data`: an SVG image,
+/// gradient and tiling fills and strokes, gradient text and a gradient
+/// page fill, transformed and clipped. Every page is complete, and every
+/// island's box, glyphs, paths and XObjects are the page's own.
+#[test]
+fn islands_match_typst() {
+    let svg =
+        br##"<svg xmlns="http://www.w3.org/2000/svg" width="40" height="30" viewBox="0 0 40 30">
+<rect x="2" y="2" width="20" height="14" fill="#c33" stroke="#222" stroke-width="1.5"/>
+<circle cx="28" cy="18" r="9" fill="#36c" fill-opacity="0.6"/>
+<path d="M2 28 L38 4" stroke="#090" stroke-width="2" stroke-dasharray="3 2"/>
+</svg>"##;
+    let r = check_doc_with(
+        "islands.typ",
+        &fixture("islands.typ"),
+        &["image-data", "color-spaces", "line-state"],
+        &[("drawing.svg", svg.to_vec())],
+    );
+    // Two SVGs, four gradient or tiling shapes (one of them clipped), the
+    // gradient and gradient-stroked text runs, the page fill.
+    assert_eq!(r.islands, 9, "islands");
+}
+
+/// The island check discriminates: an island against a page whose paths
+/// are one ulp off, or drawn with another matrix, is rejected.
+#[test]
+fn the_island_check_rejects_other_numbers() {
+    use flashtex_display_list::resource::ImageData;
+    use flashtex_typst_host::convert::{self, ClientCaps, Positions, Tables};
+    use flashtex_typst_host::world::{FontOptions, Fonts, HostWorld};
+    let root = project(
+        "island-numbers",
+        "#set page(width: 100pt, height: 100pt)\n#rotate(10deg, rect(width: 40pt, height: 20pt, fill: gradient.linear(red, blue), stroke: 1pt))\n",
+    );
+    let fonts = Fonts::load(&FontOptions {
+        paths: vec![font_dir().to_path_buf()],
+        system: false,
+    });
+    let world = HostWorld::new(&root, "main.typ", &fonts).unwrap();
+    let doc = typst::compile::<typst_layout::PagedDocument>(&world)
+        .output
+        .unwrap();
+    let pdf = typst_pdf::pdf(&doc, &typst_pdf::PdfOptions::default()).unwrap();
+    let reference = checker::reference(&pdf);
+    let caps = ClientCaps {
+        minor: 3,
+        opentype_programs: true,
+        program_refs: true,
+        color_spaces: true,
+        line_state: true,
+        image_data: true,
+        ..Default::default()
+    };
+    let pp = flashtex_typst_host::pdfpos::derive(&doc, &[0]).unwrap();
+    let out = convert::page(
+        &world,
+        &doc,
+        0,
+        &mut Tables::new(),
+        caps,
+        &[],
+        Positions::Pdf(&pp[0]),
+    )
+    .unwrap();
+    assert_eq!(out.images.len(), 1);
+    let island = ImageData::decode(&out.images[0].1).unwrap().parts.remove(0);
+    let id = [1.0, 0.0, 0.0, 1.0, 0.0, 0.0];
+    let (_, paths, _) = checker::check_island(id, &island, &reference[0]).unwrap();
+    assert!(paths > 0);
+    let mut off = reference[0].clone();
+    for p in &mut off.paths {
+        p.ctm[4] = f64::from_bits(p.ctm[4].to_bits() + 1);
+    }
+    assert!(checker::check_island(id, &island, &off).is_err());
+    assert!(checker::check_island([1.0, 0.0, 0.0, 1.0, 0.5, 0.0], &island, &reference[0]).is_err());
 }
 
 /// Without `image-data` a page with an image is INCOMPLETE and no IMAGE is

@@ -1251,10 +1251,8 @@ SAVE/RESTORE to `saveGState`/`restoreGState` and CLIP to `addPath` + `clip`.
 - S₀ persisted with `--s0-cache` does not carry source spans: after a
   reopen, material made before `\begin{document}` (none that a page shows,
   in practice) has no span.
-- Typst (3.3, §11): the Typst host produces E1–E4, E6 (raster images)
-  and E7 (E3, E4, E6 for a client that accepts them); SVG and PDF images
-  (E5 islands) are flagged INCOMPLETE and `RESOLVE`/`LOCATE` (E8) is not
-  answered yet.
+- Typst (3.3, §11): the Typst host produces E1–E7 (E3–E6 for a client
+  that accepts them); `RESOLVE`/`LOCATE` (E8) is not answered yet.
 
 ## 11. Version 3.3: the Typst host's additions
 
@@ -1276,7 +1274,9 @@ items **and** flags the page INCOMPLETE, with an UNSUPPORTED entry
 `DONE.pdf`. The host's `--draw-ungated` drops that flag, for measuring the
 rows only. Pending today: ICCBased and Separation colours
 (`FILL_COLOR_CS`, `STROKE_COLOR_CS`), alpha other than 1, stroked glyphs,
-raster images (`IMAGE` with `data`).
+raster images (`IMAGE` with `data`), PDF islands (§11.5). Colour glyphs
+(drawn by typst-pdf as Type 3 procedures) are neither islanded nor drawn
+yet: a page with one is INCOMPLETE whatever the client accepts.
 
 For a Typst document **the PDF** of §4.2 and §4.4 is typst-pdf's export of
 the same compile (`DONE.pdf`; the host's per-page positions come from a
@@ -1430,7 +1430,7 @@ strokes the glyph's outline, mapped by the glyph matrix, with that pen in
 stream space. Under a CTM that is not a similarity (a non-uniform scale, a
 skew) the pen is no circle and has no one width: the page is INCOMPLETE.
 
-### 11.5 Images from bytes and PDF islands (E5 specified; E6 produced)
+### 11.5 Images from bytes and PDF islands (E5, E6; produced)
 
 Typst images come from bytes as often as from files (`image(bytes)`,
 packages), and typst-pdf re-encodes them. For a client that accepts
@@ -1490,15 +1490,38 @@ unless the PDF carries the file's own bytes (a JPEG it passes through), when
 `type` is `jpeg` and the data is the file.
 
 **PDF islands (E5).** What v3 cannot draw item by item — gradients
-(conic included), tilings, SVG images, colour glyphs, gradient-filled text
-— the Typst host may send as a one-page PDF that typst-pdf exports for the
-construct's bounding box (`page_ranges`, untagged): an `IMAGE` with
-`"type": "pdf"`, `"island": true`, `"data": true`, `page` 1, `page_box`
-`media`, its `width`/`height` and `orig_x`/`orig_y` in bp, drawn by an IMAGE
-item whose matrix maps the island's page space to stream space (§5.2). A
-page that would need an island but whose client does not accept
-`image-data` is INCOMPLETE. Parity by construction is a **belief** until its
-gate row passes (DESIGN.md §15.4).
+(conic included), tilings, SVG and PDF images, gradient-filled or
+gradient-stroked text, a gradient page fill — the Typst host sends as a
+one-page PDF: an `IMAGE` with `"type": "pdf"`, `"island": true`,
+`"data": true`, `page` 1, `page_box` `media`, `width`/`height` and
+`orig_x`/`orig_y` (bp) of its box, drawn by an IMAGE item whose matrix maps
+the island's page space to stream space (§5.2); its one part is the PDF.
+
+The Typst host exports, untagged, a page **of the page's own size and
+bleed** holding only that construct, inside the same chain of frames
+(sizes, hard or soft), groups, transforms and clips as on the page (a page
+fill: an empty page with that fill). typst-pdf then composes the same
+transforms in the same order, so the island's content stream carries the
+page's own numbers, the island's box is the page's, and the IMAGE item's
+matrix is the identity. A client draws it clipped as the display list's
+clip stack says (the island repeats its groups' clips). An island is sent
+once per connection while a page the client holds uses it; an image or
+island id no held page uses is released after the compile and rebound by
+a later one (§5), so moving an island on every edit does not grow the
+client's store. A page that would need an island but whose client does
+not accept `image-data` is INCOMPLETE.
+
+*Measured (2026-10-04, `examples/positions_suite.rs`):* on Typst's test
+suite, the 828 islands of the 2,622 snippets that compile all have the
+page's box, and every glyph (1,466), path (754) and XObject their content
+streams show is, in order, one the page's content stream shows bit for bit
+(the independent checker's `check_island`); with `--draw-ungated` (no
+pixel gate yet, §11), the only pages INCOMPLETE for a client that accepts
+`color-spaces`, `line-state` and `image-data` are the 26 with colour
+glyphs. An island export took 10 ms on average (at most 177 ms) and 15 kB
+(at most 236 kB), under load. That the
+client's drawing of an island equals the page's pixels at 2× and 3× is a
+**belief** until its gate row passes (DESIGN.md §15.4).
 
 ### 11.6 On-demand source mapping: `RESOLVE`, `LOCATE` (E8; specified)
 
