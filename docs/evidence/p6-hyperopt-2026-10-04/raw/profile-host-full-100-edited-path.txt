@@ -1,0 +1,94 @@
+samples 558, cycles 449.3 M
+ self%  incl%  function
+ 15.27  18.85  body_2::get_next
+  7.96   7.96  _platform_memmove
+  6.35  19.91  body_2::macro_call
+  6.00  15.18  WidthEnv::show
+  5.80   6.85  Arena::checkpoint
+  4.26   4.26  body_2::end_token_list
+  4.12   5.73  displaylist::dl_note_node
+  3.58   6.23  body_1::copy_node_list
+  3.08  23.42  body_2::expand
+  2.93   2.93  body_1::id_lookup
+  2.28  93.12  body_7::main_control
+  1.49   1.94  WidthEnv::advance
+  1.49   4.45  body_0::get_avail
+  1.27   1.35  _xzm_free
+  1.24   1.46  Sha256::update
+  1.16   1.16  body_1::delete_token_ref
+  1.13   2.69  intrinsics::replay
+  1.12   1.12  write::Xneu_15fl
+  1.11   6.11  body_2::scan_int
+  1.11   1.34  body_1::flush_node_list
+  1.11   1.95  body_0::get_node
+  1.04   1.04  __floatuntidf
+  0.98   0.98  specialized_div_rem::u128_div_rem
+  0.91   0.91  Core::seal
+  0.89   0.89  _xzm_xzone_malloc
+  0.89  17.99  WidthEnv::run
+  0.72  16.50  body_7::prefixed_command
+  0.69   1.14  body_2::begin_token_list
+  0.67   0.89  body_0::show_token_list
+  0.67   0.67  next::N
+  0.67   0.67  body_6::delete_last
+  0.67   7.82  body_3::conditional
+  0.50   3.86  Core::save
+  0.48   7.98  body_3::scan_toks
+  0.46   2.72  body_2::eq_define
+  0.45   0.45  RandomState::insert
+  0.45   1.34  body_2::back_input
+  0.45   0.45  body_2::eq_destroy
+  0.45   0.45  body_0::free_node
+  0.45   0.49  arena::Spill
+  0.44   0.66  F_E::u_
+  0.42   3.49  Arena::restore_branch
+  0.38   0.60  body_5::vpackage
+  0.38   0.38  _malloc_zone_malloc
+  0.38   0.38  _xzm_segment_group_find_and_allocate_chunk
+
+-- inclusive --
+100.00  new::thread_start
+100.00  main::f
+100.00  Session::compile
+100.00  vtable::b
+100.00  _pthread_start
+100.00  Engine::compile
+100.00  thread_start
+100.00  Engine::run
+100.00  Session::compile_pass
+ 99.58  Session::incremental
+ 94.17  checkpoint::resume_to_end
+ 93.12  body_7::main_control
+ 23.42  body_2::expand
+ 22.59  body_5::ship_out
+ 22.59  body_5::pdf_ship_out
+ 19.91  body_2::macro_call
+ 19.89  displaylist::dl_shipout_end
+ 19.89  utils::pdfshipoutend
+ 18.85  body_2::get_next
+ 17.99  WidthEnv::run
+ 17.99  interpret::WidthEnv
+ 16.50  body_7::prefixed_command
+ 15.18  WidthEnv::show
+  8.45  checkpoint::hook_checkpoint
+  8.45  checkpoint::flashtex_checkpoint_hook
+  8.00  checkpoint::checkpoint
+  7.98  body_3::scan_toks
+  7.96  _platform_memmove
+  7.82  body_3::conditional
+  6.85  Arena::checkpoint
+  6.23  body_1::copy_node_list
+  6.11  body_2::scan_int
+  5.73  displaylist::dl_note_node
+  5.48  body_3::conv_toks
+  4.47  checkpoint::restore
+  4.45  body_0::get_avail
+  4.26  body_6::begin_box
+  4.26  body_2::end_token_list
+  4.04  body_3::the_toks
+  3.86  Core::save
+  3.81  displaylist::dl_font_key
+  3.49  Arena::restore_branch
+  3.28  body_3::ins_the_toks
+  2.93  body_1::id_lookup
+  2.72  body_2::eq_define

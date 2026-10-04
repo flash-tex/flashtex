@@ -86,6 +86,7 @@ final class EngineV3Latency {
     }
 
     func sent(compile: Int, keystrokeNs: UInt64, editNs: UInt64, path: String, at ns: UInt64) {
+        prune(newest: compile)
         pending.append((compile, keystrokeNs))
         var c = compiles[compile] ?? Compile()
         c.sentNs = ns; c.editNs = editNs; c.editPath = path
@@ -148,6 +149,29 @@ final class EngineV3Latency {
 
     var wantsVsync: Bool { !awaitingVsync.isEmpty }
 
+    /// Compiles this many behind the newest are settled: a page commits
+    /// within a few compiles of its own, or never (it went off screen, a
+    /// newer compile replaced it). Their bookkeeping goes, as the samples'
+    /// does (`trim`): every keystroke is a compile, and it grew for as long
+    /// as the window was open.
+    static let compileWindow = 256
+
+    /// Per-compile entries held (tests: stays bounded).
+    var heldCompileEntries: Int { compiles.count + painted.count + expected.count + pending.count }
+
+    private func prune(newest: Int) {
+        let limit = 2 * Self.compileWindow
+        guard compiles.count > limit || painted.count > limit || expected.count > limit || pending.count > limit else { return }
+        let floor = newest - Self.compileWindow
+        for (id, c) in compiles where id < floor {
+            if let s = c.interval { Self.signposter.endInterval("keystroke-to-pixels", s) }
+        }
+        compiles = compiles.filter { $0.key >= floor }
+        painted = painted.filter { $0 >= floor }
+        expected = expected.filter { $0 >= floor }
+        pending.removeAll { $0.compile < floor } // never painted, and now never will be
+    }
+
     /// The display link fired: its `targetTimestamp` is when the frame that
     /// carries every commit before this callback is shown.
     func vsync(targetNs: UInt64) {
@@ -157,6 +181,7 @@ final class EngineV3Latency {
     }
 
     func done(compile: Int, cancelled: Bool, hostFirstPageMs: Double?) {
+        prune(newest: compile)
         if let hostFirstPageMs {
             compiles[compile, default: Compile()].hostFirstPageMs = hostFirstPageMs
             for i in samples.indices where samples[i].compile == compile { samples[i].hostFirstPageMs = hostFirstPageMs }

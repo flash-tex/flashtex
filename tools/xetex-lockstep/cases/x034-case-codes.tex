@@ -1,0 +1,13 @@
+% x034-case-codes: \lccode, \uccode and \sfcode of characters above 255
+% XeTeX-specific (docs/design/xetex/PLAN.md, phase S0: TFM fonts)
+\input prelude
+\def\space{ }
+\font\x=cmr10 \x
+\message{x034 \the\lccode`É\space\the\uccode`é\space\the\sfcode`É\space\the\lccode`A}
+\lccode`É=`é \uccode`é=`É \lccode`Ω=`ω
+\lowercase{\message{x034 [ÉΩA]}}
+\uppercase{\message{x034 [éωa]}}
+\sfcode`é=999
+\setbox0=\hbox{\lowercase{É} é. a}
+\lsshipbox0
+\end

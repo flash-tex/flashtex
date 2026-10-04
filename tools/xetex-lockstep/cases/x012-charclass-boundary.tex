@@ -1,0 +1,13 @@
+% x012-charclass-boundary: interchar tokens at boundaries, with groups and the ignored class 4096
+% XeTeX-specific (docs/design/xetex/PLAN.md, phase S0: TFM fonts)
+\input prelude
+\def\space{ }
+\font\x=cmr10 \x
+\XeTeXcharclass`a=1 \XeTeXcharclass`b=2 \XeTeXcharclass`.=4096
+\XeTeXinterchartoks 4095 1 {[}
+\XeTeXinterchartoks 2 4095 {]}
+\XeTeXinterchartoks 1 2 {-}
+\XeTeXinterchartokenstate=1
+\setbox0=\hbox{ab a.b {a}b ab}
+\lsshipbox0
+\end

@@ -523,6 +523,11 @@ D8 specification; what landed differs, and D8's rewording is proposed to the own
    #1309 (P6-THROUGHPUT, 64-bit `divide_scaled`, landed 2026-10-01) saves up to 3 % more;
    plain-1000 is the thinnest margin. The intrinsics' recording state is dead for convergence
    while nothing records (§5.3).
+   *Extension (adopted 2026-10-04, #1509):* macros **with parameters** may also be replayed,
+   keyed on the macro and its argument tokens, under the guard, capacity, leak and convergence
+   rules of [MACRO-REPLAY.md](MACRO-REPLAY.md). This goes beyond "pure, non-erroring leaf
+   functions" only as that document allows: every input is captured or excluded, every call is
+   verified on both paths in CI, and a broken invariant drops the cache without releasing it.
 5. NEON input scanning only if the profile shows scanning matters.
 6. **First named intrinsics target: the per-page output routine.** Measured 2026-09-29:
    - hyperref's two per-page PDF-string calls (page label and page anchor) cost
@@ -1027,6 +1032,9 @@ Rules:
 | 2026-10-04 | Typst watchdog in two layers: the host's self-watchdog over the compile only (`_exit` 86, children killed, temp dir removed), the app restarting a host on any exit (§15.2) | Commander (mac-claude-a), on the stack review |
 | 2026-10-04 | Typst host: comemo evict age 10 → 3, measured 2026-10-04 (300 pages: 1.31 → 0.87 GB RSS, flat, no measured latency cost), #1487; watchdog cold budget 180 s, set by the app from the last cold time in T2 (§15.2) | Commander (mac-claude-a), from evidence |
 | 2026-10-04 | R6 lifted: the owner asked (2026-10-04) to push Typst support forward, so T1 no longer waits for J1 and J3 to be staffed; lane TYPST-T0T1 finishes T0 (v3.3 in the shared spec and crate, the T0 gate measured) and starts T1. §15.9's other guard-rails stand: one Typst lane, path-filtered CI, no LaTeX path touched (§15.9, §15.10) | Commander (mac-claude-a), on owner direction |
+| 2026-10-04 | Guarded replay of macros with parameters (MACRO-REPLAY.md, §5.6 item 4): the macro passed as `(warning_index, ref_count, n)`; inputs captured or excluded per its §4; peak-capacity, leak and S₀-arming commit checks; a cheap ref-count ≥ pins invariant after every restore and jump in every build (exact walk in verify mode), failing closed by leaking the cache; gates (a)–(g) with faults. Approved after three design reviews | Commander (mac-claude-a), on owner direction (P6, 2026-10-04) |
+| 2026-10-04 | XeTeX port from WEB source, for the owner's request for full custom font support (any system font, OpenType, math): `xetex.web` translated by web2rust with change files only (D1 rejected embedding XeTeX's C, not a WEB port); `flashtex-xetex` is GPL, allowlisted in `scripts/license-boundary-allow.txt`, linked by no MIT target (§3; docs/design/xetex/PLAN.md, #1489) | Owner (2026-10-04), Commander |
+| 2026-10-04 | XeTeX direction: "recreate/rewrite whatever we need from XeTeX; FlashTeX should not need to ship a separate TeX". FlashTeX ships only its own engine programs; Unicode input, native OpenType/system fonts and OpenType math are FlashTeX features (a per-document engine mode matching `xelatex`), with no bundled `xetex`, no xdvipdfmx port and no TeX Live binary in the product path. Native fonts and shaping live in FlashTeX's runtime (HarfBuzz, FreeType and ICU vendored at TeX Live's versions are libraries, not a TeX); PDF goes through FlashTeX's own writer from the display list; the user's TeX Live or the no-TeX-Live bundle supplies `.sty` files and fonts (D12). Parity: P-T1 and XDV against `xelatex`; PDF visual and structural, not byte-level (P-T2 stays Classic's). The XeTeX-derived and pdfTeX engines share one runtime library crate and one engine interface trait, in two binaries (owner, Q10 of the modes proposal #1520: SPLIT): `flashtex-host` for Classic and `flashtex-host-unicode` for Unicode (and the later opt-in FlashTeX native mode); the mode is per document and a switch starts the other binary; each binary's size and start-up are measured. Rulings: no Apache-2.0-only code (it would force GPLv3 only); AAT-only fonts out of scope (no Core Text dependency) (docs/design/xetex/PLAN.md §3) | Owner (2026-10-04), relayed by the Commander (mac-claude-a), who made the two rulings |
 
 ---
 

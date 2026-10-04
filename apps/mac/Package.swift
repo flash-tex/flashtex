@@ -10,6 +10,7 @@ let package = Package(
         .library(name: "FlashTeXEditorCore", targets: ["FlashTeXEditorCore"]),
         .library(name: "FlashTeXAccessibility", targets: ["FlashTeXAccessibility"]),
         .library(name: "FlashTeXDisplayListV3", targets: ["FlashTeXDisplayListV3"]),
+        .library(name: "FlashTeXCollabCore", targets: ["FlashTeXCollabCore"]),
     ],
     dependencies: [
         // Test-only: the reference companion client (apps/mac/tools/nearby-client)
@@ -57,6 +58,17 @@ let package = Package(
         .target(
             name: "FlashTeXEditorCore",
             dependencies: ["FlashTeXProtocol", .product(name: "TOMLDecoder", package: "TOMLDecoder")]
+        ),
+        // Live collaboration's data model (collab-v1, docs/contracts/
+        // collab-v1.md): the text sequence CRDT, the file-map CRDT, local
+        // undo and the wire codec. Platform-free, Foundation only, no
+        // dependencies; shared with the iPad through a symlink in
+        // FlashTeXPadKit like FlashTeXEditorCore. Checked against the Rust
+        // oracle crates/collaboration-core (src/v1) by shared fixtures.
+        .target(name: "FlashTeXCollabCore"),
+        .testTarget(
+            name: "FlashTeXCollabCoreTests",
+            dependencies: ["FlashTeXCollabCore"]
         ),
         .executableTarget(
             name: "FlashTeXMac",

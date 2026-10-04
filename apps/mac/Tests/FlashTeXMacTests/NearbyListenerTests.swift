@@ -96,7 +96,7 @@ final class NearbyTestClient {
     /// Throws (after recording a failure) rather than returning a short array, so a
     /// caller that indexes the result can't trap on an array that never reached `count`.
     @discardableResult
-    func lines(atLeast count: Int, timeout: TimeInterval = 5, file: StaticString = #filePath, line: UInt = #line) throws -> [Data] {
+    func lines(atLeast count: Int, timeout: TimeInterval = loopbackWait, file: StaticString = #filePath, line: UInt = #line) throws -> [Data] {
         let exp = XCTestExpectation(description: "\(count) lines")
         lock.withLock {
             if lines.count >= count { exp.fulfill() } else { waiters.append((count, exp)) }
@@ -142,7 +142,7 @@ final class ListenerHarness {
 
     func start(file: StaticString = #filePath, line: UInt = #line) throws {
         try listener.start()
-        if XCTWaiter.wait(for: [ready], timeout: 5) != .completed {
+        if XCTWaiter.wait(for: [ready], timeout: loopbackWait) != .completed {
             XCTFail("listener never became ready: \(snapshot)", file: file, line: line)
         }
     }
@@ -188,7 +188,7 @@ final class NearbyListenerTests: XCTestCase {
         defer { h.stop() }
 
         let client = NearbyTestClient(port: h.port, identity: "pair-a", psk: Self.pskA)
-        XCTAssertEqual(XCTWaiter.wait(for: [client.ready], timeout: 5), .completed, "\(client.failure.map(String.init(describing:)) ?? "no error")")
+        XCTAssertEqual(XCTWaiter.wait(for: [client.ready], timeout: loopbackWait), .completed, "\(client.failure.map(String.init(describing:)) ?? "no error")")
         hello(client, pairId: "pair-a", psk: Self.pskA, nonce: "n-1")
         var lines = try client.lines(atLeast: 1)
         let ack: RuntimeV1.Envelope<NearbyV1.HelloAck> = try decode(lines[0])
@@ -244,11 +244,11 @@ final class NearbyListenerTests: XCTestCase {
 
         // Right identity, wrong key.
         let wrongKey = NearbyTestClient(port: h.port, identity: "pair-a", psk: Self.pskB)
-        XCTAssertEqual(XCTWaiter.wait(for: [wrongKey.failed], timeout: 5), .completed, "handshake should fail")
+        XCTAssertEqual(XCTWaiter.wait(for: [wrongKey.failed], timeout: loopbackWait), .completed, "handshake should fail")
         XCTAssertEqual(XCTWaiter.wait(for: [wrongKey.ready], timeout: 0.5), .timedOut)
         // Unknown identity.
         let unknown = NearbyTestClient(port: h.port, identity: "nobody", psk: Self.pskA)
-        XCTAssertEqual(XCTWaiter.wait(for: [unknown.failed], timeout: 5), .completed)
+        XCTAssertEqual(XCTWaiter.wait(for: [unknown.failed], timeout: loopbackWait), .completed)
         XCTAssertEqual(XCTWaiter.wait(for: [unknown.ready], timeout: 0.5), .timedOut)
 
         XCTAssertEqual(sink.count, 0)
@@ -270,7 +270,7 @@ final class NearbyListenerTests: XCTestCase {
 
         // A complete line over the limit.
         let c1 = NearbyTestClient(port: h.port, identity: "pair-a", psk: Self.pskA)
-        XCTAssertEqual(XCTWaiter.wait(for: [c1.ready], timeout: 5), .completed)
+        XCTAssertEqual(XCTWaiter.wait(for: [c1.ready], timeout: loopbackWait), .completed)
         hello(c1, pairId: "pair-a", psk: Self.pskA)
         _ = try c1.lines(atLeast: 1)
         var big = Data(repeating: 0x20, count: 5000); big.append(0x0A)
@@ -279,18 +279,18 @@ final class NearbyListenerTests: XCTestCase {
         let err = try decodeError(lines[1])
         XCTAssertEqual(err.payload.code, "line_too_long")
         XCTAssertNil(err.id)
-        XCTAssertEqual(XCTWaiter.wait(for: [c1.closed], timeout: 5), .completed, "connection must close after the error")
+        XCTAssertEqual(XCTWaiter.wait(for: [c1.closed], timeout: loopbackWait), .completed, "connection must close after the error")
 
         // An unterminated line that grows past the limit.
         let c2 = NearbyTestClient(port: h.port, identity: "pair-a", psk: Self.pskA)
-        XCTAssertEqual(XCTWaiter.wait(for: [c2.ready], timeout: 5), .completed)
+        XCTAssertEqual(XCTWaiter.wait(for: [c2.ready], timeout: loopbackWait), .completed)
         hello(c2, pairId: "pair-a", psk: Self.pskA)
         _ = try c2.lines(atLeast: 1)
         c2.send(Data(repeating: 0x7B, count: 5000))
         let lines2 = try c2.lines(atLeast: 2)
         let err2 = try decodeError(lines2[1])
         XCTAssertEqual(err2.payload.code, "line_too_long")
-        XCTAssertEqual(XCTWaiter.wait(for: [c2.closed], timeout: 5), .completed)
+        XCTAssertEqual(XCTWaiter.wait(for: [c2.closed], timeout: loopbackWait), .completed)
         XCTAssertEqual(sink.count, 0)
     }
 
@@ -303,7 +303,7 @@ final class NearbyListenerTests: XCTestCase {
         defer { h.stop() }
 
         let c1 = NearbyTestClient(port: h.port, identity: "pair-a", psk: Self.pskA)
-        XCTAssertEqual(XCTWaiter.wait(for: [c1.ready], timeout: 5), .completed)
+        XCTAssertEqual(XCTWaiter.wait(for: [c1.ready], timeout: loopbackWait), .completed)
         var fixture = try Data(contentsOf: Self.fixtureURL)
         if fixture.last != 0x0A { fixture.append(0x0A) }
         c1.send(fixture)
@@ -311,20 +311,20 @@ final class NearbyListenerTests: XCTestCase {
         guard !l1.isEmpty else { return XCTFail("events: \(h.snapshot)") }
         let e1: RuntimeV1.Envelope<NearbyV1.ErrorPayload> = try decode(l1[0])
         XCTAssertEqual(e1.payload.code, "hello_required")
-        XCTAssertEqual(XCTWaiter.wait(for: [c1.closed], timeout: 5), .completed)
+        XCTAssertEqual(XCTWaiter.wait(for: [c1.closed], timeout: loopbackWait), .completed)
         XCTAssertEqual(sink.count, 0)
 
         // Authenticated as pair-b, claiming pair-a (proof made with its own key).
         let c2 = NearbyTestClient(port: h.port, identity: "pair-b", psk: Self.pskB)
-        XCTAssertEqual(XCTWaiter.wait(for: [c2.ready], timeout: 5), .completed, "\(String(describing: c2.failure))")
+        XCTAssertEqual(XCTWaiter.wait(for: [c2.ready], timeout: loopbackWait), .completed, "\(String(describing: c2.failure))")
         hello(c2, pairId: "pair-a", psk: Self.pskB)
         let e2: RuntimeV1.Envelope<NearbyV1.ErrorPayload> = try decode(c2.lines(atLeast: 1)[0])
         XCTAssertEqual(e2.payload.code, "pair_mismatch")
-        XCTAssertEqual(XCTWaiter.wait(for: [c2.closed], timeout: 5), .completed)
+        XCTAssertEqual(XCTWaiter.wait(for: [c2.closed], timeout: loopbackWait), .completed)
 
         // Correct pair-b hello works, proving the server picked the right PSK.
         let c3 = NearbyTestClient(port: h.port, identity: "pair-b", psk: Self.pskB)
-        XCTAssertEqual(XCTWaiter.wait(for: [c3.ready], timeout: 5), .completed)
+        XCTAssertEqual(XCTWaiter.wait(for: [c3.ready], timeout: loopbackWait), .completed)
         hello(c3, pairId: "pair-b", psk: Self.pskB, nonce: "same")
         let l3 = try c3.lines(atLeast: 1)
         guard !l3.isEmpty else { return XCTFail("events: \(h.snapshot)") }
@@ -334,11 +334,11 @@ final class NearbyListenerTests: XCTestCase {
 
         // Re-using a hello nonce on a new connection is refused.
         let c4 = NearbyTestClient(port: h.port, identity: "pair-b", psk: Self.pskB)
-        XCTAssertEqual(XCTWaiter.wait(for: [c4.ready], timeout: 5), .completed)
+        XCTAssertEqual(XCTWaiter.wait(for: [c4.ready], timeout: loopbackWait), .completed)
         hello(c4, pairId: "pair-b", psk: Self.pskB, nonce: "same")
         let e4: RuntimeV1.Envelope<NearbyV1.ErrorPayload> = try decode(c4.lines(atLeast: 1)[0])
         XCTAssertEqual(e4.payload.code, "bad_request")
-        XCTAssertEqual(XCTWaiter.wait(for: [c4.closed], timeout: 5), .completed)
+        XCTAssertEqual(XCTWaiter.wait(for: [c4.closed], timeout: loopbackWait), .completed)
         c3.cancel()
     }
 
@@ -360,7 +360,7 @@ final class NearbyListenerTests: XCTestCase {
         let derived = Pairing.derive(code: "123456", salt: store.salt)
         XCTAssertEqual(derived, pending.derived)
         let client = NearbyTestClient(port: h1.port, identity: derived.pairId, psk: derived.psk)
-        XCTAssertEqual(XCTWaiter.wait(for: [client.ready], timeout: 5), .completed, "\(String(describing: client.failure))")
+        XCTAssertEqual(XCTWaiter.wait(for: [client.ready], timeout: loopbackWait), .completed, "\(String(describing: client.failure))")
         hello(client, pairId: derived.pairId, psk: derived.psk)
         let ack: RuntimeV1.Envelope<NearbyV1.HelloAck> = try decode(client.lines(atLeast: 1)[0])
         let longTerm = try XCTUnwrap(Data(base64Encoded: try XCTUnwrap(ack.payload.pairPsk)))
@@ -379,7 +379,7 @@ final class NearbyListenerTests: XCTestCase {
         h2.listener.adoptConnections(from: h1.listener)
         let stopped = XCTestExpectation(description: "old listener released its port")
         h1.listener.stop(keepConnections: true) { stopped.fulfill() }
-        XCTAssertEqual(XCTWaiter.wait(for: [stopped], timeout: 5), .completed)
+        XCTAssertEqual(XCTWaiter.wait(for: [stopped], timeout: loopbackWait), .completed)
         try h2.start()
         XCTAssertEqual(h2.port, h1.port)
         XCTAssertEqual(h2.listener.openConnectionCount, 1)
@@ -389,10 +389,10 @@ final class NearbyListenerTests: XCTestCase {
         XCTAssertEqual(try client.lines(atLeast: 2).count, 2)
         // …the bootstrap key no longer authenticates…
         let stale = NearbyTestClient(port: h2.port, identity: derived.pairId, psk: derived.psk)
-        XCTAssertEqual(XCTWaiter.wait(for: [stale.failed], timeout: 5), .completed)
+        XCTAssertEqual(XCTWaiter.wait(for: [stale.failed], timeout: loopbackWait), .completed)
         // …and the long-term key does, without another hand-over.
         let again = NearbyTestClient(port: h2.port, identity: derived.pairId, psk: longTerm)
-        XCTAssertEqual(XCTWaiter.wait(for: [again.ready], timeout: 5), .completed, "\(String(describing: again.failure))")
+        XCTAssertEqual(XCTWaiter.wait(for: [again.ready], timeout: loopbackWait), .completed, "\(String(describing: again.failure))")
         hello(again, pairId: derived.pairId, psk: longTerm)
         let ack2: RuntimeV1.Envelope<NearbyV1.HelloAck> = try decode(again.lines(atLeast: 1)[0])
         XCTAssertNil(ack2.payload.pairPsk)
@@ -769,7 +769,7 @@ final class NearbyStateTests: XCTestCase {
         try? FileManager.default.removeItem(at: dir)
     }
 
-    private func waitUntil(_ what: String, timeout: TimeInterval = 5, _ cond: @escaping @MainActor () -> Bool) async throws {
+    private func waitUntil(_ what: String, timeout: TimeInterval = loopbackWait, _ cond: @escaping @MainActor () -> Bool) async throws {
         let deadline = Date().addingTimeInterval(timeout)
         while Date() < deadline {
             if cond() { return }
@@ -806,7 +806,7 @@ final class NearbyPlaintextTests: XCTestCase {
             }
         }
         plain.start(queue: queue)
-        XCTAssertEqual(XCTWaiter.wait(for: [ready], timeout: 5), .completed, "TCP itself connects; TLS is what refuses")
+        XCTAssertEqual(XCTWaiter.wait(for: [ready], timeout: loopbackWait), .completed, "TCP itself connects; TLS is what refuses")
         let theirHello = "{\"protocol_version\":1,\"type\":\"hello\",\"id\":\"\(UUID().uuidString)\",\"payload\":{\"role\":\"companion\"}}\n"
         plain.send(content: Data(theirHello.utf8), completion: .contentProcessed { _ in })
         var fixture = try Data(contentsOf: NearbyListenerTests.fixtureURL)
@@ -821,7 +821,7 @@ final class NearbyPlaintextTests: XCTestCase {
             }
         }
         drain()
-        XCTAssertEqual(XCTWaiter.wait(for: [ended], timeout: 5), .completed, "server must drop a plaintext peer")
+        XCTAssertEqual(XCTWaiter.wait(for: [ended], timeout: loopbackWait), .completed, "server must drop a plaintext peer")
         // Whatever came back is a TLS alert at most, never a JSON line.
         XCTAssertFalse(String(decoding: received, as: UTF8.self).contains("protocol_version"), "no plaintext reply")
         XCTAssertEqual(sink.count, 0)
@@ -833,7 +833,7 @@ final class NearbyPlaintextTests: XCTestCase {
 
         // Still serving paired peers.
         let good = NearbyTestClient(port: h.port, identity: "pair-a", psk: NearbyListenerTests.pskA)
-        XCTAssertEqual(XCTWaiter.wait(for: [good.ready], timeout: 5), .completed, "\(String(describing: good.failure))")
+        XCTAssertEqual(XCTWaiter.wait(for: [good.ready], timeout: loopbackWait), .completed, "\(String(describing: good.failure))")
         let nonce = "after-plain"
         good.send(id: "h", type: "hello", NearbyV1.Hello(pairId: "pair-a", companionName: "x", nonce: nonce,
                                                          proof: Pairing.helloProof(psk: NearbyListenerTests.pskA, nonce: nonce)))
@@ -1366,16 +1366,16 @@ final class NearbyBoundedTransportTests: XCTestCase {
         defer { h.stop() }
         let c1 = NearbyTestClient(port: h.port, identity: "pair-a", psk: Self.pskA)
         let c2 = NearbyTestClient(port: h.port, identity: "pair-a", psk: Self.pskA)
-        XCTAssertEqual(XCTWaiter.wait(for: [c1.ready, c2.ready], timeout: 5), .completed)
+        XCTAssertEqual(XCTWaiter.wait(for: [c1.ready, c2.ready], timeout: loopbackWait), .completed)
         let c3 = NearbyTestClient(port: h.port, identity: "pair-a", psk: Self.pskA)
         // The client sees a reset during its handshake (`.waiting`/`.failed`), never `.ready`.
-        XCTAssertEqual(XCTWaiter.wait(for: [c3.failed], timeout: 5), .completed, "third connection is closed: \(String(describing: c3.failure))")
+        XCTAssertEqual(XCTWaiter.wait(for: [c3.failed], timeout: loopbackWait), .completed, "third connection is closed: \(String(describing: c3.failure))")
         XCTAssertFalse(c3.isReady)
         c3.cancel()
         XCTAssertTrue(h.snapshot.contains(.connectionClosed(identity: nil, reason: "too many connections (2)")), "\(h.snapshot)")
         XCTAssertEqual(h.snapshot.filter { $0 == .connectionOpened }.count, 2)
         c1.cancel()
-        XCTAssertEqual(XCTWaiter.wait(for: [c1.closed], timeout: 5), .completed)
+        XCTAssertEqual(XCTWaiter.wait(for: [c1.closed], timeout: loopbackWait), .completed)
         // A slot frees up once the stack reports the close.
         var c4: NearbyTestClient?
         for _ in 0..<20 {
@@ -1395,15 +1395,15 @@ final class NearbyBoundedTransportTests: XCTestCase {
         try h.start()
         defer { h.stop() }
         let c1 = NearbyTestClient(port: h.port, identity: "pair-a", psk: Self.pskA)
-        XCTAssertEqual(XCTWaiter.wait(for: [c1.ready], timeout: 5), .completed)
+        XCTAssertEqual(XCTWaiter.wait(for: [c1.ready], timeout: loopbackWait), .completed)
         hello(c1, pairId: "pair-a", psk: Self.pskA)
         XCTAssertEqual(type(try c1.lines(atLeast: 1)[0]), "hello_ack")
         let c2 = NearbyTestClient(port: h.port, identity: "pair-a", psk: Self.pskA)
-        XCTAssertEqual(XCTWaiter.wait(for: [c2.ready], timeout: 5), .completed)
+        XCTAssertEqual(XCTWaiter.wait(for: [c2.ready], timeout: loopbackWait), .completed)
         hello(c2, pairId: "pair-a", psk: Self.pskA)
         let e = try JSONDecoder().decode(RuntimeV1.Envelope<NearbyV1.ErrorPayload>.self, from: c2.lines(atLeast: 1)[0])
         XCTAssertEqual(e.payload.code, "too_many_sessions")
-        XCTAssertEqual(XCTWaiter.wait(for: [c2.closed], timeout: 5), .completed)
+        XCTAssertEqual(XCTWaiter.wait(for: [c2.closed], timeout: loopbackWait), .completed)
         XCTAssertEqual(h.listener.budget.sessionCount(pairId: "pair-a"), 1)
 
         // Duplicate over the wire while pending, then the in-flight cap.
@@ -1418,7 +1418,7 @@ final class NearbyBoundedTransportTests: XCTestCase {
             usleep(100_000)
             waited.fulfill()
         }
-        XCTAssertEqual(XCTWaiter.wait(for: [waited], timeout: 5), .completed)
+        XCTAssertEqual(XCTWaiter.wait(for: [waited], timeout: loopbackWait), .completed)
         XCTAssertEqual(sink.count, 1, "the retry was coalesced")
         XCTAssertGreaterThan(h.listener.inboxBytesInFlight, 0)
         sink.flush()
@@ -1438,20 +1438,20 @@ final class NearbyBoundedTransportTests: XCTestCase {
         c1.send(id: "s4", type: "capture_submit", pending)
         let delivered = XCTestExpectation(description: "w-2 delivered")
         DispatchQueue.global().async { while sink.count < 2 { usleep(5_000) }; delivered.fulfill() }
-        XCTAssertEqual(XCTWaiter.wait(for: [delivered], timeout: 5), .completed)
+        XCTAssertEqual(XCTWaiter.wait(for: [delivered], timeout: loopbackWait), .completed)
         c1.cancel()
         let freed = XCTestExpectation(description: "slot freed")
         DispatchQueue.global().async {
             while h.listener.budget.sessionCount(pairId: "pair-a") != 0 || h.listener.inboxBytesInFlight != 0 { usleep(5_000) }
             freed.fulfill()
         }
-        XCTAssertEqual(XCTWaiter.wait(for: [freed], timeout: 5), .completed)
+        XCTAssertEqual(XCTWaiter.wait(for: [freed], timeout: loopbackWait), .completed)
         sink.flush()
         XCTAssertEqual(h.listener.inboxBytesInFlight, 0)
     }
 
     @MainActor
-    private func waitUntil(_ what: String, timeout: TimeInterval = 5, _ cond: @escaping @MainActor () -> Bool) async throws {
+    private func waitUntil(_ what: String, timeout: TimeInterval = loopbackWait, _ cond: @escaping @MainActor () -> Bool) async throws {
         let deadline = Date().addingTimeInterval(timeout)
         while Date() < deadline {
             if cond() { return }
@@ -1525,7 +1525,7 @@ final class NearbyStateErrorTests: XCTestCase {
         try? FileManager.default.removeItem(at: dir)
     }
 
-    private func waitUntil(_ what: String, timeout: TimeInterval = 5, _ cond: @escaping @MainActor () -> Bool) async throws {
+    private func waitUntil(_ what: String, timeout: TimeInterval = loopbackWait, _ cond: @escaping @MainActor () -> Bool) async throws {
         let deadline = Date().addingTimeInterval(timeout)
         while Date() < deadline {
             if cond() { return }
@@ -1691,7 +1691,7 @@ final class NearbyTranscriptAcceptanceTests: XCTestCase {
         c1.cancel(); c3.cancel()
     }
 
-    private func waitUntil(_ what: String, timeout: TimeInterval = 5, _ cond: @escaping @MainActor () -> Bool) async throws {
+    private func waitUntil(_ what: String, timeout: TimeInterval = loopbackWait, _ cond: @escaping @MainActor () -> Bool) async throws {
         let deadline = Date().addingTimeInterval(timeout)
         while Date() < deadline {
             if cond() { return }
@@ -1746,13 +1746,13 @@ final class PairingGenerationTests: XCTestCase {
         defer { h.stop() }
         _ = c.begin(code: "999999") // replaced before the listener was rebuilt
         let client = NearbyTestClient(port: h.port, identity: old.derived.pairId, psk: old.derived.psk)
-        XCTAssertEqual(XCTWaiter.wait(for: [client.ready], timeout: 5), .completed, "the stale key still authenticates TLS")
+        XCTAssertEqual(XCTWaiter.wait(for: [client.ready], timeout: loopbackWait), .completed, "the stale key still authenticates TLS")
         let nonce = "stale-gen"
         client.send(id: "h", type: "hello", NearbyV1.Hello(pairId: old.derived.pairId, companionName: "late", nonce: nonce,
                                                            proof: Pairing.helloProof(psk: old.derived.psk, nonce: nonce)))
         let e = try JSONDecoder().decode(RuntimeV1.Envelope<NearbyV1.ErrorPayload>.self, from: client.lines(atLeast: 1)[0])
         XCTAssertEqual(e.payload.code, "pairing_expired")
-        XCTAssertEqual(XCTWaiter.wait(for: [client.closed], timeout: 5), .completed)
+        XCTAssertEqual(XCTWaiter.wait(for: [client.closed], timeout: loopbackWait), .completed)
         XCTAssertEqual(store.pairs, [])
         XCTAssertTrue(c.lastRefusal?.contains("not the pending attempt") ?? false, "\(String(describing: c.lastRefusal))")
         try? FileManager.default.removeItem(at: dir)
@@ -1767,7 +1767,7 @@ final class NearbyReceivingProgressTests: XCTestCase {
         try h.start()
         defer { h.stop() }
         let client = NearbyTestClient(port: h.port, identity: "pair-a", psk: NearbyListenerTests.pskA)
-        XCTAssertEqual(XCTWaiter.wait(for: [client.ready], timeout: 5), .completed)
+        XCTAssertEqual(XCTWaiter.wait(for: [client.ready], timeout: loopbackWait), .completed)
         let nonce = "prog"
         client.send(id: "h", type: "hello", NearbyV1.Hello(pairId: "pair-a", companionName: "p", nonce: nonce,
                                                            proof: Pairing.helloProof(psk: NearbyListenerTests.pskA, nonce: nonce)))
@@ -1808,7 +1808,7 @@ final class NearbyReceivingProgressTests: XCTestCase {
 
 @MainActor
 final class NearbyStateEventTests: XCTestCase {
-    private func waitUntil(_ what: String, timeout: TimeInterval = 5, _ cond: @escaping @MainActor () -> Bool) async throws {
+    private func waitUntil(_ what: String, timeout: TimeInterval = loopbackWait, _ cond: @escaping @MainActor () -> Bool) async throws {
         let deadline = Date().addingTimeInterval(timeout)
         while Date() < deadline {
             if cond() { return }
@@ -1980,7 +1980,7 @@ final class PairingPersistedGenerationTests: XCTestCase {
 
 @MainActor
 final class NearbyStateGenerationAPITests: XCTestCase {
-    private func waitUntil(_ what: String, timeout: TimeInterval = 5, _ cond: @escaping @MainActor () -> Bool) async throws {
+    private func waitUntil(_ what: String, timeout: TimeInterval = loopbackWait, _ cond: @escaping @MainActor () -> Bool) async throws {
         let deadline = Date().addingTimeInterval(timeout)
         while Date() < deadline {
             if cond() { return }

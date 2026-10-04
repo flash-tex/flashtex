@@ -25,10 +25,12 @@ final class EngineV3OneEngineTests: XCTestCase {
         try? FileManager.default.removeItem(at: Self.cache)
     }
 
-    private func waitUntil(_ what: String, timeout: TimeInterval = 10, _ cond: () -> Bool) async throws {
+    /// Waits on a helper process (the Python worker / controller doubles); generous because a loaded runner
+    /// delays process start-up and replies by seconds, not because anything is timed.
+    private func waitUntil(_ what: String, timeout: TimeInterval = 30, _ cond: () -> Bool) async throws {
         let start = Date()
         while !cond() {
-            if Date().timeIntervalSince(start) > timeout { XCTFail("timeout waiting for \(what)"); return }
+            if Date().timeIntervalSince(start) > timeout { XCTFail("timed out after \(Int(timeout)) s waiting for \(what) from the helper double"); return }
             try await Task.sleep(nanoseconds: 20_000_000)
         }
     }
@@ -131,7 +133,7 @@ final class EngineV3OneEngineTests: XCTestCase {
         func waitUntil(_ what: String, _ cond: () -> Bool) async throws {
             let start = Date()
             while !cond() {
-                if Date().timeIntervalSince(start) > 10 { return XCTFail("timed out waiting for \(what)") }
+                if Date().timeIntervalSince(start) > 30 { return XCTFail("timed out after 30 s waiting for \(what) from the controller double") }
                 try await Task.sleep(nanoseconds: 20_000_000)
             }
         }

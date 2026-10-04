@@ -133,6 +133,34 @@ export FLASHTEX_FONT_DIRS="${FLASHTEX_FONT_DIRS:-$ROOT/apps/mac/Fonts}"
 export FLASHTEX_TFM_DIRS="${FLASHTEX_TFM_DIRS:-$ROOT/apps/mac/Fonts/texmf/fonts/tfm/public/lm:$ROOT/apps/mac/Fonts/texmf/fonts/tfm/jknappen/ec:$ROOT/apps/mac/Fonts/texmf/fonts/tfm/public/amsfonts/symbols}"
 export FLASHTEX_LM_DIR="${FLASHTEX_LM_DIR:-$ROOT/apps/mac/Fonts}"
 
+# Tests never touch the user's real caches. .cargo/config.toml already points
+# the format, bundle and package caches of every process cargo starts under
+# target/; as a second line, `cargo test` runs here with HOME (and
+# XDG_CACHE_HOME) set to an empty directory, so a test that drops those
+# variables still cannot reach ~/Library/Caches/FlashTeX or ~/.cache/flashtex,
+# and a FlashTeX cache that appears in that directory fails the step.
+# cargo and rustup keep their real homes.
+REAL_CARGO_HOME="${CARGO_HOME:-$HOME/.cargo}"
+REAL_RUSTUP_HOME="${RUSTUP_HOME:-$HOME/.rustup}"
+cargo_test() { # cargo_test <cargo test args...>
+  local home rc=0 leaked
+  home="$(mktemp -d "${TMPDIR:-/tmp}/flashtex-gate-home-XXXXXX")"
+  HOME="$home" XDG_CACHE_HOME="$home/.cache" \
+    CARGO_HOME="$REAL_CARGO_HOME" RUSTUP_HOME="$REAL_RUSTUP_HOME" \
+    cargo test "$@" || rc=$?
+  leaked="$(cd "$home" && find "Library/Caches/FlashTeX" ".cache/flashtex" \
+    "Library/Application Support/FlashTeX" -type f 2>/dev/null | head -20 || true)"
+  if [[ -n "$leaked" ]]; then
+    echo "gate.sh: a test wrote a FlashTeX cache under HOME, which outside the gate is" >&2
+    echo "         the user's real cache. Give the process it starts the caches of" >&2
+    echo "         .cargo/config.toml instead of clearing its environment. Files:" >&2
+    sed 's/^/           /' <<< "$leaked" >&2
+    rc=1
+  fi
+  rm -rf "$home"
+  return $rc
+}
+
 # Crates whose tests are temporarily not gating. One source of truth for
 # ci.yml and this script: scripts/rust-test-exclude.txt.
 read_list() { # read_list <file> -> one entry per line, comments stripped
@@ -208,6 +236,11 @@ for p in changed:
     parts = p.split("/")
     if parts[0] == "crates" and len(parts) > 1:
         dirs.add(parts[1])
+    # The XeTeX port (crates/flashtex-xetex, its own workspace) links the
+    # pdfTeX engine's runtime and is web2rust's output: a change to either
+    # must build and test it too, or an engine API change breaks it silently.
+    if p.startswith("crates/flashtex-engine/") or p.startswith("tools/web2rust/"):
+        dirs.add("flashtex-xetex")
 
 out = []
 for d in sorted(dirs):
@@ -241,6 +274,9 @@ if printf '%s\n' "$CHANGED_FILES" | grep -qxE 'Cargo\.(toml|lock)'; then
   ROOT_MANIFEST=1
 fi
 CHANGED_RS="$(printf '%s\n' "$CHANGED_FILES" | grep -E '\.rs$' || true)"
+# What web2rust's drift test covers: the translator, the WEB sources and
+# change files, and the committed translations of both engines.
+DRIFT_PATHS='^(tools/web2rust/|third_party/(pdftex|xetex)/|crates/flashtex-(engine|xetex)/(changes/|src/generated/|web2rust-default\.args$|pdftex\.pool$|xetex\.pool$))'
 
 # ---------------------------------------------------------------------------
 # quick: fmt, clippy on changed crates, tests of changed crates
@@ -270,6 +306,14 @@ gate_fmt() {
   fi
   while IFS= read -r f; do
     [[ -f "$f" ]] || continue
+    # tools/web2rust's output (the engines' src/generated/) is never edited
+    # and never formatted: its drift test, not rustfmt, says what it must be.
+    # Both the place and the header must say so, so that a hand-written file
+    # cannot opt out with the header line.
+    if [[ "$f" == crates/*/src/generated/*.rs &&
+          "$(head -n 1 "$f")" == "// GENERATED FILE -- DO NOT EDIT." ]]; then
+      continue
+    fi
     ed=2021
     crate="$(printf '%s\n' "$f" | awk -F/ '$1=="crates" {print $2}')"
     if [[ -n "$crate" && -f "crates/$crate/Cargo.toml" ]]; then
@@ -400,9 +444,9 @@ gate_tests_touched() {
     else
       what="test $pkg"
       if [[ "$ws" == "." ]]; then
-        cargo test -p "$pkg" --locked --no-fail-fast && ok=1 || ok=0
+        cargo_test -p "$pkg" --locked --no-fail-fast && ok=1 || ok=0
       else
-        ( cd "$ws" && cargo test --locked --no-fail-fast ) && ok=1 || ok=0
+        ( cd "$ws" && cargo_test --locked --no-fail-fast ) && ok=1 || ok=0
       fi
     fi
     el=$(( SECONDS - t0 ))
@@ -455,7 +499,7 @@ workspace_profile() { # workspace_profile <debug|release>
   local excludes=()
   local p
   for p in $TEST_EXCLUDE; do excludes+=(--exclude "$p"); done
-  cargo test --workspace --locked --no-fail-fast "${flag[@]}" ${excludes[@]+"${excludes[@]}"}
+  cargo_test --workspace --locked --no-fail-fast "${flag[@]}" ${excludes[@]+"${excludes[@]}"}
 }
 
 # render-pipeline and flashtex-cli, built and tested one package at a time in
@@ -463,12 +507,14 @@ workspace_profile() { # workspace_profile <debug|release>
 # retired -- so this uses the root Cargo.lock and target/, and workspace_profile
 # already covers them -- but a per-crate failure reads far more clearly than one
 # inside the 38-crate run, and ci.yml's `rust-standalone` does exactly this.
+# flashtex-xetex is a real standalone crate (its own Cargo.lock and target/,
+# excluded from the root workspace), so this is the only place `full` builds it.
 standalone_profile() { # standalone_profile <debug|release>
   local profile="$1" flag=() c rc=0
   [[ "$profile" == release ]] && flag=(--release)
-  for c in render-pipeline flashtex-cli; do
+  for c in render-pipeline flashtex-cli flashtex-xetex; do
     [[ -f "crates/$c/Cargo.toml" ]] || continue
-    ( cd "crates/$c" && cargo build --locked "${flag[@]}" && cargo test --locked --no-fail-fast "${flag[@]}" ) || rc=1
+    ( cd "crates/$c" && cargo build --locked "${flag[@]}" && cargo_test --locked --no-fail-fast "${flag[@]}" ) || rc=1
   done
   return $rc
 }
@@ -540,6 +586,12 @@ case "$TIER" in
     if cargo clippy --version >/dev/null 2>&1; then step "clippy (changed crates)" -- gate_clippy
     else skip "clippy (changed crates)" "clippy is not installed (rustup component add clippy)"; fi
     step "tests (changed crates)" -- gate_tests_touched
+    # A here-string, not `printf | grep -q`: under pipefail the writer's
+    # SIGPIPE would turn a hit into a miss.
+    if grep -qE "$DRIFT_PATHS" <<< "$CHANGED_FILES"; then
+      step "web2rust drift (pdfTeX engine and XeTeX port)" -- \
+        cargo_test --release --locked -p web2rust --test drift
+    fi
     ;;
 esac
 
