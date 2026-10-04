@@ -193,10 +193,13 @@ final class DocumentFilesTests: XCTestCase {
     func testDroppedClientKillsAndReapsItsHelperWithoutExplicitTeardown() async throws {
         let helper = try requireRealHelper()
 
+        // Only this test process's own children: a machine-wide count also saw
+        // helpers of other test runs and lanes come and go mid-test (6 against
+        // an expected 5 at load 138).
         func liveHelperCount() -> Int {
             let p = Process()
             p.executableURL = URL(fileURLWithPath: "/bin/sh")
-            p.arguments = ["-c", "ps aux | grep -c '[f]lashtex-project-files'"]
+            p.arguments = ["-c", "ps -ax -o ppid=,command= | awk '$1 == \(ProcessInfo.processInfo.processIdentifier)' | grep -c '[f]lashtex-project-files'"]
             let pipe = Pipe()
             p.standardOutput = pipe
             try? p.run()
@@ -381,7 +384,9 @@ final class DocumentFilesTests: XCTestCase {
         model.files.policy = fake(["--mode", "hang"])
         let started = Date()
         XCTAssertFalse(model.saveTex())
-        XCTAssertLessThan(Date().timeIntervalSince(started), 5, "bounded wait")
+        // Bounded by the 0.5 s deadline plus a Python spawn, which a loaded
+        // runner can stretch by seconds; a missing deadline would hang forever.
+        XCTAssertLessThan(Date().timeIntervalSince(started), 15, "bounded wait")
         XCTAssertTrue(model.isDirty)
         XCTAssertEqual(model.activeText, "edited\n")
         XCTAssertEqual(try disk(url), "base\n")
@@ -410,14 +415,16 @@ final class DocumentFilesTests: XCTestCase {
 
         let model = ShellModel()
         model.files.policy = fake([])
-        model.files.helperTimeout = 5
+        // A deadline far beyond any spawn delay, so "at once" stays
+        // distinguishable from "at the deadline" on a loaded runner.
+        model.files.helperTimeout = 30
         XCTAssertEqual(model.openTex(at: url), .opened)
         model.updateActiveText("edited\n")
 
         model.files.policy = fake(["--mode", "exit", "--exit", "7"])
         let started = Date()
         XCTAssertFalse(model.saveTex())
-        XCTAssertLessThan(Date().timeIntervalSince(started), 4, "an exit fails the request at once, not at the deadline")
+        XCTAssertLessThan(Date().timeIntervalSince(started), 15, "an exit fails the request at once, not at the 30 s deadline")
         XCTAssertTrue(model.isDirty)
         XCTAssertEqual(model.activeText, "edited\n")
         XCTAssertEqual(try disk(url), "base\n")

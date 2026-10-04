@@ -132,11 +132,19 @@ final class PasteRecoveryTests: XCTestCase {
     }
 
     /// One request/reply through the shell's per-request waiters.
-    private func request(_ model: ShellModel, _ type: String, _ payload: PreviewControllerClient.JSONObject, id: String? = nil) async throws -> (id: String, reply: Result<[String: Any], ControllerError>) {
+    /// `onReply` runs synchronously in the reply's own run-loop turn, as
+    /// EditHistoryPanel settles: the helper's outcome for an admitted compile
+    /// can be the next line on the pipe, and an adoption deferred to the test's
+    /// resumption could come after it (see AdmissionGroupsTests.request).
+    private func request(_ model: ShellModel, _ type: String, _ payload: PreviewControllerClient.JSONObject, id: String? = nil,
+                         onReply: @escaping (String, Result<[String: Any], ControllerError>) -> Void = { _, _ in }) async throws -> (id: String, reply: Result<[String: Any], ControllerError>) {
         let controller = try XCTUnwrap(model.controller)
         let id = try controller.send(type, payload, id: id)
         let reply: Result<[String: Any], ControllerError> = await withCheckedContinuation { cont in
-            model.controllerState.awaiting[id] = { cont.resume(returning: $0) }
+            model.controllerState.awaiting[id] = { reply in
+                onReply(id, reply)
+                cont.resume(returning: reply)
+            }
         }
         return (id, reply)
     }
@@ -244,8 +252,15 @@ final class PasteRecoveryTests: XCTestCase {
             ],
         ]
         let t0 = Date()
-        let (id, reply) = try await request(model, "apply_group", payload)
-        let ackMs = Date().timeIntervalSince(t0) * 1000
+        var ackMs = 0.0
+        // Adopt it the way the history panel does, inside the reply's turn: the
+        // buffer takes the durable text, nothing is resubmitted, the preview
+        // binds to the adopted editor revision.
+        let (_, reply) = try await request(model, "apply_group", payload) { id, reply in
+            ackMs = Date().timeIntervalSince(t0) * 1000
+            guard case .success(let result) = reply, let doc = (result["history"] as? [String: Any])?["document"] as? [String: Any] else { return }
+            model.controllerAdoptHistoryResult(doc, requestID: id, payload: result, issuedAtEditorRevision: issuedAt)
+        }
         let result = try reply.get()
         let history = try XCTUnwrap(result["history"] as? [String: Any])
         let doc = try XCTUnwrap(history["document"] as? [String: Any])
@@ -256,10 +271,6 @@ final class PasteRecoveryTests: XCTestCase {
         XCTAssertEqual(history["command_revision"] as? Int, 2)
         XCTAssertNil(result["preview_error"] as? String, "the wire carries JSON null when the compiler ran: \(result["preview_error"] ?? "")")
 
-        // Adopt it the way the history panel / search lane do: the buffer takes
-        // the durable text, nothing is resubmitted, the preview binds to the
-        // adopted editor revision.
-        model.controllerAdoptHistoryResult(doc, requestID: id, payload: result, issuedAtEditorRevision: issuedAt)
         XCTAssertTrue(model.activeText.sameBytes(as: expected), "the buffer adopted the grouped text exactly")
         XCTAssertGreaterThan(model.editorRevision, issuedAt)
         XCTAssertEqual(model.controllerState.durable["main.tex"]?.revision, 2)

@@ -1,0 +1,10 @@
+% x017-font-not-found: a font that is neither TFM nor installed
+% XeTeX-specific (docs/design/xetex/PLAN.md, phase S0: TFM fonts)
+% lockstep: no-halt
+\input prelude
+\def\space{ }
+\font\x=flashtexnosuchfont
+\message{x017 \fontname\x}
+\setbox0=\hbox{\x A}
+\lsshipbox0
+\end

@@ -26,13 +26,24 @@ final class ProposalPreviewTests: XCTestCase {
         try await waitUntil("preview ready") { if case .ready = preview.state { return true }; return false }
     }
 
-    private func waitUntil(_ what: String, timeout: TimeInterval = 5, _ cond: @escaping @MainActor () -> Bool) async throws {
+    /// Waits on the Python worker double; a loaded runner delays its start-up
+    /// and replies by seconds. Orderings are never left to this timeout.
+    private func waitUntil(_ what: String, timeout: TimeInterval = 30, _ cond: @escaping @MainActor () -> Bool) async throws {
         let deadline = Date().addingTimeInterval(timeout)
         while Date() < deadline {
             if cond() { return }
             try await Task.sleep(nanoseconds: 20_000_000)
         }
-        XCTFail("timed out waiting for \(what)")
+        XCTFail("timed out after \(Int(timeout)) s waiting for \(what) from the worker double")
+    }
+
+    /// The debounce timer, owned by the test: scheduled items are kept and run
+    /// only when the test says the window has elapsed.
+    private final class ManualDebounce {
+        var scheduled: [(delay: TimeInterval, item: DispatchWorkItem)] = []
+        var live: [DispatchWorkItem] { scheduled.map(\.item).filter { !$0.isCancelled } }
+        /// The window elapses: runs whatever is still scheduled.
+        func elapse() { let due = live; scheduled.removeAll(); due.forEach { $0.perform() } }
     }
 
     // MARK: shadow text
@@ -185,12 +196,20 @@ final class ProposalPreviewTests: XCTestCase {
 
     func testBurstOfEditsIsDebouncedAndCoalesced() async throws {
         let preview = makePreview()
+        // The window is the test's: with 30 ms sleeps against the real 300 ms
+        // timer, a loaded runner's oversleep fired it mid-burst.
+        let timer = ManualDebounce()
+        preview.scheduleDebounce = { timer.scheduled.append(($0, $1)) }
         let doc = input("abc\n", anchorByte: 4)
         for i in 1...5 {
             preview.update(input: doc, latex: String(repeating: "x", count: i))
             try await Task.sleep(nanoseconds: 30_000_000)
         }
+        XCTAssertEqual(timer.scheduled.count, 5, "every keystroke restarts the window")
+        XCTAssertTrue(timer.scheduled.allSatisfy { $0.delay == ProposalPreview.debounceInterval })
+        XCTAssertEqual(timer.live.count, 1, "only the newest keystroke's window is still pending")
         XCTAssertEqual(preview.shadowCompileCount, 0, "nothing is sent inside the debounce window")
+        timer.elapse()
         try await waitUntil("ready") { if case .ready = preview.state { return true }; return false }
         try await Task.sleep(nanoseconds: 400_000_000) // let any (wrong) extra compiles surface
         XCTAssertEqual(preview.shadowCompileCount, 1)
@@ -202,11 +221,15 @@ final class ProposalPreviewTests: XCTestCase {
         // documents) coalesce into exactly one more compile carrying the newest text.
         let slow = input("%slow\nabc\n", anchorByte: 10)
         preview.update(input: slow, latex: "first")
+        timer.elapse()
         try await waitUntil("in flight") { preview.isInFlight }
         XCTAssertEqual(preview.shadowCompileCount, 2)
         XCTAssertEqual(preview.baselineCompileCount, 2, "documents changed: one new baseline")
         preview.update(input: slow, latex: "second")
         preview.update(input: slow, latex: "third")
+        XCTAssertTrue(preview.isInFlight, "still compiling \"first\" (%slow)")
+        timer.elapse() // the window closes while "first" is in flight: coalesced, nothing sent
+        XCTAssertEqual(preview.shadowCompileCount, 2)
         try await waitUntil("third compiled") {
             preview.shadow?.shadowText == "%slow\nabc\nthird" && !preview.isInFlight && preview.debounceIdle
         }

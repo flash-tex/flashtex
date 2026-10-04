@@ -1,0 +1,11 @@
+% x003-uchar: \Uchar makes a character token of a Unicode scalar
+% XeTeX-specific (docs/design/xetex/PLAN.md, phase S0: TFM fonts)
+\input prelude
+\def\space{ }
+\font\x=cmr10 \x
+\message{x003 [\Uchar"41][\Uchar"E9][\Uchar"1F34C]}
+\edef\a{\Uchar"42\Uchar"3B1}
+\message{x003 \meaning\a}
+\setbox0=\hbox{\Uchar"41\Uchar"7A\Uchar"E9}
+\lsshipbox0
+\end

@@ -123,6 +123,12 @@ final class ProjectPackagesState {
     @ObservationIgnored private var engineV3RetryWork: DispatchWorkItem?
     /// The first retry's delay (tests shorten it).
     @ObservationIgnored var engineV3RetryBase: TimeInterval = 1
+    /// The clock and the timer behind the retry delay (tests replace both, so
+    /// a slow machine cannot make the retry come early or late).
+    @ObservationIgnored var engineV3Now: () -> Date = Date.init
+    @ObservationIgnored var engineV3Schedule: (TimeInterval, DispatchWorkItem) -> Void = { delay, work in
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: work)
+    }
     /// Offline resolutions run, failed in a row (tests).
     private(set) var engineV3Preparations = 0
     private(set) var engineV3Failures = 0
@@ -520,7 +526,7 @@ final class ProjectPackagesState {
             + libraries.sorted { $0.key < $1.key }.map { "\($0.key)=\($0.value)" }.joined(separator: ",")
         guard key != engineV3PreparedKey else { return false }
         // After a failure, the same manifest is asked again only once its delay is over.
-        if key == engineV3FailedKey, let at = engineV3RetryAt, Date() < at { return false }
+        if key == engineV3FailedKey, let at = engineV3RetryAt, engineV3Now() < at { return false }
         engineV3PreparedKey = key
         if pins.isEmpty, libraries.isEmpty {
             // The manifest no longer names any: what an earlier one brought goes.
@@ -553,7 +559,7 @@ final class ProjectPackagesState {
                 engineV3PreparedKey = nil
                 engineV3FailedKey = key
                 let delay = min(engineV3RetryBase * pow(2, Double(engineV3Failures - 1)), 60)
-                engineV3RetryAt = Date().addingTimeInterval(delay)
+                engineV3RetryAt = engineV3Now().addingTimeInterval(delay)
                 FlashTeXLog.write("packages: the pins and libraries could not be resolved for the new engine (\(f.why)); again in \(delay) s")
                 status = "packages: pins and libraries not resolved (\(f.why)); trying again in \(Int(delay.rounded(.up))) s"
                 let work = DispatchWorkItem { [weak self] in
@@ -564,7 +570,7 @@ final class ProjectPackagesState {
                 }
                 engineV3RetryWork?.cancel()
                 engineV3RetryWork = work
-                DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: work)
+                engineV3Schedule(delay, work)
                 model.engineV3.packagesChanged(model: model) // the held compile, with what was there before
                 return
             case .success(let r):

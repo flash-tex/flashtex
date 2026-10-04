@@ -229,9 +229,14 @@ final class EngineV3Session {
     @ObservationIgnored let latency = EngineV3Latency()
     /// What the reader thread may rasterise immediately (pages on screen, at which scale).
     @ObservationIgnored let rasterPlan = EngineV3RasterPlan()
-    @ObservationIgnored private var keyMonitor: Any?
-    @ObservationIgnored private var storageObserver: NSObjectProtocol?
-    @ObservationIgnored private var clickMonitor: Any?
+    /// The event monitors and the text-storage observer `start` installs:
+    /// removed in `stop()`, and in deinit for a session released without a
+    /// stop (AppKit and NotificationCenter keep them, and run their blocks on
+    /// every key, click and edit, until removed). nonisolated(unsafe): deinit
+    /// is nonisolated; the session is released on main.
+    @ObservationIgnored nonisolated(unsafe) private(set) var keyMonitor: Any?
+    @ObservationIgnored nonisolated(unsafe) private(set) var storageObserver: NSObjectProtocol?
+    @ObservationIgnored nonisolated(unsafe) private(set) var clickMonitor: Any?
     @ObservationIgnored private var lastKeyNs: UInt64 = 0
     /// Set by a scripted bench just before it edits the text view.
     @ObservationIgnored var nextKeystrokeNs: UInt64?
@@ -274,6 +279,13 @@ final class EngineV3Session {
 
     deinit {
         if let fontSmoothingObserver { NotificationCenter.default.removeObserver(fontSmoothingObserver) }
+        // A session released without `stop()` (its window's model went away):
+        // nothing it installed may outlive it. Its host ends with it (the
+        // process object terminates it in deinit, and the connection closes).
+        if let storageObserver { NotificationCenter.default.removeObserver(storageObserver) }
+        if let keyMonitor { NSEvent.removeMonitor(keyMonitor) }
+        if let clickMonitor { NSEvent.removeMonitor(clickMonitor) }
+        stallTimer?.invalidate()
     }
 
     // MARK: lifecycle
@@ -424,7 +436,8 @@ final class EngineV3Session {
     /// looped is not compiled again until an edit or ⌘B. The pane also offers
     /// Stop Compile while a compile runs long.
     @ObservationIgnored private var lastHostActivityNs: UInt64 = 0
-    @ObservationIgnored private var stallTimer: Timer?
+    /// Invalidated in `stop()` and deinit (the run loop keeps a repeating timer until then).
+    @ObservationIgnored nonisolated(unsafe) private(set) var stallTimer: Timer?
     /// After a stop: the texts that looped. The restarted host's opening
     /// compile is held while the editor still has them (an edit or ⌘B compiles).
     @ObservationIgnored private var stalledTexts: [String: String]?

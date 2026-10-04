@@ -17,9 +17,10 @@ import FlashTeXProtocol
 ///
 /// Real helper and compiler from this tree; every case skips cleanly without
 /// `FLASHTEX_PREVIEW_CONTROLLER` / `FLASHTEX_COMPILER`. Nothing here is
-/// timing sensitive: the pair is recorded synchronously by the adoption
-/// call, and a forged outcome is injected before the run loop can deliver
-/// the real one.
+/// timing sensitive: adoption and the forged outcomes run inside the reply's
+/// own run-loop turn (`request(…, onReply:)`, as EditHistoryPanel settles),
+/// so the real outcome, which can be the very next line on the pipe, is
+/// delivered only after them.
 @MainActor
 final class AdmissionGroupsTests: XCTestCase {
     static var realHelper: URL? {
@@ -58,7 +59,7 @@ final class AdmissionGroupsTests: XCTestCase {
         h.model.attachController(at: helper)
         h.model.controllerState.releasePolicy = .holdUntilPreview
         XCTAssertTrue(h.model.controllerAttached)
-        try await waitUntil("initial preview", 20) {
+        try await waitUntil("initial preview") {
             h.model.result?.revision == h.model.editorRevision && h.model.previewSource == .worker("flashtex-preview-controller") && h.model.inFlightRevision == nil
         }
         XCTAssertEqual(h.model.controllerState.durable["main.tex"]?.revision, 1)
@@ -69,13 +70,29 @@ final class AdmissionGroupsTests: XCTestCase {
 
     /// One raw request through the controller's reply routing (what the
     /// search / citation / history panels do), with the request id.
-    private func request(_ model: ShellModel, _ type: String, _ payload: PreviewControllerClient.JSONObject) async throws -> (id: String, reply: Result<[String: Any], ControllerError>) {
+    /// `onReply` runs synchronously in the reply's run-loop turn, the way
+    /// EditHistoryPanel settles. Work left to the test's resumption after the
+    /// continuation hop raced the helper's outcome for the admitted compile:
+    /// on a loaded runner both lines were delivered before the test resumed,
+    /// the outcome found nothing in flight, and the adopted edit then waited
+    /// for an outcome already consumed (60 s timeouts in a 20x loop at load 40-95).
+    private func request(_ model: ShellModel, _ type: String, _ payload: PreviewControllerClient.JSONObject,
+                         onReply: @escaping (String, Result<[String: Any], ControllerError>) throws -> Void = { _, _ in }) async throws -> (id: String, reply: Result<[String: Any], ControllerError>) {
         let controller = try XCTUnwrap(model.controller)
         let id = try controller.send(type, payload)
+        var thrown: Error?
         let reply: Result<[String: Any], ControllerError> = await withCheckedContinuation { cont in
-            model.controllerState.awaiting[id] = { cont.resume(returning: $0) }
+            model.controllerState.awaiting[id] = { reply in
+                do { try onReply(id, reply) } catch { thrown = error }
+                cont.resume(returning: reply)
+            }
         }
+        if let thrown { throw thrown }
         return (id, reply)
+    }
+
+    private func historyDocument(_ result: [String: Any]) throws -> [String: Any] {
+        try XCTUnwrap((result["history"] as? [String: Any])?["document"] as? [String: Any])
     }
 
     /// A one-edit `apply_group` payload replacing the first `needle` of the
@@ -96,10 +113,16 @@ final class AdmissionGroupsTests: XCTestCase {
     private func releaseLines(_ model: ShellModel) -> [String] { model.workerLog.filter { $0.hasPrefix("controller release:") } }
     private func holdLines(_ model: ShellModel) -> [String] { model.workerLog.filter { $0.hasPrefix("controller hold:") } }
 
-    private func waitUntil(_ what: String, _ timeout: TimeInterval = 15, _ cond: () -> Bool) async throws {
+    /// Every wait is on the real helper running real compiles; a loaded runner
+    /// has taken longer than the former 15 s (merge group 37088404222, "undo
+    /// preview"). Nothing here depends on how fast it is, only that it answers.
+    private func waitUntil(_ what: String, _ timeout: TimeInterval = 60, _ cond: () -> Bool) async throws {
         let start = Date()
         while !cond() {
-            if Date().timeIntervalSince(start) > timeout { XCTFail("timed out waiting for \(what)"); throw XCTSkip("timeout: \(what) (load-sensitive)") }
+            if Date().timeIntervalSince(start) > timeout {
+                XCTFail("timed out after \(Int(timeout)) s waiting for \(what) from the real helper and compiler")
+                throw XCTSkip("timeout: \(what) (load-sensitive)")
+            }
             try await Task.sleep(nanoseconds: 20_000_000)
         }
     }
@@ -113,7 +136,28 @@ final class AdmissionGroupsTests: XCTestCase {
         let model = h.model
         let issuedAt = model.editorRevision
         let payload = try groupPayload(model, commandID: "admgrp-pair-\(UUID().uuidString)", replacing: "group.", with: "group, applied.", label: "Apply group")
-        let (id, reply) = try await request(model, "apply_group", payload)
+        let (_, reply) = try await request(model, "apply_group", payload) { id, reply in
+            let result = try reply.get()
+            let pair = try XCTUnwrap(ControllerCompileAdmission.from(editResult: result), "apply_group reply names the admitted compile: \(result.keys.sorted())")
+            // Adoption (search / citation / history panels): the group is the in-flight edit with the group's pair.
+            model.controllerAdoptHistoryResult(try self.historyDocument(result), requestID: id, payload: result, issuedAtEditorRevision: issuedAt)
+            XCTAssertTrue(model.activeText.sameBytes(as: self.doc("Hello group, applied.")))
+            let inFlight = try XCTUnwrap(model.controllerState.inFlight, "the adopted group waits for its compile like an edit")
+            XCTAssertEqual(inFlight.id, id)
+            XCTAssertEqual(inFlight.durableRevision, 2)
+            XCTAssertEqual(inFlight.admitted, pair, "the group's pair is the recorded admission")
+            XCTAssertEqual(model.inFlightRevision, model.editorRevision)
+
+            // A forged outcome for another request id never releases the group (logged hold)…
+            model.handleController(.update(kind: "stale", payload: ["request_id": "not-the-group", "compile_revision": pair.compileRevision!]))
+            XCTAssertNotNil(model.controllerState.inFlight)
+            XCTAssertTrue(try XCTUnwrap(self.holdLines(model).last).contains("stale not-the-group is not the admitted compile \(pair.requestID)"))
+            // …and a `discarded` for the group's own id (wrong generation) holds too.
+            model.handleController(.update(kind: "discarded", payload: ["request_id": pair.requestID, "compile_revision": pair.compileRevision! + 100]))
+            XCTAssertNotNil(model.controllerState.inFlight)
+            XCTAssertTrue(try XCTUnwrap(self.holdLines(model).last).contains("carries compile_revision \(pair.compileRevision! + 100), admitted \(pair.compileRevision!)"))
+            XCTAssertTrue(self.releaseLines(model).isEmpty)
+        }
         let result = try reply.get()
         // The wire: a non-null pair at the top level (like `edit`), the ledger identity under `history`.
         let pair = try XCTUnwrap(ControllerCompileAdmission.from(editResult: result), "apply_group reply names the admitted compile: \(result.keys.sorted())")
@@ -125,25 +169,6 @@ final class AdmissionGroupsTests: XCTestCase {
         XCTAssertEqual(history["command_revision"] as? Int, 2)
         XCTAssertEqual(history["replayed_command"] as? Bool, false)
         XCTAssertNil(result["preview_error"] as? String)
-
-        // Adoption (search / citation / history panels): the group is the in-flight edit with the group's pair.
-        model.controllerAdoptHistoryResult(document, requestID: id, payload: result, issuedAtEditorRevision: issuedAt)
-        XCTAssertTrue(model.activeText.sameBytes(as: doc("Hello group, applied.")))
-        let inFlight = try XCTUnwrap(model.controllerState.inFlight, "the adopted group waits for its compile like an edit")
-        XCTAssertEqual(inFlight.id, id)
-        XCTAssertEqual(inFlight.durableRevision, 2)
-        XCTAssertEqual(inFlight.admitted, pair, "the group's pair is the recorded admission")
-        XCTAssertEqual(model.inFlightRevision, model.editorRevision)
-
-        // A forged outcome for another request id never releases the group (logged hold)…
-        model.handleController(.update(kind: "stale", payload: ["request_id": "not-the-group", "compile_revision": pair.compileRevision!]))
-        XCTAssertNotNil(model.controllerState.inFlight)
-        XCTAssertTrue(try XCTUnwrap(holdLines(model).last).contains("stale not-the-group is not the admitted compile \(pair.requestID)"))
-        // …and a `discarded` for the group's own id (wrong generation) holds too.
-        model.handleController(.update(kind: "discarded", payload: ["request_id": pair.requestID, "compile_revision": pair.compileRevision! + 100]))
-        XCTAssertNotNil(model.controllerState.inFlight)
-        XCTAssertTrue(try XCTUnwrap(holdLines(model).last).contains("carries compile_revision \(pair.compileRevision! + 100), admitted \(pair.compileRevision!)"))
-        XCTAssertTrue(releaseLines(model).isEmpty)
 
         // The real outcome, keyed on the group's id, releases exactly that admission.
         let adopted = model.editorRevision
@@ -164,12 +189,13 @@ final class AdmissionGroupsTests: XCTestCase {
         let model = h.model
         let commandID = "admgrp-retry-\(UUID().uuidString)"
         let payload = try groupPayload(model, commandID: commandID, replacing: "retry.", with: "retry, applied.", label: "Apply once")
-        let (firstID, firstReply) = try await request(model, "apply_group", payload)
+        let (_, firstReply) = try await request(model, "apply_group", payload) { id, reply in
+            let first = try reply.get()
+            model.controllerAdoptHistoryResult(try self.historyDocument(first), requestID: id, payload: first, issuedAtEditorRevision: model.editorRevision)
+            XCTAssertEqual(model.controllerState.inFlight?.admitted, ControllerCompileAdmission.from(editResult: first))
+        }
         let first = try firstReply.get()
         let firstPair = try XCTUnwrap(ControllerCompileAdmission.from(editResult: first))
-        let firstDoc = try XCTUnwrap((first["history"] as? [String: Any])?["document"] as? [String: Any])
-        model.controllerAdoptHistoryResult(firstDoc, requestID: firstID, payload: first, issuedAtEditorRevision: model.editorRevision)
-        XCTAssertEqual(model.controllerState.inFlight?.admitted, firstPair)
         let applied = model.editorRevision
         let r2Text = model.activeText
         try await waitUntil("first preview") { model.result?.revision == applied && model.controllerState.inFlight == nil }
@@ -183,7 +209,30 @@ final class AdmissionGroupsTests: XCTestCase {
         // The exact retry (same id, same payload) is replayed by the ledger: the permanent identity is
         // preserved, the returned document is the CURRENT one, and any admission is a fresh pair.
         let issuedAt = model.editorRevision
-        let (retryID, retryReply) = try await request(model, "apply_group", payload)
+        let (_, retryReply) = try await request(model, "apply_group", payload) { id, reply in
+            let retry = try reply.get()
+            let freshPair = ControllerCompileAdmission.from(editResult: retry)
+            // Adoption keeps the command identity out of the controller state: durable stays r3 (never r2),
+            // the buffer is intact, and the fresh pair (when admitted) is the in-flight admission.
+            model.controllerAdoptHistoryResult(try self.historyDocument(retry), requestID: id, payload: retry, issuedAtEditorRevision: issuedAt)
+            XCTAssertTrue(model.activeText.sameBytes(as: current), "the buffer is intact: the replay changed nothing")
+            XCTAssertEqual(model.editorRevision, issuedAt, "no text adoption was needed")
+            XCTAssertEqual(model.controllerState.durable["main.tex"]?.revision, 3)
+            XCTAssertTrue(model.controllerState.textByDurable["main.tex"]?[2]?.sameBytes(as: r2Text) == true, "the command's r2 text is not rewritten by the replay")
+            XCTAssertTrue(model.controllerState.textByDurable["main.tex"]?[3]?.sameBytes(as: current) == true)
+            if let freshPair {
+                let inFlight = try XCTUnwrap(model.controllerState.inFlight, "a fresh admission holds the pipeline for the current document")
+                XCTAssertEqual(inFlight.id, id)
+                XCTAssertEqual(inFlight.durableRevision, 3, "the admission belongs to the current document, not the command's r2")
+                XCTAssertEqual(inFlight.admitted, freshPair)
+                // The original command's compile id never releases the fresh admission…
+                model.handleController(.update(kind: "discarded", payload: ["request_id": firstPair.requestID, "compile_revision": firstPair.compileRevision!]))
+                XCTAssertNotNil(model.controllerState.inFlight)
+                XCTAssertTrue(try XCTUnwrap(self.holdLines(model).last).contains("\(firstPair.requestID) is not the admitted compile \(freshPair.requestID)"))
+            } else {
+                XCTAssertNil(model.controllerState.inFlight?.admitted, "no compile admitted: nothing recorded")
+            }
+        }
         let retry = try retryReply.get()
         let history = try XCTUnwrap(retry["history"] as? [String: Any])
         XCTAssertEqual(history["replayed_command"] as? Bool, true)
@@ -197,29 +246,12 @@ final class AdmissionGroupsTests: XCTestCase {
             XCTAssertGreaterThan(try XCTUnwrap(freshPair.compileRevision), try XCTUnwrap(firstPair.compileRevision))
         }
 
-        // Adoption keeps the command identity out of the controller state: durable stays r3 (never r2),
-        // the buffer is intact, and the fresh pair (when admitted) is the in-flight admission.
-        model.controllerAdoptHistoryResult(document, requestID: retryID, payload: retry, issuedAtEditorRevision: issuedAt)
-        XCTAssertTrue(model.activeText.sameBytes(as: current), "the buffer is intact: the replay changed nothing")
-        XCTAssertEqual(model.editorRevision, issuedAt, "no text adoption was needed")
-        XCTAssertEqual(model.controllerState.durable["main.tex"]?.revision, 3)
-        XCTAssertTrue(model.controllerState.textByDurable["main.tex"]?[2]?.sameBytes(as: r2Text) == true, "the command's r2 text is not rewritten by the replay")
-        XCTAssertTrue(model.controllerState.textByDurable["main.tex"]?[3]?.sameBytes(as: current) == true)
         if let freshPair {
-            let inFlight = try XCTUnwrap(model.controllerState.inFlight, "a fresh admission holds the pipeline for the current document")
-            XCTAssertEqual(inFlight.id, retryID)
-            XCTAssertEqual(inFlight.durableRevision, 3, "the admission belongs to the current document, not the command's r2")
-            XCTAssertEqual(inFlight.admitted, freshPair)
-            // The original command's compile id never releases the fresh admission…
-            model.handleController(.update(kind: "discarded", payload: ["request_id": firstPair.requestID, "compile_revision": firstPair.compileRevision!]))
-            XCTAssertNotNil(model.controllerState.inFlight)
-            XCTAssertTrue(try XCTUnwrap(holdLines(model).last).contains("\(firstPair.requestID) is not the admitted compile \(freshPair.requestID)"))
-            // …its own outcome does (the helper compiles the unchanged current document: preview, stale or discarded).
+            // The original command's compile id did not release the fresh admission (checked at adoption);
+            // its own outcome does (the helper compiles the unchanged current document: preview, stale or discarded).
             try await waitUntil("the fresh admission's outcome") { model.controllerState.inFlight == nil }
             let release = try XCTUnwrap(releaseLines(model).last)
             XCTAssertTrue(release.contains("\(freshPair.requestID) is the admitted compile (generation \(freshPair.compileRevision!), durable r3)"), release)
-        } else {
-            XCTAssertNil(model.controllerState.inFlight?.admitted, "no compile admitted: nothing recorded")
         }
         XCTAssertEqual(model.result?.revision, typed, "the shown preview is still the current document's")
         print("admission-groups: replay of \(commandID.prefix(20))… → command r2 replayed, document r3, first pair \(firstPair.requestID)/\(firstPair.compileRevision ?? -1), retry pair \(freshPair.map { "\($0.requestID)/\($0.compileRevision ?? -1)" } ?? "null")")
@@ -251,12 +283,12 @@ final class AdmissionGroupsTests: XCTestCase {
         XCTAssertFalse(model.workerLog.dropFirst(logCount).contains { $0.hasPrefix("controller refused edit") }, "an error for a raw request is not an edit refusal: \(model.workerLog.dropFirst(logCount))")
         // The same helper still admits a well-formed group afterwards (the failure left no state behind).
         let ok = try groupPayload(model, commandID: "admgrp-after-failure-\(UUID().uuidString)", replacing: "failure.", with: "failure, applied.", label: "Good group")
-        let (id, good) = try await request(model, "apply_group", ok)
-        let result = try good.get()
-        XCTAssertNotNil(ControllerCompileAdmission.from(editResult: result))
-        let document = try XCTUnwrap((result["history"] as? [String: Any])?["document"] as? [String: Any])
-        model.controllerAdoptHistoryResult(document, requestID: id, payload: result, issuedAtEditorRevision: model.editorRevision)
-        XCTAssertEqual(model.controllerState.inFlight?.admitted, ControllerCompileAdmission.from(editResult: result))
+        let (_, good) = try await request(model, "apply_group", ok) { id, reply in
+            let result = try reply.get()
+            model.controllerAdoptHistoryResult(try self.historyDocument(result), requestID: id, payload: result, issuedAtEditorRevision: model.editorRevision)
+            XCTAssertEqual(model.controllerState.inFlight?.admitted, ControllerCompileAdmission.from(editResult: result))
+        }
+        XCTAssertNotNil(ControllerCompileAdmission.from(editResult: try good.get()))
         let adopted = model.editorRevision
         try await waitUntil("the good group's preview") { model.result?.revision == adopted && model.controllerState.inFlight == nil }
     }
@@ -270,11 +302,11 @@ final class AdmissionGroupsTests: XCTestCase {
         let model = h.model
         let original = model.activeText
         let payload = try groupPayload(model, commandID: "admgrp-undo-group-\(UUID().uuidString)", replacing: "undo.", with: "undo, applied.", label: "Apply group")
-        let (groupID, groupReply) = try await request(model, "apply_group", payload)
-        let group = try groupReply.get()
-        let groupDoc = try XCTUnwrap((group["history"] as? [String: Any])?["document"] as? [String: Any])
-        model.controllerAdoptHistoryResult(groupDoc, requestID: groupID, payload: group, issuedAtEditorRevision: model.editorRevision)
-        XCTAssertNotNil(model.controllerState.inFlight?.admitted)
+        _ = try await request(model, "apply_group", payload) { id, reply in
+            let group = try reply.get()
+            model.controllerAdoptHistoryResult(try self.historyDocument(group), requestID: id, payload: group, issuedAtEditorRevision: model.editorRevision)
+            XCTAssertNotNil(model.controllerState.inFlight?.admitted)
+        }
         let applied = model.editorRevision
         try await waitUntil("group preview") { model.result?.revision == applied && model.controllerState.inFlight == nil }
         let groupedText = model.activeText
@@ -282,9 +314,22 @@ final class AdmissionGroupsTests: XCTestCase {
         for (direction, expectedText, expectedRevision) in [("undo", original, 3), ("redo", groupedText, 4)] {
             let durable = try XCTUnwrap(model.controllerState.durable["main.tex"])
             let issuedAt = model.editorRevision
-            let (id, reply) = try await request(model, direction, ["path": "main.tex",
-                                                                    "command": ["command_id": "admgrp-\(direction)-\(UUID().uuidString)",
-                                                                                "expected_revision": durable.revision, "expected_sha256": durable.sha256]])
+            let (_, reply) = try await request(model, direction, ["path": "main.tex",
+                                                                  "command": ["command_id": "admgrp-\(direction)-\(UUID().uuidString)",
+                                                                              "expected_revision": durable.revision, "expected_sha256": durable.sha256]]) { id, reply in
+                let result = try reply.get()
+                model.controllerAdoptHistoryResult(try self.historyDocument(result), requestID: id, payload: result, issuedAtEditorRevision: issuedAt)
+                XCTAssertTrue(model.activeText.sameBytes(as: expectedText), "\(direction) adopted the exact durable text")
+                let inFlight = try XCTUnwrap(model.controllerState.inFlight, "\(direction) waits for its preview like an edit")
+                XCTAssertEqual(inFlight.id, id)
+                XCTAssertEqual(inFlight.durableRevision, expectedRevision)
+                XCTAssertNil(inFlight.admitted, "\(direction): null pair → no admission recorded")
+                // Numeric fallback: a generation below the durable revision holds; the preview for the durable revision releases.
+                let before = self.releaseLines(model).count
+                model.handleController(.update(kind: "stale", payload: ["request_id": "whatever", "compile_revision": 0]))
+                XCTAssertNotNil(model.controllerState.inFlight)
+                XCTAssertEqual(self.releaseLines(model).count, before)
+            }
             let result = try reply.get()
             // Undo/redo wire schemas are unchanged: no pair, not even a null one.
             XCTAssertNil(result["compile_request_id"], "\(direction) reply carries no compile_request_id: \(result.keys.sorted())")
@@ -295,17 +340,6 @@ final class AdmissionGroupsTests: XCTestCase {
             XCTAssertEqual(history["replayed_command"] as? Bool, false)
             let document = try XCTUnwrap(history["document"] as? [String: Any])
             XCTAssertEqual(document["revision"] as? Int, expectedRevision)
-            model.controllerAdoptHistoryResult(document, requestID: id, payload: result, issuedAtEditorRevision: issuedAt)
-            XCTAssertTrue(model.activeText.sameBytes(as: expectedText), "\(direction) adopted the exact durable text")
-            let inFlight = try XCTUnwrap(model.controllerState.inFlight, "\(direction) waits for its preview like an edit")
-            XCTAssertEqual(inFlight.id, id)
-            XCTAssertEqual(inFlight.durableRevision, expectedRevision)
-            XCTAssertNil(inFlight.admitted, "\(direction): null pair → no admission recorded")
-            // Numeric fallback: a generation below the durable revision holds; the preview for the durable revision releases.
-            let before = releaseLines(model).count
-            model.handleController(.update(kind: "stale", payload: ["request_id": "whatever", "compile_revision": 0]))
-            XCTAssertNotNil(model.controllerState.inFlight)
-            XCTAssertEqual(releaseLines(model).count, before)
             let adopted = model.editorRevision
             try await waitUntil("\(direction) preview") { model.result?.revision == adopted && model.controllerState.inFlight == nil }
             let release = try XCTUnwrap(releaseLines(model).last)

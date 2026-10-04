@@ -1,0 +1,8 @@
+% x050-catcode-default: the INITEX category codes of Unicode letters and others
+% XeTeX-specific (docs/design/xetex/PLAN.md, phase S0: TFM fonts)
+\input prelude
+\def\space{ }
+\message{x050 \the\catcode`a \the\catcode`é \the\catcode`Ω \the\catcode`雪 \the\catcode`🍌 \the\catcode`1 \the\catcode`. \the\catcode`€}
+\setbox0=\hbox{\vrule width1pt}
+\lsshipbox0
+\end

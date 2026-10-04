@@ -497,9 +497,12 @@ version = "0.1.0"
 dependencies = [
  "comemo",
  "flashtex-display-list",
+ "flate2",
  "libc",
+ "miniz_oxide 0.8.9",
  "typst",
  "typst-assets",
+ "typst-eval",
  "typst-kit",
  "typst-layout",
  "typst-pdf",

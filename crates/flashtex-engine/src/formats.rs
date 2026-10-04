@@ -856,8 +856,12 @@ impl FormatCache {
         let key = Manifest::compute_key(engine, command, &files, &lookups);
         let fmt_file = format!("{key}.fmt");
         let dest = slot.join(&fmt_file);
-        // On disk before the manifest names it.
-        File::open(&fmt_made)
+        // On disk before the manifest names it. Opened for writing (nothing
+        // is written): Windows' FlushFileBuffers refuses a read-only handle
+        // ("Access is denied"), where fsync takes any.
+        fs::OpenOptions::new()
+            .write(true)
+            .open(&fmt_made)
             .and_then(|f| f.sync_all())
             .map_err(|e| io_err("sync", &fmt_made, e))?;
         fs::rename(&fmt_made, &dest).map_err(|e| io_err("rename to", &dest, e))?;

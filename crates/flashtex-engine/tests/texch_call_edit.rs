@@ -9,7 +9,8 @@
 //! the editor's, where this engine's has already been written (on a
 //! terminal both are line-buffered, and the order is the same).
 //! Skips where there is no TeX Live (e.g. CI).
-#![cfg(feature = "kpathsea")]
+// Unix: the editor commands are `/bin/sh` scripts.
+#![cfg(all(feature = "kpathsea", unix))]
 
 mod common;
 

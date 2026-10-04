@@ -207,6 +207,10 @@ pub struct Report {
     pub restart_next_gap: Option<i64>,
     /// The page after which the run converged with the old one.
     pub converged_at: Option<usize>,
+    /// After a convergence before a barrier the old run reads later
+    /// (DESIGN.md §5.3), the pages kept before the run went on live, from
+    /// the last page checkpoint before the barrier (`Obs::rerun_point`).
+    pub rerun_from: Option<usize>,
     /// Pages this compile typeset.
     pub rerun_pages: usize,
     pub pages: usize,
@@ -234,6 +238,13 @@ pub struct Report {
     /// differs from the previous run's, with the wall and thread CPU time
     /// from the start of the compile to its shipout (DESIGN.md §1.2).
     pub edited: Option<(usize, f64, f64)>,
+    /// Instructions the engine thread retired restoring the restart point,
+    /// from the observer's start (just before the restore) to the edited
+    /// page's shipout, and in the convergence tests (`os::thread_counts`;
+    /// macOS only, for measurement).
+    pub restore_instr: Option<u64>,
+    pub edited_instr: Option<u64>,
+    pub test_instr: Option<u64>,
     /// Passes run (DESIGN.md §5.5: a run that changed a file it read, the
     /// `.aux`, runs again, up to five times), how each ran, what each took,
     /// and whether the passes stopped on a repeated state.
@@ -263,7 +274,7 @@ pub struct Report {
 impl Report {
     pub fn json(&self) -> String {
         format!(
-            "{{\"mode\":\"{}\",\"cold_reason\":{},\"status\":{},\"paused\":{},\"restart_pages\":{},\"restart_mid_page\":{},\"restart_gap\":{},\"converged_at\":{},\"rerun_pages\":{},\"pages\":{},\"find_s\":{:.6},\"key_s\":{:.6},\"changes_s\":{:.6},\"restore_s\":{:.6},\"page_s\":{:.6},\"total_s\":{:.6},\"tests\":{},\"test_s\":{:.6},\"log_bytes\":{},\"checkpoints\":{},\"diffs\":{:?},\"page_times\":[{}],\"edited\":{},\"passes\":{},\"pass_modes\":{:?},\"pass_s\":[{}],\"oscillation\":{},\"ck_stats\":{},\"l5\":{:?},\"rs_events\":{},\"preempted\":{},\"deferred\":{}}}",
+            "{{\"mode\":\"{}\",\"cold_reason\":{},\"status\":{},\"paused\":{},\"restart_pages\":{},\"restart_mid_page\":{},\"restart_gap\":{},\"converged_at\":{},\"rerun_from\":{},\"rerun_pages\":{},\"pages\":{},\"find_s\":{:.6},\"key_s\":{:.6},\"changes_s\":{:.6},\"restore_s\":{:.6},\"page_s\":{:.6},\"total_s\":{:.6},\"tests\":{},\"test_s\":{:.6},\"log_bytes\":{},\"checkpoints\":{},\"diffs\":{:?},\"page_times\":[{}],\"edited\":{},\"passes\":{},\"pass_modes\":{:?},\"pass_s\":[{}],\"oscillation\":{},\"ck_stats\":{},\"l5\":{:?},\"rs_events\":{},\"preempted\":{},\"deferred\":{}}}",
             self.mode,
             self.cold_reason
                 .as_ref()
@@ -275,6 +286,9 @@ impl Report {
             self.restart_mid_page,
             self.restart_gap,
             self.converged_at
+                .map(|p| p.to_string())
+                .unwrap_or_else(|| "null".into()),
+            self.rerun_from
                 .map(|p| p.to_string())
                 .unwrap_or_else(|| "null".into()),
             self.rerun_pages,
@@ -385,6 +399,15 @@ struct Obs {
     /// old run had made at its end: one after a checkpoint is a barrier
     /// there (DESIGN.md §5.3).
     old_effects_end: usize,
+    /// The last of the old run's lookups (an index into its journal's) whose
+    /// answer is different now (`Session::changes`): a checkpoint taken
+    /// before it would keep the old run's answer (#1502).
+    changed_lookup_last: Option<usize>,
+    /// The convergence keeps the old run's pages only up to this checkpoint
+    /// of the old run, and the run goes on live from it (`after_run`): the
+    /// last page checkpoint before the old run's first later barrier or
+    /// read of a file the runs write (`test`, `rerun_point`).
+    rerun_from: Option<CheckpointId>,
     /// Retention during the run (`thin`): the budget, the cursor, the
     /// checkpoints never to drop, and the page and page-count maps of the
     /// checkpoints before the run.
@@ -398,6 +421,9 @@ struct Obs {
     /// whose frame differs (`Report::edited`).
     old_frames: Vec<[u64; 2]>,
     edited: Option<(usize, f64, f64)>,
+    instr0: Option<u64>,
+    edited_instr: Option<u64>,
+    test_instr: Option<u64>,
     /// Checkpoints with L5 patches (`Session::defpatch`).
     patched: std::collections::HashSet<CheckpointId>,
     /// Preemption (`Session::set_preempt`): asked at each page and segment
@@ -506,9 +532,13 @@ impl Obs {
     /// checkpointed as `new`) against the old run's checkpoint `old`.
     fn converged(&mut self, g: &mut Globals, new: &ExtRecord, old: CheckpointId) -> bool {
         let t = Instant::now();
+        let i0 = crate::os::thread_counts();
         self.tests += 1;
         let r = self.test(g, new, old);
         self.test_s += t.elapsed().as_secs_f64();
+        if let (Some(a), Some(b)) = (i0, crate::os::thread_counts()) {
+            *self.test_instr.get_or_insert(0) += b.0 - a.0;
+        }
         match r {
             Ok(()) => true,
             Err(why) if why == PREEMPTED => {
@@ -610,11 +640,21 @@ impl Obs {
         }
         // DESIGN.md §5.3's barriers: the old run's pages from here on made
         // an external effect (`\write18`) or read the clock
-        // (`\pdfelapsedtime`); keeping them would not re-do it.
-        if o.effects_len < self.old_effects_end {
-            return Err("the old run reads a barrier (an external effect) later".into());
+        // (`\pdfelapsedtime`); keeping them would not re-do it. They "block
+        // reuse past the point where they are read": the old run's pages
+        // before the first one are kept, and the run goes on live from the
+        // last page checkpoint before it (`rerun_point`, `after_run`), which
+        // re-does it and everything after it.
+        let barrier_later = o.effects_len < self.old_effects_end;
+        // (b) nothing the old run reads from here on has changed, and it
+        // makes no lookup from here on whose answer is different now (a
+        // file that appeared or disappeared: `\IfFileExists`, kpathsea's
+        // probes, #1502). The restart point is before the first such
+        // lookup, but an edit before it made the restart earlier still, and
+        // keeping the old run's later pages kept its old answer.
+        if self.changed_lookup_last.is_some_and(|b| o.reads.1 <= b) {
+            return Err("the old run makes a lookup later whose answer changed".into());
         }
-        // (b) nothing the old run reads from here on has changed
         let from = o.reads.0.min(self.old_journal_files.len());
         if let Some(p) = self.old_journal_files[from..]
             .iter()
@@ -633,7 +673,10 @@ impl Obs {
         // read kept old pages typeset from what the old run wrote there
         // (soundness sweep A on the NixOS PC, beamer-fragile: a frame
         // with another frame's title, 2026-09-30).
+        // Such a read is a barrier too: the old run's pages are kept up to
+        // the last page checkpoint before it, like a barrier's.
         let end = self.old_reads_end.min(self.old_journal_all.len());
+        let mut written_read: Option<(usize, String)> = None;
         if from < end {
             let norm = |p: &str| p.strip_prefix("./").unwrap_or(p).to_string();
             let live = system::outputs_since(0);
@@ -641,13 +684,27 @@ impl Obs {
                 let p = norm(p);
                 self.old_outputs.contains(&p) || live.iter().any(|o| norm(o) == p)
             };
-            if let Some(p) = self.old_journal_all[from..end]
+            written_read = self.old_journal_all[from..end]
                 .iter()
-                .find(|p| !p.is_empty() && written(p))
-            {
-                return Err(format!("the old run reads {p} later, which the runs write"));
-            }
+                .enumerate()
+                .find(|(_, p)| !p.is_empty() && written(p))
+                .map(|(i, p)| (from + i, p.clone()));
         }
+        let rerun_from = if barrier_later || written_read.is_some() {
+            match self.rerun_point(g, old, o.effects_len, written_read.as_ref().map(|r| r.0)) {
+                Some(m) => Some(m),
+                None => {
+                    return Err(match written_read {
+                        Some((_, p)) if !barrier_later => {
+                            format!("the old run reads {p} later, which the runs write")
+                        }
+                        _ => "the old run reads a barrier (an external effect) later".into(),
+                    })
+                }
+            }
+        } else {
+            None
+        };
         // the C parts
         if !new.cstate.same_as(&o.cstate) {
             return Err("pdfTeX's C-part state differs".into());
@@ -683,11 +740,42 @@ impl Obs {
         );
         if r.is_ok() {
             self.char_or = char_or;
+            self.rerun_from = rerun_from;
         }
         self.iso_s += t.elapsed().as_secs_f64();
         r.map(|nodes| {
             self.iso_nodes = nodes;
         })
+    }
+}
+
+impl Obs {
+    /// The old run's last page checkpoint from `old` on (excluding `old`
+    /// itself) before its first later external effect -- one past
+    /// `effects`, the count at `old` -- and before it opens the journal
+    /// entry `read` (a file the runs write), if any: keeping the old run's
+    /// pages up to there and running on from it re-does both (DESIGN.md
+    /// §5.3: barriers "block reuse past the point where they are read").
+    /// A checkpoint whose record has made no further effect and has opened
+    /// fewer than `read` + 1 files was taken before both. `None` when there
+    /// is no such checkpoint after `old`.
+    fn rerun_point(
+        &self,
+        g: &Globals,
+        old: CheckpointId,
+        effects: usize,
+        read: Option<usize>,
+    ) -> Option<CheckpointId> {
+        let at = self.old_pages.iter().position(|p| p.ckpt == Some(old))?;
+        let mut m = None;
+        for id in self.old_pages[at + 1..].iter().filter_map(|p| p.ckpt) {
+            let rec = g.pending_record(id)?;
+            if rec.effects_len > effects || read.is_some_and(|i| rec.reads.0 > i) {
+                break;
+            }
+            m = Some(id);
+        }
+        m
     }
 }
 
@@ -1663,6 +1751,10 @@ impl Observer for Obs {
         let unchanged = self.old_frames.get(j - 1) == Some(&frame);
         if self.edited.is_none() && !unchanged {
             self.edited = Some((j, self.page_s, cpu));
+            self.edited_instr = self
+                .instr0
+                .zip(crate::os::thread_counts())
+                .map(|(a, b)| b.0 - a);
         }
         // newer work first: not even a convergence test
         if self.stop_at != Some(j) && self.preempt_now(g) {
@@ -1750,10 +1842,16 @@ fn read_range(path: &str, from: u64, to: u64) -> Option<Vec<u8>> {
     Some(b)
 }
 
-/// A journal cut back to its first `n` files, lookups and outputs. Its
-/// directories take the signatures the last check compared them with
-/// (`checked`: `Session::lookup_dirs`), else keep the journal's: a change
-/// after the check is then still seen by the next one (#1493 final review).
+/// A signature no directory has (`truncate_journal`: not checked).
+const UNCHECKED: StatSig = StatSig {
+    len: u64::MAX,
+    mtime_ns: i128::MIN,
+    ino: u64::MAX,
+};
+
+/// A journal cut back to its first `n` files, lookups and outputs.
+/// `checked`: the lookup directories' signatures taken just before the
+/// compile checked the journal's lookups (`Session::dirs_checked`).
 fn truncate_journal(
     j: &ReadLog,
     n: (usize, usize, usize),
@@ -1764,11 +1862,24 @@ fn truncate_journal(
     out.lookups = j.lookups[..n.1.min(j.lookups.len())].to_vec();
     out.outputs = j.outputs[..n.2.min(j.outputs.len())].to_vec();
     out.barriers = j.barriers.clone();
+    // The directories the kept lookups depend on, as they were just
+    // before the compile checked the lookups against them. Not as they are
+    // now (#1514): a file that appeared since would leave a signature newer
+    // than the answers the journal keeps, and the next compile would take
+    // the directories as unchanged and never look again. An older
+    // signature only costs a recheck; a directory the check did not stat
+    // gets `UNCHECKED`, which forces one (not `StatSig::default()`, which
+    // means "absent" since #1493).
     let checked: HashMap<&str, StatSig> = checked.iter().map(|(d, s)| (d.as_str(), *s)).collect();
     out.set_dirs(
         j.dirs
             .iter()
-            .map(|(d, s)| (d.clone(), checked.get(d.as_str()).copied().unwrap_or(*s)))
+            .map(|(d, _)| {
+                (
+                    d.clone(),
+                    checked.get(d.as_str()).copied().unwrap_or(UNCHECKED),
+                )
+            })
             .collect(),
     );
     let paths: Vec<String> = out.files.iter().map(|f| f.path.clone()).collect();
@@ -1827,6 +1938,15 @@ pub struct Session {
     reemit_from: Option<CheckpointId>,
     /// The directories the journal's lookups depend on (`Key::dirs`).
     lookup_dirs: Vec<(String, StatSig)>,
+    /// The last lookup of the journal whose answer changed, as `changes`
+    /// found it for this compile (the first is its restart bound).
+    changed_lookup_last: Option<usize>,
+    /// The lookup directories' signatures, taken just before the last
+    /// `changes` checked the journal's lookups (`dirs_seen`), and those of
+    /// the check that started the current pass (`dirs_checked`, which
+    /// `truncate_journal` gives the run's journal).
+    dirs_seen: Vec<(String, StatSig)>,
+    dirs_checked: Vec<(String, StatSig)>,
     /// What S₀'s key covers of the journal: the files read before S₀,
     /// less the input files open there.
     key_cover: (usize, Vec<String>),
@@ -1906,6 +2026,9 @@ impl Session {
             before_pass: None,
             reemit_from: None,
             lookup_dirs: vec![],
+            changed_lookup_last: None,
+            dirs_seen: vec![],
+            dirs_checked: vec![],
             key_cover: (0, vec![]),
             baseline: vec![],
         }
@@ -2272,6 +2395,9 @@ impl Session {
         let own = own_outputs(&live);
         let saved = self.journal.replace(live);
         let saved_fixed = std::mem::replace(&mut self.fixed_inputs, own);
+        // The disk as it is now, not as the stopped compile's epoch cached it
+        // (`resolver::EPOCH`, #1493 with #1507).
+        crate::resolver::new_epoch();
         let r = self.changes();
         self.fixed_inputs = saved_fixed;
         let answer = match r {
@@ -2579,12 +2705,20 @@ impl Session {
         let key_s = t0.elapsed().as_secs_f64();
         let s0_id = s0.id;
         let changes = self.changes();
+        self.dirs_checked = self.dirs_seen.clone();
         // (cleared when this pass has run; a cold run below uses them)
         let fixed = self.fixed_inputs.clone();
         let (edits, changed, bad_lookup) = match changes {
             Ok(x) => x,
             Err(why) => return self.cold(t0, stop_at, Some(why)),
         };
+        // The full check of the journal's lookups found every answer the
+        // same: the signatures it took before them become the ones to
+        // compare with, so an unrelated change to a directory (a figure
+        // saved) costs one round of lookups, not one per keystroke (#1493).
+        if bad_lookup.is_none() && self.changed_lookup_last.is_none() {
+            self.lookup_dirs = self.dirs_seen.clone();
+        }
         let changes_s = t0.elapsed().as_secs_f64() - key_s;
         // pages an abandoned run shipped are to be shipped again (from a
         // retained restart point of this engine at or after S₀, which has a
@@ -2899,7 +3033,7 @@ impl Session {
         system::record_reads_into(Some(truncate_journal(
             &journal,
             rec_p.reads,
-            &self.lookup_dirs,
+            &self.dirs_checked,
         )));
         if let Err(e) = g.restore(p_aux) {
             system::record_reads_into(None);
@@ -3166,22 +3300,25 @@ impl Session {
             .and_then(|(id, g)| g.record_of(id).ok())
             .map_or(0, |r| r.reads.1);
         let mut bad = None;
-        // The directories' signatures now, before the lookups below: if
-        // every lookup still finds what the run found, they become the ones
-        // to compare with (as `host::Key::check_refreshing` does for S₀'s).
-        // An absent directory is `StatSig::default()`: still absent is
-        // unchanged (#1493 re-review: a missing `{dir}figs` made every
-        // keystroke redo every lookup).
-        let dirs_now: Vec<(String, StatSig)> = self
-            .lookup_dirs
+        let mut bad_last = None;
+        // (before the lookups below: an answer is never older than these.
+        // Through the epoch's cache, `resolver::dir_sig`, which the key
+        // check and the resolver share: one `stat` a directory a compile; an
+        // absent directory is `StatSig::default()`, so one still absent is
+        // unchanged, #1493)
+        let seen: Vec<(String, StatSig)> = j
+            .dirs
             .iter()
             .map(|(d, _)| (d.clone(), crate::resolver::dir_sig(d)))
             .collect();
         let dirs_same = !self.lookup_dirs.is_empty()
-            && dirs_now
+            && self
+                .lookup_dirs
                 .iter()
-                .zip(&self.lookup_dirs)
-                .all(|((_, n), (_, s))| n == s);
+                .all(|(d, s)| crate::resolver::dir_sig(d) == *s);
+        // (a lookup the journal lists more than once is made again once)
+        let mut again: HashMap<(&str, crate::resolver::Format, Option<bool>), Option<String>> =
+            HashMap::new();
         for (i, l) in j
             .lookups
             .iter()
@@ -3189,14 +3326,21 @@ impl Session {
             .skip(s0_lookups)
             .filter(|_| !dirs_same)
         {
-            if system::lookup_again(l) != l.found {
-                bad = Some(i);
-                break;
+            let now = again
+                .entry((l.name.as_str(), l.format, l.must_exist))
+                .or_insert_with(|| system::lookup_again(l));
+            if *now != l.found {
+                // the first bounds the restart point; the last, the
+                // convergence (`Obs::test`)
+                bad.get_or_insert(i);
+                bad_last = Some(i);
             }
         }
-        if !dirs_same && bad.is_none() {
-            self.lookup_dirs = dirs_now;
-        }
+        // `lookup_dirs` is not refreshed here: `paused_vs_changes` and
+        // `finish` call this to check part of the journal only (#1507); the
+        // full check in `compile_pass` refreshes it.
+        self.changed_lookup_last = bad_last;
+        self.dirs_seen = seen;
         Ok((edits, changed, bad))
     }
 
@@ -3330,12 +3474,17 @@ impl Session {
             checkmem: std::env::var_os("FLASHTEX_CHECKMEM").is_some(),
             page_times: vec![],
             cpu0: thread_cpu_s(),
+            instr0: crate::os::thread_counts().map(|c| c.0),
+            edited_instr: None,
+            test_instr: None,
             fails: 0,
             skipped_unchanged: false,
             next_test: 0,
             old_last_byte_reads_end: None,
             old_matrix_uses_end: None,
             old_effects_end: 0,
+            changed_lookup_last: None,
+            rerun_from: None,
             budget: self.opts.budget,
             cursor: self.cursor,
             s0: self.s0.as_ref().map(|s| s.id),
@@ -3474,7 +3623,9 @@ impl Session {
         obs.old_last_byte_reads_end = Some(crate::pdftex::last_byte_reads());
         obs.old_matrix_uses_end = Some(crate::pdftex::matrix_uses());
         obs.old_effects_end = system::external_effects_len();
+        obs.changed_lookup_last = self.changed_lookup_last;
         let t1 = Instant::now();
+        let i1 = crate::os::thread_counts();
         let end = self.end_point();
         let g = self.g.as_mut().unwrap();
         let rec = g.record_of(r)?;
@@ -3559,8 +3710,9 @@ impl Session {
             }
         }
         let g = self.g.as_mut().unwrap();
-        system::record_reads_into(Some(truncate_journal(&jr, rec.reads, &self.lookup_dirs)));
+        system::record_reads_into(Some(truncate_journal(&jr, rec.reads, &self.dirs_checked)));
         let restore_s = t1.elapsed().as_secs_f64();
+        let restore_instr = i1.zip(crate::os::thread_counts()).map(|(a, b)| b.0 - a.0);
         obs.old_pages = self.pages[base..].to_vec();
         obs.edits = edits;
         obs.changed = changed;
@@ -3612,6 +3764,7 @@ impl Session {
             restart_pages: base,
             find_s,
             restore_s,
+            restore_instr,
             ..Report::default()
         };
         self.after_run(t0, status, &mut rep)?;
@@ -3625,6 +3778,30 @@ impl Session {
         let Some(p) = self.paused.take() else {
             return Err("no run is paused".into());
         };
+        // The files and lookups may have changed while the run was stopped
+        // (#1514): it compared the old run's journal with them when it
+        // started, and the convergence test (`Obs::test`) would keep the
+        // old run's later pages on that answer. Compare again: a file the
+        // old run reads later that changed since, or a later lookup whose
+        // answer did, keeps the run from converging before it. (The run's
+        // own reads so far are not checked here: `compile` settles or
+        // abandons a stopped run whose reads changed.) What the stopped run
+        // is writing itself (the `.aux` it reopened) is not a change, as in
+        // `paused_vs_changes`. The journal is left as it was, as `dirty`
+        // leaves it.
+        let saved = self.journal.clone();
+        let own = system::reads_so_far()
+            .map(|l| own_outputs(&l))
+            .unwrap_or_default();
+        let mut fixed = self.fixed_inputs.clone();
+        fixed.extend(own);
+        let saved_fixed = std::mem::replace(&mut self.fixed_inputs, fixed);
+        // The disk as it is now, not as the stopped compile's epoch cached it
+        // (`resolver::EPOCH`, #1493 with #1507).
+        crate::resolver::new_epoch();
+        let again = self.changes();
+        self.fixed_inputs = saved_fixed;
+        self.journal = saved;
         let g = self.g.as_mut().unwrap();
         // The newer work is now this compile's (`set_preempt`): not the
         // stopped one's, which would stop it again at once.
@@ -3635,6 +3812,18 @@ impl Session {
             .and_then(|o| o.into_any().downcast::<Obs>().ok())
         {
             o.preempt = self.preempt.clone();
+            match &again {
+                Ok((_, changed, _)) => {
+                    o.changed_lookup_last = o.changed_lookup_last.max(self.changed_lookup_last);
+                    for p in changed {
+                        if !o.changed.contains(p) {
+                            o.changed.push(p.clone());
+                        }
+                    }
+                }
+                // cannot tell: no convergence
+                Err(_) => o.changed_lookup_last = Some(usize::MAX),
+            }
             g.layer().observer = Some(o);
         }
         let status = g.resume_to_end().inspect_err(|_| {
@@ -3665,6 +3854,10 @@ impl Session {
         rep.page_times.extend(obs.page_times.iter().copied());
         if rep.edited.is_none() {
             rep.edited = obs.edited;
+            rep.edited_instr = obs.edited_instr;
+        }
+        if let Some(t) = obs.test_instr {
+            *rep.test_instr.get_or_insert(0) += t;
         }
         rep.diffs.extend(obs.diffs.iter().cloned());
         rep.page_s = if rep.page_s > 0.0 {
@@ -3769,10 +3962,18 @@ impl Session {
             pages.extend(self.pages[old_base..].iter().cloned());
             self.pages = pages;
             // `\end{document}` re-runs: from the old run's last page's
-            // checkpoint (later ones may be past its re-read of the .aux).
-            let last = self.end_point().ok_or("no checkpoint")?;
+            // checkpoint (later ones may be past its re-read of the .aux),
+            // or from the last page checkpoint before the old run's first
+            // later barrier, which the run then re-does (`Obs::rerun_point`).
+            let last = match obs.rerun_from {
+                Some(m) => m,
+                None => self.end_point().ok_or("no checkpoint")?,
+            };
             let g = self.g.as_mut().unwrap();
             let last_pages = *self.ck_pages.get(&last).unwrap_or(&self.pages.len());
+            if obs.rerun_from.is_some() {
+                rep.rerun_from = Some(last_pages);
+            }
             let rec_last = g.record_of(last)?;
             if let Err(e) = g.restore_discard(last) {
                 // (an output file open there was opened for output again
@@ -3790,7 +3991,7 @@ impl Session {
             system::record_reads_into(Some(truncate_journal(
                 &jn,
                 rec_last.reads,
-                &self.lookup_dirs,
+                &self.dirs_checked,
             )));
             self.pages.truncate(last_pages);
             let mut o2 = self.observer(t0, last_pages, None);

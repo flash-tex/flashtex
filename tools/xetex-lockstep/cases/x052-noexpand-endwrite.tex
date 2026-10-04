@@ -1,0 +1,9 @@
+% x052-noexpand-endwrite: tex.ch [25.369]: \noexpand before the \endwrite of a \write does not take it
+% XeTeX-specific (docs/design/xetex/PLAN.md, phase S0: TFM fonts)
+\input prelude
+\def\space{ }
+\immediate\write16{x052 a\noexpand}
+\immediate\write-1{x052 b\noexpand}
+\setbox0=\hbox{\vrule width1pt}
+\lsshipbox0
+\end
