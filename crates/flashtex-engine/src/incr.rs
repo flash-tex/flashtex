@@ -3171,6 +3171,8 @@ impl Session {
                 .lookup_dirs
                 .iter()
                 .all(|(d, s)| StatSig::of(d).as_ref() == Some(s));
+        // (a lookup the journal lists more than once is made again once)
+        let mut again: HashMap<(String, String, Option<bool>), Option<String>> = HashMap::new();
         for (i, l) in j
             .lookups
             .iter()
@@ -3178,7 +3180,10 @@ impl Session {
             .skip(s0_lookups)
             .filter(|_| !dirs_same)
         {
-            if system::lookup_again(l) != l.found {
+            let now = again
+                .entry((l.name.clone(), format!("{:?}", l.format), l.must_exist))
+                .or_insert_with(|| system::lookup_again(l));
+            if *now != l.found {
                 // the first bounds the restart point; the last, the
                 // convergence (`Obs::test`)
                 bad.get_or_insert(i);

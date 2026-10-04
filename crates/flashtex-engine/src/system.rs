@@ -3335,7 +3335,12 @@ fn note_lookup(name: &str, format: Format, must_exist: Option<bool>, found: Opti
                 must_exist,
                 found: found.map(str::to_string),
             };
-            if !log.lookups.contains(&l) {
+            // An incremental journal lists every lookup, as it lists every
+            // read: a run that converges keeps the old run's later pages,
+            // and a lookup they make again must be seen there, not only at
+            // its first occurrence (#1502: `\pdffilesize` early, the same
+            // file tested pages later). Other read-sets keep the first.
+            if log.keep_content || !log.lookups.contains(&l) {
                 log.lookups.push(l);
             }
             // The directory whose listing decides this lookup, as it was

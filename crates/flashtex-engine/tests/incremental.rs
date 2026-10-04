@@ -2126,3 +2126,90 @@ fn a_spliced_journal_keeps_the_files_read_before_the_end() {
         "an edit of the last page's file alone",
     );
 }
+
+/// #1502 (review of #1507): the same lookup made twice, early and pages
+/// later. The journal kept a lookup only at its first occurrence, so the
+/// convergence test saw no changed lookup after the early one and kept the
+/// old run's later page, which had looked the file up when it was missing.
+/// For every kind of lookup a page can make -- `\pdffilesize`,
+/// `\pdffilemoddate`, `\pdfmdfivesum file`, `\IfFileExists` with `\input`,
+/// `\openin` -- the file appears with an edit before both lookups, goes
+/// again with the revert, and appears once more with no edit: every compile
+/// equals scratch runs.
+#[test]
+fn a_repeated_lookup_whose_answer_changed_blocks_convergence() {
+    let Some(e) = env() else {
+        common::no_texlive();
+        return;
+    };
+    const F: &str = "extra-probe.tex";
+    let kinds: [(&str, &str, &str); 5] = [
+        (
+            "size",
+            "\\begingroup\\edef\\x{\\pdffilesize{extra-probe.tex}}\\endgroup",
+            "[size \\pdffilesize{extra-probe.tex}]",
+        ),
+        (
+            "mtime",
+            "\\begingroup\\edef\\x{\\pdffilemoddate{extra-probe.tex}}\\endgroup",
+            "[date \\pdffilemoddate{extra-probe.tex}]",
+        ),
+        (
+            "md5",
+            "\\begingroup\\edef\\x{\\pdfmdfivesum file{extra-probe.tex}}\\endgroup",
+            "[md5 \\pdfmdfivesum file{extra-probe.tex}]",
+        ),
+        (
+            "iffileexists",
+            "\\IfFileExists{extra-probe.tex}{}{}",
+            "\\IfFileExists{extra-probe.tex}{\\input{extra-probe.tex}}{MISSING FILE}",
+        ),
+        (
+            "openin",
+            "\\openin15=extra-probe.tex \\ifeof15 \\else\\closein15 \\fi",
+            "\\openin15=extra-probe.tex \\ifeof15 NO FILE\\else THERE\\closein15 \\fi",
+        ),
+    ];
+    for (kind, early, late) in kinds {
+        let dir = e.dir.join(format!("repeated-lookup-{kind}"));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let doc = |w: &str| -> String {
+            let mut s = String::from("\\documentclass{article}\n\\begin{document}\n");
+            for i in 0..120 {
+                s.push_str(&para(i, if i == 10 { w } else { "lorem" }));
+                if i == 5 {
+                    s.push_str(early);
+                    s.push_str("\n\n");
+                }
+                if i == 80 {
+                    s.push_str(late);
+                    s.push_str("\n\n");
+                }
+            }
+            s.push_str("\\end{document}\n");
+            s
+        };
+        let mut h = Host::start(&e, &dir);
+        for k in 0..4 {
+            let r = compile_and_check(&e, &mut h, &dir, &[("doc.tex", &doc("lorem"))], "settle");
+            if r.contains("\"mode\":\"unchanged\"") || k == 3 {
+                break;
+            }
+        }
+        // (the same letters: the fonts' used characters stay the same)
+        let what = format!("{kind}: an edit and the file appearing");
+        compile_and_check(
+            &e,
+            &mut h,
+            &dir,
+            &[("doc.tex", &doc("lorme")), (F, "THE EXTRA FILE IS HERE.\n")],
+            &what,
+        );
+        std::fs::remove_file(dir.join(F)).unwrap();
+        let what = format!("{kind}: the revert and the file gone");
+        compile_and_check(&e, &mut h, &dir, &[("doc.tex", &doc("lorem"))], &what);
+        let what = format!("{kind}: the file appearing, no edit");
+        compile_and_check(&e, &mut h, &dir, &[(F, "THE EXTRA FILE IS HERE.\n")], &what);
+    }
+}
