@@ -101,7 +101,7 @@ def write18(a):
             print(f"engine log lacks {want!r}")
             status = 1
     # Windows only: elsewhere `'` is a quotation error (both programs agree).
-    if os.name == "nt" and ("[pipe: closed]" in joined or "plain.tex]" not in "".join(results["engine"][1])):
+    if os.name == "nt" and ("[pipe: closed]" in joined or "plain.tex ]" not in "".join(results["engine"][1])):
         print("engine: the single-quoted pipe did not run")
         status = 1
 

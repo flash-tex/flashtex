@@ -70,7 +70,7 @@ for mode in live export; do
   fi
   [[ $flat == *"$want"* ]] || fail "$mode: the log lacks $want"
   if [[ -n $exe ]]; then
-    [[ $flat == *"plain.tex]"* && $flat != *"[pipe: closed]"* ]] || fail "$mode: the single-quoted pipe did not run"
+    [[ $flat == *"plain.tex ]"* && $flat != *"[pipe: closed]"* ]] || fail "$mode: the single-quoted pipe did not run"
   fi
 done
 
