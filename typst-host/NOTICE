@@ -6,7 +6,7 @@ This program provides Typst support in FlashTeX. It is not an official Typst
 product and is not endorsed by the Typst project.
 
 It links, unmodified, the Typst compiler crates version 0.15.1 (typst,
-typst-layout, typst-pdf, typst-kit and the crates they depend on) from the
+typst-layout, typst-pdf, typst-kit, typst-ide and the crates they depend on) from the
 Typst project, https://github.com/typst/typst, licensed under the Apache
 License, Version 2.0. No Typst file is modified (Apache-2.0 §4(b)): the crates
 are used exactly as published on crates.io, pinned by version and checksum in

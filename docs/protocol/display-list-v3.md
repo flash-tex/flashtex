@@ -1252,7 +1252,7 @@ SAVE/RESTORE to `saveGState`/`restoreGState` and CLIP to `addPath` + `clip`.
   reopen, material made before `\begin{document}` (none that a page shows,
   in practice) has no span.
 - Typst (3.3, §11): the Typst host produces E1–E7 (E3–E6 for a client
-  that accepts them); `RESOLVE`/`LOCATE` (E8) is not answered yet.
+  that accepts them) and answers `RESOLVE`/`LOCATE` (E8).
 
 ## 11. Version 3.3: the Typst host's additions
 
@@ -1523,7 +1523,7 @@ glyphs. An island export took 10 ms on average (at most 177 ms) and 15 kB
 client's drawing of an island equals the page's pixels at 2× and 3× is a
 **belief** until its gate row passes (DESIGN.md §15.4).
 
-### 11.6 On-demand source mapping: `RESOLVE`, `LOCATE` (E8; specified)
+### 11.6 On-demand source mapping: `RESOLVE`, `LOCATE` (E8; produced)
 
 Re-declaring every span of a long Typst document after each edit costs
 about 0.5 s at 300 pages (DESIGN.md §15.4), so a host that lists
@@ -1543,6 +1543,23 @@ compiled since answers `{"id", "stale": true}` and the client asks again.
 The ids are the client's, separate from compile ids. The replies may
 interleave with a compile's frames.
 
+**The Typst host** answers with typst-ide's `jump_from_click` and
+`jump_from_cursor` over the document of the compile whose pages it last
+sent (a follow-up compile, §11.9, keeps the id). Page space is §4.1's: sp
+from the top-left corner of the page box, bleed included, y down; Typst's
+frame begins inside the bleed, which the host subtracts from a click and
+adds to a position. `RESOLVED`'s `byte` is where the clicked glyph's text
+node starts in the file, as Typst records it. A click on a link (a jump,
+not a source position) and a click on nothing answer `"none": true`.
+`LOCATED` gives, for each place the source position is drawn, the origin
+(on the baseline) of the first glyph of the text node holding it, so a
+client scrolls to the run. Only a project file the shown compile read
+has positions (packages, other roots and paths no compile read have none):
+the host looks the path up among the sources it holds and never makes a
+new file id for a client's path (ids are global and finite). The host answers between compiles: a RESOLVE or
+LOCATE sent during a compile is answered after its `DONE`, from its pages.
+A request without `id` is an `ERROR` (`request`).
+
 ### 11.7 Negotiation
 
 The client says `[3, 3]` in `HELLO` and lists in `accept` (§6.2) what it
@@ -1550,7 +1567,7 @@ draws: `color-spaces` (§11.3), `line-state` (§11.4), `image-data` (§11.5),
 `font-program-refs` and `font-files` (§11.1). The host lists in
 `capabilities` what it can send: the Typst host says `opentype-glyphs`,
 `origins-f64`, `page-meta`, `font-program-refs`, `color-spaces`,
-`line-state` and `image-data` today, and `resolve-v1` once it answers §11.6. An item opcode or message the client did not accept
+`line-state`, `image-data` and `resolve-v1` (§11.6). An item opcode or message the client did not accept
 is never sent: the host flags the page INCOMPLETE instead (§4.7). A host may
 send sections 8 and 10 to any 3.x client; a reader that does not know them
 skips them.

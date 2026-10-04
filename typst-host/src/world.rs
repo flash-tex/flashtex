@@ -91,6 +91,12 @@ impl Fonts {
     }
 }
 
+impl typst_ide::IdeWorld for HostWorld<'_> {
+    fn upcast(&self) -> &dyn World {
+        self
+    }
+}
+
 /// A file id for a path in the project (`/`-separated, relative to the root).
 pub fn project_file(path: &str) -> Result<FileId, String> {
     let vp = VirtualPath::new(path).map_err(|e| format!("{path}: {e}"))?;
@@ -313,6 +319,17 @@ impl<'f> HostWorld<'f> {
             file: file.clone(),
         }));
         st.notes = notes;
+    }
+
+    /// The id of a project source this World has read, by its absolute
+    /// path (as SOURCES names it), without interning anything: a path no
+    /// compile read has no id here (LOCATE, spec §11.6).
+    pub fn read_source_by_path(&self, path: &std::path::Path) -> Option<FileId> {
+        let sources = self.sources.lock().unwrap();
+        sources
+            .keys()
+            .copied()
+            .find(|&id| self.path_of(id).is_some_and(|p| p == path))
     }
 
     /// The absolute path of a project file (for `SOURCES` and diagnostics).
