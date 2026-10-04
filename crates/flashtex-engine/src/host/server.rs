@@ -65,7 +65,7 @@
 
 use flashtex_display_list::frame::{read_frame, write_frame};
 use flashtex_display_list::json::{obj, s as js, Json};
-use flashtex_display_list::transport::{Listener, Stream};
+use flashtex_display_list::transport::Stream;
 use flashtex_display_list::{kind, PROTOCOL, VERSION_MAJOR, VERSION_MINOR};
 use std::collections::HashSet;
 use std::io::{BufRead, BufReader, BufWriter, Write};
@@ -412,18 +412,16 @@ pub fn main(args: Vec<String>) -> i32 {
     }
     say(&format!("flashtex-host: {}", Json::Obj(said)));
     let _ = std::fs::remove_file(&socket);
-    let listener = match Listener::bind(&socket) {
+    // Owner-only from the start, or not at all (`os::bind_owner_only`
+    // removes a socket it could not restrict): the host never listens on a
+    // socket another account could connect to.
+    let listener = match crate::os::bind_owner_only(Path::new(&socket)) {
         Ok(l) => l,
         Err(e) => {
-            eprintln!("flashtex-host: {socket}: {e}");
+            eprintln!("flashtex-host: {socket}: cannot listen there, owner-only: {e}");
             return 1;
         }
     };
-    if let Err(e) = crate::os::restrict_to_owner(Path::new(&socket)) {
-        // As before on Unix: a socket whose permissions cannot be set (a
-        // file system without them) is still served, and said so.
-        eprintln!("flashtex-host: {socket}: cannot restrict to its owner: {e}");
-    }
     // Ready: a supervisor may wait for this line.
     say(&format!("flashtex-host: listening on {socket}"));
     // `--once` serves the process that started it: when that process is
