@@ -303,8 +303,17 @@ fn main() {
                     continue;
                 }
             };
+            // As the host does: the first page sent alone, the rest in one
+            // export (here every page alone, then all together, alternately
+            // by snippet, so both paths are compared).
             let all: Vec<usize> = (0..doc.pages().len()).collect();
-            let derived = pdfpos::derive(&doc, &all);
+            let derived: Result<Vec<pdfpos::PagePos>, String> = if t.compiled % 2 == 0 {
+                all.iter()
+                    .map(|&i| pdfpos::derive(&doc, &[i]).map(|mut v| v.remove(0)))
+                    .collect()
+            } else {
+                pdfpos::derive(&doc, &all)
+            };
             let mut tables = Tables::new();
             let mut bad = 0usize;
             let mut why = String::new();

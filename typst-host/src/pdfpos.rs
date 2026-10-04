@@ -70,26 +70,46 @@ pub struct PagePos {
 
 /// Export `pages` (0-based, ascending) of `doc` with typst-pdf, untagged,
 /// and derive each one's glyph positions. One export for all of them.
+///
+/// The export is of a document made of those pages alone: typst-pdf's cost
+/// grows with the whole document (its outline, named destinations and
+/// link targets), but a page's content stream depends only on the page's
+/// frame, so the positions are the same (the positions checker compares
+/// them with the whole document's export, `examples/positions_suite.rs`).
+/// When that export fails (a link whose target is on another page, say),
+/// the whole document is exported with `page_ranges` instead.
 pub fn derive(doc: &PagedDocument, pages: &[usize]) -> Result<Vec<PagePos>, String> {
     if pages.is_empty() {
         return Ok(vec![]);
     }
-    let ranges = pages
-        .iter()
-        .map(|&i| {
-            let n = NonZeroUsize::new(i + 1);
-            n..=n
-        })
-        .collect();
     let options = typst_pdf::PdfOptions {
-        page_ranges: Some(typst::layout::PageRanges::new(ranges)),
         tagged: false,
         ..Default::default()
     };
-    let bytes = typst_pdf::pdf(doc, &options).map_err(|errs| {
-        let m: Vec<String> = errs.iter().map(|e| e.message.to_string()).collect();
-        format!("typst-pdf export failed: {}", m.join("; "))
-    })?;
+    let sub = PagedDocument::new(
+        pages.iter().map(|&i| doc.pages()[i].clone()).collect(),
+        typst::model::DocumentInfo::default(),
+    );
+    let bytes = match typst_pdf::pdf(&sub, &options) {
+        Ok(b) => b,
+        Err(_) => {
+            let ranges = pages
+                .iter()
+                .map(|&i| {
+                    let n = NonZeroUsize::new(i + 1);
+                    n..=n
+                })
+                .collect();
+            let options = typst_pdf::PdfOptions {
+                page_ranges: Some(typst::layout::PageRanges::new(ranges)),
+                ..options
+            };
+            typst_pdf::pdf(doc, &options).map_err(|errs| {
+                let m: Vec<String> = errs.iter().map(|e| e.message.to_string()).collect();
+                format!("typst-pdf export failed: {}", m.join("; "))
+            })?
+        }
+    };
     let out = derive_pdf(&bytes)?;
     if out.len() != pages.len() {
         return Err(format!(
