@@ -181,17 +181,47 @@ pub struct PdfImage {
     pub mask: Option<(ImageEncoding, Vec<u8>)>,
 }
 
-fn decode_samples(enc: ImageEncoding, data: &[u8]) -> Result<Vec<u8>, String> {
+/// The largest ICC profile read (a profile is a few kB to a few hundred).
+pub const MAX_ICC: usize = 4 << 20;
+
+/// `expected`: the exact decoded length (inflating stops one byte past it).
+fn decode_samples(enc: ImageEncoding, data: &[u8], expected: usize) -> Result<Vec<u8>, String> {
     match enc {
-        ImageEncoding::Flate => crate::pdf::inflate(data),
+        ImageEncoding::Flate => crate::pdf::inflate_limited(data, expected),
         ImageEncoding::Plain | ImageEncoding::Jpeg => Ok(data.to_vec()),
     }
 }
 
 impl PdfImage {
+    /// The samples' length: rows top first, each `width × components ×
+    /// bits / 8` rounded up (`None` past `u64`).
+    pub fn samples_len(&self) -> Option<u64> {
+        let row = (self.width as u64)
+            .checked_mul(self.components as u64)?
+            .checked_mul(self.bits as u64)?
+            .div_ceil(8);
+        row.checked_mul(self.height as u64)
+    }
+
+    /// The bytes IMAGE_DATA carries for it (parts 0 to 2), before decoding.
+    pub fn data_len(&self) -> Option<u64> {
+        let data = match self.encoding {
+            ImageEncoding::Jpeg => self.data.len() as u64,
+            _ => self.samples_len()?,
+        };
+        let mask = match self.mask {
+            Some(_) => (self.width as u64).checked_mul(self.height as u64)?,
+            None => 0,
+        };
+        let icc = self.icc.as_ref().map_or(0, |p| p.len() as u64);
+        data.checked_add(mask)?.checked_add(icc)
+    }
+
     /// IMAGE_DATA part 0: the samples, rows top first, or the JPEG file.
     pub fn data_part(&self) -> Result<Vec<u8>, String> {
-        let d = decode_samples(self.encoding, &self.data)?;
+        let expected = usize::try_from(self.samples_len().ok_or("image too large")?)
+            .map_err(|_| "image too large")?;
+        let d = decode_samples(self.encoding, &self.data, expected)?;
         if self.encoding != ImageEncoding::Jpeg {
             let row =
                 (self.width as usize * self.components as usize * self.bits as usize).div_ceil(8);
@@ -214,8 +244,11 @@ impl PdfImage {
         let Some((enc, data)) = &self.mask else {
             return Ok(None);
         };
-        let d = decode_samples(*enc, data)?;
-        if d.len() != self.width as usize * self.height as usize {
+        let n = (self.width as usize)
+            .checked_mul(self.height as usize)
+            .ok_or("soft mask too large")?;
+        let d = decode_samples(*enc, data, n)?;
+        if d.len() != n {
             return Err(format!("soft mask: {} bytes", d.len()));
         }
         Ok(Some(d))
@@ -231,6 +264,8 @@ pub struct ImageOp {
     pub fill_alpha: f64,
     /// A Form XObject (a PDF image, or what typst-pdf groups), not an image.
     pub form: bool,
+    /// ExtGState keys in effect that v3.3 does not draw (spec §11.3).
+    pub unsupported_state: Option<String>,
     /// The image, or why the host cannot send it (fail closed).
     pub image: Result<std::sync::Arc<PdfImage>, String>,
 }
@@ -728,6 +763,12 @@ impl Interp<'_, '_> {
                         Some(p) => p.clone(),
                         None => {
                             let (d, data) = pdf.stream(*r)?;
+                            if data.len() > MAX_ICC {
+                                return Err(format!(
+                                    "an ICC profile of {} bytes (at most {MAX_ICC})",
+                                    data.len()
+                                ));
+                            }
                             let n = d.get("N").and_then(Obj::num).and_then(Num::as_i64);
                             let n = match n {
                                 Some(n @ (1 | 3 | 4)) => n as u8,
@@ -1128,10 +1169,13 @@ impl Interp<'_, '_> {
                             )),
                         ),
                     };
+                    let pi = self.paint(gs) as usize;
+                    let unsupported_state = self.paints[pi].unsupported_state.clone();
                     self.images.push(ImageOp {
                         ctm: gs.ctm,
                         fill_alpha: gs.fill_alpha,
                         form,
+                        unsupported_state,
                         image,
                     });
                 }

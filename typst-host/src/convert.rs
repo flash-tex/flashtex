@@ -72,6 +72,11 @@ pub struct ClientCaps {
     /// `accept` lists `image-data` (spec §11.5): IMAGE with `"data": true`
     /// and its IMAGE_DATA.
     pub image_data: bool,
+    /// At most this many IMAGE_DATA bytes per compile (`--image-budget`;
+    /// `None`: [`DEFAULT_IMAGE_BUDGET`]). An image past it, or one whose
+    /// frame would pass the protocol's frame limit, makes its page
+    /// INCOMPLETE instead of ending the connection.
+    pub image_budget: Option<u64>,
     /// Draw what has no 2×/3× pixel gate row yet (DESIGN.md §15.5) as
     /// complete: ICC and Separation colours, alpha, stroked glyphs (the
     /// host's `--draw-ungated`, for measuring those rows). Off: the items
@@ -90,6 +95,10 @@ pub struct Accept {
 
 /// The 3.3 `accept` token for `program_from` (spec §11.1, §11.7).
 pub const PROGRAM_REFS: &str = flashtex_display_list::accept::FONT_PROGRAM_REFS;
+
+/// Default per-compile budget of image bytes sent to a client (the host's
+/// `--image-budget`).
+pub const DEFAULT_IMAGE_BUDGET: u64 = 128 << 20;
 
 /// Default per-compile budget of font-program bytes sent to a client
 /// (the host's `--font-program-budget`).
@@ -142,6 +151,8 @@ pub struct Tables {
     /// Image ids by key (spec §5.2, §11.5); id - 1 → key.
     images: HashMap<[u8; 32], u32>,
     image_keys: Vec<[u8; 32]>,
+    /// IMAGE_DATA bytes sent in the current compile (the budget).
+    image_bytes: u64,
 }
 
 #[derive(Clone, Copy)]
@@ -176,6 +187,7 @@ impl Tables {
     pub fn begin_compile(&mut self) {
         self.span_cache.clear();
         self.program_bytes = 0;
+        self.image_bytes = 0;
     }
 }
 
@@ -541,6 +553,11 @@ impl<'a> Walker<'a, '_> {
         };
         self.image_at = k + 1;
         let op = &pp.images[k];
+        if let Some(st) = &op.unsupported_state {
+            let m = format!("image under {st} (not drawn by display-list v3.3)");
+            self.unsupported(&m);
+            return;
+        }
         if op.fill_alpha != 1.0 {
             self.unsupported("image with alpha (display-list-v3.3 E3)");
             return;
@@ -556,6 +573,7 @@ impl<'a> Walker<'a, '_> {
         let Some(id) = self.image_id(&img) else {
             return;
         };
+        self.gate("raster image (display-list-v3.3 E6)");
         let n = self.matrix(op.ctm);
         self.page.items.push(Item::Image { id, matrix: n });
     }
@@ -595,6 +613,20 @@ impl<'a> Walker<'a, '_> {
         let key = h.finish();
         if let Some(&id) = self.tables.images.get(&key) {
             return Some(id);
+        }
+        // The budget, before anything is decoded: per compile, and below
+        // the frame limit for this one IMAGE_DATA.
+        let budget = self.caps.image_budget.unwrap_or(DEFAULT_IMAGE_BUDGET);
+        let size = img.data_len();
+        let frame_room = flashtex_display_list::frame::MAX_FRAME as u64 - 64;
+        match size {
+            Some(n) if n <= frame_room && self.tables.image_bytes.saturating_add(n) <= budget => {
+                self.tables.image_bytes += n;
+            }
+            _ => {
+                self.unsupported("image data over the per-compile budget (--image-budget)");
+                return None;
+            }
         }
         let parts = (|| -> Result<Vec<Vec<u8>>, String> {
             let mut p = vec![img.data_part()?];
@@ -1696,9 +1728,13 @@ fn fmt(v: f64) -> String {
     }
 }
 
-/// typst-pdf's `exif_transform` (typst-pdf 0.15.1 `image.rs`, Apache-2.0):
-/// a JPEG is not re-encoded, so its EXIF orientation is drawn as a
-/// transform of the image's box, which may swap its sides.
+/// typst-pdf's `exif_transform`: a JPEG is not re-encoded, so its EXIF
+/// orientation is drawn as a transform of the image's box, which may swap
+/// its sides.
+///
+/// Adapted from typst-pdf 0.15.1, src/image.rs, `exif_transform`
+/// (Copyright the Typst project authors; Apache License, Version 2.0).
+/// Modified: import paths and comments only. See typst-host/NOTICE.
 fn exif_transform(image: &RasterImage, size: Size) -> (Transform, Size) {
     use typst::layout::{Angle, Ratio};
     use typst::visualize::{ExchangeFormat, RasterFormat};

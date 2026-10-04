@@ -1275,7 +1275,8 @@ items **and** flags the page INCOMPLETE, with an UNSUPPORTED entry
 "…: pixel gate row pending (DESIGN.md §15.5)", so the client shows
 `DONE.pdf`. The host's `--draw-ungated` drops that flag, for measuring the
 rows only. Pending today: ICCBased and Separation colours
-(`FILL_COLOR_CS`, `STROKE_COLOR_CS`), alpha other than 1, stroked glyphs.
+(`FILL_COLOR_CS`, `STROKE_COLOR_CS`), alpha other than 1, stroked glyphs,
+raster images (`IMAGE` with `data`).
 
 For a Typst document **the PDF** of §4.2 and §4.4 is typst-pdf's export of
 the same compile (`DONE.pdf`; the host's per-page positions come from a
@@ -1462,7 +1463,13 @@ finds each `Do` where the frame puts the image (the unit square's corners
 within 0.01 bp; a JPEG's EXIF orientation as typst-pdf draws it). What a
 v3.3 IMAGE cannot carry -- a `/Decode` array (an inverted CMYK JPEG), an
 image mask, a colour-key mask, a soft mask of another size, an image under
-constant alpha -- flags the page INCOMPLETE. Measured on Typst's test
+constant alpha or any other ExtGState key (§11.3) -- flags the page
+INCOMPLETE. So does an image past the per-compile budget of IMAGE_DATA
+bytes (`--image-budget`, default 128 MiB, counted before anything is
+decoded), or one whose IMAGE_DATA would pass the frame limit (§2), so that
+no image can end the connection. Streams are inflated to at most their
+expected size (an image's samples) or 256 MiB, and an ICC profile is read
+up to 4 MiB; past that the page is INCOMPLETE. Measured on Typst's test
 suite: every raster image of the 2,622 snippets that compile (71) is the
 PDF's bit for bit, CTM and pixels (`examples/positions_suite.rs`).
 

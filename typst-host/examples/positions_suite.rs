@@ -192,6 +192,7 @@ fn main() {
         color_spaces: accept_e3,
         line_state: accept_e3,
         image_data: accept_images,
+        image_budget: None,
         ungated,
     };
     let t0 = std::time::Instant::now();

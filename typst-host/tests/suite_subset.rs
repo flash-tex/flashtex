@@ -200,6 +200,7 @@ fn caps(colour: bool, ungated: bool) -> ClientCaps {
         color_spaces: colour,
         line_state: colour,
         image_data: false,
+        image_budget: None,
         ungated,
     }
 }

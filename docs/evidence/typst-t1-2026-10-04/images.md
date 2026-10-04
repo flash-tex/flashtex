@@ -26,3 +26,33 @@ Glyphs (80,556), paths (8,317) and boxes stay at 0 mismatches in every mode.
 - `images_need_image_data`: without `image-data` the page is INCOMPLETE.
 - `the_checker_rejects_wrong_pixels_and_matrices`: one changed sample, or a matrix one ulp off,
   is rejected.
+
+## Review fixes
+
+The suite was rerun after the review fixes, with the full paint comparison from colours.md:
+
+| Client | Images drawn | Not the PDF's | Glyphs, paths | Pages INCOMPLETE for images |
+|---|---|---|---|---|
+| `--accept colour,images,ungated` | 71 | 0 | 0 mismatches | 28 (24 SVG, 4 PDF: E5 islands) |
+| `--accept colour,images` (gate on, the default) | 71 sent | 0 | 0 mismatches | 72 (also 44 raster: pixel gate row pending) |
+
+New CI tests in `tests/oracle.rs`:
+- An EXIF-rotated JPEG (orientation 6, made here) and an ICC-tagged PNG (a profile built in the
+  test, not copied). Both are placed bit for bit, and the PNG's profile is the one sent.
+- `refused_and_over_budget_images_are_incomplete`:
+  - an Adobe CMYK JPEG, which typst-pdf inverts with `/Decode`, makes the page INCOMPLETE;
+  - an image past `--image-budget` makes the page INCOMPLETE and sends no IMAGE_DATA.
+- `images_need_image_data`:
+  - without `image-data`: INCOMPLETE;
+  - with it, gate on: sent and INCOMPLETE;
+  - with it, `--draw-ungated`: complete.
+
+`tests/fuzz.rs` (seeded and dependency-free; proptest's `r-efi` dependency fails licence check
+D3) covers:
+- mutated typst-pdf exports;
+- random operator sequences over the interpreter's whole vocabulary;
+- image decoding at any size, depth and encoding;
+- the bounded inflate.
+
+The CI default is 2,000–3,000 cases per target. A local run of 200,000 cases each found no panic
+and no allocation past a limit.

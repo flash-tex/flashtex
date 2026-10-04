@@ -619,8 +619,24 @@ fn rfind(h: &[u8], n: &[u8]) -> Option<usize> {
     h.windows(n.len()).rposition(|w| w == n)
 }
 
+/// The most a content or ICC stream may inflate to (a decompression bomb
+/// stops here instead of exhausting memory).
+pub const MAX_INFLATE: usize = 256 << 20;
+
 pub fn inflate(raw: &[u8]) -> Result<Vec<u8>, String> {
-    miniz_oxide::inflate::decompress_to_vec_zlib(raw).map_err(|e| format!("FlateDecode: {e:?}"))
+    inflate_limited(raw, MAX_INFLATE)
+}
+
+/// Inflate at most `limit` bytes; more is an error, never a larger
+/// allocation.
+pub fn inflate_limited(raw: &[u8], limit: usize) -> Result<Vec<u8>, String> {
+    miniz_oxide::inflate::decompress_to_vec_zlib_with_limit(raw, limit).map_err(|e| {
+        if e.status == miniz_oxide::inflate::TINFLStatus::HasMoreOutput {
+            format!("FlateDecode: more than {limit} bytes")
+        } else {
+            format!("FlateDecode: {:?}", e.status)
+        }
+    })
 }
 
 #[cfg(test)]
