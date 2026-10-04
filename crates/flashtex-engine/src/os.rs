@@ -310,13 +310,16 @@ pub fn set_env(var: &str, value: &str) {
 
 /// The shell web2c's `runsystem` and `runpopen` use: `/bin/sh -c CMD`, or
 /// on Windows `%COMSPEC% /c CMD` (`cmd.exe`), as `_wsystem` runs it, with
-/// the command line passed through unquoted.
+/// the command line passed through unquoted. On Unix the shell's `argv[0]`
+/// is `sh`, as the C library's `system()` and `popen()` give it, so the
+/// shell's own messages start `sh: `, not `/bin/sh: `.
 pub fn shell_command(cmd: &[u8]) -> Command {
     #[cfg(unix)]
     {
         use std::os::unix::ffi::OsStrExt;
+        use std::os::unix::process::CommandExt;
         let mut c = Command::new("/bin/sh");
-        c.arg("-c").arg(std::ffi::OsStr::from_bytes(cmd));
+        c.arg0("sh").arg("-c").arg(std::ffi::OsStr::from_bytes(cmd));
         c
     }
     #[cfg(windows)]
