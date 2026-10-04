@@ -1992,3 +1992,104 @@ fn an_erroring_cold_compile_equals_scratch_runs() {
         "fixed again",
     );
 }
+
+/// P6-HYPEROPT: `link(temp_head)` is left pointing at whatever list it
+/// last held (a paragraph's line, inline math's translated hlist), and
+/// nothing reads it before writing it again, so the convergence test does
+/// not follow it (`crate::iso`, `roots`). It used to: after a one-letter
+/// edit the old and new runs had different nodes there, page after page
+/// (the edit moved where later nodes were allocated), so a keystroke in
+/// the middle of this document (tools/incr-bench's plain-N kind: amsmath,
+/// inline math in every paragraph, a display every sixth) re-typeset many
+/// pages instead of converging on the page after the edited one. Every
+/// compile equals scratch runs.
+#[test]
+fn a_stale_temp_head_does_not_block_convergence() {
+    let Some(e) = env() else {
+        common::no_texlive();
+        return;
+    };
+    let dir = e.dir.join("temp-head");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    const WORDS: [&str; 30] = [
+        "lorem",
+        "ipsum",
+        "dolor",
+        "sit",
+        "amet",
+        "consectetur",
+        "adipiscing",
+        "elit",
+        "sed",
+        "do",
+        "eiusmod",
+        "tempor",
+        "incididunt",
+        "ut",
+        "labore",
+        "et",
+        "dolore",
+        "magna",
+        "aliqua",
+        "enim",
+        "ad",
+        "minim",
+        "veniam",
+        "quis",
+        "nostrud",
+        "exercitation",
+        "ullamco",
+        "laboris",
+        "nisi",
+        "aliquip",
+    ];
+    let doc = |edit: &str| -> String {
+        let mut s = String::from(
+            "\\documentclass[11pt]{article}\n\\usepackage[margin=1in]{geometry}\n\
+             \\usepackage{amsmath}\n\\begin{document}\n",
+        );
+        for k in 0..150usize {
+            let w: Vec<&str> = (0..90)
+                .map(|j| WORDS[(k * 7 + j * j * 3 + j) % 30])
+                .collect();
+            let (a, b) = w.split_at(45);
+            let first = if k == 60 { edit } else { "" };
+            s.push_str(&format!(
+                "Text{first} {} with $x_{{{}}}^2+\\frac{{a}}{{b}}=\\sum_{{i=1}}^n c_i$ {}.\n\n",
+                a.join(" "),
+                k % 17,
+                b.join(" ")
+            ));
+            if k % 6 == 5 {
+                s.push_str(&format!(
+                    "\\begin{{equation}}\\int_0^\\infty e^{{-x^2}}\\,dx=\
+                     \\frac{{\\sqrt\\pi}}{{2}}+{k}\\end{{equation}}\n\n"
+                ));
+            }
+        }
+        s.push_str("\\end{document}\n");
+        s
+    };
+    let mut h = Host::start(&e, &dir);
+    for k in 0..4 {
+        let r = compile_and_check(&e, &mut h, &dir, &[("doc.tex", &doc(""))], "settle");
+        if r.contains("\"mode\":\"unchanged\"") || k == 3 {
+            break;
+        }
+    }
+    // (letters the text uses elsewhere: a glyph used nowhere else changes
+    // `pdf_char_used`, which a removal never converges past)
+    for (edit, what) in [("x", "a letter"), ("", "the revert"), ("xa", "two letters")] {
+        let r = compile_and_check(&e, &mut h, &dir, &[("doc.tex", &doc(edit))], what);
+        assert!(r.contains("\"mode\":\"incremental\""), "{what}: {r}");
+        let restart: usize = field(&r, "restart_pages").parse().unwrap();
+        let conv: usize = field(&r, "converged_at")
+            .parse()
+            .unwrap_or_else(|_| panic!("{what}: no convergence: {r}"));
+        assert!(
+            conv <= restart + 4,
+            "{what}: converged after page {conv}, restarted after {restart}: {r}"
+        );
+    }
+}
