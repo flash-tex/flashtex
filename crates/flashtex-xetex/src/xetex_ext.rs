@@ -323,8 +323,8 @@ impl Globals {
                         self.mapped_text.resize_len(n);
                     }
                     let dst = self.mapped_text.slice_mut(0, n);
-                    for (d, u) in dst.iter_mut().zip(out[..2 * n].chunks_exact(2)) {
-                        *d = i32::from(u16::from_ne_bytes([u[0], u[1]]));
+                    for (d, u) in dst.iter_mut().zip(out[..2 * n].as_chunks::<2>().0) {
+                        *d = i32::from(u16::from_ne_bytes(*u));
                     }
                     return n as i32;
                 }
@@ -391,8 +391,10 @@ impl Globals {
         }
         Some(
             out[..out_used as usize / 4 * 4]
-                .chunks_exact(4)
-                .map(|b| u32::from_ne_bytes([b[0], b[1], b[2], b[3]]))
+                .as_chunks::<4>()
+                .0
+                .iter()
+                .map(|b| u32::from_ne_bytes(*b))
                 .collect(),
         )
     }
