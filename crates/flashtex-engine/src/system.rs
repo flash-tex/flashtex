@@ -3327,6 +3327,17 @@ pub fn reads_so_far() -> Option<ReadLog> {
 }
 
 fn note_lookup(name: &str, format: Format, must_exist: Option<bool>, found: Option<&str>) {
+    // The directories the resolver searched on disk for it (TEXMFHOME, user
+    // TEXINPUTS entries, ...): a file added to one of them can shadow the
+    // one found, a distribution file included (#1493 review; before, a
+    // lookup that found a distribution file recorded no directory, so a new
+    // shadowing file was not seen until a cold compile). Asked only while a
+    // read set is being recorded.
+    let searched = if READS.with(|r| r.borrow().is_some()) {
+        with_resolver(|r| r.depends_on(name, format))
+    } else {
+        Vec::new()
+    };
     READS.with(|r| {
         if let Some(log) = r.borrow_mut().as_mut() {
             let l = Lookup {
@@ -3373,7 +3384,7 @@ fn note_lookup(name: &str, format: Format, must_exist: Option<bool>, found: Opti
                 ),
                 _ => None,
             };
-            for d in dir.into_iter().chain(out_dir) {
+            for d in dir.into_iter().chain(out_dir).chain(searched) {
                 if !log.dirs.iter().any(|(x, _)| *x == d) {
                     let sig = StatSig::of(&d).unwrap_or_default();
                     log.dirs.push((d, sig));
