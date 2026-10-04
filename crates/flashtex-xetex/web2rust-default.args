@@ -27,6 +27,8 @@
 --change third_party/pdftex/web2c/showstream.ch
 --change crates/flashtex-xetex/changes/synctex.ch
 --change crates/flashtex-xetex/changes/xetex-web2c.ch
+# tex.ch's ML\TeX character access, through which xetex.ch maps TFM fonts.
+--change crates/flashtex-xetex/changes/mltex.ch
 # TeX Live's, public domain, unmodified.
 --change third_party/xetex/char-warning-xetex.ch
 --change crates/flashtex-xetex/changes/web2c-run.ch

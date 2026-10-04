@@ -129,6 +129,20 @@ pub struct Host {
     pub req_engine: u8,
     /// Whether text needing ICU's bidi analysis was reported (once).
     pub bidi_warned: bool,
+    /// XeTeX_ext.c's `saved_mapping_name`: the `:mapping=` of the TFM font
+    /// being loaded, from `check_for_tfm_font_mapping` to
+    /// `load_tfm_font_mapping`, both within one `\font`. Each check
+    /// replaces it before it is used, so a checkpoint does not save it.
+    pub saved_mapping_name: Option<Vec<u8>>,
+    /// XeTeX_ext.c's `applymapping`'s `static UInt32 outLength`: the size
+    /// of the output buffer handed to TECkit, in bytes, which only grows. It
+    /// decides how often a conversion is retried, never its result, so a
+    /// checkpoint does not save it.
+    pub mapping_out_length: u32,
+    /// XeTeX_ext.c's `apply_normalization`'s `static normalizers[2]`: the
+    /// TECkit NFC and NFD converters, made on first use. They hold no state
+    /// between conversions, so a checkpoint does not save them.
+    pub normalizers: [Option<Rc<crate::xetex_ext::Mapping>>; 2],
     /// The host state at each retained checkpoint of the word space.
     checkpoints: HashMap<flashtex_engine::arena::CheckpointId, Saved>,
     /// FreeType (XeTeXFontInst.cpp's `gFreeTypeLibrary`), made on first

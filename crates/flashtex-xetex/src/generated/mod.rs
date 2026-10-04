@@ -15,6 +15,7 @@
 // with the change file third_party/pdftex/web2c/showstream.ch
 // with the change file crates/flashtex-xetex/changes/synctex.ch
 // with the change file crates/flashtex-xetex/changes/xetex-web2c.ch
+// with the change file crates/flashtex-xetex/changes/mltex.ch
 // with the change file third_party/xetex/char-warning-xetex.ch
 // with the change file crates/flashtex-xetex/changes/web2c-run.ch.
 // Regenerate with the command in tools/web2rust/README.md.
@@ -23,6 +24,9 @@
 #![allow(unused_imports, unused_labels, while_true)]
 #![allow(dead_code, unreachable_code, unused_comparisons, clippy::all)]
 
+pub mod consts;
+pub mod globals;
+pub mod types;
 mod body_0;
 mod body_1;
 mod body_2;
@@ -31,9 +35,6 @@ mod body_4;
 mod body_5;
 mod body_6;
 mod body_7;
-pub mod consts;
-pub mod globals;
 mod main_body;
-pub mod types;
 
 pub use globals::Globals;

@@ -30,15 +30,19 @@ flashtex-engine = { path = "../flashtex-engine", default-features = false, featu
 # (third_party/harfbuzz, third_party/freetype) and built as TeX Live builds
 # them, for native fonts (docs/design/xetex/PLAN.md §3.1, phase S1).
 flashtex-xetex-fontlibs = { path = "fontlibs" }
+# TeX Live 2026's TECkit 2.5.13 (LGPL-2.1-or-later), vendored unmodified
+# (third_party/teckit) and built as TeX Live builds it, for font mappings
+# (`mapping=tex-text`, PLAN.md §3.1, phase S1).
+flashtex-xetex-teckit = { path = "teckit" }
 
 [dev-dependencies]
-# tests/pinned_libs.rs: the sha256 of every vendored HarfBuzz/FreeType file.
+# tests/pinned_libs.rs: the sha256 of every vendored HarfBuzz/FreeType/TECkit file.
 sha2 = "0.10"
 
 # Built on its own (the root workspace excludes it, see the root Cargo.toml):
 # scripts/xetex-lockstep.sh builds it with its own lockfile and target.
 [workspace]
-members = [".", "fontlibs"]
+members = [".", "fontlibs", "teckit"]
 
 [profile.release]
 opt-level = 3

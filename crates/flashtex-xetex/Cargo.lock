@@ -80,11 +80,19 @@ version = "0.1.0"
 dependencies = [
  "flashtex-engine",
  "flashtex-xetex-fontlibs",
+ "flashtex-xetex-teckit",
  "sha2",
 ]
 
 [[package]]
 name = "flashtex-xetex-fontlibs"
+version = "0.1.0"
+dependencies = [
+ "cc",
+]
+
+[[package]]
+name = "flashtex-xetex-teckit"
 version = "0.1.0"
 dependencies = [
  "cc",
