@@ -1,0 +1,111 @@
+# The no-TeX-Live gate (DESIGN.md 4.4, D12; lane BUNDLE-PUBLISH).
+#
+# On a GitHub-hosted Mac with no TeX Live (the gate refuses to run if
+# pdflatex, pdftex or kpsewhich is on PATH, and runs the engine under
+# sandbox-exec denying every TeX Live location, as
+# crates/flashtex-engine/tests/bundle_notex.rs does), the engine builds its
+# format from the bundle and compiles the gate documents
+# (tools/bundle/tl2026/gate.json: every parity fixture and a 30-paper arXiv
+# sample) from the bundle alone. Each PDF must be byte-identical to the one
+# TeX Live's own pdflatex made in the bundle's tree (oracle-refs.json, made
+# by bundle-publish.yml), unless tools/bundle/tl2026/gaps.json lists the
+# document as a known gap (METAFONT-generated fonts and EPS conversion, until
+# those lanes land).
+#
+#   dispatched            the PUBLISHED bundle: the URL and digest of
+#                         tools/bundle/tl2026/flashtex-bundle.lock, fetched
+#                         over HTTPS by byte range as the app fetches it, and
+#                         the release's oracle-refs.json
+#   called (bundle-publish.yml)  the packed bundle of that run's `texbundle`
+#                         artifact, read from a file, before it is published
+#
+# Not part of `CI required`: it needs a published bundle, and fetches it.
+name: notex gate
+
+on:
+  workflow_dispatch:
+  workflow_call:
+    inputs:
+      artifact:
+        description: "name of this run's artifact holding the packed bundle, pack.json and oracle-refs.json"
+        type: string
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  gate:
+    name: "no TeX Live: fixtures + arXiv sample from the bundle"
+    # Apple Silicon; GitHub's macOS images have no TeX Live.
+    runs-on: macos-15
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: no TeX Live here
+        run: |
+          set -euo pipefail
+          for x in pdflatex pdftex kpsewhich; do
+            if command -v "$x"; then echo "::error::$x is installed: this gate needs a Mac without TeX Live"; exit 1; fi
+          done
+          ls -d /usr/local/texlive /Library/TeX 2>/dev/null && { echo "::error::a TeX Live tree is present"; exit 1; } || true
+      - uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d # stable
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+        with:
+          key: notex-gate
+      - name: the engine
+        run: cargo build --release --locked -p flashtex-engine --bin flashtex-initex
+      - name: the bundle under test (a packed artifact)
+        if: inputs.artifact != ''
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: ${{ inputs.artifact }}
+          path: ${{ runner.temp }}/texbundle
+      - name: the lock (the published bundle)
+        id: lock
+        run: python3 tools/bundle/texbundle.py lock >> "$GITHUB_OUTPUT"
+      - name: which bundle, and its oracle references
+        id: b
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ARTIFACT: ${{ inputs.artifact }}
+          L_URL: ${{ steps.lock.outputs.url }}
+          L_DIGEST: ${{ steps.lock.outputs.digest }}
+          L_TAG: ${{ steps.lock.outputs.tag }}
+          L_REPO: ${{ steps.lock.outputs.repo }}
+        run: |
+          set -euo pipefail
+          d="$RUNNER_TEMP/texbundle"
+          if [[ -n "$ARTIFACT" ]]; then
+            ttb="$(ls "$d"/*.ttb)"
+            echo "url=file://$ttb" >> "$GITHUB_OUTPUT"
+            echo "digest=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["digest"])' "$d/pack.json")" >> "$GITHUB_OUTPUT"
+          else
+            mkdir -p "$d"
+            gh release download "$L_tag" --repo "$L_repo" --pattern oracle-refs.json --dir "$d"
+            echo "url=$L_url" >> "$GITHUB_OUTPUT"
+            echo "digest=$L_digest" >> "$GITHUB_OUTPUT"
+          fi
+          echo "refs=$d/oracle-refs.json" >> "$GITHUB_OUTPUT"
+      - name: compile from the bundle alone and compare
+        env:
+          URL: ${{ steps.b.outputs.url }}
+          DIGEST: ${{ steps.b.outputs.digest }}
+          REFS: ${{ steps.b.outputs.refs }}
+        run: |
+          set -euo pipefail
+          python3 tools/bundle/texbundle.py gate --engine target/release/flashtex-initex \
+            --url "$URL" --digest "$DIGEST" --refs "$REFS" --out "$RUNNER_TEMP/gate" -j 3
+      - name: report
+        if: always()
+        run: |
+          [ -f "$RUNNER_TEMP/gate/report.md" ] && cat "$RUNNER_TEMP/gate/report.md" >> "$GITHUB_STEP_SUMMARY" || true
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: notex-gate${{ inputs.artifact != '' && '-packed' || '' }}
+          path: |
+            ${{ runner.temp }}/gate/report.md
+            ${{ runner.temp }}/gate/results.json
+          if-no-files-found: ignore
+          retention-days: 14
