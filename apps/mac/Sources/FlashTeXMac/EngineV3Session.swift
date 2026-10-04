@@ -1971,11 +1971,38 @@ final class EngineV3Mirror: @unchecked Sendable { // only `let`s; its walks touc
     /// with the same project get two copies, as two hosts compile them).
     init(source: URL?, session: Int = 0) {
         self.source = source
-        let key = SHA256.hash(data: Data((source?.path ?? "untitled").utf8)).prefix(8).map { String(format: "%02x", $0) }.joined()
+        let key = Self.key(source)
         base = EngineV3.cacheDirectory.appendingPathComponent("projects/\(key)-\(getpid())-\(session)", isDirectory: true)
         root = base.appendingPathComponent("src", isDirectory: true)
         output = base.appendingPathComponent("out", isDirectory: true)
+        if source != nil { adoptCarriedOutput(key: key) }
         ensure()
+    }
+
+    /// The project's key in `projects/`: a hash of its path.
+    static func key(_ source: URL?) -> String {
+        SHA256.hash(data: Data((source?.path ?? "untitled").utf8)).prefix(8).map { String(format: "%02x", $0) }.joined()
+    }
+
+    /// Where the output of the project's last copy waits for the next one
+    /// (`removeAbandoned`): `projects/<key>.out`.
+    static func carriedOutput(key: String) -> URL {
+        EngineV3.cacheDirectory.appendingPathComponent("projects/\(key).out", isDirectory: true)
+    }
+
+    /// A new copy starts from the output the project's last copy left (its
+    /// `.aux`, `.toc`, `.ind` and the rest), as a pdflatex user's next run
+    /// starts from the files of the last one. Reopening a document then
+    /// compiles once, instead of once per `.aux` pass from nothing (for a
+    /// book, three passes that each re-typeset every page). Only one copy
+    /// takes it (a rename); another copy opened at the same time starts empty.
+    private func adoptCarriedOutput(key: String) {
+        let fm = FileManager.default
+        guard !fm.fileExists(atPath: output.path) else { return }
+        let carried = Self.carriedOutput(key: key)
+        guard fm.fileExists(atPath: carried.path) else { return }
+        try? fm.createDirectory(at: base, withIntermediateDirectories: true)
+        try? fm.moveItem(at: carried, to: output)
     }
 
     /// Whether the copy is still there (something outside may remove it).
@@ -1991,17 +2018,43 @@ final class EngineV3Mirror: @unchecked Sendable { // only `let`s; its walks touc
     /// Removes project copies whose owner instance has exited. Copies
     /// without an owner file (made by an older build that may still be
     /// running) and copies of running instances are left alone.
+    ///
+    /// A removed copy's output is kept for the project's next copy
+    /// (`carriedOutput`; the newest copy's when several have exited), and a
+    /// kept output that no copy took within `carriedOutputDays` is removed.
     static func removeAbandoned(log: (String) -> Void) {
         let dir = EngineV3.cacheDirectory.appendingPathComponent("projects", isDirectory: true)
         let fm = FileManager.default
-        for name in (try? fm.contentsOfDirectory(atPath: dir.path)) ?? [] {
+        let modified = { (u: URL) -> Date in
+            ((try? fm.attributesOfItem(atPath: u.path))?[.modificationDate] as? Date) ?? .distantPast
+        }
+        let names = (try? fm.contentsOfDirectory(atPath: dir.path)) ?? []
+        for name in names {
             let base = dir.appendingPathComponent(name)
             guard let owner = try? String(contentsOf: base.appendingPathComponent("owner"), encoding: .utf8),
                   owner != EngineV3.instanceOwner, !EngineV3.ownerAlive(owner) else { continue }
+            let out = base.appendingPathComponent("out", isDirectory: true)
+            if let key = name.split(separator: "-").first, key.count == 16, fm.fileExists(atPath: out.path) {
+                let carried = carriedOutput(key: String(key))
+                if !fm.fileExists(atPath: carried.path) || modified(carried) < modified(out) {
+                    try? fm.removeItem(at: carried)
+                    try? fm.moveItem(at: out, to: carried)
+                }
+            }
             try? fm.removeItem(at: base)
             log("removed the project copy \(name) of exited instance \(owner)")
         }
+        for name in names where name.hasSuffix(".out") {
+            let carried = dir.appendingPathComponent(name)
+            if modified(carried) < Date().addingTimeInterval(-Double(carriedOutputDays) * 86_400) {
+                try? fm.removeItem(at: carried)
+                log("removed the output \(name), which no copy took for \(carriedOutputDays) days")
+            }
+        }
     }
+
+    /// How long a project's last output waits for its next copy.
+    static let carriedOutputDays = 30
 
     /// Empties this instance's copy (another project or file now uses it).
     func clear() {
