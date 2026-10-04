@@ -74,7 +74,15 @@ enum EngineV3TileGrid {
     /// New contents of pages drawn whole held back by the redraw throttle.
     @MainActor static var deferredSources = 0
     /// Per new source (page entering, zoom step, edit): ms from its first tile job queued to its first tiles on screen.
-    @MainActor static var firstTileMs: [Double] = []
+    /// Kept for the scroll bench; the app appends on every page entering a
+    /// zoom, so only the newest `firstTileKeep` are kept (the bench reads far
+    /// fewer), never one per source for the whole session.
+    @MainActor private(set) static var firstTileMs: [Double] = []
+    static let firstTileKeep = 4_096
+    @MainActor static func noteFirstTile(ms: Double) {
+        firstTileMs.append(ms)
+        if firstTileMs.count > firstTileKeep + 512 { firstTileMs.removeFirst(firstTileMs.count - firstTileKeep) }
+    }
     @MainActor static func resetCounters() { jobs = 0; jobTiles = 0; jobMs = 0; maxJobMs = 0; maxLatencyMs = 0; skippedTiles = 0; firstTileMs = []; failedTiles = 0; deferredSources = 0 }
 }
 
@@ -572,7 +580,7 @@ final class EngineV3PageTiles {
         if n > 0, awaitingFirst, let shown = shownNs {
             awaitingFirst = false
             shownNs = nil
-            EngineV3TileGrid.firstTileMs.append(Double(MonotonicClock.nowNs() &- shown) / 1e6)
+            EngineV3TileGrid.noteFirstTile(ms: Double(MonotonicClock.nowNs() &- shown) / 1e6)
         }
         if let compile, compile == pendingCompile {
             pendingCompile = nil
