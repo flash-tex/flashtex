@@ -18,6 +18,11 @@ final class FakeHost: CollabTextHost {
     var collabIsComposing: Bool { composing }
     var collabSelection: Range<Int> { selection }
     func collabFlushLocalEdits() {}
+    var endedCompositions = 0
+    func collabEndComposition() {
+        composing = false
+        endedCompositions += 1
+    }
 
     func collabApply(_ changes: [TextChange], selection: Range<Int>?) {
         applies += 1

@@ -247,7 +247,8 @@ layer; the Swift tests (`FlashTeXCollabSessionTests`) run it over real loopback 
   accepts exactly the certificate whose SubjectPublicKeyInfo SHA-256 equals the invite's `fp`; any
   other certificate fails the handshake, before an application byte. No client certificate: the guest
   proves the invite in `join`.
-- Bonjour service `_flashtex-collab._tcp`, instance name = the session id, TXT `v=1`, `name`.
+- Bonjour service `_flashtex-collab._tcp`, instance name = the session id, TXT `v=1` only (no project
+  name: the network learns only that a session exists).
 - Frames as §3, at most about 1 MiB of operations per `update` or `sync_reply` (a large sync is split
   into several frames; receivers integrate each as it comes).
 
@@ -273,14 +274,22 @@ valid proof, whatever the hub user then decides.
 4. Reconnect: `join` with `token` (and an empty proof) rebinds the same participant and replica; a new
    connection for that token replaces an older one.
 
-A `join` must arrive within 10 s of the TLS handshake. Colours are assigned in join order, the hub
-having 0, modulo 8.
+A `join` must arrive within 10 s of the TLS handshake, and until a connection has joined the hub
+accepts frames of at most **4 KiB** (a larger one is answered with `bad_frame` and closed, never
+buffered). The hub accepts at most 4 connections from one address at a time and at most 5
+participants, itself and joiners still awaiting approval included. Colours are assigned in join order,
+the hub having 0, modulo 8.
 
 ### 7.4 Operations
 
 - **Replica binding** (§2.1): the hub drops every operation from a connection whose id's replica is not
   that participant's, and every operation from a viewer, before the CRDT; it relays what it kept to
   every other joined connection as an `update`. A guest has one connection, to the hub.
+- **No file-map operations from guests (P1).** Only the hub creates, renames or deletes files; the hub
+  drops every file-map operation a guest sends, whatever its ids, before the CRDT, and relays none.
+  A host writes only the files it shared, at the paths it shared them under (never a path taken from
+  the CRDT), and never a dotfile, a path through a symbolic link, or a path that collides with another
+  case- or normalisation-insensitively.
 - **Outbox**: a guest numbers its `update`s from 1 and keeps them until an `ack {through}` covers them;
   on reconnect it resends them after `sync_request`. Duplicates are harmless (§2.4).
 - An integration that reports `pending_full` makes the receiver send `sync_request` to that peer.
@@ -288,7 +297,8 @@ having 0, modulo 8.
 ### 7.5 Presence
 
 `awareness` is sent on a change (at most every 50 ms) and as a heartbeat every 3 s; a peer's presence
-is dropped 10 s after its last message. `file` is the text file's id in hex (32 digits). The hub
+is dropped 10 s after its last message. The hub passes at most 25 per second per participant (a token
+bucket); the excess is dropped, not fanned out. `file` is the text file's id in hex (32 digits). The hub
 overwrites `participant_id`, `name` and `colour_index` with the values it assigned before it fans an
 `awareness` out, so a guest cannot impersonate another.
 

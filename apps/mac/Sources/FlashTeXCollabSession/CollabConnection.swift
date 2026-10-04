@@ -17,6 +17,15 @@ final class CollabConnection {
     private(set) var isReady = false
     private(set) var isClosed = false
     private var deadline: DispatchWorkItem?
+    /// Largest frame accepted. The hub keeps it small (`CollabHub.Limits.
+    /// preJoinFrameBytes`) until a connection has joined, so an
+    /// unauthenticated peer cannot make it buffer megabytes.
+    var maxFrameBytes = CollabWire.maxFrame
+    /// The peer's address (per-address connection caps).
+    var remoteAddress: String {
+        if case let .hostPort(host, _) = nw.endpoint { return "\(host)" }
+        return "\(nw.endpoint)"
+    }
     /// Bytes handed to the stack and not yet reported sent.
     private(set) var unsentBytes = 0
     static let maxUnsentBytes = 64 * 1024 * 1024
@@ -81,8 +90,8 @@ final class CollabConnection {
         buffer.append(contentsOf: data)
         while !isClosed, buffer.count >= 4 {
             let len = Int(buffer[0]) | Int(buffer[1]) << 8 | Int(buffer[2]) << 16 | Int(buffer[3]) << 24
-            if len == 0 || len > CollabWire.maxFrame {
-                refuse(code: "bad_frame", message: "frame length \(len) is outside 1…\(CollabWire.maxFrame)")
+            if len == 0 || len > maxFrameBytes {
+                refuse(code: "bad_frame", message: "frame length \(len) is outside 1…\(maxFrameBytes)")
                 return
             }
             guard buffer.count >= 4 + len else { return }
@@ -122,6 +131,10 @@ final class CollabConnection {
         nw.send(content: nil, contentContext: .finalMessage, isComplete: true, completion: .contentProcessed { [weak self] _ in
             MainActor.assumeIsolated { self?.nw.cancel() }
         })
+        // A peer that keeps the window full (it is still sending what we
+        // refused) can stall the final send forever: cancel regardless.
+        let nw = self.nw
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2) { nw.cancel() }
         report(reason)
     }
 
