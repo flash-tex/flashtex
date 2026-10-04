@@ -2,12 +2,12 @@
 //! Live's pdfTeX (the lockstep harness fixes the job name, the options and
 //! the input lines, so it cannot show them):
 //!
-//! - [51.1333] and [32.642]: `Transcript written on` and, for a DVI file,
-//!   `Output written on` print the name with `print_file_name`, quoted when
-//!   it has a space;
-//! - [32.617]: `-output-comment` (texmfmp.c truncates it to 255 characters)
-//!   or texmf.cnf's `output_comment` is the DVI file's comment;
-//! - [49.1265]: in `\batchmode` kpathsea's mktex scripts are silent;
+//! - tex.ch \[51.1333\] and \[32.642\]: `Transcript written on` and, for a
+//!   DVI file, `Output written on` print the name with `print_file_name`,
+//!   quoted when it has a space;
+//! - tex.ch \[32.617\]: `-output-comment` (texmfmp.c truncates it to 255
+//!   characters) or texmf.cnf's `output_comment` is the DVI file's comment;
+//! - tex.ch \[49.1265\]: in `\batchmode` kpathsea's mktex scripts are silent;
 //! - texmfmp.c's `input_line`: a line that does not fit in `buf_size` stops
 //!   the run with two lines on stderr and exit status 1.
 //!
