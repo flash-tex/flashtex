@@ -213,6 +213,12 @@ def run_cli(pre, content, tag):
     for n, b in pre.items():
         with open(os.path.join(d, n), 'wb') as f:
             f.write(b)
+        # the modification time the compile saw (`\pdffilemoddate`, genlookup.py's `mtime`
+        # probe): a fresh copy's crossed a second now and then, a difference of the reference
+        w = os.path.join(work, n)
+        if n != editfile and os.path.isfile(w) and open(w, 'rb').read() == b:
+            st = os.stat(w)
+            os.utime(os.path.join(d, n), ns=(st.st_atime_ns, st.st_mtime_ns))
     with open(os.path.join(d, editfile), 'wb') as f:
         f.write(content)
     e2 = dict(env, FLASHTEX_PREVIEW='1')
