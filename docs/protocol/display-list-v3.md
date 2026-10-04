@@ -1251,10 +1251,8 @@ SAVE/RESTORE to `saveGState`/`restoreGState` and CLIP to `addPath` + `clip`.
 - S₀ persisted with `--s0-cache` does not carry source spans: after a
   reopen, material made before `\begin{document}` (none that a page shows,
   in practice) has no span.
-- Typst (3.3, §11): the Typst host produces E1–E4, E6 (raster images)
-  and E7 (E3, E4, E6 for a client that accepts them); SVG and PDF images
-  (E5 islands) are flagged INCOMPLETE and `RESOLVE`/`LOCATE` (E8) is not
-  answered yet.
+- Typst (3.3, §11): the Typst host produces E1–E7 (E3–E6 for a client
+  that accepts them); `RESOLVE`/`LOCATE` (E8) is not answered yet.
 
 ## 11. Version 3.3: the Typst host's additions
 
@@ -1402,7 +1400,7 @@ path's stroke, §4.4) for glyphs drawn with text render mode 1 (stroke) or 2
 the text object. It is graphics state (SAVE/RESTORE scope it). Without
 `line-state` a page with stroked text is INCOMPLETE.
 
-### 11.5 Images from bytes and PDF islands (E5 specified; E6 produced)
+### 11.5 Images from bytes and PDF islands (E5, E6; produced)
 
 Typst images come from bytes as often as from files (`image(bytes)`,
 packages), and typst-pdf re-encodes them. For a client that accepts
@@ -1456,15 +1454,32 @@ unless the PDF carries the file's own bytes (a JPEG it passes through), when
 `type` is `jpeg` and the data is the file.
 
 **PDF islands (E5).** What v3 cannot draw item by item — gradients
-(conic included), tilings, SVG images, colour glyphs, gradient-filled text
-— the Typst host may send as a one-page PDF that typst-pdf exports for the
-construct's bounding box (`page_ranges`, untagged): an `IMAGE` with
-`"type": "pdf"`, `"island": true`, `"data": true`, `page` 1, `page_box`
-`media`, its `width`/`height` and `orig_x`/`orig_y` in bp, drawn by an IMAGE
-item whose matrix maps the island's page space to stream space (§5.2). A
-page that would need an island but whose client does not accept
-`image-data` is INCOMPLETE. Parity by construction is a **belief** until its
-gate row passes (DESIGN.md §15.4).
+(conic included), tilings, SVG and PDF images, gradient-filled or
+gradient-stroked text, a gradient page fill — the Typst host sends as a
+one-page PDF: an `IMAGE` with `"type": "pdf"`, `"island": true`,
+`"data": true`, `page` 1, `page_box` `media`, `width`/`height` and
+`orig_x`/`orig_y` (bp) of its box, drawn by an IMAGE item whose matrix maps
+the island's page space to stream space (§5.2); its one part is the PDF.
+
+The Typst host exports, untagged, a page **of the page's own size and
+bleed** holding only that construct, inside the same chain of frames
+(sizes, hard or soft), groups, transforms and clips as on the page (a page
+fill: an empty page with that fill). typst-pdf then composes the same
+transforms in the same order, so the island's content stream carries the
+page's own numbers, the island's box is the page's, and the IMAGE item's
+matrix is the identity. A client draws it clipped as the display list's
+clip stack says (the island repeats its groups' clips). An island is sent
+once per connection. A page that would need an island but whose client does
+not accept `image-data` is INCOMPLETE.
+
+*Measured (2026-10-04, `examples/positions_suite.rs`):* on Typst's test
+suite, the 828 islands of the 2,622 snippets that compile all have the
+page's box, and every glyph (1,466), path (754) and XObject their content
+streams show is, in order, one the page's content stream shows bit for bit
+(the independent checker's `check_island`); no page is INCOMPLETE for a
+client that accepts `color-spaces`, `line-state` and `image-data`. That the
+client's drawing of an island equals the page's pixels at 2× and 3× is a
+**belief** until its gate row passes (DESIGN.md §15.4).
 
 ### 11.6 On-demand source mapping: `RESOLVE`, `LOCATE` (E8; specified)
 

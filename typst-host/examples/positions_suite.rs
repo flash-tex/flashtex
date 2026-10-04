@@ -126,8 +126,15 @@ struct Tally {
     images: usize,
     mismatched_images: usize,
     image_failures: usize,
-    /// Pages per UNSUPPORTED entry that names an image.
-    image_reasons: std::collections::BTreeMap<String, usize>,
+    /// PDF islands (E5): drawn, and those whose content is not the page's
+    /// (`checker::check_island`); the glyphs and paths they carry.
+    islands: usize,
+    island_mismatches: usize,
+    island_glyphs: usize,
+    island_paths: usize,
+    /// Pages per UNSUPPORTED entry (what still makes pages INCOMPLETE).
+    reasons: std::collections::BTreeMap<String, usize>,
+    incomplete_pages: usize,
     positions_failed_pages: usize,
     mismatched_snippets: Vec<String>,
     export_failed_snippets: Vec<String>,
@@ -325,6 +332,28 @@ fn main() {
                 t.images += hi.len();
                 t.pdf_images += rp.images.iter().filter(|r| !r.form && !r.refused).count();
                 let missing = checker::unmatched_images(&hi, &image_info, &rp.images);
+                for (m, id) in &hi {
+                    let Some((j, parts)) = image_info.get(id) else {
+                        continue;
+                    };
+                    if j.get("island").and_then(Json::as_bool) != Some(true) {
+                        continue;
+                    }
+                    t.islands += 1;
+                    match checker::check_island(*m, &parts[0], rp) {
+                        Ok((g, p, _)) => {
+                            t.island_glyphs += g;
+                            t.island_paths += p;
+                        }
+                        Err(e) => {
+                            t.island_mismatches += 1;
+                            if why.is_empty() {
+                                why = format!("island: {e}");
+                            }
+                            bad += 1;
+                        }
+                    }
+                }
                 if missing > 0 {
                     t.mismatched_images += missing;
                     if why.is_empty() {
@@ -332,8 +361,11 @@ fn main() {
                     }
                     bad += 1;
                 }
-                for u in page.unsupported.iter().filter(|u| u.contains("image")) {
-                    *t.image_reasons.entry(u.clone()).or_default() += 1;
+                for u in &page.unsupported {
+                    *t.reasons.entry(u.clone()).or_default() += 1;
+                }
+                if page.flags & 1 != 0 {
+                    t.incomplete_pages += 1;
                 }
                 if let Some(u) = page.unsupported.iter().find(|u| u.starts_with("image: ")) {
                     t.image_failures += 1;
@@ -369,7 +401,7 @@ fn main() {
                 let mut evs = Vec::new();
                 let tp = &doc.pages()[i];
                 let ts = typst::layout::Transform::translate(tp.bleed.left, tp.bleed.top);
-                checker::events(&tp.frame, ts, rp.media_box[3], &mut evs);
+                checker::events_with(&tp.frame, ts, rp.media_box[3], caps.image_data, &mut evs);
                 let expected = match checker::expected(&evs, &rp.glyphs) {
                     Ok(e) => e,
                     Err(e) => {
@@ -441,7 +473,7 @@ fn main() {
         }
     }
     println!(
-        "{{\"snippets\":{},\"compiled\":{},\"not_compiled\":{},\"export_failed\":{},\"pages\":{},\"pdf_glyphs\":{},\"drawn_glyphs\":{},\"mismatched_glyphs\":{},\"mismatched_boxes\":{},\"paths\":{},\"mismatched_paths\":{},\"pdf_images\":{},\"images\":{},\"mismatched_images\":{},\"image_failures\":{},\"positions_failed_pages\":{},\"mismatched_snippets\":{},\"seconds\":{:.1}}}",
+        "{{\"snippets\":{},\"compiled\":{},\"not_compiled\":{},\"export_failed\":{},\"pages\":{},\"pdf_glyphs\":{},\"drawn_glyphs\":{},\"mismatched_glyphs\":{},\"mismatched_boxes\":{},\"paths\":{},\"mismatched_paths\":{},\"pdf_images\":{},\"images\":{},\"mismatched_images\":{},\"image_failures\":{},\"islands\":{},\"island_mismatches\":{},\"island_glyphs\":{},\"island_paths\":{},\"positions_failed_pages\":{},\"mismatched_snippets\":{},\"seconds\":{:.1}}}",
         t.snippets,
         t.compiled,
         t.not_compiled,
@@ -457,12 +489,19 @@ fn main() {
         t.images,
         t.mismatched_images,
         t.image_failures,
+        t.islands,
+        t.island_mismatches,
+        t.island_glyphs,
+        t.island_paths,
         t.positions_failed_pages,
         t.mismatched_snippets.len(),
         t0.elapsed().as_secs_f64()
     );
-    for (r, n) in &t.image_reasons {
-        eprintln!("IMAGE UNSUPPORTED on {n} pages: {r}");
+    eprintln!("INCOMPLETE pages: {} of {}", t.incomplete_pages, t.pages);
+    let mut reasons: Vec<_> = t.reasons.iter().collect();
+    reasons.sort_by(|a, b| b.1.cmp(a.1));
+    for (r, n) in reasons.iter().take(30) {
+        eprintln!("UNSUPPORTED on {n} pages: {r}");
     }
     for s in &t.export_failed_snippets {
         eprintln!("SKIPPED (typst-pdf cannot export it, nothing to compare) {s}");

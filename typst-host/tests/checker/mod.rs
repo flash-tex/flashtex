@@ -1016,13 +1016,80 @@ pub fn unmatched_images(
     };
     let mut k = 0;
     let mut missing = 0;
-    for h in host {
+    let island = |h: &([f64; 6], u32)| {
+        info.get(&h.1)
+            .and_then(|(j, _)| j.get("island"))
+            .and_then(Json::as_bool)
+            == Some(true)
+    };
+    for h in host.iter().filter(|h| !island(h)) {
         match (k..pdf.len()).find(|&j| same(h, &pdf[j])) {
             Some(j) => k = j + 1,
             None => missing += 1,
         }
     }
     missing
+}
+
+/// A PDF island (spec §11.5, E5) against the page it stands in for: its
+/// box is the page's, the IMAGE item's matrix the identity, and every
+/// glyph, path and XObject `Do` its content stream shows is, in order, one
+/// the page's own content stream shows, bit for bit (origin, glyph matrix,
+/// colour and alpha; CTM, segments, line state and colours; CTM and
+/// pixels). `Err` says what differs. Returns (glyphs, paths, images).
+pub fn check_island(
+    matrix: [f64; 6],
+    island_pdf: &[u8],
+    page: &RefPage,
+) -> Result<(usize, usize, usize), String> {
+    if matrix != [1.0, 0.0, 0.0, 1.0, 0.0, 0.0] {
+        return Err(format!("island matrix {matrix:?}"));
+    }
+    let r = reference(island_pdf);
+    if r.len() != 1 {
+        return Err(format!("an island of {} pages", r.len()));
+    }
+    let isl = &r[0];
+    if isl.media_box.map(f64::to_bits) != page.media_box.map(f64::to_bits) {
+        return Err(format!(
+            "island box {:?}, page {:?}",
+            isl.media_box, page.media_box
+        ));
+    }
+    let bits = |v: &[f64]| v.iter().map(|x| x.to_bits()).collect::<Vec<_>>();
+    let same_glyph = |a: &RefGlyph, b: &RefGlyph| {
+        a.origin.map(f64::to_bits) == b.origin.map(f64::to_bits)
+            && a.matrix.map(f64::to_bits) == b.matrix.map(f64::to_bits)
+            && bits(&a.fill) == bits(&b.fill)
+            && a.fill_alpha.to_bits() == b.fill_alpha.to_bits()
+    };
+    let mut k = 0;
+    for (n, g) in isl.glyphs.iter().enumerate() {
+        match (k..page.glyphs.len()).find(|&j| same_glyph(g, &page.glyphs[j])) {
+            Some(j) => k = j + 1,
+            None => return Err(format!("island glyph {n} {g:?} is not the page's")),
+        }
+    }
+    let missing = unmatched_paths(&isl.paths, &page.paths);
+    if missing > 0 {
+        return Err(format!(
+            "{missing} of the island's {} paths are not the page's",
+            isl.paths.len()
+        ));
+    }
+    let mut k = 0;
+    for (n, im) in isl.images.iter().enumerate() {
+        let same = |p: &RefImage| {
+            p.ctm.map(f64::to_bits) == im.ctm.map(f64::to_bits)
+                && p.form == im.form
+                && (im.form || p == im)
+        };
+        match (k..page.images.len()).find(|&j| same(&page.images[j])) {
+            Some(j) => k = j + 1,
+            None => return Err(format!("island XObject {n} is not the page's")),
+        }
+    }
+    Ok((isl.glyphs.len(), isl.paths.len(), isl.images.len()))
 }
 
 /// The display list's paths and clips, in item order, as [`RefPath`]s.
@@ -1148,14 +1215,30 @@ pub fn events(
     h: f64,
     out: &mut Vec<Ev>,
 ) {
+    events_with(frame, ts, h, false, out)
+}
+
+/// [`events`] for a client that draws PDF islands (E5): a run with a
+/// gradient or tiling stroke is an island too, not glyphs.
+pub fn events_with(
+    frame: &typst::layout::Frame,
+    ts: typst::layout::Transform,
+    h: f64,
+    islands: bool,
+    out: &mut Vec<Ev>,
+) {
     use typst::layout::{Abs, FrameItem, Point, Transform};
     use typst::visualize::{Color, Paint};
     for (pos, item) in frame.items() {
         let ts = ts.pre_concat(Transform::translate(pos.x, pos.y));
         match item {
-            FrameItem::Group(g) => events(&g.frame, ts.pre_concat(g.transform), h, out),
+            FrameItem::Group(g) => {
+                events_with(&g.frame, ts.pre_concat(g.transform), h, islands, out)
+            }
             FrameItem::Text(t) => {
-                let d = matches!(t.fill, Paint::Solid(Color::Process(_)));
+                let pattern = |p: &Paint| matches!(p, Paint::Gradient(_) | Paint::Tiling(_));
+                let d = matches!(t.fill, Paint::Solid(Color::Process(_)))
+                    && !(islands && t.stroke.as_ref().is_some_and(|s| pattern(&s.paint)));
                 let (mut x, mut y) = (Abs::zero(), Abs::zero());
                 let mut o = Vec::new();
                 for g in &t.glyphs {

@@ -214,3 +214,45 @@ Glyphs (80,556), paths (8,317) and boxes stay at 0 mismatches in every mode.
 - `images_need_image_data`: without `image-data` the page is INCOMPLETE.
 - `the_checker_rejects_wrong_pixels_and_matrices`: one changed sample, or a matrix one ulp off,
   is rejected.
+
+## PDF islands (E5)
+
+The following go as a one-page PDF:
+- SVG and PDF images;
+- gradient and tiling fills and strokes: shapes, text, a page fill.
+
+Each island is a page of the page's size and bleed, holding only that item inside the same chain
+of frames, groups, transforms and clips. It is drawn with the identity matrix. The independent
+checker's `check_island` reads each island PDF and requires:
+- its box equals the page's;
+- every glyph, path and XObject `Do` its content stream shows is, in order, one the page's own
+  content stream shows, bit for bit.
+
+Typst 0.15.1's test suite, 2,622 snippets that compile:
+
+| Client | Islands | Not the page's numbers | Glyphs / paths checked in islands | INCOMPLETE pages | Glyph, path, box, image mismatches |
+|---|---|---|---|---|---|
+| `--accept colour,images` | **828** | **0** | 1,466 / 754 | **0 of 3,162** | 0 |
+| no `accept` | 0 | — | — | 210 of 3,162 (gradient 75, image 44, alpha 31, tiling 26, SVG 24, …) | 0 |
+
+The suite's `images` count (899) is the 71 raster images plus the 828 islands.
+
+`tests/oracle.rs` adds two tests:
+- `islands_match_typst`, through the host process: an SVG image (twice, one of them rotated),
+  linear, radial and conic gradients, a tiling, gradient and gradient-stroked text, a clipped
+  gradient, and a gradient page fill. That is 9 islands, every page complete, every island the
+  page's.
+- `the_island_check_rejects_other_numbers`: paths one ulp off, or an island drawn with another
+  matrix, are rejected.
+
+**Belief, not measured:** that the app's drawing of an island equals the page's pixels at 2× and
+3× (the DESIGN §15.4 gate row; it needs the client). Measured: the numbers are the page's.
+
+**Effect on the latency corpus:**
+- p300 with a client that accepts `image-data`: no page is INCOMPLETE, so `DONE` follows the
+  first page with no `DONE.pdf` compile.
+- RSS after the edits is **0.87 GB**, against 1.50–1.53 GB without islands. That meets the 1.1 GB
+  gate at 300 pages.
+- The 999-page runs were aborted by the load guard (load 30–55), so they are not measured here.
+- Latency at that load (one-minute load 19–24, five-minute 48) is not comparable and not
+  reported as a result.
