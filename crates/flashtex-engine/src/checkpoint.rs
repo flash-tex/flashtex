@@ -324,7 +324,8 @@ pub struct Layer {
     pub s0_reads: Option<system::ReadLog>,
     /// Take a checkpoint at the `.aux` point of this run (`Point::Aux`).
     pub want_aux_point: bool,
-    /// The `.aux` point, once taken.
+    /// The `.aux` point, once taken (before S₀ inside `\document`, or the
+    /// first `.aux` read after it: `note_aux_open`).
     pub aux_point: Option<CheckpointId>,
     /// Stop the run with `EngineExit(-1)` right after S₀ is taken.
     pub stop_at_s0: bool,
@@ -370,6 +371,18 @@ pub struct Layer {
     pub aux_close_rs: Option<usize>,
     pub aux_done: Option<CheckpointId>,
     aux_done_pending: bool,
+}
+
+impl Layer {
+    /// Where incremental runs are anchored (`incr::Session`'s S₀): the
+    /// `.aux` point when it came first (inside `\document`, before S₀), else
+    /// S₀. Checkpoint ids grow along a run, and both are in its chain.
+    pub fn anchor(&self) -> Option<CheckpointId> {
+        match (self.aux_point, self.s0) {
+            (Some(a), Some(s)) => Some(a.min(s)),
+            (a, s) => a.or(s),
+        }
+    }
 }
 
 /// Where the time of `checkpoint` goes, and how much of the word space each
@@ -1571,12 +1584,33 @@ impl Globals {
     /// checkpoint when `timed_s` of engine time has passed since the last.
     /// An input file named `*.aux` was opened: inside `\document` (armed
     /// for S₀), and when asked for, request the `.aux` point.
+    ///
+    /// When the expansion that arms S₀ ended before `\document` read the
+    /// `.aux` (so S₀ is taken first: a class or package that wraps
+    /// `\document`, as *An Infinite Descent into Pure Mathematics* does), the
+    /// `.aux` point is the first open of the `.aux` after S₀ that comes before
+    /// the run opens it for output and before the first page: `\document`
+    /// reads the old `.aux` before its `\openout` truncates it, and
+    /// `\enddocument` reads it again only after writing it. A timed or
+    /// segment checkpoint due then is taken as the `.aux` point.
     pub fn note_aux_open(&mut self, path: &str) {
-        if self.ckpt_arm_level <= 0 || self.ckpt_request != 0 {
+        if self.ckpt_request != 0
+            && self.ckpt_request != REQ_TIMED
+            && self.ckpt_request != REQ_SEGMENT
+        {
             return;
         }
+        let armed = self.ckpt_arm_level > 0;
+        let first_page_due = self.total_pages == 0;
         let l = self.layer();
-        if l.want_aux_point && l.aux_point.is_none() && l.s0.is_none() {
+        if !l.want_aux_point || l.aux_point.is_some() {
+            return;
+        }
+        let take = match l.s0 {
+            None => armed,
+            Some(_) => !armed && first_page_due && system::output_opened(path) == Some(false),
+        };
+        if take {
             l.aux_path = Some(path.to_string());
             self.ckpt_request = REQ_AUX;
         }

@@ -462,8 +462,7 @@ impl Obs {
         let mut pages = self.known_pages.clone();
         let mut ck = self.known_ck.clone();
         if self.s0.is_none() {
-            let l = g.layer();
-            self.s0 = l.aux_point.or(l.s0);
+            self.s0 = g.layer().anchor();
         }
         for (i, p) in self.new_pages.iter().enumerate() {
             if let Some(c) = p.ckpt {
@@ -3557,6 +3556,23 @@ impl Session {
             Some(e) => g.record_of(e)?.reads.0,
             None => 0,
         };
+        // A restart before the `.aux` point (one taken after S₀,
+        // `Globals::note_aux_open`) reads the `.aux` again: this run takes
+        // its own `.aux` point and the end of its read; the old run's are
+        // its future.
+        {
+            let ids = g.checkpoints();
+            let pos = |id: CheckpointId| ids.iter().position(|&i| i == id);
+            let l = g.layer();
+            if let Some(a) = l.aux_point {
+                if pos(r) < pos(a) || pos(a).is_none() {
+                    l.aux_point = None;
+                    l.aux_done = None;
+                    l.aux_close_rs = None;
+                    l.aux_armed = false;
+                }
+            }
+        }
         // Output files written and closed before `r` are the new run's own
         // too: nothing to put back. Restore, keeping the old future: the
         // restore saves the old bytes of every output file open at `r` or at
@@ -3956,7 +3972,7 @@ impl Session {
         let anchor = {
             let l = g.layer();
             let _ = l.s0_reads.take();
-            l.aux_point.or(l.s0)
+            l.anchor()
         };
         let Some(id) = anchor else {
             return Ok(());
@@ -4056,7 +4072,7 @@ fn thin(
     if g.arena.log_bytes() <= budget {
         return;
     }
-    let aux_done = g.layer().aux_done;
+    let (aux_done, aux_point) = (g.layer().aux_done, g.layer().aux_point);
     // the last page's checkpoint: where `\end{document}` re-runs from
     let last_page = pages.iter().max_by_key(|(_, &j)| j).map(|(&c, _)| c);
     // The octave of a page's distance from the cursor beyond DENSE.
@@ -4086,6 +4102,7 @@ fn thin(
             if Some(id) == s0
                 || Some(id) == keep_also
                 || Some(id) == aux_done
+                || Some(id) == aux_point
                 || Some(id) == last_page
             {
                 return true;

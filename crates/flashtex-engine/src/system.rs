@@ -3538,6 +3538,17 @@ pub fn note_whole_read(path: &str) {
     })
 }
 
+/// Whether the run recording its reads (`record_reads_into`) has opened
+/// `path` for output so far (`None`: nothing is recording).
+pub fn output_opened(path: &str) -> Option<bool> {
+    let k = out_key(path);
+    READS.with(|r| {
+        r.borrow()
+            .as_ref()
+            .map(|log| log.outputs.iter().any(|p| out_key(p) == k))
+    })
+}
+
 fn note_output(path: &str) {
     READS.with(|r| {
         if let Some(log) = r.borrow_mut().as_mut() {
