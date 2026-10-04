@@ -148,18 +148,32 @@ pub fn thread_cpu_s() -> f64 {
 /// Instructions retired and cycles elapsed by this thread so far, from the
 /// CPU's fixed counters (macOS: the kernel's per-thread counts, which do not
 /// move with other processes' load; for measurement only, DESIGN.md §5.6).
-/// `None` where the platform does not give them.
+/// `None` where the platform does not give them. The macOS call is a private
+/// symbol of libsystem_kernel, so it is looked up when first needed rather
+/// than linked: a system without it gives `None` instead of failing to load.
 pub fn thread_counts() -> Option<(u64, u64)> {
     #[cfg(target_os = "macos")]
     {
+        use std::ffi::{c_char, c_void};
+        use std::sync::OnceLock;
+        // xnu `thread_selfcounts`, type 1: the thread's instructions and
+        // cycles.
+        type SelfCounts = unsafe extern "C" fn(i32, *mut u64, usize) -> i32;
         extern "C" {
-            // xnu `thread_selfcounts` (libsystem_kernel), type 1: the
-            // thread's instructions and cycles.
-            fn thread_selfcounts(kind: i32, buf: *mut u64, nbytes: usize) -> i32;
+            fn dlsym(handle: *mut c_void, symbol: *const c_char) -> *mut c_void;
         }
+        // <dlfcn.h>: RTLD_DEFAULT is ((void *) -2) on macOS.
+        const RTLD_DEFAULT: *mut c_void = -2isize as *mut c_void;
+        static F: OnceLock<Option<SelfCounts>> = OnceLock::new();
+        let f = (*F.get_or_init(|| {
+            // SAFETY: dlsym with a NUL-terminated name only looks it up.
+            let p = unsafe { dlsym(RTLD_DEFAULT, c"thread_selfcounts".as_ptr()) };
+            // SAFETY: the symbol, when present, is a function of this type.
+            (!p.is_null()).then(|| unsafe { std::mem::transmute::<*mut c_void, SelfCounts>(p) })
+        }))?;
         let mut c = [0u64; 2];
         // SAFETY: the kernel writes at most `nbytes` into `c`.
-        let r = unsafe { thread_selfcounts(1, c.as_mut_ptr(), std::mem::size_of_val(&c)) };
+        let r = unsafe { f(1, c.as_mut_ptr(), std::mem::size_of_val(&c)) };
         (r == 0).then_some((c[0], c[1]))
     }
     #[cfg(not(target_os = "macos"))]

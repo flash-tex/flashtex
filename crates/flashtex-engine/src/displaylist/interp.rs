@@ -1425,6 +1425,54 @@ mod tests {
         assert_eq!(out.page.matrices[0][0], 9.9626);
     }
 
+    /// Two fonts with different widths for the same code.
+    struct TwoFonts;
+    impl Env for TwoFonts {
+        fn width(&mut self, font: u32, code: u8) -> Option<i64> {
+            Some(match (font, code) {
+                (1, b'o') => 5000,
+                (2, b'o') => 3000,
+                _ => 2777,
+            })
+        }
+        fn resname_prefix(&self) -> &[u8] {
+            b""
+        }
+    }
+
+    /// `show` keeps each code's advance for the current font and size
+    /// (`AdvCache`, P6-HYPEROPT #1496): a switch of font, of size, and back,
+    /// between the strings of one text object, each takes the new advances.
+    #[test]
+    fn the_advance_cache_follows_font_and_size_switches() {
+        let s = b"BT /F1 10 Tf [(oo)]TJ /F2 10 Tf [(o)-100(o)]TJ /F1 20 Tf [(oo)]TJ /F1 10 Tf (o)Tj /F2 10 Tf (o)Tj ET";
+        let out = interpret(
+            &mut TwoFonts,
+            StreamKind::Page,
+            0,
+            s,
+            fx("792"),
+            Mat::IDENTITY,
+            &[],
+        );
+        let x: Vec<i32> = out
+            .page
+            .items
+            .iter()
+            .filter_map(|i| match i {
+                Item::Glyph { x, .. } => Some(*x),
+                _ => None,
+            })
+            .collect();
+        // F1 10: 0, 5 (0.5 em); F2 10: 10, 10 + 3 + 1 (the -100 kern) = 14;
+        // F1 20: 17, 27 (0.5 em of 20); F1 10: 37; F2 10: 42.
+        let want: Vec<i32> = ["0", "5", "10", "14", "17", "27", "37", "42"]
+            .iter()
+            .map(|v| fx(v).to_sp() as i32)
+            .collect();
+        assert_eq!(x, want);
+    }
+
     #[test]
     fn origins_are_the_viewers_binary64() {
         // proof-practice-21242 p11 (a glyph after Tm then Td): the viewer's

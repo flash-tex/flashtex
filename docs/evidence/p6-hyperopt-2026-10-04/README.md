@@ -33,7 +33,7 @@ The engine's own macro profiler (`FLASHTEX_MACRO_PROFILE`) for TeX-level costs.
 | 8 | PDF page out (`pdf_ship_out`) | 10.3 % incl. | 2.7 % | zlib 2-3 % |
 
 The engine against pdfTeX on 13 arXiv papers (every 12th of `arxiv-2025-01`; `raw/cold-arxiv-base.jsonl`):
-**0.887× pdfTeX's cycles** in total (0.76-0.96× per paper), 0.86× its instructions, and
+**0.887× pdfTeX's cycles** in total (cycles measured at load 26-68 in macOS Low Power Mode: not a reference) (0.76-0.96× per paper), 0.86× its instructions, and
 **every PDF byte-identical to pdfTeX's**.
 
 Beamer, by TeX macro (`raw/macro-profile-long-deck.tsv`, inclusive): the output routine
@@ -67,10 +67,10 @@ checkpoints 8 %, the restore 4.5 %.
 | #1495 iso | a failing convergence test walks the page builder's lists first; static dispatch; a fast hash | full-100: tests 148 → 47 M, compile 699 → 579 M (−17 %); beamer 3-slide: tests 145 → 112 M |
 | #1496 dl-glyphs | the glyph loop computes per string what is per string | edited page: plain-100 57.4 → 49.8 M (−13 %), full-100 102.4 → 96.8 M (−5.5 %); display lists identical on 32 documents |
 | #1497 scratch-heads | `link(temp_head)`, `link(backup_head)` dead between commands | plain-100 2,173 → 421 M (−81 %, 33 → 2 pages); plain-300 1,199 → 533 M (9 → 2); full-100 sentence 4,164 → 627 M (−85 %, 33 → 2) |
-| #1498 barrier-rerun | a barrier blocks reuse only past where it is read; `name_key` without building names | *Infinite Descent*: 179.8 G → 16.3 G (−91 %), 319 → 49 pages, converged 0/7 → 7/7, engine CPU 24 → ~2.3 s per keystroke (`raw/infdesc-*.jsonl`); a 24-page imakeidx book 855 → 354 M, 19 → 3 pages |
+| #1498 barrier-rerun | a barrier blocks reuse only past where it is read; `name_key` without building names | *Infinite Descent*: 179.8 G → 16.3 G (−91 %), 319 → 49 pages, converged 0/7 → 7/7, engine CPU 24 → ~2.3 s per keystroke (thread CPU at load 28-180 in Low Power Mode: not a reference; the instruction counts are) (`raw/infdesc-*.jsonl`); a 24-page imakeidx book 855 → 354 M, 19 → 3 pages |
 | #1499 get-next (draft) | `get_next` fast path inlined (throughput.ch [3], web2rust `--inline`) | instructions −2.8 % over 14 documents (beamer −5.9 %); cycles not resolved on this host |
 
-Combined (`raw/ab-all.out`; `all1` = #1494-#1497 without `backup_head`): plain-100 −82 %, full-100
+Combined (`raw/ab-all.out`, columns in `raw/ab-all.out.md`; `all1` = #1494-#1497 without `backup_head`): plain-100 −82 %, full-100
 −20 %, full-1000 −8 %, plain-1000 −6 %, beamer −3 to −4 % per keystroke; the edited page −6 to −14 %
 on plain/full documents. Soundness sweep A converged in 367 of 2,112 compiles against main's 178.
 
