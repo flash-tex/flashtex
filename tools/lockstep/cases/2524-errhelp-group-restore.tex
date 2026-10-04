@@ -1,0 +1,9 @@
+% 2524-errhelp-group-restore: verifies an \errhelp assignment inside a group logs a restoring line on exit and the outer value comes back (tex.web §§230, 231)
+% new versus 1444-errorcontextlines: 1444 groups an integer parameter and ships glue sized by it; this case groups a token-list register and proves the restore line carries the outer token text
+\input prelude
+\errhelp={2524 outer help}
+{\errhelp={2524 inner help}\message{2524 in=\the\errhelp}}
+\message{2524 out=\the\errhelp}
+\setbox0=\hbox{\vrule width2pt height5pt depth1pt\hskip9pt}
+\lsshipbox0
+\end

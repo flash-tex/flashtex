@@ -1,0 +1,8 @@
+% 2505-pdfshellescape: reading the read-only \pdfshellescape status with \the and \ifnum (pdftex.web §§ 442, 443, 450)
+% new versus none: \pdfshellescape is used by no other case
+\input prelude
+\message{2505 val=\the\pdfshellescape}
+\ifnum\pdfshellescape=2 \message{2505 restricted} \else \message{2505 other} \fi
+\setbox0=\hbox{\vrule width25pt height8pt depth2pt\hskip10pt}
+\lsshipbox0
+\end

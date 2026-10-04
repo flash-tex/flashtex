@@ -1,0 +1,9 @@
+% 2541-pdfnames-name-tree: two \pdfnames calls each trace as an extension command (pdftex.web §§1524, 1580)
+% new versus 1247-pdfpagesattr-catalog: that log shows {\pdfpagesattr} with changing/into lines plus {\pdfcatalog} and a \the readback; this log shows {\pdfnames} twice with no readback
+\input prelude
+\pdfnames{/LSP2541A 4 0 R}
+\pdfnames{/LSP2541B 5 0 R}
+\message{2541 names-done}
+\setbox0=\hbox{\vrule width10pt height8pt depth2pt}
+\lsshipbox0
+\end
