@@ -3,9 +3,16 @@
 Native macOS source editor + preview shell. Swift Package, macOS 14+, SwiftUI/AppKit.
 Owner: mac-claude-a. Contract: `docs/contracts/runtime-v1.md`.
 
-The preview is **fixture-backed**: it renders `protocol/fixtures/compile-result.json`
-and shows a `FIXTURE` badge, result id/revision/status, and `pdf: none`. No LaTeX is
-compiled; when the buffer is edited the banner says the preview was not recompiled.
+Opened with no file, the window holds an untitled LaTeX document: File › New
+Project…'s "Blank article" titled "Untitled" (`UntitledDocument` in
+`ProjectScaffold.swift`), with the caret on the empty line under
+`\section{Introduction}`. It is not dirty until edited, and the attached engine
+(old or v3) compiles it like any other buffer.
+
+A bare `ShellModel()` (tests, automation) is **fixture-backed** instead: it renders
+`protocol/fixtures/compile-result.json` and shows a `FIXTURE` badge, result
+id/revision/status, and `pdf: none`; when the buffer is edited the banner says the
+preview was not recompiled.
 
 ## Build and test
 
