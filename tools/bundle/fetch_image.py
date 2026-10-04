@@ -221,6 +221,24 @@ def apply_layer(path, dest):
     return n
 
 
+def check_links(dest):
+    """After the last layer: every symlink in the tree must still resolve
+    inside it. A link checked when it was laid down can be redirected by a
+    later one (`a/b/s -> x/../..`, then `a/b/x -> ../..` makes s point above
+    dest), so the per-member checks are not enough on their own. Fatal, and
+    the tree is removed."""
+    dest_real = os.path.realpath(dest)
+    bad = []
+    for dp, dns, fns in os.walk(dest):
+        for n in dns + fns:
+            p = os.path.join(dp, n)
+            if os.path.islink(p) and not inside(dest_real, os.path.realpath(p)):
+                bad.append(f"{os.path.relpath(p, dest)} -> {os.readlink(p)} (resolves to {os.path.realpath(p)})")
+    if bad:
+        shutil.rmtree(dest, ignore_errors=True)
+        die("symlinks that leave the tree (it was removed):\n  " + "\n  ".join(bad))
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("image", help="REPO@sha256:<index digest>")
@@ -261,6 +279,7 @@ def main():
         fetch_layer(sources, layer["digest"], p)
         n = apply_layer(p, a.dest)
         print(f"layer {layer['digest'][7:19]} ({layer['size']} bytes): {n} TeX Live entries", flush=True)
+    check_links(a.dest)
     if not a.keep_layers:
         shutil.rmtree(layers_dir, ignore_errors=True)
     print(f"{a.image} (linux/{a.arch} {mdigest}) -> {a.dest}")

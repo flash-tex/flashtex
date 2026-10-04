@@ -25,7 +25,8 @@ Live's own `LICENSE.TL` and `LICENSE.CTAN`.
   TeX Live's Subversion repository (`https://tug.org/svn/texlive/`, at the revisions
   `packages.tsv` gives, with each container's SHA-512) and CTAN (`https://ctan.org/pkg/<name>`).
 - **Only free licences.** `texbundle.py pack` and `notes` refuse any package whose recorded
-  licence is `nosell`, `nodistrib`, `noinfo`, `nonfree`, `unknown` or non-commercial
+  licence is `nosell`, `nodistrib`, `noinfo`, `nonfree`, `other-nonfree`, `nosource`,
+  `shareware`, `unknown` or non-commercial
   (`cc-by-nc*`), and any package with no licence recorded unless it is allowed by name, with
   the reason, in `NO_LICENCE_RECORDED` (today `hyphen-*` and `latexconfig`).
 - **GPL source.** GPL-licensed packages with a TeX Live source container are pointed to; for
@@ -61,8 +62,10 @@ twice a year with the LaTeX releases (DESIGN.md §7), and publishes a new
 digest no tag points at any more may go. So the publish job first copies the image to
 `ghcr.io/flash-tex/texlive` with `skopeo copy --all --preserve-digests` (the same digests,
 checked) and `fetch_image.py --mirror ghcr.io/flash-tex/texlive` falls back to it. The GHCR
-package is created private on the first publish; make it public (package settings) so anyone
-can rebuild the bundle, or keep it private, which CI reads with `packages: read`.
+package is created private on the first publish and is then made **public** (package settings;
+Commander ruling, 2026-10-04), so anyone can rebuild the bundle. After the last layer,
+`fetch_image.py` also walks the tree and refuses any symlink that resolves outside it, since a
+later link can redirect one checked earlier.
 
 **Byte-identical anywhere.** The bundle's digest is the SHA-256 of its file list (paths and
 contents); the file itself is also the same bytes on a Mac and on Linux, since every gzip
