@@ -32,11 +32,17 @@ pub mod transport;
 pub const PROTOCOL: &str = "display-list-v3";
 /// Major version: a peer refuses any other.
 pub const VERSION_MAJOR: u32 = 3;
-/// Minor version: additions a peer may ignore (new sections, new JSON keys,
-/// new message kinds it does not understand). 3.3 (spec §11) is the Typst
-/// host's additions; its item opcodes are sent only to a client that
-/// accepts them ([`accept`]), so a 3.3 peer without them sees 3.2.
-pub const VERSION_MINOR: u32 = 3;
+/// The minor version `flashtex-host` (LaTeX) speaks and answers in its
+/// `HELLO`: 3.2. Minor versions only add (new sections, JSON keys, message
+/// kinds a peer may ignore); 3.3's additions (spec §11) are the Typst
+/// host's and nothing requires the LaTeX host to send any of them, so it
+/// stays at 3.2 and its replies are unchanged.
+pub const VERSION_MINOR: u32 = 2;
+/// The specification's latest minor version, 3.3 (spec §11): what the
+/// reference [`client`] says in its `HELLO` and what `flashtex-typst-host`
+/// speaks. 3.3's item opcodes go only to a client that also accepts them
+/// ([`accept`]).
+pub const LATEST_MINOR: u32 = 3;
 
 /// Scaled points per PDF point (big point): 65536 × 72.27 / 72, exactly
 /// 6578176/100.

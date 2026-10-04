@@ -30,7 +30,7 @@ use std::time::Instant;
 
 use flashtex_display_list::frame::{read_frame, write_frame};
 use flashtex_display_list::json::Json;
-use flashtex_display_list::{kind, PROTOCOL, VERSION_MAJOR, VERSION_MINOR};
+use flashtex_display_list::{kind, LATEST_MINOR, PROTOCOL, VERSION_MAJOR};
 use typst::diag::{Severity, SourceDiagnostic, Warned};
 use typst::WorldExt;
 use typst_layout::PagedDocument;
@@ -193,7 +193,7 @@ impl Host {
                     c.json(kind::ERROR, &err_json(None, "version", &m))?;
                     return c.flush();
                 }
-                let minor = (minor.clamp(0, VERSION_MINOR as i64)) as u32;
+                let minor = (minor.clamp(0, LATEST_MINOR as i64)) as u32;
                 // 3.3 `accept` (spec §11.7): FONT `program_from`.
                 let refs = minor >= 3
                     && j.as_ref()

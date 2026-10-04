@@ -18,7 +18,7 @@ use crate::json::{obj, s, Json};
 use crate::page::{Page, StreamKind};
 use crate::resource::{Font, Sources};
 use crate::transport::Stream;
-use crate::{kind, PROTOCOL, VERSION_MAJOR, VERSION_MINOR};
+use crate::{kind, LATEST_MINOR, PROTOCOL, VERSION_MAJOR};
 use std::io::{self, BufReader, BufWriter, Write};
 use std::path::Path;
 
@@ -265,7 +265,7 @@ impl Client {
                 "version",
                 Json::Arr(vec![
                     Json::Int(VERSION_MAJOR as i64),
-                    Json::Int(VERSION_MINOR as i64),
+                    Json::Int(LATEST_MINOR as i64),
                 ]),
             ),
             (
