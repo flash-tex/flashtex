@@ -1,0 +1,31 @@
+{
+  "format": "collab-v1-fixture/1",
+  "name": "deletes-multibyte",
+  "description": "overlapping concurrent deletes, an insert inside a deleted range, 2-4 byte scalars and a combining mark",
+  "generator": "rust oracle (crates/collaboration-core)",
+  "frames": [
+    "2b0000000501010001ed9f86d8cd9cc5851d0001cfc9ab66fb64a7129699b7caad8d68370100086d61696e2e746578",
+    "3200000005020101cfc9ab66fb64a7129699b7caad8d68370101ed9f86d8cd9cc5851d0000000f61f09f988062e4b8ad632065cc8164",
+    "2b00000005030101cfc9ab66fb64a7129699b7caad8d68370102ed9f86d8cd9cc5851d09ed9f86d8cd9cc5851d0104",
+    "2c00000005040101cfc9ab66fb64a7129699b7caad8d6837010289d386dca7f19ba3b30100ed9f86d8cd9cc5851d0304",
+    "3e00000005050101cfc9ab66fb64a7129699b7caad8d6837010181bac382ed94faf59c010001ed9f86d8cd9cc5851d0101ed9f86d8cd9cc5851d0206c3a9f09f9880"
+  ],
+  "orders": [
+    [0, 1, 2, 3, 4],
+    [4, 3, 2, 1, 0],
+    [2, 3, 4, 1, 0, 2]
+  ],
+  "expected": {
+    "project_digest": "cf9a9825240480c7",
+    "filemap_digest": "ec3fae7d882219d7",
+    "files": [
+      {
+        "file": "cfc9ab66fb64a7129699b7caad8d6837",
+        "path": "main.tex",
+        "kind": "text",
+        "text": "aé😀́d",
+        "digest": "974e52f7d1f35313"
+      }
+    ]
+  }
+}

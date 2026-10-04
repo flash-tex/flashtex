@@ -1,0 +1,41 @@
+{
+  "format": "collab-v1-fixture/1",
+  "name": "file-map",
+  "description": "rename racing a create at the same path, delete racing an edit, a blob file",
+  "generator": "rust oracle (crates/collaboration-core)",
+  "frames": [
+    "2b0000000501010001cb95ce91aeeef8b96e00019ef8f3260cebe47db9ca78a3183a03650100086d61696e2e746578",
+    "2d000000050201019ef8f3260cebe47db9ca78a3183a03650101b1e0e2dca4cdb1bae401000000095c696e7075747b617d",
+    "270000000503010001cb95ce91aeeef8b96e01029ef8f3260cebe47db9ca78a3183a03650205612e746578",
+    "290000000504010001b1e0e2dca4cdb1bae4010002e1e57477602c33965e1f5ef725aeb1eb010005612e746578",
+    "2b00000005050101e1e57477602c33965e1f5ef725aeb1eb0101b1e0e2dca4cdb1bae4010000000763686170746572",
+    "300000000506010001df88eef3c8bfc6f7db010002527f0358d893e072c9ba0ebd0a83892e01010c6669672f706c6f742e706e67",
+    "4e0000000507010001df88eef3c8bfc6f7db010103527f0358d893e072c9ba0ebd0a83892e030707070707070707070707070707070707070707070707070707070707070707d20909696d6167652f706e67",
+    "220000000508010001cb95ce91aeeef8b96e0204e1e57477602c33965e1f5ef725aeb1eb0401",
+    "3300000005090101e1e57477602c33965e1f5ef725aeb1eb0101b1e0e2dca4cdb1bae4010701b1e0e2dca4cdb1bae401060004206f6e65"
+  ],
+  "orders": [
+    [0, 1, 2, 3, 4, 5, 6, 7, 8],
+    [8, 7, 6, 5, 4, 3, 2, 1, 0],
+    [1, 0, 6, 7, 8, 4, 3, 2, 5, 0, 8]
+  ],
+  "expected": {
+    "project_digest": "6d8f147621a4665a",
+    "filemap_digest": "bd8428629c54589b",
+    "files": [
+      {
+        "file": "9ef8f3260cebe47db9ca78a3183a0365",
+        "path": "a.tex",
+        "kind": "text",
+        "text": "\\input{a}",
+        "digest": "27e07a53499deb36"
+      },
+      {
+        "file": "527f0358d893e072c9ba0ebd0a83892e",
+        "path": "fig/plot.png",
+        "kind": "blob",
+        "sha256": "0707070707070707070707070707070707070707070707070707070707070707"
+      }
+    ]
+  }
+}

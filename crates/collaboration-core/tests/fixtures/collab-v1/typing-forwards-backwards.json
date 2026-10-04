@@ -1,0 +1,40 @@
+{
+  "format": "collab-v1-fixture/1",
+  "name": "typing-forwards-backwards",
+  "description": "one peer types forwards and one backwards at the same spot, a key per op",
+  "generator": "rust oracle (crates/collaboration-core)",
+  "frames": [
+    "2c0000000501010001cfaddde4e1bb8dac970100012f537eddbfbc7b9864f6e7ff7a82f2c30100086d61696e2e746578",
+    "26000000050201012f537eddbfbc7b9864f6e7ff7a82f2c30101cfaddde4e1bb8dac9701000000022829",
+    "3b000000050301012f537eddbfbc7b9864f6e7ff7a82f2c30101cfaddde4e1bb8dac97010201cfaddde4e1bb8dac97010001cfaddde4e1bb8dac9701010166",
+    "3b000000050401012f537eddbfbc7b9864f6e7ff7a82f2c30101c3bcf0df80c291e4bf010001cfaddde4e1bb8dac97010001cfaddde4e1bb8dac9701010162",
+    "3b000000050501012f537eddbfbc7b9864f6e7ff7a82f2c30101cfaddde4e1bb8dac97010301cfaddde4e1bb8dac97010201cfaddde4e1bb8dac9701010166",
+    "3b000000050601012f537eddbfbc7b9864f6e7ff7a82f2c30101c3bcf0df80c291e4bf010101cfaddde4e1bb8dac97010001c3bcf0df80c291e4bf01000162",
+    "3b000000050701012f537eddbfbc7b9864f6e7ff7a82f2c30101cfaddde4e1bb8dac97010401cfaddde4e1bb8dac97010301cfaddde4e1bb8dac9701010166",
+    "3b000000050801012f537eddbfbc7b9864f6e7ff7a82f2c30101c3bcf0df80c291e4bf010201cfaddde4e1bb8dac97010001c3bcf0df80c291e4bf01010162",
+    "3b000000050901012f537eddbfbc7b9864f6e7ff7a82f2c30101cfaddde4e1bb8dac97010501cfaddde4e1bb8dac97010401cfaddde4e1bb8dac9701010166",
+    "3b000000050a01012f537eddbfbc7b9864f6e7ff7a82f2c30101c3bcf0df80c291e4bf010301cfaddde4e1bb8dac97010001c3bcf0df80c291e4bf01020162",
+    "3b000000050b01012f537eddbfbc7b9864f6e7ff7a82f2c30101cfaddde4e1bb8dac97010601cfaddde4e1bb8dac97010501cfaddde4e1bb8dac9701010166",
+    "3b000000050c01012f537eddbfbc7b9864f6e7ff7a82f2c30101c3bcf0df80c291e4bf010401cfaddde4e1bb8dac97010001c3bcf0df80c291e4bf01030162",
+    "3b000000050d01012f537eddbfbc7b9864f6e7ff7a82f2c30101cfaddde4e1bb8dac97010701cfaddde4e1bb8dac97010601cfaddde4e1bb8dac9701010166",
+    "3b000000050e01012f537eddbfbc7b9864f6e7ff7a82f2c30101c3bcf0df80c291e4bf010501cfaddde4e1bb8dac97010001c3bcf0df80c291e4bf01040162"
+  ],
+  "orders": [
+    [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13],
+    [13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0],
+    [3, 12, 6, 0, 7, 11, 9, 10, 5, 4, 13, 2, 8, 1, 3, 12, 3]
+  ],
+  "expected": {
+    "project_digest": "9ef3064dde96779c",
+    "filemap_digest": "9087f64daaf01b13",
+    "files": [
+      {
+        "file": "2f537eddbfbc7b9864f6e7ff7a82f2c3",
+        "path": "main.tex",
+        "kind": "text",
+        "text": "(ffffffbbbbbb)",
+        "digest": "eda70f12c3c3010b"
+      }
+    ]
+  }
+}
