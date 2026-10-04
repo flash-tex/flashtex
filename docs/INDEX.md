@@ -34,6 +34,7 @@ your task; do not load the entire repository history into every prompt.
 | The engine on Windows: `cmd.exe` shell escape caveats, owner-only sockets, `\pdfmatch`, what CI runs there | [docs/dev/engine-windows.md](dev/engine-windows.md) | mac-claude-a (ENGINE-PORTABILITY, WIN-HARDENING) |
 | Engine performance: how it is measured, and the committed baseline | [crates/perf-bench/README.md](../crates/perf-bench/README.md) | FT-070 perf lane |
 | CI, releases, website publication | [CI/CD](ci-cd.md) | Release lane (mac-ci-release) |
+| The no-TeX-Live bundle: licensing notice, contents, publishing as GitHub Release assets, the no-TeX-Live gate | [docs/distribution/texlive-bundle.md](distribution/texlive-bundle.md) | mac-claude-a (BUNDLE-PUBLISH) |
 | TeXpand: Emmet-style LaTeX abbreviations for the Mac/iPad editor (spec with FlashTeX adaptations, host findings, milestones) | [PLAN](texpand/PLAN.md), [HOST](texpand/HOST.md) | mac-claude-a (TEXPAND lane) |
 
 Some interface and decision directories will be created as implementation starts;

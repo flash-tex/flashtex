@@ -191,6 +191,15 @@ benchmarks, an adversarial review and preview-renderer measurements, all dated
   from GPL code.
 - **Ghostscript, if bundled for EPS** (Ventura removed native EPS conversion): AGPL,
   so run it strictly as a separate process.
+- **The no-TeX-Live bundle (§4.4) is TeX Live content, not FlashTeX code.** It carries whole,
+  unmodified TeX Live 2026 packages, each under its own licence (mostly LPPL; per package
+  in the release's `packages.tsv`, from TeX Live's package database). FlashTeX's MIT and
+  GPL licences do not cover these files and the bundle does not change their terms; nothing
+  is patched, so LPPL clause 6 never applies. Each release's notes state this, list every
+  package's licence, attach TeX Live's `LICENSE.TL` and `LICENSE.CTAN`, and point to TeX
+  Live's source and documentation containers and its Subversion repository. The app ships
+  only the lock (URL and digest); files are fetched after the user agrees
+  (docs/distribution/texlive-bundle.md).
 - **Naming:** never "TeX engine" or "pdfTeX" in product text. Use "pdfLaTeX-compatible".
 - **Linked upstream libraries inside the engine (measured choices, P3):** TeX Live
   2026's kpathsea (LGPL-2.1), zlib (zlib licence), libpng (libpng licence) and
@@ -289,7 +298,14 @@ benchmarks, an adversarial review and preview-renderer measurements, all dated
 - Prefer the user's TeX Live. Build our format from *their* `latex.ltx` and hyphenation
   patterns (about 4 s), cached by the content hash of every input. Use *their* `pdftex.map`.
 - **Fallback:** a content-addressed bundle (SHA-256-pinned, byte-range fetch, Tectonic
-  model) with a small core plus on-demand packages.
+  model) with a small core plus on-demand packages. **Hosted as GitHub Release assets on
+  flash-tex/flashtex** (owner, 2026-10-04; release asset downloads redirect to a CDN that
+  answers `Range` with 206, measured 2026-10-04): tag `texbundle-tl2026-<n>`, packed by
+  `bundle-publish.yml` from a pinned texlive/texlive image, whole packages only, two packs
+  byte-identical; the app ships `flashtex-bundle.lock` (`tools/bundle/tl2026/`) and asks
+  before the first download. `notex-gate.yml` compiles the parity fixtures and an arXiv
+  sample from the bundle on a Mac without TeX Live against pdflatex's PDFs from the same
+  tree, with known gaps (METAFONT fonts, EPS) listed until their lanes land.
 - TeX Live content is shipped or used **unmodified** only (LPPL clause 6 is never needed).
 
 ### 4.5 Determinism and safety
@@ -1033,6 +1049,7 @@ Rules:
 | 2026-10-04 | Typst host: comemo evict age 10 → 3, measured 2026-10-04 (300 pages: 1.31 → 0.87 GB RSS, flat, no measured latency cost), #1487; watchdog cold budget 180 s, set by the app from the last cold time in T2 (§15.2) | Commander (mac-claude-a), from evidence |
 | 2026-10-04 | R6 lifted: the owner asked (2026-10-04) to push Typst support forward, so T1 no longer waits for J1 and J3 to be staffed; lane TYPST-T0T1 finishes T0 (v3.3 in the shared spec and crate, the T0 gate measured) and starts T1. §15.9's other guard-rails stand: one Typst lane, path-filtered CI, no LaTeX path touched (§15.9, §15.10) | Commander (mac-claude-a), on owner direction |
 | 2026-10-04 | Guarded replay of macros with parameters (MACRO-REPLAY.md, §5.6 item 4): the macro passed as `(warning_index, ref_count, n)`; inputs captured or excluded per its §4; peak-capacity, leak and S₀-arming commit checks; a cheap ref-count ≥ pins invariant after every restore and jump in every build (exact walk in verify mode), failing closed by leaking the cache; gates (a)–(g) with faults. Approved after three design reviews | Commander (mac-claude-a), on owner direction (P6, 2026-10-04) |
+| 2026-10-04 | The no-TeX-Live bundle is hosted as GitHub Release assets on flash-tex/flashtex (byte ranges verified through the CDN redirect); packed from the pinned scheme-full texlive/texlive image (the parity job's scheme-medium image lacks 258 of the 464 packages the corpora read); licence notice in §3 (§4.4; lane BUNDLE-PUBLISH) | Owner decision; Commander (mac-claude-a) |
 
 ---
 
