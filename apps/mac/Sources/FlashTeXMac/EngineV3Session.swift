@@ -223,6 +223,12 @@ final class EngineV3Session {
     @ObservationIgnored private var hostBytes: [String: Int] = [:]
     /// Documents the fast path edited since the model last stored their text.
     @ObservationIgnored private var fastPending: Set<String> = []
+    /// The fast path's anchors per document (`EngineV3Edits.Anchors`), and
+    /// its last splice's check for the slow path: the byte offset, and the
+    /// UTF-8 of the text from up to 16 UTF-16 units before the edit through
+    /// what it inserted.
+    @ObservationIgnored private var fastAnchors: [String: EngineV3Edits.Anchors] = [:]
+    @ObservationIgnored private var fastCheck: [String: (offset: Int, bytes: [UInt8])] = [:]
     @ObservationIgnored private var project: EngineV3Mirror?
     /// The page the view shows (sent as `viewport`).
     @ObservationIgnored var visiblePage = 0
@@ -407,7 +413,7 @@ final class EngineV3Session {
         host?.terminate()
         host = nil
         phase = .idle
-        sentTexts = [:]; hostBytes = [:]; fastPending = []; compiledTexts = [:]; fastSentID = [:]; caretWindows = [:]; caretWindow = nil
+        sentTexts = [:]; hostBytes = [:]; fastPending = []; fastAnchors = [:]; fastCheck = [:]; compiledTexts = [:]; fastSentID = [:]; caretWindows = [:]; caretWindow = nil
         pages = [:]; stale = []; forms = [:]; pdfFallback = [:]
         pageCount = 0
         layoutRevision &+= 1
@@ -514,7 +520,7 @@ final class EngineV3Session {
         connection = nil
         host?.terminate()
         host = nil
-        sentTexts = [:]; hostBytes = [:]; fastPending = []; compiledTexts = [:]; fastSentID = [:]; caretWindows = [:]; caretWindow = nil
+        sentTexts = [:]; hostBytes = [:]; fastPending = []; fastAnchors = [:]; fastCheck = [:]; compiledTexts = [:]; fastSentID = [:]; caretWindows = [:]; caretWindow = nil
         guard !stopping, phase != .idle else { return }
         phase = .idle
         launchHost()
@@ -534,7 +540,7 @@ final class EngineV3Session {
             return
         }
         log("restarting the host: \(why)")
-        sentTexts = [:]; hostBytes = [:]; fastPending = []; compiledTexts = [:]; fastSentID = [:]; caretWindows = [:]; caretWindow = nil
+        sentTexts = [:]; hostBytes = [:]; fastPending = []; fastAnchors = [:]; fastCheck = [:]; compiledTexts = [:]; fastSentID = [:]; caretWindows = [:]; caretWindow = nil
         markStale(Set(pages.keys))
         phase = .idle
         launchHost()
@@ -675,6 +681,9 @@ final class EngineV3Session {
     /// path checks the fast path's byte count and resends the buffer if
     /// they ever disagree.
     private func storageEdited(_ storage: NSTextStorage) {
+        // A change the fast path does not send leaves its anchors stale.
+        var sent = false
+        defer { if !sent { fastAnchors = [:] } }
         guard phase == .ready, connection != nil, let model, model.engineV3Enabled, model.autoCompile, !exportRunning,
               storage.editedMask.contains(.editedCharacters) else { return }
         guard let tv = storage.layoutManagers.first?.textContainers.first?.textView,
@@ -688,20 +697,20 @@ final class EngineV3Session {
         guard r.location != NSNotFound, r.length <= 4096, oldLength >= 0, oldLength <= 4096 else { return }
         let now = MonotonicClock.nowNs()
         let text = storage.mutableString
-        let prefix = EngineV3Edits.utf8Count(text, NSRange(location: 0, length: r.location))
         let insert = text.substring(with: r)
-        let insertBytes = insert.utf8.count
-        let delete: Int
-        let total: Int
-        if oldLength == 0 {
-            delete = 0
-            total = base + insertBytes
-        } else {
-            let suffix = EngineV3Edits.utf8Count(text, NSRange(location: NSMaxRange(r), length: text.length - NSMaxRange(r)))
-            delete = base - prefix - suffix
-            total = prefix + insertBytes + suffix
-        }
+        let (prefix, delete, total, anchors) = EngineV3Edits.fastSplice(text: text, edited: r, delta: delta, base: base,
+                                                                        anchors: fastAnchors[path])
         guard delete >= 0, prefix + delete <= base else { return }
+        sent = true
+        fastAnchors = [path: anchors]
+        // What the slow path checks the model's text against (bytes, not a
+        // count: a wrong offset with the right total would go unseen).
+        let back = r.location - max(0, r.location - 16)
+        var c0 = r.location - back
+        if c0 > 0 { c0 = text.rangeOfComposedCharacterSequence(at: c0).location }
+        let around = text.substring(with: NSRange(location: c0, length: NSMaxRange(r) - c0))
+        let aroundBytes = Array(around.utf8)
+        fastCheck[path] = (prefix + insert.utf8.count - aroundBytes.count, aroundBytes)
         let key = consumeKeystroke(now: now)
         var req = request(model: model)
         req.edits = [DL3CompileRequest.Edit(path: path, offset: prefix, delete: delete, insert: insert)]
@@ -710,6 +719,19 @@ final class EngineV3Session {
         send(req, keystrokeNs: key, editNs: now, path: path)
         fastSentID[path] = req.id
         fastEditsSent &+= 1
+    }
+
+    /// The model's new text holds the fast path's last splice where it sent
+    /// it (`fastCheck`), byte for byte.
+    nonisolated static func fastCheckHolds(_ check: (offset: Int, bytes: [UInt8])?, _ text: String) -> Bool {
+        guard let check else { return true }
+        let u = text.utf8
+        guard check.offset >= 0, check.offset + check.bytes.count <= u.count else { return false }
+        if let ok = u.withContiguousStorageIfAvailable({ b in b[check.offset ..< check.offset + check.bytes.count].elementsEqual(check.bytes) }) {
+            return ok
+        }
+        let from = u.index(u.startIndex, offsetBy: check.offset)
+        return u[from...].prefix(check.bytes.count).elementsEqual(check.bytes)
     }
 
     private func consumeKeystroke(now: UInt64) -> UInt64 {
@@ -728,7 +750,7 @@ final class EngineV3Session {
         let path = model.activePath
         if let activeText, fastPending.contains(path) {
             fastPending.remove(path)
-            if activeText.utf8.count == hostBytes[path] {
+            if activeText.utf8.count == hostBytes[path], Self.fastCheckHolds(fastCheck[path], activeText) {
                 sentTexts[path] = activeText
                 // The fast path's compiles (and any sent since) read this text.
                 if let id = fastSentID[path] {
@@ -737,6 +759,7 @@ final class EngineV3Session {
                 return
             }
             // Out of step: resend the whole buffer.
+            fastAnchors = [:]
             log("fast path out of step for \(path) (\(hostBytes[path] ?? -1) bytes held, \(activeText.utf8.count) now); resending it")
             sentTexts[path] = nil
         }
@@ -1026,7 +1049,7 @@ final class EngineV3Session {
             // Emptied on the walk queue, before this project's walk (same serial queue): not on main.
             if let p = project { Self.walkQueue.async { p.clear() } }
             generation = model.projectGeneration
-            sentTexts = [:]; hostBytes = [:]; fastPending = []; compiledTexts = [:]; fastSentID = [:]; caretWindows = [:]; caretWindow = nil; inputsAtSync = nil
+            sentTexts = [:]; hostBytes = [:]; fastPending = []; fastAnchors = [:]; fastCheck = [:]; compiledTexts = [:]; fastSentID = [:]; caretWindows = [:]; caretWindow = nil; inputsAtSync = nil
             toolDiagnostics = []; texProblems = []; toolNote = nil; toolCycleID = -1
             if model.engineV3ResultStatus != nil { model.engineV3ResultStatus = nil } // another project: no "failed" of the last one's
             pages = [:]; stale = []; forms = [:]; pdfFallback = [:]; pageCount = 0; layoutRevision &+= 1
@@ -1113,6 +1136,7 @@ final class EngineV3Session {
             }
             sentTexts[doc.path] = doc.text
             hostBytes[doc.path] = doc.text.utf8.count
+            fastAnchors[doc.path] = nil
         }
         if reason == "edit", req.edits.isEmpty, req.buffers.isEmpty { return }
         if editsWaiting { editsWaiting = false }
@@ -1923,6 +1947,64 @@ enum EngineV3Edits {
         CFStringGetBytes(s as CFString, CFRange(location: range.location, length: range.length),
                          CFStringBuiltInEncodings.UTF8.rawValue, 0, false, nil, 0, &used)
         return used
+    }
+
+    /// Where the fast path last measured a document (lane LIVE-30MS), in the
+    /// text as it was after that edit: the UTF-8 bytes before UTF-16
+    /// position `prefix16` and from `suffix16` to the end. A keystroke then
+    /// counts only the text between an anchor and the edit, not the whole
+    /// document (a backspace counted every byte after it: 10 ms in a 4 MB
+    /// file). Valid while every change to the text goes through
+    /// `fastSplice` (the session drops them otherwise) and for the byte
+    /// length the host holds (`bytes`).
+    struct Anchors: Equatable {
+        var length16: Int
+        var bytes: Int
+        var prefix16: Int, prefix8: Int
+        var suffix16: Int, suffix8: Int
+    }
+
+    /// The fast path's splice: the byte offset of the edit, the bytes it
+    /// deleted, the text's byte length after it, and new anchors, from the
+    /// storage's new text, its edited range (new UTF-16 positions) and
+    /// change in length, and the byte length before (`base`). `anchors`
+    /// from the previous edit spare counting the text far from the edit; a
+    /// stale or unusable one is counted from the ends (the old way).
+    static func fastSplice(text: NSString, edited r: NSRange, delta: Int, base: Int,
+                           anchors: Anchors?) -> (prefix: Int, delete: Int, total: Int, anchors: Anchors) {
+        let length = text.length, oldLength = length - delta
+        let a = anchors.flatMap { $0.length16 == oldLength && $0.bytes == base ? $0 : nil }
+        // Before the edit the text is the old one: from an anchor at or
+        // before the edit (no edit since was before it), else from 0.
+        let prefix: Int
+        if let a, r.location >= a.prefix16 {
+            prefix = a.prefix8 + utf8Count(text, NSRange(location: a.prefix16, length: r.location - a.prefix16))
+        } else {
+            prefix = utf8Count(text, NSRange(location: 0, length: r.location))
+        }
+        let insertBytes = utf8Count(text, r)
+        let end = NSMaxRange(r), tail = length - end
+        let suffix: Int
+        if r.length - delta == 0 {
+            suffix = base - prefix // nothing deleted: every old byte after the edit
+        } else if let a, tail >= oldLength - a.suffix16 {
+            // the anchored end is after the edit (in the new text it starts
+            // at length - (oldLength - suffix16)), so unchanged
+            let from = length - (oldLength - a.suffix16)
+            suffix = a.suffix8 + utf8Count(text, NSRange(location: end, length: from - end))
+        } else {
+            suffix = utf8Count(text, NSRange(location: end, length: tail))
+        }
+        let delete = base - prefix - suffix
+        let total = prefix + insertBytes + suffix
+        // New anchors: the suffix at the edit's end; the prefix up to 256
+        // units before the edit (a few backspaces stay after it), on a
+        // character boundary (never inside a surrogate pair).
+        var p = max(0, r.location - 256)
+        if p > 0 { p = text.rangeOfComposedCharacterSequence(at: p).location }
+        let p8 = prefix - utf8Count(text, NSRange(location: p, length: r.location - p))
+        return (prefix, delete, total,
+                Anchors(length16: length, bytes: total, prefix16: p, prefix8: p8, suffix16: end, suffix8: suffix))
     }
 
     /// The shortest single splice turning `old` into `new` (common prefix
