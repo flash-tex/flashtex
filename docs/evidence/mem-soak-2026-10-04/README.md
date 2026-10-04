@@ -4,7 +4,8 @@ Lane **MEMORY-SAFETY** (mac-claude-a, mac-m1max-a). The owner asked for zero mem
 part soaks the resident engine host (`flashtex-host --socket`, crates/flashtex-engine): 600 to
 1,200 keystrokes through the socket, as the app sends them, and checks that the host's memory
 plateaus. DESIGN.md §5.2 (the budget drives retention), §1.2. Branch `agent/mac-claude-a/mem-soak`
-from `origin/main` `f2012b591`.
+from `origin/main` `f2012b591`, with #1493 (the parent's C-leak fixes) merged in: the plateau
+needs both.
 
 **Labels.** VERIFIED means measured here; the run and its file are named. BELIEF means an inference
 that was not measured.
@@ -163,7 +164,12 @@ tools/incr-bench/soak_gate.sh --build      # INCR_BENCH_DIR defaults to $RUNNER_
 | heap end | ≤ warm (edits 31-60) + 30 MB | **240 vs 96 + 30: fails** | 73.5 vs 66.8 + 30 |
 | footprint end (loose; what malloc does not see) | ≤ 1.5 × warm peak + 100 MB | 309 vs 492 | 168 vs 453 |
 
-The run took 134 s (fixed) and 266 s (main) at load 150. `tools/incr-bench/gates.sh` runs it as
+The run took 134 s (fixed) and 266 s (main) at load 150.
+
+`soak_gate.sh --build` itself, on this branch after merging #1493 (`9d6bea252`, load 30), passed:
+- heap 64.6 → 73.4 MB, slope 2.3 MB per 100 edits;
+- footprint 185 → 185 MB (peak 286);
+- 130 s (`raw/gate-merged.csv`). `tools/incr-bench/gates.sh` runs it as
 `soak`.
 
 **Why these numbers.** The fixed engine's 300-edit windows range from -1.2 to +3.3 MB per 100 edits,
