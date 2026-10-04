@@ -1024,6 +1024,7 @@ Rules:
 | 2026-10-02 | T4 decision 1: yes. A one-off v1 measurement is the evidence for new ≥ old on T4: 440 nightly-5k documents with both engines (#1315 5922325696), new 100 % L0–L3 and v1 ≤ 1.6 %. No recurring nightly v1 leg, because v1 is frozen to fixes only (D13). Re-measure v1 once, on the same 440, only if a D13 fix lands that touches typesetting broadly (#1382, local to operator names, does not). The board reads it from `tools/parity/baselines/t4-v1-oneoff.json` (#1457) ([#1319 5960583653](https://github.com/flash-tex/flashtex/issues/1319#issuecomment-5960583653); recorded 2026-10-03) | Commander (mac-claude-a), from evidence |
 | 2026-10-02 | Phase status updated with evidence (§12): P3 waits only on J1 (unclaimed); P4 lacks T7, cold reopen (101–365 ms at launch) and the in-app preamble row; P5's parity numbers are met on lane-run T4 (1,892/1,892 and 1,275/1,276 on one build) but nothing is gated, and its thresholds await the owner (Q3); P6 has early measured wins (#1309) | Commander (mac-claude-a), from evidence (reviews/2026-10-02.md) |
 | 2026-10-03 | P-T1 masks values assigned from `\pdfelapsedtime` (§1.1; #1462) | Commander (mac-claude-a) |
+| 2026-10-04 | R6 lifted: the owner asked (2026-10-04) to push Typst support forward, so T1 no longer waits for J1 and J3 to be staffed; lane TYPST-T0T1 finishes T0 (v3.3 in the shared spec and crate, the T0 gate measured) and starts T1. §15.9's other guard-rails stand: one Typst lane, path-filtered CI, no LaTeX path touched (§15.9, §15.10) | Commander (mac-claude-a), on owner direction |
 
 ---
 
@@ -1401,15 +1402,18 @@ Catcode-exact semantic highlighting is deferred until after L6 (hot-path cost).
 | **T2 App integration** | Typst documents open in the app behind a flag via the P3-APP-V3 client; version pin + current/previous hosts; package consent; last-good chip; cached rasters on reopen | App preview pixel-identical to typst-pdf at 2×/3× on the corpus; LaTeX TypingBench and preview gates unchanged; upgrade assistant diffs a 0.14→0.15 project |
 | **T3 Editing parity** | Language-provider refactor; `typst-syntax` library; `lang-v1` with typst-ide (+ optional tinymist-query); Settings › Languages; New Project picker; the §15.7 LaTeX items (item 1 before P5) | Every §15.6 feature available for both languages or explicitly hidden by capability; syntax tier < 1 ms per keystroke at 200 KB; semantic replies revision-bound; TypingBench no regression; LaTeX diagnostics carry a column on the fixtures tier |
 
-T0 may start only when LaTeX lanes are fully staffed (§15.9). No phase blocks any LaTeX
-phase.
+T0 may start only when LaTeX lanes are fully staffed (§15.9); the owner's 2026-10-04 direction
+overrides that hold for T0 and T1 (§13). No phase blocks any LaTeX phase.
 
 *Status (review 2026-10-02).* T0's host landed as #1303 (`typst-host/`, own workspace,
 `typst =0.15.1`, the extension as a HELLO-gated draft inside the host). Its
 `hello_negotiates_the_minor_version` test failed on main once #1296 made the reference client
-say `[3, 2]` (§6.1); #1335 renumbered the extension to 3.3 and main is green. The extension is
-not yet in the shared spec and crate, and T0's exit gate is not yet measured. **T1 waits until
-the P3/P5 lanes J1 and J3 are staffed** (§15.9; adopted 2026-10-01); J1 is still unclaimed.
+say `[3, 2]` (§6.1); #1335 renumbered the extension to 3.3 and main is green.
+*Update 2026-10-04:* **the owner's direction (2026-10-04) to push Typst forward lifts R6**
+(T1 waiting for J1 and J3; §13): lane TYPST-T0T1 moves the 3.3 extension into the shared spec
+(`docs/protocol/display-list-v3.md` §11) and the `flashtex-display-list` crate with the LaTeX
+pages unchanged, measures T0's exit gate (`docs/evidence/typst-t0-2026-10-04/`) and starts T1
+in the order of the table above, the positions checker first.
 
 ### 15.11 Owner decisions (2026-09-30)
 

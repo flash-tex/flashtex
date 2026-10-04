@@ -30,14 +30,14 @@ use std::time::Instant;
 
 use flashtex_display_list::frame::{read_frame, write_frame};
 use flashtex_display_list::json::Json;
-use flashtex_display_list::{kind, PROTOCOL, VERSION_MAJOR};
+use flashtex_display_list::{kind, PROTOCOL, VERSION_MAJOR, VERSION_MINOR};
 use typst::diag::{Severity, SourceDiagnostic, Warned};
 use typst::WorldExt;
 use typst_layout::PagedDocument;
 
 use crate::convert::{self, ClientCaps, Tables};
 use crate::world::{open_for_write, FontOptions, Fonts, HostWorld};
-use crate::{v33, TYPST_VERSION};
+use crate::TYPST_VERSION;
 
 pub struct Host {
     fonts: Fonts,
@@ -193,11 +193,11 @@ impl Host {
                     c.json(kind::ERROR, &err_json(None, "version", &m))?;
                     return c.flush();
                 }
-                let minor = (minor.clamp(0, v33::MINOR as i64)) as u32;
-                // Draft 3.3 opt-in (typst-host only): FONT `program_from`.
+                let minor = (minor.clamp(0, VERSION_MINOR as i64)) as u32;
+                // 3.3 `accept` (spec §11.7): FONT `program_from`.
                 let refs = minor >= 3
                     && j.as_ref()
-                        .and_then(|j| j.get("capabilities"))
+                        .and_then(|j| j.get("accept"))
                         .and_then(Json::as_array)
                         .is_some_and(|a| {
                             a.iter().any(|c| c.as_str() == Some(convert::PROGRAM_REFS))
@@ -578,7 +578,7 @@ fn simple_diag(id: i64, severity: &str, message: &str) -> Json {
     ])
 }
 
-/// `DIAGNOSTIC` (spec §6.4) with the 3.3-draft additions `column` (0-based
+/// `DIAGNOSTIC` (spec §6.4) with the 3.3 additions (§11.7) `column` (0-based
 /// byte column) and `hints`.
 fn diagnostic(id: i64, d: &SourceDiagnostic, w: &HostWorld) -> Json {
     let sev = match d.severity {

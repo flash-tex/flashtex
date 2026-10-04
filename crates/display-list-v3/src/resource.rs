@@ -2,6 +2,67 @@
 
 use crate::frame::{Cursor, Put};
 use crate::json::Json;
+use crate::sha256::Sha256;
+
+/// The key of a 3.3 `opentype` font instance with glyph ids (spec §11.1):
+/// SHA-256 over the format, the whole file's SHA-256, the face index and
+/// the variation coordinates in order (tag bytes, `f32` value).
+pub fn opentype_font_key(
+    program_sha256: &[u8; 32],
+    face_index: u32,
+    variations: &[([u8; 4], f32)],
+) -> [u8; 32] {
+    let mut h = Sha256::new();
+    h.update(b"display-list-v3 font\0");
+    h.update(b"opentype");
+    h.update(&[0]);
+    h.update(program_sha256);
+    h.update(b"\0face\0");
+    h.update(&face_index.to_le_bytes());
+    for (tag, v) in variations {
+        h.update(b"\0var\0");
+        h.update(tag);
+        h.update(&v.to_le_bytes());
+    }
+    h.finish()
+}
+
+/// A 3.3 `IMAGE_DATA` body (spec §11.5): the bytes of the IMAGE `id` that
+/// said `"data": true`: part 0 the image data, then the soft mask and the
+/// ICC profile when the IMAGE says so.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ImageData {
+    pub id: u32,
+    pub parts: Vec<Vec<u8>>,
+}
+
+impl ImageData {
+    pub fn encode(&self) -> Vec<u8> {
+        let mut o = Vec::new();
+        o.put_u32(self.id);
+        o.put_u32(self.parts.len() as u32);
+        for p in &self.parts {
+            o.put_u32(p.len() as u32);
+            o.extend_from_slice(p);
+        }
+        o
+    }
+
+    pub fn decode(body: &[u8]) -> Result<ImageData, String> {
+        let mut c = Cursor::new(body);
+        let id = c.u32()?;
+        let n = c.count(4)?;
+        let mut parts = Vec::with_capacity(n);
+        for _ in 0..n {
+            let len = c.u32()? as usize;
+            parts.push(c.take(len)?.to_vec());
+        }
+        if c.left() != 0 {
+            return Err("bytes after the last IMAGE_DATA part".into());
+        }
+        Ok(ImageData { id, parts })
+    }
+}
 
 /// A font resource: one PDF font object (pdfTeX's `/F<n>`), i.e. a font
 /// program and an encoding. Sizes are not part of it: every glyph's matrix
@@ -269,5 +330,29 @@ mod tests {
         assert!(a.ink(0, 0) && a.ink(8, 0) && a.ink(1, 1) && !a.ink(0, 1));
         assert!(Type3Bitmaps::decode(&p[..p.len() - 1]).is_err());
         assert!(Type3Bitmaps::decode(b"T3B1\xff\xff\xff\xff").is_err());
+    }
+
+    /// 3.3 (spec §11.1, §11.5).
+    #[test]
+    fn opentype_keys_and_image_data() {
+        let sha = [7u8; 32];
+        let a = opentype_font_key(&sha, 0, &[]);
+        assert_eq!(a, opentype_font_key(&sha, 0, &[]));
+        assert_ne!(a, opentype_font_key(&sha, 1, &[]));
+        assert_ne!(a, opentype_font_key(&sha, 0, &[(*b"wght", 700.0)]));
+        assert_ne!(
+            opentype_font_key(&sha, 0, &[(*b"wght", 700.0)]),
+            opentype_font_key(&sha, 0, &[(*b"wdth", 700.0)])
+        );
+        let d = ImageData {
+            id: 3,
+            parts: vec![vec![1, 2, 3], vec![], vec![9; 10]],
+        };
+        let b = d.encode();
+        assert_eq!(ImageData::decode(&b).unwrap(), d);
+        assert!(ImageData::decode(&b[..b.len() - 1]).is_err());
+        let mut long = b.clone();
+        long.push(0);
+        assert!(ImageData::decode(&long).is_err());
     }
 }

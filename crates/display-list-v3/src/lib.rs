@@ -33,8 +33,10 @@ pub const PROTOCOL: &str = "display-list-v3";
 /// Major version: a peer refuses any other.
 pub const VERSION_MAJOR: u32 = 3;
 /// Minor version: additions a peer may ignore (new sections, new JSON keys,
-/// new message kinds it does not understand).
-pub const VERSION_MINOR: u32 = 2;
+/// new message kinds it does not understand). 3.3 (spec §11) is the Typst
+/// host's additions; its item opcodes are sent only to a client that
+/// accepts them ([`accept`]), so a 3.3 peer without them sees 3.2.
+pub const VERSION_MINOR: u32 = 3;
 
 /// Scaled points per PDF point (big point): 65536 × 72.27 / 72, exactly
 /// 6578176/100.
@@ -51,6 +53,24 @@ pub use transport::widen_socket_buffers;
 /// The `HELLO` `accept` entry and host capability for `PROGRESS` (spec §6.8).
 pub const PROGRESS_CAPABILITY: &str = "progress-v1";
 
+/// 3.3 `HELLO` `accept` entries (spec §11.7): what a client draws. A host
+/// never sends an item opcode or message the client did not accept.
+pub mod accept {
+    /// COLORSPACES, FILL/STROKE_COLOR_CS, FILL/STROKE_ALPHA (§11.3).
+    pub const COLOR_SPACES: &str = "color-spaces";
+    /// LINE_STATE for stroked glyphs (§11.4).
+    pub const LINE_STATE: &str = "line-state";
+    /// IMAGE `data` + IMAGE_DATA, and PDF islands (§11.5).
+    pub const IMAGE_DATA: &str = "image-data";
+    /// FONT `program_from`: each font program once per connection (§11.1).
+    pub const FONT_PROGRAM_REFS: &str = "font-program-refs";
+    /// FONT with an empty program and a `file` the client reads (§11.1).
+    pub const FONT_FILES: &str = "font-files";
+}
+
+/// 3.3 host capability: the host answers RESOLVE and LOCATE (spec §11.6).
+pub const RESOLVE_CAPABILITY: &str = "resolve-v1";
+
 /// Message kinds (the byte after a frame's length).
 pub mod kind {
     // client -> host
@@ -58,6 +78,10 @@ pub mod kind {
     pub const COMPILE: u8 = 0x02;
     pub const CANCEL: u8 = 0x03;
     pub const BYE: u8 = 0x04;
+    /// 3.3: click -> source (spec §11.6).
+    pub const RESOLVE: u8 = 0x05;
+    /// 3.3: source -> page (spec §11.6).
+    pub const LOCATE: u8 = 0x06;
     // host -> client
     pub const HELLO: u8 = 0x41;
     pub const STARTED: u8 = 0x42;
@@ -74,6 +98,12 @@ pub mod kind {
     /// 3.2: an external tool (bibtex, biber, makeindex) the host runs for a
     /// compile: started, finished, or all settled (spec §6.4).
     pub const TOOL: u8 = 0x4C;
+    /// 3.3: an IMAGE's bytes (spec §11.5), right after its IMAGE.
+    pub const IMAGE_DATA: u8 = 0x4D;
+    /// 3.3: the reply to RESOLVE (spec §11.6).
+    pub const RESOLVED: u8 = 0x4E;
+    /// 3.3: the reply to LOCATE (spec §11.6).
+    pub const LOCATED: u8 = 0x4F;
     /// `diag-v1` (capability-gated, spec §6.7): one structured diagnostic.
     /// The diagnostics family has its own range (0x60..=0x6F) so that it
     /// never meets the page-protocol kinds of a later minor version.
@@ -92,6 +122,8 @@ pub mod kind {
             COMPILE => "compile",
             CANCEL => "cancel",
             BYE => "bye",
+            RESOLVE => "resolve",
+            LOCATE => "locate",
             HELLO => "hello",
             STARTED => "started",
             FONT => "font",
@@ -104,6 +136,9 @@ pub mod kind {
             ERROR => "error",
             PAGES => "pages",
             TOOL => "tool",
+            IMAGE_DATA => "image-data",
+            RESOLVED => "resolved",
+            LOCATED => "located",
             DIAG => "diag",
             PROGRESS => "progress",
             _ => "unknown",
