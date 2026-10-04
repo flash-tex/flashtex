@@ -80,7 +80,9 @@ class CaptureTest(unittest.TestCase):
         finally:
             shutil.rmtree(workdir, ignore_errors=True)
 
-    def test_capture_037_lastbox_single_shipout(self):
+    def test_capture_037_lastbox_two_shipouts(self):
+        # The case sets box 2 with \global (f3f2f3f14), so both \lsshipbox1
+        # and \lsshipbox2 ship a box: pdfTeX logs two shipouts.
         if shutil.which("pdftex") is None:
             self.skipTest("reference engine pdftex not on PATH")
         workdir = tempfile.mkdtemp(prefix="lockstep-test-037-")
@@ -93,9 +95,10 @@ class CaptureTest(unittest.TestCase):
             cap = lockstep_run.capture(tex, "pdftex", workdir)
             self.assertEqual(cap.returncode, 0)
             self.assertEqual(cap.log.count(
-                "Completed box being shipped out"), 1)
-            self.assertEqual(len(cap.boxes), 1)
-            self.assertIn("Completed box being shipped out", cap.boxes[0])
+                "Completed box being shipped out"), 2)
+            self.assertEqual(len(cap.boxes), 2)
+            for box in cap.boxes:
+                self.assertIn("Completed box being shipped out", box)
         finally:
             shutil.rmtree(workdir, ignore_errors=True)
 

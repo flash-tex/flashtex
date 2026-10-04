@@ -441,6 +441,8 @@ gate_parity_fixtures() {
 
 gate_parity_selftest() {
   python3 -m unittest discover -s tools/parity -p 'test_*.py'
+  # tools/lockstep's own tests (cases that need pdftex skip without it)
+  python3 -m unittest discover -s tools/lockstep -p 'test_*.py'
 }
 
 # ---------------------------------------------------------------------------
@@ -554,7 +556,7 @@ case "$TIER" in
     # that verify_bundle_resources.py pins by sha256; the copy must not drift.
     step "native-assets manifest handoff copy matches the pinned one" -- \
       cmp apps/mac/scripts/native-assets-manifest.json crates/rendering-core/docs/handoffs/native-assets/manifest.json
-    step "parity scoreboard self-tests" -- gate_parity_selftest
+    step "parity scoreboard and lockstep self-tests" -- gate_parity_selftest
     if [[ "$(uname -s)" == Darwin ]]; then
       step "parity fixtures hold their baseline" -- gate_parity_fixtures
     else
