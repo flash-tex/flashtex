@@ -1557,14 +1557,16 @@ fn shell_command(cmd: &[u8]) -> std::process::Command {
     crate::os::shell_command(cmd)
 }
 
-/// A command the run executed: `\write18` (`runsystem`), or the command
-/// behind `\input|cmd` or an `\openout` to `|cmd` (`runpopen`). Each is an
+/// A command the run executed: `\write18` (`runsystem`), the command
+/// behind `\input|cmd` or an `\openout` to `|cmd` (`runpopen`), or the
+/// editor (`calledit`). Each is an
 /// effect outside the engine's state, which an incremental rerun cannot
 /// replay from a snapshot.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ExternalEffect {
-    /// `write18`, `pipe-in`, `pipe-out`, or `mktex` (a file an mktex script
-    /// such as `mktextfm` made; `command` is then the file's name).
+    /// `write18`, `pipe-in`, `pipe-out`, `edit` (the editor command of `E`
+    /// at an error prompt), or `mktex` (a file an mktex script such as
+    /// `mktextfm` made; `command` is then the file's name).
     pub kind: &'static str,
     /// The command as executed (after restricted-mode quoting).
     pub command: Vec<u8>,
@@ -2499,6 +2501,116 @@ impl Globals {
             .collect();
         runsystem(&cmd)
     }
+
+    /// texmfmp.c's `calledit` (tex.ch [51.1333]), after `E` at an error
+    /// prompt: the editor command of `TEXEDIT` (the environment or
+    /// texmf.cnf, else web2c's default `vi +%d '%s'`), its `%s` the file
+    /// name `str_pool[s..s+l-1]` and its `%d` the line `n`, run by the
+    /// shell; then the program ends with status 1, whatever the editor did.
+    /// The input files need not be closed first, as `calledit` does: they
+    /// are only read, and the process ends.
+    pub fn call_edit(&mut self, s: i32, l: i32, n: i32) {
+        let name: Vec<u8> = (s..s + l)
+            .map(|k| self.xchr[self.str_pool[k as usize] as usize])
+            .collect();
+        let edit = texmf_var("TEXEDIT").unwrap_or_else(|| "vi +%d '%s'".into());
+        match edit_command(edit.as_bytes(), &name, n) {
+            Ok(cmd) => {
+                let _ = std::io::stdout().flush();
+                record_effect("edit", &cmd);
+                if c_system(&cmd) != 0 {
+                    eprintln!("! Trouble executing `{}'.", String::from_utf8_lossy(&cmd));
+                }
+            }
+            // kpathsea's FATAL: `%s: fatal: ` and `.\n` around the message.
+            Err(twice) => eprintln!(
+                "{}: fatal: call_edit: `%%{twice}' appears twice in editor command.",
+                invocation_name()
+            ),
+        }
+        exit_process(self, 1)
+    }
+}
+
+/// C's `system(3)`, as `calledit` calls it: `/bin/sh -c cmd` (the command
+/// ends at a NUL, as a C string does), with SIGINT and SIGQUIT ignored and
+/// SIGCHLD blocked in this process while it waits, and both signals back to
+/// their defaults in the child, so that Ctrl-C in the editor does not end
+/// the program before the editor does. Its result is the wait status (0
+/// when the command exited with 0).
+///
+/// `system` passes an ignored signal on to the command, and Rust's runtime
+/// ignores SIGPIPE in this program where pdfTeX leaves it at its default;
+/// so SIGPIPE is set to its default around the call and put back after it.
+/// (Only `SIG_IGN` or `SIG_DFL` is ever there, which `signal` restores
+/// exactly.)
+#[cfg(unix)]
+fn c_system(cmd: &[u8]) -> i32 {
+    use std::ffi::{c_char, c_int};
+    extern "C" {
+        fn system(command: *const c_char) -> c_int;
+        fn signal(sig: c_int, handler: usize) -> usize;
+    }
+    const SIGPIPE: c_int = 13; // the same on Linux, macOS and the BSDs
+    const SIG_DFL: usize = 0;
+    const SIG_ERR: usize = usize::MAX; // `(void (*)(int))-1`
+    let end = cmd.iter().position(|&b| b == 0).unwrap_or(cmd.len());
+    let c = std::ffi::CString::new(&cmd[..end]).expect("no NUL before `end`");
+    // SAFETY: `signal` with a valid signal number and `SIG_DFL`, then the
+    // disposition it returned; `system` gets a NUL-terminated string that
+    // outlives the call and keeps no pointer to it.
+    unsafe {
+        let old = signal(SIGPIPE, SIG_DFL);
+        let status = system(c.as_ptr());
+        if old != SIG_ERR {
+            signal(SIGPIPE, old);
+        }
+        status
+    }
+}
+
+/// Where there is no `/bin/sh` and no POSIX `system` (Windows, WASI): the
+/// shell `\write18` uses; a command that cannot start is a failure.
+#[cfg(not(unix))]
+fn c_system(cmd: &[u8]) -> i32 {
+    match shell_command(cmd).status() {
+        Ok(s) if s.success() => 0,
+        _ => 1,
+    }
+}
+
+/// `calledit`'s editor command: `%s` becomes `name`, `%d` the line `n`,
+/// each at most once (else `Err` names the letter), a `%` at the end stays,
+/// and `%` before anything else stays with what follows it.
+fn edit_command(edit: &[u8], name: &[u8], n: i32) -> Result<Vec<u8>, char> {
+    let (mut sdone, mut ddone) = (false, false);
+    let mut cmd = Vec::with_capacity(edit.len() + name.len() + 11);
+    let mut it = edit.iter().copied();
+    while let Some(c) = it.next() {
+        if c != b'%' {
+            cmd.push(c);
+            continue;
+        }
+        match it.next() {
+            Some(b'd') => {
+                if ddone {
+                    return Err('d');
+                }
+                cmd.extend_from_slice(n.to_string().as_bytes());
+                ddone = true;
+            }
+            Some(b's') => {
+                if sdone {
+                    return Err('s');
+                }
+                cmd.extend_from_slice(name);
+                sdone = true;
+            }
+            Some(c) => cmd.extend_from_slice(&[b'%', c]),
+            None => cmd.push(b'%'),
+        }
+    }
+    Ok(cmd)
 }
 
 // ---------------------------------------------------------------------------
