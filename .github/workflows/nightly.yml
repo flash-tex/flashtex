@@ -459,6 +459,13 @@ jobs:
           set -o pipefail
           INCR_BENCH_DIR="$RUNNER_TEMP/incr-bench-mem" tools/incr-bench/mem_gate.sh --build \
             | tee "$RUNNER_TEMP/mem-gate.txt"
+      # The soak: 600 edits on plain-120 through the socket; malloc's bytes in use (less the
+      # undo logs) must plateau, not grow (tools/incr-bench/soak_gate.sh; lane MEMORY-SAFETY,
+      # docs/evidence/mem-soak-2026-10-04/). About 130 s.
+      - name: "soak: 600 edits, the heap must plateau"
+        if: ${{ !cancelled() }}
+        timeout-minutes: 30
+        run: INCR_BENCH_DIR="$RUNNER_TEMP/incr-bench-soak" tools/incr-bench/soak_gate.sh --build
       - name: report
         if: always()
         run: |
@@ -519,6 +526,13 @@ jobs:
           set -o pipefail
           INCR_BENCH_DIR="$RUNNER_TEMP/incr-bench-mem" tools/incr-bench/mem_gate.sh --build \
             | tee "$RUNNER_TEMP/mem-gate.txt"
+      # The soak: 600 edits on plain-120 through the socket; malloc's bytes in use (less the
+      # undo logs) must plateau, not grow (tools/incr-bench/soak_gate.sh; lane MEMORY-SAFETY,
+      # docs/evidence/mem-soak-2026-10-04/). About 130 s.
+      - name: "soak: 600 edits, the heap must plateau"
+        if: ${{ !cancelled() }}
+        timeout-minutes: 30
+        run: INCR_BENCH_DIR="$RUNNER_TEMP/incr-bench-soak" tools/incr-bench/soak_gate.sh --build
       # The host under AddressSanitizer (vendored C included): the LaTeX format and an edit
       # session through the socket, with LeakSanitizer and a leak-growth check; then the
       # release host's unreachable memory over edit sessions by Apple's `leaks`, which found
