@@ -119,7 +119,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 @main
 struct FlashTeXMacApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
-    @State private var model = ShellModel()
+    @State private var model = ShellModel(startup: .untitledDocument) // no file open: the blank-article template (ProjectScaffold.swift)
     @StateObject private var nearby = NearbyState()
     @Environment(\.openWindow) private var openWindow
 
