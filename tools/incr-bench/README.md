@@ -50,6 +50,14 @@ at a half to a third of its speed (`docs/evidence/p4-finish-2026-09-30/raw/probe
 300 ms apart measure that; back-to-back ones do not. Soundness and convergence rates do not depend
 on load and run anywhere.
 
+On macOS the host's `DONE.stages` also carry the engine thread's **instruction counts**, which do not
+move with load either (`os::thread_counts`, the kernel's per-thread fixed counters; P6-HYPEROPT,
+`docs/evidence/p6-hyperopt-2026-10-04/`): `instr_k` and `cycles_k` for the whole compile,
+`first_page_instr_k`, `restore_instr_k`, `edited_instr_k` (from just before the restore to the
+edited page's shipout) and `test_instr_k` (the convergence tests), all in thousands. Compare
+engines by these on a loaded machine; quote wall times only from a quiet one. `dl3-keys --edit FILE`
+types in another file of the project than `--main` (a book's chapter).
+
 ## T7: the latency gate
 
 ```sh
