@@ -227,4 +227,24 @@ final class LiveShareEditorTests: XCTestCase {
         let after = b.tv.firstRect(forCharacterRange: NSRange(location: moved.location, length: 1), actualRange: nil)
         XCTAssertEqual(after.minY, before.minY, accuracy: 1, "the line did not jump on screen")
     }
+
+    /// Presence (proposal §4): Bob's selection appears in Alice's editor as a
+    /// coloured caret and tint, drawn by the overlay over the visible text,
+    /// and follows the text as Alice types before it.
+    func testTheOtherCaretIsDrawnAndFollowsTheText() async throws {
+        let (a, b, file) = try await pair("alpha beta gamma\n")
+        b.tv.setSelectedRange(NSRange(location: 6, length: 4)) // "beta"
+        try await waitUntil("presence") { a.link.session.remoteCursors(in: file).first?.range == 6..<10 }
+        let overlay = try XCTUnwrap(a.co.liveShare.overlay)
+        XCTAssertTrue(overlay.superview === a.tv)
+        overlay.display()
+        XCTAssertEqual(overlay.drawnCursors.map(\.name), ["Bob"])
+        XCTAssertEqual(overlay.drawnCursors.first?.range, 6..<10)
+        a.tv.setSelectedRange(NSRange(location: 0, length: 0))
+        try await type(">> ", a)
+        overlay.display()
+        XCTAssertEqual(overlay.drawnCursors.first?.range, 9..<13, "the caret stays on Bob's text")
+        XCTAssertNil(overlay.hitTest(NSPoint(x: 10, y: 10)), "clicks go to the text")
+    }
 }
+

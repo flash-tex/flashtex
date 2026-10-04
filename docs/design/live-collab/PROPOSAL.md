@@ -726,3 +726,43 @@ amending B2 to take Yrs.
 3. Carets and selections from `awareness`.
 4. Converged text into the edit ledger, with its durable undo off in sessions (Q6).
 5. The §7.3 editor integration suite, and the P1 latency gates.
+
+### 10.3 P1 (lane LIVE-SHARE-P1): built, behind Settings ▸ Live Share (preview), off by default
+
+Three stacked PRs: #1530 (transport and session layer, `FlashTeXCollabSession`, collab-v1 §7),
+#1534 (editor integration), and the presence/UI PR. What is in:
+
+- Transport as §3.1–§3.3: TLS 1.3 only, with the hub's in-memory P-256 identity pinned by its SPKI
+  SHA-256; single-use 10-minute invites with host approval (edit, view or deny); token reconnect with
+  backoff and two-way state-vector resync; replica binding; presence fan-out.
+- Editor as §2.4: local edits are taken from the text storage one at a time (IME steps are held back
+  until commit). Remote operations are applied as minimal storage edits, never `tv.string`, with
+  marks, closers and folds shifted, the selection restored by relative position and the viewport kept.
+  Remote operations wait while the local user composes. ⌘Z is local-only and coalesced through
+  `TextUndoManager`. The edit ledger's durable undo is refused during a session (Q6).
+- Presence as §4: carets, selections and fading name flags drawn by an overlay over the visible text;
+  participants in the status bar and the session panel.
+- Compile as §5.2: each Mac compiles its own converged copy; a guest's copy is a normal project under
+  Application Support/FlashTeX/Collab/<instance>/<session>.
+- Two instances on one Mac: the invite names the host machine, and a guest on that machine connects
+  over loopback (`FLASHTEX_INSTANCE` keeps the copies apart).
+
+Measured on mac-m1max-a: a remote keystroke reaches the other editor in p50 6.2 ms and p95 ≤ 7.5 ms
+over loopback TLS (n = 200). These are upper bounds that include up to 5 ms of test polling. LAN
+latency was not measured. Tests: 14 session tests over loopback TLS, 7 hosted two-editor tests and 5
+controller tests (host and guest `ShellModel`s). A two-process smoke run of the packaged app (host plus
+guest instance, invite by file, debug-only auto-approve) converged to disk.
+
+Deviations and follow-ups (not in P1):
+
+- P1 shares every text source of the project (not one file), but no binary files. Figures and blob
+  sync are P2.
+- The outbox is in memory. An app crash loses unacknowledged edits; the durable outbox and the session
+  op log of §2.4 are follow-ups.
+- Session pins (§5.3) are sent in `join_ack` but not yet applied to compiles. The engine host already
+  honours `SOURCE_DATE_EPOCH`/`FORCE_SOURCE_DATE`; applying them needs a host restart on join.
+- The IME rule waits for the commit. The 2 s partial-apply bound of §2.4 is not implemented.
+- Not done yet: accessibility of remote carets (the rotor entry, the "Bob edited line 42" coalescing),
+  follow mode, and per-file avatars in tabs.
+- New files, renames and deletes made during a session are not shared; the file map supports them.
+- Not measured: the 30-minute ledger soak and LAN latency.

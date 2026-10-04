@@ -55,9 +55,13 @@ final class LiveShareEditorState {
     var dirty: (location: Int, oldLength: Int, newLength: Int)?
     /// Remote change batches applied (tests and evidence).
     var remoteApplies = 0
+    /// Other participants' carets (nil outside a session).
+    var overlay: LiveShareCursorOverlay?
+    var presenceObserver: NSObjectProtocol?
 
     deinit {
         if let observer { NotificationCenter.default.removeObserver(observer) }
+        if let presenceObserver { NotificationCenter.default.removeObserver(presenceObserver) }
     }
 }
 
@@ -74,6 +78,10 @@ extension SourceEditorView.Coordinator: CollabTextHost {
                 old.binding.attach(nil)
                 if let o = st.observer { NotificationCenter.default.removeObserver(o) }
                 st.observer = nil
+                if let o = st.presenceObserver { NotificationCenter.default.removeObserver(o) }
+                st.presenceObserver = nil
+                st.overlay?.removeFromSuperview()
+                st.overlay = nil
             }
             st.link = link
             st.dirty = nil
@@ -94,6 +102,16 @@ extension SourceEditorView.Coordinator: CollabTextHost {
             }
             link.binding.attach(self)
             adoptViewText(tv, into: link)
+            let overlay = LiveShareCursorOverlay(frame: tv.bounds)
+            overlay.autoresizingMask = [.width, .height]
+            overlay.textView = tv
+            overlay.cursors = { [weak link] in link.map { $0.session.remoteCursors(in: $0.file) } ?? [] }
+            tv.addSubview(overlay)
+            st.overlay = overlay
+            st.presenceObserver = NotificationCenter.default.addObserver(
+                forName: .liveSharePresenceChanged, object: link.session, queue: nil
+            ) { [weak overlay] _ in MainActor.assumeIsolated { overlay?.needsDisplay = true } }
+            link.session.setLocalPresence(file: link.file, selection: collabSelection)
         } else if textReset, let link {
             // A reload or revert of the same file replaced the buffer: the
             // difference is a local edit.
@@ -131,6 +149,7 @@ extension SourceEditorView.Coordinator: CollabTextHost {
             st.dirty = e
         }
         if textView?.hasMarkedText() != true { collabFlushLocalEdits() }
+        st.overlay?.needsDisplay = true // remote carets move with the text
     }
 
     func collabFlushLocalEdits() {
@@ -211,6 +230,7 @@ extension SourceEditorView.Coordinator: CollabTextHost {
         if let anchor, let top { restoreViewport(tv, index: top, offset: anchor.offset) }
         tv.didChangeText() // gutter, folds, syntax flush; `commitUserChange` is skipped (programmatic)
         st.remoteApplies += 1
+        st.overlay?.needsDisplay = true
         let s = SourceEditorView.nativeText(of: tv)
         lastKnownText = s
         parent.text = s // the model, the engine and autosave follow as for typing
@@ -238,5 +258,99 @@ extension SourceEditorView.Coordinator: CollabTextHost {
         let y = line.minY + tv.textContainerInset.height - offset
         guard abs(y - tv.visibleRect.minY) > 0.5 else { return }
         tv.scroll(NSPoint(x: tv.visibleRect.minX, y: max(0, y)))
+    }
+}
+
+/// Other participants' carets and selections over the editor (proposal §4):
+/// a transparent, click-through subview of the text view that draws, over
+/// the visible text only, each selection as a tint and each caret as a bar
+/// in that person's colour, with a name flag that shows while they move and
+/// fades 2.5 s after. Nothing touches the text storage or its attributes.
+@MainActor
+final class LiveShareCursorOverlay: NSView {
+    weak var textView: NSTextView?
+    var cursors: () -> [CollabSession.RemoteCursor] = { [] }
+    /// Cursors drawn by the last pass (tests and evidence).
+    private(set) var drawnCursors: [CollabSession.RemoteCursor] = []
+    private var fade: Timer?
+    static let flagSeconds: TimeInterval = 2.5
+
+    override var isFlipped: Bool { true }
+    override func hitTest(_ point: NSPoint) -> NSView? { nil }
+    override func isAccessibilityElement() -> Bool { false }
+
+    override func draw(_ dirtyRect: NSRect) {
+        guard let tv = textView, let lm = tv.layoutManager, let tc = tv.textContainer, let storage = tv.textStorage else { return }
+        let all = cursors()
+        drawnCursors = []
+        guard !all.isEmpty else { return }
+        let origin = tv.textContainerOrigin
+        let length = storage.length
+        let visibleGlyphs = lm.glyphRange(forBoundingRect: tv.visibleRect.offsetBy(dx: -origin.x, dy: -origin.y), in: tc)
+        let visible = lm.characterRange(forGlyphRange: visibleGlyphs, actualGlyphRange: nil)
+        let lo = max(0, visible.location - 200)
+        let window = NSRange(location: lo, length: min(length, NSMaxRange(visible) + 200) - lo)
+        var nextFade: TimeInterval?
+        for c in all where c.range.upperBound <= length && c.head <= length {
+            let colour = LiveShareColours.colour(c.colourIndex)
+            let sel = NSIntersectionRange(NSRange(location: c.range.lowerBound, length: c.range.count), window)
+            if sel.length > 0 {
+                let glyphs = lm.glyphRange(forCharacterRange: sel, actualCharacterRange: nil)
+                colour.withAlphaComponent(0.22).setFill()
+                lm.enumerateEnclosingRects(forGlyphRange: glyphs, withinSelectedGlyphRange: NSRange(location: NSNotFound, length: 0),
+                                           in: tc) { rect, _ in
+                    let r = rect.offsetBy(dx: origin.x, dy: origin.y)
+                    if r.intersects(dirtyRect) { r.fill(using: .sourceOver) }
+                }
+            }
+            guard NSLocationInRange(c.head, window) || c.head == NSMaxRange(window),
+                  let caret = caretRect(c.head, length: length, lm: lm, tc: tc, storage: storage, origin: origin) else { continue }
+            drawnCursors.append(c)
+            colour.setFill()
+            NSRect(x: caret.minX - 1, y: caret.minY, width: 2, height: caret.height).fill()
+            if c.idle < Self.flagSeconds {
+                drawFlag(c.name, colour: colour, above: caret)
+                let left = Self.flagSeconds - c.idle
+                nextFade = min(nextFade ?? left, left)
+            }
+        }
+        fade?.invalidate()
+        if let nextFade {
+            let t = Timer(timeInterval: nextFade + 0.05, repeats: false) { [weak self] _ in
+                MainActor.assumeIsolated { self?.needsDisplay = true }
+            }
+            RunLoop.main.add(t, forMode: .common)
+            fade = t
+        }
+    }
+
+    private func caretRect(_ head: Int, length: Int, lm: NSLayoutManager, tc: NSTextContainer, storage: NSTextStorage,
+                           origin: NSPoint) -> NSRect? {
+        let fontHeight = (textView?.font).map { lm.defaultLineHeight(for: $0) } ?? 14
+        if length == 0 { return NSRect(x: origin.x + tc.lineFragmentPadding, y: origin.y, width: 1, height: fontHeight) }
+        if head < length {
+            let g = lm.glyphIndexForCharacter(at: head)
+            let line = lm.lineFragmentRect(forGlyphAt: g, effectiveRange: nil)
+            let loc = lm.location(forGlyphAt: g)
+            return NSRect(x: origin.x + line.minX + loc.x, y: origin.y + line.minY, width: 1, height: line.height)
+        }
+        if (storage.string as NSString).character(at: length - 1) == 10 {
+            let extra = lm.extraLineFragmentRect
+            guard extra != .zero else { return nil }
+            return NSRect(x: origin.x + extra.minX + tc.lineFragmentPadding, y: origin.y + extra.minY, width: 1, height: extra.height)
+        }
+        let g = lm.glyphIndexForCharacter(at: length - 1)
+        let r = lm.boundingRect(forGlyphRange: NSRange(location: g, length: 1), in: tc)
+        return NSRect(x: origin.x + r.maxX, y: origin.y + r.minY, width: 1, height: r.height)
+    }
+
+    private func drawFlag(_ name: String, colour: NSColor, above caret: NSRect) {
+        let attrs: [NSAttributedString.Key: Any] = [.font: NSFont.systemFont(ofSize: 10, weight: .semibold), .foregroundColor: NSColor.white]
+        let text = NSAttributedString(string: name, attributes: attrs)
+        let size = text.size()
+        let box = NSRect(x: caret.minX - 1, y: max(0, caret.minY - size.height - 2), width: size.width + 8, height: size.height + 2)
+        colour.setFill()
+        NSBezierPath(roundedRect: box, xRadius: 3, yRadius: 3).fill()
+        text.draw(at: NSPoint(x: box.minX + 4, y: box.minY + 1))
     }
 }

@@ -32,6 +32,13 @@ public final class CollabSession {
         public var name: String
         public var colourIndex: Int
         public var isLocal: Bool
+
+        public init(id: UInt64, name: String, colourIndex: Int, isLocal: Bool) {
+            self.id = id
+            self.name = name
+            self.colourIndex = colourIndex
+            self.isLocal = isLocal
+        }
     }
 
     /// Another participant's caret or selection in one file, resolved now.
