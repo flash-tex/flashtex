@@ -159,6 +159,31 @@ the C program is the one TeX Live ships:
   emitter refuses it (none occurs except on literals, which web2c reads as
   negative constants).
 
+## What xetex.web needs beyond pdftex.web
+
+`third_party/xetex/xetex.web` (the XeTeX port, `crates/flashtex-xetex`,
+`docs/design/xetex/PLAN.md`) is web2c Pascal too, closer to C still. Each of
+these is something `pdftex.web` never does, so its translation is unchanged
+(the drift test regenerates it byte for byte):
+
+- **A local `const` section** (`load_native_font`): integer constants of a
+  routine, each use replaced by its value.
+- **C's `break`**: a statement `break` without an argument leaves the
+  innermost loop (`if q = p then break`); with an argument it is still
+  Pascal's `break(f)`.
+- **`addressof(x)` as an argument**: `x` passed to a `var` parameter, which
+  is how the C routine that writes through the pointer is declared.
+- **`--first-string N`**: the number of the first multi-character pool
+  string. TeX Live tangles xetex.web with Omega's `otangle`, which starts at
+  65536 (XeTeX's first 65536 strings are its characters); TANGLE's 256
+  stays the default.
+- **A unary minus before `and`**: Pascal reads `-a and b` as `-(a and b)`,
+  web2c's C as `(-a) && b`. It happens where a macro is a negative number
+  (xetex.web's `null` is `-"FFFFFFF`), so it is refused like the other
+  precedence clashes, and a change file adds the parentheses.
+
+The XeTeX port's drift test is the second test of `tests/drift.rs`.
+
 The tangle stage needed nothing new: `web2rust --pool --emit-pascal` on
 `pdftex.web` agrees with TANGLE 4.6 (TeX Live 2026) exactly, 230,400 tokens
 and a byte-identical pool (1795 strings, checksum `400476366`), checked

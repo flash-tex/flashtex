@@ -51,6 +51,10 @@ struct Args {
     /// constants; its region of the engine's word space is reserved for
     /// elements `0..EXPR` (see emit.rs, "the word space").
     arena_caps: Vec<(String, String)>,
+    /// `--first-string N`: the number of the first multi-character pool
+    /// string (256, TANGLE's; 65536 for xetex.web, as `otangle` numbers
+    /// them).
+    first_string: i64,
 }
 
 fn parse_args() -> Result<Args, String> {
@@ -88,6 +92,7 @@ fn parse_args() -> Result<Args, String> {
         scalars: vec![],
         arena_caps: vec![],
         index_type: None,
+        first_string: 256,
     };
     while let Some(arg) = it.next() {
         match arg.as_str() {
@@ -132,6 +137,10 @@ fn parse_args() -> Result<Args, String> {
                 a.arena_caps.push((n.to_string(), e.to_string()));
             }
             "--index-type" => a.index_type = Some(it.next().ok_or("--index-type needs a path")?),
+            "--first-string" => {
+                let v = it.next().ok_or("--first-string needs a number")?;
+                a.first_string = v.parse().map_err(|_| format!("--first-string: not a number: {v}"))?;
+            }
             "--stat" => a.stat = true,
             "--debug" => a.debug = true,
             s if s.starts_with("--") => return Err(format!("unknown option {s}")),
@@ -184,6 +193,7 @@ fn main() -> ExitCode {
         stat: args.stat,
         debug: args.debug,
         macros: args.macros.clone(),
+        first_string: args.first_string,
     };
     let t = tangle::tangle(&src, opts);
     eprintln!(

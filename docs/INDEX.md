@@ -29,6 +29,7 @@ your task; do not load the entire repository history into every prompt.
 | Shared interfaces | `docs/contracts/<interface>.md` when created | Assigned interface owner |
 | Durable decisions | `docs/decisions/<id>-<topic>.md` when created | Decision owner |
 | Reproduction evidence / large outputs | Paths linked from the relevant handoff | Producing agent |
+| XeTeX port (custom fonts, OpenType, math): plan, phases S0–S3, S0 results; the crate, its change files and its lockstep gate | [docs/design/xetex/PLAN.md](design/xetex/PLAN.md), [crates/flashtex-xetex/changes/README.md](../crates/flashtex-xetex/changes/README.md), [tools/xetex-lockstep](../tools/xetex-lockstep/README.md) | mac-claude-a (XETEX-S0) |
 | Engine performance: how it is measured, and the committed baseline | [crates/perf-bench/README.md](../crates/perf-bench/README.md) | FT-070 perf lane |
 | CI, releases, website publication | [CI/CD](ci-cd.md) | Release lane (mac-ci-release) |
 | TeXpand: Emmet-style LaTeX abbreviations for the Mac/iPad editor (spec with FlashTeX adaptations, host findings, milestones) | [PLAN](texpand/PLAN.md), [HOST](texpand/HOST.md) | mac-claude-a (TEXPAND lane) |
