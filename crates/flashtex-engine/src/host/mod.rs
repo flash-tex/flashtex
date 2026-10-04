@@ -515,9 +515,19 @@ pub fn make_key(
             .filter(|f| !open_paths.contains(&f.path))
             .map(|f| (f.path.clone(), f.hash, f.stat))
             .collect();
+        // (the journal lists a repeated lookup each time; the key once)
+        let mut lookup_seen = std::collections::HashSet::new();
         let lookups: Vec<(String, u8, Option<bool>, Option<String>)> = reads.lookups
             [..nl.min(reads.lookups.len())]
             .iter()
+            .filter(|l| {
+                lookup_seen.insert((
+                    l.name.clone(),
+                    format_index(l.format),
+                    l.must_exist,
+                    l.found.clone(),
+                ))
+            })
             .map(|l| {
                 (
                     l.name.clone(),
