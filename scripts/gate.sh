@@ -270,6 +270,11 @@ gate_fmt() {
   fi
   while IFS= read -r f; do
     [[ -f "$f" ]] || continue
+    # tools/web2rust's output (the engines' src/generated/) is never edited
+    # and never formatted: its drift test, not rustfmt, says what it must be.
+    if [[ "$(head -n 1 "$f")" == "// GENERATED FILE -- DO NOT EDIT." ]]; then
+      continue
+    fi
     ed=2021
     crate="$(printf '%s\n' "$f" | awk -F/ '$1=="crates" {print $2}')"
     if [[ -n "$crate" && -f "crates/$crate/Cargo.toml" ]]; then
