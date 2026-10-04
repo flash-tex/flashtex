@@ -41,6 +41,12 @@ pub enum Event {
     Tool(Json),
     /// `diag-v1` (spec §6.7), for a client that accepted it.
     Diag(crate::diag::Diag),
+    /// 3.3: an IMAGE's bytes (spec §11.5), for a client that accepted
+    /// `image-data`.
+    ImageData(crate::resource::ImageData),
+    /// 3.3: the reply to RESOLVE or LOCATE (spec §11.6).
+    Resolved(Json),
+    Located(Json),
     /// A kind this version does not know (a later minor version's): skip.
     Other(u8, Vec<u8>),
 }
@@ -63,6 +69,9 @@ pub fn decode_event(k: u8, body: Vec<u8>) -> Result<Event, String> {
         kind::PAGES => Event::Pages(json(&body)?),
         kind::TOOL => Event::Tool(json(&body)?),
         kind::DIAG => Event::Diag(crate::diag::Diag::decode(&body)?),
+        kind::IMAGE_DATA => Event::ImageData(crate::resource::ImageData::decode(&body)?),
+        kind::RESOLVED => Event::Resolved(json(&body)?),
+        kind::LOCATED => Event::Located(json(&body)?),
         _ => Event::Other(k, body),
     })
 }

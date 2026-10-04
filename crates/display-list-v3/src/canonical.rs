@@ -19,6 +19,11 @@
 //!   unsupported h(UTF-8 TEXT)
 //!   o b(X) b(Y)              (one per GLYPH, in item order, when the page has ORIGINS)
 //!   rg b(E) b(F) b(..) ×5    (one per RULE, in item order, when the page has RULE_GEOMETRY)
+//!   3.3: fillcs CS N b(..).. | strokecs CS N b(..).. | ca b(A) | CA b(A)
+//!        | ls b(w) CAP JOIN b(miter) N b(dash).. b(phase)      (items)
+//!   meta h(JSON)             (when the page has PAGE_META)
+//!   cs icc N h(sha256(PROFILE)) | cs sep h(NAME) ALT M b(c0).. b(c1).. b(e)
+//! imagedata ID N h(sha256(PART))..   (3.3)
 //! font ID h(KEY) PROGRAM_BYTES h(sha256(PROGRAM)) FORMAT
 //!   enc NAME0 .. NAME255     (only when the font has an `encoding`; `-` for a missing name)
 //! sources
@@ -30,7 +35,7 @@
 
 use crate::client::{decode_event, Event};
 use crate::kind;
-use crate::page::{Item, Page, Seg};
+use crate::page::{ColorSpace, Item, Page, Seg};
 use crate::sha256::{hex, sha256};
 use std::fmt::Write;
 
@@ -137,6 +142,35 @@ fn page(o: &mut String, tag: &str, p: &Page) {
             Item::Span(n) => writeln!(o, "span {n}"),
             Item::TextRender(m) => writeln!(o, "tr {m}"),
             Item::Unsupported(n) => writeln!(o, "u {n}"),
+            Item::FillColorCs { cs, color } | Item::StrokeColorCs { cs, color } => {
+                let name = if matches!(it, Item::FillColorCs { .. }) {
+                    "fillcs"
+                } else {
+                    "strokecs"
+                };
+                let _ = write!(o, "{name} {cs} {}", color.0.len());
+                for v in &color.0 {
+                    let _ = write!(o, " {}", b(*v));
+                }
+                writeln!(o)
+            }
+            Item::FillAlpha(a) => writeln!(o, "ca {}", b(*a)),
+            Item::StrokeAlpha(a) => writeln!(o, "CA {}", b(*a)),
+            Item::LineState(s) => {
+                let _ = write!(
+                    o,
+                    "ls {} {} {} {} {}",
+                    b(s.width),
+                    s.cap,
+                    s.join,
+                    b(s.miter),
+                    s.dash.len()
+                );
+                for d in &s.dash {
+                    let _ = write!(o, " {}", b(*d));
+                }
+                writeln!(o, " {}", b(s.phase))
+            }
         };
     }
     for l in &p.links {
@@ -177,6 +211,33 @@ fn page(o: &mut String, tag: &str, p: &Page) {
         let v: Vec<String> = g.iter().map(|x| b(*x)).collect();
         let _ = writeln!(o, "rg {}", v.join(" "));
     }
+    if let Some(m) = &p.meta {
+        let _ = writeln!(o, "meta {}", h(m.as_bytes()));
+    }
+    for cs in &p.colorspaces {
+        let _ = match cs {
+            ColorSpace::Icc { n, profile } => {
+                writeln!(o, "cs icc {n} {}", hex(&sha256(profile)))
+            }
+            ColorSpace::Separation {
+                name,
+                alternate,
+                c0,
+                c1,
+                e,
+            } => {
+                let v: Vec<String> = c0.iter().chain(c1).map(|x| b(*x)).collect();
+                writeln!(
+                    o,
+                    "cs sep {} {alternate} {} {} {}",
+                    h(name.as_bytes()),
+                    c0.len(),
+                    v.join(" "),
+                    b(*e)
+                )
+            }
+        };
+    }
 }
 
 /// The canonical text of one frame (`k`, `body`), or the decoder's error.
@@ -215,6 +276,13 @@ pub fn canonical(k: u8, body: Vec<u8>) -> Result<String, String> {
             for (id, file, line) in &s.spans {
                 let _ = writeln!(o, "span {id} {file} {line}");
             }
+        }
+        Event::ImageData(d) => {
+            let _ = write!(o, "imagedata {} {}", d.id, d.parts.len());
+            for p in &d.parts {
+                let _ = write!(o, " {}", hex(&sha256(p)));
+            }
+            o.push('\n');
         }
         Event::Other(k, _) => {
             let _ = writeln!(o, "other {k} {len}");

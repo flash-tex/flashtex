@@ -2,7 +2,7 @@
 
 This is FlashTeX's Typst engine host, phase T0 of [DESIGN.md §15](../docs/design/engine-v2/DESIGN.md) (with the phased §15 from PR #1264).
 
-It runs as a separate process, one per open Typst document. It speaks the engine-host socket protocol of [`display-list-v3`](../docs/protocol/display-list-v3.md) §6, the same one `flashtex-host` speaks for LaTeX, and streams display-list pages. A client that says `[3, 3]` in its `HELLO` also gets the draft Typst additions (§15.4, drafted there as 3.2; 3.2 is now external tools, #1296), which are described in `src/v33.rs`.
+It runs as a separate process, one per open Typst document. It speaks the engine-host socket protocol of [`display-list-v3`](../docs/protocol/display-list-v3.md) §6, the same one `flashtex-host` speaks for LaTeX, and streams display-list pages. A client that says `[3, 3]` in its `HELLO` also gets the Typst additions of DESIGN.md §15.4, now version 3.3 of the shared specification ([§11](../docs/protocol/display-list-v3.md)) and of the `flashtex-display-list` crate.
 
 - **Licence:** our code is MIT. It links the unmodified Apache-2.0 `typst` crates, pinned exactly at `=0.15.1`, plus the MIT `flashtex-display-list`. It never links or copies from `crates/flashtex-engine`: `scripts/check-license-boundary.sh`, check D, enforces that. Obligations are listed in [NOTICE](NOTICE) and [licenses/](licenses/).
 - **Workspace:** it has its own workspace, `Cargo.lock` and target directory, and is never a member of the root workspace (§15.2). LaTeX builds, tests and perf baselines never see Typst's dependency tree.
@@ -28,7 +28,7 @@ target/release/flashtex-typst-host --socket /tmp/t.sock --font-path DIR [--no-sy
 - **`World`:** every path is confined to the canonical project root, so symlinks cannot escape it. `@preview` packages are refused and the network is never used. Fonts come from files only, because the host is built without `embedded-fonts`.
 - **Writes (`buffers`, `edits`):** these never follow a symlink. The path is walked from the root with `openat`, every component opened `O_NOFOLLOW`, and the opened descriptor's own path is re-checked against the root before anything is truncated. A file with more than one hard link is refused.
 - **Fonts on the wire:** there is one FONT frame per font instance (program, face and variation coordinates). Each program is hashed and held once per connection.
-  - A client whose HELLO lists the draft capability `font-program-refs` gets each program once; later instances carry `program_from`.
+  - A client whose HELLO `accept` lists `font-program-refs` (spec §11.1) gets each program once; later instances carry `program_from`.
   - Any other client gets the whole program in every FONT that takes one (spec §5.1), bounded by a per-compile budget (`--font-program-budget`, default 256 MiB). Past the budget the compile fails with a diagnostic.
   - Ids are checked: past 65,536 instances the compile fails with an error instead of wrapping the u16 id.
 - **Memory:** `comemo::evict(10)` runs after every compile's pages are out.
@@ -42,7 +42,6 @@ target/release/flashtex-typst-host --socket /tmp/t.sock --font-path DIR [--no-sy
 - The watchdog, which is the app's job.
 - `lang-v1`.
 - v3.3 E3–E6 and E8.
-- Moving `src/v33.rs` into `flashtex-display-list`. The protocol owner does that.
 
 ## Tests
 
