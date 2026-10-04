@@ -118,6 +118,8 @@ final class EngineV3Session {
     @ObservationIgnored var caretMapsByWindow = 0
     /// Edits the fast path sent as compiles (tests).
     @ObservationIgnored var fastEditsSent = 0
+    /// Fast-path splices the slow path found out of step (the buffer resent).
+    @ObservationIgnored var fastResyncs = 0
     @ObservationIgnored var copyRoots: (copy: URL, roots: [String])?
     @ObservationIgnored var caretMarkScheduled = false
     @ObservationIgnored var caretMarkSettling = false
@@ -760,6 +762,7 @@ final class EngineV3Session {
             }
             // Out of step: resend the whole buffer.
             fastAnchors = [:]
+            fastResyncs &+= 1
             log("fast path out of step for \(path) (\(hostBytes[path] ?? -1) bytes held, \(activeText.utf8.count) now); resending it")
             sentTexts[path] = nil
         }
