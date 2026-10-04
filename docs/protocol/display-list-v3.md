@@ -1330,7 +1330,12 @@ reference viewer computes it from the PDF's content stream (typst-pdf's,
 Typst's own frame positions are not enough: typst-pdf (krilla) writes
 positions in f32, so the frame positions miss the PDF's by up to 6 × 10⁻⁵
 bp, which moves 31–5,324 pixels at 2× and 3× (DESIGN.md §15.5). The GLYPH's
-own x and y are those origins rounded to sp (§4.2).
+own x and y are those origins rounded to sp (§4.2), its glyph matrix (MATRIX)
+is the linear part of the PDF's text rendering matrix as the viewer computes
+it, and every PATH and CLIP of a Typst page carries the PDF's own path: its
+CTM, segments and line state as the content stream writes them (§4.4), not
+Typst's frame numbers (the frame's rules miss the PDF's by up to 4.8 × 10⁻⁵
+bp, enough for 408 pixels at 3×: `docs/evidence/typst-t0-2026-10-04/`).
 
 **`PAGE_META`** (section 8) is a UTF-8 JSON object:
 
@@ -1537,3 +1542,44 @@ quiet warning in Typst, and a different file reflows the document. `kind`
 version); such a lock is never overwritten. `HELLO.typst.packages`
 describes the host's setup: `{"lock", "vendor", "cache", "mirror",
 "offline"}`.
+
+### 11.9 The Typst host's seeded compiles and their check
+
+For an incremental `COMPILE` (not `export`), the Typst host runs Typst's
+layout loop seeded with the previous compile's introspection (DESIGN.md
+§15.3): usually one layout iteration instead of about four. `DONE` says
+how each compile ran:
+
+| key | meaning |
+|---|---|
+| `seeded` | `true`: the seeded loop produced the pages; `false`: Typst's standard compile did (the first compile, an export, an error, or the seeded loop declined) |
+| `iterations` | the seeded loop's layout iterations (0 when `seeded` is false) |
+| `verified` | `true`/`false`: the pages were checked against the standard compile and were equal/different; `null`: not checked yet |
+| `verify_ms` | what the check cost |
+
+The host checks a seeded compile against the standard one, either before
+sending its pages (`--verify every`: the standard pages are sent when
+they differ) or **when idle** (the default: after a second without a
+message from the client). When the idle check finds different pages, the
+host compiles again by itself, as for external tools (§6.4): a follow-up
+compile with the last compile's `id` and `"cause": "verify"` (`STARTED`,
+the pages that differ, `PAGES`, `DONE`), which a client treats like any
+compile. A newer `COMPILE` comes first: the check runs only while the
+client is quiet.
+
+### 11.10 The Typst host's watchdog
+
+A Typst compile cannot be cancelled (a WASM plugin runs without a fuel or
+memory limit; a `for` over a huge range is unbounded), so the Typst host
+watches its own compiles: when one runs longer than its wall-time budget
+(`--watchdog-secs`, default 10 s; `--watchdog-cold-secs`, default 180 s, for
+the first compile of a document and for the idle check of §11.9, both standard
+compiles; a 722-page document took 73 s cold to its first page on a loaded
+machine, so the app should raise it from a document's last cold time), or the
+process's resident memory passes
+its ceiling (`--rss-ceiling-mb`, default 4096; 0: none), it writes one line
+to stderr, `flashtex-typst-host: {"watchdog": "wall"|"rss", "id", ...}`, and
+**exits with status 86**. The client sees the socket close during a compile
+(no `DONE`): it starts a new host, marks the pages it shows stale and
+compiles cold; a client may also kill a host it cannot reach, by `pid`.
+`HELLO.watchdog` is `{"wall_ms", "wall_cold_ms", "rss_mb", "exit_code"}`.

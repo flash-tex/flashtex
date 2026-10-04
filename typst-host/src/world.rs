@@ -180,6 +180,13 @@ impl<'f> HostWorld<'f> {
         self
     }
 
+    /// Replace the standard library (tools that need Typst's test-suite
+    /// globals; the host itself always uses the default library).
+    #[doc(hidden)]
+    pub fn set_library(&mut self, library: Library) {
+        self.library = LazyHash::new(library);
+    }
+
     pub fn root(&self) -> &Path {
         &self.root
     }

@@ -87,6 +87,18 @@ impl HostProc {
     pub fn connect(&self) -> Raw {
         Raw::connect(&self.socket)
     }
+
+    /// The host's exit status, if it exits within `within`.
+    pub fn wait_exit(&mut self, within: std::time::Duration) -> Option<std::process::ExitStatus> {
+        let t = std::time::Instant::now();
+        while t.elapsed() < within {
+            if let Some(s) = self.child.try_wait().unwrap() {
+                return Some(s);
+            }
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+        None
+    }
 }
 
 impl Drop for HostProc {

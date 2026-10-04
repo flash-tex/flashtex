@@ -34,6 +34,8 @@ path = "src/main.rs"
 typst = "=0.15.1"
 typst-layout = "=0.15.1"
 typst-pdf = "=0.15.1"
+# The seeded 1-pass loop evaluates the main file itself (src/seeded.rs).
+typst-eval = "=0.15.1"
 # `scan-fonts`: no `embedded-fonts`, so no font (in particular the GPL-3
 # NewCM10-Regular) is ever compiled into the host; fonts are files (§15.2).
 # `universe-packages`: the Universe URL scheme, gzip/tar unpacking and the
@@ -51,6 +53,9 @@ tar = "0.4.46"
 comemo = "=0.5.1"
 # openat/O_NOFOLLOW and the descriptor-path check for confined writes.
 libc = "0.2"
+# Inflate typst-pdf's content streams for the glyph positions (src/pdf.rs).
+# Already in Typst's tree (MIT OR Zlib OR Apache-2.0); no new crate.
+miniz_oxide = "0.8"
 # The display-list-v3 wire format (MIT, no dependencies), by path only.
 flashtex-display-list = { path = "../crates/display-list-v3" }
 
@@ -59,3 +64,6 @@ flashtex-display-list = { path = "../crates/display-list-v3" }
 # directory so the tests exercise the host's file-based font path and do not
 # depend on the machine's system fonts. Never linked into the host binary.
 typst-assets = { version = "=0.15.1", features = ["fonts"] }
+# The positions checker (tests/checker) inflates streams with flate2, not
+# the host's miniz_oxide path: an independent reader. Already in the tree.
+flate2 = "1"
