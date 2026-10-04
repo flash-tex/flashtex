@@ -144,7 +144,7 @@ Target: flat, ≤ 1.1 GB at 300 pages over 1,000 keystrokes.
 
 ### Eviction age (follow-up)
 
-The host now takes `--evict AGE` (default 10, as DESIGN.md §15.2 says). On p300, 150
+The host takes `--evict AGE`. On p300, 150
 keystrokes each, same machine (load 114–180):
 
 | `comemo::evict` age | RSS over 150 keystrokes (MB) | first page p50 (ms) | compile p50 (ms) |
@@ -153,6 +153,8 @@ keystrokes each, same machine (load 114–180):
 | 3 | 866 → 868 | 480 | 371 |
 | 1 | 742 → 745 | 393 | 302 |
 
-All flat; age 3 or 1 would meet the 1.1 GB ceiling with no measured latency cost (the
-timings are within this load's noise). Changing the default is DESIGN.md's number to
-change, so it is left at 10 and reported. Raw: `evict.jsonl`.
+All flat; age 3 or 1 meets the 1.1 GB ceiling with no measured latency cost (the timings
+are within this load's noise). **Commander ruling (2026-10-04): the default is now 3**
+(DESIGN.md §13, §15.2), `--evict` stays configurable. With it the memory row is **MET**
+(0.87 GB flat at 300 pages; measured over 150 keystrokes, the 1,000-keystroke run above
+was at age 10). Raw: `evict.jsonl`.

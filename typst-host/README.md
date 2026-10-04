@@ -34,7 +34,7 @@ target/release/flashtex-typst-host --socket /tmp/t.sock --font-path DIR [--no-sy
   - A client whose HELLO `accept` lists `font-program-refs` (spec §11.1) gets each program once; later instances carry `program_from`.
   - Any other client gets the whole program in every FONT that takes one (spec §5.1), bounded by a per-compile budget (`--font-program-budget`, default 256 MiB). Past the budget the compile fails with a diagnostic.
   - Ids are checked: past 65,536 instances the compile fails with an error instead of wrapping the u16 id.
-- **Memory:** `comemo::evict(10)` runs after every compile's pages are out.
+- **Memory:** `comemo::evict(3)` runs after every compile's pages are out (`--evict AGE`; DESIGN.md §15.2 said 10 until the 2026-10-04 measurement in `docs/evidence/typst-t1-2026-10-04/`: age 3 keeps 300 pages at 0.87 GB, flat).
 
 ## Not yet (§15.10 T1 and later)
 
