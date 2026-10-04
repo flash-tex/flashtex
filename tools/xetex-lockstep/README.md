@@ -13,9 +13,12 @@ and requires
   (its functions are imported, so the two harnesses cannot drift apart);
 * the same exit status, and a case that runs as it says it does (to its
   `\end`, or into an error for a `% lockstep: no-halt` case);
-* the **XDV file** byte for byte, after normalising the date in the
-  preamble's comment (a native font's path, the spike's second
-  normalisation, comes with native fonts in phase S1).
+* the **XDV file** byte for byte, after the two normalisations of
+  docs/design/xetex/PLAN.md §3.5: the date in the preamble's comment, and
+  in each `define_native_font` record the font file's path, replaced by
+  its base name (the stream is walked opcode by opcode; every other byte
+  of the record is compared). `run.py --test-normalise` checks the
+  normalisation alone; every run checks it first.
 
 ```sh
 scripts/xetex-lockstep.sh                     # build the port, run every case
@@ -50,3 +53,24 @@ The invocation is `tools/lockstep`'s (`-cnf-line=max_print_line = 1000
 
 `prelude.tex` is `tools/lockstep/prelude.tex` without `\pdfoutput`, which
 XeTeX does not have.
+
+## Phase S1: native fonts
+
+* **`cases/n*.tex`** (written by `make_cases.py`): OpenType and TrueType
+  fonts named by file -- Latin Modern and TeX Gyre from TeX Live, and
+  macOS's Times New Roman and Helvetica.ttc by absolute path -- with
+  features, the common options (`letterspace`, `color`, `extend`, `slant`,
+  `embolden`), glyph and OpenType-layout queries, glyph metrics,
+  hyphenation, interword-space shaping, justified boxes and several fonts
+  per XDV file. A machine without one of the fonts fails the same way in
+  both engines.
+* **`latex.py`** and **`latex-cases/`**: `xelatex` documents with
+  `fontspec`. Each engine builds its own `xelatex.fmt` as fmtutil does,
+  then each case runs twice with each engine (untraced, then traced as
+  tools/parity's P-T1 capture), and the traced logs, exit statuses and
+  XDV files are compared as above.
+
+```sh
+python3 tools/xetex-lockstep/run.py --engine <bin> --cases 'n0*' --no-xetex-tests
+python3 tools/xetex-lockstep/latex.py --engine <bin> [--cases 'l00*'] [--keep]
+```
