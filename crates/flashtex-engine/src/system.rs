@@ -2703,7 +2703,7 @@ fn pool_path() -> String {
 /// it can never be another build's. INITEX reads it as a file (§§51-53), so
 /// it is written into the per-user format cache (`formats::cache_dir`),
 /// `<cache>/pool/pdftex-<sha256, 16 digits>.pool`, in a directory only the
-/// user may write (0700 on Unix; one that is not is refused), written
+/// user owns and may write (0700 on Unix, owned by the euid; one that is not is refused), written
 /// atomically and read back before its path is given out. Never a shared
 /// directory such as the temporary one: without a cache directory there is
 /// no embedded pool (and `pdftex.pool` beside the program, or none).
@@ -2714,7 +2714,8 @@ mod embedded_pool {
 
     pub const POOL: &[u8] = include_bytes!("../pdftex.pool");
 
-    /// `d` exists, is a directory (not a link to one), and only its owner may write it.
+    /// `d` exists, is a directory (not a link to one), belongs to this
+    /// process's effective user, and only its owner may write it.
     fn private_dir(d: &Path) -> bool {
         if std::fs::create_dir_all(d).is_err() {
             return false;
@@ -2727,7 +2728,14 @@ mod embedded_pool {
         }
         #[cfg(unix)]
         {
-            use std::os::unix::fs::PermissionsExt;
+            use std::os::unix::fs::{MetadataExt, PermissionsExt};
+            extern "C" {
+                fn geteuid() -> u32;
+            }
+            // SAFETY: geteuid has no preconditions and cannot fail.
+            if m.uid() != unsafe { geteuid() } {
+                return false; // someone else's directory
+            }
             if m.permissions().mode() & 0o777 != 0o700
                 && std::fs::set_permissions(d, std::fs::Permissions::from_mode(0o700)).is_err()
             {
@@ -2756,6 +2764,40 @@ mod embedded_pool {
             return None;
         }
         good(&p).then(|| p.to_string_lossy().into_owned())
+    }
+
+    #[cfg(all(test, unix))]
+    mod tests {
+        use super::private_dir;
+        use std::os::unix::fs::PermissionsExt;
+
+        /// A loose directory of ours is tightened to 0700; a link to a
+        /// directory and a file are refused. (Another user's directory is
+        /// refused by owner, which a test cannot set up without root.)
+        #[test]
+        fn private_dir_tightens_ours_and_refuses_links() {
+            let base = std::env::temp_dir().join(format!(
+                "flashtex-pooldir-{}-{}",
+                std::process::id(),
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap()
+                    .as_nanos()
+            ));
+            let d = base.join("pool");
+            std::fs::create_dir_all(&d).unwrap();
+            std::fs::set_permissions(&d, std::fs::Permissions::from_mode(0o777)).unwrap();
+            assert!(private_dir(&d));
+            let mode = std::fs::metadata(&d).unwrap().permissions().mode() & 0o777;
+            assert_eq!(mode, 0o700);
+            let link = base.join("link");
+            std::os::unix::fs::symlink(&d, &link).unwrap();
+            assert!(!private_dir(&link), "a symlink to a directory");
+            let file = base.join("file");
+            std::fs::write(&file, b"x").unwrap();
+            assert!(!private_dir(&file), "a file");
+            let _ = std::fs::remove_dir_all(&base);
+        }
     }
 }
 

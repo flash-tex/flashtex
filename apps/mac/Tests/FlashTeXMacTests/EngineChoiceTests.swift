@@ -226,15 +226,14 @@ final class EngineChoiceTests: XCTestCase {
         let config = try XCTUnwrap(EngineV3Bundle.configured(environment: withLock, host: nil))
         XCTAssertEqual(config, EngineV3Bundle.Config(url: d.appendingPathComponent("core.ttb").path, digest: digest, origin: lock.path))
 
-        // Consent: asked once per bundle (digest and source), only with no TeX Live and nothing cached.
+        // Consent: asked once per bundle (digest and source), only with no TeX Live.
         typealias B = EngineV3Bundle
-        XCTAssertEqual(B.gate(texLiveInstalled: false, config: config, cached: false, consent: nil), .ask(config))
-        XCTAssertEqual(B.gate(texLiveInstalled: false, config: config, cached: false, consent: false), .declined)
-        XCTAssertEqual(B.gate(texLiveInstalled: false, config: config, cached: false, consent: true), .none)
-        XCTAssertEqual(B.gate(texLiveInstalled: false, config: config, cached: true, consent: nil), .none)
-        XCTAssertEqual(B.gate(texLiveInstalled: true, config: config, cached: false, consent: nil), .none)
+        XCTAssertEqual(B.gate(texLiveInstalled: false, config: config, consent: nil), .ask(config))
+        XCTAssertEqual(B.gate(texLiveInstalled: false, config: config, consent: false), .declined)
+        XCTAssertEqual(B.gate(texLiveInstalled: false, config: config, consent: true), .none)
+        XCTAssertEqual(B.gate(texLiveInstalled: true, config: config, consent: nil), .none)
         let fromEnv = B.Config(url: "https://e.org/b.ttb", digest: digest, origin: "environment")
-        XCTAssertEqual(B.gate(texLiveInstalled: false, config: fromEnv, cached: false, consent: nil), .ask(fromEnv),
+        XCTAssertEqual(B.gate(texLiveInstalled: false, config: fromEnv, consent: nil), .ask(fromEnv),
                        "an environment bundle is asked about too")
         B.setConsent(true, for: config)
         XCTAssertEqual(B.consent(for: config), true)
@@ -251,7 +250,8 @@ final class EngineChoiceTests: XCTestCase {
         env.set("FLASHTEX_TEXLIVE_BIN", "/nonexistent/texlive/bin")
         env.set("FLASHTEX_HOST", "none")
         env.set("FLASHTEX_BUNDLE_LOCK", lock.path)
-        env.set("FLASHTEX_BUNDLE_CACHE_DIR", try dir("bundle-cache").path)
+        let cache = try dir("bundle-cache")
+        env.set("FLASHTEX_BUNDLE_CACHE_DIR", cache.path)
         env.set("FLASHTEX_BUNDLE_ALLOW_FETCH", "1")
         let host = URL(fileURLWithPath: "/nonexistent/flashtex-host")
         var h = EngineV3HostProcess.environment(host: host)
@@ -271,6 +271,12 @@ final class EngineChoiceTests: XCTestCase {
         env.set("FLASHTEX_ENGINE_V3", "1")
         XCTAssertEqual(EngineChoice.atLaunch.effective, .new)
         XCTAssertEqual(EngineV3Bundle.currentGate(), .ask(config), "launching the host asks first, forced or not")
+        // A cache already there (an interrupted download, or one made outside
+        // the app) does not skip the question: the stored answer decides.
+        let cachedIndex = cache.appendingPathComponent("\(digest)/index.gz")
+        try FileManager.default.createDirectory(at: cachedIndex.deletingLastPathComponent(), withIntermediateDirectories: true)
+        FileManager.default.createFile(atPath: cachedIndex.path, contents: Data())
+        XCTAssertEqual(EngineV3Bundle.currentGate(), .ask(config), "a cached index is not consent")
         XCTAssertEqual(EngineV3HostProcess.environment(host: host)["FLASHTEX_BUNDLE_OFFLINE"], "1")
         env.set("FLASHTEX_ENGINE_V3", "")
 
@@ -291,7 +297,34 @@ final class EngineChoiceTests: XCTestCase {
         m.engineV3.answerBundleConsent(true)
         h = EngineV3HostProcess.environment(host: host)
         XCTAssertNil(h["FLASHTEX_BUNDLE_OFFLINE"], "downloads once agreed")
-        XCTAssertEqual(h["FLASHTEX_BUNDLE_ALLOW_FETCH"], digest, "only the bundle agreed to")
+        XCTAssertEqual(h["FLASHTEX_BUNDLE_ALLOW_FETCH"], "\(digest)@\(config.url)", "only the bundle agreed to, from the URL the app read")
+    }
+
+    /// A bundle set in the app's environment (FLASHTEX_BUNDLE_URL/DIGEST) is
+    /// asked about like a lock file's: without consent the host is offline;
+    /// with it, the host fetches that environment bundle (no ALLOW_FETCH is
+    /// needed for it, and an inherited one is still dropped).
+    func testAnEnvironmentBundleIsOfflineUntilConsent() throws {
+        let digest = String(repeating: "ef", count: 32)
+        env.set("FLASHTEX_TEXLIVE_BIN", "/nonexistent/texlive/bin")
+        env.set("FLASHTEX_HOST", "none")
+        env.set("FLASHTEX_BUNDLE_DIGEST", digest)
+        env.set("FLASHTEX_BUNDLE_URL", "https://bundles.example/core.ttb")
+        env.set("FLASHTEX_BUNDLE_ALLOW_FETCH", "1")
+        let config = try XCTUnwrap(EngineV3Bundle.configured(host: nil))
+        XCTAssertTrue(config.fromEnvironment)
+        let host = URL(fileURLWithPath: "/nonexistent/flashtex-host")
+        var h = EngineV3HostProcess.environment(host: host)
+        XCTAssertEqual(h["FLASHTEX_BUNDLE_OFFLINE"], "1", "no consent: offline")
+        XCTAssertNil(h["FLASHTEX_BUNDLE_ALLOW_FETCH"], "an inherited permission is dropped")
+        XCTAssertEqual(h["FLASHTEX_BUNDLE_LOCK"], "/nonexistent/flashtex-bundle.lock", "the app names no lock for an environment bundle (this is setUp's)")
+        XCTAssertEqual(EngineV3Bundle.currentGate(), .ask(config))
+        EngineV3Bundle.setConsent(true, for: config)
+        h = EngineV3HostProcess.environment(host: host)
+        XCTAssertNil(h["FLASHTEX_BUNDLE_OFFLINE"], "consent: the environment bundle may fetch")
+        XCTAssertNil(h["FLASHTEX_BUNDLE_ALLOW_FETCH"], "not needed for it, and the inherited one is still dropped")
+        XCTAssertEqual(h["FLASHTEX_BUNDLE_DIGEST"], digest)
+        XCTAssertEqual(EngineV3Bundle.currentGate(), .none)
     }
 
     /// The lock parser gives the engine's answers: the shared vectors

@@ -177,8 +177,11 @@ the first download of a bundle it asks (the Download TeX Files sheet, in the
 style of the package consent sheet); the answer is kept for that bundle's
 digest and source, so a new pinned bundle is asked about again. Downloads fail
 closed: the host never fetches a lock file's bundle unless
-`FLASHTEX_BUNDLE_ALLOW_FETCH` is `1` (a command-line user) or that bundle's
-digest, which the app passes only after the user agreed to that bundle; in
+`FLASHTEX_BUNDLE_ALLOW_FETCH` is `1` (a command-line user) or `<digest>@<url>`
+of that bundle and the URL the app read, which the app passes only after the
+user agreed to that bundle (a lock rewritten since, even with the same digest
+at another server, is not fetched). The question is decided by the stored
+answer, never by what is already in the cache; in
 every other case the app starts the host with `FLASHTEX_BUNDLE_OFFLINE=1`,
 whatever it made of the lock (a bundle set in the environment included), and
 drops an inherited `FLASHTEX_BUNDLE_ALLOW_FETCH`. "Not Now" falls back to the
