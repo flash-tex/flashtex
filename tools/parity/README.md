@@ -167,19 +167,25 @@ constant memory: about 20 MiB whatever the log's size), and
   its X-column trial typesetting) logs a different number on every run,
   pdfTeX against itself included. `capture.ElapsedMask` replaces with
   `<ELAPSED>` only the values the trace itself shows came from the timer:
-  the `{into \X=macro:->N}` of a macro whose expansion *starts* with
+  a macro's expansion line whose body *starts* with
   `\edef \X {\the \pdfelapsedtime }` (or `\xdef`, `\number`, an alias
-  such as `\pdf@elapsedtime` or expl3's `\tex_elapsedtime:D`), the
-  `{into \countN=N}` / `{into \dimenN=D}` of a register that such an
-  expansion assigns from the timer as its first command, and later
-  `{changing ...}`/`{restoring ...}` and expansion lines of that same name
-  showing exactly a value masked before. Any other command between the
-  macro and the assignment disarms it. Everything else stays compared: a
-  number derived from the timer, one typeset or shown, and a timer read
-  directly from the input file still fail P-T1. Both drivers apply it (one
-  implementation); a P-T1 record says how many lines it masked
-  (`elapsed_masked`). A streamed fingerprint made before the mask is a
-  harness error, not a verdict, when the other side masked something.
+  such as `\pdf@elapsedtime` or expl3's `\tex_elapsedtime:D`) or with
+  `\R =\pdfelapsedtime ` for a `\count`/`\dimen` register arms it, and
+  the exact assignment sequence that must follow (`{\edef}` or the
+  register's command line, `{changing ...}`, `{into ...}`) has its value
+  masked. Anything else in between, an expansion line or another command,
+  disarms it. Afterwards only that name's *current* timer value is masked
+  where it shows again (`changing`, `reassigning`, `retaining`, its
+  expansion line), and a `{restoring ...}` only when it shows the value
+  saved at that group level: the mask keeps TeX's save stack from the
+  `{entering ...}`/`{leaving ...}` lines, so a wrong value restored is
+  still a difference. Everything else stays compared: a number derived from
+  the timer, one typeset, shown or copied to another name, and a timer read
+  directly from the input file still fail P-T1. Both drivers and
+  `tools/lockstep` apply it (one implementation); a P-T1 record says how
+  many lines it masked (`elapsed_masked`). A streamed fingerprint made
+  before the mask is a harness error, not a verdict, when the other side
+  masked something.
 
 `--pt1-skip [tier/]ID` still reports a document's P-T1 as not evaluated
 (its oracle is never traced), but size is no longer a reason to use it.

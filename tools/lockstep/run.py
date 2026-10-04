@@ -11,6 +11,7 @@ import argparse
 import dataclasses
 import fnmatch
 import hashlib
+import importlib.util
 import os
 import re
 import shutil
@@ -350,8 +351,23 @@ def engine_link(engine_bin, workdir):
     return engine_bin
 
 
+def _elapsed_mask():
+    """tools/parity's `capture.ElapsedMask` (stdlib only), loaded by path so
+    both harnesses mask `\\pdfelapsedtime` with one implementation (DESIGN
+    §1.1, #1462) and this module's own `capture` name stays its own."""
+    path = os.path.join(os.path.dirname(HERE), "parity", "capture.py")
+    spec = importlib.util.spec_from_file_location("_parity_capture", path)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod.ElapsedMask
+
+
+ElapsedMask = _elapsed_mask()
+
+
 def normalise(text, tmpdir):
-    """Strip only what legitimately differs: temp paths, banner, dates.
+    """Strip only what legitimately differs: temp paths, banner, dates, and
+    the values `\\pdfelapsedtime` puts into the trace (`ElapsedMask`).
 
     Byte-exact otherwise: the text is split on "\\n" only (never
     splitlines()) and no trailing newline is forced, so CR bytes and
@@ -371,7 +387,9 @@ def normalise(text, tmpdir):
     lines = text.replace(tmpdir, "<TMP>").split("\n")
     if lines and lines[0].startswith("This is "):
         lines[0] = "BANNER"
-    return "\n".join(DATE_RE.sub("<DATE>", ln) for ln in lines)
+    out = "\n".join(DATE_RE.sub("<DATE>", ln) for ln in lines)
+    # values \pdfelapsedtime put into the trace (DESIGN §1.1, #1462)
+    return ElapsedMask().text_in_pieces(out)
 
 
 def _split_accounting(lines):
