@@ -1360,8 +1360,12 @@ pub struct Arena {
 struct OldCache {
     /// (checkpoint, history_gen, chunk -> index into `words` / CHUNK_WORDS),
     /// most recently used last.
-    at: Vec<(CheckpointId, u64, HashMap<u32, usize>, Vec<u64>)>,
+    at: Vec<OldAt>,
 }
+
+/// One checkpoint's kept chunks: (checkpoint, history_gen, chunk -> index
+/// into the words / CHUNK_WORDS, the words).
+type OldAt = (CheckpointId, u64, HashMap<u32, usize>, Vec<u64>);
 
 /// Checkpoints `OldCache` keeps, and the chunks it keeps in all (1 KB each).
 const OLD_CACHE_CHECKPOINTS: usize = 4;
