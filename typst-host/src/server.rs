@@ -70,6 +70,9 @@ pub struct Host {
     watchdog: Option<Watchdog>,
     /// `comemo::evict` age after each compile (`--evict`, default 3).
     evict: usize,
+    /// Draw classes without a pixel gate row as complete (`--draw-ungated`;
+    /// DESIGN.md §15.5).
+    ungated: bool,
 }
 
 /// The watchdog watches a compile while this lives.
@@ -232,12 +235,20 @@ impl Host {
             mismatches: Default::default(),
             watchdog: None,
             evict: 3,
+            ungated: false,
         }
     }
 
     /// Where packages come from (spec §11.8, [`crate::packages`]).
     pub fn with_packages(mut self, opts: PackageOptions) -> Host {
         self.packages = Arc::new(Packages::new(opts));
+        self
+    }
+
+    /// Draw what has no 2×/3× pixel gate row yet as complete (for
+    /// measuring those rows; DESIGN.md §15.5).
+    pub fn with_ungated(mut self, on: bool) -> Host {
+        self.ungated = on;
         self
     }
 
@@ -768,6 +779,7 @@ impl Host {
                     color_spaces: accept.color_spaces,
                     line_state: accept.line_state,
                     image_data: accept.image_data,
+                    ungated: self.ungated,
                     program_budget: Some(self.program_budget),
                 };
                 let th = Instant::now();

@@ -102,7 +102,8 @@ pub fn check_doc_with(
         host_pdf.len(),
         oracle_pdf.len()
     );
-    let reference = checker::reference(&oracle_pdf);
+    let mut reference = checker::reference(&oracle_pdf);
+    checker::device_only(&mut reference);
 
     let pages: Vec<Page> = frames
         .iter()
@@ -178,16 +179,14 @@ pub fn check_doc_with(
         );
         assert_eq!(p.origins.len(), g.len());
         let h = p.pdf_box[3];
-        let colours = checker::host_colors(p).0;
+        // The whole paint state: colours, spaces, alphas, render mode,
+        // line state.
+        let colours = checker::host_glyph_paints(p);
         assert_eq!(colours.len(), g.len());
-        for (j, (rg, (fill, alpha))) in r.glyphs.iter().zip(&colours).enumerate() {
-            let bits = |v: &[f64]| v.iter().map(|x| x.to_bits()).collect::<Vec<_>>();
-            if bits(fill) != bits(&rg.fill) || alpha.to_bits() != rg.fill_alpha.to_bits() {
+        for (j, (rg, h)) in r.glyphs.iter().zip(&colours).enumerate() {
+            if let Some(d) = checker::glyph_paint_mismatch(h, rg) {
                 if rep.mismatches < 5 {
-                    eprintln!(
-                        "{name} page {i} glyph {j}: fill {fill:?} {alpha}, PDF {:?} {}",
-                        rg.fill, rg.fill_alpha
-                    );
+                    eprintln!("{name} page {i} glyph {j}: {d}");
                 }
                 rep.mismatches += 1;
             }
@@ -586,7 +585,8 @@ fn the_checker_rejects_frame_positions() {
         .output
         .unwrap();
     let pdf = typst_pdf::pdf(&doc, &typst_pdf::PdfOptions::default()).unwrap();
-    let reference = checker::reference(&pdf);
+    let mut reference = checker::reference(&pdf);
+    checker::device_only(&mut reference);
     let caps = ClientCaps {
         minor: 3,
         opentype_programs: true,
@@ -646,7 +646,8 @@ fn the_checker_rejects_frame_paths() {
         .output
         .unwrap();
     let pdf = typst_pdf::pdf(&doc, &typst_pdf::PdfOptions::default()).unwrap();
-    let reference = checker::reference(&pdf);
+    let mut reference = checker::reference(&pdf);
+    checker::device_only(&mut reference);
     let caps = ClientCaps {
         minor: 3,
         opentype_programs: true,
