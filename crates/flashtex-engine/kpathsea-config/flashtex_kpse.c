@@ -114,6 +114,13 @@ void flashtex_kpse_free(void *p)
   free(p);
 }
 
+/* tex.ch [49.1265]: in \batchmode the mktex scripts' errors are discarded
+   (kpse_make_tex_discard_errors). */
+void flashtex_kpse_set_make_tex_discard_errors(void *k, int discard)
+{
+  ((kpathsea) k)->make_tex_discard_errors = discard != 0;
+}
+
 void flashtex_kpse_finish(void *k)
 {
   kpathsea_finish((kpathsea) k);
