@@ -223,8 +223,14 @@ fn image_decoding_never_panics_or_overallocates() {
         };
         let components = [1u8, 3, 4][rng.below(3)];
         let bits = [8u8, 16][rng.below(2)];
-        let raw_len =
-            (w as u64 * h as u64 * components as u64 * bits as u64 / 8).min(4096) as usize;
+        // Saturating: the sizes may be any u32 (the host's own arithmetic
+        // is checked; this only sizes the test data).
+        let raw_len = (w as u64)
+            .saturating_mul(h as u64)
+            .saturating_mul(components as u64)
+            .saturating_mul(bits as u64)
+            .min(8 * 4096) as usize
+            / 8;
         let samples = rng.bytes(raw_len);
         let data = match (encoding, rng.below(3)) {
             (ImageEncoding::Flate, 0) => rng.some_bytes(64),
@@ -232,7 +238,7 @@ fn image_decoding_never_panics_or_overallocates() {
             _ => samples.clone(),
         };
         let mask = (rng.below(2) == 0).then(|| {
-            let m = rng.bytes((w as u64 * h as u64).min(4096) as usize);
+            let m = rng.bytes((w as u64).saturating_mul(h as u64).min(4096) as usize);
             (
                 ImageEncoding::Flate,
                 miniz_oxide::deflate::compress_to_vec_zlib(&m, 1),

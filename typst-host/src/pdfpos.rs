@@ -762,7 +762,8 @@ impl Interp<'_, '_> {
                     let (n, profile) = match self.profiles.get(r) {
                         Some(p) => p.clone(),
                         None => {
-                            let (d, data) = pdf.stream(*r)?;
+                            // The cap holds while inflating, not after.
+                            let (d, data) = pdf.stream_limited(*r, MAX_ICC + 1)?;
                             if data.len() > MAX_ICC {
                                 return Err(format!(
                                     "an ICC profile of {} bytes (at most {MAX_ICC})",
