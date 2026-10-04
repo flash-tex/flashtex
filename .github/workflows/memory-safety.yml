@@ -1,0 +1,97 @@
+# Memory safety (lane MEMORY-SAFETY, 2026-10-04; owner: "zero memory leaks and memory
+# problems"). Scheduled, plus by hand; scripts/sanitizers.sh says what each leg checks.
+#
+#   sanitizers-linux  hosted ubuntu-latest, no TeX Live: Knuth's trip and the etrip test with
+#                     the engine under AddressSanitizer + LeakSanitizer (any report fails), and
+#                     Miri with strict provenance over the arena and the crash note.
+#   memory-mac        the heavy self-hosted Mac (TeX Live 2026), in the group flashtex-mac-heavy
+#                     with nightly's Mac jobs, so never beside them:
+#                       - the ASan host, the vendored C included: the LaTeX format and an edit
+#                         session, LSan's reports judged with a leak-growth check (`host`);
+#                       - the release host's unreachable memory over three edit sessions, by
+#                         Apple's `leaks` (`leaks`): LSan missed the three host leaks fixed in
+#                         #1493, this did not.
+#
+# The nightly toolchain is pinned (the one the legs were verified with); bump it deliberately.
+# Kept out of nightly.yml so that its heavy Mac job stays within its time limit, and so that
+# these legs can be dispatched alone.
+name: memory-safety
+
+on:
+  schedule:
+    # After nightly's start (08:17) and its Mac legs' usual end; the Mac job waits for the
+    # heavy group anyway.
+    - cron: '43 11 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  SAN_NIGHTLY: nightly-2026-09-16
+
+jobs:
+  sanitizers-linux:
+    name: "ASan/LSan (trip, etrip) and Miri (arena)"
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    env:
+      CARGO_BUILD_JOBS: "4"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: the pinned nightly, with rust-src and miri
+        run: |
+          rustup toolchain install "$SAN_NIGHTLY" --profile minimal --component rust-src,miri
+          echo "RUSTUP_TOOLCHAIN=$SAN_NIGHTLY" >> "$GITHUB_ENV"
+      - name: trip, etrip (ASan + LSan) and Miri (arena, crash note)
+        run: SAN_WORK="$RUNNER_TEMP/san" scripts/sanitizers.sh trip etrip miri
+      - name: keep the sanitizer reports
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sanitizer-reports-linux
+          path: |
+            ${{ runner.temp }}/san/trip/san.*
+            ${{ runner.temp }}/san/etrip/san.*
+            ${{ runner.temp }}/san/trip/run/
+            ${{ runner.temp }}/san/etrip/run/
+          if-no-files-found: ignore
+
+  memory-mac:
+    name: "ASan/LSan host and macOS leaks over edit sessions (self-hosted Mac)"
+    if: vars.FLASHTEX_SELFHOSTED_MAC == '1'
+    runs-on: [self-hosted, macOS, ARM64, flashtex, flashtex-heavy]
+    concurrency:
+      group: flashtex-mac-heavy
+      cancel-in-progress: false
+    timeout-minutes: 120
+    env:
+      FLASHTEX_REQUIRE_TEXLIVE: "1"
+      CARGO_BUILD_JOBS: "3"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@stable
+      - name: this Mac's build directory (shared by the heavy jobs, size-capped)
+        run: scripts/ci/mac-heavy-target.sh >> "$GITHUB_ENV"
+      - name: the pinned nightly, with rust-src (the ASan build)
+        run: rustup toolchain install "$SAN_NIGHTLY" --profile minimal --component rust-src
+      - name: "host: ASan/LSan, the LaTeX format and an edit session"
+        timeout-minutes: 60
+        run: SAN_WORK="$RUNNER_TEMP/san" RUSTUP_TOOLCHAIN="$SAN_NIGHTLY" scripts/sanitizers.sh host
+      - name: "leaks: the release host over three edit sessions (plain-10, full-120)"
+        if: ${{ !cancelled() }}
+        timeout-minutes: 40
+        run: SAN_WORK="$RUNNER_TEMP/san" scripts/sanitizers.sh leaks
+      - name: keep the reports
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: memory-reports-mac
+          path: |
+            ${{ runner.temp }}/san/reports/
+            ${{ runner.temp }}/san/leaks/
+          if-no-files-found: ignore

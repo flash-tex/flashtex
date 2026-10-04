@@ -2,7 +2,7 @@
 """sanitizer_reports.py: judge AddressSanitizer/LeakSanitizer report files (lane MEMORY-SAFETY,
 scripts/sanitizers.sh).
 
-    sanitizer_reports.py [--growth-against DIR] DIR
+    sanitizer_reports.py [--growth-against DIR [--tolerance-b N]] DIR
 
 DIR holds the `log_path` files of one run (ASAN_OPTIONS=log_path=DIR/asan). The verdict:
 
@@ -13,7 +13,9 @@ DIR holds the `log_path` files of one run (ASAN_OPTIONS=log_path=DIR/asan). The 
   upstream says "quite a lot of the freeing is not safe" (kpathsea.c, kpathsea_finish), and
   TeX Live's pdftex loses the same. Those are reported, not failed;
 * with --growth-against SHORT, the leaked bytes of DIR (a longer edit session) must not exceed
-  SHORT's (a shorter one): a leak per edit, kpathsea's included, fails.
+  SHORT's (a shorter one) by more than --tolerance-b (default 4096: room for a lookup or two the
+  longer session alone makes, far below one leak per keystroke over its 50 more keystrokes):
+  a leak per edit, kpathsea's included, fails.
 
 Exit status 0 when the run passes. Prints one summary line per allocation site.
 """
@@ -81,6 +83,7 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('dir')
     ap.add_argument('--growth-against', default='')
+    ap.add_argument('--tolerance-b', type=int, default=4096)
     a = ap.parse_args()
     errors, upstream, ours = judge(a.dir)
     ok = True
@@ -98,9 +101,11 @@ def main():
     print(f'kpathsea (upstream, one-time start-up): {upstream} B leaked')
     if a.growth_against:
         short, long_ = total(a.growth_against), total(a.dir)
-        verdict = 'PASS' if long_ <= short else 'FAIL'
-        print(f'{verdict} leak growth: {short} B after the short session, {long_} B after the long one')
-        ok = ok and long_ <= short
+        grew = long_ - short
+        verdict = 'PASS' if grew <= a.tolerance_b else 'FAIL'
+        print(f'{verdict} leak growth: {short} B after the short session, {long_} B after the long '
+              f'one ({grew:+d} B; tolerance {a.tolerance_b} B)')
+        ok = ok and grew <= a.tolerance_b
     print('PASS no sanitizer findings' if ok else 'FAIL sanitizer findings above')
     return 0 if ok else 1
 

@@ -18,6 +18,16 @@ socket for BENCH_DIR/docs/DOC/main.tex, types A, B and C keystrokes in three con
 LeakSanitizer missed all three of those (a stale copy of a pointer kept each "reachable"), so
 this check uses Apple's conservative scanner on the release build. The project directory holds
 only main.tex: files the harness writes go elsewhere, so the session sees no directory change.
+
+**`leaks` and hashbrown.** A Rust `HashMap` keeps one pointer to its table: `ctrl`, which points
+into the table's allocation, past its buckets, never at its start. `leaks` does not credit such a
+pointer for a large (VM-backed) block, so a big live map shows up as a ROOT LEAK with every entry
+beneath it. Probe (2026-10-04, macOS 26.3): a 50,000-entry map in a `thread_local!`, alive and
+used afterwards, was reported as 5.4 MB in 50,001 leaks. On full-120 the engine's `diag` definition
+map (`diag.rs`, `St::defs`, live) is reported the same way (~9 MB). Roots allocated by hashbrown's
+`RawTableInner::fallible_with_capacity` are therefore counted apart and printed, and the limits
+apply to the start-up limit. The per-keystroke limit applies to every byte, hashbrown's
+included: a map lost once per keystroke still fails it.
 """
 import argparse
 import json
@@ -38,13 +48,17 @@ ap.add_argument('--page', type=int, default=3)
 ap.add_argument('--keys', default='20,20,100')
 ap.add_argument('--start-kb', type=int, default=2048)
 ap.add_argument('--per-edit-b', type=int, default=1024)
+ap.add_argument('--work-root', default=None,
+                help='where the work directory goes (kept, with the leaks reports, on failure)')
 a = ap.parse_args()
 if sys.platform != 'darwin':
     print('SKIP leaks_session: macOS `leaks` only')
     sys.exit(0)
 
 E = os.path.join(a.bench, a.engine)
-work = tempfile.mkdtemp(prefix='ftx-leaks-')
+if a.work_root:
+    os.makedirs(a.work_root, exist_ok=True)
+work = tempfile.mkdtemp(prefix='ftx-leaks-', dir=a.work_root)
 proj = os.path.join(work, 'proj')
 out = os.path.join(work, 'out')
 logs = os.path.join(work, 'logs')
@@ -60,16 +74,36 @@ host = subprocess.Popen([f'{E}/flashtex-host', '--socket', sock, '--s0-cache', o
 env_keys = {k: v for k, v in env.items() if k != 'MallocStackLogging'}
 
 
+UNITS = {'': 1, 'K': 1024, 'M': 2**20, 'G': 2**30}
+
+
+def hashbrown_roots(report):
+    """Bytes under ROOT LEAKs whose block hashbrown allocated (the false positive above)."""
+    total = 0
+    for blk in re.split(r'\n(?=STACK OF )', report):
+        head = re.match(r"STACK OF \d+ INSTANCES? OF '(.*)'", blk)
+        if not head or 'hashbrown' not in head.group(1) or 'RawTable' not in head.group(1):
+            continue
+        m = (re.search(r'^\s+\d+ \(([\d.]+)([KMG]?)(?: bytes)?\) << TOTAL >>', blk, re.M)
+             or re.search(r'^\s+\d+ \(([\d.]+)([KMG]?)(?: bytes)?\) ROOT', blk, re.M))
+        if m:
+            total += int(float(m.group(1)) * UNITS[m.group(2)])
+    return total
+
+
 def lost():
+    """(leaks, bytes lost, bytes under hashbrown roots) of the live host."""
     r = subprocess.run(['leaks', str(host.pid)], capture_output=True, text=True)
     open(os.path.join(logs, f'leaks-{time.time():.0f}.txt'), 'w').write(r.stdout)
     m = re.search(r'(\d+) leaks for (\d+) total leaked bytes', r.stdout)
     if not m:
         raise SystemExit(f'leaks gave no total:\n{r.stdout[-2000:]}{r.stderr[-2000:]}')
-    return int(m.group(1)), int(m.group(2))
+    return int(m.group(1)), int(m.group(2)), hashbrown_roots(r.stdout)
 
 
-ok = True
+# False until the verdict: any exit before it (the host ending, `leaks` giving no total, a
+# timeout) keeps the work directory and its logs.
+ok = False
 try:
     for _ in range(600):
         if os.path.exists(sock):
@@ -84,13 +118,19 @@ try:
         if host.poll() is not None:
             raise SystemExit(f'the host ended during the session ({host.returncode})')
         done = sum(1 for line in r.stdout.splitlines() if '"host"' in line)
-        objs, b = lost()
-        totals.append((n, done, objs, b))
-        print(json.dumps({'keys': n, 'compiles': done, 'leaks': objs, 'leaked_bytes': b}))
-    (_, _, _, b0), (_, _, _, b1), (n2, _, _, b2) = totals[0], totals[1], totals[2]
-    if b0 > a.start_kb * 1024:
-        print(f'FAIL {b0} bytes lost after the first connection (limit {a.start_kb} KB)')
+        objs, b, hb = lost()
+        totals.append((n, done, objs, b, hb))
+        print(json.dumps({'keys': n, 'compiles': done, 'leaks': objs, 'leaked_bytes': b,
+                          'hashbrown_root_bytes': hb}))
+    (_, _, _, b0, h0), (_, _, _, b1, _), (n2, _, _, b2, _) = totals[0], totals[1], totals[2]
+    ok = True
+    if b0 - h0 > a.start_kb * 1024:
+        print(f'FAIL {b0 - h0} bytes lost after the first connection, besides {h0} under hashbrown '
+              f'tables (limit {a.start_kb} KB)')
         ok = False
+    else:
+        print(f'PASS {b0 - h0} bytes lost after the first connection, besides {h0} under hashbrown '
+              f'tables (limit {a.start_kb} KB)')
     per = (b2 - b1) / max(n2, 1)
     verdict = 'PASS' if per <= a.per_edit_b else 'FAIL'
     print(f'{verdict} {per:.0f} bytes lost per keystroke over the last {n2} (limit {a.per_edit_b})')
