@@ -279,6 +279,8 @@ struct Log {
     entries: Vec<(u32, ChunkPtr)>,
     deltas: Vec<Delta>,
     words: Vec<u64>,
+    /// A sealed log's name in `Core::by_chunk` (0: not indexed).
+    sn: u32,
 }
 
 impl Log {
@@ -425,6 +427,7 @@ fn merge_sealed(older: &Log, newer: &Log) -> Log {
         entries: Vec::new(),
         deltas,
         words,
+        sn: 0,
     }
 }
 
@@ -488,6 +491,14 @@ pub(crate) struct Core {
     /// Bumped by every change to the logs' contents that keeps the
     /// checkpoint list (`or_from`): a `Prepared` from before it is stale.
     history_gen: u64,
+    /// Per chunk, the sealed logs (by `Log::sn`, the live chain's and the
+    /// detached branches' alike) that hold a delta for it, in no order
+    /// (`rewound_indexed`). Maintained where logs are sealed, merged,
+    /// extended (`or_from`) and freed; the names of freed logs are dropped
+    /// in batches (`dead`).
+    by_chunk: Vec<Vec<u32>>,
+    next_sn: u32,
+    dead: std::collections::HashSet<u32>,
 }
 
 /// The state at checkpoint `id` of the chunks the logs from `id` on hold,
@@ -635,6 +646,95 @@ impl Core {
         log.deltas = deltas;
         log.words = words;
         self.sealed_bytes += log.sealed_bytes();
+        self.index_log(i);
+    }
+
+    /// Name sealed log `logs[i]` and list it under each chunk it holds.
+    fn index_log(&mut self, i: usize) {
+        let sn = self.next_sn;
+        self.next_sn = self.next_sn.wrapping_add(1).max(1);
+        let log = &mut self.logs[i];
+        log.sn = sn;
+        for d in &log.deltas {
+            self.by_chunk[d.c as usize].push(sn);
+        }
+    }
+
+    /// A log named `sn` is gone: its name leaves the index (in batches).
+    fn unindex(&mut self, sn: u32) {
+        if sn == 0 {
+            return;
+        }
+        self.dead.insert(sn);
+        if self.dead.len() >= 4096 {
+            let dead = std::mem::take(&mut self.dead);
+            for l in self.by_chunk.iter_mut().filter(|l| !l.is_empty()) {
+                l.retain(|s| !dead.contains(s));
+            }
+        }
+    }
+
+    /// [`rewound_until`] through the per-chunk index (`by_chunk`): each
+    /// chunk of `cs` rewound through the logs of `logs` that hold it only,
+    /// oldest first, as `rewound_until` applies them; the logs' other
+    /// entries are not looked at. Open logs (whole pre-images, not
+    /// indexed) are looked up directly.
+    fn rewound_indexed(
+        &self,
+        cs: &[u32],
+        start: &dyn Fn(u32) -> *const u64,
+        logs: &[Log],
+        stop: &mut dyn FnMut() -> bool,
+    ) -> Option<Vec<u64>> {
+        let pos: HashMap<u32, usize> = logs
+            .iter()
+            .enumerate()
+            .filter(|(_, l)| l.sn != 0)
+            .map(|(i, l)| (l.sn, i))
+            .collect();
+        let mut open: HashMap<u32, Vec<(usize, ChunkPtr)>> = HashMap::new();
+        for (i, l) in logs.iter().enumerate() {
+            for &(c, p) in &l.entries {
+                open.entry(c).or_default().push((i, p));
+            }
+        }
+        let mut buf = vec![0u64; cs.len() * CHUNK_WORDS];
+        let mut at: Vec<(usize, Option<ChunkPtr>)> = Vec::new();
+        for (k, &c) in cs.iter().enumerate() {
+            if k % 256 == 255 && stop() {
+                return None;
+            }
+            let dst = &mut buf[k * CHUNK_WORDS..(k + 1) * CHUNK_WORDS];
+            // SAFETY: `start` gives a whole chunk.
+            dst.copy_from_slice(unsafe { std::slice::from_raw_parts(start(c), CHUNK_WORDS) });
+            at.clear();
+            at.extend(
+                self.by_chunk[c as usize]
+                    .iter()
+                    .filter_map(|s| pos.get(s).map(|&i| (i, None))),
+            );
+            if let Some(o) = open.get(&c) {
+                at.extend(o.iter().map(|&(i, p)| (i, Some(p))));
+            }
+            at.sort_unstable_by_key(|x| x.0);
+            at.dedup_by_key(|x| x.0);
+            let mut done = [0u64; MASK_WORDS];
+            for &(i, p) in &at {
+                let dp = dst.as_mut_ptr();
+                match p {
+                    // SAFETY: a slab chunk and a chunk of `buf`.
+                    Some(p) => unsafe { apply_whole_under(p, dp, &mut done) },
+                    None => {
+                        let l = &logs[i];
+                        if let Ok(j) = l.deltas.binary_search_by_key(&c, |d| d.c) {
+                            // SAFETY: a chunk of `buf`.
+                            unsafe { l.deltas[j].apply_under(&l.words, dp, &mut done) };
+                        }
+                    }
+                }
+            }
+        }
+        Some(buf)
     }
 
     fn index_of(&self, id: CheckpointId) -> Option<usize> {
@@ -877,6 +977,7 @@ impl Core {
     }
 
     fn free_log(&mut self, log: Log) {
+        self.unindex(log.sn);
         self.sealed_bytes -= log.sealed_bytes();
         for (_, p) in log.entries {
             self.slab.give(p);
@@ -1151,10 +1252,19 @@ impl Core {
                     out_logs.push(log);
                     continue;
                 }
-                let merged = merge_sealed(dst, &log);
+                let mut merged = merge_sealed(dst, &log);
                 self.sealed_bytes += merged.sealed_bytes();
                 self.sealed_bytes -= dst.sealed_bytes() + log.sealed_bytes();
+                let (a, b) = (dst.sn, log.sn);
+                let sn = self.next_sn;
+                self.next_sn = self.next_sn.wrapping_add(1).max(1);
+                merged.sn = sn;
+                for d in &merged.deltas {
+                    self.by_chunk[d.c as usize].push(sn);
+                }
                 *dst = merged;
+                self.unindex(a);
+                self.unindex(b);
             } else {
                 // the oldest checkpoint goes: its log with it
                 self.free_log(log);
@@ -1350,6 +1460,9 @@ impl Arena {
             sealed_bytes: 0,
             prepared: None,
             history_gen: 0,
+            by_chunk: vec![Vec::new(); nchunks],
+            next_sn: 1,
+            dead: Default::default(),
             prepare_on_reattach: std::env::var_os("FLASHTEX_NO_PREPARE").is_none(),
         });
         Arena {
@@ -1516,6 +1629,10 @@ impl Arena {
                     mask[mw] = 1u64 << b;
                     let pos = prev.deltas.partition_point(|d| d.c < c);
                     prev.deltas.insert(pos, Delta { c, at, mask });
+                    let sn = prev.sn;
+                    if sn != 0 {
+                        core.by_chunk[c as usize].push(sn);
+                    }
                 }
             }
         }
@@ -1819,9 +1936,19 @@ impl Arena {
                 .partition(|&&c| cache.get(old, gen, c).is_some())
         };
         let rewind: &[u32] = if verify { &in_old } else { &misses };
-        let Some(rew) = rewound_until(n, rewind, &|c| redo_of[&c], &b.logs[jj..], stop) else {
+        let Some(rew) = core.rewound_indexed(rewind, &|c| redo_of[&c], &b.logs[jj..], stop) else {
             return Ok(None);
         };
+        if verify {
+            // the index against the plain rewind (every log entry looked at)
+            let Some(full) = rewound_until(n, rewind, &|c| redo_of[&c], &b.logs[jj..], stop) else {
+                return Ok(None);
+            };
+            if full != rew {
+                eprintln!("FLASHTEX_VERIFY_OLDCACHE: the indexed rewind to checkpoint {old} differs from the plain one");
+                std::process::abort();
+            }
+        }
         let mut old_buf = vec![0u64; in_old.len() * CHUNK_WORDS];
         {
             let cache = self.old_cache.borrow();
@@ -2722,6 +2849,75 @@ mod tests {
         let d = a.diff_branch(&br, ids[4]).unwrap();
         assert_eq!(d.old_word(&a, off), c4[1000]);
         a.drop_branch(br);
+    }
+
+    /// The per-chunk index (`by_chunk`) rewinds exactly as the plain rewind,
+    /// through sealed, merged and `or_from`-extended logs, an open one, and
+    /// a branch, after logs were freed.
+    #[test]
+    fn indexed_rewinds_equal_plain_ones() {
+        let (mut a, mut arr) = space(300_000);
+        scribble(&mut arr, 31, 5000);
+        let mut ids = vec![];
+        for k in 0..40u64 {
+            ids.push(a.checkpoint());
+            scribble(&mut arr, 300 + k, 1000 + (k as usize % 7) * 400);
+            if k % 9 == 8 {
+                a.retain(&|id| id % 4 != 2);
+            }
+        }
+        let start = arr.as_ptr() as usize - a.bytes().as_ptr() as usize;
+        let kept: Vec<CheckpointId> = a.checkpoint_ids().to_vec();
+        a.or_from(kept[kept.len() / 2], start + 8 * 77, 1 << 50)
+            .unwrap();
+        scribble(&mut arr, 999, 700); // the open log
+        let check = |a: &Arena, what: &str| {
+            let core = a.core();
+            for from in [0usize, 3, core.logs.len() / 2, core.logs.len() - 1] {
+                let cs: Vec<u32> = {
+                    let mut v: Vec<u32> = core.logs[from..]
+                        .iter()
+                        .flat_map(|l| l.chunk_ids())
+                        .collect();
+                    v.sort_unstable();
+                    v.dedup();
+                    v
+                };
+                let live = |c: u32| core.chunk_ptr(c as usize) as *const u64;
+                let plain = rewound(core.nchunks, &cs, &live, &core.logs[from..]);
+                let idx = core
+                    .rewound_indexed(&cs, &live, &core.logs[from..], &mut || false)
+                    .unwrap();
+                assert!(plain == idx, "{what}: from log {from}");
+            }
+        };
+        check(&a, "chain");
+        // a branch: the old future, after a restore and a new run
+        let kept: Vec<CheckpointId> = a.checkpoint_ids().to_vec();
+        let br = a.restore_branch(kept[5]).unwrap();
+        scribble(&mut arr, 4242, 900);
+        a.checkpoint();
+        {
+            let core = a.core();
+            let cs: Vec<u32> = {
+                let mut v: Vec<u32> = br.logs.iter().flat_map(|l| l.chunk_ids()).collect();
+                v.sort_unstable();
+                v.dedup();
+                v
+            };
+            let redo: HashMap<u32, *const u64> =
+                br.redo.iter().map(|&(c, p)| (c, p as *const u64)).collect();
+            let start = |c: u32| redo[&c];
+            for from in [0usize, 2, br.logs.len() - 1] {
+                let plain = rewound(core.nchunks, &cs, &start, &br.logs[from..]);
+                let idx = core
+                    .rewound_indexed(&cs, &start, &br.logs[from..], &mut || false)
+                    .unwrap();
+                assert!(plain == idx, "branch: from log {from}");
+            }
+        }
+        a.drop_branch(br);
+        check(&a, "after the branch was dropped");
     }
 
     #[test]
