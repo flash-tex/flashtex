@@ -117,6 +117,10 @@ struct Target {
     first_cpu_ms: Option<f64>,
     first_emit_ms: Option<f64>,
     first_send_ms: Option<f64>,
+    /// The engine thread's instructions and cycles at the start of the
+    /// compile and at the first page (`os::thread_counts`; macOS only).
+    pmu0: Option<(u64, u64)>,
+    first_pmu: Option<(u64, u64)>,
 }
 
 impl Target {
@@ -296,6 +300,7 @@ impl Live {
                 t.first_cpu_ms = Some((incr::thread_cpu_s() - t.cpu0) * 1e3);
                 t.first_emit_ms = Some((displaylist::emit_ns() - t.emit0) as f64 * 1e-6);
                 t.first_send_ms = Some(t.send_ns as f64 * 1e-6);
+                t.first_pmu = crate::os::thread_counts();
                 let count = t.old_count.max(i + 1);
                 t.pages_status(count, false);
             }
@@ -559,6 +564,7 @@ impl Engine {
             conn.id
         ));
         let cpu0 = incr::thread_cpu_s();
+        let pmu0 = crate::os::thread_counts();
         let out = conn.out.clone();
         let Some(id) = req.int_field("id") else {
             server::error(&out, None, "request", "COMPILE needs an integer id");
@@ -669,6 +675,8 @@ impl Engine {
             first_cpu_ms: None,
             first_emit_ms: None,
             first_send_ms: None,
+            pmu0,
+            first_pmu: None,
         });
         let stop_at = req
             .int_field("viewport")
@@ -893,6 +901,28 @@ impl Engine {
             ));
             st.push(("send".to_string(), m(t.send_ns as f64 * 1e-6)));
             st.push(("cpu".to_string(), m((incr::thread_cpu_s() - t.cpu0) * 1e3)));
+            // Instructions and cycles of the engine thread, in thousands:
+            // the whole compile, to the first page, and (from the session)
+            // the restore and to the edited page. Load does not move them.
+            if let (Some(a), Some(b)) = (t.pmu0, crate::os::thread_counts()) {
+                let k = |x: u64| Json::Int((x / 1000) as i64);
+                st.push(("instr_k".to_string(), k(b.0 - a.0)));
+                st.push(("cycles_k".to_string(), k(b.1 - a.1)));
+                if let Some(f) = t.first_pmu {
+                    st.push(("first_page_instr_k".to_string(), k(f.0 - a.0)));
+                }
+                if let Ok(rep) = &result {
+                    if let Some(r) = rep.restore_instr {
+                        st.push(("restore_instr_k".to_string(), k(r)));
+                    }
+                    if let Some(e) = rep.edited_instr {
+                        st.push(("edited_instr_k".to_string(), k(e)));
+                    }
+                    if let Some(e) = rep.test_instr {
+                        st.push(("test_instr_k".to_string(), k(e)));
+                    }
+                }
+            }
             extra.push(("stages".to_string(), Json::Obj(st)));
         }
         let cancelled = t.quiet() || t.went_quiet;

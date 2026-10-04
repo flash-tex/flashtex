@@ -55,6 +55,10 @@ struct Args {
     /// NAME (`#[inline(always)]` or `#[inline(never)]`), for a hot routine's
     /// fast path and its out-of-line rest (changes/throughput.ch).
     inline: Vec<(String, String)>,
+    /// `--first-string N`: the number of the first multi-character pool
+    /// string (256, TANGLE's; 65536 for xetex.web, as `otangle` numbers
+    /// them).
+    first_string: i64,
 }
 
 fn parse_args() -> Result<Args, String> {
@@ -93,6 +97,7 @@ fn parse_args() -> Result<Args, String> {
         arena_caps: vec![],
         index_type: None,
         inline: vec![],
+        first_string: 256,
     };
     while let Some(arg) = it.next() {
         match arg.as_str() {
@@ -144,6 +149,12 @@ fn parse_args() -> Result<Args, String> {
                     return Err(format!("--inline: `always` or `never`, got {k}"));
                 }
                 a.inline.push((n.to_string(), k.to_string()));
+            }
+            "--first-string" => {
+                let v = it.next().ok_or("--first-string needs a number")?;
+                a.first_string = v
+                    .parse()
+                    .map_err(|_| format!("--first-string: not a number: {v}"))?;
             }
             "--stat" => a.stat = true,
             "--debug" => a.debug = true,
@@ -197,6 +208,7 @@ fn main() -> ExitCode {
         stat: args.stat,
         debug: args.debug,
         macros: args.macros.clone(),
+        first_string: args.first_string,
     };
     let t = tangle::tangle(&src, opts);
     eprintln!(

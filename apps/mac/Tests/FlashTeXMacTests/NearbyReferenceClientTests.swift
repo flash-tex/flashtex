@@ -264,7 +264,7 @@ final class NearbyReferenceClientTests: XCTestCase {
         XCTAssertTrue(h1.snapshot.contains { if case .connectionClosed(Self.longTermPairId?, "listener stopped") = $0 { return true }; return false }, "\(h1.snapshot)")
         let sinceRestart = Date().timeIntervalSince(restartedAt)
         print("measured: real-listener drop→duplicate-ack in \(String(format: "%.3f", elapsed))s total; listener back at +\(String(format: "%.3f", restartedAt.timeIntervalSince(started)))s; ack \(String(format: "%.3f", sinceRestart))s after restart; backoff 0.2s")
-        XCTAssertLessThan(elapsed, 8)
+        TimingBudget.assertWithin(elapsed * 1000, 8_000, "real-listener drop to duplicate ack over loopback")
         await reconnector.shutdown()
     }
 
@@ -571,7 +571,7 @@ final class NearbyReferenceClientTests: XCTestCase {
         let started = Date()
         let session = try await r.connect()
         let elapsed = Date().timeIntervalSince(started)
-        await fulfillment(of: [closedOlder], timeout: 5)
+        await fulfillment(of: [closedOlder], timeout: loopbackWait)
         XCTAssertTrue(session.isOpen)
         let made = await r.attemptsMade
         XCTAssertEqual(made, 2)

@@ -18,12 +18,14 @@ use crate::json::{obj, s, Json};
 use crate::page::{Page, StreamKind};
 use crate::resource::{Font, Sources};
 use crate::transport::Stream;
-use crate::{kind, PROTOCOL, VERSION_MAJOR, VERSION_MINOR};
+use crate::{kind, LATEST_MINOR, PROTOCOL, VERSION_MAJOR};
 use std::io::{self, BufReader, BufWriter, Write};
 use std::path::Path;
 
-/// One message from the host, decoded.
+/// One message from the host, decoded. Later minor versions add kinds, so a
+/// match outside this crate needs a wildcard arm.
 #[derive(Debug)]
+#[non_exhaustive]
 pub enum Event {
     Started(Json),
     Font(Font),
@@ -41,6 +43,15 @@ pub enum Event {
     Tool(Json),
     /// `diag-v1` (spec §6.7), for a client that accepted it.
     Diag(crate::diag::Diag),
+    /// 3.3: an IMAGE's bytes (spec §11.5), for a client that accepted
+    /// `image-data`.
+    ImageData(crate::resource::ImageData),
+    /// 3.3: the reply to RESOLVE or LOCATE (spec §11.6).
+    Resolved(Json),
+    Located(Json),
+    /// 3.3, the Typst host: a package's fetch (spec §11.8), for a client
+    /// that accepted `packages-v1`.
+    Package(Json),
     /// A kind this version does not know (a later minor version's): skip.
     Other(u8, Vec<u8>),
 }
@@ -63,6 +74,10 @@ pub fn decode_event(k: u8, body: Vec<u8>) -> Result<Event, String> {
         kind::PAGES => Event::Pages(json(&body)?),
         kind::TOOL => Event::Tool(json(&body)?),
         kind::DIAG => Event::Diag(crate::diag::Diag::decode(&body)?),
+        kind::IMAGE_DATA => Event::ImageData(crate::resource::ImageData::decode(&body)?),
+        kind::RESOLVED => Event::Resolved(json(&body)?),
+        kind::LOCATED => Event::Located(json(&body)?),
+        kind::PACKAGE => Event::Package(json(&body)?),
         _ => Event::Other(k, body),
     })
 }
@@ -256,7 +271,7 @@ impl Client {
                 "version",
                 Json::Arr(vec![
                     Json::Int(VERSION_MAJOR as i64),
-                    Json::Int(VERSION_MINOR as i64),
+                    Json::Int(LATEST_MINOR as i64),
                 ]),
             ),
             (

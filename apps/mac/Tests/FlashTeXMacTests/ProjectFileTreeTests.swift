@@ -113,7 +113,7 @@ final class ProjectFileTreeTests: XCTestCase {
         XCTAssertEqual(ProjectFileTree.components(of: "./a/./b.tex"), ["a", "b.tex"])
     }
 
-    func testTitleSuffixTooltipAndDimmedFolders() {
+    func testTitleSuffixTooltipAndUndimmedFolders() {
         let tree = ProjectFileTree.build([
             row("ch/missing.tex", id: "missing:ch/missing:main.tex", title: "ch/missing.tex — missing, create", dimmed: true,
                 tooltip: "\\input{ch/missing} from main.tex has no file"),
@@ -124,7 +124,7 @@ final class ProjectFileTreeTests: XCTestCase {
         XCTAssertEqual(missing.title, "missing.tex — missing, create")
         XCTAssertEqual(missing.tooltip, "ch/missing.tex\n\\input{ch/missing} from main.tex has no file", "the full path leads the tooltip")
         XCTAssertEqual(find("closed:ch/closed.tex", in: tree)?.tooltip, "ch/closed.tex · entry document", "already led by the path")
-        XCTAssertEqual(find("folder:ch", in: tree)?.dimmed, true, "every file under it is outside the compile")
+        XCTAssertEqual(find("folder:ch", in: tree)?.dimmed, false, "folders never dim, even when every file under them does")
         XCTAssertEqual(find("folder:open", in: tree)?.dimmed, false)
     }
 
@@ -133,7 +133,7 @@ final class ProjectFileTreeTests: XCTestCase {
         for part in 0..<10 { for ch in 0..<50 { items.append(row("book/part\(part)/chapter\(ch)/body.tex")) } }
         let start = Date()
         let tree = ProjectFileTree.build(items)
-        XCTAssertLessThan(Date().timeIntervalSince(start), 0.5)
+        TimingBudget.assertWithin(Date().timeIntervalSince(start) * 1000, 500, "ProjectFileTree.build of 500 files")
         XCTAssertEqual(tree.count, 1)
         XCTAssertEqual(tree[0].children?.count, 10)
         XCTAssertEqual(tree[0].children?[0].children?.map(\.title).prefix(3), ["chapter0", "chapter1", "chapter2"])
@@ -256,7 +256,7 @@ final class ProjectFileTreeTests: XCTestCase {
         }
         XCTAssertEqual(find("main.tex", in: tree)?.icon, "doc.text.fill", "the root document keeps its badge")
         XCTAssertEqual(find("closed:book/chapters/ch2.tex", in: tree)?.dimmed, true, "a closed include stays dimmed")
-        XCTAssertEqual(find("folder:book/chapters", in: tree)?.dimmed, true, "a folder of closed includes reads dimmed")
+        XCTAssertEqual(find("folder:book/chapters", in: tree)?.dimmed, false, "a folder of closed includes reads like every folder")
         XCTAssertEqual(find("folder:book/front-matter", in: tree)?.dimmed, false)
         m.files.detachHelper()
     }
@@ -468,6 +468,125 @@ final class ProjectFileTreeTests: XCTestCase {
                                                proposedItem: node("folder:book"), proposedChildIndex: onItem), [])
         XCTAssertEqual(asked.count, count, "a foreign drag never reaches dropFolder")
         XCTAssertEqual(moved, ["main.tex -> book"])
+    }
+
+    // MARK: hosted: hover
+
+    /// The rows drawing a hover wash now (visible row views only).
+    private func hoveredRows(_ outline: NSOutlineView) -> [Int] {
+        var rows: [Int] = []
+        outline.enumerateAvailableRowViews { view, row in
+            if (view as? TreeRowView)?.hovering == true { rows.append(row) }
+        }
+        return rows.sorted()
+    }
+
+    /// Owner report 2026-10-04: scrolling under a still pointer left several
+    /// rows (whole folder groups) hovered. Only the row under the pointer may
+    /// hover — while the list scrolls, as rows shift on collapse, and none
+    /// once the pointer is outside the visible tree.
+    func testOnlyTheRowUnderTheStillPointerHoversWhileScrolling() async throws {
+        func file(_ path: String) -> SidebarTree.Row {
+            SidebarTree.Row(id: path, icon: "doc.text", iconColor: .labelColor, title: (path as NSString).lastPathComponent)
+        }
+        var paths = (1...12).map { "book/front-matter/fm\($0).tex" }
+        paths += (1...40).map { "book/includes/chapter\($0).tex" }
+        let rows = ProjectFileTree.build(paths.map { ProjectFileTree.Item(path: $0, row: file($0)) })
+        let (window, plain, coordinator) = try await hostTree(SidebarTree(rows: rows, selectedID: nil, onSelect: { _ in },
+                                                                          accessibilityLabel: "Test tree"))
+        defer { window.orderOut(nil) }
+        let outline = try XCTUnwrap(plain as? TreeOutlineView)
+        let clip = try XCTUnwrap(outline.enclosingScrollView?.contentView)
+        outline.expandItem(nil, expandChildren: true)
+        outline.layoutSubtreeIfNeeded()
+        XCTAssertGreaterThan(outline.bounds.height, clip.bounds.height * 3, "the tree scrolls")
+
+        // A still pointer over the fourth row (the second front-matter file).
+        let start = outline.rect(ofRow: 3)
+        let pointer = outline.convert(NSPoint(x: start.midX, y: start.midY), to: nil)
+        outline.pointerLocation = { pointer }
+        outline.updateHover() // what the tracking area's mouseEntered does
+        XCTAssertEqual(outline.hoveredRow, 3)
+        XCTAssertEqual(hoveredRows(outline), [3])
+
+        func rowUnderPointer() -> Int { outline.row(at: outline.convert(pointer, from: nil)) }
+        // Scroll in uneven steps (rows are reused as they leave the view);
+        // the hover follows the pointer, never the rows.
+        var seen = Set<Int>()
+        for step in 1...30 {
+            clip.scroll(to: NSPoint(x: 0, y: CGFloat(step) * 17))
+            outline.enclosingScrollView?.reflectScrolledClipView(clip)
+            outline.layoutSubtreeIfNeeded()
+            let under = rowUnderPointer()
+            XCTAssertEqual(outline.hoveredRow, under, "step \(step)")
+            XCTAssertEqual(hoveredRows(outline), under >= 0 ? [under] : [], "step \(step): no stale hover")
+            seen.insert(under)
+        }
+        XCTAssertGreaterThan(seen.count, 10, "the rows really moved under the pointer")
+
+        // Back to the top, then collapse a folder: rows shift under the pointer.
+        clip.scroll(to: .zero)
+        outline.enclosingScrollView?.reflectScrolledClipView(clip)
+        XCTAssertEqual(hoveredRows(outline), [3])
+        outline.collapseItem(coordinator.nodes["folder:book/front-matter"])
+        outline.layoutSubtreeIfNeeded()
+        XCTAssertEqual(outline.hoveredRow, rowUnderPointer())
+        XCTAssertEqual(hoveredRows(outline), [rowUnderPointer()])
+
+        // The pointer leaves the visible tree: nothing hovers.
+        let outside = outline.convert(NSPoint(x: start.midX, y: clip.bounds.maxY + 40), to: nil)
+        outline.pointerLocation = { outside }
+        outline.updateHover()
+        XCTAssertEqual(outline.hoveredRow, -1)
+        XCTAssertEqual(hoveredRows(outline), [])
+    }
+
+    /// Owner report 2026-10-04: names middle-truncated ("additio…-topics")
+    /// with room to spare, and the top-level folder icon clipped at the left.
+    /// AppKit's `autoresizesOutlineColumn` grew the column by an indent per
+    /// expand (wider than the sidebar: a sideways scroll) and shrank it per
+    /// collapse (narrower: early truncation). The column must stay exactly
+    /// the tree's width, and a name that fits is never truncated.
+    func testTheColumnStaysTheTreeWidthSoNamesThatFitAreWhole() async throws {
+        func file(_ path: String) -> SidebarTree.Row {
+            SidebarTree.Row(id: path, icon: "doc.text", iconColor: .labelColor, title: (path as NSString).lastPathComponent)
+        }
+        let paths = ["book/front-matter/acknowledgements.tex", "book/includes/additional-topics/a.tex",
+                     "book/includes/enumerative-combinatorics/b.tex", "main.tex"]
+        let rows = ProjectFileTree.build(paths.map { ProjectFileTree.Item(path: $0, row: file($0)) })
+        let (window, outline, coordinator) = try await hostTree(SidebarTree(rows: rows, selectedID: nil, onSelect: { _ in },
+                                                                            accessibilityLabel: "Test tree"))
+        defer { window.orderOut(nil) }
+        let clip = try XCTUnwrap(outline.enclosingScrollView?.contentView)
+        let includes = try XCTUnwrap(coordinator.nodes["folder:book/includes"])
+
+        func check(_ when: String) throws {
+            outline.layoutSubtreeIfNeeded()
+            XCTAssertEqual(outline.tableColumns[0].width, clip.bounds.width, accuracy: 0.5, "\(when): column = visible width")
+            XCTAssertLessThanOrEqual(outline.frame.width, clip.bounds.width + 0.5, "\(when): no sideways scroll")
+            XCTAssertEqual(clip.bounds.minX, 0, "\(when): never scrolled sideways")
+            for row in 0..<outline.numberOfRows {
+                let cell = try XCTUnwrap(outline.view(atColumn: 0, row: row, makeIfNecessary: true))
+                cell.layoutSubtreeIfNeeded()
+                let title = try XCTUnwrap(Self.descendants(cell).compactMap { $0 as? NSTextField }.first { !$0.stringValue.isEmpty })
+                XCTAssertGreaterThanOrEqual(title.frame.width + 0.5, title.intrinsicContentSize.width,
+                                            "\(when): \(title.stringValue) fits and is not truncated")
+                let icon = try XCTUnwrap(Self.descendants(cell).compactMap { $0 as? NSImageView }.first)
+                XCTAssertGreaterThanOrEqual(outline.convert(icon.frame, from: cell).minX, outline.frameOfOutlineCell(atRow: row).maxX,
+                                            "\(when): the icon clears the disclosure column")
+            }
+        }
+
+        outline.expandItem(nil, expandChildren: true)
+        try check("all expanded")
+        outline.collapseItem(includes)
+        try check("includes collapsed")
+        outline.expandItem(includes)
+        outline.collapseItem(coordinator.nodes["folder:book/includes/additional-topics"])
+        outline.collapseItem(coordinator.nodes["folder:book/front-matter"])
+        try check("inner folders collapsed")
+        outline.expandItem(nil, expandChildren: true)
+        try check("re-expanded")
     }
 }
 

@@ -40,6 +40,16 @@ extern "C" {}
 /// still zero-filled on first touch and take no RAM before it, but the
 /// whole length counts against the system commit limit (RAM plus page
 /// file) at once. On WASI the global allocator's zeroed memory.
+///
+/// Windows stays at reserve-and-commit (issue #1418, reviewed 2026-10-04):
+/// committing lazily needs a vectored exception handler that commits the
+/// page an access faults on, and that does not cover the kernel. A
+/// `WriteFile`/`send` whose buffer reaches an uncommitted page fails with
+/// `ERROR_NOACCESS` instead of faulting, and the word space goes to the
+/// kernel straight from the mapping (`Arena::bytes`, the persisted S₀ and
+/// checkpoint files, `host/mod.rs`, `checkpoint.rs`). Each such path would
+/// need committing first. Not simple, so not done; the cost is commit
+/// charge, not memory.
 pub fn alloc_zeroed(len: usize) -> *mut u8 {
     let p = imp::alloc_zeroed(len);
     if p.is_null() {
@@ -143,6 +153,29 @@ pub fn broken_down(t: i64, utc: bool) -> Tm {
 /// per-thread CPU clock, the process's monotonic time since the first call.
 pub fn thread_cpu_s() -> f64 {
     imp::thread_cpu_s()
+}
+
+/// Instructions retired and cycles elapsed by this thread so far, from the
+/// CPU's fixed counters (macOS: the kernel's per-thread counts, which do not
+/// move with other processes' load; for measurement only, DESIGN.md §5.6).
+/// `None` where the platform does not give them.
+pub fn thread_counts() -> Option<(u64, u64)> {
+    #[cfg(target_os = "macos")]
+    {
+        extern "C" {
+            // xnu `thread_selfcounts` (libsystem_kernel), type 1: the
+            // thread's instructions and cycles.
+            fn thread_selfcounts(kind: i32, buf: *mut u64, nbytes: usize) -> i32;
+        }
+        let mut c = [0u64; 2];
+        // SAFETY: the kernel writes at most `nbytes` into `c`.
+        let r = unsafe { thread_selfcounts(1, c.as_mut_ptr(), std::mem::size_of_val(&c)) };
+        (r == 0).then_some((c[0], c[1]))
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        None
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -345,6 +378,11 @@ pub fn shell_command(cmd: &[u8]) -> Command {
 /// (texmfmp.c `QUOTE`): `"` on Windows, `'` elsewhere.
 pub const SHELL_QUOTE: u8 = if cfg!(windows) { b'"' } else { b'\'' };
 
+/// Whether texmfmp.c's `runpopen` turns each `'` of a pipe's command into
+/// `"` before checking it (its `#ifdef WIN32` block; `system.rs`
+/// `popen_command`).
+pub const POPEN_QUOTES_TO_DOUBLE: bool = cfg!(windows);
+
 /// The environment variable that tells `flashtex-host` to run as the
 /// engine where `argv[0]` cannot be set (Windows): see [`engine_command`].
 pub const INVOKED_AS_ENV: &str = "FLASHTEX_INVOKED_AS";
@@ -370,12 +408,8 @@ pub fn engine_command(exe: &Path) -> Command {
 /// environment (which is then removed, so that the engine's own children
 /// do not inherit it).
 pub fn invoked_as(argv0: &str) -> String {
-    #[cfg(not(unix))]
-    if let Some(v) = std::env::var_os(INVOKED_AS_ENV) {
-        // SAFETY (edition 2024 makes this `unsafe`): called at the start of
-        // `main`, before any other thread exists.
-        std::env::remove_var(INVOKED_AS_ENV);
-        return v.to_string_lossy().into_owned();
+    if let Some(v) = take_invoked_as() {
+        return v;
     }
     let base = Path::new(argv0)
         .file_name()
@@ -384,6 +418,40 @@ pub fn invoked_as(argv0: &str) -> String {
     match base.len().checked_sub(4) {
         Some(k) if cfg!(windows) && base[k..].eq_ignore_ascii_case(".exe") => base[..k].to_string(),
         _ => base,
+    }
+}
+
+/// The name [`engine_command`] gave this process through the environment
+/// (Windows), removed from the environment so that the engine's own
+/// children (`\write18`, pipes, the editor) do not inherit it. Every
+/// program [`engine_command`] may start calls this first thing in `main`:
+/// `flashtex-host` through [`invoked_as`], and `flashtex-initex` (a host's
+/// `--engine`) directly. None on Unix, where `argv[0]` says it.
+pub fn take_invoked_as() -> Option<String> {
+    #[cfg(not(unix))]
+    if let Some(v) = std::env::var_os(INVOKED_AS_ENV) {
+        // Called at the start of `main`, before any other thread exists.
+        remove_env(INVOKED_AS_ENV);
+        return Some(v.to_string_lossy().into_owned());
+    }
+    None
+}
+
+/// Remove an environment variable from both of Windows' copies (see
+/// [`set_env`]): the process's, which `std::process::Command` children
+/// inherit, and the C runtime's, which the C parts' `getenv` and `spawn`
+/// read (`_putenv_s` with an empty value removes it).
+pub fn remove_env(var: &str) {
+    std::env::remove_var(var);
+    #[cfg(windows)]
+    {
+        extern "C" {
+            fn _putenv_s(name: *const std::ffi::c_char, value: *const std::ffi::c_char) -> i32;
+        }
+        if let Ok(k) = std::ffi::CString::new(var) {
+            // SAFETY: two NUL-terminated strings; the CRT copies them.
+            unsafe { _putenv_s(k.as_ptr(), c"".as_ptr()) };
+        }
     }
 }
 
@@ -400,17 +468,87 @@ pub fn link_executable(target: &Path, link: &Path) -> std::io::Result<()> {
     }
 }
 
-/// Make the engine host's socket file reachable by its owner only (mode
-/// 0600). On Windows the socket file keeps the ACL it inherits from its
-/// directory (a per-user directory such as `%TEMP%` is private already).
-pub fn restrict_to_owner(path: &Path) {
+/// Make a socket file (the engine host's, an export channel's) reachable by
+/// its owner only: mode 0600 on Unix. On Windows a protected DACL with one
+/// entry, full access for the user this process runs as, replaces the ACL
+/// inherited from the directory (`%TEMP%`'s admits Administrators and
+/// SYSTEM too); an `AF_UNIX` `connect` needs write access to the file, so
+/// no other account can connect. The file is opened as the reparse point
+/// it is, not followed. On WASI there are no other users to keep out.
+pub fn restrict_to_owner(path: &Path) -> std::io::Result<()> {
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        let _ = std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600));
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))
     }
-    #[cfg(not(unix))]
-    let _ = path;
+    #[cfg(windows)]
+    {
+        imp::restrict_to_owner(path)
+    }
+    #[cfg(target_os = "wasi")]
+    {
+        let _ = path;
+        Ok(())
+    }
+}
+
+/// A listening socket at `path` that only its owner can connect to, or an
+/// error and no socket: the engine host's and an export channel's. The
+/// caller removes a stale file at `path` first.
+///
+/// * Windows: no other account can connect at any moment, not even between
+///   `bind` and setting the DACL (Winsock's `bind` takes no security
+///   descriptor). The socket is bound inside a fresh directory beside
+///   `path` whose owner-only DACL is set as it is created
+///   (`imp::create_private_dir`), so the socket file inherits that DACL
+///   from its first instant; it is then given its own protected DACL
+///   ([`restrict_to_owner`]), renamed to `path`, and the directory removed.
+/// * Unix: `bind`, then mode 0600. Between the two the socket has the mode
+///   the umask leaves, which under the usual 022 already denies other
+///   users the write permission `connect` needs; the Mac app puts it in
+///   the per-user, mode-0700 `NSTemporaryDirectory()` besides.
+///
+/// Either way a failure to restrict removes the socket: the caller never
+/// listens on one it could not restrict.
+#[cfg(not(feature = "tex82"))]
+pub fn bind_owner_only(path: &Path) -> std::io::Result<flashtex_display_list::transport::Listener> {
+    use flashtex_display_list::transport::Listener;
+    #[cfg(windows)]
+    {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static N: AtomicU64 = AtomicU64::new(0);
+        let parent = path
+            .parent()
+            .filter(|p| !p.as_os_str().is_empty())
+            .unwrap_or(Path::new("."));
+        let dir = parent.join(format!(
+            ".flashtex-{}-{}",
+            std::process::id(),
+            N.fetch_add(1, Ordering::Relaxed)
+        ));
+        imp::create_private_dir(&dir)?;
+        let tmp = dir.join("s");
+        let r = Listener::bind(&tmp).and_then(|l| {
+            restrict_to_owner(&tmp)?;
+            std::fs::rename(&tmp, path)?;
+            Ok(l)
+        });
+        if r.is_err() {
+            let _ = std::fs::remove_file(&tmp);
+        }
+        let _ = std::fs::remove_dir(&dir);
+        r
+    }
+    #[cfg(not(windows))]
+    {
+        let l = Listener::bind(path)?;
+        if let Err(e) = restrict_to_owner(path) {
+            drop(l);
+            let _ = std::fs::remove_file(path);
+            return Err(e);
+        }
+        Ok(l)
+    }
 }
 
 /// The display-list channel of an export child (`src/host/server.rs`
@@ -422,8 +560,13 @@ pub fn restrict_to_owner(path: &Path) {
 /// * Windows, which has neither `socketpair` nor numbered-descriptor
 ///   inheritance (DESIGN.md §16 rule 1): a listener on a fresh path in the
 ///   temporary directory, `FLASHTEX_DISPLAY_LIST=socket:PATH`, accepted
-///   once. Should the child end without connecting, the read ends as
-///   soon as the caller says the child has exited.
+///   once. The socket file admits its owner only ([`bind_owner_only`]),
+///   and the connection accepted is the child's: one from any other
+///   process (`Stream::peer_pid`, `SIO_AF_UNIX_GETPEERPID`) is closed and
+///   the wait goes on. Where Windows cannot name the peer (before Windows
+///   10 1803), the owner-only DACL is the only check. Should the child end
+///   without connecting, the read ends as soon as the caller says the
+///   child has exited.
 #[cfg(not(feature = "tex82"))]
 pub struct ExportChannel {
     #[cfg(unix)]
@@ -439,9 +582,9 @@ pub struct ExportChannel {
 #[cfg(not(feature = "tex82"))]
 impl ExportChannel {
     pub fn open() -> std::io::Result<ExportChannel> {
-        use flashtex_display_list::transport::*;
         #[cfg(unix)]
         {
+            use flashtex_display_list::transport::*;
             let (ours, theirs) = Stream::pair()?;
             widen_socket_buffers(&ours);
             widen_socket_buffers(&theirs);
@@ -457,9 +600,10 @@ impl ExportChannel {
                 N.fetch_add(1, Ordering::Relaxed)
             ));
             let _ = std::fs::remove_file(&path);
-            let listener = Listener::bind(&path)?;
-            listener.set_nonblocking(true)?;
-            Ok(ExportChannel { listener, path })
+            let listener = bind_owner_only(&path)?;
+            let ch = ExportChannel { listener, path };
+            ch.listener.set_nonblocking(true)?;
+            Ok(ch)
         }
     }
 
@@ -493,15 +637,17 @@ impl ExportChannel {
         }
     }
 
-    /// After the child was spawned: our end, to read frames from until the
-    /// child closes its end. `exited` turns true when the child has ended.
+    /// After the child (process `pid`) was spawned: our end, to read
+    /// frames from until the child closes its end. `exited` turns true when
+    /// the child has ended.
     pub fn reader(
         self,
+        pid: u32,
         exited: std::sync::Arc<std::sync::atomic::AtomicBool>,
     ) -> Box<dyn std::io::Read + Send> {
         #[cfg(unix)]
         {
-            let _ = exited;
+            let _ = (pid, exited);
             drop(self.theirs);
             Box::new(self.ours)
         }
@@ -509,6 +655,7 @@ impl ExportChannel {
         {
             Box::new(Accepting {
                 ch: self,
+                pid,
                 stream: None,
                 exited,
             })
@@ -519,6 +666,7 @@ impl ExportChannel {
 #[cfg(all(not(feature = "tex82"), not(unix)))]
 struct Accepting {
     ch: ExportChannel,
+    pid: u32,
     stream: Option<flashtex_display_list::transport::Stream>,
     exited: std::sync::Arc<std::sync::atomic::AtomicBool>,
 }
@@ -534,6 +682,9 @@ impl std::io::Read for Accepting {
                 let gone = self.exited.load(Ordering::Acquire);
                 match self.ch.listener.accept() {
                     Ok((s, _)) => {
+                        if !peer_is(&s, self.pid) {
+                            continue;
+                        }
                         s.set_nonblocking(false)?;
                         flashtex_display_list::transport::widen_socket_buffers(&s);
                         self.stream = Some(s);
@@ -551,6 +702,39 @@ impl std::io::Read for Accepting {
         }
         self.stream.as_mut().unwrap().read(buf)
     }
+}
+
+/// Whether the export channel's connection `s` comes from process `pid`
+/// (the engine child). Only a Windows too old to name a peer at all
+/// (`ErrorKind::Unsupported`, before Windows 10 1803) is taken on trust,
+/// the owner-only DACL having kept other accounts out; any other failure
+/// to name the peer closes the connection.
+#[cfg(all(not(feature = "tex82"), windows))]
+fn peer_is(s: &flashtex_display_list::transport::Stream, pid: u32) -> bool {
+    peer_verdict(s.peer_pid(), pid)
+}
+
+#[cfg(all(not(feature = "tex82"), windows))]
+fn peer_verdict(peer: std::io::Result<u32>, pid: u32) -> bool {
+    match peer {
+        Ok(p) if p == pid => true,
+        Ok(p) => {
+            eprintln!("flashtex-host: export channel: closed a connection from process {p}, not the engine ({pid})");
+            false
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::Unsupported => true,
+        Err(e) => {
+            eprintln!(
+                "flashtex-host: export channel: closed a connection whose process is unknown: {e}"
+            );
+            false
+        }
+    }
+}
+
+#[cfg(all(not(feature = "tex82"), target_os = "wasi"))]
+fn peer_is(_: &flashtex_display_list::transport::Stream, _: u32) -> bool {
+    true
 }
 
 #[cfg(all(not(feature = "tex82"), not(unix)))]
@@ -752,7 +936,7 @@ mod imp {
         // on failure or in `unmap_file`.
         unsafe {
             let h = CreateFileMappingW(
-                f.as_raw_handle() as *mut c_void,
+                f.as_raw_handle(),
                 std::ptr::null_mut(),
                 PAGE_READONLY,
                 0,
@@ -793,6 +977,190 @@ mod imp {
                 _localtime64_s(tm, &t);
             }
         }
+    }
+
+    // ----- Owner-only DACL (`super::restrict_to_owner`) -----
+
+    const TOKEN_QUERY: u32 = 0x0008;
+    const TOKEN_USER_CLASS: u32 = 1; // TOKEN_INFORMATION_CLASS::TokenUser
+    const ACL_REVISION: u32 = 2;
+    const FILE_ALL_ACCESS: u32 = 0x001F_01FF;
+    const SE_FILE_OBJECT: u32 = 1;
+    const DACL_SECURITY_INFORMATION: u32 = 0x0000_0004;
+    const PROTECTED_DACL_SECURITY_INFORMATION: u32 = 0x8000_0000;
+    const READ_CONTROL: u32 = 0x0002_0000;
+    const WRITE_DAC: u32 = 0x0004_0000;
+    const FILE_FLAG_OPEN_REPARSE_POINT: u32 = 0x0020_0000;
+    const FILE_FLAG_BACKUP_SEMANTICS: u32 = 0x0200_0000;
+    const OBJECT_INHERIT_ACE: u32 = 0x1;
+    const CONTAINER_INHERIT_ACE: u32 = 0x2;
+    const SECURITY_DESCRIPTOR_REVISION: u32 = 1;
+    const SE_DACL_PROTECTED: u16 = 0x1000;
+
+    #[link(name = "advapi32")]
+    extern "system" {
+        fn OpenProcessToken(process: *mut c_void, access: u32, token: *mut *mut c_void) -> i32;
+        fn GetTokenInformation(
+            token: *mut c_void,
+            class: u32,
+            info: *mut c_void,
+            len: u32,
+            ret: *mut u32,
+        ) -> i32;
+        fn GetLengthSid(sid: *mut c_void) -> u32;
+        fn InitializeAcl(acl: *mut c_void, len: u32, revision: u32) -> i32;
+        fn AddAccessAllowedAceEx(
+            acl: *mut c_void,
+            revision: u32,
+            flags: u32,
+            mask: u32,
+            sid: *mut c_void,
+        ) -> i32;
+        fn InitializeSecurityDescriptor(sd: *mut c_void, revision: u32) -> i32;
+        fn SetSecurityDescriptorDacl(
+            sd: *mut c_void,
+            present: i32,
+            dacl: *mut c_void,
+            defaulted: i32,
+        ) -> i32;
+        fn SetSecurityDescriptorControl(sd: *mut c_void, mask: u16, bits: u16) -> i32;
+        fn SetSecurityInfo(
+            handle: *mut c_void,
+            object_type: u32,
+            info: u32,
+            owner: *mut c_void,
+            group: *mut c_void,
+            dacl: *mut c_void,
+            sacl: *mut c_void,
+        ) -> u32;
+    }
+    #[link(name = "kernel32")]
+    extern "system" {
+        fn GetCurrentProcess() -> *mut c_void;
+        fn CreateDirectoryW(path: *const u16, attrs: *const c_void) -> i32;
+    }
+
+    /// The process token's user (`TOKEN_USER`, whose first field is the
+    /// SID's pointer into the same buffer), as u64 words for alignment.
+    pub(super) fn token_user() -> std::io::Result<Vec<u64>> {
+        let err = std::io::Error::last_os_error;
+        // SAFETY: out-parameters of the documented sizes; the token handle
+        // is closed before returning.
+        unsafe {
+            let mut token = std::ptr::null_mut();
+            if OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut token) == 0 {
+                return Err(err());
+            }
+            let mut len = 0u32;
+            GetTokenInformation(token, TOKEN_USER_CLASS, std::ptr::null_mut(), 0, &mut len);
+            let mut buf = vec![0u64; (len as usize).div_ceil(8).max(1)];
+            let ok = GetTokenInformation(
+                token,
+                TOKEN_USER_CLASS,
+                buf.as_mut_ptr() as *mut c_void,
+                (buf.len() * 8) as u32,
+                &mut len,
+            );
+            let e = err();
+            CloseHandle(token);
+            if ok == 0 {
+                return Err(e);
+            }
+            Ok(buf)
+        }
+    }
+
+    /// An ACL with one entry: full access for `user`'s SID (from
+    /// [`token_user`]), with the ACE flags `inherit` (0, or object and
+    /// container inheritance for a directory's children). u32 words, as
+    /// InitializeAcl's documentation sizes it: the ACL header, then one
+    /// ACCESS_ALLOWED_ACE whose SidStart DWORD the SID overlays.
+    fn owner_acl(user: &[u64], inherit: u32) -> std::io::Result<Vec<u32>> {
+        let sid = user[0] as usize as *mut c_void;
+        // SAFETY: `sid` points into `user`, which outlives the calls; the
+        // buffer has the length passed.
+        unsafe {
+            let ace = 8 + GetLengthSid(sid) as usize;
+            let mut acl = vec![0u32; (8 + ace).div_ceil(4)];
+            let p = acl.as_mut_ptr() as *mut c_void;
+            if InitializeAcl(p, (acl.len() * 4) as u32, ACL_REVISION) == 0
+                || AddAccessAllowedAceEx(p, ACL_REVISION, inherit, FILE_ALL_ACCESS, sid) == 0
+            {
+                return Err(std::io::Error::last_os_error());
+            }
+            Ok(acl)
+        }
+    }
+
+    pub fn restrict_to_owner(path: &std::path::Path) -> std::io::Result<()> {
+        use std::os::windows::fs::OpenOptionsExt;
+        use std::os::windows::io::AsRawHandle;
+        // The file itself, never what a reparse point (an AF_UNIX socket
+        // is one) would lead to; a directory would open too.
+        let f = std::fs::OpenOptions::new()
+            .access_mode(READ_CONTROL | WRITE_DAC)
+            .share_mode(7)
+            .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT | FILE_FLAG_BACKUP_SEMANTICS)
+            .open(path)?;
+        let mut acl = owner_acl(&token_user()?, 0)?;
+        // SAFETY: a handle opened with WRITE_DAC and a valid ACL.
+        let r = unsafe {
+            SetSecurityInfo(
+                f.as_raw_handle(),
+                SE_FILE_OBJECT,
+                DACL_SECURITY_INFORMATION | PROTECTED_DACL_SECURITY_INFORMATION,
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+                acl.as_mut_ptr() as *mut c_void,
+                std::ptr::null_mut(),
+            )
+        };
+        if r != 0 {
+            return Err(std::io::Error::from_raw_os_error(r as i32));
+        }
+        Ok(())
+    }
+
+    /// A new directory whose DACL, set as it is created (no window), is
+    /// protected and gives this process's user alone full access, inherited
+    /// by everything made in it.
+    pub fn create_private_dir(path: &std::path::Path) -> std::io::Result<()> {
+        use std::os::windows::ffi::OsStrExt;
+        #[repr(C)]
+        struct SecurityAttributes {
+            len: u32,
+            sd: *mut c_void,
+            inherit: i32,
+        }
+        let mut acl = owner_acl(&token_user()?, OBJECT_INHERIT_ACE | CONTAINER_INHERIT_ACE)?;
+        // An absolute SECURITY_DESCRIPTOR: 40 bytes on 64-bit Windows
+        // (SECURITY_DESCRIPTOR_MIN_LENGTH), 20 on 32-bit.
+        let mut sd = [0u64; 8];
+        let wide: Vec<u16> = path.as_os_str().encode_wide().chain(Some(0)).collect();
+        // SAFETY: `sd` and `acl` outlive CreateDirectoryW, which copies
+        // the descriptor; `wide` is NUL-terminated.
+        unsafe {
+            let psd = sd.as_mut_ptr() as *mut c_void;
+            if InitializeSecurityDescriptor(psd, SECURITY_DESCRIPTOR_REVISION) == 0
+                || SetSecurityDescriptorDacl(psd, 1, acl.as_mut_ptr() as *mut c_void, 0) == 0
+                || SetSecurityDescriptorControl(psd, SE_DACL_PROTECTED, SE_DACL_PROTECTED) == 0
+            {
+                return Err(std::io::Error::last_os_error());
+            }
+            let sa = SecurityAttributes {
+                len: std::mem::size_of::<SecurityAttributes>() as u32,
+                sd: psd,
+                inherit: 0,
+            };
+            if CreateDirectoryW(
+                wide.as_ptr(),
+                &sa as *const SecurityAttributes as *const c_void,
+            ) == 0
+            {
+                return Err(std::io::Error::last_os_error());
+            }
+        }
+        Ok(())
     }
 
     pub fn thread_cpu_s() -> f64 {
@@ -863,5 +1231,287 @@ mod imp {
             .get_or_init(std::time::Instant::now)
             .elapsed()
             .as_secs_f64()
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Tests (the Windows ones run in .github/workflows/portability.yml)
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    fn scratch(name: &str) -> std::path::PathBuf {
+        let p = std::env::temp_dir().join(format!("flashtex-os-{}-{name}", std::process::id()));
+        let _ = std::fs::remove_file(&p);
+        p
+    }
+
+    /// The access-control entries of `path` (the file itself, not what a
+    /// reparse point leads to): (type, mask, is this process's user).
+    #[cfg(windows)]
+    fn dacl(path: &std::path::Path) -> Vec<(u8, u32, bool)> {
+        use std::ffi::c_void;
+        use std::os::windows::fs::OpenOptionsExt;
+        use std::os::windows::io::AsRawHandle;
+        #[link(name = "advapi32")]
+        extern "system" {
+            fn GetSecurityInfo(
+                handle: *mut c_void,
+                object_type: u32,
+                info: u32,
+                owner: *mut *mut c_void,
+                group: *mut *mut c_void,
+                dacl: *mut *mut c_void,
+                sacl: *mut *mut c_void,
+                sd: *mut *mut c_void,
+            ) -> u32;
+            fn GetAce(acl: *mut c_void, i: u32, ace: *mut *mut c_void) -> i32;
+            fn EqualSid(a: *mut c_void, b: *mut c_void) -> i32;
+        }
+        #[link(name = "kernel32")]
+        extern "system" {
+            fn LocalFree(p: *mut c_void) -> *mut c_void;
+        }
+        let f = std::fs::OpenOptions::new()
+            .access_mode(0x0002_0000) // READ_CONTROL
+            .share_mode(7)
+            .custom_flags(0x0020_0000 | 0x0200_0000)
+            .open(path)
+            .unwrap();
+        let user = super::imp::token_user().unwrap();
+        let me = user[0] as usize as *mut c_void;
+        let mut out = vec![];
+        // SAFETY: out-parameters of GetSecurityInfo; the ACL lives in the
+        // security descriptor, freed last.
+        unsafe {
+            let (mut acl, mut sd) = (std::ptr::null_mut(), std::ptr::null_mut());
+            let null = std::ptr::null_mut();
+            let h = f.as_raw_handle();
+            let r = GetSecurityInfo(h, 1, 4, null, null, &mut acl, null, &mut sd);
+            assert_eq!(r, 0, "GetSecurityInfo");
+            assert!(!acl.is_null(), "no DACL (everyone has access)");
+            let count = *((acl as *const u8).add(4) as *const u16);
+            for i in 0..count as u32 {
+                let mut ace = std::ptr::null_mut();
+                assert!(GetAce(acl, i, &mut ace) != 0);
+                let b = ace as *const u8;
+                let mask = *(b.add(4) as *const u32);
+                out.push((*b, mask, EqualSid(b.add(8) as *mut c_void, me) != 0));
+            }
+            LocalFree(sd);
+        }
+        out
+    }
+
+    /// `take_invoked_as` empties both of Windows' environments, so neither
+    /// a `Command` child (`\write18`) nor the C parts see the variable.
+    #[cfg(windows)]
+    #[test]
+    fn invoked_as_is_taken_out_of_both_environments() {
+        extern "C" {
+            fn getenv(name: *const std::ffi::c_char) -> *const std::ffi::c_char;
+        }
+        let crt = || unsafe { !getenv(c"FLASHTEX_INVOKED_AS".as_ptr()).is_null() };
+        super::set_env(super::INVOKED_AS_ENV, "pdftex");
+        assert!(crt());
+        assert_eq!(super::take_invoked_as().as_deref(), Some("pdftex"));
+        assert_eq!(super::take_invoked_as(), None);
+        assert!(!crt());
+        let out = super::shell_command(
+            b"if defined FLASHTEX_INVOKED_AS (echo inherited) else (echo clean)",
+        )
+        .output()
+        .unwrap();
+        assert_eq!(String::from_utf8_lossy(&out.stdout).trim_end(), "clean");
+    }
+
+    /// A socket that cannot be made owner-only is not left listening (here
+    /// it cannot even be made: its directory does not exist).
+    #[cfg(not(feature = "tex82"))]
+    #[test]
+    fn bind_owner_only_fails_closed() {
+        let p = scratch("no-such-dir").join("s.sock");
+        assert!(super::bind_owner_only(&p).is_err());
+        assert!(!p.exists());
+    }
+
+    #[cfg(all(unix, not(feature = "tex82")))]
+    #[test]
+    fn bind_owner_only_is_mode_0600() {
+        use std::os::unix::fs::PermissionsExt;
+        let p = scratch("bind.sock");
+        let l = super::bind_owner_only(&p).unwrap();
+        let mode = std::fs::metadata(&p).unwrap().permissions().mode();
+        drop(l);
+        let _ = std::fs::remove_file(&p);
+        assert_eq!(mode & 0o777, 0o600);
+    }
+
+    /// Owner-only at its final path, connectable there after the rename
+    /// out of the private directory, which is gone.
+    #[cfg(all(windows, not(feature = "tex82")))]
+    #[test]
+    fn bind_owner_only_on_windows() {
+        use flashtex_display_list::transport::Stream;
+        use std::io::{Read, Write};
+        let p = scratch("bind.sock");
+        let l = super::bind_owner_only(&p).unwrap();
+        assert_eq!(dacl(&p), vec![(0, 0x001F_01FF, true)]);
+        let mut c = Stream::connect(&p).unwrap();
+        let (mut s, ()) = l.accept().unwrap();
+        assert_eq!(s.peer_pid().unwrap(), std::process::id());
+        c.write_all(b"ok").unwrap();
+        let mut b = [0u8; 2];
+        s.read_exact(&mut b).unwrap();
+        assert_eq!(&b, b"ok");
+        drop((c, s, l));
+        let _ = std::fs::remove_file(&p);
+        let me = format!(".flashtex-{}-", std::process::id());
+        let left: Vec<_> = std::fs::read_dir(std::env::temp_dir())
+            .unwrap()
+            .flatten()
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .filter(|n| n.starts_with(&me))
+            .collect();
+        // Another test of this process may be binding at this moment;
+        // none of its directories outlives its bind.
+        assert!(left.len() <= 1, "{left:?}");
+    }
+
+    /// The private directory is owner-only from its creation, and what is
+    /// made in it inherits that.
+    #[cfg(windows)]
+    #[test]
+    fn private_dir_is_owner_only_and_inherited() {
+        let d = scratch("private");
+        let _ = std::fs::remove_dir_all(&d);
+        super::imp::create_private_dir(&d).unwrap();
+        let f = d.join("f");
+        std::fs::write(&f, b"x").unwrap();
+        let (dd, fd) = (dacl(&d), dacl(&f));
+        let _ = std::fs::remove_dir_all(&d);
+        assert_eq!(dd, vec![(0, 0x001F_01FF, true)]);
+        assert_eq!(fd, vec![(0, 0x001F_01FF, true)]);
+    }
+
+    /// The export channel's peer check refuses every failure to name the
+    /// peer except Windows being too old to (`Unsupported`).
+    #[cfg(all(windows, not(feature = "tex82")))]
+    #[test]
+    fn export_peer_verdicts() {
+        use std::io::{Error, ErrorKind};
+        assert!(super::peer_verdict(Ok(7), 7));
+        assert!(!super::peer_verdict(Ok(8), 7));
+        assert!(super::peer_verdict(
+            Err(Error::new(ErrorKind::Unsupported, "old")),
+            7
+        ));
+        assert!(!super::peer_verdict(
+            Err(Error::from_raw_os_error(10054)),
+            7
+        ));
+        assert!(!super::peer_verdict(Err(Error::other("x")), 7));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn restrict_to_owner_is_mode_0600() {
+        use std::os::unix::fs::PermissionsExt;
+        let p = scratch("mode");
+        std::fs::write(&p, b"x").unwrap();
+        super::restrict_to_owner(&p).unwrap();
+        let mode = std::fs::metadata(&p).unwrap().permissions().mode();
+        let _ = std::fs::remove_file(&p);
+        assert_eq!(mode & 0o777, 0o600);
+    }
+
+    /// One entry: full access for this process's user, nothing inherited.
+    #[cfg(windows)]
+    #[test]
+    fn restrict_to_owner_leaves_one_entry_for_the_user() {
+        let p = scratch("dacl");
+        std::fs::write(&p, b"x").unwrap();
+        let before = dacl(&p);
+        super::restrict_to_owner(&p).unwrap();
+        let after = dacl(&p);
+        let _ = std::fs::remove_file(&p);
+        assert!(before.len() > 1, "{before:?}");
+        assert_eq!(after, vec![(0, 0x001F_01FF, true)]);
+    }
+
+    /// The same on an AF_UNIX socket file (a reparse point), which its
+    /// owner can still connect to.
+    #[cfg(all(windows, not(feature = "tex82")))]
+    #[test]
+    fn restrict_to_owner_on_a_socket_keeps_the_owner_connecting() {
+        use flashtex_display_list::transport::{Listener, Stream};
+        let p = scratch("sock");
+        let l = Listener::bind(&p).unwrap();
+        super::restrict_to_owner(&p).unwrap();
+        assert_eq!(dacl(&p), vec![(0, 0x001F_01FF, true)]);
+        let c = Stream::connect(&p).unwrap();
+        let (s, ()) = l.accept().unwrap();
+        // Both ends are this process.
+        assert_eq!(s.peer_pid().unwrap(), std::process::id());
+        assert_eq!(c.peer_pid().unwrap(), std::process::id());
+        drop((c, s, l));
+        let _ = std::fs::remove_file(&p);
+    }
+
+    /// `FLASHTEX_DISPLAY_LIST=socket:PATH` as `attach` gives it.
+    #[cfg(all(windows, not(feature = "tex82")))]
+    fn channel_path(cmd: &std::process::Command) -> std::path::PathBuf {
+        cmd.get_envs()
+            .find(|(k, _)| *k == "FLASHTEX_DISPLAY_LIST")
+            .and_then(|(_, v)| v)
+            .and_then(|v| v.to_str())
+            .and_then(|v| v.strip_prefix("socket:"))
+            .map(std::path::PathBuf::from)
+            .unwrap()
+    }
+
+    /// The export channel reads the engine child's connection and closes
+    /// any other process's: first a `cmd.exe` child plays the engine (and
+    /// never connects) while this process intrudes, then this process is
+    /// the one named.
+    #[cfg(all(windows, not(feature = "tex82")))]
+    #[test]
+    fn export_channel_reads_only_the_child() {
+        use flashtex_display_list::transport::Stream;
+        use std::io::{Read, Write};
+        use std::sync::atomic::{AtomicBool, Ordering};
+        use std::sync::Arc;
+
+        let ch = super::ExportChannel::open().unwrap();
+        let mut cmd = std::process::Command::new("cmd.exe");
+        ch.attach(&mut cmd);
+        let path = channel_path(&cmd);
+        assert_eq!(dacl(&path), vec![(0, 0x001F_01FF, true)]);
+        let mut child = std::process::Command::new("cmd.exe")
+            .args(["/c", "exit 0"])
+            .spawn()
+            .unwrap();
+        let mut intruder = Stream::connect(&path).unwrap();
+        intruder.write_all(b"forged").unwrap();
+        let exited = Arc::new(AtomicBool::new(false));
+        let mut r = ch.reader(child.id(), exited.clone());
+        child.wait().unwrap();
+        exited.store(true, Ordering::Release);
+        let mut got = vec![];
+        r.read_to_end(&mut got).unwrap();
+        assert!(got.is_empty(), "read another process's bytes: {got:?}");
+        drop(intruder);
+
+        let ch = super::ExportChannel::open().unwrap();
+        let mut cmd = std::process::Command::new("cmd.exe");
+        ch.attach(&mut cmd);
+        let path = channel_path(&cmd);
+        let mut ours = Stream::connect(&path).unwrap();
+        ours.write_all(b"frames").unwrap();
+        drop(ours);
+        let mut r = ch.reader(std::process::id(), Arc::new(AtomicBool::new(false)));
+        let mut got = vec![];
+        r.read_to_end(&mut got).unwrap();
+        assert_eq!(got, b"frames");
     }
 }

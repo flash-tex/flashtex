@@ -1,0 +1,39 @@
+[package]
+name = "flashtex-xetex"
+version = "0.1.0"
+edition = "2021"
+# GPL-2.0-or-later: src/generated/ is a translation of TeX Live's xetex.web
+# (third_party/xetex/xetex.web; XeTeX's own parts are MIT, the TeX and e-TeX
+# parts are Knuth's and Breitenlohner's), and the crate links
+# crates/flashtex-engine, which is GPL-2.0-or-later. See LICENSE in this
+# directory and docs/design/engine-v2/DESIGN.md §3: nothing MIT may link
+# this crate.
+license = "GPL-2.0-or-later"
+description = "XeTeX-compatible engine core (phase S0: TFM fonts), translated from xetex.web by tools/web2rust."
+publish = false
+
+[lib]
+name = "flashtex_xetex"
+path = "src/lib.rs"
+
+[[bin]]
+name = "flashtex-xetex"
+path = "src/main.rs"
+
+[dependencies]
+# The pdfTeX engine's runtime: the word space (`arena`), checked indexing
+# (`ix`), the command line (`cli`), the run's configuration and kpathsea
+# (`system`, `resolver`), dates and MD5. Only its public interface is used;
+# nothing of it changes for this crate.
+flashtex-engine = { path = "../flashtex-engine", default-features = false, features = ["kpathsea"] }
+
+# Built on its own (the root workspace excludes it, see the root Cargo.toml):
+# scripts/xetex-lockstep.sh builds it with its own lockfile and target.
+[workspace]
+
+[profile.release]
+opt-level = 3
+lto = false
+codegen-units = 16
+panic = "unwind"
+debug = false

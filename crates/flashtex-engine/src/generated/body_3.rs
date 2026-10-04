@@ -6289,40 +6289,68 @@ impl Globals {
                     self.dvi_four(473628672i32);
                     self.prepare_mag();
                     self.dvi_four(self.eqtb[crate::ix::U(((29294i32) - 1) as usize)].int());
-                    old_setting = self.selector;
-                    self.selector = new_string;
-                    self.print(989i32);
-                    self.print_int(((self.eqtb[crate::ix::U(((29300i32) - 1) as usize)].int()) as i64));
-                    self.print_char(46i32);
-                    self.print_two(self.eqtb[crate::ix::U(((29299i32) - 1) as usize)].int());
-                    self.print_char(46i32);
-                    self.print_two(self.eqtb[crate::ix::U(((29298i32) - 1) as usize)].int());
-                    self.print_char(58i32);
-                    self.print_two((self.eqtb[crate::ix::U(((29297i32) - 1) as usize)].int() / 60i32));
-                    self.print_two((self.eqtb[crate::ix::U(((29297i32) - 1) as usize)].int() % 60i32));
-                    self.selector = old_setting;
-                    {
-                        { let __ix550 = self.dvi_ptr; let __v551 = (self.pool_ptr).wrapping_sub(self.str_start[crate::ix::U((self.str_ptr) as usize)]); self.dvi_buf[crate::ix::U((__ix550) as usize)] = __v551; }
-                        self.dvi_ptr = (self.dvi_ptr).wrapping_add(1i32);
-                        if (self.dvi_ptr == self.dvi_limit) {
-                            self.dvi_swap();
-                        }
-                    }
-                    {
-                        let __for_end_5 = (self.pool_ptr).wrapping_sub(1i32);
-                        s = self.str_start[crate::ix::U((self.str_ptr) as usize)];
-                        while s <= __for_end_5 {
+                    if (self.web2c_output_comment_length() >= 0i32) {
+                        {
                             {
-                                { let __ix552 = self.dvi_ptr; let __v553 = self.str_pool[crate::ix::U((s) as usize)]; self.dvi_buf[crate::ix::U((__ix552) as usize)] = __v553; }
+                                { let __ix550 = self.dvi_ptr; let __v551 = self.web2c_output_comment_length(); self.dvi_buf[crate::ix::U((__ix550) as usize)] = __v551; }
                                 self.dvi_ptr = (self.dvi_ptr).wrapping_add(1i32);
                                 if (self.dvi_ptr == self.dvi_limit) {
                                     self.dvi_swap();
                                 }
                             }
-                            s = s.wrapping_add(1);
+                            {
+                                let __for_end_7 = (self.web2c_output_comment_length()).wrapping_sub(1i32);
+                                s = 0i32;
+                                while s <= __for_end_7 {
+                                    {
+                                        { let __ix552 = self.dvi_ptr; let __v553 = self.web2c_output_comment_char(s); self.dvi_buf[crate::ix::U((__ix552) as usize)] = __v553; }
+                                        self.dvi_ptr = (self.dvi_ptr).wrapping_add(1i32);
+                                        if (self.dvi_ptr == self.dvi_limit) {
+                                            self.dvi_swap();
+                                        }
+                                    }
+                                    s = s.wrapping_add(1);
+                                }
+                            }
+                        }
+                    } else {
+                        {
+                            old_setting = self.selector;
+                            self.selector = new_string;
+                            self.print(989i32);
+                            self.print_int(((self.eqtb[crate::ix::U(((29300i32) - 1) as usize)].int()) as i64));
+                            self.print_char(46i32);
+                            self.print_two(self.eqtb[crate::ix::U(((29299i32) - 1) as usize)].int());
+                            self.print_char(46i32);
+                            self.print_two(self.eqtb[crate::ix::U(((29298i32) - 1) as usize)].int());
+                            self.print_char(58i32);
+                            self.print_two((self.eqtb[crate::ix::U(((29297i32) - 1) as usize)].int() / 60i32));
+                            self.print_two((self.eqtb[crate::ix::U(((29297i32) - 1) as usize)].int() % 60i32));
+                            self.selector = old_setting;
+                            {
+                                { let __ix554 = self.dvi_ptr; let __v555 = (self.pool_ptr).wrapping_sub(self.str_start[crate::ix::U((self.str_ptr) as usize)]); self.dvi_buf[crate::ix::U((__ix554) as usize)] = __v555; }
+                                self.dvi_ptr = (self.dvi_ptr).wrapping_add(1i32);
+                                if (self.dvi_ptr == self.dvi_limit) {
+                                    self.dvi_swap();
+                                }
+                            }
+                            {
+                                let __for_end_7 = (self.pool_ptr).wrapping_sub(1i32);
+                                s = self.str_start[crate::ix::U((self.str_ptr) as usize)];
+                                while s <= __for_end_7 {
+                                    {
+                                        { let __ix556 = self.dvi_ptr; let __v557 = self.str_pool[crate::ix::U((s) as usize)]; self.dvi_buf[crate::ix::U((__ix556) as usize)] = __v557; }
+                                        self.dvi_ptr = (self.dvi_ptr).wrapping_add(1i32);
+                                        if (self.dvi_ptr == self.dvi_limit) {
+                                            self.dvi_swap();
+                                        }
+                                    }
+                                    s = s.wrapping_add(1);
+                                }
+                            }
+                            self.pool_ptr = self.str_start[crate::ix::U((self.str_ptr) as usize)];
                         }
                     }
-                    self.pool_ptr = self.str_start[crate::ix::U((self.str_ptr) as usize)];
                 }
             }
             // §668
@@ -7267,8 +7295,8 @@ impl Globals {
                     }
                 } else {
                     {
-                        s = { let __a554_0 = self.round_xn_over_d(w, 1000i32, (1000i32).wrapping_add(self.pdf_cur_Tm_a)); let __a554_1 = self.pdf_font_size[crate::ix::U((f) as usize)]; let __a554_2 = 4i32; self.divide_scaled(__a554_0, __a554_1, __a554_2) };
-                        s_out = { let __a555_0 = self.round_xn_over_d(self.pdf_font_size[crate::ix::U((f) as usize)], (s).wrapping_abs(), 10000i32); let __a555_1 = (1000i32).wrapping_add(self.pdf_cur_Tm_a); let __a555_2 = 1000i32; self.round_xn_over_d(__a555_0, __a555_1, __a555_2) };
+                        s = { let __a558_0 = self.round_xn_over_d(w, 1000i32, (1000i32).wrapping_add(self.pdf_cur_Tm_a)); let __a558_1 = self.pdf_font_size[crate::ix::U((f) as usize)]; let __a558_2 = 4i32; self.divide_scaled(__a558_0, __a558_1, __a558_2) };
+                        s_out = { let __a559_0 = self.round_xn_over_d(self.pdf_font_size[crate::ix::U((f) as usize)], (s).wrapping_abs(), 10000i32); let __a559_1 = (1000i32).wrapping_add(self.pdf_cur_Tm_a); let __a559_2 = 1000i32; self.round_xn_over_d(__a559_0, __a559_1, __a559_2) };
                         if (s < 0i32) {
                             s_out = (s_out).wrapping_neg();
                         }
@@ -7397,7 +7425,7 @@ impl Globals {
     /// ...
     // §690
     pub fn pdf_print_bp(&mut self, mut s: scaled) {
-        { let __a556_0 = self.divide_scaled(s, self.one_hundred_bp, (self.fixed_decimal_digits).wrapping_add(2i32)); let __a556_1 = self.fixed_decimal_digits; self.pdf_print_real(__a556_0, __a556_1) };
+        { let __a560_0 = self.divide_scaled(s, self.one_hundred_bp, (self.fixed_decimal_digits).wrapping_add(2i32)); let __a560_1 = self.fixed_decimal_digits; self.pdf_print_real(__a560_0, __a560_1) };
     }
 
     /// Next subroutines are needed for controlling spacing in PDF page description.

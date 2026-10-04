@@ -460,7 +460,8 @@ final class AutosaveTests: XCTestCase {
         func waitUntil(_ what: String, _ cond: () -> Bool) async throws {
             let start = Date()
             while !cond() {
-                if Date().timeIntervalSince(start) > 10 { XCTFail("timed out waiting for \(what)"); throw XCTSkip(what) }
+                // The Python helper double: generous for a loaded runner's process start-up.
+                if Date().timeIntervalSince(start) > 30 { XCTFail("timed out after 30 s waiting for \(what) from the helper double"); throw XCTSkip(what) }
                 try await Task.sleep(nanoseconds: 20_000_000)
             }
         }

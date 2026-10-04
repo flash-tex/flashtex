@@ -259,6 +259,34 @@ end
   begin job_name:=get_job_name(cur_name); open_log_file;
 @z
 
+@x pdftex.web l.14585 - tex.ch [32.617]: `\.{-output-comment}' or texmf.cnf's |output_comment| is the \.{DVI} comment
+  old_setting:=selector; selector:=new_string;
+@y
+if web2c_output_comment_length>=0 then
+  begin dvi_out(web2c_output_comment_length);
+  for s:=0 to web2c_output_comment_length-1 do
+    dvi_out(web2c_output_comment_char(s));
+  end
+else begin {the default code is unchanged}
+  old_setting:=selector; selector:=new_string;
+@z
+
+@x pdftex.web l.14593 - tex.ch [32.617]: `\.{-output-comment}' or texmf.cnf's |output_comment|
+  end
+@y
+end;
+  end
+@z
+
+@x pdftex.web l.32460 - tex.ch [49.1265]: in batch mode, the mktex scripts are silent
+interaction:=cur_chr;
+@y
+interaction:=cur_chr;
+if interaction = batch_mode
+then kpse_set_make_tex_discard_errors(true)
+else kpse_set_make_tex_discard_errors(false);
+@z
+
 @x pdftex.web l.32470 - tex.ch [49.1275]: texmf.cnf's |openin_any|
   if a_open_in(read_file[n]) then read_open[n]:=just_open;
 @y
@@ -456,6 +484,13 @@ function web2c_shellenabledp:boolean; external;
 function web2c_restrictedshell:boolean; external;
 procedure web2c_pdf_options(var @!o_opt,@!o_val,@!d_opt,@!d_val:integer); external;
   {`\.{-output-format}' and `\.{-draftmode}'}
+function web2c_output_comment_length:integer; external;
+  {the length of `\.{-output-comment}' or texmf.cnf's |output_comment|;
+   $-1$ if neither is given}
+function web2c_output_comment_char(@!i:integer):integer; external;
+  {its character |i|, counting from 0}
+procedure kpse_set_make_tex_discard_errors(@!b:boolean); external;
+  {kpathsea's |kpse_make_tex_discard_errors|}
 procedure wlog_translate_filename; external;
   {the TCX file's name into the log}
 procedure wterm_translate_filename; external;

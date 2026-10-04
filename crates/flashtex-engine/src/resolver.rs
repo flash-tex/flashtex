@@ -137,6 +137,11 @@ pub trait FileResolver: Send {
     /// the start of PDF output: the resolution and mode mktexpk makes
     /// bitmap fonts at. Nothing where there is no kpathsea.
     fn init_pk(&mut self, _prefix: &str, _dpi: u32, _mode: Option<&[u8]>) {}
+    /// kpathsea's `kpse_make_tex_discard_errors`, which tex.ch [49.1265]
+    /// sets in `\batchmode` and clears in the other modes: an mktex script
+    /// (`mktextfm`) then runs with its error output discarded. Nothing
+    /// where there is no kpathsea.
+    fn set_make_tex_discard_errors(&mut self, _discard: bool) {}
     /// writet3.c's `kpse_find_pk(name, dpi, &font_ret)`: the PK file of
     /// font `name` at `dpi` (or an alias or a fallback resolution), which
     /// mktexpk may make if `make` (and kpathsea's settings allow it). None
@@ -446,6 +451,7 @@ mod kpse {
         fn flashtex_kpse_find(k: *mut c_void, name: *const c_char, format: c_int) -> *mut c_char;
         fn flashtex_kpse_var_value(k: *mut c_void, var: *const c_char) -> *mut c_char;
         fn flashtex_kpse_free(p: *mut c_void);
+        fn flashtex_kpse_set_make_tex_discard_errors(k: *mut c_void, discard: c_int);
         fn flashtex_kpse_name_ok(k: *mut c_void, name: *const c_char, write: c_int) -> c_int;
         fn flashtex_kpse_find_all(
             k: *mut c_void,
@@ -771,6 +777,10 @@ mod kpse {
                 return false;
             };
             unsafe { flashtex_kpse_name_ok(self.k, n.as_ptr(), write as c_int) != 0 }
+        }
+        fn set_make_tex_discard_errors(&mut self, discard: bool) {
+            // SAFETY: `self.k` is the live kpathsea instance.
+            unsafe { flashtex_kpse_set_make_tex_discard_errors(self.k, discard as c_int) }
         }
         fn init_pk(&mut self, prefix: &str, dpi: u32, mode: Option<&[u8]>) {
             let p = CString::new(prefix).unwrap_or_default();

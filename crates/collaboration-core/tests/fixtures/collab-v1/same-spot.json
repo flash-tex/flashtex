@@ -1,0 +1,33 @@
+{
+  "format": "collab-v1-fixture/1",
+  "name": "same-spot",
+  "description": "three peers insert a word at the same gap concurrently",
+  "generator": "rust oracle (crates/collaboration-core)",
+  "frames": [
+    "2c0000000501010001c1b989c8c8bd8b85910100010bc942ee9086c171b9b501d1d854bb710100086d61696e2e746578",
+    "34000000050201010bc942ee9086c171b9b501d1d854bb710101c1b989c8c8bd8b859101000000105c626567696e7b787d5c656e647b787d",
+    "3f000000050301010bc942ee9086c171b9b501d1d854bb710101c1b989c8c8bd8b8591011001c1b989c8c8bd8b8591010801c1b989c8c8bd8b8591010905616c706861",
+    "3e000000050401010bc942ee9086c171b9b501d1d854bb710101e7d8bbac96b4e3f5be010001c1b989c8c8bd8b8591010801c1b989c8c8bd8b859101090462657461",
+    "3f000000050501010bc942ee9086c171b9b501d1d854bb710101dfaac9d9efdde8c9f8010001c1b989c8c8bd8b8591010801c1b989c8c8bd8b859101090567616d6d61"
+  ],
+  "orders": [
+    [0, 1, 2, 3, 4],
+    [4, 3, 2, 1, 0],
+    [4, 2, 0, 1, 3, 3]
+  ],
+  "expected": {
+    "project_digest": "97697225c1912c39",
+    "filemap_digest": "5e24e849a822e337",
+    "files": [
+      {
+        "file": "0bc942ee9086c171b9b501d1d854bb71",
+        "path": "main.tex",
+        "kind": "text",
+        "text": "\\begin{x}alphabetagamma\\end{x}",
+        "digest": "208aa44b0f38eb12"
+      }
+    ],
+    "rejected": [],
+    "pending": 0
+  }
+}

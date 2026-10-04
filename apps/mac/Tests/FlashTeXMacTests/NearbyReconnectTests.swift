@@ -37,13 +37,13 @@ final class NearbyReconnectTests: XCTestCase {
 
     func connect(_ h: ListenerHarness, file: StaticString = #filePath, line: UInt = #line) -> NearbyTestClient {
         let c = NearbyTestClient(port: h.port, identity: Self.pairId, psk: Self.psk)
-        XCTAssertEqual(XCTWaiter.wait(for: [c.ready], timeout: 5), .completed, "\(String(describing: c.failure))", file: file, line: line)
+        XCTAssertEqual(XCTWaiter.wait(for: [c.ready], timeout: loopbackWait), .completed, "\(String(describing: c.failure))", file: file, line: line)
         return c
     }
 
     /// Polls `cond` (any thread) up to `timeout`; fails with `what` otherwise.
     @discardableResult
-    func waitUntil(_ what: String, timeout: TimeInterval = 5, file: StaticString = #filePath, line: UInt = #line,
+    func waitUntil(_ what: String, timeout: TimeInterval = loopbackWait, file: StaticString = #filePath, line: UInt = #line,
                    _ cond: () -> Bool) -> Bool {
         let deadline = Date().addingTimeInterval(timeout)
         while Date() < deadline {
@@ -214,7 +214,7 @@ final class NearbyReconnectTests: XCTestCase {
         h2.listener.adoptConnections(from: h1.listener)
         let stopped = XCTestExpectation(description: "old listener released its port")
         h1.listener.stop(keepConnections: true) { stopped.fulfill() }
-        XCTAssertEqual(XCTWaiter.wait(for: [stopped], timeout: 5), .completed)
+        XCTAssertEqual(XCTWaiter.wait(for: [stopped], timeout: loopbackWait), .completed)
         try h2.start()
         XCTAssertEqual(h2.port, h1.port)
         XCTAssertTrue(h2.listener.memory === h1.listener.memory, "one memory object across the restart")
@@ -235,10 +235,10 @@ final class NearbyReconnectTests: XCTestCase {
         let h3 = ListenerHarness(psks: [other], sink: sink, destinations: nil, port: h2.port, queue: queue)
         h3.listener.adoptConnections(from: h2.listener)
         XCTAssertEqual(h3.listener.memory.count(pairId: Self.pairId), 0)
-        XCTAssertEqual(XCTWaiter.wait(for: [a.closed, b.closed], timeout: 5), .completed)
+        XCTAssertEqual(XCTWaiter.wait(for: [a.closed, b.closed], timeout: loopbackWait), .completed)
         let stopped2 = XCTestExpectation(description: "h2 stopped")
         h2.listener.stop(keepConnections: true) { stopped2.fulfill() }
-        XCTAssertEqual(XCTWaiter.wait(for: [stopped2], timeout: 5), .completed)
+        XCTAssertEqual(XCTWaiter.wait(for: [stopped2], timeout: loopbackWait), .completed)
         h3.stop()
     }
 
@@ -271,7 +271,7 @@ final class NearbyReconnectTests: XCTestCase {
             }
         }
         plain.start(queue: queue)
-        XCTAssertEqual(XCTWaiter.wait(for: [tcpReady], timeout: 5), .completed)
+        XCTAssertEqual(XCTWaiter.wait(for: [tcpReady], timeout: loopbackWait), .completed)
         var got = Data()
         func drain() {
             plain.receive(minimumIncompleteLength: 1, maximumLength: 4096) { data, _, complete, error in
@@ -282,7 +282,7 @@ final class NearbyReconnectTests: XCTestCase {
         }
         drain()
         let t0 = Date()
-        XCTAssertEqual(XCTWaiter.wait(for: [tcpEnded], timeout: 5), .completed, "silent TCP peer must be dropped")
+        XCTAssertEqual(XCTWaiter.wait(for: [tcpEnded], timeout: loopbackWait), .completed, "silent TCP peer must be dropped")
         let handshakeClose = Date().timeIntervalSince(t0)
         XCTAssertTrue(got.isEmpty, "no application bytes to an unauthenticated peer: \(got as NSData)")
         waitUntil("handshake close event") { closedEvents(h, identity: nil).contains("handshake timed out after 0.40s") }
@@ -293,7 +293,7 @@ final class NearbyReconnectTests: XCTestCase {
         let t1 = Date()
         let l = try mute.lines(atLeast: 1)
         XCTAssertEqual(errorCode(l[0]), "hello_timeout")
-        XCTAssertEqual(XCTWaiter.wait(for: [mute.closed], timeout: 5), .completed)
+        XCTAssertEqual(XCTWaiter.wait(for: [mute.closed], timeout: loopbackWait), .completed)
         let helloClose = Date().timeIntervalSince(t1)
         waitUntil("hello close event") { closedEvents(h, identity: nil).contains("hello timed out after 0.40s") }
         XCTAssertEqual(h.listener.budget.sessionCount(pairId: Self.pairId), 0)
@@ -315,7 +315,7 @@ final class NearbyReconnectTests: XCTestCase {
         let sl = try slow.lines(atLeast: 2)
         feeder.cancel()
         XCTAssertEqual(errorCode(sl[1]), "frame_timeout")
-        XCTAssertEqual(XCTWaiter.wait(for: [slow.closed], timeout: 5), .completed)
+        XCTAssertEqual(XCTWaiter.wait(for: [slow.closed], timeout: loopbackWait), .completed)
         let frameClose = Date().timeIntervalSince(t2)
         waitUntil("frame close event") { closedEvents(h, identity: Self.pairId).contains("frame timed out after 0.60s") }
         XCTAssertEqual(sink.count, 0)
@@ -367,7 +367,7 @@ final class NearbyReconnectTests: XCTestCase {
         c.send(Data(repeating: 0x20, count: 2000))
         let l = try c.lines(atLeast: 2)
         XCTAssertEqual(errorCode(l[1]), "line_too_long")
-        XCTAssertEqual(XCTWaiter.wait(for: [c.closed], timeout: 5), .completed)
+        XCTAssertEqual(XCTWaiter.wait(for: [c.closed], timeout: loopbackWait), .completed)
         waitUntil("close reason") { closedEvents(h, identity: Self.pairId).contains("unterminated line too long") }
 
         // Pending + chunk again exceed the limit, but this time the newline

@@ -342,7 +342,10 @@ final class EngineV3PagesView: NSView {
     /// Published to the reader thread: which pages it may rasterise as they arrive.
     var rasterPlan: EngineV3RasterPlan?
     private var pageViews: [Int: EngineV3PageView] = [:]
-    private var link: CADisplayLink?
+    /// The vsync link (`armVsync`): its target holds this view weakly; it is
+    /// invalidated when the view leaves its window and in deinit
+    /// (nonisolated(unsafe): deinit is nonisolated; a view deallocates on main).
+    nonisolated(unsafe) private var link: CADisplayLink?
     private lazy var boost = EngineV3FrameRateBoost(view: self)
     /// Pages changed by a keystroke's compile, not yet rastered: the compile id.
     private var pendingCompile: [Int: Int] = [:]
@@ -379,7 +382,12 @@ final class EngineV3PagesView: NSView {
     }
     required init?(coder: NSCoder) { fatalError() }
 
-    override func viewDidMoveToWindow() { relayout() }
+    override func viewDidMoveToWindow() {
+        if window == nil { link?.invalidate(); link = nil } // armVsync makes another when needed
+        relayout()
+    }
+
+    deinit { link?.invalidate() }
     /// Another screen's backing scale: pixels per point (and tiles) change.
     override func viewDidChangeBackingProperties() { super.viewDidChangeBackingProperties(); relayout() }
     override func viewDidEndLiveResize() { relayout() }
@@ -1037,14 +1045,14 @@ final class EngineV3PagesView: NSView {
     /// The next display-link frame after a commit: the frame that shows it.
     private func armVsync() {
         if link == nil {
-            let l = displayLink(target: self, selector: #selector(frameTick(_:)))
+            let l = displayLink(target: EngineV3WeakLinkTarget(self) { $0.frameTick($1) }, selector: #selector(EngineV3WeakLinkTarget.tick(_:)))
             l.add(to: .main, forMode: .common)
             link = l
         }
         link?.isPaused = false
     }
 
-    @objc private func frameTick(_ l: CADisplayLink) {
+    private func frameTick(_ l: CADisplayLink) {
         // CADisplayLink times are CACurrentMediaTime(): mach absolute time, the same clock.
         session?.latency.vsync(targetNs: UInt64(l.targetTimestamp * 1e9))
         l.isPaused = true

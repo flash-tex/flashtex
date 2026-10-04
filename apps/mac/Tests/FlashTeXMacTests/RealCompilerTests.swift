@@ -230,10 +230,12 @@ final class RealCompilerTests: XCTestCase {
         print("REAL-COMPILER TRANSCRIPT: \(report.responses.count) responses validated by check_runtime.py at \(transcript.path)")
     }
 
-    private func waitUntil(timeout: TimeInterval = 15, _ cond: () -> Bool) async throws {
+    /// Waits on a helper process (the real compiler); generous because a loaded runner
+    /// delays process start-up and replies by seconds, not because anything is timed.
+    private func waitUntil(timeout: TimeInterval = 60, _ cond: () -> Bool) async throws {
         let start = Date()
         while !cond() {
-            if Date().timeIntervalSince(start) > timeout { XCTFail("timeout waiting for worker"); return }
+            if Date().timeIntervalSince(start) > timeout { XCTFail("timed out after \(Int(timeout)) s waiting for the real compiler"); return }
             try await Task.sleep(nanoseconds: 50_000_000)
         }
     }

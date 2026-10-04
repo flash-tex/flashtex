@@ -41,7 +41,7 @@ final class NearbyViewControllerTests: XCTestCase {
 
     struct TimedOut: Error {}
 
-    private func waitUntil(_ what: String, timeout: TimeInterval = 6, file: StaticString = #filePath, line: UInt = #line,
+    private func waitUntil(_ what: String, timeout: TimeInterval = loopbackWait, file: StaticString = #filePath, line: UInt = #line,
                            _ cond: @escaping @MainActor () -> Bool) async throws {
         let deadline = Date().addingTimeInterval(timeout)
         while Date() < deadline {

@@ -65,7 +65,7 @@
 
 use flashtex_display_list::frame::{read_frame, write_frame};
 use flashtex_display_list::json::{obj, s as js, Json};
-use flashtex_display_list::transport::{Listener, Stream};
+use flashtex_display_list::transport::Stream;
 use flashtex_display_list::{kind, PROTOCOL, VERSION_MAJOR, VERSION_MINOR};
 use std::collections::HashSet;
 use std::io::{BufRead, BufReader, BufWriter, Write};
@@ -412,14 +412,16 @@ pub fn main(args: Vec<String>) -> i32 {
     }
     say(&format!("flashtex-host: {}", Json::Obj(said)));
     let _ = std::fs::remove_file(&socket);
-    let listener = match Listener::bind(&socket) {
+    // Owner-only from the start, or not at all (`os::bind_owner_only`
+    // removes a socket it could not restrict): the host never listens on a
+    // socket another account could connect to.
+    let listener = match crate::os::bind_owner_only(Path::new(&socket)) {
         Ok(l) => l,
         Err(e) => {
-            eprintln!("flashtex-host: {socket}: {e}");
+            eprintln!("flashtex-host: {socket}: cannot listen there, owner-only: {e}");
             return 1;
         }
     };
-    crate::os::restrict_to_owner(Path::new(&socket));
     // Ready: a supervisor may wait for this line.
     say(&format!("flashtex-host: listening on {socket}"));
     // `--once` serves the process that started it: when that process is
@@ -977,8 +979,8 @@ fn start_export(
         .spawn()
         .map_err(|e| format!("cannot start the engine: {e}"))?;
     let exited = Arc::new(std::sync::atomic::AtomicBool::new(false));
-    let ours = channel.reader(exited.clone());
     let pid = child.id();
+    let ours = channel.reader(pid, exited.clone());
     let stdout = child.stdout.take();
     let stderr = child.stderr.take();
     send_json(
