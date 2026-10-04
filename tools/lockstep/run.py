@@ -821,11 +821,12 @@ def run_engine(binary, name, *, allow_any_reference=False,
         return {"ok": False, "tmpdir": tmpdir,
                 "returncode": cap.returncode,
                 "error": "exit %d, no log" % cap.returncode}
-    if cap.returncode == 0 and log_expects_pdf(cap.log):
+    if (cap.returncode == 0 or no_halt) and log_expects_pdf(cap.log):
         # The log claims an output file was written: the file the
         # "Output written on" line names must exist next to the log
         # and pass its format check (.pdf as before, .dvi for
-        # \pdfoutput=0 runs), or the case FAILs. A deleted,
+        # \pdfoutput=0 runs), or the case FAILs. (A no-halt case always
+        # exits nonzero, and its output is checked all the same.) A deleted,
         # truncated or garbage-mangled output no longer passes on the
         # log alone.
         problem = output_integrity_error(cap.log, tmpdir)
