@@ -163,11 +163,13 @@ pub struct PkGlyph {
 /// (`FLASHTEX_INPUTS`, `FLASHTEX_TFM_PATH`, `FLASHTEX_FORMATS`). The trip test
 /// uses this: tripman.tex defines it on files in the current area.
 ///
-/// With `dot` set, a name that is neither absolute nor explicitly relative
-/// (`./`, `../`) found in the working directory comes back as `./name`
-/// (`./sub/name` for `sub/name`), which is what kpathsea returns for a
-/// search path of `.` (the e-trip test's texmf.cnf), and so what pdfTeX's log
-/// shows.
+/// A name kpathsea takes as absolute or explicitly relative (`/`, `./`,
+/// `../`, and on Windows also `\`, `.\`, `..\`, `X:`; see
+/// `kpse_absolute_p`) is opened as given, never along the path variable.
+/// With `dot` set, any other name found in the working directory comes back
+/// as `./name` (`./sub/name` for `sub/name`), which is what kpathsea returns
+/// for a search path of `.` (the e-trip test's texmf.cnf), and so what
+/// pdfTeX's log shows.
 #[derive(Default)]
 pub struct CwdResolver {
     pub dot: bool,
@@ -201,19 +203,20 @@ impl FileResolver for CwdResolver {
 impl CwdResolver {
     fn find_one(&self, name: &str, format: Format) -> Option<PathBuf> {
         let p = Path::new(name);
+        // kpathsea opens a name that is absolute or explicitly relative
+        // (`kpse_absolute_p`: `/x`, `./x`, `../x`; on Windows also `\x`,
+        // `.\x`, `..\x`, `C:x`) as given and never along the path; it
+        // searches any other name along the path, so one found through `.`
+        // is `./name`, also `./sub/name`, written with `/` on every OS
+        // (DIR_SEP_STRING is `/` on Windows too), not `Path::join`'s `.\NAME`.
+        let as_given = kpse_absolute(name);
         if p.is_file() {
-            // kpathsea searches a name that is neither absolute nor
-            // explicitly relative (`./`, `../`) along the path, so one found
-            // through `.` is `./name`, also `./sub/name`; written with `/` on
-            // every OS (DIR_SEP_STRING is `/` on Windows too), not
-            // `Path::join`'s `.\NAME` there.
-            let explicit = name.starts_with("./") || name.starts_with("../");
-            if self.dot && !p.is_absolute() && !explicit {
+            if self.dot && !as_given {
                 return Some(PathBuf::from(format!("./{name}")));
             }
             return Some(p.to_path_buf());
         }
-        if p.is_absolute() {
+        if as_given {
             return None;
         }
         let var = match format {
@@ -228,6 +231,31 @@ impl CwdResolver {
             .map(|d| Path::new(d).join(name))
             .find(|c| c.is_file())
     }
+}
+
+/// kpathsea's `kpathsea_absolute_p (kpse, name, true)`
+/// (third_party/kpathsea/absolute.c): whether `name` is absolute or
+/// explicitly relative, which kpathsea opens as given and never looks for
+/// along a search path (pathsearch.c `search`). `dosish` is kpathsea's
+/// `DOSISH` (config.h 37-42: Windows), a parameter so that both branches are
+/// compiled and tested on every host. Bytes, as the C does:
+/// - absolute.c 38: a leading directory separator, `/`, or under DOSISH also
+///   `\` (c-pathch.h 38); this covers WIN32's UNC names (absolute.c 43-47);
+/// - absolute.c 41 (DOSISH): any first byte, then the device separator `:`
+///   (c-pathch.h 35), so `C:x` as well as `C:\x`;
+/// - absolute.c 53-62: `.` then a separator, or `..` then a separator.
+fn kpse_absolute_p(name: &str, dosish: bool) -> bool {
+    let b = name.as_bytes();
+    let sep = |i: usize| matches!(b.get(i), Some(b'/')) || (dosish && b.get(i) == Some(&b'\\'));
+    let absolute = sep(0) || (dosish && !b.is_empty() && b.get(1) == Some(&b':'));
+    let explicit_relative =
+        b.first() == Some(&b'.') && (sep(1) || (b.get(1) == Some(&b'.') && sep(2)));
+    absolute || explicit_relative
+}
+
+/// [`kpse_absolute_p`] for the host: `DOSISH` exactly on Windows.
+fn kpse_absolute(name: &str) -> bool {
+    kpse_absolute_p(name, cfg!(windows))
 }
 
 // ---------------------------------------------------------------------------
@@ -853,4 +881,80 @@ pub fn default_resolver(progname: &str, engine: &str) -> Box<dyn FileResolver> {
     Box::new(CwdResolver {
         dot: which == "cwd-kpse",
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::kpse_absolute_p;
+
+    /// kpathsea's `kpathsea_absolute_p (kpse, name, true)` with `DOSISH`
+    /// defined (Windows; config.h lines 37-42), every expectation read off
+    /// third_party/kpathsea/absolute.c and c-pathch.h:
+    /// - absolute.c 38: `IS_DIR_SEP (*filename)`, and c-pathch.h 38 makes
+    ///   `IS_DIR_SEP` both `/` and `\` under DOSISH;
+    /// - absolute.c 41: `*filename && IS_DEVICE_SEP (filename[1])`, any
+    ///   first byte ("Novell allows non-alphanumeric drive letters"), with
+    ///   c-pathch.h 35 `IS_DEVICE_SEP(ch) ((ch) == ':')`;
+    /// - absolute.c 43-47 (WIN32): UNC names, which line 38 already covers;
+    /// - absolute.c 53-62: explicitly relative, `.` then a separator, or `..`
+    ///   then a separator (either separator under DOSISH).
+    #[test]
+    fn dosish_names_as_absolute_c_classifies_them() {
+        let yes = [
+            "/x",            // 38
+            "\\x",           // 38: `\` is IS_DIR_SEP under DOSISH
+            "C:x",           // 41: drive-relative
+            "C:\\x",         // 41
+            "c:/x",          // 41
+            "1:x",           // 41: any first byte
+            "x:",            // 41: filename[1] is `:`
+            "\\\\server\\x", // 38 (and 45)
+            "//server/x",    // 38 (and 46)
+            "./x",           // 61
+            ".\\x",          // 61: `\` is IS_DIR_SEP
+            "../x",          // 62
+            "..\\x",         // 62
+            ".\\sub\\x",     // 61
+        ];
+        let no = [
+            "",         // 38: *filename is NUL; 41: *filename is false
+            "x",        // nothing matches
+            "sub\\x",   // only the first bytes are looked at
+            "sub/x",    // likewise
+            ".x",       // 61: filename[1] is not a separator
+            "..x",      // 62: filename[2] is not a separator
+            ".",        // 61: filename[1] is NUL
+            "..",       // 62: filename[2] is NUL
+            "...\\x",   // 62: filename[2] is `.`
+            ":x",       // 41: filename[1] is `x`
+            "\u{e9}:x", // 41 looks at bytes: filename[1] is 0xA9, not `:`
+        ];
+        for n in yes {
+            assert!(
+                kpse_absolute_p(n, true),
+                "DOSISH {n:?}: absolute.c: not searched"
+            );
+        }
+        for n in no {
+            assert!(
+                !kpse_absolute_p(n, true),
+                "DOSISH {n:?}: absolute.c: searched"
+            );
+        }
+    }
+
+    /// The same function without DOSISH (Unix): `IS_DIR_SEP` is `/` only
+    /// (c-pathch.h 55-61) and `IS_DEVICE_SEP` is 0 (c-pathch.h 66-67). What
+    /// kpsewhich does with such names is checked in tests/resolver_cwd.rs.
+    #[test]
+    fn unix_names_as_absolute_c_classifies_them() {
+        for n in ["/x", "//x", "./x", "../x", ".//x"] {
+            assert!(kpse_absolute_p(n, false), "Unix {n:?}: not searched");
+        }
+        for n in [
+            "", "x", "sub/x", "\\x", ".\\x", "..\\x", "C:x", "C:\\x", ".x", "..x", ".",
+        ] {
+            assert!(!kpse_absolute_p(n, false), "Unix {n:?}: searched");
+        }
+    }
 }

@@ -978,17 +978,19 @@ fn dead_word(g: &Globals, w: &crate::statediff::WordDiff) -> bool {
 /// per-object data (`obj_data_ptr`, pdftex.web's "PDF objects").
 #[derive(PartialEq, Clone, Copy)]
 enum PdfMemField {
-    /// One of the three dead fields of a form that has been written: its
-    /// box (`obj_xform_box`), attributes (`obj_xform_attr`) and resources
-    /// (`obj_xform_resources`), `pdf_mem[obj_data_ptr + 3..=5]`. They are
-    /// read only when the form is shipped: by "Write out pending forms" for
-    /// a form not yet written (`is_obj_written` false) and by
-    /// `\immediate\pdfxform` right after `\pdfxform` set them. Shipping the
-    /// form (`pdf_ship_out` with `shipping_page` false) flushes the box and
-    /// `delete_toks` the two token lists, leaving the pointers dangling
-    /// where the runs allocated them (a pgf shading, which beamer's themes
-    /// draw on every slide, is such a form). The width, height and depth
-    /// stay live (`\pdfrefxform`, the whatsit display) and are compared.
+    /// The box pointer of a form that has been written (`obj_xform_box`,
+    /// `pdf_mem[obj_data_ptr + 3]`). It is read only when the form is
+    /// shipped: by "Write out pending forms" for a form not yet written
+    /// (`is_obj_written` false) and by `\immediate\pdfxform` right after
+    /// `\pdfxform` set it. Shipping the form (`pdf_ship_out` with
+    /// `shipping_page` false) flushes the box (`flush_node_list(p)`) but
+    /// leaves the pointer, dangling where the run allocated the box (a pgf
+    /// shading, which beamer's themes draw on every slide, is such a form).
+    /// The attributes and resources (`+ 4`, `+ 5`) are not dead pointers:
+    /// `delete_toks` sets them to null when it frees them (pdftex.web's
+    /// "Write out Form stream header"), so they are compared like the width,
+    /// height and depth, which stay live (`\pdfrefxform`, the whatsit
+    /// display).
     DeadInWrittenForm,
     /// A field of a raw object, form, image or outline not yet written,
     /// which `crate::iso` (`Iso::object`) compares field by field, following
@@ -1020,7 +1022,7 @@ fn pdf_mem_field(g: &Globals, idx: usize) -> PdfMemField {
             let b = e.int4 as usize;
             if e.int4 > 0 && (b..b + size as usize).contains(&idx) {
                 let written = e.int2 > -1;
-                return match (written, t == obj_type_xform && idx >= b + 3) {
+                return match (written, t == obj_type_xform && idx == b + 3) {
                     (false, _) => PdfMemField::Walked,
                     (true, true) => PdfMemField::DeadInWrittenForm,
                     (true, false) => PdfMemField::Other,

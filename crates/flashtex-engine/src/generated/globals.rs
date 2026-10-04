@@ -1168,73 +1168,79 @@ pub struct Globals {
     pub shellenabledp: bool,
     // §1872
     pub restrictedshell: bool,
-    // §1883
+    // §1874
+    pub edit_name_start: pool_pointer,
+    // §1874
+    pub edit_name_length: i32,
+    // §1874
+    pub edit_line: i32,
+    // §1886
     pub mltex_p: bool,
-    // §1883
+    // §1886
     pub mltex_enabled_p: bool,
-    // §1891
+    // §1894
     pub synctex_tag_counter: i32,
-    // §1897
+    // §1900
     pub error_line: i32,
-    // §1897
+    // §1900
     pub half_error_line: i32,
-    // §1897
+    // §1900
     pub max_print_line: i32,
-    // §1897
+    // §1900
     pub file_line_error_style_p: bool,
-    // §1897
+    // §1900
     pub halt_on_error_p: bool,
-    // §1897
+    // §1900
     pub halting_on_error_p: bool,
-    // §1897
+    // §1900
     pub parse_first_line_p: bool,
-    // §1897
+    // §1900
     pub dump_line: bool,
-    // §1897
+    // §1900
     pub eight_bit_p: bool,
-    // §1897
+    // §1900
     pub translate_filename_p: bool,
-    // §1905
+    // §1908
     pub ckpt_request: i32,
-    // §1905
+    // §1908
     pub ckpt_arm_cs: halfword,
-    // §1905
+    // §1908
     pub ckpt_arm_level: i32,
-    // §1905
+    // §1908
     pub ckpt_resuming: bool,
-    // §1905
+    // §1908
     pub ckpt_on_shipout: i32,
-    // §1905
+    // §1908
     pub ckpt_on_segment: i32,
-    // §1907
-    pub rs_on: bool,
-    // §1907
-    pub rs_seen: crate::arena::Arr<bool>,
     // §1910
+    pub rs_on: bool,
+    // §1910
+    pub rs_seen: crate::arena::Arr<bool>,
+    // §1913
     pub dl_side: crate::arena::Arr<memory_word>,
-    // §1911
+    // §1914
     pub macro_prof_on: bool,
-    // §1912
+    // §1915
     pub intr_on: bool,
-    // §1912
+    // §1915
     pub intr_at_switch: bool,
-    // §1912
+    // §1915
     pub intr_rec_on: bool,
-    // §1912
+    // §1915
     pub intr_all: bool,
-    // §1912
+    // §1915
     pub intr_weak: bool,
-    // §1912
+    // §1915
     pub intr_state: crate::arena::Arr<i32>,
-    // §1912
+    // §1915
     pub intr_cand: crate::arena::Arr<i32>,
-    // §1912
+    // §1915
     pub intr_watch: crate::arena::Arr<i32>,
-    // §1912
+    // §1915
     pub intr_seen: crate::arena::Arr<i32>,
-    // §1912
+    // §1915
     pub intr_pre: crate::arena::Arr<memory_word>,
-    // §1912
+    // §1915
     pub intr_data: crate::arena::Arr<i32>,
     /// The word space every `Arr` above lives in (crates/flashtex-engine/src/arena.rs).
     pub arena: crate::arena::Arena,
@@ -1711,6 +1717,9 @@ pub const SCALAR_BYTES: usize = 0
     + crate::arena::slot::<i32>()
     + crate::arena::slot::<bool>()
     + crate::arena::slot::<bool>()
+    + crate::arena::slot::<pool_pointer>()
+    + crate::arena::slot::<i32>()
+    + crate::arena::slot::<i32>()
     + crate::arena::slot::<bool>()
     + crate::arena::slot::<bool>()
     + crate::arena::slot::<i32>()
@@ -2493,6 +2502,9 @@ impl Globals {
             expand_depth_count: 0,
             shellenabledp: false,
             restrictedshell: false,
+            edit_name_start: 0,
+            edit_name_length: 0,
+            edit_line: 0,
             mltex_p: false,
             mltex_enabled_p: false,
             synctex_tag_counter: 0,
@@ -3003,6 +3015,9 @@ impl Globals {
         v.pod(&mut self.expand_depth_count);
         v.pod(&mut self.shellenabledp);
         v.pod(&mut self.restrictedshell);
+        v.pod(&mut self.edit_name_start);
+        v.pod(&mut self.edit_name_length);
+        v.pod(&mut self.edit_line);
         v.pod(&mut self.mltex_p);
         v.pod(&mut self.mltex_enabled_p);
         v.pod(&mut self.synctex_tag_counter);

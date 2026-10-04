@@ -369,6 +369,7 @@ def oracle(doc, pdftex, cache, trace, tree_hash, load_log=True):
             log = f.read()
         for a, b in pcapture.cached_log_subs():  # one cached with TEXMFVAR unset names it (pt1stream.V)
             log = log.replace(a, b)
+        log = pcapture.ElapsedMask().text_in_pieces(log)  # one cached before the mask; a no-op on a masked one
         cap = pcapture.Capture(log, pcapture.split_boxes(log), pdf)
     return meta, cap, pdf
 
@@ -515,6 +516,9 @@ def compare_pt1(ref, cand):
         rec["log_line"] = {"line": d[0], "oracle": d[1], "candidate": d[2]}
     rec["ok"] = rec["boxes_equal"] and rec["log_equal"]
     rec["accounting"] = compare_accounting(ref_acc, cand_acc)
+    masked = [ref.log.count(pcapture.ELAPSED), cand.log.count(pcapture.ELAPSED)]
+    if any(masked):
+        rec["elapsed_masked"] = masked  # values of \pdfelapsedtime masked (capture.ElapsedMask)
     return rec
 
 
@@ -544,6 +548,14 @@ def compare_pt1_streamed(ref, cand):
         rec["log_lines"] = where
     rec["ok"] = rec["boxes_equal"] and rec["log_equal"]
     rec["accounting"] = compare_accounting(ref["accounting"], cand["accounting"])
+    masked = [ref.get("elapsed_masked"), cand.get("elapsed_masked")]
+    if any(masked):
+        rec["elapsed_masked"] = masked  # values of \pdfelapsedtime masked (capture.ElapsedMask)
+        if None in masked and not rec["log_equal"]:
+            # one side's fingerprint predates the mask: a difference may be only that
+            rec["ok"] = False
+            rec["harness_error"] = ("a fingerprint made before the \\pdfelapsedtime mask "
+                                    "(capture.ElapsedMask) against one that masked values; make the oracle again")
     return rec
 
 

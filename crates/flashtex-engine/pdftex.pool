@@ -9,8 +9,6 @@
 02! 
 42(That makes 100 errors; please try again.)
 02? 
-22You want to edit file 
-09 at line 
 60Type <return> to proceed, S to scroll future error messages,
 44R to run without stopping, Q to run quietly,
 23I to insert something, 
@@ -1733,6 +1731,7 @@
 06 shift
 05 left
 14 group (level 
+09 at line 
 08leaving 
 09entering 
 17currentgrouplevel
@@ -1816,4 +1815,4 @@
 14widowpenalties
 21displaywidowpenalties
 07synctex
-*158087473
+*112854628

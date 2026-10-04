@@ -4,6 +4,7 @@ import Foundation
 import CoreImage
 import ImageIO
 import IOSurface
+import ObjectiveC
 import FlashTeXDisplayListV3
 
 // The display-list-v3 preview renderer (DESIGN.md §6.2): a decoded page
@@ -219,7 +220,7 @@ public final class DL3RenderImage: @unchecked Sendable {
             }
             return .success(DL3RenderImage(key: key, payload: .raster(deviceSamples(img)), cost: img.bytesPerRow * img.height))
         case "pdf":
-            guard let doc = CGPDFDocument(url as CFURL), let page = doc.page(at: Int(info["page"]?.int ?? 1)) else {
+            guard let doc = DL3Renderer.openPDF(url), let page = doc.page(at: Int(info["page"]?.int ?? 1)) else {
                 return .failure(DL3Error("\(file): cannot open page \(info["page"]?.int ?? 1)"))
             }
             let box = pdfBox(info, page: page)
@@ -691,7 +692,7 @@ public enum DL3Renderer {
                     // (`drawPDFPage` neither rotates nor clips).
                     ctx.concatenate(matrix)
                     ctx.clip(to: box)
-                    ctx.drawPDFPage(pdfPage)
+                    DL3Renderer.drawPDFPage(pdfPage, in: ctx)
                 }
                 ctx.restoreGState()
                 lastFont = nil
@@ -732,6 +733,42 @@ public enum DL3Renderer {
                 ctx.setTextDrawingMode(mode(m))
             }
         }
+    }
+
+    /// Draws a PDF page (a fallback page, an included PDF image) from this
+    /// thread's own copy of its document when the document was opened with
+    /// `openPDF` (every document the app draws from), else from the page as
+    /// given. Core Graphics draws one `CGPDFDocument`'s pages wrongly when
+    /// two threads use it at once: shadings (beamer's balls, headlines and
+    /// frame titles) came out up to 75 levels off, at random, and the pane
+    /// draws fallback pages on a concurrent raster queue, the tile queue and
+    /// `concurrentPerform` tile batches at the same time (lane BEAMER-V3). A
+    /// lock around the draw was not enough (3 of ~52 test runs still failed:
+    /// the page lookup and box reads of the shared document stayed
+    /// concurrent). Each page drawn from its own document is exact, so each
+    /// thread opens its own document from the same bytes, once, and keeps the
+    /// last few (`PDFThreadDocuments`).
+    public static func drawPDFPage(_ page: CGPDFPage, in ctx: CGContext) {
+        if let doc = page.document, let bytes = DL3PDFBytes.of(doc),
+           let own = PDFThreadDocuments.current.document(for: bytes)?.page(at: page.pageNumber) {
+            ctx.drawPDFPage(own)
+            return
+        }
+        ctx.drawPDFPage(page)
+    }
+
+    /// Opens a PDF for drawing: the file's bytes are read once (a later
+    /// rewrite of the file does not change what is drawn) and kept with the
+    /// document, so `drawPDFPage` can open a private copy per thread.
+    public static func openPDF(_ url: URL) -> CGPDFDocument? {
+        guard let data = try? Data(contentsOf: url) else { return nil }
+        return openPDF(data: data)
+    }
+
+    public static func openPDF(data: Data) -> CGPDFDocument? {
+        guard let provider = CGDataProvider(data: data as CFData), let doc = CGPDFDocument(provider) else { return nil }
+        DL3PDFBytes.attach(DL3PDFBytes(data), to: doc)
+        return doc
     }
 
     /// Whether `m` maps the unit square's edges onto device rows and columns
@@ -866,7 +903,7 @@ public enum DL3Renderer {
         let box = pdfPage.getBoxRect(.mediaBox)
         let s = surface(widthPt: box.width, heightPt: box.height, scale: scale, smoothFonts: smoothFonts) { ctx in
             ctx.translateBy(x: -box.minX, y: -box.minY)
-            ctx.drawPDFPage(pdfPage)
+            DL3Renderer.drawPDFPage(pdfPage, in: ctx)
         }
         guard appearance == .dark, let s else { return s }
         let ci = CIImage(ioSurface: s)
@@ -922,7 +959,61 @@ public enum DL3Renderer {
         guard let ctx = bitmapContext(widthPt: box.width, heightPt: box.height, scale: scale, layout: layout,
                                       smoothFonts: smoothFonts) else { return nil }
         ctx.translateBy(x: -box.minX, y: -box.minY)
-        ctx.drawPDFPage(pdfPage)
+        DL3Renderer.drawPDFPage(pdfPage, in: ctx)
         return ctx.makeImage()
+    }
+}
+
+/// A PDF's bytes, kept with the `CGPDFDocument` opened from them
+/// (`DL3Renderer.openPDF`), so a thread can open its own document of the
+/// same PDF. `id` is unique per opened PDF (never reused, unlike an address).
+public final class DL3PDFBytes: @unchecked Sendable {
+    public let data: Data
+    public let id: UInt64
+    private static let counter = NSLock()
+    nonisolated(unsafe) private static var next: UInt64 = 0
+
+    init(_ data: Data) {
+        self.data = data
+        Self.counter.lock(); Self.next &+= 1; id = Self.next; Self.counter.unlock()
+    }
+
+    nonisolated(unsafe) private static var key: UInt8 = 0
+    static func attach(_ bytes: DL3PDFBytes, to doc: CGPDFDocument) {
+        withUnsafePointer(to: &key) { objc_setAssociatedObject(doc, $0, bytes, .OBJC_ASSOCIATION_RETAIN) }
+    }
+    static func of(_ doc: CGPDFDocument) -> DL3PDFBytes? {
+        withUnsafePointer(to: &key) { objc_getAssociatedObject(doc, $0) as? DL3PDFBytes }
+    }
+}
+
+/// One thread's own documents of the PDFs it drew last (at most `limit`,
+/// least recently used out), opened from the shared bytes. Confined to its
+/// thread (`Thread.threadDictionary`), so nothing here is shared.
+final class PDFThreadDocuments {
+    static let limit = 4
+    private var entries: [(id: UInt64, doc: CGPDFDocument)] = []
+    /// Documents opened on this thread (tests).
+    private(set) var opened = 0
+
+    static var current: PDFThreadDocuments {
+        let d = Thread.current.threadDictionary
+        if let c = d["flashtex.dl3.pdf-documents"] as? PDFThreadDocuments { return c }
+        let c = PDFThreadDocuments()
+        d["flashtex.dl3.pdf-documents"] = c
+        return c
+    }
+
+    func document(for bytes: DL3PDFBytes) -> CGPDFDocument? {
+        if let i = entries.firstIndex(where: { $0.id == bytes.id }) {
+            let e = entries.remove(at: i)
+            entries.append(e)
+            return e.doc
+        }
+        guard let provider = CGDataProvider(data: bytes.data as CFData), let doc = CGPDFDocument(provider) else { return nil }
+        opened += 1
+        entries.append((bytes.id, doc))
+        if entries.count > Self.limit { entries.removeFirst(entries.count - Self.limit) }
+        return doc
     }
 }

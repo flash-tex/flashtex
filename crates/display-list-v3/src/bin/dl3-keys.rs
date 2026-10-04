@@ -31,6 +31,9 @@
 //! frame's body is collected as an argument and typeset at `\end{frame}`,
 //! so every glyph of the frame carries the `\end{frame}` line (as pdfTeX's
 //! SyncTeX records it), and an overlay repeats the frame on several pages.
+//! A bad `--line`/`--page` (out of range, or a line the display list places
+//! on other pages than `--page`), or a line with no plain word for the edit,
+//! exits 2 with a message.
 //!
 //! `--kind K` (DESIGN.md §8, T7's edit kinds) chooses what a keystroke
 //! changes and the next changes back: `letter` (the default: a letter
@@ -260,12 +263,32 @@ fn main() {
     // `--line N --page P`: the line and the watched page are given (see the
     // module comment: a beamer frame's glyphs all carry its `\end{frame}`
     // line, so no prose line is found on a page).
-    let given = arg("--line").map(|v| match (v.parse::<u32>(), arg("--page")) {
-        (Ok(l), Some(_)) if (1..=lines.len() as u32).contains(&l) => (l, want),
-        _ => {
-            eprintln!("dl3-keys: --line {v} wants a line of {main} and --page");
+    let given = arg("--line").map(|v| {
+        let page = arg("--page").and_then(|p| p.parse::<u32>().ok());
+        let (Ok(l), Some(p)) = (v.parse::<u32>(), page) else {
+            eprintln!("dl3-keys: --line {v} wants a line number and --page INDEX");
+            std::process::exit(2)
+        };
+        if !(1..=lines.len() as u32).contains(&l) {
+            eprintln!("dl3-keys: --line {l}: {main} has {} lines", lines.len());
             std::process::exit(2)
         }
+        if p >= held.count as u32 {
+            eprintln!(
+                "dl3-keys: --page {p}: the document has {} pages (0-based)",
+                held.count
+            );
+            std::process::exit(2)
+        }
+        // A line whose glyphs the display list places must be on the
+        // watched page; a beamer frame's prose line has none (its glyphs
+        // carry the `\end{frame}` line), so any page passes there.
+        let on = on_pages(l);
+        if !on.is_empty() && !on.contains(&p) {
+            eprintln!("dl3-keys: --line {l} is on pages {on:?}, not on --page {p}");
+            std::process::exit(2)
+        }
+        (l, p)
     });
     let (line, page) = given.unwrap_or_else(|| {
         (1..=lines.len() as u32)
@@ -289,12 +312,21 @@ fn main() {
         .chain(this.match_indices(' ').map(|(i, _)| i + 1))
         .filter(|&i| plain(this[i..].split(' ').next().unwrap_or("")))
         .collect();
-    let pos = match arg("--where").as_deref().unwrap_or("middle") {
+    let found = match arg("--where").as_deref().unwrap_or("middle") {
         "start" => starts.iter().copied().find(|&i| i > 0),
         "end" => starts.last().copied(),
         _ => starts.iter().copied().find(|&i| i > this.len() / 2),
-    }
-    .expect("a plain word in the line");
+    };
+    // (a preamble edit types in no word: only the other kinds need one)
+    let pos = || {
+        found.unwrap_or_else(|| {
+            eprintln!(
+                "dl3-keys: line {line} has no plain lowercase word (4+ letters) where \
+                 --where asks; give --line a prose line"
+            );
+            std::process::exit(2)
+        })
+    };
     let kind = match (a.iter().any(|x| x == "--sentence"), arg("--kind")) {
         (true, Some(k)) if k != "sentence" => {
             eprintln!("dl3-keys: --sentence and --kind {k} conflict");
@@ -330,21 +362,21 @@ fn main() {
     // What a keystroke changes (`old` at `at_byte` becomes `new`; the next
     // keystroke changes it back), and the watched page.
     let (at_byte, old, new, page): (u64, String, String, u32) = match kind.as_str() {
-        "letter" => ((offset + pos + 2) as u64, String::new(), "x".into(), page),
+        "letter" => ((offset + pos() + 2) as u64, String::new(), "x".into(), page),
         "sentence" => (
-            (offset + pos + 2) as u64,
+            (offset + pos() + 2) as u64,
             String::new(),
             "lorem ipsum dolor sit amet consectetur adipiscing elit sed do eiusmod tempor ".into(),
             page,
         ),
         "newline" => (
-            (offset + space_after(pos)) as u64,
+            (offset + space_after(pos())) as u64,
             " ".into(),
             "\n".into(),
             page,
         ),
         "split" => (
-            (offset + space_after(pos)) as u64,
+            (offset + space_after(pos())) as u64,
             " ".into(),
             "\n\n".into(),
             page,

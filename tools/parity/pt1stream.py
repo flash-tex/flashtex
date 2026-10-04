@@ -271,6 +271,7 @@ class Stream:
     def __init__(self, workdir=None):
         self.subs = capture.workdir_subs(workdir) if workdir else capture.cached_log_subs()
         self.log = _Log()
+        self.mask = capture.ElapsedMask()
         self.banner_seen = False
         self.rest, self.pending, self.pending_n = b"", [], 0
         self.size, self.tail = 0, b""
@@ -304,13 +305,15 @@ class Stream:
             lines = text.split("\n")
             start = next((i for i, ln in enumerate(lines) if capture.banner_end(ln)), None)
             if start is None:
-                self.log.lines(lines)  # the hypothesis that no `**` line comes: they are kept
+                # the hypothesis that no `**` line comes: they are kept
+                self.log.lines(self.mask.text(text).split("\n"))
                 return
             self.banner_seen = True
             self.log = _Log()  # the banner ends here: nothing before this line counts
-            self.log.lines(lines[start:])
+            self.mask = capture.ElapsedMask()  # nor for the mask (normalise_log masks after the banner)
+            self.log.lines(self.mask.text("\n".join(lines[start:])).split("\n"))
             return
-        self.log.text(text)
+        self.log.text(self.mask.text(text))
 
     def close(self):
         """The fingerprint: {"v", "bytes", "complete", "strict", "boxes", "accounting"}."""
@@ -319,7 +322,8 @@ class Stream:
         self.rest = b""
         tail = self.tail.decode("latin-1")
         fp = {"v": V, "bytes": self.size,
-              "complete": "\nOutput written on " in tail or "\nNo pages of output." in tail}
+              "complete": "\nOutput written on " in tail or "\nNo pages of output." in tail,
+              "elapsed_mask": capture.ELAPSED_MASK_V, "elapsed_masked": self.mask.masked}
         fp.update(self.log.result())
         return fp
 
