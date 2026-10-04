@@ -57,3 +57,18 @@ Gate: seeded == standard page hashes on ≥ 192 edits.
   document with two fixed points, where the seeded loop and the standard compile differ,
   shows both checks working: `--verify every` sends the standard pages, and the idle check
   sends them in a follow-up compile with `"cause": "verify"`.
+
+## Watchdog
+
+Gate: the watchdog kills and recovers a hanging plugin and a runaway `for` within budget.
+
+| Case | Budget | Stopped after (status 86) | New host, cold compile done | Verdict |
+|---|---|---|---|---|
+| WASM plugin whose function loops forever (`tests/watchdog.rs`, hand-assembled module) | 1.5 s wall | 1.53–1.58 s | 84 ms later | MET |
+| `#for i in range(4000000000) { n += 1 }` | 1.5 s wall | 1.57–1.70 s | 86 ms later | MET |
+| `range(200000000).map(..)` (runaway memory) | 400 MB RSS | 0.36–1.04 s | 59 ms later | MET |
+
+- The host's own watchdog thread (`typst-host/src/watchdog.rs`) polls every 50 ms and exits
+  the process with status 86 after one stderr line saying why; the client sees the socket
+  close mid-compile and starts a new host (spec §11.10). Defaults: 10 s incremental, 60 s
+  cold, 4096 MB. Two runs, load average about 110.

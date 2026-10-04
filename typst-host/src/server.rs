@@ -22,8 +22,10 @@
 //!   standard one; pages that differ go out in a follow-up compile with
 //!   `"cause": "verify"` (spec §11.9).
 //!
-//! Not yet (DESIGN.md §15.10): `viewport` ordering, packages, the
-//! watchdog, `lang-v1`.
+//! * The watchdog ([`crate::watchdog`]) stops the process when a compile
+//!   runs past its budget or memory past its ceiling (spec §11.10).
+//!
+//! Not yet (DESIGN.md §15.10): `viewport` ordering, packages, `lang-v1`.
 
 use std::io::{self, BufReader, BufWriter, Write};
 use std::os::unix::net::{UnixListener, UnixStream};
@@ -42,6 +44,7 @@ use typst_layout::PagedDocument;
 use crate::convert::{self, ClientCaps, Tables};
 use crate::pdfpos;
 use crate::seeded;
+use crate::watchdog::{self, Watchdog};
 use crate::world::{open_for_write, FontOptions, Fonts, HostWorld};
 use crate::TYPST_VERSION;
 
@@ -56,6 +59,20 @@ pub struct Host {
     /// Seeded compiles found equal / different by a check (process life).
     verified: std::cell::Cell<u64>,
     mismatches: std::cell::Cell<u64>,
+    /// Stops the process when a compile runs too long or memory grows too
+    /// far (DESIGN.md §15.2; spec §11.10).
+    watchdog: Option<Watchdog>,
+}
+
+/// The watchdog watches a compile while this lives.
+struct Watched<'a>(Option<&'a Watchdog>);
+
+impl Drop for Watched<'_> {
+    fn drop(&mut self) {
+        if let Some(w) = self.0 {
+            w.end();
+        }
+    }
 }
 
 /// When the seeded loop is re-checked (`--verify`; DESIGN.md §15.3).
@@ -178,7 +195,21 @@ impl Host {
             verify: Verify::Idle(std::time::Duration::from_millis(1000)),
             verified: Default::default(),
             mismatches: Default::default(),
+            watchdog: None,
         }
+    }
+
+    /// Watch every compile with these limits.
+    pub fn with_watchdog(mut self, limits: watchdog::Limits) -> Host {
+        self.watchdog = Some(Watchdog::start(limits));
+        self
+    }
+
+    fn watch(&self, id: i64, cold: bool) -> Watched<'_> {
+        if let Some(w) = &self.watchdog {
+            w.begin(id, cold);
+        }
+        Watched(self.watchdog.as_ref())
     }
 
     /// Use (or not) the seeded loop for incremental compiles.
@@ -295,7 +326,28 @@ impl Host {
             }
             _ => return Ok(()),
         };
-        c.json(kind::HELLO, &hello(minor, self.fonts.len()))?;
+        let mut h = hello(minor, self.fonts.len());
+        if let (Json::Obj(kv), Some(w)) = (&mut h, &self.watchdog) {
+            let l = w.limits();
+            kv.push((
+                "watchdog".into(),
+                Json::Obj(vec![
+                    ("wall_ms".into(), Json::Int(l.wall.as_millis() as i64)),
+                    (
+                        "wall_cold_ms".into(),
+                        Json::Int(l.wall_cold.as_millis() as i64),
+                    ),
+                    (
+                        "rss_mb".into(),
+                        l.rss_bytes
+                            .map(|b| Json::Int((b >> 20) as i64))
+                            .unwrap_or(Json::Null),
+                    ),
+                    ("exit_code".into(), Json::Int(watchdog::EXIT_CODE as i64)),
+                ]),
+            ));
+        }
+        c.json(kind::HELLO, &h)?;
         c.flush()?;
 
         let mut job: Option<Job> = None;
@@ -434,6 +486,7 @@ impl Host {
         j.world.reset();
         j.tables.begin_compile();
         let cold = !j.compiled;
+        let _watched = self.watch(id, cold);
         // The seeded loop for an incremental preview compile (DESIGN.md
         // §15.3); an export always uses the standard compile.
         let seed = if self.seeded && req.incremental && !req.export {
@@ -502,6 +555,7 @@ impl Host {
             return Ok(());
         };
         j.unverified = false;
+        let _watched = self.watch(req.id, false);
         let t0 = Instant::now();
         let std = seeded::standard(&j.world);
         let verify_ms = ms(t0);

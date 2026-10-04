@@ -15,7 +15,8 @@ use flashtex_typst_host::TYPST_VERSION;
 fn usage() -> ExitCode {
     eprintln!(
         "usage: flashtex-typst-host --socket PATH [--font-path DIR]... [--no-system-fonts] \
-         [--font-program-budget BYTES] [--seeded on|off] [--verify off|every|idle[:MS]]"
+         [--font-program-budget BYTES] [--seeded on|off] [--verify off|every|idle[:MS]] \
+         [--watchdog-secs S] [--watchdog-cold-secs S] [--rss-ceiling-mb MB]"
     );
     ExitCode::from(2)
 }
@@ -28,6 +29,7 @@ fn main() -> ExitCode {
     };
     let mut budget: Option<u64> = None;
     let mut seeded = true;
+    let mut limits = flashtex_typst_host::watchdog::Limits::default();
     let mut verify = Verify::Idle(std::time::Duration::from_millis(1000));
     let mut args = std::env::args().skip(1);
     while let Some(a) = args.next() {
@@ -62,6 +64,22 @@ fn main() -> ExitCode {
                     None => return usage(),
                 }
             }
+            "--watchdog-secs" | "--watchdog-cold-secs" => {
+                let Some(s) = args.next().and_then(|v| v.parse::<f64>().ok()) else {
+                    return usage();
+                };
+                let d = std::time::Duration::from_secs_f64(s);
+                if a == "--watchdog-secs" {
+                    limits.wall = d;
+                } else {
+                    limits.wall_cold = d;
+                }
+            }
+            "--rss-ceiling-mb" => match args.next().and_then(|v| v.parse::<u64>().ok()) {
+                Some(0) => limits.rss_bytes = None,
+                Some(mb) => limits.rss_bytes = Some(mb << 20),
+                None => return usage(),
+            },
             "--version" => {
                 println!(
                     "flashtex-typst-host {} (Typst {TYPST_VERSION})",
@@ -73,7 +91,10 @@ fn main() -> ExitCode {
         }
     }
     let Some(socket) = socket else { return usage() };
-    let mut host = Host::new(&fonts).with_seeded(seeded).with_verify(verify);
+    let mut host = Host::new(&fonts)
+        .with_seeded(seeded)
+        .with_verify(verify)
+        .with_watchdog(limits);
     if let Some(b) = budget {
         host = host.with_program_budget(b);
     }

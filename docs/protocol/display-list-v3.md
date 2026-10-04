@@ -1492,3 +1492,17 @@ compile with the last compile's `id` and `"cause": "verify"` (`STARTED`,
 the pages that differ, `PAGES`, `DONE`), which a client treats like any
 compile. A newer `COMPILE` comes first: the check runs only while the
 client is quiet.
+
+### 11.10 The Typst host's watchdog
+
+A Typst compile cannot be cancelled (a WASM plugin runs without a fuel or
+memory limit; a `for` over a huge range is unbounded), so the Typst host
+watches its own compiles: when one runs longer than its wall-time budget
+(`--watchdog-secs`, default 10 s; `--watchdog-cold-secs`, default 60 s, for
+the first compile of a document), or the process's resident memory passes
+its ceiling (`--rss-ceiling-mb`, default 4096; 0: none), it writes one line
+to stderr, `flashtex-typst-host: {"watchdog": "wall"|"rss", "id", ...}`, and
+**exits with status 86**. The client sees the socket close during a compile
+(no `DONE`): it starts a new host, marks the pages it shows stale and
+compiles cold; a client may also kill a host it cannot reach, by `pid`.
+`HELLO.watchdog` is `{"wall_ms", "wall_cold_ms", "rss_mb", "exit_code"}`.

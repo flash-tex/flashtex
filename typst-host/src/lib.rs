@@ -18,6 +18,7 @@ pub mod pdf;
 pub mod pdfpos;
 pub mod seeded;
 pub mod server;
+pub mod watchdog;
 pub mod world;
 
 /// The pinned Typst version (Cargo.toml `=0.15.1`; a test checks the lock).
