@@ -104,12 +104,30 @@ struct Finish {
     check: Check,
 }
 
-/// Typst's per-page hash: what decides that a page changed.
+/// Typst's per-page hash: what decides that a page changed. Hashing every
+/// page is on the path to the first page (about 0.8 ms a page under load),
+/// so long documents are hashed on several threads.
 fn page_hashes(doc: &PagedDocument) -> Vec<u128> {
-    doc.pages()
-        .iter()
-        .map(|p| typst::utils::hash128(&(&p.frame, &p.fill, &p.bleed, p.number)))
-        .collect()
+    let hash =
+        |p: &typst_layout::Page| typst::utils::hash128(&(&p.frame, &p.fill, &p.bleed, p.number));
+    let pages = doc.pages();
+    let threads = std::thread::available_parallelism()
+        .map(|n| n.get().min(8))
+        .unwrap_or(1);
+    if pages.len() < 16 || threads < 2 {
+        return pages.iter().map(hash).collect();
+    }
+    let chunk = pages.len().div_ceil(threads);
+    std::thread::scope(|s| {
+        let parts: Vec<_> = pages
+            .chunks(chunk)
+            .map(|c| s.spawn(move || c.iter().map(hash).collect::<Vec<u128>>()))
+            .collect();
+        parts
+            .into_iter()
+            .flat_map(|h| h.join().expect("hashing a page"))
+            .collect()
+    })
 }
 
 /// Two compiles' results show the same pages (or fail alike).
@@ -642,6 +660,7 @@ impl Host {
             }
         };
         let mut positions_ms = 0.0;
+        let mut hash_ms = 0.0;
 
         let mut ndiag = 0;
         let mut errors = 0;
@@ -669,7 +688,9 @@ impl Host {
                     program_refs,
                     program_budget: Some(self.program_budget),
                 };
+                let th = Instant::now();
                 let hashes = page_hashes(&doc);
+                hash_ms = ms(th);
                 let mut first = None;
                 let mut typeset = 0;
                 let mut incomplete = vec![false; hashes.len()];
@@ -828,6 +849,7 @@ impl Host {
             ("diagnostics".into(), Json::Int(ndiag)),
             ("elapsed_ms".into(), Json::Num(ms(t0))),
             ("compile_ms".into(), Json::Num(compile_ms)),
+            ("hash_ms".into(), Json::Num(hash_ms)),
             (
                 "positions_ms".into(),
                 Json::Num((positions_ms * 1e3).round() / 1e3),
