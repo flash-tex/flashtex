@@ -3800,19 +3800,50 @@ impl Session {
             let old_base = self.pages.len().min(j);
             pages.extend(self.pages[old_base..].iter().cloned());
             self.pages = pages;
+            // Before a barrier the old run reads later: the converged run is
+            // the document now up to the re-run point, so it becomes the old
+            // run of an edit-free restart there. The restart re-does the
+            // barrier, and past it may converge with the old run again (the
+            // pages after a `\printindex` whose makeindex wrote the same
+            // `.ind`), up to its next barrier, and so on: only the pages
+            // around each barrier are typeset again, not the rest of the
+            // document (P6-HYPEROPT).
+            if let Some(m) = obs.rerun_from {
+                let m_pages = *self
+                    .ck_pages
+                    .get(&m)
+                    .ok_or("re-run point without a page count")?;
+                rep.rerun_from = Some(m_pages);
+                rep.status = status;
+                self.journal = Some(jn);
+                // (the retention stays dense around the edit, not the barrier)
+                let (cursor, last_restart) = (self.cursor, self.last_restart);
+                let r2 = self.incremental(t0, m, vec![], vec![], None, 0.0, None, vec![]);
+                (self.cursor, self.last_restart) = (cursor, last_restart);
+                let r2 = r2?;
+                rep.rerun_pages += r2.rerun_pages;
+                rep.tests += r2.tests;
+                rep.test_s += r2.test_s;
+                rep.diffs.extend(r2.diffs.iter().cloned());
+                rep.page_times.extend(r2.page_times.iter().copied());
+                rep.status = r2.status;
+                rep.paused = r2.paused;
+                rep.preempted = r2.preempted;
+                rep.pages = r2.pages;
+                rep.log_bytes = r2.log_bytes;
+                rep.checkpoints = r2.checkpoints;
+                rep.rs_events = r2.rs_events;
+                rep.total_s = t0.elapsed().as_secs_f64();
+                if rep.page_s == 0.0 {
+                    rep.page_s = rep.total_s;
+                }
+                return Ok(());
+            }
             // `\end{document}` re-runs: from the old run's last page's
-            // checkpoint (later ones may be past its re-read of the .aux),
-            // or from the last page checkpoint before the old run's first
-            // later barrier, which the run then re-does (`Obs::rerun_point`).
-            let last = match obs.rerun_from {
-                Some(m) => m,
-                None => self.end_point().ok_or("no checkpoint")?,
-            };
+            // checkpoint (later ones may be past its re-read of the .aux).
+            let last = self.end_point().ok_or("no checkpoint")?;
             let g = self.g.as_mut().unwrap();
             let last_pages = *self.ck_pages.get(&last).unwrap_or(&self.pages.len());
-            if obs.rerun_from.is_some() {
-                rep.rerun_from = Some(last_pages);
-            }
             let rec_last = g.record_of(last)?;
             if let Err(e) = g.restore_discard(last) {
                 // (an output file open there was opened for output again
