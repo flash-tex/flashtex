@@ -544,6 +544,12 @@ impl<'a> Pdf<'a> {
 
     /// The decoded data of stream object `n`.
     pub fn stream(&self, n: u32) -> Result<(Dict, Vec<u8>), String> {
+        self.stream_limited(n, MAX_INFLATE)
+    }
+
+    /// [`Pdf::stream`], inflating at most `limit` bytes (more is an
+    /// error, never a larger allocation).
+    pub fn stream_limited(&self, n: u32, limit: usize) -> Result<(Dict, Vec<u8>), String> {
         let ind = self.get(n)?;
         let Obj::Dict(d) = ind.obj else {
             return Err(format!("object {n} is not a stream"));
@@ -553,10 +559,10 @@ impl<'a> Pdf<'a> {
             .ok_or_else(|| format!("object {n} is not a stream"))?;
         let data = match d.get("Filter").map(|f| self.resolve(f)).transpose()? {
             None => raw.to_vec(),
-            Some(Obj::Name(f)) if f == b"FlateDecode" => inflate(raw)?,
+            Some(Obj::Name(f)) if f == b"FlateDecode" => inflate_limited(raw, limit)?,
             Some(Obj::Arr(a)) if a.is_empty() => raw.to_vec(),
             Some(Obj::Arr(a)) if a.len() == 1 && a[0] == Obj::Name(b"FlateDecode".to_vec()) => {
-                inflate(raw)?
+                inflate_limited(raw, limit)?
             }
             Some(f) => return Err(format!("object {n}: filter {f:?} is not read")),
         };
