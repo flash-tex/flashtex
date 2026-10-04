@@ -1,0 +1,10 @@
+% x027-filesize-dump: \filesize and \filedump of a file
+% XeTeX-specific (docs/design/xetex/PLAN.md, phase S0: TFM fonts)
+\input prelude
+\def\space{ }
+\message{x027 \filesize{prelude.tex}}
+\message{x027 \filedump offset 2 length 12{prelude.tex}}
+\message{x027 [\filesize{flashtex-no-such-file.tex}]}
+\setbox0=\hbox{\vrule width1pt}
+\lsshipbox0
+\end

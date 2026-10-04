@@ -1,0 +1,8 @@
+% x028-creationdate: \creationdate under SOURCE_DATE_EPOCH
+% XeTeX-specific (docs/design/xetex/PLAN.md, phase S0: TFM fonts)
+\input prelude
+\def\space{ }
+\message{x028 \creationdate}
+\setbox0=\hbox{\vrule width1pt}
+\lsshipbox0
+\end

@@ -1,0 +1,11 @@
+% x018-suppressfontnotfound: \suppressfontnotfounderror makes a missing font silent
+% XeTeX-specific (docs/design/xetex/PLAN.md, phase S0: TFM fonts)
+\input prelude
+\def\space{ }
+\suppressfontnotfounderror=1
+\font\x=flashtexnosuchfont
+\message{x018 \fontname\x}
+\ifx\x\nullfont\message{x018 null}\fi
+\setbox0=\hbox{\x A}
+\lsshipbox0
+\end
