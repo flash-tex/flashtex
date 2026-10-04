@@ -1790,7 +1790,7 @@ pub struct Session {
     cursor: usize,
     /// PDF file position corrections of checkpoints inherited from an old
     /// run at a convergence, applied in order after a restore.
-    reloc: HashMap<CheckpointId, Vec<Reloc>>,
+    reloc: HashMap<CheckpointId, Reloc>,
     /// L5: new meanings of `.aux` entries to put into a checkpoint's state
     /// after restoring it, in order (the checkpoints from `Point::AuxDone`
     /// to where a pass with a changed `.aux` restarted hold the meanings
@@ -2091,9 +2091,10 @@ impl Session {
         }
         v.push(("pages".into(), self.pages.len() as i64));
         v.push(("defpatch".into(), self.defpatch.len() as i64));
+        v.push(("reloc".into(), self.reloc.len() as i64));
         v.push((
-            "reloc".into(),
-            self.reloc.values().map(|r| r.len()).sum::<usize>() as i64,
+            "reloc_bytes".into(),
+            self.reloc.values().map(|r| r.heap_bytes()).sum::<usize>() as i64,
         ));
         v
     }
@@ -2247,6 +2248,11 @@ impl Session {
         let ids: std::collections::HashSet<CheckpointId> = g.checkpoints().into_iter().collect();
         self.ck_pages.retain(|k, _| ids.contains(k));
         self.defpatch.retain(|k, _| ids.contains(k));
+        // (and their position corrections: a checkpoint of the pending
+        // branch may be reattached)
+        let pending = g.pending_ids();
+        self.reloc
+            .retain(|k, _| ids.contains(k) || pending.contains(k));
         for p in self.pages.iter_mut() {
             if p.ckpt.is_some_and(|c| !ids.contains(&c)) {
                 p.ckpt = None;
@@ -3494,7 +3500,7 @@ impl Session {
             system::stamp_output(p);
         }
         if let Some(rs) = self.reloc.get(&r) {
-            Reloc::apply_all(rs, g);
+            rs.apply(g);
         }
         if g.layer().aux_point == Some(r) {
             // the run reads the `.aux` again: its close begins the read-set
@@ -3700,7 +3706,7 @@ impl Session {
                 }
             };
             let new_id = obs.taken.last().map(|(i, _)| *i).ok_or("no checkpoint")?;
-            let reloc = Reloc {
+            let reloc = RelocStep {
                 threshold: pdf_len(&rec_old) as i64,
                 delta: pdf_len(&g.record_of(new_id)?) as i64 - pdf_len(&rec_old) as i64,
                 overrides: obs.positions.clone(),
@@ -3717,7 +3723,7 @@ impl Session {
             let chain = g.checkpoints();
             if let Some(at) = chain.iter().position(|&i| i == old) {
                 for &id in &chain[at..] {
-                    self.reloc.entry(id).or_default().push(reloc.clone());
+                    self.reloc.entry(id).or_default().then(&reloc);
                 }
             }
             // The journal: the new run's so far, then the old run's after
@@ -3751,7 +3757,7 @@ impl Session {
             }
             let g = self.g.as_mut().unwrap();
             if let Some(rs) = self.reloc.get(&last) {
-                Reloc::apply_all(rs, g);
+                rs.apply(g);
             }
             for p in self.defpatch.get(&last).cloned().unwrap_or_default() {
                 crate::readset::apply_patch(g, &p)?;
@@ -3827,6 +3833,11 @@ impl Session {
         let ids: std::collections::HashSet<CheckpointId> = g.checkpoints().into_iter().collect();
         self.ck_pages.retain(|k, _| ids.contains(k));
         self.defpatch.retain(|k, _| ids.contains(k));
+        // (and their position corrections: a checkpoint of the pending
+        // branch may be reattached)
+        let pending = g.pending_ids();
+        self.reloc
+            .retain(|k, _| ids.contains(k) || pending.contains(k));
         for p in self.pages.iter_mut() {
             if p.ckpt.is_some_and(|c| !ids.contains(&c)) {
                 p.ckpt = None;
@@ -3910,6 +3921,11 @@ impl Session {
         let ids: std::collections::HashSet<CheckpointId> = g.checkpoints().into_iter().collect();
         self.ck_pages.retain(|k, _| ids.contains(k));
         self.defpatch.retain(|k, _| ids.contains(k));
+        // (and their position corrections: a checkpoint of the pending
+        // branch may be reattached)
+        let pending = g.pending_ids();
+        self.reloc
+            .retain(|k, _| ids.contains(k) || pending.contains(k));
         for p in self.pages.iter_mut() {
             if p.ckpt.is_some_and(|c| !ids.contains(&c)) {
                 p.ckpt = None;
@@ -4045,14 +4061,15 @@ fn new_positions(g: &Globals, from: u64) -> Vec<(usize, u64)> {
         .collect()
 }
 
-/// The PDF file position corrections for a checkpoint an old run took after
-/// a point where a new run converged with it (DESIGN.md §5.3: file
-/// positions are relocatable). In the spliced file the old run's bytes from
-/// `threshold` (its length at the convergence point) on lie `delta` further;
-/// the objects the new run wrote before converging lie where it wrote them
-/// (`overrides`: their `obj_offset` words, from the convergence test).
+/// One convergence's PDF file position correction for the checkpoints an
+/// old run took after the point where a new run converged with it
+/// (DESIGN.md §5.3: file positions are relocatable). In the spliced file
+/// the old run's bytes from `threshold` (its length at the convergence
+/// point) on lie `delta` further; the objects the new run wrote before
+/// converging lie where it wrote them (`overrides`: their `obj_offset`
+/// words, from the convergence test).
 #[derive(Clone, Debug)]
-struct Reloc {
+struct RelocStep {
     threshold: i64,
     delta: i64,
     overrides: Vec<(usize, u64)>,
@@ -4061,32 +4078,87 @@ struct Reloc {
     rebuild_rs: bool,
 }
 
-impl Reloc {
-    /// Apply a checkpoint's corrections, in the order the convergences that
-    /// made them happened. Each convergence adds one to every later
-    /// checkpoint it keeps, so a checkpoint that outlived n converged
-    /// compiles carries n of them. `rebuild_seen` sets `rs_seen` from the
-    /// read-set and the live names alone, neither of which a position
-    /// correction touches (`overrides` are `obj_offset` words,
-    /// `new_positions`), so running it once after the last correction
-    /// leaves the state each run of it after every correction left. Run
-    /// once per correction it was the cost that grew with n: about 1 ms
-    /// each on full-100 (8,419 read-set events), so a letter edit at the
-    /// end after 20 converged ones in the middle restored in 21 ms instead
-    /// of 3 (lane P4-EDIT-LATENCY, docs/evidence/p4-edit-latency-2026-10-03/).
-    /// The position corrections still run once each (about 1.4 µs each at
-    /// 1,051 PDF objects).
-    fn apply_all(rs: &[Reloc], g: &mut Globals) {
-        for x in rs {
-            x.apply_positions(g);
+/// A checkpoint's position corrections: the [`RelocStep`]s of every
+/// convergence it outlived, composed into one, so that it stays the size of
+/// the corrections rather than growing with the session (lane
+/// MEMORY-SAFETY, docs/evidence/mem-soak-2026-10-04/). Kept as the steps
+/// themselves, a checkpoint near the end gained a step, with a copy of its
+/// `overrides`, at every converged compile: 1,200 edits on plain-120 left
+/// 300,000 steps, and the host's footprint grew by 25 MB per 100 edits
+/// until a cold compile.
+///
+/// Applying it leaves exactly what applying the steps in order did
+/// (`RelocStep::apply`; the test `reloc_composes_exactly`):
+/// - A step moves a position `x` (as the state then holds it) to `x + d`
+///   when `x >= t`. Composed, a position as the checkpoint holds it moves by
+///   the `delta` of the last piece of `shift` that starts at or before it.
+///   A step splits at most one piece, where the moved values reach `t`,
+///   and equal neighbours merge: the pieces start at the old runs' page
+///   boundaries, so there are at most about as many as pages before the
+///   checkpoint.
+/// - `pdf_save_offset` and `pdf_stream_length_offset` move only while
+///   positive: `shift_pos`, the same composition with the threshold
+///   `max(t, 1)` (a positive value at or past `t` is at or past both).
+/// - An override writes its value after its step's move, and later steps
+///   move it when its object is one the moves visit (written, not in an
+///   object stream: neither changes between steps): `overrides` keeps the
+///   value written and the value after the later moves.
+#[derive(Clone, Debug, Default)]
+struct Reloc {
+    shift: Vec<(i64, i64)>,
+    shift_pos: Vec<(i64, i64)>,
+    /// (word offset, value written, value after the later steps' moves),
+    /// sorted by offset.
+    overrides: Vec<(usize, i64, i64)>,
+    rebuild_rs: bool,
+}
+
+/// `pieces` (start, delta: a value from `start` on, up to the next piece,
+/// moves by `delta`; below the first piece nothing moves) followed by the
+/// move "`+ d` from `t` on".
+fn compose_shift(pieces: &mut Vec<(i64, i64)>, t: i64, d: i64) {
+    if d == 0 {
+        return;
+    }
+    fn push(out: &mut Vec<(i64, i64)>, at: i64, delta: i64) {
+        if out.last().is_some_and(|l| l.0 == at) {
+            out.pop(); // (an empty piece)
         }
-        if rs.iter().any(|x| x.rebuild_rs) && g.rs_on {
-            crate::readset::rebuild_seen(g);
+        if out.last().map_or(0, |l| l.1) != delta {
+            out.push((at, delta));
         }
     }
+    let mut out: Vec<(i64, i64)> = Vec::with_capacity(pieces.len() + 1);
+    let starts = std::iter::once((i64::MIN, 0)).chain(pieces.iter().copied());
+    let ends = pieces.iter().map(|p| p.0).chain(std::iter::once(i64::MAX));
+    for ((a, delta), b) in starts.zip(ends) {
+        // the values x in [a, b) hold x + delta; they move when x + delta >= t
+        let s = (t as i128 - delta as i128).clamp(i64::MIN as i128, i64::MAX as i128) as i64;
+        if s <= a {
+            push(&mut out, a, delta + d);
+        } else if s >= b {
+            push(&mut out, a, delta);
+        } else {
+            push(&mut out, a, delta);
+            push(&mut out, s, delta + d);
+        }
+    }
+    *pieces = out;
+}
 
-    /// The file position part of the correction.
-    fn apply_positions(&self, g: &mut Globals) {
+/// `x` moved by `pieces` (`compose_shift`).
+fn shifted(pieces: &[(i64, i64)], x: i64) -> i64 {
+    match pieces.partition_point(|p| p.0 <= x) {
+        0 => x,
+        i => x.wrapping_add(pieces[i - 1].1),
+    }
+}
+
+impl RelocStep {
+    /// The correction itself, on a restored state: what `Reloc::apply`
+    /// composes (the test checks one against the other).
+    #[cfg(test)]
+    fn apply(&self, g: &mut Globals) {
         let (t, d) = (self.threshold, self.delta);
         let mv = |x: i64| if x >= t { x + d } else { x };
         if d != 0 {
@@ -4108,6 +4180,103 @@ impl Reloc {
         for &(off, v) in &self.overrides {
             g.arena.write_through(off, &v.to_le_bytes());
         }
+    }
+}
+
+impl Reloc {
+    /// Compose `s` after the steps this holds.
+    fn then(&mut self, s: &RelocStep) {
+        compose_shift(&mut self.shift, s.threshold, s.delta);
+        compose_shift(&mut self.shift_pos, s.threshold.max(1), s.delta);
+        if s.delta != 0 {
+            for o in self.overrides.iter_mut() {
+                if o.2 >= s.threshold {
+                    o.2 += s.delta;
+                }
+            }
+        }
+        if !s.overrides.is_empty() {
+            let mut new: Vec<(usize, i64, i64)> = s
+                .overrides
+                .iter()
+                .map(|&(off, v)| (off, v as i64, v as i64))
+                .collect();
+            // (a step writes each word once: `new_positions`; were one
+            // written twice, its last value would stand)
+            new.reverse();
+            new.sort_by_key(|o| o.0);
+            new.dedup_by_key(|o| o.0);
+            let old = std::mem::take(&mut self.overrides);
+            let mut merged = Vec::with_capacity(old.len() + new.len());
+            let (mut i, mut j) = (0, 0);
+            while i < old.len() || j < new.len() {
+                if j == new.len() || (i < old.len() && old[i].0 < new[j].0) {
+                    merged.push(old[i]);
+                    i += 1;
+                } else {
+                    if i < old.len() && old[i].0 == new[j].0 {
+                        i += 1; // the later step's value replaces it
+                    }
+                    merged.push(new[j]);
+                    j += 1;
+                }
+            }
+            self.overrides = merged;
+        }
+        self.rebuild_rs |= s.rebuild_rs;
+    }
+
+    /// Apply the corrections to the restored checkpoint. `rebuild_seen`
+    /// sets `rs_seen` from the read-set and the live names alone, neither
+    /// of which a position correction touches (`overrides` are
+    /// `obj_offset` words, `new_positions`), so running it once after the
+    /// corrections leaves the state that running it after every step left
+    /// (lane P4-EDIT-LATENCY, docs/evidence/p4-edit-latency-2026-10-03/).
+    fn apply(&self, g: &mut Globals) {
+        let n = (g.obj_ptr.max(0) as usize).min(g.obj_tab.len().saturating_sub(1));
+        if !self.shift.is_empty() {
+            g.pdf_gone = shifted(&self.shift, g.pdf_gone);
+            for k in 1..=n {
+                let e = g.obj_tab[k];
+                if e.int3 == -1 {
+                    let x = shifted(&self.shift, e.int2);
+                    if x != e.int2 {
+                        g.obj_tab[k].int2 = x;
+                    }
+                }
+            }
+        }
+        if !self.shift_pos.is_empty() {
+            g.pdf_save_offset = shifted(&self.shift_pos, g.pdf_save_offset);
+            g.pdf_stream_length_offset = shifted(&self.shift_pos, g.pdf_stream_length_offset);
+        }
+        if !self.overrides.is_empty() {
+            // an override word is an object's `obj_offset` (`new_positions`)
+            let base = g
+                .arena
+                .regions
+                .iter()
+                .find(|r| r.name == "obj_tab")
+                .map(|r| r.off);
+            let size = std::mem::size_of::<crate::generated::types::obj_entry>();
+            let at = std::mem::offset_of!(crate::generated::types::obj_entry, int2);
+            for &(off, raw, moved) in &self.overrides {
+                let k = base
+                    .filter(|&b| off >= b + at && (off - b - at) % size == 0)
+                    .map(|b| (off - b - at) / size);
+                let visited = k.is_some_and(|k| (1..=n).contains(&k) && g.obj_tab[k].int3 == -1);
+                let v = if visited { moved } else { raw };
+                g.arena.write_through(off, &v.to_le_bytes());
+            }
+        }
+        if self.rebuild_rs && g.rs_on {
+            crate::readset::rebuild_seen(g);
+        }
+    }
+
+    /// Heap bytes (`Session::mem_stats`' `reloc_bytes`).
+    fn heap_bytes(&self) -> usize {
+        (self.shift.capacity() + self.shift_pos.capacity()) * 16 + self.overrides.capacity() * 24
     }
 }
 
@@ -4162,5 +4331,121 @@ mod tests {
                 );
             }
         }
+    }
+
+    /// A checkpoint's composed position corrections (`Reloc`) leave the
+    /// state that applying its steps one after another left: every
+    /// `obj_offset`, the three scalars, the override words, on random
+    /// steps with overrides of written, unwritten and object-stream objects
+    /// (lane MEMORY-SAFETY).
+    #[test]
+    fn reloc_composes_exactly() {
+        use super::{Reloc, RelocStep};
+        use crate::Globals;
+        let mut seed = 99u64;
+        let mut rnd = |n: u64| {
+            seed = seed
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
+            (seed >> 33) % n.max(1)
+        };
+        let mut a = Globals::new();
+        let mut b = Globals::new();
+        let n = 60usize;
+        a.obj_tab.alloc_len(n + 10);
+        b.obj_tab.alloc_len(n + 10);
+        let base = a
+            .arena
+            .regions
+            .iter()
+            .find(|r| r.name == "obj_tab")
+            .unwrap()
+            .off;
+        let size = std::mem::size_of::<crate::generated::types::obj_entry>();
+        let at = std::mem::offset_of!(crate::generated::types::obj_entry, int2);
+        for round in 0..40 {
+            // a checkpoint's state: objects at increasing file positions,
+            // some in object streams, some not yet written
+            for g in [&mut a, &mut b] {
+                g.obj_ptr = n as i32;
+            }
+            let mut pos = 15i64;
+            for k in 0..n + 10 {
+                pos += 1 + (rnd(400) as i64);
+                let int3 = if rnd(6) == 0 { rnd(3) as i32 } else { -1 };
+                for g in [&mut a, &mut b] {
+                    g.obj_tab[k].int2 = pos;
+                    g.obj_tab[k].int3 = int3;
+                }
+            }
+            let (gone, save, slen) = (
+                pos + 100,
+                [0, -1, pos / 2][round % 3],
+                [0, pos / 3][round % 2],
+            );
+            for g in [&mut a, &mut b] {
+                g.pdf_gone = gone;
+                g.pdf_save_offset = save;
+                g.pdf_stream_length_offset = slen;
+            }
+            let steps: Vec<RelocStep> = (0..1 + rnd(30))
+                .map(|_| RelocStep {
+                    threshold: rnd(pos as u64 + 200) as i64 - [0, 50][rnd(8).min(1) as usize],
+                    delta: rnd(4001) as i64 - 2000,
+                    overrides: (0..rnd(6))
+                        .map(|_| {
+                            let k = 1 + rnd(n as u64 + 8) as usize;
+                            (base + k * size + at, rnd(pos as u64 * 2) + 1)
+                        })
+                        .collect(),
+                    rebuild_rs: false,
+                })
+                .collect();
+            let mut r = Reloc::default();
+            for s in &steps {
+                s.apply(&mut a);
+                r.then(s);
+            }
+            r.apply(&mut b);
+            assert_eq!(a.pdf_gone, b.pdf_gone, "round {round}: pdf_gone");
+            assert_eq!(a.pdf_save_offset, b.pdf_save_offset, "round {round}: save");
+            assert_eq!(
+                a.pdf_stream_length_offset, b.pdf_stream_length_offset,
+                "round {round}: stream length"
+            );
+            for k in 0..n + 10 {
+                assert_eq!(
+                    a.obj_tab[k].int2, b.obj_tab[k].int2,
+                    "round {round}: object {k}"
+                );
+            }
+        }
+    }
+
+    /// Edits that come back to the same places keep a checkpoint's composed
+    /// corrections the size of those places, however many there were.
+    #[test]
+    fn reloc_stays_bounded() {
+        use super::{Reloc, RelocStep};
+        let mut r = Reloc::default();
+        let mut len = [10_000i64, 20_000, 30_000];
+        for i in 0..10_000 {
+            // typing at one of three pages: a letter in, a letter out
+            let p = i % 3;
+            let d = if (i / 3) % 2 == 0 { 7 } else { -7 };
+            let step = RelocStep {
+                threshold: len[p],
+                delta: d,
+                overrides: vec![(64 * (p + 1), len[p] as u64 - 500)],
+                rebuild_rs: true,
+            };
+            for l in len.iter_mut().skip(p) {
+                *l += d;
+            }
+            r.then(&step);
+        }
+        assert!(r.shift.len() <= 4, "{:?}", r.shift);
+        assert!(r.shift_pos.len() <= 4);
+        assert_eq!(r.overrides.len(), 3);
     }
 }

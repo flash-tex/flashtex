@@ -316,7 +316,9 @@ pub struct Layer {
     pending: Option<Pending>,
     /// The control sequence whose expansion arms S₀ (`document`).
     arm_name: Option<Vec<u8>>,
-    /// Checkpoints taken by the hook, in order, with why.
+    /// Checkpoints taken by the hook, in order, with why. Only those still
+    /// retained (or pending) are kept: the others go once they are as many
+    /// as those (`hook_checkpoint`), so a long session does not grow it.
     pub taken: Vec<(CheckpointId, Point)>,
     /// S₀, once taken.
     pub s0: Option<CheckpointId>,
@@ -1533,6 +1535,13 @@ impl Globals {
                 } else {
                     None
                 };
+                let live = self.arena.checkpoint_ids().len();
+                if self.layer().taken.len() >= 2 * live + 64 {
+                    let mut keep: std::collections::HashSet<CheckpointId> =
+                        self.arena.checkpoint_ids().iter().copied().collect();
+                    keep.extend(self.pending_ids());
+                    self.layer().taken.retain(|(i, _)| keep.contains(i));
+                }
                 let l = self.layer();
                 l.taken.push((id, why));
                 if let Some(h) = hash {

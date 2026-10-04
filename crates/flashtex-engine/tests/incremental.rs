@@ -1992,3 +1992,100 @@ fn an_erroring_cold_compile_equals_scratch_runs() {
         "fixed again",
     );
 }
+
+/// Lane MEMORY-SAFETY (docs/evidence/mem-soak-2026-10-04/): a long session
+/// of edits that converge keeps the session's bookkeeping the size of its
+/// checkpoints. Every converged compile used to add a position correction,
+/// with a copy of the objects the new run wrote, to every later checkpoint,
+/// and keep those of checkpoints dropped since: 1,200 edits on plain-120
+/// left 300,000 of them. Now each checkpoint holds one composed correction
+/// (`reloc` counts checkpoints, `reloc_bytes` their size), and the hook's
+/// list of the checkpoints it took (`taken`) forgets dropped ones. The
+/// output is still that of a from-scratch run, after edits that move the
+/// end's PDF objects back and forth many times.
+#[test]
+fn a_long_session_keeps_its_bookkeeping_bounded() {
+    let Some(e) = env() else {
+        common::no_texlive();
+        return;
+    };
+    let dir = e.dir.join("soak");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let doc = |a: &str, b: &str| -> String {
+        let mut s =
+            String::from("\\documentclass{article}\n\\usepackage{hyperref}\n\\begin{document}\n");
+        for k in 0..200 {
+            let word = match k {
+                40 => a,
+                130 => b,
+                _ => "gamma",
+            };
+            s.push_str(&para(k, word));
+        }
+        s.push_str("\\end{document}\n");
+        s
+    };
+    let mut h = Host::start(&e, &dir);
+    for k in 0..4 {
+        let r = compile_and_check(
+            &e,
+            &mut h,
+            &dir,
+            &[("doc.tex", &doc("gamma", "gamma"))],
+            "settle",
+        );
+        if r.contains("\"mode\":\"unchanged\"") || k == 3 {
+            break;
+        }
+    }
+    let num = |m: &str, k: &str| -> i64 {
+        field(m, k)
+            .trim()
+            .parse()
+            .unwrap_or_else(|_| panic!("{k} in {m}"))
+    };
+    let words = ["gammx", "gamma", "gammxy", "gamma", "gam", "gamma"];
+    let (mut converged, mut at_20) = (0, 0);
+    for i in 0..60 {
+        let w = words[i % words.len()];
+        let files = if (i / 6) % 2 == 0 {
+            doc(w, "gamma")
+        } else {
+            doc("gamma", w)
+        };
+        let what = format!("edit {i}");
+        let r = if i % 15 == 14 {
+            compile_and_check(&e, &mut h, &dir, &[("doc.tex", &files)], &what)
+        } else {
+            std::fs::write(dir.join("doc.tex"), &files).unwrap();
+            h.cmd("compile")
+        };
+        assert!(r.contains("\"mode\":\"incremental\""), "{what}: {r}");
+        if field(&r, "converged_at") != "null" {
+            converged += 1;
+        }
+        let m = h.cmd("mem");
+        let ck = num(&m, "checkpoints");
+        assert!(
+            num(&m, "reloc") <= ck,
+            "{what}: corrections of dropped checkpoints: {m}"
+        );
+        assert!(
+            num(&m, "taken") <= 2 * ck + 65,
+            "{what}: `taken` grows: {m}"
+        );
+        if i == 20 {
+            at_20 = num(&m, "reloc_bytes");
+        }
+        if i > 20 {
+            // composed corrections are bounded by the places edited and
+            // the objects written, not by the number of edits
+            assert!(
+                num(&m, "reloc_bytes") <= 2 * at_20 + 64 * 1024,
+                "{what}: corrections grow: {m}"
+            );
+        }
+    }
+    assert!(converged >= 40, "only {converged} of 60 edits converged");
+}
