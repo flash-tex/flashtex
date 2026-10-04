@@ -14,6 +14,9 @@
 //! * `xetex_ext.rs` holds XeTeX's other C parts behind the interface
 //!   `changes/ext.ch` declares. In S0 the native-font, graphics and TECkit
 //!   routines are stubs: no installed font is ever found.
+//! * `fontmgr/` is XeTeX's font lookup (`XeTeXFontMgr`, `splitFontName`,
+//!   `findnativefont` up to loading), platform-free over
+//!   `crates/font-discovery`'s index. Not yet called by `xetex_ext.rs`.
 //! * The word space (`arena`), the checked array index (`ix`), the command
 //!   line, the run's configuration and the file resolver (kpathsea) are the
 //!   pdfTeX engine's (`crates/flashtex-engine`), used through its public
@@ -22,6 +25,7 @@
 pub use flashtex_engine::arena;
 pub use flashtex_engine::ix;
 
+pub mod fontmgr;
 pub mod generated;
 pub mod system;
 pub mod xetex_ext;

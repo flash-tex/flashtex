@@ -27,6 +27,12 @@ path = "src/main.rs"
 # nothing of it changes for this crate.
 flashtex-engine = { path = "../flashtex-engine", default-features = false, features = ["kpathsea"] }
 
+# The platform-free index of installed fonts (MIT, no dependencies): the file
+# list XeTeX's font manager searches by name (src/fontmgr, PLAN.md §3.1). Only
+# its directory list and scan are used; every name XeTeX matches on is read
+# from the font files by src/fontmgr itself.
+flashtex-font-discovery = { path = "../font-discovery" }
+
 # Built on its own (the root workspace excludes it, see the root Cargo.toml):
 # scripts/xetex-lockstep.sh builds it with its own lockfile and target.
 [workspace]

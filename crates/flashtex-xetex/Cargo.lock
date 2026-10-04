@@ -31,10 +31,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "flashtex-font-discovery"
+version = "0.1.0"
+
+[[package]]
 name = "flashtex-xetex"
 version = "0.1.0"
 dependencies = [
  "flashtex-engine",
+ "flashtex-font-discovery",
 ]
 
 [[package]]
