@@ -30,14 +30,26 @@ public final class CollabHub {
         case refused(reason: String)
         /// Operations dropped by replica binding (count).
         case forgedDropped(participant: UInt64, count: Int)
+        /// File-map operations from a guest, all dropped: in P1 only the hub
+        /// creates, renames or deletes files.
+        case fileOpsDropped(participant: UInt64, count: Int)
     }
 
     /// Caps, as nearby-v1's table.
     public struct Limits: Sendable {
         public var maxConnections = 12
+        /// Connections from one address at a time (two instances on one Mac
+        /// share 127.0.0.1, and a reconnect may overlap its predecessor).
+        public var maxConnectionsPerAddress = 4
+        /// Participants, the hub included, joined or waiting for approval.
         public var maxParticipants = 5
         public var joinTimeout: TimeInterval = 10
         public var approvalTimeout: TimeInterval = 120
+        /// Largest frame before a connection has joined (a `join` is ~300 B).
+        public var preJoinFrameBytes = 4096
+        /// Awareness messages a participant may send per second; the excess
+        /// is dropped, never fanned out.
+        public var awarenessPerSecond: Double = 25
         public init() {}
     }
 
@@ -52,12 +64,19 @@ public final class CollabHub {
         var removed = false
     }
 
-    final class Link {
+    @MainActor final class Link {
         let connection: CollabConnection
+        let address: String
         var member: UInt64?
         var awaitingApproval = false
         var outSeq: UInt64 = 0
-        init(_ c: CollabConnection) { connection = c }
+        /// Token bucket for awareness.
+        var awarenessTokens: Double = 0
+        var awarenessStamp = Date()
+        init(_ c: CollabConnection) {
+            connection = c
+            address = c.remoteAddress
+        }
     }
 
     public let session: CollabSession
@@ -70,6 +89,8 @@ public final class CollabHub {
     /// Ask the hub user; call the reply exactly once (any time).
     public var approve: (JoinRequest, @escaping (Decision) -> Void) -> Void = { _, reply in reply(.deny) }
     public var onEvent: (Event) -> Void = { _ in }
+    /// How long a new invitation stays valid (tests shorten it).
+    public var inviteLifetime: TimeInterval = CollabInvite.lifetime
 
     private var listener: NWListener?
     public private(set) var port: UInt16?
@@ -101,7 +122,7 @@ public final class CollabHub {
         let l = try NWListener(using: params, on: nwPort)
         if advertise {
             l.service = NWListener.Service(name: sessionID, type: CollabTLS.serviceType, domain: nil,
-                                           txtRecord: NWTXTRecord(["v": "1", "name": String(projectName.prefix(200))]))
+                                           txtRecord: NWTXTRecord(["v": "1"])) // no project name: the LAN sees only that a session exists
         }
         l.stateUpdateHandler = { [weak self] state in
             MainActor.assumeIsolated {
@@ -146,7 +167,7 @@ public final class CollabHub {
         let now = Date()
         invites = invites.filter { $0.value > now }
         let secret = CollabInvite.randomBytes(32)
-        invites[secret] = now.addingTimeInterval(CollabInvite.lifetime)
+        invites[secret] = now.addingTimeInterval(inviteLifetime)
         return CollabInvite(sessionID: sessionID, secret: secret, fingerprint: identity.fingerprint, projectName: projectName,
                             port: port ?? 0, addresses: addresses, hostName: hostName)
     }
@@ -192,7 +213,13 @@ public final class CollabHub {
             return
         }
         let c = CollabConnection(nw)
+        c.maxFrameBytes = limits.preJoinFrameBytes
         let link = Link(c)
+        guard links.values.filter({ $0.address == link.address }).count < limits.maxConnectionsPerAddress else {
+            nw.cancel()
+            onEvent(.refused(reason: "too many connections from \(link.address)"))
+            return
+        }
         let key = ObjectIdentifier(link)
         links[key] = link
         c.onReady = { [weak self, weak c] in
@@ -238,6 +265,13 @@ public final class CollabHub {
             receive(sections, from: member, link: link)
             link.connection.send(.ack(.init(through: seq)))
         case let .awareness(a):
+            // Token bucket: presence is cheap but fanned out to everyone.
+            let now = Date()
+            link.awarenessTokens = min(limits.awarenessPerSecond,
+                                       link.awarenessTokens + now.timeIntervalSince(link.awarenessStamp) * limits.awarenessPerSecond)
+            link.awarenessStamp = now
+            guard link.awarenessTokens >= 1 else { return }
+            link.awarenessTokens -= 1
             var v = a
             v.participantID = collabHex(id)
             v.name = member.name
@@ -287,7 +321,8 @@ public final class CollabHub {
             return
         }
         invites.removeValue(forKey: secret) // single use, whatever the host decides
-        guard members.values.filter({ !$0.removed }).count < limits.maxParticipants - 1 else {
+        let pending = links.values.filter(\.awaitingApproval).count
+        guard members.values.filter({ !$0.removed }).count + pending < limits.maxParticipants - 1 else {
             link.connection.refuse(code: "session_full", message: "The session is full.")
             return
         }
@@ -322,6 +357,8 @@ public final class CollabHub {
         m.link = key
         members[id] = m
         link.member = id
+        link.connection.maxFrameBytes = CollabWire.maxFrame
+        link.awarenessTokens = limits.awarenessPerSecond
         link.connection.send(.joinAck(.init(participantID: collabHex(id), role: m.canEdit ? "edit" : "view", token: m.token,
                                             colourIndex: m.colourIndex, pins: pins, environmentDigest: environmentDigest)))
         // Both directions: the guest asks for what it lacks; the hub asks
@@ -335,12 +372,13 @@ public final class CollabHub {
     private func receive(_ sections: [Section], from member: Member, link: Link) {
         var kept: [Section] = []
         var dropped = 0
+        var fileOps = 0
         for s in sections {
             switch s {
             case let .fileMap(ops):
-                let ok = member.canEdit ? ops.filter { $0.id.replica == member.id } : []
-                dropped += ops.count - ok.count
-                if !ok.isEmpty { kept.append(.fileMap(ok)) }
+                // P1 shares no creates, renames or deletes: a guest's file-map
+                // operation never reaches the CRDT (or the host's disk).
+                fileOps += ops.count
             case let .text(f, ops):
                 let ok = member.canEdit ? ops.filter { $0.id.replica == member.id } : []
                 dropped += ops.count - ok.count
@@ -348,6 +386,7 @@ public final class CollabHub {
             }
         }
         if dropped > 0 { onEvent(.forgedDropped(participant: member.id, count: dropped)) }
+        if fileOps > 0 { onEvent(.fileOpsDropped(participant: member.id, count: fileOps)) }
         guard !kept.isEmpty else { return }
         let errors = session.integrate(kept)
         for (k, other) in links where other !== link && other.member != nil {

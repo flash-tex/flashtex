@@ -142,6 +142,15 @@ extension SourceEditorView.Coordinator: CollabTextHost {
         link.binding.localReplace(d.location..<(d.location + d.oldLength), with: new)
     }
 
+    /// The held-operations bound was reached: commit the composition as it
+    /// stands (the input method is told to drop its state), hand it over.
+    func collabEndComposition() {
+        guard let tv = textView, tv.hasMarkedText() else { return }
+        tv.unmarkText()
+        tv.inputContext?.discardMarkedText()
+        collabFlushLocalEdits()
+    }
+
     /// End of a composition or a turn: flush, then integrate what waited.
     func liveShareSettle() {
         guard let link = liveShare.link, textView?.hasMarkedText() != true else { return }
