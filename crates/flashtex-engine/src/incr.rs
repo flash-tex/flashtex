@@ -439,7 +439,20 @@ struct Obs {
     /// A run from the format: newer work stops it only once S₀ is taken
     /// (`cold`), so that the next compile restarts from S₀ or later.
     preempt_after_s0: bool,
+    /// The first pass of an incremental compile: newer work does not stop
+    /// it before its first changed page has shipped (or [`PROTECT_PAGES`]
+    /// pages have, when no page changed), so that every keystroke's
+    /// compile shows its edit -- else typing faster than the edited page
+    /// arrives preempts every compile before it and nothing is painted
+    /// until the typing stops (lane LIVE-30MS). Stopping later than asked
+    /// changes nothing the engine computes.
+    protect_edit: bool,
 }
+
+/// The most pages an incremental compile ships, none changed, before newer
+/// work may stop it (`Obs::protect_edit`): the page before the edited
+/// paragraph, the edited page and one more.
+const PROTECT_PAGES: usize = 3;
 
 /// Whether newer work waits: (pass, pages the run shipped) -> stop now.
 pub type Preempt = std::rc::Rc<dyn Fn(usize, usize) -> bool>;
@@ -1774,6 +1787,16 @@ impl Observer for Obs {
                     self.positions = new_positions(g, self.pdf_len_r);
                     return Action::Stop;
                 }
+                if self.preempted && self.protecting() {
+                    // newer work came during the test, but this run goes on
+                    // to its edited page first: the test only failed (and
+                    // is not counted as a miss)
+                    self.preempted = false;
+                    if self.stop_at == Some(j) {
+                        return Action::Stop;
+                    }
+                    return Action::Continue;
+                }
                 if self.preempted {
                     // newer work came during the test
                     return Action::Stop;
@@ -1796,6 +1819,11 @@ impl Observer for Obs {
 }
 
 impl Obs {
+    /// Newer work may not stop the run yet (`protect_edit`).
+    fn protecting(&self) -> bool {
+        self.protect_edit && self.edited.is_none() && self.new_pages.len() < PROTECT_PAGES
+    }
+
     /// Newer work waits: stop the run at this checkpoint. A run from the
     /// format goes on to S₀ first: stopped before it, the next compile
     /// would start from the format again (the whole preamble, and while
@@ -1803,6 +1831,9 @@ impl Obs {
     /// compile restarts from S₀ or a later checkpoint of this run.
     fn preempt_now(&mut self, g: &mut Globals) -> bool {
         if self.preempt_after_s0 && g.layer().s0.is_none() {
+            return false;
+        }
+        if self.protecting() {
             return false;
         }
         let stop = self
@@ -3412,6 +3443,7 @@ impl Session {
             interruptible: false,
             char_or: vec![],
             preempt_after_s0: false,
+            protect_edit: false,
         }
     }
 
@@ -3639,6 +3671,7 @@ impl Session {
         obs.pdf_len_r = pdf_len(&rec);
         obs.keep_r = Some(r);
         obs.preempt = self.preempt.clone();
+        obs.protect_edit = self.pass == 1;
         g.checkpoint_every_shipout(true);
         g.layer().timed_s = self.opts.timed_s;
         g.checkpoint_segments(self.opts.segment_s);

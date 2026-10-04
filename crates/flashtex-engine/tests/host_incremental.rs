@@ -1392,6 +1392,137 @@ fn a_newer_compile_preempts_the_running_one() {
     let _ = std::fs::remove_dir_all(&base);
 }
 
+/// LIVE-30MS: typing faster than the edited page arrives must not starve
+/// the preview. A compile superseded before its first changed page still
+/// typesets and sends that page (then stops, `cancelled`), so every
+/// keystroke's edit is painted; and what the client holds at the end still
+/// equals a from-scratch compile.
+#[test]
+fn a_superseded_compile_still_sends_its_edited_page() {
+    if find_texlive_bin().is_none() {
+        common::no_texlive();
+        return;
+    }
+    let base = common::fresh_dir("flashtex-host-antistarve");
+    let _ = std::fs::remove_dir_all(&base);
+    std::fs::create_dir_all(&base).unwrap();
+    let (proj, out) = (base.join("proj"), base.join("out"));
+    std::fs::create_dir_all(&proj).unwrap();
+    std::fs::create_dir_all(&out).unwrap();
+    let main = "main.tex";
+    std::fs::write(proj.join(main), article(40)).unwrap();
+    let host = start_host("s");
+    let scratch = start_host("t");
+    let mut c = Client::connect(&host.1).unwrap();
+    let mut view = View::default();
+    let mut id = 0;
+    for _ in 0..4 {
+        id += 1;
+        let o = compile(&mut c, &mut view, &req(id, &proj, &out, main));
+        if o.done.str_field("mode") == Some("unchanged") {
+            break;
+        }
+    }
+    // A prose line about two thirds in.
+    let text = String::from_utf8_lossy(&std::fs::read(proj.join(main)).unwrap()).into_owned();
+    let lines: Vec<&str> = text.split('\n').collect();
+    let prose: Vec<usize> = (0..lines.len())
+        .filter(|&i| {
+            let t = lines[i];
+            t.split(' ').count() > 6 && !t.trim_start().starts_with('%') && !t.starts_with('\\')
+        })
+        .collect();
+    let line = prose[prose.len() * 2 / 3];
+    let (w, _) = middle_word(lines[line]).expect("a word");
+    let offset: usize = lines[..line].iter().map(|l| l.len() + 1).sum::<usize>() + w;
+    let mut sent_superseded = 0;
+    for round in 0..3u64 {
+        let (id1, id2) = (id + 1, id + 2);
+        id += 2;
+        let mut r1 = req(id1, &proj, &out, main);
+        r1.edits = vec![Edit {
+            path: main.into(),
+            offset: offset as u64,
+            delete: 0,
+            insert: "xy".into(),
+        }];
+        let mut r2 = req(id2, &proj, &out, main);
+        r2.edits = vec![Edit {
+            path: main.into(),
+            offset: offset as u64 + 1 + round % 2,
+            delete: 0,
+            insert: "z".into(),
+        }];
+        // the second as soon as the first has started: the first is
+        // superseded while it restores and typesets
+        c.compile(&r1).unwrap();
+        let (mut current, mut dones, mut pages_of_first) = (0, vec![], 0);
+        while dones.len() < 2 {
+            match c.next_event().unwrap().expect("host closed the connection") {
+                Event::Started(j) => {
+                    current = j.int_field("id").unwrap_or(0);
+                    if current == id1 {
+                        c.compile(&r2).unwrap();
+                    }
+                    if j.get("keep").and_then(Json::as_bool) != Some(true) {
+                        view = View::default();
+                    }
+                }
+                Event::Font(f) => {
+                    view.fonts.insert(f.id, f.key);
+                }
+                Event::Sources(s) => {
+                    for (i, p) in s.files {
+                        view.files.insert(i, p);
+                    }
+                    for (i, f, l) in s.spans {
+                        view.spans.insert(i, (f, l));
+                    }
+                }
+                Event::Page(p) => {
+                    if current == id1 {
+                        pages_of_first += 1;
+                    }
+                    view.page_fonts.insert(p.index, view.fonts.clone());
+                    view.pages.insert(p.index, p);
+                }
+                Event::Done(d) => dones.push(d),
+                Event::Error(e) => panic!("host error: {e}"),
+                _ => {}
+            }
+        }
+        assert_eq!(dones[0].int_field("id"), Some(id1));
+        assert_eq!(dones[1].str_field("status"), Some("ok"), "{}", dones[1]);
+        // superseded (unless the host took the second only after the
+        // first's DONE), and still sent its changed page
+        if dones[0].str_field("status") == Some("cancelled") {
+            assert!(
+                pages_of_first >= 1,
+                "round {round}: the superseded compile sent no page: {}",
+                dones[0]
+            );
+            sent_superseded += 1;
+        }
+        let count = dones[1].int_field("pages").unwrap_or(0) as usize;
+        view.count = count;
+        view.pages.retain(|&i, _| (i as usize) < count);
+        let (p2, o2) = snapshot(&base, &proj, &out, &format!("s{round}"));
+        compare_with_scratch(
+            &scratch.1,
+            &view,
+            &proj,
+            &out,
+            &p2,
+            &o2,
+            main,
+            &format!("superseded round {round}"),
+        );
+    }
+    assert!(sent_superseded > 0, "no compile was superseded");
+    let _ = c.bye();
+    let _ = std::fs::remove_dir_all(&base);
+}
+
 /// #1295: pdfTeX frees an image's name once it has written the XObject; a
 /// page that draws the image again after a restore (or in a later pass)
 /// must still get an `IMAGE` naming the file.

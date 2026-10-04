@@ -709,7 +709,13 @@ a bibliography or an index: see "External tools" in §6.4.
 **A `COMPILE` while one is running supersedes it**: the running compile
 goes on (a page is never interrupted) without sending, its `DONE` says
 `cancelled`, and the next compile sends what is current; a compile
-superseded before it started only applies its edits. An `export` compile
+superseded before it started only applies its edits. One exception keeps
+fast typing visible: an incremental compile is not stopped before its first
+changed page has shipped (or three pages have, none changed), and it sends
+that page (with the forms it draws) even when superseded, so every
+keystroke's edit reaches the screen however fast the next one comes (lane
+LIVE-30MS). That `PAGE` comes after the newer `COMPILE` was sent and before
+the superseded compile's `DONE`; a client takes it like any other page. An `export` compile
 is killed as in 3.0.
 
 ### 6.4 Replies
