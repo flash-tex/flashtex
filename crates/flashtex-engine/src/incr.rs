@@ -439,14 +439,20 @@ struct Obs {
     /// A run from the format: newer work stops it only once S₀ is taken
     /// (`cold`), so that the next compile restarts from S₀ or later.
     preempt_after_s0: bool,
-    /// The first pass of an incremental compile: newer work does not stop
-    /// it before its first changed page has shipped (or [`PROTECT_PAGES`]
-    /// pages have, when no page changed), so that every keystroke's
-    /// compile shows its edit -- else typing faster than the edited page
-    /// arrives preempts every compile before it and nothing is painted
-    /// until the typing stops (lane LIVE-30MS). Stopping later than asked
-    /// changes nothing the engine computes.
+    /// Newer work does not stop this run before its first changed page has
+    /// shipped (or [`PROTECT_PAGES`] pages have, when no page changed):
+    /// the first pass of an incremental compile whose predecessor newer
+    /// work stopped before it shipped a changed page
+    /// (`Session::starved`). Typing faster than the edited page arrives
+    /// would else preempt every compile before its page, and nothing would
+    /// be painted until the typing stopped; at most every other compile is
+    /// held so, and typing slower than that is preempted at once (lane
+    /// LIVE-30MS). Stopping later than asked changes nothing the engine
+    /// computes.
     protect_edit: bool,
+    /// The first pass of an incremental compile: its end says whether the
+    /// next one is protected (`Session::starved`).
+    first_incremental: bool,
 }
 
 /// The most pages an incremental compile ships, none changed, before newer
@@ -1930,6 +1936,9 @@ pub struct Session {
     /// restored run's differ from: the next pass restarts there at the
     /// latest, so that they are shipped again (a display holds them).
     reemit_from: Option<CheckpointId>,
+    /// The last compile's first pass was stopped by newer work before it
+    /// shipped a changed page: the next one is protected (`Obs::protect_edit`).
+    starved: bool,
     /// The directories the journal's lookups depend on (`Key::dirs`).
     lookup_dirs: Vec<(String, StatSig)>,
     /// What S₀'s key covers of the journal: the files read before S₀,
@@ -2010,6 +2019,7 @@ impl Session {
             fixed_inputs: vec![],
             before_pass: None,
             reemit_from: None,
+            starved: false,
             lookup_dirs: vec![],
             key_cover: (0, vec![]),
             baseline: vec![],
@@ -3444,6 +3454,7 @@ impl Session {
             char_or: vec![],
             preempt_after_s0: false,
             protect_edit: false,
+            first_incremental: false,
         }
     }
 
@@ -3671,7 +3682,8 @@ impl Session {
         obs.pdf_len_r = pdf_len(&rec);
         obs.keep_r = Some(r);
         obs.preempt = self.preempt.clone();
-        obs.protect_edit = self.pass == 1;
+        obs.first_incremental = self.pass == 1;
+        obs.protect_edit = self.pass == 1 && self.starved;
         g.checkpoint_every_shipout(true);
         g.layer().timed_s = self.opts.timed_s;
         g.checkpoint_segments(self.opts.segment_s);
@@ -3753,6 +3765,13 @@ impl Session {
         let obs: Box<Obs> = obs
             .and_then(|o| o.into_any().downcast::<Obs>().ok())
             .ok_or("the run lost its observer")?;
+        if obs.first_incremental && obs.edited.is_none() {
+            // (decided once, at its first stop: a protected run ships its
+            // changed page before newer work stops it)
+            self.starved = status == STOPPED && obs.preempted;
+        } else if obs.first_incremental {
+            self.starved = false;
+        }
         rep.tests += obs.tests;
         rep.test_s += obs.test_s;
         rep.page_times.extend(obs.page_times.iter().copied());
