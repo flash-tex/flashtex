@@ -1245,7 +1245,7 @@ pub struct Arena {
 /// place, which tests against the same old checkpoints keystroke after
 /// keystroke, rewinds the old future (O(pages after the edit)) only for
 /// chunks it has not seen there. `FLASHTEX_VERIFY_OLDCACHE=1` rewinds
-/// every chunk anyway and fails the test on any difference.
+/// every chunk anyway and aborts the process on any difference.
 #[derive(Default)]
 struct OldCache {
     /// (checkpoint, history_gen, chunk -> index into `words` / CHUNK_WORDS),
@@ -1835,9 +1835,11 @@ impl Arena {
                 }
                 if let Some(v) = cache.get(old, gen, c) {
                     if mine && v != &dst[..] {
-                        return Err(format!(
+                        // (a verify mode: loud, so that a sweep fails)
+                        eprintln!(
                             "FLASHTEX_VERIFY_OLDCACHE: chunk {c} at checkpoint {old} differs from its rewind"
-                        ));
+                        );
+                        std::process::abort();
                     }
                     dst.copy_from_slice(v);
                 }
