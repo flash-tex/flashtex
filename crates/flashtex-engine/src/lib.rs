@@ -58,6 +58,8 @@ pub mod iso;
 pub mod ix;
 #[cfg(not(feature = "tex82"))]
 pub mod macroprof;
+#[cfg(all(feature = "makeindex", not(feature = "tex82")))]
+pub mod makeindex;
 pub mod memstat;
 pub mod os;
 #[cfg(not(feature = "tex82"))]

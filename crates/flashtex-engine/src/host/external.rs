@@ -148,6 +148,17 @@ impl Programs {
         }
     }
 
+    /// How a rule of `t` runs: makeindex in-process (crate::makeindex,
+    /// unless `FLASHTEX_MAKEINDEX=external`), with or without a TeX Live;
+    /// the others as the TeX Live program, if there is one.
+    fn runner(&self, t: Tool) -> Option<Runner> {
+        #[cfg(feature = "makeindex")]
+        if t == Tool::Makeindex && crate::makeindex::in_process() {
+            return Some(Runner::InProcess);
+        }
+        self.get(t).cloned().map(Runner::Program)
+    }
+
     /// For `HELLO.texmf.tools`.
     pub fn json(&self) -> Json {
         let p = |x: &Option<PathBuf>| {
@@ -595,7 +606,7 @@ impl Job {
         self.snap.rules.iter().any(|r| {
             let (state, missing) = self.state(r);
             missing.is_empty()
-                && self.cfg.programs.get(r.key.tool).is_some()
+                && self.cfg.programs.runner(r.key.tool).is_some()
                 && self.reason(r, state).is_some()
         })
     }
@@ -640,7 +651,7 @@ impl Job {
                 skip(format!("not found: {}", missing.join(", ")));
                 continue;
             }
-            let Some(prog) = self.cfg.programs.get(r.key.tool).cloned() else {
+            let Some(prog) = self.cfg.programs.runner(r.key.tool) else {
                 skip(format!(
                     "{} is not in the TeX Live the host found",
                     r.key.tool.name()
@@ -671,7 +682,7 @@ impl Job {
         Report { outcomes }
     }
 
-    fn run_one(&self, r: &Rule, prog: &Path) -> Outcome {
+    fn run_one(&self, r: &Rule, prog: &Runner) -> Outcome {
         let t0 = Instant::now();
         let n = SCRATCH.fetch_add(1, Ordering::Relaxed);
         let scratch =
@@ -687,8 +698,30 @@ impl Job {
                 problem = Some(format!("{}: {e}", p.display()));
             }
         }
-        let (ext, log_ext) = r.key.tool.outputs();
+        let (result, terminal) = match prog {
+            Runner::Program(prog) => self.run_program(r, prog, &scratch, problem),
+            Runner::InProcess => run_in_process(r, &scratch, problem),
+        };
+        let (status, exit_code) = match &result {
+            Ok(Some(c)) => (if *c == 0 { "ok" } else { "error" }, Some(*c)),
+            Ok(None) => ("timeout", None),
+            Err(_) => ("failed", None),
+        };
+        self.finish_one(r, t0, &scratch, result, terminal, status, exit_code)
+    }
+
+    /// Run the TeX Live program `prog` for `r` in `scratch`, with a
+    /// timeout: its result and terminal output.
+    fn run_program(
+        &self,
+        r: &Rule,
+        prog: &Path,
+        scratch: &Path,
+        problem: Option<String>,
+    ) -> (Result<Option<i32>, String>, String) {
+        let (ext, _) = r.key.tool.outputs();
         let base = &r.key.base;
+        let scratch = scratch.to_path_buf();
         let mut cmd = Command::new(prog);
         match r.key.tool {
             Tool::Bibtex => {
@@ -735,11 +768,23 @@ impl Job {
             }
         };
         let terminal = std::fs::read_to_string(&term).unwrap_or_default();
-        let (status, exit_code) = match &result {
-            Ok(Some(c)) => (if *c == 0 { "ok" } else { "error" }, Some(*c)),
-            Ok(None) => ("timeout", None),
-            Err(_) => ("failed", None),
-        };
+        (result, terminal)
+    }
+
+    /// Install what the run of `r` made, report it, and clean up.
+    #[allow(clippy::too_many_arguments)]
+    fn finish_one(
+        &self,
+        r: &Rule,
+        t0: Instant,
+        scratch: &Path,
+        result: Result<Option<i32>, String>,
+        terminal: String,
+        status: &str,
+        exit_code: Option<i32>,
+    ) -> Outcome {
+        let (ext, log_ext) = r.key.tool.outputs();
+        let base = &r.key.base;
         // Install what it made (not after a timeout: it may be partial).
         let mut changed = false;
         let log_path = self.snap.out.join(format!("{base}.{log_ext}"));
@@ -907,6 +952,75 @@ fn install(dest: &Path, data: &[u8]) -> std::io::Result<()> {
     std::fs::rename(&tmp, dest).inspect_err(|_| {
         let _ = std::fs::remove_file(&tmp);
     })
+}
+
+/// How a tool runs.
+#[derive(Clone, Debug)]
+enum Runner {
+    /// The TeX Live program.
+    Program(PathBuf),
+    /// The engine's own port (makeindex).
+    #[cfg_attr(not(feature = "makeindex"), allow(dead_code))]
+    InProcess,
+}
+
+/// The makeindex rule's run in-process, as the program would run in
+/// `scratch` (`makeindex -o X.ind X.idx`, standard input empty, its terminal
+/// output captured): `Ok(Some(status))`, -1 where the C program would have
+/// died of a signal, `Ok(None)` (a timeout) where it would never have ended.
+#[cfg(feature = "makeindex")]
+fn run_in_process(
+    r: &Rule,
+    scratch: &Path,
+    problem: Option<String>,
+) -> (Result<Option<i32>, String>, String) {
+    if let Some(p) = problem {
+        return (Err(p), String::new());
+    }
+    let (ext, _) = r.key.tool.outputs();
+    let base = &r.key.base;
+    let args: Vec<Vec<u8>> = vec![
+        b"-o".to_vec(),
+        format!("{base}.{ext}").into_bytes(),
+        format!("{base}.idx").into_bytes(),
+    ];
+    // One buffer for both streams, as the program's share one file.
+    let term = std::cell::RefCell::new(Vec::new());
+    struct Shared<'a>(&'a std::cell::RefCell<Vec<u8>>);
+    impl std::io::Write for Shared<'_> {
+        fn write(&mut self, b: &[u8]) -> std::io::Result<usize> {
+            self.0.borrow_mut().extend_from_slice(b);
+            Ok(b.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+    let (mut o, mut e) = (Shared(&term), Shared(&term));
+    let mut host = crate::makeindex::EngineHost {
+        cwd: Some(scratch.to_path_buf()),
+        stdout: &mut o,
+        stderr: &mut e,
+        stdin: Some(vec![]),
+    };
+    let status = flashtex_makeindex::run(&args, &mut host);
+    let result = match status {
+        flashtex_makeindex::LOOPS_FOREVER => Ok(None),
+        s if s < 0 => Ok(Some(-1)),
+        s => Ok(Some(s)),
+    };
+    drop(host);
+    let terminal = String::from_utf8_lossy(&term.borrow()).into_owned();
+    (result, terminal)
+}
+
+#[cfg(not(feature = "makeindex"))]
+fn run_in_process(
+    _r: &Rule,
+    _scratch: &Path,
+    _problem: Option<String>,
+) -> (Result<Option<i32>, String>, String) {
+    (Err("makeindex is not built in".into()), String::new())
 }
 
 /// Run `cmd`; `Ok(Some(code))` when it exits (-1 when killed by a signal),
