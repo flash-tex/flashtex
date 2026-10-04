@@ -108,7 +108,7 @@ pub fn derive(doc: &PagedDocument, pages: &[usize]) -> Result<Vec<PagePos>, Stri
         typst::model::DocumentInfo::default(),
     );
     let bytes = match typst_pdf::pdf(&sub, &options) {
-        Ok(b) => b,
+        Ok(b) => Ok(b),
         Err(_) => {
             let ranges = pages
                 .iter()
@@ -124,10 +124,12 @@ pub fn derive(doc: &PagedDocument, pages: &[usize]) -> Result<Vec<PagePos>, Stri
             typst_pdf::pdf(doc, &options).map_err(|errs| {
                 let m: Vec<String> = errs.iter().map(|e| e.message.to_string()).collect();
                 format!("typst-pdf export failed: {}", m.join("; "))
-            })?
+            })
         }
     };
+    // Counted whether the export succeeded or not (DONE.stages).
     crate::stages::add(crate::stages::Stage::Export, t_export);
+    let bytes = bytes?;
     let out = crate::stages::time(crate::stages::Stage::PdfRead, || derive_pdf(&bytes))?;
     if out.len() != pages.len() {
         return Err(format!(

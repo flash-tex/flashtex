@@ -16,7 +16,8 @@
 //! World (sources, files) and the fonts. A part's share is the heap it
 //! frees; what two parts share is freed with the later one.
 //!
-//! macOS only (the heap statistics); the host itself is portable.
+//! The heap statistics are macOS's (`malloc_zone_statistics`); elsewhere
+//! they print as NaN and only the resident size is measured.
 
 use std::path::PathBuf;
 
@@ -24,30 +25,54 @@ use flashtex_typst_host::convert::{self, ClientCaps, Positions, Tables};
 use flashtex_typst_host::seeded;
 use flashtex_typst_host::world::{FontOptions, Fonts, HostWorld};
 
-#[repr(C)]
-#[derive(Default)]
-struct MallocStats {
-    blocks_in_use: u32,
-    size_in_use: usize,
-    max_size_in_use: usize,
-    size_allocated: usize,
+/// macOS's malloc zone statistics; elsewhere the heap columns are NaN
+/// (the resident size is still measured) and pressure relief frees 0.
+#[cfg(target_os = "macos")]
+mod zone {
+    #[repr(C)]
+    #[derive(Default)]
+    struct MallocStats {
+        blocks_in_use: u32,
+        size_in_use: usize,
+        max_size_in_use: usize,
+        size_allocated: usize,
+    }
+
+    extern "C" {
+        fn malloc_zone_statistics(zone: *mut std::ffi::c_void, stats: *mut MallocStats);
+        fn malloc_zone_pressure_relief(zone: *mut std::ffi::c_void, goal: usize) -> usize;
+    }
+
+    /// (heap in use, heap allocated from the system) in MB.
+    pub fn heap() -> (f64, f64) {
+        let mut s = MallocStats::default();
+        // SAFETY: a null zone asks for every zone's statistics combined.
+        unsafe { malloc_zone_statistics(std::ptr::null_mut(), &mut s) };
+        (
+            s.size_in_use as f64 / 1048576.0,
+            s.size_allocated as f64 / 1048576.0,
+        )
+    }
+
+    /// Return free pages to the system; the bytes freed.
+    pub fn pressure_relief() -> usize {
+        // SAFETY: a null zone relieves every zone; goal 0: as much as possible.
+        unsafe { malloc_zone_pressure_relief(std::ptr::null_mut(), 0) }
+    }
 }
 
-extern "C" {
-    fn malloc_zone_statistics(zone: *mut std::ffi::c_void, stats: *mut MallocStats);
-    fn malloc_zone_pressure_relief(zone: *mut std::ffi::c_void, goal: usize) -> usize;
+#[cfg(not(target_os = "macos"))]
+mod zone {
+    pub fn heap() -> (f64, f64) {
+        (f64::NAN, f64::NAN)
+    }
+
+    pub fn pressure_relief() -> usize {
+        0
+    }
 }
 
-/// (heap in use, heap allocated from the system) in MB.
-fn heap() -> (f64, f64) {
-    let mut s = MallocStats::default();
-    // SAFETY: a null zone asks for every zone's statistics combined.
-    unsafe { malloc_zone_statistics(std::ptr::null_mut(), &mut s) };
-    (
-        s.size_in_use as f64 / 1048576.0,
-        s.size_allocated as f64 / 1048576.0,
-    )
-}
+use zone::heap;
 
 fn rss_mb() -> f64 {
     let out = std::process::Command::new("ps")
@@ -154,8 +179,7 @@ fn main() {
     snap("keystrokes (steady state)", &mut out);
     // Free pages the allocator holds, returned to the system.
     let t = std::time::Instant::now();
-    // SAFETY: a null zone relieves every zone; goal 0: as much as possible.
-    let freed = unsafe { malloc_zone_pressure_relief(std::ptr::null_mut(), 0) };
+    let freed = zone::pressure_relief();
     snap(
         &format!(
             "malloc_zone_pressure_relief ({:.0} MB in {:.1} ms)",
