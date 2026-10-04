@@ -368,14 +368,22 @@ fn compiles_from_a_bundle_with_no_texlive_visible() {
         (child, lines, prepared)
     };
 
-    // 4a. Without the user's consent (no FLASHTEX_BUNDLE_ALLOW_FETCH), a
-    // lock file's bundle is not fetched: the host is offline and, with an
-    // empty cache, has no bundle to read.
+    // 4a. Without the user's consent for this bundle from this source (here:
+    // consent for the same digest from another server, as a lock rewritten
+    // after the app read it would give), a lock file's bundle is not
+    // fetched: the host is offline and, with an empty cache, has no bundle.
+    let bundle_url = d.join("b.ttb").display().to_string();
     let closed_cache = d.join("bcache-closed");
-    let (mut child, lines, prepared) = start_host(&[(
-        "FLASHTEX_BUNDLE_CACHE_DIR",
-        closed_cache.display().to_string(),
-    )]);
+    let (mut child, lines, prepared) = start_host(&[
+        (
+            "FLASHTEX_BUNDLE_CACHE_DIR",
+            closed_cache.display().to_string(),
+        ),
+        (
+            "FLASHTEX_BUNDLE_ALLOW_FETCH",
+            format!("{digest}@https://elsewhere.example/b.ttb"),
+        ),
+    ]);
     let _ = child.kill();
     let _ = child.wait();
     let _ = std::fs::remove_file(&sock);
@@ -400,15 +408,19 @@ fn compiles_from_a_bundle_with_no_texlive_visible() {
         "{lines:?}"
     );
 
-    // 4b. With consent for this bundle (its digest, as the app passes it),
-    // the host fetches it, says so in HELLO and compiles over its socket.
+    // 4b. With consent for this bundle from this source (`<digest>@<url>`, as
+    // the app passes it), the host fetches it, says so in HELLO and
+    // compiles over its socket.
     let open_cache = d.join("bcache-open");
     let (mut child, lines, _) = start_host(&[
         (
             "FLASHTEX_BUNDLE_CACHE_DIR",
             open_cache.display().to_string(),
         ),
-        ("FLASHTEX_BUNDLE_ALLOW_FETCH", digest.clone()),
+        (
+            "FLASHTEX_BUNDLE_ALLOW_FETCH",
+            format!("{digest}@{bundle_url}"),
+        ),
     ]);
     assert!(open_cache.join(&digest).join("index.gz").is_file());
     assert!(

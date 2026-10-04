@@ -19,7 +19,7 @@ import SwiftUI
 // Nothing is downloaded before the user agrees to that bundle (`consent(for:)`,
 // tied to its digest and source): until then the host runs with
 // FLASHTEX_BUNDLE_OFFLINE=1, and after it with FLASHTEX_BUNDLE_ALLOW_FETCH set
-// to the agreed digest (`hostEnvironment`). The host itself never fetches a
+// to `<agreed digest>@<its url>` (`hostEnvironment`). The host itself never fetches a
 // lock file's bundle without that flag, so a lock the app failed to read
 // cannot be fetched either.
 
@@ -110,20 +110,6 @@ enum EngineV3Bundle {
         return nil
     }
 
-    /// The host's bundle cache (`bundle::default_cache_dir`).
-    static func cacheDirectory(environment env: [String: String]) -> String? {
-        if let d = env["FLASHTEX_BUNDLE_CACHE_DIR"], !d.isEmpty { return d }
-        guard let home = env["HOME"], !home.isEmpty else { return nil }
-        return "\(home)/Library/Caches/FlashTeX/bundles"
-    }
-
-    /// The bundle's index is in the cache: it was fetched before, and opening
-    /// it again downloads nothing up front.
-    static func isCached(_ c: Config, environment env: [String: String]) -> Bool {
-        guard let dir = cacheDirectory(environment: env) else { return false }
-        return FileManager.default.fileExists(atPath: "\(dir)/\(c.digest)/index.gz")
-    }
-
     /// The user's answer for this bundle: true (download), false (not now),
     /// nil (not asked). An answer holds for the bundle it was given for --
     /// its digest and where it comes from (`sourceLabel`) -- so a new pinned
@@ -154,11 +140,13 @@ enum EngineV3Bundle {
         case declined
     }
 
-    /// A bundle already in the cache is not asked about (the host reads it
-    /// offline; nothing is downloaded); one in the environment is asked
+    /// Decided by the stored answer alone, never by what is in the cache: a
+    /// cache left by an interrupted download, or made outside the app, would
+    /// otherwise start the host offline without asking, and it would fail on
+    /// the first file not yet fetched. A bundle in the environment is asked
     /// about like any other, since the app may not fetch without consent.
-    static func gate(texLiveInstalled: Bool, config: Config?, cached: Bool, consent: Bool?) -> Gate {
-        guard !texLiveInstalled, let config, !cached else { return .none }
+    static func gate(texLiveInstalled: Bool, config: Config?, consent: Bool?) -> Gate {
+        guard !texLiveInstalled, let config else { return .none }
         switch consent {
         case true?: return .none
         case false?: return .declined
@@ -169,14 +157,20 @@ enum EngineV3Bundle {
     static func currentGate(environment env: [String: String] = ProcessInfo.processInfo.environment) -> Gate {
         let c = configured(environment: env)
         return gate(texLiveInstalled: EngineChoice.texLiveInstalled(environment: env), config: c,
-                    cached: c.map { isCached($0, environment: env) } ?? false, consent: c.flatMap { consent(for: $0) })
+                    consent: c.flatMap { consent(for: $0) })
     }
+
+    /// `FLASHTEX_BUNDLE_ALLOW_FETCH` for a bundle the user agreed to: its
+    /// digest and the URL it is fetched from (the host's `fetch_allowed`).
+    static func allowFetchValue(_ c: Config) -> String { "\(c.digest)@\(c.url)" }
 
     /// The host's environment for the bundle. **Fails closed:** whatever the
     /// app could or could not parse (the host may find a lock the app did
     /// not read, or read one the app refused), the host may fetch only the
-    /// very bundle the user agreed to: `FLASHTEX_BUNDLE_ALLOW_FETCH=<its
-    /// digest>`, which the host checks against the lock it reads, and else
+    /// very bundle the user agreed to, from the very URL the app read:
+    /// `FLASHTEX_BUNDLE_ALLOW_FETCH=<digest>@<url>`, which the host checks
+    /// against the lock it reads (a lock rewritten since, even with the same
+    /// digest at another server, is not fetched), and else
     /// `FLASHTEX_BUNDLE_OFFLINE=1`. An inherited ALLOW_FETCH is dropped. The
     /// lock the app found is passed on, so both read one file.
     static func hostEnvironment(_ env: inout [String: String], host: URL) {
@@ -184,7 +178,7 @@ enum EngineV3Bundle {
         if let c, !c.fromEnvironment, (env["FLASHTEX_BUNDLE_LOCK"] ?? "").isEmpty { env["FLASHTEX_BUNDLE_LOCK"] = c.origin }
         env.removeValue(forKey: "FLASHTEX_BUNDLE_ALLOW_FETCH")
         if let c, consent(for: c) == true {
-            if !c.fromEnvironment { env["FLASHTEX_BUNDLE_ALLOW_FETCH"] = c.digest }
+            if !c.fromEnvironment { env["FLASHTEX_BUNDLE_ALLOW_FETCH"] = allowFetchValue(c) }
         } else {
             env["FLASHTEX_BUNDLE_OFFLINE"] = "1"
         }

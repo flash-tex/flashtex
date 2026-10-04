@@ -83,8 +83,9 @@ impl BundleSpec {
     /// **Fetching from a lock file fails closed:** a bundle configured by a
     /// lock file is offline (nothing is fetched; only what is already in
     /// the cache is read) unless `FLASHTEX_BUNDLE_ALLOW_FETCH` is `1` (a
-    /// command-line user) or that bundle's digest (what the app passes
-    /// once the user agreed to downloading that bundle). A bundle set in
+    /// command-line user) or `<digest>@<url>` of that very bundle and
+    /// source ([`fetch_allowed`]; what the app passes once the user agreed
+    /// to downloading that bundle from there). A bundle set in
     /// the environment is that user's explicit choice and may fetch (the app
     /// passes `FLASHTEX_BUNDLE_OFFLINE=1` until its user agreed).
     /// `FLASHTEX_BUNDLE_OFFLINE=1` makes either offline, whatever else.
@@ -110,18 +111,16 @@ impl BundleSpec {
             return Some(Ok((spec, SpecOrigin::Environment)));
         }
         let lock = candidates.iter().find(|p| p.is_file())?.clone();
-        let allow = set("FLASHTEX_BUNDLE_ALLOW_FETCH").map(|a| a.to_ascii_lowercase());
+        let allow = set("FLASHTEX_BUNDLE_ALLOW_FETCH");
         Some(
             std::fs::read_to_string(&lock)
                 .map_err(|e| e.to_string())
                 .and_then(|t| parse_lock(&t, lock.parent().unwrap_or(Path::new("."))))
                 .map_err(|e| format!("{}: {e}", lock.display()))
                 .map(|(url, digest)| {
-                    // `1` (a command-line user), or the very digest the
-                    // user agreed to (the app), so a lock that changed
-                    // after the app read it is not fetched either.
-                    let allow_fetch = matches!(allow.as_deref(), Some("1" | "yes" | "true"))
-                        || allow.as_deref() == Some(digest.as_str());
+                    let allow_fetch = allow
+                        .as_deref()
+                        .is_some_and(|a| fetch_allowed(a, &digest, &url));
                     let spec = BundleSpec {
                         url,
                         digest,
@@ -130,6 +129,24 @@ impl BundleSpec {
                     (spec, SpecOrigin::LockFile(lock))
                 }),
         )
+    }
+}
+
+/// Whether `FLASHTEX_BUNDLE_ALLOW_FETCH=allow` lets the lock file's bundle
+/// (`digest` at `url`) be fetched: `1` (a command-line user), or
+/// `<digest>@<url>` naming exactly the bundle and the source the user
+/// agreed to (what the app passes). The source counts as well as the
+/// digest: the content would be verified anyway, but which server is
+/// contacted is the user's to agree to, so a lock rewritten after the app
+/// read it, with the same digest at another URL, is not fetched. A bare
+/// digest, without its source, is refused.
+pub fn fetch_allowed(allow: &str, digest: &str, url: &str) -> bool {
+    if matches!(allow, "1" | "yes" | "true") {
+        return true;
+    }
+    match allow.split_once('@') {
+        Some((d, u)) => d.eq_ignore_ascii_case(digest) && u == url,
+        None => false,
     }
 }
 
@@ -839,13 +856,32 @@ mod tests {
             .unwrap()
             .unwrap();
         assert!(!spec.offline, "consent given");
-        let (spec, _) = run(&[("FLASHTEX_BUNDLE_ALLOW_FETCH", D)]).unwrap().unwrap();
-        assert!(!spec.offline, "consent given for this digest");
-        let other = "00".repeat(32);
-        let (spec, _) = run(&[("FLASHTEX_BUNDLE_ALLOW_FETCH", other.as_str())])
-            .unwrap()
-            .unwrap();
-        assert!(spec.offline, "consent was for another bundle");
+        let url = base.join("b.ttb").display().to_string();
+        let offline_with = |allow: String| {
+            run(&[("FLASHTEX_BUNDLE_ALLOW_FETCH", allow.as_str())])
+                .unwrap()
+                .unwrap()
+                .0
+                .offline
+        };
+        assert!(
+            !offline_with(format!("{D}@{url}")),
+            "consent for this bundle from this source"
+        );
+        assert!(
+            !offline_with(format!("{}@{url}", D.to_uppercase())),
+            "the digest in either case"
+        );
+        assert!(offline_with(D.to_string()), "a digest without its source");
+        assert!(
+            offline_with(format!("{}@{url}", "00".repeat(32))),
+            "consent was for another bundle"
+        );
+        assert!(
+            offline_with(format!("{D}@https://elsewhere.example/b.ttb")),
+            "the same bundle from a source the user did not agree to"
+        );
+        assert!(offline_with(format!("{D}@")), "no source");
         let both = [
             ("FLASHTEX_BUNDLE_ALLOW_FETCH", "1"),
             ("FLASHTEX_BUNDLE_OFFLINE", "1"),
