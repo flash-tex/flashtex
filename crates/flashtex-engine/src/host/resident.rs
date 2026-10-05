@@ -514,13 +514,15 @@ impl Engine {
     fn s0_path(&self, job: &Job) -> Option<PathBuf> {
         let dir = self.cfg.s0_cache.as_ref()?;
         let key = format!(
-            "{}\0{}\0{}\0{:?}\0{}\0{}",
+            "{}\0{}\0{}\0{:?}\0{}\0{}{}",
             job.root.display(),
             job.main,
             job.format,
             job.shell,
             job.out_dir.display(),
-            job.jobname
+            job.jobname,
+            // (only when set: a normal job's stored S0 keeps its key)
+            if job.halt { "\0halt" } else { "" }
         );
         let h = crate::persist::hash128(key.as_bytes());
         Some(dir.join(format!("{:016x}{:016x}.s0", h[0], h[1])))

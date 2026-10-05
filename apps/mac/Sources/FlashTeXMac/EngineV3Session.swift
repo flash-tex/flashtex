@@ -139,8 +139,15 @@ final class EngineV3Session {
     @ObservationIgnored private var diags: [DL3Diag] = []
     /// The connected host offers diag-v1 (and so sends DIAGs, not DIAGNOSTICs).
     @ObservationIgnored private(set) var hostOffersDiagV1 = false
-    /// The first TeX error of the last compile ("file:line: message"), shown in the pane.
+    /// The first TeX error of the last compile ("file:line: message"), shown
+    /// in the pane: under best effort only one TeX stopped at (and its cause).
     private(set) var firstError: String?
+    /// How TeX's errors are presented (EngineV3ErrorPolicy): best effort shows
+    /// the errors TeX recovers from as warnings.
+    @ObservationIgnored var errorMode: EngineV3ErrorPolicy.Mode = EngineV3ErrorPolicy.storedMode
+    /// The compile in progress stopped on a fatal error (a `fatal` DIAG):
+    /// its DONE keeps the last good pages after the ones it made, stale.
+    @ObservationIgnored private(set) var compileFatal = false
     /// Project trust (EngineV3Trust.swift): false → shell escape off and the
     /// pane asks "Trust this project?".
     private(set) var projectTrusted = true
@@ -981,6 +988,8 @@ final class EngineV3Session {
         // would, only for a trusted project (DESIGN.md §4.5, owner 9A); an
         // untrusted one runs no external program.
         req.externalTools = projectTrusted && !trustPending ? "auto" : "off"
+        // Strict mode (EngineV3ErrorPolicy): TeX stops at the first error.
+        req.haltOnError = errorMode == .strict
         return req
     }
 
@@ -1229,6 +1238,7 @@ final class EngineV3Session {
         guard let connection, project != nil else { finishExport(.failure(.failed("the preview engine is not connected"))); return }
         var req = request(model: model)
         req.export = true
+        req.haltOnError = false // the exported PDF is nonstopmode's, as pdflatex writes it
         req.externalTools = "off" // the resident run's cycle already made the .bbl/.ind
         exportStage = .running(id: req.id)
         do { try connection.compile(req) } catch { finishExport(.failure(.failed("could not send the export: \(error)"))) }
@@ -1407,7 +1417,7 @@ final class EngineV3Session {
                 newestClientStartedID = max(newestClientStartedID, id)
                 if let cycle = toolsCycleID, id > cycle { toolsCycleID = nil }
             }
-            errorCount = 0; warningCount = 0; firstError = nil
+            errorCount = 0; warningCount = 0; firstError = nil; compileFatal = false
             diagnostics = []; diags = []
             if j["keep"]?.bool == false {
                 sourceMap.reset() // span ids restart with the resource ids
@@ -1445,7 +1455,9 @@ final class EngineV3Session {
             forms[f.page.index] = f
             view?.formArrived(f.page.index)
         case .pages(let j):
-            if let n = j["count"]?.int { setCount(Int(n), complete: j["complete"]?.bool ?? false) }
+            // A complete count below the pages on screen is applied at DONE:
+            // a run that stopped on a fatal error keeps the last good ones.
+            if let n = j["count"]?.int { setCount(Int(n), complete: false) }
             var newStale = Set<Int>()
             for r in j["stale"]?.array ?? [] {
                 if let a = r.array, a.count == 2, let lo = a[0].int, let hi = a[1].int, lo <= hi { newStale.formUnion(Int(lo) ... Int(hi)) }
@@ -1457,25 +1469,16 @@ final class EngineV3Session {
             markStale(stale.union(newStale))
         case .diag(let d):
             diags.append(d)
-            if d.severity == "error" {
-                errorCount += 1
-                if firstError == nil {
-                    let at = [d.file.map { ($0 as NSString).lastPathComponent }, d.line.map(String.init), d.col.map { String($0 + 1) }].compactMap { $0 }.joined(separator: ":")
-                    firstError = (at.isEmpty ? "" : at + ": ") + d.message
-                }
-            } else if d.severity == "warning" { warningCount += 1 }
+            if EngineV3ErrorPolicy.isFatal(d) { compileFatal = true }
+            // (an error can change how the ones before it read: recount; O(errors²) at worst)
+            if d.severity == "error" { recount() } else if d.severity == "warning" { warningCount += 1 }
         case .diagnostic(let j) where j["source"]?.string != nil:
             toolDiagnostics.append(j) // bibtex/biber/makeindex (3.2), published at the tool's done
         case .diagnostic(let j):
             diagnostics.append(j)
             if j["severity"]?.string == "error" {
-                errorCount += 1
-                if firstError == nil {
-                    let file = j["file"]?.string.map { ($0 as NSString).lastPathComponent }
-                    let line = j["line"]?.int
-                    let at = [file, line.map(String.init)].compactMap { $0 }.joined(separator: ":")
-                    firstError = (at.isEmpty ? "" : at + ": ") + (j["message"]?.string ?? "error")
-                }
+                if EngineV3ErrorPolicy.isFatal(message: j["message"]?.string ?? "") { compileFatal = true }
+                recount()
             } else { warningCount += 1 }
         case .exportDone(let j):
             exportDone(j)
@@ -1490,16 +1493,31 @@ final class EngineV3Session {
                 compile(model: model, reason: "recover") // the copy vanished under the host
             }
             if status != "cancelled" {
-                if let n = j["pages"]?.int { setCount(Int(n), complete: true) }
-                // A stored page the compile did not replace (it failed early)
-                // stays on screen, stale, until its page arrives.
-                markStale([])
-                statusNote = "\(status) · \(j["mode"]?.string ?? "") · \(pageCount) page\(pageCount == 1 ? "" : "s") · \(String(format: "%.0f", j["elapsed_ms"]?.double ?? 0)) ms"
-                // The Problems line (gap B8): a compile that wrote no page keeps the last ones.
-                let failed = status == "failed" || (status == "error" && (j["pages"]?.int ?? 1) == 0)
+                let made = j["pages"]?.int.map(Int.init)
+                recount()
+                if compileFatal, let n = made, n < pageCount {
+                    // TeX stopped (EngineV3ErrorPolicy): the pages it made
+                    // before the stop are current, the last good ones after
+                    // them stay on screen, stale, until a compile sends them.
+                    let kept = pageCount - n
+                    markStale(Set(n ..< pageCount))
+                    statusNote = "stopped: pdfLaTeX gives up here · \(n) new page\(n == 1 ? "" : "s"), \(kept) kept from the last compile · \(String(format: "%.0f", j["elapsed_ms"]?.double ?? 0)) ms"
+                } else {
+                    if let n = made { setCount(n, complete: true) }
+                    // A stored page the compile did not replace (it failed early)
+                    // stays on screen, stale, until its page arrives.
+                    markStale([])
+                    // Best effort: TeX recovered from every error it reported.
+                    let shown = status == "error" && errorCount == 0 ? "recovered" : status
+                    statusNote = "\(shown) · \(j["mode"]?.string ?? "") · \(pageCount) page\(pageCount == 1 ? "" : "s") · \(String(format: "%.0f", j["elapsed_ms"]?.double ?? 0)) ms"
+                }
+                // The Problems line (gap B8): a compile that wrote no page, or
+                // stopped on a fatal error, keeps the last ones.
+                let failed = status == "failed" || compileFatal || (status == "error" && (j["pages"]?.int ?? 1) == 0)
                 if let model, model.engineV3ResultStatus != (failed ? .failed : nil) { model.engineV3ResultStatus = failed ? .failed : nil }
                 if stale.isEmpty { snapshot = nil } // the compile's pages replaced the stored ones
-                if status == "ok", compileID >= lastSentID { scheduleSnapshotSave() }
+                // (pages TeX made recovering from errors are a document's too; a stopped run's are not all there)
+                if status == "ok" || (status == "error" && !compileFatal), compileID >= lastSentID { scheduleSnapshotSave() }
                 if let model {
                     // TeX's line numbers refer to the texts this compile read,
                     // not the editor's now (typing went on meanwhile): the rows'
@@ -1512,8 +1530,8 @@ final class EngineV3Session {
                     caretWindow = caretWindows[compileID] // the caret's edits since this compile was sent
                     compiledStamp &+= 1
                     prepareCaretLines(path: model.activePath, text: model.compiledDocuments[model.activePath])
-                    texProblems = diags.isEmpty ? Self.problems(diagnostics, model: model, projectRoot: project?.root, texts: texts)
-                                                : Self.problems(diags: diags, model: model, projectRoot: project?.root, texts: texts)
+                    texProblems = diags.isEmpty ? Self.problems(diagnostics, model: model, projectRoot: project?.root, texts: texts, mode: errorMode)
+                                                : Self.problems(diags: diags, model: model, projectRoot: project?.root, texts: texts, mode: errorMode)
                     publishProblems(model: model)
                     // VoiceOver: "2 errors, 1 warning" when the counts changed (the v2 path's announcement).
                     if model.engineV3Enabled { model.noteCompileCompletedForVoiceOver() }
@@ -1688,11 +1706,15 @@ final class EngineV3Session {
     /// project (the engine names the copy's path) maps back to the editor's
     /// document and the reported line's byte range; anything else (a
     /// package file) keeps its place in the message.
-    static func problems(_ diags: [DL3JSON], model: ShellModel, projectRoot: URL?, texts: [String: String]? = nil) -> [RuntimeV1.Diagnostic] {
+    static func problems(_ diags: [DL3JSON], model: ShellModel, projectRoot: URL?, texts: [String: String]? = nil,
+                         mode: EngineV3ErrorPolicy.Mode = .bestEffort) -> [RuntimeV1.Diagnostic] {
         let root = projectRoot.map { $0.standardizedFileURL.path + "/" }
-        return diags.map { d in
-            let severity: RuntimeV1.Severity = d["severity"]?.string == "error" ? .error : .warning
+        let kept = EngineV3ErrorPolicy.keptErrors(diags.map(Self.policyItem), mode: mode)
+        return diags.enumerated().map { i, d in
+            let error = d["severity"]?.string == "error"
+            let severity: RuntimeV1.Severity = error && kept.contains(i) ? .error : .warning
             var message = d["message"]?.string ?? "(no message)"
+            if error, !kept.contains(i) { message = EngineV3ErrorPolicy.marked(message) }
             var source: RuntimeV1.SourceRange?
             if var file = d["file"]?.string {
                 if file.hasPrefix("./") { file.removeFirst(2) }
@@ -1713,17 +1735,21 @@ final class EngineV3Session {
     /// reported token/command (`range`, byte columns of `line`) or TeX's split
     /// (`col`), so a click lands on the exact column; the macro chain and
     /// TeX's help text become the row's notes and help.
-    static func problems(diags: [DL3Diag], model: ShellModel, projectRoot: URL?, texts: [String: String]? = nil) -> [RuntimeV1.Diagnostic] {
+    static func problems(diags: [DL3Diag], model: ShellModel, projectRoot: URL?, texts: [String: String]? = nil,
+                         mode: EngineV3ErrorPolicy.Mode = .bestEffort) -> [RuntimeV1.Diagnostic] {
         let root = projectRoot.map { $0.standardizedFileURL.path + "/" }
+        // TeX's errors it recovered from (EngineV3ErrorPolicy): warnings under best effort.
+        let kept = EngineV3ErrorPolicy.keptErrors(diags.map(Self.policyItem), mode: mode)
+        let recovered = Set(diags.indices.filter { diags[$0].severity == "error" && !kept.contains($0) })
         func rel(_ file: String) -> String {
             var f = file
             if f.hasPrefix("./") { f.removeFirst(2) }
             if let root, f.hasPrefix(root) { f.removeFirst(root.count) }
             return f
         }
-        return diags.compactMap { d in
+        return diags.enumerated().compactMap { i, d in
             guard d.severity != "info" else { return nil } // \show, tight/loose boxes: not problems
-            var message = d.message
+            var message = recovered.contains(i) ? EngineV3ErrorPolicy.marked(d.message) : d.message
             var source: RuntimeV1.SourceRange?
             if let file = d.file.map(rel) {
                 if let line = d.line, let text = texts?[file] ?? model.documents.first(where: { $0.path == file })?.text,
@@ -1746,7 +1772,7 @@ final class EngineV3Session {
                 notes.append("in \(f.name ?? "a macro")" + (def.map { " (defined at \($0))" } ?? ""))
             }
             let help = d.help.isEmpty ? nil : RuntimeV1.Diagnostic.Help(message: d.help.joined(separator: " "))
-            let row = RuntimeV1.Diagnostic(severity: d.severity == "error" ? .error : .warning, message: message, source: source,
+            let row = RuntimeV1.Diagnostic(severity: d.severity == "error" && !recovered.contains(i) ? .error : .warning, message: message, source: source,
                                            recovery: nil, code: d.code.isEmpty ? "engine-v3" : d.code,
                                            notes: notes.isEmpty ? nil : notes, help: help)
             // "did you mean \textbf?": the old engine's mechanical fix, only
@@ -1754,6 +1780,50 @@ final class EngineV3Session {
             guard d.code == EngineV3Fixes.undefinedCode, let texts else { return row }
             return EngineV3Fixes.fix(row, named: EngineV3Fixes.undefinedName(trace: d.trace.map { ($0.kind, $0.before) }), texts: texts)
         }
+    }
+
+    static func policyItem(_ d: DL3Diag) -> EngineV3ErrorPolicy.Item {
+        .init(error: d.severity == "error", fatal: EngineV3ErrorPolicy.isFatal(d), line: d.line)
+    }
+
+    static func policyItem(_ j: DL3JSON) -> EngineV3ErrorPolicy.Item {
+        let error = j["severity"]?.string == "error"
+        return .init(error: error, fatal: error && EngineV3ErrorPolicy.isFatal(message: j["message"]?.string ?? ""), line: j["line"]?.int.map(Int.init))
+    }
+
+    /// The pane's counts and first error from the compile's diagnostics so
+    /// far, under `errorMode`: an error TeX recovered from counts as a
+    /// warning under best effort, and is not the pane's first error.
+    private func recount() {
+        var e = 0, w = 0
+        var first: String?
+        if !diags.isEmpty {
+            let kept = EngineV3ErrorPolicy.keptErrors(diags.map(Self.policyItem), mode: errorMode)
+            for (i, d) in diags.enumerated() {
+                if d.severity == "error", kept.contains(i) {
+                    e += 1
+                    if first == nil {
+                        let at = [d.file.map { ($0 as NSString).lastPathComponent }, d.line.map(String.init), d.col.map { String($0 + 1) }].compactMap { $0 }.joined(separator: ":")
+                        first = (at.isEmpty ? "" : at + ": ") + d.message
+                    }
+                } else if d.severity == "error" || d.severity == "warning" { w += 1 }
+            }
+        } else {
+            let kept = EngineV3ErrorPolicy.keptErrors(diagnostics.map(Self.policyItem), mode: errorMode)
+            for (i, j) in diagnostics.enumerated() {
+                if j["severity"]?.string == "error", kept.contains(i) {
+                    e += 1
+                    if first == nil {
+                        let file = j["file"]?.string.map { ($0 as NSString).lastPathComponent }
+                        let at = [file, j["line"]?.int.map { String($0) }].compactMap { $0 }.joined(separator: ":")
+                        first = (at.isEmpty ? "" : at + ": ") + (j["message"]?.string ?? "error")
+                    }
+                } else { w += 1 }
+            }
+        }
+        if errorCount != e { errorCount = e }
+        if warningCount != w { warningCount = w }
+        if firstError != first { firstError = first }
     }
 
     /// Bytes of 1-based `line` in `text`, without its newline.
@@ -1769,8 +1839,11 @@ final class EngineV3Session {
         return n == line ? start ..< i : nil
     }
 
+    /// Pages on screen: a complete count is the document's (pages past it
+    /// go); an incomplete one (a compile in progress) never hides pages.
     private func setCount(_ n: Int, complete: Bool) {
         guard n != pageCount || complete else { return }
+        guard complete || n > pageCount else { return }
         if complete, n < pageCount {
             for i in n ..< pageCount { pages[i] = nil; stale.remove(i); pdfFallback[i] = nil }
         }
