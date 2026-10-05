@@ -3540,6 +3540,8 @@ pub fn outside_change(path: &str) -> Option<String> {
 }
 
 fn why_changed(path: &str, foreign_too: bool) -> Option<String> {
+    // (a cut in progress is the engine's own: the stamp it leaves first)
+    settle_cut(path);
     let k = out_key(path);
     if foreign_too && FOREIGN.with(|f| f.borrow().contains(&k)) {
         return Some(format!("{path} was changed by another program"));
