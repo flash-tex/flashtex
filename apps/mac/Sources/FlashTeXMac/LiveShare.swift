@@ -501,18 +501,16 @@ final class LiveShareController {
     @ObservationIgnored private var quarantineEvent = UUID().uuidString
     @ObservationIgnored private(set) var guestEdited: Set<String> = []
 
-    /// A guest's text reached this project file: give it a quarantine mark
-    /// (one event per session, agent "FlashTeX Live Share"). The trust check
-    /// (EngineV3Trust) counts a quarantined file that did not come with the
-    /// project's own download, so after the session the project compiles
-    /// untrusted (shell escape off, no external tools) until the user trusts
-    /// it again; the app's saves copy the attribute, so it stays. During the
-    /// session compiles are pinned anyway.
+    /// A guest's text reached this project file: the project is tainted in
+    /// the trust store (`EngineV3Trust.taint`, one event per session), so
+    /// after the session it compiles untrusted (shell escape off, no external
+    /// tools) until the user trusts it again. The record is the app's own,
+    /// not the files': no save path or other tool can drop it (an earlier
+    /// version used a `com.apple.quarantine` mark, which the project-files
+    /// helper's atomic save does not keep). During the session compiles are
+    /// pinned anyway.
     func markGuestEdited(_ url: URL) {
-        let value = String(format: "0082;%08x;FlashTeX Live Share;", Int(Date().timeIntervalSince1970)) + quarantineEvent
-        if EngineV3Trust.quarantineValue(url) == nil {
-            _ = setxattr(url.path, EngineV3Trust.quarantineAttribute, value, value.utf8.count, 0, XATTR_NOFOLLOW)
-        }
+        if guestEdited.isEmpty, let root { EngineV3Trust.taint(root: root, event: quarantineEvent) }
         guestEdited.insert(url.path)
     }
 

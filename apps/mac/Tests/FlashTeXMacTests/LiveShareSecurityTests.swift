@@ -65,6 +65,24 @@ final class LiveShareSecurityTests: XCTestCase {
         XCTAssertNotNil(LiveShareController.safeTarget(root: root, path: "new/dir/two.tex", creating: true))
     }
 
+    /// A taint and a downloaded (quarantined) project folder are separate
+    /// subjects: trusting records both, and neither replaces the other.
+    func testTaintCoexistsWithAQuarantinedFolder() throws {
+        let root = temp.appendingPathComponent("downloaded")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let main = root.appendingPathComponent("main.tex")
+        try "x\n".write(to: main, atomically: true, encoding: .utf8)
+        let q = "0083;\(String(Int(Date().timeIntervalSince1970), radix: 16));Safari;\(UUID().uuidString)"
+        XCTAssertEqual(setxattr(root.path, EngineV3Trust.quarantineAttribute, q, q.utf8.count, 0, 0), 0)
+        EngineV3Trust.record(root: root, main: main)
+        XCTAssertTrue(EngineV3Trust.isTrusted(root: root, main: main), "the download, trusted")
+        EngineV3Trust.taint(root: root, event: "session-1")
+        XCTAssertFalse(EngineV3Trust.isTrusted(root: root, main: main))
+        XCTAssertEqual(EngineV3Trust.subjects(root: root, main: main)?.count, 2)
+        EngineV3Trust.record(root: root, main: main)
+        XCTAssertTrue(EngineV3Trust.isTrusted(root: root, main: main), "both subjects recorded")
+    }
+
     func testPathsCompareAsAPFSDoes() {
         XCTAssertEqual(LiveShareController.foldedKey("Main.tex"), LiveShareController.foldedKey("main.tex"))
         XCTAssertEqual(LiveShareController.foldedKey("caf\u{e9}.tex"), LiveShareController.foldedKey("cafe\u{301}.tex"))
@@ -107,24 +125,28 @@ final class LiveShareSecurityTests: XCTestCase {
             (try? String(contentsOf: chapterURL, encoding: .utf8))?.contains("fsmonitor") == true
         }
         XCTAssertEqual(try String(contentsOf: project.appendingPathComponent(".git/config"), encoding: .utf8), "[core]\n")
-        // The file the guest's text reached is marked, so the project's
-        // trust is decided again (EngineV3Trust counts a quarantined file).
-        // (macOS normalises the value's flags and agent; the event stays.)
-        let mark = try XCTUnwrap(EngineV3Trust.quarantineValue(chapterURL))
-        XCTAssertNil(EngineV3Trust.quarantineValue(project.appendingPathComponent(".git/config")))
-        // An open buffer the guest edits is marked too (the same session
-        // event), and the app's own save keeps the mark (it copies extended
-        // attributes). The guest's model follows its edit as its editor would.
+        // The project is tainted in the trust store (the app's own record,
+        // not the files'): untrusted until the user trusts it again, whatever
+        // then happens to its files.
+        let main = project.appendingPathComponent("main.tex")
+        XCTAssertFalse(EngineV3Trust.isTrusted(root: project, main: main), "a guest's text reached the project")
+        XCTAssertNil(EngineV3Trust.quarantineValue(chapterURL), "the files themselves carry no mark")
+        // An open buffer the guest edits, saved by the app (through whichever
+        // save path: the project-files helper keeps no extended attributes),
+        // and a file replaced by another tool change nothing.
         try XCTUnwrap(gs.binding(for: try XCTUnwrap(gs.file(atPath: "main.tex")))).localReplace(0..<0, with: "% g\n")
         guest.updateActiveText("% g\n" + guest.activeText)
         try await waitUntil("host buffer") { host.activeText.hasPrefix("% g\n") }
-        let mainMark = try XCTUnwrap(EngineV3Trust.quarantineValue(project.appendingPathComponent("main.tex")))
-        XCTAssertEqual(EngineV3Trust.quarantineEvent(mainMark), EngineV3Trust.quarantineEvent(mark))
         host.flushPendingAutosave()
-        try await waitUntil("saved") {
-            (try? String(contentsOf: project.appendingPathComponent("main.tex"), encoding: .utf8))?.hasPrefix("% g\n") == true
-        }
-        XCTAssertNotNil(EngineV3Trust.quarantineValue(project.appendingPathComponent("main.tex")), "the save kept the mark")
+        try await waitUntil("saved") { (try? String(contentsOf: main, encoding: .utf8))?.hasPrefix("% g\n") == true }
+        try Data("rewritten\n".utf8).write(to: chapterURL, options: .atomic)
+        XCTAssertFalse(EngineV3Trust.isTrusted(root: project, main: main), "the taint outlives any save")
+        // Trusting the prompt records the taint's subject: trusted again.
+        EngineV3Trust.record(root: project, main: main)
+        XCTAssertTrue(EngineV3Trust.isTrusted(root: project, main: main))
+        // A later session's edits need trusting again.
+        EngineV3Trust.taint(root: project, event: "a later session")
+        XCTAssertFalse(EngineV3Trust.isTrusted(root: project, main: main))
     }
 
     // MARK: Guest

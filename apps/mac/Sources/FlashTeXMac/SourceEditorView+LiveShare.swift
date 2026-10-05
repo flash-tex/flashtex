@@ -57,6 +57,13 @@ final class LiveShareEditorState {
     var remoteApplies = 0
     /// Times the buffer had to be resynchronised from the CRDT.
     var resyncs = 0
+    /// The viewport anchor the last remote apply restored, exactly: the
+    /// character, its line's offset below the visible top, and the scroll
+    /// position and text length it left. The next apply reuses the exact
+    /// offset while nothing moved in between (no scroll, no local edit), so
+    /// the clip view's rounding to backing pixels never accumulates across
+    /// a burst of remote keystrokes.
+    var viewport: (index: Int, offset: CGFloat, scrollY: CGFloat, length: Int)?
     /// Other participants' carets (nil outside a session).
     var overlay: LiveShareCursorOverlay?
     var presenceObserver: NSObjectProtocol?
@@ -214,7 +221,11 @@ extension SourceEditorView.Coordinator: CollabTextHost {
             programmaticChanges -= 1
             st.applyingRemote = false
         }
-        let anchor = viewportAnchor(tv)
+        var anchor = viewportAnchor(tv)
+        if anchor != nil, let v = st.viewport, abs(tv.visibleRect.minY - v.scrollY) < 0.001, v.length == storage.length {
+            anchor = (v.index, v.offset)
+        }
+        st.viewport = nil
         var top = anchor?.index
         var diverged = false
         storage.beginEditing()
@@ -242,7 +253,10 @@ extension SourceEditorView.Coordinator: CollabTextHost {
         if let selection, selection.upperBound <= storage.length {
             tv.setSelectedRange(NSRange(location: selection.lowerBound, length: selection.count))
         }
-        if let anchor, let top { restoreViewport(tv, index: top, offset: anchor.offset) }
+        if let anchor, let top {
+            restoreViewport(tv, index: top, offset: anchor.offset)
+            st.viewport = (top, anchor.offset, tv.visibleRect.minY, storage.length)
+        }
         tv.didChangeText() // gutter, folds, syntax flush; `commitUserChange` is skipped (programmatic)
         st.remoteApplies += 1
         st.overlay?.needsDisplay = true

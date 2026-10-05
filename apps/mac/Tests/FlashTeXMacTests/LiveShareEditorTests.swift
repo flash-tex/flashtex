@@ -225,7 +225,12 @@ final class LiveShareEditorTests: XCTestCase {
         let moved = (b.text as NSString).range(of: "line 120\n")
         XCTAssertEqual(b.tv.selectedRange().location, moved.location, "the caret stayed on its line")
         let after = b.tv.firstRect(forCharacterRange: NSRange(location: moved.location, length: 1), actualRange: nil)
-        XCTAssertEqual(after.minY, before.minY, accuracy: 1, "the line did not jump on screen")
+        // The clip view scrolls in whole backing pixels (1 pt on a 1x
+        // display, as on CI's runners); the remote text arrived as twelve
+        // applies, and the exact offset is carried across them, so what
+        // remains is at most one pixel's rounding, not twelve.
+        let pixel = 1 / max(1, b.tv.window?.backingScaleFactor ?? 1)
+        XCTAssertEqual(after.minY, before.minY, accuracy: pixel, "the line did not jump on screen")
     }
 
     /// Presence (proposal §4): Bob's selection appears in Alice's editor as a

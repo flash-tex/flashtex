@@ -810,11 +810,13 @@ Security review of P1 (fixed before merge):
   host whose confinement does not match, and leaving a session clears the copy's output folder
   (`.aux` and the like). Files a host's own `flashtex.toml` names outside the project (texinputs) are
   not readable during a session.
-- Guest-written files are marked. Every host file that a guest's text reached gets a
-  `com.apple.quarantine` mark (one event per session). The app's saves copy extended attributes, so the
-  mark stays. The trust check (`EngineV3Trust`) counts a quarantined file that did not come with the
-  project's own download, so after the session the project compiles untrusted (shell escape off, no
-  external tools) until the user trusts it again. During the session, compiles are pinned anyway.
+- Guest edits taint the project. When a guest's text first reaches a host file, the project's root is
+  tainted in the app's trust store (`EngineV3Trust.taint`, one event per session). The trust check
+  counts the taint as a subject of its own, so after the session the project compiles untrusted (shell
+  escape off, no external tools) until the user trusts it again. A later session taints it anew.
+  During the session, compiles are pinned anyway. The record is the app's, not the files': an earlier
+  version marked the files with `com.apple.quarantine`, but the project-files helper's atomic save (and
+  any other tool) drops extended attributes, so that mark was not reliable.
 - A guest takes at most 200 files and 32 MiB. Writes go through `O_CREAT | O_EXCL | O_NOFOLLOW`
   temporary files that are renamed into place. IPv6 peers count against the per-address cap by
   their /64.
