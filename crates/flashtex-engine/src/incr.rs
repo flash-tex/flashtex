@@ -531,6 +531,7 @@ impl Obs {
     /// DESIGN.md §5.3's convergence test of the live state (just
     /// checkpointed as `new`) against the old run's checkpoint `old`.
     fn converged(&mut self, g: &mut Globals, new: &ExtRecord, old: CheckpointId) -> bool {
+        let _busy = crate::busy::enter(crate::busy::Part::Test);
         let t = Instant::now();
         let i0 = crate::os::thread_counts();
         self.tests += 1;
@@ -2468,6 +2469,7 @@ impl Session {
         let t0 = Instant::now();
         // A run stopped for this compile (preempted, or at a viewport).
         if self.paused.is_some() {
+            let _busy = crate::busy::enter(crate::busy::Part::Paused);
             match self.paused_vs_changes() {
                 // nothing new: it goes on
                 Some(false) => return self.finish(),
@@ -3625,6 +3627,7 @@ impl Session {
         // the old run's end, and of every file the old run opened after `r`
         // (its journal says which), so the journal must be in place.
         system::record_reads_into(Some(jr.clone()));
+        let busy_restore = crate::busy::enter(crate::busy::Part::Restore);
         if let Err(e) = g.restore(r) {
             // An output the restore needs is gone: a run that failed
             // removes its PDF (pdfTeX's "no output PDF file produced"),
@@ -3677,6 +3680,7 @@ impl Session {
         let g = self.g.as_mut().unwrap();
         system::record_reads_into(Some(truncate_journal(&jr, rec.reads, &self.dirs_checked)));
         let restore_s = t1.elapsed().as_secs_f64();
+        drop(busy_restore);
         let restore_instr = i1.zip(crate::os::thread_counts()).map(|(a, b)| b.0 - a.0);
         obs.old_pages = self.pages[base..].to_vec();
         obs.edits = edits;
@@ -3873,6 +3877,7 @@ impl Session {
         }
         rep.rerun_pages += obs.new_pages.len();
         if let Some((j, old)) = obs.converged {
+            let busy_jump = crate::busy::enter(crate::busy::Part::Jump);
             rep.converged_at = Some(j);
             let edits = obs.edits.clone();
             let g = self.g.as_mut().unwrap();
@@ -3968,6 +3973,7 @@ impl Session {
             o2.preempt = self.preempt.clone();
             let g = self.g.as_mut().unwrap();
             g.layer().observer = Some(Box::new(o2));
+            drop(busy_jump);
             let st = g.resume_to_end().inspect_err(|_| {
                 system::record_reads_into(None);
             })?;
