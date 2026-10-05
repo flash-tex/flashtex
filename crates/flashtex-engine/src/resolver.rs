@@ -408,6 +408,52 @@ pub fn find_texlive_bin() -> Option<PathBuf> {
 #[cfg(feature = "kpathsea")]
 pub use kpse::KpathseaResolver;
 
+/// The `kpse_make_tex_discard_errors` (tex.ch [49.1265]) that every
+/// kpathsea instance started from now on begins with, whether or not a
+/// resolver exists yet; [`FileResolver::set_make_tex_discard_errors`] also
+/// sets a live instance's. Nothing without kpathsea.
+pub fn set_kpathsea_make_tex_discard_errors(discard: bool) {
+    #[cfg(feature = "kpathsea")]
+    {
+        extern "C" {
+            fn flashtex_kpse_set_make_tex_discard_errors(
+                k: *mut std::ffi::c_void,
+                discard: std::ffi::c_int,
+            );
+        }
+        // SAFETY: a null instance: the shim only keeps the flag.
+        unsafe {
+            flashtex_kpse_set_make_tex_discard_errors(
+                std::ptr::null_mut(),
+                discard as std::ffi::c_int,
+            )
+        }
+    }
+    #[cfg(not(feature = "kpathsea"))]
+    let _ = discard;
+}
+
+/// Unit tests that set the process's mktex discard flag hold this.
+#[cfg(test)]
+pub(crate) static MKTEX_DISCARD_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+/// What [`set_kpathsea_make_tex_discard_errors`] last set (false without
+/// kpathsea).
+pub fn kpathsea_make_tex_discard_errors() -> bool {
+    #[cfg(feature = "kpathsea")]
+    {
+        extern "C" {
+            fn flashtex_kpse_get_make_tex_discard_errors(
+                k: *mut std::ffi::c_void,
+            ) -> std::ffi::c_int;
+        }
+        // SAFETY: a null instance: the shim reads its own flag.
+        unsafe { flashtex_kpse_get_make_tex_discard_errors(std::ptr::null_mut()) != 0 }
+    }
+    #[cfg(not(feature = "kpathsea"))]
+    false
+}
+
 /// kpathsea's `kpathsea_version_string` (`kpathsea version 6.4.2`), from the
 /// vendored library; empty without it.
 pub fn kpathsea_version() -> String {
@@ -452,6 +498,7 @@ mod kpse {
         fn flashtex_kpse_var_value(k: *mut c_void, var: *const c_char) -> *mut c_char;
         fn flashtex_kpse_free(p: *mut c_void);
         fn flashtex_kpse_set_make_tex_discard_errors(k: *mut c_void, discard: c_int);
+        fn flashtex_kpse_get_make_tex_discard_errors(k: *mut c_void) -> c_int;
         fn flashtex_kpse_name_ok(k: *mut c_void, name: *const c_char, write: c_int) -> c_int;
         fn flashtex_kpse_find_all(
             k: *mut c_void,
@@ -496,6 +543,13 @@ mod kpse {
     }
 
     impl KpathseaResolver {
+        /// kpathsea's `make_tex_discard_errors` for this resolver: its
+        /// instance's, or (not started yet) the one it will start with.
+        pub fn make_tex_discard_errors(&self) -> bool {
+            // SAFETY: the live instance or null; the shim only reads.
+            unsafe { flashtex_kpse_get_make_tex_discard_errors(self.k) != 0 }
+        }
+
         /// kpathsea configured exactly as `kpsewhich -progname=PROGNAME
         /// -engine=ENGINE` run from `bin_dir` would be. `bin_dir` is what
         /// kpathsea derives SELFAUTOLOC and friends from, and through them
@@ -779,7 +833,10 @@ mod kpse {
             unsafe { flashtex_kpse_name_ok(self.k, n.as_ptr(), write as c_int) != 0 }
         }
         fn set_make_tex_discard_errors(&mut self, discard: bool) {
-            // SAFETY: `self.k` is the live kpathsea instance.
+            // SAFETY: `self.k` is the live kpathsea instance or null (an
+            // instance not started yet); the shim writes through it only
+            // when it is not null, and keeps the flag for the instance
+            // `flashtex_kpse_new` starts later.
             unsafe { flashtex_kpse_set_make_tex_discard_errors(self.k, discard as c_int) }
         }
         fn init_pk(&mut self, prefix: &str, dpi: u32, mode: Option<&[u8]>) {
@@ -898,6 +955,29 @@ pub fn default_resolver(progname: &str, engine: &str) -> Box<dyn FileResolver> {
 #[cfg(test)]
 mod tests {
     use super::kpse_absolute_p;
+
+    /// tex.ch [49.1265]'s flag reaches kpathsea whether it is set before
+    /// the instance starts (a resolver made later, or one that starts
+    /// kpathsea at its first lookup) or after.
+    #[cfg(feature = "kpathsea")]
+    #[test]
+    fn mktex_discard_flag_reaches_every_instance() {
+        use super::{FileResolver, Format, KpathseaResolver};
+        let Some(bin) = super::find_texlive_bin() else {
+            return;
+        };
+        let _lock = super::MKTEX_DISCARD_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
+        super::set_kpathsea_make_tex_discard_errors(true);
+        let mut r = KpathseaResolver::for_texlive(&bin, "pdftex", "pdftex");
+        assert!(r.make_tex_discard_errors(), "a resolver made in batch mode");
+        let _ = r.find("plain.tex", Format::Tex); // started now in any case
+        assert!(r.make_tex_discard_errors(), "its instance once started");
+        r.set_make_tex_discard_errors(false);
+        assert!(!r.make_tex_discard_errors(), "the instance, set again");
+        assert!(!super::kpathsea_make_tex_discard_errors(), "the next one");
+    }
 
     /// kpathsea's `kpathsea_absolute_p (kpse, name, true)` with `DOSISH`
     /// defined (Windows; config.h lines 37-42), every expectation read off

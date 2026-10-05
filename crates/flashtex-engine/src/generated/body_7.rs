@@ -11,6 +11,33 @@ use super::globals::Globals;
 use super::types::*;
 
 impl Globals {
+    /// An `align_group` code is supposed to remain on the `save_stack`
+    /// during an entire alignment, until `fin_align` removes it.
+    /// A devious user might force an `endv` command to occur just about anywhere;
+    /// we must defeat such hacks.
+    /// @<Declare act...
+    // §1309
+    pub fn do_endv(&mut self) {
+        self.base_ptr = self.input_ptr;
+        { let __ix1619 = self.base_ptr; let __v1620 = self.cur_input; self.input_stack[crate::ix::U((__ix1619) as usize)] = __v1620; }
+        while (((self.input_stack[crate::ix::U((self.base_ptr) as usize)].index_field != v_template) && (self.input_stack[crate::ix::U((self.base_ptr) as usize)].loc_field == null)) && (self.input_stack[crate::ix::U((self.base_ptr) as usize)].state_field == token_list)) {
+            self.base_ptr = (self.base_ptr).wrapping_sub(1i32);
+        }
+        if (((self.input_stack[crate::ix::U((self.base_ptr) as usize)].index_field != v_template) || (self.input_stack[crate::ix::U((self.base_ptr) as usize)].loc_field != null)) || (self.input_stack[crate::ix::U((self.base_ptr) as usize)].state_field != token_list)) {
+            self.fatal_error(677i32);
+        }
+        if (self.cur_group == align_group) {
+            {
+                self.end_graf();
+                if self.fin_col() {
+                    self.fin_row();
+                }
+            }
+        } else {
+            self.off_save();
+        }
+    }
+
     /// @<Declare act...
     // §1313
     pub fn cs_error(&mut self) {
@@ -2644,10 +2671,11 @@ impl Globals {
         self.print_ln();
         self.interaction = self.cur_chr;
         if (self.interaction == batch_mode) {
-            self.kpse_set_make_tex_discard_errors(true);
+            self.kpse_make_tex_discard_errors = true;
         } else {
-            self.kpse_set_make_tex_discard_errors(false);
+            self.kpse_make_tex_discard_errors = false;
         }
+        self.kpse_set_make_tex_discard_errors(self.kpse_make_tex_discard_errors);
         // §75
         if (self.interaction == batch_mode) {
             self.selector = no_print;

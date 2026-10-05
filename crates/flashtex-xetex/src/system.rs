@@ -1350,7 +1350,8 @@ impl Globals {
     pub fn output_comment_byte(&mut self, k: i32) -> i32 {
         run()
             .output_comment
-            .and_then(|c| c.as_bytes().get(k as usize).copied())
+            .as_ref()
+            .and_then(|c| c.get(k as usize).copied())
             .unwrap_or(0) as i32
     }
     /// texmfmp.c's `runsystem` on `str_pool[s..s+l-1]`, made UTF-8 as
