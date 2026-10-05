@@ -141,6 +141,8 @@ fn copy_dir(from: &Path, to: &Path) {
             // (a link as it is: `a_file_under_two_names_shifts_once`)
             let target = std::fs::read_link(f.path()).unwrap();
             std::os::unix::fs::symlink(target, to.join(f.file_name())).unwrap();
+        } else if t.is_dir() {
+            copy_dir(&f.path(), &to.join(f.file_name()));
         }
     }
 }
@@ -3117,5 +3119,90 @@ fn a_file_under_two_names_shifts_once() {
             .parse()
             .unwrap_or_else(|_| panic!("{what}: no convergence: {r}"));
         assert!(conv + 3 < pages, "{what}: converged late: {r}");
+    }
+}
+
+/// The #1595 review's probe: `alias` is a link to the project directory
+/// while names are resolved, then becomes a real directory with its own
+/// `chapx.tex`. One compile then edits both files with the same line delta:
+/// a late newline in the file read first, an early one in the file read
+/// second, which reads `\inputlineno` below the first file's edit. The two
+/// files' shifts are both kept: a resolution remembered from before the
+/// swap took them for one file, dropped the second's shift, and the read
+/// was no barrier.
+#[test]
+fn an_alias_replaced_by_a_directory_is_another_file() {
+    let Some(e) = env() else {
+        common::no_texlive();
+        return;
+    };
+    for (first, second) in [("chapx", "alias/chapx"), ("alias/chapx", "chapx")] {
+        let tag = if first == "chapx" { "a" } else { "b" };
+        let dir = e.dir.join(format!("lines-alias-swap-{tag}"));
+        let _ = std::fs::remove_dir_all(&dir);
+        let _ = std::fs::remove_dir_all(dir.with_extension("ref"));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::os::unix::fs::symlink(".", dir.join("alias")).unwrap();
+        let mut chap = String::new();
+        chap.push_str(&para(1000, "ipsum"));
+        chap.push_str(&para(1001, "ipsum"));
+        chap.push_str("\\input{other}\n");
+        chap.push_str("\\message{[chap line \\the\\inputlineno]}\n");
+        for i in 1002..1020 {
+            chap.push_str(&para(i, "ipsum"));
+        }
+        let other: String = (2000..2040).map(|i| para(i, "dolor")).collect();
+        std::fs::write(dir.join("chapx.tex"), &chap).unwrap();
+        std::fs::write(dir.join("other.tex"), &other).unwrap();
+        let doc = lines_doc(
+            "",
+            40,
+            &[
+                (10, &format!("\\input{{{first}}}")),
+                (30, &format!("\\input{{{second}}}")),
+            ],
+        );
+        let mut h = Host::start(&e, &dir);
+        settle(&e, &mut h, &dir, &doc);
+        // names resolved: a newline through both names, and its revert
+        let nl = chap.replacen(
+            "Paragraph 1015 with the word",
+            "Paragraph 1015 with\nthe word",
+            1,
+        );
+        for (text, what) in [(&nl, "a newline"), (&chap, "its revert")] {
+            let what = format!("lines-alias-swap-{tag}: {what}");
+            compile_and_check(&e, &mut h, &dir, &[("chapx.tex", text)], &what);
+        }
+        // the link becomes a directory with its own copy
+        std::fs::remove_file(dir.join("alias")).unwrap();
+        std::fs::create_dir_all(dir.join("alias")).unwrap();
+        std::fs::write(dir.join("alias").join("chapx.tex"), &chap).unwrap();
+        compile_and_check(
+            &e,
+            &mut h,
+            &dir,
+            &[],
+            &format!("lines-alias-swap-{tag}: swap"),
+        );
+        // a late newline in the file read first, an early one in the second
+        let late = chap.replacen(
+            "Paragraph 1015 with the word",
+            "Paragraph 1015 with\nthe word",
+            1,
+        );
+        let early = chap.replacen(
+            "Paragraph 1001 with the word",
+            "Paragraph 1001 with\nthe word",
+            1,
+        );
+        let file = |n: &str| format!("{n}.tex");
+        compile_and_check(
+            &e,
+            &mut h,
+            &dir,
+            &[(&file(first), &late), (&file(second), &early)],
+            &format!("lines-alias-swap-{tag}: two files, one delta"),
+        );
     }
 }

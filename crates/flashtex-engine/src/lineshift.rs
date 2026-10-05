@@ -221,6 +221,16 @@ pub struct Pending {
 }
 
 impl Pending {
+    /// Whether `o` is the same edit: the same bytes changed the same way,
+    /// so that either one's shift is the other's. Two names of one file
+    /// (a link, a case variant) give the same edit; two files that only
+    /// look alike may too, and then dropping either shift drops nothing.
+    pub fn same_edit(&self, o: &Pending) -> bool {
+        (self.delta, self.s, self.mid, self.at_start, self.s_ends)
+            == (o.delta, o.s, o.mid, o.at_start, o.s_ends)
+            && (std::sync::Arc::ptr_eq(&self.new, &o.new) || *self.new == *o.new)
+    }
+
     /// The shift, given that TeX's line at byte `at` of the file (just past
     /// a line end, before the edit) is `line`: what a level reading it has
     /// counted there ((0, 0): the file's start).
@@ -481,11 +491,21 @@ pub fn same_path(a: &str, b: &str) -> bool {
     a == b || canonical(a) == canonical(b)
 }
 
+thread_local! {
+    /// `canonical`'s answers, until `forget_paths`.
+    static CANONICAL: RefCell<std::collections::HashMap<String, std::path::PathBuf>> =
+        RefCell::new(std::collections::HashMap::new());
+}
+
+/// Forget every name's resolution (`same_path`): a compile resolves names
+/// afresh, since a link may have become a directory, or the working
+/// directory another job's, since the last.
+pub fn forget_paths() {
+    CANONICAL.with(|c| c.borrow_mut().clear());
+}
+
 fn canonical(p: &str) -> std::path::PathBuf {
-    thread_local! {
-        static CACHE: RefCell<std::collections::HashMap<String, std::path::PathBuf>> =
-            RefCell::new(std::collections::HashMap::new());
-    }
+    use CANONICAL as CACHE;
     if let Some(c) = CACHE.with(|c| c.borrow().get(p).cloned()) {
         return c;
     }
