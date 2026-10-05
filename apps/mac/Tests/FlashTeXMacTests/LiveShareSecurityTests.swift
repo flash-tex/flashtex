@@ -229,8 +229,11 @@ final class LiveShareSecurityTests: XCTestCase {
     /// The host process for session compiles: reads and writes confined, no
     /// TEXMFOUTPUT.
     func testConfinedHostEnvironment() {
-        let env = EngineV3HostProcess.confinedEnvironment(["TEXMFOUTPUT": "/", "openin_any": "a", "openout_any_pdftex": "a", "PATH": "/bin"])
+        let env = EngineV3HostProcess.confinedEnvironment(["TEXMFOUTPUT": "/", "openin_any": "a", "openout_any_pdftex": "a", "PATH": "/bin"],
+                                                          roots: ["/p", "/q"])
         XCTAssertEqual(env["FLASHTEX_CONFINE_READS"], "1")
+        XCTAssertEqual(env["FLASHTEX_CONFINE_ROOTS"], "/p:/q")
+        for k in ["MKTEXTFM", "MKTEXPK", "MKTEXMF", "MKTEXTEX"] { XCTAssertEqual(env[k], "0", k) }
         XCTAssertEqual(env["openin_any"], "p")
         XCTAssertEqual(env["openout_any"], "p")
         XCTAssertNil(env["TEXMFOUTPUT"])

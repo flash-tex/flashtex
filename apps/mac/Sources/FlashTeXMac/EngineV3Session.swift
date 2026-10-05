@@ -362,8 +362,7 @@ final class EngineV3Session {
         do {
             // A Live Share session (or a session copy) compiles in a host
             // launched confined; `compile` relaunches when that changes.
-            let confined = model.map { $0.liveShare.forcesPinnedCompile(root: $0.project.projectRoot) } ?? false
-            let h = try EngineV3HostProcess(executable: exe, confined: confined) { event in
+            let h = try EngineV3HostProcess(executable: exe, confineRoots: model.flatMap(Self.confineRoots)) { event in
                 EngineV3Session.onMain { ref.value?.hostEvent(event) }
             }
             host = h
@@ -680,6 +679,10 @@ final class EngineV3Session {
     private func storageEdited(_ storage: NSTextStorage) {
         guard phase == .ready, connection != nil, let model, model.engineV3Enabled, model.autoCompile, !exportRunning,
               storage.editedMask.contains(.editedCharacters) else { return }
+        // Live Share: the fast path never sends to a host whose confinement
+        // no longer matches (a session just started); the slow path, a few
+        // milliseconds later, relaunches it first.
+        guard fastPathAllowed(model: model) else { return }
         guard let tv = storage.layoutManagers.first?.textContainers.first?.textView,
               tv.accessibilityLabel() == "LaTeX source", !tv.hasMarkedText() else { return }
         let typing = nextKeystrokeNs != nil || NSApp.currentEvent?.type == .keyDown
@@ -714,6 +717,56 @@ final class EngineV3Session {
         fastSentID[path] = req.id
         fastEditsSent &+= 1
     }
+
+    /// The roots a host compiling `model`'s project must be confined to, or
+    /// nil when it need not be (no Live Share session, not a session copy).
+    static func confineRoots(_ model: ShellModel) -> [String]? {
+        guard model.liveShare.forcesPinnedCompile(root: model.project.projectRoot) else { return nil }
+        return [model.project.projectRoot?.resolvingSymlinksInPath().path].compactMap { $0 }
+    }
+
+    /// Relaunches the host when its confinement no longer matches the
+    /// project's (a session started or ended, another project opened);
+    /// leaving confinement clears the copy's output folder, so nothing a
+    /// session's text wrote (an `.aux` with `\write18` in it, say) is read
+    /// by the next, possibly trusted, compile. Not counted as a crash.
+    @discardableResult
+    func relaunchIfConfinementChanged(model: ShellModel) -> Bool {
+        guard let host else { return false }
+        let want = Self.confineRoots(model)
+        guard host.confineRoots != want else { return false }
+        log("relaunching the host \(want == nil ? "unconfined" : "confined") (Live Share)")
+        if host.confined, want == nil { clearOutputAfterSession() }
+        stopRunningCompile(statusNote: "restarting the engine for Live Share", firstError: nil)
+        stalledTexts = nil
+        return true
+    }
+
+    /// Empties the project copy's output folder (`.aux`, `.toc`, ...).
+    func clearOutputAfterSession() {
+        guard let out = project?.output else { return }
+        let fm = FileManager.default
+        for name in (try? fm.contentsOfDirectory(atPath: out.path)) ?? [] {
+            try? fm.removeItem(at: out.appendingPathComponent(name))
+        }
+        outputClearedForSession &+= 1
+    }
+
+    /// Times `clearOutputAfterSession` ran (tests and evidence).
+    private(set) var outputClearedForSession = 0
+
+    /// The fast path sends only to a host confined exactly as `model`'s
+    /// project needs (the race of a keystroke right after a session starts).
+    func fastPathAllowed(model: ShellModel) -> Bool {
+        guard let host else { return false }
+        return host.confineRoots == Self.confineRoots(model)
+    }
+
+    /// The project copy's output folder (tests).
+    var outputDirectory: URL? { project?.output }
+
+    /// Whether the running host is confined (tests and evidence).
+    var hostConfineRoots: [String]?? { host.map(\.confineRoots) }
 
     private func consumeKeystroke(now: UInt64) -> UInt64 {
         let key = nextKeystrokeNs ?? (now &- lastKeyNs < 200_000_000 ? lastKeyNs : now)
@@ -1012,12 +1065,7 @@ final class EngineV3Session {
         // Live Share: a session's text compiles only in a confined host (and
         // a host launched confined serves nothing else). Relaunch, not
         // counted as a crash; the fresh host compiles when it is ready.
-        if let host, host.confined != model.liveShare.forcesPinnedCompile(root: model.project.projectRoot) {
-            log("relaunching the host \(host.confined ? "unconfined" : "confined") (Live Share)")
-            stopRunningCompile(statusNote: "restarting the engine for Live Share", firstError: nil)
-            stalledTexts = nil
-            return
-        }
+        if relaunchIfConfinementChanged(model: model) { return }
         // After a stall the text that looped waits for an edit or ⌘B (the stall bound).
         if let held = stalledTexts {
             if reason == "open", held == Dictionary(model.documents.map { ($0.path, $0.text) }, uniquingKeysWith: { a, _ in a }) { return }

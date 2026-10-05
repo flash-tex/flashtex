@@ -782,15 +782,31 @@ Security review of P1 (fixed before merge):
   composition are bounded (past the bound, the composition is committed).
 - `flashtex.toml` (and every `.toml`) is never shared: the manifest decides package sources and
   fetching, fonts and the engine, and stays the host's own for the session.
-- Read confinement (§6.2). Session compiles run in a host launched with `FLASHTEX_CONFINE_READS=1`.
-  With it the engine refuses any file name that is absolute, starts with `~`, contains `$` or has a
-  `..` component. This covers `\input`, `\openin` and the file primitives: `\pdffilesize`,
-  `\pdffiledump`, `\pdfmdfivesum`, `\pdffilemoddate` and images. kpathsea's `openin_any = p` is not
-  enough: measured against TeX Live 2026's pdfTeX, it still reads `/etc/hosts`, `~/x` and `../x`
-  through `\openin`. Writes: the same host runs with `openout_any = p` and no `TEXMFOUTPUT`. A
-  relative `\openout` name lands in the project copy's output folder, never next to the sources, and
-  absolute or `..` names are refused. Without the variable the engine is unchanged, and pdfTeX parity
-  with it. The app relaunches the host when this state changes.
+- Read confinement (§6.2). Session compiles run in a host launched with `FLASHTEX_CONFINE_READS=1` and
+  `FLASHTEX_CONFINE_ROOTS` (the real project folder). The gate sits at the engine's lowest layers, the
+  resolver lookups (`resolve`, `resolve_ex`) and `open_input`'s output-directory shortcut
+  (`input_path`, `find_input`), so every file the engine opens goes through it: `\input`, `\openin`,
+  `\pdfobj file`, `\font` and its TFM/VF/encoding/font files, `\pdfmapfile`, `\pdfmapline`, images,
+  and the file primitives. Two rules:
+  - The name asked for may not be absolute, start with `~`, contain `$` or have a `..` component.
+  - What was found, followed through every link, must lie in the project, the job's folder or the
+    output folder, or be a link-free search-path hit (a TeX tree file). A relative link to a file
+    outside the project is therefore refused.
+
+  The format and the pool, which come from the host's own command line, are exempt. No mktex script
+  runs (`MKTEXTFM`, `MKTEXPK`, `MKTEXMF` and `MKTEXTEX` are 0), so a `\font` name can never start
+  METAFONT. kpathsea's `openin_any = p` is not enough: measured against TeX Live 2026's pdfTeX, it
+  still reads `/etc/hosts`, `~/x` and `../x` through `\openin`.
+
+  Writes: the same host runs with `openout_any = p` and no `TEXMFOUTPUT`. A relative `\openout` name
+  lands in the project copy's output folder, never next to the sources, and absolute or `..` names
+  are refused.
+
+  Without the variables the engine is unchanged; the lockstep passes in full with them unset. The
+  app relaunches the host when the confinement changes, the keystroke fast path never sends to a
+  host whose confinement does not match, and leaving a session clears the copy's output folder
+  (`.aux` and the like). Files a host's own `flashtex.toml` names outside the project (texinputs) are
+  not readable during a session.
 - Guest-written files are marked. Every host file that a guest's text reached gets a
   `com.apple.quarantine` mark (one event per session). The app's saves copy extended attributes, so the
   mark stays. The trust check (`EngineV3Trust`) counts a quarantined file that did not come with the
