@@ -211,9 +211,15 @@ step_t2() {
   if [[ $rc -gt 1 ]]; then tail -n 30 "$WORK/t2-reference.txt"; die "T2: the reference run did not complete (exit $rc)"; fi
   rc=0
   # l3build's unpack and check runs take this engine's formats and pool from
-  # the environment (tools/latex-suites passes both through to its shim).
-  FLASHTEX_FORMATS="$FMT" FLASHTEX_POOL="$POOL" \
-    python3 tools/latex-suites/run.py --engine "$INITEX" --suite all >"$WORK/t2-engine.txt" 2>&1 || rc=$?
+  # the shim run.py puts first on PATH, which exports exactly the
+  # --engine-env pairs. They must be flags: run.py removes every FLASHTEX_*
+  # variable from the environment it inherits, so the reference run can
+  # never see one. (Passed through the environment, as until 2026-10-05,
+  # they never reached the engine: it looked for pdftex.fmt itself, tried to
+  # build it and stopped at the `**` prompt, and all 1,385 tests failed.)
+  python3 tools/latex-suites/run.py --engine "$INITEX" --suite all \
+    --engine-env "FLASHTEX_FORMATS=$FMT" --engine-env "FLASHTEX_POOL=$POOL" \
+    >"$WORK/t2-engine.txt" 2>&1 || rc=$?
   if [[ $rc -gt 1 ]]; then tail -n 30 "$WORK/t2-engine.txt"; die "T2: the engine run did not complete (exit $rc)"; fi
   grep -E ': PASS [0-9]+ / FAIL' "$WORK/t2-reference.txt" | sed 's/^/reference: /' || true
   grep -E ': PASS [0-9]+ / FAIL' "$WORK/t2-engine.txt" | sed 's/^/engine:    /' || true

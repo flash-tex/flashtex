@@ -790,9 +790,9 @@ gh api repos/flash-tex/flashtex/actions/permissions/fork-pr-contributor-approval
 ### `nightly.yml`
 
 Scheduled at 08:17 UTC, and `workflow_dispatch` with a `parity_tiers` input.
-Concurrency is serialised (`cancel-in-progress: false`), so a run that overruns
-into the next night makes the next one wait rather than doubling the load on one
-Mac.
+Concurrency is serialised per ref (`cancel-in-progress: false`), so a run that
+overruns into the next night makes the next one wait rather than doubling the
+load on one Mac, while a dispatch of a branch does not wait for main's night.
 
 * **parity scoreboard (arxiv + templates)** — needs a real `pdflatex` and ~450 MB
   of fetched, hash-verified sources, and no GitHub image ships TeX Live, so it is
@@ -826,21 +826,30 @@ Mac.
   (1,509 of 1,531 executions pass), 13 of them outside `EXPECTED-FAILURES.txt`
   (`tikz-001`–`008`, `github-1398`, `m3graphics001`, `test`, `test-footnote`,
   `tlb-varioref-005`); about 24 minutes per run.
-* **engine: T2, soundness and host memory (self-hosted Mac)** — the same three
+* **engine: T2, soundness and host memory (GitHub-hosted)** — the same three
   gates (`engine-parity.sh build t2`, `engine-parity.sh soundness`,
-  `tools/incr-bench/mem_gate.sh`) one after the other in one job on a
-  self-hosted Mac, used only on main while `FLASHTEX_SELFHOSTED_LINUX` is 0
-  and `FLASHTEX_SELFHOSTED_MAC` is 1 (lane P5-BOARD-MAC, 2026-10-03). Every
-  heavy Mac job (this one, the templates leg and `p5-scoreboard.yml`'s Mac
-  route) is pinned to the runner labelled `flashtex-heavy` (mac-m1max-a-2);
-  mac-m1max-a-1 stays general and serves the merge queue. They also share the
-  concurrency group `flashtex-mac-heavy`, so only one runs at a time (the
-  nightly waits for the 06:47 board), and this job `needs` the templates leg
-  so the nightly never has two jobs pending in the group (a third pending job
-  would cancel the earlier one). Its oracle is the Mac's MacTeX 2026: the same pdfTeX 1.40.29 as
-  the PC but another snapshot (LaTeX 2025-11-01 on mac-m1max-a, the suites'
-  `PINS.txt`, against the PC's 2026-06-01), so its T2 results are not the
-  PC's. All Cargo output goes to one size-capped directory
+  `tools/incr-bench/mem_gate.sh`), one job each on `ubuntu-latest`, used while
+  `FLASHTEX_SELFHOSTED_LINUX` is not 1 (DESIGN §9.2's hosted fallback legs;
+  lane NIGHTLY-GREEN, 2026-10-05). Their oracle is the official
+  `texlive/texlive:latest` image (scheme-full, TeX Live 2026, pdfTeX 1.40.29)
+  pinned by digest in the workflow's `NIGHTLY_TEXLIVE_IMAGE`; scheme-medium,
+  which `ci.yml` caches, lacks l3build and several packages the suites load.
+  The full tree is too large for the Actions cache, so each job pulls it
+  (`.github/actions/texlive-2026` with `cache: "false"`). T2's baseline is
+  still the reference run on that same tree. They need no fork guard (a
+  hosted runner sees no secrets and no network of the team's), so a dispatch
+  of any branch runs them; the dispatch input `engine_hosted` runs them beside
+  the NixOS jobs too. Until 2026-10-05 they ran one after the other in
+  one job on the heavy self-hosted Mac (#1413): T2 held that runner for about
+  two hours a night beside `p5-scoreboard.yml`'s own T2 on the same oracle,
+  and the Mac ran out of disk twice on 10-03.
+* **The heavy self-hosted Mac** (`flashtex-heavy`, mac-m1max-a-2) now carries
+  the templates leg here and `p5-scoreboard.yml`'s Mac route only; they share
+  the concurrency group `flashtex-mac-heavy`, so only one runs at a time;
+  mac-m1max-a-1 stays general and serves the merge queue. Its oracle is the
+  Mac's MacTeX 2026: the same pdfTeX 1.40.29 as the PC but another snapshot
+  (LaTeX 2025-11-01 on mac-m1max-a, the suites' `PINS.txt`, against the PC's
+  2026-06-01). All Cargo output goes to one size-capped directory
   (`scripts/ci/mac-heavy-target.sh`). **T4 (`corpus-t4`) and the arxiv leg
   stay PC-only**: T4 runs most of a day with 8 workers and its ratchet
   baseline is bound to the PC's machine id and TeX Live, so a Mac would need
