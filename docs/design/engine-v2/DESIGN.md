@@ -470,6 +470,32 @@ D8 specification; what landed differs, and D8's rewording is proposed to the own
   writing the new run's extra characters into the old run's later history (`Arena::or_from`,
   #1300, a draft); a first version that compared against unpatched checkpoints was unsound
   (103/8,500 sweep-A mismatches) and was backed out.
+- **As built: line shifting** (P4-NEWLINE-CONVERGE, #1570; `src/lineshift.rs`,
+  `changes/lineshift.ch`).
+  - **Lines moved by δ.** An edit moves the lines after it by δ, the line ends it adds minus
+    those it removes.
+  - **`line`/`line_stack`.** For a level reading the edited file these may differ by δ. They
+    are corrected whenever the old run's later checkpoint is restored (`Reloc`).
+  - **Open levels, groups and conditionals.** Each one's line carries its file (the SyncTeX
+    tag, in new word-space arrays). A line of the edited file past the edit must differ by
+    δ; any other must be equal.
+  - **SyncTeX node lines.** These are dead: they are written and copied, never read.
+  - **Line journal.** Every `\inputlineno` read and every printed line number is journalled.
+    One the edit may have moved, read by the old run after the convergence point, is a
+    barrier (`rerun_point`).
+  - **`\the\inputlineno` in an `\edef` body.** For LaTeX's `\begin` this marks the token list
+    instead, and expanding, comparing or showing that list is the read.
+  - **Dropped checkpoints.** An old checkpoint that cannot be corrected (a marked list alive,
+    or a line of no known file) is dropped.
+  - **Soundness cases.** Each rule has one that fails without it (tests/incremental.rs).
+  - **Measured (PC, non-reference, #1570):** newline and split converge on 19/19 T7
+    keystrokes on plain/full-100/300/1000, except plain-1000 split. That split changes the
+    page count (§5.4).
+  - **Where split convergence comes from.** After a reflow the pending object stream holds
+    the re-typeset pages' resources. A split converges once that stream is flushed (≤ 33
+    pages).
+  - **What is still missing.** PDF object relocation is not needed for these rows and is
+    still not built.
 - **Every convergence rule is a soundness risk** (adopted 2026-10-01, §13): two rules were
   found unsound on 2026-09-30 (P4-FINISH's first `pdf_char_used` union, and the older (b′) read
   test, which skipped later reads of files the old run closes again), and only the soundness
