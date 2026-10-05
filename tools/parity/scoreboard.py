@@ -36,15 +36,19 @@ Honest denominators:
 
 Verdicts: ahead, equal, ahead (old n/a), and for T4 against the committed one-off v1
 baseline (decision 1, --t4-v1-baseline; rates, not counts) ahead/equal (v1 one-off) are
-green; behind, below target, denominators differ, host mismatch, invalid, missing are not. Targets beyond
-new >= old: arXiv L1 >= 90% (§12 P5) and 0 unexpected T2 failures (the
-retirement plan's S5 precondition).
+green; behind, below target, below bar, denominators differ, host mismatch, invalid, missing are
+not. Targets beyond new >= old: arXiv L1 >= 90% (§12 P5) and 0 unexpected T2 failures (the
+retirement plan's S5 precondition). The owner's P5 bar (DESIGN §13, 2026-10-05; OWNER_BAR):
+P-T2 >= 99% and P-T1 >= 98% on the arXiv and T4 tiers, and zero engine crashes on T4 (the
+`crashes` row: documents the engine ran without crashing, nightly.py crash_of).
 
 Outputs (--out DIR): scoreboard.json, scoreboard.md (the one table, for the
 artifact), and with --summary FILE a short committed summary. --issues
-dry-run|apply opens or updates one GitHub issue per tier where new < old
-(marker `<!-- p5-scoreboard:tier=NAME -->` in the body) and closes the
-scoreboard's own issue once the tier recovers.
+dry-run|apply opens or updates one GitHub issue per tier that is red: new < old, or below
+a target or the owner's bar (ISSUE_VERDICTS; label `p5-red`, marker
+`<!-- p5-scoreboard:tier=NAME -->` in the body), and closes the scoreboard's own issue
+once the tier recovers. --require-green (also with --from-board) is the gate: exit 1
+unless the board is all green.
 
     python3 tools/parity/scoreboard.py \\
         --parity new=<dir> --parity old=<dir> --nightly new=<dir> \\
@@ -70,12 +74,23 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 STAGES_FILE = os.path.join(HERE, "retirement-stages.json")
 
 PARITY_METRICS = ("P-T1", "P-T2", "L0", "L1", "L2", "L3", "L4")
-METRIC_ORDER = PARITY_METRICS + ("tests", "documents", "fonts", "(any)")
+METRIC_ORDER = PARITY_METRICS + ("crashes", "tests", "documents", "fonts", "(any)")
 GREEN = ("ahead", "equal", "ahead (old n/a)", "ahead (v1 one-off)", "equal (v1 one-off)")
 ARXIV_L1_TARGET = 90.0
+# The owner's P5 bar (DESIGN §13 2026-10-05, confirming decision 3's thresholds, §12 P5):
+# minimum percent of the measured documents, per (tier, metric). `crashes` is the row of
+# documents the engine ran without crashing, so "zero crashes" is 100%.
+OWNER_BAR = {("arxiv", "P-T1"): 98.0, ("arxiv", "P-T2"): 99.0,
+             ("nightly-5k", "P-T1"): 98.0, ("nightly-5k", "P-T2"): 99.0,
+             ("nightly-5k", "crashes"): 100.0}
+# A complete run with one of these verdicts opens or updates its tier's issue (p5-red).
+ISSUE_VERDICTS = ("behind", "below target", "below bar", "below bar (old n/a)")
+ISSUE_LABEL = "p5-red"
 CENSUS_PER_FAMILY = 6  # tools/font-census/census.py --per-family default: the tier's definition
 # parity.py options that select a subset of a tier's manifest.
 SUBSET_FLAGS = ("--limit", "--only", "--shard", "--spread")
+# parity.py's excluded reasons that mean "not measured", not "excluded by the oracle"
+UNMEASURED_KEYS = ("fetch", "harness error")
 
 TIER_TITLES = {
     "fixtures": "T3 fixtures",
@@ -91,6 +106,10 @@ TIER_ORDER = ("fixtures", "arxiv", "templates", "packages", "nightly-5k",
               "latex-suites", "package-smoke", "fonts")
 
 NO_V1_T4 = "no v1 one-off baseline (decision 1)"
+NO_V1_CRASHES = ("n/a: the v1 one-off baseline counts no crashes; the bar is 0 crashes "
+                 "(owner, 2026-10-05)")
+# nightly.py's crash_of, recovered from a summary written before it counted crashes
+CRASH_CAUSE = re.compile(r"\bexit (101|-\d+)\b|the traced pass crashed|panicked at")
 # Decision 1 (Commander, 2026-10-02, #1319 comment 5960583653): T4's old column is a
 # committed one-off v1 measurement, not a nightly v1 leg (v1 is frozen by D13).
 T4_V1_BASELINE = os.path.join(HERE, "baselines", "t4-v1-oneoff.json")
@@ -240,6 +259,11 @@ def load_parity(path, sizes=None):
         excluded = dict(req(s, "excluded", w, dict))
         why = [x for x in (("subset: " + " ".join(flags)) if flags else None,
                            short_of_manifest(tier, documents, sizes)) if x]
+        # a document that could not be fetched or scored was not measured: the tier is short of
+        # its manifest, never silently smaller (parity.py's excluded keys "fetch", "harness error")
+        unmeasured = sum(v for k, v in excluded.items() if k in UNMEASURED_KEYS)
+        if unmeasured:
+            why.append("%d document(s) unmeasured (fetch or harness error)" % unmeasured)
         partial = "; ".join(why) or None
         drows = req(docs, tier, docs_where, list)
         died = sum(1 for d in drows if d.get("worker_died"))
@@ -398,6 +422,7 @@ def load_nightly(path, sizes=None, tiers_wanted=T4_TIERS):
                         why = "outside the --pt1-sample, or " + why
                     c["excluded"]["P-T1 %s" % why] = ne - outside
             row[m] = c
+        row["crashes"] = crash_cell(t, tier, documents, unmeasured, partial, os.path.dirname(p))
         tiers[tier] = row
     host = req(sm, "host", p, dict)
     ident = {"host": host.get("node") or host.get("label"), "host_label": host.get("label"),
@@ -410,6 +435,36 @@ def load_nightly(path, sizes=None, tiers_wanted=T4_TIERS):
              "documents_path": (os.path.join(os.path.dirname(p), "documents.json")
                                 if os.path.isfile(os.path.join(os.path.dirname(p), "documents.json")) else None)}
     return tiers, ident
+
+
+def crash_cell(t, tier, documents, unmeasured, partial, run_dir):
+    """The `crashes` row of a T4 tier: documents the engine ran (every document but the
+    unmeasured ones) without crashing. From the summary's `crashes` count; a summary
+    written before nightly.py counted them has it recovered from documents.json's causes
+    (partial: a traced-pass crash outside the recorded causes may be missed); with
+    neither, the row is not run."""
+    ran = documents - unmeasured
+    where = "%s tiers.%s" % (run_dir, tier)
+    if "crashes" in t:
+        n = req_count(t, "crashes", where)
+        if n > ran:
+            raise FormatError("%s: crashes %d > documents run %d" % (where, n, ran))
+        c = cell("measured", ran - n, ran, partial=partial)
+        if n:
+            c["note"] = "%d crash(es), e.g. %s" % (n, ", ".join(str(x) for x in (t.get("crash_examples") or [])[:5]))
+        return c
+    try:
+        recs = _read_json(os.path.join(run_dir, "documents.json"))["documents"]
+    except (OSError, ValueError, KeyError, TypeError):
+        return cell("not run", note="this T4 summary counts no crashes and has no documents.json")
+    hit = [r.get("id") for r in recs if isinstance(r, dict) and r.get("tier") == tier and not r.get("unmeasured")
+           and (r.get("crash") or CRASH_CAUSE.search("%s %s" % (r.get("cause") or "",
+                                                                r.get("first_difference") or "")))]
+    why = "crash count recovered from documents.json causes (the summary predates nightly.py's count)"
+    c = cell("measured", ran - len(hit), ran, partial="; ".join(x for x in (partial, why) if x))
+    if hit:
+        c["note"] = "%d crash(es), e.g. %s" % (len(hit), ", ".join(str(x) for x in hit[:5]))
+    return c
 
 
 SUITE_LINE = re.compile(r"^(\S.*): PASS (\d+) / FAIL (\d+) / SKIP (\d+)\s*$")
@@ -699,6 +754,15 @@ def na_bar_met(tier, metric, new, na_baseline):
     return new["passed"] * b["of"] >= b["passed"] * new["of"]
 
 
+def bar_met(tier, metric, new):
+    """The owner's bar (OWNER_BAR) on a measured cell; True for rows it does not cover.
+    Counts, not the rounded percent: 98.95% is not 99%."""
+    bar = OWNER_BAR.get((tier, metric))
+    if bar is None:
+        return True
+    return bool(new["of"]) and 100 * new["passed"] >= bar * new["of"]
+
+
 def verdict(tier, metric, new, old, same_host, na_baseline=None):
     if new is None or new["status"] != "measured":
         return "missing"
@@ -720,7 +784,7 @@ def verdict(tier, metric, new, old, same_host, na_baseline=None):
         a, b = cmp["passed"] * old["of"], old["passed"] * cmp["of"]
         v = "ahead (v1 one-off)" if a > b else ("equal (v1 one-off)" if a == b else "behind")
     elif old["status"] == "n/a":
-        if not na_bar_met(tier, metric, new, na_baseline):
+        if not na_bar_met(tier, metric, new, na_baseline) or not bar_met(tier, metric, new):
             return "below bar (old n/a)"
         v = "ahead (old n/a)"
     else:
@@ -732,6 +796,8 @@ def verdict(tier, metric, new, old, same_host, na_baseline=None):
             "equal" if new["passed"] == old["passed"] else "behind")
     if v == "behind":
         return v
+    if not bar_met(tier, metric, new):
+        return "below bar"
     if tier == "arxiv" and metric == "L1" and (pct(new) or 0.0) < ARXIV_L1_TARGET:
         return "below target"
     if tier == "latex-suites" and new.get("unexpected"):
@@ -744,6 +810,11 @@ def target_of(tier, metric):
         return "new >= old; >= 90%"
     if tier == "latex-suites":
         return "new >= old; 0 unexpected"
+    if metric == "crashes":
+        return "0 crashes (owner bar)"
+    bar = OWNER_BAR.get((tier, metric))
+    if bar is not None:
+        return "new >= old; >= %g%% (owner bar)" % bar
     return "new >= old"
 
 
@@ -893,6 +964,8 @@ def t4_v1_cells(t4_v1, tier, new_row, documents_path=None):
         elif m == "P-T1":
             out[m] = cell("n/a", note="n/a: the flashtex CLI is not a TeX engine and writes no box dumps "
                                       "or \\tracingall log")
+        elif m == "crashes":
+            out[m] = cell("n/a", note=NO_V1_CRASHES)
         else:
             out[m] = cell("missing", note="not in the v1 one-off baseline")
     return out
@@ -1034,6 +1107,7 @@ def build(sources, shas=None, sample_note=None, stages=None, host_label=None, na
     red = [r for r in rows if r["verdict"] not in GREEN]
     all_green = not red and not partial and not samples and not sample_note
     behind_tiers = sorted({r["tier"] for r in rows if r["verdict"] == "behind"})
+    red_tiers = sorted({r["tier"] for r in rows if r["verdict"] in ISSUE_VERDICTS})
     stage_rows = []
     for st in stages:
         g = st.get("scoreboard_gate")
@@ -1057,7 +1131,7 @@ def build(sources, shas=None, sample_note=None, stages=None, host_label=None, na
                                if isinstance(t4_v1, dict) else t4_v1),
             "engines": {lab: {"git_sha": shas.get(lab), "runs": idents[lab]} for lab in LABELS},
             "rows": rows, "all_green": all_green, "red": len(red),
-            "behind_tiers": behind_tiers, "partial": partial, "samples": samples,
+            "behind_tiers": behind_tiers, "red_tiers": red_tiers, "partial": partial, "samples": samples,
             "retirement": stage_rows,
             "s5_scoreboard_gate_met": all_green}
 
@@ -1185,21 +1259,24 @@ MARKER_RE = re.compile(r"<!-- p5-scoreboard:tier=([A-Za-z0-9_.-]+) -->")
 
 
 def issue_title(tier):
-    return "P5 scoreboard: new engine behind v1 on %s" % TIER_TITLES.get(tier, tier)
+    return "P5 scoreboard red: %s (behind v1 or below the bar)" % TIER_TITLES.get(tier, tier)
 
 
 def issue_body(board, tier, run_url=None):
     rows = [r for r in board["rows"] if r["tier"] == tier]
     out = [MARKER % tier, "",
-           "The P5 scoreboard (tools/parity/scoreboard.py) measured the new engine **behind** v1 "
-           "on this tier. DESIGN §12 P5 requires new >= old on every tier. This issue is opened and "
-           "updated by the nightly scoreboard and closed by it once the tier recovers.", ""]
+           "The P5 scoreboard (tools/parity/scoreboard.py) measured this tier **red**: the new engine "
+           "behind v1, or below a target or the owner's bar. DESIGN §12 P5 requires new >= old on "
+           "every tier; the owner's bar (§13, 2026-10-05) is P-T2 >= 99% and P-T1 >= 98% on arXiv "
+           "and T4, and zero crashes on T4. This issue is opened and updated by the nightly "
+           "scoreboard and closed by it once the tier recovers.", ""]
     if run_url:
         out += ["Run: %s" % run_url, ""]
-    out += ["| metric | new | old | verdict |", "|---|---|---|---|"]
+    out += ["| metric | new | old | verdict | target |", "|---|---|---|---|---|"]
     for r in rows:
-        out.append("| %s | %s | %s | %s |" % (r["metric"], fmt_cell(r["new"]), fmt_cell(r["old"]),
-                                              r["verdict"]))
+        v = r["verdict"]
+        out.append("| %s | %s | %s | %s | %s |" % (r["metric"], fmt_cell(r["new"]), fmt_cell(r["old"]),
+                                                   v if v in GREEN else "**%s**" % v, r["target"]))
     shas = ", ".join("%s %s" % (lab, board["engines"][lab].get("git_sha") or "?") for lab in LABELS)
     out += ["", "Engines: %s. Host: %s." % (shas, board.get("host_label") or "?")]
     return "\n".join(out) + "\n"
@@ -1223,7 +1300,7 @@ def plan_issues(board, existing, run_url=None):
     # Only complete runs open or update issues: a sample (--limit, --sample-note) is shown
     # in the table but files nothing.
     behind = set() if board.get("sample_note") else {
-        r["tier"] for r in board["rows"] if r["verdict"] == "behind"
+        r["tier"] for r in board["rows"] if r["verdict"] in ISSUE_VERDICTS
         and not any(c and (c.get("partial") or c.get("sample")) for c in (r["new"], r["old"]))}
     for tier in sorted(behind):
         body = issue_body(board, tier, run_url)
@@ -1241,7 +1318,8 @@ def plan_issues(board, existing, run_url=None):
             continue
         if tier_rows and all(clean(r) for r in tier_rows):
             actions.append(("close", iss["number"], tier,
-                            "The P5 scoreboard now measures new >= old on every row of this tier%s. "
+                            "The P5 scoreboard now measures this tier green (new >= old, targets and the "
+                            "owner's bar met) on every row%s. "
                             "Closing; it reopens as a new issue if the tier falls behind again."
                             % ((" (" + run_url + ")") if run_url else "")))
     return actions
@@ -1249,13 +1327,18 @@ def plan_issues(board, existing, run_url=None):
 
 def apply_issues(actions, repo, gh=run_gh):
     done = []
+    if any(kind in ("create", "edit") for kind, _, _, _ in actions):
+        # --force: create the label, or leave an existing one as it is (idempotent)
+        gh(["label", "create", ISSUE_LABEL, "--repo", repo, "--force", "--color", "B60205",
+            "--description", "P5 scoreboard: a tier behind v1 or below the owner's bar (opened by p5-scoreboard.yml)"])
     for kind, number, tier, body in actions:
         if kind == "create":
             out = gh(["issue", "create", "--repo", repo, "--title", issue_title(tier),
-                      "--body-file", "-"], stdin=body)
+                      "--label", ISSUE_LABEL, "--body-file", "-"], stdin=body)
             done.append((kind, out.strip(), tier))
         elif kind == "edit":
-            gh(["issue", "edit", str(number), "--repo", repo, "--body-file", "-"], stdin=body)
+            gh(["issue", "edit", str(number), "--repo", repo, "--title", issue_title(tier),
+                "--add-label", ISSUE_LABEL, "--body-file", "-"], stdin=body)
             done.append((kind, number, tier))
         elif kind == "close":
             gh(["issue", "close", str(number), "--repo", repo, "--comment", body])
@@ -1365,7 +1448,8 @@ def main(argv=None):
         if board.get("schema") != SCHEMA:
             print("scoreboard: %s is not a %s board" % (args.from_board, SCHEMA), file=sys.stderr)
             return 2
-        return issues_step(board, args)
+        rc = issues_step(board, args)
+        return rc or gate(board, args)
     if not args.out:
         ap.error("--out is required (or --from-board)")
     shas = dict(_pairs(args.sha, "sha"))
@@ -1391,7 +1475,20 @@ def main(argv=None):
     print(render_status(board))
     print(render_table(board))
     rc = issues_step(board, args)
-    return rc or (1 if args.require_green and not board["all_green"] else 0)
+    return rc or gate(board, args)
+
+
+def gate(board, args):
+    """--require-green: 1 unless the board is all green (red rows, partial or sampled runs)."""
+    if not args.require_green or board.get("all_green"):
+        return 0
+    why = ["%d row(s) not green" % board.get("red", 0)] if board.get("red") else []
+    if board.get("red_tiers"):
+        why.append("issue-worthy tiers: " + ", ".join(board["red_tiers"]))
+    if board.get("partial") or board.get("samples") or board.get("sample_note"):
+        why.append("partial or sampled runs")
+    print("::error::P5 scoreboard gate: not all green (%s)" % "; ".join(why or ["see the board"]))
+    return 1
 
 
 def issues_step(board, args):

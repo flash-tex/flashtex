@@ -99,6 +99,12 @@ HARNESS_DIRS = (HERE, os.path.join(REPO, "tools", "real-world-corpus"), os.path.
 # exclusions that mean "not measured" (the harness failed), unlike the
 # oracle's own exclusions (pdflatex fails, or never converges)
 UNMEASURED = ("fetch:", "harness error:")
+# The owner's P5 bar (DESIGN §13, 2026-10-05) is zero crashes on T4. A crash is the
+# engine dying, not TeX stopping: a Rust panic (exit 101), a signal (a negative exit:
+# SIGSEGV, SIGABRT from a stack overflow, ...) or a traced pass whose log stops before
+# the run's end (tiers.TRACE_CRASH). A TeX error (exit 1) and a timeout are not crashes.
+PANIC_EXIT = 101
+TRACE_CRASH_PREFIX = "the traced pass crashed"
 # Resident memory of one worker scoring a document without a trace (oracle
 # and candidate PDFs parsed for L2/L3, qpdf, rasters): an allowance, not a
 # measurement; the traced part is measured (parity.PT1_MEMORY_FACTOR).
@@ -500,6 +506,25 @@ def level_name(r):
     return None if lv is None else ("below L0" if lv < 0 else LEVELS[lv])
 
 
+def crash_of(r):
+    """Why the candidate engine crashed on this document (see PANIC_EXIT), or None."""
+    cand = r.get("candidate") or {}
+    if cand.get("timed_out"):
+        return None
+    code = cand.get("exit")
+    if isinstance(code, int) and not isinstance(code, bool):
+        if code == PANIC_EXIT:
+            return f"exit {code} (panic)"
+        if code < 0:
+            return f"killed by signal {-code}"
+    tail = str(cand.get("stderr_tail") or "")
+    if tail.startswith(TRACE_CRASH_PREFIX):
+        return tail[:200]
+    if "panicked at" in tail:
+        return "panicked: " + tail[tail.index("panicked at"):][:180]
+    return None
+
+
 def compact(r):
     """The artifact's per-document record: results and causes, no logs."""
     pt = r.get("pt") or {}
@@ -514,6 +539,9 @@ def compact(r):
             out["pt1_not_evaluated"] = why[:200]
     if (r.get("excluded") or "").startswith(UNMEASURED):
         out["unmeasured"] = True
+    crash = crash_of(r)
+    if crash:
+        out["crash"] = crash
     if not full_pass(r):
         cls, cause = classify(r)
         out["class"], out["cause"] = cls, (cause or "")[:400]
@@ -534,7 +562,10 @@ def tier_row(recs):
     row = {"documents": len(recs), "measured": len(measured),
            "excluded": dict(collections.Counter(r["excluded"].split(":", 1)[0] for r in recs if r.get("excluded"))),
            "excluded_by_oracle": sum(1 for r in recs if r.get("excluded") and not r.get("unmeasured")),
-           "unmeasured": sum(1 for r in recs if r.get("unmeasured"))}
+           "unmeasured": sum(1 for r in recs if r.get("unmeasured")),
+           # the owner's bar: zero crashes (crash_of), over every document the engine ran
+           "crashes": sum(1 for r in recs if r.get("crash")),
+           "crash_examples": [r["id"] for r in recs if r.get("crash")][:10]}
     for t in ("P-T1", "P-T2"):
         ev = [r for r in measured if r.get(t) is not None]
         row[t] = [sum(1 for r in ev if r[t]), len(ev)] if ev else None
@@ -646,6 +677,9 @@ def render_summary(s):
         ex = ", ".join(f"{k} {v}" for k, v in sorted(row["excluded"].items())) or "—"
         w(f"| {t} | {row['documents']} | {ex} | {cell(row['P-T1'])} | {cell(row['P-T2'])} | "
           + " | ".join(cell(row[n]) for n in LEVELS) + " |")
+    w("")
+    w("Engine crashes (panic, signal, or a traced log cut short; the bar is 0): " + "; ".join(
+        f"{t} {row.get('crashes', 'not counted')}" for t, row in s["tiers"].items()) + ".")
     w("")
     w("P-T1 not evaluated: " + "; ".join(
         f"{t} {row['P-T1_not_evaluated']}" for t, row in s["tiers"].items()) + ".")

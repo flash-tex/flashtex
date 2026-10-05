@@ -68,7 +68,7 @@ def nightly(kind="tex", sha=SHA, engine_sha256="E-new", n=10, tiers=None, **over
     t = {"documents": n, "measured": n, "excluded": {}, "unmeasured": 0,
          "P-T1": [n, n] if kind == "tex" else None, "P-T1_not_evaluated": 0 if kind == "tex" else n,
          "P-T1_over_cap": 0, "P-T2": [n, n] if kind == "tex" else [0, n],
-         "L0": [n, n], "L1": [n, n], "L2": [n, n], "L3": [n, n], "L4": [0, n]}
+         "L0": [n, n], "L1": [n, n], "L2": [n, n], "L3": [n, n], "L4": [0, n], "crashes": 0}
     d = {"schema": "flashtex-nightly/1", "git_sha": sha, "host": {"node": "h1", "label": "linux-x"},
          "engine": {"kind": kind, "version": kind, "sha256": engine_sha256},
          "fingerprint": {"oracle_pdftex_version": "pdfTeX 1.40.29"},
@@ -913,6 +913,146 @@ class Decision1(unittest.TestCase):
             sb.main(["--nightly", "new=" + nn, "--sha", "new=" + SHA, "--out", out, "--t4-v1-baseline", "none"])
         with open(os.path.join(out, "scoreboard.json")) as f:
             self.assertEqual(row(json.load(f), "nightly-5k", "L0")["verdict"], "missing")
+
+
+class OwnerBar(unittest.TestCase):
+    """P5-BOARD-T4: the owner's bar (DESIGN §13, 2026-10-05): P-T2 >= 99% and P-T1 >= 98% on
+    arXiv and T4, zero crashes on T4; a red tier opens or updates one p5-red issue; the gate
+    fails the run unless the board is all green."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+
+    def arxiv(self, pt1, pt2, n=1000):
+        return board_for(self.tmp, {"arxiv": summary(n, pt1, pt2, (n, n, n, n))},
+                         {"arxiv": summary(n, pt1_na=CLI_NA, pt2=(0, n), levels=(1, 1, 0, 0))},
+                         sizes={"arxiv": n})
+
+    def test_pt_rates_against_the_bar(self):
+        b = self.arxiv((980, 1000), (990, 1000))  # exactly at the bar
+        self.assertEqual(row(b, "arxiv", "P-T1")["verdict"], "ahead (old n/a)")
+        self.assertEqual(row(b, "arxiv", "P-T2")["verdict"], "ahead")
+        self.assertEqual(row(b, "arxiv", "P-T2")["target"], "new >= old; >= 99% (owner bar)")
+        b = self.arxiv((979, 1000), (989, 1000))  # one document under, though new > old
+        self.assertEqual(row(b, "arxiv", "P-T1")["verdict"], "below bar (old n/a)")
+        self.assertEqual(row(b, "arxiv", "P-T2")["verdict"], "below bar")
+        self.assertEqual(b["red_tiers"], ["arxiv"])
+        # the bar is on counts, not the rounded percent (98.95% shows as 99.0%)
+        self.assertFalse(sb.bar_met("arxiv", "P-T2", sb.cell("measured", 1979, 2000)))
+        # rows the bar does not cover are unchanged
+        self.assertTrue(sb.bar_met("templates", "P-T2", sb.cell("measured", 1, 2)))
+
+    def test_below_bar_opens_a_labelled_issue_and_edit_relabels(self):
+        b = self.arxiv((979, 1000), (990, 1000))
+        acts = sb.plan_issues(b, [])
+        self.assertEqual([(a[0], a[2]) for a in acts], [("create", "arxiv")])
+        self.assertIn("below bar", acts[0][3])
+        calls = []
+        sb.apply_issues(acts, "o/r", gh=lambda args, stdin=None: calls.append(args) or "https://x/1\n")
+        self.assertEqual(calls[0][:3], ["label", "create", sb.ISSUE_LABEL])
+        self.assertIn("--label", calls[1])
+        self.assertEqual(calls[1][calls[1].index("--label") + 1], "p5-red")
+        calls = []
+        acts = sb.plan_issues(b, [{"number": 9, "title": "old title", "body": sb.MARKER % "arxiv"}])
+        sb.apply_issues(acts, "o/r", gh=lambda args, stdin=None: calls.append(args) or "")
+        self.assertEqual(calls[1][:3], ["issue", "edit", "9"])
+        self.assertIn("--add-label", calls[1])
+        # recovered: closed, and no label call is needed
+        calls = []
+        good = self.arxiv((1000, 1000), (1000, 1000))
+        acts = sb.plan_issues(good, [{"number": 9, "title": "t", "body": sb.MARKER % "arxiv"}])
+        sb.apply_issues(acts, "o/r", gh=lambda args, stdin=None: calls.append(args) or "")
+        self.assertEqual([c[:3] for c in calls], [["issue", "close", "9"]])
+
+    def test_t4_crash_row(self):
+        t = nightly()["tiers"]["nightly-5k"]
+        t.update(crashes=1, crash_examples=["2101.00001v1"])
+        tiers, _ = sb.load_nightly(write_json(self.tmp, "s.json", nightly(tiers={"nightly-5k": t})), SIZES)
+        c = tiers["nightly-5k"]["crashes"]
+        self.assertEqual((c["passed"], c["of"]), (9, 10))
+        self.assertIn("2101.00001v1", c["note"])
+        na = sb.cell("n/a", note=sb.NO_V1_CRASHES)
+        self.assertEqual(sb.verdict("nightly-5k", "crashes", c, na, True), "below bar (old n/a)")
+        self.assertEqual(sb.verdict("nightly-5k", "crashes", sb.cell("measured", 10, 10), na, True),
+                         "ahead (old n/a)")
+        self.assertEqual(sb.target_of("nightly-5k", "crashes"), "0 crashes (owner bar)")
+        # the v1 one-off baseline has no crash count: n/a, with the bar named
+        base = {"tier": "nightly-5k", "status": "PROVISIONAL", "measured_date": "2026-10-01",
+                "source": ["https://example.invalid/m"], "v1": {"L0": [1, 4]}}
+        old = sb.t4_v1_cells(base, "nightly-5k", {"crashes": c, "L0": c})
+        self.assertEqual(old["crashes"]["status"], "n/a")
+        t["crashes"] = 11
+        with self.assertRaises(sb.FormatError):
+            sb.load_nightly(write_json(self.tmp, "bad.json", nightly(tiers={"nightly-5k": t})), SIZES)
+
+    def test_crash_count_recovered_from_an_older_summary(self):
+        d = tempfile.mkdtemp()
+        t = nightly()["tiers"]["nightly-5k"]
+        del t["crashes"]
+        p = write_json(d, "summary.json", nightly(tiers={"nightly-5k": t}))
+        c = sb.load_nightly(p, SIZES)[0]["nightly-5k"]["crashes"]
+        self.assertEqual(c["status"], "not run")  # no documents.json: not counted, never green
+        recs = [{"tier": "nightly-5k", "id": "a", "cause": "L0: exit 101"},
+                {"tier": "nightly-5k", "id": "b", "cause": "L0: exit 1: ! Undefined control sequence."},
+                {"tier": "nightly-5k", "id": "c", "first_difference": "P-T1: the candidate's traced pass did not "
+                 "run: the traced pass crashed: its log stops before the end of the run (3 s)"},
+                {"tier": "arxiv", "id": "d", "cause": "L0: exit -11"}]
+        write_json(d, "documents.json", {"documents": recs})
+        c = sb.load_nightly(p, SIZES)[0]["nightly-5k"]["crashes"]
+        self.assertEqual((c["passed"], c["of"]), (8, 10))
+        self.assertIn("recovered from documents.json", c["partial"])
+
+    def test_unfetched_documents_make_the_tier_partial(self):
+        b = board_for(self.tmp, {"templates": summary(8, (8, 8), (8, 8), (8, 8, 8, 8), excluded={"fetch": 2})},
+                      {"templates": summary(8, pt1_na=CLI_NA, pt2=(0, 8), levels=(0, 0, 0, 0), excluded={"fetch": 2})})
+        r = row(b, "templates", "L1")
+        self.assertIn("2 document(s) unmeasured", r["new"]["partial"])
+        self.assertFalse(b["all_green"])
+
+    def test_nightly_counts_crashes(self):
+        import nightly as nt
+        self.assertEqual(nt.crash_of({"candidate": {"exit": 101}}), "exit 101 (panic)")
+        self.assertEqual(nt.crash_of({"candidate": {"exit": -11}}), "killed by signal 11")
+        self.assertIsNone(nt.crash_of({"candidate": {"exit": None, "timed_out": True}}))
+        self.assertIsNone(nt.crash_of({"candidate": {"exit": 1, "stderr_tail": "exit 1: ! Emergency stop."}}))
+        self.assertIsNone(nt.crash_of({"candidate": {"exit": 0, "stderr_tail": ""}}))
+        self.assertTrue(nt.crash_of({"candidate": {"exit": 0, "stderr_tail":
+                                                   "the traced pass crashed: its log stops before the end (2 s)"}}))
+        recs = [{"id": "x", "crash": "exit 101 (panic)"}, {"id": "y"}, {"id": "z", "unmeasured": True}]
+        row_ = nt.tier_row(recs)
+        self.assertEqual((row_["crashes"], row_["crash_examples"]), (1, ["x"]))
+
+    def test_workflow_one_official_host_and_the_gate(self):
+        with open(os.path.join(REPO, ".github", "workflows", "p5-scoreboard.yml")) as f:
+            wf = f.read()
+        jobs = jobs_of(wf)
+        auto = jobs["pick"].split("auto)", 1)[1].split(";;", 1)[0]
+        self.assertIn("route=pc", auto)
+        self.assertNotIn("route=mac", auto)  # never a silent Mac stand-in
+        pub = jobs["publish"]
+        self.assertIn("--require-green", pub)
+        self.assertLess(pub.index("--issues \"$ISSUES\""), pub.index("--require-green"))  # issues first
+        self.assertIn("OFFICIAL: ${{ needs.pick.outputs.route == 'pc' }}", pub)
+        self.assertIn("|| 'off' }}", pub.split("ISSUES:", 1)[1].split("\n", 1)[0])  # a Mac board files none
+        self.assertIn("--slice=flashtex.slice", jobs["scoreboard"])
+        self.assertIn("exit 1", jobs["scoreboard-unavailable"])
+
+    def test_gate_from_board(self):
+        b = self.arxiv((979, 1000), (990, 1000))
+        path = write_json(self.tmp, "board.json", b)
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            rc = sb.main(["--from-board", path, "--issues", "off", "--require-green"])
+        self.assertEqual(rc, 1)
+        self.assertIn("::error::P5 scoreboard gate", out.getvalue())
+        self.assertIn("arxiv", out.getvalue())
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(sb.main(["--from-board", path, "--issues", "off"]), 0)  # no gate asked
+        green = complete_board(tempfile.mkdtemp())
+        self.assertTrue(green["all_green"], red(green))
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(sb.main(["--from-board", write_json(self.tmp, "g.json", green), "--issues", "off",
+                                      "--require-green"]), 0)
 
 
 if __name__ == "__main__":
