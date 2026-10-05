@@ -185,9 +185,94 @@ impl Drop for Slab {
 
 const MASK_WORDS: usize = CHUNK_WORDS / 64;
 
+// ---------------------------------------------------------------------------
+// The words of a sealed log, packed
+// ---------------------------------------------------------------------------
+//
+// A sealed log's words are the pre-images of TeX's memory words: two 32-bit
+// halves each (`link`/`info`, a `scaled`, character and font codes), most of
+// them small. Each half is stored in 0, 1, 2 or 4 bytes (zero, then the
+// smallest sign-extended width that holds it), with a 2-bit tag; a word's two
+// tags are one nibble. A delta's words are its nibbles (two to a byte), then
+// the halves' bytes in the same order. On the documents measured this takes
+// 0.50–0.58 of the 8 bytes a word took (docs/evidence/mem-footprint-2026-10-04/).
+// Decoding a word needs the sizes of the words before it in its delta, which
+// the nibbles give without touching their bytes.
+
+/// Bytes a half takes, by its tag.
+const HALF_LEN: [usize; 4] = [0, 1, 2, 4];
+
+/// Bytes a word takes, by its nibble (the low half's tag, then the high half's).
+const NIBBLE_LEN: [usize; 16] = {
+    let mut t = [0usize; 16];
+    let mut i = 0;
+    while i < 16 {
+        t[i] = HALF_LEN[i & 3] + HALF_LEN[i >> 2];
+        i += 1;
+    }
+    t
+};
+
+#[inline]
+fn half_tag(x: u32) -> usize {
+    let v = x as i32;
+    if v == 0 {
+        0
+    } else if v as i8 as i32 == v {
+        1
+    } else if v as i16 as i32 == v {
+        2
+    } else {
+        3
+    }
+}
+
+#[inline]
+fn put_half(out: &mut Vec<u8>, x: u32, t: usize) {
+    match t {
+        0 => {}
+        1 => out.push(x as u8),
+        2 => out.extend_from_slice(&(x as u16).to_le_bytes()),
+        _ => out.extend_from_slice(&x.to_le_bytes()),
+    }
+}
+
+/// The half at `b[p..]` with tag `t`.
+#[inline]
+fn get_half(b: &[u8], p: usize, t: usize) -> u32 {
+    match t {
+        0 => 0,
+        1 => b[p] as i8 as i32 as u32,
+        2 => i16::from_le_bytes([b[p], b[p + 1]]) as i32 as u32,
+        _ => u32::from_le_bytes([b[p], b[p + 1], b[p + 2], b[p + 3]]),
+    }
+}
+
+/// Append `vals`, packed, to `out`.
+fn pack_words(vals: &[u64], out: &mut Vec<u8>) {
+    let t0 = out.len();
+    out.resize(t0 + vals.len().div_ceil(2), 0);
+    for (i, &x) in vals.iter().enumerate() {
+        let (lo, hi) = (x as u32, (x >> 32) as u32);
+        let (tl, th) = (half_tag(lo), half_tag(hi));
+        out[t0 + i / 2] |= ((tl | th << 2) as u8) << ((i & 1) * 4);
+        put_half(out, lo, tl);
+        put_half(out, hi, th);
+    }
+}
+
+/// The word at byte `p` of `b` with nibble `t`.
+#[inline]
+fn get_word(b: &[u8], p: usize, t: usize) -> u64 {
+    let lo = get_half(b, p, t & 3);
+    let hi = get_half(b, p + HALF_LEN[t & 3], t >> 2);
+    lo as u64 | (hi as u64) << 32
+}
+
 /// One chunk of a sealed log: the words that differ between the state at
 /// the log's checkpoint and the state at the next, as a bit mask; their
-/// values at the log's checkpoint are `Log::words[at..]`, in bit order.
+/// values at the log's checkpoint are packed at `Log::bytes[at..]`, in bit
+/// order (`pack_words`).
 #[derive(Clone, Copy)]
 struct Delta {
     c: u32,
@@ -200,6 +285,29 @@ impl Delta {
         self.mask.iter().map(|m| m.count_ones() as usize).sum()
     }
 
+    /// The values of the words in `mask`, in bit order, into `out[..len]`.
+    fn unpack(&self, bytes: &[u8], out: &mut [u64; CHUNK_WORDS]) {
+        let n = self.len();
+        let tags = self.at as usize;
+        let mut p = tags + n.div_ceil(2);
+        for (i, v) in out.iter_mut().enumerate().take(n) {
+            let t = (bytes[tags + i / 2] >> ((i & 1) * 4)) as usize & 15;
+            *v = get_word(bytes, p, t);
+            p += NIBBLE_LEN[t];
+        }
+    }
+
+    /// Bytes the packed words take.
+    fn packed_len(&self, bytes: &[u8]) -> usize {
+        let n = self.len();
+        let tags = self.at as usize;
+        let mut p = n.div_ceil(2);
+        for i in 0..n {
+            p += NIBBLE_LEN[(bytes[tags + i / 2] >> ((i & 1) * 4)) as usize & 15];
+        }
+        p
+    }
+
     /// Rewind a chunk by this delta where an older entry has not already:
     /// write the words it holds that are not in `done` into `dst`, and add
     /// them to `done`. Applied from the oldest log on, this leaves each word
@@ -208,20 +316,41 @@ impl Delta {
     /// # Safety
     /// `dst` points at CHUNK_WORDS writable words.
     #[inline]
-    unsafe fn apply_under(&self, words: &[u64], dst: *mut u64, done: &mut [u64; MASK_WORDS]) {
-        let mut k = self.at as usize;
-        for (mw, dmw) in done.iter_mut().enumerate() {
-            let m = self.mask[mw];
-            let mut need = m & !*dmw;
-            while need != 0 {
-                let b = need.trailing_zeros();
-                let idx = k + (m & ((1u64 << b) - 1)).count_ones() as usize;
-                *dst.add(mw * 64 + b as usize) = words[idx];
-                need &= need - 1;
+    unsafe fn apply_under(&self, bytes: &[u8], dst: *mut u64, done: &mut [u64; MASK_WORDS]) {
+        let need = [self.mask[0] & !done[0], self.mask[1] & !done[1]];
+        if need[0] | need[1] != 0 {
+            // Walk the words in order up to the last one needed, decoding
+            // only those (the others' sizes come from their nibbles).
+            let n = self.len();
+            let tags = self.at as usize;
+            let mut p = tags + n.div_ceil(2);
+            let mut i = 0usize;
+            for mw in 0..MASK_WORDS {
+                let mut m = self.mask[mw];
+                let mut left = need[mw];
+                while left != 0 {
+                    let b = m.trailing_zeros();
+                    let t = (bytes[tags + i / 2] >> ((i & 1) * 4)) as usize & 15;
+                    if left >> b & 1 == 1 {
+                        *dst.add(mw * 64 + b as usize) = get_word(bytes, p, t);
+                        left &= left - 1;
+                    }
+                    p += NIBBLE_LEN[t];
+                    i += 1;
+                    m &= m - 1;
+                }
+                i += m.count_ones() as usize;
+                if mw + 1 < MASK_WORDS && need[mw + 1] != 0 {
+                    // the skipped rest of this mask word: their sizes
+                    let skip = m.count_ones() as usize;
+                    for k in i - skip..i {
+                        p += NIBBLE_LEN[(bytes[tags + k / 2] >> ((k & 1) * 4)) as usize & 15];
+                    }
+                }
             }
-            *dmw |= m;
-            k += m.count_ones() as usize;
         }
+        done[0] |= self.mask[0];
+        done[1] |= self.mask[1];
     }
 }
 
@@ -278,7 +407,8 @@ unsafe fn apply_whole_under(src: *const u64, dst: *mut u64, done: &mut [u64; MAS
 struct Log {
     entries: Vec<(u32, ChunkPtr)>,
     deltas: Vec<Delta>,
-    words: Vec<u64>,
+    /// The deltas' words, packed (`pack_words`).
+    bytes: Vec<u8>,
 }
 
 impl Log {
@@ -292,7 +422,48 @@ impl Log {
 
     /// Heap bytes of the sealed part.
     fn sealed_bytes(&self) -> usize {
-        self.deltas.capacity() * std::mem::size_of::<Delta>() + self.words.capacity() * 8
+        self.deltas.capacity() * std::mem::size_of::<Delta>() + self.bytes.capacity()
+    }
+
+    /// The words the deltas hold.
+    fn words(&self) -> usize {
+        self.deltas.iter().map(|d| d.len()).sum()
+    }
+
+    /// Rewrite the sealed log through `f`, which sees each delta as its
+    /// chunk, mask and values (in bit order) and may change them or add
+    /// deltas (kept sorted by chunk). For the rare edits of a sealed log
+    /// (`Arena::or_from`), not for restores.
+    fn rewrite(&mut self, f: impl FnOnce(&mut Vec<(u32, [u64; MASK_WORDS], Vec<u64>)>)) {
+        let mut buf = [0u64; CHUNK_WORDS];
+        let mut v: Vec<(u32, [u64; MASK_WORDS], Vec<u64>)> = self
+            .deltas
+            .iter()
+            .map(|d| {
+                d.unpack(&self.bytes, &mut buf);
+                (d.c, d.mask, buf[..d.len()].to_vec())
+            })
+            .collect();
+        f(&mut v);
+        v.sort_by_key(|e| e.0);
+        let mut deltas = Vec::with_capacity(v.len());
+        let mut bytes = Vec::with_capacity(self.bytes.len() + 16);
+        for (c, mask, vals) in &v {
+            debug_assert_eq!(
+                vals.len(),
+                mask.iter().map(|m| m.count_ones() as usize).sum::<usize>()
+            );
+            let at = bytes.len() as u32;
+            pack_words(vals, &mut bytes);
+            deltas.push(Delta {
+                c: *c,
+                at,
+                mask: *mask,
+            });
+        }
+        bytes.shrink_to_fit();
+        self.deltas = deltas;
+        self.bytes = bytes;
     }
 }
 
@@ -349,7 +520,7 @@ fn rewound_until(
                 // SAFETY: a chunk of `buf`.
                 unsafe {
                     d.apply_under(
-                        &log.words,
+                        &log.bytes,
                         buf.as_mut_ptr().add(i * CHUNK_WORDS),
                         &mut done[i],
                     )
@@ -368,48 +539,58 @@ const STOP_LOGS: usize = 64;
 /// word, `older`'s value wins.
 fn merge_sealed(older: &Log, newer: &Log) -> Log {
     let mut deltas = Vec::with_capacity(older.deltas.len() + newer.deltas.len());
-    let mut words = Vec::with_capacity(older.words.len() + newer.words.len());
-    let copy = |d: &Delta, from: &[u64], words: &mut Vec<u64>| -> Delta {
-        let at = words.len();
-        words.extend_from_slice(&from[d.at as usize..d.at as usize + d.len()]);
+    let mut bytes = Vec::with_capacity(older.bytes.len() + newer.bytes.len());
+    // a delta of one log alone keeps its packed bytes as they are
+    let copy = |d: &Delta, from: &[u8], bytes: &mut Vec<u8>| -> Delta {
+        let at = bytes.len();
+        let n = d.packed_len(from);
+        bytes.extend_from_slice(&from[d.at as usize..d.at as usize + n]);
         Delta {
             c: d.c,
             at: at as u32,
             mask: d.mask,
         }
     };
+    let (mut xv, mut yv) = ([0u64; CHUNK_WORDS], [0u64; CHUNK_WORDS]);
+    let mut vals: Vec<u64> = Vec::with_capacity(CHUNK_WORDS);
     let (mut i, mut j) = (0, 0);
     let (a, b) = (&older.deltas, &newer.deltas);
     while i < a.len() || j < b.len() {
         if j == b.len() || (i < a.len() && a[i].c < b[j].c) {
-            deltas.push(copy(&a[i], &older.words, &mut words));
+            deltas.push(copy(&a[i], &older.bytes, &mut bytes));
             i += 1;
         } else if i == a.len() || b[j].c < a[i].c {
-            deltas.push(copy(&b[j], &newer.words, &mut words));
+            deltas.push(copy(&b[j], &newer.bytes, &mut bytes));
             j += 1;
         } else {
             let (x, y) = (&a[i], &b[j]);
-            let at = words.len();
-            let (mut kx, mut ky) = (x.at as usize, y.at as usize);
+            x.unpack(&older.bytes, &mut xv);
+            y.unpack(&newer.bytes, &mut yv);
+            let at = bytes.len();
+            let (mut kx, mut ky) = (0usize, 0usize);
             let mut mask = [0u64; MASK_WORDS];
+            vals.clear();
             for (mw, m) in mask.iter_mut().enumerate() {
                 let (mx, my) = (x.mask[mw], y.mask[mw]);
                 *m = mx | my;
-                for bpos in 0..64 {
-                    let bitv = 1u64 << bpos;
+                let mut all = mx | my;
+                while all != 0 {
+                    let bitv = all & all.wrapping_neg();
                     let (in_x, in_y) = (mx & bitv != 0, my & bitv != 0);
                     if in_x {
-                        words.push(older.words[kx]);
+                        vals.push(xv[kx]);
                         kx += 1;
                         if in_y {
                             ky += 1;
                         }
-                    } else if in_y {
-                        words.push(newer.words[ky]);
+                    } else {
+                        vals.push(yv[ky]);
                         ky += 1;
                     }
+                    all &= all - 1;
                 }
             }
+            pack_words(&vals, &mut bytes);
             deltas.push(Delta {
                 c: x.c,
                 at: at as u32,
@@ -420,11 +601,11 @@ fn merge_sealed(older: &Log, newer: &Log) -> Log {
         }
     }
     deltas.shrink_to_fit();
-    words.shrink_to_fit();
+    bytes.shrink_to_fit();
     Log {
         entries: Vec::new(),
         deltas,
-        words,
+        bytes,
     }
 }
 
@@ -567,7 +748,8 @@ impl Core {
         debug_assert!(self.logs[i].deltas.is_empty(), "sealing a sealed log");
         entries.sort_unstable_by_key(|e| e.0);
         let mut deltas = Vec::with_capacity(entries.len());
-        let mut words = Vec::with_capacity(entries.len() * (CHUNK_WORDS / 8));
+        let mut bytes = Vec::with_capacity(entries.len() * CHUNK_WORDS / 2);
+        let mut vals: Vec<u64> = Vec::with_capacity(CHUNK_WORDS);
         // The two chunks of each entry are mostly not in the cache any more
         // (the page wrote them long ago): ask for the next ones early. On the
         // 953-page benchmark this cut the seal from 0.31 to 0.20 ms a page.
@@ -610,14 +792,16 @@ impl Core {
                 }
             }
             if mask.iter().any(|&m| m != 0) {
-                let at = words.len();
+                let at = bytes.len();
+                vals.clear();
                 for (mw, &m0) in mask.iter().enumerate() {
                     let mut m = m0;
                     while m != 0 {
-                        words.push(old[mw * 64 + m.trailing_zeros() as usize]);
+                        vals.push(old[mw * 64 + m.trailing_zeros() as usize]);
                         m &= m - 1;
                     }
                 }
+                pack_words(&vals, &mut bytes);
                 deltas.push(Delta {
                     c,
                     at: at as u32,
@@ -627,10 +811,10 @@ impl Core {
             self.slab.give(p);
         }
         deltas.shrink_to_fit();
-        words.shrink_to_fit();
+        bytes.shrink_to_fit();
         let log = &mut self.logs[i];
         log.deltas = deltas;
-        log.words = words;
+        log.bytes = bytes;
         self.sealed_bytes += log.sealed_bytes();
     }
 
@@ -757,7 +941,7 @@ impl Core {
                     let dn = &mut done[slot_r[d.c as usize] as usize - i0];
                     let live = (base + ((d.c as usize) << CHUNK_SHIFT)) as *mut u64;
                     // SAFETY: as above.
-                    unsafe { d.apply_under(&log.words, live, dn) };
+                    unsafe { d.apply_under(&log.bytes, live, dn) };
                 }
             }
         };
@@ -1350,32 +1534,30 @@ impl Arena {
             if !prev.entries.is_empty() {
                 return Err("or_from: the log before the checkpoint is not sealed".into());
             }
-            match prev.deltas.iter().position(|d| d.c == c) {
-                Some(di) if prev.deltas[di].mask[mw] >> b & 1 == 1 => {}
-                Some(di) => {
-                    let d = prev.deltas[di];
-                    let idx = d.at as usize
-                        + d.mask[..mw]
+            let held = prev
+                .deltas
+                .iter()
+                .any(|d| d.c == c && d.mask[mw] >> b & 1 == 1);
+            if !held {
+                let before = prev.sealed_bytes();
+                prev.rewrite(|ds| match ds.iter_mut().find(|e| e.0 == c) {
+                    Some((_, mask, vals)) => {
+                        // the word's place among the delta's words, in bit order
+                        let idx = mask[..mw]
                             .iter()
                             .map(|m| m.count_ones() as usize)
                             .sum::<usize>()
-                        + (d.mask[mw] & ((1u64 << b) - 1)).count_ones() as usize;
-                    prev.words.insert(idx, v);
-                    prev.deltas[di].mask[mw] |= 1u64 << b;
-                    for d2 in prev.deltas.iter_mut() {
-                        if d2.at > d.at {
-                            d2.at += 1;
-                        }
+                            + (mask[mw] & ((1u64 << b) - 1)).count_ones() as usize;
+                        vals.insert(idx, v);
+                        mask[mw] |= 1u64 << b;
                     }
-                }
-                None => {
-                    let at = prev.words.len() as u32;
-                    prev.words.push(v);
-                    let mut mask = [0u64; MASK_WORDS];
-                    mask[mw] = 1u64 << b;
-                    let pos = prev.deltas.partition_point(|d| d.c < c);
-                    prev.deltas.insert(pos, Delta { c, at, mask });
-                }
+                    None => {
+                        let mut mask = [0u64; MASK_WORDS];
+                        mask[mw] = 1u64 << b;
+                        ds.push((c, mask, vec![v]));
+                    }
+                });
+                core.sealed_bytes = core.sealed_bytes + prev.sealed_bytes() - before;
             }
         }
         let mut n = 0;
@@ -1387,17 +1569,26 @@ impl Arena {
                     n += 1;
                 }
             }
-            for d in &log.deltas {
-                if d.c == c && d.mask[mw] >> b & 1 == 1 {
-                    let idx = d.at as usize
-                        + d.mask[..mw]
-                            .iter()
-                            .map(|m| m.count_ones() as usize)
-                            .sum::<usize>()
-                        + (d.mask[mw] & ((1u64 << b) - 1)).count_ones() as usize;
-                    log.words[idx] |= bits;
-                    n += 1;
-                }
+            if log
+                .deltas
+                .iter()
+                .any(|d| d.c == c && d.mask[mw] >> b & 1 == 1)
+            {
+                let before = log.sealed_bytes();
+                log.rewrite(|ds| {
+                    for (dc, mask, vals) in ds.iter_mut() {
+                        if *dc == c && mask[mw] >> b & 1 == 1 {
+                            let idx = mask[..mw]
+                                .iter()
+                                .map(|m| m.count_ones() as usize)
+                                .sum::<usize>()
+                                + (mask[mw] & ((1u64 << b) - 1)).count_ones() as usize;
+                            vals[idx] |= bits;
+                            n += 1;
+                        }
+                    }
+                });
+                core.sealed_bytes = core.sealed_bytes + log.sealed_bytes() - before;
             }
         }
         // SAFETY: inside the mapping, 8-byte aligned.
@@ -1763,7 +1954,7 @@ impl Arena {
             .sum();
         let sum = |logs: &[Log]| -> (usize, usize, usize) {
             logs.iter().fold((0, 0, 0), |(b, d, w), l| {
-                (b + l.sealed_bytes(), d + l.deltas.len(), w + l.words.len())
+                (b + l.sealed_bytes(), d + l.deltas.len(), w + l.words())
             })
         };
         let (live_b, live_d, live_w) = sum(&c.logs);
@@ -2191,8 +2382,93 @@ mod tests {
             x ^= x >> 7;
             x ^= x << 17;
             let i = (x as usize) % arr.len();
-            arr[i] = x;
+            arr[i] = shaped(x);
         }
+    }
+
+    /// A word whose halves take every packed width (`pack_words`): zero,
+    /// one, two or four bytes, positive and negative.
+    fn shaped(x: u64) -> u64 {
+        let half = |y: u64| -> u32 {
+            match (y >> 61) & 7 {
+                0 => 0,
+                1 => (y as i8) as i32 as u32,
+                2 => (y as i16) as i32 as u32,
+                3 => y as u32,
+                4 => 1,
+                5 => u32::MAX,
+                6 => (y >> 8) as u16 as u32,
+                _ => 0x8000_0000 | y as u32,
+            }
+        };
+        half(x) as u64 | (half(x.rotate_left(29)) as u64) << 32
+    }
+
+    #[test]
+    fn packed_words_round_trip() {
+        let mut x = 7u64;
+        let mut vals = vec![];
+        for _ in 0..10_000 {
+            x ^= x << 13;
+            x ^= x >> 7;
+            x ^= x << 17;
+            vals.push(shaped(x));
+        }
+        vals.extend([
+            0,
+            1,
+            u64::MAX,
+            0x7f,
+            0x80,
+            0xff,
+            0x7fff,
+            0x8000,
+            0xffff_8000,
+            1 << 32,
+            0x8000_0000_0000_0000,
+        ]);
+        for n in [0usize, 1, 2, 3, 127, 128] {
+            for start in [0usize, 5, 333] {
+                let chunk = &vals[start..start + n];
+                let mut bytes = vec![9u8; 3];
+                pack_words(chunk, &mut bytes);
+                let mut mask = [0u64; MASK_WORDS];
+                // the first n bits set, any n words do
+                for k in 0..n {
+                    mask[k / 64] |= 1 << (k % 64);
+                }
+                let d = Delta { c: 0, at: 3, mask };
+                let mut out = [0u64; CHUNK_WORDS];
+                d.unpack(&bytes, &mut out);
+                assert_eq!(&out[..n], chunk);
+                assert_eq!(d.packed_len(&bytes), bytes.len() - 3);
+                // apply_under with every other word already done
+                let mut dst = [0u64; CHUNK_WORDS];
+                let mut done = [0xaaaa_aaaa_aaaa_aaaau64; MASK_WORDS];
+                // SAFETY: `dst` is CHUNK_WORDS words.
+                unsafe { d.apply_under(&bytes, dst.as_mut_ptr(), &mut done) };
+                for k in 0..n {
+                    let want = if (0xaaaa_aaaa_aaaa_aaaau64 >> (k % 64)) & 1 == 1 {
+                        0
+                    } else {
+                        chunk[k]
+                    };
+                    assert_eq!(dst[k], want, "n {n} start {start} word {k}");
+                }
+            }
+        }
+        // scattered masks, both mask words, only the second needed
+        let mask = [0x8000_0000_0000_0011u64, 0x0100_0000_0000_8001];
+        let chunk = &vals[40..46];
+        let mut bytes = vec![];
+        pack_words(chunk, &mut bytes);
+        let d = Delta { c: 0, at: 0, mask };
+        let mut dst = [0u64; CHUNK_WORDS];
+        let mut done = [u64::MAX, 0];
+        // SAFETY: as above.
+        unsafe { d.apply_under(&bytes, dst.as_mut_ptr(), &mut done) };
+        assert_eq!([dst[64], dst[79], dst[120]], [chunk[3], chunk[4], chunk[5]]);
+        assert_eq!(dst[0] | dst[4] | dst[63], 0);
     }
 
     #[test]
@@ -2499,6 +2775,43 @@ mod tests {
             best = best.min(t.elapsed().as_secs_f64());
         }
         eprintln!("seal of 2000 chunks: best {:.3} ms", best * 1000.0);
+    }
+
+    /// The cost of a restore through many sealed logs (the tail of a long
+    /// document after an edit near its start), and of the logs' bytes:
+    /// `cargo test --release -p flashtex-engine --lib restore_cost -- --ignored --nocapture`
+    #[test]
+    #[ignore]
+    fn restore_cost() {
+        let (mut a, mut arr) = space(8_000_000);
+        scribble(&mut arr, 5, 1_000_000);
+        let first = a.checkpoint();
+        let mut x = 99u64;
+        // 400 pages, each rewriting 13 words in 2000 of the same 6000 chunks
+        for round in 0..400u64 {
+            for k in 0..2000usize {
+                let c = (k * 3 + round as usize % 3) % 6000;
+                for w in 0..13usize {
+                    x ^= x << 13;
+                    x ^= x >> 7;
+                    x ^= x << 17;
+                    arr[c * CHUNK_WORDS + w * 9] = shaped(x);
+                }
+            }
+            a.checkpoint();
+        }
+        let mut best = f64::MAX;
+        for _ in 0..5 {
+            let t = std::time::Instant::now();
+            let br = a.restore_branch(first).unwrap();
+            best = best.min(t.elapsed().as_secs_f64());
+            a.converge(br, first).unwrap();
+        }
+        eprintln!(
+            "restore through 400 logs: best {:.3} ms; logs {:.1} MB",
+            best * 1000.0,
+            a.log_bytes() as f64 / 1e6
+        );
     }
 
     #[test]
