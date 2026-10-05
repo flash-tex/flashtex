@@ -53,7 +53,8 @@ on:
       - 'apps/mac/Package.resolved'
       - 'apps/mac/Sources/FlashTeXPreviewV3/**'
       - 'apps/mac/Sources/FlashTeXDisplayListV3/**'
-      - 'apps/mac/Tests/FlashTeXPreviewV3Tests/PreviewParityTests.swift'
+      - 'apps/mac/Tests/FlashTeXPreviewV3Tests/**'
+      - 'apps/mac/Tests/FlashTeXDisplayListV3Tests/**'
       - '.github/actions/texlive-2026/**'
       - '.github/workflows/preview-parity.yml'
   workflow_dispatch:
