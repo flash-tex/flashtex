@@ -1436,7 +1436,7 @@ fn a_superseded_compile_still_sends_its_edited_page() {
     let (w, _) = middle_word(lines[line]).expect("a word");
     let offset: usize = lines[..line].iter().map(|l| l.len() + 1).sum::<usize>() + w;
     let mut sent_superseded = 0;
-    for round in 0..3u64 {
+    for round in 0..5u64 {
         // three keystrokes, each sent as soon as the one before has started
         let ids: Vec<i64> = (1..=3).map(|n| id + n).collect();
         id += 3;
@@ -1526,8 +1526,14 @@ fn a_superseded_compile_still_sends_its_edited_page() {
             &format!("superseded round {round}"),
         );
     }
-    // (whether a round starves its first compile depends on timing)
-    eprintln!("{sent_superseded} of 3 rounds starved a compile and protected the next");
+    // The second keystroke is sent as soon as the first has started: the
+    // first is stopped at its first checkpoint, long before its page, in
+    // practice every round; one round at least, or the test proved nothing.
+    eprintln!("{sent_superseded} of 5 rounds starved a compile and protected the next");
+    assert!(
+        sent_superseded >= 1,
+        "no round starved a compile: the protection was not exercised"
+    );
     let _ = c.bye();
     let _ = std::fs::remove_dir_all(&base);
 }
