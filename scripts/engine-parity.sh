@@ -26,11 +26,17 @@
 #             fixtures/multipass document, with the bibtex/makeindex runs
 #             its PASSES file gives, must equal its from-scratch sequence
 #
-# Usage: scripts/engine-parity.sh [--jobs N] [--work DIR] [STEP...]
+# Usage: scripts/engine-parity.sh [--jobs N] [--shard K/N] [--work DIR] [STEP...]
 # Default steps: build lockstep parity tests. A step after `build` reuses the
 # binary and format in the work directory (default: $RUNNER_TEMP or /tmp,
-# under engine-parity/). CI's merge-queue gate runs the steps as separate
-# shards on separate runners (`build lockstep`, `build parity`, `tests`).
+# under engine-parity/).
+#
+# --shard K/N (0 <= K < N, as tools/parity's) runs slice K of N of `parity`
+# (every N-th fixture, parity.py --shard) and of `tests` (every N-th test
+# target of flashtex-engine: the library, the binaries, each tests/*.rs; the
+# doc tests in slice 0). The N slices together are the whole step. CI's
+# merge-queue gate runs the steps as separate jobs: `build lockstep`, and
+# `build parity` and `tests` in two slices each (ci.yml, engine-parity-hosted).
 #
 # Needs TeX Live 2026 FIRST on PATH (pdfTeX 1.40.29, the pinned oracle;
 # another TeX Live's kpsewhich earlier on PATH makes the engine read the wrong
@@ -44,10 +50,12 @@ cd "$ROOT"
 JOBS="$(( $(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 4) / 2 ))"
 WORK="${RUNNER_TEMP:-/tmp}/engine-parity"
 STEPS=()
+SHARD=''
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --jobs) JOBS="${2:?--jobs needs a number}"; shift 2 ;;
     --work) WORK="${2:?--work needs a directory}"; shift 2 ;;
+    --shard) SHARD="${2:?--shard needs K/N}"; shift 2 ;;
     -h|--help) awk 'NR == 1 { next } /^#/ { sub(/^# ?/, ""); print; next } { exit }' "${BASH_SOURCE[0]}"; exit 0 ;;
     build|lockstep|parity|tests|t2|soundness) STEPS+=("$1"); shift ;;
     *) echo "engine-parity.sh: unknown argument: $1" >&2; exit 2 ;;
@@ -55,6 +63,14 @@ while [[ $# -gt 0 ]]; do
 done
 [[ ${#STEPS[@]} -gt 0 ]] || STEPS=(build lockstep parity tests)
 [[ "$JOBS" -ge 1 ]] || JOBS=1
+SHARD_K=0 SHARD_N=1
+if [[ -n "$SHARD" ]]; then
+  if ! [[ "$SHARD" =~ ^([0-9]+)/([0-9]+)$ ]] || (( BASH_REMATCH[1] >= BASH_REMATCH[2] )); then
+    echo "engine-parity.sh: --shard wants K/N with 0 <= K < N, got $SHARD" >&2
+    exit 2
+  fi
+  SHARD_K="${BASH_REMATCH[1]}" SHARD_N="${BASH_REMATCH[2]}"
+fi
 
 ENG="$WORK/eng"
 FMT="$WORK/fmt"
@@ -127,24 +143,24 @@ step_lockstep() {
   need_engine
   # tools/lockstep/run.py runs its cases one after another (two engine runs
   # each, ~1,500 cases: over 8 minutes on a busy runner), so the cases are
-  # split into $JOBS interleaved shards (run.py --shard K/N) run at once.
+  # split into $JOBS interleaved slices (run.py --shard K/N) run at once.
   local out="$WORK/lockstep.txt" n="$JOBS" k rc=0
   local -a pids=()
   rm -f "$WORK"/lockstep.shard-*.txt
-  for (( k = 1; k <= n; k++ )); do
+  for (( k = 0; k < n; k++ )); do
     FLASHTEX_POOL="$POOL" python3 tools/lockstep/run.py --engine "$INITEX" --reference "$PDFTEX" \
       --shard "$k/$n" >"$WORK/lockstep.shard-$k.txt" 2>&1 &
     pids+=("$!")
   done
   for k in "${!pids[@]}"; do
-    wait "${pids[$k]}" || { echo "lockstep shard $((k + 1))/$n: exit $?"; rc=1; }
+    wait "${pids[$k]}" || { echo "lockstep slice $k/$n: exit $?"; rc=1; }
   done
-  for (( k = 1; k <= n; k++ )); do cat "$WORK/lockstep.shard-$k.txt"; done >"$out"
+  for (( k = 0; k < n; k++ )); do cat "$WORK/lockstep.shard-$k.txt"; done >"$out"
   grep -vE '^PASS ' "$out" | grep -vE '^[0-9]+ cases, |^accounting: ' | tail -n 40 || true
   # One total line, as an unsharded run prints it.
   awk '/^[0-9]+ cases, [0-9]+ equal, [0-9]+ differ$/ { c += $1; e += $3; d += $5 }
        /^accounting: [0-9]+ / { a += $2 }
-       END { printf "%d cases, %d equal, %d differ (%d shards)\naccounting: %d cases differ\n", c, e, d, '"$n"', a }' "$out"
+       END { printf "%d cases, %d equal, %d differ (%d slices)\naccounting: %d cases differ\n", c, e, d, '"$n"', a }' "$out"
   [[ $rc -eq 0 ]] || die "lockstep: the engine differs from pdfTeX ($out)"
 }
 
@@ -155,11 +171,31 @@ step_parity() {
     --oracle-pdftex "$PDFTEX" --texbin "$TEXBIN" \
     --pt on --raster none -j "$JOBS" \
     --out "$WORK/parity" --work "$WORK/parity-work" \
-    --require-pt
+    ${SHARD:+--shard "$SHARD"} --require-pt
 }
 
 step_tests() {
-  FLASHTEX_REQUIRE_TEXLIVE=1 cargo test --release --locked -p flashtex-engine --no-fail-fast
+  local -a sel=()
+  if (( SHARD_N > 1 )); then
+    # Every N-th test target, from the K-th: the library, the binaries, then
+    # each integration test (tests/*.rs, in name order). cargo runs test
+    # binaries one after another, so this is what splits the wall time.
+    local -a targets=(--lib --bins)
+    local f i
+    for f in crates/flashtex-engine/tests/*.rs; do
+      f="${f##*/}"
+      targets+=("--test=${f%.rs}")
+    done
+    for i in "${!targets[@]}"; do
+      if (( i % SHARD_N == SHARD_K )); then sel+=("${targets[$i]}"); fi
+    done
+    echo "test targets of slice $SHARD: ${sel[*]}"
+  fi
+  FLASHTEX_REQUIRE_TEXLIVE=1 cargo test --release --locked -p flashtex-engine --no-fail-fast ${sel[@]+"${sel[@]}"}
+  # A target selection leaves out the doc tests: slice 0 runs them.
+  if (( SHARD_N > 1 && SHARD_K == 0 )); then
+    FLASHTEX_REQUIRE_TEXLIVE=1 cargo test --release --locked -p flashtex-engine --doc
+  fi
 }
 
 step_t2() {
