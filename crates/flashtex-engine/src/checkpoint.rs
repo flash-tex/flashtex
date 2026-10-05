@@ -322,6 +322,11 @@ pub struct Layer {
     pub s0: Option<CheckpointId>,
     /// The read-set when S₀ was taken.
     pub s0_reads: Option<system::ReadLog>,
+    /// At S₀ and at the `.aux` point: the files the run had written and
+    /// closed, with their content there (`host::written_before`, S₀'s key
+    /// takes them). Read when the checkpoint is taken: the run may write
+    /// them again before it ends, when the key is made (#1348).
+    pub written_at: Vec<(CheckpointId, Vec<(String, Vec<u8>)>)>,
     /// Take a checkpoint at the `.aux` point of this run (`Point::Aux`).
     pub want_aux_point: bool,
     /// The `.aux` point, once taken.
@@ -975,15 +980,29 @@ impl Globals {
     /// re-read of the `.aux` alone, `crate::incr`).
     /// Why `reattach_pending` cannot put the old run's files back (`None`:
     /// it can): a file whose first bytes its tail continues was changed by
-    /// another program.
+    /// another program; or a file the abandoned run opened for output
+    /// (truncated) that no tail holds -- the old run had it closed at the
+    /// restore target and never opened it again (a temporary file an edit
+    /// writes once more), so its old content is gone, and the record of
+    /// that open would go with the abandoned run's (#1348).
     pub fn reattach_blocked(&mut self) -> Option<String> {
-        self.layer_ref()?
-            .pending
-            .as_ref()?
+        let p = self.layer_ref()?.pending.as_ref()?;
+        if let Some(why) = p
             .tails
             .iter()
             .filter(|t| t.base > 0)
             .find_map(|t| system::outside_change(&t.path))
+        {
+            return Some(why);
+        }
+        let held: std::collections::HashSet<String> =
+            p.tails.iter().map(|t| system::out_key(&t.path)).collect();
+        system::opens_since(p.opens_tail.0)
+            .into_iter()
+            .find(|k| !k.is_empty() && !held.contains(k))
+            .map(|k| {
+                format!("{k} was opened for output by the abandoned run, and no tail holds it")
+            })
     }
 
     pub fn reattach_pending(&mut self) -> Result<(), String> {
@@ -1532,12 +1551,21 @@ impl Globals {
                 } else {
                     None
                 };
-                let reads = if why == Point::BeginDocument {
+                let reads = if matches!(why, Point::BeginDocument | Point::Aux) {
                     system::reads_so_far()
                 } else {
                     None
                 };
+                let written = match &reads {
+                    Some(r) => self
+                        .record_of(id)
+                        .and_then(|rec| crate::host::written_before(&rec, r)),
+                    None => Err(String::new()),
+                };
                 let l = self.layer();
+                if let Ok(w) = written {
+                    l.written_at.push((id, w));
+                }
                 l.taken.push((id, why));
                 if let Some(h) = hash {
                     l.state_hashes.push((id, h));
