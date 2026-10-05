@@ -1871,6 +1871,7 @@ fn doc_of(t: &Tangled, sec: u32) -> String {
 
 /// `sources`: the WEB file, then the change files applied to it, as given on
 /// the command line (for the generated `mod.rs` header).
+#[allow(clippy::too_many_arguments)]
 pub fn emit(
     p: &Program,
     t: &Tangled,

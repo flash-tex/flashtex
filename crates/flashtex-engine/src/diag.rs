@@ -1273,6 +1273,11 @@ mod tests {
         for e in std::fs::read_dir(dir).unwrap() {
             all.push_str(&std::fs::read_to_string(e.unwrap().path()).unwrap());
         }
+        // A routine indexes `eqtb` and `mem` through its local views
+        // (web2rust --array-view, crate::arena::ArrView): the same elements.
+        let all = all
+            .replace("__av_eqtb[", "self.eqtb[")
+            .replace("__av_mem[", "self.mem[");
         let body = |name: &str| {
             let s = all.split(&format!("pub fn {name}(")).nth(1).unwrap();
             s[..s.find("\n    pub fn ").unwrap_or(s.len())].to_string()
