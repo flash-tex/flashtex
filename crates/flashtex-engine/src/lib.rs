@@ -34,6 +34,7 @@
 pub mod arena;
 #[cfg(all(feature = "distribution", not(feature = "tex82")))]
 pub mod bundle;
+pub mod busy;
 #[cfg(not(feature = "tex82"))]
 pub mod checkpoint;
 pub mod cli;

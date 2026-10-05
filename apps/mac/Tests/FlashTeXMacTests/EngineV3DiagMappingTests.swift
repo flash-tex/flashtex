@@ -27,7 +27,7 @@ final class EngineV3DiagMappingTests: XCTestCase {
         let pkg = #"{"id":1,"seq":1,"severity":"warning","code":"package/hyperref/x","origin":"package","message":"Package hyperref Warning: x.","file":"/usr/local/texlive/2026/texmf-dist/tex/latex/hyperref/hyperref.sty","line":10,"exact":true}"#
         let info = #"{"id":1,"seq":2,"severity":"info","code":"tex/underfull-hbox","origin":"tex","message":"Underfull \\hbox (badness 10000)","exact":true}"#
         let diags = try [json, pkg, info].map { try DL3Diag.decode(Array($0.utf8)) }
-        let problems = EngineV3Session.problems(diags: diags, model: model, projectRoot: root)
+        let problems = EngineV3Session.problems(diags: diags, model: model, projectRoot: root, mode: .strict)
         XCTAssertEqual(problems.count, 2, "info is not a problem")
         let e = problems[0]
         XCTAssertEqual(e.severity, .error)
@@ -41,5 +41,10 @@ final class EngineV3DiagMappingTests: XCTestCase {
         let w = problems[1]
         XCTAssertNil(w.source)
         XCTAssertTrue(w.message.hasPrefix("hyperref.sty:10: "), w.message)
+        // Best effort (the default): the same row, a warning marked as pdfLaTeX's error.
+        let soft = EngineV3Session.problems(diags: diags, model: model, projectRoot: root)
+        XCTAssertEqual(soft[0].severity, .warning)
+        XCTAssertEqual(soft[0].message, "Undefined control sequence. (pdfLaTeX would report an error here)")
+        XCTAssertEqual(soft[0].source, e.source)
     }
 }
