@@ -625,7 +625,7 @@ The host answers with its own `HELLO`, or with `ERROR` `{"code":
  "engine": "pdfTeX 3.141592653-2.6-1.40.29 (FlashTeX engine)",
  "capabilities": ["compile", "cancel", "diagnostics", "font-programs", "font-formats", "have-fonts",
                   "resident", "incremental", "buffers", "edits", "viewport",
-                  "pages-status", "export", "external-tools", "exact-geometry", "diag-v1"],
+                  "pages-status", "export", "external-tools", "exact-geometry", "halt-on-error", "diag-v1"],
  "texmf": {"texlive": "/Library/TeX/texbin (PATH) -> /usr/local/texlive/2026/bin/universal-darwin",
            "resolver": "kpathsea (/Library/TeX/texbin)",
            "bundle": null,
@@ -686,7 +686,7 @@ demand later) the host prints progress lines
 | `main` | yes | the main file, relative to `root` (no `..`) |
 | `format` | no | format name, default `pdflatex` |
 | `shell_escape` | no | `\write18`: `default` (texmf.cnf's: restricted in TeX Live), `off`, `restricted`, `on` |
-| `halt_on_error` | no | `true`: `-halt-on-error`, TeX stops at the first error (a client's strict mode); default `false`: nonstopmode, recovering as pdflatex does. Another job: the resident document is replaced |
+| `halt_on_error` | no | (capability `halt-on-error`; an older host ignores the field) `true`: `-halt-on-error`, TeX stops at the first error (a client's strict mode); default `false`: nonstopmode, recovering as pdflatex does. Another job: the resident document is replaced |
 | `output_dir` | no | where the PDF, log and auxiliary files go (default: a per-connection temporary directory) |
 | `jobname` | no | default: the main file's name |
 | `have_fonts` | no | font keys (hex) the client holds (§5.1) |

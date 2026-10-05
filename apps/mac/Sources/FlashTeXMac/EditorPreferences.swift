@@ -908,6 +908,10 @@ struct CompilePreferencesSection: View {
             Text(model.strictTeXErrors ? "Like pdflatex -halt-on-error: TeX stops at the first error and every error is an error."
                                        : "Best effort: an error pdfLaTeX recovers from is a warning (“pdfLaTeX would report an error here”) and the preview goes on.")
                 .font(DS.Fonts.secondary).foregroundStyle(DS.Colors.textSecondary)
+            if model.strictTeXErrors, model.engineV3.strictModeIgnored {
+                Text("This engine host does not stop at the first error: errors are shown as errors, but TeX goes on. Update FlashTeX's engine to stop.")
+                    .font(DS.Fonts.secondary).foregroundStyle(.orange)
+            }
         }
     }
 }

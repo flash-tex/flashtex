@@ -650,6 +650,8 @@ pub(crate) const CAPABILITIES: &[&str] = &[
     "external-tools",
     // Every PAGE/FORM carries ORIGINS and RULE_GEOMETRY (spec §4.2, §4.4).
     "exact-geometry",
+    // COMPILE `halt_on_error` is honoured (`Job::halt`): a client's strict mode.
+    "halt-on-error",
     flashtex_display_list::diag::CAPABILITY,
     flashtex_display_list::PROGRESS_CAPABILITY,
 ];
