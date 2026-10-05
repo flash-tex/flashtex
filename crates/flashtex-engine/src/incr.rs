@@ -2627,7 +2627,9 @@ impl Session {
     /// Whether the files or lookups the last run read changed since it
     /// read them (`None`: nothing did), and if so whether through its key
     /// or a lookup (a file that appeared) rather than a file's content.
-    /// Changes nothing (`changes` does, for the pass that follows).
+    /// Changes nothing the next pass reads (`changes` does, for the pass
+    /// that follows), except S₀'s key's signatures, which a clean check
+    /// refreshes (`Key::check_refresh`: what it verified another way).
     fn dirty(&mut self) -> Option<bool> {
         if self.paused.is_some() {
             return None;
