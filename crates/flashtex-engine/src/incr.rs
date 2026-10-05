@@ -1799,8 +1799,16 @@ impl Observer for Obs {
                 .and_then(|p| p.ckpt)
                 .filter(|o| g.pending_ids().contains(o))
             {
-                self.interruptible = self.stop_at != Some(j);
+                // (interruptible at the requested page too: the page is out
+                // before its test, and an interrupted test only failed)
+                self.interruptible = true;
                 if self.converged(g, &rec, old) {
+                    // Newer work came while the test ran: the jump (which
+                    // cannot stop once it changes the state) waits; the run
+                    // stops here as if the work had come before the test.
+                    if !self.protecting() && self.preempt_now(g) {
+                        return Action::Stop;
+                    }
                     self.converged = Some((j, old));
                     self.positions = new_positions(g, self.pdf_len_r);
                     return Action::Stop;
@@ -3877,6 +3885,30 @@ impl Session {
         if let Some(t) = obs.test_instr {
             *rep.test_instr.get_or_insert(0) += t;
         }
+        // The convergence jump's comparison of the states first, read-only
+        // and stopped by newer work (`Globals::jump_adopt`): stopped, nothing
+        // has changed, and the run is paused at the convergence point as if
+        // preempted before its test (`finish` goes on from there, the next
+        // compile settles or abandons it).
+        let mut obs = obs;
+        let mut adopt = None;
+        if let Some((_, old)) = obs.converged {
+            let g = self.g.as_mut().unwrap();
+            // (newer work stops it only where it may stop the run at a
+            // checkpoint: `Obs::preempt_now`'s rules)
+            let may_stop = !obs.protecting() && !(obs.preempt_after_s0 && g.layer().s0.is_none());
+            let pp = obs.preempt.clone().filter(|_| may_stop);
+            let (pass, pages) = (obs.pass, obs.new_pages.len());
+            let mut stop = move || pp.as_ref().is_some_and(|p| p(pass, pages));
+            let _busy = crate::busy::enter(crate::busy::Part::Jump);
+            match g.jump_adopt(old, &mut stop)? {
+                Some(a) => adopt = Some(a),
+                None => {
+                    obs.converged = None;
+                    obs.preempted = true;
+                }
+            }
+        }
         rep.diffs.extend(obs.diffs.iter().cloned());
         rep.page_s = if rep.page_s > 0.0 {
             rep.page_s
@@ -3949,7 +3981,7 @@ impl Session {
                 overrides: obs.positions.clone(),
                 rebuild_rs: true,
             };
-            g.redo_to_remapped(old, &in_remap)?;
+            g.redo_to_remapped_with(old, &in_remap, adopt.take())?;
             // the new run's extra characters, into the old run's states
             // from the convergence point on (see `same_words`)
             for &(off, bits) in &obs.char_or {
