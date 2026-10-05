@@ -2031,6 +2031,26 @@ impl Arena {
         ]
     }
 
+    /// The resident bytes of each region of the word space (`mincore`),
+    /// largest first, for the regions with any (lane MEM-FOOTPRINT: which of
+    /// TeX's fixed-size arrays the run actually touched).
+    pub fn region_residency(&self) -> Vec<(&'static str, usize)> {
+        let c = self.core();
+        let mut v: Vec<(&'static str, usize)> = self
+            .regions
+            .iter()
+            .filter(|r| r.bytes > 0)
+            .filter_map(|r| {
+                // SAFETY: inside the mapping (regions lie within `c.bytes`).
+                let p = unsafe { c.base.add(r.off) };
+                let n = crate::memstat::resident(p, r.bytes)?;
+                (n > 0).then_some((r.name, n))
+            })
+            .collect();
+        v.sort_by_key(|r| std::cmp::Reverse(r.1));
+        v
+    }
+
     /// Workers for restores; 0 picks one per core, up to 8.
     pub fn set_threads(&mut self, n: usize) {
         self.core_mut().threads = n;

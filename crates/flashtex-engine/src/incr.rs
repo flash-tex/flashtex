@@ -2279,8 +2279,17 @@ impl Session {
                 v.push((format!("heap_peak_{k}"), b));
             }
         }
+        if let Some((used, held)) = crate::memstat::malloc_in_use() {
+            v.push(("malloc_in_use".into(), used as i64));
+            v.push(("malloc_held".into(), held as i64));
+        }
         if let Some(g) = &self.g {
             v.extend(g.mem_stats().into_iter().map(|(k, x)| (k.to_string(), x)));
+            for (name, n) in g.arena.region_residency() {
+                if n >= 1 << 20 {
+                    v.push((format!("res_{name}"), n as i64));
+                }
+            }
             v.push(("old_cache".into(), g.arena.old_cache_bytes() as i64));
         }
         v.push(("pages".into(), self.pages.len() as i64));
