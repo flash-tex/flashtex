@@ -2641,3 +2641,73 @@ fn a_file_read_to_its_end_then_appended_restarts_before_the_first_read() {
         compile_and_check(&e, &mut h, &dir, &[("part.tex", &part)], "the revert");
     }
 }
+
+/// Review of #1551: a reader open at the end of a file whose last line has
+/// no final newline has read the end (`read_tex_line` stops there, and text
+/// appended extends that line), and one just after a `\r` has peeked at the
+/// next byte; no restart point there is sound for text appended at the end.
+/// With a final `\n` (the control) one is. The appended file is `\input` in
+/// the body and in the preamble, with a timed checkpoint at almost every
+/// line; every compile equals scratch runs.
+#[test]
+fn text_appended_to_a_last_line_without_a_newline_extends_it() {
+    let Some(e) = env() else {
+        common::no_texlive();
+        return;
+    };
+    // (where it is input, the old part, what is appended)
+    let cases: [(&str, &str, &str, &str); 5] = [
+        ("body", "no final newline", "Tail text", "s more"),
+        (
+            "preamble",
+            "no final newline",
+            "\\global\\probecount=1",
+            "7",
+        ),
+        ("body", "a final CR", "Tail text\r", "\nmore text"),
+        (
+            "preamble",
+            "a final CR",
+            "\\global\\probecount=1\r",
+            "\n\\global\\probecount=5",
+        ),
+        (
+            "body",
+            "a final newline (control)",
+            "Tail text\n",
+            "more text\n",
+        ),
+    ];
+    for (i, (place, what, part, more)) in cases.into_iter().enumerate() {
+        let dir = e.dir.join(format!("eol-append-{i}"));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let paras: String = (0..8).map(|k| para(k, "tau")).collect();
+        let (pre, body) = if place == "body" {
+            ("", "\\input{part}\n")
+        } else {
+            ("\\input{part}\n", "")
+        };
+        let doc = format!(
+            "\\documentclass{{article}}\n\\newcount\\probecount\n{pre}\\begin{{document}}\n\
+             {paras}{body}\nCounted \\the\\probecount.\n\\end{{document}}\n"
+        );
+        let mut h = Host::start_env(&e, &dir, &[("FLASHTEX_TIMED_S", "0.000001")]);
+        for k in 0..4 {
+            let r = compile_and_check(
+                &e,
+                &mut h,
+                &dir,
+                &[("doc.tex", &doc), ("part.tex", part)],
+                "settle",
+            );
+            if r.contains("\"mode\":\"unchanged\"") || k == 3 {
+                break;
+            }
+        }
+        let appended = format!("{part}{more}");
+        let what = format!("{place}, {what}");
+        compile_and_check(&e, &mut h, &dir, &[("part.tex", &appended)], &what);
+        compile_and_check(&e, &mut h, &dir, &[("part.tex", part)], "the revert");
+    }
+}

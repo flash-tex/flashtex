@@ -4222,6 +4222,34 @@ fn first_reads(j: &ReadLog) -> HashMap<&str, usize> {
     m
 }
 
+/// How much of a file a reader open at `offset` has seen (review of
+/// #1551): the bytes before `offset`, and one more where reading the line
+/// that ends there looked at what follows it. `read_tex_line` ends a line at
+/// `\r` only after peeking at the next byte (an `\n` would belong to the
+/// line), and ends the last line, when the file does not end in `\n`, at the
+/// end of the file: text appended there extends that line. So a reader at
+/// the old end of a file whose last byte was not `\n`, or just after an
+/// `\r`, has seen the byte at `offset` (or the end). `now` is the file as it
+/// is now, the same as before the change `e` up to `e.prefix`; without it,
+/// the conservative answer.
+fn read_through(offset: u64, e: &Edit, now: Option<&Vec<u8>>) -> u64 {
+    if offset > e.prefix {
+        return offset;
+    }
+    let Some(now) = now else {
+        return offset + 1;
+    };
+    let old_len = (now.len() as u64 + e.old_mid).saturating_sub(e.new_mid);
+    let before = offset
+        .checked_sub(1)
+        .and_then(|i| now.get(i as usize).copied());
+    if before == Some(b'\r') || (offset == old_len && before != Some(b'\n')) {
+        offset + 1
+    } else {
+        offset
+    }
+}
+
 /// Whether the run had consumed nothing changed at the checkpoint whose
 /// record is `r` (`Session::restart_point`): every changed file it had read
 /// is one it is still reading, at an offset at or before the change, and
@@ -4246,8 +4274,16 @@ fn consumed_nothing_changed(
             continue; // read after this checkpoint
         }
         let e = edits.iter().find(|e| e.path == *p);
+        // (the file as it is now: the same as before the change up to it)
+        let now = j
+            .files
+            .iter()
+            .find(|f| f.path == *p && f.content.is_some())
+            .and_then(|f| f.content.as_deref());
         let open_before = r.files.iter().any(|f| match &f.stream {
-            Stream::In { path, offset } => path == p && e.is_some_and(|e| *offset <= e.prefix),
+            Stream::In { path, offset } => {
+                path == p && e.is_some_and(|e| read_through(*offset, e, now) <= e.prefix)
+            }
             _ => false,
         });
         // A file read before and no longer open, or open past the
