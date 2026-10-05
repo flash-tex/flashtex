@@ -58,6 +58,8 @@ pub mod iso;
 #[cfg(not(feature = "tex82"))]
 pub mod ix;
 #[cfg(not(feature = "tex82"))]
+pub mod lineshift;
+#[cfg(not(feature = "tex82"))]
 pub mod macroprof;
 pub mod memstat;
 pub mod os;

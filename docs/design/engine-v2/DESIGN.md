@@ -499,7 +499,8 @@ D8 specification; what landed differs, and D8's rewording is proposed to the own
   caches are treated as derived state. The **convergence rate** and background pages re-run per
   edit are part of T7 and of the P4 exit gate (§8, §12). *Status (review 2026-10-05):*
   - Object relocation and line shifting are **still not built**. Object numbers are dead only
-    where they are unread, and `line` is still compared.
+    where they are unread, and `line` is still compared. *(Line shifting has since been built;
+    see "As built: line shifting" below.)*
   - So T7's newline and split rows never converge on any document, and sentence rows do not on
     plain-10/100/1000 or full-10. They re-typeset to the end: 150 of 300 pages, 501 of 1,000,
     and 1,503 in two passes on plain-1000 (NixOS PC, `9f29302fe`, 2026-10-05,
@@ -519,6 +520,32 @@ D8 specification; what landed differs, and D8's rewording is proposed to the own
     - the fixture-wide soundness test **fails on main**: conf-paper, edit 0, page 3, the named
       destinations differ. It failed in nightly 37208020073 (10-04) and again on the NixOS PC
       on `9f29302fe` (2026-10-05, VERIFIED).
+- **As built: line shifting** (P4-NEWLINE-CONVERGE, #1570; `src/lineshift.rs`,
+  `changes/lineshift.ch`).
+  - **Lines moved by δ.** An edit moves the lines after it by δ, the line ends it adds minus
+    those it removes.
+  - **`line`/`line_stack`.** For a level reading the edited file these may differ by δ. They
+    are corrected whenever the old run's later checkpoint is restored (`Reloc`).
+  - **Open levels, groups and conditionals.** Each one's line carries its file (the SyncTeX
+    tag, in new word-space arrays). A line of the edited file past the edit must differ by
+    δ; any other must be equal.
+  - **SyncTeX node lines.** These are dead: they are written and copied, never read.
+  - **Line journal.** Every `\inputlineno` read and every printed line number is journalled.
+    One the edit may have moved, read by the old run after the convergence point, is a
+    barrier (`rerun_point`).
+  - **`\the\inputlineno` in an `\edef` body.** For LaTeX's `\begin` this marks the token list
+    instead, and expanding, comparing or showing that list is the read.
+  - **Dropped checkpoints.** An old checkpoint that cannot be corrected (a marked list alive,
+    or a line of no known file) is dropped.
+  - **Soundness cases.** Each rule has one that fails without it (tests/incremental.rs).
+  - **Measured (PC, non-reference, #1570):** newline and split converge on 19/19 T7
+    keystrokes on plain/full-100/300/1000, except plain-1000 split. That split changes the
+    page count (§5.4).
+  - **Where split convergence comes from.** After a reflow the pending object stream holds
+    the re-typeset pages' resources. A split converges once that stream is flushed (≤ 33
+    pages).
+  - **What is still missing.** PDF object relocation is not needed for these rows and is
+    still not built.
 - **Every convergence rule is a soundness risk** (adopted 2026-10-01, §13): two rules were
   found unsound on 2026-09-30 (P4-FINISH's first `pdf_char_used` union, and the older (b′) read
   test, which skipped later reads of files the old run closes again), and only the soundness

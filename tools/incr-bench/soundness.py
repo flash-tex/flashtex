@@ -30,6 +30,9 @@ ap.add_argument('--interleave', action='store_true', help='interrupt each compil
 ap.add_argument('--host-args', default='', help='iserve options, e.g. "--budget 4194304" (incr_bench.py --host-args)')
 ap.add_argument('--cold', action='store_true', help='with --interleave: interrupt compiles from the format (incr_bench.py --cold)')
 ap.add_argument('--toggle-files', default='', help='files created and deleted around half the edits (incr_bench.py --toggle-files; genlookup.py)')
+ap.add_argument('--allow-no-trials', action='store_true',
+                help='a fixture where no edit of --kinds applies (edits.py: the line kinds need plain prose) is '
+                     'reported as skipped, not as an error; an --extra document never is')
 a = ap.parse_args()
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import edits  # noqa: E402
@@ -83,7 +86,8 @@ def run(job):
 
 
 os.makedirs(a.dir, exist_ok=True)
-tot = dict(compiles=0, ok=0, bad=0, conv=0, acct=0, err=0, interrupted=0)
+tot = dict(compiles=0, ok=0, bad=0, conv=0, acct=0, err=0, interrupted=0, skipped=0)
+extra_names = {e.split(':')[1] for e in a.extra}
 with open(a.out, 'w') as out, concurrent.futures.ThreadPoolExecutor(a.j) as ex:
     for r in ex.map(run, jobs):
         out.write(json.dumps(r) + '\n')
@@ -93,6 +97,10 @@ with open(a.out, 'w') as out, concurrent.futures.ThreadPoolExecutor(a.j) as ex:
             print(f"{r['name']}: ERROR {r['error'][-300:]}", flush=True)
             continue
         zero = edits.zero_trials_error(r['compiles'], a.kinds)
+        if zero and a.allow_no_trials and r['name'] not in extra_names:
+            tot['skipped'] += 1
+            print(f"{r['name']}: skipped, no position for {a.kinds}", flush=True)
+            continue
         if zero:
             tot['err'] += 1
             print(f"{r['name']}: ERROR {zero}", flush=True)
