@@ -1,7 +1,8 @@
 # MACRO-REPLAY: guarded replay of macros with arguments
 
 Sub-lane **P6-MACRO-REPLAY** of P6-HYPEROPT (Commander ruling, 2026-10-04). Status: **design,
-revision 3** (after the reviews of #1509, rounds 1 and 2), for review before the implementation lands.
+revision 4 approved** (#1509), prototype in #1524-#1526; **revision 5 proposed** in §11 (dimensions,
+sparse registers, `\afterassignment`, contexts, local-group elision), for review.
 
 **Dependency (process).** Once this design is approved, the Commander amends DESIGN.md §5.6 item 4
 (D9: "only pure, non-erroring leaf functions" extended to macros with arguments) and adds the §13
@@ -527,3 +528,144 @@ are the next layer.
   its own proof note (a pin is the only reference the cache adds) and test.
 - **`\aftergroup` in colour code** (`\color` uses `\aftergroup\reset@color`): out of scope here
   (`\color` typesets); listed so nobody adds `\aftergroup` to the allowlist without a design.
+
+## 11. Revision 5: dimensions, `\afterassignment`, sparse registers, contexts, local groups
+
+Status: **proposal** (Commander ruling 2, 2026-10-04: "design revision v5 is authorized"), for
+review. The prototype of §9 (#1524-#1526) stays open until this revision shows a measured win of at
+least 15 % of the instructions on `long-deck` or *An Infinite Descent*.
+
+### 11.1 Why (measured)
+
+The prototype replays 25 % of `\XC@col@rlet`'s calls on `long-deck` and saves 2.2 % of the
+instructions. The refusals and abandons it counts (#1525) have four causes, and a probe engine (not
+committed) priced lifting each before any of this is written:
+
+| `long-deck`, settled pass | instructions | vs intrinsics off | `\XC@col@rlet` replays / calls |
+|---|---:|---:|---|
+| intrinsics off | 49.76 G | | |
+| the approved rules | 48.44 G | -2.7 % | 20,863 / 69,961 |
+| + dimensions, `\afterassignment`, sparse registers (lifted, not captured) | 50.51 G | +1.5 % | 23,953 / 69,961 |
+| + 32 contexts per argument list | 45.92 G | -7.7 % | 55,504 / 69,961 |
+| + local-group elision (§11.5) | **42.13 G** | **-15.3 %** | 55,504 / 69,961 |
+| the same in verify mode | | | 55,504 verified, **1,757 differ** |
+
+The 1,757 differences (3.2 %) are replays that depended on an input the probe lifted without
+capturing it: exactly the inputs §11.3 captures. With them captured, those calls are refused or
+replayed correctly, so the estimate for this revision is **-13 % to -15 %** on `long-deck`. On *An
+Infinite Descent* (592 pages, #1524's comment), the guard would admit 83 % of `\XC@col@rlet`'s
+calls (9.8 % of the book) and 40 % of `\pgf@process`'s (22 %, all of them reading sparse
+registers), which estimates **-7 % to -12 %**. The pgfmath parser itself never records: its bodies
+read past themselves (`Level`).
+
+### 11.2 Dimensions
+
+Today scanning a dimension abandons a recording (`scan_dimen`'s hook, `Why::Dimension`), and
+`\dimen` assignments and `\ifdim` are outside the allowlists. A dimension is computed from tokens,
+integers and dimensions held in `eqtb`, and three units that read other state. This revision lets
+a recording scan a dimension and captures what it reads:
+
+| input of `scan_dimen` | how it is captured |
+|---|---|
+| the digits, the sign, the keywords (`pt`, `true`, `plus`, ...) | tokens: read through `get_x_token`, already recorded (meanings watched) |
+| `\dimen`*n* (*n* < 256), `\dimendef`'d names, dimension parameters | `eqtb` words in the integer region: value pairs (`F_NRW`), as integers are today. The read through `REGISTER` (`scan_something_internal`, "Fetch a register") becomes a pair read of `dimen_base+n` / `count_base+n` instead of an abandon |
+| `true` | reads `\mag` (and `prepare_mag` can error): `\mag` becomes a pair; an error abandons as today (`Error` at commit) |
+| `em`, `ex` | read `quad(cur_font)` and `x_height(cur_font)`: **refused** (abandon, `Why::FontUnit`). Capturing them needs the current font's parameters, which `\fontdimen` can change; no measured macro uses them |
+| `mu` | math units: refused (abandon) |
+| internal glue, `\wd`/`\ht`/`\dp` of a box, `\fontdimen`, `\lastskip` | outside the allowlist as today (`Internal`) |
+| the arithmetic (`\advance`, `\multiply`, `\divide` of a dimension, `\dimexpr`) | pure functions of the above; an arithmetic error ("Dimension too large", "Arithmetic overflow") is an error and abandons at commit |
+
+The commands and expandables added to the allowlists: `ASSIGN_DIMEN` (a dimension parameter or a
+`\dimendef`'d register as a command), `\dimen` through `REGISTER` (already allowed for
+assignment), `\ifdim`, `\dimexpr`. Glue (`\skip`, `\glueexpr`) stays out: its values are pointers to
+glue specifications, which no watch record compares.
+
+### 11.3 Sparse registers and `\afterassignment`
+
+**Sparse registers** (e-TeX `\count`, `\dimen` above 255; LaTeX allocates there once 256 are used:
+`\pgf@picmaxx`, `\XC@countmixins`) live in nodes of `mem` (`find_sa_element`), not in `eqtb`.
+- *Reading one* (`scan_something_internal`'s "Fetch a register", `sa_int`) is recorded as a
+  **sparse pair** (type, number, value) in a new part of the slot (`P_SA`). The guard looks each up
+  again without changing anything: a hand-written walk of `sa_root`'s index nodes that, unlike
+  `find_sa_element`, writes no global (`cur_ptr` included); a missing element reads 0, as TeX's
+  does. A different value fails the guard (`Why::SparseDeps`).
+- *Assigning one* is recorded as an operation `K_SAWORD` (type, number, value, global) and replayed
+  by `find_sa_element(t, n, true)` followed by `sa_w_def` or `gsa_w_def`: TeX's own routines, which
+  create the element and save it for `unsave` exactly as the normal path did.
+- Token and box registers above 255 keep abandoning (`Sparse`): their values are pointers.
+
+**`\afterassignment`** inside the body (pgf's `\afterassignment\pgf@x\pgf@x=...`) is allowed when
+the token it saves is used before the body ends: the commit already requires `after_token = 0`
+(§2), and the guard already requires it at the call. The saved token is inserted after the next
+assignment by `back_input`, a level above the body's, which the recording reads like any other.
+
+### 11.4 Contexts per argument list
+
+`\XC@col@rlet`'s argument lists recur under different values of beamer's `\color@fg` and
+`\color@bg`; each recording watches the values it read, so each context needs its own recording.
+`KEY_VARIANTS` becomes 32 (the probe's value), with the least recently replayed evicted, under the
+same per-macro budget of 256. Nothing about the guard changes: a recording for another context is
+simply another variant.
+
+### 11.5 Local-group elision
+
+A recording's operations come in balanced `K_BEGIN` ... `K_END` pairs for its `\begingroup` /
+`\endgroup` (and `{` / `}`) groups. **Claim:** a group whose operations are all local (no
+`K_GLOBAL` flag, no sparse global) leaves, when its `K_END` has been replayed, the same state as
+not replaying it at all, except for memory addresses and the memory-usage statistics. A replay
+therefore skips every such group.
+
+*Proof.* Inside the group every operation is an `eq_define`, `eq_word_define`, local `sa_def` /
+`sa_w_def`, or a nested local group. Each saves the old value of its location on the save stack
+the first time the location changes at the group's level (`eq_save`, `sa_save`) and `unsave`
+restores it at `K_END`, destroying the inner value (`eq_destroy`). A location changed twice is
+saved once; its restored value is the one before the group. A location changed by a nested group
+is restored by that group's own `unsave` first, then by this one. So after `K_END` every `eqtb`
+word and every sparse value written inside holds what it held before `K_BEGIN`, and the save stack
+holds what it held before. What else could a replay of the group leave behind?
+1. *Memory.* The values made inside (`K_FRESH` copies) are freed by `eq_destroy`; the net change of
+   `dyn_used` / `var_used` is zero, which the leak check (§6.1) compares.
+2. *Watch records.* Each write and restore reported to `flashtex_intr_touch` updates mismatch counts
+   for the new and then for the restored value; after the restore every record holds again what it
+   held before the group, so the counts are unchanged.
+3. *The read-set.* A replay reports all its reads at its start (§3.6 item 4), independently of
+   which operations it then performs.
+4. *The high-water marks.* Raised from the recorded peaks (§3.6 item 1), not by the operations.
+5. *Values handed out of the group.* `\expandafter\endgroup\@@tmp` expands `\@@tmp` (defined inside)
+   before the group ends; what it produces is executed after `\endgroup` and recorded there as its
+   own operations: a `K_FRESH` template (the tokens as they were then) or a `K_LETCS` whose source,
+   read after the restore, holds its outer value. Neither reads a location the group wrote.
+6. *Tracing and `\aftergroup`.* Refused as preconditions (tracing) or outside the allowlist.
+So the state after skipping the group equals the state after replaying it. ∎
+
+The commit condition is unchanged: the recording still verifies the group balanced. The verifier
+replays with the elision and diffs against the normal path, so a mistake in this argument is a
+difference (§11.6).
+
+### 11.6 Gates and faults
+
+The gates of §6.4 are unchanged in kind: the elision, the dimension pairs, the sparse pairs and
+`K_SAWORD` are all exercised by `verify` and `verify-all-args`, and the soundness sweeps run with
+the switch on. New faults (§6.5), each to be caught by (a) or (b):
+- `dims-unwatched`: a dimension register read by number is not recorded as a pair;
+- `sparse-unwatched`: a sparse register read is not recorded;
+- `sparse-op-local`: a global sparse assignment is replayed as a local one;
+- `elide-global`: a group with a global operation is elided too;
+- `true-unwatched`: `\mag` is not recorded for `true` units.
+
+The measurement that decides whether the prototype lands (ruling 1): `long-deck` and *An Infinite
+Descent*, intrinsics off against this revision on, instructions of a settled pass, with the verify
+run of each at 0 differences. The bar is 15 % on either.
+
+### 11.7 The DESIGN.md amendment (text for the Commander)
+
+§5.6 item 4, after the 2026-10-04 extension to macros with parameters: "MACRO-REPLAY.md revision 5
+extends the recordable set to dimension arithmetic (`scan_dimen` with `pt`/`pc`/`in`/`bp`/`cm`/
+`mm`/`dd`/`cc`/`sp`/`true`; `em`, `ex` and `mu` refused), `\dimen` and `\count` registers read by
+number (as value pairs), e-TeX's sparse `\count`/`\dimen` registers (sparse value pairs and
+`K_SAWORD` operations through `sa_w_def`/`gsa_w_def`) and `\afterassignment` consumed inside the
+body; keeps 32 contexts per argument list; and replays a group whose operations are all local as
+nothing (proof in MACRO-REPLAY.md §11.5). The gates and faults are those of §6, plus §11.6's."
+And the §13 row: "2026-10-xx | Guarded replay revision 5 (dimensions, sparse registers,
+`\afterassignment`, contexts, local-group elision) | Commander, from evidence (#1524's measured
+estimate)".
