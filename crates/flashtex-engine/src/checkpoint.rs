@@ -538,6 +538,28 @@ fn read_tail_into(path: &str, from: u64, mut buf: Vec<u8>) -> Result<Vec<u8>, St
     Ok(buf)
 }
 
+/// The convergence jump's comparison, made ahead (`Globals::jump_adopt`):
+/// each differing chunk's byte offset and the old run's bytes there, and
+/// the scalar region it compared.
+pub struct Adopt {
+    chunks: Vec<(usize, Vec<u8>)>,
+    scalars: Vec<u8>,
+}
+
+/// The old run's bytes of every chunk `d` found differing.
+fn adopt_of(d: &crate::arena::ChunkDiff) -> Vec<(usize, Vec<u8>)> {
+    d.differing
+        .iter()
+        .map(|&(c, old, _)| {
+            // SAFETY: `old` points at a whole chunk owned by the arena or
+            // the branch, unchanged until `d` is dropped.
+            let b =
+                unsafe { std::slice::from_raw_parts(old as *const u8, crate::arena::CHUNK_BYTES) };
+            ((c as usize) << crate::arena::CHUNK_SHIFT, b.to_vec())
+        })
+        .collect()
+}
+
 impl Globals {
     fn put_layer(&mut self, l: Layer) {
         self.arena.extra = Some(Box::new(l));
@@ -1141,6 +1163,42 @@ impl Globals {
         id: CheckpointId,
         in_remap: &dyn Fn(&str, u64) -> u64,
     ) -> Result<(), String> {
+        self.redo_to_remapped_with(id, in_remap, None)
+    }
+
+    /// The comparison `redo_to_remapped` adopts the old run's state with
+    /// (the chunks that differ from the old run's at `id`, and the old
+    /// values), worked out ahead and stopped by `stop` (`None`): it reads
+    /// and changes nothing else (the scalar spill writes the live scalars'
+    /// own values), so a stopped one leaves the restore pending as it was.
+    /// The jump that follows uses it only while the scalar region is still
+    /// what it compared (`Adopt::scalars`); else it compares again.
+    /// `FLASHTEX_VERIFY_JUMP=1`: the jump compares again anyway and aborts
+    /// the process if the two disagree.
+    pub fn jump_adopt(
+        &mut self,
+        id: CheckpointId,
+        stop: &mut dyn FnMut() -> bool,
+    ) -> Result<Option<Adopt>, String> {
+        self.spill_scalars();
+        let l = self.layer_ref().ok_or("no checkpoint layer")?;
+        let p = l.pending.as_ref().ok_or("no restore is pending")?;
+        let Some(d) = self.arena.diff_branch_all_until(&p.branch, id, stop)? else {
+            return Ok(None);
+        };
+        Ok(Some(Adopt {
+            chunks: adopt_of(&d),
+            scalars: self.arena.read(0, SCALAR_BYTES).to_vec(),
+        }))
+    }
+
+    /// `redo_to_remapped` with the comparison `jump_adopt` made, if any.
+    pub fn redo_to_remapped_with(
+        &mut self,
+        id: CheckpointId,
+        in_remap: &dyn Fn(&str, u64) -> u64,
+        pre: Option<Adopt>,
+    ) -> Result<(), String> {
         let Some(p) = self.layer().pending.take() else {
             return Err("redo_to: no restore to jump back from".into());
         };
@@ -1274,23 +1332,31 @@ impl Globals {
         // every other chunk must be its own state at `id`. Take that state
         // over whole, so that the jump and every later restore of an old
         // checkpoint give exactly the old run's states.
-        let adopt: Vec<(usize, Vec<u8>)> = match self.arena.diff_branch_all(&branch, id) {
-            Ok(d) => d
-                .differing
-                .iter()
-                .map(|&(c, old, _)| {
-                    // SAFETY: `old` points at a whole chunk owned by the
-                    // arena or the branch, unchanged until `d` is dropped.
-                    let b = unsafe {
-                        std::slice::from_raw_parts(old as *const u8, crate::arena::CHUNK_BYTES)
-                    };
-                    ((c as usize) << crate::arena::CHUNK_SHIFT, b.to_vec())
-                })
-                .collect(),
-            Err(e) => {
-                self.arena.drop_branch(branch);
-                return Err(e);
-            }
+        let verify = std::env::var_os("FLASHTEX_VERIFY_JUMP").is_some();
+        let pre = pre.filter(|a| self.arena.read(0, SCALAR_BYTES) == &a.scalars[..]);
+        let adopt: Vec<(usize, Vec<u8>)> = match pre {
+            Some(a) if !verify => a.chunks,
+            pre => match self.arena.diff_branch_all(&branch, id) {
+                Ok(d) => {
+                    let now = adopt_of(&d);
+                    if let Some(a) = pre {
+                        if a.chunks != now {
+                            // (a verify mode: loud, so that a sweep fails)
+                            eprintln!(
+                                "FLASHTEX_VERIFY_JUMP: the comparison made ahead differs ({} vs {} chunks)",
+                                a.chunks.len(),
+                                now.len()
+                            );
+                            std::process::abort();
+                        }
+                    }
+                    now
+                }
+                Err(e) => {
+                    self.arena.drop_branch(branch);
+                    return Err(e);
+                }
+            },
         };
         for (off, b) in &adopt {
             self.arena.write_through(*off, b);
