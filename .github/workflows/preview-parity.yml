@@ -62,6 +62,15 @@ on:
         description: scales in px/pt, comma-separated (the 31-scale sweep is 1,1.14,1.25,...,8)
         type: string
         default: '1,2,4'
+      runner:
+        # GitHub-hosted arm64 images only. When macos-26 is short of capacity
+        # GitHub cancels the job after ~15 minutes ("not acquired by Runner of
+        # type hosted"); macos-15 is another pool. Both sides of the
+        # comparison render on the same machine, so either is a valid run.
+        description: hosted macOS image for the sweep
+        type: choice
+        options: [macos-26, macos-15]
+        default: macos-26
 
 concurrency:
   group: preview-parity-${{ github.ref }}
@@ -154,7 +163,7 @@ jobs:
     name: zero-tolerance sweep (macOS)
     needs: [inputs]
     if: always() && needs.inputs.outputs.uploaded == 'true'
-    runs-on: macos-26
+    runs-on: ${{ inputs.runner || 'macos-26' }}
     timeout-minutes: 60
     env:
       CI: "1"
