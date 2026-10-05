@@ -790,12 +790,15 @@ request's wait for the engine thread) by what the engine thread did
 meanwhile, in ms per part (`restore`, `typeset`, `test`, `jump`, `paused`,
 `done`, `prepare`, `request`, `idle`, `other`). `old_kept` and
 `old_rewound` count, since the host started, the old checkpoints' chunks
-the convergence comparisons took from their cache and rewound. On macOS the
-engine thread's fixed-counter readings are added, in thousands
-(`os::thread_counts`; absent where the system does not give them):
-`instr_k` and `cycles_k` for the whole compile, `first_page_instr_k` to the
-first page, `restore_instr_k` for the restore, `edited_instr_k` from just
-before the restore to the edited page's shipout, `test_instr_k` for the
+the convergence comparisons took from their cache and rewound. On macOS and
+Linux the engine thread's counter readings are added, in thousands
+(`os::thread_counts`: macOS's fixed counters; Linux's `perf_event_open`,
+user space only; absent where the system does not give them): `instr_k` and
+`cycles_k` for the whole compile, `first_page_instr_k` to the first page,
+`restore_instr_k` for the restore, `edited_instr_k` from just before the
+restore to the edited page's shipout, `typeset_instr_k` and
+`typeset_cycles_k` from the engine's resumption after the restore to the
+edited page's shipout (the typesetting alone), `test_instr_k` for the
 convergence tests, and two absolute cycle marks of the engine thread,
 `arrival_mark_kc` (when the `COMPILE` arrived; also on a `DONE` cancelled
 before its compile started) and `first_page_mark_kc` (its first page): a
