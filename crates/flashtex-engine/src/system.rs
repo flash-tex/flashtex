@@ -1860,27 +1860,38 @@ impl Globals {
     fn input_path(&mut self, default: Format, must_exist: bool) -> Option<String> {
         FULL_NAME_OF_FILE.with(|f| *f.borrow_mut() = None);
         let s = self.raw_file_name();
-        // tex.web's device names (§§514, 520: `TeXformats:`, ...) survive in
-        // this port only as the spelling of web2c's own defaults: the format
+        // tex.web's device names (§§514, 520: `TeXinputs:`, `TeXfonts:`,
+        // `TeXformats:`). Pure tex.web (`tex82`: Knuth's trip test) parses
+        // `:` as an area delimiter and itself prepends `TEX_area` and
+        // `TEX_font_area` (§§537, 563), so there a device name means its
+        // device, as tripman.tex expects. Under web2c's change files (the
+        // product, etrip) an area ends only at `/` and a device name
+        // survives only as the spelling of web2c's own defaults: the format
         // `w_open_in` opens (`TEX_format_default`, §524) and INITEX's string
         // pool (§51, before `ready_already`). Any other name is the
         // document's and is literal, as in web2c: pdfTeX answers
         // `\input TeXformats:/etc/hosts` with "I can't find file
         // `TeXformats:/etc/hosts'", and the name must never select the
         // format search (whose files are not confined).
-        let (area, base) = if default == Format::Fmt {
+        let tex82 = cfg!(feature = "tex82");
+        let (area, base) = if tex82 || default == Format::Fmt {
             Self::split_area(&s)
         } else {
             ("", s.as_str())
         };
-        if self.ready_already != 314159 && Self::split_area(&s).1.eq_ignore_ascii_case("TEX.POOL") {
+        if (tex82 || self.ready_already != 314159)
+            && Self::split_area(&s).1.eq_ignore_ascii_case("TEX.POOL")
+        {
             let p = pool_path();
             read_set_open(&p);
             return Some(p);
         }
         let format = match area {
+            "TeXfonts" if tex82 => Format::Tfm,
+            "TeXformats" if tex82 => Format::Fmt,
+            "TeXinputs" if tex82 => Format::Tex,
             "" | "TeXformats" => default,
-            _ => return None, // no other device holds a format
+            _ => return None, // web2c: no other device holds a format
         };
         let mut found = None;
         if let Some(dir) = run().output_directory {
@@ -1949,10 +1960,15 @@ impl Globals {
     /// `-output-directory`; if it cannot be created there, into texmf.cnf's
     /// `TEXMFOUTPUT`. The name opened is written back into `name_of_file`.
     fn open_output_file(&mut self) -> Option<(File, String)> {
-        // A document's name is literal (`\openout1=TeXinputs:x` writes a
-        // file of that name, as pdfTeX does); no output has a device name.
+        // Under web2c a document's name is literal (`\openout1=TeXinputs:x`
+        // writes a file of that name, as pdfTeX does); pure tex.web
+        // (`tex82`, trip) parses the device off, as `input_path` does.
         let s = self.raw_file_name();
-        let name = s.clone();
+        let name = if cfg!(feature = "tex82") {
+            Self::split_area(&s).1.to_string()
+        } else {
+            s.clone()
+        };
         let absolute = name.starts_with('/');
         let mut fname = name.clone();
         if let Some(dir) = run().output_directory {
