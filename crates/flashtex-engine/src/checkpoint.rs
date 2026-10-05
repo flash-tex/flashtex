@@ -1301,8 +1301,21 @@ impl Globals {
             self.arena.checkpoint_ids().iter().copied().collect();
         {
             let layer = self.layer();
+            // The new run's checkpoints the jump drops (its last, which `id`
+            // replaces) hand their line journals to `id`'s record: the
+            // reads and prints of line numbers since the checkpoint before
+            // (`crate::lineshift`, as `retain_checkpoints` does).
+            let mut at_id = now.clone();
+            let mut here = vec![];
+            for (i, r) in layer.records.iter_mut() {
+                if !keep.contains(i) || *i == id {
+                    here.append(&mut r.lines.here);
+                }
+            }
+            here.append(&mut at_id.lines.here);
+            at_id.lines.here = here;
             layer.records.retain(|(i, _)| keep.contains(i) && *i != id);
-            layer.records.push((id, now.clone()));
+            layer.records.push((id, at_id));
             for (i, r) in records {
                 if keep.contains(&i) && i != id {
                     layer.records.push((i, remap(&r)));
