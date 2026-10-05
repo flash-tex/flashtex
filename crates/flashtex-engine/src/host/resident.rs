@@ -1569,14 +1569,14 @@ fn line_change(old: &[u8], new: &[u8]) -> (u32, u32, u32) {
 fn lf_count(b: &[u8]) -> usize {
     const LO7: u64 = 0x7f7f_7f7f_7f7f_7f7f;
     const LF: u64 = 0x0a0a_0a0a_0a0a_0a0a;
-    let mut chunks = b.chunks_exact(8);
+    let (chunks, rest) = b.as_chunks::<8>();
     let mut n = 0usize;
-    for c in &mut chunks {
-        let x = u64::from_le_bytes(c.try_into().unwrap()) ^ LF;
+    for c in chunks {
+        let x = u64::from_le_bytes(*c) ^ LF;
         let z = !(((x & LO7) + LO7) | x | LO7);
         n += z.count_ones() as usize;
     }
-    n + chunks.remainder().iter().filter(|&&c| c == b'\n').count()
+    n + rest.iter().filter(|&&c| c == b'\n').count()
 }
 
 #[cfg(test)]
