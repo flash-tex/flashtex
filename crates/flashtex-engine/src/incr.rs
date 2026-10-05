@@ -2756,11 +2756,12 @@ impl Session {
         let Some(s0) = &self.s0 else {
             return self.cold(t0, stop_at, None);
         };
-        if let Err(why) = s0.key.check(self.clock, &self.first_line) {
+        let s0_id = s0.id;
+        let s0_check = s0.key.check(self.clock, &self.first_line);
+        if let Err(why) = s0_check.and_then(|()| self.written_before_s0_changed_outside()) {
             return self.cold(t0, stop_at, Some(why));
         }
         let key_s = t0.elapsed().as_secs_f64();
-        let s0_id = s0.id;
         let changes = self.changes();
         self.dirs_checked = self.dirs_seen.clone();
         // (cleared when this pass has run; a cold run below uses them)
@@ -3387,6 +3388,31 @@ impl Session {
         Ok((edits, changed, bad))
     }
 
+    /// S₀ holds only while the files the run wrote before it, and reads,
+    /// are still the run's own: one another program changed since (#1578:
+    /// `\input` of a file the preamble writes, `filecontents[overwrite]`
+    /// edited in the editor) is read in the other program's version by a
+    /// run from S₀, where a run from the start writes it again first (S₀'s
+    /// key covers the files read before it, not those written). `Err` names
+    /// it; the caller runs from the format.
+    fn written_before_s0_changed_outside(&mut self) -> Result<(), String> {
+        let (Some(j), Some(s0), Some(g)) =
+            (self.journal.as_ref(), self.s0.as_ref(), self.g.as_mut())
+        else {
+            return Ok(());
+        };
+        let n = g.record_of(s0.id)?.reads.2.min(j.outputs.len());
+        for o in &j.outputs[..n] {
+            let k = system::out_key(o);
+            if j.files.iter().any(|f| system::out_key(&f.path) == k) {
+                if let Some(why) = system::outside_change(o) {
+                    return Err(why);
+                }
+            }
+        }
+        Ok(())
+    }
+
     /// The newest retained checkpoint (S₀ or later) that consumed nothing
     /// changed: every changed file it had read is one it is still reading,
     /// at an offset at or before the change, and every lookup it made still
@@ -3423,6 +3449,19 @@ impl Session {
                 let Some(&i) = first_read.get(p.as_str()) else {
                     continue;
                 };
+                // A file the run wrote before this checkpoint that another
+                // program has changed since: a run from here reads the
+                // other program's version, where a run from the start
+                // writes the file again first (#1578). The run's own
+                // rewrites (beamer's `.vrb`) are not another program's.
+                let key = system::out_key(p);
+                if j.outputs[..r.reads.2.min(j.outputs.len())]
+                    .iter()
+                    .any(|o| system::out_key(o) == key)
+                    && system::outside_change(p).is_some()
+                {
+                    return false;
+                }
                 if i >= r.reads.0 {
                     continue; // read after this checkpoint
                 }
