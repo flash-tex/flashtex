@@ -77,8 +77,8 @@ const CS_TOKEN_FLAG: i32 = web::cs_token_flag;
 /// `list_ptr(r)` is `link(r+list_offset)`.
 const LIST_OFFSET: i32 = 5;
 /// Selector codes (§54).
-const TERM_ONLY: i32 = 17;
-const TERM_AND_LOG: i32 = 19;
+const TERM_ONLY: i32 = web::term_only;
+const TERM_AND_LOG: i32 = web::term_and_log;
 /// Text kept of one side of a context line.
 const TEXT_CAP: usize = 240;
 /// Levels kept of the input stack: the innermost `MAX_FRAMES - 1` and the
