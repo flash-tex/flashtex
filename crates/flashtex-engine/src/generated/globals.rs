@@ -1252,6 +1252,8 @@ pub struct Globals {
     pub ls_cond_tag: crate::arena::Arr<i32>,
     // §1920
     pub ls_cond_depth: i32,
+    // §1920
+    pub ls_tag_file: crate::arena::Arr<str_number>,
     /// The word space every `Arr` above lives in (crates/flashtex-engine/src/arena.rs).
     pub arena: crate::arena::Arena,
 }
@@ -1936,6 +1938,7 @@ impl Globals {
         let __r_ls_nest_tag = __plan.reserve::<i32>("ls_nest_tag", 1001);
         let __r_ls_grp_tag = __plan.reserve::<i32>("ls_grp_tag", 256);
         let __r_ls_cond_tag = __plan.reserve::<i32>("ls_cond_tag", 1001);
+        let __r_ls_tag_file = __plan.reserve::<str_number>("ls_tag_file", 65536);
         let __arena = __plan.build();
         Box::new(Globals {
             bad: 0,
@@ -2559,6 +2562,7 @@ impl Globals {
             ls_grp_tag: __arena.arr(__r_ls_grp_tag, 256),
             ls_cond_tag: __arena.arr(__r_ls_cond_tag, 1001),
             ls_cond_depth: 0,
+            ls_tag_file: __arena.arr(__r_ls_tag_file, 65536),
             arena: __arena,
         })
     }

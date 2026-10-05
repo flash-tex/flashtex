@@ -34,7 +34,8 @@
 %   is of (|push_nest|, |new_save_level|, the condition stack's push; with
 %   |ls_cond_depth| kept by the pushes and pops), so that the engine can tell
 %   a line of the edited file from a line of another. These are the only
-%   variables this file adds, and nothing reads them but src/.
+%   variables this file adds, and nothing reads them but src/; with
+%   |ls_tag_file|, the full name of the file each tag was given to.
 %
 % GPL-2.0-or-later, like the rest of crates/flashtex-engine.
 
@@ -201,6 +202,16 @@ else  begin ls_box_lines; if pack_begin_line<>0 then {it's actually negative}
   begin ls_print_unknown(#); print(" entered on line "); print_int(#);
 @z
 
+@x changes/synctex.ch - a file opened: which one its tag is
+begin incr(synctex_tag_counter); synctex_tag:=synctex_tag_counter;
+end
+@y
+begin incr(synctex_tag_counter); synctex_tag:=synctex_tag_counter;
+if synctex_tag<=ls_tag_size then
+  ls_tag_file[synctex_tag]:=full_source_filename_stack[in_open];
+end
+@z
+
 @x changes/web2c-run.ch - print_file_line: a file level's line
     if level=in_open then print_int (line)
 @y
@@ -219,15 +230,20 @@ from: the SyncTeX tag of the input level that was being read when it began
 (a file's, which token lists inherit; 0 in a \.{\\scantokens} pseudo
 file). Nothing \TeX\ computes reads them; the incremental engine does, to
 tell a line an edit moved from one it did not. Conditionals nested deeper
-than |ls_cond_size| have none.
+than |ls_cond_size| have none. |ls_tag_file| names the file of each tag, so
+that a level, group or conditional begun in a file that is closed again is
+still known to be that file's.
 
 @d ls_cond_size=1000 {conditionals whose file is known}
+@d ls_tag_size=65535 {files opened whose name is kept by their tag}
 
 @<Glob...@>=
 @!ls_nest_tag:array[0..nest_size] of integer; {|mode_line|'s file}
 @!ls_grp_tag:array[0..max_quarterword] of integer; {a group's line's file}
 @!ls_cond_tag:array[0..ls_cond_size] of integer; {a conditional's line's file}
 @!ls_cond_depth:integer; {conditionals open}
+@!ls_tag_file:array[0..ls_tag_size] of str_number;
+  {the full name of the file each SyncTeX tag was given to}
 
 @ @<Set init...@>=
 ls_cond_depth:=0;

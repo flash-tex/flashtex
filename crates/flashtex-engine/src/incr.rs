@@ -663,6 +663,15 @@ impl Obs {
         if o.effects_len != new.effects_len || o.tex_input_type != new.tex_input_type {
             return Err("an external effect since the restart".into());
         }
+        // DESIGN.md §5.3 rule (c): which openings are the edited files'
+        // (`crate::lineshift::Shift::with_tags`), as of this point: the old
+        // run reads no changed file later (test (b)), so none is opened
+        // again in what the convergence keeps.
+        self.shifts = self
+            .shifts
+            .iter()
+            .map(|s| s.with_tags(g))
+            .collect::<Result<Vec<_>, _>>()?;
         // DESIGN.md §5.3's barriers: the old run's pages from here on made
         // an external effect (`\write18`) or read the clock
         // (`\pdfelapsedtime`); keeping them would not re-do it. They "block
@@ -779,7 +788,7 @@ impl Obs {
         // edit)
         let mut stages = self.old_lines.get(&old).cloned().unwrap_or_default();
         stages.extend(self.shifts.iter().cloned());
-        let active = crate::lineshift::Active::new(g, &stages);
+        let active = crate::lineshift::Active::new(&stages);
         let r = crate::lineshift::with_active(active, || {
             same_words(
                 g,
@@ -1080,6 +1089,8 @@ fn live_len(g: &Globals, region: &str) -> Option<usize> {
         "ls_nest_tag" => g.nest_ptr + 1,
         "ls_grp_tag" => g.cur_level + 1,
         "ls_cond_tag" => g.ls_cond_depth.min(g.ls_cond_tag.len() as i32 - 1) + 1,
+        // ... and the file of every SyncTeX tag given so far
+        "ls_tag_file" => g.synctex_tag_counter.min(g.ls_tag_file.len() as i32 - 1) + 1,
         // pdftex.web: the PDF output buffer up to `pdf_ptr` (in object
         // stream mode it is saved in `pdf_op_ptr`), the object stream
         // buffer likewise

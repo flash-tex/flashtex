@@ -2813,3 +2813,127 @@ fn restores_after_a_line_edit_equal_scratch_runs() {
     compile_and_check(&e, &mut h, &dir, &[("doc.tex", &letter)], "a letter later");
     compile_and_check(&e, &mut h, &dir, &[("doc.tex", &doc)], "all reverted");
 }
+
+/// The independent review of #1570 (probe 1): `\the\inputlineno` confined
+/// into an `\edef` body, and the definition runs away (an `\outer` macro
+/// read from another file). TeX's `runaway` prints the unfinished body, the
+/// moved line's digits included, through `show_token_list(link(def_ref))`
+/// before the definition is done and its list marked; the error's context
+/// is the other file's line. The print is a read of the moved line.
+#[test]
+fn a_runaway_definition_prints_a_moved_line() {
+    let Some(e) = env() else {
+        common::no_texlive();
+        return;
+    };
+    const N: usize = 240;
+    const AT: usize = 180;
+    let doc = lines_doc(
+        "\\outer\\def\\foo{}\n",
+        N,
+        &[
+            (
+                AT,
+                "\\edef\\x{\\the\\inputlineno\\csname @@input\\endcsname rvsub ",
+            ),
+            (AT + 3, "\\let\\x\\relax"),
+        ],
+    );
+    let dir = e.dir.join("lines-runaway");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("rvsub.tex"), "\\foo\n").unwrap();
+    let mut h = Host::start(&e, &dir);
+    settle(&e, &mut h, &dir, &doc);
+    for (text, what) in line_edits(&doc).into_iter().take(2) {
+        let what = format!("lines-runaway: {what}");
+        compile_and_check(&e, &mut h, &dir, &[("doc.tex", &text)], &what);
+    }
+}
+
+/// The review's probe 2: a group begun in an `\input` file that is closed
+/// again while the group stays open, after a newline in that file. The old
+/// run's later checkpoints hold the group's line in the old numbering;
+/// correcting them must know the group is the edited file's although no
+/// level reads it any more. e-TeX's end of job prints the line ("entered
+/// at line N").
+#[test]
+fn a_group_line_of_a_closed_inclusion_moves() {
+    let Some(e) = env() else {
+        common::no_texlive();
+        return;
+    };
+    let dir = e.dir.join("lines-closed-group");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let mut chap: String = (0..60).map(|i| para(1000 + i, "ipsum")).collect();
+    chap.push_str("\\begingroup\n");
+    let doc = lines_doc("", 120, &[(20, "\\input{chapx}")]);
+    std::fs::write(dir.join("chapx.tex"), &chap).unwrap();
+    let mut h = Host::start(&e, &dir);
+    settle(&e, &mut h, &dir, &doc);
+    let nl = chap.replacen(
+        "Paragraph 1005 with the word",
+        "Paragraph 1005 with\nthe word",
+        1,
+    );
+    assert_ne!(nl, chap);
+    compile_and_check(
+        &e,
+        &mut h,
+        &dir,
+        &[("chapx.tex", &nl)],
+        "lines-closed-group: a newline in chapx.tex",
+    );
+    compile_and_check(
+        &e,
+        &mut h,
+        &dir,
+        &[("chapx.tex", &chap)],
+        "lines-closed-group: its revert",
+    );
+}
+
+/// The review's probe 3: a file `sub/doc.tex`, read by its absolute name,
+/// is not the edited `doc.tex`. After a newline in `doc.tex` converges, a
+/// read of `\inputlineno` is added in `sub/doc.tex`: the restart from a
+/// checkpoint the convergence kept must not move that file's line.
+#[test]
+fn an_absolute_namesake_is_not_the_edited_file() {
+    let Some(e) = env() else {
+        common::no_texlive();
+        return;
+    };
+    let dir = e.dir.join("lines-namesake");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(dir.join("sub")).unwrap();
+    let abs = dir.canonicalize().unwrap().join("sub").join("doc.tex");
+    let sub: String = (0..80).map(|i| para(1000 + i, "ipsum")).collect();
+    std::fs::write(&abs, &sub).unwrap();
+    let inc = format!("\\input{{{}}}", abs.display());
+    let doc = lines_doc("", 150, &[(60, &inc)]);
+    let mut h = Host::start(&e, &dir);
+    settle(&e, &mut h, &dir, &doc);
+    let nl = doc.replacen("Paragraph 5 with the word", "Paragraph 5 with\nthe word", 1);
+    compile_and_check(
+        &e,
+        &mut h,
+        &dir,
+        &[("doc.tex", &nl)],
+        "lines-namesake: a newline",
+    );
+    // a line read in the middle of sub/doc.tex, no line moved
+    let sub2 = sub.replacen(
+        "Paragraph 1050 with",
+        "\\message{[sub line \\the\\inputlineno]}Paragraph 1050 with",
+        1,
+    );
+    assert_ne!(sub2, sub);
+    compile_and_check(
+        &e,
+        &mut h,
+        &dir,
+        &[("sub/doc.tex", &sub2)],
+        "lines-namesake: a read in sub/doc.tex",
+    );
+}

@@ -114,6 +114,7 @@ const EXCLUDED_REGIONS: &[&str] = &[
     "ls_nest_tag",
     "ls_grp_tag",
     "ls_cond_tag",
+    "ls_tag_file",
 ];
 
 struct Pending {

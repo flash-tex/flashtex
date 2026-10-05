@@ -54,17 +54,17 @@
 use crate::generated::Globals;
 use std::cell::{Cell, RefCell};
 
-/// A line number read or printed: the file it counts lines of (as the
-/// run opened it) when `known`, and the number. `known` with an empty
-/// `file`: not a line of a source file (a `\scantokens` pseudo file, the
-/// terminal), never moved by an edit.
+/// A line number read or printed: the SyncTeX tag of the file it counts
+/// lines of (the opening of the file: changes/synctex.ch) when `known`, and
+/// the number. `known` with tag 0: not a line of a source file (a
+/// `\scantokens` pseudo file, the terminal), never moved by an edit.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct LineRead {
-    pub file: String,
+    pub tag: i32,
     pub known: bool,
     pub line: i32,
 }
-crate::codec_struct!(LineRead { file, known, line });
+crate::codec_struct!(LineRead { tag, known, line });
 
 /// A token list holding the digits of `\inputlineno` reads: its reference
 /// count's location and its first token's.
@@ -113,6 +113,8 @@ thread_local! {
     /// `scan_toks`'s `\the` in a definition's body is about to call
     /// `the_toks` (`ls_the_begin`, taken by `ls_the_take`).
     static THE_DEF: Cell<bool> = const { Cell::new(false) };
+    /// The definition being scanned holds confined reads (`def_reads`).
+    static DEF_READS: Cell<bool> = const { Cell::new(false) };
 }
 
 fn with<R>(f: impl FnOnce(&mut St) -> R) -> R {
@@ -124,6 +126,7 @@ pub fn reset() {
     with(|s| *s = St::default());
     TAINTS.with(|t| t.set(0));
     THE_DEF.with(|t| t.set(false));
+    DEF_READS.with(|t| t.set(false));
 }
 
 /// This state's line record, for a checkpoint (or the record of a run's
@@ -148,6 +151,7 @@ pub fn restore(r: &Rec) {
     });
     TAINTS.with(|t| t.set(r.taints.len()));
     THE_DEF.with(|t| t.set(false));
+    DEF_READS.with(|t| t.set(false));
 }
 
 /// The largest line number the state holds without a file:
@@ -185,12 +189,17 @@ fn ls_cond_size(g: &Globals) -> i32 {
 /// One edited file's line shift (line numbers as the old file has them):
 /// lines from `after` on moved by `delta`; lines before `first` did not
 /// move; the lines between hold the edit.
+/// `tags`: the SyncTeX tags of every opening of the edited file so far
+/// ([`Shift::with_tags`]; changes/lineshift.ch's `ls_tag_file`), which say
+/// which lines are the file's: a level's, group's or conditional's line is
+/// the file of the tag it was begun under, even once that opening is closed.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Shift {
     pub path: String,
     pub delta: i32,
     pub first: i32,
     pub after: i32,
+    pub tags: Vec<i32>,
 }
 
 /// A [`Shift`] whose lines before the edit are not counted yet: the edit
@@ -231,6 +240,7 @@ impl Pending {
             first: clamp(1 + before),
             // the first line that starts at or after the edit's end
             after: clamp(1 + before + self.mid + if self.at_start { 0 } else { 1 }),
+            tags: vec![],
         }
     }
 }
@@ -326,11 +336,39 @@ impl Shift {
     }
 
     /// Whether `r` may be a line this shift moved: a line of the edited
-    /// file, or of a file TeX does not know, at or after `first`.
+    /// file (one of `tags`), or of a file TeX does not know, at or after
+    /// `first`.
     pub fn moves(&self, r: &LineRead) -> bool {
         r.line != 0
             && r.line.unsigned_abs() as i64 >= self.first as i64
-            && (!r.known || same_path(&r.file, &self.path))
+            && (!r.known || self.tags.contains(&r.tag))
+    }
+
+    /// This shift with `tags` set from the state `g`: every tag given to an
+    /// opening of the edited file (`ls_tag_file`). `Err` when the tags have
+    /// run past what `ls_tag_file` keeps.
+    pub fn with_tags(&self, g: &Globals) -> Result<Shift, String> {
+        let n = g.synctex_tag_counter.max(0);
+        let size = g.ls_tag_file.len() as i32 - 1;
+        if n > size {
+            return Err(format!(
+                "{n} files opened: their tags are not all kept ({size})"
+            ));
+        }
+        let mut tags = vec![];
+        for t in 1..=n {
+            let s = g.ls_tag_file[t as usize];
+            if s > 0 && s < g.str_ptr {
+                let name = String::from_utf8_lossy(&g.str_bytes(s)).into_owned();
+                if same_path(&name, &self.path) {
+                    tags.push(t);
+                }
+            }
+        }
+        Ok(Shift {
+            tags,
+            ..self.clone()
+        })
     }
 
     /// Whether a checkpoint with this line record holds a line of no known
@@ -351,13 +389,10 @@ impl Shift {
     /// conditional's line of that file from `after` on.
     pub fn relocate(&self, g: &mut Globals) {
         let d = self.delta;
-        let mut tags = vec![];
+        let tags = &self.tags;
         for j in 1..=g.in_open.max(0) {
-            if !level_file(g, j).is_some_and(|p| same_path(p, &self.path)) {
+            if level_file(g, j).is_none() || !level_tag(g, j).is_some_and(|t| tags.contains(&t)) {
                 continue;
-            }
-            if let Some(t) = level_tag(g, j) {
-                tags.push(t);
             }
             if j == g.in_open {
                 g.line += d;
@@ -439,23 +474,43 @@ fn shifted(v: i32, d: i32) -> i32 {
     }
 }
 
-/// The same file named two ways: `./a.tex` and `a.tex`, or an absolute name
-/// and a relative one ending it.
+/// The same file named two ways (`./a.tex`, `a.tex`, its absolute name): the
+/// names resolved against the working directory the run opens files from,
+/// links followed where the file exists (cached per name).
 pub fn same_path(a: &str, b: &str) -> bool {
-    let a = a.strip_prefix("./").unwrap_or(a);
-    let b = b.strip_prefix("./").unwrap_or(b);
-    if a == b {
-        return true;
+    a == b || canonical(a) == canonical(b)
+}
+
+fn canonical(p: &str) -> std::path::PathBuf {
+    thread_local! {
+        static CACHE: RefCell<std::collections::HashMap<String, std::path::PathBuf>> =
+            RefCell::new(std::collections::HashMap::new());
     }
-    // (an absolute name and a relative one only: `chap/a.tex` is not `a.tex`)
-    let tail = |long: &str, short: &str| {
-        long.starts_with('/')
-            && !short.starts_with('/')
-            && long.len() > short.len()
-            && long.ends_with(short)
-            && long.as_bytes()[long.len() - short.len() - 1] == b'/'
-    };
-    tail(a, b) || tail(b, a)
+    if let Some(c) = CACHE.with(|c| c.borrow().get(p).cloned()) {
+        return c;
+    }
+    let path = std::path::Path::new(p);
+    let c = std::fs::canonicalize(path).unwrap_or_else(|_| {
+        // (a name that does not resolve: its lexical form, made absolute)
+        let abs = if path.is_absolute() {
+            path.to_path_buf()
+        } else {
+            std::env::current_dir().unwrap_or_default().join(path)
+        };
+        let mut out = std::path::PathBuf::new();
+        for c in abs.components() {
+            match c {
+                std::path::Component::CurDir => {}
+                std::path::Component::ParentDir => {
+                    out.pop();
+                }
+                c => out.push(c),
+            }
+        }
+        out
+    });
+    CACHE.with(|m| m.borrow_mut().insert(p.to_string(), c.clone()));
+    c
 }
 
 /// The source file input level `j` (1..=`in_open`) reads, as the run
@@ -506,7 +561,11 @@ fn level_line(g: &Globals, j: i32) -> i32 {
 
 fn level_read(g: &Globals, j: i32) -> LineRead {
     LineRead {
-        file: level_file(g, j).unwrap_or("").to_string(),
+        tag: if level_file(g, j).is_some() {
+            level_tag(g, j).unwrap_or(0)
+        } else {
+            0
+        },
         known: true,
         line: level_line(g, j),
     }
@@ -517,36 +576,27 @@ fn level_read(g: &Globals, j: i32) -> LineRead {
 
 /// The shifts a convergence test allows, in order: those the old
 /// checkpoint still owes (`incr::Reloc`: it is stored as an earlier run
-/// numbered its lines, and corrected only when restored), then the edit's.
-/// Each with the SyncTeX tags of the input levels that read its file in the
-/// live state.
+/// numbered its lines, and corrected only when restored), then the edit's;
+/// each with its tags ([`Shift::with_tags`]).
 #[derive(Clone, Debug, Default)]
 pub struct Active {
-    stages: Vec<(Shift, Vec<i32>)>,
+    stages: Vec<Shift>,
 }
 
 impl Active {
-    pub fn new(g: &Globals, shifts: &[Shift]) -> Active {
-        let stages = shifts
-            .iter()
-            .map(|s| {
-                let tags = (1..=g.in_open.max(0))
-                    .filter(|&j| level_file(g, j).is_some_and(|p| same_path(p, &s.path)))
-                    .filter_map(|j| level_tag(g, j))
-                    .collect();
-                (s.clone(), tags)
-            })
-            .collect();
-        Active { stages }
+    pub fn new(shifts: &[Shift]) -> Active {
+        Active {
+            stages: shifts.to_vec(),
+        }
     }
 
-    /// The new numbering of a line `o` of the file whose reading level had
+    /// The new numbering of a line `o` of the file whose opening had
     /// SyncTeX tag `tag`: each shift of that file moves it from its `after`
     /// on.
     fn held(&self, tag: i32, o: i32) -> i32 {
         let mut v = o;
-        for (s, tags) in &self.stages {
-            if tags.contains(&tag) && v.unsigned_abs() as i64 >= s.after as i64 {
+        for s in &self.stages {
+            if s.tags.contains(&tag) && v.unsigned_abs() as i64 >= s.after as i64 {
                 v = shifted(v, s.delta);
             }
         }
@@ -556,15 +606,17 @@ impl Active {
     /// The shift of input level `j`'s line: every shift of the file it
     /// reads.
     fn level(&self, g: &Globals, j: i32) -> i64 {
-        match level_file(g, j) {
-            Some(p) => self
-                .stages
-                .iter()
-                .filter(|(s, _)| same_path(p, &s.path))
-                .map(|(s, _)| s.delta as i64)
-                .sum(),
-            None => 0,
+        if level_file(g, j).is_none() {
+            return 0;
         }
+        let Some(t) = level_tag(g, j) else {
+            return 0;
+        };
+        self.stages
+            .iter()
+            .filter(|s| s.tags.contains(&t))
+            .map(|s| s.delta as i64)
+            .sum()
     }
 }
 
@@ -674,13 +726,18 @@ impl Globals {
     /// `\inputlineno` was read (`cur_val:=line`).
     pub fn ls_line_read(&mut self) {
         let r = level_read(self, self.in_open);
-        with(|s| {
+        let confined = with(|s| {
             if std::mem::take(&mut s.confine) {
                 s.def_reads.push(r);
+                true
             } else {
                 s.events.push(r);
+                false
             }
         });
+        if confined {
+            DEF_READS.with(|t| t.set(true));
+        }
     }
 
     /// `scan_toks`'s `\the` is about to call `the_toks`; `d`: in the body
@@ -712,6 +769,7 @@ impl Globals {
             s.confine = false;
             std::mem::take(&mut s.def_reads)
         });
+        DEF_READS.with(|t| t.set(false));
         if reads.is_empty() {
             return;
         }
@@ -737,9 +795,18 @@ impl Globals {
         }
     }
 
-    /// `show_token_list(p)`: `p` a list's first token (or its head).
+    /// `show_token_list(p)`: `p` a list's first token (or its head). While
+    /// a definition holding confined reads is being scanned, any list shown
+    /// may be its unfinished body (`runaway`, tex.web §306): its reads are
+    /// journalled.
     #[inline(always)]
     pub fn ls_show(&mut self, p: i32) {
+        if DEF_READS.with(|t| t.get()) {
+            with(|s| {
+                let r = s.def_reads.clone();
+                s.events.extend(r)
+            });
+        }
         if TAINTS.with(|t| t.get()) != 0 {
             self.ls_use_slow(p, true);
         }
@@ -789,7 +856,7 @@ impl Globals {
         if v != 0 {
             with(|s| {
                 s.events.push(LineRead {
-                    file: String::new(),
+                    tag: 0,
                     known: false,
                     line: v,
                 })
@@ -882,19 +949,16 @@ mod tests {
             delta: 1,
             first: 10,
             after: 11,
+            tags: vec![1, 7],
         };
-        let r = |file: &str, known, line| LineRead {
-            file: file.into(),
-            known,
-            line,
-        };
-        assert!(s.moves(&r("main.tex", true, 10)));
-        assert!(s.moves(&r("/w/main.tex", true, 12)));
-        assert!(!s.moves(&r("main.tex", true, 9)));
-        assert!(!s.moves(&r("chap.tex", true, 50)));
-        assert!(!s.moves(&r("", true, 50)));
-        assert!(s.moves(&r("", false, -50)));
-        assert!(!s.moves(&r("", false, 0)));
+        let r = |tag, known, line| LineRead { tag, known, line };
+        assert!(s.moves(&r(1, true, 10)));
+        assert!(s.moves(&r(7, true, 12)));
+        assert!(!s.moves(&r(1, true, 9)));
+        assert!(!s.moves(&r(3, true, 50)));
+        assert!(!s.moves(&r(0, true, 50)));
+        assert!(s.moves(&r(0, false, -50)));
+        assert!(!s.moves(&r(0, false, 0)));
     }
 
     #[test]
@@ -904,9 +968,10 @@ mod tests {
             delta,
             first: after - 1,
             after,
+            tags: vec![3],
         };
         let a = Active {
-            stages: vec![(sh(2, 11), vec![3])],
+            stages: vec![sh(2, 11)],
         };
         with_active(a, || {
             assert!(held_ok(3, 12, 14));
@@ -921,7 +986,7 @@ mod tests {
         // a checkpoint that owes a shift (+1 from line 20 on), then the
         // edit's (-1 from line 31 on, in the numbering after the first)
         let a = Active {
-            stages: vec![(sh(1, 20), vec![3]), (sh(-1, 31), vec![3])],
+            stages: vec![sh(1, 20), sh(-1, 31)],
         };
         with_active(a, || {
             assert!(held_ok(3, 19, 19));
@@ -934,7 +999,13 @@ mod tests {
     #[test]
     fn same_paths() {
         assert!(same_path("./a.tex", "a.tex"));
-        assert!(same_path("/x/y/a.tex", "./a.tex"));
+        let cwd = std::env::current_dir().unwrap();
+        let abs = cwd.join("a.tex");
+        assert!(same_path(abs.to_str().unwrap(), "./a.tex"));
+        assert!(same_path("sub/../a.tex", "a.tex"));
+        // a namesake elsewhere is another file
+        let other = cwd.join("sub").join("a.tex");
+        assert!(!same_path(other.to_str().unwrap(), "a.tex"));
         assert!(!same_path("/x/ya.tex", "a.tex"));
         assert!(!same_path("b.tex", "a.tex"));
         assert!(!same_path("chap/a.tex", "a.tex"));
