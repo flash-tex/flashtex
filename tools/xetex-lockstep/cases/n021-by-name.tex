@@ -1,0 +1,16 @@
+% n021-by-name: system fonts by family, full and PostScript name, with /B /I /BI and features
+% XeTeX-specific (docs/design/xetex/PLAN.md, phase S1: native fonts)
+\input prelude
+\def\space{ }
+\hsize=210pt \parindent=12pt \parfillskip=0pt plus 1fil
+\baselineskip=13pt \tolerance=10000 \pretolerance=-1
+\font\a="Times New Roman" \font\b="Times New Roman/B" \font\c="Times New Roman/I"
+\font\d="Times New Roman/BI" \font\e="Arial Bold" \font\f="Georgia-Italic"
+\font\g="Courier New:+liga" \font\h="Helvetica/OT" \font\i="Helvetica Neue/OT/B"
+\font\j="Arial:letterspace=5;color=0000FF" \font\k="Georgia" at 12pt
+\message{[\fontname\a][\fontname\b][\fontname\c][\fontname\d][\fontname\e][\fontname\f]}
+\message{[\fontname\g][\fontname\h][\fontname\i][\fontname\j][\fontname\k]}
+\setbox0=\vbox{\a We shall find that office workers, efficient and affluent, flatly refuse difficult fjords; AVATAR, Wo, Ta, T. Yo! Naïve café owners in Zürich serve crème brûlée -- or not --- with 1234567890 “quotes” and ‘single’ ones. \b office \c office \d office \e office \f office
+\g office \h We shall find that office workers, efficient and affluent, flatly refuse difficult fjords; AVATAR, Wo, Ta, T. Yo! Naïve café owners in Zürich serve crème brûlée -- or not --- with 1234567890 “quotes” and ‘single’ ones. \i office \j office \k 0123456789\par}
+\lsshipbox0
+\end

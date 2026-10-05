@@ -3,12 +3,12 @@ name = "flashtex-xetex-icu"
 version = "0.1.0"
 edition = "2021"
 # TeX Live 2026's ICU 78.2 (Unicode License v3, third_party/icu/README.md:
-# the common library and data items, unmodified; the data's third-party
+# the common library as TeX Live has it and data items, unchanged; the data's third-party
 # notices are in third_party/icu/icu-src/LICENSE). This crate's own code is
 # GPL-2.0-or-later, like the XeTeX port that links it. No Apache-2.0-only
 # code is vendored.
 license = "GPL-2.0-or-later AND Unicode-3.0"
-description = "TeX Live 2026's ICU 78.2 common library and a subset of its data, vendored unmodified (third_party/icu), built as TeX Live builds it, with raw FFI for the XeTeX port's bidi, input encodings and line breaking."
+description = "TeX Live 2026's ICU 78.2 common library and a subset of its data, vendored as TeX Live has it (third_party/icu), built as TeX Live builds it, with raw FFI for the XeTeX port's bidi, input encodings and line breaking."
 publish = false
 build = "build.rs"
 links = "flashtex_xetex_icu"

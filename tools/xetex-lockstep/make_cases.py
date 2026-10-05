@@ -685,6 +685,32 @@ ncase("n020-unknown-font", "a bracketed font file that does not exist, and one t
 \lsshipbox0
 \end""", no_halt=True)
 
+# Fonts by name: XeTeX's font manager (src/fontmgr) over the platform-free
+# index of the installed fonts. Names of macOS's own fonts; one that is
+# AAT-only (Helvetica) is asked for with /OT, which TeX Live's xetex on macOS
+# also shapes with HarfBuzz (without it, it uses Core Text: out of scope,
+# PLAN.md §3.1). No \XeTeXtracingfonts here: for a name, TeX Live's xetex
+# on macOS prints the path from a destroyed temporary
+# (`getPlatformFontDesc(...).c_str()` in XeTeXFontMgr::findFont), so its
+# "-> path" line is garbage bytes; the port prints the path.
+ncase("n021-by-name", "system fonts by family, full and PostScript name, with /B /I /BI and features",
+      PARA + r"""\font\a="Times New Roman" \font\b="Times New Roman/B" \font\c="Times New Roman/I"
+\font\d="Times New Roman/BI" \font\e="Arial Bold" \font\f="Georgia-Italic"
+\font\g="Courier New:+liga" \font\h="Helvetica/OT" \font\i="Helvetica Neue/OT/B"
+\font\j="Arial:letterspace=5;color=0000FF" \font\k="Georgia" at 12pt
+\message{[\fontname\a][\fontname\b][\fontname\c][\fontname\d][\fontname\e][\fontname\f]}
+\message{[\fontname\g][\fontname\h][\fontname\i][\fontname\j][\fontname\k]}
+\setbox0=\vbox{\a """ + WORDS + r""" \b office \c office \d office \e office \f office
+\g office \h """ + WORDS + r""" \i office \j office \k 0123456789\par}
+\lsshipbox0
+\end""")
+
+ncase("n022-name-not-found", "a font name that the index does not have",
+      r"""\font\a="No Such Font Family Anywhere"
+\setbox0=\hbox{x}
+\lsshipbox0
+\end""", no_halt=True)
+
 # ---------------------------------------------------------------------------
 # b: ICU (docs/design/xetex/PLAN.md §3.1, phase S1): bidirectional text in
 # native words, input encodings, \XeTeXinputnormalization and

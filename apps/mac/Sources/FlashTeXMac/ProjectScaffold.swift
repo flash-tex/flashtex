@@ -257,6 +257,21 @@ enum ProjectTemplate: String, CaseIterable, Identifiable {
     }
 }
 
+/// What the window holds when FlashTeX opens with no file
+/// (`ShellModel.Startup.untitledDocument`): File › New Project…'s "Blank
+/// article" entry document titled "Untitled" — the one source of that text —
+/// with the caret on the empty line under `\section{Introduction}`, where
+/// the first sentence goes. Never on disk until Save As….
+enum UntitledDocument {
+    static let path = ProjectTemplate.entryPath
+    static let text = ProjectTemplate.blankArticle.files(projectName: "Untitled")[0].text
+    /// UTF-16 offset of the line after `\section{Introduction}`.
+    static let caretUTF16: Int = {
+        let line = (text as NSString).range(of: "\\section{Introduction}\n")
+        return line.location == NSNotFound ? 0 : NSMaxRange(line)
+    }()
+}
+
 /// Writes a template into `<folder>/<name>` (pure file-system work; the
 /// model then opens the entry document like ⌘O would).
 enum ProjectScaffold {

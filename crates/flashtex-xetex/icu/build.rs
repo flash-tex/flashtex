@@ -1,5 +1,5 @@
 //! Builds TeX Live 2026's ICU 78.2 common library (third_party/icu,
-//! unmodified) with the configuration TeX Live's build uses, and links a
+//! as TeX Live has it) with the configuration TeX Live's build uses, and links a
 //! subset of TeX Live's ICU data in the way TeX Live links all of it.
 //!
 //! * Library: TeX Live's `libs/icu` runs ICU's own `source/configure` with

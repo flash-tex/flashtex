@@ -318,16 +318,69 @@ impl Globals {
     }
 
     /// The other branch of `findnativefont`: a font looked up by name
-    /// through the font manager. Phase S1 lands it with the font lookup
-    /// (crate::fontmgr); until then no font is found by name.
+    /// through the font manager (`crate::fontmgr`, XeTeXFontMgr's rules
+    /// over the platform-free index). A font XeTeX on macOS would shape
+    /// with AAT (`/AAT`, or no `GSUB`/`GPOS` table) is loaded as an
+    /// OpenType font, shaped by HarfBuzz (PLAN.md §3.1, out of scope).
     fn find_native_font_by_name(
         &mut self,
-        _name: &[u8],
-        _var: Option<Vec<u8>>,
-        _feat: Option<Vec<u8>>,
-        _scaled_size: i32,
+        name: &[u8],
+        var: Option<Vec<u8>>,
+        feat: Option<Vec<u8>>,
+        scaled_size: i32,
     ) -> i32 {
-        0
+        let mut full = name.to_vec();
+        if let Some(v) = &var {
+            full.push(b'/');
+            full.extend_from_slice(v);
+        }
+        if let Some(f) = &feat {
+            full.push(b':');
+            full.extend_from_slice(f);
+        }
+        let mgr = self.host.font_mgr.get_or_insert_with(|| {
+            Rc::new(crate::fontmgr::FontMgr::new(std::sync::Arc::new(
+                crate::fontmgr::FontCatalog::system(None),
+            )))
+        });
+        let located = Rc::make_mut(mgr).locate(&String::from_utf8_lossy(&full), scaled_size);
+        let Some(located) = located else {
+            return 0;
+        };
+        self.host.req_engine = located.req_engine;
+        if self.get_tracing_fonts_state() > 0 {
+            // XeTeXFontMgr::findFont's diagnostic.
+            self.begin_diagnostic();
+            self.print_nl(b' ' as i32);
+            self.print_bytes(b"-> ");
+            self.print_bytes(located.path.as_bytes());
+            self.end_diagnostic(false);
+        }
+        self.loaded_font_design_size = located.loaded_font_design_size;
+        // name_of_file becomes the full name, for messages while loading.
+        let full_name = located.full_name.clone().unwrap_or_default();
+        self.set_name_of_file_bytes(full_name.as_bytes());
+        let mut rval = 0;
+        let scaled_size = located.scaled_size;
+        if let Some(font) =
+            self.create_font_from_file(located.path.as_bytes(), located.face_index, scaled_size)
+        {
+            rval = self.load_ot_font(font, scaled_size, feat.as_deref());
+        }
+        // The style and feature strings are appended, so that \show of the
+        // font gives a full result.
+        let nof = located.name_of_file.unwrap_or(full_name);
+        self.set_name_of_file_bytes(nof.as_bytes());
+        rval
+    }
+
+    /// `name_of_file` (and `name_length`) set to `s`, NUL-terminated as
+    /// XeTeX's C string.
+    fn set_name_of_file_bytes(&mut self, s: &[u8]) {
+        let n = s.len().min(self.name_of_file.len() - 1);
+        self.name_of_file[..n].copy_from_slice(&s[..n]);
+        self.name_of_file[n] = 0;
+        self.name_length = n as i32;
     }
 
     /// texmfmp.c's `printcstring`: bytes, one `print_char` each.

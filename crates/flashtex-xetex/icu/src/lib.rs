@@ -1,5 +1,5 @@
 //! TeX Live 2026's ICU 78.2 for the XeTeX port (docs/design/xetex/PLAN.md
-//! §3.1): the common library vendored unmodified in `third_party/icu`,
+//! §3.1): the common library vendored as TeX Live has it in `third_party/icu`,
 //! compiled by `build.rs` with TeX Live's configuration, with the items of
 //! TeX Live's ICU data that XeTeX's uses need (the converter alias table and
 //! the break-iteration data; `third_party/icu/README.md`), and raw
