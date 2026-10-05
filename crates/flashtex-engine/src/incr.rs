@@ -430,6 +430,9 @@ struct Obs {
     /// checkpoint of a run that may stop there, with the pass and the
     /// pages this run shipped; whether it stopped the run.
     preempt: Option<Preempt>,
+    /// The client cancelled this compile (`Session::set_cancel`): stops the
+    /// run like newer work, protected or not (`protecting`).
+    cancel: Option<Preempt>,
     /// The client's heartbeat (`Session::set_progress`): told at every page
     /// and segment checkpoint of every run, cold or incremental.
     progress: Option<Progress>,
@@ -1845,9 +1848,16 @@ impl Observer for Obs {
 }
 
 impl Obs {
-    /// Newer work may not stop the run yet (`protect_edit`).
+    /// Newer work may not stop the run yet (`protect_edit`); a cancel
+    /// always may.
     fn protecting(&self) -> bool {
-        self.protect_edit && self.edited.is_none() && self.new_pages.len() < PROTECT_PAGES
+        self.protect_edit
+            && self.edited.is_none()
+            && self.new_pages.len() < PROTECT_PAGES
+            && !self
+                .cancel
+                .as_ref()
+                .is_some_and(|c| c(self.pass, self.new_pages.len()))
     }
 
     /// Newer work waits: stop the run at this checkpoint. A run from the
@@ -1951,6 +1961,8 @@ pub struct Session {
     /// Newer work is waiting: a running pass stops at its next page or
     /// segment checkpoint (`set_preempt`).
     preempt: Option<Preempt>,
+    /// `set_cancel`.
+    cancel: Option<Preempt>,
     /// The heartbeat every run reports to (`set_progress`).
     progress: Option<Progress>,
     /// The last incremental pass's restart point: the next edit, typed
@@ -2060,6 +2072,7 @@ impl Session {
             reloc: HashMap::new(),
             defpatch: HashMap::new(),
             preempt: None,
+            cancel: None,
             progress: None,
             last_restart: None,
             defer: None,
@@ -2214,6 +2227,7 @@ impl Session {
         system::guard_every_output(true);
         let mut obs = self.observer(t0, 0, stop_at);
         obs.preempt = self.preempt.clone();
+        obs.cancel = self.cancel.clone();
         let g = self.g.as_mut().unwrap();
         g.restore_discard(id)?;
         system::take_ahead_read();
@@ -2319,6 +2333,13 @@ impl Session {
     /// and the next `compile` keeps what it typeset (`settle_paused`).
     pub fn set_preempt(&mut self, p: Option<Preempt>) {
         self.preempt = p;
+    }
+
+    /// The client cancelled the compile (`c(pass, pages)` says so): a run
+    /// protected to its first changed page (`Obs::protect_edit`) stops all
+    /// the same. `set_preempt`'s callback must say so too.
+    pub fn set_cancel(&mut self, c: Option<Preempt>) {
+        self.cancel = c;
     }
 
     /// The heartbeat every later run reports to (`None`: none).
@@ -3554,6 +3575,7 @@ impl Session {
             edited: None,
             patched: self.defpatch.keys().copied().collect(),
             preempt: None,
+            cancel: None,
             progress: self.progress.clone(),
             pass: self.pass,
             preempted: false,
@@ -3633,6 +3655,7 @@ impl Session {
         // run is then kept like a stopped incremental one (`settle_paused`),
         // S₀ and the checkpoints it took with it.
         obs.preempt = self.preempt.clone();
+        obs.cancel = self.cancel.clone();
         obs.preempt_after_s0 = true;
         g.layer().observer = Some(Box::new(obs));
         let status = g.run_to_end();
@@ -3797,6 +3820,7 @@ impl Session {
         obs.pdf_len_r = pdf_len(&rec);
         obs.keep_r = Some(r);
         obs.preempt = self.preempt.clone();
+        obs.cancel = self.cancel.clone();
         obs.first_incremental = self.pass == 1;
         obs.protect_edit = self.pass == 1 && self.starved;
         g.checkpoint_every_shipout(true);
@@ -3876,6 +3900,7 @@ impl Session {
             .and_then(|o| o.into_any().downcast::<Obs>().ok())
         {
             o.preempt = self.preempt.clone();
+            o.cancel = self.cancel.clone();
             match &again {
                 Ok((_, changed, _)) => {
                     o.changed_lookup_last = o.changed_lookup_last.max(self.changed_lookup_last);
@@ -3916,7 +3941,9 @@ impl Session {
         if obs.first_incremental && obs.edited.is_none() {
             // (decided once, at its first stop: a protected run ships its
             // changed page before newer work stops it)
-            self.starved = status == STOPPED && obs.preempted;
+            // A protected run is never followed by another: at most every
+            // other compile is held (`Obs::protect_edit`).
+            self.starved = status == STOPPED && obs.preempted && !obs.protect_edit;
         } else if obs.first_incremental {
             self.starved = false;
         }
@@ -4120,6 +4147,7 @@ impl Session {
             // (after an unfinished old run -- a preempted one kept by
             // `settle_paused` -- this is the rest of the document)
             o2.preempt = self.preempt.clone();
+            o2.cancel = self.cancel.clone();
             let g = self.g.as_mut().unwrap();
             g.layer().observer = Some(Box::new(o2));
             drop(busy_jump);

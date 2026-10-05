@@ -779,6 +779,30 @@ null), `typeset_pages` (pages this compile shipped), `first_page_ms`
 (`COMPILE` to the first re-typeset page on the socket), `viewport_ms`,
 `run_ms`, `keep`, and `cold_reason` when a full run was needed.
 
+The resident engine's `DONE` may also carry `stages`, an object of
+**optional diagnostics** for benchmarks (`tools/incr-bench`): a client must
+not depend on any of its keys, which may change without a protocol version.
+Times are in ms (`queue`, `apply`, `move_spans`, `find`, `key`, `changes`, `restore`,
+`first_page`, `first_page_cpu`, `first_page_dl`, `first_page_send`,
+`edited_wall`, `edited_cpu`, `test`, `dl`, `send`, `cpu`; `tests` and
+`edited_page` are counts and a page index). `queue_by` splits `queue` (the
+request's wait for the engine thread) by what the engine thread did
+meanwhile, in ms per part (`restore`, `typeset`, `test`, `jump`, `paused`,
+`done`, `prepare`, `request`, `idle`, `other`). `old_kept` and
+`old_rewound` count, since the host started, the old checkpoints' chunks
+the convergence comparisons took from their cache and rewound. On macOS the
+engine thread's fixed-counter readings are added, in thousands
+(`os::thread_counts`; absent where the system does not give them):
+`instr_k` and `cycles_k` for the whole compile, `first_page_instr_k` to the
+first page, `restore_instr_k` for the restore, `edited_instr_k` from just
+before the restore to the edited page's shipout, `test_instr_k` for the
+convergence tests, and two absolute cycle marks of the engine thread,
+`arrival_mark_kc` (when the `COMPILE` arrived; also on a `DONE` cancelled
+before its compile started) and `first_page_mark_kc` (its first page): a
+keystroke's latency in engine cycles is the second mark of the compile that
+painted it less the first of its own (`dl3-keys --interval-ms`,
+`docs/evidence/live-30ms-2026-10-04/scripts/interval.py`).
+
 **External tools (3.2).** For a `COMPILE` with `"external_tools":
 "auto"`, once its `DONE` is out (never before: the edited page is not
 delayed), the host decides as latexmk 4.87 does
