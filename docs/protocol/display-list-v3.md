@@ -376,8 +376,10 @@ Destinations (`\pdfdest`, hyperref anchors) on the page:
 u8     named    1: name is a name; 0: a number in decimal
 u32 nl; u8[nl]  name
 u8     kind     0 xyz, 1 fit, 2 fith, 3 fitv, 4 fitb, 5 fitbh, 6 fitbv, 7 fitr
-i32[4] rect     left, top, right, bottom (page space, sp); xyz uses left, top
-i32    zoom     xyz zoom in thousandths, 0 = keep
+i32[4] rect     left, top, right, bottom (page space, sp): the ones pdfTeX
+                writes for the kind (xyz left, top; fith, fitbh top; fitv,
+                fitbv left; fitr all four), the others 0
+i32    zoom     xyz zoom in thousandths, 0 = keep; 0 for the other kinds
 ```
 
 A `goto name` link resolves to the page whose `DESTS` hold that name.
