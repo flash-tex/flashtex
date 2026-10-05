@@ -497,63 +497,74 @@ jobs:
       - name: scripts/gate.sh quick
         run: scripts/gate.sh quick --committed-only
 
-  # DESIGN §3 / §9.6. Cheap, and the whole licensing argument depends on it.
-  boundary:
-    name: licence boundary
+  # Six cheap gates in ONE job (2026-10-05). Each took under two minutes, but
+  # each was a job of its own, and the organisation's Free plan runs at most
+  # 20 GitHub-hosted jobs at a time: a gate run was 15 jobs, and merge groups
+  # queued for slots. Every step runs even when an earlier one failed
+  # (`!cancelled()`), so one red gate does not hide another, and the job fails
+  # if any did. The first three are source-level and run on the Linux leg only:
+  #
+  #   licence boundary   DESIGN §3 / §9.6: no MIT crate or iPad target may
+  #                      reach the GPL engine (scripts/check-license-boundary.sh)
+  #   inventory          the Mac app's bundled command inventory is
+  #                      byte-identical to the compiler's (a sha256 comparison;
+  #                      it does not need a Mac)
+  #   generated tables   no generated table or generator changed without the
+  #                      other (scripts/check-generated.py); the Core 14 AFM
+  #                      tables, the one generator whose inputs CI can fetch,
+  #                      fully re-derived
+  #
+  # and the engine's T0 tests (DESIGN §8, §12), each self-contained (no TeX
+  # installed), each generating its configuration into a scratch package,
+  # never into the committed src/generated/:
+  #
+  #   trip               Knuth's trip test (third_party/knuth/trip/): tripin.log,
+  #                      trip.log and tripos.tex byte-identical to Knuth's
+  #                      masters, the transcripts differing only in the two
+  #                      accepted ways
+  #   etrip              e-TeX's trip test against TeX Live's pdftex output
+  #                      (third_party/pdftex/)
+  #   pdfTeX regression  TeX Live 2026's `pdftex_tests`, unmodified
+  #                      (third_party/pdftex/regression/), run as `make check`
+  #                      does; fails on any failure but the listed expected ones
+  #
+  # Linux on every run, the merge queue included; macOS (T0 only) after the
+  # merge (push to main, where a failure files `main-red`) and on manual
+  # runs (plan's `trip_os`). The Linux leg is always GitHub-hosted; the macOS
+  # leg's runner comes from plan.
+  checks:
+    name: gate checks and engine T0 (${{ matrix.os }})
     needs: [plan]
     if: needs.plan.outputs.run == 'true'
-    # Always GitHub-hosted (owner, 2026-09-30): light, and the repository is
-    # public, so it costs nothing.
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
+    runs-on: ${{ matrix.os == 'macos-15' && fromJSON(needs.plan.outputs.mac_rust_runner) || 'ubuntu-latest' }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        os: ${{ fromJSON(needs.plan.outputs.trip_os) }}
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
-      - name: No MIT crate or iPad target may reach the GPL engine
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: gate-checks
+      - name: "licence boundary: no MIT crate or iPad target may reach the GPL engine"
+        if: ${{ !cancelled() && runner.os == 'Linux' }}
         run: scripts/check-license-boundary.sh
-
-  # The Mac app's bundled command inventory must stay byte-identical to the
-  # compiler's. That gate lived only in `mac-app` below, on a macOS runner --
-  # and macOS runners queue for hours behind ~90 branches, so in practice a
-  # compiler PR could drift the inventory and nothing would say so until
-  # someone ran the Mac suite by hand. It is a sha256 comparison of two files;
-  # it does not need a Mac.
-  inventory:
-    name: bundled inventory matches the compiler
-    needs: [plan]
-    if: needs.plan.outputs.run == 'true'
-    # Always GitHub-hosted (owner, 2026-09-30): light, and the repository is
-    # public, so it costs nothing.
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    steps:
-      - uses: actions/checkout@v4
-      - name: Completion vocabulary is the compiler's inventory
+      - name: "inventory: completion vocabulary is the compiler's inventory"
+        if: ${{ !cancelled() && runner.os == 'Linux' }}
         run: apps/mac/scripts/sync-supported-latex.sh --check
-
-  # Cheap source-level gates that need no build and no TeX: no generated table
-  # or generator changed without the other (scripts/check-generated.py). The
-  # Core 14 AFM tables are the one generator whose inputs CI can fetch, so they
-  # are fully re-derived. There is no pin gate any more: every crate depends on
-  # its live siblings (engine-v2 DESIGN.md §9.4).
-  gates:
-    name: generated tables
-    needs: [plan]
-    if: needs.plan.outputs.run == 'true'
-    # Always GitHub-hosted (owner, 2026-09-30): light, and the repository is
-    # public, so it costs nothing.
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    steps:
-      - uses: actions/checkout@v4
-      - name: Generated tables match the manifest
+      - name: "generated tables match the manifest"
+        if: ${{ !cancelled() && runner.os == 'Linux' }}
         run: python3 scripts/check-generated.py
       - uses: actions/setup-python@v5
+        if: ${{ !cancelled() && runner.os == 'Linux' }}
         with:
           # crates/font-engine/src/generated.rs records Python unicodedata
           # 15.0.0, which is Python 3.12's. Another version is "cannot check".
           python-version: "3.12"
-      - name: Core 14 AFM tables re-derive byte-identically (gen_tables.py --check)
+      - name: "generated tables: Core 14 AFM tables re-derive byte-identically (gen_tables.py --check)"
+        if: ${{ !cancelled() && runner.os == 'Linux' }}
         # Inputs are never committed (crates/font-engine/README.md,
         # "Reproducibility"): matplotlib ships Adobe's AFMs unmodified and
         # TeX Live ships glyphlist.txt (fetch-glyphlist.sh: Adobe's pinned
@@ -570,6 +581,44 @@ jobs:
           FLASHTEX_GLYPHLIST="$(scripts/ci/fetch-glyphlist.sh "$work/glyphlist")"
           export FLASHTEX_GLYPHLIST
           python scripts/check-generated.py --run --strict --only "font-engine core14"
+      - name: "trip: third_party/knuth checksums"
+        if: ${{ !cancelled() }}
+        working-directory: third_party/knuth
+        run: shasum -a 256 -c SHA256SUMS
+      # DVItype for the trip.typ gate (tripman.tex step 5). Without it that
+      # comparison only ever SKIPped, so CI never checked the trip DVI
+      # (#1208). Ubuntu's texlive-binaries ships it; the Linux leg then
+      # requires it (TRIP_REQUIRE_DVITYPE=1).
+      - name: "trip: dvitype (Linux)"
+        if: ${{ !cancelled() && runner.os == 'Linux' }}
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq --no-install-recommends texlive-binaries
+          echo "TRIP_REQUIRE_DVITYPE=1" >> "$GITHUB_ENV"
+      - name: "trip: scripts/flashtex-trip.sh"
+        if: ${{ !cancelled() }}
+        run: TRIP_WORK="$RUNNER_TEMP/trip" scripts/flashtex-trip.sh
+      # The trip/etrip harness's own checks (#1208): byte-exact .fot
+      # comparison, and the timeout that kills a hung engine's process group.
+      - name: "trip: harness self-tests"
+        if: ${{ !cancelled() }}
+        run: |
+          python3 tools/web2rust/tools/test_trip_fot.py
+          python3 scripts/tests/test_run_with_timeout.py
+      - name: "etrip: third_party/pdftex checksums"
+        if: ${{ !cancelled() }}
+        working-directory: third_party/pdftex
+        run: shasum -a 256 -c SHA256SUMS
+      - name: "etrip: scripts/flashtex-etrip.sh"
+        if: ${{ !cancelled() }}
+        run: ETRIP_WORK="$RUNNER_TEMP/etrip" scripts/flashtex-etrip.sh
+      - name: "pdfTeX regression: third_party/pdftex/regression checksums"
+        if: ${{ !cancelled() }}
+        working-directory: third_party/pdftex/regression
+        run: shasum -a 256 -c SHA256SUMS
+      - name: "pdfTeX regression: scripts/pdftex-regression.sh"
+        if: ${{ !cancelled() }}
+        run: REGRESSION_WORK="$RUNNER_TEMP/pdftex-regression" scripts/pdftex-regression.sh
 
   # THE OLD ENGINE's parity fixtures tier (the frozen flashtex-cli path, D13).
   # It stays until P5 retires that path; the new engine's gates are
@@ -926,121 +975,6 @@ jobs:
         working-directory: crates/${{ matrix.crate }}
         run: cargo test --release --locked --no-fail-fast
 
-  # Knuth's trip test for the tex.web translation in crates/flashtex-engine
-  # (DESIGN.md §12, P1 exit gate). Self-contained: the fixtures, including
-  # trip.tfm, are committed under third_party/knuth/trip/, so no TeX is
-  # installed. The script generates the trip configuration into a scratch
-  # package, never into the committed src/generated/, and fails unless
-  # tripin.log, trip.log and tripos.tex are byte-identical to Knuth's masters
-  # and the terminal transcripts differ only in the two accepted ways.
-  trip:
-    name: trip test (${{ matrix.os }})
-    needs: plan
-    # Linux on every run; macOS after the merge (push to main) and on manual
-    # runs, and never on a push that duplicates a pull request's run.
-    if: needs.plan.outputs.run == 'true'
-    # Linux leg always GitHub-hosted (owner, 2026-09-30); the macOS leg's
-    # runner comes from plan.
-    runs-on: ${{ matrix.os == 'macos-15' && fromJSON(needs.plan.outputs.mac_rust_runner) || 'ubuntu-latest' }}
-    timeout-minutes: 30
-    strategy:
-      fail-fast: false
-      matrix:
-        os: ${{ fromJSON(needs.plan.outputs.trip_os) }}
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
-        with:
-          key: trip
-      - name: third_party/knuth checksums
-        working-directory: third_party/knuth
-        run: shasum -a 256 -c SHA256SUMS
-      # DVItype for the trip.typ gate (tripman.tex step 5). Without it that
-      # comparison only ever SKIPped, so CI never checked the trip DVI
-      # (#1208). Ubuntu's texlive-binaries ships it; the Linux leg then
-      # requires it (TRIP_REQUIRE_DVITYPE=1).
-      - name: dvitype (Linux)
-        if: runner.os == 'Linux'
-        run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq --no-install-recommends texlive-binaries
-          echo "TRIP_REQUIRE_DVITYPE=1" >> "$GITHUB_ENV"
-      - name: scripts/flashtex-trip.sh
-        run: TRIP_WORK="$RUNNER_TEMP/trip" scripts/flashtex-trip.sh
-      # The trip/etrip harness's own checks (#1208): byte-exact .fot
-      # comparison, and the timeout that kills a hung engine's process group.
-      - name: trip harness self-tests
-        run: |
-          python3 tools/web2rust/tools/test_trip_fot.py
-          python3 scripts/tests/test_run_with_timeout.py
-
-  # e-TeX's trip test (etrip) for the pdftex.web translation in
-  # crates/flashtex-engine (DESIGN.md sections 8 and 12, P2). Self-contained:
-  # the fixtures, etrip.tfm and TeX Live's own pdftex output for them are
-  # committed under third_party/pdftex/, so no TeX is installed. The script
-  # generates the etrip configuration into a scratch package, never into the
-  # committed src/generated/, and fails unless every log, transcript, \write
-  # file and DVI file matches pdfTeX's after the normalisations it lists.
-  etrip:
-    name: etrip test (${{ matrix.os }})
-    needs: plan
-    # Linux on every run; macOS after the merge (push to main) and on manual
-    # runs, and never on a push that duplicates a pull request's run.
-    if: needs.plan.outputs.run == 'true'
-    # Linux leg always GitHub-hosted (owner, 2026-09-30); the macOS leg's
-    # runner comes from plan.
-    runs-on: ${{ matrix.os == 'macos-15' && fromJSON(needs.plan.outputs.mac_rust_runner) || 'ubuntu-latest' }}
-    timeout-minutes: 30
-    strategy:
-      fail-fast: false
-      matrix:
-        os: ${{ fromJSON(needs.plan.outputs.trip_os) }}
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
-        with:
-          key: etrip
-      - name: third_party/pdftex checksums
-        working-directory: third_party/pdftex
-        run: shasum -a 256 -c SHA256SUMS
-      - name: scripts/flashtex-etrip.sh
-        run: ETRIP_WORK="$RUNNER_TEMP/etrip" scripts/flashtex-etrip.sh
-
-  # pdfTeX's own regression tests (DESIGN.md section 8, tier T0) for the
-  # pdftex.web translation in crates/flashtex-engine: TeX Live 2026's
-  # `pdftex_tests`, unmodified, with the files they read, pinned under
-  # third_party/pdftex/regression/, so no TeX is installed. The script runs
-  # each test as TeX Live's `make check` does and fails on any failure except
-  # the expected ones it lists with their owning lane.
-  pdftex-regression:
-    name: pdfTeX regression tests (${{ matrix.os }})
-    # Both legs GitHub-hosted (owner, 2026-09-30). The same OS matrix as
-    # trip and etrip (plan's `trip_os`): Linux on every run, including the
-    # merge queue; macOS after the merge (push to main, where a failure files
-    # `main-red`) and on manual runs, so the queue never waits on a hosted
-    # macOS runner.
-    needs: [plan]
-    if: needs.plan.outputs.run == 'true'
-    runs-on: ${{ matrix.os }}
-    timeout-minutes: 30
-    strategy:
-      fail-fast: false
-      matrix:
-        os: ${{ fromJSON(needs.plan.outputs.trip_os) }}
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
-        with:
-          key: pdftex-regression
-      - name: third_party/pdftex/regression checksums
-        working-directory: third_party/pdftex/regression
-        run: shasum -a 256 -c SHA256SUMS
-      - name: scripts/pdftex-regression.sh
-        run: REGRESSION_WORK="$RUNNER_TEMP/pdftex-regression" scripts/pdftex-regression.sh
-
   mac-app:
     name: mac app (swift build + test)
     needs: [plan]
@@ -1194,7 +1128,7 @@ jobs:
   # owner fixes forward within 2 hours, or the Commander reverts the merge.
   main-red:
     name: main-red issue
-    needs: [plan, build, quick, boundary, inventory, gates, parity-fixtures, parity-fixtures-hosted, engine-parity, engine-parity-hosted, rust-workspace, rust-standalone, trip, etrip, pdftex-regression, mac-app, ipad]
+    needs: [plan, build, quick, checks, parity-fixtures, parity-fixtures-hosted, engine-parity, engine-parity-hosted, rust-workspace, rust-standalone, mac-app, ipad]
     if: >-
       always() && github.event_name == 'push' && github.ref == 'refs/heads/main' &&
       needs.plan.outputs.run == 'true'
@@ -1231,21 +1165,16 @@ jobs:
       - plan
       - build
       - quick
-      - boundary
-      - inventory
-      - gates
+      # licence boundary, inventory, generated tables and the engine's T0
+      # tests (trip, etrip, pdfTeX regression): skipped only when plan says
+      # the run is a duplicate; their macOS leg runs post-merge only.
+      - checks
       - parity-fixtures
       - parity-fixtures-hosted
       - engine-parity
       - engine-parity-hosted
       - rust-workspace
       - rust-standalone
-      # The engine's own tests (DESIGN.md section 8): skipped only when plan
-      # says the run is a duplicate (run == 'false'); their macOS legs run
-      # post-merge only (plan's `trip_os`).
-      - trip
-      - etrip
-      - pdftex-regression
       - mac-app
       - ipad
     runs-on: ubuntu-latest
