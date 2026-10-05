@@ -869,6 +869,26 @@ use crate::os::MappedFile;
 mod key_tests {
     use super::*;
 
+    /// A directory opened so that its times can be set: a plain open does
+    /// on Unix; Windows wants write access and FILE_FLAG_BACKUP_SEMANTICS
+    /// (`CreateFileW` opens a directory only with it).
+    fn open_dir_for_times(d: &std::path::Path) -> std::fs::File {
+        #[cfg(windows)]
+        {
+            use std::os::windows::fs::OpenOptionsExt;
+            const FILE_FLAG_BACKUP_SEMANTICS: u32 = 0x0200_0000;
+            std::fs::OpenOptions::new()
+                .write(true)
+                .custom_flags(FILE_FLAG_BACKUP_SEMANTICS)
+                .open(d)
+                .unwrap()
+        }
+        #[cfg(not(windows))]
+        {
+            std::fs::File::open(d).unwrap()
+        }
+    }
+
     /// After a check that verified racy signatures by content and by the
     /// lookups, the key keeps fresh ones: once the tick has passed, the
     /// steady state is not racy (else every compile compared the preamble's
@@ -907,7 +927,7 @@ mod key_tests {
             .unwrap()
             .set_modified(old)
             .unwrap();
-        std::fs::File::open(&d).unwrap().set_modified(old).unwrap();
+        open_dir_for_times(&d).set_modified(old).unwrap();
         key.check_refresh((0, 0), b"main").unwrap();
         assert!(!key.files[0].2.racy, "the file's signature is still racy");
         assert!(
