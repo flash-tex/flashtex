@@ -108,7 +108,11 @@ struct Target {
     broken: bool,
     /// Output stopped (superseded or cancelled) at some point.
     went_quiet: bool,
-
+    /// A changed page was delivered (LIVE-30MS: a superseded compile still
+    /// sends its first changed page, the keystroke's edit, then the forms
+    /// that page draws; `forms_after`).
+    changed_sent: bool,
+    forms_after: bool,
     /// Stage timings (DONE's `stages`): the engine thread's CPU time and
     /// display-list time at the start of the compile, the time spent
     /// writing frames to the socket, and the first page's figures.
@@ -132,6 +136,13 @@ impl Target {
             || self.conn.is_cancelled(self.id);
         self.went_quiet |= q;
         q
+    }
+
+    /// Only superseded by a newer compile: not cancelled, the client there.
+    fn superseded_only(&self) -> bool {
+        !self.broken
+            && !self.conn.is_cancelled(self.id)
+            && self.conn.queued.load(Ordering::SeqCst) > 0
     }
 
     fn out(&self) -> &Out {
@@ -253,7 +264,8 @@ impl Live {
         if e.form {
             let mut t = self.target.take();
             if let Some(t) = t.as_mut() {
-                if !t.quiet() && t.send(&e) {
+                let wanted = !t.quiet() || (t.forms_after && t.superseded_only());
+                if wanted && t.send(&e) {
                     t.ps.forms.insert(e.index, e.hash);
                 }
             }
@@ -272,6 +284,11 @@ impl Live {
         // even when unchanged (the client learns the page is current, and
         // the edited page comes first).
         let delivered = self.target.as_ref().is_some_and(|t| (i as u32) < t.next);
+        let changed = self
+            .pages
+            .get(i)
+            .and_then(|c| c.as_ref())
+            .is_none_or(|c| c.e.hash != e.hash);
         let version = match &self.pages[i] {
             Some(c)
                 if delivered
@@ -291,10 +308,29 @@ impl Live {
             return;
         };
         t.emitted += 1;
+        t.forms_after = false;
         self.catch_up(&mut t, i as u32);
-        if !t.quiet() && t.next == i as u32 {
+        let quiet = t.quiet();
+        // Superseded before its first changed page: send that page anyway
+        // (the edit it shows is nearer the editor than what the client
+        // shows), not the pages before it, which the client holds.
+        let edited_anyway = quiet
+            && changed
+            && t.incremental
+            && !t.changed_sent
+            && t.superseded_only()
+            && (i as u32) >= t.next;
+        if edited_anyway {
             self.deliver(&mut t, i as u32, false);
-            t.next = i as u32 + 1;
+            t.changed_sent = true;
+            t.forms_after = true;
+        }
+        if (!quiet && t.next == i as u32) || edited_anyway {
+            if !edited_anyway {
+                self.deliver(&mut t, i as u32, false);
+                t.next = i as u32 + 1;
+                t.changed_sent |= changed;
+            }
             if t.first_index.is_none() {
                 t.first_index = Some(i as u32);
                 t.first_page_ms = Some(t.t0.elapsed().as_secs_f64() * 1e3);
@@ -681,6 +717,8 @@ impl Engine {
             bytes: 0,
             broken: false,
             went_quiet: false,
+            changed_sent: false,
+            forms_after: false,
             cpu0,
             emit0: displaylist::emit_ns(),
             send_ns: 0,
