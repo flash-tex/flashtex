@@ -326,7 +326,7 @@ pub struct Layer {
     /// closed, with their content there (`host::written_before`, S₀'s key
     /// takes them). Read when the checkpoint is taken: the run may write
     /// them again before it ends, when the key is made (#1348).
-    pub written_at: Vec<(CheckpointId, Vec<(String, Vec<u8>)>)>,
+    pub written_at: Vec<(CheckpointId, crate::host::Written)>,
     /// Take a checkpoint at the `.aux` point of this run (`Point::Aux`).
     pub want_aux_point: bool,
     /// The `.aux` point, once taken.

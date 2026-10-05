@@ -459,14 +459,14 @@ impl Session {
     }
 }
 
+/// Files with their content (S₀'s key's `written`).
+pub type Written = Vec<(String, Vec<u8>)>;
+
 /// The files a run had written and closed at checkpoint `rec` (`reads`:
 /// what it had read and written so far, or more), with their content on
 /// disk now: S₀'s key's `written`, read when the checkpoint is taken
 /// (`Layer::written_at`).
-pub fn written_before(
-    rec: &ExtRecord,
-    reads: &system::ReadLog,
-) -> Result<Vec<(String, Vec<u8>)>, String> {
+pub fn written_before(rec: &ExtRecord, reads: &system::ReadLog) -> Result<Written, String> {
     let no = if rec.reads == (0, 0, 0) {
         reads.outputs.len()
     } else {
