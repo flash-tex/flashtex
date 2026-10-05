@@ -12,7 +12,8 @@
 #   sound-budget soundness: 20 edits + reverts under a 4 MB undo-log budget (retention always on)
 #   sound-budget-d the same budget with 8 interleaved (preempted) edits of every kind
 #   sound-timed soundness: 10 edits + reverts per fixture with a timed checkpoint every 0.2 ms
-#   sound-vol  a temporary file written and read back (genvol.py): 20 edits + reverts, timed and default
+#   sound-vol  a temporary file written and read back (genvol.py): 20 edits + reverts, timed and default;
+#              then 12 interleaved (interrupted) edits of every kind (#1550)
 #   sound-lookup a later lookup whose answer changed (genlookup.py, #1502): 30 edits + reverts, files toggled;
 #              then 12 interleaved edits, half with a file toggled while the compile is stopped (#1514)
 #   span       display-list source spans after each edit against a from-scratch host (dlspan.py)
@@ -119,7 +120,13 @@ for g in ${@:-build parity lockstep trip etrip drift positions tests sound-a sou
       PYTHONHASHSEED=0 timeout 36000 python3 $S/soundness.py gates -j $J --trials 20 --no-fixtures \
         --dir $B/sound-vol --out $R/soundness-vol.jsonl \
         --extra $B/src-vol-closed:vol-closed --extra $B/src-vol-open:vol-open >> $R/soundness-vol.txt 2>&1
-      echo "soundness vol exit $e1 $?" >> $R/soundness-vol.txt ;;
+      e2=$?
+      # interleaved (preempted) edits, as sweep D (#1550: an edit broke a `\closeout`, and the file,
+      # still open for output, was read back with the line a checkpoint had flushed)
+      PYTHONHASHSEED=0 timeout 36000 python3 $S/soundness.py gates -j $J --trials 12 --no-fixtures --interleave \
+        --kinds replace,insert,sentence,section,label,ref,unlabel --dir $B/sound-vol-d --out $R/soundness-vol-d.jsonl \
+        --extra $B/src-vol-closed:vol-closed --extra $B/src-vol-open:vol-open >> $R/soundness-vol.txt 2>&1
+      echo "soundness vol exit $e1 $e2 $?" >> $R/soundness-vol.txt ;;
     sound-lookup)
       # a later lookup whose answer changed (#1502): genlookup.py's document tests for five files at
       # five pages, and half the edits create or delete one of them first (put back before the revert)

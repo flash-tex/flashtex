@@ -257,7 +257,11 @@ impl PasFile for AlphaFile {
     }
     fn close(&mut self) {
         self.flush();
-        self.output = None;
+        if self.output.take().is_some() {
+            if let Some(p) = &self.path {
+                unmark_ahead(p);
+            }
+        }
         self.input = None;
         self.have_line = false;
         self.path = None;
@@ -281,7 +285,11 @@ impl PasFile for ByteFile {
     }
     fn close(&mut self) {
         self.flush();
-        self.output = None;
+        if self.output.take().is_some() {
+            if let Some(p) = &self.path {
+                unmark_ahead(p);
+            }
+        }
         self.input = None;
     }
 }
@@ -3041,6 +3049,97 @@ pub fn guarded(path: &str) -> Option<Vec<u8>> {
     })
 }
 
+thread_local! {
+    /// Output files open for output whose bytes on disk may be ahead of a
+    /// run from scratch's (by `out_key`): a checkpoint flushed the stream
+    /// while its buffer held output that pdfTeX's `fprintf` keeps buffered
+    /// (`AlphaFile::flush_output`), or restored the stream, whose record
+    /// does not say what its buffer held then (`AlphaFile::restore`). A
+    /// close writes everything out, as from scratch: it takes the file off.
+    static AHEAD: std::cell::RefCell<Vec<String>> = const { std::cell::RefCell::new(Vec::new()) };
+    /// The first such file the run read (or looked up: `\pdffilesize`) while
+    /// it was open for output and ahead (issue #1550: a `\closeout` lost to a
+    /// typo, the file `\input` four paragraphs later read the line a
+    /// checkpoint had flushed, where pdfTeX reads an empty file).
+    static AHEAD_READ: std::cell::RefCell<Option<String>> = const { std::cell::RefCell::new(None) };
+    /// Files never flushed ahead of a run from scratch (`no_flush`).
+    static NO_FLUSH: std::cell::RefCell<Vec<String>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// A checkpoint flushed, or a restore reopened, an output stream on `path`
+/// (`AHEAD`). A file that is `no_flush` is never ahead: every checkpoint
+/// since it became so found its buffer empty.
+pub fn mark_ahead(path: &str) {
+    if no_flush(path) {
+        return;
+    }
+    let k = out_key(path);
+    AHEAD.with(|a| {
+        let mut a = a.borrow_mut();
+        if !a.contains(&k) {
+            a.push(k);
+        }
+    });
+}
+
+/// An output stream on `path` was closed: a run from scratch has written
+/// it all out too.
+fn unmark_ahead(path: &str) {
+    let k = out_key(path);
+    AHEAD.with(|a| a.borrow_mut().retain(|p| *p != k));
+}
+
+/// No stream is open (a new engine, or a restore about to reopen them).
+pub fn clear_ahead() {
+    AHEAD.with(|a| a.borrow_mut().clear());
+}
+
+/// A read or lookup of `path`: noted if it is open for output and ahead.
+fn note_ahead_read(path: &str) {
+    if AHEAD.with(|a| a.borrow().is_empty()) {
+        return;
+    }
+    let k = out_key(path);
+    if AHEAD.with(|a| a.borrow().contains(&k)) {
+        AHEAD_READ.with(|r| {
+            r.borrow_mut().get_or_insert_with(|| {
+                file_trace(|| format!("read while ahead: {k}"));
+                k
+            });
+        });
+    }
+}
+
+/// The file the run read while it was open for output and ahead (and
+/// forget it): the run is not what a run from scratch does, and is redone
+/// with that file `no_flush` (`crate::incr`).
+pub fn take_ahead_read() -> Option<String> {
+    AHEAD_READ.with(|r| r.borrow_mut().take())
+}
+
+/// From now on, a checkpoint is not taken while an output stream on `path`
+/// holds buffered output (`crate::checkpoint`'s `capture_ext`), so that no
+/// checkpoint writes out what a run from scratch has not, and a restore
+/// gives the stream exactly as it was (its buffer empty).
+pub fn set_no_flush(path: &str) {
+    let k = out_key(path);
+    NO_FLUSH.with(|n| {
+        let mut n = n.borrow_mut();
+        if !n.contains(&k) {
+            n.push(k);
+        }
+    });
+}
+
+/// Whether `set_no_flush` named `path`.
+pub fn no_flush(path: &str) -> bool {
+    if NO_FLUSH.with(|n| n.borrow().is_empty()) {
+        return false;
+    }
+    let k = out_key(path);
+    NO_FLUSH.with(|n| n.borrow().contains(&k))
+}
+
 /// An output file as the engine last left it: length, modification time,
 /// inode.
 type Stamp = (u64, Option<std::time::SystemTime>, u64);
@@ -3480,6 +3579,7 @@ fn note_lookup(name: &str, format: Format, must_exist: Option<bool>, found: Opti
 }
 
 fn note_file(path: &str) {
+    note_ahead_read(path);
     READS.with(|r| {
         let mut b = r.borrow_mut();
         let Some(log) = b.as_mut() else { return };
@@ -3763,11 +3863,26 @@ impl AlphaFile {
     }
 
     /// Flush the output buffer (a checkpoint flushes every output stream
-    /// before it records any, `Globals::capture_ext`).
+    /// before it records any, `Globals::capture_ext`). What it writes out
+    /// a run from scratch still holds in its buffer: the file is ahead
+    /// (`mark_ahead`).
     pub fn flush_output(&mut self) {
+        if let Some(p) = self.pending_output() {
+            mark_ahead(&p);
+        }
         if let Some(w) = self.output.as_mut() {
             let _ = w.flush();
         }
+    }
+
+    /// The file of this output stream if its buffer holds output not
+    /// written out yet.
+    pub fn pending_output(&self) -> Option<String> {
+        let w = self.output.as_ref()?;
+        if w.buffer().is_empty() {
+            return None;
+        }
+        self.path.clone()
     }
 
     /// Put this file back as `s` recorded it: an output file is cut back to
@@ -3778,6 +3893,9 @@ impl AlphaFile {
     pub fn restore(&mut self, s: &FileSnap) -> Result<(), String> {
         if let Some(w) = self.output.take() {
             let _ = w.into_parts();
+            if let Some(p) = &self.path {
+                unmark_ahead(p);
+            }
         }
         PasFile::close(self);
         let mut f = AlphaFile {
@@ -3800,6 +3918,8 @@ impl AlphaFile {
             Stream::Out { path, len, at } => {
                 f.output = Some(BufWriter::new(Box::new(reopen_out(path, *len, *at)?)));
                 f.path = Some(path.clone());
+                // (the record does not say whether its buffer held output)
+                mark_ahead(path);
             }
         }
         *self = f;
@@ -3835,14 +3955,29 @@ impl ByteFile {
 
     /// Flush the output buffer (see `AlphaFile::flush_output`).
     pub fn flush_output(&mut self) {
+        if let Some(p) = self.pending_output() {
+            mark_ahead(&p);
+        }
         if let Some(w) = self.output.as_mut() {
             let _ = w.flush();
         }
     }
 
+    /// See `AlphaFile::pending_output`.
+    pub fn pending_output(&self) -> Option<String> {
+        let w = self.output.as_ref()?;
+        if w.buffer().is_empty() {
+            return None;
+        }
+        self.path.clone()
+    }
+
     pub fn restore(&mut self, s: &FileSnap) -> Result<(), String> {
         if let Some(w) = self.output.take() {
             let _ = w.into_parts();
+            if let Some(p) = &self.path {
+                unmark_ahead(p);
+            }
         }
         PasFile::close(self);
         let mut f = ByteFile {
@@ -3860,6 +3995,7 @@ impl ByteFile {
             Stream::Out { path, len, at } => {
                 f.output = Some(BufWriter::new(reopen_out(path, *len, *at)?));
                 f.path = Some(path.clone());
+                mark_ahead(path);
             }
             other => return Err(format!("a binary file cannot be {other:?}")),
         }
