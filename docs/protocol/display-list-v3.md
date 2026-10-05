@@ -5,9 +5,9 @@
   P3P4-HOST-UNIFY (2026-09-29); 3.2 (external tools: bibtex, biber,
   makeindex, §6.3–§6.4): lane P5-EXTERNAL-TOOLS (2026-09-30). Page sections
   `ORIGINS` and `RULE_GEOMETRY` (§4.2, §4.4; host capability
-  `exact-geometry`): lane J1 P3-ZERO-TOLERANCE (2026-10-02), a minor-compatible
-  addition whose minor number the protocol owner assigns in landing order
-  (DESIGN.md §6.1). 3.3 (the Typst host's additions E1–E8, DESIGN.md §15.4:
+  `exact-geometry`): lane J1 P3-ZERO-TOLERANCE (2026-10-02), gated by that
+  capability like `progress-v1`, so it takes no minor number (protocol
+  owner's ruling, DESIGN.md §13, 2026-10-05). 3.3 (the Typst host's additions E1–E8, DESIGN.md §15.4:
   §11): lane TYPST-T0T1 (2026-10-04), drafted in `typst-host/` by #1303 and
   #1335. Producers: `crates/flashtex-engine` (`src/displaylist/`,
   `src/host/`) for LaTeX, `typst-host/` (`flashtex-typst-host`) for Typst.
@@ -155,9 +155,9 @@ length 0, is a corrupt stream: the reader stops (§7).
   and listed the feature in its `HELLO` `accept`** (§11.7): an item opcode
   a reader does not know is otherwise a major change. A 3.1 or 3.2 client
   of the Typst host gets its glyph pages INCOMPLETE and draws `DONE.pdf`.
-- **Exact geometry** (J1, 2026-10-02; minor number to be assigned by the
-  protocol owner; 3.3 went to the Typst additions in landing order, so the
-  next free minor is 3.4) adds page sections 7
+- **Exact geometry** (J1, 2026-10-02; gated by the `exact-geometry`
+  capability like `progress-v1`, so it takes no minor number: protocol
+  owner's ruling, DESIGN.md §13, 2026-10-05) adds page sections 7
   `ORIGINS` and 9 `RULE_GEOMETRY` (§4.1, §4.2, §4.4) and the host capability
   `exact-geometry`, which says every `PAGE` and `FORM` carries both. Both
   directions are handled without negotiation: a reader that does not know
