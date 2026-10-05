@@ -38,6 +38,20 @@
 # the rest out of line.
 --inline get_next=always
 --inline get_next_slow=never
+# The token-level routines inlined into their callers (P6): a call through
+# `&mut Globals` costs its register saves and, after it, the reload of every
+# array's address the caller uses. Measured as a set (instructions, settled
+# pass, against get_next's fast path alone): Infinite Descent -9.4%,
+# long-deck -8.9%, full-100 -6.3%; adding the save-stack routines,
+# id_lookup, scan_keyword, get_node or free_node did not help further.
+--inline get_token=always
+--inline get_x_token=always
+--inline back_input=always
+--inline get_avail=always
+--inline delete_token_ref=always
+--inline flush_list=always
+--inline begin_token_list=always
+--inline end_token_list=always
 --stat
 --scalar longinteger=i64
 --macro max_halfword=268435455

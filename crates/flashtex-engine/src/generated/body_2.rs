@@ -1450,6 +1450,7 @@ impl Globals {
     /// a token list `p` and its type `t`. If `t=macro`, the calling routine should
     /// set `name` and `loc`.
     // §345
+    #[inline(always)]
     pub fn begin_token_list(&mut self, mut p: halfword, mut t: quarterword) {
         {
             if (self.input_ptr > self.max_in_stack) {
@@ -1506,6 +1507,7 @@ impl Globals {
     /// should be done as we leave that level of input. The `token_type` tends
     /// to be equal to either `backed_up` or `inserted` about 2/3 of the time.
     // §346
+    #[inline(always)]
     pub fn end_token_list(&mut self) {
         if (self.cur_input.index_field >= backed_up) {
             {
@@ -1567,6 +1569,7 @@ impl Globals {
     /// replaced. Some applications of \TeX\ use this procedure a lot,
     /// so it has been slightly optimized for speed.
     // §347
+    #[inline(always)]
     pub fn back_input(&mut self) {
         let mut p: halfword = 0; // §347
         while (((self.cur_input.loc_field == null) && (self.cur_input.index_field != v_template)) && (self.cur_input.index_field != output_text)) {
@@ -2608,6 +2611,7 @@ impl Globals {
     /// `get_token`, or when \.{\\csname} compresses a token list, because
     /// `no_new_control_sequence` is always `true` at other times.
     // §387
+    #[inline(always)]
     pub fn get_token(&mut self) {
         self.no_new_control_sequence = false;
         self.get_next();
@@ -3751,6 +3755,7 @@ impl Globals {
     /// next token of input. It has been slightly optimized to take account of
     /// common cases.
     // §406
+    #[inline(always)]
     pub fn get_x_token(&mut self) {
         // goto labels: restart, done
         let mut __goto_1: i32 = 0;
