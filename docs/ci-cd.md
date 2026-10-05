@@ -303,7 +303,34 @@ pull request's base commit, or `HEAD~1` on `main`, or `origin/main` otherwise.
 
 ### Measured: the gate, 2026-10-05
 
-MEASURED_GATE_PLACEHOLDER
+Run time of each gate job (queueing excluded), from this lane's runs on
+2026-10-05: the manual `gate_only` run
+[37345026625](https://github.com/flash-tex/flashtex/actions/runs/37345026625)
+(the gate exactly as `merge_group` runs it, NixOS shards) and the pull-request
+run [37346450319](https://github.com/flash-tex/flashtex/actions/runs/37346450319)
+(the same jobs, engine parity on GitHub-hosted shards). The PC was busy with
+merge-queue groups still on the old workflow throughout.
+
+| Job | GitHub-hosted | NixOS PC |
+|---|---:|---:|
+| `plan`, boundary, inventory, generated tables | ≤ 0.4 min each | — |
+| `quick (touched crates)` (a workflow + script change: no crates) | 0.6–3.1 min | — |
+| trip / etrip / pdfTeX regression (Linux) | 0.9–1.7 min | — |
+| `build (workspace, all targets)` | 5.0–5.3 min (cache from a restore key) | — |
+| engine parity, `lockstep` shard | 2.0–2.9 min (build 56 s, 1,466 cases in 4 slices: 22 s) | not measured (queued behind old-workflow groups); estimated 2–3.5 min |
+| engine parity, `P-T fixtures` shard | 3.5–5.6 min (build 87 s, 86/86 P-T1 and P-T2: 193 s) | **5.3 min** (build 58 s, parity 242 s) |
+| engine parity, `engine tests` shard | 5.6–5.9 min | not measured; estimated 5–6 min (the `tests` step took 348 s inside the old single job on a busy PC) |
+| **critical path** | **~6 min** | **~6–7 min (estimate)** |
+
+So a `merge_group` run that touches the engine is bounded by its slowest
+parity shard, about 6–7 minutes of work (target ≤ 12), and one that does not by
+`build`, about 5 minutes (target ≤ 5; `quick` grows with the crates a group
+touches). Before, the same queue entries' slowest jobs were the Mac app (18.6–22
+min of work) and the Rust workspace (11.8–12.2), and their wall clock was 20–48
+minutes on 2026-10-04 (45–130 across the day), most of it waiting for the PC.
+What remains is queueing: with three PC runners and three shards per engine
+group, groups behind an engine change wait for runners; the hosted twin needs no
+queue and stays inside the target (above).
 
 History: on 2026-09-30 the then "fast set" of a scripts-and-docs pull request
 took 3 min 11 s on Linux plus one GitHub-hosted macOS job that waited 11 minutes
