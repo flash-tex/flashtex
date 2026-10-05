@@ -874,9 +874,11 @@ engine reported them, after the compile's last `PAGE`/`PAGES` and before
 something, what TeX itself knows then (`changes/diagnostics.ch`,
 `src/diag.rs`): TeX's `error`, `pdf_warning`, the overfull/underfull box
 reports of `hpack`/`vpackage`, `\write`s to the terminal (LaTeX's, packages'
-and classes' warnings are `\immediate\write`s), and `\def` (definition
-sites). The hooks only read TeX's variables and never print: the terminal
-and the log are byte-identical with and without them (P-T1). The record
+and classes' warnings are `\immediate\write`s), `\def` (definition
+sites), and a source line too long for TeX's buffer (texmfmp.c's
+`input_line`, which prints to stderr, not the terminal: an `error` at the
+file and line being read, with no `col`). The hooks only read TeX's
+variables and never print: the terminal and the log are byte-identical with and without them (P-T1). The record
 travels with the engine's checkpoints, so an incremental compile reports
 every diagnostic of the document — those of pages it kept too — exactly as
 a run from scratch does, and a persisted S₀ carries the preamble's.
@@ -917,7 +919,7 @@ a run from scratch does, and a persisted S₀ carries the preamble's.
 | `span` | no | the display-list span (§5.3) of (`file`, `line`), declared in a `SOURCES` before the `DIAG` if the client lacks it; it moves with its line across edits like the pages' spans |
 | `end` | no | `{"file","line","col","span"}`: where the material ends (box reports: the box's last character) |
 | `lines` | no | TeX's line range (box reports: "at lines a--b"; "detected at line n" is `[n, n]`) |
-| `trace` | no | the input stack when TeX reported it, **innermost level first**, every level up to 24 (the innermost 23 and the file level; TeX shows only `\errorcontextlines` of them, and LaTeX sets that to −1): `kind` (`macro`, `argument`, `template`, `backed_up`, `recently_read`, `inserted`, `output`, `everypar`, `everymath`, `everydisplay`, `everyhbox`, `everyvbox`, `everyjob`, `everycr`, `mark`, `everyeof`, `write`, `file`, `scantokens`, `terminal`, `insert`, `read`; a client shows an unknown kind as its name), `name` (a macro's), `text` (`[read, still to read]`, as TeX shows the level; each side at most 240 bytes), a file level's `file`/`line`/`col`, a macro's `def` (`file`, `line`: where this run defined it, when it saw the definition; macros of the format have none) |
+| `trace` | no | the input stack when TeX reported it, **innermost level first**, every level up to 24 (the innermost 23 and the file level; TeX shows only `\errorcontextlines` of them, and LaTeX sets that to −1): `kind` (`macro`, `argument`, `template`, `backed_up`, `recently_read`, `inserted`, `output`, `everypar`, `everymath`, `everydisplay`, `everyhbox`, `everyvbox`, `everyjob`, `everycr`, `mark`, `everyeof`, `write`, `file`, `scantokens`, `terminal`, `insert`, `read`; a client shows an unknown kind as its name), `name` (a macro's), `text` (`[read, still to read]`, as TeX shows the level; each side at most 240 bytes), a file level's `file`/`line`/`col`, a macro's `def` (`file`, `line`: where this run defined it, when it saw the definition; macros of the format have none). After the compile's first 1,000 reports, a report's `trace` keeps only its file level |
 | `help` | no | TeX's help lines (the log has them; the terminal does not), or the `\errhelp` text of `\errmessage` (LaTeX's `\PackageError` help) |
 | `fatal` | no | `true`: TeX stopped (emergency stop, capacity exceeded, `==> Fatal error occurred`) |
 | `output` | no | `true`: reported while `\output` was active (a box report then has no line range) |
@@ -941,11 +943,12 @@ place is line `a` of the file TeX was reading.
 **Codes.** `origin/slug` or `origin/package/slug`: `tex/…`
 (`undefined-control-sequence`, `missing-dollar`, `missing-left-brace`,
 `missing-right-brace`, `extra-right-brace-or-forgotten-dollar`,
-`too-many-right-braces`, `missing-number`, `illegal-unit`,
+`extra-right-brace-or-forgotten-endgroup`, `too-many-right-braces`,
+`display-math-should-end-with-dollars`, `missing-number`, `illegal-unit`,
 `paragraph-ended-before-argument-complete`, `file-ended-while-scanning`,
 `emergency-stop`, `capacity-exceeded`, `file-not-found`,
 `cannot-use-in-this-mode`, `misplaced-alignment-tab`, `extra-alignment-tab`,
-`double-superscript`, `fatal-error-no-output`, `show`, `overfull-hbox`,
+`double-superscript`, `double-subscript`, `fatal-error-no-output`, `show`, `overfull-hbox`,
 `underfull-hbox`, `tight-hbox`, `loose-hbox`, the same for `vbox`),
 `latex/…` (`file-not-found`, `environment-undefined`,
 `environment-mismatch`, `missing-begin-document`, `missing-item`,
