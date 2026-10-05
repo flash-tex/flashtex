@@ -68,6 +68,9 @@ impl OutSink for std::process::ChildStdin {
 pub struct Tracked {
     f: File,
     path: String,
+    /// A tail of the file is being cut off ([`Cut`]): wait for it before
+    /// the stream's first write, flush, seek or position.
+    cutting: bool,
 }
 
 impl Tracked {
@@ -75,12 +78,21 @@ impl Tracked {
         Tracked {
             f,
             path: path.to_string(),
+            cutting: false,
+        }
+    }
+
+    fn settle(&mut self) {
+        if self.cutting {
+            self.cutting = false;
+            settle_cut(&self.path);
         }
     }
 }
 
 impl Write for Tracked {
     fn write(&mut self, b: &[u8]) -> std::io::Result<usize> {
+        self.settle();
         note_foreign(&self.path);
         let n = self.f.write(b)?;
         if let Ok(m) = self.f.metadata() {
@@ -89,12 +101,14 @@ impl Write for Tracked {
         Ok(n)
     }
     fn flush(&mut self) -> std::io::Result<()> {
+        self.settle();
         self.f.flush()
     }
 }
 
 impl std::io::Seek for Tracked {
     fn seek(&mut self, pos: std::io::SeekFrom) -> std::io::Result<u64> {
+        self.settle();
         self.f.seek(pos)
     }
 }
@@ -102,8 +116,101 @@ impl std::io::Seek for Tracked {
 impl OutSink for Tracked {
     fn position(&mut self) -> Option<u64> {
         use std::io::Seek;
+        self.settle();
         self.f.stream_position().ok()
     }
+}
+
+/// An output file's tail being read and then cut off on another thread
+/// (lane P4-PAGE-COST): a restore keeps the old run's bytes past the
+/// checkpoint's length and cuts the file back to that length, and on a
+/// 1,000-page document both take 2-3 ms of a keystroke (13 MB of PDF), while
+/// the new run writes nothing to the file before its first page is out.
+/// Everything that looks at the file first waits for the cut
+/// ([`settle_cut`]): its stream's first write, flush, seek or position,
+/// any stat of it for the stamps, and the tail's bytes.
+pub struct Cut {
+    from: u64,
+    done: Mutex<Option<Result<Vec<u8>, String>>>,
+    cv: std::sync::Condvar,
+}
+
+impl Cut {
+    fn finish(&self, r: Result<Vec<u8>, String>) {
+        *self.done.lock().unwrap_or_else(|e| e.into_inner()) = Some(r);
+        self.cv.notify_all();
+    }
+
+    /// Wait for the cut, then `f` of the tail's bytes.
+    pub fn with<R>(&self, f: impl FnOnce(&Result<Vec<u8>, String>) -> R) -> R {
+        let mut d = self.done.lock().unwrap_or_else(|e| e.into_inner());
+        while d.is_none() {
+            d = self.cv.wait(d).unwrap_or_else(|e| e.into_inner());
+        }
+        f(d.as_ref().unwrap())
+    }
+}
+
+/// [`Cut`]'s work: `path`'s bytes from `from` on into `buf`, then the file
+/// cut back to `from`.
+fn cut_job(p: &str, from: u64, mut buf: Vec<u8>) -> Result<Vec<u8>, String> {
+    use std::io::{Seek, SeekFrom};
+    let e = |x: std::io::Error| format!("{p}: {x}");
+    let mut f = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(p)
+        .map_err(e)?;
+    let len = f.metadata().map_err(e)?.len();
+    buf.clear();
+    if from < len {
+        buf.reserve((len - from) as usize);
+        f.seek(SeekFrom::Start(from)).map_err(e)?;
+        f.read_to_end(&mut buf).map_err(e)?;
+        f.set_len(from).map_err(e)?;
+    }
+    Ok(buf)
+}
+
+thread_local! {
+    /// The cuts not yet settled, by `out_key`.
+    static CUTS: std::cell::RefCell<std::collections::HashMap<String, std::sync::Arc<Cut>>> =
+        std::cell::RefCell::new(std::collections::HashMap::new());
+}
+
+/// Read `path`'s bytes from `from` on into `buf` and cut the file back to
+/// `from`, on another thread.
+pub fn start_cut(path: &str, from: u64, buf: Vec<u8>) -> std::sync::Arc<Cut> {
+    settle_cut(path);
+    let c = std::sync::Arc::new(Cut {
+        from,
+        done: Mutex::new(None),
+        cv: std::sync::Condvar::new(),
+    });
+    let (job, p) = (c.clone(), path.to_string());
+    let spawned = std::thread::Builder::new()
+        .name("flashtex-cut".into())
+        .spawn(move || job.finish(cut_job(&p, from, buf)));
+    if spawned.is_err() {
+        c.finish(cut_job(path, from, Vec::new()));
+    }
+    CUTS.with(|m| m.borrow_mut().insert(out_key(path), c.clone()));
+    c
+}
+
+/// Wait for a cut of `path` in progress, if any, and stamp the file as the
+/// engine's again.
+pub fn settle_cut(path: &str) {
+    let c = CUTS.with(|m| m.borrow_mut().remove(&out_key(path)));
+    if let Some(c) = c {
+        c.with(|_| ());
+        stamp_output(path);
+    }
+}
+
+/// The cut of `path` in progress, if it cuts the file back to `len`.
+fn cutting_to(path: &str, len: u64) -> bool {
+    CUTS.with(|m| m.borrow().get(&out_key(path)).is_some_and(|c| c.from == len))
 }
 
 /// `packed file of char`.
@@ -3379,6 +3486,7 @@ fn stamp_of(m: &std::fs::Metadata) -> Stamp {
 }
 
 fn disk_stamp(path: &str) -> Option<Stamp> {
+    settle_cut(path);
     std::fs::metadata(path).ok().map(|m| stamp_of(&m))
 }
 
@@ -4056,6 +4164,7 @@ pub fn file_trace(msg: impl FnOnce() -> String) {
 
 /// The length of `path` on disk now (`None`: no such file).
 pub fn disk_len(path: &str) -> Option<u64> {
+    settle_cut(path);
     std::fs::metadata(path).ok().map(|m| m.len())
 }
 
@@ -4074,7 +4183,14 @@ fn reopen_out(path: &str, len: u64, at: u64) -> Result<Tracked, String> {
     // Never extend: the first `len` bytes must still be what the run
     // wrote (a file cut shorter since -- a failed run removes its PDF --
     // would come back zero-filled, issue #1294).
-    let disk = disk_len(path).unwrap_or(0);
+    // (a cut back to `len` in progress: the file is what it was until then,
+    // and its stream waits for the cut)
+    let cutting = cutting_to(path, len);
+    let disk = if cutting {
+        std::fs::metadata(path).map_or(0, |m| m.len())
+    } else {
+        disk_len(path).unwrap_or(0)
+    };
     if disk < len || at > len {
         return Err(format!(
             "{path} holds {disk} bytes, not the {len} of the checkpoint (at {at})"
@@ -4086,11 +4202,18 @@ fn reopen_out(path: &str, len: u64, at: u64) -> Result<Tracked, String> {
         .truncate(false)
         .open(path)
         .map_err(|e| format!("{path}: {e}"))?;
-    f.set_len(len).map_err(|e| format!("{path}: {e}"))?;
+    if !cutting {
+        f.set_len(len).map_err(|e| format!("{path}: {e}"))?;
+    }
     f.seek(std::io::SeekFrom::Start(at))
         .map_err(|e| format!("{path}: {e}"))?;
-    stamp_output(path);
-    Ok(Tracked::new(f, path))
+    let mut t = Tracked::new(f, path);
+    if cutting {
+        t.cutting = true;
+    } else {
+        stamp_output(path);
+    }
+    Ok(t)
 }
 
 fn reopen_in(path: &str, offset: u64) -> Result<BufReader<File>, String> {

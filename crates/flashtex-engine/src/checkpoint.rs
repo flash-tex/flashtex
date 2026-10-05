@@ -229,6 +229,9 @@ enum TailBytes {
     /// return to when dropped).
     Read(Vec<u8>, String),
     Clone(String),
+    /// Being read, and the file cut back to the tail's start, on another
+    /// thread (`system::Cut`: the file's length at the restore target).
+    Cutting(std::sync::Arc<system::Cut>),
 }
 
 impl TailBytes {
@@ -246,6 +249,11 @@ impl TailBytes {
             return Ok(TailBytes::Clone(dst));
         }
         let buf = SPARE_TAILS.with(|s| s.borrow_mut().remove(path).unwrap_or_default());
+        if from > 0 && std::env::var_os("FLASHTEX_SYNC_TAILS").is_none() {
+            // (the restore reopens the file at `from`: a stream open at the
+            // target, `Globals::restore`)
+            return Ok(TailBytes::Cutting(system::start_cut(path, from, buf)));
+        }
         Ok(TailBytes::Read(
             read_tail_into(path, from, buf)?,
             path.to_string(),
@@ -257,6 +265,10 @@ impl TailBytes {
         match self {
             TailBytes::Read(b, _) => Ok(b.get(skip as usize..).unwrap_or(&[]).to_vec()),
             TailBytes::Clone(p) => read_tail(p, base + skip),
+            TailBytes::Cutting(c) => c.with(|r| match r {
+                Ok(b) => Ok(b.get(skip as usize..).unwrap_or(&[]).to_vec()),
+                Err(e) => Err(e.clone()),
+            }),
         }
     }
 }
@@ -267,6 +279,7 @@ impl Drop for TailBytes {
             TailBytes::Clone(p) => {
                 let _ = std::fs::remove_file(p);
             }
+            TailBytes::Cutting(_) => {}
             // keep the buffer for the next restore's tail of the same file,
             // while the spares fit in SPARE_TAILS_MAX
             TailBytes::Read(b, path) => SPARE_TAILS.with(|s| {
@@ -841,7 +854,7 @@ impl Globals {
                 .iter()
                 .map(|t| match &t.bytes {
                     TailBytes::Read(b, _) => b.capacity(),
-                    TailBytes::Clone(_) => 0,
+                    TailBytes::Clone(_) | TailBytes::Cutting(_) => 0,
                 })
                 .sum();
             v.push(("pending_tails_read", tails as i64));
