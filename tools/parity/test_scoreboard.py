@@ -924,7 +924,7 @@ class OwnerBar(unittest.TestCase):
         self.tmp = tempfile.mkdtemp()
 
     def arxiv(self, pt1, pt2, n=1000):
-        return board_for(self.tmp, {"arxiv": summary(n, pt1, pt2, (n, n, n, n))},
+        return board_for(tempfile.mkdtemp(), {"arxiv": summary(n, pt1, pt2, (n, n, n, n))},
                          {"arxiv": summary(n, pt1_na=CLI_NA, pt2=(0, n), levels=(1, 1, 0, 0))},
                          sizes={"arxiv": n})
 

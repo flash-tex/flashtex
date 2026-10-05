@@ -743,9 +743,12 @@ def load_fonts(path):
 
 def na_bar_met(tier, metric, new, na_baseline):
     """The bar for a row v1 cannot run: new at 100% of what it measured (no skips), or at or
-    above the recorded baseline for the row. The exact bar is the Commander's ruling."""
+    above the recorded baseline for the row. The exact bar is the Commander's ruling; on a
+    row the owner's bar covers (OWNER_BAR: arXiv and T4 P-T1, T4 crashes), it is that bar."""
     if new.get("skipped"):
         return False
+    if (tier, metric) in OWNER_BAR:
+        return bar_met(tier, metric, new)
     if new["passed"] == new["of"]:
         return True
     b = (na_baseline or {}).get("%s:%s" % (tier, metric))
@@ -784,7 +787,7 @@ def verdict(tier, metric, new, old, same_host, na_baseline=None):
         a, b = cmp["passed"] * old["of"], old["passed"] * cmp["of"]
         v = "ahead (v1 one-off)" if a > b else ("equal (v1 one-off)" if a == b else "behind")
     elif old["status"] == "n/a":
-        if not na_bar_met(tier, metric, new, na_baseline) or not bar_met(tier, metric, new):
+        if not na_bar_met(tier, metric, new, na_baseline):
             return "below bar (old n/a)"
         v = "ahead (old n/a)"
     else:
