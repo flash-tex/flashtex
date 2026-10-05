@@ -11,8 +11,10 @@
 #     here;
 #   * the tests of every crate in scripts/rust-test-exclude.txt, without gating,
 #     so a crate that has quietly started passing is noticed;
-#   * the new engine's T2 (the LaTeX team's suites) and its fixture-wide
-#     incremental soundness test, on the NixOS PC. Lockstep and P-T1/P-T2 run
+#   * the new engine's T2 (the LaTeX team's suites), its fixture-wide
+#     incremental soundness test and T6 (tools/fuzz/nightly.py: every
+#     differential and parser fuzzer in tools/fuzz, in a one-hour budget), on
+#     the NixOS PC. Lockstep and P-T1/P-T2 run
 #     in ci.yml's `engine parity` job, with trip, etrip and pdfTeX's
 #     regression tests beside it;
 #   * the macOS legs that left the merge queue (release workspace, standalone
@@ -36,10 +38,13 @@
 # sharded, resumable and ratcheted against a baseline recorded on the NixOS PC
 # itself (tools/parity/nightly.py).
 #
+# T6 (DESIGN §8: fuzzing, continuous) runs here nightly, the `engine-fuzz`
+# job below (tools/fuzz/nightly.py), on the NixOS runners only for now.
+#
 # WHAT IS NOT HERE YET. DESIGN §8 also specifies T5 (30,000+ documents, weekly,
-# kept out of the repository) and T6 (differential fuzzing, continuous).
-# Neither has an implementation in this repository yet, so this workflow does
-# not pretend to run them. Add each one to this file in the lane that builds it.
+# kept out of the repository). It has no implementation in this repository yet,
+# so this workflow does not pretend to run it. Add it to this file in the lane
+# that builds it.
 name: nightly
 
 on:
@@ -461,6 +466,41 @@ jobs:
         run: |
           [ -f "$RUNNER_TEMP/mem-gate.txt" ] || exit 0
           { echo "### Host memory gate"; grep -E '^\||mem gate' "$RUNNER_TEMP/mem-gate.txt"; } >> "$GITHUB_STEP_SUMMARY"
+
+  # T6 (DESIGN §8): tools/fuzz/nightly.py through scripts/engine-parity.sh,
+  # i.e. the lockstep-seeded and document-level differential fuzzers against
+  # TeX Live's pdftex and the parser fuzzers in tools/fuzz/parsers, in a
+  # 60-minute budget (FLASHTEX_FUZZ_MINUTES). A finding not in
+  # tools/fuzz/known-findings.json, or a harness failure, fails the job; the
+  # fuzz directory (summary plus one input per distinct finding) is the
+  # `engine-fuzz` artifact. On the NixOS runners, so it follows their switch
+  # (FLASHTEX_SELFHOSTED_LINUX; unset: the Mac switch, as #1349 does
+  # elsewhere). It does not run on the heavy Mac while the PC is off.
+  engine-fuzz:
+    name: "engine: fuzzing (T6)"
+    if: (vars.FLASHTEX_SELFHOSTED_LINUX || vars.FLASHTEX_SELFHOSTED_MAC) == '1'
+    runs-on: [self-hosted, Linux, X64, flashtex-linux]
+    # 60 minutes of fuzzing (nightly.py hard-kills a fuzzer past its share),
+    # the engine and format build, and slack.
+    timeout-minutes: 120
+    env:
+      FLASHTEX_FUZZ_MINUTES: "60"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: this runner's build directory
+        run: echo "CARGO_TARGET_DIR=$HOME/.cache/flashtex-ci/$RUNNER_NAME/target-engine-parity" >> "$GITHUB_ENV"
+      - name: build the engine and its formats, then fuzz
+        run: scripts/engine-parity.sh build fuzz
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: engine-fuzz
+          # summary.md/json plus one stored input and sidecar per distinct
+          # finding signature (the fuzzers dedupe), so it stays small.
+          path: ${{ runner.temp }}/engine-parity/fuzz/
+          if-no-files-found: ignore
+          retention-days: 14
 
   # The PC switched off, the Macs on: T2, soundness and the memory gate on a
   # self-hosted Mac (MacTeX 2026 first on its PATH: /Library/TeX/texbin is the
