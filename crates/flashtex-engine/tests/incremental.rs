@@ -2586,3 +2586,58 @@ fn preamble_edits_restart_before_s0() {
     assert_eq!(field(&r, "mode"), "\"cold\"", "{r}");
     compile_and_check(&e, &mut h, &dir, &[("doc.tex", &doc)], "the revert");
 }
+
+/// Review of #1551 (PREAMBLE-FAST): a file `\input` twice, then text
+/// appended to it. The first read closed at the file's end, which the
+/// appended text moves: a checkpoint inside the second read had consumed
+/// the unchanged prefix of the file there, but the first read had read the
+/// end, so no restart point after the first read is sound
+/// (`consumed_nothing_changed`). In the preamble (a restart before S₀) and
+/// in the body (from S₀ on), with a timed checkpoint at almost every line.
+#[test]
+fn a_file_read_to_its_end_then_appended_restarts_before_the_first_read() {
+    let Some(e) = env() else {
+        common::no_texlive();
+        return;
+    };
+    let part: String = (0..40)
+        .map(|k| format!("\\stepcounter{{probe}}% line {k}\n"))
+        .collect();
+    let more = format!("{part}\\stepcounter{{probe}}\\stepcounter{{probe}}\n");
+    for (i, (preamble, body)) in [
+        ("\\input{part}\n\\input{part}\n", ""),
+        ("", "\\input{part}\n\\input{part}\n"),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let dir = e.dir.join(format!("eof-append-{i}"));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let paras: String = (0..8).map(|k| para(k, "sigma")).collect();
+        let doc = format!(
+            "\\documentclass{{article}}\n\\newcounter{{probe}}\n{preamble}\\begin{{document}}\n\
+             {paras}{body}Counted \\arabic{{probe}}.\n\\end{{document}}\n"
+        );
+        let mut h = Host::start_env(&e, &dir, &[("FLASHTEX_TIMED_S", "0.000001")]);
+        for k in 0..4 {
+            let r = compile_and_check(
+                &e,
+                &mut h,
+                &dir,
+                &[("doc.tex", &doc), ("part.tex", &part)],
+                "settle",
+            );
+            if r.contains("\"mode\":\"unchanged\"") || k == 3 {
+                break;
+            }
+        }
+        let what = if i == 0 {
+            "in the preamble"
+        } else {
+            "in the body"
+        };
+        compile_and_check(&e, &mut h, &dir, &[("part.tex", &more)], what);
+        compile_and_check(&e, &mut h, &dir, &[("part.tex", &part)], "the revert");
+    }
+}

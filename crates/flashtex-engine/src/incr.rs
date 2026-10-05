@@ -4265,11 +4265,16 @@ fn consumed_nothing_changed(
             return false;
         }
         // An earlier read, closed by now (a file `\input` twice, a
-        // `\IfFileExists` test), must have stopped before the change.
+        // `\IfFileExists` test), must have stopped before the change. A read
+        // closed at the change has seen it: one closed at the file's end read
+        // the end itself, and text appended there would have been read on
+        // (review of #1551: `\input` twice in the preamble, text appended);
+        // one closed early at `n` (`\endinput`) is taken as having read byte
+        // `n`, the conservative answer.
         let upto = r.reads.0.min(j.files.len());
         if j.files[..upto]
             .iter()
-            .any(|f| f.path == *p && f.closed_at.is_some_and(|n| e.is_none_or(|e| n > e.prefix)))
+            .any(|f| f.path == *p && f.closed_at.is_some_and(|n| e.is_none_or(|e| n >= e.prefix)))
         {
             return false;
         }
