@@ -3145,6 +3145,83 @@ pub fn no_flush(path: &str) -> bool {
 type Stamp = (u64, Option<std::time::SystemTime>, u64);
 
 thread_local! {
+    /// The resident session keeps what a fatal run removes (`set_keep_removed`).
+    static KEEP_REMOVED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    /// Output files a fatal run removed, set aside (`remove_output`).
+    static REMOVED: std::cell::RefCell<Vec<String>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// Where `remove_output` sets `path` aside.
+fn aside_path(path: &str) -> String {
+    format!("{path}.flashtex-removed")
+}
+
+/// The resident, incremental session (`crate::incr::Session`) turns this on:
+/// an output file the run removes (pdfTeX deletes its unfinished PDF after a
+/// fatal error, `removepdffile`) is set aside instead, so that a later
+/// compile restoring a checkpoint taken while the file was open can put it
+/// back (`revive_removed_outputs`) instead of compiling from scratch.
+pub fn set_keep_removed(on: bool) {
+    KEEP_REMOVED.with(|k| k.set(on));
+}
+
+/// Removes output file `path`, as pdfTeX does (it is gone from its name
+/// either way). With `set_keep_removed`, a file all of whose bytes are the
+/// engine's is renamed aside: renaming keeps its length, modification time
+/// and inode, the stamp `outside_change` compares.
+pub fn remove_output(path: &str) {
+    let k = out_key(path);
+    let ours = KEEP_REMOVED.with(|k| k.get())
+        && STAMPS.with(|m| m.borrow().contains_key(&k))
+        && !FOREIGN.with(|f| f.borrow().contains(&k));
+    if ours && std::fs::rename(path, aside_path(path)).is_ok() {
+        file_trace(|| format!("set aside {path}"));
+        REMOVED.with(|r| r.borrow_mut().push(path.to_string()));
+        return;
+    }
+    let _ = std::fs::remove_file(path);
+}
+
+/// Before a restore relies on output files (`checkpoint::changed_outside`):
+/// puts back those of `need` a fatal run set aside (`remove_output`), unless
+/// something else has taken the name since (then the aside copy goes).
+/// Only a restore whose checkpoint had the file open puts it back: a
+/// compile that restores nothing, or restores to before the file was
+/// opened, leaves it gone, as pdfTeX left it. What it holds is what the
+/// engine wrote and closed, so it is stamped as the engine's; a later run
+/// that opened the file again is caught by `rewritten_at`.
+pub fn revive_removed<'a>(need: impl IntoIterator<Item = &'a String>) {
+    let need: Vec<String> = need.into_iter().map(|p| out_key(p)).collect();
+    if need.is_empty() || REMOVED.with(|r| r.borrow().is_empty()) {
+        return;
+    }
+    let back: Vec<String> = REMOVED.with(|r| {
+        let mut r = r.borrow_mut();
+        let (back, keep): (Vec<String>, Vec<String>) =
+            r.drain(..).partition(|p| need.contains(&out_key(p)));
+        *r = keep;
+        back
+    });
+    for path in back {
+        let aside = aside_path(&path);
+        if std::fs::metadata(&path).is_err() && std::fs::rename(&aside, &path).is_ok() {
+            file_trace(|| format!("put back {path}"));
+            stamp_output(&path);
+        } else {
+            let _ = std::fs::remove_file(&aside);
+        }
+    }
+}
+
+/// A run from the format writes its outputs afresh: what fatal runs set
+/// aside is no longer needed.
+pub fn forget_removed() {
+    for path in REMOVED.with(|r| std::mem::take(&mut *r.borrow_mut())) {
+        let _ = std::fs::remove_file(aside_path(&path));
+    }
+}
+
+thread_local! {
     /// Every output file's stamp after the engine's last write to it: a
     /// write by another program since (an `export` run of the same job in
     /// the same directory, the user's pdflatex) changes it.

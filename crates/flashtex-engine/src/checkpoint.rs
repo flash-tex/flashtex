@@ -105,12 +105,15 @@ fn rewritten_since(rec: &ExtRecord) -> Option<String> {
 /// it -- an `export` of the same job in the same directory rewrites them
 /// all, also while the engine has them open -- or it is gone).
 fn changed_outside(rec: &ExtRecord, also: &[String]) -> Option<String> {
-    rec.files
-        .iter()
-        .filter_map(|f| match &f.stream {
+    let open = || {
+        rec.files.iter().filter_map(|f| match &f.stream {
             Stream::Out { path, len, .. } if *len > 0 => Some(path),
             _ => None,
         })
+    };
+    // a fatal run's PDF, set aside (`system::remove_output`), is back for it
+    system::revive_removed(open());
+    open()
         .chain(also.iter())
         .find_map(|p| system::outside_change(p))
 }
