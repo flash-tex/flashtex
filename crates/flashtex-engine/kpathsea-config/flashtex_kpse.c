@@ -20,6 +20,7 @@
 #include <kpathsea/readable.h>
 #include <kpathsea/str-list.h>
 #include <kpathsea/str-llist.h>
+#include <kpathsea/hash.h>
 #include <string.h>
 #include <stdlib.h>
 
@@ -292,14 +293,18 @@ char **flashtex_kpse_search_dirs(void *k, int format, const char *found)
       elt += 2;
     kpathsea_normalize_path(kpse, elt);
     if (db_only) {
-      /* found in this element's database: the elements after it were not
+      /* found in this element's database (kpathsea's own match of the
+         element, and the file on disk): the elements after it were not
          searched */
       if (found) {
-        size_t l = strlen(elt);
-        while (l > 0 && elt[l - 1] == '/')
-          l--;
-        if (l > 0 && strncmp(found, elt, l) == 0 && found[l] == '/')
-          done = 1;
+        str_list_type *hit = kpathsea_db_search(kpse, xbasename(found), elt, false);
+        if (hit) {
+          if (STR_LIST_LENGTH(*hit) > 0 && STR_LIST_ELT(*hit, 0)
+              && strcmp(STR_LIST_ELT(*hit, 0), found) == 0)
+            done = 1;
+          str_list_free(hit);
+          free(hit);
+        }
       }
       continue;
     }
@@ -328,4 +333,52 @@ char **flashtex_kpse_search_dirs(void *k, int format, const char *found)
     return NULL;
   }
   return out;
+}
+
+/* Whether an ls-R database lists NAME, or NAME with one of FORMAT's
+   suffixes, where no readable file is (kpathsea_db_search passes over such
+   an entry, and finds the file once it is there, with no directory of the
+   search changing), or has an alias for one of them: then the memo does not
+   keep the lookup (resolver.rs, `Memo`). Every entry counts, whatever tree
+   it is in (the conservative answer). */
+int flashtex_kpse_db_hazard(void *k, int format, const char *name)
+{
+  kpathsea kpse = (kpathsea) k;
+  kpse_format_info_type *f;
+  const_string *lists[2];
+  const_string *ext;
+  int l, hazard = 0;
+  if (kpse->db.buckets == NULL)
+    return 0;
+  if (!kpse->format_info[format].type)
+    kpathsea_init_format(kpse, (kpse_file_format_type) format);
+  f = &kpse->format_info[format];
+  lists[0] = f->suffix;
+  lists[1] = f->alt_suffix;
+  for (l = -1; l < 2 && !hazard; l++) {
+    const_string *exts = l < 0 ? NULL : lists[l];
+    if (l >= 0 && !exts)
+      continue;
+    for (ext = exts; l < 0 || *ext; ext = ext ? ext + 1 : NULL) {
+      string n = l < 0 ? xstrdup(name) : concat(name, *ext);
+      const_string *dirs = hash_lookup(kpse->db, n);
+      const_string *d;
+      for (d = dirs; d && *d && !hazard; d++) {
+        string file = concat(*d, n);
+        if (!kpathsea_readable_file(kpse, file))
+          hazard = 1;
+        free(file);
+      }
+      free((void *) dirs);
+      if (!hazard && kpse->alias_db.buckets) {
+        const_string *a = hash_lookup(kpse->alias_db, n);
+        hazard = a && *a;
+        free((void *) a);
+      }
+      free(n);
+      if (l < 0 || hazard)
+        break;
+    }
+  }
+  return hazard;
 }

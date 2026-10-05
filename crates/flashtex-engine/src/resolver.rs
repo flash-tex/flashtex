@@ -524,6 +524,7 @@ mod kpse {
         fn flashtex_kpse_format_path(k: *mut c_void, format: c_int) -> *const c_char;
         fn flashtex_kpse_has_alias(k: *mut c_void, name: *const c_char) -> c_int;
         fn flashtex_kpse_readable(k: *mut c_void, path: *const c_char) -> c_int;
+        fn flashtex_kpse_db_hazard(k: *mut c_void, format: c_int, name: *const c_char) -> c_int;
         fn flashtex_kpse_search_dirs(
             k: *mut c_void,
             format: c_int,
@@ -565,6 +566,12 @@ mod kpse {
     ///   dangling symbolic link or an unreadable file under a name it tries)
     ///   could become readable without changing their directory: a lookup
     ///   that met one is not remembered.
+    /// - likewise an ls-R entry under the name (or the name with a suffix)
+    ///   with no readable file on disk: kpathsea's database search checks
+    ///   each entry on disk (`db.c`), so the file's appearing would change
+    ///   the answer with no directory of the search changing; an ls-R alias
+    ///   too (`flashtex_kpse_db_hazard`). An `!!` element is taken as where
+    ///   the answer was found only by kpathsea's own database search.
     ///
     /// Not remembered either: absolute and relative names and names with a
     /// directory, variables or `~` (kpathsea expands them; they are cheap
@@ -955,6 +962,9 @@ mod kpse {
             let n = CString::new(name).map_err(|_| "a NUL in the name")?;
             if unsafe { flashtex_kpse_has_alias(self.k, n.as_ptr()) } != 0 {
                 return Err("a fontmap alias");
+            }
+            if unsafe { flashtex_kpse_db_hazard(self.k, f, n.as_ptr()) } != 0 {
+                return Err("an ls-R entry under the name is not on disk, or has an alias");
             }
             let cwd = std::env::current_dir().map_err(|_| "no working directory")?;
             let path = self.format_path(f);
