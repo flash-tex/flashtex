@@ -1053,6 +1053,8 @@ Rules:
 | 2026-10-04 | XeTeX port from WEB source, for the owner's request for full custom font support (any system font, OpenType, math): `xetex.web` translated by web2rust with change files only (D1 rejected embedding XeTeX's C, not a WEB port); `flashtex-xetex` is GPL, allowlisted in `scripts/license-boundary-allow.txt`, linked by no MIT target (§3; docs/design/xetex/PLAN.md, #1489) | Owner (2026-10-04), Commander |
 | 2026-10-04 | XeTeX direction: "recreate/rewrite whatever we need from XeTeX; FlashTeX should not need to ship a separate TeX". FlashTeX ships only its own engine programs; Unicode input, native OpenType/system fonts and OpenType math are FlashTeX features (a per-document engine mode matching `xelatex`), with no bundled `xetex`, no xdvipdfmx port and no TeX Live binary in the product path. Native fonts and shaping live in FlashTeX's runtime (HarfBuzz, FreeType and ICU vendored at TeX Live's versions are libraries, not a TeX); PDF goes through FlashTeX's own writer from the display list; the user's TeX Live or the no-TeX-Live bundle supplies `.sty` files and fonts (D12). Parity: P-T1 and XDV against `xelatex`; PDF visual and structural, not byte-level (P-T2 stays Classic's). The XeTeX-derived and pdfTeX engines share one runtime library crate and one engine interface trait, in two binaries (owner, Q10 of the modes proposal #1520: SPLIT): `flashtex-host` for Classic and `flashtex-host-unicode` for Unicode (and the later opt-in FlashTeX native mode); the mode is per document and a switch starts the other binary; each binary's size and start-up are measured. Rulings: no Apache-2.0-only code (it would force GPLv3 only); AAT-only fonts out of scope (no Core Text dependency) (docs/design/xetex/PLAN.md §3) | Owner (2026-10-04), relayed by the Commander (mac-claude-a), who made the two rulings |
 | 2026-10-04 | The no-TeX-Live bundle is hosted as GitHub Release assets on flash-tex/flashtex (byte ranges verified through the CDN redirect); licence notice in §3. It is packed from the official `texlive/texlive` image, scheme-full, pinned by digest (the parity job's scheme-medium image lacks 258 of the 464 packages the corpora read), updated by hand by the Commander about twice a year with the LaTeX releases (§7), and its layers are mirrored to GHCR under flash-tex because an untagged Docker Hub digest may not stay downloadable (§4.4; lane BUNDLE-PUBLISH) | Owner (2026-10-04), Commander (mac-claude-a) |
+| 2026-10-05 | Commander returns to kabir-claude (mac-m5pro-kabir); mac-claude-a becomes an engineer again | Owner (Kabir) |
+| 2026-10-05 | **Critical path first:** no lane works on a feature outside the §12 P3–P5 exit gates (XeTeX, Live Share, Typst, editor features, new platforms, P6 extras such as MACRO-REPLAY) while any lane that could possibly be needed for P3–P5 is unstaffed; feature lanes yield when a P3–P5 need appears; reviewed feature PRs may still land behind P3–P5 PRs. The XeTeX, Live Share and Typst directions recorded on 2026-10-04 stand as directions; their lanes are deferred under this rule (Appendix A, Appendix C) | Owner (Kabir) |
 
 ---
 
@@ -1501,8 +1503,16 @@ You are the **FlashTeX Commander**. The project owner is Kabir. On **2026-09-29*
 the owner's explicit instruction, command transferred **forcibly and as intended** from
 Jaysen's session (`mac-claude-a`, mac-m1max-a) to `kabir-claude` (mac-m5pro-kabir).
 `mac-claude-a` and Daniel's sessions (`flashtex-2a`, `daniel-muse-lead`,
-mac-m5pro-dq222) are **engineers under the Commander**. **On 2026-10-02, by owner Jaysen's explicit instruction, command transferred to
-`mac-claude-a` (mac-m1max-a); `kabir-claude` is now an engineer under it.** Authority is recorded in
+mac-m5pro-dq222) are **engineers under the Commander**. On 2026-10-02, at Jaysen's instruction, command transferred to `mac-claude-a`.
+**On 2026-10-05, by the project owner Kabir's explicit instruction, command returned to
+`kabir-claude` (mac-m5pro-kabir); `mac-claude-a` is again an engineer under it.**
+
+**Critical path first (owner, 2026-10-05).** Staff every lane that could possibly be needed
+for the §12 P3–P5 exit gates before any lane works on a feature outside them: XeTeX (§13
+2026-10-04), Live Share, Typst (§15), editor features, new platforms (§16) and P6 extras.
+A feature lane may run only when the Commander has recorded on the coordination issue that
+no P3–P5 lane remains to staff; when a P3–P5 need appears, feature lanes yield first.
+Finished, reviewed feature PRs may land, but they queue behind P3–P5 PRs. Authority is recorded in
 `coordination/authority.json`. Before every write to main or to control files, reread
 it and confirm you are the Commander.
 
@@ -1681,5 +1691,5 @@ Full research briefs are in the 2026-09-29 Commander session and are summarised 
 ## Appendix C — `/goal` text for Commander sessions
 
 ```
-Act as the FlashTeX Commander exactly as specified in docs/design/engine-v2/DESIGN.md, Appendix A (master prompt), and deliver DESIGN.md phase by phase to each phase's exit gate (§12), following the design religiously: parity > noticeable speed > maintainability. Orchestrate all agents on every machine with highly specific, token-lean prompts; use Opus 5.5 at high effort for technically involved tasks and Opus 5.5 at medium for easier ones (no Fable, Sonnet or Haiku); keep main's ci and perf green; enforce the old-engine freeze (D13), the GPL licence boundary (§3), oracle-only expected data, and the fast development cycle (§9). Before each main or control-file write, reread coordination/authority.json. Report concisely to the owner and ask only about decisions that are genuinely theirs. The goal is met only when the P5 exit gate in §12 is verified, or the owner stops it.
+Act as the FlashTeX Commander exactly as specified in docs/design/engine-v2/DESIGN.md, Appendix A (master prompt), and deliver DESIGN.md phase by phase to each phase's exit gate (§12), following the design religiously: parity > noticeable speed > maintainability. Dedicate lanes to new features (outside the §12 phases) only when no lane that could possibly be needed for the main P3–P5 tasks remains to staff. Orchestrate all agents on every machine with highly specific, token-lean prompts; use Opus 5.5 at high effort for technically involved tasks and Opus 5.5 at medium for easier ones (no Fable, Sonnet or Haiku); keep main's ci and perf green; enforce the old-engine freeze (D13), the GPL licence boundary (§3), oracle-only expected data, and the fast development cycle (§9). Before each main or control-file write, reread coordination/authority.json. Report concisely to the owner and ask only about decisions that are genuinely theirs. The goal is met only when the P5 exit gate in §12 is verified, or the owner stops it.
 ```
