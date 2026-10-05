@@ -15,7 +15,7 @@
 # edits -- because the point of a local gate is to catch a problem before the
 # commit, not after. A change to the root Cargo.toml or Cargo.lock adds one
 # workspace-wide `cargo check` and one workspace-wide clippy run, not a test
-# run per crate: the workspace's tests are the merge queue's job.
+# run per crate: the workspace's tests run after the merge (ci.yml, push to main).
 #
 # Exit status is 1 if any step FAILED. WARN and SKIP do not fail the run; the
 # summary table at the end says which is which and why.
@@ -267,8 +267,8 @@ CHANGED_CRATES="$(printf '%s\n' "$CRATE_TABLE" | awk 'NF{print $1}' | sort -u | 
 # `quick` job (PR #1183, run 36546401263). Instead the whole workspace is
 # checked, then clippied, in one cargo invocation each (one shared build);
 # tests run only for crates whose own files changed; and the workspace's tests
-# are the merge queue's job (`rust workspace` in ci.yml, on merge_group and on
-# push to main). The standalone crates have their own lockfiles: unaffected.
+# run after the merge (`rust workspace` in ci.yml, on push to main; the merge
+# queue runs only the gate since 2026-10-05). The standalone crates have their own lockfiles: unaffected.
 ROOT_MANIFEST=0
 if printf '%s\n' "$CHANGED_FILES" | grep -qxE 'Cargo\.(toml|lock)'; then
   ROOT_MANIFEST=1
@@ -540,7 +540,7 @@ if (( BASE_OK )); then
   note "crates:     ${CHANGED_CRATES:-(none)}"
   if (( ROOT_MANIFEST )); then
     note "root:       Cargo.toml/Cargo.lock changed -> workspace check + clippy;"
-    note "            the workspace's tests run in the merge queue (rust workspace)"
+    note "            the workspace's tests run after the merge (rust workspace)"
   fi
 fi
 echo

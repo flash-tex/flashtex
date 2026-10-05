@@ -966,6 +966,29 @@ def select_cases(patterns):
                          for p in patterns))
 
 
+def parse_shard(spec):
+    """`K/N` (1 <= K <= N) for --shard; argparse type."""
+    try:
+        k, n = (int(x) for x in spec.split("/"))
+    except ValueError:
+        raise argparse.ArgumentTypeError("--shard wants K/N, got %r" % spec)
+    if not 1 <= k <= n:
+        raise argparse.ArgumentTypeError("--shard wants 1 <= K <= N, got %r" % spec)
+    return k, n
+
+
+def shard_cases(names, shard):
+    """The K-th of N interleaved slices of the sorted case list.
+
+    Interleaved, not contiguous: case numbers group related (and similarly
+    slow) cases, so every shard gets a share of each group. Shards 1..N
+    together are exactly `names`, each name in one shard."""
+    if shard is None:
+        return names
+    k, n = shard
+    return names[k - 1::n]
+
+
 def valid_run(result, name, what):
     if result.get("ok") and "log" in result:
         return True
@@ -1049,6 +1072,9 @@ def main(argv=None):
     ap.add_argument("--timeout", type=float, default=RUN_TIMEOUT,
                     help="per-run engine timeout in seconds (default %s)" %
                     RUN_TIMEOUT)
+    ap.add_argument("--shard", type=parse_shard, default=None, metavar="K/N",
+                    help="run only the K-th of N interleaved slices of the "
+                    "selected cases (scripts/engine-parity.sh runs N at once)")
     args = ap.parse_args(argv)
 
     if not os.path.isfile(PRELUDE):
@@ -1058,6 +1084,11 @@ def main(argv=None):
     if not names:
         print("error: no cases match %r" % (args.cases,), file=sys.stderr)
         return 2
+    names = shard_cases(names, args.shard)
+    if not names:
+        # More shards than cases: this slice is empty, which is not an error.
+        print("0 cases, 0 equal, 0 differ")
+        return 0
     if shutil.which(args.reference) is None and not os.path.isfile(args.reference):
         print("error: reference not found: %s" % args.reference, file=sys.stderr)
         return 2

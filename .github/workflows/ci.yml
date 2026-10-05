@@ -1,51 +1,54 @@
 # FlashTeX CI, tiered (docs/design/engine-v2/DESIGN.md §9, owner-approved
-# 2026-09-29). See docs/ci-cd.md.
+# 2026-09-29; the merge queue slimmed to a gate on 2026-10-05). See
+# docs/ci-cd.md.
 #
-# WHY TIERS. On 2026-09-27 a run on main took 225-275 minutes, almost all of it
-# macOS jobs queueing: every pull request ran the whole matrix -- the Rust
-# workspace on Linux AND macOS, the three standalone crates on both, the Mac app
-# (90 min timeout) and the iPad simulator (60 min) -- behind ~90 branches all
-# competing for GitHub-hosted macOS runners.
+# WHY. On 2026-09-27 a run on main took 225-275 minutes, almost all of it macOS
+# jobs queueing. Tiering fixed pull requests, but by 2026-10-04 a merge_group
+# run still took 45-130 minutes wall: the Mac app (19-24 min on hosted
+# macos-26), the Rust workspace (16-22, on the PC) and engine parity (13-19,
+# on the PC) ran in every group, and up to 8 groups at a time queued for the
+# PC's three runners. Owner, 2026-10-05: "30-60 mins per merge is absolutely
+# unacceptable ... can't we merge more stuff in and test later as needed?"
 #
-# So the gate a branch must pass is now proportional to what it changed:
-#
-#   fast (required, target <= 10 min)  pull_request, and push to any branch
+#   pr (pull_request, and push to any branch but main)       for reviewers
 #     build, the crates the branch touches (fmt/clippy/tests), the licence
-#     boundary, the bundled inventory and the generated-table gates. NO full
-#     matrix, no Mac app, no simulator. Plus the NEW engine's parity gates
-#     (lockstep, P-T1/P-T2 on the fixtures) when the branch touches the engine
-#     or its harnesses (see `engine` below), and the OLD engine's parity
-#     fixtures tier (a macOS job) when it touches a path those fixtures depend
-#     on (`old_engine` below; a push without a pull request always runs it).
+#     boundary, the bundled inventory and the generated-table gates; trip,
+#     etrip, pdfTeX's regression tests (Linux); the NEW engine's parity
+#     (GitHub-hosted, sharded) when the branch touches the engine or its
+#     harnesses (`engine` below). Hosted macOS jobs only when the branch
+#     touches apps/ (`apple` below): the Mac app and the iPad companion, and
+#     the OLD engine's parity fixtures when it also touches their paths.
 #
-#   full                               merge_group, manual (push to main runs the
-#                                      fast set: the queue already ran full on it)
-#     everything above plus the Rust workspace and the three standalone crates on
-#     Linux, the Mac app and the iPad companion. The new engine's parity
-#     gates ALWAYS run here, and on every push to main.
+#   gate (merge_group; manual with gate_only)       target <= 12 min engine,
+#                                                    <= 5 min otherwise
+#     plan, licence boundary, inventory, generated tables, build, quick, trip,
+#     etrip, pdfTeX regression (all GitHub-hosted Linux), and the new engine's
+#     parity when the GROUP touches engine-affecting paths, sharded across the
+#     PC's runners: lockstep, the P-T1/P-T2 fixtures and the engine's tests,
+#     one job each, each with a warm per-runner target directory. Nothing
+#     else: no Mac, no iPad, no full workspace. Parity stays gated before
+#     merge (parity > speed).
 #
-#   post-merge macOS                   push to main (and manual runs); nightly
-#     the macOS legs of the Rust workspace, the standalone crates, trip and
-#     etrip. They left the merge queue on 2026-09-30: the queue is bound by
-#     macOS runners, and in the 48 hours before, those legs caught nothing
-#     the Linux legs did not (docs/ci-cd.md). A failure on main opens or
-#     updates an issue labelled `main-macos-red`, fixed forward. The old
-#     engine's parity fixtures (frozen, D13) join them there: the merge queue
-#     runs that job only when a change touches its paths (`old_engine`), a
-#     push to main always does, and a failure on main files the same issue.
+#   post (push to main; manual without gate_only; and nightly.yml)
+#     the Mac app, the iPad companion, the Rust workspace on Linux and macOS,
+#     render-pipeline, flashtex-cli, flashtex-xetex, the macOS legs of trip,
+#     etrip and pdfTeX's regression tests, the old engine's parity fixtures,
+#     and the new engine's parity (GitHub-hosted, which also keeps the caches
+#     warm for pull requests). Fixed forward: a failure opens or updates the
+#     `main-red` issue, naming the pull requests the push merged
+#     (scripts/ci/main-red.sh). Policy: the PR's owner fixes forward within
+#     2 hours, or the Commander reverts.
 #
-# WHERE (owner, 2026-09-30). The three NixOS runners on the owner's PC
-# (label flashtex-linux) bound the merge queue, and the repository is public,
-# so GitHub-hosted Linux is free. The PC keeps the heavy jobs only:
-# `build (workspace, all targets)`, `rust workspace (ubuntu-latest)` (both via
-# plan.outputs.linux_runner) and `engine parity (NixOS)`, plus nightly.yml's
-# engine and soundness jobs -- and only on merge_group, push to main and manual
-# runs (`selfhosted_linux` in plan); a pull request or branch push never
-# reaches it (DESIGN §9.3). The PC and the self-hosted Macs have separate
-# switches, FLASHTEX_SELFHOSTED_LINUX and FLASHTEX_SELFHOSTED_MAC (see plan),
-# so one being offline does not take the other out of service. Every light Linux job is on ubuntu-latest on every event: the
-# quick, licence, inventory and generated-table gates, trip, etrip, pdfTeX's
-# regression tests and the three standalone crates (none needs TeX installed).
+# WHERE. The three NixOS runners on the owner's PC (label flashtex-linux) take
+# only the gate's engine-parity shards (and nightly.yml's engine jobs), and
+# only on merge_group and manual runs (`engine_nixos` in plan) -- never a
+# pull request or a branch push (DESIGN §9.3), and no longer the workspace
+# build or the Rust workspace, which queued the gate's parity behind them.
+# The PC and the self-hosted Macs have separate switches,
+# FLASHTEX_SELFHOSTED_LINUX and FLASHTEX_SELFHOSTED_MAC (see plan), so one
+# being offline does not take the other out of service; with the PC switched
+# off the gate's parity runs on GitHub-hosted Ubuntu instead. Every other
+# Linux job is on ubuntu-latest (the repository is public: free).
 #
 # Nightly and weekly suites live in nightly.yml.
 #
@@ -67,6 +70,10 @@ on:
     inputs:
       engine_parity_hosted:
         description: also run the GitHub-hosted engine parity job (it is otherwise the fallback)
+        type: boolean
+        default: false
+      gate_only:
+        description: run only the merge-queue gate (what a merge_group run runs, with engine parity), to measure it
         type: boolean
         default: false
 
@@ -105,8 +112,12 @@ jobs:
       contents: read
       pull-requests: read
     outputs:
-      # 'true' when this run must do the full matrix.
-      full: ${{ steps.p.outputs.full }}
+      # The tier: `pr`, `gate` (merge_group, or a manual run with gate_only)
+      # or `all` (push to main, manual): see the header.
+      tier: ${{ steps.p.outputs.tier }}
+      # 'true' when this run must run the post-merge set (Mac app, iPad, Rust
+      # workspace, standalone crates, macOS legs): push to main, manual runs.
+      post: ${{ steps.p.outputs.post }}
       # 'false' when this run is a duplicate of one already covering this SHA.
       run: ${{ steps.p.outputs.run }}
       # 'true' when the repository has self-hosted Macs (labels flashtex)
@@ -117,26 +128,28 @@ jobs:
       # FLASHTEX_SELFHOSTED_LINUX (falling back to FLASHTEX_SELFHOSTED_MAC
       # while it is unset).
       selfhosted_linux: ${{ steps.p.outputs.selfhosted_linux }}
-      # A JSON array for `runs-on` on the Xcode jobs of the full tier.
+      # A JSON array for `runs-on` on the Xcode jobs.
       mac_runner: ${{ steps.p.outputs.mac_runner }}
       # The same choice for the Rust/trip jobs' macOS matrix leg (hosted: macos-15).
       mac_rust_runner: ${{ steps.p.outputs.mac_rust_runner }}
-      # The runner of the HEAVY Linux jobs (build, the Rust workspace's Linux
-      # leg): the owner's NixOS PC (three runner instances,
-      # scripts/ci/install-selfhosted-runner-nixos.sh) when selfhosted_linux
-      # is 'true', else ubuntu-latest. Every light Linux job is on ubuntu-latest
-      # always (owner, 2026-09-30; see the header).
-      linux_runner: ${{ steps.p.outputs.linux_runner }}
       # 'true' when this run must run the new engine's parity gates.
       engine: ${{ steps.p.outputs.engine }}
-      # 'true' when this run must run the OLD engine's parity fixtures
-      # (parity-fixtures / parity-fixtures-hosted): on every event except
-      # merge_group and pull_request, and on those two only when the change
-      # touches a path the fixtures depend on (`old_engine` in the script).
+      # Where they run: the gate's shards on the NixOS PC (engine_nixos), or
+      # GitHub-hosted Ubuntu (engine_hosted); both on a manual run that asks.
+      engine_nixos: ${{ steps.p.outputs.engine_nixos }}
+      engine_hosted: ${{ steps.p.outputs.engine_hosted }}
+      # 'true' when this run must run the OLD engine's parity fixtures (a
+      # macOS job): after the merge always; on a pull request or branch push
+      # only when the change touches both their paths (`old_engine` in the
+      # script) and apps/ (`apple`); never in the gate.
       old_engine: ${{ steps.p.outputs.old_engine }}
+      # 'true' when the Xcode jobs (Mac app, iPad) run: after the merge, and
+      # on a pull request or branch push that touches apps/.
+      apple: ${{ steps.p.outputs.apple }}
       # JSON `os` lists for the Rust workspace/standalone jobs and for
-      # trip/etrip: the merge queue runs Linux only, push to main adds the
-      # post-merge macOS legs (see the header).
+      # trip/etrip/pdftex-regression: the gate and pull requests run trip and
+      # co. on Linux only and the Rust jobs not at all; after the merge, both
+      # systems.
       rust_os: ${{ steps.p.outputs.rust_os }}
       trip_os: ${{ steps.p.outputs.trip_os }}
     steps:
@@ -169,20 +182,26 @@ jobs:
           SHA: ${{ github.sha }}
           MG_BASE: ${{ github.event.merge_group.base_sha }}
           MG_HEAD: ${{ github.event.merge_group.head_sha }}
+          GATE_ONLY: ${{ inputs.gate_only }}
+          ENGINE_PARITY_HOSTED: ${{ inputs.engine_parity_hosted }}
         run: |
           set -euo pipefail
 
-          full=false
+          # The tier (see the header):
+          #   gate  merge_group, or a manual run with gate_only
+          #   all   push to main, or a manual run without it: the post-merge
+          #         set (and, on a manual run, the gate too)
+          #   pr    pull_request, and push to any other branch
           case "$EVENT" in
-            merge_group|workflow_dispatch) full=true ;;
+            merge_group) tier='gate' ;;
+            workflow_dispatch) if [ "$GATE_ONLY" = "true" ]; then tier='gate'; else tier='all'; fi ;;
+            push) if [ "$REF" = "refs/heads/main" ]; then tier='all'; else tier='pr'; fi ;;
+            *) tier='pr' ;;
           esac
-          # push to main is NOT full: every change reaches main through the
-          # merge queue, whose merge_group run already ran the full tier on
-          # that exact tree. Repeating it doubled the macOS queue (2026-09-29).
+          post=false
+          [ "$tier" = "all" ] && post=true
 
           # A fork pull request may never reach a self-hosted runner (§9.3).
-          # The full tier cannot be reached from `pull_request` at all, which is
-          # why its Mac jobs can take their runner from here.
           # Self-hosted runners (the Macs run the owner's working account, the
           # NixOS PC is on the owner's network) take only code the Commander
           # has queued or pushed to main: merge_group, push to main and manual
@@ -208,7 +227,7 @@ jobs:
           # events for the same commit (`push` and `pull_request`). The
           # pull_request run is the one that carries the required checks, so the
           # push run stands down. A branch with no pull request still gets the
-          # full fast set from its push.
+          # full pr set from its push.
           run=true
           if [ "$EVENT" = "push" ] && [ "$REF" != "refs/heads/main" ]; then
             branch="${REF#refs/heads/}"
@@ -261,29 +280,59 @@ jobs:
             [ "$files" = UNKNOWN ] || grep -qE "$1" <<<"$files"
           }
 
-          # The new engine's parity gates (DESIGN §8 T1, §1.1 P-T1/P-T2). Always
-          # in the merge queue, on main and on a manual run. On a pull request
-          # (or a branch push without one) only when the change touches the
-          # engine, its translator, its harnesses, the pinned sources or the
-          # fixtures -- or this gate's own definition.
+          # The new engine's parity gates (DESIGN §8 T1, §1.1 P-T1/P-T2): on
+          # every push to main and manual run; in the merge queue, on a pull
+          # request and on a branch push only when the change touches what
+          # they build, run or compare against:
+          #   - the engine and its path dependencies (display-list-v3), the
+          #     root Cargo.toml and Cargo.lock (it builds --locked in the root
+          #     workspace);
+          #   - its translator (tools/web2rust), its harnesses (tools/lockstep,
+          #     tools/parity and the two directories parity.py imports), the
+          #     pinned sources (third_party/), the fixtures;
+          #   - the gate's own definition: scripts/engine-parity.sh, the TeX
+          #     Live action, this file.
+          # A merge group's diff is cumulative (main to the group's head), so
+          # once an engine change is in the queue, every group behind it runs
+          # parity too -- which is what testing that exact tree requires.
+          engine_paths='^(crates/(flashtex-engine|display-list-v3)/|Cargo\.(toml|lock)$|tools/(web2rust|lockstep|parity|visual-oracle|real-world-corpus)/|third_party/|fixtures/|scripts/engine-parity\.sh$|\.github/actions/texlive-2026/|\.github/workflows/ci\.yml$)'
           engine=false
-          case "$EVENT" in
-            merge_group|workflow_dispatch) engine=true ;;
-            push) [ "$REF" = "refs/heads/main" ] && engine=true ;;
-          esac
-          if [ "$engine" != "true" ] && [ "$run" = "true" ]; then
-            if touches '^(crates/flashtex-engine/|tools/web2rust/|tools/lockstep/|tools/parity/|third_party/|fixtures/|scripts/engine-parity\.sh$|\.github/actions/texlive-2026/|\.github/workflows/ci\.yml$)'; then
-              engine=true
+          [ "$tier" = "all" ] && engine=true
+          [ "$EVENT" = "workflow_dispatch" ] && engine=true
+          if [ "$engine" != "true" ] && [ "$run" = "true" ] && touches "$engine_paths"; then
+            engine=true
+          fi
+          # The gate's shards go to the PC (merge_group and manual runs, with
+          # its switch on). Everything else -- pull requests, the push to main
+          # (which also keeps the Actions caches warm for pull requests), and
+          # the gate when the PC is switched off -- runs the hosted twin.
+          engine_nixos=false
+          engine_hosted=false
+          if [ "$engine" = "true" ]; then
+            if [ "$selfhosted_linux" = "true" ] && [ "$EVENT" != "push" ]; then
+              engine_nixos=true
+            fi
+            if [ "$engine_nixos" != "true" ] || [ "$ENGINE_PARITY_HOSTED" = "true" ]; then
+              engine_hosted=true
             fi
           fi
 
+          # The Xcode jobs and every other hosted macOS job: after the merge
+          # (post); on a pull request or branch push only when it touches
+          # apps/ (the Mac app, the iPad companion and their fonts); never in
+          # the gate.
+          apple=false
+          case "$tier" in
+            all) apple=true ;;
+            pr) [ "$run" = "true" ] && touches '^apps/' && apple=true ;;
+          esac
+
           # The OLD engine's parity fixtures (parity-fixtures and its hosted
-          # twin). That engine is frozen (D13, fixes only), so almost nothing in
-          # the merge queue changes it, and the job needs a Mac, which the
-          # queue is short of. It runs on every event except merge_group and
-          # pull_request -- so on every push to main, where a failure files
-          # `main-macos-red` -- and on those two only when the change touches
-          # something the fixtures tier depends on:
+          # twin). That engine is frozen (D13, fixes only), and the job needs a
+          # Mac. It runs after the merge (every push to main, where a failure
+          # files `main-red`), never in the gate, and on a pull request or a
+          # branch push only when the change touches apps/ (`apple`, the
+          # hosted-macOS rule) AND something the fixtures tier depends on:
           #   - flashtex-cli and every path crate it links, transitively, with
           #     dev-dependencies (`cargo metadata` of crates/flashtex-cli). The
           #     parity-fixtures action checks this list against cargo metadata
@@ -297,32 +346,24 @@ jobs:
           #   - fixtures/ (the documents and their pdflatex references) and
           #     apps/mac/Fonts (the font directory parity.py hands the CLI);
           #   - the action itself and this workflow.
-          # When in doubt a path is on the list: a wasted Mac run costs
-          # minutes, a missed one turns main red.
           old_engine_crates='bibliography|class-geometry|compiler|docstrip|document-style|flashtex-cli|font-discovery|font-engine|font-resources|math-layout|microtype|package-resolver|paragraph-layout|pdf|project-files|project-manifest|render-pipeline|tex-boxes|tex-expansion|tex-text-encoding|vector-graphics'
-          old_engine=true
-          case "$EVENT" in
-            merge_group|pull_request)
-              old_engine=false
-              if [ "$run" = "true" ] && touches "^(crates/($old_engine_crates)/|Cargo\.(toml|lock)$|tools/(parity|visual-oracle|real-world-corpus)/|fixtures/|apps/mac/Fonts/|\.github/actions/parity-fixtures/|\.github/workflows/ci\.yml$)"; then
+          old_engine=false
+          case "$tier" in
+            all) old_engine=true ;;
+            pr)
+              if [ "$apple" = "true" ] && touches "^(crates/($old_engine_crates)/|Cargo\.(toml|lock)$|tools/(parity|visual-oracle|real-world-corpus)/|fixtures/|apps/mac/Fonts/|\.github/actions/parity-fixtures/|\.github/workflows/ci\.yml$)"; then
                 old_engine=true
               fi ;;
           esac
 
-          # Where the macOS legs of the Rust jobs and trip/etrip/pdftex-regression run. Not in
-          # the merge queue (it is bound by macOS runners, and those legs
-          # caught nothing the Linux legs missed): after the merge, on the push
-          # to main, where a failure files `main-macos-red`, and nightly.
-          trip_os='["ubuntu-latest"]'
-          case "$EVENT" in
-            merge_group) rust_os='["ubuntu-latest"]' ;;
-            workflow_dispatch) rust_os='["ubuntu-latest","macos-15"]'; trip_os="$rust_os" ;;
-            push)
-              rust_os='[]'
-              if [ "$REF" = "refs/heads/main" ]; then
-                rust_os='["macos-15"]'; trip_os='["ubuntu-latest","macos-15"]'
-              fi ;;
-            *) rust_os='[]' ;;
+          # Where the Rust workspace/standalone jobs and trip/etrip/pdftex-
+          # regression run: the gate and pull requests run trip and co. on
+          # Linux and the Rust jobs not at all (quick covers the touched
+          # crates, build the whole workspace); after the merge, both on Linux
+          # and macOS.
+          case "$tier" in
+            all) rust_os='["ubuntu-latest","macos-15"]'; trip_os="$rust_os" ;;
+            *) rust_os='[]'; trip_os='["ubuntu-latest"]' ;;
           esac
 
           # The Xcode jobs (mac app, iPad simulator) always use the hosted
@@ -330,29 +371,26 @@ jobs:
           # are tied to that image's Xcode, and a self-hosted Mac on another
           # Xcode fails them (DesignSnapshots; exit 70 on a missing simulator).
           # Only the Rust/trip/etrip/parity legs move to self-hosted Macs.
-          # macos-26 is the Xcode 26 image the Mac app and the simulator need.
           mac_runner='["macos-26"]'
           if [ "$selfhosted_mac" = "true" ]; then
             mac_rust_runner='["self-hosted","macOS","ARM64","flashtex"]'
           else
             mac_rust_runner='["macos-15"]'
           fi
-          if [ "$selfhosted_linux" = "true" ]; then
-            linux_runner='["self-hosted","Linux","X64","flashtex-linux"]'
-          else
-            linux_runner='["ubuntu-latest"]'
-          fi
 
           {
-            echo "full=$full"
+            echo "tier=$tier"
+            echo "post=$post"
             echo "run=$run"
             echo "selfhosted_mac=$selfhosted_mac"
             echo "selfhosted_linux=$selfhosted_linux"
             echo "mac_runner=$mac_runner"
             echo "mac_rust_runner=$mac_rust_runner"
-            echo "linux_runner=$linux_runner"
             echo "engine=$engine"
+            echo "engine_nixos=$engine_nixos"
+            echo "engine_hosted=$engine_hosted"
             echo "old_engine=$old_engine"
+            echo "apple=$apple"
             echo "rust_os=$rust_os"
             echo "trip_os=$trip_os"
           } >> "$GITHUB_OUTPUT"
@@ -364,14 +402,15 @@ jobs:
             echo "|---|---|"
             echo "| event | \`$EVENT\` |"
             echo "| ref | \`$REF\` |"
-            echo "| tier | $([ "$full" = true ] && echo '**full**' || echo 'fast (required set only)') |"
+            echo "| tier | **$tier** |"
             echo "| runs | $run |"
             echo "| self-hosted Macs | $selfhosted_mac |"
             echo "| self-hosted NixOS | $selfhosted_linux |"
             echo "| Mac runner | \`$mac_runner\` |"
-            echo "| Linux runner | \`$linux_runner\` |"
-            echo "| new engine parity | $engine |"
+            echo "| new engine parity | $engine (NixOS shards: $engine_nixos, hosted: $engine_hosted) |"
+            echo "| Mac app / iPad | $apple |"
             echo "| old engine parity fixtures | $old_engine |"
+            echo "| Rust workspace / standalone | \`$rust_os\` |"
           } >> "$GITHUB_STEP_SUMMARY"
 
           if [ "$run" != "true" ]; then
@@ -380,19 +419,22 @@ jobs:
           fi
 
   # ===========================================================================
-  # The fast, required set. Runs on every event. Target: <= 10 minutes.
+  # The gate: every event, including the merge queue. Target: <= 5 minutes,
+  # plus engine parity (<= 12) when the change touches the engine.
   # ===========================================================================
 
   # §9.2 "build": the whole root workspace must compile, all targets, before
   # anything else is believed. Debug, not release: the release profile is two to
-  # three times slower and the merge queue already covers it.
+  # three times slower. It is also what catches a change that breaks a crate
+  # it did not touch: `quick` builds and tests only the touched crates.
   build:
     name: build (workspace, all targets)
     needs: [plan]
     if: needs.plan.outputs.run == 'true'
-    # The NixOS PC when self-hosted is allowed (plan), else ubuntu-latest.
-    # One of the three heavy jobs that stay there (see the header).
-    runs-on: ${{ fromJSON(needs.plan.outputs.linux_runner) }}
+    # GitHub-hosted on every event since 2026-10-05: on the PC it queued
+    # behind the gate's engine-parity shards (30 minutes, measured), and the
+    # PC is kept for those.
+    runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
@@ -533,13 +575,15 @@ jobs:
   # on purpose -- branch protection requires only "CI required" below, and two
   # check runs with one name on the same commit would be ambiguous.
   #
-  # In the merge queue and on pull requests they run only when `plan` says the
-  # change touches something the fixtures depend on (`old_engine`: the CLI's
-  # crates, the workspace manifests, tools/parity and what it imports,
-  # fixtures/, apps/mac/Fonts, the action, this file). On every other event --
-  # push to main above all -- they always run, and on main a failure opens or
-  # updates the `main-macos-red` issue (the `main-macos-red` job below).
-  # `CI required` fails a run where old_engine is 'true' and neither passed.
+  # They never run in the merge queue (a macOS job; the gate has none). After
+  # the merge (push to main, manual runs) they always run, and on main a
+  # failure opens or updates the `main-red` issue (the `main-red` job below).
+  # On a pull request or branch push they run only when the change touches
+  # apps/ (the hosted-macOS rule) and something the fixtures depend on
+  # (`old_engine` in plan: the CLI's crates, the workspace manifests,
+  # tools/parity and what it imports, fixtures/, apps/mac/Fonts, the action,
+  # this file). `CI required` fails a run where old_engine is 'true' and
+  # neither passed.
   parity-fixtures:
     name: "old engine: parity fixtures (self-hosted macOS)"
     needs: [plan]
@@ -580,28 +624,53 @@ jobs:
   # 1.40.29, and the engine's tests with FLASHTEX_REQUIRE_TEXLIVE=1 (a test
   # that would skip for want of TeX Live fails). The body is
   # scripts/engine-parity.sh, which runs the same steps on any machine with
-  # TeX Live. Before this job, CI never checked the new engine's parity.
+  # TeX Live.
+  #
+  # SHARDED (2026-10-05). As one job it took 10-21 minutes on a busy PC
+  # (build 212 s, lockstep 499 s -- 1,466 cases, one after another --
+  # parity 192 s, tests 348 s, measured on main). Now three jobs on three
+  # runners, each running only its own steps; the lockstep shard also runs
+  # its cases in parallel (engine-parity.sh --jobs, run.py --shard):
+  #
+  #   lockstep      build, lockstep
+  #   P-T fixtures  build, parity (P-T1 and P-T2 on the fixtures tier)
+  #   engine tests  tests
+  #
+  # The gate's critical path is the slowest shard, not their sum.
   #
   #   engine-parity         the NixOS PC (TeX Live 2026 first on its runners'
-  #                         PATH): merge queue, main and manual runs (§9.3)
+  #                         PATH): the merge queue and manual runs (§9.3)
   #   engine-parity-hosted  GitHub-hosted Ubuntu with a digest-pinned TeX Live
-  #                         2026: pull requests that touch the engine, and the
+  #                         2026: pull requests that touch the engine, every
+  #                         push to main (post-merge, and the caches), and the
   #                         fallback when the NixOS runners are switched off
   #                         (FLASHTEX_SELFHOSTED_LINUX, plan's selfhosted_linux)
   #
-  # One of the two runs (the hosted one also on a push to main, to keep its
-  # caches warm for pull requests; the manual input can add it too), and
-  # `CI required` fails a merge_group run in which neither passed.
+  # `CI required` fails a gate run (merge_group) in which plan's `engine` is
+  # 'true' and neither job passed in full (a matrix job passes only when every
+  # shard does).
   engine-parity:
-    name: engine parity (NixOS)
+    name: engine parity (NixOS, ${{ matrix.shard }})
     needs: [plan]
     if: >-
-      needs.plan.outputs.run == 'true' && needs.plan.outputs.engine == 'true' &&
-      needs.plan.outputs.selfhosted_linux == 'true' &&
+      needs.plan.outputs.run == 'true' && needs.plan.outputs.engine_nixos == 'true' &&
       (github.event_name != 'pull_request' ||
        github.event.pull_request.head.repo.full_name == github.repository)
     runs-on: [self-hosted, Linux, X64, flashtex-linux]
     timeout-minutes: 30
+    strategy:
+      # A red shard frees the other two runners at once for the next group.
+      fail-fast: true
+      matrix:
+        include:
+          # Lockstep cases are ~one core each and small: 8 at a time.
+          - {shard: lockstep, id: lockstep, steps: build lockstep, jobs: 8}
+          # -j 4, not 8: each parity worker holds up to ~2 GB while it
+          # compares a \tracingall log, and each runner instance is a systemd
+          # service with MemoryHigh=9G. At -j 8 the cgroup sat at its limit
+          # and the fixtures tier crawled (over 14 minutes instead of about 2).
+          - {shard: P-T fixtures, id: fixtures, steps: build parity, jobs: 4}
+          - {shard: engine tests, id: tests, steps: tests, jobs: 4}
     env:
       FLASHTEX_REQUIRE_TEXLIVE: "1"
     steps:
@@ -609,7 +678,9 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - name: this runner's build directory; a fresh oracle cache
         # A per-runner target directory outside the checkout, so a run
-        # rebuilds only what changed (the checkout is cleaned every job).
+        # rebuilds only what changed (the checkout is cleaned every job): the
+        # warm cache. Per runner, not shared: cargo locks a target directory
+        # for a whole build, so shards sharing one would build in turn.
         # The oracle's P-T references are NOT kept between runs here: an
         # oracle run that a cancelled or starved job cut short was once
         # cached as complete (its traced log truncated), and every later run
@@ -618,16 +689,12 @@ jobs:
           set -euo pipefail
           echo "CARGO_TARGET_DIR=$HOME/.cache/flashtex-ci/$RUNNER_NAME/target-engine-parity" >> "$GITHUB_ENV"
           echo "FLASHTEX_PARITY_CACHE=$RUNNER_TEMP/parity-oracle" >> "$GITHUB_ENV"
-      - name: scripts/engine-parity.sh
-        # -j 4, not 8: each parity worker holds up to ~2 GB while it compares
-        # a \tracingall log, and each runner instance is a systemd service
-        # with MemoryHigh=9G. At -j 8 the cgroup sat at its limit and the
-        # fixtures tier crawled (over 14 minutes instead of about 2).
-        run: scripts/engine-parity.sh --jobs 4
+      - name: scripts/engine-parity.sh ${{ matrix.steps }}
+        run: scripts/engine-parity.sh --jobs ${{ matrix.jobs }} ${{ matrix.steps }}
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: engine-parity-nixos
+          name: engine-parity-nixos-${{ matrix.id }}
           path: |
             ${{ runner.temp }}/engine-parity/lockstep.txt
             ${{ runner.temp }}/engine-parity/parity/report.md
@@ -636,19 +703,24 @@ jobs:
           retention-days: 14
 
   engine-parity-hosted:
-    name: engine parity (GitHub-hosted)
+    name: engine parity (GitHub-hosted, ${{ matrix.shard }})
     needs: [plan]
-    # Also on every push to main, beside the NixOS job: the Actions cache is
-    # scoped by ref, and a pull request can restore only its own caches and
-    # main's. Without this run nothing would save the TeX Live tree and the
-    # oracle's references on main, and every pull request would start cold
-    # (measured: 9 min 23 s to 10 min 2 s cold, 5 to 7.5 min warm).
-    if: >-
-      needs.plan.outputs.run == 'true' && needs.plan.outputs.engine == 'true' &&
-      (needs.plan.outputs.selfhosted_linux != 'true' || inputs.engine_parity_hosted ||
-       (github.event_name == 'push' && github.ref == 'refs/heads/main'))
+    # Also on every push to main: that is the post-merge parity check, and
+    # the Actions cache is scoped by ref -- a pull request can restore only
+    # its own caches and main's. Without this run nothing would save the TeX
+    # Live tree and the oracle's references on main, and every pull request
+    # would start cold (measured unsharded: 9 min 23 s to 10 min 2 s cold, 5
+    # to 7.5 min warm).
+    if: needs.plan.outputs.run == 'true' && needs.plan.outputs.engine_hosted == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {shard: lockstep, id: lockstep, steps: build lockstep, jobs: 4}
+          - {shard: P-T fixtures, id: fixtures, steps: build parity, jobs: 4}
+          - {shard: engine tests, id: tests, steps: tests, jobs: 4}
     env:
       FLASHTEX_REQUIRE_TEXLIVE: "1"
       # texlive/texlive:latest-medium as of 2026-09-27 (TeX Live 2026, pdfTeX
@@ -665,28 +737,29 @@ jobs:
           extra: |
             sansmathaccent 62cf97334eb2c1d4056cb7f72ef2e59d99edaef151c3f4870116cc23056394b9
             translations a7766687fd777e7077a68d6d908cb43da0673616e58ebc31741b22108d4af591
-      - name: qpdf (P-T2 normalises with it)
+      - name: qpdf (P-T2 normalises with it; engine-parity.sh checks for it)
         run: command -v qpdf || { sudo apt-get update -qq && sudo apt-get install -y -qq qpdf; }
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:
-          key: engine-parity
+          key: engine-parity-${{ matrix.id }}
       - name: the oracle's P-T references, cached per TeX Live image
         # Saved only by a job that passed, so a cut-short oracle run (which
-        # fails P-T1) is never kept.
+        # fails P-T1) is never kept. Only the fixtures shard runs the oracle.
+        if: matrix.id == 'fixtures'
         uses: actions/cache@v4
         with:
           path: ${{ runner.temp }}/parity-oracle
           key: parity-oracle-${{ env.TEXLIVE_IMAGE }}-${{ hashFiles('fixtures/**', 'tools/parity/capture.py', 'tools/parity/tiers.py') }}
           restore-keys: parity-oracle-${{ env.TEXLIVE_IMAGE }}-
-      - name: scripts/engine-parity.sh
+      - name: scripts/engine-parity.sh ${{ matrix.steps }}
         env:
           FLASHTEX_PARITY_CACHE: ${{ runner.temp }}/parity-oracle
-        run: scripts/engine-parity.sh --jobs 4
+        run: scripts/engine-parity.sh --jobs ${{ matrix.jobs }} ${{ matrix.steps }}
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: engine-parity-hosted
+          name: engine-parity-hosted-${{ matrix.id }}
           path: |
             ${{ runner.temp }}/engine-parity/lockstep.txt
             ${{ runner.temp }}/engine-parity/parity/report.md
@@ -695,13 +768,15 @@ jobs:
           retention-days: 14
 
   # ===========================================================================
-  # The full tier: merge_group, workflow_dispatch; and the post-merge macOS
-  # legs on a push to main.
+  # The post-merge set: push to main and manual runs (plan's `post`; plus
+  # nightly.yml). Not in the merge queue since 2026-10-05; fixed forward
+  # through the `main-red` issue (the `main-red` job below).
   #
-  # None of these jobs can be reached from a `pull_request` event -- `full` is
-  # false for it in `plan`, and `rust_os` is empty -- which is why the Mac ones
-  # can take their runner from plan.outputs.mac_runner without repeating the
-  # fork guard.
+  # The Rust jobs cannot be reached from a `pull_request` event (`rust_os` is
+  # empty), so their macOS leg can take a possibly self-hosted runner from
+  # plan.outputs.mac_rust_runner without repeating the fork guard. The Xcode
+  # jobs do run on a pull request that touches apps/ (`apple`), always on
+  # GitHub-hosted macos-26 (`mac_runner` is never self-hosted).
   # ===========================================================================
 
   # Every crate of the root Cargo workspace (Cargo.toml), built and tested
@@ -710,13 +785,14 @@ jobs:
   rust-workspace:
     name: rust workspace (${{ matrix.os }})
     needs: [plan]
-    # Linux in the merge queue; macOS after the merge (push to main).
+    # Both legs after the merge (push to main) and on manual runs.
     if: needs.plan.outputs.run == 'true' && needs.plan.outputs.rust_os != '[]'
-    # The Linux leg runs on the NixOS PC too: the engine's build records the
-    # C++ runtime's directory as an rpath when it is outside /usr and /lib
-    # (crates/flashtex-engine/build.rs, rpath_cxx_runtime). Without it every
-    # engine binary, tests/initex.rs first, failed there to load libstdc++.
-    runs-on: ${{ matrix.os == 'macos-15' && fromJSON(needs.plan.outputs.mac_rust_runner) || fromJSON(needs.plan.outputs.linux_runner) }}
+    # The Linux leg is GitHub-hosted since 2026-10-05: nobody waits on it
+    # after the merge, and on the PC it held a runner for 12 minutes that the
+    # gate's engine-parity shards needed. (It also works on the PC: the
+    # engine's build records the C++ runtime's directory as an rpath when it
+    # is outside /usr and /lib, crates/flashtex-engine/build.rs.)
+    runs-on: ${{ matrix.os == 'macos-15' && fromJSON(needs.plan.outputs.mac_rust_runner) || 'ubuntu-latest' }}
     timeout-minutes: 60
     env:
       # The pinned Latin Modern faces and rooted TFM metrics vendored for the
@@ -789,10 +865,11 @@ jobs:
   # flashtex-xetex (the XeTeX port, docs/design/xetex/PLAN.md) is a real
   # standalone crate: its own Cargo.lock and target/, excluded from the root
   # workspace. It links the pdfTeX engine's runtime and is web2rust's output,
-  # so it runs here, in the merge queue and after the merge, whatever the
-  # change (a pull request that touches crates/flashtex-engine/** or
-  # tools/web2rust/** also builds and tests it in `scripts/gate.sh quick`), so
-  # an engine API change cannot break it silently. Its tests need no TeX.
+  # so it runs here after the merge, whatever the change; before the merge, a
+  # pull request or merge group that touches crates/flashtex-engine/** or
+  # tools/web2rust/** builds and tests it in `scripts/gate.sh quick` (the
+  # gate), so an engine API change cannot break it silently. Its tests need
+  # no TeX.
   rust-standalone:
     name: rust ${{ matrix.crate }} (${{ matrix.os }})
     needs: [plan]
@@ -922,8 +999,8 @@ jobs:
     # Both legs GitHub-hosted (owner, 2026-09-30). The same OS matrix as
     # trip and etrip (plan's `trip_os`): Linux on every run, including the
     # merge queue; macOS after the merge (push to main, where a failure files
-    # `main-macos-red`) and on manual runs, so the queue never waits on a
-    # hosted macOS runner.
+    # `main-red`) and on manual runs, so the queue never waits on a hosted
+    # macOS runner.
     needs: [plan]
     if: needs.plan.outputs.run == 'true'
     runs-on: ${{ matrix.os }}
@@ -947,10 +1024,13 @@ jobs:
   mac-app:
     name: mac app (swift build + test)
     needs: [plan]
-    if: needs.plan.outputs.run == 'true' && needs.plan.outputs.full == 'true'
-    # Xcode 26 / Swift 6.x. Either the team's self-hosted Apple Silicon Macs or
-    # the macos-26 GitHub image, decided once in `plan`. This job is the reason
-    # self-hosted runners exist: its 90-minute timeout was spent queueing.
+    # After the merge (push to main, where a failure files `main-red`) and on
+    # manual runs; before it, only on a pull request or branch push that
+    # touches apps/ (plan's `apple`). Not in the merge queue: at 19-24 minutes
+    # it was the gate's slowest job.
+    if: needs.plan.outputs.run == 'true' && needs.plan.outputs.apple == 'true'
+    # Xcode 26 / Swift 6.x on the macos-26 GitHub image (plan's mac_runner;
+    # never self-hosted, so a fork pull request that touches apps/ is safe).
     runs-on: ${{ fromJSON(needs.plan.outputs.mac_runner) }}
     timeout-minutes: 90
     env:
@@ -1032,7 +1112,8 @@ jobs:
   ipad:
     name: iPad companion (simulator build + tests)
     needs: [plan]
-    if: needs.plan.outputs.run == 'true' && needs.plan.outputs.full == 'true'
+    # When the Mac app runs (plan's `apple`; see mac-app).
+    if: needs.plan.outputs.run == 'true' && needs.plan.outputs.apple == 'true'
     runs-on: ${{ fromJSON(needs.plan.outputs.mac_runner) }}
     timeout-minutes: 60
     steps:
@@ -1085,14 +1166,15 @@ jobs:
           grep -E "error: -\[|: error: .*XCT|Test Case .* failed" "$RUNNER_TEMP/ipad-test.log" || echo "(none)"
           exit "${status:-0}"
 
-  # The post-merge macOS legs are fixed forward: on a push to main, a failed
-  # macOS job opens or updates the issue labelled `main-macos-red`, and a
-  # fully green run closes it (scripts/ci/main-macos-red.sh). That includes the
-  # old engine's parity fixtures, which the merge queue skips unless the change
-  # touches their paths (plan's `old_engine`) but a push to main always runs.
-  main-macos-red:
-    name: main-macos-red issue
-    needs: [plan, rust-workspace, rust-standalone, trip, etrip, pdftex-regression, parity-fixtures, parity-fixtures-hosted]
+  # The post-merge set is fixed forward: on a push to main, a failed job --
+  # any job, not only the macOS legs as before 2026-10-05 -- opens or updates
+  # the issue labelled `main-red`, naming the run, the failed jobs and the
+  # pull requests the push merged; a fully green run on main's tip closes it
+  # (scripts/ci/main-red.sh). Policy (docs/ci-cd.md, "main-red"): the PR's
+  # owner fixes forward within 2 hours, or the Commander reverts the merge.
+  main-red:
+    name: main-red issue
+    needs: [plan, build, quick, boundary, inventory, gates, parity-fixtures, parity-fixtures-hosted, engine-parity, engine-parity-hosted, rust-workspace, rust-standalone, trip, etrip, pdftex-regression, mac-app, ipad]
     if: >-
       always() && github.event_name == 'push' && github.ref == 'refs/heads/main' &&
       needs.plan.outputs.run == 'true'
@@ -1102,12 +1184,15 @@ jobs:
       contents: read
       actions: read
       issues: write
+      pull-requests: read
     steps:
       - uses: actions/checkout@v4
       - name: open, update or close the issue
         env:
           GH_TOKEN: ${{ github.token }}
-        run: scripts/ci/main-macos-red.sh "${{ github.run_id }}"
+          BEFORE: ${{ github.event.before }}
+          AFTER: ${{ github.event.after }}
+        run: scripts/ci/main-red.sh "${{ github.run_id }}"
 
   # ===========================================================================
   # One check to require in branch protection and in the merge queue.
@@ -1159,15 +1244,19 @@ jobs:
               print("duplicate run: this branch's pull_request run carries the checks")
           bad = {k: v["result"] for k, v in needs.items()
                  if v["result"] not in ("success", "skipped")}
-          # The new engine's parity is required in the merge queue: one of its
-          # two jobs must have run and passed, not merely been skipped.
-          if os.environ["EVENT"] == "merge_group" and "success" not in (
-                  needs["engine-parity"]["result"], needs["engine-parity-hosted"]["result"]):
-              bad["engine-parity (either runner)"] = "did not run"
+          plan_out = needs["plan"].get("outputs", {})
+          # The new engine's parity is required in the gate whenever plan says
+          # the group touches it (`engine`): one of its two jobs -- every
+          # shard of it -- must have run and passed, not merely been skipped.
+          # A filter must not be able to skip parity by accident, so plan's
+          # outputs going missing counts as "required" too.
+          if (os.environ["EVENT"] == "merge_group" and plan_out.get("engine") != "false"
+                  and "success" not in (needs["engine-parity"]["result"],
+                                        needs["engine-parity-hosted"]["result"])):
+              bad["engine-parity (either runner, every shard)"] = "did not run"
           # The old engine's parity fixtures: when plan says this run needs
           # them (old_engine), one of their two jobs must have run and passed.
           # Both skipped is a pass only when plan said they were not needed.
-          plan_out = needs["plan"].get("outputs", {})
           if (plan_out.get("run") != "false" and plan_out.get("old_engine") == "true"
                   and "success" not in (needs["parity-fixtures"]["result"],
                                         needs["parity-fixtures-hosted"]["result"])):

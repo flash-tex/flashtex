@@ -16,8 +16,8 @@
 #     in ci.yml's `engine parity` job, with trip, etrip and pdfTeX's
 #     regression tests beside it;
 #   * the macOS legs that left the merge queue (release workspace, standalone
-#     crates, trip, etrip); a failed macOS job opens or updates the issue
-#     labelled `main-macos-red`.
+#     crates, trip, etrip); a failed macOS or debug-workspace job opens or
+#     updates the issue labelled `main-red` (ci.yml's post-merge issue).
 #
 # WHERE. Every Linux job runs on the owner's NixOS PC (labels flashtex-linux;
 # three instances, scripts/ci/install-selfhosted-runner-nixos.sh) when
@@ -708,10 +708,12 @@ jobs:
         if: always()
         run: ETRIP_WORK="$RUNNER_TEMP/etrip" scripts/flashtex-etrip.sh
 
-  # A failed macOS job tonight opens or updates `main-macos-red`; a night with
-  # every macOS job green closes it.
-  main-macos-red:
-    name: main-macos-red issue
+  # A failed macOS leg or debug-profile workspace job tonight opens or
+  # updates `main-red` (scripts/ci/main-red.sh, the issue ci.yml's post-merge
+  # jobs file). A green night does not close it: these legs are a few of the
+  # post-merge jobs, and only a green ci.yml run on main's tip covers them all.
+  main-red:
+    name: main-red issue
     needs: [macos-legs, workspace-debug]
     if: always() && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
@@ -725,4 +727,4 @@ jobs:
       - name: open, update or close the issue
         env:
           GH_TOKEN: ${{ github.token }}
-        run: scripts/ci/main-macos-red.sh "${{ github.run_id }}"
+        run: scripts/ci/main-red.sh "${{ github.run_id }}" --only 'macos|debug profile' --no-close
