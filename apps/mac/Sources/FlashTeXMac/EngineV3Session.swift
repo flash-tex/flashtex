@@ -120,6 +120,8 @@ final class EngineV3Session {
     @ObservationIgnored var fastEditsSent = 0
     /// Fast-path splices the slow path found out of step (the buffer resent).
     @ObservationIgnored var fastResyncs = 0
+    /// The fast path holds anchors for `path` (tests).
+    func fastAnchored(_ path: String) -> Bool { fastAnchors[path] != nil }
     @ObservationIgnored var copyRoots: (copy: URL, roots: [String])?
     @ObservationIgnored var caretMarkScheduled = false
     @ObservationIgnored var caretMarkSettling = false
@@ -683,13 +685,18 @@ final class EngineV3Session {
     /// path checks the fast path's byte count and resends the buffer if
     /// they ever disagree.
     private func storageEdited(_ storage: NSTextStorage) {
-        // A change the fast path does not send leaves its anchors stale.
+        // Only this window's LaTeX editor: the notification comes for every
+        // text storage of the app (a search field, another window's editor),
+        // none of which holds the text the host has.
+        guard storage.editedMask.contains(.editedCharacters),
+              let tv = storage.layoutManagers.first?.textContainers.first?.textView,
+              tv.accessibilityLabel() == "LaTeX source", let w = tv.window, w === view?.window else { return }
+        // A change of this editor's text the fast path does not send leaves
+        // its anchors stale.
         var sent = false
         defer { if !sent { fastAnchors = [:] } }
         guard phase == .ready, connection != nil, let model, model.engineV3Enabled, model.autoCompile, !exportRunning,
-              storage.editedMask.contains(.editedCharacters) else { return }
-        guard let tv = storage.layoutManagers.first?.textContainers.first?.textView,
-              tv.accessibilityLabel() == "LaTeX source", !tv.hasMarkedText() else { return }
+              !tv.hasMarkedText() else { return }
         let typing = nextKeystrokeNs != nil || NSApp.currentEvent?.type == .keyDown
         let path = model.activePath
         guard typing, let base = hostBytes[path], sentTexts[path] != nil || fastPending.contains(path) else { return }
