@@ -3799,7 +3799,10 @@ impl Session {
         let mut adopt = None;
         if let Some((_, old)) = obs.converged {
             let g = self.g.as_mut().unwrap();
-            let pp = obs.preempt.clone();
+            // (newer work stops it only where it may stop the run at a
+            // checkpoint: `Obs::preempt_now`'s rules)
+            let may_stop = !obs.protecting() && !(obs.preempt_after_s0 && g.layer().s0.is_none());
+            let pp = obs.preempt.clone().filter(|_| may_stop);
             let (pass, pages) = (obs.pass, obs.new_pages.len());
             let mut stop = move || pp.as_ref().is_some_and(|p| p(pass, pages));
             let _busy = crate::busy::enter(crate::busy::Part::Jump);
