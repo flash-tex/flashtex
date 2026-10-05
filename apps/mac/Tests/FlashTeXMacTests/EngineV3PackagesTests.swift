@@ -184,6 +184,7 @@ final class EngineV3PackagesTests: XCTestCase {
         XCTAssertTrue(m.engineV3Enabled, m.engineChoice.explanation)
         XCTAssertNil(m.engineChoice.blocker, "pins and libraries no longer fall back")
         let s = m.engineV3
+        s.errorMode = .strict // the unpinned lipsum's undefined command is the error waited for
         try await EngineV3TestHost.awaitReady(s)
         try await waitUntil("the compile") { s.statusNote.hasPrefix("ok") && !s.compiling && s.pageCount == 1 }
         XCTAssertNil(s.firstError)

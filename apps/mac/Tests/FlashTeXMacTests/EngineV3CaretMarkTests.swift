@@ -421,6 +421,50 @@ final class EngineV3CaretMarkTests: XCTestCase {
         try assertBar(pages, s, at: gamma + 3, of: typed, "inside the typed word")
     }
 
+    /// LIVE-30MS: the fast path's anchored splices (EngineV3Edits.fastSplice)
+    /// through a real text view: typing multi-byte characters, backspacing
+    /// over them and typing further on, each key sent from the storage
+    /// notification. The host's copy of the file ends byte for byte as the
+    /// editor's text, and the slow path never found a splice out of step.
+    func testAnchoredFastSplicesKeepTheHostsCopyExact() async throws {
+        try EngineV3TestHost.require()
+        let model = ShellModel()
+        model.replaceProject(entryText: Self.doc, named: "main.tex")
+        let (s, _, tv, window) = try await editorPane(model, autoCompile: true)
+        defer { s.stop(); window.contentView = nil }
+        let sent = s.fastEditsSent
+        var at = (Self.doc as NSString).range(of: "gamma").location
+        func type(_ str: String) {
+            for ch in str {
+                s.nextKeystrokeNs = MonotonicClock.nowNs()
+                let piece = String(ch)
+                tv.insertText(piece, replacementRange: NSRange(location: at, length: 0))
+                at += (piece as NSString).length
+                model.updateActiveText(tv.string)
+            }
+        }
+        func backspace(_ n: Int) {
+            for _ in 0 ..< n {
+                s.nextKeystrokeNs = MonotonicClock.nowNs()
+                let r = (tv.string as NSString).rangeOfComposedCharacterSequence(at: at - 1)
+                tv.insertText("", replacementRange: r)
+                at = r.location
+                model.updateActiveText(tv.string)
+            }
+        }
+        type("né😀日 ")
+        backspace(3)
+        type("x😀y")
+        backspace(2)
+        type("z ")
+        XCTAssertGreaterThanOrEqual(s.fastEditsSent, sent + 14, "the keys went out through the fast path")
+        let typed = tv.string
+        try await waitForCompiled(s, model, typed)
+        XCTAssertEqual(s.fastResyncs, 0, "no splice out of step")
+        let copy = try XCTUnwrap(s.projectCopy).appendingPathComponent("main.tex")
+        XCTAssertEqual(try String(contentsOf: copy, encoding: .utf8), typed, "the host's copy is the editor's text")
+    }
+
     /// A reload (DocumentFiles.adoptReloadedDocument), a restored snapshot or
     /// any `updateActiveText` from outside the editor: the model takes the
     /// text first and its compile is sent while the editor still shows the

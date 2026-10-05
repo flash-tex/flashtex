@@ -154,6 +154,10 @@ final class EngineV3Bench {
         // the keystrokes are synthetic).
         if ProcessInfo.processInfo.environment["FLASHTEX_V3_BENCH_FRONT"] == "1" { tv.window?.orderFrontRegardless() }
         tv.setSelectedRange(NSRange(location: offset, length: 0))
+        // The preview shows the caret's page (as when the user types where
+        // they look): a page off screen is never painted, so a keystroke in a
+        // book's middle chapter would only count as "offscreen".
+        model.revealCaretInPreview()
         s.latency.reset()
         diskAtStart = EngineV3ScrollBench.diskBytesWritten()
         footprintMax = EngineV3ScrollBench.footprint()
