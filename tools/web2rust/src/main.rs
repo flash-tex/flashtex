@@ -144,7 +144,9 @@ fn parse_args() -> Result<Args, String> {
             "--index-type" => a.index_type = Some(it.next().ok_or("--index-type needs a path")?),
             "--inline" => {
                 let v = it.next().ok_or("--inline needs NAME=always|never")?;
-                let (n, k) = v.split_once('=').ok_or("--inline needs NAME=always|never")?;
+                let (n, k) = v
+                    .split_once('=')
+                    .ok_or("--inline needs NAME=always|never")?;
                 if k != "always" && k != "never" {
                     return Err(format!("--inline: `always` or `never`, got {k}"));
                 }
