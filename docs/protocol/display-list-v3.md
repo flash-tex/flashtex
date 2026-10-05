@@ -5,9 +5,9 @@
   P3P4-HOST-UNIFY (2026-09-29); 3.2 (external tools: bibtex, biber,
   makeindex, §6.3–§6.4): lane P5-EXTERNAL-TOOLS (2026-09-30). Page sections
   `ORIGINS` and `RULE_GEOMETRY` (§4.2, §4.4; host capability
-  `exact-geometry`): lane J1 P3-ZERO-TOLERANCE (2026-10-02), a minor-compatible
-  addition whose minor number the protocol owner assigns in landing order
-  (DESIGN.md §6.1). 3.3 (the Typst host's additions E1–E8, DESIGN.md §15.4:
+  `exact-geometry`): lane J1 P3-ZERO-TOLERANCE (2026-10-02), gated by that
+  capability like `progress-v1`, so it takes no minor number (protocol
+  owner's ruling, DESIGN.md §13, 2026-10-05). 3.3 (the Typst host's additions E1–E8, DESIGN.md §15.4:
   §11): lane TYPST-T0T1 (2026-10-04), drafted in `typst-host/` by #1303 and
   #1335. Producers: `crates/flashtex-engine` (`src/displaylist/`,
   `src/host/`) for LaTeX, `typst-host/` (`flashtex-typst-host`) for Typst.
@@ -143,18 +143,21 @@ length 0, is a corrupt stream: the reader stops (§7).
 - **3.3** (§11; DESIGN.md §15.4, E1–E8) adds, all of it for the Typst
   host and none of it required of the LaTeX host: `FONT.format`
   `opentype` with glyph ids and variation coordinates (§11.1), page
-  sections 8 `PAGE_META` and 10 `COLORSPACES` (§11.2, §11.3), item opcodes
+  sections 8 `PAGE_META` and 10 `COLORSPACES` (§11.2, §11.3), section 7
+  `ORIGINS` on every Typst page (§11.2; the section is exact geometry's,
+  below, and has one layout for both hosts), item opcodes
   `0x0F`–`0x13` for colour spaces, constant alpha and the text line state
-  (§11.3, §11.4), images from bytes (`IMAGE_DATA`, §11.5) and on-demand
-  source mapping (`RESOLVE`/`LOCATE`, §11.6), plus `DIAGNOSTIC` keys
-  `column` and `hints`. Sections and JSON keys follow the minor rules
+  (§11.3, §11.4), images from bytes (`IMAGE_DATA`, §11.5), on-demand
+  source mapping (`RESOLVE`/`LOCATE`, §11.6) and, for a client that
+  accepts `packages-v1`, the `PACKAGE` message (§11.8), plus `DIAGNOSTIC`
+  keys `column` and `hints`. Sections and JSON keys follow the minor rules
   above. **The new opcodes are sent only to a client that said `[3, 3]`
   and listed the feature in its `HELLO` `accept`** (§11.7): an item opcode
   a reader does not know is otherwise a major change. A 3.1 or 3.2 client
   of the Typst host gets its glyph pages INCOMPLETE and draws `DONE.pdf`.
-- **Exact geometry** (J1, 2026-10-02; minor number to be assigned by the
-  protocol owner; 3.3 went to the Typst additions in landing order, so the
-  next free minor is 3.4) adds page sections 7
+- **Exact geometry** (J1, 2026-10-02; gated by the `exact-geometry`
+  capability like `progress-v1`, so it takes no minor number: protocol
+  owner's ruling, DESIGN.md §13, 2026-10-05) adds page sections 7
   `ORIGINS` and 9 `RULE_GEOMETRY` (§4.1, §4.2, §4.4) and the host capability
   `exact-geometry`, which says every `PAGE` and `FORM` carries both. Both
   directions are handled without negotiation: a reader that does not know
@@ -198,9 +201,9 @@ The fixed header is 124 bytes. Section tags:
 | 4 | `LINKS` | `u32 n`, then n links (§4.5) |
 | 5 | `DESTS` | `u32 n`, then n destinations (§4.5) |
 | 6 | `UNSUPPORTED` | `u32 n`, then n × {`u16 len`, UTF-8 text}: what the page used that v3 cannot express |
-| 7 | `ORIGINS` | `u32 n`, then n × `f64[2]`: each GLYPH's origin (X, Y) in stream space, in item order (§4.2); the Typst host's `ORIGINS_F64` (#1335) is this section |
+| 7 | `ORIGINS` | exact geometry (§3), and every 3.3 Typst page (§11.2): `u32 n`, then n × `f64[2]`: each GLYPH's origin (X, Y) in stream space, in item order (§4.2); the Typst host's `ORIGINS_F64` (#1335) is this section |
 | 8 | `PAGE_META` | 3.3: UTF-8 JSON, the page's metadata (§11.2) |
-| 9 | `RULE_GEOMETRY` | `u32 n`, then n × `f64[7]`: what the PDF draws each RULE with, in item order (§4.4) |
+| 9 | `RULE_GEOMETRY` | exact geometry (§3): `u32 n`, then n × `f64[7]`: what the PDF draws each RULE with, in item order (§4.4) |
 | 10 | `COLORSPACES` | 3.3: `u32 n`, then n colour spaces, referenced as 1..n (§11.3) |
 
 Any other tag: skip `len` bytes (a later minor version's section).
