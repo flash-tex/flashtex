@@ -3959,7 +3959,18 @@ impl Session {
         let g = self.g.as_mut().unwrap();
         // the edits' line shifts, their lines before the edit counted from
         // where the restart point reads each file
-        obs.shifts = std::mem::take(&mut self.line_shifts)
+        // (one file under two names -- a symlink, a case variant -- is in the
+        // journal twice: its edit is one shift, #1591)
+        let mut pending: Vec<crate::lineshift::Pending> = vec![];
+        for p in std::mem::take(&mut self.line_shifts) {
+            if !pending
+                .iter()
+                .any(|q| crate::lineshift::same_path(&q.path, &p.path))
+            {
+                pending.push(p);
+            }
+        }
+        obs.shifts = pending
             .into_iter()
             .map(|p| {
                 let (line, at) = crate::lineshift::level_at(g, &rec, &p.path);

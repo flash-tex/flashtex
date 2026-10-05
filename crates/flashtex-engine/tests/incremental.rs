@@ -134,8 +134,13 @@ fn copy_dir(from: &Path, to: &Path) {
     std::fs::create_dir_all(to).unwrap();
     for f in std::fs::read_dir(from).unwrap() {
         let f = f.unwrap();
-        if f.file_type().unwrap().is_file() {
+        let t = f.file_type().unwrap();
+        if t.is_file() {
             std::fs::copy(f.path(), to.join(f.file_name())).unwrap();
+        } else if t.is_symlink() {
+            // (a link as it is: `a_file_under_two_names_shifts_once`)
+            let target = std::fs::read_link(f.path()).unwrap();
+            std::os::unix::fs::symlink(target, to.join(f.file_name())).unwrap();
         }
     }
 }
@@ -3070,5 +3075,47 @@ fn a_file_the_preamble_wrote_is_rewritten_after_a_host_restart() {
         ("alpha", "its revert"),
     ] {
         compile_and_check(&e, &mut h, &dir, &[("doc.tex", &doc(word))], what);
+    }
+}
+
+/// #1591: one file under two names (here `alias/chapx.tex`, through a link
+/// `alias` to the project's own directory), each opening
+/// leaving a group open to the end. The edit is one shift: counted once per
+/// name, it moved the groups' lines twice, every later test failed, and the
+/// convergence came at the document's end.
+#[test]
+fn a_file_under_two_names_shifts_once() {
+    let Some(e) = env() else {
+        common::no_texlive();
+        return;
+    };
+    let dir = e.dir.join("lines-alias");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    std::os::unix::fs::symlink(".", dir.join("alias")).unwrap();
+    let mut chap: String = (0..12).map(|i| para(1000 + i, "ipsum")).collect();
+    chap.push_str("\\begingroup\n");
+    let doc = lines_doc(
+        "",
+        150,
+        &[(10, "\\input{chapx}"), (30, "\\input{alias/chapx}")],
+    );
+    std::fs::write(dir.join("chapx.tex"), &chap).unwrap();
+    let mut h = Host::start(&e, &dir);
+    settle(&e, &mut h, &dir, &doc);
+    let nl = chap.replacen(
+        "Paragraph 1005 with the word",
+        "Paragraph 1005 with\nthe word",
+        1,
+    );
+    assert_ne!(nl, chap);
+    for (text, what) in [(&nl, "a newline in chapx.tex"), (&chap, "its revert")] {
+        let what = format!("lines-alias: {what}");
+        let r = compile_and_check(&e, &mut h, &dir, &[("chapx.tex", text)], &what);
+        let pages: usize = field(&r, "pages").parse().unwrap();
+        let conv: usize = field(&r, "converged_at")
+            .parse()
+            .unwrap_or_else(|_| panic!("{what}: no convergence: {r}"));
+        assert!(conv + 3 < pages, "{what}: converged late: {r}");
     }
 }
