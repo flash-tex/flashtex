@@ -188,7 +188,8 @@ final class EngineV3FixesTests: XCTestCase {
         let rows = m.engineV3Diagnostics.filter { $0.code == EngineV3Fixes.undefinedCode }
         XCTAssertEqual(rows.count, 3, "\(m.engineV3Diagnostics.map(\.message))")
         for r in rows {
-            XCTAssertNil(r.help?.replacement, "no mechanical fix for a macro call: \(r)")
+            // The fix (if any) is in the definition (EngineV3DiagPresent), never on the call.
+            if let f = r.help?.replacement, let s = r.source { XCTAssertTrue(f.endByte < s.startByte || f.startByte > s.endByte, "no fix on a macro call: \(r)") }
             XCTAssertNil(r.suggestion)
         }
         for cs in ["\\mycite", "\\mysec", "\\myemph"] {

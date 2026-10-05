@@ -34,7 +34,7 @@ final class EngineV3ExplainTests: XCTestCase {
                      "latex/environment-undefined", "latex/file-not-found", "latex/lonely-item", "latex/there-no-line-here-to-end"] {
             XCTAssertNotNil(EngineV3Explain.explanation(code: code, message: ""), code)
         }
-        XCTAssertNil(EngineV3Explain.explanation(code: "tex/overfull-hbox", message: ""))
+        XCTAssertNil(EngineV3Explain.explanation(code: "tex/not-a-code", message: ""))
         XCTAssertEqual(EngineV3Explain.explanation(code: "tex/file-ended-while-scanning", message: "File ended while scanning use of \\textbf ."),
                        "The argument of \\textbf opens with { but is never closed, so TeX read to the end of the file and stopped. Close the brace.")
         XCTAssertTrue(EngineV3Explain.explanation(code: "tex/file-ended-while-scanning", message: "File ended while scanning use of \\@xdblarg.")!
