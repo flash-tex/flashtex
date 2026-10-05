@@ -1161,8 +1161,10 @@ fn a_cold_run_stopped_past_s0_is_kept() {
         ),
     ];
     // With preamble restarts off, the preamble edit runs from the format;
-    // with them on (PREAMBLE-FAST), from a checkpoint before S₀, a run that
-    // takes S₀ again and is stopped past it the same way.
+    // with them on (PREAMBLE-FAST), from a checkpoint before S₀ where one
+    // precedes it (with hyperref: a preamble without packages has none), a
+    // run that takes S₀ again and is stopped past it the same way.
+    let mut restarted = 0;
     for restarts in [false, true] {
         let env: &[(&str, &str)] = if restarts {
             &[]
@@ -1187,23 +1189,23 @@ fn a_cold_run_stopped_past_s0_is_kept() {
             std::fs::write(dir.join("doc.tex"), &marked).unwrap();
             let r = h.cmd("compile-interrupt 1 2");
             assert!(r.contains("\"preempted\":true"), "{what}: not stopped: {r}");
-            let first = if restarts { "incremental" } else { "cold" };
+            let pre = field(&r, "restart_preamble") == "true";
+            let first = if pre { "incremental" } else { "cold" };
             assert_eq!(field(&r, "mode"), format!("\"{first}\""), "{what}: {r}");
-            assert_eq!(
-                field(&r, "restart_preamble"),
-                restarts.to_string(),
-                "{what}: {r}"
-            );
+            assert!(restarts || !pre, "{what}: {r}");
+            restarted += pre as usize;
             std::fs::write(dir.join("doc.tex"), &second).unwrap();
             std::fs::write(reference.join("doc.tex"), &second).unwrap();
             let r2 = h.cmd("compile");
-            let mode = if restarts { "incremental" } else { mode };
+            let mode = if pre { "incremental" } else { mode };
             assert_eq!(field(&r2, "mode"), format!("\"{mode}\""), "{what}: {r2}");
             check_against(&e, &dir, &reference, &r2, what);
             // and back
             compile_and_check(&e, &mut h, &dir, &[("doc.tex", base)], what);
         }
     }
+    // (the cases with hyperref, at least)
+    assert!(restarted >= 4, "{restarted} preamble restarts");
     // Opening a document compiled before (a new session's first compile is
     // from the format), and one never compiled: its S₀ looked up a `.aux`
     // that did not exist, and the stopped run wrote one, so the next
@@ -1234,7 +1236,14 @@ fn a_cold_run_stopped_past_s0_is_kept() {
         std::fs::write(reference.join("doc.tex"), &edited).unwrap();
         let r2 = h.cmd("compile");
         let mode = if compiled { "incremental" } else { "cold" };
-        assert_eq!(field(&r2, "mode"), format!("\"{mode}\""), "{r2}");
+        // (or, never compiled -- PREAMBLE-FAST -- from a checkpoint before
+        // S₀, before the `.aux` lookup whose answer changed, which the run
+        // makes again without the partial `.aux`)
+        assert!(
+            field(&r2, "mode") == format!("\"{mode}\"")
+                || (!compiled && field(&r2, "restart_preamble") == "true"),
+            "{r2}"
+        );
         check_against(&e, &dir, &reference, &r2, "opened and stopped");
     }
 }
