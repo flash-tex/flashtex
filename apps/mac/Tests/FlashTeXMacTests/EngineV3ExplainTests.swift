@@ -27,6 +27,32 @@ final class EngineV3ExplainTests: XCTestCase {
         return String(decoding: b, as: UTF8.self)
     }
 
+    /// Lane DIAG-PARITY: every explained code reads as one or more plain
+    /// sentences, both with no message and with a typical one; the list
+    /// and the switch agree (an unknown code has none).
+    func testEveryExplanationIsWellFormed() {
+        let messages = ["", "LaTeX Warning: Reference `sec:a' on page 1 undefined on input line 5.",
+                        "LaTeX Warning: Citation `knuth' on page 1 undefined on input line 5.",
+                        "File ended while scanning use of \\textbf .", "LaTeX Error: File `x.sty' not found.",
+                        "LaTeX Error: \\begin{itemize} on input line 3 ended by \\end{document}."]
+        XCTAssertEqual(Set(EngineV3Explain.explainedCodes).count, EngineV3Explain.explainedCodes.count, "no duplicates")
+        XCTAssertGreaterThanOrEqual(EngineV3Explain.explainedCodes.count, 40)
+        for code in EngineV3Explain.explainedCodes {
+            for m in messages {
+                guard let t = EngineV3Explain.explanation(code: code, message: m) else { return XCTFail("\(code) is listed but not explained") }
+                XCTAssertGreaterThan(t.count, 20, code)
+                XCTAssertLessThan(t.count, 300, code)
+                XCTAssertTrue(t.hasPrefix("pdfLaTeX") || (t.first.map { $0.isUppercase || $0.isNumber || "\\&x$".contains($0) } ?? false), "\(code): starts a sentence: \(t)")
+                XCTAssertTrue(t.hasSuffix("."), "\(code): ends a sentence: \(t)")
+                XCTAssertFalse(t.contains("  ") || t.contains("\n"), "\(code): one paragraph: \(t)")
+                XCTAssertFalse(t.contains("Type ") || t.contains("<return>"), "\(code): no interactive TeX instructions: \(t)")
+            }
+        }
+        for code in ["tex/not-a-code", "latex/x", "tex/show", "pdftex/dest"] {
+            XCTAssertNil(EngineV3Explain.explanation(code: code, message: ""), code)
+        }
+    }
+
     func testEveryCorpusCodeIsExplainedAndTeXsHelpKept() {
         for code in ["tex/undefined-control-sequence", "tex/missing-dollar", "tex/too-many-right-braces", "tex/misplaced-alignment-tab",
                      "tex/file-ended-while-scanning", "tex/paragraph-ended-before-argument-complete", "tex/display-math-should-end-with-dollars",

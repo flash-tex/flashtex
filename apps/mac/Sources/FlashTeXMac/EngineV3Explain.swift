@@ -129,6 +129,23 @@ enum EngineV3Explain {
         return String(name)
     }
 
+    /// Every code `explanation` explains (EngineV3ExplainTests keeps the two in step).
+    static let explainedCodes: [String] = [
+        "tex/undefined-control-sequence", "tex/missing-dollar", "tex/too-many-right-braces", "tex/misplaced-alignment-tab",
+        "tex/file-ended-while-scanning", "tex/paragraph-ended-before-argument-complete", "tex/display-math-should-end-with-dollars",
+        "tex/emergency-stop", "tex/fatal-error-no-output", "tex/capacity-exceeded", "latex/environment-mismatch",
+        "latex/environment-undefined", "latex/file-not-found", "latex/lonely-item", "latex/there-no-line-here-to-end",
+        // lane DIAG-PARITY
+        "tex/overfull-hbox", "tex/underfull-hbox", "tex/overfull-vbox", "tex/underfull-vbox", "tex/extra-alignment-tab",
+        "tex/double-superscript", "tex/double-subscript", "tex/missing-right-delimiter", "tex/extra-right-delimiter",
+        "tex/missing-right-brace", "tex/missing-left-brace", "tex/illegal-unit", "tex/missing-number", "tex/missing-character",
+        "latex/unicode-not-set-up", "latex/caption-outside-float", "latex/can-be-used-only-in-preamble",
+        "latex/command-already-defined", "latex/missing-item", "latex/allowed-only-in-math-mode", "latex/not-in-outer-par-mode",
+        "latex/float-too-large", "latex/undefined-reference", "latex/undefined-citation", "latex/multiply-defined-label",
+        "latex/rerun", "latex-font/font-shape-undefined", "latex/empty-environment", "latex/no-file",
+        "package/hyperref/token-not-allowed-in-a-pdf-string-unicode-removing",
+    ]
+
     static func explanation(code: String, message: String) -> String? {
         switch code {
         case "tex/undefined-control-sequence":
