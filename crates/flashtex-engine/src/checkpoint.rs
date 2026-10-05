@@ -105,18 +105,40 @@ fn rewritten_since(rec: &ExtRecord) -> Option<String> {
 /// it -- an `export` of the same job in the same directory rewrites them
 /// all, also while the engine has them open -- or it is gone).
 fn changed_outside(rec: &ExtRecord, also: &[String]) -> Option<String> {
-    rec.files
-        .iter()
-        .filter_map(|f| match &f.stream {
+    let open = || {
+        rec.files.iter().filter_map(|f| match &f.stream {
             Stream::Out { path, len, .. } if *len > 0 => Some(path),
             _ => None,
         })
+    };
+    // a fatal run's PDF, set aside (`system::remove_output`), is back for it
+    system::revive_removed(open());
+    open()
         .chain(also.iter())
         .find_map(|p| system::outside_change(p))
 }
 
 /// Flushes every output stream (before a checkpoint records any).
 struct FlushFiles;
+
+/// The first output stream whose buffer holds output, on a file that is
+/// `system::no_flush`: a checkpoint now would write out what a run from
+/// scratch has not (issue #1550), so none is taken.
+struct NoFlush(Option<String>);
+
+impl FileVisit for NoFlush {
+    fn alpha(&mut self, f: &mut AlphaFile) {
+        if self.0.is_none() {
+            self.0 = f.pending_output().filter(|p| system::no_flush(p));
+        }
+    }
+    fn byte(&mut self, f: &mut ByteFile) {
+        if self.0.is_none() {
+            self.0 = f.pending_output().filter(|p| system::no_flush(p));
+        }
+    }
+    fn word(&mut self, _f: &mut WordFile) {}
+}
 
 impl FileVisit for FlushFiles {
     fn alpha(&mut self, f: &mut AlphaFile) {
@@ -528,6 +550,28 @@ fn read_tail_into(path: &str, from: u64, mut buf: Vec<u8>) -> Result<Vec<u8>, St
     Ok(buf)
 }
 
+/// The convergence jump's comparison, made ahead (`Globals::jump_adopt`):
+/// each differing chunk's byte offset and the old run's bytes there, and
+/// the scalar region it compared.
+pub struct Adopt {
+    chunks: Vec<(usize, Vec<u8>)>,
+    scalars: Vec<u8>,
+}
+
+/// The old run's bytes of every chunk `d` found differing.
+fn adopt_of(d: &crate::arena::ChunkDiff) -> Vec<(usize, Vec<u8>)> {
+    d.differing
+        .iter()
+        .map(|&(c, old, _)| {
+            // SAFETY: `old` points at a whole chunk owned by the arena or
+            // the branch, unchanged until `d` is dropped.
+            let b =
+                unsafe { std::slice::from_raw_parts(old as *const u8, crate::arena::CHUNK_BYTES) };
+            ((c as usize) << crate::arena::CHUNK_SHIFT, b.to_vec())
+        })
+        .collect()
+}
+
 impl Globals {
     fn put_layer(&mut self, l: Layer) {
         self.arena.extra = Some(Box::new(l));
@@ -657,6 +701,13 @@ impl Globals {
         // Every stream flushed before any is recorded: streams on one file
         // (LaTeX's `\tableofcontents` twice opens the `.toc` twice) then
         // record the file's length alike, not what each had flushed.
+        let mut nf = NoFlush(None);
+        self.visit_files(&mut nf);
+        if let Some(p) = nf.0 {
+            return Err(format!(
+                "cannot checkpoint: {p} holds output not written out, and is read while open"
+            ));
+        }
         self.visit_files(&mut FlushFiles);
         let mut v = SnapFiles {
             out: vec![],
@@ -688,6 +739,8 @@ impl Globals {
 
     /// Put the host state of `rec` back.
     pub fn restore_ext(&mut self, rec: &ExtRecord) -> Result<(), String> {
+        // (each stream is reopened as `rec` has it: `system::mark_ahead`)
+        system::clear_ahead();
         let mut v = RestoreFiles {
             snaps: &rec.files,
             i: 0,
@@ -1131,6 +1184,42 @@ impl Globals {
         id: CheckpointId,
         in_remap: &dyn Fn(&str, u64) -> u64,
     ) -> Result<(), String> {
+        self.redo_to_remapped_with(id, in_remap, None)
+    }
+
+    /// The comparison `redo_to_remapped` adopts the old run's state with
+    /// (the chunks that differ from the old run's at `id`, and the old
+    /// values), worked out ahead and stopped by `stop` (`None`): it reads
+    /// and changes nothing else (the scalar spill writes the live scalars'
+    /// own values), so a stopped one leaves the restore pending as it was.
+    /// The jump that follows uses it only while the scalar region is still
+    /// what it compared (`Adopt::scalars`); else it compares again.
+    /// `FLASHTEX_VERIFY_JUMP=1`: the jump compares again anyway and aborts
+    /// the process if the two disagree.
+    pub fn jump_adopt(
+        &mut self,
+        id: CheckpointId,
+        stop: &mut dyn FnMut() -> bool,
+    ) -> Result<Option<Adopt>, String> {
+        self.spill_scalars();
+        let l = self.layer_ref().ok_or("no checkpoint layer")?;
+        let p = l.pending.as_ref().ok_or("no restore is pending")?;
+        let Some(d) = self.arena.diff_branch_all_until(&p.branch, id, stop)? else {
+            return Ok(None);
+        };
+        Ok(Some(Adopt {
+            chunks: adopt_of(&d),
+            scalars: self.arena.read(0, SCALAR_BYTES).to_vec(),
+        }))
+    }
+
+    /// `redo_to_remapped` with the comparison `jump_adopt` made, if any.
+    pub fn redo_to_remapped_with(
+        &mut self,
+        id: CheckpointId,
+        in_remap: &dyn Fn(&str, u64) -> u64,
+        pre: Option<Adopt>,
+    ) -> Result<(), String> {
         let Some(p) = self.layer().pending.take() else {
             return Err("redo_to: no restore to jump back from".into());
         };
@@ -1264,23 +1353,31 @@ impl Globals {
         // every other chunk must be its own state at `id`. Take that state
         // over whole, so that the jump and every later restore of an old
         // checkpoint give exactly the old run's states.
-        let adopt: Vec<(usize, Vec<u8>)> = match self.arena.diff_branch_all(&branch, id) {
-            Ok(d) => d
-                .differing
-                .iter()
-                .map(|&(c, old, _)| {
-                    // SAFETY: `old` points at a whole chunk owned by the
-                    // arena or the branch, unchanged until `d` is dropped.
-                    let b = unsafe {
-                        std::slice::from_raw_parts(old as *const u8, crate::arena::CHUNK_BYTES)
-                    };
-                    ((c as usize) << crate::arena::CHUNK_SHIFT, b.to_vec())
-                })
-                .collect(),
-            Err(e) => {
-                self.arena.drop_branch(branch);
-                return Err(e);
-            }
+        let verify = std::env::var_os("FLASHTEX_VERIFY_JUMP").is_some();
+        let pre = pre.filter(|a| self.arena.read(0, SCALAR_BYTES) == &a.scalars[..]);
+        let adopt: Vec<(usize, Vec<u8>)> = match pre {
+            Some(a) if !verify => a.chunks,
+            pre => match self.arena.diff_branch_all(&branch, id) {
+                Ok(d) => {
+                    let now = adopt_of(&d);
+                    if let Some(a) = pre {
+                        if a.chunks != now {
+                            // (a verify mode: loud, so that a sweep fails)
+                            eprintln!(
+                                "FLASHTEX_VERIFY_JUMP: the comparison made ahead differs ({} vs {} chunks)",
+                                a.chunks.len(),
+                                now.len()
+                            );
+                            std::process::abort();
+                        }
+                    }
+                    now
+                }
+                Err(e) => {
+                    self.arena.drop_branch(branch);
+                    return Err(e);
+                }
+            },
         };
         for (off, b) in &adopt {
             self.arena.write_through(*off, b);
