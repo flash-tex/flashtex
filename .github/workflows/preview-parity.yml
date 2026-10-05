@@ -38,7 +38,7 @@ name: preview parity
 
 on:
   push:
-    branches: [main]
+    branches: [main, 'agent/kabir-claude/p3-reverify']  # TEMPORARY: measure before merge; removed before merge
     paths:
       - 'crates/**'
       - 'Cargo.toml'
