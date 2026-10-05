@@ -1450,6 +1450,7 @@ impl Globals {
     /// a token list `p` and its type `t`. If `t=macro`, the calling routine should
     /// set `name` and `loc`.
     // §345
+    #[inline(always)]
     pub fn begin_token_list(&mut self, mut p: halfword, mut t: quarterword) {
         {
             if (self.input_ptr > self.max_in_stack) {
@@ -1506,6 +1507,7 @@ impl Globals {
     /// should be done as we leave that level of input. The `token_type` tends
     /// to be equal to either `backed_up` or `inserted` about 2/3 of the time.
     // §346
+    #[inline(always)]
     pub fn end_token_list(&mut self) {
         if (self.cur_input.index_field >= backed_up) {
             {
@@ -1567,6 +1569,7 @@ impl Globals {
     /// replaced. Some applications of \TeX\ use this procedure a lot,
     /// so it has been slightly optimized for speed.
     // §347
+    #[inline(always)]
     pub fn back_input(&mut self) {
         let mut p: halfword = 0; // §347
         while (((self.cur_input.loc_field == null) && (self.cur_input.index_field != v_template)) && (self.cur_input.index_field != output_text)) {
@@ -2355,7 +2358,8 @@ impl Globals {
     /// Now we're ready to take the plunge into `get_next` itself. Parts of
     /// this routine are executed more often than any other instructions of \TeX.
     // §363
-    pub fn get_next(&mut self) {
+    #[inline(never)]
+    pub fn get_next_slow(&mut self) {
         let mut t: halfword = 0; // §363
         // goto labels: restart, exit
         let mut __goto_1: i32 = 0;
@@ -2485,6 +2489,77 @@ impl Globals {
         }
     }
 
+    /// Now we're ready to take the plunge into `get_next` itself. Parts of
+    /// this routine are executed more often than any other instructions of \TeX.
+    // §363
+    #[inline(always)]
+    pub fn get_next(&mut self) {
+        let mut t: halfword = 0; // §363
+        let mut n: halfword = 0; // §363
+        let mut q: halfword = 0; // §363
+        let mut c: i32 = 0; // §363
+        let mut e: halfword = 0; // §363
+        c = (1i32).wrapping_neg();
+        if (self.cur_input.state_field == token_list) {
+            if (self.cur_input.loc_field != null) {
+                {
+                    t = self.mem[crate::ix::U((self.cur_input.loc_field) as usize)].hh().lh();
+                    n = self.mem[crate::ix::U((self.cur_input.loc_field) as usize)].hh().rh();
+                    if (t >= cs_token_flag) {
+                        {
+                            q = (t).wrapping_sub(4095i32);
+                            c = self.eqtb[crate::ix::U(((q) - 1) as usize)].hh().b0();
+                            e = self.eqtb[crate::ix::U(((q) - 1) as usize)].hh().rh();
+                            if ((c >= outer_call) || (((c <= car_ret) && (c >= tab_mark)) && (self.align_state == 0i32))) {
+                                c = (1i32).wrapping_neg();
+                            } else {
+                                {
+                                    self.cur_cs = q;
+                                    self.cur_input.loc_field = n;
+                                    self.cur_cmd = c;
+                                    self.cur_chr = e;
+                                    if self.rs_on {
+                                        if (!self.rs_seen[crate::ix::U((q) as usize)]) {
+                                            self.flashtex_cs_read(q);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    } else {
+                        {
+                            c = (t / 256i32);
+                            if ((c == out_param) || ((c == tab_mark) && (self.align_state == 0i32))) {
+                                c = (1i32).wrapping_neg();
+                            } else {
+                                {
+                                    self.cur_cs = 0i32;
+                                    self.cur_input.loc_field = n;
+                                    self.cur_cmd = c;
+                                    self.cur_chr = (t % 256i32);
+                                    if (c == left_brace) {
+                                        self.align_state = (self.align_state).wrapping_add(1i32);
+                                    } else {
+                                        if (c == right_brace) {
+                                            self.align_state = (self.align_state).wrapping_sub(1i32);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        if (c < 0i32) {
+            self.get_next_slow();
+        } else {
+            if self.intr_rec_on {
+                self.flashtex_intr_next();
+            }
+        }
+    }
+
     /// If the user has set the `pausing` parameter to some positive value,
     /// and if nonstop mode has not been selected, each line of input is displayed
     /// on the terminal and the transcript file, followed by `\.{=>}'.
@@ -2536,6 +2611,7 @@ impl Globals {
     /// `get_token`, or when \.{\\csname} compresses a token list, because
     /// `no_new_control_sequence` is always `true` at other times.
     // §387
+    #[inline(always)]
     pub fn get_token(&mut self) {
         self.no_new_control_sequence = false;
         self.get_next();
@@ -3679,6 +3755,7 @@ impl Globals {
     /// next token of input. It has been slightly optimized to take account of
     /// common cases.
     // §406
+    #[inline(always)]
     pub fn get_x_token(&mut self) {
         // goto labels: restart, done
         let mut __goto_1: i32 = 0;
@@ -6617,70 +6694,6 @@ impl Globals {
             break 'l_reswitch_b;
         }
         scan_rule_spec
-    }
-
-    /// The token list (balanced text) created by `scan_general_text` begins
-    /// at `link(temp_head)` and ends at `cur_val`.  (If `cur_val=temp_head`,
-    /// the list is empty.)
-    /// @<Declare \eTeX\ procedures for tok...
-    // §1683
-    pub fn scan_general_text(&mut self) {
-        let mut s: i32 = 0; // §1683
-        let mut w: halfword = 0; // §1683
-        let mut d: halfword = 0; // §1683
-        let mut p: halfword = 0; // §1683
-        let mut q: halfword = 0; // §1683
-        let mut unbalance: halfword = 0; // §1683
-        'l_found_f: {
-            s = self.scanner_status;
-            w = self.warning_index;
-            d = self.def_ref;
-            self.scanner_status = absorbing;
-            self.warning_index = self.cur_cs;
-            self.def_ref = self.get_avail();
-            { let __ix353 = self.def_ref; self.mem[crate::ix::U((__ix353) as usize)].set_hh_lh(null); }
-            p = self.def_ref;
-            self.scan_left_brace();
-            unbalance = 1i32;
-            while true {
-                {
-                    self.get_token();
-                    if (self.cur_tok < right_brace_limit) {
-                        if (self.cur_cmd < right_brace) {
-                            unbalance = (unbalance).wrapping_add(1i32);
-                        } else {
-                            {
-                                unbalance = (unbalance).wrapping_sub(1i32);
-                                if (unbalance == 0i32) {
-                                    break 'l_found_f;
-                                }
-                            }
-                        }
-                    }
-                    {
-                        q = self.get_avail();
-                        self.mem[crate::ix::U((p) as usize)].set_hh_rh(q);
-                        { let __v354 = self.cur_tok; self.mem[crate::ix::U((q) as usize)].set_hh_lh(__v354); }
-                        p = q;
-                    }
-                }
-            }
-        }
-        q = self.mem[crate::ix::U((self.def_ref) as usize)].hh().rh();
-        {
-            { let __ix355 = self.def_ref; let __v356 = self.avail; self.mem[crate::ix::U((__ix355) as usize)].set_hh_rh(__v356); }
-            self.avail = self.def_ref;
-            self.dyn_used = (self.dyn_used).wrapping_sub(1i32);
-        }
-        if (q == null) {
-            self.cur_val = temp_head;
-        } else {
-            self.cur_val = p;
-        }
-        self.mem[crate::ix::U((temp_head) as usize)].set_hh_rh(q);
-        self.scanner_status = s;
-        self.warning_index = w;
-        self.def_ref = d;
     }
 
 }

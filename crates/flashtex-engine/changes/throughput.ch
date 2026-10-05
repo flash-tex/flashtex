@@ -24,6 +24,57 @@
 % assign each local before reading it, so where they live changes nothing.
 % Nothing else refers to the labels switch, reswitch, start_cs and found.
 %
+% [3] get_next (section 363): a fast path for a token list's next token.
+%
+% Measured first by hand on the generated code (P6-HYPEROPT,
+% docs/evidence/p6-hyperopt-2026-10-04/): most tokens of a LaTeX run come
+% from a token list, and get_next's prologue and epilogue (seven register
+% pairs, the constants its restart loop keeps) cost as much as its token-list
+% part. So get_next becomes a small routine, inlined into its callers
+% (web2rust-*.args: --inline get_next=always), that handles the common cases
+% itself and leaves the rest, unchanged, to get_next_slow (the routine of [1],
+% renamed; --inline get_next_slow=never). The fast path handles a token from
+% a token list (state=token_list, loc<>null) that is
+%   - a control sequence whose eq_type is below outer_call (so not outer and
+%     not dont_expand) and is not tab_mark..car_ret while align_state=0, or
+%   - a character token whose command is not out_param (which expands a
+%     parameter) and is not tab_mark while align_state=0 (a character token's
+%     command is at most car_ret=out_param only for those two, section 364).
+% It decides from mem[loc] and eqtb[t-cs_token_flag] alone (each read once,
+% as one word: the same reads [1]'s routine makes, before the stores),
+% changing nothing, and in those
+% cases does exactly what [1]'s routine does for them, in its order: for a
+% control sequence cur_cs, loc, cur_cmd, cur_chr, then the read-set hook
+% (changes/readset.ch); for a character cur_cs:=0, loc, cur_cmd, cur_chr and
+% the align_state step of a brace (section 357); section 364's alignment test
+% does not apply (its condition is excluded above); then the exit's
+% intrinsics hook (changes/intrinsics.ch). In every other case it calls
+% get_next_slow on the unchanged state, which then does exactly what the
+% routine did. So the two compute the same in every case.
+%
+% [4] pass_text (section 494): skipped tokens of a token list, read in place.
+%
+% pass_text skips the text of a false conditional: for each token it calls
+% get_next and looks at cur_cmd (and at cur_chr for fi_or_else). Most of
+% that text comes from token lists (macro bodies), and get_next's fast
+% path [3] stores cur_cs, cur_cmd and cur_chr for every token. Here, while
+% no intrinsic is being recorded, a token of a token list that [3]'s fast
+% path would take (loc<>null; a control sequence whose eq_type is below
+% outer_call and not tab_mark..car_ret while align_state=0; a character
+% token that is not out_param and not tab_mark while align_state=0) is
+% read in place: loc moves on, the read-set hook runs for a control
+% sequence as in [3], a brace steps align_state as in [3], and cur_cs,
+% cur_cmd and cur_chr are not stored. A control sequence whose command is
+% fi_or_else or if_test, and every other token, goes to get_next, as
+% before. So cur_cmd and cur_chr hold what pass_text's own get_next would
+% have left whenever they are read: pass_text reads them only right after
+% get_next, and it leaves with the three set by the get_next of the
+% fi_or_else that ends it. Nothing between two tokens reads them: the loop
+% runs no other code, and get_next's exit hook (flashtex_intr_next) runs
+% only while a recording is in progress, when every token goes through
+% get_next. A token not read in place leaves the state as get_next found
+% it.
+%
 % [2] divide_scaled (section 689): one 64-bit division, not a digit loop.
 %
 % Precondition: m > 0 when the division runs. The sign handling makes m
@@ -88,7 +139,7 @@ get_next_file:=2; return;
 restart: get_next_file:=0;
 exit:end;
 @#
-procedure get_next; {sets |cur_cmd|, |cur_chr|, |cur_cs| to next token}
+procedure get_next_slow; {|get_next| where its fast path [3] does not apply}
 label restart, {go here to get the next input token}
   exit; {go here when the next input token has been got}
 var @!t:halfword; {a token}
@@ -101,6 +152,86 @@ if state<>token_list then
   endcases
 else @<Input from token list, |goto restart| if end of list or
   if a parameter needs to be expanded@>;
+@z
+
+@x [24] m.363 - get_next: a fast path for a token list's next token.
+exit: if intr_rec_on then flashtex_intr_next;
+end;
+@y
+exit: if intr_rec_on then flashtex_intr_next;
+end;
+@#
+procedure get_next; {sets |cur_cmd|, |cur_chr|, |cur_cs| to next token}
+var @!t:halfword; {a token}
+@!n:pointer; {the rest of the list}
+@!q:pointer; {the control sequence of |t|}
+@!c:integer; {its command code, or $-1$: |get_next_slow| reads it}
+@!e:halfword; {its |equiv|}
+begin c:=-1;
+if state=token_list then if loc<>null then
+  begin t:=info(loc); n:=link(loc);
+  if t>=cs_token_flag then
+    begin q:=t-cs_token_flag; c:=eq_type(q); e:=equiv(q);
+    if (c>=outer_call)or((c<=car_ret)and(c>=tab_mark)and(align_state=0)) then
+      c:=-1
+    else  begin cur_cs:=q; loc:=n; cur_cmd:=c; cur_chr:=e;
+      if rs_on then if not rs_seen[q] then flashtex_cs_read(q);
+      end;
+    end
+  else  begin c:=t div @'400;
+    if (c=out_param)or((c=tab_mark)and(align_state=0)) then c:=-1
+    else  begin cur_cs:=0; loc:=n; cur_cmd:=c; cur_chr:=t mod @'400;
+      if c=left_brace then incr(align_state)
+      else if c=right_brace then decr(align_state);
+      end;
+    end;
+  end;
+if c<0 then get_next_slow
+else if intr_rec_on then flashtex_intr_next;
+end;
+@z
+
+@x [28] m.494 l.11812 - pass_text: skipped tokens of a token list, read in place [4]
+@p procedure pass_text;
+label done;
+var l:integer; {level of $\.{\\if}\ldots\.{\\fi}$ nesting}
+@!save_scanner_status:small_number; {|scanner_status| upon entry}
+begin save_scanner_status:=scanner_status; scanner_status:=skipping; l:=0;
+skip_line:=line;
+loop@+  begin get_next;
+@y
+@p procedure pass_text;
+label done, continue;
+var l:integer; {level of $\.{\\if}\ldots\.{\\fi}$ nesting}
+@!save_scanner_status:small_number; {|scanner_status| upon entry}
+@!t:halfword; {a token}
+@!q:pointer; {the control sequence of |t|}
+@!c:integer; {its command code}
+begin save_scanner_status:=scanner_status; scanner_status:=skipping; l:=0;
+skip_line:=line;
+loop@+  begin continue:
+  if state=token_list then if loc<>null then if not intr_rec_on then
+    begin t:=info(loc);
+    if t>=cs_token_flag then
+      begin q:=t-cs_token_flag; c:=eq_type(q);
+      if (c<outer_call)and((c>car_ret)or(c<tab_mark)or(align_state<>0)) then
+        begin if (c<>fi_or_else)and(c<>if_test) then
+          begin loc:=link(loc);
+          if rs_on then if not rs_seen[q] then flashtex_cs_read(q);
+          goto continue;
+          end;
+        end;
+      end
+    else  begin c:=t div @'400;
+      if (c<>out_param)and((c<>tab_mark)or(align_state<>0)) then
+        begin loc:=link(loc);
+        if c=left_brace then incr(align_state)
+        else if c=right_brace then decr(align_state);
+        goto continue;
+        end;
+      end;
+    end;
+  get_next;
 @z
 
 @x [42] m.689 l.15826 - divide_scaled: one 64-bit division.
