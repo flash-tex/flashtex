@@ -137,6 +137,30 @@ final class LiveShareConfinedProbeTests: XCTestCase {
         }
     }
 
+    /// Round 4: a tex.web device name (`TeXformats:`) in a document's name
+    /// is literal (as in pdfTeX), so it can no longer select the format
+    /// search and its exemption: neither `\openin` nor `\input` of
+    /// `TeXformats:/etc/hosts` opens /etc/hosts in a session.
+    func testDeviceNamesDoNotEscapeConfinement() async throws {
+        let openin = """
+        \\documentclass{article}
+        \\begin{document}
+        \\openin1=TeXformats:/etc/hosts \\ifeof1 \\PackageWarning{probe}{DEVICE-EOF}\\else \\PackageWarning{probe}{DEVICE-READ}\\fi
+        \\IfFileExists{TeXformats:OUT/secret.tex}{\\PackageWarning{probe}{DEVICE-SECRET-READ}}{}
+        Text.
+        \\end{document}
+
+        """
+        let r = try await probe(openin)
+        XCTAssertTrue(r.messages.contains { $0.contains("DEVICE-EOF") }, "\(r.messages)")
+        XCTAssertFalse(r.messages.contains { $0.contains("DEVICE-READ") || $0.contains("DEVICE-SECRET-READ") }, "\(r.messages)")
+        XCTAssertEqual(outsideOpens(r.opened), [])
+        let input = try await probe("\\documentclass{article}\n\\begin{document}\n\\input TeXformats:/etc/hosts\nText.\n\\end{document}\n")
+        XCTAssertEqual(outsideOpens(input.opened), [])
+        // pdfTeX's own words for it.
+        XCTAssertTrue(input.messages.contains { $0.contains("I can't find file `TeXformats:/etc/hosts'") }, "\(input.messages)")
+    }
+
     // MARK: Sessions on a host's own project
 
     /// Hosting: the keystroke fast path refuses a host whose confinement no

@@ -793,7 +793,10 @@ Security review of P1 (fixed before merge):
     output folder, or be a link-free search-path hit (a TeX tree file). A relative link to a file
     outside the project is therefore refused.
 
-  The format and the pool, which come from the host's own command line, are exempt. No mktex script
+  The format and the pool, which come from the host's own command line, are exempt. A document's
+  tex.web device name (`TeXformats:/etc/hosts`) cannot reach that exemption: as in pdfTeX, such a name
+  is literal, and pdfTeX answers "I can't find file `TeXformats:/etc/hosts'". This also fixed a
+  parity bug, covered by lockstep case 2575, for both reading and writing. No mktex script
   runs (`MKTEXTFM`, `MKTEXPK`, `MKTEXMF` and `MKTEXTEX` are 0), so a `\font` name can never start
   METAFONT. kpathsea's `openin_any = p` is not enough: measured against TeX Live 2026's pdfTeX, it
   still reads `/etc/hosts`, `~/x` and `../x` through `\openin`.
