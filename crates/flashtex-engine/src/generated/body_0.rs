@@ -629,6 +629,8 @@ impl Globals {
         self.intr_state[crate::ix::U((120i32) as usize)] = hash_prime;
         self.intr_state[crate::ix::U((121i32) as usize)] = eqtb_top;
         self.intr_on = self.flashtex_intr_enabled();
+        // §1921
+        self.ls_cond_depth = 0i32;
         // §182
         {
             let __for_end_2 = lo_mem_stat_max;
@@ -1775,6 +1777,7 @@ impl Globals {
                 self.print_nl(345i32);
                 self.print(self.full_source_filename_stack[crate::ix::U((level) as usize)]);
                 self.print(58i32);
+                self.ls_print_level(level);
                 if (level == self.in_open) {
                     self.print_int(((self.line) as i64));
                 } else {
@@ -1913,6 +1916,7 @@ impl Globals {
                                                 self.edit_name_start = self.str_start[crate::ix::U((self.input_stack[crate::ix::U((self.base_ptr) as usize)].name_field) as usize)];
                                                 self.edit_name_length = (self.str_start[crate::ix::U(((self.input_stack[crate::ix::U((self.base_ptr) as usize)].name_field).wrapping_add(1i32)) as usize)]).wrapping_sub(self.str_start[crate::ix::U((self.input_stack[crate::ix::U((self.base_ptr) as usize)].name_field) as usize)]);
                                                 self.edit_line = self.line;
+                                                self.ls_print_level(self.in_open);
                                                 self.jump_out();
                                             }
                                         }
@@ -3476,6 +3480,7 @@ impl Globals {
         let mut match_chr: ASCII_code = 0; // §314
         let mut n: ASCII_code = 0; // §314
         'l_exit_f: {
+            self.ls_show(p);
             match_chr = 35i32;
             n = 48i32;
             self.tally = 0i32;

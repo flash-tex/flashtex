@@ -126,6 +126,11 @@ pub struct AlphaFile {
 }
 
 impl AlphaFile {
+    /// The file opened, as the run opened it (`crate::lineshift`).
+    pub fn opened_path(&self) -> Option<&str> {
+        self.path.as_deref()
+    }
+
     fn refresh(&mut self) {
         self.buf = if !self.have_line {
             b' '

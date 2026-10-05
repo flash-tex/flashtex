@@ -399,6 +399,10 @@ struct Obs {
     /// old run had made at its end: one after a checkpoint is a barrier
     /// there (DESIGN.md §5.3).
     old_effects_end: usize,
+    /// DESIGN.md §5.3 rule (c): the edits' line shifts (`crate::lineshift`),
+    /// and the old run's line journal at its end.
+    shifts: Vec<crate::lineshift::Shift>,
+    old_line_events: Vec<crate::lineshift::LineRead>,
     /// The last of the old run's lookups (an index into its journal's) whose
     /// answer is different now (`Session::changes`): a checkpoint taken
     /// before it would keep the old run's answer (#1502).
@@ -647,6 +651,12 @@ impl Obs {
         // last page checkpoint before it (`rerun_point`, `after_run`), which
         // re-does it and everything after it.
         let barrier_later = o.effects_len < self.old_effects_end;
+        // DESIGN.md §5.3 rule (c): the old run's first read or print of a
+        // line number from here on that the edit may have moved
+        // (`crate::lineshift`) is a barrier too; and the run goes on live
+        // from an old checkpoint the shift can be put right in.
+        let line_barrier = self.line_barrier(&o);
+        let end_dirty = self.old_end_dirty(g);
         // (b) nothing the old run reads from here on has changed, and it
         // makes no lookup from here on whose answer is different now (a
         // file that appeared or disappeared: `\IfFileExists`, kpathsea's
@@ -691,21 +701,37 @@ impl Obs {
                 .find(|(_, p)| !p.is_empty() && written(p))
                 .map(|(i, p)| (from + i, p.clone()));
         }
-        let rerun_from = if barrier_later || written_read.is_some() {
-            match self.rerun_point(g, old, o.effects_len, written_read.as_ref().map(|r| r.0)) {
-                Some(m) => Some(m),
-                None => {
-                    return Err(match written_read {
-                        Some((_, p)) if !barrier_later => {
-                            format!("the old run reads {p} later, which the runs write")
-                        }
-                        _ => "the old run reads a barrier (an external effect) later".into(),
-                    })
+        let rerun_from =
+            if barrier_later || written_read.is_some() || line_barrier.is_some() || end_dirty {
+                match self.rerun_point(
+                    g,
+                    old,
+                    o.effects_len,
+                    written_read.as_ref().map(|r| r.0),
+                    line_barrier,
+                ) {
+                    Some(m) => Some(m),
+                    None => {
+                        return Err(match written_read {
+                            Some((_, p)) if !barrier_later => {
+                                format!("the old run reads {p} later, which the runs write")
+                            }
+                            _ if barrier_later => {
+                                "the old run reads a barrier (an external effect) later".into()
+                            }
+                            _ => format!(
+                                "the old run reads a moved line number next ({:?}), or has no \
+                             later checkpoint the line shift can be put right in (its end's \
+                             is {})",
+                                line_barrier.and_then(|i| self.old_line_events.get(i)),
+                                if end_dirty { "dirty" } else { "clean" }
+                            ),
+                        })
+                    }
                 }
-            }
-        } else {
-            None
-        };
+            } else {
+                None
+            };
         // the C parts
         if !new.cstate.same_as(&o.cstate) {
             return Err("pdfTeX's C-part state differs".into());
@@ -729,16 +755,19 @@ impl Obs {
         };
         let t = Instant::now();
         let mut char_or = vec![];
-        let r = same_words(
-            g,
-            old,
-            last_byte_dead,
-            dest_dims_dead,
-            self.relabel,
-            self.debug,
-            stop,
-            &mut char_or,
-        );
+        let active = crate::lineshift::Active::new(g, &self.shifts);
+        let r = crate::lineshift::with_active(active, || {
+            same_words(
+                g,
+                old,
+                last_byte_dead,
+                dest_dims_dead,
+                self.relabel,
+                self.debug,
+                stop,
+                &mut char_or,
+            )
+        });
         if r.is_ok() {
             self.char_or = char_or;
             self.rerun_from = rerun_from;
@@ -766,17 +795,57 @@ impl Obs {
         old: CheckpointId,
         effects: usize,
         read: Option<usize>,
+        lines: Option<usize>,
     ) -> Option<CheckpointId> {
         let at = self.old_pages.iter().position(|p| p.ckpt == Some(old))?;
         let mut m = None;
         for id in self.old_pages[at + 1..].iter().filter_map(|p| p.ckpt) {
             let rec = g.pending_record(id)?;
-            if rec.effects_len > effects || read.is_some_and(|i| rec.reads.0 > i) {
+            if rec.effects_len > effects
+                || read.is_some_and(|i| rec.reads.0 > i)
+                || lines.is_some_and(|i| rec.lines.events > i)
+            {
                 break;
             }
-            m = Some(id);
+            // (one the line shift cannot be put right in is no place to go
+            // on from: `crate::lineshift::Shift::dirty`)
+            if !self.shifts.iter().any(|s| s.dirty(&rec.lines)) {
+                m = Some(id);
+            }
         }
         m
+    }
+
+    /// DESIGN.md §5.3 rule (c): the index in the old run's line journal of
+    /// its first entry after checkpoint `o` that may be a line an edit
+    /// moved (`crate::lineshift`): what the old run read or printed there
+    /// would be another number now.
+    fn line_barrier(&self, o: &ExtRecord) -> Option<usize> {
+        if self.shifts.is_empty() {
+            return None;
+        }
+        let from = o.lines.events;
+        self.old_line_events
+            .get(from..)?
+            .iter()
+            .position(|r| self.shifts.iter().any(|s| s.moves(r)))
+            .map(|i| from + i)
+    }
+
+    /// Whether the old run's last page checkpoint (where `\end{document}`
+    /// would re-run from) holds a line number of unknown file that an edit
+    /// may have moved (`crate::lineshift::Shift::dirty`).
+    fn old_end_dirty(&self, g: &Globals) -> bool {
+        if self.shifts.is_empty() {
+            return false;
+        }
+        let Some(id) = self.old_pages.iter().rev().find_map(|p| p.ckpt) else {
+            return false;
+        };
+        match g.pending_record(id) {
+            Some(r) => self.shifts.iter().any(|s| s.dirty(&r.lines)),
+            None => true,
+        }
     }
 }
 
@@ -842,6 +911,8 @@ fn same_words(
     let (_pos, left): (Vec<_>, Vec<_>) = words
         .into_iter()
         .filter(|w| !dead_word(g, w))
+        // line numbers moved by the edit (DESIGN.md §5.3 rule (c))
+        .filter(|w| !crate::lineshift::shifted_word(g, w, &layout))
         .filter(|w| !(last_byte_dead && w.scalar == Some("pdf_last_byte")))
         .partition(|w| position_only(g, w));
     let (left, (free_o, free_n)) = drop_free_mem(g, &d, &layout, left);
@@ -850,6 +921,23 @@ fn same_words(
         if let Some(w) = left.iter().find(|w| w.region != "mem" && !iso_covers(g, w)) {
             if debug && w.region == "pdf_mem" {
                 eprintln!("[incr] {}", pdf_mem_owner(g, w.index));
+            }
+            if debug {
+                let out: Vec<_> = left
+                    .iter()
+                    .filter(|w| w.region != "mem" && !iso_covers(g, w))
+                    .cloned()
+                    .collect();
+                eprintln!("[incr] uncovered: {}", crate::statediff::summary(&out));
+                for w in out.iter().take(16) {
+                    eprintln!("[incr]     {w}");
+                }
+                if let Some(w) = out.iter().find(|w| w.region == "pdf_os_buf") {
+                    let b = &g.pdf_os_buf;
+                    let (lo, hi) = (w.index.saturating_sub(200), (w.index + 200).min(b.len()));
+                    let s: Vec<u8> = b[lo..hi].iter().map(|&c| c as u8).collect();
+                    eprintln!("[incr] pdf_os_buf now: {:?}", String::from_utf8_lossy(&s));
+                }
             }
             return Err(format!(
                 "{} differs outside what the structural comparison reads: {w}",
@@ -941,6 +1029,11 @@ fn live_len(g: &Globals, region: &str) -> Option<usize> {
         // letters before lowercasing), filled by each `hyphenate`,
         // `\hyphenation` or `\patterns` before it reads them
         "hc" | "hu" => 0,
+        // changes/lineshift.ch: the files of the open semantic levels',
+        // groups' and conditionals' lines, set as each begins
+        "ls_nest_tag" => g.nest_ptr + 1,
+        "ls_grp_tag" => g.cur_level + 1,
+        "ls_cond_tag" => g.ls_cond_depth.min(g.ls_cond_tag.len() as i32 - 1) + 1,
         // pdftex.web: the PDF output buffer up to `pdf_ptr` (in object
         // stream mode it is saved in `pdf_op_ptr`), the object stream
         // buffer likewise
@@ -1930,6 +2023,9 @@ pub struct Session {
     /// The last lookup of the journal whose answer changed, as `changes`
     /// found it for this compile (the first is its restart bound).
     changed_lookup_last: Option<usize>,
+    /// The line shifts of the edits `changes` found (DESIGN.md §5.3 rule
+    /// (c), `crate::lineshift`), for the run it starts.
+    line_shifts: Vec<crate::lineshift::Shift>,
     /// The lookup directories' signatures, taken just before the last
     /// `changes` checked the journal's lookups (`dirs_seen`), and those of
     /// the check that started the current pass (`dirs_checked`, which
@@ -2016,6 +2112,7 @@ impl Session {
             reemit_from: None,
             lookup_dirs: vec![],
             changed_lookup_last: None,
+            line_shifts: vec![],
             dirs_seen: vec![],
             dirs_checked: vec![],
             key_cover: (0, vec![]),
@@ -3210,6 +3307,7 @@ impl Session {
         let j = self.journal.as_mut().ok_or("no journal")?;
         let mut edits = vec![];
         let mut changed = vec![];
+        let mut shifts = vec![];
         // A file the journal lists more than once (read again) is read once.
         let mut now_of: HashMap<String, Option<std::sync::Arc<Vec<u8>>>> = HashMap::new();
         let fixed = self.fixed_inputs.clone();
@@ -3244,7 +3342,18 @@ impl Session {
             if !changed.contains(&f.path) {
                 changed.push(f.path.clone());
                 match (&f.content, &now) {
-                    (Some(old), Some(new)) => edits.push(diff_edit(&f.path, old, new.as_slice())),
+                    (Some(old), Some(new)) => {
+                        let e = diff_edit(&f.path, old, new.as_slice());
+                        shifts.extend(crate::lineshift::Shift::of(
+                            &f.path,
+                            old,
+                            new,
+                            e.prefix as usize,
+                            e.old_end() as usize,
+                            (e.prefix + e.new_mid) as usize,
+                        ));
+                        edits.push(e)
+                    }
                     _ => edits.push(Edit {
                         path: f.path.clone(),
                         prefix: 0,
@@ -3307,6 +3416,7 @@ impl Session {
             }
         }
         self.changed_lookup_last = bad_last;
+        self.line_shifts = shifts;
         self.dirs_seen = seen;
         Ok((edits, changed, bad))
     }
@@ -3450,6 +3560,8 @@ impl Session {
             old_last_byte_reads_end: None,
             old_matrix_uses_end: None,
             old_effects_end: 0,
+            shifts: vec![],
+            old_line_events: vec![],
             changed_lookup_last: None,
             rerun_from: None,
             budget: self.opts.budget,
@@ -3590,6 +3702,8 @@ impl Session {
         obs.old_last_byte_reads_end = Some(crate::pdftex::last_byte_reads());
         obs.old_matrix_uses_end = Some(crate::pdftex::matrix_uses());
         obs.old_effects_end = system::external_effects_len();
+        obs.old_line_events = crate::lineshift::events_from(0);
+        obs.shifts = std::mem::take(&mut self.line_shifts);
         obs.changed_lookup_last = self.changed_lookup_last;
         let t1 = Instant::now();
         let i1 = crate::os::thread_counts();
@@ -3896,8 +4010,19 @@ impl Session {
                 delta: pdf_len(&g.record_of(new_id)?) as i64 - pdf_len(&rec_old) as i64,
                 overrides: obs.positions.clone(),
                 rebuild_rs: true,
+                lines: obs.shifts.clone(),
             };
+            let notes_new = g.record_of(new_id)?.notes;
             g.redo_to_remapped(old, &in_remap)?;
+            // The old run's line journal from the convergence point on, after
+            // the new run's; and its diagnostics there, in the new numbering
+            // (DESIGN.md §5.3 rule (c), `crate::lineshift`).
+            crate::lineshift::append_events(
+                obs.old_line_events
+                    .get(rec_old.lines.events..)
+                    .unwrap_or(&[]),
+            );
+            crate::diag::move_lines(notes_new, &obs.shifts);
             // the new run's extra characters, into the old run's states
             // from the convergence point on (see `same_words`)
             for &(off, bits) in &obs.char_or {
@@ -3951,6 +4076,28 @@ impl Session {
             let g = self.g.as_mut().unwrap();
             if let Some(rs) = self.reloc.get(&last) {
                 Reloc::apply_all(rs, g);
+            }
+            // The old run's checkpoints after the convergence point that the
+            // line shift cannot be put right in are never restored: their
+            // pages stay, they go (`crate::lineshift::Shift::dirty`).
+            if !obs.shifts.is_empty() {
+                let chain = g.checkpoints();
+                let after: std::collections::HashSet<CheckpointId> = chain
+                    .iter()
+                    .skip_while(|&&i| i != old)
+                    .skip(1)
+                    .filter(|&&i| i != last)
+                    .copied()
+                    .collect();
+                let dirty: std::collections::HashSet<CheckpointId> = g
+                    .checkpoints_where(&|i, r| {
+                        after.contains(&i) && obs.shifts.iter().any(|s| s.dirty(&r.lines))
+                    })
+                    .into_iter()
+                    .collect();
+                if !dirty.is_empty() {
+                    g.retain_checkpoints(&|i| !dirty.contains(&i));
+                }
             }
             for p in self.defpatch.get(&last).cloned().unwrap_or_default() {
                 crate::readset::apply_patch(g, &p)?;
@@ -4263,6 +4410,9 @@ struct Reloc {
     /// The checkpoint's `rs_seen` is the old run's, its read-set the
     /// spliced one: rebuild the first from the second.
     rebuild_rs: bool,
+    /// The edits' line shifts: the old run's line numbers of the edited
+    /// files in the checkpoint's state (DESIGN.md §5.3 rule (c)).
+    lines: Vec<crate::lineshift::Shift>,
 }
 
 impl Reloc {
@@ -4283,6 +4433,9 @@ impl Reloc {
     fn apply_all(rs: &[Reloc], g: &mut Globals) {
         for x in rs {
             x.apply_positions(g);
+            for s in &x.lines {
+                s.relocate(g);
+            }
         }
         if rs.iter().any(|x| x.rebuild_rs) && g.rs_on {
             crate::readset::rebuild_seen(g);

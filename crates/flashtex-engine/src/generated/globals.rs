@@ -1244,6 +1244,14 @@ pub struct Globals {
     pub intr_pre: crate::arena::Arr<memory_word>,
     // §1915
     pub intr_data: crate::arena::Arr<i32>,
+    // §1920
+    pub ls_nest_tag: crate::arena::Arr<i32>,
+    // §1920
+    pub ls_grp_tag: crate::arena::Arr<i32>,
+    // §1920
+    pub ls_cond_tag: crate::arena::Arr<i32>,
+    // §1920
+    pub ls_cond_depth: i32,
     /// The word space every `Arr` above lives in (crates/flashtex-engine/src/arena.rs).
     pub arena: crate::arena::Arena,
 }
@@ -1748,7 +1756,8 @@ pub const SCALAR_BYTES: usize = 0
     + crate::arena::slot::<bool>()
     + crate::arena::slot::<bool>()
     + crate::arena::slot::<bool>()
-    + crate::arena::slot::<bool>();
+    + crate::arena::slot::<bool>()
+    + crate::arena::slot::<i32>();
 
 impl Globals {
     pub fn new() -> Box<Globals> {
@@ -1924,6 +1933,9 @@ impl Globals {
         let __r_intr_seen = __plan.reserve::<i32>("intr_seen", 630193);
         let __r_intr_pre = __plan.reserve::<memory_word>("intr_pre", 630193);
         let __r_intr_data = __plan.reserve::<i32>("intr_data", 8388608);
+        let __r_ls_nest_tag = __plan.reserve::<i32>("ls_nest_tag", 1001);
+        let __r_ls_grp_tag = __plan.reserve::<i32>("ls_grp_tag", 256);
+        let __r_ls_cond_tag = __plan.reserve::<i32>("ls_cond_tag", 1001);
         let __arena = __plan.build();
         Box::new(Globals {
             bad: 0,
@@ -2543,6 +2555,10 @@ impl Globals {
             intr_seen: __arena.arr(__r_intr_seen, 630193),
             intr_pre: __arena.arr(__r_intr_pre, 630193),
             intr_data: __arena.arr(__r_intr_data, 8388608),
+            ls_nest_tag: __arena.arr(__r_ls_nest_tag, 1001),
+            ls_grp_tag: __arena.arr(__r_ls_grp_tag, 256),
+            ls_cond_tag: __arena.arr(__r_ls_cond_tag, 1001),
+            ls_cond_depth: 0,
             arena: __arena,
         })
     }
@@ -3049,6 +3065,7 @@ impl Globals {
         v.pod(&mut self.intr_rec_on);
         v.pod(&mut self.intr_all);
         v.pod(&mut self.intr_weak);
+        v.pod(&mut self.ls_cond_depth);
     }
 
     /// Every file global, in declaration order (the checkpoint's host-state record).

@@ -54,6 +54,9 @@ pub struct ExtRecord {
     pub notes: usize,
     /// How many files the run has opened for output (`system::opens_len`).
     pub opens: usize,
+    /// The line journal's length, the line numbers of unknown file and the
+    /// marked token lists (`crate::lineshift`, DESIGN.md §5.3 rule (c)).
+    pub lines: crate::lineshift::Rec,
 }
 
 crate::codec_struct!(ExtRecord {
@@ -67,7 +70,8 @@ crate::codec_struct!(ExtRecord {
     matrix_uses,
     rs,
     notes,
-    opens
+    opens,
+    lines
 });
 
 /// Where an output position `x` of the old run goes when a convergence
@@ -683,6 +687,7 @@ impl Globals {
             rs: self.layer().rs.len(),
             notes: crate::diag::len(),
             opens: system::opens_len(),
+            lines: crate::lineshift::record(self),
         })
     }
 
@@ -704,6 +709,7 @@ impl Globals {
         crate::pdftex::set_last_byte_reads(rec.last_byte_reads);
         crate::pdftex::set_matrix_uses(rec.matrix_uses);
         self.layer().rs.truncate(rec.rs);
+        crate::lineshift::restore(&rec.lines);
         match err {
             Some(e) => Err(format!("cannot restore the files: {e}")),
             None => Ok(()),
@@ -1209,6 +1215,7 @@ impl Globals {
         );
         let rs_delta = now.rs as i64 - at_id.rs as i64;
         let notes_delta = now.notes as i64 - at_id.notes as i64;
+        let lines_delta = now.lines.events as i64 - at_id.lines.events as i64;
         // The old run's output opens after `id` (opens_tail starts at the
         // restore target's count, which `id`'s is not below).
         let old_opens_after = |upto: usize| -> &[String] {
@@ -1245,6 +1252,7 @@ impl Globals {
             );
             r.rs = (r.rs as i64 + rs_delta) as usize;
             r.notes = (r.notes as i64 + notes_delta) as usize;
+            r.lines.events = (r.lines.events as i64 + lines_delta) as usize;
             r
         };
         // The read-set: the new run's up to here, then the old run's after
@@ -1378,6 +1386,20 @@ impl Globals {
         // `rs_seen` is the old run's; the read-set is the spliced one
         crate::readset::rebuild_seen(self);
         r
+    }
+
+    /// The retained checkpoints whose host records `f` accepts (no copies
+    /// of the records).
+    pub fn checkpoints_where(
+        &mut self,
+        f: &dyn Fn(CheckpointId, &ExtRecord) -> bool,
+    ) -> Vec<CheckpointId> {
+        self.layer()
+            .records
+            .iter()
+            .filter(|(i, r)| f(*i, r))
+            .map(|(i, _)| *i)
+            .collect()
     }
 
     /// Drop every checkpoint `keep` rejects, except the newest (their undo
