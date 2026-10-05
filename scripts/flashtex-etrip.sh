@@ -72,23 +72,26 @@ etrip_runs() {
     cp "$knuth/trip.tex" "$knuth/trip.tfm" "$fix/etrip.tex" "$fix/etrip.tfm" "$d/"
     (
         cd "$d"
+        # A run cut off (or failing) may leave a file out: each `mv` is
+        # `|| true` so `set -eu` does not end the runs before the report
+        # says which were cut off, as in flashtex-trip.sh.
         # Part 1: tripman.tex steps 3 and 4, compatibility mode.
         printf '\n\\input trip\n' | timed $ini >ctripin.fot 2>&1 || true
-        mv trip.log ctripin.log
+        mv trip.log ctripin.log || true
         printf ' &trip  trip \n' | timed $vir >ctrip.fot 2>&1 || true
-        mv trip.log ctrip.log
-        mv tripos.tex ctripos.tex
-        mv trip.dvi ctrip.dvi
+        mv trip.log ctrip.log || true
+        mv tripos.tex ctripos.tex || true
+        mv trip.dvi ctrip.dvi || true
         # Part 2: extended mode.
         timed $ini <"$fix/etrip1.in" >xtripin.fot 2>&1 || true
-        mv trip.log xtripin.log
+        mv trip.log xtripin.log || true
         timed $vir <"$fix/trip2.in" >xtrip.fot 2>&1 || true
-        mv trip.log xtrip.log
-        mv tripos.tex xtripos.tex
-        mv trip.dvi xtrip.dvi
+        mv trip.log xtrip.log || true
+        mv tripos.tex xtripos.tex || true
+        mv trip.dvi xtrip.dvi || true
         # Part 3: the e-TeX specific test.
         timed $ini <"$fix/etrip2.in" >etripin.fot 2>&1 || true
-        mv etrip.log etripin.log
+        mv etrip.log etripin.log || true
         timed $vir <"$fix/etrip3.in" >etrip.fot 2>&1 || true
     )
 }
@@ -273,6 +276,10 @@ for pair in "$knuth/tripin.log ctripin.log" "$knuth/trip.log ctrip.log" \
     "$fix/etrip.log etrip.log" "$fix/etrip.out etrip.out" \
     "$knuth/trip.fot ctrip.fot" "$fix/etrip.fot etrip.fot"; do
     set -- $pair
+    if [ ! -f "$run/$2" ]; then
+        echo "info $2: not written (see the FAILs above)"
+        continue
+    fi
     sed -f "$tlf" "$1" >"$work/a"
     sed -f "$tlf" "$run/$2" >"$work/b"
     n=$(diff "$work/a" "$work/b" | grep -c '^[<>]' || true)
