@@ -3425,11 +3425,44 @@ pub fn set_tex_input_type_flag(v: bool) {
 
 /// A file's identity as the file system reports it: a cheap test for
 /// "unchanged" before its content is hashed again.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+///
+/// **Racy signatures** (git's "racy clean" rule). A file system keeps
+/// modification times at some granularity: 1 s on HFS+, 2 s on FAT, a
+/// kernel tick on ext4 before Linux 6.13. A file changed again within the
+/// tick in which its signature was taken, to the same length, keeps the
+/// same signature. So a signature taken within [`RACY_NS`] of the file's
+/// modification time (`racy`) proves nothing: it equals no signature, not
+/// even itself, and every "unchanged?" test that meets one compares the
+/// content instead (and may then keep the fresh signature, which is not
+/// racy once the tick has passed).
+#[derive(Clone, Copy, Debug, Default)]
 pub struct StatSig {
     pub len: u64,
     pub mtime_ns: i128,
     pub ino: u64,
+    /// Taken within [`RACY_NS`] of `mtime_ns`, either side.
+    pub racy: bool,
+}
+
+/// The widest modification-time granularity of a supported file system
+/// (FAT's 2 s; HFS+ 1 s, ext4 a kernel tick), for [`StatSig::racy`]
+/// (`FLASHTEX_RACY_MS` changes it, for the tests).
+pub const RACY_NS: i128 = 2_000_000_000;
+
+fn racy_ns() -> i128 {
+    static R: std::sync::OnceLock<i128> = std::sync::OnceLock::new();
+    *R.get_or_init(|| {
+        std::env::var("FLASHTEX_RACY_MS")
+            .ok()
+            .and_then(|v| v.parse::<i128>().ok())
+            .map_or(RACY_NS, |ms| ms * 1_000_000)
+    })
+}
+
+impl PartialEq for StatSig {
+    fn eq(&self, o: &StatSig) -> bool {
+        !self.racy && !o.racy && self.same_fields(o)
+    }
 }
 
 impl StatSig {
@@ -3441,11 +3474,25 @@ impl StatSig {
             .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
             .map_or(0, |d| d.as_nanos() as i128);
         let ino = crate::os::file_id(&m);
+        let now_ns = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |d| d.as_nanos() as i128);
         Some(StatSig {
             len: m.len(),
             mtime_ns,
             ino,
+            // Within the tick on either side: a write after now lands in
+            // the same tick only then. (A modification time far in the
+            // future -- a file from a clock ahead -- is not racy: any write
+            // from now on gets an earlier time.)
+            racy: (now_ns - mtime_ns).abs() < racy_ns(),
         })
+    }
+
+    /// The same length, time and identity, racy or not (only where a racy
+    /// equality is harmless: see the callers).
+    pub fn same_fields(&self, o: &StatSig) -> bool {
+        (self.len, self.mtime_ns, self.ino) == (o.len, o.mtime_ns, o.ino)
     }
 }
 
@@ -3619,13 +3666,24 @@ fn note_lookup(name: &str, format: Format, must_exist: Option<bool>, found: Opti
                         .unwrap_or_else(|| ".".into()),
                 ),
                 Some(_) => None,
+                // (an absolute name not found: its own directory, where a
+                // file appearing changes the answer -- not the working one)
                 None => Some(
                     std::path::Path::new(name)
                         .parent()
                         .map(|d| d.to_string_lossy().into_owned())
-                        .filter(|d| !d.is_empty() && !d.starts_with('/'))
+                        .filter(|d| !d.is_empty())
                         .unwrap_or_else(|| ".".into()),
                 ),
+            };
+            // An absolute name found outside the working directory: its
+            // directory too (the file may go again).
+            let dir = match (dir, found) {
+                (None, Some(p)) if name.starts_with('/') => std::path::Path::new(p)
+                    .parent()
+                    .map(|d| d.to_string_lossy().into_owned())
+                    .filter(|d| !d.is_empty()),
+                (d, _) => d,
             };
             // A relative name not found is looked for in the output
             // directory too (`-output-directory`, as texmfmp.c's
@@ -4263,5 +4321,54 @@ mod os_dependent_tests {
             String::from_utf8_lossy(&out.stdout).trim_end(),
             r#""Windows_NT""#
         );
+    }
+}
+
+#[cfg(test)]
+mod statsig_tests {
+    use super::*;
+
+    /// A signature taken within the modification-time granularity of the
+    /// file's time equals none, not even itself; an older one equals its
+    /// twin and not a file changed since.
+    #[test]
+    fn racy_signatures_equal_nothing() {
+        let d = std::env::temp_dir().join(format!("flashtex-statsig-{}", std::process::id()));
+        std::fs::create_dir_all(&d).unwrap();
+        let f = d.join("f.tex");
+        std::fs::write(&f, "abc").unwrap();
+        let p = f.to_str().unwrap();
+        let fresh = StatSig::of(p).unwrap();
+        assert!(fresh.racy);
+        assert!(fresh != fresh, "a racy signature equals itself");
+        assert!(fresh.same_fields(&fresh));
+        let old = std::time::SystemTime::now() - std::time::Duration::from_secs(60);
+        std::fs::File::options()
+            .write(true)
+            .open(&f)
+            .unwrap()
+            .set_modified(old)
+            .unwrap();
+        let a = StatSig::of(p).unwrap();
+        let b = StatSig::of(p).unwrap();
+        assert!(!a.racy && a == b);
+        // a time within the tick ahead is racy too; one far ahead is not
+        let soon = std::time::SystemTime::now() + std::time::Duration::from_millis(500);
+        std::fs::File::options()
+            .write(true)
+            .open(&f)
+            .unwrap()
+            .set_modified(soon)
+            .unwrap();
+        assert!(StatSig::of(p).unwrap().racy);
+        let far = std::time::SystemTime::now() + std::time::Duration::from_secs(3600);
+        std::fs::File::options()
+            .write(true)
+            .open(&f)
+            .unwrap()
+            .set_modified(far)
+            .unwrap();
+        assert!(!StatSig::of(p).unwrap().racy);
+        let _ = std::fs::remove_dir_all(&d);
     }
 }

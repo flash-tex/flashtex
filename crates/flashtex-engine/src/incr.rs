@@ -2657,13 +2657,16 @@ impl Session {
     /// Whether the files or lookups the last run read changed since it
     /// read them (`None`: nothing did), and if so whether through its key
     /// or a lookup (a file that appeared) rather than a file's content.
-    /// Changes nothing (`changes` does, for the pass that follows).
+    /// Changes nothing the next pass reads (`changes` does, for the pass
+    /// that follows), except S₀'s key's signatures, which a clean check
+    /// refreshes (`Key::check_refresh`: what it verified another way).
     fn dirty(&mut self) -> Option<bool> {
         if self.paused.is_some() {
             return None;
         }
-        let s0 = self.s0.as_ref()?;
-        if s0.key.check(self.clock, &self.first_line).is_err() {
+        let (clock, first_line) = (self.clock, self.first_line.clone());
+        let s0 = self.s0.as_mut()?;
+        if s0.key.check_refresh(clock, &first_line).is_err() {
             return Some(true);
         }
         let saved = self.journal.clone();
@@ -2759,12 +2762,14 @@ impl Session {
         if let Some(why) = self.force_cold.take() {
             return self.cold(t0, stop_at, Some(why));
         }
-        let Some(s0) = &self.s0 else {
+        let (clock, first_line) = (self.clock, self.first_line.clone());
+        let Some(s0) = self.s0.as_mut() else {
             return self.cold(t0, stop_at, None);
         };
-        if let Err(why) = s0.key.check(self.clock, &self.first_line) {
+        if let Err(why) = s0.key.check_refresh(clock, &first_line) {
             return self.cold(t0, stop_at, Some(why));
         }
+        let s0 = self.s0.as_ref().unwrap();
         let key_s = t0.elapsed().as_secs_f64();
         let s0_id = s0.id;
         let changes = self.changes();
