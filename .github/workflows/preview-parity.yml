@@ -1,0 +1,223 @@
+# The P3 preview-parity gate in CI (docs/design/engine-v2/DESIGN.md §12 P3
+# exit: "P-T2 on fixtures; preview parity check at zero tolerance"; §6.2;
+# §13 R12, 2026-10-05). Lane P3-REVERIFY.
+#
+# WHAT. Every parity fixture's display list, drawn by the Mac preview's
+# DL3Renderer, must be byte-identical (RGBA, 0 px) to Core Graphics'
+# rendering of pdflatex's own PDF of that fixture, at 1x, 2x and 4x
+# (PreviewParityTests' fixture sweep). Before this workflow the sweep
+# skipped in CI: nothing generated its input.
+#
+#   inputs   GitHub-hosted Ubuntu with the digest-pinned TeX Live 2026 (the
+#            oracle, pdfTeX 1.40.29) that ci.yml's engine parity uses:
+#            build flashtex-initex and its formats (scripts/engine-parity.sh
+#            build) and dl3-dump; tools/displaylist/check_positions.py --pt2
+#            compiles every fixture to convergence with the display list
+#            written, checks every glyph and rule position against the
+#            oracle's PDF (0 sp) and runs P-T2 on the engine PDF of that same
+#            run. The display lists, the engine PDFs and pdflatex's PDFs go
+#            up as one artifact.
+#   sweep    GitHub-hosted macOS (never a self-hosted Mac: the team's Macs
+#            are laptops, the owner's among them): swift test
+#            --filter PreviewParityTests at tolerance 0 on that artifact,
+#            FLASHTEX_V3_PARITY_REQUIRE=1 so a missing input fails instead
+#            of skipping. tools/displaylist/preview_parity_summary.py writes
+#            renders identical / total per scale, the PDF-fallback rate and
+#            the pages that fall back to the job summary.
+#
+# WHEN. After the merge (push to main, DESIGN §13 2026-10-05: merge fast,
+# test later) when the change can move a pixel, and on manual runs
+# (workflow_dispatch; `scales` runs §6.2's 31-scale sweep). Not in the merge
+# queue. A failure on main opens or updates the `main-red` issue
+# (scripts/ci/main-red.sh), fixed forward like ci.yml's post-merge jobs.
+#
+# Runs on main never cancel each other: a push queues behind the running
+# one, and a newer push replaces a queued (not yet started) one, so the tip
+# is always measured and a skipped commit can be bisected by dispatch.
+name: preview parity
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'crates/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'fixtures/**'
+      - 'tools/displaylist/**'
+      - 'tools/parity/**'
+      - 'tools/visual-oracle/**'
+      - 'tools/real-world-corpus/**'
+      - 'scripts/engine-parity.sh'
+      - 'apps/mac/Package.swift'
+      - 'apps/mac/Package.resolved'
+      - 'apps/mac/Sources/FlashTeXPreviewV3/**'
+      - 'apps/mac/Sources/FlashTeXDisplayListV3/**'
+      - 'apps/mac/Tests/FlashTeXPreviewV3Tests/PreviewParityTests.swift'
+      - '.github/actions/texlive-2026/**'
+      - '.github/workflows/preview-parity.yml'
+  workflow_dispatch:
+    inputs:
+      scales:
+        description: scales in px/pt, comma-separated (the 31-scale sweep is 1,1.14,1.25,...,8)
+        type: string
+        default: '1,2,4'
+
+concurrency:
+  group: preview-parity-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: "0"
+
+jobs:
+  inputs:
+    name: sweep inputs (display lists, PDFs; positions, P-T2)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      # As ci.yml's engine-parity-hosted: texlive/texlive:latest-medium as of
+      # 2026-09-27 (TeX Live 2026, pdfTeX 1.40.29), pinned by digest.
+      TEXLIVE_IMAGE: texlive/texlive@sha256:961215b30a17099ee677cedbb9163fe755ebca1d7e8b0b9fa73248a2f53bd198
+      SOURCE_DATE_EPOCH: "0"
+      FORCE_SOURCE_DATE: "1"
+    outputs:
+      uploaded: ${{ steps.upload.outcome == 'success' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/texlive-2026
+        with:
+          image: ${{ env.TEXLIVE_IMAGE }}
+          extra: |
+            sansmathaccent 62cf97334eb2c1d4056cb7f72ef2e59d99edaef151c3f4870116cc23056394b9
+            translations a7766687fd777e7077a68d6d908cb43da0673616e58ebc31741b22108d4af591
+      - name: qpdf (P-T2 normalises with it)
+        run: command -v qpdf || { sudo apt-get update -qq && sudo apt-get install -y -qq qpdf; }
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: preview-parity
+      - name: the oracle's untraced references, cached per TeX Live image
+        # check_positions.py runs the oracle without \tracingall (its own
+        # cache key), so this is not engine parity's cache. Saved only by a
+        # job that passed.
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/parity-oracle
+          key: dl3-oracle-${{ env.TEXLIVE_IMAGE }}-${{ hashFiles('fixtures/**', 'tools/parity/capture.py', 'tools/parity/tiers.py') }}
+          restore-keys: |
+            dl3-oracle-${{ env.TEXLIVE_IMAGE }}-
+      - name: build flashtex-initex, its formats and dl3-dump
+        run: |
+          set -euo pipefail
+          scripts/engine-parity.sh --work "$RUNNER_TEMP/engine-parity" build
+          cargo build --release --locked -p flashtex-display-list --bin dl3-dump
+      - name: positions (0 sp) and P-T2, with the display lists written
+        id: positions
+        run: |
+          set -euo pipefail
+          E="$RUNNER_TEMP/engine-parity"
+          mkdir -p "$RUNNER_TEMP/dl3"
+          rc=0
+          python3 tools/displaylist/check_positions.py --pt2 -j 4 \
+            --engine "$E/eng/flashtex-initex" --formats "$E/fmt" --pool "$E/eng/pdftex.pool" \
+            --dump "${CARGO_TARGET_DIR:-target}/release/dl3-dump" \
+            --oracle "$(command -v pdftex)" --cache "$RUNNER_TEMP/parity-oracle" \
+            --work "$RUNNER_TEMP/dl3/fixtures" --json "$RUNNER_TEMP/dl3/positions.json" \
+            2>&1 | tee "$RUNNER_TEMP/dl3/positions.txt" || rc=$?
+          tail -n 2 "$RUNNER_TEMP/dl3/positions.txt" | sed 's/^/    /' >> "$GITHUB_STEP_SUMMARY"
+          [[ -s "$RUNNER_TEMP/dl3/positions.json" ]] && echo "ran=true" >> "$GITHUB_OUTPUT"
+          exit "$rc"
+      - name: upload the sweep's input
+        id: upload
+        # Also when positions or P-T2 failed: the sweep still measures, and
+        # the run is red either way.
+        if: always() && steps.positions.outputs.ran == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: preview-parity-inputs
+          path: |
+            ${{ runner.temp }}/dl3/positions.json
+            ${{ runner.temp }}/dl3/positions.txt
+            ${{ runner.temp }}/dl3/fixtures/*/display.dl3
+            ${{ runner.temp }}/dl3/fixtures/*/oracle.pdf
+            ${{ runner.temp }}/dl3/fixtures/*/src/*.pdf
+            ${{ runner.temp }}/dl3/fixtures/*/src/*.tex
+          if-no-files-found: error
+          retention-days: 14
+
+  sweep:
+    name: zero-tolerance sweep (macOS)
+    needs: [inputs]
+    if: always() && needs.inputs.outputs.uploaded == 'true'
+    runs-on: macos-26
+    timeout-minutes: 60
+    env:
+      CI: "1"
+      FLASHTEX_NO_ACTIVATE: "1"
+      FLASHTEX_KEYCHAIN_OFF: "1"
+      FLASHTEX_REVIEW_HISTORY_DIR: "off"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: latest-stable
+      - run: swift --version && xcodebuild -version && sw_vers
+      - uses: actions/download-artifact@v4
+        with:
+          name: preview-parity-inputs
+          path: ${{ runner.temp }}/dl3
+      - name: swift test --filter PreviewParityTests (tolerance 0)
+        working-directory: apps/mac
+        env:
+          FLASHTEX_DL3_FIXTURES: ${{ runner.temp }}/dl3/fixtures
+          FLASHTEX_V3_PARITY_REQUIRE: "1"
+          FLASHTEX_V3_PARITY_OUT: ${{ runner.temp }}/dl3/parity
+          FLASHTEX_V3_PARITY_SCALES: ${{ inputs.scales || '1,2,4' }}
+        # The Core Graphics sweep, the checked-in fixture and the renderer's
+        # own checks; not the PDFKit comparison (a looser bound than 0 px,
+        # and a third full render of every page).
+        run: |
+          set -o pipefail
+          swift test --filter 'PreviewParityTests/(testEveryParityFixtureIsPixelIdenticalToThePDF|testCheckedInFixtureIsPixelIdenticalToThePDF|testGlyphsAreDrawnAtTheirOrigins|testScreenLayoutDrawsTheSamePixels)' \
+            2>&1 | tee "$RUNNER_TEMP/dl3/swift-test.log" | grep -vE '^\s*$' | tail -n 200
+      - name: summary (per scale, fallback rate, fallback pages)
+        if: always()
+        run: |
+          python3 tools/displaylist/preview_parity_summary.py \
+            --sweep "$RUNNER_TEMP/dl3/parity.coreGraphics.json" \
+            --positions "$RUNNER_TEMP/dl3/positions.json" | tee -a "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: preview-parity-report
+          path: |
+            ${{ runner.temp }}/dl3/parity.coreGraphics.json
+            ${{ runner.temp }}/dl3/swift-test.log
+          if-no-files-found: ignore
+          retention-days: 30
+
+  main-red:
+    name: main-red issue
+    needs: [inputs, sweep]
+    if: always() && github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      actions: read
+      issues: write
+      pull-requests: read
+    steps:
+      - uses: actions/checkout@v4
+      - name: open or update the issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BEFORE: ${{ github.event.before }}
+          AFTER: ${{ github.event.after }}
+        # --no-close: only a green ci.yml run on main's tip closes it.
+        run: scripts/ci/main-red.sh "${{ github.run_id }}" --only 'sweep|inputs' --no-close
