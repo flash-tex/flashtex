@@ -604,6 +604,7 @@ impl Globals {
         self.synctex_tag_counter = 0i32;
         // §1902
         self.halting_on_error_p = false;
+        self.kpse_make_tex_discard_errors = false;
         // §1916
         self.intr_state[crate::ix::U((100i32) as usize)] = hash_base;
         self.intr_state[crate::ix::U((101i32) as usize)] = frozen_control_sequence;
