@@ -575,7 +575,7 @@ fn merge_sealed(older: &Log, newer: &Log) -> Log {
                 *m = mx | my;
                 let mut all = mx | my;
                 while all != 0 {
-                    let bitv = all & all.wrapping_neg();
+                    let bitv = all.isolate_lowest_one();
                     let (in_x, in_y) = (mx & bitv != 0, my & bitv != 0);
                     if in_x {
                         vals.push(xv[kx]);
