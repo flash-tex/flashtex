@@ -64,6 +64,14 @@ final class EngineV3ExplainTests: XCTestCase {
                        "\\begin{itemize}\n\\item One\n\\end{itemize}\n\\end{document}\n")
     }
 
+    /// A CRLF document gets CRLF, never a bare LF (review of #1566).
+    func testTheInsertedEndUsesTheDocumentsLineEnding() {
+        let text = "\\begin{itemize}\r\n\\item One\r\n\\end{document}\r\n"
+        let m = "LaTeX Error: \\begin{itemize} on input line 1 ended by \\end{document}."
+        XCTAssertEqual(fixed(apply(row("latex/environment-mismatch", m, in: text, at: "\\end{document}"), m, text), text),
+                       "\\begin{itemize}\r\n\\item One\r\n\\end{itemize}\r\n\\end{document}\r\n")
+    }
+
     func testNoFixWhereItWouldGuess() {
         // \begin{foo} unknown: LaTeX closes `document` with \end{foo}; never "fix" that.
         var text = "\\begin{foo}x\\end{foo}\n"

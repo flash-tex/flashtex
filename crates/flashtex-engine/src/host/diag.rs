@@ -311,7 +311,7 @@ pub fn build(
         }
     }
     out.sort_by_key(|x| x.0);
-    locate_runaways(&mut out, terminal, root);
+    locate_runaways(&mut out, terminal, root, &mut b);
     let diags = out
         .into_iter()
         .enumerate()
@@ -334,7 +334,7 @@ pub fn build(
 /// place either ("Emergency stop", "Fatal error occurred"). Nothing is
 /// placed when the text is not found. Read only from what TeX printed and
 /// the files: the engine's output is not touched.
-fn locate_runaways(out: &mut [(usize, Diag)], terminal: &[u8], root: &Path) {
+fn locate_runaways(out: &mut [(usize, Diag)], terminal: &[u8], root: &Path, b: &mut Builder) {
     let mut i = 0;
     while i < out.len() {
         let (at, d) = &out[i];
@@ -346,14 +346,17 @@ fn locate_runaways(out: &mut [(usize, Diag)], terminal: &[u8], root: &Path) {
             i += 1;
             continue;
         };
-        let Some((path, line, col)) = opened_files(terminal, root)
-            .iter()
+        // only a brace still open at its file's end (newest file first): a
+        // closed copy of the same text elsewhere is not the runaway
+        let Some(((path, name), (line, col, offset))) = opened_files(terminal, root)
+            .into_iter()
             .rev()
-            .find_map(|f| find_open_brace(f, &text).map(|(l, c)| (f.clone(), l, c)))
+            .find_map(|f| find_open_brace(&f.0, &text).map(|at| (f, at)))
         else {
             i += 1;
             continue;
         };
+        let span = b.span(name.as_bytes(), line as i32);
         let mut j = i;
         while j < out.len() && (j == i || (out[j].1.file.is_none() && out[j].1.fatal)) {
             let d = &mut out[j].1;
@@ -361,6 +364,8 @@ fn locate_runaways(out: &mut [(usize, Diag)], terminal: &[u8], root: &Path) {
             d.line = Some(line as i64);
             d.col = Some(col as i64);
             d.range = Some((col as i64, col as i64 + 1));
+            d.offset = Some(offset as i64);
+            d.span = span;
             d.exact = false;
             j += 1;
         }
@@ -386,11 +391,16 @@ fn runaway_text(term: &[u8]) -> Option<String> {
     None
 }
 
-/// The project's files TeX opened, in order: `(./main.tex` and the like on
-/// the terminal, inside `root`.
-fn opened_files(term: &[u8], root: &Path) -> Vec<PathBuf> {
+/// The project's files TeX opened, in order, with the name TeX printed:
+/// `(./main.tex` and the like on the terminal, inside `root` once both are
+/// canonical (`(../x.tex` is not the project's), named under `root` as
+/// given (the client strips that prefix).
+fn opened_files(term: &[u8], root: &Path) -> Vec<(PathBuf, String)> {
     let t = String::from_utf8_lossy(term);
-    let mut v: Vec<PathBuf> = Vec::new();
+    let mut v: Vec<(PathBuf, String)> = Vec::new();
+    let Ok(canon_root) = std::fs::canonicalize(root) else {
+        return v;
+    };
     for (i, _) in t.match_indices('(') {
         let name: String = t[i + 1..]
             .chars()
@@ -405,18 +415,25 @@ fn opened_files(term: &[u8], root: &Path) -> Vec<PathBuf> {
         } else {
             root.join(name.trim_start_matches("./"))
         };
-        if full.starts_with(root) && full.is_file() && !v.contains(&full) {
-            v.push(full);
+        let Ok(canon) = std::fs::canonicalize(&full) else {
+            continue;
+        };
+        let Ok(rel) = canon.strip_prefix(&canon_root) else {
+            continue;
+        };
+        let full = root.join(rel);
+        if canon.is_file() && !v.iter().any(|(f, _)| *f == full) {
+            v.push((full, name));
         }
     }
     v
 }
 
 /// Where in `path` an argument starting with `text` (as TeX shows tokens:
-/// spaces and line ends are not compared, nor comments) opens: the line
-/// (1-based) and byte column of its `{`. Of several, the last whose brace
-/// is never closed, else the last.
-fn find_open_brace(path: &Path, text: &str) -> Option<(usize, usize)> {
+/// spaces and line ends are not compared, nor comments) opens and is never
+/// closed: the line (1-based), byte column and byte offset of its `{`; of
+/// several, the last. A copy whose brace closes is not a runaway: none.
+fn find_open_brace(path: &Path, text: &str) -> Option<(usize, usize, usize)> {
     let src = std::fs::read(path).ok()?;
     // the source without blanks and comments, and each byte's offset
     let mut flat: Vec<u8> = Vec::with_capacity(src.len());
@@ -482,19 +499,14 @@ fn find_open_brace(path: &Path, text: &str) -> Option<(usize, usize)> {
         .filter(|(i, w)| *w == want.as_slice() && (*i == 0 || flat[i - 1] != b'\\'))
         .map(|(i, _)| i)
         .collect();
-    let hit = hits
-        .iter()
-        .rev()
-        .find(|h| open.contains(h))
-        .or(hits.last())
-        .copied()?;
+    let hit = hits.iter().rev().find(|h| open.contains(h)).copied()?;
     let off = at[hit];
     let line_start = src[..off]
         .iter()
         .rposition(|&c| c == b'\n')
         .map_or(0, |p| p + 1);
     let line = src[..off].iter().filter(|&&c| c == b'\n').count() + 1;
-    Some((line, off - line_start))
+    Some((line, off - line_start, off))
 }
 
 /// What the terminal shows, read as the 3.1 `DIAGNOSTIC`s were read
@@ -939,7 +951,7 @@ mod tests {
             ),
             (s.find("! Emergency").unwrap(), err("Emergency stop.", true)),
         ];
-        locate_runaways(&mut out, term, &root);
+        locate_runaways(&mut out, term, &root, &mut Builder::new(&root));
         for (_, d) in &out {
             assert_eq!(
                 d.file.as_deref(),
@@ -960,9 +972,60 @@ mod tests {
                 .map(|&c| if c == b'A' { b'Z' } else { c })
                 .collect::<Vec<u8>>(),
             &root,
+            &mut Builder::new(&root),
         );
         assert_eq!(none[0].1.file, None);
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// Review of #1566: the same text closed in an earlier `\input` file
+    /// (opened after main.tex, so newer) is not the runaway; the unclosed
+    /// brace in main.tex is. And a file outside the project (`(../x.tex`)
+    /// is never read.
+    #[test]
+    fn a_closed_copy_in_another_file_does_not_take_the_runaway() {
+        let base = std::env::temp_dir().join(format!("flashtex-runaway2-{}", std::process::id()));
+        let root = base.join("proj");
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(
+            root.join("intro.tex"),
+            "% the same text, closed\n\\textbf{bold text\nend. \\end{document}} intro.\n",
+        )
+        .unwrap();
+        std::fs::write(
+            root.join("main.tex"),
+            "\\documentclass{article}\n\\begin{document}\n\\input{intro}\nMore \\textbf{bold text\nend.\n\\end{document}\n",
+        )
+        .unwrap();
+        // outside the project: an unclosed copy that must not be read
+        std::fs::write(base.join("x.tex"), "\\textbf{bold text\n").unwrap();
+        let term = b"(./main.tex (./intro.tex) (../x.tex)\nRunaway argument?\n{bold text end. \\end {document} \\ETC.\n! File ended while scanning use of \\textbf .\n";
+        let s = String::from_utf8_lossy(term);
+        let mut out = vec![(
+            s.find("! File ended").unwrap(),
+            Diag {
+                message: "File ended while scanning use of \\textbf .".into(),
+                ..Diag::default()
+            },
+        )];
+        locate_runaways(&mut out, term, &root, &mut Builder::new(&root));
+        let d = &out[0].1;
+        assert_eq!(
+            d.file.as_deref(),
+            Some(root.join("main.tex").display().to_string().as_str()),
+            "the unclosed brace in main.tex, not intro.tex's closed copy nor ../x.tex"
+        );
+        assert_eq!((d.line, d.col), (Some(4), Some(12)));
+        let main = std::fs::read(root.join("main.tex")).unwrap();
+        assert_eq!(main[d.offset.unwrap() as usize], b'{');
+        assert_eq!(
+            opened_files(term, &root)
+                .iter()
+                .map(|(_, n)| n.as_str())
+                .collect::<Vec<_>>(),
+            ["./main.tex", "./intro.tex"]
+        );
+        let _ = std::fs::remove_dir_all(&base);
     }
 
     #[test]

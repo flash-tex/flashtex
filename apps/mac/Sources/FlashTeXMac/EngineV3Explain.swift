@@ -153,7 +153,8 @@ enum EngineV3Explain {
             guard let (begun, ended) = mismatch(message), begun != ended, begun != "document", marked == "\\end{\(ended)}",
                   let line = openedLine(message), lineText(text, line)?.contains("\\begin{\(begun)}") == true else { return nil }
             if ended == "document" {
-                return replace(src.startByte, src.startByte, with: "\\end{\(begun)}\n", "add \\end{\(begun)} before \\end{document}")
+                let eol = text.contains("\r\n") ? "\r\n" : "\n" // the document's own line ending
+                return replace(src.startByte, src.startByte, with: "\\end{\(begun)}" + eol, "add \\end{\(begun)} before \\end{document}")
             }
             return replace(src.startByte, src.endByte, with: "\\end{\(begun)}", "close with \\end{\(begun)}")
         case "latex/file-not-found":
