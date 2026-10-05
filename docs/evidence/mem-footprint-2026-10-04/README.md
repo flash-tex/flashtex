@@ -122,6 +122,13 @@ restore had not run there (`restore` 190 M instructions per key against 43 M; th
 rose from 8 to 180 during that run, and the preparation is cut short by the next request).
 Wall-clock times of these runs are in the raw files and are not a comparison.
 
+**Gates** (`raw/gate-pr-1.txt`, `scripts/gate.sh pr` at `6735a5d31`, load 230–330): rustfmt, the
+licence boundary, the parity self-tests and the parity fixtures' baseline pass. Clippy found one
+`unnecessary_sort_by` in the new accounting (fixed in the next commit; `cargo clippy -p
+flashtex-engine --all-targets -D warnings` then passes). Of the engine's tests one failed:
+`host_lifetime::a_once_host_exits_when_no_connection_comes_in_time` (the debug host did not exit
+within its 300 s limit at load 300); rerun alone, both `host_lifetime` tests pass.
+
 ## Reproducing
 
 ```
