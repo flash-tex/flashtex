@@ -315,13 +315,16 @@ merge-queue groups still on the old workflow throughout.
 | `quick (touched crates)` (a workflow + script change: no crates) | 0.6–3.1 min | — |
 | trip / etrip / pdfTeX regression (Linux) | 0.9–1.7 min | — |
 | `build (workspace, all targets)` | 5.0–5.3 min (cache from a restore key) | — |
-| engine parity, `lockstep` shard | 2.0–2.9 min (build 56 s, 1,466 cases in 4 slices: 22 s) | not measured (queued behind old-workflow groups); estimated 2–3.5 min |
-| engine parity, `P-T fixtures` shard | 3.5–5.6 min (build 87 s, 86/86 P-T1 and P-T2: 193 s) | **5.3 min** (build 58 s, parity 242 s) |
-| engine parity, `engine tests` shard | 5.6–5.9 min | not measured; estimated 5–6 min (the `tests` step took 348 s inside the old single job on a busy PC) |
-| **critical path** | **~6 min** | **~6–7 min (estimate)** |
+| engine parity, `lockstep` shard | 2.0–2.9 min (build 56 s, 1,466 cases in 4 slices: 22 s) | **2.7 min**, after waiting 54 min for a runner |
+| engine parity, `P-T fixtures` shard | 3.5–5.6 min (build 87 s, 86/86 P-T1 and P-T2: 193 s) | **5.3 min** (build 58 s, parity 242 s), after waiting 7 min |
+| engine parity, `engine tests` shard | 5.6–5.9 min | **9.8 min**, after waiting 30 min |
+| **critical path** | **~6 min** | **9.8 min** of work, and 7–54 min of waiting for one of the PC's three runners |
 
-So a `merge_group` run that touches the engine is bounded by its slowest
-parity shard, about 6–7 minutes of work (target ≤ 12), and one that does not by
+So a `merge_group` run that touches the engine was bounded by its slowest
+parity shard: about 6 minutes hosted, 9.8 on the busy PC (target ≤ 12) — before
+the waits, which on the PC dwarfed the work. That is why the gate's parity moved
+to hosted runners (the second change, below). One that does not touch it was
+bounded by
 `build`, about 5 minutes (target ≤ 5; `quick` grows with the crates a group
 touches). Before, the same queue entries' slowest jobs were the Mac app (18.6–22
 min of work) and the Rust workspace (11.8–12.2), and their wall clock was 20–48
