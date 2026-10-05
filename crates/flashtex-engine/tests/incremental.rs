@@ -1071,6 +1071,111 @@ fn a_fatal_edit_after_an_interrupted_aux_pass_keeps_the_pdf() {
     interrupt_then(&e, "fatal-after-interrupt", base, &label, "2 1", &fatal);
 }
 
+/// genvol.py's vol-closed, shorter: three blocks, each writes a file with
+/// `\immediate\write`, closes it, ships a page or two and `\input`s it.
+fn vol_closed_doc() -> String {
+    let mut s = String::from("\\documentclass{article}\n\\newwrite\\tmp\n\\begin{document}\n\n");
+    for k in 0..3 {
+        s.push_str(&format!(
+            "\\immediate\\openout\\tmp=\\jobname-tmp.tex\n\
+             \\immediate\\write\\tmp{{Instance {k} says {}.}}\n\\immediate\\closeout\\tmp\n\n",
+            "x".repeat(k + 1)
+        ));
+        for i in 0..25 {
+            s.push_str(&para(k * 25 + i, "delta"));
+        }
+        s.push_str("\\input{\\jobname-tmp.tex}\n\n");
+    }
+    s.push_str("\\end{document}\n");
+    s
+}
+
+/// Issue #1550 (soundness sweep D, vol-closed `3:second-after-interrupt`):
+/// an edit breaks a `\closeout` (`\closeouet`), so the file is still open
+/// for output when it is `\input` pages later. pdfTeX's `\write` line is
+/// still in the stream's buffer then, and the `\input` reads an empty file;
+/// a checkpoint between them had flushed the buffer, and the run read the
+/// line. Such a read now redoes the run from the format, with that file
+/// never flushed by a checkpoint (`system::no_flush`). Also on the
+/// document's first compile, and back.
+#[test]
+fn a_file_read_while_open_for_output_is_read_as_from_scratch() {
+    let Some(e) = env() else {
+        common::no_texlive();
+        return;
+    };
+    let base = vol_closed_doc();
+    let lost =
+        base.replacen("\\closeout", "\\closeouet", 2)
+            .replacen("\\closeouet", "\\closeout", 1);
+    assert_ne!(base, lost);
+    let dir = e.dir.join("read-while-open");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let mut h = Host::start(&e, &dir);
+    for _ in 0..3 {
+        compile_and_check(&e, &mut h, &dir, &[("doc.tex", &base)], "settle");
+    }
+    compile_and_check(&e, &mut h, &dir, &[("doc.tex", &lost)], "closeout lost");
+    compile_and_check(
+        &e,
+        &mut h,
+        &dir,
+        &[("doc.tex", &lost)],
+        "closeout lost, again",
+    );
+    let edited = lost.replacen("Paragraph 40 with", "Paragraph 40 now with", 1);
+    compile_and_check(
+        &e,
+        &mut h,
+        &dir,
+        &[("doc.tex", &edited)],
+        "an edit after it",
+    );
+    compile_and_check(&e, &mut h, &dir, &[("doc.tex", &base)], "back");
+    drop(h);
+    // the first compile, from the format
+    let dir = e.dir.join("read-while-open-first");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let mut h = Host::start(&e, &dir);
+    compile_and_check(&e, &mut h, &dir, &[("doc.tex", &lost)], "first compile");
+}
+
+/// Issue #1550 as sweep D found it: the broken `\closeout` arrives while
+/// the compile of an earlier edit is stopped.
+#[test]
+fn a_file_read_while_open_for_output_after_an_interrupt() {
+    let Some(e) = env() else {
+        common::no_texlive();
+        return;
+    };
+    let base = vol_closed_doc();
+    let first = base.replacen(
+        "\\immediate\\closeout\\tmp\n\n",
+        "\\immediate\\closeout\\tmp\n\n\\section{Inserted}\n\n",
+        2,
+    );
+    let first = first.replacen(
+        "\\immediate\\closeout\\tmp\n\n\\section{Inserted}\n\n",
+        "\\immediate\\closeout\\tmp\n\n",
+        1,
+    );
+    let second =
+        first
+            .replacen("\\closeout", "\\closeouet", 2)
+            .replacen("\\closeouet", "\\closeout", 1);
+    assert!(first != base && second != first);
+    interrupt_then(
+        &e,
+        "read-while-open-interrupt",
+        &base,
+        &first,
+        "1 2",
+        &second,
+    );
+}
+
 /// P4-COLD-PREEMPT (Commander ruling, DESIGN.md §5.1/§5.3): a run from the
 /// format -- a document's first compile, or one after a preamble edit --
 /// stops for newer work once it has taken S₀, and keeps S₀ and the

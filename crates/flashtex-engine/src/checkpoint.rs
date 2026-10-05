@@ -122,6 +122,25 @@ fn changed_outside(rec: &ExtRecord, also: &[String]) -> Option<String> {
 /// Flushes every output stream (before a checkpoint records any).
 struct FlushFiles;
 
+/// The first output stream whose buffer holds output, on a file that is
+/// `system::no_flush`: a checkpoint now would write out what a run from
+/// scratch has not (issue #1550), so none is taken.
+struct NoFlush(Option<String>);
+
+impl FileVisit for NoFlush {
+    fn alpha(&mut self, f: &mut AlphaFile) {
+        if self.0.is_none() {
+            self.0 = f.pending_output().filter(|p| system::no_flush(p));
+        }
+    }
+    fn byte(&mut self, f: &mut ByteFile) {
+        if self.0.is_none() {
+            self.0 = f.pending_output().filter(|p| system::no_flush(p));
+        }
+    }
+    fn word(&mut self, _f: &mut WordFile) {}
+}
+
 impl FileVisit for FlushFiles {
     fn alpha(&mut self, f: &mut AlphaFile) {
         f.flush_output()
@@ -683,6 +702,13 @@ impl Globals {
         // Every stream flushed before any is recorded: streams on one file
         // (LaTeX's `\tableofcontents` twice opens the `.toc` twice) then
         // record the file's length alike, not what each had flushed.
+        let mut nf = NoFlush(None);
+        self.visit_files(&mut nf);
+        if let Some(p) = nf.0 {
+            return Err(format!(
+                "cannot checkpoint: {p} holds output not written out, and is read while open"
+            ));
+        }
         self.visit_files(&mut FlushFiles);
         let mut v = SnapFiles {
             out: vec![],
@@ -715,6 +741,8 @@ impl Globals {
 
     /// Put the host state of `rec` back.
     pub fn restore_ext(&mut self, rec: &ExtRecord) -> Result<(), String> {
+        // (each stream is reopened as `rec` has it: `system::mark_ahead`)
+        system::clear_ahead();
         let mut v = RestoreFiles {
             snaps: &rec.files,
             i: 0,
