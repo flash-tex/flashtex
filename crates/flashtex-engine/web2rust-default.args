@@ -54,6 +54,16 @@
 --inline flush_list=always
 --inline begin_token_list=always
 --inline end_token_list=always
+# Each routine indexes mem and eqtb through a local copy of the array header
+# (crate::arena::ArrView): an element write through a raw pointer otherwise
+# makes LLVM reload the address, length and flag pointer from Globals before
+# the next access (P6). Same checks, same barrier. Measured (instructions,
+# settled pass, with diag.rs's out-of-line thread-local): full-100 -4.1%,
+# long-deck -3.2%; viewing hash, the save, input and parameter stacks,
+# str_pool, str_start and buffer as well was worse (each view costs its loads
+# at every call of a routine that uses it).
+--array-view mem
+--array-view eqtb
 
 # Every array subscript becomes crate::ix::U(...), so that src/ix.rs decides
 # how it is checked: always, except in a benchmarking build with the
