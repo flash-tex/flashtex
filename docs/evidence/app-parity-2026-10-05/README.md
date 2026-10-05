@@ -71,7 +71,9 @@ By section at `0752115a1`:
 - **B9** moved from missing to **different**: it is absent on both paths (see the row).
 - **D5** moved from different to **partial**: the successor exists, but it is not
   shipped under the old name yet.
-- **A9** is unchanged (**missing**): it is pending an owner decision.
+- **A9** is still **missing**, and is now **P5 scope**: the owner ruled (2026-10-05,
+  Q-new-1 of `reviews/2026-10-05.md`; relayed by the Commander, kabir-claude) that the Unicode mode (XeTeX, lane XETEX-S1)
+  carries project fonts before P5, rather than retiring them.
 
 ## The DESIGN §6.2 / §10 named items
 
@@ -103,7 +105,7 @@ By section at `0752115a1`:
 | A6 | `\include` / `\input` resolution | different (intended) | [B] Real TeX over a symlinked copy, capped at 20,000 entries (`EngineV3Snapshot.swift:69`, `maxEntries`) |
 | A7 | Which file compiles from a chapter tab | different | The entry; else the first open document with `\documentclass` (`EngineV3Session.mainFile`, `EngineV3Session.swift:808`). [V] `EngineV3OpenTests.testOpeningAnotherFileCompilesThatFile` |
 | A8 | `flashtex.toml` texinputs and packages, Fetch Missing Packages | **done** (#1421, #1444) | [V] `EngineChoiceTests.testTheNewEngineFindsTexinputsPackages` (texinputs, real host); [F] `EngineV3PackagesTests.testAPinnedPackageAndALibraryCompileUnderTheNewEngine` (pins and libraries), `EngineChoiceTests.testManifestRules`, `.testTexinputsLinksYieldToProjectFiles` |
-| A9 | Project and system fonts (`[fonts]`) | **missing** (**pending an owner decision**; status left unchanged) | v3 is pdfLaTeX only. Since #1421, a `[fonts]` project visibly falls back to the old engine, with a banner, the status item and a VoiceOver announcement (`EngineChoice.Blocker.projectFonts`, `EngineChoice.swift:78`). [V] `EngineChoiceTests.testProjectFontsFallBackAndSayWhy`, `.testStatusItemAndBannerShowTheFallback`. The owner must decide whether `[fonts]` is ported, dropped or kept on the old engine |
+| A9 | Project and system fonts (`[fonts]`) | **missing**; **P5 scope via the Unicode mode** (owner, 2026-10-05) | v3 is pdfLaTeX only. Since #1421, a `[fonts]` project visibly falls back to the old engine, with a banner, the status item and a VoiceOver announcement (`EngineChoice.Blocker.projectFonts`, `EngineChoice.swift:78`). [V] `EngineChoiceTests.testProjectFontsFallBackAndSayWhy`, `.testStatusItemAndBannerShowTheFallback`. The owner ruled (2026-10-05, Q-new-1) that the Unicode mode (XeTeX, lane XETEX-S1) carries `[fonts]` in P5, so this row closes when a `[fonts]` project compiles on the Unicode mode instead of falling back |
 | A10 | BibTeX, biber, makeindex | done (trusted projects) | [V] `EngineV3ToolsTests.testTrustedProjectRunsBibtexAndTheCitationResolves`; [F] `.testRequestCarriesExternalToolsAndTheClientSays32` |
 | A11 | Tool-run status | done | [V] `EngineV3ToolsTests.testUntrustedProjectRunsNoToolAndSaysWhy`, `.testTrustingTheProjectMidSessionRunsTheTools`, `EngineV3RunawayTests.testASupersededRunLeavesTheCurrentCyclesRowsAndNote` |
 | A12 | Shell escape and project trust | done | [V] `EngineV3TrustTests.testQuarantinedProjectCompilesWithShellEscapeOffUntilTrusted`; [F] 11 more in `EngineV3TrustTests` |
@@ -211,9 +213,10 @@ pages, dimmed. Strict mode sends halt-on-error ([F] `EngineV3BestEffortTests`, 6
 
 These are the 4 rows still missing or partial, ranked by user impact, highest first:
 
-1. **A9, project fonts (`[fonts]`): missing; pending an owner decision.** Every
-   `[fonts]` project silently stays on the old engine (with a visible banner), so it
-   blocks deleting the old engine for those users. Its status is not changed here.
+1. **A9, project fonts (`[fonts]`): missing; P5 scope via the Unicode mode (owner,
+   2026-10-05).** Every `[fonts]` project stays on the old engine (with a visible
+   banner), so it blocks deleting the old engine for those users until the Unicode
+   mode (XeTeX, lane XETEX-S1) compiles them.
 2. **D5, `flashtex build/check/watch` successor: partial.** `flashtex-v3` works, but
    the shipped `flashtex` CLI still links the old engine. The rename and packaging
    (RQ6) are needed before the old crates are deleted.
