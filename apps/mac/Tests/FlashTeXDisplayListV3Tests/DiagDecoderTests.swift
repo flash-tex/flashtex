@@ -56,11 +56,8 @@ final class DiagDecoderTests: XCTestCase {
         func le32(_ v: Int32) -> [UInt8] { withUnsafeBytes(of: v.littleEndian) { Array($0) } }
         func leU32(_ v: UInt32) -> [UInt8] { withUnsafeBytes(of: v.littleEndian) { Array($0) } }
         var p = Array("T3B1".utf8) + leU32(2)
-        // One append per field: chained `+` over array literals here exceeded
-        // the type checker's time limit on hosted macos-15 (Xcode 26.3).
-        let rows: [UInt8] = [0xFF, 0xC0, 0x80, 0x40] // 10 px wide: 2 bytes per row
-        p.append(65); p += le32(-1); p += le32(2); p += leU32(10); p += leU32(2); p += rows
-        p.append(32); p += le32(0); p += le32(0); p += leU32(0); p += leU32(0)
+        p += [65] + le32(-1) + le32(2) + leU32(10) + leU32(2) + [0xFF, 0xC0, 0x80, 0x40] // 10 px wide: 2 bytes per row
+        p += [32] + le32(0) + le32(0) + leU32(0) + leU32(0)
         let g = try DL3Type3.decode(p)
         XCTAssertEqual(g.map(\.code), [65, 32])
         XCTAssertEqual(g[0].llx, -1); XCTAssertEqual(g[0].lly, 2); XCTAssertEqual(g[0].bytesPerRow, 2); XCTAssertEqual(g[0].rows, [0xFF, 0xC0, 0x80, 0x40])

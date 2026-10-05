@@ -63,15 +63,6 @@ on:
         description: scales in px/pt, comma-separated (the 31-scale sweep is 1,1.14,1.25,...,8)
         type: string
         default: '1,2,4'
-      runner:
-        # GitHub-hosted arm64 images only. When macos-26 is short of capacity
-        # GitHub cancels the job after ~15 minutes ("not acquired by Runner of
-        # type hosted"); macos-15 is another pool. Both sides of the
-        # comparison render on the same machine, so either is a valid run.
-        description: hosted macOS image for the sweep
-        type: choice
-        options: [macos-26, macos-15]
-        default: macos-26
 
 concurrency:
   group: preview-parity-${{ github.ref }}
@@ -164,7 +155,13 @@ jobs:
     name: zero-tolerance sweep (macOS)
     needs: [inputs]
     if: always() && needs.inputs.outputs.uploaded == 'true'
-    runs-on: ${{ inputs.runner || 'macos-15' }}  # TEMPORARY (branch measurement); macos-26 before merge
+    # macos-26 only, as ci.yml's mac app. macos-15's newest Xcode (26.3, Swift
+    # 6.2.4) cannot type-check the app (Fonts.swift:61 and a test, "unable to
+    # type-check this expression in reasonable time"; run 37372777558); the
+    # app is built with Xcode 26.6 / Swift 6.3.3. When arm64 capacity is short,
+    # GitHub cancels a queued job after ~15 minutes ("not acquired by Runner
+    # of type hosted"): re-run it; that is not a parity result.
+    runs-on: macos-26
     timeout-minutes: 60
     env:
       CI: "1"
