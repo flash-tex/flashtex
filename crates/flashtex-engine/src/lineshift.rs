@@ -47,8 +47,9 @@
 //!
 //! A dirty checkpoint of the old run is never restored after the
 //! convergence (its page is kept; `incr` drops the checkpoint). The
-//! journal's length, the marks and the live taints are part of each
-//! checkpoint's host record ([`Rec`], `ExtRecord::lines`).
+//! journal's entries since the checkpoint before, the marks and the live
+//! taints are part of each checkpoint's host record ([`Rec`],
+//! `ExtRecord::lines`).
 
 use crate::generated::Globals;
 use std::cell::{Cell, RefCell};
@@ -75,16 +76,21 @@ pub struct Taint {
 }
 crate::codec_struct!(Taint { head, first, reads });
 
-/// A checkpoint's line state: how long the journal was, the largest line
-/// number of no known file the state holds (`marks`), and the live taints.
+/// A checkpoint's line state: the journal's entries since the checkpoint
+/// before it (`here`: the run's reads and prints of line numbers between
+/// the two), the largest line number of no known file the state holds
+/// (`marks`), and the live taints. The journal lives in the records, an
+/// interval each, so that it follows the checkpoints through every restore,
+/// jump, pass and thinning (`Globals::retain_checkpoints` hands a dropped
+/// checkpoint's entries to the next one kept).
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Rec {
-    pub events: usize,
+    pub here: Vec<LineRead>,
     pub marks: i32,
     pub taints: Vec<Taint>,
 }
 crate::codec_struct!(Rec {
-    events,
+    here,
     marks,
     taints
 });
@@ -96,6 +102,7 @@ struct St {
     /// The confined reads of the definition being scanned.
     def_reads: Vec<LineRead>,
     taints: Vec<Taint>,
+    /// The journal's entries since the last checkpoint.
     events: Vec<LineRead>,
 }
 
@@ -119,36 +126,22 @@ pub fn reset() {
     THE_DEF.with(|t| t.set(false));
 }
 
-/// The journal's entries from `n` on.
-pub fn events_from(n: usize) -> Vec<LineRead> {
-    with(|s| s.events.get(n..).map(|v| v.to_vec()).unwrap_or_default())
-}
-
-/// The journal's length.
-pub fn events_len() -> usize {
-    with(|s| s.events.len())
-}
-
-/// Append entries to the journal (a convergence splices the old run's
-/// later entries after the new run's).
-pub fn append_events(v: &[LineRead]) {
-    with(|s| s.events.extend_from_slice(v));
-}
-
-/// This state's line record, for a checkpoint.
+/// This state's line record, for a checkpoint (or the record of a run's
+/// end, or of a convergence point, which become checkpoints' records too):
+/// the journal's entries since the last checkpoint go into it.
 pub fn record(g: &Globals) -> Rec {
     let marks = marks(g);
     with(|s| Rec {
-        events: s.events.len(),
+        here: std::mem::take(&mut s.events),
         marks,
         taints: s.taints.clone(),
     })
 }
 
-/// Put a checkpoint's line record back.
+/// Put a checkpoint's line record back: nothing has been read since it.
 pub fn restore(r: &Rec) {
     with(|s| {
-        s.events.truncate(r.events);
+        s.events.clear();
         s.taints = r.taints.clone();
         s.confine = false;
         s.def_reads.clear();

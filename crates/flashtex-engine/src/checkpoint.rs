@@ -1215,7 +1215,6 @@ impl Globals {
         );
         let rs_delta = now.rs as i64 - at_id.rs as i64;
         let notes_delta = now.notes as i64 - at_id.notes as i64;
-        let lines_delta = now.lines.events as i64 - at_id.lines.events as i64;
         // The old run's output opens after `id` (opens_tail starts at the
         // restore target's count, which `id`'s is not below).
         let old_opens_after = |upto: usize| -> &[String] {
@@ -1252,7 +1251,6 @@ impl Globals {
             );
             r.rs = (r.rs as i64 + rs_delta) as usize;
             r.notes = (r.notes as i64 + notes_delta) as usize;
-            r.lines.events = (r.lines.events as i64 + lines_delta) as usize;
             r
         };
         // The read-set: the new run's up to here, then the old run's after
@@ -1405,10 +1403,56 @@ impl Globals {
     /// Drop every checkpoint `keep` rejects, except the newest (their undo
     /// logs merge into their predecessors').
     pub fn retain_checkpoints(&mut self, keep: &dyn Fn(CheckpointId) -> bool) {
+        let order = self.arena.checkpoint_ids().to_vec();
         self.arena.retain(keep);
         let ids: std::collections::HashSet<CheckpointId> =
             self.arena.checkpoint_ids().iter().copied().collect();
-        self.layer().records.retain(|(i, _)| ids.contains(i));
+        // A dropped checkpoint's line journal (the reads and prints of line
+        // numbers since the checkpoint before it, `crate::lineshift`) goes
+        // to the next checkpoint kept, which then holds the whole interval.
+        let records = &mut self.layer().records;
+        let at: std::collections::HashMap<CheckpointId, usize> = records
+            .iter()
+            .enumerate()
+            .map(|(k, (i, _))| (*i, k))
+            .collect();
+        let mut carry = vec![];
+        for id in order {
+            let Some(&k) = at.get(&id) else { continue };
+            let here = &mut records[k].1.lines.here;
+            if ids.contains(&id) {
+                if !carry.is_empty() {
+                    carry.append(here);
+                    *here = std::mem::take(&mut carry);
+                }
+            } else {
+                carry.append(here);
+            }
+        }
+        records.retain(|(i, _)| ids.contains(i));
+    }
+
+    /// The line records of the pending branch's checkpoints (the old run's
+    /// future), in the order the run took them (`crate::lineshift`).
+    pub fn pending_lines(&self) -> Vec<(CheckpointId, crate::lineshift::Rec)> {
+        let Some(l) = self.layer_ref() else {
+            return vec![];
+        };
+        let Some(p) = l.pending.as_ref() else {
+            return vec![];
+        };
+        p.branch
+            .ids()
+            .iter()
+            .filter_map(|&id| {
+                let r = p
+                    .records
+                    .iter()
+                    .find(|(i, _)| *i == id)
+                    .or_else(|| l.records.iter().rev().find(|(i, _)| *i == id))?;
+                Some((id, r.1.lines.clone()))
+            })
+            .collect()
     }
 
     /// Drop every checkpoint.

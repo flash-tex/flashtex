@@ -399,12 +399,8 @@ struct Obs {
     /// old run had made at its end: one after a checkpoint is a barrier
     /// there (DESIGN.md §5.3).
     old_effects_end: usize,
-    /// DESIGN.md §5.3 rule (c): the edits' line shifts (`crate::lineshift`),
-    /// and the old run's line journal at its end from the restart point on
-    /// (entry `old_line_base` first).
+    /// DESIGN.md §5.3 rule (c): the edits' line shifts (`crate::lineshift`).
     shifts: Vec<crate::lineshift::Shift>,
-    old_line_events: Vec<crate::lineshift::LineRead>,
-    old_line_base: usize,
     /// The line shifts each old page checkpoint still owes (`Reloc`): its
     /// stored state numbers lines as the run that took it did.
     old_lines: HashMap<CheckpointId, Vec<crate::lineshift::Shift>>,
@@ -660,7 +656,7 @@ impl Obs {
         // line number from here on that the edit may have moved
         // (`crate::lineshift`) is a barrier too; and the run goes on live
         // from an old checkpoint the shift can be put right in.
-        let line_barrier = self.line_barrier(&o);
+        let line_barrier = self.line_barrier(g, old);
         let end_dirty = self.old_end_dirty(g);
         // (b) nothing the old run reads from here on has changed, and it
         // makes no lookup from here on whose answer is different now (a
@@ -713,7 +709,7 @@ impl Obs {
                     old,
                     o.effects_len,
                     written_read.as_ref().map(|r| r.0),
-                    line_barrier,
+                    line_barrier.as_ref().map(|b| b.0),
                 ) {
                     Some(m) => Some(m),
                     None => {
@@ -728,9 +724,7 @@ impl Obs {
                                 "the old run reads a moved line number next ({:?}), or has no \
                              later checkpoint the line shift can be put right in (its end's \
                              is {})",
-                                line_barrier.and_then(|i| self
-                                    .old_line_events
-                                    .get(i.checked_sub(self.old_line_base)?)),
+                                line_barrier.as_ref().map(|b| &b.1),
                                 if end_dirty { "dirty" } else { "clean" }
                             ),
                         })
@@ -809,12 +803,21 @@ impl Obs {
         lines: Option<usize>,
     ) -> Option<CheckpointId> {
         let at = self.old_pages.iter().position(|p| p.ckpt == Some(old))?;
+        let order: HashMap<CheckpointId, usize> = match lines {
+            Some(_) => g
+                .pending_ids()
+                .into_iter()
+                .enumerate()
+                .map(|(k, i)| (i, k))
+                .collect(),
+            None => HashMap::new(),
+        };
         let mut m = None;
         for id in self.old_pages[at + 1..].iter().filter_map(|p| p.ckpt) {
             let rec = g.pending_record(id)?;
             if rec.effects_len > effects
                 || read.is_some_and(|i| rec.reads.0 > i)
-                || lines.is_some_and(|i| rec.lines.events > i)
+                || lines.is_some_and(|b| order.get(&id).is_none_or(|&k| k >= b))
             {
                 break;
             }
@@ -827,20 +830,33 @@ impl Obs {
         m
     }
 
-    /// DESIGN.md §5.3 rule (c): the index in the old run's line journal of
-    /// its first entry after checkpoint `o` that may be a line an edit
-    /// moved (`crate::lineshift`): what the old run read or printed there
-    /// would be another number now.
-    fn line_barrier(&self, o: &ExtRecord) -> Option<usize> {
+    /// DESIGN.md §5.3 rule (c): the old run's first read or print of a line
+    /// number after checkpoint `old` that an edit may have moved
+    /// (`crate::lineshift`), and the place in the old run's checkpoint order
+    /// of the checkpoint after it (its record's interval holds it): what the
+    /// old run read or printed there would be another number now.
+    fn line_barrier(
+        &self,
+        g: &Globals,
+        old: CheckpointId,
+    ) -> Option<(usize, crate::lineshift::LineRead)> {
         if self.shifts.is_empty() {
             return None;
         }
-        let from = o.lines.events;
-        self.old_line_events
-            .get(from.checked_sub(self.old_line_base)?..)?
-            .iter()
-            .position(|r| self.shifts.iter().any(|s| s.moves(r)))
-            .map(|i| from + i)
+        let recs = g.pending_lines();
+        let Some(at) = recs.iter().position(|(i, _)| *i == old) else {
+            // (cannot tell: at once)
+            return Some((0, crate::lineshift::LineRead::default()));
+        };
+        recs.iter()
+            .enumerate()
+            .skip(at + 1)
+            .find_map(|(k, (_, r))| {
+                r.here
+                    .iter()
+                    .find(|x| self.shifts.iter().any(|s| s.moves(x)))
+                    .map(|x| (k, x.clone()))
+            })
     }
 
     /// Whether the old run's last page checkpoint (where `\end{document}`
@@ -3572,8 +3588,7 @@ impl Session {
             old_matrix_uses_end: None,
             old_effects_end: 0,
             shifts: vec![],
-            old_line_events: vec![],
-            old_line_base: 0,
+
             old_lines: HashMap::new(),
             changed_lookup_last: None,
             rerun_from: None,
@@ -3721,9 +3736,6 @@ impl Session {
         let end = self.end_point();
         let g = self.g.as_mut().unwrap();
         let rec = g.record_of(r)?;
-        // (the restore below cuts the journal back to the restart point)
-        obs.old_line_base = rec.lines.events;
-        obs.old_line_events = crate::lineshift::events_from(rec.lines.events);
         let next_gap: Option<i64> = {
             let ids = g.checkpoints();
             ids.iter()
@@ -4051,14 +4063,8 @@ impl Session {
             };
             let notes_new = g.record_of(new_id)?.notes;
             g.redo_to_remapped(old, &in_remap)?;
-            // The old run's line journal from the convergence point on, after
-            // the new run's; and its diagnostics there, in the new numbering
-            // (DESIGN.md §5.3 rule (c), `crate::lineshift`).
-            crate::lineshift::append_events(
-                obs.old_line_events
-                    .get(rec_old.lines.events.saturating_sub(obs.old_line_base)..)
-                    .unwrap_or(&[]),
-            );
+            // The old run's diagnostics from the convergence point on, in the
+            // new numbering (DESIGN.md §5.3 rule (c), `crate::lineshift`).
             crate::diag::move_lines(notes_new, &obs.shifts);
             // the new run's extra characters, into the old run's states
             // from the convergence point on (see `same_words`)
