@@ -2099,3 +2099,7 @@ pub const hash_top: i32 = 630192i32;
 pub const max_trie_op: i32 = 65535i32;
 // §1900
 pub const ssup_error_line: i32 = 255i32;
+// §1920
+pub const ls_cond_size: i32 = 1000i32;
+// §1920
+pub const ls_tag_size: i32 = 65535i32;
