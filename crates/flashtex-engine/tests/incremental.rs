@@ -2601,12 +2601,37 @@ fn preamble_edits_restart_before_s0() {
         assert_eq!(field(&r, "mode"), "\"incremental\"", "{what}, revert: {r}");
         compile_and_check(&e, &mut h, &dir, &[], "settle again");
     }
-    // the line after `\documentclass` is read with the class (its look for
-    // an optional argument): no checkpoint before it, a run from the format
+    // the line after `\documentclass`: the class looks for an optional
+    // argument, which reads that line's first token, but the checkpoint
+    // taken between the two `\futurelet`s of `\@ifnextchar` (the first line
+    // used up, `\@xifnch` still being read) precedes it
     let early = doc.replacen("\\usepackage{amsmath}", "\\usepackage{amssymb}", 1);
     let r = compile_and_check(&e, &mut h, &dir, &[("doc.tex", &early)], "the first line");
-    assert_eq!(field(&r, "mode"), "\"cold\"", "{r}");
+    assert_eq!(field(&r, "mode"), "\"incremental\"", "{r}");
+    assert_eq!(field(&r, "restart_preamble"), "true", "{r}");
     compile_and_check(&e, &mut h, &dir, &[("doc.tex", &doc)], "the revert");
+    compile_and_check(&e, &mut h, &dir, &[], "settle again");
+    // ... and a line right after a package's: its first token is read
+    // with the package (the same look), the rest after the checkpoint
+    let tight = doc.replacen("\n\n\\title", "\n\\title", 1);
+    for _ in 0..4 {
+        let r = compile_and_check(&e, &mut h, &dir, &[("doc.tex", &tight)], "no blank line");
+        if r.contains("\"mode\":\"unchanged\"") {
+            break;
+        }
+    }
+    for (text, what) in [
+        (tight.replacen("a title about", "a titled about", 1), "a letter in the title"),
+        (tight.replacen("\\title{", "\\title {", 1), "a space after \\title"),
+        (tight.replacen("\\title{", "\\author{X}\\title{", 1), "a command before \\title"),
+    ] {
+        let r = compile_and_check(&e, &mut h, &dir, &[("doc.tex", &text)], what);
+        assert_eq!(field(&r, "mode"), "\"incremental\"", "{what}: {r}");
+        assert_eq!(field(&r, "restart_preamble"), "true", "{what}: {r}");
+        let r = compile_and_check(&e, &mut h, &dir, &[("doc.tex", &tight)], "the revert");
+        assert_eq!(field(&r, "mode"), "\"incremental\"", "{what}, revert: {r}");
+        compile_and_check(&e, &mut h, &dir, &[], "settle again");
+    }
 }
 
 /// Review of #1551 (PREAMBLE-FAST): a file `\input` twice, then text

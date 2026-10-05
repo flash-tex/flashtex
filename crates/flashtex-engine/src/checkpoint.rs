@@ -1779,12 +1779,22 @@ impl Globals {
 
     /// Between two lines of the main file at its top level: the input
     /// stack holds the terminal and the main file (no `\input` file), with
-    /// nothing above it but token lists read to their end (TeX leaves a
-    /// finished list on the stack until `get_next` next reads: a `\par`
-    /// macro's), the main file's line is used up, and no group or
-    /// conditional is open. A checkpoint is sound at any `big_switch`; this
-    /// one is where a preamble edit after the line restarts with nothing of
-    /// the edited line consumed and nothing of the lines before it to redo.
+    /// nothing above it but token lists, the main file's line is used up,
+    /// and no group or conditional is open. A checkpoint is sound at any
+    /// `big_switch`; this one is where a preamble edit after the line
+    /// restarts with nothing of the edited line consumed and nothing of the
+    /// lines before it to redo.
+    ///
+    /// The token lists need not be finished. `\documentclass` and
+    /// `\usepackage` end by looking for an optional argument
+    /// (`\@ifnextchar[`): `\futurelet` reads the line's end (a space, which
+    /// `\@xifnch` drops), then `\futurelet` again reads the next line's first
+    /// token. Between the two, at a `big_switch`, the line is used up with
+    /// `\@xifnch`'s list still being read; after them, the next line is
+    /// partly read, so a checkpoint there would hold that line in its
+    /// buffer and no edit to it could restart there. Whatever the lists
+    /// hold, the main file is read only up to this line's end
+    /// (`consumed_nothing_changed` decides from what was read).
     pub fn at_preamble_line_end(&self) -> bool {
         use crate::generated::consts::{level_one, null, token_list};
         if self.input_ptr < 1
@@ -1794,14 +1804,12 @@ impl Globals {
         {
             return false;
         }
-        let done = |r: &crate::generated::types::in_state_record| {
-            r.state_field == token_list && r.loc_field == null
-        };
+        let list = |r: &crate::generated::types::in_state_record| r.state_field == token_list;
         let base = if self.input_ptr == 1 {
             &self.cur_input
         } else {
-            if !done(&self.cur_input)
-                || !(2..self.input_ptr as usize).all(|k| done(&self.input_stack[k]))
+            if !list(&self.cur_input)
+                || !(2..self.input_ptr as usize).all(|k| list(&self.input_stack[k]))
             {
                 return false;
             }
