@@ -257,7 +257,11 @@ impl PasFile for AlphaFile {
     }
     fn close(&mut self) {
         self.flush();
-        self.output = None;
+        if self.output.take().is_some() {
+            if let Some(p) = &self.path {
+                unmark_ahead(p);
+            }
+        }
         self.input = None;
         self.have_line = false;
         self.path = None;
@@ -281,7 +285,11 @@ impl PasFile for ByteFile {
     }
     fn close(&mut self) {
         self.flush();
-        self.output = None;
+        if self.output.take().is_some() {
+            if let Some(p) = &self.path {
+                unmark_ahead(p);
+            }
+        }
         self.input = None;
     }
 }
@@ -3180,9 +3188,177 @@ pub fn guarded(path: &str) -> Option<Vec<u8>> {
     })
 }
 
+thread_local! {
+    /// Output files open for output whose bytes on disk may be ahead of a
+    /// run from scratch's (by `out_key`): a checkpoint flushed the stream
+    /// while its buffer held output that pdfTeX's `fprintf` keeps buffered
+    /// (`AlphaFile::flush_output`), or restored the stream, whose record
+    /// does not say what its buffer held then (`AlphaFile::restore`). A
+    /// close writes everything out, as from scratch: it takes the file off.
+    static AHEAD: std::cell::RefCell<Vec<String>> = const { std::cell::RefCell::new(Vec::new()) };
+    /// The first such file the run read (or looked up: `\pdffilesize`) while
+    /// it was open for output and ahead (issue #1550: a `\closeout` lost to a
+    /// typo, the file `\input` four paragraphs later read the line a
+    /// checkpoint had flushed, where pdfTeX reads an empty file).
+    static AHEAD_READ: std::cell::RefCell<Option<String>> = const { std::cell::RefCell::new(None) };
+    /// Files never flushed ahead of a run from scratch (`no_flush`).
+    static NO_FLUSH: std::cell::RefCell<Vec<String>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// A checkpoint flushed, or a restore reopened, an output stream on `path`
+/// (`AHEAD`). A file that is `no_flush` is never ahead: every checkpoint
+/// since it became so found its buffer empty.
+pub fn mark_ahead(path: &str) {
+    if no_flush(path) {
+        return;
+    }
+    let k = out_key(path);
+    AHEAD.with(|a| {
+        let mut a = a.borrow_mut();
+        if !a.contains(&k) {
+            a.push(k);
+        }
+    });
+}
+
+/// An output stream on `path` was closed: a run from scratch has written
+/// it all out too.
+fn unmark_ahead(path: &str) {
+    let k = out_key(path);
+    AHEAD.with(|a| a.borrow_mut().retain(|p| *p != k));
+}
+
+/// No stream is open (a new engine, or a restore about to reopen them).
+pub fn clear_ahead() {
+    AHEAD.with(|a| a.borrow_mut().clear());
+}
+
+/// A read or lookup of `path`: noted if it is open for output and ahead.
+fn note_ahead_read(path: &str) {
+    if AHEAD.with(|a| a.borrow().is_empty()) {
+        return;
+    }
+    let k = out_key(path);
+    if AHEAD.with(|a| a.borrow().contains(&k)) {
+        AHEAD_READ.with(|r| {
+            r.borrow_mut().get_or_insert_with(|| {
+                file_trace(|| format!("read while ahead: {k}"));
+                k
+            });
+        });
+    }
+}
+
+/// The file the run read while it was open for output and ahead (and
+/// forget it): the run is not what a run from scratch does, and is redone
+/// with that file `no_flush` (`crate::incr`).
+pub fn take_ahead_read() -> Option<String> {
+    AHEAD_READ.with(|r| r.borrow_mut().take())
+}
+
+/// From now on, a checkpoint is not taken while an output stream on `path`
+/// holds buffered output (`crate::checkpoint`'s `capture_ext`), so that no
+/// checkpoint writes out what a run from scratch has not, and a restore
+/// gives the stream exactly as it was (its buffer empty).
+pub fn set_no_flush(path: &str) {
+    let k = out_key(path);
+    NO_FLUSH.with(|n| {
+        let mut n = n.borrow_mut();
+        if !n.contains(&k) {
+            n.push(k);
+        }
+    });
+}
+
+/// Whether `set_no_flush` named `path`.
+pub fn no_flush(path: &str) -> bool {
+    if NO_FLUSH.with(|n| n.borrow().is_empty()) {
+        return false;
+    }
+    let k = out_key(path);
+    NO_FLUSH.with(|n| n.borrow().contains(&k))
+}
+
 /// An output file as the engine last left it: length, modification time,
 /// inode.
 type Stamp = (u64, Option<std::time::SystemTime>, u64);
+
+thread_local! {
+    /// The resident session keeps what a fatal run removes (`set_keep_removed`).
+    static KEEP_REMOVED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    /// Output files a fatal run removed, set aside (`remove_output`).
+    static REMOVED: std::cell::RefCell<Vec<String>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// Where `remove_output` sets `path` aside.
+fn aside_path(path: &str) -> String {
+    format!("{path}.flashtex-removed")
+}
+
+/// The resident, incremental session (`crate::incr::Session`) turns this on:
+/// an output file the run removes (pdfTeX deletes its unfinished PDF after a
+/// fatal error, `removepdffile`) is set aside instead, so that a later
+/// compile restoring a checkpoint taken while the file was open can put it
+/// back (`revive_removed_outputs`) instead of compiling from scratch.
+pub fn set_keep_removed(on: bool) {
+    KEEP_REMOVED.with(|k| k.set(on));
+}
+
+/// Removes output file `path`, as pdfTeX does (it is gone from its name
+/// either way). With `set_keep_removed`, a file all of whose bytes are the
+/// engine's is renamed aside: renaming keeps its length, modification time
+/// and inode, the stamp `outside_change` compares.
+pub fn remove_output(path: &str) {
+    let k = out_key(path);
+    let ours = KEEP_REMOVED.with(|k| k.get())
+        && STAMPS.with(|m| m.borrow().contains_key(&k))
+        && !FOREIGN.with(|f| f.borrow().contains(&k));
+    if ours && std::fs::rename(path, aside_path(path)).is_ok() {
+        file_trace(|| format!("set aside {path}"));
+        REMOVED.with(|r| r.borrow_mut().push(path.to_string()));
+        return;
+    }
+    let _ = std::fs::remove_file(path);
+}
+
+/// Before a restore relies on output files (`checkpoint::changed_outside`):
+/// puts back those of `need` a fatal run set aside (`remove_output`), unless
+/// something else has taken the name since (then the aside copy goes).
+/// Only a restore whose checkpoint had the file open puts it back: a
+/// compile that restores nothing, or restores to before the file was
+/// opened, leaves it gone, as pdfTeX left it. What it holds is what the
+/// engine wrote and closed, so it is stamped as the engine's; a later run
+/// that opened the file again is caught by `rewritten_at`.
+pub fn revive_removed<'a>(need: impl IntoIterator<Item = &'a String>) {
+    let need: Vec<String> = need.into_iter().map(|p| out_key(p)).collect();
+    if need.is_empty() || REMOVED.with(|r| r.borrow().is_empty()) {
+        return;
+    }
+    let back: Vec<String> = REMOVED.with(|r| {
+        let mut r = r.borrow_mut();
+        let (back, keep): (Vec<String>, Vec<String>) =
+            r.drain(..).partition(|p| need.contains(&out_key(p)));
+        *r = keep;
+        back
+    });
+    for path in back {
+        let aside = aside_path(&path);
+        if std::fs::metadata(&path).is_err() && std::fs::rename(&aside, &path).is_ok() {
+            file_trace(|| format!("put back {path}"));
+            stamp_output(&path);
+        } else {
+            let _ = std::fs::remove_file(&aside);
+        }
+    }
+}
+
+/// A run from the format writes its outputs afresh: what fatal runs set
+/// aside is no longer needed.
+pub fn forget_removed() {
+    for path in REMOVED.with(|r| std::mem::take(&mut *r.borrow_mut())) {
+        let _ = std::fs::remove_file(aside_path(&path));
+    }
+}
 
 thread_local! {
     /// Every output file's stamp after the engine's last write to it: a
@@ -3388,11 +3564,44 @@ pub fn set_tex_input_type_flag(v: bool) {
 
 /// A file's identity as the file system reports it: a cheap test for
 /// "unchanged" before its content is hashed again.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+///
+/// **Racy signatures** (git's "racy clean" rule). A file system keeps
+/// modification times at some granularity: 1 s on HFS+, 2 s on FAT, a
+/// kernel tick on ext4 before Linux 6.13. A file changed again within the
+/// tick in which its signature was taken, to the same length, keeps the
+/// same signature. So a signature taken within [`RACY_NS`] of the file's
+/// modification time (`racy`) proves nothing: it equals no signature, not
+/// even itself, and every "unchanged?" test that meets one compares the
+/// content instead (and may then keep the fresh signature, which is not
+/// racy once the tick has passed).
+#[derive(Clone, Copy, Debug, Default)]
 pub struct StatSig {
     pub len: u64,
     pub mtime_ns: i128,
     pub ino: u64,
+    /// Taken within [`RACY_NS`] of `mtime_ns`, either side.
+    pub racy: bool,
+}
+
+/// The widest modification-time granularity of a supported file system
+/// (FAT's 2 s; HFS+ 1 s, ext4 a kernel tick), for [`StatSig::racy`]
+/// (`FLASHTEX_RACY_MS` changes it, for the tests).
+pub const RACY_NS: i128 = 2_000_000_000;
+
+fn racy_ns() -> i128 {
+    static R: std::sync::OnceLock<i128> = std::sync::OnceLock::new();
+    *R.get_or_init(|| {
+        std::env::var("FLASHTEX_RACY_MS")
+            .ok()
+            .and_then(|v| v.parse::<i128>().ok())
+            .map_or(RACY_NS, |ms| ms * 1_000_000)
+    })
+}
+
+impl PartialEq for StatSig {
+    fn eq(&self, o: &StatSig) -> bool {
+        !self.racy && !o.racy && self.same_fields(o)
+    }
 }
 
 impl StatSig {
@@ -3404,11 +3613,25 @@ impl StatSig {
             .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
             .map_or(0, |d| d.as_nanos() as i128);
         let ino = crate::os::file_id(&m);
+        let now_ns = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |d| d.as_nanos() as i128);
         Some(StatSig {
             len: m.len(),
             mtime_ns,
             ino,
+            // Within the tick on either side: a write after now lands in
+            // the same tick only then. (A modification time far in the
+            // future -- a file from a clock ahead -- is not racy: any write
+            // from now on gets an earlier time.)
+            racy: (now_ns - mtime_ns).abs() < racy_ns(),
         })
+    }
+
+    /// The same length, time and identity, racy or not (only where a racy
+    /// equality is harmless: see the callers).
+    pub fn same_fields(&self, o: &StatSig) -> bool {
+        (self.len, self.mtime_ns, self.ino) == (o.len, o.mtime_ns, o.ino)
     }
 }
 
@@ -3582,13 +3805,24 @@ fn note_lookup(name: &str, format: Format, must_exist: Option<bool>, found: Opti
                         .unwrap_or_else(|| ".".into()),
                 ),
                 Some(_) => None,
+                // (an absolute name not found: its own directory, where a
+                // file appearing changes the answer -- not the working one)
                 None => Some(
                     std::path::Path::new(name)
                         .parent()
                         .map(|d| d.to_string_lossy().into_owned())
-                        .filter(|d| !d.is_empty() && !d.starts_with('/'))
+                        .filter(|d| !d.is_empty())
                         .unwrap_or_else(|| ".".into()),
                 ),
+            };
+            // An absolute name found outside the working directory: its
+            // directory too (the file may go again).
+            let dir = match (dir, found) {
+                (None, Some(p)) if name.starts_with('/') => std::path::Path::new(p)
+                    .parent()
+                    .map(|d| d.to_string_lossy().into_owned())
+                    .filter(|d| !d.is_empty()),
+                (d, _) => d,
             };
             // A relative name not found is looked for in the output
             // directory too (`-output-directory`, as texmfmp.c's
@@ -3619,6 +3853,7 @@ fn note_lookup(name: &str, format: Format, must_exist: Option<bool>, found: Opti
 }
 
 fn note_file(path: &str) {
+    note_ahead_read(path);
     READS.with(|r| {
         let mut b = r.borrow_mut();
         let Some(log) = b.as_mut() else { return };
@@ -3902,11 +4137,26 @@ impl AlphaFile {
     }
 
     /// Flush the output buffer (a checkpoint flushes every output stream
-    /// before it records any, `Globals::capture_ext`).
+    /// before it records any, `Globals::capture_ext`). What it writes out
+    /// a run from scratch still holds in its buffer: the file is ahead
+    /// (`mark_ahead`).
     pub fn flush_output(&mut self) {
+        if let Some(p) = self.pending_output() {
+            mark_ahead(&p);
+        }
         if let Some(w) = self.output.as_mut() {
             let _ = w.flush();
         }
+    }
+
+    /// The file of this output stream if its buffer holds output not
+    /// written out yet.
+    pub fn pending_output(&self) -> Option<String> {
+        let w = self.output.as_ref()?;
+        if w.buffer().is_empty() {
+            return None;
+        }
+        self.path.clone()
     }
 
     /// Put this file back as `s` recorded it: an output file is cut back to
@@ -3917,6 +4167,9 @@ impl AlphaFile {
     pub fn restore(&mut self, s: &FileSnap) -> Result<(), String> {
         if let Some(w) = self.output.take() {
             let _ = w.into_parts();
+            if let Some(p) = &self.path {
+                unmark_ahead(p);
+            }
         }
         PasFile::close(self);
         let mut f = AlphaFile {
@@ -3939,6 +4192,8 @@ impl AlphaFile {
             Stream::Out { path, len, at } => {
                 f.output = Some(BufWriter::new(Box::new(reopen_out(path, *len, *at)?)));
                 f.path = Some(path.clone());
+                // (the record does not say whether its buffer held output)
+                mark_ahead(path);
             }
         }
         *self = f;
@@ -3974,14 +4229,29 @@ impl ByteFile {
 
     /// Flush the output buffer (see `AlphaFile::flush_output`).
     pub fn flush_output(&mut self) {
+        if let Some(p) = self.pending_output() {
+            mark_ahead(&p);
+        }
         if let Some(w) = self.output.as_mut() {
             let _ = w.flush();
         }
     }
 
+    /// See `AlphaFile::pending_output`.
+    pub fn pending_output(&self) -> Option<String> {
+        let w = self.output.as_ref()?;
+        if w.buffer().is_empty() {
+            return None;
+        }
+        self.path.clone()
+    }
+
     pub fn restore(&mut self, s: &FileSnap) -> Result<(), String> {
         if let Some(w) = self.output.take() {
             let _ = w.into_parts();
+            if let Some(p) = &self.path {
+                unmark_ahead(p);
+            }
         }
         PasFile::close(self);
         let mut f = ByteFile {
@@ -3999,6 +4269,7 @@ impl ByteFile {
             Stream::Out { path, len, at } => {
                 f.output = Some(BufWriter::new(reopen_out(path, *len, *at)?));
                 f.path = Some(path.clone());
+                mark_ahead(path);
             }
             other => return Err(format!("a binary file cannot be {other:?}")),
         }
@@ -4265,5 +4536,54 @@ mod confined_read_tests {
             true
         ));
         std::fs::remove_dir_all(&base).unwrap();
+    }
+}
+
+#[cfg(test)]
+mod statsig_tests {
+    use super::*;
+
+    /// A signature taken within the modification-time granularity of the
+    /// file's time equals none, not even itself; an older one equals its
+    /// twin and not a file changed since.
+    #[test]
+    fn racy_signatures_equal_nothing() {
+        let d = std::env::temp_dir().join(format!("flashtex-statsig-{}", std::process::id()));
+        std::fs::create_dir_all(&d).unwrap();
+        let f = d.join("f.tex");
+        std::fs::write(&f, "abc").unwrap();
+        let p = f.to_str().unwrap();
+        let fresh = StatSig::of(p).unwrap();
+        assert!(fresh.racy);
+        assert!(fresh != fresh, "a racy signature equals itself");
+        assert!(fresh.same_fields(&fresh));
+        let old = std::time::SystemTime::now() - std::time::Duration::from_secs(60);
+        std::fs::File::options()
+            .write(true)
+            .open(&f)
+            .unwrap()
+            .set_modified(old)
+            .unwrap();
+        let a = StatSig::of(p).unwrap();
+        let b = StatSig::of(p).unwrap();
+        assert!(!a.racy && a == b);
+        // a time within the tick ahead is racy too; one far ahead is not
+        let soon = std::time::SystemTime::now() + std::time::Duration::from_millis(500);
+        std::fs::File::options()
+            .write(true)
+            .open(&f)
+            .unwrap()
+            .set_modified(soon)
+            .unwrap();
+        assert!(StatSig::of(p).unwrap().racy);
+        let far = std::time::SystemTime::now() + std::time::Duration::from_secs(3600);
+        std::fs::File::options()
+            .write(true)
+            .open(&f)
+            .unwrap()
+            .set_modified(far)
+            .unwrap();
+        assert!(!StatSig::of(p).unwrap().racy);
+        let _ = std::fs::remove_dir_all(&d);
     }
 }

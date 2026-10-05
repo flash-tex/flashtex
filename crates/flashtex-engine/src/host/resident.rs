@@ -108,7 +108,11 @@ struct Target {
     broken: bool,
     /// Output stopped (superseded or cancelled) at some point.
     went_quiet: bool,
-
+    /// A changed page was delivered (LIVE-30MS: a superseded compile still
+    /// sends its first changed page, the keystroke's edit, then the forms
+    /// that page draws; `forms_after`).
+    changed_sent: bool,
+    forms_after: bool,
     /// Stage timings (DONE's `stages`): the engine thread's CPU time and
     /// display-list time at the start of the compile, the time spent
     /// writing frames to the socket, and the first page's figures.
@@ -132,6 +136,13 @@ impl Target {
             || self.conn.is_cancelled(self.id);
         self.went_quiet |= q;
         q
+    }
+
+    /// Only superseded by a newer compile: not cancelled, the client there.
+    fn superseded_only(&self) -> bool {
+        !self.broken
+            && !self.conn.is_cancelled(self.id)
+            && self.conn.queued.load(Ordering::SeqCst) > 0
     }
 
     fn out(&self) -> &Out {
@@ -253,7 +264,8 @@ impl Live {
         if e.form {
             let mut t = self.target.take();
             if let Some(t) = t.as_mut() {
-                if !t.quiet() && t.send(&e) {
+                let wanted = !t.quiet() || (t.forms_after && t.superseded_only());
+                if wanted && t.send(&e) {
                     t.ps.forms.insert(e.index, e.hash);
                 }
             }
@@ -272,6 +284,11 @@ impl Live {
         // even when unchanged (the client learns the page is current, and
         // the edited page comes first).
         let delivered = self.target.as_ref().is_some_and(|t| (i as u32) < t.next);
+        let changed = self
+            .pages
+            .get(i)
+            .and_then(|c| c.as_ref())
+            .is_none_or(|c| c.e.hash != e.hash);
         let version = match &self.pages[i] {
             Some(c)
                 if delivered
@@ -291,10 +308,29 @@ impl Live {
             return;
         };
         t.emitted += 1;
+        t.forms_after = false;
         self.catch_up(&mut t, i as u32);
-        if !t.quiet() && t.next == i as u32 {
+        let quiet = t.quiet();
+        // Superseded before its first changed page: send that page anyway
+        // (the edit it shows is nearer the editor than what the client
+        // shows), not the pages before it, which the client holds.
+        let edited_anyway = quiet
+            && changed
+            && t.incremental
+            && !t.changed_sent
+            && t.superseded_only()
+            && (i as u32) >= t.next;
+        if edited_anyway {
             self.deliver(&mut t, i as u32, false);
-            t.next = i as u32 + 1;
+            t.changed_sent = true;
+            t.forms_after = true;
+        }
+        if (!quiet && t.next == i as u32) || edited_anyway {
+            if !edited_anyway {
+                self.deliver(&mut t, i as u32, false);
+                t.next = i as u32 + 1;
+                t.changed_sent |= changed;
+            }
             if t.first_index.is_none() {
                 t.first_index = Some(i as u32);
                 t.first_page_ms = Some(t.t0.elapsed().as_secs_f64() * 1e3);
@@ -427,6 +463,9 @@ impl Engine {
                     Ok(r) => r,
                     Err(mpsc::RecvTimeoutError::Timeout) => {
                         trim_due = false;
+                        if let Some(d) = self.doc.as_mut() {
+                            d.session.trim_caches();
+                        }
                         give_back_free_memory();
                         continue;
                     }
@@ -681,6 +720,8 @@ impl Engine {
             bytes: 0,
             broken: false,
             went_quiet: false,
+            changed_sent: false,
+            forms_after: false,
             cpu0,
             emit0: displaylist::emit_ns(),
             send_ns: 0,
@@ -704,6 +745,12 @@ impl Engine {
             doc.session
                 .set_preempt(Some(std::rc::Rc::new(move |_pass, _pages| {
                     c.queued.load(Ordering::SeqCst) > 0 || c.is_cancelled(id)
+                })));
+            // (a CANCEL stops even a run protected to its edited page)
+            let c = conn.clone();
+            doc.session
+                .set_cancel(Some(std::rc::Rc::new(move |_pass, _pages| {
+                    c.is_cancelled(id)
                 })));
         }
         // The `progress-v1` heartbeat (spec §6.8): at a pass's first
@@ -817,6 +864,7 @@ impl Engine {
         drop(busy_run);
         let _busy = crate::busy::enter(crate::busy::Part::Done);
         doc.session.set_preempt(None);
+        doc.session.set_cancel(None);
         doc.session.set_progress(None);
         doc.session.set_defer(None);
         let deferred = matches!(&result, Ok(r) if r.deferred);
@@ -925,6 +973,17 @@ impl Engine {
             ));
             st.push(("send".to_string(), m(t.send_ns as f64 * 1e-6)));
             st.push(("cpu".to_string(), m((incr::thread_cpu_s() - t.cpu0) * 1e3)));
+            // the convergence tests' old chunks kept and rewound
+            // (`arena::OldCache`), since the host started
+            {
+                use std::sync::atomic::Ordering::Relaxed;
+                let c = |a: &std::sync::atomic::AtomicU64| Json::Int(a.load(Relaxed) as i64);
+                st.push(("old_kept".to_string(), c(&crate::arena::OLD_CACHE_HITS)));
+                st.push((
+                    "old_rewound".to_string(),
+                    c(&crate::arena::OLD_CACHE_MISSES),
+                ));
+            }
             // Instructions and cycles of the engine thread, in thousands:
             // the whole compile, to the first page, and (from the session)
             // the restore and to the edited page. Load does not move them.
@@ -1353,7 +1412,11 @@ fn apply_changes(root: &Path, req: &Json, written: &mut Written) -> Result<(), S
     // it, else read.
     let current = |path: &Path, written: &mut Written| -> std::io::Result<Vec<u8>> {
         if let Some((s, d)) = written.remove(path) {
-            if sig(path) == Some(s) {
+            // (the host's own last write, still in place: exact fields,
+            // racy or not -- the file is the host's copy of the editor's
+            // text, which nothing else writes, and a racy test here would
+            // read the typed file back at every keystroke)
+            if sig(path).is_some_and(|n| n.same_fields(&s)) {
                 return Ok(Arc::try_unwrap(d).unwrap_or_else(|d| (*d).clone()));
             }
         }

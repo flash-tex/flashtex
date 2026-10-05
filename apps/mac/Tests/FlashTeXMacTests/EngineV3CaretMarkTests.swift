@@ -426,6 +426,34 @@ final class EngineV3CaretMarkTests: XCTestCase {
     /// over them and typing further on, each key sent from the storage
     /// notification. The host's copy of the file ends byte for byte as the
     /// editor's text, and the slow path never found a splice out of step.
+    /// LIVE-30MS (review of #1538): the storage notification comes for every
+    /// text storage of the app; an edit in another one (a search field's,
+    /// another editor's) leaves this editor's anchors alone.
+    func testAnEditElsewhereKeepsTheFastPathsAnchors() async throws {
+        try EngineV3TestHost.require()
+        let model = ShellModel()
+        model.replaceProject(entryText: Self.doc, named: "main.tex")
+        let (s, _, tv, window) = try await editorPane(model, autoCompile: true)
+        defer { s.stop(); window.contentView = nil }
+        let at = (Self.doc as NSString).range(of: "gamma").location
+        s.nextKeystrokeNs = MonotonicClock.nowNs()
+        tv.insertText("x", replacementRange: NSRange(location: at, length: 0))
+        model.updateActiveText(tv.string)
+        XCTAssertTrue(s.fastAnchored("main.tex"), "the fast path took anchors")
+        // another text view, in another window, edited
+        let other = NSTextView(usingTextLayoutManager: false)
+        other.string = "search"
+        let w2 = HostedWindowSupport.window(contentRect: NSRect(x: 0, y: 0, width: 200, height: 100), styleMask: [.titled])
+        w2.isReleasedWhenClosed = false
+        w2.contentView = other
+        other.insertText("ing", replacementRange: NSRange(location: 6, length: 0))
+        XCTAssertTrue(s.fastAnchored("main.tex"), "an edit elsewhere dropped the anchors")
+        // this editor's text replaced outside the fast path: they go
+        tv.string = tv.string + "\n"
+        XCTAssertFalse(s.fastAnchored("main.tex"), "a change the fast path did not send kept them")
+        w2.contentView = nil
+    }
+
     func testAnchoredFastSplicesKeepTheHostsCopyExact() async throws {
         try EngineV3TestHost.require()
         let model = ShellModel()

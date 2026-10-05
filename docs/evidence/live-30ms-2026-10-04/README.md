@@ -88,13 +88,75 @@ cut, not incremental work.
    the new run's and remaps every later checkpoint's record.
 4. The display list, socket, decode, raster and commit are O(1) per page.
 
+## Phase 2: results (VERIFIED, mac-m1max-a, load1 100–310)
+
+**Metric.** Wall time measured only the load here. Each keystroke's **engine latency** is the engine
+thread's cycles from its COMPILE arriving to the first page of the compile that painted it (DONE's
+`arrival_mark_kc`, `first_page_mark_kc`), at 3.2 GHz. The work on its critical path, whatever the load;
+it leaves out the socket and the client (< 1 ms). The typist is on a clock (`dl3-keys --interval-ms`),
+which on a loaded machine types faster *relative to the engine* than a user would: a harsher test, the
+same for every engine. Runs are interleaved by document (`/tmp/l30/ab.sh`); `scripts/pool.py` pools.
+
+### Synthetic documents (plain-100, full-100, plain-1000 × middle/page 1 × 100/150 ms; 2 rounds each, 540 keys per engine)
+
+| run | engine | engine p50/p95/p99 ms | keys never painted |
+|---|---|---|---|
+| ab6 | main | 12.4/39.3/64.0 | 2 |
+| ab6 | + D (every compile held to its page: first version) | 14.3/49.7/70.3 | 4 |
+| ab6 | + C | 14.0/39.8/65.2 | 2 |
+| ab6 | + B | 12.8/38.1/59.2 | 4 |
+| ab6 | + A | **12.1/28.2/49.0** | 0 |
+| ab7 | main | 15.0/53.2/81.1 | 2 |
+| ab7 | + D (adaptive: held only after a starved compile) | 15.2/49.6/72.7 | 4 |
+| ab7 | + C | 14.7/42.2/67.6 | 0 |
+| ab7 | + B | 13.8/37.5/59.0 | 6 |
+| ab7 | + A | **13.5/37.0/57.0** | 2 |
+
+(`raw/phase2/ab6`, `raw/phase2/ab7`.) Run-to-run spread is large (main's p95 39 vs 53), so only
+deltas within a run are meant to be read. Deterministic effects (`scripts/stagecmp.py`, instructions):
+
+- B: the restore after an abandoned run on plain-1000 drops from 44 to 11–14 M p50.
+- A: keeps about half the old chunks a comparison needs (e.g. 29k kept / 33k rewound).
+
+### Infinite Descent (580 pages; dl3-keys --edit, a key on a clock; `raw/phase2/infab`)
+
+| row | main: engine p50/p95 ms, keys painted | D(full)+C+B+A: engine p50/p95 ms, keys painted |
+|---|---|---|
+| middle of the book, every 150 ms | **none painted (0/30)**: every compile preempted before its page | 148/359, 26/30 |
+| middle, every 300 ms | 269/736, 25/30 | 168/348, 30/30 |
+| late in the book, every 150 ms | 240/612, 25/30 | 130/174, 30/30 |
+
+The restore drops from 136 to 43 M instructions. The edited page itself stays 520–600 M instructions
+(≈ 165–190 ms at 3.2 GHz): the TeX floor of this book (mdframed + TikZ frames), for macro replay (P6).
+
+### A per-chunk log index: tried, worse, not landed
+
+The next step for A was to rewind each missing chunk through the logs that hold it only (a per-chunk
+index of the sealed logs, branch `agent/mac-claude-a/live30-index-attempt`). It was exact (unit test
+and verify mode) but **slower**: plain-1000's engine p95 went 27 → 100 ms (`raw/phase2/ab8`, engine
+"a6"). Hot chunks (the page builder's state, counters) are in every page's log, so a missing hot chunk's
+list is as long as the old future, and a hash look-up per entry costs more than the plain walk's bit
+test. Bounding the comparison further needs keyframes (a materialised old state every N pages), not an
+index.
+
+### Soundness (sweeps A, C, D; FLASHTEX_VERIFY_JUMP, FLASHTEX_VERIFY_PREPARED, FLASHTEX_VERIFY_OLDCACHE on, each aborting on a disagreement; none did)
+
+| build | sweep A | sweep C | sweep D (interleaved) |
+|---|---|---|---|
+| D(full) + C | 2112 compiles, **0** mismatches, 367 converged | 580, **0**, 26 | 804 (712 verified, 92 interrupted), **0**, 107 |
+| D(full) + C + B + A | 2112, **0**, 367 | 580, **0**, 26 | 804 (712/92), **0**, 108 |
+
+Sweep C's error is the harness's known "0 trials" on beamer-sans-operators-professional. The lookup
+sweep needs #1507's tooling (not on main).
+
 ## Phase 2 (one PR each, in the Commander's order)
 
 | PR | change | status |
 |---|---|---|
-| live30-measure | `queue_by`, `dl3-keys --interval-ms`, these scripts, the bench's caret reveal | this PR |
-| D antistarve | no preemption between the restore and the first changed page; a superseded compile still sends that page | next |
-| C | a preemptible jump and an interruptible viewport test (abort before any mutation; verify mode) | planned |
-| B | the prepared buffer from the live state after a paused run is abandoned | planned |
-| A | old-checkpoint chunk values from a per-chunk log index plus a cache (verify mode runs both) | planned |
-| E | the app: edit hook → sent, raster → main hop, the S₀ key check | planned |
+| live30-measure | `queue_by`, engine-cycle marks, `dl3-keys --interval-ms`, these scripts, the bench's caret reveal | #1533 |
+| D live30-antistarve | after a starved compile, the next is not preempted before its changed page; a superseded compile still sends that page | #1541 |
+| C live30-preempt | no jump while newer work waits; the jump's comparison first and stoppable; an interruptible viewport test | #1542 |
+| B live30-reattach | a reattach leaves the restore to its target prepared | #1543 |
+| A live30-oldstate | old checkpoints' chunk values kept between comparisons | this PR |
+| E live30-app | the fast path's splice counts only the text near the edit | #1538 |
+| E live30-s0key | S₀'s key runs the preamble's lookups again only when a directory changed since they last held | separate PR |

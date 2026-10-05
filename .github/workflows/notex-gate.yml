@@ -12,7 +12,7 @@
 # document as a known gap (METAFONT-generated fonts and EPS conversion, until
 # those lanes land).
 #
-#   dispatched            the PUBLISHED bundle: the URL and digest of
+#   scheduled, dispatched the PUBLISHED bundle: the URL and digest of
 #                         tools/bundle/tl2026/flashtex-bundle.lock, fetched
 #                         over HTTPS by byte range as the app fetches it, and
 #                         the release's oracle-refs.json
@@ -20,9 +20,16 @@
 #                         artifact, read from a file, before it is published
 #
 # Not part of `CI required`: it needs a published bundle, and fetches it.
+# Weekly on a schedule (P5-CHECKS), so a change to the engine or the gate set
+# that breaks the bundle-only path is seen within a week without a dispatch.
+# The scheduled run is skipped outside flash-tex/flashtex, so a fork that
+# enables Actions does not spend its minutes or fetch our release.
 name: notex gate
 
 on:
+  schedule:
+    # Mondays 05:17 UTC (off the hour, to avoid GitHub's top-of-hour backlog).
+    - cron: "17 5 * * 1"
   workflow_dispatch:
   workflow_call:
     inputs:
@@ -40,6 +47,7 @@ jobs:
     # Apple Silicon; GitHub's macOS images have no TeX Live.
     runs-on: macos-15
     timeout-minutes: 90
+    if: github.event_name != 'schedule' || github.repository == 'flash-tex/flashtex'
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - name: no TeX Live here
@@ -82,9 +90,9 @@ jobs:
             echo "digest=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["digest"])' "$d/pack.json")" >> "$GITHUB_OUTPUT"
           else
             mkdir -p "$d"
-            gh release download "$L_tag" --repo "$L_repo" --pattern oracle-refs.json --dir "$d"
-            echo "url=$L_url" >> "$GITHUB_OUTPUT"
-            echo "digest=$L_digest" >> "$GITHUB_OUTPUT"
+            gh release download "$L_TAG" --repo "$L_REPO" --pattern oracle-refs.json --dir "$d"
+            echo "url=$L_URL" >> "$GITHUB_OUTPUT"
+            echo "digest=$L_DIGEST" >> "$GITHUB_OUTPUT"
           fi
           echo "refs=$d/oracle-refs.json" >> "$GITHUB_OUTPUT"
       - name: compile from the bundle alone and compare

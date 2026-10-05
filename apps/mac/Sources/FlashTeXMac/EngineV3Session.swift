@@ -120,6 +120,8 @@ final class EngineV3Session {
     @ObservationIgnored var fastEditsSent = 0
     /// Fast-path splices the slow path found out of step (the buffer resent).
     @ObservationIgnored var fastResyncs = 0
+    /// The fast path holds anchors for `path` (tests).
+    func fastAnchored(_ path: String) -> Bool { fastAnchors[path] != nil }
     @ObservationIgnored var copyRoots: (copy: URL, roots: [String])?
     @ObservationIgnored var caretMarkScheduled = false
     @ObservationIgnored var caretMarkSettling = false
@@ -139,12 +141,18 @@ final class EngineV3Session {
     @ObservationIgnored private var diags: [DL3Diag] = []
     /// The connected host offers diag-v1 (and so sends DIAGs, not DIAGNOSTICs).
     @ObservationIgnored private(set) var hostOffersDiagV1 = false
+    /// The connected host stops at the first error when asked (`halt-on-error`):
+    /// with an older one, strict mode shows errors as errors but TeX goes on.
+    private(set) var hostHonoursHaltOnError = true
     /// The first TeX error of the last compile ("file:line: message"), shown
     /// in the pane: under best effort only one TeX stopped at (and its cause).
     private(set) var firstError: String?
     /// How TeX's errors are presented (EngineV3ErrorPolicy): best effort shows
     /// the errors TeX recovers from as warnings.
     @ObservationIgnored var errorMode: EngineV3ErrorPolicy.Mode = EngineV3ErrorPolicy.storedMode
+    /// Strict mode is on but the host does not honour `halt_on_error`
+    /// (Settings > Compile says so): errors are errors, TeX still goes on.
+    var strictModeIgnored: Bool { errorMode == .strict && phase == .ready && !hostHonoursHaltOnError }
     /// The compile in progress stopped on a fatal error (a `fatal` DIAG):
     /// its DONE keeps the last good pages after the ones it made, stale.
     @ObservationIgnored private(set) var compileFatal = false
@@ -610,6 +618,7 @@ final class EngineV3Session {
                     guard let self = ref.value else { c.bye(); return }
                     self.connection = c
                     self.hostOffersDiagV1 = c.hello["capabilities"]?.array?.contains(.string(DL3Diag.capability)) ?? false
+                    self.hostHonoursHaltOnError = c.hello["capabilities"]?.array?.contains(.string(DL3CompileRequest.haltOnErrorCapability)) ?? false
                     if case .failed = self.phase {} else { self.phase = .ready }
                     self.log("connected: \(c.hello["server"]?.string ?? "?"), \(c.hello["engine"]?.string ?? "?")")
                     if let model = self.model {
@@ -692,17 +701,22 @@ final class EngineV3Session {
     /// path checks the fast path's byte count and resends the buffer if
     /// they ever disagree.
     private func storageEdited(_ storage: NSTextStorage) {
-        // A change the fast path does not send leaves its anchors stale.
+        // Only this window's LaTeX editor: the notification comes for every
+        // text storage of the app (a search field, another window's editor),
+        // none of which holds the text the host has.
+        guard storage.editedMask.contains(.editedCharacters),
+              let tv = storage.layoutManagers.first?.textContainers.first?.textView,
+              tv.accessibilityLabel() == "LaTeX source", let w = tv.window, w === view?.window else { return }
+        // A change of this editor's text the fast path does not send leaves
+        // its anchors stale.
         var sent = false
         defer { if !sent { fastAnchors = [:] } }
         guard phase == .ready, connection != nil, let model, model.engineV3Enabled, model.autoCompile, !exportRunning,
-              storage.editedMask.contains(.editedCharacters) else { return }
+              !tv.hasMarkedText() else { return }
         // Live Share: the fast path never sends to a host whose confinement
         // no longer matches (a session just started); the slow path, a few
         // milliseconds later, relaunches it first.
         guard fastPathAllowed(model: model) else { return }
-        guard let tv = storage.layoutManagers.first?.textContainers.first?.textView,
-              tv.accessibilityLabel() == "LaTeX source", !tv.hasMarkedText() else { return }
         let typing = nextKeystrokeNs != nil || NSApp.currentEvent?.type == .keyDown
         let path = model.activePath
         guard typing, let base = hostBytes[path], sentTexts[path] != nil || fastPending.contains(path) else { return }
@@ -1047,7 +1061,8 @@ final class EngineV3Session {
         // would, only for a trusted project (DESIGN.md §4.5, owner 9A); an
         // untrusted one runs no external program.
         req.externalTools = !pinned && projectTrusted && !trustPending ? "auto" : "off"
-        // Strict mode (EngineV3ErrorPolicy): TeX stops at the first error.
+        // Strict mode (EngineV3ErrorPolicy): TeX stops at the first error
+        // (an older host ignores the field: `strictModeIgnored`).
         req.haltOnError = errorMode == .strict
         return req
     }
@@ -1566,10 +1581,14 @@ final class EngineV3Session {
                     markStale(Set(n ..< pageCount))
                     statusNote = "stopped: pdfLaTeX gives up here · \(n) new page\(n == 1 ? "" : "s"), \(kept) kept from the last compile · \(String(format: "%.0f", j["elapsed_ms"]?.double ?? 0)) ms"
                 } else {
-                    if let n = made { setCount(n, complete: true) }
-                    // A stored page the compile did not replace (it failed early)
-                    // stays on screen, stale, until its page arrives.
-                    markStale([])
+                    // A DONE without `pages` says nothing about them: the
+                    // marks stay as they are (never "all current").
+                    if let n = made {
+                        setCount(n, complete: true)
+                        // A stored page the compile did not replace (it failed early)
+                        // stays on screen, stale, until its page arrives.
+                        markStale([])
+                    }
                     // Best effort: TeX recovered from every error it reported.
                     let shown = status == "error" && errorCount == 0 ? "recovered" : status
                     statusNote = "\(shown) · \(j["mode"]?.string ?? "") · \(pageCount) page\(pageCount == 1 ? "" : "s") · \(String(format: "%.0f", j["elapsed_ms"]?.double ?? 0)) ms"
@@ -1838,10 +1857,12 @@ final class EngineV3Session {
             let row = RuntimeV1.Diagnostic(severity: d.severity == "error" && !recovered.contains(i) ? .error : .warning, message: message, source: source,
                                            recovery: nil, code: d.code.isEmpty ? "engine-v3" : d.code,
                                            notes: notes.isEmpty ? nil : notes, help: help)
+            // A plain-language explanation and, where mechanical, a fix (EngineV3Explain.swift).
+            let explained = EngineV3Explain.apply(row, code: d.code, message: d.message, texts: texts)
             // "did you mean \textbf?": the old engine's mechanical fix, only
             // where the range is the very name TeX reports (EngineV3Fixes.swift).
-            guard d.code == EngineV3Fixes.undefinedCode, let texts else { return row }
-            return EngineV3Fixes.fix(row, named: EngineV3Fixes.undefinedName(trace: d.trace.map { ($0.kind, $0.before) }), texts: texts)
+            guard d.code == EngineV3Fixes.undefinedCode, let texts else { return explained }
+            return EngineV3Fixes.fix(explained, named: EngineV3Fixes.undefinedName(trace: d.trace.map { ($0.kind, $0.before) }), texts: texts)
         }
     }
 
