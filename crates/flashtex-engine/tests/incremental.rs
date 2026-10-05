@@ -2860,7 +2860,7 @@ fn a_preamble_edit_looks_the_preamble_s_files_up_again() {
         )
     };
     let mut h = Host::start_env(&e, &dir, &env);
-    let mut check = |h: &mut Host, text: &str, what: &str| -> String {
+    let check = |h: &mut Host, text: &str, what: &str| -> String {
         std::fs::write(dir.join("doc.tex"), text).unwrap();
         let reference = dir.with_extension("ref");
         let _ = std::fs::remove_dir_all(&reference);
