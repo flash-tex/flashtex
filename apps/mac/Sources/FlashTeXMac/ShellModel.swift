@@ -607,6 +607,18 @@ final class ShellModel {
     var autoCompile = true {
         didSet { if autoCompile, !oldValue, engineV3Enabled { engineV3.textChanged(model: self) } }
     }
+    /// Settings > Compile > Stop at the first error (EngineV3ErrorPolicy):
+    /// off (the default) is best effort, nonstopmode with the errors TeX
+    /// recovers from shown as warnings; on is `-halt-on-error`. Kept in the
+    /// engine-v3 defaults (a test suite of its own under XCTest).
+    var strictTeXErrors = EngineV3ErrorPolicy.storedMode == .strict {
+        didSet {
+            guard strictTeXErrors != oldValue else { return }
+            EngineV3.defaults.set(strictTeXErrors, forKey: EngineV3ErrorPolicy.strictKey)
+            engineV3.errorMode = strictTeXErrors ? .strict : .bestEffort
+            if engineV3Enabled { engineV3.compile(model: self, reason: "error mode") }
+        }
+    }
     private(set) var lastLatencyMs: Double?
     private(set) var latenciesMs: [Double] = []
     @ObservationIgnored private var debounce: DispatchWorkItem?

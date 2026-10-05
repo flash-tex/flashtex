@@ -2862,6 +2862,7 @@ impl Globals {
     /// that the token list should disappear if the reference count was `null`,
     /// otherwise the count should be decreased by one.
     // §218
+    #[inline(always)]
     pub fn delete_token_ref(&mut self, mut p: halfword) {
         if (self.mem[crate::ix::U((p) as usize)].hh().lh() == null) {
             self.flush_list(p);

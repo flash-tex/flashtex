@@ -3614,6 +3614,7 @@ impl Globals {
     /// `mem_end=mem_max`, we try to decrease `hi_mem_min`. If that cannot be
     /// done, i.e., if `hi_mem_min=lo_mem_max+1`, we have to quit.
     // §138
+    #[inline(always)]
     pub fn get_avail(&mut self) -> halfword {
         let mut get_avail: halfword = 0;
         let mut p: halfword = 0; // §138
@@ -3649,6 +3650,7 @@ impl Globals {
     /// The procedure `flush_list(p)` frees an entire linked list of
     /// one-word nodes that starts at position `p`.
     // §141
+    #[inline(always)]
     pub fn flush_list(&mut self, mut p: halfword) {
         let mut q: halfword = 0; // §141
         let mut r: halfword = 0; // §141
