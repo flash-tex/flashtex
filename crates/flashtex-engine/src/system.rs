@@ -4163,7 +4163,14 @@ mod confined_read_tests {
         ] {
             assert!(!confined_name_ok(bad), "{bad}");
         }
-        for ok in ["main.tex", "chapters/one.tex", "article.cls", "figures/a.pdf", "./local.sty", "a..b.tex"] {
+        for ok in [
+            "main.tex",
+            "chapters/one.tex",
+            "article.cls",
+            "figures/a.pdf",
+            "./local.sty",
+            "a..b.tex",
+        ] {
             assert!(confined_name_ok(ok), "{ok}");
         }
     }
@@ -4185,10 +4192,19 @@ mod confined_read_tests {
         std::os::unix::fs::symlink("../outside", project.join("linked")).unwrap();
         let roots = vec![std::fs::canonicalize(&project).unwrap()];
         assert!(confined_path_ok(&project.join("main.tex"), &roots));
-        assert!(!confined_path_ok(&project.join("evil.tex"), &roots), "a link to a file outside");
-        assert!(!confined_path_ok(&project.join("linked/secret.tex"), &roots), "a relative link to a folder outside");
+        assert!(
+            !confined_path_ok(&project.join("evil.tex"), &roots),
+            "a link to a file outside"
+        );
+        assert!(
+            !confined_path_ok(&project.join("linked/secret.tex"), &roots),
+            "a relative link to a folder outside"
+        );
         let real_outside = std::fs::canonicalize(outside.join("secret.tex")).unwrap();
-        assert!(confined_path_ok(&real_outside, &roots), "a link-free absolute hit is a tree file");
+        assert!(
+            confined_path_ok(&real_outside, &roots),
+            "a link-free absolute hit is a tree file"
+        );
         assert!(!confined_path_ok(&project.join("missing.tex"), &roots));
         std::fs::remove_dir_all(&base).unwrap();
     }
