@@ -75,6 +75,7 @@ import re
 import shutil
 import subprocess
 import tempfile
+import threading
 
 # The one \write18 setting, for BOTH engines. Owner decision #1209 (DESIGN
 # §4.5): restricted by default, as in TeX Live's pdflatex. So the default is
@@ -634,7 +635,9 @@ def engine_link(engine_bin):
     link = os.path.join(d, PROGRAM)
     if os.path.realpath(link) != real:
         os.makedirs(d, exist_ok=True)
-        tmp = f"{link}.{os.getpid()}"
+        # pid AND thread: check_positions.py runs its workers as threads of
+        # one process, and two of them once shared one temporary name here.
+        tmp = f"{link}.{os.getpid()}.{threading.get_ident()}"
         if os.path.lexists(tmp):
             os.remove(tmp)
         os.symlink(real, tmp)
