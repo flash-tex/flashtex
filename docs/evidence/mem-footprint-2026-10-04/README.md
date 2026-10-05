@@ -190,6 +190,60 @@ The over-budget form of the same step was already gated by `sound-budget` (a 4 M
 run thinned; `tools/incr-bench/gates.sh`). `scripts/gate.sh pr` at `b5636a2ac` passed
 (`raw/gate-pr-2.txt`; the fixture scorer reported one dead worker, as on PR 1's run).
 
+## PR 3 (`memfp-logcodec`): sealed logs pack each half-word in 0–4 bytes (VERIFIED)
+
+A sealed log's words are pre-images of TeX's memory words: two 32-bit halves (`link`/`info`, a
+`scaled`, character and font codes), mostly small. Each half is now stored in 0, 1, 2 or 4 bytes
+(zero, then the smallest sign-extended width), with a 2-bit tag; a word's two tags are one nibble,
+and a delta's nibbles precede its bytes. Measured offline on the dumped logs (`scripts/tags.py`):
+0.50 of the bytes on infdesc, 0.58 on full-100. (Rejected: a zero-word mask alone saved 9 %
+(`scripts/zero.py`); zlib reaches about 0.2–0.3 but needs a whole log decompressed for one word.)
+
+- A restore (`Delta::apply_under`) decodes only the words it still needs; the others' sizes come
+  from their nibbles. A merge copies a lone delta's bytes and repacks only where two deltas meet.
+  `or_from` (rare) rewrites the log it changes.
+- Tests: every arena test now writes words of every packed width (`shaped`);
+  `packed_words_round_trip` checks the codec and `apply_under` with partly done masks.
+- Microbenchmarks (release, `restore_cost`, `seal_cost`): logs 102 → 66 MB, a restore through
+  400 logs 1.88 → 1.88 ms, the seal of 2,000 chunks 0.157 → 0.218 ms.
+
+PR 2 against PR 2 + PR 3 on main `2cd5f151a` (engines `segpr`, `codec`), interleaved, **load 6–8**
+(`raw/table-pr3.txt`, `raw/restore-pr3.txt`):
+
+| doc | undo logs | malloc in use | footprint peak | edited page p50 / p95 | restore (median) |
+|---|---|---|---|---|---|
+| infdesc | 382 → **223 MB** | 532 → **373 MB** | 1.1 → **0.78 GB** | 53.8 / 96.1 → 55.1 / 92.5 ms | 36.1 → 36.5 M instr |
+| full-100 | 49 → 30 MB | 138 → 120 MB | 261 → 238 MB | 15.4 / 20.1 → 15.7 / 21.6 ms | 13.1 → 12.8 M instr |
+| long-deck | 43 → 26 MB | 126 → 109 MB | 248 → 224 MB | 38.7 / 42.2 → 38.7 / 41.9 ms | 19.8 → 19.8 M instr |
+
+Edited-page instructions: +0.4–1.8 % at p50 (the seal's packing). The steady footprint of
+infdesc read 242–257 MB in both runs: the system had compressed the idle host (see the caveat
+above), so the table gives the peak and the heap.
+
+**Soundness** (engine `codec` = `ead2c608a`; the next commit only renames a bit trick for clippy;
+`raw/soundness/summary-pr3.txt`): every restore reads packed logs, so the fixtures ran too.
+
+| sweep | documents | compiles | mismatches |
+|---|---|---|---|
+| A: 30 letters + reverts | plain-120, full-100 | 120 (114 converged) | **0** |
+| C: 12 structural edits + reverts | refs-120, full-100 | 46 | **0** |
+| D: 8 interleaved edits | refs-120, full-100 | 29 verified + 6 interrupted | **0** |
+| A: 4 letters + reverts per fixture | every parity fixture (86) | 688 (100 converged; 1 log differs in accounting only) | **0** |
+
+`scripts/gate.sh pr` at `47d3748e9` passed (`raw/gate-pr-3.txt`).
+
+## Where it stands (all three PRs, against main)
+
+| doc | target | main (Phase 1) | PRs 1–3 |
+|---|---|---|---|
+| infdesc | ≤ 0.5 GB steady | malloc 1,339 MB, peak 1.8 GB | malloc **373 MB**, peak **0.78 GB** |
+| full-100 | ≤ 150 MB | malloc 186 MB, footprint 292 MB | malloc **120 MB**, footprint **238 MB** |
+
+What is left on full-100 beyond the heap: the word space (27 MB dirty, 15 MB compressed), the slab
+(5 MB), 61 MB of TeX Live tables (kpathsea's `ls-R` 37 MB, the font map 24 MB) and the page cache
+(11.5 MB). The 150 MB target needs those next: a compact `ls-R` and font map, and a smaller page
+cache (BELIEF: about −40 MB together; not built).
+
 ## Reproducing
 
 ```
