@@ -280,6 +280,11 @@ thread_local! {
     static ST: RefCell<St> = RefCell::new(St::default());
 }
 
+/// Out of line: inlined, the thread-local's address (a call to
+/// `_tlv_get_addr` on macOS) is hoisted to the entry of every generated
+/// routine with a `print_err` (`dg_mark`), which then pays it on each call
+/// even when diagnostics are off (1.2 % of long-deck's cycles, P6).
+#[inline(never)]
 fn with<R>(f: impl FnOnce(&mut St) -> R) -> R {
     ST.with(|s| f(&mut s.borrow_mut()))
 }

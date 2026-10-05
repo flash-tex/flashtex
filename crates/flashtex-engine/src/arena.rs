@@ -1942,6 +1942,14 @@ impl<T> Arr<T> {
     #[inline(always)]
     fn touch_addr(&self, a: usize) {
         let flag = self.flags.wrapping_add(a >> CHUNK_SHIFT);
+        // Measurement only: the branchless barrier, an unconditional store
+        // of the chunk's flag (what a dirty map without pre-images would
+        // need). Checkpoints are wrong with it; never ship it.
+        if cfg!(feature = "bench-store-barrier") {
+            // SAFETY: as below; the map is owned by the core and writable.
+            unsafe { *(flag as *mut u8) = 1 };
+            return;
+        }
         // SAFETY: `a` lies in this array's region, so `flag` is the saved
         // flag of its chunk, inside the core's map.
         if unsafe { *flag } == 0 {
@@ -2098,6 +2106,143 @@ range_mut! {
     std::ops::RangeTo<usize> => |s, r| 0, r.end;
     std::ops::RangeInclusive<usize> => |s, r| *r.start(), *r.end() + 1;
     std::ops::RangeFull => |s, r| { let _ = r; 0 }, s.len;
+}
+
+// ---------------------------------------------------------------------------
+// ArrView: an array global's address, length and barrier in a local
+// ---------------------------------------------------------------------------
+
+/// A copy of a **fixed-length** array global's header (`Arr::view`), which
+/// `tools/web2rust --array-view NAME` puts in a local at the start of each
+/// routine that indexes the array. The generated code then indexes the view
+/// instead of `self.NAME`. Only `mem` and `eqtb` are viewed
+/// (`web2rust-default.args`): a view costs its loads at every call of the
+/// routine, and for the other arrays that cost more than it saved (measured,
+/// P6).
+///
+/// Why: every element write is a store through a raw pointer, which LLVM
+/// must assume can change any field of `Globals` once `&mut self` has been
+/// passed to a call. So after each write it reloads the array's address,
+/// length and flag pointer from `Globals` before the next access. A local is
+/// not reachable through any pointer, so it stays in a register. Nothing
+/// else changes: reads and writes are bounds-checked against the same length
+/// (views are made only of arrays created at their full length and never
+/// resized: web2c's fixed arrays, never `xmalloc_array`'d), and writes pass
+/// the same barrier as `Arr`'s.
+pub struct ArrView<T> {
+    ptr: *mut T,
+    len: usize,
+    flags: *const u8,
+    core: *mut Core,
+}
+
+impl<T> Clone for ArrView<T> {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+impl<T> Copy for ArrView<T> {}
+
+impl<T> Arr<T> {
+    /// This array's view (see [`ArrView`]). Only for an array whose length
+    /// never changes: a view keeps the length it was made with.
+    #[inline(always)]
+    pub fn view(&self) -> ArrView<T> {
+        ArrView {
+            ptr: self.ptr,
+            len: self.len,
+            flags: self.flags,
+            core: self.core,
+        }
+    }
+}
+
+impl<T> ArrView<T> {
+    const SIZE: usize = std::mem::size_of::<T>();
+    const STRADDLES: bool = !Self::SIZE.is_power_of_two();
+
+    /// `Arr::touch_addr`.
+    #[inline(always)]
+    fn touch_addr(&self, a: usize) {
+        let flag = self.flags.wrapping_add(a >> CHUNK_SHIFT);
+        if cfg!(feature = "bench-store-barrier") {
+            // SAFETY: as in `Arr::touch_addr`.
+            unsafe { *(flag as *mut u8) = 1 };
+            return;
+        }
+        // SAFETY: as in `Arr::touch_addr`: `a` lies in the array's region.
+        if unsafe { *flag } == 0 {
+            // SAFETY: the core outlives every array and view.
+            let base = unsafe { (*self.core).base } as usize;
+            save_cold(self.core, (a - base) >> CHUNK_SHIFT);
+        }
+    }
+
+    /// The write barrier for element `i` (already bounds-checked): exactly
+    /// `Arr::touch`'s.
+    #[inline(always)]
+    fn touch(&self, i: usize) {
+        if cfg!(feature = "bench-no-barrier") {
+            return;
+        }
+        let a = self.ptr as usize + i * Self::SIZE;
+        self.touch_addr(a);
+        if Self::STRADDLES {
+            let a2 = a + Self::SIZE - 1;
+            if (a2 ^ a) >> CHUNK_SHIFT != 0 {
+                self.touch_addr(a2);
+            }
+        }
+    }
+
+    /// Element `i` for reading, bounds-checked.
+    #[inline(always)]
+    pub fn get(&self, i: usize) -> &T {
+        if i >= self.len {
+            out_of_bounds(i, self.len);
+        }
+        // SAFETY: in bounds; the elements live as long as the arena, which
+        // outlives the routine holding the view.
+        unsafe { &*self.ptr.add(i) }
+    }
+
+    /// Element `i` for reading without the check: only for the
+    /// `unchecked-reads` measurement feature (`crate::ix`).
+    ///
+    /// # Safety
+    /// `i` must be below the view's length.
+    #[inline(always)]
+    pub unsafe fn get_unchecked(&self, i: usize) -> &T {
+        // SAFETY: the caller's.
+        unsafe { &*self.ptr.add(i) }
+    }
+
+    /// Element `i` for writing, bounds-checked and through the barrier.
+    #[inline(always)]
+    pub fn get_mut(&mut self, i: usize) -> &mut T {
+        if i >= self.len {
+            out_of_bounds(i, self.len);
+        }
+        self.touch(i);
+        // SAFETY: in bounds; the generated code holds no other reference to
+        // the element while it writes (it reads elements by value).
+        unsafe { &mut *self.ptr.add(i) }
+    }
+}
+
+impl<T> Index<usize> for ArrView<T> {
+    type Output = T;
+    #[inline(always)]
+    fn index(&self, i: usize) -> &T {
+        self.get(i)
+    }
+}
+
+impl<T> IndexMut<usize> for ArrView<T> {
+    #[inline(always)]
+    fn index_mut(&mut self, i: usize) -> &mut T {
+        self.get_mut(i)
+    }
 }
 
 impl<T: std::fmt::Debug> std::fmt::Debug for Arr<T> {
