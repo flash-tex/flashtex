@@ -1200,6 +1200,8 @@ pub struct Globals {
     pub eight_bit_p: bool,
     // §1900
     pub translate_filename_p: bool,
+    // §1900
+    pub kpse_make_tex_discard_errors: bool,
     // §1908
     pub ckpt_request: i32,
     // §1908
@@ -1726,6 +1728,7 @@ pub const SCALAR_BYTES: usize = 0
     + crate::arena::slot::<i32>()
     + crate::arena::slot::<i32>()
     + crate::arena::slot::<i32>()
+    + crate::arena::slot::<bool>()
     + crate::arena::slot::<bool>()
     + crate::arena::slot::<bool>()
     + crate::arena::slot::<bool>()
@@ -2518,6 +2521,7 @@ impl Globals {
             dump_line: false,
             eight_bit_p: false,
             translate_filename_p: false,
+            kpse_make_tex_discard_errors: false,
             ckpt_request: 0,
             ckpt_arm_cs: 0,
             ckpt_arm_level: 0,
@@ -3031,6 +3035,7 @@ impl Globals {
         v.pod(&mut self.dump_line);
         v.pod(&mut self.eight_bit_p);
         v.pod(&mut self.translate_filename_p);
+        v.pod(&mut self.kpse_make_tex_discard_errors);
         v.pod(&mut self.ckpt_request);
         v.pod(&mut self.ckpt_arm_cs);
         v.pod(&mut self.ckpt_arm_level);

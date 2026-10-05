@@ -2102,6 +2102,329 @@ fn a_stale_temp_head_does_not_block_convergence() {
     }
 }
 
+/// #1502: a lookup the old run makes after the convergence point and whose
+/// answer is different now (`\IfFileExists` of a file that appeared with
+/// the edit) must not be skipped. The restart point is the edit (before
+/// the lookup), and the convergence test did not look at the old run's
+/// later lookups: the run converged on the page after the edit and kept
+/// the old run's "MISSING FILE" page (found by the review of #1495-#1498).
+/// Every compile equals scratch runs.
+#[test]
+fn a_later_lookup_whose_answer_changed_blocks_convergence() {
+    let Some(e) = env() else {
+        common::no_texlive();
+        return;
+    };
+    let dir = e.dir.join("later-lookup");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let doc = |w: &str| -> String {
+        let mut s = String::from("\\documentclass{article}\n\\begin{document}\n");
+        for i in 0..120 {
+            s.push_str(&para(i, if i == 10 { w } else { "lorem" }));
+            if i == 80 {
+                s.push_str(
+                    "\\IfFileExists{extra-probe.tex}{\\input{extra-probe.tex}}{MISSING FILE}\n\n",
+                );
+            }
+        }
+        s.push_str("\\end{document}\n");
+        s
+    };
+    let mut h = Host::start(&e, &dir);
+    for k in 0..4 {
+        let r = compile_and_check(&e, &mut h, &dir, &[("doc.tex", &doc("lorem"))], "settle");
+        if r.contains("\"mode\":\"unchanged\"") || k == 3 {
+            break;
+        }
+    }
+    // (the same letters: the fonts' used characters stay the same)
+    compile_and_check(
+        &e,
+        &mut h,
+        &dir,
+        &[
+            ("doc.tex", &doc("lorme")),
+            ("extra-probe.tex", "THE EXTRA FILE IS HERE.\n"),
+        ],
+        "an edit and a new file a later page looks for",
+    );
+    std::fs::remove_file(dir.join("extra-probe.tex")).unwrap();
+    compile_and_check(
+        &e,
+        &mut h,
+        &dir,
+        &[("doc.tex", &doc("lorem"))],
+        "the revert and the file gone",
+    );
+}
+
+/// #1502 (low, probed: not a bug, kept as a guard). After a convergence
+/// the journal is the new run's reads up to the convergence point, then the
+/// old run's after it, and the re-run of `\end{document}` cuts it at its
+/// restart point's counts (`truncate_journal(&jn, rec_last.reads)`). Those
+/// counts are in the spliced numbering: `redo_to_remapped` shifts every
+/// kept record by the journal's length now minus the old run's at the
+/// convergence point. Here the edit adds five whole-file reads (each in a
+/// group, so it leaves no state) before the convergence point, the new run
+/// has 14 journal entries more there, and the run converges; `tail.tex`,
+/// read once pages later, stays in the journal, so an edit of it alone is
+/// seen. Every compile equals scratch runs.
+#[test]
+fn a_spliced_journal_keeps_the_files_read_before_the_end() {
+    let Some(e) = env() else {
+        common::no_texlive();
+        return;
+    };
+    let dir = e.dir.join("spliced-journal");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let doc = |extra: bool| -> String {
+        let mut s = String::from("\\documentclass{article}\n\\begin{document}\n");
+        for i in 0..200 {
+            let p = para(i, "lorem");
+            if i == 10 && extra {
+                // on the paragraph's own line: no input line moves
+                s.push_str(p.trim_end());
+                s.push_str(
+                    &" \\begingroup\\toks0=\\expandafter{\\pdfmdfivesum file{doc.tex}}\\endgroup"
+                        .repeat(5),
+                );
+                s.push_str("\n\n");
+            } else {
+                s.push_str(&p);
+            }
+            if i == 150 {
+                // the primitive: one open of the file (LaTeX's `\\input`
+                // tests for it first, a second journal entry)
+                s.push_str("\\csname @@input\\endcsname tail.tex\n\n");
+            }
+        }
+        s.push_str("\\end{document}\n");
+        s
+    };
+    let mut h = Host::start(&e, &dir);
+    for k in 0..4 {
+        let r = compile_and_check(
+            &e,
+            &mut h,
+            &dir,
+            &[
+                ("doc.tex", &doc(false)),
+                ("tail.tex", "The tail, first version.\n"),
+            ],
+            "settle",
+        );
+        if r.contains("\"mode\":\"unchanged\"") || k == 3 {
+            break;
+        }
+    }
+    let r = compile_and_check(
+        &e,
+        &mut h,
+        &dir,
+        &[("doc.tex", &doc(true))],
+        "more files read before the convergence point",
+    );
+    assert_ne!(field(&r, "converged_at"), "null", "{r}");
+    compile_and_check(
+        &e,
+        &mut h,
+        &dir,
+        &[("tail.tex", "The tail, second version.\n")],
+        "an edit of the last page's file alone",
+    );
+}
+
+/// #1502 (review of #1507): the same lookup made twice, early and pages
+/// later. The journal kept a lookup only at its first occurrence, so the
+/// convergence test saw no changed lookup after the early one and kept the
+/// old run's later page, which had looked the file up when it was missing.
+/// For every kind of lookup a page can make -- `\pdffilesize`,
+/// `\pdffilemoddate`, `\pdfmdfivesum file`, `\IfFileExists` with `\input`,
+/// `\openin` -- the file appears with an edit before both lookups, goes
+/// again with the revert, and appears once more with no edit: every compile
+/// equals scratch runs.
+#[test]
+fn a_repeated_lookup_whose_answer_changed_blocks_convergence() {
+    let Some(e) = env() else {
+        common::no_texlive();
+        return;
+    };
+    const F: &str = "extra-probe.tex";
+    let kinds: [(&str, &str, &str); 5] = [
+        (
+            "size",
+            "\\begingroup\\edef\\x{\\pdffilesize{extra-probe.tex}}\\endgroup",
+            "[size \\pdffilesize{extra-probe.tex}]",
+        ),
+        (
+            "mtime",
+            "\\begingroup\\edef\\x{\\pdffilemoddate{extra-probe.tex}}\\endgroup",
+            "[date \\pdffilemoddate{extra-probe.tex}]",
+        ),
+        (
+            "md5",
+            "\\begingroup\\edef\\x{\\pdfmdfivesum file{extra-probe.tex}}\\endgroup",
+            "[md5 \\pdfmdfivesum file{extra-probe.tex}]",
+        ),
+        (
+            "iffileexists",
+            "\\IfFileExists{extra-probe.tex}{}{}",
+            "\\IfFileExists{extra-probe.tex}{\\input{extra-probe.tex}}{MISSING FILE}",
+        ),
+        (
+            "openin",
+            "\\openin15=extra-probe.tex \\ifeof15 \\else\\closein15 \\fi",
+            "\\openin15=extra-probe.tex \\ifeof15 NO FILE\\else THERE\\closein15 \\fi",
+        ),
+    ];
+    for (kind, early, late) in kinds {
+        let dir = e.dir.join(format!("repeated-lookup-{kind}"));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let doc = |w: &str| -> String {
+            let mut s = String::from("\\documentclass{article}\n\\begin{document}\n");
+            for i in 0..120 {
+                s.push_str(&para(i, if i == 10 { w } else { "lorem" }));
+                if i == 5 {
+                    s.push_str(early);
+                    s.push_str("\n\n");
+                }
+                if i == 80 {
+                    s.push_str(late);
+                    s.push_str("\n\n");
+                }
+            }
+            s.push_str("\\end{document}\n");
+            s
+        };
+        let mut h = Host::start(&e, &dir);
+        for k in 0..4 {
+            let r = compile_and_check(&e, &mut h, &dir, &[("doc.tex", &doc("lorem"))], "settle");
+            if r.contains("\"mode\":\"unchanged\"") || k == 3 {
+                break;
+            }
+        }
+        // (the same letters: the fonts' used characters stay the same)
+        let what = format!("{kind}: an edit and the file appearing");
+        compile_and_check(
+            &e,
+            &mut h,
+            &dir,
+            &[("doc.tex", &doc("lorme")), (F, "THE EXTRA FILE IS HERE.\n")],
+            &what,
+        );
+        std::fs::remove_file(dir.join(F)).unwrap();
+        let what = format!("{kind}: the revert and the file gone");
+        compile_and_check(&e, &mut h, &dir, &[("doc.tex", &doc("lorem"))], &what);
+        let what = format!("{kind}: the file appearing, no edit");
+        compile_and_check(&e, &mut h, &dir, &[(F, "THE EXTRA FILE IS HERE.\n")], &what);
+    }
+}
+
+/// #1514 (the re-review of #1507): the same as
+/// `a_later_lookup_whose_answer_changed_blocks_convergence`, but the file
+/// appears while the edit's compile is preempted. The next compile
+/// continues the stopped run (nothing it has read changed), which had
+/// checked the old run's lookups when the file was still missing: it
+/// converged on the page after the edit and kept the old run's "MISSING
+/// FILE" page, and the compile after it said `unchanged`. For a lookup
+/// by `\IfFileExists` and by `\pdffilesize`, and then for the file going
+/// again with the revert, every compile equals scratch runs.
+#[test]
+fn a_lookup_whose_answer_changed_during_a_preempted_run_blocks_convergence() {
+    let Some(e) = env() else {
+        common::no_texlive();
+        return;
+    };
+    const F: &str = "extra-probe.tex";
+    let kinds: [(&str, &str); 2] = [
+        (
+            "iffileexists",
+            "\\IfFileExists{extra-probe.tex}{\\input{extra-probe.tex}}{MISSING FILE}",
+        ),
+        ("size", "[size \\pdffilesize{extra-probe.tex}]"),
+    ];
+    for (kind, late) in kinds {
+        let dir = e.dir.join(format!("preempted-lookup-{kind}"));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let doc = |w: &str| -> String {
+            let mut s = String::from("\\documentclass{article}\n\\begin{document}\n");
+            for i in 0..200 {
+                s.push_str(&para(i, if i == 10 { w } else { "lorem" }));
+                if i == 160 {
+                    s.push_str(late);
+                    s.push_str("\n\n");
+                }
+            }
+            s.push_str("\\end{document}\n");
+            s
+        };
+        let mut h = Host::start(&e, &dir);
+        for k in 0..4 {
+            let r = compile_and_check(&e, &mut h, &dir, &[("doc.tex", &doc("lorem"))], "settle");
+            if r.contains("\"mode\":\"unchanged\"") || k == 3 {
+                break;
+            }
+        }
+        // A control: a file nothing looks up appears while the compile is
+        // stopped. The continued run still converges (the `.aux` it is
+        // rewriting itself is not taken as changed).
+        std::fs::write(dir.join("doc.tex"), doc("lorme")).unwrap();
+        let r = h.cmd("compile-interrupt 1 2");
+        assert!(r.contains("\"preempted\":true"), "{kind}: not stopped: {r}");
+        std::fs::write(dir.join("unrelated.txt"), "nobody reads this\n").unwrap();
+        let reference = dir.with_extension("ref");
+        copy_dir(&dir, &reference);
+        let r2 = h.cmd("compile");
+        check_against(
+            &e,
+            &dir,
+            &reference,
+            &r2,
+            &format!("{kind}: an unrelated file"),
+        );
+        assert_eq!(field(&r2, "mode"), "\"continued\"", "{kind}: {r2}");
+        assert_ne!(field(&r2, "converged_at"), "null", "{kind}: {r2}");
+        std::fs::remove_file(dir.join("unrelated.txt")).unwrap();
+        compile_and_check(
+            &e,
+            &mut h,
+            &dir,
+            &[("doc.tex", &doc("lorem"))],
+            "the revert",
+        );
+        for (step, (word, file)) in [("lorme", true), ("lorem", false)].into_iter().enumerate() {
+            // the edit's compile is preempted after two pages, then the
+            // file appears (or goes)
+            std::fs::write(dir.join("doc.tex"), doc(word)).unwrap();
+            let r = h.cmd("compile-interrupt 1 2");
+            assert!(
+                r.contains("\"preempted\":true"),
+                "{kind} {step}: not stopped: {r}"
+            );
+            if file {
+                std::fs::write(dir.join(F), "THE EXTRA FILE IS HERE.\n").unwrap();
+            } else {
+                std::fs::remove_file(dir.join(F)).unwrap();
+            }
+            let reference = dir.with_extension("ref");
+            copy_dir(&dir, &reference);
+            let r2 = h.cmd("compile");
+            eprintln!("{kind} {step}: {}", &r2[..r2.len().min(300)]);
+            let what = format!("{kind} {step}: the file changed during a preempted compile");
+            check_against(&e, &dir, &reference, &r2, &what);
+            // and the next compile, with nothing changed, keeps it
+            copy_dir(&dir, &reference);
+            let r3 = h.cmd("compile");
+            let what = format!("{kind} {step}: the compile after it");
+            check_against(&e, &dir, &reference, &r3, &what);
+        }
+    }
+}
+
 /// P6-HYPEROPT: DESIGN.md §5.3's barriers "block reuse past the point where
 /// they are read". A document that writes a file through its body and reads
 /// it back near its end, after a `\write18` (imakeidx's `\index` entries,
