@@ -1823,7 +1823,7 @@ impl Arena {
                 (n > 0).then_some((r.name, n))
             })
             .collect();
-        v.sort_by(|a, b| b.1.cmp(&a.1));
+        v.sort_by_key(|r| std::cmp::Reverse(r.1));
         v
     }
 
