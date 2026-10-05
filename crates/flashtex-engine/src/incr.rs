@@ -400,9 +400,11 @@ struct Obs {
     /// there (DESIGN.md §5.3).
     old_effects_end: usize,
     /// DESIGN.md §5.3 rule (c): the edits' line shifts (`crate::lineshift`),
-    /// and the old run's line journal at its end.
+    /// and the old run's line journal at its end from the restart point on
+    /// (entry `old_line_base` first).
     shifts: Vec<crate::lineshift::Shift>,
     old_line_events: Vec<crate::lineshift::LineRead>,
+    old_line_base: usize,
     /// The line shifts each old page checkpoint still owes (`Reloc`): its
     /// stored state numbers lines as the run that took it did.
     old_lines: HashMap<CheckpointId, Vec<crate::lineshift::Shift>>,
@@ -726,7 +728,9 @@ impl Obs {
                                 "the old run reads a moved line number next ({:?}), or has no \
                              later checkpoint the line shift can be put right in (its end's \
                              is {})",
-                                line_barrier.and_then(|i| self.old_line_events.get(i)),
+                                line_barrier.and_then(|i| self
+                                    .old_line_events
+                                    .get(i.checked_sub(self.old_line_base)?)),
                                 if end_dirty { "dirty" } else { "clean" }
                             ),
                         })
@@ -833,7 +837,7 @@ impl Obs {
         }
         let from = o.lines.events;
         self.old_line_events
-            .get(from..)?
+            .get(from.checked_sub(self.old_line_base)?..)?
             .iter()
             .position(|r| self.shifts.iter().any(|s| s.moves(r)))
             .map(|i| from + i)
@@ -3569,6 +3573,7 @@ impl Session {
             old_effects_end: 0,
             shifts: vec![],
             old_line_events: vec![],
+            old_line_base: 0,
             old_lines: HashMap::new(),
             changed_lookup_last: None,
             rerun_from: None,
@@ -3710,13 +3715,15 @@ impl Session {
         obs.old_last_byte_reads_end = Some(crate::pdftex::last_byte_reads());
         obs.old_matrix_uses_end = Some(crate::pdftex::matrix_uses());
         obs.old_effects_end = system::external_effects_len();
-        obs.old_line_events = crate::lineshift::events_from(0);
         obs.changed_lookup_last = self.changed_lookup_last;
         let t1 = Instant::now();
         let i1 = crate::os::thread_counts();
         let end = self.end_point();
         let g = self.g.as_mut().unwrap();
         let rec = g.record_of(r)?;
+        // (the restore below cuts the journal back to the restart point)
+        obs.old_line_base = rec.lines.events;
+        obs.old_line_events = crate::lineshift::events_from(rec.lines.events);
         let next_gap: Option<i64> = {
             let ids = g.checkpoints();
             ids.iter()
@@ -4049,7 +4056,7 @@ impl Session {
             // (DESIGN.md §5.3 rule (c), `crate::lineshift`).
             crate::lineshift::append_events(
                 obs.old_line_events
-                    .get(rec_old.lines.events..)
+                    .get(rec_old.lines.events.saturating_sub(obs.old_line_base)..)
                     .unwrap_or(&[]),
             );
             crate::diag::move_lines(notes_new, &obs.shifts);

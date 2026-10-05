@@ -454,8 +454,11 @@ pub fn same_path(a: &str, b: &str) -> bool {
     if a == b {
         return true;
     }
+    // (an absolute name and a relative one only: `chap/a.tex` is not `a.tex`)
     let tail = |long: &str, short: &str| {
-        long.len() > short.len()
+        long.starts_with('/')
+            && !short.starts_with('/')
+            && long.len() > short.len()
             && long.ends_with(short)
             && long.as_bytes()[long.len() - short.len() - 1] == b'/'
     };
@@ -941,5 +944,6 @@ mod tests {
         assert!(same_path("/x/y/a.tex", "./a.tex"));
         assert!(!same_path("/x/ya.tex", "a.tex"));
         assert!(!same_path("b.tex", "a.tex"));
+        assert!(!same_path("chap/a.tex", "a.tex"));
     }
 }
