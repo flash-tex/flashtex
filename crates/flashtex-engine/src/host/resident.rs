@@ -1322,7 +1322,11 @@ fn apply_changes(root: &Path, req: &Json, written: &mut Written) -> Result<(), S
     // it, else read.
     let current = |path: &Path, written: &mut Written| -> std::io::Result<Vec<u8>> {
         if let Some((s, d)) = written.remove(path) {
-            if sig(path) == Some(s) {
+            // (the host's own last write, still in place: exact fields,
+            // racy or not -- the file is the host's copy of the editor's
+            // text, which nothing else writes, and a racy test here would
+            // read the typed file back at every keystroke)
+            if sig(path).is_some_and(|n| n.same_fields(&s)) {
                 return Ok(Arc::try_unwrap(d).unwrap_or_else(|d| (*d).clone()));
             }
         }

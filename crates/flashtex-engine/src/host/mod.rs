@@ -85,6 +85,7 @@ impl Codec for StatSig {
         (self.mtime_ns as i64).enc(w);
         ((self.mtime_ns >> 64) as i64).enc(w);
         self.ino.enc(w);
+        (self.racy as u64).enc(w);
     }
     fn dec(r: &mut Reader) -> Result<Self, String> {
         let len = u64::dec(r)?;
@@ -94,6 +95,7 @@ impl Codec for StatSig {
             len,
             mtime_ns: (hi << 64) | lo,
             ino: u64::dec(r)?,
+            racy: u64::dec(r)? != 0,
         })
     }
 }
