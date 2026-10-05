@@ -1,0 +1,14 @@
+% b014-encoding-tables: table-driven ICU converters (latin2, cp1252, macintosh): FlashTeX links no .cnv data (expected to differ)
+% XeTeX-specific (docs/design/xetex/PLAN.md, phase S1: native fonts)
+\input prelude
+\def\space{ }
+\font\x="[lmroman10-regular.otf]" \x
+\XeTeXinputencoding "latin2"
+\count1=`± \message{b014 [\the\count1]}
+\XeTeXinputencoding "cp1252"
+\count1=`€ \message{b014 [\the\count1]}
+\XeTeXinputencoding "macintosh"
+\count1=`Ž \message{b014 [\the\count1]}
+\setbox0=\hbox{x}
+\lsshipbox0
+\end

@@ -1,0 +1,12 @@
+% b009-encoding-latin1: \XeTeXinputencoding "latin1": an ICU converter (ISO-8859-1, algorithmic) by alias
+% XeTeX-specific (docs/design/xetex/PLAN.md, phase S1: native fonts)
+\input prelude
+\def\space{ }
+\font\x="[lmroman10-regular.otf]" \x
+\XeTeXinputencoding "latin1"
+\setbox0=\hbox{café naïve Ångström © ½ × ÿ}
+\count1=`é \message{b009-encoding-latin1 [\the\count1]}
+\count1=`¤ \message{b009-encoding-latin1 [\the\count1]}
+\count1=`€ \message{b009-encoding-latin1 [\the\count1]}
+\lsshipbox0
+\end

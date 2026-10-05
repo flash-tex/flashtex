@@ -1,0 +1,17 @@
+% b017-linebreak-cjk: \XeTeXlinebreaklocale "ja" and "zh": breaks between ideographs; penalty only
+% XeTeX-specific (docs/design/xetex/PLAN.md, phase S1: native fonts)
+\input prelude
+\def\space{ }
+\hsize=210pt \parindent=12pt \parfillskip=0pt plus 1fil
+\baselineskip=13pt \tolerance=10000 \pretolerance=-1
+\font\au="[/System/Library/Fonts/Supplemental/Arial Unicode.ttf]"
+\font\ta="[/System/Library/Fonts/Supplemental/Tahoma.ttf]"
+\font\hb="[/System/Library/Fonts/ArialHB.ttc:0]"
+\au \hsize=100pt
+\XeTeXlinebreaklocale "ja" \XeTeXlinebreakpenalty=50
+\setbox0=\vbox{日本語の文章は、単語の間に空白を置かずに書きます。「括弧」や句読点の前後で改行の規則が違います。\par}
+\XeTeXlinebreaklocale "zh" \XeTeXlinebreakskip=0pt plus 2pt
+\setbox1=\vbox{中文的句子没有空格，可以在汉字之间换行。（括号）和标点符号有特别的规则。\par}
+\setbox2=\vbox{\box0 \box1}
+\lsshipbox2
+\end

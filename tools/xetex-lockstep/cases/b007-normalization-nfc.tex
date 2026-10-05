@@ -1,0 +1,13 @@
+% b007-normalization-nfc: \XeTeXinputnormalization=1 (NFC) on decomposed and precomposed input
+% XeTeX-specific (docs/design/xetex/PLAN.md, phase S1: native fonts)
+\input prelude
+\def\space{ }
+\font\x="[lmroman10-regular.otf]" \x
+\XeTeXinputnormalization=1
+\setbox0=\hbox{café cafés Ångström é Å ﬁ}
+\count1=`é \message{b007 [\the\count1]}
+\lsshipbox0
+\XeTeXinputnormalization=0
+\setbox0=\hbox{café}
+\lsshipbox0
+\end

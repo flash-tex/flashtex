@@ -28,6 +28,9 @@ pub use flashtex_engine::ix;
 /// TeX Live's HarfBuzz and FreeType (phase S1's native fonts,
 /// docs/design/xetex/PLAN.md §3.1): `fontlibs::hb`, `fontlibs::ft`.
 pub use flashtex_xetex_fontlibs as fontlibs;
+/// TeX Live's ICU 78.2 (phase S1): bidi, input encodings and line
+/// breaking (third_party/icu).
+pub use flashtex_xetex_icu as icu;
 
 pub mod generated;
 pub mod native;

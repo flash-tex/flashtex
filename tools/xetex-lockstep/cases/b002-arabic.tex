@@ -1,0 +1,11 @@
+% b002-arabic: Arabic words: joining forms, right-to-left runs
+% XeTeX-specific (docs/design/xetex/PLAN.md, phase S1: native fonts)
+\input prelude
+\def\space{ }
+\font\au="[/System/Library/Fonts/Supplemental/Arial Unicode.ttf]"
+\font\ta="[/System/Library/Fonts/Supplemental/Tahoma.ttf]"
+\font\hb="[/System/Library/Fonts/ArialHB.ttc:0]"
+\ta
+\setbox0=\hbox{مرحبا بالعالم، العربية لغة جميلة. \au كتاب لا إله}
+\lsshipbox0
+\end

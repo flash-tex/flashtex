@@ -1,0 +1,15 @@
+% b004-mixed-paragraph: a paragraph mixing English, Hebrew and Arabic, broken into lines
+% XeTeX-specific (docs/design/xetex/PLAN.md, phase S1: native fonts)
+\input prelude
+\def\space{ }
+\hsize=210pt \parindent=12pt \parfillskip=0pt plus 1fil
+\baselineskip=13pt \tolerance=10000 \pretolerance=-1
+\font\au="[/System/Library/Fonts/Supplemental/Arial Unicode.ttf]"
+\font\ta="[/System/Library/Fonts/Supplemental/Tahoma.ttf]"
+\font\hb="[/System/Library/Fonts/ArialHB.ttc:0]"
+\ta
+\setbox0=\vbox{The word שלום means peace, and so does سلام in Arabic;
+ספר is a book and كتاب too. Numbers 123 and ١٢٣ and 45.6 stay left to right:
+עמוד 12 من 34. We shall find that office workers, efficient and affluent, flatly refuse difficult fjords; AVATAR, Wo, Ta, T. Yo! Naïve café owners in Zürich serve crème brûlée -- or not --- with 1234567890 “quotes” and ‘single’ ones.\par}
+\lsshipbox0
+\end

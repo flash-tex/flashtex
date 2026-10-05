@@ -1,0 +1,13 @@
+% b005-default-direction: the paragraph level follows the script of the font's last layout (getDefaultDirection)
+% XeTeX-specific (docs/design/xetex/PLAN.md, phase S1: native fonts)
+\input prelude
+\def\space{ }
+\font\au="[/System/Library/Fonts/Supplemental/Arial Unicode.ttf]"
+\font\ta="[/System/Library/Fonts/Supplemental/Tahoma.ttf]"
+\font\hb="[/System/Library/Fonts/ArialHB.ttc:0]"
+\au
+\setbox0=\hbox{abc 123 (x) שלום 123 (x) !? abc 4-5}
+\setbox1=\hbox{\ta كتاب 2026 ... \hb עברית 1.5 ; english}
+\setbox2=\vbox{\box0 \box1}
+\lsshipbox2
+\end

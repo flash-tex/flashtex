@@ -105,11 +105,67 @@ impl Globals {
         0
     }
     pub fn gr_print_font_name(&mut self, _what: i32, _engine: i32, _p1: i32, _p2: i32) {}
-    /// `linebreak_start`/`linebreak_next` (ICU's line breaker): reached only
-    /// with a native font.
-    pub fn linebreak_start(&mut self, _f: i32, _locale: i32, _s: i32, _len: i32) {}
+    /// `linebreakstart`: ICU's line breaker for `\XeTeXlinebreaklocale`
+    /// (pool string `locale`) over `native_text[s..s+len-1]`. The iterator
+    /// is kept while the locale's string number stays the same; one that
+    /// ICU cannot open for the locale is opened for `en_us`, with a
+    /// diagnostic, and the run ends if that fails too.
+    ///
+    /// The locale `G` asks for Graphite's line breaking where the font is a
+    /// Graphite font (`initGraphiteBreaking`); Graphite comes with phase
+    /// S2, and until then no font is one, so `G` goes to ICU as in TeX
+    /// Live for a font without Graphite tables.
+    pub fn linebreak_start(&mut self, _f: i32, locale: i32, s: i32, len: i32) {
+        if locale != self.host.line_break_locale && self.host.line_breaker.is_some() {
+            self.host.line_breaker = None;
+        }
+        if self.host.line_breaker.is_none() {
+            let name = crate::system::tex_string_utf8(self, locale);
+            let end = name.iter().position(|&b| b == 0).unwrap_or(name.len());
+            let name = std::ffi::CString::new(&name[..end]).unwrap();
+            let breaker = match crate::icu::LineBreaker::open(&name) {
+                Ok(b) => b,
+                Err(status) => {
+                    self.begin_diagnostic();
+                    self.print_nl(b'E' as i32);
+                    self.print_c_string(b"rror ");
+                    self.print_int(status);
+                    self.print_c_string(b" creating linebreak iterator for locale `");
+                    self.print_c_string(name.to_bytes());
+                    self.print_c_string(b"'; trying default locale `en_us'.");
+                    self.end_diagnostic(true);
+                    match crate::icu::LineBreaker::open(c"en_us") {
+                        Ok(b) => b,
+                        Err(status) => {
+                            // XeTeX_ext.c's `die` (C's `exit` flushes the
+                            // open files, as `exit_process` does).
+                            eprintln!(
+                                "! failed to create linebreak iterator, status={status} - exiting"
+                            );
+                            crate::system::exit_process(self, 3);
+                        }
+                    }
+                }
+            };
+            self.host.line_breaker = Some(breaker);
+            self.host.line_break_locale = locale;
+        }
+        let text: Vec<u16> = (s..s + len)
+            .map(|k| self.native_text[k as usize] as u16)
+            .collect();
+        if let Some(b) = self.host.line_breaker.as_mut() {
+            b.set_text(&text);
+        }
+    }
+
+    /// `linebreaknext`: the next break offset, or -1 after the last.
+    /// (Without an ICU iterator C asks Graphite's, which phase S1 never
+    /// starts.)
     pub fn linebreak_next(&mut self) -> i32 {
-        -1
+        match self.host.line_breaker.as_mut() {
+            Some(b) => b.next_boundary(),
+            None => -1,
+        }
     }
 
     // ---- TECkit mappings (S0: none) ---------------------------------------

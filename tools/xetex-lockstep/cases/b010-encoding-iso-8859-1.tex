@@ -1,0 +1,14 @@
+% b010-encoding-iso-8859-1: \XeTeXinputencoding "iso-8859-1" and "ISO_8859-1:1987"
+% XeTeX-specific (docs/design/xetex/PLAN.md, phase S1: native fonts)
+\input prelude
+\def\space{ }
+\font\x="[lmroman10-regular.otf]" \x
+\XeTeXinputencoding "iso-8859-1"
+\setbox0=\hbox{café naïve Ångström © ½ × ÿ}
+\count1=`é \message{b010-encoding-iso-8859-1 [\the\count1]}
+\count1=`¤ \message{b010-encoding-iso-8859-1 [\the\count1]}
+\count1=`€ \message{b010-encoding-iso-8859-1 [\the\count1]}
+\XeTeXinputencoding "ISO_8859-1:1987"
+\count1=`é \message{b010 [\the\count1]}
+\lsshipbox0
+\end

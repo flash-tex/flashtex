@@ -1,0 +1,14 @@
+% b011-encoding-ascii: \XeTeXinputencoding "ascii": bytes above 127 are not US-ASCII
+% XeTeX-specific (docs/design/xetex/PLAN.md, phase S1: native fonts)
+\input prelude
+\def\space{ }
+\font\x="[lmroman10-regular.otf]" \x
+\XeTeXinputencoding "ascii"
+\setbox0=\hbox{café naïve Ångström © ½ × ÿ}
+\count1=`é \message{b011-encoding-ascii [\the\count1]}
+\count1=`¤ \message{b011-encoding-ascii [\the\count1]}
+\count1=`€ \message{b011-encoding-ascii [\the\count1]}
+\XeTeXinputencoding "US-ASCII"
+\count1=`é \message{b011 [\the\count1]}
+\lsshipbox0
+\end

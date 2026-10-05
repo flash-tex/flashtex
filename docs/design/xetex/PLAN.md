@@ -98,7 +98,7 @@ the engine and how it shares one runtime and one engine interface with the pdfTe
   `.tec` files (`tex-text.tec` comes from the bundle or TeX Live); ICU for
   encodings, normalisation and line breaking is pinned the same way, at the
   version TeX Live 2026 builds with.
-- **Vendored (S1):** [`third_party/harfbuzz`](../../../third_party/harfbuzz/README.md) and [`third_party/freetype`](../../../third_party/freetype/README.md), built by `crates/flashtex-xetex/fontlibs` and pinned by `crates/flashtex-xetex/tests/pinned_libs.rs`.
+- **Vendored (S1):** [`third_party/harfbuzz`](../../../third_party/harfbuzz/README.md) and [`third_party/freetype`](../../../third_party/freetype/README.md), built by `crates/flashtex-xetex/fontlibs` and pinned by `crates/flashtex-xetex/tests/pinned_libs.rs`. [`third_party/icu`](../../../third_party/icu/README.md) (ICU 78.2: the common library and the converter-alias and break-iteration data of TeX Live's `icudt78l.dat`, for bidi, input encodings and `\XeTeXlinebreaklocale`; no table-driven converters), built by `crates/flashtex-xetex/icu`, pinned the same way. Input normalisation is TECkit's in XeTeX, not ICU's.
 - **Font lookup, platform-free.** XeTeX asks Core Text (macOS) or fontconfig
   (elsewhere) for the installed fonts; FlashTeX does not. A name is resolved
   by XeTeX's own matching rules, rewritten, over a platform-free index of the

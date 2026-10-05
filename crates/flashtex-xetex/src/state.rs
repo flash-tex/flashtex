@@ -127,8 +127,13 @@ pub struct Host {
     /// XeTeXFontMgr's `sReqEngine`: the renderer the last font name asked
     /// for (`/AAT`, `/OT` or `/ICU`, `/GR`), or 0.
     pub req_engine: u8,
-    /// Whether text needing ICU's bidi analysis was reported (once).
-    pub bidi_warned: bool,
+    /// XeTeX_ext.c's `brkIter` and `brkLocaleStrNum`: the ICU line-break
+    /// iterator of `\XeTeXlinebreaklocale` and the pool string of the
+    /// locale it was opened for. A restored checkpoint drops it (the pool
+    /// string number may name another string there); it is reopened on
+    /// next use.
+    pub line_breaker: Option<crate::icu::LineBreaker>,
+    pub line_break_locale: i32,
     /// The host state at each retained checkpoint of the word space.
     checkpoints: HashMap<flashtex_engine::arena::CheckpointId, Saved>,
     /// FreeType (XeTeXFontInst.cpp's `gFreeTypeLibrary`), made on first
@@ -194,6 +199,8 @@ impl Globals {
         self.host.full_name_of_file = saved.full_name_of_file;
         self.host.protrusion = saved.protrusion;
         self.host.handles = saved.handles;
+        self.host.line_breaker = None;
+        self.host.line_break_locale = 0;
         Ok(())
     }
 

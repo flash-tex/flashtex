@@ -1,0 +1,10 @@
+% b008-normalization-nfd: \XeTeXinputnormalization=2 (NFD) on precomposed input
+% XeTeX-specific (docs/design/xetex/PLAN.md, phase S1: native fonts)
+\input prelude
+\def\space{ }
+\font\x="[lmroman10-regular.otf]" \x
+\XeTeXinputnormalization=2
+\setbox0=\hbox{café Ångström naïve Ŵ é}
+\message{b008 [\the\XeTeXinputnormalization]}
+\lsshipbox0
+\end

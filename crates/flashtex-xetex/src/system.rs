@@ -38,7 +38,7 @@ pub const UTF8: i32 = 1;
 pub const UTF16BE: i32 = 2;
 pub const UTF16LE: i32 = 3;
 pub const RAW: i32 = 4;
-/// An ICU converter; not available in phase S0 (see `set_input_file_encoding`).
+/// An ICU converter (`AlphaFile::converter`).
 pub const ICUMAPPING: i32 = 5;
 
 // ---------------------------------------------------------------------------
@@ -77,6 +77,8 @@ pub struct AlphaFile {
     pushback: Option<u8>,
     /// The end of the file was seen (Pascal's `eof`).
     at_eof: bool,
+    /// `UFILE.conversionData`: the ICU converter of an `ICUMAPPING` file.
+    converter: Option<crate::icu::Converter>,
 }
 
 impl Default for AlphaFile {
@@ -94,6 +96,7 @@ impl Default for AlphaFile {
             skip_next_lf: false,
             pushback: None,
             at_eof: true,
+            converter: None,
         }
     }
 }
@@ -202,6 +205,8 @@ impl PasFile for AlphaFile {
         self.input = None;
         self.path = None;
         self.at_eof = true;
+        // u_close_inout's ucnv_close.
+        self.converter = None;
         if let Some(mut c) = self.child.take() {
             let _ = c.wait();
         }
@@ -802,38 +807,119 @@ impl Globals {
     /// the file. `bypass_eoln` is not needed: lines are read whole.
     pub fn input_ln(&mut self, f: &mut AlphaFile, _bypass_eoln: bool) -> bool {
         let buf_size = crate::generated::consts::buf_size;
+        let norm = self.get_input_normalization_state();
+        let (lf, cr) = (b'\n' as i32, b'\r' as i32);
+        let ends_line = |c: i32| c == -1 || c == lf || c == cr;
         self.last = self.first;
-        let mut i = self.get_uni_c(f);
-        if f.skip_next_lf {
-            f.skip_next_lf = false;
-            if i == b'\n' as i32 {
-                i = self.get_uni_c(f);
-            }
-        }
-        if self.last < buf_size && i != -1 && i != b'\n' as i32 && i != b'\r' as i32 {
-            self.buffer[self.last as usize] = i;
-            self.last += 1;
-        }
-        if i != -1 && i != b'\n' as i32 && i != b'\r' as i32 {
-            while self.last < buf_size {
-                i = self.get_uni_c(f);
-                if i == -1 || i == b'\n' as i32 || i == b'\r' as i32 {
-                    break;
+        let mut i;
+        if f.encoding_mode == ICUMAPPING {
+            // The line's bytes, converted by the file's ICU converter.
+            let mut bytes: Vec<u8> = Vec::new();
+            i = f.getc();
+            if f.skip_next_lf {
+                f.skip_next_lf = false;
+                if i == lf {
+                    i = f.getc();
                 }
-                self.buffer[self.last as usize] = i;
-                self.last += 1;
+            }
+            if !ends_line(i) {
+                bytes.push(i as u8);
+                while (bytes.len() as i32) < buf_size {
+                    i = f.getc();
+                    if ends_line(i) {
+                        break;
+                    }
+                    bytes.push(i as u8);
+                }
+            }
+            if i == -1 && bytes.is_empty() {
+                return false;
+            }
+            if !ends_line(i) {
+                self.buffer_overflow();
+            }
+            let cnv = f
+                .converter
+                .as_mut()
+                .expect("an ICUMAPPING file has a converter");
+            if norm == 1 || norm == 2 {
+                let mut utf32 = vec![0u8; buf_size as usize * 4];
+                let (len, err) = cnv.to_utf32_native(&mut utf32, &bytes);
+                if err != crate::icu::U_ZERO_ERROR {
+                    self.conversion_error(err);
+                    return false;
+                }
+                let chars: Vec<u32> = utf32[..len as usize]
+                    .as_chunks::<4>()
+                    .0
+                    .iter()
+                    .map(|c| u32::from_ne_bytes(*c))
+                    .collect();
+                self.apply_normalization(&chars, norm);
+            } else {
+                let room = (buf_size - self.first) as usize * 4;
+                let mut out = vec![0u8; room];
+                let (len, err) = cnv.to_utf32_native(&mut out, &bytes);
+                if err != crate::icu::U_ZERO_ERROR {
+                    self.conversion_error(err);
+                    return false;
+                }
+                for c in out[..len as usize].as_chunks::<4>().0 {
+                    self.buffer[self.last as usize] = i32::from_ne_bytes(*c);
+                    self.last += 1;
+                }
+            }
+        } else {
+            i = self.get_uni_c(f);
+            if f.skip_next_lf {
+                f.skip_next_lf = false;
+                if i == lf {
+                    i = self.get_uni_c(f);
+                }
+            }
+            if norm == 1 || norm == 2 {
+                let mut chars: Vec<u32> = Vec::new();
+                if !ends_line(i) {
+                    chars.push(i as u32);
+                    while (chars.len() as i32) < buf_size {
+                        i = self.get_uni_c(f);
+                        if ends_line(i) {
+                            break;
+                        }
+                        chars.push(i as u32);
+                    }
+                }
+                if i == -1 && chars.is_empty() {
+                    return false;
+                }
+                if !ends_line(i) {
+                    self.buffer_overflow();
+                }
+                self.apply_normalization(&chars, norm);
+            } else {
+                if self.last < buf_size && !ends_line(i) {
+                    self.buffer[self.last as usize] = i;
+                    self.last += 1;
+                }
+                if !ends_line(i) {
+                    while self.last < buf_size {
+                        i = self.get_uni_c(f);
+                        if ends_line(i) {
+                            break;
+                        }
+                        self.buffer[self.last as usize] = i;
+                        self.last += 1;
+                    }
+                }
+                if i == -1 && self.last == self.first {
+                    return false;
+                }
+                if !ends_line(i) {
+                    self.buffer_overflow();
+                }
             }
         }
-        if i == -1 && self.last == self.first {
-            return false;
-        }
-        if i != -1 && i != b'\n' as i32 && i != b'\r' as i32 {
-            // XeTeX_ext.c's `buffer_overflow`.
-            eprintln!("! Unable to read an entire line---bufsize={buf_size}.");
-            eprintln!("Please increase buf_size in texmf.cnf.");
-            exit_process(self, 1);
-        }
-        if i == b'\r' as i32 {
+        if i == cr {
             f.skip_next_lf = true;
         }
         self.buffer[self.last as usize] = b' ' as i32;
@@ -842,13 +928,58 @@ impl Globals {
         }
         while self.last > self.first {
             let c = self.buffer[(self.last - 1) as usize];
-            if c == b' ' as i32 || c == b'\r' as i32 || c == b'\n' as i32 {
+            if c == b' ' as i32 || c == cr || c == lf {
                 self.last -= 1;
             } else {
                 break;
             }
         }
         true
+    }
+
+    /// XeTeX_ext.c's `buffer_overflow`.
+    fn buffer_overflow(&mut self) -> ! {
+        let buf_size = crate::generated::consts::buf_size;
+        eprintln!("! Unable to read an entire line---bufsize={buf_size}.");
+        eprintln!("Please increase buf_size in texmf.cnf.");
+        exit_process(self, 1)
+    }
+
+    /// XeTeX_ext.c's `conversion_error`: an ICU converter failed on a line.
+    fn conversion_error(&mut self, err: crate::icu::UErrorCode) {
+        self.begin_diagnostic();
+        self.print_nl(b'U' as i32);
+        self.print_c_string(b"nicode conversion failed (ICU error code = ");
+        self.print_int(err);
+        self.print_c_string(b") discarding any remaining text");
+        self.end_diagnostic(true);
+    }
+
+    /// XeTeX_ext.c's `apply_normalization`: the line `chars`, normalised
+    /// to NFC (`norm` 1) or NFD (2), into `buffer[first..]`, setting
+    /// `last`; a line that does not fit is `buffer_overflow`.
+    ///
+    /// XeTeX normalises with **TECkit** (`TECkit_CreateConverter(NULL, 0,
+    /// 1, UTF-32, UTF-32 | kForm_NFC or kForm_NFD)`), not with ICU. TECkit
+    /// is another sub-lane of XETEX-S1; until it is wired here, the line is
+    /// copied unnormalised, so `\XeTeXinputnormalization` 1 and 2 read a
+    /// line as 0 does.
+    fn apply_normalization(&mut self, chars: &[u32], _norm: i32) {
+        let buf_size = crate::generated::consts::buf_size;
+        if chars.len() as i64 > (buf_size - self.first) as i64 {
+            self.buffer_overflow();
+        }
+        for (k, &c) in chars.iter().enumerate() {
+            self.buffer[self.first as usize + k] = c as i32;
+        }
+        self.last = self.first + chars.len() as i32;
+    }
+
+    /// XeTeX's `printcstring`: each byte of a C string through `print_char`.
+    pub(crate) fn print_c_string(&mut self, s: &[u8]) {
+        for &b in s {
+            self.print_char(b as i32);
+        }
     }
 
     /// `tex.web` §37 with texmfmp.c's `topenin`: the command line, decoded
@@ -997,53 +1128,93 @@ impl Globals {
         f.close();
     }
 
-    /// `setinputfileencoding`. An ICU converter (`ICUMAPPING`) is not
-    /// available in phase S0: `get_encoding_mode_and_info` never returns
-    /// it.
-    pub fn set_input_file_encoding(&mut self, f: &mut AlphaFile, in_mode: i32, _data: i32) {
+    /// `setinputfileencoding`: the file's converter is closed, then `mode`
+    /// applies; `ICUMAPPING` opens the ICU converter named by pool string
+    /// `data` (made by [`Self::get_encoding_mode_and_info`]), and reads the
+    /// file as bytes, with a diagnostic, if ICU cannot open it. Another mode
+    /// leaves the file's mode as it was, as C's `switch` does (it is never
+    /// passed one).
+    pub fn set_input_file_encoding(&mut self, f: &mut AlphaFile, in_mode: i32, data: i32) {
+        f.converter = None;
         match in_mode {
             UTF8 | UTF16BE | UTF16LE | RAW => f.encoding_mode = in_mode,
-            _ => f.encoding_mode = RAW,
+            ICUMAPPING => {
+                let name = c_string(&tex_string_utf8(self, data));
+                match crate::icu::Converter::open(&name) {
+                    Ok(cnv) => {
+                        f.encoding_mode = ICUMAPPING;
+                        f.converter = Some(cnv);
+                    }
+                    Err(err) => {
+                        self.begin_diagnostic();
+                        self.print_nl(b'E' as i32);
+                        self.print_c_string(b"rror ");
+                        self.print_int(err);
+                        self.print_c_string(b" creating Unicode converter for `");
+                        self.print_c_string(name.to_bytes());
+                        self.print_c_string(b"'; reading as raw bytes");
+                        self.end_diagnostic(true);
+                        f.encoding_mode = RAW;
+                    }
+                }
+            }
+            _ => {}
         }
     }
 
     /// `getencodingmodeandinfo`: the encoding named in `name_of_file`
-    /// (`\XeTeXinputencoding`, `\XeTeXdefaultencoding`). Names other than
-    /// XeTeX's built-in ones are ICU converters in TeX Live; phase S0 has
-    /// none, and reports such a name as TeX Live does a name ICU does not
-    /// know.
+    /// (`\XeTeXinputencoding`, `\XeTeXdefaultencoding`): one of XeTeX's
+    /// built-in names (any case), else an ICU converter, whose name becomes
+    /// a pool string in `enc_info`; a name ICU cannot open is read as bytes,
+    /// with a diagnostic.
+    ///
+    /// The ICU data FlashTeX links has the converter alias table but no
+    /// `.cnv` tables (third_party/icu/README.md): every alias of ICU's
+    /// algorithmic converters (UTF-8, -16, -32, -7, ISO-8859-1, US-ASCII,
+    /// SCSU, BOCU-1, CESU-8, IMAP) opens; a table-driven one (`latin2`,
+    /// `cp1252`, ...) fails as a name ICU does not know does.
     pub fn get_encoding_mode_and_info(&mut self, enc_info: &mut i32) -> i32 {
         *enc_info = 0;
-        let name = self.raw_file_name();
-        let n = name.to_ascii_lowercase();
-        match n.as_str() {
-            "auto" => return AUTO,
-            "utf8" => return UTF8,
-            "utf16" => {
-                return if cfg!(target_endian = "big") {
-                    UTF16BE
-                } else {
-                    UTF16LE
-                }
+        let name = c_string(&self.raw_name_bytes());
+        let n = name.to_bytes();
+        let is = |s: &str| n.eq_ignore_ascii_case(s.as_bytes());
+        if is("auto") {
+            return AUTO;
+        }
+        if is("utf8") {
+            return UTF8;
+        }
+        if is("utf16") {
+            return if cfg!(target_endian = "big") {
+                UTF16BE
+            } else {
+                UTF16LE
+            };
+        }
+        if is("utf16be") {
+            return UTF16BE;
+        }
+        if is("utf16le") {
+            return UTF16LE;
+        }
+        if is("bytes") {
+            return RAW;
+        }
+        match crate::icu::Converter::open(&name) {
+            Err(_) => {
+                self.begin_diagnostic();
+                self.print_nl(b'U' as i32);
+                self.print_c_string(b"nknown encoding `");
+                self.print_c_string(n);
+                self.print_c_string(b"'; reading as raw bytes");
+                self.end_diagnostic(true);
+                RAW
             }
-            "utf16be" => return UTF16BE,
-            "utf16le" => return UTF16LE,
-            "bytes" => return RAW,
-            _ => {}
+            Ok(_cnv) => {
+                *enc_info = self.make_string_utf8(n);
+                ICUMAPPING
+            }
         }
-        self.begin_diagnostic();
-        self.print_nl(b'U' as i32);
-        for b in "nknown encoding `".bytes() {
-            self.print_char(b as i32);
-        }
-        for b in name.bytes() {
-            self.print_char(b as i32);
-        }
-        for b in "'; reading as raw bytes".bytes() {
-            self.print_char(b as i32);
-        }
-        self.end_diagnostic(true);
-        RAW
     }
 
     /// `makeutf16name`: `name_of_file16[0..name_length16-1]` from
@@ -1397,6 +1568,12 @@ pub fn command_line(args: &[String]) -> Vec<u8> {
         line.push(b' ');
     }
     line
+}
+
+/// A C string of `bytes`, cut at the first NUL as C reads it.
+fn c_string(bytes: &[u8]) -> std::ffi::CString {
+    let end = bytes.iter().position(|&b| b == 0).unwrap_or(bytes.len());
+    std::ffi::CString::new(&bytes[..end]).unwrap()
 }
 
 /// The bytes of pool string `s` as UTF-8 (texmfmp.c's XeTeX

@@ -1,9 +1,11 @@
-//! The shaping and metrics libraries are pinned to TeX Live 2026's versions
-//! (docs/design/xetex/PLAN.md §3.1 and §5: XeTeX's output depends on the
-//! exact HarfBuzz and FreeType). These tests fail when:
+//! The shaping, metrics and Unicode libraries are pinned to TeX Live 2026's
+//! versions (docs/design/xetex/PLAN.md §3.1 and §5: XeTeX's output depends
+//! on the exact HarfBuzz and FreeType, and its bidi runs, input encodings
+//! and line breaks on the exact ICU). These tests fail when:
 //!
-//! * the linked HarfBuzz does not report 12.3.2 or FreeType 2.14.1;
-//! * either `third_party/<lib>/README.md` pins another version;
+//! * the linked HarfBuzz does not report 12.3.2, FreeType 2.14.1 or ICU
+//!   78.2 (`u_getVersion`);
+//! * a `third_party/<lib>/README.md` pins another version;
 //! * any vendored file differs from its `SHA256SUMS` entry, or a file of the
 //!   vendored tree is missing from `SHA256SUMS`;
 //! * a declared FFI function does not link.
@@ -22,10 +24,12 @@ use std::os::raw::{c_uint, c_void};
 use std::path::{Path, PathBuf};
 
 use flashtex_xetex_fontlibs::{ft, hb};
+use flashtex_xetex_icu as icu;
 use sha2::{Digest, Sha256};
 
 const HARFBUZZ: &str = "12.3.2";
 const FREETYPE: (i32, i32, i32) = (2, 14, 1);
+const ICU: &str = "78.2";
 
 fn third_party() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../../third_party")
@@ -47,6 +51,14 @@ fn freetype_runtime_version_is_pinned() {
     );
     let header = (ft::FREETYPE_MAJOR, ft::FREETYPE_MINOR, ft::FREETYPE_PATCH);
     assert_eq!(header, FREETYPE, "the FFI's FREETYPE_* constants");
+}
+
+#[test]
+fn icu_runtime_version_is_pinned() {
+    assert_eq!(icu::version_string(), ICU);
+    let mut v = [0u8; 4];
+    unsafe { icu::u_getVersion(v.as_mut_ptr()) };
+    assert_eq!(v, [78, 2, 0, 0]);
 }
 
 /// The README's pin table row `| Version | <version> ...`.
@@ -71,6 +83,7 @@ fn readmes_pin_the_same_versions() {
     assert_eq!(readme_version("harfbuzz"), HARFBUZZ);
     let (a, b, c) = FREETYPE;
     assert_eq!(readme_version("freetype"), format!("{a}.{b}.{c}"));
+    assert_eq!(readme_version("icu"), ICU);
 }
 
 fn files_under(dir: &Path, base: &Path, out: &mut BTreeSet<String>) {
@@ -89,7 +102,7 @@ fn files_under(dir: &Path, base: &Path, out: &mut BTreeSet<String>) {
     }
 }
 
-fn check_sums(lib: &str, tree: &str) {
+fn check_sums(lib: &str, trees: &[&str]) {
     let base = third_party().join(lib);
     let sums = std::fs::read_to_string(base.join("SHA256SUMS")).unwrap();
     let mut listed = BTreeSet::new();
@@ -114,7 +127,9 @@ fn check_sums(lib: &str, tree: &str) {
         bad.join("\n")
     );
     let mut on_disk = BTreeSet::new();
-    files_under(&base.join(tree), &base, &mut on_disk);
+    for tree in trees {
+        files_under(&base.join(tree), &base, &mut on_disk);
+    }
     let unlisted: Vec<_> = on_disk.difference(&listed).collect();
     assert!(
         unlisted.is_empty(),
@@ -129,12 +144,17 @@ fn check_sums(lib: &str, tree: &str) {
 
 #[test]
 fn vendored_harfbuzz_matches_sha256sums() {
-    check_sums("harfbuzz", "harfbuzz-src");
+    check_sums("harfbuzz", &["harfbuzz-src"]);
 }
 
 #[test]
 fn vendored_freetype_matches_sha256sums() {
-    check_sums("freetype", "freetype-src");
+    check_sums("freetype", &["freetype-src"]);
+}
+
+#[test]
+fn vendored_icu_matches_sha256sums() {
+    check_sums("icu", &["icu-src", "icudt78l"]);
 }
 
 #[test]
@@ -142,8 +162,9 @@ fn every_declared_function_links() {
     let all: Vec<_> = flashtex_xetex_fontlibs::hb::all_functions()
         .into_iter()
         .chain(flashtex_xetex_fontlibs::ft::all_functions())
+        .chain(icu::all_functions())
         .collect();
-    assert!(all.len() > 90, "{} functions", all.len());
+    assert!(all.len() > 100, "{} functions", all.len());
     for (name, addr) in all {
         assert_ne!(addr, 0, "{name}");
     }

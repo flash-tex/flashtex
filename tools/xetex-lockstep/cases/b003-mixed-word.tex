@@ -1,0 +1,15 @@
+% b003-mixed-word: left-to-right and right-to-left text in one word (ubidi MIXED: visual runs)
+% XeTeX-specific (docs/design/xetex/PLAN.md, phase S1: native fonts)
+\input prelude
+\def\space{ }
+\font\au="[/System/Library/Fonts/Supplemental/Arial Unicode.ttf]"
+\font\ta="[/System/Library/Fonts/Supplemental/Tahoma.ttf]"
+\font\hb="[/System/Library/Fonts/ArialHB.ttc:0]"
+\au
+\setbox0=\hbox{abcשלוםdef}
+\setbox1=\hbox{\ta عام2026م xyzكتاب١٢٣abc}
+\setbox2=\hbox{\hb שלום123עולם ab(גד)ef}
+\setbox3=\hbox{\au a‮bc‬d x‫yz‬w ‏x a⁧בג⁩d}
+\setbox4=\vbox{\box0 \box1 \box2 \box3}
+\lsshipbox4
+\end

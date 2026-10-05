@@ -493,15 +493,15 @@ case("x050-catcode-default", "the INITEX category codes of Unicode letters and o
 # ---------------------------------------------------------------------------
 
 
-def ncase(name, desc, body, no_halt=False):
+def ncase(name, desc, body, no_halt=False, raw=None):
     head = "%% %s: %s\n" % (name, desc)
     head += "% XeTeX-specific (docs/design/xetex/PLAN.md, phase S1: native fonts)\n"
     if no_halt:
         head += "% lockstep: no-halt\n"
     text = head + "\\input prelude\n\\def\\space{ }\n" + body
-    if not text.endswith("\n"):
+    if not text.endswith("\n") and not raw:
         text += "\n"
-    cases[name] = text.encode("utf-8")
+    cases[name] = raw(text) if raw else text.encode("utf-8")
 
 
 PARA = (r"""\hsize=210pt \parindent=12pt \parfillskip=0pt plus 1fil
@@ -684,6 +684,172 @@ ncase("n020-unknown-font", "a bracketed font file that does not exist, and one t
 \setbox0=\hbox{x}
 \lsshipbox0
 \end""", no_halt=True)
+
+# ---------------------------------------------------------------------------
+# b: ICU (docs/design/xetex/PLAN.md §3.1, phase S1): bidirectional text in
+# native words, input encodings, \XeTeXinputnormalization and
+# \XeTeXlinebreaklocale. The fonts are macOS's own, by absolute path:
+# Arial Unicode (Hebrew, Arabic, Thai, CJK), Tahoma (Hebrew, Arabic, Thai)
+# and the Hebrew Arial of ArialHB.ttc.
+# ---------------------------------------------------------------------------
+
+AU = r"""\font\au="[/System/Library/Fonts/Supplemental/Arial Unicode.ttf]"
+\font\ta="[/System/Library/Fonts/Supplemental/Tahoma.ttf]"
+\font\hb="[/System/Library/Fonts/ArialHB.ttc:0]"
+"""
+
+ncase("b001-hebrew", "Hebrew words: right-to-left runs (ubidi direction RTL)",
+      AU + r"""\au
+\setbox0=\hbox{שלום עולם, ספר־תורה! \hb שָׁלוֹם עוֹלָם \ta אבגדה}
+\lsshipbox0
+\end""")
+
+ncase("b002-arabic", "Arabic words: joining forms, right-to-left runs",
+      AU + r"""\ta
+\setbox0=\hbox{مرحبا بالعالم، العربية لغة جميلة. \au كتاب لا إله}
+\lsshipbox0
+\end""")
+
+ncase("b003-mixed-word", "left-to-right and right-to-left text in one word (ubidi MIXED: visual runs)",
+      AU + r"""\au
+\setbox0=\hbox{abcשלוםdef}
+\setbox1=\hbox{\ta عام2026م xyzكتاب١٢٣abc}
+\setbox2=\hbox{\hb שלום123עולם ab(גד)ef}
+\setbox3=\hbox{\au a‮bc‬d x‫yz‬w ‏x a⁧בג⁩d}
+\setbox4=\vbox{\box0 \box1 \box2 \box3}
+\lsshipbox4
+\end""")
+
+ncase("b004-mixed-paragraph", "a paragraph mixing English, Hebrew and Arabic, broken into lines",
+      PARA + AU + r"""\ta
+\setbox0=\vbox{The word שלום means peace, and so does سلام in Arabic;
+ספר is a book and كتاب too. Numbers 123 and ١٢٣ and 45.6 stay left to right:
+עמוד 12 من 34. """ + WORDS + r"""\par}
+\lsshipbox0
+\end""")
+
+ncase("b005-default-direction", "the paragraph level follows the script of the font's last layout (getDefaultDirection)",
+      AU + r"""\au
+\setbox0=\hbox{abc 123 (x) שלום 123 (x) !? abc 4-5}
+\setbox1=\hbox{\ta كتاب 2026 ... \hb עברית 1.5 ; english}
+\setbox2=\vbox{\box0 \box1}
+\lsshipbox2
+\end""")
+
+ncase("b006-bidi-letterspace", "a mixed word with letter spacing and glyph metrics",
+      AU + r"""\font\ls="[/System/Library/Fonts/Supplemental/Arial Unicode.ttf]:letterspace=10" \ls
+\XeTeXuseglyphmetrics=1
+\setbox0=\hbox{abשלוםcd مرحبا12}
+\lsshipbox0
+\end""")
+
+ncase("b007-normalization-nfc", "\\XeTeXinputnormalization=1 (NFC) on decomposed and precomposed input",
+      r"""\font\x="[lmroman10-regular.otf]" \x
+\XeTeXinputnormalization=1
+\setbox0=\hbox{cafe""" + "\u0301" + r""" cafe""" + "\u0301" + r"""s A""" + "\u030a" + r"""ngstro""" + "\u0308" + r"""m é Å ﬁ}
+\count1=`e""" + "\u0301" + r""" \message{b007 [\the\count1]}
+\lsshipbox0
+\XeTeXinputnormalization=0
+\setbox0=\hbox{cafe""" + "\u0301" + r"""}
+\lsshipbox0
+\end""")
+
+ncase("b008-normalization-nfd", "\\XeTeXinputnormalization=2 (NFD) on precomposed input",
+      r"""\font\x="[lmroman10-regular.otf]" \x
+\XeTeXinputnormalization=2
+\setbox0=\hbox{café Ångström naïve Ŵ e""" + "\u0301" + r"""}
+\message{b008 [\the\XeTeXinputnormalization]}
+\lsshipbox0
+\end""")
+
+LATIN1 = "\\font\\x=\"[lmroman10-regular.otf]\" \\x\n"
+
+
+def latin1_case(name, desc, encoding, extra=b""):
+    ncase(name, desc, "", raw=lambda t: t.encode("utf-8") + LATIN1.encode() +
+          ('\\XeTeXinputencoding "%s"\n' % encoding).encode() +
+          b"\\setbox0=\\hbox{caf\xe9 na\xefve \xc5ngstr\xf6m \xa9 \xbd \xd7 \xff}\n"
+          b"\\count1=`\xe9 \\message{" + name.encode() + b" [\\the\\count1]}\n"
+          b"\\count1=`\xa4 \\message{" + name.encode() + b" [\\the\\count1]}\n"
+          b"\\count1=`\x80 \\message{" + name.encode() + b" [\\the\\count1]}\n"
+          + extra +
+          b"\\lsshipbox0\n\\end\n")
+
+
+latin1_case("b009-encoding-latin1", "\\XeTeXinputencoding \"latin1\": an ICU converter (ISO-8859-1, algorithmic) by alias", "latin1")
+latin1_case("b010-encoding-iso-8859-1", "\\XeTeXinputencoding \"iso-8859-1\" and \"ISO_8859-1:1987\"", "iso-8859-1",
+            b'\\XeTeXinputencoding "ISO_8859-1:1987"\n\\count1=`\xe9 \\message{b010 [\\the\\count1]}\n')
+latin1_case("b011-encoding-ascii", "\\XeTeXinputencoding \"ascii\": bytes above 127 are not US-ASCII", "ascii",
+            b'\\XeTeXinputencoding "US-ASCII"\n\\count1=`\xe9 \\message{b011 [\\the\\count1]}\n')
+
+ncase("b012-encoding-utf16", "\\XeTeXinputencoding \"utf16\" (built in, the host's byte order) mid-file",
+      "", raw=lambda t: t.encode("utf-8") + LATIN1.encode() +
+      b'\\XeTeXinputencoding "utf16"\n' +
+      ("\\setbox0=\\hbox{UTF-16: café 雪 🍌 Ω}\n\\message{b012 [é🍌]}\n"
+       "\\XeTeXinputencoding \"utf8\"\n").encode("utf-16-le") +
+      "\\count1=`é \\message{b012 [\\the\\count1]}\n\\lsshipbox0\n\\end\n".encode("utf-8"))
+
+ncase("b013-encoding-unknown", "an encoding name ICU does not know is read as bytes, with a diagnostic",
+      "", raw=lambda t: t.encode("utf-8") + LATIN1.encode() +
+      b'\\XeTeXinputencoding "no-such-encoding"\n'
+      b"\\setbox0=\\hbox{caf\xe9}\n\\count1=`\xe9 \\message{b013 [\\the\\count1]}\n"
+      b'\\XeTeXinputencoding "UTF-8"\n'
+      b"\\count1=`\xc3\xa9 \\message{b013 [\\the\\count1]}\n"
+      b"\\lsshipbox0\n"
+      b'\\XeTeXinputencoding "auto"\n'
+      b"\\end\n", no_halt=True)
+
+ncase("b014-encoding-tables", "table-driven ICU converters (latin2, cp1252, macintosh): FlashTeX links no .cnv data (expected to differ)",
+      "", raw=lambda t: t.encode("utf-8") + LATIN1.encode() +
+      b'\\XeTeXinputencoding "latin2"\n'
+      b"\\count1=`\xb1 \\message{b014 [\\the\\count1]}\n"
+      b'\\XeTeXinputencoding "cp1252"\n'
+      b"\\count1=`\x80 \\message{b014 [\\the\\count1]}\n"
+      b'\\XeTeXinputencoding "macintosh"\n'
+      b"\\count1=`\x8e \\message{b014 [\\the\\count1]}\n"
+      b"\\setbox0=\\hbox{x}\n\\lsshipbox0\n\\end\n")
+
+ncase("b015-default-encoding", "\\XeTeXdefaultencoding \"latin1\" for a file written in UTF-8, then \\input",
+      LATIN1 + r"""\immediate\openout1=b015-in.tex
+\immediate\write1{\noexpand\setbox0=\noexpand\hbox{café ü}\noexpand\count1=`é \noexpand\message{b015 [\noexpand\the\noexpand\count1]}}
+\immediate\closeout1
+\XeTeXdefaultencoding "latin1"
+\input b015-in
+\XeTeXdefaultencoding "utf8"
+\lsshipbox0
+\end""")
+
+ncase("b016-linebreak-th", "\\XeTeXlinebreaklocale \"th\": Thai words found by ICU's dictionary",
+      PARA + AU + r"""\au \hsize=120pt
+\XeTeXlinebreaklocale "th" \XeTeXlinebreakskip=0pt plus 1pt \XeTeXlinebreakpenalty=0
+\setbox0=\vbox{ภาษาไทยเป็นภาษาที่มีระดับเสียงของคำแน่นอนหรือวรรณยุกต์เช่นเดียวกับภาษาจีน
+และออกเสียงแยกคำต่อคำ office difficult\par}
+\lsshipbox0
+\end""")
+
+ncase("b017-linebreak-cjk", "\\XeTeXlinebreaklocale \"ja\" and \"zh\": breaks between ideographs; penalty only",
+      PARA + AU + r"""\au \hsize=100pt
+\XeTeXlinebreaklocale "ja" \XeTeXlinebreakpenalty=50
+\setbox0=\vbox{日本語の文章は、単語の間に空白を置かずに書きます。「括弧」や句読点の前後で改行の規則が違います。\par}
+\XeTeXlinebreaklocale "zh" \XeTeXlinebreakskip=0pt plus 2pt
+\setbox1=\vbox{中文的句子没有空格，可以在汉字之间换行。（括号）和标点符号有特别的规则。\par}
+\setbox2=\vbox{\box0 \box1}
+\lsshipbox2
+\end""")
+
+ncase("b018-linebreak-locales", "\\XeTeXlinebreaklocale with en, G (Graphite, no Graphite font), an unknown locale, and Latin text",
+      PARA + AU + r"""\au \hsize=80pt
+\XeTeXlinebreaklocale "en" \XeTeXlinebreakpenalty=7
+\setbox0=\vbox{self-evident well-known co-operation http://example.com/a/b?c=d 1,234.5 (x)\par}
+\XeTeXlinebreaklocale "G"
+\setbox1=\vbox{self-evident well-known\par}
+\XeTeXlinebreaklocale "xx-YY"
+\setbox2=\vbox{ภาษาไทยเป็นภาษา self-evident\par}
+\XeTeXlinebreaklocale ""
+\setbox3=\vbox{ภาษาไทยเป็นภาษา self-evident\par}
+\setbox4=\vbox{\box0 \box1 \box2 \box3}
+\lsshipbox4
+\end""")
 
 for name, data in cases.items():
     with open(os.path.join(OUT, name + ".tex"), "wb") as fh:

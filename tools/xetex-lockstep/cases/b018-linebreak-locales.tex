@@ -1,0 +1,21 @@
+% b018-linebreak-locales: \XeTeXlinebreaklocale with en, G (Graphite, no Graphite font), an unknown locale, and Latin text
+% XeTeX-specific (docs/design/xetex/PLAN.md, phase S1: native fonts)
+\input prelude
+\def\space{ }
+\hsize=210pt \parindent=12pt \parfillskip=0pt plus 1fil
+\baselineskip=13pt \tolerance=10000 \pretolerance=-1
+\font\au="[/System/Library/Fonts/Supplemental/Arial Unicode.ttf]"
+\font\ta="[/System/Library/Fonts/Supplemental/Tahoma.ttf]"
+\font\hb="[/System/Library/Fonts/ArialHB.ttc:0]"
+\au \hsize=80pt
+\XeTeXlinebreaklocale "en" \XeTeXlinebreakpenalty=7
+\setbox0=\vbox{self-evident well-known co-operation http://example.com/a/b?c=d 1,234.5 (x)\par}
+\XeTeXlinebreaklocale "G"
+\setbox1=\vbox{self-evident well-known\par}
+\XeTeXlinebreaklocale "xx-YY"
+\setbox2=\vbox{ภาษาไทยเป็นภาษา self-evident\par}
+\XeTeXlinebreaklocale ""
+\setbox3=\vbox{ภาษาไทยเป็นภาษา self-evident\par}
+\setbox4=\vbox{\box0 \box1 \box2 \box3}
+\lsshipbox4
+\end

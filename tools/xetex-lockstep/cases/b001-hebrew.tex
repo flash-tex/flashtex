@@ -1,0 +1,11 @@
+% b001-hebrew: Hebrew words: right-to-left runs (ubidi direction RTL)
+% XeTeX-specific (docs/design/xetex/PLAN.md, phase S1: native fonts)
+\input prelude
+\def\space{ }
+\font\au="[/System/Library/Fonts/Supplemental/Arial Unicode.ttf]"
+\font\ta="[/System/Library/Fonts/Supplemental/Tahoma.ttf]"
+\font\hb="[/System/Library/Fonts/ArialHB.ttc:0]"
+\au
+\setbox0=\hbox{שלום עולם, ספר־תורה! \hb שָׁלוֹם עוֹלָם \ta אבגדה}
+\lsshipbox0
+\end

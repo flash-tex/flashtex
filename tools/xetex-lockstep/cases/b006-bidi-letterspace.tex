@@ -1,0 +1,12 @@
+% b006-bidi-letterspace: a mixed word with letter spacing and glyph metrics
+% XeTeX-specific (docs/design/xetex/PLAN.md, phase S1: native fonts)
+\input prelude
+\def\space{ }
+\font\au="[/System/Library/Fonts/Supplemental/Arial Unicode.ttf]"
+\font\ta="[/System/Library/Fonts/Supplemental/Tahoma.ttf]"
+\font\hb="[/System/Library/Fonts/ArialHB.ttc:0]"
+\font\ls="[/System/Library/Fonts/Supplemental/Arial Unicode.ttf]:letterspace=10" \ls
+\XeTeXuseglyphmetrics=1
+\setbox0=\hbox{abשלוםcd مرحبا12}
+\lsshipbox0
+\end

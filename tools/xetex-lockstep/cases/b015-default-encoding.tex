@@ -1,0 +1,13 @@
+% b015-default-encoding: \XeTeXdefaultencoding "latin1" for a file written in UTF-8, then \input
+% XeTeX-specific (docs/design/xetex/PLAN.md, phase S1: native fonts)
+\input prelude
+\def\space{ }
+\font\x="[lmroman10-regular.otf]" \x
+\immediate\openout1=b015-in.tex
+\immediate\write1{\noexpand\setbox0=\noexpand\hbox{café ü}\noexpand\count1=`é \noexpand\message{b015 [\noexpand\the\noexpand\count1]}}
+\immediate\closeout1
+\XeTeXdefaultencoding "latin1"
+\input b015-in
+\XeTeXdefaultencoding "utf8"
+\lsshipbox0
+\end

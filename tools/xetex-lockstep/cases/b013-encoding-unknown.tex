@@ -1,0 +1,14 @@
+% b013-encoding-unknown: an encoding name ICU does not know is read as bytes, with a diagnostic
+% XeTeX-specific (docs/design/xetex/PLAN.md, phase S1: native fonts)
+% lockstep: no-halt
+\input prelude
+\def\space{ }
+\font\x="[lmroman10-regular.otf]" \x
+\XeTeXinputencoding "no-such-encoding"
+\setbox0=\hbox{café}
+\count1=`é \message{b013 [\the\count1]}
+\XeTeXinputencoding "UTF-8"
+\count1=`Ã© \message{b013 [\the\count1]}
+\lsshipbox0
+\XeTeXinputencoding "auto"
+\end
