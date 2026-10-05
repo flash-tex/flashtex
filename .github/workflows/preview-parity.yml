@@ -163,7 +163,7 @@ jobs:
     name: zero-tolerance sweep (macOS)
     needs: [inputs]
     if: always() && needs.inputs.outputs.uploaded == 'true'
-    runs-on: ${{ inputs.runner || 'macos-26' }}
+    runs-on: ${{ inputs.runner || 'macos-15' }}  # TEMPORARY (branch measurement); macos-26 before merge
     timeout-minutes: 60
     env:
       CI: "1"
