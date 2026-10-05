@@ -15,8 +15,10 @@
 #            compiles every fixture to convergence with the display list
 #            written, checks every glyph and rule position against the
 #            oracle's PDF (0 sp) and runs P-T2 on the engine PDF of that same
-#            run. The display lists, the engine PDFs and pdflatex's PDFs go
-#            up as one artifact.
+#            run. The display lists, pdflatex's PDFs and each fixture's whole
+#            work tree (the engine PDF, and the images a display list names
+#            by path: without them a page falls back to the PDF) go up as
+#            one artifact.
 #   sweep    GitHub-hosted macOS (never a self-hosted Mac: the team's Macs
 #            are laptops, the owner's among them): swift test
 #            --filter PreviewParityTests at tolerance 0 on that artifact,
@@ -146,8 +148,7 @@ jobs:
             ${{ runner.temp }}/dl3/positions.txt
             ${{ runner.temp }}/dl3/fixtures/*/display.dl3
             ${{ runner.temp }}/dl3/fixtures/*/oracle.pdf
-            ${{ runner.temp }}/dl3/fixtures/*/src/*.pdf
-            ${{ runner.temp }}/dl3/fixtures/*/src/*.tex
+            ${{ runner.temp }}/dl3/fixtures/*/src/
           if-no-files-found: error
           retention-days: 14
 
