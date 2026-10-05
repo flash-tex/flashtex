@@ -84,6 +84,10 @@ fn fmt_dir() -> PathBuf {
 }
 
 fn start_host(name: &str) -> Host {
+    start_host_env(name, &[])
+}
+
+fn start_host_env(name: &str, env: &[(&str, &str)]) -> Host {
     // Short: a Unix socket path must fit in sockaddr_un (104 bytes on macOS).
     static N: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
     let n = N.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
@@ -95,6 +99,7 @@ fn start_host(name: &str) -> Host {
         .env("SOURCE_DATE_EPOCH", "0")
         .env("FORCE_SOURCE_DATE", "1")
         .env_remove("FLASHTEX_S0_CACHE")
+        .envs(env.iter().copied())
         .stdout(Stdio::piped())
         .spawn()
         .unwrap();
@@ -1388,6 +1393,291 @@ fn a_newer_compile_preempts_the_running_one() {
         );
     }
     assert!(cancelled > 0, "no compile was preempted");
+    let _ = c.bye();
+    let _ = std::fs::remove_dir_all(&base);
+}
+
+/// LIVE-30MS: typing faster than the edited page arrives must not starve
+/// the preview. After a compile that newer work stopped before it shipped a
+/// changed page, the next one is not stopped before its changed page, and
+/// sends it even when superseded (then stops, `cancelled`); and what the
+/// client holds at the end still equals a from-scratch compile.
+#[test]
+fn a_superseded_compile_still_sends_its_edited_page() {
+    if find_texlive_bin().is_none() {
+        common::no_texlive();
+        return;
+    }
+    let base = common::fresh_dir("flashtex-host-antistarve");
+    let _ = std::fs::remove_dir_all(&base);
+    std::fs::create_dir_all(&base).unwrap();
+    let (proj, out) = (base.join("proj"), base.join("out"));
+    std::fs::create_dir_all(&proj).unwrap();
+    std::fs::create_dir_all(&out).unwrap();
+    let main = "main.tex";
+    std::fs::write(proj.join(main), article(40)).unwrap();
+    let host = start_host("s");
+    let scratch = start_host("t");
+    let mut c = Client::connect(&host.1).unwrap();
+    let mut view = View::default();
+    let mut id = 0;
+    for _ in 0..4 {
+        id += 1;
+        let o = compile(&mut c, &mut view, &req(id, &proj, &out, main));
+        if o.done.str_field("mode") == Some("unchanged") {
+            break;
+        }
+    }
+    // A prose line about two thirds in.
+    let text = String::from_utf8_lossy(&std::fs::read(proj.join(main)).unwrap()).into_owned();
+    let lines: Vec<&str> = text.split('\n').collect();
+    let prose: Vec<usize> = (0..lines.len())
+        .filter(|&i| {
+            let t = lines[i];
+            t.split(' ').count() > 6 && !t.trim_start().starts_with('%') && !t.starts_with('\\')
+        })
+        .collect();
+    let line = prose[prose.len() * 2 / 3];
+    let (w, _) = middle_word(lines[line]).expect("a word");
+    let offset: usize = lines[..line].iter().map(|l| l.len() + 1).sum::<usize>() + w;
+    let mut sent_superseded = 0;
+    for round in 0..5u64 {
+        // three keystrokes, each sent as soon as the one before has started
+        let ids: Vec<i64> = (1..=3).map(|n| id + n).collect();
+        id += 3;
+        let reqs: Vec<CompileRequest> = ids
+            .iter()
+            .enumerate()
+            .map(|(n, &i)| {
+                let mut r = req(i, &proj, &out, main);
+                r.edits = vec![Edit {
+                    path: main.into(),
+                    offset: offset as u64 + (n as u64 + round) % 2,
+                    delete: 0,
+                    insert: ["xy", "z", "w"][n].into(),
+                }];
+                r
+            })
+            .collect();
+        c.compile(&reqs[0]).unwrap();
+        let (mut current, mut dones) = (0, vec![]);
+        let mut pages: HashMap<i64, usize> = HashMap::new();
+        while dones.len() < 3 {
+            match c.next_event().unwrap().expect("host closed the connection") {
+                Event::Started(j) => {
+                    current = j.int_field("id").unwrap_or(0);
+                    if let Some(n) = ids.iter().position(|&i| i == current) {
+                        if n + 1 < reqs.len() {
+                            c.compile(&reqs[n + 1]).unwrap();
+                        }
+                    }
+                    if j.get("keep").and_then(Json::as_bool) != Some(true) {
+                        view = View::default();
+                    }
+                }
+                Event::Font(f) => {
+                    view.fonts.insert(f.id, f.key);
+                }
+                Event::Sources(s) => {
+                    for (i, p) in s.files {
+                        view.files.insert(i, p);
+                    }
+                    for (i, f, l) in s.spans {
+                        view.spans.insert(i, (f, l));
+                    }
+                }
+                Event::Page(p) => {
+                    *pages.entry(current).or_default() += 1;
+                    view.page_fonts.insert(p.index, view.fonts.clone());
+                    view.pages.insert(p.index, p);
+                }
+                Event::Done(d) => dones.push(d),
+                Event::Error(e) => panic!("host error: {e}"),
+                _ => {}
+            }
+        }
+        assert_eq!(dones[2].int_field("id"), Some(ids[2]));
+        assert_eq!(dones[2].str_field("status"), Some("ok"), "{}", dones[2]);
+        // the first stopped before a page (starved): the second, superseded
+        // too, still sent its changed page
+        let cancelled = |d: &Json| d.str_field("status") == Some("cancelled");
+        let started = |d: &Json| d.get("stages").is_some();
+        if cancelled(&dones[0])
+            && started(&dones[0])
+            && pages.get(&ids[0]).copied().unwrap_or(0) == 0
+            && cancelled(&dones[1])
+            && started(&dones[1])
+        {
+            assert!(
+                pages.get(&ids[1]).copied().unwrap_or(0) >= 1,
+                "round {round}: the protected compile sent no page: {}",
+                dones[1]
+            );
+            sent_superseded += 1;
+        }
+        let dones = [dones[0].clone(), dones[2].clone()];
+        let count = dones[1].int_field("pages").unwrap_or(0) as usize;
+        view.count = count;
+        view.pages.retain(|&i, _| (i as usize) < count);
+        let (p2, o2) = snapshot(&base, &proj, &out, &format!("s{round}"));
+        compare_with_scratch(
+            &scratch.1,
+            &view,
+            &proj,
+            &out,
+            &p2,
+            &o2,
+            main,
+            &format!("superseded round {round}"),
+        );
+    }
+    // The second keystroke is sent as soon as the first has started: the
+    // first is stopped at its first checkpoint, long before its page, in
+    // practice every round; one round at least, or the test proved nothing.
+    eprintln!("{sent_superseded} of 5 rounds starved a compile and protected the next");
+    assert!(
+        sent_superseded >= 1,
+        "no round starved a compile: the protection was not exercised"
+    );
+    let _ = c.bye();
+    let _ = std::fs::remove_dir_all(&base);
+}
+
+/// Racy signatures (git's racy-clean rule; review of #1549): a source
+/// changed to the same length within the modification-time tick in which
+/// the run took its signature keeps the same signature. Simulated here on
+/// any file system with a one-day tick (`FLASHTEX_RACY_MS`): the edit puts
+/// the file's modification time back, as a coarse clock would leave it;
+/// the host must still see the change (main said `unchanged`). The tick
+/// must outlast the test: every signature the host takes meanwhile (a
+/// content check keeps a fresh one) has to fall within it, as on a real
+/// coarse clock, where the edit's own time is the tick it happens in. A
+/// tick shorter than a slow (debug, loaded) run let a signature taken after
+/// it hide the edit: a test artefact, not a racy case.
+#[test]
+fn a_same_size_edit_within_the_mtime_tick_is_seen() {
+    if find_texlive_bin().is_none() {
+        common::no_texlive();
+        return;
+    }
+    let base = common::fresh_dir("flashtex-host-racy");
+    let _ = std::fs::remove_dir_all(&base);
+    std::fs::create_dir_all(&base).unwrap();
+    let (proj, out) = (base.join("proj"), base.join("out"));
+    std::fs::create_dir_all(&proj).unwrap();
+    std::fs::create_dir_all(&out).unwrap();
+    let main = "main.tex";
+    let text = article(3);
+    std::fs::write(proj.join(main), &text).unwrap();
+    let tick = std::time::SystemTime::now();
+    let set_mtime = |t: std::time::SystemTime| {
+        std::fs::File::options()
+            .write(true)
+            .open(proj.join(main))
+            .unwrap()
+            .set_modified(t)
+            .unwrap()
+    };
+    set_mtime(tick);
+    let host = start_host_env("r", &[("FLASHTEX_RACY_MS", "86400000")]);
+    let scratch = start_host("rs");
+    let mut c = Client::connect(&host.1).unwrap();
+    let mut view = View::default();
+    let mut id = 0;
+    for _ in 0..4 {
+        id += 1;
+        let o = compile(&mut c, &mut view, &req(id, &proj, &out, main));
+        if o.done.str_field("mode") == Some("unchanged") {
+            break;
+        }
+    }
+    // the same length: one letter of a prose word replaced, in the body
+    let at = text
+        .rfind(" lorem ")
+        .or_else(|| text.rfind(" the "))
+        .expect("a word")
+        + 1;
+    let mut b = text.into_bytes();
+    b[at] = if b[at] == b'q' { b'z' } else { b'q' };
+    std::fs::write(proj.join(main), &b).unwrap();
+    set_mtime(tick);
+    id += 1;
+    let o = compile(&mut c, &mut view, &req(id, &proj, &out, main));
+    assert_ne!(
+        o.done.str_field("mode"),
+        Some("unchanged"),
+        "the edit was not seen: {}",
+        o.done
+    );
+    let (p2, o2) = snapshot(&base, &proj, &out, "r");
+    compare_with_scratch(&scratch.1, &view, &proj, &out, &p2, &o2, main, "racy edit");
+    let _ = c.bye();
+    let _ = std::fs::remove_dir_all(&base);
+}
+
+/// An absolute name the run looked for (review of #1549, (a)): its own
+/// directory decides the answer, not the working directory, both before
+/// S₀ (S₀'s key) and after it (the journal). A file appearing there is
+/// seen (main: `unchanged`, the working directory being as it was).
+#[test]
+fn a_file_appearing_at_an_absolute_name_is_seen() {
+    if find_texlive_bin().is_none() {
+        common::no_texlive();
+        return;
+    }
+    let base = common::fresh_dir("flashtex-host-absname");
+    let _ = std::fs::remove_dir_all(&base);
+    std::fs::create_dir_all(&base).unwrap();
+    let (proj, out, ext) = (base.join("proj"), base.join("out"), base.join("ext"));
+    for d in [&proj, &out, &ext] {
+        std::fs::create_dir_all(d).unwrap();
+    }
+    let main = "main.tex";
+    let pre = ext.join("pre.tex");
+    let body = ext.join("body.tex");
+    let doc = format!(
+        "\\documentclass{{article}}\n\\IfFileExists{{{}}}{{\\def\\pre{{yes}}}}{{\\def\\pre{{no}}}}\n\\begin{{document}}\nPreamble: \\pre.\n\n\\IfFileExists{{{}}}{{Body: yes.}}{{Body: no.}}\n\\end{{document}}\n",
+        pre.display(),
+        body.display()
+    );
+    std::fs::write(proj.join(main), doc).unwrap();
+    let host = start_host("a");
+    let scratch = start_host("as");
+    let mut c = Client::connect(&host.1).unwrap();
+    let mut view = View::default();
+    let mut id = 0;
+    for _ in 0..4 {
+        id += 1;
+        let o = compile(&mut c, &mut view, &req(id, &proj, &out, main));
+        if o.done.str_field("mode") == Some("unchanged") {
+            break;
+        }
+    }
+    // the body's file appears (the journal's lookup), then the preamble's
+    // (S₀'s key)
+    for (k, f) in [&body, &pre].into_iter().enumerate() {
+        std::fs::write(f, "% exists\n").unwrap();
+        id += 1;
+        let o = compile(&mut c, &mut view, &req(id, &proj, &out, main));
+        assert_ne!(
+            o.done.str_field("mode"),
+            Some("unchanged"),
+            "{}: not seen: {}",
+            f.display(),
+            o.done
+        );
+        let (p2, o2) = snapshot(&base, &proj, &out, &format!("a{k}"));
+        compare_with_scratch(
+            &scratch.1,
+            &view,
+            &proj,
+            &out,
+            &p2,
+            &o2,
+            main,
+            &format!("{} appeared", f.display()),
+        );
+    }
     let _ = c.bye();
     let _ = std::fs::remove_dir_all(&base);
 }

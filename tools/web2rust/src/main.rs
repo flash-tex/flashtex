@@ -55,6 +55,10 @@ struct Args {
     /// NAME (`#[inline(always)]` or `#[inline(never)]`), for a hot routine's
     /// fast path and its out-of-line rest (changes/throughput.ch).
     inline: Vec<(String, String)>,
+    /// `--array-view NAME`: index the fixed-length word-space array NAME
+    /// through a view held in a local of each routine that indexes it
+    /// (`crate::arena::ArrView`).
+    array_views: Vec<String>,
     /// `--first-string N`: the number of the first multi-character pool
     /// string (256, TANGLE's; 65536 for xetex.web, as `otangle` numbers
     /// them).
@@ -97,6 +101,7 @@ fn parse_args() -> Result<Args, String> {
         arena_caps: vec![],
         index_type: None,
         inline: vec![],
+        array_views: vec![],
         first_string: 256,
     };
     while let Some(arg) = it.next() {
@@ -152,6 +157,9 @@ fn parse_args() -> Result<Args, String> {
                 }
                 a.inline.push((n.to_string(), k.to_string()));
             }
+            "--array-view" => a
+                .array_views
+                .push(it.next().ok_or("--array-view needs a name")?),
             "--first-string" => {
                 let v = it.next().ok_or("--first-string needs a number")?;
                 a.first_string = v
@@ -295,6 +303,7 @@ fn main() -> ExitCode {
         &args.arena_caps,
         args.index_type.as_deref(),
         &args.inline,
+        &args.array_views,
     ) {
         eprintln!("web2rust: emit error: {e}");
         return ExitCode::FAILURE;

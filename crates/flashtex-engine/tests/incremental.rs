@@ -278,7 +278,16 @@ fn a_failed_run_then_a_revert() {
         &[("doc.tex", &broken)],
         "a run that fails",
     );
-    compile_and_check(&e, &mut h, &dir, &[("doc.tex", &doc)], "the revert");
+    // (the failed run's PDF is gone, as pdfTeX leaves it: `check_against`)
+    assert!(!dir.join("doc.pdf").exists());
+    let r = compile_and_check(&e, &mut h, &dir, &[("doc.tex", &doc)], "the revert");
+    // Lane ERROR-RECOVERY: the failed run's PDF was set aside, not lost
+    // (`system::remove_output`), so the revert restarts from a checkpoint
+    // instead of from the format.
+    assert!(
+        !field(&r, "mode").contains("cold"),
+        "the revert compiled from scratch: {r}"
+    );
     compile_and_check(&e, &mut h, &dir, &[], "settle again");
 }
 
@@ -1069,6 +1078,111 @@ fn a_fatal_edit_after_an_interrupted_aux_pass_keeps_the_pdf() {
     let label = base.replacen("the height", "the height\\label{lab:new}", 1);
     let fatal = label.replacen("\\end{document}", "\\jend{document}", 1);
     interrupt_then(&e, "fatal-after-interrupt", base, &label, "2 1", &fatal);
+}
+
+/// genvol.py's vol-closed, shorter: three blocks, each writes a file with
+/// `\immediate\write`, closes it, ships a page or two and `\input`s it.
+fn vol_closed_doc() -> String {
+    let mut s = String::from("\\documentclass{article}\n\\newwrite\\tmp\n\\begin{document}\n\n");
+    for k in 0..3 {
+        s.push_str(&format!(
+            "\\immediate\\openout\\tmp=\\jobname-tmp.tex\n\
+             \\immediate\\write\\tmp{{Instance {k} says {}.}}\n\\immediate\\closeout\\tmp\n\n",
+            "x".repeat(k + 1)
+        ));
+        for i in 0..25 {
+            s.push_str(&para(k * 25 + i, "delta"));
+        }
+        s.push_str("\\input{\\jobname-tmp.tex}\n\n");
+    }
+    s.push_str("\\end{document}\n");
+    s
+}
+
+/// Issue #1550 (soundness sweep D, vol-closed `3:second-after-interrupt`):
+/// an edit breaks a `\closeout` (`\closeouet`), so the file is still open
+/// for output when it is `\input` pages later. pdfTeX's `\write` line is
+/// still in the stream's buffer then, and the `\input` reads an empty file;
+/// a checkpoint between them had flushed the buffer, and the run read the
+/// line. Such a read now redoes the run from the format, with that file
+/// never flushed by a checkpoint (`system::no_flush`). Also on the
+/// document's first compile, and back.
+#[test]
+fn a_file_read_while_open_for_output_is_read_as_from_scratch() {
+    let Some(e) = env() else {
+        common::no_texlive();
+        return;
+    };
+    let base = vol_closed_doc();
+    let lost =
+        base.replacen("\\closeout", "\\closeouet", 2)
+            .replacen("\\closeouet", "\\closeout", 1);
+    assert_ne!(base, lost);
+    let dir = e.dir.join("read-while-open");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let mut h = Host::start(&e, &dir);
+    for _ in 0..3 {
+        compile_and_check(&e, &mut h, &dir, &[("doc.tex", &base)], "settle");
+    }
+    compile_and_check(&e, &mut h, &dir, &[("doc.tex", &lost)], "closeout lost");
+    compile_and_check(
+        &e,
+        &mut h,
+        &dir,
+        &[("doc.tex", &lost)],
+        "closeout lost, again",
+    );
+    let edited = lost.replacen("Paragraph 40 with", "Paragraph 40 now with", 1);
+    compile_and_check(
+        &e,
+        &mut h,
+        &dir,
+        &[("doc.tex", &edited)],
+        "an edit after it",
+    );
+    compile_and_check(&e, &mut h, &dir, &[("doc.tex", &base)], "back");
+    drop(h);
+    // the first compile, from the format
+    let dir = e.dir.join("read-while-open-first");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let mut h = Host::start(&e, &dir);
+    compile_and_check(&e, &mut h, &dir, &[("doc.tex", &lost)], "first compile");
+}
+
+/// Issue #1550 as sweep D found it: the broken `\closeout` arrives while
+/// the compile of an earlier edit is stopped.
+#[test]
+fn a_file_read_while_open_for_output_after_an_interrupt() {
+    let Some(e) = env() else {
+        common::no_texlive();
+        return;
+    };
+    let base = vol_closed_doc();
+    let first = base.replacen(
+        "\\immediate\\closeout\\tmp\n\n",
+        "\\immediate\\closeout\\tmp\n\n\\section{Inserted}\n\n",
+        2,
+    );
+    let first = first.replacen(
+        "\\immediate\\closeout\\tmp\n\n\\section{Inserted}\n\n",
+        "\\immediate\\closeout\\tmp\n\n",
+        1,
+    );
+    let second =
+        first
+            .replacen("\\closeout", "\\closeouet", 2)
+            .replacen("\\closeouet", "\\closeout", 1);
+    assert!(first != base && second != first);
+    interrupt_then(
+        &e,
+        "read-while-open-interrupt",
+        &base,
+        &first,
+        "1 2",
+        &second,
+    );
 }
 
 /// P4-COLD-PREEMPT (Commander ruling, DESIGN.md §5.1/§5.3): a run from the
@@ -2483,5 +2597,131 @@ fn a_late_barrier_keeps_the_pages_before_it() {
         // the pages up to the barrier are the old run's; the last ones (the
         // `\write18` and the read of the written file) were re-typeset
         assert!(conv < kept && kept < pages, "{what}: {r}");
+    }
+}
+
+/// `\immediate` writes of `\jobname-tmp.tex` (`Instance K says S.`), closed
+/// at once: a temporary file written and read back (genvol.py's
+/// vol-closed).
+fn write_tmp(k: usize, s: &str) -> String {
+    format!(
+        "\\immediate\\openout\\tmp=\\jobname-tmp.tex\n\
+         \\immediate\\write\\tmp{{Instance {k} says {s}.}}\n\\immediate\\closeout\\tmp\n\n"
+    )
+}
+
+fn paras(from: usize, to: usize, word: &str) -> String {
+    (from..to).map(|i| para(i, word)).collect()
+}
+
+/// #1348 (1): an edit adds a write of a temporary file that the document
+/// wrote and closed before the edit's restart point and reads later, and
+/// its compile is preempted after that write. The next compile abandons
+/// it and gets the complete run back (`reattach_pending`), but no tail of
+/// that run held the file (the run never opened it after the restart
+/// point), so the disk kept the abandoned run's instance, and the record
+/// of that open was dropped: a later restart between the document's own
+/// write and its `\input` read the abandoned instance.
+#[test]
+fn an_abandoned_run_that_rewrote_a_closed_file_leaves_it_as_the_old_run() {
+    let Some(e) = env() else {
+        common::no_texlive();
+        return;
+    };
+    let dir = e.dir.join("abandoned-rewrite");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let doc = |slot: &str, word: &str| {
+        format!(
+            "\\documentclass{{article}}\n\\newwrite\\tmp\n\\begin{{document}}\n{}{}\\clearpage\n\
+             {}\\clearpage\n{slot}{}\\clearpage\n{}\\clearpage\n\\input{{\\jobname-tmp.tex}}\n\n{}\
+             \\end{{document}}\n",
+            paras(0, 3, "alpha"),
+            write_tmp(0, "x"),
+            paras(3, 6, "alpha"),
+            paras(6, 9, "alpha"),
+            paras(9, 12, word),
+            paras(12, 15, "alpha"),
+        )
+    };
+    let base = doc("", "alpha");
+    let mut h = Host::start(&e, &dir);
+    for k in 0..4 {
+        let r = compile_and_check(&e, &mut h, &dir, &[("doc.tex", &base)], "settle");
+        if r.contains("\"mode\":\"unchanged\"") || k == 3 {
+            break;
+        }
+    }
+    // The new write, on the page after the restart point: preempted once
+    // that page is out.
+    std::fs::write(dir.join("doc.tex"), doc(&write_tmp(1, "yy"), "alpha")).unwrap();
+    let r = h.cmd("compile-interrupt 1 1");
+    assert!(r.contains("\"preempted\":true"), "not interrupted: {r}");
+    compile_and_check(&e, &mut h, &dir, &[("doc.tex", &base)], "the revert");
+    // A restart after the document's write and before its read.
+    compile_and_check(
+        &e,
+        &mut h,
+        &dir,
+        &[("doc.tex", &doc("", "gamma"))],
+        "an edit between the write and the read",
+    );
+    compile_and_check(&e, &mut h, &dir, &[("doc.tex", &base)], "its revert");
+}
+
+/// #1348 (2): a temporary file the preamble writes and the body reads, then
+/// writes again and reads, in a host that opened the document from a
+/// stored S₀ (a host restart). The opens before S₀ were not stored, so
+/// the new process did not know the preamble had written the file: a
+/// restart at S₀ or a checkpoint before the body's write (`rewritten_since`)
+/// read the body's instance.
+#[test]
+fn a_file_the_preamble_wrote_is_rewritten_after_a_host_restart() {
+    let Some(e) = env() else {
+        common::no_texlive();
+        return;
+    };
+    let dir = e.dir.join("preamble-rewrite");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let doc = |word: &str| {
+        format!(
+            "\\documentclass{{article}}\n\\newwrite\\tmp\n{}\\begin{{document}}\n{}\\clearpage\n\
+             {}\\clearpage\n\\input{{\\jobname-tmp.tex}}\n\n{}\\clearpage\n{}{}\
+             \\input{{\\jobname-tmp.tex}}\n\n\\end{{document}}\n",
+            write_tmp(0, "x"),
+            paras(0, 3, "alpha"),
+            paras(3, 6, word),
+            paras(6, 9, "alpha"),
+            write_tmp(1, "yy"),
+            paras(9, 12, "alpha"),
+        )
+    };
+    let base = doc("alpha");
+    let s0 = dir.with_extension("s0");
+    let _ = std::fs::remove_file(&s0);
+    {
+        let mut h = Host::start(&e, &dir);
+        for k in 0..4 {
+            let r = compile_and_check(&e, &mut h, &dir, &[("doc.tex", &base)], "settle");
+            if r.contains("\"mode\":\"unchanged\"") || k == 3 {
+                break;
+            }
+        }
+        let r = h.cmd(&format!("save {}", s0.display()));
+        assert!(r.contains("\"saved\""), "{r}");
+    }
+    // A new process, from the stored S₀.
+    let mut h = Host::start(&e, &dir);
+    let reference = dir.with_extension("ref");
+    copy_dir(&dir, &reference);
+    let r = h.cmd(&format!("open {}", s0.display()));
+    assert!(r.contains("\"mode\":\"open\""), "not opened from S0: {r}");
+    check_against(&e, &dir, &reference, &r, "the open");
+    for (word, what) in [
+        ("gamma", "an edit before the first read"),
+        ("alpha", "its revert"),
+    ] {
+        compile_and_check(&e, &mut h, &dir, &[("doc.tex", &doc(word))], what);
     }
 }

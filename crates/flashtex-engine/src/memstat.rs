@@ -299,6 +299,66 @@ pub fn resident(p: *const u8, len: usize) -> Option<usize> {
     }
 }
 
+/// Bytes the C allocator has handed out and not taken back, from every
+/// caller (Rust's heap and the C parts': kpathsea, zlib, pdfTeX's C code),
+/// and the bytes it holds from the system for them (macOS
+/// `malloc_zone_statistics`; Linux `mallinfo2`, with the feature
+/// `mem-stats` only, else `None`). The difference from the
+/// counting allocator's total (feature `mem-stats`) is the C parts' heap.
+pub fn malloc_in_use() -> Option<(u64, u64)> {
+    #[cfg(target_os = "macos")]
+    {
+        #[repr(C)]
+        #[derive(Default)]
+        struct MallocStatistics {
+            blocks_in_use: u32,
+            size_in_use: usize,
+            max_size_in_use: usize,
+            size_allocated: usize,
+        }
+        extern "C" {
+            fn malloc_zone_statistics(zone: *mut std::ffi::c_void, stats: *mut MallocStatistics);
+        }
+        let mut st = MallocStatistics::default();
+        // SAFETY: a null zone asks for the sum over all zones; `st` is the
+        // C struct `malloc_statistics_t`.
+        unsafe { malloc_zone_statistics(std::ptr::null_mut(), &mut st) };
+        Some((st.size_in_use as u64, st.size_allocated as u64))
+    }
+    // `mallinfo2` needs glibc 2.33 or newer, so only measurement builds
+    // link it; a default build runs on older glibc.
+    #[cfg(all(target_os = "linux", target_env = "gnu", feature = "mem-stats"))]
+    {
+        #[repr(C)]
+        #[derive(Default)]
+        struct Mallinfo2 {
+            arena: usize,
+            ordblks: usize,
+            smblks: usize,
+            hblks: usize,
+            hblkhd: usize,
+            usmblks: usize,
+            fsmblks: usize,
+            uordblks: usize,
+            fordblks: usize,
+            keepcost: usize,
+        }
+        extern "C" {
+            fn mallinfo2() -> Mallinfo2;
+        }
+        // SAFETY: no preconditions.
+        let m = unsafe { mallinfo2() };
+        Some(((m.uordblks + m.hblkhd) as u64, (m.arena + m.hblkhd) as u64))
+    }
+    #[cfg(not(any(
+        target_os = "macos",
+        all(target_os = "linux", target_env = "gnu", feature = "mem-stats")
+    )))]
+    {
+        None
+    }
+}
+
 /// `k: v` pairs as a JSON object's members.
 pub fn json_members(kv: &[(&str, i64)]) -> String {
     kv.iter()
