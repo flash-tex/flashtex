@@ -20,7 +20,12 @@ pdfTeX regression 7/7, lockstep 260/260, parity fixtures P-T1 83/83 and P-T2 83/
 T2 LaTeX suites 1,520/1,529 with 0 unexpected failures · **P3 met on lane evidence, not yet
 gated** (§12) · P4 and P5 in progress (§12).
 Re-measured 2026-10-05 on the NixOS PC (TeX Live 2026) on main `9f29302fe`
-(reviews/2026-10-05.md §2): lockstep **1,466/1,466**; the other rows are in that file.
+(reviews/2026-10-05.md §2):
+- lockstep **1,466/1,466**;
+- fixtures P-T1 **86/86** and P-T2 **86/86**;
+- T7 30/56 (non-reference);
+- the nightly's T2 harness fails before the engine runs;
+- **the fixture soundness test fails** (conf-paper edit 0, §5.3).
 **CI gates** lockstep, the P-T1/P-T2 fixtures (`merge_group`, #1262) and, since #1336
 (2026-10-02), `trip`, `etrip` and `pdftex-regression` (`CI required`). Not gated: the P5 board
 (daily, not all green: T2 1,576/1,590 with 14 unexpected, T4 missing), T2 (the nightly has
@@ -136,7 +141,18 @@ M1 Max, on battery, in Low Power Mode, so it is non-reference
 - cold reopen, host share: 544–721 ms.
 
 About 15 incremental PRs have landed since that run (#1300, #1397, #1404, #1414, #1439, #1442,
-#1498, #1507, #1533, #1536 and others), so it is stale.
+#1498, #1507, #1533, #1536 and others).
+
+**Re-measured 2026-10-05 (VERIFIED, NixOS PC, main `9f29302fe`; non-reference: shared PC, power
+state unknown, load 0.7–3.4).** 30 of 56 rows pass
+(`reviews/2026-10-05/t7-table.md`):
+- **every preamble row** (plain-* 74–90 ms, full-* 296–335 ms p95);
+- **every in-body row on plain-10, plain-100 and plain-300** (≤ 9 ms p95).
+
+The misses are the in-body rows of full-10, full-300 and full-1000, three of full-100, and five
+of plain-1000, at 11.2–21.6 ms p95. In addition:
+- a cold reopen takes 298–384 ms (host share);
+- RSS is 1.18 GB at plain-1000 and 1.49 GB at full-1000, over the 1 GB budget (§5.2).
 
 In the app:
 - key → commit p95 is 20–31 ms with keep-warm off (`docs/evidence/app-v3-preview-2026-09-29/`);
@@ -483,9 +499,11 @@ D8 specification; what landed differs, and D8's rewording is proposed to the own
   caches are treated as derived state. The **convergence rate** and background pages re-run per
   edit are part of T7 and of the P4 exit gate (§8, §12). *Status (review 2026-10-05):*
   - Object relocation and line shifting are **still not built**. Object numbers are dead only
-    where they are unread, and `line` is still compared. So T7's newline, split and sentence
-    rows never converge on plain-* documents: they re-typeset to the end, 150 of 300 pages and
-    501 of 1,000 (`t7-latency-2026-10-02`).
+    where they are unread, and `line` is still compared.
+  - So T7's newline and split rows never converge on any document, and sentence rows do not on
+    plain-10/100/1000 or full-10. They re-typeset to the end: 150 of 300 pages, 501 of 1,000,
+    and 1,503 in two passes on plain-1000 (NixOS PC, `9f29302fe`, 2026-10-05,
+    `reviews/2026-10-05/t7-table.md`).
   - The edit kinds now exist. `tools/incr-bench` has newline, split and join edits (#1387), and
     T7 measures them (#1391).
   - `pdf_char_used` is unioned soundly into the old run's later history (#1300, landed
@@ -498,8 +516,9 @@ D8 specification; what landed differs, and D8's rewording is proposed to the own
     - #1348: two restore holes in output-file tracking;
     - #1550 / #1556: a file read while open for output;
     - #1552: racy stat signatures, which give wrong output on main;
-    - the fixture-wide soundness test failed in the 2026-10-04 nightly (conf-paper, edit 0,
-      page 3: named destinations differ; run 37208020073).
+    - the fixture-wide soundness test **fails on main**: conf-paper, edit 0, page 3, the named
+      destinations differ. It failed in nightly 37208020073 (10-04) and again on the NixOS PC
+      on `9f29302fe` (2026-10-05, VERIFIED).
 - **Every convergence rule is a soundness risk** (adopted 2026-10-01, §13): two rules were
   found unsound on 2026-09-30 (P4-FINISH's first `pdf_char_used` union, and the older (b′) read
   test, which skipped later reads of files the old run closes again), and only the soundness
@@ -770,7 +789,10 @@ custom Metal glyph renderer.
 - **The nightly has failed 4 nights of 4** (10-01 to 10-04). The hosted debug workspace failed on
   10-01 and 10-02 (fixed by #1379). The heavy Mac job (#1413) ran out of disk on 10-03. On 10-04
   it ran, but its T2 harness failed every engine test in seconds (reference 1,286/1,385, engine
-  0/1,385: a setup failure), and the fixture-wide **soundness test failed** (conf-paper edit 0).
+  0/1,385), and the fixture-wide **soundness test failed** (conf-paper edit 0). The T2 failure
+  reproduces on the PC on `9f29302fe`: under `engine-parity.sh t2` the candidate does not find
+  its format, tries to build `pdftex.fmt` itself and stops. It is a harness failure, not an
+  engine verdict (reviews/2026-10-05.md §2).
   The PC legs, T2, soundness, memory and `corpus-t4`, are skipped while
   `FLASHTEX_SELFHOSTED_LINUX=0` (since 2026-10-04 07:02Z). The R4 hosted fallback legs are not
   built.
@@ -1001,9 +1023,11 @@ by CI or by a named reference run. Lane runs are REPORTED evidence.
     - P3-PARITY-CI: the sweep running in CI, not skipping (§13 R12).
   - The PDF backend's font scope is complete on main.
 - **P4: not met.**
-  - T7 exists (#1391). Its only run is non-reference and stale: 8 of 56 rows passed on
-    `ab9893935` (§1.2).
-  - There is no reference host (Q1).
+  - T7 exists (#1391). It has no reference run, and no reference host (Q1).
+  - Non-reference runs: 8 of 56 rows on `ab9893935` (M1 Max, Low Power Mode); **30 of 56 on
+    `9f29302fe`** (NixOS PC, 2026-10-05, §1.2).
+    - All preamble rows pass, and all plain-10/100/300 in-body rows.
+    - The full-* and plain-1000 in-body rows miss, at 11.2–21.6 ms p95.
   - Remaining:
     - the edited-page host share ≤ 11 ms p95 on full-* and plain-1000 (LIVE-30MS, #1541–#1549);
     - preamble ≤ 400 ms (PREAMBLE-FAST, #1551);
