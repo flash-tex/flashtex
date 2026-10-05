@@ -258,10 +258,10 @@ touches the engine, ≤ 5 minutes otherwise**.
 | `licence boundary` | ubuntu | `scripts/check-license-boundary.sh` |
 | `bundled inventory matches the compiler` | ubuntu | a sha256 comparison of two files |
 | `generated tables` | ubuntu | `scripts/check-generated.py` plus `gen_tables.py --check` |
-| `build (workspace, all targets)` | ubuntu | `cargo build --workspace --all-targets --locked`, debug. Kept in the gate because `quick` builds only the crates a change touches, and this is what catches a change that breaks a crate it did not touch. GitHub-hosted since 2026-10-05: on the PC it queued behind engine parity |
+| `build (workspace, all targets)` | ubuntu | in the gate **`cargo check --workspace --all-targets --locked`** (pull requests: `cargo build`). Kept in the gate because `quick` builds only the crates a change touches, and this is what catches a change that breaks a crate it did not touch; `check` because `cargo build` took 5.0–6.6 min here, over the gate's 5, while code generation and linking are covered by the post-merge `rust workspace` jobs. The push to `main` runs `check` too, so the gate restores a warm check cache (`workspace-debug-check`) |
 | `quick (touched crates)` | ubuntu | `scripts/gate.sh quick --committed-only` on the group's diff: fmt, clippy and tests of the crates it changed (and `flashtex-xetex` when the engine or `tools/web2rust` changed) |
 | `trip test`, `etrip test`, `pdfTeX regression tests` (`ubuntu-latest`) | ubuntu | the engine's T0 tests; self-contained, 1–2 minutes each |
-| `engine parity (NixOS, …)` | the PC, three shards | only when the group touches engine-affecting paths; see [below](#the-new-engines-parity-gates) |
+| `engine parity (GitHub-hosted, …)` | ubuntu, five shards | only when the group touches engine-affecting paths; see [below](#the-new-engines-parity-gates) |
 
 The engine-affecting paths (`engine_paths` in `plan`): `crates/flashtex-engine/`
 and its path dependency `crates/display-list-v3/`; the root `Cargo.toml` and
@@ -332,6 +332,29 @@ What remains is queueing: with three PC runners and three shards per engine
 group, groups behind an engine change wait for runners; the hosted twin needs no
 queue and stays inside the target (above).
 
+**After the second change (same day): everything hosted, five shards, `cargo
+check`.** Manual `gate_only` run
+[37350251998](https://github.com/flash-tex/flashtex/actions/runs/37350251998),
+the gate exactly as `merge_group` now runs it, all GitHub-hosted:
+
+| Job | Run time |
+|---|---:|
+| `build (workspace, all targets)` (`cargo check`, cold check cache) | 1.5 min |
+| `quick`, boundary, inventory, generated tables, trip, etrip, pdfTeX regression | 0.1–1.6 min each |
+| engine parity, `lockstep` (build 87 s, 1,466/1,466 cases in 4 slices: 36 s) | 2.9 min |
+| engine parity, `P-T fixtures 1/2`, `2/2` (build 81–83 s, 43/43 + 43/43 at P-T1 and P-T2: 91–97 s) | 3.9–4.4 min |
+| engine parity, `engine tests 1/2`, `2/2` (147 s and 185 s) | 3.7–3.9 min |
+| **critical path (slowest job's run time)** | **4.4 min** with engine parity, **1.6 min** without |
+
+The run's wall clock was 8.8 minutes: its jobs waited 1–3 minutes each for a
+runner. The organisation is on GitHub's Free plan, which runs at most **20
+GitHub-hosted jobs at a time** across the repository, and a gate run is up to 15
+jobs (9 without engine parity) — so with several merge groups in flight, the
+binding constraint is that pool, not any one job. The levers, in order: fold the
+sub-minute jobs (boundary, inventory, generated tables, trip, etrip, pdfTeX
+regression) into one or two jobs; lower the queue's `max_entries_to_build` from
+8; or a paid plan's larger pool.
+
 History: on 2026-09-30 the then "fast set" of a scripts-and-docs pull request
 took 3 min 11 s on Linux plus one GitHub-hosted macOS job that waited 11 minutes
 for a runner (run
@@ -393,24 +416,30 @@ tracks 1 and 5). `scripts/engine-parity.sh` is now the gate, and CI runs it:
 It needs TeX Live 2026 first on `PATH` (it refuses another pdfTeX, or another
 TeX Live's `kpsewhich` earlier on `PATH`), `python3` and `qpdf`.
 
-Three shards run it, one job each, on three runners at once (2026-10-05; as
-one job it took 10–21 minutes on a busy PC — build 212 s, lockstep 499 s,
-parity 192 s, tests 348 s in run
-[37322818362](https://github.com/flash-tex/flashtex/actions/runs/37322818362)):
+Shards run it, one job each, at once (2026-10-05; as one job it took 10–21
+minutes on a busy PC — build 212 s, lockstep 499 s, parity 192 s, tests 348 s in
+run [37322818362](https://github.com/flash-tex/flashtex/actions/runs/37322818362)):
 
 | Shard | Steps (`scripts/engine-parity.sh …`) |
 |---|---|
 | `lockstep` | `build lockstep`; lockstep's ~1,500 cases split into `--jobs` interleaved slices run at once (`tools/lockstep/run.py --shard K/N`; it used to run them one after another) |
-| `P-T fixtures` | `build parity` |
-| `engine tests` | `tests` |
+| `P-T fixtures 1/2`, `2/2` | `--shard 0/2 build parity`, `--shard 1/2 build parity`: every other fixture (`parity.py --shard`) |
+| `engine tests 1/2`, `2/2` | `--shard 0/2 tests`, `--shard 1/2 tests`: every other test target of `flashtex-engine` (the library, the binaries, each `tests/*.rs`; the doc tests in slice 0), because cargo runs test binaries one after another |
 
-The gate's critical path is the slowest shard, not the sum. Two jobs carry the
-shards, one per run:
+`--shard K/N` is 0-based, as `parity.py`'s and `run.py`'s are. The N slices of a
+step together are the whole step. As three shards (one each) the P-T fixtures
+and engine tests shards took 5.4–5.9 min on hosted runners and set the critical
+path; split in two, see the measurements above. The gate's critical path is the
+slowest shard, not the sum. Two jobs carry the shards:
 
-* **`engine parity (NixOS, <shard>)`**, on the `flashtex-linux` runners (the
-  owner's PC, TeX Live 2026 first on their `PATH`): the merge queue and manual
-  runs — never a pull request (§9.3), and no longer the push to `main`, so the
-  PC's three runners are free for the queue. Each shard keeps a **per-runner**
+* **`engine parity (GitHub-hosted, <shard>)`**, five shards: every event that
+  needs parity — the merge queue (since the second 2026-10-05 change: on the
+  PC, up to 8 groups queued for three runners; hosted, the shards start at
+  once), pull requests and every push to `main`. Described below.
+* **`engine parity (NixOS, <shard>)`**, three shards (lockstep, P-T fixtures,
+  engine tests), on the `flashtex-linux` runners (the owner's PC, TeX Live 2026
+  first on their `PATH`): only a full manual run (`workflow_dispatch` without
+  `gate_only`, PC switch on) — never a pull request (§9.3). Each shard keeps a **per-runner**
   `CARGO_TARGET_DIR` under `~/.cache/flashtex-ci/<runner>/` (the warm cache: a
   run rebuilds only what changed). Per runner, not one shared directory: cargo
   locks a target directory for a whole build, so shards sharing one would build
@@ -422,20 +451,19 @@ shards, one per run:
   each runner is a systemd service with `MemoryHigh=9G` (at `-j 8` the fixtures
   tier crawled for 14+ minutes); the lockstep shard at `-j 8` (small
   processes). `fail-fast`: a red shard frees the other two runners at once.
-* **`engine parity (GitHub-hosted, <shard>)`**, on `ubuntu-latest` with TeX
+* The **GitHub-hosted** shards run on `ubuntu-latest` with TeX
   Live 2026 from the `texlive/texlive:latest-medium` image **pinned by digest**
   (`.github/actions/texlive-2026`), plus the two packages the fixtures read that
   scheme-medium lacks (`sansmathaccent`, `translations`), each pinned by the
   SHA-256 of its tlnet archive. The package list comes from `pdflatex -recorder`
   on every fixture, mapped through `texlive.tlpdb`. The tree and the oracle's
   references are kept in the Actions cache (the latter saved only by a green
-  job, and only by the fixtures shard). It runs on pull requests that touch the
-  engine-affecting paths, on every push to `main` (the post-merge parity check,
-  and the caches: they are scoped by ref, a pull request can restore only its
-  own and `main`'s, and without a `main` run every pull request would start
-  cold — the TeX Live tree is 549 MB in the cache, the oracle's references
-  428 MB), and as the gate's fallback when the NixOS runners are switched off
-  (`FLASHTEX_SELFHOSTED_LINUX` is not 1).
+  job, by each fixtures shard under its own key, falling back to any earlier
+  oracle cache of the image; the three `build` shards share one Rust cache).
+  The push to `main` matters for the caches: they are scoped by ref, a pull
+  request or merge group can restore only its own and `main`'s, and without a
+  `main` run every one would start cold (the TeX Live tree is 549 MB in the
+  cache, the oracle's references 428 MB).
 
 `CI required` fails a `merge_group` run in which `plan` set `engine` and
 neither job passed in full (a matrix job passes only when every shard does), so
@@ -661,16 +689,13 @@ Routing uses the same eligibility as the Macs but its own switch,
 `FLASHTEX_SELFHOSTED_LINUX` (unset: it follows `FLASHTEX_SELFHOSTED_MAC`):
 `plan`'s `selfhosted_linux` output is `true` for merge_group, push to main and
 workflow_dispatch when that switch is `1` — never for `pull_request` or a
-branch push. In `ci.yml` the PC now runs **only the gate's engine-parity
-shards** (`engine_nixos` in `plan`: merge_group and manual runs). Until
-2026-10-05 it also ran the workspace build and the Linux leg of the Rust
-workspace (and engine parity on every push to `main`), and in the merge queue
-those queued the gate's parity behind them: three runners, up to 8 groups at a
-time, each wanting three PC jobs. Owner, 2026-09-30: hosted Linux is free for
-this public repository, so every other Linux job runs on `ubuntu-latest` on
-every event. With the slice's CPU cap shared by all three runners, the three
-shards of one group compete for the same 8 cores; a fourth runner instance would
-add queue capacity, not speed. In `nightly.yml`
+branch push. In `ci.yml` the PC now runs **only engine parity on a full manual
+run** (`engine_nixos` in `plan`); nothing in the merge queue waits for it. Until
+2026-10-05 it ran the workspace build, the Linux leg of the Rust workspace and
+engine parity in every merge group, and up to 8 groups at a time queued for its
+three runners (up to 50 minutes; with the slice's CPU cap, the three runners also
+share 8 cores). Owner, 2026-09-30: hosted Linux is free for this public
+repository, so every Linux job of `ci.yml` runs on `ubuntu-latest`. In `nightly.yml`
 (schedule, workflow_dispatch) the Linux debug workspace, excluded crates, clippy
 debt and the parity scoreboard's arxiv tier (its templates tier stays on a Mac;
 see `nightly.yml` below). `plan` and `CI required` stay on hosted Ubuntu.
