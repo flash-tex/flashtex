@@ -2581,8 +2581,9 @@ impl Session {
         if self.paused.is_some() {
             return None;
         }
-        let s0 = self.s0.as_ref()?;
-        if s0.key.check(self.clock, &self.first_line).is_err() {
+        let (clock, first_line) = (self.clock, self.first_line.clone());
+        let s0 = self.s0.as_mut()?;
+        if s0.key.check_refresh(clock, &first_line).is_err() {
             return Some(true);
         }
         let saved = self.journal.clone();
@@ -2675,12 +2676,14 @@ impl Session {
                 Some("a compile arrived while one was paused".into()),
             );
         }
-        let Some(s0) = &self.s0 else {
+        let (clock, first_line) = (self.clock, self.first_line.clone());
+        let Some(s0) = self.s0.as_mut() else {
             return self.cold(t0, stop_at, None);
         };
-        if let Err(why) = s0.key.check(self.clock, &self.first_line) {
+        if let Err(why) = s0.key.check_refresh(clock, &first_line) {
             return self.cold(t0, stop_at, Some(why));
         }
+        let s0 = self.s0.as_ref().unwrap();
         let key_s = t0.elapsed().as_secs_f64();
         let s0_id = s0.id;
         let changes = self.changes();

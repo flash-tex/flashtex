@@ -84,6 +84,10 @@ fn fmt_dir() -> PathBuf {
 }
 
 fn start_host(name: &str) -> Host {
+    start_host_env(name, &[])
+}
+
+fn start_host_env(name: &str, env: &[(&str, &str)]) -> Host {
     // Short: a Unix socket path must fit in sockaddr_un (104 bytes on macOS).
     static N: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
     let n = N.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
@@ -95,6 +99,7 @@ fn start_host(name: &str) -> Host {
         .env("SOURCE_DATE_EPOCH", "0")
         .env("FORCE_SOURCE_DATE", "1")
         .env_remove("FLASHTEX_S0_CACHE")
+        .envs(env.iter().copied())
         .stdout(Stdio::piped())
         .spawn()
         .unwrap();
@@ -1395,9 +1400,9 @@ fn a_newer_compile_preempts_the_running_one() {
 /// Racy signatures (git's racy-clean rule; review of #1549): a source
 /// changed to the same length within the modification-time tick in which
 /// the run took its signature keeps the same signature. Simulated here on
-/// any file system by giving the file a modification time in the future
-/// (as a coarse clock would leave it) and putting it back after the edit:
-/// the host must still see the change (main said `unchanged`).
+/// any file system with a 10-minute tick (`FLASHTEX_RACY_MS`): the edit
+/// puts the file's modification time back, as a coarse clock would leave
+/// it; the host must still see the change (main said `unchanged`).
 #[test]
 fn a_same_size_edit_within_the_mtime_tick_is_seen() {
     if find_texlive_bin().is_none() {
@@ -1413,7 +1418,7 @@ fn a_same_size_edit_within_the_mtime_tick_is_seen() {
     let main = "main.tex";
     let text = article(3);
     std::fs::write(proj.join(main), &text).unwrap();
-    let tick = std::time::SystemTime::now() + std::time::Duration::from_secs(60);
+    let tick = std::time::SystemTime::now() + std::time::Duration::from_secs(5);
     let set_mtime = |t: std::time::SystemTime| {
         std::fs::File::options()
             .write(true)
@@ -1423,7 +1428,7 @@ fn a_same_size_edit_within_the_mtime_tick_is_seen() {
             .unwrap()
     };
     set_mtime(tick);
-    let host = start_host("r");
+    let host = start_host_env("r", &[("FLASHTEX_RACY_MS", "600000")]);
     let scratch = start_host("rs");
     let mut c = Client::connect(&host.1).unwrap();
     let mut view = View::default();
