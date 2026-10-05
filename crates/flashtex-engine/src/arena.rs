@@ -1259,7 +1259,7 @@ type OldAt = (CheckpointId, u64, HashMap<u32, usize>, Vec<u64>);
 
 /// Checkpoints `OldCache` keeps, and the chunks it keeps in all (1 KB each).
 const OLD_CACHE_CHECKPOINTS: usize = 4;
-const OLD_CACHE_CHUNKS: usize = 32 * 1024;
+const OLD_CACHE_CHUNKS: usize = 16 * 1024;
 
 /// Chunks `diff_branch_inner` took from `OldCache` and rewound (for
 /// DONE's stages: cumulative).
@@ -1276,32 +1276,36 @@ impl OldCache {
     /// Keep chunks `cs` (their values in `buf`, CHUNK_WORDS each) at `id`.
     fn put(&mut self, id: CheckpointId, gen: u64, cs: &[u32], buf: &[u64]) {
         self.at.retain(|e| e.1 == gen);
-        let k = match self.at.iter().position(|e| e.0 == id) {
+        match self.at.iter().position(|e| e.0 == id) {
             Some(k) => {
                 let e = self.at.remove(k);
                 self.at.push(e);
-                self.at.len() - 1
             }
-            None => {
-                self.at.push((id, gen, HashMap::new(), vec![]));
-                self.at.len() - 1
-            }
-        };
-        let e = &mut self.at[k];
+            None => self.at.push((id, gen, HashMap::new(), vec![])),
+        }
+        // Room first, least recently used checkpoints out (never the one
+        // being filled, now the last): the cache never holds more than
+        // OLD_CACHE_CHUNKS chunks, also while filling.
+        let new = cs.len().min(OLD_CACHE_CHUNKS);
+        while self.at.len() > 1
+            && (self.at.len() > OLD_CACHE_CHECKPOINTS
+                || self.at.iter().map(|e| e.2.len()).sum::<usize>() + new > OLD_CACHE_CHUNKS)
+        {
+            self.at.remove(0);
+        }
+        let room = OLD_CACHE_CHUNKS.saturating_sub(self.at.iter().map(|e| e.2.len()).sum());
+        let e = self.at.last_mut().expect("the entry being filled");
+        let mut added = 0;
         for (i, &c) in cs.iter().enumerate() {
-            if e.2.contains_key(&c) || e.2.len() >= OLD_CACHE_CHUNKS {
+            if added == room {
+                break;
+            }
+            if e.2.contains_key(&c) {
                 continue;
             }
             e.2.insert(c, e.3.len() / CHUNK_WORDS);
             e.3.extend_from_slice(&buf[i * CHUNK_WORDS..(i + 1) * CHUNK_WORDS]);
-        }
-        while self.at.len() > OLD_CACHE_CHECKPOINTS
-            || self.at.iter().map(|e| e.2.len()).sum::<usize>() > OLD_CACHE_CHUNKS
-        {
-            if self.at.len() == 1 {
-                break;
-            }
-            self.at.remove(0);
+            added += 1;
         }
     }
 }
@@ -1618,6 +1622,22 @@ impl Arena {
     }
 
     /// Drop every checkpoint and log: the space becomes plain memory again.
+    /// Drop the old checkpoints' kept chunks (`OldCache`): the host does
+    /// when it has been idle a while (its memory goes back to the system).
+    pub fn drop_old_cache(&self) {
+        self.old_cache.borrow_mut().at = Vec::new();
+    }
+
+    /// Bytes the old checkpoints' kept chunks hold.
+    pub fn old_cache_bytes(&self) -> usize {
+        self.old_cache
+            .borrow()
+            .at
+            .iter()
+            .map(|e| e.3.capacity() * 8)
+            .sum()
+    }
+
     pub fn forget_checkpoints(&mut self) {
         self.old_cache.borrow_mut().at.clear();
         let core = self.core_mut();
@@ -2674,6 +2694,31 @@ mod tests {
     /// (`OldCache`) serve the next, across a jump back and a new restore
     /// (typing in one place), and give exactly the old states; an `or_from`
     /// since makes them stale.
+    #[test]
+    fn kept_old_chunks_never_exceed_the_cap() {
+        let mut c = OldCache::default();
+        let n = OLD_CACHE_CHUNKS / 3 + 7;
+        let buf = vec![7u64; n * CHUNK_WORDS];
+        for id in 0..10u64 {
+            let cs: Vec<u32> = (0..n as u32).map(|x| x + id as u32).collect();
+            c.put(id, 0, &cs, &buf);
+            let total: usize = c.at.iter().map(|e| e.2.len()).sum();
+            assert!(total <= OLD_CACHE_CHUNKS, "{total} chunks after {id}");
+            assert!(c.at.len() <= OLD_CACHE_CHECKPOINTS);
+            assert!(c.get(id, 0, id as u32).is_some(), "the newest is kept");
+        }
+        // one bigger than the cap: as much as fits
+        let big: Vec<u32> = (0..(OLD_CACHE_CHUNKS + 5) as u32).collect();
+        c.put(99, 0, &big, &vec![1u64; big.len() * CHUNK_WORDS]);
+        assert_eq!(
+            c.at.iter().map(|e| e.2.len()).sum::<usize>(),
+            OLD_CACHE_CHUNKS
+        );
+        // another history: everything older goes
+        c.put(100, 1, &[3], &[2u64; CHUNK_WORDS]);
+        assert_eq!(c.at.len(), 1);
+    }
+
     #[test]
     fn kept_old_chunks_equal_rewound_ones() {
         let (mut a, mut arr) = space(200_000);

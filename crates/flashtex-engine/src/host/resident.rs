@@ -463,6 +463,9 @@ impl Engine {
                     Ok(r) => r,
                     Err(mpsc::RecvTimeoutError::Timeout) => {
                         trim_due = false;
+                        if let Some(d) = self.doc.as_mut() {
+                            d.session.trim_caches();
+                        }
                         give_back_free_memory();
                         continue;
                     }

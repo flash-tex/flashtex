@@ -2218,6 +2218,7 @@ impl Session {
         }
         if let Some(g) = &self.g {
             v.extend(g.mem_stats().into_iter().map(|(k, x)| (k.to_string(), x)));
+            v.push(("old_cache".into(), g.arena.old_cache_bytes() as i64));
         }
         v.push(("pages".into(), self.pages.len() as i64));
         v.push(("defpatch".into(), self.defpatch.len() as i64));
@@ -2226,6 +2227,14 @@ impl Session {
             self.reloc.values().map(|r| r.len()).sum::<usize>() as i64,
         ));
         v
+    }
+
+    /// The host has been idle a while: drop what only speeds up the next
+    /// keystrokes and costs memory (the old checkpoints' kept chunks).
+    pub fn trim_caches(&mut self) {
+        if let Some(g) = self.g.as_ref() {
+            g.arena.drop_old_cache();
+        }
     }
 
     /// While the engine waits for the next edit: work out the restore to
