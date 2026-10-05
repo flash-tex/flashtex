@@ -383,7 +383,9 @@ final class EngineV3Session {
         log("starting \(exe.path)")
         let ref = EngineV3WeakRef(self)
         do {
-            let h = try EngineV3HostProcess(executable: exe) { event in
+            // A Live Share session (or a session copy) compiles in a host
+            // launched confined; `compile` relaunches when that changes.
+            let h = try EngineV3HostProcess(executable: exe, confineRoots: model.flatMap(Self.confineRoots)) { event in
                 EngineV3Session.onMain { ref.value?.hostEvent(event) }
             }
             host = h
@@ -711,6 +713,10 @@ final class EngineV3Session {
         defer { if !sent { fastAnchors = [:] } }
         guard phase == .ready, connection != nil, let model, model.engineV3Enabled, model.autoCompile, !exportRunning,
               !tv.hasMarkedText() else { return }
+        // Live Share: the fast path never sends to a host whose confinement
+        // no longer matches (a session just started); the slow path, a few
+        // milliseconds later, relaunches it first.
+        guard fastPathAllowed(model: model) else { return }
         let typing = nextKeystrokeNs != nil || NSApp.currentEvent?.type == .keyDown
         let path = model.activePath
         guard typing, let base = hostBytes[path], sentTexts[path] != nil || fastPending.contains(path) else { return }
@@ -743,6 +749,56 @@ final class EngineV3Session {
         fastSentID[path] = req.id
         fastEditsSent &+= 1
     }
+
+    /// The roots a host compiling `model`'s project must be confined to, or
+    /// nil when it need not be (no Live Share session, not a session copy).
+    static func confineRoots(_ model: ShellModel) -> [String]? {
+        guard model.liveShare.forcesPinnedCompile(root: model.project.projectRoot) else { return nil }
+        return [model.project.projectRoot?.resolvingSymlinksInPath().path].compactMap { $0 }
+    }
+
+    /// Relaunches the host when its confinement no longer matches the
+    /// project's (a session started or ended, another project opened);
+    /// leaving confinement clears the copy's output folder, so nothing a
+    /// session's text wrote (an `.aux` with `\write18` in it, say) is read
+    /// by the next, possibly trusted, compile. Not counted as a crash.
+    @discardableResult
+    func relaunchIfConfinementChanged(model: ShellModel) -> Bool {
+        guard let host else { return false }
+        let want = Self.confineRoots(model)
+        guard host.confineRoots != want else { return false }
+        log("relaunching the host \(want == nil ? "unconfined" : "confined") (Live Share)")
+        if host.confined, want == nil { clearOutputAfterSession() }
+        stopRunningCompile(statusNote: "restarting the engine for Live Share", firstError: nil)
+        stalledTexts = nil
+        return true
+    }
+
+    /// Empties the project copy's output folder (`.aux`, `.toc`, ...).
+    func clearOutputAfterSession() {
+        guard let out = project?.output else { return }
+        let fm = FileManager.default
+        for name in (try? fm.contentsOfDirectory(atPath: out.path)) ?? [] {
+            try? fm.removeItem(at: out.appendingPathComponent(name))
+        }
+        outputClearedForSession &+= 1
+    }
+
+    /// Times `clearOutputAfterSession` ran (tests and evidence).
+    private(set) var outputClearedForSession = 0
+
+    /// The fast path sends only to a host confined exactly as `model`'s
+    /// project needs (the race of a keystroke right after a session starts).
+    func fastPathAllowed(model: ShellModel) -> Bool {
+        guard let host else { return false }
+        return host.confineRoots == Self.confineRoots(model)
+    }
+
+    /// The project copy's output folder (tests).
+    var outputDirectory: URL? { project?.output }
+
+    /// Whether the running host is confined (tests and evidence).
+    var hostConfineRoots: [String]?? { host.map(\.confineRoots) }
 
     /// The model's new text holds the fast path's last splice where it sent
     /// it (`fastCheck`), byte for byte.
@@ -997,11 +1053,14 @@ final class EngineV3Session {
         default: if visiblePage > 0 { req.viewport = visiblePage }
         }
         // Owner decision 9A: a project from elsewhere runs no shell commands until trusted.
-        req.shellEscape = EngineV3Trust.shellEscape(trusted: projectTrusted && !trustPending)
+        // Live Share: a session copy, or any project while a session runs,
+        // compiles with the session pins (proposal §6.2), trusted or not.
+        let pinned = model.liveShare.forcesPinnedCompile(root: model.project.projectRoot)
+        req.shellEscape = pinned ? "off" : EngineV3Trust.shellEscape(trusted: projectTrusted && !trustPending)
         // Protocol 3.2: bibtex, biber and makeindex run in the host as latexmk
         // would, only for a trusted project (DESIGN.md §4.5, owner 9A); an
         // untrusted one runs no external program.
-        req.externalTools = projectTrusted && !trustPending ? "auto" : "off"
+        req.externalTools = !pinned && projectTrusted && !trustPending ? "auto" : "off"
         // Strict mode (EngineV3ErrorPolicy): TeX stops at the first error
         // (an older host ignores the field: `strictModeIgnored`).
         req.haltOnError = errorMode == .strict
@@ -1053,6 +1112,10 @@ final class EngineV3Session {
     /// `walked`: the project walk for this compile has just run (startWalk).
     func compile(model: ShellModel, reason: String, keystrokeNs: UInt64? = nil, activeText: String? = nil, editNs: UInt64 = MonotonicClock.nowNs(), walked: Bool = false) {
         guard connection != nil else { return }
+        // Live Share: a session's text compiles only in a confined host (and
+        // a host launched confined serves nothing else). Relaunch, not
+        // counted as a crash; the fresh host compiles when it is ready.
+        if relaunchIfConfinementChanged(model: model) { return }
         // After a stall the text that looped waits for an edit or ⌘B (the stall bound).
         if let held = stalledTexts {
             if reason == "open", held == Dictionary(model.documents.map { ($0.path, $0.text) }, uniquingKeysWith: { a, _ in a }) { return }
