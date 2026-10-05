@@ -374,10 +374,10 @@ pub fn move_lines(from: usize, shifts: &[crate::lineshift::Shift]) {
     with(|s| {
         for n in s.notes.iter_mut().skip(from) {
             let mut m = (**n).clone();
-            let mut moved = m.pos.as_mut().is_some_and(&mv);
+            let mut moved = m.pos.as_mut().is_some_and(mv);
             for f in m.frames.iter_mut() {
-                moved |= f.pos.as_mut().is_some_and(&mv);
-                moved |= f.def.as_mut().is_some_and(&mv);
+                moved |= f.pos.as_mut().is_some_and(mv);
+                moved |= f.def.as_mut().is_some_and(mv);
             }
             if moved {
                 *n = Arc::new(m);
