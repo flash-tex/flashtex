@@ -255,12 +255,9 @@ touches the engine, ≤ 5 minutes otherwise**.
 | Job | Runner | What |
 |---|---|---|
 | `plan` | ubuntu | tier, deduplication, runner choice, path filters |
-| `licence boundary` | ubuntu | `scripts/check-license-boundary.sh` |
-| `bundled inventory matches the compiler` | ubuntu | a sha256 comparison of two files |
-| `generated tables` | ubuntu | `scripts/check-generated.py` plus `gen_tables.py --check` |
+| `gate checks and engine T0 (ubuntu-latest)` | ubuntu | **one job, six gates**, each a step that runs even if an earlier one failed: the licence boundary (`scripts/check-license-boundary.sh`), the bundled inventory (a sha256 comparison of two files), the generated tables (`scripts/check-generated.py` plus `gen_tables.py --check`), and the engine's T0 tests — trip, etrip and pdfTeX's regression tests, self-contained. One job since 2026-10-05: as six jobs of under two minutes each they took six of the Free plan's 20 concurrent hosted slots per gate run |
 | `build (workspace, all targets)` | ubuntu | in the gate **`cargo check --workspace --all-targets --locked`** (pull requests: `cargo build`). Kept in the gate because `quick` builds only the crates a change touches, and this is what catches a change that breaks a crate it did not touch; `check` because `cargo build` took 5.0–6.6 min here, over the gate's 5, while code generation and linking are covered by the post-merge `rust workspace` jobs. The push to `main` runs `check` too, so the gate restores a warm check cache (`workspace-debug-check`) |
 | `quick (touched crates)` | ubuntu | `scripts/gate.sh quick --committed-only` on the group's diff: fmt, clippy and tests of the crates it changed (and `flashtex-xetex` when the engine or `tools/web2rust` changed) |
-| `trip test`, `etrip test`, `pdfTeX regression tests` (`ubuntu-latest`) | ubuntu | the engine's T0 tests; self-contained, 1–2 minutes each |
 | `engine parity (GitHub-hosted, …)` | ubuntu, five shards | only when the group touches engine-affecting paths; see [below](#the-new-engines-parity-gates) |
 
 The engine-affecting paths (`engine_paths` in `plan`): `crates/flashtex-engine/`
@@ -496,7 +493,7 @@ in the merge queue:
 | `rust workspace (ubuntu-latest)` | ubuntu (GitHub-hosted since 2026-10-05: nobody waits on it, and on the PC it held a runner the gate needed) |
 | `rust workspace (macos-15)` | self-hosted Mac, else hosted `macos-15` |
 | `rust render-pipeline`, `rust flashtex-cli`, `rust flashtex-xetex` (both systems) | ubuntu; self-hosted Mac, else hosted `macos-15` |
-| `trip test`, `etrip test`, `pdfTeX regression tests` (`macos-15`) | self-hosted Mac (trip, etrip), else hosted |
+| `gate checks and engine T0 (macos-15)` (trip, etrip, pdfTeX regression) | self-hosted Mac, else hosted `macos-15` |
 | `old engine: parity fixtures (…)` | self-hosted Mac, else hosted `macos-15` |
 | `engine parity (GitHub-hosted, …)` | ubuntu, three shards |
 
