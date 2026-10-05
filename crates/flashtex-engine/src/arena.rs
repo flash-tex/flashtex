@@ -1229,6 +1229,85 @@ pub struct Arena {
     pub extra: Option<Box<dyn std::any::Any>>,
     /// The regions, in address order.
     pub regions: Vec<RegionInfo>,
+    /// Old checkpoints' chunk values, as the convergence tests rewound
+    /// them (`OldCache`).
+    old_cache: std::cell::RefCell<OldCache>,
+}
+
+/// The value of chunks at a few checkpoints, as `diff_branch_inner` rewound
+/// them from the old run's end (lane LIVE-30MS). A retained checkpoint's
+/// state never changes: a restore only moves it between the live chain and a
+/// detached branch, the convergence jump adopts the old run's state at its
+/// checkpoint whole (`Globals::redo_to_remapped`), a merge drops the
+/// checkpoint itself, and the only change in place, `or_from`, bumps
+/// `history_gen`, which every entry carries. Ids are never reused. So a
+/// value kept here is the one a rewind would give again, and typing in one
+/// place, which tests against the same old checkpoints keystroke after
+/// keystroke, rewinds the old future (O(pages after the edit)) only for
+/// chunks it has not seen there. `FLASHTEX_VERIFY_OLDCACHE=1` rewinds
+/// every chunk anyway and aborts the process on any difference.
+#[derive(Default)]
+struct OldCache {
+    /// (checkpoint, history_gen, chunk -> index into `words` / CHUNK_WORDS),
+    /// most recently used last.
+    at: Vec<OldAt>,
+}
+
+/// One checkpoint's kept chunks: (checkpoint, history_gen, chunk -> index
+/// into the words / CHUNK_WORDS, the words).
+type OldAt = (CheckpointId, u64, HashMap<u32, usize>, Vec<u64>);
+
+/// Checkpoints `OldCache` keeps, and the chunks it keeps in all (1 KB each).
+const OLD_CACHE_CHECKPOINTS: usize = 4;
+const OLD_CACHE_CHUNKS: usize = 16 * 1024;
+
+/// Chunks `diff_branch_inner` took from `OldCache` and rewound (for
+/// DONE's stages: cumulative).
+pub static OLD_CACHE_HITS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+pub static OLD_CACHE_MISSES: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+impl OldCache {
+    fn get(&self, id: CheckpointId, gen: u64, c: u32) -> Option<&[u64]> {
+        let (_, _, ix, w) = self.at.iter().find(|e| e.0 == id && e.1 == gen)?;
+        ix.get(&c)
+            .map(|&i| &w[i * CHUNK_WORDS..(i + 1) * CHUNK_WORDS])
+    }
+
+    /// Keep chunks `cs` (their values in `buf`, CHUNK_WORDS each) at `id`.
+    fn put(&mut self, id: CheckpointId, gen: u64, cs: &[u32], buf: &[u64]) {
+        self.at.retain(|e| e.1 == gen);
+        match self.at.iter().position(|e| e.0 == id) {
+            Some(k) => {
+                let e = self.at.remove(k);
+                self.at.push(e);
+            }
+            None => self.at.push((id, gen, HashMap::new(), vec![])),
+        }
+        // Room first, least recently used checkpoints out (never the one
+        // being filled, now the last): the cache never holds more than
+        // OLD_CACHE_CHUNKS chunks, also while filling.
+        let new = cs.len().min(OLD_CACHE_CHUNKS);
+        while self.at.len() > 1
+            && (self.at.len() > OLD_CACHE_CHECKPOINTS
+                || self.at.iter().map(|e| e.2.len()).sum::<usize>() + new > OLD_CACHE_CHUNKS)
+        {
+            self.at.remove(0);
+        }
+        let room = OLD_CACHE_CHUNKS.saturating_sub(self.at.iter().map(|e| e.2.len()).sum());
+        let e = self.at.last_mut().expect("the entry being filled");
+        let mut added = 0;
+        for (i, &c) in cs.iter().enumerate() {
+            if added == room {
+                break;
+            }
+            if e.2.contains_key(&c) {
+                continue;
+            }
+            e.2.insert(c, e.3.len() / CHUNK_WORDS);
+            e.3.extend_from_slice(&buf[i * CHUNK_WORDS..(i + 1) * CHUNK_WORDS]);
+            added += 1;
+        }
+    }
 }
 
 // SAFETY: the arena and its arrays are owned by one `Globals`, which is
@@ -1286,6 +1365,7 @@ impl Arena {
             scalar_bytes,
             extra: None,
             regions: vec![],
+            old_cache: Default::default(),
         }
     }
 
@@ -1542,7 +1622,24 @@ impl Arena {
     }
 
     /// Drop every checkpoint and log: the space becomes plain memory again.
+    /// Drop the old checkpoints' kept chunks (`OldCache`): the host does
+    /// when it has been idle a while (its memory goes back to the system).
+    pub fn drop_old_cache(&self) {
+        self.old_cache.borrow_mut().at = Vec::new();
+    }
+
+    /// Bytes the old checkpoints' kept chunks hold.
+    pub fn old_cache_bytes(&self) -> usize {
+        self.old_cache
+            .borrow()
+            .at
+            .iter()
+            .map(|e| e.3.capacity() * 8)
+            .sum()
+    }
+
     pub fn forget_checkpoints(&mut self) {
+        self.old_cache.borrow_mut().at.clear();
         let core = self.core_mut();
         let logs = std::mem::take(&mut core.logs);
         for log in logs {
@@ -1734,9 +1831,55 @@ impl Arena {
         in_old.sort_unstable();
         at_r.sort_unstable();
         let t = std::time::Instant::now();
-        let Some(old_buf) = rewound_until(n, &in_old, &|c| redo_of[&c], &b.logs[jj..], stop) else {
+        // The old run's values at `old`: those `OldCache` holds, the rest
+        // rewound from the old run's end (every one with
+        // FLASHTEX_VERIFY_OLDCACHE, which compares).
+        let gen = core.history_gen;
+        let verify = std::env::var_os("FLASHTEX_VERIFY_OLDCACHE").is_some();
+        let (cached, misses): (Vec<u32>, Vec<u32>) = {
+            let cache = self.old_cache.borrow();
+            in_old
+                .iter()
+                .partition(|&&c| cache.get(old, gen, c).is_some())
+        };
+        let rewind: &[u32] = if verify { &in_old } else { &misses };
+        let Some(rew) = rewound_until(n, rewind, &|c| redo_of[&c], &b.logs[jj..], stop) else {
             return Ok(None);
         };
+        let mut old_buf = vec![0u64; in_old.len() * CHUNK_WORDS];
+        {
+            let cache = self.old_cache.borrow();
+            let mut r = 0;
+            for (i, &c) in in_old.iter().enumerate() {
+                let dst = &mut old_buf[i * CHUNK_WORDS..(i + 1) * CHUNK_WORDS];
+                let mine = rewind.get(r) == Some(&c);
+                if mine {
+                    dst.copy_from_slice(&rew[r * CHUNK_WORDS..(r + 1) * CHUNK_WORDS]);
+                    r += 1;
+                }
+                if let Some(v) = cache.get(old, gen, c) {
+                    if mine && v != &dst[..] {
+                        // (a verify mode: loud, so that a sweep fails)
+                        eprintln!(
+                            "FLASHTEX_VERIFY_OLDCACHE: chunk {c} at checkpoint {old} differs from its rewind"
+                        );
+                        std::process::abort();
+                    }
+                    dst.copy_from_slice(v);
+                }
+            }
+        }
+        OLD_CACHE_HITS.fetch_add(cached.len() as u64, std::sync::atomic::Ordering::Relaxed);
+        OLD_CACHE_MISSES.fetch_add(misses.len() as u64, std::sync::atomic::Ordering::Relaxed);
+        if !misses.is_empty() {
+            // (`rew` holds them in `rewind`'s order, which is in_old's or theirs)
+            let mut mb = Vec::with_capacity(misses.len() * CHUNK_WORDS);
+            for &c in &misses {
+                let i = rewind.binary_search(&c).expect("a rewound chunk");
+                mb.extend_from_slice(&rew[i * CHUNK_WORDS..(i + 1) * CHUNK_WORDS]);
+            }
+            self.old_cache.borrow_mut().put(old, gen, &misses, &mb);
+        }
         let t_old = t.elapsed();
         let live = |c: u32| core.chunk_ptr(c as usize) as *const u64;
         let r_buf = rewound(n, &at_r, &live, &core.logs[kr..]);
@@ -1746,9 +1889,10 @@ impl Arena {
                 .map(|l| l.entries.len() + l.deltas.len())
                 .sum();
             eprintln!(
-                "[arena] diff: {} candidates ({} in the old run, rewound through {} logs, {} entries: {:.2} ms; {} at the restart point through {} logs: {:.2} ms)",
+                "[arena] diff: {} candidates ({} in the old run, {} of them kept, rewound through {} logs, {} entries: {:.2} ms; {} at the restart point through {} logs: {:.2} ms)",
                 cand.len(),
                 in_old.len(),
+                cached.len(),
                 b.logs.len() - jj,
                 entries,
                 t_old.as_secs_f64() * 1e3,
@@ -2543,6 +2687,89 @@ mod tests {
             assert_eq!(!d.differing.is_empty(), differ);
         }
         let _ = n1;
+        a.drop_branch(br);
+    }
+
+    /// LIVE-30MS: an old checkpoint's chunks kept by one comparison
+    /// (`OldCache`) serve the next, across a jump back and a new restore
+    /// (typing in one place), and give exactly the old states; an `or_from`
+    /// since makes them stale.
+    #[test]
+    fn kept_old_chunks_never_exceed_the_cap() {
+        let mut c = OldCache::default();
+        let n = OLD_CACHE_CHUNKS / 3 + 7;
+        let buf = vec![7u64; n * CHUNK_WORDS];
+        for id in 0..10u64 {
+            let cs: Vec<u32> = (0..n as u32).map(|x| x + id as u32).collect();
+            c.put(id, 0, &cs, &buf);
+            let total: usize = c.at.iter().map(|e| e.2.len()).sum();
+            assert!(total <= OLD_CACHE_CHUNKS, "{total} chunks after {id}");
+            assert!(c.at.len() <= OLD_CACHE_CHECKPOINTS);
+            assert!(c.get(id, 0, id as u32).is_some(), "the newest is kept");
+        }
+        // one bigger than the cap: as much as fits
+        let big: Vec<u32> = (0..(OLD_CACHE_CHUNKS + 5) as u32).collect();
+        c.put(99, 0, &big, &vec![1u64; big.len() * CHUNK_WORDS]);
+        assert_eq!(
+            c.at.iter().map(|e| e.2.len()).sum::<usize>(),
+            OLD_CACHE_CHUNKS
+        );
+        // another history: everything older goes
+        c.put(100, 1, &[3], &[2u64; CHUNK_WORDS]);
+        assert_eq!(c.at.len(), 1);
+    }
+
+    #[test]
+    fn kept_old_chunks_equal_rewound_ones() {
+        let (mut a, mut arr) = space(200_000);
+        scribble(&mut arr, 21, 5000);
+        let mut ids = vec![];
+        let mut copies = vec![];
+        for k in 0..12 {
+            ids.push(a.checkpoint());
+            copies.push(arr.to_vec());
+            scribble(&mut arr, 70 + k, 2000);
+        }
+        let start = arr.as_ptr() as usize - a.bytes().as_ptr() as usize;
+        let len = arr.len();
+        let check = |a: &Arena, d: &ChunkDiff, j: usize, what: &str| {
+            for e in (0..len).step_by(41) {
+                assert_eq!(
+                    d.old_word(a, start + e * 8),
+                    copies[j][e],
+                    "{what}: old {j}, element {e}"
+                );
+            }
+        };
+        let end = arr.to_vec();
+        for round in 0..4u64 {
+            let hits0 = OLD_CACHE_HITS.load(std::sync::atomic::Ordering::Relaxed);
+            let br = a.restore_branch(ids[3]).unwrap();
+            scribble(&mut arr, 900 + round, 1500);
+            a.checkpoint();
+            for j in [4usize, 5] {
+                let d = a.diff_branch(&br, ids[j]).unwrap();
+                check(&a, &d, j, &format!("round {round}"));
+            }
+            if round > 0 {
+                assert!(
+                    OLD_CACHE_HITS.load(std::sync::atomic::Ordering::Relaxed) > hits0,
+                    "round {round}: nothing kept was used"
+                );
+            }
+            // back to the old run's end, as an abandoned compile does
+            a.reattach(br).unwrap();
+            assert!(arr[..] == end[..]);
+        }
+        // a history rewrite since: the kept values are not used
+        let off = start + 8 * 1000;
+        a.or_from(ids[2], off, 1 << 40).unwrap();
+        let mut c4 = copies[4].clone();
+        c4[1000] |= 1 << 40;
+        let br = a.restore_branch(ids[3]).unwrap();
+        a.checkpoint();
+        let d = a.diff_branch(&br, ids[4]).unwrap();
+        assert_eq!(d.old_word(&a, off), c4[1000]);
         a.drop_branch(br);
     }
 
