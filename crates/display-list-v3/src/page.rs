@@ -292,9 +292,10 @@ pub struct Dest {
     pub name: Vec<u8>,
     /// 0 xyz, 1 fit, 2 fith, 3 fitv, 4 fitb, 5 fitbh, 6 fitbv, 7 fitr.
     pub kind: u8,
-    /// left, top, right, bottom (sp, y down); xyz uses left/top.
+    /// left, top, right, bottom (sp, y down): xyz has left/top, fith and
+    /// fitbh top, fitv and fitbv left, fitr all four; the others are 0.
     pub rect: [i32; 4],
-    /// xyz zoom in thousandths (0 = keep).
+    /// xyz zoom in thousandths (0 = keep; 0 for the other kinds).
     pub zoom: i32,
 }
 
