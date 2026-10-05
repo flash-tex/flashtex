@@ -1509,8 +1509,8 @@ fn remember_texts(doc: &mut Doc) {
 
 /// The lines that differ between `old` and `new`: (first changed line,
 /// end of the change in `old`, end in `new`), 1-based, ends exclusive; lines
-/// as TeX reads them (`system::read_tex_line`: a LF, a CR not followed by a
-/// LF, a CR LF), which is how spans number them (`line`). A text without a
+/// as TeX reads them (`crate::texlines`: a LF, a CR not followed by a LF, a
+/// CR LF), which is how spans number them (`line`). A text without a
 /// CR has only LF ends; its common prefix and suffix are compared as bytes
 /// (memcmp) and only their line ends counted: splitting a 1,000-page source
 /// into lines twice took 2-2.5 ms of every keystroke (lane
@@ -1568,10 +1568,16 @@ fn line_change(old: &[u8], new: &[u8]) -> (u32, u32, u32) {
     (p as u32 + 1, (na - s) as u32 + 1, (nb - s) as u32 + 1)
 }
 
-/// `line_change` of texts with CR line ends: line by line (rare: such a
-/// file pays the split).
+/// `line_change` of texts with CR line ends: line by line
+/// (`crate::texlines`; rare: such a file pays the split).
 fn line_change_tex(old: &[u8], new: &[u8]) -> (u32, u32, u32) {
-    let (a, b) = (tex_lines(old), tex_lines(new));
+    let split = |t: &[u8]| -> Vec<Vec<u8>> {
+        crate::texlines::lines(t)
+            .into_iter()
+            .map(|(s, e)| t[s..e].to_vec())
+            .collect()
+    };
+    let (a, b) = (split(old), split(new));
     let p = a.iter().zip(&b).take_while(|(x, y)| x == y).count();
     let max_s = a.len().min(b.len()) - p;
     let s = a
@@ -1586,32 +1592,6 @@ fn line_change_tex(old: &[u8], new: &[u8]) -> (u32, u32, u32) {
         (a.len() - s) as u32 + 1,
         (b.len() - s) as u32 + 1,
     )
-}
-
-/// The lines of `b` as TeX reads them: ends at a LF, a CR not followed by
-/// a LF, a CR LF (once); the last line is what follows the last end.
-fn tex_lines(b: &[u8]) -> Vec<&[u8]> {
-    let mut out = vec![];
-    let (mut i, mut start) = (0, 0);
-    while i < b.len() {
-        match b[i] {
-            b'\n' => {
-                out.push(&b[start..i]);
-                start = i + 1;
-            }
-            b'\r' => {
-                out.push(&b[start..i]);
-                if b.get(i + 1) == Some(&b'\n') {
-                    i += 1;
-                }
-                start = i + 1;
-            }
-            _ => {}
-        }
-        i += 1;
-    }
-    out.push(&b[start..]);
-    out
 }
 
 /// The LFs in `b`, eight bytes at a time: a byte of `w ^ LF` is zero
@@ -1654,30 +1634,13 @@ mod tests {
         )
     }
 
-    /// TeX's lines (`read_tex_line`): a line ends at a LF, at a CR not
-    /// followed by a LF, and at a CR LF (once).
+    /// TeX's lines (`crate::texlines`, which `texlines::tests` holds to the
+    /// engine's own reader).
     fn tex_lines(b: &[u8]) -> Vec<&[u8]> {
-        let mut out = vec![];
-        let (mut i, mut start) = (0, 0);
-        while i < b.len() {
-            match b[i] {
-                b'\n' => {
-                    out.push(&b[start..i]);
-                    start = i + 1;
-                }
-                b'\r' => {
-                    out.push(&b[start..i]);
-                    if b.get(i + 1) == Some(&b'\n') {
-                        i += 1;
-                    }
-                    start = i + 1;
-                }
-                _ => {}
-            }
-            i += 1;
-        }
-        out.push(&b[start..]);
-        out
+        crate::texlines::lines(b)
+            .into_iter()
+            .map(|(s, e)| &b[s..e])
+            .collect()
     }
 
     /// Spans number lines as TeX does (`line`), CR and CR LF ends
