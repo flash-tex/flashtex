@@ -1686,10 +1686,10 @@ impl Globals {
         let c = &self.cur_input;
         self.input_ptr == 1
             && self.in_open == 1
-            && c.state_field as i32 != crate::generated::consts::token_list
+            && c.state_field != crate::generated::consts::token_list
             && c.name_field > 17
             && c.loc_field > c.limit_field
-            && self.cur_level as i32 == crate::generated::consts::level_one
+            && self.cur_level == crate::generated::consts::level_one
             && self.cond_ptr == crate::generated::consts::null
     }
 
