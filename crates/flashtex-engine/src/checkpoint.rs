@@ -383,6 +383,9 @@ pub struct Layer {
     /// Segment checkpoints (`Point::Segment`): the least engine time since
     /// the last checkpoint for one to be taken.
     pub segment_s: f64,
+    /// No segment checkpoints for now (`crate::incr`: an edit's run until
+    /// its edited page has shipped).
+    pub segment_hold: bool,
     /// Lines read (`input_ln`) so far, and when the last checkpoint was
     /// taken: a segment checkpoint needs a line read since the last one
     /// (two checkpoints with the same input consumed are the same restart
@@ -1599,7 +1602,8 @@ impl Globals {
             REQ_AUX_DONE => self.hook_checkpoint(Point::AuxDone),
             REQ_SEGMENT => {
                 let l = self.layer();
-                let due = l.lines > l.lines_at_checkpoint
+                let due = !l.segment_hold
+                    && l.lines > l.lines_at_checkpoint
                     && l.last_checkpoint
                         .is_none_or(|t| t.elapsed().as_secs_f64() >= l.segment_s);
                 if due {

@@ -144,6 +144,9 @@ pub struct Options {
     /// Checkpoints between shipouts, after `build_page` (`Point::Segment`),
     /// at least this far apart in engine time; `None`: none.
     pub segment_s: Option<f64>,
+    /// None of them in an edit's first pass before its edited page has
+    /// shipped (`Obs::segment_hold`; FLASHTEX_SEGMENT_HOLD=0 takes them).
+    pub segment_hold: bool,
     /// Test convergence after each page of an incremental run.
     pub converge: bool,
     /// Print what differs at each convergence test to stderr.
@@ -175,6 +178,7 @@ impl Default for Options {
                 Ok(v) => v.parse().ok(),
                 Err(_) => Some(DEFAULT_SEGMENT_S),
             },
+            segment_hold: std::env::var("FLASHTEX_SEGMENT_HOLD").map_or(true, |v| v != "0"),
             converge: true,
             debug: std::env::var_os("FLASHTEX_INCR_DEBUG").is_some(),
             relabel: std::env::var_os("FLASHTEX_NO_RELABEL").is_none(),
@@ -1772,6 +1776,13 @@ impl Observer for Obs {
         let cpu = thread_cpu_s() - self.cpu0;
         self.page_times.push((j, self.page_s, cpu));
         let unchanged = self.old_frames.get(j - 1) == Some(&frame);
+        if g.layer().segment_hold
+            && (self.edited.is_some() || !unchanged || self.new_pages.len() >= PROTECT_PAGES)
+        {
+            // the edited page is out (or none changed in the pages it could
+            // be): restart points between pages again
+            g.layer().segment_hold = false;
+        }
         if self.edited.is_none() && !unchanged {
             self.edited = Some((j, self.page_s, cpu));
             self.edited_instr = self
@@ -2245,6 +2256,7 @@ impl Session {
         g.checkpoint_every_shipout(true);
         g.layer().timed_s = self.opts.timed_s;
         g.checkpoint_segments(self.opts.segment_s);
+        g.layer().segment_hold = false;
         g.layer().observer = Some(Box::new(obs));
         let status = g.resume_to_end().inspect_err(|_| {
             system::record_reads_into(None);
@@ -3659,6 +3671,7 @@ impl Session {
         g.checkpoint_every_shipout(true);
         g.layer().timed_s = self.opts.timed_s;
         g.checkpoint_segments(self.opts.segment_s);
+        g.layer().segment_hold = false;
         let mut obs = self.observer(t0, 0, stop_at);
         // Newer work stops it once S₀ is taken (P4, Commander ruling): the
         // run is then kept like a stopped incremental one (`settle_paused`),
@@ -3835,6 +3848,12 @@ impl Session {
         g.checkpoint_every_shipout(true);
         g.layer().timed_s = self.opts.timed_s;
         g.checkpoint_segments(self.opts.segment_s);
+        // No restart points between pages before the edited page (DESIGN.md
+        // §5.2's segment checkpoints): those the run takes after the edit
+        // consumed the edited line, which the next keystroke there edits
+        // again, and each one seals every chunk the page wrote since the
+        // last (lane P4-PAGE-COST). `Obs::on_checkpoint` lifts the hold.
+        g.layer().segment_hold = self.opts.segment_hold && obs.first_incremental;
         // The pages before `r` stay; the rest are the old run's until
         // redone.
         let gap = obs
