@@ -1514,22 +1514,14 @@ fn move_spans(doc: &mut Doc, written: &Written) {
                 .find(|(p, (s, _))| p.file_name() == name && n.same_fields(s))
                 .map(|(_, (_, d))| d.clone())
         });
-        let new = match ours {
-            Some(d) => d,
+        let (new, new_sig) = match ours {
+            Some(d) => (d, now),
             None => match read_signed(path) {
-                Some((d, s)) => {
-                    *sig = s;
-                    if d.as_slice() != old.as_slice() {
-                        let (from, old_end, new_end) = line_change(old, &d);
-                        displaylist::move_lines(path, from, old_end, new_end);
-                        *old = Arc::new(d);
-                    }
-                    continue;
-                }
+                Some((d, s)) => (Arc::new(d), s),
                 None => continue,
             },
         };
-        *sig = now;
+        *sig = new_sig;
         if !Arc::ptr_eq(&new, old) && new.as_slice() != old.as_slice() {
             let (from, old_end, new_end) = line_change(old, &new);
             displaylist::move_lines(path, from, old_end, new_end);
