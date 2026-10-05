@@ -1435,8 +1435,10 @@ fn apply_changes(root: &Path, req: &Json, written: &mut Written) -> Result<(), S
                 crate::os::write_all_at(&f, &data[from..], from as u64)
             });
         r.map_err(|e| format!("{}: {e}", path.display()))?;
-        if let Some(s) = sig(path) {
-            written.insert(path.to_path_buf(), (s, Arc::new(data)));
+        let held = sig(path).map(|s| (s, Arc::new(data)));
+        crate::system::note_known_content(path, held.clone());
+        if let Some(h) = held {
+            written.insert(path.to_path_buf(), h);
         }
         Ok::<(), String>(())
     };

@@ -3252,6 +3252,39 @@ fn set_stamp(path: &str, st: Stamp) {
     STAMPS.with(|m| m.borrow_mut().insert(out_key(path), st));
 }
 
+/// The host's copies of the files it wrote (the editor's text: the host
+/// writes each edit through, `host::resident::apply_changes`), by file name,
+/// with each file's stat signature right after the write. A compile that
+/// asks for such a file's bytes ([`known_content`]) takes the copy while
+/// the file is the same file with the same fields, racy or not, under the
+/// rule `apply_changes` reads its own copy back by: nothing else writes
+/// the editor's file (lane P4-PAGE-COST: the file is read once less per
+/// keystroke, 4 MB on a 1,000-page document).
+static KNOWN: Mutex<Vec<(std::ffi::OsString, StatSig, std::sync::Arc<Vec<u8>>)>> =
+    Mutex::new(Vec::new());
+
+/// Note the host's copy of `path` (see [`KNOWN`]); `None` forgets it.
+pub fn note_known_content(path: &Path, held: Option<(StatSig, std::sync::Arc<Vec<u8>>)>) {
+    let Some(name) = path.file_name() else {
+        return;
+    };
+    let mut k = KNOWN.lock().unwrap_or_else(|e| e.into_inner());
+    k.retain(|(n, _, _)| n != name);
+    if let Some((s, d)) = held {
+        k.push((name.to_os_string(), s, d));
+    }
+}
+
+/// The host's copy of `path`'s bytes, if it holds the file as it is now.
+pub fn known_content(path: &str) -> Option<std::sync::Arc<Vec<u8>>> {
+    let name = Path::new(path).file_name()?;
+    let now = StatSig::of(path)?;
+    let k = KNOWN.lock().unwrap_or_else(|e| e.into_inner());
+    k.iter()
+        .find(|(n, s, _)| n == name && s.same_fields(&now))
+        .map(|(_, _, d)| d.clone())
+}
+
 /// The engine has written `path` whole (created it, put back its content,
 /// or cut it back to a checkpoint's length after checking it was the
 /// run's): what it holds now is the engine's.
@@ -4374,6 +4407,33 @@ mod statsig_tests {
             .set_modified(far)
             .unwrap();
         assert!(!StatSig::of(p).unwrap().racy);
+        let _ = std::fs::remove_dir_all(&d);
+    }
+}
+
+#[cfg(test)]
+mod known_content_tests {
+    use super::*;
+
+    /// The host's copy stands for the file while the file is the one it
+    /// wrote, and not once anything else has written it.
+    #[test]
+    fn the_hosts_copy_stands_while_the_file_is_unchanged() {
+        let d = std::env::temp_dir().join(format!("flashtex-known-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).unwrap();
+        let p = d.join("known-main.tex");
+        let path = p.to_string_lossy().into_owned();
+        std::fs::write(&p, b"abc\n").unwrap();
+        let data = std::sync::Arc::new(b"abc\n".to_vec());
+        note_known_content(&p, Some((StatSig::of(&path).unwrap(), data.clone())));
+        let got = known_content(&path).expect("the copy");
+        assert!(std::sync::Arc::ptr_eq(&got, &data));
+        // another program writes it (another length)
+        std::fs::write(&p, b"abcd\n").unwrap();
+        assert!(known_content(&path).is_none());
+        note_known_content(&p, None);
+        assert!(known_content(&path).is_none());
         let _ = std::fs::remove_dir_all(&d);
     }
 }
