@@ -14,6 +14,12 @@
 #include <kpathsea/tex-file.h>
 #include <kpathsea/tex-glyph.h>
 #include <kpathsea/proginit.h>
+#include <kpathsea/pathsearch.h>
+#include <kpathsea/db.h>
+#include <kpathsea/fontmap.h>
+#include <kpathsea/readable.h>
+#include <kpathsea/str-list.h>
+#include <kpathsea/str-llist.h>
 #include <string.h>
 #include <stdlib.h>
 
@@ -215,4 +221,111 @@ char *flashtex_kpse_find_pk(void *k, const char *name, unsigned dpi, int make,
     *made = g.source == kpse_glyph_source_maketex;
   }
   return r;
+}
+
+/* ---- the session's lookup memo (resolver.rs, `Memo`) ----------------- */
+
+/* The search path of FORMAT (kpse_format_info_type.path), as
+   kpathsea_find_file_generic searches it; not to be freed. NULL if the
+   format has none. */
+const char *flashtex_kpse_format_path(void *k, int format)
+{
+  kpathsea kpse = (kpathsea) k;
+  if (!kpse->format_info[format].type)
+    kpathsea_init_format(kpse, (kpse_file_format_type) format);
+  return kpse->format_info[format].path;
+}
+
+/* Whether NAME has an alias in kpathsea's fontmaps (texfonts.map), which
+   kpathsea_find_file_generic looks for as well (for font formats). */
+int flashtex_kpse_has_alias(void *k, const char *name)
+{
+  const_string *a = kpathsea_fontmap_lookup((kpathsea) k, name);
+  return a && *a;
+}
+
+/* kpathsea_readable_file: a regular file that may be read. */
+int flashtex_kpse_readable(void *k, const char *path)
+{
+  string p = xstrdup(path);
+  int r = kpathsea_readable_file((kpathsea) k, p) != NULL;
+  free(p);
+  return r;
+}
+
+/* The directories whose listings decide a lookup of FORMAT that found FOUND
+   (NULL: found nothing), in the order kpathsea_path_search_list_generic
+   searches them: every directory of every path element it searches on disk
+   (a `//` subtree as kpathsea expanded it) up to the one that holds FOUND,
+   or (found nothing) all of them. An element searched in an ls-R database
+   only (`!!`) depends on the database, which kpathsea reads once per
+   process, as it does for every lookup. A malloc'd NULL-terminated list
+   (flashtex_kpse_free_list), or NULL where the dependencies are not known:
+   an element that is not `!!` but has a database (kpathsea searches its
+   disk only sometimes), or FOUND under no element reached. */
+char **flashtex_kpse_search_dirs(void *k, int format, const char *found)
+{
+  kpathsea kpse = (kpathsea) k;
+  const char *path = flashtex_kpse_format_path(k, format);
+  size_t n = 0, cap = 16, found_dir_len = 0;
+  char **out;
+  string elt;
+  int done = 0, known = 1;
+  if (!path)
+    return NULL;
+  if (found) {
+    const char *slash = strrchr(found, '/');
+    if (!slash)
+      return NULL;
+    found_dir_len = (size_t) (slash - found) + 1; /* with the slash */
+  }
+  out = (char **) xmalloc(cap * sizeof(char *));
+  out[0] = NULL;
+  for (elt = kpathsea_path_element(kpse, path); elt; elt = kpathsea_path_element(kpse, NULL)) {
+    int db_only = elt[0] == '!' && elt[1] == '!';
+    str_list_type *probe;
+    str_llist_type *dirs;
+    str_llist_elt_type *d;
+    if (done || !known)
+      continue; /* (finish kpathsea's one path iteration) */
+    if (db_only)
+      elt += 2;
+    kpathsea_normalize_path(kpse, elt);
+    if (db_only) {
+      /* found in this element's database: the elements after it were not
+         searched */
+      if (found) {
+        size_t l = strlen(elt);
+        while (l > 0 && elt[l - 1] == '/')
+          l--;
+        if (l > 0 && strncmp(found, elt, l) == 0 && found[l] == '/')
+          done = 1;
+      }
+      continue;
+    }
+    probe = kpathsea_db_search(kpse, "flashtex-lookup-memo-probe", elt, false);
+    if (probe) {
+      str_list_free(probe);
+      free(probe);
+      known = 0;
+      continue;
+    }
+    dirs = kpathsea_element_dirs(kpse, elt);
+    for (d = dirs ? *dirs : NULL; d; d = STR_LLIST_NEXT(*d)) {
+      const char *dir = STR_LLIST(*d);
+      if (n + 2 > cap) {
+        cap *= 2;
+        out = (char **) xrealloc(out, cap * sizeof(char *));
+      }
+      out[n++] = xstrdup(dir);
+      out[n] = NULL;
+      if (found && strlen(dir) == found_dir_len && strncmp(found, dir, found_dir_len) == 0)
+        done = 1;
+    }
+  }
+  if (!known || (found && !done)) {
+    flashtex_kpse_free_list(out);
+    return NULL;
+  }
+  return out;
 }
