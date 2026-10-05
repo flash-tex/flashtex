@@ -27,10 +27,11 @@
 # ubuntu-latest. The one self-hosted Mac leg (parity-corpus, templates) reads
 # FLASHTEX_SELFHOSTED_MAC. Owner, 2026-09-29: "any tests that can be run on
 # the nixos pc should be run there, as all other machines are laptops".
-# While the NixOS switch is off and the Mac's is on, the new engine's T2,
-# soundness and memory gates run on a self-hosted Mac instead, one after the
-# other in one job (engine-nightly-mac); T4 and the arxiv leg stay PC-only
-# (see their jobs).
+# While the NixOS switch is off, the new engine's T2, soundness and memory
+# gates run on GitHub-hosted Ubuntu instead (engine-*-hosted, with a pinned
+# TeX Live 2026 image); T4 and the arxiv leg stay PC-only (see their jobs).
+# The heavy self-hosted Mac (flashtex-heavy) carries only the templates leg
+# here, beside p5-scoreboard.
 #
 # T4, the ~5,000-document corpus (DESIGN §8), is the `corpus-t4` job below:
 # sharded, resumable and ratcheted against a baseline recorded on the NixOS PC
@@ -71,8 +72,10 @@ on:
 
 concurrency:
   # A nightly run may take hours. If one is still going when the next fires,
-  # the newer one waits rather than doubling the load on the same Mac.
-  group: nightly-${{ github.workflow }}
+  # the newer one waits rather than doubling the load on the same Mac. Per
+  # ref: a dispatch of a branch (to prove a change to this file) does not
+  # queue behind main's night; the self-hosted jobs keep their own groups.
+  group: nightly-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: false
 
 permissions:
@@ -81,6 +84,11 @@ permissions:
 env:
   CARGO_TERM_COLOR: always
   CARGO_INCREMENTAL: "0"
+  # The oracle of the GitHub-hosted engine jobs (engine-*-hosted): the
+  # official texlive/texlive:latest image (scheme-full, TeX Live 2026, pdfTeX
+  # 1.40.29) of 2026-10-04, pinned by its digest, so a night never changes
+  # oracle under the engine. A new pin is a reviewed change of this line.
+  NIGHTLY_TEXLIVE_IMAGE: texlive/texlive@sha256:a7ae4dfa9d521b5db14446872fa488b839021d1f604d0a3c74461784895f2a67
 
 jobs:
   # The wide parity tiers. pdflatex is the oracle and never runs in the product
@@ -126,7 +134,7 @@ jobs:
        github.event.pull_request.head.repo.full_name == github.repository)
     runs-on: ${{ matrix.tier == 'arxiv' && fromJSON('["self-hosted","Linux","X64","flashtex-linux"]') || fromJSON('["self-hosted","macOS","ARM64","flashtex","flashtex-heavy"]') }}
     # templates holds the heavy Mac, so it joins the group of the heavy Mac
-    # jobs (p5-scoreboard, engine-nightly-mac); arxiv keeps a group of its own.
+    # jobs (p5-scoreboard's Mac route); arxiv keeps a group of its own.
     concurrency:
       group: ${{ matrix.tier == 'templates' && 'flashtex-mac-heavy' || format('nightly-arxiv-{0}', github.run_id) }}
       cancel-in-progress: false
@@ -401,9 +409,8 @@ jobs:
   #
   # Both run with FLASHTEX_REQUIRE_TEXLIVE=1, so a runner that has lost its
   # TeX Live fails instead of passing on skips. Same switch as the other
-  # self-hosted jobs. With the PC switched off and the Macs on, the Mac job
-  # engine-nightly-mac below runs T2, soundness and memory instead; with
-  # both off, the notices below say so.
+  # self-hosted jobs. With the PC switched off, the GitHub-hosted jobs
+  # engine-*-hosted below run T2, soundness and memory instead.
   engine-latex-suites:
     name: "engine: LaTeX suites (T2)"
     if: (vars.FLASHTEX_SELFHOSTED_LINUX || vars.FLASHTEX_SELFHOSTED_MAC) == '1'
@@ -462,56 +469,128 @@ jobs:
           [ -f "$RUNNER_TEMP/mem-gate.txt" ] || exit 0
           { echo "### Host memory gate"; grep -E '^\||mem gate' "$RUNNER_TEMP/mem-gate.txt"; } >> "$GITHUB_STEP_SUMMARY"
 
-  # The PC switched off, the Macs on: T2, soundness and the memory gate on a
-  # self-hosted Mac (MacTeX 2026 first on its PATH: /Library/TeX/texbin is the
-  # only TeX Live there, so engine-parity.sh's kpsewhich check holds), one
-  # after the other in ONE job on the heavy Mac (label flashtex-heavy,
-  # mac-m1max-a-2), so the general Mac stays free for the merge queue's macOS legs. Main
-  # only. The job shares the group `flashtex-mac-heavy` with p5-scoreboard's
-  # Mac job (06:47 UTC) and the templates leg, and runs after the templates
-  # leg (needs), so nightly never has two jobs pending in that group (a third
-  # would cancel the pending one). Each gate runs even when an earlier one
-  # failed, and the job fails if any did.
+  # The PC switched off: T2, soundness and the memory gate on GitHub-hosted
+  # Ubuntu instead (DESIGN §9.2: "a night without the PC is not a night
+  # without gates"; review 2026-10-05, lane NIGHTLY-GREEN). Until 2026-10-05
+  # they ran one after the other in one job on the heavy self-hosted Mac
+  # (#1413), which also carries p5-scoreboard: T2 alone held it for about
+  # two hours a night beside the board's own T2 on the same oracle, and that
+  # Mac ran out of disk twice (10-03). The heavy Mac now carries the board and
+  # the templates leg only.
   #
-  # Host notes. T2's baseline is this Mac's own pdftex run first, as on the
-  # PC (engine-parity.sh t2). The memory gate's limits were set on the PC;
-  # mem.py samples RSS with ps on macOS (the PC reads /proc VmHWM), and the
-  # host's own peak (macOS phys_footprint, crate::memstat) is the kernel
-  # figure there; the P4-MEMORY evidence measured both hosts
-  # (docs/evidence/p4-memory-2026-09-30/raw/mac-summary.jsonl).
-  engine-nightly-mac:
-    name: "engine: T2, soundness and host memory (self-hosted Mac)"
-    needs: parity-corpus
-    if: >-
-      !cancelled() &&
-      !((vars.FLASHTEX_SELFHOSTED_LINUX || vars.FLASHTEX_SELFHOSTED_MAC) == '1') &&
-      vars.FLASHTEX_SELFHOSTED_MAC == '1' && github.ref == 'refs/heads/main' &&
-      (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
-    runs-on: [self-hosted, macOS, ARM64, flashtex, flashtex-heavy]
-    concurrency:
-      group: flashtex-mac-heavy
-      cancel-in-progress: false
-    timeout-minutes: 540
+  # The oracle is TeX Live 2026 from the official texlive/texlive image pulled
+  # by digest (.github/actions/texlive-2026), scheme-full: the suites load
+  # packages scheme-medium lacks (l3build itself, blindtext, cleveref,
+  # multirow, tugboat, ...). The full tree is ~2.6 GB compressed, too large to
+  # keep in the Actions cache beside the rest, so each job pulls it. T2's
+  # baseline is still the reference run on that same tree, first, in the same
+  # job (engine-parity.sh t2), so this snapshot's own failures never count
+  # against the engine. A GitHub-hosted runner sees only this repository's
+  # code and no secrets, so these jobs need no fork guard (§9.3) and may run
+  # on a dispatch of any branch.
+  engine-latex-suites-hosted:
+    name: "engine: LaTeX suites (T2, GitHub-hosted)"
+    if: ${{ !((vars.FLASHTEX_SELFHOSTED_LINUX || vars.FLASHTEX_SELFHOSTED_MAC) == '1') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 300
     env:
       FLASHTEX_REQUIRE_TEXLIVE: "1"
-      CARGO_BUILD_JOBS: "3"
     steps:
+      - name: free disk (the TeX Live image and its copy take ~12 GB)
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/local/.ghcup /opt/hostedtoolcache/CodeQL
+          sudo docker image prune --all --force || true
+          df -h /
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
+      - uses: ./.github/actions/texlive-2026
+        with:
+          image: ${{ env.NIGHTLY_TEXLIVE_IMAGE }}
+          cache: "false"
+      - name: qpdf (engine-parity.sh's preflight requires it)
+        run: command -v qpdf || { sudo apt-get update -qq && sudo apt-get install -y -qq qpdf; }
       - uses: dtolnay/rust-toolchain@stable
-      - name: this Mac's build directory (shared by the heavy jobs, size-capped)
-        run: scripts/ci/mac-heavy-target.sh >> "$GITHUB_ENV"
-      - name: "T2: build the engine and its formats, then run the suites"
-        timeout-minutes: 240
-        run: scripts/engine-parity.sh --jobs 3 build t2
-      - name: "soundness: cargo test --ignored every_fixture_edits_equal_scratch_compiles"
-        if: ${{ !cancelled() }}
-        timeout-minutes: 180
-        run: scripts/engine-parity.sh --jobs 3 soundness
-      - name: "memory: build, then type on each document and gate its peak RSS"
-        if: ${{ !cancelled() }}
-        timeout-minutes: 90
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: engine-parity
+      - name: build the engine and its formats, then run the suites
+        run: scripts/engine-parity.sh --jobs 4 build t2
+      - name: report
+        if: always()
+        run: |
+          w="$RUNNER_TEMP/engine-parity"
+          [ -f "$w/t2-engine.txt" ] || exit 0
+          {
+            echo "### T2 ($(pdftex --version | head -1); $NIGHTLY_TEXLIVE_IMAGE)"
+            echo '```'
+            grep -E ': PASS [0-9]+ / FAIL' "$w/t2-reference.txt" | sed 's/^/reference: /'
+            grep -E ': PASS [0-9]+ / FAIL' "$w/t2-engine.txt" | sed 's/^/engine:    /'
+            python3 tools/latex-suites/compare_failures.py "$w/t2-reference.txt" "$w/t2-engine.txt" || true
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: engine-t2-hosted
+          path: |
+            ${{ runner.temp }}/engine-parity/t2-reference.txt
+            ${{ runner.temp }}/engine-parity/t2-engine.txt
+          if-no-files-found: ignore
+          retention-days: 30
+
+  engine-soundness-hosted:
+    name: "engine: incremental soundness (every fixture, GitHub-hosted)"
+    if: ${{ !((vars.FLASHTEX_SELFHOSTED_LINUX || vars.FLASHTEX_SELFHOSTED_MAC) == '1') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    env:
+      FLASHTEX_REQUIRE_TEXLIVE: "1"
+    steps:
+      - name: free disk (the TeX Live image and its copy take ~12 GB)
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/local/.ghcup /opt/hostedtoolcache/CodeQL
+          sudo docker image prune --all --force || true
+          df -h /
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/texlive-2026
+        with:
+          image: ${{ env.NIGHTLY_TEXLIVE_IMAGE }}
+          cache: "false"
+      - name: qpdf (engine-parity.sh's preflight requires it)
+        run: command -v qpdf || { sudo apt-get update -qq && sudo apt-get install -y -qq qpdf; }
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: engine-soundness
+      - name: cargo test --ignored every_fixture_edits_equal_scratch_compiles
+        run: scripts/engine-parity.sh soundness
+
+  engine-memory-hosted:
+    name: "engine: host memory (peak RSS per document size, GitHub-hosted)"
+    if: ${{ !((vars.FLASHTEX_SELFHOSTED_LINUX || vars.FLASHTEX_SELFHOSTED_MAC) == '1') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - name: free disk (the TeX Live image and its copy take ~12 GB)
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/local/.ghcup /opt/hostedtoolcache/CodeQL
+          sudo docker image prune --all --force || true
+          df -h /
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/texlive-2026
+        with:
+          image: ${{ env.NIGHTLY_TEXLIVE_IMAGE }}
+          cache: "false"
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: engine-memory
+      - name: build, then type on each document and gate its peak RSS
         run: |
           set -o pipefail
           INCR_BENCH_DIR="$RUNNER_TEMP/incr-bench-mem" tools/incr-bench/mem_gate.sh --build \
@@ -520,27 +599,7 @@ jobs:
         if: always()
         run: |
           [ -f "$RUNNER_TEMP/mem-gate.txt" ] || exit 0
-          { echo "### Host memory gate ($RUNNER_NAME, $(uname -sm))"; grep -E '^\||mem gate' "$RUNNER_TEMP/mem-gate.txt"; } >> "$GITHUB_STEP_SUMMARY"
-
-  engine-memory-unavailable:
-    name: "engine: host memory (peak RSS per document size)"
-    if: ${{ !((vars.FLASHTEX_SELFHOSTED_LINUX || vars.FLASHTEX_SELFHOSTED_MAC) == '1' || (vars.FLASHTEX_SELFHOSTED_MAC == '1' && github.ref == 'refs/heads/main')) }}
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    steps:
-      - run: |
-          echo "::notice::skipped: the host memory gate needs the NixOS runners (flashtex-linux) or, on main, the heavy self-hosted Mac."
-          echo "Both self-hosted switches are off (\`FLASHTEX_SELFHOSTED_LINUX\`, or \`FLASHTEX_SELFHOSTED_MAC\` while it is unset, is not 1; nor is \`FLASHTEX_SELFHOSTED_MAC\`), or this is not main." >> "$GITHUB_STEP_SUMMARY"
-
-  engine-nightly-unavailable:
-    name: "engine: T2 and soundness"
-    if: ${{ !((vars.FLASHTEX_SELFHOSTED_LINUX || vars.FLASHTEX_SELFHOSTED_MAC) == '1' || (vars.FLASHTEX_SELFHOSTED_MAC == '1' && github.ref == 'refs/heads/main')) }}
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    steps:
-      - run: |
-          echo "::notice::skipped: the engine's T2 and soundness runs need the NixOS runners (flashtex-linux) or, on main, the heavy self-hosted Mac."
-          echo "Both self-hosted switches are off (\`FLASHTEX_SELFHOSTED_LINUX\`, or while it is unset \`FLASHTEX_SELFHOSTED_MAC\`, is not 1; nor is \`FLASHTEX_SELFHOSTED_MAC\`), or this is not main." >> "$GITHUB_STEP_SUMMARY"
+          { echo "### Host memory gate ($(nproc) CPUs, $(free -g | awk '/^Mem:/ { print $2 }') GB; GitHub-hosted)"; grep -E '^\||mem gate' "$RUNNER_TEMP/mem-gate.txt"; } >> "$GITHUB_STEP_SUMMARY"
 
   # ci.yml tests the release profile. Nothing tests debug, which is the profile
   # with `debug_assert!` and integer-overflow checks turned on -- so an
