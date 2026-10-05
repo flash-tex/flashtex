@@ -2150,6 +2150,10 @@ impl Session {
             key.check(key.clock, &first_line)
         })?;
         self.clock = clock;
+        // The files the preamble wrote and closed, as it left them: a later
+        // run (the last one before the host restarted) may have written them
+        // again since, and the body reads what S₀ stands for (#1348).
+        s0.key.rewrite_outputs()?;
         self.paused = None;
         self.pages.clear();
         self.ck_pages.clear();
@@ -4207,7 +4211,7 @@ impl Session {
             return Ok(());
         };
         let rec = g.record_of(id)?;
-        match host::make_key(g, &rec, j, self.clock, &self.first_line) {
+        match host::make_key(g, id, &rec, j, self.clock, &self.first_line) {
             Ok(key) => {
                 self.s0 = Some(host::S0 { id, key });
                 self.ck_pages.insert(id, 0);
