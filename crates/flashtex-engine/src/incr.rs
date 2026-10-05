@@ -403,6 +403,9 @@ struct Obs {
     /// and the old run's line journal at its end.
     shifts: Vec<crate::lineshift::Shift>,
     old_line_events: Vec<crate::lineshift::LineRead>,
+    /// The line shifts each old page checkpoint still owes (`Reloc`): its
+    /// stored state numbers lines as the run that took it did.
+    old_lines: HashMap<CheckpointId, Vec<crate::lineshift::Shift>>,
     /// The last of the old run's lookups (an index into its journal's) whose
     /// answer is different now (`Session::changes`): a checkpoint taken
     /// before it would keep the old run's answer (#1502).
@@ -755,7 +758,11 @@ impl Obs {
         };
         let t = Instant::now();
         let mut char_or = vec![];
-        let active = crate::lineshift::Active::new(g, &self.shifts);
+        // (compared as the restore would correct it, then shifted by the
+        // edit)
+        let mut stages = self.old_lines.get(&old).cloned().unwrap_or_default();
+        stages.extend(self.shifts.iter().cloned());
+        let active = crate::lineshift::Active::new(g, &stages);
         let r = crate::lineshift::with_active(active, || {
             same_words(
                 g,
@@ -2025,7 +2032,7 @@ pub struct Session {
     changed_lookup_last: Option<usize>,
     /// The line shifts of the edits `changes` found (DESIGN.md §5.3 rule
     /// (c), `crate::lineshift`), for the run it starts.
-    line_shifts: Vec<crate::lineshift::Shift>,
+    line_shifts: Vec<crate::lineshift::Pending>,
     /// The lookup directories' signatures, taken just before the last
     /// `changes` checked the journal's lookups (`dirs_seen`), and those of
     /// the check that started the current pass (`dirs_checked`, which
@@ -3344,7 +3351,7 @@ impl Session {
                 match (&f.content, &now) {
                     (Some(old), Some(new)) => {
                         let e = diff_edit(&f.path, old, new.as_slice());
-                        shifts.extend(crate::lineshift::Shift::of(
+                        shifts.extend(crate::lineshift::Shift::pending(
                             &f.path,
                             old,
                             new,
@@ -3562,6 +3569,7 @@ impl Session {
             old_effects_end: 0,
             shifts: vec![],
             old_line_events: vec![],
+            old_lines: HashMap::new(),
             changed_lookup_last: None,
             rerun_from: None,
             budget: self.opts.budget,
@@ -3703,7 +3711,6 @@ impl Session {
         obs.old_matrix_uses_end = Some(crate::pdftex::matrix_uses());
         obs.old_effects_end = system::external_effects_len();
         obs.old_line_events = crate::lineshift::events_from(0);
-        obs.shifts = std::mem::take(&mut self.line_shifts);
         obs.changed_lookup_last = self.changed_lookup_last;
         let t1 = Instant::now();
         let i1 = crate::os::thread_counts();
@@ -3792,11 +3799,34 @@ impl Session {
             }
         }
         let g = self.g.as_mut().unwrap();
+        // the edits' line shifts, their lines before the edit counted from
+        // where the restart point reads each file
+        obs.shifts = std::mem::take(&mut self.line_shifts)
+            .into_iter()
+            .map(|p| {
+                let (line, at) = crate::lineshift::level_at(g, &rec, &p.path);
+                p.resolve(line, at)
+            })
+            .collect();
         system::record_reads_into(Some(truncate_journal(&jr, rec.reads, &self.dirs_checked)));
         let restore_s = t1.elapsed().as_secs_f64();
         drop(busy_restore);
         let restore_instr = i1.zip(crate::os::thread_counts()).map(|(a, b)| b.0 - a.0);
         obs.old_pages = self.pages[base..].to_vec();
+        obs.old_lines = obs
+            .old_pages
+            .iter()
+            .filter_map(|p| p.ckpt)
+            .filter_map(|c| {
+                let v: Vec<_> = self
+                    .reloc
+                    .get(&c)?
+                    .iter()
+                    .flat_map(|x| x.lines.iter().cloned())
+                    .collect();
+                (!v.is_empty()).then_some((c, v))
+            })
+            .collect();
         obs.edits = edits;
         obs.changed = changed;
         obs.old_journal_files = old_files;
@@ -4096,6 +4126,12 @@ impl Session {
                     .into_iter()
                     .collect();
                 if !dirty.is_empty() {
+                    if self.opts.debug {
+                        eprintln!(
+                            "[incr] {} old checkpoints dropped: lines the shift cannot correct",
+                            dirty.len()
+                        );
+                    }
                     g.retain_checkpoints(&|i| !dirty.contains(&i));
                 }
             }

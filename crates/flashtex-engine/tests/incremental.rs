@@ -2485,3 +2485,226 @@ fn a_late_barrier_keeps_the_pages_before_it() {
         assert!(conv < kept && kept < pages, "{what}: {r}");
     }
 }
+
+/// DESIGN.md §5.3 rule (c), the line half (`crate::lineshift`): a document
+/// of `n` paragraphs with `extra` text before some of them, and `pre` in
+/// the preamble.
+fn lines_doc(pre: &str, n: usize, extra: &[(usize, &str)]) -> String {
+    let mut s = format!("\\documentclass{{article}}\n{pre}\\begin{{document}}\n");
+    for i in 0..n {
+        for (k, t) in extra {
+            if *k == i {
+                s.push_str(t);
+                s.push_str("\n\n");
+            }
+        }
+        s.push_str(&para(i, "lorem"));
+    }
+    s.push_str("\\end{document}\n");
+    s
+}
+
+/// The edits of the line kinds at paragraph 5 (`tools/incr-bench/edits.py`'s
+/// `newline`, `split`, `join`), each followed by its revert.
+fn line_edits(doc: &str) -> Vec<(String, &'static str)> {
+    let at = "Paragraph 5 with the word";
+    assert!(doc.contains(at));
+    let nl = doc.replacen(at, "Paragraph 5 with\nthe word", 1);
+    let split = doc.replacen(at, "Paragraph 5 with\n\nthe word", 1);
+    // two paragraphs joined: the break before paragraph 6 becomes a space
+    let join = doc.replacen(".\n\nParagraph 6 ", ". Paragraph 6 ", 1);
+    assert!(nl != *doc && split != *doc && join != *doc);
+    vec![
+        (nl, "a newline"),
+        (doc.to_string(), "its revert"),
+        (split, "a paragraph split"),
+        (doc.to_string(), "its revert"),
+        (join, "a paragraph join"),
+        (doc.to_string(), "its revert"),
+    ]
+}
+
+/// The 1-based line of the first occurrence of `what` in `doc`.
+fn line_of(doc: &str, what: &str) -> usize {
+    doc[..doc.find(what).unwrap()].matches('\n').count() + 1
+}
+
+fn settle(e: &Env, h: &mut Host, dir: &Path, doc: &str) {
+    for k in 0..4 {
+        let r = compile_and_check(e, h, dir, &[("doc.tex", doc)], "settle");
+        if r.contains("\"mode\":\"unchanged\"") || k == 3 {
+            break;
+        }
+    }
+}
+
+#[test]
+fn line_edits_converge_and_equal_scratch_runs() {
+    let Some(e) = env() else {
+        common::no_texlive();
+        return;
+    };
+    // Plain prose, and LaTeX environments (`\begin` reads `\inputlineno`
+    // into `\@currenvline`, a marked list): a newline before them converges
+    // at the first page tested after the edited one.
+    let envs: Vec<(usize, String)> = (10..120)
+        .step_by(7)
+        .map(|i| (i, format!("\\begin{{equation}}a_{i}=b\\end{{equation}}")))
+        .collect();
+    let envs: Vec<(usize, &str)> = envs.iter().map(|(i, s)| (*i, s.as_str())).collect();
+    for (name, doc) in [
+        ("lines-plain", lines_doc("", 120, &[])),
+        ("lines-envs", lines_doc("", 120, &envs)),
+    ] {
+        let dir = e.dir.join(name);
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut h = Host::start(&e, &dir);
+        settle(&e, &mut h, &dir, &doc);
+        for (k, (text, what)) in line_edits(&doc).into_iter().enumerate() {
+            let what = format!("{name}: {what}");
+            let r = compile_and_check(&e, &mut h, &dir, &[("doc.tex", &text)], &what);
+            assert!(r.contains("\"mode\":\"incremental\""), "{what}: {r}");
+            if k < 2 {
+                assert_ne!(field(&r, "converged_at"), "null", "{what}: {r}");
+                assert_eq!(field(&r, "rerun_from"), "null", "{what}: {r}");
+            }
+        }
+    }
+}
+
+/// Each case reads or prints a line number pages after a line edit (about
+/// page 9 of 12; the edit is on page 1): the old run's pages from there on
+/// would show the old number. The newline converges, and the run goes on
+/// live from before that page. Every compile equals a scratch run; each
+/// case fails without its rule (`crate::lineshift`).
+#[test]
+fn moved_line_numbers_are_barriers() {
+    let Some(e) = env() else {
+        common::no_texlive();
+        return;
+    };
+    const N: usize = 240;
+    const AT: usize = 180;
+    // `\ifx` on and expansion of `\@currenvline` (a marked list): the
+    // environment's line compared with the line it had before the edit
+    let probe = "\\begin{center}\\expandafter\\ifx\\csname @currenvline\\endcsname\\expected \
+                 SAME\\else DIFFERENT\\fi\\end{center}";
+    let base = lines_doc("\\def\\expected{ on input line LINE}\n", N, &[(AT, probe)]);
+    let l = line_of(&base, "\\begin{center}");
+    let ifx = base.replace("LINE", &l.to_string());
+    let typeset = lines_doc(
+        "",
+        N,
+        &[(
+            AT,
+            "\\begin{center}\\csname @currenvline\\endcsname\\end{center}",
+        )],
+    );
+    let cases: Vec<(&str, String)> = vec![
+        // `\inputlineno` into a message (the log)
+        (
+            "lines-message",
+            lines_doc("", N, &[(AT, "\\message{[line \\the\\inputlineno]}")]),
+        ),
+        // ... into a register in a group, typeset
+        (
+            "lines-count",
+            lines_doc(
+                "",
+                N,
+                &[(
+                    AT,
+                    "\\begingroup\\count255=\\inputlineno Line \\the\\count255.\\endgroup",
+                )],
+            ),
+        ),
+        // a box report's line (the log)
+        (
+            "lines-underfull",
+            lines_doc("", N, &[(AT, "\\noindent\\hbox to 10cm{a b}")]),
+        ),
+        // the context of a `\show` (`l.<n>`, the log)
+        ("lines-show", lines_doc("", N, &[(AT, "\\show\\par")])),
+        // `\showgroups` in an open group (the log)
+        (
+            "lines-groups",
+            lines_doc("", N, &[(AT, "\\begingroup\\showgroups\\endgroup")]),
+        ),
+        // `\showlists` (the modes' lines, the log)
+        ("lines-lists", lines_doc("", N, &[(AT, "\\showlists")])),
+        ("lines-ifx", ifx),
+        ("lines-typeset", typeset),
+    ];
+    // (every case runs, and the failures are named together)
+    let mut bad = vec![];
+    for (name, doc) in &cases {
+        let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let dir = e.dir.join(name);
+            let _ = std::fs::remove_dir_all(&dir);
+            std::fs::create_dir_all(&dir).unwrap();
+            let mut h = Host::start(&e, &dir);
+            settle(&e, &mut h, &dir, doc);
+            for (k, (text, what)) in line_edits(doc).into_iter().enumerate() {
+                let what = format!("{name}: {what}");
+                let r = compile_and_check(&e, &mut h, &dir, &[("doc.tex", &text)], &what);
+                if k == 0 {
+                    // the old run's pages are kept up to the barrier
+                    assert_ne!(field(&r, "converged_at"), "null", "{what}: {r}");
+                    assert_ne!(field(&r, "rerun_from"), "null", "{what}: {r}");
+                }
+            }
+        }));
+        if r.is_err() {
+            bad.push(*name);
+        }
+    }
+    assert!(bad.is_empty(), "failed: {bad:?}");
+}
+
+/// After a line edit converges, later edits restart from the old run's
+/// checkpoints. Those inside an environment open across pages keep a marked
+/// `\@currenvline`: they are dropped, so that an edit ending the environment
+/// with the wrong `\end` shows its true line. The others are corrected as
+/// they are restored (`Reloc`): a `\message` of `\inputlineno` after the
+/// restart point shows the new number.
+#[test]
+fn restores_after_a_line_edit_equal_scratch_runs() {
+    let Some(e) = env() else {
+        common::no_texlive();
+        return;
+    };
+    let items: String = (0..40)
+        .map(|i| format!("\\item {}", para(1000 + i, "ipsum")))
+        .collect();
+    let list = format!("\\begin{{itemize}}\n{items}\\end{{itemize}}");
+    let doc = lines_doc(
+        "",
+        150,
+        &[(60, &list), (140, "\\message{[line \\the\\inputlineno]}")],
+    );
+    let dir = e.dir.join("lines-restore");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let mut h = Host::start(&e, &dir);
+    settle(&e, &mut h, &dir, &doc);
+    let nl = doc.replacen("Paragraph 5 with the word", "Paragraph 5 with\nthe word", 1);
+    let r = compile_and_check(&e, &mut h, &dir, &[("doc.tex", &nl)], "a newline");
+    assert_ne!(field(&r, "converged_at"), "null", "a newline: {r}");
+    // the list's end made wrong: a restart inside the list; LaTeX's error
+    // shows the list's line
+    let wrong = nl.replacen("\\end{itemize}", "\\end{enumerate}", 1);
+    assert_ne!(wrong, nl);
+    compile_and_check(&e, &mut h, &dir, &[("doc.tex", &wrong)], "the wrong end");
+    compile_and_check(&e, &mut h, &dir, &[("doc.tex", &nl)], "its revert");
+    // a letter after the list and before the message: a restart from a
+    // checkpoint the convergence kept
+    let letter = nl.replacen(
+        "Paragraph 130 with the word lorem",
+        "Paragraph 130 with the word lorme",
+        1,
+    );
+    assert_ne!(letter, nl);
+    compile_and_check(&e, &mut h, &dir, &[("doc.tex", &letter)], "a letter later");
+    compile_and_check(&e, &mut h, &dir, &[("doc.tex", &doc)], "all reverted");
+}

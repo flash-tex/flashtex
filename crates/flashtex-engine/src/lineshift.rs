@@ -200,6 +200,66 @@ pub struct Shift {
     pub after: i32,
 }
 
+/// A [`Shift`] whose lines before the edit are not counted yet: the edit
+/// (`Session::changes`) and the file as it is now, whose bytes before the
+/// edit are the old ones.
+#[derive(Clone, Debug)]
+pub struct Pending {
+    pub path: String,
+    delta: i32,
+    /// Where the count of the lines before the edit stops (see `of`).
+    s: usize,
+    /// Line ends in the edited bytes (old), from `s` on.
+    mid: i64,
+    /// The edit ends where a line starts.
+    at_start: bool,
+    /// Byte `s` of the old file is a line end.
+    s_ends: bool,
+    new: std::sync::Arc<Vec<u8>>,
+}
+
+impl Pending {
+    /// The shift, given that TeX's line at byte `at` of the file (just past
+    /// a line end, before the edit) is `line`: what a level reading it has
+    /// counted there ((0, 0): the file's start).
+    pub fn resolve(self, line: i64, at: usize) -> Shift {
+        // the line ends before byte `s`
+        let before = if at <= self.s {
+            line + line_ends(&self.new, at, self.s) as i64
+        } else if at == self.s + 1 {
+            // (byte `s` is a line end or not by the old byte after it)
+            line - self.s_ends as i64
+        } else {
+            line - line_ends(&self.new, self.s, at) as i64
+        };
+        Shift {
+            path: self.path,
+            delta: self.delta,
+            first: clamp(1 + before),
+            // the first line that starts at or after the edit's end
+            after: clamp(1 + before + self.mid + if self.at_start { 0 } else { 1 }),
+        }
+    }
+}
+
+/// The line count and the byte offset where input level `j` of `g` (just
+/// restored to checkpoint `rec`) reads `path`: (0, 0) when no level does.
+pub fn level_at(g: &Globals, rec: &crate::checkpoint::ExtRecord, path: &str) -> (i64, usize) {
+    for j in (1..=g.in_open.max(0)).rev() {
+        if !level_file(g, j).is_some_and(|p| same_path(p, path)) {
+            continue;
+        }
+        // the record's files: term_in, term_out, pool_file, log_file, then
+        // input_file[1..] (`Globals::visit_files`)
+        if let Some(crate::system::Stream::In { offset, .. }) =
+            rec.files.get(3 + j as usize).map(|f| &f.stream)
+        {
+            return (level_line(g, j) as i64, *offset as usize);
+        }
+    }
+    (0, 0)
+}
+
 /// Line ends in `b[lo..hi]` as `read_tex_line` counts them: a LF, a CR not
 /// followed by a LF (the next byte looked at even past `hi`), a CR LF once.
 pub fn line_ends(b: &[u8], lo: usize, hi: usize) -> usize {
@@ -234,6 +294,22 @@ impl Shift {
         old_end: usize,
         new_end: usize,
     ) -> Option<Shift> {
+        let new = std::sync::Arc::new(new.to_vec());
+        Some(Shift::pending(path, old, &new, prefix, old_end, new_end)?.resolve(0, 0))
+    }
+
+    /// [`Shift::of`] without counting the lines before the edit, which
+    /// [`Pending::resolve`] counts from a place in the file whose line TeX
+    /// knows (a 1,000-page source is 2-4 MB; the restart point is a page
+    /// or less before the edit).
+    pub fn pending(
+        path: &str,
+        old: &[u8],
+        new: &std::sync::Arc<Vec<u8>>,
+        prefix: usize,
+        old_end: usize,
+        new_end: usize,
+    ) -> Option<Pending> {
         if old_end > old.len() || new_end > new.len() || prefix > old_end.min(new_end) {
             return None;
         }
@@ -245,14 +321,14 @@ impl Shift {
         if delta == 0 {
             return None;
         }
-        // the first line that starts at or after the edit's end
-        let ends = line_ends(old, 0, old_end) as i64;
-        let at_start = old_end == 0 || line_ends(old, old_end - 1, old_end) == 1;
-        Some(Shift {
+        Some(Pending {
             path: path.to_string(),
             delta: clamp(delta),
-            first: clamp(1 + line_ends(old, 0, s) as i64),
-            after: clamp(1 + ends + if at_start { 0 } else { 1 }),
+            s,
+            mid: line_ends(old, s, old_end) as i64,
+            at_start: old_end == 0 || line_ends(old, old_end - 1, old_end) == 1,
+            s_ends: line_ends(old, s, s + 1) == 1,
+            new: new.clone(),
         })
     }
 
@@ -443,30 +519,55 @@ fn level_read(g: &Globals, j: i32) -> LineRead {
 // ---------------------------------------------------------------------------
 // the convergence test's view of the state
 
-/// The shifts a convergence test allows, with the SyncTeX tags of the
-/// input levels that read each edited file in the live state.
+/// The shifts a convergence test allows, in order: those the old
+/// checkpoint still owes (`incr::Reloc`: it is stored as an earlier run
+/// numbered its lines, and corrected only when restored), then the edit's.
+/// Each with the SyncTeX tags of the input levels that read its file in the
+/// live state.
 #[derive(Clone, Debug, Default)]
 pub struct Active {
-    shifts: Vec<Shift>,
-    /// (tag, delta, after)
-    tags: Vec<(i32, i32, i32)>,
+    stages: Vec<(Shift, Vec<i32>)>,
 }
 
 impl Active {
     pub fn new(g: &Globals, shifts: &[Shift]) -> Active {
-        let mut tags = vec![];
-        for s in shifts {
-            for j in 1..=g.in_open.max(0) {
-                if level_file(g, j).is_some_and(|p| same_path(p, &s.path)) {
-                    if let Some(t) = level_tag(g, j) {
-                        tags.push((t, s.delta, s.after));
-                    }
-                }
+        let stages = shifts
+            .iter()
+            .map(|s| {
+                let tags = (1..=g.in_open.max(0))
+                    .filter(|&j| level_file(g, j).is_some_and(|p| same_path(p, &s.path)))
+                    .filter_map(|j| level_tag(g, j))
+                    .collect();
+                (s.clone(), tags)
+            })
+            .collect();
+        Active { stages }
+    }
+
+    /// The new numbering of a line `o` of the file whose reading level had
+    /// SyncTeX tag `tag`: each shift of that file moves it from its `after`
+    /// on.
+    fn held(&self, tag: i32, o: i32) -> i32 {
+        let mut v = o;
+        for (s, tags) in &self.stages {
+            if tags.contains(&tag) && v.unsigned_abs() as i64 >= s.after as i64 {
+                v = shifted(v, s.delta);
             }
         }
-        Active {
-            shifts: shifts.to_vec(),
-            tags,
+        v
+    }
+
+    /// The shift of input level `j`'s line: every shift of the file it
+    /// reads.
+    fn level(&self, g: &Globals, j: i32) -> i64 {
+        match level_file(g, j) {
+            Some(p) => self
+                .stages
+                .iter()
+                .filter(|(s, _)| same_path(p, &s.path))
+                .map(|(s, _)| s.delta as i64)
+                .sum(),
+            None => 0,
         }
     }
 }
@@ -485,29 +586,11 @@ pub fn with_active<R>(a: Active, f: impl FnOnce() -> R) -> R {
 }
 
 /// Whether a line the old state holds as `o` and the new one as `n` is the
-/// same line: equal, or -- for a line of an edited file (its reading
-/// level's SyncTeX tag `tag`) from `after` on -- moved by δ, which it must
-/// be then.
+/// same line: `n` is `o` in the new numbering (for a line of an edited file,
+/// its reading level's SyncTeX tag `tag`, from the shift's `after` on: moved
+/// by δ, which it must be then; any other line: equal).
 pub fn held_ok(tag: i32, o: i32, n: i32) -> bool {
-    ACTIVE.with(|a| {
-        let a = a.borrow();
-        match a.tags.iter().find(|x| x.0 == tag) {
-            Some(&(_, d, after)) if o.unsigned_abs() as i64 >= after as i64 => n == shifted(o, d),
-            _ => n == o,
-        }
-    })
-}
-
-/// The shift for level `j` of the live state: the one of the file it reads.
-fn level_delta(g: &Globals, shifts: &[Shift], j: i32) -> i32 {
-    match level_file(g, j) {
-        Some(p) => shifts
-            .iter()
-            .filter(|s| same_path(p, &s.path))
-            .map(|s| s.delta)
-            .sum(),
-        None => 0,
-    }
+    ACTIVE.with(|a| n == a.borrow().held(tag, o))
 }
 
 /// Whether a differing word of the live state (`new`) and the old run's
@@ -523,10 +606,9 @@ pub fn shifted_word(
 ) -> bool {
     ACTIVE.with(|a| {
         let a = a.borrow();
-        if a.shifts.is_empty() {
+        if a.stages.is_empty() {
             return false;
         }
-        let shifts = &a.shifts;
         let i32s = |x: u64| [x as u32 as i32, (x >> 32) as u32 as i32];
         if w.region == "line_stack" {
             let (o, n) = (i32s(w.old), i32s(w.new));
@@ -539,8 +621,7 @@ pub fn shifted_word(
                 if e >= g.in_open {
                     continue;
                 }
-                let d = level_delta(g, shifts, e);
-                if d == 0 || n[k] as i64 != o[k] as i64 + d as i64 {
+                if n[k] as i64 != o[k] as i64 + a.level(g, e) {
                     return false;
                 }
             }
@@ -570,10 +651,7 @@ pub fn shifted_word(
                 i32::from_le_bytes(wn[lo..hi].try_into().unwrap()),
             );
             let ok = match s.name {
-                "line" => {
-                    let d = level_delta(g, shifts, g.in_open);
-                    d != 0 && n as i64 == o as i64 + d as i64
-                }
+                "line" => n as i64 == o as i64 + a.level(g, g.in_open),
                 "if_line" => {
                     let k = g.ls_cond_depth;
                     let tag = if k >= 1 && k <= ls_cond_size(g) {
@@ -581,12 +659,7 @@ pub fn shifted_word(
                     } else {
                         -1
                     };
-                    match a.tags.iter().find(|x| x.0 == tag) {
-                        Some(&(_, d, after)) if o.unsigned_abs() as i64 >= after as i64 => {
-                            n == shifted(o, d)
-                        }
-                        _ => false,
-                    }
+                    n == a.held(tag, o)
                 }
                 _ => false,
             };
@@ -779,6 +852,34 @@ mod tests {
     }
 
     #[test]
+    fn pending_shifts_count_from_any_line_start() {
+        // every line start up to the edit gives what a count from the file's
+        // start gives, CR, LF and CR LF alike, an edit after a CR included
+        let old: &[u8] = b"a\nb\r\nc\rd e f\ng\r\nh\n";
+        for (prefix, old_end, ins) in [(9, 10, &b"\n"[..]), (7, 7, b"\n\n"), (8, 8, b"\n")] {
+            let mut new = old[..prefix].to_vec();
+            new.extend_from_slice(ins);
+            new.extend_from_slice(&old[old_end..]);
+            let new_end = prefix + ins.len();
+            let whole = Shift::of("f", old, &new, prefix, old_end, new_end).unwrap();
+            let arc = std::sync::Arc::new(new.clone());
+            for x in 0..=prefix {
+                let starts = x == 0 || line_ends(old, x - 1, x) == 1;
+                if !starts {
+                    continue;
+                }
+                let line = line_ends(old, 0, x) as i64;
+                let p = Shift::pending("f", old, &arc, prefix, old_end, new_end).unwrap();
+                assert_eq!(
+                    p.resolve(line, x),
+                    whole,
+                    "edit at {prefix}, counted from {x}"
+                );
+            }
+        }
+    }
+
+    #[test]
     fn moved_reads() {
         let s = Shift {
             path: "./main.tex".into(),
@@ -802,9 +903,14 @@ mod tests {
 
     #[test]
     fn held_lines() {
+        let sh = |delta, after| Shift {
+            path: "a.tex".into(),
+            delta,
+            first: after - 1,
+            after,
+        };
         let a = Active {
-            shifts: vec![],
-            tags: vec![(3, 2, 11)],
+            stages: vec![(sh(2, 11), vec![3])],
         };
         with_active(a, || {
             assert!(held_ok(3, 12, 14));
@@ -816,6 +922,17 @@ mod tests {
             assert!(!held_ok(4, 12, 14));
         });
         assert!(!held_ok(3, 12, 14));
+        // a checkpoint that owes a shift (+1 from line 20 on), then the
+        // edit's (-1 from line 31 on, in the numbering after the first)
+        let a = Active {
+            stages: vec![(sh(1, 20), vec![3]), (sh(-1, 31), vec![3])],
+        };
+        with_active(a, || {
+            assert!(held_ok(3, 19, 19));
+            assert!(held_ok(3, 25, 26));
+            assert!(held_ok(3, 30, 30));
+            assert!(held_ok(3, 40, 40));
+        });
     }
 
     #[test]
