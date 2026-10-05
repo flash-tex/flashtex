@@ -93,8 +93,17 @@ impl Host {
     }
 
     fn start_env(e: &Env, dir: &Path, env: &[(&str, &str)]) -> Host {
+        Host::start_args(e, dir, &[], env)
+    }
+
+    /// With `iserve`'s own options (`--budget`).
+    fn start_args(e: &Env, dir: &Path, args: &[&str], env: &[(&str, &str)]) -> Host {
         let mut c = Command::new(env!("CARGO_BIN_EXE_flashtex-host"));
-        c.arg("iserve").arg("--").args(ARGS).current_dir(dir);
+        c.arg("iserve")
+            .args(args)
+            .arg("--")
+            .args(ARGS)
+            .current_dir(dir);
         engine_env(&mut c, e);
         c.envs(env.iter().copied());
         let mut child = c
@@ -2710,4 +2719,42 @@ fn text_appended_to_a_last_line_without_a_newline_extends_it() {
         compile_and_check(&e, &mut h, &dir, &[("part.tex", &appended)], &what);
         compile_and_check(&e, &mut h, &dir, &[("part.tex", part)], "the revert");
     }
+}
+
+/// #1551 with retention (MEM-FOOTPRINT, #1573): the preamble's line
+/// checkpoints have no pages before them, so the distance rules of `thin`
+/// would drop them once the cursor is more than `DENSE` pages away -- and
+/// the next preamble edit would run from the format again. They are kept:
+/// after an edit far into the document, under a budget that thins, a
+/// preamble edit still restarts before S₀, and equals scratch runs.
+#[test]
+fn a_preamble_edit_after_an_edit_far_away_restarts_before_s0() {
+    let Some(e) = env() else {
+        common::no_texlive();
+        return;
+    };
+    let dir = e.dir.join("preamble-far");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let body: String = (0..900).map(|i| para(i, "omega")).collect();
+    let doc = format!(
+        "\\documentclass{{article}}\n\\usepackage{{amsmath}}\n\\usepackage{{hyperref}}\n\n\
+         \\title{{a title about latency}}\n\\author{{Jane Doe}}\n\n\
+         \\begin{{document}}\n\\maketitle\n{body}\\end{{document}}\n"
+    );
+    // (a 4 MB undo-log budget: every compile thins, as gates.sh's sound-budget)
+    let mut h = Host::start_args(&e, &dir, &["--budget", "4194304"], &[]);
+    for k in 0..4 {
+        let r = compile_and_check(&e, &mut h, &dir, &[("doc.tex", &doc)], "settle");
+        if r.contains("\"mode\":\"unchanged\"") || k == 3 {
+            break;
+        }
+    }
+    let far = doc.replacen("Paragraph 850 with", "Paragraph 850 now with", 1);
+    let r = compile_and_check(&e, &mut h, &dir, &[("doc.tex", &far)], "an edit far away");
+    let pages: usize = field(&r, "pages").parse().unwrap();
+    assert!(pages > 30, "{r}");
+    let title = far.replacen("a title about", "a titled about", 1);
+    let r = compile_and_check(&e, &mut h, &dir, &[("doc.tex", &title)], "then the title");
+    assert_eq!(field(&r, "restart_preamble"), "true", "{r}");
 }

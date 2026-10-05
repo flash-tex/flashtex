@@ -4439,7 +4439,8 @@ pub const MAX_PASSES: usize = 5;
 /// spacing `s` = 1, 2, 4, 8, ... doubled an octave at a time, the farthest
 /// first, until the logs fit (docs/evidence/p4-memory-2026-09-30/ measures
 /// what each budget costs). S₀, the newest
-/// checkpoint and `keep_also` are always kept. `pages` maps a page
+/// checkpoint, `keep_also` and the preamble's line checkpoints
+/// (`Point::PreambleLine`: a preamble edit restarts at one) are always kept. `pages` maps a page
 /// checkpoint to its page, `ck_pages` any checkpoint to the pages before it.
 fn thin(
     g: &mut Globals,
@@ -4456,6 +4457,18 @@ fn thin(
     let aux_done = g.layer().aux_done;
     // the last page's checkpoint: where `\end{document}` re-runs from
     let last_page = pages.iter().max_by_key(|(_, &j)| j).map(|(&c, _)| c);
+    // The checkpoints between the preamble's lines (`Point::PreambleLine`):
+    // a preamble edit restarts at one (`Session::preamble_restart`) wherever
+    // the cursor is, and they have no pages before them, so the distance
+    // rules below would drop them. They are few: one after each line that
+    // loads a file (`Layer::preamble_file_closed`) or takes a millisecond.
+    let preamble: std::collections::HashSet<CheckpointId> = g
+        .layer()
+        .taken
+        .iter()
+        .filter(|(_, why)| *why == Point::PreambleLine)
+        .map(|(id, _)| *id)
+        .collect();
     // The octave of a page's distance from the cursor beyond DENSE.
     let octave = |d: usize| (usize::BITS - 1 - (d / DENSE).leading_zeros()) as usize;
     let far = pages
@@ -4484,6 +4497,7 @@ fn thin(
                 || Some(id) == keep_also
                 || Some(id) == aux_done
                 || Some(id) == last_page
+                || preamble.contains(&id)
             {
                 return true;
             }
