@@ -2145,6 +2145,9 @@ mod tests {
         for e in std::fs::read_dir(dir).unwrap() {
             all.push_str(&std::fs::read_to_string(e.unwrap().path()).unwrap());
         }
+        // A routine indexes `eqtb` through its local view (web2rust
+        // --array-view, crate::arena::ArrView): the same element.
+        let all = all.replace("__av_eqtb[", "self.eqtb[");
         // Subscripts are wrapped in `crate::ix::U(...)` (web2rust
         // --index-type, src/ix.rs). `count_base` is a named macro constant;
         // `int_base+mag_code` is folded by TANGLE into one number.

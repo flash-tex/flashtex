@@ -278,7 +278,16 @@ fn a_failed_run_then_a_revert() {
         &[("doc.tex", &broken)],
         "a run that fails",
     );
-    compile_and_check(&e, &mut h, &dir, &[("doc.tex", &doc)], "the revert");
+    // (the failed run's PDF is gone, as pdfTeX leaves it: `check_against`)
+    assert!(!dir.join("doc.pdf").exists());
+    let r = compile_and_check(&e, &mut h, &dir, &[("doc.tex", &doc)], "the revert");
+    // Lane ERROR-RECOVERY: the failed run's PDF was set aside, not lost
+    // (`system::remove_output`), so the revert restarts from a checkpoint
+    // instead of from the format.
+    assert!(
+        !field(&r, "mode").contains("cold"),
+        "the revert compiled from scratch: {r}"
+    );
     compile_and_check(&e, &mut h, &dir, &[], "settle again");
 }
 

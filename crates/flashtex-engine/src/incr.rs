@@ -2177,6 +2177,8 @@ impl Session {
         crate::diag::set_enabled(opts.diagnostics);
         crate::diag::reset();
         crate::pdftex::set_preview(opts.preview);
+        // a fatal run's PDF is set aside, not lost (system::remove_output)
+        system::set_keep_removed(true);
         Session {
             run_options: o,
             g: None,
@@ -3718,6 +3720,8 @@ impl Session {
         // from scratch, which reads them all
         let fixed = std::mem::take(&mut self.fixed_inputs);
         put_back(self.baseline.iter())?;
+        // (no checkpoint before this run is restored again)
+        system::forget_removed();
         if let Some(j) = &self.journal {
             for p in &fixed {
                 if let Some(c) = j
