@@ -1,0 +1,2236 @@
+{
+  "ampersand" : {
+    "error" : {
+      "changed" : [
+        0,
+        1,
+        2,
+        3,
+        4
+      ],
+      "cold_reason" : "",
+      "done_pages" : 5,
+      "elapsed_ms" : 49.124000000000002,
+      "errors" : 0,
+      "first_error" : "",
+      "lost" : [
+
+      ],
+      "mode" : "incremental",
+      "pane_pages" : 5,
+      "present" : 5,
+      "rerun_pages" : 5,
+      "result_failed" : false,
+      "rows" : [
+        {
+          "code" : "tex\/misplaced-alignment-tab",
+          "col" : 6,
+          "fix" : false,
+          "help" : "I can't figure out why you would want to use a tab mark here. If you just want an ampersand, the remedy is simple: Just type `I\\&' now. But if some right brace up above has ended a previous alignment prematurely, you're probably due for more error messages, and you might try typing `S' now just to see what is salvageable.",
+          "line" : 13,
+          "marked" : "&",
+          "message" : "Misplaced alignment tab character &. (pdfLaTeX would report an error here)",
+          "notes" : 0,
+          "severity" : "warning"
+        }
+      ],
+      "same_as_before" : false,
+      "seconds" : 0.47899999999999998,
+      "stale" : 0,
+      "status" : "error",
+      "status_note" : "recovered · incremental · 5 pages · 49 ms",
+      "typeset_pages" : 5
+    },
+    "fix" : {
+      "changed" : [
+
+      ],
+      "cold_reason" : "",
+      "done_pages" : 5,
+      "elapsed_ms" : 46.585000000000001,
+      "errors" : 0,
+      "first_error" : "",
+      "lost" : [
+
+      ],
+      "mode" : "incremental",
+      "pane_pages" : 5,
+      "present" : 5,
+      "rerun_pages" : 5,
+      "result_failed" : false,
+      "rows" : [
+
+      ],
+      "same_as_before" : true,
+      "seconds" : 0.47899999999999998,
+      "stale" : 0,
+      "status" : "ok",
+      "status_note" : "ok · incremental · 5 pages · 47 ms",
+      "typeset_pages" : 5
+    },
+    "good_pages" : 5,
+    "what" : "an & outside a table"
+  },
+  "begin-incomplete" : {
+    "error" : {
+      "changed" : [
+
+      ],
+      "cold_reason" : "",
+      "done_pages" : 5,
+      "elapsed_ms" : 61.725000000000001,
+      "errors" : 0,
+      "first_error" : "",
+      "lost" : [
+
+      ],
+      "mode" : "incremental",
+      "pane_pages" : 5,
+      "present" : 5,
+      "rerun_pages" : 5,
+      "result_failed" : false,
+      "rows" : [
+        {
+          "code" : "tex\/paragraph-ended-before-argument-complete",
+          "col" : 1,
+          "fix" : false,
+          "help" : "I suspect you've forgotten a `}', causing me to apply this control sequence to too much text. How can we recover? My plan is to forget the whole thing and hope for the best.",
+          "line" : 14,
+          "marked" : "",
+          "message" : "Paragraph ended before \\begin was complete. (pdfLaTeX would report an error here)",
+          "notes" : 0,
+          "severity" : "warning"
+        }
+      ],
+      "same_as_before" : true,
+      "seconds" : 0.48099999999999998,
+      "stale" : 0,
+      "status" : "error",
+      "status_note" : "recovered · incremental · 5 pages · 62 ms",
+      "typeset_pages" : 5
+    },
+    "fix" : {
+      "changed" : [
+
+      ],
+      "cold_reason" : "",
+      "done_pages" : 5,
+      "elapsed_ms" : 54.816000000000003,
+      "errors" : 0,
+      "first_error" : "",
+      "lost" : [
+
+      ],
+      "mode" : "incremental",
+      "pane_pages" : 5,
+      "present" : 5,
+      "rerun_pages" : 5,
+      "result_failed" : false,
+      "rows" : [
+
+      ],
+      "same_as_before" : true,
+      "seconds" : 0.46700000000000003,
+      "stale" : 0,
+      "status" : "ok",
+      "status_note" : "ok · incremental · 5 pages · 55 ms",
+      "typeset_pages" : 5
+    },
+    "good_pages" : 5,
+    "what" : "\\begin{ite (mid-typing)"
+  },
+  "capacity-exceeded" : {
+    "error" : {
+      "changed" : [
+
+      ],
+      "cold_reason" : "",
+      "done_pages" : 0,
+      "elapsed_ms" : 51.624000000000002,
+      "errors" : 2,
+      "first_error" : "main.tex:13:27: TeX capacity exceeded, sorry [input stack size=10000].",
+      "lost" : [
+
+      ],
+      "mode" : "incremental",
+      "pane_pages" : 5,
+      "present" : 5,
+      "rerun_pages" : 0,
+      "result_failed" : true,
+      "rows" : [
+        {
+          "code" : "tex\/capacity-exceeded",
+          "col" : 21,
+          "fix" : false,
+          "help" : "If you really absolutely need more capacity, you can ask a wizard to enlarge me.",
+          "line" : 13,
+          "marked" : "\\loopy",
+          "message" : "TeX capacity exceeded, sorry [input stack size=10000].",
+          "notes" : 23,
+          "severity" : "error"
+        },
+        {
+          "code" : "tex\/fatal-error-no-output",
+          "col" : 1,
+          "fix" : false,
+          "help" : "",
+          "line" : 13,
+          "marked" : "\\def\\loopy{\\loopy x}\\loopy",
+          "message" : "==> Fatal error occurred, no output PDF file produced!",
+          "notes" : 0,
+          "severity" : "error"
+        }
+      ],
+      "same_as_before" : true,
+      "seconds" : 0.46999999999999997,
+      "stale" : 5,
+      "status" : "error",
+      "status_note" : "stopped: pdfLaTeX gives up here · 0 new pages, 5 kept from the last compile · 52 ms",
+      "typeset_pages" : 0
+    },
+    "fix" : {
+      "changed" : [
+
+      ],
+      "cold_reason" : "",
+      "done_pages" : 5,
+      "elapsed_ms" : 98.298000000000002,
+      "errors" : 0,
+      "first_error" : "",
+      "lost" : [
+
+      ],
+      "mode" : "incremental",
+      "pane_pages" : 5,
+      "present" : 5,
+      "rerun_pages" : 10,
+      "result_failed" : false,
+      "rows" : [
+
+      ],
+      "same_as_before" : true,
+      "seconds" : 0.51900000000000002,
+      "stale" : 0,
+      "status" : "ok",
+      "status_note" : "ok · incremental · 5 pages · 98 ms",
+      "typeset_pages" : 10
+    },
+    "good_pages" : 5,
+    "what" : "a fatal error: TeX capacity exceeded"
+  },
+  "end-document-deleted" : {
+    "error" : {
+      "changed" : [
+
+      ],
+      "cold_reason" : "",
+      "done_pages" : 4,
+      "elapsed_ms" : 423.47500000000002,
+      "errors" : 2,
+      "first_error" : "Emergency stop.",
+      "lost" : [
+
+      ],
+      "mode" : "incremental",
+      "pane_pages" : 5,
+      "present" : 5,
+      "rerun_pages" : 4,
+      "result_failed" : true,
+      "rows" : [
+        {
+          "code" : "tex\/emergency-stop",
+          "fix" : false,
+          "help" : "*** (job aborted, no legal \\end found)",
+          "message" : "Emergency stop.",
+          "notes" : 0,
+          "severity" : "error"
+        },
+        {
+          "code" : "tex\/fatal-error-no-output",
+          "fix" : false,
+          "help" : "",
+          "message" : "==> Fatal error occurred, no output PDF file produced!",
+          "notes" : 0,
+          "severity" : "error"
+        }
+      ],
+      "same_as_before" : true,
+      "seconds" : 0.85799999999999998,
+      "stale" : 1,
+      "status" : "error",
+      "status_note" : "stopped: pdfLaTeX gives up here · 4 new pages, 1 kept from the last compile · 423 ms",
+      "typeset_pages" : 4
+    },
+    "fix" : {
+      "changed" : [
+
+      ],
+      "cold_reason" : "",
+      "done_pages" : 5,
+      "elapsed_ms" : 156.66300000000001,
+      "errors" : 0,
+      "first_error" : "",
+      "lost" : [
+
+      ],
+      "mode" : "incremental",
+      "pane_pages" : 5,
+      "present" : 5,
+      "rerun_pages" : 6,
+      "result_failed" : false,
+      "rows" : [
+
+      ],
+      "same_as_before" : true,
+      "seconds" : 0.57699999999999996,
+      "stale" : 0,
+      "status" : "ok",
+      "status_note" : "ok · incremental · 5 pages · 157 ms",
+      "typeset_pages" : 6
+    },
+    "good_pages" : 5,
+    "what" : "\\end{document} deleted"
+  },
+  "file-ended-in-argument" : {
+    "error" : {
+      "changed" : [
+
+      ],
+      "cold_reason" : "",
+      "done_pages" : 4,
+      "elapsed_ms" : 331.27199999999999,
+      "errors" : 3,
+      "first_error" : "File ended while scanning use of \\textbf .",
+      "lost" : [
+
+      ],
+      "mode" : "incremental",
+      "pane_pages" : 5,
+      "present" : 5,
+      "rerun_pages" : 4,
+      "result_failed" : true,
+      "rows" : [
+        {
+          "code" : "tex\/file-ended-while-scanning",
+          "fix" : false,
+          "help" : "I suspect you have forgotten a `}', causing me to read past where you wanted me to stop. I'll try to recover; but if the error is serious, you'd better type `E' or `X' now and fix your file.",
+          "message" : "File ended while scanning use of \\textbf .",
+          "notes" : 0,
+          "severity" : "error"
+        },
+        {
+          "code" : "tex\/emergency-stop",
+          "fix" : false,
+          "help" : "*** (job aborted, no legal \\end found)",
+          "message" : "Emergency stop.",
+          "notes" : 0,
+          "severity" : "error"
+        },
+        {
+          "code" : "tex\/fatal-error-no-output",
+          "fix" : false,
+          "help" : "",
+          "message" : "==> Fatal error occurred, no output PDF file produced!",
+          "notes" : 0,
+          "severity" : "error"
+        }
+      ],
+      "same_as_before" : true,
+      "seconds" : 0.755,
+      "stale" : 1,
+      "status" : "error",
+      "status_note" : "stopped: pdfLaTeX gives up here · 4 new pages, 1 kept from the last compile · 331 ms",
+      "typeset_pages" : 4
+    },
+    "fix" : {
+      "changed" : [
+
+      ],
+      "cold_reason" : "",
+      "done_pages" : 5,
+      "elapsed_ms" : 278.18200000000002,
+      "errors" : 0,
+      "first_error" : "",
+      "lost" : [
+
+      ],
+      "mode" : "incremental",
+      "pane_pages" : 5,
+      "present" : 5,
+      "rerun_pages" : 6,
+      "result_failed" : false,
+      "rows" : [
+
+      ],
+      "same_as_before" : true,
+      "seconds" : 0.68899999999999995,
+      "stale" : 0,
+      "status" : "ok",
+      "status_note" : "ok · incremental · 5 pages · 278 ms",
+      "typeset_pages" : 6
+    },
+    "good_pages" : 5,
+    "what" : "file ended while scanning an argument"
+  },
+  "frac-incomplete" : {
+    "error" : {
+      "changed" : [
+
+      ],
+      "cold_reason" : "",
+      "done_pages" : 0,
+      "elapsed_ms" : 56.430999999999997,
+      "errors" : 3,
+      "first_error" : "File ended while scanning use of \\frac .",
+      "lost" : [
+
+      ],
+      "mode" : "incremental",
+      "pane_pages" : 5,
+      "present" : 5,
+      "rerun_pages" : 0,
+      "result_failed" : true,
+      "rows" : [
+        {
+          "code" : "tex\/file-ended-while-scanning",
+          "fix" : false,
+          "help" : "I suspect you have forgotten a `}', causing me to read past where you wanted me to stop. I'll try to recover; but if the error is serious, you'd better type `E' or `X' now and fix your file.",
+          "message" : "File ended while scanning use of \\frac .",
+          "notes" : 0,
+          "severity" : "error"
+        },
+        {
+          "code" : "tex\/emergency-stop",
+          "fix" : false,
+          "help" : "*** (job aborted, no legal \\end found)",
+          "message" : "Emergency stop.",
+          "notes" : 0,
+          "severity" : "error"
+        },
+        {
+          "code" : "tex\/fatal-error-no-output",
+          "fix" : false,
+          "help" : "",
+          "message" : "==> Fatal error occurred, no output PDF file produced!",
+          "notes" : 0,
+          "severity" : "error"
+        }
+      ],
+      "same_as_before" : true,
+      "seconds" : 0.47999999999999998,
+      "stale" : 5,
+      "status" : "error",
+      "status_note" : "stopped: pdfLaTeX gives up here · 0 new pages, 5 kept from the last compile · 56 ms",
+      "typeset_pages" : 0
+    },
+    "fix" : {
+      "changed" : [
+
+      ],
+      "cold_reason" : "",
+      "done_pages" : 5,
+      "elapsed_ms" : 118.71299999999999,
+      "errors" : 0,
+      "first_error" : "",
+      "lost" : [
+
+      ],
+      "mode" : "incremental",
+      "pane_pages" : 5,
+      "present" : 5,
+      "rerun_pages" : 10,
+      "result_failed" : false,
+      "rows" : [
+
+      ],
+      "same_as_before" : true,
+      "seconds" : 0.54100000000000004,
+      "stale" : 0,
+      "status" : "ok",
+      "status_note" : "ok · incremental · 5 pages · 119 ms",
+      "typeset_pages" : 10
+    },
+    "good_pages" : 5,
+    "what" : "\\frac{a}{ incomplete (mid-typing)"
+  },
+  "graphic-missing" : {
+    "error" : {
+      "changed" : [
+        0,
+        1,
+        2,
+        3,
+        4
+      ],
+      "cold_reason" : "",
+      "done_pages" : 5,
+      "elapsed_ms" : 57.121000000000002,
+      "errors" : 0,
+      "first_error" : "",
+      "lost" : [
+
+      ],
+      "mode" : "incremental",
+      "pane_pages" : 5,
+      "present" : 5,
+      "rerun_pages" : 5,
+      "result_failed" : false,
+      "rows" : [
+        {
+          "code" : "latex\/file-not-found",
+          "col" : 1,
+          "fix" : false,
+          "help" : "I could not locate the file with any of these extensions: .pdf,.png,.jpg,.mps,.jpeg,.jbig2,.jb2,.PDF,.PNG,.JPG,.JPEG,.JBIG2,.JB2,.eps Try typing  <return>  to proceed. If that doesn't work, type  X <return>  to quit.",
+          "line" : 13,
+          "marked" : "\\includegraphics{figure-missing}",
+          "message" : "LaTeX Error: File `figure-missing' not found. (pdfLaTeX would report an error here)",
+          "notes" : 5,
+          "severity" : "warning"
+        }
+      ],
+      "same_as_before" : false,
+      "seconds" : 0.47999999999999998,
+      "stale" : 0,
+      "status" : "error",
+      "status_note" : "recovered · incremental · 5 pages · 57 ms",
+      "typeset_pages" : 5
+    },
+    "fix" : {
+      "changed" : [
+
+      ],
+      "cold_reason" : "",
+      "done_pages" : 5,
+      "elapsed_ms" : 50.962000000000003,
+      "errors" : 0,
+      "first_error" : "",
+      "lost" : [
+
+      ],
+      "mode" : "incremental",
+      "pane_pages" : 5,
+      "present" : 5,
+      "rerun_pages" : 5,
+      "result_failed" : false,
+      "rows" : [
+
+      ],
+      "same_as_before" : true,
+      "seconds" : 0.47999999999999998,
+      "stale" : 0,
+      "status" : "ok",
+      "status_note" : "ok · incremental · 5 pages · 51 ms",
+      "typeset_pages" : 5
+    },
+    "good_pages" : 5,
+    "what" : "a missing \\includegraphics file"
+  },
+  "input-missing" : {
+    "error" : {
+      "changed" : [
+
+      ],
+      "cold_reason" : "",
+      "done_pages" : 0,
+      "elapsed_ms" : 45.57,
+      "errors" : 3,
+      "first_error" : "main.tex:13:24: LaTeX Error: File `chapter-missing.tex' not found.",
+      "lost" : [
+
+      ],
+      "mode" : "incremental",
+      "pane_pages" : 5,
+      "present" : 5,
+      "rerun_pages" : 0,
+      "result_failed" : true,
+      "rows" : [
+        {
+          "code" : "latex\/file-not-found",
+          "col" : 1,
+          "fix" : false,
+          "help" : "",
+          "line" : 13,
+          "marked" : "\\input{chapter-missing}",
+          "message" : "LaTeX Error: File `chapter-missing.tex' not found.",
+          "notes" : 4,
+          "severity" : "error"
+        },
+        {
+          "code" : "tex\/emergency-stop",
+          "col" : 1,
+          "fix" : false,
+          "help" : "*** (cannot \\read from terminal in nonstop modes)",
+          "line" : 13,
+          "marked" : "\\input{chapter-missing}",
+          "message" : "Emergency stop.",
+          "notes" : 2,
+          "severity" : "error"
+        },
+        {
+          "code" : "tex\/fatal-error-no-output",
+          "col" : 1,
+          "fix" : false,
+          "help" : "",
+          "line" : 13,
+          "marked" : "\\input{chapter-missing}",
+          "message" : "==> Fatal error occurred, no output PDF file produced!",
+          "notes" : 0,
+          "severity" : "error"
+        }
+      ],
+      "same_as_before" : true,
+      "seconds" : 0.46999999999999997,
+      "stale" : 5,
+      "status" : "error",
+      "status_note" : "stopped: pdfLaTeX gives up here · 0 new pages, 5 kept from the last compile · 46 ms",
+      "typeset_pages" : 0
+    },
+    "fix" : {
+      "changed" : [
+
+      ],
+      "cold_reason" : "",
+      "done_pages" : 5,
+      "elapsed_ms" : 113.319,
+      "errors" : 0,
+      "first_error" : "",
+      "lost" : [
+
+      ],
+      "mode" : "incremental",
+      "pane_pages" : 5,
+      "present" : 5,
+      "rerun_pages" : 10,
+      "result_failed" : false,
+      "rows" : [
+
+      ],
+      "same_as_before" : true,
+      "seconds" : 0.52700000000000002,
+      "stale" : 0,
+      "status" : "ok",
+      "status_note" : "ok · incremental · 5 pages · 113 ms",
+      "typeset_pages" : 10
+    },
+    "good_pages" : 5,
+    "what" : "a missing \\input file"
+  },
+  "item-outside-list" : {
+    "error" : {
+      "changed" : [
+        0,
+        1,
+        2,
+        3,
+        4
+      ],
+      "cold_reason" : "",
+      "done_pages" : 5,
+      "elapsed_ms" : 39.658999999999999,
+      "errors" : 0,
+      "first_error" : "",
+      "lost" : [
+
+      ],
+      "mode" : "incremental",
+      "pane_pages" : 5,
+      "present" : 5,
+      "rerun_pages" : 5,
+      "result_failed" : false,
+      "rows" : [
+        {
+          "code" : "latex\/lonely-item",
+          "col" : 7,
+          "fix" : false,
+          "help" : "Try typing  <return>  to proceed. If that doesn't work, type  X <return>  to quit.",
+          "line" : 13,
+          "marked" : "L",
+          "message" : "LaTeX Error: Lonely \\item--perhaps a missing list environment. (pdfLaTeX would report an error here)",
+          "notes" : 5,
+          "severity" : "warning"
+        }
+      ],
+      "same_as_before" : false,
+      "seconds" : 0.44800000000000001,
+      "stale" : 0,
+      "status" : "error",
+      "status_note" : "recovered · incremental · 5 pages · 40 ms",
+      "typeset_pages" : 5
+    },
+    "fix" : {
+      "changed" : [
+
+      ],
+      "cold_reason" : "",
+      "done_pages" : 5,
+      "elapsed_ms" : 42.563000000000002,
+      "errors" : 0,
+      "first_error" : "",
+      "lost" : [
+
+      ],
+      "mode" : "incremental",
+      "pane_pages" : 5,
+      "present" : 5,
+      "rerun_pages" : 5,
+      "result_failed" : false,
+      "rows" : [
+
+      ],
+      "same_as_before" : true,
+      "seconds" : 0.47699999999999998,
+      "stale" : 0,
+      "status" : "ok",
+      "status_note" : "ok · incremental · 5 pages · 43 ms",
+      "typeset_pages" : 5
+    },
+    "good_pages" : 5,
+    "what" : "\\item outside a list"
+  },
+  "itemize-no-end" : {
+    "error" : {
+      "changed" : [
+        0,
+        1,
+        2,
+        3,
+        4
+      ],
+      "cold_reason" : "",
+      "done_pages" : 6,
+      "elapsed_ms" : 136.37100000000001,
+      "errors" : 0,
+      "first_error" : "",
+      "lost" : [
+
+      ],
+      "mode" : "incremental",
+      "pane_pages" : 6,
+      "present" : 6,
+      "rerun_pages" : 12,
+      "result_failed" : false,
+      "rows" : [
+        {
+          "code" : "latex\/environment-mismatch",
+          "col" : 1,
+          "fix" : false,
+          "help" : "Your command was ignored. Type  I <command> <return>  to replace it with another command, or  <return>  to continue without it.",
+          "line" : 64,
+          "marked" : "\\end{document}",
+          "message" : "LaTeX Error: \\begin{itemize} on input line 13 ended by \\end{document}. (pdfLaTeX would report an error here)",
+          "notes" : 6,
+          "severity" : "warning"
+        }
+      ],
+      "same_as_before" : false,
+      "seconds" : 0.57299999999999995,
+      "stale" : 0,
+      "status" : "error",
+      "status_note" : "recovered · incremental · 6 pages · 136 ms",
+      "typeset_pages" : 12
+    },
+    "fix" : {
+      "changed" : [
+
+      ],
+      "cold_reason" : "",
+      "done_pages" : 5,
+      "elapsed_ms" : 135.50399999999999,
+      "errors" : 0,
+      "first_error" : "",
+      "lost" : [
+
+      ],
+      "mode" : "incremental",
+      "pane_pages" : 5,
+      "present" : 5,
+      "rerun_pages" : 10,
+      "result_failed" : false,
+      "rows" : [
+
+      ],
+      "same_as_before" : true,
+      "seconds" : 0.54600000000000004,
+      "stale" : 0,
+      "status" : "ok",
+      "status_note" : "ok · incremental · 5 pages · 136 ms",
+      "typeset_pages" : 10
+    },
+    "good_pages" : 5,
+    "what" : "\\begin{itemize} with no \\end"
+  },
+  "long-error-page1" : {
+    "error" : {
+      "changed" : [
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8,
+        9,
+        10,
+        11,
+        12,
+        13,
+        14,
+        15,
+        16,
+        17,
+        18,
+        19,
+        20,
+        21,
+        22,
+        23,
+        24,
+        25,
+        26,
+        27,
+        28,
+        29
+      ],
+      "cold_reason" : "",
+      "done_pages" : 75,
+      "elapsed_ms" : 1039.7829999999999,
+      "errors" : 0,
+      "first_error" : "",
+      "lost" : [
+
+      ],
+      "mode" : "incremental",
+      "pane_pages" : 75,
+      "present" : 75,
+      "rerun_pages" : 75,
+      "result_failed" : false,
+      "rows" : [
+        {
+          "code" : "tex\/undefined-control-sequence",
+          "col" : 3,
+          "fix" : false,
+          "help" : "The control sequence at the end of the top line of your error message was never \\def'ed. If you have misspelled it (e.g., `\\hobx'), type `I' and the correct spelling (e.g., `I\\hbox'). Otherwise just continue, and I'll forget about whatever was undefined.",
+          "line" : 13,
+          "marked" : "\\foo",
+          "message" : "Undefined control sequence. (pdfLaTeX would report an error here)",
+          "notes" : 0,
+          "severity" : "warning"
+        },
+        {
+          "code" : "tex\/overfull-hbox",
+          "fix" : false,
+          "help" : "",
+          "message" : "main.tex:524:1: Overfull \\hbox (0.38954pt too wide) in paragraph at lines 524--525",
+          "notes" : 2,
+          "severity" : "warning"
+        },
+        {
+          "code" : "tex\/overfull-hbox",
+          "fix" : false,
+          "help" : "",
+          "message" : "main.tex:755:1: Overfull \\hbox (0.55623pt too wide) in paragraph at lines 755--756",
+          "notes" : 2,
+          "severity" : "warning"
+        },
+        {
+          "code" : "tex\/overfull-hbox",
+          "fix" : false,
+          "help" : "",
+          "message" : "main.tex:794:1: Overfull \\hbox (4.2784pt too wide) in paragraph at lines 794--795",
+          "notes" : 2,
+          "severity" : "warning"
+        }
+      ],
+      "same_as_before" : false,
+      "seconds" : 1.46,
+      "stale" : 0,
+      "status" : "error",
+      "status_note" : "recovered · incremental · 75 pages · 1040 ms",
+      "typeset_pages" : 75
+    },
+    "fix" : {
+      "changed" : [
+
+      ],
+      "cold_reason" : "",
+      "done_pages" : 75,
+      "elapsed_ms" : 1280.8969999999999,
+      "errors" : 0,
+      "first_error" : "",
+      "lost" : [
+
+      ],
+      "mode" : "incremental",
+      "pane_pages" : 75,
+      "present" : 75,
+      "rerun_pages" : 75,
+      "result_failed" : false,
+      "rows" : [
+        {
+          "code" : "tex\/overfull-hbox",
+          "fix" : false,
+          "help" : "",
+          "message" : "main.tex:522:1: Overfull \\hbox (0.38954pt too wide) in paragraph at lines 522--523",
+          "notes" : 2,
+          "severity" : "warning"
+        },
+        {
+          "code" : "tex\/overfull-hbox",
+          "fix" : false,
+          "help" : "",
+          "message" : "main.tex:753:1: Overfull \\hbox (0.55623pt too wide) in paragraph at lines 753--754",
+          "notes" : 2,
+          "severity" : "warning"
+        },
+        {
+          "code" : "tex\/overfull-hbox",
+          "fix" : false,
+          "help" : "",
+          "message" : "main.tex:792:1: Overfull \\hbox (4.2784pt too wide) in paragraph at lines 792--793",
+          "notes" : 2,
+          "severity" : "warning"
+        }
+      ],
+      "same_as_before" : true,
+      "seconds" : 1.7210000000000001,
+      "stale" : 0,
+      "status" : "ok",
+      "status_note" : "ok · incremental · 75 pages · 1281 ms",
+      "typeset_pages" : 75
+    },
+    "good_pages" : 75,
+    "what" : "an error on page 1 of 60"
+  },
+  "long-error-page50" : {
+    "error" : {
+      "changed" : [
+        62,
+        63,
+        64,
+        65,
+        66,
+        67,
+        68,
+        69,
+        70,
+        71
+      ],
+      "cold_reason" : "",
+      "done_pages" : 75,
+      "elapsed_ms" : 203.65799999999999,
+      "errors" : 0,
+      "first_error" : "",
+      "lost" : [
+
+      ],
+      "mode" : "incremental",
+      "pane_pages" : 75,
+      "present" : 75,
+      "rerun_pages" : 13,
+      "result_failed" : false,
+      "rows" : [
+        {
+          "code" : "tex\/overfull-hbox",
+          "fix" : false,
+          "help" : "",
+          "message" : "main.tex:522:1: Overfull \\hbox (0.38954pt too wide) in paragraph at lines 522--523",
+          "notes" : 2,
+          "severity" : "warning"
+        },
+        {
+          "code" : "tex\/undefined-control-sequence",
+          "col" : 3,
+          "fix" : false,
+          "help" : "The control sequence at the end of the top line of your error message was never \\def'ed. If you have misspelled it (e.g., `\\hobx'), type `I' and the correct spelling (e.g., `I\\hbox'). Otherwise just continue, and I'll forget about whatever was undefined.",
+          "line" : 672,
+          "marked" : "\\foo",
+          "message" : "Undefined control sequence. (pdfLaTeX would report an error here)",
+          "notes" : 0,
+          "severity" : "warning"
+        },
+        {
+          "code" : "tex\/overfull-hbox",
+          "fix" : false,
+          "help" : "",
+          "message" : "main.tex:755:1: Overfull \\hbox (0.55623pt too wide) in paragraph at lines 755--756",
+          "notes" : 2,
+          "severity" : "warning"
+        },
+        {
+          "code" : "tex\/overfull-hbox",
+          "fix" : false,
+          "help" : "",
+          "message" : "main.tex:794:1: Overfull \\hbox (4.2784pt too wide) in paragraph at lines 794--795",
+          "notes" : 2,
+          "severity" : "warning"
+        }
+      ],
+      "same_as_before" : false,
+      "seconds" : 0.65400000000000003,
+      "stale" : 0,
+      "status" : "error",
+      "status_note" : "recovered · incremental · 75 pages · 204 ms",
+      "typeset_pages" : 13
+    },
+    "fix" : {
+      "changed" : [
+
+      ],
+      "cold_reason" : "",
+      "done_pages" : 75,
+      "elapsed_ms" : 185.19300000000001,
+      "errors" : 0,
+      "first_error" : "",
+      "lost" : [
+
+      ],
+      "mode" : "incremental",
+      "pane_pages" : 75,
+      "present" : 75,
+      "rerun_pages" : 13,
+      "result_failed" : false,
+      "rows" : [
+        {
+          "code" : "tex\/overfull-hbox",
+          "fix" : false,
+          "help" : "",
+          "message" : "main.tex:522:1: Overfull \\hbox (0.38954pt too wide) in paragraph at lines 522--523",
+          "notes" : 2,
+          "severity" : "warning"
+        },
+        {
+          "code" : "tex\/overfull-hbox",
+          "fix" : false,
+          "help" : "",
+          "message" : "main.tex:753:1: Overfull \\hbox (0.55623pt too wide) in paragraph at lines 753--754",
+          "notes" : 2,
+          "severity" : "warning"
+        },
+        {
+          "code" : "tex\/overfull-hbox",
+          "fix" : false,
+          "help" : "",
+          "message" : "main.tex:792:1: Overfull \\hbox (4.2784pt too wide) in paragraph at lines 792--793",
+          "notes" : 2,
+          "severity" : "warning"
+        }
+      ],
+      "same_as_before" : true,
+      "seconds" : 0.63500000000000001,
+      "stale" : 0,
+      "status" : "ok",
+      "status_note" : "ok · incremental · 75 pages · 185 ms",
+      "typeset_pages" : 13
+    },
+    "good_pages" : 75,
+    "what" : "an error on page 50 of 60"
+  },
+  "long-fatal-page50" : {
+    "error" : {
+      "changed" : [
+
+      ],
+      "cold_reason" : "",
+      "done_pages" : 62,
+      "elapsed_ms" : 1049.02,
+      "errors" : 3,
+      "first_error" : "main.tex:672:24: LaTeX Error: File `chapter-missing.tex' not found.",
+      "lost" : [
+
+      ],
+      "mode" : "incremental",
+      "pane_pages" : 75,
+      "present" : 75,
+      "rerun_pages" : 62,
+      "result_failed" : true,
+      "rows" : [
+        {
+          "code" : "tex\/overfull-hbox",
+          "fix" : false,
+          "help" : "",
+          "message" : "main.tex:522:1: Overfull \\hbox (0.38954pt too wide) in paragraph at lines 522--523",
+          "notes" : 2,
+          "severity" : "warning"
+        },
+        {
+          "code" : "latex\/file-not-found",
+          "col" : 1,
+          "fix" : false,
+          "help" : "",
+          "line" : 672,
+          "marked" : "\\input{chapter-missing}",
+          "message" : "LaTeX Error: File `chapter-missing.tex' not found.",
+          "notes" : 4,
+          "severity" : "error"
+        },
+        {
+          "code" : "tex\/emergency-stop",
+          "col" : 1,
+          "fix" : false,
+          "help" : "*** (cannot \\read from terminal in nonstop modes)",
+          "line" : 672,
+          "marked" : "\\input{chapter-missing}",
+          "message" : "Emergency stop.",
+          "notes" : 2,
+          "severity" : "error"
+        },
+        {
+          "code" : "tex\/fatal-error-no-output",
+          "col" : 1,
+          "fix" : false,
+          "help" : "",
+          "line" : 672,
+          "marked" : "\\input{chapter-missing}",
+          "message" : "==> Fatal error occurred, no output PDF file produced!",
+          "notes" : 0,
+          "severity" : "error"
+        }
+      ],
+      "same_as_before" : true,
+      "seconds" : 1.526,
+      "stale" : 13,
+      "status" : "error",
+      "status_note" : "stopped: pdfLaTeX gives up here · 62 new pages, 13 kept from the last compile · 1049 ms",
+      "typeset_pages" : 62
+    },
+    "fix" : {
+      "changed" : [
+
+      ],
+      "cold_reason" : "",
+      "done_pages" : 75,
+      "elapsed_ms" : 908.25599999999997,
+      "errors" : 0,
+      "first_error" : "",
+      "lost" : [
+
+      ],
+      "mode" : "incremental",
+      "pane_pages" : 75,
+      "present" : 75,
+      "rerun_pages" : 88,
+      "result_failed" : false,
+      "rows" : [
+        {
+          "code" : "tex\/overfull-hbox",
+          "fix" : false,
+          "help" : "",
+          "message" : "main.tex:522:1: Overfull \\hbox (0.38954pt too wide) in paragraph at lines 522--523",
+          "notes" : 2,
+          "severity" : "warning"
+        },
+        {
+          "code" : "tex\/overfull-hbox",
+          "fix" : false,
+          "help" : "",
+          "message" : "main.tex:753:1: Overfull \\hbox (0.55623pt too wide) in paragraph at lines 753--754",
+          "notes" : 2,
+          "severity" : "warning"
+        },
+        {
+          "code" : "tex\/overfull-hbox",
+          "fix" : false,
+          "help" : "",
+          "message" : "main.tex:792:1: Overfull \\hbox (4.2784pt too wide) in paragraph at lines 792--793",
+          "notes" : 2,
+          "severity" : "warning"
+        }
+      ],
+      "same_as_before" : true,
+      "seconds" : 1.3240000000000001,
+      "stale" : 0,
+      "status" : "ok",
+      "status_note" : "ok · incremental · 75 pages · 908 ms",
+      "typeset_pages" : 88
+    },
+    "good_pages" : 75,
+    "what" : "a fatal error on page 50 of 60"
+  },
+  "math-outside-math" : {
+    "error" : {
+      "changed" : [
+        0,
+        1,
+        2,
+        3,
+        4
+      ],
+      "cold_reason" : "",
+      "done_pages" : 5,
+      "elapsed_ms" : 44.932000000000002,
+      "errors" : 0,
+      "first_error" : "",
+      "lost" : [
+
+      ],
+      "mode" : "incremental",
+      "pane_pages" : 5,
+      "present" : 5,
+      "rerun_pages" : 5,
+      "result_failed" : false,
+      "rows" : [
+        {
+          "code" : "tex\/missing-dollar",
+          "col" : 12,
+          "fix" : false,
+          "help" : "I've inserted a begin-math\/end-math symbol since I think you left one out. Proceed, with fingers crossed.",
+          "line" : 13,
+          "marked" : "^",
+          "message" : "Missing $ inserted. (pdfLaTeX would report an error here)",
+          "notes" : 0,
+          "severity" : "warning"
+        },
+        {
+          "code" : "tex\/missing-dollar",
+          "col" : 1,
+          "fix" : false,
+          "help" : "I've inserted a begin-math\/end-math symbol since I think you left one out. Proceed, with fingers crossed.",
+          "line" : 14,
+          "marked" : "",
+          "message" : "Missing $ inserted. (pdfLaTeX would report an error here)",
+          "notes" : 0,
+          "severity" : "warning"
+        }
+      ],
+      "same_as_before" : false,
+      "seconds" : 0.47999999999999998,
+      "stale" : 0,
+      "status" : "error",
+      "status_note" : "recovered · incremental · 5 pages · 45 ms",
+      "typeset_pages" : 5
+    },
+    "fix" : {
+      "changed" : [
+
+      ],
+      "cold_reason" : "",
+      "done_pages" : 5,
+      "elapsed_ms" : 48.963999999999999,
+      "errors" : 0,
+      "first_error" : "",
+      "lost" : [
+
+      ],
+      "mode" : "incremental",
+      "pane_pages" : 5,
+      "present" : 5,
+      "rerun_pages" : 5,
+      "result_failed" : false,
+      "rows" : [
+
+      ],
+      "same_as_before" : true,
+      "seconds" : 0.47299999999999998,
+      "stale" : 0,
+      "status" : "ok",
+      "status_note" : "ok · incremental · 5 pages · 49 ms",
+      "typeset_pages" : 5
+    },
+    "good_pages" : 5,
+    "what" : "math syntax outside math (Missing $ inserted)"
+  },
+  "mismatched-end" : {
+    "error" : {
+      "changed" : [
+        0,
+        1,
+        2,
+        3,
+        4
+      ],
+      "cold_reason" : "",
+      "done_pages" : 5,
+      "elapsed_ms" : 37.177,
+      "errors" : 0,
+      "first_error" : "",
+      "lost" : [
+
+      ],
+      "mode" : "incremental",
+      "pane_pages" : 5,
+      "present" : 5,
+      "rerun_pages" : 5,
+      "result_failed" : false,
+      "rows" : [
+        {
+          "code" : "latex\/environment-mismatch",
+          "col" : 1,
+          "fix" : false,
+          "help" : "Your command was ignored. Type  I <command> <return>  to replace it with another command, or  <return>  to continue without it.",
+          "line" : 15,
+          "marked" : "\\end{enumerate}",
+          "message" : "LaTeX Error: \\begin{itemize} on input line 13 ended by \\end{enumerate}. (pdfLaTeX would report an error here)",
+          "notes" : 5,
+          "severity" : "warning"
+        }
+      ],
+      "same_as_before" : false,
+      "seconds" : 0.45600000000000002,
+      "stale" : 0,
+      "status" : "error",
+      "status_note" : "recovered · incremental · 5 pages · 37 ms",
+      "typeset_pages" : 5
+    },
+    "fix" : {
+      "changed" : [
+
+      ],
+      "cold_reason" : "",
+      "done_pages" : 5,
+      "elapsed_ms" : 33.331000000000003,
+      "errors" : 0,
+      "first_error" : "",
+      "lost" : [
+
+      ],
+      "mode" : "incremental",
+      "pane_pages" : 5,
+      "present" : 5,
+      "rerun_pages" : 5,
+      "result_failed" : false,
+      "rows" : [
+
+      ],
+      "same_as_before" : true,
+      "seconds" : 0.44900000000000001,
+      "stale" : 0,
+      "status" : "ok",
+      "status_note" : "ok · incremental · 5 pages · 33 ms",
+      "typeset_pages" : 5
+    },
+    "good_pages" : 5,
+    "what" : "a mismatched \\end"
+  },
+  "missing-dollar" : {
+    "error" : {
+      "changed" : [
+        0,
+        1,
+        2,
+        3,
+        4
+      ],
+      "cold_reason" : "",
+      "done_pages" : 5,
+      "elapsed_ms" : 72.891000000000005,
+      "errors" : 0,
+      "first_error" : "",
+      "lost" : [
+
+      ],
+      "mode" : "incremental",
+      "pane_pages" : 5,
+      "present" : 5,
+      "rerun_pages" : 5,
+      "result_failed" : false,
+      "rows" : [
+        {
+          "code" : "tex\/missing-dollar",
+          "col" : 1,
+          "fix" : false,
+          "help" : "I've inserted a begin-math\/end-math symbol since I think you left one out. Proceed, with fingers crossed.",
+          "line" : 14,
+          "marked" : "",
+          "message" : "Missing $ inserted. (pdfLaTeX would report an error here)",
+          "notes" : 0,
+          "severity" : "warning"
+        }
+      ],
+      "same_as_before" : false,
+      "seconds" : 0.52000000000000002,
+      "stale" : 0,
+      "status" : "error",
+      "status_note" : "recovered · incremental · 5 pages · 73 ms",
+      "typeset_pages" : 5
+    },
+    "fix" : {
+      "changed" : [
+
+      ],
+      "cold_reason" : "",
+      "done_pages" : 5,
+      "elapsed_ms" : 37.740000000000002,
+      "errors" : 0,
+      "first_error" : "",
+      "lost" : [
+
+      ],
+      "mode" : "incremental",
+      "pane_pages" : 5,
+      "present" : 5,
+      "rerun_pages" : 5,
+      "result_failed" : false,
+      "rows" : [
+
+      ],
+      "same_as_before" : true,
+      "seconds" : 0.47199999999999998,
+      "stale" : 0,
+      "status" : "ok",
+      "status_note" : "ok · incremental · 5 pages · 38 ms",
+      "typeset_pages" : 5
+    },
+    "good_pages" : 5,
+    "what" : "an unclosed $ (inline math)"
+  },
+  "newline-bad" : {
+    "error" : {
+      "changed" : [
+        0,
+        1,
+        2,
+        3,
+        4
+      ],
+      "cold_reason" : "",
+      "done_pages" : 5,
+      "elapsed_ms" : 60.801000000000002,
+      "errors" : 0,
+      "first_error" : "",
+      "lost" : [
+
+      ],
+      "mode" : "incremental",
+      "pane_pages" : 5,
+      "present" : 5,
+      "rerun_pages" : 5,
+      "result_failed" : false,
+      "rows" : [
+        {
+          "code" : "latex\/there-no-line-here-to-end",
+          "col" : 1,
+          "fix" : false,
+          "help" : "Your command was ignored. Type  I <command> <return>  to replace it with another command, or  <return>  to continue without it.",
+          "line" : 15,
+          "marked" : "T",
+          "message" : "LaTeX Error: There's no line here to end. (pdfLaTeX would report an error here)",
+          "notes" : 4,
+          "severity" : "warning"
+        }
+      ],
+      "same_as_before" : false,
+      "seconds" : 0.47099999999999997,
+      "stale" : 0,
+      "status" : "error",
+      "status_note" : "recovered · incremental · 5 pages · 61 ms",
+      "typeset_pages" : 5
+    },
+    "fix" : {
+      "changed" : [
+
+      ],
+      "cold_reason" : "",
+      "done_pages" : 5,
+      "elapsed_ms" : 59.771999999999998,
+      "errors" : 0,
+      "first_error" : "",
+      "lost" : [
+
+      ],
+      "mode" : "incremental",
+      "pane_pages" : 5,
+      "present" : 5,
+      "rerun_pages" : 5,
+      "result_failed" : false,
+      "rows" : [
+
+      ],
+      "same_as_before" : true,
+      "seconds" : 0.48399999999999999,
+      "stale" : 0,
+      "status" : "ok",
+      "status_note" : "ok · incremental · 5 pages · 60 ms",
+      "typeset_pages" : 5
+    },
+    "good_pages" : 5,
+    "what" : "\\\\ where there is no line to end"
+  },
+  "preamble-error" : {
+    "error" : {
+      "changed" : [
+
+      ],
+      "cold_reason" : ".\/main.tex changed in the 95 bytes read before S0",
+      "done_pages" : 5,
+      "elapsed_ms" : 284.53399999999999,
+      "errors" : 0,
+      "first_error" : "",
+      "lost" : [
+
+      ],
+      "mode" : "cold",
+      "pane_pages" : 5,
+      "present" : 5,
+      "rerun_pages" : 5,
+      "result_failed" : false,
+      "rows" : [
+        {
+          "code" : "tex\/undefined-control-sequence",
+          "col" : 1,
+          "fix" : false,
+          "help" : "The control sequence at the end of the top line of your error message was never \\def'ed. If you have misspelled it (e.g., `\\hobx'), type `I' and the correct spelling (e.g., `I\\hbox'). Otherwise just continue, and I'll forget about whatever was undefined.",
+          "line" : 5,
+          "marked" : "\\foo",
+          "message" : "Undefined control sequence. (pdfLaTeX would report an error here)",
+          "notes" : 0,
+          "severity" : "warning"
+        }
+      ],
+      "same_as_before" : true,
+      "seconds" : 0.71699999999999997,
+      "stale" : 0,
+      "status" : "error",
+      "status_note" : "recovered · cold · 5 pages · 285 ms",
+      "typeset_pages" : 5
+    },
+    "fix" : {
+      "changed" : [
+
+      ],
+      "cold_reason" : ".\/main.tex changed in the 100 bytes read before S0",
+      "done_pages" : 5,
+      "elapsed_ms" : 273.041,
+      "errors" : 0,
+      "first_error" : "",
+      "lost" : [
+
+      ],
+      "mode" : "cold",
+      "pane_pages" : 5,
+      "present" : 5,
+      "rerun_pages" : 5,
+      "result_failed" : false,
+      "rows" : [
+
+      ],
+      "same_as_before" : true,
+      "seconds" : 0.68700000000000006,
+      "stale" : 0,
+      "status" : "ok",
+      "status_note" : "ok · cold · 5 pages · 273 ms",
+      "typeset_pages" : 5
+    },
+    "good_pages" : 5,
+    "what" : "an error in the preamble"
+  },
+  "runaway-argument" : {
+    "error" : {
+      "changed" : [
+        0,
+        1,
+        2,
+        3,
+        4
+      ],
+      "cold_reason" : "",
+      "done_pages" : 5,
+      "elapsed_ms" : 94.524000000000001,
+      "errors" : 0,
+      "first_error" : "",
+      "lost" : [
+
+      ],
+      "mode" : "incremental",
+      "pane_pages" : 5,
+      "present" : 5,
+      "rerun_pages" : 5,
+      "result_failed" : false,
+      "rows" : [
+        {
+          "code" : "tex\/paragraph-ended-before-argument-complete",
+          "col" : 4,
+          "fix" : false,
+          "help" : "I suspect you've forgotten a `}', causing me to apply this control sequence to too much text. How can we recover? My plan is to forget the whole thing and hope for the best.",
+          "line" : 15,
+          "marked" : "}",
+          "message" : "Paragraph ended before \\text@command was complete. (pdfLaTeX would report an error here)",
+          "notes" : 1,
+          "severity" : "warning"
+        },
+        {
+          "code" : "tex\/too-many-right-braces",
+          "col" : 4,
+          "fix" : false,
+          "help" : "You've closed more groups than you opened. Such booboos are generally harmless, so keep going.",
+          "line" : 15,
+          "marked" : "}",
+          "message" : "Too many }'s. (pdfLaTeX would report an error here)",
+          "notes" : 0,
+          "severity" : "warning"
+        }
+      ],
+      "same_as_before" : false,
+      "seconds" : 0.50800000000000001,
+      "stale" : 0,
+      "status" : "error",
+      "status_note" : "recovered · incremental · 5 pages · 95 ms",
+      "typeset_pages" : 5
+    },
+    "fix" : {
+      "changed" : [
+
+      ],
+      "cold_reason" : "",
+      "done_pages" : 5,
+      "elapsed_ms" : 38.662999999999997,
+      "errors" : 0,
+      "first_error" : "",
+      "lost" : [
+
+      ],
+      "mode" : "incremental",
+      "pane_pages" : 5,
+      "present" : 5,
+      "rerun_pages" : 5,
+      "result_failed" : false,
+      "rows" : [
+
+      ],
+      "same_as_before" : true,
+      "seconds" : 0.45600000000000002,
+      "stale" : 0,
+      "status" : "ok",
+      "status_note" : "ok · incremental · 5 pages · 39 ms",
+      "typeset_pages" : 5
+    },
+    "good_pages" : 5,
+    "what" : "a paragraph end inside an argument"
+  },
+  "section-incomplete" : {
+    "error" : {
+      "changed" : [
+
+      ],
+      "cold_reason" : "",
+      "done_pages" : 0,
+      "elapsed_ms" : 48.572000000000003,
+      "errors" : 3,
+      "first_error" : "File ended while scanning use of \\@xdblarg.",
+      "lost" : [
+
+      ],
+      "mode" : "incremental",
+      "pane_pages" : 5,
+      "present" : 5,
+      "rerun_pages" : 0,
+      "result_failed" : true,
+      "rows" : [
+        {
+          "code" : "tex\/file-ended-while-scanning",
+          "fix" : false,
+          "help" : "I suspect you have forgotten a `}', causing me to read past where you wanted me to stop. I'll try to recover; but if the error is serious, you'd better type `E' or `X' now and fix your file.",
+          "message" : "File ended while scanning use of \\@xdblarg.",
+          "notes" : 0,
+          "severity" : "error"
+        },
+        {
+          "code" : "tex\/emergency-stop",
+          "fix" : false,
+          "help" : "*** (job aborted, no legal \\end found)",
+          "message" : "Emergency stop.",
+          "notes" : 0,
+          "severity" : "error"
+        },
+        {
+          "code" : "tex\/fatal-error-no-output",
+          "fix" : false,
+          "help" : "",
+          "message" : "==> Fatal error occurred, no output PDF file produced!",
+          "notes" : 0,
+          "severity" : "error"
+        }
+      ],
+      "same_as_before" : true,
+      "seconds" : 0.46500000000000002,
+      "stale" : 5,
+      "status" : "error",
+      "status_note" : "stopped: pdfLaTeX gives up here · 0 new pages, 5 kept from the last compile · 49 ms",
+      "typeset_pages" : 0
+    },
+    "fix" : {
+      "changed" : [
+
+      ],
+      "cold_reason" : "",
+      "done_pages" : 5,
+      "elapsed_ms" : 102.31,
+      "errors" : 0,
+      "first_error" : "",
+      "lost" : [
+
+      ],
+      "mode" : "incremental",
+      "pane_pages" : 5,
+      "present" : 5,
+      "rerun_pages" : 10,
+      "result_failed" : false,
+      "rows" : [
+
+      ],
+      "same_as_before" : true,
+      "seconds" : 0.51700000000000002,
+      "stale" : 0,
+      "status" : "ok",
+      "status_note" : "ok · incremental · 5 pages · 102 ms",
+      "typeset_pages" : 10
+    },
+    "good_pages" : 5,
+    "what" : "\\section{ incomplete (mid-typing)"
+  },
+  "stray-close-brace" : {
+    "error" : {
+      "changed" : [
+        0,
+        1,
+        2,
+        3,
+        4
+      ],
+      "cold_reason" : "",
+      "done_pages" : 5,
+      "elapsed_ms" : 38.884,
+      "errors" : 0,
+      "first_error" : "",
+      "lost" : [
+
+      ],
+      "mode" : "incremental",
+      "pane_pages" : 5,
+      "present" : 5,
+      "rerun_pages" : 5,
+      "result_failed" : false,
+      "rows" : [
+        {
+          "code" : "tex\/too-many-right-braces",
+          "col" : 11,
+          "fix" : false,
+          "help" : "You've closed more groups than you opened. Such booboos are generally harmless, so keep going.",
+          "line" : 13,
+          "marked" : "}",
+          "message" : "Too many }'s. (pdfLaTeX would report an error here)",
+          "notes" : 0,
+          "severity" : "warning"
+        }
+      ],
+      "same_as_before" : false,
+      "seconds" : 0.47999999999999998,
+      "stale" : 0,
+      "status" : "error",
+      "status_note" : "recovered · incremental · 5 pages · 39 ms",
+      "typeset_pages" : 5
+    },
+    "fix" : {
+      "changed" : [
+
+      ],
+      "cold_reason" : "",
+      "done_pages" : 5,
+      "elapsed_ms" : 60.527999999999999,
+      "errors" : 0,
+      "first_error" : "",
+      "lost" : [
+
+      ],
+      "mode" : "incremental",
+      "pane_pages" : 5,
+      "present" : 5,
+      "rerun_pages" : 5,
+      "result_failed" : false,
+      "rows" : [
+
+      ],
+      "same_as_before" : true,
+      "seconds" : 0.51100000000000001,
+      "stale" : 0,
+      "status" : "ok",
+      "status_note" : "ok · incremental · 5 pages · 61 ms",
+      "typeset_pages" : 5
+    },
+    "good_pages" : 5,
+    "what" : "a stray }"
+  },
+  "unclosed-brace" : {
+    "error" : {
+      "changed" : [
+
+      ],
+      "cold_reason" : "",
+      "done_pages" : 0,
+      "elapsed_ms" : 43.069000000000003,
+      "errors" : 3,
+      "first_error" : "File ended while scanning use of \\textbf .",
+      "lost" : [
+
+      ],
+      "mode" : "incremental",
+      "pane_pages" : 5,
+      "present" : 5,
+      "rerun_pages" : 0,
+      "result_failed" : true,
+      "rows" : [
+        {
+          "code" : "tex\/file-ended-while-scanning",
+          "fix" : false,
+          "help" : "I suspect you have forgotten a `}', causing me to read past where you wanted me to stop. I'll try to recover; but if the error is serious, you'd better type `E' or `X' now and fix your file.",
+          "message" : "File ended while scanning use of \\textbf .",
+          "notes" : 0,
+          "severity" : "error"
+        },
+        {
+          "code" : "tex\/emergency-stop",
+          "fix" : false,
+          "help" : "*** (job aborted, no legal \\end found)",
+          "message" : "Emergency stop.",
+          "notes" : 0,
+          "severity" : "error"
+        },
+        {
+          "code" : "tex\/fatal-error-no-output",
+          "fix" : false,
+          "help" : "",
+          "message" : "==> Fatal error occurred, no output PDF file produced!",
+          "notes" : 0,
+          "severity" : "error"
+        }
+      ],
+      "same_as_before" : true,
+      "seconds" : 0.499,
+      "stale" : 5,
+      "status" : "error",
+      "status_note" : "stopped: pdfLaTeX gives up here · 0 new pages, 5 kept from the last compile · 43 ms",
+      "typeset_pages" : 0
+    },
+    "fix" : {
+      "changed" : [
+
+      ],
+      "cold_reason" : "",
+      "done_pages" : 5,
+      "elapsed_ms" : 221.155,
+      "errors" : 0,
+      "first_error" : "",
+      "lost" : [
+
+      ],
+      "mode" : "incremental",
+      "pane_pages" : 5,
+      "present" : 5,
+      "rerun_pages" : 10,
+      "result_failed" : false,
+      "rows" : [
+
+      ],
+      "same_as_before" : true,
+      "seconds" : 0.65700000000000003,
+      "stale" : 0,
+      "status" : "ok",
+      "status_note" : "ok · incremental · 5 pages · 221 ms",
+      "typeset_pages" : 10
+    },
+    "good_pages" : 5,
+    "what" : "an unclosed { in an argument (mid-typing)"
+  },
+  "unclosed-display" : {
+    "error" : {
+      "changed" : [
+        0,
+        1,
+        2,
+        3,
+        4
+      ],
+      "cold_reason" : "",
+      "done_pages" : 5,
+      "elapsed_ms" : 54.575000000000003,
+      "errors" : 0,
+      "first_error" : "",
+      "lost" : [
+
+      ],
+      "mode" : "incremental",
+      "pane_pages" : 5,
+      "present" : 5,
+      "rerun_pages" : 5,
+      "result_failed" : false,
+      "rows" : [
+        {
+          "code" : "tex\/missing-dollar",
+          "col" : 1,
+          "fix" : false,
+          "help" : "I've inserted a begin-math\/end-math symbol since I think you left one out. Proceed, with fingers crossed.",
+          "line" : 14,
+          "marked" : "",
+          "message" : "Missing $ inserted. (pdfLaTeX would report an error here)",
+          "notes" : 0,
+          "severity" : "warning"
+        },
+        {
+          "code" : "tex\/display-math-should-end-with-dollars",
+          "col" : 1,
+          "fix" : false,
+          "help" : "The `$' that I just saw supposedly matches a previous `$$'. So I shall assume that you typed `$$' both times.",
+          "line" : 14,
+          "marked" : "",
+          "message" : "Display math should end with $$. (pdfLaTeX would report an error here)",
+          "notes" : 0,
+          "severity" : "warning"
+        },
+        {
+          "code" : "latex\/environment-mismatch",
+          "col" : 1,
+          "fix" : false,
+          "help" : "Your command was ignored. Type  I <command> <return>  to replace it with another command, or  <return>  to continue without it.",
+          "line" : 65,
+          "marked" : "\\end{document}",
+          "message" : "LaTeX Error: \\begin{equation*} on input line 13 ended by \\end{document}. (pdfLaTeX would report an error here)",
+          "notes" : 6,
+          "severity" : "warning"
+        }
+      ],
+      "same_as_before" : false,
+      "seconds" : 0.497,
+      "stale" : 0,
+      "status" : "error",
+      "status_note" : "recovered · incremental · 5 pages · 55 ms",
+      "typeset_pages" : 5
+    },
+    "fix" : {
+      "changed" : [
+
+      ],
+      "cold_reason" : "",
+      "done_pages" : 5,
+      "elapsed_ms" : 42.381,
+      "errors" : 0,
+      "first_error" : "",
+      "lost" : [
+
+      ],
+      "mode" : "incremental",
+      "pane_pages" : 5,
+      "present" : 5,
+      "rerun_pages" : 5,
+      "result_failed" : false,
+      "rows" : [
+
+      ],
+      "same_as_before" : true,
+      "seconds" : 0.46200000000000002,
+      "stale" : 0,
+      "status" : "ok",
+      "status_note" : "ok · incremental · 5 pages · 42 ms",
+      "typeset_pages" : 5
+    },
+    "good_pages" : 5,
+    "what" : "an unclosed \\[ display"
+  },
+  "unclosed-group" : {
+    "error" : {
+      "changed" : [
+        0,
+        1,
+        2,
+        3,
+        4
+      ],
+      "cold_reason" : "",
+      "done_pages" : 6,
+      "elapsed_ms" : 183.786,
+      "errors" : 0,
+      "first_error" : "",
+      "lost" : [
+
+      ],
+      "mode" : "incremental",
+      "pane_pages" : 6,
+      "present" : 6,
+      "rerun_pages" : 12,
+      "result_failed" : false,
+      "rows" : [
+
+      ],
+      "same_as_before" : false,
+      "seconds" : 0.61599999999999999,
+      "stale" : 0,
+      "status" : "ok",
+      "status_note" : "ok · incremental · 6 pages · 184 ms",
+      "typeset_pages" : 12
+    },
+    "fix" : {
+      "changed" : [
+
+      ],
+      "cold_reason" : "",
+      "done_pages" : 5,
+      "elapsed_ms" : 178.23400000000001,
+      "errors" : 0,
+      "first_error" : "",
+      "lost" : [
+
+      ],
+      "mode" : "incremental",
+      "pane_pages" : 5,
+      "present" : 5,
+      "rerun_pages" : 10,
+      "result_failed" : false,
+      "rows" : [
+
+      ],
+      "same_as_before" : true,
+      "seconds" : 0.61099999999999999,
+      "stale" : 0,
+      "status" : "ok",
+      "status_note" : "ok · incremental · 5 pages · 178 ms",
+      "typeset_pages" : 10
+    },
+    "good_pages" : 5,
+    "what" : "an unclosed { group"
+  },
+  "undefined-cs" : {
+    "error" : {
+      "changed" : [
+        0,
+        1,
+        2,
+        3,
+        4
+      ],
+      "cold_reason" : "",
+      "done_pages" : 5,
+      "elapsed_ms" : 125.238,
+      "errors" : 0,
+      "first_error" : "",
+      "lost" : [
+
+      ],
+      "mode" : "incremental",
+      "pane_pages" : 5,
+      "present" : 5,
+      "rerun_pages" : 5,
+      "result_failed" : false,
+      "rows" : [
+        {
+          "code" : "tex\/undefined-control-sequence",
+          "col" : 3,
+          "fix" : false,
+          "help" : "The control sequence at the end of the top line of your error message was never \\def'ed. If you have misspelled it (e.g., `\\hobx'), type `I' and the correct spelling (e.g., `I\\hbox'). Otherwise just continue, and I'll forget about whatever was undefined.",
+          "line" : 13,
+          "marked" : "\\foo",
+          "message" : "Undefined control sequence. (pdfLaTeX would report an error here)",
+          "notes" : 0,
+          "severity" : "warning"
+        }
+      ],
+      "same_as_before" : false,
+      "seconds" : 0.57399999999999995,
+      "stale" : 0,
+      "status" : "error",
+      "status_note" : "recovered · incremental · 5 pages · 125 ms",
+      "typeset_pages" : 5
+    },
+    "fix" : {
+      "changed" : [
+
+      ],
+      "cold_reason" : "",
+      "done_pages" : 5,
+      "elapsed_ms" : 39.726999999999997,
+      "errors" : 0,
+      "first_error" : "",
+      "lost" : [
+
+      ],
+      "mode" : "incremental",
+      "pane_pages" : 5,
+      "present" : 5,
+      "rerun_pages" : 5,
+      "result_failed" : false,
+      "rows" : [
+
+      ],
+      "same_as_before" : true,
+      "seconds" : 0.45400000000000001,
+      "stale" : 0,
+      "status" : "ok",
+      "status_note" : "ok · incremental · 5 pages · 40 ms",
+      "typeset_pages" : 5
+    },
+    "good_pages" : 5,
+    "what" : "an undefined control sequence"
+  },
+  "undefined-env" : {
+    "error" : {
+      "changed" : [
+        0,
+        1,
+        2,
+        3,
+        4
+      ],
+      "cold_reason" : "",
+      "done_pages" : 5,
+      "elapsed_ms" : 99.477000000000004,
+      "errors" : 0,
+      "first_error" : "",
+      "lost" : [
+
+      ],
+      "mode" : "incremental",
+      "pane_pages" : 5,
+      "present" : 5,
+      "rerun_pages" : 5,
+      "result_failed" : false,
+      "rows" : [
+        {
+          "code" : "latex\/environment-undefined",
+          "col" : 1,
+          "fix" : false,
+          "help" : "Your command was ignored. Type  I <command> <return>  to replace it with another command, or  <return>  to continue without it.",
+          "line" : 13,
+          "marked" : "\\begin{foo}",
+          "message" : "LaTeX Error: Environment foo undefined. (pdfLaTeX would report an error here)",
+          "notes" : 3,
+          "severity" : "warning"
+        },
+        {
+          "code" : "latex\/environment-mismatch",
+          "col" : 13,
+          "fix" : false,
+          "help" : "Your command was ignored. Type  I <command> <return>  to replace it with another command, or  <return>  to continue without it.",
+          "line" : 13,
+          "marked" : "\\end{foo}",
+          "message" : "LaTeX Error: \\begin{document} ended by \\end{foo}. (pdfLaTeX would report an error here)",
+          "notes" : 5,
+          "severity" : "warning"
+        }
+      ],
+      "same_as_before" : false,
+      "seconds" : 0.56000000000000005,
+      "stale" : 0,
+      "status" : "error",
+      "status_note" : "recovered · incremental · 5 pages · 99 ms",
+      "typeset_pages" : 5
+    },
+    "fix" : {
+      "changed" : [
+
+      ],
+      "cold_reason" : "",
+      "done_pages" : 5,
+      "elapsed_ms" : 39.341999999999999,
+      "errors" : 0,
+      "first_error" : "",
+      "lost" : [
+
+      ],
+      "mode" : "incremental",
+      "pane_pages" : 5,
+      "present" : 5,
+      "rerun_pages" : 5,
+      "result_failed" : false,
+      "rows" : [
+
+      ],
+      "same_as_before" : true,
+      "seconds" : 0.46300000000000002,
+      "stale" : 0,
+      "status" : "ok",
+      "status_note" : "ok · incremental · 5 pages · 39 ms",
+      "typeset_pages" : 5
+    },
+    "good_pages" : 5,
+    "what" : "an undefined environment"
+  },
+  "usepackage-typo" : {
+    "error" : {
+      "changed" : [
+
+      ],
+      "cold_reason" : ".\/main.tex changed in the 95 bytes read before S0",
+      "done_pages" : 0,
+      "elapsed_ms" : 99.753,
+      "errors" : 3,
+      "first_error" : "main.tex:3:12: LaTeX Error: File `amsmth.sty' not found.",
+      "lost" : [
+
+      ],
+      "mode" : "cold",
+      "pane_pages" : 5,
+      "present" : 5,
+      "rerun_pages" : 0,
+      "result_failed" : true,
+      "rows" : [
+        {
+          "code" : "latex\/file-not-found",
+          "col" : 1,
+          "fix" : false,
+          "help" : "",
+          "line" : 3,
+          "marked" : "\\usepackage",
+          "message" : "LaTeX Error: File `amsmth.sty' not found.",
+          "notes" : 7,
+          "severity" : "error"
+        },
+        {
+          "code" : "tex\/emergency-stop",
+          "col" : 1,
+          "fix" : false,
+          "help" : "*** (cannot \\read from terminal in nonstop modes)",
+          "line" : 3,
+          "marked" : "\\usepackage",
+          "message" : "Emergency stop.",
+          "notes" : 5,
+          "severity" : "error"
+        },
+        {
+          "code" : "tex\/fatal-error-no-output",
+          "col" : 1,
+          "fix" : false,
+          "help" : "",
+          "line" : 3,
+          "marked" : "\\usepackage{graphicx}",
+          "message" : "==> Fatal error occurred, no output PDF file produced!",
+          "notes" : 0,
+          "severity" : "error"
+        }
+      ],
+      "same_as_before" : true,
+      "seconds" : 0.53100000000000003,
+      "stale" : 5,
+      "status" : "error",
+      "status_note" : "stopped: pdfLaTeX gives up here · 0 new pages, 5 kept from the last compile · 100 ms",
+      "typeset_pages" : 0
+    },
+    "fix" : {
+      "changed" : [
+
+      ],
+      "cold_reason" : "",
+      "done_pages" : 5,
+      "elapsed_ms" : 278.79199999999997,
+      "errors" : 0,
+      "first_error" : "",
+      "lost" : [
+
+      ],
+      "mode" : "cold",
+      "pane_pages" : 5,
+      "present" : 5,
+      "rerun_pages" : 5,
+      "result_failed" : false,
+      "rows" : [
+
+      ],
+      "same_as_before" : true,
+      "seconds" : 0.69499999999999995,
+      "stale" : 0,
+      "status" : "ok",
+      "status_note" : "ok · cold · 5 pages · 279 ms",
+      "typeset_pages" : 5
+    },
+    "good_pages" : 5,
+    "what" : "a typo in \\usepackage{amsmth}"
+  }
+}
