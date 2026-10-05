@@ -311,6 +311,7 @@ pub fn build(
         }
     }
     out.sort_by_key(|x| x.0);
+    locate_runaways(&mut out, terminal, root);
     let diags = out
         .into_iter()
         .enumerate()
@@ -321,6 +322,179 @@ pub fn build(
         })
         .collect();
     (diags, b.used_spans)
+}
+
+/// "File ended while scanning use of \\X" (TeX reads an unclosed argument
+/// to the end of the file) names no place: the file level has ended when
+/// TeX reports it. TeX shows what it had read, though: the line after
+/// "Runaway argument?" (§306, the start of the argument, cut at
+/// `error_line`). That text is looked for in the project's files TeX
+/// opened, and the report placed on the argument's opening brace, which
+/// is never closed; so are the stop reports right after it that name no
+/// place either ("Emergency stop", "Fatal error occurred"). Nothing is
+/// placed when the text is not found. Read only from what TeX printed and
+/// the files: the engine's output is not touched.
+fn locate_runaways(out: &mut [(usize, Diag)], terminal: &[u8], root: &Path) {
+    let mut i = 0;
+    while i < out.len() {
+        let (at, d) = &out[i];
+        if d.file.is_some() || !d.message.starts_with("File ended while scanning") {
+            i += 1;
+            continue;
+        }
+        let Some(text) = runaway_text(&terminal[..(*at).min(terminal.len())]) else {
+            i += 1;
+            continue;
+        };
+        let Some((path, line, col)) = opened_files(terminal, root)
+            .iter()
+            .rev()
+            .find_map(|f| find_open_brace(f, &text).map(|(l, c)| (f.clone(), l, c)))
+        else {
+            i += 1;
+            continue;
+        };
+        let mut j = i;
+        while j < out.len() && (j == i || (out[j].1.file.is_none() && out[j].1.fatal)) {
+            let d = &mut out[j].1;
+            d.file = Some(path.display().to_string());
+            d.line = Some(line as i64);
+            d.col = Some(col as i64);
+            d.range = Some((col as i64, col as i64 + 1));
+            d.exact = false;
+            j += 1;
+        }
+        i = j;
+    }
+}
+
+/// The text TeX showed after the last "Runaway ...?" line of `term`
+/// (before its "\\ETC." cut).
+fn runaway_text(term: &[u8]) -> Option<String> {
+    let t = String::from_utf8_lossy(term);
+    let mut lines = t.lines().rev();
+    let mut prev = None;
+    for l in lines.by_ref().take(6) {
+        if l.starts_with("Runaway ") && l.ends_with('?') {
+            let text = prev?;
+            let text: &str = text;
+            let text = text.strip_suffix("\\ETC.").unwrap_or(text);
+            return (!text.trim().is_empty()).then(|| text.to_string());
+        }
+        prev = Some(l);
+    }
+    None
+}
+
+/// The project's files TeX opened, in order: `(./main.tex` and the like on
+/// the terminal, inside `root`.
+fn opened_files(term: &[u8], root: &Path) -> Vec<PathBuf> {
+    let t = String::from_utf8_lossy(term);
+    let mut v: Vec<PathBuf> = Vec::new();
+    for (i, _) in t.match_indices('(') {
+        let name: String = t[i + 1..]
+            .chars()
+            .take_while(|c| !c.is_whitespace() && *c != ')' && *c != '(')
+            .collect();
+        if name.is_empty() {
+            continue;
+        }
+        let p = Path::new(&name);
+        let full = if p.is_absolute() {
+            p.to_path_buf()
+        } else {
+            root.join(name.trim_start_matches("./"))
+        };
+        if full.starts_with(root) && full.is_file() && !v.contains(&full) {
+            v.push(full);
+        }
+    }
+    v
+}
+
+/// Where in `path` an argument starting with `text` (as TeX shows tokens:
+/// spaces and line ends are not compared, nor comments) opens: the line
+/// (1-based) and byte column of its `{`. Of several, the last whose brace
+/// is never closed, else the last.
+fn find_open_brace(path: &Path, text: &str) -> Option<(usize, usize)> {
+    let src = std::fs::read(path).ok()?;
+    // the source without blanks and comments, and each byte's offset
+    let mut flat: Vec<u8> = Vec::with_capacity(src.len());
+    let mut at: Vec<usize> = Vec::with_capacity(src.len());
+    let mut k = 0;
+    while k < src.len() {
+        let c = src[k];
+        if c == b'\\' && k + 1 < src.len() {
+            flat.extend([c, src[k + 1]]);
+            at.extend([k, k + 1]);
+            k += 2;
+            continue;
+        }
+        if c == b'%' {
+            while k < src.len() && src[k] != b'\n' {
+                k += 1;
+            }
+            continue;
+        }
+        if c.is_ascii_whitespace() {
+            // a blank line is TeX's `\par` (§347), as the runaway text shows it
+            let run = src[k..]
+                .iter()
+                .take_while(|c| c.is_ascii_whitespace())
+                .count();
+            if src[k..k + run].iter().filter(|&&c| c == b'\n').count() >= 2 {
+                flat.extend(b"\\par");
+                at.extend([k; 4]);
+            }
+            k += run;
+            continue;
+        }
+        flat.push(c);
+        at.push(k);
+        k += 1;
+    }
+    // TeX shows `#` doubled, and a control word with a space after it
+    let want: Vec<u8> = text
+        .replace("##", "#")
+        .bytes()
+        .filter(|c| !c.is_ascii_whitespace())
+        .collect();
+    if want.len() < 2 || want[0] != b'{' {
+        return None;
+    }
+    // braces still open at the end: their positions in `flat`
+    let mut open: Vec<usize> = Vec::new();
+    let mut k = 0;
+    while k < flat.len() {
+        match flat[k] {
+            b'\\' => k += 1,
+            b'{' => open.push(k),
+            b'}' => {
+                open.pop();
+            }
+            _ => {}
+        }
+        k += 1;
+    }
+    let hits: Vec<usize> = flat
+        .windows(want.len())
+        .enumerate()
+        .filter(|(i, w)| *w == want.as_slice() && (*i == 0 || flat[i - 1] != b'\\'))
+        .map(|(i, _)| i)
+        .collect();
+    let hit = hits
+        .iter()
+        .rev()
+        .find(|h| open.contains(h))
+        .or(hits.last())
+        .copied()?;
+    let off = at[hit];
+    let line_start = src[..off]
+        .iter()
+        .rposition(|&c| c == b'\n')
+        .map_or(0, |p| p + 1);
+    let line = src[..off].iter().filter(|&&c| c == b'\n').count() + 1;
+    Some((line, off - line_start))
 }
 
 /// What the terminal shows, read as the 3.1 `DIAGNOSTIC`s were read
@@ -741,6 +915,55 @@ fn classify_warning(d: &mut Diag) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Lane ERROR-RECOVERY gap 4: "File ended while scanning use of
+    /// \\textbf" is placed on the argument's unclosed `{`, found from the
+    /// runaway text TeX showed; the stop reports after it go there too.
+    #[test]
+    fn a_runaway_argument_is_placed_on_its_open_brace() {
+        let root = std::env::temp_dir().join(format!("flashtex-runaway-{}", std::process::id()));
+        std::fs::create_dir_all(&root).unwrap();
+        let doc = "\\documentclass{article}\n\\begin{document}\n% a {comment\nSome {\\bfseries ok} and \\textbf{bold}.\nMore \\textbf{bold text\nAmet  amet enim.\n\n\\end{document}\n";
+        std::fs::write(root.join("main.tex"), doc).unwrap();
+        let term = b"(./main.tex\nRunaway argument?\n{bold text Amet amet enim. \\par \\end {document} \\ETC.\n! File ended while scanning use of \\textbf .\n<inserted text> \n                \\par \n<*> main.tex\n\n! Emergency stop.\n";
+        let err = |m: &str, fatal: bool| Diag {
+            message: m.into(),
+            fatal,
+            ..Diag::default()
+        };
+        let s = String::from_utf8_lossy(term);
+        let mut out = vec![
+            (
+                s.find("! File ended").unwrap(),
+                err("File ended while scanning use of \\textbf .", false),
+            ),
+            (s.find("! Emergency").unwrap(), err("Emergency stop.", true)),
+        ];
+        locate_runaways(&mut out, term, &root);
+        for (_, d) in &out {
+            assert_eq!(
+                d.file.as_deref(),
+                Some(root.join("main.tex").display().to_string().as_str())
+            );
+            assert_eq!(d.line, Some(5), "{}", d.message);
+            assert_eq!(d.range, Some((12, 13)), "the `{{` after \\textbf on line 5");
+        }
+        // Text found nowhere: no place, as before.
+        let mut none = vec![(
+            s.find("! File ended").unwrap(),
+            err("File ended while scanning use of \\textbf .", false),
+        )];
+        locate_runaways(
+            &mut none,
+            &term[..]
+                .iter()
+                .map(|&c| if c == b'A' { b'Z' } else { c })
+                .collect::<Vec<u8>>(),
+            &root,
+        );
+        assert_eq!(none[0].1.file, None);
+        let _ = std::fs::remove_dir_all(&root);
+    }
 
     #[test]
     fn codes_are_stable() {
