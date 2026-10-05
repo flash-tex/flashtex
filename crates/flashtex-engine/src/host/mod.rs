@@ -518,8 +518,9 @@ pub fn make_key(
         };
         // As they were at the checkpoint (`written_at`, taken there), not
         // as the end of the run left them.
-        let written = match g.layer().written_at.iter().find(|(i, _)| *i == id) {
-            Some((_, w)) => w.clone(),
+        let wa = &mut g.layer().written_at;
+        let written = match wa.iter().position(|(i, _)| *i == id) {
+            Some(k) => wa.swap_remove(k).1,
             None => written_before(rec, reads)?,
         };
         let files = reads.files[..nf.min(reads.files.len())]

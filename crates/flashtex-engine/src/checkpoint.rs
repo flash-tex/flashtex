@@ -325,7 +325,9 @@ pub struct Layer {
     /// At S₀ and at the `.aux` point: the files the run had written and
     /// closed, with their content there (`host::written_before`, S₀'s key
     /// takes them). Read when the checkpoint is taken: the run may write
-    /// them again before it ends, when the key is made (#1348).
+    /// them again before it ends, when the key is made (#1348). At most
+    /// the current S₀'s and `.aux` point's; `host::make_key` takes its
+    /// entry.
     pub written_at: Vec<(CheckpointId, crate::host::Written)>,
     /// Take a checkpoint at the `.aux` point of this run (`Point::Aux`).
     pub want_aux_point: bool,
@@ -1581,6 +1583,10 @@ impl Globals {
                     l.s0_reads = reads;
                     l.s0_elapsed = l.run_started.map_or(0.0, |s| s.elapsed().as_secs_f64());
                 }
+                // (only the current anchors' contents are kept)
+                let (s0, aux) = (l.s0, l.aux_point);
+                l.written_at
+                    .retain(|(i, _)| Some(*i) == s0 || Some(*i) == aux);
                 l.seconds += t.elapsed().as_secs_f64();
                 l.last_checkpoint = Some(std::time::Instant::now());
                 l.lines_at_checkpoint = l.lines;
