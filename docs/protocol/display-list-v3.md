@@ -681,6 +681,7 @@ demand later) the host prints progress lines
 | `main` | yes | the main file, relative to `root` (no `..`) |
 | `format` | no | format name, default `pdflatex` |
 | `shell_escape` | no | `\write18`: `default` (texmf.cnf's: restricted in TeX Live), `off`, `restricted`, `on` |
+| `halt_on_error` | no | `true`: `-halt-on-error`, TeX stops at the first error (a client's strict mode); default `false`: nonstopmode, recovering as pdflatex does. Another job: the resident document is replaced |
 | `output_dir` | no | where the PDF, log and auxiliary files go (default: a per-connection temporary directory) |
 | `jobname` | no | default: the main file's name |
 | `have_fonts` | no | font keys (hex) the client holds (§5.1) |
@@ -710,7 +711,13 @@ a bibliography or an index: see "External tools" in §6.4.
 **A `COMPILE` while one is running supersedes it**: the running compile
 goes on (a page is never interrupted) without sending, its `DONE` says
 `cancelled`, and the next compile sends what is current; a compile
-superseded before it started only applies its edits. An `export` compile
+superseded before it started only applies its edits. One exception keeps
+fast typing visible: an incremental compile is not stopped before its first
+changed page has shipped (or three pages have, none changed), and it sends
+that page (with the forms it draws) even when superseded, so every
+keystroke's edit reaches the screen however fast the next one comes (lane
+LIVE-30MS). That `PAGE` comes after the newer `COMPILE` was sent and before
+the superseded compile's `DONE`; a client takes it like any other page. An `export` compile
 is killed as in 3.0.
 
 ### 6.4 Replies

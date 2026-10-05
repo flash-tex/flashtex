@@ -152,7 +152,8 @@ final class EngineV3EditorMarksTests: XCTestCase {
         let typed = sent.replacingOccurrences(of: "\\begin{document}\n", with: "\\begin{document}\nA new line.\n")
         m.updateActiveText(typed)
         try await wait("compile N's DONE") { !s.compiling }
-        let mark = try XCTUnwrap(m.editorMarks.first { $0.severity == .error })
+        // Best effort: TeX recovers, so the mark is a warning (EngineV3BestEffortTests).
+        let mark = try XCTUnwrap(m.editorMarks.first { $0.severity == .warning })
         let at = (typed as NSString).range(of: "\\undefinedthing")
         XCTAssertTrue(NSIntersectionRange(mark.nsRange, at).length > 0,
                       "the mark is on \\undefinedthing in the current text: \(mark.nsRange) vs \(at)")
@@ -175,9 +176,10 @@ final class EngineV3EditorMarksTests: XCTestCase {
             if Date().timeIntervalSince(start) > 120 { return XCTFail("timeout: \(s.statusNote), \(m.engineV3Diagnostics)") }
             try await Task.sleep(nanoseconds: 50_000_000)
         }
-        let mark = try XCTUnwrap(m.editorMarks.first { $0.severity == .error })
+        // Best effort: TeX recovers, so the mark is a warning (EngineV3BestEffortTests).
+        let mark = try XCTUnwrap(m.editorMarks.first { $0.severity == .warning })
         let at = (doc as NSString).range(of: "\\undefinedthing")
         XCTAssertTrue(NSIntersectionRange(mark.nsRange, at).length > 0, "\(mark.nsRange) vs \(at)")
-        XCTAssertEqual(m.diagnosticAnnouncements.last.map { $0.hasPrefix("1 error") }, true, "\(m.diagnosticAnnouncements)")
+        XCTAssertEqual(m.diagnosticAnnouncements.last.map { $0.hasPrefix("1 warning") }, true, "\(m.diagnosticAnnouncements)")
     }
 }

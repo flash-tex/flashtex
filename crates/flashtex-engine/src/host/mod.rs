@@ -154,6 +154,42 @@ fn hash_prefix(path: &str, len: u64) -> Result<[u64; 2], String> {
 impl Key {
     /// Whether S₀ is still what a full run would reach: `Err` says why not.
     pub fn check(&self, session_clock: (i64, i32), first_line: &[u8]) -> Result<(), String> {
+        self.check_fresh(session_clock, first_line).map(|_| ())
+    }
+
+    /// [`check`](Self::check), then keep the signatures it verified another
+    /// way (by content, or by running the lookups again): taken before that
+    /// test, they stand for the state it found unchanged. A signature taken
+    /// within the modification-time tick of its file (`StatSig::racy`)
+    /// proves nothing, so a key taken just after the run wrote its output
+    /// directory would otherwise test by content, and run every lookup
+    /// again, at every compile; with the fresh signatures, once the tick has
+    /// passed, it does not.
+    pub fn check_refresh(
+        &mut self,
+        session_clock: (i64, i32),
+        first_line: &[u8],
+    ) -> Result<(), String> {
+        let fresh = self.check_fresh(session_clock, first_line)?;
+        for (i, s) in fresh.files {
+            self.files[i].2 = s;
+        }
+        for (i, s) in fresh.prefixes {
+            self.prefixes[i].3 = s;
+        }
+        if let Some(d) = fresh.dirs {
+            for (i, s) in d.into_iter().enumerate() {
+                self.dirs[i].1 = s;
+            }
+        }
+        Ok(())
+    }
+
+    /// The test, and the signatures it verified by other means: (index,
+    /// signature now) of files and prefixes compared by content, and every
+    /// directory's signature when the lookups ran again and all held.
+    fn check_fresh(&self, session_clock: (i64, i32), first_line: &[u8]) -> Result<Fresh, String> {
+        let mut fresh = Fresh::default();
         if self.build != engine_build() {
             return Err("the engine build changed".into());
         }
@@ -173,28 +209,40 @@ impl Key {
         }
         // A file both written before S₀ and read before it is keyed by
         // what was read; `rewrite_outputs` puts back what was written.
-        for (path, hash, stat) in &self.files {
-            if StatSig::of(path).as_ref() == Some(stat) {
+        for (i, (path, hash, stat)) in self.files.iter().enumerate() {
+            let sig = StatSig::of(path);
+            if sig.as_ref() == Some(stat) {
                 continue;
             }
             let now = std::fs::read(path).map(|d| hash128(&d)).ok();
             if now != Some(*hash) {
                 return Err(format!("{path} changed"));
             }
+            if let Some(s) = sig {
+                fresh.files.push((i, s));
+            }
         }
-        for (path, len, hash, stat) in &self.prefixes {
-            if StatSig::of(path).as_ref() == Some(stat) {
+        for (i, (path, len, hash, stat)) in self.prefixes.iter().enumerate() {
+            let sig = StatSig::of(path);
+            if sig.as_ref() == Some(stat) {
                 continue;
             }
             if hash_prefix(path, *len).ok() != Some(*hash) {
                 return Err(format!("{path} changed in the {len} bytes read before S0"));
             }
+            if let Some(s) = sig {
+                fresh.prefixes.push((i, s));
+            }
         }
+        // (taken before the lookups: a directory changed while they run
+        // shows as changed next time)
+        let now: Vec<Option<StatSig>> = self.dirs.iter().map(|(d, _)| StatSig::of(d)).collect();
         let dirs_same = !self.dirs.is_empty()
             && self
                 .dirs
                 .iter()
-                .all(|(d, s)| StatSig::of(d).as_ref() == Some(s));
+                .zip(&now)
+                .all(|((_, s), n)| n.as_ref() == Some(s));
         for (name, fmt, must, found) in self.lookups.iter().filter(|_| !dirs_same) {
             let l = Lookup {
                 name: name.clone(),
@@ -206,8 +254,19 @@ impl Key {
                 return Err(format!("looking up {name} finds another file now"));
             }
         }
-        Ok(())
+        if !dirs_same && now.iter().all(Option::is_some) {
+            fresh.dirs = Some(now.into_iter().flatten().collect());
+        }
+        Ok(fresh)
     }
+}
+
+/// What [`Key::check_fresh`] verified other than by signature.
+#[derive(Default)]
+struct Fresh {
+    files: Vec<(usize, StatSig)>,
+    prefixes: Vec<(usize, StatSig)>,
+    dirs: Option<Vec<StatSig>>,
 }
 
 impl Key {
@@ -805,3 +864,60 @@ impl OpenReport {
 }
 
 use crate::os::MappedFile;
+
+#[cfg(test)]
+mod key_tests {
+    use super::*;
+
+    /// After a check that verified racy signatures by content and by the
+    /// lookups, the key keeps fresh ones: once the tick has passed, the
+    /// steady state is not racy (else every compile compared the preamble's
+    /// files and ran its lookups again; review of #1552).
+    #[test]
+    fn a_checked_key_keeps_fresh_signatures() {
+        let d = std::env::temp_dir().join(format!("flashtex-key-{}", std::process::id()));
+        std::fs::create_dir_all(&d).unwrap();
+        let f = d.join("pre.sty");
+        std::fs::write(&f, "\\def\\x{1}").unwrap();
+        let (fp, dp) = (
+            f.to_str().unwrap().to_string(),
+            d.to_str().unwrap().to_string(),
+        );
+        let (fs, ds) = (StatSig::of(&fp).unwrap(), StatSig::of(&dp).unwrap());
+        assert!(fs.racy && ds.racy, "just written");
+        let mut key = Key {
+            build: engine_build(),
+            clock: (0, 0),
+            source_date_epoch: std::env::var("SOURCE_DATE_EPOCH").ok(),
+            force_source_date: std::env::var("FORCE_SOURCE_DATE").ok(),
+            first_line: b"main".to_vec(),
+            job_name: "main".into(),
+            files: vec![(fp.clone(), hash128(&std::fs::read(&f).unwrap()), fs)],
+            prefixes: vec![],
+            lookups: vec![],
+            barriers: vec![],
+            written: vec![],
+            dirs: vec![(dp.clone(), ds)],
+        };
+        // the tick passes (the files' times put back a minute)
+        let old = std::time::SystemTime::now() - std::time::Duration::from_secs(60);
+        std::fs::File::options()
+            .write(true)
+            .open(&f)
+            .unwrap()
+            .set_modified(old)
+            .unwrap();
+        std::fs::File::open(&d).unwrap().set_modified(old).unwrap();
+        key.check_refresh((0, 0), b"main").unwrap();
+        assert!(!key.files[0].2.racy, "the file's signature is still racy");
+        assert!(
+            !key.dirs[0].1.racy,
+            "the directory's signature is still racy"
+        );
+        // and the next check is by signature alone: a changed file still fails
+        key.check_refresh((0, 0), b"main").unwrap();
+        std::fs::write(&f, "\\def\\x{2}").unwrap();
+        assert!(key.check((0, 0), b"main").is_err());
+        let _ = std::fs::remove_dir_all(&d);
+    }
+}

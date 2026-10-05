@@ -3264,13 +3264,24 @@ pub struct StatSig {
     pub len: u64,
     pub mtime_ns: i128,
     pub ino: u64,
-    /// Taken within [`RACY_NS`] of `mtime_ns` (or before it).
+    /// Taken within [`RACY_NS`] of `mtime_ns`, either side.
     pub racy: bool,
 }
 
 /// The widest modification-time granularity of a supported file system
-/// (FAT's 2 s; HFS+ 1 s, ext4 a kernel tick), for [`StatSig::racy`].
+/// (FAT's 2 s; HFS+ 1 s, ext4 a kernel tick), for [`StatSig::racy`]
+/// (`FLASHTEX_RACY_MS` changes it, for the tests).
 pub const RACY_NS: i128 = 2_000_000_000;
+
+fn racy_ns() -> i128 {
+    static R: std::sync::OnceLock<i128> = std::sync::OnceLock::new();
+    *R.get_or_init(|| {
+        std::env::var("FLASHTEX_RACY_MS")
+            .ok()
+            .and_then(|v| v.parse::<i128>().ok())
+            .map_or(RACY_NS, |ms| ms * 1_000_000)
+    })
+}
 
 impl PartialEq for StatSig {
     fn eq(&self, o: &StatSig) -> bool {
@@ -3294,7 +3305,11 @@ impl StatSig {
             len: m.len(),
             mtime_ns,
             ino,
-            racy: now_ns - mtime_ns < RACY_NS,
+            // Within the tick on either side: a write after now lands in
+            // the same tick only then. (A modification time far in the
+            // future -- a file from a clock ahead -- is not racy: any write
+            // from now on gets an earlier time.)
+            racy: (now_ns - mtime_ns).abs() < racy_ns(),
         })
     }
 
@@ -4124,17 +4139,23 @@ mod statsig_tests {
         let a = StatSig::of(p).unwrap();
         let b = StatSig::of(p).unwrap();
         assert!(!a.racy && a == b);
-        // the same length and time, other bytes: equal (the tick hides it)
-        // only while not racy -- a future time (a coarse clock's) is racy
-        std::fs::write(&f, "abd").unwrap();
-        let future = std::time::SystemTime::now() + std::time::Duration::from_secs(60);
+        // a time within the tick ahead is racy too; one far ahead is not
+        let soon = std::time::SystemTime::now() + std::time::Duration::from_millis(500);
         std::fs::File::options()
             .write(true)
             .open(&f)
             .unwrap()
-            .set_modified(future)
+            .set_modified(soon)
             .unwrap();
         assert!(StatSig::of(p).unwrap().racy);
+        let far = std::time::SystemTime::now() + std::time::Duration::from_secs(3600);
+        std::fs::File::options()
+            .write(true)
+            .open(&f)
+            .unwrap()
+            .set_modified(far)
+            .unwrap();
+        assert!(!StatSig::of(p).unwrap().racy);
         let _ = std::fs::remove_dir_all(&d);
     }
 }
