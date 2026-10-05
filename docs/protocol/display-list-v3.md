@@ -143,11 +143,14 @@ length 0, is a corrupt stream: the reader stops (§7).
 - **3.3** (§11; DESIGN.md §15.4, E1–E8) adds, all of it for the Typst
   host and none of it required of the LaTeX host: `FONT.format`
   `opentype` with glyph ids and variation coordinates (§11.1), page
-  sections 8 `PAGE_META` and 10 `COLORSPACES` (§11.2, §11.3), item opcodes
+  sections 8 `PAGE_META` and 10 `COLORSPACES` (§11.2, §11.3), section 7
+  `ORIGINS` on every Typst page (§11.2; the section is exact geometry's,
+  below, and has one layout for both hosts), item opcodes
   `0x0F`–`0x13` for colour spaces, constant alpha and the text line state
-  (§11.3, §11.4), images from bytes (`IMAGE_DATA`, §11.5) and on-demand
-  source mapping (`RESOLVE`/`LOCATE`, §11.6), plus `DIAGNOSTIC` keys
-  `column` and `hints`. Sections and JSON keys follow the minor rules
+  (§11.3, §11.4), images from bytes (`IMAGE_DATA`, §11.5), on-demand
+  source mapping (`RESOLVE`/`LOCATE`, §11.6) and, for a client that
+  accepts `packages-v1`, the `PACKAGE` message (§11.8), plus `DIAGNOSTIC`
+  keys `column` and `hints`. Sections and JSON keys follow the minor rules
   above. **The new opcodes are sent only to a client that said `[3, 3]`
   and listed the feature in its `HELLO` `accept`** (§11.7): an item opcode
   a reader does not know is otherwise a major change. A 3.1 or 3.2 client
@@ -198,9 +201,9 @@ The fixed header is 124 bytes. Section tags:
 | 4 | `LINKS` | `u32 n`, then n links (§4.5) |
 | 5 | `DESTS` | `u32 n`, then n destinations (§4.5) |
 | 6 | `UNSUPPORTED` | `u32 n`, then n × {`u16 len`, UTF-8 text}: what the page used that v3 cannot express |
-| 7 | `ORIGINS` | `u32 n`, then n × `f64[2]`: each GLYPH's origin (X, Y) in stream space, in item order (§4.2); the Typst host's `ORIGINS_F64` (#1335) is this section |
+| 7 | `ORIGINS` | exact geometry (§3), and every 3.3 Typst page (§11.2): `u32 n`, then n × `f64[2]`: each GLYPH's origin (X, Y) in stream space, in item order (§4.2); the Typst host's `ORIGINS_F64` (#1335) is this section |
 | 8 | `PAGE_META` | 3.3: UTF-8 JSON, the page's metadata (§11.2) |
-| 9 | `RULE_GEOMETRY` | `u32 n`, then n × `f64[7]`: what the PDF draws each RULE with, in item order (§4.4) |
+| 9 | `RULE_GEOMETRY` | exact geometry (§3): `u32 n`, then n × `f64[7]`: what the PDF draws each RULE with, in item order (§4.4) |
 | 10 | `COLORSPACES` | 3.3: `u32 n`, then n colour spaces, referenced as 1..n (§11.3) |
 
 Any other tag: skip `len` bytes (a later minor version's section).
