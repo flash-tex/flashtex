@@ -10,22 +10,22 @@ instruction, it wins. Deviations need evidence and owner approval and are record
 Appendix A is the master prompt for any Commander session.
 
 **Design review: nightly, lean** (owner, 2026-09-30; see §14). First nightly review: 2026-09-30.
-**Last review:** 2026-10-02, [`reviews/2026-10-02.md`](reviews/2026-10-02.md). It supersedes
-the unmerged 2026-10-01 review (PR #1334), whose findings it carries. Previous landed review:
-[`reviews/2026-09-30.md`](reviews/2026-09-30.md).
+**Last review:** 2026-10-05, [`reviews/2026-10-05.md`](reviews/2026-10-05.md): the
+critical-path inventory for P3–P5. Previous: [`reviews/2026-10-02.md`](reviews/2026-10-02.md),
+which superseded the unmerged 2026-10-01 review (PR #1334); [`reviews/2026-09-30.md`](reviews/2026-09-30.md).
 
 **Phase status (verified gates):** P0 ✔ (2026-09-29) · P1 ✔ trip byte-identical (2026-09-29) ·
 P2 ✔ verified independently on main `d4f2a1581` (2026-09-29): trip, etrip 18/18,
 pdfTeX regression 7/7, lockstep 260/260, parity fixtures P-T1 83/83 and P-T2 83/83,
-T2 LaTeX suites 1,520/1,529 with 0 unexpected failures · P3, P4 and P5 in progress (§12).
-Re-measured 2026-10-02 on mac-m1max-a (M1 Max, MacTeX 2026) on main `ab9893935`
-(`docs/evidence/design-review-2026-10-02/`, load 22–138): trip pass, etrip 18/18, lockstep
-**1,435/1,435**, P-T1 83/83, P-T2 83/83. arXiv, T2 and T4 were not run here; T4 is lane-run
-evidence (§12).
-**CI gates lockstep and the P-T1/P-T2 fixtures in `merge_group`** (#1262). Not yet gated: T2
-(nightly; it has never completed on main, and the nightly workflow has been red three nights
-running, §8), and `trip`, `etrip` and `pdftex-regression`, which still run outside `CI required`
-(#1336 open; §9.2).
+T2 LaTeX suites 1,520/1,529 with 0 unexpected failures · **P3 met on lane evidence, not yet
+gated** (§12) · P4 and P5 in progress (§12).
+Re-measured 2026-10-05 on the NixOS PC (TeX Live 2026) on main `9f29302fe`
+(reviews/2026-10-05.md §2): lockstep **1,466/1,466**; the other rows are in that file.
+**CI gates** lockstep, the P-T1/P-T2 fixtures (`merge_group`, #1262) and, since #1336
+(2026-10-02), `trip`, `etrip` and `pdftex-regression` (`CI required`). Not gated: the P5 board
+(daily, not all green: T2 1,576/1,590 with 14 unexpected, T4 missing), T2 (the nightly has
+failed 4 nights of 4 since 10-01), T7 (no reference host) and the zero-tolerance preview sweep
+(it skips in CI) (§8).
 
 ---
 
@@ -125,15 +125,27 @@ not gated. Its floor is the window server, which presents a commit no sooner tha
 frames later (15.9–16.0 ms minimum, 16–24 ms typical; app-v3-5 evidence, #1332). Every report
 names the quantity it measured.
 
-**Status (review 2026-10-02; REPORTED, not re-measured).** Engine side, the edited page is
-3.1–10.6 ms p95 on all eight bench documents (#1269 §5, Mac). In the app, key → commit p50/p95
-is 12.7/21.6 ms (plain-10), 13.3/20.2 (plain-120) and 24.5/30.6 (plain-1000) with keep-warm off
-(`docs/evidence/app-v3-preview-2026-09-29/`, #1332), so **the gate is not met yet**. Most of the
-gap is the host's first page after an idle gap (Apple Silicon runs an idle core at about a third
-of its clock; §5.1, keep-warm, #1300, still a draft). **Reopen** from stored pages landed with
-#1332: in the running app 16–29 ms (met); **at launch** (cold) the stored pages show after
-101–365 ms (plain-10 to plain-1000), so the cold row is **not met**. **Preamble edit** 41–281 ms
-engine side (#1269, Mac). No harness gates any of this yet (T7, §8).
+**Status (review 2026-10-05; REPORTED unless marked; no reference run exists).** The one
+harness is `tools/incr-bench/t7.py` (#1391). Its only run is on main `ab9893935`. It was on an
+M1 Max, on battery, in Low Power Mode, so it is non-reference
+(`docs/evidence/t7-latency-2026-10-02/`). It passed **8 of 56** gated rows:
+- the edited page's host share ≤ 11 ms p95 in 4 of 48 in-body rows: plain-* 8–23 ms, full-*
+  19–122 ms;
+- preamble at full-1000: 3.4–4.8 s, before #1300. After #1300, full-* took 413–498 ms in Low
+  Power Mode (`p4-preamble-cost-2026-10-02`);
+- cold reopen, host share: 544–721 ms.
+
+About 15 incremental PRs have landed since that run (#1300, #1397, #1404, #1414, #1439, #1442,
+#1498, #1507, #1533, #1536 and others), so it is stale.
+
+In the app:
+- key → commit p95 is 20–31 ms with keep-warm off (`docs/evidence/app-v3-preview-2026-09-29/`);
+- main-thread work per keystroke fell 41 → 11 ms (#1432);
+- reopen from stored pages is 16–29 ms in the running app, which meets its row, and
+  **101–365 ms at launch**, which does not;
+- the preamble row has never been measured to the first visible page in the app.
+
+**The gate is not met**, and its host is an open owner question (Q1, §8).
 
 ---
 
@@ -247,10 +259,15 @@ benchmarks, an adversarial review and preview-renderer measurements, all dated
   the `pdftex.web` § numbers it relies on plus a hash of their text, checked by a unit test
   that fails when an upgrade changes one. *Status 2026-10-02:* the first part landed as #1302
   (2026-10-01; web2rust names 996 `@d` constants at 7,583 sites with identical machine code).
-  The hand copies are only partly switched to it: `iso.rs` and `intrinsics.rs` still hold 212
-  numeric `const NAME: T = <literal>` definitions (VERIFIED by grep), next to a few that import
-  `generated::consts`. String-pool references are not symbolic, and the hash-pinned tests are
-  not started.
+  The hand copies are only partly switched to it: `iso.rs` and `intrinsics.rs` still hold 232
+  numeric `const NAME: T = <literal>` definitions (VERIFIED by grep on 2026-10-05; 212 on
+  10-02), next to a few that import `generated::consts`. String-pool references are not
+  symbolic, and the hash-pinned tests are not started.
+- **Rewrite proposal (2026-10-05; §13 R15).** `REWRITE.md` (on main since 2026-10-04) records an
+  "owner decision" to stop regenerating `src/generated/` from `pdftex.web` and evolve the Rust
+  directly. That would reverse step 1 and the as-built model above (D3). It is not in §13, and
+  owner Kabir has not confirmed it. Until he does, the model above stands, and lane
+  IDIOMATIC-REWRITE is parked as a P6 extra (§13, 2026-10-05).
 - **C parts** (`writet1.c`, `writeimg`, `pdftoepdf.cc` (xpdf-based), `writeenc`,
   `writefont`, `mapfile.c`, `utils.c`) are ported per file under the same harness.
 - **Existing crates** (tex-expansion, tex-boxes, paragraph-layout, math-layout,
@@ -357,13 +374,15 @@ benchmarks, an adversarial review and preview-renderer measurements, all dated
   (REPORTED, `docs/evidence/app-v3-preview-2026-09-29/` "Instant reopen"): 16–29 ms in the
   running app, which meets the row; **at launch, 101–365 ms** (stored pages, plain-10 to
   plain-1000, including window and editor creation), which does not. The cold-reopen gap is
-  open work for P4 (§12).
+  open work for P4 (§12). On the host side, a cold reopen takes 544–721 ms to page 1 (T7,
+  non-reference, 2026-10-02). It is a 3-pass cold compile; #1537 (open) keeps S₀ and the
+  `.aux`, so a reopen takes 1 pass (−65.7 % instructions, REPORTED).
 - **Keep-warm (owner, 2026-09-30, decision 10):** only while the user is typing. After each
   compile the host alternates 100 µs sleeps and spins for 2 s, never while idle, because an idle
   Apple Silicon core runs the next keystroke at about a third of its clock (first page 18 ms
   after a 300 ms gap against 7 ms back to back; #1269 §1). With it the host's first page is
-  8–15 ms p50 (#1269 §6). Built in #1300 (a draft PR on 2026-10-02, not landed);
-  `--keep-warm 0` turns it off.
+  8–15 ms p50 (#1269 §6). Built in #1300 (landed 2026-10-03, with the host-memory work:
+  plain-1000 7.4 → 0.62 GB); `--keep-warm 0` turns it off.
 
 ### 5.2 L2: checkpoints
 
@@ -462,14 +481,25 @@ D8 specification; what landed differs, and D8's rewording is proposed to the own
   into state (`\inputlineno`, text written to a `\write` stream) stays a barrier.
   `pdf_char_used` becomes a per-page external effect unioned at the end, and the intrinsics'
   caches are treated as derived state. The **convergence rate** and background pages re-run per
-  edit are part of T7 and of the P4 exit gate (§8, §12). *Status (review 2026-10-02):* object
-  relocation and line shifting are **not built** (object numbers are dead only where unread;
-  `line` is still compared, so a newline edit never converges), and the `tools/incr-bench`
-  drivers on main still have no newline or paragraph split/join edit kind (VERIFIED by grep;
-  daniel-muse-lead's edit-replay inputs are assigned, not landed). `pdf_char_used` is handled by
-  writing the new run's extra characters into the old run's later history (`Arena::or_from`,
-  #1300, a draft); a first version that compared against unpatched checkpoints was unsound
-  (103/8,500 sweep-A mismatches) and was backed out.
+  edit are part of T7 and of the P4 exit gate (§8, §12). *Status (review 2026-10-05):*
+  - Object relocation and line shifting are **still not built**. Object numbers are dead only
+    where they are unread, and `line` is still compared. So T7's newline, split and sentence
+    rows never converge on plain-* documents: they re-typeset to the end, 150 of 300 pages and
+    501 of 1,000 (`t7-latency-2026-10-02`).
+  - The edit kinds now exist. `tools/incr-bench` has newline, split and join edits (#1387), and
+    T7 measures them (#1391).
+  - `pdf_char_used` is unioned soundly into the old run's later history (#1300, landed
+    2026-10-03).
+  - Rules have landed with soundness cases: #1397 follows intrinsics pointers, #1498 adds a
+    barrier read point, #1507 makes a changed later lookup block convergence, and #1399 closes
+    two interrupted-compile holes.
+  - Sweeps A, C and D reported 0 mismatches (`p6-hyperopt-2026-10-04`, REPORTED).
+  - Open soundness issues:
+    - #1348: two restore holes in output-file tracking;
+    - #1550 / #1556: a file read while open for output;
+    - #1552: racy stat signatures, which give wrong output on main;
+    - the fixture-wide soundness test failed in the 2026-10-04 nightly (conf-paper, edit 0,
+      page 3: named destinations differ; run 37208020073).
 - **Every convergence rule is a soundness risk** (adopted 2026-10-01, §13): two rules were
   found unsound on 2026-09-30 (P4-FINISH's first `pdf_char_used` union, and the older (b′) read
   test, which skipped later reads of files the old run closes again), and only the soundness
@@ -625,7 +655,7 @@ custom Metal glyph renderer.
   Measured app-side cost: 1.7–2.9 ms p50 per keystroke (key → hook, send, decode, raster,
   commit; #1254 evidence, review track 2 §3.1). Since 2026-10-01 main also has stored-page
   reopen and project trust (#1332) and a font-smoothing setting, default off (#1304); the
-  zoom tiles (#1287) are still open. The v2 path (`V2PreparedPage` →
+  zoom tiles (#1287) landed on 2026-10-02. The v2 path (`V2PreparedPage` →
   `GlyphRunRenderer` → `V2PageRasterizer`) is the old engine's pane and retires at P5; it
   gets fixes only (D13), no new features (§10).
 - **Type 1 fonts.** Core Text no longer supports Type 1 (Ventura), but
@@ -649,9 +679,30 @@ custom Metal glyph renderer.
   `DL3Renderer` and the PDF reference at the default and swept scales. With smoothing off,
   text is 25 % lighter than in Preview.app (ink ratio 1.2525, #1228). Both sides now draw the
   same `CGFont` programs, so smoothing on may keep 0 px; if it does, smoothing is turned on.
-  The fallback rate is to be reported alongside parity. *Status 2026-10-02:* neither step has
-  run. The lane that owns them, J1 `P3-ZERO-TOLERANCE` (exact f64 positions, 1×/2×/4× at
-  tolerance 0, Type 3 included), was assigned on 2026-09-30 and has no claim (§12).
+  The fallback rate is to be reported alongside parity.
+  - *Status 2026-10-05 (REPORTED; lane run on an M5 Pro, base `7fdbe0850` + #1390;
+    `docs/evidence/p3-zero-tolerance-2026-10-02/`).*
+    - **J1 landed as #1390** (2026-10-02). The display list carries f64 glyph origins
+      (`ORIGINS`) and rule geometry (`RULE_GEOMETRY`), and `DL3Renderer` draws from them with
+      the viewer's binary64 arithmetic.
+    - **660/660 renders are identical at 0 px** at 1×, 2× and 4× on the 83 fixtures, and
+      12/12 on the Type 3, TrueType and OpenType documents. An independent re-run also gave
+      660/660.
+    - **The scale sweep** (31 scales, 1–8 px/pt plus 1.14 and 2.28): 6,820/6,820 and
+      124/124, both at 0 px.
+    - **The fallback rate is 4.3 %** (30/690 renders: the `gs` and shading forms of two
+      beamer fixtures). Fallback renders are identical by construction and cost a PDF render.
+    - **Smoothing on is not 0 px** (4,256/6,820 identical). So smoothing stays off, the
+      default (#1304).
+  - **Not done:**
+    - **The sweep is not in CI** (adopted §13 R12). `PreviewParityTests`' fixture sweep skips
+      unless `tools/displaylist/check_positions.py` has run first, and no workflow runs it
+      (VERIFIED by grep, 2026-10-05).
+    - **No re-verification on current main.** About 15 renderer PRs have landed since
+      (beamer v3, tiles, PDF inclusion).
+    - **Protocol numbering.** Tags 7/8/9 still need their minor version (3.4, after Typst's
+      3.3), and the tag-7 hash rule has to be reconciled between `page.rs` and `convert.rs`
+      (#1319 5961663133).
 - **Tiling above about 3 pixels per point:** 512 px tiles for the visible area only,
   rasterised in parallel (0.24–0.32 ms per tile, #1228), using a custom tile layer rather
   than `CATiledLayer`, to avoid its fade-in and resize jitter. The tile core (phase-boundary
@@ -690,8 +741,9 @@ custom Metal glyph renderer.
 - **Dry-run each LaTeX release on its pre-release** (adopted 2026-10-01, §13): build the format
   from it and run T2 and lockstep, so the upgrade is prepared before users' `tlmgr` delivers it
   (D12 builds the format from the user's own `latex.ltx`). Next: LaTeX 2026-11-01
-  (`dev-2026-11-01-2a`, 2026-09-24, still the newest pre-release on 2026-10-02); pdfTeX's
-  source is unchanged since TeX Live 2026. No lane has taken the dry run yet.
+  (`dev-2026-11-01-2a`, 2026-09-24, still the newest pre-release on 2026-10-05); pdfTeX's
+  source is unchanged since TeX Live 2026. No lane has taken the dry run yet (lane
+  LATEX-2026-11-DRY-RUN, reviews/2026-10-05.md §4.4; due before 2026-11-01).
 
 ---
 
@@ -700,7 +752,7 @@ custom Metal glyph renderer.
 | Tier | Contents | When | Gate |
 |---|---|---|---|
 | T0 | Unit tests; `web2rust` round-trip; **trip** and **etrip** (TeX Live's accepted-difference filters); pdfTeX's regression tests: the 7 `pdftex_tests` of TeX Live's `pdftex.am` (`scripts/pdftex-regression.sh`; the numbered `doc/pdftex/tests/NN-*` directories are not run) | Every commit | must pass; `trip`, `etrip` and `pdftex-regression` join `CI required` (§9.2) |
-| T1 | **Lockstep differential tests** against the pinned pdfTeX: `\tracingall` logs and box dumps on primitive-level cases (1,435 on main on 2026-10-02, each citing its `tex.web`/`pdftex.web` section; `tools/lockstep/COVERAGE.md` lists the 52 primitives no case uses) | Every PR; merge queue | 0 new differences |
+| T1 | **Lockstep differential tests** against the pinned pdfTeX: `\tracingall` logs and box dumps on primitive-level cases (1,466 on main on 2026-10-05, each citing its `tex.web`/`pdftex.web` section; `tools/lockstep/COVERAGE.md` lists the 52 primitives no case uses) | Every PR; merge queue | 0 new differences |
 | T2 | LaTeX team suites: latex2e `base`+`required` and l3kernel (989 `testfiles/*.lvt`; 1,531 check executions, 1,529 unique names, of which l3kernel 206; `tools/latex-suites/README.md`) against pdfTeX `.tlg`, normalised by l3build | Nightly (the new engine); every PR (touched areas) and merge queue (full) once affordable | must match |
 | T3 | Parity scoreboard (`tools/parity`): fixtures, arXiv and templates tiers, switched to box-dump plus P-T2 levels; **run on the new engine** (`--engine flashtex-initex`), the old engine's run kept as a non-gating comparison until P5 | Fixtures P-T1/P-T2: merge queue; arXiv/templates: nightly | never falls (ratchet) |
 | T4 | About 5,000-document corpus | Nightly | ratchet |
@@ -708,29 +760,32 @@ custom Metal glyph renderer.
 | T6 | Differential coverage-guided fuzzing of the tokenizer, expander and box builder against pdfTeX, plus parser fuzzers (TFM, Type 1, OpenType, PNG, JPEG, PDF) | Continuous | no panics, no new differences |
 | T7 | Latency benchmarks (§1.2) on 10/100/300/1,000-page documents, **including the convergence rate and the background pages re-run per edit** (§5.3), with newline and paragraph-split/join edits among the edit kinds; one harness under `tools/` (P4-FINISH), reused by the app benchmark | Merge queue, on a quiet named reference host (the shared NixOS PC cannot be the latency host; which host is an owner question, reviews/2026-10-02.md Q1) | targets met |
 
-**What CI runs today (review 2026-10-02).** Adopted 2026-09-30 (§13) and built by #1262:
-lockstep (T1) and the new engine's P-T1/P-T2 fixtures are **required in `merge_group`**
-(`engine parity`, on the NixOS PC or its GitHub-hosted twin), with
-`FLASHTEX_REQUIRE_TEXLIVE=1`; the T2 suites and the fixture-wide soundness test are scheduled
-nightly. Still missing:
-- **T0 is not required:** `trip`, `etrip` and `pdftex-regression` run on every PR but are not
-  among `CI required`'s needs (`ci.yml`, VERIFIED 2026-10-02), so they turn main red without
-  stopping the queue; #1336 adds them and is open;
-- **T2 has never completed on main.** The scheduled runs of 09-30 (T2 failed: its PC runner was
-  lost), 10-01 and 10-02 (T2 and soundness skipped: "need the NixOS runners") produced no T2
-  result. The GitHub-hosted fallback leg adopted on 2026-10-01 is not built;
-- **The nightly workflow has been red three nights running** (runs 36733056890, 36884620806,
-  37022169971). The common failure is the hosted `workspace, debug profile (ubuntu-latest)` job:
-  on 10-01 `ld` died with a bus error, and on 10-02 the runner ran out of disk ("No space left
-  on device"). It is a known issue owned by the Commander (mac-claude-a), with #1349 and the
-  nightly fix under review (#1319, 2026-10-02 17:14Z);
-- **T7** is not in CI (it needs a quiet host; owner question Q1). The one harness is
-  `tools/incr-bench` (#1269); #1275 was closed on 2026-10-02 as a second harness, and T7 is a
-  Commander lane;
-- **T4** is PR #1276 (open, conflicts with main). Its evidence so far is lane-run (§12 P5).
-  T6 (#1234) is on main with a nightly driver; T5 has no lane. The **P5 scoreboard** (#1299)
-  landed on 2026-10-01, but its scheduled run is skipped without the NixOS runners, so the
-  official board has never run on main.
+**What CI runs today (review 2026-10-05; VERIFIED, reviews/2026-10-05.md §3).**
+- **Required.** Lockstep (T1) and the new engine's P-T1/P-T2 fixtures run in `merge_group`
+  (`engine parity`, #1262). The PC's `flashtex-linux` runners are off, so the hosted twin runs
+  them. `trip`, `etrip` and `pdftex-regression` are in `CI required` (#1336, 2026-10-02). The
+  `main` ruleset (24166787: `CI required` plus the merge queue) is active. Since 10-02,
+  `merge_group` passed 159 of 185 runs (86 %), with a median wall of 23 min. 17 of the 23
+  failures were the `mac app` Swift tests.
+- **The nightly has failed 4 nights of 4** (10-01 to 10-04). The hosted debug workspace failed on
+  10-01 and 10-02 (fixed by #1379). The heavy Mac job (#1413) ran out of disk on 10-03. On 10-04
+  it ran, but its T2 harness failed every engine test in seconds (reference 1,286/1,385, engine
+  0/1,385: a setup failure), and the fixture-wide **soundness test failed** (conf-paper edit 0).
+  The PC legs, T2, soundness, memory and `corpus-t4`, are skipped while
+  `FLASHTEX_SELFHOSTED_LINUX=0` (since 2026-10-04 07:02Z). The R4 hosted fallback legs are not
+  built.
+- **The P5 board** (#1299, #1413, #1457) runs daily on mac-m1max-a-2, the only `flashtex-heavy`
+  runner. It is not gated, and its job succeeds even when the board is red. The latest run
+  (37203562594, 10-04, `e450d72e`) is not all green: T2 is 1,576/1,590 with 14 unexpected
+  failures (1,590/1,590 on 10-03), and T4 is missing. Every T3 row is 100 %.
+- **T4's nightly** (#1276) runs on the PC only, and `corpus-t4-mac.yml` has never run. Its
+  evidence is lane-run (§12 P5).
+- **T7** has a harness (`tools/incr-bench/t7.py`, #1391) but no CI job and no reference host
+  (Q1).
+- **T6** is on main with a nightly driver; #1385 (the T6 nightly) is open. **T5** has no lane.
+- **The zero-tolerance preview sweep** (§6.2) skips in CI.
+- **The no-TeX-Live gate** (`notex-gate.yml`) runs only when `bundle-publish.yml` calls it, or on
+  dispatch. Its last run passed 116/116 byte-identical (37225170319, 2026-10-04).
 The old engine's `parity fixtures` job now runs only when a change touches the old engine
 (#1298).
 
@@ -755,10 +810,13 @@ Rules:
    - **As of 2026-10-02** (§8): the new engine's lockstep and P-T1/P-T2 fixtures are
      required in `merge_group` (#1262); the old engine's fixtures run only for old-engine
      changes (#1298); light Linux jobs run on GitHub-hosted `ubuntu-latest`, the PC keeps the
-     build, the Linux workspace and engine parity (#1318). The NixOS PC's runners have been
-     off since 2026-10-01 04:58Z (owner's request; `FLASHTEX_SELFHOSTED_MAC=0`), so every job
-     runs hosted; #1349 (separate Mac and NixOS switches) is open. Adopted 2026-09-30 and
-     **still owed:** `trip`, `etrip` and `pdftex-regression` join `CI required` (#1336).
+     build, the Linux workspace and engine parity (#1318). #1349 split the switches:
+     `FLASHTEX_SELFHOSTED_MAC=1` (since 10-03; mac-m1max-a-1 for the queue, -2 `flashtex-heavy`
+     for the board and the nightly Mac job, #1413) and `FLASHTEX_SELFHOSTED_LINUX=0` (since
+     2026-10-04 07:02Z, "owner decision 10-04" relayed by mac-claude-a; the PC's three runners are
+     online and idle; #1476 caps them at 50 % CPU). `trip`, `etrip` and `pdftex-regression`
+     joined `CI required` (#1336, 2026-10-02). *Measured 10-02 → 10-05:* `merge_group` 159 of 185
+     runs passed (86 %), median 22.9 min, p90 33.3 min (reviews/2026-10-05.md §3).
    - **Measured 2026-09-30 06:00Z → 10-01 05:45Z** (reviews/2026-10-02.md §2, from the
      unmerged 10-01 review): `merge_group` 29 of 57 completed runs passed (51 %), success wall
      median 56 min, p90 92 min. The failures were infrastructure: lost or OOM-killed PC runners
@@ -770,8 +828,9 @@ Rules:
      every job on hosted runners after #1318 and the PC switch-off.
    - **A night without the PC is not a night without gates** (adopted 2026-10-01, §13): the
      nightly T2, soundness, memory and scoreboard jobs get a GitHub-hosted fallback leg, as
-     `engine parity` has, used when the PC's labels are unavailable. *Not built by 2026-10-02:*
-     the hosted nightly prints "skipped" for T2, soundness and the scoreboard.
+     `engine parity` has, used when the PC's labels are unavailable. *Status 2026-10-05:* not
+     built as hosted legs. #1413 moved them to a self-hosted Mac instead (one `flashtex-heavy`
+     runner, which ran out of disk twice); the nightly has failed 4 of 4 nights (§8).
 3. **Self-hosted runners on the NixOS PC and the team's Macs, never on the owner's laptop**
    (owner, 2026-09-30, decision 5), with the security rules below. A `push` runs the pushed
    ref's own `ci.yml`, so anyone who can push a branch can target a runner, and the runners
@@ -820,8 +879,7 @@ Rules:
    93 GB. **Adopted (§13):** the script removes the build outputs of a harness-locked
    worktree whose lane is finished (branch merged into `origin/main`, and no process holds
    the directory), and still never deletes sources or uncommitted work. Not yet changed in
-   the script (lane J4 `CLEAN-WORKTREES-LOCKED`, reassigned to flashtex-2a on 2026-10-01;
-   not landed by 2026-10-02).
+   the script (lane J4 `CLEAN-WORKTREES-LOCKED`; landed as #1384, 2026-10-02).
    - A lane removes its own worktree when it lands or is parked.
    - The Commander runs the script at every checkpoint.
    - Every machine runs it at least daily (a scheduled job on each Mac and Linux host).
@@ -861,12 +919,27 @@ Rules:
   `P5-APP-PARITY` audits the gaps (error UI through diag-v1 #1255, export and print through
   the ported backend, multi-file projects and `\include`, external-viewer SyncTeX, and the
   rows above) and ends with a per-document "new engine default" switch the scoreboard can
-  flip. *Status 2026-10-02:* moved from mac-claude-a to kabir-claude on 2026-10-01. The gap
-  audit is #1337, and the stack #1340 → #1344 (one engine at a time while v3 is on; ⌘B and
-  auto-compile drive the v3 preview; Export PDF and Print through the host's `export: true`;
-  bibliography and index under v3) is open and not landed. #1340 left the queue once for a real
-  test failure (`PreviewPaneAccessibilityTests`) and is MERGEABLE again; the owner of the stack
-  self-queues it under R2 (#1319, 2026-10-02 17:14Z).
+  flip.
+  - *Status 2026-10-05 (REPORTED; PR titles and
+    `docs/evidence/app-parity-2026-10-03/`):* the stack #1340 → #1344 landed on 2026-10-03.
+    Under v3, one engine runs at a time. ⌘B and auto-compile drive v3. Export and Print go
+    through `export: true`, and bibliography and index work.
+  - P5-APP-PARITY-2 then closed more rows:
+    - links (#1408), editor marks (#1409), navigation, fit and dark (#1410);
+    - VoiceOver page text and the Pages rotor (#1416);
+    - the stall bound (#1417) and fixes for missing files (#1430);
+    - the caret mark and page labels (#1434), and math hover (#1435);
+    - `flashtex-v3` build/check/watch, the D5 CLI successor (#1436), and polish (#1437);
+    - main-thread work per keystroke, 41 → 11 ms (#1432);
+    - the per-document engine choice with visible fallbacks (#1421, #1427);
+    - packages under v3 (#1444).
+  - #1337 is closed.
+  - **Still open:**
+    - a re-audit of the gap list against main (lane APP-PARITY-CLOSE);
+    - **A9 project fonts** (`[fonts]`): these fall back to the old engine. Deleting it removes
+      them unless the Unicode mode carries them or the owner retires them (owner question,
+      reviews/2026-10-05.md §6);
+    - the app latency rows (§1.2).
 - **Multi-window and multi-project (owner, 2026-09-30, decision 7):** after switch-over, in P6.
 - **New:** `tools/web2rust`, `crates/flashtex-engine`, the incremental system,
   `display-list-v3`, the socket protocol, `scripts/gate.sh`, and the CI tiers and
@@ -884,11 +957,12 @@ Rules:
 | Snapshot memory on very long documents | Retention budget; measured in P4 |
 | Page-count shifts defeat convergence | Viewport first (L4) is the answer; convergence is an optimisation |
 | Preview of Type 1 fonts: `CGFont` loads Type 1 today, undocumented, and Apple could remove it as it did from Core Text | Canary test on each macOS beta; engine-side CFF conversion as the fallback, with no protocol change (§6.2) |
-| The new engine's parity is only partly protected by CI: T0 not required, T2 never completed on main, the nightly red three nights running, the P5 board never run officially (§8) | `trip`/`etrip`/`pdftex-regression` into `CI required` (#1336); hosted fallback legs for the nightly jobs (§9.2); the nightly's disk failure fixed as a Commander lane |
-| Convergence false negatives make large hyperref documents re-typeset to the end after most edits | Semantic-state comparison and the convergence rate in T7 and the P4 gate (§5.3); since #1269 full-1000 converges 50/66 |
+| The new engine's parity is only partly protected by CI: T0 is required (#1336), but T2 has never completed cleanly on main, the nightly has failed 4 nights of 4, the board is not gated and lacks T4, and the zero-tolerance preview sweep skips in CI (§8, 2026-10-05) | Lanes T2-TRIAGE, NIGHTLY-GREEN, T4-ON-BOARD, BOARD-OFFICIAL and P3-PARITY-CI (reviews/2026-10-05.md §4); a second `flashtex-heavy` runner |
+| Convergence false negatives make large documents re-typeset to the end after many edits (newline, split and sentence edits never converge on plain-* documents, T7 2026-10-02) | Semantic-state comparison and the convergence rate in T7 and the P4 gate (§5.3); line shift and object relocation (lane CONVERGENCE-LINESHIFT) |
 | A hand-proved convergence rule is wrong, and the preview silently differs from a from-scratch run (two such rules in one day, 2026-09-30) | A soundness case per rule; sweeps A, C, D and budget nightly; hash-pinned § tests (§4.1, §5.3) |
 | Landing throughput: fixes wait for review and landing longer than they took to write (17–19 h for the three remaining arXiv failure classes on 2026-10-01; 51 % merge-group pass rate on infrastructure, 76 % the next day) | Written self-queue rule, a 6 h reviewer rule and base-is-main (§9.5); hosted fallbacks and the PC memory cap (§9.2) |
-| Capacity: a machine's quota runs out with its critical lanes unstarted (J1–J4, 2026-10-01); J1 still has no claim on 2026-10-02 | The Commander reassigns at the next checkpoint; feature lanes after critical lanes (owner question Q2, reviews/2026-10-02.md) |
+| The gates depend on one machine and two oracles: the board and the nightly Mac job share one `flashtex-heavy` runner (out of disk twice, 10-03); T4 runs only on the PC, whose runners are off; the Mac's oracle has LaTeX 2025-11-01 and the PC's 2026-06-01 | One named oracle host for the official board; a second heavy runner; T4 on the board's host (lanes BOARD-OFFICIAL, T4-ON-BOARD; owner question on the PC's runners) |
+| Capacity: critical lanes go unstaffed while feature lanes run (J1–J4, 2026-10-01; six feature lanes on 2026-10-04) | Owner rule 2026-10-05: critical path first (§13, Appendix A); the per-gate inventory in reviews/2026-10-05.md §4 |
 | A gate harness reports a false failure or a false pass on very large inputs (streamed P-T1 on a 798 MB log, 2501.08775v2; fixed by #1375) | Every harness verdict on a new class of input is reproduced by hand once; a 5 % re-check of every corpus bucket on a fresh oracle (as daniel-muse-lead ran, 110/110) |
 | Upstream churn (LaTeX twice a year, pdfTeX fixes) | Pinning plus a twice-yearly upgrade with regenerated oracles |
 | User TeX Live skew | Format built from their files (D12) |
@@ -911,63 +985,70 @@ Rules:
 | **P5 Switch-over** | New engine is the default per document (a per-document switch the scoreboard flips); then the old engine and everything in §10 are deleted (git keeps them) | **Scoreboard: new engine ≥ old on every tier; arXiv L1 ≥ 90%; retirement complete.** *Decision 3 (owner, 2026-09-30) replaces this with a stronger gate and no soak; its thresholds are **pending owner confirmation** (Q3, reviews/2026-10-02.md), so this text stands and the proposal is measured alongside it:* the scoreboard (#1299) all green on a complete nightly run, new ≥ old on every row; P-T2 ≥ 99 % and P-T1 ≥ 98 % of measured documents on the arXiv and T4 tiers; zero panics on T4; T2 with 0 unexpected failures; a no-TeX-Live (bundle) gate; the app feature-parity checklist (§10) closed; deletion at once |
 | **P6 Speed and polish** | L6 program; picture memoisation; contiguous tokens; multi-window and multi-project (decision 7) | Measured wins; P-T1 unchanged |
 
-**Gate status (review 2026-10-02; evidence in reviews/2026-10-02.md §3–§5).**
-- **P3: not met; one item left.** P-T2 on fixtures is met (83/83 on main `ab9893935`, VERIFIED
-  on mac-m1max-a). The preview-parity gate is **zero tolerance**, and it is met only at 2× and
-  4× on fixtures (220/220, #1247); 1× is 216/220 under a documented floor, and Type 3 pages pass
-  only with a loosened tolerance (§6.2). **J1 `P3-ZERO-TOLERANCE`** (exact f64 glyph positions
-  through the display list and `DL3Renderer`; 220/220 at 1×/2×/4× with tolerance 0, Type 3
-  included; P-T2 unchanged; then the scale sweep and smoothing-on test of §6.2) is the whole
-  remaining P3 gate. It was assigned on 2026-09-30, reassigned to flashtex-2a on 2026-10-01,
-  and **has no claim** on 2026-10-02 (#1319, 17:14Z). The PDF backend's font scope is complete
-  on main: PK/Type 3, TrueType, OpenType and subfonts (#1265), drawn by the v3 pane (#1266),
-  writet3 hardening (#1282, closed #1218).
-- **P4: not met.** Engine side meets the edit rows on the Mac (edited page p95 3.1–10.6 ms;
-  preamble edit 41–281 ms; #1269, REPORTED). Missing:
-  - **T7 does not exist** as a gate: no harness run in CI or on a named quiet host, no newline
-    or paragraph split/join edit kinds in `tools/incr-bench` (§5.3), and no ruling on the host
-    (Q1). It is a Commander lane from 2026-10-02 (reusing `tools/incr-bench`).
-  - **Edit rows, end to end:** app key → commit p95 20.2–30.6 ms with keep-warm off (§1.2);
-    keep-warm is in draft #1300.
-  - **Cold reopen:** stored-page reopen landed (#1332); in the running app 16–29 ms (met),
-    **at launch 101–365 ms** (not met, §5.1).
-  - **Preamble row:** measured engine side only (41–281 ms on the Mac, #1269; 264–461 ms on the
-    loaded PC on 09-30), never to the first visible page in the app.
-  - Convergence: newline edits never converge (line numbers are compared, §5.3).
-- **P5: not met; the gate itself awaits the owner (Q3).** The current gate's metric is far
-  exceeded: arXiv L1 **98.5 %** on 131 documents on 2026-09-30 (track 4), and **140/140** on
-  every level (P-T1, P-T2, L0–L4) on flashtex-2a's local board on main `33ae722c6` on
-  2026-10-01 (REPORTED, #1315 5939546299); v1 has L1 0.7 % there. **T4** (REPORTED, #1315
-  5946523870, 5948256796, 5949351809): on one engine build (`82752c2fb`), **1,892/1,892** and
-  **1,275/1,276** measured nightly-5k documents pass L0–L3, P-T1 and P-T2; the one report
-  (2501.08775v2) was a harness false fail, fixed by #1375, after which it passes; re-runs moved
-  116 documents from not-pass to pass and none the other way; on the 38 documents where pdfTeX
-  does not converge in 6 passes, the new engine does not either, with identical aux states.
-  So the proposed P-T1 ≥ 98 % / P-T2 ≥ 99 % thresholds are met on the evidence so far.
-  **Not met:** the official scoreboard has never run on main (#1299 landed; its scheduled run
-  needs the NixOS runners, off since 10-01); T4's nightly is #1276 (open, conflicts with
-  main); T2 has never completed on main (§8); no no-TeX-Live gate exists; the app-parity stack
-  #1340 → #1344 is open (§10); and the retirement plan #1236 waits for Commander review (stages
-  S1–S8 not started). **T4 decision 1 is ruled** (§13, 2026-10-02): a one-off v1 measurement
-  suffices. The board's T4 old column reads the committed baseline
-  `tools/parity/baselines/t4-v1-oneoff.json` (440 nightly-5k documents measured with both
-  engines: v1 L0 7, L1 5, L2 0, L3 0 and P-T2 0 of 440). Rates are compared, not counts:
-  while the file is PROVISIONAL, against the new engine's own numbers on the same 440 from
-  that measurement; once FINAL, against the new run restricted to the file's 440 IDs. The
-  file stays PROVISIONAL, so the board is never all-green, until its ID list (and hash) and
-  oracle provenance are recorded. This baseline is a frozen v1 measurement and may come from
-  a different oracle than the board's (another host or TeX Live snapshot). That is accepted
-  for v1 only, because its rates (≤ 1.6 %) are far below the new engine's. The new engine's
-  T4 itself is always measured against the board's own oracle. Each board takes T4 from its
-  own host and oracle (#1457): the PC board from `nightly.yml`'s `corpus-t4`, the Mac board
-  from `corpus-t4-mac.yml`. Issues #1220 and #1283 are still open although their documents
-  pass on main (#1352, #1356, #1363); #1289 looks superseded. Triage is a Commander lane.
-- **P6: in progress ahead of its phase, by measured wins.** #1309 (P6-THROUGHPUT, landed
-  2026-10-01): cold full compiles faster than C pdfTeX at 10–1,000 pages (REPORTED); #1302
-  (named constants, identical machine code); the first intrinsics (#1230) are on main.
-  Contiguous token lists, picture memoisation and the segment memo (§5.7) have not started.
-  The P6 gate (P-T1 unchanged) holds on every measurement above.
-
+**Gate status (review 2026-10-05; the inventory, with a lane per remaining item, is
+reviews/2026-10-05.md §4).** By §13 R13, a gate is **met** only when it holds on main, measured
+by CI or by a named reference run. Lane runs are REPORTED evidence.
+- **P3: met on lane evidence, not yet gated.**
+  - P-T2 on fixtures: **86/86**. P-T1 86/86 (VERIFIED, NixOS PC, TeX Live 2026, main
+    `9f29302fe`). The board's CI run of 10-04 agrees.
+  - Zero-tolerance preview parity: J1 landed as #1390.
+    - 660/660 renders at 0 px at 1×, 2× and 4×, Type 3 included; the 31-scale sweep
+      6,820/6,820 at 0 px (REPORTED, M5 Pro, base `7fdbe0850`; §6.2).
+    - 4.3 % of renders are PDF fallbacks. They are identical by construction, so they
+      satisfy the gate's text, and they are a speed item.
+  - To call P3 passed:
+    - P3-VERIFY: the sweep re-run on current main;
+    - P3-PARITY-CI: the sweep running in CI, not skipping (§13 R12).
+  - The PDF backend's font scope is complete on main.
+- **P4: not met.**
+  - T7 exists (#1391). Its only run is non-reference and stale: 8 of 56 rows passed on
+    `ab9893935` (§1.2).
+  - There is no reference host (Q1).
+  - Remaining:
+    - the edited-page host share ≤ 11 ms p95 on full-* and plain-1000 (LIVE-30MS, #1541–#1549);
+    - preamble ≤ 400 ms (PREAMBLE-FAST, #1551);
+    - newline, split and sentence convergence (§5.3: line shift and object relocation,
+      unstaffed);
+    - RSS within budget on T7 (#1493, #1505);
+    - app key → commit and the in-app preamble row (unstaffed);
+    - cold reopen at launch ≤ 100 ms (101–365 ms; the host side is #1537);
+    - error recovery (#1553, #1554).
+- **P5: not met.**
+  - The current gate's metric is exceeded on the rows the board has. The latest board
+    (37203562594, 10-04, `e450d72e`, CI on mac-m1max-a-2) has every T3 row at 100 % and new ≥
+    old: fixtures 86/86, arXiv 140/140 (L1 140/140 against v1's 0.7 %), templates 18/18,
+    packages 92/92, package-smoke 484/484, fonts 439/439.
+  - **Not met:**
+    - **T2 is 1,576/1,590 with 14 unexpected** (1,590/1,590 on 10-03; lane T2-TRIAGE);
+    - **T4 is missing** from the board. Its nightly (#1276) is PC-only and the PC's runners are
+      off. `corpus-t4-mac.yml` has never run. The lane evidence is 4,335/4,335 on one build
+      (`82752c2fb`, REPORTED, #1319 5961734949), and a recheck on `17f025ece` stopped at 19 of
+      40 shards;
+    - the board is not gated, and the nightly has failed 4 of 4 nights;
+    - retirement: S0 is done and S1 landed (#1400). S3's per-document engine choice landed
+      (#1421, #1427) without the flip. S2 and S4–S8 have not started. The plan #1236
+      (revision `4b0eb7db2`) has awaited the Commander's review since 10-03.
+  - Decision 3's proposal (thresholds still pending, Q3):
+    - P-T1 and P-T2 rates: met on arXiv and on lane-run T4;
+    - zero T4 panics: lane-run;
+    - T2 clean: **not met**;
+    - **the no-TeX-Live gate exists and passed**: `notex-gate.yml`, 116/116 byte-identical from
+      the bundle with TeX Live hidden (37225170319, 10-04). It is not scheduled;
+    - the app checklist: nearly closed (§10), with A9 an owner question.
+  - **T4 decision 1** (ruled 2026-10-02, §13):
+    - The board's T4 old column reads `tools/parity/baselines/t4-v1-oneoff.json`, now
+      **FINAL** (#1461: 440 IDs, hash and oracle recorded; v1 L0 7, L1 5, L2 0, L3 0, P-T2 0
+      of 440).
+    - Rates are compared against the new run restricted to those 440 IDs.
+    - The new engine's T4 is always measured against the board's own oracle, and each board
+      takes T4 from its own host (#1457).
+- **P6: in progress ahead of its phase, by measured wins. Under the owner's 2026-10-05 rule, P6
+  extras are parked** while any P3–P5 lane is unstaffed.
+  - Landed: #1309 and #1499 (−16 % instructions on *Infinite Descent*), #1302, the
+    intrinsics (#1230), P6-HYPEROPT (#1494–#1500; 0.887× pdfTeX's cycles on 13 arXiv papers,
+    REPORTED), and the MACRO-REPLAY design (#1509).
+  - MACRO-REPLAY's code (#1524–#1526) is parked.
+  - The P6 gate (P-T1 unchanged) holds on every measurement above.
 ---
 
 ## 13. Decision log
@@ -1055,6 +1136,11 @@ Rules:
 | 2026-10-04 | The no-TeX-Live bundle is hosted as GitHub Release assets on flash-tex/flashtex (byte ranges verified through the CDN redirect); licence notice in §3. It is packed from the official `texlive/texlive` image, scheme-full, pinned by digest (the parity job's scheme-medium image lacks 258 of the 464 packages the corpora read), updated by hand by the Commander about twice a year with the LaTeX releases (§7), and its layers are mirrored to GHCR under flash-tex because an untagged Docker Hub digest may not stay downloadable (§4.4; lane BUNDLE-PUBLISH) | Owner (2026-10-04), Commander (mac-claude-a) |
 | 2026-10-05 | Commander returns to kabir-claude (mac-m5pro-kabir); mac-claude-a becomes an engineer again | Owner (Kabir) |
 | 2026-10-05 | **Critical path first:** no lane works on a feature outside the §12 P3–P5 exit gates (XeTeX, Live Share, Typst, editor features, new platforms, P6 extras such as MACRO-REPLAY) while any lane that could possibly be needed for P3–P5 is unstaffed; feature lanes yield when a P3–P5 need appears; reviewed feature PRs may still land behind P3–P5 PRs. The XeTeX, Live Share and Typst directions recorded on 2026-10-04 stand as directions; their lanes are deferred under this rule (Appendix A, Appendix C) | Owner (Kabir) |
+| 2026-10-05 | R12: the zero-tolerance preview sweep (§6.2) runs in CI: `target/dl3-positions` is generated on a Mac leg with TeX Live, the 1×/2×/4× fixture sweep runs per merge group, and the 31-scale sweep nightly. A skipped sweep is not a pass (lane P3-PARITY-CI) | Commander (kabir-claude), from evidence (reviews/2026-10-05.md §4.1) |
+| 2026-10-05 | R13: a §12 exit gate is "met" only when it holds on main, measured by CI or by a named reference run. A lane run is REPORTED evidence, and the phase-status header says which kind each number is | Commander (kabir-claude), from evidence (reviews/2026-10-05.md §1) |
+| 2026-10-05 | R14: under the critical-path rule, bundle publishing and `notex-gate.yml` are P5 infrastructure, not a parked feature: decision 3's no-TeX-Live gate and app-parity row A17 depend on them. They get maintenance only, plus a scheduled gate run (lane NOTEX-SCHEDULED) | Commander (kabir-claude), from evidence (reviews/2026-10-05.md §5) |
+| 2026-10-05 | R15: `REWRITE.md`'s "owner decision (2026-10-04)" to stop regenerating `src/generated/` reverses D3 and §4.1, and §13 does not record it. Until owner Kabir confirms it, D3 and §4.1 stand, and lane IDIOMATIC-REWRITE is parked as a P6 extra (owner question, reviews/2026-10-05.md §6) | Commander (kabir-claude) |
+| 2026-10-05 | Phase status updated with evidence (§12). P3: met on lane evidence (#1390), not gated. P4: T7 exists but has no reference run. P5: T2 1,576/1,590 with 14 unexpected, T4 missing from the board, retirement S2–S8 not started. The no-TeX-Live gate passed 116/116 once. The T4 v1 baseline is FINAL (#1461) | Commander (kabir-claude), from evidence (reviews/2026-10-05.md) |
 
 ---
 
@@ -1454,6 +1540,11 @@ say `[3, 2]` (§6.1); #1335 renumbered the extension to 3.3 and main is green.
 (`docs/protocol/display-list-v3.md` §11) and the `flashtex-display-list` crate with the LaTeX
 pages unchanged, measures T0's exit gate (`docs/evidence/typst-t0-2026-10-04/`) and starts T1
 in the order of the table above, the positions checker first.
+*Update 2026-10-05:* T0's gate is measured (`docs/evidence/typst-t0-2026-10-04/`). For T1, the
+positions checker (0 mismatches over 80,556 glyphs) and the seeded-equals-standard check
+(216/216) are met; latency is **not met** (99 pages 42–62 ms p95 against 16; non-reference)
+(`typst-t1-2026-10-04`). Under the owner's critical-path rule (2026-10-05, §13), Typst T1+ is
+**parked**. #1522, #1528, #1529, #1531, #1532 and #1539 may land when reviewed, behind P3–P5 PRs.
 
 ### 15.11 Owner decisions (2026-09-30)
 
