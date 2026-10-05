@@ -463,6 +463,9 @@ impl Engine {
                     Ok(r) => r,
                     Err(mpsc::RecvTimeoutError::Timeout) => {
                         trim_due = false;
+                        if let Some(d) = self.doc.as_mut() {
+                            d.session.trim_caches();
+                        }
                         give_back_free_memory();
                         continue;
                     }
@@ -963,6 +966,17 @@ impl Engine {
             ));
             st.push(("send".to_string(), m(t.send_ns as f64 * 1e-6)));
             st.push(("cpu".to_string(), m((incr::thread_cpu_s() - t.cpu0) * 1e3)));
+            // the convergence tests' old chunks kept and rewound
+            // (`arena::OldCache`), since the host started
+            {
+                use std::sync::atomic::Ordering::Relaxed;
+                let c = |a: &std::sync::atomic::AtomicU64| Json::Int(a.load(Relaxed) as i64);
+                st.push(("old_kept".to_string(), c(&crate::arena::OLD_CACHE_HITS)));
+                st.push((
+                    "old_rewound".to_string(),
+                    c(&crate::arena::OLD_CACHE_MISSES),
+                ));
+            }
             // Instructions and cycles of the engine thread, in thousands:
             // the whole compile, to the first page, and (from the session)
             // the restore and to the edited page. Load does not move them.

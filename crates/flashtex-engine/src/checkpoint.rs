@@ -105,18 +105,40 @@ fn rewritten_since(rec: &ExtRecord) -> Option<String> {
 /// it -- an `export` of the same job in the same directory rewrites them
 /// all, also while the engine has them open -- or it is gone).
 fn changed_outside(rec: &ExtRecord, also: &[String]) -> Option<String> {
-    rec.files
-        .iter()
-        .filter_map(|f| match &f.stream {
+    let open = || {
+        rec.files.iter().filter_map(|f| match &f.stream {
             Stream::Out { path, len, .. } if *len > 0 => Some(path),
             _ => None,
         })
+    };
+    // a fatal run's PDF, set aside (`system::remove_output`), is back for it
+    system::revive_removed(open());
+    open()
         .chain(also.iter())
         .find_map(|p| system::outside_change(p))
 }
 
 /// Flushes every output stream (before a checkpoint records any).
 struct FlushFiles;
+
+/// The first output stream whose buffer holds output, on a file that is
+/// `system::no_flush`: a checkpoint now would write out what a run from
+/// scratch has not (issue #1550), so none is taken.
+struct NoFlush(Option<String>);
+
+impl FileVisit for NoFlush {
+    fn alpha(&mut self, f: &mut AlphaFile) {
+        if self.0.is_none() {
+            self.0 = f.pending_output().filter(|p| system::no_flush(p));
+        }
+    }
+    fn byte(&mut self, f: &mut ByteFile) {
+        if self.0.is_none() {
+            self.0 = f.pending_output().filter(|p| system::no_flush(p));
+        }
+    }
+    fn word(&mut self, _f: &mut WordFile) {}
+}
 
 impl FileVisit for FlushFiles {
     fn alpha(&mut self, f: &mut AlphaFile) {
@@ -679,6 +701,13 @@ impl Globals {
         // Every stream flushed before any is recorded: streams on one file
         // (LaTeX's `\tableofcontents` twice opens the `.toc` twice) then
         // record the file's length alike, not what each had flushed.
+        let mut nf = NoFlush(None);
+        self.visit_files(&mut nf);
+        if let Some(p) = nf.0 {
+            return Err(format!(
+                "cannot checkpoint: {p} holds output not written out, and is read while open"
+            ));
+        }
         self.visit_files(&mut FlushFiles);
         let mut v = SnapFiles {
             out: vec![],
@@ -710,6 +739,8 @@ impl Globals {
 
     /// Put the host state of `rec` back.
     pub fn restore_ext(&mut self, rec: &ExtRecord) -> Result<(), String> {
+        // (each stream is reopened as `rec` has it: `system::mark_ahead`)
+        system::clear_ahead();
         let mut v = RestoreFiles {
             snaps: &rec.files,
             i: 0,

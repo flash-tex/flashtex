@@ -12,7 +12,8 @@
 #   sound-budget soundness: 20 edits + reverts under a 4 MB undo-log budget (retention always on)
 #   sound-budget-d the same budget with 8 interleaved (preempted) edits of every kind
 #   sound-timed soundness: 10 edits + reverts per fixture with a timed checkpoint every 0.2 ms
-#   sound-vol  a temporary file written and read back (genvol.py): 20 edits + reverts, timed and default
+#   sound-vol  a temporary file written and read back (genvol.py): 20 edits + reverts, timed and default;
+#              then 12 interleaved (interrupted) edits of every kind (#1550)
 #   sound-lookup a later lookup whose answer changed (genlookup.py, #1502): 30 edits + reverts, files toggled;
 #              then 12 interleaved edits, half with a file toggled while the compile is stopped (#1514)
 #   span       display-list source spans after each edit against a from-scratch host (dlspan.py)
@@ -23,6 +24,12 @@
 #   gate       scripts/gate.sh pr
 # The checkout is this script's (on NixOS it needs PR #1232's rpath fix for libstdc++).
 # Raw output: $R. Every engine run has a time limit (incr_bench.py, soundness.py, timeout(1)).
+#
+# Every engine run here has the incremental engine's verify modes on (LIVE-30MS review: a
+# mutation of the convergence jump's adopted chunks gave matching outputs 6/6 with them off;
+# only FLASHTEX_VERIFY_JUMP caught it): the jump's comparison made ahead against the jump's own,
+# kept old chunks against their rewind, prepared restores after a reattach against the rewind.
+# Each aborts the host on a disagreement, so the sweep fails.
 set -u
 S=$(cd "$(dirname "$0")" && pwd)
 W=$(cd "$S/../.." && pwd)
@@ -39,6 +46,7 @@ export CARGO_BUILD_JOBS=${CARGO_BUILD_JOBS:-12}
 mkdir -p $R
 cd $W
 echo "engine $(git rev-parse --short HEAD) ($(git log -1 --format=%s | head -c 80)); $(uname -srm); start $(date -u +%FT%TZ) $(uptime)" >> $R/environment.txt
+export FLASHTEX_VERIFY_JUMP=1 FLASHTEX_VERIFY_OLDCACHE=1 FLASHTEX_VERIFY_PREPARED=1
 for g in ${@:-build parity lockstep trip etrip drift positions tests sound-a sound-budget sound-budget-d sound-timed sound-vol sound-lookup span sound-c sound-d sound-book gate}; do
   echo "== $g $(date -u +%T) $(uptime)" >> $R/environment.txt
   case $g in
@@ -112,7 +120,13 @@ for g in ${@:-build parity lockstep trip etrip drift positions tests sound-a sou
       PYTHONHASHSEED=0 timeout 36000 python3 $S/soundness.py gates -j $J --trials 20 --no-fixtures \
         --dir $B/sound-vol --out $R/soundness-vol.jsonl \
         --extra $B/src-vol-closed:vol-closed --extra $B/src-vol-open:vol-open >> $R/soundness-vol.txt 2>&1
-      echo "soundness vol exit $e1 $?" >> $R/soundness-vol.txt ;;
+      e2=$?
+      # interleaved (preempted) edits, as sweep D (#1550: an edit broke a `\closeout`, and the file,
+      # still open for output, was read back with the line a checkpoint had flushed)
+      PYTHONHASHSEED=0 timeout 36000 python3 $S/soundness.py gates -j $J --trials 12 --no-fixtures --interleave \
+        --kinds replace,insert,sentence,section,label,ref,unlabel --dir $B/sound-vol-d --out $R/soundness-vol-d.jsonl \
+        --extra $B/src-vol-closed:vol-closed --extra $B/src-vol-open:vol-open >> $R/soundness-vol.txt 2>&1
+      echo "soundness vol exit $e1 $e2 $?" >> $R/soundness-vol.txt ;;
     sound-lookup)
       # a later lookup whose answer changed (#1502): genlookup.py's document tests for five files at
       # five pages, and half the edits create or delete one of them first (put back before the revert)
