@@ -220,12 +220,25 @@ fn compile_and_check(
 /// compile should be equal to a from-scratch run on) and compare `dir`'s
 /// outputs with it.
 fn check_against(e: &Env, dir: &Path, reference: &Path, report: &str, what: &str) {
+    check_against_env(e, dir, reference, report, what, &[])
+}
+
+/// `check_against`, the scratch runs with `env` too.
+fn check_against_env(
+    e: &Env,
+    dir: &Path,
+    reference: &Path,
+    report: &str,
+    what: &str,
+    env: &[(&str, &str)],
+) {
     let mut seen = vec![];
     for _ in 0..5 {
         seen.push(dir_state(reference));
         let mut c = Command::new(e.fmt.join("pdftex"));
         c.args(ARGS).current_dir(reference);
         engine_env(&mut c, e);
+        c.envs(env.iter().copied());
         c.env("FLASHTEX_PREVIEW", "1");
         c.stdin(Stdio::null()).stdout(Stdio::null());
         c.status().unwrap();
@@ -2757,4 +2770,122 @@ fn a_preamble_edit_after_an_edit_far_away_restarts_before_s0() {
     let title = far.replacen("a title about", "a titled about", 1);
     let r = compile_and_check(&e, &mut h, &dir, &[("doc.tex", &title)], "then the title");
     assert_eq!(field(&r, "restart_preamble"), "true", "{r}");
+}
+
+/// Review of #1551 (#1578): a file the run writes and later `\input`s,
+/// changed by another program between compiles. A run from the start writes
+/// it again before reading it; no restart point after the write may read
+/// the other program's version (`consumed_nothing_changed`). In the
+/// preamble (a restart before S₀) and in the body (from S₀ on), with a
+/// timed checkpoint at almost every line; every compile equals scratch runs.
+#[test]
+fn a_file_the_run_writes_changed_by_another_program_is_written_again() {
+    let Some(e) = env() else {
+        common::no_texlive();
+        return;
+    };
+    let write = "\\newwrite\\w\n\\immediate\\openout\\w=gen.tex\n\
+                 \\immediate\\write\\w{\\string\\def\\string\\gen{from the document}}\n\
+                 \\immediate\\closeout\\w\n";
+    let paras: String = (0..8).map(|k| para(k, "rho")).collect();
+    for (i, place) in ["preamble", "body"].into_iter().enumerate() {
+        let doc = if place == "preamble" {
+            format!(
+                "\\documentclass{{article}}\n{write}\\usepackage{{amsmath}}\n\\usepackage{{amssymb}}\n\
+                 \\input{{gen.tex}}\n\\title{{T}}\n\\begin{{document}}\n{paras}\\gen\n\\end{{document}}\n"
+            )
+        } else {
+            format!(
+                "\\documentclass{{article}}\n{write}\\begin{{document}}\n{paras}\
+                 \\input{{gen.tex}}\\gen\n\\end{{document}}\n"
+            )
+        };
+        let dir = e.dir.join(format!("outside-write-{i}"));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut h = Host::start_env(&e, &dir, &[("FLASHTEX_TIMED_S", "0.000001")]);
+        for k in 0..4 {
+            let r = compile_and_check(&e, &mut h, &dir, &[("doc.tex", &doc)], "settle");
+            if r.contains("\"mode\":\"unchanged\"") || k == 3 {
+                break;
+            }
+        }
+        let what = format!("{place}: gen.tex changed by another program");
+        compile_and_check(
+            &e,
+            &mut h,
+            &dir,
+            &[("gen.tex", "\\def\\gen{from outside}\n")],
+            &what,
+        );
+        // and an edit after that, in the same session
+        let edited = doc.replacen("Paragraph 3 with", "Paragraph 3 now with", 1);
+        compile_and_check(&e, &mut h, &dir, &[("doc.tex", &edited)], "then an edit");
+    }
+}
+
+/// Review of #1551 (MED): a lookup in the preamble whose answer depends on
+/// a directory the journal does not track -- a `TEXMFHOME` subtree, a
+/// dangling link's target (#1562) -- is made again by a restart before S₀
+/// (`preamble_restart` runs every lookup before S₀ again), as the run from
+/// the format a preamble edit used to be made it. Every compile equals
+/// scratch runs with the same `TEXMFHOME`.
+#[test]
+fn a_preamble_edit_looks_the_preamble_s_files_up_again() {
+    let Some(e) = env() else {
+        common::no_texlive();
+        return;
+    };
+    let dir = e.dir.join("preamble-lookups");
+    let home = e.dir.join("preamble-lookups-home");
+    let ext = e.dir.join("preamble-lookups-ext");
+    for d in [&dir, &home, &ext] {
+        let _ = std::fs::remove_dir_all(d);
+    }
+    let sub = home.join("tex/latex/rv");
+    for d in [&dir, &sub, &ext] {
+        std::fs::create_dir_all(d).unwrap();
+    }
+    let target = ext.join("zzlinked.tex");
+    #[cfg(unix)]
+    std::os::unix::fs::symlink(&target, dir.join("zzlink.tex")).unwrap();
+    let home_s = home.to_string_lossy().into_owned();
+    let env: [(&str, &str); 1] = [("TEXMFHOME", &home_s)];
+    let doc = |title: &str| {
+        format!(
+            "\\documentclass{{article}}\n\\usepackage{{amsmath}}\n\n\
+             \\IfFileExists{{zzrvprobe.sty}}{{\\def\\p{{found}}}}{{\\def\\p{{missing}}}}\n\
+             \\IfFileExists{{zzlink.tex}}{{\\def\\q{{linked}}}}{{\\def\\q{{dangling}}}}\n\n\
+             \\title{{{title} \\p\\ \\q}}\n\\begin{{document}}\n\\maketitle\nText.\n\\end{{document}}\n"
+        )
+    };
+    let mut h = Host::start_env(&e, &dir, &env);
+    let mut check = |h: &mut Host, text: &str, what: &str| -> String {
+        std::fs::write(dir.join("doc.tex"), text).unwrap();
+        let reference = dir.with_extension("ref");
+        let _ = std::fs::remove_dir_all(&reference);
+        copy_dir(&dir, &reference);
+        // (`copy_dir` copies files only: the link too)
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(&target, reference.join("zzlink.tex")).unwrap();
+        let r = h.cmd("compile");
+        check_against_env(&e, &dir, &reference, &r, what, &env);
+        r
+    };
+    for _ in 0..3 {
+        check(&mut h, &doc("a title"), "settle");
+    }
+    std::fs::write(sub.join("zzrvprobe.sty"), "% probe\n").unwrap();
+    let r = check(
+        &mut h,
+        &doc("a titled"),
+        "a file in TEXMFHOME, then a title edit",
+    );
+    assert_eq!(field(&r, "restart_preamble"), "true", "{r}");
+    std::fs::write(&target, "% target\n").unwrap();
+    check(
+        &mut h,
+        &doc("a title"),
+        "a link's target, then a title edit",
+    );
 }

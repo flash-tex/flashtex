@@ -2752,7 +2752,8 @@ impl Session {
         };
         // A restart before S₀ (an edit in the preamble), with what changed
         let mut pre: Option<(CheckpointId, Vec<Edit>, Vec<String>)> = None;
-        if let Err(why) = s0.key.check(self.clock, &self.first_line) {
+        let s0_check = s0.key.check(self.clock, &self.first_line);
+        if let Err(why) = s0_check.and_then(|()| self.written_before_s0_changed_outside()) {
             match self.preamble_restart() {
                 Ok(p) => pre = Some(p),
                 Err(no) => {
@@ -3419,6 +3420,31 @@ impl Session {
         Ok((edits, changed, bad))
     }
 
+    /// S₀ holds only while the files the run wrote before it, and reads
+    /// (after it, or before it), are still the run's own: one another
+    /// program changed since (review of #1551, #1578: `\input` of a file the
+    /// preamble writes, `filecontents[overwrite]` edited in the editor) is
+    /// read in the other program's version by a run from S₀, where a run
+    /// from the start writes it again first. `Err` names it; the caller
+    /// restarts before the write (`preamble_restart`) or from the format.
+    fn written_before_s0_changed_outside(&mut self) -> Result<(), String> {
+        let (Some(j), Some(s0), Some(g)) =
+            (self.journal.as_ref(), self.s0.as_ref(), self.g.as_mut())
+        else {
+            return Ok(());
+        };
+        let n = g.record_of(s0.id)?.reads.2.min(j.outputs.len());
+        for o in &j.outputs[..n] {
+            let k = system::out_key(o);
+            if j.files.iter().any(|f| system::out_key(&f.path) == k) {
+                if let Some(why) = system::outside_change(o) {
+                    return Err(why);
+                }
+            }
+        }
+        Ok(())
+    }
+
     /// PREAMBLE-FAST: S₀'s key failed. If the run, its clock and its
     /// first line are the same and only the content of files the run read
     /// changed (an edit in the preamble), the newest retained checkpoint
@@ -3436,12 +3462,6 @@ impl Session {
         let s0 = self.s0.as_ref().ok_or("no S0")?;
         s0.key.check_run(self.clock, &self.first_line)?;
         let anchor = s0.id;
-        let dirs_same = !s0.key.dirs.is_empty()
-            && s0
-                .key
-                .dirs
-                .iter()
-                .all(|(d, s)| StatSig::of(d).as_ref() == Some(s));
         // every file the run read, those the key covers included
         let cover = std::mem::take(&mut self.key_cover);
         let r = self.changes();
@@ -3454,13 +3474,21 @@ impl Session {
         let j = self.journal.as_ref().ok_or("no journal")?;
         // The lookups before S₀ (`changes` looks at those after it)
         let s0_lookups = g.record_of(anchor)?.reads.1.min(j.lookups.len());
-        let bad_before = if dirs_same {
-            None
-        } else {
-            j.lookups[..s0_lookups]
-                .iter()
-                .position(|l| system::lookup_again(l) != l.found)
-        };
+        // Every one of them again, whatever the directories' signatures:
+        // those the journal keeps (the working directory, the user files'
+        // directories) do not cover every directory a lookup depends on (a
+        // `TEXMFHOME` subtree, a dangling link's target: #1562), and a run
+        // from the format, which a preamble edit made before this, looked
+        // everything up again (review of #1551). Each (name, format, flag)
+        // once.
+        let mut again: HashMap<(&str, crate::resolver::Format, Option<bool>), Option<String>> =
+            HashMap::new();
+        let bad_before = j.lookups[..s0_lookups].iter().position(|l| {
+            let now = again
+                .entry((l.name.as_str(), l.format, l.must_exist))
+                .or_insert_with(|| system::lookup_again(l));
+            *now != l.found
+        });
         let bad = bad_before.or(bad_after);
         let ids = g.checkpoints();
         let lo = ids
@@ -4360,6 +4388,20 @@ fn consumed_nothing_changed(
         let Some(&i) = first_read.get(p.as_str()) else {
             continue;
         };
+        // A file the run wrote before this checkpoint (and reads after it,
+        // or read before it) that another program has changed since: a run
+        // from here reads the other program's version, where a run from
+        // the start writes the file again first (review of #1551: `\input`
+        // of a file the preamble writes, `filecontents[overwrite]` edited in
+        // the editor). The run's own rewrites (beamer's `.vrb`) are not
+        // another program's.
+        let key = system::out_key(p);
+        let wrote_before = j.outputs[..r.reads.2.min(j.outputs.len())]
+            .iter()
+            .any(|o| system::out_key(o) == key);
+        if wrote_before && system::outside_change(p).is_some() {
+            return false;
+        }
         if i >= r.reads.0 {
             continue; // read after this checkpoint
         }
