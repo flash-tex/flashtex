@@ -14,7 +14,8 @@
 //!   -DFT_CONFIG_OPTIONS_H=<ftoption.h>` (plus `-DDARWIN_NO_CARBON` on macOS),
 //!   `-std=c99 -O2 -fvisibility=hidden`.
 //! * HarfBuzz: TeX Live compiles `src/harfbuzz.cc` (the amalgamation) and the
-//!   subsetter sources with `-DHAVE_CONFIG_H -DHB_NO_MT -DHAVE_FALLBACK=1`,
+//!   subsetter sources with `-DHAVE_CONFIG_H -DHB_NO_MT -DHAVE_FALLBACK=1`
+//!   (here without `HB_NO_MT`: see `harfbuzz::build`),
 //!   `-O2 -fno-rtti -fno-exceptions -fvisibility=hidden
 //!   -fvisibility-inlines-hidden`, against configure's `config.h`
 //!   (config/harfbuzz/config.h here) and `hb-version.h` (generated below from
@@ -26,7 +27,22 @@
 
 use std::path::{Path, PathBuf};
 
-const HB_VERSION: (&str, &str, &str) = ("12", "3", "2");
+/// HarfBuzz's version, from TeX Live's own `libs/harfbuzz/version.ac`
+/// (vendored as third_party/harfbuzz/version.ac and sha-pinned with the
+/// sources), as TeX Live's configure takes it.
+fn hb_version(third_party: &Path) -> (String, String, String) {
+    let ac = third_party.join("harfbuzz/version.ac");
+    println!("cargo:rerun-if-changed={}", ac.display());
+    let text = std::fs::read_to_string(&ac).unwrap();
+    let v = text
+        .lines()
+        .find_map(|l| l.strip_prefix("m4_define([harfbuzz_version], ["))
+        .and_then(|r| r.strip_suffix("])"))
+        .expect("version.ac defines harfbuzz_version");
+    let mut it = v.split('.').map(str::to_string);
+    let (a, b, c) = (it.next(), it.next(), it.next());
+    (a.unwrap(), b.unwrap(), c.unwrap())
+}
 
 fn main() {
     let manifest = PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").unwrap());
@@ -240,12 +256,12 @@ mod harfbuzz {
         std::fs::create_dir_all(conf).unwrap();
         let config = std::fs::read_to_string(manifest.join("config/harfbuzz/config.h")).unwrap();
         write_if_changed(&conf.join("config.h"), &config);
-        let (major, minor, micro) = HB_VERSION;
+        let (major, minor, micro) = hb_version(&manifest.join("../../../third_party"));
         let template = std::fs::read_to_string(src.join("src/hb-version.h.in")).unwrap();
         let version = template
-            .replace("@HB_VERSION_MAJOR@", major)
-            .replace("@HB_VERSION_MINOR@", minor)
-            .replace("@HB_VERSION_MICRO@", micro)
+            .replace("@HB_VERSION_MAJOR@", &major)
+            .replace("@HB_VERSION_MINOR@", &minor)
+            .replace("@HB_VERSION_MICRO@", &micro)
             .replace("@HB_VERSION@", &format!("{major}.{minor}.{micro}"));
         assert!(
             !version.contains("@HB_"),
@@ -259,13 +275,14 @@ mod harfbuzz {
         let mut b = cc::Build::new();
         // DEFS, DEFAULT_INCLUDES and AM_CPPFLAGS of libs/harfbuzz/Makefile:
         // -DHAVE_CONFIG_H -I<build dir> -DHB_NO_MT -DHAVE_FALLBACK=1
-        // -I<harfbuzz-src/src>. The compiler's default C++ dialect, as there
+        // -I<harfbuzz-src/src>, except HB_NO_MT: an engine may move to
+        // another thread (Globals is Send), so HarfBuzz keeps its locking and
+        // atomic lazy globals. Locking changes no shaping result. The compiler's default C++ dialect, as there
         // (configure: "g++ supports C++11 features by default... yes").
         b.cpp(true)
             .include(conf)
             .include(src.join("src"))
             .define("HAVE_CONFIG_H", None)
-            .define("HB_NO_MT", None)
             .define("HAVE_FALLBACK", "1")
             .flag_if_supported("-fno-rtti")
             .flag_if_supported("-fno-exceptions")

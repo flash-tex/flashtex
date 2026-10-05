@@ -24,7 +24,7 @@ use crate::state::{GlyphInfo, Object};
 use font_inst::{d2fix, fix2d, FontInst, FtLibrary, GlyphBBox};
 use layout::LayoutEngine;
 use std::ffi::CString;
-use std::rc::Rc;
+use std::sync::Arc;
 
 const FONT_FLAGS_COLORED: i32 = 0x01;
 const FONT_FLAGS_VERTICAL: i32 = 0x02;
@@ -213,7 +213,7 @@ pub fn needs_bidi(text: &[u16]) -> bool {
 
 impl Globals {
     /// The FreeType library of this engine, made on first use.
-    fn ft_library(&mut self) -> Rc<FtLibrary> {
+    fn ft_library(&mut self) -> Arc<FtLibrary> {
         self.host
             .ft_library
             .get_or_insert_with(FtLibrary::new)
@@ -221,7 +221,7 @@ impl Globals {
     }
 
     /// The layout engine of handle `h`.
-    pub(crate) fn layout_engine(&self, h: i32) -> Option<Rc<LayoutEngine>> {
+    pub(crate) fn layout_engine(&self, h: i32) -> Option<Arc<LayoutEngine>> {
         match self.host.handles.get(h)? {
             Object::Other(o) => o.clone().downcast::<LayoutEngine>().ok(),
             _ => None,
@@ -229,7 +229,7 @@ impl Globals {
     }
 
     /// The layout engine of font `f`.
-    fn font_engine(&self, f: i32) -> Option<Rc<LayoutEngine>> {
+    fn font_engine(&self, f: i32) -> Option<Arc<LayoutEngine>> {
         if f < 0 || self.font_area[f as usize] != otgr_font_flag {
             return None;
         }
@@ -365,11 +365,11 @@ impl Globals {
             full.extend_from_slice(f);
         }
         let mgr = self.host.font_mgr.get_or_insert_with(|| {
-            Rc::new(crate::fontmgr::FontMgr::new(std::sync::Arc::new(
-                crate::fontmgr::FontCatalog::system(None),
+            Arc::new(crate::fontmgr::FontMgr::new(std::sync::Arc::new(
+                crate::fontmgr::FontCatalog::system_cached(None),
             )))
         });
-        let located = Rc::make_mut(mgr).locate(&String::from_utf8_lossy(&full), scaled_size);
+        let located = Arc::make_mut(mgr).locate(&String::from_utf8_lossy(&full), scaled_size);
         let Some(located) = located else {
             return 0;
         };
@@ -422,7 +422,7 @@ impl Globals {
         let h = self
             .host
             .handles
-            .alloc(Object::Other(Rc::new(feature.to_vec())));
+            .alloc(Object::Other(Arc::new(feature.to_vec())));
         self.font_feature_warning(h, feature.len() as i32, 0, 0);
         self.host.handles.free(h);
     }
@@ -440,7 +440,7 @@ impl Globals {
     }
 
     /// `loadOTfont`: parse the feature string, make the layout engine.
-    fn load_ot_font(&mut self, font: FontInst, scaled_size: i32, feat: Option<&[u8]>) -> i32 {
+    fn load_ot_font(&mut self, mut font: FontInst, scaled_size: i32, feat: Option<&[u8]>) -> i32 {
         let req_engine = self.host.req_engine;
         let mut script: hb::hb_tag_t = 0;
         let mut language: Option<Vec<u8>> = None;
@@ -574,7 +574,7 @@ impl Globals {
             rgb_value = 0x0000_00FF;
         }
         if self.loaded_font_flags & FONT_FLAGS_VERTICAL != 0 {
-            font.vertical.set(true);
+            font.vertical = true;
         }
         let engine = LayoutEngine::new(
             font,
@@ -589,7 +589,7 @@ impl Globals {
             req_engine,
         );
         self.native_font_type_flag = otgr_font_flag;
-        self.host.handles.alloc(Object::Other(Rc::new(engine)))
+        self.host.handles.alloc(Object::Other(Arc::new(engine)))
     }
 
     /// `readCommonFeatures`: 1 for a recognised option, -1 for a bad one,
@@ -654,7 +654,7 @@ impl Globals {
         let h = self
             .host
             .handles
-            .alloc(Object::Other(Rc::new(buffer.clone())));
+            .alloc(Object::Other(Arc::new(buffer.clone())));
         self.font_mapping_warning(h, buffer.len() as i32, 1);
         self.host.handles.free(h);
         0
@@ -733,7 +733,7 @@ impl Globals {
         self.mem[(p + 4) as usize].qqqq_b1()
     }
 
-    fn glyph_info_of(&self, p: i32) -> Option<Rc<GlyphInfo>> {
+    fn glyph_info_of(&self, p: i32) -> Option<Arc<GlyphInfo>> {
         self.host
             .handles
             .glyph_info(self.mem[(p + 5) as usize].int())
@@ -748,7 +748,7 @@ impl Globals {
         self.host.handles.free(old);
         let count = gi.as_ref().map_or(0, |g| g.ids.len());
         let h = match gi {
-            Some(g) if count > 0 => self.host.handles.alloc(Object::GlyphInfo(Rc::new(g))),
+            Some(g) if count > 0 => self.host.handles.alloc(Object::GlyphInfo(Arc::new(g))),
             _ => 0,
         };
         self.mem[(p + 5) as usize].set_int(h);
@@ -1242,11 +1242,11 @@ impl Globals {
 
 /// `getCachedGlyphBBox`/`cacheGlyphBBox` around `getGlyphBounds`.
 fn cached_bbox(engine: &LayoutEngine, gid: u16) -> GlyphBBox {
-    if let Some(b) = engine.bbox_cache.borrow().get(&gid) {
+    if let Some(b) = engine.bbox_cache.lock().unwrap().get(&gid) {
         return *b;
     }
     let b = engine.glyph_bounds(gid as u32);
-    engine.bbox_cache.borrow_mut().insert(gid, b);
+    engine.bbox_cache.lock().unwrap().insert(gid, b);
     b
 }
 

@@ -175,6 +175,18 @@ impl CatalogFace {
         })
     }
 
+    /// A face whose names came from [`NameCache`]: its style data is read
+    /// on first use, as for [`CatalogFace::read`].
+    fn from_cache(path: PathBuf, index: u32, pattern: PatternNames, names: NameCollection) -> Self {
+        CatalogFace {
+            path,
+            index,
+            pattern,
+            names,
+            style: OnceLock::new(),
+        }
+    }
+
     /// A face with given names and style data, no file (for tests and for
     /// callers that index fonts themselves).
     pub fn synthetic(
@@ -297,6 +309,63 @@ impl FontCatalog {
         FontCatalog { faces }
     }
 
+    /// [`FontCatalog::from_files`] with the names of each face taken from
+    /// `cache` when its file has the size and modification time the cache
+    /// recorded, else read (and recorded). The result is the same faces with
+    /// the same names: the cache only saves reading them.
+    pub fn from_files_cached<I: IntoIterator<Item = (PathBuf, u32)>>(
+        files: I,
+        cache: &mut NameCache,
+    ) -> FontCatalog {
+        let mut seen = std::collections::HashSet::new();
+        let mut faces = Vec::new();
+        for (path, index) in files {
+            let is_link =
+                std::fs::symlink_metadata(&path).is_ok_and(|m| m.file_type().is_symlink());
+            let real = std::fs::canonicalize(&path).unwrap_or_else(|_| path.clone());
+            let path = if is_link { real.clone() } else { path };
+            if !seen.insert((real, index)) {
+                continue;
+            }
+            let stamp = file_stamp(&path);
+            if let Some((pattern, names)) = stamp.and_then(|st| cache.get(&path, index, st)) {
+                faces.push(CatalogFace::from_cache(path, index, pattern, names));
+                continue;
+            }
+            if let Some(face) = CatalogFace::read(&path, index) {
+                if let Some(st) = stamp {
+                    cache.put(&path, index, st, &face.pattern, &face.names);
+                }
+                faces.push(face);
+            }
+        }
+        FontCatalog { faces }
+    }
+
+    /// [`FontCatalog::system`] through the name cache at
+    /// [`NameCache::default_path`] (none if there is no cache directory):
+    /// a cold lookup by name otherwise reads every installed face's names
+    /// (about 1,400 faces, 0.3-1 s on macOS, measured 2026-10-04).
+    pub fn system_cached(project_root: Option<&Path>) -> FontCatalog {
+        let Some(cache_path) = NameCache::default_path() else {
+            return FontCatalog::system(project_root);
+        };
+        let mut cache = NameCache::load(&cache_path);
+        let mut dirs = flashtex_font_discovery::scan_dirs(project_root);
+        for d in os_extra_dirs() {
+            if !dirs.contains(&d) {
+                dirs.push(d);
+            }
+        }
+        let index = flashtex_font_discovery::FontIndex::scan(&dirs);
+        let catalog = FontCatalog::from_files_cached(
+            index.files().iter().map(|f| (f.path.clone(), f.face_index)),
+            &mut cache,
+        );
+        cache.save(&cache_path);
+        catalog
+    }
+
     /// The catalog of the fonts in `dirs`, in `font-discovery`'s scan order
     /// (directories in the order given, entries sorted, `.otf`, `.ttf` and
     /// `.ttc` only).
@@ -334,5 +403,238 @@ impl FontCatalog {
 
     pub fn is_empty(&self) -> bool {
         self.faces.is_empty()
+    }
+}
+
+/// A file's size and modification time (nanoseconds since the epoch), the
+/// key a cached face's names are valid for.
+fn file_stamp(path: &Path) -> Option<(u64, u128)> {
+    let m = std::fs::metadata(path).ok()?;
+    let t = m
+        .modified()
+        .ok()?
+        .duration_since(std::time::UNIX_EPOCH)
+        .ok()?;
+    Some((m.len(), t.as_nanos()))
+}
+
+/// The names read from each face, kept between runs in a JSON file: by
+/// (path, face index), with the file's size and modification time. A face
+/// whose file changed is read again. Only entries used by the last scan are
+/// kept, so the file does not grow with fonts that were removed.
+#[derive(Default)]
+pub struct NameCache {
+    old: std::collections::HashMap<(PathBuf, u32), Entry>,
+    new: Vec<((PathBuf, u32), Entry)>,
+    changed: bool,
+}
+
+#[derive(Clone)]
+struct Entry {
+    stamp: (u64, u128),
+    pattern: PatternNames,
+    names: NameCollection,
+}
+
+/// The format of the cache file; another version is ignored.
+const NAME_CACHE_VERSION: &str = "flashtex-xetex font names 1";
+
+impl NameCache {
+    /// `$FLASHTEX_CACHE_DIR`, else the user's cache directory
+    /// (`~/Library/Caches` on macOS, `$XDG_CACHE_HOME` or `~/.cache`
+    /// elsewhere, `%LOCALAPPDATA%` on Windows) under `flashtex/`.
+    pub fn default_path() -> Option<PathBuf> {
+        let var = |k: &str| {
+            std::env::var_os(k)
+                .filter(|v| !v.is_empty())
+                .map(PathBuf::from)
+        };
+        let dir = if let Some(d) = var("FLASHTEX_CACHE_DIR") {
+            d
+        } else if cfg!(target_os = "macos") {
+            var("HOME")?.join("Library/Caches/flashtex")
+        } else if cfg!(windows) {
+            var("LOCALAPPDATA")?.join("flashtex")
+        } else if let Some(x) = var("XDG_CACHE_HOME") {
+            x.join("flashtex")
+        } else {
+            var("HOME")?.join(".cache/flashtex")
+        };
+        Some(dir.join("xetex-font-names.json"))
+    }
+
+    /// The cache at `path`; empty if it is missing, unreadable or of
+    /// another version.
+    pub fn load(path: &Path) -> NameCache {
+        use flashtex_font_discovery::json::{parse, Value};
+        let mut c = NameCache::default();
+        let Ok(text) = std::fs::read_to_string(path) else {
+            return c;
+        };
+        let Ok(v) = parse(&text) else {
+            return c;
+        };
+        if v.get("version").and_then(Value::as_str) != Some(NAME_CACHE_VERSION) {
+            return c;
+        }
+        let strs = |v: Option<&Value>| -> Option<Vec<String>> {
+            v?.as_arr()?
+                .iter()
+                .map(|s| s.as_str().map(str::to_string))
+                .collect()
+        };
+        for e in v.get("faces").and_then(Value::as_arr).unwrap_or(&[]) {
+            let entry = (|| {
+                let path = PathBuf::from(e.get("path")?.as_str()?);
+                let index = e.get("index")?.as_u64()? as u32;
+                let size = e.get("size")?.as_u64()?;
+                let mtime: u128 = e.get("mtime")?.as_str()?.parse().ok()?;
+                let pattern = PatternNames {
+                    full_names: strs(e.get("pfull"))?,
+                    families: strs(e.get("pfam"))?,
+                    styles: strs(e.get("pstyle"))?,
+                };
+                let names = NameCollection {
+                    family_names: strs(e.get("fam"))?,
+                    style_names: strs(e.get("style"))?,
+                    full_names: strs(e.get("full"))?,
+                    ps_name: e.get("ps")?.as_str()?.to_string(),
+                };
+                Some((
+                    (path, index),
+                    Entry {
+                        stamp: (size, mtime),
+                        pattern,
+                        names,
+                    },
+                ))
+            })();
+            if let Some((k, v)) = entry {
+                c.old.insert(k, v);
+            }
+        }
+        c
+    }
+
+    fn get(
+        &mut self,
+        path: &Path,
+        index: u32,
+        stamp: (u64, u128),
+    ) -> Option<(PatternNames, NameCollection)> {
+        let key = (path.to_path_buf(), index);
+        let e = self.old.get(&key).filter(|e| e.stamp == stamp)?.clone();
+        let out = (e.pattern.clone(), e.names.clone());
+        self.new.push((key, e));
+        Some(out)
+    }
+
+    fn put(
+        &mut self,
+        path: &Path,
+        index: u32,
+        stamp: (u64, u128),
+        p: &PatternNames,
+        n: &NameCollection,
+    ) {
+        self.changed = true;
+        self.new.push((
+            (path.to_path_buf(), index),
+            Entry {
+                stamp,
+                pattern: p.clone(),
+                names: n.clone(),
+            },
+        ));
+    }
+
+    /// Write the entries the last scan used, if any face was read or one
+    /// went away (best effort, through a temporary file and a rename).
+    pub fn save(&self, path: &Path) {
+        use flashtex_font_discovery::json::{write, Value};
+        use std::collections::BTreeMap;
+        if !self.changed && self.new.len() == self.old.len() {
+            return;
+        }
+        let arr = |v: &[String]| Value::Arr(v.iter().cloned().map(Value::Str).collect());
+        let faces = self
+            .new
+            .iter()
+            .map(|((p, i), e)| {
+                let mut m = BTreeMap::new();
+                m.insert("path".into(), Value::Str(p.to_string_lossy().into_owned()));
+                m.insert("index".into(), Value::Num(f64::from(*i)));
+                m.insert("size".into(), Value::Num(e.stamp.0 as f64));
+                m.insert("mtime".into(), Value::Str(e.stamp.1.to_string()));
+                m.insert("pfull".into(), arr(&e.pattern.full_names));
+                m.insert("pfam".into(), arr(&e.pattern.families));
+                m.insert("pstyle".into(), arr(&e.pattern.styles));
+                m.insert("fam".into(), arr(&e.names.family_names));
+                m.insert("style".into(), arr(&e.names.style_names));
+                m.insert("full".into(), arr(&e.names.full_names));
+                m.insert("ps".into(), Value::Str(e.names.ps_name.clone()));
+                Value::Obj(m)
+            })
+            .collect();
+        let mut top = BTreeMap::new();
+        top.insert("version".into(), Value::Str(NAME_CACHE_VERSION.into()));
+        top.insert("faces".into(), Value::Arr(faces));
+        let mut out = String::new();
+        write(&Value::Obj(top), &mut out);
+        if let Some(dir) = path.parent() {
+            let _ = std::fs::create_dir_all(dir);
+        }
+        let tmp = path.with_extension(format!("json.{}", std::process::id()));
+        if std::fs::write(&tmp, out).is_ok() && std::fs::rename(&tmp, path).is_err() {
+            let _ = std::fs::remove_file(&tmp);
+        }
+    }
+}
+
+#[cfg(test)]
+mod cache_tests {
+    use super::*;
+
+    /// A catalog built through the cache has the faces and names of one
+    /// built from the files, both when the cache is empty and when it is
+    /// read back; a changed file is read again.
+    #[test]
+    fn name_cache_round_trip() {
+        let fonts: Vec<PathBuf> = [
+            "/System/Library/Fonts/Helvetica.ttc",
+            "/System/Library/Fonts/Supplemental/Arial.ttf",
+        ]
+        .iter()
+        .map(PathBuf::from)
+        .filter(|p| p.exists())
+        .collect();
+        if fonts.is_empty() {
+            eprintln!("skipped: no system fonts to read");
+            return;
+        }
+        let files: Vec<(PathBuf, u32)> = fonts.iter().map(|p| (p.clone(), 0)).collect();
+        let plain = FontCatalog::from_files(files.clone());
+        let dir = std::env::temp_dir().join(format!("xetex-name-cache-{}", std::process::id()));
+        let cache_path = dir.join("names.json");
+        let mut c = NameCache::load(&cache_path);
+        let first = FontCatalog::from_files_cached(files.clone(), &mut c);
+        c.save(&cache_path);
+        let mut c2 = NameCache::load(&cache_path);
+        assert_eq!(c2.old.len(), plain.len());
+        let second = FontCatalog::from_files_cached(files.clone(), &mut c2);
+        for cat in [&first, &second] {
+            assert_eq!(cat.len(), plain.len());
+            for (a, b) in cat.faces().iter().zip(plain.faces()) {
+                assert_eq!((&a.path, a.index), (&b.path, b.index));
+                assert_eq!(a.names, b.names);
+                assert_eq!(a.pattern, b.pattern);
+            }
+        }
+        // An entry whose stamp does not match is not used.
+        let key = (fonts[0].clone(), 0);
+        let mut c3 = NameCache::load(&cache_path);
+        let st = c3.old[&key].stamp;
+        assert!(c3.get(&fonts[0], 0, (st.0 + 1, st.1)).is_none());
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
