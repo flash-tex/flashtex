@@ -2644,10 +2644,11 @@ impl Globals {
         self.print_ln();
         self.interaction = self.cur_chr;
         if (self.interaction == batch_mode) {
-            self.kpse_set_make_tex_discard_errors(true);
+            self.kpse_make_tex_discard_errors = true;
         } else {
-            self.kpse_set_make_tex_discard_errors(false);
+            self.kpse_make_tex_discard_errors = false;
         }
+        self.kpse_set_make_tex_discard_errors(self.kpse_make_tex_discard_errors);
         // §75
         if (self.interaction == batch_mode) {
             self.selector = no_print;

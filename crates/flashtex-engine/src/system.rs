@@ -562,7 +562,7 @@ pub struct RunOptions {
     /// `-output-format`: `\pdfoutput` 0 (dvi) or 2 (pdf).
     pub output_format: Option<i32>,
     pub draftmode: bool,
-    pub output_comment: Option<String>,
+    pub output_comment: Option<Vec<u8>>,
     pub cnf_lines: Vec<String>,
     /// The arguments after the options (`argv[optind..]`).
     pub args: Vec<String>,
@@ -628,7 +628,7 @@ pub struct Run {
     pub recorder: bool,
     pub output_format: Option<i32>,
     pub draftmode: bool,
-    pub output_comment: Option<String>,
+    pub output_comment: Option<Vec<u8>>,
 }
 
 impl Default for Run {
@@ -923,7 +923,7 @@ pub fn configure(mut o: RunOptions) {
     let output_comment = o
         .output_comment
         .clone()
-        .or_else(|| texmf_var("output_comment"));
+        .or_else(|| texmf_var("output_comment").map(String::into_bytes));
 
     // topenin: the arguments, each followed by a space, trailing spaces,
     // CRs and LFs removed.
@@ -969,8 +969,17 @@ pub fn configure(mut o: RunOptions) {
     }
     // kpathsea's `kpse_make_tex_discard_errors` starts false in every run;
     // a resolver kept from an earlier run forgets that run's `\batchmode`.
+    set_mktex_discard(false);
+}
+
+/// Set kpathsea's `kpse_make_tex_discard_errors` (tex.ch [49.1265]): for
+/// the resolver there is now, if any, and for any kpathsea started later
+/// (a resolver made later, or one whose kpathsea starts at its first
+/// lookup). Making no resolver, it costs nothing where none is needed yet.
+pub fn set_mktex_discard(discard: bool) {
+    crate::resolver::set_kpathsea_make_tex_discard_errors(discard);
     if let Some(r) = RESOLVER.lock().unwrap().as_mut() {
-        r.set_make_tex_discard_errors(false);
+        r.set_make_tex_discard_errors(discard);
     }
 }
 
@@ -2152,11 +2161,15 @@ impl Globals {
             // `uexit(1)`, without TeX's error machinery.
             #[cfg(not(feature = "tex82"))]
             if self.last >= crate::generated::consts::buf_size - 1 {
-                eprintln!(
-                    "! Unable to read an entire line---bufsize={}.",
+                let text = format!(
+                    "Unable to read an entire line---bufsize={}.",
                     crate::generated::consts::buf_size
                 );
-                eprintln!("Please increase buf_size in texmf.cnf.");
+                let help = "Please increase buf_size in texmf.cnf.";
+                eprintln!("! {text}");
+                eprintln!("{help}");
+                // A resident host's compile reports it too (diag-v1).
+                self.dg_input_line_overflow(text.as_bytes(), help.as_bytes());
                 exit_process(self, 1);
             }
             if self.last >= self.max_buf_stack {
@@ -2380,12 +2393,14 @@ impl Globals {
         with_run(|r| {
             r.output_comment
                 .as_ref()
-                .map_or(0, |c| c.as_bytes()[i as usize] as i32)
+                .map_or(0, |c| c[i as usize] as i32)
         })
     }
-    /// tex.ch [49.1265]'s `kpse_make_tex_discard_errors := ...`.
+    /// tex.ch [49.1265]'s `kpse_make_tex_discard_errors := ...`, which the
+    /// engine also keeps in its own global of that name, so that a
+    /// checkpoint carries it (`fill_scalars` sets it again).
     pub fn kpse_set_make_tex_discard_errors(&mut self, discard: bool) {
-        with_resolver(|r| r.set_make_tex_discard_errors(discard));
+        set_mktex_discard(discard);
     }
     /// texmfmp.c's `pdfoutputoption`/`pdfoutputvalue` (`-output-format`)
     /// and `pdfdraftmodeoption`/`pdfdraftmodevalue` (`-draftmode`).
