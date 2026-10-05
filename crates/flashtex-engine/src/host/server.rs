@@ -809,6 +809,9 @@ pub(crate) struct Job {
     pub shell: Option<&'static str>,
     pub out_dir: PathBuf,
     pub jobname: String,
+    /// `-halt-on-error` (`"halt_on_error": true`): TeX stops at the first
+    /// error, as `pdflatex -halt-on-error` does (the app's strict mode).
+    pub halt: bool,
 }
 
 impl Job {
@@ -868,6 +871,11 @@ impl Job {
                 ))
             }
         };
+        let halt = match req.get("halt_on_error") {
+            None | Some(Json::Null) => false,
+            Some(Json::Bool(b)) => *b,
+            Some(_) => return Err("halt_on_error is a boolean".into()),
+        };
         Ok(Job {
             root,
             main,
@@ -875,6 +883,7 @@ impl Job {
             shell,
             out_dir,
             jobname,
+            halt,
         })
     }
 
@@ -900,6 +909,9 @@ impl Job {
             "-interaction=nonstopmode".to_string(),
             "-file-line-error".to_string(),
         ];
+        if self.halt {
+            argv.push("-halt-on-error".to_string());
+        }
         if !self.out_is_root() {
             argv.push(format!("-output-directory={}", self.out_dir.display()));
         }
@@ -1241,4 +1253,40 @@ fn input_line(msg: &str) -> Option<i64> {
         .next()?
         .parse()
         .ok()
+}
+
+#[cfg(test)]
+mod job_tests {
+    use super::*;
+
+    fn req(extra: &str) -> Json {
+        let dir = std::env::temp_dir().join(format!("flashtex-job-test-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("main.tex"), "x").unwrap();
+        let root = dir.display().to_string();
+        Json::parse(&format!(
+            r#"{{"id":1,"root":"{root}","main":"main.tex","output_dir":"{root}/out"{extra}}}"#
+        ))
+        .unwrap()
+    }
+
+    /// Strict mode (lane ERROR-RECOVERY): `halt_on_error` is pdflatex's
+    /// `-halt-on-error`, a different job; without it the command line is
+    /// nonstopmode's, unchanged.
+    #[test]
+    fn halt_on_error_is_pdflatexs_flag() {
+        let plain = Job::parse(&req(""), 1).unwrap();
+        assert!(!plain.halt);
+        assert!(!plain.argv().iter().any(|a| a == "-halt-on-error"));
+        let off = Job::parse(&req(r#","halt_on_error":false"#), 1).unwrap();
+        assert_eq!(off, plain);
+        let halt = Job::parse(&req(r#","halt_on_error":true"#), 1).unwrap();
+        assert!(halt.halt);
+        assert_ne!(halt, plain, "another job: the resident document is replaced");
+        assert_eq!(
+            &halt.argv()[..4],
+            &["-fmt=pdflatex", "-interaction=nonstopmode", "-file-line-error", "-halt-on-error"]
+        );
+        assert!(Job::parse(&req(r#","halt_on_error":"yes""#), 1).is_err());
+    }
 }
