@@ -2946,3 +2946,129 @@ fn an_absolute_namesake_is_not_the_edited_file() {
         "lines-namesake: a read in sub/doc.tex",
     );
 }
+
+/// `\immediate` writes of `\jobname-tmp.tex` (`Instance K says S.`), closed
+/// at once: a temporary file written and read back (genvol.py's
+/// vol-closed).
+fn write_tmp(k: usize, s: &str) -> String {
+    format!(
+        "\\immediate\\openout\\tmp=\\jobname-tmp.tex\n\
+         \\immediate\\write\\tmp{{Instance {k} says {s}.}}\n\\immediate\\closeout\\tmp\n\n"
+    )
+}
+
+fn paras(from: usize, to: usize, word: &str) -> String {
+    (from..to).map(|i| para(i, word)).collect()
+}
+
+/// #1348 (1): an edit adds a write of a temporary file that the document
+/// wrote and closed before the edit's restart point and reads later, and
+/// its compile is preempted after that write. The next compile abandons
+/// it and gets the complete run back (`reattach_pending`), but no tail of
+/// that run held the file (the run never opened it after the restart
+/// point), so the disk kept the abandoned run's instance, and the record
+/// of that open was dropped: a later restart between the document's own
+/// write and its `\input` read the abandoned instance.
+#[test]
+fn an_abandoned_run_that_rewrote_a_closed_file_leaves_it_as_the_old_run() {
+    let Some(e) = env() else {
+        common::no_texlive();
+        return;
+    };
+    let dir = e.dir.join("abandoned-rewrite");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let doc = |slot: &str, word: &str| {
+        format!(
+            "\\documentclass{{article}}\n\\newwrite\\tmp\n\\begin{{document}}\n{}{}\\clearpage\n\
+             {}\\clearpage\n{slot}{}\\clearpage\n{}\\clearpage\n\\input{{\\jobname-tmp.tex}}\n\n{}\
+             \\end{{document}}\n",
+            paras(0, 3, "alpha"),
+            write_tmp(0, "x"),
+            paras(3, 6, "alpha"),
+            paras(6, 9, "alpha"),
+            paras(9, 12, word),
+            paras(12, 15, "alpha"),
+        )
+    };
+    let base = doc("", "alpha");
+    let mut h = Host::start(&e, &dir);
+    for k in 0..4 {
+        let r = compile_and_check(&e, &mut h, &dir, &[("doc.tex", &base)], "settle");
+        if r.contains("\"mode\":\"unchanged\"") || k == 3 {
+            break;
+        }
+    }
+    // The new write, on the page after the restart point: preempted once
+    // that page is out.
+    std::fs::write(dir.join("doc.tex"), doc(&write_tmp(1, "yy"), "alpha")).unwrap();
+    let r = h.cmd("compile-interrupt 1 1");
+    assert!(r.contains("\"preempted\":true"), "not interrupted: {r}");
+    compile_and_check(&e, &mut h, &dir, &[("doc.tex", &base)], "the revert");
+    // A restart after the document's write and before its read.
+    compile_and_check(
+        &e,
+        &mut h,
+        &dir,
+        &[("doc.tex", &doc("", "gamma"))],
+        "an edit between the write and the read",
+    );
+    compile_and_check(&e, &mut h, &dir, &[("doc.tex", &base)], "its revert");
+}
+
+/// #1348 (2): a temporary file the preamble writes and the body reads, then
+/// writes again and reads, in a host that opened the document from a
+/// stored S₀ (a host restart). The opens before S₀ were not stored, so
+/// the new process did not know the preamble had written the file: a
+/// restart at S₀ or a checkpoint before the body's write (`rewritten_since`)
+/// read the body's instance.
+#[test]
+fn a_file_the_preamble_wrote_is_rewritten_after_a_host_restart() {
+    let Some(e) = env() else {
+        common::no_texlive();
+        return;
+    };
+    let dir = e.dir.join("preamble-rewrite");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let doc = |word: &str| {
+        format!(
+            "\\documentclass{{article}}\n\\newwrite\\tmp\n{}\\begin{{document}}\n{}\\clearpage\n\
+             {}\\clearpage\n\\input{{\\jobname-tmp.tex}}\n\n{}\\clearpage\n{}{}\
+             \\input{{\\jobname-tmp.tex}}\n\n\\end{{document}}\n",
+            write_tmp(0, "x"),
+            paras(0, 3, "alpha"),
+            paras(3, 6, word),
+            paras(6, 9, "alpha"),
+            write_tmp(1, "yy"),
+            paras(9, 12, "alpha"),
+        )
+    };
+    let base = doc("alpha");
+    let s0 = dir.with_extension("s0");
+    let _ = std::fs::remove_file(&s0);
+    {
+        let mut h = Host::start(&e, &dir);
+        for k in 0..4 {
+            let r = compile_and_check(&e, &mut h, &dir, &[("doc.tex", &base)], "settle");
+            if r.contains("\"mode\":\"unchanged\"") || k == 3 {
+                break;
+            }
+        }
+        let r = h.cmd(&format!("save {}", s0.display()));
+        assert!(r.contains("\"saved\""), "{r}");
+    }
+    // A new process, from the stored S₀.
+    let mut h = Host::start(&e, &dir);
+    let reference = dir.with_extension("ref");
+    copy_dir(&dir, &reference);
+    let r = h.cmd(&format!("open {}", s0.display()));
+    assert!(r.contains("\"mode\":\"open\""), "not opened from S0: {r}");
+    check_against(&e, &dir, &reference, &r, "the open");
+    for (word, what) in [
+        ("gamma", "an edit before the first read"),
+        ("alpha", "its revert"),
+    ] {
+        compile_and_check(&e, &mut h, &dir, &[("doc.tex", &doc(word))], what);
+    }
+}

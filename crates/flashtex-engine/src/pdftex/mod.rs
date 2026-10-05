@@ -191,7 +191,7 @@ impl CState {
     pub fn same_as(&self, o: &CState) -> bool {
         let (f, g) = (&self.fonts, &o.fonts);
         same_enc(&self.utils, &o.utils)
-            && same_shared(&self.vf, &o.vf)
+            && (shared::Shared::ptr_eq(&self.vf, &o.vf) || self.vf.same_as(&o.vf))
             && self.avl.same_as(&o.avl)
             && self.fonts_busy == o.fonts_busy
             && same_enc(&self.out, &o.out)

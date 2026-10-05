@@ -1315,19 +1315,41 @@ impl Globals {
             } else {
                 id.to_string().into_bytes()
             };
-            let zoom = self.m_lh(i + 6);
+            let kind = self.m_b0(i + 5);
+            // Only the words pdfTeX writes for this kind (`pdf_print_dests`'
+            // `/XYZ left top zoom`, `/FitH top`, `/FitV left`, `/FitR` the
+            // rectangle): `do_dest` sets just those unless a matrix is in
+            // use, and `\pdfdest` sets the zoom for `xyz` alone. The others
+            // hold whatever the node's memory held before (`get_node` does
+            // not clear it; `pdf_bottom` of an `xyz` dest is never set), so
+            // a restored run and a run from scratch differ there.
+            let (left, top, right_bottom, zoom) = match kind {
+                0 => (true, true, false, true),       // xyz
+                2 | 5 => (false, true, false, false), // fith, fitbh
+                3 | 6 => (true, false, false, false), // fitv, fitbv
+                7 => (true, true, true, false),       // fitr
+                _ => (false, false, false, false),    // fit, fitb
+            };
+            let word = |on: bool, at: i32, g: &mut Globals| {
+                if on {
+                    let v = g.m_int(at);
+                    scale(v, g)
+                } else {
+                    0
+                }
+            };
             let rect = [
-                scale(self.m_int(i + 1), self),
-                scale(self.m_int(i + 2), self),
-                scale(self.m_int(i + 3), self),
-                scale(self.m_int(i + 4), self),
+                word(left, i + 1, self),
+                word(top, i + 2, self),
+                word(right_bottom, i + 3, self),
+                word(right_bottom, i + 4, self),
             ];
             page.dests.push(Dest {
                 named,
                 name,
-                kind: self.m_b0(i + 5) as u8,
+                kind: kind as u8,
                 rect,
-                zoom,
+                zoom: if zoom { self.m_lh(i + 6) } else { 0 },
             });
             k = self.m_rh(k);
         }
@@ -2191,6 +2213,65 @@ mod tests {
         assert!(src.files.is_empty(), "the reader has the file already");
         assert!(peer.moved_spans().is_none());
         DL.with(|d| *d.borrow_mut() = None);
+    }
+
+    /// A destination carries only the words pdfTeX writes for its kind.
+    /// `get_node` does not clear a node, and `do_dest` leaves the rest of
+    /// a dest node as the memory held it (`pdf_bottom` of an `xyz` dest
+    /// is never set): a restored run and a run from scratch hold different
+    /// values there (the fixture soundness test, conf-paper edit 0).
+    #[test]
+    fn a_dest_carries_only_the_words_its_kind_uses() {
+        let mut g = Globals::new();
+        // The dest list's one entry (node 100) names object 1, whose dest
+        // node (200) is all stale words except what the kind sets.
+        let (k, i) = (100i32, 200i32);
+        // (the arrays a format load sizes)
+        if g.mem.len() < 300 {
+            g.mem.resize_len(300);
+        }
+        if g.obj_tab.len() < 2 {
+            g.obj_tab.resize_len(2);
+        }
+        let dest = |g: &mut Globals, kind: i32| -> Dest {
+            for w in 0..7 {
+                g.mem[(i + w) as usize].set_int(0x5a5a + w);
+                g.mem[(i + w) as usize].set_hh_lh(0x3c3c + w);
+            }
+            g.mem[(i + 1) as usize].set_int(1000); // pdf_left
+            g.mem[(i + 2) as usize].set_int(2000); // pdf_top
+            g.mem[(i + 5) as usize].set_hh_b0(kind); // pdf_dest_type
+            g.mem[(i + 5) as usize].set_hh_b1(0); // pdf_dest_named_id: num
+            g.mem[(i + 5) as usize].set_hh_rh(7); // pdf_dest_id
+            g.mem[k as usize].set_hh_lh(1);
+            g.mem[k as usize].set_hh_rh(0);
+            g.obj_tab[1].int4 = i; // obj_dest_ptr
+            g.pdf_dest_list = k;
+            g.pdf_link_list = 0;
+            let mut page = Page::new(StreamKind::Page, 0);
+            g.dl_links(&mut page, 1000);
+            assert_eq!(page.dests.len(), 1);
+            page.dests.pop().unwrap()
+        };
+        let d = dest(&mut g, 0);
+        assert_eq!((d.named, &d.name[..], d.kind), (false, &b"7"[..], 0));
+        assert_eq!((d.rect, d.zoom), ([1000, 2000, 0, 0], 0x3c3c + 6), "xyz");
+        assert_eq!(
+            (dest(&mut g, 1).rect, dest(&mut g, 1).zoom),
+            ([0; 4], 0),
+            "fit"
+        );
+        assert_eq!(dest(&mut g, 2).rect, [0, 2000, 0, 0], "fith");
+        assert_eq!(dest(&mut g, 3).rect, [1000, 0, 0, 0], "fitv");
+        assert_eq!(dest(&mut g, 4).rect, [0; 4], "fitb");
+        assert_eq!(dest(&mut g, 5).rect, [0, 2000, 0, 0], "fitbh");
+        assert_eq!(dest(&mut g, 6).rect, [1000, 0, 0, 0], "fitbv");
+        let r = dest(&mut g, 7);
+        assert_eq!(
+            (r.rect, r.zoom),
+            ([1000, 2000, 0x5a5a + 3, 0x5a5a + 4], 0),
+            "fitr"
+        );
     }
 
     #[test]

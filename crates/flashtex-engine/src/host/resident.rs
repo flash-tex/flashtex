@@ -746,6 +746,12 @@ impl Engine {
                 .set_preempt(Some(std::rc::Rc::new(move |_pass, _pages| {
                     c.queued.load(Ordering::SeqCst) > 0 || c.is_cancelled(id)
                 })));
+            // (a CANCEL stops even a run protected to its edited page)
+            let c = conn.clone();
+            doc.session
+                .set_cancel(Some(std::rc::Rc::new(move |_pass, _pages| {
+                    c.is_cancelled(id)
+                })));
         }
         // The `progress-v1` heartbeat (spec §6.8): at a pass's first
         // checkpoint, then at most every 250 ms, in every run (a later
@@ -858,6 +864,7 @@ impl Engine {
         drop(busy_run);
         let _busy = crate::busy::enter(crate::busy::Part::Done);
         doc.session.set_preempt(None);
+        doc.session.set_cancel(None);
         doc.session.set_progress(None);
         doc.session.set_defer(None);
         let deferred = matches!(&result, Ok(r) if r.deferred);
@@ -1405,7 +1412,11 @@ fn apply_changes(root: &Path, req: &Json, written: &mut Written) -> Result<(), S
     // it, else read.
     let current = |path: &Path, written: &mut Written| -> std::io::Result<Vec<u8>> {
         if let Some((s, d)) = written.remove(path) {
-            if sig(path) == Some(s) {
+            // (the host's own last write, still in place: exact fields,
+            // racy or not -- the file is the host's copy of the editor's
+            // text, which nothing else writes, and a racy test here would
+            // read the typed file back at every keystroke)
+            if sig(path).is_some_and(|n| n.same_fields(&s)) {
                 return Ok(Arc::try_unwrap(d).unwrap_or_else(|d| (*d).clone()));
             }
         }

@@ -435,6 +435,9 @@ struct Obs {
     /// checkpoint of a run that may stop there, with the pass and the
     /// pages this run shipped; whether it stopped the run.
     preempt: Option<Preempt>,
+    /// The client cancelled this compile (`Session::set_cancel`): stops the
+    /// run like newer work, protected or not (`protecting`).
+    cancel: Option<Preempt>,
     /// The client's heartbeat (`Session::set_progress`): told at every page
     /// and segment checkpoint of every run, cold or incremental.
     progress: Option<Progress>,
@@ -1976,9 +1979,16 @@ impl Observer for Obs {
 }
 
 impl Obs {
-    /// Newer work may not stop the run yet (`protect_edit`).
+    /// Newer work may not stop the run yet (`protect_edit`); a cancel
+    /// always may.
     fn protecting(&self) -> bool {
-        self.protect_edit && self.edited.is_none() && self.new_pages.len() < PROTECT_PAGES
+        self.protect_edit
+            && self.edited.is_none()
+            && self.new_pages.len() < PROTECT_PAGES
+            && !self
+                .cancel
+                .as_ref()
+                .is_some_and(|c| c(self.pass, self.new_pages.len()))
     }
 
     /// Newer work waits: stop the run at this checkpoint. A run from the
@@ -2082,6 +2092,8 @@ pub struct Session {
     /// Newer work is waiting: a running pass stops at its next page or
     /// segment checkpoint (`set_preempt`).
     preempt: Option<Preempt>,
+    /// `set_cancel`.
+    cancel: Option<Preempt>,
     /// The heartbeat every run reports to (`set_progress`).
     progress: Option<Progress>,
     /// The last incremental pass's restart point: the next edit, typed
@@ -2194,6 +2206,7 @@ impl Session {
             reloc: HashMap::new(),
             defpatch: HashMap::new(),
             preempt: None,
+            cancel: None,
             progress: None,
             last_restart: None,
             defer: None,
@@ -2285,6 +2298,10 @@ impl Session {
             key.check(key.clock, &first_line)
         })?;
         self.clock = clock;
+        // The files the preamble wrote and closed, as it left them: a later
+        // run (the last one before the host restarted) may have written them
+        // again since, and the body reads what S₀ stands for (#1348).
+        s0.key.rewrite_outputs()?;
         self.paused = None;
         self.pages.clear();
         self.ck_pages.clear();
@@ -2345,6 +2362,7 @@ impl Session {
         system::guard_every_output(true);
         let mut obs = self.observer(t0, 0, stop_at);
         obs.preempt = self.preempt.clone();
+        obs.cancel = self.cancel.clone();
         let g = self.g.as_mut().unwrap();
         g.restore_discard(id)?;
         system::take_ahead_read();
@@ -2396,8 +2414,17 @@ impl Session {
                 v.push((format!("heap_peak_{k}"), b));
             }
         }
+        if let Some((used, held)) = crate::memstat::malloc_in_use() {
+            v.push(("malloc_in_use".into(), used as i64));
+            v.push(("malloc_held".into(), held as i64));
+        }
         if let Some(g) = &self.g {
             v.extend(g.mem_stats().into_iter().map(|(k, x)| (k.to_string(), x)));
+            for (name, n) in g.arena.region_residency() {
+                if n >= 1 << 20 {
+                    v.push((format!("res_{name}"), n as i64));
+                }
+            }
             v.push(("old_cache".into(), g.arena.old_cache_bytes() as i64));
         }
         v.push(("pages".into(), self.pages.len() as i64));
@@ -2450,6 +2477,13 @@ impl Session {
     /// and the next `compile` keeps what it typeset (`settle_paused`).
     pub fn set_preempt(&mut self, p: Option<Preempt>) {
         self.preempt = p;
+    }
+
+    /// The client cancelled the compile (`c(pass, pages)` says so): a run
+    /// protected to its first changed page (`Obs::protect_edit`) stops all
+    /// the same. `set_preempt`'s callback must say so too.
+    pub fn set_cancel(&mut self, c: Option<Preempt>) {
+        self.cancel = c;
     }
 
     /// The heartbeat every later run reports to (`None`: none).
@@ -2788,13 +2822,16 @@ impl Session {
     /// Whether the files or lookups the last run read changed since it
     /// read them (`None`: nothing did), and if so whether through its key
     /// or a lookup (a file that appeared) rather than a file's content.
-    /// Changes nothing (`changes` does, for the pass that follows).
+    /// Changes nothing the next pass reads (`changes` does, for the pass
+    /// that follows), except S₀'s key's signatures, which a clean check
+    /// refreshes (`Key::check_refresh`: what it verified another way).
     fn dirty(&mut self) -> Option<bool> {
         if self.paused.is_some() {
             return None;
         }
-        let s0 = self.s0.as_ref()?;
-        if s0.key.check(self.clock, &self.first_line).is_err() {
+        let (clock, first_line) = (self.clock, self.first_line.clone());
+        let s0 = self.s0.as_mut()?;
+        if s0.key.check_refresh(clock, &first_line).is_err() {
             return Some(true);
         }
         let saved = self.journal.clone();
@@ -2890,12 +2927,14 @@ impl Session {
         if let Some(why) = self.force_cold.take() {
             return self.cold(t0, stop_at, Some(why));
         }
-        let Some(s0) = &self.s0 else {
+        let (clock, first_line) = (self.clock, self.first_line.clone());
+        let Some(s0) = self.s0.as_mut() else {
             return self.cold(t0, stop_at, None);
         };
-        if let Err(why) = s0.key.check(self.clock, &self.first_line) {
+        if let Err(why) = s0.key.check_refresh(clock, &first_line) {
             return self.cold(t0, stop_at, Some(why));
         }
+        let s0 = self.s0.as_ref().unwrap();
         let key_s = t0.elapsed().as_secs_f64();
         let s0_id = s0.id;
         let changes = self.changes();
@@ -3696,6 +3735,7 @@ impl Session {
             edited: None,
             patched: self.defpatch.keys().copied().collect(),
             preempt: None,
+            cancel: None,
             progress: self.progress.clone(),
             pass: self.pass,
             preempted: false,
@@ -3775,6 +3815,7 @@ impl Session {
         // run is then kept like a stopped incremental one (`settle_paused`),
         // S₀ and the checkpoints it took with it.
         obs.preempt = self.preempt.clone();
+        obs.cancel = self.cancel.clone();
         obs.preempt_after_s0 = true;
         g.layer().observer = Some(Box::new(obs));
         let status = g.run_to_end();
@@ -3962,6 +4003,7 @@ impl Session {
         obs.pdf_len_r = pdf_len(&rec);
         obs.keep_r = Some(r);
         obs.preempt = self.preempt.clone();
+        obs.cancel = self.cancel.clone();
         obs.first_incremental = self.pass == 1;
         obs.protect_edit = self.pass == 1 && self.starved;
         g.checkpoint_every_shipout(true);
@@ -4041,6 +4083,7 @@ impl Session {
             .and_then(|o| o.into_any().downcast::<Obs>().ok())
         {
             o.preempt = self.preempt.clone();
+            o.cancel = self.cancel.clone();
             match &again {
                 Ok((_, changed, _)) => {
                     o.changed_lookup_last = o.changed_lookup_last.max(self.changed_lookup_last);
@@ -4081,7 +4124,9 @@ impl Session {
         if obs.first_incremental && obs.edited.is_none() {
             // (decided once, at its first stop: a protected run ships its
             // changed page before newer work stops it)
-            self.starved = status == STOPPED && obs.preempted;
+            // A protected run is never followed by another: at most every
+            // other compile is held (`Obs::protect_edit`).
+            self.starved = status == STOPPED && obs.preempted && !obs.protect_edit;
         } else if obs.first_incremental {
             self.starved = false;
         }
@@ -4318,6 +4363,7 @@ impl Session {
             // (after an unfinished old run -- a preempted one kept by
             // `settle_paused` -- this is the rest of the document)
             o2.preempt = self.preempt.clone();
+            o2.cancel = self.cancel.clone();
             let g = self.g.as_mut().unwrap();
             g.layer().observer = Some(Box::new(o2));
             drop(busy_jump);
@@ -4414,7 +4460,7 @@ impl Session {
             return Ok(());
         };
         let rec = g.record_of(id)?;
-        match host::make_key(g, &rec, j, self.clock, &self.first_line) {
+        match host::make_key(g, id, &rec, j, self.clock, &self.first_line) {
             Ok(key) => {
                 self.s0 = Some(host::S0 { id, key });
                 self.ck_pages.insert(id, 0);

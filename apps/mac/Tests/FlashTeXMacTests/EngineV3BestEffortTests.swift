@@ -149,6 +149,13 @@ final class EngineV3BestEffortTests: XCTestCase {
         XCTAssertEqual(model.engineV3ResultStatus, .failed)
         let errors = model.displayedDiagnostics.filter { $0.severity == .error }.map(\.message)
         XCTAssertTrue(errors.contains { $0.hasPrefix("File ended while scanning use of \\textbf") }, "\(errors)")
+        // Gap 4: TeX names no place for it; the host puts it on the brace that never closes.
+        let ended = try XCTUnwrap(model.displayedDiagnostics.first { $0.code == "tex/file-ended-while-scanning" })
+        let at = try XCTUnwrap(ended.source, "placed (host diag.rs `locate_runaways`)")
+        let brace = bad.utf8.distance(from: bad.startIndex, to: bad.range(of: "\\textbf{bold")!.lowerBound) + "\\textbf".utf8.count
+        XCTAssertEqual(at.startByte, brace)
+        XCTAssertEqual(bad.utf8Slice(at.startByte, at.endByte), "{")
+        XCTAssertTrue(ended.notes?.first?.hasPrefix("The argument of \\textbf opens with {") == true, "\(ended.notes ?? [])")
         // The hosted pane draws all four: page 1 current, 2–4 dimmed as stale.
         window.layoutIfNeeded()
         pages.update(revision: s.layoutRevision, zoom: 0.5)
@@ -204,12 +211,39 @@ final class EngineV3BestEffortTests: XCTestCase {
         model.strictTeXErrors = true // recompiles; the defaults are this test process's suite
         defer { model.strictTeXErrors = false }
         XCTAssertEqual(s.errorMode, .strict)
+        XCTAssertTrue(s.hostHonoursHaltOnError, "this host lists `halt-on-error` in HELLO")
+        XCTAssertFalse(s.strictModeIgnored)
         try await waitUntil("the strict compile") { s.doneCount > n && !s.compiling && s.lastDone?["status"]?.string != "cancelled" }
         XCTAssertTrue(s.compileFatal, s.statusNote)
         XCTAssertEqual(model.displayedDiagnostics.first { $0.code == "tex/undefined-control-sequence" }?.severity, .error)
         XCTAssertTrue(s.firstError?.contains("Undefined control sequence") == true, s.firstError ?? "nil")
         XCTAssertEqual(s.pageCount, 4)
         XCTAssertEqual(s.stale, [1, 2, 3])
+    }
+
+    /// A DONE without `pages` says nothing about them: stale pages stay
+    /// stale (it used to clear every mark, making kept pages look current).
+    func testADoneWithoutPagesKeepsTheStaleMarks() {
+        let s = EngineV3Session()
+        s.handle(.started(.object(["keep": .bool(true)])))
+        s.handle(.pages(.object(["count": .int(3), "stale": .array([.array([.int(1), .int(2)])])])))
+        XCTAssertEqual(s.pageCount, 3)
+        XCTAssertEqual(s.stale, [1, 2])
+        s.handle(.done(.object(["status": .string("error")]), compileID: 1))
+        XCTAssertEqual(s.stale, [1, 2], "no `pages`: unknown, not none")
+        XCTAssertEqual(s.pageCount, 3)
+        s.handle(.done(.object(["status": .string("ok"), "pages": .int(3)]), compileID: 2))
+        XCTAssertEqual(s.stale, [], "a DONE with its count: every page it names is current")
+    }
+
+    /// Strict mode with a host that does not list `halt-on-error`: errors
+    /// are errors, TeX goes on, and Settings says so.
+    func testStrictModeKnowsWhenTheHostIgnoresIt() {
+        let s = EngineV3Session()
+        XCTAssertFalse(s.strictModeIgnored, "no host: nothing to say")
+        s.errorMode = .strict
+        XCTAssertFalse(s.strictModeIgnored, "not connected yet")
+        XCTAssertTrue(s.hostHonoursHaltOnError, "assumed until a HELLO says otherwise")
     }
 
     /// The request carries `halt_on_error` only in strict mode (protocol 3.x, `Job::halt`).

@@ -84,6 +84,10 @@ fn fmt_dir() -> PathBuf {
 }
 
 fn start_host(name: &str) -> Host {
+    start_host_env(name, &[])
+}
+
+fn start_host_env(name: &str, env: &[(&str, &str)]) -> Host {
     // Short: a Unix socket path must fit in sockaddr_un (104 bytes on macOS).
     static N: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
     let n = N.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
@@ -95,6 +99,7 @@ fn start_host(name: &str) -> Host {
         .env("SOURCE_DATE_EPOCH", "0")
         .env("FORCE_SOURCE_DATE", "1")
         .env_remove("FLASHTEX_S0_CACHE")
+        .envs(env.iter().copied())
         .stdout(Stdio::piped())
         .spawn()
         .unwrap();
@@ -1436,7 +1441,7 @@ fn a_superseded_compile_still_sends_its_edited_page() {
     let (w, _) = middle_word(lines[line]).expect("a word");
     let offset: usize = lines[..line].iter().map(|l| l.len() + 1).sum::<usize>() + w;
     let mut sent_superseded = 0;
-    for round in 0..3u64 {
+    for round in 0..5u64 {
         // three keystrokes, each sent as soon as the one before has started
         let ids: Vec<i64> = (1..=3).map(|n| id + n).collect();
         id += 3;
@@ -1526,8 +1531,153 @@ fn a_superseded_compile_still_sends_its_edited_page() {
             &format!("superseded round {round}"),
         );
     }
-    // (whether a round starves its first compile depends on timing)
-    eprintln!("{sent_superseded} of 3 rounds starved a compile and protected the next");
+    // The second keystroke is sent as soon as the first has started: the
+    // first is stopped at its first checkpoint, long before its page, in
+    // practice every round; one round at least, or the test proved nothing.
+    eprintln!("{sent_superseded} of 5 rounds starved a compile and protected the next");
+    assert!(
+        sent_superseded >= 1,
+        "no round starved a compile: the protection was not exercised"
+    );
+    let _ = c.bye();
+    let _ = std::fs::remove_dir_all(&base);
+}
+
+/// Racy signatures (git's racy-clean rule; review of #1549): a source
+/// changed to the same length within the modification-time tick in which
+/// the run took its signature keeps the same signature. Simulated here on
+/// any file system with a one-day tick (`FLASHTEX_RACY_MS`): the edit puts
+/// the file's modification time back, as a coarse clock would leave it;
+/// the host must still see the change (main said `unchanged`). The tick
+/// must outlast the test: every signature the host takes meanwhile (a
+/// content check keeps a fresh one) has to fall within it, as on a real
+/// coarse clock, where the edit's own time is the tick it happens in. A
+/// tick shorter than a slow (debug, loaded) run let a signature taken after
+/// it hide the edit: a test artefact, not a racy case.
+#[test]
+fn a_same_size_edit_within_the_mtime_tick_is_seen() {
+    if find_texlive_bin().is_none() {
+        common::no_texlive();
+        return;
+    }
+    let base = common::fresh_dir("flashtex-host-racy");
+    let _ = std::fs::remove_dir_all(&base);
+    std::fs::create_dir_all(&base).unwrap();
+    let (proj, out) = (base.join("proj"), base.join("out"));
+    std::fs::create_dir_all(&proj).unwrap();
+    std::fs::create_dir_all(&out).unwrap();
+    let main = "main.tex";
+    let text = article(3);
+    std::fs::write(proj.join(main), &text).unwrap();
+    let tick = std::time::SystemTime::now();
+    let set_mtime = |t: std::time::SystemTime| {
+        std::fs::File::options()
+            .write(true)
+            .open(proj.join(main))
+            .unwrap()
+            .set_modified(t)
+            .unwrap()
+    };
+    set_mtime(tick);
+    let host = start_host_env("r", &[("FLASHTEX_RACY_MS", "86400000")]);
+    let scratch = start_host("rs");
+    let mut c = Client::connect(&host.1).unwrap();
+    let mut view = View::default();
+    let mut id = 0;
+    for _ in 0..4 {
+        id += 1;
+        let o = compile(&mut c, &mut view, &req(id, &proj, &out, main));
+        if o.done.str_field("mode") == Some("unchanged") {
+            break;
+        }
+    }
+    // the same length: one letter of a prose word replaced, in the body
+    let at = text
+        .rfind(" lorem ")
+        .or_else(|| text.rfind(" the "))
+        .expect("a word")
+        + 1;
+    let mut b = text.into_bytes();
+    b[at] = if b[at] == b'q' { b'z' } else { b'q' };
+    std::fs::write(proj.join(main), &b).unwrap();
+    set_mtime(tick);
+    id += 1;
+    let o = compile(&mut c, &mut view, &req(id, &proj, &out, main));
+    assert_ne!(
+        o.done.str_field("mode"),
+        Some("unchanged"),
+        "the edit was not seen: {}",
+        o.done
+    );
+    let (p2, o2) = snapshot(&base, &proj, &out, "r");
+    compare_with_scratch(&scratch.1, &view, &proj, &out, &p2, &o2, main, "racy edit");
+    let _ = c.bye();
+    let _ = std::fs::remove_dir_all(&base);
+}
+
+/// An absolute name the run looked for (review of #1549, (a)): its own
+/// directory decides the answer, not the working directory, both before
+/// S₀ (S₀'s key) and after it (the journal). A file appearing there is
+/// seen (main: `unchanged`, the working directory being as it was).
+#[test]
+fn a_file_appearing_at_an_absolute_name_is_seen() {
+    if find_texlive_bin().is_none() {
+        common::no_texlive();
+        return;
+    }
+    let base = common::fresh_dir("flashtex-host-absname");
+    let _ = std::fs::remove_dir_all(&base);
+    std::fs::create_dir_all(&base).unwrap();
+    let (proj, out, ext) = (base.join("proj"), base.join("out"), base.join("ext"));
+    for d in [&proj, &out, &ext] {
+        std::fs::create_dir_all(d).unwrap();
+    }
+    let main = "main.tex";
+    let pre = ext.join("pre.tex");
+    let body = ext.join("body.tex");
+    let doc = format!(
+        "\\documentclass{{article}}\n\\IfFileExists{{{}}}{{\\def\\pre{{yes}}}}{{\\def\\pre{{no}}}}\n\\begin{{document}}\nPreamble: \\pre.\n\n\\IfFileExists{{{}}}{{Body: yes.}}{{Body: no.}}\n\\end{{document}}\n",
+        pre.display(),
+        body.display()
+    );
+    std::fs::write(proj.join(main), doc).unwrap();
+    let host = start_host("a");
+    let scratch = start_host("as");
+    let mut c = Client::connect(&host.1).unwrap();
+    let mut view = View::default();
+    let mut id = 0;
+    for _ in 0..4 {
+        id += 1;
+        let o = compile(&mut c, &mut view, &req(id, &proj, &out, main));
+        if o.done.str_field("mode") == Some("unchanged") {
+            break;
+        }
+    }
+    // the body's file appears (the journal's lookup), then the preamble's
+    // (S₀'s key)
+    for (k, f) in [&body, &pre].into_iter().enumerate() {
+        std::fs::write(f, "% exists\n").unwrap();
+        id += 1;
+        let o = compile(&mut c, &mut view, &req(id, &proj, &out, main));
+        assert_ne!(
+            o.done.str_field("mode"),
+            Some("unchanged"),
+            "{}: not seen: {}",
+            f.display(),
+            o.done
+        );
+        let (p2, o2) = snapshot(&base, &proj, &out, &format!("a{k}"));
+        compare_with_scratch(
+            &scratch.1,
+            &view,
+            &proj,
+            &out,
+            &p2,
+            &o2,
+            main,
+            &format!("{} appeared", f.display()),
+        );
+    }
     let _ = c.bye();
     let _ = std::fs::remove_dir_all(&base);
 }
