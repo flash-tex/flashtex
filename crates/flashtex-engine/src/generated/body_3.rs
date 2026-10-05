@@ -1621,6 +1621,9 @@ impl Globals {
     pub fn pass_text(&mut self) {
         let mut l: i32 = 0; // §520
         let mut save_scanner_status: small_number = 0; // §520
+        let mut t: halfword = 0; // §520
+        let mut q: halfword = 0; // §520
+        let mut c: i32 = 0; // §520
         'l_done_f: {
             save_scanner_status = self.scanner_status;
             self.scanner_status = skipping;
@@ -1628,20 +1631,70 @@ impl Globals {
             self.skip_line = self.line;
             while true {
                 {
-                    self.get_next();
-                    if (self.cur_cmd == fi_or_else) {
-                        {
-                            if (l == 0i32) {
-                                break 'l_done_f;
-                            }
-                            if (self.cur_chr == fi_code) {
-                                l = (l).wrapping_sub(1i32);
+                    'l_continue_b: loop {
+                        if (self.cur_input.state_field == token_list) {
+                            if (self.cur_input.loc_field != null) {
+                                if (!self.intr_rec_on) {
+                                    {
+                                        t = self.mem[crate::ix::U((self.cur_input.loc_field) as usize)].hh().lh();
+                                        if (t >= cs_token_flag) {
+                                            {
+                                                q = (t).wrapping_sub(4095i32);
+                                                c = self.eqtb[crate::ix::U(((q) - 1) as usize)].hh().b0();
+                                                if ((c < outer_call) && (((c > car_ret) || (c < tab_mark)) || (self.align_state != 0i32))) {
+                                                    {
+                                                        if ((c != fi_or_else) && (c != if_test)) {
+                                                            {
+                                                                self.cur_input.loc_field = self.mem[crate::ix::U((self.cur_input.loc_field) as usize)].hh().rh();
+                                                                if self.rs_on {
+                                                                    if (!self.rs_seen[crate::ix::U((q) as usize)]) {
+                                                                        self.flashtex_cs_read(q);
+                                                                    }
+                                                                }
+                                                                continue 'l_continue_b;
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        } else {
+                                            {
+                                                c = (t / 256i32);
+                                                if ((c != out_param) && ((c != tab_mark) || (self.align_state != 0i32))) {
+                                                    {
+                                                        self.cur_input.loc_field = self.mem[crate::ix::U((self.cur_input.loc_field) as usize)].hh().rh();
+                                                        if (c == left_brace) {
+                                                            self.align_state = (self.align_state).wrapping_add(1i32);
+                                                        } else {
+                                                            if (c == right_brace) {
+                                                                self.align_state = (self.align_state).wrapping_sub(1i32);
+                                                            }
+                                                        }
+                                                        continue 'l_continue_b;
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
                             }
                         }
-                    } else {
-                        if (self.cur_cmd == if_test) {
-                            l = (l).wrapping_add(1i32);
+                        self.get_next();
+                        if (self.cur_cmd == fi_or_else) {
+                            {
+                                if (l == 0i32) {
+                                    break 'l_done_f;
+                                }
+                                if (self.cur_chr == fi_code) {
+                                    l = (l).wrapping_sub(1i32);
+                                }
+                            }
+                        } else {
+                            if (self.cur_cmd == if_test) {
+                                l = (l).wrapping_add(1i32);
+                            }
                         }
+                        break 'l_continue_b;
                     }
                 }
             }
