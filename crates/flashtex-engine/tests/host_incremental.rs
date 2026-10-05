@@ -1400,9 +1400,14 @@ fn a_newer_compile_preempts_the_running_one() {
 /// Racy signatures (git's racy-clean rule; review of #1549): a source
 /// changed to the same length within the modification-time tick in which
 /// the run took its signature keeps the same signature. Simulated here on
-/// any file system with a 10-minute tick (`FLASHTEX_RACY_MS`): the edit
-/// puts the file's modification time back, as a coarse clock would leave
-/// it; the host must still see the change (main said `unchanged`).
+/// any file system with a one-day tick (`FLASHTEX_RACY_MS`): the edit puts
+/// the file's modification time back, as a coarse clock would leave it;
+/// the host must still see the change (main said `unchanged`). The tick
+/// must outlast the test: every signature the host takes meanwhile (a
+/// content check keeps a fresh one) has to fall within it, as on a real
+/// coarse clock, where the edit's own time is the tick it happens in. A
+/// tick shorter than a slow (debug, loaded) run let a signature taken after
+/// it hide the edit: a test artefact, not a racy case.
 #[test]
 fn a_same_size_edit_within_the_mtime_tick_is_seen() {
     if find_texlive_bin().is_none() {
@@ -1418,7 +1423,7 @@ fn a_same_size_edit_within_the_mtime_tick_is_seen() {
     let main = "main.tex";
     let text = article(3);
     std::fs::write(proj.join(main), &text).unwrap();
-    let tick = std::time::SystemTime::now() + std::time::Duration::from_secs(5);
+    let tick = std::time::SystemTime::now();
     let set_mtime = |t: std::time::SystemTime| {
         std::fs::File::options()
             .write(true)
@@ -1428,7 +1433,7 @@ fn a_same_size_edit_within_the_mtime_tick_is_seen() {
             .unwrap()
     };
     set_mtime(tick);
-    let host = start_host_env("r", &[("FLASHTEX_RACY_MS", "600000")]);
+    let host = start_host_env("r", &[("FLASHTEX_RACY_MS", "86400000")]);
     let scratch = start_host("rs");
     let mut c = Client::connect(&host.1).unwrap();
     let mut view = View::default();
