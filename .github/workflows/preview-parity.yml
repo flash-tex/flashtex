@@ -76,6 +76,13 @@ permissions:
 env:
   CARGO_TERM_COLOR: always
   CARGO_INCREMENTAL: "0"
+  # One path on BOTH runners. A display list names an included image by its
+  # absolute path (the app's engine and preview share a filesystem), so the
+  # fixtures are compiled on Linux where the Mac will find them: the macOS
+  # runner's own temporary directory. Anywhere else the Mac cannot open the
+  # image and the page falls back to the PDF (run 37376127250:
+  # beamer-blocks-columns p4, "figure.png: cannot decode").
+  DL3: /Users/runner/work/_temp/dl3
 
 jobs:
   inputs:
@@ -124,16 +131,16 @@ jobs:
         run: |
           set -euo pipefail
           E="$RUNNER_TEMP/engine-parity"
-          mkdir -p "$RUNNER_TEMP/dl3"
+          sudo mkdir -p "$DL3" && sudo chown "$(id -u):$(id -g)" "$DL3"
           rc=0
           python3 tools/displaylist/check_positions.py --pt2 -j 4 \
             --engine "$E/eng/flashtex-initex" --formats "$E/fmt" --pool "$E/eng/pdftex.pool" \
             --dump "${CARGO_TARGET_DIR:-target}/release/dl3-dump" \
             --oracle "$(command -v pdftex)" --cache "$RUNNER_TEMP/parity-oracle" \
-            --work "$RUNNER_TEMP/dl3/fixtures" --json "$RUNNER_TEMP/dl3/positions.json" \
-            2>&1 | tee "$RUNNER_TEMP/dl3/positions.txt" || rc=$?
-          tail -n 2 "$RUNNER_TEMP/dl3/positions.txt" | sed 's/^/    /' >> "$GITHUB_STEP_SUMMARY"
-          [[ -s "$RUNNER_TEMP/dl3/positions.json" ]] && echo "ran=true" >> "$GITHUB_OUTPUT"
+            --work "$DL3/fixtures" --json "$DL3/positions.json" \
+            2>&1 | tee "$DL3/positions.txt" || rc=$?
+          tail -n 2 "$DL3/positions.txt" | sed 's/^/    /' >> "$GITHUB_STEP_SUMMARY"
+          [[ -s "$DL3/positions.json" ]] && echo "ran=true" >> "$GITHUB_OUTPUT"
           exit "$rc"
       - name: upload the sweep's input
         id: upload
@@ -144,11 +151,11 @@ jobs:
         with:
           name: preview-parity-inputs
           path: |
-            ${{ runner.temp }}/dl3/positions.json
-            ${{ runner.temp }}/dl3/positions.txt
-            ${{ runner.temp }}/dl3/fixtures/*/display.dl3
-            ${{ runner.temp }}/dl3/fixtures/*/oracle.pdf
-            ${{ runner.temp }}/dl3/fixtures/*/src/
+            ${{ env.DL3 }}/positions.json
+            ${{ env.DL3 }}/positions.txt
+            ${{ env.DL3 }}/fixtures/*/display.dl3
+            ${{ env.DL3 }}/fixtures/*/oracle.pdf
+            ${{ env.DL3 }}/fixtures/*/src/
           if-no-files-found: error
           retention-days: 14
 
@@ -178,13 +185,13 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           name: preview-parity-inputs
-          path: ${{ runner.temp }}/dl3
+          path: ${{ env.DL3 }}
       - name: swift test --filter PreviewParityTests (tolerance 0)
         working-directory: apps/mac
         env:
-          FLASHTEX_DL3_FIXTURES: ${{ runner.temp }}/dl3/fixtures
+          FLASHTEX_DL3_FIXTURES: ${{ env.DL3 }}/fixtures
           FLASHTEX_V3_PARITY_REQUIRE: "1"
-          FLASHTEX_V3_PARITY_OUT: ${{ runner.temp }}/dl3/parity
+          FLASHTEX_V3_PARITY_OUT: ${{ env.DL3 }}/parity
           FLASHTEX_V3_PARITY_SCALES: ${{ inputs.scales || '1,2,4' }}
         # The Core Graphics sweep, the checked-in fixture and the renderer's
         # own checks; not the PDFKit comparison (a looser bound than 0 px,
@@ -192,20 +199,20 @@ jobs:
         run: |
           set -o pipefail
           swift test --filter 'PreviewParityTests/(testEveryParityFixtureIsPixelIdenticalToThePDF|testCheckedInFixtureIsPixelIdenticalToThePDF|testGlyphsAreDrawnAtTheirOrigins|testScreenLayoutDrawsTheSamePixels)' \
-            2>&1 | tee "$RUNNER_TEMP/dl3/swift-test.log" | grep -vE '^\s*$' | tail -n 200
+            2>&1 | tee "$DL3/swift-test.log" | grep -vE '^\s*$' | tail -n 200
       - name: summary (per scale, fallback rate, fallback pages)
         if: always()
         run: |
           python3 tools/displaylist/preview_parity_summary.py \
-            --sweep "$RUNNER_TEMP/dl3/parity.coreGraphics.json" \
-            --positions "$RUNNER_TEMP/dl3/positions.json" | tee -a "$GITHUB_STEP_SUMMARY"
+            --sweep "$DL3/parity.coreGraphics.json" \
+            --positions "$DL3/positions.json" | tee -a "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: preview-parity-report
           path: |
-            ${{ runner.temp }}/dl3/parity.coreGraphics.json
-            ${{ runner.temp }}/dl3/swift-test.log
+            ${{ env.DL3 }}/parity.coreGraphics.json
+            ${{ env.DL3 }}/swift-test.log
           if-no-files-found: ignore
           retention-days: 30
 
