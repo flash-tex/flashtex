@@ -717,7 +717,8 @@ load on one Mac, while a dispatch of a branch does not wait for main's night.
   (`.github/actions/texlive-2026` with `cache: "false"`). T2's baseline is
   still the reference run on that same tree. They need no fork guard (a
   hosted runner sees no secrets and no network of the team's), so a dispatch
-  of any branch runs them. Until 2026-10-05 they ran one after the other in
+  of any branch runs them; the dispatch input `engine_hosted` runs them beside
+  the NixOS jobs too. Until 2026-10-05 they ran one after the other in
   one job on the heavy self-hosted Mac (#1413): T2 held that runner for about
   two hours a night beside `p5-scoreboard.yml`'s own T2 on the same oracle,
   and the Mac ran out of disk twice on 10-03.

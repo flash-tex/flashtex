@@ -54,6 +54,13 @@ on:
         description: parity tiers to run (space separated)
         required: false
         default: 'arxiv templates'
+      engine_hosted:
+        description: >-
+          also run the GitHub-hosted T2, soundness and memory jobs (otherwise
+          only the fallback while the NixOS switch is off)
+        type: boolean
+        required: false
+        default: false
       corpus_record_baseline:
         description: >-
           T4: record the ratchet baseline from this run (NixOS PC, main only).
@@ -490,7 +497,7 @@ jobs:
   # on a dispatch of any branch.
   engine-latex-suites-hosted:
     name: "engine: LaTeX suites (T2, GitHub-hosted)"
-    if: ${{ !((vars.FLASHTEX_SELFHOSTED_LINUX || vars.FLASHTEX_SELFHOSTED_MAC) == '1') }}
+    if: ${{ !((vars.FLASHTEX_SELFHOSTED_LINUX || vars.FLASHTEX_SELFHOSTED_MAC) == '1') || inputs.engine_hosted }}
     runs-on: ubuntu-latest
     timeout-minutes: 300
     env:
@@ -541,7 +548,7 @@ jobs:
 
   engine-soundness-hosted:
     name: "engine: incremental soundness (every fixture, GitHub-hosted)"
-    if: ${{ !((vars.FLASHTEX_SELFHOSTED_LINUX || vars.FLASHTEX_SELFHOSTED_MAC) == '1') }}
+    if: ${{ !((vars.FLASHTEX_SELFHOSTED_LINUX || vars.FLASHTEX_SELFHOSTED_MAC) == '1') || inputs.engine_hosted }}
     runs-on: ubuntu-latest
     timeout-minutes: 120
     env:
@@ -570,7 +577,7 @@ jobs:
 
   engine-memory-hosted:
     name: "engine: host memory (peak RSS per document size, GitHub-hosted)"
-    if: ${{ !((vars.FLASHTEX_SELFHOSTED_LINUX || vars.FLASHTEX_SELFHOSTED_MAC) == '1') }}
+    if: ${{ !((vars.FLASHTEX_SELFHOSTED_LINUX || vars.FLASHTEX_SELFHOSTED_MAC) == '1') || inputs.engine_hosted }}
     runs-on: ubuntu-latest
     timeout-minutes: 90
     steps:
