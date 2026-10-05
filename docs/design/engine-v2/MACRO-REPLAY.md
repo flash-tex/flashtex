@@ -2,7 +2,9 @@
 
 Sub-lane **P6-MACRO-REPLAY** of P6-HYPEROPT (Commander ruling, 2026-10-04). Status: **design,
 revision 4 approved** (#1509), prototype in #1524-#1526; **revision 5 proposed** in §11 (dimensions,
-sparse registers, `\afterassignment`, contexts, local-group elision), for review.
+sparse registers, `\afterassignment`, contexts, local-group elision), for review. Its measured
+evidence (§11.8, 2026-10-05): -10 % to -13 % on `long-deck`, -1.3 % on *An Infinite Descent*, so
+by the Commander's ruling it is not to be implemented unless the Commander decides otherwise.
 
 **Dependency (process).** Once this design is approved, the Commander amends DESIGN.md §5.6 item 4
 (D9: "only pure, non-erroring leaf functions" extended to macros with arguments) and adds the §13
@@ -608,6 +610,10 @@ glue specifications, which no watch record compares.
   with no return to `main_control` in between. The verifier (§6.1) therefore leaves `cur_ptr` out
   of the diff as a dead scratch global, and names it in its exclusion list so that the exclusion
   is reviewed with the code.
+- *`remainder` is dead after the read too* (measured, §11.8). Dimension arithmetic (`x_over_n`,
+  `xn_over_d`) writes it, and every read of it in `pdftex.web` (`scan_dimen`'s `true` and unit
+  conversions, `math_glue`, `math_kern`) comes right after the call that writes it. The verifier
+  excludes it by name with `cur_ptr`.
 - *Assigning one* is recorded as an operation `K_SAWORD` (type, number, value, global) and replayed
   by `find_sa_element(t, n, true)` followed by `sa_w_def` or `gsa_w_def`: TeX's own routines, which
   create the element and save it for `unsave` exactly as the normal path did.
@@ -719,3 +725,61 @@ plus §11.6's."
 And the §13 row: "2026-10-xx | Guarded replay revision 5 (dimensions, sparse registers,
 `\afterassignment`, contexts, local-group elision) | Commander, from evidence (#1524's measured
 estimate)".
+
+### 11.8 Measured evidence for the review (2026-10-05)
+
+The Commander's review asked for three measurements before any v5 code: (a) contexts and elision
+**without** the new captures, (b) *An Infinite Descent* for real, (c) `long-deck` with the inputs
+captured instead of the upper bound with 1,757 known-wrong replays. A probe engine (scratch, not
+committed; #1526's head `ea7e74861` plus switches) measured them. Instructions of the settled
+(second) pass, `/usr/bin/time -l`, mac-m1max-a; every PDF is byte-identical to the intrinsics-off
+run's. VERIFIED unless marked.
+
+The probe's switches: `PROBE_KV=32` (32 contexts per argument list), `PROBE_ELIDE=1` (a replay skips
+every group whose operations are all local, §11.5), `PROBE_CAPTURE=1` (dimensions are scanned and
+`\ifdim`, `\dimexpr`, dimension-parameter assignments and `\afterassignment` are allowed;
+`\count`/`\dimen` read by number and dimension parameters are captured as value pairs in the
+existing integer-pair records; `em`, `ex`, `px`, `mu`, `true` and sparse registers still abandon, so
+(c) is a **lower bound** on what full v5 capture would admit).
+
+| `long-deck` (118 slides) | instructions | vs off | `\XC@col@rlet` replays / calls | verify differences |
+|---|---:|---:|---|---:|
+| intrinsics off | 49.78 G | | | |
+| approved rules (#1526) | 48.41 G | -2.8 % | 20,863 / 69,961 | |
+| **(a)** + 32 contexts + elision, no new captures | **43.09 G** | **-13.4 %** | 40,933 / 69,961 | **0** |
+| **(c)** + captures | **44.58 G** | **-10.4 %** | 46,480 / 69,961 | 1,746 (the 20 kept: `remainder`, below) |
+| (c) without elision | 48.03 G | -3.5 % | 46,480 / 69,961 | |
+
+| *An Infinite Descent* (592 pages) | instructions | vs off | replays / calls offered |
+|---|---:|---:|---|
+| intrinsics off | 291.92 G | | |
+| **(b)** (a) with #1524's 11 names | 302.77 G | **+3.7 %** | 0 / 3,477,076 |
+| (b) (c) with the 11 names | 297.89 G | **+2.0 %** | 24,901 / 3,473,151 |
+| (b) (c), `\XC@col@rlet` only | 288.03 G | **-1.3 %** | 24,697 / 29,959 |
+| (b) (a), `\XC@col@rlet` only | 293.44 G | +0.5 % | 0 / 29,959 |
+
+What these show:
+- **Elision is sound on the measured run and carries most of the win.** (a)'s verify run diffs every
+  replay against the expansion and finds 0 differences. Without elision the captured version saves
+  3.5 %, with it 10.4 %.
+- **Capture costs more than it admits on `long-deck`.** (c) replays 5,547 more calls than (a) but
+  retires 1.5 G more instructions. Its keys vary with the captured dimensions, so it makes 4,096
+  recordings against (a)'s 567 (belief: recording, the slow path, is where the difference goes).
+- **(c)'s verify differences.** The 20 of the 1,746 that the verifier keeps are all in `remainder`,
+  which `x_over_n` and `xn_over_d` write. Every read of `remainder` in `pdftex.web` (four:
+  `scan_dimen`'s `true` and unit conversions, `math_glue`, `math_kern`) comes right after the call
+  that writes it, so a replay that leaves it alone cannot be told apart, and the verifier would
+  exclude it by name, as `cur_ptr` (§11.3). The other 1,726 were not inspected.
+- **On *An Infinite Descent* v5 does not pay.** Offering the pgf macros costs more than it saves
+  (3.5 M calls, almost none admitted: pgfmath's bodies read past themselves, `\pgf@process` reads
+  sparse registers). With `\XC@col@rlet` alone, 83 % of its calls replay and the book saves
+  **1.3 %**, against the shadow estimate of 7 % in §11.1 (belief: the guard, the argument-key comparison
+  and the replay cost most of what the skipped expansion would have). Capturing sparse registers
+  could add only the share of `\pgf@process`'s calls whose bounding-box registers repeat (belief:
+  far below the 13.7 points still missing).
+
+**Conclusion (measured):** v5 reaches -10 % to -13 % on `long-deck` and -1.3 % on *An Infinite
+Descent*. It does not clearly beat 15 % on *An Infinite Descent*, so by the Commander's ruling of
+2026-10-05 ("if v5 can't clearly beat 15 % on Infinite Descent, interpreter speed wins") interpreter
+speed wins: this revision stays a proposal, and #1524-#1526 stay unmerged unless the Commander
+decides otherwise for beamer alone.
