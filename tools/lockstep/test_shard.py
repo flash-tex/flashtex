@@ -17,14 +17,15 @@ import run as lockstep_run
 class ShardTest(unittest.TestCase):
     def test_parse(self):
         self.assertEqual(lockstep_run.parse_shard("2/5"), (2, 5))
-        for bad in ("0/3", "4/3", "x/3", "3", "1/0"):
+        self.assertEqual(lockstep_run.parse_shard("0/1"), (0, 1))
+        for bad in ("3/3", "4/3", "-1/3", "x/3", "3", "1/0"):
             with self.assertRaises(argparse.ArgumentTypeError, msg=bad):
                 lockstep_run.parse_shard(bad)
 
     def test_shards_partition_the_cases(self):
         names = ["%03d-case" % i for i in range(1, 24)]
         for n in (1, 2, 3, 8, 30):
-            parts = [lockstep_run.shard_cases(names, (k, n)) for k in range(1, n + 1)]
+            parts = [lockstep_run.shard_cases(names, (k, n)) for k in range(n)]
             joined = sorted(x for p in parts for x in p)
             self.assertEqual(joined, names, "n=%d" % n)
             self.assertLessEqual(max(map(len, parts)) - min(map(len, parts)), 1)
@@ -34,7 +35,7 @@ class ShardTest(unittest.TestCase):
 
     def test_every_real_case_lands_in_one_shard(self):
         names = lockstep_run.select_cases([])
-        parts = [lockstep_run.shard_cases(names, (k, 6)) for k in range(1, 7)]
+        parts = [lockstep_run.shard_cases(names, (k, 6)) for k in range(6)]
         self.assertEqual(sum(map(len, parts)), len(names))
         self.assertEqual(len(set().union(*map(set, parts))), len(names))
 

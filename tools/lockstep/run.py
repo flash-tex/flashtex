@@ -967,13 +967,13 @@ def select_cases(patterns):
 
 
 def parse_shard(spec):
-    """`K/N` (1 <= K <= N) for --shard; argparse type."""
+    """`K/N` (0 <= K < N, as tools/parity's --shard) for --shard; argparse type."""
     try:
         k, n = (int(x) for x in spec.split("/"))
     except ValueError:
         raise argparse.ArgumentTypeError("--shard wants K/N, got %r" % spec)
-    if not 1 <= k <= n:
-        raise argparse.ArgumentTypeError("--shard wants 1 <= K <= N, got %r" % spec)
+    if not 0 <= k < n:
+        raise argparse.ArgumentTypeError("--shard wants 0 <= K < N, got %r" % spec)
     return k, n
 
 
@@ -981,12 +981,12 @@ def shard_cases(names, shard):
     """The K-th of N interleaved slices of the sorted case list.
 
     Interleaved, not contiguous: case numbers group related (and similarly
-    slow) cases, so every shard gets a share of each group. Shards 1..N
+    slow) cases, so every shard gets a share of each group. Shards 0..N-1
     together are exactly `names`, each name in one shard."""
     if shard is None:
         return names
     k, n = shard
-    return names[k - 1::n]
+    return names[k::n]
 
 
 def valid_run(result, name, what):
@@ -1073,7 +1073,7 @@ def main(argv=None):
                     help="per-run engine timeout in seconds (default %s)" %
                     RUN_TIMEOUT)
     ap.add_argument("--shard", type=parse_shard, default=None, metavar="K/N",
-                    help="run only the K-th of N interleaved slices of the "
+                    help="run only slice K (0-based) of N interleaved slices of the "
                     "selected cases (scripts/engine-parity.sh runs N at once)")
     args = ap.parse_args(argv)
 

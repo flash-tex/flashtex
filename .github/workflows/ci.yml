@@ -21,13 +21,13 @@
 #
 #   gate (merge_group; manual with gate_only)       target <= 12 min engine,
 #                                                    <= 5 min otherwise
-#     plan, licence boundary, inventory, generated tables, build, quick, trip,
-#     etrip, pdfTeX regression (all GitHub-hosted Linux), and the new engine's
-#     parity when the GROUP touches engine-affecting paths, sharded across the
-#     PC's runners: lockstep, the P-T1/P-T2 fixtures and the engine's tests,
-#     one job each, each with a warm per-runner target directory. Nothing
-#     else: no Mac, no iPad, no full workspace. Parity stays gated before
-#     merge (parity > speed).
+#     plan, licence boundary, inventory, generated tables, build (`cargo
+#     check` here), quick, trip, etrip, pdfTeX regression, and the new
+#     engine's parity when the GROUP touches engine-affecting paths, in five
+#     shards (lockstep; the P-T1/P-T2 fixtures in two; the engine's tests in
+#     two). All GitHub-hosted Linux, so nothing in the gate queues for the PC.
+#     Nothing else: no Mac, no iPad, no full workspace. Parity stays gated
+#     before merge (parity > speed).
 #
 #   post (push to main; manual without gate_only; and nightly.yml)
 #     the Mac app, the iPad companion, the Rust workspace on Linux and macOS,
@@ -39,16 +39,15 @@
 #     (scripts/ci/main-red.sh). Policy: the PR's owner fixes forward within
 #     2 hours, or the Commander reverts.
 #
-# WHERE. The three NixOS runners on the owner's PC (label flashtex-linux) take
-# only the gate's engine-parity shards (and nightly.yml's engine jobs), and
-# only on merge_group and manual runs (`engine_nixos` in plan) -- never a
-# pull request or a branch push (DESIGN §9.3), and no longer the workspace
-# build or the Rust workspace, which queued the gate's parity behind them.
-# The PC and the self-hosted Macs have separate switches,
-# FLASHTEX_SELFHOSTED_LINUX and FLASHTEX_SELFHOSTED_MAC (see plan), so one
-# being offline does not take the other out of service; with the PC switched
-# off the gate's parity runs on GitHub-hosted Ubuntu instead. Every other
-# Linux job is on ubuntu-latest (the repository is public: free).
+# WHERE. Every job of the gate is GitHub-hosted (the repository is public:
+# free). The three NixOS runners on the owner's PC (label flashtex-linux)
+# keep nightly.yml's suites (T2, soundness, T4, the scoreboard); in this file
+# they run engine parity only on a full manual run (`engine_nixos` in plan)
+# -- never a pull request or a branch push (DESIGN §9.3). Until 2026-10-05
+# they ran the gate's parity, the workspace build and the Rust workspace,
+# and up to 8 merge groups queued for them (up to 50 minutes). The PC and
+# the self-hosted Macs have separate switches, FLASHTEX_SELFHOSTED_LINUX and
+# FLASHTEX_SELFHOSTED_MAC (see plan).
 #
 # Nightly and weekly suites live in nightly.yml.
 #
@@ -134,8 +133,9 @@ jobs:
       mac_rust_runner: ${{ steps.p.outputs.mac_rust_runner }}
       # 'true' when this run must run the new engine's parity gates.
       engine: ${{ steps.p.outputs.engine }}
-      # Where they run: the gate's shards on the NixOS PC (engine_nixos), or
-      # GitHub-hosted Ubuntu (engine_hosted); both on a manual run that asks.
+      # Where they run: GitHub-hosted Ubuntu (engine_hosted) on every event;
+      # the NixOS PC (engine_nixos) only on a full manual run, and both when
+      # that run asks (input engine_parity_hosted).
       engine_nixos: ${{ steps.p.outputs.engine_nixos }}
       engine_hosted: ${{ steps.p.outputs.engine_hosted }}
       # 'true' when this run must run the OLD engine's parity fixtures (a
@@ -302,14 +302,15 @@ jobs:
           if [ "$engine" != "true" ] && [ "$run" = "true" ] && touches "$engine_paths"; then
             engine=true
           fi
-          # The gate's shards go to the PC (merge_group and manual runs, with
-          # its switch on). Everything else -- pull requests, the push to main
-          # (which also keeps the Actions caches warm for pull requests), and
-          # the gate when the PC is switched off -- runs the hosted twin.
+          # Where they run: GitHub-hosted Ubuntu, sharded, on every event --
+          # the merge queue included (Commander, 2026-10-05: measured ~6 min
+          # with no queueing, where the PC's three runners queued the gate for
+          # up to 50 minutes). The PC twin runs only on a full manual run with
+          # its switch on (and the PC keeps nightly.yml's suites).
           engine_nixos=false
           engine_hosted=false
           if [ "$engine" = "true" ]; then
-            if [ "$selfhosted_linux" = "true" ] && [ "$EVENT" != "push" ]; then
+            if [ "$selfhosted_linux" = "true" ] && [ "$EVENT" = "workflow_dispatch" ] && [ "$tier" = "all" ]; then
               engine_nixos=true
             fi
             if [ "$engine_nixos" != "true" ] || [ "$ENGINE_PARITY_HOSTED" = "true" ]; then
@@ -432,17 +433,25 @@ jobs:
     needs: [plan]
     if: needs.plan.outputs.run == 'true'
     # GitHub-hosted on every event since 2026-10-05: on the PC it queued
-    # behind the gate's engine-parity shards (30 minutes, measured), and the
-    # PC is kept for those.
+    # behind the gate's engine-parity shards (30 minutes, measured).
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    env:
+      # In the merge queue, and on the push to main whose cache the queue
+      # restores, `cargo check`: it type-checks every target of the workspace
+      # without code generation or linking (cargo build took 5.0-6.6 min
+      # there, over the gate's 5). The post-merge `rust workspace` jobs build
+      # and link everything in release, and `quick` builds the touched
+      # crates' tests. Pull requests keep `cargo build`.
+      CARGO_MODE: ${{ (needs.plan.outputs.tier == 'gate' || (github.event_name == 'push' && github.ref == 'refs/heads/main')) && 'check' || 'build' }}
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:
-          key: workspace-debug
-      - run: cargo build --workspace --all-targets --locked
+          # check and build artifacts are not interchangeable: one cache each.
+          key: workspace-debug-${{ env.CARGO_MODE }}
+      - run: cargo "$CARGO_MODE" --workspace --all-targets --locked
 
   # fmt, clippy and tests, scoped to the crates this branch touches. The steps
   # ARE scripts/gate.sh quick -- the same script an agent runs before pushing,
@@ -452,7 +461,7 @@ jobs:
     needs: [plan]
     if: needs.plan.outputs.run == 'true'
     # Always GitHub-hosted (owner, 2026-09-30): light, and the repository is
-    # public, so it costs nothing. The PC keeps the heavy jobs only.
+    # public, so it costs nothing.
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
@@ -494,7 +503,7 @@ jobs:
     needs: [plan]
     if: needs.plan.outputs.run == 'true'
     # Always GitHub-hosted (owner, 2026-09-30): light, and the repository is
-    # public, so it costs nothing. The PC keeps the heavy jobs only.
+    # public, so it costs nothing.
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -514,7 +523,7 @@ jobs:
     needs: [plan]
     if: needs.plan.outputs.run == 'true'
     # Always GitHub-hosted (owner, 2026-09-30): light, and the repository is
-    # public, so it costs nothing. The PC keeps the heavy jobs only.
+    # public, so it costs nothing.
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -532,7 +541,7 @@ jobs:
     needs: [plan]
     if: needs.plan.outputs.run == 'true'
     # Always GitHub-hosted (owner, 2026-09-30): light, and the repository is
-    # public, so it costs nothing. The PC keeps the heavy jobs only.
+    # public, so it costs nothing.
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -628,23 +637,21 @@ jobs:
   #
   # SHARDED (2026-10-05). As one job it took 10-21 minutes on a busy PC
   # (build 212 s, lockstep 499 s -- 1,466 cases, one after another --
-  # parity 192 s, tests 348 s, measured on main). Now three jobs on three
-  # runners, each running only its own steps; the lockstep shard also runs
-  # its cases in parallel (engine-parity.sh --jobs, run.py --shard):
+  # parity 192 s, tests 348 s, measured on main). Now separate jobs, each
+  # running only its own steps; the lockstep shard also runs its cases in
+  # parallel (engine-parity.sh --jobs, run.py --shard):
   #
-  #   lockstep      build, lockstep
-  #   P-T fixtures  build, parity (P-T1 and P-T2 on the fixtures tier)
-  #   engine tests  tests
+  #   lockstep            build, lockstep
+  #   P-T fixtures (1/2)  build, parity --shard (P-T1 and P-T2, half the tier)
+  #   engine tests (1/2)  tests --shard (half the test targets)
   #
   # The gate's critical path is the slowest shard, not their sum.
   #
-  #   engine-parity         the NixOS PC (TeX Live 2026 first on its runners'
-  #                         PATH): the merge queue and manual runs (§9.3)
   #   engine-parity-hosted  GitHub-hosted Ubuntu with a digest-pinned TeX Live
-  #                         2026: pull requests that touch the engine, every
-  #                         push to main (post-merge, and the caches), and the
-  #                         fallback when the NixOS runners are switched off
-  #                         (FLASHTEX_SELFHOSTED_LINUX, plan's selfhosted_linux)
+  #                         2026, five shards: every event that needs parity,
+  #                         the merge queue included
+  #   engine-parity         the NixOS PC (TeX Live 2026 first on its runners'
+  #                         PATH), three shards: only a full manual run (§9.3)
   #
   # `CI required` fails a gate run (merge_group) in which plan's `engine` is
   # 'true' and neither job passed in full (a matrix job passes only when every
@@ -718,9 +725,16 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - {shard: lockstep, id: lockstep, steps: build lockstep, jobs: 4}
-          - {shard: P-T fixtures, id: fixtures, steps: build parity, jobs: 4}
-          - {shard: engine tests, id: tests, steps: tests, jobs: 4}
+          # Five shards (2026-10-05): as three, the P-T fixtures and engine
+          # tests shards each took 5.4-5.9 min and set the critical path; each
+          # is split in two (engine-parity.sh --shard K/N). `cache` names the
+          # Rust cache the shard shares: the three `build` shards compile the
+          # same flashtex-initex.
+          - {shard: lockstep, id: lockstep, steps: build lockstep, jobs: 4, slice: '', cache: build}
+          - {shard: P-T fixtures 1/2, id: fixtures-0, steps: build parity, jobs: 4, slice: 0/2, cache: build}
+          - {shard: P-T fixtures 2/2, id: fixtures-1, steps: build parity, jobs: 4, slice: 1/2, cache: build}
+          - {shard: engine tests 1/2, id: tests-0, steps: tests, jobs: 4, slice: 0/2, cache: tests}
+          - {shard: engine tests 2/2, id: tests-1, steps: tests, jobs: 4, slice: 1/2, cache: tests}
     env:
       FLASHTEX_REQUIRE_TEXLIVE: "1"
       # texlive/texlive:latest-medium as of 2026-09-27 (TeX Live 2026, pdfTeX
@@ -742,20 +756,26 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:
-          key: engine-parity-${{ matrix.id }}
-      - name: the oracle's P-T references, cached per TeX Live image
+          key: engine-parity-${{ matrix.cache }}
+      - name: the oracle's P-T references, cached per TeX Live image and slice
         # Saved only by a job that passed, so a cut-short oracle run (which
-        # fails P-T1) is never kept. Only the fixtures shard runs the oracle.
-        if: matrix.id == 'fixtures'
+        # fails P-T1) is never kept. Only the fixtures shards run the oracle,
+        # each on its own half, so each keeps its own cache (one key for both
+        # would keep whichever half saved first). The last restore key falls
+        # back to any earlier cache of this image, e.g. the unsharded one.
+        if: startsWith(matrix.id, 'fixtures')
         uses: actions/cache@v4
         with:
           path: ${{ runner.temp }}/parity-oracle
-          key: parity-oracle-${{ env.TEXLIVE_IMAGE }}-${{ hashFiles('fixtures/**', 'tools/parity/capture.py', 'tools/parity/tiers.py') }}
-          restore-keys: parity-oracle-${{ env.TEXLIVE_IMAGE }}-
-      - name: scripts/engine-parity.sh ${{ matrix.steps }}
+          key: parity-oracle-${{ env.TEXLIVE_IMAGE }}-${{ matrix.id }}-${{ hashFiles('fixtures/**', 'tools/parity/capture.py', 'tools/parity/tiers.py') }}
+          restore-keys: |
+            parity-oracle-${{ env.TEXLIVE_IMAGE }}-${{ matrix.id }}-
+            parity-oracle-${{ env.TEXLIVE_IMAGE }}-
+      - name: scripts/engine-parity.sh ${{ matrix.steps }} ${{ matrix.slice }}
         env:
           FLASHTEX_PARITY_CACHE: ${{ runner.temp }}/parity-oracle
-        run: scripts/engine-parity.sh --jobs ${{ matrix.jobs }} ${{ matrix.steps }}
+          SLICE: ${{ matrix.slice }}
+        run: scripts/engine-parity.sh --jobs ${{ matrix.jobs }} ${SLICE:+--shard "$SLICE"} ${{ matrix.steps }}
       - uses: actions/upload-artifact@v4
         if: always()
         with:
