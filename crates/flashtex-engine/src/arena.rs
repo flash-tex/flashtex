@@ -3017,6 +3017,84 @@ mod tests {
         assert_eq!(dst[0] | dst[4] | dst[63], 0);
     }
 
+    /// The branch-free `half_tag` gives every half the width the plain
+    /// definition does (zero, then the smallest sign-extended width).
+    #[test]
+    fn branch_free_tags_equal_the_widths() {
+        let plain = |x: u32| -> usize {
+            let v = x as i32;
+            if v == 0 {
+                0
+            } else if v as i8 as i32 == v {
+                1
+            } else if v as i16 as i32 == v {
+                2
+            } else {
+                3
+            }
+        };
+        let mut xs: Vec<u32> = vec![0, 1, u32::MAX, 0x8000_0000, 0x7fff_ffff];
+        for b in [7u32, 8, 15, 16, 31] {
+            for d in [-2i64, -1, 0, 1] {
+                let v = (1i64 << b) + d;
+                xs.extend([v as u32, (-v) as u32]);
+            }
+        }
+        let mut y = 99u64;
+        for _ in 0..1_000_000 {
+            y ^= y << 13;
+            y ^= y >> 7;
+            y ^= y << 17;
+            xs.push(shaped(y) as u32);
+            xs.push(y as u32 >> (y >> 59));
+        }
+        for x in xs {
+            assert_eq!(half_tag(x), plain(x), "{x:#x}");
+        }
+    }
+
+    /// Logs sealed unpacked (`Arena::defer_packing`) restore exactly, packed
+    /// later or not, merged with packed ones or not.
+    #[test]
+    fn deferred_packing_is_lossless() {
+        for pack_at in [0usize, 4, 9, 99] {
+            let (mut a, mut arr) = space(100_000);
+            scribble(&mut arr, 3, 5000);
+            let mut ids = vec![];
+            let mut copies = vec![];
+            for k in 0..12 {
+                a.defer_packing(k < 6 || k == 8);
+                if k == pack_at {
+                    a.pack_deferred();
+                }
+                ids.push(a.checkpoint());
+                copies.push(arr.to_vec());
+                scribble(&mut arr, 40 + k as u64, 2500);
+            }
+            if pack_at == 9 {
+                a.retain(&|id| id % 2 == 0);
+            }
+            let end = arr.to_vec();
+            for (i, &id) in ids.iter().enumerate().rev() {
+                if pack_at == 9 && id % 2 == 1 && i + 1 != ids.len() {
+                    continue;
+                }
+                let br = a.restore_branch(id).unwrap();
+                assert!(
+                    arr[..] == copies[i][..],
+                    "restore to {i}, packed at {pack_at}"
+                );
+                a.converge(br, id).unwrap();
+                assert!(arr[..] == end[..], "jump back from {i}");
+            }
+            a.pack_deferred();
+            assert!(a.core().logs.iter().all(|l| !l.raw));
+            let br = a.restore_branch(ids[0]).unwrap();
+            assert!(arr[..] == copies[0][..], "restore to 0 after packing");
+            a.converge(br, ids[0]).unwrap();
+        }
+    }
+
     #[test]
     fn restore_to_every_checkpoint_and_converge() {
         let (mut a, mut arr) = space(200_000);

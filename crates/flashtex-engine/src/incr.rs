@@ -1942,6 +1942,9 @@ impl Observer for Obs {
             g.layer().segment_hold = false;
         }
         if self.edited.is_none() && !unchanged {
+            // the logs sealed unpacked so far are packed at the next
+            // checkpoint, the edited page out
+            g.arena.defer_packing(false);
             self.edited = Some((j, self.page_s, cpu));
             let now = crate::os::thread_counts();
             if self.first_incremental {
@@ -2867,6 +2870,9 @@ impl Session {
             rep.pass_s.push(rep.total_s);
             self.more_passes(t0, &mut rep)?;
         }
+        if !rep.paused {
+            self.pack_deferred();
+        }
         rep.cursor = self.cursor;
         Ok(rep)
     }
@@ -3024,6 +3030,14 @@ impl Session {
     /// changed.
     fn compile_pass(&mut self, t0: Instant, stop_at: Option<usize>) -> Result<Report, String> {
         system::file_trace(|| format!("pass {}", self.pass));
+        // The first pass seals its undo logs unpacked up to its edited page
+        // (`Arena::defer_packing`; packing them cost the edited page 6 %,
+        // the review of #1575): `Obs::on_checkpoint` packs from there on.
+        if self.pass == 1 {
+            if let Some(g) = self.g.as_mut() {
+                g.arena.defer_packing(true);
+            }
+        }
         self.before_pass = self
             .g
             .as_mut()
@@ -3949,6 +3963,8 @@ impl Session {
         g.layer().timed_s = self.opts.timed_s;
         g.checkpoint_segments(self.opts.segment_s);
         g.layer().segment_hold = false;
+        // (unpacked up to the first page, as in `compile_pass`)
+        g.arena.defer_packing(self.pass == 1);
         let mut obs = self.observer(t0, 0, stop_at);
         // Newer work stops it once S₀ is taken (P4, Commander ruling): the
         // run is then kept like a stopped incremental one (`settle_paused`),
@@ -4282,7 +4298,16 @@ impl Session {
         }
         rep.pass_s.push(rep.total_s);
         self.more_passes(p.t0, &mut rep)?;
+        self.pack_deferred();
         Ok(rep)
+    }
+
+    /// The run is over (not stopped): pack the undo logs it sealed unpacked
+    /// before its edited page (`Arena::defer_packing`).
+    fn pack_deferred(&mut self) {
+        if let Some(g) = self.g.as_mut() {
+            g.arena.pack_deferred();
+        }
     }
 
     /// After a run returned: pause, converge or complete.
