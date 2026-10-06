@@ -103,6 +103,45 @@ pub struct Index {
 /// TTBv1's meta-files, which are members but not TeX files.
 pub const META_FILES: [&str; 3] = ["FILELIST", "SEARCH", "SHA256SUM"];
 
+/// Whether `path` can be a FlashTeX bundle's member (other than the
+/// [`META_FILES`]): a plain relative path inside a tree, `<tree>/<rest>`,
+/// with no empty, `.` or `..` component, and not an `ls-R` (the reader
+/// writes each tree's own). The reader rejects a bundle with any other
+/// path, and the packer ([`super::build::select`]) never writes one.
+pub fn check_member_path(path: &str) -> Result<(), String> {
+    let bad = path.starts_with('/')
+        || path.contains('\\')
+        || !path.contains('/')
+        || path
+            .split('/')
+            .any(|c| c.is_empty() || c == "." || c == "..")
+        || path.rsplit('/').next() == Some("ls-R");
+    if bad {
+        Err(format!("bundle path {path:?} is not a plain relative path"))
+    } else {
+        Ok(())
+    }
+}
+
+/// No two members' paths may differ only in case: on a case-insensitive
+/// file system (APFS's default, NTFS) they would be one file in the cache,
+/// and a file is taken as present by its size alone. The reader rejects
+/// such a bundle and the packer never writes one. (TeX Live itself has no
+/// such pair: it installs on those file systems.)
+pub fn check_case_collisions<'a>(paths: impl IntoIterator<Item = &'a str>) -> Result<(), String> {
+    let mut seen: std::collections::HashMap<String, &str> = std::collections::HashMap::new();
+    for p in paths {
+        if let Some(other) = seen.insert(p.to_lowercase(), p) {
+            if other != p {
+                return Err(format!(
+                    "bundle paths {other:?} and {p:?} differ only in case"
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
 impl Index {
     pub fn parse(text: &str) -> Result<Index, String> {
         let mut ix = Index::default();

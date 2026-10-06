@@ -74,7 +74,15 @@ enum EngineV3TileGrid {
     /// New contents of pages drawn whole held back by the redraw throttle.
     @MainActor static var deferredSources = 0
     /// Per new source (page entering, zoom step, edit): ms from its first tile job queued to its first tiles on screen.
-    @MainActor static var firstTileMs: [Double] = []
+    /// Kept for the scroll bench; the app appends on every page entering a
+    /// zoom, so only the newest `firstTileKeep` are kept (the bench reads far
+    /// fewer), never one per source for the whole session.
+    @MainActor private(set) static var firstTileMs: [Double] = []
+    static let firstTileKeep = 4_096
+    @MainActor static func noteFirstTile(ms: Double) {
+        firstTileMs.append(ms)
+        if firstTileMs.count > firstTileKeep + 512 { firstTileMs.removeFirst(firstTileMs.count - firstTileKeep) }
+    }
     @MainActor static func resetCounters() { jobs = 0; jobTiles = 0; jobMs = 0; maxJobMs = 0; maxLatencyMs = 0; skippedTiles = 0; firstTileMs = []; failedTiles = 0; deferredSources = 0 }
 }
 
@@ -173,6 +181,10 @@ final class EngineV3RasterHolder: @unchecked Sendable {
     private var kept: DL3PageRaster?
     /// Rasters drawn (tests: one per source, not one per job; one more after a purge).
     private(set) var drawn = 0
+    /// Of `drawn`, the redraws of a raster found purged when it was cut. The
+    /// kernel may purge an idle (volatile) raster at any time under memory
+    /// pressure, so tests count these apart from the draws a source makes.
+    private(set) var redrawnAfterPurge = 0
 
     /// Kept rasters over all pages: at most this many (`FLASHTEX_V3_KEPT_RASTERS`).
     static let budget = max(1, Int(ProcessInfo.processInfo.environment["FLASHTEX_V3_KEPT_RASTERS"] ?? "") ?? 2)
@@ -199,6 +211,7 @@ final class EngineV3RasterHolder: @unchecked Sendable {
                 guard let r = make() else { return nil }
                 kept = r; self.identity = identity; self.scale = scale
                 drawn += 1
+                if attempt > 0 { redrawnAfterPurge += 1 }
                 Self.noteDrawn(r)
             }
             touch()
@@ -219,6 +232,12 @@ final class EngineV3RasterHolder: @unchecked Sendable {
 
     var holding: Bool { EngineV3TileGrid.queue.sync { kept != nil } }
     var rastersDrawn: Int { EngineV3TileGrid.queue.sync { drawn } }
+    /// Redraws after a purge (the kernel's or `purgeForTesting`'s).
+    var rastersRedrawnAfterPurge: Int { EngineV3TileGrid.queue.sync { redrawnAfterPurge } }
+    /// Rasters drawn for the sources shown (a new content, scale or
+    /// appearance, or after a release): every draw but the redraws after a
+    /// purge, which a loaded machine may add at any time.
+    var rastersDrawnForSources: Int { EngineV3TileGrid.queue.sync { drawn - redrawnAfterPurge } }
     /// Purges the kept raster as the kernel may (tests).
     func purgeForTesting() { EngineV3TileGrid.queue.sync { kept?.purgeForTesting() } }
     static var keptCount: Int { EngineV3TileGrid.queue.sync { lru.count } }
@@ -335,6 +354,8 @@ final class EngineV3PageTiles {
     }
 
     func tileImage(_ i: EngineV3TileGrid.Index) -> IOSurface? { layers[i]?.contents as! IOSurface? }
+    /// Tiles up that show an earlier content of the same geometry (evidence, tests).
+    var staleCount: Int { stale.count }
 
     /// Shows `new` (a new content, scale or backing scale; the same source
     /// is a no-op) and requests the missing visible tiles.
@@ -559,7 +580,7 @@ final class EngineV3PageTiles {
         if n > 0, awaitingFirst, let shown = shownNs {
             awaitingFirst = false
             shownNs = nil
-            EngineV3TileGrid.firstTileMs.append(Double(MonotonicClock.nowNs() &- shown) / 1e6)
+            EngineV3TileGrid.noteFirstTile(ms: Double(MonotonicClock.nowNs() &- shown) / 1e6)
         }
         if let compile, compile == pendingCompile {
             pendingCompile = nil

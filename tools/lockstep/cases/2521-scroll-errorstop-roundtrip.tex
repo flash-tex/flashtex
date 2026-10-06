@@ -1,0 +1,13 @@
+% 2521-scroll-errorstop-roundtrip: verifies \scrollmode and \errorstopmode read back as modes 2 and 3 and a clean run back in \nonstopmode ships a box (tex.web §§1262, 1265; pdftex.web §1692)
+% new versus 335-interactionmode: 335 assigns scrollmode through \interactionmode and never touches errorstopmode; this case drives the \scrollmode and \errorstopmode primitives in one chain and reads back mode 3
+\input prelude
+\message{2521 mode=\the\interactionmode}
+\scrollmode
+\message{2521 scroll=\the\interactionmode}
+\errorstopmode
+\message{2521 estop=\the\interactionmode}
+\nonstopmode
+\message{2521 back=\the\interactionmode}
+\setbox0=\hbox{\vrule width3pt height6pt depth2pt\hskip7pt}
+\lsshipbox0
+\end

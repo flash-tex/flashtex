@@ -518,7 +518,7 @@ class Corpus(unittest.TestCase):
         self.assertEqual((man["schema"], man["tier"]), ("flashtex-parity-corpus/1", "packages"))
         entries, skipped = man["entries"], man["skipped"]
         self.assertEqual((len(entries), len(skipped)), (92, 6))
-        self.assertEqual([e["id"] for e in entries if e.get("pt1_skip")], ["tabu-europasscv"])
+        self.assertEqual([e["id"] for e in entries if e.get("pt1_skip")], [])  # tabu-europasscv: capture.ElapsedMask
         ids, paths = [e["id"] for e in entries], [e["path"] for e in entries]
         self.assertEqual(len(set(ids)), len(ids))
         self.assertEqual(len(set(paths)), len(paths))  # no file pinned under two ids
@@ -608,6 +608,77 @@ class Corpus(unittest.TestCase):
                 self.assertEqual(json.load(f)["generated_v"], tiers.GENERATED_V)
             self.assertEqual(walks, [doc["dir"]])  # walked once, then stamped
 
+    def test_traced_time_limits(self):
+        import capture
+        import tiers
+        saved = capture.TIMEOUT
+        try:
+            self.assertEqual(saved, 1800)
+            self.assertEqual(tiers.oracle_pt1_timeout(), 7200)  # cached: a long one costs once
+            self.assertEqual(tiers.pt1_timeout(), 1800)
+            self.assertEqual(tiers.pt1_timeout(100, 30.5), 1800)  # a quick oracle: the floor
+            self.assertEqual(tiers.pt1_timeout(25 << 30), (25 << 30) // tiers.PT1_MIN_RATE + 1)  # its log
+            self.assertEqual(tiers.pt1_timeout(25 << 30, 2400.4), 7200)  # 3 times its traced pass, up to
+            self.assertEqual(tiers.pt1_timeout(0, 1403.67), 4212)  # the oracle's limit (2501.08663v2 here)
+            self.assertEqual(tiers.pt1_timeout(60 << 30, 7000), (60 << 30) // tiers.PT1_MIN_RATE + 1)
+            capture.TIMEOUT = 600  # --pt1-timeout 600
+            self.assertEqual((tiers.oracle_pt1_timeout(), tiers.pt1_timeout(None, None)), (2400, 600))
+        finally:
+            capture.TIMEOUT = saved
+        cfg = {"pt": "on", "oracle_pdftex": "/bin/pdftex", "cache": "/nonexistent"}
+        doc = {"id": "d", "tier": "arxiv", "dir": HERE, "entry": "x.tex"}
+        real = tiers.oracle
+        try:
+            tiers.oracle = lambda *a, **k: ({"ok": True, "log_chars": 100, "trace_seconds": 1403.67}, None, "r.pdf")
+            self.assertEqual(parity.pt1_plan(doc, cfg, None), ("pipe", 4212))
+        finally:
+            tiers.oracle = real
+
+    def test_oracle_stopped_by_a_shorter_limit_is_traced_again_with_the_oracle_limit(self):
+        import capture
+        import tiers
+        version = "pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026)"
+        stopped = {"ok": True, "generated": [], "generated_v": tiers.GENERATED_V,
+                   "trace_incomplete": tiers.TRACE_TIMEOUT.format(1800), "trace_timed_out": True,
+                   "trace_timeout": 1800}
+        self.assertTrue(tiers.stale_entry(stopped, "/nonexistent"))  # board run 37121600909's two entries
+        self.assertFalse(tiers.stale_entry(dict(stopped, trace_timeout=7200), "/nonexistent"))
+        saved = tiers.engine_version, tiers.run_tex
+        with tempfile.TemporaryDirectory() as d:
+            doc = {"id": "slow", "entry": "main.tex", "dir": os.path.join(d, "src")}
+            os.makedirs(doc["dir"])
+            key = tiers.oracle_key(doc, version, True, "t")
+            entry = os.path.join(d, "cache", "pt-oracle", key[:2], key)
+            os.makedirs(entry)
+            with open(os.path.join(entry, "oracle.json"), "w") as f:
+                json.dump(dict(stopped, key=key), f)
+            limits = []
+
+            def run_tex(doc, engine, work, trace=True, extra_env=None, seed=None, stream=False, timeout=None):
+                limits.append(timeout)  # stopped again: still a harness error, never a pass
+                os.makedirs(work)
+                pdf = os.path.join(work, "main.pdf")  # the converged pass's PDF, as run_tex keeps it
+                with open(pdf, "w") as f:
+                    f.write("%PDF")
+                return ({"ok": True, "passes": 2, "trace_timeout": timeout, "trace_timed_out": True,
+                         "trace_incomplete": tiers.TRACE_TIMEOUT.format(timeout)}, None, pdf)
+            try:
+                tiers.engine_version, tiers.run_tex = (lambda _exe: version), run_tex
+                meta, cap, _ = tiers.oracle(doc, "/stub/pdftex", os.path.join(d, "cache"), True, "t")
+                self.assertEqual((limits, meta["cached"], cap), ([4 * capture.TIMEOUT], False, None))
+                meta, _, _ = tiers.oracle(doc, "/stub/pdftex", os.path.join(d, "cache"), True, "t")
+                self.assertEqual((limits, meta["cached"]), ([7200], True))  # stopped at today's limit: kept
+                cfg = {"pt": "on", "oracle_pdftex": "/stub/pdftex", "cache": os.path.join(d, "cache")}
+                real_tree_hash = parity.tree_hash
+                parity.tree_hash = lambda _dir: "t"
+                try:
+                    skip = parity.pt1_skip_reason(dict(doc, tier="arxiv"), cfg)
+                finally:
+                    parity.tree_hash = real_tree_hash
+                self.assertEqual(skip["harness_error"], tiers.TRACE_TIMEOUT.format(7200))
+            finally:
+                tiers.engine_version, tiers.run_tex = saved
+
     def test_seeded_conversions_count_only_conversions(self):
         seed = {"a-eps-converted-to.pdf": "/c/a", "a.eps": "/c/a.eps", "figs/b-eps-converted-to.pdf": "/c/b"}
         self.assertEqual((parity.seeded_conversions(seed), parity.seeded_conversions({}),
@@ -650,6 +721,88 @@ class Corpus(unittest.TestCase):
             self.assertEqual(corpus.unpack(buf.getvalue(), dest), "tar.gz")
             self.assertGreater(os.stat(os.path.join(dest, "huge.tex")).st_mtime, before)  # the unpack's time
             self.assertEqual(os.stat(os.path.join(dest, "fine.tex")).st_mtime, 1500000000)
+
+    def test_archive_tier_tree_is_its_root_directory(self):
+        # a forge's commit archive (the books tier): the tree is the archive's top directory,
+        # so the entry's relative \input{book/...} resolves as in the project's checkout
+        doc = b"\\documentclass{book}\\begin{document}\\input{book/ch.tex}\\end{document}\n"
+        data = self._targz({"proj/main.tex": doc, "proj/book/ch.tex": b"x"})
+        e = {"id": "proj-1234567", "url": "https://example.invalid/a.tar.gz", "sha256": corpus.sha256_bytes(data),
+             "root": "proj", "entry": "main.tex"}
+        with tempfile.TemporaryDirectory() as d:
+            cache = os.path.join(d, "cache")
+            os.makedirs(os.path.join(cache, "archives"))
+            with open(os.path.join(cache, "archives", e["id"]), "wb") as f:
+                f.write(data)  # already fetched: no network
+            man = os.path.join(d, "m.json")
+            with open(man, "w") as f:
+                json.dump({"tier": "books", "entries": [e, dict(e, id="other", root="nope")]}, f)
+            with open(os.path.join(cache, "archives", "other"), "wb") as f:
+                f.write(data)
+            ok, bad = corpus.fetch_manifest(man, cache, log=lambda *_: None)
+            self.assertIsNone(ok["problem"])
+            self.assertEqual(ok["dir"], os.path.join(cache, "src", "books", e["id"]))
+            self.assertTrue(os.path.isfile(os.path.join(ok["dir"], "main.tex")))
+            self.assertTrue(os.path.isfile(os.path.join(ok["dir"], "book", "ch.tex")))
+            self.assertFalse(os.path.exists(os.path.join(ok["dir"], "proj")))
+            with open(os.path.join(ok["dir"], ".parity-unpacked")) as f:
+                self.assertEqual(f.read(), f"{e['sha256']} {corpus.UNPACK_V} root=proj")
+            self.assertIn("no top directory 'nope'", bad["problem"])
+            self.assertEqual([n for n in os.listdir(os.path.join(cache, "src", "books")) if ".tmp-" in n], [])
+
+    def test_books_manifest_pins_a_commit_archive(self):
+        with open(os.path.join(corpus.MANIFEST_DIR, "books.json"), encoding="utf-8") as f:
+            man = json.load(f)
+        self.assertIn(man["tier"], corpus.ARCHIVE_TIERS)
+        self.assertTrue(man["on_demand"])  # a bare `corpus.py fetch` stays the T3 tiers'
+        for e in man["entries"]:
+            self.assertRegex(e["sha256"], r"^[0-9a-f]{64}$")
+            self.assertIn(e["commit"], e["url"])  # a commit, never a moving branch
+            self.assertTrue(e["root"] and e["entry"].endswith(".tex"))
+
+    def test_repo_entry_is_copied_with_its_directory_and_recopied_when_edited(self):
+        # the beamer tier's own decks: a `repo` entry names a committed document, unpinned (Git pins it)
+        with tempfile.TemporaryDirectory() as d:
+            repo, cache = os.path.join(d, "repo"), os.path.join(d, "cache")
+            deck = os.path.join(repo, "fixtures", "beamer-v3", "deck")
+            os.makedirs(deck)
+            with open(os.path.join(deck, "main.tex"), "w") as f:
+                f.write("\\documentclass{beamer}\\begin{document}\\begin{frame}x\\end{frame}\\end{document}\n")
+            with open(os.path.join(deck, "fig.png"), "wb") as f:
+                f.write(b"png")
+            e = {"id": "v3-deck", "repo": "fixtures/beamer-v3/deck/main.tex", "copy_dir": True}
+            man = os.path.join(d, "m.json")
+            with open(man, "w") as f:
+                json.dump({"tier": "beamer", "entries": [e, dict(e, id="gone", repo="fixtures/nope/main.tex")]}, f)
+            old = corpus.REPO
+            corpus.REPO = repo
+            try:
+                ok, bad = corpus.fetch_manifest(man, cache, log=lambda *_: None)
+                self.assertIsNone(ok["problem"])
+                self.assertEqual((ok["dir"], ok["entry"]), (os.path.join(cache, "src", "beamer", "v3-deck"), "main.tex"))
+                self.assertEqual(sorted(n for n in os.listdir(ok["dir"]) if not n.startswith(".")), ["fig.png", "main.tex"])
+                self.assertIn("missing in the repository", bad["problem"])
+                with open(os.path.join(deck, "main.tex"), "a") as f:
+                    f.write("% edited\n")
+                corpus.fetch_manifest(man, cache, log=lambda *_: None, only={"v3-deck"})
+                with open(os.path.join(ok["dir"], "main.tex")) as f:
+                    self.assertTrue(f.read().endswith("% edited\n"))
+            finally:
+                corpus.REPO = old
+
+    def test_beamer_manifest(self):
+        with open(os.path.join(corpus.MANIFEST_DIR, "beamer.json"), encoding="utf-8") as f:
+            man = json.load(f)
+        self.assertIn(man["tier"], corpus.TEXLIVE_TIERS)
+        self.assertTrue(man["on_demand"])
+        ids = [e["id"] for e in man["entries"]]
+        self.assertEqual(len(set(ids)), len(ids))
+        for e in man["entries"]:
+            if "repo" in e:
+                self.assertTrue(os.path.isfile(os.path.join(corpus.REPO, e["repo"])), e["id"])
+            else:
+                self.assertTrue(e["path"].startswith("doc/"), e["id"])
+                self.assertRegex(e["sha256"], r"^[0-9a-f]{64}$")
 
     def test_tree_unpacked_before_archive_times_is_unpacked_again(self):
         data = self._targz({"main.tex": b"\\documentclass{article}\\begin{document}x\\end{document}\n"})
@@ -855,6 +1008,201 @@ def acc_capture(box=BOX, mem=ACC_MEM, tail=ACC_TAIL):
     return capture.Capture(f"**\\tracingall\n{box}\n\n{mem}\n{tail}", [box], "x.pdf")
 
 
+def elapsed_log(stop=893544, start=12, inner=13, reg=4161, dim="0.0635pt", other=5, typeset="4", restore=None,
+                extra=""):
+    """A traced log shaped like pdfTeX's for tabu-europasscv (lane P5-PT1-SKIPS)
+    and the cases around it; every keyword is one value that may differ."""
+    restore = start if restore is None else restore
+    return "\n".join([
+        "This is pdfTeX, Version 3.141592653-2.6-1.40.29", "**\\input{main.tex}",
+        "{into \\pdf@elapsedtime=\\pdfelapsedtime}",
+        "{\\begingroup}", "{entering semi simple group (level 1) at line 364}",
+        # tabu's \tabu@message@etime: the body starts with the timer's \edef,
+        # and the message's ^^J breaks the expansion line
+        "~........\\tabu@elapsedtime ->\\edef \\tabu@stoptime {\\the \\pdfelapsedtime }\\tabu@message {(tabu)",
+        "", "}", "{\\edef}", "{changing \\tabu@stoptime=undefined}",
+        f"{{into \\tabu@stoptime=macro:->{stop}}}",
+        # an alias learnt from the run; two timer reads into one name, the
+        # second one inside a group
+        "~.\\stamp ->\\edef \\st {\\the \\pdf@elapsedtime }",
+        "{\\edef}", "{changing \\st=undefined}", f"{{into \\st=macro:->{start}}}",
+        f"~.\\st ->{start}",
+        "{\\begingroup}", "{entering semi simple group (level 2) at line 365}",
+        "~.\\stamp ->\\edef \\st {\\the \\pdf@elapsedtime }",
+        "{\\edef}", f"{{changing \\st=macro:->{start}}}", f"{{into \\st=macro:->{inner}}}",
+        # a register fed directly: \count and \dimen
+        "~.\\regstamp ->\\mycnt =\\pdfelapsedtime \\relax ",
+        "{\\count283}", "{changing \\count283=0}", f"{{into \\count283={reg}}}", "{\\relax}",
+        "~.\\dimstamp ->\\dimen@ =\\pdfelapsedtime sp",
+        "{\\dimen0}", "{changing \\dimen0=24.88pt}", f"{{into \\dimen0={dim}}}",
+        # an ordinary number after all of that stays compared
+        "{\\count255}", "{changing \\count255=92}", f"{{into \\count255={other}}}",
+        f"{{the character {typeset}}}",
+        "{\\endgroup}", f"{{restoring \\dimen0=24.88pt}}", "{restoring \\count283=0}",
+        f"{{restoring \\st=macro:->{restore}}}",
+        "{leaving semi simple group (level 2) entered at line 365}",
+        "{\\endgroup}", "{restoring \\st=undefined}", "{restoring \\tabu@stoptime=undefined}",
+        "{leaving semi simple group (level 1) entered at line 364}",
+        extra,
+        "Output written on main.pdf (1 page, 9 bytes).", ""])
+
+
+class PTElapsed(unittest.TestCase):
+    """Commander ruling (lane P5-PT1-SKIPS): P-T1 masks the values
+    `\\pdfelapsedtime` puts into a traced log, and only those
+    (capture.ElapsedMask)."""
+
+    def pt1(self, a, b):
+        cap = [capture.Capture(x, capture.split_boxes(x), "x.pdf")
+               for x in (capture.normalise_log(a, "/w"), capture.normalise_log(b, "/w"))]
+        mem = tiers.compare_pt1(*cap)
+        streamed = tiers.compare_pt1_streamed(*(pt1stream.Stream("/w").feed(x.encode("latin-1")).close()
+                                                for x in (a, b)))
+        self.assertEqual(mem["ok"], streamed["ok"])  # one rule, both drivers
+        self.assertEqual(mem.get("elapsed_masked"), streamed.get("elapsed_masked"))
+        return mem
+
+    def test_the_timer_is_masked(self):
+        a = elapsed_log()
+        b = elapsed_log(stop=910049, start=14, inner=15, reg=4170, dim="0.07pt")
+        self.assertNotEqual(a, b)  # pdfTeX against itself: the clock differs
+        r = self.pt1(a, b)
+        self.assertTrue(r["ok"], r)
+        self.assertEqual(r["elapsed_masked"], [8, 8])
+        out = capture.normalise_log(a, "/w")
+        for ln in ("{into \\tabu@stoptime=macro:-><ELAPSED>}", "{into \\st=macro:-><ELAPSED>}", "~.\\st -><ELAPSED>",
+                   "{changing \\st=macro:-><ELAPSED>}", "{into \\count283=<ELAPSED>}", "{into \\dimen0=<ELAPSED>}",
+                   "{restoring \\st=macro:-><ELAPSED>}"):
+            self.assertIn("\n" + ln + "\n", out)
+        self.assertIn("{changing \\count283=0}", out)  # the old values were not the timer's
+        self.assertIn("{restoring \\count283=0}", out)
+        # a later assignment of the same number from elsewhere is not the timer's
+        again = capture.normalise_log(elapsed_log(extra="{\\count283}\n{changing \\count283=4161}\n"
+                                                        "{into \\count283=4161}"), "/w")
+        self.assertIn("\n{changing \\count283=4161}\n{into \\count283=4161}\n", again)  # restored: no longer the timer's
+
+    def test_every_other_number_is_still_compared(self):
+        a = elapsed_log()
+        for kw in ({"other": 6}, {"typeset": "5"}, {"restore": 11}):
+            r = self.pt1(a, elapsed_log(**kw))
+            self.assertFalse(r["ok"], kw)
+            self.assertRegex(r["log_line"]["candidate"], r"=(macro:->)?\d+\}$|character \d\}$", kw)
+
+    def test_a_wrong_timer_value_restored_is_compared(self):
+        # review of #1462: \st holds two timer values, the outer one saved by
+        # the inner group; restoring the inner one at the group's end (a
+        # save-stack bug) shows a timer value, but not the one saved there
+        a = elapsed_log()
+        bug = elapsed_log(restore=13)  # \st's inner value restored instead of the outer 12
+        self.assertIn("{restoring \\st=macro:->13}", capture.normalise_log(bug, "/w"))
+        r = self.pt1(a, bug)
+        self.assertFalse(r["ok"])
+        self.assertEqual(r["log_line"]["candidate"], "{restoring \\st=macro:->13}")
+        # and with the clock different too: still caught
+        r = self.pt1(a, elapsed_log(start=14, inner=15, restore=15))
+        self.assertFalse(r["ok"])
+
+    def test_only_the_assignment_that_comes_next(self):
+        def two(n):
+            return elapsed_log(extra="\n".join([
+                # the timer's \edef is not the first thing the macro does
+                "~.\\late ->\\count@ =1 \\edef \\x {\\the \\pdfelapsedtime }",
+                "{\\count255}", "{changing \\count255=5}", f"{{into \\count255={n}}}",
+                "{\\edef}", "{changing \\x=undefined}", f"{{into \\x=macro:->{n}}}",
+                # armed, but another command comes first
+                "~.\\ifstamp ->\\ifnum \\pdfelapsedtime >0 \\count@ =7\\fi ",
+                "{\\ifnum: (level 1) entered on line 1}", "{true}", "{\\count255}",
+                "{changing \\count255=1}", f"{{into \\count255={n}}}",
+                # \edef of another name; a timer read from the input file (no macro)
+                "~.\\other ->\\edef \\y {\\the \\pdfelapsedtime }", "{\\edef}",
+                "{changing \\z=undefined}", f"{{into \\z=macro:->{n}}}",
+                "{\\edef}", "{changing \\w=undefined}", f"{{into \\w=macro:->{n}}}"]))
+        out = capture.normalise_log(two(1), "/w")
+        self.assertEqual(out.count("<ELAPSED>"), 8)  # elapsed_log's own, none of these
+        self.assertFalse(self.pt1(two(1), two(2))["ok"])
+
+    def test_a_macro_expanded_where_its_edef_does_not_run(self):
+        # review of #1462: \stamp expanded inside a \write, so its \edef never
+        # runs there; the next \edef of the same name is the input's own
+        def log(n):
+            return elapsed_log(extra="\n".join([
+                "{\\immediate}", "{\\write}",
+                "~.\\stamp ->\\edef \\v {\\the \\pdfelapsedtime }",
+                "~.\\v ->7",
+                "{\\edef}", "{changing \\v=macro:->7}", f"{{into \\v=macro:->{n}}}"]))
+        self.assertIn("\n{into \\v=macro:->1}\n", capture.normalise_log(log(1), "/w"))
+        self.assertFalse(self.pt1(log(1), log(2))["ok"])
+        # an expansion line or another command between arm and \edef disarms too
+        for between in ("~.\\foo ->", "{\\relax}", "#1<-x", "! Undefined control sequence."):
+            lg = elapsed_log(extra="\n".join(["~.\\stamp ->\\edef \\v {\\the \\pdfelapsedtime }", between,
+                                              "{\\edef}", "{changing \\v=undefined}", "{into \\v=macro:->3}"]))
+            self.assertIn("\n{into \\v=macro:->3}\n", capture.normalise_log(lg, "/w"), between)
+
+    def test_a_let_alias_is_dropped_when_redefined(self):
+        extra = "\n".join(["{into \\pdf@elapsedtime=\\relax}", "~.\\again ->\\edef \\v {\\the \\pdf@elapsedtime }",
+                           "{\\edef}", "{changing \\v=undefined}", "{into \\v=macro:->{}}"])
+        a, b = elapsed_log(extra=extra.replace("{}", "8")), elapsed_log(extra=extra.replace("{}", "9"))
+        self.assertFalse(self.pt1(a, b)["ok"])
+
+    def test_a_rebound_primitive_name_is_not_the_timer(self):
+        # re-review of #1462: \let\pdfelapsedtime\count@, then \the\pdfelapsedtime is \count255's constant
+        def log(n):
+            return elapsed_log(extra="\n".join([
+                "{\\let}", "{changing \\pdfelapsedtime=\\pdfelapsedtime}", "{into \\pdfelapsedtime=\\count255}",
+                "~.\\stamp ->\\edef \\v {\\the \\pdfelapsedtime }",
+                "{\\edef}", "{changing \\v=undefined}", f"{{into \\v=macro:->{n}}}"]))
+        self.assertIn("\n{into \\v=macro:->7}\n", capture.normalise_log(log(7), "/w"))
+        self.assertFalse(self.pt1(log(7), log(8))["ok"])
+        # rebound back to the primitive: the timer again
+        back = log(7) + "\n".join(["", "{into \\pdfelapsedtime=\\pdfelapsedtime}",
+                                   "~.\\stamp ->\\edef \\v {\\the \\pdfelapsedtime }",
+                                   "{\\edef}", "{changing \\v=macro:->7}", "{into \\v=macro:->9}", ""])
+        self.assertIn("\n{into \\v=macro:-><ELAPSED>}\n", capture.normalise_log(back, "/w"))
+
+    def test_a_register_scaled_from_the_timer_is_not_armed(self):
+        # re-review of #1462: only the bare \R=<timer> (a \dimen's in sp) arms
+        for body, cmd, n in (("\\dimen@ =\\pdfelapsedtime \\dimen 2", "{\\dimen0}", "3.0pt"),
+                             ("\\dimen@ =\\pdfelapsedtime pt", "{\\dimen0}", "3.0pt"),
+                             ("\\count@ =2\\pdfelapsedtime ", "{\\count255}", "8"),
+                             ("\\count@ =\\pdfelapsedtime \\advance \\count@ 1 ", "{\\count255}", "8"),
+                             ("\\count@ =\\pdfelapsedtime sp", "{\\count255}", "8"),  # not a \dimen
+                             ("\\dimen@ =\\pdfelapsedtime \\relax ", "{\\dimen0}", "3.0pt")):  # not a \count
+            name = cmd[1:-1]
+            lg = elapsed_log(extra="\n".join([f"~.\\scaled ->{body}", cmd, f"{{changing {name}=0.0pt}}",
+                                              f"{{into {name}={n}}}"]))
+            self.assertIn(f"\n{{into {name}={n}}}\n", capture.normalise_log(lg, "/w"), body)
+
+    def test_tabu_shape_needs_the_mask(self):
+        # what two pdfTeX runs of tabu-europasscv differ in (one line, 2026-10-03)
+        a = elapsed_log()
+        b = a.replace("{into \\tabu@stoptime=macro:->893544}", "{into \\tabu@stoptime=macro:->910049}")
+        self.assertEqual(sum(x != y for x, y in zip(a.split("\n"), b.split("\n"))), 1)
+        self.assertTrue(self.pt1(a, b)["ok"])
+        plain = [capture.Capture(x, [], "x.pdf") for x in (a, b)]  # without the mask
+        self.assertFalse(tiers.compare_pt1(*plain)["log_equal"])
+
+    def test_chunks_and_cached_logs(self):
+        out = capture.normalise_log(elapsed_log(), "/w")
+        self.assertEqual(capture.ElapsedMask().text_in_pieces(out), out)  # idempotent: a cached log is masked again
+        self.assertEqual(capture.ElapsedMask().text_in_pieces(out, piece=7), out)
+        raw = elapsed_log()
+        whole = capture.ElapsedMask().text_in_pieces(raw)
+        for piece in (1, 5, 40, 200):  # any run of whole lines at a time, the group depth included
+            self.assertEqual(capture.ElapsedMask().text_in_pieces(raw, piece=piece), whole, piece)
+
+    def test_a_fingerprint_from_before_the_mask_is_a_harness_error(self):
+        a, b = elapsed_log(), elapsed_log(stop=1)
+        fa, fb = (pt1stream.Stream("/w").feed(x.encode()).close() for x in (a, b))
+        old = pt1stream.Stream("/w").feed(a.encode()).close()
+        for k in ("elapsed_mask", "elapsed_masked"):
+            old.pop(k)
+        old["strict"] = dict(old["strict"], sha256="0" * 64)  # what an unmasked log hashes to: something else
+        r = tiers.compare_pt1_streamed(old, fb)
+        self.assertFalse(r["ok"])
+        self.assertIn("before the \\pdfelapsedtime mask", r["harness_error"])
+        self.assertTrue(tiers.compare_pt1_streamed(fa, fb)["ok"])
+
+
 class PTAccounting(unittest.TestCase):
     """DESIGN §1.1 N2 ruling: only end-of-run accounting leaves P-T1, and a
     block ends at the first line that does not start with a space."""
@@ -995,7 +1343,8 @@ class PTSummary(unittest.TestCase):
             self.assertEqual(skip, {"why": "not evaluated: listed in --pt1-skip", "traced_oracle": False})
             self.assertIsNone(parity.pt1_skip_reason(doc, dict(cfg, pt="pt2")))
             tiers.oracle = lambda *a, **k: ({"ok": True, "log_chars": 100}, None, "ref.pdf")
-            self.assertEqual(parity.pt1_plan(doc, cfg, None), (False, capture.TIMEOUT))
+            # under the budget: a pipe too (held in memory, streamed past the budget), never a file
+            self.assertEqual(parity.pt1_plan(doc, cfg, None), ("pipe", capture.TIMEOUT))
             tiers.oracle = lambda *a, **k: ({"ok": True, "trace_incomplete": "the traced pass crashed"}, None, "ref.pdf")
             self.assertNotIn("harness_error", parity.pt1_skip_reason(doc, cfg))
             stopped = tiers.TRACE_TIMEOUT.format(1800)
@@ -1394,6 +1743,39 @@ class NightlyMemoryBound(unittest.TestCase):
         self.assertAlmostEqual(nightly.memory_bound_gib(a), 8 * (nightly.WORKER_GIB + 9 * 64 / 1024))
         self.assertAlmostEqual(nightly.memory_bound_gib(argparse.Namespace(jobs=2, pt1_max_log_mb=256)),
                                2 * (nightly.WORKER_GIB + 9 * 256 / 1024))
+
+
+class NightlyDiskAndCommit(unittest.TestCase):
+    """P5-T4-MAC: a disk floor between shards, and the commit of the checkout."""
+
+    def test_low_disk(self):
+        import argparse
+        import shutil
+        import nightly
+        d = tempfile.mkdtemp()
+        free = shutil.disk_usage(d).free / 2 ** 30
+        a = argparse.Namespace(min_free_gb=0, state=d, work=os.path.join(d, "not-yet", "work"))
+        self.assertIsNone(nightly.low_disk(a))                 # 0: no check
+        a.min_free_gb = max(free - 1, 0.001)
+        self.assertIsNone(nightly.low_disk(a))                 # a directory not made yet: its parent's disk
+        a.min_free_gb = free + 1024
+        self.assertIn("GB free", nightly.low_disk(a))
+
+    def test_git_sha_is_the_checkout_not_github_sha(self):
+        import subprocess
+        import nightly
+        saved = os.environ.get("GITHUB_SHA")
+        os.environ["GITHUB_SHA"] = "f" * 40  # the head of the dispatched ref, not what was checked out
+        try:
+            sha = nightly.git_sha()
+        finally:
+            if saved is None:
+                os.environ.pop("GITHUB_SHA")
+            else:
+                os.environ["GITHUB_SHA"] = saved
+        head = subprocess.run(["git", "-C", nightly.REPO, "rev-parse", "HEAD"], capture_output=True,
+                              text=True).stdout.strip()
+        self.assertEqual(sha, head if len(head) == 40 else "f" * 40)
 
 
 class NightlyRatchet(unittest.TestCase):

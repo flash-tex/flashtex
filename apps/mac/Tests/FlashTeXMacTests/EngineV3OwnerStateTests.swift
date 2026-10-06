@@ -14,7 +14,16 @@ final class EngineV3OwnerStateTests: XCTestCase {
     private var env = EnvironmentOverride()
 
     override func setUp() { OwnerStateGuard.install() }
-    override func tearDown() { env.restore() }
+    override func tearDown() {
+        env.restore()
+        // After the guard's check (teardown blocks run first): the probe
+        // goes, and the guard takes the state without it as its baseline.
+        if UserDefaults.standard.object(forKey: Self.probeKey) != nil {
+            UserDefaults.standard.removeObject(forKey: Self.probeKey)
+            OwnerStateGuard.rebase()
+        }
+    }
+    static let probeKey = "FlashTeX.EngineV3.ownerStateGuardProbe"
 
     func testWithoutACacheSettingATestUsesItsOwnTemporaryCache() {
         env.set("FLASHTEX_V3_CACHE", "")
@@ -32,18 +41,34 @@ final class EngineV3OwnerStateTests: XCTestCase {
         XCTAssertTrue(formats.hasPrefix(EngineV3.testCacheDirectory.path), formats)
     }
 
-    func testTheFlagIsKeptInTheTestProcessesOwnDefaults() {
+    /// Setting the window's engine directly (benches, tests) persists
+    /// nothing (it is that window's override, EngineChoice.swift); a
+    /// per-document choice is kept in the test process's own suite, never
+    /// in the runner's standard domain.
+    func testTheFlagIsKeptInTheTestProcessesOwnDefaults() throws {
         env.set("FLASHTEX_HOST", "none")
         XCTAssertFalse(EngineV3.defaults === UserDefaults.standard)
-        let before = UserDefaults.standard.object(forKey: EngineV3.enabledKey).map { String(describing: $0) }
+        let before = UserDefaults.standard.dictionaryRepresentation().filter { $0.key.hasPrefix("FlashTeX.EngineV3") }.mapValues { String(describing: $0) }
+        let suiteBefore = EngineV3.defaults.object(forKey: EngineV3.enabledKey).map { String(describing: $0) }
         let model = ShellModel()
         defer { model.engineV3.stop() }
         model.engineV3Enabled = true
         model.engineV3Enabled = false
         model.engineV3Enabled = true
-        XCTAssertEqual(UserDefaults.standard.object(forKey: EngineV3.enabledKey).map { String(describing: $0) }, before,
+        XCTAssertEqual(EngineV3.defaults.object(forKey: EngineV3.enabledKey).map { String(describing: $0) }, suiteBefore,
+                       "a direct set is the window's override, not the app setting")
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("engine-v3-owner-flag-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let file = dir.appendingPathComponent("main.tex")
+        try "\\documentclass{article}\n\\begin{document}\nx\n\\end{document}\n".write(to: file, atomically: true, encoding: .utf8)
+        XCTAssertEqual(model.openTex(at: file, dirty: .discard), .opened)
+        model.chooseEngine(.previous)
+        defer { EngineChoiceStore.set(nil, for: file) }
+        XCTAssertEqual(EngineChoiceStore.entry(for: file)?.source, .user)
+        XCTAssertNotNil(EngineV3.defaults.dictionary(forKey: EngineChoiceStore.documentsKey))
+        XCTAssertEqual(UserDefaults.standard.dictionaryRepresentation().filter { $0.key.hasPrefix("FlashTeX.EngineV3") }.mapValues { String(describing: $0) }, before,
                        "the runner's standard domain is untouched")
-        XCTAssertEqual(EngineV3.defaults.bool(forKey: EngineV3.enabledKey), true)
     }
 
     /// The review's reproduction: a session that compiled is stopped and the
@@ -88,8 +113,19 @@ final class EngineV3OwnerStateTests: XCTestCase {
         after.ownProjectCopies = ["630c-\(getpid())-2"]
         after.ownHostFiles = ["4242"]
         after.snapshotDirectories = ["abc123"]
-        after.formats = ["pdflatex-1": Date()]
         after.runnerEngineV3Keys = [EngineV3.enabledKey: "1"]
-        XCTAssertEqual(after.written(since: before).count, 5, after.written(since: before).joined(separator: "; "))
+        XCTAssertEqual(after.written(since: before).count, 4, after.written(since: before).joined(separator: "; "))
+    }
+
+    /// The guard reports a write as the failure of the test that made it,
+    /// while the test runs (a teardown block), and the run goes on: before,
+    /// it recorded the issue after the test had finished, which XCTest
+    /// refuses by aborting the whole run.
+    func testTheGuardFailsTheTestThatWroteAndTheRunGoesOn() {
+        let options = XCTExpectedFailure.Options()
+        options.isStrict = true
+        options.issueMatcher = { $0.compactDescription.contains("wrote the owner's state") && $0.compactDescription.contains(Self.probeKey) }
+        XCTExpectFailure("the guard reports the runner's FlashTeX.EngineV3 key written here", options: options)
+        UserDefaults.standard.set("x", forKey: Self.probeKey)
     }
 }

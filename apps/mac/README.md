@@ -3,9 +3,16 @@
 Native macOS source editor + preview shell. Swift Package, macOS 14+, SwiftUI/AppKit.
 Owner: mac-claude-a. Contract: `docs/contracts/runtime-v1.md`.
 
-The preview is **fixture-backed**: it renders `protocol/fixtures/compile-result.json`
-and shows a `FIXTURE` badge, result id/revision/status, and `pdf: none`. No LaTeX is
-compiled; when the buffer is edited the banner says the preview was not recompiled.
+Opened with no file, the window holds an untitled LaTeX document: File › New
+Project…'s "Blank article" titled "Untitled" (`UntitledDocument` in
+`ProjectScaffold.swift`), with the caret on the empty line under
+`\section{Introduction}`. It is not dirty until edited, and the attached engine
+(old or v3) compiles it like any other buffer.
+
+A bare `ShellModel()` (tests, automation) is **fixture-backed** instead: it renders
+`protocol/fixtures/compile-result.json` and shows a `FIXTURE` badge, result
+id/revision/status, and `pdf: none`; when the buffer is edited the banner says the
+preview was not recompiled.
 
 ## Build and test
 
@@ -63,8 +70,8 @@ established fixtures need (`ec-lmr10`, `ec-lmr12`, `rm-lmr12`, `rm-lmr8`,
 
 - `scripts/bundle-texmf.py` (called by `make-app.sh`) verifies every file's
   byte length and SHA-256 against the Commander's pinned manifest
-  (`crates/rendering-core/docs/handoffs/native-assets/manifest.json`, itself
-  SHA-pinned in `crates/rendering-core/tools/verify_bundle_resources.py`)
+  (`apps/mac/scripts/native-assets-manifest.json`, itself
+  SHA-pinned in `apps/mac/scripts/verify_bundle_resources.py`)
   BEFORE the build, stages them into `Contents/Resources/texmf/fonts/tfm/public/lm`
   and `Contents/Resources/texmf/doc/fonts/lm/GUST-FONT-LICENSE.TXT`, then runs
   the pinned verifier over the whole `Resources` directory (3 fonts + 5 metrics
@@ -993,6 +1000,7 @@ explain that nothing is loaded.
 | ⌘⇧R | Attach render pipeline (`$FLASHTEX_RENDER`, the app bundle, or `crates/render-pipeline/target/…`): the Latin Modern-metric producer, so the preview shows Computer Modern-style text |
 | ⌘K | Attach worker executable… |
 | ⌘B | Compile now (auto-compile also runs 250 ms after edits) |
+| ⌘. | Stop compile: ends a compile that runs too long under the engine-v3 preview |
 | ⌘⇧E | Export PDF… — the app's one export route: the loaded v2 display list through `flashtex-pdf-exact from-v2` (`$FLASHTEX_PDF_EXACT`, the bundle, or `crates/pdf/target/…`): original GIDs, embedded font programs, typed rules, images; refusals name the item. Progress and Cancel in the status bar; the file is written atomically |
 | ⌘P | Print… (the same bytes Export PDF… writes; system print panel; page size follows the PDF) |
 | File > Print Source… | Print Source… (editor text with line numbers, monospaced, from a copy so the live editor is untouched) |

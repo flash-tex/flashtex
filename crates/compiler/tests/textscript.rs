@@ -4,6 +4,9 @@
 //! `\@textsuperscript` / `\@textsubscript`): the argument is set at the
 //! `\sf@size` of the current size, raised or lowered like a math script
 //! of an empty nucleus.
+
+// Clippy debt in frozen old-engine code (D13): allowed, not refactored.
+#![allow(unused_imports, reason = "frozen old engine (D13): fixes only; clippy debt is allowed rather than refactored")]
 use flashtex_compiler::layout::{layout, layout_with_constraints, LayoutConstraints, Page, TextItem};
 use flashtex_compiler::parser::{parse, Block, Inline};
 

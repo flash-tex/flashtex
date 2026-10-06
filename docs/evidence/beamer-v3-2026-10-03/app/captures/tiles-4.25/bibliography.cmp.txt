@@ -1,0 +1,26 @@
+status done; pages 3 (pdf 3); incomplete (
+)
+p1 current 1 src pane pdfFallback 0 forms 0 ppp 4.25
+    whole @2.0000: 726x545 differing 0 maxDelta 0
+    tiles held 9 stale 0 missingVisible 0 wrongSize 0 drawnWhole 1 deferred 0 waited 80 ms
+    tiles @4.2500: 1543x1157 differing 0 maxDelta 0 missing 8099
+p2 current 1 src pane pdfFallback 0 forms 0 ppp 4.25
+    whole @2.0000: 726x545 differing 0 maxDelta 0
+    tiles held 9 stale 0 missingVisible 0 wrongSize 0 drawnWhole 1 deferred 0 waited 78 ms
+    tiles @4.2500: 1543x1157 differing 0 maxDelta 0 missing 8099
+p3 current 1 src pane pdfFallback 0 forms 0 ppp 4.25
+    whole @2.0000: 726x545 differing 439 maxDelta 161 bbox x59-82 y411-434
+    tiles held 9 stale 0 missingVisible 0 wrongSize 0 drawnWhole 1 deferred 0 waited 80 ms
+    tiles @4.2500: 1543x1157 differing 1811 maxDelta 161 missing 8099 bbox x126-175 y873-921
+p4 current 0 src - pdfFallback - forms - ppp - NO PDF PAGE
+p5 current 0 src - pdfFallback - forms - ppp - NO PDF PAGE
+p6 current 0 src - pdfFallback - forms - ppp - NO PDF PAGE
+p7 current 0 src - pdfFallback - forms - ppp - NO PDF PAGE
+p8 current 0 src - pdfFallback - forms - ppp - NO PDF PAGE
+p9 current 0 src - pdfFallback - forms - ppp - NO PDF PAGE
+p10 current 0 src - pdfFallback - forms - ppp - NO PDF PAGE
+p11 current 0 src - pdfFallback - forms - ppp - NO PDF PAGE
+p12 current 0 src - pdfFallback - forms - ppp - NO PDF PAGE
+p13 current 0 src - pdfFallback - forms - ppp - NO PDF PAGE
+p14 current 0 src - pdfFallback - forms - ppp - NO PDF PAGE
+p15 current 0 src - pdfFallback - forms - ppp - NO PDF PAGE

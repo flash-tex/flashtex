@@ -43,6 +43,10 @@
 #
 # Informational (not gating): the same files against e-TeX's masters under
 # TeX Live's accepted-difference filter (etriptest.test).
+#
+# Each of the six engine runs is killed with its process group past
+# ETRIP_TIMEOUT seconds (default 300); a run cut off fails the gate, even
+# though the runs' own exit statuses are not the verdict (#1208).
 set -eu
 
 root=$(cd "$(dirname "$0")/.." && pwd)
@@ -55,31 +59,37 @@ files="ctripin.log ctripin.fot ctrip.log ctrip.fot ctripos.tex ctrip.dvi
 xtripin.log xtripin.fot xtrip.log xtrip.fot xtripos.tex xtrip.dvi
 etripin.log etripin.fot etrip.log etrip.fot etrip.out etrip.dvi"
 
+# timed CMD...: CMD under scripts/run-with-timeout.py, logging a timeout in
+# $timeouts (set before the runs).
+timed() { python3 "$root/scripts/run-with-timeout.py" "${ETRIP_TIMEOUT:-300}" --log "$timeouts" -- "$@"; }
+
 # etrip_runs INI VIR DIR: the six runs of the three parts in DIR. INI and VIR
-# are the commands for an INITEX and for a production run.
+# are the commands for an INITEX and for a production run, split into words
+# on purpose (POSIX sh has no arrays).
+# shellcheck disable=SC2086
 etrip_runs() {
     ini=$1 vir=$2 d=$3
     cp "$knuth/trip.tex" "$knuth/trip.tfm" "$fix/etrip.tex" "$fix/etrip.tfm" "$d/"
     (
         cd "$d"
         # Part 1: tripman.tex steps 3 and 4, compatibility mode.
-        printf '\n\\input trip\n' | $ini >ctripin.fot 2>&1 || true
+        printf '\n\\input trip\n' | timed $ini >ctripin.fot 2>&1 || true
         mv trip.log ctripin.log
-        printf ' &trip  trip \n' | $vir >ctrip.fot 2>&1 || true
+        printf ' &trip  trip \n' | timed $vir >ctrip.fot 2>&1 || true
         mv trip.log ctrip.log
         mv tripos.tex ctripos.tex
         mv trip.dvi ctrip.dvi
         # Part 2: extended mode.
-        $ini <"$fix/etrip1.in" >xtripin.fot 2>&1 || true
+        timed $ini <"$fix/etrip1.in" >xtripin.fot 2>&1 || true
         mv trip.log xtripin.log
-        $vir <"$fix/trip2.in" >xtrip.fot 2>&1 || true
+        timed $vir <"$fix/trip2.in" >xtrip.fot 2>&1 || true
         mv trip.log xtrip.log
         mv tripos.tex xtripos.tex
         mv trip.dvi xtrip.dvi
         # Part 3: the e-TeX specific test.
-        $ini <"$fix/etrip2.in" >etripin.fot 2>&1 || true
+        timed $ini <"$fix/etrip2.in" >etripin.fot 2>&1 || true
         mv etrip.log etripin.log
-        $vir <"$fix/etrip3.in" >etrip.fot 2>&1 || true
+        timed $vir <"$fix/etrip3.in" >etrip.fot 2>&1 || true
     )
 }
 
@@ -91,12 +101,19 @@ if [ "${1:-}" = "--oracle" ]; then
         exit 1
     }
     work=$(mktemp -d)
+    timeouts=$work/timeouts.txt
+    : >"$timeouts"
     # TeX Live's etrip configuration; pdfTeX's strings need a larger pool
     # than e-TeX's 32000 (etrip/texmf.cnf), which only changes the counts
     # normalised under b.
     TEXMFCNF=$fix pool_size=60000 max_strings=5000
     export TEXMFCNF pool_size max_strings
     etrip_runs "pdftex --progname=inipdftex --ini" "pdftex --progname=pdftex" "$work"
+    if [ -s "$timeouts" ]; then
+        echo "flashtex-etrip.sh --oracle: pdftex runs cut off; oracle not written:" >&2
+        cat "$timeouts" >&2
+        exit 1
+    fi
     rm -rf "$oracle"
     mkdir -p "$oracle"
     for f in $files; do cp "$work/$f" "$oracle/$f"; done
@@ -118,7 +135,7 @@ mkdir -p "$pkg/src/generated" "$run"
 
 # 1. Generate the etrip configuration into the scratch package.
 cargo build --release --locked -p web2rust
-(cd "$root" && "$root/target/release/web2rust" third_party/pdftex/pdftex.web \
+(cd "$root" && "${CARGO_TARGET_DIR:-$root/target}/release/web2rust" third_party/pdftex/pdftex.web \
     @crates/flashtex-engine/web2rust-etrip.args \
     --out-dir "$pkg/src/generated" --pool "$run/pdftex.pool")
 cp "$root"/crates/flashtex-engine/src/*.rs "$pkg/src/"
@@ -149,8 +166,10 @@ tex82 = []
 [workspace]
 EOF
 # The display-list writer's wire format (MIT, crates/display-list-v3).
+# (Cargo reads the path natively: under Git Bash/MSYS2 on Windows, `/d/a/...`
+# is `D:/a/...`, which `cygpath -m` gives; elsewhere there is no cygpath.)
 printf '\n[dependencies]\nflashtex-display-list = { path = "%s/crates/display-list-v3" }\n' \
-    "$root" >>"$pkg/Cargo.toml"
+    "$(cygpath -m "$root" 2>/dev/null || printf '%s' "$root")" >>"$pkg/Cargo.toml"
 # The generated code's warnings are known and not ours to fix by hand.
 CARGO_TARGET_DIR=$work/target RUSTFLAGS=-Awarnings \
     cargo build --release --quiet --manifest-path "$pkg/Cargo.toml"
@@ -165,6 +184,8 @@ export FLASHTEX_POOL="$run/pdftex.pool" FLASHTEX_RESOLVER=cwd-kpse
 export error_line=64 half_error_line=32 max_print_line=72
 # The second run of each part is a production run, as in TeX Live: its
 # default format is `pdftex' (never loaded, since the first line names one).
+timeouts=$work/timeouts.txt
+: >"$timeouts"
 etrip_runs "$initex -ini" "$initex -fmt=pdftex" "$run"
 
 # 3. Compare.
@@ -180,6 +201,11 @@ s/^ [0-9]* string characters out of [0-9]*$/ N string characters out of M/
 s/^ [0-9]* hyphenation exceptions* out of [0-9]*$/ N hyphenation exceptions out of M/
 EOF
 fail=0
+if [ -s "$timeouts" ]; then
+    echo "FAIL engine runs cut off:"
+    sed 's/^/    /' "$timeouts"
+    fail=1
+fi
 for f in $files; do
     case $f in
     *.dvi)

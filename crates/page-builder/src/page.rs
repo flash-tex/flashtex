@@ -267,6 +267,8 @@ impl PageBuilder {
         self.so_far[GOAL] = self.params.vsize;
         self.page_max_depth = self.params.max_depth;
         self.so_far[DEPTH] = 0;
+        // Indexed as in tex.web's `for k:=1 to 6 do page_so_far[k]:=0`.
+        #[allow(clippy::needless_range_loop)]
         for i in 1..=6 {
             self.so_far[i] = 0;
         }

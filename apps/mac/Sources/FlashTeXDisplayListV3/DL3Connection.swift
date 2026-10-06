@@ -29,6 +29,13 @@ public struct DL3CompileRequest: Sendable {
     public var buffers: [(path: String, text: String)] = []
     public var edits: [Edit] = []
     public var export = false
+    /// 3.2: `auto` runs bibtex, biber and makeindex as latexmk would (a
+    /// trusted project only, DESIGN.md §4.5); `off` never; nil: the host's default.
+    public var externalTools: String?
+    /// `-halt-on-error`: TeX stops at the first error (the app's strict mode).
+    /// Honoured by a host that lists `haltOnErrorCapability`.
+    public var haltOnError = false
+    public static let haltOnErrorCapability = "halt-on-error"
 
     public init(id: Int, root: String, main: String) { self.id = id; self.root = root; self.main = main }
 
@@ -47,6 +54,8 @@ public struct DL3CompileRequest: Sendable {
                                                      "delete": .int(Int64($0.delete)), "insert": .string($0.insert)]) })
         }
         if export { o["export"] = .bool(true) }
+        if let externalTools { o["external_tools"] = .string(externalTools) }
+        if haltOnError { o["halt_on_error"] = .bool(true) }
         return .object(o)
     }
 }

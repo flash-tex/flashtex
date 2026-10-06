@@ -17,6 +17,10 @@
 #include <string.h>
 #include <stdlib.h>
 
+/* The mktex discard flag a new instance starts with
+   (flashtex_kpse_set_make_tex_discard_errors). */
+static int flashtex_make_tex_discard_errors;
+
 /* ENV is a NULL-terminated list of name, value pairs set in the environment
    before any configuration is read. The bundle resolver uses it; the TeX
    Live one passes none. */
@@ -48,6 +52,7 @@ void *flashtex_kpse_new(const char *argv0, const char *progname, const char *eng
   kpathsea_set_program_enabled(kpse, kpse_ofm_format, false, kpse_src_cmdline - 1);
   kpathsea_set_program_enabled(kpse, kpse_ocp_format, false, kpse_src_cmdline - 1);
   kpathsea_init_prog(kpse, uppercasify(kpse->program_name), 600, NULL, NULL);
+  kpse->make_tex_discard_errors = flashtex_make_tex_discard_errors;
   return kpse;
 }
 
@@ -112,6 +117,25 @@ void flashtex_kpse_putenv(void *k, const char *var, const char *value)
 void flashtex_kpse_free(void *p)
 {
   free(p);
+}
+
+/* tex.ch [49.1265]: in \batchmode the mktex scripts' errors are discarded
+   (kpse_make_tex_discard_errors). The flag is kept here too, and
+   flashtex_kpse_new gives it to every instance it starts, so that K may be
+   NULL: a resolver whose kpathsea has not started yet (it may start at the
+   first lookup) gets the flag when it does. */
+void flashtex_kpse_set_make_tex_discard_errors(void *k, int discard)
+{
+  flashtex_make_tex_discard_errors = discard != 0;
+  if (k)
+    ((kpathsea) k)->make_tex_discard_errors = flashtex_make_tex_discard_errors;
+}
+
+/* The flag of instance K, or (K NULL) the one a new instance starts with. */
+int flashtex_kpse_get_make_tex_discard_errors(void *k)
+{
+  return k ? ((kpathsea) k)->make_tex_discard_errors != 0
+           : flashtex_make_tex_discard_errors;
 }
 
 void flashtex_kpse_finish(void *k)

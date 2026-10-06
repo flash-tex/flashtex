@@ -1428,7 +1428,7 @@ pub const or_code: i32 = 4i32;
 // §546
 pub const format_default_length: i32 = 20i32;
 // §546
-pub const format_extension: i32 = 941i32;
+pub const format_extension: i32 = 939i32;
 // §570
 pub const ext_tag: i32 = 3i32;
 // §570
@@ -2097,5 +2097,9 @@ pub const hash_extra: i32 = 600000i32;
 pub const hash_top: i32 = 630192i32;
 // §1870
 pub const max_trie_op: i32 = 65535i32;
-// §1897
+// §1900
 pub const ssup_error_line: i32 = 255i32;
+// §1920
+pub const ls_cond_size: i32 = 1000i32;
+// §1920
+pub const ls_tag_size: i32 = 65535i32;

@@ -534,3 +534,33 @@ fn socket_negotiates_diag_v1() {
     let _ = child.wait();
     let _ = std::fs::remove_file(&sock);
 }
+
+/// texmfmp.c's `input_line` stops a run whose line does not fit in the
+/// buffer with a message on stderr only; the host's compile reports it as
+/// an error at the file and line being read.
+#[test]
+fn input_line_overflow_is_reported() {
+    let Some(e) = env() else {
+        common::no_texlive();
+        return;
+    };
+    let dir = e.dir.join("bufsize");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let mut doc = b"\\documentclass{article}\n\\begin{document}\n%".to_vec();
+    doc.extend(std::iter::repeat_n(b'x', 200_010));
+    doc.extend_from_slice(b"\nx\n\\end{document}\n");
+    std::fs::write(dir.join("doc.tex"), doc).unwrap();
+    let mut h = Host::start(&e, &dir, "doc.tex");
+    h.cmd("compile");
+    let got = h.diagnostics();
+    let d = got
+        .iter()
+        .find(|d| {
+            d.str_field("message")
+                .is_some_and(|m| m.contains("Unable to read an entire line---bufsize=200000"))
+        })
+        .unwrap_or_else(|| panic!("no input_line diagnostic in {got:?}"));
+    assert_eq!(kind_of(d), "error", "{d:?}");
+    assert_eq!(d.int_field("line"), Some(3), "{d:?}");
+}

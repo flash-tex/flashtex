@@ -131,12 +131,14 @@ def complete_board(tmp, **kw):
                                    expected=kw.pop("smoke_expected", 2))
     fonts = sb.load_fonts(kw.pop("census", None) or census(tmp))
     nn = write_json(tmp, "n-new.json", kw.pop("nightly_new", nightly()))
-    no = write_json(tmp, "n-old.json", kw.pop("nightly_old", nightly(kind="flashtex-cli", engine_sha256="E-old")))
+    old_t4 = kw.pop("nightly_old", nightly(kind="flashtex-cli", engine_sha256="E-old"))
     extra = {"new": [("latex-suites", {"latex-suites": suites}, {"host": "h1"}),
                      ("package-smoke", {"package-smoke": smoke}, {"host": "h1"}),
                      ("fonts", {"fonts": fonts}, {"host": "h1"}),
                      ("nightly",) + sb.load_nightly(nn, SIZES)],
-             "old": [("nightly",) + sb.load_nightly(no, SIZES)]}
+             "old": []}
+    if old_t4 is not None:  # None: no v1 T4 run (decision 1: the one-off baseline stands in)
+        extra["old"].append(("nightly",) + sb.load_nightly(write_json(tmp, "n-old.json", old_t4), SIZES))
     return board_for(tmp, full, old, extra=extra, **kw)
 
 
@@ -276,6 +278,7 @@ class Review1299(unittest.TestCase):
         o["fingerprint"]["oracle_pdftex_version"] = "pdfTeX 1.40.28"
         b = complete_board(self.tmp, nightly_old=o)
         self.assertEqual(row(b, "nightly-5k", "L0")["verdict"], "invalid")
+
 
     def test_1_not_returned_and_spread_are_partial(self):
         n = nightly(not_returned=["nightly-5k/9"])
@@ -507,8 +510,8 @@ class Rereview1299T4(unittest.TestCase):
         b = board_for(tmp, full, old, extra={"new": [("nightly",) + sb.load_nightly(nn, SIZES)]})
         r = row(b, "nightly-5k", "L1")
         self.assertEqual(r["verdict"], "missing")
-        self.assertEqual(sb.fmt_cell(r["old"]), "missing (no v1 leg in nightly: decision 1)")
-        self.assertIn("missing (no v1 leg in nightly: decision 1)", sb.render_table(b))
+        self.assertEqual(sb.fmt_cell(r["old"]), "missing (no v1 one-off baseline (decision 1))")
+        self.assertIn("missing (no v1 one-off baseline (decision 1))", sb.render_table(b))
         self.assertFalse(b["all_green"])
 
 
@@ -650,6 +653,266 @@ class Parsers(unittest.TestCase):
         with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
             rc = sb.main(["--parity", "new=" + new, "--parity", "old=" + old, "--out", out])
         self.assertEqual(rc, 2)  # a format error fails closed
+
+
+class OneOracle(unittest.TestCase):
+    """P5-T4-MAC: the version string is the same on the PC and the Macs, so T4 is tied to the
+    board's oracle by its texlive.tlpdb and pdftex sha256 (DESIGN §8)."""
+
+    MAC = {"pdftex": "/usr/local/texlive/2026/bin/universal-darwin/pdftex", "pdftex_sha256": "3ead7b" + "0" * 58,
+           "texlive_root": "/usr/local/texlive/2026", "tlpdb_sha256": "ca39e6" + "0" * 58,
+           "latex_format": "2025-11-01", "version": "pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026)"}
+    PC = {"pdftex": "/opt/texlive/2026/bin/x86_64-linux/pdftex", "pdftex_sha256": "aa11" + "0" * 60,
+          "texlive_root": "/opt/texlive/2026", "tlpdb_sha256": "bb22" + "0" * 60}
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+
+    def t4(self, oracle, **kw):
+        n = nightly(**kw)
+        if oracle is not None:
+            n["fingerprint"]["oracle"] = {k: oracle[k] for k in ("pdftex", "pdftex_sha256", "texlive_root",
+                                                                  "tlpdb_sha256")}
+        return n
+
+    def test_same_oracle_is_green(self):
+        b = complete_board(self.tmp, oracle=self.MAC, nightly_new=self.t4(self.MAC),
+                           nightly_old=self.t4(self.MAC, kind="flashtex-cli", engine_sha256="E-old"))
+        self.assertTrue(b["all_green"], red(b))
+        self.assertEqual(b["oracle"]["tlpdb_sha256"], self.MAC["tlpdb_sha256"])
+        self.assertIn("texlive.tlpdb `ca39e6000000`", sb.render_md(b))
+
+    def test_pc_t4_on_a_mac_board_is_invalid(self):
+        b = complete_board(self.tmp, oracle=self.MAC, nightly_new=self.t4(self.PC),
+                           nightly_old=self.t4(self.MAC, kind="flashtex-cli", engine_sha256="E-old"))
+        r = row(b, "nightly-5k", "L1")
+        self.assertEqual(r["verdict"], "invalid")
+        self.assertIn("another oracle: texlive.tlpdb bb2200000000 (/opt/texlive/2026)", r["new"]["invalid"])
+        self.assertEqual(row(b, "arxiv", "L1")["verdict"], "ahead")  # the board's own runs are untouched
+        self.assertFalse(b["all_green"])
+
+    def test_same_tlpdb_other_pdftex_is_invalid(self):
+        o = dict(self.MAC, pdftex_sha256="ff" * 32)
+        b = complete_board(self.tmp, oracle=self.MAC, nightly_new=self.t4(o))
+        self.assertIn("pdftex binary", row(b, "nightly-5k", "P-T2")["new"]["invalid"])
+
+    def test_t4_without_oracle_record_is_invalid_on_a_board_with_one(self):
+        b = complete_board(self.tmp, oracle=self.MAC, nightly_new=self.t4(None))
+        self.assertIn("records no oracle identity", row(b, "nightly-5k", "L0")["new"]["invalid"])
+        # without a board oracle there is nothing to tie it to: as before
+        b = complete_board(tempfile.mkdtemp(), nightly_new=self.t4(None))
+        self.assertIsNone(row(b, "nightly-5k", "L0")["new"].get("invalid"))
+
+    def test_two_runs_disagree_without_a_board_oracle(self):
+        b = complete_board(self.tmp, nightly_new=self.t4(self.MAC),
+                           nightly_old=self.t4(self.PC, kind="flashtex-cli", engine_sha256="E-old"))
+        self.assertIn("another oracle", row(b, "nightly-5k", "L1")["old"]["invalid"])
+
+    def test_todays_nightly_tier_row_loads(self):
+        """nightly.tier_row no longer writes P-T1_over_cap (P-T1 streams large logs); found by
+        the P5-T4-MAC local proof, where the board refused the first real summary (exit 2)."""
+        import nightly
+        recs = [{"excluded": None, "P-T1": True, "P-T2": True, "level_index": 3},
+                {"excluded": None, "P-T1": None, "P-T2": True, "level_index": 3,
+                 "pt1_not_evaluated": "not evaluated: outside the P-T1 sample (0.05 of tier nightly-5k, --pt1-sample)"},
+                {"excluded": "oracle: pdflatex exit 1", "P-T1": None, "P-T2": None}]
+        n = self.t4(self.MAC, n=2)
+        n["tiers"]["nightly-5k"] = nightly.tier_row(recs)
+        n["expected"] = ["nightly-5k/%d" % i for i in range(3)]
+        self.assertNotIn("P-T1_over_cap", n["tiers"]["nightly-5k"])
+        tiers, _ = sb.load_nightly(write_json(self.tmp, "today.json", n), {"nightly-5k": 3})
+        c = tiers["nightly-5k"]["P-T1"]
+        self.assertEqual((c["passed"], c["of"]), (1, 1))
+        self.assertEqual(c["skipped"], 0)  # outside the sample: out of the denominator by rule
+        self.assertEqual(c["excluded"]["P-T1 outside the --pt1-sample (by rule)"], 1)
+        self.assertEqual(tiers["nightly-5k"]["L3"]["of"], 2)
+
+    def test_cli_oracle_flag(self):
+        o = write_json(self.tmp, "oracle.json", self.MAC)
+        nn = write_json(self.tmp, "t4.json", self.t4(self.PC))
+        out = os.path.join(self.tmp, "board")
+        with contextlib.redirect_stdout(io.StringIO()):
+            sb.main(["--nightly", "new=" + nn, "--sha", "new=" + SHA, "--oracle", o, "--out", out])
+        with open(os.path.join(out, "scoreboard.json")) as f:
+            board = json.load(f)
+        self.assertIn("another oracle", row(board, "nightly-5k", "L1")["new"]["invalid"])
+
+
+class Decision1(unittest.TestCase):
+    """T4 decision 1 (Commander, 2026-10-02, #1319 comment 5960583653): the old column of T4 is
+    a committed one-off v1 measurement, tools/parity/baselines/t4-v1-oneoff.json. Its rate is
+    compared on its own slice: a FINAL baseline against the new run restricted to its IDs, a
+    PROVISIONAL one against its new_same_slice (else the whole new run)."""
+
+    IDS = ["1601.00001v1", "1601.00002v1", "1601.00003v1", "1601.00004v1"]
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+
+    def baseline(self, **over):
+        b = {"schema": sb.T4_V1_SCHEMA, "status": "FINAL", "tier": "nightly-5k",
+             "decision": {"date": "2026-10-02", "url": "https://example.invalid/r", "remeasure_when": "a D13 fix"},
+             "measured_date": "2026-10-01", "source": ["https://example.invalid/m"],
+             "documents": {"measured": 4}, "ids": list(self.IDS), "id_list_sha256": sb.id_list_sha256(self.IDS),
+             "oracle": {"tlpdb_sha256": "cd" * 32, "pdftex_sha256": "ef" * 32},
+             "v1": {"P-T2": [0, 4], "L0": [1, 4], "L1": [1, 4], "L2": [0, 4], "L3": [0, 4]}}
+        b.update(over)
+        return sb.load_t4_v1_baseline(write_json(self.tmp, "b%d.json" % len(os.listdir(self.tmp)), b))
+
+    def provisional(self, **over):
+        o = dict(status="PROVISIONAL", ids=None, id_list_sha256=None, oracle=None, provisional="hash pending")
+        o.update(over)
+        return self.baseline(**o)
+
+    def board(self, t4_v1, docs=None, **kw):
+        """docs: {id: level_index} written as the new T4 run's documents.json (None: no file)."""
+        d = tempfile.mkdtemp()
+        if docs is not None:
+            recs = [{"tier": "nightly-5k", "id": i, "level_index": lv, "P-T1": None,
+                     "P-T2": lv is not None and lv >= 0} for i, lv in docs.items()]
+            write_json(d, "documents.json", {"schema": "flashtex-nightly-documents/1", "documents": recs})
+        n = kw.pop("nightly_new", nightly())
+        return complete_board(d, nightly_new=n, nightly_old=None, t4_v1=t4_v1, **kw)
+
+    def all_pass(self):
+        return {i: 3 for i in self.IDS}
+
+    def test_committed_baseline_loads(self):
+        b = sb.load_t4_v1_baseline(sb.T4_V1_BASELINE)
+        self.assertIsInstance(b, dict, b)
+        self.assertEqual(b["status"], "FINAL")
+        self.assertEqual(b["documents"]["measured"], 440)
+        self.assertEqual(len(b["ids"]), 440)
+        self.assertEqual(b["id_list_sha256"], sb.id_list_sha256(b["ids"]))
+        self.assertEqual(b["oracle"]["tlpdb_sha256"][:12], "ca39e6791582")
+        self.assertEqual(b["v1"]["L0"], [7, 440])
+        self.assertEqual(b["new_same_slice"]["L1"], [440, 440])
+        self.assertIn("5960583653", b["decision"]["url"])
+
+    def test_final_compares_on_its_ids_and_goes_green(self):
+        b = self.board(self.baseline(), docs=self.all_pass())
+        for m in ("P-T2", "L0", "L1", "L2", "L3"):
+            r = row(b, "nightly-5k", m)
+            self.assertEqual(r["verdict"], "ahead (v1 one-off)", m)
+            self.assertIn("v1 one-off (decision 1, 2026-10-01); new 4/4 on the baseline's 4 IDs",
+                          sb.fmt_cell(r["old"]))
+        self.assertEqual(row(b, "nightly-5k", "P-T1")["verdict"], "ahead (old n/a)")
+        self.assertTrue(b["all_green"], red(b))
+        self.assertEqual(b["t4_v1_baseline"]["status"], "FINAL")
+
+    def test_final_uses_the_restricted_slice_not_the_whole_run(self):
+        # the whole new run passes everything, but on the baseline's IDs new is at 0 on L0
+        docs = {i: -1 for i in self.IDS}
+        docs["9999.99999v1"] = 3  # outside the baseline's IDs: not counted
+        b = self.board(self.baseline(), docs=docs)
+        self.assertEqual(row(b, "nightly-5k", "L0")["verdict"], "behind")
+        self.assertEqual(row(b, "nightly-5k", "L2")["verdict"], "equal (v1 one-off)")  # 0/4 vs 0/4
+        self.assertFalse(b["all_green"])
+
+    def test_final_without_documents_is_missing(self):
+        b = self.board(self.baseline(), docs=None)
+        r = row(b, "nightly-5k", "L1")
+        self.assertEqual(r["verdict"], "missing")
+        self.assertIn("documents.json is needed", sb.fmt_cell(r["old"]))
+        self.assertFalse(b["all_green"])
+
+    def test_final_with_ids_missing_from_the_run_is_partial(self):
+        docs = self.all_pass()
+        docs.pop(self.IDS[0])
+        b = self.board(self.baseline(), docs=docs)
+        r = row(b, "nightly-5k", "L1")
+        self.assertEqual(r["verdict"], "ahead (v1 one-off)")  # 3/3 against 1/4
+        self.assertIn("3 of the v1 one-off baseline's 4 IDs", r["old"]["partial"])
+        self.assertFalse(b["all_green"])
+
+    def test_provisional_compares_its_same_slice(self):
+        # new_same_slice L1 0/4 against v1 1/4: behind, though today's whole run passes
+        b = self.board(self.provisional(new_same_slice={"L1": [0, 4], "L0": [4, 4]}))
+        self.assertEqual(row(b, "nightly-5k", "L1")["verdict"], "behind")
+        r = row(b, "nightly-5k", "L0")
+        self.assertEqual(r["verdict"], "ahead (v1 one-off)")
+        self.assertIn("new 4/4 on the same slice in that measurement", sb.fmt_cell(r["old"]))
+        # a metric it lacks is compared with the whole new run
+        self.assertNotIn("against", row(b, "nightly-5k", "L2")["old"])
+        self.assertEqual(row(b, "nightly-5k", "L2")["verdict"], "ahead (v1 one-off)")
+
+    def test_provisional_row_green_board_not(self):
+        b = self.board(self.provisional())
+        r = row(b, "nightly-5k", "L1")
+        self.assertEqual(r["verdict"], "ahead (v1 one-off)")
+        self.assertIn("PROVISIONAL", sb.fmt_cell(r["old"]))
+        self.assertFalse(b["all_green"])  # a provisional baseline is partial
+        self.assertTrue(any("hash pending" in p for p in b["partial"]))
+
+    def test_rates_not_counts(self):
+        # whole-run comparison (PROVISIONAL, no new_same_slice): new 9/10 (90%) against v1 1/4
+        n = nightly()
+        n["tiers"]["nightly-5k"]["L0"] = [9, 10]
+        self.assertEqual(row(self.board(self.provisional(), nightly_new=n), "nightly-5k", "L0")["verdict"],
+                         "ahead (v1 one-off)")
+        n = nightly()
+        n["tiers"]["nightly-5k"]["L2"] = [0, 10]
+        self.assertEqual(row(self.board(self.provisional(), nightly_new=n), "nightly-5k", "L2")["verdict"],
+                         "equal (v1 one-off)")
+        n = nightly()
+        n["tiers"]["nightly-5k"]["L1"] = [2, 10]  # 20% < 25%
+        b = self.board(self.provisional(), nightly_new=n)
+        self.assertEqual(row(b, "nightly-5k", "L1")["verdict"], "behind")
+        self.assertFalse(b["all_green"])
+
+    def test_missing_baseline_is_not_green(self):
+        b = self.board(None)
+        r = row(b, "nightly-5k", "L1")
+        self.assertEqual(r["verdict"], "missing")
+        self.assertIn("no v1 one-off baseline", sb.fmt_cell(r["old"]))
+        self.assertFalse(b["all_green"])
+        self.assertIn("unreadable", sb.load_t4_v1_baseline(os.path.join(self.tmp, "nope.json")))
+
+    def test_malformed_baseline_is_not_green(self):
+        bad = [dict(schema="other"), dict(status="DRAFT"), dict(tier="arxiv"),
+               dict(v1={"L1": [5, 4]}), dict(v1={"L1": [1, 0]}), dict(v1={"L1": [1, 5]}),
+               dict(v1={"L9": [1, 2]}), dict(v1={}), dict(oracle={}),
+               dict(decision={"date": "2026-10-02"}), dict(measured_date=None),
+               # FINAL: the ID list, each once, as many as measured, and its hash
+               dict(ids=None), dict(ids=self.IDS[:3]), dict(ids=self.IDS[:3] + self.IDS[:1]),
+               dict(id_list_sha256="ab" * 32), dict(id_list_sha256=None),
+               dict(new_same_slice={"L1": [5, 4]})]
+        for over in bad:
+            t = self.baseline(**over)
+            self.assertIsInstance(t, str, over)
+            self.assertIn("malformed", t)
+            b = self.board(t, docs=self.all_pass())
+            self.assertEqual(row(b, "nightly-5k", "L1")["verdict"], "missing", over)
+            self.assertIn("malformed", sb.fmt_cell(row(b, "nightly-5k", "L1")["old"]))
+            self.assertFalse(b["all_green"])
+        with open(os.path.join(self.tmp, "garbage.json"), "w") as f:
+            f.write("{not json")
+        self.assertIn("unreadable", sb.load_t4_v1_baseline(os.path.join(self.tmp, "garbage.json")))
+
+    def test_id_list_hash_definition(self):
+        import hashlib
+        self.assertEqual(sb.id_list_sha256(["b", "a"]), hashlib.sha256(b"a\nb\n").hexdigest())
+
+    def test_a_v1_run_wins_over_the_baseline(self):
+        b = complete_board(self.tmp, t4_v1=self.baseline())  # complete_board's default v1 nightly run
+        self.assertEqual(row(b, "nightly-5k", "L1")["old"]["status"], "measured")
+
+    def test_cli_reads_the_committed_baseline_by_default(self):
+        nn = write_json(self.tmp, "t4.json", nightly())
+        out = os.path.join(self.tmp, "board")
+        with contextlib.redirect_stdout(io.StringIO()):
+            sb.main(["--nightly", "new=" + nn, "--sha", "new=" + SHA, "--out", out])
+        with open(os.path.join(out, "scoreboard.json")) as f:
+            board = json.load(f)
+        # the committed baseline is FINAL: without the new run's documents.json beside the
+        # summary it cannot compare on its IDs, and says so (never green)
+        old = row(board, "nightly-5k", "L0")["old"]
+        self.assertEqual(old["status"], "missing")
+        self.assertIn("FINAL v1 one-off baseline", old["note"])
+        with contextlib.redirect_stdout(io.StringIO()):
+            sb.main(["--nightly", "new=" + nn, "--sha", "new=" + SHA, "--out", out, "--t4-v1-baseline", "none"])
+        with open(os.path.join(out, "scoreboard.json")) as f:
+            self.assertEqual(row(json.load(f), "nightly-5k", "L0")["verdict"], "missing")
 
 
 if __name__ == "__main__":

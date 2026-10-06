@@ -117,15 +117,7 @@ impl CFile {
 
 /// A file name as the C code sees it (bytes) as a path.
 pub fn os_path(name: &[u8]) -> std::path::PathBuf {
-    #[cfg(unix)]
-    {
-        use std::os::unix::ffi::OsStrExt;
-        std::path::PathBuf::from(std::ffi::OsStr::from_bytes(name))
-    }
-    #[cfg(not(unix))]
-    {
-        std::path::PathBuf::from(String::from_utf8_lossy(name).into_owned())
-    }
+    crate::os::path_from_bytes(name)
 }
 
 #[cfg(test)]

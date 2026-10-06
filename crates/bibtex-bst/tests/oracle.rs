@@ -10,6 +10,9 @@
 //!
 //! `ORACLE_CASE=<substring>` filters cases, `ORACLE_VERBOSE=1` prints diffs.
 
+// Clippy debt in frozen old-engine code (D13): allowed, not refactored.
+#![allow(clippy::unnecessary_map_or, reason = "frozen old engine (D13): fixes only; clippy debt is allowed rather than refactored")]
+
 use std::path::{Path, PathBuf};
 
 use flashtex_bibtex_bst::{run, DirSource, Options};

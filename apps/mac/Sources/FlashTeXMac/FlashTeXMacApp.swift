@@ -75,15 +75,41 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Automation: place the main window at an explicit screen frame
         // ("x,y,w,h" in screen points) so evidence captures by window id are
         // not cropped by a restored off-screen frame.
-        if let spec = ProcessInfo.processInfo.environment["FLASHTEX_WINDOW_FRAME"] {
-            let p = spec.split(separator: ",").compactMap { Double($0.trimmingCharacters(in: .whitespaces)) }
-            if p.count == 4 {
-                // After SwiftUI restored the saved frame, so the hook wins.
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-                    (NSApp.windows.first { $0.title == "FlashTeX" } ?? NSApp.windows.first)?
-                        .setFrame(NSRect(x: p[0], y: p[1], width: p[2], height: p[3]), display: true)
-                }
+        if let spec = ProcessInfo.processInfo.environment["FLASHTEX_WINDOW_FRAME"], let frame = Self.windowFrame(spec) {
+            Self.applyWindowFrame(frame, attempt: 0)
+        }
+    }
+
+    /// `FLASHTEX_WINDOW_FRAME`'s "x,y,w,h" (screen points), nil unless four numbers.
+    static func windowFrame(_ spec: String) -> NSRect? {
+        let p = spec.split(separator: ",").compactMap { Double($0.trimmingCharacters(in: .whitespaces)) }
+        guard p.count == 4, p[2] > 0, p[3] > 0 else { return nil }
+        return NSRect(x: p[0], y: p[1], width: p[2], height: p[3])
+    }
+
+    /// The window the frame hook places: the main "FlashTeX" window only,
+    /// never another window that happens to be first (an early launch has a
+    /// 500×500 helper window before SwiftUI makes the main one).
+    static func mainWindow(in windows: [NSWindow]) -> NSWindow? {
+        windows.first { $0.title == "FlashTeX" && $0.contentView != nil }
+    }
+
+    /// Applies the frame once the main window exists, after SwiftUI restored
+    /// its saved frame (so the hook wins), and again until it holds: a large
+    /// project's open can create or restore the window seconds after launch.
+    /// Waits up to 2 min: a heavily loaded machine (load averages of 100–190
+    /// were seen) can take that long to make the main window.
+    private static func applyWindowFrame(_ frame: NSRect, attempt: Int, checksLeft: Int = 8) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+            guard attempt < 240 else { FlashTeXLog.write("window frame: no main window after 120 s"); return }
+            guard let w = mainWindow(in: NSApp.windows) else { applyWindowFrame(frame, attempt: attempt + 1); return }
+            if w.frame != frame {
+                w.setFrame(frame, display: true)
+                // Once: AppKit may constrain the frame to the screen, so it can differ on every check.
+                if checksLeft == 8 { FlashTeXLog.write("window frame: \(NSStringFromRect(w.frame)) after \(Double(attempt + 1) * 0.5) s") }
             }
+            // Re-checked for a few seconds: a later restoration may move it again.
+            if checksLeft > 0 { applyWindowFrame(frame, attempt: attempt + 1, checksLeft: checksLeft - 1) }
         }
     }
 
@@ -93,7 +119,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 @main
 struct FlashTeXMacApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
-    @State private var model = ShellModel()
+    @State private var model = ShellModel(startup: .untitledDocument) // no file open: the blank-article template (ProjectScaffold.swift)
     @StateObject private var nearby = NearbyState()
     @Environment(\.openWindow) private var openWindow
 
@@ -106,6 +132,8 @@ struct FlashTeXMacApp: App {
                 .onAppear {
                     appDelegate.model = model; nearby.attach(sink: model, destinations: model); TypingBench.shared.install(model: model)
                     EngineV3Bench.startIfConfigured(model: model) // FLASHTEX_V3_BENCH (EngineV3Bench.swift)
+                    EngineV3PageCapture.startIfConfigured(model: model) // FLASHTEX_V3_CAPTURE_OUT (evidence)
+                    LiveShareAutomation.startIfConfigured(model: model) // FLASHTEX_LIVE_SHARE_HOST / _JOIN_FILE (LiveShareAutomation.swift)
                     // FLASHTEX_OPEN=<file.tex or folder>: open it at launch (scripts/run-mac-dev.sh).
                     if let open = ProcessInfo.processInfo.environment["FLASHTEX_OPEN"], !open.isEmpty, ProcessInfo.processInfo.environment["FLASHTEX_V3_BENCH"] == nil {
                         _ = model.openTex(at: URL(fileURLWithPath: (open as NSString).expandingTildeInPath))
@@ -161,9 +189,9 @@ struct FlashTeXMacApp: App {
             CommandGroup(after: .toolbar) {
                 Toggle("Show Preview Debug Status", isOn: Binding(get: { model.previewDebugStatus }, set: { model.previewDebugStatus = $0 }))
                     .help("Show the compile status word, provisional-rendering note, display-list identity line and display-list diagnostics in the preview pane (off by default).")
-                // Engine-v3 preview (EngineV3Host.swift): default OFF; also `defaults write … FlashTeX.EngineV3.enabled -bool YES` or FLASHTEX_ENGINE_V3=1.
-                Toggle("Engine v3 Preview (Experimental)", isOn: Binding(get: { model.engineV3Enabled }, set: { model.engineV3Enabled = $0 }))
-                    .help("Preview through the pdfLaTeX-compatible engine (flashtex-host, a separate process). Off by default.")
+                // The engine for the open document (EngineChoice.swift): saved per
+                // document; Settings > Compile for the others; FLASHTEX_ENGINE_V3 forces.
+                Menu("Engine for This Document") { EngineChoiceMenuItems(model: model) }
                 // Helper display-candidate route (ShellModel+DisplayCandidates.swift): default OFF; untrusted v2 siblings painted in the v2 pane.
                 Toggle("Helper Display Candidates", isOn: Binding(get: { model.displayCandidates.requested }, set: { model.setDisplayCandidates($0) }))
                     .disabled(!model.controllerAttached)
@@ -254,9 +282,10 @@ struct FlashTeXMacApp: App {
                     .keyboardShortcut("n")
                     .disabled(model.project.projectRoot == nil)
                 Button("Move To…") { model.scaffold.presentMove(model.activePath) } // ProjectMove.swift (no key: the tree drags too)
-                    .disabled(model.project.projectRoot == nil || model.activePath == model.project.entryPath)
+                    .disabled(model.project.projectRoot == nil || model.activePath == model.menuEntryPath) // change-only mirror: `entryPath` reads `documents`
                 Button("Open LaTeX File…") { model.openTexPanel() } // also a project folder: its flashtex.toml names the entry (ProjectManifest.swift)
                     .keyboardShortcut("o")
+                LiveShareMenuItems(model: model) // LiveShareViews.swift: Start/Join/Leave Live Share Session, while Settings > Live Share is on
                 // The project manifest (ProjectManifest.swift): writes the
                 // commented template next to the entry and opens it.
                 Button("Create flashtex.toml…") { Task { await model.manifest.createManifestInteractive() } }
@@ -304,6 +333,11 @@ struct FlashTeXMacApp: App {
                 Button("Compile") { model.compileCommand() } // the engine the preview shows (engine v3 or the old one)
                     .keyboardShortcut("b")
                     .disabled(!model.canCompile)
+                Button("Stop Compile") { model.engineV3.stopCompile() } // engine v3: end a compile that runs too long (EngineV3Session)
+                    .keyboardShortcut(".")
+                    .disabled(!model.engineV3Enabled || !model.engineV3.compiling)
+                Button("Show TeX Log") { model.engineV3.showTeXLog() } // engine v3: the last compile's .log (gap A21)
+                    .disabled(!model.engineV3Enabled)
                 Button("Detach Worker") { model.detachWorker() }
                     .disabled(!model.workerAttached)
             }

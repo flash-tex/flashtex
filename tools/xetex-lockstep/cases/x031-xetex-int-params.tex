@@ -1,0 +1,14 @@
+% x031-xetex-int-params: XeTeX's integer parameters and \XeTeXlinebreakskip
+% XeTeX-specific (docs/design/xetex/PLAN.md, phase S0: TFM fonts)
+\input prelude
+\def\space{ }
+\message{x031 \the\XeTeXdashbreakstate\space\the\XeTeXuseglyphmetrics\space\the\XeTeXinputnormalization}
+\XeTeXdashbreakstate=1 \XeTeXuseglyphmetrics=1 \XeTeXlinebreakpenalty=50
+\XeTeXlinebreakskip=0pt plus 1pt \XeTeXhyphenatablelength=40
+\message{x031 \the\XeTeXdashbreakstate\space\the\XeTeXuseglyphmetrics\space\the\XeTeXlinebreakpenalty\space\the\XeTeXlinebreakskip\space\the\XeTeXhyphenatablelength}
+\XeTeXlinebreaklocale "en"
+\XeTeXprotrudechars=2 \XeTeXgenerateactualtext=1 \XeTeXinterwordspaceshaping=1
+\message{x031 \the\XeTeXprotrudechars\space\the\XeTeXgenerateactualtext\space\the\XeTeXinterwordspaceshaping}
+\setbox0=\hbox{\vrule width1pt}
+\lsshipbox0
+\end

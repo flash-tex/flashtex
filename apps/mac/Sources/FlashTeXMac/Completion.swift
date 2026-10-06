@@ -3085,6 +3085,27 @@ extension Completion.Kind {
 /// list. Rust metadata (`compileResult`, `accept(projectIndex:)`) is used only
 /// when bound to `editorRevision`, which the owner sets on every update.
 final class CompletingTextView: NSTextView {
+    /// Live Share: the session's typing undo step ends where AppKit's does
+    /// (a capture insertion, an auto-closed pair's own step).
+    override func breakUndoCoalescing() {
+        super.breakUndoCoalescing()
+        (delegate as? SourceEditorView.Coordinator)?.liveShareBreakUndoCoalescing()
+    }
+
+    /// Live Share: the session file's local-only undo stack. The text view's
+    /// own undo is off in a session (`allowsUndo`, which makes `undoManager`
+    /// nil, so AppKit registers no typing undo anywhere); ⌘Z and Edit ▸ Undo
+    /// reach the session's stack through `undo:`/`redo:` below. Outside a
+    /// session neither is answered here and everything is AppKit's.
+    var liveShareUndoManager: UndoManager? { (delegate as? SourceEditorView.Coordinator)?.liveShare.link?.undoManager }
+    @objc func undo(_ sender: Any?) { liveShareUndoManager?.undo() }
+    @objc func redo(_ sender: Any?) { liveShareUndoManager?.redo() }
+    /// Only a session answers `undo:`/`redo:` here; otherwise they travel
+    /// the responder chain as before.
+    override func responds(to aSelector: Selector!) -> Bool {
+        if aSelector == #selector(undo(_:)) || aSelector == #selector(redo(_:)) { return liveShareUndoManager != nil }
+        return super.responds(to: aSelector)
+    }
     var compileResult: RuntimeV1.CompileResult? {
         didSet { resultMetadata = compileResult.map(Completion.Metadata.from) }
     }
@@ -3117,7 +3138,15 @@ final class CompletingTextView: NSTextView {
     var texpandProject: () -> TeXpandProject? = { nil }
     /// Accepted commands and environments, ranked first on the next open. A
     /// bare text view keeps its own; the hosted editor installs the shared one.
-    var recentlyUsed = Completion.RecentlyUsed()
+    ///
+    /// `lazy`, as `folds` and `scheduler` are: `NSTextView.init(frame:)`
+    /// calls `init(frame:textContainer:)`, and each of the two Swift
+    /// initializers runs this class's property initializers, so an object
+    /// made by an initializer expression was made twice and the first one
+    /// was never released (leaks(1): one RecentlyUsed, EditorFoldStore and
+    /// CompletionScheduler with its dispatch queue per editor). A lazy
+    /// property's storage starts empty, so nothing is made until first use.
+    lazy var recentlyUsed = Completion.RecentlyUsed()
     /// Whether the caret is in math mode, answered by the owner from its
     /// in-sync `SyntaxHighlighter` (`SourceEditorView`), which costs one
     /// line's lexing. Unwired — a bare text view in a test — it answers nil:
@@ -3139,7 +3168,7 @@ final class CompletingTextView: NSTextView {
     /// macros are offered as declared in that file. A bare text view has none.
     var packageDocuments: () -> [Completion.SourceDocument] = { [] }
     /// Code folding (EditorFolding.swift): hidden ranges stay in the storage.
-    let folds = EditorFoldStore()
+    private(set) lazy var folds = EditorFoldStore() // lazy: see `recentlyUsed`
 
     // MARK: paste an image (PasteImage.swift)
 
@@ -3176,6 +3205,12 @@ final class CompletingTextView: NSTextView {
     /// A plain-text view disables Paste for a pasteboard with no text on it;
     /// an image the image paste would take enables it.
     override func validateUserInterfaceItem(_ item: NSValidatedUserInterfaceItem) -> Bool {
+        // Live Share: Edit ▸ Undo/Redo name and enable the session's stack.
+        if let m = liveShareUndoManager, item.action == #selector(undo(_:)) || item.action == #selector(redo(_:)) {
+            let undo = item.action == #selector(undo(_:))
+            (item as? NSMenuItem)?.title = undo ? m.undoMenuItemTitle : m.redoMenuItemTitle
+            return undo ? m.canUndo : m.canRedo
+        }
         if item.action == #selector(paste(_:)), isEditable, imagePasteHandler != nil,
            PasteImage.wouldHandle(imagePasteboard()) { return true }
         return super.validateUserInterfaceItem(item)
@@ -3285,6 +3320,7 @@ final class CompletingTextView: NSTextView {
         let ok = super.shouldChangeText(in: affectedCharRange, replacementString: replacementString)
         if ok { shiftSnippetStops(edit: affectedCharRange, replacementLength: (replacementString as NSString?)?.length ?? 0) }
         if ok { texpandEditor?.willChange(affectedCharRange, replacement: replacementString) } // the exact edit TeXpand sees (TeXpandEditor.swift)
+        if ok { editTailWillChange(affectedCharRange, replacement: replacementString) } // EditorEditTail.swift
         return ok
     }
 
@@ -3401,7 +3437,7 @@ final class CompletingTextView: NSTextView {
     }
 
     /// Replaceable so tests can inject a manual executor.
-    var scheduler = CompletionScheduler()
+    lazy var scheduler = CompletionScheduler() // lazy: see `recentlyUsed`
     private(set) var session: CompletionSession?
     var isCompletionActive: Bool { session != nil }
 
@@ -3569,7 +3605,10 @@ final class CompletingTextView: NSTextView {
     /// but with this subclass as the document view.
     static func scrollable() -> NSScrollView {
         let scroll = scrollableTextView()
-        if scroll.documentView is CompletingTextView { return scroll }
+        if let tv = scroll.documentView as? CompletingTextView {
+            EditTailLayoutManager.install(in: tv) // EditorEditTail.swift
+            return scroll
+        }
         // Fallback if AppKit did not instantiate the subclass.
         let tv = CompletingTextView(frame: scroll.contentView.bounds)
         tv.autoresizingMask = [.width]
@@ -3579,6 +3618,7 @@ final class CompletingTextView: NSTextView {
         tv.textContainer?.widthTracksTextView = true
         tv.textContainer?.containerSize = NSSize(width: scroll.contentView.bounds.width, height: CGFloat.greatestFiniteMagnitude)
         scroll.documentView = tv
+        EditTailLayoutManager.install(in: tv)
         return scroll
     }
 
@@ -3861,6 +3901,19 @@ final class CompletingTextView: NSTextView {
     var vimEnabledOverride: Bool? { didSet { applyVimPreference(isVimEnabled) } }
     var isVimEnabled: Bool { vimEnabledOverride ?? EditorPreferences.shared.vimKeybindings }
     private var vimActive = false
+    /// The edit in progress whose redraw below the edited paragraph is
+    /// deferred (EditorEditTail.swift).
+    var editTail: EditTailState?
+    /// Edits whose deferred redraw below the paragraph was dropped (tests, evidence).
+    var editTailDroppedCount = 0
+    /// Every rect passed on to be redrawn (tests).
+    var onInvalidate: ((NSRect) -> Void)?
+    /// The line-number gutter, redrawn when the edit in progress turns out to
+    /// have moved lines (SourceEditorView's textDidChange; EditorEditTail.swift).
+    weak var gutterAfterEdit: LineNumberGutter?
+    /// Depth of `needsDisplay`/`setNeedsDisplay(_:)` calls: invalidations
+    /// that did not come from the layout manager are never deferred.
+    private(set) var externalInvalidations = 0
 
     /// The preference changed (EditorPreferences.apply): enter normal mode, or drop back to plain editing.
     func applyVimPreference(_ on: Bool) {
@@ -3895,7 +3948,32 @@ final class CompletingTextView: NSTextView {
         }
     }
 
+    // MARK: edit tail (EditorEditTail.swift)
+
+    override var needsDisplay: Bool {
+        get { super.needsDisplay }
+        set {
+            externalInvalidations += 1
+            defer { externalInvalidations -= 1 }
+            super.needsDisplay = newValue
+        }
+    }
+
+    override func setNeedsDisplay(_ invalidRect: NSRect) {
+        externalInvalidations += 1
+        defer { externalInvalidations -= 1 }
+        super.setNeedsDisplay(invalidRect)
+    }
+
+    override func viewWillDraw() {
+        editTailFlush() // an edit that never reached didChangeText: redraw what it deferred
+        super.viewWillDraw()
+    }
+
     override func setNeedsDisplay(_ rect: NSRect, avoidAdditionalLayout flag: Bool) {
+        let rect = editTailFilter(rect)
+        guard !rect.isNull else { return }
+        onInvalidate?(rect)
         var r = rect
         if vimActive, vim.wantsBlockCaret { r.size.width += vimBlockWidth() }
         super.setNeedsDisplay(r, avoidAdditionalLayout: flag)
@@ -4053,6 +4131,7 @@ final class CompletingTextView: NSTextView {
         textChanged()
         signatureHelpAfterTextChange()
         texpandEditor?.applyPendingCommit() // an instant atom, ligature or auto fraction the keystroke completed
+        editTailDidChange() // EditorEditTail.swift: the text below the paragraph is redrawn only if it changed
     }
 
     /// TeXpand's auto-preamble (M6): `\usepackage` lines at `location`. The

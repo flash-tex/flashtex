@@ -1,0 +1,11 @@
+% 2522-interaction-group-global: verifies a \batchmode switch inside a group leaves no \tracingrestores entry and stays in force after the group ends, until \nonstopmode restores it (tex.web §§1262, 1265; pdftex.web §1692)
+% new versus 335-interactionmode: 335 switches modes only at the outer level; this case switches inside a group and proves the mode survives group exit with no restore line
+\input prelude
+\message{2522 mode=\the\interactionmode}
+{\batchmode\message{2522 inner=\the\interactionmode}}
+\message{2522 after=\the\interactionmode}
+\nonstopmode
+\message{2522 back=\the\interactionmode}
+\setbox0=\hbox{\vrule width4pt height7pt depth1pt\hskip8pt}
+\lsshipbox0
+\end

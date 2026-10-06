@@ -178,7 +178,7 @@ final class ProjectMoveTests: XCTestCase {
         // The open referencing document gets one grouped, undoable edit
         // (posted once the editor has swapped to it): both spellings rewritten.
         XCTAssertEqual(m.activePath, "main.tex")
-        try await Task.sleep(for: .milliseconds(150))
+        try await eventually { m.pendingEdit != nil }
         let edit = try XCTUnwrap(m.pendingEdit)
         XCTAssertEqual(edit.path, "main.tex")
         XCTAssertEqual(edit.revision, m.editorRevision)
@@ -212,7 +212,7 @@ final class ProjectMoveTests: XCTestCase {
         XCTAssertNil(m.scaffold.sheet)
         XCTAssertEqual(try String(contentsOf: root.appendingPathComponent("a.tex"), encoding: .utf8), "A.\n")
         XCTAssertFalse(FileManager.default.fileExists(atPath: root.appendingPathComponent("sections/a.tex").path))
-        try await Task.sleep(for: .milliseconds(100))
+        try await eventually { m.pendingEdit != nil }
         let edit = try XCTUnwrap(m.pendingEdit)
         XCTAssertEqual(edit.path, "main.tex")
         m.editApplied(edit, newText: (m.activeText as NSString).replacingCharacters(in: edit.nsRange, with: edit.text))

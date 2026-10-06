@@ -1,0 +1,11 @@
+stacks 10111 cycles 246100.244783 M
+total 246.1 G cycles
+  5.24  dl_note_node
+  6.69  displaylist_all
+  3.22  diag
+  3.11  dg_def
+  7.44  checkpoints
+  2.27  malloc
+  7.08  get_avail
+
+[exited with code 0]

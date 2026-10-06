@@ -70,6 +70,7 @@ What web2c gets from `texmf.cnf` is a value, not code, so it is an option:
 | `--stat`, `--debug` | make `stat`/`tats` and `debug`/`gubed` empty |
 | `--arena-cap NAME=EXPR` | the largest index of a growable (`^T`) array global, which reserves its region of the word space (see below) |
 | `--index-type PATH` | wraps every array subscript in `PATH(...)`; the engine passes `crate::ix::U`, whose `Index` impls check every read except in a benchmarking build with the `unchecked-reads` feature (`crates/flashtex-engine/src/ix.rs`) |
+| `--inline NAME=always\|never` | puts `#[inline(always)]` or `#[inline(never)]` on routine NAME (an error if there is none); the engine inlines `get_next`'s fast path into its callers and keeps the rest, `get_next_slow`, out of line (`changes/throughput.ch` [3]) |
 
 Code changes are change files (`crates/flashtex-engine/changes/`).
 
@@ -159,6 +160,31 @@ the C program is the one TeX Live ships:
   emitter refuses it (none occurs except on literals, which web2c reads as
   negative constants).
 
+## What xetex.web needs beyond pdftex.web
+
+`third_party/xetex/xetex.web` (the XeTeX port, `crates/flashtex-xetex`,
+`docs/design/xetex/PLAN.md`) is web2c Pascal too, closer to C still. Each of
+these is something `pdftex.web` never does, so its translation is unchanged
+(the drift test regenerates it byte for byte):
+
+- **A local `const` section** (`load_native_font`): integer constants of a
+  routine, each use replaced by its value.
+- **C's `break`**: a statement `break` without an argument leaves the
+  innermost loop (`if q = p then break`); with an argument it is still
+  Pascal's `break(f)`.
+- **`addressof(x)` as an argument**: `x` passed to a `var` parameter, which
+  is how the C routine that writes through the pointer is declared.
+- **`--first-string N`**: the number of the first multi-character pool
+  string. TeX Live tangles xetex.web with Omega's `otangle`, which starts at
+  65536 (XeTeX's first 65536 strings are its characters); TANGLE's 256
+  stays the default.
+- **A unary minus before `and`**: Pascal reads `-a and b` as `-(a and b)`,
+  web2c's C as `(-a) && b`. It happens where a macro is a negative number
+  (xetex.web's `null` is `-"FFFFFFF`), so it is refused like the other
+  precedence clashes, and a change file adds the parentheses.
+
+The XeTeX port's drift test is the second test of `tests/drift.rs`.
+
 The tangle stage needed nothing new: `web2rust --pool --emit-pascal` on
 `pdftex.web` agrees with TANGLE 4.6 (TeX Live 2026) exactly, 230,400 tokens
 and a byte-identical pool (1795 strings, checksum `400476366`), checked
@@ -203,8 +229,13 @@ non-zero on any failure. CI runs it on Ubuntu and macOS (job `trip`). Result on
 | `tripin.log` | byte-identical (465 lines) |
 | `trip.log` | byte-identical (7306 lines; sha256 `61a65352…` as Knuth's master) |
 | `tripos.tex` | byte-identical |
-| `tripin.fot`, `trip.fot` | identical after exactly two accepted differences: the typed lines Knuth's terminal echoed, and the final newline `tex.web` §1333 does not print (`tools/web2rust/tools/trip_fot.py`) |
-| `trip.typ` (DVItype, where installed) | identical except DVItype's own banner line |
+| `trip.fmt` | written by step 3, non-empty |
+| `tripin.fot`, `trip.fot` | identical, byte for byte (a CR is a difference), after exactly two accepted differences: the typed lines Knuth's terminal echoed, and the final newline `tex.web` §1333 does not print (`tools/web2rust/tools/trip_fot.py`, tested by `test_trip_fot.py`) |
+| `trip.typ` (DVItype) | identical except DVItype's own banner line; required on CI's Linux leg (`TRIP_REQUIRE_DVITYPE=1`, Ubuntu's `texlive-binaries`), skipped elsewhere when DVItype is missing |
+
+Each engine run is killed with its process group past `TRIP_TIMEOUT` seconds
+(default 300; `ETRIP_TIMEOUT` for `scripts/flashtex-etrip.sh`) by
+`scripts/run-with-timeout.py`, and a run cut off fails the gate (#1208).
 
 ## Oracle check against Knuth's TANGLE
 

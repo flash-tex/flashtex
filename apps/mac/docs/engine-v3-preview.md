@@ -35,18 +35,63 @@ pass it to the script.
 - Nothing else is needed. Your files are never written; the engine compiles a
   copy in `~/Library/Caches/FlashTeX/engine-v3/projects/`.
 
-## Turning it on
+## Turning it on: per document (lane P5-ENGINE-CHOICE)
 
-Use any one of these:
+The engine is chosen per document (`Sources/FlashTeXMac/EngineChoice.swift`).
+For the open document, highest first:
 
-- **View > Engine v3 Preview (Experimental)**, a toggle that is remembered.
-- `defaults write FlashTeXMac FlashTeX.EngineV3.enabled -bool YES`. The domain is
-  the app's bundle id when it runs as a bundle, or `FlashTeXMac` for the SwiftPM
-  executable.
-- `FLASHTEX_ENGINE_V3=1` in the environment. `0` forces it off.
+1. `FLASHTEX_ENGINE_V3=1` (`0`) in the environment forces the new (previous)
+   engine for every document. No fallback rule applies.
+2. Setting `ShellModel.engineV3Enabled` directly (benches, tests) is that
+   window's override. No fallback rule applies.
+3. **Your choice for this document**: the engine item in the status bar, or
+   **View > Engine for This Document**. It is kept per document, app-local
+   (UserDefaults `FlashTeX.EngineV3.documents`, keyed by project root plus
+   entry, following a moved or renamed project folder, at most 500 entries),
+   never in the project. A choice made on an unsaved buffer is stored at its
+   first save; Save As keeps it for the new file.
+4. **Settings > Compile > Engine for other documents**: New, Previous, or
+   Default (`FlashTeX.EngineV3.defaultEngine`; absent is Default).
+5. The engine the document was last typeset with (recorded when it opens, but
+   not while a fallback rule blocks the new engine), so a change of the
+   built-in default never switches a document already typeset.
+6. The old global switch (`FlashTeX.EngineV3.enabled`, the former View toggle):
+   a stored `true` applies only to a document with no entry yet and becomes
+   that document's own choice; a stored `false` is removed once at launch (the
+   toggle wrote it on every toggle-off, so it is no choice).
+7. The built-in default, `EngineChoice.defaultForNewDocuments`: still the
+   previous engine. Flipping it to `.new` is the P5 switch-over (owner gate).
 
-When the flag is off, nothing of this runs: the old worker, the v2 pane and the
-v1 pane behave exactly as before (D13).
+A change of the setting or the default applies when a document opens; an open
+window keeps its engine until you switch it from the status bar. The engine is
+chosen before the new engine hears of an opened project, so a window on the new
+engine opening a document the previous engine typesets compiles nothing in v3.
+
+**Fallback rules.** When the new engine would be used but cannot typeset the
+project as the previous engine does, the previous engine typesets it and the
+window says why (a banner over the preview, a warning on the status bar's engine
+item, a VoiceOver announcement):
+
+- no TeX Live (the same search as the engine's `resolver.rs`, or the host's own
+  report at start-up); a configured bundle counts as a distribution (see
+  "Without TeX Live" below);
+- no TeX Live, and the user answered "Not Now" to downloading the bundle
+  (choosing the new engine again, or the banner's Download TeX Files…, asks
+  again);
+- `[fonts]` in `flashtex.toml` (pdfLaTeX would ignore them);
+- `[packages] pin` (the new engine uses TeX Live's packages);
+- `[packages] path` local libraries (not read by the new engine yet).
+
+An outside edit of `flashtex.toml` (or the Fonts sheet) re-checks the rules.
+
+**`[project] texinputs` work in the new engine.** Each file the manifest lists
+is linked at the top of the engine's project copy, so `\usepackage{mystyle}`
+finds `styles/mystyle.sty` as `TEXINPUTS=.:styles:` would; a project file of the
+same name wins. Files from outside the root are inputs of the stored pages:
+changing one outside the app drops them at the next open.
+
+With the new engine off, nothing of this runs: the old worker, the v2 pane and
+the v1 pane behave exactly as before (D13).
 
 ## Where the host comes from
 
@@ -65,7 +110,11 @@ The app looks for `flashtex-host` in these places, in order:
   other helpers (identifier `<bundle id>.flashtex-host`; hardened runtime with
   `--sign`);
 - its string pool at `Contents/Resources/engine/pdftex.pool`;
-- its GPL licence at `Contents/Resources/engine/LICENSE`.
+- its GPL licence at `Contents/Resources/engine/LICENSE`;
+- the pinned no-TeX-Live bundle's lock at
+  `Contents/Resources/engine/flashtex-bundle.lock`, from
+  `tools/bundle/tl2026/flashtex-bundle.lock` (a GitHub Release asset of this
+  repository; docs/distribution/texlive-bundle.md).
 
 `components.json` records the host as `engine_host`. It is still a separate
 process that the app only talks to over the socket.
@@ -108,6 +157,44 @@ On first use the host builds `pdflatex.fmt` from the user's TeX Live. This took
 pane shows "Preparing the pdfLaTeX format from your TeX Live…" with a timer. It
 then shows which TeX Live was chosen and whether the format is ready.
 
+The host no longer needs the pool beside it: a standalone `flashtex-host` or
+`flashtex-initex` uses the copy compiled into it (written once to
+`~/Library/Caches/FlashTeX/formats/pool/`), so `FLASHTEX_POOL` is optional.
+
+**Without TeX Live** (DESIGN.md §4.4; `EngineV3Bundle.swift`). The host reads
+a content-addressed bundle of unmodified TeX Live files instead, pinned by its
+SHA-256 digest. Which bundle is data, not code; the packaged app ships the
+lock of the published one (GitHub Release assets, `texbundle-tl2026-<n>`;
+docs/distribution/texlive-bundle.md), and the first of these wins:
+
+1. `FLASHTEX_BUNDLE_URL` and `FLASHTEX_BUNDLE_DIGEST`;
+2. a `flashtex-bundle.lock` — the file `FLASHTEX_BUNDLE_LOCK` names, else
+   `~/Library/Application Support/FlashTeX/flashtex-bundle.lock`, else one
+   beside the host or in the app's `Contents/Resources/engine/`:
+
+   ```toml
+   url = "https://example.org/texlive-2026-core.ttb"   # or a path, relative to this file
+   digest = "f7ed930fdd4e7a0138e7634bcef61a0ff3e192ecb09765f75e61bb1e840ec58b"
+   ```
+
+The app passes the lock it found to the host (`FLASHTEX_BUNDLE_LOCK`). Before
+the first download of a bundle it asks (the Download TeX Files sheet, in the
+style of the package consent sheet); the answer is kept for that bundle's
+digest and source, so a new pinned bundle is asked about again. Downloads fail
+closed: the host never fetches a lock file's bundle unless
+`FLASHTEX_BUNDLE_ALLOW_FETCH` is `1` (a command-line user) or `<digest>@<url>`
+of that bundle and the URL the app read, which the app passes only after the
+user agreed to that bundle (a lock rewritten since, even with the same digest
+at another server, is not fetched). The question is decided by the stored
+answer, never by what is already in the cache; in
+every other case the app starts the host with `FLASHTEX_BUNDLE_OFFLINE=1`,
+whatever it made of the lock (a bundle set in the environment included), and
+drops an inherited `FLASHTEX_BUNDLE_ALLOW_FETCH`. "Not Now" falls back to the
+previous engine. While the host fetches (the index and core on a cold cache, a
+package on demand later) it prints `bundle_progress` lines, which the status
+bar shows ("downloading TeX files: 1.2 of 2.8 MB (43%)"). `HELLO.texmf.bundle`
+says which bundle the host reads and from which configuration.
+
 ## How it works
 
 | piece | file | notes |
@@ -125,6 +212,20 @@ then shows which TeX Live was chosen and whether the format is ready.
   Auto-compile off, edits wait ("edited — ⌘B to compile") until ⌘B or until
   auto-compile is turned on again. An outside change to an unopened
   `\input`/`\include` file (git checkout, another editor) recompiles.
+- **Bibliography and index (protocol 3.2).** The app says `[3, 2]` and sends
+  `external_tools: "auto"` for a trusted project (`"off"` for one #1332's
+  trust check holds back, owner 9A), so the host runs bibtex, biber and
+  makeindex from the user's TeX Live as latexmk would and compiles again
+  with what they made. `TOOL` progress ("Running bibtex paper…", a failure,
+  or why a tool did not run) shows in the pane and the status bar; the
+  tools' DIAGNOSTICs join the Problems panel. An export waits for the
+  tools to settle (a follow-up compile would interleave its frames) and
+  runs none itself. It waits only for the newest finished compile's own
+  cycle (a superseded one may never say `settled`) and fails after 300 s
+  rather than waiting for ever. When the project folder's file set changes
+  (a file created, removed, renamed, or its quarantine changed; hidden paths
+  and the editor's own files aside), the next compile, an edit included,
+  walks the project and decides trust again first.
 - **Export PDF… and Print…** use the host's `export: true` run: the
   compressed PDF pdflatex would write (P-T2), with the resident run's
   `.aux`, so references are resolved. A compile first brings the host's

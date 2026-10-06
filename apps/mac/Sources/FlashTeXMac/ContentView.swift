@@ -24,6 +24,7 @@ struct ContentView: View {
     @AppStorage("FlashTeX.workspace.outlineVisible") private var outlineVisible = false
 
     var body: some View {
+        let _ = ViewBodyProbe.note("ContentView") // KeystrokeInvalidationTests
         @Bindable var model = model
         VStack(spacing: 0) {
             // The single title-bar control row, in the traffic lights' own
@@ -57,6 +58,9 @@ struct ContentView: View {
         .sheet(isPresented: $model.commandPaletteShown) { CommandPalette().environment(model) }
         .sheet(isPresented: Binding(get: { model.projectFonts.shown }, set: { model.projectFonts.shown = $0 })) { ProjectFontsSheet().environment(model) } // File > Project Fonts… (ProjectFonts.swift)
         .sheet(isPresented: Binding(get: { model.projectPackages.shown }, set: { model.projectPackages.shown = $0 })) { ProjectPackagesSheet().environment(model) } // the package consent sheet (ProjectPackages.swift)
+        .sheet(isPresented: Binding(get: { model.engineV3.bundleConsentShown }, set: { model.engineV3.bundleConsentShown = $0 })) { EngineV3BundleSheet().environment(model) } // the TeX files download consent (EngineV3Bundle.swift)
+        .sheet(isPresented: Binding(get: { model.liveShare.sheetShown }, set: { model.liveShare.sheetShown = $0 })) { LiveShareSheet().environment(model) } // Live Share: invitation, approvals, participants (LiveShareViews.swift)
+        .sheet(isPresented: Binding(get: { model.liveShare.joinSheetShown }, set: { model.liveShare.joinSheetShown = $0 })) { LiveShareJoinSheet().environment(model) } // File > Join Live Share Session…
         .modifier(EditorNavigationSheets()) // Rename / Wrap / Change Environment… / Go to Symbol… / Go to Line (ShellModel+EditorNavigation.swift)
     }
 }
@@ -84,6 +88,7 @@ private struct ToolRail: View {
     @Binding var outlineVisible: Bool
 
     var body: some View {
+        let _ = ViewBodyProbe.note("ToolRail") // KeystrokeInvalidationTests
         @Bindable var model = model
         VStack(spacing: DS.Space.s) {
             RailButton(icon: "folder", label: "Project", isOn: $projectVisible,
@@ -133,9 +138,11 @@ private struct RailButton: View {
 //
 // Each pane is its own view reading the model from the environment, so
 // `@Observable` tracking scopes invalidation: a keystroke (documents,
-// editorRevision) re-evaluates EditorPane and the status bar; a compile
-// result the status bar, PreviewPane and ProblemsPanel; bridge traffic the
-// bridge bar only.
+// editorRevision, caret) re-evaluates EditorPane only, the status bar follows
+// throttled mirrors (ShellChrome) and caret-driven tasks read the caret in
+// zero-size children (IsolatedTask); a compile result the status bar,
+// PreviewPane and ProblemsPanel; bridge traffic the bridge bar only.
+// KeystrokeInvalidationTests pins the keystroke half.
 
 struct EditorPane: View {
     @Environment(ShellModel.self) var model
@@ -144,7 +151,12 @@ struct EditorPane: View {
     @Bindable private var preferences: EditorPreferences = .shared
 
     var body: some View {
+        let _ = ViewBodyProbe.note("EditorPane") // KeystrokeInvalidationTests
         @Bindable var model = model
+        // Live Share: the session file this buffer is (nil outside a session);
+        // `generation` changes when a session starts, ends or opens its project.
+        let _ = model.liveShare.generation
+        let liveShareLink = model.liveShare.link(for: model.activePath)
         VStack(spacing: 0) {
             // Switching goes through ProjectDocuments so each document's
             // caret/selection is kept and a pending insertion is never
@@ -167,10 +179,11 @@ struct EditorPane: View {
                 projectFiles: model.documents.map(\.path), // `\input{` completion (Completion.swift)
                 projectPackageFiles: { model.projectPackageFiles }, // `\usepackage{` offers the project's .sty files first (ShellModel+EditorHover.swift)
                 packageDocuments: { model.packageDocumentsForEditor() }, // macros of the project's .sty/.cls files complete as declared there (ShellModel+PackageNavigation.swift)
-                editable: model.project.readOnlyNote(for: model.activePath) == nil, // a package input from a virtual path is shown, never edited
+                editable: model.project.readOnlyNote(for: model.activePath) == nil && (liveShareLink == nil || model.liveShare.canEdit), // a package input from a virtual path is shown, never edited; a Live Share viewer reads only
                 graphicsRoot: { model.project.projectRoot }, // `\includegraphics{` completion walks the saved project's directory
                 imagePasteHost: { model.imagePasteHost() }, // paste an image: saved under the project, a figure inserted (PasteImage.swift)
                 onCaretChange: { model.caretUTF16 = $0 },
+                initialCaretUTF16: { model.untitledDocumentCaret }, // the untitled document opens with the caret where typing starts
                 onSelectionChange: { if model.caretLengthUTF16 != $0.length { model.caretLengthUTF16 = $0.length } }, // every keystroke reports length 0; an equal write still invalidates its readers
                 onEditApplied: { model.editApplied($0, newText: $1) },
                 onEditRefused: { model.editRefused($0, reason: $1) },
@@ -200,6 +213,7 @@ struct EditorPane: View {
                         MathHoverPreview.Context(path: model.activePath, frame: $0, previewIsStale: model.previewIsStale, dark: model.darkPreview)
                     }
                 },
+                mathPreviewV3: { span in model.engineV3Enabled ? model.engineV3.mathPreviewImage(span: span) : nil }, // EngineV3MathHover.swift
                 onExCommand: { command in // Vim `:` commands (VimMode.swift) mapped to the shell's own actions
                     switch command {
                     case .write: model.saveTexInteractive(); return nil
@@ -208,7 +222,8 @@ struct EditorPane: View {
                     case .edit(let path): Task { await model.openAndSwitch(path, role: .opened) { model.navigationNote = $0 } }; return nil
                     case .setNumber(let on): preferences.showLineNumbers = on; return nil
                     }
-                }
+                },
+                liveShare: liveShareLink // co-editing (SourceEditorView+LiveShare.swift)
             )
             // Vim's status line belongs to the window being edited, so it sits
             // directly under the source text — not in the window's status bar,
@@ -316,9 +331,14 @@ struct PreviewPane: View {
     @State private var hudActivity = 0
 
     var body: some View {
+        let _ = ViewBodyProbe.note("PreviewPane") // KeystrokeInvalidationTests
+        VStack(spacing: 0) {
+        // The previous engine typesets this project because the new one
+        // cannot, and why (EngineChoice.swift); never a silent fallback.
+        EngineFallbackBanner()
         ZStack(alignment: .topTrailing) {
             if model.engineV3Enabled {
-                PreviewV3Pane() // flag-gated engine-v3 preview (EngineV3Preview.swift)
+                PreviewV3Pane() // the new engine's preview (EngineV3Preview.swift), per document (EngineChoice.swift)
             } else if model.previewV2 {
                 PreviewV2Pane() // experimental v2 path (PreviewV2View.swift); v1 below stays the default
                     .modifier(PreviewMagnify()) // pinch to zoom (PreviewZoom.swift)
@@ -357,6 +377,7 @@ struct PreviewPane: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(DS.Space.l)
             }
+        }
         }
         // One container for VoiceOver ("PDF preview, Page 2 of 5"); the pages
         // and HUD inside stay reachable (PreviewV2Accessibility.swift, AccessibilityOverlay).
@@ -472,7 +493,8 @@ private struct PreviewHUD: View {
         .allowsHitTesting(visible)
         .animation(DS.Motion.quick, value: visible)
         .accessibilityHidden(!visible)
-        .help(chrome.previewSource == .fixture
+        .help(chrome.route == .engineV3 ? "Engine v3 preview — " + chrome.routeHelp // not the old producer's summary (gap C21)
+              : chrome.previewSource == .fixture
               ? "Fixture\(chrome.fixtureName.map { ": " + $0 } ?? "") — not a real compile. Layout: \(chrome.acceptedCapabilities.isEmpty ? "legacy (U+2500 fraction bars are an approximation)" : chrome.acceptedCapabilities.joined(separator: ", "))"
               : model.producerSummary + " — layout: \(chrome.acceptedCapabilities.isEmpty ? "legacy (U+2500 fraction bars are an approximation)" : chrome.acceptedCapabilities.joined(separator: ", "))")
         // The linger timer is a real pending Task for as long as it runs;
@@ -543,6 +565,7 @@ struct StatusBar: View {
     @Environment(ShellModel.self) var model
 
     var body: some View {
+        let _ = ViewBodyProbe.note("StatusBar") // KeystrokeInvalidationTests
         // Reads the throttled chrome mirror (ShellChrome.swift): the revision,
         // latency, route tooltip, problem counts and notes change on every
         // keystroke / reply, and this bar re-evaluated with each of them.
@@ -557,13 +580,20 @@ struct StatusBar: View {
             Text(chrome.note ?? "Click text in the preview to select its source range.")
                 .foregroundStyle(.secondary).lineLimit(1)
             Spacer()
+            LiveShareStatusItem() // who is co-editing (LiveShareViews.swift); absent outside a session
             WordCountStatusItem() // GH68: live word count + breakdown popover (WordCountStatusView.swift)
             if let ms = chrome.lastLatencyMs {
                 Label(String(format: "%.0f ms", ms), systemImage: "timer")
                     .help(chrome.latencyHelp)
             }
-            Label(route(chrome), systemImage: routeIcon(chrome))
-                .help(chrome.routeHelp)
+            // Which engine typesets this document, a fallback's warning, and
+            // the switch (EngineChoice.swift). The old engine's producer
+            // route follows while it is the one in use.
+            EngineChoiceStatusItem()
+            if !model.engineV3Enabled {
+                Label(route(chrome), systemImage: routeIcon(chrome))
+                    .help(chrome.routeHelp)
+            }
             // Capability warnings (moved off the preview HUD, owner feedback:
             // a "⚠ ⚠ 87 %" pill was floating over the page). Still real
             // diagnostics, just anchored in the status bar instead of
@@ -651,6 +681,7 @@ private struct StatusBreadcrumb: View {
     @State private var chain: [DocumentOutline.Item] = []
 
     var body: some View {
+        let _ = ViewBodyProbe.note("StatusBreadcrumb") // KeystrokeInvalidationTests
         HStack(spacing: DS.Space.xs) {
             // The same colour-coded identity as the tree and the tabs (§6)
             // leads the breadcrumb — one of the deliberate small accents
@@ -673,18 +704,21 @@ private struct StatusBreadcrumb: View {
                 .accessibilityLabel("\(item.command) \(item.title), line \(item.line)")
             }
         }
-        .task(id: "\(model.activePath)@\(model.chrome.editorRevision)") {
+        // The revision and the caret change on every keystroke: they are read in
+        // zero-size children (IsolatedTask.swift), so a keystroke re-evaluates
+        // those, not the breadcrumb or the status bar around it.
+        .background(IsolatedTask(id: { "\(model.activePath)@\(model.chrome.editorRevision)" }) { _ in
             if !items.isEmpty { try? await Task.sleep(for: .milliseconds(150)) }
             guard !Task.isCancelled else { return }
             items = model.outline
             chain = DocumentOutline.breadcrumb(at: model.caretUTF16, in: items)
-        }
-        .task(id: model.caretUTF16) {
+        })
+        .background(IsolatedTask(id: { model.caretUTF16 }) { _ in
             try? await Task.sleep(for: .milliseconds(80))
             guard !Task.isCancelled else { return }
             let new = DocumentOutline.breadcrumb(at: model.caretUTF16, in: items)
             if new != chain { chain = new }
-        }
+        })
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Breadcrumb")
     }

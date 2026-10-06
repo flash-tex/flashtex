@@ -37,7 +37,13 @@ Cache layout (`--cache`, default `$FLASHTEX_PARITY_CACHE` or
 `~/.cache/flashtex-parity`):
 
     eprints/<id>            the downloaded bytes (verified against the manifest)
+    archives/<id>           the same, for an archive tier's source archive
     src/<tier>/<doc-id>/    the unpacked tree the oracle and FlashTeX both read
+
+An archive tier (`ARCHIVE_TIERS`: `books`) pins a whole project's source
+archive at a fixed commit by URL and SHA-256, as an e-print is pinned. An
+entry's `root` names the archive's top directory, which becomes the tree's
+root, so the entry's relative `\\input`s resolve as in the project's checkout.
 """
 
 import argparse
@@ -60,13 +66,19 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.abspath(os.path.join(HERE, "..", ".."))
 MANIFEST_DIR = os.path.join(HERE, "corpus")
 DEFAULT_TEXMF = "/usr/local/texlive/2026/texmf-dist"
-# tiers whose entries are files of the local TeX Live, copied (never committed)
-TEXLIVE_TIERS = ("templates", "packages")
+# tiers whose entries are files of the local TeX Live, copied (never committed);
+# an entry with `repo` instead names a document committed in this repository
+# (the beamer tier's own small decks), copied with its directory, unpinned
+# because Git pins it
+TEXLIVE_TIERS = ("templates", "packages", "beamer")
 # Bumped when `unpack` makes a different tree from the same bytes. 2: files keep the archive's times.
 UNPACK_V = 2
 USER_AGENT = "flashtex-parity-scoreboard/1 (oracle corpus fetch; https://github.com/flash-tex/flashtex)"
 # tiers whose entries are arXiv e-prints, fetched and pinned by SHA-256
 ARXIV_TIERS = ("arxiv", "nightly-5k")
+# tiers whose entries are a project's source archive at a pinned commit (url + SHA-256),
+# with `root` the archive's top directory (a textbook's repository snapshot, say)
+ARCHIVE_TIERS = ("books",)
 ATOM = {"a": "http://www.w3.org/2005/Atom", "arxiv": "http://arxiv.org/schemas/atom"}
 
 
@@ -136,6 +148,22 @@ def unpack(data, dest):
             f.write(raw)
         return "gz"
     return "unknown"
+
+
+def unpack_root(data, dest, root):
+    """`unpack` an archive whose tree is under its top directory `root`, as
+    a forge's commit archive is, and make that directory `dest`, so the
+    entry's relative paths resolve as in the project's checkout. Raises
+    ValueError when the archive has no such directory."""
+    tmp = f"{dest}.tmp-{os.getpid()}"
+    unpack(data, tmp)
+    top = os.path.realpath(os.path.join(tmp, root))
+    if not (top.startswith(os.path.realpath(tmp) + os.sep) and os.path.isdir(top)):
+        shutil.rmtree(tmp, ignore_errors=True)
+        raise ValueError(f"archive has no top directory {root!r}")
+    shutil.rmtree(dest, ignore_errors=True)
+    os.rename(top, dest)
+    shutil.rmtree(tmp, ignore_errors=True)
 
 
 def detect_entry(root):
@@ -452,6 +480,17 @@ def cmd_select_arxiv_grid(args):
     return 0
 
 
+def repo_tree_hash(d):
+    """SHA-256 over a committed document directory's files (names and bytes)."""
+    h = hashlib.sha256()
+    for root, dirs, files in os.walk(d):
+        dirs.sort()
+        for name in sorted(files):
+            p = os.path.join(root, name)
+            h.update(os.path.relpath(p, d).encode() + b"\0" + slurp(p, "rb") + b"\0")
+    return h.hexdigest()
+
+
 def fetch_manifest(manifest_path, cache, texmf=DEFAULT_TEXMF, delay=3.0, log=print, only=None):
     """Fetch + verify + unpack every entry, or with `only` (a set of safe
     ids) just those. Returns list of document records
@@ -464,8 +503,9 @@ def fetch_manifest(manifest_path, cache, texmf=DEFAULT_TEXMF, delay=3.0, log=pri
     polite = Polite(delay)
     # A fresh cache (a new runner) has no eprints/ yet; only select-arxiv
     # used to create it, so a first `fetch` died writing the first e-print.
-    if tier in ARXIV_TIERS:
-        os.makedirs(os.path.join(cache, "eprints"), exist_ok=True)
+    store = "eprints" if tier in ARXIV_TIERS else "archives"
+    if tier in ARXIV_TIERS or tier in ARCHIVE_TIERS:
+        os.makedirs(os.path.join(cache, store), exist_ok=True)
     for e in man["entries"]:
         doc_id = safe_id(e["id"])
         if only is not None and doc_id not in only:
@@ -475,8 +515,8 @@ def fetch_manifest(manifest_path, cache, texmf=DEFAULT_TEXMF, delay=3.0, log=pri
                "category": e.get("category"), "problem": None}
         if e.get("pt1_skip"):  # why pdfTeX's own traced log is not reproducible (parity.pt1_skip_reason)
             rec["pt1_skip"] = e["pt1_skip"]
-        if tier in ARXIV_TIERS:
-            path = os.path.join(cache, "eprints", doc_id)
+        if tier in ARXIV_TIERS or tier in ARCHIVE_TIERS:
+            path = os.path.join(cache, store, doc_id)
             if not os.path.isfile(path):
                 try:  # one request per `delay` s; a 429/503 is retried after arXiv's Retry-After
                     data = with_retries(lambda: http_get(e["url"]), polite)
@@ -493,27 +533,41 @@ def fetch_manifest(manifest_path, cache, texmf=DEFAULT_TEXMF, delay=3.0, log=pri
                 docs.append(rec)
                 continue
             # UNPACK_V in the marker: a tree unpacked before unpack kept the archive's times is made again
-            marker, want = os.path.join(dest, ".parity-unpacked"), f"{e['sha256']} {UNPACK_V}"
+            root = e.get("root")
+            marker = os.path.join(dest, ".parity-unpacked")
+            want = f"{e['sha256']} {UNPACK_V}" + (f" root={root}" if root else "")
             if not (os.path.isfile(marker) and slurp(marker) == want):
-                unpack(data, dest)
+                if root:
+                    try:
+                        unpack_root(data, dest, root)
+                    except ValueError as ex:
+                        rec["problem"] = str(ex)
+                        docs.append(rec)
+                        continue
+                else:
+                    unpack(data, dest)
                 with open(marker, "w") as f:
                     f.write(want)
         elif tier in TEXLIVE_TIERS:
-            src = os.path.join(texmf, e["path"])
+            in_repo = bool(e.get("repo"))
+            src = os.path.join(REPO, e["repo"]) if in_repo else os.path.join(texmf, e["path"])
             if not os.path.isfile(src):
-                rec["problem"] = f"missing in TeX Live: {src}"
+                rec["problem"] = f"missing in {'the repository' if in_repo else 'TeX Live'}: {src}"
                 docs.append(rec)
                 continue
-            got = hashlib.sha256(slurp(src, "rb")).hexdigest()
-            if got != e["sha256"]:
-                rec["problem"] = f"sha256 mismatch for {e['path']}: manifest {e['sha256'][:12]}, local {got[:12]}"
-                docs.append(rec)
-                continue
+            if not in_repo:
+                got = hashlib.sha256(slurp(src, "rb")).hexdigest()
+                if got != e["sha256"]:
+                    rec["problem"] = f"sha256 mismatch for {e['path']}: manifest {e['sha256'][:12]}, local {got[:12]}"
+                    docs.append(rec)
+                    continue
             # A tree already made from this exact entry is left alone, so parity
             # runs sharing the cache never rebuild it under one another. A new one
-            # is built beside it and then renamed into place.
+            # is built beside it and then renamed into place. A repository entry's
+            # marker also holds its directory's content hash, so an edited deck is
+            # copied again.
             marker = os.path.join(dest, ".parity-copied")
-            want = json.dumps(e, sort_keys=True)
+            want = json.dumps(dict(e, tree=repo_tree_hash(os.path.dirname(src))) if in_repo else e, sort_keys=True)
             if not (os.path.isfile(marker) and slurp(marker) == want):
                 srcdir = os.path.dirname(src)
                 tmp = f"{dest}.tmp-{os.getpid()}"

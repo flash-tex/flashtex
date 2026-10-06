@@ -1,0 +1,37 @@
+\documentclass{beamer}
+\usetheme{Berlin}
+\title{Bibliography}
+\author{B. Bib}
+\date{October 2026}
+\begin{document}
+\begin{frame}\titlepage\end{frame}
+\section{Citations}
+\begin{frame}{Citing}
+  TeX is described in \cite{knuth84}; its algorithms in \cite{knuth81,liang83}.
+  Beamer is documented in \cite{tantau}.
+\end{frame}
+\section{References}
+\begin{frame}{References}
+  \begin{thebibliography}{10}
+  \beamertemplatebookbibitems
+  \bibitem{knuth84}
+    Donald E.~Knuth.
+    \newblock {\em The \TeX book}.
+    \newblock Addison-Wesley, 1984.
+  \beamertemplatearticlebibitems
+  \bibitem{knuth81}
+    Donald E.~Knuth and Michael F.~Plass.
+    \newblock Breaking paragraphs into lines.
+    \newblock {\em Software: Practice and Experience}, 11:1119--1184, 1981.
+  \bibitem{liang83}
+    Franklin M.~Liang.
+    \newblock Word hy-phen-a-tion by com-put-er.
+    \newblock PhD thesis, Stanford University, 1983.
+  \beamertemplateonlinebibitems
+  \bibitem{tantau}
+    Till Tantau, Joseph Wright and Vedran Mileti\'c.
+    \newblock The beamer class.
+    \newblock CTAN, 2026.
+  \end{thebibliography}
+\end{frame}
+\end{document}

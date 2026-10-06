@@ -6,7 +6,8 @@ Written by the independent review of PR #1300 (P4-MEMORY), which found with it t
 jump did not adopt the side table; kept here as the `span` gate (gates.sh).
 
 A persistent `flashtex-host --socket` (A) is edited N times (a letter or twelve words inserted into a
-random paragraph in the part of the document from FRAC on, accumulated). After every compile a fresh
+random paragraph in the part of the document from FRAC on, accumulated; with `--kinds`, also a space
+turned into a line break or a blank line, which moves every later line: DESIGN.md §5.3 rule (c)). After every compile a fresh
 dl3-client connection fetches every page of A (a new peer is sent the whole page cache), and a fresh
 host (R) compiles the same source from scratch. Per page, each glyph's source (file, line) and
 column are compared. Prints one JSON line per edit and a summary; exit status 1 if any glyph's
@@ -32,7 +33,11 @@ ap.add_argument('--seed', type=int, default=1)
 ap.add_argument('--from', dest='frac', type=float, default=0.6)
 ap.add_argument('--host-args', default='')
 ap.add_argument('--timeout', type=int, default=3000)
+ap.add_argument('--kinds', default='letter,sentence', help='comma list of letter, sentence, newline, split')
 a = ap.parse_args()
+KINDS = [k.strip() for k in a.kinds.split(',') if k.strip()]
+if not KINDS or [k for k in KINDS if k not in ('letter', 'sentence', 'newline', 'split')]:
+    ap.error(f'unknown or empty --kinds {a.kinds}')
 signal.alarm(a.timeout)
 BASE = os.environ['INCR_BENCH_DIR']
 E = f'{BASE}/{a.engine}'
@@ -126,13 +131,19 @@ for e in range(a.edits):
     li = rng.choice(cand)
     ws = [m.start() for m in re.finditer(r'(?<= )[a-z]{3,}(?= )', lines[li])]
     p = rng.choice(ws)
-    if rng.random() < 0.5:
-        lines[li] = lines[li][:p + 1] + 'x' + lines[li][p + 1:]
-        kind = 'letter'
+    if KINDS == ['letter', 'sentence']:
+        # (the default keeps its random sequence: the seeds of earlier runs give the same edits)
+        kind = 'letter' if rng.random() < 0.5 else 'sentence'
     else:
+        kind = rng.choice(KINDS)
+    if kind == 'letter':
+        lines[li] = lines[li][:p + 1] + 'x' + lines[li][p + 1:]
+    elif kind == 'sentence':
         ins = ' '.join(rng.choice(words) for _ in range(12)) + ' '
         lines[li] = lines[li][:p] + ins + lines[li][p:]
-        kind = 'sentence'
+    else:
+        # the space before the word becomes a line break (edits.py's newline) or a blank line (split)
+        lines[li] = lines[li][:p - 1] + ('\n' if kind == 'newline' else '\n\n') + lines[li][p:]
     open(f'{A}/main.tex', 'w').write('\n'.join(lines))
     ga_res = fetch(A, sa, f'e{e}')
     done = ga_res[3] or {}

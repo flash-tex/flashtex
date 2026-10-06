@@ -24,6 +24,9 @@
 //! face -- they are the `C70` subfont metrics -- so the fixture faces measure
 //! the same layout on every machine that resolves Latin Modern.
 
+// Clippy debt in frozen old-engine code (D13): allowed, not refactored.
+#![allow(clippy::unnecessary_sort_by, reason = "frozen old engine (D13): fixes only; clippy debt is allowed rather than refactored")]
+
 mod common;
 
 use common::{lm_available, render_one_with, words_of, Word};

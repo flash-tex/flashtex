@@ -55,7 +55,7 @@ use interp::Marker;
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 use std::io::Write;
-use std::sync::atomic::{AtomicBool, AtomicI32, AtomicU32, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI32, AtomicU32, AtomicU64, AtomicUsize, Ordering};
 use std::sync::Arc;
 
 static ENABLED: AtomicBool = AtomicBool::new(false);
@@ -172,6 +172,8 @@ struct State {
     images: HashMap<[u8; 32], Json>,
     programs: HashMap<String, Program>,
     encodings: HashMap<String, Option<Arc<Vec<Vec<u8>>>>>,
+    /// Type 1 programs' built-in encodings, by the program's SHA-256.
+    builtin_encodings: HashMap<[u8; 32], Arc<Vec<Vec<u8>>>>,
     // Engine state as the writer saw it: dropped at every restore.
     font_keys: HashMap<u32, [u8; 32]>,
     image_keys: HashMap<u32, [u8; 32]>,
@@ -196,6 +198,7 @@ impl State {
             images: HashMap::new(),
             programs: HashMap::new(),
             encodings: HashMap::new(),
+            builtin_encodings: HashMap::new(),
             font_keys: HashMap::new(),
             image_keys: HashMap::new(),
             widths: HashMap::new(),
@@ -611,26 +614,45 @@ pub fn move_lines(path: &str, from: u32, old_end: u32, new_end: u32) {
         let Some(f) = st.file_paths.iter().position(|p| p == path) else {
             return;
         };
-        let f = f as u32 + 1;
+        st.move_spans_of(f as u32 + 1, from, old_end, new_end);
+    });
+    forget_file_cache();
+}
+
+impl State {
+    /// `move_lines` for file `f`. Every span of the file on a line from
+    /// `from` on is retired (before `old_end`) or moved (from `old_end` on,
+    /// to a line from `new_end` on), and no other span's line is that high,
+    /// so only those spans' keys change: they are taken out of `span_ids`
+    /// and the moved ones put back, in span order (the lowest span of a
+    /// line keeps it, as when the whole table was rebuilt). A long document
+    /// rebuilt the table at every keystroke (lane P4-SPLIT-LATENCY), and
+    /// at every change of a file no span names a moved line of.
+    fn move_spans_of(&mut self, f: u32, from: u32, old_end: u32, new_end: u32) {
         let delta = new_end as i64 - old_end as i64;
-        for (i, (file, line)) in st.spans.iter_mut().enumerate() {
+        let mut moved = vec![];
+        for (i, (file, line)) in self.spans.iter_mut().enumerate() {
             if *file != f || *line < from {
                 continue;
             }
+            let id = i as u32 + 1;
+            if self.span_ids.get(&(*file, *line)) == Some(&id) {
+                self.span_ids.remove(&(*file, *line));
+            }
             if *line < old_end {
-                st.retired.insert(i as u32 + 1);
+                self.retired.insert(id);
             } else {
                 *line = (*line as i64 + delta).max(1) as u32;
+                moved.push(id);
             }
         }
-        st.span_ids.clear();
-        for (i, &at) in st.spans.iter().enumerate() {
-            if !st.retired.contains(&(i as u32 + 1)) {
-                st.span_ids.entry(at).or_insert(i as u32 + 1);
+        for id in moved {
+            if !self.retired.contains(&id) {
+                let at = self.spans[id as usize - 1];
+                self.span_ids.entry(at).or_insert(id);
             }
         }
-    });
-    forget_file_cache();
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -686,6 +708,13 @@ fn forget_file_cache() {
 static LAST_NAME: AtomicI32 = AtomicI32::new(-1);
 static LAST_LINE: AtomicU32 = AtomicU32::new(0);
 static LAST_SPAN: AtomicU32 = AtomicU32::new(0);
+/// Where `dl_here` last found the innermost input level that reads a file
+/// line, as an index of `input_stack` (a hint: `Globals::file_level`
+/// checks it against the state before it uses it).
+static FILE_LEVEL: AtomicUsize = AtomicUsize::new(usize::MAX);
+/// Between `dl_token_begin` and `dl_token_end`: an allocation that is not a
+/// node of a list TeX ships.
+static NOT_A_NODE: AtomicBool = AtomicBool::new(false);
 /// While `hyphenate` rebuilds a word: HYPH_ON, and the word's place.
 static HYPH_ON: AtomicBool = AtomicBool::new(false);
 static HYPH_LOC: AtomicU64 = AtomicU64::new(0);
@@ -718,10 +747,26 @@ impl Globals {
         // Tokens stored while a definition, a macro's arguments or a token
         // list are scanned (`scanner_status` other than `normal`) never
         // become nodes; they are most of the allocations, so they are
-        // skipped before anything else is looked at.
-        if enabled() && self.scanner_status == 0 {
+        // skipped before anything else is looked at. So are the
+        // allocations between `dl_token_begin` and `dl_token_end`.
+        if self.scanner_status == 0 && enabled() && !NOT_A_NODE.load(Ordering::Relaxed) {
             self.dl_note_node(p);
         }
+    }
+
+    /// `back_input` allocates its token, `conditional` its condition-stack
+    /// node (changes/displaylist.ch): neither becomes part of a list TeX
+    /// ships, so neither needs a source position. The side table's entry
+    /// of the location keeps whatever it held; the location is noted again
+    /// when it is next allocated as a node, before anything reads it.
+    #[inline(always)]
+    pub fn dl_token_begin(&mut self) {
+        NOT_A_NODE.store(true, Ordering::Relaxed);
+    }
+
+    #[inline(always)]
+    pub fn dl_token_end(&mut self) {
+        NOT_A_NODE.store(false, Ordering::Relaxed);
     }
 
     #[inline(never)]
@@ -756,10 +801,7 @@ impl Globals {
         let rec = if is_file(&self.cur_input) {
             Some(self.cur_input)
         } else {
-            (0..self.input_ptr as usize)
-                .rev()
-                .map(|k| self.input_stack[k])
-                .find(|r| is_file(r))
+            self.file_level(&FILE_LEVEL, is_file)
         };
         let col = match rec {
             Some(r) if r.loc_field > r.start_field => {
@@ -785,6 +827,44 @@ impl Globals {
             s
         };
         loc_pack(span, col)
+    }
+
+    /// The innermost level of `input_stack` (below `cur_input`) for which
+    /// `is_file` holds: what walking the stack down from its top finds,
+    /// without the walk when the level found last time is still that level.
+    ///
+    /// Every level whose state is not `token_list` is one that
+    /// `begin_file_reading` pushed (or the bottom level), and
+    /// `begin_file_reading` gives it `index:=in_open` after
+    /// `incr(in_open)`, which `end_file_reading` takes back (§328, §329):
+    /// the open levels carry the indexes 1 to `in_open` in stack order. So
+    /// a level below the top whose state is not `token_list` and whose
+    /// index is `in_open` has no such level above it but `cur_input`, and
+    /// if `is_file` holds for it, it is the level the walk finds (the walk
+    /// skips token lists, whose state is `token_list`). The hint is checked
+    /// against the state as it is now, so a restore or anything else that
+    /// moved the stack since leaves the result exact.
+    /// `hint` is the caller's own (each `is_file` its own).
+    #[inline]
+    pub(crate) fn file_level(
+        &self,
+        hint: &AtomicUsize,
+        is_file: impl Fn(&crate::generated::types::in_state_record) -> bool,
+    ) -> Option<crate::generated::types::in_state_record> {
+        let top = self.input_ptr.max(0) as usize;
+        let k = hint.load(Ordering::Relaxed);
+        if k < top {
+            let r = self.input_stack[k];
+            if r.state_field != crate::generated::consts::token_list
+                && r.index_field == self.in_open
+                && is_file(&r)
+            {
+                return Some(r);
+            }
+        }
+        let k = (0..top).rev().find(|&k| is_file(&self.input_stack[k]))?;
+        hint.store(k, Ordering::Relaxed);
+        Some(self.input_stack[k])
     }
 
     /// `dl_copy(r, p)`: node `r` is a copy of node `p` (`copy_node_list`).
@@ -1257,19 +1337,41 @@ impl Globals {
             } else {
                 id.to_string().into_bytes()
             };
-            let zoom = self.m_lh(i + 6);
+            let kind = self.m_b0(i + 5);
+            // Only the words pdfTeX writes for this kind (`pdf_print_dests`'
+            // `/XYZ left top zoom`, `/FitH top`, `/FitV left`, `/FitR` the
+            // rectangle): `do_dest` sets just those unless a matrix is in
+            // use, and `\pdfdest` sets the zoom for `xyz` alone. The others
+            // hold whatever the node's memory held before (`get_node` does
+            // not clear it; `pdf_bottom` of an `xyz` dest is never set), so
+            // a restored run and a run from scratch differ there.
+            let (left, top, right_bottom, zoom) = match kind {
+                0 => (true, true, false, true),       // xyz
+                2 | 5 => (false, true, false, false), // fith, fitbh
+                3 | 6 => (true, false, false, false), // fitv, fitbv
+                7 => (true, true, true, false),       // fitr
+                _ => (false, false, false, false),    // fit, fitb
+            };
+            let word = |on: bool, at: i32, g: &mut Globals| {
+                if on {
+                    let v = g.m_int(at);
+                    scale(v, g)
+                } else {
+                    0
+                }
+            };
             let rect = [
-                scale(self.m_int(i + 1), self),
-                scale(self.m_int(i + 2), self),
-                scale(self.m_int(i + 3), self),
-                scale(self.m_int(i + 4), self),
+                word(left, i + 1, self),
+                word(top, i + 2, self),
+                word(right_bottom, i + 3, self),
+                word(right_bottom, i + 4, self),
             ];
             page.dests.push(Dest {
                 named,
                 name,
-                kind: self.m_b0(i + 5) as u8,
+                kind: kind as u8,
                 rect,
-                zoom,
+                zoom: if zoom { self.m_lh(i + 6) } else { 0 },
             });
             k = self.m_rh(k);
         }
@@ -1433,7 +1535,7 @@ impl Globals {
             }
         }
         if names.is_none() && format == "type1" {
-            names = Some(Arc::new(builtin_encoding(&program)));
+            names = Some(builtin_encoding_of(&program, &program_sha));
         }
         let mut h = Sha256::new();
         h.update(b"display-list-v3 font\0");
@@ -1662,6 +1764,14 @@ impl Globals {
                 IMAGE_TYPE_JBIG2 => "jbig2",
                 _ => "none",
             };
+            // A PDF page's box in bp, as the PDF gives it (protocol §5.2):
+            // pdfTeX's own fields hold it in scaled points (`bp2int`).
+            // Rounded to 1e-4 bp, which drops only the f32's binary tail.
+            let bp = |v: f32| Json::Num((v as f64 * 1e4).round() / 1e4);
+            let (width, height) = match &e.data {
+                ImageData::Pdf(p) => (bp(p.box_bp[2]), bp(p.box_bp[3])),
+                _ => (Json::Int(e.width as i64), Json::Int(e.height as i64)),
+            };
             let extra = match &e.data {
                 ImageData::Pdf(p) => vec![
                     ("page".to_string(), Json::Int(p.selected_page as i64)),
@@ -1676,8 +1786,8 @@ impl Globals {
                             _ => "crop",
                         }),
                     ),
-                    ("orig_x".to_string(), Json::Int(p.orig_x as i64)),
-                    ("orig_y".to_string(), Json::Int(p.orig_y as i64)),
+                    ("orig_x".to_string(), bp(p.box_bp[0])),
+                    ("orig_y".to_string(), bp(p.box_bp[1])),
                 ],
                 _ => vec![],
             };
@@ -1690,8 +1800,8 @@ impl Globals {
                         .map(|n| js(absolute(n)))
                         .unwrap_or(Json::Null),
                 ),
-                ("width".to_string(), Json::Int(e.width as i64)),
-                ("height".to_string(), Json::Int(e.height as i64)),
+                ("width".to_string(), width),
+                ("height".to_string(), height),
                 ("rotate".to_string(), Json::Int(e.rotate as i64)),
                 ("x_res".to_string(), Json::Int(e.x_res as i64)),
                 ("y_res".to_string(), Json::Int(e.y_res as i64)),
@@ -1842,6 +1952,20 @@ fn parse_enc(data: &[u8]) -> Option<Vec<Vec<u8>>> {
 
 /// A Type 1 font's built-in `/Encoding` (from the clear-text part of a
 /// PFB or PFA): `StandardEncoding` or `dup <code> /<name> put` entries.
+/// [`builtin_encoding`] of a program whose SHA-256 is `sha`, worked out once
+/// per program: every restore forgets the fonts' keys (`restored`), and the
+/// next page worked them out again, decrypting each Type 1 program's
+/// cleartext for its encoding (0.2 ms of every keystroke on a 1,000-page
+/// hyperref document; lane P4-PAGE-COST).
+fn builtin_encoding_of(program: &[u8], sha: &[u8; 32]) -> Arc<Vec<Vec<u8>>> {
+    if let Some(hit) = with(|st| st.builtin_encodings.get(sha).cloned()).flatten() {
+        return hit;
+    }
+    let names = Arc::new(builtin_encoding(program));
+    with(|st| st.builtin_encodings.insert(*sha, names.clone()));
+    names
+}
+
 fn builtin_encoding(program: &[u8]) -> Vec<Vec<u8>> {
     let clear = cleartext(program);
     let mut out = vec![b".notdef".to_vec(); 256];
@@ -1984,6 +2108,92 @@ fn c_int(t: &[u8]) -> Option<i64> {
 mod tests {
     use super::*;
 
+    /// `Globals::file_level` finds what walking the input stack finds, on
+    /// random sequences of the pushes and pops TeX makes: token lists
+    /// (`begin_token_list`, state `token_list`, `index` its token type)
+    /// and `begin_file_reading` levels (`index:=in_open`; real files,
+    /// `\read` levels and pseudo files by `name`), with the hint left from
+    /// each previous call, and with a hint from another stack (a restore).
+    #[test]
+    fn file_level_finds_what_the_walk_finds() {
+        use crate::generated::consts::token_list;
+        use crate::generated::types::in_state_record;
+        let mut g = Globals::new();
+        let is_file = |r: &in_state_record| r.state_field != 0 && r.name_field > 17;
+        let walk = |g: &Globals| {
+            (0..g.input_ptr as usize)
+                .rev()
+                .map(|k| g.input_stack[k])
+                .find(|r| is_file(r))
+        };
+        let hint = AtomicUsize::new(usize::MAX);
+        let mut seed = 0x2545_f491_4f6c_dd1du64;
+        let mut rnd = |n: u64| {
+            seed ^= seed << 13;
+            seed ^= seed >> 7;
+            seed ^= seed << 17;
+            seed % n
+        };
+        // the bottom level: the terminal
+        g.input_ptr = 0;
+        g.in_open = 0;
+        g.cur_input = in_state_record {
+            state_field: 1,
+            index_field: 0,
+            name_field: 0,
+            ..Default::default()
+        };
+        let mut checked = 0;
+        for step in 0..200_000 {
+            let push = g.input_ptr < 60 && (g.input_ptr == 0 || rnd(100) < 52);
+            if push {
+                let k = g.input_ptr as usize;
+                g.input_stack[k] = g.cur_input;
+                g.input_ptr += 1;
+                g.cur_input = if rnd(5) == 0 && g.in_open < 14 {
+                    g.in_open += 1;
+                    let name = match rnd(6) {
+                        0 => 1 + rnd(17) as i32, // `\read`, the terminal
+                        1 => 18 + rnd(2) as i32, // a pseudo file
+                        _ => 100 + rnd(1000) as i32,
+                    };
+                    in_state_record {
+                        state_field: 1 + rnd(3) as i32,
+                        index_field: g.in_open,
+                        name_field: name,
+                        ..Default::default()
+                    }
+                } else {
+                    in_state_record {
+                        state_field: token_list,
+                        index_field: rnd(20) as i32,
+                        name_field: rnd(2000) as i32,
+                        ..Default::default()
+                    }
+                };
+            } else {
+                if g.cur_input.state_field != token_list {
+                    g.in_open -= 1;
+                }
+                g.input_ptr -= 1;
+                g.cur_input = g.input_stack[g.input_ptr as usize];
+            }
+            if step % 997 == 0 {
+                // a hint from another stack (a restore)
+                hint.store(rnd(70) as usize, Ordering::Relaxed);
+            }
+            let want = walk(&g);
+            let got = g.file_level(&hint, is_file);
+            assert_eq!(
+                got.map(|r| (r.index_field, r.name_field, r.state_field)),
+                want.map(|r| (r.index_field, r.name_field, r.state_field)),
+                "step {step}"
+            );
+            checked += want.is_some() as usize;
+        }
+        assert!(checked > 10_000, "too few file levels found: {checked}");
+    }
+
     /// The eqtb locations above are the translation's: `pdf_ship_out`
     /// prints `count(k)` and `pdf_print_mag_bp` reads `mag` there.
     #[test]
@@ -1993,6 +2203,9 @@ mod tests {
         for e in std::fs::read_dir(dir).unwrap() {
             all.push_str(&std::fs::read_to_string(e.unwrap().path()).unwrap());
         }
+        // A routine indexes `eqtb` through its local view (web2rust
+        // --array-view, crate::arena::ArrView): the same element.
+        let all = all.replace("__av_eqtb[", "self.eqtb[");
         // Subscripts are wrapped in `crate::ix::U(...)` (web2rust
         // --index-type, src/ix.rs). `count_base` is a named macro constant;
         // `int_base+mag_code` is folded by TANGLE into one number.
@@ -2003,6 +2216,61 @@ mod tests {
         assert!(mag_bp[..400].contains(&format!(
             "self.eqtb[crate::ix::U((({MAG_LOC}i32) - 1) as usize)].int() != 1000i32"
         )));
+    }
+
+    /// `State::move_spans_of` leaves the table as rebuilding it whole did:
+    /// random spans, retired ones and moves, against that rebuild.
+    #[test]
+    fn moving_spans_keeps_the_table_a_rebuild_makes() {
+        let mut seed = 0x9e37_79b9_7f4a_7c15u64;
+        let mut rnd = |n: u32| {
+            seed ^= seed << 13;
+            seed ^= seed >> 7;
+            seed ^= seed << 17;
+            (seed % n as u64) as u32
+        };
+        for _ in 0..300 {
+            let mut st = State::new();
+            for _ in 0..60 {
+                let (f, l) = (1 + rnd(2), 1 + rnd(30));
+                st.span_id(f, l);
+            }
+            for _ in 0..4 {
+                let from = 1 + rnd(30);
+                let old_end = from + rnd(4);
+                let new_end = (from + rnd(6)).max(1);
+                let f = 1 + rnd(2);
+                // the rebuild, on a copy
+                let mut spans = st.spans.clone();
+                let mut retired = st.retired.clone();
+                let delta = new_end as i64 - old_end as i64;
+                for (i, (file, line)) in spans.iter_mut().enumerate() {
+                    if *file != f || *line < from {
+                        continue;
+                    }
+                    if *line < old_end {
+                        retired.insert(i as u32 + 1);
+                    } else {
+                        *line = (*line as i64 + delta).max(1) as u32;
+                    }
+                }
+                let mut want: HashMap<(u32, u32), u32> = HashMap::new();
+                for (i, &at) in spans.iter().enumerate() {
+                    if !retired.contains(&(i as u32 + 1)) {
+                        want.entry(at).or_insert(i as u32 + 1);
+                    }
+                }
+                st.move_spans_of(f, from, old_end, new_end);
+                assert_eq!(st.spans, spans);
+                assert_eq!(st.retired, retired);
+                assert_eq!(st.span_ids, want);
+                // new spans after the move, as a compile makes them
+                for _ in 0..10 {
+                    let (f, l) = (1 + rnd(2), 1 + rnd(30));
+                    st.span_id(f, l);
+                }
+            }
+        }
     }
 
     /// `move_lines`: spans after an edit move with their lines, spans of
@@ -2036,6 +2304,65 @@ mod tests {
         assert!(src.files.is_empty(), "the reader has the file already");
         assert!(peer.moved_spans().is_none());
         DL.with(|d| *d.borrow_mut() = None);
+    }
+
+    /// A destination carries only the words pdfTeX writes for its kind.
+    /// `get_node` does not clear a node, and `do_dest` leaves the rest of
+    /// a dest node as the memory held it (`pdf_bottom` of an `xyz` dest
+    /// is never set): a restored run and a run from scratch hold different
+    /// values there (the fixture soundness test, conf-paper edit 0).
+    #[test]
+    fn a_dest_carries_only_the_words_its_kind_uses() {
+        let mut g = Globals::new();
+        // The dest list's one entry (node 100) names object 1, whose dest
+        // node (200) is all stale words except what the kind sets.
+        let (k, i) = (100i32, 200i32);
+        // (the arrays a format load sizes)
+        if g.mem.len() < 300 {
+            g.mem.resize_len(300);
+        }
+        if g.obj_tab.len() < 2 {
+            g.obj_tab.resize_len(2);
+        }
+        let dest = |g: &mut Globals, kind: i32| -> Dest {
+            for w in 0..7 {
+                g.mem[(i + w) as usize].set_int(0x5a5a + w);
+                g.mem[(i + w) as usize].set_hh_lh(0x3c3c + w);
+            }
+            g.mem[(i + 1) as usize].set_int(1000); // pdf_left
+            g.mem[(i + 2) as usize].set_int(2000); // pdf_top
+            g.mem[(i + 5) as usize].set_hh_b0(kind); // pdf_dest_type
+            g.mem[(i + 5) as usize].set_hh_b1(0); // pdf_dest_named_id: num
+            g.mem[(i + 5) as usize].set_hh_rh(7); // pdf_dest_id
+            g.mem[k as usize].set_hh_lh(1);
+            g.mem[k as usize].set_hh_rh(0);
+            g.obj_tab[1].int4 = i; // obj_dest_ptr
+            g.pdf_dest_list = k;
+            g.pdf_link_list = 0;
+            let mut page = Page::new(StreamKind::Page, 0);
+            g.dl_links(&mut page, 1000);
+            assert_eq!(page.dests.len(), 1);
+            page.dests.pop().unwrap()
+        };
+        let d = dest(&mut g, 0);
+        assert_eq!((d.named, &d.name[..], d.kind), (false, &b"7"[..], 0));
+        assert_eq!((d.rect, d.zoom), ([1000, 2000, 0, 0], 0x3c3c + 6), "xyz");
+        assert_eq!(
+            (dest(&mut g, 1).rect, dest(&mut g, 1).zoom),
+            ([0; 4], 0),
+            "fit"
+        );
+        assert_eq!(dest(&mut g, 2).rect, [0, 2000, 0, 0], "fith");
+        assert_eq!(dest(&mut g, 3).rect, [1000, 0, 0, 0], "fitv");
+        assert_eq!(dest(&mut g, 4).rect, [0; 4], "fitb");
+        assert_eq!(dest(&mut g, 5).rect, [0, 2000, 0, 0], "fitbh");
+        assert_eq!(dest(&mut g, 6).rect, [1000, 0, 0, 0], "fitbv");
+        let r = dest(&mut g, 7);
+        assert_eq!(
+            (r.rect, r.zoom),
+            ([1000, 2000, 0x5a5a + 3, 0x5a5a + 4], 0),
+            "fitr"
+        );
     }
 
     #[test]
@@ -2076,6 +2403,24 @@ mod tests {
             font_matrix(fm, 0, 850).as_deref(),
             Some("0.00085 0 0 0.001 0 0")
         );
+    }
+
+    /// A program's built-in encoding is worked out once and kept across
+    /// restores (`restored` forgets the fonts' keys, not this).
+    #[test]
+    fn builtin_encodings_are_kept_by_program() {
+        DL.with(|d| *d.borrow_mut() = Some(Box::new(State::new())));
+        let pfa = b"/Encoding 256 array\ndup 65 /A put\nreadonly def\n";
+        let other = b"/Encoding StandardEncoding def\n";
+        let (sa, so) = (sha256(pfa), sha256(other));
+        let a = builtin_encoding_of(pfa, &sa);
+        assert_eq!(*a, builtin_encoding(pfa));
+        forget_engine_state();
+        assert!(Arc::ptr_eq(&a, &builtin_encoding_of(pfa, &sa)));
+        let o = builtin_encoding_of(other, &so);
+        assert_eq!(*o, builtin_encoding(other));
+        assert!(!Arc::ptr_eq(&a, &o));
+        DL.with(|d| *d.borrow_mut() = None);
     }
 
     /// A real font whose encoding writes `dup 1/uni6301 put`; skipped when

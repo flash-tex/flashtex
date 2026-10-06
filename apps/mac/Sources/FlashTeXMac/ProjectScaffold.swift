@@ -257,6 +257,21 @@ enum ProjectTemplate: String, CaseIterable, Identifiable {
     }
 }
 
+/// What the window holds when FlashTeX opens with no file
+/// (`ShellModel.Startup.untitledDocument`): File › New Project…'s "Blank
+/// article" entry document titled "Untitled" — the one source of that text —
+/// with the caret on the empty line under `\section{Introduction}`, where
+/// the first sentence goes. Never on disk until Save As….
+enum UntitledDocument {
+    static let path = ProjectTemplate.entryPath
+    static let text = ProjectTemplate.blankArticle.files(projectName: "Untitled")[0].text
+    /// UTF-16 offset of the line after `\section{Introduction}`.
+    static let caretUTF16: Int = {
+        let line = (text as NSString).range(of: "\\section{Introduction}\n")
+        return line.location == NSNotFound ? 0 : NSMaxRange(line)
+    }()
+}
+
 /// Writes a template into `<folder>/<name>` (pure file-system work; the
 /// model then opens the entry document like ⌘O would).
 enum ProjectScaffold {
@@ -476,6 +491,12 @@ enum MissingIncludeFix {
 
     /// The requested name, or nil when `message` is not that diagnostic.
     static func requested(from message: String) -> String? {
+        // TeX's wording under the engine-v3 preview (`latex/file-not-found`):
+        // LaTeX Error: File `chap.tex' not found.
+        if let file = ProjectPackagesState.texMissingFile(in: message) {
+            guard file.hasSuffix(".tex"), file.count > 4 else { return nil }
+            return String(file.dropLast(4))
+        }
         guard message.hasPrefix(prefix) else { return nil }
         let rest = message.dropFirst(prefix.count)
         guard let end = rest.range(of: "' and '") else { return nil }

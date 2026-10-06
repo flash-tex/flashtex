@@ -1,0 +1,30 @@
+\documentclass{beamer}
+\usetheme{Singapore}
+\usepackage{pgfpages}
+\setbeameroption{show notes on second screen=right}
+\title{Speaker notes}
+\author{N. Notes}
+\date{October 2026}
+\begin{document}
+\begin{frame}\titlepage
+  \note{Welcome everyone.}
+\end{frame}
+\section{Body}
+\begin{frame}{With notes}
+  \begin{itemize}
+    \item A point.
+    \item<2-> Another point.
+  \end{itemize}
+  \note<1>{Say the first thing.}
+  \note<2>{Then the second.}
+\end{frame}
+\begin{frame}{Without notes}
+  No notes on this frame.
+\end{frame}
+\note{A note between frames.}
+\begin{frame}{Itemised notes}
+  Content.
+  \note[item]{First item of the note.}
+  \note[item]{Second item.}
+\end{frame}
+\end{document}

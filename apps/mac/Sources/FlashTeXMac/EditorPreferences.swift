@@ -871,7 +871,7 @@ struct SettingsRootView: View {
                 .formStyle(.grouped)
                 .frame(width: DS.Layout.settingsWidth)
                 .tabItem { Label("Abbreviations", systemImage: "text.badge.plus") }
-            Form { CompilePreferencesSection() } // auto-compile (moved out of the toolbar's producer menu, #653 review)
+            Form { CompilePreferencesSection(); EngineChoiceSettingsSection() } // auto-compile (moved out of the toolbar's producer menu, #653 review); the engine for other documents (EngineChoice.swift)
                 .formStyle(.grouped)
                 .frame(width: DS.Layout.settingsWidth)
                 .tabItem { Label("Compile", systemImage: "play.circle") }
@@ -883,6 +883,10 @@ struct SettingsRootView: View {
                 .formStyle(.grouped)
                 .frame(width: DS.Layout.settingsWidth)
                 .tabItem { Label("Images", systemImage: "photo") }
+            Form { LiveShareSettingsSection() } // Live Share (preview), off by default (LiveShareViews.swift)
+                .formStyle(.grouped)
+                .frame(width: DS.Layout.settingsWidth)
+                .tabItem { Label("Live Share", systemImage: "person.2") }
         }
     }
 }
@@ -903,6 +907,15 @@ struct CompilePreferencesSection: View {
             Text(model.canCompile ? "Edits compile as you type; ⌘B compiles at any time."
                                       : "No producer attached — File > Attach Built Compiler (⌘⇧K) first.")
                 .font(DS.Fonts.secondary).foregroundStyle(DS.Colors.textSecondary)
+            Toggle("Stop at the first error", isOn: $model.strictTeXErrors)
+                .accessibilityHint("While off, errors TeX recovers from are shown as warnings and the preview shows every page. While on, the new engine stops at the first error, like pdflatex -halt-on-error.")
+            Text(model.strictTeXErrors ? "Like pdflatex -halt-on-error: TeX stops at the first error and every error is an error."
+                                       : "Best effort: an error pdfLaTeX recovers from is a warning (“pdfLaTeX would report an error here”) and the preview goes on.")
+                .font(DS.Fonts.secondary).foregroundStyle(DS.Colors.textSecondary)
+            if model.strictTeXErrors, model.engineV3.strictModeIgnored {
+                Text("This engine host does not stop at the first error: errors are shown as errors, but TeX goes on. Update FlashTeX's engine to stop.")
+                    .font(DS.Fonts.secondary).foregroundStyle(.orange)
+            }
         }
     }
 }
@@ -984,6 +997,7 @@ struct EditorPreferencesView: View {
                 ErrorLensPreferenceRows() // inline diagnostic text at line ends (ErrorLens.swift)
             }
             Section("Preview") { PreviewFontSmoothingRows() } // font smoothing vs exact PDF parity (PreviewFontSmoothing.swift)
+            Section("Sidebar") { ProjectTreeSettingsRows() } // Project files as a folder tree or a flat list (ProjectFileTree.swift)
             Section("Saving") {
                 Toggle("Autosave", isOn: $prefs.autosave)
                     .accessibilityHint("Writes the open file to disk a couple of seconds after you stop typing, on top of Command-S. Only applies to a file that has already been saved once; a new, never-saved buffer still needs Command-S or Save As.")

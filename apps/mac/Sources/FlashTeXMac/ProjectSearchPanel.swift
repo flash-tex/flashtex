@@ -841,23 +841,47 @@ extension ProjectSearchClient {
         }
     }
 
-    /// `controllerRequest` (Navigation.swift) that also yields the request id,
-    /// so the adopted history result can be recorded as the in-flight edit its
-    /// follow-up preview binds to (exactly what the history panel does).
-    private func controllerRequestTracked(_ type: String, _ payload: PreviewControllerClient.JSONObject) async -> (id: String, reply: Result<[String: Any], ControllerError>)? {
+    /// `controllerRequest` (Navigation.swift) whose reply is settled INSIDE the
+    /// `awaiting` waiter, on the helper's own delivery turn, and only then
+    /// resumes the caller with what `settle` returned. The request id is
+    /// passed to `settle` so the adopted history result is recorded as the
+    /// in-flight edit its follow-up preview binds to.
+    ///
+    /// Settling after the `await` instead is a race: the continuation resumes
+    /// on the main dispatch queue, but every controller line is delivered as a
+    /// run-loop block (`PreviewControllerClient.deliver`), so when the reply and
+    /// the compile outcome arrive in one read the outcome is handled first,
+    /// finds nothing in flight and is dropped as unknown, and the late
+    /// adoption then records an in-flight edit whose outcome was already
+    /// consumed, wedging the preview pipeline. The history panel
+    /// (EditHistoryPanel.swift `send`/`settle`) and the reviewed reload
+    /// (DocumentFiles.swift) adopt inside the waiter for the same reason.
+    private func controllerRequestTracked(_ type: String, _ payload: PreviewControllerClient.JSONObject,
+                                          settle: @escaping (_ requestID: String, _ reply: Result<[String: Any], ControllerError>) -> ProjectSearch.FileOutcome) async -> ProjectSearch.FileOutcome? {
         guard let controller = model.controller, controller.isRunning, model.controllerState.ready else { return nil }
         let id: String
-        do { id = try controller.send(type, payload) } catch { return ("", .failure(.init(message: "\(type) failed to send: \(error.localizedDescription)"))) } // nothing was sent: no id
+        do { id = try controller.send(type, payload) } catch { return settle("", .failure(.init(message: "\(type) failed to send: \(error.localizedDescription)"))) } // nothing was sent: no id
         return await withCheckedContinuation { cont in
-            model.controllerState.awaiting[id] = { cont.resume(returning: (id, $0)) }
+            model.controllerState.awaiting[id] = { reply in
+                let outcome = MainActor.assumeIsolated { settle(id, reply) }
+                cont.resume(returning: outcome)
+            }
         }
     }
 
     private func sendApplyGroup(path: String, commandID: String, payload: PreviewControllerClient.JSONObject, edits: [ProjectSearch.ReplacementEdit]) async -> ProjectSearch.FileOutcome {
         let snapshot = EditorSnapshot.take(model, path: path) // recorded BEFORE the send; the await below is the GH39 window
-        guard let (requestID, reply) = await controllerRequestTracked("apply_group", payload) else {
-            return .init(path: path, state: .uncertain("helper detached before the reply", commandID: commandID))
+        let outcome = await controllerRequestTracked("apply_group", payload) { [self] requestID, reply in
+            settleApplyGroup(path: path, commandID: commandID, edits: edits, requestID: requestID, reply: reply, snapshot: snapshot)
         }
+        return outcome ?? .init(path: path, state: .uncertain("helper detached before the reply", commandID: commandID))
+    }
+
+    /// The `apply_group` reply, run synchronously in the reply's waiter
+    /// (`controllerRequestTracked`): classification, then `reconcile` before
+    /// any later line of the same read is handled.
+    private func settleApplyGroup(path: String, commandID: String, edits: [ProjectSearch.ReplacementEdit], requestID: String,
+                                  reply: Result<[String: Any], ControllerError>, snapshot: EditorSnapshot) -> ProjectSearch.FileOutcome {
         switch reply {
         case .failure(let e):
             if e.message.hasPrefix("helper exited") || e.message.contains("not admitted") {

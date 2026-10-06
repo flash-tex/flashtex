@@ -108,6 +108,11 @@ struct Target {
     broken: bool,
     /// Output stopped (superseded or cancelled) at some point.
     went_quiet: bool,
+    /// A changed page was delivered (LIVE-30MS: a superseded compile still
+    /// sends its first changed page, the keystroke's edit, then the forms
+    /// that page draws; `forms_after`).
+    changed_sent: bool,
+    forms_after: bool,
     /// Stage timings (DONE's `stages`): the engine thread's CPU time and
     /// display-list time at the start of the compile, the time spent
     /// writing frames to the socket, and the first page's figures.
@@ -117,6 +122,10 @@ struct Target {
     first_cpu_ms: Option<f64>,
     first_emit_ms: Option<f64>,
     first_send_ms: Option<f64>,
+    /// The engine thread's instructions and cycles at the start of the
+    /// compile and at the first page (`os::thread_counts`; macOS only).
+    pmu0: Option<(u64, u64)>,
+    first_pmu: Option<(u64, u64)>,
 }
 
 impl Target {
@@ -127,6 +136,13 @@ impl Target {
             || self.conn.is_cancelled(self.id);
         self.went_quiet |= q;
         q
+    }
+
+    /// Only superseded by a newer compile: not cancelled, the client there.
+    fn superseded_only(&self) -> bool {
+        !self.broken
+            && !self.conn.is_cancelled(self.id)
+            && self.conn.queued.load(Ordering::SeqCst) > 0
     }
 
     fn out(&self) -> &Out {
@@ -248,7 +264,8 @@ impl Live {
         if e.form {
             let mut t = self.target.take();
             if let Some(t) = t.as_mut() {
-                if !t.quiet() && t.send(&e) {
+                let wanted = !t.quiet() || (t.forms_after && t.superseded_only());
+                if wanted && t.send(&e) {
                     t.ps.forms.insert(e.index, e.hash);
                 }
             }
@@ -267,6 +284,11 @@ impl Live {
         // even when unchanged (the client learns the page is current, and
         // the edited page comes first).
         let delivered = self.target.as_ref().is_some_and(|t| (i as u32) < t.next);
+        let changed = self
+            .pages
+            .get(i)
+            .and_then(|c| c.as_ref())
+            .is_none_or(|c| c.e.hash != e.hash);
         let version = match &self.pages[i] {
             Some(c)
                 if delivered
@@ -286,16 +308,36 @@ impl Live {
             return;
         };
         t.emitted += 1;
+        t.forms_after = false;
         self.catch_up(&mut t, i as u32);
-        if !t.quiet() && t.next == i as u32 {
+        let quiet = t.quiet();
+        // Superseded before its first changed page: send that page anyway
+        // (the edit it shows is nearer the editor than what the client
+        // shows), not the pages before it, which the client holds.
+        let edited_anyway = quiet
+            && changed
+            && t.incremental
+            && !t.changed_sent
+            && t.superseded_only()
+            && (i as u32) >= t.next;
+        if edited_anyway {
             self.deliver(&mut t, i as u32, false);
-            t.next = i as u32 + 1;
+            t.changed_sent = true;
+            t.forms_after = true;
+        }
+        if (!quiet && t.next == i as u32) || edited_anyway {
+            if !edited_anyway {
+                self.deliver(&mut t, i as u32, false);
+                t.next = i as u32 + 1;
+                t.changed_sent |= changed;
+            }
             if t.first_index.is_none() {
                 t.first_index = Some(i as u32);
                 t.first_page_ms = Some(t.t0.elapsed().as_secs_f64() * 1e3);
                 t.first_cpu_ms = Some((incr::thread_cpu_s() - t.cpu0) * 1e3);
                 t.first_emit_ms = Some((displaylist::emit_ns() - t.emit0) as f64 * 1e-6);
                 t.first_send_ms = Some(t.send_ns as f64 * 1e-6);
+                t.first_pmu = crate::os::thread_counts();
                 let count = t.old_count.max(i + 1);
                 t.pages_status(count, false);
             }
@@ -330,6 +372,10 @@ struct Doc {
     /// spans with their lines when they are edited).
     texts: HashMap<String, Arc<Vec<u8>>>,
     tools: DocTools,
+    /// A run from the format was stopped by newer work (past S₀, which it
+    /// keeps): S₀ is persisted after the next compile that completes, not
+    /// while that work waits.
+    s0_unsaved: bool,
 }
 
 /// The external tools of the resident document (`super::external`).
@@ -417,6 +463,9 @@ impl Engine {
                     Ok(r) => r,
                     Err(mpsc::RecvTimeoutError::Timeout) => {
                         trim_due = false;
+                        if let Some(d) = self.doc.as_mut() {
+                            d.session.trim_caches();
+                        }
                         give_back_free_memory();
                         continue;
                     }
@@ -444,6 +493,7 @@ impl Engine {
                     // (FLASHTEX_NO_PREPARE=1 leaves it out, for A/B)
                     let prepare = std::env::var_os("FLASHTEX_NO_PREPARE").is_none();
                     if let Some(d) = self.doc.as_mut().filter(|_| prepare) {
+                        let _busy = crate::busy::enter(crate::busy::Part::Prepare);
                         d.session
                             .prepare_next(&mut || c.queued.load(Ordering::SeqCst) > 0);
                     }
@@ -503,13 +553,15 @@ impl Engine {
     fn s0_path(&self, job: &Job) -> Option<PathBuf> {
         let dir = self.cfg.s0_cache.as_ref()?;
         let key = format!(
-            "{}\0{}\0{}\0{:?}\0{}\0{}",
+            "{}\0{}\0{}\0{:?}\0{}\0{}{}",
             job.root.display(),
             job.main,
             job.format,
             job.shell,
             job.out_dir.display(),
-            job.jobname
+            job.jobname,
+            // (only when set: a normal job's stored S0 keeps its key)
+            if job.halt { "\0halt" } else { "" }
         );
         let h = crate::persist::hash128(key.as_bytes());
         Some(dir.join(format!("{:016x}{:016x}.s0", h[0], h[1])))
@@ -533,6 +585,7 @@ impl Engine {
             compiles: 0,
             texts: HashMap::new(),
             tools: DocTools::default(),
+            s0_unsaved: false,
         });
         Ok(())
     }
@@ -541,6 +594,10 @@ impl Engine {
     /// the host starts itself after external tools changed an input.
     fn compile(&mut self, conn: Arc<Conn>, req: Json, t0: Instant, cause: Option<&'static str>) {
         let queue_ms = t0.elapsed().as_secs_f64() * 1e3;
+        // what the engine thread did while this request waited (LIVE-30MS)
+        let queue_by = crate::busy::since(t0);
+        let arrival_mark = crate::busy::cycles_at(t0);
+        let _busy = crate::busy::enter(crate::busy::Part::Request);
         super::crash::serving(&format!(
             "COMPILE id {} main {} ({} edits, {} buffers) from connection {}",
             req.int_field("id").unwrap_or(-1),
@@ -554,6 +611,7 @@ impl Engine {
             conn.id
         ));
         let cpu0 = incr::thread_cpu_s();
+        let pmu0 = crate::os::thread_counts();
         let out = conn.out.clone();
         let Some(id) = req.int_field("id") else {
             server::error(&out, None, "request", "COMPILE needs an integer id");
@@ -604,6 +662,10 @@ impl Engine {
                     ("id", Json::Int(id)),
                     ("status", js("cancelled")),
                     ("pages", Json::Int(self.live.borrow().pages.len() as i64)),
+                    (
+                        "arrival_mark_kc",
+                        arrival_mark.map_or(Json::Null, |c| Json::Int((c / 1000) as i64)),
+                    ),
                 ]),
             );
             return self.resume_deferred(&conn);
@@ -658,12 +720,16 @@ impl Engine {
             bytes: 0,
             broken: false,
             went_quiet: false,
+            changed_sent: false,
+            forms_after: false,
             cpu0,
             emit0: displaylist::emit_ns(),
             send_ns: 0,
             first_cpu_ms: None,
             first_emit_ms: None,
             first_send_ms: None,
+            pmu0,
+            first_pmu: None,
         });
         let stop_at = req
             .int_field("viewport")
@@ -680,7 +746,32 @@ impl Engine {
                 .set_preempt(Some(std::rc::Rc::new(move |_pass, _pages| {
                     c.queued.load(Ordering::SeqCst) > 0 || c.is_cancelled(id)
                 })));
+            // (a CANCEL stops even a run protected to its edited page)
+            let c = conn.clone();
+            doc.session
+                .set_cancel(Some(std::rc::Rc::new(move |_pass, _pages| {
+                    c.is_cancelled(id)
+                })));
         }
+        // The `progress-v1` heartbeat (spec §6.8): at a pass's first
+        // checkpoint, then at most every 250 ms, in every run (a later
+        // `.aux` pass whose unchanged pages are not sent included).
+        doc.session.set_progress(conn.progress.then(|| {
+            let c = conn.clone();
+            let last = std::cell::Cell::new((0usize, None::<Instant>));
+            std::rc::Rc::new(move |pass: usize, pages: usize| {
+                let (last_pass, at) = last.get();
+                if pass != last_pass || at.is_none_or(|t| t.elapsed().as_millis() >= 250) {
+                    last.set((pass, Some(Instant::now())));
+                    let j = obj([
+                        ("id", Json::Int(id)),
+                        ("pass", Json::Int(pass as i64)),
+                        ("page", Json::Int(pages as i64)),
+                    ]);
+                    server::send_json(&c.out, kind::PROGRESS, &j);
+                }
+            }) as incr::Progress
+        }));
         // Lane P4-MULTIPASS: when a pass leaves work for the external tools
         // (latexmk's rules: a new `.bcf`, `\citation`s, an `.idx`), the
         // further `.aux` passes wait for them: the tools run after `DONE`
@@ -723,6 +814,7 @@ impl Engine {
             }
         }
         let t_run = Instant::now();
+        let busy_run = crate::busy::enter(crate::busy::Part::Typeset);
         let mut open_error = None;
         let first = if reopen {
             match doc
@@ -769,9 +861,14 @@ impl Engine {
             other => other,
         };
         let run_ms = t_run.elapsed().as_secs_f64() * 1e3;
+        drop(busy_run);
+        let _busy = crate::busy::enter(crate::busy::Part::Done);
         doc.session.set_preempt(None);
+        doc.session.set_cancel(None);
+        doc.session.set_progress(None);
         doc.session.set_defer(None);
         let deferred = matches!(&result, Ok(r) if r.deferred);
+        let stopped = matches!(&result, Ok(r) if r.paused);
         let mut live = self.live.borrow_mut();
         let mut t = live.target.take().unwrap();
         let (status, exit_code, count, mode, mut extra) = match &result {
@@ -841,6 +938,15 @@ impl Engine {
             let o = |v: Option<f64>| v.map(m).unwrap_or(Json::Null);
             let mut st = vec![
                 ("queue".to_string(), m(queue_ms)),
+                (
+                    "queue_by".to_string(),
+                    Json::Obj(
+                        queue_by
+                            .iter()
+                            .map(|(k, v)| (k.to_string(), m(*v)))
+                            .collect(),
+                    ),
+                ),
                 ("apply".to_string(), m(apply_ms)),
                 ("move_spans".to_string(), m(move_ms)),
                 ("first_page".to_string(), o(t.first_page_ms)),
@@ -867,6 +973,45 @@ impl Engine {
             ));
             st.push(("send".to_string(), m(t.send_ns as f64 * 1e-6)));
             st.push(("cpu".to_string(), m((incr::thread_cpu_s() - t.cpu0) * 1e3)));
+            // the convergence tests' old chunks kept and rewound
+            // (`arena::OldCache`), since the host started
+            {
+                use std::sync::atomic::Ordering::Relaxed;
+                let c = |a: &std::sync::atomic::AtomicU64| Json::Int(a.load(Relaxed) as i64);
+                st.push(("old_kept".to_string(), c(&crate::arena::OLD_CACHE_HITS)));
+                st.push((
+                    "old_rewound".to_string(),
+                    c(&crate::arena::OLD_CACHE_MISSES),
+                ));
+            }
+            // Instructions and cycles of the engine thread, in thousands:
+            // the whole compile, to the first page, and (from the session)
+            // the restore and to the edited page. Load does not move them.
+            if let (Some(a), Some(b)) = (t.pmu0, crate::os::thread_counts()) {
+                let k = |x: u64| Json::Int((x / 1000) as i64);
+                st.push(("instr_k".to_string(), k(b.0 - a.0)));
+                st.push(("cycles_k".to_string(), k(b.1 - a.1)));
+                if let Some(f) = t.first_pmu {
+                    st.push(("first_page_instr_k".to_string(), k(f.0 - a.0)));
+                    // absolute engine-thread cycle marks (thousands): the
+                    // first page's, and this request's arrival
+                    st.push(("first_page_mark_kc".to_string(), k(f.1)));
+                }
+                if let Some(c) = arrival_mark {
+                    st.push(("arrival_mark_kc".to_string(), k(c)));
+                }
+                if let Ok(rep) = &result {
+                    if let Some(r) = rep.restore_instr {
+                        st.push(("restore_instr_k".to_string(), k(r)));
+                    }
+                    if let Some(e) = rep.edited_instr {
+                        st.push(("edited_instr_k".to_string(), k(e)));
+                    }
+                    if let Some(e) = rep.test_instr {
+                        st.push(("test_instr_k".to_string(), k(e)));
+                    }
+                }
+            }
             extra.push(("stages".to_string(), Json::Obj(st)));
         }
         let cancelled = t.quiet() || t.went_quiet;
@@ -984,8 +1129,12 @@ impl Engine {
         doc.compiles += 1;
         doc.tools.deferred = deferred.then(|| (conn.clone(), req.clone(), id));
         remember_texts(doc);
-        // Persist S₀ after a full run (off the keystroke path: DONE is out).
-        if cold {
+        // Persist S₀ after a full run (off the keystroke path: DONE is out),
+        // or after the first complete compile behind a stopped one.
+        let _busy = crate::busy::enter(crate::busy::Part::Other);
+        let save = (cold || doc.s0_unsaved) && !stopped;
+        doc.s0_unsaved = (cold || doc.s0_unsaved) && stopped;
+        if save {
             if let Some(p) = &s0_path {
                 if let Some(d) = p.parent() {
                     let _ = std::fs::create_dir_all(d);
@@ -1251,7 +1400,6 @@ fn give_back_free_memory() {
 /// (truncated or extended to the new length) rather than all of it.
 fn apply_changes(root: &Path, req: &Json, written: &mut Written) -> Result<(), String> {
     use crate::system::StatSig;
-    use std::os::unix::fs::FileExt;
     let target = |p: &str| -> Result<PathBuf, String> {
         let rel = Path::new(p);
         if !server::inside(rel) {
@@ -1264,7 +1412,11 @@ fn apply_changes(root: &Path, req: &Json, written: &mut Written) -> Result<(), S
     // it, else read.
     let current = |path: &Path, written: &mut Written| -> std::io::Result<Vec<u8>> {
         if let Some((s, d)) = written.remove(path) {
-            if sig(path) == Some(s) {
+            // (the host's own last write, still in place: exact fields,
+            // racy or not -- the file is the host's copy of the editor's
+            // text, which nothing else writes, and a racy test here would
+            // read the typed file back at every keystroke)
+            if sig(path).is_some_and(|n| n.same_fields(&s)) {
                 return Ok(Arc::try_unwrap(d).unwrap_or_else(|d| (*d).clone()));
             }
         }
@@ -1279,7 +1431,7 @@ fn apply_changes(root: &Path, req: &Json, written: &mut Written) -> Result<(), S
             .open(path)
             .and_then(|f| {
                 f.set_len(data.len() as u64)?;
-                f.write_all_at(&data[from..], from as u64)
+                crate::os::write_all_at(&f, &data[from..], from as u64)
             });
         r.map_err(|e| format!("{}: {e}", path.display()))?;
         if let Some(s) = sig(path) {
@@ -1356,29 +1508,148 @@ fn remember_texts(doc: &mut Doc) {
 }
 
 /// The lines that differ between `old` and `new`: (first changed line,
-/// end of the change in `old`, end in `new`), 1-based, ends exclusive.
+/// end of the change in `old`, end in `new`), 1-based, ends exclusive; lines
+/// are split at LF. The common prefix and suffix are compared as bytes
+/// (memcmp) and only their line ends counted: splitting a 1,000-page source
+/// into lines twice took 2-2.5 ms of every keystroke (lane
+/// P4-SPLIT-LATENCY); `tests::line_change_is_the_line_split` holds it to the
+/// line-by-line definition.
 fn line_change(old: &[u8], new: &[u8]) -> (u32, u32, u32) {
-    let a: Vec<&[u8]> = old.split(|&c| c == b'\n').collect();
-    let b: Vec<&[u8]> = new.split(|&c| c == b'\n').collect();
-    let p = a.iter().zip(&b).take_while(|(x, y)| x == y).count();
-    let max_s = a.len().min(b.len()) - p;
-    let s = a
+    // equal leading lines
+    let pre = crate::incr::common_prefix(old, new);
+    let ls = old[..pre]
         .iter()
-        .rev()
-        .zip(b.iter().rev())
-        .take(max_s)
-        .take_while(|(x, y)| x == y)
-        .count();
-    (
-        p as u32 + 1,
-        (a.len() - s) as u32 + 1,
-        (b.len() - s) as u32 + 1,
-    )
+        .rposition(|&c| c == b'\n')
+        .map_or(0, |i| i + 1);
+    let mut p = lf_count(&old[..ls]);
+    // the common suffix, and every text's LFs counted once
+    let suf = crate::incr::common_suffix(old, new, old.len().min(new.len()));
+    let (so, sn) = (old.len() - suf, new.len() - suf);
+    let (mo, mn) = (so.max(ls), sn.max(ls));
+    let tail_o = lf_count(&old[mo..]);
+    let tail_n = if so >= ls && sn >= ls {
+        tail_o // the same bytes
+    } else {
+        lf_count(&new[mn..])
+    };
+    let na = p + lf_count(&old[ls..mo]) + tail_o + 1;
+    let nb = p + lf_count(&new[ls..mn]) + tail_n + 1;
+    // the line holding the first difference is equal only when it ends
+    // there in one text and at a LF in the other (or at the end of both)
+    let line_end = |b: &[u8]| {
+        b[ls..]
+            .iter()
+            .position(|&c| c == b'\n')
+            .map_or(b.len(), |i| ls + i)
+    };
+    if p < na.min(nb) && old[ls..line_end(old)] == new[ls..line_end(new)] {
+        p += 1;
+    }
+    // equal trailing lines, no further back than the leading ones: each LF
+    // in the common suffix starts one ...
+    let max_s = na.min(nb) - p;
+    let mut s = if so >= ls {
+        tail_o
+    } else {
+        lf_count(&old[so..])
+    };
+    // ... and so does the suffix itself where a line starts there in both
+    // texts (at a text's start, or after a LF)
+    let starts = |b: &[u8], at: usize| at == 0 || b[at - 1] == b'\n';
+    if starts(old, so) && starts(new, sn) {
+        s += 1;
+    }
+    let s = s.min(max_s);
+    (p as u32 + 1, (na - s) as u32 + 1, (nb - s) as u32 + 1)
+}
+
+/// The LFs in `b`, eight bytes at a time: a byte of `w ^ LF` is zero
+/// exactly where `w` holds a LF, and the zero-byte test below sets the top
+/// bit of exactly those bytes (no carries cross bytes).
+fn lf_count(b: &[u8]) -> usize {
+    const LO7: u64 = 0x7f7f_7f7f_7f7f_7f7f;
+    const LF: u64 = 0x0a0a_0a0a_0a0a_0a0a;
+    let (chunks, rest) = b.as_chunks::<8>();
+    let mut n = 0usize;
+    for c in chunks {
+        let x = u64::from_le_bytes(*c) ^ LF;
+        let z = !(((x & LO7) + LO7) | x | LO7);
+        n += z.count_ones() as usize;
+    }
+    n + rest.iter().filter(|&&c| c == b'\n').count()
 }
 
 #[cfg(test)]
 mod tests {
     use super::line_change;
+
+    /// The line-by-line definition `line_change` computes.
+    fn line_change_by_lines(old: &[u8], new: &[u8]) -> (u32, u32, u32) {
+        let a: Vec<&[u8]> = old.split(|&c| c == b'\n').collect();
+        let b: Vec<&[u8]> = new.split(|&c| c == b'\n').collect();
+        let p = a.iter().zip(&b).take_while(|(x, y)| x == y).count();
+        let max_s = a.len().min(b.len()) - p;
+        let s = a
+            .iter()
+            .rev()
+            .zip(b.iter().rev())
+            .take(max_s)
+            .take_while(|(x, y)| x == y)
+            .count();
+        (
+            p as u32 + 1,
+            (a.len() - s) as u32 + 1,
+            (b.len() - s) as u32 + 1,
+        )
+    }
+
+    #[test]
+    fn lf_count_counts_every_lf() {
+        let mut seed = 0x1234_5678_9abc_def1u64;
+        for n in 0..300 {
+            let v: Vec<u8> = (0..n)
+                .map(|_| {
+                    seed ^= seed << 13;
+                    seed ^= seed >> 7;
+                    seed ^= seed << 17;
+                    [b'\n', 0x0b, 0x8a, 0, 0xff, b'a', 0x09][(seed % 7) as usize]
+                })
+                .collect();
+            let want = v.iter().filter(|&&c| c == b'\n').count();
+            assert_eq!(super::lf_count(&v), want);
+        }
+    }
+
+    #[test]
+    fn line_change_is_the_line_split() {
+        let mut seed = 0x2545_f491_4f6c_dd1du64;
+        let mut rnd = |n: usize| {
+            seed ^= seed << 13;
+            seed ^= seed >> 7;
+            seed ^= seed << 17;
+            (seed % n as u64) as usize
+        };
+        let alpha = b"ab\n";
+        for _ in 0..20_000 {
+            let n = rnd(14);
+            let old: Vec<u8> = (0..n).map(|_| alpha[rnd(3)]).collect();
+            // an edit: replace a range with random bytes
+            let (a, b) = {
+                let x = rnd(n + 1);
+                (x, x + rnd(n + 1 - x))
+            };
+            let mut new = old[..a].to_vec();
+            new.extend((0..rnd(4)).map(|_| alpha[rnd(3)]));
+            new.extend_from_slice(&old[b..]);
+            assert_eq!(
+                line_change(&old, &new),
+                line_change_by_lines(&old, &new),
+                "{:?} -> {:?}",
+                String::from_utf8_lossy(&old),
+                String::from_utf8_lossy(&new)
+            );
+        }
+    }
 
     #[test]
     fn line_changes() {

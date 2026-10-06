@@ -1,0 +1,12 @@
+before1 | load_before { 26.92 22.39 28.53 } | load_after { 60.64 34.23 32.68 }
+before1: window 6.24 s, main 4698 ms (75% busy), 46.98 ms/keystroke over 100 traced keystrokes | GraphHost.flushTransactions 1406 ms (14.06/key) | CA::Transaction::commit 2527 ms (25.27/key) | NSHostingView.layout() 730 ms (7.30/key) | CompletingTextView.draw 1361 ms (13.61/key) | LineNumberGutter.draw 121 ms (1.21/key) | EngineV3 281 ms (2.81/key) | textDidChange 82 ms (0.82/key)
+  keystroke->first changed page committed: p50 49.4 ms p95 164.4 ms (88 samples)
+after1 | load_before { 59.25 35.20 33.05 } | load_after { 43.63 33.73 32.59 }
+after1: window 6.24 s, main 1075 ms (17% busy), 10.75 ms/keystroke over 100 traced keystrokes | GraphHost.flushTransactions 294 ms (2.94/key) | CA::Transaction::commit 480 ms (4.80/key) | NSHostingView.layout() 207 ms (2.07/key) | CompletingTextView.draw 122 ms (1.22/key) | LineNumberGutter.draw 1 ms (0.01/key) | EngineV3 316 ms (3.16/key) | textDidChange 54 ms (0.54/key)
+  keystroke->first changed page committed: p50 35.1 ms p95 51.7 ms (100 samples)
+before2 | load_before { 41.98 33.55 32.53 } | load_after { 32.36 32.15 32.07 }
+before2: window 6.24 s, main 4477 ms (72% busy), 44.77 ms/keystroke over 100 traced keystrokes | GraphHost.flushTransactions 1320 ms (13.20/key) | CA::Transaction::commit 2495 ms (24.95/key) | NSHostingView.layout() 691 ms (6.91/key) | CompletingTextView.draw 1352 ms (13.52/key) | LineNumberGutter.draw 122 ms (1.22/key) | EngineV3 329 ms (3.29/key) | textDidChange 60 ms (0.60/key)
+  keystroke->first changed page committed: p50 26.6 ms p95 31.5 ms (100 samples)
+after2 | load_before { 29.33 31.50 31.84 } | load_after { 22.61 29.73 31.19 }
+after2: window 6.24 s, main 1142 ms (18% busy), 11.42 ms/keystroke over 100 traced keystrokes | GraphHost.flushTransactions 307 ms (3.07/key) | CA::Transaction::commit 516 ms (5.16/key) | NSHostingView.layout() 233 ms (2.33/key) | CompletingTextView.draw 113 ms (1.13/key) | LineNumberGutter.draw 1 ms (0.01/key) | EngineV3 339 ms (3.39/key) | textDidChange 58 ms (0.58/key)
+  keystroke->first changed page committed: p50 26.2 ms p95 30.7 ms (100 samples)

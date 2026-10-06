@@ -1,4 +1,4 @@
-//! A blocking client for the engine host's Unix socket (spec §6).
+//! A blocking client for the engine host's socket (spec §6).
 //!
 //! ```no_run
 //! use flashtex_display_list::client::{Client, CompileRequest, Event};
@@ -17,13 +17,15 @@ use crate::frame::{read_frame, write_frame};
 use crate::json::{obj, s, Json};
 use crate::page::{Page, StreamKind};
 use crate::resource::{Font, Sources};
-use crate::{kind, PROTOCOL, VERSION_MAJOR, VERSION_MINOR};
+use crate::transport::Stream;
+use crate::{kind, LATEST_MINOR, PROTOCOL, VERSION_MAJOR};
 use std::io::{self, BufReader, BufWriter, Write};
-use std::os::unix::net::UnixStream;
 use std::path::Path;
 
-/// One message from the host, decoded.
+/// One message from the host, decoded. Later minor versions add kinds, so a
+/// match outside this crate needs a wildcard arm.
 #[derive(Debug)]
+#[non_exhaustive]
 pub enum Event {
     Started(Json),
     Font(Font),
@@ -41,6 +43,15 @@ pub enum Event {
     Tool(Json),
     /// `diag-v1` (spec §6.7), for a client that accepted it.
     Diag(crate::diag::Diag),
+    /// 3.3: an IMAGE's bytes (spec §11.5), for a client that accepted
+    /// `image-data`.
+    ImageData(crate::resource::ImageData),
+    /// 3.3: the reply to RESOLVE or LOCATE (spec §11.6).
+    Resolved(Json),
+    Located(Json),
+    /// 3.3, the Typst host: a package's fetch (spec §11.8), for a client
+    /// that accepted `packages-v1`.
+    Package(Json),
     /// A kind this version does not know (a later minor version's): skip.
     Other(u8, Vec<u8>),
 }
@@ -63,6 +74,10 @@ pub fn decode_event(k: u8, body: Vec<u8>) -> Result<Event, String> {
         kind::PAGES => Event::Pages(json(&body)?),
         kind::TOOL => Event::Tool(json(&body)?),
         kind::DIAG => Event::Diag(crate::diag::Diag::decode(&body)?),
+        kind::IMAGE_DATA => Event::ImageData(crate::resource::ImageData::decode(&body)?),
+        kind::RESOLVED => Event::Resolved(json(&body)?),
+        kind::LOCATED => Event::Located(json(&body)?),
+        kind::PACKAGE => Event::Package(json(&body)?),
         _ => Event::Other(k, body),
     })
 }
@@ -201,19 +216,30 @@ impl CompileRequest {
 
 /// A connection to the engine host.
 pub struct Client {
-    r: BufReader<UnixStream>,
-    w: BufWriter<UnixStream>,
+    r: BufReader<Stream>,
+    w: BufWriter<Stream>,
     /// The host's `HELLO`.
     pub hello: Json,
 }
 
-/// A handle that can cancel from another thread.
-pub struct Canceller(UnixStream);
+/// A handle that can cancel, or send a `COMPILE`, from another thread
+/// (a typist that keeps its own time while the client reads).
+pub struct Canceller(Stream);
 
 impl Canceller {
     pub fn cancel(&mut self, id: i64) -> io::Result<()> {
         let b = obj([("id", Json::Int(id))]).to_string();
         write_frame(&mut self.0, kind::CANCEL, b.as_bytes())?;
+        self.0.flush()
+    }
+
+    /// Send a `COMPILE` request, as [`Client::compile`].
+    pub fn compile(&mut self, req: &CompileRequest) -> io::Result<()> {
+        write_frame(
+            &mut self.0,
+            kind::COMPILE,
+            req.to_json().to_string().as_bytes(),
+        )?;
         self.0.flush()
     }
 }
@@ -226,24 +252,24 @@ impl Client {
     /// Connect and exchange `HELLO`s; refuses a host of another major
     /// version.
     pub fn connect(path: &Path) -> io::Result<Client> {
-        let stream = UnixStream::connect(path)?;
+        let stream = Stream::connect(path)?;
         Self::over(stream)
     }
 
     /// `connect`, accepting optional message families the host may offer
     /// (`HELLO.accept`, e.g. [`crate::diag::CAPABILITY`]).
     pub fn connect_accepting(path: &Path, accept: &[&str]) -> io::Result<Client> {
-        let stream = UnixStream::connect(path)?;
+        let stream = Stream::connect(path)?;
         Self::over_accepting(stream, accept)
     }
 
     /// The same over an already connected stream.
-    pub fn over(stream: UnixStream) -> io::Result<Client> {
+    pub fn over(stream: Stream) -> io::Result<Client> {
         Self::over_accepting(stream, &[])
     }
 
     /// `over`, accepting optional message families.
-    pub fn over_accepting(stream: UnixStream, accept: &[&str]) -> io::Result<Client> {
+    pub fn over_accepting(stream: Stream, accept: &[&str]) -> io::Result<Client> {
         crate::widen_socket_buffers(&stream);
         let mut c = Client {
             r: BufReader::with_capacity(1 << 20, stream.try_clone()?),
@@ -256,7 +282,7 @@ impl Client {
                 "version",
                 Json::Arr(vec![
                     Json::Int(VERSION_MAJOR as i64),
-                    Json::Int(VERSION_MINOR as i64),
+                    Json::Int(LATEST_MINOR as i64),
                 ]),
             ),
             (
@@ -327,7 +353,7 @@ impl Client {
 
     /// The connection's reader, for a caller that reads raw frames
     /// ([`crate::frame::read_frame`]) and decodes them itself.
-    pub fn reader(&mut self) -> &mut BufReader<UnixStream> {
+    pub fn reader(&mut self) -> &mut BufReader<Stream> {
         &mut self.r
     }
 

@@ -30,10 +30,15 @@
 //!
 //! ```text
 //! flashtex-host --socket /tmp/flashtex.sock [--engine PATH] [--format NAME]...
-//!     [--once] [--no-warm] [--s0-cache DIR] [--budget BYTES] [--timed SECONDS]
+//!     [--once [--accept-timeout SECONDS]] [--no-warm] [--s0-cache DIR] [--budget BYTES] [--timed SECONDS]
 //!     [--keep-warm MS] [--keep-warm-pause US]
 //!     [--external-tools off|auto] [--tool-timeout SECONDS]
 //! ```
+//!
+//! `--once` serves one connection, then exits. Until that connection comes,
+//! the host also exits (removing its socket) when the process that started
+//! it is gone (Unix: its parent changed), or after `--accept-timeout`
+//! seconds, so a client killed before it connected leaves no host behind.
 //!
 //! `--keep-warm MS` (or `FLASHTEX_HOST_KEEP_WARM_MS`; default 2000, the
 //! owner's decision 10A; 0 turns it off): after each compile the engine
@@ -60,23 +65,18 @@
 
 use flashtex_display_list::frame::{read_frame, write_frame};
 use flashtex_display_list::json::{obj, s as js, Json};
+use flashtex_display_list::transport::Stream;
 use flashtex_display_list::{kind, PROTOCOL, VERSION_MAJOR, VERSION_MINOR};
 use std::collections::HashSet;
 use std::io::{BufRead, BufReader, BufWriter, Write};
-use std::os::unix::net::{UnixListener, UnixStream};
-use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Stdio};
+use std::process::{Child, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
-extern "C" {
-    fn dup2(oldfd: i32, newfd: i32) -> i32;
-}
-
-pub(crate) type Out = Arc<Mutex<BufWriter<UnixStream>>>;
+pub(crate) type Out = Arc<Mutex<BufWriter<Stream>>>;
 
 /// `--keep-warm`'s default (ms after each compile).
 const DEFAULT_KEEP_WARM_MS: u64 = 2000;
@@ -171,6 +171,8 @@ pub(crate) struct Conn {
     /// The client accepted `diag-v1` (its HELLO's `accept`): it gets
     /// `DIAG` messages instead of `DIAGNOSTIC`s (spec §6.7).
     pub diag: bool,
+    /// The client accepted `progress-v1`: it gets `PROGRESS` heartbeats (spec §6.8).
+    pub progress: bool,
 }
 
 impl Conn {
@@ -209,6 +211,11 @@ pub fn main(args: Vec<String>) -> i32 {
     let mut socket = None;
     let mut engine = None;
     let mut once = false;
+    // `--once`: the process that started this host, so that the host goes
+    // when it goes (taken before the format is prepared, which takes time).
+    #[cfg(unix)]
+    let parent = std::os::unix::process::parent_id();
+    let mut accept_timeout: Option<f64> = None;
     let mut warm = true;
     let mut s0_cache = std::env::var_os("FLASHTEX_S0_CACHE").map(PathBuf::from);
     let mut opts = crate::incr::Options::default();
@@ -236,6 +243,16 @@ pub fn main(args: Vec<String>) -> i32 {
                 i += 1;
             }
             "--once" => once = true,
+            "--accept-timeout" => {
+                match v.as_deref().and_then(|v| v.parse::<f64>().ok()) {
+                    Some(t) if t > 0.0 => accept_timeout = Some(t),
+                    _ => {
+                        eprintln!("flashtex-host: --accept-timeout SECONDS");
+                        return 2;
+                    }
+                }
+                i += 1;
+            }
             "--no-warm" => warm = false,
             "--s0-cache" => {
                 s0_cache = v.map(PathBuf::from);
@@ -308,7 +325,7 @@ pub fn main(args: Vec<String>) -> i32 {
                 i += 1;
             }
             "--help" | "-h" => {
-                println!("usage: flashtex-host --socket PATH [--engine PATH] [--format NAME]... [--once] [--no-warm] [--s0-cache DIR] [--budget BYTES] [--timed SECONDS] [--keep-warm MS] [--keep-warm-pause US] [--external-tools off|auto] [--tool-timeout SECONDS]");
+                println!("usage: flashtex-host --socket PATH [--engine PATH] [--format NAME]... [--once [--accept-timeout SECONDS]] [--no-warm] [--s0-cache DIR] [--budget BYTES] [--timed SECONDS] [--keep-warm MS] [--keep-warm-pause US] [--external-tools off|auto] [--tool-timeout SECONDS]");
                 println!("       flashtex-host serve|iserve|bench|open|selftest|layout ... (see src/host/tools.rs)");
                 return 0;
             }
@@ -327,8 +344,7 @@ pub fn main(args: Vec<String>) -> i32 {
         .map(PathBuf::from)
         .or_else(|| std::env::current_exe().ok())
         .unwrap_or_else(|| PathBuf::from("flashtex-initex"));
-    let engine_version = Command::new(&engine)
-        .arg0("pdftex")
+    let engine_version = crate::os::engine_command(&engine)
         .arg("-version")
         .output()
         .ok()
@@ -396,21 +412,63 @@ pub fn main(args: Vec<String>) -> i32 {
     }
     say(&format!("flashtex-host: {}", Json::Obj(said)));
     let _ = std::fs::remove_file(&socket);
-    let listener = match UnixListener::bind(&socket) {
+    // Owner-only from the start, or not at all (`os::bind_owner_only`
+    // removes a socket it could not restrict): the host never listens on a
+    // socket another account could connect to.
+    let listener = match crate::os::bind_owner_only(Path::new(&socket)) {
         Ok(l) => l,
         Err(e) => {
-            eprintln!("flashtex-host: {socket}: {e}");
+            eprintln!("flashtex-host: {socket}: cannot listen there, owner-only: {e}");
             return 1;
         }
     };
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let _ = std::fs::set_permissions(&socket, std::fs::Permissions::from_mode(0o600));
-    }
     // Ready: a supervisor may wait for this line.
     say(&format!("flashtex-host: listening on {socket}"));
+    // `--once` serves the process that started it: when that process is
+    // gone before it connected (killed, crashed), or no connection comes
+    // within `--accept-timeout`, the host removes its socket and exits
+    // instead of waiting for ever. Once connected, the connection's end
+    // ends the host as before.
+    // One lock decides between the two: the watcher exits only while it
+    // holds it and `connected` is false, and an accepted connection is
+    // marked under it, so a connection accepted is never dropped by the
+    // watcher's exit (it either sees `connected`, or exits before the
+    // accept loop can mark it).
+    let connected = Arc::new(std::sync::Mutex::new(false));
+    if once {
+        let (connected, socket) = (connected.clone(), socket.clone());
+        let t0 = Instant::now();
+        std::thread::spawn(move || loop {
+            std::thread::sleep(std::time::Duration::from_millis(200));
+            let Ok(guard) = connected.lock() else { return };
+            if *guard {
+                return;
+            }
+            #[cfg(unix)]
+            let orphaned = std::os::unix::process::parent_id() != parent;
+            #[cfg(not(unix))]
+            let orphaned = false;
+            let late = accept_timeout.is_some_and(|t| t0.elapsed().as_secs_f64() > t);
+            if orphaned || late {
+                let _ = std::fs::remove_file(&socket);
+                eprintln!(
+                    "flashtex-host: {} before a connection (--once); exiting",
+                    if orphaned {
+                        "the parent process exited"
+                    } else {
+                        "--accept-timeout passed"
+                    }
+                );
+                std::process::exit(0); // still holding the lock
+            }
+            drop(guard);
+        });
+    }
     for conn in listener.incoming() {
         let Ok(conn) = conn else { continue };
+        if let Ok(mut c) = connected.lock() {
+            *c = true;
+        }
         let cfg = cfg.clone();
         let tx = tx.clone();
         let h = std::thread::spawn(move || {
@@ -444,16 +502,35 @@ fn prepare(engine: &Path, formats: &[String]) -> Json {
         .unwrap_or(Json::Null);
     #[cfg(not(feature = "kpathsea"))]
     let texlive = Json::Null;
+    // A bundle's fetches (opening it fetches its index and core, which can
+    // take a while on a cold cache) are reported as they go, one line each
+    // (`{"bundle_progress": ...}`), so the app can show them; the resident
+    // engine's own on-demand fetches later are reported the same way.
+    #[cfg(all(feature = "distribution", not(feature = "tex82")))]
+    crate::bundle::set_progress(|p| {
+        say(&format!(
+            "flashtex-host: {}",
+            obj([(
+                "bundle_progress",
+                obj([
+                    ("what", js(p.what)),
+                    ("name", js(p.name.as_str())),
+                    ("done", Json::Int(p.done as i64)),
+                    ("total", Json::Int(p.total as i64)),
+                ]),
+            )])
+        ))
+    });
     let resolver =
         crate::resolver::default_resolver("pdflatex", crate::system::ENGINE_NAME).describe();
+    let bundle = bundle_json(&resolver);
     let dir = std::env::temp_dir().join(format!("flashtex-host-prepare-{}", std::process::id()));
     let _ = std::fs::create_dir_all(&dir);
     let mut ready = Vec::new();
     for f in formats {
         let t0 = Instant::now();
         // Load the format and stop at once (\@@end in LaTeX, \end in plain).
-        let st = Command::new(engine)
-            .arg0("pdftex")
+        let st = crate::os::engine_command(engine)
             .arg(format!("-fmt={f}"))
             .args(["-interaction=batchmode", "-jobname=flashtex-host-prepare"])
             .arg(format!("-output-directory={}", dir.display()))
@@ -495,8 +572,39 @@ fn prepare(engine: &Path, formats: &[String]) -> Json {
     obj([
         ("texlive", texlive),
         ("resolver", js(resolver)),
+        ("bundle", bundle),
         ("formats", Json::Arr(ready)),
     ])
+}
+
+/// `HELLO.texmf.bundle`: the configured bundle (`bundle::BundleSpec::
+/// configured`: the environment, else a `flashtex-bundle.lock`), whether
+/// the engine reads it (`active`: no TeX Live, or `FLASHTEX_RESOLVER=
+/// bundle`), and where its configuration came from; null when none is
+/// configured. `error` when its configuration does not parse.
+fn bundle_json(resolver: &str) -> Json {
+    #[cfg(all(feature = "distribution", not(feature = "tex82")))]
+    {
+        return match crate::bundle::BundleSpec::configured() {
+            None => Json::Null,
+            Some(Err(e)) => obj([("error", js(e))]),
+            Some(Ok((spec, origin))) => obj([
+                ("digest", js(spec.digest.as_str())),
+                ("url", js(spec.url.as_str())),
+                ("origin", js(origin.describe())),
+                ("offline", Json::Bool(spec.offline)),
+                (
+                    "active",
+                    Json::Bool(resolver == format!("bundle {}", spec.digest)),
+                ),
+            ]),
+        };
+    }
+    #[allow(unreachable_code)]
+    {
+        let _ = resolver;
+        Json::Null
+    }
 }
 
 /// A line on stdout for a supervisor, which may have stopped reading.
@@ -542,10 +650,13 @@ pub(crate) const CAPABILITIES: &[&str] = &[
     "external-tools",
     // Every PAGE/FORM carries ORIGINS and RULE_GEOMETRY (spec §4.2, §4.4).
     "exact-geometry",
+    // COMPILE `halt_on_error` is honoured (`Job::halt`): a client's strict mode.
+    "halt-on-error",
     flashtex_display_list::diag::CAPABILITY,
+    flashtex_display_list::PROGRESS_CAPABILITY,
 ];
 
-fn connection(stream: UnixStream, cfg: &Config, tx: mpsc::Sender<Req>) {
+fn connection(stream: Stream, cfg: &Config, tx: mpsc::Sender<Req>) {
     let id = CONNECTIONS.fetch_add(1, Ordering::Relaxed);
     flashtex_display_list::widen_socket_buffers(&stream);
     let Ok(wstream) = stream.try_clone() else {
@@ -555,6 +666,7 @@ fn connection(stream: UnixStream, cfg: &Config, tx: mpsc::Sender<Req>) {
     let mut r = BufReader::new(stream);
     // HELLO
     let diag;
+    let progress;
     let minor = match read_frame(&mut r) {
         Ok(Some((k, body))) if k == kind::C_HELLO => {
             let j = std::str::from_utf8(&body)
@@ -575,6 +687,10 @@ fn connection(stream: UnixStream, cfg: &Config, tx: mpsc::Sender<Req>) {
             diag = j.get("accept").and_then(Json::as_array).is_some_and(|a| {
                 a.iter()
                     .any(|x| x.as_str() == Some(flashtex_display_list::diag::CAPABILITY))
+            });
+            progress = j.get("accept").and_then(Json::as_array).is_some_and(|a| {
+                a.iter()
+                    .any(|x| x.as_str() == Some(flashtex_display_list::PROGRESS_CAPABILITY))
             });
             version
                 .and_then(|a| a.get(1))
@@ -616,6 +732,7 @@ fn connection(stream: UnixStream, cfg: &Config, tx: mpsc::Sender<Req>) {
         cancelled: Mutex::new(HashSet::new()),
         minor,
         diag,
+        progress,
     });
     let mut export: Option<Running> = None;
     loop {
@@ -694,6 +811,9 @@ pub(crate) struct Job {
     pub shell: Option<&'static str>,
     pub out_dir: PathBuf,
     pub jobname: String,
+    /// `-halt-on-error` (`"halt_on_error": true`): TeX stops at the first
+    /// error, as `pdflatex -halt-on-error` does (the app's strict mode).
+    pub halt: bool,
 }
 
 impl Job {
@@ -753,6 +873,11 @@ impl Job {
                 ))
             }
         };
+        let halt = match req.get("halt_on_error") {
+            None | Some(Json::Null) => false,
+            Some(Json::Bool(b)) => *b,
+            Some(_) => return Err("halt_on_error is a boolean".into()),
+        };
         Ok(Job {
             root,
             main,
@@ -760,6 +885,7 @@ impl Job {
             shell,
             out_dir,
             jobname,
+            halt,
         })
     }
 
@@ -785,6 +911,9 @@ impl Job {
             "-interaction=nonstopmode".to_string(),
             "-file-line-error".to_string(),
         ];
+        if self.halt {
+            argv.push("-halt-on-error".to_string());
+        }
         if !self.out_is_root() {
             argv.push(format!("-output-directory={}", self.out_dir.display()));
         }
@@ -849,38 +978,23 @@ fn start_export(
     let argv = job.argv();
     let (root, out_dir, jobname) = (job.root.clone(), job.out_dir.clone(), job.jobname.clone());
 
-    let (ours, theirs) = UnixStream::pair().map_err(|e| e.to_string())?;
-    flashtex_display_list::widen_socket_buffers(&ours);
-    flashtex_display_list::widen_socket_buffers(&theirs);
-    let fd = {
-        use std::os::fd::AsRawFd;
-        theirs.as_raw_fd()
-    };
-    let mut cmd = Command::new(&cfg.engine);
-    cmd.arg0("pdftex")
-        .args(&argv)
+    let channel = crate::os::ExportChannel::open().map_err(|e| e.to_string())?;
+    let mut cmd = crate::os::engine_command(&cfg.engine);
+    cmd.args(&argv)
         .current_dir(&root)
-        .env("FLASHTEX_DISPLAY_LIST", "fd:3")
         .env("FLASHTEX_DISPLAY_LIST_HAVE_FONTS", have_fonts.join(","))
         .env("FLASHTEX_DISPLAY_LIST_FONT_FORMATS", font_formats.join(","))
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
-    // Descriptor 3 in the child is our socket pair's other end.
-    unsafe {
-        cmd.pre_exec(move || {
-            if dup2(fd, 3) < 0 {
-                return Err(std::io::Error::last_os_error());
-            }
-            Ok(())
-        });
-    }
+    channel.attach(&mut cmd);
     let t0 = Instant::now();
     let mut child = cmd
         .spawn()
         .map_err(|e| format!("cannot start the engine: {e}"))?;
-    drop(theirs);
+    let exited = Arc::new(std::sync::atomic::AtomicBool::new(false));
     let pid = child.id();
+    let ours = channel.reader(pid, exited.clone());
     let stdout = child.stdout.take();
     let stderr = child.stderr.take();
     send_json(
@@ -970,6 +1084,7 @@ fn start_export(
             drop(g);
             std::thread::sleep(std::time::Duration::from_millis(2));
         };
+        exited.store(true, Ordering::Release);
         let (pages, bytes, first_page) = relay.join().unwrap_or((0, 0, None));
         let ndiag = diag.join().unwrap_or(0);
         let stderr_text = err_t.join().unwrap_or_default();
@@ -1140,4 +1255,56 @@ fn input_line(msg: &str) -> Option<i64> {
         .next()?
         .parse()
         .ok()
+}
+
+#[cfg(test)]
+mod job_tests {
+    use super::*;
+
+    /// A COMPILE on a scratch root, with `halt` as its `halt_on_error`. Built
+    /// as values, not JSON text: a Windows path's `\` is no JSON escape.
+    fn req(halt: Option<Json>) -> Json {
+        let dir = std::env::temp_dir().join(format!("flashtex-job-test-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("main.tex"), "x").unwrap();
+        let path = |p: &Path| js(p.to_string_lossy().into_owned());
+        let mut kv = vec![
+            ("id".to_string(), Json::Int(1)),
+            ("root".to_string(), path(&dir)),
+            ("main".to_string(), js("main.tex")),
+            ("output_dir".to_string(), path(&dir.join("out"))),
+        ];
+        if let Some(h) = halt {
+            kv.push(("halt_on_error".to_string(), h));
+        }
+        Json::Obj(kv)
+    }
+
+    /// Strict mode (lane ERROR-RECOVERY): `halt_on_error` is pdflatex's
+    /// `-halt-on-error`, a different job; without it the command line is
+    /// nonstopmode's, unchanged.
+    #[test]
+    fn halt_on_error_is_pdflatexs_flag() {
+        let plain = Job::parse(&req(None), 1).unwrap();
+        assert!(!plain.halt);
+        assert!(!plain.argv().iter().any(|a| a == "-halt-on-error"));
+        let off = Job::parse(&req(Some(Json::Bool(false))), 1).unwrap();
+        assert_eq!(off, plain);
+        let halt = Job::parse(&req(Some(Json::Bool(true))), 1).unwrap();
+        assert!(halt.halt);
+        assert_ne!(
+            halt, plain,
+            "another job: the resident document is replaced"
+        );
+        assert_eq!(
+            &halt.argv()[..4],
+            &[
+                "-fmt=pdflatex",
+                "-interaction=nonstopmode",
+                "-file-line-error",
+                "-halt-on-error"
+            ]
+        );
+        assert!(Job::parse(&req(Some(js("yes"))), 1).is_err());
+    }
 }

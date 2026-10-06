@@ -1,0 +1,14 @@
+% 2501-month-day-restore: group-local \month and \day assignments restore at \endgroup (tex.web §§ 236, 241)
+% new versus none: \month and \day are used by no other case
+\input prelude
+\month=6
+\day=15
+\begingroup
+\month=12
+\day=25
+\message{2501 in=\the\month/\the\day}
+\endgroup
+\message{2501 out=\the\month/\the\day}
+\setbox0=\hbox{\vrule width21pt height8pt depth2pt\hskip10pt}
+\lsshipbox0
+\end

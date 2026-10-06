@@ -31,7 +31,9 @@
 # The engine-v3 preview host (flashtex-host, crates/flashtex-engine, GPL-2.0-or-later,
 # a separate process: DESIGN.md §3) is staged as Contents/Helpers/flashtex-host,
 # its string pool as Contents/Resources/engine/pdftex.pool and its licence as
-# Contents/Resources/engine/LICENSE (apps/mac/docs/engine-v3-preview.md); it is
+# Contents/Resources/engine/LICENSE (apps/mac/docs/engine-v3-preview.md), with
+# the pinned no-TeX-Live bundle's lock, tools/bundle/tl2026/flashtex-bundle.lock,
+# as Contents/Resources/engine/flashtex-bundle.lock; it is
 # signed like the other helpers (hardened runtime with --sign) before the app.
 # Helpers default to <crate target dir>/release/<name> (scripts/crate-target-dir.sh);
 # --helper-root defaults to this repository (set it to the main checkout when
@@ -387,7 +389,7 @@ echo "==> Bundled supported-latex.json ($(shasum -a 256 "$RESOURCES_DIR/supporte
 # --- Pinned rooted TFM metrics + faces (GH36; before signing, no download/host TeX)
 # Re-verifies each source file, copies it to Contents/Resources/texmf/… or
 # Contents/Resources/Fonts/, then runs
-# crates/rendering-core/tools/verify_bundle_resources.py over the whole
+# apps/mac/scripts/verify_bundle_resources.py over the whole
 # Resources directory (3 OTFs + 5 TFMs + license) and re-verifies every
 # supplementary copy. Refuses signing otherwise.
 echo "==> Staging pinned rooted TFM metrics and faces into Contents/Resources (sources: $BUNDLE_TEXMF_ROOT, $BUNDLE_FONTS_DIR)"
@@ -475,14 +477,20 @@ if [[ -z "$ENGINE_HOST" && -f "$ENGINE_CRATE/Cargo.toml" ]]; then
   [[ -f "$engine_target/release/flashtex-host" ]] && ENGINE_HOST="$engine_target/release/flashtex-host"
 fi
 ENGINE_HOST_BUNDLED=""
+BUNDLE_LOCK="$REPO_ROOT/tools/bundle/tl2026/flashtex-bundle.lock"
+[[ -f "$BUNDLE_LOCK" ]] || die "missing $BUNDLE_LOCK (the pinned no-TeX-Live bundle)"
 if [[ -n "$ENGINE_HOST" && -f "$ENGINE_HOST" && -f "$ENGINE_CRATE/pdftex.pool" ]]; then
   mkdir -p "$HELPERS_DIR" "$RESOURCES_DIR/engine"
   cp "$ENGINE_HOST" "$HELPERS_DIR/flashtex-host"
   chmod +x "$HELPERS_DIR/flashtex-host"
   cp "$ENGINE_CRATE/pdftex.pool" "$RESOURCES_DIR/engine/pdftex.pool"
   cp "$ENGINE_CRATE/LICENSE" "$RESOURCES_DIR/engine/LICENSE"
+  # The pinned no-TeX-Live bundle (GitHub Release assets; DESIGN.md 4.4, lane
+  # BUNDLE-PUBLISH). Data only: the host fetches nothing from it until the user
+  # agrees in the app's consent sheet (EngineV3Bundle.swift).
+  cp "$BUNDLE_LOCK" "$RESOURCES_DIR/engine/flashtex-bundle.lock"
   ENGINE_HOST_BUNDLED="$HELPERS_DIR/flashtex-host"
-  echo "    bundled flashtex-host from $ENGINE_HOST (+ Resources/engine/pdftex.pool, LICENSE)"
+  echo "    bundled flashtex-host from $ENGINE_HOST (+ Resources/engine/pdftex.pool, LICENSE, flashtex-bundle.lock)"
 else
   echo "    no flashtex-host found (cargo build --release -p flashtex-engine --bin flashtex-host, or --engine-host <path>); skipping"
 fi

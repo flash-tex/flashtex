@@ -1,0 +1,11 @@
+% x026-mdfivesum: \mdfivesum of strings (as UTF-8) and of a file
+% XeTeX-specific (docs/design/xetex/PLAN.md, phase S0: TFM fonts)
+\input prelude
+\def\space{ }
+\message{x026 \mdfivesum{abc}}
+\message{x026 \mdfivesum{café}}
+\message{x026 \mdfivesum{🍌}}
+\message{x026 \mdfivesum file {prelude.tex}}
+\setbox0=\hbox{\vrule width1pt}
+\lsshipbox0
+\end

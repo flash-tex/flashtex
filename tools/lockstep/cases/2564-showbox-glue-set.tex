@@ -1,0 +1,8 @@
+% 2564-showbox-glue-set: \showbox of a stretched hbox prints the dump with its `glue set` ratio line, then `! OK.` and the `l.NN` context (tex.web §§198, 1291, 1296)
+% new versus 1102-shipout-showboxdepth-one: 1102 shows the same dump routine through shipout tracing at cut depth; here an explicit \showbox dumps a glue-set box at full depth
+% lockstep: no-halt
+\input prelude
+\setbox0=\hbox to60pt{\vrule width5pt height5pt depth0pt\hss}
+\showbox0
+\lsshipbox0
+\end

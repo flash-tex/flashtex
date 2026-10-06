@@ -8,7 +8,6 @@ import XCTest
 ///   - a project copy or host pid file of this test process
 ///     (`engine-v3/projects/*-<pid>-*`, `engine-v3/hosts/*` naming this pid);
 ///   - a new page-snapshot directory (`engine-v3/snapshots/*`);
-///   - any change to the format cache (`formats/*`);
 /// - the engine-v3 keys (`FlashTeX.EngineV3.*`) of the standard defaults
 ///   domain, which under XCTest is the test runner's.
 ///
@@ -16,8 +15,24 @@ import XCTest
 /// snapshots and its own snapshots, under keys of its projects), so those
 /// are not compared. A new snapshot directory in the middle of a test run
 /// counts as the suite's, since the app writes into the ones it already
-/// has. Every engine-v3 test class installs the guard in `setUp`; it checks
-/// after each test from then on, and removes the test process's defaults
+/// has.
+///
+/// The format cache (`formats/*`) is not compared: other processes on the
+/// machine write it while the suite runs (seen: the self-hosted Actions
+/// runner's `flashtex-v3` end-to-end tests, the owner's app, engine test
+/// runs), and a change there cannot be told apart from the suite's. That
+/// the suite's hosts use their own format cache is checked where it is
+/// decided (`EngineV3HostProcess.environment`,
+/// `EngineV3OwnerStateTests.testWithoutACacheSettingATestUsesItsOwnTemporaryCache`).
+///
+/// Every engine-v3 test class installs the guard in `setUp`; from then on
+/// it checks each test in a teardown block it adds when the test starts,
+/// while the test is still running, so the failure is that test's. (It
+/// recorded the failure in `testCaseDidFinish` before: XCTest does not take
+/// an issue for a test that has finished, and the whole run aborted with
+/// "terminate_handler unexpectedly threw an exception".) A write seen only
+/// after a test finished (a process exiting late) is printed and counted
+/// against the next test. The guard removes the test process's defaults
 /// suite (`EngineV3.removeTestDefaults`) when the bundle finishes.
 final class OwnerStateGuard: NSObject, XCTestObservation {
     static let shared = OwnerStateGuard()
@@ -32,6 +47,10 @@ final class OwnerStateGuard: NSObject, XCTestObservation {
         XCTestObservationCenter.shared.addTestObserver(shared)
     }
 
+    /// Takes the current state as the baseline (a test that wrote on
+    /// purpose and was failed for it, once it has put things back).
+    static func rebase() { shared.baseline = State.now() }
+
     /// The real cache root, whatever the environment says.
     static var realCache: URL {
         (FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first
@@ -43,7 +62,6 @@ final class OwnerStateGuard: NSObject, XCTestObservation {
         var ownProjectCopies: Set<String> = []
         var ownHostFiles: Set<String> = []
         var snapshotDirectories: Set<String> = []
-        var formats: [String: Date] = [:]
         var runnerEngineV3Keys: [String: String] = [:]
 
         static func now() -> State {
@@ -58,11 +76,6 @@ final class OwnerStateGuard: NSObject, XCTestObservation {
                     .trimmingCharacters(in: .whitespacesAndNewlines) == pid
             })
             s.snapshotDirectories = Set(names(v3.appendingPathComponent("snapshots")))
-            let formats = realCache.appendingPathComponent("formats", isDirectory: true)
-            for n in names(formats) {
-                let attrs = try? fm.attributesOfItem(atPath: formats.appendingPathComponent(n).path)
-                s.formats[n] = attrs?[.modificationDate] as? Date ?? .distantPast
-            }
             for (k, v) in UserDefaults.standard.dictionaryRepresentation() where k.hasPrefix("FlashTeX.EngineV3") {
                 s.runnerEngineV3Keys[k] = String(describing: v)
             }
@@ -75,13 +88,18 @@ final class OwnerStateGuard: NSObject, XCTestObservation {
             for p in ownProjectCopies.subtracting(before.ownProjectCopies).sorted() { out.append("project copy engine-v3/projects/\(p)") }
             for h in ownHostFiles.subtracting(before.ownHostFiles).sorted() { out.append("host pid file engine-v3/hosts/\(h)") }
             for d in snapshotDirectories.subtracting(before.snapshotDirectories).sorted() { out.append("page snapshot engine-v3/snapshots/\(d)") }
-            if formats != before.formats { out.append("format cache formats/ (\(before.formats.count) → \(formats.count) entries, or a newer one)") }
             if runnerEngineV3Keys != before.runnerEngineV3Keys { out.append("defaults \(runnerEngineV3Keys) (was \(before.runnerEngineV3Keys))") }
             return out
         }
     }
 
-    func testCaseDidFinish(_ testCase: XCTestCase) {
+    func testCaseWillStart(_ testCase: XCTestCase) {
+        // (Teardown blocks run after `tearDown`, while the test still runs.)
+        testCase.addTeardownBlock { [weak self] in self?.check(testCase) }
+    }
+
+    /// Records what was written since the last check as the test's failure.
+    private func check(_ testCase: XCTestCase) {
         guard let before = baseline else { return }
         let now = State.now()
         let written = now.written(since: before)
@@ -90,6 +108,16 @@ final class OwnerStateGuard: NSObject, XCTestObservation {
                                      compactDescription: "wrote the owner's state (\(Self.realCache.path)): " + written.joined(separator: "; ")))
         }
         baseline = now
+    }
+
+    /// After a test finished an issue can no longer be recorded: a write
+    /// seen here is printed, and the next test's check still reports it.
+    func testCaseDidFinish(_ testCase: XCTestCase) {
+        guard let before = baseline else { return }
+        let written = State.now().written(since: before)
+        if !written.isEmpty {
+            print("OwnerStateGuard: after \(testCase.name) finished, the owner's state was written: " + written.joined(separator: "; "))
+        }
     }
 
     func testBundleDidFinish(_ testBundle: Bundle) {

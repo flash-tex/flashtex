@@ -57,11 +57,17 @@ public struct DL3GlyphRef: Sendable {
     public var cell: CGRect
     /// Its ink (the outline's bounding box), empty for a blank glyph.
     public var ink: CGRect
+    /// The GLYPH item's font id and code (its text, for VoiceOver).
+    public var font: UInt16 = 0
+    public var code: UInt16 = 0
 }
 
 /// The glyphs of one page, in painting order.
 public struct DL3SourceIndex: Sendable {
     public let glyphs: [DL3GlyphRef]
+    /// Span id → its glyphs' indexes in `glyphs` (painting order): a line's
+    /// glyphs without a pass over the page's.
+    let bySpan: [UInt32: [Int32]]
 
     public init(_ prepared: DL3PreparedPage) {
         let page = prepared.page
@@ -110,11 +116,14 @@ public struct DL3SourceIndex: Sendable {
                 let em = font.type3 == nil ? 1.0 : 1 / max(abs(font.fontTransform.a), 1e-9)
                 let cell = font.type3 == nil ? rect(0, -0.25, max(met.advance / s, 0.25), 0.75)
                     : rect(0, -0.25 * em, max(met.advance, 0.25 * em), 0.75 * em)
-                out.append(DL3GlyphRef(span: span, col: col, origin: CGPoint(x: ox, y: oy), cell: cell, ink: ink))
+                out.append(DL3GlyphRef(span: span, col: col, origin: CGPoint(x: ox, y: oy), cell: cell, ink: ink, font: f, code: code))
             default: break
             }
         }
         glyphs = out
+        var by: [UInt32: [Int32]] = [:]
+        for (i, g) in out.enumerated() { by[g.span, default: []].append(Int32(i)) }
+        bySpan = by
     }
 
     /// Reverse search: the glyph under `point` (page points), else the
@@ -134,13 +143,28 @@ public struct DL3SourceIndex: Sendable {
     /// Forward search: the glyphs of `spans`; with `col`, only the glyph at
     /// (or the last before) that column, when the columns are known.
     public func glyphs(of spans: Set<UInt32>, col: Int? = nil) -> [DL3GlyphRef] {
-        let all = glyphs.filter { spans.contains($0.span) }
+        var at: [Int32] = []
+        for s in spans { if let i = bySpan[s] { at += i } }
+        if spans.count > 1 { at.sort() } // painting order, as a filter over the page gave
+        let all = at.map { glyphs[Int($0)] }
         guard let col, !all.isEmpty else { return all }
-        let known = all.filter { $0.col != 0xFFFF }
-        guard !known.isEmpty else { return all }
+        return Self.pick(all, col: col).map { [$0] } ?? all
+    }
+
+    /// The glyph at `col` of a line's glyphs (painting order): the last one
+    /// at or before it, else the first after it; nil when no column is known.
+    /// Several glyphs can carry one column (an inline formula's all carry its
+    /// closing `$`): at that column, the first of them; after it, the last,
+    /// so a caret after the `$` stands after the formula.
+    public static func pick(_ glyphs: [DL3GlyphRef], col: Int) -> DL3GlyphRef? {
+        let known = glyphs.filter { $0.col != 0xFFFF }
+        guard !known.isEmpty else { return nil }
         let before = known.filter { Int($0.col) <= col }
-        if let g = before.max(by: { $0.col < $1.col }) { return [g] }
-        return [known.min(by: { $0.col < $1.col })!]
+        if let top = before.map(\.col).max() {
+            let tied = before.filter { $0.col == top }
+            return Int(top) < col ? tied.last : tied.first
+        }
+        return known.min(by: { $0.col < $1.col })
     }
 
     /// The union of the glyphs' cells (a line's box on the page).

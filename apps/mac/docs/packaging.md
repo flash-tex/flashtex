@@ -235,12 +235,16 @@ this worker (`mac-packaging`) to acquire or spend on.
 
 ```xml
 <key>NSLocalNetworkUsageDescription</key>
-<string>FlashTeX uses the local network to discover and receive captures from nearby devices.</string>
+<string>FlashTeX uses the local network to receive captures from nearby devices and, with Live Share, to edit projects together with other Macs.</string>
 <key>NSBonjourServices</key>
 <array>
     <string>_flashtex._tcp</string>
+    <string>_flashtex-collab._tcp</string>
 </array>
 ```
+
+(`_flashtex-collab._tcp` and the wording about Live Share were added with Live Share P1;
+docs/contracts/collab-v1.md §7.)
 
 `NSLocalNetworkUsageDescription` is required before macOS will show the local
 network permission prompt at all (its absence causes a silent denial, not a
@@ -326,7 +330,7 @@ and `Contents/Resources/texmf/doc/fonts/lm/GUST-FONT-LICENSE.TXT` through
 `scripts/bundle-texmf.py`: each source file is hash-verified against the
 Commander's pinned manifest before the build (a mismatch, a missing file or a
 symlink exits 1 before `swift build`), staged, and then the whole `Resources`
-directory is verified with `crates/rendering-core/tools/verify_bundle_resources.py`
+directory is verified with `apps/mac/scripts/verify_bundle_resources.py`
 before any signing. `components.json` gains a `"resources"` entry with the nine
 verified SHA-256/byte pairs and the manifest hash; `resource-coverage.json` is
 the verifier's full report. Both are sealed by the app signature (they are
@@ -383,8 +387,8 @@ verified against the pinned 2.004 archive) is stated in that file.
   human: launch the installed `FlashTeX.app` (not `swift run`, which has no
   bundle identity for TCC to key off), open `Edit > Nearby Companion…`,
   flip "Advertise" on, confirm the system prompt reads "FlashTeX uses the
-  local network to discover and receive captures from nearby devices."
-  (this doc's `NSLocalNetworkUsageDescription` string) with the app's name
+  local network to receive captures from nearby devices and, with Live
+  Share, to edit projects together with other Macs." (this doc's `NSLocalNetworkUsageDescription` string) with the app's name
   and icon, approve it, and confirm the listener starts (its status text)
   and that `System Settings > Privacy & Security > Local Network` then
   lists FlashTeX. Whether a subsequent `make-app.sh --install` rebuild

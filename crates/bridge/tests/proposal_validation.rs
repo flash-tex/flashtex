@@ -5,6 +5,23 @@ use flashtex_bridge::{
 };
 use serde_json::{json, Value};
 use std::{path::PathBuf, time::Duration};
+
+/// Serialises the tests in this binary that fork or that need a journal lock
+/// back after dropping it. Test threads share one process: a child forked by
+/// one thread inherits every descriptor the process has open until its own
+/// exec, including another test's `.bridge.lock`. flock(2) belongs to the open
+/// file description, so that journal stays locked after its test drops the
+/// `Store`, and the bridge CLI it spawns next exits with `store_in_use`. Seen
+/// on GitHub-hosted ubuntu (merge-group run 37186330429) and reproduced under
+/// CPU load at 3 failures in 150 runs; 0 in 150 with one test thread. The
+/// product is unaffected: one bridge process owns one journal and never
+/// reopens it.
+static FORKS: std::sync::Mutex<()> = std::sync::Mutex::new(());
+fn forks() -> std::sync::MutexGuard<'static, ()> {
+    FORKS
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
 fn fixtures() -> (Vec<Document>, PreparedEdit) {
     let text = "α source";
     (
@@ -89,6 +106,7 @@ fn fake(body: &str) -> (tempfile::TempDir, PathBuf) {
 #[test]
 #[cfg(unix)]
 fn compiler_process_success_and_timeout_leave_editor_unchanged() {
+    let _forks = forks();
     let (docs, edit) = fixtures();
     let req = ProposedCompilation::new("test", "main.tex", &docs, &edit).unwrap();
     let (_dir, path) = fake(&format!(
@@ -114,6 +132,7 @@ fn compiler_process_success_and_timeout_leave_editor_unchanged() {
 #[test]
 #[cfg(unix)]
 fn compiler_output_overflow_and_bad_status_are_rejected() {
+    let _forks = forks();
     let (docs, edit) = fixtures();
     let req = ProposedCompilation::new("test", "main.tex", &docs, &edit).unwrap();
     for body in [
@@ -133,6 +152,7 @@ fn compiler_output_overflow_and_bad_status_are_rejected() {
 #[test]
 #[ignore = "requires explicit original FlashTeX compiler binary"]
 fn actual_original_compiler_returns_review_evidence() {
+    let _forks = forks();
     let path =
         std::env::var_os("FLASHTEX_TEST_COMPILER").expect("set exact original compiler executable");
     let (docs, edit) = fixtures();
@@ -186,6 +206,7 @@ fn seed_capture(path: &std::path::Path) -> flashtex_bridge::Bridge {
 #[test]
 #[cfg(unix)]
 fn capture_validation_does_not_issue_edit_and_refuses_stale_context() {
+    let _forks = forks();
     let journal = tempfile::tempdir().unwrap();
     let mut bridge = seed_capture(journal.path());
     let(_dir,path)=fake("import json,sys\nr=json.loads(sys.stdin.readline())\nprint(json.dumps({'protocol_version':1,'id':r['id'],'type':'compile_result','payload':{'project_id':r['payload']['project_id'],'revision':r['payload']['revision'],'status':'ok','pages':[],'diagnostics':[]}}))");
@@ -221,6 +242,7 @@ fn capture_validation_does_not_issue_edit_and_refuses_stale_context() {
 #[test]
 #[cfg(unix)]
 fn real_bridge_cli_exposes_validation_without_preparing_source_edit() {
+    let _forks = forks();
     use std::io::Write;
     use std::process::{Command, Stdio};
     let journal = tempfile::tempdir().unwrap();

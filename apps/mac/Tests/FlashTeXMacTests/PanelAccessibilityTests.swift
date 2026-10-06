@@ -190,10 +190,10 @@ final class PanelAccessibilityTests: XCTestCase {
     /// new toggle is updated once rather than in each Settings test: wrap long
     /// lines, auto-close brackets, show completion list, check spelling,
     /// relative line numbers, Vim keybindings, preview follows the caret,
-    /// autosave, the two error-lens rows, smooth fonts in preview, and check
-    /// for updates automatically.
+    /// autosave, the two error-lens rows, smooth fonts in preview, project
+    /// files as a folder tree, and check for updates automatically.
     /// Both assertions below print the control list when this drifts.
-    static let preferencesSwitchCount = 12
+    static let preferencesSwitchCount = 13
 
     /// The Capture conversion section (ConversionPreferencesView.swift, shown
     /// in the app's Settings after the editor sections): its AppKit-backed

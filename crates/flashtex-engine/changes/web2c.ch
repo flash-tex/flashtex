@@ -61,6 +61,21 @@ if translate_filename_p then read_tcx_file;
   not xprn[k]
 @z
 
+@x pdftex.web l.2068 - tex.ch [6.84]: `\.E' switches to the editor
+"E": if base_ptr>0 then if input_stack[base_ptr].name_field>=256 then
+  begin print_nl("You want to edit file ");
+@.You want to edit file x@>
+  slow_print(input_stack[base_ptr].name_field);
+  print(" at line "); print_int(line);
+  interaction:=scroll_mode; jump_out;
+@y
+"E": if base_ptr>0 then if input_stack[base_ptr].name_field>=256 then
+  begin edit_name_start:=str_start[input_stack[base_ptr].name_field];
+  edit_name_length:=length(input_stack[base_ptr].name_field);
+  edit_line:=line;
+  jump_out;
+@z
+
 @x pdftex.web l.2396 - tex.ch [7.104]: |save_arith_error|
 @!arith_error:boolean; {has arithmetic overflow occurred recently?}
 @y
@@ -231,6 +246,27 @@ cur_order:=co_backup; link(backup_head):=backup_backup;
 decr(expand_depth_count);
 @z
 
+% TeX bug entry: https://tug.org/texmfbug/newbug.html#B155endwrite
+@x pdftex.web l.9013 - tex.ch [25.369]: disallow \.{\\noexpand\\endwrite}
+if t>=cs_token_flag then
+@y
+if (t>=cs_token_flag)and(t<>end_write_token) then
+@z
+
+% TeX bug entry: https://tug.org/texmfbug/newbug.html#B182muerror
+@x pdftex.web l.10433 - tex.ch [26.449]: recover better from \.{\\mkern} <non-mu-dimen-or-skip>
+  @<Coerce glue to a dimension@>;
+  if cur_val_level=mu_val then goto attach_sign;
+  if cur_val_level<>int_val then mu_error;
+@y
+  if cur_val_level<>int_val then
+    begin
+    @<Coerce glue to a dimension@>;
+    if cur_val_level<>mu_val then mu_error;
+    goto attach_sign;
+    end;
+@z
+
 @x pdftex.web l.13015 - tex.ch's MLTeX |orig_char_info|; without MLTeX it is |char_info|
 @d char_info(#)==font_info[char_base[#]+char_info_end
 @y
@@ -278,6 +314,28 @@ pack_file_name(nom,aire,"");
   end;
 @z
 
+@x pdftex.web l.14181 - tex.ch [32.598]: dvi_swap: check dvi file size
+begin if dvi_limit=dvi_buf_size then
+@y
+begin if dvi_ptr>(@"7FFFFFFF-dvi_offset) then
+  begin cur_s:=-2; {the postamble is not written, tex.ch [32.642]}
+  fatal_error("dvi length exceeds ""7FFFFFFF");
+@.dvi length exceeds...@>
+  end;
+if dvi_limit=dvi_buf_size then
+@z
+
+@x pdftex.web l.14195 - tex.ch [32.599]: empty the last bytes: check dvi file size
+if dvi_ptr>0 then write_dvi(0,dvi_ptr-1)
+@y
+if dvi_ptr>(@"7FFFFFFF-dvi_offset) then
+  begin cur_s:=-2;
+  fatal_error("dvi length exceeds ""7FFFFFFF");
+@.dvi length exceeds...@>
+  end;
+if dvi_ptr>0 then write_dvi(0,dvi_ptr-1)
+@z
+
 @x pdftex.web l.14226 - tex.ch [32.602]: more than 256 fonts in the DVI file
 begin dvi_out(fnt_def1);
 dvi_out(f-font_base-1);@/
@@ -303,6 +361,19 @@ else begin dvi_out(fnt1+1);
   dvi_out((f-font_base-1) div @'400);
   dvi_out((f-font_base-1) mod @'400);
   end;
+@z
+
+@x pdftex.web l.15095 - tex.ch [32.642]: check dvi file size
+else  begin dvi_out(post); {beginning of the postamble}
+@y
+else if cur_s<>-2 then
+  begin dvi_out(post); {beginning of the postamble}
+@z
+
+@x pdftex.web l.15109 - tex.ch [32.642]: the \.{DVI} file's name quoted if need be
+  print_nl("Output written on "); slow_print(output_file_name);
+@y
+  print_nl("Output written on "); print_file_name(0,output_file_name,0);
 @z
 
 @x pdftex.web l.17221 - texmfmem.h: |character| is a C |short|
@@ -450,16 +521,18 @@ if hash_high>0 then for p:=eqtb_size+1 to eqtb_size+hash_high do
   undump(min_quarterword)(max_trie_op)(hyf_next[k]);
 @z
 
-@x pdftex.web l.33470 - tex.ch [51.1333]: a new line before termination
+@x pdftex.web l.33470 - tex.ch [51.1333]: the log's name quoted if need be; a new line before termination; switch to the editor
     slow_print(log_name); print_char(".");
     end;
   end;
 end;
 @y
-    slow_print(log_name); print_char(".");
+    print_file_name(0,log_name,0); print_char(".");
     end;
   end;
 print_ln;
+if (edit_name_start<>0) and (interaction>batch_mode) then
+  call_edit(edit_name_start,edit_name_length,edit_line);
 end;
 @z
 
@@ -593,6 +666,23 @@ both. \.{texmf.cnf} also supplies |pk_dpi|, and \.{texmfmp.c} the state of
 @ @<Set init...@>=
 expand_depth_count:=0;
 pk_dpi:=72;
+
+@ tex.ch [6.84] and [51.1333]: the `\.E' option of |error| remembers which
+file and line to edit, and |close_files_and_terminate|, once \TeX\ has
+closed its files, hands them to |call_edit| (\.{system.rs}, texmfmp.c's
+|calledit|), which runs the editor command of \.{TEXEDIT} and ends the
+program. |edit_name_start| is nonzero only when that is to happen.
+
+@<Glob...@>=
+@!edit_name_start: pool_pointer; {where the filename to switch to starts}
+@!edit_name_length,@!edit_line: integer; {what line to start editing at}
+
+@ @<Set init...@>=
+edit_name_start:=0;
+
+@ @<Declare web2c's file-name procedures@>=
+procedure call_edit(@!s:pool_pointer;@!l,@!n:integer); external;
+  {run the editor on |str_pool[s..s+l-1]| at line |n|, and stop}
 
 @* \[55] Index.
 @z

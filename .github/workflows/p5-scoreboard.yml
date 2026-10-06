@@ -1,7 +1,8 @@
 # The P5 scoreboard (docs/design/engine-v2/DESIGN.md §12 P5 and §8): the new
 # engine against v1 on every tier, pdflatex as the oracle, nightly on the
-# owner's NixOS PC. tools/parity/scoreboard-run.sh does the work; this file
-# only schedules it and publishes what it writes:
+# owner's NixOS PC, or on a self-hosted Mac while the PC is switched off (see
+# WHERE below). tools/parity/scoreboard-run.sh does the work; this file only
+# schedules it and publishes what it writes:
 #
 #   * the one table (scoreboard.md + scoreboard.json) and every harness log as
 #     the artifact `p5-scoreboard`, and the table in the run summary;
@@ -14,27 +15,70 @@
 # THREE JOBS, so no write token is ever near third-party sources. pdflatex and
 # both engines run arXiv e-prints and TeX Live documents, and a TeX document
 # can read any file the process can (\openin; TeX Live's openin_any is `a`).
-#   pick        (ubuntu-latest, actions: read) chooses the nightly run whose T4
-#               results the board uses;
-#   scoreboard  (the NixOS PC, contents: read + actions: read) builds and
-#               measures. Its checkout keeps no credentials, and the token is
+#   pick        (ubuntu-latest, actions: read) chooses the route (WHERE below)
+#               and the T4 run of that route's oracle the board uses;
+#   scoreboard  (the NixOS PC or a Mac, contents: read + actions: read) builds
+#               and measures. Its checkout keeps no credentials, and the token is
 #               only in the environment of the one step that downloads the
 #               T4 artifacts, which runs before any TeX does;
 #   publish     (ubuntu-latest, contents: write + issues: write) runs no TeX: it
 #               takes the artifact, files the issues and pushes the summary,
 #               with the token scoped to those two steps.
 #
-# T4 (the 5k corpus) is not re-run here: it takes most of a night on its own
-# (nightly.yml's corpus-t4 job, #1276). Its rows come from the artifacts
-# `corpus-t4` (new engine) and `corpus-t4-v1` (v1) of the newest nightly run
-# on main started in the last 36 h, and the WHOLE board is then measured at
-# that run's commit, so every tier is at one SHA. scoreboard.py checks the
-# commit, engine binary sha256 and oracle each T4 summary records against the
-# board's own and marks any mismatch INVALID, and a run with missing shards or
-# documents partial. With no such nightly run the board is measured at this
+# T4 (the 5k corpus) is not re-run here: it takes most of a night on its own.
+# ONE ORACLE PER BOARD (DESIGN §8): its rows come from a T4 run measured on the
+# board's own host, against the same TeX Live:
+#   route pc   the artifacts `corpus-t4` (new engine) and `corpus-t4-v1` (v1)
+#              of nightly.yml's corpus-t4 job (#1276), uploaded in the last 36 h;
+#   route mac  the artifact `corpus-t4-mac` of corpus-t4-mac.yml (P5-T4-MAC),
+#              uploaded in the last 7 days. That workflow uploads it under this
+#              name only once all 50 shards are done (a cycle takes more than
+#              one night on the Mac, at one pinned commit), so the board picks
+#              the newest COMPLETE Mac T4.
+# The newest such artifact of this repository's own schedule or dispatch run
+# of that workflow on main is used (never a pull request's or a fork's: the
+# board builds its commit on a self-hosted runner, DESIGN §9.3; the rules are
+# in scripts/ci/p5-pick-t4.sh), and the WHOLE board is then measured at the
+# commit its summary records, which must be a commit of main (checked even
+# when it is the run's own), so every tier is at one SHA. scoreboard.py
+# checks the commit, the engine binary sha256 and the oracle each T4 summary
+# records against the board's own (the oracle down to its texlive.tlpdb and
+# pdftex sha256, from oracle_provenance.py: the version string is the same on
+# both hosts) and marks any mismatch INVALID, and a run with missing shards or
+# documents partial. With no such artifact the board is measured at this
 # workflow's commit and the T4 rows read "missing" (stale): never green.
-# #1276 uploads no `corpus-t4-v1` yet, so T4's old column reads "missing (no v1
-# leg in nightly: decision 1)" until the Commander rules on decision 1.
+#
+# WHERE (the `route`, chosen by the pick job and read by every other job). A
+# manual run may name it (input `route`: pc or mac); otherwise (`auto`, and
+# every scheduled run) the same two switches as ci.yml's `plan` and nightly.yml
+# decide (#1349):
+#   pc: FLASHTEX_SELFHOSTED_LINUX = 1 (unset: FLASHTEX_SELFHOSTED_MAC stands in)
+#     the NixOS PC, [self-hosted, Linux, X64, flashtex-linux], exactly as before;
+#     a forced `pc` while the PC is off waits in the queue;
+#   mac: else FLASHTEX_SELFHOSTED_MAC = 1, on main only
+#     the heavy self-hosted Mac, [self-hosted, macOS, ARM64, flashtex,
+#     flashtex-heavy] (mac-m1max-a-2; mac-m1max-a-1 stays general and serves
+#     the merge queue), with MacTeX 2026 as the oracle. Its T4 is the Mac's
+#     own (corpus-t4-mac.yml, above); the PC's would mix two oracles. The
+#     Mac job also takes the cross-workflow group
+#     `flashtex-mac-heavy` (shared with nightly.yml's templates leg and
+#     engine-nightly-mac, which nightly chains so it adds one pending job at a
+#     time): one heavy job at a time on the heavy runner. A manual run entering
+#     that group while one is pending cancels the pending one (GitHub keeps
+#     one);
+#   else the `unavailable` notice below.
+# The publish job names its reports from the route the board ran on, not from
+# the switches when it starts (a switch flipped during a 5 h board would have
+# filed a Mac board under the PC's names).
+# Both trees call themselves "pdfTeX 1.40.29 (TeX Live 2026)" but they are
+# different snapshots, so every board names its oracle down to texlive.tlpdb
+# (tools/parity/oracle_provenance.py: in the host label, the run summary and
+# ORACLE.md), and a Mac board's reports carry a `-mac` suffix on the summary
+# branch. Compare boards only across the same oracle (DESIGN §8).
+# T4 runs the new engine only. Its old column is the committed one-off v1
+# measurement, tools/parity/baselines/t4-v1-oneoff.json (decision 1, ruled
+# 2026-10-02: v1 is frozen by D13), which scoreboard.py reads by default; a
+# `corpus-t4-v1` artifact, if a nightly ever uploads one, takes precedence.
 name: p5-scoreboard
 
 on:
@@ -52,6 +96,12 @@ on:
         description: 'first N documents per parity tier (0 = every document; N > 0 is a sample, never green)'
         required: false
         default: '0'
+      route:
+        description: 'where the board runs: auto (the switches), pc (the NixOS PC) or mac (the heavy Mac, main only)'
+        type: choice
+        options: [auto, pc, mac]
+        required: false
+        default: auto
 
 concurrency:
   group: p5-scoreboard
@@ -68,91 +118,145 @@ env:
 
 jobs:
   pick:
-    name: pick the T4 nightly run
-    # The NixOS runners' switch (ci.yml `plan`, selfhosted_linux): while
-    # FLASHTEX_SELFHOSTED_LINUX is unset, FLASHTEX_SELFHOSTED_MAC stands in.
-    if: (vars.FLASHTEX_SELFHOSTED_LINUX || vars.FLASHTEX_SELFHOSTED_MAC) == '1'
+    name: pick the route and its T4 run
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
+      contents: read    # the checkout of scripts/ci/p5-pick-t4.sh
       actions: read
     outputs:
+      route: ${{ steps.pick.outputs.route }}
       id: ${{ steps.pick.outputs.id }}
       sha: ${{ steps.pick.outputs.sha }}
     steps:
-      - name: the newest nightly run on main from the last 36 h
+      # the workflow's own commit of main (trusted), for scripts/ci/p5-pick-t4.sh
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      # the pick's own rules, against a fake gh, before they are trusted (seconds, no network)
+      - name: the T4 pick's self-test
+        run: scripts/tests/p5-pick-t4.test.sh
+      - name: the route (see WHERE), then the T4 run of its oracle
         id: pick
         env:
           GH_TOKEN: ${{ github.token }}
+          WANT: ${{ inputs.route || 'auto' }}
+          # the NixOS switch (ci.yml `plan`, selfhosted_linux; unset: the Mac switch stands in)
+          LINUX_ON: ${{ (vars.FLASHTEX_SELFHOSTED_LINUX || vars.FLASHTEX_SELFHOSTED_MAC) == '1' }}
+          MAC_ON: ${{ vars.FLASHTEX_SELFHOSTED_MAC == '1' && github.ref == 'refs/heads/main' }}
         run: |
           set -euo pipefail
-          # whatever its other jobs did: the T4 summaries say for themselves
-          # whether they are complete
-          row=$(gh run list --repo "$GITHUB_REPOSITORY" --workflow nightly.yml --branch main \
-                  --status completed --limit 1 --json databaseId,headSha,createdAt \
-                  --jq '.[0] | select(. != null) | "\(.databaseId) \(.headSha) \(.createdAt)"')
-          if [ -z "$row" ]; then
-            echo "::notice::no completed nightly run on main: T4 rows read missing"; exit 0
-          fi
-          read -r id sha created <<<"$row"
-          age=$(( $(date -u +%s) - $(date -u -d "$created" +%s) ))
-          if [ "$age" -gt $((36 * 3600)) ]; then
-            echo "::notice::the newest nightly run ($id, $created) is older than 36 h: T4 is stale and reads missing"; exit 0
-          fi
-          echo "nightly run $id at $sha ($created)"
-          { echo "id=$id"; echo "sha=$sha"; } >> "$GITHUB_OUTPUT"
+          case "$WANT" in
+            pc) route=pc ;;
+            mac)
+              [ "$MAC_ON" = true ] || { echo "::error::route mac needs FLASHTEX_SELFHOSTED_MAC=1 and a run of main"; exit 1; }
+              route=mac ;;
+            auto)
+              if [ "$LINUX_ON" = true ]; then route=pc
+              elif [ "$MAC_ON" = true ]; then route=mac
+              else route=""; fi ;;
+            *) echo "::error::route $WANT: expected auto, pc or mac"; exit 1 ;;
+          esac
+          echo "route=$route" >> "$GITHUB_OUTPUT"
+          [ -n "$route" ] || exit 0  # scoreboard-unavailable says why
+          # The board checks out and builds the commit this picks, on a self-hosted
+          # runner: only this repository's own schedule/dispatch run of the route's
+          # workflow on main qualifies, at a commit of main (always checked), never a
+          # pull request's or a fork's (DESIGN §9.3). The rules and their tests:
+          # scripts/ci/p5-pick-t4.sh, scripts/tests/p5-pick-t4.test.sh.
+          scripts/ci/p5-pick-t4.sh "$route" "$GITHUB_OUTPUT"
 
   scoreboard:
     name: P5 scoreboard (new vs v1, every tier)
     needs: pick
-    runs-on: [self-hosted, Linux, X64, flashtex-linux]
-    timeout-minutes: 600
+    if: needs.pick.outputs.route != ''
+    # the route pick chose (see WHERE)
+    runs-on: ${{ needs.pick.outputs.route == 'pc' && fromJSON('["self-hosted","Linux","X64","flashtex-linux"]') || fromJSON('["self-hosted","macOS","ARM64","flashtex","flashtex-heavy"]') }}
+    # On a Mac: one heavy job at a time across p5-scoreboard and nightly on
+    # the flashtex-heavy runner; the general Mac serves the merge queue.
+    # On the PC: a group of its own run (no constraint beyond the workflow's
+    # group), as before.
+    concurrency:
+      group: ${{ needs.pick.outputs.route == 'pc' && format('p5-scoreboard-pc-{0}', github.run_id) || 'flashtex-mac-heavy' }}
+      cancel-in-progress: false
+    # A Mac has fewer cores to spare (-j 2 beside the agents and the other
+    # runner): the local subset on 2026-10-03 took up to 434 s per arXiv
+    # document at load ~200, so the Mac gets 15 h; the PC keeps its 10 h.
+    timeout-minutes: ${{ needs.pick.outputs.route == 'pc' && 600 || 900 }}
     permissions:
       contents: read
-      actions: read     # the corpus-t4 artifacts of nightly.yml
+      actions: read     # the T4 artifacts (nightly.yml or corpus-t4-mac.yml)
     env:
       FLASHTEX_REQUIRE_TEXLIVE: "1"
       CARGO_BUILD_JOBS: "3"
       LIMIT: ${{ github.event.inputs.limit || '0' }}
+      ROUTE: ${{ needs.pick.outputs.route == 'pc' && 'flashtex-linux' || 'mac' }}
     steps:
       - uses: actions/checkout@v4
         with:
-          # the nightly run's commit, so T4 and every tier measured here are one SHA
+          # the T4 run's commit, so T4 and every tier measured here are one SHA
           ref: ${{ needs.pick.outputs.sha || github.sha }}
           persist-credentials: false
-      - uses: dtolnay/rust-toolchain@stable
+      # Pinned, not @stable: the board compares its engine binary's sha256 with the
+      # T4 run's, so p5-scoreboard.yml and both T4 jobs (nightly.yml corpus-t4,
+      # corpus-t4-mac.yml) build with one rustc. Change all three together.
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: "1.99.0"
       - name: this runner's build directory
-        run: echo "CARGO_TARGET_DIR=$HOME/.cache/flashtex-ci/$RUNNER_NAME/target-p5-scoreboard" >> "$GITHUB_ENV"
+        run: |
+          set -euo pipefail
+          if [ "$ROUTE" = mac ]; then
+            # One directory for both Mac instances (the group above never runs
+            # two heavy jobs at once), size-capped: the Macs are short of disk.
+            scripts/ci/mac-heavy-target.sh >> "$GITHUB_ENV"
+          else
+            echo "CARGO_TARGET_DIR=$HOME/.cache/flashtex-ci/$RUNNER_NAME/target-p5-scoreboard" >> "$GITHUB_ENV"
+          fi
       - name: pdflatex is the oracle and must be installed
         run: |
           set -euo pipefail
           command -v pdflatex >/dev/null || { echo "::error::no pdflatex on this runner (TeX Live 2026)"; exit 1; }
           pdftex --version | sed -n 1p
           command -v qpdf >/dev/null || { echo "::error::no qpdf: P-T2 cannot be measured"; exit 1; }
-      - name: T4 results of that nightly run (before any TeX runs)
+      - name: which oracle (DESIGN §8 provenance)
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/p5"
+          id=$(python3 tools/parity/oracle_provenance.py \
+                 --markdown "$RUNNER_TEMP/p5/ORACLE.md" --json "$RUNNER_TEMP/p5/oracle.json")
+          echo "$id"
+          echo "ORACLE_ID=$id" >> "$GITHUB_ENV"
+      - name: T4 results of that run (before any TeX runs)
         if: needs.pick.outputs.id != ''
         env:
           GH_TOKEN: ${{ github.token }}
           id: ${{ needs.pick.outputs.id }}
         run: |
           set -uo pipefail
-          gh run download "$id" --repo "$GITHUB_REPOSITORY" -n corpus-t4 -D "$RUNNER_TEMP/t4-new" ||
-            echo "::notice::nightly run $id has no corpus-t4 artifact: T4 (new) reads missing"
-          gh run download "$id" --repo "$GITHUB_REPOSITORY" -n corpus-t4-v1 -D "$RUNNER_TEMP/t4-old" ||
-            echo "::notice::nightly run $id has no corpus-t4-v1 artifact: T4 (old) reads missing (decision 1)"
+          if [ "$ROUTE" = mac ]; then new=corpus-t4-mac old=""; else new=corpus-t4 old=corpus-t4-v1; fi
+          gh run download "$id" --repo "$GITHUB_REPOSITORY" -n "$new" -D "$RUNNER_TEMP/t4-new" ||
+            echo "::notice::run $id has no $new artifact: T4 (new) reads missing"
+          if [ -n "$old" ]; then
+            gh run download "$id" --repo "$GITHUB_REPOSITORY" -n "$old" -D "$RUNNER_TEMP/t4-old" ||
+              echo "::notice::run $id has no $old artifact: T4 (old) is the v1 one-off baseline (decision 1)"
+          fi
       - name: every tier, both engines, then the board (no token in this step)
+        # scoreboard-run.sh passes the oracle.json written above to scoreboard.py
+        # --oracle: a T4 run measured against any other oracle reads INVALID
         run: |
           set -euo pipefail
           extra=()
           if [ "$LIMIT" != "0" ]; then extra+=(--limit "$LIMIT" --sample-note "workflow_dispatch limit=$LIMIT"); fi
           tools/parity/scoreboard-run.sh --out "$RUNNER_TEMP/p5" --jobs 2 \
             --t4-new "$RUNNER_TEMP/t4-new" --t4-old "$RUNNER_TEMP/t4-old" "${extra[@]}" -- \
-            --host-label "$RUNNER_NAME (flashtex-linux)" \
+            --host-label "$RUNNER_NAME ($ROUTE; $ORACLE_ID)" \
             --run-url "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" \
             --summary "$RUNNER_TEMP/p5/SUMMARY.md" --issues off
       - name: report
         if: always()
         run: |
+          [ -f "$RUNNER_TEMP/p5/ORACLE.md" ] && cat "$RUNNER_TEMP/p5/ORACLE.md" >> "$GITHUB_STEP_SUMMARY"
           [ -f "$RUNNER_TEMP/p5/board/scoreboard.md" ] || exit 0
           cat "$RUNNER_TEMP/p5/board/scoreboard.md" >> "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@v4
@@ -164,10 +268,16 @@ jobs:
             !${{ runner.temp }}/p5/work
           if-no-files-found: ignore
           retention-days: 30
+      # The runner empties _temp only when its next job starts; the artifact
+      # holds what the board keeps, so free the disk now (scoreboard-run.sh
+      # has already removed its work directory).
+      - name: free this runner's disk
+        if: always()
+        run: rm -rf "$RUNNER_TEMP/p5" "$RUNNER_TEMP/t4-new" "$RUNNER_TEMP/t4-old"
 
   publish:
     name: P5 scoreboard issues and summary
-    needs: scoreboard
+    needs: [pick, scoreboard]
     # a harness that failed still leaves a board (its rows read invalid or missing)
     if: always() && (needs.scoreboard.result == 'success' || needs.scoreboard.result == 'failure')
     runs-on: ubuntu-latest
@@ -178,6 +288,9 @@ jobs:
     env:
       ISSUES: ${{ github.event.inputs.issues || 'apply' }}
       LIMIT: ${{ github.event.inputs.limit || '0' }}
+      # the PC's reports keep their names; a Mac's carry -mac (another oracle). From
+      # the route the board ran on, not the switches now.
+      SUFFIX: ${{ needs.pick.outputs.route == 'pc' && '' || '-mac' }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -210,8 +323,12 @@ jobs:
           else git worktree add --detach "$d" && git -C "$d" checkout --orphan "$b" && git -C "$d" rm -rfq .; fi
           mkdir -p "$d/reports"
           cp "$RUNNER_TEMP/p5/SUMMARY.md" "$d/SUMMARY.md"
-          cp "$RUNNER_TEMP/p5/board/scoreboard.md" "$d/reports/$day.md"
-          cp "$RUNNER_TEMP/p5/board/scoreboard.json" "$d/reports/$day.json"
+          cp "$RUNNER_TEMP/p5/board/scoreboard.md" "$d/reports/$day$SUFFIX.md"
+          cp "$RUNNER_TEMP/p5/board/scoreboard.json" "$d/reports/$day$SUFFIX.json"
+          if [ -f "$RUNNER_TEMP/p5/ORACLE.md" ]; then
+            { echo; cat "$RUNNER_TEMP/p5/ORACLE.md"; } >> "$d/SUMMARY.md"
+            { echo; cat "$RUNNER_TEMP/p5/ORACLE.md"; } >> "$d/reports/$day$SUFFIX.md"
+          fi
           git -C "$d" add -A
           git -C "$d" -c user.name='github-actions[bot]' \
             -c user.email='41898282+github-actions[bot]@users.noreply.github.com' \
@@ -220,10 +337,11 @@ jobs:
 
   scoreboard-unavailable:
     name: P5 scoreboard (new vs v1, every tier)
-    if: ${{ !((vars.FLASHTEX_SELFHOSTED_LINUX || vars.FLASHTEX_SELFHOSTED_MAC) == '1') }}
+    needs: pick
+    if: needs.pick.outputs.route == ''
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
       - run: |
-          echo "::notice::skipped: the P5 scoreboard needs the NixOS PC's self-hosted runners (TeX Live 2026)."
-          echo "Set \`gh variable set FLASHTEX_SELFHOSTED_LINUX --body 1\` once they are registered." >> "$GITHUB_STEP_SUMMARY"
+          echo "::notice::skipped: the P5 scoreboard needs a self-hosted runner with TeX Live 2026 (the NixOS PC, or on main a Mac labelled flashtex-heavy with MacTeX 2026)."
+          echo "Set \`gh variable set FLASHTEX_SELFHOSTED_LINUX --body 1\` (the NixOS PC) or \`gh variable set FLASHTEX_SELFHOSTED_MAC --body 1\` (a Mac; main only) once its runners are registered." >> "$GITHUB_STEP_SUMMARY"

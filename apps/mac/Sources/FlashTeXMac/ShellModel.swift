@@ -27,7 +27,11 @@ final class ShellModel {
     /// it. Not observed: it changes per keystroke and no view reads it.
     @ObservationIgnored private(set) var documentsRevision = 0
     var activePath: String = "main.tex" {
-        didSet { if activePath != oldValue { navigationToken &+= 1 } }
+        didSet {
+            guard activePath != oldValue else { return }
+            navigationToken &+= 1; refreshDocumentMirror()
+            if engineV3Enabled { engineV3.scheduleCaretMark() }
+        }
     }
     /// Bumped by every document switch and every `openAndSwitch` request, so a
     /// slow open only switches if nothing navigated after it was requested.
@@ -107,14 +111,15 @@ final class ShellModel {
         // (`display-list-v2-only`) is re-requested with pages.
         didSet { if oldValue, !previewV2, v1PagesElided, autoCompile, workerAttached { compile() } }
     }
-    /// Engine-v3 preview (EngineV3Host.swift): flag-gated, default off. When
-    /// on, the pane shows the pdfLaTeX-compatible engine's pages and the old
-    /// engine compiles nothing (one engine at a time, `suspendOldEngineForV3`);
-    /// when off, nothing of v3 runs.
+    /// The window's effective engine (EngineChoice.swift decides it per
+    /// document): when on, the pane shows the new pdfLaTeX-compatible
+    /// engine's pages and the old engine compiles nothing (one engine at a
+    /// time, `suspendOldEngineForV3`); when off, nothing of v3 runs. Set
+    /// directly (a bench, a test), it is the window's own override.
     var engineV3Enabled = EngineV3.enabledAtLaunch {
         didSet {
+            engineV3EnabledSetDirectly() // EngineChoice.swift; a no-op while a choice is applied
             guard engineV3Enabled != oldValue else { return }
-            EngineV3.defaults.set(engineV3Enabled, forKey: EngineV3.enabledKey) // a test process's own suite under XCTest
             if engineV3Enabled {
                 suspendOldEngineForV3()
                 engineV3.start(model: self)
@@ -130,6 +135,23 @@ final class ShellModel {
         }
     }
     @ObservationIgnored let engineV3 = EngineV3Session()
+    /// Which engine typesets the open document, why, and any fallback (EngineChoice.swift).
+    var engineChoice = EngineChoice.atLaunch
+    /// The fallback banner was dismissed (until the next open or change).
+    var engineFallbackDismissed = false
+    /// `engineV3Enabled` set directly: the engine every document of this window uses.
+    @ObservationIgnored var engineWindowOverride: EngineChoice.Engine?
+    @ObservationIgnored var applyingEngineChoice = false
+    /// An open is in progress and its engine is not chosen yet: the v3
+    /// session is not told about the new project until it is (no compile
+    /// of a document the previous engine will typeset).
+    @ObservationIgnored var engineChoicePending = false
+    /// The document `engineChoice` was resolved for.
+    @ObservationIgnored var engineChoiceDocument: URL?
+    /// The host reported no TeX Live (sticky for the window until the user chooses again).
+    @ObservationIgnored var engineHostLacksTeXLive = false
+    /// Fallback announcements made (tests; VoiceOver hears them as they are posted).
+    @ObservationIgnored var engineAnnouncements: [String] = []
     /// The developer-only durable helper (`FLASHTEX_PREVIEW_CONTROLLER`)
     /// detached while the engine-v3 preview is on: the helper compiles every
     /// edit it records with the old engine, and has no way to record without
@@ -171,7 +193,9 @@ final class ShellModel {
     var documentURL: URL? {
         // Engine-v3 instant reopen: the project's stored pages go on screen
         // now, in this run-loop turn, before the editor ingests the text.
-        didSet { if engineV3Enabled, documentURL != oldValue, let at = engineV3OpenedAt { engineV3.projectChanged(model: self, openedAt: at) } }
+        // While an open is choosing its engine (`engineChoicePending`), the
+        // open path tells the session itself once the engine is known.
+        didSet { if engineV3Enabled, !engineChoicePending, documentURL != oldValue, let at = engineV3OpenedAt { engineV3.projectChanged(model: self, openedAt: at) } }
     }
     /// When `replaceProject` began (engine-v3 open → pixels timing).
     @ObservationIgnored var engineV3OpenedAt: UInt64?
@@ -199,7 +223,11 @@ final class ShellModel {
     }
     struct CaptureRefund: Equatable { var proposal: RuntimeV1.CaptureProposal; var anchorBefore: InsertionAnchor }
     var caretUTF16: Int = 0 {
-        didSet { if caretUTF16 != oldValue { caretFollow.noteCaretMove() } } // CaretFollow.swift: re-arms across a line/page boundary
+        didSet {
+            guard caretUTF16 != oldValue else { return }
+            caretFollow.noteCaretMove() // CaretFollow.swift: re-arms across a line/page boundary
+            if engineV3Enabled { engineV3.scheduleCaretMark() } // the caret on the v3 page, outside SwiftUI (EngineV3CaretMark.swift)
+        }
     }
     /// Debounced "the preview follows what you are editing" (CaretFollow.swift).
     /// Triggers: `updateActiveText` (edit), a result or v2 frame landing
@@ -277,6 +305,14 @@ final class ShellModel {
     /// `!documents.isEmpty`, change-only: File > Print Source… must not read
     /// `documents` from the App scene (a keystroke reassigns the array).
     private(set) var toolbarHasDocument = false
+    /// `documents.count`, change-only: the word-count item names "this
+    /// document" or "N open documents" and rescans when a document opens or
+    /// closes, without reading `documents` (a keystroke reassigns it).
+    private(set) var documentCount = 0
+    /// `project.entryPath`, change-only, for File > Move To…'s enabled state:
+    /// `entryPath` reads `documents`, so the App scene (every menu) was
+    /// re-evaluated on every keystroke (P5-KEYSTROKE-MAIN).
+    private(set) var menuEntryPath = "main.tex"
     /// The producer as attached ("attached: flashtex-render"), not the
     /// per-request status line: tooltips read this instead of `workerStatus`.
     private(set) var producerSummary = "no worker attached"
@@ -325,6 +361,9 @@ final class ShellModel {
     private func refreshDocumentMirror() {
         let has = !documents.isEmpty
         if toolbarHasDocument != has { toolbarHasDocument = has }
+        if documentCount != documents.count { documentCount = documents.count }
+        let entry = documents.first?.path ?? activePath // ProjectDocuments.entryPath
+        if menuEntryPath != entry { menuEntryPath = entry }
     }
 
     private func refreshToolbarMirrors() {
@@ -349,7 +388,10 @@ final class ShellModel {
         let diagnostics = displayedDiagnostics
         if toolbarProblemCount != diagnostics.count { toolbarProblemCount = diagnostics.count }
         if problemsList != diagnostics { problemsList = diagnostics }
-        if resultStatus != result?.status { resultStatus = result?.status }
+        // Under engine v3: a compile that failed (no pages) keeps the last
+        // pages, as an old failed result did (the Problems line, gap B8).
+        let status = engineV3Enabled ? engineV3ResultStatus : result?.status
+        if resultStatus != status { resultStatus = status }
         refreshDocumentMirror()
         let summary: String
         if controllerAttached { summary = "helper attached: \(controller?.executable.lastPathComponent ?? "flashtex-preview-controller")" }
@@ -470,8 +512,37 @@ final class ShellModel {
     /// The engine-v3 preview's last completed compile's TeX errors and
     /// warnings (EngineV3Session: `DIAGNOSTIC` messages; diag-v1 later),
     /// shown in the Problems panel and the status bar while the flag is on.
+    /// The last v3 compile's outcome for the Problems line: `.failed` when
+    /// TeX produced no pages (the previous ones are kept), else nil.
+    var engineV3ResultStatus: RuntimeV1.Status? {
+        didSet { if engineV3ResultStatus != oldValue { refreshToolbarMirrors() } }
+    }
     var engineV3Diagnostics: [RuntimeV1.Diagnostic] = [] {
-        didSet { if engineV3Diagnostics != oldValue { refreshToolbarMirrors() } }
+        didSet { if engineV3Diagnostics != oldValue { engineV3MarksRevision &+= 1; refreshToolbarMirrors() } }
+    }
+    /// Bumped when the v3 rows or their compiled texts change: the editor
+    /// marks' memo key under engine v3 (there is no old-engine result id).
+    /// Observed: a memo hit reads only this, so a view that drew the marks
+    /// must be invalidated when a DONE brings new rows or a new baseline.
+    private(set) var engineV3MarksRevision = 0
+    /// The editor revision of the texts the last v3 compile read, or nil
+    /// when the editor no longer has them (set at DONE).
+    private(set) var engineV3CompiledEditorRevision: Int?
+    /// The revision a diagnostic's mechanical fix was computed against:
+    /// "Fix…" and Tab apply it only while the editor is at that revision.
+    var fixCompiledRevision: Int? { engineV3Enabled ? engineV3CompiledEditorRevision : result?.revision }
+
+    /// What the editor marks (underlines, gutter, Error Lens, ⌘⇧]/[) are built
+    /// from: the old engine's result, or under engine v3 the host's rows of the
+    /// last completed compile as one result, with `compiledDocuments` (set at
+    /// its DONE) as the texts they rebase from.
+    var markSource: (result: RuntimeV1.CompileResult, id: String?)? {
+        if engineV3Enabled {
+            let failed = engineV3Diagnostics.contains { $0.severity == .error }
+            return (RuntimeV1.CompileResult(projectId: "engine-v3", revision: engineV3MarksRevision, status: failed ? .recovered : .ok,
+                                            pages: [], diagnostics: engineV3Diagnostics, pdfPath: nil), nil)
+        }
+        return result.map { ($0, resultID) }
     }
 
     /// Explicit banner notes: requested-but-unaccepted capabilities and font
@@ -535,6 +606,18 @@ final class ShellModel {
     /// turning it back on sends what was typed meanwhile.
     var autoCompile = true {
         didSet { if autoCompile, !oldValue, engineV3Enabled { engineV3.textChanged(model: self) } }
+    }
+    /// Settings > Compile > Stop at the first error (EngineV3ErrorPolicy):
+    /// off (the default) is best effort, nonstopmode with the errors TeX
+    /// recovers from shown as warnings; on is `-halt-on-error`. Kept in the
+    /// engine-v3 defaults (a test suite of its own under XCTest).
+    var strictTeXErrors = EngineV3ErrorPolicy.storedMode == .strict {
+        didSet {
+            guard strictTeXErrors != oldValue else { return }
+            EngineV3.defaults.set(strictTeXErrors, forKey: EngineV3ErrorPolicy.strictKey)
+            engineV3.errorMode = strictTeXErrors ? .strict : .bestEffort
+            if engineV3Enabled { engineV3.compile(model: self, reason: "error mode") }
+        }
     }
     private(set) var lastLatencyMs: Double?
     private(set) var latenciesMs: [Double] = []
@@ -632,8 +715,18 @@ final class ShellModel {
     /// evaluation and the rebase compares the compiled and current texts.
     var editorMarkReport: EditorDiagnostics.Report {
         // Historical spans are inert: not drawn even when their offsets are in bounds.
-        // Under engine v3 no old-engine marks are drawn (one engine at a time).
-        guard !engineV3Enabled, let result, historicalPreview == nil else { return .empty }
+        // Under engine v3 the marks are the host's rows (`markSource`), never
+        // the old engine's (one engine at a time).
+        guard historicalPreview == nil else { return .empty }
+        if engineV3Enabled {
+            let key = EditorMarksKey(resultID: "engine-v3", resultRevision: engineV3MarksRevision, editorRevision: editorRevision,
+                                     path: activePath, explanationsCount: -1, carriedExplanationsCount: -1)
+            if let cached = editorMarksCache, cached.key == key { return cached.report }
+            let report = diagnosticReport(for: activePath, currentText: activeText)
+            editorMarksCache = (key, report)
+            return report
+        }
+        guard let result else { return .empty }
         let key = EditorMarksKey(resultID: resultID, resultRevision: result.revision, editorRevision: editorRevision, path: activePath,
                                  explanationsCount: explanations[resultID]?.count ?? -1,
                                  carriedExplanationsCount: explanations[retainedMarks?.resultID]?.count ?? -1)
@@ -675,7 +768,7 @@ final class ShellModel {
         if diags.indices.contains(diagnosticIndex) {
             let d = diags[diagnosticIndex]
             if EditorDiagnostics.canApplyHelpReplacement(d, path: activePath, currentText: activeText,
-                                                         compiledRevision: result?.revision, editorRevision: editorRevision) {
+                                                         compiledRevision: fixCompiledRevision, editorRevision: editorRevision) {
                 let compiled = compiledDocuments[activePath] ?? activeText
                 switch EditorDiagnostics.prepareHelpReplacement(d, path: activePath, in: activeText, compiledText: compiled) {
                 case .success(let preview): quickFix = preview; quickFixIndex = diagnosticIndex; navigationNote = nil; return
@@ -726,12 +819,12 @@ final class ShellModel {
         // Cheap bail-out before `caretByte`, whose UTF-16 → UTF-8 conversion is
         // linear in the document: this is read on every keystroke, and most
         // documents carry no mechanical fix at all.
-        guard result?.revision == editorRevision,
+        guard fixCompiledRevision == editorRevision,
               diagnostics.contains(where: { $0.help?.replacement != nil || $0.suggestion != nil })
         else { return nil }
         guard let caretByte, let fix = EditorDiagnostics.fixOffered(
             at: caretByte, in: diagnostics, path: activePath,
-            currentText: activeText, compiledRevision: result?.revision,
+            currentText: activeText, compiledRevision: fixCompiledRevision,
             editorRevision: editorRevision
         ) else { return nil }
         return fix == dismissedCaretFix ? nil : fix
@@ -791,7 +884,13 @@ final class ShellModel {
     /// Empty when there is no result or the caret maps to nothing.
     var caretItems: [Int: Set<Int>] { exactCaretItems } // CaretSync.swift: O(log n) index, memoized per result
 
-    init() {
+    /// What a new model holds before anything is opened: the protocol
+    /// contract fixture (`protocol/fixtures`, the default: tests and
+    /// automation are written against it), or — the app's window — the
+    /// untitled LaTeX document (`UntitledDocument`, ProjectScaffold.swift).
+    enum Startup { case fixture, untitledDocument }
+
+    init(startup: Startup = .fixture) {
         let env = ProcessInfo.processInfo.environment
         // Caret following asks for the target only when a follow actually
         // fires, so this closure runs at most once per debounce interval.
@@ -841,7 +940,9 @@ final class ShellModel {
             }
             refreshChrome() // ShellChrome.swift: from here on the chrome follows the model, throttled
         }
-        if let fixtures = Self.locateFixturesDirectory() {
+        if startup == .untitledDocument {
+            loadUntitledDocument()
+        } else if let fixtures = Self.locateFixturesDirectory() {
             loadFixtures(request: fixtures.appendingPathComponent("compile-request.json"),
                          result: fixtures.appendingPathComponent("compile-result.json"))
         } else {
@@ -851,6 +952,29 @@ final class ShellModel {
     }
 
     // MARK: loading
+
+    /// The window FlashTeX opens with no file (`Startup.untitledDocument`):
+    /// File › New Project…'s blank article, caret on the empty line under
+    /// `\section{Introduction}`. Like the fixture it replaces, it is fresh —
+    /// revision 1, no file, no saved text — so it is dirty only once edited
+    /// and quitting or opening a file asks nothing. The attached engine
+    /// compiles it like any other buffer (`compile()` at launch, or the v3
+    /// pane's first compile).
+    /// `UntitledDocument.caretUTF16` while the window still shows the untouched
+    /// untitled document (the editor view places its caret there when made),
+    /// else nil.
+    var untitledDocumentCaret: Int? {
+        guard documentURL == nil, activePath == UntitledDocument.path,
+              activeText.utf8.count == UntitledDocument.text.utf8.count, activeText == UntitledDocument.text else { return nil }
+        return UntitledDocument.caretUTF16
+    }
+
+    private func loadUntitledDocument() {
+        documents = [.init(path: UntitledDocument.path, text: UntitledDocument.text)]
+        activePath = UntitledDocument.path
+        compiledDocuments = [:]
+        caretUTF16 = UntitledDocument.caretUTF16
+    }
 
     /// `beforeReplacing` runs once the fixture is valid, just before the
     /// project is replaced; returning false replaces nothing (#806).
@@ -1009,6 +1133,7 @@ final class ShellModel {
         if engineV3Enabled {
             let openedAt = MonotonicClock.nowNs()
             engineV3OpenedAt = openedAt
+            guard !engineChoicePending else { return } // the open path tells the session once its engine is chosen
             // The caller sets `documentURL` next (its didSet shows the stored
             // pages at once); this catches a replacement that keeps the URL.
             DispatchQueue.main.async { [weak self] in
@@ -1058,8 +1183,14 @@ final class ShellModel {
     /// line labels and navigation rebase from, as an old result's request
     /// text was.
     func setEngineV3CompiledDocuments(_ docs: [String: String]) {
-        guard engineV3Enabled, compiledDocuments != docs else { return }
+        guard engineV3Enabled else { return }
+        // The editor revision the compile's texts are, when the editor still
+        // has them: a mechanical fix applies only then (`fixCompiledRevision`).
+        let current = documents.allSatisfy { doc in docs[doc.path].map { $0.sameBytes(as: doc.text) } ?? true }
+        engineV3CompiledEditorRevision = current ? editorRevision : nil
+        guard compiledDocuments != docs else { return }
         compiledDocuments = docs
+        engineV3MarksRevision &+= 1
     }
 
     func updateActiveText(_ text: String) {

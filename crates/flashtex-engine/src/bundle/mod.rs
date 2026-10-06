@@ -26,6 +26,10 @@
 //!   index's.
 //! * **Offline:** with `offline`, nothing is fetched; lookups find only what
 //!   is already in the cache.
+//! * **Configuration:** `FLASHTEX_BUNDLE_URL` and `FLASHTEX_BUNDLE_DIGEST`,
+//!   else a `flashtex-bundle.lock` ([`lock_candidates`], [`parse_lock`]),
+//!   so a pinned default ships as data beside the program. There is no
+//!   built-in default: where bundles are hosted is the owner's decision.
 
 pub mod build;
 pub mod fetch;
@@ -66,13 +70,258 @@ impl BundleSpec {
         Some(BundleSpec {
             url: url.unwrap_or_default(),
             digest: digest.to_ascii_lowercase(),
-            offline: matches!(
-                std::env::var("FLASHTEX_BUNDLE_OFFLINE").as_deref(),
-                Ok("1" | "yes" | "true")
-            ),
+            offline: offline_from_env(),
         })
     }
+
+    /// The configured bundle and where its configuration came from: the
+    /// environment ([`BundleSpec::from_env`]) when `FLASHTEX_BUNDLE_DIGEST`
+    /// is set, else the first lock file of [`lock_candidates`] that exists
+    /// ([`parse_lock`]). `FLASHTEX_BUNDLE_OFFLINE` applies to either. A lock
+    /// file that exists but does not parse is an error, not "no bundle".
+    ///
+    /// **Fetching from a lock file fails closed:** a bundle configured by a
+    /// lock file is offline (nothing is fetched; only what is already in
+    /// the cache is read) unless `FLASHTEX_BUNDLE_ALLOW_FETCH` is `1` (a
+    /// command-line user) or `<digest>@<url>` of that very bundle and
+    /// source ([`fetch_allowed`]; what the app passes once the user agreed
+    /// to downloading that bundle from there). A bundle set in
+    /// the environment is that user's explicit choice and may fetch (the app
+    /// passes `FLASHTEX_BUNDLE_OFFLINE=1` until its user agreed).
+    /// `FLASHTEX_BUNDLE_OFFLINE=1` makes either offline, whatever else.
+    pub fn configured() -> Option<Result<(BundleSpec, SpecOrigin), String>> {
+        Self::configured_with(&|k| std::env::var(k).ok(), &lock_candidates())
+    }
+
+    /// [`BundleSpec::configured`] over the variables `var` gives and the
+    /// lock files `candidates` (testable without the process environment).
+    pub fn configured_with(
+        var: &dyn Fn(&str) -> Option<String>,
+        candidates: &[PathBuf],
+    ) -> Option<Result<(BundleSpec, SpecOrigin), String>> {
+        let set = |k: &str| var(k).filter(|v| !v.is_empty());
+        let flag = |k: &str| matches!(set(k).as_deref(), Some("1" | "yes" | "true"));
+        let offline = flag("FLASHTEX_BUNDLE_OFFLINE");
+        if let Some(digest) = set("FLASHTEX_BUNDLE_DIGEST") {
+            let spec = BundleSpec {
+                url: set("FLASHTEX_BUNDLE_URL").unwrap_or_default(),
+                digest: digest.to_ascii_lowercase(),
+                offline,
+            };
+            return Some(Ok((spec, SpecOrigin::Environment)));
+        }
+        let lock = candidates.iter().find(|p| p.is_file())?.clone();
+        let allow = set("FLASHTEX_BUNDLE_ALLOW_FETCH");
+        Some(
+            std::fs::read_to_string(&lock)
+                .map_err(|e| e.to_string())
+                .and_then(|t| parse_lock(&t, lock.parent().unwrap_or(Path::new("."))))
+                .map_err(|e| format!("{}: {e}", lock.display()))
+                .map(|(url, digest)| {
+                    let allow_fetch = allow
+                        .as_deref()
+                        .is_some_and(|a| fetch_allowed(a, &digest, &url));
+                    let spec = BundleSpec {
+                        url,
+                        digest,
+                        offline: offline || !allow_fetch,
+                    };
+                    (spec, SpecOrigin::LockFile(lock))
+                }),
+        )
+    }
 }
+
+/// Whether `FLASHTEX_BUNDLE_ALLOW_FETCH=allow` lets the lock file's bundle
+/// (`digest` at `url`) be fetched: `1` (a command-line user), or
+/// `<digest>@<url>` naming exactly the bundle and the source the user
+/// agreed to (what the app passes). The source counts as well as the
+/// digest: the content would be verified anyway, but which server is
+/// contacted is the user's to agree to, so a lock rewritten after the app
+/// read it, with the same digest at another URL, is not fetched. A bare
+/// digest, without its source, is refused.
+pub fn fetch_allowed(allow: &str, digest: &str, url: &str) -> bool {
+    if matches!(allow, "1" | "yes" | "true") {
+        return true;
+    }
+    match allow.split_once('@') {
+        Some((d, u)) => d.eq_ignore_ascii_case(digest) && u == url,
+        None => false,
+    }
+}
+
+fn offline_from_env() -> bool {
+    matches!(
+        std::env::var("FLASHTEX_BUNDLE_OFFLINE").as_deref(),
+        Ok("1" | "yes" | "true")
+    )
+}
+
+/// Where a [`BundleSpec`] came from.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum SpecOrigin {
+    /// `FLASHTEX_BUNDLE_URL` and `FLASHTEX_BUNDLE_DIGEST`.
+    Environment,
+    /// A `flashtex-bundle.lock` ([`lock_candidates`]).
+    LockFile(PathBuf),
+}
+
+impl SpecOrigin {
+    pub fn describe(&self) -> String {
+        match self {
+            SpecOrigin::Environment => "environment".into(),
+            SpecOrigin::LockFile(p) => p.display().to_string(),
+        }
+    }
+}
+
+/// The lock file's name.
+pub const LOCK_FILE: &str = "flashtex-bundle.lock";
+
+/// Where a bundle lock file is looked for, first first:
+///
+/// 1. `FLASHTEX_BUNDLE_LOCK`, when set (then nothing else);
+/// 2. the user's own, in the per-user configuration directory:
+///    `~/Library/Application Support/FlashTeX/` (macOS),
+///    `%APPDATA%\FlashTeX\` (Windows), `$XDG_CONFIG_HOME/flashtex/` or
+///    `~/.config/flashtex/` (elsewhere);
+/// 3. the one shipped with the program: beside the executable, then the
+///    app bundle's `Contents/Resources/engine/` (the executable in
+///    `Contents/Helpers` or `Contents/MacOS`).
+///
+/// So a pinned default ships as data next to the program, and a user's
+/// own file (or the environment) overrides it.
+pub fn lock_candidates() -> Vec<PathBuf> {
+    if let Some(p) = std::env::var_os("FLASHTEX_BUNDLE_LOCK").filter(|p| !p.is_empty()) {
+        return vec![PathBuf::from(p)];
+    }
+    let mut v = vec![];
+    if let Some(d) = user_config_dir(crate::formats::HOST_OS, |k| std::env::var_os(k)) {
+        v.push(d.join(LOCK_FILE));
+    }
+    if let Some(dir) = std::env::current_exe()
+        .ok()
+        .and_then(|e| e.parent().map(Path::to_path_buf))
+    {
+        v.push(dir.join(LOCK_FILE));
+        v.push(dir.join("../Resources/engine").join(LOCK_FILE));
+    }
+    v
+}
+
+/// The per-user configuration directory of [`lock_candidates`] (2.).
+pub fn user_config_dir(
+    os: crate::formats::CacheOs,
+    var: impl Fn(&str) -> Option<std::ffi::OsString>,
+) -> Option<PathBuf> {
+    use crate::formats::CacheOs;
+    let set = |k: &str| var(k).filter(|v| !v.is_empty()).map(PathBuf::from);
+    match os {
+        CacheOs::MacOs => Some(set("HOME")?.join("Library/Application Support/FlashTeX")),
+        CacheOs::Windows => Some(set("APPDATA")?.join("FlashTeX")),
+        CacheOs::Xdg => match set("XDG_CONFIG_HOME").filter(|p| p.is_absolute()) {
+            Some(d) => Some(d.join("flashtex")),
+            None => Some(set("HOME")?.join(".config/flashtex")),
+        },
+    }
+}
+
+/// A bundle lock file: `key = value` lines (a TOML subset; values may be
+/// quoted), `#` comments, unknown keys ignored, so later versions can add
+/// keys:
+///
+/// ```text
+/// # The bundle the engine reads when there is no TeX Live.
+/// url = "https://example.org/texlive-2026-core.ttb"
+/// digest = "26c4b1e6f5a4248ae5fc3427078cadabdbb1a87ddeca345a4d548435fe9e5d30"
+/// ```
+///
+/// `digest` (the TTBv1 digest, 64 hex digits) and `url` are required. A
+/// `url` with no scheme that is not absolute is relative to the lock
+/// file's directory (`dir`), for a bundle shipped beside it. Lines end in
+/// LF or CRLF; a quoted value may be followed by a comment. The app's
+/// reader (apps/mac EngineV3Bundle.parseLock) is held to the same answers
+/// by the shared vectors in docs/contracts/bundle-lock-vectors.json.
+pub fn parse_lock(text: &str, dir: &Path) -> Result<(String, String), String> {
+    let mut url = None;
+    let mut digest = None;
+    for (n, line) in text.lines().enumerate() {
+        let l = line.trim();
+        if l.is_empty() || l.starts_with('#') {
+            continue;
+        }
+        let (k, v) = l
+            .split_once('=')
+            .ok_or_else(|| format!("line {}: expected key = value", n + 1))?;
+        let v = v.trim();
+        let v = match v.strip_prefix('"') {
+            // `"value"`, then nothing or a comment.
+            Some(rest) => {
+                let (inner, after) = rest
+                    .split_once('"')
+                    .ok_or_else(|| format!("line {}: unterminated string", n + 1))?;
+                let after = after.trim();
+                if !after.is_empty() && !after.starts_with('#') {
+                    return Err(format!("line {}: text after the string", n + 1));
+                }
+                inner
+            }
+            None => v.split('#').next().unwrap_or("").trim(),
+        };
+        match k.trim() {
+            "url" => url = Some(v.to_string()),
+            "digest" => digest = Some(v.to_ascii_lowercase()),
+            _ => {}
+        }
+    }
+    let digest = digest.ok_or("no digest")?;
+    if digest.len() != 64 || !digest.bytes().all(|b| b.is_ascii_hexdigit()) {
+        return Err(format!("digest {digest:?} is not a SHA-256"));
+    }
+    let url = url.filter(|u| !u.is_empty()).ok_or("no url")?;
+    let url = if url.contains("://") || Path::new(&url).is_absolute() {
+        url
+    } else {
+        dir.join(&url).display().to_string()
+    };
+    Ok((url, digest))
+}
+
+/// What a fetch is doing, for a progress display (`set_progress`).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Progress {
+    /// `index` (header and index), `core` (the core packages, in chunks)
+    /// or `file` (a file or package on demand).
+    pub what: &'static str,
+    /// The file or package fetched (`file`), else the digest.
+    pub name: String,
+    pub done: u64,
+    pub total: u64,
+}
+
+type ProgressFn = dyn Fn(&Progress) + Send + Sync;
+static PROGRESS: std::sync::OnceLock<Box<ProgressFn>> = std::sync::OnceLock::new();
+
+/// Report every fetch's progress to `f` (once per process: the host's).
+/// It is called before each request and after the last one of a step.
+pub fn set_progress(f: impl Fn(&Progress) + Send + Sync + 'static) {
+    let _ = PROGRESS.set(Box::new(f));
+}
+
+fn progress(what: &'static str, name: &str, done: u64, total: u64) {
+    if let Some(f) = PROGRESS.get() {
+        f(&Progress {
+            what,
+            name: name.to_string(),
+            done,
+            total,
+        });
+    }
+}
+
+/// The core is fetched in requests of at most this many bytes, so that
+/// its progress can be shown (a few requests more on a cold start).
+pub const CORE_CHUNK: u64 = 4 * 1024 * 1024;
 
 /// `FLASHTEX_BUNDLE_CACHE_DIR`, else `bundles` under
 /// [`crate::formats::cache_dir_default_root`]: `~/Library/Caches/FlashTeX`
@@ -130,6 +379,7 @@ impl Bundle {
                 ))
             }
             Err(_) => {
+                progress("index", &spec.digest, 0, 0);
                 let mut src = fetch::open(&spec.url)?;
                 let hb = src.read_range(0, ttb::HEADER_SIZE)?;
                 let h = ttb::Header::parse(&hb)?;
@@ -163,20 +413,15 @@ impl Bundle {
                 continue;
             }
             // `<tree>/<path>`: a plain relative path inside a tree.
-            if e.path.starts_with('/')
-                || !e.path.contains('/')
-                || e.path
-                    .split('/')
-                    .any(|c| c.is_empty() || c == "." || c == "..")
-                || e.basename() == "ls-R"
-            {
-                return Err(format!(
-                    "bundle path {:?} is not a plain relative path",
-                    e.path
-                ));
-            }
+            ttb::check_member_path(&e.path)?;
             by_name.entry(e.basename().to_string()).or_default().push(i);
         }
+        ttb::check_case_collisions(
+            by_name
+                .values()
+                .flatten()
+                .map(|&i| index.files[i].path.as_str()),
+        )?;
         Self::write_ls_r(&files_dir, &index, &by_name)?;
         // Each file's package: the range that contains it (binary search
         // over the ranges ordered by offset).
@@ -212,7 +457,7 @@ impl Bundle {
         Ok(b)
     }
 
-    /// `<root>/<tree>/ls-R` for each tree (`texmf-dist`, `texmf-var`), as
+    /// `<root>/<tree>/ls-R` for each tree (`texmf-dist`, `texmf-var`, `texmf-config`), as
     /// `mktexlsr` would write it for every file of the bundle in that tree,
     /// fetched or not; once per bundle.
     fn write_ls_r(
@@ -297,7 +542,8 @@ impl Bundle {
         Ok(v)
     }
 
-    /// The core packages, which the bundle stores first: one request.
+    /// The core packages, which the bundle stores first: one byte range,
+    /// fetched in requests of at most [`CORE_CHUNK`] bytes.
     fn fetch_core(&mut self) -> Result<(), String> {
         let core: Vec<usize> = (0..self.index.packages.len())
             .filter(|&i| self.index.core.contains(&self.index.packages[i].name))
@@ -307,7 +553,15 @@ impl Bundle {
         };
         let start = self.index.packages[first].start;
         let end = self.index.packages[last].start + self.index.packages[last].len;
-        let data = self.read_range(start, end - start)?;
+        let total = end - start;
+        let mut data = Vec::with_capacity(total as usize);
+        while (data.len() as u64) < total {
+            let done = data.len() as u64;
+            progress("core", &self.spec.digest, done, total);
+            let n = CORE_CHUNK.min(total - done);
+            data.extend_from_slice(&self.read_range(start + done, n)?);
+        }
+        progress("core", &self.spec.digest, total, total);
         let members: Vec<usize> = (0..self.index.files.len())
             .filter(|&i| self.package_of[i].is_some_and(|p| core.contains(&p)))
             .collect();
@@ -364,6 +618,7 @@ impl Bundle {
         }
         match self.package_of[i].map(|p| self.index.packages[p].clone()) {
             Some(p) if p.len <= PACKAGE_FETCH_LIMIT => {
+                progress("file", &p.name, 0, p.len);
                 let data = self.read_range(p.start, p.len)?;
                 let members: Vec<usize> = (0..self.index.files.len())
                     .filter(|&j| self.package_of[j] == self.package_of[i])
@@ -371,11 +626,14 @@ impl Bundle {
                 for j in members {
                     self.store_member(j, &data, p.start)?;
                 }
+                progress("file", &p.name, p.len, p.len);
             }
             _ => {
                 let e = self.index.files[i].clone();
+                progress("file", e.basename(), 0, e.gzip_len as u64);
                 let data = self.read_range(e.start, e.gzip_len as u64)?;
                 self.store_member(i, &data, e.start)?;
+                progress("file", e.basename(), e.gzip_len as u64, e.gzip_len as u64);
             }
         }
         Ok(self.local_path(i))
@@ -466,9 +724,13 @@ impl BundleResolver {
         })
     }
 
-    /// The bundle's cache (from the environment), for `default_resolver`.
+    /// The configured bundle ([`BundleSpec::configured`]: the environment,
+    /// else a lock file) in its cache, for `default_resolver`.
     pub fn from_env(progname: &str, engine: &str) -> Option<Result<BundleResolver, String>> {
-        let spec = BundleSpec::from_env()?;
+        let spec = match BundleSpec::configured()? {
+            Ok((spec, _)) => spec,
+            Err(e) => return Some(Err(e)),
+        };
         let cache = match default_cache_dir() {
             Some(c) => c,
             None => return Some(Err("no bundle cache directory (HOME unset)".into())),
@@ -524,5 +786,144 @@ impl FileResolver for BundleResolver {
     }
     fn name_ok(&mut self, name: &str, write: bool) -> bool {
         self.kpse.name_ok(name, write)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::formats::CacheOs;
+
+    const D: &str = "26c4b1e6f5a4248ae5fc3427078cadabdbb1a87ddeca345a4d548435fe9e5d30";
+
+    /// The vectors the app's parser is held to as well
+    /// (docs/contracts/bundle-lock-vectors.json).
+    #[cfg(unix)]
+    #[test]
+    fn lock_file_vectors() {
+        use flashtex_display_list::json::Json;
+        let v = Json::parse(include_str!(
+            "../../../../docs/contracts/bundle-lock-vectors.json"
+        ))
+        .unwrap();
+        let dir = Path::new(v.str_field("dir").unwrap());
+        let cases = v.get("cases").and_then(Json::as_array).unwrap();
+        assert!(cases.len() >= 10);
+        for c in cases {
+            let name = c.str_field("name").unwrap();
+            let got = parse_lock(c.str_field("text").unwrap(), dir).ok();
+            let want = c
+                .str_field("url")
+                .map(|u| (u.to_string(), c.str_field("digest").unwrap().to_string()));
+            assert_eq!(got, want, "{name}");
+        }
+    }
+
+    /// A lock file's bundle fetches nothing unless FLASHTEX_BUNDLE_ALLOW_FETCH=1
+    /// (the app's consent); FLASHTEX_BUNDLE_OFFLINE wins over it; an
+    /// environment bundle may fetch.
+    #[test]
+    fn a_lock_files_bundle_fails_closed() {
+        let base = std::env::temp_dir().join(format!(
+            "flashtex-lock-closed-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&base).unwrap();
+        let lock = base.join(LOCK_FILE);
+        std::fs::write(&lock, format!("url = \"b.ttb\"\r\ndigest = \"{D}\"\r\n")).unwrap();
+        let missing = base.join("none").join(LOCK_FILE);
+        let cands = [missing.clone(), lock.clone()];
+        let run = |vars: &[(&str, &str)]| {
+            let vars: Vec<(String, String)> = vars
+                .iter()
+                .map(|(k, v)| (k.to_string(), v.to_string()))
+                .collect();
+            BundleSpec::configured_with(
+                &move |k| vars.iter().find(|(n, _)| n == k).map(|(_, v)| v.clone()),
+                &cands,
+            )
+        };
+        let (spec, origin) = run(&[]).unwrap().unwrap();
+        assert_eq!(origin, SpecOrigin::LockFile(lock.clone()));
+        assert_eq!(spec.digest, D);
+        assert_eq!(spec.url, base.join("b.ttb").display().to_string());
+        assert!(spec.offline, "no consent: offline");
+        let (spec, _) = run(&[("FLASHTEX_BUNDLE_ALLOW_FETCH", "1")])
+            .unwrap()
+            .unwrap();
+        assert!(!spec.offline, "consent given");
+        let url = base.join("b.ttb").display().to_string();
+        let offline_with = |allow: String| {
+            run(&[("FLASHTEX_BUNDLE_ALLOW_FETCH", allow.as_str())])
+                .unwrap()
+                .unwrap()
+                .0
+                .offline
+        };
+        assert!(
+            !offline_with(format!("{D}@{url}")),
+            "consent for this bundle from this source"
+        );
+        assert!(
+            !offline_with(format!("{}@{url}", D.to_uppercase())),
+            "the digest in either case"
+        );
+        assert!(offline_with(D.to_string()), "a digest without its source");
+        assert!(
+            offline_with(format!("{}@{url}", "00".repeat(32))),
+            "consent was for another bundle"
+        );
+        assert!(
+            offline_with(format!("{D}@https://elsewhere.example/b.ttb")),
+            "the same bundle from a source the user did not agree to"
+        );
+        assert!(offline_with(format!("{D}@")), "no source");
+        let both = [
+            ("FLASHTEX_BUNDLE_ALLOW_FETCH", "1"),
+            ("FLASHTEX_BUNDLE_OFFLINE", "1"),
+        ];
+        assert!(run(&both).unwrap().unwrap().0.offline, "offline wins");
+        let env = [
+            ("FLASHTEX_BUNDLE_DIGEST", D),
+            ("FLASHTEX_BUNDLE_URL", "file:///x"),
+        ];
+        let (spec, origin) = run(&env).unwrap().unwrap();
+        assert_eq!(origin, SpecOrigin::Environment);
+        assert!(!spec.offline, "the environment's own bundle");
+        // A lock that does not parse is an error, never "no bundle".
+        std::fs::write(&lock, "url = \"b.ttb\n").unwrap();
+        assert!(run(&[]).unwrap().is_err());
+        // No lock at all.
+        assert!(BundleSpec::configured_with(&|_| None, &[missing]).is_none());
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn user_config_dir_per_os() {
+        let env = |pairs: &'static [(&'static str, &'static str)]| {
+            move |k: &str| {
+                pairs
+                    .iter()
+                    .find(|(n, _)| *n == k)
+                    .map(|(_, v)| std::ffi::OsString::from(v))
+            }
+        };
+        assert_eq!(
+            user_config_dir(CacheOs::MacOs, env(&[("HOME", "/h")])),
+            Some(PathBuf::from("/h/Library/Application Support/FlashTeX"))
+        );
+        assert_eq!(
+            user_config_dir(CacheOs::Xdg, env(&[("HOME", "/h")])),
+            Some(PathBuf::from("/h/.config/flashtex"))
+        );
+        assert_eq!(
+            user_config_dir(CacheOs::Windows, env(&[("APPDATA", "A")])),
+            Some(PathBuf::from("A").join("FlashTeX"))
+        );
+        assert_eq!(user_config_dir(CacheOs::MacOs, env(&[])), None);
     }
 }

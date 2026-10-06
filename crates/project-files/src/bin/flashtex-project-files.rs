@@ -61,6 +61,12 @@
 //!   and `source = "none"` stop at the cache. Files carry the document-set
 //!   path `packages/<name>/<file>`. `diagnostics` are `packages.path.<key>`
 //!   problems. A name that is not a package name is `invalid_request`.
+//!   `"offline":true` never contacts the source, whatever the policy and
+//!   `consent` say: a library or the cache, else `not_available` (the Mac
+//!   app's new engine resolves the pins this way before it compiles).
+//!   `"libraries":true` adds `"libraries":[{"name","version","files"}]`:
+//!   every loaded `[packages] path` library with all its files (the same
+//!   file objects), which the new engine puts ahead of TeX Live.
 //! - `{"id","operation":"set_packages","fetch"?:"ask"|"always"|"never",
 //!   "pin"?:{name:version},"entry"?}` → payload `{"path","exists","changed",
 //!   "text"?}`: like `set_fonts`, the governing manifest's text (or the
@@ -489,6 +495,13 @@ fn resolve_packages(root: &ProjectRoot, req: &Json) -> Result<Json, Failure> {
         Some(Json::Bool(b)) => *b,
         Some(_) => return Err(fail("invalid_request", "consent must be a boolean")),
     };
+    let flag = |key: &str| match req.get(key) {
+        None | Some(Json::Null) => Ok(false),
+        Some(Json::Bool(b)) => Ok(*b),
+        Some(_) => Err(fail("invalid_request", format!("{key} must be a boolean"))),
+    };
+    let offline = flag("offline")?;
+    let with_libraries = flag("libraries")?;
     let (_, loaded, manifest_dir) = governing_manifest(root)?;
     let packages = &loaded.manifest.packages;
     let mut payload = Json::object();
@@ -509,7 +522,29 @@ fn resolve_packages(root: &ProjectRoot, req: &Json) -> Result<Json, Failure> {
     let cache_root = flashtex_package_resolver::default_cache_root();
     payload.insert("cache", cache_root.as_ref().map_or(Json::Null, |p| Json::from(p.to_string_lossy().into_owned())));
     let fetcher = flashtex_package_resolver::http::HttpFetcher::new().map_err(|e| fail("io", e))?;
+    // `libraries`: every loaded library, with all its files (kept before the
+    // resolver takes them; a library with no cache root is still a library).
+    let library_entries: Option<Vec<(String, String, Vec<flashtex_package_resolver::ResolvedFile>)>> =
+        with_libraries.then(|| libraries.iter().map(|l| (l.name.clone(), l.version(), l.files.clone())).collect());
     let resolver = cache_root.map(|c| Resolver::new(c, &fetcher).with_libraries(libraries));
+    let files_json = |mount: &str, files: &[flashtex_package_resolver::ResolvedFile]| {
+        files
+            .iter()
+            .map(|f| {
+                let mut j = Json::object();
+                j.insert("path", virtual_path(mount, &f.name))
+                    .insert("text", f.text.as_str())
+                    .insert("sha256", flashtex_project_files::sha256_hex(f.text.as_bytes()))
+                    .insert("bytes", f.text.len() as u64);
+                if let Some(g) = &f.generated_from {
+                    let mut from = Json::object();
+                    from.insert("batch", g.batch.as_str()).insert("sources", g.sources.iter().map(|s| Json::from(s.as_str())).collect::<Vec<_>>());
+                    j.insert("generated_from", from);
+                }
+                j
+            })
+            .collect::<Vec<_>>()
+    };
     let entries: Vec<Json> = names
         .iter()
         .map(|name| {
@@ -519,26 +554,12 @@ fn resolve_packages(root: &ProjectRoot, req: &Json) -> Result<Json, Failure> {
                 o.insert("status", "not_available").insert("reason", format!("no package cache: set {} (no home directory is known)", flashtex_package_resolver::CACHE_ENV));
                 return o;
             };
-            let policy = Policy::for_package(packages, name);
-            let resolution = if consent { resolver.resolve_with_consent(name, &policy) } else { resolver.resolve(name, &policy) };
-            let files_json = |mount: &str, files: &[flashtex_package_resolver::ResolvedFile]| {
-                files
-                    .iter()
-                    .map(|f| {
-                        let mut j = Json::object();
-                        j.insert("path", virtual_path(mount, &f.name))
-                            .insert("text", f.text.as_str())
-                            .insert("sha256", flashtex_project_files::sha256_hex(f.text.as_bytes()))
-                            .insert("bytes", f.text.len() as u64);
-                        if let Some(g) = &f.generated_from {
-                            let mut from = Json::object();
-                            from.insert("batch", g.batch.as_str()).insert("sources", g.sources.iter().map(|s| Json::from(s.as_str())).collect::<Vec<_>>());
-                            j.insert("generated_from", from);
-                        }
-                        j
-                    })
-                    .collect::<Vec<_>>()
-            };
+            let mut policy = Policy::for_package(packages, name);
+            if offline {
+                // Never the network: the library and the cache only.
+                policy = policy.with_fetch(flashtex_project_manifest::FetchPolicy::Never);
+            }
+            let resolution = if consent && !offline { resolver.resolve_with_consent(name, &policy) } else { resolver.resolve(name, &policy) };
             match resolution {
                 Resolution::Cached { version, files, from, .. } => {
                     let (label, mount) = match &from {
@@ -567,6 +588,17 @@ fn resolve_packages(root: &ProjectRoot, req: &Json) -> Result<Json, Failure> {
         })
         .collect();
     payload.insert("packages", entries);
+    if let Some(libs) = library_entries {
+        let libs: Vec<Json> = libs
+            .iter()
+            .map(|(name, version, files)| {
+                let mut o = Json::object();
+                o.insert("name", name.as_str()).insert("version", version.as_str()).insert("files", files_json(name, files));
+                o
+            })
+            .collect();
+        payload.insert("libraries", libs);
+    }
     Ok(payload)
 }
 

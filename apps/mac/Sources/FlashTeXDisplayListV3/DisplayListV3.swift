@@ -16,16 +16,24 @@ import Foundation
 public enum DL3 {
     public static let protocolName = "display-list-v3"
     public static let versionMajor = 3
-    public static let versionMinor = 1
+    /// 3.2: `external_tools`, `TOOL`, `cause` (bibtex, biber, makeindex in the host).
+    public static let versionMinor = 2
     /// Scaled points per PDF point: 65536 × 72.27 / 72 = 6578176/100.
     public static let spPerBp = 65781.76
     public static let maxFrame = 1 << 28
+
+    /// The `HELLO` `accept` entry for `PROGRESS` (§6.8).
+    public static let progressCapability = "progress-v1"
 
     public enum Kind {
         public static let cHello: UInt8 = 0x01, compile: UInt8 = 0x02, cancel: UInt8 = 0x03, bye: UInt8 = 0x04
         public static let hello: UInt8 = 0x41, started: UInt8 = 0x42, font: UInt8 = 0x43, image: UInt8 = 0x44
         public static let page: UInt8 = 0x45, form: UInt8 = 0x46, sources: UInt8 = 0x47, diagnostic: UInt8 = 0x48
         public static let done: UInt8 = 0x49, error: UInt8 = 0x4A, pages: UInt8 = 0x4B
+        /// 3.2: bibtex/biber/makeindex runs of a compile (spec §6.4).
+        public static let tool: UInt8 = 0x4C
+        /// `progress-v1` (capability-gated, §6.8): a heartbeat while a compile typesets.
+        public static let progress: UInt8 = 0x70
 
         /// The names `dl3-dump` and the Rust crate's `kind::name` use.
         public static func name(_ k: UInt8) -> String {
@@ -45,6 +53,8 @@ public enum DL3 {
             case done: "done"
             case error: "error"
             case pages: "pages"
+            case tool: "tool"
+            case progress: "progress"
             case DL3Diag.kind: "diag"
             default: "unknown"
             }
@@ -546,8 +556,12 @@ public enum DL3Event: Sendable {
     case done(DL3JSON)
     case error(DL3JSON)
     case pages(DL3JSON)
+    /// 3.2: `{"id", "event": run|done|skip|settled, ...}` (§6.4).
+    case tool(DL3JSON)
     /// `diag-v1` (§6.7), for a client that accepted it.
     case diag(DL3Diag)
+    /// `progress-v1` (§6.8), for a client that accepted it: `{"id", "pass", "page"}`.
+    case progress(DL3JSON)
     /// A kind this version does not know (a later minor version's): skipped.
     case other(UInt8, Int)
 
@@ -564,7 +578,9 @@ public enum DL3Event: Sendable {
         case DL3.Kind.done: .done(try DL3JSON.parse(body))
         case DL3.Kind.error: .error(try DL3JSON.parse(body))
         case DL3.Kind.pages: .pages(try DL3JSON.parse(body))
+        case DL3.Kind.tool: .tool(try DL3JSON.parse(body))
         case DL3Diag.kind: .diag(try DL3Diag.decode(body))
+        case DL3.Kind.progress: .progress(try DL3JSON.parse(body))
         default: .other(k, body.count)
         }
     }

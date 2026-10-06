@@ -7,28 +7,25 @@ import FlashTeXDisplayListV3
 // display-list-v3 socket protocol (FlashTeXDisplayListV3). Nothing here links
 // engine code: the licence boundary is this process boundary.
 //
-// Behind a flag, default OFF (docs: apps/mac/docs/engine-v3-preview.md):
-//   defaults write <bundle id or FlashTeXMac> FlashTeX.EngineV3.enabled -bool YES
-//   or FLASHTEX_ENGINE_V3=1 in the environment (0 forces it off), or
-//   View > Engine v3 Preview (Experimental).
-// With the flag off nothing below runs and the old preview path is unchanged.
+// Chosen per document (EngineChoice.swift; docs: apps/mac/docs/engine-v3-preview.md):
+// the status bar's engine item or View > Engine for This Document; Settings >
+// Compile for documents without a choice (`FlashTeX.EngineV3.enabled`);
+// FLASHTEX_ENGINE_V3=1 (0) forces it on (off) for every document. The
+// built-in default is still the previous engine. With the new engine off
+// nothing below runs and the old preview path is unchanged.
 
 enum EngineV3 {
     static let enabledKey = "FlashTeX.EngineV3.enabled"
     static let hostPathKey = "FlashTeX.EngineV3.hostPath"
 
-    /// The flag's stored value (environment first, then user defaults).
-    /// Under XCTest the stored default is not read: a test that wants v3
-    /// turns it on itself, and one that does not must not inherit whatever
-    /// an earlier run left in the test runner's defaults (with v3 on the old
-    /// engine compiles nothing, `ShellModel.suspendOldEngineForV3`).
-    static var enabledAtLaunch: Bool {
-        switch ProcessInfo.processInfo.environment["FLASHTEX_ENGINE_V3"] {
-        case "1": return true
-        case "0": return false
-        default: return underTest ? false : defaults.bool(forKey: enabledKey)
-        }
-    }
+    /// A window's engine before any document opens (EngineChoice.swift:
+    /// the environment, then the app setting, then the built-in default,
+    /// with the no-TeX-Live fallback). Under XCTest the stored setting is
+    /// not read: a test that wants v3 turns it on itself, and one that does
+    /// not must not inherit whatever an earlier run left in the test
+    /// runner's defaults (with v3 on the old engine compiles nothing,
+    /// `ShellModel.suspendOldEngineForV3`).
+    @MainActor static var enabledAtLaunch: Bool { EngineChoice.atLaunch.effective == .new }
 
     /// XCTest is loaded: `swift test` sets neither of the variables
     /// `ShellModel.runningUnderXCTest` looks for, so ask for its class too.
@@ -161,6 +158,9 @@ final class EngineV3HostProcess: @unchecked Sendable {
         case prepared(DL3JSON)
         case listening(socket: String)
         case exited(pid: Int32, status: Int32)
+        /// A bundle fetch's progress (`bundle_progress`, protocol §6.2):
+        /// `what` is `index`, `core` or `file`; a step ends with done = total.
+        case bundleProgress(what: String, name: String, done: Int64, total: Int64)
     }
 
     let executable: URL
@@ -169,8 +169,12 @@ final class EngineV3HostProcess: @unchecked Sendable {
     private var buffer = Data()
     private let lock = NSLock()
 
-    init(executable: URL, onEvent: @escaping @Sendable (Event) -> Void) throws {
+    /// `confineRoots`: the host compiles text from a Live Share session and
+    /// may read only inside these folders besides the job's own
+    /// (`confinedEnvironment`); nil for an ordinary host.
+    init(executable: URL, confineRoots: [String]? = nil, onEvent: @escaping @Sendable (Event) -> Void) throws {
         self.executable = executable
+        self.confineRoots = confineRoots
         let dir = NSTemporaryDirectory()
         socketPath = (dir as NSString).appendingPathComponent("ftx-\(getpid())-\(UInt32.random(in: 0 ... .max)).sock")
         let s0 = EngineV3.cacheDirectory.appendingPathComponent("s0", isDirectory: true)
@@ -183,7 +187,8 @@ final class EngineV3HostProcess: @unchecked Sendable {
         // Checkpoint interval inside a page (engine default 0.02 s): the
         // restart re-typesets up to that much before an edit. A/B knob.
         if let t = ProcessInfo.processInfo.environment["FLASHTEX_V3_TIMED"], Double(t) != nil { process.arguments! += ["--timed", t] }
-        process.environment = Self.environment(host: executable)
+        process.environment = confineRoots.map { Self.confinedEnvironment(Self.environment(host: executable), roots: $0) }
+            ?? Self.environment(host: executable)
         let out = Pipe(), err = Pipe()
         process.standardOutput = out
         process.standardError = err
@@ -203,9 +208,13 @@ final class EngineV3HostProcess: @unchecked Sendable {
                 onEvent(.line(line))
                 if line.hasPrefix("flashtex-host: listening on") {
                     onEvent(.listening(socket: socketPath))
-                } else if line.hasPrefix("flashtex-host: {"), let j = try? DL3JSON.parse(Array(line.dropFirst("flashtex-host: ".count).utf8)),
-                          j["texmf"] != nil || j["formats"] != nil || j["warm_ms"] != nil {
-                    onEvent(.prepared(j))
+                } else if line.hasPrefix("flashtex-host: {"), let j = try? DL3JSON.parse(Array(line.dropFirst("flashtex-host: ".count).utf8)) {
+                    if let p = j["bundle_progress"] {
+                        onEvent(.bundleProgress(what: p["what"]?.string ?? "", name: p["name"]?.string ?? "",
+                                                done: p["done"]?.int ?? 0, total: p["total"]?.int ?? 0))
+                    } else if j["texmf"] != nil || j["formats"] != nil || j["warm_ms"] != nil {
+                        onEvent(.prepared(j))
+                    }
                 }
             }
         }
@@ -264,6 +273,38 @@ final class EngineV3HostProcess: @unchecked Sendable {
         if env["FLASHTEX_POOL"] == nil, let pool = EngineV3.locatePool(host: executable) { env["FLASHTEX_POOL"] = pool.path }
         if (env["FLASHTEX_FORMAT_CACHE_DIR"] ?? "").isEmpty, EngineV3.cacheIsPrivate {
             env["FLASHTEX_FORMAT_CACHE_DIR"] = EngineV3.cacheDirectory.appendingPathComponent("formats", isDirectory: true).path
+        }
+        // The bundle (no TeX Live): the lock the app found, offline until the user agreed.
+        EngineV3Bundle.hostEnvironment(&env, host: executable)
+        return env
+    }
+
+    /// Launched with `confinedEnvironment` and these roots (nil: not).
+    let confineRoots: [String]?
+    var confined: Bool { confineRoots != nil }
+
+    /// The environment of a host that compiles other people's text (a Live
+    /// Share session, proposal §6.2): reads confined to names relative to
+    /// the job or found along the search paths (`FLASHTEX_CONFINE_READS`, the
+    /// engine's own check: kpathsea's paranoid `openin_any` does not confine
+    /// reads), writes confined by kpathsea's paranoid `openout_any` (no
+    /// absolute name, no `..`, no dotfile; relative names land in the
+    /// output directory, which is the project copy's, never the project),
+    /// with no `TEXMFOUTPUT` that would let an absolute name through. Every
+    /// file the engine opens must also resolve, through links, into `roots`
+    /// (the real project folder), the job's folder, the output folder or a
+    /// TeX tree (`FLASHTEX_CONFINE_ROOTS`). No mktex script runs (a `\font`
+    /// name must never start METAFONT).
+    static func confinedEnvironment(_ base: [String: String], roots: [String]) -> [String: String] {
+        var env = base
+        env["FLASHTEX_CONFINE_READS"] = "1"
+        env["FLASHTEX_CONFINE_ROOTS"] = roots.joined(separator: ":")
+        for k in ["MKTEXTFM", "MKTEXPK", "MKTEXMF", "MKTEXTEX", "MKOCP", "MKOFM"] { env[k] = "0" }
+        env["openin_any"] = "p"
+        env["openout_any"] = "p"
+        env.removeValue(forKey: "TEXMFOUTPUT")
+        for k in env.keys where k.hasPrefix("openin_any_") || k.hasPrefix("openout_any_") || k.hasPrefix("TEXMFOUTPUT_") {
+            env.removeValue(forKey: k)
         }
         return env
     }

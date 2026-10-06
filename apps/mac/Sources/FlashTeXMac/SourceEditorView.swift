@@ -62,6 +62,10 @@ struct SourceEditorView: NSViewRepresentable {
     /// bare editor) leaves Paste exactly AppKit's.
     var imagePasteHost: () -> PasteImage.Host? = { nil }
     var onCaretChange: (Int) -> Void = { _ in }
+    /// Where a newly made view puts the caret (UTF-16 offset), read once in
+    /// `makeNSView`; nil (the default) leaves AppKit's. The untitled document
+    /// starts on its empty line under `\section{Introduction}` (ContentView).
+    var initialCaretUTF16: () -> Int? = { nil }
     var onSelectionChange: (NSRange) -> Void = { _ in }
     var onEditApplied: (ShellModel.PendingEdit, String) -> Void = { _, _ in }
     /// A pending edit the view could not apply (the buffer moved on since it
@@ -124,10 +128,16 @@ struct SourceEditorView: NSViewRepresentable {
     /// The current v2 preview, for the inline math hover preview
     /// (MathHoverPreview.swift); nil when there is no v2 frame to crop from.
     var mathPreviewContext: () -> MathHoverPreview.Context? = { nil }
+    /// The engine-v3 preview's crop for a formula (its UTF-16 range in the
+    /// buffer; EngineV3MathHover.swift); nil when v3 has none.
+    var mathPreviewV3: (NSRange) -> CGImage? = { _ in nil }
     /// Vim `:` commands that need the app (`:w`, `:q`, `:e`, `:set nu`;
     /// VimMode.swift); returns a status message or nil. Nothing is wired by
     /// default: the command line then reports it as unavailable.
     var onExCommand: (VimMode.ExCommand) -> String? = { _ in "E319: Command not available here" }
+    /// Live Share (SourceEditorView+LiveShare.swift): the session file this
+    /// buffer is, or nil outside a session (the default; nothing changes).
+    var liveShare: LiveShareFileLink? = nil
 
     /// A navigation selection that would move the caret backwards is deferred
     /// while the last user edit is younger than this.
@@ -160,6 +170,11 @@ struct SourceEditorView: NSViewRepresentable {
         tv.setAccessibilityLabel("LaTeX source") // FlashTeXAccessibility: VoiceOver names the editor
         tv.setAccessibilityHelp("LaTeX source editor. Moving the selection announces the line and column, and any diagnostic under the insertion point.")
         tv.string = text
+        if let caret = initialCaretUTF16(), caret >= 0, caret <= (tv.string as NSString).length {
+            context.coordinator.programmaticChanges += 1 // placed, not moved: nothing is announced
+            tv.setSelectedRange(NSRange(location: caret, length: 0)) // onCaretChange → model.caretUTF16
+            context.coordinator.programmaticChanges -= 1
+        }
         context.coordinator.syntax.enabled = syntaxHighlighting
         context.coordinator.syntax.language = language // before attach: the first lex is already in the right language
         context.coordinator.syntax.attach(tv) // follows the storage from here on; paints the visible window
@@ -231,12 +246,16 @@ struct SourceEditorView: NSViewRepresentable {
         var textReset = false
         if text != co.lastKnownText {
             co.programmaticChanges += 1
+            co.liveShare.suspended += 1 // a reset is a document switch or a reload, not typing
             tv.string = text // drops temporary attributes; repaint marks below
+            co.liveShare.suspended -= 1
             co.programmaticChanges -= 1
             co.lastKnownText = text
+            co.textResets += 1
             co.textWasReset()
             textReset = true
         }
+        if liveShare != nil || co.liveShare.link != nil { co.syncLiveShare(liveShare, in: tv, textReset: textReset) }
         co.marks.update(marks, in: tv, reset: textReset)
         co.gutter?.update(marks: marks)
         co.errorLens.update(marks: marks)
@@ -570,6 +589,11 @@ struct SourceEditorView: NSViewRepresentable {
         var composing: Bool { textView?.hasMarkedText() ?? false }
         /// Composition selection changes observed (tests and evidence).
         private(set) var compositionSteps = 0
+        /// Live Share state (SourceEditorView+LiveShare.swift).
+        let liveShare = LiveShareEditorState()
+        /// Whole-buffer resets from the model (`tv.string = text`): a remote
+        /// change must never cause one (tests assert this stays put).
+        var textResets = 0
         /// VoiceOver sink; tests replace it to observe announcements.
         var announce: (String) -> Void = { _ in }
         /// Delimiter pair highlighted around the caret (temporary background).
@@ -581,6 +605,10 @@ struct SourceEditorView: NSViewRepresentable {
         /// hand-typed opener's closer (EditorKeyHandling.swift's hook from
         /// Completion.swift's snippet insertion).
         func registerPendingCloser(_ offset: Int) { pendingClosers.append(offset) }
+        /// A remote change moved the text (Live Share): keep auto-closers aligned.
+        func shiftPendingClosers(edit range: NSRange, replacementLength: Int) {
+            pendingClosers = AutoClose.shifted(pendingClosers, edit: range, replacementLength: replacementLength)
+        }
         /// The user edit AppKit is applying (from `shouldChangeTextIn` to `textDidChange`).
         private var lastEdit: (range: NSRange, replacement: String)?
         /// True while a linked name-span keystroke has an open undo group that
@@ -773,10 +801,13 @@ struct SourceEditorView: NSViewRepresentable {
         /// `MathHoverPreview.crop` is (not inside one, stale, or the current
         /// frame's items don't cover it) or that page's bitmap isn't ready yet.
         func mathPreview(at index: Int) -> (image: CGImage, range: NSRange)? {
-            guard let tv = textView, let context = parent.mathPreviewContext() else { return nil }
+            guard let tv = textView else { return nil }
             let text = tv.textStorage?.string as NSString? ?? ""
             let h = syntax.inSync(with: text) ? syntax.highlighter : nil
             guard let span = EditorIntelligence.inlineMathSpan(in: text, at: index, highlighter: h) else { return nil }
+            // The engine-v3 preview crops from its own page bitmap.
+            if let image = parent.mathPreviewV3(span) { return (image, span) }
+            guard let context = parent.mathPreviewContext() else { return nil }
             guard let crop = MathHoverPreview.crop(in: text, at: index, path: context.path, pages: context.frame.list.pages,
                                                    previewIsStale: context.previewIsStale, highlighter: h) else { return nil }
             guard let last = V2PageRasterizer.shared.lastRequest,
@@ -1112,10 +1143,18 @@ struct SourceEditorView: NSViewRepresentable {
         private func textDidChange(_ notification: Notification, signposted: Void) {
             guard let tv = notification.object as? NSTextView else { return }
             TypingBench.shared.textViewDidChange() // stamps the delegate time for keystroke -> paint
+            if liveShare.link != nil, !liveShare.applyingRemote { liveShareSettle() } // Live Share: a committed composition reaches peers
             PerfSignposts.interval("syntaxFlush") { syntax.flush() } // the storage notification updated the line model; colours the changed lines now (deferred while composing)
             hover.dismiss()
             gutter?.layoutIfNeeded(lineCount: syntax.highlighter.lineCount)
-            gutter?.needsDisplay = true
+            // An edit inside one paragraph that moves no line leaves every
+            // number, fold mark and dot where it was: the text view redraws the
+            // gutter only if the edit did move lines (EditorEditTail.swift).
+            if let completing = tv as? CompletingTextView, completing.editTail != nil {
+                completing.gutterAfterEdit = gutter
+            } else {
+                gutter?.redrawAfterEdit()
+            }
             scheduleFoldGutterRefresh()
             if !textChangedThisTurn {
                 textChangedThisTurn = true
@@ -1156,6 +1195,7 @@ struct SourceEditorView: NSViewRepresentable {
         func textViewDidChangeSelection(_ notification: Notification) {
             guard let tv = notification.object as? NSTextView else { return }
             if tv.hasMarkedText() { compositionStep(tv); return }
+            if liveShare.link != nil { liveShareSelectionChanged(tv, typing: textChangedThisTurn) }
             let range = tv.selectedRange()
             parent.onCaretChange(range.location)
             parent.onSelectionChange(range)

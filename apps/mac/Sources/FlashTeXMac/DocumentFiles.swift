@@ -66,6 +66,8 @@ final class DocumentFilesState {
     }
 
     var policy: HelperPolicy = .discover
+    /// How long an `offline` `resolve_packages` may take (tests shorten it).
+    var packagesOfflineTimeout: TimeInterval = 10
     /// Backend of the most recent file operation (nil before any).
     private(set) var backend: Backend?
     private(set) var status = "no file operation yet"
@@ -290,8 +292,10 @@ final class DocumentFilesState {
     /// binding and bounded wait as `manifest(for:entry:)`.
     /// `resolve_packages` on the dedicated packages helper (see
     /// `packagesClient`), awaited off the main thread: up to 30 s for a
-    /// description, 120 s when `consent` fetches.
-    func resolvePackages(for root: URL, names: [String], consent: Bool, entry: String) async -> Result<ProjectFilesV1.ResolvePackages, ProjectManifest.Failure> {
+    /// description, 120 s when `consent` fetches, 10 s `offline` (the
+    /// library and the cache only; `libraries` lists every library too).
+    func resolvePackages(for root: URL, names: [String], consent: Bool, entry: String, offline: Bool = false,
+                         libraries: Bool = false) async -> Result<ProjectFilesV1.ResolvePackages, ProjectManifest.Failure> {
         switch acquirePackagesClient(for: root) {
         case .direct(let reason):
             note(reason)
@@ -300,7 +304,8 @@ final class DocumentFilesState {
             return .failure(.init(reason))
         case .client(let client):
             do {
-                return .success(try await client.resolvePackages(names: names, consent: consent, entry: entry, timeout: consent ? 120 : 30))
+                return .success(try await client.resolvePackages(names: names, consent: consent, entry: entry, offline: offline, libraries: libraries,
+                                                                 timeout: offline ? packagesOfflineTimeout : consent ? 120 : 30))
             } catch let f as LineProcessFailure {
                 note("helper resolve_packages failed: \(f.text)")
                 return .failure(.init(f.text))
@@ -854,6 +859,11 @@ extension ShellModel {
             guard keepDiscarded(discarding, reason: reload ? "discarded by a reload from disk" : "discarded when \(url.lastPathComponent) was opened",
                                 before: (reload ? "reloading " : "opening ") + url.lastPathComponent) else { return false }
         }
+        // The engine is chosen before the v3 session hears of the new
+        // project (EngineChoice.swift): a window on the new engine opening a
+        // document the previous engine typesets starts no v3 compile of it.
+        let v3Before = engineV3Enabled
+        engineChoicePending = true
         replaceProject(entryText: text, named: url.lastPathComponent)
         documentURL = url
         savedText = text
@@ -861,6 +871,11 @@ extension ShellModel {
         files.noteDiskState(.unchanged)
         watchOpenDocument() // DocumentWatcher.swift: live external-change detection
         manifest.refresh() // ProjectManifest.swift: the flashtex.toml governing this project, before the first compile
+        resolveEngineForOpenedDocument() // this document's engine, with the fallback rules (after the manifest)
+        engineChoicePending = false
+        // Still on the new engine: now it opens the project (stored pages,
+        // compile). Newly on it: `engineV3Enabled`'s didSet started it.
+        if v3Before, engineV3Enabled, let at = engineV3OpenedAt { engineV3.projectChanged(model: self, openedAt: at) }
         if workerAttached { compile() }
         return true
     }
@@ -1470,7 +1485,12 @@ extension ShellModel {
         }
         switch result {
         case .saved:
+            let before = documentURL
+            // Save As / a first save: no v3 open of the new path before its
+            // engine is chosen (cleared by engineDocumentSaved).
+            if before?.standardizedFileURL != url.standardizedFileURL { engineChoicePending = true }
             documentURL = url
+            engineDocumentSaved(from: before) // EngineChoice.swift: Save As / first save keeps the engine choice, re-checks the rules
             savedText = text
             noteSaveConfirmation("Saved \(url.lastPathComponent)" + (recreated ? " (recreated; it had been deleted on disk)" : ""), for: url)
             bridgeSourceSaved(url: url, text: text)

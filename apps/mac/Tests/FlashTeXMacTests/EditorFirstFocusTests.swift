@@ -221,8 +221,12 @@ final class EditorFirstFocusTests: XCTestCase {
                                               windowNumber: window.windowNumber, context: nil, characters: s,
                                               charactersIgnoringModifiers: s, isARepeat: false, keyCode: 0)!)
         }
-        try await Task.sleep(nanoseconds: 400_000_000)
-        let popupVisible = window.childWindows?.contains { $0 is CompletionPopup && $0.isVisible } ?? false
+        // The popup appears after the auto-completion delay and an off-main
+        // scan: wait for it (up to 10 s on a loaded runner), not a fixed 400 ms.
+        func popupOnScreen() -> Bool { window.childWindows?.contains { $0 is CompletionPopup && $0.isVisible } ?? false }
+        let shown = Date().addingTimeInterval(10)
+        while !popupOnScreen(), Date() < shown { try await Task.sleep(nanoseconds: 20_000_000) }
+        let popupVisible = popupOnScreen()
         XCTAssertTrue(tv.string.hasSuffix(" \\se"), "the keys reached the editor")
         XCTAssertTrue(tv.isCompletionActive, "typing \\se opens a session")
         XCTAssertTrue(popupVisible, "the completion panel is on screen")

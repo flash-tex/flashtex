@@ -693,15 +693,23 @@ def pt1_skip_reason(doc, cfg):
 
 
 def pt1_plan(doc, cfg, skip):
-    """How the TeX candidate's traced pass runs: (stream, time limit). When
-    the oracle's log is over the in-memory budget, the candidate's is
-    expected to be too: its log is a named pipe streamed from the first
-    byte (`capture(stream="fingerprint")`, constant memory). The limit
-    scales with the oracle's log (`tiers.pt1_timeout`)."""
-    if cfg["pt"] != "on" or skip or not cfg.get("oracle_pdftex"):
+    """How the TeX candidate's traced pass runs: (stream, time limit). Its
+    log is always a named pipe, like the oracle's, so no byte of it reaches
+    the disk: a candidate that traces far more than the oracle (a runaway
+    loop until the time limit, at 27-40 MiB/s) once wrote tens of GB into
+    the work directory. When the oracle's log is over the in-memory budget,
+    the candidate's is expected to be too, and is streamed from the first
+    byte (`capture(stream="fingerprint")`, constant memory); otherwise it is
+    held in memory up to the budget and streamed past it
+    (`capture(stream="pipe")`, the oracle's own mode). The limit scales with
+    the oracle's log and its traced pass's time (`tiers.pt1_timeout`)."""
+    if cfg["pt"] != "on" or skip:
         return False, None
+    if not cfg.get("oracle_pdftex"):
+        return "pipe", None
     meta, _, _ = ptiers.oracle(doc, cfg["oracle_pdftex"], cfg["cache"], True, tree_hash(doc["dir"]), load_log=False)
-    return ("fingerprint" if ptiers.log_over_budget(meta) else False), ptiers.pt1_timeout(meta.get("log_chars"))
+    return (("fingerprint" if ptiers.log_over_budget(meta) else "pipe"),
+            ptiers.pt1_timeout(meta.get("log_chars"), meta.get("trace_seconds")))
 
 
 def pt_oracle_trace(cfg, skip):
@@ -1857,8 +1865,10 @@ def main(argv=None):
                     help="in-memory budget for a traced log (MiB); a larger one is compared as a stream, in constant "
                          "memory (pt1stream.py); 0: no budget")
     ap.add_argument("--pt1-timeout", type=int, default=ptiers.pcapture.TIMEOUT, metavar="S",
-                    help="time limit of a traced pass, at least; a candidate's grows with the oracle's log "
-                         f"({ptiers.PT1_MIN_RATE >> 20} MiB/s). A pass it stops is a harness error, never a pass")
+                    help="time limit of a traced pass, at least; the oracle's is "
+                         f"{ptiers.PT1_ORACLE_FACTOR} times this (cached), a candidate's grows with the oracle's "
+                         f"log ({ptiers.PT1_MIN_RATE >> 20} MiB/s) and with {ptiers.PT1_ORACLE_SLACK} times its traced "
+                         "pass, up to the oracle's limit. A pass it stops is a harness error, never a pass")
     ap.add_argument("--pt1-skip", action="append", default=[], metavar="ID",
                     help="document ([tier/]id) whose P-T1 is not evaluated (its oracle is never traced); repeatable")
     ap.add_argument("--texbin", default=rwc.DEFAULT_TEXBIN)
@@ -1963,7 +1973,7 @@ def main(argv=None):
             "engine_kind": kind, "engine_version": exe_ver.splitlines()[0] if exe_ver else "",
             "oracle_pdftex": oracle_pdftex, "oracle_pdftex_version": oracle_ver, "pt": args.pt,
             "pt1_max_log_mb": args.pt1_max_log_mb, "pt1_skip": sorted(args.pt1_skip),
-            "pt1_timeout": args.pt1_timeout,
+            "pt1_timeout": args.pt1_timeout, "pt1_oracle_timeout": ptiers.oracle_pt1_timeout(),
             "capture": ptiers.pcapture.SOURCE, "qpdf": ptiers.qpdf_version(),
             "shell_escape": args.shell_escape_flag, "argv0": ptiers.pcapture.PROGRAM,
             "engine_env": sorted(engine_env),

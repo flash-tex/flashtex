@@ -1,0 +1,190 @@
+status done; pages 119 (pdf 119); incomplete (
+    1,
+    2,
+    5,
+    6,
+    8,
+    9,
+    10,
+    13,
+    14,
+    16,
+    17,
+    18,
+    21,
+    22,
+    24,
+    25,
+    26,
+    29,
+    30,
+    32,
+    33,
+    34,
+    37,
+    38,
+    40,
+    41,
+    42,
+    43,
+    46,
+    47,
+    49,
+    50,
+    51,
+    54,
+    55,
+    57,
+    58,
+    59,
+    62,
+    63,
+    65,
+    66,
+    67,
+    70,
+    71,
+    73,
+    74,
+    75,
+    78,
+    79,
+    81,
+    82,
+    83,
+    86,
+    87,
+    89,
+    90,
+    91,
+    94,
+    95,
+    97,
+    98,
+    99,
+    102,
+    103,
+    105,
+    106,
+    107,
+    110,
+    111,
+    113,
+    114,
+    115,
+    118,
+    119
+)
+p38 current 1 src pane pdfFallback 1 forms 1 ppp 2.860804497912274
+    whole @2.8608: 1038x779 differing 0 maxDelta 0
+p40 current 1 src pane pdfFallback 1 forms 4 ppp 2.860804497912274
+    whole @2.8608: 1038x779 differing 0 maxDelta 0
+p41 current 1 src pane pdfFallback 1 forms 4 ppp 2.860804497912274
+    whole @2.8608: 1038x779 differing 0 maxDelta 0
+p42 current 1 src pane pdfFallback 1 forms 4 ppp 2.860804497912274
+    whole @2.8608: 1038x779 differing 0 maxDelta 0
+p43 current 1 src pane pdfFallback 1 forms 4 ppp 2.860804497912274
+    whole @2.8608: 1038x779 differing 0 maxDelta 0
+p44 current 1 src pane pdfFallback 0 forms 0 ppp 2.860804497912274
+    whole @2.8608: 1038x779 differing 0 maxDelta 0
+p45 current 1 src pane pdfFallback 0 forms 0 ppp 2.860804497912274
+    whole @2.8608: 1038x779 differing 0 maxDelta 0
+p60 current 1 src pane pdfFallback 0 forms 0 ppp 2.860804497912274
+    whole @2.8608: 1038x779 differing 0 maxDelta 0
+p117 current 1 src pane pdfFallback 0 forms 0 ppp 2.860804497912274
+    whole @2.8608: 1038x779 differing 0 maxDelta 0
+p118 current 1 src pane pdfFallback 1 forms 1 ppp 2.860804497912274
+    whole @2.8608: 1038x779 differing 0 maxDelta 0
+p119 current 1 src pane pdfFallback 1 forms 1 ppp 2.860804497912274
+    whole @2.8608: 1038x779 differing 0 maxDelta 0
+edit {
+    changedPages =     (
+        40,
+        41,
+        42,
+        43,
+        44,
+        45,
+        46,
+        47,
+        48,
+        49,
+        50,
+        51,
+        52,
+        53,
+        54,
+        55,
+        56,
+        57,
+        58,
+        59,
+        60,
+        61,
+        62,
+        63,
+        64,
+        65,
+        66,
+        67,
+        68,
+        69,
+        70,
+        71,
+        72,
+        73,
+        74,
+        75,
+        76,
+        77,
+        78,
+        79,
+        80,
+        81,
+        82,
+        83,
+        84,
+        85,
+        86,
+        87,
+        88,
+        89,
+        90,
+        91,
+        92,
+        93,
+        94,
+        95,
+        96,
+        97,
+        98,
+        99,
+        100,
+        101,
+        102,
+        103,
+        104,
+        105,
+        106,
+        107,
+        108,
+        109,
+        110,
+        111,
+        112,
+        113,
+        114,
+        115,
+        116,
+        117,
+        118,
+        119
+    );
+    needle = "Point three of frame 20.";
+    offset = 8819;
+    pagesAfter = 119;
+    pagesBefore = 118;
+    stalePages =     (
+    );
+    text = "\n    \\item<4-> Point four of frame 20.";
+}

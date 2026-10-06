@@ -4,6 +4,9 @@
 //! xorshift PRNG, no extra dependencies) over every oracle document and
 //! the HW1/HW2 real-world fixtures.
 
+// Clippy debt in frozen old-engine code (D13): allowed, not refactored.
+#![allow(clippy::precedence, reason = "frozen old engine (D13): fixes only; clippy debt is allowed rather than refactored")]
+
 use flashtex_tex_expansion::{expand_str, Edit, IncrementalExpander, Limits};
 use serde_json::Value;
 

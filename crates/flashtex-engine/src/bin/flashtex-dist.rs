@@ -96,7 +96,7 @@ const VARS: &[&str] = &[
 fn texlive(args: &[String]) {
     let compare = args.iter().any(|a| a == "--compare");
     for (d, how) in resolver::texlive_candidates() {
-        let ok = d.join("kpsewhich").is_file();
+        let ok = d.join(flashtex_engine::os::exe_name("kpsewhich")).is_file();
         println!("  {} {:<60} {how}", if ok { "*" } else { " " }, d.display());
         if ok {
             break;
@@ -119,7 +119,7 @@ fn texlive(args: &[String]) {
         let ours = r.var_value(v).unwrap_or_default();
         let mut line = format!("{v:<16} {ours}");
         if compare {
-            let o = Command::new(t.bin.join("kpsewhich"))
+            let o = Command::new(t.bin.join(flashtex_engine::os::exe_name("kpsewhich")))
                 .arg("-progname=pdflatex")
                 .arg(format!("-var-value={v}"))
                 .output()
@@ -148,7 +148,7 @@ fn texlive(args: &[String]) {
                 .find(n, *f)
                 .map(|p| p.display().to_string())
                 .unwrap_or_default();
-            let o = Command::new(t.bin.join("kpsewhich"))
+            let o = Command::new(t.bin.join(flashtex_engine::os::exe_name("kpsewhich")))
                 .args(["-progname=pdflatex", &format!("-format={kf}"), n])
                 .output()
                 .map(|o| String::from_utf8_lossy(&o.stdout).trim_end().to_string())
@@ -171,7 +171,7 @@ fn texlive(args: &[String]) {
             .iter()
             .map(|p| p.display().to_string())
             .collect();
-        let o = Command::new(t.bin.join("kpsewhich"))
+        let o = Command::new(t.bin.join(flashtex_engine::os::exe_name("kpsewhich")))
             .args(["-all", "fmtutil.cnf"])
             .output()
             .map(|o| {
@@ -302,10 +302,17 @@ fn bundle_pack(args: &[String]) {
     let tlpdb = opt(args, "--tlpdb")
         .map(PathBuf::from)
         .unwrap_or_else(|| root.join("tlpkg/texlive.tlpdb"));
-    let packages = bundle::build::parse_tlpdb_runfiles(
-        &std::fs::read_to_string(&tlpdb)
-            .unwrap_or_else(|e| die(format!("{}: {e}", tlpdb.display()))),
-    );
+    let whole = args.iter().any(|a| a == "--whole-packages");
+    // The tlpdb names each file's package. Without one (a distribution's
+    // own TeX Live packaging), every file goes in one package, which is
+    // only wrong for `--whole-packages`.
+    let packages = match std::fs::read_to_string(&tlpdb) {
+        Ok(t) => bundle::build::parse_tlpdb_runfiles(&t),
+        Err(e) if whole || opt(args, "--tlpdb").is_some() => {
+            die(format!("{}: {e}", tlpdb.display()))
+        }
+        Err(_) => Default::default(),
+    };
     let mut read = read_paths(&opt_all(args, "--read"), &opt_all(args, "--manifest"));
     // Read by kpathsea and the format cache themselves, not through the
     // engine: TeX Live's texmf.cnf (the bundle resolver runs kpathsea with
@@ -317,7 +324,6 @@ fn bundle_pack(args: &[String]) {
     read.extend(config.iter().cloned());
     read.sort();
     read.dedup();
-    let whole = args.iter().any(|a| a == "--whole-packages");
     let mut sel = bundle::build::select(&root, &read, &packages, whole).unwrap_or_else(|e| die(e));
     // Core: exactly the files the core read lists name (what the format
     // build and a minimal document read), as one range at the front; the
@@ -338,6 +344,9 @@ fn bundle_pack(args: &[String]) {
         core = vec!["core".into()];
     }
     let nfiles = sel.files.len();
+    if nfiles == 0 {
+        die("nothing to pack: no file of the read lists is TeX Live's");
+    }
     let (bytes, ix) = ttb::pack(sel.files, &bundle::build::default_search(), &core);
     std::fs::write(&out, &bytes).unwrap_or_else(|e| die(format!("{out}: {e}")));
     let core_bytes: u64 = ix
@@ -350,14 +359,25 @@ fn bundle_pack(args: &[String]) {
     println!("bundle {out}");
     println!("digest {}", hex(&h.digest));
     println!(
-        "{} files ({} read, {} outside TeX Live left out), {} packages, {} core ({} bytes)",
+        "{} files ({} read, {} outside TeX Live left out, {} never bundled), {} packages, {} core ({} bytes)",
         nfiles,
         read.len(),
         sel.outside.len(),
+        sel.excluded.len(),
         ix.packages.len(),
         core.len(),
         core_bytes
     );
+    // The read files left out by rule, each by name (whole packages' own
+    // left-out runfiles, e.g. texlive.infra's tlpkg/, only as a count).
+    let read_rel: BTreeSet<String> = read
+        .iter()
+        .filter_map(|p| p.strip_prefix(&root).ok())
+        .map(|p| p.to_string_lossy().replace('\\', "/"))
+        .collect();
+    for (rel, why) in sel.excluded.iter().filter(|(r, _)| read_rel.contains(r)) {
+        println!("left out {rel}: {why}");
+    }
     println!(
         "size {} bytes, index {} bytes gzipped ({} raw)",
         bytes.len(),
@@ -381,7 +401,13 @@ fn bundle_measure(args: &[String]) {
     for d in ["bin", "doc", "bundles", "formats"] {
         std::fs::create_dir_all(work.join(d)).unwrap();
     }
-    std::os::unix::fs::symlink(engine_exe(), work.join("bin/pdftex")).unwrap();
+    flashtex_engine::os::link_executable(
+        &engine_exe(),
+        &work
+            .join("bin")
+            .join(flashtex_engine::os::exe_name("pdftex")),
+    )
+    .unwrap();
     let server = FixtureServer::start(bytes, "bundle.ttb").unwrap();
     let dir = doc.parent().unwrap_or(Path::new("."));
     for e in std::fs::read_dir(dir).unwrap().flatten() {

@@ -272,7 +272,6 @@ name = "flashtex-bridge"
 version = "0.1.0"
 dependencies = [
  "base64",
- "flashtex-compiler",
  "fs2",
  "image",
  "reqwest",
@@ -280,6 +279,14 @@ dependencies = [
  "serde_json",
  "sha2",
  "tempfile",
+]
+
+[[package]]
+name = "flashtex-build"
+version = "0.1.0"
+dependencies = [
+ "flashtex-display-list",
+ "libc",
 ]
 
 [[package]]
@@ -442,9 +449,7 @@ version = "0.1.0"
 name = "flashtex-paragraph-layout"
 version = "0.1.0"
 dependencies = [
- "flashtex-compiler",
  "flashtex-document-style",
- "flashtex-font-engine",
  "flashtex-microtype",
 ]
 
