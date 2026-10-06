@@ -197,6 +197,12 @@ pub trait Observer {
     fn take_held_segment(&mut self, _g: &mut Globals) -> bool {
         true
     }
+    /// A `build_page` after a line was read (a restart point) comes before
+    /// the segment spacing allows a checkpoint: whether to take one anyway,
+    /// because the observer would stop the run there (newer work waits).
+    fn stop_between_segments(&mut self, _g: &mut Globals) -> bool {
+        false
+    }
     /// The observer as `Any`, to take it back after a run.
     fn into_any(self: Box<Self>) -> Box<dyn std::any::Any>;
 }
@@ -1890,21 +1896,37 @@ impl Globals {
             REQ_AUX_DONE => self.hook_checkpoint(Point::AuxDone),
             REQ_SEGMENT => {
                 let l = self.layer();
-                let due = l.lines > l.lines_at_checkpoint
-                    && l.last_checkpoint
-                        .is_none_or(|t| t.elapsed().as_secs_f64() >= l.segment_s);
+                // a restart point: a line read since the last checkpoint
+                let fresh = l.lines > l.lines_at_checkpoint;
+                let spaced = l
+                    .last_checkpoint
+                    .is_none_or(|t| t.elapsed().as_secs_f64() >= l.segment_s);
+                let due = fresh && spaced;
                 let held = due && l.segment_hold;
-                // held back: taken only where the observer stops the run
-                let take = due
-                    && (!held
-                        || match self.layer().observer.take() {
-                            Some(mut obs) => {
-                                let t = obs.take_held_segment(self);
-                                self.layer().observer = Some(obs);
-                                t
-                            }
-                            None => true,
-                        });
+                // Held back: taken only where the observer stops the run.
+                // Not yet `segment_s` after the last one: likewise. The
+                // spacing is what the copies cost; a stop needs a restart
+                // point, not the spacing, so a keystroke typed while the run
+                // goes on stops it at the next `build_page` (lane
+                // P4-TYPING-200WPM: up to ~18 M cycles sooner).
+                let take = if due && !held {
+                    true
+                } else if fresh {
+                    match self.layer().observer.take() {
+                        Some(mut obs) => {
+                            let t = if held {
+                                obs.take_held_segment(self)
+                            } else {
+                                obs.stop_between_segments(self)
+                            };
+                            self.layer().observer = Some(obs);
+                            t
+                        }
+                        None => held,
+                    }
+                } else {
+                    false
+                };
                 let l = self.layer();
                 if take {
                     l.stats.segments += 1;
