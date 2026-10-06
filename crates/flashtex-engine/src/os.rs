@@ -341,6 +341,7 @@ mod linux_pmu {
 
     /// Whether the group has counted all the time it was enabled (no other
     /// counters took the PMU from it).
+    #[cfg(test)]
     pub fn counted_throughout() -> bool {
         reading().is_some_and(|r| r.3 >= r.2)
     }
