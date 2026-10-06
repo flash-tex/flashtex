@@ -551,6 +551,9 @@ jobs:
       - name: "licence boundary: no MIT crate or iPad target may reach the GPL engine"
         if: ${{ !cancelled() && runner.os == 'Linux' }}
         run: scripts/check-license-boundary.sh
+      - name: "retirement: retired code is not named outside the allowlist (#1236 §4.6)"
+        if: ${{ !cancelled() && runner.os == 'Linux' }}
+        run: python3 tools/parity/retirement_refs.py
       - name: "inventory: completion vocabulary is the compiler's inventory"
         if: ${{ !cancelled() && runner.os == 'Linux' }}
         run: apps/mac/scripts/sync-supported-latex.sh --check
@@ -1005,6 +1008,11 @@ jobs:
         with:
           xcode-version: latest-stable
       - run: swift --version && xcodebuild -version
+      - name: Packaging self-test (fast part; no build, no signing identity)
+        # make-app.sh's refusal paths, the pinned TFMs and Latin Modern faces
+        # (SUPPLEMENTARY-FACES.json), the Resources plists and every script's
+        # --help (retirement plan #1236: S2's and S6's gate).
+        run: apps/mac/scripts/packaging-selftest.sh
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:

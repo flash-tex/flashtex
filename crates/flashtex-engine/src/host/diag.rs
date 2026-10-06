@@ -58,15 +58,9 @@ impl<'a> Builder<'a> {
             .files
             .entry(PathBuf::from(path))
             .or_insert_with(|| {
+                // (lines as TeX numbers them: `crate::texlines`)
                 let b = std::fs::read(path).ok()?;
-                let mut v = vec![0];
-                v.extend(
-                    b.iter()
-                        .enumerate()
-                        .filter(|(_, &c)| c == b'\n')
-                        .map(|(i, _)| i + 1),
-                );
-                Some(v)
+                Some(crate::texlines::starts(&b))
             })
             .as_ref()?;
         lines.get((line - 1).max(0) as usize).copied()
@@ -448,7 +442,8 @@ fn find_open_brace(path: &Path, text: &str) -> Option<(usize, usize, usize)> {
             continue;
         }
         if c == b'%' {
-            while k < src.len() && src[k] != b'\n' {
+            // (to the end of the line, as TeX reads lines)
+            while k < src.len() && !crate::texlines::is_end(src[k]) {
                 k += 1;
             }
             continue;
@@ -459,7 +454,7 @@ fn find_open_brace(path: &Path, text: &str) -> Option<(usize, usize, usize)> {
                 .iter()
                 .take_while(|c| c.is_ascii_whitespace())
                 .count();
-            if src[k..k + run].iter().filter(|&&c| c == b'\n').count() >= 2 {
+            if crate::lineshift::line_ends(&src, k, k + run) >= 2 {
                 flat.extend(b"\\par");
                 at.extend([k; 4]);
             }
@@ -501,11 +496,7 @@ fn find_open_brace(path: &Path, text: &str) -> Option<(usize, usize, usize)> {
         .collect();
     let hit = hits.iter().rev().find(|h| open.contains(h)).copied()?;
     let off = at[hit];
-    let line_start = src[..off]
-        .iter()
-        .rposition(|&c| c == b'\n')
-        .map_or(0, |p| p + 1);
-    let line = src[..off].iter().filter(|&&c| c == b'\n').count() + 1;
+    let (line, line_start) = crate::texlines::line_of(&src, off);
     Some((line, off - line_start, off))
 }
 
@@ -559,6 +550,19 @@ pub fn scan_terminal(term: &[u8], root: &Path) -> Vec<(usize, Diag)> {
             d.origin = "pdftex".into();
             d.code = "pdftex/error".into();
             d.fatal = true;
+        } else if let Some(name) = no_file(l) {
+            // `\include` / `\InputIfFileExists` of a file that is not there:
+            // LaTeX only `\typeout`s it (no note, no place; the app finds the call).
+            d.severity = Some(Severity::Warning);
+            d.message = format!("No file {name}.");
+            d.origin = "latex".into();
+            d.code = "latex/no-file".into();
+        } else if l.starts_with("Missing character: There is no ") {
+            // `\tracinglostchars` > 1 shows it on the terminal (no place).
+            d.severity = Some(Severity::Warning);
+            d.message = l.trim_end().to_string();
+            d.origin = "tex".into();
+            d.code = "tex/missing-character".into();
         } else if l.starts_with("pdfTeX warning") {
             d.severity = Some(Severity::Warning);
             d.message = l.clone();
@@ -611,6 +615,16 @@ pub fn scan_terminal(term: &[u8], root: &Path) -> Vec<(usize, Diag)> {
         i += 1;
     }
     out
+}
+
+/// "No file chap9.tex." (LaTeX's `\typeout` for a missing `\include` or
+/// `\InputIfFileExists`) -> "chap9.tex". Only a `.tex` file: "No file
+/// main.aux." (and `.toc`, `.bbl`, ...) on a first run is not a problem.
+fn no_file(text: &str) -> Option<String> {
+    text.split('\n').find_map(|l| {
+        let name = l.trim().strip_prefix("No file ")?.strip_suffix('.')?;
+        (name.ends_with(".tex") && !name.contains(' ')).then(|| name.to_string())
+    })
 }
 
 fn lossy(b: &[u8]) -> String {
@@ -750,6 +764,12 @@ fn curated(origin: &str, msg: &str) -> Option<&'static str> {
         ("tex", "Missing } inserted", "missing-right-brace"),
         (
             "tex",
+            "Missing \\right. inserted",
+            "missing-right-delimiter",
+        ),
+        ("tex", "Extra \\right", "extra-right-delimiter"),
+        (
+            "tex",
             "Extra }, or forgotten $",
             "extra-right-brace-or-forgotten-dollar",
         ),
@@ -826,6 +846,16 @@ fn curated(origin: &str, msg: &str) -> Option<&'static str> {
             "option-clash",
         ),
         ("latex", "LaTeX Error: Unknown option", "unknown-option"),
+        (
+            "latex",
+            "LaTeX Error: Unicode character",
+            "unicode-not-set-up",
+        ),
+        (
+            "latex",
+            "LaTeX Error: \\caption outside float",
+            "caption-outside-float",
+        ),
         ("latex", "LaTeX Error: Command ", "command-already-defined"),
     ];
     table
@@ -912,6 +942,8 @@ fn classify_warning(d: &mut Diag) {
         "rerun".to_string()
     } else if r.starts_with("Font shape `") {
         "font-shape-undefined".to_string()
+    } else if r.starts_with("Float too large for page") {
+        "float-too-large".to_string()
     } else {
         slug(r)
     };
@@ -976,6 +1008,38 @@ mod tests {
         );
         assert_eq!(none[0].1.file, None);
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// A file with CR (or CR LF) line ends: TeX numbers its lines at each
+    /// CR (`crate::texlines`), and so do the diagnostics' places: the
+    /// runaway's `{` on line 5, a line's start for a note's column.
+    #[test]
+    fn places_count_lines_as_tex_does() {
+        for (tag, eol) in [("cr", "\r"), ("crlf", "\r\n")] {
+            let root =
+                std::env::temp_dir().join(format!("flashtex-runaway-{tag}-{}", std::process::id()));
+            std::fs::create_dir_all(&root).unwrap();
+            let doc = "\\documentclass{article}\n\\begin{document}\n% a {comment\nSome {\\bfseries ok} and \\textbf{bold}.\nMore \\textbf{bold text\nAmet  amet enim.\n\n\\end{document}\n"
+                .replace('\n', eol);
+            std::fs::write(root.join("main.tex"), &doc).unwrap();
+            let term = b"(./main.tex\nRunaway argument?\n{bold text Amet amet enim. \\par \\end {document} \\ETC.\n! File ended while scanning use of \\textbf .\n";
+            let s = String::from_utf8_lossy(term);
+            let mut out = vec![(
+                s.find("! File ended").unwrap(),
+                Diag {
+                    message: "File ended while scanning use of \\textbf .".into(),
+                    ..Diag::default()
+                },
+            )];
+            let mut b = Builder::new(&root);
+            locate_runaways(&mut out, term, &root, &mut b);
+            assert_eq!(out[0].1.line, Some(5), "{tag}");
+            assert_eq!(out[0].1.range, Some((12, 13)), "{tag}");
+            let main = root.join("main.tex").display().to_string();
+            let want = doc.find("More").unwrap();
+            assert_eq!(b.line_start(&main, 5), Some(want), "{tag}");
+            let _ = std::fs::remove_dir_all(&root);
+        }
     }
 
     /// Review of #1566: the same text closed in an earlier `\input` file
@@ -1060,5 +1124,54 @@ mod tests {
         };
         classify_warning(&mut d);
         assert_eq!(d.code, "latex-font/font-shape-undefined");
+        for (msg, code) in [
+            ("Missing \\right. inserted.", "tex/missing-right-delimiter"),
+            ("Extra \\right.", "tex/extra-right-delimiter"),
+            (
+                "LaTeX Error: Unicode character \u{2713} (U+2713)",
+                "latex/unicode-not-set-up",
+            ),
+            (
+                "LaTeX Error: \\caption outside float.",
+                "latex/caption-outside-float",
+            ),
+        ] {
+            let mut d = Diag {
+                message: msg.into(),
+                ..Diag::default()
+            };
+            classify_error(&mut d);
+            assert_eq!(d.code, code, "{msg}");
+        }
+        let mut d = Diag {
+            message: "LaTeX Warning: Float too large for page by 327.5pt on input line 5.".into(),
+            ..Diag::default()
+        };
+        classify_warning(&mut d);
+        assert_eq!(d.code, "latex/float-too-large");
+    }
+
+    #[test]
+    fn a_missing_include_is_a_warning_and_aux_files_are_not() {
+        assert_eq!(
+            no_file("\nNo file chap9.tex.\n").as_deref(),
+            Some("chap9.tex")
+        );
+        assert_eq!(no_file("No file main.aux."), None);
+        assert_eq!(no_file("No file main.toc."), None);
+        let d = scan_terminal(
+            b"(./main.aux)\nNo file main.aux.\nNo file chap9.tex.\n",
+            Path::new("/tmp"),
+        );
+        assert_eq!(d.len(), 1);
+        assert_eq!(
+            (d[0].1.code.as_str(), d[0].1.message.as_str()),
+            ("latex/no-file", "No file chap9.tex.")
+        );
+        let term = b"Missing character: There is no \xc8 in font cmr10!\n";
+        let d = scan_terminal(term, Path::new("/tmp"));
+        assert_eq!(d.len(), 1);
+        assert_eq!(d[0].1.code, "tex/missing-character");
+        assert_eq!(d[0].1.severity, Some(Severity::Warning));
     }
 }

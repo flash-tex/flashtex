@@ -1518,12 +1518,17 @@ fn remember_texts(doc: &mut Doc) {
 
 /// The lines that differ between `old` and `new`: (first changed line,
 /// end of the change in `old`, end in `new`), 1-based, ends exclusive; lines
-/// are split at LF. The common prefix and suffix are compared as bytes
+/// as TeX reads them (`crate::texlines`: a LF, a CR not followed by a LF, a
+/// CR LF), which is how spans number them (`line`). A text without a
+/// CR has only LF ends; its common prefix and suffix are compared as bytes
 /// (memcmp) and only their line ends counted: splitting a 1,000-page source
 /// into lines twice took 2-2.5 ms of every keystroke (lane
 /// P4-SPLIT-LATENCY); `tests::line_change_is_the_line_split` holds it to the
 /// line-by-line definition.
 fn line_change(old: &[u8], new: &[u8]) -> (u32, u32, u32) {
+    if old.contains(&b'\r') || new.contains(&b'\r') {
+        return line_change_tex(old, new);
+    }
     // equal leading lines
     let pre = crate::incr::common_prefix(old, new);
     let ls = old[..pre]
@@ -1572,6 +1577,32 @@ fn line_change(old: &[u8], new: &[u8]) -> (u32, u32, u32) {
     (p as u32 + 1, (na - s) as u32 + 1, (nb - s) as u32 + 1)
 }
 
+/// `line_change` of texts with CR line ends: line by line
+/// (`crate::texlines`; rare: such a file pays the split).
+fn line_change_tex(old: &[u8], new: &[u8]) -> (u32, u32, u32) {
+    let split = |t: &[u8]| -> Vec<Vec<u8>> {
+        crate::texlines::lines(t)
+            .into_iter()
+            .map(|(s, e)| t[s..e].to_vec())
+            .collect()
+    };
+    let (a, b) = (split(old), split(new));
+    let p = a.iter().zip(&b).take_while(|(x, y)| x == y).count();
+    let max_s = a.len().min(b.len()) - p;
+    let s = a
+        .iter()
+        .rev()
+        .zip(b.iter().rev())
+        .take(max_s)
+        .take_while(|(x, y)| x == y)
+        .count();
+    (
+        p as u32 + 1,
+        (a.len() - s) as u32 + 1,
+        (b.len() - s) as u32 + 1,
+    )
+}
+
 /// The LFs in `b`, eight bytes at a time: a byte of `w ^ LF` is zero
 /// exactly where `w` holds a LF, and the zero-byte test below sets the top
 /// bit of exactly those bytes (no carries cross bytes).
@@ -1610,6 +1641,63 @@ mod tests {
             (a.len() - s) as u32 + 1,
             (b.len() - s) as u32 + 1,
         )
+    }
+
+    /// TeX's lines (`crate::texlines`, which `texlines::tests` holds to the
+    /// engine's own reader).
+    fn tex_lines(b: &[u8]) -> Vec<&[u8]> {
+        crate::texlines::lines(b)
+            .into_iter()
+            .map(|(s, e)| &b[s..e])
+            .collect()
+    }
+
+    /// Spans number lines as TeX does (`line`), CR and CR LF ends
+    /// included: `line_change` must count them the same way, or spans move
+    /// to the wrong lines in a file with CR line ends.
+    #[test]
+    fn line_change_counts_tex_lines() {
+        let mut seed = 0x9e37_79b9_7f4a_7c15u64;
+        let mut rnd = |n: usize| {
+            seed ^= seed << 13;
+            seed ^= seed >> 7;
+            seed ^= seed << 17;
+            (seed % n as u64) as usize
+        };
+        let alpha = b"ab\n\r";
+        for _ in 0..20_000 {
+            let n = rnd(14);
+            let old: Vec<u8> = (0..n).map(|_| alpha[rnd(4)]).collect();
+            let (a, b) = {
+                let x = rnd(n + 1);
+                (x, x + rnd(n + 1 - x))
+            };
+            let mut new = old[..a].to_vec();
+            new.extend((0..rnd(4)).map(|_| alpha[rnd(4)]));
+            new.extend_from_slice(&old[b..]);
+            let (x, y) = (tex_lines(&old), tex_lines(&new));
+            let p = x.iter().zip(&y).take_while(|(u, v)| u == v).count();
+            let max_s = x.len().min(y.len()) - p;
+            let s = x
+                .iter()
+                .rev()
+                .zip(y.iter().rev())
+                .take(max_s)
+                .take_while(|(u, v)| u == v)
+                .count();
+            let want = (
+                p as u32 + 1,
+                (x.len() - s) as u32 + 1,
+                (y.len() - s) as u32 + 1,
+            );
+            assert_eq!(
+                line_change(&old, &new),
+                want,
+                "{:?} -> {:?}",
+                String::from_utf8_lossy(&old),
+                String::from_utf8_lossy(&new)
+            );
+        }
     }
 
     #[test]

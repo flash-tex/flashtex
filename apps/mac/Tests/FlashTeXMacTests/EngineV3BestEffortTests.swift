@@ -201,7 +201,7 @@ final class EngineV3BestEffortTests: XCTestCase {
         XCTAssertEqual(hashes(s)[0], good[0])
         let row = try XCTUnwrap(model.displayedDiagnostics.first { $0.code == "tex/undefined-control-sequence" })
         XCTAssertEqual(row.severity, .warning)
-        XCTAssertEqual(row.message, "Undefined control sequence. (pdfLaTeX would report an error here)")
+        XCTAssertEqual(row.message, "Undefined control sequence (pdfLaTeX would report an error here)")
         let src = try XCTUnwrap(row.source)
         XCTAssertEqual(String(decoding: Array(bad.utf8)[src.startByte ..< src.endByte], as: UTF8.self), "\\foo")
 

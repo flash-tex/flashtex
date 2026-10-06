@@ -450,7 +450,7 @@ impl AlphaFile {
 
 /// One line as texmfmp.c's `input_line` reads it: up to a LF, a CR or a CR
 /// LF; false at the end of the file when nothing was read.
-fn read_tex_line(r: &mut impl BufRead, line: &mut Vec<u8>) -> bool {
+pub(crate) fn read_tex_line(r: &mut impl BufRead, line: &mut Vec<u8>) -> bool {
     line.clear();
     let mut got_any = false;
     loop {

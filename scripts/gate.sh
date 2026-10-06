@@ -277,6 +277,13 @@ CHANGED_RS="$(printf '%s\n' "$CHANGED_FILES" | grep -E '\.rs$' || true)"
 # What web2rust's drift test covers: the translator, the WEB sources and
 # change files, and the committed translations of both engines.
 DRIFT_PATHS='^(tools/web2rust/|third_party/(pdftex|xetex)/|crates/flashtex-(engine|xetex)/(changes/|src/generated/|web2rust-default\.args$|pdftex\.pool$|xetex\.pool$))'
+# What the trip and etrip tests build: each assembles its own scratch crate
+# from crates/flashtex-engine/src (trip from a list of files, etrip from the
+# whole tree) under its own feature set, which the crate's tests and clippy
+# never compile. A module the scratch crate lacks fails there only (#1599:
+# E0583 in CI's gate job and the Windows engine job), so quick builds and
+# runs both whenever the engine's sources or the harness change.
+TRIP_PATHS='^(tools/web2rust/|third_party/(knuth|pdftex)/|crates/flashtex-engine/(src/|changes/|web2rust-[a-z]+\.args$)|scripts/flashtex-e?trip\.sh$)'
 
 # ---------------------------------------------------------------------------
 # quick: fmt, clippy on changed crates, tests of changed crates
@@ -592,6 +599,17 @@ case "$TIER" in
       step "web2rust drift (pdfTeX engine and XeTeX port)" -- \
         cargo_test --release --locked -p web2rust --test drift
     fi
+    # In CI the gate job runs both already (ci.yml, "trip:"/"etrip:" steps);
+    # the `quick` job does not repeat them.
+    if ! grep -qE "$TRIP_PATHS" <<< "$CHANGED_FILES"; then :
+    elif [[ -n "${GITHUB_ACTIONS:-}" ]]; then
+      skip "trip and etrip tests" "CI's gate job runs them"
+    else
+      step "trip test (scripts/flashtex-trip.sh)" -- \
+        env TRIP_WORK="$ROOT/target/gate-trip" scripts/flashtex-trip.sh
+      step "etrip test (scripts/flashtex-etrip.sh)" -- \
+        env ETRIP_WORK="$ROOT/target/gate-etrip" scripts/flashtex-etrip.sh
+    fi
     ;;
 esac
 
@@ -604,11 +622,9 @@ case "$TIER" in
     else
       skip "licence boundary (DESIGN §3)" "scripts/check-license-boundary.sh is not in this checkout"
     fi
-    # The rendering-core handoff keeps a copy of the native-assets manifest
-    # that verify_bundle_resources.py pins by sha256; the copy must not drift.
-    step "native-assets manifest handoff copy matches the pinned one" -- \
-      cmp apps/mac/scripts/native-assets-manifest.json crates/rendering-core/docs/handoffs/native-assets/manifest.json
     step "parity scoreboard and lockstep self-tests" -- gate_parity_selftest
+    step "retired code is not named outside the allowlist (retirement plan §4.6)" -- \
+      python3 tools/parity/retirement_refs.py
     if [[ "$(uname -s)" == Darwin ]]; then
       step "parity fixtures hold their baseline" -- gate_parity_fixtures
     else
