@@ -119,7 +119,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 @main
 struct FlashTeXMacApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
-    @State private var model = ShellModel()
+    @State private var model = ShellModel(startup: .untitledDocument) // no file open: the blank-article template (ProjectScaffold.swift)
     @StateObject private var nearby = NearbyState()
     @Environment(\.openWindow) private var openWindow
 
@@ -133,6 +133,7 @@ struct FlashTeXMacApp: App {
                     appDelegate.model = model; nearby.attach(sink: model, destinations: model); TypingBench.shared.install(model: model)
                     EngineV3Bench.startIfConfigured(model: model) // FLASHTEX_V3_BENCH (EngineV3Bench.swift)
                     EngineV3PageCapture.startIfConfigured(model: model) // FLASHTEX_V3_CAPTURE_OUT (evidence)
+                    LiveShareAutomation.startIfConfigured(model: model) // FLASHTEX_LIVE_SHARE_HOST / _JOIN_FILE (LiveShareAutomation.swift)
                     // FLASHTEX_OPEN=<file.tex or folder>: open it at launch (scripts/run-mac-dev.sh).
                     if let open = ProcessInfo.processInfo.environment["FLASHTEX_OPEN"], !open.isEmpty, ProcessInfo.processInfo.environment["FLASHTEX_V3_BENCH"] == nil {
                         _ = model.openTex(at: URL(fileURLWithPath: (open as NSString).expandingTildeInPath))
@@ -284,6 +285,7 @@ struct FlashTeXMacApp: App {
                     .disabled(model.project.projectRoot == nil || model.activePath == model.menuEntryPath) // change-only mirror: `entryPath` reads `documents`
                 Button("Open LaTeX File…") { model.openTexPanel() } // also a project folder: its flashtex.toml names the entry (ProjectManifest.swift)
                     .keyboardShortcut("o")
+                LiveShareMenuItems(model: model) // LiveShareViews.swift: Start/Join/Leave Live Share Session, while Settings > Live Share is on
                 // The project manifest (ProjectManifest.swift): writes the
                 // commented template next to the entry and opens it.
                 Button("Create flashtex.toml…") { Task { await model.manifest.createManifestInteractive() } }

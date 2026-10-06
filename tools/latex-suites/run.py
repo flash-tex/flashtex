@@ -23,10 +23,17 @@ Safety rules (all validated against the reference engine):
   errorstopmode `Please type another input file name:` prompt on stdin.
   With an inherited open stdin that prompt blocks forever at 0% CPU
   (observed 1.5 h hang); from /dev/null it emergency-stops at once.
-- Each directory gets a timeout (default 1800 s, --timeout-dir SECONDS):
-  on expiry the whole process group is killed and every unfinished test
-  is FAIL [UNEXPECTED] (timeout). l3build offers no per-test timeout
-  flag, so the directory timeout is the enforcement point.
+- Each directory gets two timeouts: a stall timeout (default 900 s,
+  --timeout-idle SECONDS), when l3build has printed nothing for that
+  long (it prints a line per test, so this bounds one test, or the
+  unpack and format build before the first), and a cap on the whole
+  directory (default 10800 s, --timeout-dir SECONDS). On either the
+  whole process group is killed and every unfinished test is FAIL
+  [UNEXPECTED] (timeout). l3build offers no per-test timeout flag, so
+  run.py is the enforcement point. The cap was 1800 s with no stall
+  timeout until 2026-10-05: latex-lab (330 tests) needs about that long
+  on a loaded Mac, so a run passed or failed its last tests by the
+  host's load (the P5 board of 2026-10-04 lost 14 table-* tests to it).
 - A test whose engine process dies (crash, kill, exit code other than
   pdfTeX's 0/1) is FAIL, never PASS: l3build turns this into a Lua
   assertion abort with no `--> failed` line and no .diff, so run.py
@@ -59,7 +66,8 @@ EXPECTED = os.path.join(ROOT, "EXPECTED-FAILURES.txt")
 
 REF_ENGINE_VERSION = "1.40.29"
 
-DEFAULT_TIMEOUT_DIR = 1800
+DEFAULT_TIMEOUT_DIR = 10800
+DEFAULT_TIMEOUT_IDLE = 900
 KILL_GRACE = 5.0  # seconds between SIGTERM and SIGKILL of a timed-out group
 
 # Each entry: (repo, subdir, l3build -e engine, l3build -c configs or
@@ -682,12 +690,14 @@ def _join_reader_before_close(proc, reader, grace=10):
             pass
 
 
-def run_capture(cmd, cwd, env, timeout, on_line=None):
+def run_capture(cmd, cwd, env, timeout, on_line=None, idle=None):
     """Run cmd with stdin /dev/null in its own process group.
 
     stdout+stderr stream to on_line(line) live via a reader thread while
-    the main thread enforces `timeout` seconds. Returns (rc, lines,
-    timed_out); on timeout (or Ctrl-C) the whole process group is killed
+    the main thread enforces `timeout` seconds in all and, when `idle` is
+    set, at most `idle` seconds without an output line. Returns (rc,
+    lines, timed_out), where timed_out is False or a reason ("after N s",
+    "no output for N s"); on either timeout (or Ctrl-C) the whole process group is killed
     and reaped before returning/raising. The kill is SIGTERM, then
     unconditional SIGKILL after KILL_GRACE (a SIGTERM-ignoring engine
     cannot hang the runner), and the pipe is never closed while the
@@ -706,20 +716,31 @@ def run_capture(cmd, cwd, env, timeout, on_line=None):
                               daemon=True)
     lines, timed_out = [], False
     deadline = time.monotonic() + timeout
+    last = time.monotonic()
+
+    def why():
+        """The timeout that has expired now, or None."""
+        now = time.monotonic()
+        if now >= deadline:
+            return "after %s s" % timeout
+        if idle is not None and now >= last + idle:
+            return "no output for %s s" % idle
+        return None
+
     try:
         reader.start()
         while True:
-            remaining = deadline - time.monotonic()
-            if remaining <= 0:
-                timed_out = True
+            timed_out = why() or False
+            if timed_out:
                 break
+            limit = deadline if idle is None else min(deadline, last + idle)
             try:
-                item = q.get(timeout=remaining)
+                item = q.get(timeout=max(0.0, limit - time.monotonic()))
             except queue.Empty:
-                timed_out = True
-                break
+                continue  # why() names the expired timeout
             if item is None:
                 break
+            last = time.monotonic()
             lines.append(item)
             if on_line:
                 on_line(item)
@@ -735,7 +756,7 @@ def run_capture(cmd, cwd, env, timeout, on_line=None):
         except subprocess.TimeoutExpired:
             # Output done but process lingers (e.g. a detached grandchild
             # holding nothing): do not hang, kill and call it a timeout.
-            timed_out = True
+            timed_out = "still running 60 s after its output ended"
             _kill_tree(proc)
     _join_reader_before_close(proc, reader)
     # Keep late forensic output without blocking: whatever arrived.
@@ -754,6 +775,7 @@ def run_capture(cmd, cwd, env, timeout, on_line=None):
 
 def run_l3build(workdir, names, engine, logpath,
                 timeout=DEFAULT_TIMEOUT_DIR, l3build_exe="l3build",
+                idle=DEFAULT_TIMEOUT_IDLE,
                 engine_env=None, l3build_engine="pdftex",
                 l3build_configs=None, testdir="testfiles",
                 texlua="texlua"):
@@ -811,12 +833,12 @@ def run_l3build(workdir, names, engine, logpath,
                                             m.group(3)), flush=True)
 
             rc, _, timed_out = run_capture(cmd, workdir, env, timeout,
-                                           on_line=emit)
+                                           on_line=emit, idle=idle)
             if timed_out:
-                log.write("TIMEOUT after %s s: killed process group\n"
-                          % timeout)
-                print("  TIMEOUT after %s s: killed l3build process group"
-                      % timeout, flush=True)
+                log.write("TIMEOUT (%s): killed process group\n"
+                          % timed_out)
+                print("  TIMEOUT (%s): killed l3build process group"
+                      % timed_out, flush=True)
         deaths = engine_deaths(calllog)
         ran, completed, failed = parse_l3build_log(out, l3build_engine)
         # Genuine verdicts before attribution: diff failures and engine
@@ -845,7 +867,7 @@ def run_l3build(workdir, names, engine, logpath,
             # verdict (pass, or fail-by-diff/death) keep it untouched.
             for t in list(ran) + [t for t in requested if t not in ran]:
                 if t not in completed and t not in decided:
-                    notes[t] = "timeout after %s s" % timeout
+                    notes[t] = "timeout (%s)" % timed_out
                     failed.add(t)
                     timedout.add(t)
         neverran = set()
@@ -953,7 +975,7 @@ def summarize(results, expected, allow_stale):
 
 
 def one_dir(entry, tests, engine, timeout=DEFAULT_TIMEOUT_DIR,
-            keep_diffs=None, engine_env=None):
+            keep_diffs=None, engine_env=None, idle=DEFAULT_TIMEOUT_IDLE):
     repo, sub, l3engine, configs, testdir = entry
     label = dir_label(repo, sub, l3engine, configs)
     workdir = os.path.join(CACHE, repo, sub)
@@ -968,7 +990,8 @@ def one_dir(entry, tests, engine, timeout=DEFAULT_TIMEOUT_DIR,
     rc, ran, failed, notes, timedout, info = run_l3build(
         workdir, names, engine,
         os.path.join(CACHE, "l3build-%s.log" % label.replace("/", "_")),
-        timeout=timeout, engine_env=engine_env, l3build_engine=l3engine,
+        timeout=timeout, idle=idle, engine_env=engine_env,
+        l3build_engine=l3engine,
         l3build_configs=configs, testdir=testdir)
     if keep_diffs is not None:
         n = keep_run_diffs(keep_diffs, label, info.get("difffiles", {}),
@@ -999,6 +1022,12 @@ def main(argv=None):
                     help="kill the l3build process group if a directory "
                     "takes longer (default %d); unfinished tests FAIL "
                     "as timeouts" % DEFAULT_TIMEOUT_DIR)
+    ap.add_argument("--timeout-idle", type=int, default=DEFAULT_TIMEOUT_IDLE,
+                    metavar="SECONDS",
+                    help="kill the l3build process group if it prints "
+                    "nothing for this long, i.e. one test (or the unpack "
+                    "and format build) hangs (default %d); unfinished tests "
+                    "FAIL as timeouts" % DEFAULT_TIMEOUT_IDLE)
     ap.add_argument("--allow-stale", action="store_true",
                     help="warn instead of failing on EXPECTED-FAILURES "
                     "entries that now pass")
@@ -1024,6 +1053,8 @@ def main(argv=None):
     args = ap.parse_args(argv)
     if args.timeout_dir <= 0:
         ap.error("--timeout-dir must be positive")
+    if args.timeout_idle <= 0:
+        ap.error("--timeout-idle must be positive")
     try:
         engine_env = parse_engine_env(args.engine_env)
     except ValueError as exc:
@@ -1083,6 +1114,7 @@ def main(argv=None):
     # Sequential across ALL dirs: every latex2e dir shares <repo>/build
     # (maindir build root + build/local installs), so overlap corrupts.
     results = dict(one_dir(p, tests, args.engine, args.timeout_dir,
+                           idle=args.timeout_idle,
                            keep_diffs=args.keep_diffs,
                            engine_env=engine_env or None)
                    for p in dirs)

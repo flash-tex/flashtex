@@ -15,7 +15,7 @@
 //!   the feature [`scope`] compiles to nothing.
 
 #[cfg(feature = "mem-stats")]
-use std::alloc::{GlobalAlloc, Layout, System};
+use std::alloc::{GlobalAlloc, Layout};
 #[cfg(feature = "mem-stats")]
 use std::sync::atomic::{AtomicI64, Ordering};
 
@@ -52,29 +52,40 @@ pub mod tag {
 
 thread_local! {
     static CUR: std::cell::Cell<u8> = const { std::cell::Cell::new(tag::OTHER) };
+    /// In a `scope(tag::LOG)`: large blocks get mappings of their own
+    /// (`crate::logalloc`), in every build.
+    static LOGS: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
 /// Restores the previous tag when dropped (see [`scope`]).
-pub struct Scope(#[allow(dead_code)] u8);
+pub struct Scope(#[allow(dead_code)] u8, bool);
 
 /// Attribute this thread's allocations to `t` until the returned guard is
-/// dropped. Free without the feature `mem-stats`.
+/// dropped: with the feature `mem-stats` for the accounting, and in every
+/// build whether they are undo logs ([`in_log_scope`]).
 #[inline(always)]
 pub fn scope(t: u8) -> Scope {
+    let logs = LOGS.try_with(|c| c.replace(t == tag::LOG)).unwrap_or(false);
     #[cfg(feature = "mem-stats")]
     {
-        Scope(CUR.try_with(|c| c.replace(t)).unwrap_or(tag::OTHER))
+        Scope(CUR.try_with(|c| c.replace(t)).unwrap_or(tag::OTHER), logs)
     }
     #[cfg(not(feature = "mem-stats"))]
     {
-        let _ = t;
-        Scope(0)
+        Scope(0, logs)
     }
+}
+
+/// Whether this thread is allocating undo logs (`scope(tag::LOG)`).
+#[inline(always)]
+pub fn in_log_scope() -> bool {
+    LOGS.try_with(|c| c.get()).unwrap_or(false)
 }
 
 impl Drop for Scope {
     #[inline(always)]
     fn drop(&mut self) {
+        let _ = LOGS.try_with(|c| c.set(self.1));
         #[cfg(feature = "mem-stats")]
         {
             let _ = CUR.try_with(|c| c.set(self.0));
@@ -101,10 +112,19 @@ static PEAK_BY: [AtomicI64; tag::N] = [ZERO; tag::N];
 #[cfg(feature = "mem-stats")]
 static PEAK_SNAP: AtomicI64 = AtomicI64::new(0);
 
-/// The counting allocator (feature `mem-stats`): `System` with a header
-/// holding the allocation's tag.
+/// The counting allocator (feature `mem-stats`): the host's allocator
+/// (`crate::logalloc` on Linux, else `System`) with a header holding the
+/// allocation's tag.
 #[cfg(feature = "mem-stats")]
 pub struct Counting;
+
+#[cfg(all(feature = "mem-stats", target_os = "linux", not(feature = "tex82")))]
+const INNER: crate::logalloc::HostAlloc = crate::logalloc::HostAlloc;
+#[cfg(all(
+    feature = "mem-stats",
+    not(all(target_os = "linux", not(feature = "tex82")))
+))]
+const INNER: std::alloc::System = std::alloc::System;
 
 #[cfg(feature = "mem-stats")]
 const HDR: usize = 16;
@@ -145,7 +165,7 @@ fn outer(l: Layout) -> (Layout, usize) {
 unsafe impl GlobalAlloc for Counting {
     unsafe fn alloc(&self, l: Layout) -> *mut u8 {
         let (o, a) = outer(l);
-        let p = System.alloc(o);
+        let p = INNER.alloc(o);
         if p.is_null() {
             return p;
         }
@@ -158,7 +178,7 @@ unsafe impl GlobalAlloc for Counting {
 
     unsafe fn alloc_zeroed(&self, l: Layout) -> *mut u8 {
         let (o, a) = outer(l);
-        let p = System.alloc_zeroed(o);
+        let p = INNER.alloc_zeroed(o);
         if p.is_null() {
             return p;
         }
@@ -173,13 +193,13 @@ unsafe impl GlobalAlloc for Counting {
         let (o, a) = outer(l);
         let t = *q.sub(1);
         account(t, -(l.size() as i64));
-        System.dealloc(q.sub(a), o);
+        INNER.dealloc(q.sub(a), o);
     }
 
     unsafe fn realloc(&self, q: *mut u8, l: Layout, new: usize) -> *mut u8 {
         let (o, a) = outer(l);
         let t = *q.sub(1);
-        let p = System.realloc(q.sub(a), o, new + a);
+        let p = INNER.realloc(q.sub(a), o, new + a);
         if p.is_null() {
             return p;
         }
@@ -295,6 +315,66 @@ pub fn resident(p: *const u8, len: usize) -> Option<usize> {
     #[cfg(not(unix))]
     {
         let _ = (p, len);
+        None
+    }
+}
+
+/// Bytes the C allocator has handed out and not taken back, from every
+/// caller (Rust's heap and the C parts': kpathsea, zlib, pdfTeX's C code),
+/// and the bytes it holds from the system for them (macOS
+/// `malloc_zone_statistics`; Linux `mallinfo2`, with the feature
+/// `mem-stats` only, else `None`). The difference from the
+/// counting allocator's total (feature `mem-stats`) is the C parts' heap.
+pub fn malloc_in_use() -> Option<(u64, u64)> {
+    #[cfg(target_os = "macos")]
+    {
+        #[repr(C)]
+        #[derive(Default)]
+        struct MallocStatistics {
+            blocks_in_use: u32,
+            size_in_use: usize,
+            max_size_in_use: usize,
+            size_allocated: usize,
+        }
+        extern "C" {
+            fn malloc_zone_statistics(zone: *mut std::ffi::c_void, stats: *mut MallocStatistics);
+        }
+        let mut st = MallocStatistics::default();
+        // SAFETY: a null zone asks for the sum over all zones; `st` is the
+        // C struct `malloc_statistics_t`.
+        unsafe { malloc_zone_statistics(std::ptr::null_mut(), &mut st) };
+        Some((st.size_in_use as u64, st.size_allocated as u64))
+    }
+    // `mallinfo2` needs glibc 2.33 or newer, so only measurement builds
+    // link it; a default build runs on older glibc.
+    #[cfg(all(target_os = "linux", target_env = "gnu", feature = "mem-stats"))]
+    {
+        #[repr(C)]
+        #[derive(Default)]
+        struct Mallinfo2 {
+            arena: usize,
+            ordblks: usize,
+            smblks: usize,
+            hblks: usize,
+            hblkhd: usize,
+            usmblks: usize,
+            fsmblks: usize,
+            uordblks: usize,
+            fordblks: usize,
+            keepcost: usize,
+        }
+        extern "C" {
+            fn mallinfo2() -> Mallinfo2;
+        }
+        // SAFETY: no preconditions.
+        let m = unsafe { mallinfo2() };
+        Some(((m.uordblks + m.hblkhd) as u64, (m.arena + m.hblkhd) as u64))
+    }
+    #[cfg(not(any(
+        target_os = "macos",
+        all(target_os = "linux", target_env = "gnu", feature = "mem-stats")
+    )))]
+    {
         None
     }
 }

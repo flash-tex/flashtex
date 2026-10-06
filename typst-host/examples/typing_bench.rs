@@ -371,6 +371,7 @@ fn run(args: &[String]) {
         let mut total = vec![];
         let mut compile_ms = vec![];
         let mut pos_ms = vec![];
+        let mut hash_ms = vec![];
         let mut host_first = vec![];
         let mut iters = vec![];
         let mut pages_sent = vec![];
@@ -412,6 +413,7 @@ fn run(args: &[String]) {
                 };
                 compile_ms.push(num("compile_ms"));
                 pos_ms.push(num("positions_ms"));
+                hash_ms.push(num("hash_ms"));
                 host_first.push(num("first_page_ms"));
                 iters.push(num("iterations"));
                 pages_sent.push(num("typeset_pages"));
@@ -421,7 +423,7 @@ fn run(args: &[String]) {
             }
         }
         println!(
-            "{{\"label\":{label:?},\"loc\":{loc:?},\"keys\":{keys},\"first_page_p50\":{:.2},\"first_page_p95\":{:.2},\"first_page_max\":{:.2},\"done_p50\":{:.2},\"done_p95\":{:.2},\"compile_p50\":{:.2},\"compile_p95\":{:.2},\"host_first_page_p95\":{:.2},\"positions_p50\":{:.3},\"positions_p95\":{:.3},\"iterations_max\":{},\"pages_sent_max\":{},\"not_ok\":{not_ok},\"seeded\":{seeded},\"verified_same\":{checked_same},\"verified_differ\":{checked_differ},\"rss_mb\":{:.1},\"rss\":[{}],\"load\":{:?}}}",
+            "{{\"label\":{label:?},\"loc\":{loc:?},\"keys\":{keys},\"first_page_p50\":{:.2},\"first_page_p95\":{:.2},\"first_page_max\":{:.2},\"done_p50\":{:.2},\"done_p95\":{:.2},\"compile_p50\":{:.2},\"compile_p95\":{:.2},\"host_first_page_p95\":{:.2},\"positions_p50\":{:.3},\"positions_p95\":{:.3},\"hash_p50\":{:.3},\"iterations_max\":{},\"pages_sent_max\":{},\"not_ok\":{not_ok},\"seeded\":{seeded},\"verified_same\":{checked_same},\"verified_differ\":{checked_differ},\"rss_mb\":{:.1},\"rss\":[{}],\"load\":{:?}}}",
             pct(&first, 50.0),
             pct(&first, 95.0),
             pct(&first, 100.0),
@@ -432,6 +434,7 @@ fn run(args: &[String]) {
             pct(&host_first, 95.0),
             pct(&pos_ms, 50.0),
             pct(&pos_ms, 95.0),
+            pct(&hash_ms, 50.0),
             pct(&iters, 100.0),
             pct(&pages_sent, 100.0),
             rss_mb(pid),

@@ -14,6 +14,9 @@
 //! and out of scope.
 
 pub mod convert;
+pub mod fontlist;
+pub mod lock;
+pub mod packages;
 pub mod pdf;
 pub mod pdfpos;
 pub mod seeded;

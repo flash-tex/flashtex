@@ -1,1 +1,0 @@
-{"protocol_version": 1, "id": "original-reference-plain", "type": "compile", "payload": {"project_id": "visual-corpus", "revision": 1, "entry_path": "main.tex", "documents": [{"path": "main.tex", "text": "\\begin{document}\nHello world. This is one short paragraph that fits on a single line.\n\\end{document}\n"}]}}

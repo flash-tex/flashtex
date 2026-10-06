@@ -257,6 +257,21 @@ enum ProjectTemplate: String, CaseIterable, Identifiable {
     }
 }
 
+/// What the window holds when FlashTeX opens with no file
+/// (`ShellModel.Startup.untitledDocument`): File › New Project…'s "Blank
+/// article" entry document titled "Untitled" — the one source of that text —
+/// with the caret on the empty line under `\section{Introduction}`, where
+/// the first sentence goes. Never on disk until Save As….
+enum UntitledDocument {
+    static let path = ProjectTemplate.entryPath
+    static let text = ProjectTemplate.blankArticle.files(projectName: "Untitled")[0].text
+    /// UTF-16 offset of the line after `\section{Introduction}`.
+    static let caretUTF16: Int = {
+        let line = (text as NSString).range(of: "\\section{Introduction}\n")
+        return line.location == NSNotFound ? 0 : NSMaxRange(line)
+    }()
+}
+
 /// Writes a template into `<folder>/<name>` (pure file-system work; the
 /// model then opens the entry document like ⌘O would).
 enum ProjectScaffold {
@@ -481,6 +496,11 @@ enum MissingIncludeFix {
         if let file = ProjectPackagesState.texMissingFile(in: message) {
             guard file.hasSuffix(".tex"), file.count > 4 else { return nil }
             return String(file.dropLast(4))
+        }
+        // `\include` of a missing file under the engine-v3 preview (`latex/no-file`): No file chap.tex.
+        if message.hasPrefix("No file "), message.hasSuffix(".tex."), message.count > "No file .tex.".count {
+            let name = String(message.dropFirst("No file ".count).dropLast(".tex.".count))
+            return name.contains(" ") ? nil : name
         }
         guard message.hasPrefix(prefix) else { return nil }
         let rest = message.dropFirst(prefix.count)

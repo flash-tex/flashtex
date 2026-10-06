@@ -115,94 +115,18 @@ struct Tally {
     glyphs_drawn: usize,
     mismatched_glyphs: usize,
     mismatched_boxes: usize,
+    paths: usize,
+    mismatched_paths: usize,
     positions_failed_pages: usize,
     mismatched_snippets: Vec<String>,
     export_failed_snippets: Vec<String>,
-}
-
-/// What the PDF shows of a frame, in typst-pdf's painting order: text runs
-/// (does the host draw it -- a solid process-colour fill -- and where the
-/// frame puts each glyph, stream space) and images (an SVG image's text is
-/// shown inline, so glyphs that are no run's may follow one).
-enum Ev {
-    Run(bool, Vec<[f64; 2]>),
-    Image,
-}
-
-fn events(frame: &typst::layout::Frame, ts: typst::layout::Transform, h: f64, out: &mut Vec<Ev>) {
-    use typst::layout::{Abs, FrameItem, Point, Transform};
-    use typst::visualize::{Color, Paint};
-    for (pos, item) in frame.items() {
-        let ts = ts.pre_concat(Transform::translate(pos.x, pos.y));
-        match item {
-            FrameItem::Group(g) => events(&g.frame, ts.pre_concat(g.transform), h, out),
-            FrameItem::Text(t) => {
-                let d = matches!(t.fill, Paint::Solid(Color::Process(_)));
-                let (mut x, mut y) = (Abs::zero(), Abs::zero());
-                let mut o = Vec::new();
-                for g in &t.glyphs {
-                    let p = Point::new(x + g.x_offset.at(t.size), y - g.y_offset.at(t.size))
-                        .transform(ts);
-                    o.push([p.x.to_pt(), h - p.y.to_pt()]);
-                    x += g.x_advance.at(t.size);
-                    y -= g.y_advance.at(t.size);
-                }
-                out.push(Ev::Run(d, o));
-            }
-            FrameItem::Image(..) => out.push(Ev::Image),
-            _ => {}
-        }
-    }
-}
-
-/// The PDF glyphs the host must draw, in order, or why they cannot be
-/// matched to the frame's runs.
-fn expected<'a>(
-    evs: &[Ev],
-    pdf: &'a [checker::RefGlyph],
-) -> Result<Vec<&'a checker::RefGlyph>, String> {
-    let mut k = 0;
-    let mut gap = false;
-    let mut out = Vec::new();
-    for ev in evs {
-        match ev {
-            Ev::Image => gap = true,
-            Ev::Run(drawn, fo) => {
-                let n = fo.len();
-                let near = |a: [f64; 2], b: [f64; 2]| {
-                    (a[0] - b[0]).abs() < 0.01 && (a[1] - b[1]).abs() < 0.01
-                };
-                let fit = |at: usize| {
-                    at + n <= pdf.len() && (0..n).all(|j| near(pdf[at + j].origin, fo[j]))
-                };
-                let at = if fit(k) {
-                    Some(k)
-                } else if gap {
-                    (k + 1..=pdf.len().saturating_sub(n)).find(|&a| fit(a))
-                } else {
-                    None
-                };
-                gap = false;
-                let Some(at) = at else {
-                    return Err(format!("a run of {n} glyphs is not at PDF glyph {k}"));
-                };
-                if *drawn {
-                    out.extend(&pdf[at..at + n]);
-                }
-                k = at + n;
-            }
-        }
-    }
-    if k != pdf.len() && !gap {
-        return Err(format!("{} PDF glyphs after the last run", pdf.len() - k));
-    }
-    Ok(out)
 }
 
 fn main() {
     let mut args = std::env::args().skip(1);
     let (mut typst, mut assets, mut fonts_dir, mut work) = (None, None, None, None);
     let (mut json, mut only) = (None, None);
+    let (mut accept_e3, mut ungated) = (false, false);
     while let Some(a) = args.next() {
         let v = args.next().expect("a value");
         match a.as_str() {
@@ -212,6 +136,15 @@ fn main() {
             "--work" => work = Some(PathBuf::from(v)),
             "--json" => json = Some(PathBuf::from(v)),
             "--only" => only = Some(v),
+            // `--accept colour`: the client accepts `color-spaces` and
+            // `line-state` (spec §11.3, §11.4).
+            // `--accept colour[,ungated]`: `ungated` draws what has no
+            // pixel gate row yet as complete (`--draw-ungated`), so that
+            // every number is compared, not left out of an INCOMPLETE page.
+            "--accept" => {
+                accept_e3 = v.split(',').any(|t| t == "colour");
+                ungated = v.split(',').any(|t| t == "ungated");
+            }
             _ => panic!("unknown argument {a}"),
         }
     }
@@ -244,6 +177,9 @@ fn main() {
         opentype_programs: true,
         program_refs: true,
         program_budget: None,
+        color_spaces: accept_e3,
+        line_state: accept_e3,
+        ungated,
     };
     let t0 = std::time::Instant::now();
     for f in &files {
@@ -305,7 +241,12 @@ fn main() {
                 }
             };
             let reference = match std::panic::catch_unwind(|| checker::reference(&bytes)) {
-                Ok(r) => r,
+                Ok(mut r) => {
+                    if !caps.color_spaces {
+                        checker::device_only(&mut r);
+                    }
+                    r
+                }
                 Err(_) => {
                     t.mismatched_snippets
                         .push(format!("{name}: the checker failed"));
@@ -343,17 +284,33 @@ fn main() {
                 if page
                     .unsupported
                     .iter()
-                    .any(|u| u.starts_with("glyph positions"))
+                    .any(|u| u.starts_with("glyph positions") || u.starts_with("paths:"))
                 {
                     t.positions_failed_pages += 1;
                     why = page
                         .unsupported
                         .iter()
-                        .find(|u| u.starts_with("glyph positions"))
+                        .find(|u| u.starts_with("glyph positions") || u.starts_with("paths:"))
                         .unwrap()
                         .clone();
                     bad += 1;
                     continue;
+                }
+                // Paths and clips: the PDF's own numbers, in order.
+                let hp = checker::host_paths(&page);
+                let missing = checker::unmatched_paths(&hp, &rp.paths);
+                t.paths += hp.len();
+                if missing > 0 {
+                    t.mismatched_paths += missing;
+                    if why.is_empty() {
+                        why = format!(
+                            "{missing} of {} paths are not the PDF's (first host path: fill {:?} {:?})",
+                            hp.len(),
+                            hp.first().map(|p| &p.fill),
+                            hp.first().map(|p| &p.fill_space)
+                        );
+                    }
+                    bad += 1;
                 }
                 if page.pdf_box.map(f64::to_bits) != rp.media_box.map(f64::to_bits) {
                     t.mismatched_boxes += 1;
@@ -382,8 +339,8 @@ fn main() {
                 let mut evs = Vec::new();
                 let tp = &doc.pages()[i];
                 let ts = typst::layout::Transform::translate(tp.bleed.left, tp.bleed.top);
-                events(&tp.frame, ts, rp.media_box[3], &mut evs);
-                let expected = match expected(&evs, &rp.glyphs) {
+                checker::events(&tp.frame, ts, rp.media_box[3], &mut evs);
+                let expected = match checker::expected(&evs, &rp.glyphs) {
                     Ok(e) => e,
                     Err(e) => {
                         why = format!("the checker cannot place the runs: {e}");
@@ -399,8 +356,35 @@ fn main() {
                 }
                 let h = page.pdf_box[3];
                 let sp = |v: f64| (v * 65_781.76).round() as i32;
+                let colours = checker::host_glyph_paints(&page);
                 for (gi, (r, g)) in expected.iter().zip(&page.origins).enumerate() {
                     let (x, y, l) = drawn[gi];
+                    // The fill colour too (alpha only where the page is
+                    // complete: without `color-spaces` the host does not
+                    // draw it and flags the page).
+                    let bits = |v: &[f64]| v.iter().map(|x| x.to_bits()).collect::<Vec<_>>();
+                    // On a complete page every part of the paint state is
+                    // the PDF's (colour, space, alphas, render mode, line
+                    // state); on an INCOMPLETE one the fill colour.
+                    let hc = &colours[gi];
+                    let differs = if page.flags & 1 == 0 {
+                        checker::glyph_paint_mismatch(hc, r)
+                    } else if bits(&hc.fill) != bits(&r.fill) || hc.fill_space != r.fill_space {
+                        Some(format!(
+                            "fill {:?} {}, PDF {:?} {}",
+                            hc.fill, hc.fill_space, r.fill, r.fill_space
+                        ))
+                    } else {
+                        None
+                    };
+                    if let Some(d) = differs {
+                        t.mismatched_glyphs += 1;
+                        if why.is_empty() {
+                            why = format!("glyph {gi}: {d}");
+                        }
+                        bad += 1;
+                        continue;
+                    }
                     let ok = r.origin.map(f64::to_bits) == g.map(f64::to_bits)
                         && r.matrix.map(f64::to_bits) == l.map(f64::to_bits)
                         && x == sp(r.origin[0])
@@ -435,7 +419,7 @@ fn main() {
         }
     }
     println!(
-        "{{\"snippets\":{},\"compiled\":{},\"not_compiled\":{},\"export_failed\":{},\"pages\":{},\"pdf_glyphs\":{},\"drawn_glyphs\":{},\"mismatched_glyphs\":{},\"mismatched_boxes\":{},\"positions_failed_pages\":{},\"mismatched_snippets\":{},\"seconds\":{:.1}}}",
+        "{{\"snippets\":{},\"compiled\":{},\"not_compiled\":{},\"export_failed\":{},\"pages\":{},\"pdf_glyphs\":{},\"drawn_glyphs\":{},\"mismatched_glyphs\":{},\"mismatched_boxes\":{},\"paths\":{},\"mismatched_paths\":{},\"positions_failed_pages\":{},\"mismatched_snippets\":{},\"seconds\":{:.1}}}",
         t.snippets,
         t.compiled,
         t.not_compiled,
@@ -445,6 +429,8 @@ fn main() {
         t.glyphs_drawn,
         t.mismatched_glyphs,
         t.mismatched_boxes,
+        t.paths,
+        t.mismatched_paths,
         t.positions_failed_pages,
         t.mismatched_snippets.len(),
         t0.elapsed().as_secs_f64()
