@@ -243,6 +243,24 @@ impl Key {
                 .iter()
                 .zip(&now)
                 .all(|((_, s), n)| n.as_ref() == Some(s));
+        if !dirs_same && std::env::var_os("FLASHTEX_INCR_DEBUG").is_some() {
+            let why: Vec<String> = self
+                .dirs
+                .iter()
+                .zip(&now)
+                .filter(|((_, s), n)| n.as_ref() != Some(s))
+                .map(|((d, s), n)| {
+                    let racy = n.is_some_and(|n| n.racy) || s.racy;
+                    let same = n.is_some_and(|n| n.same_fields(s));
+                    format!("{d} (racy {racy}, same fields {same})")
+                })
+                .collect();
+            eprintln!(
+                "[key] {} lookups run again: {}",
+                self.lookups.len(),
+                why.join(", ")
+            );
+        }
         for (name, fmt, must, found) in self.lookups.iter().filter(|_| !dirs_same) {
             let l = Lookup {
                 name: name.clone(),
