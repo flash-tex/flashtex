@@ -223,7 +223,7 @@ pub fn perf_mark(on: bool) {
 mod linux_pmu {
     extern "C" {
         fn syscall(n: i64, ...) -> i64;
-        fn read(fd: i32, buf: *mut u8, n: usize) -> isize;
+        fn read(fd: i32, buf: *mut std::ffi::c_void, n: usize) -> isize;
         fn close(fd: i32) -> i32;
     }
     #[cfg(target_arch = "x86_64")]
@@ -298,7 +298,7 @@ mod linux_pmu {
                 let mut v = [0u64; 3];
                 // SAFETY: at most `size_of_val(&v)` bytes into `v`.
                 let n =
-                    unsafe { read(g.0, v.as_mut_ptr() as *mut u8, std::mem::size_of_val(&v)) };
+                    unsafe { read(g.0, v.as_mut_ptr().cast(), std::mem::size_of_val(&v)) };
                 if n < 16 {
                     return None;
                 }
