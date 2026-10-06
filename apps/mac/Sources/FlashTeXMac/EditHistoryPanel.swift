@@ -519,6 +519,13 @@ final class EditHistoryClient {
     /// command is pending, the buffer is not yet durable, or the stack is empty.
     private func move(_ direction: EditHistory.Direction) {
         guard let model else { return }
+        // Live Share (proposal Q6): the ledger's history reverts the last
+        // durable group whoever wrote it, so it is off while collaborating;
+        // ⌘Z undoes only your own edits there.
+        guard !model.liveShare.isActive else {
+            setNote("durable undo is off during Live Share (it would revert collaborators' edits); ⌘Z undoes only yours")
+            return
+        }
         guard pending == nil else { setNote("a \(pending!.command.direction.rawValue) is still pending; retry or wait for its reply"); return }
         guard bufferIsDurable, let durable = model.controllerState.durable[model.activePath] else {
             setNote("the buffer is not durable yet; wait for the helper's receipt"); return
