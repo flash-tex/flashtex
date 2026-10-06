@@ -1,5 +1,7 @@
 import Foundation
 import XCTest
+import FlashTeXDisplayListV3
+import FlashTeXProtocol
 @testable import FlashTeXMac
 
 /// App-parity row B3 (box warnings) against a real host: an overfull \hbox
