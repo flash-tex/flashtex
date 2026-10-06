@@ -1649,21 +1649,36 @@ fn an_outside_rewrite_after_the_hosts_own_write_is_seen() {
             }
         }
         // the host writes the file: one letter of a prose word replaced
-        let at = text.find(" lorem ").or_else(|| text.find(" the ")).expect("a word") + 1;
+        let at = text
+            .find(" lorem ")
+            .or_else(|| text.find(" the "))
+            .expect("a word")
+            + 1;
         id += 1;
         let mut r = req(id, &proj, &out, main);
         r.edits = vec![Edit {
             path: main.into(),
             offset: at as u64,
             delete: 1,
-            insert: if text.as_bytes()[at] == b'q' { "z" } else { "q" }.into(),
+            insert: if text.as_bytes()[at] == b'q' {
+                "z"
+            } else {
+                "q"
+            }
+            .into(),
         }];
         let o = compile(&mut c, &mut view, &r);
         assert_eq!(o.done.str_field("status"), Some("ok"), "{}", o.done);
         // another program, within the tick: another byte, in place
-        let mtime = std::fs::metadata(proj.join(main)).unwrap().modified().unwrap();
+        let mtime = std::fs::metadata(proj.join(main))
+            .unwrap()
+            .modified()
+            .unwrap();
         let mut b = std::fs::read(proj.join(main)).unwrap();
-        let w = text.rfind(" lorem ").or_else(|| text.rfind(" the ")).expect("a word");
+        let w = text
+            .rfind(" lorem ")
+            .or_else(|| text.rfind(" the "))
+            .expect("a word");
         assert!(w > at + 8);
         match (from, to) {
             (Some(f), Some(t)) => {
@@ -1674,7 +1689,10 @@ fn an_outside_rewrite_after_the_hosts_own_write_is_seen() {
         }
         {
             use std::io::{Seek, Write};
-            let mut f = std::fs::File::options().write(true).open(proj.join(main)).unwrap();
+            let mut f = std::fs::File::options()
+                .write(true)
+                .open(proj.join(main))
+                .unwrap();
             f.seek(std::io::SeekFrom::Start(0)).unwrap();
             f.write_all(&b).unwrap();
             f.set_modified(mtime).unwrap();
