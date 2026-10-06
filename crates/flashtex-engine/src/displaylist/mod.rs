@@ -2295,7 +2295,11 @@ mod tests {
         };
         for round in 0..600 {
             // every other round about the line the index's table ends at
-            let base = if round % 2 == 0 { 0 } else { SpanIndex::DENSE - 15 };
+            let base = if round % 2 == 0 {
+                0
+            } else {
+                SpanIndex::DENSE - 15
+            };
             let mut st = State::new();
             for _ in 0..60 {
                 let (f, l) = (1 + rnd(2), base + 1 + rnd(30));
