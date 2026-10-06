@@ -163,8 +163,14 @@ fn the_documents_engine_picks_the_providers_feature_list() {
     let new: Vec<String> = NEW_ENGINE_FEATURES.iter().map(|s| s.to_string()).collect();
     for (convert, want) in [
         (json!({"capture_id":"cap-provider"}), supported_features()),
-        (json!({"capture_id":"cap-provider","engine":"previous"}), supported_features()),
-        (json!({"capture_id":"cap-provider","engine":"new","supported_features":["\\anything"]}), new),
+        (
+            json!({"capture_id":"cap-provider","engine":"previous"}),
+            supported_features(),
+        ),
+        (
+            json!({"capture_id":"cap-provider","engine":"new","supported_features":["\\anything"]}),
+            new,
+        ),
     ] {
         let stub = Stub::start(200, OPENAI_REPLY);
         let store = tempfile::tempdir().unwrap();
@@ -195,7 +201,11 @@ fn the_documents_engine_picks_the_providers_feature_list() {
         ],
         &capture_flow_with(json!({"capture_id":"cap-provider","engine":"pdftex"})),
     );
-    assert_ne!(run.replies[3]["type"], "capture_proposal", "{:?}", run.replies[3]);
+    assert_ne!(
+        run.replies[3]["type"], "capture_proposal",
+        "{:?}",
+        run.replies[3]
+    );
 }
 
 struct Run {

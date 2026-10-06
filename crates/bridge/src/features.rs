@@ -115,10 +115,17 @@ mod tests {
     /// new one is the policy list, within the conversion context's limits.
     #[test]
     fn the_engine_picks_the_list() {
-        assert_eq!(supported_features_for(TypesettingEngine::Previous), supported_features());
+        assert_eq!(
+            supported_features_for(TypesettingEngine::Previous),
+            supported_features()
+        );
         assert_eq!(TypesettingEngine::default(), TypesettingEngine::Previous);
         let new = supported_features_for(TypesettingEngine::New);
-        assert!(new.iter().all(|f| f.starts_with("POLICY: ") && f.len() <= 128), "{new:?}");
+        assert!(
+            new.iter()
+                .all(|f| f.starts_with("POLICY: ") && f.len() <= 128),
+            "{new:?}"
+        );
         assert!(!new.contains(&"\\pi".to_string()));
         let doc = crate::Document {
             project_id: "p".into(),
@@ -127,8 +134,14 @@ mod tests {
             text: "x".into(),
         };
         crate::context::build(&doc, 0, 1, std::iter::once(&doc), new).expect("fits the context");
-        for (wire, engine) in [("\"new\"", TypesettingEngine::New), ("\"previous\"", TypesettingEngine::Previous)] {
-            assert_eq!(serde_json::from_str::<TypesettingEngine>(wire).unwrap(), engine);
+        for (wire, engine) in [
+            ("\"new\"", TypesettingEngine::New),
+            ("\"previous\"", TypesettingEngine::Previous),
+        ] {
+            assert_eq!(
+                serde_json::from_str::<TypesettingEngine>(wire).unwrap(),
+                engine
+            );
         }
         assert!(serde_json::from_str::<TypesettingEngine>("\"pdftex\"").is_err());
     }
