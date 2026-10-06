@@ -961,6 +961,18 @@ impl Engine {
                 st.push(("restore".to_string(), m(rep.restore_s * 1e3)));
                 st.push(("tests".to_string(), Json::Int(rep.tests as i64)));
                 st.push(("test".to_string(), m(rep.test_s * 1e3)));
+                // (a run newer work stopped: what this compile did with it
+                // first, inside `key` and `find`)
+                if !rep.paused_how.is_empty() {
+                    st.push(("paused_how".to_string(), js(rep.paused_how)));
+                    st.push(("paused".to_string(), m(rep.paused_s * 1e3)));
+                    if let Some(i) = rep.paused_instr {
+                        st.push((
+                            "paused_instr_k".to_string(),
+                            Json::Int((i / 1000) as i64),
+                        ));
+                    }
+                }
                 if let Some((p, w, c)) = rep.edited {
                     st.push(("edited_page".to_string(), Json::Int(p as i64)));
                     st.push(("edited_wall".to_string(), m(w * 1e3)));
