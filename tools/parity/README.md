@@ -728,8 +728,11 @@ at the commit that T4 summary records.
 **The board's host (the NixOS PC).** Its runners are user services in
 `flashtex.slice` (MemoryMax 20G, no swap, CPUQuota 800 %, shared with agents'
 runs). The board runs in a scope of its own inside that slice
-(`systemd-run --user --scope --slice=flashtex.slice -p MemoryMax=10G`, nice
-10), so it and a T4 night cannot take the slice's 20 GB between them. Its TeX
+(`systemd-run --user --scope --slice=flashtex.slice -p MemoryMax=8G`, nice
+10), and never beside a T4 night: the board's PC job and nightly.yml's
+`corpus-t4` share the concurrency group `flashtex-pc-heavy`. On 10-06 the two
+together, beside the agents' runs, pushed the slice to 86 % full memory
+pressure, and GitHub dropped the board (37525986631). Its TeX
 Live 2026 is installed without doc files (`tlmgr option docfiles` is 0), and
 the templates and packages manifests pin files from TeX Live's `doc/` tree.
 Installing the docs would change the oracle's `texlive.tlpdb`, so the board
