@@ -229,7 +229,8 @@ final class EditorInstantTests: XCTestCase {
     /// to main from another thread, while a ping measures main's latency; runs
     /// `during` (on main) as typing starts.
     private func typePhase(_ name: String, keys: Int, into tv: NSTextView, session: EngineV3Session,
-                           stamp: Bool = false, during: (() -> Void)? = nil) async throws -> Phase {
+                           stamp: Bool = false, pauseEvery: Int = 0, pauseMs: UInt32 = 0,
+                           during: (() -> Void)? = nil) async throws -> Phase {
         let box = Box()
         var phase = Phase(name: name)
         phase.pagesAtStart = session.pageCount
@@ -259,7 +260,7 @@ final class EditorInstantTests: XCTestCase {
         let sessionRef = EngineV3WeakRef(session)
         let typist = Thread {
             for k in 0 ..< keys {
-                usleep(50_000)
+                usleep(pauseEvery > 0 && k > 0 && k % pauseEvery == 0 ? pauseMs * 1000 : 50_000)
                 let t0 = MonotonicClock.nowNs()
                 box.lock.lock(); box.posts.append(t0); box.lock.unlock()
                 EditorInstantTests.onMain {
@@ -274,7 +275,7 @@ final class EditorInstantTests: XCTestCase {
         }
         typist.qualityOfService = .userInteractive
         typist.start()
-        try await waitUntil("\(keys) keys handled", timeout: Double(keys) * 0.05 + 60) {
+        try await waitUntil("\(keys) keys handled", timeout: Double(keys) * (0.05 + Double(pauseMs) / 1000) + 60) {
             box.lock.lock(); defer { box.lock.unlock() }; return box.ends.count >= keys
         }
         try await Task.sleep(nanoseconds: 300_000_000) // the last key's draw
@@ -363,6 +364,10 @@ final class EditorInstantTests: XCTestCase {
         }
         steadyBox.lock.lock(); steadyBox.stop = true; steadyBox.lock.unlock()
 
+        // E: typing in bursts (3 keys, then 400 ms still): what runs once the
+        // typing pauses (debounced whole-document scans) and holds the next key.
+        let bursts = try await typePhase("bursts", keys: 24, into: tv, session: s, pauseEvery: 3, pauseMs: 400)
+
         // D: a cold compile with no typing: which views re-evaluate.
         let againPages = try Self.pages(n, salt: 9)
         let again = Feed(Self.coldCompile(againPages, id: 100, path: path, lines: lines))
@@ -379,7 +384,7 @@ final class EditorInstantTests: XCTestCase {
         var burstSections: [String: [Double]] = [:]
         for (k, b) in MainThreadProbe.buckets { burstSections[k] = [Double(b.totalNs) / 1e6, Double(b.count), Double(b.maxNs) / 1e6] }
 
-        report([idle, coldPhase, steady], extra: ["pages": n, "document_bytes": text.utf8.count, "burst_applied_ms": burstMs,
+        report([idle, coldPhase, steady, bursts], extra: ["pages": n, "document_bytes": text.utf8.count, "burst_applied_ms": burstMs,
                                                   "burst_bodies": ViewBodyProbe.counts, "burst_main_sections_ms": burstSections])
         XCTAssertEqual(s.pageCount, n)
         XCTAssertEqual(idle.keys, 40)
