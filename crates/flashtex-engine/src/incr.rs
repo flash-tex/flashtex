@@ -4800,9 +4800,12 @@ impl Step {
 /// memory grew with every converged keystroke (lane P4-PAGE-COST).
 ///
 /// - A file position `x` the steps shift becomes `x + delta` of the piece
-///   holding `x` (`pieces`, by where each starts): applying the steps one by
-///   one splits the positions only where a step's threshold falls, so n
-///   steps give at most n + 1 pieces.
+///   holding `x` (`pieces`, by where each starts): a step splits a piece
+///   only where its threshold falls in it. Repeated convergences at one
+///   place add about a piece each; a step that would take the pieces past
+///   [`RELOC_PIECES`] (deltas of both signs scattered over the file) is kept
+///   whole instead (`rest`), and it and every later step are applied one
+///   by one after the composed ones.
 /// - An override writes its word whatever the entry; the later steps shift
 ///   it where they shift its entry (one not in an object stream: `int3`,
 ///   which no step changes). Each override keeps both values, the one it
@@ -4820,11 +4823,16 @@ struct Reloc {
     /// is shifted).
     overrides: Vec<(usize, u64, u64)>,
     lines: Vec<crate::lineshift::Shift>,
-    /// Steps composed.
+    /// Steps after the composed ones, applied one by one (see above).
+    rest: Vec<Step>,
+    /// Steps composed or kept.
     count: usize,
     /// The steps themselves, kept only under `FLASHTEX_VERIFY_RELOC`.
     steps: Vec<Step>,
 }
+
+/// The most pieces a [`Reloc`] composes into.
+const RELOC_PIECES: usize = 256;
 
 fn verify_reloc() -> bool {
     static V: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
@@ -4834,7 +4842,16 @@ fn verify_reloc() -> bool {
 impl Reloc {
     /// Compose step `s` after the ones this holds.
     fn push(&mut self, s: &Step) {
+        self.lines.extend(s.lines.iter().cloned());
+        self.count += 1;
+        if verify_reloc() {
+            self.steps.push(s.clone());
+        }
         let (t, d) = (s.threshold, s.delta);
+        if !self.rest.is_empty() {
+            self.rest.push(s.clone());
+            return;
+        }
         if d != 0 {
             if self.pieces.is_empty() {
                 self.pieces.push((i64::MIN, 0));
@@ -4858,6 +4875,10 @@ impl Reloc {
                     add(c, e + d);
                 }
             }
+            if out.len() > RELOC_PIECES {
+                self.rest.push(s.clone());
+                return;
+            }
             self.pieces = out;
             for o in self.overrides.iter_mut() {
                 if o.2 as i64 >= t {
@@ -4869,14 +4890,21 @@ impl Reloc {
             self.overrides.retain(|o| o.0 != off);
             self.overrides.push((off, v, v));
         }
-        self.lines.extend(s.lines.iter().cloned());
-        self.count += 1;
-        if verify_reloc() {
-            self.steps.push(s.clone());
-        }
     }
 
-    /// Where the steps put file position `x`.
+    /// Where the steps put file position `x` (tests: with the kept steps).
+    #[cfg(test)]
+    fn position(&self, x: i64) -> i64 {
+        self.rest.iter().fold(self.moved(x), |x, s| {
+            if s.delta != 0 && x >= s.threshold {
+                x + s.delta
+            } else {
+                x
+            }
+        })
+    }
+
+    /// Where the composed steps put file position `x`.
     fn moved(&self, x: i64) -> i64 {
         let i = self.pieces.partition_point(|&(a, _)| a <= x);
         match i.checked_sub(1) {
@@ -4889,6 +4917,9 @@ impl Reloc {
     fn apply(&self, g: &mut Globals) {
         let before = verify_reloc().then(|| reloc_words(g));
         self.apply_positions(g);
+        for s in &self.rest {
+            s.apply_positions(g);
+        }
         for s in &self.lines {
             s.relocate(g);
         }
@@ -5040,15 +5071,24 @@ mod tests {
             seed ^= seed << 17;
             seed % n
         };
-        for _ in 0..3000 {
+        // (rounds of a few steps, and a few of hundreds, past the pieces'
+        // cap; and repeated convergences at one place: positions shifted by
+        // the steps before)
+        for round in 0..3000 {
             let mut r = super::Reloc::default();
-            let mut steps = vec![];
-            for _ in 0..rnd(14) {
+            let mut steps: Vec<super::Step> = vec![];
+            let n = if round % 500 == 0 { 600 } else { rnd(14) };
+            let same = round % 3 == 0;
+            for _ in 0..n {
                 let overrides = (0..rnd(3))
                     .map(|_| (8 * rnd(5) as usize, rnd(1400)))
                     .collect();
+                let threshold = match steps.last() {
+                    Some(p) if same => p.threshold + p.delta,
+                    _ => rnd(1200) as i64,
+                };
                 let s = super::Step {
-                    threshold: rnd(1200) as i64,
+                    threshold,
                     delta: rnd(301) as i64 - 150,
                     overrides,
                     lines: vec![],
@@ -5056,7 +5096,10 @@ mod tests {
                 r.push(&s);
                 steps.push(s);
             }
-            assert!(r.pieces.len() <= steps.len() + 1);
+            assert!(r.pieces.len() <= super::RELOC_PIECES);
+            if same {
+                assert!(r.rest.is_empty() && r.pieces.len() <= steps.len() + 1);
+            }
             for x in -5..1600i64 {
                 let seq = steps.iter().fold(x, |x, s| {
                     if s.delta != 0 && x >= s.threshold {
@@ -5065,7 +5108,10 @@ mod tests {
                         x
                     }
                 });
-                assert_eq!(r.moved(x), seq, "position {x}");
+                assert_eq!(r.position(x), seq, "position {x}");
+            }
+            if !r.rest.is_empty() {
+                continue;
             }
             for off in (0..5).map(|k| 8 * k) {
                 let (mut raw, mut val) = (None, None::<i64>);
