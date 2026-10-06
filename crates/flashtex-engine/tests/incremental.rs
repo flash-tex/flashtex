@@ -3250,3 +3250,68 @@ fn twin_files_edited_alike_both_shift() {
         assert!(conv + 3 < pages, "{what}: converged late: {r}");
     }
 }
+
+/// Lane P4-MEMORY-BUDGET (`Obs::thin_pending`): a run that does not
+/// converge -- extra text early on moves every later page break and label
+/// -- thins the old run's future behind it (here once it is a page past its
+/// restart page: `FLASHTEX_BRANCH_WINDOW=1`, and a restart point at most
+/// input lines, `FLASHTEX_TIMED_S`, so that the thinning runs often). Each
+/// compile equals from-scratch runs: the edit, its revert interrupted
+/// mid-document and replaced by another edit (the thinned old run comes back
+/// by reattach, then the new run converges with it), and the revert.
+#[test]
+fn a_rerun_thins_the_old_run_behind_it() {
+    let Some(e) = env() else {
+        common::no_texlive();
+        return;
+    };
+    let dir = e.dir.join("thin-behind");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let base = refs_doc("", 40);
+    let moved = refs_doc(&"Words that move every later page. ".repeat(40), 40);
+    let late = base.replacen("Paragraph 200 with", "Paragraph 200 now with", 1);
+    let mut h = Host::start_env(
+        &e,
+        &dir,
+        &[
+            ("FLASHTEX_BRANCH_WINDOW", "1"),
+            ("FLASHTEX_TIMED_S", "0.0000001"),
+        ],
+    );
+    for _ in 0..3 {
+        let r = compile_and_check(&e, &mut h, &dir, &[("doc.tex", &base)], "settle");
+        if r.contains("\"mode\":\"unchanged\"") {
+            break;
+        }
+    }
+    let thinned = |h: &mut Host| -> i64 {
+        let m = h.cmd("mem");
+        field(&m, "branch_thinned").parse().unwrap_or(0)
+    };
+    let t0 = thinned(&mut h);
+    let r = compile_and_check(&e, &mut h, &dir, &[("doc.tex", &moved)], "the move");
+    assert!(r.contains("\"mode\":\"incremental\""), "the move: {r}");
+    let t1 = thinned(&mut h);
+    assert!(t1 > t0, "the move thinned nothing of the old run: {r}");
+    // the revert, interrupted mid-document in its first pass, then a late
+    // edit: the move's run comes back whole but for what was thinned
+    let reference = dir.with_extension("ref");
+    copy_dir(&dir, &reference);
+    std::fs::write(dir.join("doc.tex"), &base).unwrap();
+    let r = h.cmd("compile-interrupt 1 12");
+    assert!(r.contains("\"preempted\":true"), "not interrupted: {r}");
+    assert!(thinned(&mut h) > t1, "the revert thinned nothing: {r}");
+    std::fs::write(dir.join("doc.tex"), &late).unwrap();
+    std::fs::write(reference.join("doc.tex"), &late).unwrap();
+    let r = h.cmd("compile");
+    check_against(
+        &e,
+        &dir,
+        &reference,
+        &r,
+        "a late edit after the interrupted revert",
+    );
+    compile_and_check(&e, &mut h, &dir, &[("doc.tex", &base)], "the revert");
+    compile_and_check(&e, &mut h, &dir, &[], "settle again");
+}
