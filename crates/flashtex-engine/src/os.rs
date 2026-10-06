@@ -242,7 +242,12 @@ mod linux_pmu {
     const PERF_TYPE_HARDWARE: u32 = 0;
     const PERF_COUNT_HW_CPU_CYCLES: u64 = 0;
     const PERF_COUNT_HW_INSTRUCTIONS: u64 = 1;
+    const PERF_FORMAT_TOTAL_TIME_ENABLED: u64 = 1;
+    const PERF_FORMAT_TOTAL_TIME_RUNNING: u64 = 2;
     const PERF_FORMAT_GROUP: u64 = 8;
+    // perf_event_open's flags: the fds are not inherited by programs the
+    // host runs (the external tools, kpathsea's mktex scripts)
+    const PERF_FLAG_FD_CLOEXEC: u64 = 8;
     // attr.flags bits: exclude_kernel (5), exclude_hv (6)
     const EXCLUDE_KERNEL_HV: u64 = (1 << 5) | (1 << 6);
 
@@ -280,12 +285,14 @@ mod linux_pmu {
             config,
             sample_period: 0,
             sample_type: 0,
-            read_format: PERF_FORMAT_GROUP,
+            read_format: PERF_FORMAT_GROUP
+                | PERF_FORMAT_TOTAL_TIME_ENABLED
+                | PERF_FORMAT_TOTAL_TIME_RUNNING,
             flags: EXCLUDE_KERNEL_HV,
             rest: [0; 8],
         };
         // SAFETY: perf_event_open(attr, pid 0 = this thread, cpu -1 = any,
-        // group_fd, flags 0) reads `a` only.
+        // group_fd, flags) reads `a` only.
         unsafe {
             syscall(
                 SYS_PERF_EVENT_OPEN,
@@ -293,7 +300,7 @@ mod linux_pmu {
                 0i32,
                 -1i32,
                 group,
-                0u64,
+                PERF_FLAG_FD_CLOEXEC,
             ) as i32
         }
     }
@@ -305,24 +312,37 @@ mod linux_pmu {
         };
     }
 
-    /// The group's counts. Raw, so that they never decrease: while other
-    /// counters share the PMU (`perf stat` on the host, say), the group
-    /// counts only part of the time and these undercount.
-    pub fn thread_counts() -> Option<(u64, u64)> {
+    /// The group's reading: (instructions, cycles, time enabled, time
+    /// running).
+    fn reading() -> Option<(u64, u64, u64, u64)> {
         GROUP
             .try_with(|g| {
                 let g = g.as_ref()?;
-                // nr, then one value per member
-                let mut v = [0u64; 3];
+                // nr, time enabled, time running, then one value per member
+                let mut v = [0u64; 5];
                 // SAFETY: at most `size_of_val(&v)` bytes into `v`.
                 let n = unsafe { read(g.0, v.as_mut_ptr().cast(), std::mem::size_of_val(&v)) };
-                if n < 16 {
+                if n < 32 {
                     return None;
                 }
-                Some((v[1], if v[0] >= 2 { v[2] } else { 0 }))
+                Some((v[3], if v[0] >= 2 { v[4] } else { 0 }, v[1], v[2]))
             })
             .ok()
             .flatten()
+    }
+
+    /// The group's counts. Raw, so that they never decrease: while other
+    /// counters share the PMU (`perf stat` on the host, say), the group
+    /// counts only part of the time and these undercount
+    /// ([`counted_throughout`]).
+    pub fn thread_counts() -> Option<(u64, u64)> {
+        reading().map(|r| (r.0, r.1))
+    }
+
+    /// Whether the group has counted all the time it was enabled (no other
+    /// counters took the PMU from it).
+    pub fn counted_throughout() -> bool {
+        reading().is_some_and(|r| r.3 >= r.2)
     }
 }
 
@@ -1420,6 +1440,15 @@ mod tests {
             x = std::hint::black_box(x.wrapping_mul(31).wrapping_add(i));
         }
         let c = super::thread_counts().unwrap();
+        // (another counter user, `perf` or the CI host's, may have taken the
+        // PMU part of the time: then the counts fall short, and prove less)
+        #[cfg(all(
+            target_os = "linux",
+            any(target_arch = "x86_64", target_arch = "aarch64")
+        ))]
+        if !super::linux_pmu::counted_throughout() {
+            return;
+        }
         assert!(c.0 - b.0 >= 2_000_000, "{b:?} -> {c:?}");
         assert!(
             b.0 - a.0 < 2_000_000,
