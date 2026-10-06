@@ -25,11 +25,14 @@ separately. Every difference is printed with both faces
 (PostScript name, full name, family and style per the port's catalog).
 
 Usage:
-  fontmatch.py [--names FILE] [--finder BIN] [--xetex BIN] [--jobs N]
-               [--json OUT]
+  fontmatch.py [--names FILE] [--known FILE] [--finder BIN] [--xetex BIN]
+               [--jobs N] [--json OUT]
 
 `--names` defaults to fontnames.txt here: one lookup per line, `NAME` or
 `NAME<TAB>SIZE` (`12` for `at 12pt`, `scaled 1200`); `#` comments.
+`--known` defaults to fontmatch-known.txt here: the measured differences
+(`face NAME` or `name NAME`, tab-separated), printed as KNOWN; the run
+fails on any other difference and on a listed one that no longer differs.
 `--finder` defaults to crates/flashtex-xetex/target/release/examples/
 find_font (build it with `cargo build --release --example find_font` in
 crates/flashtex-xetex). Stdlib only; MIT, like the rest of tools/.
@@ -49,6 +52,7 @@ ROOT = os.path.dirname(os.path.dirname(HERE))
 XETEX = "/usr/local/texlive/2026/bin/universal-darwin/xetex"
 FINDER = os.path.join(ROOT, "crates", "flashtex-xetex", "target", "release", "examples", "find_font")
 NAMES = os.path.join(HERE, "fontnames.txt")
+KNOWN = os.path.join(HERE, "fontmatch-known.txt")
 
 # XDV define_native_font flags (XeTeX_ext.c).
 XDV_FLAG_COLORED = 0x0200
@@ -66,6 +70,24 @@ def read_names(path):
                 continue
             name, _, size = line.partition("\t")
             out.append((name, size.strip()))
+    return out
+
+
+def read_known(path):
+    """{(kind, name, size)} from a known-differences file."""
+    out = set()
+    if not path or not os.path.exists(path):
+        return out
+    with open(path, encoding="utf-8") as f:
+        for line in f:
+            line = line.rstrip("\n")
+            if not line.strip() or line.lstrip().startswith("#"):
+                continue
+            kind, _, rest = line.partition("\t")
+            name, _, size = rest.partition("\t")
+            if kind not in ("face", "name"):
+                raise SystemExit("%s: unknown kind %r" % (path, kind))
+            out.add((kind, name, size.strip()))
     return out
 
 
@@ -187,6 +209,7 @@ def catalog(finder):
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--names", default=NAMES)
+    ap.add_argument("--known", default=KNOWN)
     ap.add_argument("--finder", default=FINDER)
     ap.add_argument("--xetex", default=XETEX)
     ap.add_argument("--jobs", type=int, default=4)
@@ -197,6 +220,9 @@ def main():
             print("missing %s" % exe, file=sys.stderr)
             return 2
     entries = read_names(a.names)
+    known = read_known(a.known)
+    seen_known = set()
+    unexpected = []
     ours = run_finder(a.finder, entries)
     faces = catalog(a.finder)
     with concurrent.futures.ThreadPoolExecutor(a.jobs) as ex:
@@ -242,22 +268,34 @@ def main():
                         "xetex_fontname": t_name, "port_name_of_file": o_name, "name_equal": name_equal,
                         "xetex_size": t.get("size"), "port_size": o["size"], "size_equal": size_equal})
         mark = "same" if equal else ("n/a" if equal is None else "DIFF")
-        print("%-4s %-44s %s%s" % (mark, label, t_face or "(not found)", note))
+        diffs = [k for k, d in (("face", equal is False), ("name", not name_equal)) if d]
+        listed = [k for k in diffs if (k, e[0], e[1]) in known]
+        seen_known.update((k, e[0], e[1]) for k in listed)
+        unexpected += [(k, label) for k in diffs if k not in listed]
+        if diffs:
+            mark = "KNOWN" if len(listed) == len(diffs) else "DIFF"
+        print("%-5s %-44s %s%s" % (mark, label, t_face or "(not found)", note))
         if equal is False:
-            print("       xetex: %s -> %s" % (t_face or "(not found)", faces.get(t_face, "(not in the port's catalog)") if t_face else ""))
-            print("       port:  %s -> %s" % (o_face or "(not found)", faces.get(o_face, "") if o_face else ""))
+            print("        xetex: %s -> %s" % (t_face or "(not found)", faces.get(t_face, "(not in the port's catalog)") if t_face else ""))
+            print("        port:  %s -> %s" % (o_face or "(not found)", faces.get(o_face, "") if o_face else ""))
         if size_equal is False:
-            print("       size: xetex %s sp, port %s sp" % (t["size"], o["size"]))
+            print("        size: xetex %s sp, port %s sp" % (t["size"], o["size"]))
         if not name_equal:
-            print("       name_of_file: xetex %r, port %r" % (t_name, o_name))
+            print("        name_of_file: xetex %r, port %r" % (t_name, o_name))
     print()
     print("faces equal: %d of %d (and %d unverifiable: found by xetex's lookup, not loadable)" % (same, len(entries) - lookup_only, lookup_only))
     print("name_of_file equal: %d of %d" % (name_same, len(entries)))
     print("size equal (XDV define_native_font size, faces equal and loaded): %d of %d (%d in big points: AAT-loaded)" % (size_same, size_cmp, size_aat))
+    stale = sorted(known - seen_known)
+    print("known differences: %d of %d listed seen; %d not listed" % (len(seen_known), len(known), len(unexpected)))
+    for kind, label in unexpected:
+        print("  not listed: %s %s" % (kind, label))
+    for kind, name, size in stale:
+        print("  listed, no longer differs (or not in --names): %s %s" % (kind, name + ("  [%s]" % size if size else "")))
     if a.json:
         with open(a.json, "w", encoding="utf-8") as f:
             json.dump(results, f, indent=1, ensure_ascii=False)
-    return 0 if same == len(entries) - lookup_only else 1
+    return 0 if not unexpected and not stale and size_same == size_cmp else 1
 
 
 if __name__ == "__main__":

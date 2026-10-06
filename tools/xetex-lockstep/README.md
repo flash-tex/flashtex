@@ -79,3 +79,16 @@ On macOS xetex asks Core Text; the port follows XeTeX's fontconfig build
 over its own index, so a difference is either the index (which files are
 seen) or the platform search (which faces get into the maps). The module
 documentation of `fontmgr` lists what is known.
+
+**Known differences** (`fontmatch-known.txt`, measured on macOS): 2 faces
+and 7 `name_of_file`s out of 180 lookups, all from Core Text: variable
+fonts' named instances (`STIX Two Text Bold` is found by xetex only; Core
+Text's instance names for `STIX Two Text` and `Inter`), and two installed
+families both named `SF Mono` (`SFMono-Regular` is found by the port
+only). They print as `KNOWN`; the run fails on a difference not listed or
+a listed one that no longer differs.
+
+The port's catalog keeps each face's names in a cache
+(`$FLASHTEX_CACHE_DIR`, else the user's cache directory,
+`xetex-font-names.json`), keyed by path, face index, size and modification
+time, so only the directory scan is repeated on a later run.
