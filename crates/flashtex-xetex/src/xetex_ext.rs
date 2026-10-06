@@ -15,14 +15,23 @@ use crate::generated::types::{real_point, real_rect, transform};
 use crate::generated::Globals;
 use crate::state::Object;
 use crate::teckit;
-use std::rc::Rc;
+use std::sync::{Arc, Mutex};
 
 /// A TECkit converter (XeTeX_ext.c's `TECkit_Converter`), the object of a
 /// font mapping's handle in `Host::handles`. XeTeX never frees one; it is
 /// disposed of when the last engine state (or checkpoint) holding it goes.
 /// Every conversion resets it, so between calls it holds no state and
-/// checkpoints can share it.
-pub struct Mapping(teckit::TECkit_Converter);
+/// checkpoints can share it. The mutex makes it Send + Sync (an engine may
+/// move between threads, `Globals` is `Send`); a mapping is used by one
+/// engine at a time, so it is never contended.
+pub struct Mapping(Mutex<Converter>);
+
+/// TECkit's converter pointer. TECkit keeps no thread-local or global state
+/// per converter, so it may be used from any one thread at a time.
+pub struct Converter(teckit::TECkit_Converter);
+
+// SAFETY: see `Converter`; `Mapping`'s mutex serialises every use.
+unsafe impl Send for Converter {}
 
 impl Mapping {
     /// `TECkit_CreateConverter` over a compiled mapping (`.tec` bytes, which
@@ -48,7 +57,7 @@ impl Mapping {
                 &mut cnv,
             );
         }
-        (!cnv.is_null()).then_some(Mapping(cnv))
+        (!cnv.is_null()).then(|| Mapping(Mutex::new(Converter(cnv))))
     }
 
     /// XeTeX_ext.c's normalizer for `apply_normalization`: no mapping,
@@ -75,7 +84,7 @@ impl Mapping {
         if status != teckit::kStatus_NoError || cnv.is_null() {
             return Err(status);
         }
-        Ok(Mapping(cnv))
+        Ok(Mapping(Mutex::new(Converter(cnv))))
     }
 }
 
@@ -83,7 +92,7 @@ impl Drop for Mapping {
     fn drop(&mut self) {
         // SAFETY: a converter TECkit made, disposed of once.
         unsafe {
-            teckit::TECkit_DisposeConverter(self.0);
+            teckit::TECkit_DisposeConverter(self.0.get_mut().unwrap_or_else(|e| e.into_inner()).0);
         }
     }
 }
@@ -238,10 +247,11 @@ impl Globals {
         let input = (c as u16).to_ne_bytes();
         let mut out = [0u8; 2];
         let (mut in_used, mut out_used) = (0u32, 0u32);
+        let conv = map.0.lock().unwrap_or_else(|e| e.into_inner());
         // SAFETY: a live converter; the buffers are as long as said.
         unsafe {
             teckit::TECkit_ConvertBuffer(
-                map.0,
+                conv.0,
                 input.as_ptr(),
                 input.len() as u32,
                 &mut in_used,
@@ -250,7 +260,7 @@ impl Globals {
                 &mut out_used,
                 1,
             );
-            teckit::TECkit_ResetConverter(map.0);
+            teckit::TECkit_ResetConverter(conv.0);
         }
         if out_used < 1 {
             0
@@ -301,10 +311,11 @@ impl Globals {
         loop {
             let mut out = vec![0u8; self.host.mapping_out_length as usize];
             let (mut in_used, mut out_used) = (0u32, 0u32);
+            let conv = map.0.lock().unwrap_or_else(|e| e.into_inner());
             // SAFETY: a live converter; the buffers are as long as said.
             let status = unsafe {
                 let s = teckit::TECkit_ConvertBuffer(
-                    map.0,
+                    conv.0,
                     input.as_ptr(),
                     input.len() as u32,
                     &mut in_used,
@@ -313,7 +324,7 @@ impl Globals {
                     &mut out_used,
                     1,
                 );
-                teckit::TECkit_ResetConverter(map.0);
+                teckit::TECkit_ResetConverter(conv.0);
                 s
             };
             match status {
@@ -355,7 +366,7 @@ impl Globals {
             Some(c) => c,
             None => match Mapping::normalizer(nfd) {
                 Ok(m) => {
-                    let m = Rc::new(m);
+                    let m = Arc::new(m);
                     self.host.normalizers[slot] = Some(m.clone());
                     m
                 }
@@ -371,10 +382,11 @@ impl Globals {
         let input: Vec<u8> = text.iter().flat_map(|c| c.to_ne_bytes()).collect();
         let mut out = vec![0u8; room.saturating_mul(4)];
         let (mut in_used, mut out_used) = (0u32, 0u32);
+        let conv = cnv.0.lock().unwrap_or_else(|e| e.into_inner());
         // SAFETY: a live converter; the buffers are as long as said.
         let status = unsafe {
             let s = teckit::TECkit_ConvertBuffer(
-                cnv.0,
+                conv.0,
                 input.as_ptr(),
                 input.len() as u32,
                 &mut in_used,
@@ -383,7 +395,7 @@ impl Globals {
                 &mut out_used,
                 1,
             );
-            teckit::TECkit_ResetConverter(cnv.0);
+            teckit::TECkit_ResetConverter(conv.0);
             s
         };
         if status != teckit::kStatus_NoError {
@@ -400,7 +412,7 @@ impl Globals {
     }
 
     /// The TECkit converter of handle `m`.
-    fn mapping(&self, m: i32) -> Option<Rc<Mapping>> {
+    fn mapping(&self, m: i32) -> Option<Arc<Mapping>> {
         match self.host.handles.get(m)? {
             Object::Other(o) => o.clone().downcast::<Mapping>().ok(),
             _ => None,

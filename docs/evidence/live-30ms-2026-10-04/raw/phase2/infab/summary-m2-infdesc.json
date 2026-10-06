@@ -1,0 +1,369 @@
+{
+ "engine": "m2",
+ "doc": "infdesc",
+ "phases": {
+  "mid-i150": {
+   "args": [
+    "--edit",
+    "book/number-theory/divisibility.tex",
+    "--page",
+    "280",
+    "--interval-ms",
+    "150",
+    "--gap-ms",
+    "300"
+   ],
+   "where": "dl3-keys: 580 pages; letter on line 551 (page 252), byte 32955",
+   "n": 0,
+   "stages": {
+    "queue": {
+     "p50": 41.513,
+     "p95": 62.715,
+     "max": 62.715,
+     "n": 4
+    },
+    "apply": {
+     "p50": 0.277,
+     "p95": 0.408,
+     "max": 0.408,
+     "n": 4
+    },
+    "find": {
+     "p50": 0,
+     "p95": 0,
+     "max": 0,
+     "n": 4
+    },
+    "key": {
+     "p50": 0,
+     "p95": 0,
+     "max": 0,
+     "n": 4
+    },
+    "changes": {
+     "p50": 0,
+     "p95": 0,
+     "max": 0,
+     "n": 4
+    },
+    "restore": {
+     "p50": 0,
+     "p95": 0,
+     "max": 0,
+     "n": 4
+    },
+    "test": {
+     "p50": 0,
+     "p95": 0,
+     "max": 0,
+     "n": 4
+    },
+    "tests": {
+     "p50": 0,
+     "p95": 0,
+     "max": 0,
+     "n": 4
+    },
+    "dl": {
+     "p50": 0,
+     "p95": 0,
+     "max": 0,
+     "n": 4
+    },
+    "send": {
+     "p50": 0,
+     "p95": 0,
+     "max": 0,
+     "n": 4
+    },
+    "cpu": {
+     "p50": 41.546,
+     "p95": 46.975,
+     "max": 46.975,
+     "n": 4
+    },
+    "instr_k": {
+     "p50": 292618,
+     "p95": 295902,
+     "max": 295902,
+     "n": 4
+    },
+    "cycles_k": {
+     "p50": 101376,
+     "p95": 110966,
+     "max": 110966,
+     "n": 4
+    }
+   },
+   "edited_page_ms": null,
+   "done_ms": null,
+   "converged": 0,
+   "cancelled": 25,
+   "typeset_pages": [
+    0,
+    0,
+    0,
+    0
+   ],
+   "load": [
+    145.76,
+    191.85
+   ],
+   "secs": 477.87794399261475
+  },
+  "mid-i300": {
+   "args": [
+    "--edit",
+    "book/number-theory/divisibility.tex",
+    "--page",
+    "280",
+    "--interval-ms",
+    "300",
+    "--gap-ms",
+    "300"
+   ],
+   "where": "dl3-keys: 580 pages; letter on line 551 (page 252), byte 32955",
+   "n": 24,
+   "stages": {
+    "queue": {
+     "p50": 42.497,
+     "p95": 118.763,
+     "max": 118.763,
+     "n": 7
+    },
+    "apply": {
+     "p50": 0.202,
+     "p95": 0.336,
+     "max": 0.336,
+     "n": 7
+    },
+    "find": {
+     "p50": 0,
+     "p95": 0,
+     "max": 0,
+     "n": 7
+    },
+    "key": {
+     "p50": 0,
+     "p95": 0,
+     "max": 0,
+     "n": 7
+    },
+    "changes": {
+     "p50": 0,
+     "p95": 0,
+     "max": 0,
+     "n": 7
+    },
+    "restore": {
+     "p50": 0,
+     "p95": 0,
+     "max": 0,
+     "n": 7
+    },
+    "test": {
+     "p50": 0,
+     "p95": 0,
+     "max": 0,
+     "n": 7
+    },
+    "tests": {
+     "p50": 0,
+     "p95": 0,
+     "max": 0,
+     "n": 7
+    },
+    "dl": {
+     "p50": 0,
+     "p95": 0,
+     "max": 0,
+     "n": 7
+    },
+    "send": {
+     "p50": 0,
+     "p95": 0,
+     "max": 0,
+     "n": 7
+    },
+    "cpu": {
+     "p50": 45.918,
+     "p95": 48.09,
+     "max": 48.09,
+     "n": 7
+    },
+    "instr_k": {
+     "p50": 296200,
+     "p95": 326020,
+     "max": 326020,
+     "n": 7
+    },
+    "cycles_k": {
+     "p50": 111049,
+     "p95": 114021,
+     "max": 114021,
+     "n": 7
+    }
+   },
+   "edited_page_ms": {
+    "p50": 1475.675417,
+    "p95": 3891.557875,
+    "max": 4191.481
+   },
+   "done_ms": null,
+   "converged": 0,
+   "cancelled": 22,
+   "typeset_pages": [
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0
+   ],
+   "load": [
+    191.85,
+    194.22
+   ],
+   "secs": 9.39465594291687
+  },
+  "late-i150": {
+   "args": [
+    "--edit",
+    "book/probability-theory/discrete-random-variables.tex",
+    "--page",
+    "470",
+    "--interval-ms",
+    "150",
+    "--gap-ms",
+    "300"
+   ],
+   "where": "dl3-keys: 580 pages; letter on line 525 (page 445), byte 35738",
+   "n": 24,
+   "stages": {
+    "queue": {
+     "p50": 64.962,
+     "p95": 124.654,
+     "max": 124.654,
+     "n": 2
+    },
+    "apply": {
+     "p50": 0.227,
+     "p95": 3.668,
+     "max": 3.668,
+     "n": 2
+    },
+    "find": {
+     "p50": 0,
+     "p95": 0,
+     "max": 0,
+     "n": 2
+    },
+    "key": {
+     "p50": 0,
+     "p95": 0,
+     "max": 0,
+     "n": 2
+    },
+    "changes": {
+     "p50": 0,
+     "p95": 0,
+     "max": 0,
+     "n": 2
+    },
+    "restore": {
+     "p50": 0,
+     "p95": 0,
+     "max": 0,
+     "n": 2
+    },
+    "test": {
+     "p50": 0,
+     "p95": 0,
+     "max": 0,
+     "n": 2
+    },
+    "tests": {
+     "p50": 0,
+     "p95": 0,
+     "max": 0,
+     "n": 2
+    },
+    "dl": {
+     "p50": 0,
+     "p95": 0,
+     "max": 0,
+     "n": 2
+    },
+    "send": {
+     "p50": 0,
+     "p95": 0,
+     "max": 0,
+     "n": 2
+    },
+    "cpu": {
+     "p50": 41.978,
+     "p95": 43.822,
+     "max": 43.822,
+     "n": 2
+    },
+    "instr_k": {
+     "p50": 307605,
+     "p95": 310073,
+     "max": 310073,
+     "n": 2
+    },
+    "cycles_k": {
+     "p50": 102137,
+     "p95": 106155,
+     "max": 106155,
+     "n": 2
+    }
+   },
+   "edited_page_ms": {
+    "p50": 1030.486333,
+    "p95": 2528.482125,
+    "max": 2678.584792
+   },
+   "done_ms": null,
+   "converged": 0,
+   "cancelled": 27,
+   "typeset_pages": [
+    0,
+    0
+   ],
+   "load": [
+    194.22,
+    194.36
+   ],
+   "secs": 5.117645025253296
+  }
+ },
+ "power": {
+  "source": "AC",
+  "battery_pct": 100,
+  "low_power_mode": true,
+  "thermal": "Note: No thermal warning level has been recorded; Note: No performance warning level has been recorded; Note: No CPU power status has been recorded",
+  "thermal_limited": false,
+  "load": [
+   145.76,
+   157.22,
+   176.88
+  ],
+  "ncpu": 10
+ },
+ "rss_peak": 1171570688,
+ "power_end": {
+  "source": "AC",
+  "battery_pct": 100,
+  "low_power_mode": true,
+  "thermal": "Note: No thermal warning level has been recorded; Note: No performance warning level has been recorded; Note: No CPU power status has been recorded",
+  "thermal_limited": false,
+  "load": [
+   194.36,
+   170.32,
+   171.55
+  ],
+  "ncpu": 10
+ }
+}

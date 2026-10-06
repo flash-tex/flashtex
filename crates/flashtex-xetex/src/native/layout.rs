@@ -6,9 +6,10 @@
 
 use super::font_inst::{FontInst, GlyphBBox};
 use crate::fontlibs::hb;
-use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::ffi::{c_char, c_uint, CStr, CString};
+use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::Mutex;
 
 /// `XeTeXLayoutEngine_rec`.
 pub struct LayoutEngine {
@@ -20,7 +21,7 @@ pub struct LayoutEngine {
     pub shaper_list: Option<Vec<CString>>,
     /// The shaper HarfBuzz used last (`shaper`), none before the first
     /// shaping.
-    pub shaper: RefCell<Option<String>>,
+    pub shaper: Mutex<Option<String>>,
     pub rgb_value: u32,
     pub extend: f32,
     pub slant: f32,
@@ -31,15 +32,24 @@ pub struct LayoutEngine {
     /// one process-wide map by font number; a map per engine is the same
     /// cache, and stays right when a restored engine loads another font
     /// under the same number.
-    pub bbox_cache: RefCell<HashMap<u16, GlyphBBox>>,
+    pub bbox_cache: Mutex<HashMap<u16, GlyphBBox>>,
     /// The `\XeTeXfonttype` letter XeTeX's font manager had when the
     /// engine was made (`getReqEngine`): 'G' makes the language a BCP 47
     /// tag.
     pub req_engine: u8,
     /// The direction of the last shaped run's script (for
     /// `getDefaultDirection`, which reads the reused buffer).
-    pub last_script: Cell<hb::hb_script_t>,
+    pub last_script: AtomicU32,
 }
+
+// SAFETY: a layout engine is reached only through its engine's `Host`
+// (a handle's `Arc`, shared between the live table and that engine's own
+// checkpoints, never handed out of the crate), and every `Globals` method
+// takes `&mut self`: one thread at a time uses it, as one thread uses an
+// engine in TeX Live. The raw HarfBuzz buffer and language pointers are
+// owned by it (the language is HarfBuzz's static interned string).
+unsafe impl Send for LayoutEngine {}
+unsafe impl Sync for LayoutEngine {}
 
 impl Drop for LayoutEngine {
     fn drop(&mut self) {
@@ -79,16 +89,16 @@ impl LayoutEngine {
             language,
             features,
             shaper_list,
-            shaper: RefCell::new(None),
+            shaper: Mutex::new(None),
             rgb_value,
             extend,
             slant,
             embolden,
             // SAFETY: a new buffer, destroyed in Drop.
             buffer: unsafe { hb::hb_buffer_create() },
-            bbox_cache: RefCell::new(HashMap::new()),
+            bbox_cache: Mutex::new(HashMap::new()),
             req_engine,
-            last_script: Cell::new(hb::HB_SCRIPT_INVALID),
+            last_script: AtomicU32::new(hb::HB_SCRIPT_INVALID),
         }
     }
 
@@ -98,7 +108,7 @@ impl LayoutEngine {
         let font = &self.font;
         let hb_font = font.hb_font;
         let mut direction = hb::HB_DIRECTION_LTR;
-        if font.vertical.get() {
+        if font.vertical {
             direction = hb::HB_DIRECTION_TTB;
         } else if rtl {
             direction = hb::HB_DIRECTION_RTL;
@@ -152,10 +162,11 @@ impl LayoutEngine {
             let shaper = CStr::from_ptr(hb::hb_shape_plan_get_shaper(plan))
                 .to_string_lossy()
                 .into_owned();
-            *self.shaper.borrow_mut() = Some(shaper);
+            *self.shaper.lock().unwrap() = Some(shaper);
             hb::hb_buffer_set_content_type(buf, hb::HB_BUFFER_CONTENT_TYPE_GLYPHS);
             hb::hb_shape_plan_destroy(plan);
-            self.last_script.set(hb::hb_buffer_get_script(buf));
+            self.last_script
+                .store(hb::hb_buffer_get_script(buf), Ordering::Relaxed);
             hb::hb_buffer_get_length(buf) as usize
         }
     }
@@ -193,7 +204,7 @@ impl LayoutEngine {
 
     /// `getGlyphAdvances`.
     pub fn glyph_advances(&self) -> Vec<f32> {
-        let v = self.font.vertical.get();
+        let v = self.font.vertical;
         self.positions()
             .iter()
             .map(|p| {
@@ -209,7 +220,7 @@ impl LayoutEngine {
         let f = &self.font;
         let mut out = Vec::with_capacity(pos.len() + 1);
         let (mut x, mut y) = (0f32, 0f32);
-        if f.vertical.get() {
+        if f.vertical {
             for p in pos {
                 out.push((
                     -f.units_to_points(x + p.y_offset as f32), // negative is forwards
@@ -280,12 +291,16 @@ impl LayoutEngine {
 
     /// `usingOpenType`.
     pub fn using_open_type(&self) -> bool {
-        self.shaper.borrow().as_deref().is_none_or(|s| s == "ot")
+        self.shaper
+            .lock()
+            .unwrap()
+            .as_deref()
+            .is_none_or(|s| s == "ot")
     }
 
     /// `usingGraphite`.
     pub fn using_graphite(&self) -> bool {
-        self.shaper.borrow().as_deref() == Some("graphite2")
+        self.shaper.lock().unwrap().as_deref() == Some("graphite2")
     }
 
     /// `isOpenTypeMathFont`.

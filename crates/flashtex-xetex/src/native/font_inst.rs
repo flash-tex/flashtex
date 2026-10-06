@@ -6,7 +6,7 @@
 
 use crate::fontlibs::{ft, hb};
 use std::ffi::{c_char, c_uint, c_void, CString};
-use std::rc::Rc;
+use std::sync::Arc;
 
 /// The FreeType library (XeTeXFontInst.cpp's `gFreeTypeLibrary`), one per
 /// engine (`Host`), shared by the fonts loaded through it.
@@ -14,7 +14,7 @@ pub struct FtLibrary(ft::FT_Library);
 
 impl FtLibrary {
     /// `FT_Init_FreeType`. XeTeX exits when this fails; so does the port.
-    pub fn new() -> Rc<FtLibrary> {
+    pub fn new() -> Arc<FtLibrary> {
         let mut lib: ft::FT_Library = std::ptr::null_mut();
         // SAFETY: FT_Init_FreeType writes a new library handle.
         let error = unsafe { ft::FT_Init_FreeType(&mut lib) };
@@ -22,13 +22,19 @@ impl FtLibrary {
             eprintln!("FreeType initialization failed! ({error})");
             std::process::exit(1);
         }
-        Rc::new(FtLibrary(lib))
+        Arc::new(FtLibrary(lib))
     }
 }
 
+// SAFETY: one engine's fonts use their library, from the thread that runs
+// the engine (see `LayoutEngine`'s Send and Sync); FreeType allows a
+// library to move between threads when it is not used concurrently.
+unsafe impl Send for FtLibrary {}
+unsafe impl Sync for FtLibrary {}
+
 impl Drop for FtLibrary {
     fn drop(&mut self) {
-        // SAFETY: every face of this library holds an `Rc` to it, so none is
+        // SAFETY: every face of this library holds an `Arc` to it, so none is
         // left when it drops.
         unsafe {
             ft::FT_Done_FreeType(self.0);
@@ -54,14 +60,18 @@ pub struct FontInst {
     pub cap_height: f32,
     pub x_height: f32,
     pub italic_angle: f32,
-    pub vertical: std::cell::Cell<bool>,
+    pub vertical: bool,
     /// The font file's path as opened (`m_filename`), and the face index.
     pub filename: Vec<u8>,
     pub index: u32,
     pub ft_face: ft::FT_Face,
     pub hb_font: *mut hb::hb_font_t,
-    _lib: Rc<FtLibrary>,
+    _lib: Arc<FtLibrary>,
 }
+
+// SAFETY: as `FtLibrary`: a font is used by one engine at a time.
+unsafe impl Send for FontInst {}
+unsafe impl Sync for FontInst {}
 
 impl Drop for FontInst {
     fn drop(&mut self) {
@@ -296,7 +306,7 @@ impl FontInst {
     /// `initialize`: `None` where XeTeX sets `status` to 1. `afm` finds the
     /// AFM file of a Type 1 font (kpathsea's `afm` format).
     pub fn new(
-        lib: &Rc<FtLibrary>,
+        lib: &Arc<FtLibrary>,
         pathname: &[u8],
         index: u32,
         point_size: f32,
@@ -318,7 +328,7 @@ impl FontInst {
             cap_height: 0.0,
             x_height: 0.0,
             italic_angle: 0.0,
-            vertical: std::cell::Cell::new(false),
+            vertical: false,
             filename: pathname.to_vec(),
             index,
             ft_face: face,

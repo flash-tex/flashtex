@@ -2,8 +2,16 @@
 //! §4.7): what TeX Live's XeTeX keeps in C globals and C pointers.
 //!
 //! `Globals::host` (web2rust's `--host-state`) holds one [`Host`] per
-//! engine, so that a process can run several engines and restore one; the
-//! crate has no process-wide mutable state (`static`, `thread_local!`).
+//! engine; this crate has no process-wide mutable state (`static`,
+//! `thread_local!`). The runtime it shares with the pdfTeX engine still has
+//! some (`flashtex_engine::system`'s run configuration, resolver, recorder
+//! and external-effect log): those move into per-engine state with the
+//! shared runtime crate in phase S3 (PLAN.md §3.3), so until then one
+//! process runs one XeTeX engine at a time.
+//!
+//! `Globals` is `Send` (the pdfTeX engine's `Arena` is), so a host may move
+//! an engine to another thread: the objects behind handles are `Arc`s of
+//! `Send + Sync` values (`tests/send.rs`).
 //!
 //! The C pointers `xetex.web` keeps in `mem` and in its font arrays (a
 //! native word node's glyph-info array, a font's layout engine and TECkit
@@ -16,7 +24,7 @@
 
 use crate::generated::Globals;
 use std::collections::HashMap;
-use std::rc::Rc;
+use std::sync::Arc;
 
 /// An object a handle refers to. Objects are immutable once allocated (a
 /// change is a new object), so a checkpoint shares them with the live
@@ -25,14 +33,14 @@ use std::rc::Rc;
 pub enum Object {
     /// A native word node's glyph-info array (XeTeX_ext.c's
     /// `native_glyph_info_ptr`: the glyphs' positions, then their ids).
-    GlyphInfo(Rc<GlyphInfo>),
+    GlyphInfo(Arc<GlyphInfo>),
     /// A picture's path (XeTeX_pic.c's `pic_path`), until `pic_path_to_mem`
     /// copies it into `mem`.
-    PicPath(Rc<[u8]>),
+    PicPath(Arc<[u8]>),
     /// An object of a later phase (a font's layout engine, a TECkit
-    /// mapping, an OpenType assembly), held as `Rc<dyn Any>` so that the
+    /// mapping, an OpenType assembly), held as `Arc<dyn Any + Send + Sync>` so that the
     /// table and its checkpoints need not know its type.
-    Other(Rc<dyn std::any::Any>),
+    Other(Arc<dyn std::any::Any + Send + Sync>),
 }
 
 /// XeTeX_ext.c's glyph-info array of a native word node: for each glyph its
@@ -92,7 +100,7 @@ impl Handles {
     }
 
     /// The glyph-info array of handle `h`.
-    pub fn glyph_info(&self, h: i32) -> Option<&Rc<GlyphInfo>> {
+    pub fn glyph_info(&self, h: i32) -> Option<&Arc<GlyphInfo>> {
         match self.get(h)? {
             Object::GlyphInfo(g) => Some(g),
             _ => None,
@@ -127,7 +135,7 @@ pub struct Host {
     /// XeTeX's font manager (`XeTeXFontMgr::GetFontManager`), made on the
     /// first lookup by name. What it has cached changes later answers, so
     /// a checkpoint keeps it (copied on write).
-    pub font_mgr: Option<std::rc::Rc<crate::fontmgr::FontMgr>>,
+    pub font_mgr: Option<std::sync::Arc<crate::fontmgr::FontMgr>>,
     /// XeTeXFontMgr's `sReqEngine`: the renderer the last font name asked
     /// for (`/AAT`, `/OT` or `/ICU`, `/GR`), or 0.
     pub req_engine: u8,
@@ -146,12 +154,15 @@ pub struct Host {
     /// XeTeX_ext.c's `apply_normalization`'s `static normalizers[2]`: the
     /// TECkit NFC and NFD converters, made on first use. They hold no state
     /// between conversions, so a checkpoint does not save them.
-    pub normalizers: [Option<Rc<crate::xetex_ext::Mapping>>; 2],
-    /// The host state at each retained checkpoint of the word space.
+    pub normalizers: [Option<Arc<crate::xetex_ext::Mapping>>; 2],
+    /// The host state at each retained checkpoint of the word space. Each
+    /// copies the handle table and the protrusion codes (the objects
+    /// themselves are shared): O(live handles) per checkpoint, to be made
+    /// persistent when S3 brings checkpoints into the Unicode host.
     checkpoints: HashMap<flashtex_engine::arena::CheckpointId, Saved>,
     /// FreeType (XeTeXFontInst.cpp's `gFreeTypeLibrary`), made on first
     /// use; each font keeps it alive.
-    pub ft_library: Option<std::rc::Rc<crate::native::font_inst::FtLibrary>>,
+    pub ft_library: Option<std::sync::Arc<crate::native::font_inst::FtLibrary>>,
 }
 
 /// `-no-pdf`, true unless set otherwise.
@@ -174,7 +185,7 @@ pub type Protrusion = HashMap<(i32, u32, i32), i32>;
 /// is the run's: none of them changes between checkpoints.
 #[derive(Clone)]
 struct Saved {
-    font_mgr: Option<std::rc::Rc<crate::fontmgr::FontMgr>>,
+    font_mgr: Option<std::sync::Arc<crate::fontmgr::FontMgr>>,
     full_name_of_file: Option<String>,
     protrusion: Protrusion,
     handles: Handles,
@@ -245,7 +256,7 @@ mod tests {
     use super::*;
 
     fn gi(n: u16) -> Object {
-        Object::GlyphInfo(Rc::new(GlyphInfo {
+        Object::GlyphInfo(Arc::new(GlyphInfo {
             locations: vec![(i32::from(n), 0)],
             ids: vec![n],
         }))
