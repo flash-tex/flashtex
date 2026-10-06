@@ -175,6 +175,75 @@ final class CaptureFlowAcceptanceTests: XCTestCase {
         model.detachBridge()
     }
 
+    /// App-parity row E4: the same anchors follow typing under the new
+    /// engine. With the engine-v3 preview on (no host: `FLASHTEX_HOST=none`,
+    /// so nothing compiles), typing still reaches the real bridge as
+    /// `document_edit`s, the automatic caret destination stays valid and
+    /// follows the caret, a re-query names the same handle at the typed
+    /// revision, and a capture built from the stale hello_ack is journaled,
+    /// not refused.
+    func testUnderEngineV3TypingAfterTheIPadConnectedKeepsTheAnchorAtTheCaret() async throws {
+        var env = EnvironmentOverride()
+        defer { env.restore() }
+        OwnerStateGuard.install()
+        let cache = FileManager.default.temporaryDirectory.appendingPathComponent("capture-flow-v3-\(getpid())")
+        defer { try? FileManager.default.removeItem(at: cache) }
+        env.set("FLASHTEX_V3_CACHE", cache.path)
+        env.set("FLASHTEX_HOST", "none")
+        env.set("FLASHTEX_BUNDLE_LOCK", "/nonexistent/flashtex-bundle.lock")
+        env.set("FLASHTEX_BUNDLE_DIGEST", "")
+        let stub = try LoopbackProviderStub(latex: "x = 2y + 1")
+        defer { stub.stop() }
+        let store = try BridgeClientTests.tempStore()
+        defer { try? FileManager.default.removeItem(at: store) }
+        let model = ShellModel()
+        model.autoCompile = false
+        model.engineV3Enabled = true // before the bridge attaches
+        defer { model.engineV3Enabled = false }
+        XCTAssertEqual(model.typesettingEngine, .new)
+        XCTAssertEqual(model.activeText, Self.demoText)
+        try await attach(model, store: store, stub: stub)
+        model.caretUTF16 = 5 // "Hello| FlashTeX."
+
+        let h = ListenerHarness(psks: [Self.entry], sink: model, destinations: model)
+        try h.start()
+        defer { h.stop() }
+        let r = reconnector(port: h.port)
+        let session = try await r.connect()
+        let atHello = try XCTUnwrap(session.destination, "hello_ack names the caret without any pin")
+        XCTAssertEqual(atHello.destinationId, "mac-caret-1")
+        XCTAssertEqual(model.bridgeDestination?.mode, .caret)
+        XCTAssertEqual(model.bridgeDestination?.startByte, 5)
+
+        model.updateActiveText("Hello!! FlashTeX.\n")
+        model.caretUTF16 = 7
+        let typedRevision = model.editorRevision
+        try await waitUntil("document_edit sent") { model.bridge?.shadow["main.tex"]?.revision == typedRevision }
+        XCTAssertEqual(model.bridge?.shadow["main.tex"]?.text, "Hello!! FlashTeX.\n", "the bridge's shadow is the typed text")
+        XCTAssertEqual(model.bridgeDestination?.valid, true, "typing at the caret never drops the automatic destination")
+        XCTAssertEqual(model.bridgeDestination?.startByte, 7, "the anchor followed the caret")
+        let requeried = try await session.connection.destinationQuery()
+        XCTAssertEqual(requeried?.destinationId, "mac-caret-1", "same handle after typing")
+        XCTAssertEqual(requeried?.baseRevision, typedRevision)
+
+        // A second edit, then the capture the iPad built from hello_ack (stale revision, same id).
+        model.updateActiveText("Hello!! FlashTeX.\n\n")
+        model.caretUTF16 = 19
+        let secondRevision = model.editorRevision
+        try await waitUntil("second document_edit sent") { model.bridge?.shadow["main.tex"]?.revision == secondRevision }
+        XCTAssertEqual(model.bridgeDestination?.startByte, 19)
+        let capture = try session.makeCapture(captureId: "flow-v3-1", image: Self.fixturePNG, mimeType: "image/png",
+                                              instructions: "the equation", destination: atHello)
+        let ack = try await r.submit(capture, requireCurrentDestination: false)
+        XCTAssertEqual(ack.captureId, "flow-v3-1")
+        XCTAssertTrue(ack.durable, "journaled by the real bridge, not refused")
+        XCTAssertEqual(journalFiles(in: store, captureId: "flow-v3-1").count, 1)
+        XCTAssertFalse(h.snapshot.contains { if case .captureRefused = $0 { return true }; return false }, "\(h.snapshot)")
+        XCTAssertTrue(model.engineV3Enabled, "still the new engine throughout")
+        await r.shutdown()
+        model.detachBridge()
+    }
+
     // MARK: bridge restart
 
     /// The app relaunches between receipt and insert: the bridge forgot every
