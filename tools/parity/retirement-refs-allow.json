@@ -1,0 +1,34 @@
+{
+  "schema": "flashtex-retirement-refs/1",
+  "note": "tools/parity/retirement_refs.py: per landed retirement stage, the names it deleted and the files allowed to name them until a later stage removes or rewrites them (docs/design/engine-v2/retirement-plan.md §4.6). The allow list may only shrink.",
+  "always_allowed": [
+    "docs/evidence/",
+    "coordination/",
+    "docs/design/engine-v2/reviews/",
+    "docs/design/engine-v2/retirement-plan.md",
+    "tools/native-validation/mac-live/reports/",
+    "tools/parity/retirement-refs-allow.json",
+    "tools/parity/retirement_refs.py",
+    "tools/parity/test_retirement_refs.py",
+    "tools/parity/retirement-stages.json"
+  ],
+  "stages": {
+    "S2": {
+      "landed": true,
+      "pr": "S2 (#1236 stage table, row 4)",
+      "names": [
+        "crates/bibtex-bst", "flashtex-bibtex-bst", "flashtex_bibtex_bst", "bibtex-bst",
+        "crates/color-expressions", "flashtex-color-expressions", "flashtex_color_expressions", "color-expressions",
+        "crates/conversion-jobs", "flashtex-conversion-jobs", "flashtex_conversion_jobs", "flashtex-review-inbox", "conversion-jobs",
+        "crates/project-bundle", "flashtex-project-bundle", "flashtex_project_bundle", "project-bundle",
+        "crates/rendering-core", "flashtex-rendering-core", "flashtex_rendering_core", "rendering-core",
+        "crates/spellcheck", "flashtex-spellcheck", "flashtex_spellcheck",
+        "crates/title-layout", "flashtex-title-layout", "flashtex_title_layout", "title-layout",
+        "crates/toc-layout", "flashtex-toc-layout", "flashtex_toc_layout", "toc-layout",
+        "crates/unicode-tex", "flashtex-unicode-tex", "flashtex_unicode_tex", "unicode-tex",
+        "tests/test_rendering_v2.py", "check_rendering_v2"
+      ],
+      "allow": []
+    }
+  }
+}
