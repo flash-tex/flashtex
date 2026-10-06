@@ -245,6 +245,13 @@ pub struct Report {
     pub restore_instr: Option<u64>,
     pub edited_instr: Option<u64>,
     pub test_instr: Option<u64>,
+    /// A run newer work had stopped (typing: the last compile's background
+    /// work): what this compile did with it before its own (`compile`:
+    /// `continued`, `settled`, `abandoned`), the time and instructions
+    /// that took (part of `key_s`, `find_s`), for the latency accounting.
+    pub paused_how: &'static str,
+    pub paused_s: f64,
+    pub paused_instr: Option<u64>,
     /// Passes run (DESIGN.md §5.5: a run that changed a file it read, the
     /// `.aux`, runs again, up to five times), how each ran, what each took,
     /// and whether the passes stopped on a repeated state.
@@ -2691,6 +2698,10 @@ impl Session {
         self.reemit_from = obs
             .filter(|o| !o.new_pages.is_empty())
             .and_then(|o| o.keep_r);
+        // (the old run's output tails are put back cheaply: a tail the
+        // restore kept in its file gets back only the bytes the abandoned
+        // run wrote over, `system::put_back_kept`; #1608's deferral of the
+        // rest to the next restore is not needed)
         let g = self.g.as_mut().unwrap();
         g.reattach_pending()?;
         system::record_reads_into(None);
@@ -2722,6 +2733,8 @@ impl Session {
     pub fn compile(&mut self, stop_at: Option<usize>) -> Result<Report, String> {
         let _m = crate::memstat::scope(crate::memstat::tag::ENGINE);
         let t0 = Instant::now();
+        let i0 = crate::os::thread_counts();
+        let mut paused_how = "";
         // A run stopped for this compile (preempted, or at a viewport).
         let ahead = self.paused.as_ref().and_then(|_| system::take_ahead_read());
         if let Some(p) = ahead {
@@ -2732,27 +2745,56 @@ impl Session {
             // written out ahead.
             system::set_no_flush(&p);
             self.abandon_paused()?;
+            paused_how = "abandoned";
             self.force_cold = Some(format!("{p} was read while a checkpoint had it ahead"));
         } else if self.paused.is_some() {
             let _busy = crate::busy::enter(crate::busy::Part::Paused);
-            match self.paused_vs_changes() {
+            let vs = self.paused_vs_changes();
+            if self.opts.debug {
+                eprintln!(
+                    "[incr] a stopped run against the changes: {vs:?}, {:.2} ms",
+                    t0.elapsed().as_secs_f64() * 1e3
+                );
+            }
+            match vs {
                 // nothing new: it goes on
-                Some(false) => return self.finish(),
+                Some(false) => {
+                    let paused_s = t0.elapsed().as_secs_f64();
+                    let paused_instr = i0.zip(crate::os::thread_counts()).map(|(a, b)| b.0 - a.0);
+                    let mut rep = self.finish()?;
+                    rep.paused_how = "continued";
+                    rep.paused_s = paused_s;
+                    rep.paused_instr = paused_instr;
+                    return Ok(rep);
+                }
                 // it typeset pages before the change: they stay
-                Some(true) => self.settle_paused()?,
+                Some(true) => {
+                    self.settle_paused()?;
+                    paused_how = "settled";
+                }
                 // it has not reached the change, or all it did is after
                 // the change (typing: the same paragraph again), or cannot
                 // tell: back to the complete run it was replacing, whose
                 // checkpoints are as near the change and whose later pages
                 // can still be converged with
-                None => self.abandon_paused()?,
+                None => {
+                    self.abandon_paused()?;
+                    paused_how = "abandoned";
+                }
             }
         }
+        let paused_s = t0.elapsed().as_secs_f64();
+        let paused_instr = i0.zip(crate::os::thread_counts()).map(|(a, b)| b.0 - a.0);
         if let Some(g) = self.g.as_mut() {
             g.layer().stats = Default::default();
         }
         self.pass = 1;
         let mut rep = self.compile_pass(t0, stop_at)?;
+        if !paused_how.is_empty() {
+            rep.paused_how = paused_how;
+            rep.paused_s = paused_s;
+            rep.paused_instr = paused_instr;
+        }
         rep.passes = 1;
         rep.pass_modes.push(rep.mode.clone());
         if let Some(pp) = self.paused.as_mut().filter(|_| rep.paused) {

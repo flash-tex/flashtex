@@ -1085,6 +1085,12 @@ impl Globals {
             })
     }
 
+    /// Abandon the run since the last `restore` (see above). A tail kept
+    /// in its file (`system::keep_tail`) gets back only the old bytes the
+    /// abandoned run wrote over, then its old length (`put_back_kept`): this
+    /// replaces #1608's deferred tails, which left the old bytes unwritten
+    /// here and handed them to the next restore, because a restore no
+    /// longer reads a tail it can keep in the file.
     pub fn reattach_pending(&mut self) -> Result<(), String> {
         if let Some(why) = self.reattach_blocked() {
             return Err(format!("reattach: {why}"));
@@ -1093,6 +1099,7 @@ impl Globals {
             return Err("reattach: no restore is pending".into());
         };
         system::file_trace(|| "reattach_pending".into());
+        let t0 = std::time::Instant::now();
         let Pending {
             branch,
             live,
@@ -1105,6 +1112,7 @@ impl Globals {
         } = p;
         self.spill_scalars();
         self.arena.reattach(branch)?;
+        let t_branch = t0.elapsed();
         self.fill_scalars();
         let keep: std::collections::HashSet<CheckpointId> =
             self.arena.checkpoint_ids().iter().copied().collect();
@@ -1171,6 +1179,7 @@ impl Globals {
             system::logical_settled(&t.path);
             system::stamp_output(&t.path);
         }
+        let t_tails = t0.elapsed();
         system::guard_outputs(vec![]);
         system::truncate_terminal(terminal_tail.0);
         system::append_terminal(&terminal_tail.1);
@@ -1178,7 +1187,17 @@ impl Globals {
         crate::diag::append(&notes_tail.1, 0);
         system::truncate_opens(opens_tail.0);
         system::append_opens(&opens_tail.1);
-        self.restore_ext(&live)
+        let r = self.restore_ext(&live);
+        if std::env::var_os("FLASHTEX_INCR_DEBUG").is_some() {
+            let ms = |d: std::time::Duration| d.as_secs_f64() * 1e3;
+            eprintln!(
+                "[ckpt] reattach: branch {:.2}, output tails {:.2}, host state {:.2} ms",
+                ms(t_branch),
+                ms(t_tails - t_branch),
+                ms(t0.elapsed() - t_tails)
+            );
+        }
+        r
     }
 
     /// The old run's bytes `from..to` of output file `path`, from the
