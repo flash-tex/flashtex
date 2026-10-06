@@ -53,7 +53,7 @@ final class EditorInstantTests: XCTestCase {
 
     /// An owner-shaped book: the 1,000-page test's preamble, sections of six
     /// long paragraphs with inline math, a display equation each.
-    static func book(sections: Int) -> String {
+    nonisolated static func book(sections: Int) -> String {
         let words = ["lorem", "ipsum", "dolor", "sit", "amet", "consectetur", "adipiscing", "elit", "sed", "do", "eiusmod",
                      "tempor", "incididunt", "ut", "labore", "et", "dolore", "magna", "aliqua", "enim", "ad", "minim", "veniam"]
         var s = """
@@ -78,7 +78,7 @@ final class EditorInstantTests: XCTestCase {
     }
 
     /// `n` distinct pages made from the beamer fixture's first page.
-    static func pages(_ n: Int, salt: UInt8 = 0) throws -> [DL3PreparedPage] {
+    nonisolated static func pages(_ n: Int, salt: UInt8 = 0) throws -> [DL3PreparedPage] {
         let url = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
             .appendingPathComponent("FlashTeXDisplayListV3Tests/Fixtures/beamer-overlays.dl3")
         let base = try XCTUnwrap(DL3Document(frames: Array(Data(contentsOf: url))).orderedPages.first)
@@ -167,7 +167,7 @@ final class EditorInstantTests: XCTestCase {
 
     /// The cold compile: STARTED (a new document), every page with PROGRESS,
     /// PAGES every 25 pages, a warning every 10 pages, DONE.
-    static func coldCompile(_ pages: [DL3PreparedPage], id: Int, path: String, lines: Int) -> [EngineV3Reader.Output] {
+    nonisolated static func coldCompile(_ pages: [DL3PreparedPage], id: Int, path: String, lines: Int) -> [EngineV3Reader.Output] {
         let n = pages.count
         var outs: [EngineV3Reader.Output] = [.started(.object(["id": .int(Int64(id)), "keep": .bool(false), "mode": .string("full")]))]
         for (i, p) in pages.enumerated() {
@@ -185,7 +185,7 @@ final class EditorInstantTests: XCTestCase {
     }
 
     /// A keystroke's compile: STARTED, the edited page, PAGES, 100 warnings, DONE.
-    static func keystrokeCompile(_ page: DL3PreparedPage, n: Int, id: Int, path: String, lines: Int) -> [EngineV3Reader.Output] {
+    nonisolated static func keystrokeCompile(_ page: DL3PreparedPage, n: Int, id: Int, path: String, lines: Int) -> [EngineV3Reader.Output] {
         var outs: [EngineV3Reader.Output] = [.started(.object(["id": .int(Int64(id)), "keep": .bool(true), "mode": .string("incremental")]))]
         outs.append(.page(page, compileID: id, timing: .init(), image: nil))
         outs.append(.pages(.object(["count": .int(Int64(n)), "current": .array([.array([.int(0), .int(Int64(n - 1))])])])))
@@ -195,7 +195,7 @@ final class EditorInstantTests: XCTestCase {
         return outs
     }
 
-    static func warning(path: String, line: Int) -> DL3JSON {
+    nonisolated static func warning(path: String, line: Int) -> DL3JSON {
         .object(["severity": .string("warning"), "message": .string("Overfull \\hbox (12.3pt too wide) in paragraph"),
                  "file": .string(path), "line": .int(Int64(line))])
     }
@@ -333,7 +333,7 @@ final class EditorInstantTests: XCTestCase {
         tv.window?.makeFirstResponder(tv)
         try await Task.sleep(nanoseconds: 500_000_000)
         let path = model.activePath
-        let delivery = s.delivery
+        let delivery: EngineV3Delivery = s.delivery
         let coldPages = try Self.pages(n)
         let cold = Feed(Self.coldCompile(coldPages, id: 1, path: path, lines: lines))
 
