@@ -1200,6 +1200,8 @@ pub struct Globals {
     pub eight_bit_p: bool,
     // §1900
     pub translate_filename_p: bool,
+    // §1900
+    pub kpse_make_tex_discard_errors: bool,
     // §1908
     pub ckpt_request: i32,
     // §1908
@@ -1248,6 +1250,16 @@ pub struct Globals {
     pub intr_pre: crate::arena::Arr<memory_word>,
     // §1915
     pub intr_data: crate::arena::Arr<i32>,
+    // §1920
+    pub ls_nest_tag: crate::arena::Arr<i32>,
+    // §1920
+    pub ls_grp_tag: crate::arena::Arr<i32>,
+    // §1920
+    pub ls_cond_tag: crate::arena::Arr<i32>,
+    // §1920
+    pub ls_cond_depth: i32,
+    // §1920
+    pub ls_tag_file: crate::arena::Arr<str_number>,
     /// The word space every `Arr` above lives in (crates/flashtex-engine/src/arena.rs).
     pub arena: crate::arena::Arena,
 }
@@ -1739,6 +1751,7 @@ pub const SCALAR_BYTES: usize = 0
     + crate::arena::slot::<bool>()
     + crate::arena::slot::<bool>()
     + crate::arena::slot::<bool>()
+    + crate::arena::slot::<bool>()
     + crate::arena::slot::<i32>()
     + crate::arena::slot::<halfword>()
     + crate::arena::slot::<i32>()
@@ -1753,7 +1766,8 @@ pub const SCALAR_BYTES: usize = 0
     + crate::arena::slot::<bool>()
     + crate::arena::slot::<bool>()
     + crate::arena::slot::<bool>()
-    + crate::arena::slot::<bool>();
+    + crate::arena::slot::<bool>()
+    + crate::arena::slot::<i32>();
 
 impl Globals {
     pub fn new() -> Box<Globals> {
@@ -1930,6 +1944,10 @@ impl Globals {
         let __r_intr_seen = __plan.reserve::<i32>("intr_seen", 630193);
         let __r_intr_pre = __plan.reserve::<memory_word>("intr_pre", 630193);
         let __r_intr_data = __plan.reserve::<i32>("intr_data", 16777216);
+        let __r_ls_nest_tag = __plan.reserve::<i32>("ls_nest_tag", 1001);
+        let __r_ls_grp_tag = __plan.reserve::<i32>("ls_grp_tag", 256);
+        let __r_ls_cond_tag = __plan.reserve::<i32>("ls_cond_tag", 1001);
+        let __r_ls_tag_file = __plan.reserve::<str_number>("ls_tag_file", 65536);
         let __arena = __plan.build();
         Box::new(Globals {
             bad: 0,
@@ -2527,6 +2545,7 @@ impl Globals {
             dump_line: false,
             eight_bit_p: false,
             translate_filename_p: false,
+            kpse_make_tex_discard_errors: false,
             ckpt_request: 0,
             ckpt_arm_cs: 0,
             ckpt_arm_level: 0,
@@ -2551,6 +2570,11 @@ impl Globals {
             intr_seen: __arena.arr(__r_intr_seen, 630193),
             intr_pre: __arena.arr(__r_intr_pre, 630193),
             intr_data: __arena.arr(__r_intr_data, 16777216),
+            ls_nest_tag: __arena.arr(__r_ls_nest_tag, 1001),
+            ls_grp_tag: __arena.arr(__r_ls_grp_tag, 256),
+            ls_cond_tag: __arena.arr(__r_ls_cond_tag, 1001),
+            ls_cond_depth: 0,
+            ls_tag_file: __arena.arr(__r_ls_tag_file, 65536),
             arena: __arena,
         })
     }
@@ -3043,6 +3067,7 @@ impl Globals {
         v.pod(&mut self.dump_line);
         v.pod(&mut self.eight_bit_p);
         v.pod(&mut self.translate_filename_p);
+        v.pod(&mut self.kpse_make_tex_discard_errors);
         v.pod(&mut self.ckpt_request);
         v.pod(&mut self.ckpt_arm_cs);
         v.pod(&mut self.ckpt_arm_level);
@@ -3058,6 +3083,7 @@ impl Globals {
         v.pod(&mut self.intr_args_on);
         v.pod(&mut self.intr_all_args);
         v.pod(&mut self.intr_weak);
+        v.pod(&mut self.ls_cond_depth);
     }
 
     /// Every file global, in declaration order (the checkpoint's host-state record).

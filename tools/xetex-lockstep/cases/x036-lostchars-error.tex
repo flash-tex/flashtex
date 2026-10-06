@@ -1,0 +1,9 @@
+% x036-lostchars-error: \tracinglostchars=3 makes a lost character an error (char-warning-xetex.ch)
+% XeTeX-specific (docs/design/xetex/PLAN.md, phase S0: TFM fonts)
+% lockstep: no-halt
+\input prelude
+\def\space{ }
+\font\x=cmr10 \x \tracinglostchars=3
+\setbox0=\hbox{a€b}
+\lsshipbox0
+\end

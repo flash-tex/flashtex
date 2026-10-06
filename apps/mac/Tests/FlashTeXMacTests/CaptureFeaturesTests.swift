@@ -1,4 +1,5 @@
 import XCTest
+import FlashTeXProtocol
 @testable import FlashTeXMac
 
 /// `supported_features` sent with every `capture_convert` (CaptureFeatures.swift).
@@ -17,6 +18,19 @@ final class CaptureFeaturesTests: XCTestCase {
         XCTAssertTrue(features.contains { $0.contains("\\mathbb") && $0.hasPrefix("NOT supported") })
         XCTAssertTrue(features.contains { $0.contains("\\frac") })
         XCTAssertTrue(CaptureFeatures.defaultInstructions.contains("report anything else in ambiguities"))
+    }
+
+    /// `capture_convert` names the document's engine; the bridge picks the
+    /// provider's list for it (crates/bridge tests `the_documents_engine_picks…`).
+    /// The field is additive: omitted when nil, so an old payload is unchanged.
+    func testCaptureConvertCarriesTheEngine() throws {
+        func json(_ c: TransferV1.CaptureConvert) throws -> [String: Any] {
+            try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(c)) as? [String: Any])
+        }
+        let new = try json(.init(captureId: "c", supportedFeatures: [], engine: "new"))
+        XCTAssertEqual(new["engine"] as? String, "new")
+        XCTAssertEqual(new["capture_id"] as? String, "c")
+        XCTAssertNil(try json(.init(captureId: "c", supportedFeatures: []))["engine"])
     }
 
     /// Re-derives the glyph names from the pinned compiler commit when this

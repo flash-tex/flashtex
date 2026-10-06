@@ -5,8 +5,9 @@ import SwiftUI
 // where no TeX Live is installed, `flashtex-host` reads a content-addressed
 // bundle of unmodified TeX Live files, fetched on first use and pinned by
 // its SHA-256 digest (crates/flashtex-engine/src/bundle/). Which bundle is
-// configuration, not code -- where bundles are hosted is still the owner's
-// decision, so there is no built-in default:
+// configuration, not code: the packaged app ships the lock of the published
+// one (GitHub Release assets; tools/bundle/tl2026/flashtex-bundle.lock, copied
+// by make-app.sh into Contents/Resources/engine/), and the first of these wins:
 //
 //   1. `FLASHTEX_BUNDLE_URL` and `FLASHTEX_BUNDLE_DIGEST` (developers, CI);
 //   2. a `flashtex-bundle.lock` (`url = "…"`, `digest = "…"`): the file

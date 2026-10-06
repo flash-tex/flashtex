@@ -1,0 +1,10 @@
+% x016-tracingfonts: \XeTeXtracingfonts reports a TFM font's lookup
+% XeTeX-specific (docs/design/xetex/PLAN.md, phase S0: TFM fonts)
+\input prelude
+\def\space{ }
+\XeTeXtracingfonts=1
+\font\x=cmr10 \font\y=cmr7 scaled 1200 \font\z=cmr5 at 7pt
+\x
+\setbox0=\hbox{A\y B\z C}
+\lsshipbox0
+\end

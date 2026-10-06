@@ -110,6 +110,9 @@ pub mod kind {
     pub const RESOLVED: u8 = 0x4E;
     /// 3.3: the reply to LOCATE (spec §11.6).
     pub const LOCATED: u8 = 0x4F;
+    /// 3.3, the Typst host: what happened to a package (spec §11.8), for a
+    /// client that accepts `packages-v1`.
+    pub const PACKAGE: u8 = 0x50;
     /// `diag-v1` (capability-gated, spec §6.7): one structured diagnostic.
     /// The diagnostics family has its own range (0x60..=0x6F) so that it
     /// never meets the page-protocol kinds of a later minor version.
@@ -145,6 +148,7 @@ pub mod kind {
             IMAGE_DATA => "image-data",
             RESOLVED => "resolved",
             LOCATED => "located",
+            PACKAGE => "package",
             DIAG => "diag",
             PROGRESS => "progress",
             _ => "unknown",

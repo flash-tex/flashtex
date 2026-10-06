@@ -11,6 +11,7 @@ let package = Package(
         .library(name: "FlashTeXAccessibility", targets: ["FlashTeXAccessibility"]),
         .library(name: "FlashTeXDisplayListV3", targets: ["FlashTeXDisplayListV3"]),
         .library(name: "FlashTeXCollabCore", targets: ["FlashTeXCollabCore"]),
+        .library(name: "FlashTeXCollabSession", targets: ["FlashTeXCollabSession"]),
     ],
     dependencies: [
         // Test-only: the reference companion client (apps/mac/tools/nearby-client)
@@ -70,9 +71,21 @@ let package = Package(
             name: "FlashTeXCollabCoreTests",
             dependencies: ["FlashTeXCollabCore"]
         ),
+        // Live Share's session layer (collab-v1 transport and roles,
+        // proposal §3–§4): TLS 1.3 with an in-memory pinned identity,
+        // single-use invites, the hub (approval, replica binding, relay)
+        // and the guest (outbox, reconnect), and the binding between the
+        // CRDT and an editor (remote changes, IME hold, local undo,
+        // presence). Foundation, Network, Security and CryptoKit only; no
+        // AppKit, so the iPad can link it later.
+        .target(name: "FlashTeXCollabSession", dependencies: ["FlashTeXCollabCore"]),
+        .testTarget(
+            name: "FlashTeXCollabSessionTests",
+            dependencies: ["FlashTeXCollabSession", "FlashTeXCollabCore"]
+        ),
         .executableTarget(
             name: "FlashTeXMac",
-            dependencies: ["FlashTeXProtocol", "FlashTeXAccessibility", "FlashTeXEditorCore", "FlashTeXDisplayListV3", "FlashTeXPreviewV3"],
+            dependencies: ["FlashTeXProtocol", "FlashTeXAccessibility", "FlashTeXEditorCore", "FlashTeXDisplayListV3", "FlashTeXPreviewV3", "FlashTeXCollabCore", "FlashTeXCollabSession"],
             // The compiler's command inventory (crates/compiler/supported/
             // supported-latex.json), synced by scripts/sync-supported-latex.sh;
             // Completion.Vocabulary is decoded from it. make-app.sh copies it
@@ -106,7 +119,7 @@ let package = Package(
         ),
         .testTarget(
             name: "FlashTeXMacTests",
-            dependencies: ["FlashTeXMac", "FlashTeXEditorCore", "HostedWindows", .product(name: "NearbyClient", package: "nearby-client")]
+            dependencies: ["FlashTeXMac", "FlashTeXEditorCore", "FlashTeXCollabCore", "FlashTeXCollabSession", "HostedWindows", .product(name: "NearbyClient", package: "nearby-client")]
         ),
         // One test per UI surface, rendering it to `Tests/DesignSnapshots/
         // __Snapshots__/`. Kept apart from FlashTeXMacTests so a design pass

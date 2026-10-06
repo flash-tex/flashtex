@@ -185,7 +185,8 @@ final class ProjectPackagesState {
     /// The file a LaTeX "File `x' not found" error names (`\usepackage`,
     /// `\documentclass`, `\input` under the new engine), nil otherwise.
     nonisolated static func texMissingFile(in message: String) -> String? {
-        guard let open = message.range(of: "LaTeX Error: File `"),
+        // TeX's message, or the Problems row's headline without "LaTeX Error: " (EngineV3DiagPresent).
+        guard let open = message.range(of: "LaTeX Error: File `") ?? (message.hasPrefix("File `") ? message.range(of: "File `") : nil),
               let close = message.range(of: "' not found", range: open.upperBound ..< message.endIndex) else { return nil }
         let name = String(message[open.upperBound ..< close.lowerBound])
         return name.isEmpty ? nil : name

@@ -118,6 +118,10 @@ final class EngineV3Session {
     @ObservationIgnored var caretMapsByWindow = 0
     /// Edits the fast path sent as compiles (tests).
     @ObservationIgnored var fastEditsSent = 0
+    /// Fast-path splices the slow path found out of step (the buffer resent).
+    @ObservationIgnored var fastResyncs = 0
+    /// The fast path holds anchors for `path` (tests).
+    func fastAnchored(_ path: String) -> Bool { fastAnchors[path] != nil }
     @ObservationIgnored var copyRoots: (copy: URL, roots: [String])?
     @ObservationIgnored var caretMarkScheduled = false
     @ObservationIgnored var caretMarkSettling = false
@@ -137,8 +141,21 @@ final class EngineV3Session {
     @ObservationIgnored private var diags: [DL3Diag] = []
     /// The connected host offers diag-v1 (and so sends DIAGs, not DIAGNOSTICs).
     @ObservationIgnored private(set) var hostOffersDiagV1 = false
-    /// The first TeX error of the last compile ("file:line: message"), shown in the pane.
+    /// The connected host stops at the first error when asked (`halt-on-error`):
+    /// with an older one, strict mode shows errors as errors but TeX goes on.
+    private(set) var hostHonoursHaltOnError = true
+    /// The first TeX error of the last compile ("file:line: message"), shown
+    /// in the pane: under best effort only one TeX stopped at (and its cause).
     private(set) var firstError: String?
+    /// How TeX's errors are presented (EngineV3ErrorPolicy): best effort shows
+    /// the errors TeX recovers from as warnings.
+    @ObservationIgnored var errorMode: EngineV3ErrorPolicy.Mode = EngineV3ErrorPolicy.storedMode
+    /// Strict mode is on but the host does not honour `halt_on_error`
+    /// (Settings > Compile says so): errors are errors, TeX still goes on.
+    var strictModeIgnored: Bool { errorMode == .strict && phase == .ready && !hostHonoursHaltOnError }
+    /// The compile in progress stopped on a fatal error (a `fatal` DIAG):
+    /// its DONE keeps the last good pages after the ones it made, stale.
+    @ObservationIgnored private(set) var compileFatal = false
     /// Project trust (EngineV3Trust.swift): false → shell escape off and the
     /// pane asks "Trust this project?".
     private(set) var projectTrusted = true
@@ -215,6 +232,30 @@ final class EngineV3Session {
     var hostPID: Int32? { host?.pid }
     /// Hosts started by this session (the first, then each restart).
     @ObservationIgnored private(set) var hostStarts = 0
+
+    /// View > Show Preview Debug Status under v3 (gap C25): what the v2
+    /// pane's debug strip showed of its frame (id, revision, pages), as this
+    /// session has it. The host's pid and how many hosts the session started,
+    /// the newest compile a DONE finished (a cancelled one does not count),
+    /// the layout revision, the pages and how many are stale, the DONEs
+    /// received, the keystroke-to-screen median the status bar shows
+    /// (ShellChrome: the last 200 samples) and the environment note. The
+    /// counters marked `@ObservationIgnored` change with observed ones (a
+    /// DONE sets the status note), so the pane's line follows them.
+    var debugLine: String {
+        func plural(_ n: Int, _ word: String) -> String { "\(n) \(word)\(n == 1 ? "" : "s")" }
+        var parts = [hostPID.map { "host pid \($0)" } ?? "no host", plural(hostStarts, "host start")]
+        parts.append(lastDoneID > 0 ? "last DONE #\(lastDoneID)" : "no DONE yet")
+        parts.append("layout revision \(layoutRevision)")
+        parts.append("\(plural(pageCount, "page")), \(staleCount) stale")
+        parts.append("\(plural(doneCount, "DONE")) received")
+        let ms = latency.samples.suffix(200).map(\.ms)
+        if !ms.isEmpty {
+            parts.append(String(format: "keystroke to screen median %.0f ms over %d", ms.sorted()[ms.count / 2], ms.count))
+        }
+        if !environmentNote.isEmpty { parts.append(environmentNote) }
+        return parts.joined(separator: " · ")
+    }
     @ObservationIgnored private var connection: DL3Connection?
     @ObservationIgnored private var nextID = 1
     /// The text of each document as the host's copy of the project holds it.
@@ -223,6 +264,12 @@ final class EngineV3Session {
     @ObservationIgnored private var hostBytes: [String: Int] = [:]
     /// Documents the fast path edited since the model last stored their text.
     @ObservationIgnored private var fastPending: Set<String> = []
+    /// The fast path's anchors per document (`EngineV3Edits.Anchors`), and
+    /// its last splice's check for the slow path: the byte offset, and the
+    /// UTF-8 of the text from up to 16 UTF-16 units before the edit through
+    /// what it inserted.
+    @ObservationIgnored private var fastAnchors: [String: EngineV3Edits.Anchors] = [:]
+    @ObservationIgnored private var fastCheck: [String: (offset: Int, bytes: [UInt8])] = [:]
     @ObservationIgnored private var project: EngineV3Mirror?
     /// The page the view shows (sent as `viewport`).
     @ObservationIgnored var visiblePage = 0
@@ -360,7 +407,9 @@ final class EngineV3Session {
         log("starting \(exe.path)")
         let ref = EngineV3WeakRef(self)
         do {
-            let h = try EngineV3HostProcess(executable: exe) { event in
+            // A Live Share session (or a session copy) compiles in a host
+            // launched confined; `compile` relaunches when that changes.
+            let h = try EngineV3HostProcess(executable: exe, confineRoots: model.flatMap(Self.confineRoots)) { event in
                 EngineV3Session.onMain { ref.value?.hostEvent(event) }
             }
             host = h
@@ -407,7 +456,7 @@ final class EngineV3Session {
         host?.terminate()
         host = nil
         phase = .idle
-        sentTexts = [:]; hostBytes = [:]; fastPending = []; compiledTexts = [:]; fastSentID = [:]; caretWindows = [:]; caretWindow = nil
+        sentTexts = [:]; hostBytes = [:]; fastPending = []; fastAnchors = [:]; fastCheck = [:]; compiledTexts = [:]; fastSentID = [:]; caretWindows = [:]; caretWindow = nil
         pages = [:]; stale = []; forms = [:]; pdfFallback = [:]
         pageCount = 0
         layoutRevision &+= 1
@@ -514,7 +563,7 @@ final class EngineV3Session {
         connection = nil
         host?.terminate()
         host = nil
-        sentTexts = [:]; hostBytes = [:]; fastPending = []; compiledTexts = [:]; fastSentID = [:]; caretWindows = [:]; caretWindow = nil
+        sentTexts = [:]; hostBytes = [:]; fastPending = []; fastAnchors = [:]; fastCheck = [:]; compiledTexts = [:]; fastSentID = [:]; caretWindows = [:]; caretWindow = nil
         guard !stopping, phase != .idle else { return }
         phase = .idle
         launchHost()
@@ -534,7 +583,7 @@ final class EngineV3Session {
             return
         }
         log("restarting the host: \(why)")
-        sentTexts = [:]; hostBytes = [:]; fastPending = []; compiledTexts = [:]; fastSentID = [:]; caretWindows = [:]; caretWindow = nil
+        sentTexts = [:]; hostBytes = [:]; fastPending = []; fastAnchors = [:]; fastCheck = [:]; compiledTexts = [:]; fastSentID = [:]; caretWindows = [:]; caretWindow = nil
         markStale(Set(pages.keys))
         phase = .idle
         launchHost()
@@ -593,6 +642,7 @@ final class EngineV3Session {
                     guard let self = ref.value else { c.bye(); return }
                     self.connection = c
                     self.hostOffersDiagV1 = c.hello["capabilities"]?.array?.contains(.string(DL3Diag.capability)) ?? false
+                    self.hostHonoursHaltOnError = c.hello["capabilities"]?.array?.contains(.string(DL3CompileRequest.haltOnErrorCapability)) ?? false
                     if case .failed = self.phase {} else { self.phase = .ready }
                     self.log("connected: \(c.hello["server"]?.string ?? "?"), \(c.hello["engine"]?.string ?? "?")")
                     if let model = self.model {
@@ -675,10 +725,22 @@ final class EngineV3Session {
     /// path checks the fast path's byte count and resends the buffer if
     /// they ever disagree.
     private func storageEdited(_ storage: NSTextStorage) {
+        // Only this window's LaTeX editor: the notification comes for every
+        // text storage of the app (a search field, another window's editor),
+        // none of which holds the text the host has.
+        guard storage.editedMask.contains(.editedCharacters),
+              let tv = storage.layoutManagers.first?.textContainers.first?.textView,
+              tv.accessibilityLabel() == "LaTeX source", let w = tv.window, w === view?.window else { return }
+        // A change of this editor's text the fast path does not send leaves
+        // its anchors stale.
+        var sent = false
+        defer { if !sent { fastAnchors = [:] } }
         guard phase == .ready, connection != nil, let model, model.engineV3Enabled, model.autoCompile, !exportRunning,
-              storage.editedMask.contains(.editedCharacters) else { return }
-        guard let tv = storage.layoutManagers.first?.textContainers.first?.textView,
-              tv.accessibilityLabel() == "LaTeX source", !tv.hasMarkedText() else { return }
+              !tv.hasMarkedText() else { return }
+        // Live Share: the fast path never sends to a host whose confinement
+        // no longer matches (a session just started); the slow path, a few
+        // milliseconds later, relaunches it first.
+        guard fastPathAllowed(model: model) else { return }
         let typing = nextKeystrokeNs != nil || NSApp.currentEvent?.type == .keyDown
         let path = model.activePath
         guard typing, let base = hostBytes[path], sentTexts[path] != nil || fastPending.contains(path) else { return }
@@ -688,20 +750,20 @@ final class EngineV3Session {
         guard r.location != NSNotFound, r.length <= 4096, oldLength >= 0, oldLength <= 4096 else { return }
         let now = MonotonicClock.nowNs()
         let text = storage.mutableString
-        let prefix = EngineV3Edits.utf8Count(text, NSRange(location: 0, length: r.location))
         let insert = text.substring(with: r)
-        let insertBytes = insert.utf8.count
-        let delete: Int
-        let total: Int
-        if oldLength == 0 {
-            delete = 0
-            total = base + insertBytes
-        } else {
-            let suffix = EngineV3Edits.utf8Count(text, NSRange(location: NSMaxRange(r), length: text.length - NSMaxRange(r)))
-            delete = base - prefix - suffix
-            total = prefix + insertBytes + suffix
-        }
+        let (prefix, delete, total, anchors) = EngineV3Edits.fastSplice(text: text, edited: r, delta: delta, base: base,
+                                                                        anchors: fastAnchors[path])
         guard delete >= 0, prefix + delete <= base else { return }
+        sent = true
+        fastAnchors = [path: anchors]
+        // What the slow path checks the model's text against (bytes, not a
+        // count: a wrong offset with the right total would go unseen).
+        let back = r.location - max(0, r.location - 16)
+        var c0 = r.location - back
+        if c0 > 0 { c0 = text.rangeOfComposedCharacterSequence(at: c0).location }
+        let around = text.substring(with: NSRange(location: c0, length: NSMaxRange(r) - c0))
+        let aroundBytes = Array(around.utf8)
+        fastCheck[path] = (prefix + insert.utf8.count - aroundBytes.count, aroundBytes)
         let key = consumeKeystroke(now: now)
         var req = request(model: model)
         req.edits = [DL3CompileRequest.Edit(path: path, offset: prefix, delete: delete, insert: insert)]
@@ -710,6 +772,69 @@ final class EngineV3Session {
         send(req, keystrokeNs: key, editNs: now, path: path)
         fastSentID[path] = req.id
         fastEditsSent &+= 1
+    }
+
+    /// The roots a host compiling `model`'s project must be confined to, or
+    /// nil when it need not be (no Live Share session, not a session copy).
+    static func confineRoots(_ model: ShellModel) -> [String]? {
+        guard model.liveShare.forcesPinnedCompile(root: model.project.projectRoot) else { return nil }
+        return [model.project.projectRoot?.resolvingSymlinksInPath().path].compactMap { $0 }
+    }
+
+    /// Relaunches the host when its confinement no longer matches the
+    /// project's (a session started or ended, another project opened);
+    /// leaving confinement clears the copy's output folder, so nothing a
+    /// session's text wrote (an `.aux` with `\write18` in it, say) is read
+    /// by the next, possibly trusted, compile. Not counted as a crash.
+    @discardableResult
+    func relaunchIfConfinementChanged(model: ShellModel) -> Bool {
+        guard let host else { return false }
+        let want = Self.confineRoots(model)
+        guard host.confineRoots != want else { return false }
+        log("relaunching the host \(want == nil ? "unconfined" : "confined") (Live Share)")
+        if host.confined, want == nil { clearOutputAfterSession() }
+        stopRunningCompile(statusNote: "restarting the engine for Live Share", firstError: nil)
+        stalledTexts = nil
+        return true
+    }
+
+    /// Empties the project copy's output folder (`.aux`, `.toc`, ...).
+    func clearOutputAfterSession() {
+        guard let out = project?.output else { return }
+        let fm = FileManager.default
+        for name in (try? fm.contentsOfDirectory(atPath: out.path)) ?? [] {
+            try? fm.removeItem(at: out.appendingPathComponent(name))
+        }
+        outputClearedForSession &+= 1
+    }
+
+    /// Times `clearOutputAfterSession` ran (tests and evidence).
+    private(set) var outputClearedForSession = 0
+
+    /// The fast path sends only to a host confined exactly as `model`'s
+    /// project needs (the race of a keystroke right after a session starts).
+    func fastPathAllowed(model: ShellModel) -> Bool {
+        guard let host else { return false }
+        return host.confineRoots == Self.confineRoots(model)
+    }
+
+    /// The project copy's output folder (tests).
+    var outputDirectory: URL? { project?.output }
+
+    /// Whether the running host is confined (tests and evidence).
+    var hostConfineRoots: [String]?? { host.map(\.confineRoots) }
+
+    /// The model's new text holds the fast path's last splice where it sent
+    /// it (`fastCheck`), byte for byte.
+    nonisolated static func fastCheckHolds(_ check: (offset: Int, bytes: [UInt8])?, _ text: String) -> Bool {
+        guard let check else { return true }
+        let u = text.utf8
+        guard check.offset >= 0, check.offset + check.bytes.count <= u.count else { return false }
+        if let ok = u.withContiguousStorageIfAvailable({ b in b[check.offset ..< check.offset + check.bytes.count].elementsEqual(check.bytes) }) {
+            return ok
+        }
+        let from = u.index(u.startIndex, offsetBy: check.offset)
+        return u[from...].prefix(check.bytes.count).elementsEqual(check.bytes)
     }
 
     private func consumeKeystroke(now: UInt64) -> UInt64 {
@@ -728,7 +853,7 @@ final class EngineV3Session {
         let path = model.activePath
         if let activeText, fastPending.contains(path) {
             fastPending.remove(path)
-            if activeText.utf8.count == hostBytes[path] {
+            if activeText.utf8.count == hostBytes[path], Self.fastCheckHolds(fastCheck[path], activeText) {
                 sentTexts[path] = activeText
                 // The fast path's compiles (and any sent since) read this text.
                 if let id = fastSentID[path] {
@@ -737,6 +862,8 @@ final class EngineV3Session {
                 return
             }
             // Out of step: resend the whole buffer.
+            fastAnchors = [:]
+            fastResyncs &+= 1
             log("fast path out of step for \(path) (\(hostBytes[path] ?? -1) bytes held, \(activeText.utf8.count) now); resending it")
             sentTexts[path] = nil
         }
@@ -950,11 +1077,17 @@ final class EngineV3Session {
         default: if visiblePage > 0 { req.viewport = visiblePage }
         }
         // Owner decision 9A: a project from elsewhere runs no shell commands until trusted.
-        req.shellEscape = EngineV3Trust.shellEscape(trusted: projectTrusted && !trustPending)
+        // Live Share: a session copy, or any project while a session runs,
+        // compiles with the session pins (proposal §6.2), trusted or not.
+        let pinned = model.liveShare.forcesPinnedCompile(root: model.project.projectRoot)
+        req.shellEscape = pinned ? "off" : EngineV3Trust.shellEscape(trusted: projectTrusted && !trustPending)
         // Protocol 3.2: bibtex, biber and makeindex run in the host as latexmk
         // would, only for a trusted project (DESIGN.md §4.5, owner 9A); an
         // untrusted one runs no external program.
-        req.externalTools = projectTrusted && !trustPending ? "auto" : "off"
+        req.externalTools = !pinned && projectTrusted && !trustPending ? "auto" : "off"
+        // Strict mode (EngineV3ErrorPolicy): TeX stops at the first error
+        // (an older host ignores the field: `strictModeIgnored`).
+        req.haltOnError = errorMode == .strict
         return req
     }
 
@@ -1003,6 +1136,10 @@ final class EngineV3Session {
     /// `walked`: the project walk for this compile has just run (startWalk).
     func compile(model: ShellModel, reason: String, keystrokeNs: UInt64? = nil, activeText: String? = nil, editNs: UInt64 = MonotonicClock.nowNs(), walked: Bool = false) {
         guard connection != nil else { return }
+        // Live Share: a session's text compiles only in a confined host (and
+        // a host launched confined serves nothing else). Relaunch, not
+        // counted as a crash; the fresh host compiles when it is ready.
+        if relaunchIfConfinementChanged(model: model) { return }
         // After a stall the text that looped waits for an edit or ⌘B (the stall bound).
         if let held = stalledTexts {
             if reason == "open", held == Dictionary(model.documents.map { ($0.path, $0.text) }, uniquingKeysWith: { a, _ in a }) { return }
@@ -1026,7 +1163,7 @@ final class EngineV3Session {
             // Emptied on the walk queue, before this project's walk (same serial queue): not on main.
             if let p = project { Self.walkQueue.async { p.clear() } }
             generation = model.projectGeneration
-            sentTexts = [:]; hostBytes = [:]; fastPending = []; compiledTexts = [:]; fastSentID = [:]; caretWindows = [:]; caretWindow = nil; inputsAtSync = nil
+            sentTexts = [:]; hostBytes = [:]; fastPending = []; fastAnchors = [:]; fastCheck = [:]; compiledTexts = [:]; fastSentID = [:]; caretWindows = [:]; caretWindow = nil; inputsAtSync = nil
             toolDiagnostics = []; texProblems = []; toolNote = nil; toolCycleID = -1
             if model.engineV3ResultStatus != nil { model.engineV3ResultStatus = nil } // another project: no "failed" of the last one's
             pages = [:]; stale = []; forms = [:]; pdfFallback = [:]; pageCount = 0; layoutRevision &+= 1
@@ -1113,6 +1250,7 @@ final class EngineV3Session {
             }
             sentTexts[doc.path] = doc.text
             hostBytes[doc.path] = doc.text.utf8.count
+            fastAnchors[doc.path] = nil
         }
         if reason == "edit", req.edits.isEmpty, req.buffers.isEmpty { return }
         if editsWaiting { editsWaiting = false }
@@ -1202,6 +1340,7 @@ final class EngineV3Session {
         guard let connection, project != nil else { finishExport(.failure(.failed("the preview engine is not connected"))); return }
         var req = request(model: model)
         req.export = true
+        req.haltOnError = false // the exported PDF is nonstopmode's, as pdflatex writes it
         req.externalTools = "off" // the resident run's cycle already made the .bbl/.ind
         exportStage = .running(id: req.id)
         do { try connection.compile(req) } catch { finishExport(.failure(.failed("could not send the export: \(error)"))) }
@@ -1380,7 +1519,7 @@ final class EngineV3Session {
                 newestClientStartedID = max(newestClientStartedID, id)
                 if let cycle = toolsCycleID, id > cycle { toolsCycleID = nil }
             }
-            errorCount = 0; warningCount = 0; firstError = nil
+            errorCount = 0; warningCount = 0; firstError = nil; compileFatal = false
             diagnostics = []; diags = []
             if j["keep"]?.bool == false {
                 sourceMap.reset() // span ids restart with the resource ids
@@ -1418,7 +1557,9 @@ final class EngineV3Session {
             forms[f.page.index] = f
             view?.formArrived(f.page.index)
         case .pages(let j):
-            if let n = j["count"]?.int { setCount(Int(n), complete: j["complete"]?.bool ?? false) }
+            // A complete count below the pages on screen is applied at DONE:
+            // a run that stopped on a fatal error keeps the last good ones.
+            if let n = j["count"]?.int { setCount(Int(n), complete: false) }
             var newStale = Set<Int>()
             for r in j["stale"]?.array ?? [] {
                 if let a = r.array, a.count == 2, let lo = a[0].int, let hi = a[1].int, lo <= hi { newStale.formUnion(Int(lo) ... Int(hi)) }
@@ -1430,25 +1571,16 @@ final class EngineV3Session {
             markStale(stale.union(newStale))
         case .diag(let d):
             diags.append(d)
-            if d.severity == "error" {
-                errorCount += 1
-                if firstError == nil {
-                    let at = [d.file.map { ($0 as NSString).lastPathComponent }, d.line.map(String.init), d.col.map { String($0 + 1) }].compactMap { $0 }.joined(separator: ":")
-                    firstError = (at.isEmpty ? "" : at + ": ") + d.message
-                }
-            } else if d.severity == "warning" { warningCount += 1 }
+            if EngineV3ErrorPolicy.isFatal(d) { compileFatal = true }
+            // (an error can change how the ones before it read: recount; O(errors²) at worst)
+            if d.severity == "error" { recount() } else if d.severity == "warning" { warningCount += 1 }
         case .diagnostic(let j) where j["source"]?.string != nil:
             toolDiagnostics.append(j) // bibtex/biber/makeindex (3.2), published at the tool's done
         case .diagnostic(let j):
             diagnostics.append(j)
             if j["severity"]?.string == "error" {
-                errorCount += 1
-                if firstError == nil {
-                    let file = j["file"]?.string.map { ($0 as NSString).lastPathComponent }
-                    let line = j["line"]?.int
-                    let at = [file, line.map(String.init)].compactMap { $0 }.joined(separator: ":")
-                    firstError = (at.isEmpty ? "" : at + ": ") + (j["message"]?.string ?? "error")
-                }
+                if EngineV3ErrorPolicy.isFatal(message: j["message"]?.string ?? "") { compileFatal = true }
+                recount()
             } else { warningCount += 1 }
         case .exportDone(let j):
             exportDone(j)
@@ -1463,16 +1595,43 @@ final class EngineV3Session {
                 compile(model: model, reason: "recover") // the copy vanished under the host
             }
             if status != "cancelled" {
-                if let n = j["pages"]?.int { setCount(Int(n), complete: true) }
-                // A stored page the compile did not replace (it failed early)
-                // stays on screen, stale, until its page arrives.
-                markStale([])
-                statusNote = "\(status) · \(j["mode"]?.string ?? "") · \(pageCount) page\(pageCount == 1 ? "" : "s") · \(String(format: "%.0f", j["elapsed_ms"]?.double ?? 0)) ms"
-                // The Problems line (gap B8): a compile that wrote no page keeps the last ones.
-                let failed = status == "failed" || (status == "error" && (j["pages"]?.int ?? 1) == 0)
+                let made = j["pages"]?.int.map(Int.init)
+                recount()
+                if compileFatal, let n = made, n < pageCount {
+                    // TeX stopped (EngineV3ErrorPolicy): the pages it made
+                    // before the stop are current, the last good ones after
+                    // them stay on screen, stale, until a compile sends them.
+                    let kept = pageCount - n
+                    markStale(Set(n ..< pageCount))
+                    statusNote = "stopped: pdfLaTeX gives up here · \(n) new page\(n == 1 ? "" : "s"), \(kept) kept from the last compile · \(String(format: "%.0f", j["elapsed_ms"]?.double ?? 0)) ms"
+                } else {
+                    // A DONE without `pages` says nothing about them: the
+                    // marks stay as they are (never "all current").
+                    if let n = made {
+                        setCount(n, complete: true)
+                        // A stored page the compile did not replace (it failed early)
+                        // stays on screen, stale, until its page arrives.
+                        markStale([])
+                    }
+                    // Best effort: TeX recovered from every error it reported.
+                    let shown = status == "error" && errorCount == 0 ? "recovered" : status
+                    statusNote = "\(shown) · \(j["mode"]?.string ?? "") · \(pageCount) page\(pageCount == 1 ? "" : "s") · \(String(format: "%.0f", j["elapsed_ms"]?.double ?? 0)) ms"
+                }
+                // The Problems line (gap B8): a compile that wrote no page, or
+                // stopped on a fatal error, keeps the last ones.
+                let failed = status == "failed" || compileFatal || (status == "error" && (j["pages"]?.int ?? 1) == 0)
                 if let model, model.engineV3ResultStatus != (failed ? .failed : nil) { model.engineV3ResultStatus = failed ? .failed : nil }
+                // A package that needs XeTeX or LuaTeX stopped it (fontspec, unicode-math,
+                // xeCJK, \RequireXeTeX): the compatibility engine takes the document,
+                // visibly (UnicodeFonts.swift; the preamble scan missed it).
+                if status != "ok", let model,
+                   let need = diags.lazy.compactMap(UnicodeFonts.need(in:)).first
+                       ?? diagnostics.lazy.compactMap({ UnicodeFonts.need(message: $0["message"]?.string ?? "", detail: $0["detail"]?.string) }).first {
+                    model.engineV3NeedsUnicodeFonts(need)
+                }
                 if stale.isEmpty { snapshot = nil } // the compile's pages replaced the stored ones
-                if status == "ok", compileID >= lastSentID { scheduleSnapshotSave() }
+                // (pages TeX made recovering from errors are a document's too; a stopped run's are not all there)
+                if status == "ok" || (status == "error" && !compileFatal), compileID >= lastSentID { scheduleSnapshotSave() }
                 if let model {
                     // TeX's line numbers refer to the texts this compile read,
                     // not the editor's now (typing went on meanwhile): the rows'
@@ -1485,8 +1644,8 @@ final class EngineV3Session {
                     caretWindow = caretWindows[compileID] // the caret's edits since this compile was sent
                     compiledStamp &+= 1
                     prepareCaretLines(path: model.activePath, text: model.compiledDocuments[model.activePath])
-                    texProblems = diags.isEmpty ? Self.problems(diagnostics, model: model, projectRoot: project?.root, texts: texts)
-                                                : Self.problems(diags: diags, model: model, projectRoot: project?.root, texts: texts)
+                    texProblems = diags.isEmpty ? Self.problems(diagnostics, model: model, projectRoot: project?.root, texts: texts, mode: errorMode)
+                                                : Self.problems(diags: diags, model: model, projectRoot: project?.root, texts: texts, mode: errorMode)
                     publishProblems(model: model)
                     // VoiceOver: "2 errors, 1 warning" when the counts changed (the v2 path's announcement).
                     if model.engineV3Enabled { model.noteCompileCompletedForVoiceOver() }
@@ -1661,11 +1820,15 @@ final class EngineV3Session {
     /// project (the engine names the copy's path) maps back to the editor's
     /// document and the reported line's byte range; anything else (a
     /// package file) keeps its place in the message.
-    static func problems(_ diags: [DL3JSON], model: ShellModel, projectRoot: URL?, texts: [String: String]? = nil) -> [RuntimeV1.Diagnostic] {
+    static func problems(_ diags: [DL3JSON], model: ShellModel, projectRoot: URL?, texts: [String: String]? = nil,
+                         mode: EngineV3ErrorPolicy.Mode = .bestEffort) -> [RuntimeV1.Diagnostic] {
         let root = projectRoot.map { $0.standardizedFileURL.path + "/" }
-        return diags.map { d in
-            let severity: RuntimeV1.Severity = d["severity"]?.string == "error" ? .error : .warning
+        let kept = EngineV3ErrorPolicy.keptErrors(diags.map(Self.policyItem), mode: mode)
+        return diags.enumerated().map { i, d in
+            let error = d["severity"]?.string == "error"
+            let severity: RuntimeV1.Severity = error && kept.contains(i) ? .error : .warning
             var message = d["message"]?.string ?? "(no message)"
+            if error, !kept.contains(i) { message = EngineV3ErrorPolicy.marked(message) }
             var source: RuntimeV1.SourceRange?
             if var file = d["file"]?.string {
                 if file.hasPrefix("./") { file.removeFirst(2) }
@@ -1686,47 +1849,144 @@ final class EngineV3Session {
     /// reported token/command (`range`, byte columns of `line`) or TeX's split
     /// (`col`), so a click lands on the exact column; the macro chain and
     /// TeX's help text become the row's notes and help.
-    static func problems(diags: [DL3Diag], model: ShellModel, projectRoot: URL?, texts: [String: String]? = nil) -> [RuntimeV1.Diagnostic] {
+    static func problems(diags: [DL3Diag], model: ShellModel, projectRoot: URL?, texts: [String: String]? = nil,
+                         mode: EngineV3ErrorPolicy.Mode = .bestEffort) -> [RuntimeV1.Diagnostic] {
         let root = projectRoot.map { $0.standardizedFileURL.path + "/" }
+        // TeX's errors it recovered from (EngineV3ErrorPolicy): warnings under best effort.
+        let kept = EngineV3ErrorPolicy.keptErrors(diags.map(Self.policyItem), mode: mode)
+        let recovered = Set(diags.indices.filter { diags[$0].severity == "error" && !kept.contains($0) })
         func rel(_ file: String) -> String {
             var f = file
             if f.hasPrefix("./") { f.removeFirst(2) }
             if let root, f.hasPrefix(root) { f.removeFirst(root.count) }
             return f
         }
-        return diags.compactMap { d in
+        // Rows that say the same thing as another fold into it (EngineV3DiagPresent.folds).
+        let folds = EngineV3DiagPresent.folds(diags, kept: kept)
+        let stopped = Set(folds.filter { EngineV3DiagPresent.isStop(diags[$0.key].code) && !EngineV3DiagPresent.isStop(diags[$0.value].code) }.map(\.value))
+        let projectTexts: [String: String] = texts ?? Dictionary(model.documents.map { ($0.path, $0.text) }, uniquingKeysWith: { a, _ in a })
+        func text(_ file: String) -> String? { texts?[file] ?? model.documents.first(where: { $0.path == file })?.text }
+        return diags.enumerated().compactMap { i, d in
             guard d.severity != "info" else { return nil } // \show, tight/loose boxes: not problems
-            var message = d.message
+            guard folds[i] == nil else { return nil }
+            let headline = EngineV3DiagPresent.headline(code: d.code, message: d.message)
+            var message = recovered.contains(i) ? EngineV3ErrorPolicy.marked(headline) : headline
             var source: RuntimeV1.SourceRange?
             if let file = d.file.map(rel) {
-                if let line = d.line, let text = texts?[file] ?? model.documents.first(where: { $0.path == file })?.text,
-                   let lineRange = lineByteRange(text, line: line) {
+                if let line = d.line, let text = text(file), let lineRange = lineByteRange(text, line: line) {
                     let len = lineRange.count
                     let (a, b): (Int, Int) = {
                         if let r = d.range { return (min(r.0, len), min(max(r.1, r.0), len)) }
                         if let c = d.col { return (min(c, len), min(c, len)) }
                         return (0, len)
                     }()
-                    source = RuntimeV1.SourceRange(path: file, startByte: lineRange.lowerBound + a, endByte: lineRange.lowerBound + b)
+                    var end = lineRange.lowerBound + b
+                    // A box: from its first character to its last (the display list's side table).
+                    if EngineV3DiagPresent.boxKind(d.code) != nil, let e = d.end, e.file.map(rel) == file, let el = e.line, let ec = e.col,
+                       el >= line, let endLine = lineByteRange(text, line: el), lineRange.lowerBound + a <= endLine.lowerBound + min(ec, endLine.count) {
+                        end = endLine.lowerBound + min(ec, endLine.count)
+                    }
+                    source = RuntimeV1.SourceRange(path: file, startByte: lineRange.lowerBound + a, endByte: end)
                 } else {
                     message = "\((file as NSString).lastPathComponent)\(d.line.map { ":\($0)" } ?? "")\(d.col.map { ":\($0 + 1)" } ?? ""): " + message
                 }
             }
             var notes: [String] = []
-            if let detail = d.detail, !detail.isEmpty { notes.append(detail) }
-            for f in d.trace where f.kind == "macro" {
-                let def = f.def.flatMap { l in l.file.map { "\(rel($0))\(l.line.map { ":\($0)" } ?? "")" } }
-                notes.append("in \(f.name ?? "a macro")" + (def.map { " (defined at \($0))" } ?? ""))
+            var labels: [RuntimeV1.Diagnostic.Label] = []
+            var defFix: RuntimeV1.Diagnostic.Help?
+            if EngineV3DiagPresent.boxKind(d.code) != nil, let note = EngineV3DiagPresent.boxNote(d.message) {
+                notes.append(note)
+                // TeX's display of the box (fonts and all) only where the row has no text to show.
+                if source == nil, let detail = d.detail, !detail.isEmpty { notes.append(detail) }
+            } else if let detail = d.detail, !detail.isEmpty { notes.append(detail) }
+            let macros = d.trace.filter { $0.kind == "macro" }
+            for (k, f) in macros.enumerated() {
+                let name = (f.name ?? "a macro").trimmingCharacters(in: .whitespaces)
+                var def = f.def.flatMap { l in l.file.map { "\(rel($0))\(l.line.map { ":\($0)" } ?? "")" } }
+                // The engine names no definition site: the project's one definition of it.
+                if def == nil, let found = EngineV3DiagPresent.definition(of: name, in: projectTexts) {
+                    def = found.site.label
+                    labels.append(.init(source: found.site.source, text: "\(name) is defined at \(found.site.label)", primary: false))
+                    // The error is inside this (innermost) macro: the undefined name in its definition.
+                    if k == 0, d.code == EngineV3Fixes.undefinedCode, let body = found.body, let cs = EngineV3DiagPresent.lastControlWord(f.before),
+                       let at = EngineV3DiagPresent.occurrence(of: cs, in: body, path: found.site.path, texts: projectTexts) {
+                        labels.append(.init(source: at.source, text: "\(cs) is undefined (in \(name) at \(at.label))", primary: false))
+                        let close = EngineV3Fixes.closestCommands(String(cs.dropFirst()), vocabulary: Completion.defaultSupported)
+                        if close.count == 1 {
+                            defFix = .init(message: "did you mean \\\(close[0])? (in the definition of \(name), \(at.label))",
+                                           replacement: .init(startByte: at.start, endByte: at.end, text: "\\" + close[0], path: at.path))
+                        }
+                    }
+                }
+                // Only a macro with a known definition (the user's, in effect): the
+                // kernel's own (\GenericWarning, \@setref, \use_i:nn) say nothing to the author.
+                if let def { notes.append("in \(name) (defined at \(def))") }
             }
+            if !labels.isEmpty, let source { labels.insert(.init(source: source, text: "", primary: true), at: 0) }
             let help = d.help.isEmpty ? nil : RuntimeV1.Diagnostic.Help(message: d.help.joined(separator: " "))
-            let row = RuntimeV1.Diagnostic(severity: d.severity == "error" ? .error : .warning, message: message, source: source,
+            var row = RuntimeV1.Diagnostic(severity: d.severity == "error" && !recovered.contains(i) ? .error : .warning, message: message, source: source,
                                            recovery: nil, code: d.code.isEmpty ? "engine-v3" : d.code,
-                                           notes: notes.isEmpty ? nil : notes, help: help)
+                                           labels: labels.isEmpty ? nil : labels, notes: notes.isEmpty ? nil : notes, help: help)
+            if stopped.contains(i), let stop = EngineV3Explain.explanation(code: "tex/emergency-stop", message: "") {
+                row.notes = (row.notes ?? []) + [stop]
+            }
+            let named = EngineV3Fixes.undefinedName(trace: d.trace.map { ($0.kind, $0.before) })
+            // A plain-language explanation and, where mechanical, a fix (EngineV3Explain.swift).
+            var explained = EngineV3Explain.apply(row, code: d.code, message: d.message, texts: texts, undefinedName: named)
+            if let defFix, explained.help?.replacement == nil {
+                if let tex = explained.help?.message, !tex.isEmpty { explained.notes = (explained.notes ?? []) + [tex] }
+                explained.help = defFix
+            }
             // "did you mean \textbf?": the old engine's mechanical fix, only
             // where the range is the very name TeX reports (EngineV3Fixes.swift).
-            guard d.code == EngineV3Fixes.undefinedCode, let texts else { return row }
-            return EngineV3Fixes.fix(row, named: EngineV3Fixes.undefinedName(trace: d.trace.map { ($0.kind, $0.before) }), texts: texts)
+            guard d.code == EngineV3Fixes.undefinedCode, let texts, explained.help?.replacement == nil else { return explained }
+            return EngineV3Fixes.fix(explained, named: named, texts: texts)
         }
+    }
+
+    static func policyItem(_ d: DL3Diag) -> EngineV3ErrorPolicy.Item {
+        .init(error: d.severity == "error", fatal: EngineV3ErrorPolicy.isFatal(d), line: d.line)
+    }
+
+    static func policyItem(_ j: DL3JSON) -> EngineV3ErrorPolicy.Item {
+        let error = j["severity"]?.string == "error"
+        return .init(error: error, fatal: error && EngineV3ErrorPolicy.isFatal(message: j["message"]?.string ?? ""), line: j["line"]?.int.map(Int.init))
+    }
+
+    /// The pane's counts and first error from the compile's diagnostics so
+    /// far, under `errorMode`: an error TeX recovered from counts as a
+    /// warning under best effort, and is not the pane's first error.
+    private func recount() {
+        var e = 0, w = 0
+        var first: String?
+        if !diags.isEmpty {
+            let kept = EngineV3ErrorPolicy.keptErrors(diags.map(Self.policyItem), mode: errorMode)
+            let folds = EngineV3DiagPresent.folds(diags, kept: kept) // as the Problems rows count them
+            for (i, d) in diags.enumerated() where folds[i] == nil {
+                if d.severity == "error", kept.contains(i) {
+                    e += 1
+                    if first == nil {
+                        let at = [d.file.map { ($0 as NSString).lastPathComponent }, d.line.map(String.init), d.col.map { String($0 + 1) }].compactMap { $0 }.joined(separator: ":")
+                        first = (at.isEmpty ? "" : at + ": ") + EngineV3DiagPresent.headline(code: d.code, message: d.message)
+                    }
+                } else if d.severity == "error" || d.severity == "warning" { w += 1 }
+            }
+        } else {
+            let kept = EngineV3ErrorPolicy.keptErrors(diagnostics.map(Self.policyItem), mode: errorMode)
+            for (i, j) in diagnostics.enumerated() {
+                if j["severity"]?.string == "error", kept.contains(i) {
+                    e += 1
+                    if first == nil {
+                        let file = j["file"]?.string.map { ($0 as NSString).lastPathComponent }
+                        let at = [file, j["line"]?.int.map { String($0) }].compactMap { $0 }.joined(separator: ":")
+                        first = (at.isEmpty ? "" : at + ": ") + (j["message"]?.string ?? "error")
+                    }
+                } else { w += 1 }
+            }
+        }
+        if errorCount != e { errorCount = e }
+        if warningCount != w { warningCount = w }
+        if firstError != first { firstError = first }
     }
 
     /// Bytes of 1-based `line` in `text`, without its newline.
@@ -1742,8 +2002,11 @@ final class EngineV3Session {
         return n == line ? start ..< i : nil
     }
 
+    /// Pages on screen: a complete count is the document's (pages past it
+    /// go); an incomplete one (a compile in progress) never hides pages.
     private func setCount(_ n: Int, complete: Bool) {
         guard n != pageCount || complete else { return }
+        guard complete || n > pageCount else { return }
         if complete, n < pageCount {
             for i in n ..< pageCount { pages[i] = nil; stale.remove(i); pdfFallback[i] = nil }
         }
@@ -1923,6 +2186,64 @@ enum EngineV3Edits {
         CFStringGetBytes(s as CFString, CFRange(location: range.location, length: range.length),
                          CFStringBuiltInEncodings.UTF8.rawValue, 0, false, nil, 0, &used)
         return used
+    }
+
+    /// Where the fast path last measured a document (lane LIVE-30MS), in the
+    /// text as it was after that edit: the UTF-8 bytes before UTF-16
+    /// position `prefix16` and from `suffix16` to the end. A keystroke then
+    /// counts only the text between an anchor and the edit, not the whole
+    /// document (a backspace counted every byte after it: 10 ms in a 4 MB
+    /// file). Valid while every change to the text goes through
+    /// `fastSplice` (the session drops them otherwise) and for the byte
+    /// length the host holds (`bytes`).
+    struct Anchors: Equatable {
+        var length16: Int
+        var bytes: Int
+        var prefix16: Int, prefix8: Int
+        var suffix16: Int, suffix8: Int
+    }
+
+    /// The fast path's splice: the byte offset of the edit, the bytes it
+    /// deleted, the text's byte length after it, and new anchors, from the
+    /// storage's new text, its edited range (new UTF-16 positions) and
+    /// change in length, and the byte length before (`base`). `anchors`
+    /// from the previous edit spare counting the text far from the edit; a
+    /// stale or unusable one is counted from the ends (the old way).
+    static func fastSplice(text: NSString, edited r: NSRange, delta: Int, base: Int,
+                           anchors: Anchors?) -> (prefix: Int, delete: Int, total: Int, anchors: Anchors) {
+        let length = text.length, oldLength = length - delta
+        let a = anchors.flatMap { $0.length16 == oldLength && $0.bytes == base ? $0 : nil }
+        // Before the edit the text is the old one: from an anchor at or
+        // before the edit (no edit since was before it), else from 0.
+        let prefix: Int
+        if let a, r.location >= a.prefix16 {
+            prefix = a.prefix8 + utf8Count(text, NSRange(location: a.prefix16, length: r.location - a.prefix16))
+        } else {
+            prefix = utf8Count(text, NSRange(location: 0, length: r.location))
+        }
+        let insertBytes = utf8Count(text, r)
+        let end = NSMaxRange(r), tail = length - end
+        let suffix: Int
+        if r.length - delta == 0 {
+            suffix = base - prefix // nothing deleted: every old byte after the edit
+        } else if let a, tail >= oldLength - a.suffix16 {
+            // the anchored end is after the edit (in the new text it starts
+            // at length - (oldLength - suffix16)), so unchanged
+            let from = length - (oldLength - a.suffix16)
+            suffix = a.suffix8 + utf8Count(text, NSRange(location: end, length: from - end))
+        } else {
+            suffix = utf8Count(text, NSRange(location: end, length: tail))
+        }
+        let delete = base - prefix - suffix
+        let total = prefix + insertBytes + suffix
+        // New anchors: the suffix at the edit's end; the prefix up to 256
+        // units before the edit (a few backspaces stay after it), on a
+        // character boundary (never inside a surrogate pair).
+        var p = max(0, r.location - 256)
+        if p > 0 { p = text.rangeOfComposedCharacterSequence(at: p).location }
+        let p8 = prefix - utf8Count(text, NSRange(location: p, length: r.location - p))
+        return (prefix, delete, total,
+                Anchors(length16: length, bytes: total, prefix16: p, prefix8: p8, suffix16: end, suffix8: suffix))
     }
 
     /// The shortest single splice turning `old` into `new` (common prefix

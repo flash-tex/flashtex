@@ -184,6 +184,7 @@ final class EngineV3PackagesTests: XCTestCase {
         XCTAssertTrue(m.engineV3Enabled, m.engineChoice.explanation)
         XCTAssertNil(m.engineChoice.blocker, "pins and libraries no longer fall back")
         let s = m.engineV3
+        s.errorMode = .strict // the unpinned lipsum's undefined command is the error waited for
         try await EngineV3TestHost.awaitReady(s)
         try await waitUntil("the compile") { s.statusNote.hasPrefix("ok") && !s.compiling && s.pageCount == 1 }
         XCTAssertNil(s.firstError)
@@ -219,7 +220,7 @@ final class EngineV3PackagesTests: XCTestCase {
     func testFetchIsOfferedAndFetchesIntoTheCacheUnderTheNewEngine() async throws {
         try EngineV3TestHost.require()
         guard ProjectFilesClient.locate() != nil else {
-            throw XCTSkip("no flashtex-project-files built (cargo build -p flashtex-project-files)")
+            throw EngineV3TestHost.unavailable("no flashtex-project-files built (cargo build -p flashtex-project-files)")
         }
         let base = try dir("fetch")
         let archive = base.appendingPathComponent("archive/macros/latex/contrib/fxpkgtest")
@@ -281,7 +282,7 @@ final class EngineV3PackagesTests: XCTestCase {
     func testTheRealHelperResolvesTheLibraryOfflineBeforeTheFirstCompile() async throws {
         try EngineV3TestHost.require()
         guard ProjectFilesClient.locate() != nil else {
-            throw XCTSkip("no flashtex-project-files built (cargo build -p flashtex-project-files)")
+            throw EngineV3TestHost.unavailable("no flashtex-project-files built (cargo build -p flashtex-project-files)")
         }
         let base = try dir("real-helper")
         let cache = base.appendingPathComponent("cache")
