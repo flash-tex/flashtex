@@ -77,8 +77,8 @@ const CS_TOKEN_FLAG: i32 = web::cs_token_flag;
 /// `list_ptr(r)` is `link(r+list_offset)`.
 const LIST_OFFSET: i32 = 5;
 /// Selector codes (§54).
-const TERM_ONLY: i32 = 17;
-const TERM_AND_LOG: i32 = 19;
+const TERM_ONLY: i32 = web::term_only;
+const TERM_AND_LOG: i32 = web::term_and_log;
 /// Text kept of one side of a context line.
 const TEXT_CAP: usize = 240;
 /// Levels kept of the input stack: the innermost `MAX_FRAMES - 1` and the
@@ -280,6 +280,11 @@ thread_local! {
     static ST: RefCell<St> = RefCell::new(St::default());
 }
 
+/// Out of line: inlined, the thread-local's address (a call to
+/// `_tlv_get_addr` on macOS) is hoisted to the entry of every generated
+/// routine with a `print_err` (`dg_mark`), which then pays it on each call
+/// even when diagnostics are off (1.2 % of long-deck's cycles, P6).
+#[inline(never)]
 fn with<R>(f: impl FnOnce(&mut St) -> R) -> R {
     ST.with(|s| f(&mut s.borrow_mut()))
 }
@@ -341,6 +346,41 @@ pub fn append(v: &[Arc<Note>], shift: i64) {
                 n.at = (n.at as i64 + shift).max(0) as usize;
                 n.end = (n.end as i64 + shift).max(0) as usize;
                 s.notes.push(Arc::new(n));
+            }
+        }
+    })
+}
+
+/// A convergence kept the old run's notes from `from` on, which it made
+/// before an edit moved lines of the files of `shifts` (DESIGN.md §5.3 rule
+/// (c), `crate::lineshift`): their places in those files move with their
+/// lines. (Every place in such a note is in the old run's numbering; the
+/// convergence test made sure the old run read no moved line into what the
+/// note says.)
+pub fn move_lines(from: usize, shifts: &[crate::lineshift::Shift]) {
+    if shifts.is_empty() {
+        return;
+    }
+    let mv = |p: &mut Pos| -> bool {
+        let f = String::from_utf8_lossy(&p.file);
+        let d: i32 = shifts
+            .iter()
+            .filter(|s| p.line >= s.after && s.names().any(|n| crate::lineshift::same_path(&f, n)))
+            .map(|s| s.delta)
+            .sum();
+        p.line += d;
+        d != 0
+    };
+    with(|s| {
+        for n in s.notes.iter_mut().skip(from) {
+            let mut m = (**n).clone();
+            let mut moved = m.pos.as_mut().is_some_and(mv);
+            for f in m.frames.iter_mut() {
+                moved |= f.pos.as_mut().is_some_and(mv);
+                moved |= f.def.as_mut().is_some_and(mv);
+            }
+            if moved {
+                *n = Arc::new(m);
             }
         }
     })
@@ -1297,6 +1337,11 @@ mod tests {
         for e in std::fs::read_dir(dir).unwrap() {
             all.push_str(&std::fs::read_to_string(e.unwrap().path()).unwrap());
         }
+        // A routine indexes `eqtb` and `mem` through its local views
+        // (web2rust --array-view, crate::arena::ArrView): the same elements.
+        let all = all
+            .replace("__av_eqtb[", "self.eqtb[")
+            .replace("__av_mem[", "self.mem[");
         let body = |name: &str| {
             let s = all.split(&format!("pub fn {name}(")).nth(1).unwrap();
             s[..s.find("\n    pub fn ").unwrap_or(s.len())].to_string()

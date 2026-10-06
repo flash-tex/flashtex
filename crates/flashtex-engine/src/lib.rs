@@ -34,6 +34,7 @@
 pub mod arena;
 #[cfg(all(feature = "distribution", not(feature = "tex82")))]
 pub mod bundle;
+pub mod busy;
 #[cfg(not(feature = "tex82"))]
 pub mod checkpoint;
 pub mod cli;
@@ -57,6 +58,8 @@ pub mod iso;
 #[cfg(not(feature = "tex82"))]
 pub mod ix;
 #[cfg(not(feature = "tex82"))]
+pub mod lineshift;
+#[cfg(not(feature = "tex82"))]
 pub mod macroprof;
 pub mod memstat;
 pub mod os;
@@ -69,6 +72,8 @@ pub mod resolver;
 #[cfg(not(feature = "tex82"))]
 pub mod statediff;
 pub mod system;
+#[cfg(not(feature = "tex82"))]
+pub mod texlines;
 
 pub use generated::Globals;
 

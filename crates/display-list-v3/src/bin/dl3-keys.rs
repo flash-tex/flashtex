@@ -35,6 +35,13 @@
 //! on other pages than `--page`), or a line with no plain word for the edit,
 //! exits 2 with a message.
 //!
+//! `--interval-ms MS` types on a clock instead (keystroke k sent at k * MS,
+//! whatever the host is doing, as a user types): each keystroke's latency
+//! is the time to the watched page's first `PAGE` from its own compile or a
+//! later one (what the app paints), so compiles superseded before their
+//! edited page show as waiting keystrokes; `unpainted` counts those never
+//! shown.
+//!
 //! `--edit FILE` (relative to `--root`) types in another file of the project
 //! than `--main`, e.g. a book chapter the main file `\input`s; the line search
 //! and `--line` then look at that file.
@@ -192,7 +199,7 @@ fn main() {
     };
     let (Some(socket), Some(root), Some(main)) = (arg("--socket"), arg("--root"), arg("--main"))
     else {
-        eprintln!("usage: dl3-keys --socket PATH --root DIR --main FILE [--output-dir DIR] [--keys N] [--at FRACTION] [--gap-ms MS] [--edit FILE] [--page INDEX [--line N]] [--where start|middle|end] [--kind letter|sentence|newline|split|preamble | --sentence] [--overlap] [--no-viewport]");
+        eprintln!("usage: dl3-keys --socket PATH --root DIR --main FILE [--output-dir DIR] [--keys N] [--at FRACTION] [--gap-ms MS] [--edit FILE] [--page INDEX [--line N]] [--where start|middle|end] [--kind letter|sentence|newline|split|preamble | --sentence] [--overlap | --interval-ms MS] [--no-viewport]");
         std::process::exit(2);
     };
     let keys: usize = arg("--keys").and_then(|v| v.parse().ok()).unwrap_or(40);
@@ -434,6 +441,105 @@ fn main() {
     let mut cancelled = 0;
     // (overlap) DONEs still to come for keystrokes already answered
     let mut owed: Vec<i64> = vec![];
+    // `--interval-ms MS`: a typist on a clock, as the app's user: keystroke
+    // k is sent at k * MS whatever the host is doing, and its latency is
+    // the time to the watched page's first `PAGE` from its compile or a
+    // later one (the app's measure: the first commit that shows it). A
+    // keystroke whose compile is superseded before that page waits for
+    // the next compile's.
+    if let Some(ms) = arg("--interval-ms").and_then(|v| v.parse::<u64>().ok()) {
+        let reqs: Vec<CompileRequest> = (0..keys)
+            .map(|k| {
+                let mut r = req(id + 1 + k as i64);
+                r.viewport = viewport.then_some(page);
+                r.edits = vec![edit(k)];
+                r
+            })
+            .collect();
+        let first_id = id + 1;
+        let last_id = id + keys as i64;
+        let mut sender = c.canceller().expect("a sending handle");
+        let t_start = Instant::now();
+        let sent: std::sync::Arc<std::sync::Mutex<Vec<Instant>>> = Default::default();
+        let sent2 = sent.clone();
+        let typist = std::thread::spawn(move || {
+            for (k, r) in reqs.iter().enumerate() {
+                let due = t_start + Duration::from_millis(ms * k as u64);
+                if let Some(d) = due.checked_duration_since(Instant::now()) {
+                    std::thread::sleep(d);
+                }
+                sent2.lock().unwrap().push(Instant::now());
+                sender.compile(r).expect("send COMPILE");
+            }
+        });
+        let (mut started, mut covered, mut lat) = (0i64, 0usize, vec![]);
+        let (mut cancelled, mut done_last) = (0, false);
+        while !done_last {
+            let ev = c
+                .next_event()
+                .expect("read")
+                .expect("host closed the connection");
+            let now = Instant::now();
+            match ev {
+                Event::Started(j) => started = j.int_field("id").unwrap_or(0),
+                Event::Page(p) if p.index == page && started >= first_id => {
+                    let upto = (started - first_id + 1) as usize;
+                    let s = sent.lock().unwrap();
+                    while covered < upto.min(s.len()) {
+                        let l = (now - s[covered]).as_secs_f64() * 1e3;
+                        println!(
+                            "{}",
+                            Json::Obj(vec![
+                                ("key".into(), Json::Int(covered as i64)),
+                                ("edited_page_ms".into(), Json::Num(l)),
+                                ("by".into(), Json::Int(started)),
+                            ])
+                        );
+                        lat.push(l);
+                        covered += 1;
+                    }
+                }
+                Event::Done(d) => {
+                    println!("{}", Json::Obj(vec![("done".into(), d.clone())]));
+                    if d.str_field("status") == Some("cancelled") {
+                        cancelled += 1;
+                    }
+                    done_last = d.int_field("id") == Some(last_id);
+                }
+                Event::Error(e) => {
+                    eprintln!("dl3-keys: host error: {e}");
+                    std::process::exit(1)
+                }
+                _ => {}
+            }
+        }
+        typist.join().expect("the typist");
+        let unpainted = keys - covered;
+        let sum = |v: &mut Vec<f64>| {
+            Json::Obj(vec![
+                ("n".into(), Json::Int(v.len() as i64)),
+                ("p50".into(), Json::Num(pct(v, 0.5))),
+                ("p95".into(), Json::Num(pct(v, 0.95))),
+                ("max".into(), Json::Num(pct(v, 1.0))),
+            ])
+        };
+        println!(
+            "{}",
+            Json::Obj(vec![
+                ("summary".into(), s(main.as_str())),
+                ("kind".into(), s(kind.as_str())),
+                ("interval_ms".into(), Json::Int(ms as i64)),
+                ("pages".into(), Json::Int(held.count as i64)),
+                ("edited_page".into(), Json::Int(page as i64)),
+                ("edited_page_ms".into(), sum(&mut lat)),
+                ("unpainted".into(), Json::Int(unpainted as i64)),
+                ("cancelled".into(), Json::Int(cancelled)),
+            ])
+        );
+        let _ = std::io::stdout().flush();
+        let _ = c.bye();
+        return;
+    }
     for k in 0..keys {
         if overlap {
             id += 1;
