@@ -39,6 +39,9 @@ def make_engine(tmp, name="pdftex"):
     return path
 
 
+# run_passes compares PDFs through qpdf (P-T2); without it every run is a HarnessError, so
+# these skip, like PdfSignatureTest (ci.yml's gate job installs qpdf, so they run there)
+@unittest.skipUnless(shutil.which("qpdf"), "qpdf not installed")
 class RunTest(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.mkdtemp(prefix="pkgsmoke-test-")

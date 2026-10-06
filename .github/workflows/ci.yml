@@ -562,6 +562,8 @@ jobs:
         if: ${{ !cancelled() && runner.os == 'Linux' }}
         run: |
           set -euo pipefail
+          # qpdf: package-smoke's runner and P-T2 compare PDFs through it (its tests skip without it)
+          command -v qpdf >/dev/null || { sudo apt-get update -qq && sudo apt-get install -y -qq qpdf >/dev/null; }
           python3 -m unittest discover -s tools/parity -p 'test_*.py'
           python3 -m unittest discover -s tools/package-smoke -p 'test_*.py'
           scripts/tests/p5-pick-t4.test.sh
