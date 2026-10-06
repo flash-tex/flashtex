@@ -20,9 +20,11 @@ runs one host per open document. The phases:
                                             (edits.py's `newline`: only later input lines move)
   split@middle                              that space becomes a blank line (edits.py's `split`), and
                                             the blank line a space again (edits.py's `join` of it)
-  typing@100ms, typing@150ms                letter@middle's edit typed on a clock (dl3-keys --interval-ms:
-                                            keystroke k sent at k x 100 or 150 ms, whatever the host is
-                                            doing), so most keystrokes arrive while the previous
+  typing@50ms … typing@150ms               letter@middle's edit typed on a clock (dl3-keys --interval-ms:
+                                            keystroke k sent at k x 50, 60, 80, 100 or 150 ms, whatever the
+                                            host is doing; 50 ms is about 240 words per minute, 60 ms 200:
+                                            the owner's 2026-10-06 requirement that typing below 240 wpm
+                                            meets the target), so most keystrokes arrive while the previous
                                             compile's background work runs: the case a user typing
                                             meets and the phases above, which wait for DONE, never do.
                                             A keystroke's time runs to the watched page from its own
@@ -111,6 +113,9 @@ BODY_PHASES = [
 # convergence, tests, the jump, the next restore prepared) still runs: the user's case, which the
 # in-body phases above never meet, since each of their keystrokes waits for DONE and --gap-ms more
 TYPING_PHASES = [
+    ('typing@50ms', ['--kind', 'letter', '--at', '0.5', '--interval-ms', '50']),
+    ('typing@60ms', ['--kind', 'letter', '--at', '0.5', '--interval-ms', '60']),
+    ('typing@80ms', ['--kind', 'letter', '--at', '0.5', '--interval-ms', '80']),
     ('typing@100ms', ['--kind', 'letter', '--at', '0.5', '--interval-ms', '100']),
     ('typing@150ms', ['--kind', 'letter', '--at', '0.5', '--interval-ms', '150']),
 ]

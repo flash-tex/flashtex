@@ -103,6 +103,10 @@ final class UnicodeFontsTests: XCTestCase {
         XCTAssertEqual(scan(doc("\\if@twoside\\usepackage{fontspec}\\fi"))?.kind, .package("fontspec"),
                        "an unknown conditional reads both branches")
         XCTAssertEqual(scan(doc("\\fi\\fi\\usepackage{fontspec}"))?.kind, .package("fontspec"), "stray \\fi")
+        // in a branch that is not read too (review of #1624, follow-up)
+        XCTAssertEqual(scan(doc("\\ifxetex\\let\\ifxe\\iftrue\\newif\\ifmine\\def\\iflocal{}\\fi\n\\usepackage{fontspec}"))?.kind,
+                       .package("fontspec"), "\\let, \\newif and \\def in an unread branch open no conditional")
+        XCTAssertEqual(scan(doc("\\iffalse\\let\\ifa=\\iftrue\\fi\\setmainfont{X}"))?.kind, .command("setmainfont"))
     }
 
     /// Review of #1624: `\input file` without braces, a byte-order mark.
