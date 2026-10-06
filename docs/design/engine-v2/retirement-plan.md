@@ -653,7 +653,7 @@ Revision 2's §5.2 (Recents migration, a menu item writing choices for all docum
 1. **Capture features per engine** (§1.5): `ShellModel+Bridge.swift` L309 and L349 still send the old compiler's list for every document.
 2. **Engine labels.**
    - **`FlashTeXLog`.** No line records which engine a document opened or compiled with. The old routes log `preview-v2:`, `compile:`, `display-candidate:` and `worker:`; v3 logs `engine-v3:`, `v3capture:` and `v3bench:`; `paint:` and `launch:` name no engine. S3r adds one line per open and per compile, `engine: <new|previous> (<why>)`, where `why` is the resolution step or blocker. It also adds `engine` to the `TypingBench` summary next to `producer`.
-   - **Attribution tools.** S3r adds an `engine` field, and a `v3` route where the tool has routes, to:
+   - **Attribution tools.** S3r records the engine (from the `engine:` line or the bench summary) in each tool. It also pins the old-engine routes to the previous engine (`FLASHTEX_ENGINE_V3=0`); otherwise, from S5 on, a new document would be measured as an "old" route. The new engine's typing bench stays `EngineV3Bench` (`FLASHTEX_V3_BENCH`). The tools are:
      - `tools/native-validation/mac-live/lib/typing_attribution.py` (routes v1, v1-render, v2, controller; L9–14, L345–350);
      - `launch_summary.py` (L46–76);
      - `capture_cycle.py` (L127);
@@ -662,12 +662,12 @@ Revision 2's §5.2 (Recents migration, a menu item writing choices for all docum
      Without it, dogfooding evidence is attributed to the wrong engine.
 3. **Statuses.** `retirement-stages.json` marks S3 "partly landed (#1421, #1427)" and S1 "done (#1400, `cba6c3470`)". This revision does both.
 
-S3r's named tests:
-- `EngineChoiceLogTests.testOpenAndCompileLogTheEngineAndWhy`;
+S3r's named tests (#1611):
+- `EngineChoiceTests.testTheLogLineNamesTheEngineWhyAndTheFallback` and `testOpenAndChangeLogTheEngineAndTheCaptureListFollowsIt` (the line is written at every application of the window's engine, which covers open and every change; a per-compile line was not needed);
 - `CaptureFeaturesTests.testTheNewEngineListOmitsTheOldLimits`;
 - `CaptureFeaturesTests.testTheOldEngineListIsUnchanged`;
-- a `ShellModel+Bridge` test that the document's engine picks the list;
-- a Python unit test for each tool's `engine` field.
+- the capture list following `typesettingEngine` (in the second `EngineChoiceTests` test above);
+- `tools/native-validation/mac-live/lib/test_engine_labels.py`.
 
 ### 5.3 No silent re-typesetting (ruling 4)
 
