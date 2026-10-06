@@ -2089,8 +2089,9 @@ pub struct Session {
     /// The page of the last edit (retention keeps checkpoints dense there).
     cursor: usize,
     /// PDF file position corrections of checkpoints inherited from an old
-    /// run at a convergence, applied in order after a restore.
-    reloc: HashMap<CheckpointId, Vec<Reloc>>,
+    /// run at a convergence, applied after a restore: each convergence's
+    /// (`Step`) composed into one per checkpoint (`Reloc`).
+    reloc: HashMap<CheckpointId, Reloc>,
     /// L5: new meanings of `.aux` entries to put into a checkpoint's state
     /// after restoring it, in order (the checkpoints from `Point::AuxDone`
     /// to where a pass with a changed `.aux` restarted hold the meanings
@@ -2444,7 +2445,7 @@ impl Session {
         v.push(("defpatch".into(), self.defpatch.len() as i64));
         v.push((
             "reloc".into(),
-            self.reloc.values().map(|r| r.len()).sum::<usize>() as i64,
+            self.reloc.values().map(|r| r.count).sum::<usize>() as i64,
         ));
         v
     }
@@ -4020,7 +4021,7 @@ impl Session {
             system::stamp_output(p);
         }
         if let Some(rs) = self.reloc.get(&r) {
-            Reloc::apply_all(rs, g);
+            rs.apply(g);
         }
         if g.layer().aux_point == Some(r) {
             // the run reads the `.aux` again: its close begins the read-set
@@ -4087,13 +4088,8 @@ impl Session {
             .iter()
             .filter_map(|p| p.ckpt)
             .filter_map(|c| {
-                let v: Vec<_> = self
-                    .reloc
-                    .get(&c)?
-                    .iter()
-                    .flat_map(|x| x.lines.iter().cloned())
-                    .collect();
-                (!v.is_empty()).then_some((c, v))
+                let v = &self.reloc.get(&c)?.lines;
+                (!v.is_empty()).then(|| (c, v.clone()))
             })
             .collect();
         obs.edits = edits;
@@ -4361,11 +4357,10 @@ impl Session {
                 }
             };
             let new_id = obs.taken.last().map(|(i, _)| *i).ok_or("no checkpoint")?;
-            let reloc = Reloc {
+            let step = Step {
                 threshold: pdf_len(&rec_old) as i64,
                 delta: pdf_len(&g.record_of(new_id)?) as i64 - pdf_len(&rec_old) as i64,
                 overrides: obs.positions.clone(),
-                rebuild_rs: true,
                 lines: obs.shifts.clone(),
             };
             let notes_new = g.record_of(new_id)?.notes;
@@ -4383,7 +4378,7 @@ impl Session {
             let chain = g.checkpoints();
             if let Some(at) = chain.iter().position(|&i| i == old) {
                 for &id in &chain[at..] {
-                    self.reloc.entry(id).or_default().push(reloc.clone());
+                    self.reloc.entry(id).or_default().push(&step);
                 }
             }
             // The journal: the new run's so far, then the old run's after
@@ -4425,7 +4420,7 @@ impl Session {
             }
             let g = self.g.as_mut().unwrap();
             if let Some(rs) = self.reloc.get(&last) {
-                Reloc::apply_all(rs, g);
+                rs.apply(g);
             }
             // The old run's checkpoints after the convergence point that the
             // line shift cannot be put right in are never restored: their
@@ -4753,53 +4748,26 @@ fn new_positions(g: &Globals, from: u64) -> Vec<(usize, u64)> {
         .collect()
 }
 
-/// The PDF file position corrections for a checkpoint an old run took after
-/// a point where a new run converged with it (DESIGN.md §5.3: file
-/// positions are relocatable). In the spliced file the old run's bytes from
-/// `threshold` (its length at the convergence point) on lie `delta` further;
-/// the objects the new run wrote before converging lie where it wrote them
-/// (`overrides`: their `obj_offset` words, from the convergence test).
+/// One convergence's PDF file position corrections for a checkpoint an old
+/// run took after the point where a new run converged with it (DESIGN.md
+/// §5.3: file positions are relocatable). In the spliced file the old run's
+/// bytes from `threshold` (its length at the convergence point) on lie
+/// `delta` further; the objects the new run wrote before converging lie
+/// where it wrote them (`overrides`: their `obj_offset` words, from the
+/// convergence test). And the edits' line shifts: the old run's line
+/// numbers of the edited files in the checkpoint's state (DESIGN.md §5.3
+/// rule (c)).
 #[derive(Clone, Debug)]
-struct Reloc {
+struct Step {
     threshold: i64,
     delta: i64,
     overrides: Vec<(usize, u64)>,
-    /// The checkpoint's `rs_seen` is the old run's, its read-set the
-    /// spliced one: rebuild the first from the second.
-    rebuild_rs: bool,
-    /// The edits' line shifts: the old run's line numbers of the edited
-    /// files in the checkpoint's state (DESIGN.md §5.3 rule (c)).
     lines: Vec<crate::lineshift::Shift>,
 }
 
-impl Reloc {
-    /// Apply a checkpoint's corrections, in the order the convergences that
-    /// made them happened. Each convergence adds one to every later
-    /// checkpoint it keeps, so a checkpoint that outlived n converged
-    /// compiles carries n of them. `rebuild_seen` sets `rs_seen` from the
-    /// read-set and the live names alone, neither of which a position
-    /// correction touches (`overrides` are `obj_offset` words,
-    /// `new_positions`), so running it once after the last correction
-    /// leaves the state each run of it after every correction left. Run
-    /// once per correction it was the cost that grew with n: about 1 ms
-    /// each on full-100 (8,419 read-set events), so a letter edit at the
-    /// end after 20 converged ones in the middle restored in 21 ms instead
-    /// of 3 (lane P4-EDIT-LATENCY, docs/evidence/p4-edit-latency-2026-10-03/).
-    /// The position corrections still run once each (about 1.4 µs each at
-    /// 1,051 PDF objects).
-    fn apply_all(rs: &[Reloc], g: &mut Globals) {
-        for x in rs {
-            x.apply_positions(g);
-            for s in &x.lines {
-                s.relocate(g);
-            }
-        }
-        if rs.iter().any(|x| x.rebuild_rs) && g.rs_on {
-            crate::readset::rebuild_seen(g);
-        }
-    }
-
-    /// The file position part of the correction.
+impl Step {
+    /// The correction alone, as each was applied before they were composed
+    /// (`FLASHTEX_VERIFY_RELOC` compares the composition with these).
     fn apply_positions(&self, g: &mut Globals) {
         let (t, d) = (self.threshold, self.delta);
         let mv = |x: i64| if x >= t { x + d } else { x };
@@ -4825,6 +4793,232 @@ impl Reloc {
     }
 }
 
+/// The corrections a checkpoint owes for every convergence it outlived
+/// (`Step`), composed into one: a checkpoint that outlived n converged
+/// compiles used to carry n of them, each a pass over every PDF object at
+/// its restore and a copy in memory, so a long session's restores and
+/// memory grew with every converged keystroke (lane P4-PAGE-COST).
+///
+/// - A file position `x` the steps shift becomes `x + delta` of the piece
+///   holding `x` (`pieces`, by where each starts): applying the steps one by
+///   one splits the positions only where a step's threshold falls, so n
+///   steps give at most n + 1 pieces.
+/// - An override writes its word whatever the entry; the later steps shift
+///   it where they shift its entry (one not in an object stream: `int3`,
+///   which no step changes). Each override keeps both values, the one it
+///   wrote and the one the later steps make of it, and the last override
+///   of a word wins.
+/// - The line shifts are kept in order (`lines`).
+/// - `rebuild_seen` runs once after the corrections: it sets `rs_seen` from
+///   the read-set and the live names alone, which no correction touches.
+#[derive(Clone, Debug, Default)]
+struct Reloc {
+    /// (first position of the piece, its delta), the first from `i64::MIN`;
+    /// empty: no position moves.
+    pieces: Vec<(i64, i64)>,
+    /// (word's offset in the space, value written, value where its entry
+    /// is shifted).
+    overrides: Vec<(usize, u64, u64)>,
+    lines: Vec<crate::lineshift::Shift>,
+    /// Steps composed.
+    count: usize,
+    /// The steps themselves, kept only under `FLASHTEX_VERIFY_RELOC`.
+    steps: Vec<Step>,
+}
+
+fn verify_reloc() -> bool {
+    static V: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *V.get_or_init(|| std::env::var_os("FLASHTEX_VERIFY_RELOC").is_some())
+}
+
+impl Reloc {
+    /// Compose step `s` after the ones this holds.
+    fn push(&mut self, s: &Step) {
+        let (t, d) = (s.threshold, s.delta);
+        if d != 0 {
+            if self.pieces.is_empty() {
+                self.pieces.push((i64::MIN, 0));
+            }
+            let mut out: Vec<(i64, i64)> = Vec::with_capacity(self.pieces.len() + 1);
+            let mut add = |a: i64, e: i64| {
+                if out.last().is_none_or(|&(_, le)| le != e) {
+                    out.push((a, e));
+                }
+            };
+            for (i, &(a, e)) in self.pieces.iter().enumerate() {
+                let b = self.pieces.get(i + 1).map(|p| p.0);
+                // the piece's positions the step moves: x + e >= t
+                let c = t.saturating_sub(e);
+                if c <= a {
+                    add(a, e + d);
+                } else if b.is_some_and(|b| c >= b) {
+                    add(a, e);
+                } else {
+                    add(a, e);
+                    add(c, e + d);
+                }
+            }
+            self.pieces = out;
+            for o in self.overrides.iter_mut() {
+                if o.2 as i64 >= t {
+                    o.2 = (o.2 as i64 + d) as u64;
+                }
+            }
+        }
+        for &(off, v) in &s.overrides {
+            self.overrides.retain(|o| o.0 != off);
+            self.overrides.push((off, v, v));
+        }
+        self.lines.extend(s.lines.iter().cloned());
+        self.count += 1;
+        if verify_reloc() {
+            self.steps.push(s.clone());
+        }
+    }
+
+    /// Where the steps put file position `x`.
+    fn moved(&self, x: i64) -> i64 {
+        let i = self.pieces.partition_point(|&(a, _)| a <= x);
+        match i.checked_sub(1) {
+            Some(i) => x + self.pieces[i].1,
+            None => x,
+        }
+    }
+
+    /// Apply the corrections to the state just restored.
+    fn apply(&self, g: &mut Globals) {
+        let before = verify_reloc().then(|| reloc_words(g));
+        self.apply_positions(g);
+        for s in &self.lines {
+            s.relocate(g);
+        }
+        if let Some(before) = before {
+            self.verify(g, before);
+        }
+        if self.count > 0 && g.rs_on {
+            crate::readset::rebuild_seen(g);
+        }
+    }
+
+    fn apply_positions(&self, g: &mut Globals) {
+        if !self.pieces.is_empty() {
+            g.pdf_gone = self.moved(g.pdf_gone);
+            if g.pdf_save_offset > 0 {
+                g.pdf_save_offset = self.moved(g.pdf_save_offset);
+            }
+            if g.pdf_stream_length_offset > 0 {
+                g.pdf_stream_length_offset = self.moved(g.pdf_stream_length_offset);
+            }
+            let n = (g.obj_ptr.max(0) as usize).min(g.obj_tab.len().saturating_sub(1));
+            for k in 1..=n {
+                let e = g.obj_tab[k];
+                if e.int3 == -1 {
+                    let y = self.moved(e.int2);
+                    if y != e.int2 {
+                        g.obj_tab[k].int2 = y;
+                    }
+                }
+            }
+        }
+        if self.overrides.is_empty() {
+            return;
+        }
+        let tab = g.arena.regions.iter().find(|r| r.name == "obj_tab").map(|r| r.off);
+        let size = std::mem::size_of::<crate::generated::types::obj_entry>();
+        let at = std::mem::offset_of!(crate::generated::types::obj_entry, int2);
+        let n = (g.obj_ptr.max(0) as usize).min(g.obj_tab.len().saturating_sub(1));
+        for &(off, raw, shifted) in &self.overrides {
+            // its entry, if it is an entry's obj_offset word the steps
+            // shift
+            let k = tab
+                .and_then(|r| off.checked_sub(r + at))
+                .filter(|x| x % size == 0)
+                .map(|x| x / size);
+            let shifts = k.is_some_and(|k| (1..=n).contains(&k) && g.obj_tab[k].int3 == -1);
+            let v = if shifts { shifted } else { raw };
+            g.arena.write_through(off, &v.to_le_bytes());
+        }
+    }
+
+    /// `FLASHTEX_VERIFY_RELOC`: the composed corrections leave the words the
+    /// steps one by one would have (from `before`, the state the restore
+    /// left); a verify mode, loud, so that a sweep fails.
+    fn verify(&self, g: &Globals, before: RelocWords) {
+        let mut w = before;
+        for s in &self.steps {
+            w.step(s);
+        }
+        let now = reloc_words(g);
+        let words = w
+            .words
+            .iter()
+            .all(|&(off, v)| g.arena.read(off, 8) == v.to_le_bytes());
+        if w.scalars != now.scalars || w.objs != now.objs || !words || self.steps.len() != self.count {
+            eprintln!(
+                "FLASHTEX_VERIFY_RELOC: {} composed corrections differ from the steps ({} kept)",
+                self.count,
+                self.steps.len()
+            );
+            std::process::abort();
+        }
+    }
+}
+
+/// The words the position corrections touch, outside the space's barrier:
+/// the three file position scalars, every object's (offset, stream index),
+/// and the override words (for `Reloc::verify`).
+struct RelocWords {
+    scalars: [i64; 3],
+    objs: Vec<(i64, i32)>,
+    words: Vec<(usize, u64)>,
+    tab: Option<usize>,
+}
+
+fn reloc_words(g: &Globals) -> RelocWords {
+    let n = (g.obj_ptr.max(0) as usize).min(g.obj_tab.len().saturating_sub(1));
+    RelocWords {
+        scalars: [g.pdf_gone, g.pdf_save_offset, g.pdf_stream_length_offset],
+        objs: (0..=n).map(|k| (g.obj_tab[k].int2, g.obj_tab[k].int3)).collect(),
+        words: vec![],
+        tab: g.arena.regions.iter().find(|r| r.name == "obj_tab").map(|r| r.off),
+    }
+}
+
+impl RelocWords {
+    /// `Step::apply_positions` on these words.
+    fn step(&mut self, s: &Step) {
+        let (t, d) = (s.threshold, s.delta);
+        let mv = |x: i64| if x >= t { x + d } else { x };
+        if d != 0 {
+            self.scalars[0] = mv(self.scalars[0]);
+            for v in self.scalars[1..].iter_mut() {
+                if *v > 0 {
+                    *v = mv(*v);
+                }
+            }
+            for o in self.objs.iter_mut().skip(1) {
+                if o.1 == -1 && o.0 >= t {
+                    o.0 += d;
+                }
+            }
+        }
+        let size = std::mem::size_of::<crate::generated::types::obj_entry>();
+        let at = std::mem::offset_of!(crate::generated::types::obj_entry, int2);
+        for &(off, v) in &s.overrides {
+            let k = self
+                .tab
+                .and_then(|r| off.checked_sub(r + at))
+                .filter(|x| x % size == 0)
+                .map(|x| x / size)
+                .filter(|&k| k >= 1 && k < self.objs.len());
+            match k {
+                Some(k) => self.objs[k].0 = v as i64,
+                None => self.words.push((off, v)),
+            }
+        }
+    }
+}
+
 // Silence unused warnings for items only the host binary uses.
 #[allow(dead_code)]
 fn _unused(_: &FileRead, _: &Key) {}
@@ -4832,6 +5026,66 @@ fn _unused(_: &FileRead, _: &Key) {}
 #[cfg(test)]
 mod tests {
     use super::diff_edit;
+
+    /// `Reloc`'s composition against the steps applied one by one: every
+    /// position, and every override word's two values (written, and shifted
+    /// where its entry is), over random thresholds, deltas of both signs and
+    /// overrides of the same words again.
+    #[test]
+    fn composed_relocations_equal_the_steps() {
+        let mut seed = 0x51ed_270b_7a1c_9e33u64;
+        let mut rnd = |n: u64| {
+            seed ^= seed << 13;
+            seed ^= seed >> 7;
+            seed ^= seed << 17;
+            seed % n
+        };
+        for _ in 0..3000 {
+            let mut r = super::Reloc::default();
+            let mut steps = vec![];
+            for _ in 0..rnd(14) {
+                let overrides = (0..rnd(3))
+                    .map(|_| (8 * rnd(5) as usize, rnd(1400)))
+                    .collect();
+                let s = super::Step {
+                    threshold: rnd(1200) as i64,
+                    delta: rnd(301) as i64 - 150,
+                    overrides,
+                    lines: vec![],
+                };
+                r.push(&s);
+                steps.push(s);
+            }
+            assert!(r.pieces.len() <= steps.len() + 1);
+            for x in -5..1600i64 {
+                let seq = steps.iter().fold(x, |x, s| {
+                    if s.delta != 0 && x >= s.threshold {
+                        x + s.delta
+                    } else {
+                        x
+                    }
+                });
+                assert_eq!(r.moved(x), seq, "position {x}");
+            }
+            for off in (0..5).map(|k| 8 * k) {
+                let (mut raw, mut val) = (None, None::<i64>);
+                for s in &steps {
+                    if let Some(v) = val.as_mut() {
+                        if s.delta != 0 && *v >= s.threshold {
+                            *v += s.delta;
+                        }
+                    }
+                    if let Some(&(_, v)) = s.overrides.iter().rev().find(|o| o.0 == off) {
+                        raw = Some(v);
+                        val = Some(v as i64);
+                    }
+                }
+                let got = r.overrides.iter().find(|o| o.0 == off);
+                assert_eq!(got.map(|o| o.1), raw, "word {off}");
+                assert_eq!(got.map(|o| o.2 as i64), val, "word {off}");
+            }
+        }
+    }
 
     /// `diff_edit` against the byte-at-a-time definition, on edits of every
     /// kind near block boundaries and at the ends.
