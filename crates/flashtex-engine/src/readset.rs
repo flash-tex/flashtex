@@ -1003,18 +1003,9 @@ pub fn apply_seen_diff(g: &mut Globals, diff: &[(u32, u8)]) {
     }
 }
 
-/// The read-set's events, as one number (length and an FNV-1a hash of
-/// every event).
-pub fn events_fingerprint(g: &mut Globals) -> (usize, u64) {
-    let ev = &g.layer().rs.events;
-    let mut h: u64 = 0xcbf2_9ce4_8422_2325;
-    for e in ev.iter() {
-        for x in [e.name, e.p as u32 as u64] {
-            h ^= x;
-            h = h.wrapping_mul(0x0100_0000_01b3);
-        }
-    }
-    (ev.len(), h)
+/// The read-set's events (`incr::SeenMemo` keys its rebuilds by them).
+pub fn events(g: &mut Globals) -> &[Event] {
+    &g.layer().rs.events
 }
 
 impl Globals {
