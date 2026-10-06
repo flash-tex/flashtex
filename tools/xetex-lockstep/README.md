@@ -75,6 +75,22 @@ python3 tools/xetex-lockstep/run.py --engine <bin> --cases 'n0*' --no-xetex-test
 python3 tools/xetex-lockstep/latex.py --engine <bin> [--cases 'l00*'] [--keep]
 ```
 
+## Phase S2: OpenType math
+
+* **`cases/o*.tex`** (written by `make_cases.py`): Latin Modern Math,
+  STIX Two Math and Libertinus Math from TeX Live as families 0-3 through
+  `\Umathcode`, `\Udelcode`, `\Umathchardef`, `\Uradical` and
+  `\Umathaccent`: scripts and cut-in kerns, fractions, radicals, accents
+  (top attachments, stretchy and bottom accents), `\left`/`\right` size
+  variants and glyph assemblies (vertical and horizontal), big operators,
+  every fontdimen the `MATH` table gives, and a TFM text family beside an
+  OpenType one.
+* **`latex-cases/l007`-`l009`**: amsmath and unicode-math with the same
+  three fonts, against `xelatex -no-pdf`.
+* **`cases/x054-shorthand-reassign.tex`**: xetex.ch's `\chardef` and
+  friends start from `\relax` as `\csname` makes it, so
+  `\tracingassigns` says "reassigning" (unicode-math's documents show it).
+
 ## Font lookup by name (`fontmatch.py`)
 
 `fontmatch.py` measures the port's font lookup

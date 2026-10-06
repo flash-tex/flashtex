@@ -478,6 +478,15 @@ case("x053-mkern-nonmu", "tex.ch [26.449]: \\mkern and \\mskip with a non-mu int
 \lsshipbox0
 \end""", no_halt=True)
 
+case("x054-shorthand-reassign", "xetex.ch [49.1222]: a shorthand definition of a \\csname-made \\relax reassigns (\\tracingassigns)",
+     r"""\expandafter\let\csname a\endcsname\relax \chardef\a=1
+\csname b\endcsname \mathchardef\b="141 \csname c\endcsname \Umathchardef\c="1 "0 "41
+\csname d\endcsname \countdef\d=5 \csname e\endcsname \XeTeXmathchardef\e="1 "0 "42
+\message{[\meaning\a][\meaning\b][\meaning\c][\meaning\d][\meaning\e]}
+\setbox0=\hbox{}
+\lsshipbox0
+\end""")
+
 case("x050-catcode-default", "the INITEX category codes of Unicode letters and others",
      r"""\message{x050 \the\catcode`a \the\catcode`é \the\catcode`Ω \the\catcode`雪 \the\catcode`🍌 \the\catcode`1 \the\catcode`. \the\catcode`€}
 \setbox0=\hbox{\vrule width1pt}
@@ -803,6 +812,114 @@ mcase("m010-tfm-mapping-chars", "characters of a mapped TFM font whose mapped co
 \setbox1=\hbox{$\fam0 a^b\mathchar"7019 ff\mathchar"7022\mathaccent"7015 x$}
 \setbox2=\vbox{\box0 \box1}
 \lsshipbox2
+\end""")
+
+# --- OpenType math (phase S2): the MATH table through \Umath... ---------
+
+def ocase(name, desc, body, no_halt=False):
+    ncase(name, desc, body, no_halt)
+    cases[name] = cases[name].replace(
+        b"phase S1: native fonts)", b"phase S2: OpenType math)", 1)
+
+
+def otmath(font, sizes=(10, 7, 5)):
+    """Families 0-3 in OpenType math font `font` at text, script and
+    scriptscript sizes, with plain TeX's delimiter and script parameters,
+    and Unicode math codes for the letters, digits and the operators the
+    cases use."""
+    t, s, ss = sizes
+    return (r"""\def\loop#1\repeat{\def\body{#1}\iterate}\let\repeat=\fi
+\def\iterate{\body \let\next\iterate \else\let\next\relax\fi \next}
+\font\mt="[%s]" at %dpt \font\ms="[%s]" at %dpt \font\mss="[%s]" at %dpt
+\textfont0=\mt \scriptfont0=\ms \scriptscriptfont0=\mss
+\textfont1=\mt \scriptfont1=\ms \scriptscriptfont1=\mss
+\textfont2=\mt \scriptfont2=\ms \scriptscriptfont2=\mss
+\textfont3=\mt \scriptfont3=\ms \scriptscriptfont3=\mss
+\delimiterfactor=901 \delimitershortfall=5pt \nulldelimiterspace=1.2pt \scriptspace=0.5pt
+\thinmuskip=3mu \medmuskip=4mu plus 2mu minus 4mu \thickmuskip=5mu plus 5mu
+\hsize=300pt \parindent=0pt \parfillskip=0pt plus 1fil \baselineskip=12pt
+\count255=`a \loop \Umathcode\count255="7 "1 \numexpr"1D44E+\count255-`a\relax
+  \advance\count255 1 \ifnum\count255<`\{\repeat
+\Umathcode`h="7 "1 "210E
+\count255=`A \loop \Umathcode\count255="7 "1 \numexpr"1D434+\count255-`A\relax
+  \advance\count255 1 \ifnum\count255<`\[\repeat
+\count255=`0 \loop \Umathcode\count255="0 "0 \count255
+  \advance\count255 1 \ifnum\count255<`\:\repeat
+\Umathcode`+="2 "0 "2B \Umathcode`-="2 "0 "2212 \Umathcode`=="3 "0 "3D
+\Umathcode`,="6 "0 "2C \Umathcode`(="4 "0 "28 \Umathcode`)="5 "0 "29
+\Umathcode`[="4 "0 "5B \Umathcode`]="5 "0 "5D \Umathcode`/="0 "0 "2F
+\Udelcode`(="0 "28 \Udelcode`)="0 "29 \Udelcode`[="0 "5B \Udelcode`]="0 "5D
+\Udelcode`|="0 "7C \Udelcode`/="0 "2F \Udelcode`.="0 "0
+\Umathchardef\sum="1 "0 "2211 \Umathchardef\int="1 "0 "222B \Umathchardef\prod="1 "0 "220F
+\Umathchardef\alpha="7 "1 "1D6FC \Umathchardef\beta="7 "1 "1D6FD \Umathchardef\infty="0 "0 "221E
+\Umathchardef\partial="0 "0 "1D715 \Umathchardef\prime="0 "0 "2032
+\def\lbrace{\Udelimiter "4 "0 "7B}\def\rbrace{\Udelimiter "5 "0 "7D}
+\def\sqrt{\Uradical "0 "221A }\def\,{\mskip\thinmuskip}
+\def\hat{\Umathaccent "0 "0 "0302 }\def\widehat{\Umathaccent "0 "0 "0302 }
+\def\tilde{\Umathaccent "0 "0 "0303 }\def\vec{\Umathaccent "0 "0 "20D7 }
+\def\overbrace{\Umathaccent "0 "0 "23DE }\def\underbrace{\Umathaccent bottom "0 "0 "23DF }
+""" % (font, t, font, s, font, ss))
+
+
+MATHFONTS = [("lm", "latinmodern-math.otf", "Latin Modern Math"),
+             ("stix", "STIXTwoMath-Regular.otf", "STIX Two Math"),
+             ("libertinus", "LibertinusMath-Regular.otf", "Libertinus Math")]
+
+FORMULAS = r"""\setbox0=\vbox{
+$a+b=c$, $x^2+y_1^{n+1}=z_{i,j}^{k}$, $f'(x)^2$, $A^2_B P_1 T^2 V_j W^k Y_1 f_1 f^2$,
+$\alpha_1\beta^2 \sum_{i=1}^n x_i \prod_{k=0}^{\infty} \int_0^1 \partial x$,
+${a\over b}+{a+1\atop b-1}+{1\above 1pt 2}+{x\overwithdelims() y}$,
+$\sqrt{x}+\sqrt{x^2+y^2}+\sqrt{\displaystyle{a\over b}}$,
+$\hat a \hat A \tilde x \vec v \widehat{xyz} \hat{\hat a}$,
+$\left( a\over b\right) \left[ x\over y\right] \left| x \right| \left\lbrace x \right\rbrace$
+$$\sum_{i=1}^n x_i = \int_0^\infty f(x)\,dx = \prod_{k=1}^\infty {1\over 1-x^k}$$
+$$\left( \vrule height 20pt depth 10pt width 0pt x \right) \left[ \vrule height 40pt depth 30pt width 0pt \right] \left\lbrace \vrule height 80pt depth 70pt width 0pt \right\rbrace \left/ \vrule height 30pt width 0pt \right.$$
+$$\overbrace{a+b+c}\quad \underbrace{x+y+z+w+v+u+t+s}\quad \overbrace{\hbox to 200pt{}}$$
+$\displaystyle x^{y^z} {a^2\over b_1} \textstyle x^{y^z} \scriptstyle x^{y^z} \scriptscriptstyle x^{y^z}$
+\par}
+\lsshipbox0
+"""
+
+for i, (tag, file, fam) in enumerate(MATHFONTS):
+    ocase("o%03d-formulas-%s" % (i + 1, tag),
+          "formulas in %s: scripts and cut-in kerns, fractions, radicals, accents, \\left/\\right variants and assemblies, big operators, horizontal braces as stretchy accents" % fam,
+          otmath(file) + r"\def\quad{\hskip10pt}" + "\n" + FORMULAS + r"\end")
+
+for i, (tag, file, fam) in enumerate(MATHFONTS):
+    ocase("o%03d-fontdimens-%s" % (i + 4, tag),
+          "all 65 fontdimens of %s at 10pt and 7pt, as families 2 and 3 read them" % fam,
+          otmath(file) + r"""\count1=1 \loop \message{[\the\count1:\the\fontdimen\count1\mt:\the\fontdimen\count1\ms]}
+  \advance\count1 1 \ifnum\count1<66 \repeat
+\setbox0=\hbox{$x$}
+\lsshipbox0
+\end""")
+
+ocase("o007-radicals", "\\Uradical of growing height (variants, then the assembly), nested, in each style, and a degree placed as plain TeX's \\root does",
+      otmath("latinmodern-math.otf") + r"""\def\root#1\of#2{\setbox2=\hbox{$\scriptscriptstyle{#1}$}\mkern5mu\raise.6\ht2\copy2\mkern-10mu\sqrt{#2}}
+\setbox0=\vbox{$\root 3\of x \root n\of{x^2+1} \sqrt{\sqrt{\sqrt{x}}} \scriptstyle\sqrt{x} \scriptscriptstyle\sqrt{x}$
+$$\sqrt{\vrule height 12pt depth 4pt width 1pt} \sqrt{\vrule height 30pt depth 10pt width 1pt} \sqrt{\vrule height 80pt depth 40pt width 1pt} \sqrt{\vrule height 150pt width 1pt} \sqrt{\displaystyle{a\over b}}$$\par}
+\lsshipbox0
+\end""")
+
+ocase("o008-mixed-sizes", "an OpenType math font with a TFM text family 0 and other script sizes (\\fontdimen with scaled fonts)",
+      otmath("STIXTwoMath-Regular.otf", (12, 8, 6)) + r"""\font\tr=cmr10 \textfont0=\tr \scriptfont0=\tr \scriptscriptfont0=\tr
+\Umathcode`1="0 "0 `1 \Umathcode`2="0 "0 `2
+\setbox0=\vbox{$x_1^2 + {1\over 2} + \sqrt{12} + \left(x\over y\right)^{2}_{i}$
+$$\sum_{i=1}^{2} x_i^2 \int_1^2 \partial f$$\par}
+\lsshipbox0
+\end""")
+
+ocase("o009-limits-and-operators", "big operators with \\limits/\\nolimits/\\displaylimits, display operator size (variants), italic correction of an integral",
+      otmath("LibertinusMath-Regular.otf") + r"""\setbox0=\vbox{$\sum\limits_{i=1}^n \int\limits_0^1 \int\nolimits_0^1 \prod\displaylimits_a^b$
+$$\sum_{i=1}^n \int_0^1 \int\nolimits_0^1 f \prod\limits_{k} \int\limits_a^b$$\par}
+\lsshipbox0
+\end""")
+
+ocase("o010-mathaccents", "\\Umathaccent: top accents on letters with and without top accent attachments, fixed, bottom and stretched accents",
+      otmath("latinmodern-math.otf") + r"""\setbox0=\vbox{$\hat a \hat f \hat W \hat{ab} \Umathaccent fixed "0 "0 "0302 {xyz}
+\Umathaccent bottom "0 "0 "0332 {x} \Umathaccent "0 "0 "0305 {abcdef} \Umathaccent "0 "0 "20D7 {ABCDEF}
+\Umathaccent "0 "0 "0302 {\Umathaccent "0 "0 "0302 {x}}$\par}
+\lsshipbox0
 \end""")
 
 for name, data in cases.items():
