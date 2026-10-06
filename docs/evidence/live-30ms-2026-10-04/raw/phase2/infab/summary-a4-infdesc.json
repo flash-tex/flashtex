@@ -1,0 +1,120 @@
+{
+ "engine": "a4",
+ "doc": "infdesc",
+ "phases": {
+  "mid-i150": {
+   "args": [
+    "--edit",
+    "book/number-theory/divisibility.tex",
+    "--page",
+    "280",
+    "--interval-ms",
+    "150",
+    "--gap-ms",
+    "300"
+   ],
+   "where": "dl3-keys: 580 pages; letter on line 551 (page 252), byte 32955",
+   "n": 25,
+   "stages": {},
+   "edited_page_ms": {
+    "p50": 699.1431660000001,
+    "p95": 1384.48,
+    "max": 1532.1768329999998
+   },
+   "done_ms": null,
+   "converged": 0,
+   "cancelled": 29,
+   "typeset_pages": [],
+   "load": [
+    194.36,
+    131.73
+   ],
+   "secs": 404.30337285995483
+  },
+  "mid-i300": {
+   "args": [
+    "--edit",
+    "book/number-theory/divisibility.tex",
+    "--page",
+    "280",
+    "--interval-ms",
+    "300",
+    "--gap-ms",
+    "300"
+   ],
+   "where": "dl3-keys: 580 pages; letter on line 551 (page 252), byte 32955",
+   "n": 29,
+   "stages": {},
+   "edited_page_ms": {
+    "p50": 1213.67225,
+    "p95": 2628.5876670000002,
+    "max": 2929.5802919999996
+   },
+   "done_ms": null,
+   "converged": 0,
+   "cancelled": 29,
+   "typeset_pages": [],
+   "load": [
+    131.73,
+    133.01
+   ],
+   "secs": 16.912238836288452
+  },
+  "late-i150": {
+   "args": [
+    "--edit",
+    "book/probability-theory/discrete-random-variables.tex",
+    "--page",
+    "470",
+    "--interval-ms",
+    "150",
+    "--gap-ms",
+    "300"
+   ],
+   "where": "dl3-keys: 580 pages; letter on line 525 (page 445), byte 35738",
+   "n": 29,
+   "stages": {},
+   "edited_page_ms": {
+    "p50": 580.574292,
+    "p95": 964.852667,
+    "max": 1008.7949169999999
+   },
+   "done_ms": null,
+   "converged": 0,
+   "cancelled": 29,
+   "typeset_pages": [],
+   "load": [
+    133.01,
+    133.43
+   ],
+   "secs": 9.47657585144043
+  }
+ },
+ "power": {
+  "source": "AC",
+  "battery_pct": 100,
+  "low_power_mode": true,
+  "thermal": "Note: No thermal warning level has been recorded; Note: No performance warning level has been recorded; Note: No CPU power status has been recorded",
+  "thermal_limited": false,
+  "load": [
+   194.36,
+   170.32,
+   171.55
+  ],
+  "ncpu": 10
+ },
+ "rss_peak": 1481195520,
+ "power_end": {
+  "source": "AC",
+  "battery_pct": 100,
+  "low_power_mode": true,
+  "thermal": "Note: No thermal warning level has been recorded; Note: No performance warning level has been recorded; Note: No CPU power status has been recorded",
+  "thermal_limited": false,
+  "load": [
+   133.43,
+   148.93,
+   161.46
+  ],
+  "ncpu": 10
+ }
+}

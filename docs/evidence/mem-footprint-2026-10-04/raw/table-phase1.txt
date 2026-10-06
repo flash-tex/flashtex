@@ -1,0 +1,8 @@
+p1         full-100   fp  267.7M peak  300.8M malloc   188.1 held   277.9 logs   87.6 ckpts 560 edited p50/p95 37.3/121.0 ms, 102.4/143.3 Minstr n=24
+p1         infdesc    fp    1.5G peak    1.8G malloc  1329.1 held  2050.0 logs  801.3 ckpts 6784 edited p50/p95 377.6/768.4 ms, 516.8/585.1 Minstr n=18
+p1         long-deck  fp  237.5M peak  262.0M malloc   161.0 held   232.7 logs   69.6 ckpts 566 edited p50/p95 242.4/445.0 ms, 384.6/386.6 Minstr n=16
+mh         full-100   fp  315.6M peak  315.6M malloc   200.0 held   290.5 logs   87.3 ckpts 578 edited p50/p95 71.3/169.7 ms, 132.6/185.1 Minstr n=24
+mh         infdesc    fp    1.6G peak    1.9G malloc  1406.7 held  2055.6 logs  822.0 ckpts 7240 edited p50/p95 401.7/1877.1 ms, 432.7/670.7 Minstr n=18
+A-base     full-100   fp  292.3M peak  292.3M malloc   185.5 held   269.5 logs   85.8 ckpts 516 edited p50/p95 18.1/46.3 ms, 102.3/142.2 Minstr n=24
+A-base     infdesc    fp  930.4M peak    1.8G malloc  1339.4 held  1972.6 logs  803.6 ckpts 6770 edited p50/p95 85.4/363.0 ms, 369.8/585.2 Minstr n=18
+A-base     long-deck  fp  269.4M peak  269.5M malloc   160.5 held   241.1 logs   69.5 ckpts 537 edited p50/p95 57.5/174.2 ms, 384.1/387.5 Minstr n=16

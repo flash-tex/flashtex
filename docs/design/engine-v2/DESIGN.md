@@ -17,8 +17,9 @@ which superseded the unmerged 2026-10-01 review (PR #1334); [`reviews/2026-09-30
 **Phase status (verified gates):** P0 ✔ (2026-09-29) · P1 ✔ trip byte-identical (2026-09-29) ·
 P2 ✔ verified independently on main `d4f2a1581` (2026-09-29): trip, etrip 18/18,
 pdfTeX regression 7/7, lockstep 260/260, parity fixtures P-T1 83/83 and P-T2 83/83,
-T2 LaTeX suites 1,520/1,529 with 0 unexpected failures · **P3 met on lane evidence, not yet
-gated** (§12) · P4 and P5 in progress (§12).
+T2 LaTeX suites 1,520/1,529 with 0 unexpected failures · **P3 ✔ verified and gated on main
+`2e7203e03` (2026-10-05): preview 669/669 at 0 px, P-T2 86/86, positions 86/86 exact; CI
+`preview-parity.yml` run 37381958089** (§12) · P4 and P5 in progress (§12).
 Re-measured 2026-10-05 on the NixOS PC (TeX Live 2026) on main `9f29302fe`
 (reviews/2026-10-05.md §2):
 - lockstep **1,466/1,466**;
@@ -129,6 +130,11 @@ breaks, positions and glyph shapes, which P-T1 and P-T2 cover completely.
 not gated. Its floor is the window server, which presents a commit no sooner than two 120 Hz
 frames later (15.9–16.0 ms minimum, 16–24 ms typical; app-v3-5 evidence, #1332). Every report
 names the quantity it measured.
+**Typing speed (owner, 2026-10-06).** The gate holds for **continuous typing with keys as
+close as 50 ms apart** (about 240 wpm; the owner's floor is 200 wpm, ~60 ms), not only isolated
+keys: every key at 50, 60, 80, 100 and 150 ms intervals meets the targets above for its *own* edited page, and every key is painted by its
+own compile (a key folded into a later compile is a miss). T7 gates these as its `typing@Nms`
+rows (#1605; 50/60/80 ms rows added by lane P4-TYPING-200WPM).
 
 **Status (review 2026-10-05; REPORTED unless marked; no reference run exists).** The one
 harness is `tools/incr-bench/t7.py` (#1391). Its only run is on main `ab9893935`. It was on an
@@ -409,6 +415,13 @@ benchmarks, an adversarial review and preview-renderer measurements, all dated
   CPU per page and 284–343 MB max RSS on 1,000-page documents with a checkpoint at every
   shipout (review track 1 §1.5); with the between-page points the Mac measured
   382 → 638 MB on full-1000 (P4-L5). Both are inside the 1 GB budget.
+- **Segment hold (#1614, 2026-10-06):** between the restart point and the edited page, the
+  between-page segment checkpoints are *held*: the preemption check still runs at every
+  segment boundary, and a held checkpoint is materialised wherever newer work stops the run,
+  but the copies are otherwise deferred until the edited page ships (6–7 % fewer typesetting
+  instructions). A later edit or preemption that would have used a skipped segment point
+  restarts from the previous checkpoint, which is always valid. Independently reviewed;
+  every soundness sweep 0 bad.
 - **Mechanism (measured 2026-09-29, `docs/evidence/snapshot-bench-2026-09-29/`):**
   software copy-on-write, specifically **(b3)**:
   - All mutable arenas live in **one flat word space** with a dirty bitmap. Reads
@@ -499,7 +512,8 @@ D8 specification; what landed differs, and D8's rewording is proposed to the own
   caches are treated as derived state. The **convergence rate** and background pages re-run per
   edit are part of T7 and of the P4 exit gate (§8, §12). *Status (review 2026-10-05):*
   - Object relocation and line shifting are **still not built**. Object numbers are dead only
-    where they are unread, and `line` is still compared.
+    where they are unread, and `line` is still compared. *(Line shifting has since been built;
+    see "As built: line shifting" below.)*
   - So T7's newline and split rows never converge on any document, and sentence rows do not on
     plain-10/100/1000 or full-10. They re-typeset to the end: 150 of 300 pages, 501 of 1,000,
     and 1,503 in two passes on plain-1000 (NixOS PC, `9f29302fe`, 2026-10-05,
@@ -519,6 +533,32 @@ D8 specification; what landed differs, and D8's rewording is proposed to the own
     - the fixture-wide soundness test **fails on main**: conf-paper, edit 0, page 3, the named
       destinations differ. It failed in nightly 37208020073 (10-04) and again on the NixOS PC
       on `9f29302fe` (2026-10-05, VERIFIED).
+- **As built: line shifting** (P4-NEWLINE-CONVERGE, #1570; `src/lineshift.rs`,
+  `changes/lineshift.ch`).
+  - **Lines moved by δ.** An edit moves the lines after it by δ, the line ends it adds minus
+    those it removes.
+  - **`line`/`line_stack`.** For a level reading the edited file these may differ by δ. They
+    are corrected whenever the old run's later checkpoint is restored (`Reloc`).
+  - **Open levels, groups and conditionals.** Each one's line carries its file (the SyncTeX
+    tag, in new word-space arrays). A line of the edited file past the edit must differ by
+    δ; any other must be equal.
+  - **SyncTeX node lines.** These are dead: they are written and copied, never read.
+  - **Line journal.** Every `\inputlineno` read and every printed line number is journalled.
+    One the edit may have moved, read by the old run after the convergence point, is a
+    barrier (`rerun_point`).
+  - **`\the\inputlineno` in an `\edef` body.** For LaTeX's `\begin` this marks the token list
+    instead, and expanding, comparing or showing that list is the read.
+  - **Dropped checkpoints.** An old checkpoint that cannot be corrected (a marked list alive,
+    or a line of no known file) is dropped.
+  - **Soundness cases.** Each rule has one that fails without it (tests/incremental.rs).
+  - **Measured (PC, non-reference, #1570):** newline and split converge on 19/19 T7
+    keystrokes on plain/full-100/300/1000, except plain-1000 split. That split changes the
+    page count (§5.4).
+  - **Where split convergence comes from.** After a reflow the pending object stream holds
+    the re-typeset pages' resources. A split converges once that stream is flushed (≤ 33
+    pages).
+  - **What is still missing.** PDF object relocation is not needed for these rows and is
+    still not built.
 - **Every convergence rule is a soundness risk** (adopted 2026-10-01, §13): two rules were
   found unsound on 2026-09-30 (P4-FINISH's first `pdf_char_used` union, and the older (b′) read
   test, which skipped later reads of files the old run closes again), and only the soundness
@@ -1010,7 +1050,11 @@ Rules:
 **Gate status (review 2026-10-05; the inventory, with a lane per remaining item, is
 reviews/2026-10-05.md §4).** By §13 R13, a gate is **met** only when it holds on main, measured
 by CI or by a named reference run. Lane runs are REPORTED evidence.
-- **P3: met on lane evidence, not yet gated.**
+- **P3: ✔ MET (2026-10-05).** Verified on main `2e7203e03` by the post-merge CI job
+  `preview-parity.yml` (run 37381958089, #1596): zero-tolerance preview 669/669 page
+  renders identical at 1×, 2× and 4× (223/223 each), glyph positions exact to 0 sp on 86/86,
+  P-T2 86/86; PDF fallback 30/699 renders (4.3 %, the same 10 beamer shading pages as 10-02,
+  identical by construction). A failure on main opens `main-red`. History below:
   - P-T2 on fixtures: **86/86**. P-T1 86/86 (VERIFIED, NixOS PC, TeX Live 2026, main
     `9f29302fe`). The board's CI run of 10-04 agrees.
   - Zero-tolerance preview parity: J1 landed as #1390.
@@ -1169,6 +1213,15 @@ by CI or by a named reference run. Lane runs are REPORTED evidence.
 | 2026-10-05 | P5 bar (Q3) confirmed: P-T2 ≥ 99 %, P-T1 ≥ 98 %, zero crashes on the 5k corpus (T4), and new ≥ old on every tier | Owner (Kabir) |
 | 2026-10-05 | Project fonts (app-parity row A9): the Unicode (XeTeX-derived) mode enters P5 scope **only as far as project and system fonts need** (fontspec/OpenType loading, shaping, PDF embedding through FlashTeX's writer), so retiring the old engine loses nothing (decision 3A). The rest of the XeTeX plan stays parked under critical path first | Owner (Kabir) |
 | 2026-10-05 | CI runs on the NixOS PC again (`FLASHTEX_SELFHOSTED_LINUX=1`), inside `flashtex.slice`: MemoryHigh 18G, MemoryMax 20G, no swap, CPUQuota 800 % (8 of 16 threads), shared with agents' PC runs, so the owner keeps ≥ 10 GB and half the CPU | Owner (Kabir) |
+| 2026-10-05 | Confirmed by the owner (Kabir) from Jaysen's 2026-10-04 directions: **north star** — a fully independent, blazing-fast TeX engine in Rust that beats the old engine on speed and memory (within parity > speed > maintainability, §1) | Owner (Kabir) |
+| 2026-10-05 | Confirmed: **best-effort error preview** is the app default (#1553): recoverable errors are warnings marked "(pdfLaTeX would report an error here)" and the preview still updates; strict pdfLaTeX semantics are opt-in (`-halt-on-error`). Every parity tier (P-T1/P-T2, T2, T4, arXiv) keeps pdfTeX's error semantics | Owner (Kabir) |
+| 2026-10-05 | Confirmed: **engine modes Q1–Q10** as in `docs/design/modes/PROPOSAL.md` (Classic, Unicode and opt-in Modern over one runtime, two binaries). Under critical path first, only the Unicode mode's project and system font path is P5 scope; per Q1 the old engine stays the explicit fallback for documents routed to Unicode until that gate passes, then it is deleted, which completes P5 retirement. The rest of the modes plan is staffed only when no P3–P5 lane remains | Owner (Kabir) |
+| 2026-10-05 | Confirmed: **MACRO-REPLAY** (`MACRO-REPLAY.md`) as the P6 direction; parked until P3–P5 are staffed, and implemented only after an ablation and a real-document measurement show a win | Owner (Kabir) |
+| 2026-10-05 | display-list-v3 exact geometry (`ORIGINS`, `RULE_GEOMETRY`) is gated by the `exact-geometry` capability, like `progress-v1`, and takes no minor number (§6.1) | Commander (kabir-claude), protocol owner |
+| 2026-10-05 | **Merge fast, test later (§9).** The merge queue batches up to 8 PRs and runs only the gate: build (`cargo check`), the changed crates' fmt/clippy/tests, trip/etrip/pdfTeX regression, licence/inventory/tables, and engine parity (lockstep, P-T1/P-T2, engine tests) sharded on hosted runners, only when engine paths change. Everything else (Mac app, iPad, full workspace, macOS legs, old-engine checks) runs after merge; a failure opens or updates `main-red` naming the PRs, and the PR's owner fixes forward within 2 h or the Commander reverts. App PRs still run their Swift tests at PR level. Measured: gate 4.7 min wall (was 45–130 min); first batch landed 6 PRs in under 20 min (#1586–#1589) | Owner (Kabir): "30–60 mins per merge is absolutely unacceptable"; Commander (kabir-claude) |
+| 2026-10-05 | **P3 exit gate met** (§12): P-T2 on fixtures 86/86 and preview parity at zero tolerance 669/669, verified on main `2e7203e03` and gated after every merge by `preview-parity.yml` (#1596). The 4.3 % PDF-fallback renders are identical by construction and remain a speed item | Commander (kabir-claude), from evidence |
+| 2026-10-06 | Segment hold (§5.2, #1614): segment checkpoints between the restart point and the edited page are deferred until the page ships; preemption points stay, and a held checkpoint is materialised where newer work stops the run. An implementation of §5.2's cadence, not a change to its guarantees | Commander (kabir-claude), on independent review |
+| 2026-10-06 | The latency gate covers continuous typing with keys **50 ms apart** (≈ 240 wpm; ≥ the owner's 200 wpm floor): each key at 50/60/80/100/150 ms intervals meets ≤ 16 ms p95 (host ≤ 11 ms) for its own edited page and is painted by its own compile (§1.2) | Owner (Kabir): "anything below 200wpm needs to hit our target"; "the 50ms target is good" |
 
 ---
 

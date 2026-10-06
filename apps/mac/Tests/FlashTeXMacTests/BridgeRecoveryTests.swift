@@ -36,6 +36,22 @@ final class BridgeRecoveryTests: XCTestCase {
         try FileManager.default.setAttributes([.posixPermissions: mode], ofItemAtPath: url.path)
     }
 
+    /// `convertCapture` sends the document's engine on the wire (`capture_convert.engine`):
+    /// the bridge picks the provider's feature list by it (retirement plan #1236, S3r).
+    func testConvertSendsTheDocumentsEngine() async throws {
+        let store = try BridgeClientTests.tempStore()
+        let model = ShellModel()
+        model.autoCompile = false
+        defer { model.detachBridge() }
+        _ = try await stage(model, store: store)
+        let lines = try String(contentsOf: store.appendingPathComponent("convert-requests.jsonl"), encoding: .utf8)
+            .split(separator: "\n").map { try JSONSerialization.jsonObject(with: Data($0.utf8)) as? [String: Any] }
+        let last = try XCTUnwrap(lines.last ?? nil)
+        XCTAssertEqual(last["capture_id"] as? String, "fixture-capture-1")
+        XCTAssertEqual(last["engine"] as? String, model.typesettingEngine.rawValue)
+        XCTAssertEqual(last["engine"] as? String, "previous", "a test window typesets with the previous engine")
+    }
+
     // MARK: 1. receipt only after the durable commit (helper) and the .tex export
 
     func testPersistenceFailureInsertsNothingAndSendsNoReceipt() async throws {

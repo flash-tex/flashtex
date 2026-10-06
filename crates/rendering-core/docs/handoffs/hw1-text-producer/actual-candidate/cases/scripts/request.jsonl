@@ -1,1 +1,0 @@
-{"protocol_version": 1, "id": "scripts", "type": "compile", "payload": {"project_id": "scripts", "revision": 1, "entry_path": "main.tex", "documents": [{"path": "main.tex", "text": "\\documentclass[12pt]{article}\n\\begin{document}\n$\\text{and}_{i}^{2}$\n\\end{document}\n"}]}}

@@ -85,6 +85,7 @@ impl Codec for StatSig {
         (self.mtime_ns as i64).enc(w);
         ((self.mtime_ns >> 64) as i64).enc(w);
         self.ino.enc(w);
+        (self.racy as u64).enc(w);
     }
     fn dec(r: &mut Reader) -> Result<Self, String> {
         let len = u64::dec(r)?;
@@ -94,6 +95,7 @@ impl Codec for StatSig {
             len,
             mtime_ns: (hi << 64) | lo,
             ino: u64::dec(r)?,
+            racy: u64::dec(r)? != 0,
         })
     }
 }
@@ -152,6 +154,44 @@ fn hash_prefix(path: &str, len: u64) -> Result<[u64; 2], String> {
 impl Key {
     /// Whether S₀ is still what a full run would reach: `Err` says why not.
     pub fn check(&self, session_clock: (i64, i32), first_line: &[u8]) -> Result<(), String> {
+        self.check_fresh(session_clock, first_line).map(|_| ())
+    }
+
+    /// [`check`](Self::check), then keep the signatures it verified another
+    /// way (by content, or by running the lookups again): taken before that
+    /// test, they stand for the state it found unchanged. A signature taken
+    /// within the modification-time tick of its file (`StatSig::racy`)
+    /// proves nothing, so a key taken just after the run wrote its output
+    /// directory would otherwise test by content, and run every lookup
+    /// again, at every compile; with the fresh signatures, once the tick has
+    /// passed, it does not.
+    pub fn check_refresh(
+        &mut self,
+        session_clock: (i64, i32),
+        first_line: &[u8],
+    ) -> Result<(), String> {
+        let fresh = self.check_fresh(session_clock, first_line)?;
+        for (i, s) in fresh.files {
+            self.files[i].2 = s;
+        }
+        for (i, s) in fresh.prefixes {
+            self.prefixes[i].3 = s;
+        }
+        if let Some(d) = fresh.dirs {
+            for (i, s) in d.into_iter().enumerate() {
+                self.dirs[i].1 = s;
+            }
+        }
+        Ok(())
+    }
+
+    /// The test, and the signatures it verified by other means: (index,
+    /// signature now) of files and prefixes compared by content, and every
+    /// directory's signature when the lookups ran again and all held.
+    // (merging #1551 into #1552's test: #1551's `check_run`, which a
+    // preamble restart uses alone, and `check_files`; #1552's `Fresh`
+    // signatures come out of `check_files`)
+    fn check_fresh(&self, session_clock: (i64, i32), first_line: &[u8]) -> Result<Fresh, String> {
         self.check_run(session_clock, first_line)?;
         if let Some(b) = self.barriers.first() {
             return Err(format!("the preamble ran an external command ({b})"));
@@ -180,31 +220,44 @@ impl Key {
     }
 
     /// The part of `check` about the files and lookups the run read.
-    fn check_files(&self) -> Result<(), String> {
+    fn check_files(&self) -> Result<Fresh, String> {
+        let mut fresh = Fresh::default();
         // A file both written before S₀ and read before it is keyed by
         // what was read; `rewrite_outputs` puts back what was written.
-        for (path, hash, stat) in &self.files {
-            if StatSig::of(path).as_ref() == Some(stat) {
+        for (i, (path, hash, stat)) in self.files.iter().enumerate() {
+            let sig = StatSig::of(path);
+            if sig.as_ref() == Some(stat) {
                 continue;
             }
             let now = std::fs::read(path).map(|d| hash128(&d)).ok();
             if now != Some(*hash) {
                 return Err(format!("{path} changed"));
             }
+            if let Some(s) = sig {
+                fresh.files.push((i, s));
+            }
         }
-        for (path, len, hash, stat) in &self.prefixes {
-            if StatSig::of(path).as_ref() == Some(stat) {
+        for (i, (path, len, hash, stat)) in self.prefixes.iter().enumerate() {
+            let sig = StatSig::of(path);
+            if sig.as_ref() == Some(stat) {
                 continue;
             }
             if hash_prefix(path, *len).ok() != Some(*hash) {
                 return Err(format!("{path} changed in the {len} bytes read before S0"));
             }
+            if let Some(s) = sig {
+                fresh.prefixes.push((i, s));
+            }
         }
+        // (taken before the lookups: a directory changed while they run
+        // shows as changed next time)
+        let now: Vec<Option<StatSig>> = self.dirs.iter().map(|(d, _)| StatSig::of(d)).collect();
         let dirs_same = !self.dirs.is_empty()
             && self
                 .dirs
                 .iter()
-                .all(|(d, s)| StatSig::of(d).as_ref() == Some(s));
+                .zip(&now)
+                .all(|((_, s), n)| n.as_ref() == Some(s));
         for (name, fmt, must, found) in self.lookups.iter().filter(|_| !dirs_same) {
             let l = Lookup {
                 name: name.clone(),
@@ -216,8 +269,19 @@ impl Key {
                 return Err(format!("looking up {name} finds another file now"));
             }
         }
-        Ok(())
+        if !dirs_same && now.iter().all(Option::is_some) {
+            fresh.dirs = Some(now.into_iter().flatten().collect());
+        }
+        Ok(fresh)
     }
+}
+
+/// What [`Key::check_fresh`] verified other than by signature.
+#[derive(Default)]
+struct Fresh {
+    files: Vec<(usize, StatSig)>,
+    prefixes: Vec<(usize, StatSig)>,
+    dirs: Option<Vec<StatSig>>,
 }
 
 impl Key {
@@ -438,7 +502,7 @@ impl Session {
         if let (Some(id), Some(reads)) = (s0_id, reads) {
             s0_at_s = g.layer().s0_elapsed;
             let rec = g.record_of(id)?;
-            match self.make_key(&mut g, &rec, reads) {
+            match self.make_key(&mut g, id, &rec, reads) {
                 Ok(key) => self.s0 = Some(S0 { id, key }),
                 Err(e) => eprintln!("flashtex-host: no S0: {e}"),
             }
@@ -463,11 +527,39 @@ impl Session {
     fn make_key(
         &self,
         g: &mut Globals,
+        id: CheckpointId,
         rec: &ExtRecord,
         reads: system::ReadLog,
     ) -> Result<Key, String> {
-        make_key(g, rec, &reads, self.clock, &self.first_line)
+        make_key(g, id, rec, &reads, self.clock, &self.first_line)
     }
+}
+
+/// Files with their content (S₀'s key's `written`).
+pub type Written = Vec<(String, Vec<u8>)>;
+
+/// The files a run had written and closed at checkpoint `rec` (`reads`:
+/// what it had read and written so far, or more), with their content on
+/// disk now: S₀'s key's `written`, read when the checkpoint is taken
+/// (`Layer::written_at`).
+pub fn written_before(rec: &ExtRecord, reads: &system::ReadLog) -> Result<Written, String> {
+    let no = if rec.reads == (0, 0, 0) {
+        reads.outputs.len()
+    } else {
+        rec.reads.2
+    };
+    let mut written = vec![];
+    for p in &reads.outputs[..no.min(reads.outputs.len())] {
+        let open = rec
+            .files
+            .iter()
+            .any(|f| matches!(&f.stream, Stream::Out { path, .. } if path == p));
+        if !open {
+            let d = std::fs::read(p).map_err(|e| format!("{p}: {e}"))?;
+            written.push((p.clone(), d));
+        }
+    }
+    Ok(written)
 }
 
 /// S₀'s key: what the run read before S₀ (`reads`, whose files and lookups
@@ -475,6 +567,7 @@ impl Session {
 /// record `rec`.
 pub fn make_key(
     g: &mut Globals,
+    id: CheckpointId,
     rec: &ExtRecord,
     reads: &system::ReadLog,
     clock: (i64, i32),
@@ -494,22 +587,18 @@ pub fn make_key(
                 open_paths.push(path.clone());
             }
         }
-        let (nf, nl, no) = if rec.reads == (0, 0, 0) {
+        let (nf, nl, _) = if rec.reads == (0, 0, 0) {
             (reads.files.len(), reads.lookups.len(), reads.outputs.len())
         } else {
             rec.reads
         };
-        let mut written = vec![];
-        for p in &reads.outputs[..no.min(reads.outputs.len())] {
-            let open = rec
-                .files
-                .iter()
-                .any(|f| matches!(&f.stream, Stream::Out { path, .. } if path == p));
-            if !open {
-                let d = std::fs::read(p).map_err(|e| format!("{p}: {e}"))?;
-                written.push((p.clone(), d));
-            }
-        }
+        // As they were at the checkpoint (`written_at`, taken there), not
+        // as the end of the run left them.
+        let wa = &mut g.layer().written_at;
+        let written = match wa.iter().position(|(i, _)| *i == id) {
+            Some(k) => wa.swap_remove(k).1,
+            None => written_before(rec, reads)?,
+        };
         let files = reads.files[..nf.min(reads.files.len())]
             .iter()
             .filter(|f| !open_paths.contains(&f.path))
@@ -676,6 +765,15 @@ pub fn write_s0(
             .collect::<Vec<crate::diag::Note>>()
             .enc(&mut head);
         crate::diag::sites().enc(&mut head);
+        // The files opened for output before S₀, by name: a process that
+        // opens S₀ must know them (`system::rewritten_at`: a file the
+        // preamble wrote and the body writes again, #1348).
+        let opens = system::opens_since(0);
+        opens
+            .get(..rec.opens)
+            .ok_or("the output opens are fewer than at S0")?
+            .to_vec()
+            .enc(&mut head);
         (g.arena.len_bytes() as u64).enc(&mut head);
         (g.arena.scalar_bytes() as u64).enc(&mut head);
         present.enc(&mut head);
@@ -734,6 +832,10 @@ pub fn read_s0(
         let terminal = Vec::<u8>::dec(&mut r)?;
         let notes = Vec::<crate::diag::Note>::dec(&mut r)?;
         let sites = Vec::<(i32, crate::diag::Site)>::dec(&mut r)?;
+        let opens = Vec::<String>::dec(&mut r)?;
+        if opens.len() != rec.opens {
+            return Err("S0 file: its output opens do not match its record".into());
+        }
         let arena_len = u64::dec(&mut r)? as usize;
         let scalar_bytes = u64::dec(&mut r)? as usize;
         let present = Vec::<u32>::dec(&mut r)?;
@@ -775,6 +877,9 @@ pub fn read_s0(
         crate::diag::set_sites(sites);
         system::truncate_external_effects(0);
         g.restore_ext(&rec)?;
+        // (`restore_ext` left placeholders for the opens)
+        system::truncate_opens(0);
+        system::append_opens(&opens);
         let id = g.checkpoint()?;
         let ext_s = t3.elapsed().as_secs_f64();
         let rep = OpenReport {
@@ -790,7 +895,7 @@ pub fn read_s0(
     }
 }
 
-const MAGIC: &[u8] = b"flashtex S0 v2";
+const MAGIC: &[u8] = b"flashtex S0 v3";
 
 /// How opening a persisted S₀ went.
 #[derive(Clone, Debug, Default)]
@@ -815,3 +920,80 @@ impl OpenReport {
 }
 
 use crate::os::MappedFile;
+
+#[cfg(test)]
+mod key_tests {
+    use super::*;
+
+    /// A directory opened so that its times can be set: a plain open does
+    /// on Unix; Windows wants write access and FILE_FLAG_BACKUP_SEMANTICS
+    /// (`CreateFileW` opens a directory only with it).
+    fn open_dir_for_times(d: &std::path::Path) -> std::fs::File {
+        #[cfg(windows)]
+        {
+            use std::os::windows::fs::OpenOptionsExt;
+            const FILE_FLAG_BACKUP_SEMANTICS: u32 = 0x0200_0000;
+            std::fs::OpenOptions::new()
+                .write(true)
+                .custom_flags(FILE_FLAG_BACKUP_SEMANTICS)
+                .open(d)
+                .unwrap()
+        }
+        #[cfg(not(windows))]
+        {
+            std::fs::File::open(d).unwrap()
+        }
+    }
+
+    /// After a check that verified racy signatures by content and by the
+    /// lookups, the key keeps fresh ones: once the tick has passed, the
+    /// steady state is not racy (else every compile compared the preamble's
+    /// files and ran its lookups again; review of #1552).
+    #[test]
+    fn a_checked_key_keeps_fresh_signatures() {
+        let d = std::env::temp_dir().join(format!("flashtex-key-{}", std::process::id()));
+        std::fs::create_dir_all(&d).unwrap();
+        let f = d.join("pre.sty");
+        std::fs::write(&f, "\\def\\x{1}").unwrap();
+        let (fp, dp) = (
+            f.to_str().unwrap().to_string(),
+            d.to_str().unwrap().to_string(),
+        );
+        let (fs, ds) = (StatSig::of(&fp).unwrap(), StatSig::of(&dp).unwrap());
+        assert!(fs.racy && ds.racy, "just written");
+        let mut key = Key {
+            build: engine_build(),
+            clock: (0, 0),
+            source_date_epoch: std::env::var("SOURCE_DATE_EPOCH").ok(),
+            force_source_date: std::env::var("FORCE_SOURCE_DATE").ok(),
+            first_line: b"main".to_vec(),
+            job_name: "main".into(),
+            files: vec![(fp.clone(), hash128(&std::fs::read(&f).unwrap()), fs)],
+            prefixes: vec![],
+            lookups: vec![],
+            barriers: vec![],
+            written: vec![],
+            dirs: vec![(dp.clone(), ds)],
+        };
+        // the tick passes (the files' times put back a minute)
+        let old = std::time::SystemTime::now() - std::time::Duration::from_secs(60);
+        std::fs::File::options()
+            .write(true)
+            .open(&f)
+            .unwrap()
+            .set_modified(old)
+            .unwrap();
+        open_dir_for_times(&d).set_modified(old).unwrap();
+        key.check_refresh((0, 0), b"main").unwrap();
+        assert!(!key.files[0].2.racy, "the file's signature is still racy");
+        assert!(
+            !key.dirs[0].1.racy,
+            "the directory's signature is still racy"
+        );
+        // and the next check is by signature alone: a changed file still fails
+        key.check_refresh((0, 0), b"main").unwrap();
+        std::fs::write(&f, "\\def\\x{2}").unwrap();
+        assert!(key.check((0, 0), b"main").is_err());
+        let _ = std::fs::remove_dir_all(&d);
+    }
+}

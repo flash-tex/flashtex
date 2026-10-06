@@ -172,9 +172,178 @@ pub fn thread_counts() -> Option<(u64, u64)> {
         let r = unsafe { thread_selfcounts(1, c.as_mut_ptr(), std::mem::size_of_val(&c)) };
         (r == 0).then_some((c[0], c[1]))
     }
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(all(
+        target_os = "linux",
+        any(target_arch = "x86_64", target_arch = "aarch64")
+    ))]
+    {
+        linux_pmu::thread_counts()
+    }
+    #[cfg(not(any(
+        target_os = "macos",
+        all(
+            target_os = "linux",
+            any(target_arch = "x86_64", target_arch = "aarch64")
+        )
+    )))]
     {
         None
+    }
+}
+
+/// Profiling one interval (measurement only): with `FLASHTEX_PERF_MARKS` set
+/// to a file, the host appends `b NS` when an edit's engine resumes after the
+/// restore and `e NS` at the edited page's shipout (NS: CLOCK_MONOTONIC), so
+/// the samples of `perf record -k CLOCK_MONOTONIC` between them are the
+/// typesetting to the edited page alone.
+pub fn perf_mark(on: bool) {
+    use std::io::Write;
+    static MARKS: std::sync::OnceLock<Option<std::sync::Mutex<std::fs::File>>> =
+        std::sync::OnceLock::new();
+    let marks = MARKS.get_or_init(|| {
+        let p = std::env::var_os("FLASHTEX_PERF_MARKS")?;
+        std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(p)
+            .ok()
+            .map(std::sync::Mutex::new)
+    });
+    if let Some(f) = marks {
+        #[cfg(unix)]
+        let ns = imp::monotonic_ns();
+        #[cfg(not(unix))]
+        let ns = 0u64;
+        if let Ok(mut f) = f.lock() {
+            let _ = writeln!(f, "{} {ns}", if on { 'b' } else { 'e' });
+        }
+    }
+}
+
+/// Linux: the thread's user-space instructions and cycles from
+/// `perf_event_open` (one counter group per thread, opened on the first call;
+/// `perf_event_paranoid` ≤ 2 allows a process to count itself). Kernel work
+/// is excluded, unlike macOS's counts, so the two are compared only with
+/// themselves.
+#[cfg(all(
+    target_os = "linux",
+    any(target_arch = "x86_64", target_arch = "aarch64")
+))]
+mod linux_pmu {
+    extern "C" {
+        fn syscall(n: i64, ...) -> i64;
+        fn read(fd: i32, buf: *mut std::ffi::c_void, n: usize) -> isize;
+        fn close(fd: i32) -> i32;
+    }
+    #[cfg(target_arch = "x86_64")]
+    const SYS_PERF_EVENT_OPEN: i64 = 298;
+    #[cfg(target_arch = "aarch64")]
+    const SYS_PERF_EVENT_OPEN: i64 = 241;
+    const PERF_TYPE_HARDWARE: u32 = 0;
+    const PERF_COUNT_HW_CPU_CYCLES: u64 = 0;
+    const PERF_COUNT_HW_INSTRUCTIONS: u64 = 1;
+    const PERF_FORMAT_TOTAL_TIME_ENABLED: u64 = 1;
+    const PERF_FORMAT_TOTAL_TIME_RUNNING: u64 = 2;
+    const PERF_FORMAT_GROUP: u64 = 8;
+    // perf_event_open's flags: the fds are not inherited by programs the
+    // host runs (the external tools, kpathsea's mktex scripts)
+    const PERF_FLAG_FD_CLOEXEC: u64 = 8;
+    // attr.flags bits: exclude_kernel (5), exclude_hv (6)
+    const EXCLUDE_KERNEL_HV: u64 = (1 << 5) | (1 << 6);
+
+    /// `struct perf_event_attr` up to PERF_ATTR_SIZE_VER5 (112 bytes); the
+    /// fields after `read_format` are zero.
+    #[repr(C)]
+    struct Attr {
+        kind: u32,
+        size: u32,
+        config: u64,
+        sample_period: u64,
+        sample_type: u64,
+        read_format: u64,
+        flags: u64,
+        rest: [u64; 8],
+    }
+
+    struct Group(i32, i32);
+    impl Drop for Group {
+        fn drop(&mut self) {
+            // SAFETY: fds this thread opened and owns.
+            unsafe {
+                if self.1 >= 0 {
+                    close(self.1);
+                }
+                close(self.0);
+            }
+        }
+    }
+
+    fn open(config: u64, group: i32) -> i32 {
+        let a = Attr {
+            kind: PERF_TYPE_HARDWARE,
+            size: std::mem::size_of::<Attr>() as u32,
+            config,
+            sample_period: 0,
+            sample_type: 0,
+            read_format: PERF_FORMAT_GROUP
+                | PERF_FORMAT_TOTAL_TIME_ENABLED
+                | PERF_FORMAT_TOTAL_TIME_RUNNING,
+            flags: EXCLUDE_KERNEL_HV,
+            rest: [0; 8],
+        };
+        // SAFETY: perf_event_open(attr, pid 0 = this thread, cpu -1 = any,
+        // group_fd, flags) reads `a` only.
+        unsafe {
+            syscall(
+                SYS_PERF_EVENT_OPEN,
+                &a as *const Attr,
+                0i32,
+                -1i32,
+                group,
+                PERF_FLAG_FD_CLOEXEC,
+            ) as i32
+        }
+    }
+
+    thread_local! {
+        static GROUP: Option<Group> = {
+            let lead = open(PERF_COUNT_HW_INSTRUCTIONS, -1);
+            (lead >= 0).then(|| Group(lead, open(PERF_COUNT_HW_CPU_CYCLES, lead)))
+        };
+    }
+
+    /// The group's reading: (instructions, cycles, time enabled, time
+    /// running).
+    fn reading() -> Option<(u64, u64, u64, u64)> {
+        GROUP
+            .try_with(|g| {
+                let g = g.as_ref()?;
+                // nr, time enabled, time running, then one value per member
+                let mut v = [0u64; 5];
+                // SAFETY: at most `size_of_val(&v)` bytes into `v`.
+                let n = unsafe { read(g.0, v.as_mut_ptr().cast(), std::mem::size_of_val(&v)) };
+                if n < 32 {
+                    return None;
+                }
+                Some((v[3], if v[0] >= 2 { v[4] } else { 0 }, v[1], v[2]))
+            })
+            .ok()
+            .flatten()
+    }
+
+    /// The group's counts. Raw, so that they never decrease: while other
+    /// counters share the PMU (`perf stat` on the host, say), the group
+    /// counts only part of the time and these undercount
+    /// ([`counted_throughout`]).
+    pub fn thread_counts() -> Option<(u64, u64)> {
+        reading().map(|r| (r.0, r.1))
+    }
+
+    /// Whether the group has counted all the time it was enabled (no other
+    /// counters took the PMU from it).
+    #[cfg(test)]
+    pub fn counted_throughout() -> bool {
+        reading().is_some_and(|r| r.3 >= r.2)
     }
 }
 
@@ -852,6 +1021,17 @@ mod imp {
         unsafe { clock_gettime(CLOCK_THREAD_CPUTIME_ID, &mut t) };
         t.sec as f64 + t.nsec as f64 * 1e-9
     }
+
+    pub fn monotonic_ns() -> u64 {
+        #[cfg(target_os = "macos")]
+        const CLOCK_MONOTONIC: i32 = 6;
+        #[cfg(not(target_os = "macos"))]
+        const CLOCK_MONOTONIC: i32 = 1;
+        let mut t = Timespec { sec: 0, nsec: 0 };
+        // SAFETY: an out-parameter of the right layout.
+        unsafe { clock_gettime(CLOCK_MONOTONIC, &mut t) };
+        t.sec as u64 * 1_000_000_000 + t.nsec as u64
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1240,6 +1420,43 @@ mod imp {
 
 #[cfg(test)]
 mod tests {
+    /// Where the system gives them, the thread's counts grow with its work
+    /// and another thread's work does not move them.
+    #[test]
+    fn thread_counts_count_this_thread() {
+        let Some(a) = super::thread_counts() else {
+            return;
+        };
+        std::thread::spawn(|| {
+            let mut x = 0u64;
+            for i in 0..2_000_000u64 {
+                x = std::hint::black_box(x.wrapping_mul(31).wrapping_add(i));
+            }
+        })
+        .join()
+        .unwrap();
+        let b = super::thread_counts().unwrap();
+        let mut x = 0u64;
+        for i in 0..2_000_000u64 {
+            x = std::hint::black_box(x.wrapping_mul(31).wrapping_add(i));
+        }
+        let c = super::thread_counts().unwrap();
+        // (another counter user, `perf` or the CI host's, may have taken the
+        // PMU part of the time: then the counts fall short, and prove less)
+        #[cfg(all(
+            target_os = "linux",
+            any(target_arch = "x86_64", target_arch = "aarch64")
+        ))]
+        if !super::linux_pmu::counted_throughout() {
+            return;
+        }
+        assert!(c.0 - b.0 >= 2_000_000, "{b:?} -> {c:?}");
+        assert!(
+            b.0 - a.0 < 2_000_000,
+            "{a:?} -> {b:?}: another thread's work"
+        );
+    }
+
     fn scratch(name: &str) -> std::path::PathBuf {
         let p = std::env::temp_dir().join(format!("flashtex-os-{}-{name}", std::process::id()));
         let _ = std::fs::remove_file(&p);

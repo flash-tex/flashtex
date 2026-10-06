@@ -33,7 +33,9 @@ public struct DL3CompileRequest: Sendable {
     /// trusted project only, DESIGN.md §4.5); `off` never; nil: the host's default.
     public var externalTools: String?
     /// `-halt-on-error`: TeX stops at the first error (the app's strict mode).
+    /// Honoured by a host that lists `haltOnErrorCapability`.
     public var haltOnError = false
+    public static let haltOnErrorCapability = "halt-on-error"
 
     public init(id: Int, root: String, main: String) { self.id = id; self.root = root; self.main = main }
 
