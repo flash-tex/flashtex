@@ -375,7 +375,7 @@ final class ShellModel {
     }
 
     /// Applies pending chrome changes now (tests, and the bench's paint point).
-    func flushChrome() { chromeRefreshPending = false; refreshChrome() }
+    func flushChrome() { chromeRefreshPending = false; chrome.settleNext = true; refreshChrome() }
 
     private func refreshDocumentMirror() {
         let has = !documents.isEmpty
