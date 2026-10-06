@@ -934,6 +934,16 @@ jobs:
             echo "Temporarily excluded (built, not gated): \`${RUST_TEST_EXCLUDE:-none}\`"
           } >> "$GITHUB_STEP_SUMMARY"
           cargo test --workspace --release --locked --no-fail-fast ${excludes[@]+"${excludes[@]}"}
+      - name: flashtex-v3 end to end ran, not skipped (self-hosted Mac; app-parity D5)
+        # crates/flashtex-build/tests/cli.rs skips without the release
+        # flashtex-host (built above) or a pdflatex; under
+        # FLASHTEX_REQUIRE_TEXLIVE=1 a skip fails instead. The self-hosted
+        # Macs have MacTeX; the hosted macos-15 image and the Linux leg have
+        # no TeX Live, so they keep skipping in the step above.
+        if: matrix.os == 'macos-15' && needs.plan.outputs.selfhosted_mac == 'true'
+        env:
+          FLASHTEX_REQUIRE_TEXLIVE: "1"
+        run: cargo test --release --locked -p flashtex-build --test cli
       - name: excluded crates (not gating; warns once they pass)
         if: always()
         continue-on-error: true
