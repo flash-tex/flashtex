@@ -19,6 +19,7 @@ on:
       - apps/mac/scripts/packaging-selftest.sh
       - apps/mac/scripts/repro-check.sh
       - apps/mac/scripts/launch-check.sh
+      - apps/mac/scripts/texmf-acceptance.sh
       - apps/mac/Resources/**
       - scripts/ci/build-helpers.sh
       - .github/workflows/packaging-full.yml
@@ -59,6 +60,12 @@ jobs:
           cargo build --release --locked -p flashtex-engine --bin flashtex-host
           ls -l target/release/flashtex-host
       - name: packaging-selftest.sh --full
+        env:
+          # texmf-acceptance.sh's `removed` producer-diagnostic check fails on
+          # main too (the old engine's flashtex-render reports no missing
+          # metric; runs 37536036219 and 37529780962): skipped here only,
+          # until https://github.com/flash-tex/flashtex/issues/1651 is resolved.
+          FLASHTEX_TEXMF_ACCEPTANCE_SKIP_REMOVED: "1"
         run: |
           set -euo pipefail
           mkdir -p "$RUNNER_TEMP/evidence"

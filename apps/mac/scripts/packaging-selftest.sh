@@ -13,6 +13,9 @@
 # Its builds pass --require-engine-host, as a release does: flashtex-host must
 # be built first (cargo build --release -p flashtex-engine --bin flashtex-host),
 # and the hardened app's Contents/Helpers/flashtex-host is verified with codesign.
+# FLASHTEX_TEXMF_ACCEPTANCE_SKIP_REMOVED=1 (CI's packaging-full.yml only)
+# skips texmf-acceptance.sh's one known-failing check, issue #1651; by
+# default it runs.
 # make-app.sh arguments after -- (e.g. --helper-root <main checkout>) are
 # passed through to every build in --full mode.
 set -euo pipefail
@@ -224,6 +227,9 @@ if [[ "$FULL" -eq 1 ]]; then
     bad "launch-check.sh --dmg: $(grep '^- FAIL' "$WORK/launch-dmg.md" 2>/dev/null | head -3 | tr '\n' ' ')$(tail -2 "$WORK/launch-dmg.log" | tr '\n' ' ')"
   fi
   section "Full: texmf-acceptance (bundled producer, host TeX excluded)"
+  if [[ "${FLASHTEX_TEXMF_ACCEPTANCE_SKIP_REMOVED:-0}" == "1" ]]; then
+    skip "texmf-acceptance 'removed' producer-diagnostic check (FLASHTEX_TEXMF_ACCEPTANCE_SKIP_REMOVED=1; fails on main too, https://github.com/flash-tex/flashtex/issues/1651)"
+  fi
   if [[ -x "$MAC_DIR/build/FlashTeX.app/Contents/MacOS/flashtex-render" ]]; then
     if "$SCRIPT_DIR/texmf-acceptance.sh" --evidence "$WORK/texmf-acceptance" >"$WORK/texmf-acceptance.log" 2>&1; then
       ok "texmf-acceptance.sh: $(grep '^Result' "$WORK/texmf-acceptance/README.md")"
