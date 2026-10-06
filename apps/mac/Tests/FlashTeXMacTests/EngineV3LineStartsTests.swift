@@ -4,6 +4,7 @@ import XCTest
 /// The DONE's line index (`EngineV3LineStarts`) gives exactly what
 /// `EngineV3Session.lineByteRange` gives, for every line and past the end
 /// (APP-EDITOR-INSTANT: one pass per file instead of one walk per diagnostic).
+@MainActor
 final class EngineV3LineStartsTests: XCTestCase {
     func testTheIndexMatchesTheWalkOnEveryLine() {
         let texts = ["", "a", "a\n", "\n", "\n\n", "one\ntwo\n\nfour", "x\r\ny\n", "é\n€ two\n𝔸\n", String(repeating: "line\n", count: 300) + "tail"]
