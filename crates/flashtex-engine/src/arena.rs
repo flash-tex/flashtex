@@ -213,28 +213,27 @@ const NIBBLE_LEN: [usize; 16] = {
     t
 };
 
+/// A half's tag by the leading zeros of its magnitude bits (`half_tag`):
+/// 25 or more, it fits an `i8`; 17 or more, an `i16`.
+const TAG_BY_LZ: [u8; 33] = {
+    let mut t = [3u8; 33];
+    let mut lz = 17;
+    while lz <= 32 {
+        t[lz] = if lz >= 25 { 1 } else { 2 };
+        lz += 1;
+    }
+    t
+};
+
+/// The tag of half `x` (read as an `i32`): 0 if it is zero, else 1, 2 or 4
+/// bytes, the smallest sign-extended width that holds it. Without branches
+/// (the review of #1575: packing at every seal cost the edited page 6 %):
+/// `v ^ (v >> 31)` has as many leading zeros as `v` has redundant sign bits.
 #[inline]
 fn half_tag(x: u32) -> usize {
     let v = x as i32;
-    if v == 0 {
-        0
-    } else if v as i8 as i32 == v {
-        1
-    } else if v as i16 as i32 == v {
-        2
-    } else {
-        3
-    }
-}
-
-#[inline]
-fn put_half(out: &mut Vec<u8>, x: u32, t: usize) {
-    match t {
-        0 => {}
-        1 => out.push(x as u8),
-        2 => out.extend_from_slice(&(x as u16).to_le_bytes()),
-        _ => out.extend_from_slice(&x.to_le_bytes()),
-    }
+    let m = (v ^ (v >> 31)) as u32;
+    TAG_BY_LZ[m.leading_zeros() as usize] as usize * (x != 0) as usize
 }
 
 /// The half at `b[p..]` with tag `t`.
@@ -251,13 +250,43 @@ fn get_half(b: &[u8], p: usize, t: usize) -> u32 {
 /// Append `vals`, packed, to `out`.
 fn pack_words(vals: &[u64], out: &mut Vec<u8>) {
     let t0 = out.len();
-    out.resize(t0 + vals.len().div_ceil(2), 0);
-    for (i, &x) in vals.iter().enumerate() {
-        let (lo, hi) = (x as u32, (x >> 32) as u32);
-        let (tl, th) = (half_tag(lo), half_tag(hi));
-        out[t0 + i / 2] |= ((tl | th << 2) as u8) << ((i & 1) * 4);
-        put_half(out, lo, tl);
-        put_half(out, hi, th);
+    let ntags = vals.len().div_ceil(2);
+    // every half stored as 4 bytes, then the end moved on by its length:
+    // room for the last store's 4
+    out.reserve(ntags + vals.len() * 8 + 4);
+    // SAFETY: the writes stay within the capacity reserved above (the tags,
+    // then at most 8 bytes a word, the last store 4 bytes past the end at
+    // most); `set_len` covers only bytes written.
+    unsafe {
+        let base = out.as_mut_ptr().add(t0);
+        std::ptr::write_bytes(base, 0, ntags);
+        let mut p = base.add(ntags);
+        for (i, &x) in vals.iter().enumerate() {
+            let (lo, hi) = (x as u32, (x >> 32) as u32);
+            let (tl, th) = (half_tag(lo), half_tag(hi));
+            *base.add(i / 2) |= ((tl | th << 2) as u8) << ((i & 1) * 4);
+            (p as *mut [u8; 4]).write_unaligned(lo.to_le_bytes());
+            p = p.add(HALF_LEN[tl]);
+            (p as *mut [u8; 4]).write_unaligned(hi.to_le_bytes());
+            p = p.add(HALF_LEN[th]);
+        }
+        out.set_len(p.offset_from(out.as_ptr()) as usize);
+    }
+}
+
+/// Append `vals` to `out` unpacked: each half as 4 bytes (tag 3), which
+/// every reader of packed words reads as it reads any. A seal before the
+/// edited page stores its words so, and `Core::pack_raw` packs them later
+/// (`Arena::defer_packing`).
+fn raw_words(vals: &[u64], out: &mut Vec<u8>) {
+    let n = vals.len();
+    out.reserve(n.div_ceil(2) + n * 8);
+    out.resize(out.len() + n / 2, 0xff);
+    if n % 2 == 1 {
+        out.push(0x0f);
+    }
+    for &x in vals {
+        out.extend_from_slice(&x.to_le_bytes());
     }
 }
 
@@ -409,6 +438,9 @@ struct Log {
     deltas: Vec<Delta>,
     /// The deltas' words, packed (`pack_words`).
     bytes: Vec<u8>,
+    /// Some of `bytes` are unpacked (`raw_words`): `Core::pack_raw` packs
+    /// them.
+    raw: bool,
 }
 
 impl Log {
@@ -464,6 +496,22 @@ impl Log {
         bytes.shrink_to_fit();
         self.deltas = deltas;
         self.bytes = bytes;
+        self.raw = false;
+    }
+
+    /// Pack the words of every delta (a log with unpacked words, `raw`).
+    fn pack(&mut self) {
+        let mut buf = [0u64; CHUNK_WORDS];
+        let mut bytes = Vec::with_capacity(self.bytes.len() / 2);
+        for d in self.deltas.iter_mut() {
+            d.unpack(&self.bytes, &mut buf);
+            let at = bytes.len();
+            pack_words(&buf[..d.len()], &mut bytes);
+            d.at = at as u32;
+        }
+        bytes.shrink_to_fit();
+        self.bytes = bytes;
+        self.raw = false;
     }
 }
 
@@ -606,6 +654,8 @@ fn merge_sealed(older: &Log, newer: &Log) -> Log {
         entries: Vec::new(),
         deltas,
         bytes,
+        // (a delta of one log alone keeps its bytes, unpacked or not)
+        raw: older.raw || newer.raw,
     }
 }
 
@@ -666,6 +716,10 @@ pub(crate) struct Core {
     /// Bumped by every change to the logs' contents that keeps the
     /// checkpoint list (`or_from`): a `Prepared` from before it is stale.
     history_gen: u64,
+    /// Seals store their words unpacked (`Arena::defer_packing`).
+    defer_pack: bool,
+    /// A log of `logs` may hold unpacked words.
+    raw_pending: bool,
 }
 
 /// The state at checkpoint `id` of the chunks the logs from `id` on hold,
@@ -728,6 +782,9 @@ impl Core {
     fn checkpoint(&mut self) -> CheckpointId {
         if let Some(i) = self.logs.len().checked_sub(1) {
             self.seal(i);
+        }
+        if !self.defer_pack && self.raw_pending {
+            self.pack_raw();
         }
         let id = self.next_id;
         self.next_id += 1;
@@ -801,7 +858,11 @@ impl Core {
                         m &= m - 1;
                     }
                 }
-                pack_words(&vals, &mut bytes);
+                if self.defer_pack {
+                    raw_words(&vals, &mut bytes);
+                } else {
+                    pack_words(&vals, &mut bytes);
+                }
                 deltas.push(Delta {
                     c,
                     at: at as u32,
@@ -815,7 +876,21 @@ impl Core {
         let log = &mut self.logs[i];
         log.deltas = deltas;
         log.bytes = bytes;
+        log.raw = self.defer_pack;
+        self.raw_pending |= self.defer_pack;
         self.sealed_bytes += log.sealed_bytes();
+    }
+
+    /// Pack the words of every log sealed unpacked (`Arena::defer_packing`;
+    /// a detached branch's stay as they are until they come back).
+    fn pack_raw(&mut self) {
+        let _m = crate::memstat::scope(crate::memstat::tag::LOG);
+        for log in self.logs.iter_mut().filter(|l| l.raw) {
+            let before = log.sealed_bytes();
+            log.pack();
+            self.sealed_bytes = self.sealed_bytes + log.sealed_bytes() - before;
+        }
+        self.raw_pending = false;
     }
 
     fn index_of(&self, id: CheckpointId) -> Option<usize> {
@@ -1188,6 +1263,7 @@ impl Core {
         }
         self.ids.extend(keep_ids);
         self.logs.extend(keep_logs);
+        self.raw_pending = true;
         self.clear_saved();
         let open: Vec<usize> = self
             .logs
@@ -1224,6 +1300,7 @@ impl Core {
         }
         self.ids.extend(ids);
         self.logs.extend(logs);
+        self.raw_pending = true;
         self.clear_saved();
         let open: Vec<usize> = self
             .logs
@@ -1278,6 +1355,7 @@ impl Core {
         }
         self.ids = out_ids;
         self.logs = out_logs;
+        self.raw_pending = true;
     }
 }
 
@@ -1395,6 +1473,8 @@ impl Arena {
             sealed_bytes: 0,
             prepared: None,
             history_gen: 0,
+            defer_pack: false,
+            raw_pending: false,
         });
         Arena {
             core: Box::into_raw(core),
@@ -1627,6 +1707,24 @@ impl Arena {
 
     pub fn checkpoint(&mut self) -> CheckpointId {
         self.core_mut().checkpoint()
+    }
+
+    /// Seal checkpoints' logs unpacked from now on (`on`), or pack again:
+    /// the run to the edited page seals unpacked, which costs a copy, and
+    /// the logs sealed so are packed at the first checkpoint after `off`
+    /// (the edited page is out by then; MEM-FOOTPRINT, the review of #1575).
+    /// The packing is lossless either way, so this changes no restore.
+    pub fn defer_packing(&mut self, on: bool) {
+        self.core_mut().defer_pack = on;
+    }
+
+    /// Pack every log sealed unpacked now (the run's end).
+    pub fn pack_deferred(&mut self) {
+        let c = self.core_mut();
+        c.defer_pack = false;
+        if c.raw_pending {
+            c.pack_raw();
+        }
     }
 
     pub fn checkpoint_ids(&self) -> &[CheckpointId] {
