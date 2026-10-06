@@ -9,7 +9,8 @@
 # It refuses to start unless this is an Apple-Silicon Mac on mains power, with Low Power Mode off,
 # no thermal or CPU speed limit, a clean checkout, and TeX Live 2026 on PATH. It then builds
 # the engine in release, waits until the 1-minute load is below L, and runs all of
-# tools/incr-bench/t7.py: every document and phase, the typing rows included, with
+# tools/incr-bench/t7.py: every document and phase, the typing rows (50, 60, 80, 100 and 150 ms
+# between keystrokes; owner, 2026-10-06: typing up to 240 wpm meets the target) included, with
 # --require-reference. It writes the evidence directory:
 #
 #   DIR/README.md     the verdict, the commit, the machine and the command
