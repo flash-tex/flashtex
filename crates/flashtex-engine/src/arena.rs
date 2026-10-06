@@ -897,7 +897,12 @@ impl Core {
                 } else {
                     extra[i - p.cs.len()].1 as usize
                 };
-                (base + ((c as usize) << CHUNK_SHIFT), r as usize, src, fresh[i])
+                (
+                    base + ((c as usize) << CHUNK_SHIFT),
+                    r as usize,
+                    src,
+                    fresh[i],
+                )
             })
             .collect();
         let job = |k: usize| {
@@ -2694,7 +2699,10 @@ mod tests {
             scribble(&mut arr, 1000 + n as u64, 2_000);
             let end = arr.to_vec();
             let br = a.restore_branch(ids[i]).unwrap();
-            assert!(arr[..] == copies[i][..], "prepared restore to {i}, written since");
+            assert!(
+                arr[..] == copies[i][..],
+                "prepared restore to {i}, written since"
+            );
             a.converge(br, ids[i]).unwrap();
             assert!(arr[..] == end[..], "jump back from {i}, written since");
         }
