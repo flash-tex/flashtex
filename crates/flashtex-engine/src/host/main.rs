@@ -14,7 +14,7 @@
 //! GPL-2.0-or-later like the engine. The app never links this program; it
 //! runs it and talks to its socket.
 
-/// Linux: undo logs in mappings of their own, everything else `System`'s
+/// Linux: undo logs in mappings of their own, everything else jemalloc's
 /// (`flashtex_engine::logalloc`; lane P4-MEMORY-BUDGET). A `mem-stats`
 /// build's counting allocator does the same underneath.
 #[cfg(all(target_os = "linux", not(feature = "mem-stats")))]
