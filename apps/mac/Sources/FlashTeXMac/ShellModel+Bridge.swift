@@ -345,9 +345,11 @@ extension ShellModel {
     }
 
     @discardableResult
-    /// `supportedFeatures` defaults to what our compiler renders (CaptureFeatures.swift).
-    func convertCapture(captureId: String, supportedFeatures: [String] = CaptureFeatures.supportedFeatures()) async -> RuntimeV1.CaptureProposal? {
+    /// `supportedFeatures` defaults to the list for the engine that typesets
+    /// this document (`typesettingEngine`; CaptureFeatures.swift).
+    func convertCapture(captureId: String, supportedFeatures: [String]? = nil) async -> RuntimeV1.CaptureProposal? {
         guard let bridge, bridge.running else { captureNote = "No bridge attached."; return nil }
+        let supportedFeatures = supportedFeatures ?? CaptureFeatures.supportedFeatures(for: typesettingEngine)
         do {
             let proposal = try await bridge.convert(captureId: captureId, supportedFeatures: supportedFeatures)
             enqueue(proposal)

@@ -538,6 +538,42 @@ final class EngineChoiceTests: XCTestCase {
         XCTAssertEqual(EngineChoiceStatusItem.spokenValue(m.engineChoice), "Settings > Compile")
     }
 
+    // MARK: engine labels (retirement plan #1236, S3r)
+
+    func testTheLogLineNamesTheEngineWhyAndTheFallback() {
+        XCTAssertEqual(EngineChoice(preferred: .new, source: .record).logLine(document: "main.tex"),
+                       "engine: new (record) main.tex")
+        XCTAssertEqual(EngineChoice(preferred: .new, source: .user, blocker: .noTeXLive).logLine(document: nil),
+                       "engine: previous (user; fallback from new: no TeX Live is installed)")
+        XCTAssertEqual(EngineChoice(preferred: .previous, source: .builtInDefault).logLine(document: ""),
+                       "engine: previous (builtInDefault)")
+    }
+
+    /// Every open and every change of the window's engine writes an
+    /// `engine:` line (FLASHTEX_LOG), and the capture feature list follows the
+    /// engine that typesets the document.
+    func testOpenAndChangeLogTheEngineAndTheCaptureListFollowsIt() throws {
+        try fakeTeXLive()
+        EngineChoiceStore.appSetting = .new
+        var current: ProjectFilesV1.Manifest? = Self.manifest(fonts: ["text": "Georgia"])
+        let m = model { current }
+        defer { m.engineV3.stop() }
+        final class Lines { var all: [String] = [] }
+        let lines = Lines()
+        m.engineLog = { lines.all.append($0) }
+        XCTAssertEqual(m.openTex(at: try texFile(), dirty: .discard), .opened)
+        XCTAssertEqual(lines.all.last, "engine: previous (appSetting; fallback from new: this project sets fonts in flashtex.toml) main.tex")
+        XCTAssertEqual(m.typesettingEngine, .previous)
+        XCTAssertEqual(CaptureFeatures.supportedFeatures(for: m.typesettingEngine), CaptureFeatures.supportedFeatures(for: .previous))
+        current = Self.manifest()
+        m.manifest.refresh()
+        XCTAssertEqual(lines.all.last, "engine: new (appSetting) main.tex")
+        XCTAssertEqual(m.typesettingEngine, .new)
+        XCTAssertEqual(CaptureFeatures.supportedFeatures(for: m.typesettingEngine), CaptureFeatures.newEngineFeatures)
+        m.engineV3Enabled = false // a direct set: the window's override
+        XCTAssertEqual(lines.all.last, "engine: previous (window) main.tex")
+    }
+
     // MARK: follow-ups (#1421 review)
 
     /// A blocked open records nothing, so after the default's flip the
