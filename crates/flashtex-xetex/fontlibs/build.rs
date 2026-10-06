@@ -331,8 +331,9 @@ mod harfbuzz {
         // -DHAVE_CONFIG_H -I<build dir> -DHB_NO_MT -DHAVE_FALLBACK=1
         // -I<harfbuzz-src/src>, except HB_NO_MT: an engine may move to
         // another thread (Globals is Send), so HarfBuzz keeps its locking and
-        // atomic lazy globals. Locking changes no shaping result. The compiler's default C++ dialect, as there
-        // (configure: "g++ supports C++11 features by default... yes").
+        // atomic lazy globals. Locking changes no shaping result. The
+        // compiler's default C++ dialect, as there (configure: "g++ supports
+        // C++11 features by default... yes").
         b.cpp(true)
             .include(conf)
             .include(src.join("src"))

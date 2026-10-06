@@ -40,7 +40,6 @@ flashtex-font-discovery = { path = "../font-discovery" }
 # tests/pinned_libs.rs: the sha256 of every vendored HarfBuzz/FreeType file.
 sha2 = "0.10"
 
-
 # Built on its own (the root workspace excludes it, see the root Cargo.toml):
 # scripts/xetex-lockstep.sh builds it with its own lockfile and target.
 [workspace]

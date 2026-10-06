@@ -50,7 +50,7 @@ fn main() {
         args
     };
     let t = std::time::Instant::now();
-    let catalog = Arc::new(FontCatalog::system(None));
+    let catalog = Arc::new(FontCatalog::system_cached(None));
     eprintln!(
         "catalog: {} faces in {:.0} ms",
         catalog.len(),
