@@ -626,6 +626,9 @@ impl Engine {
             }
         };
         let t_apply = Instant::now();
+        // (the host's copies stand for files only within the compile that
+        // wrote them: `system::KNOWN`)
+        crate::system::clear_known_content();
         if let Err(e) = apply_changes(&job.root, &req, &mut self.written) {
             server::error(&out, Some(id), "request", &e);
             return self.resume_deferred(&conn);
@@ -1129,6 +1132,7 @@ impl Engine {
         let doc = self.doc.as_mut().unwrap();
         doc.compiles += 1;
         doc.tools.deferred = deferred.then(|| (conn.clone(), req.clone(), id));
+        crate::system::clear_known_content();
         remember_texts(doc);
         // Persist S₀ after a full run (off the keystroke path: DONE is out),
         // or after the first complete compile behind a stopped one.
