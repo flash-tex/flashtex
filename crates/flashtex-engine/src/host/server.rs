@@ -557,7 +557,10 @@ fn prepare(engine: &Path, formats: &[String]) -> Json {
                 ),
             ];
             if let Err(why) = r {
-                kv.push(("error".into(), js(why.chars().take(400).collect::<String>())));
+                kv.push((
+                    "error".into(),
+                    js(why.chars().take(400).collect::<String>()),
+                ));
             }
             ready.push((f, Json::Obj(kv)));
             continue;
