@@ -362,9 +362,19 @@ jobs:
         # 12.5 GiB, where 9 is parity.PT1_MEMORY_FACTOR, measured. nightly.py
         # refuses to start when that bound is over 70% of the memory this PC
         # has available at the start of the job (other runner instances share it).
+        #
+        # The templates and packages documents come from the PC's pinned copy
+        # (tools/parity/README.md, "The board's host"): its TeX Live has no doc
+        # files, so without it those documents are unmeasured, and every shard
+        # holding one is scored again on each resume (P5-BOARD-T4, 2026-10-06:
+        # a resume of 4 missing shards started over at shard 0).
         run: |
           set -euo pipefail
           budget="$(awk '/^MemAvailable:/ { printf "%.1f", $2 * 0.7 / 1048576 }' /proc/meminfo)"
+          docs="$HOME/.cache/flashtex-corpus-texmf/texlive-2026"
+          corpus=()
+          if [ -d "$docs" ]; then corpus=(--corpus-texmf "$docs")
+          else echo "::warning::no $docs: the templates and packages documents are unmeasured"; fi
           python3 tools/parity/nightly.py run --shards "$SHARDS" \
             ${SHARD_RANGE:+--shard-range "$SHARD_RANGE"} \
             --tier nightly-5k --tier arxiv --tier templates --tier packages \
@@ -373,7 +383,7 @@ jobs:
             --engine-env "FLASHTEX_FORMATS=$ENGINE_DIR" --engine-env "FLASHTEX_POOL=$ENGINE_DIR/pdftex.pool" \
             --texbin "$PARITY_TEXBIN" --oracle-pdftex "$PARITY_ORACLE" \
             -j 8 --deadline-minutes 1320 --out "$RUNNER_TEMP/corpus-t4" \
-            -- --texmf "$PARITY_TEXMF"
+            -- --texmf "$PARITY_TEXMF" ${corpus[@]+"${corpus[@]}"}
       - name: ratchet against this host's baseline
         # also after an unfinished run: the documents it did score are held
         if: always()
