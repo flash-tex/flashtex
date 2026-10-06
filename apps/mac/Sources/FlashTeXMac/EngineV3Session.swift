@@ -1597,6 +1597,14 @@ final class EngineV3Session {
                 // stopped on a fatal error, keeps the last ones.
                 let failed = status == "failed" || compileFatal || (status == "error" && (j["pages"]?.int ?? 1) == 0)
                 if let model, model.engineV3ResultStatus != (failed ? .failed : nil) { model.engineV3ResultStatus = failed ? .failed : nil }
+                // A package that needs XeTeX or LuaTeX stopped it (fontspec, unicode-math,
+                // xeCJK, \RequireXeTeX): the compatibility engine takes the document,
+                // visibly (UnicodeFonts.swift; the preamble scan missed it).
+                if status != "ok", let model,
+                   let need = diags.lazy.compactMap(UnicodeFonts.need(in:)).first
+                       ?? diagnostics.lazy.compactMap({ UnicodeFonts.need(message: $0["message"]?.string ?? "", detail: $0["detail"]?.string) }).first {
+                    model.engineV3NeedsUnicodeFonts(need)
+                }
                 if stale.isEmpty { snapshot = nil } // the compile's pages replaced the stored ones
                 // (pages TeX made recovering from errors are a document's too; a stopped run's are not all there)
                 if status == "ok" || (status == "error" && !compileFatal), compileID >= lastSentID { scheduleSnapshotSave() }
