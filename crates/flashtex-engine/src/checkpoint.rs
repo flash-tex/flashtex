@@ -54,6 +54,9 @@ pub struct ExtRecord {
     pub notes: usize,
     /// How many files the run has opened for output (`system::opens_len`).
     pub opens: usize,
+    /// The line journal's length, the line numbers of unknown file and the
+    /// marked token lists (`crate::lineshift`, DESIGN.md §5.3 rule (c)).
+    pub lines: crate::lineshift::Rec,
 }
 
 crate::codec_struct!(ExtRecord {
@@ -67,7 +70,8 @@ crate::codec_struct!(ExtRecord {
     matrix_uses,
     rs,
     notes,
-    opens
+    opens,
+    lines
 });
 
 /// Where an output position `x` of the old run goes when a convergence
@@ -741,6 +745,7 @@ impl Globals {
             rs: self.layer().rs.len(),
             notes: crate::diag::len(),
             opens: system::opens_len(),
+            lines: crate::lineshift::record(self),
         })
     }
 
@@ -764,6 +769,7 @@ impl Globals {
         crate::pdftex::set_last_byte_reads(rec.last_byte_reads);
         crate::pdftex::set_matrix_uses(rec.matrix_uses);
         self.layer().rs.truncate(rec.rs);
+        crate::lineshift::restore(&rec.lines);
         match err {
             Some(e) => Err(format!("cannot restore the files: {e}")),
             None => Ok(()),
@@ -1413,8 +1419,21 @@ impl Globals {
             self.arena.checkpoint_ids().iter().copied().collect();
         {
             let layer = self.layer();
+            // The new run's checkpoints the jump drops (its last, which `id`
+            // replaces) hand their line journals to `id`'s record: the
+            // reads and prints of line numbers since the checkpoint before
+            // (`crate::lineshift`, as `retain_checkpoints` does).
+            let mut at_id = now.clone();
+            let mut here = vec![];
+            for (i, r) in layer.records.iter_mut() {
+                if !keep.contains(i) || *i == id {
+                    here.append(&mut r.lines.here);
+                }
+            }
+            here.append(&mut at_id.lines.here);
+            at_id.lines.here = here;
             layer.records.retain(|(i, _)| keep.contains(i) && *i != id);
-            layer.records.push((id, now.clone()));
+            layer.records.push((id, at_id));
             for (i, r) in records {
                 if keep.contains(&i) && i != id {
                     layer.records.push((i, remap(&r)));
@@ -1498,13 +1517,73 @@ impl Globals {
         r
     }
 
+    /// The retained checkpoints whose host records `f` accepts (no copies
+    /// of the records).
+    pub fn checkpoints_where(
+        &mut self,
+        f: &dyn Fn(CheckpointId, &ExtRecord) -> bool,
+    ) -> Vec<CheckpointId> {
+        self.layer()
+            .records
+            .iter()
+            .filter(|(i, r)| f(*i, r))
+            .map(|(i, _)| *i)
+            .collect()
+    }
+
     /// Drop every checkpoint `keep` rejects, except the newest (their undo
     /// logs merge into their predecessors').
     pub fn retain_checkpoints(&mut self, keep: &dyn Fn(CheckpointId) -> bool) {
+        let order = self.arena.checkpoint_ids().to_vec();
         self.arena.retain(keep);
         let ids: std::collections::HashSet<CheckpointId> =
             self.arena.checkpoint_ids().iter().copied().collect();
-        self.layer().records.retain(|(i, _)| ids.contains(i));
+        // A dropped checkpoint's line journal (the reads and prints of line
+        // numbers since the checkpoint before it, `crate::lineshift`) goes
+        // to the next checkpoint kept, which then holds the whole interval.
+        let records = &mut self.layer().records;
+        let at: std::collections::HashMap<CheckpointId, usize> = records
+            .iter()
+            .enumerate()
+            .map(|(k, (i, _))| (*i, k))
+            .collect();
+        let mut carry = vec![];
+        for id in order {
+            let Some(&k) = at.get(&id) else { continue };
+            let here = &mut records[k].1.lines.here;
+            if ids.contains(&id) {
+                if !carry.is_empty() {
+                    carry.append(here);
+                    *here = std::mem::take(&mut carry);
+                }
+            } else {
+                carry.append(here);
+            }
+        }
+        records.retain(|(i, _)| ids.contains(i));
+    }
+
+    /// The line records of the pending branch's checkpoints (the old run's
+    /// future), in the order the run took them (`crate::lineshift`).
+    pub fn pending_lines(&self) -> Vec<(CheckpointId, crate::lineshift::Rec)> {
+        let Some(l) = self.layer_ref() else {
+            return vec![];
+        };
+        let Some(p) = l.pending.as_ref() else {
+            return vec![];
+        };
+        p.branch
+            .ids()
+            .iter()
+            .filter_map(|&id| {
+                let r = p
+                    .records
+                    .iter()
+                    .find(|(i, _)| *i == id)
+                    .or_else(|| l.records.iter().rev().find(|(i, _)| *i == id))?;
+                Some((id, r.1.lines.clone()))
+            })
+            .collect()
     }
 
     /// Drop every checkpoint.

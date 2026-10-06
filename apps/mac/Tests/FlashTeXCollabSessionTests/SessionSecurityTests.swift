@@ -96,6 +96,17 @@ final class SessionSecurityTests: XCTestCase {
         h.hub.stop()
     }
 
+    /// IPv6 peers count against the per-address cap by their /64.
+    func testIPv6PeersCountByTheirSlash64() {
+        func address(_ h: String) -> String {
+            CollabConnection(NWConnection(host: NWEndpoint.Host(h), port: 9, using: .tcp)).remoteAddress
+        }
+        XCTAssertEqual(address("2001:db8:1:2:aaaa::1"), address("2001:db8:1:2:bbbb::9"))
+        XCTAssertEqual(address("2001:db8:1:2:aaaa::1"), "20010db800010002::/64")
+        XCTAssertNotEqual(address("2001:db8:1:3::1"), address("2001:db8:1:2::1"))
+        XCTAssertEqual(address("192.168.1.5"), "192.168.1.5")
+    }
+
     /// An invitation stops working after its lifetime.
     func testInvitationExpires() throws {
         let h = try Harness(text: "x")

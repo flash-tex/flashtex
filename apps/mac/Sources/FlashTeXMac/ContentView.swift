@@ -59,6 +59,8 @@ struct ContentView: View {
         .sheet(isPresented: Binding(get: { model.projectFonts.shown }, set: { model.projectFonts.shown = $0 })) { ProjectFontsSheet().environment(model) } // File > Project Fonts… (ProjectFonts.swift)
         .sheet(isPresented: Binding(get: { model.projectPackages.shown }, set: { model.projectPackages.shown = $0 })) { ProjectPackagesSheet().environment(model) } // the package consent sheet (ProjectPackages.swift)
         .sheet(isPresented: Binding(get: { model.engineV3.bundleConsentShown }, set: { model.engineV3.bundleConsentShown = $0 })) { EngineV3BundleSheet().environment(model) } // the TeX files download consent (EngineV3Bundle.swift)
+        .sheet(isPresented: Binding(get: { model.liveShare.sheetShown }, set: { model.liveShare.sheetShown = $0 })) { LiveShareSheet().environment(model) } // Live Share: invitation, approvals, participants (LiveShareViews.swift)
+        .sheet(isPresented: Binding(get: { model.liveShare.joinSheetShown }, set: { model.liveShare.joinSheetShown = $0 })) { LiveShareJoinSheet().environment(model) } // File > Join Live Share Session…
         .modifier(EditorNavigationSheets()) // Rename / Wrap / Change Environment… / Go to Symbol… / Go to Line (ShellModel+EditorNavigation.swift)
     }
 }
@@ -151,6 +153,10 @@ struct EditorPane: View {
     var body: some View {
         let _ = ViewBodyProbe.note("EditorPane") // KeystrokeInvalidationTests
         @Bindable var model = model
+        // Live Share: the session file this buffer is (nil outside a session);
+        // `generation` changes when a session starts, ends or opens its project.
+        let _ = model.liveShare.generation
+        let liveShareLink = model.liveShare.link(for: model.activePath)
         VStack(spacing: 0) {
             // Switching goes through ProjectDocuments so each document's
             // caret/selection is kept and a pending insertion is never
@@ -173,7 +179,7 @@ struct EditorPane: View {
                 projectFiles: model.documents.map(\.path), // `\input{` completion (Completion.swift)
                 projectPackageFiles: { model.projectPackageFiles }, // `\usepackage{` offers the project's .sty files first (ShellModel+EditorHover.swift)
                 packageDocuments: { model.packageDocumentsForEditor() }, // macros of the project's .sty/.cls files complete as declared there (ShellModel+PackageNavigation.swift)
-                editable: model.project.readOnlyNote(for: model.activePath) == nil, // a package input from a virtual path is shown, never edited
+                editable: model.project.readOnlyNote(for: model.activePath) == nil && (liveShareLink == nil || model.liveShare.canEdit), // a package input from a virtual path is shown, never edited; a Live Share viewer reads only
                 graphicsRoot: { model.project.projectRoot }, // `\includegraphics{` completion walks the saved project's directory
                 imagePasteHost: { model.imagePasteHost() }, // paste an image: saved under the project, a figure inserted (PasteImage.swift)
                 onCaretChange: { model.caretUTF16 = $0 },
@@ -216,7 +222,8 @@ struct EditorPane: View {
                     case .edit(let path): Task { await model.openAndSwitch(path, role: .opened) { model.navigationNote = $0 } }; return nil
                     case .setNumber(let on): preferences.showLineNumbers = on; return nil
                     }
-                }
+                },
+                liveShare: liveShareLink // co-editing (SourceEditorView+LiveShare.swift)
             )
             // Vim's status line belongs to the window being edited, so it sits
             // directly under the source text — not in the window's status bar,
@@ -573,6 +580,7 @@ struct StatusBar: View {
             Text(chrome.note ?? "Click text in the preview to select its source range.")
                 .foregroundStyle(.secondary).lineLimit(1)
             Spacer()
+            LiveShareStatusItem() // who is co-editing (LiveShareViews.swift); absent outside a session
             WordCountStatusItem() // GH68: live word count + breakdown popover (WordCountStatusView.swift)
             if let ms = chrome.lastLatencyMs {
                 Label(String(format: "%.0f ms", ms), systemImage: "timer")
