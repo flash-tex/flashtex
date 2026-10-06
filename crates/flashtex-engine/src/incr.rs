@@ -196,6 +196,9 @@ pub struct Report {
     pub paused: bool,
     /// Pages shipped before the restart point.
     pub restart_pages: usize,
+    /// The retention cursor after the compile (`Session::cursor`): the
+    /// first pass's restart page.
+    pub cursor: usize,
     /// The restart point is not a page's checkpoint (a timed one), and how
     /// many bytes before the (first) edit its consumed input ends.
     pub restart_mid_page: bool,
@@ -274,7 +277,7 @@ pub struct Report {
 impl Report {
     pub fn json(&self) -> String {
         format!(
-            "{{\"mode\":\"{}\",\"cold_reason\":{},\"status\":{},\"paused\":{},\"restart_pages\":{},\"restart_mid_page\":{},\"restart_gap\":{},\"converged_at\":{},\"rerun_from\":{},\"rerun_pages\":{},\"pages\":{},\"find_s\":{:.6},\"key_s\":{:.6},\"changes_s\":{:.6},\"restore_s\":{:.6},\"page_s\":{:.6},\"total_s\":{:.6},\"tests\":{},\"test_s\":{:.6},\"log_bytes\":{},\"checkpoints\":{},\"diffs\":{:?},\"page_times\":[{}],\"edited\":{},\"passes\":{},\"pass_modes\":{:?},\"pass_s\":[{}],\"oscillation\":{},\"ck_stats\":{},\"l5\":{:?},\"rs_events\":{},\"preempted\":{},\"deferred\":{}}}",
+            "{{\"mode\":\"{}\",\"cold_reason\":{},\"status\":{},\"paused\":{},\"restart_pages\":{},\"cursor\":{},\"restart_mid_page\":{},\"restart_gap\":{},\"converged_at\":{},\"rerun_from\":{},\"rerun_pages\":{},\"pages\":{},\"find_s\":{:.6},\"key_s\":{:.6},\"changes_s\":{:.6},\"restore_s\":{:.6},\"page_s\":{:.6},\"total_s\":{:.6},\"tests\":{},\"test_s\":{:.6},\"log_bytes\":{},\"checkpoints\":{},\"diffs\":{:?},\"page_times\":[{}],\"edited\":{},\"passes\":{},\"pass_modes\":{:?},\"pass_s\":[{}],\"oscillation\":{},\"ck_stats\":{},\"l5\":{:?},\"rs_events\":{},\"preempted\":{},\"deferred\":{}}}",
             self.mode,
             self.cold_reason
                 .as_ref()
@@ -283,6 +286,7 @@ impl Report {
             self.status,
             self.paused,
             self.restart_pages,
+            self.cursor,
             self.restart_mid_page,
             self.restart_gap,
             self.converged_at
@@ -2509,6 +2513,7 @@ impl Session {
             rep.pass_s.push(rep.total_s);
             self.more_passes(t0, &mut rep)?;
         }
+        rep.cursor = self.cursor;
         Ok(rep)
     }
 
@@ -3580,7 +3585,15 @@ impl Session {
             .ck_pages
             .get(&r)
             .ok_or("restart point without a page count")?;
-        self.cursor = base;
+        // The retention cursor (DESIGN.md §5.2: dense near it) is where the
+        // user edits: the first pass's restart. A later pass restarts at
+        // the `.aux` point or the first read of a changed entry, which is
+        // not where the next keystroke comes (#1573's review: an `.aux`
+        // pass moved it to page 0, and the edited page lost its segment
+        // checkpoints).
+        if self.pass == 1 {
+            self.cursor = base;
+        }
         self.last_restart = Some(r);
         let journal = self.journal.as_ref().ok_or("no journal")?;
         // (a close reads nothing: the convergence test checks the streams
