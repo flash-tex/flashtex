@@ -906,18 +906,19 @@ and 20 GB), and pull requests waited hours. **The PC is now for timing and
 latency measurements only** (T7, the keystroke and memory scripts, instruction
 counts), which need a quiet machine; correctness does not depend on load.
 
-Jobs: `plan` resolves `ref` (and `base_ref`) to a SHA and packs each gate's
+Jobs: `prepare` resolves `ref` (and `base_ref`) to a SHA, packs the gates'
 units (one soundness.py run over one document, one dlspan.py run, readers.py)
-into shards of about 20 minutes, from the measured seconds in
-`tools/incr-bench/sweeps-costs.json` (`sweeps.py plan`). `build` compiles the
+into shards of about 15 minutes from the measured seconds in
+`tools/incr-bench/sweeps-costs.json` (`sweeps.py plan`), and compiles the
 release engine and its pdflatex format once per SHA, kept in the Actions cache
-by SHA and TeX Live image. Then one `ubuntu-latest` job per shard (4 units at a
-time), with the TeX Live 2026 image `engine-parity-hosted` uses. `summary`
-writes one table (per gate: shards, units, compiles, ok, bad, wrong, aborts,
-skipped) as the run summary and the `sweeps-summary` artifact, and is red if a
-gate of `ref` has a bad or wrong compile, an aborted unit or a missing shard;
-`base_ref`'s rows are context and never fail it. Details, and how the shards
-are cut without changing any document's edits: `tools/incr-bench/README.md`,
+by SHA and TeX Live image (one job, not two: each job waits in the shared
+queue). Then one `ubuntu-latest` job per shard (4 units at a time), with the
+TeX Live 2026 image `engine-parity-hosted` uses. `summary` writes one table
+(per gate: units, compiles, ok, bad, wrong, aborts, skipped) as the run summary
+and the `sweeps-summary` artifact, with the wall time from the dispatch, and is
+red if a gate of `ref` has a bad or wrong compile, an aborted unit or a unit
+that did not report; `base_ref`'s rows are context and never fail it. Details,
+and how the shards are cut without changing any document's edits:
 [Sweeps on hosted runners](../tools/incr-bench/README.md#sweeps-on-hosted-runners).
 
 Fork safety: no secrets, `permissions: {contents: read, actions: read}`, no persisted checkout
@@ -928,9 +929,11 @@ dispatching branch (main), so dispatch only refs you would review.
 
 **Capacity.** The organisation is on GitHub's Free plan: 20 concurrent hosted
 jobs (5 of them macOS) for the whole organisation, shared with `ci.yml` and
-every other workflow. A full sweep is about 23 shards of up to 20 minutes, so
-it runs as fast as the queue lets it; when `ci.yml` is busy, shards wait for
-runners. Dispatch one run per head, not one per gate.
+every other workflow. A full sweep is about 150 unit-minutes (about 40
+runner-minutes: 3 shards of ~13 minutes plus readers'), so its wall time is
+mostly the queue: when `ci.yml` is busy, each of the three stages can wait 20
+minutes or more for a runner (measured 2026-10-06). Dispatch one run per head,
+not one per gate.
 
 ### Validating a workflow change
 

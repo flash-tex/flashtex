@@ -5,23 +5,25 @@
 A sweep is a list of runs of soundness.py (or dlspan.py, readers.py) over documents. Each run of
 soundness.py over one document is independent of the others: soundness.py seeds each document's
 edits from its name alone (crc32), so `--only DOC` gives that document exactly the edits the whole
-sweep gives it. A unit is one (run, document) pair; a shard is a set of units, run J at a time.
-Shards are packed from measured unit costs (sweeps-costs.json, `costs` below) so that each takes
-about --target minutes.
+sweep gives it. A unit is one (run, document) pair; a shard is a set of units of any gates, run J
+at a time. Shards are packed from measured unit costs (sweeps-costs.json, `costs` below) so that
+each takes about --target minutes; readers.py, which is timing-dependent, gets a shard of its own.
 
 The run definitions (GATES) mirror gates.sh's sweeps; change both together.
 
   sweeps.py gates                              the gate names, in gates.sh's order
-  sweeps.py plan  --tree T --gates G,.. [--side S --sha X] [--target MIN] [-j J]
-                                               the shards, as JSON (the workflow's matrix)
-  sweeps.py run   --tree T --gate G --shard K/N --out DIR [-j J]
-                                               one shard: INCR_BENCH_DIR must hold the engine
-                                               `gates` and fmt-gates (gates.sh's build step);
-                                               writes DIR/result.json and the raw records
-  sweeps.py summary DIR... [--plan P] [--md F] [--json F]
+  sweeps.py plan  --tree T [--gates G,..] [--side S --sha X] [--target MIN] [-j J] [--detail F]
+                                               the shards, as JSON (the workflow's matrix); F gets
+                                               each shard's unit keys
+  sweeps.py run   --tree T [--gates G,..] --shard K/N --out DIR [-j J]
+                                               one shard of the plan with the same arguments:
+                                               INCR_BENCH_DIR must hold the engine `gates` and
+                                               fmt-gates (gates.sh's build step); writes
+                                               DIR/result.json and the raw records
+  sweeps.py summary DIR... [--plan F]... [--md F] [--json F]
                                                one table of every result.json under DIR; exit 1
                                                if a gate of side `ref` has a bad, wrong or failed
-                                               unit, or a shard of the plan is missing
+                                               unit, or a unit of the plan did not report
   sweeps.py costs DIR...                       measured unit seconds, as sweeps-costs.json
 
 T is the checkout under test: its soundness.py, incr_bench.py, edits.py, dlspan.py, readers.py,
@@ -92,8 +94,6 @@ GATES = {
     'sound-c': [S('c', 20, REFS, kinds='sentence,section,label,ref,cite,footnote,unlabel,unsection')],
     'sound-d': [S('d', 12, REFS, kinds=KD, interleave=True)],
 }
-# gates.sh's span check: every one of its 13 dlspan runs printed a summary
-SPAN_RUNS = len(GATES['span'])
 
 # Seconds per unit with no measurement in sweeps-costs.json (a new fixture or run): per trial (an
 # edit and its revert, each verified), by document; interleaved trials compile twice. Rough, from
@@ -153,23 +153,30 @@ def estimate(u, costs):
     return 5 + t
 
 
-def shards(tree, gate, target_s, j, costs=None):
-    """GATE's units packed into shards (longest first onto the least loaded shard), each about
-    TARGET_S seconds of J parallel slots. Deterministic: plan and run compute the same."""
+SOLO = ('readers',)  # timing-dependent (its thresholds were measured on a quiet machine): a shard of its own
+
+
+def shards(tree, gates, target_s, j, costs=None):
+    """The units of GATES packed into shards (longest first onto the least loaded shard), each about
+    TARGET_S seconds of J parallel slots; a SOLO unit alone. Shards mix gates: a job's setup and its
+    wait for a runner cost more than most gates' work. Deterministic: plan and run compute the same.
+    Returns [(units, estimated unit-seconds)]."""
     costs = load_costs() if costs is None else costs
-    us = sorted(units(tree, gate), key=lambda u: (-estimate(u, costs), u['key']))
-    if not us:
-        return []
-    total = sum(estimate(u, costs) for u in us)
-    n = max(1, math.ceil(total / (target_s * j)))
-    n = min(n, len(us))
-    load = [0.0] * n
-    out = [[] for _ in range(n)]
-    for u in us:
-        k = min(range(n), key=lambda i: (load[i], i))
-        out[k].append(u)
-        load[k] += estimate(u, costs)
-    return [(s, l) for s, l in zip(out, load)]
+    every = [u for g in gates for u in units(tree, g)]
+    us = sorted((u for u in every if u['tool'] not in SOLO), key=lambda u: (-estimate(u, costs), u['key']))
+    out = []
+    if us:
+        total = sum(estimate(u, costs) for u in us)
+        n = min(len(us), max(1, math.ceil(total / (target_s * j))))
+        load = [0.0] * n
+        packed = [[] for _ in range(n)]
+        for u in us:
+            k = min(range(n), key=lambda i: (load[i], i))
+            packed[k].append(u)
+            load[k] += estimate(u, costs)
+        out = list(zip(packed, load))
+    out += [([u], estimate(u, costs)) for u in every if u['tool'] in SOLO]
+    return out
 
 
 # --------------------------------------------------------------------------- run
@@ -304,15 +311,27 @@ def _run_unit(tree, bench, out, u, timeout):
     return r
 
 
+def gate_list(text):
+    gs = [g.strip() for g in text.split(',') if g.strip()]
+    if not gs or gs == ['all']:
+        return list(GATES)
+    for g in gs:
+        if g not in GATES:
+            sys.exit(f'sweeps.py: no gate {g!r} (have: {", ".join(GATES)})')
+    return [g for g in GATES if g in gs]  # gates.sh's order, each once
+
+
 def cmd_run(a):
     k, n = map(int, a.shard.split('/'))
-    plan = shards(a.tree, a.gate, a.target * 60, a.j)
+    gates = gate_list(a.gates)
+    plan = shards(a.tree, gates, a.target * 60, a.j)
     if n != len(plan):
-        sys.exit(f'sweeps.py: the plan has {len(plan)} shards for {a.gate}, not {n} (a different tree or costs?)')
+        sys.exit(f'sweeps.py: the plan has {len(plan)} shards, not {n} (a different tree or costs?)')
     us, est = plan[k]
     bench = os.environ.get('INCR_BENCH_DIR', '/tmp/incr-bench')
     os.makedirs(a.out, exist_ok=True)
-    prepare(a.tree, bench, a.gate)
+    for g in sorted({u['key'].split('|')[0] for u in us}):
+        prepare(a.tree, bench, g)
     t0 = time.monotonic()
     results = []
     with concurrent.futures.ThreadPoolExecutor(a.j) as ex:
@@ -333,30 +352,32 @@ def cmd_run(a):
     wall = time.monotonic() - t0
     ru = resource.getrusage(resource.RUSAGE_CHILDREN)
     cpus = os.cpu_count() or 1
-    res = dict(side=a.side, sha=a.sha, gate=a.gate, shard=k, of=n, jobs=a.j, estimate=round(est),
+    res = dict(side=a.side, sha=a.sha, shard=k, of=n, jobs=a.j, estimate=round(est),
                seconds=round(wall, 1), cpu_seconds=round(ru.ru_utime + ru.ru_stime), cpus=cpus,
                max_rss_mb=round(ru.ru_maxrss / 1024), units=sorted(results, key=lambda r: r['key']))
     json.dump(res, open(os.path.join(a.out, 'result.json'), 'w'), indent=1)
     bad = [r for r in results if r['status'] not in ('ok', 'absent')]
-    print(f"{a.gate} {k + 1}/{n}: {len(results)} units in {wall:.0f}s (estimated {est:.0f}s), {len(bad)} not ok; "
+    print(f"shard {k + 1}/{n}: {len(results)} units in {wall:.0f}s (estimated {est / a.j:.0f}s), {len(bad)} not ok; "
           f"CPU {res['cpu_seconds']}s = {res['cpu_seconds'] / max(wall, 1) / cpus:.0%} of {cpus} cpus; "
           f"largest child {res['max_rss_mb']} MB")
     sys.exit(1 if bad else 0)
 
 
 def cmd_plan(a):
+    """The matrix on stdout: one entry per shard. With --detail F, F gets every shard's unit keys
+    (what the summary checks the results against)."""
+    gates = gate_list(a.gates)
+    p = shards(a.tree, gates, a.target * 60, a.j)
     out = []
-    for g in a.gates.split(','):
-        g = g.strip()
-        if not g:
-            continue
-        if g not in GATES:
-            sys.exit(f'sweeps.py: no gate {g!r} (have: {", ".join(GATES)})')
-        p = shards(a.tree, g, a.target * 60, a.j)
-        for k, (us, est) in enumerate(p):
-            out.append(dict(side=a.side, sha=a.sha, gate=g, shard=f'{k}/{len(p)}',
-                            name=f'{a.side} {g} {k + 1}/{len(p)}', id=f'{a.side}-{g}-{k}', units=len(us),
-                            estimate_min=round(est / a.j / 60, 1)))
+    for k, (us, est) in enumerate(p):
+        gs = [g for g in GATES if any(u['key'].startswith(g + '|') for u in us)]
+        label = ', '.join(g.replace('sound-', '') for g in gs)
+        out.append(dict(side=a.side, sha=a.sha, gates=','.join(gates), shard=f'{k}/{len(p)}',
+                        name=f'{a.side} {k + 1}/{len(p)}: {label}', id=f'{a.side}-{k}', units=len(us),
+                        estimate_min=round(est / a.j / 60, 1)))
+    if a.detail:
+        json.dump(dict(side=a.side, sha=a.sha, gates=gates, shards=[[u['key'] for u in us] for us, _ in p]),
+                  open(a.detail, 'w'))
     print(json.dumps(out))
 
 
@@ -371,51 +392,60 @@ def collect(dirs):
 
 
 def cmd_summary(a):
+    """Per side and gate: the units the plan expected (--plan: `plan --detail` files, a JSON list
+    of them or one) against the units the results have."""
     rs = collect(a.dirs)
-    plan = json.load(open(a.plan)) if a.plan else []
-    order = list(GATES)
-    rows, failed = [], False
-    sides = sorted({r['side'] for r in rs} | {p['side'] for p in plan}, key=lambda s: (s != 'ref', s))
+    plans = []
+    for f in a.plan or []:
+        p = json.load(open(f))
+        plans += p if isinstance(p, list) else [p]
+    gate_of = lambda key: key.split('|')[0]  # noqa: E731
+    rows, failed, shard_rows = [], False, []
+    sides = sorted({r['side'] for r in rs} | {p['side'] for p in plans}, key=lambda s: (s != 'ref', s))
     for side in sides:
-        gates = sorted({r['gate'] for r in rs if r['side'] == side} | {p['gate'] for p in plan if p['side'] == side},
-                       key=lambda g: order.index(g) if g in order else 99)
+        got = [r for r in rs if r['side'] == side]
+        sp = [p for p in plans if p['side'] == side]
+        want = {k for p in sp for s in p['shards'] for k in s}
+        units_by_key = {u['key']: u for r in got for u in r['units']}
+        gates = [g for g in GATES if g in {gate_of(k) for k in want | set(units_by_key)}]
+        sha = (got or sp or [{}])[0].get('sha', '')
+        planned = sum(len(p['shards']) for p in sp)
+        shard_rows.append(f"{side} `{sha[:9]}`: {len(got)}/{planned or '?'} shards, slowest "
+                          f"{max([r['seconds'] for r in got] or [0]) / 60:.1f} min, "
+                          f"{sum(r['seconds'] for r in got) / 60:.0f} shard-minutes")
         for g in gates:
-            got = [r for r in rs if r['side'] == side and r['gate'] == g]
-            want = [p for p in plan if p['side'] == side and p['gate'] == g]
-            us = [u for r in got for u in r['units']]
-            row = dict(side=side, sha=(got or want or [{}])[0].get('sha', ''), gate=g, shards=len(got),
-                       planned=len(want) or (got[0]['of'] if got else 0), units=len(us),
+            us = [u for k, u in units_by_key.items() if gate_of(k) == g]
+            missing = sorted(k for k in want if gate_of(k) == g and k not in units_by_key)
+            bad_units = [u for u in us if u['status'] not in ('ok', 'absent')]
+            row = dict(side=side, sha=sha, gate=g, units=len(us), expected=len([k for k in want if gate_of(k) == g]) or len(us),
                        compiles=sum(u.get('compiles', 0) for u in us), ok=sum(u.get('ok', 0) for u in us),
                        bad=sum(u.get('bad', 0) for u in us), wrong=sum(u.get('wrong', 0) for u in us),
-                       edits=sum(u.get('edits', 0) for u in us),
+                       edits=sum(u.get('edits', 0) for u in us), glyphs=sum(u.get('glyphs', 0) for u in us),
                        aborts=sum(1 for u in us if u['status'] == 'error'),
                        skipped=sum(u.get('skipped', 0) for u in us),
-                       absent=all(u['status'] == 'absent' for u in us) and bool(us),
-                       slowest_shard_min=round(max([r['seconds'] for r in got] or [0]) / 60, 1),
-                       slowest_unit=max(us, key=lambda u: u.get('seconds', 0))['key'] if us else '')
-            missing = row['planned'] - row['shards']
-            bad_units = [u for u in us if u['status'] not in ('ok', 'absent')]
-            if g == 'span' and row['units'] and row['units'] < SPAN_RUNS:
-                missing = max(missing, 1)
-            row['missing'] = missing
-            row['status'] = 'n/a' if row['absent'] else ('FAIL' if bad_units or missing or not us else 'pass')
+                       unit_minutes=round(sum(u.get('seconds', 0) for u in us) / 60, 1),
+                       missing=missing[:20], n_missing=len(missing))
+            absent = bool(us) and all(u['status'] == 'absent' for u in us)
+            row['status'] = 'n/a' if absent and not missing else ('FAIL' if bad_units or missing or not us else 'pass')
             row['failures'] = [dict(key=u['key'], status=u['status'], note=u.get('note', '')[-300:]) for u in bad_units][:20]
             if side == 'ref' and row['status'] == 'FAIL':
                 failed = True
             rows.append(row)
-    md = ['| side | gate | status | shards | units | compiles | ok | bad | wrong (span) | aborts | skipped | slowest shard (min) |',
-          '|---|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|']
+    md = ['| side | gate | status | units | compiles | ok | bad | wrong (span) | aborts | skipped | unit-minutes |',
+          '|---|---|---|---:|---:|---:|---:|---:|---:|---:|---:|']
     for r in rows:
-        md.append(f"| {r['side']} `{r['sha'][:9]}` | {r['gate']} | **{r['status']}** | {r['shards']}/{r['planned']} | "
-                  f"{r['units']} | {r['compiles']} | {r['ok']} | {r['bad']} | {r['wrong'] if r['gate'] == 'span' else ''} | "
-                  f"{r['aborts']} | {r['skipped']} | {r['slowest_shard_min']} |")
+        wrong = f"{r['wrong']} of {r['glyphs'] / 1e6:.1f} M glyphs" if r['gate'] == 'span' else ''
+        md.append(f"| {r['side']} `{r['sha'][:9]}` | {r['gate']} | **{r['status']}** | {r['units']}/{r['expected']} | "
+                  f"{r['compiles']} | {r['ok']} | {r['bad']} | {wrong} | {r['aborts']} | {r['skipped']} | {r['unit_minutes']} |")
+    md += [''] + [f'- {s}' for s in shard_rows]
     fails = [(r, f) for r in rows for f in r['failures']]
     if fails:
         md += ['', '**Not ok:**', '']
         for r, f in fails:
             md.append(f"- {r['side']} `{f['key']}`: {f['status']}" + (f" -- `{f['note'][-200:].strip().replace(chr(10), ' / ')}`" if f['note'] else ''))
-    if any(r['missing'] for r in rows):
-        md += ['', 'Missing shards: ' + ', '.join(f"{r['side']} {r['gate']} ({r['missing']})" for r in rows if r['missing'])]
+    if any(r['n_missing'] for r in rows):
+        md += ['', 'Missing units (a shard that did not report): ' + ', '.join(
+            f"{r['side']} {r['gate']} ({r['n_missing']})" for r in rows if r['n_missing'])]
     text = '\n'.join(md) + '\n'
     print(text)
     if a.md:
@@ -430,7 +460,7 @@ def cmd_costs(a):
     measured = {}
     for r in collect(a.dirs):
         for u in r['units']:
-            if u['status'] != 'absent':
+            if u['status'] not in ('absent', 'error'):  # an error's seconds measure nothing
                 measured[u['key']] = max(round(u.get('seconds', 0)), measured.get(u['key'], 0))
     out = dict(load_costs(), **measured) if a.merge else measured
     json.dump(dict(note='seconds per unit on a GitHub-hosted ubuntu-latest runner, %d units at a time '
@@ -445,19 +475,19 @@ def main():
     for name in ('plan', 'run'):
         p = sub.add_parser(name)
         p.add_argument('--tree', required=True)
-        p.add_argument('--target', type=float, default=20, help='minutes per shard (default 20)')
+        p.add_argument('--target', type=float, default=15, help='minutes per shard (default 15)')
         p.add_argument('-j', type=int, default=4, help='units at a time per shard (default 4)')
         p.add_argument('--side', default='ref')
         p.add_argument('--sha', default='')
-    sub.choices['plan'].add_argument('--gates', default=','.join(GATES))
+        p.add_argument('--gates', default='all', help='comma-separated, or all (default)')
+    sub.choices['plan'].add_argument('--detail', help="write every shard's unit keys here (summary --plan)")
     r = sub.choices['run']
-    r.add_argument('--gate', required=True)
-    r.add_argument('--shard', required=True, help='K/N, 0 <= K < N')
+    r.add_argument('--shard', required=True, help='K/N, 0 <= K < N, of the plan with the same arguments')
     r.add_argument('--out', required=True)
     r.add_argument('--timeout', type=int, default=6000, help='seconds per unit')
     s = sub.add_parser('summary')
     s.add_argument('dirs', nargs='+')
-    s.add_argument('--plan')
+    s.add_argument('--plan', action='append', help='a plan --detail file (repeatable)')
     s.add_argument('--md')
     s.add_argument('--json')
     c = sub.add_parser('costs')

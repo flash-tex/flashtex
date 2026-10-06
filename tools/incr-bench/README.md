@@ -56,11 +56,13 @@ gh run list --workflow sweeps.yml --limit 3                        # then: gh ru
 
 `ref` is a branch, a SHA or `refs/pull/N/head` (a fork's pull request). Adding the `run-sweeps`
 label to a pull request does the same for its head, once its branch has the workflow. The run's
-summary is one table per gate: shards, units, compiles, ok, bad, wrong (span), aborts (a unit that
-failed or timed out: the verify modes abort the host on a disagreement), skipped. The run is red
-if any gate of `ref` has a bad or wrong compile, an abort, or a missing shard; `base_ref`'s rows
-never fail it. The table, `costs.json` and the plan are the `sweeps-summary` artifact; each
-shard's raw records (soundness.py's JSONL, each unit's output) are `result-<side>-<gate>-<k>`.
+summary is one table, a row per gate: units (reported/planned), compiles, ok, bad, wrong (span:
+glyphs whose source line or column differs from a from-scratch host's), aborts (a unit that failed
+or timed out: the verify modes abort the host on a disagreement), skipped. The run is red if any
+gate of `ref` has a bad or wrong compile, an abort, or a unit that did not report; `base_ref`'s
+rows never fail it. The table, `costs.json` and the plan are the `sweeps-summary` artifact; each
+shard's raw records (soundness.py's JSONL, each unit's output, and for a failed unit its hosts'
+stderr as `.diag`) are `result-<side>-<k>`.
 
 The gates (`sweeps.py gates`): `sound-a sound-budget sound-budget-d sound-timed sound-vol
 sound-lookup sound-lines span readers sound-c sound-d`, with gates.sh's trials, kinds, host
@@ -71,10 +73,13 @@ here: `ci.yml` runs parity, lockstep and the engine's tests on every pull reques
 
 How it is cut: a unit is one soundness.py run over one document (`--only DOC`), one dlspan.py run,
 or readers.py. soundness.py seeds each document's edits from its name alone, so a document gets
-exactly the edits it gets in gates.sh's unsharded sweep. `sweeps.py plan` packs each gate's units,
-longest first, into shards of about 20 minutes of 4 units at a time, from the measured seconds in
-`sweeps-costs.json` (a rough guess per trial for a unit it has no measurement of). After a change
-that moves the costs, refresh it from a green run's `costs.json`:
+exactly the edits it gets in gates.sh's unsharded sweep (the hosted counts equal the PC's: sound-a
+8,800 compiles, C 1,974, timed 1,720, budget 3,520). `sweeps.py plan` packs all the gates' units
+together, longest first, into shards of about 15 minutes of 4 units at a time, from the measured
+seconds in `sweeps-costs.json` (a rough guess per trial for a unit it has no measurement of);
+readers.py, timing-dependent, gets a shard of its own. Mixing gates matters: the whole set is about
+150 unit-minutes (40 runner-minutes), so per-gate shards would be one-minute jobs, each paying the
+queue. After a change that moves the costs, refresh it from a green run's `costs.json`:
 `gh run download <id> -n sweeps-summary -D /tmp/s && cp /tmp/s/costs.json tools/incr-bench/sweeps-costs.json`.
 
 The harness (`sweeps.py`) is the workflow's own commit (main's, for a dispatch from main); what it

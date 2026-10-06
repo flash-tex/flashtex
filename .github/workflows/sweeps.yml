@@ -1,9 +1,8 @@
 # The incremental engine's soundness sweeps (tools/incr-bench/gates.sh's
 # sound-a, sound-budget, sound-budget-d, sound-timed, sound-vol, sound-lookup,
 # sound-lines, span, readers, sound-c, sound-d) on GitHub-hosted runners,
-# sharded so the whole set takes well under an hour of wall time. Lane
-# CI-SWEEPS-HOSTED: until this, every lane queued them on the one NixOS PC
-# (8 threads, 20 GB), which is now for timing and latency measurements only.
+# sharded. Lane CI-SWEEPS-HOSTED: until this, every lane queued them on the one
+# NixOS PC, which is now for timing and latency measurements only.
 #
 #   gh workflow run sweeps.yml -f ref=<branch|sha|refs/pull/N/head> \
 #     [-f gates=sound-a,span] [-f base_ref=main]
@@ -11,27 +10,29 @@
 # Or add the `run-sweeps` label to a pull request (its head, once the PR's
 # branch has this file).
 #
-#   plan    resolves `ref` (and `base_ref`) to a SHA and packs each gate's units
-#           (a soundness.py run over one document, a dlspan.py run, readers.py)
-#           into shards of about `target` minutes: tools/incr-bench/sweeps.py,
-#           from measured costs (sweeps-costs.json)
-#   build   the release engine and its pdflatex format, once per SHA (kept in
-#           the Actions cache by SHA, so a second dispatch of a head skips it)
-#   sweep   one hosted ubuntu-latest job per shard, 4 units at a time
-#   summary one table (shards, units, compiles, ok, bad, wrong, aborts per
-#           gate) as the run summary and the `sweeps-summary` artifact; red if a
-#           gate of `ref` has a bad or wrong compile, an aborted or failed unit
-#           (the verify modes abort the host on a disagreement), or a missing
-#           shard. `base_ref` rows are A/B context only and never fail the run.
+#   prepare resolves `ref` (and `base_ref`) to a SHA; packs the gates' units (a
+#           soundness.py run over one document, a dlspan.py run, readers.py)
+#           into shards of about `target` minutes (tools/incr-bench/sweeps.py,
+#           from the measured seconds in sweeps-costs.json); builds the release
+#           engine and its pdflatex format once per SHA (kept in the Actions
+#           cache by SHA). One job, not two: on the organisation's 20 shared
+#           hosted runners every job waits in the queue, often 20+ minutes.
+#   sweep   one ubuntu-latest job per shard, 4 units at a time
+#   summary one table (units, compiles, ok, bad, wrong, aborts per gate) as the
+#           run summary and the `sweeps-summary` artifact; red if a gate of `ref`
+#           has a bad or wrong compile, an aborted or failed unit (the verify
+#           modes abort the host on a disagreement), or a unit that did not
+#           report. `base_ref` rows are A/B context only and never fail the run.
 #
 # The harness (sweeps.py: which runs, which documents, the shards) is this
 # workflow's own commit; what it runs (soundness.py, incr_bench.py, edits.py,
 # dlspan.py, readers.py, the generators, the fixtures) and the engine are the
 # ref's. To try a changed harness, dispatch from that branch (`--ref`).
 #
-# Fork safety: no secrets, read-only `contents` and `actions`, checkouts without persisted
-# credentials. A dispatch needs write access; on a fork's pull request the
-# label run gets GitHub's read-only token and the pull request's cache scope.
+# Fork safety: no secrets; read-only `contents` and `actions`; checkouts
+# without persisted credentials. A dispatch needs write access; on a fork's
+# pull request the label run gets GitHub's read-only token and the pull
+# request's cache scope.
 name: sweeps
 
 on:
@@ -52,7 +53,7 @@ on:
       target:
         description: "minutes of work per shard"
         required: false
-        default: "20"
+        default: "15"
   pull_request:
     types: [labeled]
 
@@ -75,10 +76,10 @@ env:
   JOBS: "4"
 
 jobs:
-  plan:
+  prepare:
     if: github.event_name != 'pull_request' || github.event.label.name == 'run-sweeps'
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 60
     outputs:
       sides: ${{ steps.plan.outputs.sides }}
       shards: ${{ steps.plan.outputs.shards }}
@@ -87,11 +88,13 @@ jobs:
       - uses: actions/checkout@v4
         with:
           path: harness
-          sparse-checkout: tools/incr-bench
+          sparse-checkout: |
+            tools/incr-bench
+            .github/actions
           persist-credentials: false
       - uses: actions/checkout@v4
         with:
-          path: tree
+          path: ref
           ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || inputs.ref }}
           persist-credentials: false
       - uses: actions/checkout@v4
@@ -104,23 +107,25 @@ jobs:
         id: plan
         env:
           GATES: ${{ github.event_name == 'pull_request' && 'all' || inputs.gates }}
-          TARGET: ${{ github.event_name == 'pull_request' && '20' || inputs.target }}
+          TARGET: ${{ github.event_name == 'pull_request' && '15' || inputs.target }}
           REF: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.ref || inputs.ref }}
           BASE_REF: ${{ github.event_name == 'pull_request' && '' || inputs.base_ref }}
         run: |
           set -euo pipefail
           H=harness/tools/incr-bench/sweeps.py
-          [[ "$GATES" == all || -z "$GATES" ]] && GATES=$(python3 "$H" gates | tr ' ' ',')
+          GATES=${GATES:-all}
           sides='[]'; shards='[]'
+          mkdir -p plan
           for side in ref base; do
-            dir=$([[ $side == ref ]] && echo tree || echo base)
-            [[ -d "$dir" ]] || continue
-            sha=$(git -C "$dir" rev-parse HEAD)
+            [[ -d "$side" ]] || continue
+            sha=$(git -C "$side" rev-parse HEAD)
             name=$([[ $side == ref ]] && echo "$REF" || echo "$BASE_REF")
-            echo "$side: $name = $sha ($(git -C "$dir" log -1 --format=%s | head -c 100))"
-            python3 "$H" plan --tree "$dir" --gates "$GATES" --side "$side" --sha "$sha" --target "$TARGET" -j "$JOBS" > "$side.json"
+            echo "$side: $name = $sha ($(git -C "$side" log -1 --format=%s | head -c 100))"
+            python3 "$H" plan --tree "$side" --gates "$GATES" --side "$side" --sha "$sha" --target "$TARGET" -j "$JOBS" \
+              --detail "plan/$side.json" > "$side.json"
             sides=$(jq -c --arg s "$side" --arg h "$sha" --arg n "$name" '. + [{side: $s, sha: $h, ref: $n}]' <<< "$sides")
             shards=$(jq -c -s 'add' <(echo "$shards") "$side.json")
+            echo "${side}_sha=$sha" >> "$GITHUB_OUTPUT"
           done
           jq -r '.[] | "  \(.name): \(.units) units, ~\(.estimate_min) min"' <<< "$shards"
           {
@@ -128,76 +133,88 @@ jobs:
             echo "shards=$shards"
             echo "target=$TARGET"
           } >> "$GITHUB_OUTPUT"
-          echo "$shards" > plan.json
           echo "$(jq length <<< "$shards") shards for $(jq -c 'map(.side + " " + .sha[:9])' <<< "$sides")"
       - uses: actions/upload-artifact@v4
         with:
           name: sweeps-plan
-          path: plan.json
+          path: plan
           retention-days: 14
-
-  build:
-    name: build (${{ matrix.side }})
-    needs: plan
-    runs-on: ubuntu-latest
-    timeout-minutes: 60
-    strategy:
-      matrix:
-        include: ${{ fromJSON(needs.plan.outputs.sides) }}
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: ${{ matrix.sha }}
-          persist-credentials: false
-      # The engine and its format, by SHA and TeX Live image: a second
-      # dispatch of the same head (another gate list, a re-run) skips the build.
+      # The engine and its format by SHA and TeX Live image: a second dispatch
+      # of the same head (other gates, a re-run) skips the build.
       - uses: actions/cache@v4
-        id: engine
+        id: eng-ref
         with:
-          path: ${{ runner.temp }}/engine.tar
-          key: sweeps-engine-${{ matrix.sha }}-${{ env.TEXLIVE_IMAGE }}
-      - uses: ./.github/actions/texlive-2026
-        if: steps.engine.outputs.cache-hit != 'true'
+          path: ${{ runner.temp }}/engine-ref.tar
+          key: sweeps-engine-${{ steps.plan.outputs.ref_sha }}-${{ env.TEXLIVE_IMAGE }}
+      - uses: actions/cache@v4
+        id: eng-base
+        if: steps.plan.outputs.base_sha != ''
+        with:
+          path: ${{ runner.temp }}/engine-base.tar
+          key: sweeps-engine-${{ steps.plan.outputs.base_sha }}-${{ env.TEXLIVE_IMAGE }}
+      - name: which engines to build
+        id: need
+        env:
+          REF_HIT: ${{ steps.eng-ref.outputs.cache-hit }}
+          BASE_HIT: ${{ steps.eng-base.outputs.cache-hit }}
+          HAS_BASE: ${{ steps.plan.outputs.base_sha != '' }}
+        run: |
+          set -euo pipefail
+          sides=""
+          [[ "$REF_HIT" == true ]] || sides="ref"
+          [[ "$HAS_BASE" != true || "$BASE_HIT" == true ]] || sides="$sides base"
+          echo "sides=${sides# }" >> "$GITHUB_OUTPUT"
+          echo "to build: ${sides:-nothing (cached)}"
+      - uses: ./harness/.github/actions/texlive-2026
+        if: steps.need.outputs.sides != ''
         with:
           image: ${{ env.TEXLIVE_IMAGE }}
           extra: ${{ env.TEXLIVE_EXTRA }}
       - uses: dtolnay/rust-toolchain@stable
-        if: steps.engine.outputs.cache-hit != 'true'
+        if: steps.need.outputs.sides != ''
       - uses: Swatinem/rust-cache@v2
-        if: steps.engine.outputs.cache-hit != 'true'
+        if: steps.need.outputs.sides != ''
         with:
           key: sweeps
-      - name: the release engine and the pdflatex format (gates.sh's build step)
-        if: steps.engine.outputs.cache-hit != 'true'
+          workspaces: ref -> ../target  # relative to ref/: $GITHUB_WORKSPACE/target
+      - name: the release engines and pdflatex formats (gates.sh's build step)
+        if: steps.need.outputs.sides != ''
+        env:
+          SIDES: ${{ steps.need.outputs.sides }}
         run: |
           set -euo pipefail
-          cargo build --release --locked -p flashtex-engine -p flashtex-display-list
-          IB="$RUNNER_TEMP/ib"; D="$IB/gates"; F="$IB/fmt-gates"; T=target/release
-          mkdir -p "$D" "$F"
-          cp "$T/flashtex-initex" "$T/flashtex-host" "$T/dl3-keys" "$T/dl3-client" "$T/dl3-dump" "$D/"
-          cp crates/flashtex-engine/pdftex.pool "$D/"
-          ln -sf flashtex-initex "$D/pdftex"
-          git rev-parse --short HEAD > "$D/HEAD"
-          (cd "$F" && SOURCE_DATE_EPOCH=0 FORCE_SOURCE_DATE=1 FLASHTEX_POOL="$D/pdftex.pool" timeout 300 "$D/flashtex-initex" -ini \
-             -jobname=pdflatex -progname=pdflatex -etex -translate-file=cp227.tcx pdflatex.ini </dev/null >pdflatex.out 2>&1) || true
-          [[ -s "$F/pdflatex.fmt" ]] || { tail -n 40 "$F/pdflatex.out" "$F/pdflatex.log" || true; echo "::error::no pdflatex.fmt"; exit 1; }
-          ls -l "$D" "$F"
-          tar -C "$IB" -cf "$RUNNER_TEMP/engine.tar" gates fmt-gates
+          # One target directory for both sides: the second build is incremental.
+          export CARGO_TARGET_DIR="$GITHUB_WORKSPACE/target"
+          T="$CARGO_TARGET_DIR/release"
+          for side in $SIDES; do
+            (cd "$side" && cargo build --release --locked -p flashtex-engine -p flashtex-display-list)
+            IB="$RUNNER_TEMP/ib-$side"; D="$IB/gates"; F="$IB/fmt-gates"
+            mkdir -p "$D" "$F"
+            cp "$T/flashtex-initex" "$T/flashtex-host" "$T/dl3-keys" "$T/dl3-client" "$T/dl3-dump" "$D/"
+            cp "$side/crates/flashtex-engine/pdftex.pool" "$D/"
+            ln -sf flashtex-initex "$D/pdftex"
+            git -C "$side" rev-parse --short HEAD > "$D/HEAD"
+            (cd "$F" && SOURCE_DATE_EPOCH=0 FORCE_SOURCE_DATE=1 FLASHTEX_POOL="$D/pdftex.pool" timeout 300 "$D/flashtex-initex" -ini \
+               -jobname=pdflatex -progname=pdflatex -etex -translate-file=cp227.tcx pdflatex.ini </dev/null >pdflatex.out 2>&1) || true
+            [[ -s "$F/pdflatex.fmt" ]] || { tail -n 40 "$F/pdflatex.out" "$F/pdflatex.log" || true; echo "::error::$side: no pdflatex.fmt"; exit 1; }
+            ls -l "$D" "$F"
+            tar -C "$IB" -cf "$RUNNER_TEMP/engine-$side.tar" gates fmt-gates
+          done
       - uses: actions/upload-artifact@v4
         with:
-          name: engine-${{ matrix.side }}
-          path: ${{ runner.temp }}/engine.tar
+          name: engines
+          path: ${{ runner.temp }}/engine-*.tar
           retention-days: 3
 
   sweep:
     name: ${{ matrix.name }}
-    needs: [plan, build]
+    needs: prepare
     runs-on: ubuntu-latest
     timeout-minutes: 90
     strategy:
       fail-fast: false
       matrix:
-        include: ${{ fromJSON(needs.plan.outputs.shards) }}
+        include: ${{ fromJSON(needs.prepare.outputs.shards) }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -217,25 +234,25 @@ jobs:
           extra: ${{ env.TEXLIVE_EXTRA }}
       - uses: actions/download-artifact@v4
         with:
-          name: engine-${{ matrix.side }}
+          name: engines
           path: ${{ runner.temp }}
-      - name: ${{ matrix.gate }} ${{ matrix.shard }}
+      - name: ${{ matrix.name }}
         env:
           SHARD: ${{ matrix.shard }}
-          GATE: ${{ matrix.gate }}
+          GATES: ${{ matrix.gates }}
           SIDE: ${{ matrix.side }}
           SHA: ${{ matrix.sha }}
-          TARGET: ${{ needs.plan.outputs.target }}
+          TARGET: ${{ needs.prepare.outputs.target }}
         run: |
           set -euo pipefail
-          # A canonical path (no `..`, no symlink), as /tmp/incr-bench on the PC: with
-          # $GITHUB_WORKSPACE/../ib the span gate failed (2026-10-06, see sweeps.py's README).
+          # A canonical path (no `..`, no symlink), as /tmp/incr-bench on the PC: under
+          # $GITHUB_WORKSPACE/../ib the span gate failed (2026-10-06; tools/incr-bench/README.md).
           INCR_BENCH_DIR="$(realpath -m "$RUNNER_TEMP/ib")"
           export INCR_BENCH_DIR
           mkdir -p "$INCR_BENCH_DIR"
-          tar -C "$INCR_BENCH_DIR" -xf "$RUNNER_TEMP/engine.tar"
+          tar -C "$INCR_BENCH_DIR" -xf "$RUNNER_TEMP/engine-$SIDE.tar"
           echo "engine $(cat "$INCR_BENCH_DIR/gates/HEAD"); $(nproc) cpus; $(free -g | awk '/Mem:/ {print $2}') GB"
-          python3 harness/tools/incr-bench/sweeps.py run --tree "$PWD/tree" --gate "$GATE" --shard "$SHARD" \
+          python3 harness/tools/incr-bench/sweeps.py run --tree "$PWD/tree" --gates "$GATES" --shard "$SHARD" \
             --side "$SIDE" --sha "$SHA" --target "$TARGET" -j "$JOBS" --out "$RUNNER_TEMP/out"
       - uses: actions/upload-artifact@v4
         if: always()
@@ -246,8 +263,8 @@ jobs:
           retention-days: 14
 
   summary:
-    needs: [plan, sweep]
-    if: always() && needs.plan.result == 'success'
+    needs: [prepare, sweep]
+    if: always() && needs.prepare.result == 'success'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -262,16 +279,18 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           name: sweeps-plan
-          path: .
+          path: plan
       - name: one table
         env:
-          SIDES: ${{ needs.plan.outputs.sides }}
+          SIDES: ${{ needs.prepare.outputs.sides }}
+          SHARDS: ${{ needs.prepare.outputs.shards }}
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           mkdir -p results
           rc=0
-          python3 tools/incr-bench/sweeps.py summary results --plan plan.json --md summary.md --json summary.json || rc=$?
+          plans=(); for f in plan/*.json; do plans+=(--plan "$f"); done
+          python3 tools/incr-bench/sweeps.py summary results "${plans[@]}" --md summary.md --json summary.json || rc=$?
           python3 tools/incr-bench/sweeps.py costs results > costs.json
           # Wall time: from the run's creation (the dispatch) to now. The
           # shards' own minutes are in the table; the rest is runner queue.
@@ -282,7 +301,7 @@ jobs:
             echo "### Soundness sweeps"
             echo
             jq -r '.[] | "- \(.side): `\(.ref)` = `\(.sha)`"' <<< "$SIDES"
-            [[ -z "$wall" ]] || echo "- wall: $wall; $(jq length plan.json) shards"
+            [[ -z "$wall" ]] || echo "- wall: $wall; $(jq length <<< "$SHARDS") shards"
             echo
             cat summary.md
           } | tee -a "$GITHUB_STEP_SUMMARY" > summary-full.md
@@ -296,6 +315,6 @@ jobs:
             summary-full.md
             summary.json
             costs.json
-            plan.json
+            plan
           if-no-files-found: ignore
           retention-days: 30
