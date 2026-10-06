@@ -1914,10 +1914,20 @@ impl Observer for Obs {
             let Some(path) = crate::lineshift::level_file(g, j).map(str::to_string) else {
                 continue;
             };
-            let Some(at) = self.edits.iter().filter(|e| e.path == path).map(|e| e.prefix).min() else {
+            let Some(at) = self
+                .edits
+                .iter()
+                .filter(|e| e.path == path)
+                .map(|e| e.prefix)
+                .min()
+            else {
                 continue;
             };
-            match g.input_file.get_mut(j as usize - 1).and_then(|f| f.read_offset()) {
+            match g
+                .input_file
+                .get_mut(j as usize - 1)
+                .and_then(|f| f.read_offset())
+            {
                 Some(off) if off <= at => before = true,
                 _ => return false,
             }
