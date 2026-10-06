@@ -239,22 +239,14 @@ enum TailBytes {
     /// return to when dropped).
     Read(Vec<u8>, String),
     Clone(String),
+    /// Kept by the file itself past its logical end (`system::keep_tail`):
+    /// a tail from the file's length at the restore target on.
+    Kept(String),
 }
 
 impl TailBytes {
-    /// `reopened`: the restore reopens the file at `from` (open for output
-    /// at its target, not opened again since), so the disk's bytes from
-    /// `from` on are the new run's alone: a tail `reattach_pending_deferring`
-    /// left unwritten is handed over from memory. Any other file gets it
-    /// written first (the new run may read the file before it writes it).
-    fn take(path: &str, from: u64, reopened: bool) -> Result<TailBytes, String> {
+    fn take(path: &str, from: u64) -> Result<TailBytes, String> {
         system::file_trace(|| format!("tail {path} from {from} disk {:?}", system::disk_len(path)));
-        if let Some(d) = take_deferred(path) {
-            if reopened {
-                return d.into_tail_from(from);
-            }
-            d.write_back()?;
-        }
         static N: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
         let n = N.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         // Not in the document's directory: a new file there would change
@@ -263,24 +255,20 @@ impl TailBytes {
             .join(format!("flashtex-tail-{}-{n}", std::process::id()))
             .to_string_lossy()
             .into_owned();
+        let buf = SPARE_TAILS.with(|s| s.borrow_mut().remove(path).unwrap_or_default());
+        if let Some(len) = system::logical_len(path) {
+            // (bytes past the file's logical end are stale: not a clone)
+            let mut b = read_tail_into(path, from, buf)?;
+            b.truncate(len.saturating_sub(from) as usize);
+            return Ok(TailBytes::Read(b, path.to_string()));
+        }
         if system::clone_file(path, &dst) {
             return Ok(TailBytes::Clone(dst));
         }
-        let buf = SPARE_TAILS.with(|s| s.borrow_mut().remove(path).unwrap_or_default());
         Ok(TailBytes::Read(
             read_tail_into(path, from, buf)?,
             path.to_string(),
         ))
-    }
-
-    /// The tail's length (it starts at `base`).
-    fn len_from(&self, base: u64) -> Result<u64, String> {
-        match self {
-            TailBytes::Read(b, _) => Ok(b.len() as u64),
-            TailBytes::Clone(p) => Ok(system::disk_len(p)
-                .ok_or_else(|| format!("{p}: the tail's clone is gone"))?
-                .saturating_sub(base)),
-        }
     }
 
     /// Bytes `skip..` of the tail that starts at `base`.
@@ -288,6 +276,7 @@ impl TailBytes {
         match self {
             TailBytes::Read(b, _) => Ok(b.get(skip as usize..).unwrap_or(&[]).to_vec()),
             TailBytes::Clone(p) => read_tail(p, base + skip),
+            TailBytes::Kept(p) => system::kept_tail(p, base, skip),
         }
     }
 }
@@ -298,6 +287,7 @@ impl Drop for TailBytes {
             TailBytes::Clone(p) => {
                 let _ = std::fs::remove_file(p);
             }
+            TailBytes::Kept(p) => system::drop_kept_tail(p),
             // keep the buffer for the next restore's tail of the same file,
             // while the spares fit in SPARE_TAILS_MAX
             TailBytes::Read(b, path) => SPARE_TAILS.with(|s| {
@@ -327,138 +317,6 @@ thread_local! {
     /// against 2-5 ms with the old 5 GB heap).
     static SPARE_TAILS: std::cell::RefCell<std::collections::HashMap<String, Vec<u8>>> =
         std::cell::RefCell::new(std::collections::HashMap::new());
-}
-
-thread_local! {
-    /// The output tails `reattach_pending_deferring` left unwritten: the
-    /// old run's bytes of each file from `base` on, which the disk does not
-    /// hold there (it holds the abandoned run's, then zeros, to the old
-    /// length). `TailBytes::take` takes them; `flush_deferred_tails` writes
-    /// what is left.
-    static DEFERRED: std::cell::RefCell<Vec<Tail>> = const { std::cell::RefCell::new(Vec::new()) };
-}
-
-/// The smallest tail `reattach_pending_deferring` leaves unwritten (the
-/// `.log` and `.aux` tails are a few kilobytes, a 1,000-page PDF's
-/// megabytes). `FLASHTEX_DEFER_TAIL_MIN=BYTES` changes it (the soundness
-/// sweeps defer every tail with 0, on documents whose PDFs are small).
-pub const DEFER_TAIL_MIN: u64 = 256 << 10;
-
-fn defer_tail_min() -> u64 {
-    static M: std::sync::OnceLock<u64> = std::sync::OnceLock::new();
-    *M.get_or_init(|| {
-        std::env::var("FLASHTEX_DEFER_TAIL_MIN")
-            .ok()
-            .and_then(|v| v.parse().ok())
-            .unwrap_or(DEFER_TAIL_MIN)
-    })
-}
-
-fn take_deferred(path: &str) -> Option<Tail> {
-    let k = system::out_key(path);
-    DEFERRED.with(|d| {
-        let mut d = d.borrow_mut();
-        let i = d.iter().position(|t| system::out_key(&t.path) == k)?;
-        Some(d.remove(i))
-    })
-}
-
-impl Tail {
-    /// A deferred tail as a restore's tail from `from` on. From at or after
-    /// its base: the old bytes up to `from` go to the disk first (the run
-    /// resumes after them), the rest is the tail. From before it: the disk
-    /// still holds the old bytes from `from` to the base (the abandoned run
-    /// wrote only after it), then the deferred ones.
-    fn into_tail_from(self, from: u64) -> Result<TailBytes, String> {
-        use std::io::{Seek, Write};
-        let Tail { path, base, bytes } = self;
-        if from >= base {
-            let skip = from - base;
-            if skip > 0 {
-                let head = match &bytes {
-                    TailBytes::Read(b, _) => b
-                        .get(..skip as usize)
-                        .ok_or_else(|| format!("{path}: the deferred tail ends before {from}"))?
-                        .to_vec(),
-                    TailBytes::Clone(c) => read_range_of(c, base, from)?,
-                };
-                let mut h = std::fs::OpenOptions::new()
-                    .write(true)
-                    .open(&path)
-                    .map_err(|e| format!("{path}: {e}"))?;
-                h.seek(std::io::SeekFrom::Start(base))
-                    .map_err(|e| format!("{path}: {e}"))?;
-                h.write_all(&head).map_err(|e| format!("{path}: {e}"))?;
-                drop(h);
-                system::stamp_output(&path);
-            }
-            system::file_trace(|| {
-                format!("tail {path} from {from}: deferred at {base}, skip {skip}")
-            });
-            let mut bytes = bytes;
-            // (a clone holds the whole old file: any offset)
-            if let TailBytes::Read(b, _) = &mut bytes {
-                if skip > 0 {
-                    b.drain(..skip as usize);
-                }
-            }
-            return Ok(bytes);
-        }
-        system::file_trace(|| format!("tail {path} from {from}: deferred at {base}, before it"));
-        let mut bytes = bytes;
-        if let TailBytes::Read(b, _) = &mut bytes {
-            let mut v = read_range_of(&path, from, base)?;
-            v.extend_from_slice(b);
-            *b = v;
-        }
-        Ok(bytes)
-    }
-
-    /// Write a deferred tail to its file, as `reattach_pending` would have.
-    fn write_back(self) -> Result<(), String> {
-        use std::io::{Seek, Write};
-        system::file_trace(|| format!("flush deferred {} at {}", self.path, self.base));
-        let mut h = std::fs::OpenOptions::new()
-            .write(true)
-            .open(&self.path)
-            .map_err(|e| format!("{}: {e}", self.path))?;
-        h.set_len(self.base)
-            .map_err(|e| format!("{}: {e}", self.path))?;
-        h.seek(std::io::SeekFrom::Start(self.base))
-            .map_err(|e| format!("{}: {e}", self.path))?;
-        h.write_all(&self.bytes.get(self.base, 0)?)
-            .map_err(|e| format!("{}: {e}", self.path))?;
-        drop(h);
-        system::stamp_output(&self.path);
-        Ok(())
-    }
-}
-
-/// Write the tails `reattach_pending_deferring` left unwritten, as
-/// `reattach_pending` would have: before anything but a `restore` reads or
-/// rewrites those files (a run from the format, the end of a compile).
-pub fn flush_deferred_tails() -> Result<(), String> {
-    let tails = DEFERRED.with(|d| std::mem::take(&mut *d.borrow_mut()));
-    for t in tails {
-        t.write_back()?;
-    }
-    Ok(())
-}
-
-/// How many tails are deferred (none between compiles).
-pub fn deferred_tails() -> usize {
-    DEFERRED.with(|d| d.borrow().len())
-}
-
-/// Bytes `from..to` of the file at `path`.
-fn read_range_of(path: &str, from: u64, to: u64) -> Result<Vec<u8>, String> {
-    use std::io::{Read, Seek, SeekFrom};
-    let e = |x: std::io::Error| format!("{path}: {x}");
-    let mut f = std::fs::File::open(path).map_err(e)?;
-    f.seek(SeekFrom::Start(from)).map_err(e)?;
-    let mut v = vec![0u8; to.saturating_sub(from) as usize];
-    f.read_exact(&mut v).map_err(e)?;
-    Ok(v)
 }
 
 /// The most the spare tail buffers hold together. They are outside the undo
@@ -1013,7 +871,7 @@ impl Globals {
                 .iter()
                 .map(|t| match &t.bytes {
                     TailBytes::Read(b, _) => b.capacity(),
-                    TailBytes::Clone(_) => 0,
+                    TailBytes::Clone(_) | TailBytes::Kept(_) => 0,
                 })
                 .sum();
             v.push(("pending_tails_read", tails as i64));
@@ -1106,12 +964,23 @@ impl Globals {
                 if have(&tails, path) {
                     continue;
                 }
-                let reopened = !later.contains(&system::out_key(path));
-                let base = if reopened { *len } else { 0 };
+                let base = if later.contains(&system::out_key(path)) {
+                    0
+                } else {
+                    *len
+                };
+                // (from the target's length on: kept by the file itself,
+                // nothing read or cut now; see `system::Logical`)
+                let bytes = if base > 0 {
+                    system::keep_tail(path, base)?;
+                    TailBytes::Kept(path.clone())
+                } else {
+                    TailBytes::take(path, base)?
+                };
                 tails.push(Tail {
                     path: path.clone(),
                     base,
-                    bytes: TailBytes::take(path, base, reopened)?,
+                    bytes,
                 });
             }
         }
@@ -1121,7 +990,7 @@ impl Globals {
                     tails.push(Tail {
                         path: path.clone(),
                         base: 0,
-                        bytes: TailBytes::take(path, 0, false)?,
+                        bytes: TailBytes::take(path, 0)?,
                     });
                 }
             }
@@ -1132,7 +1001,7 @@ impl Globals {
         closed.extend(system::outputs_since(rec.reads.2));
         for path in closed {
             if !have(&tails, &path) {
-                if let Ok(bytes) = TailBytes::take(&path, 0, false) {
+                if let Ok(bytes) = TailBytes::take(&path, 0) {
                     tails.push(Tail {
                         path,
                         base: 0,
@@ -1141,9 +1010,6 @@ impl Globals {
                 }
             }
         }
-        // (tails deferred for files this restore keeps none of: written
-        // now, as the reattach would have)
-        flush_deferred_tails()?;
         // A file the tails hold from its length at the target on, which the
         // new run opens for output again (truncating it), must keep its
         // first bytes for `reattach_pending`.
@@ -1232,26 +1098,29 @@ impl Globals {
             })
     }
 
-    pub fn reattach_pending(&mut self) -> Result<(), String> {
-        self.reattach_pending_deferring(&|_| false)
+    /// Why `redo_to` cannot take the old run's later bytes (`None`: it
+    /// can): a file whose tail the restore kept in the file
+    /// (`system::keep_tail`) was changed by another program since (an
+    /// `export` in the same directory), so its bytes past the new run's
+    /// are no longer the old run's. As for a restore (`changed_outside`),
+    /// the caller then runs from scratch.
+    pub fn jump_blocked(&self) -> Option<String> {
+        self.layer_ref()?
+            .pending
+            .as_ref()?
+            .tails
+            .iter()
+            .filter(|t| matches!(t.bytes, TailBytes::Kept(_)))
+            .find_map(|t| system::outside_change(&t.path))
     }
 
-    /// `reattach_pending`, leaving the tails of the output files `defer`
-    /// names (and of at least [`DEFER_TAIL_MIN`] bytes) unwritten: the
-    /// file gets its old length, the old bytes stay in [`DEFERRED`], and the
-    /// next `restore` takes its tail of the file from there
-    /// (`TailBytes::take`) instead of reading back what this would have
-    /// written. Typing: a keystroke abandons the previous one's stopped run,
-    /// and its restore goes back to the same point at once, so the old
-    /// PDF's tail (megabytes on a 1,000-page document) was written here and
-    /// read again there, on the keystroke's path. Only for files the engine
-    /// does not read (the caller's `defer`: not inputs of the run), and
-    /// whoever does not restore next writes them first
-    /// ([`flush_deferred_tails`]).
-    pub fn reattach_pending_deferring(
-        &mut self,
-        defer: &dyn Fn(&str) -> bool,
-    ) -> Result<(), String> {
+    /// Abandon the run since the last `restore` (see above). A tail kept
+    /// in its file (`system::keep_tail`) gets back only the old bytes the
+    /// abandoned run wrote over, then its old length (`put_back_kept`): this
+    /// replaces #1608's deferred tails, which left the old bytes unwritten
+    /// here and handed them to the next restore, because a restore no
+    /// longer reads a tail it can keep in the file.
+    pub fn reattach_pending(&mut self) -> Result<(), String> {
         if let Some(why) = self.reattach_blocked() {
             return Err(format!("reattach: {why}"));
         }
@@ -1273,7 +1142,6 @@ impl Globals {
         self.spill_scalars();
         self.arena.reattach(branch)?;
         let t_branch = t0.elapsed();
-        let mut deferred = 0u64;
         self.fill_scalars();
         let keep: std::collections::HashSet<CheckpointId> =
             self.arena.checkpoint_ids().iter().copied().collect();
@@ -1289,7 +1157,7 @@ impl Globals {
         }
         // Before `restore_ext`, which drops the abandoned run's output
         // buffers unwritten: the files are the old run's again.
-        for t in tails {
+        for t in &tails {
             use std::io::{Seek, Write};
             // The first `base` bytes are on disk unless the abandoned run
             // opened the file for output again (`guard_outputs` kept them).
@@ -1302,6 +1170,15 @@ impl Globals {
                 }
                 _ => (t.base, vec![]),
             };
+            if from > 0
+                && matches!(t.bytes, TailBytes::Kept(_))
+                && system::disk_len(&t.path).unwrap_or(0) >= from
+                && system::put_back_kept(&t.path, t.base)?
+            {
+                continue;
+            }
+            // (read before the file is cut: a kept tail is partly on disk)
+            let old = t.bytes.get(t.base, 0)?;
             let mut h = std::fs::OpenOptions::new()
                 .write(true)
                 .create(true)
@@ -1322,26 +1199,18 @@ impl Globals {
                     t.path
                 ));
             }
-            let tail_len = t.bytes.len_from(t.base)?;
-            if head.is_empty() && tail_len >= defer_tail_min() && defer(&t.path) {
-                // the old length (what `restore_ext` reopens it at, and
-                // what a checkpoint records), without the old bytes
-                h.set_len(t.base + tail_len)
-                    .map_err(|e| format!("{}: {e}", t.path))?;
-                drop(h);
-                system::stamp_output(&t.path);
-                system::file_trace(|| format!("reattach {} deferred {tail_len} bytes", t.path));
-                deferred += tail_len;
-                DEFERRED.with(|d| d.borrow_mut().push(t));
-                continue;
-            }
-            h.set_len(from).map_err(|e| format!("{}: {e}", t.path))?;
+            // In place, then the length once (`system::Logical`: a reader
+            // never sees the file cut and written on).
             h.seek(std::io::SeekFrom::Start(from))
                 .map_err(|e| format!("{}: {e}", t.path))?;
             h.write_all(&head).map_err(|e| format!("{}: {e}", t.path))?;
-            h.write_all(&t.bytes.get(t.base, 0)?)
-                .map_err(|e| format!("{}: {e}", t.path))?;
+            h.write_all(&old).map_err(|e| format!("{}: {e}", t.path))?;
+            let end = from + (head.len() + old.len()) as u64;
+            if system::disk_len(&t.path) != Some(end) {
+                h.set_len(end).map_err(|e| format!("{}: {e}", t.path))?;
+            }
             drop(h);
+            system::logical_settled(&t.path);
             system::stamp_output(&t.path);
         }
         let t_tails = t0.elapsed();
@@ -1356,7 +1225,7 @@ impl Globals {
         if std::env::var_os("FLASHTEX_INCR_DEBUG").is_some() {
             let ms = |d: std::time::Duration| d.as_secs_f64() * 1e3;
             eprintln!(
-                "[ckpt] reattach: branch {:.2}, output tails {:.2} ({deferred} bytes deferred), host state {:.2} ms",
+                "[ckpt] reattach: branch {:.2}, output tails {:.2}, host state {:.2} ms",
                 ms(t_branch),
                 ms(t_tails - t_branch),
                 ms(t0.elapsed() - t_tails)
@@ -1459,6 +1328,9 @@ impl Globals {
         in_remap: &dyn Fn(&str, u64) -> u64,
         pre: Option<Adopt>,
     ) -> Result<(), String> {
+        if let Some(why) = self.jump_blocked() {
+            return Err(format!("redo_to: {why}"));
+        }
         let Some(p) = self.layer().pending.take() else {
             return Err("redo_to: no restore to jump back from".into());
         };
@@ -1680,6 +1552,8 @@ impl Globals {
                 continue;
             };
             use std::io::{Seek, Write};
+            // (read before the file is cut: a kept tail is partly on disk)
+            let old = t.bytes.get(t.base, skip)?;
             let mut h = std::fs::OpenOptions::new()
                 .write(true)
                 .create(true)
@@ -1700,12 +1574,17 @@ impl Globals {
                     t.path
                 ));
             }
-            h.set_len(from).map_err(|e| format!("{}: {e}", t.path))?;
+            // In place, then the length once (`system::Logical`: a reader
+            // never sees the file cut and written on).
             h.seek(std::io::SeekFrom::Start(from))
                 .map_err(|e| format!("{}: {e}", t.path))?;
-            h.write_all(&t.bytes.get(t.base, skip)?)
-                .map_err(|e| format!("{}: {e}", t.path))?;
+            h.write_all(&old).map_err(|e| format!("{}: {e}", t.path))?;
+            let end = from + old.len() as u64;
+            if system::disk_len(&t.path) != Some(end) {
+                h.set_len(end).map_err(|e| format!("{}: {e}", t.path))?;
+            }
             drop(h);
+            system::logical_settled(&t.path);
             system::stamp_output(&t.path);
         }
         // The output opens: the new run's so far, then the old run's after

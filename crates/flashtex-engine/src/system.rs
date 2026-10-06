@@ -68,6 +68,9 @@ impl OutSink for std::process::ChildStdin {
 pub struct Tracked {
     f: File,
     path: String,
+    /// The file has bytes past its logical end ([`LOGICAL`]): each write
+    /// keeps the old bytes it covers first and moves the logical end.
+    logical: bool,
 }
 
 impl Tracked {
@@ -75,6 +78,7 @@ impl Tracked {
         Tracked {
             f,
             path: path.to_string(),
+            logical: false,
         }
     }
 }
@@ -82,7 +86,18 @@ impl Tracked {
 impl Write for Tracked {
     fn write(&mut self, b: &[u8]) -> std::io::Result<usize> {
         note_foreign(&self.path);
+        let at = if self.logical {
+            use std::io::Seek;
+            let at = self.f.stream_position()?;
+            before_write(&self.path, at + b.len() as u64);
+            Some(at)
+        } else {
+            None
+        };
         let n = self.f.write(b)?;
+        if let Some(at) = at {
+            after_write(&self.path, at + n as u64);
+        }
         if let Ok(m) = self.f.metadata() {
             set_stamp(&self.path, stamp_of(&m));
         }
@@ -104,6 +119,354 @@ impl OutSink for Tracked {
         use std::io::Seek;
         self.f.stream_position().ok()
     }
+}
+
+// ---- output files longer than their logical end ------------------------
+//
+// A restore used to read the old run's tail of each output file open at its
+// target (a `checkpoint::Tail`, for a jump back or an abandon) and cut the
+// file back to the target's length. On a 1,000-page document that is 12 MB
+// of PDF read and freed at every keystroke, before the edited page: 1.2 and
+// 1.6 ms on the NixOS PC (lane P4-PAGE-COST). Instead the file keeps its
+// bytes: the restore records the file's logical end (the length the cut
+// would have left), the new run writes on from there, and before a write
+// covers old bytes of the kept tail it keeps them ([`Logical::keep`]). The
+// file is cut to its logical end only where that is off the keystroke's
+// path: when its stream is closed (the run's end), by a jump back (which
+// writes the old run's later bytes after the new run's), or by an abandon
+// (which puts the old bytes back).
+//
+// What another program reading the file meanwhile sees (a viewer that
+// reloads the PDF): never a zero-filled hole, so no length is cut and then
+// extended again -- bytes are written in place and the length is set once,
+// at the end. And never a file that looks complete but is not: a file past
+// its logical end has its last `BLANK_END` bytes blanked (the old run's
+// `%%EOF` and cross-reference offset; [`Keep::end`] keeps them), so that it
+// reads as the truncated file a cut would have left.
+
+/// How many of the last bytes of a file longer than its logical end are
+/// blanked (a PDF reader looks for `%%EOF` in the last 1,024).
+const BLANK_END: u64 = 1024;
+
+/// An output file whose bytes past `len` are stale, or whose old tail a
+/// pending restore keeps.
+struct Logical {
+    /// The file's length as the engine's streams have it (`None`: the
+    /// file's own length).
+    len: Option<u64>,
+    /// The old run's tail a pending restore keeps.
+    keep: Option<Keep>,
+}
+
+/// The old run's bytes `base..old_len` of a file: the first `saved.len()`
+/// in `saved` (the new run has written over them since, or the file was
+/// cut), the rest still on disk, except the last `end.len()`, which are
+/// blanked on disk (`BLANK_END`).
+struct Keep {
+    base: u64,
+    old_len: u64,
+    saved: Vec<u8>,
+    end: Vec<u8>,
+}
+
+impl Keep {
+    fn saved_to(&self) -> u64 {
+        self.base + self.saved.len() as u64
+    }
+
+    /// Where the blanked bytes start.
+    fn end_at(&self) -> u64 {
+        self.old_len - self.end.len() as u64
+    }
+
+    /// `buf`, read from disk at `from`: the old bytes where it holds the
+    /// blanked ones.
+    fn unblank(&self, from: u64, buf: &mut [u8]) {
+        let to = from + buf.len() as u64;
+        let (lo, hi) = (from.max(self.end_at()), to.min(self.old_len));
+        if lo < hi {
+            let e = (lo - self.end_at()) as usize..(hi - self.end_at()) as usize;
+            buf[(lo - from) as usize..(hi - from) as usize].copy_from_slice(&self.end[e]);
+        }
+    }
+
+    /// Keep the old bytes from `saved_to` up to `to` (read from disk now).
+    fn save_to(&mut self, path: &str, to: u64) -> std::io::Result<()> {
+        let (from, to) = (self.saved_to(), to.min(self.old_len));
+        if to <= from {
+            return Ok(());
+        }
+        use std::io::Seek;
+        let mut f = File::open(path)?;
+        f.seek(std::io::SeekFrom::Start(from))?;
+        let n = self.saved.len();
+        let mut saved = std::mem::take(&mut self.saved);
+        saved.resize(n + (to - from) as usize, 0);
+        let r = f.read_exact(&mut saved[n..]);
+        if r.is_ok() {
+            self.unblank(from, &mut saved[n..]);
+        } else {
+            saved.truncate(n);
+        }
+        self.saved = saved;
+        r
+    }
+}
+
+/// Blank bytes `from..to` of `path` (spaces), written in place, and return
+/// what they held.
+fn blank(path: &str, from: u64, to: u64) -> std::io::Result<Vec<u8>> {
+    use std::io::Seek;
+    let mut f = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(path)?;
+    f.seek(std::io::SeekFrom::Start(from))?;
+    let mut old = vec![0u8; to.saturating_sub(from) as usize];
+    f.read_exact(&mut old)?;
+    f.seek(std::io::SeekFrom::Start(from))?;
+    f.write_all(&vec![b' '; old.len()])?;
+    Ok(old)
+}
+
+thread_local! {
+    /// By `out_key`.
+    static LOGICAL: std::cell::RefCell<std::collections::HashMap<String, Logical>> =
+        std::cell::RefCell::new(std::collections::HashMap::new());
+}
+
+/// The logical length of `path`, if its file is longer than that.
+pub fn logical_len(path: &str) -> Option<u64> {
+    LOGICAL.with(|m| m.borrow().get(&out_key(path)).and_then(|l| l.len))
+}
+
+/// A restore keeps the old run's tail of `path` from `base` on: the file's
+/// logical end becomes `base`, and nothing is read or cut. The tail's old
+/// bytes come from [`kept_tail`] while the restore is pending.
+pub fn keep_tail(path: &str, base: u64) -> Result<(), String> {
+    let old_len = match logical_len(path) {
+        Some(n) => n,
+        None => std::fs::metadata(path)
+            .map(|m| m.len())
+            .map_err(|e| format!("{path}: {e}"))?,
+    };
+    if old_len < base {
+        return Err(format!("{path} holds {old_len} bytes, fewer than {base}"));
+    }
+    // (blanked: the old run's end; the restore checked that the file is
+    // the engine's, `checkpoint::changed_outside`)
+    if let Some(why) = outside_change(path) {
+        return Err(why);
+    }
+    let end_at = old_len.saturating_sub(BLANK_END).max(base);
+    let end = blank(path, end_at, old_len).map_err(|e| format!("{path}: {e}"))?;
+    stamp_output(path);
+    file_trace(|| format!("keep_tail {path} base {base} old_len {old_len} blank {end_at}"));
+    LOGICAL.with(|m| {
+        m.borrow_mut().insert(
+            out_key(path),
+            Logical {
+                len: Some(base),
+                keep: Some(Keep {
+                    base,
+                    old_len,
+                    saved: Vec::new(),
+                    end,
+                }),
+            },
+        )
+    });
+    Ok(())
+}
+
+/// The kept tail of `path` from `base + skip` on.
+pub fn kept_tail(path: &str, base: u64, skip: u64) -> Result<Vec<u8>, String> {
+    let e = |x: std::io::Error| format!("{path}: {x}");
+    LOGICAL.with(|m| {
+        let mut m = m.borrow_mut();
+        let k = m
+            .get_mut(&out_key(path))
+            .and_then(|l| l.keep.as_mut())
+            .filter(|k| k.base == base)
+            .ok_or_else(|| format!("{path}: no tail kept from {base}"))?;
+        let mut out = k
+            .saved
+            .get(skip as usize..)
+            .map(|s| s.to_vec())
+            .unwrap_or_default();
+        let from = k.saved_to().max(base + skip);
+        if from < k.old_len {
+            use std::io::Seek;
+            let mut f = File::open(path).map_err(e)?;
+            f.seek(std::io::SeekFrom::Start(from)).map_err(e)?;
+            let n = out.len();
+            out.resize(n + (k.old_len - from) as usize, 0);
+            f.read_exact(&mut out[n..]).map_err(e)?;
+            k.unblank(from, &mut out[n..]);
+        }
+        Ok(out)
+    })
+}
+
+/// The pending restore no longer keeps the tail of `path` (the file's
+/// stale bytes stay until its stream is closed).
+pub fn drop_kept_tail(path: &str) {
+    LOGICAL.with(|m| {
+        if let Some(l) = m.borrow_mut().get_mut(&out_key(path)) {
+            l.keep = None;
+        }
+    });
+}
+
+/// Keep every old byte the kept tail of `path` still has on disk (before
+/// the file is cut or truncated).
+fn save_kept(path: &str) {
+    LOGICAL.with(|m| {
+        if let Some(k) = m
+            .borrow_mut()
+            .get_mut(&out_key(path))
+            .and_then(|l| l.keep.as_mut())
+        {
+            let to = k.old_len;
+            if let Err(e) = k.save_to(path, to) {
+                file_trace(|| format!("save_kept {path}: {e}"));
+            }
+        }
+    });
+}
+
+/// Before a write of `path` up to `end`: keep the old bytes it covers.
+fn before_write(path: &str, end: u64) {
+    LOGICAL.with(|m| {
+        if let Some(k) = m
+            .borrow_mut()
+            .get_mut(&out_key(path))
+            .and_then(|l| l.keep.as_mut())
+        {
+            if end > k.saved_to() {
+                if let Err(e) = k.save_to(path, end) {
+                    file_trace(|| format!("before_write {path}: {e}"));
+                }
+            }
+        }
+    });
+}
+
+fn after_write(path: &str, end: u64) {
+    LOGICAL.with(|m| {
+        if let Some(n) = m
+            .borrow_mut()
+            .get_mut(&out_key(path))
+            .and_then(|l| l.len.as_mut())
+        {
+            *n = (*n).max(end);
+        }
+    });
+}
+
+/// Cut `path` to its logical end, keeping the old bytes a pending restore
+/// needs first; the file's length is its logical one from then on (while
+/// a restore is pending, its kept tail is all in memory).
+pub fn cut_to_logical(path: &str) {
+    let k = out_key(path);
+    let Some(len) = logical_len(path) else {
+        return;
+    };
+    save_kept(path);
+    let cut = std::fs::OpenOptions::new()
+        .write(true)
+        .open(path)
+        .and_then(|f| f.set_len(len));
+    file_trace(|| format!("cut_to_logical {path} {len}: {cut:?}"));
+    stamp_output(path);
+    LOGICAL.with(|m| {
+        let mut m = m.borrow_mut();
+        if let Some(l) = m.get_mut(&k) {
+            l.len = None;
+            if l.keep.is_none() {
+                m.remove(&k);
+            }
+        }
+    });
+}
+
+/// `path`'s bytes up to its logical end (all of them for a file whose
+/// logical end is not tracked).
+pub fn read_logical(path: &str) -> std::io::Result<Vec<u8>> {
+    let mut d = std::fs::read(path)?;
+    if let Some(n) = logical_len(path) {
+        d.truncate(n as usize);
+    }
+    Ok(d)
+}
+
+/// A new engine: no file's logical end is known any more. Each file still
+/// longer than its logical end is cut to it first, as the old engine's
+/// runs left it (the new run may not open it for output again), unless
+/// another program has written it since (an export: its bytes stay).
+pub fn forget_logical() {
+    let paths: Vec<String> = LOGICAL.with(|m| {
+        m.borrow()
+            .iter()
+            .filter(|(_, l)| l.len.is_some())
+            .map(|(k, _)| k.clone())
+            .collect()
+    });
+    for p in paths {
+        if outside_change(&p).is_none() && std::path::Path::new(&p).exists() {
+            cut_to_logical(&p);
+        }
+    }
+    LOGICAL.with(|m| m.borrow_mut().clear());
+}
+
+/// `path` was written whole to its logical end (a jump back, an abandon):
+/// its length is its logical one.
+pub fn logical_settled(path: &str) {
+    LOGICAL.with(|m| m.borrow_mut().remove(&out_key(path)));
+}
+
+/// An abandon puts the old run's tail of `path` back where the new run has
+/// not truncated the file: only the old bytes the new run wrote over and
+/// the blanked end, in place, then the file's length set to the old run's
+/// (the rest are still on disk). `false`: no tail kept from `base`.
+pub fn put_back_kept(path: &str, base: u64) -> Result<bool, String> {
+    let e = |x: std::io::Error| format!("{path}: {x}");
+    let k = out_key(path);
+    let Some(kp) = LOGICAL.with(|m| {
+        m.borrow_mut()
+            .get_mut(&k)
+            .and_then(|l| l.keep.take())
+            .filter(|kp| kp.base == base)
+    }) else {
+        return Ok(false);
+    };
+    let (end_at, old_len, saved) = (kp.end_at(), kp.old_len, &kp.saved);
+    use std::io::Seek;
+    let mut f = std::fs::OpenOptions::new()
+        .write(true)
+        .open(path)
+        .map_err(e)?;
+    // (the end last: until the old bytes before it are back, a reader sees
+    // no `%%EOF` after the new run's bytes; where `saved` covers the end,
+    // it holds the same)
+    f.seek(std::io::SeekFrom::Start(base)).map_err(e)?;
+    f.write_all(saved).map_err(e)?;
+    f.seek(std::io::SeekFrom::Start(end_at)).map_err(e)?;
+    f.write_all(&kp.end).map_err(e)?;
+    if disk_len(path) != Some(old_len) {
+        f.set_len(old_len).map_err(e)?;
+    }
+    drop(f);
+    file_trace(|| {
+        format!(
+            "put_back_kept {path} base {base} saved {} old_len {old_len}",
+            saved.len()
+        )
+    });
+    logical_settled(path);
+    stamp_output(path);
+    Ok(true)
 }
 
 /// `packed file of char`.
@@ -265,6 +628,7 @@ impl PasFile for AlphaFile {
         if self.output.take().is_some() {
             if let Some(p) = &self.path {
                 unmark_ahead(p);
+                cut_to_logical(p);
             }
         }
         self.input = None;
@@ -293,6 +657,7 @@ impl PasFile for ByteFile {
         if self.output.take().is_some() {
             if let Some(p) = &self.path {
                 unmark_ahead(p);
+                cut_to_logical(p);
             }
         }
         self.input = None;
@@ -1575,6 +1940,10 @@ static RECORDER: Mutex<Option<Recorder>> = Mutex::new(None);
 /// `<jobname>.fls` when the log file opens), after a `PWD` line.
 fn record_file(prefix: &str, name: &str) {
     if prefix == "INPUT" {
+        // a file the run wrote, read back: as a cut would have left it
+        if logical_len(name).is_some() {
+            cut_to_logical(name);
+        }
         note_file(name);
     } else {
         note_output(name);
@@ -3507,16 +3876,37 @@ fn why_changed(path: &str, foreign_too: bool) -> Option<String> {
 
 fn before_truncate(path: &str) {
     let k = out_key(path);
+    // (what the file holds: its bytes up to its logical end)
+    let content = || {
+        std::fs::read(path).ok().map(|mut d| {
+            if let Some(n) = logical_len(path) {
+                d.truncate(n as usize);
+            }
+            d
+        })
+    };
     GUARD_ALL.with(|g| {
         if let Some(m) = g.borrow_mut().as_mut() {
             m.entry(k.clone())
-                .or_insert_with(|| std::fs::read(path).ok().map(std::sync::Arc::new));
+                .or_insert_with(|| content().map(std::sync::Arc::new));
         }
     });
     GUARD.with(|g| {
         for (p, b) in g.borrow_mut().iter_mut() {
             if out_key(p) == k && b.is_none() {
-                *b = Some(std::fs::read(path).unwrap_or_default());
+                *b = Some(content().unwrap_or_default());
+            }
+        }
+    });
+    // the truncation cuts the kept tail's old bytes off: keep them first
+    save_kept(path);
+    // (the file is the new stream's own from here on)
+    LOGICAL.with(|m| {
+        let mut m = m.borrow_mut();
+        if let Some(l) = m.get_mut(&k) {
+            l.len = None;
+            if l.keep.is_none() {
+                m.remove(&k);
             }
         }
     });
@@ -3927,7 +4317,7 @@ fn note_file(path: &str) {
             return;
         }
         let stat = StatSig::of(path).unwrap_or_default();
-        let data = std::fs::read(path).ok();
+        let data = read_logical(path).ok();
         let hash = data
             .as_deref()
             .map(crate::persist::hash128)
@@ -4082,9 +4472,12 @@ fn out_state<W: Write>(
 ) -> Result<(u64, u64), String> {
     w.flush().map_err(|e| format!("{path}: {e}"))?;
     let at = position(w.get_mut()).ok_or_else(|| format!("{path}: no position"))?;
-    let len = std::fs::metadata(path)
-        .map(|m| m.len())
-        .map_err(|e| format!("{path}: {e}"))?;
+    let len = match logical_len(path) {
+        Some(n) => n,
+        None => std::fs::metadata(path)
+            .map(|m| m.len())
+            .map_err(|e| format!("{path}: {e}"))?,
+    };
     Ok((len, at))
 }
 
@@ -4143,11 +4536,37 @@ fn reopen_out(path: &str, len: u64, at: u64) -> Result<Tracked, String> {
         .truncate(false)
         .open(path)
         .map_err(|e| format!("{path}: {e}"))?;
-    f.set_len(len).map_err(|e| format!("{path}: {e}"))?;
+    // A file whose logical end is known keeps its bytes past it (see
+    // `Logical`): its stream writes on from `at` and the cut comes later.
+    // So does a longer one (its first `len` bytes are the checkpoint's),
+    // its end blanked: cut now and written on, a reader could see the
+    // length cut and then a hole.
+    let mut logical = LOGICAL.with(|m| {
+        m.borrow_mut()
+            .get_mut(&out_key(path))
+            .and_then(|l| l.len.as_mut())
+            .map(|n| *n = len)
+    });
+    if logical.is_none() && disk > len {
+        blank(path, disk.saturating_sub(BLANK_END).max(len), disk)
+            .map_err(|e| format!("{path}: {e}"))?;
+        LOGICAL.with(|m| {
+            m.borrow_mut().insert(
+                out_key(path),
+                Logical {
+                    len: Some(len),
+                    keep: None,
+                },
+            )
+        });
+        logical = Some(());
+    }
     f.seek(std::io::SeekFrom::Start(at))
         .map_err(|e| format!("{path}: {e}"))?;
     stamp_output(path);
-    Ok(Tracked::new(f, path))
+    let mut t = Tracked::new(f, path);
+    t.logical = logical.is_some();
+    Ok(t)
 }
 
 fn reopen_in(path: &str, offset: u64) -> Result<BufReader<File>, String> {

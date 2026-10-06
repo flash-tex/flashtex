@@ -2370,7 +2370,7 @@ impl Session {
         let mut open = vec![];
         for f in &rec.files {
             if let Stream::In { path, .. } = &f.stream {
-                let d = std::fs::read(path).map_err(|e| format!("{path}: {e}"))?;
+                let d = system::read_logical(path).map_err(|e| format!("{path}: {e}"))?;
                 j.files.push(FileRead {
                     path: path.clone(),
                     hash: hash128(&d),
@@ -2727,32 +2727,12 @@ impl Session {
         self.reemit_from = obs
             .filter(|o| !o.new_pages.is_empty())
             .and_then(|o| o.keep_r);
-        // The next restore (this compile's, `compile_pass`) takes the old
-        // run's output tails back from memory: those of files the run never
-        // reads (the PDF) are not written back to be read again at once
-        // (`Globals::reattach_pending_deferring`; whatever does not restore
-        // next writes them, `checkpoint::flush_deferred_tails`).
-        let read: std::collections::HashSet<String> = self
-            .before_pass
-            .as_ref()
-            .and_then(|b| b.journal.as_ref())
-            .map(|j| {
-                j.files
-                    .iter()
-                    .map(|f| system::out_key(&f.path))
-                    .chain(
-                        j.lookups
-                            .iter()
-                            .filter_map(|l| l.found.as_deref().map(system::out_key)),
-                    )
-                    .collect()
-            })
-            .unwrap_or_default();
-        // (FLASHTEX_NO_DEFER_TAILS=1 writes them all back at once, for A/B)
-        let on = std::env::var_os("FLASHTEX_NO_DEFER_TAILS").is_none();
-        let defer = |p: &str| on && !read.contains(&system::out_key(p));
+        // (the old run's output tails are put back cheaply: a tail the
+        // restore kept in its file gets back only the bytes the abandoned
+        // run wrote over, `system::put_back_kept`; #1608's deferral of the
+        // rest to the next restore is not needed)
         let g = self.g.as_mut().unwrap();
-        g.reattach_pending_deferring(&defer)?;
+        g.reattach_pending()?;
         system::record_reads_into(None);
         let b = self.before_pass.take().unwrap();
         self.journal = b.journal;
@@ -2838,12 +2818,7 @@ impl Session {
             g.layer().stats = Default::default();
         }
         self.pass = 1;
-        let rep = self.compile_pass(t0, stop_at);
-        // (an abandoned run's tails this pass did not restore from: the
-        // files as `reattach_pending` leaves them)
-        let flushed = crate::checkpoint::flush_deferred_tails();
-        let mut rep = rep?;
-        flushed?;
+        let mut rep = self.compile_pass(t0, stop_at)?;
         if !paused_how.is_empty() {
             rep.paused_how = paused_how;
             rep.paused_s = paused_s;
@@ -3005,7 +2980,9 @@ impl Session {
             .read_state()
             .into_iter()
             .map(|(p, _)| {
-                let h = std::fs::read(&p).map(|d| hash128(&d)).unwrap_or([0, 0]);
+                let h = system::read_logical(&p)
+                    .map(|d| hash128(&d))
+                    .unwrap_or([0, 0]);
                 (p, h)
             })
             .collect();
@@ -3602,7 +3579,7 @@ impl Session {
                 .entry(f.path.clone())
                 .or_insert_with(|| {
                     system::known_content(&f.path)
-                        .or_else(|| std::fs::read(&f.path).ok().map(std::sync::Arc::new))
+                        .or_else(|| system::read_logical(&f.path).ok().map(std::sync::Arc::new))
                 })
                 .clone();
             // With the old content at hand, compare bytes (a 1,000-page
@@ -3886,9 +3863,6 @@ impl Session {
         // pass stands for read them (`fixed_inputs`): put back for a run
         // from scratch, which reads them all
         let fixed = std::mem::take(&mut self.fixed_inputs);
-        // (the files as an abandoned run's reattach leaves them, before
-        // this run keeps what they hold: `guard_every_output`)
-        crate::checkpoint::flush_deferred_tails()?;
         put_back(self.baseline.iter())?;
         // (no checkpoint before this run is restored again)
         system::forget_removed();
@@ -3927,6 +3901,7 @@ impl Session {
         crate::diag::reset();
         system::truncate_external_effects(0);
         system::truncate_opens(0);
+        system::forget_logical();
         system::guard_outputs(vec![]);
         // (a new engine: no stream is open, none was read ahead)
         system::clear_ahead();
@@ -4398,6 +4373,13 @@ impl Session {
             rep.converged_at = Some(j);
             let edits = obs.edits.clone();
             let g = self.g.as_mut().unwrap();
+            // (an outside write to the old run's kept output: from scratch,
+            // as for a restore)
+            if let Some(why) = g.jump_blocked() {
+                drop(busy_jump);
+                *rep = self.cold(t0, None, Some(format!("cannot jump: {why}")))?;
+                return Ok(());
+            }
             let rec_old = g
                 .pending_record(old)
                 .ok_or("no record at the convergence point")?;
