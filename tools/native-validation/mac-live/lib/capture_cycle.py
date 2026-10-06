@@ -124,7 +124,9 @@ class Cycle:
         self.transcript = open(os.path.join(a.work, "transcript.jsonl"), "w", encoding="utf-8")
         self.checks = []
         self.timings = {}
-        self.record = {"app": a.app, "binaries": {}, "checks": self.checks, "timings_ms": self.timings, "network": {}}
+        # It drives the bundled helpers directly, the compiler among them, so
+        # every result is the previous engine's (retirement plan #1236, S3r).
+        self.record = {"app": a.app, "engine": "previous", "binaries": {}, "checks": self.checks, "timings_ms": self.timings, "network": {}}
         for n, p in self.bins.items():
             self.record["binaries"][n] = describe(p)
 

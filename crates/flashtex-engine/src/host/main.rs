@@ -14,6 +14,13 @@
 //! GPL-2.0-or-later like the engine. The app never links this program; it
 //! runs it and talks to its socket.
 
+/// Linux: undo logs in mappings of their own, everything else `System`'s
+/// (`flashtex_engine::logalloc`; lane P4-MEMORY-BUDGET). A `mem-stats`
+/// build's counting allocator does the same underneath.
+#[cfg(all(target_os = "linux", not(feature = "mem-stats")))]
+#[global_allocator]
+static ALLOC: flashtex_engine::logalloc::HostAlloc = flashtex_engine::logalloc::HostAlloc;
+
 fn main() {
     let mut argv: Vec<String> = std::env::args_os()
         .map(|a| a.to_string_lossy().into_owned())
@@ -31,6 +38,8 @@ fn main() {
         engine(&argv);
     }
     flashtex_engine::host::crash::install();
+    #[cfg(target_os = "linux")]
+    flashtex_engine::logalloc::set_enabled(std::env::var_os("FLASHTEX_NO_LOG_MAPS").is_none());
     let code = match argv.get(1).map(String::as_str) {
         Some("serve" | "iserve" | "bench" | "open" | "selftest" | "layout") => {
             flashtex_engine::host::tools::main(argv)

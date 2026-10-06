@@ -222,13 +222,24 @@ pub struct Client {
     pub hello: Json,
 }
 
-/// A handle that can cancel from another thread.
+/// A handle that can cancel, or send a `COMPILE`, from another thread
+/// (a typist that keeps its own time while the client reads).
 pub struct Canceller(Stream);
 
 impl Canceller {
     pub fn cancel(&mut self, id: i64) -> io::Result<()> {
         let b = obj([("id", Json::Int(id))]).to_string();
         write_frame(&mut self.0, kind::CANCEL, b.as_bytes())?;
+        self.0.flush()
+    }
+
+    /// Send a `COMPILE` request, as [`Client::compile`].
+    pub fn compile(&mut self, req: &CompileRequest) -> io::Result<()> {
+        write_frame(
+            &mut self.0,
+            kind::COMPILE,
+            req.to_json().to_string().as_bytes(),
+        )?;
         self.0.flush()
     }
 }

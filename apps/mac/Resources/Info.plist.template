@@ -32,10 +32,11 @@
 	<key>LSApplicationCategoryType</key>
 	<string>public.app-category.productivity</string>
 	<key>NSLocalNetworkUsageDescription</key>
-	<string>FlashTeX uses the local network to discover and receive captures from nearby devices.</string>
+	<string>FlashTeX uses the local network to receive captures from nearby devices and, with Live Share, to edit projects together with other Macs.</string>
 	<key>NSBonjourServices</key>
 	<array>
 		<string>_flashtex._tcp</string>
+		<string>_flashtex-collab._tcp</string>
 	</array>
 </dict>
 </plist>

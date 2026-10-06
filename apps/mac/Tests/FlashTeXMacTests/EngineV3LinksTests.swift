@@ -20,9 +20,14 @@ final class EngineV3LinksTests: XCTestCase {
         DL3Link(rect: rect.map { Int32(($0 * Self.sp).rounded()) }, span: 0, kind: kind, file: Array(file.utf8), data: Array(data.utf8))
     }
 
+    /// As the engine sends it (display-list-v3 §4.5): the words pdfTeX
+    /// writes for the kind, the others 0 (a fitr: a 100 × 20 bp rectangle).
     func dest(_ name: String, named: Bool = true, kind: UInt8 = 0, left: Double, top: Double) -> DL3Dest {
-        DL3Dest(named: named, name: Array(name.utf8), kind: kind,
-                rect: [left, top, left, top].map { Int32(($0 * Self.sp).rounded()) }, zoom: 0)
+        let usesLeft: Set<UInt8> = [0, 3, 6, 7], usesTop: Set<UInt8> = [0, 2, 5, 7]
+        let l = usesLeft.contains(kind) ? left : 0, t = usesTop.contains(kind) ? top : 0
+        let rect = kind == 7 ? [l, t, l + 100, t + 20] : [l, t, 0, 0]
+        return DL3Dest(named: named, name: Array(name.utf8), kind: kind,
+                       rect: rect.map { Int32(($0 * Self.sp).rounded()) }, zoom: 0)
     }
 
     // MARK: the v2 pane's rules
@@ -80,6 +85,34 @@ final class EngineV3LinksTests: XCTestCase {
         XCTAssertEqual(EngineV3Links.action(for: link(1, "nope"), pages: pages), .unknownDestination("nope"))
         XCTAssertEqual(EngineV3Links.action(for: link(1, "x", file: "other.pdf"), pages: pages), .unsupported("link to another file (other.pdf)"))
         if case .unsupported = EngineV3Links.action(for: link(5, "<</S/Launch>>"), pages: pages) {} else { XCTFail("raw action") }
+    }
+
+    /// Every dest kind reaches the place its words give: the words pdfTeX
+    /// writes for the kind, the others 0 (#1568). A fitr's rectangle may
+    /// come either way round; the others' right and bottom are not a place.
+    func testEveryDestKindTargetsItsOwnWords() {
+        let sp = Self.sp
+        func at(_ kind: UInt8, _ rect: [Double]) -> CGPoint {
+            let d = DL3Dest(named: true, name: Array("d".utf8), kind: kind,
+                            rect: rect.map { Int32(($0 * sp).rounded()) }, zoom: 0)
+            return EngineV3Links.target(of: d, page: 3).rect.origin
+        }
+        let cases: [(UInt8, [Double], CGPoint, String)] = [
+            (0, [72, 100, 0, 0], CGPoint(x: 72, y: 100), "xyz"),
+            (1, [0, 0, 0, 0], .zero, "fit"),
+            (2, [0, 100, 0, 0], CGPoint(x: 0, y: 100), "fith"),
+            (3, [90, 0, 0, 0], CGPoint(x: 90, y: 0), "fitv"),
+            (4, [0, 0, 0, 0], .zero, "fitb"),
+            (5, [0, 100, 0, 0], CGPoint(x: 0, y: 100), "fitbh"),
+            (6, [90, 0, 0, 0], CGPoint(x: 90, y: 0), "fitbv"),
+            (7, [60, 80, 160, 120], CGPoint(x: 60, y: 80), "fitr"),
+            (7, [160, 120, 60, 80], CGPoint(x: 60, y: 80), "fitr, corners swapped"),
+        ]
+        for (kind, rect, want, what) in cases {
+            let p = at(kind, rect)
+            XCTAssertEqual(p.x, want.x, accuracy: 1e-4, what)
+            XCTAssertEqual(p.y, want.y, accuracy: 1e-4, what)
+        }
     }
 
     /// The model's notes are the v2 pane's for the same outcome.

@@ -77,13 +77,23 @@ impl Sha256 {
     }
 
     /// Compress whole 64-byte blocks: with the ARMv8 SHA-256 instructions
-    /// where the CPU has them (every Apple silicon Mac), else in software.
+    /// where the CPU has them (every Apple silicon Mac), or x86's SHA
+    /// extensions (AMD since Zen, Intel since Ice Lake and the Atoms), else
+    /// in software.
     fn blocks(&mut self, data: &[u8]) {
         #[cfg(target_arch = "aarch64")]
         {
             if std::arch::is_aarch64_feature_detected!("sha2") {
                 // SAFETY: the CPU has the SHA-256 instructions.
                 unsafe { compress_arm(&mut self.h, data) };
+                return;
+            }
+        }
+        #[cfg(target_arch = "x86_64")]
+        {
+            if x86_sha() {
+                // SAFETY: the CPU has the SHA extensions, SSSE3 and SSE4.1.
+                unsafe { compress_x86(&mut self.h, data) };
                 return;
             }
         }
@@ -165,6 +175,76 @@ unsafe fn compress_arm(h: &mut [u32; 8], data: &[u8]) {
     }
     vst1q_u32(h.as_mut_ptr(), abcd);
     vst1q_u32(h.as_mut_ptr().add(4), efgh);
+}
+
+/// Whether the CPU has what [`compress_x86`] uses (detected once).
+#[cfg(target_arch = "x86_64")]
+fn x86_sha() -> bool {
+    static HAS: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *HAS.get_or_init(|| {
+        std::arch::is_x86_feature_detected!("sha")
+            && std::arch::is_x86_feature_detected!("ssse3")
+            && std::arch::is_x86_feature_detected!("sse4.1")
+    })
+}
+
+/// [`Sha256::blocks`] with x86's SHA extensions. The state is kept as the
+/// instructions want it, (a, b, e, f) and (c, d, g, h) in one register each;
+/// `sha256rnds2` does two rounds, so each group of four message words takes
+/// two of them, the second on the upper half of the words-plus-constants
+/// vector. `sha256msg1`/`sha256msg2` extend the message schedule (FIPS
+/// 180-4 §6.2.2 step 1) four words at a time. The PC's page content hashes
+/// (lane P4-PAGE-COST) ran in the software rounds.
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "sha,sse2,ssse3,sse4.1")]
+unsafe fn compress_x86(h: &mut [u32; 8], data: &[u8]) {
+    use std::arch::x86_64::*;
+    // big-endian words: reverse the bytes of each 32-bit lane
+    let bswap = _mm_set_epi64x(0x0c0d_0e0f_0809_0a0b, 0x0405_0607_0001_0203);
+    // (a, b, c, d), (e, f, g, h) -> (a, b, e, f), (c, d, g, h), each with its
+    // first word in the top lane
+    let dcba = _mm_loadu_si128(h.as_ptr() as *const __m128i);
+    let hgfe = _mm_loadu_si128(h.as_ptr().add(4) as *const __m128i);
+    let cdab = _mm_shuffle_epi32(dcba, 0xb1);
+    let efgh = _mm_shuffle_epi32(hgfe, 0x1b);
+    let mut abef = _mm_alignr_epi8(cdab, efgh, 8);
+    let mut cdgh = _mm_blend_epi16(efgh, cdab, 0xf0);
+    for block in data.as_chunks::<64>().0 {
+        let (abef0, cdgh0) = (abef, cdgh);
+        let p = block.as_ptr() as *const __m128i;
+        let mut m = [
+            _mm_shuffle_epi8(_mm_loadu_si128(p), bswap),
+            _mm_shuffle_epi8(_mm_loadu_si128(p.add(1)), bswap),
+            _mm_shuffle_epi8(_mm_loadu_si128(p.add(2)), bswap),
+            _mm_shuffle_epi8(_mm_loadu_si128(p.add(3)), bswap),
+        ];
+        for i in 0..16 {
+            if i >= 4 {
+                // words 4i..4i+3 from the four groups before them
+                let (w0, w1, w2, w3) = (m[i % 4], m[(i + 1) % 4], m[(i + 2) % 4], m[(i + 3) % 4]);
+                let t = _mm_add_epi32(_mm_sha256msg1_epu32(w0, w1), _mm_alignr_epi8(w3, w2, 4));
+                m[i % 4] = _mm_sha256msg2_epu32(t, w3);
+            }
+            let wk = _mm_add_epi32(
+                m[i % 4],
+                _mm_loadu_si128(K.as_ptr().add(4 * i) as *const __m128i),
+            );
+            cdgh = _mm_sha256rnds2_epu32(cdgh, abef, wk);
+            abef = _mm_sha256rnds2_epu32(abef, cdgh, _mm_shuffle_epi32(wk, 0x0e));
+        }
+        abef = _mm_add_epi32(abef, abef0);
+        cdgh = _mm_add_epi32(cdgh, cdgh0);
+    }
+    let feba = _mm_shuffle_epi32(abef, 0x1b);
+    let dchg = _mm_shuffle_epi32(cdgh, 0xb1);
+    _mm_storeu_si128(
+        h.as_mut_ptr() as *mut __m128i,
+        _mm_blend_epi16(feba, dchg, 0xf0),
+    );
+    _mm_storeu_si128(
+        h.as_mut_ptr().add(4) as *mut __m128i,
+        _mm_alignr_epi8(dchg, feba, 8),
+    );
 }
 
 /// SHA-256 of `data`.

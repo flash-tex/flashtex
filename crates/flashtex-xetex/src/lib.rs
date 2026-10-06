@@ -27,6 +27,9 @@
 
 pub use flashtex_engine::arena;
 pub use flashtex_engine::ix;
+/// TeX Live's HarfBuzz and FreeType (phase S1's native fonts,
+/// docs/design/xetex/PLAN.md §3.1): `fontlibs::hb`, `fontlibs::ft`.
+pub use flashtex_xetex_fontlibs as fontlibs;
 
 pub mod generated;
 pub mod state;
