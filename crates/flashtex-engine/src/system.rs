@@ -447,11 +447,13 @@ pub fn put_back_kept(path: &str, base: u64) -> Result<bool, String> {
         .write(true)
         .open(path)
         .map_err(e)?;
-    // (the end first: `saved`, where it covers the end, holds the same)
-    f.seek(std::io::SeekFrom::Start(end_at)).map_err(e)?;
-    f.write_all(&kp.end).map_err(e)?;
+    // (the end last: until the old bytes before it are back, a reader sees
+    // no `%%EOF` after the new run's bytes; where `saved` covers the end,
+    // it holds the same)
     f.seek(std::io::SeekFrom::Start(base)).map_err(e)?;
     f.write_all(saved).map_err(e)?;
+    f.seek(std::io::SeekFrom::Start(end_at)).map_err(e)?;
+    f.write_all(&kp.end).map_err(e)?;
     if disk_len(path) != Some(old_len) {
         f.set_len(old_len).map_err(e)?;
     }
