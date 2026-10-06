@@ -1,6 +1,7 @@
 import Foundation
 import XCTest
 import FlashTeXDisplayListV3
+import FlashTeXPreviewV3
 import FlashTeXProtocol
 @testable import FlashTeXMac
 
@@ -42,10 +43,10 @@ final class EngineV3AppParityTests: XCTestCase {
 
     static let document = "\\documentclass{article}\n\\begin{document}\nHello.\n\\end{document}\n"
 
-    private func v3Model(_ text: String = EngineV3AppParityTests.document) -> ShellModel {
+    private func v3Model(_ text: String? = nil) -> ShellModel {
         let model = ShellModel()
         model.autoCompile = false
-        model.replaceProject(entryText: text, named: "main.tex")
+        model.replaceProject(entryText: text ?? Self.document, named: "main.tex")
         model.engineV3Enabled = true
         return model
     }
@@ -68,7 +69,7 @@ final class EngineV3AppParityTests: XCTestCase {
     private func pagesFixture() throws -> [DL3PreparedPage] {
         let url = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
             .appendingPathComponent("FlashTeXDisplayListV3Tests/Fixtures/beamer-overlays.dl3")
-        return try DL3Document(frames: Array(try Data(contentsOf: url))).orderedPages
+        return try DL3Document(frames: Array(Data(contentsOf: url))).orderedPages
     }
 
     // MARK: A13 crash limit, A14 retry
