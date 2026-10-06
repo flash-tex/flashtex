@@ -209,6 +209,20 @@ enum UnicodeFonts {
                 }
                 guard case .word(let w) = t else { continue }
 
+                // References and definitions: the name after them is not a use,
+                // and not a conditional to track either, also in a branch that is
+                // not read (`\ifxetex \let\ifxe\iftrue \fi`, `\newif\ifxe`).
+                if w == "let" || w == "futurelet" {
+                    i += 1 // the name defined
+                    if case .other("=") = (i < toks.count ? toks[i] : .other(" ")) { i += 1 }
+                    i += 1 // the name it takes the meaning of
+                    continue
+                }
+                if UnicodeFonts.definers.contains(w) {
+                    if name(at: i) != nil { i += 1 } // the body, a group, is scanned as code where it runs
+                    continue
+                }
+
                 // conditionals (tracked even while skipping, so `\fi`s pair up)
                 if w == "else" || w == "or" { if !stack.isEmpty { stack[stack.count - 1].inElse = true }; continue }
                 if w == "fi" { if !stack.isEmpty { stack.removeLast() }; continue }
@@ -238,17 +252,6 @@ enum UnicodeFonts {
                 }
                 if skipping { continue }
 
-                // references and definitions: the name after them is not a use
-                if w == "let" || w == "futurelet" {
-                    i += 1 // the name defined
-                    if case .other("=") = (i < toks.count ? toks[i] : .other(" ")) { i += 1 }
-                    i += 1 // the name it takes the meaning of
-                    continue
-                }
-                if UnicodeFonts.definers.contains(w) {
-                    if name(at: i) != nil { i += 1 } // the body, a group, is scanned as code
-                    continue
-                }
                 if UnicodeFonts.commandIfs.contains(w) || (w.hasPrefix("if") && group(at: i) != nil) {
                     // etoolbox's `\ifdef{\setmainfont}{T}{F}`: the first argument is
                     // a reference; a branch taken only when a Unicode-only name is
