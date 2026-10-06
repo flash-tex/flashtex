@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "urn:flashtex:experimental:rendering-v2",
   "title": "Experimental FlashTeX display-list-v2 proposal",
-  "description": "Not negotiated production ABI. Opt-in version-2 envelope is experimental; runtime-v1 remains unchanged. Run scripts/check_rendering_v2.py for required cross-record, capability, UTF-8, digest, and arithmetic validation. Synthetic tests do not prove real font glyph correctness. RGBA is unpremultiplied sRGB with source-over compositing; each logical cluster is extracted once using ActualText, not once per glyph.",
+  "description": "Not negotiated production ABI. Opt-in version-2 envelope is experimental; runtime-v1 remains unchanged. Its cross-record, capability, UTF-8, digest, and arithmetic checker (scripts/check_rendering_v2.py) was deleted in old-engine retirement stage S2 (#1236); the schema retires with the v2 pane. Synthetic tests do not prove real font glyph correctness. RGBA is unpremultiplied sRGB with source-over compositing; each logical cluster is extracted once using ActualText, not once per glyph.",
   "oneOf": [
     {
       "$ref": "#/$defs/offer"

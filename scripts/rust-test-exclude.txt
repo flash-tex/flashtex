@@ -7,4 +7,5 @@
 #
 # THE LIST MAY ONLY SHRINK: delete a line in the PR that closes its issue.
 
-flashtex-rendering-core   # #992: 4 byte-exact PDF goldens differ
+# (empty: flashtex-rendering-core, the last entry, was deleted with its crate in
+# old-engine retirement stage S2, #1236)
