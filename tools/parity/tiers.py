@@ -39,7 +39,11 @@ DEFAULT_ORACLE = "/Library/TeX/texbin/pdftex"
 FMT = "pdflatex"
 PASSES = 6
 PASS_TIMEOUT = 300
-QPDF_ARGS = ["--qdf", "--normalize-content=y", "--object-streams=disable"]
+# --compress-streams=y: qpdf still decodes every stream it can (Flate, LZW, predictors) and
+# normalises the content streams, then writes them compressed again with its own Flate, so
+# the qdf copy stays about the size of the PDF; Graph decodes one stream at a time, and an
+# image as a stream (image_digest). Without it a 12.7 MB PDF became a 3.0 GB copy (#1621).
+QPDF_ARGS = ["--qdf", "--normalize-content=y", "--object-streams=disable", "--compress-streams=y"]
 # P-T2's normalised (qdf) copy of a PDF holds every stream decoded, and the comparison reads
 # it whole: a 12.7 MB PDF with large images (T4 2511.15561v1) became 3.0 GB and an OOM kill.
 # Over this size the document is a harness error (unmeasured; its tier reads partial), never
@@ -607,24 +611,78 @@ def clear_row_padding(doc, obj, data):
     1.40.29 on the same PNG wrote 0 on the Macs and 1101110 on the NixOS PC
     (tcolorbox-example's Basilica_5.png, 977 px at 1 bit, P5-BOARD-T4, 2026-10-06):
     heap contents, not output anyone can match. Every pixel is still compared."""
-    if not isinstance(obj, dict) or str(obj.get("Subtype")) != "Image":
+    g = row_geometry(doc, obj)
+    if g is None:
         return data
-    w, h = obj.get("Width"), obj.get("Height")
-    bpc = 1 if obj.get("ImageMask") is True else obj.get("BitsPerComponent")
-    n = image_components(doc, obj)
-    if not all(isinstance(v, int) and not isinstance(v, bool) and v > 0 for v in (w, h, bpc, n or 0)):
-        return data
-    bits = w * bpc * n
-    if bits % 8 == 0:
-        return data
-    rowbytes = (bits + 7) // 8
+    h, rowbytes, keep = g
     if len(data) != h * rowbytes:  # still encoded (DCT, JPX), or not plain rows: as it is
         return data
-    keep = (0xff << (8 - bits % 8)) & 0xff
     out = bytearray(data)
     for i in range(rowbytes - 1, len(out), rowbytes):
         out[i] &= keep
     return bytes(out)
+
+
+def row_geometry(doc, obj):
+    """(height, bytes per row, mask of the last byte's pixel bits) of an image whose rows
+    end inside a byte, or None (not an image, rows ending on a byte, or unknown)."""
+    if not isinstance(obj, dict) or str(obj.get("Subtype")) != "Image":
+        return None
+    w, h = obj.get("Width"), obj.get("Height")
+    bpc = 1 if obj.get("ImageMask") is True else obj.get("BitsPerComponent")
+    n = image_components(doc, obj)
+    if not all(isinstance(v, int) and not isinstance(v, bool) and v > 0 for v in (w, h, bpc, n or 0)):
+        return None
+    bits = w * bpc * n
+    if bits % 8 == 0:
+        return None
+    return h, (bits + 7) // 8, (0xff << (8 - bits % 8)) & 0xff
+
+
+# Decoded bytes handled at a time when an image is hashed as a stream (image_digest).
+DIGEST_CHUNK = 8 << 20
+
+
+def image_digest(doc, obj, raw):
+    """sha256 (hex) of an image XObject's decoded samples with the row padding cleared
+    (clear_row_padding), computed as a stream in constant memory; None when the image is
+    not plain /FlateDecode (no /DecodeParms), which the caller decodes as before.
+
+    The same digest as sha(clear_row_padding(doc, obj, decode(...))), without holding
+    the image: T4's 2511.15561v1 holds 3.0 GB of decoded image data (#1621)."""
+    if not isinstance(obj, dict) or str(obj.get("Subtype")) != "Image" or obj.get("DecodeParms"):
+        return None
+    filt = obj.get("Filter")
+    if not (filt == "FlateDecode" or (isinstance(filt, list) and len(filt) == 1 and filt[0] == "FlateDecode")):
+        return None
+    geo = row_geometry(doc, obj)
+    table = bytes(i & geo[2] for i in range(256)) if geo else None
+    plain, masked = hashlib.sha256(), hashlib.sha256()
+    z = zlib.decompressobj()
+    pos = 0
+
+    def take(buf):
+        nonlocal pos
+        if not buf:
+            return
+        plain.update(buf)
+        if geo:
+            rb = geo[1]
+            first = (rb - 1 - pos) % rb  # index in buf of the first row's last byte
+            out = bytearray(buf)
+            out[first::rb] = out[first::rb].translate(table)
+            masked.update(out)
+        pos += len(buf)
+
+    data = raw
+    while data:
+        take(z.decompress(data, DIGEST_CHUNK))
+        data = z.unconsumed_tail
+    take(z.flush())
+    if not z.eof:
+        raise zlib.error("incomplete or truncated stream")
+    use_masked = geo is not None and pos == geo[0] * geo[1]
+    return (masked if use_masked else plain).hexdigest()
 
 
 class Graph:
@@ -656,6 +714,15 @@ class Graph:
             data = data.replace(t.encode("latin-1"), b"SUBSET+")
         return data
 
+    def stream_digest(self, num, obj, raw):
+        """sha of the stream's compared bytes (`stream`); an image is hashed as a stream
+        (image_digest), so a large one is never held in memory."""
+        try:
+            d = image_digest(self.doc, obj, raw)
+        except zlib.error:
+            d = None
+        return d if d is not None else sha(self.stream(num))
+
     def node(self, num):
         if num in self.memo:
             return self.memo[num]
@@ -663,7 +730,7 @@ class Graph:
         obj, raw = self.doc.objects.get(num, (None, None))
         s = self.canon(obj)
         if raw is not None:
-            s += " stream " + sha(self.stream(num))
+            s += " stream " + self.stream_digest(num, obj, raw)
         h = sha(s)[:40]
         self.memo[num] = h
         if isinstance(obj, dict) and obj.get("Type") == "Font":
