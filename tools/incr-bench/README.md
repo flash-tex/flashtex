@@ -88,6 +88,17 @@ and the engine are `ref`'s. A branch that changes a sweep's definition dispatche
 `gh workflow run sweeps.yml --ref <branch> -f ref=<branch>`. gates.sh keeps the same definitions
 for a local run; change both together.
 
+Two environment findings from the first hosted runs (2026-10-06), both handled in the workflow:
+the hosted TeX Live is scheme-medium plus pinned extras, and without `siunitx` and `cleveref` every
+`full-N` and `refs-N` compile stopped in the preamble, engine and reference alike, so those units
+passed while testing nothing (`prepare` now compiles the generated documents with pdfTeX first).
+And with `INCR_BENCH_DIR` under a path containing `..` (`$GITHUB_WORKSPACE/../ib`), `span`'s
+plain-120 seeds 4 and 5 (the line kinds) reported about 2 M wrong source lines on main: after a
+converging `newline`/`split` edit, the kept pages' spans did not move with their lines. Under a
+canonical path (`$RUNNER_TEMP/ib`, as `/tmp/incr-bench` on the PC) the same runs give 0 wrong.
+That is a host bug with such paths (DESIGN.md §5.3 rule (c)); reproduce with
+`INCR_BENCH_DIR=/some/dir/../ib tools/incr-bench/dlspan.py gates plain-120 --edits 12 --seed 4 --from 0.3 --kinds letter,newline,split`.
+
 **The NixOS PC is for timing and latency measurements only** (T7, `keys*.sh`, `mem*.py`, the
 instruction counts): numbers that need a quiet, known machine. Correctness does not depend on load.
 
