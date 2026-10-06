@@ -68,11 +68,19 @@ concurrency:
 env:
   # As ci.yml's engine-parity-hosted: texlive/texlive:latest-medium as of
   # 2026-09-27 (TeX Live 2026, pdfTeX 1.40.29), pinned by digest, plus the
-  # two packages beamer loads that scheme-medium lacks.
+  # two packages beamer loads that scheme-medium lacks, plus the two the
+  # generated documents load (tools/incr-bench/gen.py's full-N: siunitx,
+  # cleveref; genrefs.py's refs-N: cleveref). Without those every full-N and
+  # refs-N compile stopped in the preamble, so the sweeps compared two equal
+  # error runs ("cold" 100 of 100) and span's hosts had nothing to keep
+  # (measured 2026-10-06). The `prepare` job's preflight now catches that.
+  # siunitx r80407 (3.6.3), cleveref r79618 (0.21.4).
   TEXLIVE_IMAGE: texlive/texlive@sha256:961215b30a17099ee677cedbb9163fe755ebca1d7e8b0b9fa73248a2f53bd198
   TEXLIVE_EXTRA: |
     sansmathaccent 62cf97334eb2c1d4056cb7f72ef2e59d99edaef151c3f4870116cc23056394b9
     translations a7766687fd777e7077a68d6d908cb43da0673616e58ebc31741b22108d4af591
+    siunitx 28573d661ab5cb9472eaed3dd46c30fcaee569ce5f227eb437fd1b18cac6c708
+    cleveref 2d52e8f485c20dd4352dda55d14abf94666e845adeb5f630f73d3c67692d22a1
   JOBS: "4"
 
 jobs:
@@ -166,10 +174,26 @@ jobs:
           echo "sides=${sides# }" >> "$GITHUB_OUTPUT"
           echo "to build: ${sides:-nothing (cached)}"
       - uses: ./harness/.github/actions/texlive-2026
-        if: steps.need.outputs.sides != ''
         with:
           image: ${{ env.TEXLIVE_IMAGE }}
           extra: ${{ env.TEXLIVE_EXTRA }}
+      - name: preflight, the generated documents compile with TeX Live's pdflatex
+        # A package this TeX Live lacks makes a document stop in its preamble
+        # on the engine and the reference alike: the sweeps would then compare
+        # equal error runs and pass. pdfTeX itself must compile each cleanly.
+        run: |
+          set -euo pipefail
+          for side in ref base; do
+            [[ -d "$side" ]] || continue
+            ib="$RUNNER_TEMP/preflight-$side"
+            INCR_BENCH_DIR="$ib" python3 "$side/tools/incr-bench/mkdocs.py" > /dev/null
+            for doc in plain-10 full-10 refs-30; do
+              (cd "$ib/src-$doc" && pdflatex -interaction=nonstopmode -halt-on-error "$doc.tex" > /dev/null 2>&1) || {
+                grep -E '^!|not found' "$ib/src-$doc/$doc.log" | head -5 || true
+                echo "::error::$side: TeX Live's pdflatex does not compile $doc (a missing package? add it to TEXLIVE_EXTRA)"; exit 1; }
+              echo "$side: $doc ok ($(grep -c . "$ib/src-$doc/$doc.log") log lines)"
+            done
+          done
       - uses: dtolnay/rust-toolchain@stable
         if: steps.need.outputs.sides != ''
       - uses: Swatinem/rust-cache@v2
