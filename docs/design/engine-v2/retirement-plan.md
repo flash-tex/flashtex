@@ -61,7 +61,7 @@
 | 5 | **S3** Per-document engine choice | #1421, #1427: the choice per document, a window override, the app setting, records, a lazy migration of the global key, fallback blockers with a banner | Built; `EngineChoiceTests` (29 tests) | mac-claude-a | — | — | **partly landed** |
 | 6 | **S3r** S3 remainder | (a) `CaptureFeatures` per engine (§1.5); (b) an engine label on `FlashTeXLog` lines at open and compile, and an `engine` field in the §1.8 attribution tools | `mac-app`; named tests (§4.4) | kabir-claude | — | S3 | not started |
 | 7 | **S4** Gates P5 needs | (a) the #1299 board on a hosted fallback leg, and a complete run; (b) T4 on the board (#1461 ✔ baseline FINAL; #1598 board row); (c) T2 completing green on main (#1574 fixed the harness); (d) the no-TeX-Live gate scheduled and green (#1563 ✔ weekly; first run pending); (e) T7 by Q1 (#1605, #1609; a reference run on main); (f) parity fixtures on the engine; (g) T0 in `CI required` ✔ (#1336); (h) **the row → test check** (§4.4) | 10 consecutive green `merge_group` runs with the new jobs; 3 consecutive complete nightly boards; one T7 reference run on main | Commander (workflows); (h) kabir-claude | — | — | partly |
-| 8 | **S5** Flip: new documents default to the new engine | `EngineChoice.defaultForNewDocuments = .new` (EngineChoice.swift L130, one line); nightly `parity-corpus` and parity fixtures default to the engine; `baseline-fixtures.json` re-recorded on its host. **Existing documents do not change** (§5.3). | **Decision 3's gate as confirmed** (§4.2); the S5 rows (§4.4); one shipped release carries #1421/#1427's records (§5.3); T1 with 0 new differences; T7 meeting §1.2 | Commander (one-line flip) | — (flip back) | S3, S3r, S4 | — |
+| 8 | **S5** Flip: new documents default to the new engine | `EngineChoice.defaultForNewDocuments = .new` (EngineChoice.swift L130, one line); nightly `parity-corpus` and parity fixtures default to the engine; `baseline-fixtures.json` re-recorded on its host. **Existing documents do not change** (§5.3). | **Decision 3's gate as confirmed** (§4.2); the S5 rows (§4.4); one shipped release carries #1421/#1427's records (§5.3); T1 with 0 new differences; T7 meeting §1.2 | Commander (one-line flip) | — (flip back) | S3, S3r, S4; the modes lane's interim fontspec fallback (§4.4) | — |
 | 9 | **S6a** Shared types to v3 files | Move `V2PageText`'s line builder, `DisplayListLinks`'s URI policy and `MathHoverPreview`'s `padding` / `MathPreviewView` into v3-owned files (§1.4), as a rename with no behaviour change. Rewrite the v2-parity assertions in `EngineV3LinksTests`. | `swift build`; `EngineV3LinksTests`, `EngineV3AccessibilityTests`, `EngineV3SearchTests` and `EngineV3MathHoverTests` pass, not skipped | Commander assigns | — (a move) | S5 | — |
 | 10 | **S6** App old route out | Delete the §1.4 Swift, the helper rows, menus, attach commands, user docs and the §5.5 defaults; retarget the tools (§1.8); remove the `.previous` engine, its blockers and banner from `EngineChoice` and rewrite their tests; `packaging-selftest.sh` must fail on a missing helper | **The S6 rows** (§4.4); the §6 licence preconditions (RQ19); RQ6 ruled; **the Unicode mode's M3 gate passed** (modes Q1) | Commander assigns | **yes** | S5, S6a, M3 | — |
 | 11 | **S7** Old engine deleted at once | One PR deletes the compiler, render-pipeline, the old `flashtex-cli`, perf-bench and every §1.3 orphan, with their CI, scripts, generated entries and env (§1.7, §1.8) | Full tier; `check-generated.py`; a release.yml dry-run; the §4.6 check; T7 has gated for ≥ 10 runs; RQ5 ruled; 0 open old-path PRs | Commander assigns | **yes** | S6, queued as soon as it lands | — |
@@ -81,7 +81,7 @@
 
 1. **bibtex-bst leaves in S2** (RQ16). DESIGN §13 decision 4 (O4, L1162) ports `bibtex.web` through web2rust for the no-TeX-Live case. Nothing on main or in an open PR reuses `crates/bibtex-bst` (VERIFIED). The S2 PR deletes it in a commit of its own, which can be dropped.
 2. **S6 and S7 wait for the Unicode mode's M3 gate** (modes Q1). This plan reads Q1 as: the old engine, and therefore the old route in the app, stays as the explicit fallback for Unicode-routed documents until M3 passes. S6 and S7 come after M3.
-3. **The S5 / S6 row split** in §4.4. Visible-fallback rows (A9, A17) are allowed at S5 and forbidden at S6. Old-route-only rows (B9, C25, E2, E3, E5) gate S6, not S5.
+3. **The S5 / S6 row split** in §4.4. Visible-fallback rows (A9, A17) are allowed at S5 and forbidden at S6. Old-route-only rows (C25, E2, E3, E5) gate S6, not S5. B9 moved to S5's done class after #1592.
 4. **"Gates, not a soak"** (revision 2's question): S4's three consecutive boards and S5's T7 requirement are gates. Q1 and Q3 being decided removes their dependency on an open question.
 5. **Ruling 4 at S6** (§5.3): a document still recorded as `previous` gets a one-time sheet that must be acknowledged.
 6. **§10's TFM wording** (§2): only `math-layout/src/tfm.rs` survives, in place.
@@ -265,14 +265,14 @@ The iPad companion has no engine code (D14), and no iPad Swift retires.
   otherwise S6 retargets it. Either way the iPad build stays free of engine code.
 - The bridge feature list (§1.3) is another compiler-derived input to the iPad capture
   flow. S1 keeps it byte-identical.
-- **`apps/mac/Sources/FlashTeXMac/CaptureFeatures.swift`** (81 lines, MIT) is the Mac's own pinned `supported_features` list. It is sent with every `capture_convert` (transfer-v1), and the bridge forwards it to the conversion provider.
+- **`apps/mac/Sources/FlashTeXMac/CaptureFeatures.swift`** (81 lines, MIT) is the Mac's own pinned `supported_features` list. It is sent with every `capture_convert` (transfer-v1), but **`flashtex-bridge` does not forward it** (VERIFIED, review N1 of revision 3): `crates/bridge/src/main.rs` L36–44 accepts the field and ignores it, and L154–157 always gives the provider the bridge's own table, `features::supported_features()`, which S1 derived from the old compiler's `COMMAND_GLYPHS` (issues #51/#23 chose a bridge-owned list over a caller's).
   - **What it holds:** the 60 `COMMAND_GLYPHS` names and the parser's structures, pinned to compiler commit `49e6eb43…` (`compilerSHA`, L18). It also has explicit "NOT supported" lines (L50–56: `gather*`, `\mathbb`, `\text`), which describe the **old** compiler's limits.
   - **It has no engine parameter.** Its callers (VERIFIED) are `ShellModel+Bridge.swift` L309 (`submitCapture`) and L349 (`convertCapture`, default argument), which L344 and `CaptureInbox.swift` L218 reach without an override. So a document on the new engine still advertises the old compiler's limits.
   - **Its test:** `CaptureFeaturesTests` re-derives the glyph list through `git show <sha>:crates/compiler/src/math.rs` and skips when that commit is absent.
 
   | Stage | What happens to it |
   |---|---|
-  | S3r | `supportedFeatures(for: Engine)`. A capture for a document on the new engine sends a list without the old "NOT supported" lines for features the new engine typesets. The old-engine list stays byte-identical. The new list is MIT data; its provenance follows RQ5's ruling, and until then it is the old list minus the `unsupported` block. Tests: `CaptureFeaturesTests.testTheNewEngineListOmitsTheOldLimits` and `testTheOldEngineListIsUnchanged`, plus a `ShellModel+Bridge` test that the document's engine picks the list. |
+  | S3r | **The bridge picks the list by engine** (#1611). `capture_convert` gains an additive `engine` (`new` or `previous`; absent = `previous`). The bridge sends the provider the old compiler's table for `previous` and a short `POLICY:` list for `new` (packages tied to the document's own `\usepackage` lines; `features::supported_features_for`); its system prompt says how to read `POLICY:` entries. The caller still cannot supply the list. The Mac sends `typesettingEngine`. Tests: Rust `features::the_engine_picks_the_list` and `conversion_provider::the_documents_engine_picks_the_providers_feature_list` (the provider's `destination_context` follows `engine`); Swift `CaptureFeaturesTests.testCaptureConvertCarriesTheEngine`, `BridgeRecoveryTests.testConvertSendsTheDocumentsEngine` (the fake bridge records the payload) and `EngineChoiceTests` (the request names the engine). The Mac's own list stays one list, sent for wire compatibility. |
   | S6 | The old list and the git-history test retire. One list remains, with a test that pins it to its MIT source. |
   | S7 | Nothing left to do. |
 
@@ -520,16 +520,17 @@ Revision 2's dry-run could not fail. On current main it was impossible: the stag
 2. re-applying S's edits to files it changed but did not delete (`git diff <S-merge>^1 <S-merge> -- <those files> | git apply -R -3`), resolving any conflicts by hand;
 3. adding the restored crates back to `members`.
 
+**Rollback runs in stack order.** A stage's deleted code may depend on code a later stage deleted: S2's color-expressions needs vector-graphics, rendering-core needs font-resources, font-engine and pdf, and unicode-tex needs font-engine, all of which S7 deletes. So rolling back S(n) after S(n+k) landed first rolls back S(n+k), …, S(n+1), newest first, then S(n). Restoring S2 alone after S7 is not a supported rollback; it needs S7's crates.
+
 **The check runs at two points, and each run records:** the conflict count, the commands, the time taken and the gate result, in the PR body.
 
-1. **At the stage's own PR.** On a scratch branch made from the PR head (the tree with the stage applied), restore the stage's deleted paths from current main with steps 1–3. Then run:
+1. **At the stage's own PR: a rehearsal, not evidence.** On a scratch branch made from the PR head, restore the stage's deleted paths from current main with steps 1–3. Because steps 1–3 undo the whole PR, this gives back the base's tree and **cannot fail by construction** (#1610's run: "restored tree identical to the base"). It checks that the procedure and its commands work. Then run:
    - `cargo metadata`, which must resolve;
    - `scripts/gate.sh pr`, which must pass;
    - the stage's own check: `packaging-selftest.sh` for S2 and S6, `cargo check --workspace` and `check-generated.py` for S7, and the `members` and `gate.sh` path mapping for S8;
    - for every restored crate, `cargo build -p <crate>` and `cargo test -p <crate>`.
 
-   This fails when the PR has removed or changed something the deleted code depends on. A shared dependency gutted in the same PR, a workspace setting, or a script the crate's tests call are examples.
-2. **At every later deletion stage.** When S(n+1) is queued, repeat step 1 for each earlier stage, on top of S(n+1)'s scratch merge into main, restoring that stage's paths from its `pre-retire-*` tag. This measures the cost of rolling the earlier stage back after the later one landed. It is how S6 is checked on top of S7, and it applies to every pair.
+2. **At every later deletion stage: the check that can fail.** When S(n+1) is queued, roll back, on top of S(n+1)'s scratch merge into main, in stack order: S(n+1) first, then each earlier stage newest first, each from its `pre-retire-*` tag with steps 1–3, running the commands above after each. This fails when main has moved away from what the restored code needs (a shared crate, a workspace setting, a script its tests call), which is the cost a real rollback would meet. It is how S6 is checked on top of S7, and it applies to every pair.
 
 **Pass criteria:**
 - 0 unresolvable conflicts;
@@ -558,7 +559,8 @@ A failure blocks the queue until the Commander either accepts the measured rollb
 | Partial | C21 (status chips and HUD tooltip; the fix is at `TitleBar.swift` L131) | Done, with a test |
 | Different, in the v3 pane | A6, A7, A18, C5, C23 | The owner's retirement in writing, or done with a test. A7 has a test of the new behaviour (`EngineV3OpenTests.testOpeningAnotherFileCompilesThatFile`). |
 | **Visible fallback to the previous engine** (allowed at S5) | **A9** (`[fonts]` → `Blocker.projectFonts`); **A17** (no TeX Live, or a declined download → `.noTeXLive` / `.bundleDeclined`) | The fallback is visible: banner, status item and VoiceOver. `EngineChoiceTests.testProjectFontsFallBackAndSayWhy`, `testNoTeXLiveFallsBackAndTheChoiceSaysWhy` and `testStatusItemAndBannerShowTheFallback` pass. |
-| Old route only; gated at S6 | B9, C25, E2, E3, E5 | Nothing at S5. These rows describe the old route, which existing documents keep. |
+| Old route only; gated at S6 | C25, E2, E3, E5 | Nothing at S5. These rows describe the old route, which existing documents keep. |
+| Re-checked after #1592 (landed 2026-10-06) | **B9** (explanations) | The checklist says "different (absent on both paths)": `flashtex-explain` is on neither path. #1592 (DIAG-PARITY) gives the v3 pane explanations of its own for 25 curated TeX codes, with tests (`EngineV3ExplainTests`, `EngineV3DiagPresentTests`). So B9 is done on v3, with named tests, once the checklist file records it (APP-PARITY-CLOSE). It no longer gates S6. |
 | CLI | D5 | Gated at S7 (RQ6) |
 
 **Unicode-routed documents** (modes Q1). #1421 does not detect `fontspec` documents; under v3 they hit fontspec's own fatal error. After the flip, such a new document should not end in that error. **S5 also needs** the modes lane's interim route: a v3 run that stops with fontspec's fatal error or `\RequireXeTeX` (modes §4.2, signal 2) falls back visibly to the previous engine, as a fourth blocker with a test. This is the modes lane's work, not this plan's.
@@ -569,7 +571,6 @@ A failure blocks the queue until the Commander either accepts the measured rollb
 |---|---|
 | **A9** | The Unicode mode carries `[fonts]` and `fontspec` documents (decision 3A), and **its M3 gate has passed** (modes Q1). Until then the old engine stays as their explicit fallback, which is why S6 and S7 wait for M3. |
 | **A17** | No TeX Live: the in-app TTBv1 bundle route (#1471, #1523), with an app test of a real download (missing today, L116, L245). A declined download: the owner rules what happens when no old engine is left. |
-| **B9** | `flashtex-explain`: absent on both paths. Owner retirement, or a lane that builds it. |
 | **C25** | Preview Debug Status: a v3 test, or owner retirement (it is developer-facing). |
 | **E2** | The capture `projectId` is `"demo"` under v3 (`ShellModel.swift` L669): a fix with a test. |
 | **E3** | The capture proposal preview, which v3 refuses: a v3 route with a test, or owner retirement. |
@@ -650,7 +651,7 @@ Revision 2's §5.2 (Recents migration, a menu item writing choices for all docum
 
 ### 5.2 What S3 still owes: S3r
 
-1. **Capture features per engine** (§1.5): `ShellModel+Bridge.swift` L309 and L349 still send the old compiler's list for every document.
+1. **Capture features per engine** (§1.5). The provider always receives the bridge's own old-compiler table: the bridge ignores the Mac's `supported_features`. S3r adds `engine` to `capture_convert` and the bridge picks its list for it (#1611).
 2. **Engine labels.**
    - **`FlashTeXLog`.** No line records which engine a document opened or compiled with. The old routes log `preview-v2:`, `compile:`, `display-candidate:` and `worker:`; v3 logs `engine-v3:`, `v3capture:` and `v3bench:`; `paint:` and `launch:` name no engine. S3r adds one line per open and per compile, `engine: <new|previous> (<why>)`, where `why` is the resolution step or blocker. It also adds `engine` to the `TypingBench` summary next to `producer`.
    - **Attribution tools.** S3r records the engine (from the `engine:` line or the bench summary) in each tool. It also pins the old-engine routes to the previous engine (`FLASHTEX_ENGINE_V3=0`); otherwise, from S5 on, a new document would be measured as an "old" route. The new engine's typing bench stays `EngineV3Bench` (`FLASHTEX_V3_BENCH`). The tools are:
@@ -817,6 +818,10 @@ RQ9 is superseded by RQ18. RQ11–RQ14 were never used.
 | Scope | Dual compile, Copy Engine Report, crash banner, storage UI | §5.8 (dropped) |
 | Smaller | Stage statuses; A.9 re-run; the S1b checklist retarget | `retirement-stages.json`; §7 RQ10; S1b no longer adds CaptureFeatures to #1337, which S3r covers |
 | Commander, 2026-10-06 | A9 is P5 via the Unicode mode; under modes Q1 the old engine stays the explicit fallback for Unicode-routed documents until that gate | §4.4 (S5 fallback row, S6 row, R10); §0 "For the Commander" 2; S6 depends on M3 |
+| Rev. 3 review N1 | The bridge ignores the Mac's `supported_features` | §1.5 (S3r row), §5.2 item 1: `capture_convert.engine`, the bridge picks the list (#1611) |
+| Rev. 3 review N2 | The PR-time revert check cannot fail; S2's restore needs S7's crates | §4.3: point 1 is a rehearsal; rollback in stack order; point 2 is the check that can fail |
+| Rev. 3 review N3 | The fontspec fallback in S5's dependencies | Stage table S5 "Depends on" |
+| Rev. 3 review N4 | Row B9 after #1592 | §4.4: B9 is done on v3 with named tests; it no longer gates S6 |
 
 ### 9.2 Revisions 1–2 (carried over)
 
