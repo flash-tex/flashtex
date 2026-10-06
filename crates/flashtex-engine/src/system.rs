@@ -136,10 +136,12 @@ impl OutSink for Tracked {
 // writes the old run's later bytes after the new run's), or by an abandon
 // (which puts the old bytes back).
 
-/// An output file whose bytes past `len` are stale.
+/// An output file whose bytes past `len` are stale, or whose old tail a
+/// pending restore keeps.
 struct Logical {
-    /// The file's length as the engine's streams have it.
-    len: u64,
+    /// The file's length as the engine's streams have it (`None`: the
+    /// file's own length).
+    len: Option<u64>,
     /// The old run's tail a pending restore keeps.
     keep: Option<Keep>,
 }
@@ -181,7 +183,7 @@ thread_local! {
 
 /// The logical length of `path`, if its file is longer than that.
 pub fn logical_len(path: &str) -> Option<u64> {
-    LOGICAL.with(|m| m.borrow().get(&out_key(path)).map(|l| l.len))
+    LOGICAL.with(|m| m.borrow().get(&out_key(path)).and_then(|l| l.len))
 }
 
 /// A restore keeps the old run's tail of `path` from `base` on: the file's
@@ -202,7 +204,7 @@ pub fn keep_tail(path: &str, base: u64) -> Result<(), String> {
         m.borrow_mut().insert(
             out_key(path),
             Logical {
-                len: base,
+                len: Some(base),
                 keep: Some(Keep {
                     base,
                     old_len,
@@ -288,8 +290,12 @@ fn before_write(path: &str, end: u64) {
 
 fn after_write(path: &str, end: u64) {
     LOGICAL.with(|m| {
-        if let Some(l) = m.borrow_mut().get_mut(&out_key(path)) {
-            l.len = l.len.max(end);
+        if let Some(n) = m
+            .borrow_mut()
+            .get_mut(&out_key(path))
+            .and_then(|l| l.len.as_mut())
+        {
+            *n = (*n).max(end);
         }
     });
 }
@@ -311,8 +317,11 @@ pub fn cut_to_logical(path: &str) {
     stamp_output(path);
     LOGICAL.with(|m| {
         let mut m = m.borrow_mut();
-        if m.get(&k).is_some_and(|l| l.keep.is_none()) {
-            m.remove(&k);
+        if let Some(l) = m.get_mut(&k) {
+            l.len = None;
+            if l.keep.is_none() {
+                m.remove(&k);
+            }
         }
     });
 }
@@ -3749,9 +3758,14 @@ fn before_truncate(path: &str) {
     });
     // the truncation cuts the kept tail's old bytes off: keep them first
     save_kept(path);
+    // (the file is the new stream's own from here on)
     LOGICAL.with(|m| {
-        if let Some(l) = m.borrow_mut().get_mut(&k) {
-            l.len = 0;
+        let mut m = m.borrow_mut();
+        if let Some(l) = m.get_mut(&k) {
+            l.len = None;
+            if l.keep.is_none() {
+                m.remove(&k);
+            }
         }
     });
 }
@@ -4383,9 +4397,10 @@ fn reopen_out(path: &str, len: u64, at: u64) -> Result<Tracked, String> {
     // A file whose logical end is known keeps its bytes past it (see
     // `Logical`): its stream writes on from `at` and the cut comes later.
     let logical = LOGICAL.with(|m| {
-        m.borrow_mut().get_mut(&out_key(path)).map(|l| {
-            l.len = len;
-        })
+        m.borrow_mut()
+            .get_mut(&out_key(path))
+            .and_then(|l| l.len.as_mut())
+            .map(|n| *n = len)
     });
     if logical.is_none() {
         f.set_len(len).map_err(|e| format!("{path}: {e}"))?;
