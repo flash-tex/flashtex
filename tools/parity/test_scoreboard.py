@@ -1009,11 +1009,41 @@ class OwnerBar(unittest.TestCase):
                 {"tier": "nightly-5k", "id": "b", "cause": "L0: exit 1: ! Undefined control sequence."},
                 {"tier": "nightly-5k", "id": "c", "first_difference": "P-T1: the candidate's traced pass did not "
                  "run: the traced pass crashed: its log stops before the end of the run (3 s)"},
-                {"tier": "arxiv", "id": "d", "cause": "L0: exit -11"}]
+                {"tier": "arxiv", "id": "d", "cause": "L0: exit -11"},
+                {"tier": "nightly-5k", "id": "e", "cause": "L0: exit 101", "excluded": "oracle: pdflatex exit 1"},
+                {"tier": "nightly-5k", "id": "f", "cause": "L0: exit None (timeout)"}]
         write_json(d, "documents.json", {"documents": recs})
         c = sb.load_nightly(p, SIZES)[0]["nightly-5k"]["crashes"]
-        self.assertEqual((c["passed"], c["of"]), (8, 10))
+        # every way of not finishing, by kind; an oracle-excluded document never ran
+        self.assertEqual((c["passed"], c["of"]), (6, 10))
         self.assertIn("recovered from documents.json", c["partial"])
+        for k in ("panic 1", "exit 1", "traced pass cut short 1", "timeout 1"):
+            self.assertIn(k, c["note"])
+
+    def test_crash_row_counts_every_kind_over_the_documents_run(self):
+        t = nightly(n=10)["tiers"]["nightly-5k"]
+        t.update(documents=14, measured=10, excluded={"oracle": 4}, crashes=3,
+                 crash_kinds={"timeout": 1, "worker died": 1, "exit": 1}, crash_examples=["a", "b", "c"])
+        c = sb.load_nightly(write_json(self.tmp, "k.json", nightly(tiers={"nightly-5k": t})), SIZES)[0]
+        c = c["nightly-5k"]["crashes"]
+        self.assertEqual((c["passed"], c["of"]), (7, 10))  # of: what the engine ran, not 14
+        self.assertEqual(c["excluded"], {"oracle": 4})
+        self.assertIn("exit 1, timeout 1, worker died 1", c["note"])
+
+    def test_cross_oracle_v1_baseline_is_stated(self):
+        base = {"tier": "nightly-5k", "status": "PROVISIONAL", "measured_date": "2026-10-01",
+                "source": ["https://example.invalid/m"], "v1": {"L0": [1, 4]},
+                "oracle": {"tlpdb_sha256": "ca39e6791582" + "0" * 52, "texlive_root": "/usr/local/texlive/2026"}}
+        new = {"L0": sb.cell("measured", 4, 4)}
+        pc = {"tlpdb_sha256": "909745461c89" + "0" * 52, "texlive_root": "/home/kubar/texlive/2026"}
+        c = sb.t4_v1_cells(base, "nightly-5k", new, board_oracle=pc)["L0"]
+        self.assertIn("CROSS-ORACLE", c["note"])
+        self.assertIn("ca39e6791582", sb.fmt_cell(c))
+        self.assertIn("909745461c89", sb.fmt_cell(c))
+        same = sb.t4_v1_cells(base, "nightly-5k", new, board_oracle=base["oracle"])["L0"]
+        self.assertNotIn("CROSS-ORACLE", same["note"])
+        # the committed baseline names the Mac's oracle
+        self.assertEqual(sb.load_t4_v1_baseline(sb.T4_V1_BASELINE)["oracle"]["tlpdb_sha256"][:12], "ca39e6791582")
 
     def test_unfetched_documents_make_the_tier_partial(self):
         b = board_for(self.tmp, {"templates": summary(8, (8, 8), (8, 8), (8, 8, 8, 8), excluded={"fetch": 2})},
@@ -1024,16 +1054,26 @@ class OwnerBar(unittest.TestCase):
 
     def test_nightly_counts_crashes(self):
         import nightly as nt
-        self.assertEqual(nt.crash_of({"candidate": {"exit": 101}}), "exit 101 (panic)")
-        self.assertEqual(nt.crash_of({"candidate": {"exit": -11}}), "killed by signal 11")
-        self.assertIsNone(nt.crash_of({"candidate": {"exit": None, "timed_out": True}}))
-        self.assertIsNone(nt.crash_of({"candidate": {"exit": 1, "stderr_tail": "exit 1: ! Emergency stop."}}))
+        kind = lambda r: (nt.crash_of(r) or (None,))[0]  # noqa: E731
+        self.assertEqual(nt.crash_of({"candidate": {"exit": 101}}), ("panic", "exit 101 (panic)"))
+        self.assertEqual(nt.crash_of({"candidate": {"exit": -11}}), ("signal", "killed by signal 11"))
+        self.assertEqual(kind({"candidate": {"exit": None, "timed_out": True}}), "timeout")
+        self.assertEqual(kind({"candidate": {"exit": 1, "stderr_tail": "exit 1: ! Emergency stop."}}), "exit")
+        self.assertEqual(kind({"candidate": {"exit": 2}}), "exit")
+        self.assertEqual(kind({"worker_died": True, "candidate": {"status": "died"}}), "worker died")
+        self.assertEqual(kind({"candidate": {"exit": 0, "stderr_tail":
+                                             "the traced pass did not finish in the capture's 600 s limit"}}), "timeout")
+        self.assertEqual(kind({"candidate": {"exit": 0, "stderr_tail":
+                                             "the traced pass crashed: its log stops before the end (2 s)"}}),
+                         "traced pass cut short")
         self.assertIsNone(nt.crash_of({"candidate": {"exit": 0, "stderr_tail": ""}}))
-        self.assertTrue(nt.crash_of({"candidate": {"exit": 0, "stderr_tail":
-                                                   "the traced pass crashed: its log stops before the end (2 s)"}}))
-        recs = [{"id": "x", "crash": "exit 101 (panic)"}, {"id": "y"}, {"id": "z", "unmeasured": True}]
+        # never reached the engine: excluded by the oracle, or unmeasured
+        self.assertIsNone(nt.crash_of({"excluded": "oracle: pdflatex exit 1", "candidate": {"exit": 101}}))
+        recs = [{"id": "x", "crash": "exit 101 (panic)", "crash_kind": "panic"}, {"id": "y"},
+                {"id": "z", "excluded": "fetch: gone", "unmeasured": True}]
         row_ = nt.tier_row(recs)
-        self.assertEqual((row_["crashes"], row_["crash_examples"]), (1, ["x"]))
+        self.assertEqual((row_["crashes"], row_["crash_kinds"], row_["crash_examples"], row_["measured"]),
+                         (1, {"panic": 1}, ["x"], 2))
 
     def test_workflow_one_official_host_and_the_gate(self):
         with open(os.path.join(REPO, ".github", "workflows", "p5-scoreboard.yml")) as f:

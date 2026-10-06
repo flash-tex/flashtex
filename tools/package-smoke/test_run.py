@@ -99,6 +99,9 @@ class RunTest(unittest.TestCase):
         self.assertIsNone(smoke.same_failure(ok, both[1]))
         other = self.passes({**self.env, "FAKE_RC": "1", "FAKE_BOX": "other"}, False)
         self.assertIsNone(smoke.same_failure(other, both[1]))
+        # the reference failed but still wrote a PDF: the candidate's must match it
+        other_pdf = self.passes({**self.env, "FAKE_RC": "1", "FAKE_PDF": "other"}, False)
+        self.assertIsNone(smoke.same_failure(other_pdf, both[1]))
         # a reference that compiles is never excluded
         self.assertIsNone(smoke.same_failure(ok, self.passes(self.env, True)))
 

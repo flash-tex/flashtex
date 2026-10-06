@@ -494,6 +494,9 @@ gate_parity_selftest() {
   python3 -m unittest discover -s tools/parity -p 'test_*.py'
   # tools/lockstep's own tests (cases that need pdftex skip without it)
   python3 -m unittest discover -s tools/lockstep -p 'test_*.py'
+  # package-smoke's runner and the P5 board's T4 pick (ci.yml's gate job runs the same)
+  python3 -m unittest discover -s tools/package-smoke -p 'test_*.py'
+  scripts/tests/p5-pick-t4.test.sh
 }
 
 # ---------------------------------------------------------------------------

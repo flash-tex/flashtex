@@ -99,12 +99,17 @@ HARNESS_DIRS = (HERE, os.path.join(REPO, "tools", "real-world-corpus"), os.path.
 # exclusions that mean "not measured" (the harness failed), unlike the
 # oracle's own exclusions (pdflatex fails, or never converges)
 UNMEASURED = ("fetch:", "harness error:")
-# The owner's P5 bar (DESIGN §13, 2026-10-05) is zero crashes on T4. A crash is the
-# engine dying, not TeX stopping: a Rust panic (exit 101), a signal (a negative exit:
-# SIGSEGV, SIGABRT from a stack overflow, ...) or a traced pass whose log stops before
-# the run's end (tiers.TRACE_CRASH). A TeX error (exit 1) and a timeout are not crashes.
+# The owner's P5 bar (DESIGN §13, 2026-10-05) is zero crashes on T4. The `crashes` row
+# counts every way the engine failed to finish a document the oracle compiles, each kind
+# apart (crash_of, CRASH_KINDS): a Rust panic (exit 101), a signal (a negative exit), any
+# other non-zero exit (a fatal or TeX error pdfTeX did not hit: the oracle compiled the
+# document), a timeout, a traced pass whose log stops before the run's end, and a
+# worker that died scoring it (killed for memory?). Over the documents the engine ran:
+# a document the oracle excludes never reaches the engine (parity.score).
 PANIC_EXIT = 101
 TRACE_CRASH_PREFIX = "the traced pass crashed"
+TRACE_TIMEOUT_PREFIX = "the traced pass did not finish"
+CRASH_KINDS = ("panic", "signal", "exit", "timeout", "traced pass cut short", "worker died")
 # Resident memory of one worker scoring a document without a trace (oracle
 # and candidate PDFs parsed for L2/L3, qpdf, rasters): an allowance, not a
 # measurement; the traced part is measured (parity.PT1_MEMORY_FACTOR).
@@ -507,21 +512,30 @@ def level_name(r):
 
 
 def crash_of(r):
-    """Why the candidate engine crashed on this document (see PANIC_EXIT), or None."""
-    cand = r.get("candidate") or {}
-    if cand.get("timed_out"):
+    """(kind, why) for how the engine failed on a document it ran (CRASH_KINDS), or None.
+    A document excluded by the oracle or unmeasured never reached the engine."""
+    if r.get("excluded"):
         return None
+    if r.get("worker_died"):
+        return "worker died", "the worker scoring it died (killed for memory?)"
+    cand = r.get("candidate") or {}
+    tail = str(cand.get("stderr_tail") or "")
+    if cand.get("timed_out"):
+        return "timeout", "timed out" + (": " + tail[:160] if tail else "")
     code = cand.get("exit")
     if isinstance(code, int) and not isinstance(code, bool):
         if code == PANIC_EXIT:
-            return f"exit {code} (panic)"
+            return "panic", f"exit {code} (panic)"
         if code < 0:
-            return f"killed by signal {-code}"
-    tail = str(cand.get("stderr_tail") or "")
+            return "signal", f"killed by signal {-code}"
+        if code != 0:
+            return "exit", f"exit {code}, where the oracle compiled it" + (": " + tail[:160] if tail else "")
     if tail.startswith(TRACE_CRASH_PREFIX):
-        return tail[:200]
+        return "traced pass cut short", tail[:200]
+    if tail.startswith(TRACE_TIMEOUT_PREFIX):
+        return "timeout", tail[:200]
     if "panicked at" in tail:
-        return "panicked: " + tail[tail.index("panicked at"):][:180]
+        return "panic", "panicked: " + tail[tail.index("panicked at"):][:180]
     return None
 
 
@@ -541,7 +555,7 @@ def compact(r):
         out["unmeasured"] = True
     crash = crash_of(r)
     if crash:
-        out["crash"] = crash
+        out["crash_kind"], out["crash"] = crash[0], crash[1][:300]
     if not full_pass(r):
         cls, cause = classify(r)
         out["class"], out["cause"] = cls, (cause or "")[:400]
@@ -563,9 +577,11 @@ def tier_row(recs):
            "excluded": dict(collections.Counter(r["excluded"].split(":", 1)[0] for r in recs if r.get("excluded"))),
            "excluded_by_oracle": sum(1 for r in recs if r.get("excluded") and not r.get("unmeasured")),
            "unmeasured": sum(1 for r in recs if r.get("unmeasured")),
-           # the owner's bar: zero crashes (crash_of), over every document the engine ran
-           "crashes": sum(1 for r in recs if r.get("crash")),
-           "crash_examples": [r["id"] for r in recs if r.get("crash")][:10]}
+           # the owner's bar: zero crashes (crash_of), over the documents the engine ran
+           # (`measured`: every one the oracle compiles and the harness scored)
+           "crashes": sum(1 for r in measured if r.get("crash")),
+           "crash_kinds": dict(collections.Counter(r.get("crash_kind") or "?" for r in measured if r.get("crash"))),
+           "crash_examples": [r["id"] for r in measured if r.get("crash")][:10]}
     for t in ("P-T1", "P-T2"):
         ev = [r for r in measured if r.get(t) is not None]
         row[t] = [sum(1 for r in ev if r[t]), len(ev)] if ev else None

@@ -108,8 +108,6 @@ TIER_ORDER = ("fixtures", "arxiv", "templates", "packages", "nightly-5k",
 NO_V1_T4 = "no v1 one-off baseline (decision 1)"
 NO_V1_CRASHES = ("n/a: the v1 one-off baseline counts no crashes; the bar is 0 crashes "
                  "(owner, 2026-10-05)")
-# nightly.py's crash_of, recovered from a summary written before it counted crashes
-CRASH_CAUSE = re.compile(r"\bexit (101|-\d+)\b|the traced pass crashed|panicked at")
 # Decision 1 (Commander, 2026-10-02, #1319 comment 5960583653): T4's old column is a
 # committed one-off v1 measurement, not a nightly v1 leg (v1 is frozen by D13).
 T4_V1_BASELINE = os.path.join(HERE, "baselines", "t4-v1-oneoff.json")
@@ -422,7 +420,9 @@ def load_nightly(path, sizes=None, tiers_wanted=T4_TIERS):
                         why = "outside the --pt1-sample, or " + why
                     c["excluded"]["P-T1 %s" % why] = ne - outside
             row[m] = c
-        row["crashes"] = crash_cell(t, tier, documents, unmeasured, partial, os.path.dirname(p))
+        row["crashes"] = crash_cell(t, tier, req_count(t, "measured", w), partial, os.path.dirname(p))
+        if row["crashes"]["status"] == "measured":
+            row["crashes"]["excluded"] = dict(excluded)  # never reached the engine, shown apart
         tiers[tier] = row
     host = req(sm, "host", p, dict)
     ident = {"host": host.get("node") or host.get("label"), "host_label": host.get("label"),
@@ -437,34 +437,60 @@ def load_nightly(path, sizes=None, tiers_wanted=T4_TIERS):
     return tiers, ident
 
 
-def crash_cell(t, tier, documents, unmeasured, partial, run_dir):
-    """The `crashes` row of a T4 tier: documents the engine ran (every document but the
-    unmeasured ones) without crashing. From the summary's `crashes` count; a summary
+def crash_cell(t, tier, measured, partial, run_dir):
+    """The `crashes` row of a T4 tier: the documents the engine ran (`measured`: the oracle
+    compiles them and the harness scored them; a document the oracle excludes never reaches
+    the engine) that it finished, by kind (nightly.py crash_of: panic, signal, other non-zero
+    exit, timeout, traced pass cut short, worker died). From the summary's count; a summary
     written before nightly.py counted them has it recovered from documents.json's causes
-    (partial: a traced-pass crash outside the recorded causes may be missed); with
-    neither, the row is not run."""
-    ran = documents - unmeasured
+    (partial); with neither, the row is not run."""
     where = "%s tiers.%s" % (run_dir, tier)
     if "crashes" in t:
         n = req_count(t, "crashes", where)
-        if n > ran:
-            raise FormatError("%s: crashes %d > documents run %d" % (where, n, ran))
-        c = cell("measured", ran - n, ran, partial=partial)
-        if n:
-            c["note"] = "%d crash(es), e.g. %s" % (n, ", ".join(str(x) for x in (t.get("crash_examples") or [])[:5]))
-        return c
-    try:
-        recs = _read_json(os.path.join(run_dir, "documents.json"))["documents"]
-    except (OSError, ValueError, KeyError, TypeError):
-        return cell("not run", note="this T4 summary counts no crashes and has no documents.json")
-    hit = [r.get("id") for r in recs if isinstance(r, dict) and r.get("tier") == tier and not r.get("unmeasured")
-           and (r.get("crash") or CRASH_CAUSE.search("%s %s" % (r.get("cause") or "",
-                                                                r.get("first_difference") or "")))]
-    why = "crash count recovered from documents.json causes (the summary predates nightly.py's count)"
-    c = cell("measured", ran - len(hit), ran, partial="; ".join(x for x in (partial, why) if x))
-    if hit:
-        c["note"] = "%d crash(es), e.g. %s" % (len(hit), ", ".join(str(x) for x in hit[:5]))
+        if n > measured:
+            raise FormatError("%s: crashes %d > documents run %d" % (where, n, measured))
+        kinds = t.get("crash_kinds") or {}
+        examples = [str(x) for x in (t.get("crash_examples") or [])[:5]]
+        recovered = None
+    else:
+        try:
+            recs = _read_json(os.path.join(run_dir, "documents.json"))["documents"]
+        except (OSError, ValueError, KeyError, TypeError):
+            return cell("not run", note="this T4 summary counts no crashes and has no documents.json")
+        kinds, examples = {}, []
+        for r in recs:
+            if not isinstance(r, dict) or r.get("tier") != tier or r.get("excluded"):
+                continue
+            k = r.get("crash_kind") or crash_kind_of_cause("%s %s" % (r.get("cause") or "",
+                                                                     r.get("first_difference") or ""))
+            if k:
+                kinds[k] = kinds.get(k, 0) + 1
+                examples.append(str(r.get("id")))
+        n = sum(kinds.values())
+        examples = examples[:5]
+        recovered = "crash count recovered from documents.json causes (the summary predates nightly.py's count)"
+    c = cell("measured", measured - n, measured, partial="; ".join(x for x in (partial, recovered) if x) or None)
+    if n:
+        c["note"] = "%d failure(s): %s; e.g. %s" % (
+            n, ", ".join("%s %d" % kv for kv in sorted(kinds.items())), ", ".join(examples))
     return c
+
+
+# nightly.py's crash_of, recovered from a summary written before it counted crashes; the
+# first match wins (a document's cause names one way it failed)
+CRASH_CAUSES = (("worker died", re.compile(r"worker process scoring this document died")),
+                ("timeout", re.compile(r"\(timeout\)|the traced pass did not finish")),
+                ("panic", re.compile(r"\bexit 101\b|panicked at")),
+                ("signal", re.compile(r"\bexit -\d+\b")),
+                ("traced pass cut short", re.compile(r"the traced pass crashed")),
+                ("exit", re.compile(r"^L0: exit [1-9]\d*\b")))
+
+
+def crash_kind_of_cause(text):
+    for kind, rx in CRASH_CAUSES:
+        if rx.search(text):
+            return kind
+    return None
 
 
 SUITE_LINE = re.compile(r"^(\S.*): PASS (\d+) / FAIL (\d+) / SKIP (\d+)\s*$")
@@ -935,7 +961,7 @@ def restricted_counts(documents_path, tier, ids):
     return out, len({r["id"] for r in sel})
 
 
-def t4_v1_cells(t4_v1, tier, new_row, documents_path=None):
+def t4_v1_cells(t4_v1, tier, new_row, documents_path=None, board_oracle=None):
     """T4's old column from the one-off v1 baseline, one cell per metric new measured.
 
     The rate is compared on the baseline's own slice: a FINAL baseline against the new
@@ -946,6 +972,15 @@ def t4_v1_cells(t4_v1, tier, new_row, documents_path=None):
         why = t4_v1 if isinstance(t4_v1, str) else NO_V1_T4
         return {m: cell("missing", note=why) for m in new_row}
     label = "v1 one-off (decision 1, %s)" % t4_v1["measured_date"]
+    # Decision 1 accepts a baseline from another oracle (v1 is frozen and far behind), but
+    # the board says so: the comparison is then across two TeX Live snapshots.
+    want, got = oracle_key(board_oracle), oracle_key(t4_v1.get("oracle"))
+    if want and got:
+        why = oracle_mismatch(got, want)
+        if why:
+            label += "; CROSS-ORACLE, " + why.replace("another oracle: ", "v1 measured against ")
+    elif want:
+        label += "; its oracle is not recorded, so it cannot be tied to this board's"
     partial = None
     restricted = None
     if t4_v1["status"] == "PROVISIONAL":
@@ -1084,7 +1119,7 @@ def build(sources, shas=None, sample_note=None, stages=None, host_label=None, na
         if tier in cells["new"] and tier not in cells["old"]:
             docs = next((i.get("documents_path") for k, t, i in sources.get("new", ())
                          if k == "nightly" and tier in t), None)
-            cells["old"][tier] = t4_v1_cells(t4_v1, tier, cells["new"][tier], docs)
+            cells["old"][tier] = t4_v1_cells(t4_v1, tier, cells["new"][tier], docs, oracle)
     all_tiers = set(cells["new"]) | set(cells["old"])
     for t in TIER_ORDER:
         all_tiers.add(t)  # a tier nobody ran is still a row: "missing"

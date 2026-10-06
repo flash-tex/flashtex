@@ -2800,6 +2800,34 @@ sys.exit(0)
             live.wait()
 
 
+@unittest.skipUnless(shutil.which("qpdf"), "needs qpdf")
+class PT2SizeCap(unittest.TestCase):
+    """P5-BOARD-T4: a PDF whose qdf copy is over the cap is a harness error (unmeasured),
+    never a P-T2 pass or fail, and qpdf stops writing at the cap (T4 2511.15561v1: 3.0 GB)."""
+
+    def test_over_the_cap_raises_and_leaves_nothing(self):
+        d = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, d, True)
+        src = os.path.join(d, "a.pdf")
+        body = (b"%PDF-1.4\n1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n2 0 obj\n<< /Type /Pages "
+                b"/Kids [3 0 R] /Count 1 >>\nendobj\n3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 9 9] "
+                b">>\nendobj\ntrailer\n<< /Root 1 0 R /Size 4 >>\n%%EOF\n")
+        with open(src, "wb") as f:
+            f.write(body)
+        out = os.path.join(d, "a.qdf.pdf")
+        old = tiers.PT2_MAX_QDF_BYTES
+        try:
+            tiers.PT2_MAX_QDF_BYTES = 64
+            with self.assertRaises(tiers.PT2TooLarge):
+                tiers.normalise_pdf(src, out)
+            self.assertFalse(os.path.exists(out))
+            self.assertFalse(issubclass(tiers.PT2TooLarge, tiers.pdftext.PdfError))  # compare_pt2 lets it through
+        finally:
+            tiers.PT2_MAX_QDF_BYTES = old
+        tiers.normalise_pdf(src, out)  # under the default cap: as before
+        self.assertTrue(os.path.getsize(out) > 0)
+
+
 class RowPadding(unittest.TestCase):
     """P5-BOARD-T4: pdfTeX leaves heap bytes in the unused bits of a sub-byte image row
     (writepng.c's uninitialised row buffer and libpng's png_combine_row), so P-T2

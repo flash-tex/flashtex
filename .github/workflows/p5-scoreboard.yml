@@ -288,9 +288,12 @@ jobs:
             if [ -d "$docs" ]; then extra+=(--corpus-texmf "$docs")
             else echo "::warning::no $docs on this PC: the templates and packages tiers read partial (tools/parity/README.md)"; fi
             # a scope of its own inside flashtex.slice (see WHERE)
-            scope=(systemd-run --user --scope --quiet --slice=flashtex.slice -p MemoryMax=10G -p MemorySwapMax=0)
+            # OOMPolicy=continue: an OOM kill takes its victim only (parity.py records a
+            # worker_died document), not the whole scope (systemd's default is stop).
+            # No scope, no run: never unbounded in the runner's own cgroup.
+            scope=(systemd-run --user --scope --quiet --slice=flashtex.slice -p MemoryMax=10G -p MemorySwapMax=0 -p OOMPolicy=continue)
             if "${scope[@]}" true 2>/dev/null; then wrap=("${scope[@]}" nice -n 10)
-            else echo "::warning::systemd-run --user is unavailable here: the board runs in the runner's own cgroup"; fi
+            else echo "::error::systemd-run --user is unavailable: the official board runs only in its own scope (see WHERE)"; exit 1; fi
           fi
           ${wrap[@]+"${wrap[@]}"} tools/parity/scoreboard-run.sh --out "$RUNNER_TEMP/p5" --jobs 2 \
             --t4-new "$RUNNER_TEMP/t4-new" --t4-old "$RUNNER_TEMP/t4-old" ${extra[@]+"${extra[@]}"} -- \

@@ -25,7 +25,8 @@ A document the reference itself does not compile on this TeX Live (a package tha
 breaks under a newer LaTeX kernel, e.g. tabu, tabls and thmtools under LaTeX
 2026-06-01) has no expected output to match. It is EXCLUDED, with the reason, when
 the candidate fails identically: the same exit code, transcript and box dumps on
-every pass. A candidate that fails differently, or succeeds, is DIFFERENT. The
+every pass, and the same PDF where the reference still wrote one. A candidate that
+fails differently, or succeeds, is DIFFERENT. The
 summary line counts the excluded documents; they are never dropped silently.
 
   FLASHTEX_POOL=... FLASHTEX_FORMATS=... \\
@@ -168,15 +169,16 @@ def compare(cand, ref):
 
 def same_failure(cand, ref):
     """When the reference fails on some pass (a non-zero exit) and the candidate
-    fails identically on every pass (same exit code, transcript and box dumps), the
-    reference's exit code; else None."""
+    fails identically on every pass (same exit code, transcript, box dumps and, where
+    the reference wrote a PDF anyway, the same PDF after qpdf), the reference's exit
+    code; else None."""
     if len(cand) != len(ref) or any(x.get("error") or "returncode" not in x for x in cand + ref):
         return None
     codes = [r["returncode"] for r in ref if r["returncode"] != 0]
     if not codes:
         return None
     for c, r in zip(cand, ref):
-        if (c["returncode"], c["lines"], c["boxes"]) != (r["returncode"], r["lines"], r["boxes"]):
+        if (c["returncode"], c["lines"], c["boxes"], c["pdf"]) != (r["returncode"], r["lines"], r["boxes"], r["pdf"]):
             return None
     return codes[0]
 

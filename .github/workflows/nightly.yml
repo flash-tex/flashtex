@@ -392,9 +392,12 @@ jobs:
           budget="$(awk '/^MemAvailable:/ { b = $2 * 0.7 / 1048576; if (b > 8) b = 8; printf "%.1f", b }' /proc/meminfo)"
           jobs="$(awk -v b="$budget" 'BEGIN { j = int(b / 1.5625); if (j > 8) j = 8; if (j < 1) j = 1; print j }')"
           wrap=()
-          scope=(systemd-run --user --scope --quiet --slice=flashtex.slice -p MemoryMax=10G -p MemoryHigh=9G -p MemorySwapMax=0)
+          # OOMPolicy=continue: an OOM kill takes its victim only (parity.py records a
+          # worker_died document), not the whole scope (systemd's default is stop).
+          # No scope, no run: never unbounded in the runner's own cgroup.
+          scope=(systemd-run --user --scope --quiet --slice=flashtex.slice -p MemoryMax=10G -p MemoryHigh=9G -p MemorySwapMax=0 -p OOMPolicy=continue)
           if "${scope[@]}" true 2>/dev/null; then wrap=("${scope[@]}" nice -n 10)
-          else echo "::warning::systemd-run --user is unavailable: the workers run in the runner's own cgroup"; fi
+          else echo "::error::systemd-run --user is unavailable: T4's workers run only in their own scope, never in the runner's cgroup (37423737667)"; exit 1; fi
           echo "T4: $jobs workers, memory budget $budget GiB"
           docs="$HOME/.cache/flashtex-corpus-texmf/texlive-2026"
           corpus=()

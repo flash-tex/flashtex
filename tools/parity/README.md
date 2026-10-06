@@ -610,15 +610,39 @@ old on every tier. `OWNER_BAR` in `scoreboard.py` holds them; a row under its
 bar reads **below bar** (or **below bar (old n/a)**) even when new > old. The
 comparison is on counts, so 98.95 % is not 99 %.
 
-**T4 crashes.** The T4 tier has a `crashes` row: the documents the engine ran
-(every document but the unmeasured ones) without crashing; the bar is all of
-them. A crash is the engine dying, not TeX stopping (`nightly.py crash_of`): a
-Rust panic (exit 101), a signal (a negative exit), or a traced pass whose log
-stops before the run's end. A TeX error (exit 1) and a timeout are not crashes.
-`nightly.py` writes the count (`crashes`, `crash_examples`) per tier. For an
-older summary without it, the board recovers the count from `documents.json`'s
-causes and marks the row partial; with neither, the row is not run. The v1
-one-off baseline counts no crashes, so the old column is n/a.
+**T4 crashes.** The T4 tier has a `crashes` row. Its denominator is the
+documents the engine ran: those the oracle compiles and the harness scored. A
+document the oracle excludes never reaches the engine (`parity.score`), and is
+shown apart as excluded. The row counts every way the engine failed to finish
+such a document, by kind (`nightly.py crash_of`, `CRASH_KINDS`):
+- a Rust panic (exit 101);
+- a signal (a negative exit);
+- any other non-zero exit, such as a fatal or TeX error that pdfTeX did not hit
+  on a document it compiles;
+- a timeout;
+- a traced pass whose log stops before the end of the run;
+- a worker that died scoring the document.
+
+The bar is none of them. `nightly.py` writes `crashes`, `crash_kinds` and
+`crash_examples` per tier. For an older summary without them, the board
+recovers the kinds from `documents.json`'s causes and marks the row partial;
+with neither, the row is not run. The v1 one-off baseline counts no crashes,
+so the old column is n/a.
+
+**The v1 baseline's oracle.** `t4-v1-oneoff.json` records the oracle it was
+measured against: the Mac, texlive.tlpdb `ca39e6791582`, LaTeX 2025-11-01. When
+the board's own oracle is another one (the PC's is `909745461c89`, LaTeX
+2026-06-01), T4's old cells say **CROSS-ORACLE** with both identities. Decision
+1 accepts this for frozen v1, whose rates are far below the new engine's. It
+never changes a verdict at v1's 0/440 P-T2, but the board states it.
+
+**P-T2's size cap.** The comparison reads a qdf copy of each PDF, in which
+every stream is decoded. T4's 2511.15561v1, a 12.7 MB PDF with large images,
+expanded to 3.0 GB, and loading it OOM-killed an 8 GB scope. Over
+`FLASHTEX_PT2_MAX_QDF_MB` (default 1024), qpdf stops writing (`RLIMIT_FSIZE`)
+and the document is a **harness error**: unmeasured, never a pass or a fail.
+Its tier reads partial, so the gate stays red. This is a harness limit, to be
+lifted by a normaliser that leaves image data compressed.
 
 **Issues and the gate.** `--issues apply` opens or updates one issue per red
 tier, on complete runs only: a row behind v1, below a target (arXiv L1, T2's

@@ -40,6 +40,16 @@ FMT = "pdflatex"
 PASSES = 6
 PASS_TIMEOUT = 300
 QPDF_ARGS = ["--qdf", "--normalize-content=y", "--object-streams=disable"]
+# P-T2's normalised (qdf) copy of a PDF holds every stream decoded, and the comparison reads
+# it whole: a 12.7 MB PDF with large images (T4 2511.15561v1) became 3.0 GB and an OOM kill.
+# Over this size the document is a harness error (unmeasured; its tier reads partial), never
+# a pass or a fail, until the normaliser stops expanding images (P5-BOARD-T4 follow-up).
+PT2_MAX_QDF_BYTES = int(float(os.environ.get("FLASHTEX_PT2_MAX_QDF_MB", "1024")) * 1048576)
+
+
+class PT2TooLarge(Exception):
+    """A PDF whose P-T2 normalisation is over PT2_MAX_QDF_BYTES. Not a PdfError: compare_pt2
+    lets it through, and parity.score_safe records the document as a harness error."""
 TAG = re.compile(r"^[A-Z]{6}\+")
 SNIP = 200
 # What a run converts with \write18 (epstopdf.sty's `<name>-eps-converted-to.pdf`,
@@ -698,7 +708,22 @@ def normalise_pdf(pdf, out):
     q = shutil.which("qpdf")
     if not q:
         raise pdftext.PdfError("qpdf not found on PATH")
-    p = subprocess.run([q] + QPDF_ARGS + [pdf, out], capture_output=True, timeout=300)
+    cap = PT2_MAX_QDF_BYTES
+
+    def limit():  # qpdf may not write more than the cap (SIGXFSZ), and dumps no core
+        import resource
+        resource.setrlimit(resource.RLIMIT_FSIZE, (cap + 1, cap + 1))
+        resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
+    p = subprocess.run([q] + QPDF_ARGS + [pdf, out], capture_output=True, timeout=300,
+                       preexec_fn=limit if cap > 0 else None)
+    size = os.path.getsize(out) if os.path.isfile(out) else 0
+    if cap > 0 and (p.returncode == -25 or size > cap):  # -25: SIGXFSZ
+        try:
+            os.remove(out)
+        except OSError:
+            pass
+        raise PT2TooLarge(f"P-T2 not measured: the qdf copy of {os.path.basename(pdf)} is over "
+                          f"{cap >> 20} MiB (FLASHTEX_PT2_MAX_QDF_MB), a harness limit")
     if p.returncode not in (0, 3) or not os.path.isfile(out):
         raise pdftext.PdfError(f"qpdf exit {p.returncode}: {p.stderr.decode('utf-8', 'replace')[:200]}")
 
