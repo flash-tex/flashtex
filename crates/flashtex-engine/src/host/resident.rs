@@ -915,6 +915,22 @@ impl Engine {
                     // whether they stopped for the external tools
                     ("passes".to_string(), Json::Int(rep.passes as i64)),
                     ("deferred".to_string(), Json::Bool(rep.deferred)),
+                    // how each pass ran ("cold": from the format;
+                    // "incremental": from a checkpoint) and its seconds
+                    // (lane COLD-OPEN: a first open's later passes)
+                    (
+                        "pass_modes".to_string(),
+                        Json::Arr(rep.pass_modes.iter().map(|m| js(m.as_str())).collect()),
+                    ),
+                    (
+                        "pass_s".to_string(),
+                        Json::Arr(
+                            rep.pass_s
+                                .iter()
+                                .map(|s| Json::Num((s * 1e3).round() / 1e3))
+                                .collect(),
+                        ),
+                    ),
                 ];
                 if let Some(r) = &rep.cold_reason {
                     extra.push(("cold_reason".to_string(), js(r.as_str())));
