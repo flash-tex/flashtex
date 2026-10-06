@@ -97,8 +97,10 @@ def missing_tests(doc, root=ROOT):
             if t.startswith("rust:"):
                 path, _, fn = t[5:].partition("::")
                 full = os.path.join(root, path)
-                ok = os.path.isfile(full) and re.search(r"\bfn\s+%s\s*\(" % re.escape(fn),
-                                                        open(full, encoding="utf-8").read())
+                ok = False
+                if os.path.isfile(full):
+                    with open(full, encoding="utf-8") as f:
+                        ok = bool(re.search(r"\bfn\s+%s\s*\(" % re.escape(fn), f.read()))
             elif "." in t:
                 suite, name = t.split(".", 1)
                 ok = name in idx.get(suite, ())

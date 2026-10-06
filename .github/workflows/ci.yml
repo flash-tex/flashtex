@@ -554,6 +554,9 @@ jobs:
       - name: "retirement: retired code is not named outside the allowlist (#1236 §4.6)"
         if: ${{ !cancelled() && runner.os == 'Linux' }}
         run: python3 tools/parity/retirement_refs.py
+      - name: "app parity: every checklist row names tests that exist (#1236 §4.4, S4(h))"
+        if: ${{ !cancelled() && runner.os == 'Linux' }}
+        run: python3 tools/parity/app_parity_rows.py check
       # The parity harness, the P5 board (its owner's bar, crash row and gate), package-smoke
       # and the P5 board's T4 pick, by their own unit tests (as `gate.sh pr`'s
       # gate_parity_selftest does, less tools/lockstep), so a pull request cannot break them unseen (cases
@@ -1072,6 +1075,11 @@ jobs:
           set -o pipefail
           mkdir -p "$SNAPSHOT_ARTIFACTS"
           swift test 2>&1 | tee swift-test.log | grep -vE '^\s*$' | tail -n 400
+      - name: "app parity: every row test this runner can run passed, not skipped (#1236 §4.4)"
+        # tools/parity/app-parity-rows.json: the hosted leg's share of the checklist's
+        # tests (all but `host_driven`, which need flashtex-host and TeX Live).
+        working-directory: apps/mac
+        run: python3 ../../tools/parity/app_parity_rows.py check-log --leg hosted swift-test.log
       - name: Upload swift test log
         if: always()
         uses: actions/upload-artifact@v4

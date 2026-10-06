@@ -632,6 +632,8 @@ case "$TIER" in
     step "parity scoreboard and lockstep self-tests" -- gate_parity_selftest
     step "retired code is not named outside the allowlist (retirement plan §4.6)" -- \
       python3 tools/parity/retirement_refs.py
+    step "every app-parity row names tests that exist (retirement plan §4.4)" -- \
+      python3 tools/parity/app_parity_rows.py check
     if [[ "$(uname -s)" == Darwin ]]; then
       step "parity fixtures hold their baseline" -- gate_parity_fixtures
     else
