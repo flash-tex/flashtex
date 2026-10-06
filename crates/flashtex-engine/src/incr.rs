@@ -4122,6 +4122,8 @@ impl Session {
                 }
             }
         }
+        // the restart point is a segment's (between pages)
+        let mid = !self.pages.iter().any(|p| p.ckpt == Some(r));
         let g = self.g.as_mut().unwrap();
         // the edits' line shifts, their lines before the edit counted from
         // where the restart point reads each file
@@ -4191,7 +4193,13 @@ impl Session {
         // the next keystroke there edits again, and each one seals every
         // chunk the page wrote since the last (lane P4-PAGE-COST).
         // `Obs::on_checkpoint` lifts the hold at the edited page.
-        g.layer().segment_hold = self.opts.segment_hold && obs.first_incremental;
+        // Only after a restart between pages (a segment checkpoint before
+        // the edit): from a page's start, the segments before the edited
+        // line are the next keystroke's restart points, and with retention
+        // thinning far from the cursor (`thin`, MEM-FOOTPRINT) nothing else
+        // may hold one there (plain-1000, letter@middle: no mid-page
+        // restart at all with the hold).
+        g.layer().segment_hold = self.opts.segment_hold && obs.first_incremental && mid;
         // The pages before `r` stay; the rest are the old run's until
         // redone.
         let gap = obs
@@ -4207,7 +4215,6 @@ impl Session {
             })
             .min()
             .unwrap_or(u64::MAX);
-        let mid = !self.pages.iter().any(|p| p.ckpt == Some(r));
         let g = self.g.as_mut().unwrap();
         obs.instr_go = crate::os::thread_counts();
         if obs.first_incremental {
