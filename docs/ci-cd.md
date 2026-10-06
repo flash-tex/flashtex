@@ -8,6 +8,7 @@ gate a branch must pass is proportional to what it changed.
 |---|---|
 | `ci.yml` | Tiered. **`merge_group` runs only the gate** (target ≤ 12 min with engine parity, ≤ 5 without): workspace build, the touched crates' fmt/clippy/tests, the licence boundary, the bundled inventory, the generated-table gates, trip, etrip and pdfTeX's regression tests on Linux, and the **new engine's parity gates** (lockstep, P-T1/P-T2 on the fixtures, the engine's tests; three shards on the NixOS PC) when the group touches engine-affecting paths. **After the merge** (push to `main`, and nightly): the Mac app, the iPad simulator, the Rust workspace on Linux and macOS, `render-pipeline`, `flashtex-cli`, `flashtex-xetex`, every macOS leg and the old engine's parity fixtures, fixed forward through the `main-red` issue (the PR's owner fixes within 2 h or the Commander reverts). **Pull requests** run the gate's set (engine parity on GitHub-hosted Ubuntu), plus the Mac app, the iPad and the old engine's fixtures only when they touch `apps/`. |
 | `nightly.yml` | On a schedule (08:17 UTC) and on demand: the heavy suites. The parity scoreboard's `arxiv` (149 pinned e-prints) and `templates` tiers on a self-hosted Mac with TeX Live; the new engine's **T2** (LaTeX suites) and fixture-wide **incremental soundness** test on the NixOS PC; the macOS legs that left the merge queue; the whole workspace in the **debug** profile on both OSes, which nothing else covers; the tests of every crate in `scripts/rust-test-exclude.txt` and the clippy of every crate in `scripts/clippy-debt.txt`, without gating, so a list that can shrink is noticed within a day. |
+| `sweeps.yml` | On demand (`gh workflow run sweeps.yml -f ref=<branch>`) or the `run-sweeps` label: the incremental engine's **soundness sweeps** (gates.sh's sound-a … sound-d, span, readers), sharded across GitHub-hosted Ubuntu jobs, one summary table. Lanes run their sweeps here; the NixOS PC is for timing and latency only. See [`sweeps.yml`](#sweepsyml-the-soundness-sweeps-on-hosted-runners). |
 | `notex-gate.yml` | Weekly (Mondays 05:17 UTC, `flash-tex/flashtex` only), on demand, and from `bundle-publish.yml` on the packed bundle: the **no-TeX-Live gate** (DESIGN §4.4, D12). On a hosted Mac with no TeX Live, the engine builds its format from the published bundle and compiles `tools/bundle/tl2026/gate.json` (parity fixtures and a 30-paper arXiv sample); each PDF must equal TeX Live's pdflatex byte for byte, apart from `gaps.json`. Not part of `CI required`. |
 | `release.yml` | On a `v*` tag or a manual run with a version: builds the helpers, packages `FlashTeX.app` into `FlashTeX.dmg` (signed + notarized when the secrets exist), tars the CLI tools for macOS arm64 and Linux x86_64, publishes the GitHub release with `SHA256SUMS`, then points the website at it. |
 | `site.yml` | On every published (non-prerelease) release, on a push to `main` touching `site/**`, and on demand: re-renders the whole site from `site/` (`site/render.py`) and pushes it to `gh-pages`. This is what makes the download page and both installers reflect a release; see [How the website is updated](#how-the-website-is-updated). |
@@ -883,6 +884,53 @@ documents, weekly) and T6 (differential fuzzing, continuous). **None of those
 three has an implementation in this repository yet**, so `nightly.yml` does not
 pretend to run them; the `arxiv`/`templates` tiers are the breadth that exists
 today. Each one joins this workflow in the lane that builds it.
+
+### `sweeps.yml`: the soundness sweeps, on hosted runners
+
+**A lane runs its incremental-engine soundness sweeps here, not on the NixOS PC:**
+
+```sh
+gh workflow run sweeps.yml -f ref=<branch>                          # every sweep
+gh workflow run sweeps.yml -f ref=<branch> -f gates=sound-a,span    # some
+gh workflow run sweeps.yml -f ref=<branch> -f base_ref=main         # plus main's rows (A/B)
+```
+
+or add the `run-sweeps` label to a pull request (its head; the branch must
+contain this workflow). `ref` is a branch, a SHA or `refs/pull/N/head`. The
+sweeps are `tools/incr-bench/gates.sh`'s `sound-a`, `sound-budget`,
+`sound-budget-d`, `sound-timed`, `sound-vol`, `sound-lookup`, `sound-lines`,
+`span`, `readers` (when the tree has `readers.py`), `sound-c` and `sound-d`,
+with gates.sh's trials, kinds, host options and documents. Until this workflow
+every lane queued them on the PC (three runners in a slice capped at 8 threads
+and 20 GB), and pull requests waited hours. **The PC is now for timing and
+latency measurements only** (T7, the keystroke and memory scripts, instruction
+counts), which need a quiet machine; correctness does not depend on load.
+
+Jobs: `plan` resolves `ref` (and `base_ref`) to a SHA and packs each gate's
+units (one soundness.py run over one document, one dlspan.py run, readers.py)
+into shards of about 20 minutes, from the measured seconds in
+`tools/incr-bench/sweeps-costs.json` (`sweeps.py plan`). `build` compiles the
+release engine and its pdflatex format once per SHA, kept in the Actions cache
+by SHA and TeX Live image. Then one `ubuntu-latest` job per shard (4 units at a
+time), with the TeX Live 2026 image `engine-parity-hosted` uses. `summary`
+writes one table (per gate: shards, units, compiles, ok, bad, wrong, aborts,
+skipped) as the run summary and the `sweeps-summary` artifact, and is red if a
+gate of `ref` has a bad or wrong compile, an aborted unit or a missing shard;
+`base_ref`'s rows are context and never fail it. Details, and how the shards
+are cut without changing any document's edits: `tools/incr-bench/README.md`,
+[Sweeps on hosted runners](../tools/incr-bench/README.md#sweeps-on-hosted-runners).
+
+Fork safety: no secrets, `permissions: contents: read`, no persisted checkout
+credentials. A dispatch needs write access to the repository; a fork's
+pull-request label run gets GitHub's read-only token and its own cache scope.
+A dispatched run builds and runs `ref`'s code with the cache scope of the
+dispatching branch (main), so dispatch only refs you would review.
+
+**Capacity.** The organisation is on GitHub's Free plan: 20 concurrent hosted
+jobs (5 of them macOS) for the whole organisation, shared with `ci.yml` and
+every other workflow. A full sweep is about 23 shards of up to 20 minutes, so
+it runs as fast as the queue lets it; when `ci.yml` is busy, shards wait for
+runners. Dispatch one run per head, not one per gate.
 
 ### Validating a workflow change
 

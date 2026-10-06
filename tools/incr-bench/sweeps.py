@@ -33,6 +33,7 @@ import glob
 import json
 import math
 import os
+import resource
 import subprocess
 import sys
 import time
@@ -307,11 +308,17 @@ def cmd_run(a):
                   flush=True)
             if r['status'] not in ('ok', 'absent') and r.get('note'):
                 print('       ' + r['note'].replace('\n', '\n       '), flush=True)
+    wall = time.monotonic() - t0
+    ru = resource.getrusage(resource.RUSAGE_CHILDREN)
+    cpus = os.cpu_count() or 1
     res = dict(side=a.side, sha=a.sha, gate=a.gate, shard=k, of=n, jobs=a.j, estimate=round(est),
-               seconds=round(time.monotonic() - t0, 1), units=sorted(results, key=lambda r: r['key']))
+               seconds=round(wall, 1), cpu_seconds=round(ru.ru_utime + ru.ru_stime), cpus=cpus,
+               max_rss_mb=round(ru.ru_maxrss / 1024), units=sorted(results, key=lambda r: r['key']))
     json.dump(res, open(os.path.join(a.out, 'result.json'), 'w'), indent=1)
     bad = [r for r in results if r['status'] not in ('ok', 'absent')]
-    print(f"{a.gate} {k + 1}/{n}: {len(results)} units in {res['seconds']:.0f}s (estimated {est:.0f}s), {len(bad)} not ok")
+    print(f"{a.gate} {k + 1}/{n}: {len(results)} units in {wall:.0f}s (estimated {est:.0f}s), {len(bad)} not ok; "
+          f"CPU {res['cpu_seconds']}s = {res['cpu_seconds'] / max(wall, 1) / cpus:.0%} of {cpus} cpus; "
+          f"largest child {res['max_rss_mb']} MB")
     sys.exit(1 if bad else 0)
 
 
