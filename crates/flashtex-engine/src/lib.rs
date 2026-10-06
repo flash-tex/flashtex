@@ -76,6 +76,8 @@ pub mod statediff;
 pub mod system;
 #[cfg(not(feature = "tex82"))]
 pub mod texlines;
+#[cfg(not(feature = "tex82"))]
+pub mod throughput;
 
 pub use generated::Globals;
 

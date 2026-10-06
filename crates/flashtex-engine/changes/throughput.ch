@@ -102,6 +102,33 @@
 % in both: the original's loop has no effect before it gets there. The
 % errors (m = 0, m too big) are tested first in both.
 
+% [5] id_lookup (section 261): the hash code in 64 bits.
+%
+% pdftex.web computes h := buffer[j], then for each next character c
+% h := h+h+c, reduced below hash_prime by subtraction. Since h < hash_prime
+% before each step and c < 256 < hash_prime, h+h+c < 3*hash_prime, so the
+% subtractions leave (h+h+c) mod hash_prime: the result is
+% (sum of buffer[j+i]*2^(l-1-i)) mod hash_prime. src/throughput.rs computes
+% the same sum in 64 bits, reduced modulo hash_prime every 40 characters
+% (from a value below hash_prime < 2^20, forty doublings and additions of
+% characters below 2^8 stay below 2^61) and at the end, which is the same
+% residue (reduction modulo hash_prime commutes with doubling and adding).
+% For l = 1 both give buffer[j] (below 256 < hash_prime). Its test checks
+% every length up to 300. The profile (P6-ENGINE-SPEED) had id_lookup at
+% 3.9 % of Infinite Descent's edited page, \csname's long names mostly.
+
+@x [18] m.261 l.6611 - id_lookup: the hash code in 64 bits [5].
+@<Compute the hash code |h|@>=
+h:=buffer[j];
+for k:=j+1 to j+l-1 do
+  begin h:=h+h+buffer[k];
+  while h>=hash_prime do h:=h-hash_prime;
+  end
+@y
+@<Compute the hash code |h|@>=
+h:=tp_hash_code(j,l);
+@z
+
 @x [24] m.363 l.8501 - get_next: the external-file part out of line.
 @p procedure get_next; {sets |cur_cmd|, |cur_chr|, |cur_cs| to next token}
 label restart, {go here to get the next input token}

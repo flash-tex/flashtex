@@ -6161,20 +6161,7 @@ impl Globals {
         let mut k: halfword = 0; // §278
         'l_found_f: {
             // §280
-            h = self.buffer[crate::ix::U((j) as usize)];
-            {
-                let __for_end_3 = ((j).wrapping_add(l)).wrapping_sub(1i32);
-                k = (j).wrapping_add(1i32);
-                while k <= __for_end_3 {
-                    {
-                        h = ((h).wrapping_add(h)).wrapping_add(self.buffer[crate::ix::U((k) as usize)]);
-                        while (h >= hash_prime) {
-                            h = (h).wrapping_sub(8501i32);
-                        }
-                    }
-                    k = k.wrapping_add(1);
-                }
-            }
+            h = self.tp_hash_code(j, l);
             // §278
             p = (h).wrapping_add(514i32);
             while true {
