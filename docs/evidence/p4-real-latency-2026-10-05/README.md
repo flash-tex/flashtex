@@ -74,7 +74,7 @@ full-1000, keystroke on page 501, p50 / p95 ms (`scripts/tab2.py`):
   - It also takes more CPU time: 25 instead of 17 ms, from SMT siblings and frequency under
     load (cycles rose from 67 to 102 M).
   - A wall time on that slice measures the quota. `t7.py` now marks such a run non-reference.
-- **What typing adds, unthrottled (VERIFIED; the split by the DONE `paused_*` stages of branch `agent/kabir-claude/p4-reattach-defer`).**
+- **What typing adds, unthrottled (VERIFIED; the split is by the DONE `paused_*` stages #1608 adds, and #1608 fixes it).**
   - Every other keystroke abandons the previous compile's stopped background run. That costs
     +3.2 ms on full-1000 (key check 0.8 → 4.0 ms, +27 M instructions).
   - Of that, 3.4–4.1 ms is `reattach_pending`, but only 5.7 M user instructions: it writes the
