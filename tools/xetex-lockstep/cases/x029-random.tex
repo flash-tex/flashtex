@@ -1,0 +1,11 @@
+% x029-random: \setrandomseed, \uniformdeviate, \normaldeviate, \randomseed
+% XeTeX-specific (docs/design/xetex/PLAN.md, phase S0: TFM fonts)
+\input prelude
+\def\space{ }
+\setrandomseed 12345
+\message{x029 \the\randomseed\space\uniformdeviate 1000 \uniformdeviate 1000000 \normaldeviate\space\normaldeviate}
+\setrandomseed -7
+\message{x029 \the\randomseed\space\uniformdeviate 100}
+\setbox0=\hbox{\vrule width\uniformdeviate 10 pt}
+\lsshipbox0
+\end

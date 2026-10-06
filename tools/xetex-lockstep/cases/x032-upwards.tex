@@ -1,0 +1,13 @@
+% x032-upwards: \XeTeXupwardsmode builds vertical lists upwards
+% XeTeX-specific (docs/design/xetex/PLAN.md, phase S0: TFM fonts)
+\input prelude
+\def\space{ }
+\font\x=cmr10 \x \baselineskip=12pt \lineskip=1pt \lineskiplimit=0pt
+\XeTeXupwardsmode=1
+\setbox0=\vbox{\hbox{one}\hbox{two}\kern3pt\hbox{three}\vskip 4pt plus 1fil\hbox{}}
+\XeTeXupwardsmode=0
+\setbox1=\vbox{\hbox{one}\hbox{two}}
+\message{x032 \the\ht0 \the\dp0 \the\ht1 \the\dp1}
+\lsshipbox0
+\lsshipbox1
+\end

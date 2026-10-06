@@ -1,0 +1,26 @@
+% x005-umathcode: \Umathcode, \Umathcodenum and \mathcode with Unicode math codes
+% XeTeX-specific (docs/design/xetex/PLAN.md, phase S0: TFM fonts)
+% lockstep: no-halt
+\input prelude
+\def\space{ }
+\font\tenrm=cmr10 \font\sevenrm=cmr7 \font\fiverm=cmr5
+\font\teni=cmmi10 \font\seveni=cmmi7 \font\fivei=cmmi5
+\font\tensy=cmsy10 \font\sevensy=cmsy7 \font\fivesy=cmsy5
+\font\tenex=cmex10
+\skewchar\teni='177 \skewchar\seveni='177 \skewchar\fivei='177
+\skewchar\tensy='60 \skewchar\sevensy='60 \skewchar\fivesy='60
+\textfont0=\tenrm \scriptfont0=\sevenrm \scriptscriptfont0=\fiverm
+\textfont1=\teni \scriptfont1=\seveni \scriptscriptfont1=\fivei
+\textfont2=\tensy \scriptfont2=\sevensy \scriptscriptfont2=\fivesy
+\textfont3=\tenex \scriptfont3=\tenex \scriptscriptfont3=\tenex
+\Umathcode`a="7 "1 "61
+\message{x005 \the\Umathcodenum`a}
+\message{x005 \the\Umathcodenum`a}
+\message{x005 \the\mathcode`a}
+\Umathcodenum`b="E200062
+\message{x005 \the\Umathcodenum`b}
+\Umathcode`c="1 "FF "1F34C
+\message{x005 \the\Umathcodenum`c \the\mathcode`c}
+\setbox0=\hbox{$ab$}
+\lsshipbox0
+\end

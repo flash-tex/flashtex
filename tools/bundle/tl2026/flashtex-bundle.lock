@@ -1,0 +1,7 @@
+# FlashTeX's no-TeX-Live bundle: whole, unmodified TeX Live 2026 packages under their
+# own licences (docs/distribution/texlive-bundle.md). Shipped in the app as
+# Contents/Resources/engine/flashtex-bundle.lock (apps/mac/scripts/make-app.sh);
+# nothing is fetched before the user agrees. bundle-publish.yml publishes exactly
+# this digest at this URL, and refuses any other.
+url = "https://github.com/flash-tex/flashtex/releases/download/texbundle-tl2026-1/texlive2026.ttb"
+digest = "9f43447276cda8cff07505b2efe5e1df04c9a38006d119c38b1880bd5b4e25bc"

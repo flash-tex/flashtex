@@ -26,7 +26,8 @@ pub const EXIT_CODE: i32 = 86;
 const POLL: Duration = Duration::from_millis(50);
 
 /// Budgets: wall time for an incremental compile and for a cold one (the
-/// first compile of a document, or one that starts over), and the resident
+/// first compile of a document, or one that starts over, and the idle
+/// check's standard compile), and the resident
 /// memory ceiling (`None`: none).
 #[derive(Clone, Copy, Debug)]
 pub struct Limits {
@@ -39,7 +40,7 @@ impl Default for Limits {
     fn default() -> Limits {
         Limits {
             wall: Duration::from_secs(10),
-            wall_cold: Duration::from_secs(60),
+            wall_cold: Duration::from_secs(180),
             rss_bytes: Some(4096 << 20),
         }
     }
@@ -98,7 +99,10 @@ pub fn sweep_stale_temp_dirs() -> usize {
 /// Stop now: kill the children, remove the temporary directory, `_exit`.
 fn stop(why: &str) -> ! {
     eprintln!("flashtex-typst-host: {why}");
-    for pid in CHILDREN.lock().map(|c| c.clone()).unwrap_or_default() {
+    // Tracked children, and the package downloads in flight (curl).
+    let mut children = CHILDREN.lock().map(|c| c.clone()).unwrap_or_default();
+    children.extend(crate::packages::running_children());
+    for pid in children {
         // SAFETY: a pid this process started; SIGKILL needs nothing else.
         unsafe { libc::kill(pid as i32, libc::SIGKILL) };
     }

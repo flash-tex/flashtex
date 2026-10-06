@@ -44,6 +44,9 @@ const LO_MEM_STAT_MAX: i32 = 19; // fil_neg_glue + glue_spec_size - 1
 
 // node sizes with SyncTeX's two words (changes/synctex.ch)
 const SYNCTEX_FIELD_SIZE: i32 = 2;
+// changes/lineshift.ch's `ls_cond_size`: conditionals whose line's file is
+// known
+const LS_COND_SIZE: i32 = 1000;
 const BOX_NODE_SIZE: i32 = crate::generated::consts::box_node_size;
 const RULE_NODE_SIZE: i32 = crate::generated::consts::rule_node_size;
 const MEDIUM_NODE_SIZE: i32 = crate::generated::consts::medium_node_size;
@@ -268,6 +271,11 @@ struct Layout {
     pdf_link_stack: usize,
     intr_state: usize,
     intr_data: usize,
+    // the files the open levels', groups' and conditionals' lines are of
+    // (changes/lineshift.ch)
+    ls_nest_tag: usize,
+    ls_grp_tag: usize,
+    ls_cond_tag: usize,
     scalars: HashMap<&'static str, (usize, usize)>,
 }
 
@@ -300,6 +308,9 @@ impl Layout {
             pdf_link_stack: off("pdf_link_stack"),
             intr_state: off("intr_state"),
             intr_data: off("intr_data"),
+            ls_nest_tag: off("ls_nest_tag"),
+            ls_grp_tag: off("ls_grp_tag"),
+            ls_cond_tag: off("ls_cond_tag"),
             scalars: slots.iter().map(|s| (s.name, (s.off, s.size))).collect(),
         }
     }
@@ -579,19 +590,44 @@ impl<'a, O: Space, N: Space> Iso<'a, O, N> {
 
     /// The SyncTeX words of a synchronized node of `size` words
     /// (changes/synctex.ch): the `int` halves of its last two words, the
-    /// file tag and the line that `get_node` or a copy wrote there.
+    /// file tag and the line that `get_node` or a copy wrote there. The
+    /// tag is compared. The line is not: only `get_node` writes it and only
+    /// `copy_node_list` reads it, into another node's line, since the
+    /// `.synctex` file is not written. So it is dead like a free cell's
+    /// words, which it becomes when the node is freed. An edit that adds a
+    /// line break moves the lines of every node made after it (DESIGN.md
+    /// §5.3 rule (c), `crate::lineshift`).
     fn sync_fields(&mut self, a: i32, b: i32, size: i32) {
-        let (t, l) = (size - SYNCTEX_FIELD_SIZE, size - SYNCTEX_FIELD_SIZE + 1);
+        let t = size - SYNCTEX_FIELD_SIZE;
         self.eq(
             "synctex tag",
             int(self.o.mem(a + t)),
             int(self.n.mem(b + t)),
         );
-        self.eq(
-            "synctex line",
-            int(self.o.mem(a + l)),
-            int(self.n.mem(b + l)),
-        );
+    }
+
+    /// A line number the state holds, of the file whose reading level had
+    /// SyncTeX tag `tag` (the new state's; the tags are compared as words):
+    /// equal, or moved by an edit of that file (DESIGN.md §5.3 rule (c),
+    /// `crate::lineshift::held_ok`).
+    fn eq_line(&mut self, what: &'static str, tag: i32, x: i32, y: i32) {
+        if x != y && !crate::lineshift::held_ok(tag, x, y) {
+            self.eq(what, x, y);
+        } else if x == y && !crate::lineshift::held_ok(tag, x, y) {
+            fail!(
+                self,
+                "{what}: {x} is a line an edit moved, the same in both states"
+            );
+        }
+    }
+
+    /// The tag of `ls_*_tag[k]` in the new state (-1 outside it).
+    fn line_tag(&self, base: usize, k: i32, max: i32) -> i32 {
+        if base == usize::MAX || k < 0 || k > max {
+            -1
+        } else {
+            self.n.i32_at(base, k as usize)
+        }
     }
 
     fn cover(&mut self, a: i32, b: i32, size: i32) {
@@ -1332,6 +1368,21 @@ impl<'a, O: Space, N: Space> Iso<'a, O, N> {
     /// The conditional stack (§489): `link` the enclosing one, type
     /// `if_limit`, subtype `cur_if`, then `if_line`.
     fn cond(&mut self, mut a: i32, mut b: i32) {
+        // node j from the top holds conditional depth-1-j's line; a walk
+        // that starts below the top (from `if_stack`) finds its place
+        let depth = self.n.sc("ls_cond_depth");
+        let mut k = {
+            let (mut p, mut j) = (self.n.sc("cond_ptr"), 0);
+            while p != NULL && p != b && j <= depth {
+                p = rh(self.n.mem(p));
+                j += 1;
+            }
+            if p == b {
+                depth - 1 - j
+            } else {
+                -1
+            }
+        };
         loop {
             if a == NULL && b == NULL {
                 return;
@@ -1348,7 +1399,10 @@ impl<'a, O: Space, N: Space> Iso<'a, O, N> {
             let (x, y) = (self.o.mem(a), self.n.mem(b));
             self.eq("conditional", lh(x), lh(y));
             let (x1, y1) = (self.o.mem(a + 1), self.n.mem(b + 1));
-            self.eq("if_line", int(x1), int(y1));
+            let tag = self.line_tag(self.n.l.ls_cond_tag, k.max(0), LS_COND_SIZE);
+            let tag = if k >= 1 { tag } else { -1 };
+            self.eq_line("if_line", tag, int(x1), int(y1));
+            k -= 1;
             a = rh(x);
             b = rh(y);
         }
@@ -1952,6 +2006,7 @@ impl<O: Space, N: Space> Iso<'_, O, N> {
             return;
         }
         let etex = self.o.sc("eTeX_mode") == 1;
+        let mut lvl = self.n.sc("cur_level");
         let mut top = so; // the entries of the current group are below this
         let mut bnd = bo;
         let mut grp = go;
@@ -2037,8 +2092,10 @@ impl<O: Space, N: Space> Iso<'_, O, N> {
             let base = bnd - if etex { 1 } else { 0 };
             if etex {
                 let (x, y) = (self.o.save(bnd - 1), self.n.save(bnd - 1));
-                self.eq("saved line", int(x), int(y));
+                let tag = self.line_tag(self.n.l.ls_grp_tag, lvl, 255);
+                self.eq_line("saved line", tag, int(x), int(y));
             }
+            lvl -= 1;
             for k in 1..=extras {
                 let (x, y) = (self.o.save(base - k), self.n.save(base - k));
                 if grp == MATH_GROUP {
@@ -2097,10 +2154,11 @@ impl<O: Space, N: Space> Iso<'_, O, N> {
         }
     }
 
-    fn nest_record(&mut self, x: &list_state_record, y: &list_state_record) {
+    fn nest_record(&mut self, k: i32, x: &list_state_record, y: &list_state_record) {
         self.eq("mode", x.mode_field, y.mode_field);
         self.eq("prev_graf", x.pg_field, y.pg_field);
-        self.eq("mode_line", x.ml_field, y.ml_field);
+        let tag = self.line_tag(self.n.l.ls_nest_tag, k, i32::MAX);
+        self.eq_line("mode_line", tag, x.ml_field, y.ml_field);
         self.ptr(K::List, x.head_field, y.head_field);
         self.later("tail", x.tail_field, y.tail_field);
         let m = x.mode_field.abs();
@@ -2138,11 +2196,11 @@ impl<O: Space, N: Space> Iso<'_, O, N> {
         }
         for k in 0..po {
             let (x, y) = (self.o.nest(k), self.n.nest(k));
-            self.nest_record(&x, &y);
+            self.nest_record(k, &x, &y);
         }
         let x: list_state_record = rec_from(&self.o.sc_bytes("cur_list"));
         let y: list_state_record = rec_from(&self.n.sc_bytes("cur_list"));
-        self.nest_record(&x, &y);
+        self.nest_record(po, &x, &y);
     }
 
     fn input_record(&mut self, x: &in_state_record, y: &in_state_record) {

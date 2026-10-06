@@ -871,6 +871,8 @@ extension ShellModel {
         files.noteDiskState(.unchanged)
         watchOpenDocument() // DocumentWatcher.swift: live external-change detection
         manifest.refresh() // ProjectManifest.swift: the flashtex.toml governing this project, before the first compile
+        engineHostNeedsUnicode = nil // the new engine's report on the document before this open (UnicodeFonts.swift)
+        unicodeFontsScan = nil
         resolveEngineForOpenedDocument() // this document's engine, with the fallback rules (after the manifest)
         engineChoicePending = false
         // Still on the new engine: now it opens the project (stored pages,

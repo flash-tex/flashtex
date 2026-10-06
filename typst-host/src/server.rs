@@ -17,20 +17,24 @@
 //!   says `cancelled`. A Typst compile cannot be interrupted (Track A §6), so
 //!   a `CANCEL` for the running compile has no effect and `cancel` is not
 //!   offered as a capability.
-//! * `comemo::evict(10)` after every compile's pages are sent (§15.2).
+//! * `comemo::evict(3)` after every compile's pages are sent (§15.2, §13: 10 → 3).
 //! * When the client is quiet, a seeded compile is checked against the
 //!   standard one; pages that differ go out in a follow-up compile with
 //!   `"cause": "verify"` (spec §11.9).
 //!
+//! * Packages and the project's lock ([`crate::packages`], spec §11.8):
+//!   `COMPILE.packages` (`offline`, the default, or `online`) and
+//!   `COMPILE.lock`; `PACKAGE` messages to a client that accepts
+//!   `packages-v1`; the font list's notes as `DIAGNOSTIC`s with `kind`.
 //! * The watchdog ([`crate::watchdog`]) stops the process when a compile
 //!   runs past its budget or memory past its ceiling (spec §11.10).
 //!
-//! Not yet (DESIGN.md §15.10): `viewport` ordering, packages, `lang-v1`.
+//! Not yet (DESIGN.md §15.10): `viewport` ordering, `lang-v1`.
 
 use std::io::{self, BufReader, BufWriter, Write};
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
-use std::sync::mpsc;
+use std::sync::{mpsc, Arc};
 use std::time::Instant;
 
 use flashtex_display_list::frame::{read_frame, write_frame};
@@ -42,6 +46,7 @@ use typst::WorldExt;
 use typst_layout::PagedDocument;
 
 use crate::convert::{self, ClientCaps, Tables};
+use crate::packages::{self, LockMode, PackageEvent, PackageOptions, Packages};
 use crate::pdfpos;
 use crate::seeded;
 use crate::watchdog::{self, Watchdog};
@@ -50,6 +55,7 @@ use crate::TYPST_VERSION;
 
 pub struct Host {
     fonts: Fonts,
+    packages: Arc<Packages>,
     /// Per-compile budget of font-program bytes (`--font-program-budget`).
     program_budget: u64,
     /// Use the seeded loop for incremental compiles (`--seeded on|off`).
@@ -62,6 +68,11 @@ pub struct Host {
     /// Stops the process when a compile runs too long or memory grows too
     /// far (DESIGN.md §15.2; spec §11.10).
     watchdog: Option<Watchdog>,
+    /// `comemo::evict` age after each compile (`--evict`, default 3).
+    evict: usize,
+    /// Draw classes without a pixel gate row as complete (`--draw-ungated`;
+    /// DESIGN.md §15.5).
+    ungated: bool,
 }
 
 /// The watchdog watches a compile while this lives.
@@ -102,14 +113,34 @@ struct Finish {
     keep: bool,
     cause: Option<&'static str>,
     check: Check,
+    /// The project lock's notes from the last check (spec §11.8).
+    lock_notes: Vec<crate::world::LockNote>,
 }
 
-/// Typst's per-page hash: what decides that a page changed.
+/// Typst's per-page hash: what decides that a page changed. Hashing every
+/// page is on the path to the first page (about 0.8 ms a page under load),
+/// so long documents are hashed on several threads.
 fn page_hashes(doc: &PagedDocument) -> Vec<u128> {
-    doc.pages()
-        .iter()
-        .map(|p| typst::utils::hash128(&(&p.frame, &p.fill, &p.bleed, p.number)))
-        .collect()
+    let hash =
+        |p: &typst_layout::Page| typst::utils::hash128(&(&p.frame, &p.fill, &p.bleed, p.number));
+    let pages = doc.pages();
+    let threads = std::thread::available_parallelism()
+        .map(|n| n.get().min(8))
+        .unwrap_or(1);
+    if pages.len() < 16 || threads < 2 {
+        return pages.iter().map(hash).collect();
+    }
+    let chunk = pages.len().div_ceil(threads);
+    std::thread::scope(|s| {
+        let parts: Vec<_> = pages
+            .chunks(chunk)
+            .map(|c| s.spawn(move || c.iter().map(hash).collect::<Vec<u128>>()))
+            .collect();
+        parts
+            .into_iter()
+            .flat_map(|h| h.join().expect("hashing a page"))
+            .collect()
+    })
 }
 
 /// Two compiles' results show the same pages (or fail alike).
@@ -124,6 +155,8 @@ fn same_pages(a: &SourceResult<PagedDocument>, b: &SourceResult<PagedDocument>) 
 enum Msg {
     Frame(u8, Vec<u8>),
     Closed,
+    /// A package fetch's progress (spec §11.8), from its thread.
+    Package(PackageEvent),
 }
 
 struct Job<'f> {
@@ -158,6 +191,10 @@ struct Request {
     buffers: Vec<(String, String)>,
     edits: Vec<(String, u64, u64, String)>,
     export: bool,
+    /// `packages`: `online` lets this compile fetch (spec §11.8).
+    packages_online: bool,
+    /// `lock`: `record` (default), `update`, `off` (spec §11.8).
+    lock: LockMode,
 }
 
 fn err_json(id: Option<i64>, code: &str, message: &str) -> Json {
@@ -190,13 +227,35 @@ impl Host {
     pub fn new(fonts: &FontOptions) -> Host {
         Host {
             fonts: Fonts::load(fonts),
+            packages: Arc::new(Packages::new(PackageOptions::default())),
             program_budget: convert::DEFAULT_PROGRAM_BUDGET,
             seeded: true,
             verify: Verify::Idle(std::time::Duration::from_millis(1000)),
             verified: Default::default(),
             mismatches: Default::default(),
             watchdog: None,
+            evict: 3,
+            ungated: false,
         }
+    }
+
+    /// Where packages come from (spec §11.8, [`crate::packages`]).
+    pub fn with_packages(mut self, opts: PackageOptions) -> Host {
+        self.packages = Arc::new(Packages::new(opts));
+        self
+    }
+
+    /// Draw what has no 2×/3× pixel gate row yet as complete (for
+    /// measuring those rows; DESIGN.md §15.5).
+    pub fn with_ungated(mut self, on: bool) -> Host {
+        self.ungated = on;
+        self
+    }
+
+    /// The `comemo::evict` age after each compile (DESIGN.md §15.2: 3).
+    pub fn with_evict(mut self, age: usize) -> Host {
+        self.evict = age;
+        self
     }
 
     /// Watch every compile with these limits.
@@ -257,6 +316,7 @@ impl Host {
     fn session(&self, stream: UnixStream) -> io::Result<()> {
         flashtex_display_list::widen_socket_buffers(&stream);
         let (tx, rx) = mpsc::channel();
+        let ptx = tx.clone();
         let rstream = stream.try_clone()?;
         std::thread::spawn(move || {
             let mut r = BufReader::with_capacity(1 << 20, rstream);
@@ -279,7 +339,7 @@ impl Host {
         };
 
         // HELLO (spec §6.2).
-        let (minor, program_refs) = match rx.recv() {
+        let (minor, accept, accept_packages) = match rx.recv() {
             Ok(Msg::Frame(kind::C_HELLO, body)) => {
                 let j = std::str::from_utf8(&body)
                     .ok()
@@ -307,15 +367,27 @@ impl Host {
                     return c.flush();
                 }
                 let minor = (minor.clamp(0, LATEST_MINOR as i64)) as u32;
-                // 3.3 `accept` (spec §11.7): FONT `program_from`.
-                let refs = minor >= 3
-                    && j.as_ref()
-                        .and_then(|j| j.get("accept"))
-                        .and_then(Json::as_array)
-                        .is_some_and(|a| {
-                            a.iter().any(|c| c.as_str() == Some(convert::PROGRAM_REFS))
-                        });
-                (minor, refs)
+                // 3.3 `accept` (spec §11.7): FONT `program_from`, colour
+                // spaces and alpha (§11.3), the line state (§11.4).
+                let accepts = |token: &str| {
+                    minor >= 3
+                        && j.as_ref()
+                            .and_then(|j| j.get("accept"))
+                            .and_then(Json::as_array)
+                            .is_some_and(|a| a.iter().any(|c| c.as_str() == Some(token)))
+                };
+                let refs = convert::Accept {
+                    program_refs: accepts(convert::PROGRAM_REFS),
+                    color_spaces: accepts(flashtex_display_list::accept::COLOR_SPACES),
+                    line_state: accepts(flashtex_display_list::accept::LINE_STATE),
+                };
+                // `packages-v1` (spec §11.8): PACKAGE messages.
+                let pkgs = j
+                    .as_ref()
+                    .and_then(|j| j.get("accept"))
+                    .and_then(Json::as_array)
+                    .is_some_and(|a| a.iter().any(|c| c.as_str() == Some(packages::CAPABILITY)));
+                (minor, refs, pkgs)
             }
             Ok(Msg::Frame(..)) => {
                 c.json(
@@ -326,7 +398,7 @@ impl Host {
             }
             _ => return Ok(()),
         };
-        let mut h = hello(minor, self.fonts.len());
+        let mut h = hello(minor, self.fonts.len(), &self.packages.describe());
         if let (Json::Obj(kv), Some(w)) = (&mut h, &self.watchdog) {
             let l = w.limits();
             kv.push((
@@ -349,7 +421,23 @@ impl Host {
         }
         c.json(kind::HELLO, &h)?;
         c.flush()?;
+        // Package fetches report to this connection (one at a time).
+        self.packages.set_listener(Some(Box::new(move |ev| {
+            let _ = ptx.send(Msg::Package(ev));
+        })));
+        let r = self.serve_session(&mut c, &rx, minor, accept, accept_packages);
+        self.packages.set_listener(None);
+        r
+    }
 
+    fn serve_session(
+        &self,
+        c: &mut Conn,
+        rx: &mpsc::Receiver<Msg>,
+        minor: u32,
+        accept: convert::Accept,
+        accept_packages: bool,
+    ) -> io::Result<()> {
         let mut job: Option<Job> = None;
         let mut pending: std::collections::VecDeque<Msg> = Default::default();
         loop {
@@ -367,9 +455,9 @@ impl Host {
                     Some(d) => match rx.recv_timeout(d) {
                         Ok(m) => m,
                         Err(mpsc::RecvTimeoutError::Timeout) => {
-                            self.verify_idle(&mut c, &mut job, minor, program_refs)?;
+                            self.verify_idle(c, &mut job, minor, accept)?;
                             c.flush()?;
-                            comemo::evict(10);
+                            comemo::evict(self.evict);
                             continue;
                         }
                         Err(mpsc::RecvTimeoutError::Disconnected) => return Ok(()),
@@ -394,8 +482,14 @@ impl Host {
                             continue;
                         }
                     };
-                    self.compile(&mut c, &mut job, req, minor, program_refs, superseded)?;
+                    self.compile(c, &mut job, req, minor, accept, superseded)?;
                     c.flush()?;
+                }
+                Msg::Package(ev) => {
+                    if accept_packages {
+                        c.json(packages::KIND, &ev.to_json())?;
+                        c.flush()?;
+                    }
                 }
                 // CANCEL: nothing is running between messages; C_HELLO again
                 // and unknown kinds are ignored (spec §7).
@@ -410,7 +504,7 @@ impl Host {
         job: &mut Option<Job<'f>>,
         req: Request,
         minor: u32,
-        program_refs: bool,
+        accept: convert::Accept,
         superseded: bool,
     ) -> io::Result<()> {
         let t0 = Instant::now();
@@ -420,7 +514,9 @@ impl Host {
             .as_ref()
             .is_some_and(|j| j.root == req.root && j.main == req.main);
         if !same {
-            match HostWorld::new(&req.root, &req.main, &self.fonts) {
+            match HostWorld::new(&req.root, &req.main, &self.fonts)
+                .map(|w| w.with_packages(Arc::clone(&self.packages)))
+            {
                 Ok(world) => {
                     *job = Some(Job {
                         root: req.root.clone(),
@@ -482,6 +578,7 @@ impl Host {
         }
 
         j.world.reset();
+        j.world.set_compile_options(req.packages_online, req.lock);
         j.tables.begin_compile();
         let cold = !j.compiled;
         // The watchdog watches the compile itself, nothing after it.
@@ -517,6 +614,9 @@ impl Host {
             j.unverified = check.seeded && check.verified != Some(true);
         }
         j.last = Some(req.clone());
+        // The project's lock: what the last check found (spec §11.8); the
+        // check itself runs after DONE.
+        let lock_notes = j.world.lock_notes();
         self.finish(
             c,
             j,
@@ -528,11 +628,12 @@ impl Host {
                 keep,
                 cause: None,
                 check,
+                lock_notes,
             },
             output,
             warnings,
             minor,
-            program_refs,
+            accept,
         )
     }
 
@@ -546,7 +647,7 @@ impl Host {
         c: &mut Conn,
         job: &mut Option<Job<'f>>,
         minor: u32,
-        program_refs: bool,
+        accept: convert::Accept,
     ) -> io::Result<()> {
         let Some(j) = job.as_mut() else {
             return Ok(());
@@ -610,11 +711,12 @@ impl Host {
                 keep,
                 cause: Some("verify"),
                 check,
+                lock_notes: vec![],
             },
             output,
             warnings,
             minor,
-            program_refs,
+            accept,
         )
     }
 
@@ -630,7 +732,7 @@ impl Host {
         output: SourceResult<PagedDocument>,
         warnings: EcoVec<SourceDiagnostic>,
         minor: u32,
-        program_refs: bool,
+        accept: convert::Accept,
     ) -> io::Result<()> {
         let Finish {
             t0,
@@ -639,6 +741,7 @@ impl Host {
             keep,
             cause,
             check,
+            lock_notes,
         } = f;
         let id = req.id;
         let output_dir = match &req.output_dir {
@@ -646,6 +749,7 @@ impl Host {
             None => watchdog::temp_dir(std::process::id()),
         };
         let mut positions_ms = 0.0;
+        let mut hash_ms = 0.0;
 
         let mut ndiag = 0;
         let mut errors = 0;
@@ -659,9 +763,9 @@ impl Host {
         for d in &warnings {
             send_diag(c, d, &j.world)?;
         }
-        let (status, pages, typeset, first_page_ms, pdf) = match output {
+        let (status, pages, typeset, first_page_ms, pdf) = match &output {
             Err(errs) => {
-                for d in &errs {
+                for d in errs.iter() {
                     send_diag(c, d, &j.world)?;
                 }
                 ("error", 0usize, 0usize, None, None)
@@ -670,10 +774,15 @@ impl Host {
                 let caps = ClientCaps {
                     minor,
                     opentype_programs: req.opentype,
-                    program_refs,
+                    program_refs: accept.program_refs,
+                    color_spaces: accept.color_spaces,
+                    line_state: accept.line_state,
+                    ungated: self.ungated,
                     program_budget: Some(self.program_budget),
                 };
-                let hashes = page_hashes(&doc);
+                let th = Instant::now();
+                let hashes = page_hashes(doc);
+                hash_ms = ms(th);
                 let mut first = None;
                 let mut typeset = 0;
                 let mut incomplete = vec![false; hashes.len()];
@@ -692,7 +801,7 @@ impl Host {
                 let draws = minor >= 3 && req.opentype;
                 let mut derived: Vec<Result<pdfpos::PagePos, String>> = Vec::new();
                 let derive = |pages: &[usize], out: &mut Vec<Result<pdfpos::PagePos, String>>| {
-                    match pdfpos::derive(&doc, pages) {
+                    match pdfpos::derive(doc, pages) {
                         Ok(v) => out.extend(v.into_iter().map(Ok)),
                         Err(e) => out.extend(pages.iter().map(|_| Err(e.clone()))),
                     }
@@ -714,7 +823,7 @@ impl Host {
                     };
                     let out = match convert::page(
                         &j.world,
-                        &doc,
+                        doc,
                         i,
                         &mut j.tables,
                         caps,
@@ -807,7 +916,7 @@ impl Host {
                     None
                 };
                 let exported = if need_pdf {
-                    let pdf_doc = standard_doc.as_ref().unwrap_or(&doc);
+                    let pdf_doc = standard_doc.as_ref().unwrap_or(doc);
                     Some(typst_pdf::pdf(pdf_doc, &typst_pdf::PdfOptions::default()))
                 } else {
                     None
@@ -847,6 +956,22 @@ impl Host {
                 )
             }
         };
+        for n in &lock_notes {
+            ndiag += 1;
+            c.json(
+                kind::DIAGNOSTIC,
+                &Json::Obj(vec![
+                    ("id".into(), Json::Int(id)),
+                    ("severity".into(), Json::Str("warning".into())),
+                    ("message".into(), Json::Str(n.message.clone())),
+                    (
+                        "file".into(),
+                        Json::Str(n.file.to_string_lossy().into_owned()),
+                    ),
+                    ("kind".into(), Json::Str(n.kind.into())),
+                ]),
+            )?;
+        }
         let mut done = vec![
             ("id".to_string(), Json::Int(id)),
             ("status".into(), Json::Str(status.into())),
@@ -858,6 +983,7 @@ impl Host {
             ("diagnostics".into(), Json::Int(ndiag)),
             ("elapsed_ms".into(), Json::Num(ms(t0))),
             ("compile_ms".into(), Json::Num(compile_ms)),
+            ("hash_ms".into(), Json::Num(hash_ms)),
             (
                 "positions_ms".into(),
                 Json::Num((positions_ms * 1e3).round() / 1e3),
@@ -893,14 +1019,18 @@ impl Host {
         }
         c.json(kind::DONE, &Json::Obj(done))?;
         c.flush()?;
+        // After DONE, never before the edited page: record the document's
+        // fonts in the project's lock and check them (hashing font files);
+        // what it finds goes with the next compile.
+        j.world.after_compile(output.as_ref().ok());
         // Mandatory eviction once the pages are out (DESIGN.md §15.2):
         // without it memory grows ~70 MB per keystroke at 300 pages.
-        comemo::evict(10);
+        comemo::evict(self.evict);
         Ok(())
     }
 }
 
-fn hello(minor: u32, fonts: usize) -> Json {
+fn hello(minor: u32, fonts: usize, packages: &Json) -> Json {
     let mut caps = vec![
         "compile",
         "diagnostics",
@@ -913,12 +1043,15 @@ fn hello(minor: u32, fonts: usize) -> Json {
         "edits",
         "pages-status",
         "export",
+        packages::CAPABILITY,
     ];
     if minor >= 3 {
         caps.extend([
             "opentype-glyphs",
             "origins-f64",
             "page-meta",
+            "color-spaces",
+            "line-state",
             convert::PROGRAM_REFS,
         ]);
     }
@@ -945,7 +1078,7 @@ fn hello(minor: u32, fonts: usize) -> Json {
             Json::Obj(vec![
                 ("version".into(), Json::Str(TYPST_VERSION.into())),
                 ("fonts".into(), Json::Int(fonts as i64)),
-                ("packages".into(), Json::Str("unavailable".into())),
+                ("packages".into(), packages.clone()),
             ]),
         ),
     ])
@@ -1082,6 +1215,25 @@ fn parse_request(body: &[u8]) -> Result<Request, (Option<i64>, String)> {
             ins,
         ));
     }
+    let packages_online = match j.str_field("packages") {
+        None | Some("offline") => false,
+        Some("online") => true,
+        Some(o) => {
+            return Err(bad(format!(
+                "packages {o:?} is not \"offline\" or \"online\""
+            )))
+        }
+    };
+    let lock = match j.str_field("lock") {
+        None | Some("record") => LockMode::Record,
+        Some("update") => LockMode::Update,
+        Some("off") => LockMode::Off,
+        Some(o) => {
+            return Err(bad(format!(
+                "lock {o:?} is not \"record\", \"update\" or \"off\""
+            )))
+        }
+    };
     Ok(Request {
         id,
         root,
@@ -1097,6 +1249,8 @@ fn parse_request(body: &[u8]) -> Result<Request, (Option<i64>, String)> {
         buffers,
         edits,
         export: j.get("export").and_then(Json::as_bool).unwrap_or(false),
+        packages_online,
+        lock,
     })
 }
 

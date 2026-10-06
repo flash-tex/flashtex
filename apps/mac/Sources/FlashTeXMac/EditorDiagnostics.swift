@@ -1171,6 +1171,10 @@ extension EditorDiagnostics {
                                           compiledRevision: compiledRevision,
                                           editorRevision: editorRevision),
                   let edit = mechanicalEdit(for: d) else { continue }
+            // Tab edits only what the caret is on: a fix elsewhere (in a
+            // macro's definition, a \usepackage in the preamble) is the
+            // Problems panel's "Fix…", where the author sees where it goes.
+            guard edit.path == path, edit.startByte <= source.endByte, edit.endByte >= source.startByte else { continue }
             return CaretFix(diagnosticIndex: index,
                             title: d.help?.message ?? "Replace with \(edit.replacement)",
                             replacement: edit.replacement,

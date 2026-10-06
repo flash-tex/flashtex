@@ -1,0 +1,49 @@
+TIME build 51s rc=0
+1466 cases, 1466 equal, 0 differ
+accounting: 7 cases differ
+TIME lockstep 250s rc=0
+[58/86] fixtures/divergence-probes/min2-cases: P-T1=pass P-T2=pass L3 (2.75 s)
+fixtures: accounting (non-gating): 86/86 documents differ
+fixtures: 86 measured, P-T1 86/86 (100.0%), P-T2 86/86 (100.0%), L3 100.0%; at least: L0 100.0%, L1 100.0%, L2 100.0%, L3 100.0%, L4 —
+P-T gate: all 86 measured documents pass P-T1 and P-T2
+TIME parity 125s rc=0
+
+reference: latex2e/base: PASS 799 / FAIL 1 / SKIP 0
+reference: latex2e/required/cyrillic: PASS 1 / FAIL 0 / SKIP 0
+reference: latex2e/required/graphics@etex: PASS 31 / FAIL 0 / SKIP 0
+reference: latex2e/required/tools: PASS 129 / FAIL 3 / SKIP 0
+reference: latex2e/required/amsmath: PASS 39 / FAIL 0 / SKIP 0
+reference: latex2e/required/firstaid: PASS 23 / FAIL 0 / SKIP 0
+reference: latex2e/required/latex-lab: PASS 316 / FAIL 14 / SKIP 0
+reference: latex3/l3kernel: PASS 202 / FAIL 4 / SKIP 0
+reference: latex3/l3kernel[config-backend]@etex-dvips: PASS 14 / FAIL 0 / SKIP 0
+reference: latex3/l3kernel[config-backend]@etex-dvisvgm: PASS 14 / FAIL 0 / SKIP 0
+engine:    latex2e/base: PASS 0 / FAIL 800 / SKIP 0
+engine:    latex2e/required/cyrillic: PASS 0 / FAIL 1 / SKIP 0
+engine:    latex2e/required/graphics@etex: PASS 0 / FAIL 31 / SKIP 0
+engine:    latex2e/required/tools: PASS 0 / FAIL 132 / SKIP 0
+engine:    latex2e/required/amsmath: PASS 0 / FAIL 39 / SKIP 0
+engine:    latex2e/required/firstaid: PASS 0 / FAIL 23 / SKIP 0
+engine:    latex2e/required/latex-lab: PASS 0 / FAIL 330 / SKIP 0
+engine:    latex3/l3kernel: PASS 0 / FAIL 1 / SKIP 0
+engine:    latex3/l3kernel[config-backend]@etex-dvips: PASS 0 / FAIL 14 / SKIP 0
+engine:    latex3/l3kernel[config-backend]@etex-dvisvgm: PASS 0 / FAIL 14 / SKIP 0
+T2: reference fails 22, candidate fails 1385; candidate-only failures: LM-2-2 (latex2e/required/latex-lab), LM-3-1+2 (latex2e/required/latex-lab), LM-3-3 (latex2e/required/latex-lab), LM-3-4 (latex2e/required/latex-lab), amsldoc-1 (latex2e/required/amsmath), amsldoc-2 (latex2e/required/amsmath), ams
+TIME t2 1286s rc=1
+EXIT 1
+SWEEP article-twocolumn: 3 compiles compared
+SWEEP beamer-blocks-columns: 0 compiles compared
+SWEEP beamer-default: 0 compiles compared
+SWEEP beamer-fragile: 0 compiles compared
+SWEEP beamer-madrid: 0 compiles compared
+SWEEP beamer-overlays: 0 compiles compared
+SWEEP beamer-polish: 0 compiles compared
+SWEEP beamer-sans-operators: 0 compiles compared
+SWEEP beamer-sans-operators-professional: 0 compiles compared
+SWEEP beamer-sans-operators-serif: 0 compiles compared
+SWEEP beamer-visuals: 0 compiles compared
+thread 'every_fixture_edits_equal_scratch_compiles' (4108995) panicked at crates/flashtex-engine/tests/host_incremental.rs:389:13:
+conf-paper edit 0: page 3 differs from the scratch compile: dests [Dest { named: true, name: [112, 97, 103, 101, 46, 52], kind: 0, rect: [3486434, 1061602, 268435455, 3384], zoom: 0 }, Dest { named: true, name: [102, 105, 103, 117, 114, 101, 46, 49], kind: 0, rect: [6531342, 42108678, 268435455, 10526], zoom: 0 }] vs [Dest { named: true, name: [112, 97, 103, 101, 46, 52], kind: 0, rect: [3486434, 
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 9 filtered out; finished in 24.99s
+TIME soundness 27s rc=101
+EXIT 101
