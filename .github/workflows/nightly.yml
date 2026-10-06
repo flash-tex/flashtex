@@ -115,20 +115,25 @@ jobs:
   #              pdflatex (TeX Live 2026, pdfTeX 1.40.29), and the scoreboard
   #              is a report, not a gate. The PC has qpdf (P-T2) and pdftoppm
   #              (L4) on PATH.
-  #   templates  the heavy Mac (label flashtex-heavy, main only). Its
-  #              manifest pins 20 files of the Mac's MacTeX 2026 tree by path and SHA-256; the PC's TeX Live 2026 is another
-  #              snapshot, where 7 of the 20 are missing or differ (measured
-  #              2026-09-29: amsldoc.tex and moderncv's template.tex changed,
-  #              IEEEtran's and acmart's samples moved). Moving it would mean
-  #              re-pinning it on the PC, so it stays where it was recorded.
+  #   templates  the NixOS PC too, since 2026-10-06 (P5-BOARD-T4). Its manifest
+  #              pins 20 files of the Mac's MacTeX 2026 tree by path and
+  #              SHA-256; the PC's TeX Live 2026 has no doc files, so the PC
+  #              keeps a copy of exactly those files in
+  #              ~/.cache/flashtex-corpus-texmf/texlive-2026 (parity.py
+  #              --corpus-texmf; tools/parity/README.md, "The board's host").
+  #              The oracle stays the PC's own pdflatex. On the heavy Mac it
+  #              lost its runner mid-build on 10-06 (37423737667: "lost
+  #              communication", the laptop's runner), so the Mac now runs it
+  #              only while the PC's switch is off.
   #
   # Scores are per host (a document that paints from system fonts differs), so
   # compare each leg's nightly scoreboards with each other only.
   #
-  # Each leg has its own switch: arxiv FLASHTEX_SELFHOSTED_LINUX (unset: the
-  # Mac switch), templates FLASHTEX_SELFHOSTED_MAC. A job's `if` cannot see the
-  # matrix, so the tier list itself is built from the switches, and the job
-  # runs when at least one leg is on.
+  # Switches: with FLASHTEX_SELFHOSTED_LINUX on (unset: the Mac switch stands
+  # in) both legs run on the PC; otherwise templates alone runs on the heavy Mac
+  # (FLASHTEX_SELFHOSTED_MAC, main only). A job's `if` cannot see the matrix,
+  # so the tier list itself is built from the switches, and the job runs when
+  # at least one leg is on.
   #
   # DESIGN §9.3: never on a pull_request from a fork. This workflow has no
   # pull_request trigger, and the guard is here anyway so that adding one later
@@ -139,19 +144,19 @@ jobs:
       ((vars.FLASHTEX_SELFHOSTED_LINUX || vars.FLASHTEX_SELFHOSTED_MAC) == '1' || (vars.FLASHTEX_SELFHOSTED_MAC == '1' && github.ref == 'refs/heads/main')) &&
       (github.event_name != 'pull_request' ||
        github.event.pull_request.head.repo.full_name == github.repository)
-    runs-on: ${{ matrix.tier == 'arxiv' && fromJSON('["self-hosted","Linux","X64","flashtex-linux"]') || fromJSON('["self-hosted","macOS","ARM64","flashtex","flashtex-heavy"]') }}
-    # templates holds the heavy Mac, so it joins the group of the heavy Mac
-    # jobs (p5-scoreboard's Mac route); arxiv keeps a group of its own.
+    runs-on: ${{ (vars.FLASHTEX_SELFHOSTED_LINUX || vars.FLASHTEX_SELFHOSTED_MAC) == '1' && fromJSON('["self-hosted","Linux","X64","flashtex-linux"]') || fromJSON('["self-hosted","macOS","ARM64","flashtex","flashtex-heavy"]') }}
+    # On the heavy Mac (the PC off) templates joins the group of the heavy Mac
+    # jobs (p5-scoreboard's Mac route); on the PC each leg has a group of its own.
     concurrency:
-      group: ${{ matrix.tier == 'templates' && 'flashtex-mac-heavy' || format('nightly-arxiv-{0}', github.run_id) }}
+      group: ${{ (vars.FLASHTEX_SELFHOSTED_LINUX || vars.FLASHTEX_SELFHOSTED_MAC) != '1' && 'flashtex-mac-heavy' || format('nightly-{0}-{1}', matrix.tier, github.run_id) }}
       cancel-in-progress: false
     timeout-minutes: 300
     strategy:
       fail-fast: false
       matrix:
-        # arxiv on the NixOS PC, templates on the Mac; only the legs whose
-        # switch is on. Never empty: the job's `if` needs one of them.
-        tier: ${{ fromJSON(((vars.FLASHTEX_SELFHOSTED_LINUX || vars.FLASHTEX_SELFHOSTED_MAC) == '1' && (vars.FLASHTEX_SELFHOSTED_MAC == '1' && github.ref == 'refs/heads/main')) && '["arxiv","templates"]' || (vars.FLASHTEX_SELFHOSTED_LINUX || vars.FLASHTEX_SELFHOSTED_MAC) == '1' && '["arxiv"]' || '["templates"]') }}
+        # both on the NixOS PC; with the PC off, templates alone on the Mac.
+        # Never empty: the job's `if` needs one of them.
+        tier: ${{ fromJSON((vars.FLASHTEX_SELFHOSTED_LINUX || vars.FLASHTEX_SELFHOSTED_MAC) == '1' && '["arxiv","templates"]' || '["templates"]') }}
     env:
       # 'true' when the dispatch input (default: both tiers) names this leg's tier.
       WANT: ${{ contains(format(' {0} ', github.event.inputs.parity_tiers || 'arxiv templates'), format(' {0} ', matrix.tier)) }}
@@ -184,6 +189,10 @@ jobs:
             echo "PARITY_TEXBIN=$(dirname "$(command -v pdflatex)")"
             echo "PARITY_ORACLE=$(command -v pdftex)"
             echo "PARITY_TEXMF=$(kpsewhich -var-value TEXMFDIST)"
+            # the templates documents' pinned copy, where this TeX Live has no doc files (the PC)
+            docs="$HOME/.cache/flashtex-corpus-texmf/texlive-2026"
+            if [ -d "$docs" ]; then echo "PARITY_CORPUS_TEXMF=$docs"
+            else echo "PARITY_CORPUS_TEXMF=$(kpsewhich -var-value TEXMFDIST)"; fi
           } | tee -a "$GITHUB_ENV"
       - name: build the flashtex CLI (release)
         if: env.WANT == 'true'
@@ -202,7 +211,7 @@ jobs:
           set -euo pipefail
           margs=()
           for m in tools/parity/corpus/"$TIER"-*.json; do margs+=(--manifest "$m"); done
-          python3 tools/parity/corpus.py --texmf "$PARITY_TEXMF" fetch "${margs[@]}"
+          python3 tools/parity/corpus.py --texmf "$PARITY_CORPUS_TEXMF" fetch "${margs[@]}"
       - name: run the tier
         if: env.WANT == 'true'
         env:
@@ -211,6 +220,7 @@ jobs:
           set -euo pipefail
           python3 tools/parity/parity.py --tier "$TIER" -j 6 \
             --texbin "$PARITY_TEXBIN" --oracle-pdftex "$PARITY_ORACLE" --texmf "$PARITY_TEXMF" \
+            --corpus-texmf "$PARITY_CORPUS_TEXMF" \
             --out "$RUNNER_TEMP/parity" --work "$RUNNER_TEMP/parity-work"
       - name: report
         if: always() && env.WANT == 'true'
@@ -230,7 +240,7 @@ jobs:
   # Say why, rather than leaving an empty run, when a leg's runners are off.
   parity-corpus-unavailable:
     name: parity scoreboard (arxiv + templates)
-    if: ${{ !((vars.FLASHTEX_SELFHOSTED_LINUX || vars.FLASHTEX_SELFHOSTED_MAC) == '1') || !((vars.FLASHTEX_SELFHOSTED_MAC == '1' && github.ref == 'refs/heads/main')) }}
+    if: ${{ !((vars.FLASHTEX_SELFHOSTED_LINUX || vars.FLASHTEX_SELFHOSTED_MAC) == '1') }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
     env:
@@ -242,8 +252,8 @@ jobs:
             echo "::notice::skipped: the arxiv tier needs the NixOS PC's self-hosted runners (TeX Live 2026)."
             echo "arxiv: register the NixOS runners (scripts/ci/install-selfhosted-runner-nixos.sh) and set \`gh variable set FLASHTEX_SELFHOSTED_LINUX --body 1\`." >> "$GITHUB_STEP_SUMMARY"
           fi
-          if [ "$MAC_ON" != "true" ]; then
-            echo "::notice::skipped: the templates tier needs a self-hosted Mac with MacTeX 2026."
+          if [ "$LINUX_ON" != "true" ] && [ "$MAC_ON" != "true" ]; then
+            echo "::notice::skipped: the templates tier needs the NixOS PC, or (the PC off) a self-hosted Mac with MacTeX 2026."
             echo "templates: register a Mac runner (scripts/ci/install-selfhosted-runner.sh) and set \`gh variable set FLASHTEX_SELFHOSTED_MAC --body 1\`." >> "$GITHUB_STEP_SUMMARY"
           fi
 
@@ -363,6 +373,15 @@ jobs:
         # refuses to start when that bound is over 70% of the memory this PC
         # has available at the start of the job (other runner instances share it).
         #
+        # The workers run in a scope of their own inside flashtex.slice, capped
+        # at 10G (MemoryHigh 9G), and their count is fitted to it (at most 8,
+        # 1.5625 GiB each: 5). On 10-06 (37423737667) the 8 workers ran in the
+        # runner's own service cgroup, whose MemoryHigh is 9G: reclaim stalled
+        # the whole cgroup, the runner's listener with it, its job renewals
+        # timed out (11:27Z on), and GitHub dropped the job after 46 of 50
+        # shards ("lost communication"). In a scope, a stall stops the workers,
+        # not the listener.
+        #
         # The templates and packages documents come from the PC's pinned copy
         # (tools/parity/README.md, "The board's host"): its TeX Live has no doc
         # files, so without it those documents are unmeasured, and every shard
@@ -370,19 +389,25 @@ jobs:
         # a resume of 4 missing shards started over at shard 0).
         run: |
           set -euo pipefail
-          budget="$(awk '/^MemAvailable:/ { printf "%.1f", $2 * 0.7 / 1048576 }' /proc/meminfo)"
+          budget="$(awk '/^MemAvailable:/ { b = $2 * 0.7 / 1048576; if (b > 8) b = 8; printf "%.1f", b }' /proc/meminfo)"
+          jobs="$(awk -v b="$budget" 'BEGIN { j = int(b / 1.5625); if (j > 8) j = 8; if (j < 1) j = 1; print j }')"
+          wrap=()
+          scope=(systemd-run --user --scope --quiet --slice=flashtex.slice -p MemoryMax=10G -p MemoryHigh=9G -p MemorySwapMax=0)
+          if "${scope[@]}" true 2>/dev/null; then wrap=("${scope[@]}" nice -n 10)
+          else echo "::warning::systemd-run --user is unavailable: the workers run in the runner's own cgroup"; fi
+          echo "T4: $jobs workers, memory budget $budget GiB"
           docs="$HOME/.cache/flashtex-corpus-texmf/texlive-2026"
           corpus=()
           if [ -d "$docs" ]; then corpus=(--corpus-texmf "$docs")
           else echo "::warning::no $docs: the templates and packages documents are unmeasured"; fi
-          python3 tools/parity/nightly.py run --shards "$SHARDS" \
+          ${wrap[@]+"${wrap[@]}"} python3 tools/parity/nightly.py run --shards "$SHARDS" \
             ${SHARD_RANGE:+--shard-range "$SHARD_RANGE"} \
             --tier nightly-5k --tier arxiv --tier templates --tier packages \
             --pt1-sample nightly-5k=0.05 --pt1-max-log-mb 64 --memory-budget-gib "$budget" \
             --engine "$ENGINE_DIR/flashtex-initex" \
             --engine-env "FLASHTEX_FORMATS=$ENGINE_DIR" --engine-env "FLASHTEX_POOL=$ENGINE_DIR/pdftex.pool" \
             --texbin "$PARITY_TEXBIN" --oracle-pdftex "$PARITY_ORACLE" \
-            -j 8 --deadline-minutes 1320 --out "$RUNNER_TEMP/corpus-t4" \
+            -j "$jobs" --deadline-minutes 1320 --out "$RUNNER_TEMP/corpus-t4" \
             -- --texmf "$PARITY_TEXMF" ${corpus[@]+"${corpus[@]}"}
       - name: ratchet against this host's baseline
         # also after an unfinished run: the documents it did score are held
