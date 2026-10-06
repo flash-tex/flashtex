@@ -2092,6 +2092,8 @@ pub struct Session {
     /// run at a convergence, applied after a restore: each convergence's
     /// (`Step`) composed into one per checkpoint (`Reloc`).
     reloc: HashMap<CheckpointId, Reloc>,
+    /// `rs_seen`'s rebuild after such a restore, as the bytes it changed.
+    seen_memo: SeenMemo,
     /// L5: new meanings of `.aux` entries to put into a checkpoint's state
     /// after restoring it, in order (the checkpoints from `Point::AuxDone`
     /// to where a pass with a changed `.aux` restarted hold the meanings
@@ -2217,6 +2219,7 @@ impl Session {
             paused: None,
             cursor: 0,
             reloc: HashMap::new(),
+            seen_memo: SeenMemo::default(),
             defpatch: HashMap::new(),
             preempt: None,
             cancel: None,
@@ -2320,6 +2323,7 @@ impl Session {
         self.pages.clear();
         self.ck_pages.clear();
         self.reloc.clear();
+        self.seen_memo = SeenMemo::default();
         // (an abandoned run's restart point is the old engine's id)
         self.reemit_from = None;
         let id = s0.id;
@@ -3883,6 +3887,7 @@ impl Session {
         // drops S₀ (and every later restart point's page count); the pages
         // it shipped are shipped again anyway.
         self.reloc.clear();
+        self.seen_memo = SeenMemo::default();
         self.defpatch.clear();
         self.reemit_from = None;
         crate::pdftex::reset_state();
@@ -4022,6 +4027,9 @@ impl Session {
         }
         if let Some(rs) = self.reloc.get(&r) {
             rs.apply(g);
+            if rs.count > 0 && g.rs_on {
+                self.seen_memo.rebuild(g, r, rs.count);
+            }
         }
         if g.layer().aux_point == Some(r) {
             // the run reads the `.aux` again: its close begins the read-set
@@ -4421,6 +4429,9 @@ impl Session {
             let g = self.g.as_mut().unwrap();
             if let Some(rs) = self.reloc.get(&last) {
                 rs.apply(g);
+                if rs.count > 0 && g.rs_on {
+                    self.seen_memo.rebuild(g, last, rs.count);
+                }
             }
             // The old run's checkpoints after the convergence point that the
             // line shift cannot be put right in are never restored: their
@@ -4831,6 +4842,56 @@ struct Reloc {
     steps: Vec<Step>,
 }
 
+/// After a restore of a checkpoint with corrections, `rs_seen` is rebuilt
+/// from the read-set (`readset::rebuild_seen`: a name key per event, 0.3-1.1
+/// ms at 10,000 events on a 1,000-page hyperref document, at every such
+/// restore; lane P4-PAGE-COST). What it writes depends only on the
+/// checkpoint's state, which every restore of it gives back the same (the
+/// corrections touch no name), and on the read-set's events up to it: for
+/// the same checkpoint, the same corrections and the same events, the bytes
+/// it changed are written again. A few checkpoints are kept (typing restores
+/// one again and again). `FLASHTEX_VERIFY_RELOC` rebuilds every time and
+/// compares.
+#[derive(Default)]
+struct SeenMemo {
+    /// (checkpoint, corrections composed, events' fingerprint, the bytes).
+    kept: Vec<(CheckpointId, usize, (usize, u64), Vec<(u32, u8)>)>,
+}
+
+impl SeenMemo {
+    const KEEP: usize = 8;
+
+    fn rebuild(&mut self, g: &mut Globals, id: CheckpointId, count: usize) {
+        let fp = crate::readset::events_fingerprint(g);
+        let hit = self
+            .kept
+            .iter()
+            .position(|e| e.0 == id && e.1 == count && e.2 == fp);
+        if let Some(i) = hit {
+            if verify_reloc() {
+                let fresh = crate::readset::rebuild_seen_diff(g);
+                if fresh != self.kept[i].3 {
+                    eprintln!(
+                        "FLASHTEX_VERIFY_RELOC: rs_seen's rebuild at checkpoint {id} differs from the one kept ({} vs {} bytes)",
+                        fresh.len(),
+                        self.kept[i].3.len()
+                    );
+                    std::process::abort();
+                }
+                return;
+            }
+            crate::readset::apply_seen_diff(g, &self.kept[i].3);
+            return;
+        }
+        let d = crate::readset::rebuild_seen_diff(g);
+        self.kept.retain(|e| e.0 != id);
+        if self.kept.len() >= Self::KEEP {
+            self.kept.remove(0);
+        }
+        self.kept.push((id, count, fp, d));
+    }
+}
+
 /// The most pieces a [`Reloc`] composes into.
 const RELOC_PIECES: usize = 256;
 
@@ -4925,9 +4986,6 @@ impl Reloc {
         }
         if let Some(before) = before {
             self.verify(g, before);
-        }
-        if self.count > 0 && g.rs_on {
-            crate::readset::rebuild_seen(g);
         }
     }
 
