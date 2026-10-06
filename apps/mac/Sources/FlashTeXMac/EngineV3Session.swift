@@ -1903,8 +1903,12 @@ final class EngineV3Session {
             for (k, f) in macros.enumerated() {
                 let name = (f.name ?? "a macro").trimmingCharacters(in: .whitespaces)
                 var def = f.def.flatMap { l in l.file.map { "\(rel($0))\(l.line.map { ":\($0)" } ?? "")" } }
-                // The engine names no definition site: the project's one definition of it.
-                if def == nil, let found = EngineV3DiagPresent.definition(of: name, in: projectTexts) {
+                // The definition in the project's text: where the engine says it was made (#1593),
+                // else (the engine names no site) the project's one definition of it.
+                let near = f.def.flatMap { l in l.file.map { (path: rel($0), line: l.line ?? Int.max) } }
+                let found = near.flatMap { EngineV3DiagPresent.definition(of: name, in: projectTexts, near: $0) }
+                    ?? (def == nil ? EngineV3DiagPresent.definition(of: name, in: projectTexts) : nil)
+                if let found {
                     def = found.site.label
                     labels.append(.init(source: found.site.source, text: "\(name) is defined at \(found.site.label)", primary: false))
                     // The error is inside this (innermost) macro: the undefined name in its definition.
