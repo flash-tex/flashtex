@@ -4854,9 +4854,12 @@ struct Reloc {
 /// compares.
 #[derive(Default)]
 struct SeenMemo {
-    /// (checkpoint, corrections composed, events' fingerprint, the bytes).
-    kept: Vec<(CheckpointId, usize, (usize, u64), Vec<(u32, u8)>)>,
+    kept: Vec<SeenKept>,
 }
+
+/// One rebuild: (checkpoint, corrections composed, the events'
+/// fingerprint, the bytes it changed).
+type SeenKept = (CheckpointId, usize, (usize, u64), Vec<(u32, u8)>);
 
 impl SeenMemo {
     const KEEP: usize = 8;
