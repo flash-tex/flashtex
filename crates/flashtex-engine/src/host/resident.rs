@@ -1740,7 +1740,7 @@ mod tests {
         }
         // past a vector round's 255 blocks, every byte a LF (each lane's
         // count at its most) and none, at every offset of the slice
-        for fill in [b'\n', b'x'] {
+        for fill in *b"\nx" {
             let v = vec![fill; 16 * 255 * 3 + 37];
             for off in 0..17 {
                 let want = if fill == b'\n' { v.len() - off } else { 0 };
