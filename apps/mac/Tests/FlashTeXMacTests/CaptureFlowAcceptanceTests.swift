@@ -227,11 +227,13 @@ final class CaptureFlowAcceptanceTests: XCTestCase {
         XCTAssertEqual(requeried?.baseRevision, typedRevision)
 
         // A second edit, then the capture the iPad built from hello_ack (stale revision, same id).
+        // An edit after the anchor (a new line at the end) leaves it where it is.
         model.updateActiveText("Hello!! FlashTeX.\n\n")
+        XCTAssertEqual(model.bridgeDestination?.valid, true)
+        XCTAssertEqual(model.bridgeDestination?.startByte, 7, "an edit after the anchor does not move it")
         model.caretUTF16 = 19
         let secondRevision = model.editorRevision
         try await waitUntil("second document_edit sent") { model.bridge?.shadow["main.tex"]?.revision == secondRevision }
-        XCTAssertEqual(model.bridgeDestination?.startByte, 19)
         let capture = try session.makeCapture(captureId: "flow-v3-1", image: Self.fixturePNG, mimeType: "image/png",
                                               instructions: "the equation", destination: atHello)
         let ack = try await r.submit(capture, requireCurrentDestination: false)
