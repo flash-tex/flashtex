@@ -146,6 +146,11 @@ jobs:
       # 'true' when the Xcode jobs (Mac app, iPad) run: after the merge, and
       # on a pull request or branch push that touches apps/.
       apple: ${{ steps.p.outputs.apple }}
+      # 'true' when the engine-v3 host tests run (mac-v3-host): after the
+      # merge and on manual runs; on a pull request or branch push only when
+      # it touches the app's engine-v3 code or tests, the display-list-v3
+      # protocol, or the host (`v3_app_paths` in the script).
+      v3_app: ${{ steps.p.outputs.v3_app }}
       # JSON `os` lists for the Rust workspace/standalone jobs and for
       # trip/etrip/pdftex-regression: the gate and pull requests run trip and
       # co. on Linux only and the Rust jobs not at all; after the merge, both
@@ -328,6 +333,21 @@ jobs:
             pr) [ "$run" = "true" ] && touches '^apps/' && apple=true ;;
           esac
 
+          # The engine-v3 host tests (mac-v3-host): the app's EngineV3* and
+          # EngineChoice suites against a real flashtex-host and a TeX, which
+          # the mac-app job has neither of (there they skip). After the merge
+          # and on manual runs; before it, only when the change touches the
+          # app's engine-v3 code or tests, the display-list-v3 protocol (both
+          # sides), the host itself, or this file. Not on every engine change:
+          # engine parity covers the typesetting, and this is a ~20 minute
+          # hosted macOS job. Never in the gate.
+          v3_app_paths='^(apps/mac/(Sources/FlashTeXMac/(EngineV3|EngineChoice)|Sources/FlashTeXDisplayListV3/|Tests/FlashTeXMacTests/(EngineV3|EngineChoiceTests)|Package\.swift$)|crates/(flashtex-engine/src/host/|display-list-v3/)|\.github/workflows/ci\.yml$)'
+          v3_app=false
+          case "$tier" in
+            all) v3_app=true ;;
+            pr) [ "$run" = "true" ] && touches "$v3_app_paths" && v3_app=true ;;
+          esac
+
           # The OLD engine's parity fixtures (parity-fixtures and its hosted
           # twin). That engine is frozen (D13, fixes only), and the job needs a
           # Mac. It runs after the merge (every push to main, where a failure
@@ -392,6 +412,7 @@ jobs:
             echo "engine_hosted=$engine_hosted"
             echo "old_engine=$old_engine"
             echo "apple=$apple"
+            echo "v3_app=$v3_app"
             echo "rust_os=$rust_os"
             echo "trip_os=$trip_os"
           } >> "$GITHUB_OUTPUT"
@@ -410,6 +431,7 @@ jobs:
             echo "| Mac runner | \`$mac_runner\` |"
             echo "| new engine parity | $engine (NixOS shards: $engine_nixos, hosted: $engine_hosted) |"
             echo "| Mac app / iPad | $apple |"
+            echo "| engine-v3 host tests (Mac app) | $v3_app |"
             echo "| old engine parity fixtures | $old_engine |"
             echo "| Rust workspace / standalone | \`$rust_os\` |"
           } >> "$GITHUB_STEP_SUMMARY"
@@ -1092,6 +1114,92 @@ jobs:
           if-no-files-found: ignore
           retention-days: 7
 
+  # The engine-v3 host tests: the app's EngineV3* and EngineChoice suites
+  # against a real `flashtex-host` and a TeX. The mac-app job above has
+  # neither, so there every test behind EngineV3TestHost.require() (and the
+  # ones that look for a host themselves) SKIPS -- app-parity rows A15, A16,
+  # A19, A20, A21 and B3 among them. Here FLASHTEX_REQUIRE_HOST=1 makes a
+  # missing host or TeX a failure, so a green run means they ran.
+  #
+  # GitHub-hosted macos-26, never a self-hosted Mac: these tests open windows
+  # (the team's Macs are laptops, the owner's among them; preview-parity.yml).
+  # The TeX is BasicTeX (a minimal TeX Live 2026 installed from CTAN to
+  # /Library/TeX/texbin, where both the app and the host look) plus the few
+  # packages the tests load that it lacks. Same Xcode and Swift as mac-app.
+  mac-v3-host:
+    name: "mac app: engine-v3 host tests"
+    needs: [plan]
+    if: needs.plan.outputs.run == 'true' && needs.plan.outputs.v3_app == 'true'
+    runs-on: macos-26
+    timeout-minutes: 75
+    env:
+      CI: "1"
+      FLASHTEX_NO_ACTIVATE: "1"
+      FLASHTEX_KEYCHAIN_OFF: "1"
+      FLASHTEX_REVIEW_HISTORY_DIR: "off"
+      FLASHTEX_REQUIRE_HOST: "1"
+      HOMEBREW_NO_AUTO_UPDATE: "1"
+      HOMEBREW_NO_INSTALL_CLEANUP: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - name: Select the newest stable Xcode
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: latest-stable
+      - run: swift --version && xcodebuild -version
+      - name: Install BasicTeX and the packages the tests load
+        # The tests' documents use article, amsmath, graphicx, geometry,
+        # hyperref, lmodern, lipsum and tikz, and the tools tests run BibTeX.
+        # lipsum and pgf are not in BasicTeX. Fails unless kpsewhich then
+        # finds pdflatex.ini (what EngineV3TestHost.require() checks).
+        run: |
+          set -euo pipefail
+          brew install --cask basictex
+          echo /Library/TeX/texbin >> "$GITHUB_PATH"
+          export PATH="/Library/TeX/texbin:$PATH"
+          sudo tlmgr update --self
+          sudo tlmgr install lipsum pgf xcolor
+          kpsewhich pdflatex.ini
+          pdflatex --version | head -n 1
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: v3-host
+          # The build is ~11 min cold; keep it even when a test fails.
+          cache-on-failure: true
+      - name: Build flashtex-host and every bundled helper (release)
+        # The host is found through FLASHTEX_HOST; the helpers' FLASHTEX_*
+        # lines are what mac-app exports (flashtex-project-files for the
+        # package tests, and so on). pipefail: see mac-app.
+        run: |
+          set -o pipefail
+          cargo build --release --locked -p flashtex-engine --bin flashtex-host
+          echo "FLASHTEX_HOST=$PWD/target/release/flashtex-host" >> "$GITHUB_ENV"
+          scripts/ci/build-helpers.sh | tee -a "$GITHUB_ENV"
+      - name: swift test (EngineV3* and EngineChoiceTests)
+        working-directory: apps/mac
+        env:
+          FLASHTEX_V3_CACHE: ${{ runner.temp }}/flashtex-v3-cache
+        run: |
+          set -o pipefail
+          mkdir -p "$FLASHTEX_V3_CACHE"
+          swift test --filter 'FlashTeXMacTests\.(EngineV3|EngineChoiceTests)' 2>&1 | tee swift-test.log | grep -vE '^\s*$' | tail -n 400
+      - name: Executed and skipped
+        if: always()
+        working-directory: apps/mac
+        run: |
+          grep -E "Executed [0-9]+ tests?" swift-test.log | tail -n 1 || true
+          echo "skipped:"
+          grep -E "Test Case .* skipped" swift-test.log || true
+      - name: Upload swift test log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mac-host-swift-test-log
+          path: apps/mac/swift-test.log
+          if-no-files-found: ignore
+          retention-days: 14
+
   ipad:
     name: iPad companion (simulator build + tests)
     needs: [plan]
@@ -1157,7 +1265,7 @@ jobs:
   # owner fixes forward within 2 hours, or the Commander reverts the merge.
   main-red:
     name: main-red issue
-    needs: [plan, build, quick, checks, parity-fixtures, parity-fixtures-hosted, engine-parity, engine-parity-hosted, rust-workspace, rust-standalone, mac-app, ipad]
+    needs: [plan, build, quick, checks, parity-fixtures, parity-fixtures-hosted, engine-parity, engine-parity-hosted, rust-workspace, rust-standalone, mac-app, mac-v3-host, ipad]
     if: >-
       always() && github.event_name == 'push' && github.ref == 'refs/heads/main' &&
       needs.plan.outputs.run == 'true'
