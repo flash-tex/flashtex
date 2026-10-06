@@ -351,7 +351,7 @@ final class ShellModel {
     private func refreshChrome() {
         var again = false
         withObservationTracking {
-            again = chrome.refresh(from: self)
+            again = MainThreadProbe.time("chrome.refresh") { chrome.refresh(from: self) }
         } onChange: { [weak self] in
             // Observation calls this at the mutation (main actor: every writer is).
             MainActor.assumeIsolated { self?.scheduleChromeRefresh() }

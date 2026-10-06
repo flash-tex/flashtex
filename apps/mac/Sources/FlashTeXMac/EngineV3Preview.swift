@@ -158,6 +158,8 @@ struct EngineV3ScrollView: NSViewRepresentable {
     }
 
     func updateNSView(_ scroll: NSScrollView, context: Context) {
+        let probe = MainThreadProbe.begin()
+        defer { MainThreadProbe.end("v3.updateNSView", probe) }
         let revision = session.layoutRevision // observed: page count/sizes changed
         let pages = scroll.documentView as? EngineV3PagesView
         pages?.setAppearance(dark ? .dark : .light)
@@ -735,6 +737,8 @@ final class EngineV3PagesView: NSView {
     /// stays where it is in the viewport.
     func relayout(revision: Int? = nil, anchor: CGPoint? = nil) {
         guard let session else { return }
+        let probe = MainThreadProbe.begin()
+        defer { MainThreadProbe.end("v3.relayout", probe) }
         let n = session.pageCount
         let avail = available
         // `pageSize`: a compiled page, or a stored one of an instant reopen.

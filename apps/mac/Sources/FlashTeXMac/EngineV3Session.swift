@@ -319,6 +319,7 @@ final class EngineV3Session {
     init(smoothFonts: Bool? = nil) {
         self.smoothFonts = smoothFonts ?? PreviewFontSmoothing.enabled
         rasterPlan.smoothFonts = self.smoothFonts
+        delivery = EngineV3Delivery(EngineV3WeakRef(self))
         if smoothFonts == nil {
             fontSmoothingObserver = PreviewFontSmoothing.observe { [weak self] on in self?.smoothFonts = on }
         }
@@ -632,9 +633,10 @@ final class EngineV3Session {
             do {
                 let c = try DL3Connection(socketPath: socket, client: "FlashTeX (engine-v3 preview)", accept: [DL3Diag.capability] + (ProcessInfo.processInfo.environment["FLASHTEX_V3_NO_PROGRESS"] == "1" ? [] : [DL3.progressCapability]))
                 let reader = EngineV3Reader(cache: .shared, plan: plan)
+                let delivery = EngineV3Delivery(ref)
                 c.start(onTimedEvent: { ev, timing in
                     guard let out = reader.handle(ev, timing: timing) else { return }
-                    EngineV3Session.onMain { ref.value?.apply(out, connection: c) }
+                    delivery.post(out, connection: c)
                 }, onClose: { err in
                     EngineV3Session.onMain { ref.value?.closed(err, connection: c) }
                 })
@@ -1498,11 +1500,16 @@ final class EngineV3Session {
 
     // MARK: events from the reader
 
-    private func apply(_ out: EngineV3Reader.Output, connection c: DL3Connection) {
-        guard c === connection else { return } // a replaced connection's late frames
-        handle(out)
+    /// `c` nil: a test's feed (`EngineV3Delivery.post(_:connection:)`), as from the current connection.
+    fileprivate func apply(_ out: EngineV3Reader.Output, connection c: DL3Connection?) {
+        guard c == nil || c === connection else { return } // a replaced connection's late frames
+        MainThreadProbe.time("v3.event") { handle(out) }
         afterEvent?(out)
     }
+
+    /// Hands host events to the main thread as the reader thread does (tests:
+    /// `EditorInstantTests` feeds a synthetic compile through it).
+    @ObservationIgnored private(set) var delivery: EngineV3Delivery!
 
     /// Tests: called after each event from the host has been applied.
     @ObservationIgnored var afterEvent: ((EngineV3Reader.Output) -> Void)?
@@ -1586,7 +1593,8 @@ final class EngineV3Session {
             exportDone(j)
         case .done(let j, let compileID):
             let doneStart = DispatchTime.now().uptimeNanoseconds
-            defer { lastDoneMainMs = Double(DispatchTime.now().uptimeNanoseconds - doneStart) / 1e6 }
+            let probe = MainThreadProbe.begin()
+            defer { lastDoneMainMs = Double(DispatchTime.now().uptimeNanoseconds - doneStart) / 1e6; MainThreadProbe.end("v3.done", probe) }
             let status = j["status"]?.string ?? "?"
             if logDone { log("DONE \(j)") }
             doneCount &+= 1
@@ -2034,6 +2042,18 @@ final class EngineV3Session {
 final class EngineV3WeakRef: @unchecked Sendable {
     weak var value: EngineV3Session?
     init(_ v: EngineV3Session) { value = v }
+}
+
+/// How the reader thread's events reach the main thread (any thread may post).
+final class EngineV3Delivery: @unchecked Sendable {
+    let ref: EngineV3WeakRef
+    init(_ ref: EngineV3WeakRef) { self.ref = ref }
+
+    /// One decoded event from connection `c` (nil: a test's feed), applied on main.
+    func post(_ out: EngineV3Reader.Output, connection c: DL3Connection?) {
+        let ref = self.ref
+        EngineV3Session.onMain { ref.value?.apply(out, connection: c) }
+    }
 }
 
 /// Which pages the reader thread may rasterise as they arrive: the ones on
