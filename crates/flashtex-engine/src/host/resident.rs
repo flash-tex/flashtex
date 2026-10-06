@@ -764,18 +764,25 @@ impl Engine {
         doc.session.set_progress(conn.progress.then(|| {
             let c = conn.clone();
             let last = std::cell::Cell::new((0usize, None::<Instant>));
-            std::rc::Rc::new(move |pass: usize, pages: usize| {
-                let (last_pass, at) = last.get();
-                if pass != last_pass || at.is_none_or(|t| t.elapsed().as_millis() >= 250) {
-                    last.set((pass, Some(Instant::now())));
-                    let j = obj([
-                        ("id", Json::Int(id)),
-                        ("pass", Json::Int(pass as i64)),
-                        ("page", Json::Int(pages as i64)),
-                    ]);
-                    server::send_json(&c.out, kind::PROGRESS, &j);
-                }
-            }) as incr::Progress
+            std::rc::Rc::new(
+                move |pass: usize, pages: usize, g: &crate::generated::Globals| {
+                    let (last_pass, at) = last.get();
+                    if pass != last_pass || at.is_none_or(|t| t.elapsed().as_millis() >= 250) {
+                        last.set((pass, Some(Instant::now())));
+                        let mut j = obj([
+                            ("id", Json::Int(id)),
+                            ("pass", Json::Int(pass as i64)),
+                            ("page", Json::Int(pages as i64)),
+                        ]);
+                        // `file`: the innermost file TeX reads (only read
+                        // here, at most every 250 ms; never per token).
+                        if let (Some(f), Json::Obj(kv)) = (reading(g), &mut j) {
+                            kv.push(("file".into(), js(f)));
+                        }
+                        server::send_json(&c.out, kind::PROGRESS, &j);
+                    }
+                },
+            ) as incr::Progress
         }));
         // Lane P4-MULTIPASS: when a pass leaves work for the external tools
         // (latexmk's rules: a new `.bcf`, `\citation`s, an `.idx`), the
@@ -1767,6 +1774,18 @@ fn lf_count_words(b: &[u8]) -> usize {
         n += z.count_ones() as usize;
     }
     n + rest.iter().filter(|&&c| c == b'\n').count()
+}
+
+/// The innermost file the engine reads (`\input`, `\include`, a package),
+/// as TeX opened it: `full_source_filename_stack[in_open]`, which
+/// `-file-line-error` names too. `None` at the terminal level.
+fn reading(g: &crate::generated::Globals) -> Option<String> {
+    let level = g.in_open;
+    if level <= 0 {
+        return None;
+    }
+    let name = g.full_source_filename_stack[level as usize];
+    (name > 0).then(|| String::from_utf8_lossy(&g.str_bytes(name)).into_owned())
 }
 
 #[cfg(test)]
