@@ -232,6 +232,30 @@ final class EngineV3Session {
     var hostPID: Int32? { host?.pid }
     /// Hosts started by this session (the first, then each restart).
     @ObservationIgnored private(set) var hostStarts = 0
+
+    /// View > Show Preview Debug Status under v3 (gap C25): what the v2
+    /// pane's debug strip showed of its frame (id, revision, pages), as this
+    /// session has it. The host's pid and how many hosts the session started,
+    /// the newest compile a DONE finished (a cancelled one does not count),
+    /// the layout revision, the pages and how many are stale, the DONEs
+    /// received, the keystroke-to-screen median the status bar shows
+    /// (ShellChrome: the last 200 samples) and the environment note. The
+    /// counters marked `@ObservationIgnored` change with observed ones (a
+    /// DONE sets the status note), so the pane's line follows them.
+    var debugLine: String {
+        func plural(_ n: Int, _ word: String) -> String { "\(n) \(word)\(n == 1 ? "" : "s")" }
+        var parts = [hostPID.map { "host pid \($0)" } ?? "no host", plural(hostStarts, "host start")]
+        parts.append(lastDoneID > 0 ? "last DONE #\(lastDoneID)" : "no DONE yet")
+        parts.append("layout revision \(layoutRevision)")
+        parts.append("\(plural(pageCount, "page")), \(staleCount) stale")
+        parts.append("\(plural(doneCount, "DONE")) received")
+        let ms = latency.samples.suffix(200).map(\.ms)
+        if !ms.isEmpty {
+            parts.append(String(format: "keystroke to screen median %.0f ms over %d", ms.sorted()[ms.count / 2], ms.count))
+        }
+        if !environmentNote.isEmpty { parts.append(environmentNote) }
+        return parts.joined(separator: " · ")
+    }
     @ObservationIgnored private var connection: DL3Connection?
     @ObservationIgnored private var nextID = 1
     /// The text of each document as the host's copy of the project holds it.
