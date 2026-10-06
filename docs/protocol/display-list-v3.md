@@ -788,7 +788,11 @@ Times are in ms (`queue`, `apply`, `move_spans`, `find`, `key`, `changes`, `rest
 `edited_page` are counts and a page index). `queue_by` splits `queue` (the
 request's wait for the engine thread) by what the engine thread did
 meanwhile, in ms per part (`restore`, `typeset`, `test`, `jump`, `paused`,
-`done`, `prepare`, `request`, `idle`, `other`). `old_kept` and
+`done`, `prepare`, `request`, `idle`, `other`). When the compile found a
+run that newer work had stopped (typing: the previous compile's background
+work), `paused_how` says what it did with it first (`continued`,
+`settled`, `abandoned`) and `paused` (ms) and `paused_instr_k` what that
+took, inside `key` and `find`. `old_kept` and
 `old_rewound` count, since the host started, the old checkpoints' chunks
 the convergence comparisons took from their cache and rewound. On macOS the
 engine thread's fixed-counter readings are added, in thousands
