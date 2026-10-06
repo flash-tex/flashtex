@@ -329,7 +329,10 @@ fn a_kept_tail_stays_in_the_file_until_it_is_settled() {
     let tail = "0123456789".repeat(20);
     // the abandon: the new run writes over part of the tail, then more
     // than the whole old file
-    for (new, more) in [("XY", ""), ("edited", "and on past the old end".repeat(12).as_str())] {
+    for (new, more) in [
+        ("XY", ""),
+        ("edited", "and on past the old end".repeat(12).as_str()),
+    ] {
         let mut g = Globals::new();
         openout(&mut g, 0, &p);
         write(&mut g, 0, "head");
@@ -372,10 +375,15 @@ fn a_kept_tail_stays_in_the_file_until_it_is_settled() {
     g.checkpoint().unwrap();
     // the record has the logical length, not the file's
     let last = *g.checkpoints().last().unwrap();
-    let len = g.record_of(last).unwrap().files.iter().find_map(|f| match &f.stream {
-        Stream::Out { path, len, .. } if *path == p => Some(*len),
-        _ => None,
-    });
+    let len = g
+        .record_of(last)
+        .unwrap()
+        .files
+        .iter()
+        .find_map(|f| match &f.stream {
+            Stream::Out { path, len, .. } if *path == p => Some(*len),
+            _ => None,
+        });
     assert_eq!(len, Some(9));
     close(&mut g, 0);
     assert_eq!(read(&p), "headshort");

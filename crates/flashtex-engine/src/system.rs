@@ -373,7 +373,12 @@ pub fn put_back_kept(path: &str, base: u64) -> Result<bool, String> {
     f.write_all(&saved).map_err(e)?;
     f.set_len(old_len).map_err(e)?;
     drop(f);
-    file_trace(|| format!("put_back_kept {path} base {base} saved {} old_len {old_len}", saved.len()));
+    file_trace(|| {
+        format!(
+            "put_back_kept {path} base {base} saved {} old_len {old_len}",
+            saved.len()
+        )
+    });
     logical_settled(path);
     stamp_output(path);
     Ok(true)

@@ -2909,7 +2909,9 @@ impl Session {
             .read_state()
             .into_iter()
             .map(|(p, _)| {
-                let h = system::read_logical(&p).map(|d| hash128(&d)).unwrap_or([0, 0]);
+                let h = system::read_logical(&p)
+                    .map(|d| hash128(&d))
+                    .unwrap_or([0, 0]);
                 (p, h)
             })
             .collect();
