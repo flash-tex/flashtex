@@ -1851,11 +1851,17 @@ final class EngineV3Session {
     /// Foundation's resolution of its links. Empty without a root.
     static func copyRoots(_ root: URL?) -> [String] {
         guard let root else { return [] }
+        let standardized: String = root.standardizedFileURL.path
+        var spellings: [String] = [standardized]
+        if let p = realpath(standardized, nil) {
+            spellings.append(String(cString: p))
+            free(p)
+        }
+        spellings.append(root.resolvingSymlinksInPath().path)
         var out: [String] = []
-        let standardized = root.standardizedFileURL.path
-        let real = realpath(standardized, nil).map { p in defer { free(p) }; return String(cString: p) }
-        for r in [standardized, real, root.resolvingSymlinksInPath().path].compactMap({ $0 }) where !out.contains(r + "/") {
-            out.append(r + "/")
+        for r in spellings {
+            let prefix = r.hasSuffix("/") ? r : r + "/"
+            if !out.contains(prefix) { out.append(prefix) }
         }
         return out
     }
@@ -1865,15 +1871,16 @@ final class EngineV3Session {
     /// leading "./" dropped. An absolute name under none of them is matched
     /// once more by its own real path (a link anywhere above the copy).
     static func relativeToCopy(_ file: String, roots: [String]) -> String {
-        var f = file
+        var f: String = file
         while f.hasPrefix("./") { f.removeFirst(2) }
         if let r = roots.first(where: { f.hasPrefix($0) }) {
             f.removeFirst(r.count)
-        } else if f.hasPrefix("/"), !roots.isEmpty,
-                  let real = realpath(f, nil).map({ p in defer { free(p) }; return String(cString: p) }),
-                  let r = roots.first(where: { real.hasPrefix($0) }) {
-            f = String(real.dropFirst(r.count))
+            return f
         }
+        guard f.hasPrefix("/"), !roots.isEmpty, let p = realpath(f, nil) else { return f }
+        let real = String(cString: p)
+        free(p)
+        if let r = roots.first(where: { real.hasPrefix($0) }) { return String(real.dropFirst(r.count)) }
         return f
     }
 
