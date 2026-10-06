@@ -2065,7 +2065,10 @@ impl Arena {
         let (br_b, br_d, br_w) = branch.map_or((0, 0, 0), |b| sum(&b.logs));
         let open = c.logs.last().map_or(0, |l| l.entries.len());
         let prepared = c.prepared.as_ref().map_or(0, |p| {
-            p.buf.capacity() * 8 + p.cs.capacity() * 4 + p.ids.capacity() * 8
+            p.buf.capacity() * 8
+                + p.cs.capacity() * 4
+                + p.ids.capacity() * 8
+                + p.pre.iter().filter(|d| !d.is_null()).count() * CHUNK_BYTES
         });
         vec![
             ("space_reserved", c.bytes as i64),
@@ -2680,6 +2683,20 @@ mod tests {
             assert!(arr[..] == copies[i][..], "prepared restore to {i}");
             a.converge(br, ids[i]).unwrap();
             assert!(arr[..] == end[..], "jump back from {i}");
+        }
+        // the redo made ahead (`Prepared::pre`): written after the
+        // preparation heavily, so that most prepared chunks the barrier had
+        // not saved are written again before the restore, and some are not
+        for (n, i) in [2usize, 15, 9].into_iter().enumerate() {
+            assert!(a.prepare_restore(ids[i], &mut || false));
+            let p = a.core().prepared.as_ref().unwrap();
+            assert!(p.pre.iter().any(|d| !d.is_null()), "a redo made ahead");
+            scribble(&mut arr, 1000 + n as u64, 2_000);
+            let end = arr.to_vec();
+            let br = a.restore_branch(ids[i]).unwrap();
+            assert!(arr[..] == copies[i][..], "prepared restore to {i}, written since");
+            a.converge(br, ids[i]).unwrap();
+            assert!(arr[..] == end[..], "jump back from {i}, written since");
         }
         // stale: a checkpoint since the preparation
         assert!(a.prepare_restore(ids[5], &mut || false));
