@@ -2985,10 +2985,9 @@ fn a_preamble_edit_looks_the_preamble_s_files_up_again() {
         std::fs::write(dir.join("doc.tex"), text).unwrap();
         let reference = dir.with_extension("ref");
         let _ = std::fs::remove_dir_all(&reference);
+        // (`copy_dir` copies a link as it is on main now, so the
+        // reference's `zzlink.tex` dangles or not as the document's does)
         copy_dir(&dir, &reference);
-        // (`copy_dir` copies files only: the link too)
-        #[cfg(unix)]
-        std::os::unix::fs::symlink(&target, reference.join("zzlink.tex")).unwrap();
         let r = h.cmd("compile");
         check_against_env(&e, &dir, &reference, &r, what, &env);
         r
