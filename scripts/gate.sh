@@ -494,6 +494,9 @@ gate_parity_selftest() {
   python3 -m unittest discover -s tools/parity -p 'test_*.py'
   # tools/lockstep's own tests (cases that need pdftex skip without it)
   python3 -m unittest discover -s tools/lockstep -p 'test_*.py'
+  # package-smoke's runner and the P5 board's T4 pick (ci.yml's gate job runs the same)
+  python3 -m unittest discover -s tools/package-smoke -p 'test_*.py'
+  scripts/tests/p5-pick-t4.test.sh
 }
 
 # ---------------------------------------------------------------------------
@@ -580,7 +583,11 @@ fi
 
 case "$TIER" in
   quick|pr|full)
-    if have rustfmt; then step "rustfmt (changed files)" -- gate_fmt
+    # `rustfmt --version`, not `have rustfmt`: rustup's proxy is on PATH even
+    # where the component is not installed, and then every rustfmt call fails,
+    # so an existing file passed unchecked (its base "failed" too) and a new
+    # one failed as unformatted (the NixOS PC's runner toolchain, 2026-10-06).
+    if rustfmt --version >/dev/null 2>&1; then step "rustfmt (changed files)" -- gate_fmt
     else skip "rustfmt (changed files)" "rustfmt is not installed (rustup component add rustfmt)"; fi
     if (( ROOT_MANIFEST )); then
       step "workspace check (root manifest changed)" -- gate_workspace_check

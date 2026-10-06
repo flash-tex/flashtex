@@ -1615,6 +1615,103 @@ fn a_same_size_edit_within_the_mtime_tick_is_seen() {
     let _ = std::fs::remove_dir_all(&base);
 }
 
+/// Another program rewrites the file after a compile that wrote it (review
+/// of #1606): in place, the same length, the host's modification time put
+/// back (a write within the file system's tick). The next compile, with no
+/// edit, sees it (`system::KNOWN` holds the host's copy only within the
+/// compile that wrote it): a letter replaced, and a space replaced by a LF.
+#[test]
+fn an_outside_rewrite_after_the_hosts_own_write_is_seen() {
+    if find_texlive_bin().is_none() {
+        common::no_texlive();
+        return;
+    }
+    for (variant, from, to) in [("letter", None, None), ("newline", Some(b' '), Some(b'\n'))] {
+        let base = common::fresh_dir(&format!("flashtex-host-outside-{variant}"));
+        let _ = std::fs::remove_dir_all(&base);
+        std::fs::create_dir_all(&base).unwrap();
+        let (proj, out) = (base.join("proj"), base.join("out"));
+        std::fs::create_dir_all(&proj).unwrap();
+        std::fs::create_dir_all(&out).unwrap();
+        let main = "main.tex";
+        let text = article(3);
+        std::fs::write(proj.join(main), &text).unwrap();
+        let host = start_host("o");
+        let scratch = start_host("os");
+        let mut c = Client::connect(&host.1).unwrap();
+        let mut view = View::default();
+        let mut id = 0;
+        for _ in 0..4 {
+            id += 1;
+            let o = compile(&mut c, &mut view, &req(id, &proj, &out, main));
+            if o.done.str_field("mode") == Some("unchanged") {
+                break;
+            }
+        }
+        // the host writes the file: one letter of a prose word replaced
+        let at = text
+            .find(" lorem ")
+            .or_else(|| text.find(" the "))
+            .expect("a word")
+            + 1;
+        id += 1;
+        let mut r = req(id, &proj, &out, main);
+        r.edits = vec![Edit {
+            path: main.into(),
+            offset: at as u64,
+            delete: 1,
+            insert: if text.as_bytes()[at] == b'q' {
+                "z"
+            } else {
+                "q"
+            }
+            .into(),
+        }];
+        let o = compile(&mut c, &mut view, &r);
+        assert_eq!(o.done.str_field("status"), Some("ok"), "{}", o.done);
+        // another program, within the tick: another byte, in place
+        let mtime = std::fs::metadata(proj.join(main))
+            .unwrap()
+            .modified()
+            .unwrap();
+        let mut b = std::fs::read(proj.join(main)).unwrap();
+        let w = text
+            .rfind(" lorem ")
+            .or_else(|| text.rfind(" the "))
+            .expect("a word");
+        assert!(w > at + 8);
+        match (from, to) {
+            (Some(f), Some(t)) => {
+                assert_eq!(b[w], f);
+                b[w] = t;
+            }
+            _ => b[w + 1] = if b[w + 1] == b'q' { b'z' } else { b'q' },
+        }
+        {
+            use std::io::{Seek, Write};
+            let mut f = std::fs::File::options()
+                .write(true)
+                .open(proj.join(main))
+                .unwrap();
+            f.seek(std::io::SeekFrom::Start(0)).unwrap();
+            f.write_all(&b).unwrap();
+            f.set_modified(mtime).unwrap();
+        }
+        id += 1;
+        let o = compile(&mut c, &mut view, &req(id, &proj, &out, main));
+        assert_ne!(
+            o.done.str_field("mode"),
+            Some("unchanged"),
+            "{variant}: the outside rewrite was not seen: {}",
+            o.done
+        );
+        let (p2, o2) = snapshot(&base, &proj, &out, "o");
+        compare_with_scratch(&scratch.1, &view, &proj, &out, &p2, &o2, main, variant);
+        let _ = c.bye();
+        let _ = std::fs::remove_dir_all(&base);
+    }
+}
+
 /// An absolute name the run looked for (review of #1549, (a)): its own
 /// directory decides the answer, not the working directory, both before
 /// S₀ (S₀'s key) and after it (the journal). A file appearing there is

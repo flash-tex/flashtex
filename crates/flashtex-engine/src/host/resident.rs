@@ -597,6 +597,7 @@ impl Engine {
         let queue_ms = t0.elapsed().as_secs_f64() * 1e3;
         // what the engine thread did while this request waited (LIVE-30MS)
         let queue_by = crate::busy::since(t0);
+        let queue_counts = crate::busy::counts_since(t0);
         let arrival_mark = crate::busy::cycles_at(t0);
         let _busy = crate::busy::enter(crate::busy::Part::Request);
         super::crash::serving(&format!(
@@ -626,6 +627,9 @@ impl Engine {
             }
         };
         let t_apply = Instant::now();
+        // (the host's copies stand for files only within the compile that
+        // wrote them: `system::KNOWN`)
+        crate::system::clear_known_content();
         if let Err(e) = apply_changes(&job.root, &req, &mut self.written) {
             server::error(&out, Some(id), "request", &e);
             return self.resume_deferred(&conn);
@@ -948,6 +952,26 @@ impl Engine {
                             .collect(),
                     ),
                 ),
+                // the same wait in the engine thread's instructions and cycles
+                // (thousands), by part: load-independent (P4-TYPING-200WPM)
+                (
+                    "queue_by_instr_k".to_string(),
+                    Json::Obj(
+                        queue_counts
+                            .iter()
+                            .map(|(k, i, _)| (k.to_string(), Json::Int((*i / 1000) as i64)))
+                            .collect(),
+                    ),
+                ),
+                (
+                    "queue_by_kc".to_string(),
+                    Json::Obj(
+                        queue_counts
+                            .iter()
+                            .map(|(k, _, c)| (k.to_string(), Json::Int((*c / 1000) as i64)))
+                            .collect(),
+                    ),
+                ),
                 ("apply".to_string(), m(apply_ms)),
                 ("move_spans".to_string(), m(move_ms)),
                 ("first_page".to_string(), o(t.first_page_ms)),
@@ -1144,6 +1168,7 @@ impl Engine {
         let doc = self.doc.as_mut().unwrap();
         doc.compiles += 1;
         doc.tools.deferred = deferred.then(|| (conn.clone(), req.clone(), id));
+        crate::system::clear_known_content();
         remember_texts(doc);
         // Persist S₀ after a full run (off the keystroke path: DONE is out),
         // or after the first complete compile behind a stopped one.
@@ -1450,8 +1475,10 @@ fn apply_changes(root: &Path, req: &Json, written: &mut Written) -> Result<(), S
                 crate::os::write_all_at(&f, &data[from..], from as u64)
             });
         r.map_err(|e| format!("{}: {e}", path.display()))?;
-        if let Some(s) = sig(path) {
-            written.insert(path.to_path_buf(), (s, Arc::new(data)));
+        let held = sig(path).map(|s| (s, Arc::new(data)));
+        crate::system::note_known_content(path, held.clone());
+        if let Some(h) = held {
+            written.insert(path.to_path_buf(), h);
         }
         Ok::<(), String>(())
     };

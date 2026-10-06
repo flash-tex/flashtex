@@ -848,7 +848,10 @@ load on one Mac, while a dispatch of a branch does not wait for main's night.
   two hours a night beside `p5-scoreboard.yml`'s own T2 on the same oracle,
   and the Mac ran out of disk twice on 10-03.
 * **The heavy self-hosted Mac** (`flashtex-heavy`, mac-m1max-a-2) now carries
-  the templates leg here and `p5-scoreboard.yml`'s Mac route only; they share
+  the templates leg here and `p5-scoreboard.yml`'s Mac route only. Since
+  2026-10-05 (P5-BOARD-T4) that route runs only when a dispatch names it and is
+  unofficial: it files no issue and does not gate. The official, gating board
+  is the NixOS PC's (its `p5-red` issues and the run's own status). They share
   the concurrency group `flashtex-mac-heavy`, so only one runs at a time;
   mac-m1max-a-1 stays general and serves the merge queue. Its oracle is the
   Mac's MacTeX 2026: the same pdfTeX 1.40.29 as the PC but another snapshot

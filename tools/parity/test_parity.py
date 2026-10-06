@@ -2800,5 +2800,185 @@ sys.exit(0)
             live.wait()
 
 
+@unittest.skipUnless(shutil.which("qpdf"), "needs qpdf")
+class PT2SizeCap(unittest.TestCase):
+    """P5-BOARD-T4: a PDF whose qdf copy is over the cap is a harness error (unmeasured),
+    never a P-T2 pass or fail, and qpdf stops writing at the cap (T4 2511.15561v1: 3.0 GB)."""
+
+    def test_over_the_cap_raises_and_leaves_nothing(self):
+        d = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, d, True)
+        src = os.path.join(d, "a.pdf")
+        body = (b"%PDF-1.4\n1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n2 0 obj\n<< /Type /Pages "
+                b"/Kids [3 0 R] /Count 1 >>\nendobj\n3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 9 9] "
+                b">>\nendobj\ntrailer\n<< /Root 1 0 R /Size 4 >>\n%%EOF\n")
+        with open(src, "wb") as f:
+            f.write(body)
+        out = os.path.join(d, "a.qdf.pdf")
+        old = tiers.PT2_MAX_QDF_BYTES
+        try:
+            tiers.PT2_MAX_QDF_BYTES = 64
+            with self.assertRaises(tiers.PT2TooLarge):
+                tiers.normalise_pdf(src, out)
+            self.assertFalse(os.path.exists(out))
+            self.assertFalse(issubclass(tiers.PT2TooLarge, tiers.pdftext.PdfError))  # compare_pt2 lets it through
+        finally:
+            tiers.PT2_MAX_QDF_BYTES = old
+        tiers.normalise_pdf(src, out)  # under the default cap: as before
+        self.assertTrue(os.path.getsize(out) > 0)
+
+    def predictor_pdf(self, d, name, pixels, width, level, png_filter):
+        """A one-page PDF whose RGB image is Flate with a PNG predictor (as pdfTeX's PNG
+        copy writes it), every row with `png_filter` (0 None, 1 Sub), at zlib `level`."""
+        import zlib
+        bpp, rowbytes = 3, width * 3
+        rows = []
+        for y in range(len(pixels) // rowbytes):
+            row = pixels[y * rowbytes:(y + 1) * rowbytes]
+            if png_filter == 1:
+                row = bytes((row[i] - (row[i - bpp] if i >= bpp else 0)) & 0xff for i in range(rowbytes))
+            rows.append(bytes([png_filter]) + row)
+        data = zlib.compress(b"".join(rows), level)
+        img = (b"<< /Type /XObject /Subtype /Image /Width %d /Height %d /BitsPerComponent 8 "
+               b"/ColorSpace /DeviceRGB /Filter /FlateDecode /DecodeParms << /Predictor 15 /Colors 3 "
+               b"/Columns %d >> /Length %d >>\nstream\n" % (width, len(rows), width, len(data))) + data + b"\nendstream"
+        objs = [b"<< /Type /Catalog /Pages 2 0 R >>", b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+                b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 9 9] /Resources << /XObject << /Im1 5 0 R >> >> "
+                b"/Contents 4 0 R >>",
+                b"<< /Length 18 >>\nstream\nq 9 0 0 9 0 0 cm /Im1 Do Q\nendstream", img]
+        body = b"%PDF-1.4\n" + b"".join(b"%d 0 obj\n%s\nendobj\n" % (i + 1, o) for i, o in enumerate(objs))
+        body += b"trailer\n<< /Root 1 0 R /Size 6 >>\n%%EOF\n"
+        p = os.path.join(d, name)
+        with open(p, "wb") as f:
+            f.write(body)
+        return p
+
+    def test_same_pixels_other_encoding_is_equal(self):
+        """#1635 review: a Flate image with a PNG predictor is compared by its samples, not by
+        zlib's bytes (--recompress-flate): the same pixels at another level and with another
+        PNG row filter pass, and one changed pixel fails."""
+        import random
+        d = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, d, True)
+        rnd = random.Random(1635)
+        width, height = 40, 30
+        pixels = bytes(rnd.randrange(256) for _ in range(width * height * 3))
+        a = self.predictor_pdf(d, "a.pdf", pixels, width, 9, 0)
+        b = self.predictor_pdf(d, "b.pdf", pixels, width, 1, 1)
+        self.assertTrue(tiers.compare_pt2(a, b, os.path.join(d, "w1"))["ok"])
+        changed = bytearray(pixels)
+        changed[1234] ^= 1
+        c = self.predictor_pdf(d, "c.pdf", bytes(changed), width, 9, 0)
+        r = tiers.compare_pt2(a, c, os.path.join(d, "w2"))
+        self.assertFalse(r["ok"])
+        self.assertEqual(r["first_page"]["differs"], ["resources"])
+
+    def test_qdf_keeps_images_compressed_and_the_digest_is_unchanged(self):
+        """#1621: the qdf copy is written compressed (--compress-streams=y), and an image's
+        digest is the streamed one, equal to hashing its decoded, padding-cleared samples."""
+        d = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, d, True)
+        rows = bytes([0xAA, 0b11101110] * 600)  # 9 px at 1 bit, 600 rows, padding bits set
+        img = (b"<< /Type /XObject /Subtype /Image /Width 9 /Height 600 /BitsPerComponent 1 "
+               b"/ColorSpace /DeviceGray /Length %d >>\nstream\n" % len(rows)) + rows + b"\nendstream"
+        objs = [b"<< /Type /Catalog /Pages 2 0 R >>", b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+                b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 9 9] /Resources << /XObject << /Im1 5 0 R >> >> "
+                b"/Contents 4 0 R >>",
+                b"<< /Length 18 >>\nstream\nq 9 0 0 9 0 0 cm /Im1 Do Q\nendstream", img]
+        body = b"%PDF-1.4\n" + b"".join(b"%d 0 obj\n%s\nendobj\n" % (i + 1, o) for i, o in enumerate(objs))
+        body += b"trailer\n<< /Root 1 0 R /Size 6 >>\n%%EOF\n"
+        src, out = os.path.join(d, "i.pdf"), os.path.join(d, "i.qdf.pdf")
+        with open(src, "wb") as f:
+            f.write(body)
+        tiers.normalise_pdf(src, out)
+        doc = tiers.pdftext.PdfDocument.load(out)
+        g = tiers.Graph(doc)
+        nums = [n for n, (o, raw) in doc.objects.items() if isinstance(o, dict) and o.get("Subtype") == "Image"]
+        self.assertEqual(len(nums), 1)
+        obj, raw = doc.objects[nums[0]]
+        self.assertEqual(obj.get("Filter"), "FlateDecode")  # compressed in the copy
+        self.assertLess(len(raw), len(rows))
+        cleared = bytes([0xAA, 0b10000000] * 600)
+        self.assertEqual(g.stream_digest(nums[0], obj, raw), tiers.sha(cleared))
+        self.assertEqual(g.stream_digest(nums[0], obj, raw), tiers.sha(g.stream(nums[0])))
+
+
+class RowPadding(unittest.TestCase):
+    """P5-BOARD-T4: pdfTeX leaves heap bytes in the unused bits of a sub-byte image row
+    (writepng.c's uninitialised row buffer and libpng's png_combine_row), so P-T2
+    compares image samples with those bits cleared, and every pixel still counts."""
+
+    class Doc:
+        def __init__(self, objs=None):
+            self.objs = objs or {}
+
+        def resolve(self, x):
+            return self.objs.get(x, x) if isinstance(x, (str, int)) else x
+
+    def image(self, width, **over):
+        o = {"Subtype": "Image", "Width": width, "Height": 2, "BitsPerComponent": 1,
+             "ColorSpace": ["Indexed", "DeviceRGB", 1, b"\x00\x00\x00\xff\xff\xff"]}
+        o.update(over)
+        return o
+
+    def test_padding_cleared_pixels_kept(self):
+        doc = self.Doc()
+        # 9 px at 1 bit: 2 bytes a row, 7 padding bits in the second
+        a = tiers.clear_row_padding(doc, self.image(9), bytes([0xAA, 0b11101110, 0x55, 0b01101110]))
+        b = tiers.clear_row_padding(doc, self.image(9), bytes([0xAA, 0b10000000, 0x55, 0b00000000]))
+        self.assertEqual(a, b)
+        c = tiers.clear_row_padding(doc, self.image(9), bytes([0xAA, 0b00000000, 0x55, 0b00000000]))
+        self.assertNotEqual(a, c)  # the 9th pixel differs: still a difference
+
+    def test_left_alone(self):
+        doc = self.Doc()
+        whole = bytes([1, 2, 3, 4])
+        self.assertEqual(tiers.clear_row_padding(doc, self.image(16), whole), whole)  # rows end on a byte
+        self.assertEqual(tiers.clear_row_padding(doc, self.image(9), b"\xff" * 3), b"\xff" * 3)  # not plain rows
+        self.assertEqual(tiers.clear_row_padding(doc, {"Subtype": "Form"}, b"\xff\xff"), b"\xff\xff")
+        unknown = self.image(9, ColorSpace="Unknown")
+        self.assertEqual(tiers.clear_row_padding(doc, unknown, b"\xff" * 4), b"\xff" * 4)
+
+    def test_streamed_digest_is_the_in_memory_one(self):
+        """#1621: image_digest hashes an image as a stream, in chunks; it must give exactly
+        sha(clear_row_padding(decoded)) whatever the chunk boundaries."""
+        import random
+        import zlib
+        rnd = random.Random(1621)
+        doc = self.Doc()
+        old = tiers.DIGEST_CHUNK
+        try:
+            for chunk in (1, 7, 64, 1 << 20):
+                tiers.DIGEST_CHUNK = chunk
+                for width, h in ((9, 5), (16, 3), (977, 4), (1, 1)):
+                    o = self.image(width, Height=h, Filter="FlateDecode")
+                    rowbytes = (width + 7) // 8
+                    data = bytes(rnd.randrange(256) for _ in range(rowbytes * h))
+                    want = tiers.sha(tiers.clear_row_padding(doc, o, data))
+                    self.assertEqual(tiers.image_digest(doc, o, zlib.compress(data)), want, (chunk, width))
+                    # not plain rows (a longer stream): the plain digest, as clear_row_padding leaves it
+                    more = data + b"\xff"
+                    self.assertEqual(tiers.image_digest(doc, o, zlib.compress(more)), tiers.sha(more))
+        finally:
+            tiers.DIGEST_CHUNK = old
+        # anything but plain /FlateDecode is the caller's to decode as before
+        self.assertIsNone(tiers.image_digest(doc, self.image(9, Filter="DCTDecode"), b"x"))
+        self.assertIsNone(tiers.image_digest(doc, self.image(9, Filter="FlateDecode",
+                                                             DecodeParms={"Predictor": 15}), b"x"))
+        self.assertIsNone(tiers.image_digest(doc, {"Subtype": "Form", "Filter": "FlateDecode"}, b"x"))
+        with self.assertRaises(zlib.error):
+            tiers.image_digest(doc, self.image(9, Filter="FlateDecode"), zlib.compress(b"\x00" * 40)[:-6])
+
+    def test_components_from_the_colour_space(self):
+        doc = self.Doc({"icc": {"N": 3}})
+        rgb = self.image(3, ColorSpace="DeviceRGB", BitsPerComponent=4)  # 36 bits: 5 bytes, 4 spare bits
+        out = tiers.clear_row_padding(doc, rgb, b"\xff" * 10)
+        self.assertEqual(out, b"\xff\xff\xff\xff\xf0" * 2)
+        icc = self.image(3, ColorSpace=["ICCBased", "icc"], BitsPerComponent=4)
+        self.assertEqual(tiers.clear_row_padding(doc, icc, b"\xff" * 10), out)
+        mask = {"Subtype": "Image", "Width": 9, "Height": 1, "ImageMask": True}
+        self.assertEqual(tiers.clear_row_padding(doc, mask, b"\xff\xff"), b"\xff\x80")
+
+
 if __name__ == "__main__":
     unittest.main()
