@@ -756,6 +756,22 @@ impl Engine {
                 .set_cancel(Some(std::rc::Rc::new(move |_pass, _pages| {
                     c.is_cancelled(id)
                 })));
+            // Nothing new against the run a newer keystroke stopped (a letter
+            // typed and deleted again): the pages that run shipped are this
+            // compile's. Deliver them now and say they are current, instead
+            // of when the run ships its next page: the edited page among
+            // them is the keystroke's (lane P4-TYPING-200WPM).
+            let live = self.live.clone();
+            doc.session
+                .set_on_continue(Some(std::rc::Rc::new(move |pages: usize| {
+                    let mut l = live.borrow_mut();
+                    if let Some(mut t) = l.target.take() {
+                        l.catch_up(&mut t, pages as u32);
+                        let count = t.old_count.max(pages);
+                        t.pages_status(count, false);
+                        l.target = Some(t);
+                    }
+                })));
         }
         // The `progress-v1` heartbeat (spec §6.8): at a pass's first
         // checkpoint, then at most every 250 ms, in every run (a later
@@ -869,6 +885,7 @@ impl Engine {
         let _busy = crate::busy::enter(crate::busy::Part::Done);
         doc.session.set_preempt(None);
         doc.session.set_cancel(None);
+        doc.session.set_on_continue(None);
         doc.session.set_progress(None);
         doc.session.set_defer(None);
         let deferred = matches!(&result, Ok(r) if r.deferred);

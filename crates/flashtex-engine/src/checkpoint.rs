@@ -199,6 +199,10 @@ pub trait Observer {
     }
     /// The observer as `Any`, to take it back after a run.
     fn into_any(self: Box<Self>) -> Box<dyn std::any::Any>;
+    /// The pages the run has shipped so far (with those before its start).
+    fn shipped(&self) -> usize {
+        0
+    }
 }
 
 /// The exit status of a run an [`Observer`] stopped.
