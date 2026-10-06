@@ -3479,6 +3479,8 @@ impl Session {
     /// index of the first lookup that finds something else now.
     #[allow(clippy::type_complexity)]
     fn changes(&mut self) -> Result<(Vec<Edit>, Vec<String>, Option<usize>), String> {
+        // (names resolve afresh in every compile: `lineshift::same_path`)
+        crate::lineshift::forget_paths();
         let (key_files, key_open) = self.key_cover.clone();
         let j = self.journal.as_mut().ok_or("no journal")?;
         let mut edits = vec![];
@@ -3984,10 +3986,24 @@ impl Session {
         let g = self.g.as_mut().unwrap();
         // the edits' line shifts, their lines before the edit counted from
         // where the restart point reads each file
-        obs.shifts = std::mem::take(&mut self.line_shifts)
+        // (one file under two names -- a symlink, a case variant -- is in the
+        // journal twice, with the same edit: one shift, #1591. Only an
+        // identical edit is merged, whatever the names say: two files that
+        // a stale or wrong resolution takes for one keep their own shifts,
+        // `first` and all; and the merged shift keeps every name, so that
+        // two byte-identical files edited alike both keep their lines'
+        // shift.)
+        let mut pending: Vec<crate::lineshift::Pending> = vec![];
+        for p in std::mem::take(&mut self.line_shifts) {
+            match pending.iter_mut().find(|q| q.same_edit(&p)) {
+                Some(q) => q.absorb(p),
+                None => pending.push(p),
+            }
+        }
+        obs.shifts = pending
             .into_iter()
             .map(|p| {
-                let (line, at) = crate::lineshift::level_at(g, &rec, &p.path);
+                let (line, at) = crate::lineshift::level_at(g, &rec, p.names());
                 p.resolve(line, at)
             })
             .collect();

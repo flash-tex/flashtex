@@ -365,7 +365,7 @@ pub fn move_lines(from: usize, shifts: &[crate::lineshift::Shift]) {
         let f = String::from_utf8_lossy(&p.file);
         let d: i32 = shifts
             .iter()
-            .filter(|s| p.line >= s.after && crate::lineshift::same_path(&f, &s.path))
+            .filter(|s| p.line >= s.after && s.names().any(|n| crate::lineshift::same_path(&f, n)))
             .map(|s| s.delta)
             .sum();
         p.line += d;
