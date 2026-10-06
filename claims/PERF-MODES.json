@@ -1,0 +1,11 @@
+{
+  "actor": "kabir-claude-perf-modes",
+  "branch": null,
+  "gh_ref": null,
+  "machine": "mac-m5pro-kabir",
+  "note": null,
+  "started_utc": "2026-10-06T21:31:21Z",
+  "state": "claimed",
+  "task_id": "PERF-MODES",
+  "updated_utc": "2026-10-06T21:31:21Z"
+}
