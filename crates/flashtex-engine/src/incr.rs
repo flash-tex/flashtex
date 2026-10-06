@@ -1743,6 +1743,12 @@ impl Observer for Obs {
         self
     }
 
+    /// Held back before the edited page: taken where newer work stops the
+    /// run (`on_checkpoint` stops it there, as at any segment checkpoint).
+    fn take_held_segment(&mut self, g: &mut Globals) -> bool {
+        self.preempt_now(g)
+    }
+
     fn on_checkpoint(&mut self, g: &mut Globals, id: CheckpointId, why: Point) -> Action {
         if let Some(p) = &self.progress {
             p(self.pass, self.pages_so_far());
@@ -3848,11 +3854,13 @@ impl Session {
         g.checkpoint_every_shipout(true);
         g.layer().timed_s = self.opts.timed_s;
         g.checkpoint_segments(self.opts.segment_s);
-        // No restart points between pages before the edited page (DESIGN.md
-        // §5.2's segment checkpoints): those the run takes after the edit
-        // consumed the edited line, which the next keystroke there edits
-        // again, and each one seals every chunk the page wrote since the
-        // last (lane P4-PAGE-COST). `Obs::on_checkpoint` lifts the hold.
+        // Segment checkpoints (DESIGN.md §5.2) before the edited page only
+        // where newer work stops the run (`Obs::take_held_segment`): the
+        // preemption points stay, but the copies wait. The restart points
+        // the run would take after the edit consumed the edited line, which
+        // the next keystroke there edits again, and each one seals every
+        // chunk the page wrote since the last (lane P4-PAGE-COST).
+        // `Obs::on_checkpoint` lifts the hold at the edited page.
         g.layer().segment_hold = self.opts.segment_hold && obs.first_incremental;
         // The pages before `r` stay; the rest are the old run's until
         // redone.
