@@ -36,6 +36,7 @@ final class PerformanceModeTests: XCTestCase {
 
     func testBalancedKeepsTodaysCaches() {
         XCTAssertEqual(PerformanceMode.balanced.keptRasters, 2)
+        XCTAssertEqual(PerformanceMode.balanced.overscanScreens, 1)
         XCTAssertEqual(PerformanceMode.balanced.imageLimits.count, 256)
         XCTAssertEqual(PerformanceMode.balanced.imageLimits.bytes, 512 << 20)
     }
@@ -44,6 +45,8 @@ final class PerformanceModeTests: XCTestCase {
         let l = PerformanceMode.lowMemory, b = PerformanceMode.balanced, h = PerformanceMode.highPerformance
         XCTAssertLessThan(l.keptRasters, b.keptRasters)
         XCTAssertLessThan(b.keptRasters, h.keptRasters)
+        XCTAssertLessThan(l.overscanScreens, b.overscanScreens)
+        XCTAssertLessThan(b.overscanScreens, h.overscanScreens)
         XCTAssertLessThan(l.imageLimits.bytes, b.imageLimits.bytes)
         XCTAssertLessThan(b.imageLimits.bytes, h.imageLimits.bytes)
         for m in PerformanceMode.allCases { XCTAssertFalse(m.explanation.isEmpty) }

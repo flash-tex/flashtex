@@ -48,6 +48,17 @@ enum PerformanceMode: String, CaseIterable, Identifiable, Sendable {
         }
     }
 
+    /// Screens above and below the visible rect whose pages are laid out
+    /// and drawn (each holds a page bitmap): scrolling into them shows a
+    /// drawn page at once.
+    var overscanScreens: CGFloat {
+        switch self {
+        case .lowMemory: 0.5
+        case .balanced: 1
+        case .highPerformance: 3
+        }
+    }
+
     /// Decoded images the renderer keeps (`DL3ResourceCache` limits).
     var imageLimits: (count: Int, bytes: Int) {
         switch self {
