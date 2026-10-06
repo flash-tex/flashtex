@@ -2,6 +2,7 @@ import AppKit
 import SwiftUI
 import XCTest
 import HostedWindows
+import FlashTeXProtocol
 @testable import FlashTeXMac
 
 /// Per-document engine choice and its fallback rules (EngineChoice.swift;
@@ -550,8 +551,8 @@ final class EngineChoiceTests: XCTestCase {
     }
 
     /// Every open and every change of the window's engine writes an
-    /// `engine:` line (FLASHTEX_LOG), and the capture feature list follows the
-    /// engine that typesets the document.
+    /// `engine:` line (FLASHTEX_LOG), and the capture request names the engine
+    /// that typesets the document.
     func testOpenAndChangeLogTheEngineAndTheCaptureListFollowsIt() throws {
         try fakeTeXLive()
         EngineChoiceStore.appSetting = .new
@@ -564,12 +565,13 @@ final class EngineChoiceTests: XCTestCase {
         XCTAssertEqual(m.openTex(at: try texFile(), dirty: .discard), .opened)
         XCTAssertEqual(lines.all.last, "engine: previous (appSetting; fallback from new: this project sets fonts in flashtex.toml) main.tex")
         XCTAssertEqual(m.typesettingEngine, .previous)
-        XCTAssertEqual(CaptureFeatures.supportedFeatures(for: m.typesettingEngine), CaptureFeatures.supportedFeatures(for: .previous))
+        XCTAssertEqual(m.captureConvertRequest(captureId: "c").engine, "previous")
         current = Self.manifest()
         m.manifest.refresh()
         XCTAssertEqual(lines.all.last, "engine: new (appSetting) main.tex")
         XCTAssertEqual(m.typesettingEngine, .new)
-        XCTAssertEqual(CaptureFeatures.supportedFeatures(for: m.typesettingEngine), CaptureFeatures.newEngineFeatures)
+        XCTAssertEqual(m.captureConvertRequest(captureId: "c").engine, "new", "the capture request names the engine that typesets it")
+        XCTAssertEqual(m.captureConvertRequest(captureId: "c").supportedFeatures, CaptureFeatures.supportedFeatures())
         m.engineV3Enabled = false // a direct set: the window's override
         XCTAssertEqual(lines.all.last, "engine: previous (window) main.tex")
     }

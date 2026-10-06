@@ -344,14 +344,21 @@ extension ShellModel {
         Task { await convertCapture(captureId: c.captureId) }
     }
 
+    /// The `capture_convert` request for this window's document: it names the
+    /// engine that typesets it, and the bridge sends the provider its own
+    /// feature list for that engine (retirement plan #1236, S3r).
+    func captureConvertRequest(captureId: String, supportedFeatures: [String]? = nil) -> TransferV1.CaptureConvert {
+        TransferV1.CaptureConvert(captureId: captureId, supportedFeatures: supportedFeatures ?? CaptureFeatures.supportedFeatures(),
+                                  engine: typesettingEngine.rawValue)
+    }
+
     @discardableResult
-    /// `supportedFeatures` defaults to the list for the engine that typesets
-    /// this document (`typesettingEngine`; CaptureFeatures.swift).
+    /// `supportedFeatures` is sent for wire compatibility only; the bridge
+    /// picks the list by the request's engine (`captureConvertRequest`).
     func convertCapture(captureId: String, supportedFeatures: [String]? = nil) async -> RuntimeV1.CaptureProposal? {
         guard let bridge, bridge.running else { captureNote = "No bridge attached."; return nil }
-        let supportedFeatures = supportedFeatures ?? CaptureFeatures.supportedFeatures(for: typesettingEngine)
         do {
-            let proposal = try await bridge.convert(captureId: captureId, supportedFeatures: supportedFeatures)
+            let proposal = try await bridge.convert(captureConvertRequest(captureId: captureId, supportedFeatures: supportedFeatures))
             enqueue(proposal)
             return proposal
         } catch {

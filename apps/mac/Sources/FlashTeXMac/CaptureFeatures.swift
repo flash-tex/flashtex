@@ -55,30 +55,14 @@ enum CaptureFeatures {
         "RULE: write the closest supported form only when the meaning is unchanged; otherwise report and leave it out",
     ]
 
-    /// The list sent as `supported_features` (≤64 entries, each ≤128 bytes)
-    /// for a document `engine` typesets. The previous engine's list is this
-    /// file's pinned compiler inventory, unchanged; the new engine
-    /// (pdfLaTeX-compatible) typesets what pdfLaTeX does with the document's
-    /// own packages, so its list drops the old compiler's "NOT supported"
-    /// lines and the closed symbol list, and keeps the output and reporting
-    /// rules (old-engine retirement plan #1236, stage S3r).
-    static func supportedFeatures(for engine: EngineChoice.Engine = .previous) -> [String] {
-        switch engine {
-        case .previous: structures + symbolLines() + unsupported
-        case .new: newEngineFeatures
-        }
+    /// The list sent as `supported_features` (≤64 entries, each ≤128 bytes).
+    /// `flashtex-bridge` ignores it (issues #51/#23): it sends the provider its
+    /// own table for the document's engine, which `capture_convert.engine`
+    /// names (`crates/bridge/src/features.rs`; retirement plan #1236, S3r).
+    /// It is still sent for wire compatibility.
+    static func supportedFeatures() -> [String] {
+        structures + symbolLines() + unsupported
     }
-
-    /// The new engine's `supported_features`: no closed list, only what keeps
-    /// a transcription inside the document as it stands (its preamble, its
-    /// packages). Engine-neutral rules (`unsupported`'s RULE lines) carry over.
-    static let newEngineFeatures: [String] = [
-        structures[0],
-        "pdfLaTeX-compatible: any construct pdfLaTeX typesets with the packages this document already loads",
-        "math: $...$, \\[ ... \\], equation; amsmath environments (align, gather, cases …) only if the document loads amsmath",
-        "symbols: standard math symbols; \\mathbb, \\mathcal … only if the document loads their package (amssymb, amsfonts)",
-        "RULE: never add \\usepackage lines or new macros; a construct that needs a package the document does not load goes in ambiguities",
-    ] + unsupported.filter { $0.hasPrefix("RULE:") }
 
     /// `COMMAND_GLYPHS` packed as "symbols: \alpha \beta …" lines under the bridge's per-entry limit.
     static func symbolLines(limit: Int = 128) -> [String] {

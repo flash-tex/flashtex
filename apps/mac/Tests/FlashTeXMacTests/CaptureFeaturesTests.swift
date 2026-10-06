@@ -1,4 +1,5 @@
 import XCTest
+import FlashTeXProtocol
 @testable import FlashTeXMac
 
 /// `supported_features` sent with every `capture_convert` (CaptureFeatures.swift).
@@ -19,31 +20,17 @@ final class CaptureFeaturesTests: XCTestCase {
         XCTAssertTrue(CaptureFeatures.defaultInstructions.contains("report anything else in ambiguities"))
     }
 
-    /// The previous engine's list is the pinned inventory, unchanged, and is
-    /// still the default (retirement plan #1236, S3r).
-    func testTheOldEngineListIsUnchanged() {
-        let old = CaptureFeatures.structures + CaptureFeatures.symbolLines() + CaptureFeatures.unsupported
-        XCTAssertEqual(CaptureFeatures.supportedFeatures(for: .previous), old)
-        XCTAssertEqual(CaptureFeatures.supportedFeatures(), old)
-    }
-
-    /// The new engine typesets what pdfLaTeX does with the document's own
-    /// packages: no closed symbol list and none of the old compiler's
-    /// "NOT supported" lines, the output and reporting rules kept, within the
-    /// bridge's limits.
-    func testTheNewEngineListOmitsTheOldLimits() {
-        let features = CaptureFeatures.supportedFeatures(for: .new)
-        XCTAssertLessThanOrEqual(features.count, 64)
-        for f in features { XCTAssertLessThanOrEqual(f.utf8.count, 128, f) }
-        XCTAssertEqual(features.first, CaptureFeatures.structures.first, "the output rule comes first")
-        XCTAssertFalse(features.contains { $0.hasPrefix("NOT supported") })
-        XCTAssertFalse(features.contains { $0.hasPrefix("symbols (only these render)") })
-        XCTAssertTrue(features.contains { $0.hasPrefix("pdfLaTeX-compatible:") })
-        XCTAssertTrue(features.contains { $0.contains("amsmath") })
-        for rule in CaptureFeatures.unsupported where rule.hasPrefix("RULE:") {
-            XCTAssertTrue(features.contains(rule), rule)
+    /// `capture_convert` names the document's engine; the bridge picks the
+    /// provider's list for it (crates/bridge tests `the_documents_engine_picks…`).
+    /// The field is additive: omitted when nil, so an old payload is unchanged.
+    func testCaptureConvertCarriesTheEngine() throws {
+        func json(_ c: TransferV1.CaptureConvert) throws -> [String: Any] {
+            try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(c)) as? [String: Any])
         }
-        XCTAssertTrue(features.contains { $0.hasPrefix("RULE:") && $0.contains("\\usepackage") })
+        let new = try json(.init(captureId: "c", supportedFeatures: [], engine: "new"))
+        XCTAssertEqual(new["engine"] as? String, "new")
+        XCTAssertEqual(new["capture_id"] as? String, "c")
+        XCTAssertNil(try json(.init(captureId: "c", supportedFeatures: []))["engine"])
     }
 
     /// Re-derives the glyph names from the pinned compiler commit when this

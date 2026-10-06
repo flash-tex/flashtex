@@ -113,6 +113,10 @@ fn request(id: &str, kind: &str, payload: Value) -> String {
 }
 
 fn capture_flow() -> String {
+    capture_flow_with(json!({"capture_id":"cap-provider"}))
+}
+
+fn capture_flow_with(convert: Value) -> String {
     let mut image = Cursor::new(Vec::new());
     image::DynamicImage::new_rgb8(2, 2)
         .write_to(&mut image, image::ImageFormat::Png)
@@ -135,10 +139,55 @@ fn capture_flow() -> String {
                    "image":{"mime_type":"image/png","data_base64":STANDARD.encode(image.into_inner())},
                    "instructions":"transcribe"}),
         ),
-        request("convert", "capture_convert", json!({"capture_id":"cap-provider"})),
+        request("convert", "capture_convert", convert),
         request("status", "capture_status", json!({"capture_id":"cap-provider"})),
     ]
     .concat()
+}
+
+/// The `supported_features` the provider was sent (the user message's
+/// `destination_context`), from a Chat Completions request body.
+fn sent_features(body: &Value) -> Vec<String> {
+    let text = body["messages"][1]["content"][0]["text"].as_str().unwrap();
+    let user: Value = serde_json::from_str(text).unwrap();
+    serde_json::from_value(user["destination_context"]["supported_features"].clone()).unwrap()
+}
+
+/// `capture_convert.engine` picks the bridge's own list for the provider:
+/// the old compiler's table when absent or `previous`, the new engine's
+/// policy list for `new`; the caller's own `supported_features` text is
+/// still ignored (#51/#23). Retirement plan #1236, S3r.
+#[test]
+fn the_documents_engine_picks_the_providers_feature_list() {
+    use flashtex_bridge::features::{supported_features, NEW_ENGINE_FEATURES};
+    let new: Vec<String> = NEW_ENGINE_FEATURES.iter().map(|s| s.to_string()).collect();
+    for (convert, want) in [
+        (json!({"capture_id":"cap-provider"}), supported_features()),
+        (json!({"capture_id":"cap-provider","engine":"previous"}), supported_features()),
+        (json!({"capture_id":"cap-provider","engine":"new","supported_features":["\\anything"]}), new),
+    ] {
+        let stub = Stub::start(200, OPENAI_REPLY);
+        let store = tempfile::tempdir().unwrap();
+        let run = run_bridge(
+            store.path(),
+            &["--conversion-provider", "openai-compatible"],
+            &[("FLASHTEX_AI_API_KEY", FIXTURE_KEY), ("FLASHTEX_CONVERSION_BASE_URL", &stub.base)],
+            &capture_flow_with(convert.clone()),
+        );
+        assert_eq!(convert_reply(&run)["type"], "capture_proposal", "{convert}");
+        let seen = stub.seen();
+        assert_eq!(seen.len(), 1);
+        assert_eq!(sent_features(&seen[0].body), want, "{convert}");
+    }
+    // an engine the bridge does not know is a request error, not the old list
+    let store = tempfile::tempdir().unwrap();
+    let run = run_bridge(
+        store.path(),
+        &["--conversion-provider", "openai-compatible"],
+        &[("FLASHTEX_AI_API_KEY", FIXTURE_KEY), ("FLASHTEX_CONVERSION_BASE_URL", "http://127.0.0.1:9")],
+        &capture_flow_with(json!({"capture_id":"cap-provider","engine":"pdftex"})),
+    );
+    assert_ne!(run.replies[3]["type"], "capture_proposal", "{:?}", run.replies[3]);
 }
 
 struct Run {
