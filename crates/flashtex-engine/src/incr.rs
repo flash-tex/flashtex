@@ -510,6 +510,41 @@ const PREEMPTED: &str = "preempted during the test";
 pub type Defer = std::rc::Rc<dyn Fn(Option<&ReadLog>) -> bool>;
 
 impl Obs {
+    /// The run has not read past an edit yet: a checkpoint now is a restart
+    /// point before it, which the next keystroke there needs (the hold
+    /// rested on the restart point being the newest one before the edit;
+    /// after a restart from a page's start, with retention thinning
+    /// segment checkpoints far from the cursor (`thin`), no other one may
+    /// be: plain-1000 letter@middle restarted at its page's start at every
+    /// keystroke, MEM-FOOTPRINT). A level reading an edited file at or
+    /// before the edit's first byte says so.
+    fn before_the_edit(&self, g: &mut Globals) -> bool {
+        let mut before = false;
+        for j in 1..=g.in_open.max(0) {
+            let Some(path) = crate::lineshift::level_file(g, j).map(str::to_string) else {
+                continue;
+            };
+            let Some(at) = self
+                .edits
+                .iter()
+                .filter(|e| e.path == path)
+                .map(|e| e.prefix)
+                .min()
+            else {
+                continue;
+            };
+            match g
+                .input_file
+                .get_mut(j as usize - 1)
+                .and_then(|f| f.read_offset())
+            {
+                Some(off) if off <= at => before = true,
+                _ => return false,
+            }
+        }
+        before
+    }
+
     /// Retention in the middle of a run (a long run would otherwise hold
     /// every page's log until it ends).
     fn thin(&mut self, g: &mut Globals) {
@@ -1898,41 +1933,6 @@ impl Observer for Obs {
     /// and before the run has read the edited line (`before_the_edit`).
     fn take_held_segment(&mut self, g: &mut Globals) -> bool {
         self.preempt_now(g) || self.before_the_edit(g)
-    }
-
-    /// The run has not read past an edit yet: a checkpoint now is a restart
-    /// point before it, which the next keystroke there needs (the hold
-    /// rested on the restart point being the newest one before the edit;
-    /// after a restart from a page's start, with retention thinning
-    /// segment checkpoints far from the cursor (`thin`), no other one may
-    /// be: plain-1000 letter@middle restarted at its page's start at every
-    /// keystroke, MEM-FOOTPRINT). A level reading an edited file at or
-    /// before the edit's first byte says so.
-    fn before_the_edit(&self, g: &mut Globals) -> bool {
-        let mut before = false;
-        for j in 1..=g.in_open.max(0) {
-            let Some(path) = crate::lineshift::level_file(g, j).map(str::to_string) else {
-                continue;
-            };
-            let Some(at) = self
-                .edits
-                .iter()
-                .filter(|e| e.path == path)
-                .map(|e| e.prefix)
-                .min()
-            else {
-                continue;
-            };
-            match g
-                .input_file
-                .get_mut(j as usize - 1)
-                .and_then(|f| f.read_offset())
-            {
-                Some(off) if off <= at => before = true,
-                _ => return false,
-            }
-        }
-        before
     }
 
     fn on_checkpoint(&mut self, g: &mut Globals, id: CheckpointId, why: Point) -> Action {
@@ -4243,6 +4243,7 @@ impl Session {
             })
             .min()
             .unwrap_or(u64::MAX);
+        let mid = !self.pages.iter().any(|p| p.ckpt == Some(r));
         let g = self.g.as_mut().unwrap();
         obs.instr_go = crate::os::thread_counts();
         if obs.first_incremental {
