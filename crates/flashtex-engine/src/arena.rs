@@ -1130,6 +1130,42 @@ impl Core {
         }
     }
 
+    /// `retain` for a detached branch (the old run's future): drop every
+    /// checkpoint of `b` that `keep` rejects, except its first (the restore
+    /// target, in the live chain too) and its newest, merging each dropped
+    /// log into its predecessor. What the branch is for stays exact: the
+    /// old run's state at every checkpoint kept (rewound from its end
+    /// through the logs after it, which are untouched or merged), the
+    /// chunks it wrote after the target (a merged log holds the union of
+    /// its parts'), and `reattach`, which puts back a chain with fewer
+    /// checkpoints.
+    fn retain_branch(&mut self, b: &mut Branch, keep: &dyn Fn(CheckpointId) -> bool) {
+        let _m = crate::memstat::scope(crate::memstat::tag::LOG);
+        let n = b.ids.len();
+        let ids = std::mem::take(&mut b.ids);
+        let logs = std::mem::take(&mut b.logs);
+        let mut out_ids = Vec::with_capacity(n);
+        let mut out_logs: Vec<Log> = Vec::with_capacity(n);
+        for (i, (id, log)) in ids.into_iter().zip(logs).enumerate() {
+            let sealed = |l: &Log| l.entries.is_empty();
+            let dst = out_logs.last_mut();
+            match dst {
+                Some(dst) if i + 1 < n && !keep(id) && sealed(dst) && sealed(&log) => {
+                    let merged = merge_sealed(dst, &log);
+                    self.sealed_bytes += merged.sealed_bytes();
+                    self.sealed_bytes -= dst.sealed_bytes() + log.sealed_bytes();
+                    *dst = merged;
+                }
+                _ => {
+                    out_ids.push(id);
+                    out_logs.push(log);
+                }
+            }
+        }
+        b.ids = out_ids;
+        b.logs = out_logs;
+    }
+
     /// Drop every checkpoint `keep` rejects, except the newest, merging each
     /// dropped log into its predecessor (the older value of a word wins).
     fn retain(&mut self, keep: &dyn Fn(CheckpointId) -> bool) {
@@ -1611,6 +1647,10 @@ impl Arena {
 
     pub fn drop_branch(&mut self, b: Branch) {
         self.core_mut().drop_branch(b)
+    }
+
+    pub fn retain_branch(&mut self, b: &mut Branch, keep: &dyn Fn(CheckpointId) -> bool) {
+        self.core_mut().retain_branch(b, keep)
     }
 
     pub fn reattach(&mut self, b: Branch) -> Result<(), String> {

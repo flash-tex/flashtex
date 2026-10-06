@@ -157,6 +157,10 @@ pub struct Options {
     /// Keep the diagnostics side channel's notes (`crate::diag`,
     /// `diag-v1`): FLASHTEX_NO_DIAGNOSTICS turns it off.
     pub diagnostics: bool,
+    /// Thin the old run's future behind a run that has not converged
+    /// (`Obs::thin_pending`) once it is this many pages past its restart
+    /// page; `None`: never (FLASHTEX_BRANCH_WINDOW=off, or another count).
+    pub branch_window: Option<usize>,
 }
 
 impl Default for Options {
@@ -180,6 +184,11 @@ impl Default for Options {
             relabel: std::env::var_os("FLASHTEX_NO_RELABEL").is_none(),
             aux_point: std::env::var_os("FLASHTEX_NO_AUX_POINT").is_none(),
             diagnostics: std::env::var_os("FLASHTEX_NO_DIAGNOSTICS").is_none(),
+            branch_window: match std::env::var("FLASHTEX_BRANCH_WINDOW") {
+                Ok(v) if v == "off" => None,
+                Ok(v) => v.parse().ok(),
+                Err(_) => Some(BRANCH_WINDOW),
+            },
         }
     }
 }
@@ -427,6 +436,11 @@ struct Obs {
     cursor: usize,
     s0: Option<CheckpointId>,
     keep_r: Option<CheckpointId>,
+    /// `Options::branch_window`, and the pages before each checkpoint the
+    /// run started with (`known_ck`, which `thin` prunes to the live chain,
+    /// as it was: it holds the old run's future too).
+    branch_window: Option<usize>,
+    branch_ck: HashMap<CheckpointId, usize>,
     known_pages: HashMap<CheckpointId, usize>,
     known_ck: HashMap<CheckpointId, usize>,
     /// The previous run's page frames, and the first page of this run
@@ -489,6 +503,19 @@ pub type Progress = std::rc::Rc<dyn Fn(usize, usize)>;
 /// A convergence test stopped by newer work (`Obs::test`).
 const PREEMPTED: &str = "preempted during the test";
 
+/// `Options::branch_window`'s default: the old run's checkpoints within
+/// this many pages after a run's restart page stay while the run goes on
+/// (`Obs::thin_pending`). A sentence on full-1000 converges 33 pages on.
+const BRANCH_WINDOW: usize = 64;
+
+/// Behind a run, one old page checkpoint every this many pages stays
+/// (`Obs::thin_pending`).
+const BRANCH_BLOCK: usize = 64;
+
+/// Old checkpoints `Obs::thin_pending` has merged away in this process
+/// (`Session::mem_stats`' `branch_thinned`).
+static BRANCH_THINNED: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
 /// Whether external tools are due on what the last pass left (its journal:
 /// the files it read), so that the passes stop for them (`Session::set_defer`).
 pub type Defer = std::rc::Rc<dyn Fn(Option<&ReadLog>) -> bool>;
@@ -529,6 +556,54 @@ impl Obs {
         self.taken.retain(|(c, _)| ids.contains(c));
         self.known_pages.retain(|c, _| ids.contains(c));
         self.known_ck.retain(|c, _| ids.contains(c));
+    }
+
+    /// Thin the old run's future (the pending branch) behind this run
+    /// (lane P4-MEMORY-BUDGET). Until the run converges or ends, the
+    /// branch keeps every checkpoint the old run took after the restart
+    /// point, so a run that does not converge -- a sentence or a paragraph
+    /// split that moves every later page break re-typesets the rest of the
+    /// document -- holds both runs' logs at once: on plain-1000 222 MB of
+    /// the old run's next to the new run's (measured 2026-10-06). The test
+    /// compares this run's page j with the old run's page j alone, so once
+    /// this run has shipped page j no old checkpoint before it is a target
+    /// any more. Those the old run took more than `branch_window` pages
+    /// after the restart page go, but for one page checkpoint every
+    /// `BRANCH_BLOCK` pages: a reattached old run (this run abandoned for
+    /// newer work) then still restarts and converges near any page, a block
+    /// at most from it. Their logs are merged, never dropped
+    /// (`Arena::retain_branch`): every old state kept stays exact.
+    fn thin_pending(&mut self, g: &mut Globals) {
+        let Some(window) = self.branch_window else {
+            return;
+        };
+        let j = self.pages_so_far();
+        let lo = self.base + window;
+        if j <= lo + 1 || g.pending_ids().is_empty() {
+            return;
+        }
+        let pinned = [self.s0, self.keep_r, g.layer().aux_done];
+        let old_pages: std::collections::HashSet<CheckpointId> =
+            self.old_pages.iter().filter_map(|p| p.ckpt).collect();
+        let branch_ck = &self.branch_ck;
+        let before = g.pending_ids().len();
+        g.retain_pending(&|id| {
+            let Some(&ck) = branch_ck.get(&id) else {
+                return true;
+            };
+            ck <= lo
+                || ck >= j
+                || pinned.contains(&Some(id))
+                || (ck % BRANCH_BLOCK == 0 && old_pages.contains(&id))
+        });
+        let gone = before - g.pending_ids().len();
+        BRANCH_THINNED.fetch_add(gone as u64, std::sync::atomic::Ordering::Relaxed);
+        if self.debug && gone > 0 {
+            eprintln!(
+                "[incr] page {j}: {gone} checkpoints of the old run merged away behind this run ({} MB of logs)",
+                g.arena.log_bytes() >> 20
+            );
+        }
     }
 
     /// Whether the old run, from its checkpoint `o` to its end, never read
@@ -1884,6 +1959,9 @@ impl Observer for Obs {
         if self.taken.len() % 32 == 31 && g.arena.log_bytes() > self.budget {
             self.thin(g);
         }
+        if self.taken.len() % 32 == 31 {
+            self.thin_pending(g);
+        }
         if why != Point::Shipout {
             self.taken.push((id, self.pages_so_far()));
             if why == Point::Segment && self.preempt_now(g) {
@@ -2441,6 +2519,10 @@ impl Session {
             v.push(("old_cache".into(), g.arena.old_cache_bytes() as i64));
         }
         v.push(("pages".into(), self.pages.len() as i64));
+        v.push((
+            "branch_thinned".into(),
+            BRANCH_THINNED.load(std::sync::atomic::Ordering::Relaxed) as i64,
+        ));
         v.push(("defpatch".into(), self.defpatch.len() as i64));
         v.push((
             "reloc".into(),
@@ -2739,7 +2821,25 @@ impl Session {
         l.aux_done = b.aux_done;
         l.aux_close_rs = b.aux_close_rs;
         l.aux_armed = false;
+        self.forget_dropped();
         Ok(())
+    }
+
+    /// Forget what the session keeps of checkpoints the engine no longer
+    /// retains (after a reattach: the old run comes back without those of
+    /// its checkpoints `Obs::thin_pending` merged away).
+    fn forget_dropped(&mut self) {
+        let Some(g) = self.g.as_mut() else {
+            return;
+        };
+        let ids: std::collections::HashSet<CheckpointId> = g.checkpoints().into_iter().collect();
+        self.ck_pages.retain(|k, _| ids.contains(k));
+        self.defpatch.retain(|k, _| ids.contains(k));
+        for p in self.pages.iter_mut() {
+            if p.ckpt.is_some_and(|c| !ids.contains(&c)) {
+                p.ckpt = None;
+            }
+        }
     }
 
     pub fn is_paused(&self) -> bool {
@@ -3538,6 +3638,7 @@ impl Session {
         l.aux_close_rs = close0;
         l.aux_done = done0;
         l.aux_armed = false;
+        self.forget_dropped();
         result
     }
 
@@ -3814,6 +3915,7 @@ impl Session {
             cursor: self.cursor,
             s0: self.s0.as_ref().map(|s| s.id),
             keep_r: None,
+            branch_window: self.opts.branch_window,
             known_pages: self
                 .pages
                 .iter()
@@ -3821,6 +3923,7 @@ impl Session {
                 .filter_map(|(i, p)| p.ckpt.map(|c| (c, i + 1)))
                 .collect(),
             known_ck: self.ck_pages.clone(),
+            branch_ck: self.ck_pages.clone(),
             old_frames: self.pages.iter().map(|p| p.frame).collect(),
             edited: None,
             patched: self.defpatch.keys().copied().collect(),
