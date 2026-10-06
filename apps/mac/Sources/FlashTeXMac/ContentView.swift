@@ -59,6 +59,8 @@ struct ContentView: View {
         .sheet(isPresented: Binding(get: { model.projectFonts.shown }, set: { model.projectFonts.shown = $0 })) { ProjectFontsSheet().environment(model) } // File > Project Fonts… (ProjectFonts.swift)
         .sheet(isPresented: Binding(get: { model.projectPackages.shown }, set: { model.projectPackages.shown = $0 })) { ProjectPackagesSheet().environment(model) } // the package consent sheet (ProjectPackages.swift)
         .sheet(isPresented: Binding(get: { model.engineV3.bundleConsentShown }, set: { model.engineV3.bundleConsentShown = $0 })) { EngineV3BundleSheet().environment(model) } // the TeX files download consent (EngineV3Bundle.swift)
+        .sheet(isPresented: Binding(get: { model.liveShare.sheetShown }, set: { model.liveShare.sheetShown = $0 })) { LiveShareSheet().environment(model) } // Live Share: invitation, approvals, participants (LiveShareViews.swift)
+        .sheet(isPresented: Binding(get: { model.liveShare.joinSheetShown }, set: { model.liveShare.joinSheetShown = $0 })) { LiveShareJoinSheet().environment(model) } // File > Join Live Share Session…
         .modifier(EditorNavigationSheets()) // Rename / Wrap / Change Environment… / Go to Symbol… / Go to Line (ShellModel+EditorNavigation.swift)
     }
 }
@@ -151,6 +153,10 @@ struct EditorPane: View {
     var body: some View {
         let _ = ViewBodyProbe.note("EditorPane") // KeystrokeInvalidationTests
         @Bindable var model = model
+        // Live Share: the session file this buffer is (nil outside a session);
+        // `generation` changes when a session starts, ends or opens its project.
+        let _ = model.liveShare.generation
+        let liveShareLink = model.liveShare.link(for: model.activePath)
         VStack(spacing: 0) {
             // Switching goes through ProjectDocuments so each document's
             // caret/selection is kept and a pending insertion is never
@@ -173,7 +179,7 @@ struct EditorPane: View {
                 projectFiles: model.documents.map(\.path), // `\input{` completion (Completion.swift)
                 projectPackageFiles: { model.projectPackageFiles }, // `\usepackage{` offers the project's .sty files first (ShellModel+EditorHover.swift)
                 packageDocuments: { model.packageDocumentsForEditor() }, // macros of the project's .sty/.cls files complete as declared there (ShellModel+PackageNavigation.swift)
-                editable: model.project.readOnlyNote(for: model.activePath) == nil, // a package input from a virtual path is shown, never edited
+                editable: model.project.readOnlyNote(for: model.activePath) == nil && (liveShareLink == nil || model.liveShare.canEdit), // a package input from a virtual path is shown, never edited; a Live Share viewer reads only
                 graphicsRoot: { model.project.projectRoot }, // `\includegraphics{` completion walks the saved project's directory
                 imagePasteHost: { model.imagePasteHost() }, // paste an image: saved under the project, a figure inserted (PasteImage.swift)
                 onCaretChange: { model.caretUTF16 = $0 },
@@ -216,7 +222,8 @@ struct EditorPane: View {
                     case .edit(let path): Task { await model.openAndSwitch(path, role: .opened) { model.navigationNote = $0 } }; return nil
                     case .setNumber(let on): preferences.showLineNumbers = on; return nil
                     }
-                }
+                },
+                liveShare: liveShareLink // co-editing (SourceEditorView+LiveShare.swift)
             )
             // Vim's status line belongs to the window being edited, so it sits
             // directly under the source text — not in the window's status bar,
@@ -377,7 +384,7 @@ struct PreviewPane: View {
         .accessibilityElement(children: .contain)
         .accessibilityLabel(Self.accessibilityLabel)
         .accessibilityValue(Self.accessibilityValue(page: model.previewVisiblePage,
-                                                    of: model.engineV3Enabled ? model.engineV3.pageCount : model.toolbarPageCount) ?? "")
+                                                    of: model.previewPageCount) ?? "")
         .onChange(of: model.previewZoom) { _, _ in hudActivity &+= 1 }
         .onChange(of: model.previewVisiblePage) { _, _ in hudActivity &+= 1 }
         // Double-click to Fit Width (⌘9 does the same). Used to live on the
@@ -422,7 +429,7 @@ struct PreviewPane: View {
 /// pointer-over and for a beat after scroll or page changes, then fades.
 /// Fading never reflows anything (§14); a healthy live preview at rest
 /// shows no chrome at all over the pages (§8, Canvas treatment).
-private struct PreviewHUD: View {
+struct PreviewHUD: View {
     @Environment(ShellModel.self) var model
     var hovering = false
     /// Bumped by the pane on scroll/page/zoom; each bump re-arms the fade.
@@ -467,13 +474,12 @@ private struct PreviewHUD: View {
             // Both panes. This was gated on `!model.previewV2` while
             // `previewV2` defaults true, so on the shipped default nobody ever
             // saw a page number.
-            let pageCount = model.engineV3Enabled ? model.engineV3.pageCount : model.toolbarPageCount
-            if pageCount > 0 {
-                let page = min(model.previewVisiblePage, pageCount)
-                Text("\(page) / \(pageCount)")
+            let pageCount = model.previewPageCount
+            if let readout = Self.pageReadout(page: model.previewVisiblePage, of: pageCount) {
+                Text(readout)
                     .font(DS.Fonts.monoSecondary).foregroundStyle(DS.Colors.textSecondary)
                     .help("Page under the top of the view")
-                    .accessibilityLabel("Page \(page) of \(pageCount)")
+                    .accessibilityLabel(PreviewPane.accessibilityValue(page: model.previewVisiblePage, of: pageCount) ?? "")
                     .accessibilityIdentifier("preview.page-readout")
             }
         }
@@ -486,10 +492,7 @@ private struct PreviewHUD: View {
         .allowsHitTesting(visible)
         .animation(DS.Motion.quick, value: visible)
         .accessibilityHidden(!visible)
-        .help(chrome.route == .engineV3 ? "Engine v3 preview — " + chrome.routeHelp // not the old producer's summary (gap C21)
-              : chrome.previewSource == .fixture
-              ? "Fixture\(chrome.fixtureName.map { ": " + $0 } ?? "") — not a real compile. Layout: \(chrome.acceptedCapabilities.isEmpty ? "legacy (U+2500 fraction bars are an approximation)" : chrome.acceptedCapabilities.joined(separator: ", "))"
-              : model.producerSummary + " — layout: \(chrome.acceptedCapabilities.isEmpty ? "legacy (U+2500 fraction bars are an approximation)" : chrome.acceptedCapabilities.joined(separator: ", "))")
+        .help(Self.help(chrome: chrome, producerSummary: model.producerSummary))
         // The linger timer is a real pending Task for as long as it runs;
         // under XCTest that outlives the surface being captured and makes
         // both this shot and the next one depend on when it fires, so
@@ -523,6 +526,21 @@ private struct PreviewHUD: View {
 
     private func statusColor(_ s: RuntimeV1.Status) -> Color {
         switch s { case .ok: DS.Colors.severitySuccess; case .recovered: DS.Colors.severityWarning; case .failed: DS.Colors.severityError }
+    }
+
+    /// The HUD's tooltip: under the new engine, that engine's route help
+    /// (`ShellChrome.routeHelp`), never the old producer's summary (gap C21);
+    /// otherwise the fixture or the old producer, with the layout capabilities.
+    static func help(chrome: ShellChrome, producerSummary: String) -> String {
+        let layout = chrome.acceptedCapabilities.isEmpty ? "legacy (U+2500 fraction bars are an approximation)" : chrome.acceptedCapabilities.joined(separator: ", ")
+        if chrome.route == .engineV3 { return "Engine v3 preview — " + chrome.routeHelp }
+        if chrome.previewSource == .fixture { return "Fixture\(chrome.fixtureName.map { ": " + $0 } ?? "") — not a real compile. Layout: \(layout)" }
+        return producerSummary + " — layout: \(layout)"
+    }
+
+    /// The "N / M" page readout (page clamped to the count), nil with no pages.
+    static func pageReadout(page: Int, of total: Int) -> String? {
+        total > 0 ? "\(min(page, total)) / \(total)" : nil
     }
 }
 
@@ -573,6 +591,7 @@ struct StatusBar: View {
             Text(chrome.note ?? "Click text in the preview to select its source range.")
                 .foregroundStyle(.secondary).lineLimit(1)
             Spacer()
+            LiveShareStatusItem() // who is co-editing (LiveShareViews.swift); absent outside a session
             WordCountStatusItem() // GH68: live word count + breakdown popover (WordCountStatusView.swift)
             if let ms = chrome.lastLatencyMs {
                 Label(String(format: "%.0f ms", ms), systemImage: "timer")

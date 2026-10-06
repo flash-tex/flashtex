@@ -996,8 +996,9 @@ final class PreviewPaneAccessibilityTests: XCTestCase {
         XCTAssertTrue(paneSource.contains(".accessibilityElement(children: .contain)"), "the pane is one container")
         XCTAssertTrue(paneSource.contains(".accessibilityLabel(Self.accessibilityLabel)"))
         XCTAssertTrue(paneSource.contains(".accessibilityValue(Self.accessibilityValue(page: model.previewVisiblePage,"))
-        // Under the v3 preview the value counts the v3 pages (#1340).
-        XCTAssertTrue(paneSource.contains("of: model.engineV3Enabled ? model.engineV3.pageCount : model.toolbarPageCount)"))
+        // Under the v3 preview the value counts the v3 pages (#1340): `previewPageCount`
+        // (EngineV3ChromeTests.testTheReadoutAndThePaneValueCountTheV3Pages pins its behaviour).
+        XCTAssertTrue(paneSource.contains("of: model.previewPageCount)"))
         XCTAssertTrue(paneSource.contains("onPageJump: { model.previewAnnouncer.notePageJump("), "the v1 pane's page jumps are announced")
 
         for file in ["FlashTeXMac/PreviewView.swift", "FlashTeXMac/PreviewV2View.swift"] {

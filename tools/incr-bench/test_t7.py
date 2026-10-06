@@ -90,6 +90,35 @@ class VerdictTests(unittest.TestCase):
         self.assertEqual(rows['plain-10 split@middle'].get('warning'), 'no baseline row')
 
 
+class TypingTests(unittest.TestCase):
+    """typing@ rows: dl3-keys --interval-ms lines (key, edited_page_ms, by) and DONE lines."""
+
+    def phase(self, by, unpainted=0):
+        def done(i, status='ok'):
+            return dict(id=i, status=status, first_page_ms=9.0,
+                        stages=dict(queue=1.0 + i % 3, first_page_cpu=7.0))
+        dones = [done(i, 'ok' if i in by else 'cancelled') for i in range(10, 10 + len(by) + unpainted)]
+        keys = [dict(key=k, edited_page_ms=10.0 + k, by=b) for k, b in enumerate(by)]
+        return dict(keys=keys, dones=dones, summary=dict(unpainted=unpainted, interval_ms=100),
+                    load=[1.0, 1.0])
+
+    def test_every_keystroke_its_own_page(self):
+        r = t7.typing_row(dict(doc='d', pages=5), 'typing@100ms', self.phase([10, 11, 12, 13]))
+        self.assertEqual((r['n'], r['missing'], r['not_own']), (3, 0, 0))  # keystroke 0 is the warm-up
+        self.assertEqual(r['ms']['max'], 13.0)
+        self.assertEqual((r['off_cpu']['p50'], r['off_cpu']['max']), (0.0, 1.0))  # 9 - queue (3, 1, 2) - 7, never < 0
+        self.assertEqual(t7.verdict([r], None), ['d typing@100ms: max 13.0 ms > 11 ms'])
+
+    def test_keystrokes_painted_by_a_later_compile(self):
+        # keystrokes 1 and 2 were painted by compile 13 (keystroke 3's), keystroke 4 never
+        r = t7.typing_row(dict(doc='d', pages=5), 'typing@100ms', self.phase([10, 13, 13, 13], unpainted=1))
+        self.assertEqual((r['n'], r['missing'], r['not_own']), (4, 1, 2))
+        r['ms'] = t7.stats([1.0] * 3)
+        why = '; '.join(t7.verdict([r], None))
+        self.assertIn('1 of 4 without the watched page', why)
+        self.assertIn('2 of 4 keystrokes not painted by their own compile', why)
+
+
 class ReferenceTests(unittest.TestCase):
     def state(self, **kw):
         s = dict(source='AC', battery_pct=100, low_power_mode=False, thermal='', thermal_limited=False,
@@ -109,6 +138,14 @@ class ReferenceTests(unittest.TestCase):
         self.assertIn('Low Power Mode on at start', issues)
         self.assertIn('thermal limit at end: CPU_Speed_Limit = 80', issues)
         self.assertIn('load1 up to 7.5 (> 5.0)', issues)
+
+    def test_cpu_quota_throttling(self):
+        before = self.state(cpu_throttle={'user.slice/x.slice': [100, 10, 5_000_000], 'a/b': [5, 0, 0]})
+        after = self.state(cpu_throttle={'user.slice/x.slice': [700, 410, 25_000_000], 'a/b': [9, 0, 0]})
+        issues = t7.reference_issues(dict(power=dict(before=before, after=after)), [dict(load=[1.0, 1.0])])
+        self.assertEqual(issues, ['CPU quota of x.slice throttled 400 of 600 periods (20.0 s stopped)'])
+        quiet = self.state(cpu_throttle={'user.slice/x.slice': [100, 10, 5_000_000]})
+        self.assertEqual(t7.reference_issues(dict(power=dict(before=quiet, after=quiet)), [dict(load=[1.0, 1.0])]), [])
 
     def test_exit_codes(self):
         with contextlib.redirect_stdout(io.StringIO()):

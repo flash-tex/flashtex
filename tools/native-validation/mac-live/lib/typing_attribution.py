@@ -149,6 +149,19 @@ RE_PUBLISHED = re.compile(r"preview-v2: published (.+?) \(revision (\d+)\) revis
 RE_COALESCED = re.compile(r"preview-v2: coalesced (.+?) \(revision (\d+)\) behind")
 RE_PAINT = re.compile(r"paint: revision (\d+) at (\d+) \(covers (\d+) keystrokes, redrawn (\w+)\)")
 RE_STATUS = re.compile(r"status: revision (\d+): ok, (\d+) diagnostics in (\d+) ms")
+# The shell's engine label (EngineChoice.logLine; retirement plan #1236, S3r)
+RE_ENGINE = re.compile(r"engine: (new|previous) \(([^)]*)\)")
+
+
+def engine_of(lines):
+    """The engine the last `engine:` line names, with its reason, or None
+    (a log from an app before S3r, which logged no engine)."""
+    last = None
+    for line in lines:
+        m = RE_ENGINE.search(line)
+        if m:
+            last = {"engine": m.group(1), "why": m.group(2)}
+    return last
 
 
 def attribute(log_path):
@@ -338,6 +351,11 @@ def run_cell(a, bundle, route, seed, seeds, out_dir, typed):
                 "FLASHTEX_LOG": log, "FLASHTEX_TYPING_BENCH": typed, "FLASHTEX_TYPING_BENCH_MS": str(a.interval),
                 "FLASHTEX_TYPING_BENCH_OUT": summary, "FLASHTEX_TYPING_BENCH_SETTLE_MS": str(a.settle_ms),
                 "FLASHTEX_TYPING_BENCH_MAX_MS": "120000"})
+    # Every route here is the previous engine's: pin it, so that a document
+    # the new engine would typeset (its default from S5 on) is never measured
+    # as one of these routes. The new engine's typing bench is EngineV3Bench
+    # (FLASHTEX_V3_BENCH).
+    env["FLASHTEX_ENGINE_V3"] = "0"
     if route == "v1":
         env["FLASHTEX_COMPILER"] = compiler
     elif route == "v1-render":
@@ -383,6 +401,9 @@ def run_cell(a, bundle, route, seed, seeds, out_dir, typed):
     if os.path.exists(summary):
         s = json.load(open(summary))
         res["summary"] = s
+        label = engine_of(open(log, encoding="utf-8", errors="replace").read().splitlines()) if os.path.exists(log) else None
+        res["engine"] = (label or {}).get("engine") or s.get("engine")
+        res["engine_why"] = (label or {}).get("why")
         rows, counts = attribute(log)
         res["attribution_counts"] = counts
         res["stages"] = {k: stats([r.get(k) for r in rows]) for k in STAGES}

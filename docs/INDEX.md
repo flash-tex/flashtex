@@ -81,14 +81,10 @@ latency. Every consumer must retain source/project/revision and resource identit
   background service and restart handling. Do not build a second independent undo ledger.
 - `crates/document-runtime/README.md`: persistent original compiler transport, stale
   response suppression and replay metrics; native paint is excluded from its timings.
-- `crates/conversion-jobs/README.md`: bounded scheduling, durable intent, ambiguous
-  provider-call recovery, typed status and explicit reviewed handoff. No automatic retry.
 - `crates/project-index/README.md`: exact-revision source navigation and lexical
   bibliography/rename facilities; lexical results do not establish TeX expansion semantics.
 - `crates/font-resources/README.md`: immutable font bytes, original GIDs, exact paths,
   TFM metrics and explicit encoding bindings. TFM8bit codes are not Unicode or GIDs.
-- `crates/rendering-core/README.md`: experimental rendering-v2 validation, exact
-  positioning, clipping and unhinted path consumers. No automatic wire activation.
 - `crates/pdf/README.md`: original runtime-v1 PDF export; its font fallback and rule
   conventions remain explicit fidelity blockers.
 - `crates/project-manifest` (`src/lib.rs` docs): the optional `flashtex.toml`, typed with
