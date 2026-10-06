@@ -1081,7 +1081,7 @@ fn a_performance_mode_switched_live_changes_no_page() {
         common::no_texlive();
         return;
     }
-    let host = start_host("profile");
+    let host = start_host_env("profile", &[("FLASHTEX_MEMSTAT", "1")]);
     // (scratch compiles in their own host: the mode's host keeps its document)
     let scratch = start_host("profile-scratch");
     let base = common::fresh_dir("flashtex-host-profile");
@@ -1090,7 +1090,7 @@ fn a_performance_mode_switched_live_changes_no_page() {
     std::fs::create_dir_all(&out).unwrap();
     let mut text = article(12);
     std::fs::write(proj.join("main.tex"), &text).unwrap();
-    let mut c = Client::connect_with(&host.1, &[], Some("low-memory")).unwrap();
+    let mut c = Client::connect_with(&host.1, &[], Some("balanced")).unwrap();
     let caps = c
         .hello
         .get("capabilities")
@@ -1103,14 +1103,21 @@ fn a_performance_mode_switched_live_changes_no_page() {
         c.hello
     );
     let hp = c.hello.get("profile").expect("HELLO.profile");
-    assert_eq!(hp.str_field("mode"), Some("low-memory"), "{}", c.hello);
+    assert_eq!(hp.str_field("mode"), Some("balanced"), "{}", c.hello);
     let mut view = View::default();
-    compile(&mut c, &mut view, &req(1, &proj, &out, "main.tex"));
+    let first = compile(&mut c, &mut view, &req(1, &proj, &out, "main.tex"));
+    let cache = |done: &Json| {
+        done.get("mem")
+            .and_then(|m| m.int_field("page_cache"))
+            .expect("DONE.mem.page_cache (FLASHTEX_MEMSTAT=1)")
+    };
+    let unpacked = cache(&first.done);
     let mut id = 1;
     for (mode, frac) in [
         ("high-performance", 0.8),
-        ("balanced", 0.3),
-        ("low-memory", 0.6),
+        ("low-memory", 0.3),
+        ("balanced", 0.6),
+        ("low-memory", 0.5),
     ] {
         c.set_profile(mode).unwrap();
         let applied = loop {
@@ -1138,7 +1145,7 @@ fn a_performance_mode_switched_live_changes_no_page() {
         assert_eq!(o.done.str_field("mode"), Some("incremental"), "{}", o.done);
         text.insert_str(at, " moded");
         std::fs::write(proj.join("main.tex"), &text).unwrap();
-        let (p2, o2) = snapshot(&base, &proj, &out, mode);
+        let (p2, o2) = snapshot(&base, &proj, &out, &format!("{mode}-{id}"));
         compare_with_scratch(
             &scratch.1,
             &view,
@@ -1150,6 +1157,32 @@ fn a_performance_mode_switched_live_changes_no_page() {
             &format!("after switching to {mode}"),
         );
     }
+    // Low Memory packs the page cache off the engine thread; a client that
+    // lacks the pages (a second, 3.0-style connection) gets them unpacked,
+    // equal to a scratch host's.
+    std::thread::sleep(Duration::from_millis(1500));
+    let mut other = Client::connect(&host.1).unwrap();
+    let mut ov = View::default();
+    let mut r = req(99, &proj, &out, "main.tex");
+    r.incremental = false;
+    let o = compile(&mut other, &mut ov, &r);
+    let packed = cache(&o.done);
+    assert!(
+        packed * 10 < unpacked * 7,
+        "Low Memory packs the page cache: {packed} of {unpacked} bytes"
+    );
+    let (p2, o2) = snapshot(&base, &proj, &out, "packed");
+    compare_with_scratch(
+        &scratch.1,
+        &ov,
+        &proj,
+        &out,
+        &p2,
+        &o2,
+        "main.tex",
+        "pages delivered from the packed cache",
+    );
+    let _ = other.bye();
     // An unknown mode is refused, and the mode in effect stays.
     c.set_profile("turbo").unwrap();
     loop {

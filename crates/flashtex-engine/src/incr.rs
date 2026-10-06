@@ -2508,6 +2508,13 @@ impl Session {
         }
     }
 
+    /// `trim_caches`, and the spare tail buffers of the restores too (Low
+    /// Memory's idle trim; `checkpoint::drop_spare_tails`).
+    pub fn trim_caches_deep(&mut self) {
+        self.trim_caches();
+        crate::checkpoint::drop_spare_tails();
+    }
+
     pub fn trim_caches(&mut self) {
         if let Some(g) = self.g.as_ref() {
             g.arena.drop_old_cache();

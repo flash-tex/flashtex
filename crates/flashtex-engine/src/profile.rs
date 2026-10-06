@@ -112,6 +112,10 @@ pub struct Profile {
     /// chunks and give the heap's free pages back (`trim_caches`,
     /// `malloc_trim`); `None`: never.
     pub trim_after_ms: Option<u64>,
+    /// Keep the host's page cache (every page's display list, for clients
+    /// that lack a page) gzip-packed, packed off the engine thread; and drop
+    /// the restores' spare tail buffers at the idle trim.
+    pub lean: bool,
 }
 
 /// Balanced's budget: DESIGN.md §5.2's 1 GiB.
@@ -135,6 +139,7 @@ impl Profile {
                 keep_warm_ms: 2000,
                 prepare: true,
                 trim_after_ms: Some(500),
+                lean: true,
             },
             Mode::Balanced => Profile {
                 mode,
@@ -145,6 +150,7 @@ impl Profile {
                 keep_warm_ms: 2000,
                 prepare: true,
                 trim_after_ms: Some(2000),
+                lean: false,
             },
             Mode::HighPerformance => Profile {
                 mode,
@@ -155,6 +161,7 @@ impl Profile {
                 keep_warm_ms: 10_000,
                 prepare: true,
                 trim_after_ms: None,
+                lean: false,
             },
         };
         if let Some(v) = pinned.budget {
@@ -206,6 +213,7 @@ impl Profile {
                 self.trim_after_ms
                     .map_or(Json::Null, |t| Json::Int(t as i64)),
             ),
+            ("lean", Json::Bool(self.lean)),
         ])
     }
 }
@@ -279,6 +287,7 @@ mod tests {
         assert_eq!(p.keep_warm_ms, 2000);
         assert!(p.prepare);
         assert_eq!(p.trim_after_ms, Some(2000));
+        assert!(!p.lean);
     }
 
     #[test]

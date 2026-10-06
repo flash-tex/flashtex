@@ -466,6 +466,12 @@ fn read_range_of(path: &str, from: u64, to: u64) -> Result<Vec<u8>, String> {
 /// than this reads into a fresh buffer each restore, as before.
 const SPARE_TAILS_MAX: usize = 64 << 20;
 
+/// Drop the spare tail buffers (a Low Memory mode's idle trim,
+/// `crate::profile`): the next restore reads its tails into fresh buffers.
+pub fn drop_spare_tails() {
+    SPARE_TAILS.with(|s| s.borrow_mut().clear());
+}
+
 /// Bytes the spare tail buffers hold (memory accounting).
 pub fn spare_tail_bytes() -> usize {
     SPARE_TAILS.with(|s| s.borrow().values().map(|v| v.capacity()).sum())

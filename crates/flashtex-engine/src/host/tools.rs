@@ -408,7 +408,11 @@ fn iserve_on_this_thread(o: crate::system::RunOptions, ho: &HostOpts) -> i32 {
         // and, where the profile trims soon after a compile (Low Memory),
         // as its idle trim does: the old run's cached chunks go
         if line.starts_with("compile") && profile.trim_after_ms.is_some_and(|t| t <= 500) {
-            s.trim_caches();
+            if profile.lean {
+                s.trim_caches_deep();
+            } else {
+                s.trim_caches();
+            }
         }
     }
     super::crash::exit(reason);
