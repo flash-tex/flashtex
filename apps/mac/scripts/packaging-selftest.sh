@@ -10,6 +10,9 @@
 # have the identity/profile it probes for, reporting that).
 # --full additionally runs repro-check.sh (ad-hoc and `--sign -` hardened
 # runtime), then launch-check.sh on the resulting app and on a --dmg image.
+# Its builds pass --require-engine-host, as a release does: flashtex-host must
+# be built first (cargo build --release -p flashtex-engine --bin flashtex-host),
+# and the hardened app's Contents/Helpers/flashtex-host is verified with codesign.
 # make-app.sh arguments after -- (e.g. --helper-root <main checkout>) are
 # passed through to every build in --full mode.
 set -euo pipefail
@@ -175,19 +178,39 @@ done
 
 if [[ "$FULL" -eq 1 ]]; then
   section "Full: repro-check (ad-hoc)"
-  if "$SCRIPT_DIR/repro-check.sh" --evidence "$WORK/repro-adhoc.md" -- ${MAKE_ARGS[@]+"${MAKE_ARGS[@]}"} >"$WORK/repro-adhoc.log" 2>&1; then
+  if "$SCRIPT_DIR/repro-check.sh" --evidence "$WORK/repro-adhoc.md" -- ${MAKE_ARGS[@]+"${MAKE_ARGS[@]}"} --require-engine-host >"$WORK/repro-adhoc.log" 2>&1; then
     ok "repro-check.sh (ad-hoc): $(grep '^RESULT' "$WORK/repro-adhoc.md")"
   else
     bad "repro-check.sh (ad-hoc) failed: $(grep '^RESULT' "$WORK/repro-adhoc.md" 2>/dev/null || tail -3 "$WORK/repro-adhoc.log")"
   fi
   section "Full: repro-check (--sign -, hardened runtime, SOURCE_DATE_EPOCH pinned)"
-  if SOURCE_DATE_EPOCH="$(date +%s)" "$SCRIPT_DIR/repro-check.sh" --evidence "$WORK/repro-hardened.md" -- ${MAKE_ARGS[@]+"${MAKE_ARGS[@]}"} --sign - --dmg >"$WORK/repro-hardened.log" 2>&1; then
+  if SOURCE_DATE_EPOCH="$(date +%s)" "$SCRIPT_DIR/repro-check.sh" --evidence "$WORK/repro-hardened.md" -- ${MAKE_ARGS[@]+"${MAKE_ARGS[@]}"} --require-engine-host --sign - --dmg >"$WORK/repro-hardened.log" 2>&1; then
     ok "repro-check.sh (--sign - --dmg, pinned): $(grep '^RESULT' "$WORK/repro-hardened.md")"
   else
     bad "repro-check.sh (--sign -) failed: $(grep '^RESULT' "$WORK/repro-hardened.md" 2>/dev/null || tail -3 "$WORK/repro-hardened.log")"
   fi
   FLAGS="$(codesign -dvv "$MAC_DIR/build/FlashTeX.app" 2>&1 | grep '^CodeDirectory' || true)"
   if grep -q 'runtime' <<< "$FLAGS"; then ok "app hardened-runtime signed: $FLAGS"; else bad "app is not hardened-runtime signed: $FLAGS"; fi
+  section "Full: the engine host is bundled and signed (app-parity row D5)"
+  HOST_BIN="$MAC_DIR/build/FlashTeX.app/Contents/Helpers/flashtex-host"
+  if [[ -x "$HOST_BIN" ]]; then ok "Contents/Helpers/flashtex-host: $(ls -l "$HOST_BIN" | awk '{print $5}') bytes"; else bad "Contents/Helpers/flashtex-host is missing"; fi
+  if codesign --verify --strict --verbose=2 "$HOST_BIN" >"$WORK/host-verify.txt" 2>&1; then
+    ok "codesign --verify --strict flashtex-host: $(tr '\n' ' ' < "$WORK/host-verify.txt")"
+  else
+    bad "codesign --verify --strict flashtex-host: $(tr '\n' ' ' < "$WORK/host-verify.txt")"
+  fi
+  HOST_FLAGS="$(codesign -dvv "$HOST_BIN" 2>&1 | grep -E '^(Identifier|CodeDirectory)' | tr '\n' ' ' || true)"
+  if grep -q 'runtime' <<< "$HOST_FLAGS"; then ok "flashtex-host hardened-runtime signed: $HOST_FLAGS"; else bad "flashtex-host is not hardened-runtime signed: $HOST_FLAGS"; fi
+  if codesign --verify --deep --strict --verbose=2 "$MAC_DIR/build/FlashTeX.app" >"$WORK/app-verify.txt" 2>&1; then
+    ok "codesign --verify --deep --strict FlashTeX.app: $(tr '\n' ' ' < "$WORK/app-verify.txt")"
+  else
+    bad "codesign --verify --deep --strict FlashTeX.app: $(tr '\n' ' ' < "$WORK/app-verify.txt")"
+  fi
+  if python3 -c 'import json,sys; e=json.load(open(sys.argv[1]))["engine_host"]; sys.exit(0 if e["bundled"] else 1)' "$MAC_DIR/build/FlashTeX.app/Contents/Resources/components.json" 2>/dev/null; then
+    ok "components.json: engine_host bundled"
+  else
+    bad "components.json: engine_host not bundled"
+  fi
   section "Full: launch-check (app, hardened)"
   if "$SCRIPT_DIR/launch-check.sh" --evidence "$WORK/launch-app.md" >"$WORK/launch-app.log" 2>&1 && ! grep -q '^- FAIL' "$WORK/launch-app.md"; then
     ok "launch-check.sh --app: $(grep -c '^- ' "$WORK/launch-app.md") notes, 0 FAIL"
