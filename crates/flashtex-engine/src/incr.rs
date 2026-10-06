@@ -250,10 +250,14 @@ pub struct Report {
     /// Instructions the engine thread retired restoring the restart point,
     /// from the observer's start (just before the restore) to the edited
     /// page's shipout, and in the convergence tests (`os::thread_counts`;
-    /// macOS only, for measurement).
+    /// macOS and Linux, for measurement).
     pub restore_instr: Option<u64>,
     pub edited_instr: Option<u64>,
     pub test_instr: Option<u64>,
+    /// Of `edited_instr`, from the engine's resumption after the restore
+    /// to the edited page's shipout: the typesetting alone.
+    pub typeset_instr: Option<u64>,
+    pub typeset_cycles: Option<u64>,
     /// A run newer work had stopped (typing: the last compile's background
     /// work): what this compile did with it before its own (`compile`:
     /// `continued`, `settled`, `abandoned`), the time and instructions
@@ -450,6 +454,10 @@ struct Obs {
     instr0: Option<u64>,
     edited_instr: Option<u64>,
     test_instr: Option<u64>,
+    /// The counts when the engine resumed after the restore, and from
+    /// there to the edited page (`Report::typeset_instr`).
+    instr_go: Option<(u64, u64)>,
+    typeset_instr: Option<(u64, u64)>,
     /// Checkpoints with L5 patches (`Session::defpatch`).
     patched: std::collections::HashSet<CheckpointId>,
     /// Preemption (`Session::set_preempt`): asked at each page and segment
@@ -1990,10 +1998,12 @@ impl Observer for Obs {
         let unchanged = self.old_frames.get(j - 1) == Some(&frame);
         if self.edited.is_none() && !unchanged {
             self.edited = Some((j, self.page_s, cpu));
-            self.edited_instr = self
-                .instr0
-                .zip(crate::os::thread_counts())
-                .map(|(a, b)| b.0 - a);
+            let now = crate::os::thread_counts();
+            if self.first_incremental {
+                crate::os::perf_mark(false);
+            }
+            self.edited_instr = self.instr0.zip(now).map(|(a, b)| b.0 - a);
+            self.typeset_instr = self.instr_go.zip(now).map(|(a, b)| (b.0 - a.0, b.1 - a.1));
         }
         // newer work first: not even a convergence test
         if self.stop_at != Some(j) && self.preempt_now(g) {
@@ -3900,6 +3910,8 @@ impl Session {
             instr0: crate::os::thread_counts().map(|c| c.0),
             edited_instr: None,
             test_instr: None,
+            instr_go: None,
+            typeset_instr: None,
             fails: 0,
             skipped_unchanged: false,
             next_test: 0,
@@ -4240,6 +4252,10 @@ impl Session {
             .unwrap_or(u64::MAX);
         let mid = !self.pages.iter().any(|p| p.ckpt == Some(r));
         let g = self.g.as_mut().unwrap();
+        obs.instr_go = crate::os::thread_counts();
+        if obs.first_incremental {
+            crate::os::perf_mark(true);
+        }
         g.layer().observer = Some(Box::new(obs));
         let status = g.resume_to_end().inspect_err(|_| {
             system::record_reads_into(None);
@@ -4350,6 +4366,8 @@ impl Session {
         if rep.edited.is_none() {
             rep.edited = obs.edited;
             rep.edited_instr = obs.edited_instr;
+            rep.typeset_instr = obs.typeset_instr.map(|c| c.0);
+            rep.typeset_cycles = obs.typeset_instr.map(|c| c.1);
         }
         if let Some(t) = obs.test_instr {
             *rep.test_instr.get_or_insert(0) += t;
