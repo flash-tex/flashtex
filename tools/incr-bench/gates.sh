@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # gates.sh [GATE...]: the engine gates a lane runs before landing, on a Linux runner with TeX Live
 # 2026 (the NixOS PC; first written for lane P4-FINISH). Engine NAME "gates" under INCR_BENCH_DIR.   default: build parity lockstep trip etrip drift positions tests sound-a
-#                           sound-budget sound-budget-d sound-timed sound-vol sound-lookup span sound-c sound-d sound-book gate
+#                           sound-budget sound-budget-d sound-timed sound-vol sound-lookup sound-lines span sound-c sound-d
+#                           sound-book gate
 #   build      release engine, display-list crate, web2rust; the pdflatex format; the documents
 #   parity     P-T1/P-T2 on the parity fixtures (tools/parity, --pt on)
 #   lockstep   tools/lockstep (260 cases)
@@ -12,10 +13,15 @@
 #   sound-budget soundness: 20 edits + reverts under a 4 MB undo-log budget (retention always on)
 #   sound-budget-d the same budget with 8 interleaved (preempted) edits of every kind
 #   sound-timed soundness: 10 edits + reverts per fixture with a timed checkpoint every 0.2 ms
-#   sound-vol  a temporary file written and read back (genvol.py): 20 edits + reverts, timed and default
+#   sound-vol  a temporary file written and read back (genvol.py): 20 edits + reverts, timed and default;
+#              then 12 interleaved (interrupted) edits of every kind (#1550)
 #   sound-lookup a later lookup whose answer changed (genlookup.py, #1502): 30 edits + reverts, files toggled;
 #              then 12 interleaved edits, half with a file toggled while the compile is stopped (#1514)
-#   span       display-list source spans after each edit against a from-scratch host (dlspan.py)
+#   sound-lines the line kinds (edits.py's newline, split, join; DESIGN.md §5.3 rule (c), which shifts
+#              line numbers): 20 edits + reverts on the fixtures + plain-120 + full-100; 10 with a timed
+#              checkpoint every 0.2 ms; 8 interleaved with letters and sentences
+#   span       display-list source spans after each edit against a from-scratch host (dlspan.py), letters
+#              and sentences, then letters with the line kinds
 #   sound-c    soundness: 20 structural edits, fixtures + refs-30/120 + full-100
 #   sound-d    soundness: 12 interleaved (interrupted) edits
 #   sound-book soundness: 8 single-character edits + 4 sentences (+ reverts) on the owner's
@@ -23,6 +29,13 @@
 #   gate       scripts/gate.sh pr
 # The checkout is this script's (on NixOS it needs PR #1232's rpath fix for libstdc++).
 # Raw output: $R. Every engine run has a time limit (incr_bench.py, soundness.py, timeout(1)).
+#
+# Every engine run here has the incremental engine's verify modes on (LIVE-30MS review: a
+# mutation of the convergence jump's adopted chunks gave matching outputs 6/6 with them off;
+# only FLASHTEX_VERIFY_JUMP caught it): the jump's comparison made ahead against the jump's own,
+# kept old chunks against their rewind, prepared restores after a reattach against the rewind,
+# composed relocations against the convergences' corrections applied one by one.
+# Each aborts the host on a disagreement, so the sweep fails.
 set -u
 S=$(cd "$(dirname "$0")" && pwd)
 W=$(cd "$S/../.." && pwd)
@@ -39,7 +52,8 @@ export CARGO_BUILD_JOBS=${CARGO_BUILD_JOBS:-12}
 mkdir -p $R
 cd $W
 echo "engine $(git rev-parse --short HEAD) ($(git log -1 --format=%s | head -c 80)); $(uname -srm); start $(date -u +%FT%TZ) $(uptime)" >> $R/environment.txt
-for g in ${@:-build parity lockstep trip etrip drift positions tests sound-a sound-budget sound-budget-d sound-timed sound-vol sound-lookup span sound-c sound-d sound-book gate}; do
+export FLASHTEX_VERIFY_JUMP=1 FLASHTEX_VERIFY_OLDCACHE=1 FLASHTEX_VERIFY_PREPARED=1 FLASHTEX_VERIFY_RELOC=1
+for g in ${@:-build parity lockstep trip etrip drift positions tests sound-a sound-budget sound-budget-d sound-timed sound-vol sound-lookup sound-lines span sound-c sound-d sound-book gate}; do
   echo "== $g $(date -u +%T) $(uptime)" >> $R/environment.txt
   case $g in
     build)
@@ -112,7 +126,13 @@ for g in ${@:-build parity lockstep trip etrip drift positions tests sound-a sou
       PYTHONHASHSEED=0 timeout 36000 python3 $S/soundness.py gates -j $J --trials 20 --no-fixtures \
         --dir $B/sound-vol --out $R/soundness-vol.jsonl \
         --extra $B/src-vol-closed:vol-closed --extra $B/src-vol-open:vol-open >> $R/soundness-vol.txt 2>&1
-      echo "soundness vol exit $e1 $?" >> $R/soundness-vol.txt ;;
+      e2=$?
+      # interleaved (preempted) edits, as sweep D (#1550: an edit broke a `\closeout`, and the file,
+      # still open for output, was read back with the line a checkpoint had flushed)
+      PYTHONHASHSEED=0 timeout 36000 python3 $S/soundness.py gates -j $J --trials 12 --no-fixtures --interleave \
+        --kinds replace,insert,sentence,section,label,ref,unlabel --dir $B/sound-vol-d --out $R/soundness-vol-d.jsonl \
+        --extra $B/src-vol-closed:vol-closed --extra $B/src-vol-open:vol-open >> $R/soundness-vol.txt 2>&1
+      echo "soundness vol exit $e1 $e2 $?" >> $R/soundness-vol.txt ;;
     sound-lookup)
       # a later lookup whose answer changed (#1502): genlookup.py's document tests for five files at
       # five pages, and half the edits create or delete one of them first (put back before the revert)
@@ -126,6 +146,18 @@ for g in ${@:-build parity lockstep trip etrip drift positions tests sound-a sou
         --kinds replace,insert,delete,sentence --dir $B/sound-lookup-d --out $R/soundness-lookup-d.jsonl \
         --toggle-files "$(python3 $S/genlookup.py --names)" --extra $B/src-lookup:lookup > $R/soundness-lookup-d.txt 2>&1
       echo "soundness lookup-d exit $?" >> $R/soundness-lookup-d.txt ;;
+    sound-lines)
+      PYTHONHASHSEED=0 timeout 36000 python3 $S/soundness.py gates -j $J --trials 20 --kinds newline,split,join --allow-no-trials \
+        --dir $B/sound-lines --out $R/soundness-lines.jsonl \
+        --extra $B/src-plain-120:plain-120 --extra $B/src-full-100:full-100 > $R/soundness-lines.txt 2>&1
+      e1=$?
+      PYTHONHASHSEED=0 timeout 36000 python3 $S/soundness.py gates -j $J --trials 10 --kinds newline,split,join --allow-no-trials \
+        --dir $B/sound-lines-timed --out $R/soundness-lines-timed.jsonl --host-args "--timed 0.0002" >> $R/soundness-lines.txt 2>&1
+      e2=$?
+      PYTHONHASHSEED=0 timeout 36000 python3 $S/soundness.py gates -j $J --trials 8 --interleave --allow-no-trials \
+        --kinds newline,split,join,replace,sentence --dir $B/sound-lines-d --out $R/soundness-lines-d.jsonl \
+        --extra $B/src-plain-120:plain-120 --extra $B/src-full-100:full-100 >> $R/soundness-lines.txt 2>&1
+      echo "soundness lines exit $e1 $e2 $?" >> $R/soundness-lines.txt ;;
     span)
       # the display list's source spans, incremental against from scratch (dlspan.py: the side
       # table, which no other sweep sees); two documents (four hosts) at once
@@ -136,7 +168,15 @@ for g in ${@:-build parity lockstep trip etrip drift positions tests sound-a sou
       (run_span full-10 --edits 15 --seed 1; run_span full-10 --edits 15 --seed 2; run_span full-10 --edits 15 --seed 3; \
        run_span full-100 --edits 10 --seed 1 --from 0.85) &
       wait
-      python3 -c "import json,sys; s=[json.loads(l) for l in open(sys.argv[1]) if '\"summary\"' in l]; [print(x) for x in s]; bad=sum(x['line_bad']+x['col_bad']+x['glyph_count_bad'] for x in s); print('span: %d runs, %d edits, %d glyphs, %d wrong' % (len(s), sum(x['edits'] for x in s), sum(x['glyphs'] for x in s), bad)); sys.exit(1 if bad or len(s) < 9 else 0)" $R/span.jsonl > $R/span.txt 2>&1
+      # the line kinds (DESIGN.md §5.3 rule (c)): spans of the pages a convergence kept move with their lines
+      (run_span plain-120 --edits 12 --seed 4 --from 0.3 --kinds letter,newline,split) &
+      (run_span full-100 --edits 10 --seed 4 --from 0.3 --kinds letter,newline,split) &
+      wait
+      # CR and mixed line ends (TeX ends a line at a LF, a CR, a CR LF: crate::texlines)
+      (run_span plain-120 --edits 12 --seed 5 --from 0.3 --eol cr --kinds letter,newline,split) &
+      (run_span full-100 --edits 10 --seed 5 --from 0.3 --eol mixed --kinds letter,newline,split,wedge) &
+      wait
+      python3 -c "import json,sys; s=[json.loads(l) for l in open(sys.argv[1]) if '\"summary\"' in l]; [print(x) for x in s]; bad=sum(x['line_bad']+x['col_bad']+x['glyph_count_bad'] for x in s); print('span: %d runs, %d edits, %d glyphs, %d wrong' % (len(s), sum(x['edits'] for x in s), sum(x['glyphs'] for x in s), bad)); sys.exit(1 if bad or len(s) < 13 else 0)" $R/span.jsonl > $R/span.txt 2>&1
       echo "span exit $?" >> $R/span.txt ;;
     sound-c)
       PYTHONHASHSEED=0 timeout 36000 python3 $S/soundness.py gates -j $J --trials 20 --dir $B/sound-c --out $R/soundness-c.jsonl \

@@ -36,6 +36,37 @@
 # Faster routines that compute exactly what pdftex.web's do (lane
 # P6-THROUGHPUT; each change carries its proof of identity).
 --change crates/flashtex-engine/changes/throughput.ch
+# Where the line-shift journal observes the engine (DESIGN.md 5.3 rule (c);
+# changes nothing the program computes).
+--change crates/flashtex-engine/changes/lineshift.ch
+# changes/throughput.ch [3]: get_next's fast path inlined into its callers,
+# the rest out of line.
+--inline get_next=always
+--inline get_next_slow=never
+# The token-level routines inlined into their callers (P6): a call through
+# `&mut Globals` costs its register saves and, after it, the reload of every
+# array's address the caller uses. Measured as a set (instructions, settled
+# pass, against get_next's fast path alone): Infinite Descent -9.4%,
+# long-deck -8.9%, full-100 -6.3%; adding the save-stack routines,
+# id_lookup, scan_keyword, get_node or free_node did not help further.
+--inline get_token=always
+--inline get_x_token=always
+--inline back_input=always
+--inline get_avail=always
+--inline delete_token_ref=always
+--inline flush_list=always
+--inline begin_token_list=always
+--inline end_token_list=always
+# Each routine indexes mem and eqtb through a local copy of the array header
+# (crate::arena::ArrView): an element write through a raw pointer otherwise
+# makes LLVM reload the address, length and flag pointer from Globals before
+# the next access (P6). Same checks, same barrier. Measured (instructions,
+# settled pass, with diag.rs's out-of-line thread-local): full-100 -4.1%,
+# long-deck -3.2%; viewing hash, the save, input and parameter stacks,
+# str_pool, str_start and buffer as well was worse (each view costs its loads
+# at every call of a routine that uses it).
+--array-view mem
+--array-view eqtb
 
 # Every array subscript becomes crate::ix::U(...), so that src/ix.rs decides
 # how it is checked: always, except in a benchmarking build with the
