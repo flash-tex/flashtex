@@ -172,13 +172,19 @@ pub fn thread_counts() -> Option<(u64, u64)> {
         let r = unsafe { thread_selfcounts(1, c.as_mut_ptr(), std::mem::size_of_val(&c)) };
         (r == 0).then_some((c[0], c[1]))
     }
-    #[cfg(all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64")))]
+    #[cfg(all(
+        target_os = "linux",
+        any(target_arch = "x86_64", target_arch = "aarch64")
+    ))]
     {
         linux_pmu::thread_counts()
     }
     #[cfg(not(any(
         target_os = "macos",
-        all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64"))
+        all(
+            target_os = "linux",
+            any(target_arch = "x86_64", target_arch = "aarch64")
+        )
     )))]
     {
         None
@@ -219,7 +225,10 @@ pub fn perf_mark(on: bool) {
 /// `perf_event_paranoid` ≤ 2 allows a process to count itself). Kernel work
 /// is excluded, unlike macOS's counts, so the two are compared only with
 /// themselves.
-#[cfg(all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64")))]
+#[cfg(all(
+    target_os = "linux",
+    any(target_arch = "x86_64", target_arch = "aarch64")
+))]
 mod linux_pmu {
     extern "C" {
         fn syscall(n: i64, ...) -> i64;
@@ -277,7 +286,16 @@ mod linux_pmu {
         };
         // SAFETY: perf_event_open(attr, pid 0 = this thread, cpu -1 = any,
         // group_fd, flags 0) reads `a` only.
-        unsafe { syscall(SYS_PERF_EVENT_OPEN, &a as *const Attr, 0i32, -1i32, group, 0u64) as i32 }
+        unsafe {
+            syscall(
+                SYS_PERF_EVENT_OPEN,
+                &a as *const Attr,
+                0i32,
+                -1i32,
+                group,
+                0u64,
+            ) as i32
+        }
     }
 
     thread_local! {
@@ -297,8 +315,7 @@ mod linux_pmu {
                 // nr, then one value per member
                 let mut v = [0u64; 3];
                 // SAFETY: at most `size_of_val(&v)` bytes into `v`.
-                let n =
-                    unsafe { read(g.0, v.as_mut_ptr().cast(), std::mem::size_of_val(&v)) };
+                let n = unsafe { read(g.0, v.as_mut_ptr().cast(), std::mem::size_of_val(&v)) };
                 if n < 16 {
                     return None;
                 }
@@ -1404,7 +1421,10 @@ mod tests {
         }
         let c = super::thread_counts().unwrap();
         assert!(c.0 - b.0 >= 2_000_000, "{b:?} -> {c:?}");
-        assert!(b.0 - a.0 < 2_000_000, "{a:?} -> {b:?}: another thread's work");
+        assert!(
+            b.0 - a.0 < 2_000_000,
+            "{a:?} -> {b:?}: another thread's work"
+        );
     }
 
     fn scratch(name: &str) -> std::path::PathBuf {
