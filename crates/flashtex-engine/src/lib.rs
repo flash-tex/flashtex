@@ -72,6 +72,7 @@ pub mod resolver;
 #[cfg(not(feature = "tex82"))]
 pub mod statediff;
 pub mod system;
+#[cfg(not(feature = "tex82"))]
 pub mod texlines;
 
 pub use generated::Globals;
