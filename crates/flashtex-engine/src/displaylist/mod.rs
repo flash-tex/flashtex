@@ -164,14 +164,18 @@ struct State {
     file_ids: HashMap<Vec<u8>, u32>,
     /// Span id - 1 -> (file, line).
     spans: Vec<(u32, u32)>,
-    span_ids: HashMap<(u32, u32), u32>,
+    /// (file, line) -> the span of that line: the lowest live span there.
+    span_ids: SpanIndex,
     /// Spans of lines an edit replaced (`move_lines`): kept, never reused.
-    retired: HashSet<u32>,
+    /// A bit per span id.
+    retired: Vec<u64>,
     // Resources by key: descriptions that do not depend on engine state.
     fonts: HashMap<[u8; 32], FontRes>,
     images: HashMap<[u8; 32], Json>,
     programs: HashMap<String, Program>,
     encodings: HashMap<String, Option<Arc<Vec<Vec<u8>>>>>,
+    /// Type 1 programs' built-in encodings, by the program's SHA-256.
+    builtin_encodings: HashMap<[u8; 32], Arc<Vec<Vec<u8>>>>,
     // Engine state as the writer saw it: dropped at every restore.
     font_keys: HashMap<u32, [u8; 32]>,
     image_keys: HashMap<u32, [u8; 32]>,
@@ -190,12 +194,13 @@ impl State {
             file_paths: Vec::new(),
             file_ids: HashMap::new(),
             spans: Vec::new(),
-            span_ids: HashMap::new(),
-            retired: HashSet::new(),
+            span_ids: SpanIndex::default(),
+            retired: Vec::new(),
             fonts: HashMap::new(),
             images: HashMap::new(),
             programs: HashMap::new(),
             encodings: HashMap::new(),
+            builtin_encodings: HashMap::new(),
             font_keys: HashMap::new(),
             image_keys: HashMap::new(),
             widths: HashMap::new(),
@@ -231,13 +236,93 @@ impl State {
         if file == 0 {
             return 0;
         }
-        if let Some(&s) = self.span_ids.get(&(file, line)) {
+        if let Some(s) = self.span_ids.get(file, line) {
             return s;
         }
         self.spans.push((file, line));
         let id = self.spans.len() as u32;
-        self.span_ids.insert((file, line), id);
+        self.span_ids.insert_new(file, line, id);
         id
+    }
+
+    fn is_retired(&self, id: u32) -> bool {
+        self.retired
+            .get(id as usize / 64)
+            .is_some_and(|w| w >> (id % 64) & 1 == 1)
+    }
+
+    fn retire(&mut self, id: u32) {
+        let i = id as usize / 64;
+        if self.retired.len() <= i {
+            self.retired.resize(i + 1, 0);
+        }
+        self.retired[i] |= 1 << (id % 64);
+    }
+}
+
+/// `State::span_ids`: for each file, a table by line (lines below
+/// [`SpanIndex::DENSE`]), and a map for the lines past it. `move_lines`
+/// re-keys every span after an edit, which a hashed (file, line) map made
+/// a hash removal and insertion per span: 0.7 ms a keystroke in the middle
+/// of a 1,000-page document (lane P4-PAGE-COST).
+#[derive(Default)]
+struct SpanIndex {
+    /// File id - 1 -> line -> span id (0: none).
+    dense: Vec<Vec<u32>>,
+    far: HashMap<(u32, u32), u32>,
+}
+
+impl SpanIndex {
+    const DENSE: u32 = 1 << 20;
+
+    fn get(&self, file: u32, line: u32) -> Option<u32> {
+        if line >= Self::DENSE {
+            return self.far.get(&(file, line)).copied();
+        }
+        let id = *self.dense.get(file as usize - 1)?.get(line as usize)?;
+        (id != 0).then_some(id)
+    }
+
+    /// Key (file, line) to `id` unless it has a span already.
+    fn insert_new(&mut self, file: u32, line: u32, id: u32) {
+        if line >= Self::DENSE {
+            self.far.entry((file, line)).or_insert(id);
+            return;
+        }
+        let f = file as usize - 1;
+        if self.dense.len() <= f {
+            self.dense.resize_with(f + 1, Vec::new);
+        }
+        let t = &mut self.dense[f];
+        if t.len() <= line as usize {
+            t.resize(line as usize + 1, 0);
+        }
+        if t[line as usize] == 0 {
+            t[line as usize] = id;
+        }
+    }
+
+    /// Drop every key of `file` on a line from `from` on.
+    fn clear_from(&mut self, file: u32, from: u32) {
+        if let Some(t) = self.dense.get_mut(file as usize - 1) {
+            t.truncate(from as usize);
+        }
+        if !self.far.is_empty() {
+            self.far.retain(|&(f, l), _| f != file || l < from);
+        }
+    }
+
+    #[cfg(test)]
+    fn to_map(&self) -> HashMap<(u32, u32), u32> {
+        let mut m = self.far.clone();
+        for (f, t) in self.dense.iter().enumerate() {
+            for (l, &id) in t.iter().enumerate() {
+                if id != 0 {
+                    m.insert((f as u32 + 1, l as u32), id);
+                }
+            }
+        }
+        m
     }
 }
 
@@ -625,28 +710,27 @@ impl State {
     /// line keeps it, as when the whole table was rebuilt). A long document
     /// rebuilt the table at every keystroke (lane P4-SPLIT-LATENCY), and
     /// at every change of a file no span names a moved line of.
+    ///
+    /// Each key of the file from `from` on names a span on that line (keys
+    /// only ever name a span where it is), so they all go, and the moved
+    /// spans that are not retired take their new lines in span order.
     fn move_spans_of(&mut self, f: u32, from: u32, old_end: u32, new_end: u32) {
         let delta = new_end as i64 - old_end as i64;
-        let mut moved = vec![];
-        for (i, (file, line)) in self.spans.iter_mut().enumerate() {
-            if *file != f || *line < from {
+        self.span_ids.clear_from(f, from);
+        for i in 0..self.spans.len() {
+            let (file, line) = self.spans[i];
+            if file != f || line < from {
                 continue;
             }
             let id = i as u32 + 1;
-            if self.span_ids.get(&(*file, *line)) == Some(&id) {
-                self.span_ids.remove(&(*file, *line));
-            }
-            if *line < old_end {
-                self.retired.insert(id);
+            if line < old_end {
+                self.retire(id);
             } else {
-                *line = (*line as i64 + delta).max(1) as u32;
-                moved.push(id);
-            }
-        }
-        for id in moved {
-            if !self.retired.contains(&id) {
-                let at = self.spans[id as usize - 1];
-                self.span_ids.entry(at).or_insert(id);
+                let line = (line as i64 + delta).max(1) as u32;
+                self.spans[i].1 = line;
+                if !self.is_retired(id) {
+                    self.span_ids.insert_new(f, line, id);
+                }
             }
         }
     }
@@ -1532,7 +1616,7 @@ impl Globals {
             }
         }
         if names.is_none() && format == "type1" {
-            names = Some(Arc::new(builtin_encoding(&program)));
+            names = Some(builtin_encoding_of(&program, &program_sha));
         }
         let mut h = Sha256::new();
         h.update(b"display-list-v3 font\0");
@@ -1949,6 +2033,20 @@ fn parse_enc(data: &[u8]) -> Option<Vec<Vec<u8>>> {
 
 /// A Type 1 font's built-in `/Encoding` (from the clear-text part of a
 /// PFB or PFA): `StandardEncoding` or `dup <code> /<name> put` entries.
+/// [`builtin_encoding`] of a program whose SHA-256 is `sha`, worked out once
+/// per program: every restore forgets the fonts' keys (`restored`), and the
+/// next page worked them out again, decrypting each Type 1 program's
+/// cleartext for its encoding (0.2 ms of every keystroke on a 1,000-page
+/// hyperref document; lane P4-PAGE-COST).
+fn builtin_encoding_of(program: &[u8], sha: &[u8; 32]) -> Arc<Vec<Vec<u8>>> {
+    if let Some(hit) = with(|st| st.builtin_encodings.get(sha).cloned()).flatten() {
+        return hit;
+    }
+    let names = Arc::new(builtin_encoding(program));
+    with(|st| st.builtin_encodings.insert(*sha, names.clone()));
+    names
+}
+
 fn builtin_encoding(program: &[u8]) -> Vec<Vec<u8>> {
     let clear = cleartext(program);
     let mut out = vec![b".notdef".to_vec(); 256];
@@ -2212,20 +2310,31 @@ mod tests {
             seed ^= seed << 17;
             (seed % n as u64) as u32
         };
-        for _ in 0..300 {
+        for round in 0..600 {
+            // every other round about the line the index's table ends at
+            let base = if round % 2 == 0 {
+                0
+            } else {
+                SpanIndex::DENSE - 15
+            };
             let mut st = State::new();
             for _ in 0..60 {
-                let (f, l) = (1 + rnd(2), 1 + rnd(30));
+                let (f, l) = (1 + rnd(2), base + 1 + rnd(30));
                 st.span_id(f, l);
             }
             for _ in 0..4 {
-                let from = 1 + rnd(30);
+                let from = base + 1 + rnd(30);
                 let old_end = from + rnd(4);
                 let new_end = (from + rnd(6)).max(1);
                 let f = 1 + rnd(2);
                 // the rebuild, on a copy
                 let mut spans = st.spans.clone();
-                let mut retired = st.retired.clone();
+                let retired_of = |st: &State| -> HashSet<u32> {
+                    (1..=st.spans.len() as u32)
+                        .filter(|&id| st.is_retired(id))
+                        .collect()
+                };
+                let mut retired = retired_of(&st);
                 let delta = new_end as i64 - old_end as i64;
                 for (i, (file, line)) in spans.iter_mut().enumerate() {
                     if *file != f || *line < from {
@@ -2245,11 +2354,11 @@ mod tests {
                 }
                 st.move_spans_of(f, from, old_end, new_end);
                 assert_eq!(st.spans, spans);
-                assert_eq!(st.retired, retired);
-                assert_eq!(st.span_ids, want);
+                assert_eq!(retired_of(&st), retired);
+                assert_eq!(st.span_ids.to_map(), want);
                 // new spans after the move, as a compile makes them
                 for _ in 0..10 {
-                    let (f, l) = (1 + rnd(2), 1 + rnd(30));
+                    let (f, l) = (1 + rnd(2), base + 1 + rnd(30));
                     st.span_id(f, l);
                 }
             }
@@ -2386,6 +2495,24 @@ mod tests {
             font_matrix(fm, 0, 850).as_deref(),
             Some("0.00085 0 0 0.001 0 0")
         );
+    }
+
+    /// A program's built-in encoding is worked out once and kept across
+    /// restores (`restored` forgets the fonts' keys, not this).
+    #[test]
+    fn builtin_encodings_are_kept_by_program() {
+        DL.with(|d| *d.borrow_mut() = Some(Box::new(State::new())));
+        let pfa = b"/Encoding 256 array\ndup 65 /A put\nreadonly def\n";
+        let other = b"/Encoding StandardEncoding def\n";
+        let (sa, so) = (sha256(pfa), sha256(other));
+        let a = builtin_encoding_of(pfa, &sa);
+        assert_eq!(*a, builtin_encoding(pfa));
+        forget_engine_state();
+        assert!(Arc::ptr_eq(&a, &builtin_encoding_of(pfa, &sa)));
+        let o = builtin_encoding_of(other, &so);
+        assert_eq!(*o, builtin_encoding(other));
+        assert!(!Arc::ptr_eq(&a, &o));
+        DL.with(|d| *d.borrow_mut() = None);
     }
 
     /// A real font whose encoding writes `dup 1/uni6301 put`; skipped when

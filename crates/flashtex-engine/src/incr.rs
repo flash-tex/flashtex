@@ -241,10 +241,21 @@ pub struct Report {
     /// Instructions the engine thread retired restoring the restart point,
     /// from the observer's start (just before the restore) to the edited
     /// page's shipout, and in the convergence tests (`os::thread_counts`;
-    /// macOS only, for measurement).
+    /// macOS and Linux, for measurement).
     pub restore_instr: Option<u64>,
     pub edited_instr: Option<u64>,
     pub test_instr: Option<u64>,
+    /// Of `edited_instr`, from the engine's resumption after the restore
+    /// to the edited page's shipout: the typesetting alone.
+    pub typeset_instr: Option<u64>,
+    pub typeset_cycles: Option<u64>,
+    /// A run newer work had stopped (typing: the last compile's background
+    /// work): what this compile did with it before its own (`compile`:
+    /// `continued`, `settled`, `abandoned`), the time and instructions
+    /// that took (part of `key_s`, `find_s`), for the latency accounting.
+    pub paused_how: &'static str,
+    pub paused_s: f64,
+    pub paused_instr: Option<u64>,
     /// Passes run (DESIGN.md §5.5: a run that changed a file it read, the
     /// `.aux`, runs again, up to five times), how each ran, what each took,
     /// and whether the passes stopped on a repeated state.
@@ -429,6 +440,10 @@ struct Obs {
     instr0: Option<u64>,
     edited_instr: Option<u64>,
     test_instr: Option<u64>,
+    /// The counts when the engine resumed after the restore, and from
+    /// there to the edited page (`Report::typeset_instr`).
+    instr_go: Option<(u64, u64)>,
+    typeset_instr: Option<(u64, u64)>,
     /// Checkpoints with L5 patches (`Session::defpatch`).
     patched: std::collections::HashSet<CheckpointId>,
     /// Preemption (`Session::set_preempt`): asked at each page and segment
@@ -1905,10 +1920,12 @@ impl Observer for Obs {
         let unchanged = self.old_frames.get(j - 1) == Some(&frame);
         if self.edited.is_none() && !unchanged {
             self.edited = Some((j, self.page_s, cpu));
-            self.edited_instr = self
-                .instr0
-                .zip(crate::os::thread_counts())
-                .map(|(a, b)| b.0 - a);
+            let now = crate::os::thread_counts();
+            if self.first_incremental {
+                crate::os::perf_mark(false);
+            }
+            self.edited_instr = self.instr0.zip(now).map(|(a, b)| b.0 - a);
+            self.typeset_instr = self.instr_go.zip(now).map(|(a, b)| (b.0 - a.0, b.1 - a.1));
         }
         // newer work first: not even a convergence test
         if self.stop_at != Some(j) && self.preempt_now(g) {
@@ -2691,8 +2708,32 @@ impl Session {
         self.reemit_from = obs
             .filter(|o| !o.new_pages.is_empty())
             .and_then(|o| o.keep_r);
+        // The next restore (this compile's, `compile_pass`) takes the old
+        // run's output tails back from memory: those of files the run never
+        // reads (the PDF) are not written back to be read again at once
+        // (`Globals::reattach_pending_deferring`; whatever does not restore
+        // next writes them, `checkpoint::flush_deferred_tails`).
+        let read: std::collections::HashSet<String> = self
+            .before_pass
+            .as_ref()
+            .and_then(|b| b.journal.as_ref())
+            .map(|j| {
+                j.files
+                    .iter()
+                    .map(|f| system::out_key(&f.path))
+                    .chain(
+                        j.lookups
+                            .iter()
+                            .filter_map(|l| l.found.as_deref().map(system::out_key)),
+                    )
+                    .collect()
+            })
+            .unwrap_or_default();
+        // (FLASHTEX_NO_DEFER_TAILS=1 writes them all back at once, for A/B)
+        let on = std::env::var_os("FLASHTEX_NO_DEFER_TAILS").is_none();
+        let defer = |p: &str| on && !read.contains(&system::out_key(p));
         let g = self.g.as_mut().unwrap();
-        g.reattach_pending()?;
+        g.reattach_pending_deferring(&defer)?;
         system::record_reads_into(None);
         let b = self.before_pass.take().unwrap();
         self.journal = b.journal;
@@ -2722,6 +2763,8 @@ impl Session {
     pub fn compile(&mut self, stop_at: Option<usize>) -> Result<Report, String> {
         let _m = crate::memstat::scope(crate::memstat::tag::ENGINE);
         let t0 = Instant::now();
+        let i0 = crate::os::thread_counts();
+        let mut paused_how = "";
         // A run stopped for this compile (preempted, or at a viewport).
         let ahead = self.paused.as_ref().and_then(|_| system::take_ahead_read());
         if let Some(p) = ahead {
@@ -2732,27 +2775,61 @@ impl Session {
             // written out ahead.
             system::set_no_flush(&p);
             self.abandon_paused()?;
+            paused_how = "abandoned";
             self.force_cold = Some(format!("{p} was read while a checkpoint had it ahead"));
         } else if self.paused.is_some() {
             let _busy = crate::busy::enter(crate::busy::Part::Paused);
-            match self.paused_vs_changes() {
+            let vs = self.paused_vs_changes();
+            if self.opts.debug {
+                eprintln!(
+                    "[incr] a stopped run against the changes: {vs:?}, {:.2} ms",
+                    t0.elapsed().as_secs_f64() * 1e3
+                );
+            }
+            match vs {
                 // nothing new: it goes on
-                Some(false) => return self.finish(),
+                Some(false) => {
+                    let paused_s = t0.elapsed().as_secs_f64();
+                    let paused_instr = i0.zip(crate::os::thread_counts()).map(|(a, b)| b.0 - a.0);
+                    let mut rep = self.finish()?;
+                    rep.paused_how = "continued";
+                    rep.paused_s = paused_s;
+                    rep.paused_instr = paused_instr;
+                    return Ok(rep);
+                }
                 // it typeset pages before the change: they stay
-                Some(true) => self.settle_paused()?,
+                Some(true) => {
+                    self.settle_paused()?;
+                    paused_how = "settled";
+                }
                 // it has not reached the change, or all it did is after
                 // the change (typing: the same paragraph again), or cannot
                 // tell: back to the complete run it was replacing, whose
                 // checkpoints are as near the change and whose later pages
                 // can still be converged with
-                None => self.abandon_paused()?,
+                None => {
+                    self.abandon_paused()?;
+                    paused_how = "abandoned";
+                }
             }
         }
+        let paused_s = t0.elapsed().as_secs_f64();
+        let paused_instr = i0.zip(crate::os::thread_counts()).map(|(a, b)| b.0 - a.0);
         if let Some(g) = self.g.as_mut() {
             g.layer().stats = Default::default();
         }
         self.pass = 1;
-        let mut rep = self.compile_pass(t0, stop_at)?;
+        let rep = self.compile_pass(t0, stop_at);
+        // (an abandoned run's tails this pass did not restore from: the
+        // files as `reattach_pending` leaves them)
+        let flushed = crate::checkpoint::flush_deferred_tails();
+        let mut rep = rep?;
+        flushed?;
+        if !paused_how.is_empty() {
+            rep.paused_how = paused_how;
+            rep.paused_s = paused_s;
+            rep.paused_instr = paused_instr;
+        }
         rep.passes = 1;
         rep.pass_modes.push(rep.mode.clone());
         if let Some(pp) = self.paused.as_mut().filter(|_| rep.paused) {
@@ -3479,6 +3556,8 @@ impl Session {
     /// index of the first lookup that finds something else now.
     #[allow(clippy::type_complexity)]
     fn changes(&mut self) -> Result<(Vec<Edit>, Vec<String>, Option<usize>), String> {
+        // (names resolve afresh in every compile: `lineshift::same_path`)
+        crate::lineshift::forget_paths();
         let (key_files, key_open) = self.key_cover.clone();
         let j = self.journal.as_mut().ok_or("no journal")?;
         let mut edits = vec![];
@@ -3730,6 +3809,8 @@ impl Session {
             instr0: crate::os::thread_counts().map(|c| c.0),
             edited_instr: None,
             test_instr: None,
+            instr_go: None,
+            typeset_instr: None,
             fails: 0,
             skipped_unchanged: false,
             next_test: 0,
@@ -3780,6 +3861,9 @@ impl Session {
         // pass stands for read them (`fixed_inputs`): put back for a run
         // from scratch, which reads them all
         let fixed = std::mem::take(&mut self.fixed_inputs);
+        // (the files as an abandoned run's reattach leaves them, before
+        // this run keeps what they hold: `guard_every_output`)
+        crate::checkpoint::flush_deferred_tails()?;
         put_back(self.baseline.iter())?;
         // (no checkpoint before this run is restored again)
         system::forget_removed();
@@ -3984,10 +4068,24 @@ impl Session {
         let g = self.g.as_mut().unwrap();
         // the edits' line shifts, their lines before the edit counted from
         // where the restart point reads each file
-        obs.shifts = std::mem::take(&mut self.line_shifts)
+        // (one file under two names -- a symlink, a case variant -- is in the
+        // journal twice, with the same edit: one shift, #1591. Only an
+        // identical edit is merged, whatever the names say: two files that
+        // a stale or wrong resolution takes for one keep their own shifts,
+        // `first` and all; and the merged shift keeps every name, so that
+        // two byte-identical files edited alike both keep their lines'
+        // shift.)
+        let mut pending: Vec<crate::lineshift::Pending> = vec![];
+        for p in std::mem::take(&mut self.line_shifts) {
+            match pending.iter_mut().find(|q| q.same_edit(&p)) {
+                Some(q) => q.absorb(p),
+                None => pending.push(p),
+            }
+        }
+        obs.shifts = pending
             .into_iter()
             .map(|p| {
-                let (line, at) = crate::lineshift::level_at(g, &rec, &p.path);
+                let (line, at) = crate::lineshift::level_at(g, &rec, p.names());
                 p.resolve(line, at)
             })
             .collect();
@@ -4051,6 +4149,10 @@ impl Session {
             .unwrap_or(u64::MAX);
         let mid = !self.pages.iter().any(|p| p.ckpt == Some(r));
         let g = self.g.as_mut().unwrap();
+        obs.instr_go = crate::os::thread_counts();
+        if obs.first_incremental {
+            crate::os::perf_mark(true);
+        }
         g.layer().observer = Some(Box::new(obs));
         let status = g.resume_to_end().inspect_err(|_| {
             system::record_reads_into(None);
@@ -4161,6 +4263,8 @@ impl Session {
         if rep.edited.is_none() {
             rep.edited = obs.edited;
             rep.edited_instr = obs.edited_instr;
+            rep.typeset_instr = obs.typeset_instr.map(|c| c.0);
+            rep.typeset_cycles = obs.typeset_instr.map(|c| c.1);
         }
         if let Some(t) = obs.test_instr {
             *rep.test_instr.get_or_insert(0) += t;

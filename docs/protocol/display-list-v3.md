@@ -788,14 +788,21 @@ Times are in ms (`queue`, `apply`, `move_spans`, `find`, `key`, `changes`, `rest
 `edited_page` are counts and a page index). `queue_by` splits `queue` (the
 request's wait for the engine thread) by what the engine thread did
 meanwhile, in ms per part (`restore`, `typeset`, `test`, `jump`, `paused`,
-`done`, `prepare`, `request`, `idle`, `other`). `old_kept` and
+`done`, `prepare`, `request`, `idle`, `other`). When the compile found a
+run that newer work had stopped (typing: the previous compile's background
+work), `paused_how` says what it did with it first (`continued`,
+`settled`, `abandoned`) and `paused` (ms) and `paused_instr_k` what that
+took, inside `key` and `find`. `old_kept` and
 `old_rewound` count, since the host started, the old checkpoints' chunks
-the convergence comparisons took from their cache and rewound. On macOS the
-engine thread's fixed-counter readings are added, in thousands
-(`os::thread_counts`; absent where the system does not give them):
-`instr_k` and `cycles_k` for the whole compile, `first_page_instr_k` to the
-first page, `restore_instr_k` for the restore, `edited_instr_k` from just
-before the restore to the edited page's shipout, `test_instr_k` for the
+the convergence comparisons took from their cache and rewound. On macOS and
+Linux the engine thread's counter readings are added, in thousands
+(`os::thread_counts`: macOS's fixed counters; Linux's `perf_event_open`,
+user space only; absent where the system does not give them): `instr_k` and
+`cycles_k` for the whole compile, `first_page_instr_k` to the first page,
+`restore_instr_k` for the restore, `edited_instr_k` from just before the
+restore to the edited page's shipout, `typeset_instr_k` and
+`typeset_cycles_k` from the engine's resumption after the restore to the
+edited page's shipout (the typesetting alone), `test_instr_k` for the
 convergence tests, and two absolute cycle marks of the engine thread,
 `arrival_mark_kc` (when the `COMPILE` arrived; also on a `DONE` cancelled
 before its compile started) and `first_page_mark_kc` (its first page): a
@@ -983,19 +990,54 @@ place is line `a` of the file TeX was reading.
 `paragraph-ended-before-argument-complete`, `file-ended-while-scanning`,
 `emergency-stop`, `capacity-exceeded`, `file-not-found`,
 `cannot-use-in-this-mode`, `misplaced-alignment-tab`, `extra-alignment-tab`,
-`double-superscript`, `double-subscript`, `fatal-error-no-output`, `show`, `overfull-hbox`,
+`double-superscript`, `double-subscript`, `missing-right-delimiter`,
+`extra-right-delimiter`, `missing-character`, `fatal-error-no-output`, `show`, `overfull-hbox`,
 `underfull-hbox`, `tight-hbox`, `loose-hbox`, the same for `vbox`),
 `latex/…` (`file-not-found`, `environment-undefined`,
 `environment-mismatch`, `missing-begin-document`, `missing-item`,
 `lonely-item`, `verb-ended-by-end-of-line`, `option-clash`,
 `unknown-option`, `command-already-defined`, `undefined-reference`,
-`undefined-citation`, `multiply-defined-label`, `rerun`),
+`undefined-citation`, `multiply-defined-label`, `rerun`, `float-too-large`,
+`unicode-not-set-up`, `caption-outside-float`, `no-file`),
 `latex-font/font-shape-undefined`, `package/<name>/…`, `class/<name>/…`,
 `pdftex/<category>` (`pdftex/dest`). Every other message's slug is its text
 with quoted names (`` `x' ``), control sequence names, arguments in braces,
 numbers and "on input line N" left out, lower case, words joined by `-`
 (`Undefined color `x'.` → `undefined-color`), at most 60 characters. A code
 names the kind of problem, never its instance.
+
+*Added 2026-10-05 (lane DIAG-PARITY, #1592).*
+- **Two codes are new reports** that a `diag-v1` client did not get before. Both are
+  read from the terminal (`exact: false`), and neither has a place:
+  - `latex/no-file`: "No file X.tex.", LaTeX's `\typeout` for an `\include` or
+    `\InputIfFileExists` of a missing `.tex` file. The `.aux` and `.toc` files of a
+    first run are not reported.
+  - `tex/missing-character`: "Missing character: There is no X in font Y!", shown
+    on the terminal when `\tracinglostchars` > 1.
+- **Five codes replace slugs** the rule above used to produce:
+
+  | Before | Now |
+  |---|---|
+  | `tex/missing-inserted` | `tex/missing-right-delimiter` |
+  | `tex/extra` | `tex/extra-right-delimiter` |
+  | `latex/unicode-character-u` | `latex/unicode-not-set-up` |
+  | `latex/outside-float` | `latex/caption-outside-float` |
+  | `latex/float-too-large-for-page-by-pt` | `latex/float-too-large` |
+
+- **Why the renames need no alias or gate:**
+  - Two of the old codes broke the rule that a code names a kind. `tex/extra` was
+    also the slug of "Extra \else", "Extra \fi" and "Extra \or". `tex/missing-inserted`
+    was also the slug of "Missing \endcsname inserted".
+  - `diag-v1` is capability-gated, and codes are not listed in HELLO.
+  - The only consumers of codes are:
+    - the app (`EngineV3Explain`, `EngineV3Fixes`, `EngineV3ErrorPolicy`,
+      `EngineV3DiagPresent`);
+    - the engine's `tests/diagnostics.rs`;
+    - `tools/diag-oracle`.
+  - On #1592's tree none of them names an old code: a search for them in `apps/`, `crates/` and
+    `tools/` finds nothing.
+  - A client that keyed on an old slug falls back, as for any unknown code, to the
+    message.
 
 **Precision** (measured, lane P5-DIAGNOSTICS: `crates/flashtex-engine/tests/diagnostics/`,
 docs/evidence/p5-diagnostics-2026-09-30/): on an 80-document corpus of

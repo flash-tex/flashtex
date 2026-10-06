@@ -42,6 +42,11 @@ struct Convert {
     #[serde(default)]
     #[allow(dead_code)]
     supported_features: Vec<String>,
+    /// Additive: the engine that typesets the destination document
+    /// (`previous` when absent). It picks which of the bridge's own tables
+    /// the provider receives (`features::supported_features_for`).
+    #[serde(default)]
+    engine: features::TypesettingEngine,
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -153,7 +158,7 @@ fn dispatch(
                 ProviderConfig::resolve(kind, |name| std::env::var(name).ok())?.build()?;
             let record = bridge.convert(
                 &request.capture_id,
-                features::supported_features(),
+                features::supported_features_for(request.engine),
                 converter.as_ref(),
             )?;
             let proposal = record.proposal.unwrap();

@@ -38,7 +38,7 @@ kept next to its output (`*.host-stderr`): the host says there why it ended
 | `mem.py ENGINE DOC --pages P,... --keys N` | the socket host's memory while typing (`FLASHTEX_MEMSTAT=1`: DONE carries `mem`, the process's resident bytes and the checkpoint layer's parts; a `mem-stats` build adds the heap by tag); samples RSS, kills the host above `--limit-gb`, fails above `--gate-gb`; `MEM_HOSTARGS` for the host |
 | `mem_table.py FILE...` | mem.py's summaries as a table: peak RSS and where the memory is; pooled latency and peak per engine for rounds tagged `TAG-ENGINE-rN` |
 | `mem_gate.sh [--build]` | the memory gate (nightly): peak RSS of plain/full-120 and plain/full-1000 against a limit per size |
-| `t7.py [--build] [--docs ...] [--quick]` | **T7, the latency gate** (DESIGN.md §8, §12's P4 exit gate): over the host's socket, per document (plain/full × 10/100/300/1000), letter edits at the start, middle and end, a reflowing sentence, a newline, a paragraph split/join (edits.py's), a preamble edit, and a reopen from the persisted S₀ (report-only); p50/p95/max against §1.2's targets (edited page: the host's ≤ 11 ms share), the convergence rate and the pages re-typeset per edit (held against `t7-baseline.json`), whether later pages were marked stale and all current at `DONE`, and the host's peak RSS. Exit 1 on a miss. See below |
+| `t7.py [--build] [--docs ...] [--quick]` | **T7, the latency gate** (DESIGN.md §8, §12's P4 exit gate): over the host's socket, per document (plain/full × 10/100/300/1000), letter edits at the start, middle and end, a reflowing sentence, a newline, a paragraph split/join (edits.py's), continuous typing every 100 and 150 ms (each keystroke must get its own page), a preamble edit, and a reopen from the persisted S₀ (report-only); p50/p95/max against §1.2's targets (edited page: the host's ≤ 11 ms share), the convergence rate and the pages re-typeset per edit (held against `t7-baseline.json`), whether later pages were marked stale and all current at `DONE`, and the host's peak RSS. Exit 1 on a miss. See below |
 | `test_t7.py`, `test_edits.py` | unit tests (`python3 -m unittest discover -s tools/incr-bench -p 'test_*.py'`); `testdata/t7-summary-trim.json` is a trimmed real summary |
 | `gates.sh [GATE...]` | the engine gates a lane runs before landing (parity, lockstep, trip, etrip, drift, display-list positions, cargo tests, soundness A/C/D, `gate.sh pr`), for a Linux runner with TeX Live 2026 |
 
@@ -50,15 +50,30 @@ at a half to a third of its speed (`docs/evidence/p4-finish-2026-09-30/raw/probe
 300 ms apart measure that; back-to-back ones do not. Soundness and convergence rates do not depend
 on load and run anywhere.
 
-On macOS the host's `DONE.stages` also carry the engine thread's **instruction counts**, which do not
-move with load either (`os::thread_counts`, the kernel's per-thread fixed counters; P6-HYPEROPT,
-`docs/evidence/p6-hyperopt-2026-10-04/`): `instr_k` and `cycles_k` for the whole compile,
+On macOS and Linux the host's `DONE.stages` also carry the engine thread's **instruction counts**,
+which do not move with load either (`os::thread_counts`: on macOS the kernel's per-thread fixed
+counters, P6-HYPEROPT, `docs/evidence/p6-hyperopt-2026-10-04/`; on Linux `perf_event_open`, user
+space only, which `perf_event_paranoid` ≤ 2 allows): `instr_k` and `cycles_k` for the whole compile,
 `first_page_instr_k`, `restore_instr_k`, `edited_instr_k` (from just before the restore to the
-edited page's shipout) and `test_instr_k` (the convergence tests), all in thousands. Compare
-engines by these on a loaded machine; quote wall times only from a quiet one. `dl3-keys --edit FILE`
+edited page's shipout), `typeset_instr_k` and `typeset_cycles_k` (from the engine's resumption after
+the restore to the edited page's shipout: the typesetting alone) and `test_instr_k` (the convergence
+tests), all in thousands. Compare engines by these on a loaded machine; quote wall times only from a
+quiet one. On Linux, `perf stat` or `perf record` on the host shares the counters, and the host's
+counts then fall short. To profile only the typesetting to the edited page, start the host with
+`FLASHTEX_PERF_MARKS=FILE`: it appends `b NS` when an edit's engine resumes after the restore and
+`e NS` at the edited page's shipout (CLOCK_MONOTONIC), and the samples of
+`perf record -k CLOCK_MONOTONIC` between a `b` and the next `e` are that interval. `dl3-keys --edit FILE`
 types in another file of the project than `--main` (a book's chapter).
 
 ## T7: the latency gate
+
+**The P4 gate's run** (owner decision on Q1, 2026-10-05) is `scripts/t7-reference.sh`. Run it on an
+idle, plugged-in Apple-Silicon Mac with Low Power Mode off, TeX Live 2026 on `PATH`, and a clean
+checkout of the commit to gate. It refuses to start otherwise (`--check` only checks). It builds
+release, waits for load1 < 2 (`--max-load`), and runs every document and phase, typing rows
+included, with `--require-reference`. It writes `docs/evidence/t7-reference-<date>-<host>/`
+(README with the verdict, table, summary, raw), for a PR. The rest of this section is `t7.py`
+itself.
 
 ```sh
 INCR_BENCH_DIR=/tmp/ib-t7 tools/incr-bench/t7.py --build --wait-load 5 --require-reference  # all 8 documents, ~40 min
@@ -75,6 +90,13 @@ codes are in `t7.py`'s docstring. Choices that a reader of the table needs:
   page's `PAGE` frame read, the host's share of key event → preview commit, gated at **≤ 11 ms
   p95** (the app's ≤ 4 ms share is the app benchmark's). Viewport set to the edited page,
   keystrokes `--gap-ms` (300) apart after each `DONE`, the host's keep-warm default (decision 10) on.
+- **Typing** (`typing@100ms`, `typing@150ms`): letter@middle's edit typed on a clock
+  (`dl3-keys --interval-ms`), whatever the host is doing, 40 keystrokes (`--typing-keys`). Most
+  arrive while the previous compile's background work runs (re-typesetting to convergence, the
+  tests, the jump, the next restore prepared), as when a user types. The in-body rows never meet
+  that case, since each of their keystrokes waits for `DONE` and 300 ms more. A keystroke's time
+  runs to the watched page from its own compile or a later one. The row is gated at ≤ 11 ms p95
+  like the others, and also fails when a keystroke is not painted by its own compile.
 - **Edit kinds**: `newline` and `split`/`join` are `edits.py`'s (the soundness sweep's): the space
   after a word becomes a line break, or a blank line, and back; the join is edits.py's `join` of
   the break the split made. dl3-keys picks a space where edits.py's conditions hold in its line.
@@ -87,7 +109,8 @@ codes are in `t7.py`'s docstring. Choices that a reader of the table needs:
   12 reopen. A row with fewer than 12 samples is gated on its maximum.
 - **Order and carry-over**: each phase leaves the host's checkpoint history and RSS to the next.
   `--order rotate` (default) starts document *i* at in-body phase *i* mod 6; the preamble runs
-  last (its full runs replace the history), then the reopens. `--order fixed|shuffle` exist.
+  last (its full runs replace the history), then the reopens. The typing rows run between the
+  in-body phases and the preamble. `--order fixed|shuffle` exist.
 - **No noise margin**: a row passes only when it meets its target.
 - **Held rates**: `t7-baseline.json` is the convergence rate and median re-typeset pages per row
   (`--write-baseline`); a row fails when its rate falls by more than 0.15 or its median pages
@@ -98,7 +121,15 @@ codes are in `t7.py`'s docstring. Choices that a reader of the table needs:
   battery, macOS Low Power Mode, `pmset -g therm` and the load. The run is **non-reference** (in
   the table, the verdict and `--check`) on battery, in Low Power Mode, under a thermal or CPU
   speed limit, with load1 above `--max-load` (default half the cores), or when power was not
-  recorded. Its misses count; `--require-reference` makes a non-reference pass exit 3. The run
+  recorded. On Linux it is also non-reference when a cgroup CPU quota over the harness throttled
+  during the run (`cpu.stat`'s `nr_throttled` on the harness's cgroup and every ancestor with a
+  `cpu.max`; the summary's `power.*.cpu_throttle`). A quota that runs out stops every thread
+  under it until the next period (100 ms), so the wall times then measure the quota: on the
+  NixOS PC's `flashtex.slice` (800 %, shared by every agent), the same build gave full-1000
+  letter@middle 16.9 / 18.8 ms p50 / p95 unthrottled and 25.8 / 70.2 ms with 69 % of periods
+  throttled. The **off-CPU** column is how much of each row's time to its page the engine thread
+  spent descheduled: the host's time to its first `PAGE`, minus the wait for the engine thread,
+  minus that thread's CPU time. Its misses count; `--require-reference` makes a non-reference pass exit 3. The run
   holds `caffeinate -i` (a sleeping Mac stops the clock the keystrokes are timed by), and
   `--wait-load L` waits (at most `--wait-max` s) for load1 below L first.
 - **Errors**: an unknown or empty `--docs` or `--phases` value, a host that never listens or a
