@@ -3255,7 +3255,7 @@ fn twin_files_edited_alike_both_shift() {
 /// between compiles, live, changes only which checkpoints are kept (the
 /// budget, the dense window), never the output. A tiny pinned budget keeps
 /// retention thinning at every compile, so the dense window of each mode
-/// (4, 16, 64 pages) decides what survives; the edits land near and far
+/// (4, 16, 512 pages) decides what survives; the edits land near and far
 /// from the last cursor.
 #[test]
 fn edits_across_performance_mode_switches_equal_scratch_runs() {

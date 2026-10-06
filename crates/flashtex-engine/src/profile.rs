@@ -155,7 +155,10 @@ impl Profile {
             Mode::HighPerformance => Profile {
                 mode,
                 budget: (physical_memory() / 4).clamp(BALANCED_BUDGET, HIGH_BUDGET_MAX),
-                dense: 64,
+                // every checkpoint within 512 pages stays (the budget permitting):
+                // the first keystroke far from the last restarts near the edit,
+                // not at its page's start (#1573: +39-143 M instructions)
+                dense: 512,
                 segment_s: Some(crate::incr::DEFAULT_SEGMENT_S),
                 timed_s: 0.020,
                 keep_warm_ms: 10_000,
