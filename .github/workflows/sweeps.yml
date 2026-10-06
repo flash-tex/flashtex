@@ -1,0 +1,290 @@
+# The incremental engine's soundness sweeps (tools/incr-bench/gates.sh's
+# sound-a, sound-budget, sound-budget-d, sound-timed, sound-vol, sound-lookup,
+# sound-lines, span, readers, sound-c, sound-d) on GitHub-hosted runners,
+# sharded so the whole set takes well under an hour of wall time. Lane
+# CI-SWEEPS-HOSTED: until this, every lane queued them on the one NixOS PC
+# (8 threads, 20 GB), which is now for timing and latency measurements only.
+#
+#   gh workflow run sweeps.yml -f ref=<branch|sha|refs/pull/N/head> \
+#     [-f gates=sound-a,span] [-f base_ref=main]
+#
+# Or add the `run-sweeps` label to a pull request (its head, once the PR's
+# branch has this file).
+#
+#   plan    resolves `ref` (and `base_ref`) to a SHA and packs each gate's units
+#           (a soundness.py run over one document, a dlspan.py run, readers.py)
+#           into shards of about `target` minutes: tools/incr-bench/sweeps.py,
+#           from measured costs (sweeps-costs.json)
+#   build   the release engine and its pdflatex format, once per SHA (kept in
+#           the Actions cache by SHA, so a second dispatch of a head skips it)
+#   sweep   one hosted ubuntu-latest job per shard, 4 units at a time
+#   summary one table (shards, units, compiles, ok, bad, wrong, aborts per
+#           gate) as the run summary and the `sweeps-summary` artifact; red if a
+#           gate of `ref` has a bad or wrong compile, an aborted or failed unit
+#           (the verify modes abort the host on a disagreement), or a missing
+#           shard. `base_ref` rows are A/B context only and never fail the run.
+#
+# The harness (sweeps.py: which runs, which documents, the shards) is this
+# workflow's own commit; what it runs (soundness.py, incr_bench.py, edits.py,
+# dlspan.py, readers.py, the generators, the fixtures) and the engine are the
+# ref's. To try a changed harness, dispatch from that branch (`--ref`).
+#
+# Fork safety: no secrets, `contents: read`, checkouts without persisted
+# credentials. A dispatch needs write access; on a fork's pull request the
+# label run gets GitHub's read-only token and the pull request's cache scope.
+name: sweeps
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "branch, tag, SHA or refs/pull/N/head to test"
+        required: true
+        default: main
+      gates:
+        description: "comma-separated gates, or all (sweeps.py gates)"
+        required: false
+        default: all
+      base_ref:
+        description: "optional: a second ref run with the same gates, as A/B rows"
+        required: false
+        default: ""
+      target:
+        description: "minutes of work per shard"
+        required: false
+        default: "20"
+  pull_request:
+    types: [labeled]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: sweeps-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || github.run_id }}
+  cancel-in-progress: true
+
+env:
+  # As ci.yml's engine-parity-hosted: texlive/texlive:latest-medium as of
+  # 2026-09-27 (TeX Live 2026, pdfTeX 1.40.29), pinned by digest, plus the
+  # two packages beamer loads that scheme-medium lacks.
+  TEXLIVE_IMAGE: texlive/texlive@sha256:961215b30a17099ee677cedbb9163fe755ebca1d7e8b0b9fa73248a2f53bd198
+  TEXLIVE_EXTRA: |
+    sansmathaccent 62cf97334eb2c1d4056cb7f72ef2e59d99edaef151c3f4870116cc23056394b9
+    translations a7766687fd777e7077a68d6d908cb43da0673616e58ebc31741b22108d4af591
+  JOBS: "4"
+
+jobs:
+  plan:
+    if: github.event_name != 'pull_request' || github.event.label.name == 'run-sweeps'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      sides: ${{ steps.plan.outputs.sides }}
+      shards: ${{ steps.plan.outputs.shards }}
+      target: ${{ steps.plan.outputs.target }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: harness
+          sparse-checkout: tools/incr-bench
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          path: tree
+          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || inputs.ref }}
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        if: github.event_name != 'pull_request' && inputs.base_ref != ''
+        with:
+          path: base
+          ref: ${{ inputs.base_ref }}
+          persist-credentials: false
+      - name: the shards
+        id: plan
+        env:
+          GATES: ${{ github.event_name == 'pull_request' && 'all' || inputs.gates }}
+          TARGET: ${{ github.event_name == 'pull_request' && '20' || inputs.target }}
+          REF: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.ref || inputs.ref }}
+          BASE_REF: ${{ github.event_name == 'pull_request' && '' || inputs.base_ref }}
+        run: |
+          set -euo pipefail
+          H=harness/tools/incr-bench/sweeps.py
+          [[ "$GATES" == all || -z "$GATES" ]] && GATES=$(python3 "$H" gates | tr ' ' ',')
+          sides='[]'; shards='[]'
+          for side in ref base; do
+            dir=$([[ $side == ref ]] && echo tree || echo base)
+            [[ -d "$dir" ]] || continue
+            sha=$(git -C "$dir" rev-parse HEAD)
+            name=$([[ $side == ref ]] && echo "$REF" || echo "$BASE_REF")
+            echo "$side: $name = $sha ($(git -C "$dir" log -1 --format=%s | head -c 100))"
+            python3 "$H" plan --tree "$dir" --gates "$GATES" --side "$side" --sha "$sha" --target "$TARGET" -j "$JOBS" > "$side.json"
+            sides=$(jq -c --arg s "$side" --arg h "$sha" --arg n "$name" '. + [{side: $s, sha: $h, ref: $n}]' <<< "$sides")
+            shards=$(jq -c -s 'add' <(echo "$shards") "$side.json")
+          done
+          jq -r '.[] | "  \(.name): \(.units) units, ~\(.estimate_min) min"' <<< "$shards"
+          {
+            echo "sides=$sides"
+            echo "shards=$shards"
+            echo "target=$TARGET"
+          } >> "$GITHUB_OUTPUT"
+          echo "$shards" > plan.json
+          echo "$(jq length <<< "$shards") shards for $(jq -c 'map(.side + " " + .sha[:9])' <<< "$sides")"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sweeps-plan
+          path: plan.json
+          retention-days: 14
+
+  build:
+    name: build (${{ matrix.side }})
+    needs: plan
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    strategy:
+      matrix:
+        include: ${{ fromJSON(needs.plan.outputs.sides) }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ matrix.sha }}
+          persist-credentials: false
+      # The engine and its format, by SHA and TeX Live image: a second
+      # dispatch of the same head (another gate list, a re-run) skips the build.
+      - uses: actions/cache@v4
+        id: engine
+        with:
+          path: ${{ runner.temp }}/engine.tar
+          key: sweeps-engine-${{ matrix.sha }}-${{ env.TEXLIVE_IMAGE }}
+      - uses: ./.github/actions/texlive-2026
+        if: steps.engine.outputs.cache-hit != 'true'
+        with:
+          image: ${{ env.TEXLIVE_IMAGE }}
+          extra: ${{ env.TEXLIVE_EXTRA }}
+      - uses: dtolnay/rust-toolchain@stable
+        if: steps.engine.outputs.cache-hit != 'true'
+      - uses: Swatinem/rust-cache@v2
+        if: steps.engine.outputs.cache-hit != 'true'
+        with:
+          key: sweeps
+      - name: the release engine and the pdflatex format (gates.sh's build step)
+        if: steps.engine.outputs.cache-hit != 'true'
+        run: |
+          set -euo pipefail
+          cargo build --release --locked -p flashtex-engine -p flashtex-display-list
+          IB="$RUNNER_TEMP/ib"; D="$IB/gates"; F="$IB/fmt-gates"; T=target/release
+          mkdir -p "$D" "$F"
+          cp "$T/flashtex-initex" "$T/flashtex-host" "$T/dl3-keys" "$T/dl3-client" "$T/dl3-dump" "$D/"
+          cp crates/flashtex-engine/pdftex.pool "$D/"
+          ln -sf flashtex-initex "$D/pdftex"
+          git rev-parse --short HEAD > "$D/HEAD"
+          (cd "$F" && SOURCE_DATE_EPOCH=0 FORCE_SOURCE_DATE=1 FLASHTEX_POOL="$D/pdftex.pool" timeout 300 "$D/flashtex-initex" -ini \
+             -jobname=pdflatex -progname=pdflatex -etex -translate-file=cp227.tcx pdflatex.ini </dev/null >pdflatex.out 2>&1) || true
+          [[ -s "$F/pdflatex.fmt" ]] || { tail -n 40 "$F/pdflatex.out" "$F/pdflatex.log" || true; echo "::error::no pdflatex.fmt"; exit 1; }
+          ls -l "$D" "$F"
+          tar -C "$IB" -cf "$RUNNER_TEMP/engine.tar" gates fmt-gates
+      - uses: actions/upload-artifact@v4
+        with:
+          name: engine-${{ matrix.side }}
+          path: ${{ runner.temp }}/engine.tar
+          retention-days: 3
+
+  sweep:
+    name: ${{ matrix.name }}
+    needs: [plan, build]
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.plan.outputs.shards) }}
+    env:
+      INCR_BENCH_DIR: ${{ github.workspace }}/../ib
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: harness
+          sparse-checkout: |
+            tools/incr-bench
+            .github/actions
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          path: tree
+          ref: ${{ matrix.sha }}
+          persist-credentials: false
+      - uses: ./harness/.github/actions/texlive-2026
+        with:
+          image: ${{ env.TEXLIVE_IMAGE }}
+          extra: ${{ env.TEXLIVE_EXTRA }}
+      - uses: actions/download-artifact@v4
+        with:
+          name: engine-${{ matrix.side }}
+          path: ${{ runner.temp }}
+      - name: ${{ matrix.gate }} ${{ matrix.shard }}
+        env:
+          SHARD: ${{ matrix.shard }}
+          GATE: ${{ matrix.gate }}
+          SIDE: ${{ matrix.side }}
+          SHA: ${{ matrix.sha }}
+          TARGET: ${{ needs.plan.outputs.target }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$INCR_BENCH_DIR"
+          tar -C "$INCR_BENCH_DIR" -xf "$RUNNER_TEMP/engine.tar"
+          echo "engine $(cat "$INCR_BENCH_DIR/gates/HEAD"); $(nproc) cpus; $(free -g | awk '/Mem:/ {print $2}') GB"
+          python3 harness/tools/incr-bench/sweeps.py run --tree "$PWD/tree" --gate "$GATE" --shard "$SHARD" \
+            --side "$SIDE" --sha "$SHA" --target "$TARGET" -j "$JOBS" --out "$RUNNER_TEMP/out"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: result-${{ matrix.id }}
+          path: ${{ runner.temp }}/out
+          if-no-files-found: ignore
+          retention-days: 14
+
+  summary:
+    needs: [plan, sweep]
+    if: always() && needs.plan.result == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: tools/incr-bench
+          persist-credentials: false
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: result-*
+          path: results
+      - uses: actions/download-artifact@v4
+        with:
+          name: sweeps-plan
+          path: .
+      - name: one table
+        env:
+          SIDES: ${{ needs.plan.outputs.sides }}
+        run: |
+          set -euo pipefail
+          mkdir -p results
+          rc=0
+          python3 tools/incr-bench/sweeps.py summary results --plan plan.json --md summary.md --json summary.json || rc=$?
+          python3 tools/incr-bench/sweeps.py costs results > costs.json
+          {
+            echo "### Soundness sweeps"
+            echo
+            jq -r '.[] | "- \(.side): `\(.ref)` = `\(.sha)`"' <<< "$SIDES"
+            echo
+            cat summary.md
+          } >> "$GITHUB_STEP_SUMMARY"
+          exit $rc
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: sweeps-summary
+          path: |
+            summary.md
+            summary.json
+            costs.json
+            plan.json
+          if-no-files-found: ignore
+          retention-days: 30
