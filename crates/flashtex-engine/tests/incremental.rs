@@ -134,8 +134,15 @@ fn copy_dir(from: &Path, to: &Path) {
     std::fs::create_dir_all(to).unwrap();
     for f in std::fs::read_dir(from).unwrap() {
         let f = f.unwrap();
-        if f.file_type().unwrap().is_file() {
+        let t = f.file_type().unwrap();
+        if t.is_file() {
             std::fs::copy(f.path(), to.join(f.file_name())).unwrap();
+        } else if t.is_symlink() {
+            // (a link as it is: `a_file_under_two_names_shifts_once`)
+            let target = std::fs::read_link(f.path()).unwrap();
+            std::os::unix::fs::symlink(target, to.join(f.file_name())).unwrap();
+        } else if t.is_dir() {
+            copy_dir(&f.path(), &to.join(f.file_name()));
         }
     }
 }
@@ -278,7 +285,16 @@ fn a_failed_run_then_a_revert() {
         &[("doc.tex", &broken)],
         "a run that fails",
     );
-    compile_and_check(&e, &mut h, &dir, &[("doc.tex", &doc)], "the revert");
+    // (the failed run's PDF is gone, as pdfTeX leaves it: `check_against`)
+    assert!(!dir.join("doc.pdf").exists());
+    let r = compile_and_check(&e, &mut h, &dir, &[("doc.tex", &doc)], "the revert");
+    // Lane ERROR-RECOVERY: the failed run's PDF was set aside, not lost
+    // (`system::remove_output`), so the revert restarts from a checkpoint
+    // instead of from the format.
+    assert!(
+        !field(&r, "mode").contains("cold"),
+        "the revert compiled from scratch: {r}"
+    );
     compile_and_check(&e, &mut h, &dir, &[], "settle again");
 }
 
@@ -1069,6 +1085,111 @@ fn a_fatal_edit_after_an_interrupted_aux_pass_keeps_the_pdf() {
     let label = base.replacen("the height", "the height\\label{lab:new}", 1);
     let fatal = label.replacen("\\end{document}", "\\jend{document}", 1);
     interrupt_then(&e, "fatal-after-interrupt", base, &label, "2 1", &fatal);
+}
+
+/// genvol.py's vol-closed, shorter: three blocks, each writes a file with
+/// `\immediate\write`, closes it, ships a page or two and `\input`s it.
+fn vol_closed_doc() -> String {
+    let mut s = String::from("\\documentclass{article}\n\\newwrite\\tmp\n\\begin{document}\n\n");
+    for k in 0..3 {
+        s.push_str(&format!(
+            "\\immediate\\openout\\tmp=\\jobname-tmp.tex\n\
+             \\immediate\\write\\tmp{{Instance {k} says {}.}}\n\\immediate\\closeout\\tmp\n\n",
+            "x".repeat(k + 1)
+        ));
+        for i in 0..25 {
+            s.push_str(&para(k * 25 + i, "delta"));
+        }
+        s.push_str("\\input{\\jobname-tmp.tex}\n\n");
+    }
+    s.push_str("\\end{document}\n");
+    s
+}
+
+/// Issue #1550 (soundness sweep D, vol-closed `3:second-after-interrupt`):
+/// an edit breaks a `\closeout` (`\closeouet`), so the file is still open
+/// for output when it is `\input` pages later. pdfTeX's `\write` line is
+/// still in the stream's buffer then, and the `\input` reads an empty file;
+/// a checkpoint between them had flushed the buffer, and the run read the
+/// line. Such a read now redoes the run from the format, with that file
+/// never flushed by a checkpoint (`system::no_flush`). Also on the
+/// document's first compile, and back.
+#[test]
+fn a_file_read_while_open_for_output_is_read_as_from_scratch() {
+    let Some(e) = env() else {
+        common::no_texlive();
+        return;
+    };
+    let base = vol_closed_doc();
+    let lost =
+        base.replacen("\\closeout", "\\closeouet", 2)
+            .replacen("\\closeouet", "\\closeout", 1);
+    assert_ne!(base, lost);
+    let dir = e.dir.join("read-while-open");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let mut h = Host::start(&e, &dir);
+    for _ in 0..3 {
+        compile_and_check(&e, &mut h, &dir, &[("doc.tex", &base)], "settle");
+    }
+    compile_and_check(&e, &mut h, &dir, &[("doc.tex", &lost)], "closeout lost");
+    compile_and_check(
+        &e,
+        &mut h,
+        &dir,
+        &[("doc.tex", &lost)],
+        "closeout lost, again",
+    );
+    let edited = lost.replacen("Paragraph 40 with", "Paragraph 40 now with", 1);
+    compile_and_check(
+        &e,
+        &mut h,
+        &dir,
+        &[("doc.tex", &edited)],
+        "an edit after it",
+    );
+    compile_and_check(&e, &mut h, &dir, &[("doc.tex", &base)], "back");
+    drop(h);
+    // the first compile, from the format
+    let dir = e.dir.join("read-while-open-first");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let mut h = Host::start(&e, &dir);
+    compile_and_check(&e, &mut h, &dir, &[("doc.tex", &lost)], "first compile");
+}
+
+/// Issue #1550 as sweep D found it: the broken `\closeout` arrives while
+/// the compile of an earlier edit is stopped.
+#[test]
+fn a_file_read_while_open_for_output_after_an_interrupt() {
+    let Some(e) = env() else {
+        common::no_texlive();
+        return;
+    };
+    let base = vol_closed_doc();
+    let first = base.replacen(
+        "\\immediate\\closeout\\tmp\n\n",
+        "\\immediate\\closeout\\tmp\n\n\\section{Inserted}\n\n",
+        2,
+    );
+    let first = first.replacen(
+        "\\immediate\\closeout\\tmp\n\n\\section{Inserted}\n\n",
+        "\\immediate\\closeout\\tmp\n\n",
+        1,
+    );
+    let second =
+        first
+            .replacen("\\closeout", "\\closeouet", 2)
+            .replacen("\\closeouet", "\\closeout", 1);
+    assert!(first != base && second != first);
+    interrupt_then(
+        &e,
+        "read-while-open-interrupt",
+        &base,
+        &first,
+        "1 2",
+        &second,
+    );
 }
 
 /// P4-COLD-PREEMPT (Commander ruling, DESIGN.md §5.1/§5.3): a run from the
@@ -2483,5 +2604,649 @@ fn a_late_barrier_keeps_the_pages_before_it() {
         // the pages up to the barrier are the old run's; the last ones (the
         // `\write18` and the read of the written file) were re-typeset
         assert!(conv < kept && kept < pages, "{what}: {r}");
+    }
+}
+
+/// DESIGN.md §5.3 rule (c), the line half (`crate::lineshift`): a document
+/// of `n` paragraphs with `extra` text before some of them, and `pre` in
+/// the preamble.
+fn lines_doc(pre: &str, n: usize, extra: &[(usize, &str)]) -> String {
+    let mut s = format!("\\documentclass{{article}}\n{pre}\\begin{{document}}\n");
+    for i in 0..n {
+        for (k, t) in extra {
+            if *k == i {
+                s.push_str(t);
+                s.push_str("\n\n");
+            }
+        }
+        s.push_str(&para(i, "lorem"));
+    }
+    s.push_str("\\end{document}\n");
+    s
+}
+
+/// The edits of the line kinds at paragraph 5 (`tools/incr-bench/edits.py`'s
+/// `newline`, `split`, `join`), each followed by its revert.
+fn line_edits(doc: &str) -> Vec<(String, &'static str)> {
+    let at = "Paragraph 5 with the word";
+    assert!(doc.contains(at));
+    let nl = doc.replacen(at, "Paragraph 5 with\nthe word", 1);
+    let split = doc.replacen(at, "Paragraph 5 with\n\nthe word", 1);
+    // two paragraphs joined: the break before paragraph 6 becomes a space
+    let join = doc.replacen(".\n\nParagraph 6 ", ". Paragraph 6 ", 1);
+    assert!(nl != *doc && split != *doc && join != *doc);
+    vec![
+        (nl, "a newline"),
+        (doc.to_string(), "its revert"),
+        (split, "a paragraph split"),
+        (doc.to_string(), "its revert"),
+        (join, "a paragraph join"),
+        (doc.to_string(), "its revert"),
+    ]
+}
+
+/// The 1-based line of the first occurrence of `what` in `doc`.
+fn line_of(doc: &str, what: &str) -> usize {
+    doc[..doc.find(what).unwrap()].matches('\n').count() + 1
+}
+
+fn settle(e: &Env, h: &mut Host, dir: &Path, doc: &str) {
+    for k in 0..4 {
+        let r = compile_and_check(e, h, dir, &[("doc.tex", doc)], "settle");
+        if r.contains("\"mode\":\"unchanged\"") || k == 3 {
+            break;
+        }
+    }
+}
+
+#[test]
+fn line_edits_converge_and_equal_scratch_runs() {
+    let Some(e) = env() else {
+        common::no_texlive();
+        return;
+    };
+    // Plain prose, and LaTeX environments (`\begin` reads `\inputlineno`
+    // into `\@currenvline`, a marked list): a newline before them converges
+    // at the first page tested after the edited one.
+    let envs: Vec<(usize, String)> = (10..120)
+        .step_by(7)
+        .map(|i| (i, format!("\\begin{{equation}}a_{i}=b\\end{{equation}}")))
+        .collect();
+    let envs: Vec<(usize, &str)> = envs.iter().map(|(i, s)| (*i, s.as_str())).collect();
+    for (name, doc) in [
+        ("lines-plain", lines_doc("", 120, &[])),
+        ("lines-envs", lines_doc("", 120, &envs)),
+    ] {
+        let dir = e.dir.join(name);
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut h = Host::start(&e, &dir);
+        settle(&e, &mut h, &dir, &doc);
+        for (k, (text, what)) in line_edits(&doc).into_iter().enumerate() {
+            let what = format!("{name}: {what}");
+            let r = compile_and_check(&e, &mut h, &dir, &[("doc.tex", &text)], &what);
+            assert!(r.contains("\"mode\":\"incremental\""), "{what}: {r}");
+            if k < 2 {
+                assert_ne!(field(&r, "converged_at"), "null", "{what}: {r}");
+                assert_eq!(field(&r, "rerun_from"), "null", "{what}: {r}");
+            }
+        }
+    }
+}
+
+/// Each case reads or prints a line number pages after a line edit (about
+/// page 9 of 12; the edit is on page 1): the old run's pages from there on
+/// would show the old number. The newline converges, and the run goes on
+/// live from before that page. Every compile equals a scratch run; each
+/// case fails without its rule (`crate::lineshift`).
+#[test]
+fn moved_line_numbers_are_barriers() {
+    let Some(e) = env() else {
+        common::no_texlive();
+        return;
+    };
+    const N: usize = 240;
+    const AT: usize = 180;
+    // `\ifx` on and expansion of `\@currenvline` (a marked list): the
+    // environment's line compared with the line it had before the edit
+    let probe = "\\begin{center}\\expandafter\\ifx\\csname @currenvline\\endcsname\\expected \
+                 SAME\\else DIFFERENT\\fi\\end{center}";
+    let base = lines_doc("\\def\\expected{ on input line LINE}\n", N, &[(AT, probe)]);
+    let l = line_of(&base, "\\begin{center}");
+    let ifx = base.replace("LINE", &l.to_string());
+    let typeset = lines_doc(
+        "",
+        N,
+        &[(
+            AT,
+            "\\begin{center}\\csname @currenvline\\endcsname\\end{center}",
+        )],
+    );
+    let cases: Vec<(&str, String)> = vec![
+        // `\inputlineno` into a message (the log)
+        (
+            "lines-message",
+            lines_doc("", N, &[(AT, "\\message{[line \\the\\inputlineno]}")]),
+        ),
+        // ... into a register in a group, typeset
+        (
+            "lines-count",
+            lines_doc(
+                "",
+                N,
+                &[(
+                    AT,
+                    "\\begingroup\\count255=\\inputlineno Line \\the\\count255.\\endgroup",
+                )],
+            ),
+        ),
+        // a box report's line (the log)
+        (
+            "lines-underfull",
+            lines_doc("", N, &[(AT, "\\noindent\\hbox to 10cm{a b}")]),
+        ),
+        // the context of a `\show` (`l.<n>`, the log)
+        ("lines-show", lines_doc("", N, &[(AT, "\\show\\par")])),
+        // `\showgroups` in an open group (the log)
+        (
+            "lines-groups",
+            lines_doc("", N, &[(AT, "\\begingroup\\showgroups\\endgroup")]),
+        ),
+        // `\showlists` (the modes' lines, the log)
+        ("lines-lists", lines_doc("", N, &[(AT, "\\showlists")])),
+        ("lines-ifx", ifx),
+        ("lines-typeset", typeset),
+    ];
+    // (every case runs, and the failures are named together)
+    let mut bad = vec![];
+    for (name, doc) in &cases {
+        let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let dir = e.dir.join(name);
+            let _ = std::fs::remove_dir_all(&dir);
+            std::fs::create_dir_all(&dir).unwrap();
+            let mut h = Host::start(&e, &dir);
+            settle(&e, &mut h, &dir, doc);
+            for (k, (text, what)) in line_edits(doc).into_iter().enumerate() {
+                let what = format!("{name}: {what}");
+                let r = compile_and_check(&e, &mut h, &dir, &[("doc.tex", &text)], &what);
+                if k == 0 {
+                    // the old run's pages are kept up to the barrier
+                    assert_ne!(field(&r, "converged_at"), "null", "{what}: {r}");
+                    assert_ne!(field(&r, "rerun_from"), "null", "{what}: {r}");
+                }
+            }
+        }));
+        if r.is_err() {
+            bad.push(*name);
+        }
+    }
+    assert!(bad.is_empty(), "failed: {bad:?}");
+}
+
+/// After a line edit converges, later edits restart from the old run's
+/// checkpoints. Those inside an environment open across pages keep a marked
+/// `\@currenvline`: they are dropped, so that an edit ending the environment
+/// with the wrong `\end` shows its true line. The others are corrected as
+/// they are restored (`Reloc`): a `\message` of `\inputlineno` after the
+/// restart point shows the new number.
+#[test]
+fn restores_after_a_line_edit_equal_scratch_runs() {
+    let Some(e) = env() else {
+        common::no_texlive();
+        return;
+    };
+    let items: String = (0..40)
+        .map(|i| format!("\\item {}", para(1000 + i, "ipsum")))
+        .collect();
+    let list = format!("\\begin{{itemize}}\n{items}\\end{{itemize}}");
+    let doc = lines_doc(
+        "",
+        150,
+        &[(60, &list), (140, "\\message{[line \\the\\inputlineno]}")],
+    );
+    let dir = e.dir.join("lines-restore");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let mut h = Host::start(&e, &dir);
+    settle(&e, &mut h, &dir, &doc);
+    let nl = doc.replacen("Paragraph 5 with the word", "Paragraph 5 with\nthe word", 1);
+    let r = compile_and_check(&e, &mut h, &dir, &[("doc.tex", &nl)], "a newline");
+    assert_ne!(field(&r, "converged_at"), "null", "a newline: {r}");
+    // the list's end made wrong: a restart inside the list; LaTeX's error
+    // shows the list's line
+    let wrong = nl.replacen("\\end{itemize}", "\\end{enumerate}", 1);
+    assert_ne!(wrong, nl);
+    compile_and_check(&e, &mut h, &dir, &[("doc.tex", &wrong)], "the wrong end");
+    compile_and_check(&e, &mut h, &dir, &[("doc.tex", &nl)], "its revert");
+    // a letter after the list and before the message: a restart from a
+    // checkpoint the convergence kept
+    let letter = nl.replacen(
+        "Paragraph 130 with the word lorem",
+        "Paragraph 130 with the word lorme",
+        1,
+    );
+    assert_ne!(letter, nl);
+    compile_and_check(&e, &mut h, &dir, &[("doc.tex", &letter)], "a letter later");
+    compile_and_check(&e, &mut h, &dir, &[("doc.tex", &doc)], "all reverted");
+}
+
+/// The independent review of #1570 (probe 1): `\the\inputlineno` confined
+/// into an `\edef` body, and the definition runs away (an `\outer` macro
+/// read from another file). TeX's `runaway` prints the unfinished body, the
+/// moved line's digits included, through `show_token_list(link(def_ref))`
+/// before the definition is done and its list marked; the error's context
+/// is the other file's line. The print is a read of the moved line.
+#[test]
+fn a_runaway_definition_prints_a_moved_line() {
+    let Some(e) = env() else {
+        common::no_texlive();
+        return;
+    };
+    const N: usize = 240;
+    const AT: usize = 180;
+    let doc = lines_doc(
+        "\\outer\\def\\foo{}\n",
+        N,
+        &[
+            (
+                AT,
+                "\\edef\\x{\\the\\inputlineno\\csname @@input\\endcsname rvsub ",
+            ),
+            (AT + 3, "\\let\\x\\relax"),
+        ],
+    );
+    let dir = e.dir.join("lines-runaway");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("rvsub.tex"), "\\foo\n").unwrap();
+    let mut h = Host::start(&e, &dir);
+    settle(&e, &mut h, &dir, &doc);
+    for (text, what) in line_edits(&doc).into_iter().take(2) {
+        let what = format!("lines-runaway: {what}");
+        compile_and_check(&e, &mut h, &dir, &[("doc.tex", &text)], &what);
+    }
+}
+
+/// The review's probe 2: a group begun in an `\input` file that is closed
+/// again while the group stays open, after a newline in that file. The old
+/// run's later checkpoints hold the group's line in the old numbering;
+/// correcting them must know the group is the edited file's although no
+/// level reads it any more. e-TeX's end of job prints the line ("entered
+/// at line N").
+#[test]
+fn a_group_line_of_a_closed_inclusion_moves() {
+    let Some(e) = env() else {
+        common::no_texlive();
+        return;
+    };
+    let dir = e.dir.join("lines-closed-group");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let mut chap: String = (0..60).map(|i| para(1000 + i, "ipsum")).collect();
+    chap.push_str("\\begingroup\n");
+    let doc = lines_doc("", 120, &[(20, "\\input{chapx}")]);
+    std::fs::write(dir.join("chapx.tex"), &chap).unwrap();
+    let mut h = Host::start(&e, &dir);
+    settle(&e, &mut h, &dir, &doc);
+    let nl = chap.replacen(
+        "Paragraph 1005 with the word",
+        "Paragraph 1005 with\nthe word",
+        1,
+    );
+    assert_ne!(nl, chap);
+    compile_and_check(
+        &e,
+        &mut h,
+        &dir,
+        &[("chapx.tex", &nl)],
+        "lines-closed-group: a newline in chapx.tex",
+    );
+    compile_and_check(
+        &e,
+        &mut h,
+        &dir,
+        &[("chapx.tex", &chap)],
+        "lines-closed-group: its revert",
+    );
+}
+
+/// The review's probe 3: a file `sub/doc.tex`, read by its absolute name,
+/// is not the edited `doc.tex`. After a newline in `doc.tex` converges, a
+/// read of `\inputlineno` is added in `sub/doc.tex`: the restart from a
+/// checkpoint the convergence kept must not move that file's line.
+#[test]
+fn an_absolute_namesake_is_not_the_edited_file() {
+    let Some(e) = env() else {
+        common::no_texlive();
+        return;
+    };
+    let dir = e.dir.join("lines-namesake");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(dir.join("sub")).unwrap();
+    let abs = dir.canonicalize().unwrap().join("sub").join("doc.tex");
+    let sub: String = (0..80).map(|i| para(1000 + i, "ipsum")).collect();
+    std::fs::write(&abs, &sub).unwrap();
+    let inc = format!("\\input{{{}}}", abs.display());
+    let doc = lines_doc("", 150, &[(60, &inc)]);
+    let mut h = Host::start(&e, &dir);
+    settle(&e, &mut h, &dir, &doc);
+    let nl = doc.replacen("Paragraph 5 with the word", "Paragraph 5 with\nthe word", 1);
+    compile_and_check(
+        &e,
+        &mut h,
+        &dir,
+        &[("doc.tex", &nl)],
+        "lines-namesake: a newline",
+    );
+    // a line read in the middle of sub/doc.tex, no line moved
+    let sub2 = sub.replacen(
+        "Paragraph 1050 with",
+        "\\message{[sub line \\the\\inputlineno]}Paragraph 1050 with",
+        1,
+    );
+    assert_ne!(sub2, sub);
+    compile_and_check(
+        &e,
+        &mut h,
+        &dir,
+        &[("sub/doc.tex", &sub2)],
+        "lines-namesake: a read in sub/doc.tex",
+    );
+}
+
+/// `\immediate` writes of `\jobname-tmp.tex` (`Instance K says S.`), closed
+/// at once: a temporary file written and read back (genvol.py's
+/// vol-closed).
+fn write_tmp(k: usize, s: &str) -> String {
+    format!(
+        "\\immediate\\openout\\tmp=\\jobname-tmp.tex\n\
+         \\immediate\\write\\tmp{{Instance {k} says {s}.}}\n\\immediate\\closeout\\tmp\n\n"
+    )
+}
+
+fn paras(from: usize, to: usize, word: &str) -> String {
+    (from..to).map(|i| para(i, word)).collect()
+}
+
+/// #1348 (1): an edit adds a write of a temporary file that the document
+/// wrote and closed before the edit's restart point and reads later, and
+/// its compile is preempted after that write. The next compile abandons
+/// it and gets the complete run back (`reattach_pending`), but no tail of
+/// that run held the file (the run never opened it after the restart
+/// point), so the disk kept the abandoned run's instance, and the record
+/// of that open was dropped: a later restart between the document's own
+/// write and its `\input` read the abandoned instance.
+#[test]
+fn an_abandoned_run_that_rewrote_a_closed_file_leaves_it_as_the_old_run() {
+    let Some(e) = env() else {
+        common::no_texlive();
+        return;
+    };
+    let dir = e.dir.join("abandoned-rewrite");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let doc = |slot: &str, word: &str| {
+        format!(
+            "\\documentclass{{article}}\n\\newwrite\\tmp\n\\begin{{document}}\n{}{}\\clearpage\n\
+             {}\\clearpage\n{slot}{}\\clearpage\n{}\\clearpage\n\\input{{\\jobname-tmp.tex}}\n\n{}\
+             \\end{{document}}\n",
+            paras(0, 3, "alpha"),
+            write_tmp(0, "x"),
+            paras(3, 6, "alpha"),
+            paras(6, 9, "alpha"),
+            paras(9, 12, word),
+            paras(12, 15, "alpha"),
+        )
+    };
+    let base = doc("", "alpha");
+    let mut h = Host::start(&e, &dir);
+    for k in 0..4 {
+        let r = compile_and_check(&e, &mut h, &dir, &[("doc.tex", &base)], "settle");
+        if r.contains("\"mode\":\"unchanged\"") || k == 3 {
+            break;
+        }
+    }
+    // The new write, on the page after the restart point: preempted once
+    // that page is out.
+    std::fs::write(dir.join("doc.tex"), doc(&write_tmp(1, "yy"), "alpha")).unwrap();
+    let r = h.cmd("compile-interrupt 1 1");
+    assert!(r.contains("\"preempted\":true"), "not interrupted: {r}");
+    compile_and_check(&e, &mut h, &dir, &[("doc.tex", &base)], "the revert");
+    // A restart after the document's write and before its read.
+    compile_and_check(
+        &e,
+        &mut h,
+        &dir,
+        &[("doc.tex", &doc("", "gamma"))],
+        "an edit between the write and the read",
+    );
+    compile_and_check(&e, &mut h, &dir, &[("doc.tex", &base)], "its revert");
+}
+
+/// #1348 (2): a temporary file the preamble writes and the body reads, then
+/// writes again and reads, in a host that opened the document from a
+/// stored S₀ (a host restart). The opens before S₀ were not stored, so
+/// the new process did not know the preamble had written the file: a
+/// restart at S₀ or a checkpoint before the body's write (`rewritten_since`)
+/// read the body's instance.
+#[test]
+fn a_file_the_preamble_wrote_is_rewritten_after_a_host_restart() {
+    let Some(e) = env() else {
+        common::no_texlive();
+        return;
+    };
+    let dir = e.dir.join("preamble-rewrite");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let doc = |word: &str| {
+        format!(
+            "\\documentclass{{article}}\n\\newwrite\\tmp\n{}\\begin{{document}}\n{}\\clearpage\n\
+             {}\\clearpage\n\\input{{\\jobname-tmp.tex}}\n\n{}\\clearpage\n{}{}\
+             \\input{{\\jobname-tmp.tex}}\n\n\\end{{document}}\n",
+            write_tmp(0, "x"),
+            paras(0, 3, "alpha"),
+            paras(3, 6, word),
+            paras(6, 9, "alpha"),
+            write_tmp(1, "yy"),
+            paras(9, 12, "alpha"),
+        )
+    };
+    let base = doc("alpha");
+    let s0 = dir.with_extension("s0");
+    let _ = std::fs::remove_file(&s0);
+    {
+        let mut h = Host::start(&e, &dir);
+        for k in 0..4 {
+            let r = compile_and_check(&e, &mut h, &dir, &[("doc.tex", &base)], "settle");
+            if r.contains("\"mode\":\"unchanged\"") || k == 3 {
+                break;
+            }
+        }
+        let r = h.cmd(&format!("save {}", s0.display()));
+        assert!(r.contains("\"saved\""), "{r}");
+    }
+    // A new process, from the stored S₀.
+    let mut h = Host::start(&e, &dir);
+    let reference = dir.with_extension("ref");
+    copy_dir(&dir, &reference);
+    let r = h.cmd(&format!("open {}", s0.display()));
+    assert!(r.contains("\"mode\":\"open\""), "not opened from S0: {r}");
+    check_against(&e, &dir, &reference, &r, "the open");
+    for (word, what) in [
+        ("gamma", "an edit before the first read"),
+        ("alpha", "its revert"),
+    ] {
+        compile_and_check(&e, &mut h, &dir, &[("doc.tex", &doc(word))], what);
+    }
+}
+
+/// #1591: one file under two names (here `alias/chapx.tex`, through a link
+/// `alias` to the project's own directory), each opening
+/// leaving a group open to the end. The edit is one shift: counted once per
+/// name, it moved the groups' lines twice, every later test failed, and the
+/// convergence came at the document's end.
+#[test]
+fn a_file_under_two_names_shifts_once() {
+    let Some(e) = env() else {
+        common::no_texlive();
+        return;
+    };
+    let dir = e.dir.join("lines-alias");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    std::os::unix::fs::symlink(".", dir.join("alias")).unwrap();
+    let mut chap: String = (0..12).map(|i| para(1000 + i, "ipsum")).collect();
+    chap.push_str("\\begingroup\n");
+    let doc = lines_doc(
+        "",
+        150,
+        &[(10, "\\input{chapx}"), (30, "\\input{alias/chapx}")],
+    );
+    std::fs::write(dir.join("chapx.tex"), &chap).unwrap();
+    let mut h = Host::start(&e, &dir);
+    settle(&e, &mut h, &dir, &doc);
+    let nl = chap.replacen(
+        "Paragraph 1005 with the word",
+        "Paragraph 1005 with\nthe word",
+        1,
+    );
+    assert_ne!(nl, chap);
+    for (text, what) in [(&nl, "a newline in chapx.tex"), (&chap, "its revert")] {
+        let what = format!("lines-alias: {what}");
+        let r = compile_and_check(&e, &mut h, &dir, &[("chapx.tex", text)], &what);
+        let pages: usize = field(&r, "pages").parse().unwrap();
+        let conv: usize = field(&r, "converged_at")
+            .parse()
+            .unwrap_or_else(|_| panic!("{what}: no convergence: {r}"));
+        assert!(conv + 3 < pages, "{what}: converged late: {r}");
+    }
+}
+
+/// The #1595 review's probe: `alias` is a link to the project directory
+/// while names are resolved, then becomes a real directory with its own
+/// `chapx.tex`. One compile then edits both files with the same line delta:
+/// a late newline in the file read first, an early one in the file read
+/// second, which reads `\inputlineno` below the first file's edit. The two
+/// files' shifts are both kept: a resolution remembered from before the
+/// swap took them for one file, dropped the second's shift, and the read
+/// was no barrier.
+#[test]
+fn an_alias_replaced_by_a_directory_is_another_file() {
+    let Some(e) = env() else {
+        common::no_texlive();
+        return;
+    };
+    for (first, second) in [("chapx", "alias/chapx"), ("alias/chapx", "chapx")] {
+        let tag = if first == "chapx" { "a" } else { "b" };
+        let dir = e.dir.join(format!("lines-alias-swap-{tag}"));
+        let _ = std::fs::remove_dir_all(&dir);
+        let _ = std::fs::remove_dir_all(dir.with_extension("ref"));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::os::unix::fs::symlink(".", dir.join("alias")).unwrap();
+        let mut chap = String::new();
+        chap.push_str(&para(1000, "ipsum"));
+        chap.push_str(&para(1001, "ipsum"));
+        chap.push_str("\\input{other}\n");
+        chap.push_str("\\message{[chap line \\the\\inputlineno]}\n");
+        for i in 1002..1020 {
+            chap.push_str(&para(i, "ipsum"));
+        }
+        let other: String = (2000..2040).map(|i| para(i, "dolor")).collect();
+        std::fs::write(dir.join("chapx.tex"), &chap).unwrap();
+        std::fs::write(dir.join("other.tex"), &other).unwrap();
+        let doc = lines_doc(
+            "",
+            40,
+            &[
+                (10, &format!("\\input{{{first}}}")),
+                (30, &format!("\\input{{{second}}}")),
+            ],
+        );
+        let mut h = Host::start(&e, &dir);
+        settle(&e, &mut h, &dir, &doc);
+        // names resolved: a newline through both names, and its revert
+        let nl = chap.replacen(
+            "Paragraph 1015 with the word",
+            "Paragraph 1015 with\nthe word",
+            1,
+        );
+        for (text, what) in [(&nl, "a newline"), (&chap, "its revert")] {
+            let what = format!("lines-alias-swap-{tag}: {what}");
+            compile_and_check(&e, &mut h, &dir, &[("chapx.tex", text)], &what);
+        }
+        // the link becomes a directory with its own copy
+        std::fs::remove_file(dir.join("alias")).unwrap();
+        std::fs::create_dir_all(dir.join("alias")).unwrap();
+        std::fs::write(dir.join("alias").join("chapx.tex"), &chap).unwrap();
+        compile_and_check(
+            &e,
+            &mut h,
+            &dir,
+            &[],
+            &format!("lines-alias-swap-{tag}: swap"),
+        );
+        // a late newline in the file read first, an early one in the second
+        let late = chap.replacen(
+            "Paragraph 1015 with the word",
+            "Paragraph 1015 with\nthe word",
+            1,
+        );
+        let early = chap.replacen(
+            "Paragraph 1001 with the word",
+            "Paragraph 1001 with\nthe word",
+            1,
+        );
+        let file = |n: &str| format!("{n}.tex");
+        compile_and_check(
+            &e,
+            &mut h,
+            &dir,
+            &[(&file(first), &late), (&file(second), &early)],
+            &format!("lines-alias-swap-{tag}: two files, one delta"),
+        );
+    }
+}
+
+/// The second #1595 review's probe: two different files, byte for byte the
+/// same, edited the same way in one compile. Their edits are one shift
+/// (`Pending::same_edit`), which must keep both names: with the second
+/// file's name dropped, its openings' lines were never shifted and the run
+/// did not converge.
+#[test]
+fn twin_files_edited_alike_both_shift() {
+    let Some(e) = env() else {
+        common::no_texlive();
+        return;
+    };
+    let dir = e.dir.join("lines-twins");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let mut chap: String = (0..12).map(|i| para(1000 + i, "ipsum")).collect();
+    chap.push_str("\\begingroup\n");
+    let doc = lines_doc("", 150, &[(10, "\\input{chapx}"), (30, "\\input{chapy}")]);
+    std::fs::write(dir.join("chapx.tex"), &chap).unwrap();
+    std::fs::write(dir.join("chapy.tex"), &chap).unwrap();
+    let mut h = Host::start(&e, &dir);
+    settle(&e, &mut h, &dir, &doc);
+    let nl = chap.replacen(
+        "Paragraph 1005 with the word",
+        "Paragraph 1005 with\nthe word",
+        1,
+    );
+    assert_ne!(nl, chap);
+    for (text, what) in [(&nl, "a newline in both"), (&chap, "its revert")] {
+        let what = format!("lines-twins: {what}");
+        let r = compile_and_check(
+            &e,
+            &mut h,
+            &dir,
+            &[("chapx.tex", text), ("chapy.tex", text)],
+            &what,
+        );
+        let pages: usize = field(&r, "pages").parse().unwrap();
+        let conv: usize = field(&r, "converged_at")
+            .parse()
+            .unwrap_or_else(|_| panic!("{what}: no convergence: {r}"));
+        assert!(conv + 3 < pages, "{what}: converged late: {r}");
     }
 }

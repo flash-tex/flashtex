@@ -603,11 +603,61 @@ only the scoreboard part of S5's precondition. The status line names what S5
 still needs, including "T1 (lockstep) has 0 new differences", which this
 board does not measure.
 
-**Issues.** `--issues apply` opens or updates one issue per tier where
-new < old, on complete runs only. The body carries the marker
-`<!-- p5-scoreboard:tier=NAME -->`. The run closes that issue only when every
-row of the tier is green and no cell is partial, a sample or invalid, and the
-board has no `--sample-note`. `dry-run` prints the plan.
+**The owner's bar (P5-BOARD-T4).** The owner confirmed decision 3's
+thresholds on 2026-10-05 (DESIGN §13): P-T2 >= 99 % and P-T1 >= 98 % of the
+measured documents on the arXiv and T4 tiers, zero crashes on T4, and new >=
+old on every tier. `OWNER_BAR` in `scoreboard.py` holds them; a row under its
+bar reads **below bar** (or **below bar (old n/a)**) even when new > old. The
+comparison is on counts, so 98.95 % is not 99 %.
+
+**T4 crashes.** The T4 tier has a `crashes` row. Its denominator is the
+documents the engine ran: those the oracle compiles and the harness scored. A
+document the oracle excludes never reaches the engine (`parity.score`), and is
+shown apart as excluded. The row counts every way the engine failed to finish
+such a document, by kind (`nightly.py crash_of`, `CRASH_KINDS`):
+- a Rust panic (exit 101);
+- a signal (a negative exit);
+- any other non-zero exit, such as a fatal or TeX error that pdfTeX did not hit
+  on a document it compiles;
+- a timeout;
+- a traced pass whose log stops before the end of the run;
+- a worker that died scoring the document.
+
+The bar is none of them. `nightly.py` writes `crashes`, `crash_kinds` and
+`crash_examples` per tier. For an older summary without them, the board
+recovers the kinds from `documents.json`'s causes and marks the row partial;
+with neither, the row is not run. The v1 one-off baseline counts no crashes,
+so the old column is n/a.
+
+**The v1 baseline's oracle.** `t4-v1-oneoff.json` records the oracle it was
+measured against: the Mac, texlive.tlpdb `ca39e6791582`, LaTeX 2025-11-01. When
+the board's own oracle is another one (the PC's is `909745461c89`, LaTeX
+2026-06-01), T4's old cells say **CROSS-ORACLE** with both identities. Decision
+1 accepts this for frozen v1, whose rates are far below the new engine's. It
+never changes a verdict at v1's 0/440 P-T2, but the board states it.
+
+**P-T2's size cap.** The comparison reads a qdf copy of each PDF, in which
+every stream is decoded. T4's 2511.15561v1, a 12.7 MB PDF with large images,
+expanded to 3.0 GB, and loading it OOM-killed an 8 GB scope. Over
+`FLASHTEX_PT2_MAX_QDF_MB` (default 1024), qpdf stops writing (`RLIMIT_FSIZE`)
+and the document is a **harness error**: unmeasured, never a pass or a fail.
+Its tier reads partial, so the gate stays red. This is a harness limit, to be
+lifted by a normaliser that leaves image data compressed.
+
+**Issues and the gate.** `--issues apply` opens or updates one issue per red
+tier, on complete runs only: a row behind v1, below a target (arXiv L1, T2's
+unexpected failures) or below the owner's bar (`ISSUE_VERDICTS`). It carries
+the label `p5-red` (created if missing) and the marker
+`<!-- p5-scoreboard:tier=NAME -->` in the body. The run closes that issue only
+when every row of the tier is green and no cell is partial, a sample or
+invalid, and the board has no `--sample-note`. `dry-run` prints the plan.
+`--require-green`, also with `--from-board`, is the gate: exit 1 unless the
+board is all green. A missing, partial or invalid tier therefore fails the run
+without filing an issue.
+
+A parity tier with documents that could not be fetched or scored (parity.py's
+excluded reasons `fetch` and `harness error`) is partial: such documents are
+not measured, and a tier is never silently smaller than its manifest.
 
 **T4 v1 (decision 1).** T4 runs the new engine only. The Commander ruled on
 2026-10-02 ([#1319 5960583653](https://github.com/flash-tex/flashtex/issues/1319#issuecomment-5960583653))
@@ -654,11 +704,31 @@ every P-T1 not evaluated is still a skip.
 `scoreboard-run.sh` runs everything but T4 end to end: it builds both
 engines and the new engine's formats, then runs each harness for each
 engine and aggregates. `.github/workflows/p5-scoreboard.yml` runs it nightly
-on the NixOS runners, or on the heavy Mac (its `route`: the switches, or a
-dispatch's `-f route=pc|mac`). The T4 rows come from the route's own T4: the
+on its one official host, the NixOS PC. A heavy Mac runs it only when a
+dispatch names it (`-f route=mac`): that board is unofficial, so it files no
+issue, does not gate, and adds `reports/<date>-mac.*` to the summary branch
+without replacing `SUMMARY.md`. The T4 rows come from the route's own T4: the
 `corpus-t4` and `corpus-t4-v1` artifacts uploaded in the last 36 h on the PC,
 `corpus-t4-mac` from the last 7 days on the Mac. The whole board is measured
 at the commit that T4 summary records.
+
+**The board's host (the NixOS PC).** Its runners are user services in
+`flashtex.slice` (MemoryMax 20G, no swap, CPUQuota 800 %, shared with agents'
+runs). The board runs in a scope of its own inside that slice
+(`systemd-run --user --scope --slice=flashtex.slice -p MemoryMax=10G`, nice
+10), so it and a T4 night cannot take the slice's 20 GB between them. Its TeX
+Live 2026 is installed without doc files (`tlmgr option docfiles` is 0), and
+the templates and packages manifests pin files from TeX Live's `doc/` tree.
+Installing the docs would change the oracle's `texlive.tlpdb`, so the board
+does not: it copies those documents from
+`~/.cache/flashtex-corpus-texmf/texlive-2026` instead (`scoreboard-run.sh
+--corpus-texmf`, `parity.py --corpus-texmf`). The oracle stays the PC's own TeX
+Live. That directory holds each manifest entry's file, its `files` and, for a
+`copy_dir` entry, its directory, at their texmf-dist paths. Each file is
+checked against the manifest's sha256 when it is fetched. It was copied on
+2026-10-05 from MacTeX 2026's texmf-dist (texlive.tlpdb `ca39e6791582`, the
+snapshot the manifests were pinned on; all 112 entries match). Without the
+directory, those tiers' documents are unmeasured and the tiers read partial.
 
 The engine is built alone, in its own `cargo build -p flashtex-engine`, as
 corpus-t4 builds it, so the two binaries' sha256 can match. Built together

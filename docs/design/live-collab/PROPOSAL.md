@@ -726,3 +726,97 @@ amending B2 to take Yrs.
 3. Carets and selections from `awareness`.
 4. Converged text into the edit ledger, with its durable undo off in sessions (Q6).
 5. The §7.3 editor integration suite, and the P1 latency gates.
+
+### 10.3 P1 (lane LIVE-SHARE-P1): built, behind Settings ▸ Live Share (preview), off by default
+
+Three stacked PRs: #1530 (transport and session layer, `FlashTeXCollabSession`, collab-v1 §7),
+#1534 (editor integration), and the presence/UI PR. What is in:
+
+- Transport as §3.1–§3.3: TLS 1.3 only, with the hub's in-memory P-256 identity pinned by its SPKI
+  SHA-256; single-use 10-minute invites with host approval (edit, view or deny); token reconnect with
+  backoff and two-way state-vector resync; replica binding; presence fan-out.
+- Editor as §2.4: local edits are taken from the text storage one at a time (IME steps are held back
+  until commit). Remote operations are applied as minimal storage edits, never `tv.string`, with
+  marks, closers and folds shifted, the selection restored by relative position and the viewport kept.
+  Remote operations wait while the local user composes. ⌘Z is local-only and coalesced through
+  `TextUndoManager`. The edit ledger's durable undo is refused during a session (Q6).
+- Presence as §4: carets, selections and fading name flags drawn by an overlay over the visible text;
+  participants in the status bar and the session panel.
+- Compile as §5.2: each Mac compiles its own converged copy; a guest's copy is a normal project under
+  Application Support/FlashTeX/Collab/<instance>/<session>.
+- Two instances on one Mac: the invite names the host machine, and a guest on that machine connects
+  over loopback (`FLASHTEX_INSTANCE` keeps the copies apart).
+
+Measured on mac-m1max-a: a remote keystroke reaches the other editor in p50 6.2 ms and p95 ≤ 7.5 ms
+over loopback TLS (n = 200). These are upper bounds that include up to 5 ms of test polling. LAN
+latency was not measured. Tests: 14 session tests over loopback TLS, 7 hosted two-editor tests and 5
+controller tests (host and guest `ShellModel`s). A two-process smoke run of the packaged app (host plus
+guest instance, invite by file, debug-only auto-approve) converged to disk.
+
+Deviations and follow-ups (not in P1):
+
+- P1 shares every text source of the project (not one file), but no binary files. Figures and blob
+  sync are P2.
+- The outbox is in memory. An app crash loses unacknowledged edits; the durable outbox and the session
+  op log of §2.4 are follow-ups.
+- Session pins (§5.3) are sent in `join_ack` but not yet applied to compiles. The engine host already
+  honours `SOURCE_DATE_EPOCH`/`FORCE_SOURCE_DATE`; applying them needs a host restart on join.
+- The IME rule waits for the commit. The 2 s partial-apply bound of §2.4 is not implemented.
+- Not done yet: accessibility of remote carets (the rotor entry, the "Bob edited line 42" coalescing),
+  follow mode, and per-file avatars in tabs.
+- New files, renames and deletes made during a session are not shared; the file map supports them.
+- Not measured: the 30-minute ledger soak and LAN latency.
+
+Security review of P1 (fixed before merge):
+
+- A guest's file-map operations never integrate. The host writes only the files it shared, at their
+  shared paths, never a dotfile, a path through a link, or a case or normalisation twin. A guest's copy
+  obeys the same rules.
+- Before join, frames are limited to 4 KiB. Per address there are at most 4 connections. Joiners waiting
+  for approval count against the participant cap. Awareness is rate-limited at the hub, and the Bonjour
+  TXT names no project.
+- Session compiles (a guest's copy, or any project while hosting) run with `shell_escape` off and
+  external tools off (§6.2), whatever the project's trust.
+- Turning the setting off ends the session. The launch automation exists only in debug builds. A
+  remote change that does not fit the buffer resynchronises it from the CRDT, and operations held for a
+  composition are bounded (past the bound, the composition is committed).
+- `flashtex.toml` (and every `.toml`) is never shared: the manifest decides package sources and
+  fetching, fonts and the engine, and stays the host's own for the session.
+- Read confinement (§6.2). Session compiles run in a host launched with `FLASHTEX_CONFINE_READS=1` and
+  `FLASHTEX_CONFINE_ROOTS` (the real project folder). The gate sits at the engine's lowest layers, the
+  resolver lookups (`resolve`, `resolve_ex`) and `open_input`'s output-directory shortcut
+  (`input_path`, `find_input`), so every file the engine opens goes through it: `\input`, `\openin`,
+  `\pdfobj file`, `\font` and its TFM/VF/encoding/font files, `\pdfmapfile`, `\pdfmapline`, images,
+  and the file primitives. Two rules:
+  - The name asked for may not be absolute, start with `~`, contain `$` or have a `..` component.
+  - What was found, followed through every link, must lie in the project, the job's folder or the
+    output folder, or be a link-free search-path hit (a TeX tree file). A relative link to a file
+    outside the project is therefore refused.
+
+  The format and the pool, which come from the host's own command line, are exempt. A document's
+  tex.web device name (`TeXformats:/etc/hosts`) cannot reach that exemption: as in pdfTeX, such a name
+  is literal, and pdfTeX answers "I can't find file `TeXformats:/etc/hosts'". This also fixed a
+  parity bug, covered by lockstep case 2575, for both reading and writing. No mktex script
+  runs (`MKTEXTFM`, `MKTEXPK`, `MKTEXMF` and `MKTEXTEX` are 0), so a `\font` name can never start
+  METAFONT. kpathsea's `openin_any = p` is not enough: measured against TeX Live 2026's pdfTeX, it
+  still reads `/etc/hosts`, `~/x` and `../x` through `\openin`.
+
+  Writes: the same host runs with `openout_any = p` and no `TEXMFOUTPUT`. A relative `\openout` name
+  lands in the project copy's output folder, never next to the sources, and absolute or `..` names
+  are refused.
+
+  Without the variables the engine is unchanged; the lockstep passes in full with them unset. The
+  app relaunches the host when the confinement changes, the keystroke fast path never sends to a
+  host whose confinement does not match, and leaving a session clears the copy's output folder
+  (`.aux` and the like). Files a host's own `flashtex.toml` names outside the project (texinputs) are
+  not readable during a session.
+- Guest edits taint the project. When a guest's text first reaches a host file, the project's root is
+  tainted in the app's trust store (`EngineV3Trust.taint`, one event per session). The trust check
+  counts the taint as a subject of its own, so after the session the project compiles untrusted (shell
+  escape off, no external tools) until the user trusts it again. A later session taints it anew.
+  During the session, compiles are pinned anyway. The record is the app's, not the files': an earlier
+  version marked the files with `com.apple.quarantine`, but the project-files helper's atomic save (and
+  any other tool) drops extended attributes, so that mark was not reliable.
+- A guest takes at most 200 files and 32 MiB. Writes go through `O_CREAT | O_EXCL | O_NOFOLLOW`
+  temporary files that are renamed into place. IPv6 peers count against the per-address cap by
+  their /64.

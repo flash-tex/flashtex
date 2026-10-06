@@ -169,8 +169,12 @@ final class EngineV3HostProcess: @unchecked Sendable {
     private var buffer = Data()
     private let lock = NSLock()
 
-    init(executable: URL, onEvent: @escaping @Sendable (Event) -> Void) throws {
+    /// `confineRoots`: the host compiles text from a Live Share session and
+    /// may read only inside these folders besides the job's own
+    /// (`confinedEnvironment`); nil for an ordinary host.
+    init(executable: URL, confineRoots: [String]? = nil, onEvent: @escaping @Sendable (Event) -> Void) throws {
         self.executable = executable
+        self.confineRoots = confineRoots
         let dir = NSTemporaryDirectory()
         socketPath = (dir as NSString).appendingPathComponent("ftx-\(getpid())-\(UInt32.random(in: 0 ... .max)).sock")
         let s0 = EngineV3.cacheDirectory.appendingPathComponent("s0", isDirectory: true)
@@ -183,7 +187,8 @@ final class EngineV3HostProcess: @unchecked Sendable {
         // Checkpoint interval inside a page (engine default 0.02 s): the
         // restart re-typesets up to that much before an edit. A/B knob.
         if let t = ProcessInfo.processInfo.environment["FLASHTEX_V3_TIMED"], Double(t) != nil { process.arguments! += ["--timed", t] }
-        process.environment = Self.environment(host: executable)
+        process.environment = confineRoots.map { Self.confinedEnvironment(Self.environment(host: executable), roots: $0) }
+            ?? Self.environment(host: executable)
         let out = Pipe(), err = Pipe()
         process.standardOutput = out
         process.standardError = err
@@ -271,6 +276,36 @@ final class EngineV3HostProcess: @unchecked Sendable {
         }
         // The bundle (no TeX Live): the lock the app found, offline until the user agreed.
         EngineV3Bundle.hostEnvironment(&env, host: executable)
+        return env
+    }
+
+    /// Launched with `confinedEnvironment` and these roots (nil: not).
+    let confineRoots: [String]?
+    var confined: Bool { confineRoots != nil }
+
+    /// The environment of a host that compiles other people's text (a Live
+    /// Share session, proposal §6.2): reads confined to names relative to
+    /// the job or found along the search paths (`FLASHTEX_CONFINE_READS`, the
+    /// engine's own check: kpathsea's paranoid `openin_any` does not confine
+    /// reads), writes confined by kpathsea's paranoid `openout_any` (no
+    /// absolute name, no `..`, no dotfile; relative names land in the
+    /// output directory, which is the project copy's, never the project),
+    /// with no `TEXMFOUTPUT` that would let an absolute name through. Every
+    /// file the engine opens must also resolve, through links, into `roots`
+    /// (the real project folder), the job's folder, the output folder or a
+    /// TeX tree (`FLASHTEX_CONFINE_ROOTS`). No mktex script runs (a `\font`
+    /// name must never start METAFONT).
+    static func confinedEnvironment(_ base: [String: String], roots: [String]) -> [String: String] {
+        var env = base
+        env["FLASHTEX_CONFINE_READS"] = "1"
+        env["FLASHTEX_CONFINE_ROOTS"] = roots.joined(separator: ":")
+        for k in ["MKTEXTFM", "MKTEXPK", "MKTEXMF", "MKTEXTEX", "MKOCP", "MKOFM"] { env[k] = "0" }
+        env["openin_any"] = "p"
+        env["openout_any"] = "p"
+        env.removeValue(forKey: "TEXMFOUTPUT")
+        for k in env.keys where k.hasPrefix("openin_any_") || k.hasPrefix("openout_any_") || k.hasPrefix("TEXMFOUTPUT_") {
+            env.removeValue(forKey: k)
+        }
         return env
     }
 

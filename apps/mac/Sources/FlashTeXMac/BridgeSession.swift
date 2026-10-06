@@ -720,12 +720,15 @@ final class BridgeSession {
     }
 
     func convert(captureId: String, supportedFeatures: [String] = []) async throws -> RuntimeV1.CaptureProposal {
+        try await convert(TransferV1.CaptureConvert(captureId: captureId, supportedFeatures: supportedFeatures))
+    }
+
+    func convert(_ request: TransferV1.CaptureConvert) async throws -> RuntimeV1.CaptureProposal {
+        let captureId = request.captureId
         let previous = capture(captureId)?.state ?? .received
         setCapture(captureId, .converting, "converting…")
         do {
-            let proposal = try await client.request(.captureConvert,
-                TransferV1.CaptureConvert(captureId: captureId, supportedFeatures: supportedFeatures),
-                as: RuntimeV1.CaptureProposal.self)
+            let proposal = try await client.request(.captureConvert, request, as: RuntimeV1.CaptureProposal.self)
             setCapture(captureId, .proposed, "proposal ready (context revision \(proposal.contextRevision.map(String.init) ?? "?"))")
             status = "proposal for \(captureId) awaiting review"
             onChange()

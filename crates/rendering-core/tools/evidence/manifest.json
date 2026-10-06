@@ -1,9 +1,0 @@
-{
-  "runner_sha256": "f02b64ce623bc0d83b53153dca0799f69cc7f6195d7a09baee118ba61d70f95f",
-  "expected_exits": {
-    "plain-accepted.json": 0,
-    "missing-assets-refused.json": 2,
-    "unpinned-tool-unknown.json": 4
-  },
-  "notes": "unknown-tool case uses a version-only fake executable; acceptance uses actual pinned Poppler. No source repair or new parser/rasterizer. Source guard scopes only the two executed examples; unrelated new math probe does not alter the pinned route."
-}

@@ -56,6 +56,10 @@ enum CaptureFeatures {
     ]
 
     /// The list sent as `supported_features` (≤64 entries, each ≤128 bytes).
+    /// `flashtex-bridge` ignores it (issues #51/#23): it sends the provider its
+    /// own table for the document's engine, which `capture_convert.engine`
+    /// names (`crates/bridge/src/features.rs`; retirement plan #1236, S3r).
+    /// It is still sent for wire compatibility.
     static func supportedFeatures() -> [String] {
         structures + symbolLines() + unsupported
     }

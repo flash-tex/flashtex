@@ -487,7 +487,7 @@ impl Session {
         if let (Some(id), Some(reads)) = (s0_id, reads) {
             s0_at_s = g.layer().s0_elapsed;
             let rec = g.record_of(id)?;
-            match self.make_key(&mut g, &rec, reads) {
+            match self.make_key(&mut g, id, &rec, reads) {
                 Ok(key) => self.s0 = Some(S0 { id, key }),
                 Err(e) => eprintln!("flashtex-host: no S0: {e}"),
             }
@@ -512,11 +512,39 @@ impl Session {
     fn make_key(
         &self,
         g: &mut Globals,
+        id: CheckpointId,
         rec: &ExtRecord,
         reads: system::ReadLog,
     ) -> Result<Key, String> {
-        make_key(g, rec, &reads, self.clock, &self.first_line)
+        make_key(g, id, rec, &reads, self.clock, &self.first_line)
     }
+}
+
+/// Files with their content (S₀'s key's `written`).
+pub type Written = Vec<(String, Vec<u8>)>;
+
+/// The files a run had written and closed at checkpoint `rec` (`reads`:
+/// what it had read and written so far, or more), with their content on
+/// disk now: S₀'s key's `written`, read when the checkpoint is taken
+/// (`Layer::written_at`).
+pub fn written_before(rec: &ExtRecord, reads: &system::ReadLog) -> Result<Written, String> {
+    let no = if rec.reads == (0, 0, 0) {
+        reads.outputs.len()
+    } else {
+        rec.reads.2
+    };
+    let mut written = vec![];
+    for p in &reads.outputs[..no.min(reads.outputs.len())] {
+        let open = rec
+            .files
+            .iter()
+            .any(|f| matches!(&f.stream, Stream::Out { path, .. } if path == p));
+        if !open {
+            let d = std::fs::read(p).map_err(|e| format!("{p}: {e}"))?;
+            written.push((p.clone(), d));
+        }
+    }
+    Ok(written)
 }
 
 /// S₀'s key: what the run read before S₀ (`reads`, whose files and lookups
@@ -524,6 +552,7 @@ impl Session {
 /// record `rec`.
 pub fn make_key(
     g: &mut Globals,
+    id: CheckpointId,
     rec: &ExtRecord,
     reads: &system::ReadLog,
     clock: (i64, i32),
@@ -543,22 +572,18 @@ pub fn make_key(
                 open_paths.push(path.clone());
             }
         }
-        let (nf, nl, no) = if rec.reads == (0, 0, 0) {
+        let (nf, nl, _) = if rec.reads == (0, 0, 0) {
             (reads.files.len(), reads.lookups.len(), reads.outputs.len())
         } else {
             rec.reads
         };
-        let mut written = vec![];
-        for p in &reads.outputs[..no.min(reads.outputs.len())] {
-            let open = rec
-                .files
-                .iter()
-                .any(|f| matches!(&f.stream, Stream::Out { path, .. } if path == p));
-            if !open {
-                let d = std::fs::read(p).map_err(|e| format!("{p}: {e}"))?;
-                written.push((p.clone(), d));
-            }
-        }
+        // As they were at the checkpoint (`written_at`, taken there), not
+        // as the end of the run left them.
+        let wa = &mut g.layer().written_at;
+        let written = match wa.iter().position(|(i, _)| *i == id) {
+            Some(k) => wa.swap_remove(k).1,
+            None => written_before(rec, reads)?,
+        };
         let files = reads.files[..nf.min(reads.files.len())]
             .iter()
             .filter(|f| !open_paths.contains(&f.path))
@@ -725,6 +750,15 @@ pub fn write_s0(
             .collect::<Vec<crate::diag::Note>>()
             .enc(&mut head);
         crate::diag::sites().enc(&mut head);
+        // The files opened for output before S₀, by name: a process that
+        // opens S₀ must know them (`system::rewritten_at`: a file the
+        // preamble wrote and the body writes again, #1348).
+        let opens = system::opens_since(0);
+        opens
+            .get(..rec.opens)
+            .ok_or("the output opens are fewer than at S0")?
+            .to_vec()
+            .enc(&mut head);
         (g.arena.len_bytes() as u64).enc(&mut head);
         (g.arena.scalar_bytes() as u64).enc(&mut head);
         present.enc(&mut head);
@@ -783,6 +817,10 @@ pub fn read_s0(
         let terminal = Vec::<u8>::dec(&mut r)?;
         let notes = Vec::<crate::diag::Note>::dec(&mut r)?;
         let sites = Vec::<(i32, crate::diag::Site)>::dec(&mut r)?;
+        let opens = Vec::<String>::dec(&mut r)?;
+        if opens.len() != rec.opens {
+            return Err("S0 file: its output opens do not match its record".into());
+        }
         let arena_len = u64::dec(&mut r)? as usize;
         let scalar_bytes = u64::dec(&mut r)? as usize;
         let present = Vec::<u32>::dec(&mut r)?;
@@ -824,6 +862,9 @@ pub fn read_s0(
         crate::diag::set_sites(sites);
         system::truncate_external_effects(0);
         g.restore_ext(&rec)?;
+        // (`restore_ext` left placeholders for the opens)
+        system::truncate_opens(0);
+        system::append_opens(&opens);
         let id = g.checkpoint()?;
         let ext_s = t3.elapsed().as_secs_f64();
         let rep = OpenReport {
@@ -839,7 +880,7 @@ pub fn read_s0(
     }
 }
 
-const MAGIC: &[u8] = b"flashtex S0 v2";
+const MAGIC: &[u8] = b"flashtex S0 v3";
 
 /// How opening a persisted S₀ went.
 #[derive(Clone, Debug, Default)]
@@ -868,6 +909,26 @@ use crate::os::MappedFile;
 #[cfg(test)]
 mod key_tests {
     use super::*;
+
+    /// A directory opened so that its times can be set: a plain open does
+    /// on Unix; Windows wants write access and FILE_FLAG_BACKUP_SEMANTICS
+    /// (`CreateFileW` opens a directory only with it).
+    fn open_dir_for_times(d: &std::path::Path) -> std::fs::File {
+        #[cfg(windows)]
+        {
+            use std::os::windows::fs::OpenOptionsExt;
+            const FILE_FLAG_BACKUP_SEMANTICS: u32 = 0x0200_0000;
+            std::fs::OpenOptions::new()
+                .write(true)
+                .custom_flags(FILE_FLAG_BACKUP_SEMANTICS)
+                .open(d)
+                .unwrap()
+        }
+        #[cfg(not(windows))]
+        {
+            std::fs::File::open(d).unwrap()
+        }
+    }
 
     /// After a check that verified racy signatures by content and by the
     /// lookups, the key keeps fresh ones: once the tick has passed, the
@@ -907,7 +968,7 @@ mod key_tests {
             .unwrap()
             .set_modified(old)
             .unwrap();
-        std::fs::File::open(&d).unwrap().set_modified(old).unwrap();
+        open_dir_for_times(&d).set_modified(old).unwrap();
         key.check_refresh((0, 0), b"main").unwrap();
         assert!(!key.files[0].2.racy, "the file's signature is still racy");
         assert!(

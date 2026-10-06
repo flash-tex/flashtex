@@ -5,9 +5,9 @@
   P3P4-HOST-UNIFY (2026-09-29); 3.2 (external tools: bibtex, biber,
   makeindex, §6.3–§6.4): lane P5-EXTERNAL-TOOLS (2026-09-30). Page sections
   `ORIGINS` and `RULE_GEOMETRY` (§4.2, §4.4; host capability
-  `exact-geometry`): lane J1 P3-ZERO-TOLERANCE (2026-10-02), a minor-compatible
-  addition whose minor number the protocol owner assigns in landing order
-  (DESIGN.md §6.1). 3.3 (the Typst host's additions E1–E8, DESIGN.md §15.4:
+  `exact-geometry`): lane J1 P3-ZERO-TOLERANCE (2026-10-02), gated by that
+  capability like `progress-v1`, so it takes no minor number (protocol
+  owner's ruling, DESIGN.md §13, 2026-10-05). 3.3 (the Typst host's additions E1–E8, DESIGN.md §15.4:
   §11): lane TYPST-T0T1 (2026-10-04), drafted in `typst-host/` by #1303 and
   #1335. Producers: `crates/flashtex-engine` (`src/displaylist/`,
   `src/host/`) for LaTeX, `typst-host/` (`flashtex-typst-host`) for Typst.
@@ -143,18 +143,21 @@ length 0, is a corrupt stream: the reader stops (§7).
 - **3.3** (§11; DESIGN.md §15.4, E1–E8) adds, all of it for the Typst
   host and none of it required of the LaTeX host: `FONT.format`
   `opentype` with glyph ids and variation coordinates (§11.1), page
-  sections 8 `PAGE_META` and 10 `COLORSPACES` (§11.2, §11.3), item opcodes
+  sections 8 `PAGE_META` and 10 `COLORSPACES` (§11.2, §11.3), section 7
+  `ORIGINS` on every Typst page (§11.2; the section is exact geometry's,
+  below, and has one layout for both hosts), item opcodes
   `0x0F`–`0x13` for colour spaces, constant alpha and the text line state
-  (§11.3, §11.4), images from bytes (`IMAGE_DATA`, §11.5) and on-demand
-  source mapping (`RESOLVE`/`LOCATE`, §11.6), plus `DIAGNOSTIC` keys
-  `column` and `hints`. Sections and JSON keys follow the minor rules
+  (§11.3, §11.4), images from bytes (`IMAGE_DATA`, §11.5), on-demand
+  source mapping (`RESOLVE`/`LOCATE`, §11.6) and, for a client that
+  accepts `packages-v1`, the `PACKAGE` message (§11.8), plus `DIAGNOSTIC`
+  keys `column` and `hints`. Sections and JSON keys follow the minor rules
   above. **The new opcodes are sent only to a client that said `[3, 3]`
   and listed the feature in its `HELLO` `accept`** (§11.7): an item opcode
   a reader does not know is otherwise a major change. A 3.1 or 3.2 client
   of the Typst host gets its glyph pages INCOMPLETE and draws `DONE.pdf`.
-- **Exact geometry** (J1, 2026-10-02; minor number to be assigned by the
-  protocol owner; 3.3 went to the Typst additions in landing order, so the
-  next free minor is 3.4) adds page sections 7
+- **Exact geometry** (J1, 2026-10-02; gated by the `exact-geometry`
+  capability like `progress-v1`, so it takes no minor number: protocol
+  owner's ruling, DESIGN.md §13, 2026-10-05) adds page sections 7
   `ORIGINS` and 9 `RULE_GEOMETRY` (§4.1, §4.2, §4.4) and the host capability
   `exact-geometry`, which says every `PAGE` and `FORM` carries both. Both
   directions are handled without negotiation: a reader that does not know
@@ -198,9 +201,9 @@ The fixed header is 124 bytes. Section tags:
 | 4 | `LINKS` | `u32 n`, then n links (§4.5) |
 | 5 | `DESTS` | `u32 n`, then n destinations (§4.5) |
 | 6 | `UNSUPPORTED` | `u32 n`, then n × {`u16 len`, UTF-8 text}: what the page used that v3 cannot express |
-| 7 | `ORIGINS` | `u32 n`, then n × `f64[2]`: each GLYPH's origin (X, Y) in stream space, in item order (§4.2); the Typst host's `ORIGINS_F64` (#1335) is this section |
+| 7 | `ORIGINS` | exact geometry (§3), and every 3.3 Typst page (§11.2): `u32 n`, then n × `f64[2]`: each GLYPH's origin (X, Y) in stream space, in item order (§4.2); the Typst host's `ORIGINS_F64` (#1335) is this section |
 | 8 | `PAGE_META` | 3.3: UTF-8 JSON, the page's metadata (§11.2) |
-| 9 | `RULE_GEOMETRY` | `u32 n`, then n × `f64[7]`: what the PDF draws each RULE with, in item order (§4.4) |
+| 9 | `RULE_GEOMETRY` | exact geometry (§3): `u32 n`, then n × `f64[7]`: what the PDF draws each RULE with, in item order (§4.4) |
 | 10 | `COLORSPACES` | 3.3: `u32 n`, then n colour spaces, referenced as 1..n (§11.3) |
 
 Any other tag: skip `len` bytes (a later minor version's section).
@@ -376,8 +379,10 @@ Destinations (`\pdfdest`, hyperref anchors) on the page:
 u8     named    1: name is a name; 0: a number in decimal
 u32 nl; u8[nl]  name
 u8     kind     0 xyz, 1 fit, 2 fith, 3 fitv, 4 fitb, 5 fitbh, 6 fitbv, 7 fitr
-i32[4] rect     left, top, right, bottom (page space, sp); xyz uses left, top
-i32    zoom     xyz zoom in thousandths, 0 = keep
+i32[4] rect     left, top, right, bottom (page space, sp): the ones pdfTeX
+                writes for the kind (xyz left, top; fith, fitbh top; fitv,
+                fitbv left; fitr all four), the others 0
+i32    zoom     xyz zoom in thousandths, 0 = keep; 0 for the other kinds
 ```
 
 A `goto name` link resolves to the page whose `DESTS` hold that name.
@@ -620,7 +625,7 @@ The host answers with its own `HELLO`, or with `ERROR` `{"code":
  "engine": "pdfTeX 3.141592653-2.6-1.40.29 (FlashTeX engine)",
  "capabilities": ["compile", "cancel", "diagnostics", "font-programs", "font-formats", "have-fonts",
                   "resident", "incremental", "buffers", "edits", "viewport",
-                  "pages-status", "export", "external-tools", "exact-geometry", "diag-v1"],
+                  "pages-status", "export", "external-tools", "exact-geometry", "halt-on-error", "diag-v1"],
  "texmf": {"texlive": "/Library/TeX/texbin (PATH) -> /usr/local/texlive/2026/bin/universal-darwin",
            "resolver": "kpathsea (/Library/TeX/texbin)",
            "bundle": null,
@@ -681,7 +686,7 @@ demand later) the host prints progress lines
 | `main` | yes | the main file, relative to `root` (no `..`) |
 | `format` | no | format name, default `pdflatex` |
 | `shell_escape` | no | `\write18`: `default` (texmf.cnf's: restricted in TeX Live), `off`, `restricted`, `on` |
-| `halt_on_error` | no | `true`: `-halt-on-error`, TeX stops at the first error (a client's strict mode); default `false`: nonstopmode, recovering as pdflatex does. Another job: the resident document is replaced |
+| `halt_on_error` | no | (capability `halt-on-error`; an older host ignores the field) `true`: `-halt-on-error`, TeX stops at the first error (a client's strict mode); default `false`: nonstopmode, recovering as pdflatex does. Another job: the resident document is replaced |
 | `output_dir` | no | where the PDF, log and auxiliary files go (default: a per-connection temporary directory) |
 | `jobname` | no | default: the main file's name |
 | `have_fonts` | no | font keys (hex) the client holds (§5.1) |
@@ -773,6 +778,37 @@ from a persisted S₀), `restart_page` (pages before the restart point),
 null), `typeset_pages` (pages this compile shipped), `first_page_ms`
 (`COMPILE` to the first re-typeset page on the socket), `viewport_ms`,
 `run_ms`, `keep`, and `cold_reason` when a full run was needed.
+
+The resident engine's `DONE` may also carry `stages`, an object of
+**optional diagnostics** for benchmarks (`tools/incr-bench`): a client must
+not depend on any of its keys, which may change without a protocol version.
+Times are in ms (`queue`, `apply`, `move_spans`, `find`, `key`, `changes`, `restore`,
+`first_page`, `first_page_cpu`, `first_page_dl`, `first_page_send`,
+`edited_wall`, `edited_cpu`, `test`, `dl`, `send`, `cpu`; `tests` and
+`edited_page` are counts and a page index). `queue_by` splits `queue` (the
+request's wait for the engine thread) by what the engine thread did
+meanwhile, in ms per part (`restore`, `typeset`, `test`, `jump`, `paused`,
+`done`, `prepare`, `request`, `idle`, `other`). When the compile found a
+run that newer work had stopped (typing: the previous compile's background
+work), `paused_how` says what it did with it first (`continued`,
+`settled`, `abandoned`) and `paused` (ms) and `paused_instr_k` what that
+took, inside `key` and `find`. `old_kept` and
+`old_rewound` count, since the host started, the old checkpoints' chunks
+the convergence comparisons took from their cache and rewound. On macOS and
+Linux the engine thread's counter readings are added, in thousands
+(`os::thread_counts`: macOS's fixed counters; Linux's `perf_event_open`,
+user space only; absent where the system does not give them): `instr_k` and
+`cycles_k` for the whole compile, `first_page_instr_k` to the first page,
+`restore_instr_k` for the restore, `edited_instr_k` from just before the
+restore to the edited page's shipout, `typeset_instr_k` and
+`typeset_cycles_k` from the engine's resumption after the restore to the
+edited page's shipout (the typesetting alone), `test_instr_k` for the
+convergence tests, and two absolute cycle marks of the engine thread,
+`arrival_mark_kc` (when the `COMPILE` arrived; also on a `DONE` cancelled
+before its compile started) and `first_page_mark_kc` (its first page): a
+keystroke's latency in engine cycles is the second mark of the compile that
+painted it less the first of its own (`dl3-keys --interval-ms`,
+`docs/evidence/live-30ms-2026-10-04/scripts/interval.py`).
 
 **External tools (3.2).** For a `COMPILE` with `"external_tools":
 "auto"`, once its `DONE` is out (never before: the edited page is not
@@ -880,9 +916,11 @@ engine reported them, after the compile's last `PAGE`/`PAGES` and before
 something, what TeX itself knows then (`changes/diagnostics.ch`,
 `src/diag.rs`): TeX's `error`, `pdf_warning`, the overfull/underfull box
 reports of `hpack`/`vpackage`, `\write`s to the terminal (LaTeX's, packages'
-and classes' warnings are `\immediate\write`s), and `\def` (definition
-sites). The hooks only read TeX's variables and never print: the terminal
-and the log are byte-identical with and without them (P-T1). The record
+and classes' warnings are `\immediate\write`s), `\def` (definition
+sites), and a source line too long for TeX's buffer (texmfmp.c's
+`input_line`, which prints to stderr, not the terminal: an `error` at the
+file and line being read, with no `col`). The hooks only read TeX's
+variables and never print: the terminal and the log are byte-identical with and without them (P-T1). The record
 travels with the engine's checkpoints, so an incremental compile reports
 every diagnostic of the document — those of pages it kept too — exactly as
 a run from scratch does, and a persisted S₀ carries the preamble's.
@@ -923,7 +961,7 @@ a run from scratch does, and a persisted S₀ carries the preamble's.
 | `span` | no | the display-list span (§5.3) of (`file`, `line`), declared in a `SOURCES` before the `DIAG` if the client lacks it; it moves with its line across edits like the pages' spans |
 | `end` | no | `{"file","line","col","span"}`: where the material ends (box reports: the box's last character) |
 | `lines` | no | TeX's line range (box reports: "at lines a--b"; "detected at line n" is `[n, n]`) |
-| `trace` | no | the input stack when TeX reported it, **innermost level first**, every level up to 24 (the innermost 23 and the file level; TeX shows only `\errorcontextlines` of them, and LaTeX sets that to −1): `kind` (`macro`, `argument`, `template`, `backed_up`, `recently_read`, `inserted`, `output`, `everypar`, `everymath`, `everydisplay`, `everyhbox`, `everyvbox`, `everyjob`, `everycr`, `mark`, `everyeof`, `write`, `file`, `scantokens`, `terminal`, `insert`, `read`; a client shows an unknown kind as its name), `name` (a macro's), `text` (`[read, still to read]`, as TeX shows the level; each side at most 240 bytes), a file level's `file`/`line`/`col`, a macro's `def` (`file`, `line`: where this run defined it, when it saw the definition; macros of the format have none) |
+| `trace` | no | the input stack when TeX reported it, **innermost level first**, every level up to 24 (the innermost 23 and the file level; TeX shows only `\errorcontextlines` of them, and LaTeX sets that to −1): `kind` (`macro`, `argument`, `template`, `backed_up`, `recently_read`, `inserted`, `output`, `everypar`, `everymath`, `everydisplay`, `everyhbox`, `everyvbox`, `everyjob`, `everycr`, `mark`, `everyeof`, `write`, `file`, `scantokens`, `terminal`, `insert`, `read`; a client shows an unknown kind as its name), `name` (a macro's), `text` (`[read, still to read]`, as TeX shows the level; each side at most 240 bytes), a file level's `file`/`line`/`col`, a macro's `def` (`file`, `line`: where this run defined it, when it saw the definition; macros of the format have none). After the compile's first 1,000 reports, a report's `trace` keeps only its file level |
 | `help` | no | TeX's help lines (the log has them; the terminal does not), or the `\errhelp` text of `\errmessage` (LaTeX's `\PackageError` help) |
 | `fatal` | no | `true`: TeX stopped (emergency stop, capacity exceeded, `==> Fatal error occurred`) |
 | `output` | no | `true`: reported while `\output` was active (a box report then has no line range) |
@@ -947,23 +985,59 @@ place is line `a` of the file TeX was reading.
 **Codes.** `origin/slug` or `origin/package/slug`: `tex/…`
 (`undefined-control-sequence`, `missing-dollar`, `missing-left-brace`,
 `missing-right-brace`, `extra-right-brace-or-forgotten-dollar`,
-`too-many-right-braces`, `missing-number`, `illegal-unit`,
+`extra-right-brace-or-forgotten-endgroup`, `too-many-right-braces`,
+`display-math-should-end-with-dollars`, `missing-number`, `illegal-unit`,
 `paragraph-ended-before-argument-complete`, `file-ended-while-scanning`,
 `emergency-stop`, `capacity-exceeded`, `file-not-found`,
 `cannot-use-in-this-mode`, `misplaced-alignment-tab`, `extra-alignment-tab`,
-`double-superscript`, `fatal-error-no-output`, `show`, `overfull-hbox`,
+`double-superscript`, `double-subscript`, `missing-right-delimiter`,
+`extra-right-delimiter`, `missing-character`, `fatal-error-no-output`, `show`, `overfull-hbox`,
 `underfull-hbox`, `tight-hbox`, `loose-hbox`, the same for `vbox`),
 `latex/…` (`file-not-found`, `environment-undefined`,
 `environment-mismatch`, `missing-begin-document`, `missing-item`,
 `lonely-item`, `verb-ended-by-end-of-line`, `option-clash`,
 `unknown-option`, `command-already-defined`, `undefined-reference`,
-`undefined-citation`, `multiply-defined-label`, `rerun`),
+`undefined-citation`, `multiply-defined-label`, `rerun`, `float-too-large`,
+`unicode-not-set-up`, `caption-outside-float`, `no-file`),
 `latex-font/font-shape-undefined`, `package/<name>/…`, `class/<name>/…`,
 `pdftex/<category>` (`pdftex/dest`). Every other message's slug is its text
 with quoted names (`` `x' ``), control sequence names, arguments in braces,
 numbers and "on input line N" left out, lower case, words joined by `-`
 (`Undefined color `x'.` → `undefined-color`), at most 60 characters. A code
 names the kind of problem, never its instance.
+
+*Added 2026-10-05 (lane DIAG-PARITY, #1592).*
+- **Two codes are new reports** that a `diag-v1` client did not get before. Both are
+  read from the terminal (`exact: false`), and neither has a place:
+  - `latex/no-file`: "No file X.tex.", LaTeX's `\typeout` for an `\include` or
+    `\InputIfFileExists` of a missing `.tex` file. The `.aux` and `.toc` files of a
+    first run are not reported.
+  - `tex/missing-character`: "Missing character: There is no X in font Y!", shown
+    on the terminal when `\tracinglostchars` > 1.
+- **Five codes replace slugs** the rule above used to produce:
+
+  | Before | Now |
+  |---|---|
+  | `tex/missing-inserted` | `tex/missing-right-delimiter` |
+  | `tex/extra` | `tex/extra-right-delimiter` |
+  | `latex/unicode-character-u` | `latex/unicode-not-set-up` |
+  | `latex/outside-float` | `latex/caption-outside-float` |
+  | `latex/float-too-large-for-page-by-pt` | `latex/float-too-large` |
+
+- **Why the renames need no alias or gate:**
+  - Two of the old codes broke the rule that a code names a kind. `tex/extra` was
+    also the slug of "Extra \else", "Extra \fi" and "Extra \or". `tex/missing-inserted`
+    was also the slug of "Missing \endcsname inserted".
+  - `diag-v1` is capability-gated, and codes are not listed in HELLO.
+  - The only consumers of codes are:
+    - the app (`EngineV3Explain`, `EngineV3Fixes`, `EngineV3ErrorPolicy`,
+      `EngineV3DiagPresent`);
+    - the engine's `tests/diagnostics.rs`;
+    - `tools/diag-oracle`.
+  - On #1592's tree none of them names an old code: a search for them in `apps/`, `crates/` and
+    `tools/` finds nothing.
+  - A client that keyed on an old slug falls back, as for any unknown code, to the
+    message.
 
 **Precision** (measured, lane P5-DIAGNOSTICS: `crates/flashtex-engine/tests/diagnostics/`,
 docs/evidence/p5-diagnostics-2026-09-30/): on an 80-document corpus of
