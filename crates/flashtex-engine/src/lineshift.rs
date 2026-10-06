@@ -196,6 +196,11 @@ fn ls_cond_size(g: &Globals) -> i32 {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Shift {
     pub path: String,
+    /// The edited file's other names: files whose edit was this one's
+    /// (`Pending::same_edit`) -- one file under two names, or two files
+    /// that are byte for byte the same and were edited the same way. Their
+    /// openings are this shift's as `path`'s are.
+    pub others: Vec<String>,
     pub delta: i32,
     pub first: i32,
     pub after: i32,
@@ -208,6 +213,8 @@ pub struct Shift {
 #[derive(Clone, Debug)]
 pub struct Pending {
     pub path: String,
+    /// The other names (`Shift::others`, `Pending::absorb`).
+    others: Vec<String>,
     delta: i32,
     /// Where the count of the lines before the edit stops (see `of`).
     s: usize,
@@ -222,13 +229,30 @@ pub struct Pending {
 
 impl Pending {
     /// Whether `o` is the same edit: the same bytes changed the same way,
-    /// so that either one's shift is the other's. Two names of one file
-    /// (a link, a case variant) give the same edit; two files that only
-    /// look alike may too, and then dropping either shift drops nothing.
+    /// so that the lines it moves are this one's (`resolve` reads only the
+    /// new bytes before the edit and a level's count there). Two names of
+    /// one file (a link, a case variant) give the same edit; two files that
+    /// are byte for byte the same may too. Either way one shift serves
+    /// both, with both names (`absorb`).
     pub fn same_edit(&self, o: &Pending) -> bool {
         (self.delta, self.s, self.mid, self.at_start, self.s_ends)
             == (o.delta, o.s, o.mid, o.at_start, o.s_ends)
             && (std::sync::Arc::ptr_eq(&self.new, &o.new) || *self.new == *o.new)
+    }
+
+    /// Take `o` (the same edit, `same_edit`) in: its names become this
+    /// shift's too.
+    pub fn absorb(&mut self, o: Pending) {
+        for n in std::iter::once(o.path).chain(o.others) {
+            if n != self.path && !self.others.contains(&n) {
+                self.others.push(n);
+            }
+        }
+    }
+
+    /// Every name of the edited file.
+    pub fn names(&self) -> impl Iterator<Item = &str> + Clone {
+        std::iter::once(self.path.as_str()).chain(self.others.iter().map(|s| s.as_str()))
     }
 
     /// The shift, given that TeX's line at byte `at` of the file (just past
@@ -246,6 +270,7 @@ impl Pending {
         };
         Shift {
             path: self.path,
+            others: self.others,
             delta: self.delta,
             first: clamp(1 + before),
             // the first line that starts at or after the edit's end
@@ -256,10 +281,15 @@ impl Pending {
 }
 
 /// The line count and the byte offset where input level `j` of `g` (just
-/// restored to checkpoint `rec`) reads `path`: (0, 0) when no level does.
-pub fn level_at(g: &Globals, rec: &crate::checkpoint::ExtRecord, path: &str) -> (i64, usize) {
+/// restored to checkpoint `rec`) reads the file named one of `names`: (0,
+/// 0) when no level does.
+pub fn level_at<'a>(
+    g: &Globals,
+    rec: &crate::checkpoint::ExtRecord,
+    names: impl Iterator<Item = &'a str> + Clone,
+) -> (i64, usize) {
     for j in (1..=g.in_open.max(0)).rev() {
-        if !level_file(g, j).is_some_and(|p| same_path(p, path)) {
+        if !level_file(g, j).is_some_and(|p| names.clone().any(|n| same_path(p, n))) {
             continue;
         }
         // the record's files: term_in, term_out, pool_file, log_file, then
@@ -296,6 +326,11 @@ fn clamp(x: i64) -> i32 {
 }
 
 impl Shift {
+    /// Every name of the edited file (`others`).
+    pub fn names(&self) -> impl Iterator<Item = &str> + Clone {
+        std::iter::once(self.path.as_str()).chain(self.others.iter().map(|s| s.as_str()))
+    }
+
     /// The shift of `old` → `new`, whose bytes differ only in
     /// `prefix..old_end` (old) and `prefix..new_end` (new); `None` when the
     /// edit moves no line.
@@ -336,6 +371,7 @@ impl Shift {
         }
         Some(Pending {
             path: path.to_string(),
+            others: vec![],
             delta: clamp(delta),
             s,
             mid: line_ends(old, s, old_end) as i64,
@@ -370,7 +406,7 @@ impl Shift {
             let s = g.ls_tag_file[t as usize];
             if s > 0 && s < g.str_ptr {
                 let name = String::from_utf8_lossy(&g.str_bytes(s)).into_owned();
-                if same_path(&name, &self.path) {
+                if self.names().any(|n| same_path(&name, n)) {
                     tags.push(t);
                 }
             }
@@ -966,6 +1002,7 @@ mod tests {
     fn moved_reads() {
         let s = Shift {
             path: "./main.tex".into(),
+            others: vec![],
             delta: 1,
             first: 10,
             after: 11,
@@ -985,6 +1022,7 @@ mod tests {
     fn held_lines() {
         let sh = |delta, after| Shift {
             path: "a.tex".into(),
+            others: vec![],
             delta,
             first: after - 1,
             after,

@@ -3206,3 +3206,47 @@ fn an_alias_replaced_by_a_directory_is_another_file() {
         );
     }
 }
+
+/// The second #1595 review's probe: two different files, byte for byte the
+/// same, edited the same way in one compile. Their edits are one shift
+/// (`Pending::same_edit`), which must keep both names: with the second
+/// file's name dropped, its openings' lines were never shifted and the run
+/// did not converge.
+#[test]
+fn twin_files_edited_alike_both_shift() {
+    let Some(e) = env() else {
+        common::no_texlive();
+        return;
+    };
+    let dir = e.dir.join("lines-twins");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let mut chap: String = (0..12).map(|i| para(1000 + i, "ipsum")).collect();
+    chap.push_str("\\begingroup\n");
+    let doc = lines_doc("", 150, &[(10, "\\input{chapx}"), (30, "\\input{chapy}")]);
+    std::fs::write(dir.join("chapx.tex"), &chap).unwrap();
+    std::fs::write(dir.join("chapy.tex"), &chap).unwrap();
+    let mut h = Host::start(&e, &dir);
+    settle(&e, &mut h, &dir, &doc);
+    let nl = chap.replacen(
+        "Paragraph 1005 with the word",
+        "Paragraph 1005 with\nthe word",
+        1,
+    );
+    assert_ne!(nl, chap);
+    for (text, what) in [(&nl, "a newline in both"), (&chap, "its revert")] {
+        let what = format!("lines-twins: {what}");
+        let r = compile_and_check(
+            &e,
+            &mut h,
+            &dir,
+            &[("chapx.tex", text), ("chapy.tex", text)],
+            &what,
+        );
+        let pages: usize = field(&r, "pages").parse().unwrap();
+        let conv: usize = field(&r, "converged_at")
+            .parse()
+            .unwrap_or_else(|_| panic!("{what}: no convergence: {r}"));
+        assert!(conv + 3 < pages, "{what}: converged late: {r}");
+    }
+}
