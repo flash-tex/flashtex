@@ -214,6 +214,12 @@ impl Key {
             if sig.as_ref() == Some(stat) {
                 continue;
             }
+            if std::env::var_os("FLASHTEX_INCR_DEBUG").is_some() {
+                eprintln!(
+                    "[key] file {path} by content: {:?} (S0 {stat:?})",
+                    sig
+                );
+            }
             let now = std::fs::read(path).map(|d| hash128(&d)).ok();
             if now != Some(*hash) {
                 return Err(format!("{path} changed"));
@@ -226,6 +232,12 @@ impl Key {
             let sig = StatSig::of(path);
             if sig.as_ref() == Some(stat) {
                 continue;
+            }
+            if std::env::var_os("FLASHTEX_INCR_DEBUG").is_some() {
+                eprintln!(
+                    "[key] prefix {path} ({len} bytes) by content: {:?} (S0 {stat:?})",
+                    sig
+                );
             }
             if hash_prefix(path, *len).ok() != Some(*hash) {
                 return Err(format!("{path} changed in the {len} bytes read before S0"));
