@@ -302,7 +302,8 @@ pub fn resident(p: *const u8, len: usize) -> Option<usize> {
 /// Bytes the C allocator has handed out and not taken back, from every
 /// caller (Rust's heap and the C parts': kpathsea, zlib, pdfTeX's C code),
 /// and the bytes it holds from the system for them (macOS
-/// `malloc_zone_statistics`; Linux `mallinfo2`). The difference from the
+/// `malloc_zone_statistics`; Linux `mallinfo2`, with the feature
+/// `mem-stats` only, else `None`). The difference from the
 /// counting allocator's total (feature `mem-stats`) is the C parts' heap.
 pub fn malloc_in_use() -> Option<(u64, u64)> {
     #[cfg(target_os = "macos")]
@@ -324,7 +325,9 @@ pub fn malloc_in_use() -> Option<(u64, u64)> {
         unsafe { malloc_zone_statistics(std::ptr::null_mut(), &mut st) };
         Some((st.size_in_use as u64, st.size_allocated as u64))
     }
-    #[cfg(all(target_os = "linux", target_env = "gnu"))]
+    // `mallinfo2` needs glibc 2.33 or newer, so only measurement builds
+    // link it; a default build runs on older glibc.
+    #[cfg(all(target_os = "linux", target_env = "gnu", feature = "mem-stats"))]
     {
         #[repr(C)]
         #[derive(Default)]
@@ -347,7 +350,10 @@ pub fn malloc_in_use() -> Option<(u64, u64)> {
         let m = unsafe { mallinfo2() };
         Some(((m.uordblks + m.hblkhd) as u64, (m.arena + m.hblkhd) as u64))
     }
-    #[cfg(not(any(target_os = "macos", all(target_os = "linux", target_env = "gnu"))))]
+    #[cfg(not(any(
+        target_os = "macos",
+        all(target_os = "linux", target_env = "gnu", feature = "mem-stats")
+    )))]
     {
         None
     }

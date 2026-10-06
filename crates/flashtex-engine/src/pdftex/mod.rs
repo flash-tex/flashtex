@@ -151,6 +151,7 @@ pub fn note_printed() {
 pub fn reset_state() {
     STATE.with(|s| *s.borrow_mut() = CState::default());
     crate::displaylist::engine_reset();
+    crate::lineshift::reset();
 }
 
 crate::codec_struct!(CState {

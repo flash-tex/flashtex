@@ -58,15 +58,9 @@ impl<'a> Builder<'a> {
             .files
             .entry(PathBuf::from(path))
             .or_insert_with(|| {
+                // (lines as TeX numbers them: `crate::texlines`)
                 let b = std::fs::read(path).ok()?;
-                let mut v = vec![0];
-                v.extend(
-                    b.iter()
-                        .enumerate()
-                        .filter(|(_, &c)| c == b'\n')
-                        .map(|(i, _)| i + 1),
-                );
-                Some(v)
+                Some(crate::texlines::starts(&b))
             })
             .as_ref()?;
         lines.get((line - 1).max(0) as usize).copied()
@@ -311,6 +305,7 @@ pub fn build(
         }
     }
     out.sort_by_key(|x| x.0);
+    locate_runaways(&mut out, terminal, root, &mut b);
     let diags = out
         .into_iter()
         .enumerate()
@@ -321,6 +316,188 @@ pub fn build(
         })
         .collect();
     (diags, b.used_spans)
+}
+
+/// "File ended while scanning use of \\X" (TeX reads an unclosed argument
+/// to the end of the file) names no place: the file level has ended when
+/// TeX reports it. TeX shows what it had read, though: the line after
+/// "Runaway argument?" (§306, the start of the argument, cut at
+/// `error_line`). That text is looked for in the project's files TeX
+/// opened, and the report placed on the argument's opening brace, which
+/// is never closed; so are the stop reports right after it that name no
+/// place either ("Emergency stop", "Fatal error occurred"). Nothing is
+/// placed when the text is not found. Read only from what TeX printed and
+/// the files: the engine's output is not touched.
+fn locate_runaways(out: &mut [(usize, Diag)], terminal: &[u8], root: &Path, b: &mut Builder) {
+    let mut i = 0;
+    while i < out.len() {
+        let (at, d) = &out[i];
+        if d.file.is_some() || !d.message.starts_with("File ended while scanning") {
+            i += 1;
+            continue;
+        }
+        let Some(text) = runaway_text(&terminal[..(*at).min(terminal.len())]) else {
+            i += 1;
+            continue;
+        };
+        // only a brace still open at its file's end (newest file first): a
+        // closed copy of the same text elsewhere is not the runaway
+        let Some(((path, name), (line, col, offset))) = opened_files(terminal, root)
+            .into_iter()
+            .rev()
+            .find_map(|f| find_open_brace(&f.0, &text).map(|at| (f, at)))
+        else {
+            i += 1;
+            continue;
+        };
+        let span = b.span(name.as_bytes(), line as i32);
+        let mut j = i;
+        while j < out.len() && (j == i || (out[j].1.file.is_none() && out[j].1.fatal)) {
+            let d = &mut out[j].1;
+            d.file = Some(path.display().to_string());
+            d.line = Some(line as i64);
+            d.col = Some(col as i64);
+            d.range = Some((col as i64, col as i64 + 1));
+            d.offset = Some(offset as i64);
+            d.span = span;
+            d.exact = false;
+            j += 1;
+        }
+        i = j;
+    }
+}
+
+/// The text TeX showed after the last "Runaway ...?" line of `term`
+/// (before its "\\ETC." cut).
+fn runaway_text(term: &[u8]) -> Option<String> {
+    let t = String::from_utf8_lossy(term);
+    let mut lines = t.lines().rev();
+    let mut prev = None;
+    for l in lines.by_ref().take(6) {
+        if l.starts_with("Runaway ") && l.ends_with('?') {
+            let text = prev?;
+            let text: &str = text;
+            let text = text.strip_suffix("\\ETC.").unwrap_or(text);
+            return (!text.trim().is_empty()).then(|| text.to_string());
+        }
+        prev = Some(l);
+    }
+    None
+}
+
+/// The project's files TeX opened, in order, with the name TeX printed:
+/// `(./main.tex` and the like on the terminal, inside `root` once both are
+/// canonical (`(../x.tex` is not the project's), named under `root` as
+/// given (the client strips that prefix).
+fn opened_files(term: &[u8], root: &Path) -> Vec<(PathBuf, String)> {
+    let t = String::from_utf8_lossy(term);
+    let mut v: Vec<(PathBuf, String)> = Vec::new();
+    let Ok(canon_root) = std::fs::canonicalize(root) else {
+        return v;
+    };
+    for (i, _) in t.match_indices('(') {
+        let name: String = t[i + 1..]
+            .chars()
+            .take_while(|c| !c.is_whitespace() && *c != ')' && *c != '(')
+            .collect();
+        if name.is_empty() {
+            continue;
+        }
+        let p = Path::new(&name);
+        let full = if p.is_absolute() {
+            p.to_path_buf()
+        } else {
+            root.join(name.trim_start_matches("./"))
+        };
+        let Ok(canon) = std::fs::canonicalize(&full) else {
+            continue;
+        };
+        let Ok(rel) = canon.strip_prefix(&canon_root) else {
+            continue;
+        };
+        let full = root.join(rel);
+        if canon.is_file() && !v.iter().any(|(f, _)| *f == full) {
+            v.push((full, name));
+        }
+    }
+    v
+}
+
+/// Where in `path` an argument starting with `text` (as TeX shows tokens:
+/// spaces and line ends are not compared, nor comments) opens and is never
+/// closed: the line (1-based), byte column and byte offset of its `{`; of
+/// several, the last. A copy whose brace closes is not a runaway: none.
+fn find_open_brace(path: &Path, text: &str) -> Option<(usize, usize, usize)> {
+    let src = std::fs::read(path).ok()?;
+    // the source without blanks and comments, and each byte's offset
+    let mut flat: Vec<u8> = Vec::with_capacity(src.len());
+    let mut at: Vec<usize> = Vec::with_capacity(src.len());
+    let mut k = 0;
+    while k < src.len() {
+        let c = src[k];
+        if c == b'\\' && k + 1 < src.len() {
+            flat.extend([c, src[k + 1]]);
+            at.extend([k, k + 1]);
+            k += 2;
+            continue;
+        }
+        if c == b'%' {
+            // (to the end of the line, as TeX reads lines)
+            while k < src.len() && !crate::texlines::is_end(src[k]) {
+                k += 1;
+            }
+            continue;
+        }
+        if c.is_ascii_whitespace() {
+            // a blank line is TeX's `\par` (§347), as the runaway text shows it
+            let run = src[k..]
+                .iter()
+                .take_while(|c| c.is_ascii_whitespace())
+                .count();
+            if crate::lineshift::line_ends(&src, k, k + run) >= 2 {
+                flat.extend(b"\\par");
+                at.extend([k; 4]);
+            }
+            k += run;
+            continue;
+        }
+        flat.push(c);
+        at.push(k);
+        k += 1;
+    }
+    // TeX shows `#` doubled, and a control word with a space after it
+    let want: Vec<u8> = text
+        .replace("##", "#")
+        .bytes()
+        .filter(|c| !c.is_ascii_whitespace())
+        .collect();
+    if want.len() < 2 || want[0] != b'{' {
+        return None;
+    }
+    // braces still open at the end: their positions in `flat`
+    let mut open: Vec<usize> = Vec::new();
+    let mut k = 0;
+    while k < flat.len() {
+        match flat[k] {
+            b'\\' => k += 1,
+            b'{' => open.push(k),
+            b'}' => {
+                open.pop();
+            }
+            _ => {}
+        }
+        k += 1;
+    }
+    let hits: Vec<usize> = flat
+        .windows(want.len())
+        .enumerate()
+        .filter(|(i, w)| *w == want.as_slice() && (*i == 0 || flat[i - 1] != b'\\'))
+        .map(|(i, _)| i)
+        .collect();
+    let hit = hits.iter().rev().find(|h| open.contains(h)).copied()?;
+    let off = at[hit];
+    let (line, line_start) = crate::texlines::line_of(&src, off);
+    Some((line, off - line_start, off))
 }
 
 /// What the terminal shows, read as the 3.1 `DIAGNOSTIC`s were read
@@ -373,6 +550,19 @@ pub fn scan_terminal(term: &[u8], root: &Path) -> Vec<(usize, Diag)> {
             d.origin = "pdftex".into();
             d.code = "pdftex/error".into();
             d.fatal = true;
+        } else if let Some(name) = no_file(l) {
+            // `\include` / `\InputIfFileExists` of a file that is not there:
+            // LaTeX only `\typeout`s it (no note, no place; the app finds the call).
+            d.severity = Some(Severity::Warning);
+            d.message = format!("No file {name}.");
+            d.origin = "latex".into();
+            d.code = "latex/no-file".into();
+        } else if l.starts_with("Missing character: There is no ") {
+            // `\tracinglostchars` > 1 shows it on the terminal (no place).
+            d.severity = Some(Severity::Warning);
+            d.message = l.trim_end().to_string();
+            d.origin = "tex".into();
+            d.code = "tex/missing-character".into();
         } else if l.starts_with("pdfTeX warning") {
             d.severity = Some(Severity::Warning);
             d.message = l.clone();
@@ -425,6 +615,16 @@ pub fn scan_terminal(term: &[u8], root: &Path) -> Vec<(usize, Diag)> {
         i += 1;
     }
     out
+}
+
+/// "No file chap9.tex." (LaTeX's `\typeout` for a missing `\include` or
+/// `\InputIfFileExists`) -> "chap9.tex". Only a `.tex` file: "No file
+/// main.aux." (and `.toc`, `.bbl`, ...) on a first run is not a problem.
+fn no_file(text: &str) -> Option<String> {
+    text.split('\n').find_map(|l| {
+        let name = l.trim().strip_prefix("No file ")?.strip_suffix('.')?;
+        (name.ends_with(".tex") && !name.contains(' ')).then(|| name.to_string())
+    })
 }
 
 fn lossy(b: &[u8]) -> String {
@@ -564,6 +764,12 @@ fn curated(origin: &str, msg: &str) -> Option<&'static str> {
         ("tex", "Missing } inserted", "missing-right-brace"),
         (
             "tex",
+            "Missing \\right. inserted",
+            "missing-right-delimiter",
+        ),
+        ("tex", "Extra \\right", "extra-right-delimiter"),
+        (
+            "tex",
             "Extra }, or forgotten $",
             "extra-right-brace-or-forgotten-dollar",
         ),
@@ -640,6 +846,16 @@ fn curated(origin: &str, msg: &str) -> Option<&'static str> {
             "option-clash",
         ),
         ("latex", "LaTeX Error: Unknown option", "unknown-option"),
+        (
+            "latex",
+            "LaTeX Error: Unicode character",
+            "unicode-not-set-up",
+        ),
+        (
+            "latex",
+            "LaTeX Error: \\caption outside float",
+            "caption-outside-float",
+        ),
         ("latex", "LaTeX Error: Command ", "command-already-defined"),
     ];
     table
@@ -726,6 +942,8 @@ fn classify_warning(d: &mut Diag) {
         "rerun".to_string()
     } else if r.starts_with("Font shape `") {
         "font-shape-undefined".to_string()
+    } else if r.starts_with("Float too large for page") {
+        "float-too-large".to_string()
     } else {
         slug(r)
     };
@@ -741,6 +959,138 @@ fn classify_warning(d: &mut Diag) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Lane ERROR-RECOVERY gap 4: "File ended while scanning use of
+    /// \\textbf" is placed on the argument's unclosed `{`, found from the
+    /// runaway text TeX showed; the stop reports after it go there too.
+    #[test]
+    fn a_runaway_argument_is_placed_on_its_open_brace() {
+        let root = std::env::temp_dir().join(format!("flashtex-runaway-{}", std::process::id()));
+        std::fs::create_dir_all(&root).unwrap();
+        let doc = "\\documentclass{article}\n\\begin{document}\n% a {comment\nSome {\\bfseries ok} and \\textbf{bold}.\nMore \\textbf{bold text\nAmet  amet enim.\n\n\\end{document}\n";
+        std::fs::write(root.join("main.tex"), doc).unwrap();
+        let term = b"(./main.tex\nRunaway argument?\n{bold text Amet amet enim. \\par \\end {document} \\ETC.\n! File ended while scanning use of \\textbf .\n<inserted text> \n                \\par \n<*> main.tex\n\n! Emergency stop.\n";
+        let err = |m: &str, fatal: bool| Diag {
+            message: m.into(),
+            fatal,
+            ..Diag::default()
+        };
+        let s = String::from_utf8_lossy(term);
+        let mut out = vec![
+            (
+                s.find("! File ended").unwrap(),
+                err("File ended while scanning use of \\textbf .", false),
+            ),
+            (s.find("! Emergency").unwrap(), err("Emergency stop.", true)),
+        ];
+        locate_runaways(&mut out, term, &root, &mut Builder::new(&root));
+        for (_, d) in &out {
+            assert_eq!(
+                d.file.as_deref(),
+                Some(root.join("main.tex").display().to_string().as_str())
+            );
+            assert_eq!(d.line, Some(5), "{}", d.message);
+            assert_eq!(d.range, Some((12, 13)), "the `{{` after \\textbf on line 5");
+        }
+        // Text found nowhere: no place, as before.
+        let mut none = vec![(
+            s.find("! File ended").unwrap(),
+            err("File ended while scanning use of \\textbf .", false),
+        )];
+        locate_runaways(
+            &mut none,
+            &term[..]
+                .iter()
+                .map(|&c| if c == b'A' { b'Z' } else { c })
+                .collect::<Vec<u8>>(),
+            &root,
+            &mut Builder::new(&root),
+        );
+        assert_eq!(none[0].1.file, None);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// A file with CR (or CR LF) line ends: TeX numbers its lines at each
+    /// CR (`crate::texlines`), and so do the diagnostics' places: the
+    /// runaway's `{` on line 5, a line's start for a note's column.
+    #[test]
+    fn places_count_lines_as_tex_does() {
+        for (tag, eol) in [("cr", "\r"), ("crlf", "\r\n")] {
+            let root =
+                std::env::temp_dir().join(format!("flashtex-runaway-{tag}-{}", std::process::id()));
+            std::fs::create_dir_all(&root).unwrap();
+            let doc = "\\documentclass{article}\n\\begin{document}\n% a {comment\nSome {\\bfseries ok} and \\textbf{bold}.\nMore \\textbf{bold text\nAmet  amet enim.\n\n\\end{document}\n"
+                .replace('\n', eol);
+            std::fs::write(root.join("main.tex"), &doc).unwrap();
+            let term = b"(./main.tex\nRunaway argument?\n{bold text Amet amet enim. \\par \\end {document} \\ETC.\n! File ended while scanning use of \\textbf .\n";
+            let s = String::from_utf8_lossy(term);
+            let mut out = vec![(
+                s.find("! File ended").unwrap(),
+                Diag {
+                    message: "File ended while scanning use of \\textbf .".into(),
+                    ..Diag::default()
+                },
+            )];
+            let mut b = Builder::new(&root);
+            locate_runaways(&mut out, term, &root, &mut b);
+            assert_eq!(out[0].1.line, Some(5), "{tag}");
+            assert_eq!(out[0].1.range, Some((12, 13)), "{tag}");
+            let main = root.join("main.tex").display().to_string();
+            let want = doc.find("More").unwrap();
+            assert_eq!(b.line_start(&main, 5), Some(want), "{tag}");
+            let _ = std::fs::remove_dir_all(&root);
+        }
+    }
+
+    /// Review of #1566: the same text closed in an earlier `\input` file
+    /// (opened after main.tex, so newer) is not the runaway; the unclosed
+    /// brace in main.tex is. And a file outside the project (`(../x.tex`)
+    /// is never read.
+    #[test]
+    fn a_closed_copy_in_another_file_does_not_take_the_runaway() {
+        let base = std::env::temp_dir().join(format!("flashtex-runaway2-{}", std::process::id()));
+        let root = base.join("proj");
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(
+            root.join("intro.tex"),
+            "% the same text, closed\n\\textbf{bold text\nend. \\end{document}} intro.\n",
+        )
+        .unwrap();
+        std::fs::write(
+            root.join("main.tex"),
+            "\\documentclass{article}\n\\begin{document}\n\\input{intro}\nMore \\textbf{bold text\nend.\n\\end{document}\n",
+        )
+        .unwrap();
+        // outside the project: an unclosed copy that must not be read
+        std::fs::write(base.join("x.tex"), "\\textbf{bold text\n").unwrap();
+        let term = b"(./main.tex (./intro.tex) (../x.tex)\nRunaway argument?\n{bold text end. \\end {document} \\ETC.\n! File ended while scanning use of \\textbf .\n";
+        let s = String::from_utf8_lossy(term);
+        let mut out = vec![(
+            s.find("! File ended").unwrap(),
+            Diag {
+                message: "File ended while scanning use of \\textbf .".into(),
+                ..Diag::default()
+            },
+        )];
+        locate_runaways(&mut out, term, &root, &mut Builder::new(&root));
+        let d = &out[0].1;
+        assert_eq!(
+            d.file.as_deref(),
+            Some(root.join("main.tex").display().to_string().as_str()),
+            "the unclosed brace in main.tex, not intro.tex's closed copy nor ../x.tex"
+        );
+        assert_eq!((d.line, d.col), (Some(4), Some(12)));
+        let main = std::fs::read(root.join("main.tex")).unwrap();
+        assert_eq!(main[d.offset.unwrap() as usize], b'{');
+        assert_eq!(
+            opened_files(term, &root)
+                .iter()
+                .map(|(_, n)| n.as_str())
+                .collect::<Vec<_>>(),
+            ["./main.tex", "./intro.tex"]
+        );
+        let _ = std::fs::remove_dir_all(&base);
+    }
 
     #[test]
     fn codes_are_stable() {
@@ -774,5 +1124,54 @@ mod tests {
         };
         classify_warning(&mut d);
         assert_eq!(d.code, "latex-font/font-shape-undefined");
+        for (msg, code) in [
+            ("Missing \\right. inserted.", "tex/missing-right-delimiter"),
+            ("Extra \\right.", "tex/extra-right-delimiter"),
+            (
+                "LaTeX Error: Unicode character \u{2713} (U+2713)",
+                "latex/unicode-not-set-up",
+            ),
+            (
+                "LaTeX Error: \\caption outside float.",
+                "latex/caption-outside-float",
+            ),
+        ] {
+            let mut d = Diag {
+                message: msg.into(),
+                ..Diag::default()
+            };
+            classify_error(&mut d);
+            assert_eq!(d.code, code, "{msg}");
+        }
+        let mut d = Diag {
+            message: "LaTeX Warning: Float too large for page by 327.5pt on input line 5.".into(),
+            ..Diag::default()
+        };
+        classify_warning(&mut d);
+        assert_eq!(d.code, "latex/float-too-large");
+    }
+
+    #[test]
+    fn a_missing_include_is_a_warning_and_aux_files_are_not() {
+        assert_eq!(
+            no_file("\nNo file chap9.tex.\n").as_deref(),
+            Some("chap9.tex")
+        );
+        assert_eq!(no_file("No file main.aux."), None);
+        assert_eq!(no_file("No file main.toc."), None);
+        let d = scan_terminal(
+            b"(./main.aux)\nNo file main.aux.\nNo file chap9.tex.\n",
+            Path::new("/tmp"),
+        );
+        assert_eq!(d.len(), 1);
+        assert_eq!(
+            (d[0].1.code.as_str(), d[0].1.message.as_str()),
+            ("latex/no-file", "No file chap9.tex.")
+        );
+        let term = b"Missing character: There is no \xc8 in font cmr10!\n";
+        let d = scan_terminal(term, Path::new("/tmp"));
+        assert_eq!(d.len(), 1);
+        assert_eq!(d[0].1.code, "tex/missing-character");
+        assert_eq!(d[0].1.severity, Some(Severity::Warning));
     }
 }

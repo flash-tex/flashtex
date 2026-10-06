@@ -40,6 +40,10 @@ def main():
     def count(sub):
         return sum(1 for l in log_lines if sub in l)
 
+    # the engine the shell said typesets the document (EngineChoice.logLine,
+    # retirement plan #1236 S3r); None for an app that logged no engine
+    engines = [m.group(1) for m in (re.search(r"engine: (new|previous) \(", l) for l in log_lines) if m]
+
     open_calls = open(a.open_log, encoding="utf-8").read().strip().splitlines() if a.open_log else []
     no_activate = any("FLASHTEX_NO_ACTIVATE=1" in c for c in open_calls)
     # Relaunch evidence: a second compiler/bridge attach after the kill lines.
@@ -65,6 +69,7 @@ def main():
         "quit_cleanly": any(n == "FlashTeX quit cleanly" for n in notes),
         "compiler_reattached_after_kill": compiler_reattached,
         "bridge_reattached_after_kill": bridge_reattached,
+        "engine": engines[-1] if engines else None,
         "log_line_count": len(log_lines),
         "log_counts": {
             "status: attached:": count("status: attached:"),
@@ -72,6 +77,7 @@ def main():
             "worker exited": count("worker exited"),
             "bridge: attached:": count("bridge: attached:"),
             "bridge exited": count("bridge exited"),
+            "engine:": count("engine: "),
         },
         "log_excerpt": [l for l in log_lines if any(k in l for k in ("attached", "exited", "revision 1", "bridge", "ledger"))][:40],
     }

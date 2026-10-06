@@ -180,6 +180,9 @@ struct TypingBenchSummary: Codable {
     var paintPoint: String
     var perKeystroke: [TypingLatencyRecorder.Keystroke]
     var startedAt: String
+    /// The engine that typeset the run (`new` or `previous`); absent in
+    /// summaries written before old-engine retirement stage S3r (#1236).
+    var engine: String? = nil
 
     enum CodingKeys: String, CodingKey {
         case producer, script, intervalMs = "interval_ms", scriptKeystrokes = "script_keystrokes", typed,
@@ -188,7 +191,8 @@ struct TypingBenchSummary: Codable {
              documentBytesBefore = "document_bytes_before", documentBytesAfter = "document_bytes_after",
              elapsedMs = "elapsed_ms", keystrokeToPaintMs = "keystroke_to_paint_ms", compileMs = "compile_ms",
              renderPassMs = "render_pass_ms", resultToPaintMs = "result_to_paint_ms",
-             debounceMs = "debounce_ms", paintPoint = "paint_point", perKeystroke = "per_keystroke", startedAt = "started_at"
+             debounceMs = "debounce_ms", paintPoint = "paint_point", perKeystroke = "per_keystroke", startedAt = "started_at",
+             engine
         }
 }
 
@@ -576,7 +580,8 @@ final class TypingBenchDriver {
             debounceMs: ShellModel.debounceInterval * 1000,
             paintPoint: TypingBench.paintPointDescription,
             perKeystroke: r.keystrokes,
-            startedAt: ISO8601DateFormatter().string(from: startedAt))
+            startedAt: ISO8601DateFormatter().string(from: startedAt),
+            engine: model.typesettingEngine.rawValue)
     }
 
     private func finish(reason: String) {
