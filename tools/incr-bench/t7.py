@@ -188,6 +188,28 @@ def reference_issues(summ, rows, max_load=None):
     return list(dict.fromkeys(out))
 
 
+LIMIT_GB = 0.0  # --limit-gb
+
+
+def rss_of(pid):
+    """Resident bytes of `pid` now (Linux /proc; elsewhere ps, coarser); 0 if it is gone."""
+    try:
+        with open(f'/proc/{pid}/status') as f:
+            for line in f:
+                if line.startswith('VmRSS:'):
+                    return int(line.split()[1]) * 1024
+        return 0
+    except FileNotFoundError:
+        pass
+    except OSError:
+        return 0
+    try:
+        r = subprocess.run(['ps', '-o', 'rss=', '-p', str(pid)], capture_output=True, text=True)
+        return int(r.stdout.strip() or 0) * 1024
+    except (OSError, ValueError):
+        return 0
+
+
 class Host:
     """flashtex-host --socket, our own child; stopped by its handle (never by name)."""
 
@@ -205,6 +227,9 @@ class Host:
         self.p = subprocess.Popen([f'{eng}/flashtex-host', '--socket', sock, '--s0-cache', s0] + extra,
                                   stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=open(log, 'a'), text=True, env=env)
         threading.Thread(target=self._read, daemon=True).start()
+        self.killed_at_limit = False
+        if LIMIT_GB:
+            threading.Thread(target=self._watch, daemon=True).start()
         deadline = time.time() + 600
         while True:
             try:
@@ -219,6 +244,17 @@ class Host:
             if l.startswith('flashtex-host: {') and self.startup is None:
                 self.startup = l[len('flashtex-host: '):]
         self.ready_ms = (time.perf_counter() - t0) * 1e3
+
+    def _watch(self):
+        """Kill the host (by its PID) once its resident memory passes --limit-gb, so that a
+        regression cannot take the machine down (mem_gate.sh)."""
+        while self.p.poll() is None:
+            if rss_of(self.p.pid) > LIMIT_GB * 2**30:
+                self.killed_at_limit = True
+                print(f'  host RSS above the {LIMIT_GB} GB limit: killed', flush=True)
+                self.p.kill()
+                return
+            time.sleep(0.05 if os.path.exists('/proc') else 0.25)
 
     def _read(self):
         for l in self.p.stdout:
@@ -317,6 +353,7 @@ def run_doc(a, eng, doc, out, i):
         h.settle_saves()
     finally:
         rss.append(h.stop())
+        res['killed_at_limit'] = h.killed_at_limit
     # reopen: edit on disk, a new host from the persisted S0, page 1
     if a.reopen and 'reopen' in a.phases:
         at = body_line(open(src).read(), 0.5)
@@ -498,6 +535,8 @@ def main():
     ap.add_argument('--seed', type=int, default=7)
     ap.add_argument('--timeout', type=int, default=3600, help='per dl3-keys connection, s')
     ap.add_argument('--host-args', default='')
+    ap.add_argument('--limit-gb', type=float, default=0.0,
+                    help="kill a host whose resident memory passes this (mem_gate.sh); 0: no limit")
     ap.add_argument('--out')
     ap.add_argument('--baseline', default=os.path.join(S, 't7-baseline.json'))
     ap.add_argument('--write-baseline')
@@ -508,6 +547,8 @@ def main():
     ap.add_argument('--quick', action='store_true', help='defaults plain-10,full-100; 8 keys, 2 preamble, 3 reopen')
     ap.add_argument('--check', help='re-evaluate an existing summary.json')
     a = ap.parse_args()
+    global LIMIT_GB
+    LIMIT_GB = a.limit_gb
     baseline = json.load(open(a.baseline)) if a.baseline and os.path.exists(a.baseline) else None
     if a.check:
         summ = json.load(open(a.check))
