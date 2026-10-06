@@ -79,6 +79,12 @@ struct EngineChoice: Equatable, Sendable {
         /// No TeX Live, a bundle is configured, and the user chose not to
         /// download it (EngineV3Bundle.swift's consent sheet).
         case bundleDeclined
+        /// The document needs Unicode/OpenType fonts (fontspec, unicode-math,
+        /// `% !TEX program = xelatex`, …; UnicodeFonts.swift): the new
+        /// engine is pdfLaTeX-compatible, and the previous engine stays these
+        /// documents' explicit fallback until the Unicode mode is ready
+        /// (modes Q1; the retirement plan's §4.4, R10).
+        case unicodeFonts(UnicodeFontsNeed)
 
         /// The banner's and the status item's short reason.
         var short: String {
@@ -86,7 +92,17 @@ struct EngineChoice: Equatable, Sendable {
             case .noTeXLive: "no TeX Live is installed"
             case .projectFonts: "this project sets fonts in flashtex.toml"
             case .bundleDeclined: "the TeX files were not downloaded"
+            case .unicodeFonts: "this document needs Unicode fonts"
             }
+        }
+
+        /// A rule the user's own choice for the document outranks: detection
+        /// suggests, it never decides (modes §4.2). The others say the new
+        /// engine cannot run at all (no TeX Live) or would ignore a project
+        /// setting (`[fonts]`).
+        var yieldsToUserChoice: Bool {
+            if case .unicodeFonts = self { return true }
+            return false
         }
 
         /// The full reason (tooltips, the menu, the announcement).
@@ -98,6 +114,8 @@ struct EngineChoice: Equatable, Sendable {
                 "This project's flashtex.toml sets [fonts] (\(roles.joined(separator: ", "))). The new engine is pdfLaTeX-compatible and typesets with TeX's fonts, so it would ignore them."
             case .bundleDeclined:
                 "No TeX Live is installed, and the TeX files the new engine would download instead were not downloaded. Choose the new engine again to be asked again, or install MacTeX."
+            case .unicodeFonts(let need):
+                "This document uses \(need.what)\(need.file.map { " (in \($0))" } ?? ""), which needs XeTeX or LuaTeX. The new engine is pdfLaTeX-compatible, so the compatibility engine typesets this document until FlashTeX's Unicode mode is ready. Choose the new engine for this document to use it anyway."
             }
         }
     }
@@ -178,8 +196,14 @@ struct EngineChoice: Equatable, Sendable {
                 c = EngineChoice(preferred: builtInDefault, source: .builtInDefault)
             }
         }
-        if c.preferred == .new, !c.isForced { c.blocker = blocker() }
+        if c.preferred == .new, !c.isForced { c.applyRule(blocker()) }
         return c
+    }
+
+    /// Sets the fallback rule found for this choice, except one the user's
+    /// own choice for the document outranks (`Blocker.yieldsToUserChoice`).
+    mutating func applyRule(_ b: Blocker?) {
+        blocker = (b?.yieldsToUserChoice == true && source == .user) ? nil : b
     }
 
     /// A window's choice before any document opens (no record, no manifest):
@@ -554,7 +578,7 @@ extension ShellModel {
             if carried.source == .user {
                 EngineChoiceStore.set(.init(engine: carried.preferred, source: .user), for: url)
             } else {
-                if carried.preferred == .new, !carried.isForced { carried.blocker = engineBlocker() }
+                if carried.preferred == .new, !carried.isForced { carried.applyRule(engineBlocker()) }
                 noteEngineTypeset(carried, url: url, entry: nil)
             }
         }
@@ -571,6 +595,7 @@ extension ShellModel {
     func chooseEngine(_ engine: EngineChoice.Engine) {
         engineWindowOverride = nil
         engineHostLacksTeXLive = false // asked again: the host's report is checked again when it starts
+        engineHostNeedsUnicode = nil
         engineFallbackDismissed = false
         // Choosing the new engine again asks again about downloading TeX files.
         if engine == .new, EngineV3Bundle.declinedSomeBundle { EngineV3Bundle.forgetConsent() }
@@ -579,7 +604,7 @@ extension ShellModel {
         if let forced = ProcessInfo.processInfo.environment["FLASHTEX_ENGINE_V3"], forced == "1" || forced == "0" {
             c = EngineChoice(preferred: forced == "1" ? .new : .previous, source: .environment)
         }
-        if c.preferred == .new, !c.isForced { c.blocker = engineBlocker() }
+        if c.preferred == .new, !c.isForced { c.applyRule(engineBlocker()) }
         applyEngineChoice(c)
         navigationNote = c.blocker.map { "The new engine cannot typeset this project: \($0.detail)" }
             ?? "This document is typeset with the \(c.effective.title.lowercased())."
@@ -595,11 +620,14 @@ extension ShellModel {
 
     /// Whether the new engine would be blocked for the open project right
     /// now, and why: no TeX Live (probed, or reported by the host), then the
-    /// manifest's `[fonts]`.
+    /// manifest's `[fonts]`, then a document that needs Unicode fonts (its
+    /// preamble, or the new engine's own report; UnicodeFonts.swift).
     func engineBlocker() -> EngineChoice.Blocker? {
         if engineHostLacksTeXLive || !EngineChoice.texLiveAvailable() { return .noTeXLive }
         if EngineV3Bundle.currentGate() == .declined { return .bundleDeclined }
-        if let snapshot = manifest.currentSnapshot { return EngineChoice.blocker(manifest: snapshot.manifest) }
+        if let snapshot = manifest.currentSnapshot, let b = EngineChoice.blocker(manifest: snapshot.manifest) { return b }
+        let reported = engineHostNeedsUnicode.flatMap { $0.document == documentURL ? $0.need : nil }
+        if let need = unicodeFontsNeed() ?? reported { return .unicodeFonts(need) }
         return nil
     }
 
@@ -611,7 +639,7 @@ extension ShellModel {
         // The open path resolves after its own read.
         guard !engineChoicePending, engineChoiceDocument == documentURL else { return }
         var c = engineChoice
-        if c.preferred == .new, !c.isForced { c.blocker = engineBlocker() }
+        if c.preferred == .new, !c.isForced { c.applyRule(engineBlocker()) }
         if c != engineChoice {
             engineFallbackDismissed = false
             applyEngineChoice(c)
@@ -743,7 +771,8 @@ struct EngineChoiceMenuItems: View {
             } label: {
                 if c.effective == engine { Label(engine.menuTitle, systemImage: "checkmark") } else { Text(engine.menuTitle) }
             }
-            .disabled(engine == .new && c.blocker != nil && c.preferred == .new)
+            // (a rule the user's choice outranks leaves the new engine choosable)
+            .disabled(engine == .new && c.preferred == .new && c.blocker.map { !$0.yieldsToUserChoice } ?? false)
         }
         Divider()
         Text(c.explanation)
@@ -790,7 +819,10 @@ struct EngineFallbackBanner: View {
 
 extension EngineFallbackBanner {
     /// The banner's first line (also what is announced when the fallback starts).
-    static func headline(_ b: EngineChoice.Blocker) -> String { "Typeset with the previous engine: \(b.short)." }
+    static func headline(_ b: EngineChoice.Blocker) -> String {
+        if case .unicodeFonts = b { return "Using compatibility engine: \(b.short)." }
+        return "Typeset with the previous engine: \(b.short)."
+    }
 }
 
 /// Settings > Compile: the engine for documents without their own choice,
