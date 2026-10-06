@@ -140,6 +140,11 @@ names the quantity it measured.
 - **Opening:** the visible page appears ≤ 1 s after open on a typical Mac, the rest streams in;
   edits during the initial compile are as fast as after it; total cold-compile time and peak
   memory are driven down continuously (P6 work that serves these targets is P4-critical).
+- **Performance modes (owner, 2026-10-06):** *Low Memory* (small retention budget, sparse
+  checkpoints, memory returned promptly; a little slower), *Balanced* (default; all gates) and
+  *High Performance* (large budget, dense checkpoints, keep-warm and prepare-ahead always,
+  everything cached, exact parallelism; fastest). Each is a named profile of the host and app
+  knobs, switchable live; correctness is identical in every mode (lane PERF-MODES).
 - **Large benchmark:** Clive Newstead's *Infinite Descent* (diagram- and formatting-heavy),
   fetched by pinned commit (codeberg cnewstead/infdesc `48825c5`), never committed.
 
@@ -1236,6 +1241,7 @@ by CI or by a named reference run. Lane runs are REPORTED evidence.
 | 2026-10-06 | Segment hold (§5.2, #1614): segment checkpoints between the restart point and the edited page are deferred until the page ships; preemption points stay, and a held checkpoint is materialised where newer work stops the run. An implementation of §5.2's cadence, not a change to its guarantees | Commander (kabir-claude), on independent review |
 | 2026-10-06 | The latency gate covers continuous typing with keys **50 ms apart** (≈ 240 wpm; ≥ the owner's 200 wpm floor): each key at 50/60/80/100/150 ms intervals meets ≤ 16 ms p95 (host ≤ 11 ms) for its own edited page and is painted by its own compile (§1.2) | Owner (Kabir): "anything below 200wpm needs to hit our target"; "the 50ms target is good" |
 | 2026-10-06 | Speed and memory targets (§1.2): ≤ 20 ms key→commit at 50 ms typing on the slowest supported Mac (M1-class) for 1,000 pages and *Infinite Descent*; editor key→glyph ≤ 1 frame p99 regardless of preview state; visible page ≤ 1 s after open; edits during the initial compile as fast as after; memory and cold-compile time minimised; *Infinite Descent* is the large benchmark. P6 work serving these is P4-critical under critical path first | Owner (Kabir): "make it faster … sub 20ms on all macs … memory usage needs to be decreased … the editor should literally be a text editor and be completely instant … optimize the absolute fuck out of everything" |
+| 2026-10-06 | Performance modes: Low Memory / Balanced (default, all gates) / High Performance, as named profiles of the retention budget and the speed/memory knobs, switchable live; every mode passes the soundness and parity gates (§1.2, §5.2) | Owner (Kabir) |
 
 ---
 
