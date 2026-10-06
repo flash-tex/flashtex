@@ -171,7 +171,11 @@ for g in ${@:-build parity lockstep trip etrip drift positions tests sound-a sou
       (run_span plain-120 --edits 12 --seed 4 --from 0.3 --kinds letter,newline,split) &
       (run_span full-100 --edits 10 --seed 4 --from 0.3 --kinds letter,newline,split) &
       wait
-      python3 -c "import json,sys; s=[json.loads(l) for l in open(sys.argv[1]) if '\"summary\"' in l]; [print(x) for x in s]; bad=sum(x['line_bad']+x['col_bad']+x['glyph_count_bad'] for x in s); print('span: %d runs, %d edits, %d glyphs, %d wrong' % (len(s), sum(x['edits'] for x in s), sum(x['glyphs'] for x in s), bad)); sys.exit(1 if bad or len(s) < 11 else 0)" $R/span.jsonl > $R/span.txt 2>&1
+      # CR and mixed line ends (TeX ends a line at a LF, a CR, a CR LF: crate::texlines)
+      (run_span plain-120 --edits 12 --seed 5 --from 0.3 --eol cr --kinds letter,newline,split) &
+      (run_span full-100 --edits 10 --seed 5 --from 0.3 --eol mixed --kinds letter,newline,split,wedge) &
+      wait
+      python3 -c "import json,sys; s=[json.loads(l) for l in open(sys.argv[1]) if '\"summary\"' in l]; [print(x) for x in s]; bad=sum(x['line_bad']+x['col_bad']+x['glyph_count_bad'] for x in s); print('span: %d runs, %d edits, %d glyphs, %d wrong' % (len(s), sum(x['edits'] for x in s), sum(x['glyphs'] for x in s), bad)); sys.exit(1 if bad or len(s) < 13 else 0)" $R/span.jsonl > $R/span.txt 2>&1
       echo "span exit $?" >> $R/span.txt ;;
     sound-c)
       PYTHONHASHSEED=0 timeout 36000 python3 $S/soundness.py gates -j $J --trials 20 --dir $B/sound-c --out $R/soundness-c.jsonl \
