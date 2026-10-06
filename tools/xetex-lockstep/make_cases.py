@@ -9,6 +9,8 @@ changing a case here and commit both. Each case starts with \\input prelude
 case that ends with an error on purpose (tools/lockstep/README.md).
 """
 import os
+import struct
+import zlib
 
 OUT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "cases")
 os.makedirs(OUT, exist_ok=True)
@@ -921,6 +923,225 @@ ocase("o010-mathaccents", "\\Umathaccent: top accents on letters with and withou
 \Umathaccent "0 "0 "0302 {\Umathaccent "0 "0 "0302 {x}}$\par}
 \lsshipbox0
 \end""")
+
+# --- Pictures (phase S2): \XeTeXpicfile and \XeTeXpdffile -------------------
+#
+# The picture files the p-cases read are written to `pictures/` (run.py
+# copies them next to each case): XeTeX reads only a picture's header, so
+# each is the header its scanner reads and nothing more (PNG chunks with
+# their CRCs, as libpng checks them; JPEG segments up to SOF; a BMP's two
+# headers; a small PDF with a correct cross-reference table).
+
+PICTURES = os.path.join(os.path.dirname(OUT), "pictures")
+pictures = {}
+
+
+def png_file(w, h, phys=None, phys_after_idat=False):
+    def chunk(kind, body):
+        return (struct.pack(">I", len(body)) + kind + body
+                + struct.pack(">I", zlib.crc32(kind + body) & 0xFFFFFFFF))
+    data = b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", w, h, 8, 2, 0, 0, 0))
+    ph = chunk(b"pHYs", struct.pack(">IIB", *phys)) if phys else b""
+    idat = chunk(b"IDAT", zlib.compress(b"\0" + b"\0" * (3 * w)))
+    if phys_after_idat:
+        data += idat + ph
+    else:
+        data += ph + idat
+    return data + chunk(b"IEND", b"")
+
+
+def jpeg_file(w, h, app=b""):
+    sof = b"\xff\xc0" + struct.pack(">HBHHB", 11, 8, h, w, 1) + b"\x01\x11\x00"
+    return b"\xff\xd8" + app + sof + b"\xff\xd9"
+
+
+def jfif(units, xd, yd):
+    body = b"JFIF\0" + struct.pack(">HBHHBB", 0x0102, units, xd, yd, 0, 0)
+    return b"\xff\xe0" + struct.pack(">H", len(body) + 2) + body
+
+
+def exif(xres, yres, unit, big_endian=True):
+    e = ">" if big_endian else "<"
+    tiff = (b"MM" if big_endian else b"II") + struct.pack(e + "HI", 42, 8)
+    entries = [(282, 5, 1, 8 + 2 + 3 * 12 + 4), (283, 5, 1, 8 + 2 + 3 * 12 + 4 + 8),
+               (296, 3, 1, None)]
+    tiff += struct.pack(e + "H", len(entries))
+    for tag, typ, count, off in entries:
+        if off is None:
+            tiff += struct.pack(e + "HHIHH", tag, typ, count, unit, 0)
+        else:
+            tiff += struct.pack(e + "HHII", tag, typ, count, off)
+    tiff += struct.pack(e + "I", 0)
+    tiff += struct.pack(e + "II", *xres) + struct.pack(e + "II", *yres)
+    body = b"Exif\0\0" + tiff
+    return b"\xff\xe1" + struct.pack(">H", len(body) + 2) + body
+
+
+def bmp_file(w, h, bits=24, xppm=2835, yppm=2835, core=False):
+    if core:
+        info = struct.pack("<IHHHH", 12, w, h, 1, bits)
+    else:
+        info = struct.pack("<IiiHHIIiiII", 40, w, h, 1, bits, 0, 0, xppm, yppm, 0, 0)
+    palette = b"" if bits >= 24 else b"\0" * ((3 if core else 4) * (1 << bits))
+    offset = 14 + len(info) + len(palette)
+    pixels = b"\0" * 64
+    return (b"BM" + struct.pack("<IHHI", offset + len(pixels), 0, 0, offset)
+            + info + palette + pixels)
+
+
+def pdf_file(objects):
+    """A PDF of `objects` (object 1 is the catalog), with a correct xref."""
+    out = b"%PDF-1.4\n%\xe2\xe3\xcf\xd3\n"
+    offsets = []
+    for i, body in enumerate(objects, 1):
+        offsets.append(len(out))
+        out += b"%d 0 obj\n" % i + body + b"\nendobj\n"
+    xref = len(out)
+    out += b"xref\n0 %d\n0000000000 65535 f \n" % (len(objects) + 1)
+    for off in offsets:
+        out += b"%010d 00000 n \n" % off
+    out += b"trailer\n<< /Size %d /Root 1 0 R >>\nstartxref\n%d\n%%%%EOF\n" % (len(objects) + 1, xref)
+    return out
+
+
+pictures["p-plain.png"] = png_file(40, 30)
+pictures["p-300dpi.png"] = png_file(600, 150, phys=(11811, 11811, 1))
+pictures["p-aspect.png"] = png_file(100, 100, phys=(3, 2, 0))
+pictures["p-mixed.png"] = png_file(50, 70, phys=(2835, 5670, 1))
+pictures["p-late-phys.png"] = png_file(64, 64, phys=(11811, 11811, 1), phys_after_idat=True)
+pictures["p-jfif-dpi.jpg"] = jpeg_file(320, 240, jfif(1, 150, 300))
+pictures["p-jfif-dpcm.jpg"] = jpeg_file(200, 100, jfif(2, 40, 40))
+pictures["p-jfif-aspect.jpg"] = jpeg_file(90, 60, jfif(0, 1, 1))
+pictures["p-exif.jpg"] = jpeg_file(300, 200, exif((600, 2), (240, 1), 2))
+pictures["p-exif-cm.jpg"] = jpeg_file(300, 200, exif((100, 1), (50, 1), 3, big_endian=False))
+pictures["p-nodpi.jpg"] = jpeg_file(72, 36)
+pictures["p-info.bmp"] = bmp_file(30, 20)
+pictures["p-topdown.bmp"] = bmp_file(30, -20, xppm=3780, yppm=3780)
+pictures["p-palette.bmp"] = bmp_file(16, 16, bits=8)
+pictures["p-core.bmp"] = bmp_file(25, 15, core=True)
+pictures["p-notimage.png"] = b"this is not a picture\n"
+pictures["p-pages.pdf"] = pdf_file([
+    b"<< /Type /Catalog /Pages 2 0 R >>",
+    b"<< /Type /Pages /Kids [3 0 R 4 0 R 5 0 R 6 0 R 7 0 R] /Count 5"
+    b" /MediaBox [0 0 612 792] /Rotate 90 >>",
+    # 1: the inherited MediaBox, its own CropBox
+    b"<< /Type /Page /Parent 2 0 R /CropBox [10 20 300 400] >>",
+    # 2: rotated, every box
+    b"<< /Type /Page /Parent 2 0 R /Rotate 90 /MediaBox [0 0 200 100]"
+    b" /BleedBox [5 5 195 95] /TrimBox [10 10 190 90] /ArtBox [20 15 180 85] >>",
+    # 3: reversed corners, -270 degrees, a box through a reference
+    b"<< /Type /Page /Parent 2 0 R /Rotate -270 /MediaBox [300 200 0 0.5] /CropBox 8 0 R >>",
+    # 4: a real Rotate and a box with a reference inside it
+    b"<< /Type /Page /Parent 2 0 R /Rotate 90.0 /MediaBox [0 0 144.5 72.25]"
+    b" /TrimBox [0 0 9 0 R 50] >>",
+    # 5: no box of its own but the inherited MediaBox, Rotate 180
+    b"<< /Type /Page /Parent 2 0 R /Rotate 180 >>",
+    b"[ 1 2 101 52 ]",
+    b"30",
+])
+
+PIC_FILES = ["p-plain.png", "p-300dpi.png", "p-aspect.png", "p-mixed.png", "p-late-phys.png",
+             "p-jfif-dpi.jpg", "p-jfif-dpcm.jpg", "p-jfif-aspect.jpg", "p-exif.jpg",
+             "p-exif-cm.jpg", "p-nodpi.jpg", "p-info.bmp", "p-topdown.bmp",
+             "p-palette.bmp", "p-core.bmp"]
+
+
+def pcase(name, desc, body, no_halt=False):
+    ncase(name, desc, body, no_halt)
+    cases[name] = cases[name].replace(
+        b"phase S1: native fonts)", b"phase S2: pictures)", 1)
+
+
+pcase("p001-picfile-formats", "\\XeTeXpicfile of PNG, JPEG and BMP files: sizes from pHYs, JFIF, Exif and BMP resolutions",
+      r"\setbox0=\vbox{" + "\n".join(r"\hbox{\XeTeXpicfile %s }" % f for f in PIC_FILES)
+      + "\n}\n" + r"""\lsshipbox0
+\end""")
+
+pcase("p002-picfile-keywords", "\\XeTeXpicfile's scaled, xscaled, yscaled, width, height and rotated keywords, in each order",
+      r"""\setbox0=\vbox{
+\hbox{\XeTeXpicfile p-plain.png scaled 1500 }
+\hbox{\XeTeXpicfile p-plain.png xscaled 500 yscaled 2000 }
+\hbox{\XeTeXpicfile p-300dpi.png width 2in }
+\hbox{\XeTeXpicfile p-300dpi.png height 1cm }
+\hbox{\XeTeXpicfile p-300dpi.png width 3cm height 1cm }
+\hbox{\XeTeXpicfile p-exif.jpg rotated 30 }
+\hbox{\XeTeXpicfile p-exif.jpg rotated 90 width 2cm }
+\hbox{\XeTeXpicfile p-exif.jpg width 2cm rotated 90 }
+\hbox{\XeTeXpicfile p-info.bmp rotated -45.5 scaled 2000 }
+\hbox{\XeTeXpicfile p-info.bmp scaled 2000 rotated 180 }
+\hbox{\XeTeXpicfile "p-jfif-dpi.jpg" width 100pt height 50pt rotated 12.25 }
+\hbox{\XeTeXpicfile p-core.bmp xscaled -1000 }
+}
+\lsshipbox0
+\end""")
+
+pcase("p003-pdffile-boxes", "\\XeTeXpdffile: pages (clamped, negative), crop/media/bleed/trim/art boxes, inherited boxes, Rotate, \\XeTeXpdfpagecount",
+      r"""\message{[\the\XeTeXpdfpagecount p-pages.pdf ][\the\XeTeXpdfpagecount nosuchfile.pdf ]}
+\setbox0=\vbox{
+\hbox{\XeTeXpdffile p-pages.pdf }
+\hbox{\XeTeXpdffile p-pages.pdf page 1 media }
+\hbox{\XeTeXpdffile p-pages.pdf page 2 }
+\hbox{\XeTeXpdffile p-pages.pdf page 2 crop }
+\hbox{\XeTeXpdffile p-pages.pdf page 2 media }
+\hbox{\XeTeXpdffile p-pages.pdf page 2 bleed }
+\hbox{\XeTeXpdffile p-pages.pdf page 2 trim }
+\hbox{\XeTeXpdffile p-pages.pdf page 2 art }
+\hbox{\XeTeXpdffile p-pages.pdf page 3 }
+\hbox{\XeTeXpdffile p-pages.pdf page 3 media }
+\hbox{\XeTeXpdffile p-pages.pdf page 4 }
+\hbox{\XeTeXpdffile p-pages.pdf page 4 trim }
+\hbox{\XeTeXpdffile p-pages.pdf page 5 art }
+\hbox{\XeTeXpdffile p-pages.pdf page 9 }
+\hbox{\XeTeXpdffile p-pages.pdf page -1 }
+\hbox{\XeTeXpdffile p-pages.pdf page -2 bleed scaled 500 }
+\hbox{\XeTeXpdffile p-pages.pdf page -9 }
+\hbox{\XeTeXpdffile p-pages.pdf page 0 rotated 45 width 3in }
+}
+\lsshipbox0
+\end""")
+
+pcase("p004-texlive-pictures", "pictures found through kpathsea in TeX Live (mwe's example images: PNG, JPEG, PDF)",
+      r"""\setbox0=\vbox{
+\hbox{\XeTeXpicfile example-image.png }
+\hbox{\XeTeXpicfile example-image-a.png width 1in }
+\hbox{\XeTeXpicfile example-image.jpg }
+\hbox{\XeTeXpicfile example-grid-100x100bp.jpg }
+\hbox{\XeTeXpdffile example-image.pdf }
+\hbox{\XeTeXpdffile example-image-golden.pdf scaled 500 }
+\hbox{\XeTeXpicfile example-grid-100x100pt.png rotated 30 }
+}
+\message{[\the\XeTeXpdfpagecount example-image.pdf ]}
+\lsshipbox0
+\end""")
+
+pcase("p005-picture-errors", "a missing picture, a file that is no picture, a late pHYs, and bad sizes",
+      r"""\setbox0=\vbox{
+\hbox{\XeTeXpicfile nosuchpicture.png }
+\hbox{\XeTeXpicfile p-notimage.png }
+\hbox{\XeTeXpdffile p-plain.png }
+\hbox{\XeTeXpicfile p-late-phys.png }
+\hbox{\XeTeXpicfile p-plain.png width -1pt }
+\hbox{\XeTeXpicfile p-plain.png height 0pt }
+}
+\lsshipbox0
+\end""", no_halt=True)
+
+pcase("p006-pictures-in-paragraphs", "pictures in a paragraph, in math and in a vertical list, shipped in several pages",
+      r"""\hsize=200pt \parindent=10pt \baselineskip=12pt \vsize=300pt \parfillskip=0pt plus 1fil
+\font\x="[lmroman10-regular.otf]" \x
+\setbox0=\vbox{Text \XeTeXpicfile p-plain.png \ and more text with a picture
+\XeTeXpicfile p-jfif-dpcm.jpg scaled 300 \ inline.\par
+\XeTeXpdffile p-pages.pdf page 2 scaled 400
+\par}
+\lsshipbox0
+\setbox1=\vbox{\XeTeXpicfile p-info.bmp \par}
+\lsshipbox1
+\end""")
+
+os.makedirs(PICTURES, exist_ok=True)
+for name, data in pictures.items():
+    with open(os.path.join(PICTURES, name), "wb") as fh:
+        fh.write(data)
 
 for name, data in cases.items():
     with open(os.path.join(OUT, name + ".tex"), "wb") as fh:

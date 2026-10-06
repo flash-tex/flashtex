@@ -534,7 +534,7 @@ impl Globals {
     }
 
     /// The same as a `String` (a name that is not UTF-8 is read lossily).
-    fn raw_file_name(&self) -> String {
+    pub(crate) fn raw_file_name(&self) -> String {
         String::from_utf8_lossy(&self.raw_name_bytes()).into_owned()
     }
 

@@ -91,6 +91,21 @@ python3 tools/xetex-lockstep/latex.py --engine <bin> [--cases 'l00*'] [--keep]
   friends start from `\relax` as `\csname` makes it, so
   `\tracingassigns` says "reassigning" (unicode-math's documents show it).
 
+## Phase S2: pictures
+
+* **`cases/p*.tex`** (written by `make_cases.py`, with the picture files of
+  **`pictures/`**, which `run.py` copies next to each p-case): PNG
+  (`pHYs` in metres, other units, after `IDAT`), JPEG (JFIF dots per inch
+  and per cm, Exif big- and little-endian, none), BMP (info and core
+  headers, top-down, palette) and a five-page PDF (every page box, boxes
+  inherited and through references, `Rotate` of the page only, pages
+  clamped and counted from the end) through `\XeTeXpicfile`,
+  `\XeTeXpdffile` and `\XeTeXpdfpagecount`, with every size keyword;
+  TeX Live's mwe images through kpathsea; errors. XeTeX reads only a
+  picture's header, so each file is the header and nothing more.
+* **`latex-cases/l010-graphicx.tex`**: graphicx with the xetex driver
+  (scaled, rotated, trimmed, clipped, by page), against `xelatex -no-pdf`.
+
 ## Font lookup by name (`fontmatch.py`)
 
 `fontmatch.py` measures the port's font lookup

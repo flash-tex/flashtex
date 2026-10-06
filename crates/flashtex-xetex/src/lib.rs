@@ -42,6 +42,7 @@ pub use flashtex_xetex_teckit as teckit;
 pub mod fontmgr;
 pub mod generated;
 pub mod native;
+pub mod pic;
 pub mod state;
 pub mod system;
 pub mod xetex_ext;

@@ -1,0 +1,14 @@
+% p006-pictures-in-paragraphs: pictures in a paragraph, in math and in a vertical list, shipped in several pages
+% XeTeX-specific (docs/design/xetex/PLAN.md, phase S2: pictures)
+\input prelude
+\def\space{ }
+\hsize=200pt \parindent=10pt \baselineskip=12pt \vsize=300pt \parfillskip=0pt plus 1fil
+\font\x="[lmroman10-regular.otf]" \x
+\setbox0=\vbox{Text \XeTeXpicfile p-plain.png \ and more text with a picture
+\XeTeXpicfile p-jfif-dpcm.jpg scaled 300 \ inline.\par
+\XeTeXpdffile p-pages.pdf page 2 scaled 400
+\par}
+\lsshipbox0
+\setbox1=\vbox{\XeTeXpicfile p-info.bmp \par}
+\lsshipbox1
+\end
