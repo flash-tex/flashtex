@@ -5012,7 +5012,12 @@ impl Reloc {
         if self.overrides.is_empty() {
             return;
         }
-        let tab = g.arena.regions.iter().find(|r| r.name == "obj_tab").map(|r| r.off);
+        let tab = g
+            .arena
+            .regions
+            .iter()
+            .find(|r| r.name == "obj_tab")
+            .map(|r| r.off);
         let size = std::mem::size_of::<crate::generated::types::obj_entry>();
         let at = std::mem::offset_of!(crate::generated::types::obj_entry, int2);
         let n = (g.obj_ptr.max(0) as usize).min(g.obj_tab.len().saturating_sub(1));
@@ -5042,7 +5047,11 @@ impl Reloc {
             .words
             .iter()
             .all(|&(off, v)| g.arena.read(off, 8) == v.to_le_bytes());
-        if w.scalars != now.scalars || w.objs != now.objs || !words || self.steps.len() != self.count {
+        if w.scalars != now.scalars
+            || w.objs != now.objs
+            || !words
+            || self.steps.len() != self.count
+        {
             eprintln!(
                 "FLASHTEX_VERIFY_RELOC: {} composed corrections differ from the steps ({} kept)",
                 self.count,
@@ -5067,9 +5076,16 @@ fn reloc_words(g: &Globals) -> RelocWords {
     let n = (g.obj_ptr.max(0) as usize).min(g.obj_tab.len().saturating_sub(1));
     RelocWords {
         scalars: [g.pdf_gone, g.pdf_save_offset, g.pdf_stream_length_offset],
-        objs: (0..=n).map(|k| (g.obj_tab[k].int2, g.obj_tab[k].int3)).collect(),
+        objs: (0..=n)
+            .map(|k| (g.obj_tab[k].int2, g.obj_tab[k].int3))
+            .collect(),
         words: vec![],
-        tab: g.arena.regions.iter().find(|r| r.name == "obj_tab").map(|r| r.off),
+        tab: g
+            .arena
+            .regions
+            .iter()
+            .find(|r| r.name == "obj_tab")
+            .map(|r| r.off),
     }
 }
 
