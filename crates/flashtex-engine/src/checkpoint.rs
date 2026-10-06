@@ -1085,6 +1085,22 @@ impl Globals {
             })
     }
 
+    /// Why `redo_to` cannot take the old run's later bytes (`None`: it
+    /// can): a file whose tail the restore kept in the file
+    /// (`system::keep_tail`) was changed by another program since (an
+    /// `export` in the same directory), so its bytes past the new run's
+    /// are no longer the old run's. As for a restore (`changed_outside`),
+    /// the caller then runs from scratch.
+    pub fn jump_blocked(&self) -> Option<String> {
+        self.layer_ref()?
+            .pending
+            .as_ref()?
+            .tails
+            .iter()
+            .filter(|t| matches!(t.bytes, TailBytes::Kept(_)))
+            .find_map(|t| system::outside_change(&t.path))
+    }
+
     /// Abandon the run since the last `restore` (see above). A tail kept
     /// in its file (`system::keep_tail`) gets back only the old bytes the
     /// abandoned run wrote over, then its old length (`put_back_kept`): this
@@ -1170,11 +1186,16 @@ impl Globals {
                     t.path
                 ));
             }
-            h.set_len(from).map_err(|e| format!("{}: {e}", t.path))?;
+            // In place, then the length once (`system::Logical`: a reader
+            // never sees the file cut and written on).
             h.seek(std::io::SeekFrom::Start(from))
                 .map_err(|e| format!("{}: {e}", t.path))?;
             h.write_all(&head).map_err(|e| format!("{}: {e}", t.path))?;
             h.write_all(&old).map_err(|e| format!("{}: {e}", t.path))?;
+            let end = from + (head.len() + old.len()) as u64;
+            if system::disk_len(&t.path) != Some(end) {
+                h.set_len(end).map_err(|e| format!("{}: {e}", t.path))?;
+            }
             drop(h);
             system::logical_settled(&t.path);
             system::stamp_output(&t.path);
@@ -1294,6 +1315,9 @@ impl Globals {
         in_remap: &dyn Fn(&str, u64) -> u64,
         pre: Option<Adopt>,
     ) -> Result<(), String> {
+        if let Some(why) = self.jump_blocked() {
+            return Err(format!("redo_to: {why}"));
+        }
         let Some(p) = self.layer().pending.take() else {
             return Err("redo_to: no restore to jump back from".into());
         };
@@ -1537,10 +1561,15 @@ impl Globals {
                     t.path
                 ));
             }
-            h.set_len(from).map_err(|e| format!("{}: {e}", t.path))?;
+            // In place, then the length once (`system::Logical`: a reader
+            // never sees the file cut and written on).
             h.seek(std::io::SeekFrom::Start(from))
                 .map_err(|e| format!("{}: {e}", t.path))?;
             h.write_all(&old).map_err(|e| format!("{}: {e}", t.path))?;
+            let end = from + old.len() as u64;
+            if system::disk_len(&t.path) != Some(end) {
+                h.set_len(end).map_err(|e| format!("{}: {e}", t.path))?;
+            }
             drop(h);
             system::logical_settled(&t.path);
             system::stamp_output(&t.path);

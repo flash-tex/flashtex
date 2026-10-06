@@ -340,8 +340,9 @@ fn a_kept_tail_stays_in_the_file_until_it_is_settled() {
         write(&mut g, 0, &tail);
         g.checkpoint().unwrap();
         g.restore(k).unwrap();
-        // nothing cut: the file still holds the old run's bytes
-        assert_eq!(read(&p).len(), 4 + tail.len());
+        // nothing cut: the file still holds the old run's bytes, its end
+        // blanked (it reads as truncated, not as the old run's whole file)
+        assert_eq!(read(&p), format!("head{}", " ".repeat(tail.len())));
         write(&mut g, 0, new);
         write(&mut g, 0, more);
         g.checkpoint().unwrap();
@@ -387,6 +388,116 @@ fn a_kept_tail_stays_in_the_file_until_it_is_settled() {
     assert_eq!(len, Some(9));
     close(&mut g, 0);
     assert_eq!(read(&p), "headshort");
+}
+
+/// What another program reading a file sees while a restore keeps its
+/// tail (the #1613 review's polling reader): never a zero byte, never the
+/// file cut and then written on, and never the old run's end after the
+/// new run's bytes. Of a tail longer than `BLANK_END`, only the end is
+/// blanked, and the jump and the abandon give back every byte.
+#[test]
+fn a_kept_tail_is_blanked_at_its_end_only_and_comes_back_whole() {
+    let d = dir("blank");
+    let p = d.join("doc.pdf").to_string_lossy().into_owned();
+    let n = BLANK_END as usize;
+    let body: String = (0..3 * n)
+        .map(|i| (b'a' + (i % 26) as u8) as char)
+        .collect();
+    let tail = format!("{body}\nstartxref\n123\n%%EOF\n");
+    for jump in [false, true] {
+        let mut g = Globals::new();
+        openout(&mut g, 0, &p);
+        write(&mut g, 0, "head");
+        let k = g.checkpoint().unwrap();
+        write(&mut g, 0, "page");
+        let j = g.checkpoint().unwrap();
+        write(&mut g, 0, &tail);
+        g.checkpoint().unwrap();
+        g.restore(k).unwrap();
+        let old = format!("headpage{tail}");
+        let now = read(&p);
+        assert_eq!(now.len(), old.len());
+        assert_eq!(now[..old.len() - n], old[..old.len() - n]);
+        assert_eq!(now[old.len() - n..], " ".repeat(n));
+        assert!(!now.contains('\0'));
+        // the new run writes over part of the old bytes, not the end
+        write(&mut g, 0, "PAGE!");
+        g.checkpoint().unwrap();
+        if jump {
+            // (the old run's later bytes, the blanked ones too)
+            g.redo_to(j).unwrap();
+            close(&mut g, 0);
+            assert_eq!(read(&p), format!("headPAGE!{tail}"));
+        } else {
+            g.reattach_pending().unwrap();
+            close(&mut g, 0);
+            assert_eq!(read(&p), old);
+        }
+    }
+}
+
+/// A restore that drops the later run (`restore_discard`) of a file longer
+/// than the checkpoint had it: the file is not cut then written on (a
+/// reader could see a hole); its end is blanked and the run's end cuts it.
+#[test]
+fn a_discarding_restore_cuts_a_longer_file_at_the_runs_end() {
+    let d = dir("discard");
+    let p = d.join("doc.pdf").to_string_lossy().into_owned();
+    let tail = "0123456789".repeat(300);
+    let mut g = Globals::new();
+    openout(&mut g, 0, &p);
+    write(&mut g, 0, "head");
+    let k = g.checkpoint().unwrap();
+    write(&mut g, 0, &tail);
+    g.checkpoint().unwrap();
+    g.restore_discard(k).unwrap();
+    let now = read(&p);
+    let n = BLANK_END as usize;
+    assert_eq!(now.len(), 4 + tail.len());
+    assert_eq!(now[..now.len() - n], format!("head{tail}")[..now.len() - n]);
+    assert_eq!(now[now.len() - n..], " ".repeat(n));
+    // the record has the checkpoint's length, not the file's
+    write(&mut g, 0, "short");
+    g.checkpoint().unwrap();
+    let last = *g.checkpoints().last().unwrap();
+    let len = g
+        .record_of(last)
+        .unwrap()
+        .files
+        .iter()
+        .find_map(|f| match &f.stream {
+            Stream::Out { path, len, .. } if *path == p => Some(*len),
+            _ => None,
+        });
+    assert_eq!(len, Some(9));
+    close(&mut g, 0);
+    assert_eq!(read(&p), "headshort");
+}
+
+/// An outside write to a tail the restore keeps in the file (an export in
+/// the same directory) between the restore and the jump: the jump refuses
+/// it (#1313's rule; the session then runs from scratch) rather than take
+/// the other program's bytes for the old run's.
+#[test]
+fn a_jump_refuses_a_kept_tail_another_program_wrote() {
+    let d = dir("jumpout");
+    let p = d.join("doc.pdf").to_string_lossy().into_owned();
+    let mut g = Globals::new();
+    openout(&mut g, 0, &p);
+    write(&mut g, 0, "head");
+    let k = g.checkpoint().unwrap();
+    write(&mut g, 0, "page");
+    let j = g.checkpoint().unwrap();
+    write(&mut g, 0, "the old run's later pages");
+    g.checkpoint().unwrap();
+    g.restore(k).unwrap();
+    write(&mut g, 0, "PAGE");
+    g.checkpoint().unwrap();
+    std::thread::sleep(std::time::Duration::from_millis(5));
+    std::fs::write(&p, "%PDF exported, compressed, longer than the preview was").unwrap();
+    assert!(g.jump_blocked().is_some());
+    let e = g.redo_to(j).unwrap_err();
+    assert!(e.contains("changed by another program"), "{e}");
 }
 
 /// A large file the run does not read (a preview PDF): its path, and the

@@ -4326,6 +4326,13 @@ impl Session {
             rep.converged_at = Some(j);
             let edits = obs.edits.clone();
             let g = self.g.as_mut().unwrap();
+            // (an outside write to the old run's kept output: from scratch,
+            // as for a restore)
+            if let Some(why) = g.jump_blocked() {
+                drop(busy_jump);
+                *rep = self.cold(t0, None, Some(format!("cannot jump: {why}")))?;
+                return Ok(());
+            }
             let rec_old = g
                 .pending_record(old)
                 .ok_or("no record at the convergence point")?;
