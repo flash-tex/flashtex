@@ -44,11 +44,7 @@
 //!
 //! `--edit FILE` (relative to `--root`) types in another file of the project
 //! than `--main`, e.g. a book chapter the main file `\input`s; the line search
-//! and `--line` then look at that file. With `--repeated` the file is
-//! input more than once (Infinite Descent ×2, tools/incr-bench/mkbook.py):
-//! a line whose glyphs are on several pages, none next to another, counts
-//! by its first page, the first the edit changes (a line split by a page
-//! break, on two consecutive pages, is still passed over).
+//! and `--line` then look at that file.
 //!
 //! `--kind K` (DESIGN.md §8, T7's edit kinds) chooses what a keystroke
 //! changes and the next changes back: `letter` (the default: a letter
@@ -308,14 +304,12 @@ fn main() {
         }
         (l, p)
     });
-    let repeated = a.iter().any(|x| x == "--repeated");
     let (line, page) = given.unwrap_or_else(|| {
         (1..=lines.len() as u32)
             .filter(|&l| lines[l as usize - 1].split(' ').count() > 40)
             .filter_map(|l| {
                 let p = on_pages(l);
-                let apart = p.windows(2).all(|w| w[1] > w[0] + 1);
-                (p.len() == 1 || (repeated && !p.is_empty() && apart)).then(|| (l, p[0]))
+                (p.len() == 1).then(|| (l, p[0]))
             })
             .min_by_key(|&(_, p)| p.abs_diff(want))
             .unwrap_or_else(|| {

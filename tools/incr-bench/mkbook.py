@@ -12,7 +12,8 @@ entry's SHA-256 and kept in INCR_BENCH_DIR/cache; nothing from the book is commi
 1.3c source, CC BY-SA 4.0 book: books.json's licence note). The tree is unpacked into docs/BOOK
 with the entry file as main.tex, and docs/BOOK/doc.json says how the drivers edit it (docspec.py):
 in-body keystrokes go into `edit`, a chapter the main file inputs (the main file's body is only
-\\input lines), and with `repeated` that file is input twice.
+\\input lines; in infdesc-x2 the first copy's: the second inputs copies of its own, so a keystroke
+changes one place). A changed generator or entry makes the document again.
 """
 import hashlib
 import json
@@ -27,12 +28,13 @@ S = os.path.dirname(os.path.abspath(__file__))
 W = os.path.dirname(os.path.dirname(S))
 IB = os.environ.get('INCR_BENCH_DIR', '/tmp/incr-bench')
 CORPUS = os.path.join(W, 'tools', 'parity', 'corpus')
-# BOOK: (books.json id, the chapter the in-body edits go into, input twice)
+# BOOK: (books.json id, the chapter the in-body edits go into, the generator of the doubled book)
 BOOKS = {
-    # number theory: pages 245-290 of the first copy (the middle of the book), 33 prose lines
+    # number theory: pages 245-290 (of the first copy), 33 prose lines
     'infdesc': ('infdesc-48825c5', 'book/number-theory/modular-arithmetic.tex', False),
     'infdesc-x2': ('infdesc-48825c5', 'book/number-theory/modular-arithmetic.tex', True),
 }
+X2 = os.path.join(CORPUS, 'infdesc_x2.py')
 
 
 def fetch(entry):
@@ -53,12 +55,13 @@ def fetch(entry):
 
 
 def make(book):
-    eid, edit, repeated = BOOKS[book]
+    eid, edit, doubled = BOOKS[book]
     entry = next(e for e in json.load(open(os.path.join(CORPUS, 'books.json')))['entries'] if e['id'] == eid)
     archive = fetch(entry)
     d = os.path.join(IB, 'docs', book)
     stamp = os.path.join(d, 'doc.json')
-    want = dict(source=entry['id'], sha256=entry['sha256'], edit=edit, repeated=repeated)
+    want = dict(source=entry['id'], sha256=entry['sha256'], edit=edit,
+                generator=hashlib.sha256(open(X2, 'rb').read()).hexdigest() if doubled else None)
     if os.path.exists(stamp) and json.load(open(stamp)) == want:
         return d
     shutil.rmtree(d, ignore_errors=True)
@@ -73,8 +76,8 @@ def make(book):
     shutil.move(os.path.join(tmp, entry['root']), d)
     shutil.rmtree(tmp)
     main = entry['entry']
-    if repeated:
-        subprocess.run([sys.executable, os.path.join(CORPUS, 'infdesc_x2.py'), d], check=True, stdout=subprocess.DEVNULL)
+    if doubled:
+        subprocess.run([sys.executable, X2, d], check=True, stdout=subprocess.DEVNULL)
         main = 'infdesc-x2.tex'
     shutil.copy(os.path.join(d, main), os.path.join(d, 'main.tex'))
     json.dump(want, open(stamp, 'w'), indent=1)

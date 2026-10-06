@@ -22,9 +22,9 @@ def copy(ib, doc, work):
 
 
 def edit_args(ib, doc):
-    """dl3-keys' arguments for an in-body keystroke: the chapter, and whether it is input twice."""
+    """dl3-keys' arguments for an in-body keystroke: the chapter it goes into."""
     s = spec(ib, doc)
-    return (['--edit', s['edit']] if s.get('edit') else []) + (['--repeated'] if s.get('repeated') else [])
+    return ['--edit', s['edit']] if s.get('edit') else []
 
 
 def edit_file(ib, doc):
