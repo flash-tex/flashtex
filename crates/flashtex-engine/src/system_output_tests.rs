@@ -474,6 +474,34 @@ fn a_discarding_restore_cuts_a_longer_file_at_the_runs_end() {
     assert_eq!(read(&p), "headshort");
 }
 
+/// A new engine (a run from scratch) forgets the logical ends: a file
+/// still longer than its own is cut to it first, as the old engine's runs
+/// left it; a file another program wrote since keeps its bytes.
+#[test]
+fn a_new_engine_cuts_the_files_to_their_logical_ends_first() {
+    let d = dir("forget");
+    let p = d.join("doc.aux").to_string_lossy().into_owned();
+    let q = d.join("doc.pdf").to_string_lossy().into_owned();
+    let mut g = Globals::new();
+    openout(&mut g, 0, &p);
+    openout(&mut g, 1, &q);
+    write(&mut g, 0, "head");
+    write(&mut g, 1, "%PDF");
+    let k = g.checkpoint().unwrap();
+    write(&mut g, 0, &"the old run's later lines".repeat(10));
+    write(&mut g, 1, &"later pages".repeat(10));
+    g.checkpoint().unwrap();
+    g.restore(k).unwrap();
+    write(&mut g, 0, "short");
+    g.checkpoint().unwrap();
+    std::thread::sleep(std::time::Duration::from_millis(5));
+    std::fs::write(&q, "%PDF exported").unwrap();
+    drop(g);
+    forget_logical();
+    assert_eq!(read(&p), "headshort");
+    assert_eq!(read(&q), "%PDF exported");
+}
+
 /// An outside write to a tail the restore keeps in the file (an export in
 /// the same directory) between the restore and the jump: the jump refuses
 /// it (#1313's rule; the session then runs from scratch) rather than take

@@ -400,9 +400,23 @@ pub fn read_logical(path: &str) -> std::io::Result<Vec<u8>> {
     Ok(d)
 }
 
-/// A new engine: no file's logical end is known any more (its run opens
-/// them for output again, which truncates them).
+/// A new engine: no file's logical end is known any more. Each file still
+/// longer than its logical end is cut to it first, as the old engine's
+/// runs left it (the new run may not open it for output again), unless
+/// another program has written it since (an export: its bytes stay).
 pub fn forget_logical() {
+    let paths: Vec<String> = LOGICAL.with(|m| {
+        m.borrow()
+            .iter()
+            .filter(|(_, l)| l.len.is_some())
+            .map(|(k, _)| k.clone())
+            .collect()
+    });
+    for p in paths {
+        if outside_change(&p).is_none() && std::path::Path::new(&p).exists() {
+            cut_to_logical(&p);
+        }
+    }
     LOGICAL.with(|m| m.borrow_mut().clear());
 }
 
