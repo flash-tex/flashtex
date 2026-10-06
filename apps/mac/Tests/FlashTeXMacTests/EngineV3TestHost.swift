@@ -17,21 +17,23 @@ enum EngineV3TestHost {
     /// with FLASHTEX_REQUIRE_HOST=1 either missing is a failure, not a skip.
     static func require(file: StaticString = #filePath, line: UInt = #line) throws {
         guard EngineV3.locateHost() != nil else {
-            try missing("no flashtex-host built (cargo build --release -p flashtex-engine --bin flashtex-host)", file: file, line: line)
-            return
+            throw unavailable("no flashtex-host built (cargo build --release -p flashtex-engine --bin flashtex-host)", file: file, line: line)
         }
-        guard texLive != nil else { try missing("no TeX Live found (kpsewhich pdflatex.ini)", file: file, line: line); return }
+        guard texLive != nil else { throw unavailable("no TeX Live found (kpsewhich pdflatex.ini)", file: file, line: line) }
     }
 
     /// Whether a missing host or TeX Live fails the test (FLASHTEX_REQUIRE_HOST=1).
-    static var hostRequired: Bool { ProcessInfo.processInfo.environment["FLASHTEX_REQUIRE_HOST"] == "1" }
+    nonisolated static var hostRequired: Bool { ProcessInfo.processInfo.environment["FLASHTEX_REQUIRE_HOST"] == "1" }
 
     struct HostMissing: Error, CustomStringConvertible { let description: String }
 
-    private static func missing(_ why: String, file: StaticString, line: UInt) throws {
-        guard hostRequired else { throw XCTSkip(why) }
+    /// What a test throws when it cannot have a working host: an XCTSkip,
+    /// or, under FLASHTEX_REQUIRE_HOST=1, a recorded failure (and an error
+    /// that ends the test). `throw EngineV3TestHost.unavailable("...")`.
+    nonisolated static func unavailable(_ why: String, file: StaticString = #filePath, line: UInt = #line) -> Error {
+        guard hostRequired else { return XCTSkip(why) }
         XCTFail("FLASHTEX_REQUIRE_HOST=1: " + why, file: file, line: line)
-        throw HostMissing(description: why)
+        return HostMissing(description: why)
     }
 
     /// The `pdflatex.ini` a TeX Live resolves, or nil when none is installed.

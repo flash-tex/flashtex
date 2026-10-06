@@ -1165,6 +1165,8 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           key: v3-host
+          # The build is ~11 min cold; keep it even when a test fails.
+          cache-on-failure: true
       - name: Build flashtex-host and every bundled helper (release)
         # The host is found through FLASHTEX_HOST; the helpers' FLASHTEX_*
         # lines are what mac-app exports (flashtex-project-files for the
