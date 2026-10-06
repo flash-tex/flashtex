@@ -43,7 +43,12 @@ PASS_TIMEOUT = 300
 # normalises the content streams, then writes them compressed again with its own Flate, so
 # the qdf copy stays about the size of the PDF; Graph decodes one stream at a time, and an
 # image as a stream (image_digest). Without it a 12.7 MB PDF became a 3.0 GB copy (#1621).
-QPDF_ARGS = ["--qdf", "--normalize-content=y", "--object-streams=disable", "--compress-streams=y"]
+# --recompress-flate: without it qpdf passes a stream that is already Flate through as it is,
+# PNG predictor included, and P-T2 would compare zlib's bytes instead of the samples (#1635
+# review: the same pixels at another zlib level failed); with it every Flate stream is
+# decoded (predictors undone) and written again with qpdf's own Flate.
+QPDF_ARGS = ["--qdf", "--normalize-content=y", "--object-streams=disable", "--compress-streams=y",
+             "--recompress-flate"]
 # P-T2's normalised (qdf) copy of a PDF holds every stream decoded, and the comparison reads
 # it whole: a 12.7 MB PDF with large images (T4 2511.15561v1) became 3.0 GB and an OOM kill.
 # Over this size the document is a harness error (unmeasured; its tier reads partial), never
@@ -649,7 +654,9 @@ def image_digest(doc, obj, raw):
     not plain /FlateDecode (no /DecodeParms), which the caller decodes as before.
 
     The same digest as sha(clear_row_padding(doc, obj, decode(...))), without holding
-    the image: T4's 2511.15561v1 holds 3.0 GB of decoded image data (#1621)."""
+    the image: T4's 2511.15561v1 holds 3.0 GB of decoded image data (#1621). Unlike
+    Graph.stream it does not fold font subset tags (ABCDEF+) in the samples: they name
+    fonts, and image data that happens to contain one is negligible."""
     if not isinstance(obj, dict) or str(obj.get("Subtype")) != "Image" or obj.get("DecodeParms"):
         return None
     filt = obj.get("Filter")

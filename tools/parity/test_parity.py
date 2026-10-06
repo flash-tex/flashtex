@@ -2827,6 +2827,52 @@ class PT2SizeCap(unittest.TestCase):
         tiers.normalise_pdf(src, out)  # under the default cap: as before
         self.assertTrue(os.path.getsize(out) > 0)
 
+    def predictor_pdf(self, d, name, pixels, width, level, png_filter):
+        """A one-page PDF whose RGB image is Flate with a PNG predictor (as pdfTeX's PNG
+        copy writes it), every row with `png_filter` (0 None, 1 Sub), at zlib `level`."""
+        import zlib
+        bpp, rowbytes = 3, width * 3
+        rows = []
+        for y in range(len(pixels) // rowbytes):
+            row = pixels[y * rowbytes:(y + 1) * rowbytes]
+            if png_filter == 1:
+                row = bytes((row[i] - (row[i - bpp] if i >= bpp else 0)) & 0xff for i in range(rowbytes))
+            rows.append(bytes([png_filter]) + row)
+        data = zlib.compress(b"".join(rows), level)
+        img = (b"<< /Type /XObject /Subtype /Image /Width %d /Height %d /BitsPerComponent 8 "
+               b"/ColorSpace /DeviceRGB /Filter /FlateDecode /DecodeParms << /Predictor 15 /Colors 3 "
+               b"/Columns %d >> /Length %d >>\nstream\n" % (width, len(rows), width, len(data))) + data + b"\nendstream"
+        objs = [b"<< /Type /Catalog /Pages 2 0 R >>", b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+                b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 9 9] /Resources << /XObject << /Im1 5 0 R >> >> "
+                b"/Contents 4 0 R >>",
+                b"<< /Length 18 >>\nstream\nq 9 0 0 9 0 0 cm /Im1 Do Q\nendstream", img]
+        body = b"%PDF-1.4\n" + b"".join(b"%d 0 obj\n%s\nendobj\n" % (i + 1, o) for i, o in enumerate(objs))
+        body += b"trailer\n<< /Root 1 0 R /Size 6 >>\n%%EOF\n"
+        p = os.path.join(d, name)
+        with open(p, "wb") as f:
+            f.write(body)
+        return p
+
+    def test_same_pixels_other_encoding_is_equal(self):
+        """#1635 review: a Flate image with a PNG predictor is compared by its samples, not by
+        zlib's bytes (--recompress-flate): the same pixels at another level and with another
+        PNG row filter pass, and one changed pixel fails."""
+        import random
+        d = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, d, True)
+        rnd = random.Random(1635)
+        width, height = 40, 30
+        pixels = bytes(rnd.randrange(256) for _ in range(width * height * 3))
+        a = self.predictor_pdf(d, "a.pdf", pixels, width, 9, 0)
+        b = self.predictor_pdf(d, "b.pdf", pixels, width, 1, 1)
+        self.assertTrue(tiers.compare_pt2(a, b, os.path.join(d, "w1"))["ok"])
+        changed = bytearray(pixels)
+        changed[1234] ^= 1
+        c = self.predictor_pdf(d, "c.pdf", bytes(changed), width, 9, 0)
+        r = tiers.compare_pt2(a, c, os.path.join(d, "w2"))
+        self.assertFalse(r["ok"])
+        self.assertEqual(r["first_page"]["differs"], ["resources"])
+
     def test_qdf_keeps_images_compressed_and_the_digest_is_unchanged(self):
         """#1621: the qdf copy is written compressed (--compress-streams=y), and an image's
         digest is the streamed one, equal to hashing its decoded, padding-cleared samples."""
