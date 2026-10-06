@@ -638,8 +638,8 @@ def parse_latex_suites(text, reference=None, listing=None):
     return {"tests": c}
 
 
-SMOKE_LINE = re.compile(r"^(\S+)\s+(equal|DIFFERENT)(?: \((.*)\))?\s*$")
-SMOKE_TOTAL = re.compile(r"^(\d+) documents, (\d+) differ\s*$")
+SMOKE_LINE = re.compile(r"^(\S+)\s+(equal|DIFFERENT|EXCLUDED)(?: \((.*)\))?\s*$")
+SMOKE_TOTAL = re.compile(r"^(\d+) documents, (\d+) differ(?:, (\d+) excluded \((.*)\))?\s*$")
 
 
 SMOKE_DIR = os.path.join(os.path.dirname(HERE), "package-smoke")
@@ -660,26 +660,34 @@ def parse_package_smoke(text, expected=None):
     files in tools/package-smoke); fewer is partial, and so is an unknown count."""
     if expected is None:
         expected = smoke_documents()
-    equal, differ, total = [], [], None
+    equal, differ, excluded, total, why = [], [], [], None, None
     for line in text.splitlines():
         m = SMOKE_LINE.match(line)
         if m:
-            (equal if m.group(2) == "equal" else differ).append(m.group(1))
+            {"equal": equal, "DIFFERENT": differ, "EXCLUDED": excluded}[m.group(2)].append(m.group(1))
             continue
         m = SMOKE_TOTAL.match(line)
         if m:
-            total = (int(m.group(1)), int(m.group(2)))
-    n = len(equal) + len(differ)
+            total = (int(m.group(1)), int(m.group(2)), int(m.group(3) or 0))
+            why = m.group(4)
+    n = len(equal) + len(differ) + len(excluded)
     if total is None:
         return {"documents": cell("measured", len(equal), n,
                                   invalid="no 'N documents, M differ' line (harness error)")}
-    if total != (n, len(differ)):
+    if total != (n, len(differ), len(excluded)):
         return {"documents": cell("measured", len(equal), total[0],
-                                  invalid="summary %d/%d disagrees with %d result lines"
-                                  % (total[0], total[1], n))}
-    if n <= 0:
+                                  invalid="summary %d/%d/%d disagrees with %d result lines"
+                                  % (total[0], total[1], total[2], n))}
+    if n - len(excluded) <= 0:
         return {"documents": cell("measured", 0, 0, invalid="package-smoke ran 0 documents")}
-    c = cell("measured", len(equal), n, note=("differ: " + ", ".join(differ)) if differ else None)
+    # a document the oracle cannot compile is out of the denominator, with its reason
+    # (run.py excludes it only when the candidate fails identically), like parity's
+    # oracle exclusions
+    notes = [x for x in (("differ: " + ", ".join(differ)) if differ else None,
+                         ("excluded: " + ", ".join(excluded)) if excluded else None) if x]
+    c = cell("measured", len(equal), n - len(excluded), note="; ".join(notes) or None)
+    if excluded:
+        c["excluded"] = {why or "the reference does not compile it": len(excluded)}
     if expected is None:
         c["partial"] = "full package-smoke count unknown (no tools/package-smoke directory)"
     elif n < expected:
@@ -1099,7 +1107,10 @@ def build(sources, shas=None, sample_note=None, stages=None, host_label=None, na
             v = verdict(tier, metric, new, old, same_host, na_baseline)
             target = target_of(tier, metric)
             if old is not None and old["status"] == "n/a":
-                target = target.replace("new >= old", "100% or baseline (old n/a)")
+                # on a row the owner's bar covers, that bar is the whole target (na_bar_met)
+                target = (target.replace("new >= old; ", "").replace("(owner bar)", "(owner bar; old n/a)")
+                          if (tier, metric) in OWNER_BAR else
+                          target.replace("new >= old", "100% or baseline (old n/a)"))
             rows.append({"tier": tier, "metric": metric, "new": new, "old": old,
                          "verdict": v, "target": target,
                          "gates": gated_stages(tier, metric, stages)})

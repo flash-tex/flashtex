@@ -45,7 +45,8 @@
 # board builds its commit on a self-hosted runner, DESIGN §9.3; the rules are
 # in scripts/ci/p5-pick-t4.sh), and the WHOLE board is then measured at the
 # commit its summary records, which must be a commit of main (checked even
-# when it is the run's own), so every tier is at one SHA. scoreboard.py
+# when it is the run's own), so every tier is at one SHA. (The engine is that
+# commit's; the harness and the board, tools/, are this workflow's own commit.) scoreboard.py
 # checks the commit, the engine binary sha256 and the oracle each T4 summary
 # records against the board's own (the oracle down to its texlive.tlpdb and
 # pdftex sha256, from oracle_provenance.py: the version string is the same on
@@ -210,6 +211,25 @@ jobs:
           # the T4 run's commit, so T4 and every tier measured here are one SHA
           ref: ${{ needs.pick.outputs.sha || github.sha }}
           persist-credentials: false
+      # The ENGINE is the measured commit's (crates/, above); the HARNESS and the board
+      # (tools/: the board driver, scoreboard.py, parity.py, ...) are this workflow's
+      # own commit, so the board's rules are the ones this file was written for. With
+      # the measured commit's tools, a board whose T4 run is a day older than the
+      # workflow ran yesterday's board script (P5-BOARD-T4: its options, the owner's
+      # bar and the T4 crash row did not exist there).
+      - uses: actions/checkout@v4
+        if: needs.pick.outputs.sha != '' && needs.pick.outputs.sha != github.sha
+        with:
+          ref: ${{ github.sha }}
+          path: .board-tools
+          sparse-checkout: tools
+          persist-credentials: false
+      - name: this workflow's tools over the measured commit's
+        if: needs.pick.outputs.sha != '' && needs.pick.outputs.sha != github.sha
+        run: |
+          set -euo pipefail
+          rm -rf tools && mv .board-tools/tools tools && rm -rf .board-tools
+          echo "engine at ${{ needs.pick.outputs.sha }}; tools at $GITHUB_SHA"
       # Pinned, not @stable: the board compares its engine binary's sha256 with the
       # T4 run's, so p5-scoreboard.yml and both T4 jobs (nightly.yml corpus-t4,
       # corpus-t4-mac.yml) build with one rustc. Change all three together.
@@ -274,7 +294,7 @@ jobs:
           fi
           ${wrap[@]+"${wrap[@]}"} tools/parity/scoreboard-run.sh --out "$RUNNER_TEMP/p5" --jobs 2 \
             --t4-new "$RUNNER_TEMP/t4-new" --t4-old "$RUNNER_TEMP/t4-old" ${extra[@]+"${extra[@]}"} -- \
-            --host-label "$RUNNER_NAME ($ROUTE; $ORACLE_ID)" \
+            --host-label "$RUNNER_NAME ($ROUTE; $ORACLE_ID; tools ${GITHUB_SHA::9})" \
             --run-url "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" \
             --summary "$RUNNER_TEMP/p5/SUMMARY.md" --issues off
       - name: report

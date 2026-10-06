@@ -613,6 +613,18 @@ class Parsers(unittest.TestCase):
         self.assertTrue(sb.parse_package_smoke("a equal\n")["documents"]["invalid"])
         self.assertTrue(sb.parse_package_smoke("a equal\n3 documents, 0 differ\n")["documents"]["invalid"])
 
+    def test_package_smoke_reference_failures_are_excluded(self):
+        why = "the reference does not compile it on this TeX Live; the candidate fails identically"
+        r = sb.parse_package_smoke("a equal\nb EXCLUDED (%s: exit 1)\nc equal\n"
+                                   "3 documents, 0 differ, 1 excluded (%s)\n" % (why, why), expected=3)["documents"]
+        self.assertEqual((r["passed"], r["of"]), (2, 2))
+        self.assertEqual(r["excluded"], {why: 1})
+        self.assertIsNone(r.get("partial"))
+        self.assertIn("excluded: b", r["note"])
+        # the summary must count them
+        r = sb.parse_package_smoke("a equal\nb EXCLUDED (x: exit 1)\n2 documents, 0 differ\n", expected=2)
+        self.assertTrue(r["documents"]["invalid"])
+
     def test_smoke_subset_is_partial(self):
         r = sb.parse_package_smoke("a equal\n1 documents, 0 differ\n", expected=59)["documents"]
         self.assertEqual(r["partial"], "1 of 59 package-smoke documents")
@@ -933,6 +945,7 @@ class OwnerBar(unittest.TestCase):
         self.assertEqual(row(b, "arxiv", "P-T1")["verdict"], "ahead (old n/a)")
         self.assertEqual(row(b, "arxiv", "P-T2")["verdict"], "ahead")
         self.assertEqual(row(b, "arxiv", "P-T2")["target"], "new >= old; >= 99% (owner bar)")
+        self.assertEqual(row(b, "arxiv", "P-T1")["target"], ">= 98% (owner bar; old n/a)")
         b = self.arxiv((979, 1000), (989, 1000))  # one document under, though new > old
         self.assertEqual(row(b, "arxiv", "P-T1")["verdict"], "below bar (old n/a)")
         self.assertEqual(row(b, "arxiv", "P-T2")["verdict"], "below bar")

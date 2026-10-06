@@ -21,11 +21,18 @@ The reference must be pdfTeX 1.40.29 (lockstep's pinned check); anything else is
 harness error. A missing or hanging candidate counts as DIFFERENT for that
 document, never as a traceback. Standard library only.
 
+A document the reference itself does not compile on this TeX Live (a package that
+breaks under a newer LaTeX kernel, e.g. tabu, tabls and thmtools under LaTeX
+2026-06-01) has no expected output to match. It is EXCLUDED, with the reason, when
+the candidate fails identically: the same exit code, transcript and box dumps on
+every pass. A candidate that fails differently, or succeeds, is DIFFERENT. The
+summary line counts the excluded documents; they are never dropped silently.
+
   FLASHTEX_POOL=... FLASHTEX_FORMATS=... \\
   python3 tools/package-smoke/run.py --candidate BIN [--reference pdftex] [PKG ...]
 
-Exit status: 0 every document equal; 1 at least one differs; 2 harness or usage
-error (unknown package name, empty selection, wrong reference version).
+Exit status: 0 every document equal or excluded; 1 at least one differs; 2 harness
+or usage error (unknown package name, empty selection, wrong reference version).
 """
 import argparse
 import hashlib
@@ -159,6 +166,24 @@ def compare(cand, ref):
     return None
 
 
+def same_failure(cand, ref):
+    """When the reference fails on some pass (a non-zero exit) and the candidate
+    fails identically on every pass (same exit code, transcript and box dumps), the
+    reference's exit code; else None."""
+    if len(cand) != len(ref) or any(x.get("error") or "returncode" not in x for x in cand + ref):
+        return None
+    codes = [r["returncode"] for r in ref if r["returncode"] != 0]
+    if not codes:
+        return None
+    for c, r in zip(cand, ref):
+        if (c["returncode"], c["lines"], c["boxes"]) != (r["returncode"], r["lines"], r["boxes"]):
+            return None
+    return codes[0]
+
+
+EXCLUDED_WHY = "the reference does not compile it on this TeX Live; the candidate fails identically"
+
+
 def select(names):
     available = sorted(f[:-4] for f in os.listdir(HERE) if f.endswith(".tex"))
     if not names:
@@ -187,7 +212,7 @@ def main(argv=None):
             raise HarnessError("--passes must be at least 1")
         names = select(args.packages)
         cand_env = {k: os.environ[k] for k in CANDIDATE_ENV if k in os.environ} or None
-        bad = 0
+        bad = excluded = 0
         for name in names:
             tex = os.path.join(HERE, name + ".tex")
             cand = run_passes(tex, args.candidate, cand_env, args.passes,
@@ -195,15 +220,20 @@ def main(argv=None):
             ref = run_passes(tex, args.reference, None, args.passes,
                              args.timeout, is_reference=True)
             reason = compare(cand, ref)
+            code = same_failure(cand, ref) if reason is not None else None
             if reason is None:
                 print("%-16s equal" % name, flush=True)
+            elif code is not None:
+                excluded += 1
+                print("%-16s EXCLUDED (%s: exit %s)" % (name, EXCLUDED_WHY, code), flush=True)
             else:
                 bad += 1
                 print("%-16s DIFFERENT (%s)" % (name, reason), flush=True)
     except HarnessError as exc:
         print("error: %s" % exc, file=sys.stderr)
         return 2
-    print("%d documents, %d differ" % (len(names), bad))
+    print("%d documents, %d differ" % (len(names), bad)
+          + (", %d excluded (%s)" % (excluded, EXCLUDED_WHY) if excluded else ""))
     return 1 if bad else 0
 
 

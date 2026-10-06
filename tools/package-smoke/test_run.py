@@ -91,6 +91,17 @@ class RunTest(unittest.TestCase):
         why = self.diff({"FAKE_RC": "1"}, {"FAKE_RC": "1"})
         self.assertIn("reference itself", why)
 
+    def test_reference_failure_matched_by_the_candidate_is_excluded(self):
+        both = self.passes({**self.env, "FAKE_RC": "1"}, False), self.passes({**self.env, "FAKE_RC": "1"}, True)
+        self.assertEqual(smoke.same_failure(*both), 1)
+        # a candidate that succeeds, or fails with another transcript, is not excluded
+        ok = self.passes(self.env, False)
+        self.assertIsNone(smoke.same_failure(ok, both[1]))
+        other = self.passes({**self.env, "FAKE_RC": "1", "FAKE_BOX": "other"}, False)
+        self.assertIsNone(smoke.same_failure(other, both[1]))
+        # a reference that compiles is never excluded
+        self.assertIsNone(smoke.same_failure(ok, self.passes(self.env, True)))
+
     def test_wrong_reference_version_is_a_harness_error(self):
         env = {**self.env, "FAKE_VERSION": "pdfTeX 3.14-2.6-1.40.28 (TeX Live 2025)"}
         with mock.patch.dict(os.environ, env, clear=False):

@@ -563,6 +563,60 @@ def compare_pt1_streamed(ref, cand):
 # P-T2
 
 
+# Components per sample of an image's /ColorSpace (a name, or the family of an array).
+_COLOR_COMPONENTS = {"DeviceGray": 1, "CalGray": 1, "Indexed": 1, "Separation": 1, "Pattern": 1,
+                     "DeviceRGB": 3, "CalRGB": 3, "Lab": 3, "DeviceCMYK": 4}
+
+
+def image_components(doc, obj):
+    """Components per sample of an image XObject, or None when they cannot be told."""
+    if obj.get("ImageMask") is True:
+        return 1
+    cs = doc.resolve(obj.get("ColorSpace"))
+    if isinstance(cs, list) and cs:
+        fam = str(cs[0])
+        if fam == "ICCBased" and len(cs) > 1:
+            icc = doc.resolve(cs[1])
+            n = icc.get("N") if isinstance(icc, dict) else None
+            return n if isinstance(n, int) else None
+        if fam == "DeviceN" and len(cs) > 1:
+            names = doc.resolve(cs[1])
+            return len(names) if isinstance(names, list) else None
+        return _COLOR_COMPONENTS.get(fam)
+    return _COLOR_COMPONENTS.get(str(cs)) if cs is not None else None
+
+
+def clear_row_padding(doc, obj, data):
+    """An image's decoded samples with the unused low bits of each row's last byte
+    cleared (PDF 32000-1 8.9.3: each row starts on a byte boundary, and those bits are
+    not pixels).
+
+    pdfTeX writes whatever its row buffer held there: writepng.c's palette and grey
+    paths decode rows with libpng into an uninitialised xtalloc'd buffer, and
+    png_combine_row keeps the destination's bits past the last pixel. The same pdfTeX
+    1.40.29 on the same PNG wrote 0 on the Macs and 1101110 on the NixOS PC
+    (tcolorbox-example's Basilica_5.png, 977 px at 1 bit, P5-BOARD-T4, 2026-10-06):
+    heap contents, not output anyone can match. Every pixel is still compared."""
+    if not isinstance(obj, dict) or str(obj.get("Subtype")) != "Image":
+        return data
+    w, h = obj.get("Width"), obj.get("Height")
+    bpc = 1 if obj.get("ImageMask") is True else obj.get("BitsPerComponent")
+    n = image_components(doc, obj)
+    if not all(isinstance(v, int) and not isinstance(v, bool) and v > 0 for v in (w, h, bpc, n or 0)):
+        return data
+    bits = w * bpc * n
+    if bits % 8 == 0:
+        return data
+    rowbytes = (bits + 7) // 8
+    if len(data) != h * rowbytes:  # still encoded (DCT, JPX), or not plain rows: as it is
+        return data
+    keep = (0xff << (8 - bits % 8)) & 0xff
+    out = bytearray(data)
+    for i in range(rowbytes - 1, len(out), rowbytes):
+        out[i] &= keep
+    return bytes(out)
+
+
 class Graph:
     """Canonical, number-free view of a qpdf-normalised PDF. Every indirect
     object is named by a hash of what it contains (its dictionary with each
@@ -585,7 +639,7 @@ class Graph:
         if raw is None:
             return b""
         try:
-            data = self.doc.decode(obj, raw)
+            data = clear_row_padding(self.doc, obj, self.doc.decode(obj, raw))
         except (pdftext.PdfError, zlib.error):
             data = raw  # a filter qpdf keeps (DCT, JPX, ...): compare the encoded bytes
         for t in self.tags:

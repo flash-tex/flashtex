@@ -2800,5 +2800,52 @@ sys.exit(0)
             live.wait()
 
 
+class RowPadding(unittest.TestCase):
+    """P5-BOARD-T4: pdfTeX leaves heap bytes in the unused bits of a sub-byte image row
+    (writepng.c's uninitialised row buffer and libpng's png_combine_row), so P-T2
+    compares image samples with those bits cleared, and every pixel still counts."""
+
+    class Doc:
+        def __init__(self, objs=None):
+            self.objs = objs or {}
+
+        def resolve(self, x):
+            return self.objs.get(x, x) if isinstance(x, (str, int)) else x
+
+    def image(self, width, **over):
+        o = {"Subtype": "Image", "Width": width, "Height": 2, "BitsPerComponent": 1,
+             "ColorSpace": ["Indexed", "DeviceRGB", 1, b"\x00\x00\x00\xff\xff\xff"]}
+        o.update(over)
+        return o
+
+    def test_padding_cleared_pixels_kept(self):
+        doc = self.Doc()
+        # 9 px at 1 bit: 2 bytes a row, 7 padding bits in the second
+        a = tiers.clear_row_padding(doc, self.image(9), bytes([0xAA, 0b11101110, 0x55, 0b01101110]))
+        b = tiers.clear_row_padding(doc, self.image(9), bytes([0xAA, 0b10000000, 0x55, 0b00000000]))
+        self.assertEqual(a, b)
+        c = tiers.clear_row_padding(doc, self.image(9), bytes([0xAA, 0b00000000, 0x55, 0b00000000]))
+        self.assertNotEqual(a, c)  # the 9th pixel differs: still a difference
+
+    def test_left_alone(self):
+        doc = self.Doc()
+        whole = bytes([1, 2, 3, 4])
+        self.assertEqual(tiers.clear_row_padding(doc, self.image(16), whole), whole)  # rows end on a byte
+        self.assertEqual(tiers.clear_row_padding(doc, self.image(9), b"\xff" * 3), b"\xff" * 3)  # not plain rows
+        self.assertEqual(tiers.clear_row_padding(doc, {"Subtype": "Form"}, b"\xff\xff"), b"\xff\xff")
+        unknown = self.image(9, ColorSpace="Unknown")
+        self.assertEqual(tiers.clear_row_padding(doc, unknown, b"\xff" * 4), b"\xff" * 4)
+
+    def test_components_from_the_colour_space(self):
+        doc = self.Doc({"icc": {"N": 3}})
+        rgb = self.image(3, ColorSpace="DeviceRGB", BitsPerComponent=4)  # 36 bits: 5 bytes, 4 spare bits
+        out = tiers.clear_row_padding(doc, rgb, b"\xff" * 10)
+        self.assertEqual(out, b"\xff\xff\xff\xff\xf0" * 2)
+        icc = self.image(3, ColorSpace=["ICCBased", "icc"], BitsPerComponent=4)
+        self.assertEqual(tiers.clear_row_padding(doc, icc, b"\xff" * 10), out)
+        mask = {"Subtype": "Image", "Width": 9, "Height": 1, "ImageMask": True}
+        self.assertEqual(tiers.clear_row_padding(doc, mask, b"\xff\xff"), b"\xff\x80")
+
+
 if __name__ == "__main__":
     unittest.main()
