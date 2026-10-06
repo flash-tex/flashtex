@@ -400,6 +400,9 @@ struct DocTools {
 
 pub(crate) struct Engine {
     cfg: Arc<Config>,
+    /// The performance mode in effect (`crate::profile`): the host's
+    /// `--profile`, then each client's choice (`Req::Profile`).
+    profile: crate::profile::Profile,
     /// The engine thread's own queue: the tools' worker reports there.
     tx: mpsc::Sender<Req>,
     doc: Option<Doc>,
@@ -418,6 +421,7 @@ type Written = HashMap<PathBuf, (crate::system::StatSig, Arc<Vec<u8>>)>;
 impl Engine {
     pub fn new(cfg: Arc<Config>, tx: mpsc::Sender<Req>) -> Engine {
         Engine {
+            profile: cfg.profile.clone(),
             cfg,
             tx,
             doc: None,
@@ -438,6 +442,10 @@ impl Engine {
         let mut trim_due = false;
         loop {
             let pause = self.cfg.keep_warm_pause;
+            let trim_after = self
+                .profile
+                .trim_after_ms
+                .map(std::time::Duration::from_millis);
             let req = match hot_until {
                 Some(t) if Instant::now() < t && pause.is_zero() => match rx.try_recv() {
                     Ok(r) => r,
@@ -460,18 +468,20 @@ impl Engine {
                     }
                     Err(mpsc::RecvTimeoutError::Disconnected) => break,
                 },
-                _ if trim_due => match rx.recv_timeout(TRIM_AFTER) {
-                    Ok(r) => r,
-                    Err(mpsc::RecvTimeoutError::Timeout) => {
-                        trim_due = false;
-                        if let Some(d) = self.doc.as_mut() {
-                            d.session.trim_caches();
+                _ if trim_due && trim_after.is_some() => {
+                    match rx.recv_timeout(trim_after.unwrap_or_default()) {
+                        Ok(r) => r,
+                        Err(mpsc::RecvTimeoutError::Timeout) => {
+                            trim_due = false;
+                            if let Some(d) = self.doc.as_mut() {
+                                d.session.trim_caches();
+                            }
+                            give_back_free_memory();
+                            continue;
                         }
-                        give_back_free_memory();
-                        continue;
+                        Err(mpsc::RecvTimeoutError::Disconnected) => break,
                     }
-                    Err(mpsc::RecvTimeoutError::Disconnected) => break,
-                },
+                }
                 _ => match rx.recv() {
                     Ok(r) => r,
                     Err(_) => break,
@@ -485,6 +495,17 @@ impl Engine {
                 Req::Closed(id) => {
                     self.peers.remove(&id);
                 }
+                Req::Profile {
+                    conn,
+                    profile,
+                    reply,
+                } => {
+                    self.set_profile(profile);
+                    if reply {
+                        let j = obj([("profile", self.profile.json())]);
+                        server::send_json(&conn.out, kind::PROFILE, &j);
+                    }
+                }
                 Req::Compile { conn, req, t0 } => {
                     conn.queued.fetch_sub(1, Ordering::SeqCst);
                     let c = conn.clone();
@@ -492,7 +513,8 @@ impl Engine {
                     // DONE is out: prepare the next keystroke's restore
                     // while nothing waits (`incr::Session::prepare_next`)
                     // (FLASHTEX_NO_PREPARE=1 leaves it out, for A/B)
-                    let prepare = std::env::var_os("FLASHTEX_NO_PREPARE").is_none();
+                    // (the profile's `prepare`; FLASHTEX_NO_PREPARE pins it off)
+                    let prepare = self.profile.prepare;
                     if let Some(d) = self.doc.as_mut().filter(|_| prepare) {
                         let _busy = crate::busy::enter(crate::busy::Part::Prepare);
                         d.session
@@ -508,8 +530,10 @@ impl Engine {
                     report,
                 } => self.tools_done(gen, conn, req, id, report),
             }
-            if compiled && !self.cfg.keep_warm.is_zero() {
-                hot_until = Some(Instant::now() + self.cfg.keep_warm);
+            if compiled && self.profile.keep_warm_ms > 0 {
+                hot_until = Some(
+                    Instant::now() + std::time::Duration::from_millis(self.profile.keep_warm_ms),
+                );
             }
         }
     }
@@ -540,7 +564,7 @@ impl Engine {
         .collect();
         let o = crate::cli::parse(&argv);
         let r = {
-            let mut s = incr::Session::new(o, None, self.cfg.opts.clone());
+            let mut s = incr::Session::new(o, None, self.opts());
             s.compile(None).map(|_| ())
         };
         if let Some(h) = here {
@@ -549,6 +573,34 @@ impl Engine {
         let _ = std::fs::remove_dir_all(&dir);
         r?;
         Ok(t.elapsed().as_secs_f64())
+    }
+
+    /// The resident engine's options under the current performance mode.
+    fn opts(&self) -> incr::Options {
+        let mut o = self.cfg.opts.clone();
+        o.apply_profile(&self.profile);
+        o
+    }
+
+    /// Change the performance mode between compiles (`Req::Profile`). Only
+    /// what is kept changes: a smaller budget or dense window thins the
+    /// resident document's checkpoints now, and a mode that trims gives the
+    /// freed memory back at once rather than after its idle wait.
+    fn set_profile(&mut self, p: crate::profile::Profile) {
+        if p == self.profile {
+            return;
+        }
+        let shrinks = p.budget < self.profile.budget || p.dense < self.profile.dense;
+        self.profile = p;
+        if let Some(d) = self.doc.as_mut() {
+            d.session.apply_profile(&self.profile);
+            if shrinks && self.profile.trim_after_ms.is_some() {
+                d.session.trim_caches();
+            }
+        }
+        if shrinks && self.profile.trim_after_ms.is_some() {
+            give_back_free_memory();
+        }
     }
 
     fn s0_path(&self, job: &Job) -> Option<PathBuf> {
@@ -575,7 +627,7 @@ impl Engine {
         let mut argv = vec!["pdftex".to_string()];
         argv.extend(job.argv());
         let o = crate::cli::parse(&argv);
-        let session = incr::Session::new(o, None, self.cfg.opts.clone());
+        let session = incr::Session::new(o, None, self.opts());
         displaylist::init_with_sink(Box::new(HostSink(self.live.clone())));
         self.live.borrow_mut().clear();
         self.gens += 1;
@@ -1399,13 +1451,10 @@ fn settle(doc: &mut Doc, conn: &Conn, id: i64, limit: bool) {
     server::send_json(&conn.out, kind::TOOL, &Json::Obj(kv));
 }
 
-/// Idle time after which the host trims its heap (`give_back_free_memory`),
-/// counted from the end of the keep-warm window (2 s by default): the trim
-/// runs 4 s after the last compile by default, and a request that arrives
-/// meanwhile starts the wait again.
-const TRIM_AFTER: std::time::Duration = std::time::Duration::from_secs(2);
-
-/// Once the engine has been idle for keep-warm + `TRIM_AFTER`: hand the heap's free pages
+/// Once the engine has been idle for keep-warm + the profile's
+/// `trim_after_ms` (Balanced: 2 s, so the trim runs 4 s after the last
+/// compile, and a request that arrives meanwhile starts the wait again;
+/// High Performance: never): hand the heap's free pages
 /// back to the system. glibc keeps what a compile freed (the logs a
 /// retention pass merged, a detached branch, the convergence test's
 /// buffers) mapped, so the host's resident memory stayed at its peak: on
@@ -1428,6 +1477,18 @@ fn give_back_free_memory() {
                     t.elapsed().as_secs_f64() * 1e3
                 );
             }
+        }
+    }
+    // macOS's allocator returns most free pages itself, but its magazines
+    // keep some per thread: hand those back too (all zones; no goal).
+    #[cfg(target_os = "macos")]
+    {
+        extern "C" {
+            fn malloc_zone_pressure_relief(zone: *mut std::ffi::c_void, goal: usize) -> usize;
+        }
+        if std::env::var_os("FLASHTEX_NO_TRIM").is_none() {
+            // SAFETY: a null zone means every zone; it only releases free memory.
+            unsafe { malloc_zone_pressure_relief(std::ptr::null_mut(), 0) };
         }
     }
 }

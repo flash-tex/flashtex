@@ -30,6 +30,12 @@
 # The checkout is this script's (on NixOS it needs PR #1232's rpath fix for libstdc++).
 # Raw output: $R. Every engine run has a time limit (incr_bench.py, soundness.py, timeout(1)).
 #
+# Performance modes (lane PERF-MODES, src/profile.rs): FLASHTEX_PROFILE=low-memory|balanced|
+# high-performance runs every sweep in that mode (iserve and the socket host both read it; a
+# sweep's own --budget/--timed still pin their knob), e.g.
+#   FLASHTEX_PROFILE=low-memory R=$B/raw-low tools/incr-bench/gates.sh sound-a sound-c sound-d
+# The default is Balanced, today's behaviour.
+#
 # Every engine run here has the incremental engine's verify modes on (LIVE-30MS review: a
 # mutation of the convergence jump's adopted chunks gave matching outputs 6/6 with them off;
 # only FLASHTEX_VERIFY_JUMP caught it): the jump's comparison made ahead against the jump's own,

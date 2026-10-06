@@ -13,6 +13,9 @@ edited-page latency p50/p95, and whether the limit was hit. Exit status 1 if the
 --gate-gb (the memory gate), 2 if the limit killed it.
 
   python3 tools/incr-bench/mem.py m0 plain-1000 --pages 0,500,999 --keys 20 --gate-gb 1.5
+
+A project of several files (a book) is typed in with --src DIR --main FILE (DOC then only names the
+run): DIR is copied whole. --profile MODE starts the host in a performance mode (lane PERF-MODES).
 """
 import argparse
 import json
@@ -42,6 +45,10 @@ ap.add_argument('--gate-gb', type=float, default=0.0, help='fail (exit 1) above 
 ap.add_argument('--tag', default='')
 ap.add_argument('--out', default='')
 ap.add_argument('--timeout', type=int, default=3600, help='seconds for the whole run')
+ap.add_argument('--src', default='', help='a project directory to copy whole (with --main)')
+ap.add_argument('--main', default='main.tex', help="the project's main file (with --src)")
+ap.add_argument('--edit', default='', help='files to type in (dl3-keys --edit), one per --pages entry, comma-separated')
+ap.add_argument('--profile', default='', help='the host\'s performance mode (--profile)')
 a = ap.parse_args()
 
 signal.alarm(a.timeout)
@@ -53,14 +60,18 @@ out = a.out or f'{outdir}/{a.doc}-{tag}.jsonl'
 W = f'{outdir}/work-{a.doc}-{tag}'
 subprocess.run(['rm', '-rf', W], check=True)
 os.makedirs(f'{W}/out')
-subprocess.run(['cp', f'{BASE}/docs/{a.doc}/main.tex', f'{W}/main.tex'], check=True)
+if a.src:
+    subprocess.run(['cp', '-a', f'{a.src}/.', W], check=True)
+else:
+    subprocess.run(['cp', f'{BASE}/docs/{a.doc}/main.tex', f'{W}/main.tex'], check=True)
 sock = f'{W}/h.sock'
 env = dict(os.environ, FLASHTEX_POOL=f'{E}/pdftex.pool', FLASHTEX_FORMATS=f'{BASE}/fmt-{a.engine}',
            SOURCE_DATE_EPOCH='0', FORCE_SOURCE_DATE='1', FLASHTEX_MEMSTAT='1')
 herr = open(f'{out}.host-stderr', 'w')
 hout = open(f'{W}/h.out', 'w')
 host = subprocess.Popen([f'{E}/flashtex-host', '--socket', sock, '--s0-cache', f'{W}/s0']
-                        + a.host_args.split(), env=env, stdout=hout, stderr=herr)
+                        + a.host_args.split() + (['--profile', a.profile] if a.profile else []),
+                        env=env, stdout=hout, stderr=herr)
 
 
 def rss_of(pid):
@@ -106,12 +117,14 @@ for _ in range(600):
 lines = []
 edited = []
 t0 = time.time()
-for p in [int(x) for x in a.pages.split(',')]:
+edits = [e for e in a.edit.split(',') if e]
+for i, p in enumerate(int(x) for x in a.pages.split(',')):
     if host.poll() is not None:
         break
-    args = [f'{E}/dl3-keys', '--socket', sock, '--root', W, '--main', 'main.tex', '--output-dir',
+    args = [f'{E}/dl3-keys', '--socket', sock, '--root', W, '--main', a.main, '--output-dir',
             f'{W}/out', '--keys', str(a.keys), '--gap-ms', str(a.gap_ms), '--no-viewport',
-            '--page', str(p), '--where', a.where] + (['--sentence'] if a.sentence else [])
+            '--page', str(p), '--where', a.where] + (['--sentence'] if a.sentence else []) \
+        + (['--edit', edits[i % len(edits)]] if edits else [])
     r = subprocess.run([f'{S}/to.sh', str(a.timeout)] + args, capture_output=True, text=True)
     for line in r.stdout.splitlines():
         try:
@@ -158,6 +171,7 @@ def pct(v, q):
 
 summary = {
     'summary': True, 'doc': a.doc, 'engine': a.engine, 'tag': tag, 'pages_typed': a.pages,
+    'profile': a.profile or None,
     'keys': len(lines), 'peak_rss': peak, 'peak_rss_sampled': samples['peak'],
     'peak_rss_kernel': kernel_peak, 'killed_at_limit': samples['killed'],
     'edited_p50': statistics.median(edited) if edited else None, 'edited_p95': pct(edited, 0.95),

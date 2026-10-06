@@ -139,6 +139,9 @@ pub struct Options {
     pub preview: bool,
     /// Bytes the undo logs may hold (DESIGN.md §5.2: 1 GB by default).
     pub budget: usize,
+    /// Pages around the cursor whose checkpoints all stay (`thin`;
+    /// `DEFAULT_DENSE`, a performance mode's `crate::profile::Profile::dense`).
+    pub dense: usize,
     /// A checkpoint after this much engine time without one (0: never).
     pub timed_s: f64,
     /// Checkpoints between shipouts, after `build_page` (`Point::Segment`),
@@ -163,28 +166,38 @@ pub struct Options {
 }
 
 impl Default for Options {
+    /// The performance mode `FLASHTEX_PROFILE` names (Balanced by default),
+    /// with the knobs the environment pins (`crate::profile`):
+    /// FLASHTEX_TIMED_S another interval (seconds; tests make restart points
+    /// between most input lines with a tiny one), FLASHTEX_SEGMENT_S
+    /// (seconds, or `off`), FLASHTEX_BUDGET, FLASHTEX_DENSE.
     fn default() -> Self {
-        Options {
+        let mut o = Options {
             preview: true,
-            budget: 1 << 30,
-            // FLASHTEX_TIMED_S: another interval (seconds; tests make
-            // restart points between most input lines with a tiny one)
-            timed_s: std::env::var("FLASHTEX_TIMED_S")
-                .ok()
-                .and_then(|v| v.parse().ok())
-                .unwrap_or(0.020),
-            segment_s: match std::env::var("FLASHTEX_SEGMENT_S") {
-                Ok(v) if v == "off" => None,
-                Ok(v) => v.parse().ok(),
-                Err(_) => Some(DEFAULT_SEGMENT_S),
-            },
+            budget: 0,
+            dense: 0,
+            timed_s: 0.0,
+            segment_s: None,
             segment_hold: std::env::var("FLASHTEX_SEGMENT_HOLD").map_or(true, |v| v != "0"),
             converge: true,
             debug: std::env::var_os("FLASHTEX_INCR_DEBUG").is_some(),
             relabel: std::env::var_os("FLASHTEX_NO_RELABEL").is_none(),
             aux_point: std::env::var_os("FLASHTEX_NO_AUX_POINT").is_none(),
             diagnostics: std::env::var_os("FLASHTEX_NO_DIAGNOSTICS").is_none(),
-        }
+        };
+        o.apply_profile(&crate::profile::Profile::from_env());
+        o
+    }
+}
+
+impl Options {
+    /// Take a performance mode's retention knobs (`crate::profile`): the
+    /// budget, the dense window and the checkpoints' spacing.
+    pub fn apply_profile(&mut self, p: &crate::profile::Profile) {
+        self.budget = p.budget;
+        self.dense = p.dense;
+        self.timed_s = p.timed_s;
+        self.segment_s = p.segment_s;
     }
 }
 
@@ -432,6 +445,7 @@ struct Obs {
     /// checkpoints never to drop, and the page and page-count maps of the
     /// checkpoints before the run.
     budget: usize,
+    dense: usize,
     cursor: usize,
     s0: Option<CheckpointId>,
     keep_r: Option<CheckpointId>,
@@ -526,6 +540,7 @@ impl Obs {
         thin(
             g,
             self.budget,
+            self.dense,
             self.cursor,
             self.s0,
             self.keep_r,
@@ -2480,6 +2495,19 @@ impl Session {
 
     /// The host has been idle a while: drop what only speeds up the next
     /// keystrokes and costs memory (the old checkpoints' kept chunks).
+    /// Take a performance mode's retention knobs (`crate::profile`) between
+    /// compiles. A smaller budget or dense window thins the checkpoints at
+    /// once, unless a run is paused (its next compile's end does it then).
+    /// Only which checkpoints are kept changes: every one kept stays exact,
+    /// and a restart from an earlier one re-runs more, to the same result.
+    pub fn apply_profile(&mut self, p: &crate::profile::Profile) {
+        let shrinks = p.budget < self.opts.budget || p.dense < self.opts.dense;
+        self.opts.apply_profile(p);
+        if shrinks && self.paused.is_none() && self.g.is_some() {
+            self.enforce_budget();
+        }
+    }
+
     pub fn trim_caches(&mut self) {
         if let Some(g) = self.g.as_ref() {
             g.arena.drop_old_cache();
@@ -3848,6 +3876,7 @@ impl Session {
             changed_lookup_last: None,
             rerun_from: None,
             budget: self.opts.budget,
+            dense: self.opts.dense,
             cursor: self.cursor,
             s0: self.s0.as_ref().map(|s| s.id),
             keep_r: None,
@@ -4653,6 +4682,7 @@ impl Session {
         let cursor = self.cursor;
         let s0 = self.s0.as_ref().map(|s| s.id);
         let budget = self.opts.budget;
+        let dense = self.opts.dense;
         let Some(g) = self.g.as_mut() else { return };
         let pages: HashMap<CheckpointId, usize> = self
             .pages
@@ -4660,7 +4690,7 @@ impl Session {
             .enumerate()
             .filter_map(|(i, p)| p.ckpt.map(|c| (c, i + 1)))
             .collect();
-        thin(g, budget, cursor, s0, None, &pages, &self.ck_pages);
+        thin(g, budget, dense, cursor, s0, None, &pages, &self.ck_pages);
         let ids: std::collections::HashSet<CheckpointId> = g.checkpoints().into_iter().collect();
         self.ck_pages.retain(|k, _| ids.contains(k));
         self.defpatch.retain(|k, _| ids.contains(k));
@@ -4672,8 +4702,9 @@ impl Session {
     }
 }
 
-/// Pages around the cursor whose checkpoints are all kept.
-const DENSE: usize = 16;
+/// Pages around the cursor whose checkpoints are all kept, by default
+/// (`Options::dense`; Balanced's).
+pub const DEFAULT_DENSE: usize = 16;
 
 /// Segment checkpoints at least this far apart by default (seconds of
 /// engine time). Measured on the benchmark documents
@@ -4690,18 +4721,20 @@ pub const MAX_PASSES: usize = 5;
 
 /// Drop checkpoints until the undo logs fit `budget` (DESIGN.md §5.2:
 /// dense near the cursor, log-spaced elsewhere, the spacing driven by the
-/// budget). Within `DENSE` pages of the cursor every checkpoint stays;
+/// budget). Within `dense` pages of the cursor every checkpoint stays;
 /// further out only page checkpoints stay: first all of them (an edit
 /// anywhere then restarts at most a page before it), then every `s * 2^k`-th
-/// page at a distance in `[DENSE * 2^k, DENSE * 2^(k+1))`, with the base
+/// page at a distance in `[dense * 2^k, dense * 2^(k+1))`, with the base
 /// spacing `s` = 1, 2, 4, 8, ... doubled an octave at a time, the farthest
 /// first, until the logs fit (docs/evidence/p4-memory-2026-09-30/ measures
 /// what each budget costs). S₀, the newest
 /// checkpoint and `keep_also` are always kept. `pages` maps a page
 /// checkpoint to its page, `ck_pages` any checkpoint to the pages before it.
+#[allow(clippy::too_many_arguments)]
 fn thin(
     g: &mut Globals,
     budget: usize,
+    dense: usize,
     cursor: usize,
     s0: Option<CheckpointId>,
     keep_also: Option<CheckpointId>,
@@ -4714,19 +4747,19 @@ fn thin(
     let aux_done = g.layer().aux_done;
     // the last page's checkpoint: where `\end{document}` re-runs from
     let last_page = pages.iter().max_by_key(|(_, &j)| j).map(|(&c, _)| c);
-    // The octave of a page's distance from the cursor beyond DENSE.
-    let octave = |d: usize| (usize::BITS - 1 - (d / DENSE).leading_zeros()) as usize;
+    // The octave of a page's distance from the cursor beyond `dense`.
+    let octave = |d: usize| (usize::BITS - 1 - (d / dense.max(1)).leading_zeros()) as usize;
     let far = pages
         .values()
         .map(|&j| j.abs_diff(cursor))
-        .filter(|&d| d > DENSE)
+        .filter(|&d| d > dense)
         .map(octave)
         .max()
         .unwrap_or(0);
     // The steps, each keeping a subset of what the one before kept, so that
     // they thin by as little as the budget needs (spacings that did not
     // divide each other, 2 then 3 then 4, compounded: 2, 6, 12):
-    // `(s, kmin)` keeps every page checkpoint within DENSE of the cursor,
+    // `(s, kmin)` keeps every page checkpoint within `dense` of the cursor,
     // every `s << k`-th in octave `k >= kmin` and every `(s / 2) << k`-th
     // below `kmin`; `s` = 0 keeps every page checkpoint (and the segment
     // checkpoints near the cursor, which the steps with `s` = 1 keep too).
@@ -4748,7 +4781,7 @@ fn thin(
             match pages.get(&id) {
                 Some(&j) => {
                     let d = j.abs_diff(cursor);
-                    if s == 0 || d <= DENSE {
+                    if s == 0 || d <= dense {
                         return true;
                     }
                     let k = octave(d).min(40);
@@ -4763,7 +4796,7 @@ fn thin(
                 }
                 None => ck_pages
                     .get(&id)
-                    .is_some_and(|&p| s <= 1 && p.abs_diff(cursor) <= DENSE),
+                    .is_some_and(|&p| s <= 1 && p.abs_diff(cursor) <= dense),
             }
         };
         g.retain_checkpoints(&keep);

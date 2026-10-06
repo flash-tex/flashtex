@@ -308,8 +308,12 @@ fn main() {
         (1..=lines.len() as u32)
             .filter(|&l| lines[l as usize - 1].split(' ').count() > 40)
             .filter_map(|l| {
+                // On one page, or (a file input more than once, as in a
+                // book typeset twice) on pages at least two apart, each a
+                // whole occurrence: the one nearest the wanted page.
                 let p = on_pages(l);
-                (p.len() == 1).then(|| (l, p[0]))
+                let whole = !p.is_empty() && p.windows(2).all(|w| w[1] > w[0] + 1);
+                whole.then(|| (l, *p.iter().min_by_key(|&&q| q.abs_diff(want)).unwrap()))
             })
             .min_by_key(|&(_, p)| p.abs_diff(want))
             .unwrap_or_else(|| {
