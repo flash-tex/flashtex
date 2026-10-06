@@ -611,26 +611,45 @@ pub fn move_lines(path: &str, from: u32, old_end: u32, new_end: u32) {
         let Some(f) = st.file_paths.iter().position(|p| p == path) else {
             return;
         };
-        let f = f as u32 + 1;
+        st.move_spans_of(f as u32 + 1, from, old_end, new_end);
+    });
+    forget_file_cache();
+}
+
+impl State {
+    /// `move_lines` for file `f`. Every span of the file on a line from
+    /// `from` on is retired (before `old_end`) or moved (from `old_end` on,
+    /// to a line from `new_end` on), and no other span's line is that high,
+    /// so only those spans' keys change: they are taken out of `span_ids`
+    /// and the moved ones put back, in span order (the lowest span of a
+    /// line keeps it, as when the whole table was rebuilt). A long document
+    /// rebuilt the table at every keystroke (lane P4-SPLIT-LATENCY), and
+    /// at every change of a file no span names a moved line of.
+    fn move_spans_of(&mut self, f: u32, from: u32, old_end: u32, new_end: u32) {
         let delta = new_end as i64 - old_end as i64;
-        for (i, (file, line)) in st.spans.iter_mut().enumerate() {
+        let mut moved = vec![];
+        for (i, (file, line)) in self.spans.iter_mut().enumerate() {
             if *file != f || *line < from {
                 continue;
             }
+            let id = i as u32 + 1;
+            if self.span_ids.get(&(*file, *line)) == Some(&id) {
+                self.span_ids.remove(&(*file, *line));
+            }
             if *line < old_end {
-                st.retired.insert(i as u32 + 1);
+                self.retired.insert(id);
             } else {
                 *line = (*line as i64 + delta).max(1) as u32;
+                moved.push(id);
             }
         }
-        st.span_ids.clear();
-        for (i, &at) in st.spans.iter().enumerate() {
-            if !st.retired.contains(&(i as u32 + 1)) {
-                st.span_ids.entry(at).or_insert(i as u32 + 1);
+        for id in moved {
+            if !self.retired.contains(&id) {
+                let at = self.spans[id as usize - 1];
+                self.span_ids.entry(at).or_insert(id);
             }
         }
-    });
-    forget_file_cache();
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -2180,6 +2199,61 @@ mod tests {
         assert!(mag_bp[..400].contains(&format!(
             "self.eqtb[crate::ix::U((({MAG_LOC}i32) - 1) as usize)].int() != 1000i32"
         )));
+    }
+
+    /// `State::move_spans_of` leaves the table as rebuilding it whole did:
+    /// random spans, retired ones and moves, against that rebuild.
+    #[test]
+    fn moving_spans_keeps_the_table_a_rebuild_makes() {
+        let mut seed = 0x9e37_79b9_7f4a_7c15u64;
+        let mut rnd = |n: u32| {
+            seed ^= seed << 13;
+            seed ^= seed >> 7;
+            seed ^= seed << 17;
+            (seed % n as u64) as u32
+        };
+        for _ in 0..300 {
+            let mut st = State::new();
+            for _ in 0..60 {
+                let (f, l) = (1 + rnd(2), 1 + rnd(30));
+                st.span_id(f, l);
+            }
+            for _ in 0..4 {
+                let from = 1 + rnd(30);
+                let old_end = from + rnd(4);
+                let new_end = (from + rnd(6)).max(1);
+                let f = 1 + rnd(2);
+                // the rebuild, on a copy
+                let mut spans = st.spans.clone();
+                let mut retired = st.retired.clone();
+                let delta = new_end as i64 - old_end as i64;
+                for (i, (file, line)) in spans.iter_mut().enumerate() {
+                    if *file != f || *line < from {
+                        continue;
+                    }
+                    if *line < old_end {
+                        retired.insert(i as u32 + 1);
+                    } else {
+                        *line = (*line as i64 + delta).max(1) as u32;
+                    }
+                }
+                let mut want: HashMap<(u32, u32), u32> = HashMap::new();
+                for (i, &at) in spans.iter().enumerate() {
+                    if !retired.contains(&(i as u32 + 1)) {
+                        want.entry(at).or_insert(i as u32 + 1);
+                    }
+                }
+                st.move_spans_of(f, from, old_end, new_end);
+                assert_eq!(st.spans, spans);
+                assert_eq!(st.retired, retired);
+                assert_eq!(st.span_ids, want);
+                // new spans after the move, as a compile makes them
+                for _ in 0..10 {
+                    let (f, l) = (1 + rnd(2), 1 + rnd(30));
+                    st.span_id(f, l);
+                }
+            }
+        }
     }
 
     /// `move_lines`: spans after an edit move with their lines, spans of
