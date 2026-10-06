@@ -141,6 +141,11 @@ final class EngineV3Session {
     @ObservationIgnored private var diags: [DL3Diag] = []
     /// The connected host offers diag-v1 (and so sends DIAGs, not DIAGNOSTICs).
     @ObservationIgnored private(set) var hostOffersDiagV1 = false
+    /// The connected host offers `trim-v1` (memory pressure: TRIM frames).
+    @ObservationIgnored private(set) var hostOffersTrim = false
+    /// TRIM frames sent, and memory-pressure events applied (tests, evidence).
+    @ObservationIgnored private(set) var trimsSent = 0
+    @ObservationIgnored private(set) var pressureEvents = 0
     /// The connected host stops at the first error when asked (`halt-on-error`):
     /// with an older one, strict mode shows errors as errors but TeX goes on.
     private(set) var hostHonoursHaltOnError = true
@@ -222,8 +227,9 @@ final class EngineV3Session {
     static let snapshotQueue = DispatchQueue(label: "flashtex.engine-v3.snapshot", qos: .utility)
     /// SOURCES of the connection: span id → (file, line) (EngineV3SourceMap.swift).
     @ObservationIgnored var sourceMap = DL3SourceMap()
-    /// Per-page glyph indexes for forward/reverse search, built on first use.
-    @ObservationIgnored var sourceIndexes: [Int: DL3SourceIndex] = [:]
+    /// Per-page glyph indexes for forward/reverse search, built on first
+    /// use, bounded (EngineV3GlyphIndexes.swift).
+    @ObservationIgnored var glyphIndexes = EngineV3GlyphIndexes()
     @ObservationIgnored weak var view: EngineV3PagesView? { didSet { view?.rasterPlan = rasterPlan } }
     @ObservationIgnored weak var model: ShellModel?
 
@@ -341,6 +347,7 @@ final class EngineV3Session {
     func start(model: ShellModel) {
         self.model = model
         stopping = false
+        EngineV3MemoryPressure.shared.register(self)
         if NSWorkspace.shared.isVoiceOverEnabled { EngineV3GlyphText.warmUp() } // VoiceOver's page text (EngineV3Accessibility.swift), off main; else loaded on first use
 
         if keyMonitor == nil {
@@ -456,9 +463,9 @@ final class EngineV3Session {
         host?.terminate()
         host = nil
         phase = .idle
+        EngineV3MemoryPressure.shared.unregister(self)
         sentTexts = [:]; hostBytes = [:]; fastPending = []; fastAnchors = [:]; fastCheck = [:]; compiledTexts = [:]; fastSentID = [:]; caretWindows = [:]; caretWindow = nil
-        pages = [:]; stale = []; forms = [:]; pdfFallback = [:]
-        pageCount = 0
+        dropPages()
         layoutRevision &+= 1
         if let keyMonitor { NSEvent.removeMonitor(keyMonitor) }
         keyMonitor = nil
@@ -640,9 +647,7 @@ final class EngineV3Session {
                 })
                 EngineV3Session.onMain {
                     guard let self = ref.value else { c.bye(); return }
-                    self.connection = c
-                    self.hostOffersDiagV1 = c.hello["capabilities"]?.array?.contains(.string(DL3Diag.capability)) ?? false
-                    self.hostHonoursHaltOnError = c.hello["capabilities"]?.array?.contains(.string(DL3CompileRequest.haltOnErrorCapability)) ?? false
+                    self.adopt(c)
                     if case .failed = self.phase {} else { self.phase = .ready }
                     self.log("connected: \(c.hello["server"]?.string ?? "?"), \(c.hello["engine"]?.string ?? "?")")
                     if let model = self.model {
@@ -656,6 +661,18 @@ final class EngineV3Session {
             }
         }
     }
+
+    /// The connected host and what it offers (HELLO `capabilities`).
+    private func adopt(_ c: DL3Connection) {
+        connection = c
+        let caps = c.hello["capabilities"]?.array ?? []
+        hostOffersDiagV1 = caps.contains(.string(DL3Diag.capability))
+        hostHonoursHaltOnError = caps.contains(.string(DL3CompileRequest.haltOnErrorCapability))
+        hostOffersTrim = caps.contains(.string(DL3.trimCapability))
+    }
+
+    /// Tests: a connection to a stand-in host, adopted as `connect` does.
+    func adoptForTesting(_ c: DL3Connection) { adopt(c) }
 
     private func closed(_ err: DL3Error?, connection c: DL3Connection) {
         guard c === connection else { return }
@@ -1166,7 +1183,7 @@ final class EngineV3Session {
             sentTexts = [:]; hostBytes = [:]; fastPending = []; fastAnchors = [:]; fastCheck = [:]; compiledTexts = [:]; fastSentID = [:]; caretWindows = [:]; caretWindow = nil; inputsAtSync = nil
             toolDiagnostics = []; texProblems = []; toolNote = nil; toolCycleID = -1
             if model.engineV3ResultStatus != nil { model.engineV3ResultStatus = nil } // another project: no "failed" of the last one's
-            pages = [:]; stale = []; forms = [:]; pdfFallback = [:]; pageCount = 0; layoutRevision &+= 1
+            dropPages(); layoutRevision &+= 1
             staleChangedNow()
             statusNote = ""; firstError = nil
             showSnapshot(model: model) // this project's stored pages, if still valid
@@ -1533,7 +1550,7 @@ final class EngineV3Session {
             let changed = pages[index]?.page.hash != p.page.hash
             let sizeChanged = pages[index].map { $0.widthPt != p.widthPt || $0.heightPt != p.heightPt } ?? true
             pages[index] = p
-            sourceIndexes[index] = nil
+            glyphIndexes.invalidate(index)
             pageInstalls &+= 1
             stale.remove(index)
             pdfFallback[index] = nil
@@ -2002,6 +2019,32 @@ final class EngineV3Session {
         return n == line ? start ..< i : nil
     }
 
+    /// No pages (a stop, another project): none of them, nor their glyph
+    /// indexes, may answer a lookup.
+    private func dropPages() {
+        pages = [:]; stale = []; forms = [:]; pdfFallback = [:]; pageCount = 0
+        glyphIndexes.removeAll()
+    }
+
+    /// Tests: the pages go as they do for another project in this window (`compile`).
+    func dropPagesForTesting() { dropPages() }
+
+    /// Memory pressure (EngineV3MemoryPressure): drops what is cheap to
+    /// build again and asks the host to trim. A warning keeps the glyph
+    /// indexes of the pages the pane holds (the caret mark's); a critical
+    /// event drops them all. Pages and their bitmaps stay.
+    func trimMemory(_ level: EngineV3MemoryPressure.Level) {
+        pressureEvents &+= 1
+        glyphIndexes.trim(keeping: level == .critical ? [] : Set(view?.heldPageIndexes ?? []))
+        guard hostOffersTrim, let connection else { return }
+        do {
+            try connection.trim(level: level.rawValue)
+            trimsSent &+= 1
+        } catch {
+            log("TRIM not sent: \(error)") // the reader sees the broken connection and restarts the host
+        }
+    }
+
     /// Pages on screen: a complete count is the document's (pages past it
     /// go); an incomplete one (a compile in progress) never hides pages.
     private func setCount(_ n: Int, complete: Bool) {
@@ -2009,6 +2052,7 @@ final class EngineV3Session {
         guard complete || n > pageCount else { return }
         if complete, n < pageCount {
             for i in n ..< pageCount { pages[i] = nil; stale.remove(i); pdfFallback[i] = nil }
+            glyphIndexes.removePages(from: n)
         }
         if n != pageCount { pageCount = n; layoutRevision &+= 1 }
     }
