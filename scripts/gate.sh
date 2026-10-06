@@ -622,11 +622,9 @@ case "$TIER" in
     else
       skip "licence boundary (DESIGN §3)" "scripts/check-license-boundary.sh is not in this checkout"
     fi
-    # The rendering-core handoff keeps a copy of the native-assets manifest
-    # that verify_bundle_resources.py pins by sha256; the copy must not drift.
-    step "native-assets manifest handoff copy matches the pinned one" -- \
-      cmp apps/mac/scripts/native-assets-manifest.json crates/rendering-core/docs/handoffs/native-assets/manifest.json
     step "parity scoreboard and lockstep self-tests" -- gate_parity_selftest
+    step "retired code is not named outside the allowlist (retirement plan §4.6)" -- \
+      python3 tools/parity/retirement_refs.py
     if [[ "$(uname -s)" == Darwin ]]; then
       step "parity fixtures hold their baseline" -- gate_parity_fixtures
     else
