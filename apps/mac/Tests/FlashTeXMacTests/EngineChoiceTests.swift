@@ -635,6 +635,62 @@ final class EngineChoiceTests: XCTestCase {
         XCTAssertTrue(m.engineV3Enabled, "the user's choice for the document is kept")
     }
 
+    /// Review of #1624: the engine's report must not keep a document on the
+    /// compatibility engine once its cause is gone. The user types
+    /// `\usepackage{fontspec}`, a compile reports fontspec's error before the
+    /// check runs, the user deletes the line: the next check drops the report
+    /// and the new engine typesets again. A report the scan never explained
+    /// (a TeX Live package that loads fontspec) stays until the document is
+    /// opened again.
+    func testTheEnginesReportEndsWhenItsCauseIsGoneOrTheDocumentReopens() throws {
+        try fakeTeXLive()
+        EngineChoiceStore.appSetting = .new
+        let m = model { nil }
+        defer { m.engineV3.stop() }
+        let file = try unicodeDoc("\\usepackage{amsmath}")
+        XCTAssertEqual(m.openTex(at: file, dirty: .discard), .opened)
+        XCTAssertTrue(m.engineV3Enabled)
+        let i = try XCTUnwrap(m.documents.firstIndex { $0.path == m.project.entryPath })
+        let plain = m.documents[i].text
+        m.documents[i].text = plain.replacingOccurrences(of: "{amsmath}", with: "{amsmath}\n\\usepackage{fontspec}")
+        let need = try XCTUnwrap(UnicodeFonts.need(message: "Fatal Package fontspec Error: The fontspec package requires either XeTeX or"))
+        m.engineV3NeedsUnicodeFonts(need) // the compile's report came before the check
+        XCTAssertFalse(m.engineV3Enabled)
+        m.documents[i].text = plain // the user deletes the line
+        m.recheckUnicodeFonts()
+        XCTAssertTrue(m.engineV3Enabled, "the report's cause is gone: the new engine again")
+        XCTAssertNil(m.engineHostNeedsUnicode)
+        XCTAssertEqual(m.engineAnnouncements.last, "This document no longer needs Unicode fonts: the new engine typesets it.")
+
+        m.engineV3NeedsUnicodeFonts(need) // a cause the scan cannot see
+        m.documents[i].text = plain + "% an edit elsewhere\n"
+        m.recheckUnicodeFonts()
+        XCTAssertFalse(m.engineV3Enabled, "an unexplained report holds while the scan finds the same")
+        XCTAssertEqual(m.openTex(at: file, dirty: .discard), .opened)
+        XCTAssertTrue(m.engineV3Enabled, "opening the document again forgets it")
+    }
+
+    /// Review of #1624: the check after an edit scans off the main thread
+    /// and applies its result on it.
+    func testTheCheckAfterAnEditScansOffTheMainThread() throws {
+        try fakeTeXLive()
+        EngineChoiceStore.appSetting = .new
+        let m = model { nil }
+        defer { m.engineV3.stop() }
+        let file = try unicodeDoc("\\usepackage{amsmath}")
+        try "\\RequirePackage{polyglossia}\n".write(to: file.deletingLastPathComponent().appendingPathComponent("mystyle.sty"),
+                                                    atomically: true, encoding: .utf8)
+        XCTAssertEqual(m.openTex(at: file, dirty: .discard), .opened)
+        let i = try XCTUnwrap(m.documents.firstIndex { $0.path == m.project.entryPath })
+        m.documents[i].text = m.documents[i].text.replacingOccurrences(of: "{amsmath}", with: "{amsmath,mystyle}")
+        let done = expectation(description: "the scan's result applied")
+        m.startUnicodeFontsScan { done.fulfill() }
+        XCTAssertTrue(m.engineV3Enabled, "nothing changes before the scan comes back")
+        wait(for: [done], timeout: 10)
+        XCTAssertFalse(m.engineV3Enabled)
+        XCTAssertEqual(m.engineChoice.blocker, .unicodeFonts(UnicodeFontsNeed(kind: .package("polyglossia"), file: "mystyle.sty")))
+    }
+
     // MARK: engine labels (retirement plan #1236, S3r)
 
     func testTheLogLineNamesTheEngineWhyAndTheFallback() {

@@ -68,6 +68,53 @@ final class UnicodeFontsTests: XCTestCase {
                        "\\newif defines, \\iftoggle{…} is a command: neither opens a conditional")
     }
 
+    /// Review of #1624: a name that is tested or defined is not a use, and a
+    /// branch that runs only once fontspec is loaded (or never) is not read.
+    func testTestsAndDefinitionsAreNotUses() {
+        for (preamble, why) in [
+            ("\\ifdefined\\setmainfont\\setmainfont{Inter}\\fi", "\\ifdefined tests the name; its true branch needs fontspec loaded"),
+            ("\\ifx\\fontspec\\undefined\\usepackage{lmodern}\\else\\fontspec{Inter}\\fi", "\\ifx tests; the else runs only with fontspec"),
+            ("\\providecommand\\setmainfont[1]{}", "a shim that defines it"),
+            ("\\newcommand{\\setmainfont}[1]{}\n\\renewcommand*{\\fontspec}[1]{}", "definitions, braced or starred"),
+            ("\\DeclareRobustCommand\\setmathfont[2][]{}\\let\\setsansfont\\relax", "\\DeclareRobustCommand, \\let"),
+            ("\\@ifpackageloaded{fontspec}{\\setmainfont{Inter}}{}", "runs only once fontspec is loaded"),
+            ("\\IfPackageLoadedTF{unicode-math}{\\setmathfont{Libertinus Math}}{\\usepackage{amsmath}}", "the TF form"),
+            ("\\@ifundefined{setmainfont}{\\usepackage{lmodern}}{\\setmainfont{Inter}}", "the defined branch of \\@ifundefined"),
+            ("\\ifdef{\\setmainfont}{\\setmainfont{Inter}}{}", "etoolbox's \\ifdef"),
+            ("\\ifundef\\fontspec{}{\\fontspec{Inter}}", "etoolbox's \\ifundef"),
+            ("\\iffalse\n\\usepackage{fontspec}\n\\fi", "an \\iffalse block never runs"),
+            ("\\iftrue\\usepackage{lmodern}\\else\\usepackage{fontspec}\\fi", "nor does \\iftrue's else"),
+        ] {
+            XCTAssertNil(scan(doc(preamble)), why)
+        }
+        // …while a use in the branch that runs still counts
+        XCTAssertEqual(scan(doc("\\@ifpackageloaded{fontspec}{}{\\setmainfont{Inter}}"))?.kind, .command("setmainfont"))
+        XCTAssertEqual(scan(doc("\\iffalse\\else\\usepackage{fontspec}\\fi"))?.kind, .package("fontspec"))
+        XCTAssertEqual(scan(doc("\\newcommand\\fonts{\\setmainfont{Inter}}"))?.kind, .command("setmainfont"), "a macro body may run")
+    }
+
+    /// Review of #1624: conditionals the scan did not track (`\let\x\iftrue`,
+    /// etoolbox's `\ifdef`, a LaTeX `\if@…`) must not leave an `\ifxetex`
+    /// open and hide what follows it.
+    func testConditionalTrackingSurvivesUnknownIfs() {
+        XCTAssertEqual(scan(doc("\\let\\ifmine\\iftrue\n\\ifxetex\\ifdef\\x{a}{b}\\usepackage{fontspec}\\fi\n\\usepackage{unicode-math}"))?.kind,
+                       .package("unicode-math"))
+        XCTAssertEqual(scan(doc("\\ifxetex\\if@twoside A\\fi\\fi\n\\usepackage{fontspec}"))?.kind, .package("fontspec"))
+        XCTAssertEqual(scan(doc("\\if@twoside\\usepackage{fontspec}\\fi"))?.kind, .package("fontspec"),
+                       "an unknown conditional reads both branches")
+        XCTAssertEqual(scan(doc("\\fi\\fi\\usepackage{fontspec}"))?.kind, .package("fontspec"), "stray \\fi")
+    }
+
+    /// Review of #1624: `\input file` without braces, a byte-order mark.
+    func testUnbracedInputAndAByteOrderMark() {
+        XCTAssertEqual(scan(doc("\\input pre\n"), files: ["pre.tex": "\\usepackage{fontspec}"]),
+                       UnicodeFontsNeed(kind: .package("fontspec"), file: "pre.tex"))
+        XCTAssertEqual(scan(doc("\\input{pre.tex}"), files: ["pre.tex": "\\setmainfont{X}"])?.kind, .command("setmainfont"))
+        XCTAssertEqual(scan("\u{FEFF}% !TEX program = xelatex\n" + doc(""))?.kind, .program("xelatex"))
+        XCTAssertEqual(scan("\u{FEFF}" + doc("\\usepackage{fontspec}"))?.kind, .package("fontspec"))
+        XCTAssertNil(scan(doc("") + "\\usepackage{fontspec}"), "nothing after \\begin{document} is read")
+    }
+
     /// The project's own class, packages and preamble files are part of the
     /// preamble; TeX Live's are not read (no `read` answer for them).
     func testProjectFilesTheEntryLoads() {
