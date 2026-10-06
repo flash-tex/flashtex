@@ -7,7 +7,7 @@
 #
 # Documents: MODES_DOCS (default "plain-1000 full-1000", from mkdocs.py) and, when it exists,
 # Infinite Descent x2 (MODES_INFDESC, default ~/bench-docs/infdesc: infdesc-x2.tex, made by
-# tools/parity/corpus/infdesc_x2.py), typed in two chapters in each copy of the book.
+# tools/parity/corpus/infdesc_x2.py), typed in two chapters of the first copy.
 # ENGINE is an mkeng.sh engine under $INCR_BENCH_DIR. Runs one host at a time; a host above
 # MODES_LIMIT_GB (default 8) is killed.
 set -u
@@ -27,10 +27,10 @@ for m in $MODES; do
     out+=("$B/mem/$d-mode-$E-$m.jsonl")
   done
   if [ -f "$INF/infdesc-x2.tex" ]; then
-    # copy 1: sets (≈ p. 110), number theory (≈ p. 270); copy 2: the same, ≈ 575 pages on
+    # sets (≈ p. 110) and number theory (≈ p. 270), in the first copy (dl3-keys --repeated)
     python3 "$S/mem.py" "$E" infdesc-x2 --src "$INF" --main infdesc-x2.tex --profile "$m" \
-      --edit book/sets/set-operations.tex,book/number-theory/modular-arithmetic.tex,book/sets/set-operations.tex,book/number-theory/modular-arithmetic.tex \
-      --pages 110,270,685,845 --keys "$KEYS" --limit-gb "$LIMIT" --tag "mode-$E-$m" --timeout 14400 \
+      --edit book/sets/set-operations.tex,book/number-theory/modular-arithmetic.tex \
+      --pages 110,270 --keys "$KEYS" --limit-gb "$LIMIT" --tag "mode-$E-$m" --timeout 14400 \
       | tail -1 | cut -c1-300
     out+=("$B/mem/infdesc-x2-mode-$E-$m.jsonl")
   fi

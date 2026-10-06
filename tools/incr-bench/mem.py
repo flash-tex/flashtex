@@ -47,7 +47,7 @@ ap.add_argument('--out', default='')
 ap.add_argument('--timeout', type=int, default=3600, help='seconds for the whole run')
 ap.add_argument('--src', default='', help='a project directory to copy whole (with --main)')
 ap.add_argument('--main', default='main.tex', help="the project's main file (with --src)")
-ap.add_argument('--edit', default='', help='files to type in (dl3-keys --edit), one per --pages entry, comma-separated')
+ap.add_argument('--edit', default='', help='files to type in (dl3-keys --edit --repeated: a file input twice is typed at its first occurrence), one per --pages entry, comma-separated')
 ap.add_argument('--profile', default='', help='the host\'s performance mode (--profile)')
 a = ap.parse_args()
 
@@ -124,7 +124,7 @@ for i, p in enumerate(int(x) for x in a.pages.split(',')):
     args = [f'{E}/dl3-keys', '--socket', sock, '--root', W, '--main', a.main, '--output-dir',
             f'{W}/out', '--keys', str(a.keys), '--gap-ms', str(a.gap_ms), '--no-viewport',
             '--page', str(p), '--where', a.where] + (['--sentence'] if a.sentence else []) \
-        + (['--edit', edits[i % len(edits)]] if edits else [])
+        + (['--edit', edits[i % len(edits)], '--repeated'] if edits else [])
     r = subprocess.run([f'{S}/to.sh', str(a.timeout)] + args, capture_output=True, text=True)
     for line in r.stdout.splitlines():
         try:
