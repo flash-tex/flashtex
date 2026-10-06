@@ -1822,7 +1822,7 @@ final class EngineV3Session {
     /// package file) keeps its place in the message.
     static func problems(_ diags: [DL3JSON], model: ShellModel, projectRoot: URL?, texts: [String: String]? = nil,
                          mode: EngineV3ErrorPolicy.Mode = .bestEffort) -> [RuntimeV1.Diagnostic] {
-        let root = projectRoot.map { $0.standardizedFileURL.path + "/" }
+        let roots = Self.copyRoots(projectRoot)
         let kept = EngineV3ErrorPolicy.keptErrors(diags.map(Self.policyItem), mode: mode)
         return diags.enumerated().map { i, d in
             let error = d["severity"]?.string == "error"
@@ -1830,9 +1830,8 @@ final class EngineV3Session {
             var message = d["message"]?.string ?? "(no message)"
             if error, !kept.contains(i) { message = EngineV3ErrorPolicy.marked(message) }
             var source: RuntimeV1.SourceRange?
-            if var file = d["file"]?.string {
-                if file.hasPrefix("./") { file.removeFirst(2) }
-                if let root, file.hasPrefix(root) { file.removeFirst(root.count) }
+            if let reported = d["file"]?.string {
+                let file = Self.relativeToCopy(reported, roots: roots)
                 let line = Int(d["line"]?.int ?? 0)
                 if let text = texts?[file] ?? model.documents.first(where: { $0.path == file })?.text, line > 0,
                    let range = lineByteRange(text, line: line) {
@@ -1845,22 +1844,50 @@ final class EngineV3Session {
         }
     }
 
+    /// Every spelling of the project copy's root, each ending in "/": as the
+    /// app made it (standardized: /var/folders/...), its real path (realpath:
+    /// /private/var/folders/..., what the host's getcwd() returns and so what
+    /// the display list's side table names a box's place by), and
+    /// Foundation's resolution of its links. Empty without a root.
+    static func copyRoots(_ root: URL?) -> [String] {
+        guard let root else { return [] }
+        var out: [String] = []
+        let standardized = root.standardizedFileURL.path
+        let real = realpath(standardized, nil).map { p in defer { free(p) }; return String(cString: p) }
+        for r in [standardized, real, root.resolvingSymlinksInPath().path].compactMap({ $0 }) where !out.contains(r + "/") {
+            out.append(r + "/")
+        }
+        return out
+    }
+
+    /// A file the engine names, relative to the project copy when it is
+    /// inside it under any of `roots` (`copyRoots`), else as given; a
+    /// leading "./" dropped. An absolute name under none of them is matched
+    /// once more by its own real path (a link anywhere above the copy).
+    static func relativeToCopy(_ file: String, roots: [String]) -> String {
+        var f = file
+        while f.hasPrefix("./") { f.removeFirst(2) }
+        if let r = roots.first(where: { f.hasPrefix($0) }) {
+            f.removeFirst(r.count)
+        } else if f.hasPrefix("/"), !roots.isEmpty,
+                  let real = realpath(f, nil).map({ p in defer { free(p) }; return String(cString: p) }),
+                  let r = roots.first(where: { real.hasPrefix($0) }) {
+            f = String(real.dropFirst(r.count))
+        }
+        return f
+    }
+
     /// diag-v1 DIAGs as Problems-panel diagnostics: the source range is the
     /// reported token/command (`range`, byte columns of `line`) or TeX's split
     /// (`col`), so a click lands on the exact column; the macro chain and
     /// TeX's help text become the row's notes and help.
     static func problems(diags: [DL3Diag], model: ShellModel, projectRoot: URL?, texts: [String: String]? = nil,
                          mode: EngineV3ErrorPolicy.Mode = .bestEffort) -> [RuntimeV1.Diagnostic] {
-        let root = projectRoot.map { $0.standardizedFileURL.path + "/" }
+        let roots = Self.copyRoots(projectRoot)
         // TeX's errors it recovered from (EngineV3ErrorPolicy): warnings under best effort.
         let kept = EngineV3ErrorPolicy.keptErrors(diags.map(Self.policyItem), mode: mode)
         let recovered = Set(diags.indices.filter { diags[$0].severity == "error" && !kept.contains($0) })
-        func rel(_ file: String) -> String {
-            var f = file
-            if f.hasPrefix("./") { f.removeFirst(2) }
-            if let root, f.hasPrefix(root) { f.removeFirst(root.count) }
-            return f
-        }
+        func rel(_ file: String) -> String { Self.relativeToCopy(file, roots: roots) }
         // Rows that say the same thing as another fold into it (EngineV3DiagPresent.folds).
         let folds = EngineV3DiagPresent.folds(diags, kept: kept)
         let stopped = Set(folds.filter { EngineV3DiagPresent.isStop(diags[$0.key].code) && !EngineV3DiagPresent.isStop(diags[$0.value].code) }.map(\.value))

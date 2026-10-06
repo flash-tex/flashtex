@@ -60,29 +60,41 @@ final class EngineV3BoxWarningTests: XCTestCase {
         // What the Problems panel lists under v3 is this row.
         XCTAssertTrue(model.displayedDiagnostics.contains(d))
 
-        // On the box's line: a source range on line 5 of box.tex (a click
-        // lands there), or, when the row could not be placed in the editor's
-        // text, TeX's place in its message ("box.tex:5:14: Overfull \hbox").
-        if let src = d.source {
+        // On the box's line, wherever the copy lives: the host names the
+        // box's file by its real path (/private/var/... under a temporary
+        // directory), the app knows the copy as /var/...; both are the copy.
+        let src = try XCTUnwrap(d.source, "the box row has a source range: \(d.message)")
+        XCTAssertEqual(src.path, "box.tex")
+        XCTAssertEqual(Self.line(ofByte: src.startByte, in: text), 5, "the row is on the box's line")
+        XCTAssertFalse(d.message.contains("box.tex:"), "placed in the editor, not named in the message: \(d.message)")
+    }
+
+    /// The same without a host: a box DIAG naming the copy's file by its
+    /// real path, while the session knows the copy through a symlink, is
+    /// placed on its line (and the standardized spelling still is).
+    func testABoxNamedByTheCopysRealPathIsPlaced() throws {
+        let base = FileManager.default.temporaryDirectory.appendingPathComponent("engine-v3-box-link-\(UUID().uuidString)")
+        let real = base.appendingPathComponent("real/src"), link = base.appendingPathComponent("link")
+        try FileManager.default.createDirectory(at: real, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: base) }
+        try FileManager.default.createSymbolicLink(at: link, withDestinationURL: base.appendingPathComponent("real"))
+        let text = "\\documentclass{article}\n\\begin{document}\nA fine first line.\n\n\\hbox to 1pt{wide text here}\n\n\\end{document}\n"
+        try text.write(to: real.appendingPathComponent("box.tex"), atomically: true, encoding: .utf8)
+        let copy = link.appendingPathComponent("src") // how the session knows it
+        let realPath = try XCTUnwrap(realpath(copy.path, nil).map { p in defer { free(p) }; return String(cString: p) })
+        XCTAssertNotEqual(realPath, copy.standardizedFileURL.path)
+        let model = ShellModel()
+        model.replaceProject(entryText: text, named: "box.tex")
+        for named in [realPath, copy.standardizedFileURL.path] {
+            let json = #"{"id":1,"seq":0,"exact":true,"severity":"warning","code":"tex/overfull-hbox","origin":"tex","message":"Overfull \\hbox (60.0pt too wide) detected at line 5","file":"\#(named)/box.tex","line":5,"col":13}"#
+            let d = try DL3Diag.decode(Array(json.utf8))
+            let rows = EngineV3Session.problems(diags: [d], model: model, projectRoot: copy, texts: ["box.tex": text])
+            let row = try XCTUnwrap(rows.first, named)
+            XCTAssertEqual(row.severity, .warning)
+            let src = try XCTUnwrap(row.source, "\(named): \(row.message)")
             XCTAssertEqual(src.path, "box.tex")
-            XCTAssertEqual(Self.line(ofByte: src.startByte, in: text), 5, "the row is on the box's line")
-        } else {
-            XCTAssertTrue(d.message.hasPrefix("box.tex:5:"), d.message)
+            XCTAssertEqual(Self.line(ofByte: src.startByte, in: text), 5, named)
         }
-        // KNOWN (finding, app-parity B3): a box's place comes from the display
-        // list's side table, whose paths are the host's getcwd() -- the real
-        // path (/private/var/...) -- while EngineV3Session.problems strips the
-        // project copy's standardized root (/var/...). Under a cache with a
-        // symlink in its path (every temporary directory on macOS) the row
-        // then gets no source range. The app's own cache
-        // (~/Library/Caches/FlashTeX/engine-v3) has none. Strict: once fixed,
-        // this expected failure fails and must be removed.
-        let copy = try XCTUnwrap(s.projectCopy)
-        let real = realpath(copy.path, nil).map { p in defer { free(p) }; return String(cString: p) }
-        if let real, real != copy.standardizedFileURL.path {
-            XCTExpectFailure("the project copy \(copy.standardizedFileURL.path) is really \(real): the box row is not placed in the editor (see KNOWN above)")
-        }
-        XCTAssertNotNil(d.source, "the box row has a source range: \(d.message)")
     }
 
     /// "Overfull \hbox ...", or the same after a "file:line:col: " place.
