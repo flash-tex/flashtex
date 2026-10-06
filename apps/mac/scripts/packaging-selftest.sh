@@ -129,6 +129,16 @@ ln -s "$MAC_DIR/Fonts/lmroman10-regular.otf" "$WORK/fonts-symlink/lmroman10-regu
 FLASHTEX_BUNDLE_FONTS_DIR="$WORK/fonts-symlink" expect_preflight_failure "pinned bundle metric refused" --debug
 FLASHTEX_BUNDLE_FONTS_DIR="$WORK/fonts-absent" expect_preflight_failure "pinned bundle fonts directory not found" --debug
 
+section "Engine host and the new CLI ship (app-parity row D5; no build)"
+# A release (release.yml: --require-engine-host) refuses an app without
+# flashtex-host before the build; the CLI tarball's checks are portable.
+expect_preflight_failure "--require-engine-host: no flashtex-host" --debug --require-engine-host --engine-host "$WORK/missing/flashtex-host"
+if "$MAC_DIR/../../scripts/tests/package-cli.test.sh" >"$WORK/package-cli-test.log" 2>&1; then
+  ok "scripts/tests/package-cli.test.sh: $(grep -c '^  ok' "$WORK/package-cli-test.log") checks (flashtex-v3, flashtex-host, its pool and licence in the CLI tarball; release.yml builds and requires them)"
+else
+  bad "scripts/tests/package-cli.test.sh: $(grep 'FAIL' "$WORK/package-cli-test.log" | head -3 | tr '\n' ' ')"
+fi
+
 section "Resources"
 for f in Info.plist.template FlashTeX.entitlements; do
   if plutil -lint "$MAC_DIR/Resources/$f" >/dev/null 2>&1; then ok "plutil -lint Resources/$f"; else bad "plutil -lint Resources/$f"; fi

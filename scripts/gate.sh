@@ -629,6 +629,7 @@ case "$TIER" in
     else
       skip "licence boundary (DESIGN §3)" "scripts/check-license-boundary.sh is not in this checkout"
     fi
+    step "CLI packaging self-test (flashtex-v3 and flashtex-host ship; app-parity D5)" -- scripts/tests/package-cli.test.sh
     step "parity scoreboard and lockstep self-tests" -- gate_parity_selftest
     step "retired code is not named outside the allowlist (retirement plan §4.6)" -- \
       python3 tools/parity/retirement_refs.py
