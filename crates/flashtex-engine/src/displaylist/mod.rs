@@ -174,6 +174,8 @@ struct State {
     images: HashMap<[u8; 32], Json>,
     programs: HashMap<String, Program>,
     encodings: HashMap<String, Option<Arc<Vec<Vec<u8>>>>>,
+    /// Type 1 programs' built-in encodings, by the program's SHA-256.
+    builtin_encodings: HashMap<[u8; 32], Arc<Vec<Vec<u8>>>>,
     // Engine state as the writer saw it: dropped at every restore.
     font_keys: HashMap<u32, [u8; 32]>,
     image_keys: HashMap<u32, [u8; 32]>,
@@ -198,6 +200,7 @@ impl State {
             images: HashMap::new(),
             programs: HashMap::new(),
             encodings: HashMap::new(),
+            builtin_encodings: HashMap::new(),
             font_keys: HashMap::new(),
             image_keys: HashMap::new(),
             widths: HashMap::new(),
@@ -1613,7 +1616,7 @@ impl Globals {
             }
         }
         if names.is_none() && format == "type1" {
-            names = Some(Arc::new(builtin_encoding(&program)));
+            names = Some(builtin_encoding_of(&program, &program_sha));
         }
         let mut h = Sha256::new();
         h.update(b"display-list-v3 font\0");
@@ -2030,6 +2033,20 @@ fn parse_enc(data: &[u8]) -> Option<Vec<Vec<u8>>> {
 
 /// A Type 1 font's built-in `/Encoding` (from the clear-text part of a
 /// PFB or PFA): `StandardEncoding` or `dup <code> /<name> put` entries.
+/// [`builtin_encoding`] of a program whose SHA-256 is `sha`, worked out once
+/// per program: every restore forgets the fonts' keys (`restored`), and the
+/// next page worked them out again, decrypting each Type 1 program's
+/// cleartext for its encoding (0.2 ms of every keystroke on a 1,000-page
+/// hyperref document; lane P4-PAGE-COST).
+fn builtin_encoding_of(program: &[u8], sha: &[u8; 32]) -> Arc<Vec<Vec<u8>>> {
+    if let Some(hit) = with(|st| st.builtin_encodings.get(sha).cloned()).flatten() {
+        return hit;
+    }
+    let names = Arc::new(builtin_encoding(program));
+    with(|st| st.builtin_encodings.insert(*sha, names.clone()));
+    names
+}
+
 fn builtin_encoding(program: &[u8]) -> Vec<Vec<u8>> {
     let clear = cleartext(program);
     let mut out = vec![b".notdef".to_vec(); 256];
@@ -2478,6 +2495,24 @@ mod tests {
             font_matrix(fm, 0, 850).as_deref(),
             Some("0.00085 0 0 0.001 0 0")
         );
+    }
+
+    /// A program's built-in encoding is worked out once and kept across
+    /// restores (`restored` forgets the fonts' keys, not this).
+    #[test]
+    fn builtin_encodings_are_kept_by_program() {
+        DL.with(|d| *d.borrow_mut() = Some(Box::new(State::new())));
+        let pfa = b"/Encoding 256 array\ndup 65 /A put\nreadonly def\n";
+        let other = b"/Encoding StandardEncoding def\n";
+        let (sa, so) = (sha256(pfa), sha256(other));
+        let a = builtin_encoding_of(pfa, &sa);
+        assert_eq!(*a, builtin_encoding(pfa));
+        forget_engine_state();
+        assert!(Arc::ptr_eq(&a, &builtin_encoding_of(pfa, &sa)));
+        let o = builtin_encoding_of(other, &so);
+        assert_eq!(*o, builtin_encoding(other));
+        assert!(!Arc::ptr_eq(&a, &o));
+        DL.with(|d| *d.borrow_mut() = None);
     }
 
     /// A real font whose encoding writes `dup 1/uni6301 put`; skipped when

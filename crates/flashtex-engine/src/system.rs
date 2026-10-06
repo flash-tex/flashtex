@@ -172,7 +172,7 @@ impl AlphaFile {
 
 /// One line as texmfmp.c's `input_line` reads it: up to a LF, a CR or a CR
 /// LF; false at the end of the file when nothing was read.
-fn read_tex_line(r: &mut impl BufRead, line: &mut Vec<u8>) -> bool {
+pub(crate) fn read_tex_line(r: &mut impl BufRead, line: &mut Vec<u8>) -> bool {
     line.clear();
     let mut got_any = false;
     loop {
@@ -1239,9 +1239,108 @@ pub fn setup_bound_var(name: &str, default: i32) -> i32 {
     n
 }
 
+// ---------------------------------------------------------------------------
+// Read confinement (FLASHTEX_CONFINE_READS)
+// ---------------------------------------------------------------------------
+
+/// With `FLASHTEX_CONFINE_READS=1` in the environment (the app sets it for a
+/// host that compiles other people's text: a Live Share session, see
+/// docs/design/live-collab/PROPOSAL.md §6.2), every file the engine looks up
+/// or opens for the job is confined, at the two places all of them go
+/// through: the resolver's lookups (`resolve`, `resolve_ex`: `\input`,
+/// `\openin`, `\font` and its TFM/VF/map/encoding/font files, `\pdfmapfile`,
+/// `\pdfmapline`, images, the file primitives) and `open_input`'s own
+/// output-directory shortcut (`input_path`, `find_input`, which also serve
+/// `\pdfobj file` and the other byte reads). Two rules (`confined_found_ok`):
+///
+/// - the name asked for may not be absolute, start with `~`, contain `$`
+///   (kpathsea expands both) or have a `..` component;
+/// - what was found, followed through every symbolic link, must lie in an
+///   allowed root (the job's directory, the output directory, and the
+///   colon-separated `FLASHTEX_CONFINE_ROOTS`: the real project folder), or
+///   be a search-path hit with no link anywhere in its path (a TeX tree
+///   file). So a project file that is a link to `~/.ssh/id_rsa` is refused.
+///
+/// The format and the string pool are the host's own (its command line),
+/// not the document's, and are not confined. kpathsea's `openin_any = p`
+/// does none of this: its paranoid mode confines output names only (pdfTeX
+/// in TeX Live 2026 reads `/etc/hosts`, `~/x` and `../x` through `\openin`
+/// with it set). Without the variable nothing changes, so pdfTeX parity is
+/// untouched.
+pub fn input_name_confined_ok(name: &str) -> bool {
+    !reads_confined() || confined_name_ok(name)
+}
+
+fn reads_confined() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var_os("FLASHTEX_CONFINE_READS").is_some_and(|v| v == "1"))
+}
+
+/// The roots a confined read may resolve into besides the job's directory
+/// and the output directory (`FLASHTEX_CONFINE_ROOTS`), with links resolved.
+fn confine_roots() -> &'static [std::path::PathBuf] {
+    static ROOTS: std::sync::OnceLock<Vec<std::path::PathBuf>> = std::sync::OnceLock::new();
+    ROOTS.get_or_init(|| {
+        std::env::var("FLASHTEX_CONFINE_ROOTS")
+            .unwrap_or_default()
+            .split(':')
+            .filter(|s| !s.is_empty())
+            .filter_map(|s| std::fs::canonicalize(s).ok())
+            .collect()
+    })
+}
+
+/// Both confinement rules for a lookup of `name` that found `found` (see
+/// `input_name_confined_ok`); true when confinement is off. `searched`: the
+/// resolver found it along its search paths (only such a hit may be a TeX
+/// tree file; the output-directory shortcut never is).
+pub(crate) fn confined_found_ok(name: &str, found: &str, format: Format, searched: bool) -> bool {
+    if !reads_confined() || format == Format::Fmt {
+        return true;
+    }
+    if !confined_name_ok(name) {
+        return false;
+    }
+    let mut roots: Vec<std::path::PathBuf> = confine_roots().to_vec();
+    if let Ok(cwd) = std::env::current_dir().and_then(std::fs::canonicalize) {
+        roots.push(cwd);
+    }
+    if let Some(dir) = run().output_directory {
+        if let Ok(d) = std::fs::canonicalize(&dir) {
+            roots.push(d);
+        }
+    }
+    confined_path_ok(Path::new(found), &roots, searched)
+}
+
+/// The second rule on its own (tests call it directly).
+pub(crate) fn confined_path_ok(found: &Path, roots: &[std::path::PathBuf], searched: bool) -> bool {
+    let Ok(real) = std::fs::canonicalize(found) else {
+        return false;
+    };
+    if roots.iter().any(|r| real.starts_with(r)) {
+        return true;
+    }
+    // A search-path hit (an absolute path kpathsea built from its trees)
+    // with no link anywhere in it is a TeX tree file.
+    searched && found.is_absolute() && real == found
+}
+
+/// The rule itself (tests call it directly).
+pub(crate) fn confined_name_ok(name: &str) -> bool {
+    let name = name.trim_matches('"');
+    !(name.starts_with('/')
+        || name.starts_with('~')
+        || name.contains('$')
+        || name.split(['/', '\\']).any(|c| c == ".."))
+}
+
 /// `kpse_find_tex(name)`, for the C parts' `find_input_file`
 /// (`kpse_find_file(name, kpse_tex_format, true)`).
 pub fn find_input(name: &str) -> Option<String> {
+    if !input_name_confined_ok(name) {
+        return None;
+    }
     // texmfmp.c's `find_input_file` looks in -output-directory first, for
     // a name that is not absolute (so `\pdffilesize{\jobname.aux}`, which
     // LaTeX's `\IfFileExists` asks, finds the `.aux` a previous run wrote
@@ -1249,7 +1348,7 @@ pub fn find_input(name: &str) -> Option<String> {
     if let Some(dir) = run().output_directory {
         if !name.starts_with('/') {
             let p = format!("{dir}/{name}");
-            if Path::new(&p).is_file() {
+            if Path::new(&p).is_file() && confined_found_ok(name, &p, Format::Tex, false) {
                 note_file(&p);
                 read_set_open(&p);
                 return Some(p);
@@ -1369,8 +1468,15 @@ pub fn getc(f: &mut ByteFile) -> i32 {
 /// `kpse_find_file(name, format, must_exist)` as web2c's `open_input` asks
 /// it; a file an mktex script made is recorded as an external effect.
 fn resolve_ex(name: &str, format: Format, must_exist: bool) -> Option<String> {
+    // Confined: a refused name is not even looked up (no mktex script runs
+    // for it), and what is found must pass too.
+    if reads_confined() && format != Format::Fmt && !confined_name_ok(name) {
+        return None;
+    }
     let (found, made) = with_resolver(|r| r.find_ex(name, format, must_exist));
-    let found = found.map(|p| p.to_string_lossy().into_owned());
+    let found = found
+        .map(|p| p.to_string_lossy().into_owned())
+        .filter(|p| confined_found_ok(name, p, format, true));
     read_set_lookup(name, format, must_exist, found.as_deref());
     if made {
         record_effect("mktex", name.as_bytes());
@@ -1425,6 +1531,10 @@ thread_local! {
 static TEX_INPUT_TYPE: AtomicBool = AtomicBool::new(false);
 
 fn resolve(name: &str, format: Format) -> Option<String> {
+    // Confined (`input_name_confined_ok`): refused names are not looked up.
+    if reads_confined() && format != Format::Fmt && !confined_name_ok(name) {
+        return None;
+    }
     // kpathsea's program name selects the search paths (`TEXINPUTS.pdflatex`
     // finds latex.ltx, `TEXINPUTS.pdftex` does not); the engine name selects
     // the format directory.
@@ -1444,6 +1554,7 @@ fn resolve(name: &str, format: Format) -> Option<String> {
         read_set_lookup(name, format, false, found.as_deref());
         found
     });
+    let found = found.filter(|p| confined_found_ok(name, p, format, true));
     note_lookup(name, format, None, found.as_deref());
     found
 }
@@ -1762,23 +1873,44 @@ impl Globals {
     fn input_path(&mut self, default: Format, must_exist: bool) -> Option<String> {
         FULL_NAME_OF_FILE.with(|f| *f.borrow_mut() = None);
         let s = self.raw_file_name();
-        let (area, base) = Self::split_area(&s);
-        if base.eq_ignore_ascii_case("TEX.POOL") {
+        // tex.web's device names (§§514, 520: `TeXinputs:`, `TeXfonts:`,
+        // `TeXformats:`). Pure tex.web (`tex82`: Knuth's trip test) parses
+        // `:` as an area delimiter and itself prepends `TEX_area` and
+        // `TEX_font_area` (§§537, 563), so there a device name means its
+        // device, as tripman.tex expects. Under web2c's change files (the
+        // product, etrip) an area ends only at `/` and a device name
+        // survives only as the spelling of web2c's own defaults: the format
+        // `w_open_in` opens (`TEX_format_default`, §524) and INITEX's string
+        // pool (§51, before `ready_already`). Any other name is the
+        // document's and is literal, as in web2c: pdfTeX answers
+        // `\input TeXformats:/etc/hosts` with "I can't find file
+        // `TeXformats:/etc/hosts'", and the name must never select the
+        // format search (whose files are not confined).
+        let tex82 = cfg!(feature = "tex82");
+        let (area, base) = if tex82 || default == Format::Fmt {
+            Self::split_area(&s)
+        } else {
+            ("", s.as_str())
+        };
+        if (tex82 || self.ready_already != 314159)
+            && Self::split_area(&s).1.eq_ignore_ascii_case("TEX.POOL")
+        {
             let p = pool_path();
             read_set_open(&p);
             return Some(p);
         }
         let format = match area {
-            "TeXfonts" => Format::Tfm,
-            "TeXformats" => Format::Fmt,
-            "TeXinputs" => Format::Tex,
-            _ => default,
+            "TeXfonts" if tex82 => Format::Tfm,
+            "TeXformats" if tex82 => Format::Fmt,
+            "TeXinputs" if tex82 => Format::Tex,
+            "" | "TeXformats" => default,
+            _ => return None, // web2c: no other device holds a format
         };
         let mut found = None;
         if let Some(dir) = run().output_directory {
             if !base.starts_with('/') {
                 let p = format!("{dir}/{base}");
-                if Path::new(&p).is_file() {
+                if Path::new(&p).is_file() && confined_found_ok(base, &p, format, false) {
                     found = Some(p);
                 }
             }
@@ -1841,8 +1973,15 @@ impl Globals {
     /// `-output-directory`; if it cannot be created there, into texmf.cnf's
     /// `TEXMFOUTPUT`. The name opened is written back into `name_of_file`.
     fn open_output_file(&mut self) -> Option<(File, String)> {
+        // Under web2c a document's name is literal (`\openout1=TeXinputs:x`
+        // writes a file of that name, as pdfTeX does); pure tex.web
+        // (`tex82`, trip) parses the device off, as `input_path` does.
         let s = self.raw_file_name();
-        let name = Self::split_area(&s).1.to_string();
+        let name = if cfg!(feature = "tex82") {
+            Self::split_area(&s).1.to_string()
+        } else {
+            s.clone()
+        };
         let absolute = name.starts_with('/');
         let mut fname = name.clone();
         if let Some(dir) = run().output_directory {
@@ -2587,7 +2726,7 @@ impl Globals {
 
     pub fn kpse_in_name_ok(&mut self) -> bool {
         let n = self.raw_file_name();
-        with_resolver(|r| r.name_ok(&n, false))
+        input_name_confined_ok(&n) && with_resolver(|r| r.name_ok(&n, false))
     }
 
     pub fn kpse_out_name_ok(&mut self) -> bool {
@@ -4378,6 +4517,82 @@ mod os_dependent_tests {
             String::from_utf8_lossy(&out.stdout).trim_end(),
             r#""Windows_NT""#
         );
+    }
+}
+
+#[cfg(test)]
+mod confined_read_tests {
+    use super::confined_name_ok;
+
+    /// The names a Live Share guest could use to read the host's files are
+    /// refused; ordinary project and TeX tree names are not.
+    #[test]
+    fn confined_names() {
+        for bad in [
+            "/etc/hosts",
+            "/etc/hosts.tex",
+            "~/.ssh/id_rsa",
+            "~alice/notes.tex",
+            "$HOME/secret.tex",
+            "../secret.tex",
+            "chapters/../../x.tex",
+            "a\\..\\b.tex",
+            "\"/etc/hosts\"",
+        ] {
+            assert!(!confined_name_ok(bad), "{bad}");
+        }
+        for ok in [
+            "main.tex",
+            "chapters/one.tex",
+            "article.cls",
+            "figures/a.pdf",
+            "./local.sty",
+            "a..b.tex",
+        ] {
+            assert!(confined_name_ok(ok), "{ok}");
+        }
+    }
+
+    /// What was found must resolve, through every link, into an allowed
+    /// root; a link-free absolute hit (a TeX tree file) is fine.
+    #[cfg(unix)]
+    #[test]
+    fn confined_paths() {
+        use super::confined_path_ok;
+        let base = std::env::temp_dir().join(format!("flashtex-confine-{}", std::process::id()));
+        let project = base.join("project");
+        let outside = base.join("outside");
+        std::fs::create_dir_all(&project).unwrap();
+        std::fs::create_dir_all(&outside).unwrap();
+        std::fs::write(project.join("main.tex"), "x").unwrap();
+        std::fs::write(outside.join("secret.tex"), "s").unwrap();
+        std::os::unix::fs::symlink(outside.join("secret.tex"), project.join("evil.tex")).unwrap();
+        std::os::unix::fs::symlink("../outside", project.join("linked")).unwrap();
+        let roots = vec![std::fs::canonicalize(&project).unwrap()];
+        assert!(confined_path_ok(&project.join("main.tex"), &roots, false));
+        assert!(
+            !confined_path_ok(&project.join("evil.tex"), &roots, true),
+            "a link to a file outside"
+        );
+        assert!(
+            !confined_path_ok(&project.join("linked/secret.tex"), &roots, true),
+            "a relative link to a folder outside"
+        );
+        let real_outside = std::fs::canonicalize(outside.join("secret.tex")).unwrap();
+        assert!(
+            confined_path_ok(&real_outside, &roots, true),
+            "a link-free search hit is a tree file"
+        );
+        assert!(
+            !confined_path_ok(&real_outside, &roots, false),
+            "but never one from the output-directory shortcut"
+        );
+        assert!(!confined_path_ok(
+            &project.join("missing.tex"),
+            &roots,
+            true
+        ));
+        std::fs::remove_dir_all(&base).unwrap();
     }
 }
 
