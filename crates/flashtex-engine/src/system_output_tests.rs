@@ -318,3 +318,142 @@ fn a_removed_file_is_reported_as_gone() {
     let e = g.restore_discard(k).unwrap_err();
     assert!(e.contains("is gone"), "{e}");
 }
+
+/// A large file the run does not read (a preview PDF): its path, and the
+/// old run's text after a 4-byte head, `a` then `b`, past
+/// `checkpoint::DEFER_TAIL_MIN` together and `b` alone.
+fn old_pdf(name: &str) -> (String, String, String) {
+    let d = dir(name);
+    let p = d.join("doc.pdf").to_string_lossy().into_owned();
+    let a: String = (0..100_000)
+        .map(|i| (b'a' + (i % 26) as u8) as char)
+        .collect();
+    let b: String = (0..300_000)
+        .map(|i| (b'A' + (i % 26) as u8) as char)
+        .collect();
+    (p, a, b)
+}
+
+/// An old run of `p`: "%PDF", checkpoint `k1`, `a`, checkpoint `k2`, `b`,
+/// a last checkpoint.
+fn old_run(g: &mut Globals, p: &str, a: &str, b: &str) -> (u64, u64) {
+    openout(g, 0, p);
+    write(g, 0, "%PDF");
+    let k1 = g.checkpoint().unwrap();
+    write(g, 0, a);
+    let k2 = g.checkpoint().unwrap();
+    write(g, 0, b);
+    g.checkpoint().unwrap();
+    (k1, k2)
+}
+
+#[test]
+fn a_deferred_tail_is_the_next_restores_tail() {
+    let (p, a, b) = old_pdf("defer-same");
+    let mut g = Globals::new();
+    let (k, _) = old_run(&mut g, &p, &a, &b);
+    // a keystroke's run, stopped and abandoned
+    g.restore(k).unwrap();
+    write(&mut g, 0, "first edit");
+    g.reattach_pending_deferring(&|_| true).unwrap();
+    assert_eq!(crate::checkpoint::deferred_tails(), 1);
+    // the old length, without the old bytes written back
+    assert_eq!(
+        std::fs::metadata(&p).unwrap().len(),
+        4 + (a.len() + b.len()) as u64
+    );
+    // the next keystroke restores the same point: its tail comes from memory
+    g.restore(k).unwrap();
+    assert_eq!(crate::checkpoint::deferred_tails(), 0);
+    write(&mut g, 0, "second edit");
+    // abandoned too, this time written back: the old run, whole
+    g.reattach_pending().unwrap();
+    close(&mut g, 0);
+    assert_eq!(read(&p), format!("%PDF{a}{b}"));
+}
+
+#[test]
+fn a_deferred_tail_is_flushed_as_a_reattach_writes_it() {
+    let (p, a, b) = old_pdf("defer-flush");
+    let mut g = Globals::new();
+    let (k, _) = old_run(&mut g, &p, &a, &b);
+    g.restore(k).unwrap();
+    write(&mut g, 0, "an edit");
+    g.reattach_pending_deferring(&|_| true).unwrap();
+    crate::checkpoint::flush_deferred_tails().unwrap();
+    assert_eq!(crate::checkpoint::deferred_tails(), 0);
+    close(&mut g, 0);
+    assert_eq!(read(&p), format!("%PDF{a}{b}"));
+}
+
+#[test]
+fn a_deferred_tail_serves_a_later_and_an_earlier_restore() {
+    let (p, a, b) = old_pdf("defer-move");
+    let mut g = Globals::new();
+    let (k1, k2) = old_run(&mut g, &p, &a, &b);
+    // abandoned from k1, then a restore at the later k2: the old bytes
+    // between them are written, the rest is the tail
+    g.restore(k1).unwrap();
+    write(&mut g, 0, "x");
+    g.reattach_pending_deferring(&|_| true).unwrap();
+    g.restore(k2).unwrap();
+    assert_eq!(crate::checkpoint::deferred_tails(), 0);
+    write(&mut g, 0, "y");
+    g.reattach_pending_deferring(&|_| true).unwrap();
+    assert_eq!(crate::checkpoint::deferred_tails(), 1);
+    // abandoned from k2, then a restore at the earlier k1: the old bytes
+    // the disk holds between them, then the deferred tail
+    g.restore(k1).unwrap();
+    assert_eq!(crate::checkpoint::deferred_tails(), 0);
+    write(&mut g, 0, "z");
+    g.reattach_pending().unwrap();
+    close(&mut g, 0);
+    assert_eq!(read(&p), format!("%PDF{a}{b}"));
+}
+
+#[test]
+fn a_run_from_a_deferred_restore_writes_after_the_old_bytes() {
+    let (p, a, b) = old_pdf("defer-run");
+    let mut g = Globals::new();
+    let (k1, k2) = old_run(&mut g, &p, &a, &b);
+    g.restore(k1).unwrap();
+    write(&mut g, 0, "x");
+    g.reattach_pending_deferring(&|_| true).unwrap();
+    g.restore(k2).unwrap();
+    write(&mut g, 0, "the new end");
+    close(&mut g, 0);
+    assert_eq!(read(&p), format!("%PDF{a}the new end"));
+}
+
+#[test]
+fn a_tail_the_run_reads_is_written_back_at_once() {
+    let (p, a, b) = old_pdf("defer-read");
+    let mut g = Globals::new();
+    let (k, _) = old_run(&mut g, &p, &a, &b);
+    g.restore(k).unwrap();
+    write(&mut g, 0, "an edit");
+    // (the caller says the run reads it)
+    g.reattach_pending_deferring(&|_| false).unwrap();
+    assert_eq!(crate::checkpoint::deferred_tails(), 0);
+    close(&mut g, 0);
+    assert_eq!(read(&p), format!("%PDF{a}{b}"));
+}
+
+#[test]
+fn a_restore_before_the_file_was_opened_gets_it_written_back() {
+    let (p, a, b) = old_pdf("defer-before-open");
+    let mut g = Globals::new();
+    let k0 = g.checkpoint().unwrap();
+    let (k1, _) = old_run(&mut g, &p, &a, &b);
+    g.restore(k1).unwrap();
+    write(&mut g, 0, "x");
+    g.reattach_pending_deferring(&|_| true).unwrap();
+    // not open at k0: the new run may read the file before it writes it,
+    // so the disk holds the old run's file again
+    g.restore(k0).unwrap();
+    assert_eq!(crate::checkpoint::deferred_tails(), 0);
+    assert_eq!(read(&p), format!("%PDF{a}{b}"));
+    g.reattach_pending().unwrap();
+    close(&mut g, 0);
+    assert_eq!(read(&p), format!("%PDF{a}{b}"));
+}

@@ -57,6 +57,13 @@ routes = [r for r in ROUTE_ORDER if any(d["route"] == r for d in runs)]
 routes += sorted({d["route"] for d in runs} - set(routes))
 
 
+def engine_of(d):
+    """The run's engine (the summary's `engine`, from retirement plan #1236
+    S3r on); a summary without one was the previous engine, the only one the
+    shell's typing bench drove before."""
+    return d.get("engine") or "previous (unlabelled)"
+
+
 def load_mark(d):
     if not d.get("load_affected"):
         return ""
@@ -78,8 +85,8 @@ lines.append("")
 lines.append("Latency is keystroke → paint per typed character (ms); a coalesced keystroke is measured to the first paint that showed it. `compile` is the shell's send → result time on the main thread; `render` is PreviewView body → last page Canvas draw. A cell marked ⚠ ran while the 1-minute load average exceeded the limit (%s) before or after it; such cells are reported, never used as a gate." % (runs[0].get("load_limit", 10) if runs else 10))
 lines.append("")
 
-HEADER = "| route | producer | seed | bytes | interval | keys typed | paints | coalesced | k→p p50 | p95 | p99 | max | compile p50 | compile p95 | render p50 | render p95 | unpainted | load before/after |"
-RULE = "|---|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|"
+HEADER = "| route | engine | producer | seed | bytes | interval | keys typed | paints | coalesced | k→p p50 | p95 | p99 | max | compile p50 | compile p95 | render p50 | render p95 | unpainted | load before/after |"
+RULE = "|---|---|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|"
 
 
 def row(d):
@@ -88,8 +95,8 @@ def row(d):
     r = d.get("render_pass_ms", {})
     typed = "%d" % d["keystrokes"] + (" of %d (budget)" % d["script_keystrokes"] if d.get("typing_budget_exhausted") else "")
     load = "%s / %s" % (ms(d.get("load_avg_before")), ms(d.get("load_avg_after")))
-    return "| %s | %s | %s | %d | %s | %s | %d | %d | %s | %s | %s | %s | %s | %s | %s | %s | %d | %s%s |" % (
-        d["route"], d["producer"], d["_seed"], d["document_bytes_after"], d["_interval"], typed, d["paints"], d["coalesced"],
+    return "| %s | %s | %s | %s | %d | %s | %s | %d | %d | %s | %s | %s | %s | %s | %s | %s | %s | %d | %s%s |" % (
+        d["route"], engine_of(d), d["producer"], d["_seed"], d["document_bytes_after"], d["_interval"], typed, d["paints"], d["coalesced"],
         ms(k.get("p50_ms")), ms(k.get("p95_ms")), ms(k.get("p99_ms")), ms(k.get("max_ms")),
         ms(c.get("p50_ms")), ms(c.get("p95_ms")), ms(r.get("p50_ms")), ms(r.get("p95_ms")), d["unpainted"], load, load_mark(d))
 

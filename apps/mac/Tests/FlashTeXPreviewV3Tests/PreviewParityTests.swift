@@ -16,7 +16,10 @@ import FlashTeXDisplayListV3
 /// * Always: the checked-in `beamer-overlays` display list and PDF.
 /// * Every parity fixture when `target/dl3-positions/` (or
 ///   `FLASHTEX_DL3_FIXTURES`) holds them (`tools/displaylist/check_positions.py`
-///   leaves `display.dl3` and `src/main.pdf` there); skipped otherwise.
+///   leaves `display.dl3`, `src/main.pdf` and `oracle.pdf` there); skipped
+///   otherwise, or failed when `FLASHTEX_V3_PARITY_REQUIRE=1` (CI:
+///   .github/workflows/preview-parity.yml). The reference is pdflatex's own
+///   `oracle.pdf` when present, else the engine's PDF.
 ///   `FLASHTEX_V3_PARITY_OUT=path.json` writes the per-page report.
 /// * `FLASHTEX_V3_PARITY_SCALES=1,2.28,3.25` replaces the scales (px/pt) of
 ///   the fixture sweeps (§6.2's scale sweep); `FLASHTEX_V3_PARITY_SMOOTH=1`
@@ -73,6 +76,15 @@ final class PreviewParityTests: XCTestCase {
             if fm.fileExists(atPath: pdf.path) { return pdf }
         }
         return nil
+    }
+
+    /// The PDF a fixture's sweep renders as the reference: `oracle.pdf`,
+    /// pdflatex's own PDF (`check_positions.py` keeps it beside the display
+    /// list), else the engine's PDF, which P-T2 makes equal to it.
+    static func referencePDF(in fixture: URL) -> URL? {
+        let oracle = fixture.appendingPathComponent("oracle.pdf")
+        if FileManager.default.fileExists(atPath: oracle.path) { return oracle }
+        return enginePDF(in: fixture.appendingPathComponent("src"))
     }
 
     func testCheckedInFixtureIsPixelIdenticalToThePDF() throws {
@@ -137,17 +149,25 @@ final class PreviewParityTests: XCTestCase {
         let env = ProcessInfo.processInfo.environment
         let dir = URL(fileURLWithPath: env["FLASHTEX_DL3_FIXTURES"] ?? Self.repoRoot.appendingPathComponent("target/dl3-positions").path)
         guard let names = try? FileManager.default.contentsOfDirectory(atPath: dir.path).sorted() else {
+            // CI (preview-parity.yml) sets FLASHTEX_V3_PARITY_REQUIRE=1: there a missing sweep fails.
+            if env["FLASHTEX_V3_PARITY_REQUIRE"] == "1" { XCTFail("no \(dir.path): the sweep's input is missing"); return }
             throw XCTSkip("no \(dir.path): run tools/displaylist/check_positions.py first")
         }
-        struct Row: Codable { var fixture: String; var reference: Reference; var pages: [DL3Parity.PageResult]; var baseline: [Int]? }
+        struct Row: Codable { var fixture: String; var reference: Reference; var pdf: String; var pages: [DL3Parity.PageResult]; var baseline: [Int]? }
         var rows: [Row] = []
         var complete = 0, identical = 0, fallback = 0, pixels = 0
         var perScale: [Double: (pages: Int, identical: Int, pixels: Int)] = [:]
+        var fallbackPages: [String] = []
         for name in names {
             let dl3 = dir.appendingPathComponent(name).appendingPathComponent("display.dl3")
             guard FileManager.default.fileExists(atPath: dl3.path),
-                  let pdf = Self.enginePDF(in: dir.appendingPathComponent(name).appendingPathComponent("src")) else { continue }
+                  let pdf = Self.referencePDF(in: dir.appendingPathComponent(name)) else { continue }
             let results = try check(dl3: dl3, pdf: pdf, name: name, reference: reference)
+            // Every page at every scale, or the sweep says which it lost (a
+            // render that failed must not pass by being left out).
+            let pageCount = CGPDFDocument(pdf as CFURL)?.numberOfPages ?? -1
+            XCTAssertEqual(results.count, pageCount * Self.scales.count, "\(name): page renders compared")
+            fallbackPages += Set(results.filter(\.incomplete).map(\.page)).sorted().map { "\(name) p\($0 + 1)" }
             var baseline: [Int]?
             if reference == .pdfKit, let cg = CGPDFDocument(pdf as CFURL), let kit = PDFDocument(url: pdf) {
                 baseline = results.map { r in
@@ -156,7 +176,7 @@ final class PreviewParityTests: XCTestCase {
                     return DL3Parity.diff(DL3Parity.rgba(a), DL3Parity.rgba(b)).pixels
                 }
             }
-            rows.append(Row(fixture: name, reference: reference, pages: results, baseline: baseline))
+            rows.append(Row(fixture: name, reference: reference, pdf: pdf.lastPathComponent, pages: results, baseline: baseline))
             for r in results {
                 if r.incomplete { fallback += 1; continue }
                 complete += 1
@@ -174,7 +194,9 @@ final class PreviewParityTests: XCTestCase {
         let baselinePixels = rows.reduce(0) { acc, row in acc + zip(row.pages, row.baseline ?? []).filter { !$0.0.incomplete }.reduce(0) { $0 + max(0, $1.1) } }
         if reference == .pdfKit { print("preview parity: Core Graphics' own rendering of the same PDFs differs from PDFKit by \(baselinePixels) px on those pages") }
         let byScale = perScale.keys.sorted().map { "\($0)x \(perScale[$0]!.identical)/\(perScale[$0]!.pages) identical (\(perScale[$0]!.pixels) px differ)" }.joined(separator: "; ")
-        print("preview parity vs \(reference.rawValue): \(rows.count) fixtures; page renders \(identical)/\(complete) identical, \(pixels) differing pixels in all; \(fallback) page renders drawn from the PDF instead (INCOMPLETE page or form); \(byScale)")
+        let oracleRefs = rows.filter { $0.pdf == "oracle.pdf" }.count
+        print("preview parity vs \(reference.rawValue): \(rows.count) fixtures (reference: pdflatex's PDF for \(oracleRefs), the engine's for \(rows.count - oracleRefs)); page renders \(identical)/\(complete) identical, \(pixels) differing pixels in all; \(fallback) page renders drawn from the PDF instead (INCOMPLETE page or form); \(byScale)")
+        print("preview parity: \(fallbackPages.count) pages drawn from the PDF: \(fallbackPages.joined(separator: ", "))")
         XCTAssertGreaterThan(complete, 0)
         for row in rows {
             // Zero tolerance at every scale, Type 3 pages included.

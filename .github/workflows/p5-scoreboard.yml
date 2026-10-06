@@ -1,16 +1,21 @@
 # The P5 scoreboard (docs/design/engine-v2/DESIGN.md §12 P5 and §8): the new
-# engine against v1 on every tier, pdflatex as the oracle, nightly on the
-# owner's NixOS PC, or on a self-hosted Mac while the PC is switched off (see
-# WHERE below). tools/parity/scoreboard-run.sh does the work; this file only
-# schedules it and publishes what it writes:
+# engine against v1 on every tier, pdflatex as the oracle, nightly on ONE
+# official host, the owner's NixOS PC (see WHERE below).
+# tools/parity/scoreboard-run.sh does the work; this file only schedules it,
+# publishes what it writes, and gates on it:
 #
 #   * the one table (scoreboard.md + scoreboard.json) and every harness log as
 #     the artifact `p5-scoreboard`, and the table in the run summary;
 #   * a short summary committed to the branch `p5-scoreboard-summary`
 #     (SUMMARY.md, plus reports/<date>.{md,json}); main is never written;
-#   * one issue per tier where new < old, opened or updated by the run and
-#     closed by it once the tier recovers (marker `p5-scoreboard:tier=` in the
-#     body; tools/parity/scoreboard.py --issues).
+#   * THE GATE (P5-BOARD-T4): one issue per red tier, labelled `p5-red`, opened
+#     or updated by the run and closed by it once the tier recovers (marker
+#     `p5-scoreboard:tier=` in the body; tools/parity/scoreboard.py --issues). A
+#     tier is red when the new engine is behind v1, or below a target or the
+#     owner's bar (DESIGN §13 2026-10-05: P-T2 >= 99 % and P-T1 >= 98 % on
+#     arXiv and T4, zero crashes on T4; scoreboard.py OWNER_BAR). Then the run
+#     itself fails unless the whole board is green (complete, every row green):
+#     a missing or partial tier fails the run without an issue;
 #
 # THREE JOBS, so no write token is ever near third-party sources. pdflatex and
 # both engines run arXiv e-prints and TeX Live documents, and a TeX document
@@ -40,7 +45,8 @@
 # board builds its commit on a self-hosted runner, DESIGN §9.3; the rules are
 # in scripts/ci/p5-pick-t4.sh), and the WHOLE board is then measured at the
 # commit its summary records, which must be a commit of main (checked even
-# when it is the run's own), so every tier is at one SHA. scoreboard.py
+# when it is the run's own), so every tier is at one SHA. (The engine is that
+# commit's; the harness and the board, tools/, are this workflow's own commit.) scoreboard.py
 # checks the commit, the engine binary sha256 and the oracle each T4 summary
 # records against the board's own (the oracle down to its texlive.tlpdb and
 # pdftex sha256, from oracle_provenance.py: the version string is the same on
@@ -48,14 +54,23 @@
 # documents partial. With no such artifact the board is measured at this
 # workflow's commit and the T4 rows read "missing" (stale): never green.
 #
-# WHERE (the `route`, chosen by the pick job and read by every other job). A
-# manual run may name it (input `route`: pc or mac); otherwise (`auto`, and
-# every scheduled run) the same two switches as ci.yml's `plan` and nightly.yml
-# decide (#1349):
+# WHERE (the `route`, chosen by the pick job and read by every other job).
+# The official board is the NixOS PC's (P5-BOARD-T4, 2026-10-05: one host, one
+# oracle, so boards compare night to night; a heavy hosted Mac carried it for
+# three days and ran out of disk). `auto` (every scheduled run) is the PC when
+# its switch is on, and nothing otherwise: never a silent Mac stand-in.
 #   pc: FLASHTEX_SELFHOSTED_LINUX = 1 (unset: FLASHTEX_SELFHOSTED_MAC stands in)
-#     the NixOS PC, [self-hosted, Linux, X64, flashtex-linux], exactly as before;
-#     a forced `pc` while the PC is off waits in the queue;
-#   mac: else FLASHTEX_SELFHOSTED_MAC = 1, on main only
+#     the NixOS PC, [self-hosted, Linux, X64, flashtex-linux]. Its runners are
+#     user services in `flashtex.slice` (MemoryMax 20G, no swap, CPUQuota 800 %,
+#     shared with agents' runs, DESIGN §13 2026-10-05), and the board runs in a
+#     scope of its own inside that slice (MemoryMax 10G, nice 10), so the board
+#     and a T4 night on the same PC cannot take the slice's 20 GB between them.
+#     Its TeX Live has no doc files, so the templates and packages tiers read
+#     their pinned documents from ~/.cache/flashtex-corpus-texmf/texlive-2026
+#     (tools/parity/README.md, "The board's host"); a forced `pc` while the PC
+#     is off waits in the queue;
+#   mac: only when a manual run names it, on main: NOT OFFICIAL. It files no
+#     issue, does not gate, and writes reports/<date>-mac.* but not SUMMARY.md;
 #     the heavy self-hosted Mac, [self-hosted, macOS, ARM64, flashtex,
 #     flashtex-heavy] (mac-m1max-a-2; mac-m1max-a-1 stays general and serves
 #     the merge queue), with MacTeX 2026 as the oracle. Its T4 is the Mac's
@@ -66,7 +81,7 @@
 #     time): one heavy job at a time on the heavy runner. A manual run entering
 #     that group while one is pending cancels the pending one (GitHub keeps
 #     one);
-#   else the `unavailable` notice below.
+#   else the `unavailable` job below, which fails: not measured is not green.
 # The publish job names its reports from the route the board ran on, not from
 # the switches when it starts (a switch flipped during a 5 h board would have
 # filed a Mac board under the PC's names).
@@ -97,7 +112,7 @@ on:
         required: false
         default: '0'
       route:
-        description: 'where the board runs: auto (the switches), pc (the NixOS PC) or mac (the heavy Mac, main only)'
+        description: 'where the board runs: auto (the PC if its switch is on), pc (the NixOS PC, official) or mac (the heavy Mac, main only, unofficial)'
         type: choice
         options: [auto, pc, mac]
         required: false
@@ -152,9 +167,8 @@ jobs:
               [ "$MAC_ON" = true ] || { echo "::error::route mac needs FLASHTEX_SELFHOSTED_MAC=1 and a run of main"; exit 1; }
               route=mac ;;
             auto)
-              if [ "$LINUX_ON" = true ]; then route=pc
-              elif [ "$MAC_ON" = true ]; then route=mac
-              else route=""; fi ;;
+              # the official host only (see WHERE): a Mac board is asked for by name
+              if [ "$LINUX_ON" = true ]; then route=pc; else route=""; fi ;;
             *) echo "::error::route $WANT: expected auto, pc or mac"; exit 1 ;;
           esac
           echo "route=$route" >> "$GITHUB_OUTPUT"
@@ -197,6 +211,25 @@ jobs:
           # the T4 run's commit, so T4 and every tier measured here are one SHA
           ref: ${{ needs.pick.outputs.sha || github.sha }}
           persist-credentials: false
+      # The ENGINE is the measured commit's (crates/, above); the HARNESS and the board
+      # (tools/: the board driver, scoreboard.py, parity.py, ...) are this workflow's
+      # own commit, so the board's rules are the ones this file was written for. With
+      # the measured commit's tools, a board whose T4 run is a day older than the
+      # workflow ran yesterday's board script (P5-BOARD-T4: its options, the owner's
+      # bar and the T4 crash row did not exist there).
+      - uses: actions/checkout@v4
+        if: needs.pick.outputs.sha != '' && needs.pick.outputs.sha != github.sha
+        with:
+          ref: ${{ github.sha }}
+          path: .board-tools
+          sparse-checkout: tools
+          persist-credentials: false
+      - name: this workflow's tools over the measured commit's
+        if: needs.pick.outputs.sha != '' && needs.pick.outputs.sha != github.sha
+        run: |
+          set -euo pipefail
+          rm -rf tools && mv .board-tools/tools tools && rm -rf .board-tools
+          echo "engine at ${{ needs.pick.outputs.sha }}; tools at $GITHUB_SHA"
       # Pinned, not @stable: the board compares its engine binary's sha256 with the
       # T4 run's, so p5-scoreboard.yml and both T4 jobs (nightly.yml corpus-t4,
       # corpus-t4-mac.yml) build with one rustc. Change all three together.
@@ -247,10 +280,24 @@ jobs:
         run: |
           set -euo pipefail
           extra=()
+          wrap=()
           if [ "$LIMIT" != "0" ]; then extra+=(--limit "$LIMIT" --sample-note "workflow_dispatch limit=$LIMIT"); fi
-          tools/parity/scoreboard-run.sh --out "$RUNNER_TEMP/p5" --jobs 2 \
-            --t4-new "$RUNNER_TEMP/t4-new" --t4-old "$RUNNER_TEMP/t4-old" "${extra[@]}" -- \
-            --host-label "$RUNNER_NAME ($ROUTE; $ORACLE_ID)" \
+          if [ "$ROUTE" != mac ]; then
+            # the TeX Live tiers' pinned documents: this PC's TeX Live has no doc files
+            docs="$HOME/.cache/flashtex-corpus-texmf/texlive-2026"
+            if [ -d "$docs" ]; then extra+=(--corpus-texmf "$docs")
+            else echo "::warning::no $docs on this PC: the templates and packages tiers read partial (tools/parity/README.md)"; fi
+            # a scope of its own inside flashtex.slice (see WHERE)
+            # OOMPolicy=continue: an OOM kill takes its victim only (parity.py records a
+            # worker_died document), not the whole scope (systemd's default is stop).
+            # No scope, no run: never unbounded in the runner's own cgroup.
+            scope=(systemd-run --user --scope --quiet --slice=flashtex.slice -p MemoryMax=10G -p MemorySwapMax=0 -p OOMPolicy=continue)
+            if "${scope[@]}" true 2>/dev/null; then wrap=("${scope[@]}" nice -n 10)
+            else echo "::error::systemd-run --user is unavailable: the official board runs only in its own scope (see WHERE)"; exit 1; fi
+          fi
+          ${wrap[@]+"${wrap[@]}"} tools/parity/scoreboard-run.sh --out "$RUNNER_TEMP/p5" --jobs 2 \
+            --t4-new "$RUNNER_TEMP/t4-new" --t4-old "$RUNNER_TEMP/t4-old" ${extra[@]+"${extra[@]}"} -- \
+            --host-label "$RUNNER_NAME ($ROUTE; $ORACLE_ID; tools ${GITHUB_SHA::9})" \
             --run-url "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" \
             --summary "$RUNNER_TEMP/p5/SUMMARY.md" --issues off
       - name: report
@@ -284,12 +331,14 @@ jobs:
     timeout-minutes: 15
     permissions:
       contents: write   # the p5-scoreboard-summary branch only
-      issues: write     # one issue per tier where new < old
+      issues: write     # one p5-red issue per red tier
     env:
-      ISSUES: ${{ github.event.inputs.issues || 'apply' }}
+      # only the official board (the PC) files issues and gates; from the route the board
+      # ran on, not the switches now
+      OFFICIAL: ${{ needs.pick.outputs.route == 'pc' }}
+      ISSUES: ${{ needs.pick.outputs.route == 'pc' && (github.event.inputs.issues || 'apply') || 'off' }}
       LIMIT: ${{ github.event.inputs.limit || '0' }}
-      # the PC's reports keep their names; a Mac's carry -mac (another oracle). From
-      # the route the board ran on, not the switches now.
+      # the PC's reports keep their names; a Mac's carry -mac (another oracle)
       SUFFIX: ${{ needs.pick.outputs.route == 'pc' && '' || '-mac' }}
     steps:
       - uses: actions/checkout@v4
@@ -299,7 +348,7 @@ jobs:
         with:
           name: p5-scoreboard
           path: ${{ runner.temp }}/p5
-      - name: one issue per tier where new < old
+      - name: one p5-red issue per red tier (behind v1, or below a target or the owner's bar)
         if: env.ISSUES != 'off'
         env:
           GH_TOKEN: ${{ github.token }}
@@ -322,11 +371,14 @@ jobs:
           if git fetch --depth 1 "$url" "$b"; then git worktree add -B "$b" "$d" FETCH_HEAD
           else git worktree add --detach "$d" && git -C "$d" checkout --orphan "$b" && git -C "$d" rm -rfq .; fi
           mkdir -p "$d/reports"
-          cp "$RUNNER_TEMP/p5/SUMMARY.md" "$d/SUMMARY.md"
+          # SUMMARY.md is the official board's (the PC); an unofficial Mac board adds its report only
+          if [ "$OFFICIAL" = true ]; then
+            cp "$RUNNER_TEMP/p5/SUMMARY.md" "$d/SUMMARY.md"
+            if [ -f "$RUNNER_TEMP/p5/ORACLE.md" ]; then { echo; cat "$RUNNER_TEMP/p5/ORACLE.md"; } >> "$d/SUMMARY.md"; fi
+          fi
           cp "$RUNNER_TEMP/p5/board/scoreboard.md" "$d/reports/$day$SUFFIX.md"
           cp "$RUNNER_TEMP/p5/board/scoreboard.json" "$d/reports/$day$SUFFIX.json"
           if [ -f "$RUNNER_TEMP/p5/ORACLE.md" ]; then
-            { echo; cat "$RUNNER_TEMP/p5/ORACLE.md"; } >> "$d/SUMMARY.md"
             { echo; cat "$RUNNER_TEMP/p5/ORACLE.md"; } >> "$d/reports/$day$SUFFIX.md"
           fi
           git -C "$d" add -A
@@ -334,6 +386,15 @@ jobs:
             -c user.email='41898282+github-actions[bot]@users.noreply.github.com' \
             commit -qm "P5 scoreboard $day (workflow at ${GITHUB_SHA::9}; the board records the measured commit)" || exit 0
           git -C "$d" push "$url" "$b"
+      # The gate, last, so the issues and the summary are written first: the run fails
+      # unless the official board is all green (every row green, every run complete).
+      - name: the gate (the official board is all green)
+        if: env.OFFICIAL == 'true'
+        run: |
+          set -euo pipefail
+          [ -f "$RUNNER_TEMP/p5/board/scoreboard.json" ] || { echo "::error::P5 scoreboard gate: no board was written"; exit 1; }
+          python3 tools/parity/scoreboard.py --from-board "$RUNNER_TEMP/p5/board/scoreboard.json" \
+            --issues off --require-green
 
   scoreboard-unavailable:
     name: P5 scoreboard (new vs v1, every tier)
@@ -342,6 +403,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
+      # Not measured is not green: the gate fails while its host is off.
       - run: |
-          echo "::notice::skipped: the P5 scoreboard needs a self-hosted runner with TeX Live 2026 (the NixOS PC, or on main a Mac labelled flashtex-heavy with MacTeX 2026)."
-          echo "Set \`gh variable set FLASHTEX_SELFHOSTED_LINUX --body 1\` (the NixOS PC) or \`gh variable set FLASHTEX_SELFHOSTED_MAC --body 1\` (a Mac; main only) once its runners are registered." >> "$GITHUB_STEP_SUMMARY"
+          echo "::error::not measured: the official P5 scoreboard runs on the NixOS PC (TeX Live 2026), whose switch FLASHTEX_SELFHOSTED_LINUX is off. A Mac board (unofficial) is a manual run with route mac."
+          echo "Set \`gh variable set FLASHTEX_SELFHOSTED_LINUX --body 1\` once the PC's runners are registered." >> "$GITHUB_STEP_SUMMARY"
+          exit 1

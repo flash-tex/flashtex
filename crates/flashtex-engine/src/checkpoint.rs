@@ -54,6 +54,9 @@ pub struct ExtRecord {
     pub notes: usize,
     /// How many files the run has opened for output (`system::opens_len`).
     pub opens: usize,
+    /// The line journal's length, the line numbers of unknown file and the
+    /// marked token lists (`crate::lineshift`, DESIGN.md §5.3 rule (c)).
+    pub lines: crate::lineshift::Rec,
 }
 
 crate::codec_struct!(ExtRecord {
@@ -67,7 +70,8 @@ crate::codec_struct!(ExtRecord {
     matrix_uses,
     rs,
     notes,
-    opens
+    opens,
+    lines
 });
 
 /// Where an output position `x` of the old run goes when a convergence
@@ -105,18 +109,40 @@ fn rewritten_since(rec: &ExtRecord) -> Option<String> {
 /// it -- an `export` of the same job in the same directory rewrites them
 /// all, also while the engine has them open -- or it is gone).
 fn changed_outside(rec: &ExtRecord, also: &[String]) -> Option<String> {
-    rec.files
-        .iter()
-        .filter_map(|f| match &f.stream {
+    let open = || {
+        rec.files.iter().filter_map(|f| match &f.stream {
             Stream::Out { path, len, .. } if *len > 0 => Some(path),
             _ => None,
         })
+    };
+    // a fatal run's PDF, set aside (`system::remove_output`), is back for it
+    system::revive_removed(open());
+    open()
         .chain(also.iter())
         .find_map(|p| system::outside_change(p))
 }
 
 /// Flushes every output stream (before a checkpoint records any).
 struct FlushFiles;
+
+/// The first output stream whose buffer holds output, on a file that is
+/// `system::no_flush`: a checkpoint now would write out what a run from
+/// scratch has not (issue #1550), so none is taken.
+struct NoFlush(Option<String>);
+
+impl FileVisit for NoFlush {
+    fn alpha(&mut self, f: &mut AlphaFile) {
+        if self.0.is_none() {
+            self.0 = f.pending_output().filter(|p| system::no_flush(p));
+        }
+    }
+    fn byte(&mut self, f: &mut ByteFile) {
+        if self.0.is_none() {
+            self.0 = f.pending_output().filter(|p| system::no_flush(p));
+        }
+    }
+    fn word(&mut self, _f: &mut WordFile) {}
+}
 
 impl FileVisit for FlushFiles {
     fn alpha(&mut self, f: &mut AlphaFile) {
@@ -165,6 +191,12 @@ pub enum Action {
 /// `crate::incr`).
 pub trait Observer {
     fn on_checkpoint(&mut self, g: &mut Globals, id: CheckpointId, why: Point) -> Action;
+    /// A segment checkpoint is due while `Layer::segment_hold` holds them
+    /// back: whether to take it anyway, because the observer would stop the
+    /// run there (a preemption point stays one: DESIGN.md §5.2).
+    fn take_held_segment(&mut self, _g: &mut Globals) -> bool {
+        true
+    }
     /// The observer as `Any`, to take it back after a run.
     fn into_any(self: Box<Self>) -> Box<dyn std::any::Any>;
 }
@@ -210,8 +242,19 @@ enum TailBytes {
 }
 
 impl TailBytes {
-    fn take(path: &str, from: u64) -> Result<TailBytes, String> {
+    /// `reopened`: the restore reopens the file at `from` (open for output
+    /// at its target, not opened again since), so the disk's bytes from
+    /// `from` on are the new run's alone: a tail `reattach_pending_deferring`
+    /// left unwritten is handed over from memory. Any other file gets it
+    /// written first (the new run may read the file before it writes it).
+    fn take(path: &str, from: u64, reopened: bool) -> Result<TailBytes, String> {
         system::file_trace(|| format!("tail {path} from {from} disk {:?}", system::disk_len(path)));
+        if let Some(d) = take_deferred(path) {
+            if reopened {
+                return d.into_tail_from(from);
+            }
+            d.write_back()?;
+        }
         static N: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
         let n = N.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         // Not in the document's directory: a new file there would change
@@ -228,6 +271,16 @@ impl TailBytes {
             read_tail_into(path, from, buf)?,
             path.to_string(),
         ))
+    }
+
+    /// The tail's length (it starts at `base`).
+    fn len_from(&self, base: u64) -> Result<u64, String> {
+        match self {
+            TailBytes::Read(b, _) => Ok(b.len() as u64),
+            TailBytes::Clone(p) => Ok(system::disk_len(p)
+                .ok_or_else(|| format!("{p}: the tail's clone is gone"))?
+                .saturating_sub(base)),
+        }
     }
 
     /// Bytes `skip..` of the tail that starts at `base`.
@@ -276,6 +329,138 @@ thread_local! {
         std::cell::RefCell::new(std::collections::HashMap::new());
 }
 
+thread_local! {
+    /// The output tails `reattach_pending_deferring` left unwritten: the
+    /// old run's bytes of each file from `base` on, which the disk does not
+    /// hold there (it holds the abandoned run's, then zeros, to the old
+    /// length). `TailBytes::take` takes them; `flush_deferred_tails` writes
+    /// what is left.
+    static DEFERRED: std::cell::RefCell<Vec<Tail>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// The smallest tail `reattach_pending_deferring` leaves unwritten (the
+/// `.log` and `.aux` tails are a few kilobytes, a 1,000-page PDF's
+/// megabytes). `FLASHTEX_DEFER_TAIL_MIN=BYTES` changes it (the soundness
+/// sweeps defer every tail with 0, on documents whose PDFs are small).
+pub const DEFER_TAIL_MIN: u64 = 256 << 10;
+
+fn defer_tail_min() -> u64 {
+    static M: std::sync::OnceLock<u64> = std::sync::OnceLock::new();
+    *M.get_or_init(|| {
+        std::env::var("FLASHTEX_DEFER_TAIL_MIN")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(DEFER_TAIL_MIN)
+    })
+}
+
+fn take_deferred(path: &str) -> Option<Tail> {
+    let k = system::out_key(path);
+    DEFERRED.with(|d| {
+        let mut d = d.borrow_mut();
+        let i = d.iter().position(|t| system::out_key(&t.path) == k)?;
+        Some(d.remove(i))
+    })
+}
+
+impl Tail {
+    /// A deferred tail as a restore's tail from `from` on. From at or after
+    /// its base: the old bytes up to `from` go to the disk first (the run
+    /// resumes after them), the rest is the tail. From before it: the disk
+    /// still holds the old bytes from `from` to the base (the abandoned run
+    /// wrote only after it), then the deferred ones.
+    fn into_tail_from(self, from: u64) -> Result<TailBytes, String> {
+        use std::io::{Seek, Write};
+        let Tail { path, base, bytes } = self;
+        if from >= base {
+            let skip = from - base;
+            if skip > 0 {
+                let head = match &bytes {
+                    TailBytes::Read(b, _) => b
+                        .get(..skip as usize)
+                        .ok_or_else(|| format!("{path}: the deferred tail ends before {from}"))?
+                        .to_vec(),
+                    TailBytes::Clone(c) => read_range_of(c, base, from)?,
+                };
+                let mut h = std::fs::OpenOptions::new()
+                    .write(true)
+                    .open(&path)
+                    .map_err(|e| format!("{path}: {e}"))?;
+                h.seek(std::io::SeekFrom::Start(base))
+                    .map_err(|e| format!("{path}: {e}"))?;
+                h.write_all(&head).map_err(|e| format!("{path}: {e}"))?;
+                drop(h);
+                system::stamp_output(&path);
+            }
+            system::file_trace(|| {
+                format!("tail {path} from {from}: deferred at {base}, skip {skip}")
+            });
+            let mut bytes = bytes;
+            // (a clone holds the whole old file: any offset)
+            if let TailBytes::Read(b, _) = &mut bytes {
+                if skip > 0 {
+                    b.drain(..skip as usize);
+                }
+            }
+            return Ok(bytes);
+        }
+        system::file_trace(|| format!("tail {path} from {from}: deferred at {base}, before it"));
+        let mut bytes = bytes;
+        if let TailBytes::Read(b, _) = &mut bytes {
+            let mut v = read_range_of(&path, from, base)?;
+            v.extend_from_slice(b);
+            *b = v;
+        }
+        Ok(bytes)
+    }
+
+    /// Write a deferred tail to its file, as `reattach_pending` would have.
+    fn write_back(self) -> Result<(), String> {
+        use std::io::{Seek, Write};
+        system::file_trace(|| format!("flush deferred {} at {}", self.path, self.base));
+        let mut h = std::fs::OpenOptions::new()
+            .write(true)
+            .open(&self.path)
+            .map_err(|e| format!("{}: {e}", self.path))?;
+        h.set_len(self.base)
+            .map_err(|e| format!("{}: {e}", self.path))?;
+        h.seek(std::io::SeekFrom::Start(self.base))
+            .map_err(|e| format!("{}: {e}", self.path))?;
+        h.write_all(&self.bytes.get(self.base, 0)?)
+            .map_err(|e| format!("{}: {e}", self.path))?;
+        drop(h);
+        system::stamp_output(&self.path);
+        Ok(())
+    }
+}
+
+/// Write the tails `reattach_pending_deferring` left unwritten, as
+/// `reattach_pending` would have: before anything but a `restore` reads or
+/// rewrites those files (a run from the format, the end of a compile).
+pub fn flush_deferred_tails() -> Result<(), String> {
+    let tails = DEFERRED.with(|d| std::mem::take(&mut *d.borrow_mut()));
+    for t in tails {
+        t.write_back()?;
+    }
+    Ok(())
+}
+
+/// How many tails are deferred (none between compiles).
+pub fn deferred_tails() -> usize {
+    DEFERRED.with(|d| d.borrow().len())
+}
+
+/// Bytes `from..to` of the file at `path`.
+fn read_range_of(path: &str, from: u64, to: u64) -> Result<Vec<u8>, String> {
+    use std::io::{Read, Seek, SeekFrom};
+    let e = |x: std::io::Error| format!("{path}: {x}");
+    let mut f = std::fs::File::open(path).map_err(e)?;
+    f.seek(SeekFrom::Start(from)).map_err(e)?;
+    let mut v = vec![0u8; to.saturating_sub(from) as usize];
+    f.read_exact(&mut v).map_err(e)?;
+    Ok(v)
+}
+
 /// The most the spare tail buffers hold together. They are outside the undo
 /// logs' budget (DESIGN.md §5.2), so they are capped instead: a PDF larger
 /// than this reads into a fresh buffer each restore, as before.
@@ -322,6 +507,13 @@ pub struct Layer {
     pub s0: Option<CheckpointId>,
     /// The read-set when S₀ was taken.
     pub s0_reads: Option<system::ReadLog>,
+    /// At S₀ and at the `.aux` point: the files the run had written and
+    /// closed, with their content there (`host::written_before`, S₀'s key
+    /// takes them). Read when the checkpoint is taken: the run may write
+    /// them again before it ends, when the key is made (#1348). At most
+    /// the current S₀'s and `.aux` point's; `host::make_key` takes its
+    /// entry.
+    pub written_at: Vec<(CheckpointId, crate::host::Written)>,
     /// Take a checkpoint at the `.aux` point of this run (`Point::Aux`).
     pub want_aux_point: bool,
     /// The `.aux` point, once taken.
@@ -354,6 +546,10 @@ pub struct Layer {
     /// Segment checkpoints (`Point::Segment`): the least engine time since
     /// the last checkpoint for one to be taken.
     pub segment_s: f64,
+    /// Segment checkpoints only where the observer stops the run
+    /// (`Observer::take_held_segment`; `crate::incr`: an edit's run until its
+    /// edited page has shipped).
+    pub segment_hold: bool,
     /// Lines read (`input_ln`) so far, and when the last checkpoint was
     /// taken: a segment checkpoint needs a line read since the last one
     /// (two checkpoints with the same input consumed are the same restart
@@ -391,6 +587,8 @@ pub struct Stats {
     /// requested but not taken.
     pub segments: u64,
     pub segments_skipped: u64,
+    /// Segment checkpoints due but held back (`Layer::segment_hold`).
+    pub segments_held: u64,
     /// The thread CPU time of the whole of `checkpoint` (the host state,
     /// the scalars, the seal).
     pub total_cpu_s: f64,
@@ -408,10 +606,11 @@ impl Stats {
             .map(|(k, v)| format!("{k:?}:{v}"))
             .collect();
         format!(
-            "{{\"checkpoints\":{},\"segments\":{},\"segments_skipped\":{},\"total_cpu_s\":{:.6},\"files_s\":{:.6},\"cstate_s\":{:.6},\"seal_s\":{:.6},\"seal_cpu_s\":{:.6},\"dirty_chunks\":{},\"dirty_by_region\":{{{}}}}}",
+            "{{\"checkpoints\":{},\"segments\":{},\"segments_skipped\":{},\"segments_held\":{},\"total_cpu_s\":{:.6},\"files_s\":{:.6},\"cstate_s\":{:.6},\"seal_s\":{:.6},\"seal_cpu_s\":{:.6},\"dirty_chunks\":{},\"dirty_by_region\":{{{}}}}}",
             self.count,
             self.segments,
             self.segments_skipped,
+            self.segments_held,
             self.total_cpu_s,
             self.files_s,
             self.cstate_s,
@@ -526,6 +725,28 @@ fn read_tail_into(path: &str, from: u64, mut buf: Vec<u8>) -> Result<Vec<u8>, St
         f.read_to_end(&mut buf).map_err(e)?;
     }
     Ok(buf)
+}
+
+/// The convergence jump's comparison, made ahead (`Globals::jump_adopt`):
+/// each differing chunk's byte offset and the old run's bytes there, and
+/// the scalar region it compared.
+pub struct Adopt {
+    chunks: Vec<(usize, Vec<u8>)>,
+    scalars: Vec<u8>,
+}
+
+/// The old run's bytes of every chunk `d` found differing.
+fn adopt_of(d: &crate::arena::ChunkDiff) -> Vec<(usize, Vec<u8>)> {
+    d.differing
+        .iter()
+        .map(|&(c, old, _)| {
+            // SAFETY: `old` points at a whole chunk owned by the arena or
+            // the branch, unchanged until `d` is dropped.
+            let b =
+                unsafe { std::slice::from_raw_parts(old as *const u8, crate::arena::CHUNK_BYTES) };
+            ((c as usize) << crate::arena::CHUNK_SHIFT, b.to_vec())
+        })
+        .collect()
 }
 
 impl Globals {
@@ -657,6 +878,13 @@ impl Globals {
         // Every stream flushed before any is recorded: streams on one file
         // (LaTeX's `\tableofcontents` twice opens the `.toc` twice) then
         // record the file's length alike, not what each had flushed.
+        let mut nf = NoFlush(None);
+        self.visit_files(&mut nf);
+        if let Some(p) = nf.0 {
+            return Err(format!(
+                "cannot checkpoint: {p} holds output not written out, and is read while open"
+            ));
+        }
         self.visit_files(&mut FlushFiles);
         let mut v = SnapFiles {
             out: vec![],
@@ -683,11 +911,14 @@ impl Globals {
             rs: self.layer().rs.len(),
             notes: crate::diag::len(),
             opens: system::opens_len(),
+            lines: crate::lineshift::record(self),
         })
     }
 
     /// Put the host state of `rec` back.
     pub fn restore_ext(&mut self, rec: &ExtRecord) -> Result<(), String> {
+        // (each stream is reopened as `rec` has it: `system::mark_ahead`)
+        system::clear_ahead();
         let mut v = RestoreFiles {
             snaps: &rec.files,
             i: 0,
@@ -704,6 +935,7 @@ impl Globals {
         crate::pdftex::set_last_byte_reads(rec.last_byte_reads);
         crate::pdftex::set_matrix_uses(rec.matrix_uses);
         self.layer().rs.truncate(rec.rs);
+        crate::lineshift::restore(&rec.lines);
         match err {
             Some(e) => Err(format!("cannot restore the files: {e}")),
             None => Ok(()),
@@ -874,15 +1106,12 @@ impl Globals {
                 if have(&tails, path) {
                     continue;
                 }
-                let base = if later.contains(&system::out_key(path)) {
-                    0
-                } else {
-                    *len
-                };
+                let reopened = !later.contains(&system::out_key(path));
+                let base = if reopened { *len } else { 0 };
                 tails.push(Tail {
                     path: path.clone(),
                     base,
-                    bytes: TailBytes::take(path, base)?,
+                    bytes: TailBytes::take(path, base, reopened)?,
                 });
             }
         }
@@ -892,7 +1121,7 @@ impl Globals {
                     tails.push(Tail {
                         path: path.clone(),
                         base: 0,
-                        bytes: TailBytes::take(path, 0)?,
+                        bytes: TailBytes::take(path, 0, false)?,
                     });
                 }
             }
@@ -903,7 +1132,7 @@ impl Globals {
         closed.extend(system::outputs_since(rec.reads.2));
         for path in closed {
             if !have(&tails, &path) {
-                if let Ok(bytes) = TailBytes::take(&path, 0) {
+                if let Ok(bytes) = TailBytes::take(&path, 0, false) {
                     tails.push(Tail {
                         path,
                         base: 0,
@@ -912,6 +1141,9 @@ impl Globals {
                 }
             }
         }
+        // (tails deferred for files this restore keeps none of: written
+        // now, as the reattach would have)
+        flush_deferred_tails()?;
         // A file the tails hold from its length at the target on, which the
         // new run opens for output again (truncating it), must keep its
         // first bytes for `reattach_pending`.
@@ -975,18 +1207,51 @@ impl Globals {
     /// re-read of the `.aux` alone, `crate::incr`).
     /// Why `reattach_pending` cannot put the old run's files back (`None`:
     /// it can): a file whose first bytes its tail continues was changed by
-    /// another program.
+    /// another program; or a file the abandoned run opened for output
+    /// (truncated) that no tail holds -- the old run had it closed at the
+    /// restore target and never opened it again (a temporary file an edit
+    /// writes once more), so its old content is gone, and the record of
+    /// that open would go with the abandoned run's (#1348).
     pub fn reattach_blocked(&mut self) -> Option<String> {
-        self.layer_ref()?
-            .pending
-            .as_ref()?
+        let p = self.layer_ref()?.pending.as_ref()?;
+        if let Some(why) = p
             .tails
             .iter()
             .filter(|t| t.base > 0)
             .find_map(|t| system::outside_change(&t.path))
+        {
+            return Some(why);
+        }
+        let held: std::collections::HashSet<String> =
+            p.tails.iter().map(|t| system::out_key(&t.path)).collect();
+        system::opens_since(p.opens_tail.0)
+            .into_iter()
+            .find(|k| !k.is_empty() && !held.contains(k))
+            .map(|k| {
+                format!("{k} was opened for output by the abandoned run, and no tail holds it")
+            })
     }
 
     pub fn reattach_pending(&mut self) -> Result<(), String> {
+        self.reattach_pending_deferring(&|_| false)
+    }
+
+    /// `reattach_pending`, leaving the tails of the output files `defer`
+    /// names (and of at least [`DEFER_TAIL_MIN`] bytes) unwritten: the
+    /// file gets its old length, the old bytes stay in [`DEFERRED`], and the
+    /// next `restore` takes its tail of the file from there
+    /// (`TailBytes::take`) instead of reading back what this would have
+    /// written. Typing: a keystroke abandons the previous one's stopped run,
+    /// and its restore goes back to the same point at once, so the old
+    /// PDF's tail (megabytes on a 1,000-page document) was written here and
+    /// read again there, on the keystroke's path. Only for files the engine
+    /// does not read (the caller's `defer`: not inputs of the run), and
+    /// whoever does not restore next writes them first
+    /// ([`flush_deferred_tails`]).
+    pub fn reattach_pending_deferring(
+        &mut self,
+        defer: &dyn Fn(&str) -> bool,
+    ) -> Result<(), String> {
         if let Some(why) = self.reattach_blocked() {
             return Err(format!("reattach: {why}"));
         }
@@ -994,6 +1259,7 @@ impl Globals {
             return Err("reattach: no restore is pending".into());
         };
         system::file_trace(|| "reattach_pending".into());
+        let t0 = std::time::Instant::now();
         let Pending {
             branch,
             live,
@@ -1006,6 +1272,8 @@ impl Globals {
         } = p;
         self.spill_scalars();
         self.arena.reattach(branch)?;
+        let t_branch = t0.elapsed();
+        let mut deferred = 0u64;
         self.fill_scalars();
         let keep: std::collections::HashSet<CheckpointId> =
             self.arena.checkpoint_ids().iter().copied().collect();
@@ -1021,7 +1289,7 @@ impl Globals {
         }
         // Before `restore_ext`, which drops the abandoned run's output
         // buffers unwritten: the files are the old run's again.
-        for t in &tails {
+        for t in tails {
             use std::io::{Seek, Write};
             // The first `base` bytes are on disk unless the abandoned run
             // opened the file for output again (`guard_outputs` kept them).
@@ -1054,6 +1322,19 @@ impl Globals {
                     t.path
                 ));
             }
+            let tail_len = t.bytes.len_from(t.base)?;
+            if head.is_empty() && tail_len >= defer_tail_min() && defer(&t.path) {
+                // the old length (what `restore_ext` reopens it at, and
+                // what a checkpoint records), without the old bytes
+                h.set_len(t.base + tail_len)
+                    .map_err(|e| format!("{}: {e}", t.path))?;
+                drop(h);
+                system::stamp_output(&t.path);
+                system::file_trace(|| format!("reattach {} deferred {tail_len} bytes", t.path));
+                deferred += tail_len;
+                DEFERRED.with(|d| d.borrow_mut().push(t));
+                continue;
+            }
             h.set_len(from).map_err(|e| format!("{}: {e}", t.path))?;
             h.seek(std::io::SeekFrom::Start(from))
                 .map_err(|e| format!("{}: {e}", t.path))?;
@@ -1063,6 +1344,7 @@ impl Globals {
             drop(h);
             system::stamp_output(&t.path);
         }
+        let t_tails = t0.elapsed();
         system::guard_outputs(vec![]);
         system::truncate_terminal(terminal_tail.0);
         system::append_terminal(&terminal_tail.1);
@@ -1070,7 +1352,17 @@ impl Globals {
         crate::diag::append(&notes_tail.1, 0);
         system::truncate_opens(opens_tail.0);
         system::append_opens(&opens_tail.1);
-        self.restore_ext(&live)
+        let r = self.restore_ext(&live);
+        if std::env::var_os("FLASHTEX_INCR_DEBUG").is_some() {
+            let ms = |d: std::time::Duration| d.as_secs_f64() * 1e3;
+            eprintln!(
+                "[ckpt] reattach: branch {:.2}, output tails {:.2} ({deferred} bytes deferred), host state {:.2} ms",
+                ms(t_branch),
+                ms(t_tails - t_branch),
+                ms(t0.elapsed() - t_tails)
+            );
+        }
+        r
     }
 
     /// The old run's bytes `from..to` of output file `path`, from the
@@ -1130,6 +1422,42 @@ impl Globals {
         &mut self,
         id: CheckpointId,
         in_remap: &dyn Fn(&str, u64) -> u64,
+    ) -> Result<(), String> {
+        self.redo_to_remapped_with(id, in_remap, None)
+    }
+
+    /// The comparison `redo_to_remapped` adopts the old run's state with
+    /// (the chunks that differ from the old run's at `id`, and the old
+    /// values), worked out ahead and stopped by `stop` (`None`): it reads
+    /// and changes nothing else (the scalar spill writes the live scalars'
+    /// own values), so a stopped one leaves the restore pending as it was.
+    /// The jump that follows uses it only while the scalar region is still
+    /// what it compared (`Adopt::scalars`); else it compares again.
+    /// `FLASHTEX_VERIFY_JUMP=1`: the jump compares again anyway and aborts
+    /// the process if the two disagree.
+    pub fn jump_adopt(
+        &mut self,
+        id: CheckpointId,
+        stop: &mut dyn FnMut() -> bool,
+    ) -> Result<Option<Adopt>, String> {
+        self.spill_scalars();
+        let l = self.layer_ref().ok_or("no checkpoint layer")?;
+        let p = l.pending.as_ref().ok_or("no restore is pending")?;
+        let Some(d) = self.arena.diff_branch_all_until(&p.branch, id, stop)? else {
+            return Ok(None);
+        };
+        Ok(Some(Adopt {
+            chunks: adopt_of(&d),
+            scalars: self.arena.read(0, SCALAR_BYTES).to_vec(),
+        }))
+    }
+
+    /// `redo_to_remapped` with the comparison `jump_adopt` made, if any.
+    pub fn redo_to_remapped_with(
+        &mut self,
+        id: CheckpointId,
+        in_remap: &dyn Fn(&str, u64) -> u64,
+        pre: Option<Adopt>,
     ) -> Result<(), String> {
         let Some(p) = self.layer().pending.take() else {
             return Err("redo_to: no restore to jump back from".into());
@@ -1264,23 +1592,31 @@ impl Globals {
         // every other chunk must be its own state at `id`. Take that state
         // over whole, so that the jump and every later restore of an old
         // checkpoint give exactly the old run's states.
-        let adopt: Vec<(usize, Vec<u8>)> = match self.arena.diff_branch_all(&branch, id) {
-            Ok(d) => d
-                .differing
-                .iter()
-                .map(|&(c, old, _)| {
-                    // SAFETY: `old` points at a whole chunk owned by the
-                    // arena or the branch, unchanged until `d` is dropped.
-                    let b = unsafe {
-                        std::slice::from_raw_parts(old as *const u8, crate::arena::CHUNK_BYTES)
-                    };
-                    ((c as usize) << crate::arena::CHUNK_SHIFT, b.to_vec())
-                })
-                .collect(),
-            Err(e) => {
-                self.arena.drop_branch(branch);
-                return Err(e);
-            }
+        let verify = std::env::var_os("FLASHTEX_VERIFY_JUMP").is_some();
+        let pre = pre.filter(|a| self.arena.read(0, SCALAR_BYTES) == &a.scalars[..]);
+        let adopt: Vec<(usize, Vec<u8>)> = match pre {
+            Some(a) if !verify => a.chunks,
+            pre => match self.arena.diff_branch_all(&branch, id) {
+                Ok(d) => {
+                    let now = adopt_of(&d);
+                    if let Some(a) = pre {
+                        if a.chunks != now {
+                            // (a verify mode: loud, so that a sweep fails)
+                            eprintln!(
+                                "FLASHTEX_VERIFY_JUMP: the comparison made ahead differs ({} vs {} chunks)",
+                                a.chunks.len(),
+                                now.len()
+                            );
+                            std::process::abort();
+                        }
+                    }
+                    now
+                }
+                Err(e) => {
+                    self.arena.drop_branch(branch);
+                    return Err(e);
+                }
+            },
         };
         for (off, b) in &adopt {
             self.arena.write_through(*off, b);
@@ -1295,8 +1631,21 @@ impl Globals {
             self.arena.checkpoint_ids().iter().copied().collect();
         {
             let layer = self.layer();
+            // The new run's checkpoints the jump drops (its last, which `id`
+            // replaces) hand their line journals to `id`'s record: the
+            // reads and prints of line numbers since the checkpoint before
+            // (`crate::lineshift`, as `retain_checkpoints` does).
+            let mut at_id = now.clone();
+            let mut here = vec![];
+            for (i, r) in layer.records.iter_mut() {
+                if !keep.contains(i) || *i == id {
+                    here.append(&mut r.lines.here);
+                }
+            }
+            here.append(&mut at_id.lines.here);
+            at_id.lines.here = here;
             layer.records.retain(|(i, _)| keep.contains(i) && *i != id);
-            layer.records.push((id, now.clone()));
+            layer.records.push((id, at_id));
             for (i, r) in records {
                 if keep.contains(&i) && i != id {
                     layer.records.push((i, remap(&r)));
@@ -1380,13 +1729,73 @@ impl Globals {
         r
     }
 
+    /// The retained checkpoints whose host records `f` accepts (no copies
+    /// of the records).
+    pub fn checkpoints_where(
+        &mut self,
+        f: &dyn Fn(CheckpointId, &ExtRecord) -> bool,
+    ) -> Vec<CheckpointId> {
+        self.layer()
+            .records
+            .iter()
+            .filter(|(i, r)| f(*i, r))
+            .map(|(i, _)| *i)
+            .collect()
+    }
+
     /// Drop every checkpoint `keep` rejects, except the newest (their undo
     /// logs merge into their predecessors').
     pub fn retain_checkpoints(&mut self, keep: &dyn Fn(CheckpointId) -> bool) {
+        let order = self.arena.checkpoint_ids().to_vec();
         self.arena.retain(keep);
         let ids: std::collections::HashSet<CheckpointId> =
             self.arena.checkpoint_ids().iter().copied().collect();
-        self.layer().records.retain(|(i, _)| ids.contains(i));
+        // A dropped checkpoint's line journal (the reads and prints of line
+        // numbers since the checkpoint before it, `crate::lineshift`) goes
+        // to the next checkpoint kept, which then holds the whole interval.
+        let records = &mut self.layer().records;
+        let at: std::collections::HashMap<CheckpointId, usize> = records
+            .iter()
+            .enumerate()
+            .map(|(k, (i, _))| (*i, k))
+            .collect();
+        let mut carry = vec![];
+        for id in order {
+            let Some(&k) = at.get(&id) else { continue };
+            let here = &mut records[k].1.lines.here;
+            if ids.contains(&id) {
+                if !carry.is_empty() {
+                    carry.append(here);
+                    *here = std::mem::take(&mut carry);
+                }
+            } else {
+                carry.append(here);
+            }
+        }
+        records.retain(|(i, _)| ids.contains(i));
+    }
+
+    /// The line records of the pending branch's checkpoints (the old run's
+    /// future), in the order the run took them (`crate::lineshift`).
+    pub fn pending_lines(&self) -> Vec<(CheckpointId, crate::lineshift::Rec)> {
+        let Some(l) = self.layer_ref() else {
+            return vec![];
+        };
+        let Some(p) = l.pending.as_ref() else {
+            return vec![];
+        };
+        p.branch
+            .ids()
+            .iter()
+            .filter_map(|&id| {
+                let r = p
+                    .records
+                    .iter()
+                    .find(|(i, _)| *i == id)
+                    .or_else(|| l.records.iter().rev().find(|(i, _)| *i == id))?;
+                Some((id, r.1.lines.clone()))
+            })
+            .collect()
     }
 
     /// Drop every checkpoint.
@@ -1484,11 +1893,28 @@ impl Globals {
                 let due = l.lines > l.lines_at_checkpoint
                     && l.last_checkpoint
                         .is_none_or(|t| t.elapsed().as_secs_f64() >= l.segment_s);
-                if due {
+                let held = due && l.segment_hold;
+                // held back: taken only where the observer stops the run
+                let take = due
+                    && (!held
+                        || match self.layer().observer.take() {
+                            Some(mut obs) => {
+                                let t = obs.take_held_segment(self);
+                                self.layer().observer = Some(obs);
+                                t
+                            }
+                            None => true,
+                        });
+                let l = self.layer();
+                if take {
                     l.stats.segments += 1;
-                    self.hook_checkpoint(Point::Segment);
+                } else if held {
+                    l.stats.segments_held += 1;
                 } else {
                     l.stats.segments_skipped += 1;
+                }
+                if take {
+                    self.hook_checkpoint(Point::Segment);
                 }
             }
             REQ_NOTE_SHIPOUT => {
@@ -1532,12 +1958,21 @@ impl Globals {
                 } else {
                     None
                 };
-                let reads = if why == Point::BeginDocument {
+                let reads = if matches!(why, Point::BeginDocument | Point::Aux) {
                     system::reads_so_far()
                 } else {
                     None
                 };
+                let written = match &reads {
+                    Some(r) => self
+                        .record_of(id)
+                        .and_then(|rec| crate::host::written_before(&rec, r)),
+                    None => Err(String::new()),
+                };
                 let l = self.layer();
+                if let Ok(w) = written {
+                    l.written_at.push((id, w));
+                }
                 l.taken.push((id, why));
                 if let Some(h) = hash {
                     l.state_hashes.push((id, h));
@@ -1553,6 +1988,10 @@ impl Globals {
                     l.s0_reads = reads;
                     l.s0_elapsed = l.run_started.map_or(0.0, |s| s.elapsed().as_secs_f64());
                 }
+                // (only the current anchors' contents are kept)
+                let (s0, aux) = (l.s0, l.aux_point);
+                l.written_at
+                    .retain(|(i, _)| Some(*i) == s0 || Some(*i) == aux);
                 l.seconds += t.elapsed().as_secs_f64();
                 l.last_checkpoint = Some(std::time::Instant::now());
                 l.lines_at_checkpoint = l.lines;

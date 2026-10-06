@@ -19,7 +19,7 @@ final class ShellModel {
     }
 
     var documents: [RuntimeV1.Document] = [] {
-        didSet { documentsRevision &+= 1; refreshDocumentMirror() }
+        didSet { documentsRevision &+= 1; refreshDocumentMirror(); scheduleUnicodeFontsCheck() }
     }
     /// Advances on every mutation of `documents` — a keystroke, a disk
     /// reload, a project swap — so a reader that derives something from a
@@ -137,6 +137,10 @@ final class ShellModel {
     @ObservationIgnored let engineV3 = EngineV3Session()
     /// Which engine typesets the open document, why, and any fallback (EngineChoice.swift).
     var engineChoice = EngineChoice.atLaunch
+    /// Where the `engine:` line goes each time a window's engine is set
+    /// (FLASHTEX_LOG; tests replace it): the label the attribution tools
+    /// read (old-engine retirement plan #1236, stage S3r).
+    @ObservationIgnored var engineLog: (String) -> Void = { FlashTeXLog.write($0) }
     /// The fallback banner was dismissed (until the next open or change).
     var engineFallbackDismissed = false
     /// `engineV3Enabled` set directly: the engine every document of this window uses.
@@ -150,6 +154,17 @@ final class ShellModel {
     @ObservationIgnored var engineChoiceDocument: URL?
     /// The host reported no TeX Live (sticky for the window until the user chooses again).
     @ObservationIgnored var engineHostLacksTeXLive = false
+    /// A run of the new engine stopped on a package that needs XeTeX or
+    /// LuaTeX (UnicodeFonts.swift; until the next open or the user's choice).
+    /// With it, what the preamble scan found then: once the scan finds
+    /// something else (the user deleted the line), the report is dropped.
+    @ObservationIgnored var engineHostNeedsUnicode: (document: URL?, need: UnicodeFontsNeed, scanned: UnicodeFontsNeed?)?
+    /// The preamble scan for the open document, by `documentsRevision`
+    /// (UnicodeFonts.swift), and the pending re-check after an edit.
+    @ObservationIgnored var unicodeFontsScan: (revision: Int, entry: String, need: UnicodeFontsNeed?)?
+    @ObservationIgnored var unicodeFontsCheck: DispatchWorkItem?
+    /// The project files the scan read (by modification date).
+    @ObservationIgnored let unicodeFontsFiles = UnicodeFontsFileCache()
     /// Fallback announcements made (tests; VoiceOver hears them as they are posted).
     @ObservationIgnored var engineAnnouncements: [String] = []
     /// The developer-only durable helper (`FLASHTEX_PREVIEW_CONTROLLER`)
@@ -302,6 +317,10 @@ final class ShellModel {
     /// HUD reads this; before it existed the readout was wired only to the v1
     /// pane's callback and so showed nothing on the default v2 route.
     var previewVisiblePage = 1
+    /// Pages the preview shows: the new engine's (`EngineV3Session.pageCount`)
+    /// under it, else the old route's `toolbarPageCount`. The HUD's "N / M"
+    /// readout and the pane's accessibility value both count these.
+    var previewPageCount: Int { engineV3Enabled ? engineV3.pageCount : toolbarPageCount }
     /// `!documents.isEmpty`, change-only: File > Print Source… must not read
     /// `documents` from the App scene (a keystroke reassigns the array).
     private(set) var toolbarHasDocument = false
@@ -606,6 +625,18 @@ final class ShellModel {
     /// turning it back on sends what was typed meanwhile.
     var autoCompile = true {
         didSet { if autoCompile, !oldValue, engineV3Enabled { engineV3.textChanged(model: self) } }
+    }
+    /// Settings > Compile > Stop at the first error (EngineV3ErrorPolicy):
+    /// off (the default) is best effort, nonstopmode with the errors TeX
+    /// recovers from shown as warnings; on is `-halt-on-error`. Kept in the
+    /// engine-v3 defaults (a test suite of its own under XCTest).
+    var strictTeXErrors = EngineV3ErrorPolicy.storedMode == .strict {
+        didSet {
+            guard strictTeXErrors != oldValue else { return }
+            EngineV3.defaults.set(strictTeXErrors, forKey: EngineV3ErrorPolicy.strictKey)
+            engineV3.errorMode = strictTeXErrors ? .strict : .bestEffort
+            if engineV3Enabled { engineV3.compile(model: self, reason: "error mode") }
+        }
     }
     private(set) var lastLatencyMs: Double?
     private(set) var latenciesMs: [Double] = []

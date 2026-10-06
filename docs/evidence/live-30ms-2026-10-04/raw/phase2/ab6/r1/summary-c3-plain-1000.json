@@ -1,0 +1,116 @@
+{
+ "engine": "c3",
+ "doc": "plain-1000",
+ "phases": {
+  "mid-i150": {
+   "args": [
+    "--kind",
+    "letter",
+    "--interval-ms",
+    "150",
+    "--gap-ms",
+    "300"
+   ],
+   "where": "dl3-keys: 1001 pages; letter on line 7374 (page 500), byte 2062400",
+   "n": 29,
+   "stages": {},
+   "edited_page_ms": {
+    "p50": 52.453917000000004,
+    "p95": 108.069917,
+    "max": 126.67404199999999
+   },
+   "done_ms": null,
+   "converged": 0,
+   "cancelled": 29,
+   "typeset_pages": [],
+   "load": [
+    226.75,
+    208.22
+   ],
+   "secs": 47.65391206741333
+  },
+  "start-i150": {
+   "args": [
+    "--kind",
+    "letter",
+    "--page",
+    "1",
+    "--interval-ms",
+    "150",
+    "--gap-ms",
+    "300"
+   ],
+   "where": "dl3-keys: 1001 pages; letter on line 22 (page 1), byte 4723",
+   "n": 29,
+   "stages": {},
+   "edited_page_ms": {
+    "p50": 68.50387500000001,
+    "p95": 291.722542,
+    "max": 447.217417
+   },
+   "done_ms": null,
+   "converged": 0,
+   "cancelled": 29,
+   "typeset_pages": [],
+   "load": [
+    208.22,
+    204.74
+   ],
+   "secs": 22.773794174194336
+  },
+  "mid-i100": {
+   "args": [
+    "--kind",
+    "letter",
+    "--interval-ms",
+    "100",
+    "--gap-ms",
+    "300"
+   ],
+   "where": "dl3-keys: 1001 pages; letter on line 7374 (page 500), byte 2062400",
+   "n": 29,
+   "stages": {},
+   "edited_page_ms": {
+    "p50": 132.178584,
+    "p95": 543.8110419999999,
+    "max": 643.435792
+   },
+   "done_ms": null,
+   "converged": 0,
+   "cancelled": 29,
+   "typeset_pages": [],
+   "load": [
+    204.74,
+    203.32
+   ],
+   "secs": 4.642420053482056
+  }
+ },
+ "power": {
+  "source": "AC",
+  "battery_pct": 100,
+  "low_power_mode": true,
+  "thermal": "Note: No thermal warning level has been recorded; Note: No performance warning level has been recorded; Note: No CPU power status has been recorded",
+  "thermal_limited": false,
+  "load": [
+   226.75,
+   232.8,
+   213.82
+  ],
+  "ncpu": 10
+ },
+ "rss_peak": 858177536,
+ "power_end": {
+  "source": "AC",
+  "battery_pct": 100,
+  "low_power_mode": true,
+  "thermal": "Note: No thermal warning level has been recorded; Note: No performance warning level has been recorded; Note: No CPU power status has been recorded",
+  "thermal_limited": false,
+  "load": [
+   203.32,
+   224.56,
+   212.32
+  ],
+  "ncpu": 10
+ }
+}
