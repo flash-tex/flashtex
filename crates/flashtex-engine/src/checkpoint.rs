@@ -233,6 +233,9 @@ enum TailBytes {
     /// return to when dropped).
     Read(Vec<u8>, String),
     Clone(String),
+    /// Kept by the file itself past its logical end (`system::keep_tail`):
+    /// a tail from the file's length at the restore target on.
+    Kept(String),
 }
 
 impl TailBytes {
@@ -246,10 +249,16 @@ impl TailBytes {
             .join(format!("flashtex-tail-{}-{n}", std::process::id()))
             .to_string_lossy()
             .into_owned();
+        let buf = SPARE_TAILS.with(|s| s.borrow_mut().remove(path).unwrap_or_default());
+        if let Some(len) = system::logical_len(path) {
+            // (bytes past the file's logical end are stale: not a clone)
+            let mut b = read_tail_into(path, from, buf)?;
+            b.truncate(len.saturating_sub(from) as usize);
+            return Ok(TailBytes::Read(b, path.to_string()));
+        }
         if system::clone_file(path, &dst) {
             return Ok(TailBytes::Clone(dst));
         }
-        let buf = SPARE_TAILS.with(|s| s.borrow_mut().remove(path).unwrap_or_default());
         Ok(TailBytes::Read(
             read_tail_into(path, from, buf)?,
             path.to_string(),
@@ -261,6 +270,7 @@ impl TailBytes {
         match self {
             TailBytes::Read(b, _) => Ok(b.get(skip as usize..).unwrap_or(&[]).to_vec()),
             TailBytes::Clone(p) => read_tail(p, base + skip),
+            TailBytes::Kept(p) => system::kept_tail(p, base, skip),
         }
     }
 }
@@ -271,6 +281,7 @@ impl Drop for TailBytes {
             TailBytes::Clone(p) => {
                 let _ = std::fs::remove_file(p);
             }
+            TailBytes::Kept(p) => system::drop_kept_tail(p),
             // keep the buffer for the next restore's tail of the same file,
             // while the spares fit in SPARE_TAILS_MAX
             TailBytes::Read(b, path) => SPARE_TAILS.with(|s| {
@@ -847,7 +858,7 @@ impl Globals {
                 .iter()
                 .map(|t| match &t.bytes {
                     TailBytes::Read(b, _) => b.capacity(),
-                    TailBytes::Clone(_) => 0,
+                    TailBytes::Clone(_) | TailBytes::Kept(_) => 0,
                 })
                 .sum();
             v.push(("pending_tails_read", tails as i64));
@@ -945,10 +956,18 @@ impl Globals {
                 } else {
                     *len
                 };
+                // (from the target's length on: kept by the file itself,
+                // nothing read or cut now; see `system::Logical`)
+                let bytes = if base > 0 {
+                    system::keep_tail(path, base)?;
+                    TailBytes::Kept(path.clone())
+                } else {
+                    TailBytes::take(path, base)?
+                };
                 tails.push(Tail {
                     path: path.clone(),
                     base,
-                    bytes: TailBytes::take(path, base)?,
+                    bytes,
                 });
             }
         }
@@ -1114,6 +1133,15 @@ impl Globals {
                 }
                 _ => (t.base, vec![]),
             };
+            if from > 0
+                && matches!(t.bytes, TailBytes::Kept(_))
+                && system::disk_len(&t.path).unwrap_or(0) >= from
+                && system::put_back_kept(&t.path, t.base)?
+            {
+                continue;
+            }
+            // (read before the file is cut: a kept tail is partly on disk)
+            let old = t.bytes.get(t.base, 0)?;
             let mut h = std::fs::OpenOptions::new()
                 .write(true)
                 .create(true)
@@ -1138,9 +1166,9 @@ impl Globals {
             h.seek(std::io::SeekFrom::Start(from))
                 .map_err(|e| format!("{}: {e}", t.path))?;
             h.write_all(&head).map_err(|e| format!("{}: {e}", t.path))?;
-            h.write_all(&t.bytes.get(t.base, 0)?)
-                .map_err(|e| format!("{}: {e}", t.path))?;
+            h.write_all(&old).map_err(|e| format!("{}: {e}", t.path))?;
             drop(h);
+            system::logical_settled(&t.path);
             system::stamp_output(&t.path);
         }
         system::guard_outputs(vec![]);
@@ -1468,6 +1496,8 @@ impl Globals {
                 continue;
             };
             use std::io::{Seek, Write};
+            // (read before the file is cut: a kept tail is partly on disk)
+            let old = t.bytes.get(t.base, skip)?;
             let mut h = std::fs::OpenOptions::new()
                 .write(true)
                 .create(true)
@@ -1491,9 +1521,9 @@ impl Globals {
             h.set_len(from).map_err(|e| format!("{}: {e}", t.path))?;
             h.seek(std::io::SeekFrom::Start(from))
                 .map_err(|e| format!("{}: {e}", t.path))?;
-            h.write_all(&t.bytes.get(t.base, skip)?)
-                .map_err(|e| format!("{}: {e}", t.path))?;
+            h.write_all(&old).map_err(|e| format!("{}: {e}", t.path))?;
             drop(h);
+            system::logical_settled(&t.path);
             system::stamp_output(&t.path);
         }
         // The output opens: the new run's so far, then the old run's after

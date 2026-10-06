@@ -2335,7 +2335,7 @@ impl Session {
         let mut open = vec![];
         for f in &rec.files {
             if let Stream::In { path, .. } = &f.stream {
-                let d = std::fs::read(path).map_err(|e| format!("{path}: {e}"))?;
+                let d = system::read_logical(path).map_err(|e| format!("{path}: {e}"))?;
                 j.files.push(FileRead {
                     path: path.clone(),
                     hash: hash128(&d),
@@ -2909,7 +2909,7 @@ impl Session {
             .read_state()
             .into_iter()
             .map(|(p, _)| {
-                let h = std::fs::read(&p).map(|d| hash128(&d)).unwrap_or([0, 0]);
+                let h = system::read_logical(&p).map(|d| hash128(&d)).unwrap_or([0, 0]);
                 (p, h)
             })
             .collect();
@@ -3501,7 +3501,7 @@ impl Session {
             }
             let now = now_of
                 .entry(f.path.clone())
-                .or_insert_with(|| std::fs::read(&f.path).ok().map(std::sync::Arc::new))
+                .or_insert_with(|| system::read_logical(&f.path).ok().map(std::sync::Arc::new))
                 .clone();
             // With the old content at hand, compare bytes (a 1,000-page
             // source is 4 MB: hashing it costs 1.5 ms, comparing 0.2).
@@ -3818,6 +3818,7 @@ impl Session {
         crate::diag::reset();
         system::truncate_external_effects(0);
         system::truncate_opens(0);
+        system::forget_logical();
         system::guard_outputs(vec![]);
         // (a new engine: no stream is open, none was read ahead)
         system::clear_ahead();

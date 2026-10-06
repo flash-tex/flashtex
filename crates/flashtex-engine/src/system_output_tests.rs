@@ -318,3 +318,65 @@ fn a_removed_file_is_reported_as_gone() {
     let e = g.restore_discard(k).unwrap_err();
     assert!(e.contains("is gone"), "{e}");
 }
+
+/// A restore keeps the old run's tail in the file itself (lane
+/// P4-PAGE-COST): nothing is cut until the stream closes, an abandon puts
+/// back only what the new run wrote over, and a jump splices as before.
+#[test]
+fn a_kept_tail_stays_in_the_file_until_it_is_settled() {
+    let d = dir("kept");
+    let p = d.join("doc.pdf").to_string_lossy().into_owned();
+    let tail = "0123456789".repeat(20);
+    // the abandon: the new run writes over part of the tail, then more
+    // than the whole old file
+    for (new, more) in [("XY", ""), ("edited", "and on past the old end".repeat(12).as_str())] {
+        let mut g = Globals::new();
+        openout(&mut g, 0, &p);
+        write(&mut g, 0, "head");
+        let k = g.checkpoint().unwrap();
+        write(&mut g, 0, &tail);
+        g.checkpoint().unwrap();
+        g.restore(k).unwrap();
+        // nothing cut: the file still holds the old run's bytes
+        assert_eq!(read(&p).len(), 4 + tail.len());
+        write(&mut g, 0, new);
+        write(&mut g, 0, more);
+        g.checkpoint().unwrap();
+        g.reattach_pending().unwrap();
+        close(&mut g, 0);
+        assert_eq!(read(&p), format!("head{tail}"), "abandon after {new:?}");
+    }
+    // the jump: the new run's bytes, then the old run's later ones
+    let mut g = Globals::new();
+    openout(&mut g, 0, &p);
+    write(&mut g, 0, "head");
+    let k = g.checkpoint().unwrap();
+    write(&mut g, 0, "page");
+    let j = g.checkpoint().unwrap();
+    write(&mut g, 0, &tail);
+    g.checkpoint().unwrap();
+    g.restore(k).unwrap();
+    write(&mut g, 0, "PAGE!");
+    g.redo_to(j).unwrap();
+    close(&mut g, 0);
+    assert_eq!(read(&p), format!("headPAGE!{tail}"));
+    // no jump and no abandon: the run's end cuts the file to what it wrote
+    let mut g = Globals::new();
+    openout(&mut g, 0, &p);
+    write(&mut g, 0, "head");
+    let k = g.checkpoint().unwrap();
+    write(&mut g, 0, &tail);
+    g.checkpoint().unwrap();
+    g.restore(k).unwrap();
+    write(&mut g, 0, "short");
+    g.checkpoint().unwrap();
+    // the record has the logical length, not the file's
+    let last = *g.checkpoints().last().unwrap();
+    let len = g.record_of(last).unwrap().files.iter().find_map(|f| match &f.stream {
+        Stream::Out { path, len, .. } if *path == p => Some(*len),
+        _ => None,
+    });
+    assert_eq!(len, Some(9));
+    close(&mut g, 0);
+    assert_eq!(read(&p), "headshort");
+}
