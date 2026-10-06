@@ -75,6 +75,56 @@
 % get_next. A token not read in place leaves the state as get_next found
 % it.
 %
+% [5] macro_call (section 392): a delimited argument's tokens, read in place.
+%
+% While macro_call scans a delimited parameter (s<>null, the delimiter's
+% first token info(r) is not a match or end_match token) and no partial
+% match of the delimiter is in effect (s=r), each token that get_token
+% returns goes, unless it is the delimiter's first token, par_token or a
+% brace, through the same steps: section 423 does nothing (s=r), section
+% 418's \par and brace tests fail, section 419 stores it (its space test
+% needs info(r) to be a match token) and incr(m); then info(r) is not a
+% match token, so the scan goes back to continue. Here, while no intrinsic
+% is being recorded, a token of a token list that [3]'s fast path would
+% take (loc<>null; a control sequence whose eq_type is below outer_call and
+% not tab_mark..car_ret while align_state=0; a character token that is not
+% out_param and not tab_mark while align_state=0) is read in place:
+%   - such a token that is neither the delimiter's first token, par_token
+%     nor a brace: loc moves on, the read-set hook runs for a control
+%     sequence as in [3], and the token is stored and counted as section
+%     419 does (fast_store_new_token takes the same node as store_new_token:
+%     both are get_avail's code, display-list hook included, and link(q) is
+%     null after either), incr(m);
+%   - the delimiter's first token, par_token or a brace: [3]'s fast path is
+%     done here, with its stores in its order (cur_cs, loc, cur_cmd, cur_chr,
+%     the read-set hook; a brace's align_state step), and get_token's last
+%     step, cur_tok:=tt (cs_token_flag+cur_cs for a control sequence,
+%     cur_cmd*@'400+cur_chr for a character: tt in both cases); then the
+%     scan goes on after get_token (found1), as it would after get_token.
+% Every other token, and the end of a list, goes to get_token, as before,
+% which reads it from the unchanged state. For a token stored in place,
+% cur_cs, cur_cmd, cur_chr and cur_tok are not stored: nothing reads them
+% before the next token sets all four (the loop runs no other code; [3]'s
+% exit hook runs only while a recording is in progress; get_token sets them
+% before it reads them). get_token's no_new_control_sequence:=false ...
+% true is not done for a token read in place; it is true outside get_token
+% and \csname's own lookup, so the pair changes nothing here.
+%
+% [6] scan_toks (section 477): a body's tokens, read in place.
+%
+% The same for the body of a definition or a token list that is not
+% expanded: each token get_token returns that is not a brace (cur_tok <
+% right_brace_limit) and whose command is not mac_param is stored
+% (store_new_token(cur_tok)) and the loop goes on. While no intrinsic is
+% being recorded, such a token of a token list that [3]'s fast path would
+% take is read in place (loc moves on, the read-set hook runs for a control
+% sequence, fast_store_new_token as in [5]); a brace or a mac_param token
+% (a character, or a control sequence whose eq_type is mac_param) that [3]
+% would take is read as [3] and get_token read it, and the loop goes on
+% after get_token (found1). intr_weak (changes/intrinsics.ch) is read only
+% while a recording is in progress, so not setting it here changes nothing.
+% Every other token and the end of a list go to get_token, as before.
+%
 % [2] divide_scaled (section 689): one 64-bit division, not a digit loop.
 %
 % Precondition: m > 0 when the division runs. The sign handling makes m
@@ -189,6 +239,118 @@ if state=token_list then if loc<>null then
 if c<0 then get_next_slow
 else if intr_rec_on then flashtex_intr_next;
 end;
+@z
+
+@x [25] m.389 l.9326 - macro_call: a delimited argument's tokens, read in place [5]
+procedure macro_call; {invokes a user-defined control sequence}
+label exit, continue, done, done1, found;
+@y
+procedure macro_call; {invokes a user-defined control sequence}
+label exit, continue, done, done1, found, done2, found1;
+@z
+
+@x [25] m.389 l.9341 - macro_call: a delimited argument's tokens, read in place [5]
+@!match_chr:ASCII_code; {character used in parameter}
+@y
+@!match_chr:ASCII_code; {character used in parameter}
+@!tt:halfword; {a token read in place}
+@!c:integer; {its command code}
+@!d:halfword; {the first token of the delimiter}
+@z
+
+@x [25] m.392 l.9402 - macro_call: a delimited argument's tokens, read in place [5]
+continue: get_token; {set |cur_tok| to the next token of input}
+if cur_tok=info(r) then
+@y
+continue: if s<>null then if s=r then if not intr_rec_on then
+  if (info(r)<match_token)or(info(r)>end_match_token) then
+  begin d:=info(r);
+  loop@+  begin if state<>token_list then goto done2;
+    if loc=null then goto done2;
+    tt:=info(loc);
+    if tt>=cs_token_flag then
+      begin c:=eq_type(tt-cs_token_flag);
+      if c>=outer_call then goto done2;
+      if (c<=car_ret)and(c>=tab_mark)and(align_state=0) then goto done2;
+      if (tt=d)or(tt=par_token) then
+        begin cur_cs:=tt-cs_token_flag; loc:=link(loc); cur_cmd:=c;
+        cur_chr:=equiv(cur_cs);
+        if rs_on then if not rs_seen[cur_cs] then flashtex_cs_read(cur_cs);
+        cur_tok:=tt; goto found1;
+        end;
+      loc:=link(loc);
+      if rs_on then if not rs_seen[tt-cs_token_flag] then
+        flashtex_cs_read(tt-cs_token_flag);
+      end
+    else  begin c:=tt div @'400;
+      if c=out_param then goto done2;
+      if (c=tab_mark)and(align_state=0) then goto done2;
+      if (tt=d)or(tt<right_brace_limit) then
+        begin cur_cs:=0; loc:=link(loc); cur_cmd:=c; cur_chr:=tt mod @'400;
+        if c=left_brace then incr(align_state)
+        else if c=right_brace then decr(align_state);
+        cur_tok:=tt; goto found1;
+        end;
+      loc:=link(loc);
+      end;
+    fast_store_new_token(tt); incr(m);
+    end;
+  end;
+done2: get_token; {set |cur_tok| to the next token of input}
+found1: if cur_tok=info(r) then
+@z
+
+@x [27] m.473 l.11456 - scan_toks: a body's tokens, read in place [6]
+label found,continue,done,done1,done2;
+@y
+label found,continue,done,done1,done2,done3,found1;
+@z
+
+@x [27] m.473 l.11462 - scan_toks: a body's tokens, read in place [6]
+@!hash_brace:halfword; {possible `\.{\#\{}' token}
+@y
+@!hash_brace:halfword; {possible `\.{\#\{}' token}
+@!tt:halfword; {a token read in place}
+@!c:integer; {its command code}
+@z
+
+@x [27] m.477 - scan_toks: a body's tokens, read in place [6]
+  else begin intr_weak:=true; get_token; intr_weak:=false;
+    end;
+@y
+  else begin if not intr_rec_on then
+      loop@+  begin if state<>token_list then goto done3;
+        if loc=null then goto done3;
+        tt:=info(loc);
+        if tt>=cs_token_flag then
+          begin c:=eq_type(tt-cs_token_flag);
+          if c>=outer_call then goto done3;
+          if (c<=car_ret)and(c>=tab_mark)and(align_state=0) then goto done3;
+          if c=mac_param then
+            begin cur_cs:=tt-cs_token_flag; loc:=link(loc); cur_cmd:=c;
+            cur_chr:=equiv(cur_cs);
+            if rs_on then if not rs_seen[cur_cs] then flashtex_cs_read(cur_cs);
+            cur_tok:=tt; goto found1;
+            end;
+          loc:=link(loc);
+          if rs_on then if not rs_seen[tt-cs_token_flag] then
+            flashtex_cs_read(tt-cs_token_flag);
+          end
+        else  begin c:=tt div @'400;
+          if c=out_param then goto done3;
+          if (c=tab_mark)and(align_state=0) then goto done3;
+          if (tt<right_brace_limit)or(c=mac_param) then
+            begin cur_cs:=0; loc:=link(loc); cur_cmd:=c; cur_chr:=tt mod @'400;
+            if c=left_brace then incr(align_state)
+            else if c=right_brace then decr(align_state);
+            cur_tok:=tt; goto found1;
+            end;
+          loc:=link(loc);
+          end;
+        fast_store_new_token(tt);
+        end;
+    done3: intr_weak:=true; get_token; intr_weak:=false;
+    found1: end;
 @z
 
 @x [28] m.494 l.11812 - pass_text: skipped tokens of a token list, read in place [4]
