@@ -123,7 +123,7 @@ struct Target {
     first_emit_ms: Option<f64>,
     first_send_ms: Option<f64>,
     /// The engine thread's instructions and cycles at the start of the
-    /// compile and at the first page (`os::thread_counts`; macOS only).
+    /// compile and at the first page (`os::thread_counts`; macOS, Linux).
     pmu0: Option<(u64, u64)>,
     first_pmu: Option<(u64, u64)>,
 }
@@ -1015,6 +1015,12 @@ impl Engine {
                     }
                     if let Some(e) = rep.edited_instr {
                         st.push(("edited_instr_k".to_string(), k(e)));
+                    }
+                    if let Some(e) = rep.typeset_instr {
+                        st.push(("typeset_instr_k".to_string(), k(e)));
+                    }
+                    if let Some(e) = rep.typeset_cycles {
+                        st.push(("typeset_cycles_k".to_string(), k(e)));
                     }
                     if let Some(e) = rep.test_instr {
                         st.push(("test_instr_k".to_string(), k(e)));
