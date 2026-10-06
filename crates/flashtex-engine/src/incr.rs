@@ -1899,7 +1899,9 @@ impl Observer for Obs {
         if let Some(p) = &self.progress {
             p(self.pass, self.pages_so_far());
         }
-        if self.taken.len() % 32 == 31 && g.arena.log_bytes() > self.budget {
+        // (within the budget too: segment checkpoints far from the cursor
+        // go, see `thin`)
+        if self.taken.len() % 32 == 31 {
             self.thin(g);
         }
         if why != Point::Shipout {
@@ -4673,8 +4675,9 @@ pub const MAX_PASSES: usize = 5;
 /// Drop checkpoints until the undo logs fit `budget` (DESIGN.md §5.2:
 /// dense near the cursor, log-spaced elsewhere, the spacing driven by the
 /// budget). Within `DENSE` pages of the cursor every checkpoint stays;
-/// further out only page checkpoints stay: first all of them (an edit
-/// anywhere then restarts at most a page before it), then every `s * 2^k`-th
+/// further out only page checkpoints stay, within the budget too: first all
+/// of them (an edit anywhere then restarts at most a page before it), then,
+/// while the logs do not fit, every `s * 2^k`-th
 /// page at a distance in `[DENSE * 2^k, DENSE * 2^(k+1))`, with the base
 /// spacing `s` = 1, 2, 4, 8, ... doubled an octave at a time, the farthest
 /// first, until the logs fit (docs/evidence/p4-memory-2026-09-30/ measures
@@ -4690,12 +4693,30 @@ fn thin(
     pages: &HashMap<CheckpointId, usize>,
     ck_pages: &HashMap<CheckpointId, usize>,
 ) {
-    if g.arena.log_bytes() <= budget {
-        return;
-    }
     let aux_done = g.layer().aux_done;
     // the last page's checkpoint: where `\end{document}` re-runs from
     let last_page = pages.iter().max_by_key(|(_, &j)| j).map(|(&c, _)| c);
+    // Within the budget too, only page checkpoints stay more than DENSE
+    // pages from the cursor (the first step below, taken always). A segment
+    // checkpoint there saves only the first edit at that place part of a
+    // page of typesetting, and its log holds again the words the page's
+    // other segments wrote: merged into the page's, the logs take 0.45–0.5
+    // of the bytes (docs/evidence/mem-footprint-2026-10-04/).
+    let pinned = |id: CheckpointId| {
+        Some(id) == s0 || Some(id) == keep_also || Some(id) == aux_done || Some(id) == last_page
+    };
+    let near = |id: CheckpointId| {
+        pages.contains_key(&id)
+            || ck_pages
+                .get(&id)
+                .is_some_and(|&p| p.abs_diff(cursor) <= DENSE)
+    };
+    if g.checkpoints().iter().any(|&id| !pinned(id) && !near(id)) {
+        g.retain_checkpoints(&|id| pinned(id) || near(id));
+    }
+    if g.arena.log_bytes() <= budget {
+        return;
+    }
     // The octave of a page's distance from the cursor beyond DENSE.
     let octave = |d: usize| (usize::BITS - 1 - (d / DENSE).leading_zeros()) as usize;
     let far = pages
