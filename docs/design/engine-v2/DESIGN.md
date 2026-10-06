@@ -17,8 +17,9 @@ which superseded the unmerged 2026-10-01 review (PR #1334); [`reviews/2026-09-30
 **Phase status (verified gates):** P0 ✔ (2026-09-29) · P1 ✔ trip byte-identical (2026-09-29) ·
 P2 ✔ verified independently on main `d4f2a1581` (2026-09-29): trip, etrip 18/18,
 pdfTeX regression 7/7, lockstep 260/260, parity fixtures P-T1 83/83 and P-T2 83/83,
-T2 LaTeX suites 1,520/1,529 with 0 unexpected failures · **P3 met on lane evidence, not yet
-gated** (§12) · P4 and P5 in progress (§12).
+T2 LaTeX suites 1,520/1,529 with 0 unexpected failures · **P3 ✔ verified and gated on main
+`2e7203e03` (2026-10-05): preview 669/669 at 0 px, P-T2 86/86, positions 86/86 exact; CI
+`preview-parity.yml` run 37381958089** (§12) · P4 and P5 in progress (§12).
 Re-measured 2026-10-05 on the NixOS PC (TeX Live 2026) on main `9f29302fe`
 (reviews/2026-10-05.md §2):
 - lockstep **1,466/1,466**;
@@ -499,7 +500,8 @@ D8 specification; what landed differs, and D8's rewording is proposed to the own
   caches are treated as derived state. The **convergence rate** and background pages re-run per
   edit are part of T7 and of the P4 exit gate (§8, §12). *Status (review 2026-10-05):*
   - Object relocation and line shifting are **still not built**. Object numbers are dead only
-    where they are unread, and `line` is still compared.
+    where they are unread, and `line` is still compared. *(Line shifting has since been built;
+    see "As built: line shifting" below.)*
   - So T7's newline and split rows never converge on any document, and sentence rows do not on
     plain-10/100/1000 or full-10. They re-typeset to the end: 150 of 300 pages, 501 of 1,000,
     and 1,503 in two passes on plain-1000 (NixOS PC, `9f29302fe`, 2026-10-05,
@@ -519,6 +521,32 @@ D8 specification; what landed differs, and D8's rewording is proposed to the own
     - the fixture-wide soundness test **fails on main**: conf-paper, edit 0, page 3, the named
       destinations differ. It failed in nightly 37208020073 (10-04) and again on the NixOS PC
       on `9f29302fe` (2026-10-05, VERIFIED).
+- **As built: line shifting** (P4-NEWLINE-CONVERGE, #1570; `src/lineshift.rs`,
+  `changes/lineshift.ch`).
+  - **Lines moved by δ.** An edit moves the lines after it by δ, the line ends it adds minus
+    those it removes.
+  - **`line`/`line_stack`.** For a level reading the edited file these may differ by δ. They
+    are corrected whenever the old run's later checkpoint is restored (`Reloc`).
+  - **Open levels, groups and conditionals.** Each one's line carries its file (the SyncTeX
+    tag, in new word-space arrays). A line of the edited file past the edit must differ by
+    δ; any other must be equal.
+  - **SyncTeX node lines.** These are dead: they are written and copied, never read.
+  - **Line journal.** Every `\inputlineno` read and every printed line number is journalled.
+    One the edit may have moved, read by the old run after the convergence point, is a
+    barrier (`rerun_point`).
+  - **`\the\inputlineno` in an `\edef` body.** For LaTeX's `\begin` this marks the token list
+    instead, and expanding, comparing or showing that list is the read.
+  - **Dropped checkpoints.** An old checkpoint that cannot be corrected (a marked list alive,
+    or a line of no known file) is dropped.
+  - **Soundness cases.** Each rule has one that fails without it (tests/incremental.rs).
+  - **Measured (PC, non-reference, #1570):** newline and split converge on 19/19 T7
+    keystrokes on plain/full-100/300/1000, except plain-1000 split. That split changes the
+    page count (§5.4).
+  - **Where split convergence comes from.** After a reflow the pending object stream holds
+    the re-typeset pages' resources. A split converges once that stream is flushed (≤ 33
+    pages).
+  - **What is still missing.** PDF object relocation is not needed for these rows and is
+    still not built.
 - **Every convergence rule is a soundness risk** (adopted 2026-10-01, §13): two rules were
   found unsound on 2026-09-30 (P4-FINISH's first `pdf_char_used` union, and the older (b′) read
   test, which skipped later reads of files the old run closes again), and only the soundness
@@ -1010,7 +1038,11 @@ Rules:
 **Gate status (review 2026-10-05; the inventory, with a lane per remaining item, is
 reviews/2026-10-05.md §4).** By §13 R13, a gate is **met** only when it holds on main, measured
 by CI or by a named reference run. Lane runs are REPORTED evidence.
-- **P3: met on lane evidence, not yet gated.**
+- **P3: ✔ MET (2026-10-05).** Verified on main `2e7203e03` by the post-merge CI job
+  `preview-parity.yml` (run 37381958089, #1596): zero-tolerance preview 669/669 page
+  renders identical at 1×, 2× and 4× (223/223 each), glyph positions exact to 0 sp on 86/86,
+  P-T2 86/86; PDF fallback 30/699 renders (4.3 %, the same 10 beamer shading pages as 10-02,
+  identical by construction). A failure on main opens `main-red`. History below:
   - P-T2 on fixtures: **86/86**. P-T1 86/86 (VERIFIED, NixOS PC, TeX Live 2026, main
     `9f29302fe`). The board's CI run of 10-04 agrees.
   - Zero-tolerance preview parity: J1 landed as #1390.
@@ -1175,6 +1207,7 @@ by CI or by a named reference run. Lane runs are REPORTED evidence.
 | 2026-10-05 | Confirmed: **MACRO-REPLAY** (`MACRO-REPLAY.md`) as the P6 direction; parked until P3–P5 are staffed, and implemented only after an ablation and a real-document measurement show a win | Owner (Kabir) |
 | 2026-10-05 | display-list-v3 exact geometry (`ORIGINS`, `RULE_GEOMETRY`) is gated by the `exact-geometry` capability, like `progress-v1`, and takes no minor number (§6.1) | Commander (kabir-claude), protocol owner |
 | 2026-10-05 | **Merge fast, test later (§9).** The merge queue batches up to 8 PRs and runs only the gate: build (`cargo check`), the changed crates' fmt/clippy/tests, trip/etrip/pdfTeX regression, licence/inventory/tables, and engine parity (lockstep, P-T1/P-T2, engine tests) sharded on hosted runners, only when engine paths change. Everything else (Mac app, iPad, full workspace, macOS legs, old-engine checks) runs after merge; a failure opens or updates `main-red` naming the PRs, and the PR's owner fixes forward within 2 h or the Commander reverts. App PRs still run their Swift tests at PR level. Measured: gate 4.7 min wall (was 45–130 min); first batch landed 6 PRs in under 20 min (#1586–#1589) | Owner (Kabir): "30–60 mins per merge is absolutely unacceptable"; Commander (kabir-claude) |
+| 2026-10-05 | **P3 exit gate met** (§12): P-T2 on fixtures 86/86 and preview parity at zero tolerance 669/669, verified on main `2e7203e03` and gated after every merge by `preview-parity.yml` (#1596). The 4.3 % PDF-fallback renders are identical by construction and remain a speed item | Commander (kabir-claude), from evidence |
 
 ---
 

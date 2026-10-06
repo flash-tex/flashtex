@@ -383,7 +383,9 @@ final class EngineV3Session {
         log("starting \(exe.path)")
         let ref = EngineV3WeakRef(self)
         do {
-            let h = try EngineV3HostProcess(executable: exe) { event in
+            // A Live Share session (or a session copy) compiles in a host
+            // launched confined; `compile` relaunches when that changes.
+            let h = try EngineV3HostProcess(executable: exe, confineRoots: model.flatMap(Self.confineRoots)) { event in
                 EngineV3Session.onMain { ref.value?.hostEvent(event) }
             }
             host = h
@@ -711,6 +713,10 @@ final class EngineV3Session {
         defer { if !sent { fastAnchors = [:] } }
         guard phase == .ready, connection != nil, let model, model.engineV3Enabled, model.autoCompile, !exportRunning,
               !tv.hasMarkedText() else { return }
+        // Live Share: the fast path never sends to a host whose confinement
+        // no longer matches (a session just started); the slow path, a few
+        // milliseconds later, relaunches it first.
+        guard fastPathAllowed(model: model) else { return }
         let typing = nextKeystrokeNs != nil || NSApp.currentEvent?.type == .keyDown
         let path = model.activePath
         guard typing, let base = hostBytes[path], sentTexts[path] != nil || fastPending.contains(path) else { return }
@@ -743,6 +749,56 @@ final class EngineV3Session {
         fastSentID[path] = req.id
         fastEditsSent &+= 1
     }
+
+    /// The roots a host compiling `model`'s project must be confined to, or
+    /// nil when it need not be (no Live Share session, not a session copy).
+    static func confineRoots(_ model: ShellModel) -> [String]? {
+        guard model.liveShare.forcesPinnedCompile(root: model.project.projectRoot) else { return nil }
+        return [model.project.projectRoot?.resolvingSymlinksInPath().path].compactMap { $0 }
+    }
+
+    /// Relaunches the host when its confinement no longer matches the
+    /// project's (a session started or ended, another project opened);
+    /// leaving confinement clears the copy's output folder, so nothing a
+    /// session's text wrote (an `.aux` with `\write18` in it, say) is read
+    /// by the next, possibly trusted, compile. Not counted as a crash.
+    @discardableResult
+    func relaunchIfConfinementChanged(model: ShellModel) -> Bool {
+        guard let host else { return false }
+        let want = Self.confineRoots(model)
+        guard host.confineRoots != want else { return false }
+        log("relaunching the host \(want == nil ? "unconfined" : "confined") (Live Share)")
+        if host.confined, want == nil { clearOutputAfterSession() }
+        stopRunningCompile(statusNote: "restarting the engine for Live Share", firstError: nil)
+        stalledTexts = nil
+        return true
+    }
+
+    /// Empties the project copy's output folder (`.aux`, `.toc`, ...).
+    func clearOutputAfterSession() {
+        guard let out = project?.output else { return }
+        let fm = FileManager.default
+        for name in (try? fm.contentsOfDirectory(atPath: out.path)) ?? [] {
+            try? fm.removeItem(at: out.appendingPathComponent(name))
+        }
+        outputClearedForSession &+= 1
+    }
+
+    /// Times `clearOutputAfterSession` ran (tests and evidence).
+    private(set) var outputClearedForSession = 0
+
+    /// The fast path sends only to a host confined exactly as `model`'s
+    /// project needs (the race of a keystroke right after a session starts).
+    func fastPathAllowed(model: ShellModel) -> Bool {
+        guard let host else { return false }
+        return host.confineRoots == Self.confineRoots(model)
+    }
+
+    /// The project copy's output folder (tests).
+    var outputDirectory: URL? { project?.output }
+
+    /// Whether the running host is confined (tests and evidence).
+    var hostConfineRoots: [String]?? { host.map(\.confineRoots) }
 
     /// The model's new text holds the fast path's last splice where it sent
     /// it (`fastCheck`), byte for byte.
@@ -997,11 +1053,14 @@ final class EngineV3Session {
         default: if visiblePage > 0 { req.viewport = visiblePage }
         }
         // Owner decision 9A: a project from elsewhere runs no shell commands until trusted.
-        req.shellEscape = EngineV3Trust.shellEscape(trusted: projectTrusted && !trustPending)
+        // Live Share: a session copy, or any project while a session runs,
+        // compiles with the session pins (proposal §6.2), trusted or not.
+        let pinned = model.liveShare.forcesPinnedCompile(root: model.project.projectRoot)
+        req.shellEscape = pinned ? "off" : EngineV3Trust.shellEscape(trusted: projectTrusted && !trustPending)
         // Protocol 3.2: bibtex, biber and makeindex run in the host as latexmk
         // would, only for a trusted project (DESIGN.md §4.5, owner 9A); an
         // untrusted one runs no external program.
-        req.externalTools = projectTrusted && !trustPending ? "auto" : "off"
+        req.externalTools = !pinned && projectTrusted && !trustPending ? "auto" : "off"
         // Strict mode (EngineV3ErrorPolicy): TeX stops at the first error
         // (an older host ignores the field: `strictModeIgnored`).
         req.haltOnError = errorMode == .strict
@@ -1053,6 +1112,10 @@ final class EngineV3Session {
     /// `walked`: the project walk for this compile has just run (startWalk).
     func compile(model: ShellModel, reason: String, keystrokeNs: UInt64? = nil, activeText: String? = nil, editNs: UInt64 = MonotonicClock.nowNs(), walked: Bool = false) {
         guard connection != nil else { return }
+        // Live Share: a session's text compiles only in a confined host (and
+        // a host launched confined serves nothing else). Relaunch, not
+        // counted as a crash; the fresh host compiles when it is ready.
+        if relaunchIfConfinementChanged(model: model) { return }
         // After a stall the text that looped waits for an edit or ⌘B (the stall bound).
         if let held = stalledTexts {
             if reason == "open", held == Dictionary(model.documents.map { ($0.path, $0.text) }, uniquingKeysWith: { a, _ in a }) { return }
@@ -1766,40 +1829,86 @@ final class EngineV3Session {
             if let root, f.hasPrefix(root) { f.removeFirst(root.count) }
             return f
         }
+        // Rows that say the same thing as another fold into it (EngineV3DiagPresent.folds).
+        let folds = EngineV3DiagPresent.folds(diags, kept: kept)
+        let stopped = Set(folds.filter { EngineV3DiagPresent.isStop(diags[$0.key].code) && !EngineV3DiagPresent.isStop(diags[$0.value].code) }.map(\.value))
+        let projectTexts: [String: String] = texts ?? Dictionary(model.documents.map { ($0.path, $0.text) }, uniquingKeysWith: { a, _ in a })
+        func text(_ file: String) -> String? { texts?[file] ?? model.documents.first(where: { $0.path == file })?.text }
         return diags.enumerated().compactMap { i, d in
             guard d.severity != "info" else { return nil } // \show, tight/loose boxes: not problems
-            var message = recovered.contains(i) ? EngineV3ErrorPolicy.marked(d.message) : d.message
+            guard folds[i] == nil else { return nil }
+            let headline = EngineV3DiagPresent.headline(code: d.code, message: d.message)
+            var message = recovered.contains(i) ? EngineV3ErrorPolicy.marked(headline) : headline
             var source: RuntimeV1.SourceRange?
             if let file = d.file.map(rel) {
-                if let line = d.line, let text = texts?[file] ?? model.documents.first(where: { $0.path == file })?.text,
-                   let lineRange = lineByteRange(text, line: line) {
+                if let line = d.line, let text = text(file), let lineRange = lineByteRange(text, line: line) {
                     let len = lineRange.count
                     let (a, b): (Int, Int) = {
                         if let r = d.range { return (min(r.0, len), min(max(r.1, r.0), len)) }
                         if let c = d.col { return (min(c, len), min(c, len)) }
                         return (0, len)
                     }()
-                    source = RuntimeV1.SourceRange(path: file, startByte: lineRange.lowerBound + a, endByte: lineRange.lowerBound + b)
+                    var end = lineRange.lowerBound + b
+                    // A box: from its first character to its last (the display list's side table).
+                    if EngineV3DiagPresent.boxKind(d.code) != nil, let e = d.end, e.file.map(rel) == file, let el = e.line, let ec = e.col,
+                       el >= line, let endLine = lineByteRange(text, line: el), lineRange.lowerBound + a <= endLine.lowerBound + min(ec, endLine.count) {
+                        end = endLine.lowerBound + min(ec, endLine.count)
+                    }
+                    source = RuntimeV1.SourceRange(path: file, startByte: lineRange.lowerBound + a, endByte: end)
                 } else {
                     message = "\((file as NSString).lastPathComponent)\(d.line.map { ":\($0)" } ?? "")\(d.col.map { ":\($0 + 1)" } ?? ""): " + message
                 }
             }
             var notes: [String] = []
-            if let detail = d.detail, !detail.isEmpty { notes.append(detail) }
-            for f in d.trace where f.kind == "macro" {
-                let def = f.def.flatMap { l in l.file.map { "\(rel($0))\(l.line.map { ":\($0)" } ?? "")" } }
-                notes.append("in \(f.name ?? "a macro")" + (def.map { " (defined at \($0))" } ?? ""))
+            var labels: [RuntimeV1.Diagnostic.Label] = []
+            var defFix: RuntimeV1.Diagnostic.Help?
+            if EngineV3DiagPresent.boxKind(d.code) != nil, let note = EngineV3DiagPresent.boxNote(d.message) {
+                notes.append(note)
+                // TeX's display of the box (fonts and all) only where the row has no text to show.
+                if source == nil, let detail = d.detail, !detail.isEmpty { notes.append(detail) }
+            } else if let detail = d.detail, !detail.isEmpty { notes.append(detail) }
+            let macros = d.trace.filter { $0.kind == "macro" }
+            for (k, f) in macros.enumerated() {
+                let name = (f.name ?? "a macro").trimmingCharacters(in: .whitespaces)
+                var def = f.def.flatMap { l in l.file.map { "\(rel($0))\(l.line.map { ":\($0)" } ?? "")" } }
+                // The engine names no definition site: the project's one definition of it.
+                if def == nil, let found = EngineV3DiagPresent.definition(of: name, in: projectTexts) {
+                    def = found.site.label
+                    labels.append(.init(source: found.site.source, text: "\(name) is defined at \(found.site.label)", primary: false))
+                    // The error is inside this (innermost) macro: the undefined name in its definition.
+                    if k == 0, d.code == EngineV3Fixes.undefinedCode, let body = found.body, let cs = EngineV3DiagPresent.lastControlWord(f.before),
+                       let at = EngineV3DiagPresent.occurrence(of: cs, in: body, path: found.site.path, texts: projectTexts) {
+                        labels.append(.init(source: at.source, text: "\(cs) is undefined (in \(name) at \(at.label))", primary: false))
+                        let close = EngineV3Fixes.closestCommands(String(cs.dropFirst()), vocabulary: Completion.defaultSupported)
+                        if close.count == 1 {
+                            defFix = .init(message: "did you mean \\\(close[0])? (in the definition of \(name), \(at.label))",
+                                           replacement: .init(startByte: at.start, endByte: at.end, text: "\\" + close[0], path: at.path))
+                        }
+                    }
+                }
+                // Only a macro with a known definition (the user's, in effect): the
+                // kernel's own (\GenericWarning, \@setref, \use_i:nn) say nothing to the author.
+                if let def { notes.append("in \(name) (defined at \(def))") }
             }
+            if !labels.isEmpty, let source { labels.insert(.init(source: source, text: "", primary: true), at: 0) }
             let help = d.help.isEmpty ? nil : RuntimeV1.Diagnostic.Help(message: d.help.joined(separator: " "))
-            let row = RuntimeV1.Diagnostic(severity: d.severity == "error" && !recovered.contains(i) ? .error : .warning, message: message, source: source,
+            var row = RuntimeV1.Diagnostic(severity: d.severity == "error" && !recovered.contains(i) ? .error : .warning, message: message, source: source,
                                            recovery: nil, code: d.code.isEmpty ? "engine-v3" : d.code,
-                                           notes: notes.isEmpty ? nil : notes, help: help)
+                                           labels: labels.isEmpty ? nil : labels, notes: notes.isEmpty ? nil : notes, help: help)
+            if stopped.contains(i), let stop = EngineV3Explain.explanation(code: "tex/emergency-stop", message: "") {
+                row.notes = (row.notes ?? []) + [stop]
+            }
+            let named = EngineV3Fixes.undefinedName(trace: d.trace.map { ($0.kind, $0.before) })
             // A plain-language explanation and, where mechanical, a fix (EngineV3Explain.swift).
-            let explained = EngineV3Explain.apply(row, code: d.code, message: d.message, texts: texts)
+            var explained = EngineV3Explain.apply(row, code: d.code, message: d.message, texts: texts, undefinedName: named)
+            if let defFix, explained.help?.replacement == nil {
+                if let tex = explained.help?.message, !tex.isEmpty { explained.notes = (explained.notes ?? []) + [tex] }
+                explained.help = defFix
+            }
             // "did you mean \textbf?": the old engine's mechanical fix, only
             // where the range is the very name TeX reports (EngineV3Fixes.swift).
-            guard d.code == EngineV3Fixes.undefinedCode, let texts else { return explained }
-            return EngineV3Fixes.fix(explained, named: EngineV3Fixes.undefinedName(trace: d.trace.map { ($0.kind, $0.before) }), texts: texts)
+            guard d.code == EngineV3Fixes.undefinedCode, let texts, explained.help?.replacement == nil else { return explained }
+            return EngineV3Fixes.fix(explained, named: named, texts: texts)
         }
     }
 
@@ -1820,12 +1929,13 @@ final class EngineV3Session {
         var first: String?
         if !diags.isEmpty {
             let kept = EngineV3ErrorPolicy.keptErrors(diags.map(Self.policyItem), mode: errorMode)
-            for (i, d) in diags.enumerated() {
+            let folds = EngineV3DiagPresent.folds(diags, kept: kept) // as the Problems rows count them
+            for (i, d) in diags.enumerated() where folds[i] == nil {
                 if d.severity == "error", kept.contains(i) {
                     e += 1
                     if first == nil {
                         let at = [d.file.map { ($0 as NSString).lastPathComponent }, d.line.map(String.init), d.col.map { String($0 + 1) }].compactMap { $0 }.joined(separator: ":")
-                        first = (at.isEmpty ? "" : at + ": ") + d.message
+                        first = (at.isEmpty ? "" : at + ": ") + EngineV3DiagPresent.headline(code: d.code, message: d.message)
                     }
                 } else if d.severity == "error" || d.severity == "warning" { w += 1 }
             }

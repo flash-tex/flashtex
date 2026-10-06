@@ -351,6 +351,41 @@ pub fn append(v: &[Arc<Note>], shift: i64) {
     })
 }
 
+/// A convergence kept the old run's notes from `from` on, which it made
+/// before an edit moved lines of the files of `shifts` (DESIGN.md §5.3 rule
+/// (c), `crate::lineshift`): their places in those files move with their
+/// lines. (Every place in such a note is in the old run's numbering; the
+/// convergence test made sure the old run read no moved line into what the
+/// note says.)
+pub fn move_lines(from: usize, shifts: &[crate::lineshift::Shift]) {
+    if shifts.is_empty() {
+        return;
+    }
+    let mv = |p: &mut Pos| -> bool {
+        let f = String::from_utf8_lossy(&p.file);
+        let d: i32 = shifts
+            .iter()
+            .filter(|s| p.line >= s.after && s.names().any(|n| crate::lineshift::same_path(&f, n)))
+            .map(|s| s.delta)
+            .sum();
+        p.line += d;
+        d != 0
+    };
+    with(|s| {
+        for n in s.notes.iter_mut().skip(from) {
+            let mut m = (**n).clone();
+            let mut moved = m.pos.as_mut().is_some_and(mv);
+            for f in m.frames.iter_mut() {
+                moved |= f.pos.as_mut().is_some_and(mv);
+                moved |= f.def.as_mut().is_some_and(mv);
+            }
+            if moved {
+                *n = Arc::new(m);
+            }
+        }
+    })
+}
+
 /// A new run from scratch (a new engine): no notes, no definition sites.
 pub fn reset() {
     with(|s| *s = St::default())

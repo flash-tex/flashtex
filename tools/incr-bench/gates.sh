@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # gates.sh [GATE...]: the engine gates a lane runs before landing, on a Linux runner with TeX Live
 # 2026 (the NixOS PC; first written for lane P4-FINISH). Engine NAME "gates" under INCR_BENCH_DIR.   default: build parity lockstep trip etrip drift positions tests sound-a
-#                           sound-budget sound-budget-d sound-timed sound-vol sound-lookup span sound-c sound-d sound-book gate
+#                           sound-budget sound-budget-d sound-timed sound-vol sound-lookup sound-lines span sound-c sound-d
+#                           sound-book gate
 #   build      release engine, display-list crate, web2rust; the pdflatex format; the documents
 #   parity     P-T1/P-T2 on the parity fixtures (tools/parity, --pt on)
 #   lockstep   tools/lockstep (260 cases)
@@ -16,7 +17,11 @@
 #              then 12 interleaved (interrupted) edits of every kind (#1550)
 #   sound-lookup a later lookup whose answer changed (genlookup.py, #1502): 30 edits + reverts, files toggled;
 #              then 12 interleaved edits, half with a file toggled while the compile is stopped (#1514)
-#   span       display-list source spans after each edit against a from-scratch host (dlspan.py)
+#   sound-lines the line kinds (edits.py's newline, split, join; DESIGN.md §5.3 rule (c), which shifts
+#              line numbers): 20 edits + reverts on the fixtures + plain-120 + full-100; 10 with a timed
+#              checkpoint every 0.2 ms; 8 interleaved with letters and sentences
+#   span       display-list source spans after each edit against a from-scratch host (dlspan.py), letters
+#              and sentences, then letters with the line kinds
 #   sound-c    soundness: 20 structural edits, fixtures + refs-30/120 + full-100
 #   sound-d    soundness: 12 interleaved (interrupted) edits
 #   sound-book soundness: 8 single-character edits + 4 sentences (+ reverts) on the owner's
@@ -47,7 +52,7 @@ mkdir -p $R
 cd $W
 echo "engine $(git rev-parse --short HEAD) ($(git log -1 --format=%s | head -c 80)); $(uname -srm); start $(date -u +%FT%TZ) $(uptime)" >> $R/environment.txt
 export FLASHTEX_VERIFY_JUMP=1 FLASHTEX_VERIFY_OLDCACHE=1 FLASHTEX_VERIFY_PREPARED=1
-for g in ${@:-build parity lockstep trip etrip drift positions tests sound-a sound-budget sound-budget-d sound-timed sound-vol sound-lookup span sound-c sound-d sound-book gate}; do
+for g in ${@:-build parity lockstep trip etrip drift positions tests sound-a sound-budget sound-budget-d sound-timed sound-vol sound-lookup sound-lines span sound-c sound-d sound-book gate}; do
   echo "== $g $(date -u +%T) $(uptime)" >> $R/environment.txt
   case $g in
     build)
@@ -140,6 +145,18 @@ for g in ${@:-build parity lockstep trip etrip drift positions tests sound-a sou
         --kinds replace,insert,delete,sentence --dir $B/sound-lookup-d --out $R/soundness-lookup-d.jsonl \
         --toggle-files "$(python3 $S/genlookup.py --names)" --extra $B/src-lookup:lookup > $R/soundness-lookup-d.txt 2>&1
       echo "soundness lookup-d exit $?" >> $R/soundness-lookup-d.txt ;;
+    sound-lines)
+      PYTHONHASHSEED=0 timeout 36000 python3 $S/soundness.py gates -j $J --trials 20 --kinds newline,split,join --allow-no-trials \
+        --dir $B/sound-lines --out $R/soundness-lines.jsonl \
+        --extra $B/src-plain-120:plain-120 --extra $B/src-full-100:full-100 > $R/soundness-lines.txt 2>&1
+      e1=$?
+      PYTHONHASHSEED=0 timeout 36000 python3 $S/soundness.py gates -j $J --trials 10 --kinds newline,split,join --allow-no-trials \
+        --dir $B/sound-lines-timed --out $R/soundness-lines-timed.jsonl --host-args "--timed 0.0002" >> $R/soundness-lines.txt 2>&1
+      e2=$?
+      PYTHONHASHSEED=0 timeout 36000 python3 $S/soundness.py gates -j $J --trials 8 --interleave --allow-no-trials \
+        --kinds newline,split,join,replace,sentence --dir $B/sound-lines-d --out $R/soundness-lines-d.jsonl \
+        --extra $B/src-plain-120:plain-120 --extra $B/src-full-100:full-100 >> $R/soundness-lines.txt 2>&1
+      echo "soundness lines exit $e1 $e2 $?" >> $R/soundness-lines.txt ;;
     span)
       # the display list's source spans, incremental against from scratch (dlspan.py: the side
       # table, which no other sweep sees); two documents (four hosts) at once
@@ -150,7 +167,15 @@ for g in ${@:-build parity lockstep trip etrip drift positions tests sound-a sou
       (run_span full-10 --edits 15 --seed 1; run_span full-10 --edits 15 --seed 2; run_span full-10 --edits 15 --seed 3; \
        run_span full-100 --edits 10 --seed 1 --from 0.85) &
       wait
-      python3 -c "import json,sys; s=[json.loads(l) for l in open(sys.argv[1]) if '\"summary\"' in l]; [print(x) for x in s]; bad=sum(x['line_bad']+x['col_bad']+x['glyph_count_bad'] for x in s); print('span: %d runs, %d edits, %d glyphs, %d wrong' % (len(s), sum(x['edits'] for x in s), sum(x['glyphs'] for x in s), bad)); sys.exit(1 if bad or len(s) < 9 else 0)" $R/span.jsonl > $R/span.txt 2>&1
+      # the line kinds (DESIGN.md §5.3 rule (c)): spans of the pages a convergence kept move with their lines
+      (run_span plain-120 --edits 12 --seed 4 --from 0.3 --kinds letter,newline,split) &
+      (run_span full-100 --edits 10 --seed 4 --from 0.3 --kinds letter,newline,split) &
+      wait
+      # CR and mixed line ends (TeX ends a line at a LF, a CR, a CR LF: crate::texlines)
+      (run_span plain-120 --edits 12 --seed 5 --from 0.3 --eol cr --kinds letter,newline,split) &
+      (run_span full-100 --edits 10 --seed 5 --from 0.3 --eol mixed --kinds letter,newline,split,wedge) &
+      wait
+      python3 -c "import json,sys; s=[json.loads(l) for l in open(sys.argv[1]) if '\"summary\"' in l]; [print(x) for x in s]; bad=sum(x['line_bad']+x['col_bad']+x['glyph_count_bad'] for x in s); print('span: %d runs, %d edits, %d glyphs, %d wrong' % (len(s), sum(x['edits'] for x in s), sum(x['glyphs'] for x in s), bad)); sys.exit(1 if bad or len(s) < 13 else 0)" $R/span.jsonl > $R/span.txt 2>&1
       echo "span exit $?" >> $R/span.txt ;;
     sound-c)
       PYTHONHASHSEED=0 timeout 36000 python3 $S/soundness.py gates -j $J --trials 20 --dir $B/sound-c --out $R/soundness-c.jsonl \

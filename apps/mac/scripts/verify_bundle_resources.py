@@ -5,9 +5,9 @@ Run: python3 apps/mac/scripts/verify_bundle_resources.py /path/FlashTeX.app/Cont
 Exit 0: pinned resources match; 1: resource refusal; 2: setup/manifest refusal.
 No directories are scanned and no resource bytes are changed or printed.
 
-Moved with its pinned manifest (a byte-identical copy of
-crates/rendering-core/docs/handoffs/native-assets/manifest.json) from
-crates/rendering-core/tools/ in old-engine retirement stage S1 (#1236).
+Moved with its pinned manifest (native-assets-manifest.json, next to this
+script) from the old engine's rendering crate in old-engine retirement stage S1;
+that crate was deleted in stage S2 (#1236), and this copy is the only one.
 """
 import argparse
 import hashlib

@@ -45,7 +45,7 @@ final class EngineV3DiagMappingTests: XCTestCase {
         // Best effort (the default): the same row, a warning marked as pdfLaTeX's error.
         let soft = EngineV3Session.problems(diags: diags, model: model, projectRoot: root)
         XCTAssertEqual(soft[0].severity, .warning)
-        XCTAssertEqual(soft[0].message, "Undefined control sequence. (pdfLaTeX would report an error here)")
+        XCTAssertEqual(soft[0].message, "Undefined control sequence (pdfLaTeX would report an error here)")
         XCTAssertEqual(soft[0].source, e.source)
     }
 }
