@@ -117,12 +117,25 @@ REQUIRE_ENV = "FLASHTEX_REQUIRE_TEXLIVE"
 
 
 def rust_fn_body(text, fn):
-    """The body of `fn <fn>(` up to the first `}` at column 0, or None."""
+    """The body of `fn <fn>(`, by brace matching from its first `{`, or None.
+
+    Braces inside strings or comments can unbalance it; the test bodies this reads are
+    plain enough, and an unbalanced body only makes the check stricter."""
     m = re.search(r"\bfn\s+%s\s*\(" % re.escape(fn), text)
     if not m:
         return None
-    end = text.find("\n}", m.end())
-    return text[m.end():] if end < 0 else text[m.end():end + 2]
+    start = text.find("{", m.end())
+    if start < 0:
+        return None
+    depth = 0
+    for i in range(start, len(text)):
+        if text[i] == "{":
+            depth += 1
+        elif text[i] == "}":
+            depth -= 1
+            if depth == 0:
+                return text[start:i + 1]
+    return text[start:]
 
 
 def rust_self_skips(doc, root=ROOT):
