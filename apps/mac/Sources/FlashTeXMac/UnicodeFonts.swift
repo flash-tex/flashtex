@@ -291,7 +291,9 @@ enum UnicodeFonts {
     /// The messages the Unicode-only packages stop the new engine with
     /// (measured: the host's DIAGs for each, TeX Live 2026).
     static let reportSignatures = [
-        "requires either XeTeX or LuaTeX", // fontspec (fatal), so also polyglossia, mathspec, …
+        // fontspec (fatal), so also polyglossia, mathspec, …: TeX breaks the
+        // message after "or" ("…requires either XeTeX or" / "(fontspec) LuaTeX.")
+        "package requires either XeTeX or",
         "Package unicode-math Error: Cannot be run with pdf", // unicode-math
         "requires XeTeX to function", // xeCJK (critical)
         "is required to compile this document", // iftex's \RequireXeTeX / \RequireLuaTeX
