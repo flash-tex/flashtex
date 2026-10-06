@@ -584,6 +584,14 @@ jobs:
           FLASHTEX_GLYPHLIST="$(scripts/ci/fetch-glyphlist.sh "$work/glyphlist")"
           export FLASHTEX_GLYPHLIST
           python scripts/check-generated.py --run --strict --only "font-engine core14"
+      # The lockstep harness by its own unit tests (capture, coverage, dupcheck,
+      # no-halt, shard), as `gate.sh pr`'s gate_parity_selftest runs them, so a
+      # pull request cannot break it unseen. It runs before the trip steps
+      # install Ubuntu's texlive-binaries, so the cases that need pdftex skip
+      # here rather than meet a pdftex with no TeX tree.
+      - name: "lockstep: harness self-tests"
+        if: ${{ !cancelled() && runner.os == 'Linux' }}
+        run: python3 -m unittest discover -s tools/lockstep -p 'test_*.py'
       - name: "trip: third_party/knuth checksums"
         if: ${{ !cancelled() }}
         working-directory: third_party/knuth

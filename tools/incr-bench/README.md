@@ -50,15 +50,30 @@ at a half to a third of its speed (`docs/evidence/p4-finish-2026-09-30/raw/probe
 300 ms apart measure that; back-to-back ones do not. Soundness and convergence rates do not depend
 on load and run anywhere.
 
-On macOS the host's `DONE.stages` also carry the engine thread's **instruction counts**, which do not
-move with load either (`os::thread_counts`, the kernel's per-thread fixed counters; P6-HYPEROPT,
-`docs/evidence/p6-hyperopt-2026-10-04/`): `instr_k` and `cycles_k` for the whole compile,
+On macOS and Linux the host's `DONE.stages` also carry the engine thread's **instruction counts**,
+which do not move with load either (`os::thread_counts`: on macOS the kernel's per-thread fixed
+counters, P6-HYPEROPT, `docs/evidence/p6-hyperopt-2026-10-04/`; on Linux `perf_event_open`, user
+space only, which `perf_event_paranoid` ≤ 2 allows): `instr_k` and `cycles_k` for the whole compile,
 `first_page_instr_k`, `restore_instr_k`, `edited_instr_k` (from just before the restore to the
-edited page's shipout) and `test_instr_k` (the convergence tests), all in thousands. Compare
-engines by these on a loaded machine; quote wall times only from a quiet one. `dl3-keys --edit FILE`
+edited page's shipout), `typeset_instr_k` and `typeset_cycles_k` (from the engine's resumption after
+the restore to the edited page's shipout: the typesetting alone) and `test_instr_k` (the convergence
+tests), all in thousands. Compare engines by these on a loaded machine; quote wall times only from a
+quiet one. On Linux, `perf stat` or `perf record` on the host shares the counters, and the host's
+counts then fall short. To profile only the typesetting to the edited page, start the host with
+`FLASHTEX_PERF_MARKS=FILE`: it appends `b NS` when an edit's engine resumes after the restore and
+`e NS` at the edited page's shipout (CLOCK_MONOTONIC), and the samples of
+`perf record -k CLOCK_MONOTONIC` between a `b` and the next `e` are that interval. `dl3-keys --edit FILE`
 types in another file of the project than `--main` (a book's chapter).
 
 ## T7: the latency gate
+
+**The P4 gate's run** (owner decision on Q1, 2026-10-05) is `scripts/t7-reference.sh`. Run it on an
+idle, plugged-in Apple-Silicon Mac with Low Power Mode off, TeX Live 2026 on `PATH`, and a clean
+checkout of the commit to gate. It refuses to start otherwise (`--check` only checks). It builds
+release, waits for load1 < 2 (`--max-load`), and runs every document and phase, typing rows
+included, with `--require-reference`. It writes `docs/evidence/t7-reference-<date>-<host>/`
+(README with the verdict, table, summary, raw), for a PR. The rest of this section is `t7.py`
+itself.
 
 ```sh
 INCR_BENCH_DIR=/tmp/ib-t7 tools/incr-bench/t7.py --build --wait-load 5 --require-reference  # all 8 documents, ~40 min

@@ -3744,6 +3744,58 @@ fn set_stamp(path: &str, st: Stamp) {
     STAMPS.with(|m| m.borrow_mut().insert(out_key(path), st));
 }
 
+/// The host's copy of a file it wrote in this compile (the editor's text:
+/// the host writes each edit through, `host::resident::apply_changes`), by
+/// canonical path, with the file's stat signature right after the write.
+struct Known {
+    path: std::path::PathBuf,
+    sig: StatSig,
+    data: std::sync::Arc<Vec<u8>>,
+}
+
+/// The copies [`known_content`] may stand for the files with. Only within
+/// the compile whose `apply_changes` wrote them (the host clears them when
+/// a compile starts and ends, [`clear_known_content`]): between the host's
+/// write and the compile's change check, nothing but the host writes the
+/// editor's file, as `apply_changes` itself assumes. Across compiles another
+/// program may have rewritten it within the file system's mtime tick, with
+/// the same length and time (review of #1606), so the file is read then
+/// (lane P4-PAGE-COST: within the compile, the 4 MB of a 1,000-page source
+/// are read once less).
+static KNOWN: Mutex<Vec<Known>> = Mutex::new(Vec::new());
+
+/// Note the host's copy of `path`, which it has just written (see
+/// [`KNOWN`]); `None` forgets it.
+pub fn note_known_content(path: &Path, held: Option<(StatSig, std::sync::Arc<Vec<u8>>)>) {
+    let Ok(path) = std::fs::canonicalize(path) else {
+        return;
+    };
+    let mut k = KNOWN.lock().unwrap_or_else(|e| e.into_inner());
+    k.retain(|e| e.path != path);
+    if let Some((sig, data)) = held {
+        k.push(Known { path, sig, data });
+    }
+}
+
+/// Forget every copy: a compile starts or has ended.
+pub fn clear_known_content() {
+    KNOWN.lock().unwrap_or_else(|e| e.into_inner()).clear();
+}
+
+/// The host's copy of `path`'s bytes, if this compile wrote the file and it
+/// is as the host left it.
+pub fn known_content(path: &str) -> Option<std::sync::Arc<Vec<u8>>> {
+    let k = KNOWN.lock().unwrap_or_else(|e| e.into_inner());
+    if k.is_empty() {
+        return None;
+    }
+    let path = std::fs::canonicalize(path).ok()?;
+    let now = StatSig::of(&path.to_string_lossy())?;
+    k.iter()
+        .find(|e| e.path == path && e.sig.same_fields(&now))
+        .map(|e| e.data.clone())
+}
+
 /// The engine has written `path` whole (created it, put back its content,
 /// or cut it back to a checkpoint's length after checking it was the
 /// run's): what it holds now is the engine's.
@@ -4992,6 +5044,43 @@ mod statsig_tests {
             .set_modified(far)
             .unwrap();
         assert!(!StatSig::of(p).unwrap().racy);
+        let _ = std::fs::remove_dir_all(&d);
+    }
+}
+
+#[cfg(test)]
+mod known_content_tests {
+    use super::*;
+
+    /// The host's copy stands for the file while the file is the one it
+    /// wrote, and not once anything else has written it.
+    #[test]
+    fn the_hosts_copy_stands_while_the_file_is_unchanged() {
+        let d = std::env::temp_dir().join(format!("flashtex-known-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).unwrap();
+        let p = d.join("known-main.tex");
+        let path = p.to_string_lossy().into_owned();
+        std::fs::write(&p, b"abc\n").unwrap();
+        let data = std::sync::Arc::new(b"abc\n".to_vec());
+        note_known_content(&p, Some((StatSig::of(&path).unwrap(), data.clone())));
+        let got = known_content(&path).expect("the copy");
+        assert!(std::sync::Arc::ptr_eq(&got, &data));
+        // another program writes it (another length)
+        std::fs::write(&p, b"abcd\n").unwrap();
+        assert!(known_content(&path).is_none());
+        note_known_content(&p, None);
+        assert!(known_content(&path).is_none());
+        // a file of the same name elsewhere is another file
+        std::fs::create_dir_all(d.join("sub")).unwrap();
+        let q = d.join("sub").join("known-main.tex");
+        std::fs::write(&q, b"abc\n").unwrap();
+        std::fs::write(&p, b"abc\n").unwrap();
+        note_known_content(&p, Some((StatSig::of(&path).unwrap(), data.clone())));
+        assert!(known_content(&q.to_string_lossy()).is_none());
+        // the next compile does not trust it
+        clear_known_content();
+        assert!(known_content(&path).is_none());
         let _ = std::fs::remove_dir_all(&d);
     }
 }

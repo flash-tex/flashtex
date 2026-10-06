@@ -123,7 +123,7 @@ struct Target {
     first_emit_ms: Option<f64>,
     first_send_ms: Option<f64>,
     /// The engine thread's instructions and cycles at the start of the
-    /// compile and at the first page (`os::thread_counts`; macOS only).
+    /// compile and at the first page (`os::thread_counts`; macOS, Linux).
     pmu0: Option<(u64, u64)>,
     first_pmu: Option<(u64, u64)>,
 }
@@ -369,8 +369,9 @@ struct Doc {
     gen: u64,
     compiles: u64,
     /// The user's files as the last compile read them (to move source
-    /// spans with their lines when they are edited).
-    texts: HashMap<String, Arc<Vec<u8>>>,
+    /// spans with their lines when they are edited), each with its stat
+    /// signature then (`None`: unknown, so it is compared again).
+    texts: HashMap<String, (Arc<Vec<u8>>, Option<crate::system::StatSig>)>,
     tools: DocTools,
     /// A run from the format was stopped by newer work (past S₀, which it
     /// keeps): S₀ is persisted after the next compile that completes, not
@@ -625,6 +626,9 @@ impl Engine {
             }
         };
         let t_apply = Instant::now();
+        // (the host's copies stand for files only within the compile that
+        // wrote them: `system::KNOWN`)
+        crate::system::clear_known_content();
         if let Err(e) = apply_changes(&job.root, &req, &mut self.written) {
             server::error(&out, Some(id), "request", &e);
             return self.resume_deferred(&conn);
@@ -682,7 +686,7 @@ impl Engine {
         let doc = self.doc.as_mut().unwrap();
         // Source spans follow their lines through the edits.
         let t_moved = Instant::now();
-        move_spans(doc);
+        move_spans(doc, &self.written);
         let move_ms = t_moved.elapsed().as_secs_f64() * 1e3;
         let mut ps = self.peers.remove(&conn.id).unwrap_or_else(PeerState::new);
         let keep = incremental && ps.doc_gen == doc.gen;
@@ -1016,6 +1020,12 @@ impl Engine {
                     if let Some(e) = rep.edited_instr {
                         st.push(("edited_instr_k".to_string(), k(e)));
                     }
+                    if let Some(e) = rep.typeset_instr {
+                        st.push(("typeset_instr_k".to_string(), k(e)));
+                    }
+                    if let Some(e) = rep.typeset_cycles {
+                        st.push(("typeset_cycles_k".to_string(), k(e)));
+                    }
                     if let Some(e) = rep.test_instr {
                         st.push(("test_instr_k".to_string(), k(e)));
                     }
@@ -1113,7 +1123,7 @@ impl Engine {
             m.push(("form_cache".into(), Json::Int(forms)));
             m.push((
                 "texts".into(),
-                Json::Int(doc.texts.values().map(|t| t.len() as i64).sum()),
+                Json::Int(doc.texts.values().map(|(t, _)| t.len() as i64).sum()),
             ));
             m.push((
                 "written".into(),
@@ -1137,6 +1147,7 @@ impl Engine {
         let doc = self.doc.as_mut().unwrap();
         doc.compiles += 1;
         doc.tools.deferred = deferred.then(|| (conn.clone(), req.clone(), id));
+        crate::system::clear_known_content();
         remember_texts(doc);
         // Persist S₀ after a full run (off the keystroke path: DONE is out),
         // or after the first complete compile behind a stopped one.
@@ -1418,18 +1429,18 @@ fn apply_changes(root: &Path, req: &Json, written: &mut Written) -> Result<(), S
     };
     let sig = |path: &Path| StatSig::of(&path.to_string_lossy());
     // The file's bytes now: the host's copy while the file is as it left
-    // it, else read.
-    let current = |path: &Path, written: &mut Written| -> std::io::Result<Vec<u8>> {
+    // it, else read. (The copy may be shared with `Doc::texts`.)
+    let current = |path: &Path, written: &mut Written| -> std::io::Result<Arc<Vec<u8>>> {
         if let Some((s, d)) = written.remove(path) {
             // (the host's own last write, still in place: exact fields,
             // racy or not -- the file is the host's copy of the editor's
             // text, which nothing else writes, and a racy test here would
             // read the typed file back at every keystroke)
             if sig(path).is_some_and(|n| n.same_fields(&s)) {
-                return Ok(Arc::try_unwrap(d).unwrap_or_else(|d| (*d).clone()));
+                return Ok(d);
             }
         }
-        std::fs::read(path)
+        std::fs::read(path).map(Arc::new)
     };
     // Write `data` to `path`, whose bytes before `from` are already these.
     let write_from = |path: &Path, data: Vec<u8>, from: usize, written: &mut Written| {
@@ -1443,8 +1454,10 @@ fn apply_changes(root: &Path, req: &Json, written: &mut Written) -> Result<(), S
                 crate::os::write_all_at(&f, &data[from..], from as u64)
             });
         r.map_err(|e| format!("{}: {e}", path.display()))?;
-        if let Some(s) = sig(path) {
-            written.insert(path.to_path_buf(), (s, Arc::new(data)));
+        let held = sig(path).map(|s| (s, Arc::new(data)));
+        crate::system::note_known_content(path, held.clone());
+        if let Some(h) = held {
+            written.insert(path.to_path_buf(), h);
         }
         Ok::<(), String>(())
     };
@@ -1455,7 +1468,7 @@ fn apply_changes(root: &Path, req: &Json, written: &mut Written) -> Result<(), S
         match current(&path, written) {
             Ok(d) if d.as_slice() == text.as_bytes() => {
                 if let Some(s) = sig(&path) {
-                    written.insert(path, (s, Arc::new(d)));
+                    written.insert(path, (s, d));
                 }
             }
             _ => write_from(&path, text.as_bytes().to_vec(), 0, written)?,
@@ -1464,7 +1477,7 @@ fn apply_changes(root: &Path, req: &Json, written: &mut Written) -> Result<(), S
     for e in req.get("edits").and_then(Json::as_array).unwrap_or(&[]) {
         let p = e.str_field("path").ok_or("an edit needs path")?;
         let path = target(p)?;
-        let mut d = current(&path, written).map_err(|x| format!("{p}: {x}"))?;
+        let d = current(&path, written).map_err(|x| format!("{p}: {x}"))?;
         let at = e.int_field("offset").ok_or("an edit needs offset")?;
         let del = e.int_field("delete").unwrap_or(0);
         let ins = e.str_field("insert").unwrap_or("");
@@ -1475,11 +1488,26 @@ fn apply_changes(root: &Path, req: &Json, written: &mut Written) -> Result<(), S
         if d[at..at + del] == *ins.as_bytes() {
             // nothing changes (the file is left alone, as before)
             if let Some(s) = sig(&path) {
-                written.insert(path, (s, Arc::new(d)));
+                written.insert(path, (s, d));
             }
             continue;
         }
-        d.splice(at..at + del, ins.bytes());
+        // In place when the copy is the host's alone; else (`Doc::texts`
+        // holds it too) the new text in one copy rather than a copy and a
+        // splice.
+        let d = match Arc::try_unwrap(d) {
+            Ok(mut d) => {
+                d.splice(at..at + del, ins.bytes());
+                d
+            }
+            Err(d) => {
+                let mut n = Vec::with_capacity(d.len() - del + ins.len());
+                n.extend_from_slice(&d[..at]);
+                n.extend_from_slice(ins.as_bytes());
+                n.extend_from_slice(&d[at + del..]);
+                n
+            }
+        };
         write_from(&path, d, at, written)?;
     }
     Ok(())
@@ -1487,19 +1515,52 @@ fn apply_changes(root: &Path, req: &Json, written: &mut Written) -> Result<(), S
 
 /// The user's files the display list names, as they are now, compared
 /// with what the last compile read: spans after a change move with their
-/// lines ([`displaylist::move_lines`]).
-fn move_spans(doc: &mut Doc) {
-    for (path, old) in doc.texts.iter_mut() {
-        let Ok(new) = std::fs::read(path) else {
-            continue;
-        };
-        if new.as_slice() == old.as_slice() {
+/// lines ([`displaylist::move_lines`]). A file whose stat signature is the
+/// one it had then is unchanged; one the host wrote last (`written`, the
+/// same file with the same fields, as `apply_changes` takes it) is the
+/// host's copy, not read again (lane P4-PAGE-COST).
+fn move_spans(doc: &mut Doc, written: &Written) {
+    use crate::system::StatSig;
+    for (path, (old, sig)) in doc.texts.iter_mut() {
+        let now = StatSig::of(path);
+        if sig.is_some() && now == *sig {
             continue;
         }
-        let (from, old_end, new_end) = line_change(old, &new);
-        displaylist::move_lines(path, from, old_end, new_end);
-        *old = Arc::new(new);
+        // (by name and signature: the host names the file under the root
+        // it was given, the display list under the working directory)
+        let name = Path::new(path).file_name();
+        let ours = now.as_ref().and_then(|n| {
+            written
+                .iter()
+                .find(|(p, (s, _))| p.file_name() == name && n.same_fields(s))
+                .map(|(_, (_, d))| d.clone())
+        });
+        let (new, new_sig) = match ours {
+            Some(d) => (d, now),
+            None => match read_signed(path) {
+                Some((d, s)) => (Arc::new(d), s),
+                None => continue,
+            },
+        };
+        *sig = new_sig;
+        if !Arc::ptr_eq(&new, old) && new.as_slice() != old.as_slice() {
+            let (from, old_end, new_end) = line_change(old, &new);
+            displaylist::move_lines(path, from, old_end, new_end);
+        }
+        *old = new;
     }
+}
+
+/// `path`'s bytes and its stat signature from before the read (`None`
+/// when the file changed while it was read, so the signature does not
+/// describe these bytes).
+fn read_signed(path: &str) -> Option<(Vec<u8>, Option<crate::system::StatSig>)> {
+    use crate::system::StatSig;
+    let before = StatSig::of(path);
+    let d = std::fs::read(path).ok()?;
+    let after = StatSig::of(path);
+    let same = matches!((&before, &after), (Some(b), Some(a)) if b.same_fields(a));
+    Some((d, if same { before } else { None }))
 }
 
 /// Record the user's files the display list names that the host has not
@@ -1510,8 +1571,8 @@ fn remember_texts(doc: &mut Doc) {
         if doc.texts.contains_key(&p) || !Path::new(&p).starts_with(&root) {
             continue;
         }
-        if let Ok(d) = std::fs::read(&p) {
-            doc.texts.insert(p, Arc::new(d));
+        if let Some((d, s)) = read_signed(&p) {
+            doc.texts.insert(p, (Arc::new(d), s));
         }
     }
 }
@@ -1577,6 +1638,74 @@ fn line_change(old: &[u8], new: &[u8]) -> (u32, u32, u32) {
     (p as u32 + 1, (na - s) as u32 + 1, (nb - s) as u32 + 1)
 }
 
+/// The LFs in `b`. Sixteen bytes at a time where the target always has
+/// 128-bit vectors (x86_64's SSE2, aarch64's NEON): each byte lane counts
+/// the LFs it saw, at most 255 rounds, and the lanes are then summed. Three
+/// times the eight-byte word count below on a 4 MB source (0.27 -> 0.085 ms
+/// on the NixOS PC), which a keystroke's `line_change` runs over the whole
+/// file (lane P4-PAGE-COST).
+fn lf_count(b: &[u8]) -> usize {
+    #[cfg(target_arch = "x86_64")]
+    {
+        lf_count_x86(b)
+    }
+    #[cfg(target_arch = "aarch64")]
+    {
+        lf_count_neon(b)
+    }
+    #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
+    {
+        lf_count_words(b)
+    }
+}
+
+/// [`lf_count`] with SSE2, part of the x86_64 baseline.
+#[cfg(target_arch = "x86_64")]
+fn lf_count_x86(b: &[u8]) -> usize {
+    use std::arch::x86_64::*;
+    let (blocks, rest) = b.as_chunks::<16>();
+    let mut n = 0usize;
+    for round in blocks.chunks(255) {
+        // SAFETY: SSE2 is always present on x86_64; the loads are unaligned
+        // loads of whole 16-byte blocks of `b`.
+        unsafe {
+            let lf = _mm_set1_epi8(b'\n' as i8);
+            let mut acc = _mm_setzero_si128();
+            for v in round {
+                let v = _mm_loadu_si128(v.as_ptr() as *const __m128i);
+                // a match is -1: subtracting it counts it
+                acc = _mm_sub_epi8(acc, _mm_cmpeq_epi8(v, lf));
+            }
+            let s = _mm_sad_epu8(acc, _mm_setzero_si128());
+            n += _mm_cvtsi128_si64(s) as usize
+                + _mm_cvtsi128_si64(_mm_unpackhi_epi64(s, s)) as usize;
+        }
+    }
+    n + lf_count_words(rest)
+}
+
+/// [`lf_count`] with NEON, part of the aarch64 baseline.
+#[cfg(target_arch = "aarch64")]
+fn lf_count_neon(b: &[u8]) -> usize {
+    use std::arch::aarch64::*;
+    let (blocks, rest) = b.as_chunks::<16>();
+    let mut n = 0usize;
+    for round in blocks.chunks(255) {
+        // SAFETY: NEON is always present on aarch64; the loads are loads of
+        // whole 16-byte blocks of `b`.
+        unsafe {
+            let lf = vdupq_n_u8(b'\n');
+            let mut acc = vdupq_n_u8(0);
+            for v in round {
+                // a match is 0xff: subtracting it counts it
+                acc = vsubq_u8(acc, vceqq_u8(vld1q_u8(v.as_ptr()), lf));
+            }
+            n += vaddlvq_u8(acc) as usize;
+        }
+    }
+    n + lf_count_words(rest)
+}
+
 /// `line_change` of texts with CR line ends: line by line
 /// (`crate::texlines`; rare: such a file pays the split).
 fn line_change_tex(old: &[u8], new: &[u8]) -> (u32, u32, u32) {
@@ -1606,7 +1735,7 @@ fn line_change_tex(old: &[u8], new: &[u8]) -> (u32, u32, u32) {
 /// The LFs in `b`, eight bytes at a time: a byte of `w ^ LF` is zero
 /// exactly where `w` holds a LF, and the zero-byte test below sets the top
 /// bit of exactly those bytes (no carries cross bytes).
-fn lf_count(b: &[u8]) -> usize {
+fn lf_count_words(b: &[u8]) -> usize {
     const LO7: u64 = 0x7f7f_7f7f_7f7f_7f7f;
     const LF: u64 = 0x0a0a_0a0a_0a0a_0a0a;
     let (chunks, rest) = b.as_chunks::<8>();
@@ -1714,6 +1843,16 @@ mod tests {
                 .collect();
             let want = v.iter().filter(|&&c| c == b'\n').count();
             assert_eq!(super::lf_count(&v), want);
+            assert_eq!(super::lf_count_words(&v), want);
+        }
+        // past a vector round's 255 blocks, every byte a LF (each lane's
+        // count at its most) and none, at every offset of the slice
+        for fill in *b"\nx" {
+            let v = vec![fill; 16 * 255 * 3 + 37];
+            for off in 0..17 {
+                let want = if fill == b'\n' { v.len() - off } else { 0 };
+                assert_eq!(super::lf_count(&v[off..]), want);
+            }
         }
     }
 
