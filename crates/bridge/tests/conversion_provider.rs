@@ -171,7 +171,11 @@ fn the_documents_engine_picks_the_providers_feature_list() {
         let run = run_bridge(
             store.path(),
             &["--conversion-provider", "openai-compatible"],
-            &[("FLASHTEX_AI_API_KEY", FIXTURE_KEY), ("FLASHTEX_CONVERSION_BASE_URL", &stub.base)],
+            &[
+                ("FLASHTEX_AI_API_KEY", FIXTURE_KEY),
+                ("FLASHTEX_CONVERSION_MODEL", "local-vlm-requested"),
+                ("FLASHTEX_CONVERSION_BASE_URL", &stub.base),
+            ],
             &capture_flow_with(convert.clone()),
         );
         assert_eq!(convert_reply(&run)["type"], "capture_proposal", "{convert}");
@@ -184,7 +188,11 @@ fn the_documents_engine_picks_the_providers_feature_list() {
     let run = run_bridge(
         store.path(),
         &["--conversion-provider", "openai-compatible"],
-        &[("FLASHTEX_AI_API_KEY", FIXTURE_KEY), ("FLASHTEX_CONVERSION_BASE_URL", "http://127.0.0.1:9")],
+        &[
+            ("FLASHTEX_AI_API_KEY", FIXTURE_KEY),
+            ("FLASHTEX_CONVERSION_MODEL", "local-vlm-requested"),
+            ("FLASHTEX_CONVERSION_BASE_URL", "http://127.0.0.1:9"),
+        ],
         &capture_flow_with(json!({"capture_id":"cap-provider","engine":"pdftex"})),
     );
     assert_ne!(run.replies[3]["type"], "capture_proposal", "{:?}", run.replies[3]);
