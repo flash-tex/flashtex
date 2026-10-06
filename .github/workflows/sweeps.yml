@@ -29,7 +29,7 @@
 # dlspan.py, readers.py, the generators, the fixtures) and the engine are the
 # ref's. To try a changed harness, dispatch from that branch (`--ref`).
 #
-# Fork safety: no secrets, `contents: read`, checkouts without persisted
+# Fork safety: no secrets, read-only `contents` and `actions`, checkouts without persisted
 # credentials. A dispatch needs write access; on a fork's pull request the
 # label run gets GitHub's read-only token and the pull request's cache scope.
 name: sweeps
@@ -58,6 +58,7 @@ on:
 
 permissions:
   contents: read
+  actions: read  # the summary reads its own run's creation time (wall time)
 
 concurrency:
   group: sweeps-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || github.run_id }}
@@ -263,19 +264,26 @@ jobs:
       - name: one table
         env:
           SIDES: ${{ needs.plan.outputs.sides }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           mkdir -p results
           rc=0
           python3 tools/incr-bench/sweeps.py summary results --plan plan.json --md summary.md --json summary.json || rc=$?
           python3 tools/incr-bench/sweeps.py costs results > costs.json
+          # Wall time: from the run's creation (the dispatch) to now. The
+          # shards' own minutes are in the table; the rest is runner queue.
+          created=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" -q .created_at || true)
+          wall=""
+          [[ -n "$created" ]] && wall="$(( ($(date +%s) - $(date -d "$created" +%s)) / 60 )) min from dispatch to this summary"
           {
             echo "### Soundness sweeps"
             echo
             jq -r '.[] | "- \(.side): `\(.ref)` = `\(.sha)`"' <<< "$SIDES"
+            [[ -z "$wall" ]] || echo "- wall: $wall; $(jq length plan.json) shards"
             echo
             cat summary.md
-          } >> "$GITHUB_STEP_SUMMARY"
+          } | tee -a "$GITHUB_STEP_SUMMARY" > summary-full.md
           exit $rc
       - uses: actions/upload-artifact@v4
         if: always()
@@ -283,6 +291,7 @@ jobs:
           name: sweeps-summary
           path: |
             summary.md
+            summary-full.md
             summary.json
             costs.json
             plan.json

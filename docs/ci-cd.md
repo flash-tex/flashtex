@@ -920,7 +920,7 @@ gate of `ref` has a bad or wrong compile, an aborted unit or a missing shard;
 are cut without changing any document's edits: `tools/incr-bench/README.md`,
 [Sweeps on hosted runners](../tools/incr-bench/README.md#sweeps-on-hosted-runners).
 
-Fork safety: no secrets, `permissions: contents: read`, no persisted checkout
+Fork safety: no secrets, `permissions: {contents: read, actions: read}`, no persisted checkout
 credentials. A dispatch needs write access to the repository; a fork's
 pull-request label run gets GitHub's read-only token and its own cache scope.
 A dispatched run builds and runs `ref`'s code with the cache scope of the

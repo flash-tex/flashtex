@@ -95,11 +95,12 @@ GATES = {
 # gates.sh's span check: every one of its 13 dlspan runs printed a summary
 SPAN_RUNS = len(GATES['span'])
 
-# Seconds per unit before any measurement (sweeps-costs.json overrides): per trial (an edit and its
-# revert, each verified), by document size; interleaved trials compile twice.
-PER_TRIAL = {'plain-120': 30, 'full-100': 30, 'refs-120': 30, 'refs-30': 8, 'lookup': 6,
-             'vol-closed': 4, 'vol-open': 4}
-SPAN_PER_EDIT = {'plain-10': 3, 'full-10': 4, 'plain-120': 25, 'full-100': 30}
+# Seconds per unit with no measurement in sweeps-costs.json (a new fixture or run): per trial (an
+# edit and its revert, each verified), by document; interleaved trials compile twice. Rough, from
+# the first hosted runs (2026-10-06: a small fixture ~0.3 s a trial, beamer ~3.5 s, full-100 ~3.5 s).
+PER_TRIAL = {'plain-120': 4, 'full-100': 4, 'refs-120': 4, 'refs-30': 2, 'lookup': 2,
+             'vol-closed': 1, 'vol-open': 1}
+SPAN_PER_EDIT = {'plain-10': 2, 'full-10': 3, 'plain-120': 10, 'full-100': 12}
 
 
 def fixtures(tree):
@@ -147,9 +148,9 @@ def estimate(u, costs):
     if u['tool'] == 'span':
         return 30 + u['edits'] * SPAN_PER_EDIT.get(u['doc'], 20)
     if u['tool'] == 'readers':
-        return 1200
-    t = PER_TRIAL.get(u['doc'], 3) * u['trials'] * (2 if u['interleave'] else 1)
-    return 20 + t
+        return 600
+    t = PER_TRIAL.get(u['doc'], 3.5 if u['doc'].startswith('beamer') else 1) * u['trials'] * (2 if u['interleave'] else 1)
+    return 5 + t
 
 
 def shards(tree, gate, target_s, j, costs=None):
@@ -203,6 +204,27 @@ def prepare(tree, bench, gate):
 
 
 def run_unit(tree, bench, out, u, timeout):
+    """One unit; for one that is not ok, the hosts' own stderr (why a host ended: src/host/crash.rs)
+    is kept next to its output as raw/TAG.DOC.diag."""
+    r = _run_unit(tree, bench, out, u, timeout)
+    if r['status'] in ('ok', 'absent'):
+        return r
+    gate, tag, doc = u['key'].split('|')
+    if u['tool'] == 'span':
+        pats = [f"{bench}/dlspan/{doc}-{ENGINE}-{u['eol'] or 'lf'}-s{u['seed']}/*/h.{x}" for x in ('err', 'out')]
+    elif u['tool'] == 'soundness':
+        pats = [f"{bench}/sound-{tag}/{doc}.jsonl.host-stderr"]
+    else:
+        pats = []
+    with open(f"{out}/raw/{tag}.{doc}.diag", 'w') as f:
+        for p in pats:
+            for g in sorted(glob.glob(p)):
+                tail = open(g, 'rb').read()[-20000:].decode('utf-8', 'replace')
+                f.write(f'=== {g}\n{tail}\n')
+    return r
+
+
+def _run_unit(tree, bench, out, u, timeout):
     ib = os.path.join(tree, 'tools/incr-bench')
     gate, tag, doc = u['key'].split('|')
     stem = f"{out}/raw/{tag}.{doc}"
