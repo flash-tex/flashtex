@@ -38,6 +38,7 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
+ORIG_ARGS="$(printf ' %s' "$@")"
 
 OUT=""
 MAX_LOAD=2.0
@@ -198,7 +199,7 @@ esac
   echo "- **Commit:** \`$(git rev-parse --short HEAD)\` ($(git log -1 --format=%s | head -c 100))"
   echo "- **Machine:** $(if [[ "$OS" == Darwin ]]; then sysctl -n hw.model machdep.cpu.brand_string 2>/dev/null | tr '\n' ' '; sw_vers -productVersion 2>/dev/null; else uname -srm; fi)"
   [[ ${#problems[@]} -gt 0 ]] && echo "- **Checks failed (--force):** $(IFS=';'; echo "${problems[*]}")"
-  echo "- **Command:** \`scripts/t7-reference.sh $(printf '%q ' "${args[@]}" | sed 's/ $//')\` (as t7.py's arguments)"
+  echo "- **Command:** \`scripts/t7-reference.sh${ORIG_ARGS}\`, which ran \`t7.py $(printf '%s ' "${args[@]}" | sed 's/ $//')\`"
   echo
   echo "Files: \`table.md\` (the rows), \`summary.json.gz\` (\`t7.py --check\` re-evaluates it after"
   echo "gunzip), \`raw.tgz\` (dl3-keys' lines), \`environment.txt\`, \`t7-output.txt\`."

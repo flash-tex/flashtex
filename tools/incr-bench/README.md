@@ -60,6 +60,14 @@ types in another file of the project than `--main` (a book's chapter).
 
 ## T7: the latency gate
 
+**The P4 gate's run** (owner decision on Q1, 2026-10-05) is `scripts/t7-reference.sh`. Run it on an
+idle, plugged-in Apple-Silicon Mac with Low Power Mode off, TeX Live 2026 on `PATH`, and a clean
+checkout of the commit to gate. It refuses to start otherwise (`--check` only checks). It builds
+release, waits for load1 < 2 (`--max-load`), and runs every document and phase, typing rows
+included, with `--require-reference`. It writes `docs/evidence/t7-reference-<date>-<host>/`
+(README with the verdict, table, summary, raw), for a PR. The rest of this section is `t7.py`
+itself.
+
 ```sh
 INCR_BENCH_DIR=/tmp/ib-t7 tools/incr-bench/t7.py --build --wait-load 5 --require-reference  # all 8 documents, ~40 min
 tools/incr-bench/t7.py --quick                                 # plain-10, full-100, fewer keys (explicit flags win)
