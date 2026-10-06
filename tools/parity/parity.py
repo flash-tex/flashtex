@@ -1874,6 +1874,10 @@ def main(argv=None):
     ap.add_argument("--texbin", default=rwc.DEFAULT_TEXBIN)
     ap.add_argument("--cache", default=pcorpus.default_cache())
     ap.add_argument("--texmf", default=pcorpus.DEFAULT_TEXMF)
+    ap.add_argument("--corpus-texmf", default=None, metavar="DIR",
+                    help="where the TeX Live tiers' documents (templates, packages) are copied from, when not "
+                         "--texmf: a tree holding the manifests' pinned files, e.g. on a host whose TeX Live has "
+                         "no doc files; the oracle and the definitions index stay on --texmf")
     ap.add_argument("--font-dirs", default=None)
     ap.add_argument("--tfm-dirs", default=None)
     ap.add_argument("--regenerate", action="store_true",
@@ -1948,7 +1952,7 @@ def main(argv=None):
             wanted = set(select_documents(ids, args))
             docs = []
             for m in paths:
-                docs += pcorpus.fetch_manifest(m, args.cache, args.texmf, log=log, only=wanted)
+                docs += pcorpus.fetch_manifest(m, args.cache, args.corpus_texmf or args.texmf, log=log, only=wanted)
         tier_docs[t] = docs
     results = {t: [] for t in tiers}
     jobs = [(t, d) for t in tiers for d in tier_docs[t]]

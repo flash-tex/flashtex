@@ -35,7 +35,8 @@
 # Every engine run here has the incremental engine's verify modes on (LIVE-30MS review: a
 # mutation of the convergence jump's adopted chunks gave matching outputs 6/6 with them off;
 # only FLASHTEX_VERIFY_JUMP caught it): the jump's comparison made ahead against the jump's own,
-# kept old chunks against their rewind, prepared restores after a reattach against the rewind.
+# kept old chunks against their rewind, prepared restores after a reattach against the rewind,
+# composed relocations against the convergences' corrections applied one by one.
 # Each aborts the host on a disagreement, so the sweep fails.
 set -u
 S=$(cd "$(dirname "$0")" && pwd)
@@ -53,7 +54,7 @@ export CARGO_BUILD_JOBS=${CARGO_BUILD_JOBS:-12}
 mkdir -p $R
 cd $W
 echo "engine $(git rev-parse --short HEAD) ($(git log -1 --format=%s | head -c 80)); $(uname -srm); start $(date -u +%FT%TZ) $(uptime)" >> $R/environment.txt
-export FLASHTEX_VERIFY_JUMP=1 FLASHTEX_VERIFY_OLDCACHE=1 FLASHTEX_VERIFY_PREPARED=1
+export FLASHTEX_VERIFY_JUMP=1 FLASHTEX_VERIFY_OLDCACHE=1 FLASHTEX_VERIFY_PREPARED=1 FLASHTEX_VERIFY_RELOC=1
 for g in ${@:-build parity lockstep trip etrip drift positions tests sound-a sound-budget sound-budget-d sound-timed sound-vol sound-lookup sound-lines span readers sound-c sound-d sound-book gate}; do
   echo "== $g $(date -u +%T) $(uptime)" >> $R/environment.txt
   case $g in

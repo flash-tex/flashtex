@@ -19,7 +19,7 @@ final class ShellModel {
     }
 
     var documents: [RuntimeV1.Document] = [] {
-        didSet { documentsRevision &+= 1; refreshDocumentMirror() }
+        didSet { documentsRevision &+= 1; refreshDocumentMirror(); scheduleUnicodeFontsCheck() }
     }
     /// Advances on every mutation of `documents` — a keystroke, a disk
     /// reload, a project swap — so a reader that derives something from a
@@ -154,6 +154,17 @@ final class ShellModel {
     @ObservationIgnored var engineChoiceDocument: URL?
     /// The host reported no TeX Live (sticky for the window until the user chooses again).
     @ObservationIgnored var engineHostLacksTeXLive = false
+    /// A run of the new engine stopped on a package that needs XeTeX or
+    /// LuaTeX (UnicodeFonts.swift; until the next open or the user's choice).
+    /// With it, what the preamble scan found then: once the scan finds
+    /// something else (the user deleted the line), the report is dropped.
+    @ObservationIgnored var engineHostNeedsUnicode: (document: URL?, need: UnicodeFontsNeed, scanned: UnicodeFontsNeed?)?
+    /// The preamble scan for the open document, by `documentsRevision`
+    /// (UnicodeFonts.swift), and the pending re-check after an edit.
+    @ObservationIgnored var unicodeFontsScan: (revision: Int, entry: String, need: UnicodeFontsNeed?)?
+    @ObservationIgnored var unicodeFontsCheck: DispatchWorkItem?
+    /// The project files the scan read (by modification date).
+    @ObservationIgnored let unicodeFontsFiles = UnicodeFontsFileCache()
     /// Fallback announcements made (tests; VoiceOver hears them as they are posted).
     @ObservationIgnored var engineAnnouncements: [String] = []
     /// The developer-only durable helper (`FLASHTEX_PREVIEW_CONTROLLER`)
@@ -306,6 +317,10 @@ final class ShellModel {
     /// HUD reads this; before it existed the readout was wired only to the v1
     /// pane's callback and so showed nothing on the default v2 route.
     var previewVisiblePage = 1
+    /// Pages the preview shows: the new engine's (`EngineV3Session.pageCount`)
+    /// under it, else the old route's `toolbarPageCount`. The HUD's "N / M"
+    /// readout and the pane's accessibility value both count these.
+    var previewPageCount: Int { engineV3Enabled ? engineV3.pageCount : toolbarPageCount }
     /// `!documents.isEmpty`, change-only: File > Print Source… must not read
     /// `documents` from the App scene (a keystroke reassigns the array).
     private(set) var toolbarHasDocument = false

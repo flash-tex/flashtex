@@ -504,6 +504,12 @@ struct Prepared {
     history_gen: u64,
     cs: Vec<u32>,
     buf: Vec<u64>,
+    /// The redo made ahead too (lane P4-PAGE-COST): for each of `cs` not
+    /// written since the last checkpoint when it was prepared, a slab chunk
+    /// holding the live chunk then (else null). A chunk the barrier has not
+    /// saved since is still that at the restore; one it has is copied again.
+    /// Empty: none made.
+    pre: Vec<ChunkPtr>,
 }
 
 #[inline(always)]
@@ -783,7 +789,7 @@ impl Core {
     /// is not in the live chain.
     fn prepare_restore(&mut self, id: CheckpointId, stop: &mut dyn FnMut() -> bool) -> bool {
         let _m = crate::memstat::scope(crate::memstat::tag::PREPARE);
-        self.prepared = None;
+        self.set_prepared(None);
         let Some(k) = self.index_of(id) else {
             return false;
         };
@@ -805,14 +811,48 @@ impl Core {
         let Some(buf) = rewound_until(self.nchunks, &cs, &live, &self.logs[k..], stop) else {
             return false;
         };
+        let pre = self.pre_redo(&cs);
         self.prepared = Some(Prepared {
             id,
             ids: self.ids.clone(),
             history_gen: self.history_gen,
             cs,
             buf,
+            pre,
         });
         true
+    }
+
+    /// `Prepared::pre` for chunks `cs`: a copy of each live chunk the
+    /// barrier has not saved since the last checkpoint.
+    fn pre_redo(&mut self, cs: &[u32]) -> Vec<ChunkPtr> {
+        let mut pre = Vec::with_capacity(cs.len());
+        for &c in cs {
+            if self.saved()[c as usize] != 0 {
+                pre.push(std::ptr::null_mut());
+                continue;
+            }
+            let d = self.slab.take();
+            // SAFETY: a live chunk and a slab chunk, CHUNK_WORDS words each.
+            unsafe { std::ptr::copy_nonoverlapping(self.chunk_ptr(c as usize), d, CHUNK_WORDS) };
+            pre.push(d);
+        }
+        pre
+    }
+
+    /// Replace the prepared restore, giving the old one's redo chunks back.
+    fn set_prepared(&mut self, p: Option<Prepared>) {
+        if let Some(old) = std::mem::replace(&mut self.prepared, p) {
+            self.give_pre(old.pre);
+        }
+    }
+
+    fn give_pre(&mut self, pre: Vec<ChunkPtr>) {
+        for d in pre {
+            if !d.is_null() {
+                self.slab.give(d);
+            }
+        }
     }
 
     /// `rewind(logs from p.id on, true)` from a `Prepared`: save the live
@@ -829,10 +869,26 @@ impl Core {
             }
         }
         let mut redo: Vec<(u32, ChunkPtr)> = Vec::with_capacity(p.cs.len() + extra.len());
-        for &c in p.cs.iter().chain(extra.iter().map(|(c, _)| c)) {
-            redo.push((c, self.slab.take()));
+        // whether each redo chunk still needs the live chunk copied in (not
+        // when `Prepared::pre` made it and the chunk is unchanged since)
+        let mut fresh: Vec<bool> = Vec::with_capacity(p.cs.len() + extra.len());
+        for (i, &c) in p.cs.iter().enumerate() {
+            match p.pre.get(i).copied().filter(|d| !d.is_null()) {
+                Some(d) => {
+                    redo.push((c, d));
+                    fresh.push(self.saved()[c as usize] != 0);
+                }
+                None => {
+                    redo.push((c, self.slab.take()));
+                    fresh.push(true);
+                }
+            }
         }
-        let work: Vec<(usize, usize, usize)> = redo
+        for &(c, _) in &extra {
+            redo.push((c, self.slab.take()));
+            fresh.push(true);
+        }
+        let work: Vec<(usize, usize, usize, bool)> = redo
             .iter()
             .enumerate()
             .map(|(i, &(c, r))| {
@@ -841,16 +897,23 @@ impl Core {
                 } else {
                     extra[i - p.cs.len()].1 as usize
                 };
-                (base + ((c as usize) << CHUNK_SHIFT), r as usize, src)
+                (
+                    base + ((c as usize) << CHUNK_SHIFT),
+                    r as usize,
+                    src,
+                    fresh[i],
+                )
             })
             .collect();
         let job = |k: usize| {
-            let (live, r, src) = work[k];
+            let (live, r, src, fresh) = work[k];
             // SAFETY: distinct live chunks, their own redo chunks, and
             // sources nobody writes meanwhile (the prepared buffer, the open
             // log's slab chunks).
             unsafe {
-                std::ptr::copy_nonoverlapping(live as *const u64, r as *mut u64, CHUNK_WORDS);
+                if fresh {
+                    std::ptr::copy_nonoverlapping(live as *const u64, r as *mut u64, CHUNK_WORDS);
+                }
                 std::ptr::copy_nonoverlapping(src as *const u64, live as *mut u64, CHUNK_WORDS);
             }
         };
@@ -920,8 +983,16 @@ impl Core {
                 None => eprintln!("[arena] nothing prepared"),
             }
         }
-        let prepared = prepared
-            .filter(|p| p.id == id && p.history_gen == self.history_gen && p.ids == self.ids);
+        let prepared = match prepared {
+            Some(p) if p.id == id && p.history_gen == self.history_gen && p.ids == self.ids => {
+                Some(p)
+            }
+            Some(p) => {
+                self.give_pre(p.pre);
+                None
+            }
+            None => None,
+        };
         let old_logs = self.logs.split_off(k);
         let old_ids = self.ids.split_off(k);
         if std::env::var_os("FLASHTEX_INCR_DEBUG").is_some() {
@@ -1075,13 +1146,18 @@ impl Core {
         for c in open {
             saved[c] = 1;
         }
-        self.prepared = prepared.map(|(cs, buf)| Prepared {
-            id: target,
-            ids: self.ids.clone(),
-            history_gen: self.history_gen,
-            cs,
-            buf,
+        let prepared = prepared.map(|(cs, buf)| {
+            let pre = self.pre_redo(&cs);
+            Prepared {
+                id: target,
+                ids: self.ids.clone(),
+                history_gen: self.history_gen,
+                cs,
+                buf,
+                pre,
+            }
         });
+        self.set_prepared(prepared);
         if std::env::var_os("FLASHTEX_VERIFY_PREPARED").is_some() {
             if let Err(e) = self.verify_prepared() {
                 // (a verify mode: loud, so that a sweep fails)
@@ -1994,7 +2070,10 @@ impl Arena {
         let (br_b, br_d, br_w) = branch.map_or((0, 0, 0), |b| sum(&b.logs));
         let open = c.logs.last().map_or(0, |l| l.entries.len());
         let prepared = c.prepared.as_ref().map_or(0, |p| {
-            p.buf.capacity() * 8 + p.cs.capacity() * 4 + p.ids.capacity() * 8
+            p.buf.capacity() * 8
+                + p.cs.capacity() * 4
+                + p.ids.capacity() * 8
+                + p.pre.iter().filter(|d| !d.is_null()).count() * CHUNK_BYTES
         });
         vec![
             ("space_reserved", c.bytes as i64),
@@ -2609,6 +2688,23 @@ mod tests {
             assert!(arr[..] == copies[i][..], "prepared restore to {i}");
             a.converge(br, ids[i]).unwrap();
             assert!(arr[..] == end[..], "jump back from {i}");
+        }
+        // the redo made ahead (`Prepared::pre`): written after the
+        // preparation heavily, so that most prepared chunks the barrier had
+        // not saved are written again before the restore, and some are not
+        for (n, i) in [2usize, 15, 9].into_iter().enumerate() {
+            assert!(a.prepare_restore(ids[i], &mut || false));
+            let p = a.core().prepared.as_ref().unwrap();
+            assert!(p.pre.iter().any(|d| !d.is_null()), "a redo made ahead");
+            scribble(&mut arr, 1000 + n as u64, 2_000);
+            let end = arr.to_vec();
+            let br = a.restore_branch(ids[i]).unwrap();
+            assert!(
+                arr[..] == copies[i][..],
+                "prepared restore to {i}, written since"
+            );
+            a.converge(br, ids[i]).unwrap();
+            assert!(arr[..] == end[..], "jump back from {i}, written since");
         }
         // stale: a checkpoint since the preparation
         assert!(a.prepare_restore(ids[5], &mut || false));

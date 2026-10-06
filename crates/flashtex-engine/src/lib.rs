@@ -59,6 +59,8 @@ pub mod iso;
 pub mod ix;
 #[cfg(not(feature = "tex82"))]
 pub mod lineshift;
+#[cfg(all(target_os = "linux", not(feature = "tex82")))]
+pub mod logalloc;
 #[cfg(not(feature = "tex82"))]
 pub mod macroprof;
 pub mod memstat;

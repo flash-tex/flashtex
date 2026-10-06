@@ -191,6 +191,12 @@ pub enum Action {
 /// `crate::incr`).
 pub trait Observer {
     fn on_checkpoint(&mut self, g: &mut Globals, id: CheckpointId, why: Point) -> Action;
+    /// A segment checkpoint is due while `Layer::segment_hold` holds them
+    /// back: whether to take it anyway, because the observer would stop the
+    /// run there (a preemption point stays one: DESIGN.md §5.2).
+    fn take_held_segment(&mut self, _g: &mut Globals) -> bool {
+        true
+    }
     /// The observer as `Any`, to take it back after a run.
     fn into_any(self: Box<Self>) -> Box<dyn std::any::Any>;
 }
@@ -398,6 +404,10 @@ pub struct Layer {
     /// Segment checkpoints (`Point::Segment`): the least engine time since
     /// the last checkpoint for one to be taken.
     pub segment_s: f64,
+    /// Segment checkpoints only where the observer stops the run
+    /// (`Observer::take_held_segment`; `crate::incr`: an edit's run until its
+    /// edited page has shipped).
+    pub segment_hold: bool,
     /// Lines read (`input_ln`) so far, and when the last checkpoint was
     /// taken: a segment checkpoint needs a line read since the last one
     /// (two checkpoints with the same input consumed are the same restart
@@ -435,6 +445,8 @@ pub struct Stats {
     /// requested but not taken.
     pub segments: u64,
     pub segments_skipped: u64,
+    /// Segment checkpoints due but held back (`Layer::segment_hold`).
+    pub segments_held: u64,
     /// The thread CPU time of the whole of `checkpoint` (the host state,
     /// the scalars, the seal).
     pub total_cpu_s: f64,
@@ -452,10 +464,11 @@ impl Stats {
             .map(|(k, v)| format!("{k:?}:{v}"))
             .collect();
         format!(
-            "{{\"checkpoints\":{},\"segments\":{},\"segments_skipped\":{},\"total_cpu_s\":{:.6},\"files_s\":{:.6},\"cstate_s\":{:.6},\"seal_s\":{:.6},\"seal_cpu_s\":{:.6},\"dirty_chunks\":{},\"dirty_by_region\":{{{}}}}}",
+            "{{\"checkpoints\":{},\"segments\":{},\"segments_skipped\":{},\"segments_held\":{},\"total_cpu_s\":{:.6},\"files_s\":{:.6},\"cstate_s\":{:.6},\"seal_s\":{:.6},\"seal_cpu_s\":{:.6},\"dirty_chunks\":{},\"dirty_by_region\":{{{}}}}}",
             self.count,
             self.segments,
             self.segments_skipped,
+            self.segments_held,
             self.total_cpu_s,
             self.files_s,
             self.cstate_s,
@@ -1759,11 +1772,28 @@ impl Globals {
                 let due = l.lines > l.lines_at_checkpoint
                     && l.last_checkpoint
                         .is_none_or(|t| t.elapsed().as_secs_f64() >= l.segment_s);
-                if due {
+                let held = due && l.segment_hold;
+                // held back: taken only where the observer stops the run
+                let take = due
+                    && (!held
+                        || match self.layer().observer.take() {
+                            Some(mut obs) => {
+                                let t = obs.take_held_segment(self);
+                                self.layer().observer = Some(obs);
+                                t
+                            }
+                            None => true,
+                        });
+                let l = self.layer();
+                if take {
                     l.stats.segments += 1;
-                    self.hook_checkpoint(Point::Segment);
+                } else if held {
+                    l.stats.segments_held += 1;
                 } else {
                     l.stats.segments_skipped += 1;
+                }
+                if take {
+                    self.hook_checkpoint(Point::Segment);
                 }
             }
             REQ_NOTE_SHIPOUT => {
