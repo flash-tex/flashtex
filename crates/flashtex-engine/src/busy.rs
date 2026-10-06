@@ -57,9 +57,9 @@ const RING: usize = 256;
 
 struct State {
     now: Part,
-    /// (when, the part from then on, the engine thread's cycles then),
-    /// oldest first.
-    ring: std::collections::VecDeque<(Instant, Part, u64)>,
+    /// (when, the part from then on, the engine thread's cycles then, and
+    /// its instructions), oldest first.
+    ring: std::collections::VecDeque<(Instant, Part, u64, u64)>,
     /// The ring dropped its oldest change (else the part before the first
     /// one is `Idle`, the initial part).
     wrapped: bool,
@@ -80,8 +80,8 @@ fn set(p: Part) -> Part {
             s.ring.pop_front();
             s.wrapped = true;
         }
-        let cycles = crate::os::thread_counts().map_or(0, |c| c.1);
-        s.ring.push_back((Instant::now(), p, cycles));
+        let (instr, cycles) = crate::os::thread_counts().unwrap_or((0, 0));
+        s.ring.push_back((Instant::now(), p, cycles, instr));
     }
     prev
 }
@@ -115,11 +115,11 @@ pub fn since(t0: Instant) -> Vec<(&'static str, f64)> {
     // the part at t0: the last change at or before it (none: the initial
     // part, unless the ring no longer reaches back that far)
     let mut changes: Vec<(Instant, Part)> = vec![];
-    match s.ring.iter().rposition(|(t, _, _)| *t <= t0) {
-        Some(i) => changes.extend(s.ring.range(i..).map(|&(t, p, _)| (t, p))),
+    match s.ring.iter().rposition(|(t, _, _, _)| *t <= t0) {
+        Some(i) => changes.extend(s.ring.range(i..).map(|&(t, p, _, _)| (t, p))),
         None if !s.wrapped => {
             changes.push((t0, Part::Idle));
-            changes.extend(s.ring.iter().map(|&(t, p, _)| (t, p)));
+            changes.extend(s.ring.iter().map(|&(t, p, _, _)| (t, p)));
         }
         None => return vec![],
     }
@@ -138,6 +138,59 @@ pub fn since(t0: Instant) -> Vec<(&'static str, f64)> {
     acc
 }
 
+/// The engine thread's work from `t0` to now by part: (part, instructions,
+/// cycles), largest cycle count first. The counterpart of [`since`] in
+/// counts, which load does not change (a keystroke that waited behind the
+/// previous compile's background work: which work, and how much of it;
+/// lane P4-TYPING-200WPM). The interval the ring has at `t0` is counted from
+/// `t0` by its share of wall time, as [`cycles_at`] does. The engine thread
+/// calls it; empty where the counters are not available or the ring no
+/// longer reaches `t0`.
+pub fn counts_since(t0: Instant) -> Vec<(&'static str, u64, u64)> {
+    let Some((ni, nc)) = crate::os::thread_counts() else {
+        return vec![];
+    };
+    let end = Instant::now();
+    let s = STATE.lock().unwrap_or_else(|e| e.into_inner());
+    // the change at or before t0; none: the ring starts after t0 (then the
+    // time before its first change was idle), unless it wrapped
+    let (i, partial) = match s.ring.iter().rposition(|(t, _, _, _)| *t <= t0) {
+        Some(i) => (i, true),
+        None if !s.wrapped && !s.ring.is_empty() => (0, false),
+        None => return vec![],
+    };
+    let mut acc: Vec<(&'static str, u64, u64)> = vec![];
+    for k in i..s.ring.len() {
+        let (ta, p, ca, ia) = s.ring[k];
+        let (tb, cb, ib) = s
+            .ring
+            .get(k + 1)
+            .map_or((end, nc, ni), |&(t, _, c, n)| (t, c, n));
+        let (mut dc, mut di) = (cb.saturating_sub(ca), ib.saturating_sub(ia));
+        if partial && k == i {
+            // only the part of the first interval after t0
+            let span = tb.saturating_duration_since(ta).as_secs_f64();
+            let after = tb.saturating_duration_since(t0).as_secs_f64();
+            let f = if span > 0.0 {
+                (after / span).min(1.0)
+            } else {
+                1.0
+            };
+            dc = (dc as f64 * f) as u64;
+            di = (di as f64 * f) as u64;
+        }
+        match acc.iter_mut().find(|(n, _, _)| *n == p.name()) {
+            Some(a) => {
+                a.1 += di;
+                a.2 += dc;
+            }
+            None => acc.push((p.name(), di, dc)),
+        }
+    }
+    acc.sort_by_key(|a| std::cmp::Reverse(a.2));
+    acc
+}
+
 /// The engine thread's cycle count (`os::thread_counts`) at `t0`,
 /// interpolated between the changes of part around it (by wall time; the
 /// engine thread calls this, and its count now closes the last interval).
@@ -149,9 +202,9 @@ pub fn since(t0: Instant) -> Vec<(&'static str, f64)> {
 pub fn cycles_at(t0: Instant) -> Option<u64> {
     let now = (Instant::now(), crate::os::thread_counts()?.1);
     let s = STATE.lock().unwrap_or_else(|e| e.into_inner());
-    let i = s.ring.iter().rposition(|(t, _, _)| *t <= t0)?;
-    let (ta, _, ca) = s.ring[i];
-    let (tb, cb) = s.ring.get(i + 1).map_or(now, |&(t, _, c)| (t, c));
+    let i = s.ring.iter().rposition(|(t, _, _, _)| *t <= t0)?;
+    let (ta, _, ca, _) = s.ring[i];
+    let (tb, cb) = s.ring.get(i + 1).map_or(now, |&(t, _, c, _)| (t, c));
     let span = tb.saturating_duration_since(ta).as_secs_f64();
     let part = t0.saturating_duration_since(ta).as_secs_f64();
     let f = if span > 0.0 {
@@ -175,12 +228,30 @@ mod tests {
             {
                 let _b = enter(Part::Jump);
                 std::thread::sleep(std::time::Duration::from_millis(2));
+                // work the counters see (instructions, not sleep)
+                let mut x = 0u64;
+                for i in 0..2_000_000u64 {
+                    x = std::hint::black_box(x.wrapping_mul(31).wrapping_add(i));
+                }
+                std::hint::black_box(x);
             }
         }
         let v = since(t0);
         let get = |n: &str| v.iter().find(|(k, _)| *k == n).map_or(0.0, |x| x.1);
         assert!(get("test") >= 2.5, "{v:?}");
         assert!(get("jump") >= 1.5, "{v:?}");
+        // the same wait in counts, where the counters are available
+        let c = counts_since(t0);
+        if crate::os::thread_counts().is_some() {
+            let instr = |n: &str| c.iter().find(|(k, _, _)| *k == n).map_or(0, |x| x.1);
+            assert!(instr("jump") >= 2_000_000, "{c:?}");
+            assert!(
+                instr("jump") > instr("test"),
+                "{c:?}: the sleep costs no instructions"
+            );
+        } else {
+            assert!(c.is_empty());
+        }
         assert_eq!(now(), Part::Idle);
     }
 }

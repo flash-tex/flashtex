@@ -597,6 +597,7 @@ impl Engine {
         let queue_ms = t0.elapsed().as_secs_f64() * 1e3;
         // what the engine thread did while this request waited (LIVE-30MS)
         let queue_by = crate::busy::since(t0);
+        let queue_counts = crate::busy::counts_since(t0);
         let arrival_mark = crate::busy::cycles_at(t0);
         let _busy = crate::busy::enter(crate::busy::Part::Request);
         super::crash::serving(&format!(
@@ -948,6 +949,26 @@ impl Engine {
                         queue_by
                             .iter()
                             .map(|(k, v)| (k.to_string(), m(*v)))
+                            .collect(),
+                    ),
+                ),
+                // the same wait in the engine thread's instructions and cycles
+                // (thousands), by part: load-independent (P4-TYPING-200WPM)
+                (
+                    "queue_by_instr_k".to_string(),
+                    Json::Obj(
+                        queue_counts
+                            .iter()
+                            .map(|(k, i, _)| (k.to_string(), Json::Int((*i / 1000) as i64)))
+                            .collect(),
+                    ),
+                ),
+                (
+                    "queue_by_kc".to_string(),
+                    Json::Obj(
+                        queue_counts
+                            .iter()
+                            .map(|(k, _, c)| (k.to_string(), Json::Int((*c / 1000) as i64)))
                             .collect(),
                     ),
                 ),
