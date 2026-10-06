@@ -132,7 +132,7 @@ frames later (15.9–16.0 ms minimum, 16–24 ms typical; app-v3-5 evidence, #13
 names the quantity it measured.
 **Speed everywhere, memory everywhere (owner, 2026-10-06, after trying the app on 1,000 pages).**
 - **Reference hardware is the slowest supported Mac (M1-class), not the newest:** key → preview
-  commit ≤ 20 ms p95 for keys 50 ms apart on 1,000-page documents and on *Infinite Descent*,
+  commit ≤ 20 ms p95 for keys 50 ms apart on 1,000-page documents and on *Infinite Descent ×2*,
   measured there (the host ≤ 11 ms / app ≤ 4 ms split stays the engineering budget).
 - **The editor is a text editor first:** key → glyph drawn in the editor ≤ 1 frame (8 ms at
   120 Hz) p99, independent of document size, compile state and host traffic. No preview work
@@ -145,8 +145,9 @@ names the quantity it measured.
   *High Performance* (large budget, dense checkpoints, keep-warm and prepare-ahead always,
   everything cached, exact parallelism; fastest). Each is a named profile of the host and app
   knobs, switchable live; correctness is identical in every mode (lane PERF-MODES).
-- **Large benchmark:** Clive Newstead's *Infinite Descent* (diagram- and formatting-heavy),
-  fetched by pinned commit (codeberg cnewstead/infdesc `48825c5`), never committed.
+- **Heavy benchmark: *Infinite Descent ×2*** (owner, 2026-10-06): Clive Newstead's book
+  (diagram- and formatting-heavy; codeberg cnewstead/infdesc `48825c5`, never committed) with its
+  whole body typeset twice in one document, 1,142 pages (`tools/parity/corpus/infdesc_x2.py`).
 
 **Typing speed (owner, 2026-10-06).** The gate holds for **continuous typing with keys as
 close as 50 ms apart** (about 240 wpm; the owner's floor is 200 wpm, ~60 ms), not only isolated
@@ -1240,7 +1241,7 @@ by CI or by a named reference run. Lane runs are REPORTED evidence.
 | 2026-10-05 | **P3 exit gate met** (§12): P-T2 on fixtures 86/86 and preview parity at zero tolerance 669/669, verified on main `2e7203e03` and gated after every merge by `preview-parity.yml` (#1596). The 4.3 % PDF-fallback renders are identical by construction and remain a speed item | Commander (kabir-claude), from evidence |
 | 2026-10-06 | Segment hold (§5.2, #1614): segment checkpoints between the restart point and the edited page are deferred until the page ships; preemption points stay, and a held checkpoint is materialised where newer work stops the run. An implementation of §5.2's cadence, not a change to its guarantees | Commander (kabir-claude), on independent review |
 | 2026-10-06 | The latency gate covers continuous typing with keys **50 ms apart** (≈ 240 wpm; ≥ the owner's 200 wpm floor): each key at 50/60/80/100/150 ms intervals meets ≤ 16 ms p95 (host ≤ 11 ms) for its own edited page and is painted by its own compile (§1.2) | Owner (Kabir): "anything below 200wpm needs to hit our target"; "the 50ms target is good" |
-| 2026-10-06 | Speed and memory targets (§1.2): ≤ 20 ms key→commit at 50 ms typing on the slowest supported Mac (M1-class) for 1,000 pages and *Infinite Descent*; editor key→glyph ≤ 1 frame p99 regardless of preview state; visible page ≤ 1 s after open; edits during the initial compile as fast as after; memory and cold-compile time minimised; *Infinite Descent* is the large benchmark. P6 work serving these is P4-critical under critical path first | Owner (Kabir): "make it faster … sub 20ms on all macs … memory usage needs to be decreased … the editor should literally be a text editor and be completely instant … optimize the absolute fuck out of everything" |
+| 2026-10-06 | Speed and memory targets (§1.2): ≤ 20 ms key→commit at 50 ms typing on the slowest supported Mac (M1-class) for 1,000 pages and *Infinite Descent*; editor key→glyph ≤ 1 frame p99 regardless of preview state; visible page ≤ 1 s after open; edits during the initial compile as fast as after; memory and cold-compile time minimised; *Infinite Descent ×2* is the heavy benchmark. P6 work serving these is P4-critical under critical path first | Owner (Kabir): "make it faster … sub 20ms on all macs … memory usage needs to be decreased … the editor should literally be a text editor and be completely instant … optimize the absolute fuck out of everything" |
 | 2026-10-06 | Performance modes: Low Memory / Balanced (default, all gates) / High Performance, as named profiles of the retention budget and the speed/memory knobs, switchable live; every mode passes the soundness and parity gates (§1.2, §5.2) | Owner (Kabir) |
 
 ---
