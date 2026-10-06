@@ -49,7 +49,8 @@ enum PerformanceMode: String, CaseIterable, Identifiable, Sendable {
     }
 
     /// Screens above and below the visible rect whose pages are laid out
-    /// and drawn (each holds a page bitmap): scrolling into them shows a
+    /// and drawn (each holds a page bitmap, about 10 MB for a letter page at
+    /// fit width on a Retina display): scrolling into them shows a
     /// drawn page at once.
     var overscanScreens: CGFloat {
         switch self {
@@ -126,6 +127,7 @@ final class PerformanceAdvisor {
     /// "Not Now" was chosen: no further suggestion until the app restarts.
     private var declined = false
     @ObservationIgnored private var source: DispatchSourceMemoryPressure?
+    @ObservationIgnored private var modeObserver: NSObjectProtocol?
 
     /// Start watching (once; at the first engine-v3 preview).
     func start() {
@@ -137,7 +139,7 @@ final class PerformanceAdvisor {
         }
         s.resume()
         source = s
-        NotificationCenter.default.addObserver(forName: PerformanceMode.changed, object: nil, queue: .main) { [weak self] _ in
+        modeObserver = NotificationCenter.default.addObserver(forName: PerformanceMode.changed, object: nil, queue: .main) { [weak self] _ in
             MainActor.assumeIsolated { self?.modeChanged() }
         }
     }
