@@ -137,6 +137,10 @@ final class ShellModel {
     @ObservationIgnored let engineV3 = EngineV3Session()
     /// Which engine typesets the open document, why, and any fallback (EngineChoice.swift).
     var engineChoice = EngineChoice.atLaunch
+    /// Where the `engine:` line goes each time a window's engine is set
+    /// (FLASHTEX_LOG; tests replace it): the label the attribution tools
+    /// read (old-engine retirement plan #1236, stage S3r).
+    @ObservationIgnored var engineLog: (String) -> Void = { FlashTeXLog.write($0) }
     /// The fallback banner was dismissed (until the next open or change).
     var engineFallbackDismissed = false
     /// `engineV3Enabled` set directly: the engine every document of this window uses.

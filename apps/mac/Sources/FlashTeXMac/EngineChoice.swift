@@ -114,6 +114,17 @@ struct EngineChoice: Equatable, Sendable {
     /// The status item's text.
     var title: String { effective.title }
 
+    /// The `engine:` log line: the engine that typesets, why (the
+    /// resolution step), and the fallback when one applies, e.g.
+    /// `engine: previous (user; fallback from new: no TeX Live is installed) main.tex`.
+    func logLine(document: String?) -> String {
+        var s = "engine: \(effective.rawValue) (\(source.rawValue)"
+        if let blocker { s += "; fallback from \(preferred.rawValue): \(blocker.short)" }
+        s += ")"
+        if let document, !document.isEmpty { s += " " + document }
+        return s
+    }
+
     /// What the status item's tooltip and the menu say about the choice.
     var explanation: String {
         if let blocker { return "Previous engine: \(blocker.detail)" }
@@ -639,6 +650,7 @@ extension ShellModel {
         applyingEngineChoice = true
         engineV3Enabled = c.effective == .new
         applyingEngineChoice = false
+        engineLog(c.logLine(document: documentURL?.lastPathComponent))
         if announce, let b = c.blocker {
             let message = EngineFallbackBanner.headline(b)
             FlashTeXLog.write("engine choice: \(message) \(b.detail)")
@@ -655,7 +667,13 @@ extension ShellModel {
         let engine: EngineChoice.Engine = engineV3Enabled ? .new : .previous
         engineWindowOverride = engine
         engineChoice = EngineChoice(preferred: engine, source: .window)
+        engineLog(engineChoice.logLine(document: documentURL?.lastPathComponent))
     }
+
+    /// The engine that typesets this window's document now (what compiles
+    /// it, whatever the choice's source): the captures' feature list and the
+    /// typing bench's `engine` follow it.
+    var typesettingEngine: EngineChoice.Engine { engineV3Enabled ? .new : .previous }
 }
 
 extension ProjectManifest {
