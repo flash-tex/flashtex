@@ -554,6 +554,19 @@ jobs:
       - name: "retirement: retired code is not named outside the allowlist (#1236 §4.6)"
         if: ${{ !cancelled() && runner.os == 'Linux' }}
         run: python3 tools/parity/retirement_refs.py
+      # The parity harness, the P5 board (its owner's bar, crash row and gate), package-smoke
+      # and the P5 board's T4 pick, by their own unit tests (as `gate.sh pr`'s
+      # gate_parity_selftest does, less tools/lockstep), so a pull request cannot break them unseen (cases
+      # that need pdfTeX or qpdf skip on this runner).
+      - name: "parity, P5 board and package-smoke self-tests"
+        if: ${{ !cancelled() && runner.os == 'Linux' }}
+        run: |
+          set -euo pipefail
+          # qpdf: package-smoke's runner and P-T2 compare PDFs through it (its tests skip without it)
+          command -v qpdf >/dev/null || { sudo apt-get update -qq && sudo apt-get install -y -qq qpdf >/dev/null; }
+          python3 -m unittest discover -s tools/parity -p 'test_*.py'
+          python3 -m unittest discover -s tools/package-smoke -p 'test_*.py'
+          scripts/tests/p5-pick-t4.test.sh
       - name: "inventory: completion vocabulary is the compiler's inventory"
         if: ${{ !cancelled() && runner.os == 'Linux' }}
         run: apps/mac/scripts/sync-supported-latex.sh --check
