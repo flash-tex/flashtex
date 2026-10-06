@@ -7,5 +7,5 @@
 #
 # THE LIST MAY ONLY SHRINK: delete a line in the PR that closes its issue.
 
-# (empty: flashtex-rendering-core, the last entry, was deleted with its crate in
-# old-engine retirement stage S2, #1236)
+# (empty since old-engine retirement stage S2, #1236, deleted the last listed
+# crate with its issue's goldens)

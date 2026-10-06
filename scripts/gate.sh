@@ -623,6 +623,8 @@ case "$TIER" in
       skip "licence boundary (DESIGN §3)" "scripts/check-license-boundary.sh is not in this checkout"
     fi
     step "parity scoreboard and lockstep self-tests" -- gate_parity_selftest
+    step "retired code is not named outside the allowlist (retirement plan §4.6)" -- \
+      python3 tools/parity/retirement_refs.py
     if [[ "$(uname -s)" == Darwin ]]; then
       step "parity fixtures hold their baseline" -- gate_parity_fixtures
     else
