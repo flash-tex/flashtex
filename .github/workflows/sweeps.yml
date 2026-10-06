@@ -198,8 +198,6 @@ jobs:
       fail-fast: false
       matrix:
         include: ${{ fromJSON(needs.plan.outputs.shards) }}
-    env:
-      INCR_BENCH_DIR: ${{ github.workspace }}/../ib
     steps:
       - uses: actions/checkout@v4
         with:
@@ -230,6 +228,10 @@ jobs:
           TARGET: ${{ needs.plan.outputs.target }}
         run: |
           set -euo pipefail
+          # A canonical path (no `..`, no symlink), as /tmp/incr-bench on the PC: with
+          # $GITHUB_WORKSPACE/../ib the span gate failed (2026-10-06, see sweeps.py's README).
+          INCR_BENCH_DIR="$(realpath -m "$RUNNER_TEMP/ib")"
+          export INCR_BENCH_DIR
           mkdir -p "$INCR_BENCH_DIR"
           tar -C "$INCR_BENCH_DIR" -xf "$RUNNER_TEMP/engine.tar"
           echo "engine $(cat "$INCR_BENCH_DIR/gates/HEAD"); $(nproc) cpus; $(free -g | awk '/Mem:/ {print $2}') GB"
