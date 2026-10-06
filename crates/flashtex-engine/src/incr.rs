@@ -86,7 +86,7 @@ impl Edit {
 /// slices (memcmp) first, then the bytes of the block that differs. A
 /// byte-at-a-time loop took 1.5-2 ms of every keystroke's compile on a
 /// 1,000-page source (2.5-4 MB).
-fn common_prefix(a: &[u8], b: &[u8]) -> usize {
+pub(crate) fn common_prefix(a: &[u8], b: &[u8]) -> usize {
     const BLOCK: usize = 256;
     let n = a.len().min(b.len());
     let mut i = 0;
@@ -101,7 +101,7 @@ fn common_prefix(a: &[u8], b: &[u8]) -> usize {
 }
 
 /// The length of the common suffix of `a` and `b`, at most `max`.
-fn common_suffix(a: &[u8], b: &[u8], max: usize) -> usize {
+pub(crate) fn common_suffix(a: &[u8], b: &[u8], max: usize) -> usize {
     const BLOCK: usize = 256;
     let n = a.len().min(b.len()).min(max);
     let (la, lb) = (a.len(), b.len());
@@ -2099,6 +2099,11 @@ pub struct Session {
     /// The last incremental pass's restart point: the next edit, typed
     /// near the last, most likely restarts there (`prepare_next`).
     last_restart: Option<CheckpointId>,
+    /// The edits of the last compile's first pass: where the user is typing.
+    /// A later pass of that compile (an `.aux` pass from the `.aux` point)
+    /// restarts far from them, and its restart point is not the next
+    /// keystroke's (`prepare_next`).
+    next_edits: Vec<Edit>,
     /// External tools are due: no further pass before them (`set_defer`).
     defer: Option<Defer>,
     /// The pass being run (1 for the compile's first).
@@ -2209,6 +2214,7 @@ impl Session {
             cancel: None,
             progress: None,
             last_restart: None,
+            next_edits: vec![],
             defer: None,
             pass: 1,
             fixed_inputs: vec![],
@@ -2456,10 +2462,25 @@ impl Session {
         if self.paused.is_some() {
             return false;
         }
-        let (Some(r), Some(g)) = (self.last_restart, self.g.as_mut()) else {
+        let Some(last) = self.last_restart else {
             return false;
         };
         let t = Instant::now();
+        // The next keystroke, typed where the last compile's first pass's
+        // edits were, restarts where those edits would now: not where a
+        // later pass of that compile restarted (an `.aux` pass from the
+        // `.aux` point, which left a page count change re-typesetting the
+        // whole document: plain-1000 split, lane P4-SPLIT-LATENCY).
+        let r = if self.next_edits.is_empty() {
+            last
+        } else {
+            let edits = self.next_edits.clone();
+            let changed: Vec<String> = edits.iter().map(|e| e.path.clone()).collect();
+            self.restart_point(&edits, &changed, None).unwrap_or(last)
+        };
+        let Some(g) = self.g.as_mut() else {
+            return false;
+        };
         let ok = g.arena.prepare_restore(r, stop);
         if self.opts.debug {
             eprintln!(
@@ -3780,6 +3801,7 @@ impl Session {
         self.s0 = None;
         self.key_cover = (0, vec![]);
         self.last_restart = None;
+        self.next_edits.clear();
         self.g = None;
         self.pages.clear();
         self.ck_pages.clear();
@@ -3852,6 +3874,9 @@ impl Session {
             .ok_or("restart point without a page count")?;
         self.cursor = base;
         self.last_restart = Some(r);
+        if self.pass == 1 {
+            self.next_edits = edits.clone();
+        }
         let journal = self.journal.as_ref().ok_or("no journal")?;
         // (a close reads nothing: the convergence test checks the streams
         // still open by their positions)

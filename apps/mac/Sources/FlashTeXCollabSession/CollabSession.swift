@@ -35,6 +35,13 @@ public final class CollabSession {
         public var name: String
         public var colourIndex: Int
         public var isLocal: Bool
+
+        public init(id: UInt64, name: String, colourIndex: Int, isLocal: Bool) {
+            self.id = id
+            self.name = name
+            self.colourIndex = colourIndex
+            self.isLocal = isLocal
+        }
     }
 
     /// Another participant's caret or selection in one file, resolved now.
@@ -78,6 +85,8 @@ public final class CollabSession {
     /// Remote text arrived for a file no editor is showing (or a file
     /// appeared): the owner updates its own copy (`text(of:)`).
     public var onRemoteText: (FileID) -> Void = { _ in }
+    /// Remote text changed this file (whether or not an editor shows it).
+    public var onRemoteChange: (FileID) -> Void = { _ in }
     /// The file map changed (files created, renamed or deleted).
     public var onFilesChanged: () -> Void = {}
     /// Someone's caret, selection, name or presence changed.
@@ -262,6 +271,7 @@ public final class CollabSession {
         for (f, w) in watches {
             w.binding.document.changeObserver = nil
             guard !w.changes.isEmpty else { continue }
+            onRemoteChange(f)
             let doc = w.binding.document
             var selection: Range<Int>?
             if let a = doc.resolve(w.anchor), let h = doc.resolve(w.head) {
@@ -271,7 +281,10 @@ public final class CollabSession {
             w.host.collabApply(w.changes, selection: selection)
             textFiles.remove(f)
         }
-        for f in textFiles.sorted() where watches[f] == nil { onRemoteText(f) }
+        for f in textFiles.sorted() where watches[f] == nil {
+            onRemoteChange(f)
+            onRemoteText(f)
+        }
         if fileMapChanged { onFilesChanged() }
         if !errors.isEmpty { onRejected(errors) }
         return errors

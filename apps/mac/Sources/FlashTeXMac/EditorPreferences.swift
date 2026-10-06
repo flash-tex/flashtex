@@ -883,6 +883,10 @@ struct SettingsRootView: View {
                 .formStyle(.grouped)
                 .frame(width: DS.Layout.settingsWidth)
                 .tabItem { Label("Images", systemImage: "photo") }
+            Form { LiveShareSettingsSection() } // Live Share (preview), off by default (LiveShareViews.swift)
+                .formStyle(.grouped)
+                .frame(width: DS.Layout.settingsWidth)
+                .tabItem { Label("Live Share", systemImage: "person.2") }
         }
     }
 }

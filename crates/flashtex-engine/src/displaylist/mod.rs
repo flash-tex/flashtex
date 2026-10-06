@@ -172,6 +172,8 @@ struct State {
     images: HashMap<[u8; 32], Json>,
     programs: HashMap<String, Program>,
     encodings: HashMap<String, Option<Arc<Vec<Vec<u8>>>>>,
+    /// Type 1 programs' built-in encodings, by the program's SHA-256.
+    builtin_encodings: HashMap<[u8; 32], Arc<Vec<Vec<u8>>>>,
     // Engine state as the writer saw it: dropped at every restore.
     font_keys: HashMap<u32, [u8; 32]>,
     image_keys: HashMap<u32, [u8; 32]>,
@@ -196,6 +198,7 @@ impl State {
             images: HashMap::new(),
             programs: HashMap::new(),
             encodings: HashMap::new(),
+            builtin_encodings: HashMap::new(),
             font_keys: HashMap::new(),
             image_keys: HashMap::new(),
             widths: HashMap::new(),
@@ -611,26 +614,45 @@ pub fn move_lines(path: &str, from: u32, old_end: u32, new_end: u32) {
         let Some(f) = st.file_paths.iter().position(|p| p == path) else {
             return;
         };
-        let f = f as u32 + 1;
+        st.move_spans_of(f as u32 + 1, from, old_end, new_end);
+    });
+    forget_file_cache();
+}
+
+impl State {
+    /// `move_lines` for file `f`. Every span of the file on a line from
+    /// `from` on is retired (before `old_end`) or moved (from `old_end` on,
+    /// to a line from `new_end` on), and no other span's line is that high,
+    /// so only those spans' keys change: they are taken out of `span_ids`
+    /// and the moved ones put back, in span order (the lowest span of a
+    /// line keeps it, as when the whole table was rebuilt). A long document
+    /// rebuilt the table at every keystroke (lane P4-SPLIT-LATENCY), and
+    /// at every change of a file no span names a moved line of.
+    fn move_spans_of(&mut self, f: u32, from: u32, old_end: u32, new_end: u32) {
         let delta = new_end as i64 - old_end as i64;
-        for (i, (file, line)) in st.spans.iter_mut().enumerate() {
+        let mut moved = vec![];
+        for (i, (file, line)) in self.spans.iter_mut().enumerate() {
             if *file != f || *line < from {
                 continue;
             }
+            let id = i as u32 + 1;
+            if self.span_ids.get(&(*file, *line)) == Some(&id) {
+                self.span_ids.remove(&(*file, *line));
+            }
             if *line < old_end {
-                st.retired.insert(i as u32 + 1);
+                self.retired.insert(id);
             } else {
                 *line = (*line as i64 + delta).max(1) as u32;
+                moved.push(id);
             }
         }
-        st.span_ids.clear();
-        for (i, &at) in st.spans.iter().enumerate() {
-            if !st.retired.contains(&(i as u32 + 1)) {
-                st.span_ids.entry(at).or_insert(i as u32 + 1);
+        for id in moved {
+            if !self.retired.contains(&id) {
+                let at = self.spans[id as usize - 1];
+                self.span_ids.entry(at).or_insert(id);
             }
         }
-    });
-    forget_file_cache();
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1513,7 +1535,7 @@ impl Globals {
             }
         }
         if names.is_none() && format == "type1" {
-            names = Some(Arc::new(builtin_encoding(&program)));
+            names = Some(builtin_encoding_of(&program, &program_sha));
         }
         let mut h = Sha256::new();
         h.update(b"display-list-v3 font\0");
@@ -1930,6 +1952,20 @@ fn parse_enc(data: &[u8]) -> Option<Vec<Vec<u8>>> {
 
 /// A Type 1 font's built-in `/Encoding` (from the clear-text part of a
 /// PFB or PFA): `StandardEncoding` or `dup <code> /<name> put` entries.
+/// [`builtin_encoding`] of a program whose SHA-256 is `sha`, worked out once
+/// per program: every restore forgets the fonts' keys (`restored`), and the
+/// next page worked them out again, decrypting each Type 1 program's
+/// cleartext for its encoding (0.2 ms of every keystroke on a 1,000-page
+/// hyperref document; lane P4-PAGE-COST).
+fn builtin_encoding_of(program: &[u8], sha: &[u8; 32]) -> Arc<Vec<Vec<u8>>> {
+    if let Some(hit) = with(|st| st.builtin_encodings.get(sha).cloned()).flatten() {
+        return hit;
+    }
+    let names = Arc::new(builtin_encoding(program));
+    with(|st| st.builtin_encodings.insert(*sha, names.clone()));
+    names
+}
+
 fn builtin_encoding(program: &[u8]) -> Vec<Vec<u8>> {
     let clear = cleartext(program);
     let mut out = vec![b".notdef".to_vec(); 256];
@@ -2182,6 +2218,61 @@ mod tests {
         )));
     }
 
+    /// `State::move_spans_of` leaves the table as rebuilding it whole did:
+    /// random spans, retired ones and moves, against that rebuild.
+    #[test]
+    fn moving_spans_keeps_the_table_a_rebuild_makes() {
+        let mut seed = 0x9e37_79b9_7f4a_7c15u64;
+        let mut rnd = |n: u32| {
+            seed ^= seed << 13;
+            seed ^= seed >> 7;
+            seed ^= seed << 17;
+            (seed % n as u64) as u32
+        };
+        for _ in 0..300 {
+            let mut st = State::new();
+            for _ in 0..60 {
+                let (f, l) = (1 + rnd(2), 1 + rnd(30));
+                st.span_id(f, l);
+            }
+            for _ in 0..4 {
+                let from = 1 + rnd(30);
+                let old_end = from + rnd(4);
+                let new_end = (from + rnd(6)).max(1);
+                let f = 1 + rnd(2);
+                // the rebuild, on a copy
+                let mut spans = st.spans.clone();
+                let mut retired = st.retired.clone();
+                let delta = new_end as i64 - old_end as i64;
+                for (i, (file, line)) in spans.iter_mut().enumerate() {
+                    if *file != f || *line < from {
+                        continue;
+                    }
+                    if *line < old_end {
+                        retired.insert(i as u32 + 1);
+                    } else {
+                        *line = (*line as i64 + delta).max(1) as u32;
+                    }
+                }
+                let mut want: HashMap<(u32, u32), u32> = HashMap::new();
+                for (i, &at) in spans.iter().enumerate() {
+                    if !retired.contains(&(i as u32 + 1)) {
+                        want.entry(at).or_insert(i as u32 + 1);
+                    }
+                }
+                st.move_spans_of(f, from, old_end, new_end);
+                assert_eq!(st.spans, spans);
+                assert_eq!(st.retired, retired);
+                assert_eq!(st.span_ids, want);
+                // new spans after the move, as a compile makes them
+                for _ in 0..10 {
+                    let (f, l) = (1 + rnd(2), 1 + rnd(30));
+                    st.span_id(f, l);
+                }
+            }
+        }
+    }
+
     /// `move_lines`: spans after an edit move with their lines, spans of
     /// replaced lines are kept but not reused, and a reader is told where
     /// the spans it holds went. (The writer's state only: the hooks, which
@@ -2312,6 +2403,24 @@ mod tests {
             font_matrix(fm, 0, 850).as_deref(),
             Some("0.00085 0 0 0.001 0 0")
         );
+    }
+
+    /// A program's built-in encoding is worked out once and kept across
+    /// restores (`restored` forgets the fonts' keys, not this).
+    #[test]
+    fn builtin_encodings_are_kept_by_program() {
+        DL.with(|d| *d.borrow_mut() = Some(Box::new(State::new())));
+        let pfa = b"/Encoding 256 array\ndup 65 /A put\nreadonly def\n";
+        let other = b"/Encoding StandardEncoding def\n";
+        let (sa, so) = (sha256(pfa), sha256(other));
+        let a = builtin_encoding_of(pfa, &sa);
+        assert_eq!(*a, builtin_encoding(pfa));
+        forget_engine_state();
+        assert!(Arc::ptr_eq(&a, &builtin_encoding_of(pfa, &sa)));
+        let o = builtin_encoding_of(other, &so);
+        assert_eq!(*o, builtin_encoding(other));
+        assert!(!Arc::ptr_eq(&a, &o));
+        DL.with(|d| *d.borrow_mut() = None);
     }
 
     /// A real font whose encoding writes `dup 1/uni6301 put`; skipped when

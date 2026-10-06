@@ -17,8 +17,9 @@ which superseded the unmerged 2026-10-01 review (PR #1334); [`reviews/2026-09-30
 **Phase status (verified gates):** P0 ✔ (2026-09-29) · P1 ✔ trip byte-identical (2026-09-29) ·
 P2 ✔ verified independently on main `d4f2a1581` (2026-09-29): trip, etrip 18/18,
 pdfTeX regression 7/7, lockstep 260/260, parity fixtures P-T1 83/83 and P-T2 83/83,
-T2 LaTeX suites 1,520/1,529 with 0 unexpected failures · **P3 met on lane evidence, not yet
-gated** (§12) · P4 and P5 in progress (§12).
+T2 LaTeX suites 1,520/1,529 with 0 unexpected failures · **P3 ✔ verified and gated on main
+`2e7203e03` (2026-10-05): preview 669/669 at 0 px, P-T2 86/86, positions 86/86 exact; CI
+`preview-parity.yml` run 37381958089** (§12) · P4 and P5 in progress (§12).
 Re-measured 2026-10-05 on the NixOS PC (TeX Live 2026) on main `9f29302fe`
 (reviews/2026-10-05.md §2):
 - lockstep **1,466/1,466**;
@@ -1037,7 +1038,11 @@ Rules:
 **Gate status (review 2026-10-05; the inventory, with a lane per remaining item, is
 reviews/2026-10-05.md §4).** By §13 R13, a gate is **met** only when it holds on main, measured
 by CI or by a named reference run. Lane runs are REPORTED evidence.
-- **P3: met on lane evidence, not yet gated.**
+- **P3: ✔ MET (2026-10-05).** Verified on main `2e7203e03` by the post-merge CI job
+  `preview-parity.yml` (run 37381958089, #1596): zero-tolerance preview 669/669 page
+  renders identical at 1×, 2× and 4× (223/223 each), glyph positions exact to 0 sp on 86/86,
+  P-T2 86/86; PDF fallback 30/699 renders (4.3 %, the same 10 beamer shading pages as 10-02,
+  identical by construction). A failure on main opens `main-red`. History below:
   - P-T2 on fixtures: **86/86**. P-T1 86/86 (VERIFIED, NixOS PC, TeX Live 2026, main
     `9f29302fe`). The board's CI run of 10-04 agrees.
   - Zero-tolerance preview parity: J1 landed as #1390.
@@ -1202,6 +1207,7 @@ by CI or by a named reference run. Lane runs are REPORTED evidence.
 | 2026-10-05 | Confirmed: **MACRO-REPLAY** (`MACRO-REPLAY.md`) as the P6 direction; parked until P3–P5 are staffed, and implemented only after an ablation and a real-document measurement show a win | Owner (Kabir) |
 | 2026-10-05 | display-list-v3 exact geometry (`ORIGINS`, `RULE_GEOMETRY`) is gated by the `exact-geometry` capability, like `progress-v1`, and takes no minor number (§6.1) | Commander (kabir-claude), protocol owner |
 | 2026-10-05 | **Merge fast, test later (§9).** The merge queue batches up to 8 PRs and runs only the gate: build (`cargo check`), the changed crates' fmt/clippy/tests, trip/etrip/pdfTeX regression, licence/inventory/tables, and engine parity (lockstep, P-T1/P-T2, engine tests) sharded on hosted runners, only when engine paths change. Everything else (Mac app, iPad, full workspace, macOS legs, old-engine checks) runs after merge; a failure opens or updates `main-red` naming the PRs, and the PR's owner fixes forward within 2 h or the Commander reverts. App PRs still run their Swift tests at PR level. Measured: gate 4.7 min wall (was 45–130 min); first batch landed 6 PRs in under 20 min (#1586–#1589) | Owner (Kabir): "30–60 mins per merge is absolutely unacceptable"; Commander (kabir-claude) |
+| 2026-10-05 | **P3 exit gate met** (§12): P-T2 on fixtures 86/86 and preview parity at zero tolerance 669/669, verified on main `2e7203e03` and gated after every merge by `preview-parity.yml` (#1596). The 4.3 % PDF-fallback renders are identical by construction and remain a speed item | Commander (kabir-claude), from evidence |
 
 ---
 
