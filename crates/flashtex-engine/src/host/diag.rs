@@ -771,7 +771,11 @@ fn curated(origin: &str, msg: &str) -> Option<&'static str> {
         ("tex", "Missing $ inserted", "missing-dollar"),
         ("tex", "Missing { inserted", "missing-left-brace"),
         ("tex", "Missing } inserted", "missing-right-brace"),
-        ("tex", "Missing \\right. inserted", "missing-right-delimiter"),
+        (
+            "tex",
+            "Missing \\right. inserted",
+            "missing-right-delimiter",
+        ),
         ("tex", "Extra \\right", "extra-right-delimiter"),
         (
             "tex",
@@ -851,8 +855,16 @@ fn curated(origin: &str, msg: &str) -> Option<&'static str> {
             "option-clash",
         ),
         ("latex", "LaTeX Error: Unknown option", "unknown-option"),
-        ("latex", "LaTeX Error: Unicode character", "unicode-not-set-up"),
-        ("latex", "LaTeX Error: \\caption outside float", "caption-outside-float"),
+        (
+            "latex",
+            "LaTeX Error: Unicode character",
+            "unicode-not-set-up",
+        ),
+        (
+            "latex",
+            "LaTeX Error: \\caption outside float",
+            "caption-outside-float",
+        ),
         ("latex", "LaTeX Error: Command ", "command-already-defined"),
     ];
     table
@@ -1118,12 +1130,21 @@ mod tests {
 
     #[test]
     fn a_missing_include_is_a_warning_and_aux_files_are_not() {
-        assert_eq!(no_file("\nNo file chap9.tex.\n").as_deref(), Some("chap9.tex"));
+        assert_eq!(
+            no_file("\nNo file chap9.tex.\n").as_deref(),
+            Some("chap9.tex")
+        );
         assert_eq!(no_file("No file main.aux."), None);
         assert_eq!(no_file("No file main.toc."), None);
-        let d = scan_terminal(b"(./main.aux)\nNo file main.aux.\nNo file chap9.tex.\n", Path::new("/tmp"));
+        let d = scan_terminal(
+            b"(./main.aux)\nNo file main.aux.\nNo file chap9.tex.\n",
+            Path::new("/tmp"),
+        );
         assert_eq!(d.len(), 1);
-        assert_eq!((d[0].1.code.as_str(), d[0].1.message.as_str()), ("latex/no-file", "No file chap9.tex."));
+        assert_eq!(
+            (d[0].1.code.as_str(), d[0].1.message.as_str()),
+            ("latex/no-file", "No file chap9.tex.")
+        );
         let term = b"Missing character: There is no \xc8 in font cmr10!\n";
         let d = scan_terminal(term, Path::new("/tmp"));
         assert_eq!(d.len(), 1);
