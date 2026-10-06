@@ -130,6 +130,11 @@ breaks, positions and glyph shapes, which P-T1 and P-T2 cover completely.
 not gated. Its floor is the window server, which presents a commit no sooner than two 120 Hz
 frames later (15.9–16.0 ms minimum, 16–24 ms typical; app-v3-5 evidence, #1332). Every report
 names the quantity it measured.
+**Typing speed (owner, 2026-10-06).** The gate holds for **continuous typing with keys as
+close as 50 ms apart** (about 240 wpm; the owner's floor is 200 wpm, ~60 ms), not only isolated
+keys: every key at 50, 60, 80, 100 and 150 ms intervals meets the targets above for its *own* edited page, and every key is painted by its
+own compile (a key folded into a later compile is a miss). T7 gates these as its `typing@Nms`
+rows (#1605; 50/60/80 ms rows added by lane P4-TYPING-200WPM).
 
 **Status (review 2026-10-05; REPORTED unless marked; no reference run exists).** The one
 harness is `tools/incr-bench/t7.py` (#1391). Its only run is on main `ab9893935`. It was on an
@@ -1216,6 +1221,7 @@ by CI or by a named reference run. Lane runs are REPORTED evidence.
 | 2026-10-05 | **Merge fast, test later (§9).** The merge queue batches up to 8 PRs and runs only the gate: build (`cargo check`), the changed crates' fmt/clippy/tests, trip/etrip/pdfTeX regression, licence/inventory/tables, and engine parity (lockstep, P-T1/P-T2, engine tests) sharded on hosted runners, only when engine paths change. Everything else (Mac app, iPad, full workspace, macOS legs, old-engine checks) runs after merge; a failure opens or updates `main-red` naming the PRs, and the PR's owner fixes forward within 2 h or the Commander reverts. App PRs still run their Swift tests at PR level. Measured: gate 4.7 min wall (was 45–130 min); first batch landed 6 PRs in under 20 min (#1586–#1589) | Owner (Kabir): "30–60 mins per merge is absolutely unacceptable"; Commander (kabir-claude) |
 | 2026-10-05 | **P3 exit gate met** (§12): P-T2 on fixtures 86/86 and preview parity at zero tolerance 669/669, verified on main `2e7203e03` and gated after every merge by `preview-parity.yml` (#1596). The 4.3 % PDF-fallback renders are identical by construction and remain a speed item | Commander (kabir-claude), from evidence |
 | 2026-10-06 | Segment hold (§5.2, #1614): segment checkpoints between the restart point and the edited page are deferred until the page ships; preemption points stay, and a held checkpoint is materialised where newer work stops the run. An implementation of §5.2's cadence, not a change to its guarantees | Commander (kabir-claude), on independent review |
+| 2026-10-06 | The latency gate covers continuous typing with keys **50 ms apart** (≈ 240 wpm; ≥ the owner's 200 wpm floor): each key at 50/60/80/100/150 ms intervals meets ≤ 16 ms p95 (host ≤ 11 ms) for its own edited page and is painted by its own compile (§1.2) | Owner (Kabir): "anything below 200wpm needs to hit our target"; "the 50ms target is good" |
 
 ---
 
