@@ -322,6 +322,8 @@ struct Fast {
 }
 
 thread_local! {
+    /// Debugging misses: the key by location of the last recording, per macro.
+    static LAST_KEY: RefCell<HashMap<i32, Vec<(i32, Vec<i32>)>>> = RefCell::new(HashMap::new());
     static FAST: RefCell<Fast> = RefCell::new(Fast::default());
     static CONFIG: RefCell<Option<Config>> = const { RefCell::new(None) };
     static ST: RefCell<State> = RefCell::new(State::default());
@@ -695,6 +697,80 @@ impl Globals {
             }
         }
         v
+    }
+
+    /// Debugging misses: K2 and K4 by location (`eqtb` location, or
+    /// `-(type*65536+number)` for a sparse register), each value as K2/K4
+    /// keep it.
+    fn bm_key_by_loc(&self) -> Vec<(i32, Vec<i32>)> {
+        let mut out = vec![];
+        for p in GLUE_BASE..=EQTB_SIZE {
+            if (BOX_BASE..BOX_BASE + 256).contains(&p) {
+                continue;
+            }
+            let w = self.bm_eq(p);
+            let mut v = vec![];
+            if p < LOCAL_BASE {
+                let e = w.hh().rh();
+                if e <= LO_MEM_STAT_MAX {
+                    v.push(e);
+                } else {
+                    v.extend_from_slice(&self.bm_glue_fields(e));
+                }
+            } else if (OUTPUT_ROUTINE_LOC..TOKS_BASE + 256).contains(&p) {
+                self.bm_push_list(w.hh().rh(), &mut v);
+            } else if p < INT_BASE {
+                v.push(w.hh().rh());
+            } else {
+                v.push(w.int());
+            }
+            out.push((p, v));
+        }
+        for t in [INT_VAL, DIMEN_VAL, GLUE_VAL, MU_VAL, TOK_VAL] {
+            let mut items: Vec<(i32, i32)> = vec![];
+            self.bm_sa_walk(t, &mut |n, e| items.push((n, e)));
+            for (n, e) in items {
+                let v = match t {
+                    INT_VAL | DIMEN_VAL => vec![self.mem[(e + 2) as usize].int()],
+                    GLUE_VAL | MU_VAL => {
+                        let q = self.bm_link(e + 1);
+                        if q <= LO_MEM_STAT_MAX {
+                            vec![q]
+                        } else {
+                            self.bm_glue_fields(q).to_vec()
+                        }
+                    }
+                    _ => {
+                        let mut v = vec![];
+                        self.bm_push_list(self.bm_link(e + 1), &mut v);
+                        v
+                    }
+                };
+                out.push((-(t * 65536 + n), v));
+            }
+        }
+        out
+    }
+
+    fn bm_loc_name(&self, p: i32) -> String {
+        if p < 0 {
+            let (t, n) = ((-p) / 65536, (-p) % 65536);
+            let kind = ["count", "dimen", "skip", "muskip", "box", "toks"][t as usize];
+            return format!("\\{kind}{n}");
+        }
+        let regs = [
+            (k::count_base, "count"),
+            (k::scaled_base, "dimen"),
+            (k::skip_base, "skip"),
+            (k::mu_skip_base, "muskip"),
+            (TOKS_BASE, "toks"),
+        ];
+        for (b, n) in regs {
+            if (b..b + 256).contains(&p) {
+                return format!("\\{n}{}", p - b);
+            }
+        }
+        format!("eqtb[{p}]")
     }
 
     /// The sparse array elements of type `t`, in order: (number, element).
@@ -1113,6 +1189,23 @@ impl Globals {
             }
         }
         self.bm_miss(why);
+        if debug() && why == "NotRecorded" {
+            let now = self.bm_key_by_loc();
+            let diff: Vec<String> = LAST_KEY.with(|l| {
+                l.borrow().get(&cs).map_or(vec![], |old| {
+                    let om: HashMap<i32, &Vec<i32>> = old.iter().map(|(p, v)| (*p, v)).collect();
+                    now.iter()
+                        .filter(|(p, v)| om.get(p).is_none_or(|o| *o != v))
+                        .map(|(p, v)| format!("{}={:?}", self.bm_loc_name(*p), &v[..v.len().min(3)]))
+                        .take(12)
+                        .collect()
+                })
+            });
+            if !diff.is_empty() {
+                eprintln!("boxmemo: \\{} miss, key differs at {diff:?}", self.cs_name_string(cs));
+            }
+            LAST_KEY.with(|l| l.borrow_mut().insert(cs, now));
+        }
         if WINDOW.with(|w| w.get()) == Some(false) {
             return;
         }
