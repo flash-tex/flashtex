@@ -110,6 +110,10 @@ pub struct Stats {
     pub committed: u64,
     pub verified: u64,
     pub verify_differences: u64,
+    /// Calls compared on the whole engine state (BOX-MEMO.md §7), and how
+    /// many differed.
+    pub full_verified: u64,
+    pub full_differences: u64,
     pub abandoned: BTreeMap<String, u64>,
     pub misses: BTreeMap<String, u64>,
     pub verify_details: Vec<String>,
@@ -373,6 +377,12 @@ pub fn stats() -> String {
     })
 }
 
+/// `FLASHTEX_BOXMEMO_VERIFY_FAIL` is set and a verification found a
+/// difference: the run's exit status becomes 3.
+pub fn fail_on_difference() -> bool {
+    mode() == Mode::Verify && with_config(|c| c.verify_fail) && differences() > 0
+}
+
 /// Did any verification find a difference?
 pub fn differences() -> u64 {
     ST.with(|s| s.borrow().stats.verify_differences)
@@ -421,6 +431,76 @@ pub fn record_window(open: bool) {
 
 /// The engine restored a checkpoint (`Globals::fill_scalars`): a recording
 /// in progress, in this timeline or in the one left, cannot continue.
+/// A full verification in progress (command line only, BOX-MEMO.md §7):
+/// the checkpoint taken where the call was admitted, and the warning index
+/// `macro_call` restores at its exit.
+struct FullVerify {
+    ck: crate::arena::CheckpointId,
+    warn: i32,
+}
+
+thread_local! {
+    static FULL: RefCell<Option<FullVerify>> = const { RefCell::new(None) };
+}
+
+/// The scalars a command reads only after writing them (D9's verifier's
+/// `EXCLUDED_SCALARS`, which every convergence point also has equal): the
+/// replay leaves them as the normal path did.
+#[derive(Clone, Copy)]
+struct Scratch {
+    cur_cmd: i32,
+    cur_chr: i32,
+    cur_cs: i32,
+    cur_tok: i32,
+    cur_val: i32,
+    cur_val_level: i32,
+    radix: i32,
+    cur_order: i32,
+    def_ref: i32,
+    long_state: i32,
+}
+
+impl Scratch {
+    fn take(g: &Globals) -> Scratch {
+        Scratch {
+            cur_cmd: g.cur_cmd,
+            cur_chr: g.cur_chr,
+            cur_cs: g.cur_cs,
+            cur_tok: g.cur_tok,
+            cur_val: g.cur_val,
+            cur_val_level: g.cur_val_level,
+            radix: g.radix,
+            cur_order: g.cur_order,
+            def_ref: g.def_ref,
+            long_state: g.long_state,
+        }
+    }
+    fn put(self, g: &mut Globals) {
+        g.cur_cmd = self.cur_cmd;
+        g.cur_chr = self.cur_chr;
+        g.cur_cs = self.cur_cs;
+        g.cur_tok = self.cur_tok;
+        g.cur_val = self.cur_val;
+        g.cur_val_level = self.cur_val_level;
+        g.radix = self.radix;
+        g.cur_order = self.cur_order;
+        g.def_ref = self.def_ref;
+        g.long_state = self.long_state;
+    }
+}
+
+/// Leave the used-up token lists at the top of the input stack, as the
+/// next `get_next` would.
+fn pop_used_up(g: &mut Globals) {
+    while g.cur_input.state_field == TOKEN_LIST
+        && g.cur_input.loc_field == 0
+        && g.cur_input.index_field != V_TEMPLATE
+        && g.input_ptr > 0
+    {
+        g.end_token_list();
+    }
+}
+
 pub fn after_restore(g: &mut Globals) {
     if g.bm_rec_on {
         g.bm_rec_on = false;
@@ -857,7 +937,7 @@ impl Globals {
     /// and its `n` arguments; the body runs with scanner status `scanner`.
     #[cold]
     #[inline(never)]
-    pub fn flashtex_bm_call(&mut self, n: i32, scanner: i32) {
+    pub fn flashtex_bm_call(&mut self, n: i32, scanner: i32, warn: i32) {
         // Never inside a recording, BOX-MEMO's or the intrinsics' (the
         // boundary with MACRO-REPLAY, BOX-MEMO.md §1).
         if self.bm_rec_on || self.intr_rec_on {
@@ -926,6 +1006,14 @@ impl Globals {
                     .all(|(p, m)| self.bm_meaning(*p).as_ref() == Some(m))
             {
                 if m == Mode::Verify {
+                    // the full verifier, where no restore's branch is
+                    // pending: the command line (in the host, the edit's
+                    // own convergence needs it; the op-log check runs)
+                    if WINDOW.with(|w| w.get()).is_none() && !self.has_pending() {
+                        if let Ok(ck) = self.checkpoint() {
+                            FULL.with(|f| *f.borrow_mut() = Some(FullVerify { ck, warn }));
+                        }
+                    }
                     return self.bm_start(cs, n, scanner, k1, ctx, k2, k4, Some(i));
                 }
                 return self.bm_replay(cs, i);
@@ -1028,6 +1116,11 @@ impl Globals {
         let dbg = debug();
         let rec = ST.with(|s| s.borrow_mut().rec.take());
         let Some(rec) = rec else { return };
+        if rec.verify.is_some() {
+            if let Some(fv) = FULL.with(|f| f.borrow_mut().take()) {
+                self.retain_checkpoints(&|id| id != fv.ck);
+            }
+        }
         if dbg {
             eprintln!(
                 "boxmemo: recording of \\{} abandoned: {why} (cmd {} chr {} cs {})",
@@ -1047,6 +1140,7 @@ impl Globals {
             if rec.verify.is_some() {
                 s.stats.verified += 1;
                 s.stats.verify_differences += 1;
+                s.stats.full_differences += 1;
                 if s.stats.verify_details.len() < 20 {
                     s.stats.verify_details.push(format!(
                         "normal path not pure after the guard passed: {why}"
@@ -1614,7 +1708,9 @@ impl Globals {
         }
         let last_badness = self.last_badness;
         if let Some(i) = rec.verify {
-            return self.bm_verified(rec, i, last_badness);
+            let (cs, scanner) = (rec.cs, rec.scanner);
+            self.bm_verified(rec, i, last_badness);
+            return self.bm_verify_full(cs, i, scanner);
         }
         self.bm_commit(rec, last_badness);
     }
@@ -1750,6 +1846,53 @@ impl Globals {
                     s.stats
                         .verify_details
                         .push(format!("\\{name}: {:?}", &diffs[..diffs.len().min(4)]));
+                }
+                if fail {
+                    eprintln!("boxmemo verify: FLASHTEX_BOXMEMO_VERIFY_FAIL is set");
+                }
+            }
+        });
+        write_stats(false);
+    }
+
+    /// The full verifier (BOX-MEMO.md §7): the normal path is done; take
+    /// its state N, restore the admission point C, replay, and compare the
+    /// replay's state with N by the convergence test's comparison. The run
+    /// goes on from the replay.
+    fn bm_verify_full(&mut self, cs: i32, i: usize, scanner: i32) {
+        let Some(fv) = FULL.with(|f| f.borrow_mut().take()) else {
+            return;
+        };
+        let name = self.cs_name_string(cs);
+        pop_used_up(self);
+        let scratch = Scratch::take(self);
+        let result = (|| -> Result<usize, String> {
+            let n = self.checkpoint()?;
+            self.restore(fv.ck)?;
+            // `macro_call`'s exit, which the normal path ran
+            self.bm_replay(cs, i);
+            self.scanner_status = scanner;
+            self.warning_index = fv.warn;
+            pop_used_up(self);
+            scratch.put(self);
+            let r = crate::incr::same_state(self, n);
+            self.abandon_pending();
+            r
+        })();
+        let ck = fv.ck;
+        self.retain_checkpoints(&|id| id != ck);
+        let fail = with_config(|c| c.verify_fail);
+        ST.with(|s| {
+            let mut s = s.borrow_mut();
+            s.stats.full_verified += 1;
+            if let Err(e) = &result {
+                s.stats.full_differences += 1;
+                s.stats.verify_differences += 1;
+                eprintln!("boxmemo verify (full state): \\{name}: {e}");
+                if s.stats.verify_details.len() < 20 {
+                    s.stats
+                        .verify_details
+                        .push(format!("full state \\{name}: {e}"));
                 }
                 if fail {
                     eprintln!("boxmemo verify: FLASHTEX_BOXMEMO_VERIFY_FAIL is set");

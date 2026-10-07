@@ -44,6 +44,7 @@ fn run(dir: &Path, mode: &str, names: &str) -> Run {
         .env("FLASHTEX_BOXMEMO", mode)
         .env("FLASHTEX_BOXMEMO_NAMES", names)
         .env("FLASHTEX_BOXMEMO_STATS", &stats)
+        .env("FLASHTEX_BOXMEMO_VERIFY_FAIL", "1")
         .stdin(Stdio::null())
         .output()
         .expect("run flashtex-initex");
@@ -85,6 +86,14 @@ fn check(tag: &str, src: &str) -> String {
         "{tag}: {}",
         verify.stats
     );
+    // every admitted call is also compared on the whole engine state
+    assert_eq!(
+        stat(&verify.stats, "full_verified"),
+        stat(&verify.stats, "verified"),
+        "{tag}: {}",
+        verify.stats
+    );
+    assert_eq!(stat(&verify.stats, "full_differences"), 0, "{tag}: {}", verify.stats);
     assert_eq!(
         stat(&verify.stats, "verified"),
         stat(&on.stats, "hits"),

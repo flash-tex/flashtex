@@ -1089,6 +1089,21 @@ fn same_words(
     Err(s)
 }
 
+/// BOX-MEMO's full verifier (`crate::boxmemo`, docs/design/engine-v2/
+/// BOX-MEMO.md §7): the live state (a replay) against checkpoint `n` of the
+/// pending branch (the same call run normally from the same state), by the
+/// convergence test's own comparison -- every word, dead words and free
+/// cells aside, nodes allocated elsewhere compared structurally.
+pub(crate) fn same_state(g: &mut Globals, n: CheckpointId) -> Result<usize, String> {
+    let debug = std::env::var_os("FLASHTEX_BOXMEMO_DEBUG").is_some();
+    let mut char_or = vec![];
+    let r = same_words(g, n, false, false, true, debug, Box::new(|| false), &mut char_or);
+    if r.is_ok() && !char_or.is_empty() {
+        return Err(format!("pdf_char_used differs in {} words", char_or.len()));
+    }
+    r
+}
+
 /// Arrays whose elements from a pointer on are dead between two commands,
 /// with that pointer (tex.web: the unused parts of stacks and buffers,
 /// which are always written before they are read again). The pointer

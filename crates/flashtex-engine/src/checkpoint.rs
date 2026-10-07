@@ -698,6 +698,11 @@ impl Globals {
             .unwrap_or_default()
     }
 
+    /// Is a restore's branch (the old run's future) pending?
+    pub fn has_pending(&self) -> bool {
+        self.layer_ref().is_some_and(|l| l.pending.is_some())
+    }
+
     /// Drop the pending branch (the old run's future): the new run will
     /// not converge.
     pub fn abandon_pending(&mut self) {

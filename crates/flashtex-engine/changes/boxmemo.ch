@@ -140,7 +140,8 @@ exit:scanner_status:=save_scanner_status; warning_index:=save_warning_index;
 @y
 @<Feed the macro body and its parameters to the scanner@>;
 if bm_on then if bm_at_switch then if expand_depth_count=0 then
-  if bm_cand[warning_index] then flashtex_bm_call(n,save_scanner_status);
+  if bm_cand[warning_index] then
+    flashtex_bm_call(n,save_scanner_status,save_warning_index);
 exit:scanner_status:=save_scanner_status; warning_index:=save_warning_index;
 @z
 
@@ -316,7 +317,7 @@ bm_on:=flashtex_bm_enabled;
 function flashtex_bm_enabled:boolean; external;
 procedure flashtex_bm_loaded; external;
 procedure flashtex_bm_new_cs(@!p:pointer); external;
-procedure flashtex_bm_call(@!n:integer;@!s:integer); external;
+procedure flashtex_bm_call(@!n:integer;@!s:integer;@!w:pointer); external;
 procedure flashtex_bm_group(@!c:group_code); external;
 procedure flashtex_bm_unsave; external;
 procedure flashtex_bm_def(@!p:pointer;@!t:quarterword;@!e:integer;@!k:integer); external;
