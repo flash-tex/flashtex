@@ -462,6 +462,10 @@ struct Scratch {
     dig: Vec<i32>,
     trick_buf: Vec<i32>,
     pstack: Vec<i32>,
+    // `hpack`'s and `vpack`'s glue totals: each pack zeroes all four orders
+    // before it adds to them (tex.web §650, §668) and reads them only after
+    total_stretch: Vec<i32>,
+    total_shrink: Vec<i32>,
     cur_cmd: i32,
     cur_chr: i32,
     cur_cs: i32,
@@ -488,6 +492,8 @@ impl Scratch {
             dig: (0..g.dig.len()).map(|i| g.dig[i]).collect(),
             trick_buf: (0..g.trick_buf.len()).map(|i| g.trick_buf[i]).collect(),
             pstack: (0..g.pstack.len()).map(|i| g.pstack[i]).collect(),
+            total_stretch: (0..g.total_stretch.len()).map(|i| g.total_stretch[i]).collect(),
+            total_shrink: (0..g.total_shrink.len()).map(|i| g.total_shrink[i]).collect(),
             cur_cmd: g.cur_cmd,
             cur_chr: g.cur_chr,
             cur_cs: g.cur_cs,
@@ -520,6 +526,16 @@ impl Scratch {
         for (i, &v) in self.pstack.iter().enumerate() {
             if g.pstack[i] != v {
                 g.pstack[i] = v;
+            }
+        }
+        for (i, &v) in self.total_stretch.iter().enumerate() {
+            if g.total_stretch[i] != v {
+                g.total_stretch[i] = v;
+            }
+        }
+        for (i, &v) in self.total_shrink.iter().enumerate() {
+            if g.total_shrink[i] != v {
+                g.total_shrink[i] = v;
             }
         }
         g.cur_cmd = self.cur_cmd;
