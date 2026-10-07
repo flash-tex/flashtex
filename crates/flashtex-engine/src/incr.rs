@@ -1940,6 +1940,7 @@ impl Observer for Obs {
             let now = crate::os::thread_counts();
             if self.first_incremental {
                 crate::os::perf_mark(false);
+                crate::macroprof::window_close(g);
             }
             self.edited_instr = self.instr0.zip(now).map(|(a, b)| b.0 - a);
             self.typeset_instr = self.instr_go.zip(now).map(|(a, b)| (b.0 - a.0, b.1 - a.1));
@@ -4181,6 +4182,7 @@ impl Session {
         obs.instr_go = crate::os::thread_counts();
         if obs.first_incremental {
             crate::os::perf_mark(true);
+            crate::macroprof::window_open(g);
         }
         g.layer().observer = Some(Box::new(obs));
         let status = g.resume_to_end().inspect_err(|_| {
