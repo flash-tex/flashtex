@@ -199,6 +199,10 @@ pub trait Observer {
     }
     /// The observer as `Any`, to take it back after a run.
     fn into_any(self: Box<Self>) -> Box<dyn std::any::Any>;
+    /// The pages the run has shipped so far (with those before its start).
+    fn shipped(&self) -> usize {
+        0
+    }
 }
 
 /// The exit status of a run an [`Observer`] stopped.
@@ -323,6 +327,12 @@ thread_local! {
 /// logs' budget (DESIGN.md §5.2), so they are capped instead: a PDF larger
 /// than this reads into a fresh buffer each restore, as before.
 const SPARE_TAILS_MAX: usize = 64 << 20;
+
+/// Drop the spare tail buffers (a Low Memory mode's idle trim,
+/// `crate::profile`): the next restore reads its tails into fresh buffers.
+pub fn drop_spare_tails() {
+    SPARE_TAILS.with(|s| s.borrow_mut().clear());
+}
 
 /// Bytes the spare tail buffers hold (memory accounting).
 pub fn spare_tail_bytes() -> usize {

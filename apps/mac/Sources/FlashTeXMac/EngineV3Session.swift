@@ -313,6 +313,9 @@ final class EngineV3Session {
     }
     /// Removed in `stop()` and deinit.
     @ObservationIgnored nonisolated(unsafe) private var fontSmoothingObserver: NSObjectProtocol?
+    /// Settings > Performance changed (PerformanceMode.swift): the host is
+    /// told (`PROFILE`). Removed in deinit.
+    @ObservationIgnored nonisolated(unsafe) private var performanceObserver: NSObjectProtocol?
 
     /// `smoothFonts` nil: follow the Settings preference (the app's
     /// session); a value: fixed at it (tests).
@@ -322,10 +325,22 @@ final class EngineV3Session {
         if smoothFonts == nil {
             fontSmoothingObserver = PreviewFontSmoothing.observe { [weak self] on in self?.smoothFonts = on }
         }
+        performanceObserver = NotificationCenter.default.addObserver(forName: PerformanceMode.changed, object: nil, queue: .main) { [weak self] note in
+            guard let mode = (note.userInfo?["mode"] as? String).flatMap(PerformanceMode.init(rawValue:)) else { return }
+            MainActor.assumeIsolated { self?.performanceModeChanged(mode) }
+        }
+    }
+
+    /// Tell the host the new performance mode (spec §6.9): it applies it
+    /// between compiles. A host without `profile-v1` keeps its own.
+    private func performanceModeChanged(_ mode: PerformanceMode) {
+        guard let c = connection, c.offersProfiles else { return }
+        do { try c.setProfile(mode.hostProfile); log("performance mode: \(mode.hostProfile)") } catch { log("PROFILE: \(error)") }
     }
 
     deinit {
         if let fontSmoothingObserver { NotificationCenter.default.removeObserver(fontSmoothingObserver) }
+        if let performanceObserver { NotificationCenter.default.removeObserver(performanceObserver) }
         // A session released without `stop()` (its window's model went away):
         // nothing it installed may outlive it. Its host ends with it (the
         // process object terminates it in deinit, and the connection closes).
@@ -341,6 +356,7 @@ final class EngineV3Session {
     func start(model: ShellModel) {
         self.model = model
         stopping = false
+        PerformanceAdvisor.shared.start() // suggests Low Memory under memory pressure (PerformanceMode.swift)
         if NSWorkspace.shared.isVoiceOverEnabled { EngineV3GlyphText.warmUp() } // VoiceOver's page text (EngineV3Accessibility.swift), off main; else loaded on first use
 
         if keyMonitor == nil {
@@ -628,9 +644,10 @@ final class EngineV3Session {
     private func connect(socket: String) {
         let ref = EngineV3WeakRef(self)
         let plan = rasterPlan
+        let profile = PerformanceMode.current.hostProfile // Settings > Performance (spec §6.9)
         DispatchQueue.global(qos: .userInitiated).async {
             do {
-                let c = try DL3Connection(socketPath: socket, client: "FlashTeX (engine-v3 preview)", accept: [DL3Diag.capability] + (ProcessInfo.processInfo.environment["FLASHTEX_V3_NO_PROGRESS"] == "1" ? [] : [DL3.progressCapability]))
+                let c = try DL3Connection(socketPath: socket, client: "FlashTeX (engine-v3 preview)", accept: [DL3Diag.capability] + (ProcessInfo.processInfo.environment["FLASHTEX_V3_NO_PROGRESS"] == "1" ? [] : [DL3.progressCapability]), profile: profile)
                 let reader = EngineV3Reader(cache: .shared, plan: plan)
                 c.start(onTimedEvent: { ev, timing in
                     guard let out = reader.handle(ev, timing: timing) else { return }
@@ -1822,7 +1839,7 @@ final class EngineV3Session {
     /// package file) keeps its place in the message.
     static func problems(_ diags: [DL3JSON], model: ShellModel, projectRoot: URL?, texts: [String: String]? = nil,
                          mode: EngineV3ErrorPolicy.Mode = .bestEffort) -> [RuntimeV1.Diagnostic] {
-        let root = projectRoot.map { $0.standardizedFileURL.path + "/" }
+        let roots = Self.copyRoots(projectRoot)
         let kept = EngineV3ErrorPolicy.keptErrors(diags.map(Self.policyItem), mode: mode)
         return diags.enumerated().map { i, d in
             let error = d["severity"]?.string == "error"
@@ -1830,9 +1847,8 @@ final class EngineV3Session {
             var message = d["message"]?.string ?? "(no message)"
             if error, !kept.contains(i) { message = EngineV3ErrorPolicy.marked(message) }
             var source: RuntimeV1.SourceRange?
-            if var file = d["file"]?.string {
-                if file.hasPrefix("./") { file.removeFirst(2) }
-                if let root, file.hasPrefix(root) { file.removeFirst(root.count) }
+            if let reported = d["file"]?.string {
+                let file = Self.relativeToCopy(reported, roots: roots)
                 let line = Int(d["line"]?.int ?? 0)
                 if let text = texts?[file] ?? model.documents.first(where: { $0.path == file })?.text, line > 0,
                    let range = lineByteRange(text, line: line) {
@@ -1845,22 +1861,57 @@ final class EngineV3Session {
         }
     }
 
+    /// Every spelling of the project copy's root, each ending in "/": as the
+    /// app made it (standardized: /var/folders/...), its real path (realpath:
+    /// /private/var/folders/..., what the host's getcwd() returns and so what
+    /// the display list's side table names a box's place by), and
+    /// Foundation's resolution of its links. Empty without a root.
+    static func copyRoots(_ root: URL?) -> [String] {
+        guard let root else { return [] }
+        let standardized: String = root.standardizedFileURL.path
+        var spellings: [String] = [standardized]
+        if let p = realpath(standardized, nil) {
+            spellings.append(String(cString: p))
+            free(p)
+        }
+        spellings.append(root.resolvingSymlinksInPath().path)
+        var out: [String] = []
+        for r in spellings {
+            let prefix = r.hasSuffix("/") ? r : r + "/"
+            if !out.contains(prefix) { out.append(prefix) }
+        }
+        return out
+    }
+
+    /// A file the engine names, relative to the project copy when it is
+    /// inside it under any of `roots` (`copyRoots`), else as given; a
+    /// leading "./" dropped. An absolute name under none of them is matched
+    /// once more by its own real path (a link anywhere above the copy).
+    static func relativeToCopy(_ file: String, roots: [String]) -> String {
+        var f: String = file
+        while f.hasPrefix("./") { f.removeFirst(2) }
+        if let r = roots.first(where: { f.hasPrefix($0) }) {
+            f.removeFirst(r.count)
+            return f
+        }
+        guard f.hasPrefix("/"), !roots.isEmpty, let p = realpath(f, nil) else { return f }
+        let real = String(cString: p)
+        free(p)
+        if let r = roots.first(where: { real.hasPrefix($0) }) { return String(real.dropFirst(r.count)) }
+        return f
+    }
+
     /// diag-v1 DIAGs as Problems-panel diagnostics: the source range is the
     /// reported token/command (`range`, byte columns of `line`) or TeX's split
     /// (`col`), so a click lands on the exact column; the macro chain and
     /// TeX's help text become the row's notes and help.
     static func problems(diags: [DL3Diag], model: ShellModel, projectRoot: URL?, texts: [String: String]? = nil,
                          mode: EngineV3ErrorPolicy.Mode = .bestEffort) -> [RuntimeV1.Diagnostic] {
-        let root = projectRoot.map { $0.standardizedFileURL.path + "/" }
+        let roots = Self.copyRoots(projectRoot)
         // TeX's errors it recovered from (EngineV3ErrorPolicy): warnings under best effort.
         let kept = EngineV3ErrorPolicy.keptErrors(diags.map(Self.policyItem), mode: mode)
         let recovered = Set(diags.indices.filter { diags[$0].severity == "error" && !kept.contains($0) })
-        func rel(_ file: String) -> String {
-            var f = file
-            if f.hasPrefix("./") { f.removeFirst(2) }
-            if let root, f.hasPrefix(root) { f.removeFirst(root.count) }
-            return f
-        }
+        func rel(_ file: String) -> String { Self.relativeToCopy(file, roots: roots) }
         // Rows that say the same thing as another fold into it (EngineV3DiagPresent.folds).
         let folds = EngineV3DiagPresent.folds(diags, kept: kept)
         let stopped = Set(folds.filter { EngineV3DiagPresent.isStop(diags[$0.key].code) && !EngineV3DiagPresent.isStop(diags[$0.value].code) }.map(\.value))

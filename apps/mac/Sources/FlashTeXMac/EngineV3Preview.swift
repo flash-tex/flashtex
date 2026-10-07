@@ -849,9 +849,10 @@ final class EngineV3PagesView: NSView {
     /// backdrop's when tiled.
     private var wholeScale: Double { tiled ? min(pixelsPerPoint, EngineV3TileGrid.backdropPixelsPerPoint) : pixelsPerPoint }
 
-    /// Page indexes intersecting the visible rect, plus one screen around it.
+    /// Page indexes intersecting the visible rect, plus the performance
+    /// mode's screens around it (one in Balanced; PerformanceMode.swift).
     private func visibleIndexes() -> [Int] {
-        let r = visibleRect.insetBy(dx: 0, dy: -visibleRect.height)
+        let r = visibleRect.insetBy(dx: 0, dy: -visibleRect.height * PerformanceMode.current.overscanScreens)
         return frames.indices.filter { frames[$0].intersects(r) }
     }
 
