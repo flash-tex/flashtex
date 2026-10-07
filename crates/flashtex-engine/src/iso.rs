@@ -276,6 +276,9 @@ struct Layout {
     ls_nest_tag: usize,
     ls_grp_tag: usize,
     ls_cond_tag: usize,
+    /// The display list's side table (`crate::displaylist`): its offset
+    /// and element count, `usize::MAX`/0 without one.
+    dl_side: (usize, usize),
     scalars: HashMap<&'static str, (usize, usize)>,
 }
 
@@ -311,6 +314,12 @@ impl Layout {
             ls_nest_tag: off("ls_nest_tag"),
             ls_grp_tag: off("ls_grp_tag"),
             ls_cond_tag: off("ls_cond_tag"),
+            dl_side: g
+                .arena
+                .regions
+                .iter()
+                .find(|r| r.name == "dl_side")
+                .map_or((usize::MAX, 0), |r| (r.off, r.bytes / r.elem.max(1))),
             scalars: slots.iter().map(|s| (s.name, (s.off, s.size))).collect(),
         }
     }
@@ -358,6 +367,14 @@ impl<S: Space> St<'_, S> {
     }
     fn eqtb(&self, p: i32) -> u64 {
         self.sp.word(self.l.eqtb + (p as usize - 1) * 8)
+    }
+    /// The side table's entry for node `p` (0 without one).
+    fn side(&self, p: i32) -> u64 {
+        let (off, n) = self.l.dl_side;
+        if off == usize::MAX || p < 0 || p as usize >= n {
+            return 0;
+        }
+        self.sp.word(off + p as usize * 8)
     }
     fn save(&self, k: i32) -> u64 {
         self.sp.word(self.l.save_stack + k as usize * 8)
@@ -736,6 +753,19 @@ impl<'a, O: Space, N: Space> Iso<'a, O, N> {
         let (ca, cb) = (self.o.is_char(a), self.n.is_char(b));
         if ca != cb {
             fail!(self, "a char node in one state only");
+        }
+        // The node's source position (file, line, column) in the display
+        // list's side table. Nothing TeX computes reads it, but the node is
+        // live: a later page ships it, and its glyphs name that position.
+        // The convergence keeps the old run's side table, so the two must
+        // agree (spans are the host's, moved with their lines: an equal
+        // entry is the same place).
+        let (so, sn) = (self.o.side(a), self.n.side(b));
+        if so != sn {
+            fail!(
+                self,
+                "a node's source position differs ({so:#x} vs {sn:#x})"
+            );
         }
         let w0o = self.o.mem(a);
         let w0n = self.n.mem(b);
@@ -2542,6 +2572,10 @@ impl<'a> Iso<'a, Old<'a>, Live<'a>> {
         }
         for &p in bad_mem {
             let p = p as i32;
+            // (a word past the walk's range: nothing explains it)
+            if !Self::in_mem(p) {
+                return Err(format!("mem[{p}] differs outside the walked range"));
+            }
             let ok_o = bit(&w.cov_o, p) || free_o.is_some_and(|f| bit(f, p));
             let ok_n = bit(&w.cov_n, p) || free_n.is_some_and(|f| bit(f, p));
             if !(ok_o && ok_n) {
