@@ -485,6 +485,11 @@ fn refs_doc(extra: &str, sections: usize) -> String {
 /// compile, with its further passes, equals from-scratch runs repeated by
 /// the same rule, and a pass whose `.aux` changed restarts at the first
 /// read of a changed entry rather than at the `.aux` point.
+///
+/// The host keeps checkpoints at shipouts and the `.aux` points only (no
+/// segment or timed ones, which are spaced in engine time): which ones a
+/// pass keeps, and so whether one restarts past the `.aux` point, must not
+/// depend on the machine's load.
 #[test]
 fn structural_edits_equal_scratch_runs() {
     let Some(e) = env() else {
@@ -495,7 +500,11 @@ fn structural_edits_equal_scratch_runs() {
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
     let base = refs_doc("", 8);
-    let mut h = Host::start(&e, &dir);
+    let mut h = Host::start_env(
+        &e,
+        &dir,
+        &[("FLASHTEX_SEGMENT_S", "off"), ("FLASHTEX_TIMED_S", "0")],
+    );
     for _ in 0..3 {
         let r = compile_and_check(&e, &mut h, &dir, &[("doc.tex", &base)], "settle");
         if r.contains("\"mode\":\"unchanged\"") {
