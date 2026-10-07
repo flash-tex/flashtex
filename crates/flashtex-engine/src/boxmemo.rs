@@ -217,6 +217,10 @@ fn key_hash(k1: &[i32], ctx: &Context, k2: &[i32], k4: &[i32]) -> u64 {
     h
 }
 
+/// A variant whose K1, context, K2 and K4 hold: its index, and the K3
+/// meanings, absent names and void boxes left to check.
+type Candidate = (usize, Vec<(i32, Meaning)>, Vec<Vec<i32>>, Vec<i32>);
+
 struct Entry {
     hash: u64,
     /// K1: the macro's body and its arguments.
@@ -671,7 +675,7 @@ impl Globals {
                     && self.str_pool[a..b]
                         .iter()
                         .zip(name)
-                        .all(|(&c, &n)| c as i32 == n)
+                        .all(|(&c, &n)| c == n)
                 {
                     return Some(p);
                 }
@@ -881,7 +885,7 @@ impl Globals {
         let k4 = self.bm_k4();
         let hash = key_hash(&k1, &ctx, &k2, &k4);
         // the variants whose K1, context, K2 and K4 hold (most recent first)
-        let candidates: Vec<(usize, Vec<(i32, Meaning)>, Vec<Vec<i32>>, Vec<i32>)> =
+        let candidates: Vec<Candidate> =
             ST.with(|s| {
                 let s = s.borrow();
                 let Some(v) = s.store.get(&cs) else {
@@ -1133,7 +1137,7 @@ impl Globals {
         if p != UNDEFINED_CS {
             return self.bm_note_cs(p);
         }
-        let name: Vec<i32> = (j..j + l).map(|i| self.buffer[i as usize] as i32).collect();
+        let name: Vec<i32> = (j..j + l).map(|i| self.buffer[i as usize]).collect();
         self.bm_with_rec(|r| {
             if !r.absent.contains(&name) {
                 r.absent.push(name);
@@ -1852,14 +1856,11 @@ impl Globals {
             let mut locs = k3;
             locs.push(cs);
             for o in &ops {
-                match o {
-                    Op::Def { p, v, .. } => {
-                        locs.push(*p);
-                        if let Val::LetCs(s) = v {
-                            locs.push(*s);
-                        }
+                if let Op::Def { p, v, .. } = o {
+                    locs.push(*p);
+                    if let Val::LetCs(s) = v {
+                        locs.push(*s);
                     }
-                    _ => {}
                 }
             }
             for p in locs {
