@@ -138,6 +138,7 @@ final class EngineV3ExportTests: XCTestCase {
         // it. (An edit typed before the run starts, while the host's copy is
         // brought up to date, is in the export: it is the text at that time.)
         try await waitUntil("the export run to start") { s.exportRunning }
+        if !s.exportRunning, report == nil { XCTFail("the export never started: \(s.exportDebugState)") }
         model.updateActiveText(Self.source.replacingOccurrences(of: "Second page.", with: "Second page.\n\\newpage\nThird page."))
         await fulfillment(of: [done], timeout: 90)
         guard case .succeeded = report?.state else { return XCTFail("export: \(String(describing: report?.state))") }
