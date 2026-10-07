@@ -56,9 +56,90 @@ use std::time::Instant;
 
 /// A page (or form) the writer produced, as the cache keeps it.
 struct Cached {
+    /// Its `body` is empty while `packed` holds it.
     e: Emitted,
     /// Bumped every time the index is produced again.
     version: u64,
+    /// Low Memory (`Profile::lean`): the body gzip-packed (`Packer`), and
+    /// its length unpacked.
+    packed: Option<(Vec<u8>, usize)>,
+}
+
+impl Cached {
+    fn new(e: Emitted, version: u64) -> Cached {
+        Cached {
+            e,
+            version,
+            packed: None,
+        }
+    }
+
+    /// The page as emitted (unpacked if packed): identical bytes.
+    fn emitted(&self) -> std::borrow::Cow<'_, Emitted> {
+        match &self.packed {
+            None => std::borrow::Cow::Borrowed(&self.e),
+            Some((z, len)) => {
+                let mut e = self.e.clone();
+                e.body = Arc::new(Packer::unpack(z, *len));
+                std::borrow::Cow::Owned(e)
+            }
+        }
+    }
+
+    /// Bytes the cache holds for it.
+    fn bytes(&self) -> usize {
+        self.e.body.len() + self.packed.as_ref().map_or(0, |(z, _)| z.len())
+    }
+}
+
+/// Low Memory's page-cache packer (`Profile::lean`): a worker thread gzips
+/// cached pages' display lists, so the engine thread never waits for it; the
+/// engine thread swaps a packed body in (`Live::take_packed`) while the
+/// page's version is still the one packed. A delivery of a packed page
+/// unpacks it, so a client receives exactly the bytes emitted.
+struct Packer {
+    jobs: mpsc::Sender<(usize, u64, Arc<Vec<u8>>)>,
+    done: Arc<Mutex<Vec<PackedPage>>>,
+}
+
+/// A page the packer finished: (index, version, gzip of its body).
+type PackedPage = (usize, u64, Vec<u8>);
+
+impl Packer {
+    fn start() -> Option<Packer> {
+        #[cfg(feature = "distribution")]
+        {
+            let (jobs, rx) = mpsc::channel::<(usize, u64, Arc<Vec<u8>>)>();
+            let done = Arc::new(Mutex::new(Vec::new()));
+            let d2 = done.clone();
+            std::thread::Builder::new()
+                .name("page-packer".into())
+                .spawn(move || {
+                    for (i, v, body) in rx {
+                        let z = crate::bundle::gz::gzip(&body, 1);
+                        d2.lock().unwrap_or_else(|p| p.into_inner()).push((i, v, z));
+                    }
+                })
+                .ok()?;
+            Some(Packer { jobs, done })
+        }
+        #[cfg(not(feature = "distribution"))]
+        {
+            None
+        }
+    }
+
+    fn unpack(z: &[u8], len: usize) -> Vec<u8> {
+        #[cfg(feature = "distribution")]
+        {
+            crate::bundle::gz::gunzip(z, len).expect("a page the host packed itself unpacks")
+        }
+        #[cfg(not(feature = "distribution"))]
+        {
+            let _ = (z, len);
+            unreachable!("pages are packed only with the distribution feature")
+        }
+    }
 }
 
 /// What one client holds.
@@ -206,6 +287,9 @@ struct Live {
     forms: HashMap<u32, Cached>,
     next_version: u64,
     target: Option<Target>,
+    /// Pack the cached pages (Low Memory, `Profile::lean`); `None`: kept as
+    /// emitted.
+    packer: Option<Packer>,
 }
 
 impl Live {
@@ -215,12 +299,49 @@ impl Live {
             forms: HashMap::new(),
             next_version: 1,
             target: None,
+            packer: None,
         }
     }
 
     fn clear(&mut self) {
         self.pages.clear();
         self.forms.clear();
+    }
+
+    /// Pack the cached pages from now on (`on`), queueing those already
+    /// cached, or stop packing (pages packed so far stay packed: they
+    /// deliver the same bytes).
+    fn set_packing(&mut self, on: bool) {
+        if !on {
+            self.packer = None;
+            return;
+        }
+        if self.packer.is_none() {
+            self.packer = Packer::start();
+        }
+        if let Some(p) = &self.packer {
+            for (i, c) in self.pages.iter().enumerate() {
+                if let Some(c) = c.as_ref().filter(|c| c.packed.is_none()) {
+                    let _ = p.jobs.send((i, c.version, c.e.body.clone()));
+                }
+            }
+        }
+    }
+
+    /// Swap in the bodies the packer finished, where the page is still the
+    /// version it packed.
+    fn take_packed(&mut self) {
+        let Some(p) = &self.packer else { return };
+        let done = std::mem::take(&mut *p.done.lock().unwrap_or_else(|p| p.into_inner()));
+        for (i, v, z) in done {
+            if let Some(Some(c)) = self.pages.get_mut(i) {
+                if c.version == v && c.packed.is_none() {
+                    let len = c.e.body.len();
+                    c.e.body = Arc::new(Vec::new());
+                    c.packed = Some((z, len));
+                }
+            }
+        }
     }
 
     /// Deliver page `j` from the cache to `t` if the client lacks it, with
@@ -231,7 +352,7 @@ impl Live {
             return;
         };
         if t.ps.held.get(&j) != Some(&c.version) {
-            if !t.send(&c.e) {
+            if !t.send(&c.emitted()) {
                 return;
             }
             t.ps.held.insert(j, c.version);
@@ -269,7 +390,7 @@ impl Live {
                     t.ps.forms.insert(e.index, e.hash);
                 }
             }
-            self.forms.insert(e.index, Cached { e, version });
+            self.forms.insert(e.index, Cached::new(e, version));
             self.target = t;
             return;
         }
@@ -289,11 +410,12 @@ impl Live {
             .get(i)
             .and_then(|c| c.as_ref())
             .is_none_or(|c| c.e.hash != e.hash);
+        self.take_packed();
         let version = match &self.pages[i] {
             Some(c)
                 if delivered
                     && c.e.hash == e.hash
-                    && c.e.body == e.body
+                    && c.emitted().body == e.body
                     && c.e.fonts == e.fonts
                     && c.e.images == e.images
                     && c.e.forms == e.forms
@@ -303,7 +425,10 @@ impl Live {
             }
             _ => version,
         };
-        self.pages[i] = Some(Cached { e, version });
+        if let Some(p) = &self.packer {
+            let _ = p.jobs.send((i, version, e.body.clone()));
+        }
+        self.pages[i] = Some(Cached::new(e, version));
         let Some(mut t) = self.target.take() else {
             return;
         };
@@ -400,6 +525,9 @@ struct DocTools {
 
 pub(crate) struct Engine {
     cfg: Arc<Config>,
+    /// The performance mode in effect (`crate::profile`): the host's
+    /// `--profile`, then each client's choice (`Req::Profile`).
+    profile: crate::profile::Profile,
     /// The engine thread's own queue: the tools' worker reports there.
     tx: mpsc::Sender<Req>,
     doc: Option<Doc>,
@@ -417,12 +545,15 @@ type Written = HashMap<PathBuf, (crate::system::StatSig, Arc<Vec<u8>>)>;
 
 impl Engine {
     pub fn new(cfg: Arc<Config>, tx: mpsc::Sender<Req>) -> Engine {
+        let live = Rc::new(RefCell::new(Live::new()));
+        live.borrow_mut().set_packing(cfg.profile.lean);
         Engine {
+            profile: cfg.profile.clone(),
             cfg,
             tx,
             doc: None,
             peers: HashMap::new(),
-            live: Rc::new(RefCell::new(Live::new())),
+            live,
             gens: 0,
             written: HashMap::new(),
         }
@@ -438,6 +569,10 @@ impl Engine {
         let mut trim_due = false;
         loop {
             let pause = self.cfg.keep_warm_pause;
+            let trim_after = self
+                .profile
+                .trim_after_ms
+                .map(std::time::Duration::from_millis);
             let req = match hot_until {
                 Some(t) if Instant::now() < t && pause.is_zero() => match rx.try_recv() {
                     Ok(r) => r,
@@ -460,18 +595,17 @@ impl Engine {
                     }
                     Err(mpsc::RecvTimeoutError::Disconnected) => break,
                 },
-                _ if trim_due => match rx.recv_timeout(TRIM_AFTER) {
-                    Ok(r) => r,
-                    Err(mpsc::RecvTimeoutError::Timeout) => {
-                        trim_due = false;
-                        if let Some(d) = self.doc.as_mut() {
-                            d.session.trim_caches();
+                _ if trim_due && trim_after.is_some() => {
+                    match rx.recv_timeout(trim_after.unwrap_or_default()) {
+                        Ok(r) => r,
+                        Err(mpsc::RecvTimeoutError::Timeout) => {
+                            trim_due = false;
+                            self.trim();
+                            continue;
                         }
-                        give_back_free_memory();
-                        continue;
+                        Err(mpsc::RecvTimeoutError::Disconnected) => break,
                     }
-                    Err(mpsc::RecvTimeoutError::Disconnected) => break,
-                },
+                }
                 _ => match rx.recv() {
                     Ok(r) => r,
                     Err(_) => break,
@@ -485,6 +619,17 @@ impl Engine {
                 Req::Closed(id) => {
                     self.peers.remove(&id);
                 }
+                Req::Profile {
+                    conn,
+                    profile,
+                    reply,
+                } => {
+                    self.set_profile(profile);
+                    if reply {
+                        let j = obj([("profile", self.profile.json())]);
+                        server::send_json(&conn.out, kind::PROFILE, &j);
+                    }
+                }
                 Req::Compile { conn, req, t0 } => {
                     conn.queued.fetch_sub(1, Ordering::SeqCst);
                     let c = conn.clone();
@@ -492,7 +637,8 @@ impl Engine {
                     // DONE is out: prepare the next keystroke's restore
                     // while nothing waits (`incr::Session::prepare_next`)
                     // (FLASHTEX_NO_PREPARE=1 leaves it out, for A/B)
-                    let prepare = std::env::var_os("FLASHTEX_NO_PREPARE").is_none();
+                    // (the profile's `prepare`; FLASHTEX_NO_PREPARE pins it off)
+                    let prepare = self.profile.prepare;
                     if let Some(d) = self.doc.as_mut().filter(|_| prepare) {
                         let _busy = crate::busy::enter(crate::busy::Part::Prepare);
                         d.session
@@ -508,8 +654,10 @@ impl Engine {
                     report,
                 } => self.tools_done(gen, conn, req, id, report),
             }
-            if compiled && !self.cfg.keep_warm.is_zero() {
-                hot_until = Some(Instant::now() + self.cfg.keep_warm);
+            if compiled && self.profile.keep_warm_ms > 0 {
+                hot_until = Some(
+                    Instant::now() + std::time::Duration::from_millis(self.profile.keep_warm_ms),
+                );
             }
         }
     }
@@ -540,7 +688,7 @@ impl Engine {
         .collect();
         let o = crate::cli::parse(&argv);
         let r = {
-            let mut s = incr::Session::new(o, None, self.cfg.opts.clone());
+            let mut s = incr::Session::new(o, None, self.opts());
             s.compile(None).map(|_| ())
         };
         if let Some(h) = here {
@@ -549,6 +697,50 @@ impl Engine {
         let _ = std::fs::remove_dir_all(&dir);
         r?;
         Ok(t.elapsed().as_secs_f64())
+    }
+
+    /// The resident engine's options under the current performance mode.
+    fn opts(&self) -> incr::Options {
+        let mut o = self.cfg.opts.clone();
+        o.apply_profile(&self.profile);
+        o
+    }
+
+    /// Change the performance mode between compiles (`Req::Profile`). Only
+    /// what is kept changes: a smaller budget or dense window thins the
+    /// resident document's checkpoints now, and a mode that trims gives the
+    /// freed memory back at once rather than after its idle wait.
+    fn set_profile(&mut self, p: crate::profile::Profile) {
+        if p == self.profile {
+            return;
+        }
+        let shrinks = p.budget < self.profile.budget
+            || p.dense < self.profile.dense
+            || (p.lean && !self.profile.lean);
+        self.profile = p;
+        self.live.borrow_mut().set_packing(self.profile.lean);
+        if let Some(d) = self.doc.as_mut() {
+            d.session.apply_profile(&self.profile);
+        }
+        if shrinks && self.profile.trim_after_ms.is_some() {
+            self.trim();
+        }
+    }
+
+    /// The idle trim (`Profile::trim_after_ms`): the old run's cached
+    /// chunks go (and, when lean, the restores' spare tail buffers), the
+    /// packed pages are swapped in, and the heap's free pages go back to the
+    /// system.
+    fn trim(&mut self) {
+        if let Some(d) = self.doc.as_mut() {
+            if self.profile.lean {
+                d.session.trim_caches_deep();
+            } else {
+                d.session.trim_caches();
+            }
+        }
+        self.live.borrow_mut().take_packed();
+        give_back_free_memory();
     }
 
     fn s0_path(&self, job: &Job) -> Option<PathBuf> {
@@ -575,7 +767,7 @@ impl Engine {
         let mut argv = vec!["pdftex".to_string()];
         argv.extend(job.argv());
         let o = crate::cli::parse(&argv);
-        let session = incr::Session::new(o, None, self.cfg.opts.clone());
+        let session = incr::Session::new(o, None, self.opts());
         displaylist::init_with_sink(Box::new(HostSink(self.live.clone())));
         self.live.borrow_mut().clear();
         self.gens += 1;
@@ -595,6 +787,8 @@ impl Engine {
     /// the host starts itself after external tools changed an input.
     fn compile(&mut self, conn: Arc<Conn>, req: Json, t0: Instant, cause: Option<&'static str>) {
         let queue_ms = t0.elapsed().as_secs_f64() * 1e3;
+        // (Low Memory: the pages packed since the last compile)
+        self.live.borrow_mut().take_packed();
         // what the engine thread did while this request waited (LIVE-30MS)
         let queue_by = crate::busy::since(t0);
         let queue_counts = crate::busy::counts_since(t0);
@@ -932,6 +1126,22 @@ impl Engine {
                     // whether they stopped for the external tools
                     ("passes".to_string(), Json::Int(rep.passes as i64)),
                     ("deferred".to_string(), Json::Bool(rep.deferred)),
+                    // how each pass ran ("cold": from the format;
+                    // "incremental": from a checkpoint) and its seconds
+                    // (lane COLD-OPEN: a first open's later passes)
+                    (
+                        "pass_modes".to_string(),
+                        Json::Arr(rep.pass_modes.iter().map(|m| js(m.as_str())).collect()),
+                    ),
+                    (
+                        "pass_s".to_string(),
+                        Json::Arr(
+                            rep.pass_s
+                                .iter()
+                                .map(|s| Json::Num((s * 1e3).round() / 1e3))
+                                .collect(),
+                        ),
+                    ),
                 ];
                 if let Some(r) = &rep.cold_reason {
                     extra.push(("cold_reason".to_string(), js(r.as_str())));
@@ -1148,9 +1358,8 @@ impl Engine {
         // session's parts (`incr::Session::mem_stats`) and the page cache.
         if std::env::var_os("FLASHTEX_MEMSTAT").is_some() {
             let live = self.live.borrow();
-            let body = |e: &Emitted| e.body.len() as i64;
-            let pages: i64 = live.pages.iter().flatten().map(|c| body(&c.e)).sum();
-            let forms: i64 = live.forms.values().map(|c| body(&c.e)).sum();
+            let pages: i64 = live.pages.iter().flatten().map(|c| c.bytes() as i64).sum();
+            let forms: i64 = live.forms.values().map(|c| c.bytes() as i64).sum();
             let mut m: Vec<(String, Json)> = doc
                 .session
                 .mem_stats()
@@ -1416,13 +1625,10 @@ fn settle(doc: &mut Doc, conn: &Conn, id: i64, limit: bool) {
     server::send_json(&conn.out, kind::TOOL, &Json::Obj(kv));
 }
 
-/// Idle time after which the host trims its heap (`give_back_free_memory`),
-/// counted from the end of the keep-warm window (2 s by default): the trim
-/// runs 4 s after the last compile by default, and a request that arrives
-/// meanwhile starts the wait again.
-const TRIM_AFTER: std::time::Duration = std::time::Duration::from_secs(2);
-
-/// Once the engine has been idle for keep-warm + `TRIM_AFTER`: hand the heap's free pages
+/// Once the engine has been idle for keep-warm + the profile's
+/// `trim_after_ms` (Balanced: 2 s, so the trim runs 4 s after the last
+/// compile, and a request that arrives meanwhile starts the wait again;
+/// High Performance: never): hand the heap's free pages
 /// back to the system. glibc keeps what a compile freed (the logs a
 /// retention pass merged, a detached branch, the convergence test's
 /// buffers) mapped, so the host's resident memory stayed at its peak: on
@@ -1445,6 +1651,18 @@ fn give_back_free_memory() {
                     t.elapsed().as_secs_f64() * 1e3
                 );
             }
+        }
+    }
+    // macOS's allocator returns most free pages itself, but its magazines
+    // keep some per thread: hand those back too (all zones; no goal).
+    #[cfg(target_os = "macos")]
+    {
+        extern "C" {
+            fn malloc_zone_pressure_relief(zone: *mut std::ffi::c_void, goal: usize) -> usize;
+        }
+        if std::env::var_os("FLASHTEX_NO_TRIM").is_none() {
+            // SAFETY: a null zone means every zone; it only releases free memory.
+            unsafe { malloc_zone_pressure_relief(std::ptr::null_mut(), 0) };
         }
     }
 }

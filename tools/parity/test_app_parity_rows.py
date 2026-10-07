@@ -164,6 +164,19 @@ class LogTests(unittest.TestCase):
         finally:
             os.unlink(p)
 
+    def test_a_test_skipped_on_one_leg_and_passed_on_the_other_is_passed(self):
+        hosted = log(("BarTests.testHost", "skipped"), ("FooTests.testOne", "passed"))
+        host = log(("BarTests.testHost", "passed"))
+        bad = log(("FooTests.testOne", "failed"))
+        try:
+            res = apr.read_log([hosted, host])
+            self.assertEqual(apr.outcome("BarTests.testHost", res), "passed")
+            self.assertEqual(apr.outcome("BarTests", res), "passed")
+            self.assertEqual(apr.outcome("FooTests.testOne", apr.read_log([hosted, bad])), "failed")
+        finally:
+            for p in (hosted, host, bad):
+                os.unlink(p)
+
     def test_check_log_exit_codes(self):
         with Tree() as root:
             path = os.path.join(root, "rows.json")

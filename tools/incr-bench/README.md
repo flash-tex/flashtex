@@ -34,6 +34,7 @@ kept next to its output (`*.host-stderr`): the host says there why it ended
 | `soundness.py ENGINE ...` | the soundness sweep (every parity fixture plus `--extra DIR:DOC`), `--kinds`, `--interleave` (preempted compiles) |
 | `preamble.py ENGINE DOC [REPS]` | §1.2 "preamble edit ≤ 400 ms to the first visible page": a preamble line added, `compile 1`, the wall time |
 | `keys.sh ENGINE DOC AT [TAG]` | keystrokes through the socket (`dl3-keys`), as the app sends them: `KEYARGS="--no-viewport --gap-ms 300 --page P --where start|middle|end [--sentence]"`, `HOSTARGS` for the host |
+| `coldopen.py ENGINE DOCDIR MAIN OUT.jsonl` | a document's first open through the socket, as the app opens it (DESIGN.md §1.2 "Opening"; `dl3-coldopen`, which `mkeng.sh` copies): a fresh copy and host per rep, then the time to the first page, the `--viewport` page, every page seen and `DONE`, when each pass started, and the host's `DONE` (its `pass_modes`: `cold` passes ran from the format); `--edit-at-ms MS --edit-line N` also types a letter on line N during the open and times its page (an edit during the initial compile); `--keep-aux` keeps the previous rep's output (a reopen from the project's last copy) |
 | `ab_engines.sh DOC PAGE GAP ROUNDS NAME=ENGINE:HOSTARGS...` | interleaved socket runs of several engines/options; `stages.py` prints the host's per-stage times (DONE's `stages`) |
 | `keys_at.sh ENGINE TAG FILE PAGE WHERE [--sentence]`, `keys_matrix.sh ENGINE TAG FILE`, `keys_sum.py TAG` | a given document (e.g. a user's 1,000-page book): pages 4, 129, 539, 999 × start/middle/end × letter/sentence; the restart check (`restart_next_gap`: the restart point is the newest checkpoint before the edit) |
 | `mem.py ENGINE DOC --pages P,... --keys N` | the socket host's memory while typing (`FLASHTEX_MEMSTAT=1`: DONE carries `mem`, the process's resident bytes and the checkpoint layer's parts; a `mem-stats` build adds the heap by tag); samples RSS, kills the host above `--limit-gb`, fails above `--gate-gb`; `MEM_HOSTARGS` for the host |
@@ -100,8 +101,11 @@ canonical path (`$RUNNER_TEMP/ib`, as `/tmp/incr-bench` on the PC) the same runs
 That is a host bug with such paths (DESIGN.md §5.3 rule (c)); reproduce with
 `INCR_BENCH_DIR=/some/dir/../ib tools/incr-bench/dlspan.py gates plain-120 --edits 12 --seed 4 --from 0.3 --kinds letter,newline,split`.
 
-**The NixOS PC is for timing and latency measurements only** (T7, `keys*.sh`, `mem*.py`, the
-instruction counts): numbers that need a quiet, known machine. Correctness does not depend on load.
+**Timing and latency (T7, `keys*.sh`, `mem*.py`, instruction counts) run only on the M1 Max**, the
+owner's T7 reference class, through `.github/workflows/t7-reference.yml`
+(`gh workflow run t7-reference.yml -f ref=<branch> [-f docs=...] [-f quick=true] [-f t7_args='...']`).
+The NixOS PC has a hard 5-core cap (owner, 2026-10-07), so its numbers are not reference numbers.
+Correctness does not depend on load.
 
 ## Machines
 
