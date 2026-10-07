@@ -187,8 +187,10 @@ final class EngineV3RasterHolder: @unchecked Sendable {
     /// pressure, so tests count these apart from the draws a source makes.
     private(set) var redrawnAfterPurge = 0
 
-    /// Kept rasters over all pages: at most this many (`FLASHTEX_V3_KEPT_RASTERS`).
-    static let budget = max(1, Int(ProcessInfo.processInfo.environment["FLASHTEX_V3_KEPT_RASTERS"] ?? "") ?? 2)
+    /// Kept rasters over all pages: at most this many (`FLASHTEX_V3_KEPT_RASTERS`, else the
+    /// performance mode's: 1, 2 or 8, PerformanceMode.swift).
+    static var budget: Int { max(1, keptOverride ?? PerformanceMode.current.keptRasters) }
+    private static let keptOverride = Int(ProcessInfo.processInfo.environment["FLASHTEX_V3_KEPT_RASTERS"] ?? "")
     /// Holders with a raster, least recently cut first (tile queue only).
     nonisolated(unsafe) private static var lru: [EngineV3RasterHolder] = []
 

@@ -27,6 +27,8 @@ public enum DL3 {
     /// The host capability (`HELLO.capabilities`) for `TRIM`: the client
     /// sends TRIM only to a host that lists it.
     public static let trimCapability = "trim-v1"
+    /// Host capability for performance modes (§6.9): `HELLO.profile` and `PROFILE`.
+    public static let profileCapability = "profile-v1"
 
     public enum Kind {
         public static let cHello: UInt8 = 0x01, compile: UInt8 = 0x02, cancel: UInt8 = 0x03, bye: UInt8 = 0x04
@@ -39,6 +41,9 @@ public enum DL3 {
         public static let tool: UInt8 = 0x4C
         /// `progress-v1` (capability-gated, §6.8): a heartbeat while a compile typesets.
         public static let progress: UInt8 = 0x70
+        /// `profile-v1` (capability-gated, §6.9): choose a performance mode (client → host),
+        /// and the host's reply with the knobs now in effect (host → client).
+        public static let cProfile: UInt8 = 0x07, profile: UInt8 = 0x51
 
         /// The names `dl3-dump` and the Rust crate's `kind::name` use.
         public static func name(_ k: UInt8) -> String {
@@ -61,6 +66,8 @@ public enum DL3 {
             case pages: "pages"
             case tool: "tool"
             case progress: "progress"
+            case cProfile: "client-profile"
+            case profile: "profile"
             case DL3Diag.kind: "diag"
             default: "unknown"
             }
