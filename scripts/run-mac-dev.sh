@@ -32,7 +32,8 @@ if [[ -n "$OPEN" ]]; then
 fi
 if [[ "$BUILD" -eq 1 ]]; then
   echo "==> cargo build --release (flashtex-host, flashtex-bridge)"
-  (cd "$ROOT" && CARGO_BUILD_JOBS="${CARGO_BUILD_JOBS:-6}" cargo build --release -p flashtex-engine --bin flashtex-host -p flashtex-bridge)
+  (cd "$ROOT" && CARGO_BUILD_JOBS="${CARGO_BUILD_JOBS:-6}" cargo build --release -p flashtex-engine --bin flashtex-host \
+    && cargo build --release -p flashtex-bridge)
   echo "==> swift build -c release (FlashTeXMac)"
   (cd "$ROOT/apps/mac" && swift build -c release --product FlashTeXMac)
 fi
