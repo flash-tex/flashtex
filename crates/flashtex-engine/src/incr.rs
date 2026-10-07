@@ -992,8 +992,19 @@ fn same_words(
         .filter(|w| !crate::lineshift::shifted_word(g, w, &layout))
         .filter(|w| !(last_byte_dead && w.scalar == Some("pdf_last_byte")))
         .partition(|w| position_only(g, w));
+    // The side table's differing words (changes/displaylist.ch: free words
+    // hold 0, so these are allocated words' positions) are for the walk.
+    let (side, left): (Vec<_>, Vec<_>) = left.into_iter().partition(|w| w.region == "dl_side");
+    let bad_side: Vec<usize> = side.iter().map(|w| w.index).collect();
+    if !bad_side.is_empty() && !relabel {
+        return Err(format!(
+            "{} source positions differ: {}",
+            bad_side.len(),
+            crate::statediff::summary(&side)
+        ));
+    }
     let (left, (free_o, free_n)) = drop_free_mem(g, &d, &layout, left);
-    if !left.is_empty() && relabel {
+    if (!left.is_empty() || !bad_side.is_empty()) && relabel {
         // Nodes allocated in other places: compare the structures.
         if let Some(w) = left.iter().find(|w| w.region != "mem" && !iso_covers(g, w)) {
             if debug && w.region == "pdf_mem" {
@@ -1037,6 +1048,7 @@ fn same_words(
             free_o.as_deref(),
             free_n.as_deref(),
             &bad_mem,
+            &bad_side,
             g.hyph_list.len(),
             dest_dims_dead,
             &mut *stop,
@@ -1144,15 +1156,10 @@ fn dead_word(g: &Globals, w: &crate::statediff::WordDiff) -> bool {
     if w.region == "rs_seen" {
         return true;
     }
-    // The display list's side table (changes/displaylist.ch): the source
-    // position of each node, which nothing TeX computes reads (DESIGN.md
-    // §6.1); the test left it out before it moved into the word space, too.
-    // The jump takes the old run's side table over with the rest of its
-    // state (`Globals::redo_to_remapped`, `Arena::diff_branch_all`): the
-    // positions must follow the node addresses the jump adopts.
-    if w.region == "dl_side" {
-        return true;
-    }
+    // (The display list's side table, `dl_side`, is not dead: the jump
+    // takes the old run's over, and a node still to be shipped keeps its
+    // position from there. `same_words` hands its differing words to the
+    // structural comparison, which requires a live node's to be equal.)
     // The intrinsics' recording scratch (`crate::intrinsics`: `intr_state`
     // elements 2..=23, `S_REC_BASE` .. `S_REC_SCANNER`): the start of every
     // recording sets them all before anything reads them, and they are read

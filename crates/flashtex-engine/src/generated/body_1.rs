@@ -2954,6 +2954,7 @@ impl Globals {
                     {
                         { let __v73 = self.avail; __av_mem[crate::ix::U((p) as usize)].set_hh_rh(__v73); }
                         self.avail = p;
+                        self.dl_free(p);
                         self.dyn_used = (self.dyn_used).wrapping_sub(1i32);
                     }
                 } else {
@@ -3173,6 +3174,7 @@ impl Globals {
                                         {
                                             { let __ix78 = __av_mem[crate::ix::U(((p).wrapping_add(2i32)) as usize)].hh().lh(); let __v79 = self.avail; __av_mem[crate::ix::U((__ix78) as usize)].set_hh_rh(__v79); }
                                             self.avail = __av_mem[crate::ix::U(((p).wrapping_add(2i32)) as usize)].hh().lh();
+                                            self.dl_free(__av_mem[crate::ix::U(((p).wrapping_add(2i32)) as usize)].hh().lh());
                                             self.dyn_used = (self.dyn_used).wrapping_sub(1i32);
                                         }
                                         self.free_node(p, margin_kern_node_size);
@@ -3572,6 +3574,7 @@ impl Globals {
         {
             { let __v138 = self.avail; __av_mem[crate::ix::U((h) as usize)].set_hh_rh(__v138); }
             self.avail = h;
+            self.dl_free(h);
             self.dyn_used = (self.dyn_used).wrapping_sub(1i32);
         }
         copy_node_list = q;
@@ -3663,6 +3666,7 @@ impl Globals {
         {
             { let __ix143 = self.cur_list.head_field; let __v144 = self.avail; __av_mem[crate::ix::U((__ix143) as usize)].set_hh_rh(__v144); }
             self.avail = self.cur_list.head_field;
+            self.dl_free(self.cur_list.head_field);
             self.dyn_used = (self.dyn_used).wrapping_sub(1i32);
         }
         self.nest_ptr = (self.nest_ptr).wrapping_sub(1i32);

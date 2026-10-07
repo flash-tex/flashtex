@@ -3691,6 +3691,7 @@ impl Globals {
                 loop {
                     q = r;
                     r = __av_mem[crate::ix::U((r) as usize)].hh().rh();
+                    self.dl_free(q);
                     self.dyn_used = (self.dyn_used).wrapping_sub(1i32);
                     if (r == null) { break; }
                 }
@@ -3828,6 +3829,7 @@ impl Globals {
         let mut q: halfword = 0; // §148
         #[allow(unused_mut)]
         let mut __av_mem = self.mem.view();
+        self.dl_free_node(p, s);
         __av_mem[crate::ix::U((p) as usize)].set_hh_lh(s);
         __av_mem[crate::ix::U((p) as usize)].set_hh_rh(empty_flag);
         q = __av_mem[crate::ix::U(((self.rover).wrapping_add(1i32)) as usize)].hh().lh();
