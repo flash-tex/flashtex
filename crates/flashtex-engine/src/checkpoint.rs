@@ -662,7 +662,9 @@ impl Globals {
     }
 
     /// [`diff_pending`](Self::diff_pending), asking `stop` while it works:
-    /// `Ok(None)` when it said to stop.
+    /// `Ok(None)` when it said to stop. (The display list's side table is
+    /// compared node by node by the structural comparison instead:
+    /// `pending_side_written`, `pending_old_chunks`.)
     pub fn diff_pending_until(
         &mut self,
         old: CheckpointId,
@@ -672,6 +674,28 @@ impl Globals {
         let l = self.layer_ref().ok_or("no checkpoint layer")?;
         let p = l.pending.as_ref().ok_or("no restore is pending")?;
         self.arena.diff_branch_until(&p.branch, old, stop)
+    }
+
+    /// The chunks of the display list's side table (`dl_side`) that either
+    /// run wrote since the pending restore's target, by chunk: elsewhere the
+    /// old run's state at `old` holds what the live one does.
+    pub fn pending_side_written(&self, old: CheckpointId) -> Result<Vec<u64>, String> {
+        let l = self.layer_ref().ok_or("no checkpoint layer")?;
+        let p = l.pending.as_ref().ok_or("no restore is pending")?;
+        self.arena.branch_written(&p.branch, old, "dl_side")
+    }
+
+    /// The old run's value at `old` of the chunks `cs` (sorted, from
+    /// `pending_side_written`): `Ok(None)` when `stop` said to stop.
+    pub fn pending_old_chunks(
+        &self,
+        old: CheckpointId,
+        cs: &[u32],
+        stop: &mut dyn FnMut() -> bool,
+    ) -> Result<Option<std::collections::HashMap<u32, Vec<u64>>>, String> {
+        let l = self.layer_ref().ok_or("no checkpoint layer")?;
+        let p = l.pending.as_ref().ok_or("no restore is pending")?;
+        self.arena.branch_old_chunks(&p.branch, old, cs, stop)
     }
 
     /// The host record of checkpoint `old` of the pending branch.

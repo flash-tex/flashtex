@@ -969,7 +969,14 @@ fn same_words(
             t.elapsed().as_secs_f64() * 1e3
         );
     }
-    if d.differing.is_empty() {
+    // The display list's side table: the chunks either run wrote since the
+    // restore target. A live node's entry there must be the same in both
+    // states (the jump keeps the old run's, and a later page ships the
+    // node): the structural comparison compares them, rewinding only the
+    // chunks of the live nodes (`crate::iso::SideOld`).
+    let side_written = g.pending_side_written(old)?;
+    let side_any = side_written.iter().any(|&w| w != 0);
+    if d.differing.is_empty() && !side_any {
         return Ok(0);
     }
     if stop() {
@@ -1007,8 +1014,14 @@ fn same_words(
         .filter(|w| !crate::lineshift::shifted_word(g, w, &layout))
         .filter(|w| !(last_byte_dead && w.scalar == Some("pdf_last_byte")))
         .partition(|w| position_only(g, w));
+    // (the side table's words in chunks it shares with another array: the
+    // walk compares the live nodes' entries, below)
+    let left: Vec<_> = left.into_iter().filter(|w| w.region != "dl_side").collect();
+    if side_any && !relabel {
+        return Err("the display list's side table changed (no structural comparison)".into());
+    }
     let (left, (free_o, free_n)) = drop_free_mem(g, &d, &layout, left);
-    if !left.is_empty() && relabel {
+    if (!left.is_empty() || side_any) && relabel {
         // Nodes allocated in other places: compare the structures.
         if let Some(w) = left.iter().find(|w| w.region != "mem" && !iso_covers(g, w)) {
             if debug && w.region == "pdf_mem" {
@@ -1045,6 +1058,10 @@ fn same_words(
             return Err(PREEMPTED.into());
         }
         let t = Instant::now();
+        let mut fetch = |cs: &[u32]| {
+            let mut never = || false;
+            g.pending_old_chunks(old, cs, &mut never)
+        };
         let r = crate::iso::Iso::check(
             g,
             &d,
@@ -1052,6 +1069,10 @@ fn same_words(
             free_o.as_deref(),
             free_n.as_deref(),
             &bad_mem,
+            side_any.then_some(crate::iso::SideOld {
+                written: &side_written,
+                fetch: &mut fetch,
+            }),
             g.hyph_list.len(),
             dest_dims_dead,
             &mut *stop,
@@ -1159,15 +1180,10 @@ fn dead_word(g: &Globals, w: &crate::statediff::WordDiff) -> bool {
     if w.region == "rs_seen" {
         return true;
     }
-    // The display list's side table (changes/displaylist.ch): the source
-    // position of each node, which nothing TeX computes reads (DESIGN.md
-    // §6.1); the test left it out before it moved into the word space, too.
-    // The jump takes the old run's side table over with the rest of its
-    // state (`Globals::redo_to_remapped`, `Arena::diff_branch_all`): the
-    // positions must follow the node addresses the jump adopts.
-    if w.region == "dl_side" {
-        return true;
-    }
+    // (The display list's side table, `dl_side`, is not dead: the jump
+    // takes the old run's over, and a node still to be shipped keeps its
+    // position from there. `same_words` hands its differing words to the
+    // structural comparison, which requires a live node's to be equal.)
     // The intrinsics' recording scratch (`crate::intrinsics`: `intr_state`
     // elements 2..=23, `S_REC_BASE` .. `S_REC_SCANNER`): the start of every
     // recording sets them all before anything reads them, and they are read

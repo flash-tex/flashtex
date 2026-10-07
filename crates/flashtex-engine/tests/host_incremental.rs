@@ -2298,3 +2298,72 @@ fn a_keystroke_that_changes_nothing_has_its_page_at_once() {
     let _ = c.bye();
     let _ = std::fs::remove_dir_all(&base);
 }
+
+/// The display list's side table at a convergence (BEAMER-LATENCY, #1319):
+/// one source line long enough to fill three pages, and an edit at its
+/// start that changes no glyph (a second space after its first word) but
+/// moves the column of every later character of the line. The pages it
+/// re-typesets equal the old ones, and the convergence test compares the
+/// state, where the rest of the paragraph still waits to be shipped. Those
+/// nodes' source positions (in `dl_side`) were dead for the test: the run
+/// converged and kept the old run's next pages, whose glyphs named the old
+/// columns. A live node's position is compared now, so the run goes on
+/// until the line is shipped, and every page equals a from-scratch compile.
+#[test]
+fn a_kept_page_never_names_a_moved_column() {
+    if find_texlive_bin().is_none() {
+        common::no_texlive();
+        return;
+    }
+    let base = common::fresh_dir("flashtex-host-cols");
+    let _ = std::fs::remove_dir_all(&base);
+    let (proj, out) = (base.join("proj"), base.join("out"));
+    std::fs::create_dir_all(&proj).unwrap();
+    std::fs::create_dir_all(&out).unwrap();
+    let doc = article(8);
+    let cut = doc.find("\n\n").unwrap() + 2;
+    // one line, about three pages of words
+    let words: Vec<String> = (0..1800).map(|i| format!("word{}", i % 97)).collect();
+    let long = format!("Begin {}.\n\n", words.join(" "));
+    let text = format!("{}{}{}", &doc[..cut], long, &doc[cut..]);
+    std::fs::write(proj.join("main.tex"), &text).unwrap();
+    let host = start_host("c");
+    let scratch = start_host("cs");
+    let mut c = Client::connect(&host.1).unwrap();
+    let mut view = View::default();
+    let mut id = 0;
+    for _ in 0..4 {
+        id += 1;
+        let o = compile(&mut c, &mut view, &req(id, &proj, &out, "main.tex"));
+        if o.done.str_field("mode") == Some("unchanged") {
+            break;
+        }
+    }
+    let at = text.find("Begin ").unwrap() + "Begin ".len();
+    for (k, (delete, insert)) in [(0, " "), (1, "")].into_iter().enumerate() {
+        id += 1;
+        let mut r = req(id, &proj, &out, "main.tex");
+        r.edits = vec![Edit {
+            path: "main.tex".into(),
+            offset: at as u64,
+            delete,
+            insert: insert.into(),
+        }];
+        let o = compile(&mut c, &mut view, &r);
+        let what = if k == 0 {
+            "a second space"
+        } else {
+            "its revert"
+        };
+        assert_eq!(
+            o.done.str_field("mode"),
+            Some("incremental"),
+            "{what}: {}",
+            o.done
+        );
+        let (p2, o2) = snapshot(&base, &proj, &out, &k.to_string());
+        compare_with_scratch(&scratch.1, &view, &proj, &out, &p2, &o2, "main.tex", what);
+    }
+    let _ = c.bye();
+    let _ = std::fs::remove_dir_all(&base);
+}
