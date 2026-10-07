@@ -156,7 +156,10 @@ pub fn window_open(g: &mut Globals) {
         calls: vec![0; n],
         active: vec![0; n],
         last: now,
-        out: format!("{f}.{}", WINDOWS.fetch_add(1, std::sync::atomic::Ordering::Relaxed)),
+        out: format!(
+            "{f}.{}",
+            WINDOWS.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+        ),
         ..Default::default()
     };
     g.flashtex_prof_roots(&mut p);
