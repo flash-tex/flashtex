@@ -954,7 +954,14 @@ fn same_words(
             t.elapsed().as_secs_f64() * 1e3
         );
     }
-    if d.differing.is_empty() {
+    // The display list's side table: the chunks either run wrote since the
+    // restore target. A live node's entry there must be the same in both
+    // states (the jump keeps the old run's, and a later page ships the
+    // node): the structural comparison compares them, rewinding only the
+    // chunks of the live nodes (`crate::iso::SideOld`).
+    let side_written = g.pending_side_written(old)?;
+    let side_any = side_written.iter().any(|&w| w != 0);
+    if d.differing.is_empty() && !side_any {
         return Ok(0);
     }
     if stop() {
@@ -992,19 +999,14 @@ fn same_words(
         .filter(|w| !crate::lineshift::shifted_word(g, w, &layout))
         .filter(|w| !(last_byte_dead && w.scalar == Some("pdf_last_byte")))
         .partition(|w| position_only(g, w));
-    // The side table's differing words (changes/displaylist.ch: free words
-    // hold 0, so these are allocated words' positions) are for the walk.
-    let (side, left): (Vec<_>, Vec<_>) = left.into_iter().partition(|w| w.region == "dl_side");
-    let bad_side: Vec<usize> = side.iter().map(|w| w.index).collect();
-    if !bad_side.is_empty() && !relabel {
-        return Err(format!(
-            "{} source positions differ: {}",
-            bad_side.len(),
-            crate::statediff::summary(&side)
-        ));
+    // (the side table's words in chunks it shares with another array: the
+    // walk compares the live nodes' entries, below)
+    let left: Vec<_> = left.into_iter().filter(|w| w.region != "dl_side").collect();
+    if side_any && !relabel {
+        return Err("the display list's side table changed (no structural comparison)".into());
     }
     let (left, (free_o, free_n)) = drop_free_mem(g, &d, &layout, left);
-    if (!left.is_empty() || !bad_side.is_empty()) && relabel {
+    if (!left.is_empty() || side_any) && relabel {
         // Nodes allocated in other places: compare the structures.
         if let Some(w) = left.iter().find(|w| w.region != "mem" && !iso_covers(g, w)) {
             if debug && w.region == "pdf_mem" {
@@ -1041,6 +1043,10 @@ fn same_words(
             return Err(PREEMPTED.into());
         }
         let t = Instant::now();
+        let mut fetch = |cs: &[u32]| {
+            let mut never = || false;
+            g.pending_old_chunks(old, cs, &mut never)
+        };
         let r = crate::iso::Iso::check(
             g,
             &d,
@@ -1048,7 +1054,10 @@ fn same_words(
             free_o.as_deref(),
             free_n.as_deref(),
             &bad_mem,
-            &bad_side,
+            side_any.then_some(crate::iso::SideOld {
+                written: &side_written,
+                fetch: &mut fetch,
+            }),
             g.hyph_list.len(),
             dest_dims_dead,
             &mut *stop,
