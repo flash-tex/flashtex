@@ -49,9 +49,9 @@ mod tests {
                     x ^= x << 17;
                     g.buffer[k] = (x % 256) as _;
                 }
-                let mut h = g.buffer[0] as i32;
+                let mut h = g.buffer[0];
                 for k in 1..l {
-                    h = h + h + g.buffer[k] as i32;
+                    h = h + h + g.buffer[k];
                     while h >= hash_prime {
                         h -= hash_prime;
                     }
