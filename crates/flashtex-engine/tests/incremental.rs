@@ -1546,7 +1546,7 @@ fn a_page_converges_at_the_end_of_its_output_routine() {
         for k in 1..=3 {
             let w = if page == 7 && k == 2 { word } else { "omega" };
             s.push_str(&format!(
-                "\\begin{{figure}}[p]\\centering\\rule{{4cm}}{{6cm}}\\caption{{Figure {k}, {w}}}\\end{{figure}}\n"
+                "\\begin{{figure}}[p]\\centering\\rule{{4cm}}{{6cm}}\\par Figure {k}, {w}.\\end{{figure}}\n"
             ));
         }
         s.push_str("Text before the float pages.\n\\clearpage\n");
@@ -1579,9 +1579,10 @@ fn a_page_converges_at_the_end_of_its_output_routine() {
         assert!(r.contains("\"mode\":\"incremental\""), "{what}: {r}");
         assert_eq!(field(&r, "converged_at"), "3", "{what}: {r}");
     }
-    // the float pages, and the page shipped from the body: equal to scratch
+    // the float pages (no `\caption`, which would change the `.aux`), and the
+    // page shipped from the body: equal to scratch
     for (page, word, what) in [
-        (7, "omgea", "a float page's caption"),
+        (7, "omgea", "a word on a float page"),
         (7, "omega", "its revert"),
         (8, "omgea", "the body's \\shipout"),
         (8, "omega", "its revert"),
