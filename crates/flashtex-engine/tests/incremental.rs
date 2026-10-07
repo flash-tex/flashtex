@@ -1542,6 +1542,90 @@ fn a_longer_longest_line_converges() {
     }
 }
 
+/// BEAMER-LATENCY: a page's convergence test runs at the end of the
+/// output routine that shipped it (`Point::OutputEnd`), not just after its
+/// `\shipout`, where LaTeX's `\ShipoutBox` (set inside the output routine's
+/// group and shipped with `\copy`) still holds the page: the test there
+/// failed on every edited page, and one more page was typeset before the
+/// next. An edit on a page now converges at that page. Every compile equals
+/// scratch runs, also where one output routine ships several pages (float
+/// pages at `\clearpage`) and where a `\shipout` comes from outside the
+/// output routine.
+#[test]
+fn a_page_converges_at_the_end_of_its_output_routine() {
+    let Some(e) = env() else {
+        common::no_texlive();
+        return;
+    };
+    let dir = e.dir.join("outputend");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    // pages 1-6: one section each; then three float-only figures that
+    // `\clearpage` ships as float pages from one output routine, a page
+    // shipped by a `\shipout` in the body, and two more sections
+    let doc = |page: usize, word: &str| -> String {
+        let mut s = String::from("\\documentclass{article}\n\\begin{document}\n");
+        for k in 1..=6 {
+            let w = if k == page { word } else { "omega" };
+            s.push_str(&format!("\\section{{Part {k}}}\n"));
+            s.push_str(&para(k, w));
+            s.push_str("\\newpage\n");
+        }
+        for k in 1..=3 {
+            let w = if page == 7 && k == 2 { word } else { "omega" };
+            s.push_str(&format!(
+                "\\begin{{figure}}[p]\\centering\\rule{{4cm}}{{6cm}}\\par Figure {k}, {w}.\\end{{figure}}\n"
+            ));
+        }
+        s.push_str("Text before the float pages.\n\\clearpage\n");
+        let w = if page == 8 { word } else { "omega" };
+        s.push_str(&format!(
+            "\\shipout\\hbox{{A page shipped from the body, {w}.}}\n"
+        ));
+        for k in 7..=8 {
+            s.push_str(&format!("\\section{{Part {k}}}\n"));
+            s.push_str(&para(k, "omega"));
+            s.push_str("\\newpage\n");
+        }
+        s.push_str("\\end{document}\n");
+        s
+    };
+    let mut h = Host::start(&e, &dir);
+    for k in 0..4 {
+        let r = compile_and_check(&e, &mut h, &dir, &[("doc.tex", &doc(0, "omega"))], "settle");
+        if r.contains("\"mode\":\"unchanged\"") || k == 3 {
+            break;
+        }
+    }
+    // an edit on page 3 converges at page 3 (two letters swapped: no
+    // character the fonts had not used, which `pdf_char_used` would keep)
+    for (word, what) in [
+        ("omgea", "two letters swapped on page 3"),
+        ("omega", "its revert"),
+    ] {
+        let r = compile_and_check(&e, &mut h, &dir, &[("doc.tex", &doc(3, word))], what);
+        assert!(r.contains("\"mode\":\"incremental\""), "{what}: {r}");
+        assert_eq!(field(&r, "converged_at"), "3", "{what}: {r}");
+    }
+    // the float pages (no `\caption`, which would change the `.aux`), and the
+    // page shipped from the body: equal to scratch (a float page converges
+    // at the end of the routine that ships the last of them; the body's
+    // `\shipout` is a page without an output routine, tested at its own
+    // checkpoint as before)
+    for (page, word, what) in [
+        (7, "omgea", "a word on a float page"),
+        (7, "omega", "its revert"),
+        (8, "omgea", "the body's \\shipout"),
+        (8, "omega", "its revert"),
+    ] {
+        let r = compile_and_check(&e, &mut h, &dir, &[("doc.tex", &doc(page, word))], what);
+        assert!(r.contains("\"mode\":\"incremental\""), "{what}: {r}");
+        if page == 7 {
+            assert_ne!(field(&r, "converged_at"), "null", "{what}: {r}");
+        }
+    }
+}
+
 /// BEAMER-V3: a form (`\pdfxform`) is shipped after the page that first
 /// refers to it, which flushes its box and deletes (and nulls) its
 /// attribute and resource token lists; `pdf_mem` keeps the box pointer,

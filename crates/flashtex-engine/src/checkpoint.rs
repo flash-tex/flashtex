@@ -159,7 +159,13 @@ impl FileVisit for FlushFiles {
 pub enum Point {
     /// After `\document` expanded: S₀ (§5.1).
     BeginDocument,
-    /// After a `\shipout` (§5.2).
+    /// After a `\shipout` (§5.2). With `Layer::output_end`, a `\shipout`
+    /// inside the output routine is checkpointed at the first `big_switch`
+    /// after the routine ends instead: there LaTeX's `\ShipoutBox`, set in
+    /// the routine's group, is given back, and the convergence test there
+    /// compares the state the next page starts from (`crate::incr`). The
+    /// pages shipped in between are announced to the observer without one
+    /// (`Observer::on_page`).
     Shipout,
     /// After ~20 ms of engine time without one (§5.2: heavy pages).
     Timed,
@@ -203,6 +209,10 @@ pub trait Observer {
     fn shipped(&self) -> usize {
         0
     }
+    /// A page was shipped inside the output routine, whose checkpoint
+    /// (`Point::Shipout`) comes when the routine ends; `rec` is the host
+    /// state now (`Layer::output_end`).
+    fn on_page(&mut self, _g: &mut Globals, _rec: &ExtRecord) {}
 }
 
 /// The exit status of a run an [`Observer`] stopped.
@@ -223,6 +233,9 @@ const REQ_AUX_DONE: i32 = 8;
 /// `\document`'s body was pushed (`ckpt_on_arm`): the `.aux` point of a run
 /// with no `.aux`, before `\document` looks for it.
 const REQ_AUX_ARM: i32 = 9;
+/// A page was shipped inside the output routine: its checkpoint is taken
+/// when the routine has ended (`Layer::output_end`).
+const REQ_OUTPUT_END: i32 = 10;
 
 /// `hash_base` (tex.web §222): `active_base + 256 + 256 + 1`, the same in
 /// every configuration.
@@ -430,6 +443,9 @@ pub struct Layer {
     /// (`Observer::take_held_segment`; `crate::incr`: an edit's run until its
     /// edited page has shipped).
     pub segment_hold: bool,
+    /// A page shipped inside the output routine is checkpointed when the
+    /// routine ends (`Point::Shipout`).
+    pub output_end: bool,
     /// Lines read (`input_ln`) so far, and when the last checkpoint was
     /// taken: a segment checkpoint needs a line read since the last one
     /// (two checkpoints with the same input consumed are the same restart
@@ -1808,6 +1824,23 @@ impl Globals {
 
     /// Called at `big_switch` whenever `ckpt_request` is nonzero
     /// (changes/checkpoint.ch).
+    /// A page shipped inside the output routine, before its checkpoint:
+    /// the observer learns of it with the host state now (its files'
+    /// lengths: the page's PDF bytes), as a checkpoint's record would say.
+    fn note_page(&mut self) {
+        let rec = match self.capture_ext() {
+            Ok(r) => r,
+            Err(e) => {
+                self.layer().errors.push(e);
+                return;
+            }
+        };
+        if let Some(mut obs) = self.layer().observer.take() {
+            obs.on_page(self, &rec);
+            self.layer().observer = Some(obs);
+        }
+    }
+
     pub fn flashtex_checkpoint_hook(&mut self) {
         let req = std::mem::replace(&mut self.ckpt_request, 0);
         match req {
@@ -1818,7 +1851,15 @@ impl Globals {
                 }
             }
             REQ_BEGIN_DOCUMENT => self.hook_checkpoint(Point::BeginDocument),
+            REQ_SHIPOUT if self.output_active && self.layer().output_end => {
+                // The page is out; its checkpoint waits for the end of the
+                // output routine (a later `\shipout` in it asks again).
+                self.note_page();
+                self.ckpt_request = REQ_OUTPUT_END;
+            }
             REQ_SHIPOUT => self.hook_checkpoint(Point::Shipout),
+            REQ_OUTPUT_END if self.output_active => self.ckpt_request = REQ_OUTPUT_END,
+            REQ_OUTPUT_END => self.hook_checkpoint(Point::Shipout),
             REQ_TIMED => self.hook_checkpoint(Point::Timed),
             REQ_AUX => {
                 // L5: the read-set begins when this `.aux` has been read

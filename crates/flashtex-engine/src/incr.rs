@@ -150,6 +150,9 @@ pub struct Options {
     /// None of them in an edit's first pass before its edited page has
     /// shipped (`Obs::segment_hold`; FLASHTEX_SEGMENT_HOLD=0 takes them).
     pub segment_hold: bool,
+    /// Checkpoint a page shipped by the output routine at the routine's end
+    /// (`Layer::output_end`; FLASHTEX_OUTPUT_END=0 at the `\shipout`).
+    pub output_end: bool,
     /// Test convergence after each page of an incremental run.
     pub converge: bool,
     /// Print what differs at each convergence test to stderr.
@@ -179,6 +182,7 @@ impl Default for Options {
             timed_s: 0.0,
             segment_s: None,
             segment_hold: std::env::var("FLASHTEX_SEGMENT_HOLD").map_or(true, |v| v != "0"),
+            output_end: std::env::var("FLASHTEX_OUTPUT_END").map_or(true, |v| v != "0"),
             converge: true,
             debug: std::env::var_os("FLASHTEX_INCR_DEBUG").is_some(),
             relabel: std::env::var_os("FLASHTEX_NO_RELABEL").is_none(),
@@ -454,6 +458,11 @@ struct Obs {
     /// The previous run's page frames, and the first page of this run
     /// whose frame differs (`Report::edited`).
     old_frames: Vec<[u64; 2]>,
+    /// A page shipped inside the output routine, whose checkpoint the
+    /// routine's end brings (`Observer::on_page`), and whether the viewport
+    /// stop is due there.
+    awaiting: Option<usize>,
+    stop_due: bool,
     edited: Option<(usize, f64, f64)>,
     instr0: Option<u64>,
     edited_instr: Option<u64>,
@@ -2005,6 +2014,16 @@ impl Observer for Obs {
         self.pages_so_far()
     }
 
+    /// A page shipped inside the output routine: its checkpoint comes when
+    /// the routine ends (`Layer::output_end`). It is a page of the run now,
+    /// with no checkpoint of its own unless it is the routine's last.
+    fn on_page(&mut self, g: &mut Globals, rec: &ExtRecord) {
+        let j = self.page_out(g, rec, None);
+        if self.stop_at == Some(j) {
+            self.stop_due = true;
+        }
+    }
+
     /// Held back before the edited page: taken where newer work stops the
     /// run (`on_checkpoint` stops it there, as at any segment checkpoint).
     fn take_held_segment(&mut self, g: &mut Globals) -> bool {
@@ -2029,40 +2048,25 @@ impl Observer for Obs {
             Ok(r) => r,
             Err(_) => return Action::Continue,
         };
-        let (frame, frame_len) = self.frame(&rec);
-        self.new_pages.push(Page {
-            ckpt: Some(id),
-            frame,
-            frame_len,
-        });
-        let j = self.pages_so_far();
-        self.taken.push((id, j));
+        // (the end of an output routine that shipped pages: the last of
+        // them gets this checkpoint)
+        let j = match self.awaiting.take() {
+            Some(j) => {
+                if let Some(p) = self.new_pages.last_mut() {
+                    p.ckpt = Some(id);
+                }
+                self.taken.push((id, j));
+                j
+            }
+            None => self.page_out(g, &rec, Some(id)),
+        };
         if self.checkmem {
             check_mem(g, j);
         }
-        self.page_s = self.t0.elapsed().as_secs_f64();
-        let cpu = thread_cpu_s() - self.cpu0;
-        self.page_times.push((j, self.page_s, cpu));
-        let unchanged = self.old_frames.get(j - 1) == Some(&frame);
-        if g.layer().segment_hold
-            && (self.edited.is_some() || !unchanged || self.new_pages.len() >= PROTECT_PAGES)
-        {
-            // the edited page is out (or none changed in the pages it could
-            // be): restart points between pages again
-            g.layer().segment_hold = false;
-        }
-        if self.edited.is_none() && !unchanged {
-            self.edited = Some((j, self.page_s, cpu));
-            let now = crate::os::thread_counts();
-            if self.first_incremental {
-                crate::os::perf_mark(false);
-                crate::macroprof::window_close(g);
-            }
-            self.edited_instr = self.instr0.zip(now).map(|(a, b)| b.0 - a);
-            self.typeset_instr = self.instr_go.zip(now).map(|(a, b)| (b.0 - a.0, b.1 - a.1));
-        }
+        let unchanged = self.old_frames.get(j - 1) == self.new_pages.last().map(|p| &p.frame);
+        let stop_here = self.stop_at == Some(j) || std::mem::take(&mut self.stop_due);
         // newer work first: not even a convergence test
-        if self.stop_at != Some(j) && self.preempt_now(g) {
+        if !stop_here && self.preempt_now(g) {
             return Action::Stop;
         }
         // The edited page first (DESIGN.md §1.2): a restart just before
@@ -2103,7 +2107,7 @@ impl Observer for Obs {
                     // to its edited page first: the test only failed (and
                     // is not counted as a miss)
                     self.preempted = false;
-                    if self.stop_at == Some(j) {
+                    if stop_here {
                         return Action::Stop;
                     }
                     return Action::Continue;
@@ -2122,7 +2126,7 @@ impl Observer for Obs {
                 };
             }
         }
-        if self.stop_at == Some(j) {
+        if stop_here {
             return Action::Stop;
         }
         Action::Continue
@@ -2130,6 +2134,46 @@ impl Observer for Obs {
 }
 
 impl Obs {
+    /// A page is out (`rec`: the host state after it): its record, with
+    /// checkpoint `id` (`None`: one shipped inside the output routine,
+    /// whose checkpoint comes at the routine's end, `on_page`), its time,
+    /// and whether it is the edited page. Returns its number.
+    fn page_out(&mut self, g: &mut Globals, rec: &ExtRecord, id: Option<CheckpointId>) -> usize {
+        let (frame, frame_len) = self.frame(rec);
+        self.new_pages.push(Page {
+            ckpt: id,
+            frame,
+            frame_len,
+        });
+        let j = self.pages_so_far();
+        match id {
+            Some(id) => self.taken.push((id, j)),
+            None => self.awaiting = Some(j),
+        }
+        self.page_s = self.t0.elapsed().as_secs_f64();
+        let cpu = thread_cpu_s() - self.cpu0;
+        self.page_times.push((j, self.page_s, cpu));
+        let unchanged = self.old_frames.get(j - 1) == Some(&frame);
+        if g.layer().segment_hold
+            && (self.edited.is_some() || !unchanged || self.new_pages.len() >= PROTECT_PAGES)
+        {
+            // the edited page is out (or none changed in the pages it could
+            // be): restart points between pages again
+            g.layer().segment_hold = false;
+        }
+        if self.edited.is_none() && !unchanged {
+            self.edited = Some((j, self.page_s, cpu));
+            let now = crate::os::thread_counts();
+            if self.first_incremental {
+                crate::os::perf_mark(false);
+                crate::macroprof::window_close(g);
+            }
+            self.edited_instr = self.instr0.zip(now).map(|(a, b)| b.0 - a);
+            self.typeset_instr = self.instr_go.zip(now).map(|(a, b)| (b.0 - a.0, b.1 - a.1));
+        }
+        j
+    }
+
     /// Newer work may not stop the run yet (`protect_edit`); a cancel
     /// always may.
     fn protecting(&self) -> bool {
@@ -2560,6 +2604,7 @@ impl Session {
             l.aux_armed = true;
         }
         g.checkpoint_every_shipout(true);
+        g.layer().output_end = self.opts.output_end;
         g.layer().timed_s = self.opts.timed_s;
         g.checkpoint_segments(self.opts.segment_s);
         g.layer().segment_hold = false;
@@ -4067,6 +4112,8 @@ impl Session {
                 .collect(),
             known_ck: self.ck_pages.clone(),
             old_frames: self.pages.iter().map(|p| p.frame).collect(),
+            awaiting: None,
+            stop_due: false,
             edited: None,
             patched: self.defpatch.keys().copied().collect(),
             preempt: None,
@@ -4150,6 +4197,7 @@ impl Session {
         // the passes after this one start there, not from the format)
         g.aux_point_at_arm(self.opts.aux_point);
         g.checkpoint_every_shipout(true);
+        g.layer().output_end = self.opts.output_end;
         g.layer().timed_s = self.opts.timed_s;
         g.checkpoint_segments(self.opts.segment_s);
         g.layer().segment_hold = false;
@@ -4389,6 +4437,7 @@ impl Session {
         obs.first_incremental = self.pass == 1;
         obs.protect_edit = self.pass == 1 && self.starved;
         g.checkpoint_every_shipout(true);
+        g.layer().output_end = self.opts.output_end;
         g.layer().timed_s = self.opts.timed_s;
         g.checkpoint_segments(self.opts.segment_s);
         // Segment checkpoints (DESIGN.md §5.2) before the edited page only
