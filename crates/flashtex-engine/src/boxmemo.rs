@@ -195,7 +195,9 @@ struct Context {
 fn key_hash(k1: &[i32], ctx: &Context, k2: &[i32], k4: &[i32]) -> u64 {
     let mut h: u64 = 0x9e37_79b9_7f4a_7c15;
     let mut mix = |x: i32| {
-        h = (h ^ x as u32 as u64).wrapping_mul(0x0100_0000_01b3).rotate_left(23);
+        h = (h ^ x as u32 as u64)
+            .wrapping_mul(0x0100_0000_01b3)
+            .rotate_left(23);
     };
     for &x in k1.iter().chain(k2).chain(k4) {
         mix(x);
@@ -672,10 +674,7 @@ impl Globals {
                     self.str_start[t as usize + 1] as usize,
                 );
                 if b - a == name.len()
-                    && self.str_pool[a..b]
-                        .iter()
-                        .zip(name)
-                        .all(|(&c, &n)| c == n)
+                    && self.str_pool[a..b].iter().zip(name).all(|(&c, &n)| c == n)
                 {
                     return Some(p);
                 }
@@ -885,28 +884,35 @@ impl Globals {
         let k4 = self.bm_k4();
         let hash = key_hash(&k1, &ctx, &k2, &k4);
         // the variants whose K1, context, K2 and K4 hold (most recent first)
-        let candidates: Vec<Candidate> =
-            ST.with(|s| {
-                let s = s.borrow();
-                let Some(v) = s.store.get(&cs) else {
-                    return vec![];
-                };
-                let mut c: Vec<_> = v
-                    .iter()
-                    .enumerate()
-                    .filter(|(_, e)| {
-                        e.hash == hash
-                            && e.k1 == k1
-                            && e.ctx == ctx
-                            && e.k2 == k2
-                            && e.k4 == k4
-                            && e.line.is_none_or(|l| l == self.line)
-                    })
-                    .map(|(i, e)| (e.last_used, i, e.k3.clone(), e.absent.clone(), e.voids.clone()))
-                    .collect();
-                c.sort_by_key(|x| std::cmp::Reverse(x.0));
-                c.into_iter().map(|(_, i, a, b, d)| (i, a, b, d)).collect()
-            });
+        let candidates: Vec<Candidate> = ST.with(|s| {
+            let s = s.borrow();
+            let Some(v) = s.store.get(&cs) else {
+                return vec![];
+            };
+            let mut c: Vec<_> = v
+                .iter()
+                .enumerate()
+                .filter(|(_, e)| {
+                    e.hash == hash
+                        && e.k1 == k1
+                        && e.ctx == ctx
+                        && e.k2 == k2
+                        && e.k4 == k4
+                        && e.line.is_none_or(|l| l == self.line)
+                })
+                .map(|(i, e)| {
+                    (
+                        e.last_used,
+                        i,
+                        e.k3.clone(),
+                        e.absent.clone(),
+                        e.voids.clone(),
+                    )
+                })
+                .collect();
+            c.sort_by_key(|x| std::cmp::Reverse(x.0));
+            c.into_iter().map(|(_, i, a, b, d)| (i, a, b, d)).collect()
+        });
         let mut why = "NotRecorded";
         // ... and of those, the first whose K3 and K7 hold
         for (i, k3, absent, voids) in candidates {

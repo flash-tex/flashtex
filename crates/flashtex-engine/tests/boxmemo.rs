@@ -75,7 +75,10 @@ fn check(tag: &str, src: &str) -> String {
     let on = run(&d, "on", "measure");
     let verify = run(&d, "verify", "measure");
     assert_eq!(off.log, on.log, "{tag}: log with BOX-MEMO on differs");
-    assert_eq!(off.log, verify.log, "{tag}: log in verification mode differs");
+    assert_eq!(
+        off.log, verify.log,
+        "{tag}: log in verification mode differs"
+    );
     assert_eq!(
         stat(&verify.stats, "verify_differences"),
         0,
@@ -112,7 +115,7 @@ fn replays_and_matches() {
         &[
             PRELUDE,
             "\\n=0 \\measure{5pt}\\show\\n=0 \\measure{5pt}\\show\\n=0 \\measure{5pt}\\show\
-             \\n=0 \\measure{5pt}\\show\\end\n"
+             \\n=0 \\measure{5pt}\\show\\end\n",
         ]
         .concat(),
     );
@@ -133,7 +136,7 @@ fn the_key_falls_back() {
              \\n=7 \\measure{5pt}\\show\\n=0 \\def\\pad{4pt}\\measure{5pt}\\show\
              \\n=0 \\boxmaxdepth=0pt \\measure{5pt}\\show\
              \\n=0 \\def\\absent{}\\measure{5pt}\\show\
-             \\n=0 \\measure{5pt}\\show\\n=0 \\measure{5pt}\\show\\end\n"
+             \\n=0 \\measure{5pt}\\show\\n=0 \\measure{5pt}\\show\\end\n",
         ]
         .concat(),
     );
