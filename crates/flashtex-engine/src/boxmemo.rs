@@ -476,6 +476,9 @@ struct Scratch {
     cur_order: i32,
     def_ref: i32,
     long_state: i32,
+    // `x_over_n`'s and `xn_over_d`'s remainder (tex.web §106, §107): read
+    // only right after the call that sets it (§458, §461, §716, §717)
+    remainder: i32,
     // pseudo-printing scratch (D9's list)
     tally: i32,
     first_count: i32,
@@ -504,6 +507,7 @@ impl Scratch {
             cur_order: g.cur_order,
             def_ref: g.def_ref,
             long_state: g.long_state,
+            remainder: g.remainder,
             tally: g.tally,
             first_count: g.first_count,
             trick_count: g.trick_count,
@@ -548,6 +552,7 @@ impl Scratch {
         g.cur_order = self.cur_order;
         g.def_ref = self.def_ref;
         g.long_state = self.long_state;
+        g.remainder = self.remainder;
         g.tally = self.tally;
         g.first_count = self.first_count;
         g.trick_count = self.trick_count;
@@ -1926,6 +1931,13 @@ impl Globals {
         fail_now();
     }
 
+    fn bm_null_hold_head(&mut self) {
+        let h = k::hold_head as usize;
+        if self.mem[h].hh().rh() != 0 {
+            self.mem[h].set_hh_rh(0);
+        }
+    }
+
     /// Debugging a full-state difference: where the lists the message names
     /// hang (the static heads, the box registers, the semantic nest).
     fn bm_locate_debug(&self, msg: &str) {
@@ -1978,6 +1990,14 @@ impl Globals {
         let name = self.cs_name_string(cs);
         pop_used_up(self);
         let scratch = Scratch::take(self);
+        // `link(hold_head)` is written before every read within a command
+        // (pdftex.web: the alignment preamble scan §779-§784 and `init_span`
+        // §789 set it first; `fin_col` §808; `reconstitute` §905 and the
+        // hyphenation loop §913-§918 set it to null first), so between two
+        // commands it is a dangling pointer to cells either path may have
+        // reused: made null on both paths (the convergence test's
+        // `temp_head` and `backup_head` rule, iso.rs, for one more head)
+        self.bm_null_hold_head();
         let result = (|| -> Result<usize, String> {
             let n = self.checkpoint()?;
             self.restore(fv.ck)?;
@@ -1987,6 +2007,7 @@ impl Globals {
             self.warning_index = fv.warn;
             pop_used_up(self);
             scratch.put(self);
+            self.bm_null_hold_head();
             let r = crate::incr::same_state(self, n);
             if r.is_err() && debug() {
                 self.bm_locate_debug(r.as_ref().err().unwrap());
