@@ -88,7 +88,7 @@ begin if intr_rec_on then flashtex_intr_unsave;
 if bm_rec_on then flashtex_bm_unsave;
 @z
 
-@x pdftex.web l.7404 - \.{true} dimensions read and set |mag_set|
+@x pdftex.web l.7349 - \.{true} dimensions read and set |mag_set|
 @p procedure prepare_mag;
 begin if (mag_set>0)and(mag<>mag_set) then
 @y
@@ -152,7 +152,7 @@ if intr_rec_on then flashtex_intr_internal;
 if bm_rec_on then flashtex_bm_internal;
 @z
 
-@x pdftex.web l.9741 - ... and its token register reads
+@x pdftex.web l.9787 - ... and its token register reads
     if m=mem_bot then
       begin scan_register_num;
       if cur_val<256 then cur_val:=equiv(toks_base+cur_val)
@@ -163,7 +163,7 @@ if bm_rec_on then flashtex_bm_internal;
       if cur_val<256 then cur_val:=equiv(toks_base+cur_val)
 @z
 
-@x pdftex.web l.9748
+@x pdftex.web l.9795
     else cur_val:=sa_ptr(m)
   else cur_val:=equiv(m);
   cur_val_level:=tok_val;
@@ -175,7 +175,16 @@ if bm_rec_on then flashtex_bm_internal;
   cur_val_level:=tok_val;
 @z
 
-@x pdftex.web l.9810 - a recording's register reads are part of its key
+@x pdftex.web l.9952 - a box register's dimension read by a recording
+begin scan_register_num; fetch_box(q);
+if q=null then cur_val:=0 @+else cur_val:=mem[q+m].sc;
+@y
+begin scan_register_num; fetch_box(q);
+if bm_rec_on then flashtex_bm_box_use(cur_val,1);
+if q=null then cur_val:=0 @+else cur_val:=mem[q+m].sc;
+@z
+
+@x pdftex.web l.10098 - a recording's register reads are part of its key
 begin if (m<mem_bot)or(m>lo_mem_stat_max) then
   begin cur_val_level:=sa_type(m);
 @y
@@ -184,7 +193,7 @@ begin if (m<mem_bot)or(m>lo_mem_stat_max) then
   cur_val_level:=sa_type(m);
 @z
 
-@x pdftex.web l.9815
+@x pdftex.web l.10103
 else  begin scan_register_num; cur_val_level:=m-mem_bot;
 @y
 else  begin scan_register_num; cur_val_level:=m-mem_bot;
@@ -196,6 +205,15 @@ begin if intr_rec_on then flashtex_intr_pop_cond;
 @y
 begin if intr_rec_on then flashtex_intr_pop_cond;
 if bm_rec_on then flashtex_bm_pop_cond;
+@z
+
+@x pdftex.web l.11983 - a box register's kind tested by a recording
+begin scan_register_num; fetch_box(p);
+if this_if=if_void_code then b:=(p=null)
+@y
+begin scan_register_num; fetch_box(p);
+if bm_rec_on then flashtex_bm_box_use(cur_val,2);
+if this_if=if_void_code then b:=(p=null)
 @z
 
 @x pdftex.web l.28752 (after changes/intrinsics.ch) - |big_switch| ends recordings, marks its own expansions, and checks every command a recording runs
@@ -221,6 +239,15 @@ get_x_token; intr_at_switch:=false; bm_at_switch:=false;@/
 reswitch: @<Give diagnostic information, if requested@>;
 if intr_rec_on then flashtex_intr_command;
 if bm_rec_on then flashtex_bm_command;
+@z
+
+@x pdftex.web l.29735 - a box a recording moves out of its register
+box_code: begin scan_register_num; fetch_box(cur_box);
+  change_box(null); {the box becomes void, at the same level}
+@y
+box_code: begin scan_register_num; fetch_box(cur_box);
+  change_box(null); {the box becomes void, at the same level}
+  if bm_rec_on then flashtex_bm_box_use(cur_val,3);
 @z
 
 @x pdftex.web l.31632 (after changes/intrinsics.ch) - ... and every assignment
@@ -286,7 +313,7 @@ assign_font_int: begin if bm_on then flashtex_bm_font_changed;
   b:=(eq_type(cur_cs)<>undefined_cs);
 @z
 
-@x pdftex.web l.39516 - a recording that fetches a box register is checked
+@x pdftex.web l.39598 - a recording that fetches a box register is checked
 @d fetch_box(#)== {fetch |box(cur_val)|}
   if cur_val<256 then #:=box(cur_val)
   else  begin find_sa_element(box_val,cur_val,false);
@@ -377,6 +404,7 @@ procedure flashtex_bm_pop_cond; external;
 procedure flashtex_bm_switch; external;
 procedure flashtex_bm_command; external;
 procedure flashtex_bm_box(@!n:integer); external;
+procedure flashtex_bm_box_use(@!n:integer;@!k:integer); external;
 procedure flashtex_bm_reg_read(@!t:integer;@!n:integer); external;
 procedure flashtex_bm_sa_read(@!p:pointer); external;
 procedure flashtex_bm_reg_loc(@!l:pointer;@!e:boolean); external;

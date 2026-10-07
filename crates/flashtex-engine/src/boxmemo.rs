@@ -99,7 +99,7 @@ struct Config {
 }
 
 /// The macros offered by default (BOX-MEMO.md §2).
-pub const DEFAULT_NAMES: &[&str] = &["fb@sizeofframe"];
+pub const DEFAULT_NAMES: &[&str] = &["fb@sizeofframe", "*@framecommand"];
 
 #[derive(Default, Debug)]
 pub struct Stats {
@@ -240,6 +240,7 @@ type Candidate = (
     Vec<Vec<i32>>,
     Vec<i32>,
     Vec<(RegId, Vec<i32>)>,
+    Vec<(i32, Vec<i32>)>,
 );
 
 struct Entry {
@@ -261,6 +262,14 @@ struct Entry {
     voids: Vec<i32>,
     /// `line` when the recording read `\inputlineno` (LaTeX's `\begin`).
     line: Option<i32>,
+    /// Foreign box registers read for their dimensions or kind, and those
+    /// moved into the output (the holes, in order): by `box_key`.
+    kb: Vec<(i32, Vec<i32>)>,
+    holes: Vec<(i32, Vec<i32>)>,
+    /// A draw call's output: the nodes it appended to the current list,
+    /// and the list's `aux` after them.
+    frag: Option<crate::boxfrag::Frag>,
+    aux: u64,
     ops: Vec<Op>,
     last_badness: i32,
     last_used: u64,
@@ -316,6 +325,12 @@ struct Rec {
     /// ends, and the replay makes it so (`\global\setbox` to void, at the
     /// end of the log).
     gboxes: Vec<i32>,
+    /// A foreign box register just fetched, waiting for what is done with
+    /// it (`flashtex_bm_box_use`): (register, box).
+    pending_box: Option<(i32, i32)>,
+    kb: Vec<(i32, Vec<i32>)>,
+    /// (register, box node, key) of each box moved out of a foreign register
+    holes: Vec<(i32, i32, Vec<i32>)>,
     ops: Vec<Op>,
     /// Verifying the entry of this index (of `store[cs]`).
     verify: Option<usize>,
@@ -1184,6 +1199,15 @@ impl Globals {
             self.str_start[t as usize + 1] as usize,
         );
         names.iter().any(|n| {
+            // `*suffix`: every name that ends with it (ntheorem's
+            // `\<env>@framecommand`)
+            if let Some(suf) = n.strip_prefix(b"*") {
+                return b - a >= suf.len()
+                    && self.str_pool[b - suf.len()..b]
+                        .iter()
+                        .zip(suf)
+                        .all(|(&c, &d)| c == d as i32);
+            }
             b - a == n.len()
                 && self.str_pool[a..b]
                     .iter()
@@ -1267,20 +1291,26 @@ impl Globals {
                         e.absent.clone(),
                         e.voids.clone(),
                         e.kr.clone(),
+                        e.kb.iter().chain(&e.holes).cloned().collect::<Vec<_>>(),
                     )
                 })
                 .collect();
             c.sort_by_key(|x| std::cmp::Reverse(x.0));
-            c.into_iter().map(|(_, i, a, b, d, r)| (i, a, b, d, r)).collect()
+            c.into_iter()
+                .map(|(_, i, a, b, d, r, x)| (i, a, b, d, r, x))
+                .collect()
         });
         let mut why = "NotRecorded";
         // ... and of those, the first whose K3 and K7 hold
-        for (i, k3, absent, voids, kr) in candidates {
+        for (i, k3, absent, voids, kr, kb) in candidates {
             let absent_ok = absent.iter().all(|n| match self.bm_find_cs(n) {
                 None => true,
                 Some(p) => self.bm_eq(p).hh().b0() == k::undefined_cs,
             }) && voids.iter().all(|&n| self.bm_box_value(n) == 0)
-                && kr.iter().all(|(r, v)| self.bm_reg_value(*r) == *v);
+                && kr.iter().all(|(r, v)| self.bm_reg_value(*r) == *v)
+                && kb
+                    .iter()
+                    .all(|(n, v)| self.bm_box_key(self.bm_box_value(*n)) == *v);
             if absent_ok
                 && k3
                     .iter()
@@ -1390,6 +1420,9 @@ impl Globals {
             line_read: false,
             boxes: HashSet::new(),
             gboxes: vec![],
+            pending_box: None,
+            kb: vec![],
+            holes: vec![],
             ops: vec![],
             verify,
         };
@@ -1781,18 +1814,79 @@ impl Globals {
     #[cold]
     #[inline(never)]
     pub fn flashtex_bm_box(&mut self, n: i32) {
+        let pending = self.bm_with_rec(|r| r.pending_box.is_some()).unwrap_or(false);
+        if pending {
+            // the previous fetch was not a dimension, a test or a move: the
+            // box's contents were read (`\copy`, `\unhbox`, `\vsplit`, ...)
+            return self.bm_abort("BoxContent");
+        }
         let written = self.bm_with_rec(|r| r.boxes.contains(&n)).unwrap_or(false);
         if written {
             return;
         }
-        if self.bm_box_value(n) != 0 {
-            return self.bm_abort("BoxRead");
+        let p = self.bm_box_value(n);
+        if p == 0 {
+            self.bm_with_rec(|r| {
+                if !r.voids.contains(&n) {
+                    r.voids.push(n);
+                }
+            });
+            return;
         }
+        self.bm_with_rec(|r| r.pending_box = Some((n, p)));
+    }
+
+    /// The box register a recording just fetched is used: `k` 1 for a
+    /// dimension (`\wd` & co.), 2 for a test (`\ifvoid`, `\ifhbox`), 3 for a
+    /// move (`\box`, which voids the register).
+    #[cold]
+    #[inline(never)]
+    pub fn flashtex_bm_box_use(&mut self, n: i32, k: i32) {
+        let Some(Some((m, p))) = self.bm_with_rec(|r| r.pending_box.take()) else {
+            return;
+        };
+        if m != n {
+            return self.bm_abort("BoxContent");
+        }
+        let key = self.bm_box_key(p);
         self.bm_with_rec(|r| {
-            if !r.voids.contains(&n) {
-                r.voids.push(n);
+            if k == 3 {
+                r.holes.push((n, p, key));
+                // void now, and the call's own from here on
+                r.boxes.insert(n);
+            } else if !r.kb.iter().any(|(x, _)| *x == n) {
+                r.kb.push((n, key));
             }
         });
+    }
+
+    /// What a box's surroundings can see of it without reading its
+    /// contents (`hpack` and `vpack` read a box node's width, height, depth
+    /// and shift, tex.web §653, §669; `\ifhbox` its type).
+    fn bm_box_key(&self, p: i32) -> Vec<i32> {
+        if p == 0 {
+            return vec![-1];
+        }
+        let m = |o: i32| self.mem[(p + o) as usize].int();
+        vec![self.mem[p as usize].hh().b0(), m(1), m(2), m(3), m(4)]
+    }
+
+    /// `change_box(null)`: box register `n` becomes void at its level
+    /// (tex.web §1079, e-TeX's `set_sa_box`).
+    fn bm_void_box(&mut self, n: i32) {
+        if n < 256 {
+            let i = (BOX_BASE + n - 1) as usize;
+            self.eqtb[i].set_hh_rh(0);
+        } else {
+            self.find_sa_element(BOX_VAL, n, false);
+            let q = self.cur_ptr;
+            if q != 0 {
+                self.mem[(q + 1) as usize].set_hh_rh(0);
+                let r = self.mem[(q + 1) as usize].hh().lh() + 1;
+                self.mem[(q + 1) as usize].set_hh_lh(r);
+                self.delete_sa_ref(q);
+            }
+        }
     }
 
     /// `box(n)` (a sparse one looked up without creating anything).
@@ -2000,9 +2094,14 @@ impl Globals {
             Some("Error")
         } else if self.after_token != 0 || self.scanner_status != scanner {
             Some("State")
-        } else if end.nest_ptr != start.nest_ptr || end.mode != start.mode || end.tail != start.tail
-        {
+        } else if end.nest_ptr != start.nest_ptr || end.mode != start.mode {
             Some("OuterList")
+        } else if end.tail != start.tail && start.mode != -k::hmode {
+            // only in restricted horizontal mode may a call append: no
+            // paragraph, no page builder
+            Some("OuterList")
+        } else if self.bm_with_rec(|r| r.pending_box.is_some()).unwrap_or(false) {
+            Some("BoxContent")
         } else if end.page != start.page {
             Some("Page")
         } else if end.fonts != start.fonts || end.font_glue != start.font_glue {
@@ -2046,16 +2145,44 @@ impl Globals {
                 });
             }
         }
+        // a draw call's output, with its holes
+        let mut frag = None;
+        if end.tail != start.tail || !rec.holes.is_empty() {
+            let holes: Vec<i32> = rec.holes.iter().map(|h| h.1).collect();
+            if end.tail == start.tail {
+                return self.bm_abort_taken(rec, "Hole");
+            }
+            let first = self.bm_link(start.tail);
+            match self.frag_take(first, 0, &holes) {
+                Ok(f) if self.cur_list.tail_field == end.tail => frag = Some(f),
+                Ok(_) => return self.bm_abort_taken(rec, "Tail"),
+                Err(w) => return self.bm_abort_taken(rec, w),
+            }
+        }
+        let aux = self.cur_list.aux_field.0;
         let last_badness = self.last_badness;
         if let Some(i) = rec.verify {
             let (cs, scanner) = (rec.cs, rec.scanner);
-            self.bm_verified(rec, i, last_badness);
+            self.bm_verified(rec, i, last_badness, &frag);
             return self.bm_verify_full(cs, i, scanner);
         }
-        self.bm_commit(rec, last_badness);
+        self.bm_commit(rec, last_badness, frag, aux);
     }
 
-    fn bm_commit(&mut self, rec: Rec, last_badness: i32) {
+    /// Abandon a recording already taken out of the state (its end check).
+    fn bm_abort_taken(&mut self, rec: Rec, why: &str) {
+        ST.with(|s| s.borrow_mut().rec = Some(rec));
+        self.bm_rec_on = true;
+        self.bm_abort(why);
+    }
+
+    fn bm_commit(
+        &mut self,
+        rec: Rec,
+        last_badness: i32,
+        frag: Option<crate::boxfrag::Frag>,
+        aux: u64,
+    ) {
         let line = self.line;
         let bytes = 4 * (rec.k1.len() + rec.k2.len() + rec.k4.len())
             + rec
@@ -2104,6 +2231,10 @@ impl Globals {
                 k3: rec.k3,
                 absent: rec.absent,
                 kr: rec.kr,
+                kb: rec.kb,
+                holes: rec.holes.iter().map(|h| (h.0, h.2.clone())).collect(),
+                frag,
+                aux,
                 voids: rec.voids,
                 line: rec.line_read.then_some(line),
                 ops: rec.ops,
@@ -2151,7 +2282,13 @@ impl Globals {
     }
 
     /// The normal path of a call the guard admitted, re-recorded: compare.
-    fn bm_verified(&mut self, rec: Rec, i: usize, last_badness: i32) {
+    fn bm_verified(
+        &mut self,
+        rec: Rec,
+        i: usize,
+        last_badness: i32,
+        frag: &Option<crate::boxfrag::Frag>,
+    ) {
         let name = self.cs_name_string(rec.cs);
         let fail = with_config(|c| c.verify_fail);
         ST.with(|s| {
@@ -2173,6 +2310,9 @@ impl Globals {
                     diffs.push(format!("op {j}: recorded {a:?} normal path {b:?}"));
                     break;
                 }
+            }
+            if e.frag != *frag {
+                diffs.push("the output nodes differ".to_string());
             }
             if e.last_badness != last_badness {
                 diffs.push(format!(
@@ -2459,6 +2599,30 @@ impl Globals {
             }
         }
         self.last_badness = last_badness;
+        // a draw call: the boxes it moved out of their registers, then its
+        // output appended to the current list
+        let draw = ST.with(|s| {
+            let s = s.borrow();
+            let e = s.store.get(&cs)?.get(i)?;
+            Some((e.holes.clone(), e.frag.clone(), e.aux))
+        });
+        if let Some((holes, Some(frag), aux)) = draw {
+            let mut nodes = vec![];
+            for (n, _) in &holes {
+                nodes.push(self.bm_box_value(*n));
+                self.bm_void_box(*n);
+            }
+            let save = self.scanner_status;
+            self.scanner_status = 0;
+            let (first, last) = self.frag_make(&frag, &nodes);
+            self.scanner_status = save;
+            if first != 0 {
+                let t = self.cur_list.tail_field;
+                self.mem[t as usize].set_hh_rh(first);
+                self.cur_list.tail_field = last;
+            }
+            self.cur_list.aux_field = crate::generated::types::memory_word(aux);
+        }
         let n = ops.len() as u64;
         ST.with(|s| {
             let mut s = s.borrow_mut();
