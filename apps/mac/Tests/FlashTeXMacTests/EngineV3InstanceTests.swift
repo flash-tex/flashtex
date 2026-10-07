@@ -86,7 +86,12 @@ final class EngineV3InstanceTests: XCTestCase {
         let s = model.engineV3
         let copy = try XCTUnwrap(s.projectCopy)
         let starts = s.hostStarts
-        try FileManager.default.removeItem(at: copy.deletingLastPathComponent())
+        // The first compile's DONE stamps the copy (`markComplete`, on the
+        // walk queue): removing the copy while the stamp is written races it
+        // (the removal fails), so the copy vanishes once it is stamped.
+        let base = copy.deletingLastPathComponent()
+        try await waitUntil("the stamp") { FileManager.default.fileExists(atPath: base.appendingPathComponent(EngineV3Mirror.stampName).path) }
+        try FileManager.default.removeItem(at: base)
         model.updateActiveText(model.activeText.replacingOccurrences(of: "One page", with: "Still here"))
         try await waitUntil("a new host") { s.hostStarts == starts + 1 && s.phase == .ready }
         try await waitUntil("the recompile") {
