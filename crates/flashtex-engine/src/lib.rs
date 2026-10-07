@@ -48,6 +48,8 @@ pub mod generated;
 #[cfg(not(feature = "tex82"))]
 pub mod host;
 #[cfg(not(feature = "tex82"))]
+pub mod boxmemo;
+#[cfg(not(feature = "tex82"))]
 pub mod incr;
 #[cfg(not(feature = "tex82"))]
 pub mod intrinsics;

@@ -714,6 +714,8 @@ impl Globals {
         // program sets (tex.ch [49.1265]): kpathsea's mktex discard flag,
         // as the restored state's `\batchmode` (or other mode) left it.
         crate::system::set_mktex_discard(self.kpse_make_tex_discard_errors);
+        // A BOX-MEMO recording cannot span a restore (BOX-MEMO.md §6).
+        crate::boxmemo::after_restore(self);
     }
 
     /// The whole engine state as bytes (scalars spilled first): what "bit

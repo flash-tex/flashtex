@@ -3243,6 +3243,7 @@ pub fn exit_process(g: &mut Globals, code: i32) -> ! {
     {
         g.flashtex_prof_finish();
         g.flashtex_intr_finish();
+        g.flashtex_bm_finish();
     }
     let _ = std::io::stdout().flush();
     g.log_file.flush();

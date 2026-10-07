@@ -39,6 +39,9 @@
 # Where the line-shift journal observes the engine (DESIGN.md 5.3 rule (c);
 # changes nothing the program computes).
 --change crates/flashtex-engine/changes/lineshift.ch
+# BOX-MEMO (docs/design/engine-v2/BOX-MEMO.md): guarded replay of macro calls
+# that typeset only what they discard (changes nothing the program computes).
+--change crates/flashtex-engine/changes/boxmemo.ch
 # changes/throughput.ch [3]: get_next's fast path inlined into its callers,
 # the rest out of line.
 --inline get_next=always

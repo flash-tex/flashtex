@@ -1195,6 +1195,12 @@ fn dead_word(g: &Globals, w: &crate::statediff::WordDiff) -> bool {
         // it right after the call, in the same command (`\vsplit` and an
         // insertion split).
         Some("best_height_plus_depth") => return true,
+        // changes/boxmemo.ch: fresh numbers naming the state of the fonts'
+        // parameters and of the hyphenation exceptions, read only by
+        // BOX-MEMO's keys (src/boxmemo.rs), never by TeX; the arrays they
+        // name are compared themselves. Two runs that both changed a font
+        // after the restart point hold different numbers for equal arrays.
+        Some("bm_font_version" | "bm_hyph_version") => return true,
         // pdftex.web §693: outside text mode (`pdf_doing_text` false, which
         // is compared), `pdf_begin_string` calls `pdf_begin_text` before it
         // reads any of these, and `pdf_begin_text` sets them all (the first
