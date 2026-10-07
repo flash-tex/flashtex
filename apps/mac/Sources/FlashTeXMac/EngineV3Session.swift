@@ -1317,6 +1317,13 @@ final class EngineV3Session {
         }
     }
 
+    /// The export's waiting state, for a test that times out waiting for its run.
+    var exportDebugState: String {
+        "stage \(String(describing: exportStage)), compiling \(compiling), lastDone \(lastDoneID), lastSent \(lastSentID), "
+            + "toolsAuto \(lastToolsAutoID), settled \(lastSettledID), walkInFlight \(walkInFlight), held \(heldDuringExport), "
+            + "inbox drains \(delivery?.drains ?? -1)"
+    }
+
     /// Whether Export PDF… and Print… have a document to produce.
     var exportAvailable: Bool { phase == .ready && pageCount > 0 && !exporting }
 
