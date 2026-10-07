@@ -1111,10 +1111,33 @@ final class EngineV3Session {
         return texts
     }
 
+    /// Where COMPILEs are encoded and written, and the first-sight files of
+    /// the project copy written before them (one serial queue: a file is on
+    /// disk before the COMPILE that reads it). Encoding a COMPILE that
+    /// carries a whole 4 MB buffer and writing it to the socket took tens of
+    /// milliseconds of main thread (APP-EDITOR-INSTANT).
+    static let sendQueue = DispatchQueue(label: "flashtex.engine-v3.send", qos: .userInteractive)
+
+    /// Writes `req` to `c` on the send queue; a failed write restarts the
+    /// host if `c` is still the connection.
+    private func write(_ req: DL3CompileRequest, to c: DL3Connection, failed: @escaping @MainActor (EngineV3Session, Error) -> Void) {
+        let ref = EngineV3WeakRef(self)
+        Self.sendQueue.async {
+            do { try c.compile(req) } catch {
+                EngineV3Session.onMain {
+                    guard let s = ref.value, s.connection === c else { return }
+                    failed(s, error)
+                }
+            }
+        }
+    }
+
     private func send(_ req: DL3CompileRequest, keystrokeNs: UInt64?, editNs: UInt64, path: String, explicit: Bool = false) {
         guard let connection else { return }
         do {
-            try connection.compile(req)
+            let probe = MainThreadProbe.begin()
+            write(req, to: connection) { s, error in s.restart("could not send: \(error)") }
+            MainThreadProbe.end("v3.send", probe)
             compiledTexts[req.id] = sentTexts // copy-on-write: no text is copied
             if let model {
                 // The editor's text is what it reads, unless the model's came from outside the editor.
@@ -1131,8 +1154,6 @@ final class EngineV3Session {
             if !compiling { compiling = true }
             if keystrokeNs != nil { view?.keystroke() }
             if let keystrokeNs { latency.sent(compile: req.id, keystrokeNs: keystrokeNs, editNs: editNs, path: path, at: MonotonicClock.nowNs()) }
-        } catch {
-            restart("could not send: \(error)")
         }
     }
 
@@ -1141,6 +1162,8 @@ final class EngineV3Session {
     /// `walked`: the project walk for this compile has just run (startWalk).
     func compile(model: ShellModel, reason: String, keystrokeNs: UInt64? = nil, activeText: String? = nil, editNs: UInt64 = MonotonicClock.nowNs(), walked: Bool = false) {
         guard connection != nil else { return }
+        let probe = MainThreadProbe.begin()
+        defer { MainThreadProbe.end("v3.compile", probe) }
         // Live Share: a session's text compiles only in a confined host (and
         // a host launched confined serves nothing else). Relaunch, not
         // counted as a crash; the fresh host compiles when it is ready.
@@ -1247,10 +1270,14 @@ final class EngineV3Session {
                 // First sight of this document (or a resync): its file in the
                 // copy is the editor's text (the host checks `main` exists
                 // before it applies buffers), and the buffer says so again.
-                let dst = project.root.appendingPathComponent(doc.path)
-                try? FileManager.default.createDirectory(at: dst.deletingLastPathComponent(), withIntermediateDirectories: true)
-                if (try? FileManager.default.destinationOfSymbolicLink(atPath: dst.path)) != nil { try? FileManager.default.removeItem(at: dst) }
-                try? Data(doc.text.utf8).write(to: dst)
+                // Written on the send queue, before the COMPILE (a 4 MB file is
+                // milliseconds of main thread).
+                let dst = project.root.appendingPathComponent(doc.path), text = doc.text
+                Self.sendQueue.async {
+                    try? FileManager.default.createDirectory(at: dst.deletingLastPathComponent(), withIntermediateDirectories: true)
+                    if (try? FileManager.default.destinationOfSymbolicLink(atPath: dst.path)) != nil { try? FileManager.default.removeItem(at: dst) }
+                    try? Data(text.utf8).write(to: dst)
+                }
                 req.buffers.append((doc.path, doc.text))
             }
             sentTexts[doc.path] = doc.text
@@ -1336,7 +1363,8 @@ final class EngineV3Session {
     func cancelExport() {
         switch exportStage {
         case .syncing: finishExport(.failure(.cancelled))
-        case .running(let id): try? connection?.cancel(id: id)
+        case .running(let id):
+            if let c = connection { Self.sendQueue.async { try? c.cancel(id: id) } } // after the COMPILEs queued before it
         case .ending, nil: break
         }
     }
@@ -1348,7 +1376,7 @@ final class EngineV3Session {
         req.haltOnError = false // the exported PDF is nonstopmode's, as pdflatex writes it
         req.externalTools = "off" // the resident run's cycle already made the .bbl/.ind
         exportStage = .running(id: req.id)
-        do { try connection.compile(req) } catch { finishExport(.failure(.failed("could not send the export: \(error)"))) }
+        write(req, to: connection) { s, error in s.finishExport(.failure(.failed("could not send the export: \(error)"))) }
     }
 
     private func exportDone(_ j: DL3JSON) {
