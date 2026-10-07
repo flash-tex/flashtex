@@ -1889,6 +1889,10 @@ impl Observer for Obs {
         self
     }
 
+    fn shipped(&self) -> usize {
+        self.pages_so_far()
+    }
+
     /// Held back before the edited page: taken where newer work stops the
     /// run (`on_checkpoint` stops it there, as at any segment checkpoint).
     fn take_held_segment(&mut self, g: &mut Globals) -> bool {
@@ -2131,6 +2135,8 @@ pub struct Session {
     preempt: Option<Preempt>,
     /// `set_cancel`.
     cancel: Option<Preempt>,
+    /// `set_on_continue`.
+    on_continue: Option<std::rc::Rc<dyn Fn(usize)>>,
     /// The heartbeat every run reports to (`set_progress`).
     progress: Option<Progress>,
     /// The last incremental pass's restart point: the next edit, typed
@@ -2250,6 +2256,7 @@ impl Session {
             defpatch: HashMap::new(),
             preempt: None,
             cancel: None,
+            on_continue: None,
             progress: None,
             last_restart: None,
             next_edits: vec![],
@@ -2547,6 +2554,25 @@ impl Session {
         self.cancel = c;
     }
 
+    /// A compile found nothing new against the run a newer keystroke had
+    /// stopped (typing a letter and deleting it again): that run is this
+    /// compile's and goes on (`finish`). Before it does, `c(pages)` is told
+    /// how many pages it has shipped: they are this compile's already, and
+    /// the caller hands them over at once (the host delivers them and says
+    /// they are current), instead of when the run ships its next page (lane
+    /// P4-TYPING-200WPM).
+    pub fn set_on_continue(&mut self, c: Option<std::rc::Rc<dyn Fn(usize)>>) {
+        self.on_continue = c;
+    }
+
+    /// The pages the paused run has shipped (0: none paused).
+    fn paused_pages(&mut self) -> usize {
+        self.g
+            .as_mut()
+            .and_then(|g| g.layer().observer.as_ref().map(|o| o.shipped()))
+            .unwrap_or(0)
+    }
+
     /// The heartbeat every later run reports to (`None`: none).
     pub fn set_progress(&mut self, p: Option<Progress>) {
         self.progress = p;
@@ -2790,8 +2816,12 @@ impl Session {
                 );
             }
             match vs {
-                // nothing new: it goes on
+                // nothing new: it goes on (its pages so far are this
+                // compile's: handed over first, `set_on_continue`)
                 Some(false) => {
+                    if let Some(c) = self.on_continue.clone() {
+                        c(self.paused_pages());
+                    }
                     let paused_s = t0.elapsed().as_secs_f64();
                     let paused_instr = i0.zip(crate::os::thread_counts()).map(|(a, b)| b.0 - a.0);
                     let mut rep = self.finish()?;
