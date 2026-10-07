@@ -74,10 +74,9 @@ const EXCLUDED_SCALARS: &[&str] = &[
     "lo_mem_max",
     "hi_mem_min",
     "mem_end",
-    "max_in_stack",
-    "max_param_stack",
-    "max_buf_stack",
-    "max_save_stack",
+    // (the input, parameter and save stacks' and the buffer's high-water
+    // marks are compared: a replay raises them as the expansion did,
+    // MACRO-REPLAY.md §3.6 item 1)
     "max_nest_stack",
     "tally",
     "first_count",
@@ -513,10 +512,20 @@ impl Globals {
             let w = self.eqtb[(*q - 1) as usize].hh();
             if is_list(w.b0(), w.rh()) {
                 let b = self.list_snap(w.rh());
-                if a.1 == b.1
-                    && a.0 != b.0
-                    && self.eqtb_word_n(n, *q, p) == self.eqtb[(*q - 1) as usize].0
-                {
+                let same_word = self.eqtb_word_n(n, *q, p) == self.eqtb[(*q - 1) as usize].0;
+                // The paths may make their lists at the same address (both
+                // allocate from the free list the checkpoint left): an
+                // equal word is then no proof of equal tokens.
+                if a.1 != b.1 && same_word {
+                    d.push(format!(
+                        "eqtb[{q}] \\{}: the same node, {} tokens -> {} tokens, different",
+                        self.cs_name_string(*q),
+                        a.1.len(),
+                        b.1.len()
+                    ));
+                    continue;
+                }
+                if a.1 == b.1 && a.0 != b.0 && same_word {
                     d.push(format!(
                         "eqtb[{q}] \\{}: shared list, reference count {} -> {}",
                         self.cs_name_string(*q),

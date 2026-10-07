@@ -220,6 +220,9 @@ impl Globals {
         let mut k: pool_pointer = 0; // §490
         #[allow(unused_mut)]
         let mut __av_mem = self.mem.view();
+        if self.intr_rec_on {
+            self.flashtex_intr_pool();
+        }
         {
             if ((self.pool_ptr).wrapping_add(1i32) > pool_size) {
                 self.overflow(259i32, (pool_size).wrapping_sub(self.init_pool_ptr));

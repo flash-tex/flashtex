@@ -3492,3 +3492,77 @@ Back to page~\pageref{one}.
     compile_and_check(&e, &mut h, &dir, &[("body.tex", &body)], "revert");
     compile_and_check(&e, &mut h, &dir, &[], "settle again");
 }
+
+/// MACRO-REPLAY.md §6.5, the `no-arm` fault (`--features test-hooks`): the
+/// begin-document arming control sequence is never replayed, since a replay
+/// would not arm the snapshot S₀. Here the arming name is `\@firstofone`
+/// (a macro with an argument, as `\document` is not; its body must end in
+/// a command for a recording to end at `big_switch`), and a test hook arms it
+/// again whenever a recording of it commits. The preamble calls it three
+/// times. `\documentclass` uses the start-of-run arm (S₀ inside it); the
+/// first call records and commits, which arms again; the second must be
+/// expanded for real, and S₀ is taken right after it. An edit between the
+/// second and the third call is then after S₀, and the next compile is
+/// incremental. Under `no-arm` the second call replays and does not use
+/// the arm, which a later expansion inside `\begin{document}` uses: S₀ is
+/// taken there, after the edit, and the compile is cold (measured with
+/// probes, 2026-10-04: S₀ after line 4 normally, at `\begin{document}`
+/// under the fault). Both compiles equal scratch runs
+/// (the S₀ placement changes only how much is re-run).
+#[cfg(feature = "test-hooks")]
+#[test]
+fn the_arming_control_sequence_is_never_replayed() {
+    let Some(e) = env() else {
+        common::no_texlive();
+        return;
+    };
+    let doc = |w: &str| -> String {
+        let mut s =
+            String::from("\\documentclass{article}\n\\makeatletter\n\\@firstofone{\\relax}\n");
+        s.push_str("\\@firstofone{\\relax}\n");
+        s.push_str(&format!("% {w}\n"));
+        s.push_str("\\@firstofone{\\relax}\n\\begin{document}\n");
+        for i in 0..20 {
+            s.push_str(&para(i, "lorem"));
+        }
+        s.push_str("\\end{document}\n");
+        s
+    };
+    for (fault, mode) in [("", "incremental"), ("no-arm", "cold")] {
+        let dir = e.dir.join(format!(
+            "no-arm-{}",
+            if fault.is_empty() { "ok" } else { fault }
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut h = Host::start_env(
+            &e,
+            &dir,
+            &[
+                ("FLASHTEX_INTRINSICS_ARGS", "on"),
+                ("FLASHTEX_INTRINSIC_NAMES", "@firstofone"),
+                ("FLASHTEX_TEST_ARM_NAME", "@firstofone"),
+                ("FLASHTEX_TEST_REARM", "1"),
+                ("FLASHTEX_INTRINSICS_FAULT", fault),
+            ],
+        );
+        for k in 0..4 {
+            let r = compile_and_check(&e, &mut h, &dir, &[("doc.tex", &doc("one"))], "settle");
+            if r.contains("\"mode\":\"unchanged\"") || k == 3 {
+                break;
+            }
+        }
+        let r = compile_and_check(
+            &e,
+            &mut h,
+            &dir,
+            &[("doc.tex", &doc("two"))],
+            "an edit between the second and the third call",
+        );
+        assert_eq!(
+            field(&r, "mode"),
+            format!("\"{mode}\""),
+            "fault {fault:?}: {r}"
+        );
+    }
+}

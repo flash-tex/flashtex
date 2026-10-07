@@ -1715,7 +1715,26 @@ impl Globals {
     /// `big_switch` after the expansion of `\document` has been consumed.
     pub fn arm_begin_document(&mut self) {
         self.layer().arm_name = Some(b"document".to_vec());
+        // (test only: MACRO-REPLAY.md §6.5's `no-arm` fixture)
+        #[cfg(feature = "test-hooks")]
+        if let Ok(n) = std::env::var("FLASHTEX_TEST_ARM_NAME") {
+            self.layer().arm_name = Some(n.into_bytes());
+        }
         self.ckpt_request = REQ_LOOKUP;
+    }
+
+    /// Test only (MACRO-REPLAY.md §6.5's `no-arm` fixture): a recording of
+    /// the arming control sequence `cs` committed; arm it again, as at the
+    /// run's start, when `FLASHTEX_TEST_REARM` is set.
+    #[cfg(feature = "test-hooks")]
+    pub(crate) fn test_rearm(&mut self, cs: i32) {
+        if std::env::var_os("FLASHTEX_TEST_REARM").is_none() {
+            return;
+        }
+        let name = self.layer().arm_name.clone();
+        if name.and_then(|n| self.find_cs(&n)) == Some(cs) {
+            self.ckpt_request = REQ_LOOKUP;
+        }
     }
 
     /// Take a checkpoint at the first `big_switch` after every `\shipout`

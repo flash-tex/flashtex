@@ -35,6 +35,12 @@ fn run(dir: &Path, mode: &str, names: &str) -> Run {
 /// The same, with macros with parameters offered (`args`,
 /// `FLASHTEX_INTRINSICS_ARGS=on`; MACRO-REPLAY.md).
 fn run_with(dir: &Path, mode: &str, names: &str, args: bool) -> Run {
+    run_env(dir, mode, names, args, None)
+}
+
+/// The same, with a fault injected (`FLASHTEX_INTRINSICS_FAULT`); then the
+/// verifier may report differences.
+fn run_env(dir: &Path, mode: &str, names: &str, args: bool, fault: Option<&str>) -> Run {
     let pool = Path::new(env!("CARGO_MANIFEST_DIR")).join("pdftex.pool");
     let stats = dir.join(format!("stats-{mode}.txt"));
     let _ = std::fs::remove_file(&stats);
@@ -49,11 +55,13 @@ fn run_with(dir: &Path, mode: &str, names: &str, args: bool) -> Run {
         .env("FLASHTEX_INTRINSIC_NAMES", names)
         .env("FLASHTEX_INTRINSICS_STATS", &stats)
         .env("FLASHTEX_INTRINSICS_ARGS", if args { "on" } else { "off" })
+        .env("FLASHTEX_INTRINSICS_FAULT", fault.unwrap_or(""))
         .stdin(Stdio::null())
         .output()
         .expect("run flashtex-initex");
     assert!(
-        out.stderr.is_empty()
+        fault.is_some()
+            || out.stderr.is_empty()
             || !String::from_utf8_lossy(&out.stderr).contains("intrinsics verify"),
         "{}",
         String::from_utf8_lossy(&out.stderr)
@@ -257,6 +265,18 @@ fn check_args(tag: &str, src: &str, names: &str) -> String {
         verify.stats,
         on.stats
     );
+    // the invariants of MACRO-REPLAY.md §7.2, exactly, at the end of the run
+    assert!(
+        stat(&verify.stats, "invariant_checks") >= 1,
+        "{tag}: {}",
+        verify.stats
+    );
+    assert_eq!(
+        stat(&verify.stats, "invariant_failures"),
+        0,
+        "{tag}: {}",
+        verify.stats
+    );
     on.stats
 }
 
@@ -389,4 +409,68 @@ fn an_argument_list_that_cannot_be_recorded_is_not_recorded_again() {
     assert_eq!(stat(&s, "args_replays"), 2, "{s}");
     assert_eq!(stat(&s, "Unrecordable"), 2, "{s}");
     assert_eq!(stat(&s, "Dimension"), 1, "{s}");
+}
+
+const KV: &str = "\\catcode`\\{=1 \\catcode`\\}=2 \\catcode`\\#=6 \\scrollmode\n\
+    \\def\\a{A}\\def\\b{B}\\def\\kv#1#2{\\edef\\cur{#1:#2}}\\def\\show{\\message{[\\meaning\\cur]}}\n";
+
+/// MACRO-REPLAY.md §6.5: each fault of the argument site is caught by the
+/// verifier (the state diff or the leak check).
+#[test]
+fn faults_at_the_argument_site_are_caught() {
+    for (fault, calls) in [
+        // the arguments are not freed: the leak check
+        ("no-flush", "\\kv\\a\\b\\show\\kv\\a\\b\\show"),
+        // {a}{bd} takes {a}{bc}'s recording
+        ("args-last", "\\kv{a}{bc}\\show\\kv{a}{bd}\\show"),
+        // the redefined \kv is not seen: the recording watched \b
+        (
+            "cur-cs",
+            "\\kv\\a\\b\\show\\def\\kv#1#2{\\edef\\cur{#2:#1}}\\kv\\a\\b\\show",
+        ),
+    ] {
+        let d = scratch(&format!("fault-{fault}"));
+        std::fs::write(d.join("t.tex"), format!("{KV}{calls}\\end\n")).unwrap();
+        let clean = run_env(&d, "verify", "kv", true, None);
+        assert_eq!(
+            stat(&clean.stats, "verify_differences"),
+            0,
+            "{fault}: {}",
+            clean.stats
+        );
+        let faulty = run_env(&d, "verify", "kv", true, Some(fault));
+        assert!(
+            stat(&faulty.stats, "verify_differences") >= 1,
+            "{fault} was not caught: {}",
+            faulty.stats
+        );
+    }
+}
+
+/// `const-hash`: every argument list in one bucket of the index costs time
+/// only (the keys are compared in full).
+#[test]
+fn a_constant_hash_changes_nothing() {
+    let mut calls = String::new();
+    for round in 0..2 {
+        for k in 0..10 {
+            calls.push_str(&format!("\\kv{{k{k}}}{{r{round}}}\\show"));
+        }
+    }
+    calls.push_str(&calls.clone());
+    let d = scratch("fault-const-hash");
+    std::fs::write(d.join("t.tex"), format!("{KV}{calls}\\end\n")).unwrap();
+    let off = run_env(&d, "off", "kv", true, None);
+    let on = run_env(&d, "on", "kv", true, None);
+    let hashed = run_env(&d, "on", "kv", true, Some("const-hash"));
+    let verify = run_env(&d, "verify", "kv", true, Some("const-hash"));
+    assert_eq!(off.log, hashed.log);
+    assert_eq!(stat(&on.stats, "args_replays"), 20, "{}", on.stats);
+    assert_eq!(stat(&hashed.stats, "args_replays"), 20, "{}", hashed.stats);
+    assert_eq!(
+        stat(&verify.stats, "verify_differences"),
+        0,
+        "{}",
+        verify.stats
+    );
 }
