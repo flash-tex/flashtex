@@ -336,6 +336,8 @@ struct PreviewPane: View {
         // The previous engine typesets this project because the new one
         // cannot, and why (EngineChoice.swift); never a silent fallback.
         EngineFallbackBanner()
+        // Memory pressure: a suggestion to use Low Memory, never a silent switch (PerformanceMode.swift).
+        MemoryPressureBanner()
         ZStack(alignment: .topTrailing) {
             if model.engineV3Enabled {
                 PreviewV3Pane() // the new engine's preview (EngineV3Preview.swift), per document (EngineChoice.swift)

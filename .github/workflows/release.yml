@@ -195,8 +195,13 @@ jobs:
           # neither compiles here; crates/flashtex-build/tests/cli.rs does
           # on the self-hosted Mac leg of ci.yml).
           cli="$RUNNER_TEMP/cli/flashtex-cli-$VERSION-macos-arm64"
-          "$cli/bin/flashtex-v3" --help | grep -q 'flashtex-v3 build'
-          "$cli/bin/flashtex-host" --help | grep -q 'usage: flashtex-host'
+          # Output captured first: `| grep -q` may close the pipe before the
+          # program has written everything, and under pipefail its EPIPE
+          # (Rust's println! panics on it) failed the step at random.
+          v3_help="$("$cli/bin/flashtex-v3" --help)"
+          host_help="$("$cli/bin/flashtex-host" --help)"
+          grep -q 'flashtex-v3 build' <<< "$v3_help"
+          grep -q 'usage: flashtex-host' <<< "$host_help"
           test -f "$cli/bin/pdftex.pool" && test -f "$cli/share/flashtex/engine/LICENSE"
       - uses: actions/upload-artifact@v4
         with:
@@ -264,8 +269,13 @@ jobs:
           set -euo pipefail
           mkdir -p "$RUNNER_TEMP/cli3" && tar -C "$RUNNER_TEMP/cli3" -xzf "dist/flashtex-cli-$VERSION-linux-x86_64.tar.gz"
           cli="$RUNNER_TEMP/cli3/flashtex-cli-$VERSION-linux-x86_64"
-          "$cli/bin/flashtex-v3" --help | grep -q 'flashtex-v3 build'
-          "$cli/bin/flashtex-host" --help | grep -q 'usage: flashtex-host'
+          # Output captured first: `| grep -q` may close the pipe before the
+          # program has written everything, and under pipefail its EPIPE
+          # (Rust's println! panics on it) failed the step at random.
+          v3_help="$("$cli/bin/flashtex-v3" --help)"
+          host_help="$("$cli/bin/flashtex-host" --help)"
+          grep -q 'flashtex-v3 build' <<< "$v3_help"
+          grep -q 'usage: flashtex-host' <<< "$host_help"
           test -f "$cli/bin/pdftex.pool" && test -f "$cli/share/flashtex/engine/LICENSE"
       - uses: actions/upload-artifact@v4
         with:

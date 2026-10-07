@@ -374,7 +374,11 @@ final class EngineV3PagesView: NSView {
     /// `FLASHTEX_V3_PPP` (evidence only): pages at exactly this many pixels
     /// per point, whatever the pane width and zoom.
     static let fixedPixelsPerPoint = ProcessInfo.processInfo.environment["FLASHTEX_V3_PPP"].flatMap(Double.init)
-    private static let rasterQueue = DispatchQueue(label: "flashtex.engine-v3.raster", qos: .userInteractive, attributes: .concurrent)
+    /// `.workItem`: each raster's autoreleased objects (the IOSurface and
+    /// the contents it replaced) go when its block ends, not whenever GCD
+    /// drains the worker thread's pool.
+    private static let rasterQueue = DispatchQueue(label: "flashtex.engine-v3.raster", qos: .userInteractive, attributes: .concurrent,
+                                                   autoreleaseFrequency: .workItem)
     private let margin: CGFloat = 16, gap: CGFloat = 12
     override var isFlipped: Bool { true }
 
@@ -849,9 +853,10 @@ final class EngineV3PagesView: NSView {
     /// backdrop's when tiled.
     private var wholeScale: Double { tiled ? min(pixelsPerPoint, EngineV3TileGrid.backdropPixelsPerPoint) : pixelsPerPoint }
 
-    /// Page indexes intersecting the visible rect, plus one screen around it.
+    /// Page indexes intersecting the visible rect, plus the performance
+    /// mode's screens around it (one in Balanced; PerformanceMode.swift).
     private func visibleIndexes() -> [Int] {
-        let r = visibleRect.insetBy(dx: 0, dy: -visibleRect.height)
+        let r = visibleRect.insetBy(dx: 0, dy: -visibleRect.height * PerformanceMode.current.overscanScreens)
         return frames.indices.filter { frames[$0].intersects(r) }
     }
 
