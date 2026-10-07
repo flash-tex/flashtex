@@ -564,3 +564,102 @@ fn input_line_overflow_is_reported() {
     assert_eq!(kind_of(d), "error", "{d:?}");
     assert_eq!(d.int_field("line"), Some(3), "{d:?}");
 }
+
+/// Issue #1593: a host compile records where each macro was defined
+/// (`\def` and `\newcommand`: file, line and column), and an error inside
+/// one names it in its trace (`def`), at the first compile and after.
+#[test]
+fn macro_definition_sites_are_recorded() {
+    let Some(e) = env() else {
+        common::no_texlive();
+        return;
+    };
+    let dir = e.dir.join("defsites");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let mut doc = String::from(
+        "\\documentclass{article}\n\
+         \\newcommand{\\mycmd}[1]{\\nothere\\textbf{#1}}\n\
+         \x20 \\def\\mydef{\\alsonothere x}\n\
+         \\begin{document}\n",
+    );
+    for i in 0..40 {
+        doc.push_str(&format!(
+            "Paragraph {i} with enough words to fill a few lines of the page so that \
+             the document ships several pages, and a few more words.\n\n"
+        ));
+        match i {
+            10 => doc.push_str("Text \\mycmd{x} and\nmore \\mydef{} text.\n\n"),
+            20 => doc.push_str("\\def\\bodydef{\\bodynothere y}\nA body \\bodydef{} use.\n\n"),
+            _ => {}
+        }
+    }
+    doc.push_str("\\end{document}\n");
+    let line_of = |d: &str, needle: &str| {
+        d.lines().position(|l| l.contains(needle)).unwrap() as i64 + 1
+    };
+    // The innermost macro frame's definition site: (file name, line, column).
+    let site = |ds: &[Json], name: &str| -> Option<(String, i64, Option<i64>)> {
+        let f = ds
+            .iter()
+            .filter_map(|d| d.get("trace").and_then(Json::as_array))
+            .flatten()
+            .find(|f| {
+                f.str_field("kind") == Some("macro")
+                    && f.str_field("name").map(str::trim) == Some(name)
+            })?;
+        let def = f.get("def")?;
+        Some((
+            basename(def.str_field("file")?).to_string(),
+            def.int_field("line")?,
+            def.int_field("col"),
+        ))
+    };
+    std::fs::write(dir.join("doc.tex"), &doc).unwrap();
+    let mut h = Host::start(&e, &dir, "doc.tex");
+    let mut check = |h: &mut Host, text: &str, what: &str| {
+        std::fs::write(dir.join("doc.tex"), text).unwrap();
+        let reference = dir.with_extension("ref");
+        let _ = std::fs::remove_dir_all(&reference);
+        copy_dir(&dir, &reference);
+        let report = h.cmd("compile");
+        let got = h.diagnostics();
+        // `\newcommand` defines when it has read its arguments: the line
+        // they end on, no column (TeX is reading a macro, not the file)
+        let mycmd = line_of(text, "\\newcommand{\\mycmd}");
+        assert_eq!(
+            site(&got, "\\mycmd"),
+            Some(("doc.tex".into(), mycmd, None)),
+            "{what}: {got:?}"
+        );
+        // `\def\x` in the file: the name's own line and column
+        let mydef = line_of(text, "\\def\\mydef");
+        assert_eq!(
+            site(&got, "\\mydef"),
+            Some(("doc.tex".into(), mydef, Some(6))),
+            "{what}"
+        );
+        let bodydef = line_of(text, "\\def\\bodydef");
+        assert_eq!(
+            site(&got, "\\bodydef"),
+            Some(("doc.tex".into(), bodydef, Some(4))),
+            "{what}"
+        );
+        let mut r = Host::start(&e, &reference, "doc.tex");
+        r.cmd("compile");
+        assert_eq!(
+            normalised(&got, &dir),
+            normalised(&r.diagnostics(), &reference),
+            "{what}: the incremental compile's diagnostics differ from a scratch compile's\n{report}"
+        );
+    };
+    check(&mut h, &doc, "first compile");
+    check(&mut h, &doc, "unchanged");
+    // lines inserted before the body's definition (and after it), so that
+    // its site moves; then back
+    let moved = doc.replacen("Paragraph 15 with", "Paragraph 15\n\nwith", 1);
+    check(&mut h, &moved, "lines inserted before a definition");
+    let later = moved.replacen("Paragraph 30 with", "Paragraph 30 wiht", 1);
+    check(&mut h, &later, "an edit after it");
+    check(&mut h, &doc, "back");
+}
