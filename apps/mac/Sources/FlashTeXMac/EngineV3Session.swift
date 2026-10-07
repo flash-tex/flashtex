@@ -2035,7 +2035,8 @@ final class EngineV3Session {
     /// event drops them all. Pages and their bitmaps stay.
     func trimMemory(_ level: EngineV3MemoryPressure.Level) {
         pressureEvents &+= 1
-        glyphIndexes.trim(keeping: level == .critical ? [] : Set(view?.heldPageIndexes ?? []))
+        let held: Set<Int> = level == .critical ? [] : Set(view?.heldPageIndexes ?? [])
+        glyphIndexes.trim(keeping: held)
         guard hostOffersTrim, let connection else { return }
         do {
             try connection.trim(level: level.rawValue)

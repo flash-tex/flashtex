@@ -30,7 +30,8 @@ final class EngineV3GlyphIndexTests: XCTestCase {
         return pages.max { DL3SourceIndex($0).glyphs.count < DL3SourceIndex($1).glyphs.count }!
     }()
 
-    /// Page `index`: the base page's glyphs with spans `spanBase`,
+    /// Page `index`: the base page's items, repeated until there are at
+    /// least 600 glyphs (each copy 1 sp lower), with spans `spanBase`,
     /// `spanBase + 1`, … (one per 40 glyphs), moved right by `shift` sp.
     static func page(_ index: Int, spanBase: UInt32, shift: Int32 = 0) -> DL3PreparedPage {
         var p = base
@@ -38,16 +39,21 @@ final class EngineV3GlyphIndexTests: XCTestCase {
         withUnsafeBytes(of: UInt64(index) << 32 | UInt64(spanBase)) { p.page.hash.replaceSubrange(0 ..< 8, with: $0) }
         p.page.hash[8] = UInt8(truncatingIfNeeded: shift)
         var items: [DL3Item] = []
-        var n = 0
-        for it in base.page.items {
-            switch it {
-            case .span: continue
-            case .glyph(let f, let code, let x, let y, _):
-                if n % 40 == 0 { items.append(.span(spanBase + UInt32(n / 40))) }
-                items.append(.glyph(font: f, code: code, x: x + shift, y: y, col: UInt16(n % 40)))
-                n += 1
-            default: items.append(it)
+        var n = 0, copy: Int32 = 0
+        while n < 600 {
+            let before = n
+            for it in base.page.items {
+                switch it {
+                case .span: continue
+                case .glyph(let f, let code, let x, let y, _):
+                    if n % 40 == 0 { items.append(.span(spanBase + UInt32(n / 40))) }
+                    items.append(.glyph(font: f, code: code, x: x + shift, y: y - copy, col: UInt16(n % 40)))
+                    n += 1
+                default: items.append(it)
+                }
             }
+            precondition(n > before, "the fixture page has glyphs")
+            copy += 1
         }
         p.page.items = items
         return p
@@ -69,8 +75,10 @@ final class EngineV3GlyphIndexTests: XCTestCase {
         return nil
     }
 
-    func testTheFixturePageHasGlyphs() {
-        XCTAssertGreaterThan(DL3SourceIndex(Self.base).glyphs.count, 200, "a page of text")
+    func testTheTestPagesHaveIndexedGlyphs() {
+        let ix = DL3SourceIndex(Self.page(0, spanBase: 1))
+        XCTAssertGreaterThanOrEqual(ix.glyphs.count, 600, "every glyph's font resolved")
+        XCTAssertEqual(EngineV3GlyphIndexes.glyphSpans(Self.page(0, spanBase: 1).page).count, (ix.glyphs.count + 39) / 40)
     }
 
     // MARK: the bound
@@ -236,7 +244,7 @@ final class EngineV3GlyphIndexTests: XCTestCase {
         let heldBytes = (0 ..< n).compactMap { s.glyphIndexes.indexedPages.contains($0) ? s.sourceIndex(page: $0) : nil }
             .reduce(0) { $0 + $1.glyphs.count * glyphBytes }
         let summaryBytes = (0 ..< n).compactMap { s.pages[$0] }.reduce(0) { $0 + EngineV3GlyphIndexes.glyphSpans($1.page).count * 4 }
-        let glyphs = DL3SourceIndex(Self.base).glyphs.count
+        let glyphs = DL3SourceIndex(Self.page(0, spanBase: 1)).glyphs.count
         print(String(format: "glyph-index bench (%ld pages, %ld glyphs a page, %ld B a glyph): cold place %.0f µs (unbounded cache %.0f µs); "
                      + "warm p50 %.1f µs (%.1f µs), p95 %.1f µs (%.1f µs); held %ld indexes %.2f MB + summaries %.3f MB (unbounded %ld indexes %.2f MB)",
                      n, glyphs, glyphBytes, newCold, oldCold, newWarm[50], oldWarm[50], newWarm[95], oldWarm[95],

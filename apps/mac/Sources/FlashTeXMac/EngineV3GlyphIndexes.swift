@@ -51,6 +51,13 @@ struct EngineV3GlyphIndexes {
         return ix
     }
 
+    /// Page `i` was used: last out of the order.
+    private mutating func touch(_ i: Int) {
+        guard order.last != i, let k = order.firstIndex(of: i) else { return }
+        order.remove(at: k)
+        order.append(i)
+    }
+
     /// Page `i`'s index, built from `page` when not held.
     mutating func index(_ i: Int, of page: DL3PreparedPage) -> DL3SourceIndex {
         if let ix = cached(i) { return ix }
