@@ -1712,6 +1712,12 @@ impl Globals {
         let level = self.bm_with_rec(|r| r.start.cur_level).unwrap_or(0);
         let global = kind >= 2;
         if !global && self.cur_level == level && self.cur_level > LEVEL_ONE {
+            if debug() {
+                eprintln!(
+                    "boxmemo: local assignment at the call's own level to {} ({p})",
+                    if Self::bm_is_cs(p) { self.cs_name_string(p) } else { self.bm_loc_name(p) }
+                );
+            }
             return self.bm_abort("OuterLocal");
         }
         if (BOX_BASE..BOX_BASE + 256).contains(&p) {

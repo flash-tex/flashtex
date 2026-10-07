@@ -1,4 +1,5 @@
-% Theorem boxes framed by TikZ through ntheorem's [framed] option and framed.sty,
+% Theorem boxes framed by TikZ through ntheorem's [framed] option (\newshadedtheorem with
+% \theoremframecommand) and framed.sty,
 % as in "An Infinite Descent into Pure Mathematics" (book/includes/theorems.tex):
 % each environment's body is boxed, measured by \fb@sizeofframe (which draws the
 % whole TikZ frame around a rule) and framed, split across pages when long.
@@ -53,17 +54,17 @@
 \theoremheaderfont{\bfseries\color{thmbdcol}}
 \theorempreskip{0pt}\theorempostskip{0pt}
 \theoremsymbol{}
-\def\theoremframecommand{\thmbox}
-\newframedtheorem{theorem}{Theorem}[section]
-\newframedtheorem{lemma}[theorem]{Lemma}
+\let\theoremframecommand\thmbox
+\newshadedtheorem{theorem}{Theorem}[section]
+\newshadedtheorem{lemma}[theorem]{Lemma}
 \theoremheaderfont{\bfseries\color{defbdcol}}
-\def\theoremframecommand{\defbox}
-\newframedtheorem{definition}[theorem]{Definition}
+\let\theoremframecommand\defbox
+\newshadedtheorem{definition}[theorem]{Definition}
 \theoremheaderfont{\itshape}
 \theoremsymbol{\ensuremath{\square}}
-\def\theoremframecommand{\pfbox}
+\let\theoremframecommand\pfbox
 \theoremnumbering{arabic}
-\newframedtheorem{proof}{Proof}
+\newshadedtheorem{proof}{Proof}
 
 \begin{document}
 
