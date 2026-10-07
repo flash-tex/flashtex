@@ -3952,3 +3952,139 @@ Back to page~\pageref{one}.
     compile_and_check(&e, &mut h, &dir, &[("body.tex", &body)], "revert");
     compile_and_check(&e, &mut h, &dir, &[], "settle again");
 }
+
+/// Copy `tests/images/NAME` into `dir` as `to`.
+fn test_image(dir: &Path, name: &str, to: &str) {
+    let from = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/images")
+        .join(name);
+    std::fs::copy(from, dir.join(to)).unwrap();
+}
+
+/// Settle `doc` in a host, store its S₀ in `s0`, and open that in a new
+/// host (a host restart): the open must restore S₀ (mode `open`) and equal
+/// scratch runs. Returns the new host.
+fn reopen_from_stored_s0(e: &Env, dir: &Path, doc: &str, s0: &Path, what: &str) -> Host {
+    let _ = std::fs::remove_file(s0);
+    {
+        let mut h = Host::start(e, dir);
+        for k in 0..4 {
+            let r = compile_and_check(e, &mut h, dir, &[("doc.tex", doc)], "settle");
+            if r.contains("\"mode\":\"unchanged\"") || k == 3 {
+                break;
+            }
+        }
+        let r = h.cmd(&format!("save {}", s0.display()));
+        assert!(r.contains("\"saved\""), "{what}: {r}");
+    }
+    let mut h = Host::start(e, dir);
+    let reference = dir.with_extension("ref");
+    copy_dir(dir, &reference);
+    let r = h.cmd(&format!("open {}", s0.display()));
+    assert!(
+        r.contains("\"mode\":\"open\""),
+        "{what}: not opened from S0: {r}"
+    );
+    check_against(e, dir, &reference, &r, what);
+    h
+}
+
+/// Lane COLD-OPEN: a stored S₀ whose preamble read images (`\pdfximage` of
+/// two pages of one PDF, a PNG with alpha, a JPEG and a JBIG2 page) reopens
+/// in a new host, equal to scratch runs, and the body's edits then run from
+/// it; with an image file changed after the save, the open is refused with
+/// a reason and the compile runs in full.
+#[test]
+fn a_stored_s0_with_images_reopens() {
+    let Some(e) = env() else {
+        common::no_texlive();
+        return;
+    };
+    let dir = e.dir.join("s0-images");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    test_image(&dir, "pdf-hand.pdf", "img-a.pdf");
+    test_image(&dir, "png-rgba8.png", "img-b.png");
+    test_image(&dir, "jpg-rgb.jpg", "img-c.jpg");
+    test_image(&dir, "jbig2-sequential.jb2", "img-d.jb2");
+    let doc = |word: &str| {
+        format!(
+            "\\documentclass{{article}}\n\
+             \\pdfximage page 2{{img-a.pdf}}\\edef\\imgA{{\\the\\pdflastximage}}\n\
+             \\pdfximage width 2cm{{img-b.png}}\\edef\\imgB{{\\the\\pdflastximage}}\n\
+             \\pdfximage width 2cm{{img-c.jpg}}\\edef\\imgC{{\\the\\pdflastximage}}\n\
+             \\pdfximage width 2cm page 1{{img-d.jb2}}\\edef\\imgD{{\\the\\pdflastximage}}\n\
+             \\pdfximage page 1{{img-a.pdf}}\\edef\\imgE{{\\the\\pdflastximage}}\n\
+             \\begin{{document}}\n\
+             {}\
+             \\noindent\\pdfrefximage\\imgA\\par\\pdfrefximage\\imgB\\par\\clearpage\n\
+             {}\
+             \\noindent\\pdfrefximage\\imgC\\ \\pdfrefximage\\imgD\\par\\pdfrefximage\\imgE\n\
+             \\end{{document}}\n",
+            paras(0, 3, word),
+            paras(3, 6, "alpha"),
+        )
+    };
+    let base = doc("alpha");
+    let s0 = dir.with_extension("s0");
+    let mut h = reopen_from_stored_s0(&e, &dir, &base, &s0, "s0-images: the open");
+    for (word, what) in [
+        ("gamma", "s0-images: an edit after the open"),
+        ("alpha", "s0-images: its revert"),
+    ] {
+        compile_and_check(&e, &mut h, &dir, &[("doc.tex", &doc(word))], what);
+    }
+    drop(h);
+    // An image changed after the save: a new host does not open S₀.
+    test_image(&dir, "png-rgb8.png", "img-b.png");
+    let mut h = Host::start(&e, &dir);
+    writeln!(h.stdin, "open {}", s0.display()).unwrap();
+    h.stdin.flush().unwrap();
+    let mut line = String::new();
+    h.stdout.read_line(&mut line).unwrap();
+    assert!(
+        line.contains("\"error\"") && line.contains("img-b.png"),
+        "S0 opened with a changed image: {line}"
+    );
+    let r = compile_and_check(
+        &e,
+        &mut h,
+        &dir,
+        &[("doc.tex", &base)],
+        "s0-images: after the refused open",
+    );
+    assert!(r.contains("\"mode\":\"cold\""), "{r}");
+}
+
+/// Lane COLD-OPEN: a beamer document (its preamble declares the navigation
+/// symbols' PDF images, `\pgfdeclareimage`) reopens from a stored S₀.
+#[test]
+fn a_stored_beamer_s0_reopens() {
+    let Some(e) = env() else {
+        common::no_texlive();
+        return;
+    };
+    let dir = e.dir.join("s0-beamer");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let doc = |word: &str| -> String {
+        let mut s = String::from("\\documentclass{beamer}\n\\begin{document}\n");
+        for k in 0..4 {
+            let w = if k == 1 { word } else { "omega" };
+            s.push_str(&format!(
+                "\\begin{{frame}}{{Frame {k}}}\nFrame {k} with the word {w}.\n\\end{{frame}}\n"
+            ));
+        }
+        s.push_str("\\end{document}\n");
+        s
+    };
+    let s0 = dir.with_extension("s0");
+    let mut h = reopen_from_stored_s0(&e, &dir, &doc("omega"), &s0, "s0-beamer: the open");
+    compile_and_check(
+        &e,
+        &mut h,
+        &dir,
+        &[("doc.tex", &doc("omegb"))],
+        "s0-beamer: an edit after the open",
+    );
+}

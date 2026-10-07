@@ -887,6 +887,9 @@ pub fn read_s0(
         crate::diag::set_sites(sites);
         system::truncate_external_effects(0);
         g.restore_ext(&rec)?;
+        // The images S₀ holds: read again and compared with what it stored
+        // (`images::State`'s codec), or S₀ is not used.
+        g.verify_persisted_images()?;
         // (`restore_ext` left placeholders for the opens)
         system::truncate_opens(0);
         system::append_opens(&opens);
