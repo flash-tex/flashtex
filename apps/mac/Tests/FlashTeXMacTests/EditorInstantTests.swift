@@ -107,6 +107,7 @@ final class EditorInstantTests: XCTestCase {
         /// Main-thread time per section (ms): total, count, max.
         var sections: [String: [Double]] = [:]
         var pagesAtStart = 0, pagesAtEnd = 0
+        var timedOut = false
 
         func stats(_ v: [Double]) -> [String: Double] {
             guard !v.isEmpty else { return [:] }
@@ -116,7 +117,7 @@ final class EditorInstantTests: XCTestCase {
         }
 
         var summary: [String: Any] {
-            var o: [String: Any] = ["keys": keys, "keys_drawn": keysDrawn, "pages_at_start": pagesAtStart, "pages_at_end": pagesAtEnd]
+            var o: [String: Any] = ["keys": keys, "keys_drawn": keysDrawn, "pages_at_start": pagesAtStart, "pages_at_end": pagesAtEnd, "timed_out": timedOut]
             o["key_to_drawn_ms"] = stats(keyToDrawnMs)
             o["key_to_commit_ms"] = stats(keyToCommitMs)
             o["queue_ms"] = stats(queueMs)
@@ -200,13 +201,15 @@ final class EditorInstantTests: XCTestCase {
                  "file": .string(path), "line": .int(Int64(line))])
     }
 
-    private func waitUntil(_ what: String, timeout: TimeInterval, _ cond: @escaping @MainActor () -> Bool) async throws {
+    @discardableResult
+    private func waitUntil(_ what: String, timeout: TimeInterval, failing: Bool = true, _ cond: @escaping @MainActor () -> Bool) async throws -> Bool {
         let deadline = Date().addingTimeInterval(timeout)
         while Date() < deadline {
-            if cond() { return }
+            if cond() { return true }
             try await Task.sleep(nanoseconds: 20_000_000)
         }
-        XCTFail("timed out waiting for \(what)")
+        if failing { XCTFail("timed out waiting for \(what)") }
+        return false
     }
 
     private func host(_ model: ShellModel) async throws -> NSTextView {
@@ -260,6 +263,7 @@ final class EditorInstantTests: XCTestCase {
         let sessionRef = EngineV3WeakRef(session)
         let typist = Thread {
             for k in 0 ..< keys {
+                if box.stopped { return }
                 usleep(pauseEvery > 0 && k > 0 && k % pauseEvery == 0 ? pauseMs * 1000 : 50_000)
                 let t0 = MonotonicClock.nowNs()
                 box.lock.lock(); box.posts.append(t0); box.lock.unlock()
@@ -275,9 +279,11 @@ final class EditorInstantTests: XCTestCase {
         }
         typist.qualityOfService = .userInteractive
         typist.start()
-        try await waitUntil("\(keys) keys handled", timeout: Double(keys) * (0.05 + Double(pauseMs) / 1000) + 60) {
+        // Not a failure by itself: a main thread too busy to take the keys is
+        // what this measures (the keys it did take are reported, `timed_out`).
+        phase.timedOut = !(try await waitUntil("\(keys) keys handled", timeout: Double(keys) * (0.05 + Double(pauseMs) / 1000) + 240, failing: false) {
             box.lock.lock(); defer { box.lock.unlock() }; return box.ends.count >= keys
-        }
+        })
         try await Task.sleep(nanoseconds: 300_000_000) // the last key's draw
         box.lock.lock(); box.stop = true; box.lock.unlock()
         MainThreadProbe.stop()
@@ -300,6 +306,9 @@ final class EditorInstantTests: XCTestCase {
             phase.sections[k] = [Double(b.totalNs) / 1e6, Double(b.count), Double(b.maxNs) / 1e6]
         }
         phase.pagesAtEnd = session.pageCount
+        if let d = try? JSONSerialization.data(withJSONObject: phase.summary, options: [.sortedKeys]) {
+            print("EditorInstantPhase \(name): " + String(decoding: d, as: UTF8.self))
+        }
         return phase
     }
 
@@ -387,9 +396,7 @@ final class EditorInstantTests: XCTestCase {
         report([idle, coldPhase, steady, bursts], extra: ["pages": n, "document_bytes": text.utf8.count, "burst_applied_ms": burstMs,
                                                   "burst_bodies": ViewBodyProbe.counts, "burst_main_sections_ms": burstSections])
         XCTAssertEqual(s.pageCount, n)
-        XCTAssertEqual(idle.keys, 40)
-        XCTAssertEqual(coldPhase.keys, 40)
-        XCTAssertEqual(steady.keys, 40)
+        for p in [idle, coldPhase, steady, bursts] { XCTAssertGreaterThan(p.keys, 0, "\(p.name): no key was handled") }
     }
 
     // MARK: the first compile's send

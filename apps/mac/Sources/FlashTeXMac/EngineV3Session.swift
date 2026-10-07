@@ -2194,6 +2194,7 @@ final class EngineV3Delivery: @unchecked Sendable {
                 lock.lock()
                 more = head < queue.count
                 if !more { queue.removeAll(keepingCapacity: true); head = 0; scheduled = false }
+                else if head >= 4096 { queue.removeFirst(head); head = 0 } // a backlog that never empties stays bounded
                 lock.unlock()
                 break
             }
