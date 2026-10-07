@@ -31,7 +31,7 @@
 #   gate       scripts/gate.sh pr
 # Lanes run the sweeps (sound-*, span, readers) on GitHub-hosted runners instead:
 # `gh workflow run sweeps.yml -f ref=<branch>` (sweeps.py holds the same runs, sharded; change both
-# together). The NixOS PC is for timing and latency measurements only (README.md).
+# together). Timing and latency run on the M1 Max: t7-reference.yml (README.md).
 # The checkout is this script's (on NixOS it needs PR #1232's rpath fix for libstdc++).
 # Raw output: $R. Every engine run has a time limit (incr_bench.py, soundness.py, timeout(1)).
 #

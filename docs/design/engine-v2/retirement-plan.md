@@ -549,6 +549,7 @@ A failure blocks the queue until the Commander either accepts the measured rollb
   - **"different (intended)", with the owner's retirement in writing** (decision 3; none of the 9 rows has one yet);
   - at S5 only, **covered by a visible fallback**.
 - **The row → test file** is `tools/parity/app-parity-rows.json`. S4(h) builds it, together with a CI check that fails when a named test is **missing or skipped** in the `mac-app` job. That job does not count skips today.
+  - *Built (2026-10-06, lane P5-APP-PARITY-FINISH): #1629 adds the file and `app_parity_rows.py`; `mac-app` checks the hosted leg and `mac-v3-host` (#1633) the host-driven tests. The checklist's 2026-10-06 revision closes A13, A14, A19, B3, C9, C20, C21, C25, D2, D5 and E4 with named tests (#1627, #1628, #1630, #1632, #1633). S5's app-parity rows then wait only on the owner's rulings for A6, A7, A18, C5 and C23 (`app_parity_rows.py gate S5`).*
 
 **S5 rows (the flip).** Every row must be in one of these states before `defaultForNewDocuments` changes:
 

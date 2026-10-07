@@ -11,7 +11,10 @@ Everything goes through the engine host's Unix socket with the display-list-v3 p
 (docs/protocol/display-list-v3.md), as the app talks to it: `flashtex-host --socket` is started
 here as a separate process, and the keystrokes are typed by `dl3-keys` (the harness's socket
 client, crates/display-list-v3/src/bin/dl3-keys.rs). One host session per document, as the app
-runs one host per open document. The phases:
+runs one host per open document. The documents: gen.py's plain-N and full-N (mkdocs.py), and, when
+named in --docs, the books infdesc and infdesc-x2 (mkbook.py: Infinite Descent fetched at a pinned
+commit, and the book twice, the owner's 1,142-page heavy benchmark), whose in-body keystrokes go
+into a chapter (docspec.py) and whose preamble edits into the main file. The phases:
 
   letter@start, letter@middle, letter@end   a letter inserted into a word and deleted again, in a
                                             prose line on a page 2 %, 50 % and 98 % into the document
@@ -102,10 +105,15 @@ import threading
 import time
 
 S = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, S)
+import docspec  # noqa: E402
 W = os.path.dirname(os.path.dirname(S))
 IB = os.environ.get('INCR_BENCH_DIR', '/tmp/incr-bench')
 DOCS = ['plain-10', 'full-10', 'plain-100', 'full-100', 'plain-300', 'full-300', 'plain-1000', 'full-1000',
         'beamer-5', 'beamer-30']
+# books (mkbook.py, fetched at a pinned commit when named in --docs; not in the default list):
+# Infinite Descent, and the owner's heavy benchmark of 2026-10-06, the book twice (1,142 pages)
+BOOKS = ['infdesc', 'infdesc-x2']
 # (phase, dl3-keys arguments); the in-body ones are ordered by --order, the preamble runs last
 BODY_PHASES = [
     ('letter@start', ['--kind', 'letter', '--at', '0.02']),
@@ -378,17 +386,18 @@ def phase_order(order, i, seed):
 
 
 def run_doc(a, eng, doc, out, i):
-    src = f'{IB}/docs/{doc}/main.tex'
+    src = f'{IB}/docs/{doc}/{docspec.edit_file(IB, doc)}'
     work = f'{IB}/t7-work/{doc}'
     s0 = f'{IB}/t7-work/s0-{doc}'
     sock = f'{IB}/t7-work/{doc}.sock'
     shutil.rmtree(work, ignore_errors=True)
     shutil.rmtree(s0, ignore_errors=True)
     os.makedirs(f'{work}/out')
-    shutil.copy(src, f'{work}/main.tex')
+    docspec.copy(IB, doc, work)
+    edit = docspec.edit_args(IB, doc)
     log = f'{out}/raw/{doc}.host-stderr'
     hostargs = a.host_args.split()
-    lines = edit_lines(os.path.dirname(src))
+    lines = edit_lines(f'{IB}/docs/{doc}')
     res = dict(doc=doc, phases={}, reopen=[], order=[])
     h = Host(eng, sock, s0, log, hostargs)
     res['host_startup'], res['host_ready_ms'] = h.startup, round(h.ready_ms, 1)
@@ -401,7 +410,9 @@ def run_doc(a, eng, doc, out, i):
             n = a.preamble if name == 'preamble' else a.typing_keys if name in TYPING_NAMES else a.keys
             l0 = load1()
             t = time.time()
-            recs, err = keys(eng, sock, work, located(args, lines) + ['--keys', str(n), '--gap-ms', str(a.gap_ms)],
+            # (a preamble edit goes into the main file; the others into a book's chapter)
+            recs, err = keys(eng, sock, work, located(args, lines) + (edit if name != 'preamble' else []) +
+                             ['--keys', str(n), '--gap-ms', str(a.gap_ms)],
                              f'{out}/raw/{doc}-{name}.jsonl', a.timeout)
             opens = [r for r in recs if 'open' in r]
             if 'open_ms' not in res and opens:
@@ -422,10 +433,11 @@ def run_doc(a, eng, doc, out, i):
     # reopen: edit on disk, a new host from the persisted S0, page 1
     if a.reopen and 'reopen' in a.phases:
         at = body_line(open(src).read(), 0.5, int(located(['--at', '0.5'], lines)[1]) if lines else None)
+        ef = f'{work}/{docspec.edit_file(IB, doc)}'
         for k in range(a.reopen):
-            text = open(f'{work}/main.tex').read()
+            text = open(ef).read()
             text = text[:at] + 'x' + text[at:] if k % 2 == 0 else text[:at] + text[at + 1:]
-            open(f'{work}/main.tex', 'w').write(text)
+            open(ef, 'w').write(text)
             l0 = load1()
             h = Host(eng, sock, s0, log, hostargs)
             try:
@@ -674,7 +686,7 @@ def main():
     if bad or not a.phases:
         error = f'unknown or empty --phases {bad or a.phases}; known: {",".join(PHASE_NAMES)}'
     docs = [d.strip() for d in a.docs.split(',') if d.strip()]
-    known = set(DOCS) | (set(os.listdir(f'{IB}/docs')) if os.path.isdir(f'{IB}/docs') else set())
+    known = set(DOCS) | set(BOOKS) | (set(os.listdir(f'{IB}/docs')) if os.path.isdir(f'{IB}/docs') else set())
     if not error and (not docs or [d for d in docs if d not in known]):
         error = f'unknown or empty --docs {[d for d in docs if d not in known] or docs}; known: {",".join(sorted(known))}'
     env_lines = [f'start {time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())} {uptime()}',
@@ -692,6 +704,9 @@ def main():
                 error = 'build failed'
         if not error and not all(os.path.exists(f'{IB}/docs/{d}/main.tex') for d in ('full-1000', 'beamer-30')):
             subprocess.run([sys.executable, f'{S}/mkdocs.py'], check=True)
+        books = [d for d in docs if d in BOOKS]
+        if not error and books:
+            subprocess.run([sys.executable, f'{S}/mkbook.py'] + books, check=True)
         for need in ('flashtex-host', 'dl3-keys', 'pdftex.pool'):
             if not error and not os.path.exists(f'{eng}/{need}'):
                 error = f'{eng}/{need} missing (run with --build, or mkeng.sh {a.engine})'
