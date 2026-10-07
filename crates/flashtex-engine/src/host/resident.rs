@@ -1829,7 +1829,12 @@ fn under_root(p: &Path, root: &Path, real_root: Option<&Path>) -> bool {
 }
 
 /// Record the user's files the display list names that the host has not
-/// seen yet (as the compile just read them).
+/// seen yet (as the compile just read them). The display list names them
+/// under the working directory, which the engine `chdir`ed to, so with
+/// symbolic links resolved: under the root as given (`/tmp/p` on macOS)
+/// or as the file system resolves it (`/private/tmp/p`). Without the
+/// second, no file was remembered and no span moved with its lines, so a
+/// page kept past an edit that added a line kept its old lines.
 fn remember_texts(doc: &mut Doc) {
     let root = doc.job.root.clone();
     let real_root = std::fs::canonicalize(&root).ok();
