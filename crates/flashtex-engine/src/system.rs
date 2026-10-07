@@ -81,6 +81,25 @@ impl Tracked {
             logical: false,
         }
     }
+
+    /// The stream pdfTeX's stdio makes of this file, with its `FILE`'s
+    /// buffer (`os::stdio_buffer_size`, #1557). A text file's one-byte
+    /// writes then reach the disk where pdfTeX's `putc`s do; the PDF
+    /// writer's `fwrite`s of whole chunks flush differently in each C
+    /// library, which is not mirrored (the PDF's bytes differ anyway).
+    fn stdio(self) -> BufWriter<Tracked> {
+        let m = self.f.metadata().ok();
+        BufWriter::with_capacity(crate::os::stdio_buffer_size(m.as_ref()), self)
+    }
+
+    /// `stdio`, as a text file's sink.
+    fn stdio_text(self) -> BufWriter<Box<dyn OutSink>> {
+        let m = self.f.metadata().ok();
+        BufWriter::with_capacity(
+            crate::os::stdio_buffer_size(m.as_ref()),
+            Box::new(self) as Box<dyn OutSink>,
+        )
+    }
 }
 
 impl Write for Tracked {
@@ -2465,14 +2484,18 @@ impl Globals {
             let Some(stdin) = child.stdin.take() else {
                 return false;
             };
-            f.output = Some(BufWriter::new(Box::new(stdin)));
+            let m = crate::os::pipe_metadata(&stdin);
+            f.output = Some(BufWriter::with_capacity(
+                crate::os::stdio_buffer_size(m.as_ref()),
+                Box::new(stdin),
+            ));
             f.child = Some(child);
             f.err = 0;
             return true;
         }
         match self.open_output_file() {
             Some((h, name)) => {
-                f.output = Some(BufWriter::new(Box::new(Tracked::new(h, &name))));
+                f.output = Some(Tracked::new(h, &name).stdio_text());
                 f.path = Some(name);
                 f.err = 0;
                 true
@@ -2593,7 +2616,7 @@ impl Globals {
         *f = ByteFile::default();
         match self.open_output_file() {
             Some((h, name)) => {
-                f.output = Some(BufWriter::new(Tracked::new(h, &name)));
+                f.output = Some(Tracked::new(h, &name).stdio());
                 f.path = Some(name);
                 f.err = 0;
                 true
@@ -4679,7 +4702,7 @@ impl AlphaFile {
                 f.path = Some(path.clone());
             }
             Stream::Out { path, len, at } => {
-                f.output = Some(BufWriter::new(Box::new(reopen_out(path, *len, *at)?)));
+                f.output = Some(reopen_out(path, *len, *at)?.stdio_text());
                 f.path = Some(path.clone());
                 // (the record does not say whether its buffer held output)
                 mark_ahead(path);
@@ -4756,7 +4779,7 @@ impl ByteFile {
                 f.path = Some(path.clone());
             }
             Stream::Out { path, len, at } => {
-                f.output = Some(BufWriter::new(reopen_out(path, *len, *at)?));
+                f.output = Some(reopen_out(path, *len, *at)?.stdio());
                 f.path = Some(path.clone());
                 mark_ahead(path);
             }

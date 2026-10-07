@@ -1158,6 +1158,62 @@ fn a_file_read_while_open_for_output_is_read_as_from_scratch() {
     compile_and_check(&e, &mut h, &dir, &[("doc.tex", &lost)], "first compile");
 }
 
+/// Issue #1557: pdfTeX's stdio writes a `\write` stream out a buffer
+/// (`st_blksize`, 4096 bytes on APFS and ext4) at a time, so a file of
+/// about 6 KB `\input` while still open for output reads its first 4096
+/// bytes (41 lines and a part), not nothing. With the `\closeout` lost,
+/// the incremental runs read what a run from scratch reads, flushed by the
+/// stream or not, with checkpoints between the writes and the read.
+#[test]
+fn a_file_read_while_open_for_output_past_the_stdio_buffer() {
+    let Some(e) = env() else {
+        common::no_texlive();
+        return;
+    };
+    // each block writes 60 lines of 100 bytes after its first line
+    let lines: String = (0..60)
+        .map(|i| {
+            format!(
+                "\\immediate\\write\\tmp{{Line {i:02} of the block, {}.}}\n",
+                "y".repeat(76)
+            )
+        })
+        .collect();
+    let base = vol_closed_doc().replace(
+        "\\immediate\\closeout\\tmp",
+        &format!("{lines}\\immediate\\closeout\\tmp"),
+    );
+    let lost =
+        base.replacen("\\closeout", "\\closeouet", 2)
+            .replacen("\\closeouet", "\\closeout", 1);
+    assert_ne!(base, lost);
+    let dir = e.dir.join("read-while-open-big");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let mut h = Host::start(&e, &dir);
+    for _ in 0..2 {
+        compile_and_check(&e, &mut h, &dir, &[("doc.tex", &base)], "settle");
+    }
+    compile_and_check(&e, &mut h, &dir, &[("doc.tex", &lost)], "closeout lost");
+    let edited = lost.replacen("Paragraph 40 with", "Paragraph 40 now with", 1);
+    compile_and_check(
+        &e,
+        &mut h,
+        &dir,
+        &[("doc.tex", &edited)],
+        "an edit after it",
+    );
+    let edited = edited.replacen("Line 59 of", "Line 59 now of", 1);
+    compile_and_check(
+        &e,
+        &mut h,
+        &dir,
+        &[("doc.tex", &edited)],
+        "an edit to the writes",
+    );
+    compile_and_check(&e, &mut h, &dir, &[("doc.tex", &base)], "back");
+}
+
 /// Issue #1550 as sweep D found it: the broken `\closeout` arrives while
 /// the compile of an earlier edit is stopped.
 #[test]
