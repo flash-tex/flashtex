@@ -29,7 +29,9 @@ permissions:
 jobs:
   footprint:
     name: "macOS host phys_footprint, log mappings on/off, and memfp"
-    runs-on: [self-hosted, macOS, ARM64]
+    # Only the heavy team Mac (label flashtex-heavy, as nightly.yml's engine-nightly-mac): the
+    # plain [self-hosted, macOS, ARM64] set includes the owner's Mac, where this must never run.
+    runs-on: [self-hosted, macOS, ARM64, flashtex, flashtex-heavy]
     concurrency:
       group: flashtex-mac-heavy
       cancel-in-progress: false
