@@ -1371,6 +1371,15 @@ fn own_outputs(j: &ReadLog) -> Vec<String> {
     v
 }
 
+/// The files a run wrote (opened for output), as `system::out_key`s
+/// (`Session::fixed_created`).
+fn created_outputs(j: &ReadLog) -> Vec<String> {
+    let mut v: Vec<String> = j.outputs.iter().map(|p| system::out_key(p)).collect();
+    v.sort();
+    v.dedup();
+    v
+}
+
 /// The files of the old run's journal `old` that a stopped run (its reads
 /// so far, `live`) has opened for output: what it holds on disk is the
 /// stopped run's own partial output, whether or not the run has read it.
@@ -2187,6 +2196,17 @@ pub struct Session {
     /// run read before (the `.aux`): the next pass takes them as its run
     /// read them (`settle_paused`), not as the unfinished run left them.
     fixed_inputs: Vec<String>,
+    /// Alongside `fixed_inputs`: the files that run wrote (`out_key`s).
+    /// A lookup of one that found nothing then -- the `.aux` of a first
+    /// compile, which `\document` looks for before the run writes it -- is
+    /// taken as that run made it, not as finding the unfinished output; the
+    /// pass after it sees the change (`dirty`).
+    fixed_created: Vec<String>,
+    /// `changes` found an `.aux` where the last run found none (a first
+    /// compile's next pass), and the pass about to run restarts at the
+    /// anchor for it: no convergence tests (`incremental`).
+    aux_appeared: bool,
+    no_tests: bool,
     /// The session as the running pass found it (`Before`).
     before_pass: Option<Before>,
     /// An abandoned run shipped pages from this checkpoint on, which the
@@ -2252,6 +2272,9 @@ struct Before {
     cursor: usize,
     aux_done: Option<CheckpointId>,
     aux_close_rs: Option<usize>,
+    /// The `.aux` point as the pass found it (a pass from the arm point
+    /// moves it: `checkpoint::Layer::arm_point`).
+    aux_point: (Option<CheckpointId>, Option<String>, bool, bool),
 }
 
 impl Session {
@@ -2295,6 +2318,9 @@ impl Session {
             defer: None,
             pass: 1,
             fixed_inputs: vec![],
+            fixed_created: vec![],
+            aux_appeared: false,
+            no_tests: false,
             before_pass: None,
             reemit_from: None,
             starved: false,
@@ -2734,6 +2760,7 @@ impl Session {
         if let Some(j) = &self.journal {
             self.lookup_dirs = j.dirs.clone();
             self.fixed_inputs = own_outputs(j);
+            self.fixed_created = created_outputs(j);
         }
         let g = self.g.as_mut().unwrap();
         let ids: std::collections::HashSet<CheckpointId> = g.checkpoints().into_iter().collect();
@@ -2755,10 +2782,13 @@ impl Session {
         let live = system::reads_so_far()?;
         // (what it is writing itself, the `.aux`, is not a change)
         let own = own_outputs(&live);
+        let created = created_outputs(&live);
         let saved = self.journal.replace(live);
         let saved_fixed = std::mem::replace(&mut self.fixed_inputs, own);
+        let saved_created = std::mem::replace(&mut self.fixed_created, created);
         let r = self.changes();
         self.fixed_inputs = saved_fixed;
+        self.fixed_created = saved_created;
         let answer = match r {
             Ok((edits, changed, bad)) => {
                 if changed.is_empty() && bad.is_none() {
@@ -2825,10 +2855,16 @@ impl Session {
         // abandoned pass was to act on) as that run read them; the pass
         // after it sees the change
         self.fixed_inputs = self.journal.as_ref().map(own_outputs).unwrap_or_default();
+        self.fixed_created = self
+            .journal
+            .as_ref()
+            .map(created_outputs)
+            .unwrap_or_default();
         let g = self.g.as_mut().unwrap();
         let l = g.layer();
         l.aux_done = b.aux_done;
         l.aux_close_rs = b.aux_close_rs;
+        (l.aux_point, l.aux_path, l.aux_at_arm, l.aux_moved) = b.aux_point;
         l.aux_armed = false;
         Ok(())
     }
@@ -3013,7 +3049,11 @@ impl Session {
             return Some(true);
         }
         let saved = self.journal.clone();
+        // (what the last pass found missing and wrote is a change for the
+        // next pass: `fixed_created` is the last pass's own)
+        let created = std::mem::take(&mut self.fixed_created);
         let r = self.changes();
+        self.fixed_created = created;
         self.journal = saved;
         // A file the run wrote before it read it (beamer's `.vrb`) holds
         // what the run itself put there: not an input a pass sees change.
@@ -3085,14 +3125,19 @@ impl Session {
             .as_mut()
             .map(|g| {
                 let l = g.layer();
-                (l.aux_done, l.aux_close_rs)
+                (
+                    l.aux_done,
+                    l.aux_close_rs,
+                    (l.aux_point, l.aux_path.clone(), l.aux_at_arm, l.aux_moved),
+                )
             })
-            .map(|(aux_done, aux_close_rs)| Before {
+            .map(|(aux_done, aux_close_rs, aux_point)| Before {
                 journal: self.journal.clone(),
                 defpatch: self.defpatch.clone(),
                 cursor: self.cursor,
                 aux_done,
                 aux_close_rs,
+                aux_point,
             });
         if self.paused.is_some() {
             // A new compile abandons the paused run: its later pages are
@@ -3138,6 +3183,7 @@ impl Session {
                 })
         });
         if changed.is_empty() && bad_lookup.is_none() && reemit.is_none() {
+            self.fixed_created.clear();
             return Ok(Report {
                 mode: "unchanged".into(),
                 pages: self.pages.len(),
@@ -3171,7 +3217,11 @@ impl Session {
         // A run from before a fixed input's read reads it: as the run it
         // stands for read it (not the unfinished run's rewrite)
         if self.opts.debug {
-            eprintln!("[incr] fixed inputs {fixed:?}, restart {r}");
+            eprintln!(
+                "[incr] fixed inputs {fixed:?}, restart {r} (anchor {:?}; an .aux appeared: {}; bad lookup {bad_lookup:?}; changed {changed:?})",
+                self.s0.as_ref().map(|s| s.id),
+                self.aux_appeared
+            );
         }
         // (written after the restore, in `incremental`: the restore keeps
         // the old run's bytes of the files it wrote from the disk, and a
@@ -3229,9 +3279,18 @@ impl Session {
                 }
             }
         }
+        // A pass from the anchor because an `.aux` appeared where the last
+        // run found none (a first compile's second pass, lane COLD-OPEN):
+        // `\document`'s read of it defines what the last run never had
+        // (LaTeX's `\@abspage@last`, the labels), which stays in the state,
+        // so no later state is the last run's and every convergence test
+        // would fail -- at up to ~50 ms each, a second of a 1,000-page pass.
+        self.no_tests =
+            self.aux_appeared && Some(r) == self.s0.as_ref().map(|s| s.id) && patch.is_none();
         let find_s = t0.elapsed().as_secs_f64();
         let rep = self.incremental(t0, r, edits, changed, stop_at, find_s, patch, fixed_writes);
         self.fixed_inputs.clear();
+        self.fixed_created.clear();
         let mut rep = rep?;
         rep.key_s = key_s;
         rep.changes_s = changes_s;
@@ -3741,6 +3800,7 @@ impl Session {
         // (a lookup the journal lists more than once is made again once)
         let mut again: HashMap<(&str, crate::resolver::Format, Option<bool>), Option<String>> =
             HashMap::new();
+        self.aux_appeared = false;
         for (i, l) in j
             .lookups
             .iter()
@@ -3752,6 +3812,18 @@ impl Session {
                 .entry((l.name.as_str(), l.format, l.must_exist))
                 .or_insert_with(|| system::lookup_again(l));
             if *now != l.found {
+                // (a file the run this pass stands for wrote, which it
+                // looked for before and did not find: `fixed_created`)
+                if l.found.is_none()
+                    && now
+                        .as_deref()
+                        .is_some_and(|p| self.fixed_created.contains(&system::out_key(p)))
+                {
+                    continue;
+                }
+                if l.found.is_none() && now.as_deref().is_some_and(|p| p.ends_with(".aux")) {
+                    self.aux_appeared = true;
+                }
                 // the first bounds the restart point; the last, the
                 // convergence (`Obs::test`)
                 bad.get_or_insert(i);
@@ -3950,6 +4022,7 @@ impl Session {
         // pass stands for read them (`fixed_inputs`): put back for a run
         // from scratch, which reads them all
         let fixed = std::mem::take(&mut self.fixed_inputs);
+        self.fixed_created.clear();
         put_back(self.baseline.iter())?;
         // (no checkpoint before this run is restored again)
         system::forget_removed();
@@ -4001,6 +4074,9 @@ impl Session {
         let mut g = Globals::new();
         g.arm_begin_document();
         g.layer().want_aux_point = self.opts.aux_point;
+        // (with no `.aux` yet, the `.aux` point is where `\document` begins:
+        // the passes after this one start there, not from the format)
+        g.aux_point_at_arm(self.opts.aux_point);
         g.checkpoint_every_shipout(true);
         g.layer().timed_s = self.opts.timed_s;
         g.checkpoint_segments(self.opts.segment_s);
@@ -4103,7 +4179,22 @@ impl Session {
         // (its journal says which), so the journal must be in place.
         system::record_reads_into(Some(jr.clone()));
         let busy_restore = crate::busy::enter(crate::busy::Part::Restore);
-        if let Err(e) = g.restore(r) {
+        // A pass that cannot converge (`no_tests`: an `.aux` appeared, a
+        // first compile's next pass) keeps nothing of the old run's future:
+        // holding it next to the new run's would hold two runs' undo logs
+        // (on a 1,072-page book 2 x 807 MB, over the budget, and `thin`
+        // merging the new run's: +4 % instructions, +320 MB peak RSS).
+        // Without it the pass is a run with no complete run behind it, as
+        // one from the format or a stored S0 (`open_s0`): newer work settles
+        // it, and what the files it truncates held is what the last complete
+        // run left (`guard_every_output`).
+        let restored = if self.no_tests {
+            system::guard_every_output(true);
+            g.restore_discard(r)
+        } else {
+            g.restore(r)
+        };
+        if let Err(e) = restored {
             // An output the restore needs is gone: a run that failed
             // removes its PDF (pdfTeX's "no output PDF file produced"),
             // which the checkpoints before it had open. Start again.
@@ -4129,6 +4220,15 @@ impl Session {
         if g.layer().aux_point == Some(r) {
             // the run reads the `.aux` again: its close begins the read-set
             g.layer().aux_armed = true;
+        }
+        if g.layer().arm_point == Some(r) {
+            // from before `\document` looks for the `.aux`: an open of one
+            // takes the `.aux` point there (`Layer::arm_point`)
+            let l = g.layer();
+            l.aux_at_arm = true;
+            l.aux_moved = false;
+            l.aux_path = None;
+            l.aux_armed = false;
         }
         let mut patches = self.defpatch.get(&r).cloned().unwrap_or_default();
         patches.extend(patch.iter().cloned());
@@ -4205,7 +4305,7 @@ impl Session {
             .map(|p| p.strip_prefix("./").unwrap_or(p).to_string())
             .collect();
         obs.old_reads_end = old_reads_end;
-        obs.converge = self.opts.converge;
+        obs.converge = self.opts.converge && !std::mem::take(&mut self.no_tests);
         obs.pdf = rec.files.iter().find_map(|f| match &f.stream {
             Stream::Out { path, len, .. } if path.ends_with(".pdf") => Some((path.clone(), *len)),
             _ => None,
@@ -4301,9 +4401,13 @@ impl Session {
         let mut fixed = self.fixed_inputs.clone();
         fixed.extend(own);
         fixed.extend(writing);
+        let mut created = self.fixed_created.clone();
+        created.extend(live.as_ref().map(created_outputs).unwrap_or_default());
         let saved_fixed = std::mem::replace(&mut self.fixed_inputs, fixed);
+        let saved_created = std::mem::replace(&mut self.fixed_created, created);
         let again = self.changes();
         self.fixed_inputs = saved_fixed;
+        self.fixed_created = saved_created;
         self.journal = saved;
         let g = self.g.as_mut().unwrap();
         // The newer work is now this compile's (`set_preempt`): not the
@@ -4655,6 +4759,16 @@ impl Session {
         if let Some(j) = &self.journal {
             self.lookup_dirs = j.dirs.clone();
         }
+        // A pass from the arm point that read an `.aux` took the `.aux`
+        // point at its open: the anchor from now on, as for a document
+        // opened with its `.aux` (lane COLD-OPEN)
+        let moved = self
+            .g
+            .as_mut()
+            .is_some_and(|g| std::mem::take(&mut g.layer().aux_moved));
+        if moved {
+            self.s0 = None;
+        }
         if self.s0.is_none() {
             if let Some(j) = self.journal.take() {
                 let r = self.take_s0(&j);
@@ -4801,7 +4915,7 @@ fn thin(
     if g.arena.log_bytes() <= budget {
         return;
     }
-    let aux_done = g.layer().aux_done;
+    let (aux_done, aux_point) = (g.layer().aux_done, g.layer().aux_point);
     // the last page's checkpoint: where `\end{document}` re-runs from
     let last_page = pages.iter().max_by_key(|(_, &j)| j).map(|(&c, _)| c);
     // The octave of a page's distance from the cursor beyond `dense`.
@@ -4831,6 +4945,7 @@ fn thin(
             if Some(id) == s0
                 || Some(id) == keep_also
                 || Some(id) == aux_done
+                || Some(id) == aux_point
                 || Some(id) == last_page
             {
                 return true;
