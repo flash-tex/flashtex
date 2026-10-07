@@ -1,0 +1,35 @@
+== open peak RSS 979
+  rss=937.2 sealed_bytes=599.2 branch_sealed=0.0 checkpoints=1807 space_touched=54.3 space_resident=56.0 slab_mapped=23.0 slab_live=0.6 slab_resident=22.5 prepared=0.0 page_cache=48.3 form_cache=0.0 spare_tails=19.1 records=1807 record_lines=364152 terminal=0.3 texts=3.3 written=0.0 old_cache=0.0
+  word space resident: mem=13.2 dl_side=10.7 str_pool=8.0 font_info=6.2 eqtb=4.8 hash=4.8 trie=3.3 pdf_char_used=1.1
+== book/number-theory/divisibility.tex:0.5:letter:4 peak RSS 937
+  rss=937.4 sealed_bytes=599.2 branch_sealed=0.0 checkpoints=1807 space_touched=54.3 space_resident=56.0 slab_mapped=23.0 slab_live=16.4 slab_resident=22.5 prepared=32.3 page_cache=48.3 form_cache=0.0 spare_tails=19.1 records=1807 record_lines=364152 terminal=0.3 texts=3.3 written=0.0 old_cache=0.0
+  word space resident: mem=13.2 dl_side=10.7 str_pool=8.0 font_info=6.2 eqtb=4.8 hash=4.8 trie=3.3 pdf_char_used=1.1
+== book/number-theory/divisibility.tex:0.5:sentence:2 peak RSS 937
+  rss=937.6 sealed_bytes=599.2 branch_sealed=0.0 checkpoints=1807 space_touched=54.3 space_resident=56.0 slab_mapped=23.0 slab_live=16.4 slab_resident=22.5 prepared=32.3 page_cache=48.3 form_cache=0.0 spare_tails=19.1 records=1807 record_lines=364152 terminal=0.3 texts=3.3 written=0.0 old_cache=0.0
+  word space resident: mem=13.2 dl_side=10.7 str_pool=8.0 font_info=6.2 eqtb=4.8 hash=4.8 trie=3.3 pdf_char_used=1.1
+== book/relations/equivalence-relations.tex:0.5:typing:20 peak RSS 938
+  rss=937.6 sealed_bytes=599.2 branch_sealed=0.0 checkpoints=1807 space_touched=54.3 space_resident=56.0 slab_mapped=23.0 slab_live=16.4 slab_resident=22.5 prepared=32.3 page_cache=48.3 form_cache=0.0 spare_tails=19.1 records=1807 record_lines=364152 terminal=0.3 texts=3.3 written=0.0 old_cache=0.0
+  word space resident: mem=13.2 dl_side=10.7 str_pool=8.0 font_info=6.2 eqtb=4.8 hash=4.8 trie=3.3 pdf_char_used=1.1
+== steady peak RSS 921
+  rss=920.2 sealed_bytes=599.2 branch_sealed=0.0 checkpoints=1807 space_touched=54.3 space_resident=56.0 slab_mapped=23.0 slab_live=16.4 slab_resident=22.5 prepared=32.3 page_cache=48.3 form_cache=0.0 spare_tails=19.1 records=1807 record_lines=364152 terminal=0.3 texts=3.3 written=0.0 old_cache=0.0
+  word space resident: mem=13.2 dl_side=10.7 str_pool=8.0 font_info=6.2 eqtb=4.8 hash=4.8 trie=3.3 pdf_char_used=1.1
+smaps at peak: RSS 969 MB
+   [anon <1M]             n= 2320 rss=  611.9 anon=  611.9
+   [anon 1-60M]           n=   41 rss=  216.0 anon=  216.0
+   [anon 64M arena]       n=    1 rss=   61.4 anon=   61.4
+   [anon >=256M]          n=    2 rss=   55.7 anon=   55.7
+   [heap]                 n=    1 rss=   15.1 anon=   15.1
+   file:flashtex-host     n=    4 rss=    5.7 anon=    0.3
+   file:libc.so.6         n=    5 rss=    1.6 anon=    0.0
+   file:libm.so.6         n=    5 rss=    0.4 anon=    0.0
+   file:ld-linux-x86-64.so.2 n=    5 rss=    0.2 anon=    0.0
+smaps at steady: RSS 921 MB
+   [anon <1M]             n= 2125 rss=  566.1 anon=  566.1
+   [anon 1-60M]           n=   35 rss=  217.2 anon=  217.2
+   [anon 64M arena]       n=    1 rss=   59.4 anon=   59.4
+   [anon >=256M]          n=    2 rss=   55.8 anon=   55.8
+   [heap]                 n=    1 rss=   14.2 anon=   14.2
+   file:flashtex-host     n=    4 rss=    5.7 anon=    0.3
+   file:libc.so.6         n=    5 rss=    1.6 anon=    0.0
+   file:libm.so.6         n=    5 rss=    0.4 anon=    0.0
+   file:ld-linux-x86-64.so.2 n=    5 rss=    0.2 anon=    0.0
