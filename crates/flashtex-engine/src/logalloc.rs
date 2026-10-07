@@ -1,7 +1,8 @@
-//! The host's global allocator on Linux (lane P4-MEMORY-BUDGET; DESIGN.md
-//! §5.2): [`HEAP`] (jemalloc, or glibc's malloc without the feature
-//! `jemalloc`), except that a large block allocated for a checkpoint's undo
-//! log gets a mapping of its own, which `free` unmaps.
+//! The host's global allocator on Linux and macOS (lane P4-MEMORY-BUDGET;
+//! DESIGN.md §5.2): [`HEAP`] (on Linux jemalloc, or glibc's malloc without
+//! the feature `jemalloc`; on macOS libmalloc), except that a large block
+//! allocated for a checkpoint's undo log gets a mapping of its own, which
+//! `free` unmaps.
 //!
 //! Most of the host's heap is undo logs (`crate::arena`), sealed one per
 //! checkpoint and merged, a few hundred kilobytes to megabytes at a time, by
@@ -30,6 +31,15 @@
 //! calling the C library's `malloc`: the crate's symbols are prefixed.
 //! [`give_back`] purges what jemalloc holds free when the host is idle.
 //!
+//! macOS: libmalloc's xzone allocator keeps freed spans in the process's
+//! `phys_footprint` (what Activity Monitor shows) until the kernel reclaims
+//! them, which it does only once they reach a tenth of the lifetime peak
+//! (docs/evidence/mem-research-2026-10-06/ §2.7). A log block's own mapping
+//! leaves the footprint at `munmap`. There is no `mremap`: a mapped block
+//! shrinks in place (its tail unmapped) and grows into a new mapping, by
+//! copy. (The logs are sized before they are filled and only shrink, by
+//! `shrink_to_fit`, so the copy is the rare case.)
+//!
 //! The mapped blocks are recorded in a fixed table (no allocation inside the
 //! allocator); `dealloc` and `realloc` of a block of at least `BIG` bytes
 //! look it up there. When the table is full a block goes to [`HEAP`].
@@ -39,15 +49,20 @@ use std::ffi::c_void;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 /// Where every block that is not a mapped log comes from.
-#[cfg(feature = "jemalloc")]
+#[cfg(all(target_os = "linux", feature = "jemalloc"))]
 pub const HEAP: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
 /// Where every block that is not a mapped log comes from.
-#[cfg(not(feature = "jemalloc"))]
+#[cfg(not(all(target_os = "linux", feature = "jemalloc")))]
 pub const HEAP: std::alloc::System = std::alloc::System;
 
 /// The smallest log block that gets a mapping of its own.
 pub const BIG: usize = 64 << 10;
 
+/// The mappings' granularity: the page (16 KB on Apple silicon; also used
+/// on Intel Macs, whose 4 KB pages divide it).
+#[cfg(target_os = "macos")]
+const PAGE: usize = 16384;
+#[cfg(not(target_os = "macos"))]
 const PAGE: usize = 4096;
 const SLOT_BITS: u32 = 17;
 const SLOTS: usize = 1 << SLOT_BITS;
@@ -63,12 +78,17 @@ extern "C" {
     fn mmap(addr: *mut c_void, len: usize, prot: i32, flags: i32, fd: i32, off: i64)
         -> *mut c_void;
     fn munmap(addr: *mut c_void, len: usize) -> i32;
+    #[cfg(target_os = "linux")]
     fn mremap(old: *mut c_void, old_len: usize, new_len: usize, flags: i32, ...) -> *mut c_void;
 }
 const PROT_READ: i32 = 1;
 const PROT_WRITE: i32 = 2;
 const MAP_PRIVATE: i32 = 2;
+#[cfg(target_os = "linux")]
 const MAP_ANONYMOUS: i32 = 0x20;
+#[cfg(target_os = "macos")]
+const MAP_ANONYMOUS: i32 = 0x1000;
+#[cfg(target_os = "linux")]
 const MREMAP_MAYMOVE: i32 = 1;
 
 fn mapped_len(size: usize) -> usize {
@@ -167,7 +187,7 @@ pub fn give_back() -> bool {
     if !INSTALLED.load(Ordering::Relaxed) {
         return false;
     }
-    #[cfg(feature = "jemalloc")]
+    #[cfg(all(target_os = "linux", feature = "jemalloc"))]
     {
         use tikv_jemalloc_sys::mallctl;
         let call = |name: &std::ffi::CStr| {
@@ -186,7 +206,7 @@ pub fn give_back() -> bool {
         // (4096 is MALLCTL_ARENAS_ALL)
         call(c"arena.4096.purge")
     }
-    #[cfg(not(feature = "jemalloc"))]
+    #[cfg(not(all(target_os = "linux", feature = "jemalloc")))]
     {
         false
     }
@@ -196,7 +216,7 @@ pub fn give_back() -> bool {
 /// `stats.resident`; the features `jemalloc` and `mem-stats`), for
 /// `memstat::malloc_in_use`.
 pub fn heap_stats() -> Option<(u64, u64)> {
-    #[cfg(all(feature = "jemalloc", feature = "mem-stats"))]
+    #[cfg(all(target_os = "linux", feature = "jemalloc", feature = "mem-stats"))]
     {
         use tikv_jemalloc_sys::mallctl;
         if !INSTALLED.load(Ordering::Relaxed) {
@@ -232,7 +252,7 @@ pub fn heap_stats() -> Option<(u64, u64)> {
         };
         Some((read(c"stats.allocated")?, read(c"stats.resident")?))
     }
-    #[cfg(not(all(feature = "jemalloc", feature = "mem-stats")))]
+    #[cfg(not(all(target_os = "linux", feature = "jemalloc", feature = "mem-stats")))]
     {
         None
     }
@@ -248,7 +268,64 @@ fn wanted(l: &Layout) -> bool {
 /// See the module's documentation.
 pub struct HostAlloc;
 
-// SAFETY: every block is either ``HEAP`'s, passed to it unchanged, or a
+/// A mapped block `p` (recorded in `e`, laid out as `l`) resized to `new`
+/// bytes, at least [`BIG`]: Linux moves its pages (`mremap`).
+#[cfg(target_os = "linux")]
+unsafe fn resize(p: *mut u8, e: &AtomicUsize, l: Layout, new: usize) -> *mut u8 {
+    let q = mremap(
+        p as *mut c_void,
+        mapped_len(l.size()),
+        mapped_len(new),
+        MREMAP_MAYMOVE,
+    );
+    if q as isize == -1 {
+        return std::ptr::null_mut();
+    }
+    if q as *mut u8 != p {
+        e.store(GONE, Ordering::Release);
+        if !insert(q as usize) {
+            // (cannot keep it recorded: give it to HEAP)
+            let s = HEAP.alloc(Layout::from_size_align_unchecked(new, l.align()));
+            if !s.is_null() {
+                std::ptr::copy_nonoverlapping(q as *const u8, s, new);
+            }
+            munmap(q, mapped_len(new));
+            return s;
+        }
+    }
+    q as *mut u8
+}
+
+/// A mapped block `p` (recorded in `e`, laid out as `l`) resized to `new`
+/// bytes, at least [`BIG`]. macOS has no `mremap`: a block that shrinks
+/// keeps its place and unmaps its tail; one that grows is copied into a new
+/// mapping (or, if none can be recorded, into a block of [`HEAP`]).
+#[cfg(target_os = "macos")]
+unsafe fn resize(p: *mut u8, e: &AtomicUsize, l: Layout, new: usize) -> *mut u8 {
+    let (had, want) = (mapped_len(l.size()), mapped_len(new));
+    if want <= had {
+        if want < had {
+            munmap(p.add(want) as *mut c_void, had - want);
+        }
+        return p;
+    }
+    let q = match map(new) {
+        Some(q) => q,
+        None => {
+            let s = HEAP.alloc(Layout::from_size_align_unchecked(new, l.align()));
+            if s.is_null() {
+                return s;
+            }
+            s
+        }
+    };
+    std::ptr::copy_nonoverlapping(p, q, l.size());
+    e.store(GONE, Ordering::Release);
+    munmap(p as *mut c_void, had);
+    q
+}
+
+// SAFETY: every block is either [`HEAP`]'s, passed to it unchanged, or a
 // mapping of at least its size, page-aligned (so any alignment up to a
 // page), recorded in `TABLE` until it is unmapped.
 unsafe impl GlobalAlloc for HostAlloc {
@@ -282,28 +359,7 @@ unsafe impl GlobalAlloc for HostAlloc {
     unsafe fn realloc(&self, p: *mut u8, l: Layout, new: usize) -> *mut u8 {
         if let Some(e) = is_mapped(p, l.size()) {
             if new >= BIG {
-                let q = mremap(
-                    p as *mut c_void,
-                    mapped_len(l.size()),
-                    mapped_len(new),
-                    MREMAP_MAYMOVE,
-                );
-                if q as isize == -1 {
-                    return std::ptr::null_mut();
-                }
-                if q as *mut u8 != p {
-                    e.store(GONE, Ordering::Release);
-                    if !insert(q as usize) {
-                        // (cannot keep it recorded: give it to HEAP)
-                        let s = HEAP.alloc(Layout::from_size_align_unchecked(new, l.align()));
-                        if !s.is_null() {
-                            std::ptr::copy_nonoverlapping(q as *const u8, s, new);
-                        }
-                        munmap(q, mapped_len(new));
-                        return s;
-                    }
-                }
-                return q as *mut u8;
+                return resize(p, e, l, new);
             }
             let s = HEAP.alloc(Layout::from_size_align_unchecked(new, l.align()));
             if !s.is_null() {
@@ -345,11 +401,23 @@ mod tests {
         let q = unsafe { a.realloc(p, l, BIG * 40) };
         assert!(find(q as usize).is_some());
         assert_eq!(unsafe { *q.add(BIG * 3 - 1) }, 7);
+        unsafe { q.write_bytes(8, BIG * 40) };
+        // shrunk, still at least BIG: in place, mapped
+        let l40 = Layout::from_size_align(BIG * 40, 8).unwrap();
+        let q2 = unsafe { a.realloc(q, l40, BIG * 2 + 100) };
+        assert_eq!(q2, q, "a log block shrinks in place");
+        assert!(find(q as usize).is_some());
+        assert_eq!(unsafe { *q.add(BIG * 2 + 99) }, 8);
+        // grown again: mapped, contents kept
+        let l2 = Layout::from_size_align(BIG * 2 + 100, 8).unwrap();
+        let q = unsafe { a.realloc(q2, l2, BIG * 40) };
+        assert!(find(q as usize).is_some());
+        assert_eq!(unsafe { *q.add(BIG * 2 + 99) }, 8);
         let l2 = Layout::from_size_align(BIG * 40, 8).unwrap();
         // shrunk below BIG: back to HEAP, contents kept
         let r = unsafe { a.realloc(q, l2, 100) };
         assert!(find(q as usize).is_none() && find(r as usize).is_none());
-        assert_eq!(unsafe { *r.add(99) }, 7);
+        assert_eq!(unsafe { *r.add(99) }, 8);
         unsafe { a.dealloc(r, Layout::from_size_align(100, 8).unwrap()) };
         // a HEAP block grown past BIG in a log scope moves to a mapping
         let s = unsafe { a.alloc(Layout::from_size_align(1000, 8).unwrap()) };
@@ -371,6 +439,9 @@ mod tests {
         let p = unsafe { a.alloc(l) };
         unsafe { p.write_bytes(1, l.size()) };
         unsafe { a.dealloc(p, l) };
-        assert_eq!(give_back(), cfg!(feature = "jemalloc"));
+        assert_eq!(
+            give_back(),
+            cfg!(all(target_os = "linux", feature = "jemalloc"))
+        );
     }
 }
