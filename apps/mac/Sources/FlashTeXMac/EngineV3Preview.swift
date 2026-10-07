@@ -300,6 +300,15 @@ final class EngineV3PageView: NSView {
         return CGRect(x: pad, y: bounds.height - h - pad, width: max(0, bounds.width - 2 * pad), height: h)
     }
 
+    /// The label's place depends on whether the layer tree is flipped,
+    /// known once the view is in a window: placed again then.
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        CATransaction.begin(); CATransaction.setDisableActions(true)
+        placeLabel()
+        CATransaction.commit()
+    }
+
     private func placeLabel() {
         // The hosted layer's own geometry: y up unless the layer tree is flipped.
         var f = labelFrameInView
