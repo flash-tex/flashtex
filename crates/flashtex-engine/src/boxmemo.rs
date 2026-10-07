@@ -1098,6 +1098,15 @@ impl Globals {
             return Err("SharedList");
         }
         if (t == REGISTER || t == TOKS_REGISTER) && e > LO_MEM_STAT_MAX {
+            // `\let` of a sparse register's `\countdef` (and kin): shares
+            // the element, as `\let` does (`add_sa_ref`)
+            let src = self.cur_cs;
+            if src != 0 {
+                let w = self.bm_eq(src).hh();
+                if w.b0() == t && w.rh() == e {
+                    return Ok(Val::LetCs(src));
+                }
+            }
             return Err("SparseRef");
         }
         Ok(Val::Plain(e))
@@ -1658,6 +1667,10 @@ impl Globals {
                 if (CALL..=LONG_OUTER_CALL).contains(&t) && e != 0 {
                     let r = self.bm_info(e) + 1;
                     self.mem[e as usize].set_hh_lh(r);
+                } else if (t == REGISTER || t == TOKS_REGISTER) && e > LO_MEM_STAT_MAX {
+                    // sa_ref(e) = info(e+1)
+                    let r = self.bm_info(e + 1) + 1;
+                    self.mem[(e + 1) as usize].set_hh_lh(r);
                 }
                 (Some(t), e)
             }
