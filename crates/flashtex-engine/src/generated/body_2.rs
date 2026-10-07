@@ -2822,7 +2822,7 @@ impl Globals {
                         self.long_state = (self.long_state).wrapping_sub(2i32);
                     }
                     loop {
-                        // goto labels: continue, done2, found1, found
+                        // goto labels: continue, found1, found
                         let mut __goto_1: i32 = 0;
                         'l_dispatch_1: loop {
                             if __goto_1 <= 0 {
@@ -2841,112 +2841,9 @@ impl Globals {
                             }
                             if __goto_1 <= 1 { // continue
                                 // §418
-                                if (s != null) {
-                                    if (s == r) {
-                                        if (!self.intr_rec_on) {
-                                            if ((__av_mem[crate::ix::U((r) as usize)].hh().lh() < match_token) || (__av_mem[crate::ix::U((r) as usize)].hh().lh() > end_match_token)) {
-                                                {
-                                                    d = __av_mem[crate::ix::U((r) as usize)].hh().lh();
-                                                    while true {
-                                                        {
-                                                            if (self.cur_input.state_field != token_list) {
-                                                                { __goto_1 = 2; continue 'l_dispatch_1; }
-                                                            }
-                                                            if (self.cur_input.loc_field == null) {
-                                                                { __goto_1 = 2; continue 'l_dispatch_1; }
-                                                            }
-                                                            tt = __av_mem[crate::ix::U((self.cur_input.loc_field) as usize)].hh().lh();
-                                                            if (tt >= cs_token_flag) {
-                                                                {
-                                                                    c = __av_eqtb[crate::ix::U((((tt).wrapping_sub(4095i32)) - 1) as usize)].hh().b0();
-                                                                    if (c >= outer_call) {
-                                                                        { __goto_1 = 2; continue 'l_dispatch_1; }
-                                                                    }
-                                                                    if (((c <= car_ret) && (c >= tab_mark)) && (self.align_state == 0i32)) {
-                                                                        { __goto_1 = 2; continue 'l_dispatch_1; }
-                                                                    }
-                                                                    if ((tt == d) || (tt == self.par_token)) {
-                                                                        {
-                                                                            self.cur_cs = (tt).wrapping_sub(4095i32);
-                                                                            self.cur_input.loc_field = __av_mem[crate::ix::U((self.cur_input.loc_field) as usize)].hh().rh();
-                                                                            self.cur_cmd = c;
-                                                                            self.cur_chr = __av_eqtb[crate::ix::U(((self.cur_cs) - 1) as usize)].hh().rh();
-                                                                            if self.rs_on {
-                                                                                if (!self.rs_seen[crate::ix::U((self.cur_cs) as usize)]) {
-                                                                                    self.flashtex_cs_read(self.cur_cs);
-                                                                                }
-                                                                            }
-                                                                            self.cur_tok = tt;
-                                                                            { __goto_1 = 3; continue 'l_dispatch_1; }
-                                                                        }
-                                                                    }
-                                                                    self.cur_input.loc_field = __av_mem[crate::ix::U((self.cur_input.loc_field) as usize)].hh().rh();
-                                                                    if self.rs_on {
-                                                                        if (!self.rs_seen[crate::ix::U(((tt).wrapping_sub(4095i32)) as usize)]) {
-                                                                            self.flashtex_cs_read((tt).wrapping_sub(4095i32));
-                                                                        }
-                                                                    }
-                                                                }
-                                                            } else {
-                                                                {
-                                                                    c = (tt / 256i32);
-                                                                    if (c == out_param) {
-                                                                        { __goto_1 = 2; continue 'l_dispatch_1; }
-                                                                    }
-                                                                    if ((c == tab_mark) && (self.align_state == 0i32)) {
-                                                                        { __goto_1 = 2; continue 'l_dispatch_1; }
-                                                                    }
-                                                                    if ((tt == d) || (tt < right_brace_limit)) {
-                                                                        {
-                                                                            self.cur_cs = 0i32;
-                                                                            self.cur_input.loc_field = __av_mem[crate::ix::U((self.cur_input.loc_field) as usize)].hh().rh();
-                                                                            self.cur_cmd = c;
-                                                                            self.cur_chr = (tt % 256i32);
-                                                                            if (c == left_brace) {
-                                                                                self.align_state = (self.align_state).wrapping_add(1i32);
-                                                                            } else {
-                                                                                if (c == right_brace) {
-                                                                                    self.align_state = (self.align_state).wrapping_sub(1i32);
-                                                                                }
-                                                                            }
-                                                                            self.cur_tok = tt;
-                                                                            { __goto_1 = 3; continue 'l_dispatch_1; }
-                                                                        }
-                                                                    }
-                                                                    self.cur_input.loc_field = __av_mem[crate::ix::U((self.cur_input.loc_field) as usize)].hh().rh();
-                                                                }
-                                                            }
-                                                            {
-                                                                {
-                                                                    q = self.avail;
-                                                                    if (q == null) {
-                                                                        q = self.get_avail();
-                                                                    } else {
-                                                                        {
-                                                                            self.avail = __av_mem[crate::ix::U((q) as usize)].hh().rh();
-                                                                            __av_mem[crate::ix::U((q) as usize)].set_hh_rh(null);
-                                                                            self.dyn_used = (self.dyn_used).wrapping_add(1i32);
-                                                                            self.dl_new_node(q);
-                                                                        }
-                                                                    }
-                                                                }
-                                                                __av_mem[crate::ix::U((p) as usize)].set_hh_rh(q);
-                                                                __av_mem[crate::ix::U((q) as usize)].set_hh_lh(tt);
-                                                                p = q;
-                                                            }
-                                                            m = (m).wrapping_add(1i32);
-                                                        }
-                                                    }
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                            if __goto_1 <= 2 { // done2
                                 self.get_token();
                             }
-                            if __goto_1 <= 3 { // found1
+                            if __goto_1 <= 2 { // found1
                                 if (self.cur_tok == __av_mem[crate::ix::U((r) as usize)].hh().lh()) {
                                     // §420
                                     {
@@ -2956,7 +2853,7 @@ impl Globals {
                                                 if (self.cur_tok < left_brace_limit) {
                                                     self.align_state = (self.align_state).wrapping_sub(1i32);
                                                 }
-                                                { __goto_1 = 4; continue 'l_dispatch_1; }
+                                                { __goto_1 = 3; continue 'l_dispatch_1; }
                                             }
                                         } else {
                                             { __goto_1 = 1; continue 'l_dispatch_1; }
@@ -3225,14 +3122,108 @@ impl Globals {
                                 }
                                 // §418
                                 m = (m).wrapping_add(1i32);
-                                if (__av_mem[crate::ix::U((r) as usize)].hh().lh() > end_match_token) {
-                                    { __goto_1 = 1; continue 'l_dispatch_1; }
-                                }
-                                if (__av_mem[crate::ix::U((r) as usize)].hh().lh() < match_token) {
-                                    { __goto_1 = 1; continue 'l_dispatch_1; }
+                                if ((__av_mem[crate::ix::U((r) as usize)].hh().lh() > end_match_token) || (__av_mem[crate::ix::U((r) as usize)].hh().lh() < match_token)) {
+                                    {
+                                        if (!self.intr_rec_on) {
+                                            {
+                                                d = __av_mem[crate::ix::U((r) as usize)].hh().lh();
+                                                while true {
+                                                    {
+                                                        if (self.cur_input.state_field != token_list) {
+                                                            { __goto_1 = 1; continue 'l_dispatch_1; }
+                                                        }
+                                                        if (self.cur_input.loc_field == null) {
+                                                            { __goto_1 = 1; continue 'l_dispatch_1; }
+                                                        }
+                                                        tt = __av_mem[crate::ix::U((self.cur_input.loc_field) as usize)].hh().lh();
+                                                        if (tt >= cs_token_flag) {
+                                                            {
+                                                                c = __av_eqtb[crate::ix::U((((tt).wrapping_sub(4095i32)) - 1) as usize)].hh().b0();
+                                                                if (c >= outer_call) {
+                                                                    { __goto_1 = 1; continue 'l_dispatch_1; }
+                                                                }
+                                                                if (((c <= car_ret) && (c >= tab_mark)) && (self.align_state == 0i32)) {
+                                                                    { __goto_1 = 1; continue 'l_dispatch_1; }
+                                                                }
+                                                                if ((tt == d) || (tt == self.par_token)) {
+                                                                    {
+                                                                        self.cur_cs = (tt).wrapping_sub(4095i32);
+                                                                        self.cur_input.loc_field = __av_mem[crate::ix::U((self.cur_input.loc_field) as usize)].hh().rh();
+                                                                        self.cur_cmd = c;
+                                                                        self.cur_chr = __av_eqtb[crate::ix::U(((self.cur_cs) - 1) as usize)].hh().rh();
+                                                                        if self.rs_on {
+                                                                            if (!self.rs_seen[crate::ix::U((self.cur_cs) as usize)]) {
+                                                                                self.flashtex_cs_read(self.cur_cs);
+                                                                            }
+                                                                        }
+                                                                        self.cur_tok = tt;
+                                                                        { __goto_1 = 2; continue 'l_dispatch_1; }
+                                                                    }
+                                                                }
+                                                                self.cur_input.loc_field = __av_mem[crate::ix::U((self.cur_input.loc_field) as usize)].hh().rh();
+                                                                if self.rs_on {
+                                                                    if (!self.rs_seen[crate::ix::U(((tt).wrapping_sub(4095i32)) as usize)]) {
+                                                                        self.flashtex_cs_read((tt).wrapping_sub(4095i32));
+                                                                    }
+                                                                }
+                                                            }
+                                                        } else {
+                                                            {
+                                                                c = (tt / 256i32);
+                                                                if (c == out_param) {
+                                                                    { __goto_1 = 1; continue 'l_dispatch_1; }
+                                                                }
+                                                                if ((c == tab_mark) && (self.align_state == 0i32)) {
+                                                                    { __goto_1 = 1; continue 'l_dispatch_1; }
+                                                                }
+                                                                if ((tt == d) || (tt < right_brace_limit)) {
+                                                                    {
+                                                                        self.cur_cs = 0i32;
+                                                                        self.cur_input.loc_field = __av_mem[crate::ix::U((self.cur_input.loc_field) as usize)].hh().rh();
+                                                                        self.cur_cmd = c;
+                                                                        self.cur_chr = (tt % 256i32);
+                                                                        if (c == left_brace) {
+                                                                            self.align_state = (self.align_state).wrapping_add(1i32);
+                                                                        } else {
+                                                                            if (c == right_brace) {
+                                                                                self.align_state = (self.align_state).wrapping_sub(1i32);
+                                                                            }
+                                                                        }
+                                                                        self.cur_tok = tt;
+                                                                        { __goto_1 = 2; continue 'l_dispatch_1; }
+                                                                    }
+                                                                }
+                                                                self.cur_input.loc_field = __av_mem[crate::ix::U((self.cur_input.loc_field) as usize)].hh().rh();
+                                                            }
+                                                        }
+                                                        {
+                                                            {
+                                                                q = self.avail;
+                                                                if (q == null) {
+                                                                    q = self.get_avail();
+                                                                } else {
+                                                                    {
+                                                                        self.avail = __av_mem[crate::ix::U((q) as usize)].hh().rh();
+                                                                        __av_mem[crate::ix::U((q) as usize)].set_hh_rh(null);
+                                                                        self.dyn_used = (self.dyn_used).wrapping_add(1i32);
+                                                                        self.dl_new_node(q);
+                                                                    }
+                                                                }
+                                                            }
+                                                            __av_mem[crate::ix::U((p) as usize)].set_hh_rh(q);
+                                                            __av_mem[crate::ix::U((q) as usize)].set_hh_lh(tt);
+                                                            p = q;
+                                                        }
+                                                        m = (m).wrapping_add(1i32);
+                                                    }
+                                                }
+                                            }
+                                        }
+                                        { __goto_1 = 1; continue 'l_dispatch_1; }
+                                    }
                                 }
                             }
-                            if __goto_1 <= 4 { // found
+                            if __goto_1 <= 3 { // found
                                 if (s != null) {
                                     // §426
                                     {
