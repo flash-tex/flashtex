@@ -252,6 +252,10 @@ struct Rec {
     line_read: bool,
     seen: HashSet<i32>,
     boxes: HashSet<i32>,
+    /// Box registers assigned globally: each must be void when the call
+    /// ends, and the replay makes it so (`\global\setbox` to void, at the
+    /// end of the log).
+    gboxes: Vec<i32>,
     ops: Vec<Op>,
     /// Verifying the entry of this index (of `store[cs]`).
     verify: Option<usize>,
@@ -896,6 +900,7 @@ impl Globals {
             line_read: false,
             seen: HashSet::new(),
             boxes: HashSet::new(),
+            gboxes: vec![],
             ops: vec![],
             verify,
         };
@@ -1167,11 +1172,10 @@ impl Globals {
             // assignments are undone by its groups); a global one may only
             // make the register void (TikZ's `\tikz@figbox`), replayed.
             if global {
-                if e != 0 {
-                    return self.bm_abort("GlobalBox");
-                }
                 self.bm_with_rec(|r| {
-                    r.ops.push(Op::Def { p, t: BOX_REF, v: Val::Plain(0), kind });
+                    if !r.gboxes.contains(&(p - BOX_BASE)) {
+                        r.gboxes.push(p - BOX_BASE)
+                    }
                 });
             }
             self.bm_with_rec(|r| r.boxes.insert(p - BOX_BASE));
@@ -1212,11 +1216,10 @@ impl Globals {
         };
         if t == BOX_VAL {
             if global {
-                if e != 0 {
-                    return self.bm_abort("GlobalBox");
-                }
                 self.bm_with_rec(|r| {
-                    r.ops.push(Op::Sa { t, n, v: Val::Plain(0), kind });
+                    if !r.gboxes.contains(&n) {
+                        r.gboxes.push(n)
+                    }
                 });
             }
             self.bm_with_rec(|r| r.boxes.insert(n));
@@ -1474,8 +1477,29 @@ impl Globals {
         if let Some(w) = why {
             return self.bm_abort(w);
         }
+        let gboxes = self.bm_with_rec(|r| r.gboxes.clone()).unwrap_or_default();
+        if gboxes.iter().any(|&n| self.bm_box_value(n) != 0) {
+            return self.bm_abort("GlobalBox");
+        }
         self.bm_rec_on = false;
-        let rec = ST.with(|s| s.borrow_mut().rec.take()).unwrap();
+        let mut rec = ST.with(|s| s.borrow_mut().rec.take()).unwrap();
+        for n in gboxes {
+            if n < 256 {
+                rec.ops.push(Op::Def {
+                    p: BOX_BASE + n,
+                    t: BOX_REF,
+                    v: Val::Plain(0),
+                    kind: 2,
+                });
+            } else {
+                rec.ops.push(Op::Sa {
+                    t: BOX_VAL,
+                    n,
+                    v: Val::Plain(0),
+                    kind: 2,
+                });
+            }
+        }
         let last_badness = self.last_badness;
         if let Some(i) = rec.verify {
             return self.bm_verified(rec, i, last_badness);
