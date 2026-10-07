@@ -38,9 +38,10 @@ jobs:
     timeout-minutes: 180
     env:
       CARGO_BUILD_JOBS: "4"
-      ROUNDS: ${{ github.event.inputs.rounds || '2' }}
-      DOCS: ${{ github.event.inputs.docs || 'full-1000 plain-1000 full-100' }}
-      SKIP_MEMFP: ${{ github.event.inputs.skip_memfp || '0' }}
+      # TEMPORARY push defaults for a second sample (3 rounds, the 1,000-page documents, no memfp)
+      ROUNDS: ${{ github.event.inputs.rounds || '3' }}
+      DOCS: ${{ github.event.inputs.docs || 'full-1000 plain-1000' }}
+      SKIP_MEMFP: ${{ github.event.inputs.skip_memfp || '1' }}
     steps:
       - name: never on the owner's Mac
         id: where
