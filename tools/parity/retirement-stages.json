@@ -1,7 +1,7 @@
 {
   "schema": "flashtex-retirement-stages/1",
   "source": "docs/design/engine-v2/retirement-plan.md §0 stage table (PR #1236, revision 3, measured on 317f1349d; a proposal; DESIGN.md §10, §12 and modes/PROPOSAL.md Q1 govern)",
-  "note": "status is recorded by hand when a stage lands; scoreboard.py only evaluates the scoreboard part of each precondition. Everything else in a precondition is listed, not checked. Decision 3: no soak; S7 deletes the old engine at once, after the Unicode mode's M3 gate (modes Q1).",
+  "note": "status is recorded by hand when a stage lands; scoreboard.py evaluates the scoreboard part of each precondition and, where a stage has app_parity_gate, its app-parity rows (app_parity_rows.py). Everything else in a precondition is listed, not checked. Decision 3: no soak; S7 deletes the old engine at once, after the Unicode mode's M3 gate (modes Q1).",
   "stages": [
     {"id": "S0", "name": "vendor/ retired", "status": "done (#1183)", "scoreboard_gate": null,
      "other_preconditions": "none"},
@@ -17,11 +17,11 @@
      "other_preconditions": "S3"},
     {"id": "S4", "name": "Gates P5 needs (board hosted fallback and complete run, T4 on the board, T2 green on main, no-TeX-Live gate scheduled and green, T7 reference run, parity fixtures on the engine, the app row -> test check)", "status": "partly (#1461, #1563, #1574, #1336; #1598, #1605, #1609 open)", "scoreboard_gate": null,
      "other_preconditions": "none (Q1 and Q3 decided)"},
-    {"id": "S5", "name": "Flip: new documents default to the new engine (existing documents never switch silently)", "status": "not started", "scoreboard_gate": "all",
-     "other_preconditions": "decision 3 gate as confirmed (Q3): P-T2 >= 99% and P-T1 >= 98% on arXiv and T4, zero crashes on T4, new >= old on every tier; T2 clean; no-TeX-Live gate green; the S5 app-parity rows of docs/evidence/app-parity-2026-10-05 (plan §4.4); T1 (lockstep) has 0 new differences, which this board does not measure; §1.2 latency targets met on a T7 reference run; one shipped release carries #1421/#1427 records; the modes lane's fontspec fallback; S3, S3r and S4 landed"},
+    {"id": "S5", "name": "Flip: new documents default to the new engine (existing documents never switch silently)", "status": "not started", "scoreboard_gate": "all", "app_parity_gate": "S5",
+     "other_preconditions": "decision 3 gate as confirmed (Q3): P-T2 >= 99% and P-T1 >= 98% on arXiv and T4, zero crashes on T4, new >= old on every tier; T2 clean; no-TeX-Live gate green; the S5 app-parity rows of docs/evidence/app-parity-2026-10-05 (plan §4.4; app_parity_gate: tools/parity/app-parity-rows.json, its tests passing, not skipped, on mac-app and the host leg); T1 (lockstep) has 0 new differences, which this board does not measure; §1.2 latency targets met on a T7 reference run; one shipped release carries #1421/#1427 records; the modes lane's fontspec fallback; S3, S3r and S4 landed"},
     {"id": "S6a", "name": "Shared v2 pieces the v3 pane uses moved into v3 files (no behaviour change)", "status": "not started", "scoreboard_gate": null,
      "other_preconditions": "S5; swift build and the EngineV3Links, EngineV3Accessibility, EngineV3Search and EngineV3MathHover tests pass, not skipped"},
-    {"id": "S6", "name": "App old route out", "status": "not started", "scoreboard_gate": "all",
+    {"id": "S6", "name": "App old route out", "status": "not started", "scoreboard_gate": "all", "app_parity_gate": "S6",
      "other_preconditions": "S5 and S6a landed (no soak); the S6 app-parity rows (plan §4.4), each test passing and not skipped on S6's tip with the old helpers absent; the Unicode mode's M3 gate (modes Q1); source offer and §3 legal review (RQ19); RQ6, RQ7 and RQ20 ruled; revert check"},
     {"id": "S7", "name": "Old engine deleted at once (compiler, render-pipeline, the old flashtex-cli, perf-bench, orphans)", "status": "not started", "scoreboard_gate": "all",
      "other_preconditions": "S6 landed, queued immediately; T7 gating for >= 10 runs; RQ5 ruled; 0 open old-path PRs; revert check"},

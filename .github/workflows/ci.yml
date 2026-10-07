@@ -325,12 +325,13 @@ jobs:
 
           # The Xcode jobs and every other hosted macOS job: after the merge
           # (post); on a pull request or branch push only when it touches
-          # apps/ (the Mac app, the iPad companion and their fonts); never in
+          # apps/ (the Mac app, the iPad companion and their fonts) or the
+          # app-parity rows file mac-app checks its log against; never in
           # the gate.
           apple=false
           case "$tier" in
             all) apple=true ;;
-            pr) [ "$run" = "true" ] && touches '^apps/' && apple=true ;;
+            pr) [ "$run" = "true" ] && touches '^(apps/|tools/parity/app[-_]parity[-_]rows)' && apple=true ;;
           esac
 
           # The engine-v3 host tests (mac-v3-host): the app's EngineV3* and
@@ -341,7 +342,7 @@ jobs:
           # sides), the host itself, or this file. Not on every engine change:
           # engine parity covers the typesetting, and this is a ~20 minute
           # hosted macOS job. Never in the gate.
-          v3_app_paths='^(apps/mac/(Sources/FlashTeXMac/(EngineV3|EngineChoice)|Sources/FlashTeXDisplayListV3/|Tests/FlashTeXMacTests/(EngineV3|EngineChoiceTests)|Package\.swift$)|crates/(flashtex-engine/src/host/|display-list-v3/)|\.github/workflows/ci\.yml$)'
+          v3_app_paths='^(apps/mac/(Sources/FlashTeXMac/(EngineV3|EngineChoice)|Sources/FlashTeXDisplayListV3/|Tests/FlashTeXMacTests/(EngineV3|EngineChoiceTests)|Package\.swift$)|crates/(flashtex-engine/src/host/|display-list-v3/)|tools/parity/app[-_]parity[-_]rows|\.github/workflows/ci\.yml$)'
           v3_app=false
           case "$tier" in
             all) v3_app=true ;;
@@ -576,6 +577,9 @@ jobs:
       - name: "retirement: retired code is not named outside the allowlist (#1236 §4.6)"
         if: ${{ !cancelled() && runner.os == 'Linux' }}
         run: python3 tools/parity/retirement_refs.py
+      - name: "app parity: every checklist row names tests that exist (#1236 §4.4, S4(h))"
+        if: ${{ !cancelled() && runner.os == 'Linux' }}
+        run: python3 tools/parity/app_parity_rows.py check
       # The parity harness, the P5 board (its owner's bar, crash row and gate), package-smoke
       # and the P5 board's T4 pick, by their own unit tests (as `gate.sh pr`'s
       # gate_parity_selftest does, less tools/lockstep), so a pull request cannot break them unseen (cases
@@ -1104,6 +1108,11 @@ jobs:
           set -o pipefail
           mkdir -p "$SNAPSHOT_ARTIFACTS"
           swift test 2>&1 | tee swift-test.log | grep -vE '^\s*$' | tail -n 400
+      - name: "app parity: every row test this runner can run passed, not skipped (#1236 §4.4)"
+        # tools/parity/app-parity-rows.json: the hosted leg's share of the checklist's
+        # tests (all but `host_driven`, which need flashtex-host and TeX Live).
+        working-directory: apps/mac
+        run: python3 ../../tools/parity/app_parity_rows.py check-log --leg hosted swift-test.log
       - name: Upload swift test log
         if: always()
         uses: actions/upload-artifact@v4
@@ -1194,6 +1203,11 @@ jobs:
           set -o pipefail
           mkdir -p "$FLASHTEX_V3_CACHE"
           swift test --filter 'FlashTeXMacTests\.(EngineV3|EngineChoiceTests)' 2>&1 | tee swift-test.log | grep -vE '^\s*$' | tail -n 400
+      - name: "app parity: every host-driven row test passed, not skipped (#1236 §4.4)"
+        # tools/parity/app-parity-rows.json's `host_driven` tests: the ones the
+        # hosted mac-app job skips for want of flashtex-host and TeX Live.
+        working-directory: apps/mac
+        run: python3 ../../tools/parity/app_parity_rows.py check-log --leg host swift-test.log
       - name: Executed and skipped
         if: always()
         working-directory: apps/mac

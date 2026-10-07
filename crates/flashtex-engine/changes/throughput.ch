@@ -112,7 +112,30 @@
 % and \csname's own lookup, so the pair changes nothing here. An undelimited
 % parameter never reaches the loop, so its cost is unchanged.
 %
-% [6] scan_toks (section 477): a body's tokens, read in place.
+% [6] macro_call (section 425): a group's tokens read in place.
+%
+% The profile of the edited page on Infinite Descent (P6-ENGINE-SPEED) put
+% macro_call first (20 %), most of it the loop of section 425 that copies
+% a braced argument token by token: per token fast_store_new_token, then
+% get_token, which runs get_next and packs cur_tok. A token of a token list
+% that [3]'s fast path would take (state=token_list, loc<>null, no intrinsic
+% recording; a control sequence whose eq_type is below outer_call and not
+% tab_mark..car_ret while align_state=0; a character token that is not
+% out_param and not tab_mark while align_state=0) is here read in place,
+% except par_token, which goes to get_token as before: loc moves on, the
+% read-set hook runs for a control sequence, a brace steps align_state, as
+% in [3]; cur_tok is the token itself, which is what get_token computes
+% from cur_cs (t-cs_token_flag) or from cur_cmd and cur_chr (t div 256,
+% t mod 256); no_new_control_sequence is true, as get_token leaves it. The
+% loop's own tests (par_token, the brace counts) then see the same cur_tok.
+% cur_cs, cur_cmd and cur_chr are not stored for a token read in place:
+% nothing reads them in the loop (fast_store_new_token and the tests read
+% cur_tok), and when the loop ends on a token read in place, which is then
+% the right brace that closes the group, they are set to what get_token
+% would have left (cur_cs=0, the brace's command and character). Every
+% other token goes to get_token with the state get_token would have found.
+%
+% [7] scan_toks (section 477): a body's tokens, read in place.
 %
 % The same for the body of a definition or a token list that is not
 % expanded: each token get_token returns that is not a brace (cur_tok <
@@ -251,13 +274,17 @@ procedure macro_call; {invokes a user-defined control sequence}
 label exit, continue, done, done1, found, found1;
 @z
 
-@x [25] m.389 l.9341 - macro_call: a delimited argument's tokens, read in place [5]
+@x [25] m.389 l.9341 - macro_call: tokens read in place [5] [6]
 @!match_chr:ASCII_code; {character used in parameter}
 @y
 @!match_chr:ASCII_code; {character used in parameter}
 @!tt:halfword; {a token read in place}
 @!c:integer; {its command code}
 @!d:halfword; {the first token of the delimiter}
+@!ft:halfword; {a token read in place [6]}
+@!fq:pointer; {the control sequence of |ft|}
+@!fc:integer; {its command code}
+@!in_place:boolean; {the last token was read in place}
 @z
 
 @x [25] m.392 l.9402 - macro_call: a delimited argument's tokens, read in place [5]
@@ -312,13 +339,71 @@ if (info(r)>end_match_token)or(info(r)<match_token) then
   end;
 @z
 
-@x [27] m.473 l.11456 - scan_toks: a body's tokens, read in place [6]
+@x [25] m.425 l.9519 - macro_call: a group's tokens read in place [6]
+begin unbalance:=1;
+@^inner loop@>
+loop@+  begin fast_store_new_token(cur_tok); get_token;
+  if cur_tok=par_token then if long_state<>long_call then
+    @<Report a runaway argument and abort@>;
+  if cur_tok<right_brace_limit then
+    if cur_tok<left_brace_limit then incr(unbalance)
+    else  begin decr(unbalance);
+      if unbalance=0 then goto done1;
+      end;
+  end;
+done1: rbrace_ptr:=p; store_new_token(cur_tok);
+end
+@y
+begin unbalance:=1;
+@^inner loop@>
+loop@+  begin fast_store_new_token(cur_tok);
+  in_place:=false;
+  if state=token_list then if loc<>null then if not intr_rec_on then
+    begin ft:=info(loc);
+    if ft>=cs_token_flag then
+      begin if ft<>par_token then
+        begin fq:=ft-cs_token_flag; fc:=eq_type(fq);
+        if (fc<outer_call)and((fc>car_ret)or(fc<tab_mark)or(align_state<>0)) then
+          begin loc:=link(loc); in_place:=true;
+          if rs_on then if not rs_seen[fq] then flashtex_cs_read(fq);
+          end;
+        end;
+      end
+    else  begin fc:=ft div @'400;
+      if (fc<>out_param)and((fc<>tab_mark)or(align_state<>0)) then
+        begin loc:=link(loc); in_place:=true;
+        if fc=left_brace then incr(align_state)
+        else if fc=right_brace then decr(align_state);
+        end;
+      end;
+    end;
+  if in_place then
+    begin cur_tok:=ft; no_new_control_sequence:=true;
+    end
+  else  begin get_token;
+    if cur_tok=par_token then if long_state<>long_call then
+      @<Report a runaway argument and abort@>;
+    end;
+  if cur_tok<right_brace_limit then
+    if cur_tok<left_brace_limit then incr(unbalance)
+    else  begin decr(unbalance);
+      if unbalance=0 then goto done1;
+      end;
+  end;
+done1: if in_place then
+  begin cur_cs:=0; cur_cmd:=cur_tok div @'400; cur_chr:=cur_tok mod @'400;
+  end;
+rbrace_ptr:=p; store_new_token(cur_tok);
+end
+@z
+
+@x [27] m.473 l.11456 - scan_toks: a body's tokens, read in place [7]
 label found,continue,done,done1,done2;
 @y
 label found,continue,done,done1,done2,done3,found1;
 @z
 
-@x [27] m.473 l.11462 - scan_toks: a body's tokens, read in place [6]
+@x [27] m.473 l.11462 - scan_toks: a body's tokens, read in place [7]
 @!hash_brace:halfword; {possible `\.{\#\{}' token}
 @y
 @!hash_brace:halfword; {possible `\.{\#\{}' token}
@@ -326,7 +411,7 @@ label found,continue,done,done1,done2,done3,found1;
 @!c:integer; {its command code}
 @z
 
-@x [27] m.477 - scan_toks: a body's tokens, read in place [6]
+@x [27] m.477 - scan_toks: a body's tokens, read in place [7]
   else begin intr_weak:=true; get_token; intr_weak:=false;
     end;
 @y
