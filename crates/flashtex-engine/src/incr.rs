@@ -490,6 +490,10 @@ struct Obs {
     progress: Option<Progress>,
     pass: usize,
     preempted: bool,
+    /// `take_held_segment` took the segment checkpoint now being taken
+    /// because the run stops there (`on_checkpoint` stops it, without
+    /// asking `preempt` again).
+    stop_held: bool,
     /// The convergence test in progress may stop for newer work.
     interruptible: bool,
     /// At the convergence point: the characters the new run had shipped
@@ -1952,7 +1956,14 @@ impl Observer for Obs {
     /// Held back before the edited page: taken where newer work stops the
     /// run (`on_checkpoint` stops it there, as at any segment checkpoint).
     fn take_held_segment(&mut self, g: &mut Globals) -> bool {
-        self.preempt_now(g)
+        self.stop_held = self.preempt_now(g);
+        self.stop_held
+    }
+
+    /// Between two spaced segment checkpoints: likewise (lane
+    /// P4-TYPING-200WPM).
+    fn stop_between_segments(&mut self, g: &mut Globals) -> bool {
+        self.take_held_segment(g)
     }
 
     fn on_checkpoint(&mut self, g: &mut Globals, id: CheckpointId, why: Point) -> Action {
@@ -1966,7 +1977,9 @@ impl Observer for Obs {
         }
         if why != Point::Shipout {
             self.taken.push((id, self.pages_so_far()));
-            if why == Point::Segment && self.preempt_now(g) {
+            // (a held one was taken because the run stops here: asked once)
+            if why == Point::Segment && (std::mem::take(&mut self.stop_held) || self.preempt_now(g))
+            {
                 return Action::Stop;
             }
             return Action::Continue;
@@ -4123,6 +4136,7 @@ impl Session {
             progress: self.progress.clone(),
             pass: self.pass,
             preempted: false,
+            stop_held: false,
             interruptible: false,
             char_or: vec![],
             preempt_after_s0: false,

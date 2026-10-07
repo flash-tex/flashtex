@@ -4088,3 +4088,44 @@ fn a_stored_beamer_s0_reopens() {
         "s0-beamer: an edit after the open",
     );
 }
+
+/// Lane P4-TYPING-200WPM: newer work stops a run at the next `build_page`
+/// after a line was read, not only at a segment checkpoint its spacing
+/// allows (here never: `FLASHTEX_SEGMENT_S` is 1000 s) or at a shipout. The
+/// interrupted compile stops before it ships a page, and the compile after
+/// it equals from-scratch runs.
+#[test]
+fn newer_work_stops_a_run_between_spaced_segments() {
+    let Some(e) = env() else {
+        common::no_texlive();
+        return;
+    };
+    let dir = e.dir.join("stop-between-segments");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let base = refs_doc("", 8);
+    let mut h = Host::start_env(&e, &dir, &[("FLASHTEX_SEGMENT_S", "1000")]);
+    for _ in 0..3 {
+        let r = compile_and_check(&e, &mut h, &dir, &[("doc.tex", &base)], "settle");
+        if r.contains("\"mode\":\"unchanged\"") {
+            break;
+        }
+    }
+    let first = base.replacen("Paragraph 20 with", "Paragraph 20 now with", 1);
+    let second = base.replacen("Paragraph 20 with", "Paragraph 20 then with", 1);
+    let reference = dir.with_extension("ref");
+    copy_dir(&dir, &reference);
+    std::fs::write(dir.join("doc.tex"), &first).unwrap();
+    let r = h.cmd("compile-interrupt-at 0");
+    assert!(r.contains("\"preempted\":true"), "not stopped: {r}");
+    assert_eq!(
+        field(&r, "rerun_pages"),
+        "0",
+        "stopped before its first page: {r}"
+    );
+    std::fs::write(dir.join("doc.tex"), &second).unwrap();
+    std::fs::write(reference.join("doc.tex"), &second).unwrap();
+    let r = h.cmd("compile");
+    check_against(&e, &dir, &reference, &r, "the compile after the stop");
+    compile_and_check(&e, &mut h, &dir, &[("doc.tex", &base)], "the revert");
+}
