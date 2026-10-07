@@ -2004,10 +2004,10 @@ impl Observer for Obs {
         }
         // Elsewhere (a run from scratch, a later pass, the background after
         // the edited page): only where retention keeps it (`thin`: segment
-        // checkpoints more than DENSE pages from the cursor go). Taking,
+        // checkpoints more than `dense` pages from the cursor go). Taking,
         // sealing, packing and then merging away the others was 6 % of a
         // cold open of full-1000 (P6-ENGINE-SPEED, COLD-OPEN).
-        self.pages_so_far().abs_diff(self.cursor) <= DENSE
+        self.pages_so_far().abs_diff(self.cursor) <= self.dense
     }
 
     fn on_checkpoint(&mut self, g: &mut Globals, id: CheckpointId, why: Point) -> Action {
