@@ -139,6 +139,10 @@ enum Val {
     LetCs(i32),
     /// A `\parshape` specification made for the assignment, by its words.
     FreshShape(Vec<i32>),
+    /// The glue specification a skip register holds when the assignment is
+    /// made (`\skip1=\skip2` shares it): an `eqtb` location, or a sparse
+    /// register (type, number) as `(-type, number)`.
+    GlueFrom(i32, i32),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -1062,7 +1066,7 @@ impl Globals {
                 return Ok(Val::StaticGlue(e));
             }
             if self.bm_link(e) != 0 {
-                return Err("SharedGlue");
+                return self.bm_glue_source(e).ok_or("SharedGlue");
             }
             return Ok(Val::FreshGlue(self.bm_glue_fields(e)));
         }
@@ -1097,6 +1101,30 @@ impl Globals {
             return Err("SparseRef");
         }
         Ok(Val::Plain(e))
+    }
+
+    /// A shared glue specification `e` being assigned: the one register
+    /// that holds it (the one `scan_glue` just read, which took a reference
+    /// to it), or `None` when it is not exactly one.
+    fn bm_glue_source(&self, e: i32) -> Option<Val> {
+        let mut found: Vec<Val> = vec![];
+        for p in GLUE_BASE..LOCAL_BASE {
+            if self.bm_eq(p).hh().rh() == e {
+                found.push(Val::GlueFrom(p, 0));
+            }
+        }
+        for t in [GLUE_VAL, MU_VAL] {
+            self.bm_sa_walk(t, &mut |n, q| {
+                if self.bm_link(q + 1) == e {
+                    found.push(Val::GlueFrom(-t, n));
+                }
+            });
+        }
+        if found.len() == 1 {
+            found.pop()
+        } else {
+            None
+        }
     }
 
     /// `eq_define` (0), `eq_word_define` (1), `geq_define` (2),
@@ -1592,6 +1620,22 @@ impl Globals {
                 (None, q)
             }
             Val::FreshList(l) => (None, self.bm_make_list(l)),
+            Val::GlueFrom(a, b) => {
+                let e = if *a > 0 {
+                    self.bm_eq(*a).hh().rh()
+                } else {
+                    self.find_sa_element(-*a, *b, false);
+                    let q = self.cur_ptr;
+                    if q == 0 {
+                        k::zero_glue
+                    } else {
+                        self.bm_link(q + 1)
+                    }
+                };
+                let r = self.bm_link(e) + 1;
+                self.mem[e as usize].set_hh_rh(r);
+                (None, e)
+            }
             Val::LetCs(src) => {
                 let w = self.bm_eq(*src).hh();
                 let (t, e) = (w.b0(), w.rh());
