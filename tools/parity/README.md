@@ -603,6 +603,19 @@ only the scoreboard part of S5's precondition. The status line names what S5
 still needs, including "T1 (lockstep) has 0 new differences", which this
 board does not measure.
 
+**App-parity rows (S4(h), plan §4.4).** `app-parity-rows.json` maps each row of
+the checklist of record (`docs/evidence/app-parity-2026-10-05/README.md`) to
+the tests that prove it and to its S5 class: `test` (named tests pass, not
+skipped), `fallback` (A9, A17: a visible fallback to the previous engine),
+`owner` ("different (intended)": the owner's retirement in writing, as a link
+in `owner_retirement`), `s6` or `s7`. `host_driven` lists the tests that need
+`flashtex-host` and TeX Live, which the hosted `mac-app` job skips.
+`app_parity_rows.py check` (the checks job, `gate.sh pr`) holds the rows to the
+checklist and every named test to the source; `check-log --leg hosted` (in
+`mac-app`) and `--leg host` (on the leg that has a host) fail when a row's test
+is missing, skipped or failed. Stages with `app_parity_gate` show the rows'
+state in the board's stage table (`gate S5` prints it, with what is still open).
+
 **The owner's bar (P5-BOARD-T4).** The owner confirmed decision 3's
 thresholds on 2026-10-05 (DESIGN §13): P-T2 >= 99 % and P-T1 >= 98 % of the
 measured documents on the arXiv and T4 tiers, zero crashes on T4, and new >=
@@ -715,8 +728,11 @@ at the commit that T4 summary records.
 **The board's host (the NixOS PC).** Its runners are user services in
 `flashtex.slice` (MemoryMax 20G, no swap, CPUQuota 800 %, shared with agents'
 runs). The board runs in a scope of its own inside that slice
-(`systemd-run --user --scope --slice=flashtex.slice -p MemoryMax=10G`, nice
-10), so it and a T4 night cannot take the slice's 20 GB between them. Its TeX
+(`systemd-run --user --scope --slice=flashtex.slice -p MemoryMax=8G`, nice
+10), and never beside a T4 night: the board's PC job and nightly.yml's
+`corpus-t4` share the concurrency group `flashtex-pc-heavy`. On 10-06 the two
+together, beside the agents' runs, pushed the slice to 86 % full memory
+pressure, and GitHub dropped the board (37525986631). Its TeX
 Live 2026 is installed without doc files (`tlmgr option docfiles` is 0), and
 the templates and packages manifests pin files from TeX Live's `doc/` tree.
 Installing the docs would change the oracle's `texlive.tlpdb`, so the board

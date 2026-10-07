@@ -887,6 +887,10 @@ struct SettingsRootView: View {
                 .formStyle(.grouped)
                 .frame(width: DS.Layout.settingsWidth)
                 .tabItem { Label("Live Share", systemImage: "person.2") }
+            Form { PerformanceSettingsSection() } // Low Memory / Balanced / High Performance (PerformanceMode.swift)
+                .formStyle(.grouped)
+                .frame(width: DS.Layout.settingsWidth)
+                .tabItem { Label("Performance", systemImage: "gauge.with.dots.needle.67percent") }
         }
     }
 }
