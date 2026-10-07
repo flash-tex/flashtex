@@ -187,6 +187,9 @@ final class EngineV3Session {
     private(set) var mainFile = ""
 
     @ObservationIgnored private(set) var pages: [Int: DL3PreparedPage] = [:]
+    /// Each page's size (bp), kept with `pages`: the layout reads every page's
+    /// size, and a `DL3PreparedPage` copy out of `pages` retains a dozen arrays.
+    @ObservationIgnored private var pageSizes: [Int: CGSize] = [:]
     @ObservationIgnored private(set) var stale: Set<Int> = []
     @ObservationIgnored private(set) var forms: [UInt32: DL3PreparedPage] = [:]
     /// Pages whose PDF rendering replaces the display list (INCOMPLETE, or a
@@ -328,6 +331,7 @@ final class EngineV3Session {
     init(smoothFonts: Bool? = nil) {
         self.smoothFonts = smoothFonts ?? PreviewFontSmoothing.enabled
         rasterPlan.smoothFonts = self.smoothFonts
+        delivery = EngineV3Delivery(EngineV3WeakRef(self))
         if smoothFonts == nil {
             fontSmoothingObserver = PreviewFontSmoothing.observe { [weak self] on in self?.smoothFonts = on }
         }
@@ -656,9 +660,10 @@ final class EngineV3Session {
             do {
                 let c = try DL3Connection(socketPath: socket, client: "FlashTeX (engine-v3 preview)", accept: [DL3Diag.capability] + (ProcessInfo.processInfo.environment["FLASHTEX_V3_NO_PROGRESS"] == "1" ? [] : [DL3.progressCapability]), profile: profile)
                 let reader = EngineV3Reader(cache: .shared, plan: plan)
+                let delivery = EngineV3Delivery(ref)
                 c.start(onTimedEvent: { ev, timing in
                     guard let out = reader.handle(ev, timing: timing) else { return }
-                    EngineV3Session.onMain { ref.value?.apply(out, connection: c) }
+                    delivery.post(out, connection: c)
                 }, onClose: { err in
                     EngineV3Session.onMain { ref.value?.closed(err, connection: c) }
                 })
@@ -1532,17 +1537,37 @@ final class EngineV3Session {
 
     // MARK: events from the reader
 
-    private func apply(_ out: EngineV3Reader.Output, connection c: DL3Connection) {
-        guard c === connection else { return } // a replaced connection's late frames
-        handle(out)
+    /// One event from the inbox (`EngineV3Delivery.drain`), without the
+    /// per-drain work (`flushEvents`). `c` nil: a test's feed, as from the
+    /// current connection.
+    fileprivate func applyQueued(_ out: EngineV3Reader.Output, connection c: DL3Connection?) {
+        guard c == nil || c === connection else { return } // a replaced connection's late frames
+        MainThreadProbe.time("v3.event") { handleOne(out) }
         afterEvent?(out)
     }
+
+    /// What waits for the end of a drain: the pages' layout, once for every
+    /// page that arrived in it (a page past the laid-out ones used to lay out
+    /// all of them: O(pages²) over a cold compile).
+    func flushEvents() {
+        view?.flushLayout()
+    }
+
+    /// Hands host events to the main thread as the reader thread does (tests:
+    /// `EditorInstantTests` feeds a synthetic compile through it).
+    @ObservationIgnored private(set) var delivery: EngineV3Delivery!
 
     /// Tests: called after each event from the host has been applied.
     @ObservationIgnored var afterEvent: ((EngineV3Reader.Output) -> Void)?
 
-    /// Applies one event from the host (internal for tests).
+    /// Applies one event from the host and flushes (tests; the inbox
+    /// applies a drain's events, then flushes once).
     func handle(_ out: EngineV3Reader.Output) {
+        handleOne(out)
+        flushEvents()
+    }
+
+    private func handleOne(_ out: EngineV3Reader.Output) {
         lastEventNs = MonotonicClock.nowNs()
         lastHostActivityNs = lastEventNs // the stall bound: the host is alive and working
         switch out {
@@ -1553,7 +1578,10 @@ final class EngineV3Session {
                 newestClientStartedID = max(newestClientStartedID, id)
                 if let cycle = toolsCycleID, id > cycle { toolsCycleID = nil }
             }
-            errorCount = 0; warningCount = 0; firstError = nil; compileFatal = false
+            if errorCount != 0 { errorCount = 0 }
+            if warningCount != 0 { warningCount = 0 }
+            if firstError != nil { firstError = nil }
+            compileFatal = false
             diagnostics = []; diags = []
             if j["keep"]?.bool == false {
                 sourceMap.reset() // span ids restart with the resource ids
@@ -1568,13 +1596,20 @@ final class EngineV3Session {
             let sizeChanged = pages[index].map { $0.widthPt != p.widthPt || $0.heightPt != p.heightPt } ?? true
             pages[index] = p
             glyphIndexes.invalidate(index)
+            pageSizes[index] = CGSize(width: p.widthPt, height: p.heightPt)
             pageInstalls &+= 1
             stale.remove(index)
             pdfFallback[index] = nil
             if index >= pageCount {
+                let before = pageCount
                 pageCount = index + 1; layoutRevision &+= 1
-                // Stored pages the count now reaches again stay stale.
-                if snapshot != nil { markStale(stale) }
+                // Stored pages the count now reaches again stay stale: only
+                // the indexes it newly reaches (`markStale(stale)` walked
+                // every page, per page: O(pages²) over a cold compile).
+                if let s = snapshot?.0, before < min(pageCount, s.pages.count) {
+                    for i in before ..< min(pageCount, s.pages.count) where pages[i] == nil { stale.insert(i) }
+                    staleChangedNow()
+                }
             } else if sizeChanged { layoutRevision &+= 1 }
             // (pageArrived re-lays out itself when the page is new or resized:
             // it does not wait for SwiftUI's updateNSView.)
@@ -1620,7 +1655,8 @@ final class EngineV3Session {
             exportDone(j)
         case .done(let j, let compileID):
             let doneStart = DispatchTime.now().uptimeNanoseconds
-            defer { lastDoneMainMs = Double(DispatchTime.now().uptimeNanoseconds - doneStart) / 1e6 }
+            let probe = MainThreadProbe.begin()
+            defer { lastDoneMainMs = Double(DispatchTime.now().uptimeNanoseconds - doneStart) / 1e6; MainThreadProbe.end("v3.done", probe) }
             let status = j["status"]?.string ?? "?"
             if logDone { log("DONE \(j)") }
             doneCount &+= 1
@@ -1731,7 +1767,7 @@ final class EngineV3Session {
 
     /// The page size to lay out page `i` with: its display list's, else the snapshot's.
     func pageSize(_ i: Int) -> CGSize? {
-        if let p = pages[i] { return CGSize(width: p.widthPt, height: p.heightPt) }
+        if let size = pageSizes[i] { return size }
         guard let s = snapshot?.0, i < s.pages.count else { return nil }
         return CGSize(width: s.pages[i].width, height: s.pages[i].height)
     }
@@ -1813,13 +1849,13 @@ final class EngineV3Session {
         // does not count) and of the input files as last synced.
         guard let model, let key = EngineV3Snapshot.key(for: model), let root = project?.source, root == model.project.projectRoot,
               let synced = inputsAtSync, fastPending.isEmpty,
-              pageCount > 0, (0 ..< pageCount).allSatisfy({ pages[$0] != nil }) else { return }
+              pageCount > 0, (0 ..< pageCount).allSatisfy({ pageSizes[$0] != nil }) else { return }
         let visible = visiblePage
         var chosen: [Int: DL3PreparedPage] = [:]
         for i in Array(0 ..< min(3, pageCount)) + Array(max(0, visible - 2) ... min(pageCount - 1, visible + 5)) where chosen.count < EngineV3Snapshot.maxPages {
             chosen[i] = pages[i]
         }
-        let sizes = (0 ..< pageCount).map { CGSize(width: pages[$0]!.widthPt, height: pages[$0]!.heightPt) }
+        let sizes = (0 ..< pageCount).map { pageSizes[$0]! }
         let docs = EngineV3Snapshot.hashes(model.documents.map { ($0.path, sentTexts[$0.path] ?? $0.text) })
         let formsCopy = forms, main = mainFile
         let ppp = view?.currentPixelsPerPoint ?? 2
@@ -2077,7 +2113,7 @@ final class EngineV3Session {
     /// No pages (a stop, another project): none of them, nor their glyph
     /// indexes, may answer a lookup.
     private func dropPages() {
-        pages = [:]; stale = []; forms = [:]; pdfFallback = [:]; pageCount = 0
+        pages = [:]; pageSizes = [:]; stale = []; forms = [:]; pdfFallback = [:]; pageCount = 0
         glyphIndexes.removeAll()
     }
 
@@ -2107,7 +2143,7 @@ final class EngineV3Session {
         guard n != pageCount || complete else { return }
         guard complete || n > pageCount else { return }
         if complete, n < pageCount {
-            for i in n ..< pageCount { pages[i] = nil; stale.remove(i); pdfFallback[i] = nil }
+            for i in n ..< pageCount { pages[i] = nil; pageSizes[i] = nil; stale.remove(i); pdfFallback[i] = nil }
             glyphIndexes.removePages(from: n)
         }
         if n != pageCount { pageCount = n; layoutRevision &+= 1 }
@@ -2134,6 +2170,113 @@ final class EngineV3Session {
 final class EngineV3WeakRef: @unchecked Sendable {
     weak var value: EngineV3Session?
     init(_ v: EngineV3Session) { value = v }
+}
+
+/// How the reader thread's events reach the main thread (APP-EDITOR-INSTANT,
+/// docs/evidence/editor-instant-2026-10-06). Any thread posts; main drains.
+///
+/// Each event used to be its own main-thread block, and Core Foundation runs
+/// every block queued when it gets to them: a cold compile's thousand PAGEs
+/// (each laying out every page) held the main thread, and the keys typed
+/// meanwhile, for as long as the backlog took. Now the events queue here and
+/// main applies them in drains: a drain stops after `budgetNs` of work and
+/// the rest waits for the next one; while events keep coming, drains are at
+/// least a frame (`frameNs`) apart, so a key never waits behind more than
+/// one budget of preview work, and the SwiftUI and layout work an event
+/// causes is done once per drain (`EngineV3Session.flushEvents`). A drain
+/// after a quiet spell starts at once (a keystroke's compile is not delayed;
+/// its page is installed on the reader thread anyway).
+/// `FLASHTEX_V3_COALESCE=0`: every event in its own block, as before (A/B).
+final class EngineV3Delivery: @unchecked Sendable {
+    let ref: EngineV3WeakRef
+    let coalesce: Bool
+    /// Main-thread time one drain may spend before it yields (`FLASHTEX_V3_DRAIN_MS`, default 3).
+    let budgetNs: UInt64
+    /// Drains while events keep coming are at least this far apart (a 120 Hz frame).
+    let frameNs: UInt64 = 8_333_333
+    private let lock = NSLock()
+    private var queue: [(EngineV3Reader.Output, DL3Connection?)?] = []
+    private var head = 0
+    private var scheduled = false
+    private var lastDrainNs: UInt64 = 0
+    /// Drains run, and those that yielded with events left (tests, evidence).
+    private(set) var drains = 0
+    private(set) var yielded = 0
+
+    init(_ ref: EngineV3WeakRef) {
+        self.ref = ref
+        let env = ProcessInfo.processInfo.environment
+        coalesce = env["FLASHTEX_V3_COALESCE"] != "0"
+        budgetNs = UInt64((env["FLASHTEX_V3_DRAIN_MS"].flatMap(Double.init) ?? 3) * 1e6)
+    }
+
+    /// One decoded event from connection `c` (nil: a test's feed), applied on main.
+    func post(_ out: EngineV3Reader.Output, connection c: DL3Connection?) {
+        guard coalesce else {
+            let ref = self.ref
+            EngineV3Session.onMain {
+                guard let s = ref.value else { return }
+                s.applyQueued(out, connection: c)
+                s.flushEvents()
+            }
+            return
+        }
+        lock.lock()
+        queue.append((out, c))
+        let schedule = !scheduled
+        scheduled = true
+        let last = lastDrainNs
+        lock.unlock()
+        if schedule { scheduleDrain(after: last) }
+    }
+
+    /// At once after a quiet frame, else a frame after the last drain began.
+    private func scheduleDrain(after last: UInt64) {
+        let now = MonotonicClock.nowNs()
+        let due = last &+ frameNs
+        if last == 0 || now >= due {
+            EngineV3Session.onMain { self.drain() }
+        } else {
+            DispatchQueue.main.asyncAfter(deadline: .now() + .nanoseconds(Int(due &- now))) {
+                MainActor.assumeIsolated { self.drain() }
+            }
+        }
+    }
+
+    @MainActor
+    private func drain() {
+        let t0 = MonotonicClock.nowNs()
+        let probe = MainThreadProbe.begin()
+        lock.lock(); lastDrainNs = t0; lock.unlock()
+        let session = ref.value
+        var more = false
+        while true {
+            lock.lock()
+            guard head < queue.count else {
+                queue.removeAll(keepingCapacity: true); head = 0; scheduled = false
+                lock.unlock()
+                break
+            }
+            let item = queue[head]
+            queue[head] = nil // its page is released when applied
+            head += 1
+            lock.unlock()
+            if let item { session?.applyQueued(item.0, connection: item.1) }
+            if MonotonicClock.nowNs() &- t0 >= budgetNs {
+                lock.lock()
+                more = head < queue.count
+                if !more { queue.removeAll(keepingCapacity: true); head = 0; scheduled = false }
+                else if head >= 4096 { queue.removeFirst(head); head = 0 } // a backlog that never empties stays bounded
+                lock.unlock()
+                break
+            }
+        }
+        session?.flushEvents()
+        drains &+= 1
+        if more { yielded &+= 1 }
+        MainThreadProbe.end("v3.drain", probe)
+        if more { scheduleDrain(after: t0) }
+    }
 }
 
 /// Which pages the reader thread may rasterise as they arrive: the ones on
