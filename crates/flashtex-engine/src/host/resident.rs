@@ -853,6 +853,13 @@ impl Engine {
                         rep.pages = r2.pages;
                         rep.converged_at = r2.converged_at;
                         rep.rerun_pages = r2.rerun_pages;
+                        // (the convergence tests, the rest's included: a
+                        // page's test at the end of its output routine
+                        // comes after the viewport's stop; `finish` goes
+                        // on from the stopped run's report)
+                        rep.tests = r2.tests;
+                        rep.test_s = r2.test_s;
+                        rep.test_instr = r2.test_instr;
                         rep.paused = r2.paused;
                         rep.preempted = r2.preempted;
                         // the rest's passes may have stopped for the tools
