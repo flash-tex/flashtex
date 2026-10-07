@@ -154,8 +154,8 @@ struct Outcome {
     first_page: Option<Duration>,
     /// `PROGRESS` heartbeats received (`progress-v1`, spec §6.8).
     progress: usize,
-    /// The `file` of the last `PROGRESS` that named one.
-    progress_file: Option<String>,
+    /// The `file`s the `PROGRESS` heartbeats named, in order.
+    progress_files: Vec<String>,
 }
 
 fn compile(c: &mut Client, view: &mut View, req: &CompileRequest) -> Outcome {
@@ -166,7 +166,7 @@ fn compile(c: &mut Client, view: &mut View, req: &CompileRequest) -> Outcome {
     let mut pages_msgs = vec![];
     let mut first_page = None;
     let mut progress = 0;
-    let mut progress_file = None;
+    let mut progress_files = vec![];
     let done = loop {
         match c.next_event().unwrap().expect("host closed the connection") {
             Event::Started(j) => {
@@ -220,7 +220,7 @@ fn compile(c: &mut Client, view: &mut View, req: &CompileRequest) -> Outcome {
                 progress += 1;
                 let j = Json::parse(std::str::from_utf8(&body).unwrap()).unwrap();
                 if let Some(f) = j.str_field("file") {
-                    progress_file = Some(f.to_string());
+                    progress_files.push(f.to_string());
                 }
             }
             _ => {}
@@ -236,7 +236,7 @@ fn compile(c: &mut Client, view: &mut View, req: &CompileRequest) -> Outcome {
         pages_msgs,
         first_page,
         progress,
-        progress_file,
+        progress_files,
     }
 }
 
@@ -1033,14 +1033,19 @@ fn the_progress_heartbeat_changes_no_page() {
         "PROGRESS while typesetting: {}",
         first.done
     );
-    // It names the file TeX reads (the innermost `\input`).
+    // It names the file TeX reads (the innermost `\input`). (Integration
+    // of #1551/#1684: a pass's first heartbeat now comes at its first
+    // checkpoint in the preamble -- a `Point::PreambleLine` after a
+    // package, or the `.aux` anchor -- so on this short document, done in
+    // under 250 ms a pass, it may name the class or the `.aux`, not main.tex.)
     assert!(
-        first
-            .progress_file
-            .as_deref()
-            .is_some_and(|f| f.ends_with("main.tex")),
+        !first.progress_files.is_empty()
+            && first
+                .progress_files
+                .iter()
+                .all(|f| Path::new(f).is_file() || proj.join(f).is_file()),
         "PROGRESS names the file: {:?}",
-        first.progress_file
+        first.progress_files
     );
     // An edit near the middle: an incremental compile, with the heartbeat.
     let at = text.len() / 2;
