@@ -15,6 +15,8 @@ in #1337.
 > the 47+ host-driven tests, which hosted CI skips. Main run 37498244558 skipped all 47
 > of them, not just the A15, A16, A20 and A21 tests this file named. The rows below
 > carry the new tests; "Counts" has a 2026-10-06 line. Run numbers are in the PRs.
+>
+> **2026-10-07:** A6, A7, A18, C5 and C23 were accepted by the owner's delegation to the Commander, 2026-10-07: the v3 behaviour is kept for speed and maintainability. They stay "different" in the counts; they no longer block S5.
 
 ## Basis
 
@@ -113,8 +115,8 @@ By section, 2026-10-06 revision:
 | A3 | Auto-compile setting | done | [V] `EngineV3CompileCommandTests.testAutoCompileOffWaitsForCompileCommand` |
 | A4 | Unopened `\input` changed on disk | done | [V] `EngineV3CompileCommandTests.testOutsideChangeToAnUnopenedInputRecompiles` |
 | A5 | New files created outside the app | done | [V] `EngineV3ToolsTests.testAQuarantinedFileAppearingInTheProjectIsCheckedBeforeTheNextCompile` (FSEvents watcher, `EngineV3ProjectWatcher.swift`) |
-| A6 | `\include` / `\input` resolution | different (intended) | [B] Real TeX over a symlinked copy, capped at 20,000 entries (`EngineV3Snapshot.swift:69`, `maxEntries`) |
-| A7 | Which file compiles from a chapter tab | different | The entry; else the first open document with `\documentclass` (`EngineV3Session.mainFile`, `EngineV3Session.swift:808`). [V] `EngineV3OpenTests.testOpeningAnotherFileCompilesThatFile` |
+| A6 | `\include` / `\input` resolution | different (intended); **accepted** (2026-10-07) | [B] Real TeX over a symlinked copy, capped at 20,000 entries (`EngineV3Snapshot.swift:69`, `maxEntries`). **Ruling:** accepted by the owner's delegation to the Commander, 2026-10-07: the v3 behaviour is kept for speed and maintainability |
+| A7 | Which file compiles from a chapter tab | different; **accepted** (2026-10-07) | The entry; else the first open document with `\documentclass` (`EngineV3Session.mainFile`, `EngineV3Session.swift:808`). [V] `EngineV3OpenTests.testOpeningAnotherFileCompilesThatFile`. **Ruling:** accepted by the owner's delegation to the Commander, 2026-10-07: the v3 behaviour is kept for speed and maintainability |
 | A8 | `flashtex.toml` texinputs and packages, Fetch Missing Packages | **done** (#1421, #1444) | [V] `EngineChoiceTests.testTheNewEngineFindsTexinputsPackages` (texinputs, real host); [F] `EngineV3PackagesTests.testAPinnedPackageAndALibraryCompileUnderTheNewEngine` (pins and libraries), `EngineChoiceTests.testManifestRules`, `.testTexinputsLinksYieldToProjectFiles` |
 | A9 | Project and system fonts (`[fonts]`) | **missing**; **P5 scope via the Unicode mode** (owner, 2026-10-05) | v3 is pdfLaTeX only. Since #1421, a `[fonts]` project visibly falls back to the old engine, with a banner, the status item and a VoiceOver announcement (`EngineChoice.Blocker.projectFonts`, `EngineChoice.swift:78`). [V] `EngineChoiceTests.testProjectFontsFallBackAndSayWhy`, `.testStatusItemAndBannerShowTheFallback`. The owner ruled (2026-10-05, Q-new-1) that the Unicode mode (XeTeX, lane XETEX-S1) carries `[fonts]` in P5, so this row closes when a `[fonts]` project compiles on the Unicode mode instead of falling back |
 | A10 | BibTeX, biber, makeindex | done (trusted projects) | [V] `EngineV3ToolsTests.testTrustedProjectRunsBibtexAndTheCitationResolves`; [F] `.testRequestCarriesExternalToolsAndTheClientSays32` |
@@ -125,7 +127,7 @@ By section, 2026-10-06 revision:
 | A15 | Runaway compile bound | **done** (#1417) | 30 s of host silence while typing, 5 min under ⌘B; tool phases and exports are exempt. Stop Compile (⌘.) appears after 2 s. [V] `EngineV3RunawayTests.testAnEndlessLoopIsStoppedAndTheNextEditCompiles`, `.testTheBoundIs30sForTypingAnd5MinutesForCommandB`, `.testALongSilentToolPhaseIsNotStopped`, `.testStopCompileEndsARunningCompile`. Runs on the `mac-v3-host` job (#1633), which has a real host and TeX Live. |
 | A16 | Cancel and supersede | done | [V] `EngineV3RunawayTests.testStopCompileEndsARunningCompile` (cancel), `.testASupersededRunLeavesTheCurrentCyclesRowsAndNote` (superseded tool cycle). [B] A newer COMPILE preempts at a checkpoint. Runs on the `mac-v3-host` job (#1633), which has a real host and TeX Live. |
 | A17 | Works without TeX Live | **done** (#1421, #1471, #1523) | `make-app.sh` ships `tools/bundle/tl2026/flashtex-bundle.lock`, which points at a GitHub Release bundle that is downloaded after consent. Declining, or having neither TeX Live nor a bundle, falls back visibly. [V] `EngineChoiceTests.testTheShippedLockIsFoundInTheAppsResources`, `.testTheShippedLockIsAReleaseAssetBehindConsent`; [F] `.testNoTeXLiveFallsBackAndTheChoiceSaysWhy`, `.testAConfiguredBundleIsADistributionBehindConsent`; Rust [F] `crates/flashtex-engine/tests/bundle_notex.rs` `compiles_from_a_bundle_with_no_texlive_visible`. There is no app test of a real download and compile |
-| A18 | Output and aux location | different | [B] `~/Library/Caches/FlashTeX/engine-v3/projects/…/out` (`EngineV3Session.swift:2135`); the manifest's `output` is ignored |
+| A18 | Output and aux location | different; **accepted** (2026-10-07) | [B] `~/Library/Caches/FlashTeX/engine-v3/projects/…/out` (`EngineV3Session.swift:2135`); the manifest's `output` is ignored. **Ruling:** accepted by the owner's delegation to the Commander, 2026-10-07: the v3 behaviour is kept for speed and maintainability |
 | A19 | Tabs, several open documents | done | Every open buffer is sent. [V] `EngineV3OpenDocumentsTests.testUnsavedEditsInSeveralOpenDocumentsReachTheCompile` (#1633: unsaved edits in `main.tex` and its `\input` reach the host's copy, not the disk; search finds the new text). Runs on the `mac-v3-host` job (#1633), which has a real host and TeX Live. |
 | A20 | Several windows | done | One `EngineV3Session` per window (`ShellModel.swift:137`), so each window has its own host and copy. The 2026-10-03 file's "one host per app" was wrong. [V] `EngineV3InstanceTests.testTwoConcurrentSessionsKeepTheirOwnCopies`. Runs on the `mac-v3-host` job (#1633), which has a real host and TeX Live. |
 | A21 | Compile status and log | **done** (#1437) | **Show TeX Log** opens the last compile's `.log`. [V] `EngineV3PolishTests.testShowTeXLogFindsTheLastLog`, `EngineV3OpenTests.testErrorsReachTheProblemsPanel`. Runs on the `mac-v3-host` job (#1633), which has a real host and TeX Live. |
@@ -161,7 +163,7 @@ pages, dimmed. Strict mode sends halt-on-error ([F] `EngineV3BestEffortTests`, 6
 | C2 | Fit Page (⌘⇧9) | **done** (#1410) | [F] `EngineV3PreviewNavTests.testFitPageFitsTheTallestPageToThePane`, `.testFitPageFitsTheTallestPageWithLegacyScrollers` (both through the `fitPage` helper, which was not re-read) |
 | C3 | Pinch | done | [V] `EngineV3ZoomTilesTests.testZoomedPaneShowsExactTilesAroundTheViewport`; [F] `EngineV3PreviewNavTests.testAPinchAnchoredInTheLeftMarginKeepsItsDistance` |
 | C4 | Double-click for Fit Width | **done** (#1437) | [V] `EngineV3PolishTests.testDoubleClickFitsTheWidthAsOnV2`, which sends a real 2-click event through the window |
-| C5 | Fit width capped at 100 % | different (intended) | [B] v3 is uncapped, which DESIGN §6.2's scale sweep assumes; horizontal scrolling is on |
+| C5 | Fit width capped at 100 % | different (intended); **accepted** (2026-10-07) | [B] v3 is uncapped, which DESIGN §6.2's scale sweep assumes; horizontal scrolling is on. **Ruling:** accepted by the owner's delegation to the Commander, 2026-10-07: the v3 behaviour is kept for speed and maintainability |
 | C6 | Page Up / Page Down | **done** (#1410) | [V] `EngineV3PreviewNavTests.testPageUpAndDownStepWholePagesAsOnV2` |
 | C7 | Reading position across resize and reflow | **done** (#1410, #1450) | [V] `EngineV3PreviewNavTests.testReadingPositionSurvivesAReflowAboveIt`; [F] `.testCollapsingAndReexpandingThePaneKeepsTheReadingPosition` |
 | C8 | Hyperref links, hand cursor, tooltip | **done** (#1408) | [V] `EngineV3LinksTests.testHyperrefLinksInThePaneOpenURLsAndScrollToTargets`; [F] 4 rule tests |
@@ -179,7 +181,7 @@ pages, dimmed. Strict mode sends halt-on-error ([F] `EngineV3BestEffortTests`, 6
 | C20 | Pane accessibility value; page-jump announcement | done (#1410, #1628) | [V] Value: `EngineV3ChromeTests.testTheReadoutAndThePaneValueCountTheV3Pages` ("Page 2 of 4" under v3), `PreviewPaneAccessibilityTests.testPreviewPaneIsALabelledContainerAndBothPanesTakeFocusForPageKeys`. [V] Announcement: `EngineV3PreviewNavTests.testPageUpAndDownStepWholePagesAsOnV2` ("Page 2 of 4") |
 | C21 | Status chips, HUD tooltip | **done** (#1628) | Under v3 the title bar's Compile tooltip and the preview HUD tooltip both carry the v3 route help, not "producer: " (`TitleBarRow.compileHelp`, `PreviewHUD.help`). [V] `EngineV3ChromeTests.testUnderV3BothTooltipsCarryTheRouteHelpNotTheProducer`, `.testOnTheOldRouteBothTooltipsAreUnchanged`, `.testTheViewsUseTheTooltipHelpers`. The v3 status card has Stop Compile (#1417) |
 | C22 | Latency readout | **done** (#1437) | [V] `EngineV3PolishTests.testTheLatencyReadoutIsV3s`, `.testTheLatencyRecordIsBounded` |
-| C23 | Stale-page look | different (intended) | [B] Dimmed, with an orange border |
+| C23 | Stale-page look | different (intended); **accepted** (2026-10-07) | [B] Dimmed, with an orange border. **Ruling:** accepted by the owner's delegation to the Commander, 2026-10-07: the v3 behaviour is kept for speed and maintainability |
 | C24 | Math hover preview | **done** (#1435) | [V] `EngineV3MathHoverTests.testHoveringAFormulaShowsItsCropFromThePage` |
 | C25 | Preview Debug Status | **done** (#1627) | Developer-facing. Under v3 the toggle shows `EngineV3Session.debugLine`: host pid and starts, last DONE id and layout revision, pages and stale pages, DONEs, the keystroke median, the environment note. v2's font manifest has no v3 equivalent. [V] `EngineV3DebugStatusTests.testTheDebugLineCarriesTheSessionsCounters`, `.testTheDebugLineShowsTheKeystrokeMedian` |
 
@@ -229,7 +231,7 @@ pages, dimmed. Strict mode sends halt-on-error ([F] `EngineV3BestEffortTests`, 6
 - At S5 that fallback is allowed (plan §4.4).
 - It blocks S6 and S7 for those users until the Unicode mode (XeTeX, lane XETEX-S1) compiles them.
 
-**Different, waiting for the owner (5 rows).** Plan §4.4 asks for the owner's retirement in writing, or done with a test, before S5:
+**Different, accepted (5 rows).** Plan §4.4 asked for the owner's retirement in writing before S5. These five were accepted by the owner's delegation to the Commander, 2026-10-07: the v3 behaviour is kept for speed and maintainability:
 - **A6**, `\include` / `\input` resolution: real TeX over a symlinked copy, capped at 20,000 entries.
 - **A7**, which file compiles from a chapter tab: v3 compiles the entry, or else the first open `\documentclass` document. `EngineV3OpenTests.testOpeningAnotherFileCompilesThatFile` tests the new behaviour.
 - **A18**, output and aux location: under the cache, and the manifest's `output` is ignored.
