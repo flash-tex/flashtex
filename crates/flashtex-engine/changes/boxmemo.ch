@@ -152,6 +152,45 @@ if intr_rec_on then flashtex_intr_internal;
 if bm_rec_on then flashtex_bm_internal;
 @z
 
+@x pdftex.web l.9741 - ... and its token register reads
+    if m=mem_bot then
+      begin scan_register_num;
+      if cur_val<256 then cur_val:=equiv(toks_base+cur_val)
+@y
+    if m=mem_bot then
+      begin scan_register_num;
+      if bm_rec_on then flashtex_bm_reg_read(tok_val,cur_val);
+      if cur_val<256 then cur_val:=equiv(toks_base+cur_val)
+@z
+
+@x pdftex.web l.9748
+    else cur_val:=sa_ptr(m)
+  else cur_val:=equiv(m);
+  cur_val_level:=tok_val;
+@y
+    else  begin if bm_rec_on then flashtex_bm_sa_read(m);
+      cur_val:=sa_ptr(m);
+      end
+  else cur_val:=equiv(m);
+  cur_val_level:=tok_val;
+@z
+
+@x pdftex.web l.9810 - a recording's register reads are part of its key
+begin if (m<mem_bot)or(m>lo_mem_stat_max) then
+  begin cur_val_level:=sa_type(m);
+@y
+begin if (m<mem_bot)or(m>lo_mem_stat_max) then
+  begin if bm_rec_on then flashtex_bm_sa_read(m);
+  cur_val_level:=sa_type(m);
+@z
+
+@x pdftex.web l.9815
+else  begin scan_register_num; cur_val_level:=m-mem_bot;
+@y
+else  begin scan_register_num; cur_val_level:=m-mem_bot;
+  if bm_rec_on then flashtex_bm_reg_read(cur_val_level,cur_val);
+@z
+
 @x pdftex.web l.11842 (after changes/intrinsics.ch) - a recording never ends a conditional it did not begin
 begin if intr_rec_on then flashtex_intr_pop_cond;
 @y
@@ -193,6 +232,13 @@ if intr_rec_on then flashtex_intr_command;
 if bm_rec_on then flashtex_bm_command;
 case cur_cmd of
 @t\4@>@<Assignments@>@;
+@z
+
+@x pdftex.web l.31990 (after changes/intrinsics.ch) - \.{\\advance}, \.{\\multiply} and \.{\\divide} read the register
+if intr_rec_on then if not e then if q<>register then flashtex_intr_read(l);
+@y
+if intr_rec_on then if not e then if q<>register then flashtex_intr_read(l);
+if bm_rec_on then if q<>register then flashtex_bm_reg_loc(l,e);
 @z
 
 @x pdftex.web l.32879 - new hyphenation exceptions are a new version of them
@@ -331,6 +377,9 @@ procedure flashtex_bm_pop_cond; external;
 procedure flashtex_bm_switch; external;
 procedure flashtex_bm_command; external;
 procedure flashtex_bm_box(@!n:integer); external;
+procedure flashtex_bm_reg_read(@!t:integer;@!n:integer); external;
+procedure flashtex_bm_sa_read(@!p:pointer); external;
+procedure flashtex_bm_reg_loc(@!l:pointer;@!e:boolean); external;
 procedure flashtex_bm_abort(@!r:integer); external;
 procedure flashtex_bm_font_changed; external;
 procedure flashtex_bm_hyph_changed; external;

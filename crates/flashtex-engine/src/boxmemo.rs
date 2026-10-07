@@ -173,6 +173,15 @@ enum Op {
     },
 }
 
+/// A register the recording read: an `eqtb` location (`\count` & co. 0-255,
+/// and the `\countdef` and kin that name them), or an e-TeX sparse register
+/// by (type, number).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+enum RegId {
+    Eqtb(i32),
+    Sa(i32, i32),
+}
+
 /// A control sequence's meaning as the key keeps it.
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum Meaning {
@@ -225,7 +234,13 @@ fn key_hash(k1: &[i32], ctx: &Context, k2: &[i32], k4: &[i32]) -> u64 {
 
 /// A variant whose K1, context, K2 and K4 hold: its index, and the K3
 /// meanings, absent names and void boxes left to check.
-type Candidate = (usize, Vec<(i32, Meaning)>, Vec<Vec<i32>>, Vec<i32>);
+type Candidate = (
+    usize,
+    Vec<(i32, Meaning)>,
+    Vec<Vec<i32>>,
+    Vec<i32>,
+    Vec<(RegId, Vec<i32>)>,
+);
 
 struct Entry {
     hash: u64,
@@ -239,6 +254,8 @@ struct Entry {
     k3: Vec<(i32, Meaning)>,
     /// Names looked up (`\ifcsname`) and not found.
     absent: Vec<Vec<i32>>,
+    /// KR: the registers read, by value, first read first.
+    kr: Vec<(RegId, Vec<i32>)>,
     /// Box registers read before written, void when read (LaTeX's
     /// `\voidb@x`).
     voids: Vec<i32>,
@@ -289,6 +306,10 @@ struct Rec {
     k3: Vec<(i32, Meaning)>,
     absent: Vec<Vec<i32>>,
     voids: Vec<i32>,
+    kr: Vec<(RegId, Vec<i32>)>,
+    /// Registers and control sequences the call assigned globally: read
+    /// after that, they hold what the call put there.
+    gwritten: HashSet<RegId>,
     line_read: bool,
     boxes: HashSet<i32>,
     /// Box registers assigned globally: each must be void when the call
@@ -666,12 +687,12 @@ impl Globals {
     fn bm_k2(&self) -> Vec<i32> {
         let mut v = Vec::with_capacity(8192);
         for p in GLUE_BASE..=EQTB_SIZE {
-            if (BOX_BASE..BOX_BASE + 256).contains(&p) {
+            if (BOX_BASE..BOX_BASE + 256).contains(&p) || Self::bm_is_register(p) {
                 continue;
             }
             let w = self.bm_eq(p);
             if p < LOCAL_BASE {
-                // glue parameters and registers
+                // glue parameters
                 let e = w.hh().rh();
                 if e <= LO_MEM_STAT_MAX {
                     v.push(-1);
@@ -813,31 +834,136 @@ impl Globals {
         }
     }
 
-    /// K4: e-TeX's sparse registers but the boxes, by value.
-    fn bm_k4(&self) -> Vec<i32> {
-        let mut v = Vec::with_capacity(4096);
-        for t in [INT_VAL, DIMEN_VAL, GLUE_VAL, MU_VAL, TOK_VAL] {
-            v.push(-100 - t);
-            let mut items: Vec<(i32, i32)> = vec![];
-            self.bm_sa_walk(t, &mut |n, e| items.push((n, e)));
-            for (n, e) in items {
-                v.push(n);
+    /// Is `eqtb` location `p` a register (`\count`, `\dimen`, `\skip`,
+    /// `\muskip`, `\toks` 0-255)? Registers are read only explicitly,
+    /// never by a primitive behind the scenes, so the key holds those the
+    /// recording read (KR) rather than all of them.
+    fn bm_is_register(p: i32) -> bool {
+        [k::count_base, k::scaled_base, k::skip_base, k::mu_skip_base, TOKS_BASE]
+            .iter()
+            .any(|&b| (b..b + 256).contains(&p))
+    }
+
+    /// A register's value as KR keeps it.
+    fn bm_reg_value(&self, r: RegId) -> Vec<i32> {
+        let mut v = vec![];
+        match r {
+            RegId::Eqtb(p) => {
+                let w = self.bm_eq(p);
+                if (k::skip_base..k::mu_skip_base + 256).contains(&p) {
+                    let e = w.hh().rh();
+                    if e <= LO_MEM_STAT_MAX {
+                        v.push(-1);
+                        v.push(e);
+                    } else {
+                        v.extend_from_slice(&self.bm_glue_fields(e));
+                    }
+                } else if (TOKS_BASE..TOKS_BASE + 256).contains(&p) {
+                    self.bm_push_list(w.hh().rh(), &mut v);
+                } else {
+                    v.push(w.int());
+                }
+            }
+            RegId::Sa(t, n) => {
+                let e = self.bm_sa_find(t, n);
                 match t {
-                    INT_VAL | DIMEN_VAL => v.push(self.mem[(e + 2) as usize].int()),
+                    INT_VAL | DIMEN_VAL => v.push(if e == 0 { 0 } else { self.mem[(e + 2) as usize].int() }),
                     GLUE_VAL | MU_VAL => {
-                        let s = self.bm_link(e + 1);
-                        if s <= LO_MEM_STAT_MAX {
+                        let q = if e == 0 { k::zero_glue } else { self.bm_link(e + 1) };
+                        if q <= LO_MEM_STAT_MAX {
                             v.push(-1);
-                            v.push(s);
+                            v.push(q);
                         } else {
-                            v.extend_from_slice(&self.bm_glue_fields(s));
+                            v.extend_from_slice(&self.bm_glue_fields(q));
                         }
                     }
-                    _ => self.bm_push_list(self.bm_link(e + 1), &mut v),
+                    _ => self.bm_push_list(if e == 0 { 0 } else { self.bm_link(e + 1) }, &mut v),
                 }
             }
         }
         v
+    }
+
+    /// The sparse array element of type `t` and number `n`, or 0, found as
+    /// `find_sa_element(t,n,false)` finds it, without changing anything.
+    fn bm_sa_find(&self, t: i32, n: i32) -> i32 {
+        let get = |q: i32, i: i32| -> i32 {
+            let w = self.mem[(q + i / 2 + 1) as usize].hh();
+            if i % 2 == 1 {
+                w.rh()
+            } else {
+                w.lh()
+            }
+        };
+        let mut q = self.sa_root[t as usize];
+        for i in [n / 4096, (n / 256) % 16, (n / 16) % 16, n % 16] {
+            if q == 0 {
+                return 0;
+            }
+            q = get(q, i);
+        }
+        q
+    }
+
+    /// The recording read register `r` (a register it assigned globally
+    /// before holds the call's own value: not an input).
+    fn bm_note_reg(&mut self, r: RegId) {
+        let known = self
+            .bm_with_rec(|rec| rec.gwritten.contains(&r) || rec.kr.iter().any(|(x, _)| *x == r))
+            .unwrap_or(true);
+        if known {
+            return;
+        }
+        let v = self.bm_reg_value(r);
+        self.bm_with_rec(|rec| rec.kr.push((r, v)));
+    }
+
+    /// `\count`-like register `n` of type `t` (`int_val` .. `tok_val`)
+    /// is read by number.
+    #[cold]
+    #[inline(never)]
+    pub fn flashtex_bm_reg_read(&mut self, t: i32, n: i32) {
+        if n > 255 {
+            return self.bm_note_reg(RegId::Sa(t, n));
+        }
+        let base = match t {
+            INT_VAL => k::count_base,
+            DIMEN_VAL => k::scaled_base,
+            GLUE_VAL => k::skip_base,
+            MU_VAL => k::mu_skip_base,
+            _ => TOKS_BASE,
+        };
+        self.bm_note_reg(RegId::Eqtb(base + n));
+    }
+
+    /// A sparse register element is read through a `\countdef` (and kin).
+    #[cold]
+    #[inline(never)]
+    pub fn flashtex_bm_sa_read(&mut self, p: i32) {
+        let t = self.mem[p as usize].hh().b0() / 16;
+        let n = if t <= DIMEN_VAL {
+            self.bm_link(p + 1)
+        } else {
+            self.bm_sa_number(p)
+        };
+        self.bm_note_reg(RegId::Sa(t, n));
+    }
+
+    /// `\advance`, `\multiply`, `\divide` read their register: `eqtb`
+    /// location `l`, or the sparse element `l` when `e`.
+    #[cold]
+    #[inline(never)]
+    pub fn flashtex_bm_reg_loc(&mut self, l: i32, e: bool) {
+        if e {
+            self.flashtex_bm_sa_read(l)
+        } else if Self::bm_is_register(l) {
+            self.bm_note_reg(RegId::Eqtb(l))
+        }
+    }
+
+    /// Sparse registers are keyed precisely (KR): K4 is empty.
+    fn bm_k4(&self) -> Vec<i32> {
+        vec![]
     }
 
     /// The register number of sparse element `p` (from its place in the
@@ -1136,19 +1262,21 @@ impl Globals {
                         e.k3.clone(),
                         e.absent.clone(),
                         e.voids.clone(),
+                        e.kr.clone(),
                     )
                 })
                 .collect();
             c.sort_by_key(|x| std::cmp::Reverse(x.0));
-            c.into_iter().map(|(_, i, a, b, d)| (i, a, b, d)).collect()
+            c.into_iter().map(|(_, i, a, b, d, r)| (i, a, b, d, r)).collect()
         });
         let mut why = "NotRecorded";
         // ... and of those, the first whose K3 and K7 hold
-        for (i, k3, absent, voids) in candidates {
+        for (i, k3, absent, voids, kr) in candidates {
             let absent_ok = absent.iter().all(|n| match self.bm_find_cs(n) {
                 None => true,
                 Some(p) => self.bm_eq(p).hh().b0() == k::undefined_cs,
-            }) && voids.iter().all(|&n| self.bm_box_value(n) == 0);
+            }) && voids.iter().all(|&n| self.bm_box_value(n) == 0)
+                && kr.iter().all(|(r, v)| self.bm_reg_value(*r) == *v);
             if absent_ok
                 && k3
                     .iter()
@@ -1182,8 +1310,14 @@ impl Globals {
                         )
                     })
                     .collect();
+                let regs: Vec<String> = kr
+                    .iter()
+                    .filter(|(r, v)| self.bm_reg_value(*r) != *v)
+                    .take(6)
+                    .map(|(r, v)| format!("{r:?} was {v:?} now {:?}", self.bm_reg_value(*r)))
+                    .collect();
                 eprintln!(
-                    "boxmemo: \\{} key differs: absent ok {absent_ok}; {bad:?}",
+                    "boxmemo: \\{} key differs: absent ok {absent_ok}; {bad:?}; registers {regs:?}",
                     self.cs_name_string(cs)
                 );
             }
@@ -1247,6 +1381,8 @@ impl Globals {
             k3: vec![],
             absent: vec![],
             voids: vec![],
+            kr: vec![],
+            gwritten: HashSet::new(),
             line_read: false,
             boxes: HashSet::new(),
             gboxes: vec![],
@@ -1558,7 +1694,26 @@ impl Globals {
         if t == BOX_REF {
             return self.bm_abort("BoxRef");
         }
-        self.bm_note_cs(p);
+        // The old value of what an assignment overwrites is not an input:
+        // the replay's own `eq_define` & co. treat whatever is there as the
+        // normal path did. A global assignment makes later reads the call's
+        // own; a local one is undone when its group ends, and a later read
+        // then sees the old value, so that value is keyed now.
+        if global {
+            if Self::bm_is_register(p) {
+                self.bm_with_rec(|r| r.gwritten.insert(RegId::Eqtb(p)));
+            } else if Self::bm_is_cs(p) {
+                FAST.with(|f| {
+                    let mut f = f.borrow_mut();
+                    let st = f.stamp;
+                    f.seen[p as usize] = st;
+                });
+            }
+        } else if Self::bm_is_register(p) {
+            self.bm_note_reg(RegId::Eqtb(p));
+        } else {
+            self.bm_note_cs(p);
+        }
         if !self.bm_rec_on {
             return;
         }
@@ -1598,6 +1753,11 @@ impl Globals {
             }
             self.bm_with_rec(|r| r.boxes.insert(n));
             return;
+        }
+        if global {
+            self.bm_with_rec(|r| r.gwritten.insert(RegId::Sa(t, n)));
+        } else {
+            self.bm_note_reg(RegId::Sa(t, n));
         }
         let v = if kind == 1 || kind == 3 {
             Val::Word(e)
@@ -1721,6 +1881,14 @@ impl Globals {
             if !ok {
                 self.bm_abort("LastItem");
             }
+        } else if (c == k::assign_int
+            || c == k::assign_dimen
+            || c == k::assign_glue
+            || c == k::assign_mu_glue
+            || c == k::assign_toks)
+            && Self::bm_is_register(chr)
+        {
+            self.bm_note_reg(RegId::Eqtb(chr));
         } else if c == k::set_page_dimen || c == k::set_page_int || c == k::set_prev_graf {
             self.bm_abort("Page");
         } else if c == k::set_aux && self.nest_ptr <= outer {
@@ -1931,6 +2099,7 @@ impl Globals {
                 k4: rec.k4,
                 k3: rec.k3,
                 absent: rec.absent,
+                kr: rec.kr,
                 voids: rec.voids,
                 line: rec.line_read.then_some(line),
                 ops: rec.ops,
