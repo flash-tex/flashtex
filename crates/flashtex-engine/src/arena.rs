@@ -2537,6 +2537,14 @@ impl Arena {
                 + p.cs.capacity() * 4
                 + p.ids.capacity() * 8
                 + p.pre.iter().filter(|d| !d.is_null()).count() * CHUNK_BYTES
+        }) + c.part.as_ref().map_or(0, |p| {
+            // (a stopped one, `PartPrep`, kept to go on)
+            p.buf.capacity() * 8
+                + p.cs.capacity() * 4
+                + p.ids.capacity() * 8
+                + p.seen.capacity() * 8
+                + p.done.capacity() * MASK_WORDS * 8
+                + p.pre.iter().filter(|d| !d.is_null()).count() * CHUNK_BYTES
         });
         vec![
             ("space_reserved", c.bytes as i64),
@@ -3332,8 +3340,9 @@ mod tests {
         assert!(!a.prepare_restore(ids[2], &mut || true) || ids.len() < 64);
         // stopped inside the copies (fewer logs than one `STOP_LOGS` but more
         // chunks than one `STOP_CHUNKS`: P4-TYPING-200WPM), at each question
-        // in turn: nothing prepared, every slab chunk given back, and the
-        // next restore is the plain one
+        // in turn: nothing prepared, no slab chunk in use but the kept
+        // part's redo made ahead (`PartPrep`), and the restore after the
+        // stops, which takes the part, equals a plain one
         let live0 = a.core().slab.live;
         for n in 1..6 {
             let mut asked = 0;
@@ -3342,15 +3351,21 @@ mod tests {
                 asked >= n
             }));
             assert!(a.core().prepared.is_none());
+            let held = a
+                .core()
+                .part
+                .as_ref()
+                .map_or(0, |p| p.pre.iter().filter(|d| !d.is_null()).count());
             assert_eq!(
                 a.core().slab.live,
-                live0,
-                "the redo made ahead is given back ({n})"
+                live0 + held,
+                "only the kept part holds slab chunks ({n})"
             );
         }
         let end = arr.to_vec();
         let br = a.restore_branch(ids[0]).unwrap();
-        assert!(arr[..] == copies[0][..], "a plain restore after the stops");
+        assert!(a.core().part.is_none(), "the restore took the kept part");
+        assert!(arr[..] == copies[0][..], "a restore after the stops");
         a.converge(br, ids[0]).unwrap();
         assert!(arr[..] == end[..]);
     }
