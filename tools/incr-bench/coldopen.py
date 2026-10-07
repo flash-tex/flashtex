@@ -49,6 +49,8 @@ def main():
     ap.add_argument('--edit-file')
     ap.add_argument('--edit-viewport', action='store_true')
     ap.add_argument('--keep-aux', action='store_true')
+    ap.add_argument('--seed-out', help="a directory whose files go into each rep's output directory first "
+                                       "(e.g. an .aux of '\\relax' only: an .aux point from the start)")
     ap.add_argument('--external-tools')
     ap.add_argument('--host-arg', action='append', default=[])
     ap.add_argument('--tag', default='')
@@ -64,6 +66,8 @@ def main():
                 shutil.rmtree(work)
             shutil.copytree(a.docdir, work, ignore=shutil.ignore_patterns(*OUTPUTS))
             os.makedirs(f'{work}/out', exist_ok=True)
+            if a.seed_out:
+                shutil.copytree(a.seed_out, f'{work}/out', dirs_exist_ok=True)
             if a.keep_aux and keep:
                 shutil.copytree(keep, f'{work}/out', dirs_exist_ok=True)
             s0 = os.path.join(tmp, f's0-{rep}')
