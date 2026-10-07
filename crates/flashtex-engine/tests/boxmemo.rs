@@ -109,10 +109,12 @@ const PRELUDE: &str = "\\catcode`\\{=1 \\catcode`\\}=2 \\catcode`\\#=6 \\scrollm
 fn replays_and_matches() {
     let s = check(
         "basic",
-        &format!(
-            "{PRELUDE}\\n=0 \\measure{5pt}\\show\\n=0 \\measure{5pt}\\show\\n=0 \\measure{5pt}\\show\
+        &[
+            PRELUDE,
+            "\\n=0 \\measure{5pt}\\show\\n=0 \\measure{5pt}\\show\\n=0 \\measure{5pt}\\show\
              \\n=0 \\measure{5pt}\\show\\end\n"
-        ),
+        ]
+        .concat(),
     );
     assert!(stat(&s, "hits") >= 2, "{s}");
 }
@@ -125,13 +127,15 @@ fn the_key_falls_back() {
     // logs still agree
     let s = check(
         "fallback",
-        &format!(
-            "{PRELUDE}\\n=0 \\measure{5pt}\\show\\n=0 \\measure{6pt}\\show\
+        &[
+            PRELUDE,
+            "\\n=0 \\measure{5pt}\\show\\n=0 \\measure{6pt}\\show\
              \\n=7 \\measure{5pt}\\show\\n=0 \\def\\pad{4pt}\\measure{5pt}\\show\
              \\n=0 \\boxmaxdepth=0pt \\measure{5pt}\\show\
              \\n=0 \\def\\absent{}\\measure{5pt}\\show\
              \\n=0 \\measure{5pt}\\show\\end\n"
-        ),
+        ]
+        .concat(),
     );
     assert!(stat(&s, "hits") >= 1, "{s}");
 }
