@@ -180,6 +180,9 @@ public final class DL3Connection: @unchecked Sendable {
 
     public func compile(_ request: DL3CompileRequest) throws { try send(DL3.Kind.compile, request.json) }
     public func cancel(id: Int) throws { try send(DL3.Kind.cancel, .object(["id": .int(Int64(id))])) }
+    /// `TRIM` (`trim-v1`; send only to a host that lists it): the system is
+    /// short of memory, `level` `warning` or `critical`. No reply.
+    public func trim(level: String) throws { try send(DL3.Kind.trim, .object(["level": .string(level)])) }
     public func bye() { try? send(DL3.Kind.bye, .object([:])); shutdownSocket() }
 
     private func send(_ kind: UInt8, _ json: DL3JSON) throws {
