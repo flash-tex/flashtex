@@ -31,6 +31,7 @@ final class ShellModel {
             guard activePath != oldValue else { return }
             navigationToken &+= 1; refreshDocumentMirror()
             if engineV3Enabled { engineV3.scheduleCaretMark() }
+            projectPackages.caretMoved()
         }
     }
     /// Bumped by every document switch and every `openAndSwitch` request, so a
@@ -242,6 +243,7 @@ final class ShellModel {
             guard caretUTF16 != oldValue else { return }
             caretFollow.noteCaretMove() // CaretFollow.swift: re-arms across a line/page boundary
             if engineV3Enabled { engineV3.scheduleCaretMark() } // the caret on the v3 page, outside SwiftUI (EngineV3CaretMark.swift)
+            projectPackages.caretMoved() // ProjectPackages.swift: leaving a half-typed \usepackage{…} shows its sheet
         }
     }
     /// Debounced "the preview follows what you are editing" (CaretFollow.swift).
@@ -733,6 +735,10 @@ final class ShellModel {
     /// shown in the footer. Memoized: ContentView reads this on every body
     /// evaluation and the rebase compares the compiled and current texts.
     var editorMarkReport: EditorDiagnostics.Report {
+        projectPackages.withholding(unheldMarkReport) // ProjectPackages.swift: a half-typed package name is not underlined yet
+    }
+
+    private var unheldMarkReport: EditorDiagnostics.Report {
         // Historical spans are inert: not drawn even when their offsets are in bounds.
         // Under engine v3 the marks are the host's rows (`markSource`), never
         // the old engine's (one engine at a time).
@@ -1470,6 +1476,7 @@ final class ShellModel {
     /// engine the preview shows. Under v3 that is the host (and, after the
     /// host stopped, a restart); otherwise the old engine, as before.
     func compileCommand() {
+        projectPackages.explicitRequest(compiling: true) // ProjectPackages.swift: ⌘B ends the typing grace period
         if engineV3Enabled { engineV3.compileNow(model: self); return }
         if !outputBoundExplicitRetry() { compile() }
     }
