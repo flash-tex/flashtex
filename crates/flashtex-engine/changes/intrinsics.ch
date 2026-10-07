@@ -139,6 +139,15 @@ assign_trace(p,"globally changing")@;@/
 begin eqtb[p].int:=w; xeq_level[p]:=level_one;
 @z
 
+@x pdftex.web l.7235 - \.{\\aftergroup} is recorded
+@p procedure save_for_after(@!t:halfword);
+begin if cur_level>level_one then
+@y
+@p procedure save_for_after(@!t:halfword);
+begin if intr_rec_on then flashtex_intr_after(t);
+if cur_level>level_one then
+@z
+
 @x pdftex.web l.7257 - a recorded run closes a group
 begin a:=false;
 if cur_level>level_one then
@@ -177,6 +186,16 @@ exit:end;
 @<If an alignment entry has just ended, take appropriate action@>;
 exit: if intr_rec_on then flashtex_intr_next;
 end;
+@z
+
+@x pdftex.web l.8763 - a body used up while |big_switch|'s |get_x_token| reads on ends its recording
+else  begin {we are done with this token list}
+  end_token_list; goto restart; {resume previous level}
+@y
+else  begin {we are done with this token list}
+  if intr_rec_on then if intr_at_switch then
+    if flashtex_intr_body_done then goto restart;
+  end_token_list; goto restart; {resume previous level}
 @z
 
 @x pdftex.web l.8957 (after changes/web2c.ch) - an expansion that is not |big_switch|'s own ends |intr_at_switch| ...
@@ -270,11 +289,31 @@ if intr_rec_on then flashtex_intr_read(m+cur_val);
 if m=math_code_base then scanned_result(ho(math_code(cur_val)))(int_val)
 @z
 
-@x pdftex.web l.10446 - a recorded run never scans a dimension
+@x pdftex.web l.10446 - a recorded run scans a dimension, but not a math or glue one ...
 begin f:=0; arith_error:=false; cur_order:=normal; negative:=false;
 @y
-begin if intr_rec_on then flashtex_intr_abort(1);
+begin if intr_rec_on then if mu or inf then flashtex_intr_abort(1);
 f:=0; arith_error:=false; cur_order:=normal; negative:=false;
+@z
+
+@x pdftex.web l.10491 - ... nor one in \.{true} units, which read \.{\\mag} and set |mag_set| ...
+if scan_keyword("true") then @<Adjust \(f)for the magnification ratio@>;
+@y
+if scan_keyword("true") then
+  begin if intr_rec_on then flashtex_intr_abort(1);
+  @<Adjust \(f)for the magnification ratio@>;
+  end;
+@z
+
+@x pdftex.web l.10538 - ... nor one in units of the current font or of \.{\\pdfpxdimen}
+else goto not_found;
+@<Scan an optional space@>;
+found:cur_val:=nx_plus_y(save_cur_val,v,xn_over_d(v,f,@'200000));
+@y
+else goto not_found;
+if intr_rec_on then flashtex_intr_abort(1);
+@<Scan an optional space@>;
+found:cur_val:=nx_plus_y(save_cur_val,v,xn_over_d(v,f,@'200000));
 @z
 
 @x pdftex.web l.10735 - ... the temporary strings |str_toks| turns into tokens
@@ -321,9 +360,29 @@ if intr_on then
   begin if intr_rec_on then flashtex_intr_switch;
   intr_at_switch:=true;
   end;
-get_x_token; intr_at_switch:=false;@/
+get_x_token;
+if intr_skip_sp then {a replay of a body that ended in an ignore-spaces loop}
+  begin intr_ign:=true;
+  while cur_cmd=spacer do get_x_token;
+  intr_ign:=false; intr_skip_sp:=false;
+  end;
+intr_at_switch:=false;@/
 reswitch: @<Give diagnostic information, if requested@>;
 if intr_rec_on then flashtex_intr_command;
+@z
+
+@x pdftex.web l.29136 - \.{\\ignorespaces} reads on as |big_switch|'s |get_x_token| does
+  if cur_chr = 0 then begin
+    @<Get the next non-blank non-call...@>;
+    goto reswitch;
+@y
+  if cur_chr = 0 then begin
+    if intr_args_on then
+      begin intr_at_switch:=true; intr_ign:=true;
+      end;
+    @<Get the next non-blank non-call...@>;
+    intr_at_switch:=false; intr_ign:=false; intr_skip_sp:=false;
+    goto reswitch;
 @z
 
 @x pdftex.web l.31632 - the assignments a recorded run may make
@@ -357,7 +416,9 @@ until cur_tok<>space_token;
 if q=register then scan_optional_equals
 @y
 @<Compute the register location |l| and its type |p|; but |return| if invalid@>;
-if intr_rec_on then if not e then if q<>register then flashtex_intr_read(l);
+if intr_rec_on then
+  if e then flashtex_intr_sa_reg(l,q<>register)
+  else if q<>register then flashtex_intr_read(l);
 if q=register then scan_optional_equals
 @z
 
@@ -368,6 +429,19 @@ if q=register then scan_optional_equals
   w_close(fmt_file);
   if intr_on then flashtex_intr_loaded;
   while (loc<limit)and(buffer[loc]=" ") do incr(loc);
+@z
+
+@x pdftex.web l.34269 - a recorded run's \.{\\pdfcolorstack} is an operation
+            scan_pdf_ext_toks;
+            pdf_colorstack_data(tail) := def_ref;
+        end;
+    end
+@y
+            scan_pdf_ext_toks;
+            pdf_colorstack_data(tail) := def_ref;
+        end;
+        if intr_rec_on then flashtex_intr_colorstack;
+    end
 @z
 
 @x pdftex.web l.38695 - \.{\\ifcsname} reads the meaning it tests
@@ -401,11 +475,11 @@ add_sa_ref(p);
 if sa_ptr(p)=e then
 @z
 
-@x pdftex.web l.39969
+@x pdftex.web l.39969 - a sparse integer or dimension assignment is recorded
 begin add_sa_ref(p);
 if sa_int(p)=w then
 @y
-begin if intr_rec_on then flashtex_intr_abort(3);
+begin if intr_rec_on then flashtex_intr_sa_word(p,w,false);
 add_sa_ref(p);
 if sa_int(p)=w then
 @z
@@ -421,12 +495,12 @@ add_sa_ref(p);
 sa_destroy(p); sa_lev(p):=level_one; sa_ptr(p):=e;
 @z
 
-@x pdftex.web l.39996
+@x pdftex.web l.39996 - ... and a global one
 begin add_sa_ref(p);
 @!stat if tracing_assigns>0 then show_sa(p,"globally changing");@+tats@;@/
 sa_lev(p):=level_one; sa_int(p):=w;
 @y
-begin if intr_rec_on then flashtex_intr_abort(3);
+begin if intr_rec_on then flashtex_intr_sa_word(p,w,true);
 add_sa_ref(p);
 @!stat if tracing_assigns>0 then show_sa(p,"globally changing");@+tats@;@/
 sa_lev(p):=level_one; sa_int(p):=w;
@@ -458,6 +532,8 @@ src/intrinsics.rs.
 @!intr_args_on:boolean; {macros with parameters are offered after their argument scan}
 @!intr_all_args:boolean; {every macro with parameters is a candidate (a stress test)}
 @!intr_weak:boolean; {|get_next|'s caller looks only at the token, not its meaning}
+@!intr_ign:boolean; {\.{\\ignorespaces} (or a replay's stand-in for it) is skipping spaces}
+@!intr_skip_sp:boolean; {a replay ended inside \.{\\ignorespaces}: skip the spaces it would}
 @!intr_state:array[0..intr_state_size] of integer;
 @!intr_cand:array[0..eqtb_top] of integer; {first slot of a registered macro, plus one}
 @!intr_watch:array[0..eqtb_top] of integer;
@@ -499,6 +575,11 @@ procedure flashtex_intr_group(@!c:group_code); external;
 procedure flashtex_intr_unsave; external;
 procedure flashtex_intr_def(@!p:pointer;@!t:quarterword;@!e:integer;@!k:integer); external;
 procedure flashtex_intr_touch(@!p:pointer); external;
+procedure flashtex_intr_after(@!t:halfword); external;
+function flashtex_intr_body_done:boolean; external;
+procedure flashtex_intr_sa_reg(@!p:pointer;@!reads:boolean); external;
+procedure flashtex_intr_sa_word(@!p:pointer;@!w:integer;@!g:boolean); external;
+procedure flashtex_intr_colorstack; external;
 procedure flashtex_intr_next; external;
 procedure flashtex_intr_expand; external;
 procedure flashtex_intr_read(@!p:pointer); external;

@@ -1154,7 +1154,7 @@ fn dead_word(g: &Globals, w: &crate::statediff::WordDiff) -> bool {
         return true;
     }
     // The intrinsics' recording scratch (`crate::intrinsics`: `intr_state`
-    // elements 2..=26 and 40..=53, `REC_SCRATCH`): the start of every
+    // elements 2..=26, 40..=58 and 3000..=3799, `REC_SCRATCH`): the start of every
     // recording sets them all before anything reads them, and they are read
     // only while a recording is in progress -- none is when `S_REC_SLOT`
     // (element 1, compared like the rest) is 0. The recording's `tail`

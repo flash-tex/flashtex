@@ -2237,7 +2237,9 @@ impl Globals {
             }
             // §1414
             if self.intr_rec_on {
-                if (!e) {
+                if e {
+                    self.flashtex_intr_sa_reg(l, (q != register));
+                } else {
                     if (q != register) {
                         self.flashtex_intr_read(l);
                     }
@@ -6490,6 +6492,9 @@ impl Globals {
                                     { let __ix2087 = (self.cur_list.tail_field).wrapping_add(2i32); let __v2088 = self.def_ref; __av_mem[crate::ix::U((__ix2087) as usize)].set_hh_rh(__v2088); }
                                 }
                             }
+                            if self.intr_rec_on {
+                                self.flashtex_intr_colorstack();
+                            }
                         }
                     } else {
                         {
@@ -7450,6 +7455,16 @@ impl Globals {
                     }
                 }
                 self.get_x_token();
+                if self.intr_skip_sp {
+                    {
+                        self.intr_ign = true;
+                        while (self.cur_cmd == spacer) {
+                            self.get_x_token();
+                        }
+                        self.intr_ign = false;
+                        self.intr_skip_sp = false;
+                    }
+                }
                 self.intr_at_switch = false;
             }
             if __goto_1 <= 2 { // reswitch
@@ -7511,12 +7526,21 @@ impl Globals {
                         {
                             if (self.cur_chr == 0i32) {
                                 {
+                                    if self.intr_args_on {
+                                        {
+                                            self.intr_at_switch = true;
+                                            self.intr_ign = true;
+                                        }
+                                    }
                                     // §432
                                     loop {
                                         self.get_x_token();
                                         if (self.cur_cmd != spacer) { break; }
                                     }
                                     // §1223
+                                    self.intr_at_switch = false;
+                                    self.intr_ign = false;
+                                    self.intr_skip_sp = false;
                                     { __goto_1 = 2; continue 'l_dispatch_1; }
                                 }
                             } else {

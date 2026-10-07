@@ -563,7 +563,7 @@ impl Globals {
         #[allow(unused_mut)]
         let mut __av_mem = self.mem.view();
         if self.intr_rec_on {
-            self.flashtex_intr_abort(3i32);
+            self.flashtex_intr_sa_word(p, w, false);
         }
         { let __v189 = (__av_mem[crate::ix::U(((p).wrapping_add(1i32)) as usize)].hh().lh()).wrapping_add(1i32); __av_mem[crate::ix::U(((p).wrapping_add(1i32)) as usize)].set_hh_lh(__v189); }
         if (__av_mem[crate::ix::U(((p).wrapping_add(2i32)) as usize)].int() == w) {
@@ -627,7 +627,7 @@ impl Globals {
         #[allow(unused_mut)]
         let mut __av_mem = self.mem.view();
         if self.intr_rec_on {
-            self.flashtex_intr_abort(3i32);
+            self.flashtex_intr_sa_word(p, w, true);
         }
         { let __v192 = (__av_mem[crate::ix::U(((p).wrapping_add(1i32)) as usize)].hh().lh()).wrapping_add(1i32); __av_mem[crate::ix::U(((p).wrapping_add(1i32)) as usize)].set_hh_lh(__v192); }
         if (__av_eqtb[crate::ix::U(((29379i32) - 1) as usize)].int() > 0i32) {
@@ -943,6 +943,9 @@ impl Globals {
     /// Subroutine `save_for_after` puts a token on the stack for save-keeping.
     // §302
     pub fn save_for_after(&mut self, mut t: halfword) {
+        if self.intr_rec_on {
+            self.flashtex_intr_after(t);
+        }
         if (self.cur_level > level_one) {
             {
                 if (self.save_ptr > self.max_save_stack) {
@@ -2543,6 +2546,13 @@ impl Globals {
                         }
                     } else {
                         {
+                            if self.intr_rec_on {
+                                if self.intr_at_switch {
+                                    if self.flashtex_intr_body_done() {
+                                        { __goto_1 = 0; continue 'l_dispatch_1; }
+                                    }
+                                }
+                            }
                             self.end_token_list();
                             { __goto_1 = 0; continue 'l_dispatch_1; }
                         }
@@ -5696,7 +5706,9 @@ impl Globals {
                         'l_not_found_f: {
                             'l_found_f: {
                                 if self.intr_rec_on {
-                                    self.flashtex_intr_abort(1i32);
+                                    if (mu || inf) {
+                                        self.flashtex_intr_abort(1i32);
+                                    }
                                 }
                                 f = 0i32;
                                 self.arith_error = false;
@@ -5918,6 +5930,9 @@ impl Globals {
                                         }
                                     }
                                 }
+                                if self.intr_rec_on {
+                                    self.flashtex_intr_abort(1i32);
+                                }
                                 // §469
                                 {
                                     self.get_x_token();
@@ -5963,15 +5978,20 @@ impl Globals {
                         }
                         // §479
                         if self.scan_keyword(802i32) {
-                            // §483
                             {
-                                self.prepare_mag();
-                                if (__av_eqtb[crate::ix::U(((29294i32) - 1) as usize)].int() != 1000i32) {
-                                    {
-                                        self.cur_val = self.xn_over_d(self.cur_val, 1000i32, __av_eqtb[crate::ix::U(((29294i32) - 1) as usize)].int());
-                                        f = (((1000i32).wrapping_mul(f)).wrapping_add((65536i32).wrapping_mul(self.remainder)) / __av_eqtb[crate::ix::U(((29294i32) - 1) as usize)].int());
-                                        self.cur_val = (self.cur_val).wrapping_add((f / 65536i32));
-                                        f = (f % 65536i32);
+                                if self.intr_rec_on {
+                                    self.flashtex_intr_abort(1i32);
+                                }
+                                // §483
+                                {
+                                    self.prepare_mag();
+                                    if (__av_eqtb[crate::ix::U(((29294i32) - 1) as usize)].int() != 1000i32) {
+                                        {
+                                            self.cur_val = self.xn_over_d(self.cur_val, 1000i32, __av_eqtb[crate::ix::U(((29294i32) - 1) as usize)].int());
+                                            f = (((1000i32).wrapping_mul(f)).wrapping_add((65536i32).wrapping_mul(self.remainder)) / __av_eqtb[crate::ix::U(((29294i32) - 1) as usize)].int());
+                                            self.cur_val = (self.cur_val).wrapping_add((f / 65536i32));
+                                            f = (f % 65536i32);
+                                        }
                                     }
                                 }
                             }

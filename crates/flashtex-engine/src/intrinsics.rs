@@ -216,8 +216,11 @@ const S_REC_REQUEST: usize = 26;
 /// For the convergence test (`crate::incr`): the slot being recorded,
 /// and the scratch a recording sets at its start.
 pub(crate) const REC_SLOT: usize = S_REC_SLOT;
-pub(crate) const REC_SCRATCH: &[(usize, usize)] =
-    &[(S_REC_BASE, S_REC_REQUEST), (S_REC_MARK_IN, S_REC_PEAK_MEM)];
+pub(crate) const REC_SCRATCH: &[(usize, usize)] = &[
+    (S_REC_BASE, S_REC_REQUEST),
+    (S_REC_MARK_IN, S_REC_SA_N),
+    (SA_LIST0, SA_LIST0 + 2 * SA_LIST_CAP - 1),
+];
 // The peaks of a recording (MACRO-REPLAY.md §3.5 item 4): the high-water
 // marks it found (put back, merged, when it ends), what the resources held
 // at its start, and the peaks no mark keeps.
@@ -235,6 +238,34 @@ const S_REC_PEAK_POOL: usize = 50;
 const S_REC_PEAK_STR: usize = 51;
 const S_REC_MEM0: usize = 52;
 const S_REC_PEAK_MEM: usize = 53;
+/// The deepest group the body opened, over the level at its start.
+const S_REC_PEAK_LEVEL: usize = 54;
+/// The modes a replay may run in (`MODE_*` bits): the commands the body ran
+/// that behave differently in another mode remove those modes.
+const S_REC_MODES: usize = 55;
+/// 1: `get_next` delivered a tab mark or `\cr` (whose meaning depends on
+/// whether `align_state` is zero then).
+const S_REC_ALIGNED: usize = 56;
+/// The sparse register element the command being run names through its
+/// control sequence (`flashtex_intr_sa_reg`): the one a sparse assignment
+/// may change.
+const S_REC_SA_OK: usize = 57;
+/// Sparse register elements the recorded run wrote before reading them:
+/// (element, value before the first write) pairs from `SA_LIST0`.
+const S_REC_SA_N: usize = 58;
+const SA_LIST0: usize = 3000;
+const SA_LIST_CAP: usize = 400;
+const _: () =
+    assert!(SLOT0 + MAX_SLOTS * SLOT_INTS <= SA_LIST0 && SA_LIST0 + 2 * SA_LIST_CAP < 4096);
+const MODE_V: i32 = 1;
+const MODE_H: i32 = 2;
+const MODE_M: i32 = 4;
+const MODES_ALL: i32 = MODE_V | MODE_H | MODE_M;
+/// `F_ALIGN` of a recording whose replay does not depend on `align_state`.
+const ALIGN_ANY: i32 = i32::MIN;
+const TAB_MARK: i32 = 4;
+const CAR_RET: i32 = 5;
+const HMODE: i32 = 105;
 /// Words a variable-size node may add to the memory in use after the
 /// allocation hook saw it (`get_node` counts it in `var_used` after
 /// `dl_new_node`): a recorded body's nodes are condition and expression
@@ -314,6 +345,16 @@ const F_PK_EXP: usize = 30;
 const F_PK_POOL: usize = 31;
 const F_PK_STR: usize = 32;
 const F_PK_MEM: usize = 33;
+const F_PK_LEVEL: usize = 34;
+/// The operations the recorded run made, before `elide_local_groups`.
+const F_NOPS_RUN: usize = 35;
+/// One more than the highest colour stack a `\\pdfcolorstack` operation
+/// uses (0: none): the guard requires that many stacks.
+const F_CSTACK: usize = 36;
+/// 1: the body ended while `\\ignorespaces` was skipping spaces after it
+/// (`flashtex_intr_body_done`): a replay leaves that skipping to its caller
+/// (`intr_skip_sp`).
+const F_IGN: usize = 37;
 
 const SEEN_DEP: i32 = 1;
 const SEEN_WRITTEN: i32 = 2;
@@ -342,7 +383,7 @@ const ABORT_BUDGET: i32 = 3;
 /// macro in all.
 const MAX_VARIANTS_ARGS: i32 = 256;
 const MAX_DEAD_ARGS: i32 = 256;
-const KEY_VARIANTS: usize = 4;
+const KEY_VARIANTS: usize = 32;
 const RECORD_BUDGET_ARGS: i32 = 4096;
 
 // intr_data: watch records first, then one region per slot.
@@ -405,7 +446,19 @@ const K_LETCS: i32 = 6;
 const K_WORD: i32 = 2;
 const K_BEGIN: i32 = 3;
 const K_END: i32 = 4;
+/// A sparse register's integer or dimension (`sa_w_def`, `gsa_w_def`):
+/// [kind, element, value].
+const K_SAWORD: i32 = 7;
+/// `\\aftergroup` (`save_for_after`): [kind, token].
+const K_AFTER: i32 = 8;
+/// `\\pdfcolorstack` (a whatsit appended to the current list): [kind,
+/// stack, action, data template or 0].
+const K_CSTACK: i32 = 9;
 const K_GLOBAL: i32 = 256;
+const PDF_COLORSTACK_NODE: i32 = 40;
+const COLORSTACK_DATA: i32 = 1;
+const EXTENSION: i32 = 59;
+const AFTER_GROUP: i32 = 41;
 
 /// A live word of `intr_data`, for the convergence test's structural
 /// comparison (`crate::iso`): the words below may hold `mem` pointers,
@@ -523,6 +576,7 @@ pub(crate) fn live_words(
                     at: o + 3,
                 },
                 K_FRESH => LiveWord::Tok(o + 3),
+                K_CSTACK if data(o + 3) != 0 => LiveWord::Tok(o + 3),
                 _ => LiveWord::Value(o + 3),
             });
         }
@@ -626,6 +680,16 @@ enum Fault {
     CurCs,
     /// the begin-document arming control sequence is not refused
     NoArm,
+    // Revision 6 (MACRO-REPLAY.md §12):
+    /// a group with a global operation is elided too
+    ElideGlobal,
+    /// the guard ignores the modes a recording may replay in
+    NoModeMask,
+    /// a sparse register read through its name is not a dependency
+    SparseUnwatched,
+    /// a replay of a body that ended inside `\\ignorespaces` leaves the
+    /// spaces after the call alone
+    NoSkipSpaces,
 }
 
 fn fault() -> Fault {
@@ -643,6 +707,10 @@ fn fault() -> Fault {
             Ok("no-align") => Fault::NoAlign,
             Ok("cur-cs") => Fault::CurCs,
             Ok("no-arm") => Fault::NoArm,
+            Ok("elide-global") => Fault::ElideGlobal,
+            Ok("no-mode-mask") => Fault::NoModeMask,
+            Ok("sparse-unwatched") => Fault::SparseUnwatched,
+            Ok("no-skip-spaces") => Fault::NoSkipSpaces,
             _ => Fault::None,
         },
     )
@@ -713,8 +781,14 @@ thread_local! {
 ///
 /// `XC@col@rlet` (xcolor's `\colorlet`, 47 % of a beamer deck's time) has
 /// parameters: it is offered only with `FLASHTEX_INTRINSICS_ARGS=on`
-/// (MACRO-REPLAY.md §8).
-pub const DEFAULT_NAMES: &[&str] = &["pdfstringdefPreHook", "XC@col@rlet"];
+/// (MACRO-REPLAY.md §8). So is `\beamer@usebeamercolor` (the macro beamer's
+/// `\usebeamercolor` reaches; its name begins with a backslash), whose
+/// colorlets and `\color` revision 6 records (MACRO-REPLAY.md §12.8).
+pub const DEFAULT_NAMES: &[&str] = &[
+    "pdfstringdefPreHook",
+    "XC@col@rlet",
+    "\\beamer@usebeamercolor",
+];
 
 fn config() -> (Mode, Vec<Vec<u8>>) {
     CONFIG.with(|c| {
@@ -1175,7 +1249,9 @@ impl Globals {
             }
             self.set_sf(slot, F_BASE, SCRATCH0 as i32);
         }
-        for f in [F_MISMATCH, F_NRW, F_NRH, F_NPIN, F_NOPS, F_NARGW] {
+        for f in [
+            F_MISMATCH, F_NRW, F_NRH, F_NPIN, F_NOPS, F_NARGW, F_NOPS_RUN, F_CSTACK, F_IGN,
+        ] {
             self.set_sf(slot, f, 0);
         }
     }
@@ -1335,6 +1411,179 @@ impl Globals {
         self.intr_pre[p as usize] = w;
     }
 
+    /// The recorded run reads the integer or dimension in the sparse
+    /// register element `p`, reached through the control sequence just
+    /// read (`cur_cs`, whose meaning points at `p`). Kept as a value pair
+    /// at `-p`. The pair is sound because the name's meaning is watched by
+    /// value: while the guard's mismatch count is zero (it is checked before
+    /// the pairs), the name still points at `p`, which its reference keeps
+    /// from being freed, so `p` is still that register.
+    fn rec_sparse_read(&mut self, p: i32) {
+        if self.st(S_REC_VERIFY) != 0 {
+            return;
+        }
+        let Some(slot) = self.rec_slot() else { return };
+        let cs = self.cur_cs;
+        // (sa_type(p) = sa_index(p) div 16 < glue_val: an integer or a
+        // dimension, whose value is sa_int(p) = mem[p+2].int)
+        let sa_type = self.mem[p as usize].hh().b0() / 16;
+        if cs <= 0
+            || self.eq_type_of(cs) != REGISTER
+            || self.equiv_of(cs) != p
+            || self.seen(cs) != SEEN_DEP
+            || sa_type >= crate::generated::consts::glue_val
+        {
+            return self.rec_abort(Why::Sparse);
+        }
+        if fault() == Fault::SparseUnwatched {
+            return;
+        }
+        self.rec_sparse_pair(slot, p);
+    }
+
+    /// The value of the sparse element `p` (`sa_int`).
+    fn sa_int(&self, p: i32) -> i32 {
+        self.mem[(p + 2) as usize].int()
+    }
+
+    /// What the recorded run held in the sparse element `p` before it first
+    /// wrote it, if it did.
+    fn sa_written(&self, p: i32) -> Option<i32> {
+        (0..self.st(S_REC_SA_N) as usize)
+            .find(|&i| self.st(SA_LIST0 + 2 * i) == p)
+            .map(|i| self.st(SA_LIST0 + 2 * i + 1))
+    }
+
+    fn has_pair(&self, slot: usize, loc: i32) -> bool {
+        let base = self.part(slot, P_RW);
+        (0..self.sf(slot, F_NRW) as usize).any(|i| self.intr_data[base + 2 * i] == loc)
+    }
+
+    /// The recorded run reads the sparse element `p`: by the first-access
+    /// rule (as `rec_read`'s), a value the run wrote itself is no
+    /// dependency, unless a group's end brought back the value from before
+    /// its first write; otherwise the value is a pair at `-p` (the value at
+    /// the call, which the guard compares).
+    fn rec_sparse_pair(&mut self, slot: usize, p: i32) {
+        if let Some(pre) = self.sa_written(p) {
+            if self.sa_int(p) != pre {
+                return;
+            }
+        }
+        if self.has_pair(slot, -p) {
+            return;
+        }
+        let n = self.sf(slot, F_NRW) as usize;
+        if n >= RW_CAP {
+            return self.rec_abort(Why::Capacity);
+        }
+        let base = self.part(slot, P_RW);
+        self.intr_data[base + 2 * n] = -p;
+        self.intr_data[base + 2 * n + 1] = self.sa_int(p);
+        self.set_sf(slot, F_NRW, n as i32 + 1);
+    }
+
+    /// `\\count`, `\\advance` & co. (`do_register_command`) name the sparse
+    /// element `p`: allowed only through the control sequence just read
+    /// (whose meaning, watched, keeps `p` alive), for an integer or a
+    /// dimension; `reads`: `\\advance`, `\\multiply` or `\\divide`, which
+    /// read the old value first. The assignment that follows may then change
+    /// `p` (`flashtex_intr_sa_word`).
+    pub fn flashtex_intr_sa_reg(&mut self, p: i32, reads: bool) {
+        let Some(slot) = self.rec_slot() else { return };
+        let verify = self.st(S_REC_VERIFY) != 0;
+        let cs = self.cur_cs;
+        let sa_type = self.mem[p as usize].hh().b0() / 16;
+        if cs <= 0
+            || self.eq_type_of(cs) != REGISTER
+            || self.equiv_of(cs) != p
+            || (!verify && self.seen(cs) != SEEN_DEP)
+            || sa_type >= crate::generated::consts::glue_val
+        {
+            return self.rec_abort(Why::Sparse);
+        }
+        self.set_st(S_REC_SA_OK, p);
+        if reads && !verify {
+            self.rec_sparse_pair(slot, p);
+        }
+    }
+
+    /// `sa_w_def` (`global`: `gsa_w_def`) is about to set the sparse
+    /// element `p` to `w`: an operation, if `p` is the element the command
+    /// named (`flashtex_intr_sa_reg`).
+    pub fn flashtex_intr_sa_word(&mut self, p: i32, w: i32, global: bool) {
+        let Some(slot) = self.rec_slot() else { return };
+        if p != self.st(S_REC_SA_OK) {
+            return self.rec_abort(Why::Sparse);
+        }
+        self.set_st(S_REC_SA_OK, 0);
+        if self.st(S_REC_VERIFY) == 0 && self.sa_written(p).is_none() && !self.has_pair(slot, -p) {
+            let n = self.st(S_REC_SA_N) as usize;
+            if n >= SA_LIST_CAP {
+                return self.rec_abort(Why::Capacity);
+            }
+            self.set_st(SA_LIST0 + 2 * n, p);
+            self.set_st(SA_LIST0 + 2 * n + 1, self.sa_int(p));
+            self.set_st(S_REC_SA_N, n as i32 + 1);
+        }
+        let k = K_SAWORD | if global { K_GLOBAL } else { 0 };
+        if !self.rec_verify_or_push(slot, k, p, w, 0) {
+            self.rec_abort(Why::Capacity);
+        }
+    }
+
+    /// `\\aftergroup` saves `t` for the end of the current group.
+    pub fn flashtex_intr_after(&mut self, t: i32) {
+        let Some(slot) = self.rec_slot() else { return };
+        if !self.rec_verify_or_push(slot, K_AFTER, t, 0, 0) {
+            self.rec_abort(Why::Capacity);
+        }
+    }
+
+    /// `\\pdfcolorstack` has appended its whatsit to the current list (it
+    /// is `tail`): an operation that appends the same node, its data a
+    /// fresh copy of the tokens (a pinned template). Its inputs besides the
+    /// tokens: `\\pdfoutput` (`check_pdfoutput`) and the number of colour
+    /// stacks (the guard, `F_CSTACK`).
+    pub fn flashtex_intr_colorstack(&mut self) {
+        let Some(slot) = self.rec_slot() else { return };
+        let t = self.cur_list.tail_field;
+        let (stack, cmd) = (self.link(t + 1), self.info(t + 1));
+        let data = if cmd <= COLORSTACK_DATA {
+            self.link(t + 2)
+        } else {
+            0
+        };
+        if self.st(S_REC_VERIFY) == 0 {
+            if data != 0 && !self.pin(slot, data) {
+                return self.rec_abort(Why::Capacity);
+            }
+            let out = self.st(L_INT_BASE) + crate::generated::consts::pdf_output_code;
+            self.rec_read(out);
+            if !self.intr_rec_on {
+                return;
+            }
+            if stack + 1 > self.sf(slot, F_CSTACK) {
+                self.set_sf(slot, F_CSTACK, stack + 1);
+            }
+        }
+        // (the list grows by this node: the commit's `tail` test)
+        self.set_st(S_REC_TAIL, t);
+        if !self.rec_verify_or_push(slot, K_CSTACK, stack, cmd, data) {
+            self.rec_abort(Why::Capacity);
+        }
+    }
+
+    /// The value a value pair at `loc` reads now: an `eqtb` word, or (`loc`
+    /// negative) a sparse register element's (`rec_sparse_read`).
+    fn pair_value(&self, loc: i32) -> i32 {
+        if loc < 0 {
+            self.mem[(-loc + 2) as usize].int()
+        } else {
+            self.eqtb[(loc - 1) as usize].int()
+        }
+    }
+
     fn rec_catcodes(&mut self) {
         if self.st(S_REC_CATCODES) == 0 {
             self.set_st(S_REC_CATCODES, 1);
@@ -1398,6 +1647,11 @@ impl Globals {
             (S_REC_PEAK_STR, 0),
             (S_REC_MEM0, self.dyn_used + self.var_used),
             (S_REC_PEAK_MEM, 0),
+            (S_REC_PEAK_LEVEL, 0),
+            (S_REC_MODES, MODES_ALL),
+            (S_REC_ALIGNED, 0),
+            (S_REC_SA_OK, 0),
+            (S_REC_SA_N, 0),
         ] {
             self.set_st(s, v);
         }
@@ -1502,6 +1756,11 @@ impl Globals {
         if c != SIMPLE_GROUP && c != SEMI_SIMPLE_GROUP {
             return self.rec_abort(Why::Group);
         }
+        // (`new_save_level` is about to make `cur_level+1`)
+        let d = self.cur_level + 1 - self.st(S_REC_LEVEL);
+        if d > self.st(S_REC_PEAK_LEVEL) {
+            self.set_st(S_REC_PEAK_LEVEL, d);
+        }
         if let Some(slot) = self.rec_slot() {
             if !self.rec_verify_or_push(slot, K_BEGIN, c, 0, 0) {
                 self.rec_abort(Why::Capacity);
@@ -1588,6 +1847,14 @@ impl Globals {
         if base == 0 || self.input_ptr < base {
             return self.rec_abort(Why::Level);
         }
+        // A tab mark or `\cr` delivered: `get_next` tested `align_state`
+        // for zero (tex.web §342). Had it been zero, the template would
+        // have been inserted instead, which no recording survives (its
+        // `\endtemplate` is outside every allowlist), so a committed
+        // recording saw every such token at a nonzero `align_state`.
+        if (TAB_MARK..=CAR_RET).contains(&self.cur_cmd) {
+            self.set_st(S_REC_ALIGNED, 1);
+        }
         if self.cur_cs != 0 {
             if self.cur_cmd == TOP_BOT_MARK {
                 return self.rec_abort(Why::Mark);
@@ -1631,7 +1898,11 @@ impl Globals {
             NO_EXPAND => chr == 0,
             // \if \ifcat \ifnum \ifodd \ifx \iftrue \iffalse \ifcase
             // \ifdefined \ifcsname \ifpdfabsnum (and \unless of them)
-            IF_TEST => matches!(chr % 32, 0 | 1 | 2 | 4 | 12 | 14 | 15 | 16 | 17 | 18 | 22),
+            // \ifdim (a dimension scan, below)
+            IF_TEST => matches!(
+                chr % 32,
+                0 | 1 | 2 | 3 | 4 | 12 | 14 | 15 | 16 | 17 | 18 | 22
+            ),
             // \number \romannumeral \string \meaning \eTeXrevision
             // \expanded \pdftexrevision \pdftexbanner \pdfescapestring
             // \pdfescapename \pdfstrcmp \pdfescapehex \pdfunescapehex
@@ -1661,8 +1932,12 @@ impl Globals {
                     self.rec_read(chr)
                 }
             }
-            // \eTeXversion, \pdftexversion, \numexpr
-            LAST_ITEM if matches!(chr, 20 | 6 | 39) => {}
+            // \eTeXversion, \pdftexversion, \numexpr, \dimexpr
+            LAST_ITEM if matches!(chr, 20 | 6 | 39 | 40) => {}
+            // An e-TeX register above 255 named by `\countdef` or
+            // `\dimendef`: `chr` points at its element (tex.web §1505's
+            // "Fetch a register"), which the name's meaning keeps alive.
+            REGISTER if !(MEM_BOT..=LO_MEM_STAT_MAX).contains(&chr) => self.rec_sparse_read(chr),
             _ => self.rec_abort(Why::Internal),
         }
     }
@@ -1675,8 +1950,8 @@ impl Globals {
         let inside = self.cur_level > self.st(S_REC_LEVEL);
         let ok = if c > MAX_NON_PREFIXED_COMMAND {
             match c {
-                TOKS_REGISTER | ASSIGN_TOKS | ASSIGN_INT | DEF_CODE | REGISTER | ADVANCE
-                | MULTIPLY | DIVIDE | PREFIX | LET | DEF => true,
+                TOKS_REGISTER | ASSIGN_TOKS | ASSIGN_INT | ASSIGN_DIMEN | DEF_CODE | REGISTER
+                | ADVANCE | MULTIPLY | DIVIDE | PREFIX | LET | DEF => true,
                 // \chardef \mathchardef \countdef \dimendef \skipdef
                 // \muskipdef \toksdef
                 SHORTHAND_DEF => (0..=6).contains(&chr),
@@ -1684,11 +1959,20 @@ impl Globals {
             }
         } else {
             match c {
-                RELAX | BEGIN_GROUP => true,
-                LEFT_BRACE => m != MMODE,
+                RELAX | BEGIN_GROUP | AFTER_GROUP => true,
+                EXTENSION => chr == PDF_COLORSTACK_NODE,
+                LEFT_BRACE => {
+                    // (a math group in math mode)
+                    self.set_st(S_REC_MODES, self.st(S_REC_MODES) & (MODE_V | MODE_H));
+                    m != MMODE
+                }
                 RIGHT_BRACE => self.cur_group == SIMPLE_GROUP && inside,
                 END_GROUP => self.cur_group == SEMI_SIMPLE_GROUP && inside,
-                SPACER => m == VMODE || m == MMODE,
+                SPACER => {
+                    // (a space in horizontal mode)
+                    self.set_st(S_REC_MODES, self.st(S_REC_MODES) & (MODE_V | MODE_M));
+                    m == VMODE || m == MMODE
+                }
                 IGNORE_SPACES => chr == 0,
                 _ => false,
             }
@@ -1727,12 +2011,48 @@ impl Globals {
 
     /// `big_switch`, during a recording: finish it when the body is done.
     pub fn flashtex_intr_switch(&mut self) {
-        if !self.rec_exhausted() {
-            return;
+        if self.rec_exhausted() {
+            self.finish_recording();
         }
+    }
+
+    /// `get_next` is about to leave a used-up token list while
+    /// `big_switch`'s own `get_x_token` reads on (`intr_at_switch`: no
+    /// routine between them, as `expand` clears the flag for its time), a
+    /// body that ends in an expansion (`\\fi`, say). If every level from
+    /// the body's on is used up, the body is done here exactly as at the
+    /// next `big_switch`: the replay path, back from `macro_call`'s `exit`,
+    /// is in the same `get_x_token` loop about to read the same token. So
+    /// the recording is finished now, before the token after the call is
+    /// read. True if a verification then replaced the state with the
+    /// replay's, which has no body levels: `get_next` reads on without
+    /// leaving one (changes/intrinsics.ch).
+    pub fn flashtex_intr_body_done(&mut self) -> bool {
+        // `get_x_token` also calls `macro_call` directly, which scans a
+        // macro's arguments with `intr_at_switch` still set: a body used up
+        // there ends in a call whose arguments come from after it (the
+        // reading on is `Level`'s). Only the scanner status the body runs
+        // with tells `get_x_token`'s own reading from that.
+        if self.scanner_status != self.st(S_REC_SCANNER) || !self.rec_exhausted() {
+            return false;
+        }
+        // Inside `\\ignorespaces`'s loop (or a replay's stand-in for it at
+        // `big_switch`), which reads on as `big_switch`'s `get_x_token`
+        // does but drops spaces: the replay leaves that to its caller.
+        if let Some(slot) = self.rec_slot() {
+            if self.st(S_REC_VERIFY) == 0 {
+                self.set_sf(slot, F_IGN, self.intr_ign as i32);
+            }
+        }
+        self.finish_recording()
+    }
+
+    /// The body is done: commit the recording (or, in a verification run,
+    /// compare; true then), or abandon it if the run was not pure.
+    fn finish_recording(&mut self) -> bool {
         let Some(slot) = self.rec_slot() else {
             self.intr_rec_on = false;
-            return;
+            return false;
         };
         let why = if self.cur_level != self.st(S_REC_LEVEL) {
             Some(Why::Group)
@@ -1779,12 +2099,20 @@ impl Globals {
             }
         };
         if let Some(w) = why {
-            return self.rec_abort(w);
+            self.rec_abort(w);
+            return false;
         }
         if self.st(S_REC_VERIFY) == 0 {
             self.rec_peaks(slot);
+            // The modes and `align_state`s a replay may run in (`guard`).
+            self.set_sf(slot, F_MODE, self.st(S_REC_MODES));
+            if self.st(S_REC_ALIGNED) == 0 {
+                self.set_sf(slot, F_ALIGN, ALIGN_ANY);
+            }
+            self.elide_local_groups(slot);
             if slot >= MAX_SLOTS && !self.arg_commit(slot) {
-                return self.rec_abort(Why::Capacity);
+                self.rec_abort(Why::Capacity);
+                return false;
             }
             self.rec_marks_back();
         }
@@ -1792,7 +2120,7 @@ impl Globals {
         self.set_st(S_REC_SLOT, 0);
         if self.st(S_REC_VERIFY) == 1 {
             crate::intrinsics_verify::normal_path_done(self, slot);
-            return;
+            return true;
         }
         self.set_sf(slot, F_STATE, ST_VALID);
         #[cfg(feature = "test-hooks")]
@@ -1805,9 +2133,9 @@ impl Globals {
         });
         if std::env::var_os("FLASHTEX_INTRINSICS_DEBUG").is_some() {
             let ops = self.intr_slot_ops(slot);
-            let mut kinds = [0usize; 8];
+            let mut kinds = [0usize; 16];
             for o in &ops {
-                kinds[(o[0] & 7) as usize] += 1;
+                kinds[(o[0] & 15) as usize] += 1;
             }
             let globals = ops.iter().filter(|o| o[0] & K_GLOBAL != 0).count();
             eprintln!(
@@ -1824,6 +2152,7 @@ impl Globals {
                 self.sf(slot, F_MISMATCH)
             );
         }
+        false
     }
 
     // -- calls -----------------------------------------------------------------
@@ -1834,28 +2163,92 @@ impl Globals {
     }
 
     /// The guard: may `slot` be replayed now?
-    fn guard(&self, slot: usize) -> Result<(), Why> {
+    fn guard(&mut self, slot: usize) -> Result<(), Why> {
         if self.sf(slot, F_MISMATCH) != 0 {
             return Err(Why::Deps);
         }
-        if self.cur_list.mode_field.abs() != self.sf(slot, F_MODE) {
+        let mode = match self.cur_list.mode_field.abs() {
+            VMODE => MODE_V,
+            HMODE => MODE_H,
+            _ => MODE_M,
+        };
+        if self.sf(slot, F_MODE) & mode == 0 && fault() != Fault::NoModeMask {
             return Err(Why::Mode);
         }
-        if self.align_state != self.sf(slot, F_ALIGN) && fault() != Fault::NoAlign {
+        let align = self.sf(slot, F_ALIGN);
+        if align != ALIGN_ANY && self.align_state != align && fault() != Fault::NoAlign {
             return Err(Why::Align);
         }
         if self.par_token != self.sf(slot, F_PAR_TOKEN) {
             return Err(Why::ParToken);
         }
         self.margins(slot)?;
+        let stacks = self.sf(slot, F_CSTACK);
+        if stacks > 0 && self.colorstackused() < stacks {
+            return Err(Why::Deps);
+        }
         let base = self.part(slot, P_RW);
         for i in 0..self.sf(slot, F_NRW) as usize {
             let p = self.intr_data[base + 2 * i];
-            if self.eqtb[(p - 1) as usize].int() != self.intr_data[base + 2 * i + 1] {
+            if self.pair_value(p) != self.intr_data[base + 2 * i + 1] {
                 return Err(Why::WordDeps);
             }
         }
         Ok(())
+    }
+
+    /// Drop from `slot`'s operations every group whose operations are all
+    /// local (MACRO-REPLAY.md §11.5): once its `unsave` has run, such a group
+    /// has left every `eqtb` entry and the save stack as they were before its
+    /// `new_save_level` (each local change is saved at its first write at the
+    /// group's level and restored by `unsave`; a nested group is restored by
+    /// its own `unsave` first), its fresh lists are freed again, every watch
+    /// record holds what it held before, and a value it hands out of the
+    /// group (`\expandafter\endgroup\x`) is a separate operation after the
+    /// `K_END`. The high-water marks and the save stack's and group depth's
+    /// margins come from the recorded peaks, not from the operations. So a
+    /// replay that skips the group ends in the same state. A group with any
+    /// global operation (by the routine called: `geq_define`,
+    /// `geq_word_define`, after `\globaldefs`) is kept whole.
+    fn elide_local_groups(&mut self, slot: usize) {
+        let ops = self.intr_slot_ops(slot);
+        self.set_sf(slot, F_NOPS_RUN, ops.len() as i32);
+        let mut keep = vec![true; ops.len()];
+        // (start, a global operation inside)
+        let mut open: Vec<(usize, bool)> = vec![];
+        for (i, o) in ops.iter().enumerate() {
+            match o[0] & 0xff {
+                K_BEGIN => open.push((i, false)),
+                K_END => match open.pop() {
+                    Some((b, false)) => keep[b..=i].iter_mut().for_each(|k| *k = false),
+                    Some((_, true)) => {
+                        if let Some(t) = open.last_mut() {
+                            t.1 = true;
+                        }
+                    }
+                    // (unbalanced: never at a commit, which requires the
+                    // group level it started with; keep everything)
+                    None => return,
+                },
+                _ => {
+                    if o[0] & K_GLOBAL != 0 && fault() != Fault::ElideGlobal {
+                        if let Some(t) = open.last_mut() {
+                            t.1 = true;
+                        }
+                    }
+                }
+            }
+        }
+        if !open.is_empty() || keep.iter().all(|&k| k) {
+            return;
+        }
+        let base = self.part(slot, P_OPS);
+        let mut n = 0;
+        for (o, _) in ops.iter().zip(&keep).filter(|(_, &k)| k) {
+            self.intr_data[base + 4 * n..base + 4 * n + 4].copy_from_slice(o);
+            n += 1;
+        }
+        self.set_sf(slot, F_NOPS, n as i32);
     }
 
     /// `make_string` or `str_toks`, during a recording: the string pool's
@@ -1906,6 +2299,7 @@ impl Globals {
             (F_PK_POOL, self.st(S_REC_PEAK_POOL)),
             (F_PK_STR, self.st(S_REC_PEAK_STR)),
             (F_PK_MEM, self.st(S_REC_PEAK_MEM)),
+            (F_PK_LEVEL, self.st(S_REC_PEAK_LEVEL)),
         ];
         for (f, v) in peaks {
             self.set_sf(slot, f, v.max(0));
@@ -1928,7 +2322,10 @@ impl Globals {
             && self.expand_depth_count + pk(F_PK_EXP) < self.expand_depth
             && self.pool_ptr + pk(F_PK_POOL) < c::pool_size
             && self.str_ptr + pk(F_PK_STR) < c::max_strings
-            && pk(F_PK_MEM) + MEM_SLACK + MEM_GROWTH < self.hi_mem_min - self.lo_mem_max;
+            && pk(F_PK_MEM) + MEM_SLACK + MEM_GROWTH < self.hi_mem_min - self.lo_mem_max
+            // (`new_save_level` overflows when called at `max_quarterword`;
+            // the body's deepest call is at its peak level minus one)
+            && (pk(F_PK_LEVEL) == 0 || self.cur_level + pk(F_PK_LEVEL) - 1 < c::max_quarterword);
         if ok {
             Ok(())
         } else {
@@ -2560,6 +2957,11 @@ impl Globals {
 
     /// Make the recorded changes of `slot`, through TeX's own routines.
     pub(crate) fn replay(&mut self, slot: usize) {
+        // (the body ended inside `\\ignorespaces`: the spaces after the call
+        // are skipped where the replay's caller reads on, changes/intrinsics.ch)
+        if self.sf(slot, F_IGN) != 0 && fault() != Fault::NoSkipSpaces {
+            self.intr_skip_sp = true;
+        }
         let t0 = std::time::Instant::now();
         // The high-water marks, as the expansion would have raised them
         // (MACRO-REPLAY.md §3.6 item 1).
@@ -2630,6 +3032,15 @@ impl Globals {
                 }
                 K_BEGIN => self.new_save_level(a),
                 K_END => self.unsave(),
+                K_SAWORD => {
+                    if global {
+                        self.gsa_w_def(a, b)
+                    } else {
+                        self.sa_w_def(a, b)
+                    }
+                }
+                K_AFTER => self.save_for_after(a),
+                K_CSTACK => self.replay_colorstack(a, b, c),
                 _ => {}
             }
         }
@@ -2646,6 +3057,30 @@ impl Globals {
             }
             *s.replays_by_cs.entry(cs).or_default() += 1;
         });
+    }
+
+    /// `\\pdfcolorstack`'s whatsit, appended as the normal path appended it
+    /// (`new_whatsit`, tex.web's "Implement \\pdfcolorstack"). The node is
+    /// made with `scanner_status` normal, as `main_control` ran it, so that
+    /// the display list notes its source position as for the normal path's.
+    fn replay_colorstack(&mut self, stack: i32, cmd: i32, data: i32) {
+        use crate::generated::consts as c;
+        let size = if cmd <= COLORSTACK_DATA {
+            c::pdf_colorstack_setter_node_size
+        } else {
+            c::pdf_colorstack_getter_node_size
+        };
+        let ss = self.scanner_status;
+        self.scanner_status = 0;
+        self.new_whatsit(PDF_COLORSTACK_NODE, size);
+        self.scanner_status = ss;
+        let t = self.cur_list.tail_field;
+        self.mem[(t + 1) as usize].set_hh_rh(stack);
+        self.mem[(t + 1) as usize].set_hh_lh(cmd);
+        if cmd <= COLORSTACK_DATA {
+            let l = self.copy_token_list(data);
+            self.mem[(t + 2) as usize].set_hh_rh(l);
+        }
     }
 
     /// Tell the L5 read-set (`src/readset.rs`, DESIGN.md §5.5) about every
@@ -2717,6 +3152,31 @@ impl Globals {
                 ]
             })
             .collect()
+    }
+
+    /// The operations `slot`'s recorded run made (the verifier counts the
+    /// normal path's), elided groups included.
+    pub(crate) fn intr_slot_run_ops(&self, slot: usize) -> usize {
+        self.sf(slot, F_NOPS_RUN) as usize
+    }
+
+    /// The sparse register elements `slot` reads (pairs) or writes.
+    pub(crate) fn intr_slot_sparse(&self, slot: usize) -> Vec<i32> {
+        let base = self.part(slot, P_RW);
+        let mut v: Vec<i32> = (0..self.sf(slot, F_NRW) as usize)
+            .map(|i| self.intr_data[base + 2 * i])
+            .filter(|&l| l < 0)
+            .map(|l| -l)
+            .collect();
+        v.extend(
+            self.intr_slot_ops(slot)
+                .iter()
+                .filter(|o| o[0] & 0xff == K_SAWORD)
+                .map(|o| o[1]),
+        );
+        v.sort_unstable();
+        v.dedup();
+        v
     }
 
     pub(crate) fn intr_slot_cs(&self, slot: usize) -> i32 {
@@ -2855,6 +3315,10 @@ impl Globals {
 
     /// End of the run: write the report (`FLASHTEX_INTRINSICS_STATS`).
     pub fn flashtex_intr_finish(&mut self) {
+        // (a run that ends in the middle of a recording: a fatal error)
+        if self.intr_rec_on {
+            self.rec_abort(Why::Error);
+        }
         if verifying() && self.intr_on {
             self.intr_check_invariants();
         }

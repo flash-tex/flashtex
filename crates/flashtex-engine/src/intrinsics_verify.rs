@@ -95,6 +95,14 @@ const EXCLUDED_SCALARS: &[&str] = &[
     // only while skipping ("Incomplete \if...; all text was ignored after
     // line ...")
     "skip_line",
+    // the arithmetic routines' side results (MACRO-REPLAY.md §11.3): every
+    // read of `remainder` in pdftex.web comes right after the `x_over_n` or
+    // `xn_over_d` that writes it (scan_dimen's units and `true`, math glue
+    // and kerns), and every read of `arith_error` follows a write in the
+    // same routine (`scan_dimen`, `\advance` & co., `scan_expr`, which
+    // saves it only to put it back, the line breaker's `fract`)
+    "remainder",
+    "arith_error",
 ];
 
 const EXCLUDED_REGIONS: &[&str] = &[
@@ -135,6 +143,9 @@ struct Pending {
     args: Option<ArgCall>,
     /// `dyn_used` and `var_used` at the checkpoint (the leak check).
     mem0: (i32, i32),
+    /// The current list's tail at the checkpoint: the nodes after it are
+    /// compared (`\\pdfcolorstack`'s whatsits).
+    tail0: i32,
 }
 
 thread_local! {
@@ -157,6 +168,15 @@ struct Snap {
     input: Vec<String>,
     cond: Vec<(i32, i32, i32)>,
     log_len: u64,
+    /// The sparse register elements the recording reads or writes: their
+    /// reference count and level word, and their value (`mem` is compared
+    /// only through what reaches it, and these are reached from `sa_root`).
+    sparse: Vec<(i32, u64, u64)>,
+    /// The nodes appended to the current list since the checkpoint.
+    nodes: Vec<String>,
+    /// The saved sparse values (`sa_chain`, e-TeX's `sa_save`): each node's
+    /// index, level, element and value.
+    sa_chain: Vec<(i32, i32, i32, i32, i32)>,
 }
 
 fn is_list(t: i32, e: i32) -> bool {
@@ -340,7 +360,73 @@ impl Globals {
         s.input = self.input_snap();
         s.cond = self.cond_snap();
         s.log_len = self.verify_log_len();
+        s.sparse = self
+            .intr_slot_sparse(p.slot)
+            .into_iter()
+            .map(|e| {
+                (
+                    e,
+                    self.mem[(e + 1) as usize].0,
+                    self.mem[(e + 2) as usize].0,
+                )
+            })
+            .collect();
+        s.nodes = self.nodes_snap(p.tail0);
+        s.sa_chain = self.sa_chain_snap();
         s
+    }
+
+    fn sa_chain_snap(&self) -> Vec<(i32, i32, i32, i32, i32)> {
+        use crate::generated::consts::dimen_val_limit;
+        let mut v = vec![];
+        let mut q = self.sa_chain;
+        while q != 0 && v.len() < 100_000 {
+            let w = self.mem[q as usize].hh();
+            let f = self.mem[(q + 1) as usize].hh();
+            let val = if w.b0() < dimen_val_limit {
+                self.mem[(q + 2) as usize].int()
+            } else {
+                0
+            };
+            v.push((w.b0(), w.b1(), f.lh(), f.rh(), val));
+            q = w.rh();
+        }
+        v
+    }
+
+    /// The nodes after `tail0` in the current list: type and subtype, and a
+    /// `\\pdfcolorstack` whatsit's stack, action and data.
+    fn nodes_snap(&self, tail0: i32) -> Vec<String> {
+        const WHATSIT_NODE: i32 = 8;
+        const PDF_COLORSTACK_NODE: i32 = 40;
+        let mut v = vec![];
+        let (mut q, tail) = (self.mem[tail0 as usize].hh().rh(), self.cur_list.tail_field);
+        if tail == tail0 {
+            return v;
+        }
+        while q != 0 && v.len() < 10_000 {
+            let w = self.mem[q as usize].hh();
+            if w.b0() == WHATSIT_NODE && w.b1() == PDF_COLORSTACK_NODE {
+                let f = self.mem[(q + 1) as usize].hh();
+                let data = if f.lh() <= 1 {
+                    self.tokens_from(
+                        self.mem[(self.mem[(q + 2) as usize].hh().rh()) as usize]
+                            .hh()
+                            .rh(),
+                    )
+                } else {
+                    vec![]
+                };
+                v.push(format!("colorstack {} {} {:?}", f.rh(), f.lh(), data));
+            } else {
+                v.push(format!("node {} {}", w.b0(), w.b1()));
+            }
+            if q == tail {
+                break;
+            }
+            q = w.rh();
+        }
+        v
     }
 
     fn verify_log_len(&mut self) -> u64 {
@@ -369,10 +455,28 @@ impl Globals {
             {
                 continue;
             }
-            let (a, b) = (
-                &n.scalars[sl.off..sl.off + sl.size],
-                &i.scalars[sl.off..sl.off + sl.size],
+            let (mut a, mut b) = (
+                n.scalars[sl.off..sl.off + sl.size].to_vec(),
+                i.scalars[sl.off..sl.off + sl.size].to_vec(),
             );
+            match sl.name {
+                // Pointers to nodes the two paths made at different
+                // addresses, compared through what they reach instead: the
+                // current list's tail (`Snap::nodes`, the nodes appended)
+                // and the chain of saved sparse values (`Snap::sa_chain`).
+                "cur_list" => {
+                    let t = std::mem::offset_of!(
+                        crate::generated::types::list_state_record,
+                        tail_field
+                    );
+                    if t + 4 <= a.len() {
+                        a[t..t + 4].fill(0);
+                        b[t..t + 4].fill(0);
+                    }
+                }
+                "sa_chain" => continue,
+                _ => {}
+            }
             if a != b {
                 d.push(format!("scalar {}: {:?} -> {:?}", sl.name, a, b));
             }
@@ -547,6 +651,21 @@ impl Globals {
         if n.cond != i.cond {
             d.push(format!("conditions: {:?} -> {:?}", n.cond, i.cond));
         }
+        if n.sparse != i.sparse {
+            d.push(format!(
+                "sparse registers: {:?} -> {:?}",
+                n.sparse, i.sparse
+            ));
+        }
+        if n.sa_chain != i.sa_chain {
+            d.push(format!(
+                "saved sparse values: {:?} -> {:?}",
+                n.sa_chain, i.sa_chain
+            ));
+        }
+        if n.nodes != i.nodes {
+            d.push(format!("nodes appended: {:?} -> {:?}", n.nodes, i.nodes));
+        }
         if n.log_len != i.log_len || n.log_len != p.log0 {
             d.push(format!(
                 "log length: before {} normal {} replayed {}",
@@ -629,6 +748,7 @@ pub(crate) fn begin(g: &mut Globals, slot: usize, args: Option<ArgCall>) {
             normal_ops: 0,
             args,
             mem0: (g.dyn_used, g.var_used),
+            tail0: g.cur_list.tail_field,
         })
     });
     let (cs, scanner) = match args {
@@ -706,7 +826,7 @@ pub(crate) fn normal_path_done(g: &mut Globals, slot: usize) {
             eprintln!("verify: letcs target {q} \\{} from \\{}: normal {:?} replay type {} level {} ref {}", g.cs_name_string(q), g.cs_name_string(o[3]), n.lists.get(&q).map(|a| (a.0, a.1.len())), w.b0(), w.b1(), g.mem[w.rh() as usize].hh().lh());
         }
     }
-    let recorded_ops = g.intr_slot_ops(slot).len();
+    let recorded_ops = g.intr_slot_run_ops(slot);
     if p.normal_ops != recorded_ops {
         diffs.push(format!(
             "operations: normal path {} replay {}",
