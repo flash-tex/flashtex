@@ -222,23 +222,40 @@ inside the call is MACRO-REPLAY revision 5's §11.5 and is not done here.
 
 ## 6. Storage, checkpoints and restores
 
-- **Where the entries live.** In Rust, outside the word space (`src/boxmemo.rs`), keyed by the
-  control sequence and its argument tokens, with at most 8 variants per key (least recently used).
-  The total is capped at 64 MB.
+- **Where the entries live.** In Rust, outside the word space (`src/boxmemo.rs`), per macro.
+  - There are up to 64 variants per macro, least recently used dropped first, within a total cap
+    of 64 MB.
+  - Each variant carries a 64-bit hash of K1, the context, K2 and K4. The hash only filters
+    candidates; the full comparison decides.
+  - All variants whose K1–K4 match are tried, most recent first, until one also passes K3 and K7.
+  - Why 64: a page of *Infinite Descent* measures a dozen frames, each with its own key, and a
+    typed letter alternates between two states of each.
 - **Why outside the word space.** An edit's restore rolls the word space back to before the edited
   window, which would delete every recording made in it. Out here they survive, and they stay sound
   because the guard checks every value in full.
-- **Values, not addresses.** An entry holds no address into `mem`: token lists, glue specs and
+- **Values, not addresses.** An entry holds no address into `mem`. Token lists, glue specs and
   arguments are kept by value.
-- **Restores.** Recording state is per call. A restore while a recording is open (a preempted
-  compile, the convergence test's own restores) abandons it: `incr.rs` and `checkpoint.rs` call
-  `boxmemo::on_restore`.
-- **`bm_rec_on` and the version words** are in the word space. Every convergence test happens at a
-  page boundary, where no recording is open, so `bm_rec_on` is equal there. The version words are
-  state like any other.
-- **Checkpoints inside a recording are fine.** The recording is taken on the normal path, so a
-  segment or timed checkpoint in the middle of a 10 ms recording is an ordinary checkpoint. A later
-  restore to it finds `bm_rec_on` true and the Rust recorder gone, and `on_restore` clears the flag.
+- **Where recordings are made.** Replays are allowed everywhere. Where recording is allowed depends
+  on the caller:
+  - On the command line, anywhere.
+  - In the host, only inside an edit's window, from the engine's resumption after the restore to
+    the edited page's shipout (`boxmemo::record_window`, set by `incr.rs`). Those are the calls the
+    next keystroke runs again.
+  - Never in a cold pass. Its calls never hit, because pgf's picture serial is in their key (§9).
+    Recording one costs about 1.7× the call.
+- **Restores.** A restore abandons a recording that is open (a preempted compile, the convergence
+  test's own restores). `Globals::fill_scalars` calls `boxmemo::after_restore`.
+- **`bm_rec_on`, `bm_at_switch` and the version words** are in the word space.
+  - A convergence test at a checkpoint taken while a recording is open sees `bm_rec_on` differ
+    from an old run that was not recording, so it does not converge there. That is conservative.
+  - The version words are fresh numbers. The convergence test treats them as dead (`incr.rs`
+    `dead_word`): the arrays they name are compared themselves.
+- **Checkpoints inside a recording are fine.** A segment or timed checkpoint in the middle of a
+  recording is an ordinary checkpoint. A later restore to it finds `bm_rec_on` true and the Rust
+  recorder gone, and `after_restore` clears the flag.
+- **Known gap: diagnostics.** A replayed `\xdef` makes a token list without a definition site
+  (`diag::dg_def`), so go-to-definition finds nothing for `\fb@frw`-like macros defined by a
+  replay. That changes no output.
 
 ## 7. Verification
 
