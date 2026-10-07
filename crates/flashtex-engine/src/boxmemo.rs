@@ -185,6 +185,9 @@ struct Entry {
     k3: Vec<(i32, Meaning)>,
     /// Names looked up (`\ifcsname`) and not found.
     absent: Vec<Vec<i32>>,
+    /// Box registers read before written, void when read (LaTeX's
+    /// `\voidb@x`).
+    voids: Vec<i32>,
     ops: Vec<Op>,
     last_badness: i32,
     last_used: u64,
@@ -227,6 +230,7 @@ struct Rec {
     k4: Vec<i32>,
     k3: Vec<(i32, Meaning)>,
     absent: Vec<Vec<i32>>,
+    voids: Vec<i32>,
     seen: HashSet<i32>,
     boxes: HashSet<i32>,
     ops: Vec<Op>,
@@ -798,17 +802,17 @@ impl Globals {
             };
             for (i, e) in v.iter().enumerate() {
                 if e.k1 == k1 && e.ctx == ctx && e.k2 == k2 && e.k4 == k4 {
-                    return Some((i, e.k3.clone(), e.absent.clone()));
+                    return Some((i, e.k3.clone(), e.absent.clone(), e.voids.clone()));
                 }
             }
             None
         });
         let mut why = "NotRecorded";
-        if let Some((i, k3, absent)) = found {
+        if let Some((i, k3, absent, voids)) = found {
             let absent_ok = absent.iter().all(|n| match self.bm_find_cs(n) {
                 None => true,
                 Some(p) => self.bm_eq(p).hh().b0() == k::undefined_cs,
-            });
+            }) && voids.iter().all(|&n| self.bm_box_value(n) == 0);
             if absent_ok && k3.iter().all(|(p, m)| self.bm_meaning(*p).as_ref() == Some(m)) {
                 if m == Mode::Verify {
                     return self.bm_start(cs, n, scanner, k1, ctx, k2, k4, Some(i));
@@ -855,6 +859,7 @@ impl Globals {
             k4,
             k3: vec![],
             absent: vec![],
+            voids: vec![],
             seen: HashSet::new(),
             boxes: HashSet::new(),
             ops: vec![],
@@ -1133,13 +1138,50 @@ impl Globals {
         self.bm_with_rec(|r| r.ops.push(Op::Sa { t, n, v, kind }));
     }
 
-    /// `fetch_box`: box register `n` is read.
+    /// `fetch_box`: box register `n` is read. One the call wrote is its
+    /// own; one it did not is part of the key while it is void (LaTeX's
+    /// `\voidb@x`), else the recording is abandoned.
     #[cold]
     #[inline(never)]
     pub fn flashtex_bm_box(&mut self, n: i32) {
         let written = self.bm_with_rec(|r| r.boxes.contains(&n)).unwrap_or(false);
-        if !written {
-            self.bm_abort("BoxRead");
+        if written {
+            return;
+        }
+        if self.bm_box_value(n) != 0 {
+            return self.bm_abort("BoxRead");
+        }
+        self.bm_with_rec(|r| {
+            if !r.voids.contains(&n) {
+                r.voids.push(n);
+            }
+        });
+    }
+
+    /// `box(n)` (a sparse one looked up without creating anything).
+    fn bm_box_value(&self, n: i32) -> i32 {
+        if n < 256 {
+            return self.bm_eq(BOX_BASE + n).hh().rh();
+        }
+        let get = |q: i32, i: i32| -> i32 {
+            let w = self.mem[(q + i / 2 + 1) as usize].hh();
+            if i % 2 == 1 {
+                w.rh()
+            } else {
+                w.lh()
+            }
+        };
+        let mut q = self.sa_root[BOX_VAL as usize];
+        for i in [n / 4096, (n / 256) % 16, (n / 16) % 16, n % 16] {
+            if q == 0 {
+                return 0;
+            }
+            q = get(q, i);
+        }
+        if q == 0 {
+            0
+        } else {
+            self.bm_link(q + 1)
         }
     }
 
@@ -1379,6 +1421,7 @@ impl Globals {
                 k4: rec.k4,
                 k3: rec.k3,
                 absent: rec.absent,
+                voids: rec.voids,
                 ops: rec.ops,
                 last_badness,
                 last_used: now,

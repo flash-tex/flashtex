@@ -9,8 +9,10 @@
 % feature on, and calls the hand-written module src/boxmemo.rs:
 %
 % * |macro_call|, once the body and its arguments are fed to the scanner:
-%   a registered macro (|bm_cand|) that |big_switch|'s |get_x_token| expands
-%   (D9's |intr_at_switch|) is offered to |flashtex_bm_call|, which either
+%   a registered macro (|bm_cand|) that |big_switch|'s |get_x_token| calls
+%   itself (|bm_at_switch|, and no |expand| in progress: so |main_control|
+%   executes all of the body; unlike D9's |intr_at_switch|, an expansion
+%   such as a \.{\fi} before it in the same |get_x_token| does not count) is offered to |flashtex_bm_call|, which either
 %   replays a recorded call whose key holds -- it pops the body with
 %   |end_token_list| and makes the recorded assignments through
 %   |eq_define| & co., exactly what |main_control| executing the body would
@@ -137,8 +139,8 @@ if eq_type(cur_cs)=undefined_cs then
 exit:scanner_status:=save_scanner_status; warning_index:=save_warning_index;
 @y
 @<Feed the macro body and its parameters to the scanner@>;
-if bm_on then if intr_at_switch then if bm_cand[warning_index] then
-  flashtex_bm_call(n,save_scanner_status);
+if bm_on then if bm_at_switch then if expand_depth_count=0 then
+  if bm_cand[warning_index] then flashtex_bm_call(n,save_scanner_status);
 exit:scanner_status:=save_scanner_status; warning_index:=save_warning_index;
 @z
 
@@ -156,17 +158,26 @@ begin if intr_rec_on then flashtex_intr_pop_cond;
 if bm_rec_on then flashtex_bm_pop_cond;
 @z
 
-@x pdftex.web l.28752 (after changes/intrinsics.ch) - |big_switch| ends recordings
+@x pdftex.web l.28752 (after changes/intrinsics.ch) - |big_switch| ends recordings, marks its own expansions, and checks every command a recording runs
 big_switch: if ckpt_request<>0 then flashtex_checkpoint_hook;
-@y
-big_switch: if ckpt_request<>0 then flashtex_checkpoint_hook;
-if bm_rec_on then flashtex_bm_switch;
-@z
-
-@x pdftex.web l.28755 (after changes/intrinsics.ch) - every command a recording runs is checked
+if intr_on then
+  begin if intr_rec_on then flashtex_intr_switch;
+  intr_at_switch:=true;
+  end;
+get_x_token; intr_at_switch:=false;@/
 reswitch: @<Give diagnostic information, if requested@>;
 if intr_rec_on then flashtex_intr_command;
 @y
+big_switch: if ckpt_request<>0 then flashtex_checkpoint_hook;
+if intr_on then
+  begin if intr_rec_on then flashtex_intr_switch;
+  intr_at_switch:=true;
+  end;
+if bm_on then
+  begin if bm_rec_on then flashtex_bm_switch;
+  bm_at_switch:=true;
+  end;
+get_x_token; intr_at_switch:=false; bm_at_switch:=false;@/
 reswitch: @<Give diagnostic information, if requested@>;
 if intr_rec_on then flashtex_intr_command;
 if bm_rec_on then flashtex_bm_command;
@@ -292,12 +303,13 @@ restore keeps them; the guard checks every value they depend on.
 @<Glob...@>=
 @!bm_on:boolean; {BOX-MEMO is switched on}
 @!bm_rec_on:boolean; {a BOX-MEMO recording is in progress}
+@!bm_at_switch:boolean; {|big_switch|'s |get_x_token| is running}
 @!bm_cand:array[0..eqtb_top] of boolean; {a registered macro}
 @!bm_font_version:integer; {names the state of the loaded fonts' parameters}
 @!bm_hyph_version:integer; {names the state of the hyphenation exceptions}
 
 @ @<Set init...@>=
-bm_rec_on:=false; bm_font_version:=0; bm_hyph_version:=0;
+bm_rec_on:=false; bm_at_switch:=false; bm_font_version:=0; bm_hyph_version:=0;
 bm_on:=flashtex_bm_enabled;
 
 @ @<Declare the routines of pdf\TeX's C parts@>=
