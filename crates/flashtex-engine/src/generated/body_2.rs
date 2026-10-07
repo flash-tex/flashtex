@@ -3257,7 +3257,7 @@ impl Globals {
                 if self.bm_at_switch {
                     if (self.expand_depth_count == 0i32) {
                         if self.bm_cand[crate::ix::U((self.warning_index) as usize)] {
-                            self.flashtex_bm_call(n, save_scanner_status);
+                            self.flashtex_bm_call(n, save_scanner_status, save_warning_index);
                         }
                     }
                 }
