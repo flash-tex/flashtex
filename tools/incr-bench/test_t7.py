@@ -162,5 +162,37 @@ class ReferenceTests(unittest.TestCase):
         self.assertEqual(t7.report(plain, None, None, True)[0], 3)  # but its power was not recorded
 
 
+class EditLocationTests(unittest.TestCase):
+    """Beamer decks give their edit lines (genbeamer.py's t7.json): dl3-keys gets --line/--page."""
+
+    def test_located_replaces_at(self):
+        lines = {0.02: (20, 2), 0.5: (21, 2), 0.98: (27, 3)}
+        self.assertEqual(t7.located(['--kind', 'letter', '--at', '0.5', '--interval-ms', '50'], lines),
+                         ['--kind', 'letter', '--line', '21', '--page', '2', '--interval-ms', '50'])
+        self.assertEqual(t7.located(['--kind', 'sentence', '--at', '0.98'], lines)[2:], ['--line', '27', '--page', '3'])
+        self.assertEqual(t7.located(['--kind', 'letter', '--at', '0.5'], None), ['--kind', 'letter', '--at', '0.5'])
+
+    def test_generated_decks(self):
+        import tempfile
+        import genbeamer
+        with tempfile.TemporaryDirectory() as d:
+            sys_argv, sys.argv = sys.argv, ['genbeamer.py', d]
+            try:
+                genbeamer.main()
+            finally:
+                sys.argv = sys_argv
+            for doc in ('beamer-5', 'beamer-30'):
+                lines = t7.edit_lines(f'{d}/docs/{doc}')
+                text = open(f'{d}/docs/{doc}/main.tex').read()
+                src = text.split('\n')
+                self.assertEqual(sorted(lines), [0.02, 0.5, 0.98])
+                for line, _ in lines.values():
+                    words = src[line - 1].split()
+                    self.assertTrue(sum(1 for w in words if len(w) >= 4 and w.isalpha() and w.islower()) >= 2, src[line - 1])
+                at = t7.body_line(text, 0.5, lines[0.5][0])
+                self.assertTrue(text[at - 1].isalpha() and text[at].isalpha())  # inside the line's second word
+            self.assertEqual(text.count('\\begin{frame}'), 30)
+
+
 if __name__ == '__main__':
     unittest.main()
