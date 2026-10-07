@@ -1163,8 +1163,16 @@ impl Globals {
             return self.bm_abort("OuterLocal");
         }
         if (BOX_BASE..BOX_BASE + 256).contains(&p) {
+            // A box made inside the call stays inside it (its local
+            // assignments are undone by its groups); a global one may only
+            // make the register void (TikZ's `\tikz@figbox`), replayed.
             if global {
-                return self.bm_abort("GlobalBox");
+                if e != 0 {
+                    return self.bm_abort("GlobalBox");
+                }
+                self.bm_with_rec(|r| {
+                    r.ops.push(Op::Def { p, t: BOX_REF, v: Val::Plain(0), kind });
+                });
             }
             self.bm_with_rec(|r| r.boxes.insert(p - BOX_BASE));
             return;
@@ -1204,7 +1212,12 @@ impl Globals {
         };
         if t == BOX_VAL {
             if global {
-                return self.bm_abort("GlobalBox");
+                if e != 0 {
+                    return self.bm_abort("GlobalBox");
+                }
+                self.bm_with_rec(|r| {
+                    r.ops.push(Op::Sa { t, n, v: Val::Plain(0), kind });
+                });
             }
             self.bm_with_rec(|r| r.boxes.insert(n));
             return;
