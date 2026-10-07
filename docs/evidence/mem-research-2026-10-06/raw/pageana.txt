@@ -1,0 +1,28 @@
+# scripts/pageana.py on the prototype's page-cache dumps (~/ib-memr/dump/*.pages on the PC), as printed.
+
+== full-1000
+pages 1002 97.6 MB (p50 100 KB), forms 0 0.0 MB
+distinct page bodies 1002
+zlib-1 per page: 0.503 of the bytes; compress 1.11 ms/page
+zstd-1 per page (200 sampled): 0.493
+zstd-3 per page (200 sampled): 0.448
+zstd-3 with a trained dictionary (110 KB): 0.434
+zstd -b1 (all sampled pages as one): ['-1     10124657 (2.028) 418.67 MB/s 1079.9 MB/s   201 files']
+
+== plain-1000
+pages 1001 99.7 MB (p50 103 KB), forms 0 0.0 MB
+distinct page bodies 1001
+zlib-1 per page: 0.503 of the bytes; compress 1.16 ms/page
+zstd-1 per page (200 sampled): 0.496
+zstd-3 per page (200 sampled): 0.448
+zstd-3 with a trained dictionary (110 KB): 0.437
+zstd -b1 (all sampled pages as one): ['-1     10399103 (2.017) 416.32 MB/s 1086.6 MB/s   201 files']
+
+== infdesc
+pages 592 24.7 MB (p50 46 KB), forms 0 0.0 MB
+distinct page bodies 592
+zlib-1 per page: 0.493 of the bytes; compress 0.48 ms/page
+zstd-1 per page (200 sampled): 0.487
+zstd-3 per page (200 sampled): 0.446
+zstd-3 with a trained dictionary (110 KB): 0.417
+zstd -b1 (all sampled pages as one): ['-1      6398721 (2.056) 419.87 MB/s 1046.4 MB/s   296 files']
