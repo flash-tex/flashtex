@@ -377,6 +377,16 @@ pub fn stats() -> String {
     })
 }
 
+/// With `FLASHTEX_BOXMEMO_VERIFY_FAIL`, a difference ends the process at
+/// once with status 3 (a host too: the gates see it as a crash).
+fn fail_now() {
+    if fail_on_difference() {
+        write_stats(true);
+        eprintln!("boxmemo: a verification found a difference; exiting with status 3");
+        std::process::exit(3);
+    }
+}
+
 /// `FLASHTEX_BOXMEMO_VERIFY_FAIL` is set and a verification found a
 /// difference: the run's exit status becomes 3.
 pub fn fail_on_difference() -> bool {
@@ -1048,10 +1058,11 @@ impl Globals {
                     .all(|(p, m)| self.bm_meaning(*p).as_ref() == Some(m))
             {
                 if m == Mode::Verify {
-                    // the full verifier, where no restore's branch is
-                    // pending: the command line (in the host, the edit's
-                    // own convergence needs it; the op-log check runs)
-                    if WINDOW.with(|w| w.get()).is_none() && !self.has_pending() {
+                    // the full verifier. In the host its restore replaces
+                    // the edit's pending branch, so a compile with a
+                    // verified call does not converge: verify is a gate
+                    // mode, and the output must still equal a full run's
+                    {
                         if let Ok(ck) = self.checkpoint() {
                             FULL.with(|f| *f.borrow_mut() = Some(FullVerify { ck, warn }));
                         }
@@ -1202,6 +1213,7 @@ impl Globals {
             }
         });
         write_stats(false);
+        fail_now();
     }
 
     #[cold]
@@ -1890,11 +1902,12 @@ impl Globals {
                         .push(format!("\\{name}: {:?}", &diffs[..diffs.len().min(4)]));
                 }
                 if fail {
-                    eprintln!("boxmemo verify: FLASHTEX_BOXMEMO_VERIFY_FAIL is set");
+                    eprintln!("boxmemo verify: FLASHTEX_BOXMEMO_VERIFY_FAIL is set: exit 3");
                 }
             }
         });
         write_stats(false);
+        fail_now();
     }
 
     /// The full verifier (BOX-MEMO.md §7): the normal path is done; take
@@ -1937,11 +1950,12 @@ impl Globals {
                         .push(format!("full state \\{name}: {e}"));
                 }
                 if fail {
-                    eprintln!("boxmemo verify: FLASHTEX_BOXMEMO_VERIFY_FAIL is set");
+                    eprintln!("boxmemo verify: FLASHTEX_BOXMEMO_VERIFY_FAIL is set: exit 3");
                 }
             }
         });
         write_stats(false);
+        fail_now();
     }
 
     // -- replay --------------------------------------------------------------
