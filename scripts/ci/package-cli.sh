@@ -45,6 +45,8 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+# Where the shipped GPL host's source is published (its README note).
+SOURCE_URL="https://github.com/flash-tex/flashtex"
 
 VERSION="${1:?version}"; PLATFORM="${2:?platform}"; OUT_DIR="${3:?out-dir}"
 shift 3
@@ -181,8 +183,8 @@ ln -s ../share/flashtex/texmf "$ROOT/bin/texmf"
       echo
       echo "\`flashtex-host\` is free software under the GNU General Public License, version 2 or later"
       echo "(\`share/flashtex/engine/LICENSE\`): a translation of pdfTeX. Its source is crates/flashtex-engine"
-      echo "in the repository at release v$VERSION. \`flashtex-v3\` (MIT) does not link it; it runs it as a"
-      echo "separate program."
+      echo "in $SOURCE_URL at tag v$VERSION ($SOURCE_URL/tree/v$VERSION/crates/flashtex-engine)."
+      echo "\`flashtex-v3\` (MIT) does not link it; it runs it as a separate program."
     fi
   fi
 } > "$ROOT/README.md"

@@ -49,6 +49,7 @@ if tarball="$("$PKG" 9.9.9 selftest "$WORK/out1" "${ALL[@]}" --require flashtex-
   check "README lists bin/flashtex-v3 and bin/flashtex-host" grep -q 'bin/flashtex-host`$' "$d/README.md"
   check "README shows flashtex-v3's usage" grep -q '^bin/flashtex-v3 build main.tex' "$d/README.md"
   check "README states the host's licence" grep -q 'GNU General Public License, version 2 or later' "$d/README.md"
+  check "README names where the host's source is" grep -qF 'https://github.com/flash-tex/flashtex/tree/v9.9.9/crates/flashtex-engine' "$d/README.md"
   check "README's code fences are plain (no backslash)" bash -c '! grep -qF "\\\`" "$1"' _ "$d/README.md"
 else
   bad "package-cli.sh with every binary and --require failed: $(head -3 "$WORK/err1" | tr '\n' ' ')"
@@ -80,6 +81,7 @@ check "builds flashtex-v3" grep -q -- '-p flashtex-build --bin flashtex-v3' "$RE
 check "requires the host in the app (make-app.sh --require-engine-host)" grep -q -- 'args=(--version "$VERSION" --dmg --require-engine-host)' "$REL"
 check "requires flashtex-v3 and flashtex-host in the macOS CLI tarball" grep -q -- '--require flashtex-v3,flashtex-host' "$REL"
 check "make-app.sh takes --require-engine-host" grep -q -- '--require-engine-host)' "$MAKE"
+check "smoke steps never pipe a program into grep -q (SIGPIPE under pipefail)" bash -c '! grep -nE -- "--help \| grep -q" "$1"' _ "$REL"
 
 if [[ "$FAIL" -gt 0 ]]; then
   echo "package-cli self-test: $FAIL failure(s)" >&2

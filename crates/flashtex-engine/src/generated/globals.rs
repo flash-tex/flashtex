@@ -1214,6 +1214,8 @@ pub struct Globals {
     pub ckpt_on_shipout: i32,
     // §1908
     pub ckpt_on_segment: i32,
+    // §1908
+    pub ckpt_on_arm: i32,
     // §1910
     pub rs_on: bool,
     // §1910
@@ -1756,6 +1758,7 @@ pub const SCALAR_BYTES: usize = 0
     + crate::arena::slot::<halfword>()
     + crate::arena::slot::<i32>()
     + crate::arena::slot::<bool>()
+    + crate::arena::slot::<i32>()
     + crate::arena::slot::<i32>()
     + crate::arena::slot::<i32>()
     + crate::arena::slot::<bool>()
@@ -2552,6 +2555,7 @@ impl Globals {
             ckpt_resuming: false,
             ckpt_on_shipout: 0,
             ckpt_on_segment: 0,
+            ckpt_on_arm: 0,
             rs_on: false,
             rs_seen: __arena.arr(__r_rs_seen, 630193),
             dl_side: __arena.arr(__r_dl_side, 5000000),
@@ -3074,6 +3078,7 @@ impl Globals {
         v.pod(&mut self.ckpt_resuming);
         v.pod(&mut self.ckpt_on_shipout);
         v.pod(&mut self.ckpt_on_segment);
+        v.pod(&mut self.ckpt_on_arm);
         v.pod(&mut self.rs_on);
         v.pod(&mut self.macro_prof_on);
         v.pod(&mut self.intr_on);
