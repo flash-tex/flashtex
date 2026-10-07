@@ -2665,12 +2665,16 @@ fn paused_then_finished(
 /// run's part so far. The old run "read the changed file later", so no
 /// test after the edited page could pass, and every keystroke re-typeset
 /// the book to its end. Now such a file is the stopped run's own output,
-/// and the old run's read of it is a barrier (a file one of the runs
-/// writes): the run converges, keeps the old run's pages before the read
-/// and runs on live from there. Every compile equals scratch runs, when the
-/// edit leaves the hints alone (i), changes what is written to them (ii),
-/// lies after the read (iii), and when a second keystroke comes before the
-/// first compile is continued (iv).
+/// and the old run's read of it is no change. Where the file holds the
+/// same bytes in both runs at the convergence point, the old run's read of
+/// it is kept too (`written_same`): the run converges and keeps the old
+/// run's pages to the end (i). Where it does not (an edit inside a hint,
+/// ii), the read is a barrier (a file one of the runs writes): the run
+/// keeps the old run's pages before the read and runs on live from there.
+/// Every compile equals scratch runs, when the edit leaves the hints alone
+/// (i), changes what is written to them (ii), lies after the read (iii),
+/// and when a second keystroke comes before the first compile is continued
+/// (iv).
 #[test]
 fn a_file_written_and_read_back_converges_after_a_stopped_run() {
     let Some(e) = env() else {
@@ -2688,9 +2692,10 @@ fn a_file_written_and_read_back_converges_after_a_stopped_run() {
             break;
         }
     }
-    // (i) an edit that leaves the written file alone: converges, and the
-    // old run's pages up to the read are kept (the same letters: the fonts'
-    // used characters stay the same)
+    // (i) an edit that leaves the written file alone: converges, and keeps
+    // the old run's pages to the end, the read of the file too, which holds
+    // the same bytes in both runs (the same letters: the fonts' used
+    // characters stay the same)
     for (word, what) in [
         ("lorme", "(i) an edit on page 2"),
         ("lorem", "(i) its revert"),
@@ -2704,20 +2709,28 @@ fn a_file_written_and_read_back_converges_after_a_stopped_run() {
         let conv: usize = field(&r, "converged_at")
             .parse()
             .unwrap_or_else(|_| panic!("{what}: no convergence before the read: {r}"));
-        let kept: usize = field(&r, "rerun_from")
-            .parse()
-            .unwrap_or_else(|_| panic!("{what}: no live run from before the read: {r}"));
-        let pages: usize = field(&r, "pages").parse().unwrap();
-        assert!(conv < kept && kept < pages, "{what}: {r}");
+        assert!(
+            conv <= 3 && field(&r, "rerun_from") == "null",
+            "{what}: re-typeset from the read of the unchanged hints: {r}"
+        );
     }
-    // (ii) an edit of what is written: the pages from the read on are
-    // typeset again from the new hints
+    // (ii) an edit of what is written: converges, keeps the old run's pages
+    // up to the read, and typesets the pages from there again from the new
+    // hints
     for (hint, what) in [
         ("lorme", "(ii) an edit of a hint"),
         ("lorem", "(ii) its revert"),
     ] {
         let doc = hints_doc("lorem", hint, "lorem");
-        paused_then_finished(&e, &mut h, &dir, &doc, 5, what);
+        let (_, r) = paused_then_finished(&e, &mut h, &dir, &doc, 5, what);
+        let conv: usize = field(&r, "converged_at")
+            .parse()
+            .unwrap_or_else(|_| panic!("{what}: no convergence before the read: {r}"));
+        let kept: usize = field(&r, "rerun_from")
+            .parse()
+            .unwrap_or_else(|_| panic!("{what}: no live run from before the read: {r}"));
+        let pages: usize = field(&r, "pages").parse().unwrap();
+        assert!(conv < kept && kept < pages, "{what}: {r}");
     }
     // (iii) an edit after the read
     for (tail, what) in [

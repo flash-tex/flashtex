@@ -737,6 +737,12 @@ impl Obs {
         // with another frame's title, 2026-09-30).
         // Such a read is a barrier too: the old run's pages are kept up to
         // the last page checkpoint before it, like a barrier's.
+        // A file both runs have open for output here, holding the same
+        // bytes in both, is no barrier: the jump puts the old run's later
+        // bytes after the new run's, so the file the old run reads later is
+        // the one it read (a book's hints, written through its body and read
+        // at its end, when the edit wrote no other hint). Only then: any
+        // other file one of the runs writes is (`written_same`).
         let end = self.old_reads_end.min(self.old_journal_all.len());
         let mut written_read: Option<(usize, String)> = None;
         if from < end {
@@ -746,10 +752,17 @@ impl Obs {
                 let p = norm(p);
                 self.old_outputs.contains(&p) || live.iter().any(|o| norm(o) == p)
             };
+            let mut same: HashMap<String, bool> = HashMap::new();
             written_read = self.old_journal_all[from..end]
                 .iter()
                 .enumerate()
-                .find(|(_, p)| !p.is_empty() && written(p))
+                .find(|(_, p)| {
+                    !p.is_empty()
+                        && written(p)
+                        && !*same
+                            .entry(system::out_key(p))
+                            .or_insert_with(|| written_same(g, &o, new, p))
+                })
                 .map(|(i, p)| (from + i, p.clone()));
         }
         let rerun_from =
@@ -1371,6 +1384,48 @@ fn being_written(live: &ReadLog, old: &ReadLog) -> Vec<String> {
     v.sort();
     v.dedup();
     v
+}
+
+/// Whether output file `p`, which the old run reads after its checkpoint
+/// record `o`, holds the same bytes in the new run at `new` as in the old
+/// run at `o`: both have it open, at its end, with the same length, and the
+/// new run's bytes since the restore (on disk: a checkpoint flushes every
+/// output stream first) are the old run's there (`pending_old_bytes`;
+/// before the restore target's length both runs' bytes are the same, the
+/// restore having cut the file to it). Then the convergence jump, which
+/// puts the old run's later bytes after the new run's, leaves the file the
+/// old run read. `false` when anything is unknown.
+fn written_same(g: &Globals, o: &ExtRecord, new: &ExtRecord, p: &str) -> bool {
+    let k = system::out_key(p);
+    let out = |r: &ExtRecord| {
+        let mut v = r.files.iter().filter_map(|f| match &f.stream {
+            Stream::Out { path, len, at } if system::out_key(path) == k => {
+                Some((path.clone(), *len, *at))
+            }
+            _ => None,
+        });
+        // (one stream on it, at its end)
+        match (v.next(), v.next()) {
+            (Some(s), None) if s.1 == s.2 => Some(s),
+            _ => None,
+        }
+    };
+    let (Some((path, lo, _)), Some((_, ln, _))) = (out(o), out(new)) else {
+        return false;
+    };
+    let Some(base) = g.pending_old_base(&path) else {
+        return false;
+    };
+    if lo != ln || base > lo {
+        return false;
+    }
+    let (Ok(now), Some(old)) = (
+        system::read_logical(&path),
+        g.pending_old_bytes(&path, base, lo),
+    ) else {
+        return false;
+    };
+    now.get(base as usize..ln as usize) == Some(old.as_slice())
 }
 
 /// Write each baseline's content back (`Session::baseline`), as the
