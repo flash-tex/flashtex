@@ -1,7 +1,7 @@
 # BOX-MEMO: guarded replay of macro calls that typeset only what they throw away
 
 Lane **P6-INFDESC-PAGE** (Commander, 2026-10-06: "attributes Infinite Descent's 800 M-instruction
-page and builds picture/box memoisation"). Status: **design, revision 1, for review.** The prototype
+page and builds picture/box memoisation"). Status: **design, revision 1, for review, with a measured prototype.** The prototype
 behind it is off by default.
 
 It is DESIGN.md §12 P6's "picture memoisation" and §5.5's "tikz/pgfplots picture memoisation", in
@@ -288,17 +288,26 @@ expect.
 5. **Measured.** Instructions per edited-page window on *Infinite Descent ×2*, typing@50ms, with
    BOX-MEMO off against on, and the convergence rate unchanged (T7's held rates).
 
-## 9. Expected gain (to be measured by the prototype)
+## 9. Gain (measured by the prototype)
 
-Typing at a place where a framed environment's frame is measured:
-- the windows lose their `\fb@sizeofframe` share: **−14 % to −44 %** (evidence table);
-- the first keystroke there records and pays, and every later one replays;
-- the cost of a replay is the key check (about 5,000 `eqtb` words, the sparse trees and a few
-  thousand control sequences) plus the effects (about 600 assignments): estimated below 0.5 M
-  instructions, against 37–40 M.
+Evidence: `docs/evidence/p6-infdesc-page-2026-10-06/boxmemo/`. It records instructions per
+keystroke window on *Infinite Descent*, with the same engine run off and on.
 
-**A cold pass gains nothing yet.** K2 and K4 include pgf's serial, so every call misses. Phase 2
-(below) is where cold compiles gain.
+| site | off | on | Δ |
+|---|---:|---:|---:|
+| equivalence-relations:430 (theorem body) | 857 M | 749 M | −13 % |
+| equivalence-relations:426 (prose) | 126 M | 86 M | −32 % |
+| sets:195 | 665 M | 375 M | −44 % |
+| discrete-probability-spaces:13 | 246 M | 167 M | −32 % |
+
+- **Replay cost.** A replay costs 0.5–2 M instructions against 37–40 M for the call (the
+  `\fb@sizeofframe` share that remains). That is the K2/K4 snapshot, the comparison and the
+  operation log, a few thousand `eq_define`s.
+- **The first keystroke at a place** records, which costs about +30 % per call (+11 to +32 % for
+  that window). Every later keystroke there replays.
+
+**A cold pass gains nothing yet.** K2 and K4 include pgf's serial, so every call misses. That is
+why the host records only in an edit's window. Phase 2 (below) is where cold compiles gain.
 
 ## 10. Later phases (not in this revision)
 
