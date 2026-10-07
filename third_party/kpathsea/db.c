@@ -102,8 +102,37 @@ db_build (kpathsea kpse, hash_table_type *table,  const_string db_filename)
   top_dir[len] = 0;
 
   if (db_file) {
-    while ((line = read_line (db_file)) != NULL) {
-      len = strlen (line);
+    /* FlashTeX change (2026-10-06): ls-R is read whole, once, and split
+       into lines in place, instead of a `read_line' (one character at a
+       time, one allocation per line) and an `xstrdup' of each file name.
+       The file names stay in the buffer, which is never freed once an
+       entry points into it, as the duplicates were never freed. The lines
+       are exactly `read_line''s: a line ends at LF, CR or CR LF, the last
+       one need not end, and null bytes are dropped.  */
+    size_t buf_size = 0, buf_cap = 1 << 20, got;
+    string buf = (string) xmalloc (buf_cap + 1);
+    string next, buf_end;
+    while ((got = fread (buf + buf_size, 1, buf_cap - buf_size, db_file)) > 0) {
+      buf_size += got;
+      if (buf_size == buf_cap) {
+        buf_cap *= 2;
+        buf = (string) xrealloc (buf, buf_cap + 1);
+      }
+    }
+    buf[buf_size] = 0;
+    buf_end = buf + buf_size;
+    for (next = buf; next < buf_end; ) {
+      string q, w;
+      line = next;
+      for (q = w = line; q < buf_end && *q != '\n' && *q != '\r'; q++)
+        if (*q != 0)
+          *w++ = *q;
+      if (q < buf_end && *q == '\r' && q + 1 < buf_end && q[1] == '\n')
+        next = q + 2;
+      else
+        next = q < buf_end ? q + 1 : buf_end;
+      *w = 0;
+      len = w - line;
 
 #if defined(MONOCASE_FILENAMES)
       for (pp = line; *pp; pp++) {
@@ -149,15 +178,15 @@ db_build (kpathsea kpse, hash_table_type *table,  const_string db_filename)
            Note that we assume that all names in the ls-R file have already
            been case-smashed to lowercase where appropriate.
         */
-        hash_insert_normalized (table, xstrdup (line), cur_dir);
+        hash_insert_normalized (table, line, cur_dir);
         file_count++;
 
       } /* else ignore blank lines or top-level files
            or files in ignored directories*/
-
-      free (line);
     }
 
+    if (file_count == 0)
+      free (buf);
     xfclose (db_file, db_filename);
 
     if (file_count == 0) {
