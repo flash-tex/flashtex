@@ -599,7 +599,8 @@ impl<'a, O: Space, N: Space> Iso<'a, O, N> {
     }
 
     fn partner(&self, a: i32) -> Option<i32> {
-        bit(&self.head_o, a).then(|| self.fwd.get(&a).copied().unwrap_or(a))
+        // (a pointer outside `mem` pairs with nothing: the check fails)
+        (Self::in_mem(a) && bit(&self.head_o, a)).then(|| self.fwd.get(&a).copied().unwrap_or(a))
     }
 
     /// The SyncTeX words of a synchronized node of `size` words
