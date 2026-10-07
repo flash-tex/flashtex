@@ -189,7 +189,11 @@ impl Key {
     /// The test, and the signatures it verified by other means: (index,
     /// signature now) of files and prefixes compared by content, and every
     /// directory's signature when the lookups ran again and all held.
-    fn check_fresh<'a>(&'a self, session_clock: (i64, i32), first_line: &[u8]) -> Result<Fresh, String> {
+    fn check_fresh<'a>(
+        &'a self,
+        session_clock: (i64, i32),
+        first_line: &[u8],
+    ) -> Result<Fresh, String> {
         let mut fresh = Fresh::default();
         if self.build != engine_build() {
             return Err("the engine build changed".into());
