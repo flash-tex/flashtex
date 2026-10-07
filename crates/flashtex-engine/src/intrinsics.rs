@@ -221,6 +221,12 @@ const S_WATCH_FREE: usize = 30; // free watch records, index + 1
 const S_WATCH_TOP: usize = 31; // records ever allocated
 const S_NSLOTS: usize = 32; // slots ever used
 const S_CALLS: usize = 33; // calls of candidates (for choosing a variant to replace)
+                           // The argument site (MACRO-REPLAY.md §3.3).
+const S_ATOP: usize = 34; // argument-site slots ever used
+const S_AFREE: usize = 35; // free argument-site slots, id + 1
+const S_HTOP: usize = 36; // words of the slot heap ever handed out since a compaction
+const S_HLIVE: usize = 37; // words of the slot heap in use
+const S_HUSED: usize = 38; // entries of the argument index in use or deleted
 
 // Layout constants, set by changes/intrinsics.ch at `Set init`.
 const L_HASH_BASE: usize = 100;
@@ -261,6 +267,13 @@ const F_NOREC: usize = 16; // (head) 1: no more recordings
 const F_LAST: usize = 17; // call number of the last hit
 const F_SITE: usize = 18; // 1: recorded at the argument site (MACRO-REPLAY)
 const F_NARGW: usize = 19; // words of the argument key (`R_ARGS`)
+                           // The argument site's slots (MACRO-REPLAY.md §3.3).
+const F_BASE: usize = 20; // its region's first word in `intr_data`
+const F_HLEN: usize = 21; // words of its block in the slot heap (0: the scratch region)
+const F_INHASH: usize = 22; // 1: the argument index names it
+const F_KEYHASH: usize = 23; // the hash of its macro and arguments
+const F_NVAR: usize = 24; // (head) valid recordings at the argument site
+const F_NDEAD: usize = 25; // (head) argument lists that could not be recorded
 
 const SEEN_DEP: i32 = 1;
 const SEEN_WRITTEN: i32 = 2;
@@ -274,11 +287,23 @@ const MATCHING: i32 = 3;
 const ST_FREE: i32 = 0;
 const ST_RECORDING: i32 = 1;
 const ST_VALID: i32 = 2;
+/// An argument-site slot that keeps only a key whose recording was
+/// abandoned: the next call with it is expanded without recording again
+/// (until a retry, for the reasons that allow one).
+const ST_DEAD: i32 = 3;
 
 /// How often a slot may be recorded afresh after its guard failed.
 const RECORD_BUDGET: i32 = 64;
 /// Abandoned recordings before a macro is left alone.
 const ABORT_BUDGET: i32 = 3;
+/// The argument site (MACRO-REPLAY.md §3.3): valid recordings per macro
+/// (the least recently replayed is evicted), keys kept as not recordable
+/// per macro, recordings per argument list (contexts), and recordings per
+/// macro in all.
+const MAX_VARIANTS_ARGS: i32 = 256;
+const MAX_DEAD_ARGS: i32 = 256;
+const KEY_VARIANTS: usize = 4;
+const RECORD_BUDGET_ARGS: i32 = 4096;
 
 // intr_data: watch records first, then one region per slot.
 const WATCH_INTS: usize = 6; // slot, want type, want equiv, ok, next+1, loc
@@ -296,8 +321,42 @@ const R_RH: usize = 2 * RW_CAP;
 const R_PIN: usize = R_RH + RH_CAP;
 const R_OPS: usize = R_PIN + PIN_CAP;
 const R_ARGS: usize = R_OPS + 4 * OPS_CAP;
-// (changes/intrinsics.ch: intr_data_size = 8388607)
-const _: () = assert!(REGION0 + MAX_SLOTS * REGION_INTS <= 8_388_608);
+const _: () = assert!(REGION0 + MAX_SLOTS * REGION_INTS <= A_SLOTS0);
+// The argument site's slots: ids from `MAX_SLOTS` on, their records in
+// `intr_data` from `A_SLOTS0`, the argument index (open addressing: the
+// slot plus one, 0 empty, -1 deleted; and the key's hash), the region a
+// recording in progress fills, and the slot heap, where a committed
+// recording is kept at its exact size (MACRO-REPLAY.md §3.3).
+const ARG_SLOTS: usize = 4096;
+const A_SLOTS0: usize = 8_388_608;
+const HASH0: usize = A_SLOTS0 + ARG_SLOTS * SLOT_INTS;
+const HASH_SIZE: usize = 8192;
+const SCRATCH0: usize = HASH0 + 2 * HASH_SIZE;
+const HEAP0: usize = SCRATCH0 + REGION_INTS;
+// (changes/intrinsics.ch: intr_data_size = 16777215)
+const HEAP_END: usize = 16_777_216;
+const _: () = assert!(HEAP0 + REGION_INTS < HEAP_END && 2 * ARG_SLOTS <= HASH_SIZE);
+// A slot's parts.
+const P_RW: usize = 0;
+const P_RH: usize = 1;
+const P_PIN: usize = 2;
+const P_OPS: usize = 3;
+const P_ARGS: usize = 4;
+const R_PARTS: [usize; 5] = [R_RW, R_RH, R_PIN, R_OPS, R_ARGS];
+
+/// Where `slot`'s part `p` starts in `intr_data`, given its fields `sf`.
+fn part_of(slot: usize, p: usize, sf: &dyn Fn(usize) -> i32) -> usize {
+    if slot < MAX_SLOTS {
+        return REGION0 + slot * REGION_INTS + R_PARTS[p];
+    }
+    let base = sf(F_BASE).max(0) as usize;
+    if sf(F_HLEN) == 0 {
+        return base + R_PARTS[p];
+    }
+    let n = |f: usize| sf(f).max(0) as usize;
+    let sizes = [2 * n(F_NRW), n(F_NRH), n(F_NPIN), 4 * n(F_NOPS)];
+    base + sizes[..p].iter().sum::<usize>()
+}
 
 // Operations.
 const K_DEF: i32 = 1;
@@ -361,22 +420,47 @@ pub(crate) fn live_words(
     if !(0..=MAX_SLOTS as i32).contains(&slots) {
         return Err(format!("intrinsics: {slots} slots"));
     }
-    for slot in 0..slots as usize {
+    let atop = st(S_ATOP);
+    if !(0..=ARG_SLOTS as i32).contains(&atop) {
+        return Err(format!("intrinsics: {atop} argument-site slots"));
+    }
+    if atop > 0 {
+        // the argument-site slots' records, and the argument index
+        for i in 0..atop as usize * SLOT_INTS {
+            out(LiveWord::Value(A_SLOTS0 + i));
+        }
+        for i in 0..2 * HASH_SIZE {
+            out(LiveWord::Value(HASH0 + i));
+        }
+    }
+    let field = |slot: usize, f: usize| -> i32 {
+        if slot < MAX_SLOTS {
+            st(SLOT0 + slot * SLOT_INTS + f)
+        } else {
+            data(A_SLOTS0 + (slot - MAX_SLOTS) * SLOT_INTS + f)
+        }
+    };
+    let ids = (0..slots as usize).chain(MAX_SLOTS..MAX_SLOTS + atop as usize);
+    for slot in ids {
         let count = |f: usize, cap: usize| -> Result<usize, String> {
-            let n = st(SLOT0 + slot * SLOT_INTS + f);
+            let n = field(slot, f);
             if (0..=cap as i32).contains(&n) {
                 Ok(n as usize)
             } else {
                 Err(format!("intrinsics: slot {slot} field {f} = {n}"))
             }
         };
-        let base = REGION0 + slot * REGION_INTS;
+        let base = |p: usize| part_of(slot, p, &|f| field(slot, f));
+        let end = base(P_ARGS) + count(F_NARGW, ARG_CAP)?;
+        if slot >= MAX_SLOTS && field(slot, F_HLEN) > 0 && end > HEAP_END {
+            return Err(format!("intrinsics: slot {slot} beyond the heap"));
+        }
         for i in 0..2 * count(F_NRW, RW_CAP)? {
-            out(LiveWord::Value(base + R_RW + i));
+            out(LiveWord::Value(base(P_RW) + i));
         }
         for i in 0..count(F_NRH, RH_CAP)? {
-            out(LiveWord::Value(base + R_RH + i));
-            let b = record(data(base + R_RH + i))?;
+            out(LiveWord::Value(base(P_RH) + i));
+            let b = record(data(base(P_RH) + i))?;
             for k in [0, 1, 3, 4, 5] {
                 out(LiveWord::Value(b + k));
             }
@@ -386,10 +470,10 @@ pub(crate) fn live_words(
             });
         }
         for i in 0..count(F_NPIN, PIN_CAP)? {
-            out(LiveWord::Tok(base + R_PIN + i));
+            out(LiveWord::Tok(base(P_PIN) + i));
         }
         for i in 0..count(F_NOPS, OPS_CAP)? {
-            let o = base + R_OPS + 4 * i;
+            let o = base(P_OPS) + 4 * i;
             for k in 0..3 {
                 out(LiveWord::Value(o + k));
             }
@@ -403,7 +487,7 @@ pub(crate) fn live_words(
             });
         }
         for i in 0..count(F_NARGW, ARG_CAP)? {
-            out(LiveWord::Value(base + R_ARGS + i));
+            out(LiveWord::Value(base(P_ARGS) + i));
         }
     }
     Ok(())
@@ -455,6 +539,8 @@ pub enum Why {
     ArgsDiffer,
     /// the arguments are too long to keep as a key
     ArgsCapacity,
+    /// a recording with these arguments was abandoned before
+    Unrecordable,
 }
 
 impl Why {
@@ -524,6 +610,9 @@ pub struct Stats {
     pub verify_differences: u64,
     pub verify_details: Vec<String>,
     pub per_cs: std::collections::BTreeMap<String, (u64, u64)>,
+    /// `per_cs`'s replays by location, named at the end of the run.
+    #[doc(hidden)]
+    pub replays_by_cs: std::collections::HashMap<i32, u64>,
     /// The argument site's share of `calls`, `replays` and `committed`.
     pub args_calls: u64,
     pub args_replays: u64,
@@ -631,15 +720,24 @@ impl Globals {
     }
     #[inline]
     fn sf(&self, slot: usize, f: usize) -> i32 {
-        self.intr_state[SLOT0 + slot * SLOT_INTS + f]
+        if slot < MAX_SLOTS {
+            self.intr_state[SLOT0 + slot * SLOT_INTS + f]
+        } else {
+            self.intr_data[A_SLOTS0 + (slot - MAX_SLOTS) * SLOT_INTS + f]
+        }
     }
     #[inline]
     fn set_sf(&mut self, slot: usize, f: usize, v: i32) {
-        self.intr_state[SLOT0 + slot * SLOT_INTS + f] = v;
+        if slot < MAX_SLOTS {
+            self.intr_state[SLOT0 + slot * SLOT_INTS + f] = v;
+        } else {
+            self.intr_data[A_SLOTS0 + (slot - MAX_SLOTS) * SLOT_INTS + f] = v;
+        }
     }
+    /// Where `slot`'s part `p` (`P_RW` .. `P_ARGS`) starts in `intr_data`.
     #[inline]
-    fn region(slot: usize) -> usize {
-        REGION0 + slot * REGION_INTS
+    fn part(&self, slot: usize, p: usize) -> usize {
+        part_of(slot, p, &|f| self.sf(slot, f))
     }
     #[inline]
     fn eq_type_of(&self, p: i32) -> i32 {
@@ -839,7 +937,11 @@ impl Globals {
             return false;
         };
         let b = r * WATCH_INTS;
-        let head = self.intr_watch[p as usize];
+        let head = if plain {
+            self.intr_wplain[p as usize]
+        } else {
+            self.intr_watch[p as usize].max(0)
+        };
         self.intr_data[b] = slot as i32;
         self.intr_data[b + 1] = if plain {
             WANT_PLAIN
@@ -854,8 +956,9 @@ impl Globals {
         }
         self.intr_data[b + 4] = head;
         self.intr_data[b + 5] = p;
-        self.intr_watch[p as usize] = r as i32 + 1;
-        self.intr_data[Self::region(slot) + R_RH + n] = r as i32;
+        self.set_watch_head(p, plain, r as i32 + 1);
+        let o = self.part(slot, P_RH);
+        self.intr_data[o + n] = r as i32;
         self.set_sf(slot, F_NRH, n as i32 + 1);
         true
     }
@@ -889,12 +992,75 @@ impl Globals {
                     && self.same_tokens(e, e2)))
     }
 
+    /// The first watch record (plus one) of `eqtb[p]` that wants a value,
+    /// or (`plain`) only a plain meaning: two lists. `intr_watch[p]` is the
+    /// first's head, or -1 when only the second is not empty, so that it is
+    /// nonzero whenever a write must be reported (changes/intrinsics.ch).
+    fn watch_head(&self, p: i32, plain: bool) -> i32 {
+        if plain {
+            self.intr_wplain[p as usize]
+        } else {
+            self.intr_watch[p as usize].max(0)
+        }
+    }
+
+    fn set_watch_head(&mut self, p: i32, plain: bool, v: i32) {
+        let (mut value, mut pl) = (self.watch_head(p, false), self.watch_head(p, true));
+        if plain {
+            pl = v;
+        } else {
+            value = v;
+        }
+        self.intr_wplain[p as usize] = pl;
+        self.intr_watch[p as usize] = if value > 0 {
+            value
+        } else if pl > 0 {
+            -1
+        } else {
+            0
+        };
+    }
+
     /// `eqtb[p]`, which some recording watches, was just written.
     pub fn flashtex_intr_touch(&mut self, p: i32) {
-        let mut r = self.intr_watch[p as usize];
+        // The watchers that want only a plain meaning (neither `\outer`
+        // nor `#`: a token a recording only passed on) all hold or all do
+        // not: the first tells whether any changes.
+        let r = self.intr_wplain[p as usize];
+        if r > 0 {
+            let now = self.holds(p, WANT_PLAIN, 0) as i32;
+            if now != self.intr_data[(r - 1) as usize * WATCH_INTS + 3] {
+                let mut r = r;
+                while r > 0 {
+                    let b = (r - 1) as usize * WATCH_INTS;
+                    self.intr_data[b + 3] = now;
+                    let slot = self.intr_data[b] as usize;
+                    let m = self.sf(slot, F_MISMATCH) + if now == 1 { -1 } else { 1 };
+                    self.set_sf(slot, F_MISMATCH, m);
+                    r = self.intr_data[b + 4];
+                }
+            }
+        }
+        // Many recordings watch an entry for the same value (the same
+        // pinned list): `holds` once per wanted value (a macro's is a
+        // comparison of tokens).
+        let mut memo: [(i32, i32, bool); 8] = [(0, 0, false); 8];
+        let mut known = 0;
+        let mut r = self.watch_head(p, false);
         while r > 0 {
             let b = (r - 1) as usize * WATCH_INTS;
-            let now = self.holds(p, self.intr_data[b + 1], self.intr_data[b + 2]) as i32;
+            let (t, e) = (self.intr_data[b + 1], self.intr_data[b + 2]);
+            let now = match memo[..known].iter().find(|m| m.0 == t && m.1 == e) {
+                Some(m) => m.2,
+                None => {
+                    let h = self.holds(p, t, e);
+                    if known < memo.len() {
+                        memo[known] = (t, e, h);
+                        known += 1;
+                    }
+                    h
+                }
+            } as i32;
             if now != self.intr_data[b + 3] {
                 self.intr_data[b + 3] = now;
                 let slot = self.intr_data[b] as usize;
@@ -907,17 +1073,18 @@ impl Globals {
 
     /// Drop everything `slot` recorded: its watch records and pins.
     fn slot_clear(&mut self, slot: usize) {
-        let base = Self::region(slot);
+        let (rh, pins) = (self.part(slot, P_RH), self.part(slot, P_PIN));
         for i in 0..self.sf(slot, F_NRH) as usize {
-            let r = self.intr_data[base + R_RH + i] as usize;
+            let r = self.intr_data[rh + i] as usize;
             let b = r * WATCH_INTS;
             let p = self.intr_data[b + 5];
             // unlink r from p's list
             let target = r as i32 + 1;
-            if self.intr_watch[p as usize] == target {
-                self.intr_watch[p as usize] = self.intr_data[b + 4];
+            let plain = self.intr_data[b + 1] == WANT_PLAIN;
+            if self.watch_head(p, plain) == target {
+                self.set_watch_head(p, plain, self.intr_data[b + 4]);
             } else {
-                let mut q = self.intr_watch[p as usize];
+                let mut q = self.watch_head(p, plain);
                 while q > 0 {
                     let qb = (q - 1) as usize * WATCH_INTS;
                     if self.intr_data[qb + 4] == target {
@@ -931,8 +1098,17 @@ impl Globals {
             self.set_st(S_WATCH_FREE, target);
         }
         for i in 0..self.sf(slot, F_NPIN) as usize {
-            let p = self.intr_data[base + R_PIN + i];
+            let p = self.intr_data[pins + i];
             self.delete_token_ref(p);
+        }
+        if slot >= MAX_SLOTS {
+            let h = self.sf(slot, F_HLEN);
+            if h > 0 {
+                let live = self.st(S_HLIVE) - h;
+                self.set_st(S_HLIVE, live);
+                self.set_sf(slot, F_HLEN, 0);
+            }
+            self.set_sf(slot, F_BASE, SCRATCH0 as i32);
         }
         for f in [F_MISMATCH, F_NRW, F_NRH, F_NPIN, F_NOPS, F_NARGW] {
             self.set_sf(slot, f, 0);
@@ -945,7 +1121,8 @@ impl Globals {
             return false;
         }
         self.add_token_ref(p);
-        self.intr_data[Self::region(slot) + R_PIN + n] = p;
+        let o = self.part(slot, P_PIN);
+        self.intr_data[o + n] = p;
         self.set_sf(slot, F_NPIN, n as i32 + 1);
         true
     }
@@ -955,7 +1132,7 @@ impl Globals {
         if n >= OPS_CAP {
             return false;
         }
-        let o = Self::region(slot) + R_OPS + 4 * n;
+        let o = self.part(slot, P_OPS) + 4 * n;
         self.intr_data[o] = k;
         self.intr_data[o + 1] = a;
         self.intr_data[o + 2] = b;
@@ -1040,7 +1217,7 @@ impl Globals {
             if n >= RW_CAP {
                 return self.rec_abort(Why::Capacity);
             }
-            let o = Self::region(slot) + R_RW + 2 * n;
+            let o = self.part(slot, P_RW) + 2 * n;
             self.intr_data[o] = p;
             self.intr_data[o + 1] = self.eqtb[(p - 1) as usize].int();
             self.set_sf(slot, F_NRW, n as i32 + 1);
@@ -1144,7 +1321,9 @@ impl Globals {
             self.set_sf(slot, F_MODE, self.cur_list.mode_field.abs());
             self.set_sf(slot, F_ALIGN, self.align_state);
             self.set_sf(slot, F_PAR_TOKEN, self.par_token);
-            self.set_sf(slot, F_SITE, 0);
+            if slot < MAX_SLOTS {
+                self.set_sf(slot, F_SITE, 0);
+            }
         }
         self.intr_rec_on = true;
         STATS.with(|s| s.borrow_mut().recordings += 1);
@@ -1201,6 +1380,9 @@ impl Globals {
             // through a call it should not have. A difference.
             crate::intrinsics_verify::verify_aborted(self, slot, why);
             return;
+        }
+        if slot >= MAX_SLOTS {
+            return self.arg_dead(slot, why);
         }
         self.slot_clear(slot);
         self.set_sf(slot, F_STATE, ST_FREE);
@@ -1499,6 +1681,9 @@ impl Globals {
         if let Some(w) = why {
             return self.rec_abort(w);
         }
+        if self.st(S_REC_VERIFY) == 0 && slot >= MAX_SLOTS && !self.arg_commit(slot) {
+            return self.rec_abort(Why::Capacity);
+        }
         self.intr_rec_on = false;
         self.set_st(S_REC_SLOT, 0);
         if self.st(S_REC_VERIFY) == 1 {
@@ -1556,7 +1741,7 @@ impl Globals {
         if self.par_token != self.sf(slot, F_PAR_TOKEN) {
             return Err(Why::ParToken);
         }
-        let base = Self::region(slot) + R_RW;
+        let base = self.part(slot, P_RW);
         for i in 0..self.sf(slot, F_NRW) as usize {
             let p = self.intr_data[base + 2 * i];
             if self.eqtb[(p - 1) as usize].int() != self.intr_data[base + 2 * i + 1] {
@@ -1700,7 +1885,7 @@ impl Globals {
     /// Does `slot`'s key equal the `n` arguments in `pstack`? Token by
     /// token (MACRO-REPLAY.md §3.2): a control sequence by its location.
     fn args_equal(&self, slot: usize, n: usize) -> bool {
-        let base = Self::region(slot) + R_ARGS;
+        let base = self.part(slot, P_ARGS);
         let len = self.sf(slot, F_NARGW) as usize;
         if len == 0 || self.intr_data[base] != n as i32 {
             return false;
@@ -1731,7 +1916,7 @@ impl Globals {
     /// Keep the `n` arguments in `pstack` as `slot`'s key; false if they do
     /// not fit.
     fn args_store(&mut self, slot: usize, n: usize) -> bool {
-        let base = Self::region(slot) + R_ARGS;
+        let base = self.part(slot, P_ARGS);
         let mut v = vec![n as i32];
         for m in 0..n {
             let at = v.len();
@@ -1783,17 +1968,27 @@ impl Globals {
         if let Err(w) = self.preconditions(cs) {
             return self.no_replay(w);
         }
-        // The key, then the guard, for each recorded variant.
-        let chain = self.chain(head);
-        let mut miss = Why::NotRecorded;
-        for &s in &chain {
-            if self.sf(s, F_STATE) != ST_VALID || self.sf(s, F_SITE) == 0 {
+        // The recordings with these arguments (the index, then the key in
+        // full), then the guard for each.
+        let h = self.key_hash(cs, n);
+        let mut valid = vec![];
+        let mut dead = None;
+        for s in self.hash_find(h) {
+            if self.sf(s, F_CS) != cs || !self.args_equal(s, n) {
                 continue;
             }
-            if !self.args_equal(s, n) {
-                miss = Why::ArgsDiffer;
-                continue;
+            match self.sf(s, F_STATE) {
+                ST_VALID => valid.push(s),
+                ST_DEAD => dead = Some(s),
+                _ => {}
             }
+        }
+        let mut miss = if dead.is_some() {
+            Why::Unrecordable
+        } else {
+            Why::NotRecorded
+        };
+        for &s in &valid {
             match self.guard(s) {
                 Ok(()) => {
                     self.set_sf(s, F_LAST, ncall);
@@ -1814,15 +2009,295 @@ impl Globals {
             }
         }
         self.no_replay(miss);
-        let Some(target) = self.record_target(head, &chain, cs) else {
+        // Record this call.
+        if self.sf(head, F_NOREC) != 0 || self.sf(head, F_RECORDS) >= RECORD_BUDGET_ARGS {
             return false;
+        }
+        let target = if let Some(d) = dead {
+            if self.sf(d, F_NOREC) != 0 {
+                return false;
+            }
+            let k = self.sf(head, F_NDEAD) - 1;
+            self.set_sf(head, F_NDEAD, k);
+            d
+        } else {
+            if valid.len() >= KEY_VARIANTS {
+                let lru = *valid.iter().min_by_key(|&&s| self.sf(s, F_LAST)).unwrap();
+                self.free_arg_slot(lru);
+            }
+            if self.sf(head, F_NVAR) >= MAX_VARIANTS_ARGS {
+                self.evict_lru(head, ST_VALID);
+            }
+            match self.alloc_arg_slot() {
+                Some(s) => s,
+                None => return false,
+            }
         };
-        self.rec_start(target, false, cs, ss);
+        self.slot_clear(target);
+        self.set_sf(target, F_CS, cs);
+        self.set_sf(target, F_HEAD, head as i32 + 1);
         self.set_sf(target, F_SITE, 1);
+        self.set_sf(target, F_KEYHASH, h);
+        self.set_sf(target, F_LAST, ncall);
+        let r = self.sf(head, F_RECORDS) + 1;
+        self.set_sf(head, F_RECORDS, r);
+        self.rec_start(target, false, cs, ss);
         if !self.args_store(target, n) {
             self.rec_abort(Why::ArgsCapacity);
         }
         false
+    }
+
+    // -- the argument site's slots, index and heap (MACRO-REPLAY.md §3.3) -----
+
+    /// FNV-1a over the macro, the argument count and the arguments' tokens
+    /// (a separator before each): it only selects candidates, whose keys are
+    /// then compared in full.
+    fn key_hash(&self, cs: i32, n: usize) -> i32 {
+        let mut h: u32 = 0x811c_9dc5;
+        let mut mix = |v: i32| {
+            for b in v.to_le_bytes() {
+                h ^= b as u32;
+                h = h.wrapping_mul(16_777_619);
+            }
+        };
+        mix(cs);
+        mix(n as i32);
+        for m in 0..n {
+            mix(-1);
+            for t in self.arg_tokens(m) {
+                mix(t);
+            }
+        }
+        (h & 0x7fff_ffff) as i32
+    }
+
+    /// The slots the index names under hash `h`.
+    fn hash_find(&self, h: i32) -> Vec<usize> {
+        let mut out = vec![];
+        let mut i = h as usize % HASH_SIZE;
+        for _ in 0..HASH_SIZE {
+            let e = self.intr_data[HASH0 + 2 * i];
+            if e == 0 {
+                break;
+            }
+            if e > 0 && self.intr_data[HASH0 + 2 * i + 1] == h {
+                out.push((e - 1) as usize);
+            }
+            i = (i + 1) % HASH_SIZE;
+        }
+        out
+    }
+
+    fn hash_insert(&mut self, slot: usize) {
+        if self.st(S_HUSED) as usize >= HASH_SIZE * 3 / 4 {
+            self.hash_rebuild();
+        }
+        let h = self.sf(slot, F_KEYHASH);
+        let mut i = h as usize % HASH_SIZE;
+        while self.intr_data[HASH0 + 2 * i] > 0 {
+            i = (i + 1) % HASH_SIZE;
+        }
+        if self.intr_data[HASH0 + 2 * i] == 0 {
+            let u = self.st(S_HUSED) + 1;
+            self.set_st(S_HUSED, u);
+        }
+        self.intr_data[HASH0 + 2 * i] = slot as i32 + 1;
+        self.intr_data[HASH0 + 2 * i + 1] = h;
+        self.set_sf(slot, F_INHASH, 1);
+    }
+
+    fn hash_remove(&mut self, slot: usize) {
+        let mut i = self.sf(slot, F_KEYHASH) as usize % HASH_SIZE;
+        for _ in 0..HASH_SIZE {
+            let e = self.intr_data[HASH0 + 2 * i];
+            if e == 0 {
+                break;
+            }
+            if e == slot as i32 + 1 {
+                self.intr_data[HASH0 + 2 * i] = -1;
+                break;
+            }
+            i = (i + 1) % HASH_SIZE;
+        }
+        self.set_sf(slot, F_INHASH, 0);
+    }
+
+    /// The index afresh, without its deleted entries (in slot order).
+    fn hash_rebuild(&mut self) {
+        for i in 0..2 * HASH_SIZE {
+            self.intr_data[HASH0 + i] = 0;
+        }
+        self.set_st(S_HUSED, 0);
+        for s in MAX_SLOTS..MAX_SLOTS + self.st(S_ATOP) as usize {
+            if self.sf(s, F_INHASH) != 0 {
+                self.hash_insert(s);
+            }
+        }
+    }
+
+    fn alloc_arg_slot(&mut self) -> Option<usize> {
+        let f = self.st(S_AFREE);
+        let s = if f > 0 {
+            let s = (f - 1) as usize;
+            self.set_st(S_AFREE, self.sf(s, F_NEXT));
+            s
+        } else {
+            let top = self.st(S_ATOP) as usize;
+            if top >= ARG_SLOTS {
+                return None;
+            }
+            self.set_st(S_ATOP, top as i32 + 1);
+            MAX_SLOTS + top
+        };
+        for f in 0..SLOT_INTS {
+            self.set_sf(s, f, 0);
+        }
+        self.set_sf(s, F_BASE, SCRATCH0 as i32);
+        Some(s)
+    }
+
+    /// Drop an argument-site slot: its recording or key, its index entry.
+    fn free_arg_slot(&mut self, s: usize) {
+        let head = (self.sf(s, F_HEAD) - 1) as usize;
+        let k = match self.sf(s, F_STATE) {
+            ST_VALID => Some(F_NVAR),
+            ST_DEAD => Some(F_NDEAD),
+            _ => None,
+        };
+        if let Some(k) = k {
+            let v = self.sf(head, k) - 1;
+            self.set_sf(head, k, v);
+        }
+        self.slot_clear(s);
+        if self.sf(s, F_INHASH) != 0 {
+            self.hash_remove(s);
+        }
+        for f in 0..SLOT_INTS {
+            self.set_sf(s, f, 0);
+        }
+        self.set_sf(s, F_NEXT, self.st(S_AFREE));
+        self.set_st(S_AFREE, s as i32 + 1);
+    }
+
+    /// Free the least recently used slot of `head`'s macro in `state`.
+    fn evict_lru(&mut self, head: usize, state: i32) {
+        let lru = (MAX_SLOTS..MAX_SLOTS + self.st(S_ATOP) as usize)
+            .filter(|&s| self.sf(s, F_HEAD) == head as i32 + 1 && self.sf(s, F_STATE) == state)
+            .min_by_key(|&s| self.sf(s, F_LAST));
+        if let Some(s) = lru {
+            self.free_arg_slot(s);
+        }
+    }
+
+    /// `len` words of the slot heap, compacting it if need be.
+    fn heap_alloc(&mut self, len: usize) -> Option<usize> {
+        let cap = HEAP_END - HEAP0;
+        if self.st(S_HTOP) as usize + len > cap {
+            if self.st(S_HLIVE) as usize + len > cap {
+                return None;
+            }
+            self.heap_compact();
+        }
+        let b = HEAP0 + self.st(S_HTOP) as usize;
+        self.set_st(S_HTOP, self.st(S_HTOP) + len as i32);
+        self.set_st(S_HLIVE, self.st(S_HLIVE) + len as i32);
+        Some(b)
+    }
+
+    /// Move the heap's blocks down over the holes, in address order.
+    fn heap_compact(&mut self) {
+        let mut blocks: Vec<(usize, usize)> = (MAX_SLOTS..MAX_SLOTS + self.st(S_ATOP) as usize)
+            .filter(|&s| self.sf(s, F_HLEN) > 0)
+            .map(|s| (self.sf(s, F_BASE) as usize, s))
+            .collect();
+        blocks.sort_unstable();
+        let mut top = HEAP0;
+        for (b, s) in blocks {
+            let len = self.sf(s, F_HLEN) as usize;
+            if b != top {
+                self.intr_data[top..b + len].copy_within(b - top..b - top + len, 0);
+                self.set_sf(s, F_BASE, top as i32);
+            }
+            top += len;
+        }
+        self.set_st(S_HTOP, (top - HEAP0) as i32);
+    }
+
+    /// A recording at the argument site commits: its parts move from the
+    /// scratch region to a block of the heap of their exact size, and the
+    /// index names it. False if the heap is full.
+    fn arg_commit(&mut self, slot: usize) -> bool {
+        let parts: Vec<(usize, usize)> = [
+            (P_RW, 2 * self.sf(slot, F_NRW)),
+            (P_RH, self.sf(slot, F_NRH)),
+            (P_PIN, self.sf(slot, F_NPIN)),
+            (P_OPS, 4 * self.sf(slot, F_NOPS)),
+            (P_ARGS, self.sf(slot, F_NARGW)),
+        ]
+        .iter()
+        .map(|&(p, n)| (self.part(slot, p), n as usize))
+        .collect();
+        let len: usize = parts.iter().map(|p| p.1).sum();
+        let Some(b) = self.heap_alloc(len) else {
+            return false;
+        };
+        let mut at = b;
+        for (from, n) in parts {
+            for i in 0..n {
+                let v = self.intr_data[from + i];
+                self.intr_data[at + i] = v;
+            }
+            at += n;
+        }
+        self.set_sf(slot, F_BASE, b as i32);
+        self.set_sf(slot, F_HLEN, len as i32);
+        if self.sf(slot, F_INHASH) == 0 {
+            self.hash_insert(slot);
+        }
+        let head = (self.sf(slot, F_HEAD) - 1) as usize;
+        let v = self.sf(head, F_NVAR) + 1;
+        self.set_sf(head, F_NVAR, v);
+        true
+    }
+
+    /// A recording at the argument site was abandoned: keep its key, so
+    /// that the next call with it is not recorded again (unless `why`
+    /// allows a retry and the budget is not used up).
+    fn arg_dead(&mut self, slot: usize, why: Why) {
+        let nargw = self.sf(slot, F_NARGW) as usize;
+        let src = self.part(slot, P_ARGS);
+        let key: Vec<i32> = (0..nargw).map(|i| self.intr_data[src + i]).collect();
+        self.slot_clear(slot);
+        self.set_sf(slot, F_STATE, ST_FREE);
+        if nargw == 0 {
+            return self.free_arg_slot(slot);
+        }
+        let Some(b) = self.heap_alloc(nargw) else {
+            return self.free_arg_slot(slot);
+        };
+        for (i, &v) in key.iter().enumerate() {
+            self.intr_data[b + i] = v;
+        }
+        self.set_sf(slot, F_BASE, b as i32);
+        self.set_sf(slot, F_HLEN, nargw as i32);
+        self.set_sf(slot, F_NARGW, nargw as i32);
+        self.set_sf(slot, F_STATE, ST_DEAD);
+        let a = self.sf(slot, F_ABORTS) + 1;
+        self.set_sf(slot, F_ABORTS, a);
+        let retry = matches!(why, Why::Checkpoint | Why::NewCs | Why::Arm);
+        if !retry || a >= ABORT_BUDGET {
+            self.set_sf(slot, F_NOREC, 1);
+        }
+        if self.sf(slot, F_INHASH) == 0 {
+            self.hash_insert(slot);
+        }
+        let head = (self.sf(slot, F_HEAD) - 1) as usize;
+        let d = self.sf(head, F_NDEAD) + 1;
+        self.set_sf(head, F_NDEAD, d);
+        if d > MAX_DEAD_ARGS {
+            self.evict_lru(head, ST_DEAD);
+        }
     }
 
     /// Replay `slot`, recorded at the argument site, for the `n` arguments
@@ -1851,14 +2326,14 @@ impl Globals {
     }
 
     fn debug_mismatches(&self, slot: usize, w: Why) {
-        let base = Self::region(slot);
+        let rh = self.part(slot, P_RH);
         let mut shown = 0;
         eprintln!(
             "intrinsics: \\{} not replayed: {w:?}",
             self.cs_name_string(self.sf(slot, F_CS))
         );
         for i in 0..self.sf(slot, F_NRH) as usize {
-            let r = self.intr_data[base + R_RH + i] as usize * WATCH_INTS;
+            let r = self.intr_data[rh + i] as usize * WATCH_INTS;
             if self.intr_data[r + 3] == 0 && shown < 12 {
                 let p = self.intr_data[r + 5];
                 eprintln!(
@@ -1880,7 +2355,7 @@ impl Globals {
         if self.rs_on && fault() != Fault::NoReadset {
             self.intr_report_reads(slot);
         }
-        let base = Self::region(slot) + R_OPS;
+        let base = self.part(slot, P_OPS);
         let n = self.sf(slot, F_NOPS) as usize;
         let fault = fault();
         for i in 0..n {
@@ -1939,7 +2414,7 @@ impl Globals {
         }
         let h = self.sf(slot, F_HITS) + 1;
         self.set_sf(slot, F_HITS, h);
-        let name = self.cs_name_string(self.sf(slot, F_CS));
+        let cs = self.sf(slot, F_CS);
         STATS.with(|s| {
             let mut s = s.borrow_mut();
             s.replays += 1;
@@ -1948,7 +2423,7 @@ impl Globals {
             if s.replays % 100 == 0 && std::env::var_os("FLASHTEX_INTRINSICS_DEBUG").is_some() {
                 eprintln!("intrinsics: {} replays", s.replays);
             }
-            s.per_cs.entry(name).or_default().0 += 1;
+            *s.replays_by_cs.entry(cs).or_default() += 1;
         });
     }
 
@@ -1966,10 +2441,10 @@ impl Globals {
         // control sequences: below undefined_control_sequence, and above
         // eqtb_size (tex.ch's hash_extra, changes/web2c.ch)
         let (limit, size) = (self.st(L_UNDEFINED_CONTROL_SEQUENCE), self.st(L_EQTB_SIZE));
-        let base = Self::region(slot);
+        let rh = self.part(slot, P_RH);
         let mut locs: Vec<i32> = Vec::new();
         for i in 0..self.sf(slot, F_NRH) as usize {
-            let r = self.intr_data[base + R_RH + i] as usize * WATCH_INTS;
+            let r = self.intr_data[rh + i] as usize * WATCH_INTS;
             locs.push(self.intr_data[r + 5]);
         }
         for o in self.intr_slot_ops(slot) {
@@ -2009,7 +2484,7 @@ impl Globals {
 
     /// The recorded operations of `slot` (for the verifier).
     pub(crate) fn intr_slot_ops(&self, slot: usize) -> Vec<[i32; 4]> {
-        let base = Self::region(slot) + R_OPS;
+        let base = self.part(slot, P_OPS);
         (0..self.sf(slot, F_NOPS) as usize)
             .map(|i| {
                 let o = base + 4 * i;
@@ -2034,6 +2509,9 @@ impl Globals {
     }
 
     pub(crate) fn intr_disable(&mut self, slot: usize) {
+        if slot >= MAX_SLOTS {
+            return self.free_arg_slot(slot);
+        }
         self.slot_clear(slot);
         self.set_sf(slot, F_STATE, ST_FREE);
         let head = (self.sf(slot, F_HEAD) - 1) as usize;
@@ -2044,7 +2522,76 @@ impl Globals {
     pub fn flashtex_intr_finish(&mut self) {
         let out = CONFIG.with(|c| c.borrow().as_ref().and_then(|c| c.stats_out.clone()));
         let Some(out) = out else { return };
+        let by_cs: Vec<(i32, u64)> = STATS.with(|s| s.borrow_mut().replays_by_cs.drain().collect());
+        for (cs, n) in by_cs {
+            let name = self.cs_name_string(cs);
+            STATS.with(|s| s.borrow_mut().per_cs.entry(name).or_default().0 += n);
+        }
         let s = STATS.with(|s| format!("{:#?}\n", s.borrow()));
         let _ = std::fs::write(out, s);
+    }
+}
+
+#[cfg(test)]
+mod heap_tests {
+    use super::*;
+
+    /// The argument site's heap and index (MACRO-REPLAY.md §3.3): blocks
+    /// keep their contents through a compaction, which closes the holes in
+    /// address order, and the index finds exactly the slots it names, also
+    /// after a rebuild.
+    #[test]
+    fn the_slot_heap_compacts_and_the_index_finds_its_slots() {
+        let mut g = Globals::new();
+        let mut ids = vec![];
+        for k in 0..6usize {
+            let s = g.alloc_arg_slot().unwrap();
+            let len = 3 + k;
+            let b = g.heap_alloc(len).unwrap();
+            for i in 0..len {
+                g.intr_data[b + i] = (100 * k + i) as i32;
+            }
+            g.set_sf(s, F_HEAD, 1);
+            g.set_sf(s, F_BASE, b as i32);
+            g.set_sf(s, F_HLEN, len as i32);
+            g.set_sf(s, F_NARGW, len as i32);
+            g.set_sf(s, F_KEYHASH, (k % 2) as i32);
+            g.set_sf(s, F_STATE, ST_DEAD);
+            g.hash_insert(s);
+            ids.push(s);
+        }
+        g.free_arg_slot(ids[1]);
+        g.free_arg_slot(ids[4]);
+        let live = [0usize, 2, 3, 5];
+        let words: usize = live.iter().map(|k| 3 + k).sum();
+        assert_eq!(g.st(S_HLIVE) as usize, words);
+        g.heap_compact();
+        assert_eq!(g.st(S_HTOP) as usize, words);
+        let mut at = HEAP0;
+        for &k in &live {
+            let s = ids[k];
+            assert_eq!(g.sf(s, F_BASE) as usize, at, "slot {k}");
+            let a = g.part(s, P_ARGS);
+            for i in 0..3 + k {
+                assert_eq!(
+                    g.intr_data[a + i],
+                    (100 * k + i) as i32,
+                    "slot {k} word {i}"
+                );
+            }
+            at += 3 + k;
+        }
+        for _ in 0..2 {
+            let mut even = g.hash_find(0);
+            even.sort_unstable();
+            assert_eq!(even, vec![ids[0], ids[2]]);
+            assert_eq!(g.hash_find(1), vec![ids[3], ids[5]]);
+            g.hash_rebuild();
+        }
+        // a freed slot is used again, and a block after a compaction
+        let s = g.alloc_arg_slot().unwrap();
+        assert!(s == ids[1] || s == ids[4]);
+        let b = g.heap_alloc(4).unwrap();
+        assert_eq!(b, HEAP0 + words);
     }
 }
