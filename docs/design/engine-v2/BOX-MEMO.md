@@ -334,12 +334,79 @@ keystroke window on *Infinite Descent*, with the same engine run off and on.
 **A cold pass gains nothing yet.** K2 and K4 include pgf's serial, so every call misses. That is
 why the host records only in an edit's window. Phase 2 (below) is where cold compiles gain.
 
-## 10. Later phases (not in this revision)
+## 10. Later phases
 
-- **Phase 2, the serial.** A recorded effect may be "a register advanced by one" when the recording
-  read it only to advance it and to print it into one assignment. That makes cold-pass hits possible
-  (−40 % of a cold pass, by the profile). Proof obligations come first.
-- **Phase 3, draw calls.** Calls that append one box to the outer list: frame draws, `tikzcd`. Then
-  the box registers they read (`\box\@tempboxa`) become a hole, keyed by the box's dimensions and
-  spliced into the recorded box.
+### 10.1 Registers keyed precisely (built)
+
+Primitives never read the `\count`, `\dimen`, `\skip`, `\muskip` and `\toks` registers behind the
+scenes. Every read is explicit:
+- `scan_something_internal`: `\the`, `\number`, `\ifnum`, `\ifdim`, and every scanned quantity;
+- `\advance`, `\multiply`, `\divide`;
+- the `\toks` copy, which the recording refuses.
+
+The exception is box registers, which §3 handles.
+
+So K2 now leaves registers out, e-TeX's sparse registers included (K4 is empty). The recording keeps
+**KR**: each register it read, by value, at its first read. Hooks: `Fetch a register`, `Fetch a
+token list`, `assign_int` & co. naming a register, and `do_register_command`.
+
+A register the call first **assigned globally** is not an input when it is read later.
+- A *local* assignment is undone when its group ends, so a later read sees the old value. That old
+  value is keyed when the assignment is made.
+- Control sequences follow the same rule. The old meaning that a global assignment overwrites is
+  not an input, because the replay's own `geq_define` handles whatever is there, as the normal path
+  did.
+
+Effect: calls hit wherever the registers they actually read agree. In-window hits went from 6 to 54
+on `framed-tikz-theorems`, with 0 full-verify differences.
+
+### 10.2 Phase 2, cold-pass hits: measured, and not reachable by keying
+
+The debug run (`FLASHTEX_BOXMEMO_DEBUG`, `key differs` lines) looked at consecutive
+`\fb@sizeofframe` calls in one pass. With precise registers they still differ:
+
+- **pgf's picture serial.** A sparse `\count`, read by its `\advance` and printed into
+  `\pgfpictureid`.
+- **pgf's leftovers from the previous picture, read before they are written:**
+  - `\pgfsyssoftpath@lastmoveto`, the last move-to of the previous path;
+  - `\pgf@sh@pi@box`, the picture of the previous `box` node;
+  - `\font@name`;
+  - `\if@endpe`;
+  - `\dimen0`.
+- **The environment kind** (`\FrameCommand`, `\@currenvir`). This only multiplies the variants,
+  which is fine.
+
+A key built from reads therefore cannot match across calls in one pass. Making it match would mean
+proving that these reads do not affect the result: taint tracking of the values from the read to
+every use (comparisons, `\csname`, arithmetic), through token lists copied by `\edef` and by macro
+arguments. That is research-scale, with a soundness argument of its own.
+
+**Recommendation:** do not pursue phase 2 for now. Typing, the P4 target, already hits, because the
+same call at the same place reads the same leftovers keystroke after keystroke. For cold passes,
+COLD-OPEN's levers (the anchor, pass-2 reuse) and P6-ENGINE-SPEED's interpreter work are worth more.
+
+### 10.3 Phase 3: draw calls (next)
+
+These are calls that append nodes to the current list in restricted horizontal mode:
+- the frame command inside `\centerline`'s `\hbox` (`\fb@putboxa`);
+- `tikzcd` and `tikzpicture` bodies.
+
+How a draw call is recorded and replayed:
+- **The recorded fragment.** The nodes between the list's tail at the start and at the end are the
+  output. They are serialised by value, following `copy_node_list`'s node formats (tex.web §206,
+  pdfTeX's whatsits), together with each node's display-list source position (`dl_side`), so the
+  preview maps them the same way.
+- **The box register the call moves** (`\box\@tempboxa`, the theorem's content) **is a hole.**
+  - It is keyed by its type, width, height, depth and shift.
+  - At replay, that node is spliced into the rebuilt fragment where the recording found it.
+  - `\copy`, `\unhbox` and `\unvbox` of a box not made by the call abandon the recording, because
+    they read its contents.
+- **The rest of the outer list is untouched.** These are also recorded and replayed: `space_factor`
+  (box_end sets it to 1000), the voided register, and the mode (unchanged).
+- **The page builder never runs.** In restricted horizontal mode it cannot.
+- **Gates** are those of §8, plus the full verifier, which compares the appended nodes structurally.
+
+Expected gain, from the Step 1 profiles: frame draws are 9–25 % of a window and `tikzcd` 24–30 %
+where present.
+
 - **Automatic candidates.** Calls the macro profiler shows above a cost threshold, instead of names.
