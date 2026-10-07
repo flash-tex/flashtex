@@ -1853,11 +1853,14 @@ final class EngineV3Session {
             chosen[i] = pages[i]
         }
         let sizes = (0 ..< pageCount).map { pageSizes[$0]! }
-        let docs = EngineV3Snapshot.hashes(model.documents.map { ($0.path, sentTexts[$0.path] ?? $0.text) })
+        // The texts' SHA-256 on the snapshot queue, not here: a 4 MB document
+        // is milliseconds of main thread at every keystroke's DONE.
+        let texts = model.documents.map { (path: $0.path, text: sentTexts[$0.path] ?? $0.text) }
         let formsCopy = forms, main = mainFile
         let ppp = view?.currentPixelsPerPoint ?? 2
         let dark = model.darkPreview
         let item = DispatchWorkItem {
+            let docs = EngineV3Snapshot.hashes(texts)
             // An input changed since the sync (outside the app): the pages
             // may not show it, so nothing is saved (the old snapshot no
             // longer matches either).
@@ -1891,6 +1894,7 @@ final class EngineV3Session {
                          mode: EngineV3ErrorPolicy.Mode = .bestEffort) -> [RuntimeV1.Diagnostic] {
         let roots = Self.copyRoots(projectRoot)
         let kept = EngineV3ErrorPolicy.keptErrors(diags.map(Self.policyItem), mode: mode)
+        var lines = EngineV3LineIndexes()
         return diags.enumerated().map { i, d in
             let error = d["severity"]?.string == "error"
             let severity: RuntimeV1.Severity = error && kept.contains(i) ? .error : .warning
@@ -1901,7 +1905,7 @@ final class EngineV3Session {
                 let file = Self.relativeToCopy(reported, roots: roots)
                 let line = Int(d["line"]?.int ?? 0)
                 if let text = texts?[file] ?? model.documents.first(where: { $0.path == file })?.text, line > 0,
-                   let range = lineByteRange(text, line: line) {
+                   let range = lines.range(file, text, line: line) {
                     source = RuntimeV1.SourceRange(path: file, startByte: range.lowerBound, endByte: range.upperBound)
                 } else {
                     message = "\((file as NSString).lastPathComponent)\(line > 0 ? ":\(line)" : ""): " + message
@@ -1967,6 +1971,7 @@ final class EngineV3Session {
         let stopped = Set(folds.filter { EngineV3DiagPresent.isStop(diags[$0.key].code) && !EngineV3DiagPresent.isStop(diags[$0.value].code) }.map(\.value))
         let projectTexts: [String: String] = texts ?? Dictionary(model.documents.map { ($0.path, $0.text) }, uniquingKeysWith: { a, _ in a })
         func text(_ file: String) -> String? { texts?[file] ?? model.documents.first(where: { $0.path == file })?.text }
+        var lines = EngineV3LineIndexes()
         return diags.enumerated().compactMap { i, d in
             guard d.severity != "info" else { return nil } // \show, tight/loose boxes: not problems
             guard folds[i] == nil else { return nil }
@@ -1974,7 +1979,7 @@ final class EngineV3Session {
             var message = recovered.contains(i) ? EngineV3ErrorPolicy.marked(headline) : headline
             var source: RuntimeV1.SourceRange?
             if let file = d.file.map(rel) {
-                if let line = d.line, let text = text(file), let lineRange = lineByteRange(text, line: line) {
+                if let line = d.line, let text = text(file), let lineRange = lines.range(file, text, line: line) {
                     let len = lineRange.count
                     let (a, b): (Int, Int) = {
                         if let r = d.range { return (min(r.0, len), min(max(r.1, r.0), len)) }
@@ -1984,7 +1989,7 @@ final class EngineV3Session {
                     var end = lineRange.lowerBound + b
                     // A box: from its first character to its last (the display list's side table).
                     if EngineV3DiagPresent.boxKind(d.code) != nil, let e = d.end, e.file.map(rel) == file, let el = e.line, let ec = e.col,
-                       el >= line, let endLine = lineByteRange(text, line: el), lineRange.lowerBound + a <= endLine.lowerBound + min(ec, endLine.count) {
+                       el >= line, let endLine = lines.range(file, text, line: el), lineRange.lowerBound + a <= endLine.lowerBound + min(ec, endLine.count) {
                         end = endLine.lowerBound + min(ec, endLine.count)
                     }
                     source = RuntimeV1.SourceRange(path: file, startByte: lineRange.lowerBound + a, endByte: end)
@@ -2090,7 +2095,8 @@ final class EngineV3Session {
         if firstError != first { firstError = first }
     }
 
-    /// Bytes of 1-based `line` in `text`, without its newline.
+    /// Bytes of 1-based `line` in `text`, without its newline (one lookup;
+    /// many: `EngineV3LineStarts`).
     static func lineByteRange(_ text: String, line: Int) -> Range<Int>? {
         var n = 1, start = 0, i = 0
         for b in text.utf8 {
@@ -2128,6 +2134,50 @@ final class EngineV3Session {
     nonisolated static func onMain(_ block: @escaping @MainActor () -> Void) {
         CFRunLoopPerformBlock(CFRunLoopGetMain(), CFRunLoopMode.commonModes.rawValue) { MainActor.assumeIsolated { block() } }
         CFRunLoopWakeUp(CFRunLoopGetMain())
+    }
+}
+
+/// Where each line of a text starts (UTF-8 bytes), found in one pass: a
+/// DONE maps every diagnostic's line to bytes, and `lineByteRange` walked the
+/// text from the start for each (100 warnings in a 4 MB book: 200 MB walked
+/// on main per DONE).
+struct EngineV3LineStarts {
+    /// `starts[k]`: the first byte of line k + 1.
+    private(set) var starts: [Int] = [0]
+    private(set) var byteCount = 0
+
+    init(_ text: String) {
+        var copy = text
+        var found: [Int] = [0]
+        byteCount = copy.withUTF8 { b -> Int in
+            guard let base = b.baseAddress else { return 0 }
+            var off = 0
+            while off < b.count, let hit = memchr(base + off, 0x0A, b.count - off) {
+                let at = UnsafeRawPointer(base).distance(to: UnsafeRawPointer(hit))
+                found.append(at + 1)
+                off = at + 1
+            }
+            return b.count
+        }
+        starts = found
+    }
+
+    /// `EngineV3Session.lineByteRange(text, line:)`, from the index.
+    func range(line: Int) -> Range<Int>? {
+        guard line >= 1, line <= starts.count else { return nil }
+        let a = starts[line - 1]
+        return a ..< (line < starts.count ? starts[line] - 1 : byteCount)
+    }
+}
+
+/// One `EngineV3LineStarts` per file, built on first use.
+struct EngineV3LineIndexes {
+    private var byFile: [String: EngineV3LineStarts] = [:]
+    mutating func range(_ file: String, _ text: String, line: Int) -> Range<Int>? {
+        if let ix = byFile[file] { return ix.range(line: line) }
+        let ix = EngineV3LineStarts(text)
+        byFile[file] = ix
+        return ix.range(line: line)
     }
 }
 
