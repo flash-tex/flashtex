@@ -1569,17 +1569,21 @@ fn a_page_converges_at_the_end_of_its_output_routine() {
             break;
         }
     }
-    // an edit on page 3 converges at page 3
-    for (word, what) in [("omegb", "a letter on page 3"), ("omega", "its revert")] {
+    // an edit on page 3 converges at page 3 (two letters swapped: no
+    // character the fonts had not used, which `pdf_char_used` would keep)
+    for (word, what) in [
+        ("omgea", "two letters swapped on page 3"),
+        ("omega", "its revert"),
+    ] {
         let r = compile_and_check(&e, &mut h, &dir, &[("doc.tex", &doc(3, word))], what);
         assert!(r.contains("\"mode\":\"incremental\""), "{what}: {r}");
         assert_eq!(field(&r, "converged_at"), "3", "{what}: {r}");
     }
     // the float pages, and the page shipped from the body: equal to scratch
     for (page, word, what) in [
-        (7, "omegb", "a float page's caption"),
+        (7, "omgea", "a float page's caption"),
         (7, "omega", "its revert"),
-        (8, "omegb", "the body's \\shipout"),
+        (8, "omgea", "the body's \\shipout"),
         (8, "omega", "its revert"),
     ] {
         let r = compile_and_check(&e, &mut h, &dir, &[("doc.tex", &doc(page, word))], what);
