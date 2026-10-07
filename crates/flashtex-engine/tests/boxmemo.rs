@@ -154,15 +154,16 @@ fn the_key_falls_back() {
 
 #[test]
 fn outside_the_model_never_replays() {
-    // output, a box register it did not make (and that is not void), and
-    // the outer list: recorded calls are abandoned, so nothing replays
+    // output, the contents of a box register it did not make (`\\copy`),
+    // and the main vertical list: recorded calls are abandoned, so nothing
+    // replays
     let s = check(
         "impure",
         "\\catcode`\\{=1 \\catcode`\\}=2 \\catcode`\\#=6 \\scrollmode\n\
          \\setbox9\\hbox{\\vrule width 2pt}\n\
          \\def\\measure#1{\\begingroup\\message{#1}\\endgroup}\n\
          \\measure{a}\\measure{a}\\measure{a}\n\
-         \\def\\measure#1{\\begingroup\\global\\dimen1=\\wd9 \\endgroup}\n\
+         \\def\\measure#1{\\begingroup\\setbox0\\copy9 \\global\\dimen1=\\wd0 \\endgroup}\n\
          \\measure{a}\\measure{a}\\measure{a}\n\
          \\def\\measure#1{\\kern#1}\n\
          \\measure{1pt}\\measure{1pt}\\measure{1pt}\\showlists\\end\n",
@@ -180,4 +181,21 @@ fn void_box_reads_are_part_of_the_key() {
          \\setbox9\\hbox{\\vrule width 2pt}\\measure{a}\\message{[\\the\\dimen1]}\\end\n",
     );
     assert!(stat(&s, "hits") >= 1, "{s}");
+}
+
+#[test]
+fn draw_calls_replay_with_their_hole() {
+    // a call in restricted horizontal mode that moves a box out of a
+    // register it did not make (`\\box9`) and appends a frame around it:
+    // replayed, the box of the moment goes into the recorded frame; a box
+    // of other dimensions is another key
+    let s = check(
+        "draw",
+        "\\catcode`\\{=1 \\catcode`\\}=2 \\catcode`\\#=6 \\scrollmode\n\
+         \\showboxdepth=100 \\showboxbreadth=100 \\tracingonline=0\n\
+         \\def\\measure#1{\\begingroup\\dimen0=#1\\relax\\vrule width\\dimen0\\vbox{\\hrule height 1pt\\kern 2pt\\box9\\kern2pt\\hrule}\\kern3pt\\penalty7\\hskip 1pt plus 2pt\\endgroup}\n\
+         \\def\\one#1{\\setbox9\\hbox{\\vrule width #1 height 2pt}\\setbox1\\hbox{\\measure{1pt}}\\showbox1 \\showbox9 }\n\
+         \\one{3pt}\\one{3pt}\\one{3pt}\\one{4pt}\\one{4pt}\\one{3pt}\\end\n",
+    );
+    assert!(stat(&s, "hits") >= 3, "{s}");
 }
