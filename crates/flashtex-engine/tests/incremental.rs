@@ -2607,6 +2607,151 @@ fn a_late_barrier_keeps_the_pages_before_it() {
     }
 }
 
+/// A file written through the body and read back at the end, opened at
+/// `\begin{document}` (*Infinite Descent*'s hints and solutions: `\hint`s
+/// written to `\jobname.hnt` in every chapter, `\input` in the appendix).
+/// `word` is in paragraph 30, `hint` in the hint written at paragraph 60,
+/// `tail` in paragraph 145, after the read.
+fn hints_doc(word: &str, hint: &str, tail: &str) -> String {
+    let mut s = String::from(
+        "\\documentclass{article}\n\\newwrite\\hnt\n\
+         \\AtBeginDocument{\\immediate\\openout\\hnt=\\jobname.hnt}\n\\begin{document}\n",
+    );
+    for i in 0..140 {
+        s.push_str(&para(i, if i == 30 { word } else { "lorem" }));
+        if i % 20 == 0 {
+            let h = if i == 60 { hint } else { "lorem" };
+            s.push_str(&format!("\\immediate\\write\\hnt{{Hint {i}: {h}.}}\n"));
+        }
+    }
+    s.push_str("\\immediate\\closeout\\hnt\n\\clearpage\\input{\\jobname.hnt}\n\n");
+    for i in 140..150 {
+        s.push_str(&para(i, if i == 145 { tail } else { "lorem" }));
+    }
+    s.push_str("\\end{document}\n");
+    s
+}
+
+/// A compile with page `stop` requested first (the viewport: the app's
+/// request), continued (`finish`) when it stopped there, checked against
+/// scratch runs: the report of each.
+fn paused_then_finished(
+    e: &Env,
+    h: &mut Host,
+    dir: &Path,
+    text: &str,
+    stop: usize,
+    what: &str,
+) -> (String, String) {
+    std::fs::write(dir.join("doc.tex"), text).unwrap();
+    let reference = dir.with_extension("ref");
+    copy_dir(dir, &reference);
+    let first = h.cmd(&format!("compile {stop}"));
+    // (a run that converged before the page, or restarted after it, did
+    // not stop)
+    let r = if first.contains("\"paused\":true") {
+        h.cmd("finish")
+    } else {
+        first.clone()
+    };
+    check_against(e, dir, &reference, &r, what);
+    (first, r)
+}
+
+/// A run stopped at the requested page and continued compared the old
+/// run's journal with the files again (#1514), and took a file it writes
+/// itself and reads back later, opened before the restart (the hints of
+/// *Infinite Descent*), for a changed input: on disk it held the stopped
+/// run's part so far. The old run "read the changed file later", so no
+/// test after the edited page could pass, and every keystroke re-typeset
+/// the book to its end. Now such a file is the stopped run's own output,
+/// and the old run's read of it is a barrier (a file one of the runs
+/// writes): the run converges, keeps the old run's pages before the read
+/// and runs on live from there. Every compile equals scratch runs, when the
+/// edit leaves the hints alone (i), changes what is written to them (ii),
+/// lies after the read (iii), and when a second keystroke comes before the
+/// first compile is continued (iv).
+#[test]
+fn a_file_written_and_read_back_converges_after_a_stopped_run() {
+    let Some(e) = env() else {
+        common::no_texlive();
+        return;
+    };
+    let dir = e.dir.join("hints");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let base = hints_doc("lorem", "lorem", "lorem");
+    let mut h = Host::start(&e, &dir);
+    for k in 0..4 {
+        let r = compile_and_check(&e, &mut h, &dir, &[("doc.tex", &base)], "settle");
+        if r.contains("\"mode\":\"unchanged\"") || k == 3 {
+            break;
+        }
+    }
+    // (i) an edit that leaves the written file alone: converges, and the
+    // old run's pages up to the read are kept (the same letters: the fonts'
+    // used characters stay the same)
+    for (word, what) in [
+        ("lorme", "(i) an edit on page 2"),
+        ("lorem", "(i) its revert"),
+    ] {
+        let doc = hints_doc(word, "lorem", "lorem");
+        let (first, r) = paused_then_finished(&e, &mut h, &dir, &doc, 2, what);
+        assert!(
+            first.contains("\"paused\":true"),
+            "{what}: not stopped: {first}"
+        );
+        let conv: usize = field(&r, "converged_at")
+            .parse()
+            .unwrap_or_else(|_| panic!("{what}: no convergence before the read: {r}"));
+        let kept: usize = field(&r, "rerun_from")
+            .parse()
+            .unwrap_or_else(|_| panic!("{what}: no live run from before the read: {r}"));
+        let pages: usize = field(&r, "pages").parse().unwrap();
+        assert!(conv < kept && kept < pages, "{what}: {r}");
+    }
+    // (ii) an edit of what is written: the pages from the read on are
+    // typeset again from the new hints
+    for (hint, what) in [
+        ("lorme", "(ii) an edit of a hint"),
+        ("lorem", "(ii) its revert"),
+    ] {
+        let doc = hints_doc("lorem", hint, "lorem");
+        paused_then_finished(&e, &mut h, &dir, &doc, 5, what);
+    }
+    // (iii) an edit after the read
+    for (tail, what) in [
+        ("lorme", "(iii) an edit after the read"),
+        ("lorem", "(iii) its revert"),
+    ] {
+        let doc = hints_doc("lorem", "lorem", tail);
+        let r = compile_and_check(&e, &mut h, &dir, &[("doc.tex", &doc)], what);
+        assert!(r.contains("\"mode\":\"incremental\""), "{what}: {r}");
+    }
+    // (iv) a second keystroke before the first compile is continued: the
+    // stopped run is settled or abandoned, and the second compile, stopped
+    // too, is continued
+    std::fs::write(dir.join("doc.tex"), hints_doc("lorme", "lorem", "lorem")).unwrap();
+    let first = h.cmd("compile 2");
+    assert!(
+        first.contains("\"paused\":true"),
+        "(iv) not stopped: {first}"
+    );
+    for (doc, what) in [
+        (
+            hints_doc("loerm", "lorem", "lorem"),
+            "(iv) a second keystroke",
+        ),
+        (base.clone(), "(iv) the revert"),
+    ] {
+        let (first, _) = paused_then_finished(&e, &mut h, &dir, &doc, 2, what);
+        assert!(
+            first.contains("\"paused\":true"),
+            "{what}: not stopped: {first}"
+        );
+    }
+}
+
 /// DESIGN.md §5.3 rule (c), the line half (`crate::lineshift`): a document
 /// of `n` paragraphs with `extra` text before some of them, and `pre` in
 /// the preamble.
