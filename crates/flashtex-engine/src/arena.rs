@@ -3494,6 +3494,79 @@ mod tests {
         a.drop_branch(br);
     }
 
+    /// P4-CONVERGE-REWIND: the `UNSTATED` chunks a convergence test kept
+    /// (`OldCache`) are the old run's values at that checkpoint, whatever
+    /// the new run writes after the test: written on (the chunks the test
+    /// saw again, and chunks it never saw, in both arrays), the jump's
+    /// comparison at the same checkpoint gives a fresh rewind's old values
+    /// word for word, and adopting what differs, then converging, gives
+    /// exactly the old run's latest state.
+    #[test]
+    fn values_a_test_kept_hold_for_chunks_written_after_it() {
+        let mut p = Plan::new(64);
+        let rt = p.reserve::<u64>("t", 150_000);
+        let ru = p.reserve::<u64>("dl_side", 50_000);
+        let mut a = p.build();
+        let mut t = a.arr(rt, 150_000);
+        let mut u = a.arr(ru, 50_000);
+        scribble(&mut t, 61, 5000);
+        scribble(&mut u, 62, 2000);
+        let mut ids = vec![];
+        for k in 0..12 {
+            ids.push(a.checkpoint());
+            scribble(&mut t, 600 + k, 2000);
+            scribble(&mut u, 700 + k, 800);
+        }
+        let (t_end, u_end) = (t.to_vec(), u.to_vec());
+        let j = 6;
+        let br = a.restore_branch(ids[3]).unwrap();
+        scribble(&mut t, 1990, 1500);
+        scribble(&mut u, 1991, 600);
+        a.checkpoint();
+        let all_words = |a: &Arena, d: &ChunkDiff| -> Vec<(usize, u64)> {
+            (0..a.bytes().len() / 8)
+                .filter(|w| d.old_at.contains_key(&(((w * 8) >> CHUNK_SHIFT) as u32)))
+                .map(|w| (w, d.old_word(a, w * 8)))
+                .collect()
+        };
+        a.drop_old_cache();
+        // the test, which keeps the unstated chunks it rewinds
+        let seen_by_test = a.diff_branch(&br, ids[j]).unwrap().compared;
+        // the new run writes on: again where it wrote, and elsewhere
+        scribble(&mut t, 2990, 3000);
+        scribble(&mut u, 2991, 3000);
+        a.checkpoint();
+        let kept = all_words(&a, &a.diff_branch_all(&br, ids[j]).unwrap());
+        a.drop_old_cache();
+        let fresh_d = a.diff_branch_all(&br, ids[j]).unwrap();
+        assert!(fresh_d.compared > seen_by_test, "the new run wrote new chunks");
+        let fresh = all_words(&a, &fresh_d);
+        assert!(kept == fresh, "kept values differ from a fresh rewind");
+        drop(fresh_d);
+        // the jump: the test kept them again, then the comparison adopts
+        // what differs from the old run's state at `j`
+        drop(a.diff_branch(&br, ids[j]).unwrap());
+        let d = a.diff_branch_all(&br, ids[j]).unwrap();
+        let adopt: Vec<(usize, Vec<u8>)> = d
+            .differing
+            .iter()
+            .map(|&(c, old_p, _)| {
+                // SAFETY: a chunk of the comparison's own buffers or the
+                // arena, unchanged while `d` lives.
+                let b = unsafe { std::slice::from_raw_parts(old_p as *const u8, CHUNK_BYTES) };
+                ((c as usize) << CHUNK_SHIFT, b.to_vec())
+            })
+            .collect();
+        drop(d);
+        for (off, b) in &adopt {
+            a.write_through(*off, b);
+        }
+        a.checkpoint();
+        a.converge(br, ids[j]).unwrap();
+        assert!(t[..] == t_end[..], "the jump gives the old run's latest state");
+        assert!(u[..] == u_end[..], "the jump gives the old run's latest side table");
+    }
+
     #[test]
     fn kept_old_chunks_equal_rewound_ones() {
         let (mut a, mut arr) = space(200_000);
