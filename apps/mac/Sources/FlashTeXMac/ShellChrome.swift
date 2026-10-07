@@ -133,9 +133,9 @@ final class ShellChrome {
             if self[keyPath: keyPath] != value { self[keyPath: keyPath] = value }
         }
         set(\.editorRevision, model.editorRevision)
-        let (errors, warnings, gaps) = EditorDiagnostics.counts(model.displayedDiagnostics)
+        let (errors, warnings, gaps) = MainThreadProbe.time("chrome.problems") { EditorDiagnostics.counts(model.displayedDiagnostics) }
         set(\.problems, ProblemCounts(errors: errors, warnings: warnings, gaps: gaps))
-        set(\.note, model.navigationNote ?? model.editorMarkReport.staleNote ?? model.explanationStatus)
+        set(\.note, MainThreadProbe.time("chrome.marks") { model.navigationNote ?? model.editorMarkReport.staleNote ?? model.explanationStatus })
         set(\.captureNote, model.captureNote)
         set(\.durableRevision, model.controllerState.durable[model.activePath]?.revision)
         set(\.carriedLine, model.editorMarkReport.carried?.line)
@@ -144,7 +144,7 @@ final class ShellChrome {
 
         let text = model.activeText
         set(\.activeTextBytes, text.utf8.count) // O(1); its UTF-16 count (unread) walked a non-ASCII text per refresh
-        let listing = model.project.listing
+        let listing = MainThreadProbe.time("chrome.listing") { model.project.listing }
         let documentSetChanged = listing.map(\.path) != self.listing.map(\.path)
         set(\.listing, listing)
         set(\.entryPath, model.project.entryPath)
@@ -157,7 +157,7 @@ final class ShellChrome {
         var closureWaits = false
         if revision != closureRevision {
             if closureRevision < 0 || documentSetChanged || settleNext || now &- seenRevisionNs >= Self.closureQuietNs {
-                set(\.closure, model.project.discoverClosure())
+                set(\.closure, MainThreadProbe.time("chrome.closure") { model.project.discoverClosure() })
                 closureRevision = revision
             } else {
                 closureWaits = true
