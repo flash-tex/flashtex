@@ -1584,12 +1584,26 @@ fn read_signed(path: &str) -> Option<(Vec<u8>, Option<crate::system::StatSig>)> 
     Some((d, if same { before } else { None }))
 }
 
+/// Whether the display list's file `p` lies under the project root. The
+/// display list names files under the engine's working directory, which
+/// the system resolved; the root is as the client gave it, and may have
+/// `..` in it or pass through a link (`real_root`: its canonical form).
+/// Compared as given only, such a root matched no file: no text was kept,
+/// so no span moved with its lines (`move_spans`), and after a converging
+/// newline or split edit every kept page pointed lines away from its
+/// source (the hosted `span` sweep under `$GITHUB_WORKSPACE/../ib`,
+/// 2026-10-06: about 2 M wrong lines on plain-120).
+fn under_root(p: &Path, root: &Path, real_root: Option<&Path>) -> bool {
+    p.starts_with(root) || real_root.is_some_and(|r| p.starts_with(r))
+}
+
 /// Record the user's files the display list names that the host has not
 /// seen yet (as the compile just read them).
 fn remember_texts(doc: &mut Doc) {
     let root = doc.job.root.clone();
+    let real_root = std::fs::canonicalize(&root).ok();
     for (_, p) in displaylist::files() {
-        if doc.texts.contains_key(&p) || !Path::new(&p).starts_with(&root) {
+        if doc.texts.contains_key(&p) || !under_root(Path::new(&p), &root, real_root.as_deref()) {
             continue;
         }
         if let Some((d, s)) = read_signed(&p) {
@@ -1772,6 +1786,36 @@ fn lf_count_words(b: &[u8]) -> usize {
 #[cfg(test)]
 mod tests {
     use super::line_change;
+
+    /// A root given with `..` in it (or through a link) still holds the
+    /// files the display list names under the resolved directory.
+    #[test]
+    fn a_root_with_dotdot_holds_its_resolved_files() {
+        use super::under_root;
+        use std::path::Path;
+        let dir = std::env::temp_dir().join(format!("under-root-{}", std::process::id()));
+        std::fs::create_dir_all(dir.join("ib/doc")).unwrap();
+        let root = dir.join("x/../ib/doc");
+        std::fs::create_dir_all(dir.join("x")).unwrap();
+        let real = std::fs::canonicalize(&root).unwrap();
+        let file = real.join("main.tex");
+        assert!(
+            !file.starts_with(&root),
+            "as given, the root matches nothing"
+        );
+        assert!(under_root(&file, &root, Some(&real)));
+        assert!(under_root(&root.join("main.tex"), &root, Some(&real)));
+        assert!(!under_root(
+            Path::new("/elsewhere/main.tex"),
+            &root,
+            Some(&real)
+        ));
+        assert!(
+            !under_root(&file, &root, None),
+            "without the canonical root, as before"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     /// The line-by-line definition `line_change` computes.
     fn line_change_by_lines(old: &[u8], new: &[u8]) -> (u32, u32, u32) {

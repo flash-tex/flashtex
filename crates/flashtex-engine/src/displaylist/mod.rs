@@ -693,18 +693,7 @@ pub fn files() -> Vec<(u32, String)> {
 /// spans of its own.
 pub fn move_lines(path: &str, from: u32, old_end: u32, new_end: u32) {
     with(|st| {
-        // The same file under another spelling: the host names it under the
-        // root it was given, the display list under the engine's working
-        // directory, which the system resolved. A root with `..` in it (or a
-        // link) left every span unmoved, and the pages a convergence kept
-        // pointed lines away from their source (the hosted `span` sweep:
-        // INCR_BENCH_DIR=$GITHUB_WORKSPACE/../ib, 2026-10-06).
-        let found = st.file_paths.iter().position(|p| p == path).or_else(|| {
-            st.file_paths
-                .iter()
-                .position(|p| crate::lineshift::same_path(p, path))
-        });
-        let Some(f) = found else {
+        let Some(f) = st.file_paths.iter().position(|p| p == path) else {
             return;
         };
         st.move_spans_of(f as u32 + 1, from, old_end, new_end);
@@ -2407,44 +2396,6 @@ mod tests {
         assert!(src.files.is_empty(), "the reader has the file already");
         assert!(peer.moved_spans().is_none());
         DL.with(|d| *d.borrow_mut() = None);
-    }
-
-    /// `move_lines` finds the file under another spelling of its path: the
-    /// host names it under the root it was given (here with `..` in it),
-    /// the display list under the resolved working directory. Before, an
-    /// exact comparison missed it and no span moved.
-    #[test]
-    fn spans_follow_moved_lines_under_another_spelling() {
-        let dir = std::env::temp_dir().join(format!("dl-move-lines-{}", std::process::id()));
-        std::fs::create_dir_all(dir.join("doc")).unwrap();
-        std::fs::write(dir.join("doc/main.tex"), "x\n").unwrap();
-        let real = std::fs::canonicalize(dir.join("doc/main.tex")).unwrap();
-        let real = real.to_str().unwrap();
-        let dotted = format!("{}/doc/../doc/main.tex", dir.to_str().unwrap());
-        DL.with(|d| *d.borrow_mut() = Some(Box::new(State::new())));
-        let (a, c) = with(|st| {
-            let f = st.file_id(real.as_bytes());
-            (st.span_id(f, 5), st.span_id(f, 20))
-        })
-        .unwrap();
-        crate::lineshift::forget_paths();
-        move_lines(&dotted, 8, 9, 10);
-        assert_eq!(span_location(a), Some((1, 5)));
-        assert_eq!(
-            span_location(c),
-            Some((1, 21)),
-            "the span after the new line moves down"
-        );
-        // A path naming no file of the document moves nothing.
-        move_lines(
-            &format!("{}/doc/../doc/other.tex", dir.to_str().unwrap()),
-            1,
-            2,
-            3,
-        );
-        assert_eq!(span_location(c), Some((1, 21)));
-        DL.with(|d| *d.borrow_mut() = None);
-        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// A destination carries only the words pdfTeX writes for its kind.
