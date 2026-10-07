@@ -1675,9 +1675,7 @@ fn a_written_form_converges() {
     ] {
         let r = compile_and_check(&e, &mut h, &dir, &[("doc.tex", &doc(word))], what);
         assert!(r.contains("\"mode\":\"incremental\""), "{what}: {r}");
-        if page == 7 {
-            assert_ne!(field(&r, "converged_at"), "null", "{what}: {r}");
-        }
+        assert_ne!(field(&r, "converged_at"), "null", "{what}: {r}");
     }
 }
 
