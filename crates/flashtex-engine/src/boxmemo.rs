@@ -458,6 +458,14 @@ struct Scratch {
     cur_order: i32,
     def_ref: i32,
     long_state: i32,
+    // pseudo-printing scratch (D9's list)
+    tally: i32,
+    first_count: i32,
+    trick_count: i32,
+    base_ptr: i32,
+    // `big_switch`'s flags, set before each `get_x_token`
+    intr_at_switch: bool,
+    bm_at_switch: bool,
 }
 
 impl Scratch {
@@ -473,6 +481,12 @@ impl Scratch {
             cur_order: g.cur_order,
             def_ref: g.def_ref,
             long_state: g.long_state,
+            tally: g.tally,
+            first_count: g.first_count,
+            trick_count: g.trick_count,
+            base_ptr: g.base_ptr,
+            intr_at_switch: g.intr_at_switch,
+            bm_at_switch: g.bm_at_switch,
         }
     }
     fn put(self, g: &mut Globals) {
@@ -486,6 +500,12 @@ impl Scratch {
         g.cur_order = self.cur_order;
         g.def_ref = self.def_ref;
         g.long_state = self.long_state;
+        g.tally = self.tally;
+        g.first_count = self.first_count;
+        g.trick_count = self.trick_count;
+        g.base_ptr = self.base_ptr;
+        g.intr_at_switch = self.intr_at_switch;
+        g.bm_at_switch = self.bm_at_switch;
     }
 }
 
