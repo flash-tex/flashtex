@@ -64,7 +64,6 @@ impl Globals {
         {
             { let __ix359 = self.def_ref; let __v360 = self.avail; __av_mem[crate::ix::U((__ix359) as usize)].set_hh_rh(__v360); }
             self.avail = self.def_ref;
-            self.dl_free(self.def_ref);
             self.dyn_used = (self.dyn_used).wrapping_sub(1i32);
         }
         if (q == null) {
@@ -464,7 +463,6 @@ impl Globals {
                         {
                             { let __ix375 = self.def_ref; let __v376 = self.avail; __av_mem[crate::ix::U((__ix375) as usize)].set_hh_rh(__v376); }
                             self.avail = self.def_ref;
-                            self.dl_free(self.def_ref);
                             self.dyn_used = (self.dyn_used).wrapping_sub(1i32);
                         }
                         self.def_ref = save_def_ref;
@@ -5310,7 +5308,6 @@ impl Globals {
                                                                     {
                                                                         { let __ix507 = self.temp_ptr; let __v508 = self.avail; __av_mem[crate::ix::U((__ix507) as usize)].set_hh_rh(__v508); }
                                                                         self.avail = self.temp_ptr;
-                                                                        self.dl_free(self.temp_ptr);
                                                                         self.dyn_used = (self.dyn_used).wrapping_sub(1i32);
                                                                     }
                                                                 }
@@ -5831,7 +5828,6 @@ impl Globals {
                                                                     {
                                                                         { let __ix544 = self.temp_ptr; let __v545 = self.avail; __av_mem[crate::ix::U((__ix544) as usize)].set_hh_rh(__v545); }
                                                                         self.avail = self.temp_ptr;
-                                                                        self.dl_free(self.temp_ptr);
                                                                         self.dyn_used = (self.dyn_used).wrapping_sub(1i32);
                                                                     }
                                                                 }
@@ -5964,7 +5960,6 @@ impl Globals {
                                 {
                                     { let __ix554 = self.temp_ptr; let __v555 = self.avail; __av_mem[crate::ix::U((__ix554) as usize)].set_hh_rh(__v555); }
                                     self.avail = self.temp_ptr;
-                                    self.dl_free(self.temp_ptr);
                                     self.dyn_used = (self.dyn_used).wrapping_sub(1i32);
                                 }
                             }
@@ -5976,7 +5971,6 @@ impl Globals {
                         {
                             { let __ix556 = self.temp_ptr; let __v557 = self.avail; __av_mem[crate::ix::U((__ix556) as usize)].set_hh_rh(__v557); }
                             self.avail = self.temp_ptr;
-                            self.dl_free(self.temp_ptr);
                             self.dyn_used = (self.dyn_used).wrapping_sub(1i32);
                         }
                     }

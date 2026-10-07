@@ -18,12 +18,6 @@
 %   writer keeps in a side table indexed like |mem|. SyncTeX's file tag
 %   and line, in the last two words of some nodes (changes/synctex.ch, kept
 %   for TeX Live's memory layout), carry no column and are not used here.
-% * |dl_free(p)| and |dl_free_node(p,s)|, as memory is given back
-%   (|free_avail|, |flush_list|, |free_node|): the side table's entries of
-%   the freed words go back to 0, so that only what is allocated has a
-%   position. The incremental engine's convergence test compares the table
-%   (src/incr.rs): a word that differs between two runs is then a live
-%   node's (or token's) position, never what a freed word happened to keep.
 % * |dl_copy(r,p)| in |copy_node_list|: the copy |r| of node |p| keeps |p|'s
 %   position (LaTeX's output routine ships copies of what the paragraphs
 %   made).
@@ -49,14 +43,6 @@ dl_new_node(p);
 get_avail:=p;
 @z
 
-@x pdftex.web l.3141 - free_avail: the freed word has no position
-@d free_avail(#)== {single-word node liberation}
-  begin link(#):=avail; avail:=#;
-@y
-@d free_avail(#)== {single-word node liberation}
-  begin link(#):=avail; avail:=#; dl_free(#);
-@z
-
 @x pdftex.web l.3154 - fast_get_avail: the display list notes the new node
   else  begin avail:=link(#); link(#):=null;
     @!stat incr(dyn_used);@+tats@/
@@ -68,23 +54,11 @@ get_avail:=p;
     end;
 @z
 
-@x pdftex.web l.3168 - flush_list: the freed words have no position
-  repeat q:=r; r:=link(r); @!stat decr(dyn_used);@+tats@/
-@y
-  repeat q:=r; r:=link(r); dl_free(q); @!stat decr(dyn_used);@+tats@/
-@z
-
 @x pdftex.web l.3227 - get_node: the display list notes the new node
 found: link(r):=null; {this node is now nonempty}
 @y
 found: link(r):=null; {this node is now nonempty}
 dl_new_node(r);
-@z
-
-@x pdftex.web l.3293 - free_node: the freed words have no position
-begin node_size(p):=s; link(p):=empty_flag;
-@y
-begin dl_free_node(p,s); node_size(p):=s; link(p):=empty_flag;
 @z
 
 @x pdftex.web l.4608 - copy_node_list: a copy keeps its original's place
@@ -155,8 +129,6 @@ changes/displaylist.ch).
 {\.{src/displaylist}}
 procedure dl_new_node(@!p:pointer); external;
 procedure dl_copy(@!r,@!p:pointer); external;
-procedure dl_free(@!p:pointer); external;
-procedure dl_free_node(@!p:pointer;@!s:halfword); external;
 procedure dl_node(@!p:pointer); external;
 procedure dl_hyph_begin(@!p:pointer); external;
 procedure dl_hyph_end; external;
