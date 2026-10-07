@@ -3363,6 +3363,9 @@ impl Globals {
                     {
                         self.ckpt_arm_level = self.input_ptr;
                         self.ckpt_arm_cs = null;
+                        if (self.ckpt_on_arm != 0i32) {
+                            self.ckpt_request = self.ckpt_on_arm;
+                        }
                     }
                 }
             }
