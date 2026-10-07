@@ -71,7 +71,9 @@ const TOK_VAL: i32 = k::tok_val;
 /// The longest token list or shape kept by value (a longer one abandons).
 const MAX_LIST: usize = 1 << 16;
 /// Variants kept per macro, least recently used dropped first.
-const MAX_VARIANTS: usize = 8;
+/// (A page of *Infinite Descent* measures a dozen frames, each with its
+/// own key, and a typed letter alternates two states of each: 8 thrashed.)
+const MAX_VARIANTS: usize = 64;
 /// Bytes of recordings kept in all, roughly.
 const MAX_BYTES: usize = 64 << 20;
 /// Recordings abandoned in a row before a macro is no longer recorded.
@@ -188,7 +190,35 @@ struct Context {
     hyph_version: i32,
 }
 
+/// A hash of K1, the context, K2 and K4: a variant is compared in full only
+/// when its hash matches (a filter; the comparison decides).
+fn key_hash(k1: &[i32], ctx: &Context, k2: &[i32], k4: &[i32]) -> u64 {
+    let mut h: u64 = 0x9e37_79b9_7f4a_7c15;
+    let mut mix = |x: i32| {
+        h = (h ^ x as u32 as u64).wrapping_mul(0x0100_0000_01b3).rotate_left(23);
+    };
+    for &x in k1.iter().chain(k2).chain(k4) {
+        mix(x);
+    }
+    for x in [
+        ctx.mode,
+        ctx.interaction,
+        ctx.align_state,
+        ctx.scanner_status,
+        ctx.par_token,
+        ctx.font_version,
+        ctx.hyph_version,
+        k1.len() as i32,
+        k2.len() as i32,
+        k4.len() as i32,
+    ] {
+        mix(x);
+    }
+    h
+}
+
 struct Entry {
+    hash: u64,
     /// K1: the macro's body and its arguments.
     k1: Vec<i32>,
     ctx: Context,
@@ -824,6 +854,7 @@ impl Globals {
         let ctx = self.bm_ctx(scanner);
         let k2 = self.bm_k2();
         let k4 = self.bm_k4();
+        let hash = key_hash(&k1, &ctx, &k2, &k4);
         // find a variant whose key holds
         let found = ST.with(|s| {
             let s = s.borrow();
@@ -831,7 +862,7 @@ impl Globals {
                 return None;
             };
             for (i, e) in v.iter().enumerate() {
-                if e.k1 == k1 && e.ctx == ctx && e.k2 == k2 && e.k4 == k4 {
+                if e.hash == hash && e.k1 == k1 && e.ctx == ctx && e.k2 == k2 && e.k4 == k4 {
                     if e.line.is_some_and(|l| l != self.line) {
                         continue;
                     }
@@ -1548,6 +1579,7 @@ impl Globals {
             let now = s.clock;
             s.aborts.remove(&rec.cs);
             let entry = Entry {
+                hash: key_hash(&rec.k1, &rec.ctx, &rec.k2, &rec.k4),
                 k1: rec.k1,
                 ctx: rec.ctx,
                 k2: rec.k2,
