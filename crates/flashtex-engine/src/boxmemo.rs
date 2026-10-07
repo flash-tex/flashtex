@@ -1097,6 +1097,10 @@ impl Globals {
             .chain([
                 self.page_tail as i64,
                 self.page_contents as i64,
+                self.best_page_break as i64,
+                self.least_page_cost as i64,
+                self.best_size as i64,
+                self.page_max_depth as i64,
                 self.last_glue as i64,
                 self.last_penalty as i64,
                 self.last_kern as i64,
@@ -2260,6 +2264,14 @@ impl Globals {
         // reused: made null on both paths (the convergence test's
         // `temp_head` and `backup_head` rule, iso.rs, for one more head)
         self.bm_null_hold_head();
+        // The page builder's best break so far: a call never moves it (the
+        // recording's end check compares it with its start), so both paths
+        // hold the same pointer; but between the page builder's runs it may
+        // point at a node `iso.rs` does not reach from its roots (it is
+        // compared only where pages ship, where it is dead). Left out of
+        // the comparison, and put back.
+        let bpb = self.best_page_break;
+        self.best_page_break = 0;
         let result = (|| -> Result<usize, String> {
             let n = self.checkpoint()?;
             self.restore(fv.ck)?;
@@ -2270,6 +2282,7 @@ impl Globals {
             pop_used_up(self);
             scratch.put(self);
             self.bm_null_hold_head();
+            self.best_page_break = 0;
             let r = crate::incr::same_state(self, n);
             if r.is_err() && debug() {
                 self.bm_locate_debug(r.as_ref().err().unwrap());
@@ -2277,6 +2290,7 @@ impl Globals {
             self.abandon_pending();
             r
         })();
+        self.best_page_break = bpb;
         let ck = fv.ck;
         self.retain_checkpoints(&|id| id != ck);
         let fail = with_config(|c| c.verify_fail);
