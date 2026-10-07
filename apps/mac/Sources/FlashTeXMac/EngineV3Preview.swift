@@ -374,7 +374,11 @@ final class EngineV3PagesView: NSView {
     /// `FLASHTEX_V3_PPP` (evidence only): pages at exactly this many pixels
     /// per point, whatever the pane width and zoom.
     static let fixedPixelsPerPoint = ProcessInfo.processInfo.environment["FLASHTEX_V3_PPP"].flatMap(Double.init)
-    private static let rasterQueue = DispatchQueue(label: "flashtex.engine-v3.raster", qos: .userInteractive, attributes: .concurrent)
+    /// `.workItem`: each raster's autoreleased objects (the IOSurface and
+    /// the contents it replaced) go when its block ends, not whenever GCD
+    /// drains the worker thread's pool.
+    private static let rasterQueue = DispatchQueue(label: "flashtex.engine-v3.raster", qos: .userInteractive, attributes: .concurrent,
+                                                   autoreleaseFrequency: .workItem)
     private let margin: CGFloat = 16, gap: CGFloat = 12
     override var isFlipped: Bool { true }
 
