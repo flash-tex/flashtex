@@ -39,14 +39,15 @@ boundary agreed on #1319 (2026-10-06) splits the work:
 ## 2. The unit: a *measure call*
 
 A **measure call** is a call of a registered macro, with or without parameters. It qualifies when:
-1. `big_switch`'s `get_x_token` expands it (D9's `intr_at_switch`), so `main_control` executes all of
-   its body;
+1. `big_switch`'s own `get_x_token` calls it, with no `expand` in progress (`bm_at_switch` and
+   `expand_depth_count=0`), so `main_control` executes all of its body. D9's `intr_at_switch` is
+   stricter than needed here: it is cleared by any expansion in the same `get_x_token`, such as the
+   `\fi` just before `\fb@sizeofframe` in `\MakeFramed`;
 2. it is balanced: groups, conditionals, `align_state` and the nest are at the end what they were at
    the start;
 3. **no node it makes reaches a list outside it**: every list it builds is inside a box it discards
    before the end;
-4. its only lasting effects are assignments: global ones to `eqtb` entries and sparse registers, and
-   the scalars of §4.3.
+4. its only lasting effects are its assignments and groups (§4.3) and `last_badness`.
 
 `\fb@sizeofframe#1` is the case that matters:
 
@@ -66,7 +67,8 @@ scanner@>` (tex.web §389):
 
 ```
 @<Feed the macro body and its parameters to the scanner@>;
-if bm_on then if intr_at_switch then if bm_cand[warning_index]<>0 then flashtex_bm_call(n);
+if bm_on then if bm_at_switch then if expand_depth_count=0 then
+  if bm_cand[warning_index] then flashtex_bm_call(n,save_scanner_status);
 exit: ...
 ```
 
@@ -94,10 +96,15 @@ offer, with no hashes, so it cannot collide (D8's lesson).
 | K3 | the meaning of every control sequence the recording read before writing it | precisely: `get_next`'s delivered `cur_cs`, `\csname`/`\ifcsname` look-ups (the D9 read points, with BOX-MEMO's own hooks). By content: macros by their tokens, the rest by `(eq_type, equiv)` |
 | K4 | e-TeX's sparse registers (`\count`, `\dimen`, `\skip`, `\muskip` and `\toks` above 255) | conservatively: every entry of the sparse trees, by (type, number, value), values by content as in K2 |
 | K5 | the fonts and the hyphenation exceptions | two **version words** in the word space, `bm_font_version` and `bm_hyph_version`. Each gets a fresh, never-reused number at every `\fontdimen`, `\hyphenchar`, `\skewchar`, pdfTeX font-code (`\efcode`, `\lpcode`, `\rpcode`, ...), `\pdfcopyfont`/`\letterspacefont` and `\hyphenation`. A restore takes them back with the arrays they describe, and since a number is never reused, a version names exactly one state |
+| K7 | names `\ifcsname` looked up and did not find; box registers read while void | each is still absent or undefined, and still void |
 | K6 | the context | `\globaldefs = 0`, no pending `\afterassignment`, the mode, and `interaction`. Tracing parameters are in K2, and a recording that printed anything is abandoned (§4.1) |
 
-**Box registers** are not in the key. A recording that **reads** a box register it did not first
-write is abandoned. Reads are `fetch_box` (`\box`, `\copy`, `\unhbox`, `\vsplit`, `\wd`, `\ifvoid`,
+**Box registers** are not in the key. A box register the recording reads must be one of two kinds:
+- one it wrote first;
+- one that is void when read, such as LaTeX's `\voidb@x`. Its voidness becomes part of the key
+  (K7).
+
+Any other box read abandons the recording. Reads are `fetch_box` (`\box`, `\copy`, `\unhbox`, `\vsplit`, `\wd`, `\ifvoid`,
 ...), `\leftmarginkern`/`\rightmarginkern` and `\showbox`. So `\fb@sizeofframe`'s `\@tempboxa`,
 which holds the edited theorem, never invalidates it.
 
@@ -169,35 +176,49 @@ A recording ends at `big_switch` once every input level from the body's on is us
 - the string, hash and font counters;
 - the output counters and the page-builder state of §4.1.
 
-### 4.3 The effects
+### 4.3 The effects: an operation log, as D9 keeps one
 
-The **effects** are what the call leaves behind, taken at the end:
-1. **`eqtb` entries assigned at any level.** From the recording's define hooks (`eq_define`,
-   `geq_define`, `eq_word_define`, `geq_word_define`). Kept: those whose `(eq_type, equiv,
-   eq_level)` (or value and `xeq_level`) now differs from the start.
-   - By §4.1 every such change is global (`level_one`).
-   - A new token list is stored by its tokens.
-   - A pointer to a list or glue spec that existed at the start is stored as *the value of the K2
-     or K3 entry that held that pointer at the start*. This is how a `\global\let` or a
-     `\skip`-to-`\skip` assignment shares structure.
-   - Two effects that share one new list share it in the replay, with the same reference count.
-   - Sharing matters: the convergence test (`iso.rs`) pairs nodes one to one, and the verifier
-     compares reference counts.
-2. **Sparse registers** whose `(value, level)` changed, by (type, number). Values are kept as in 1.
-3. **Scalars that persist and are read later.** The prototype starts with `last_badness`, written by
-   every `hpack`/`vpack`. A recording that reads `\badness` is refused, so its value at the start
-   is never an input. The verifier (§7) adds any other scalar it finds.
+A recording keeps every `eqtb` and sparse-register assignment and every group, in order, at every
+level, exactly as D9 does: `Begin(c)` (`new_save_level`), `End` (`unsave`), and `Def`/`Sa` with
+the routine (`eq_define`, `eq_word_define`, `geq_define`, `geq_word_define`, `sa_def`, `sa_w_def`,
+`gsa_def`, `gsa_w_def`) and the value. Replaying the whole log, local assignments inside the call's
+own groups included, reproduces the `eqtb`, the save stack and the sparse registers the normal path
+leaves, sharing included, because the same routines run on the same values.
+
+A value is kept **by value**, never by address:
+- an integer or dimension, or an `equiv` that is not a pointer the assignment made (a font, a
+  `\chardef`, `\relax`);
+- a glue specification made for the assignment (reference count null, as `new_spec` makes it), by
+  its five fields, or one of the static specifications (`zero_glue` and kin), whose reference
+  count the assignment takes;
+- a token list made for the assignment (`\def`, `\edef`, `\toks`), by its tokens;
+- `\let` and `\futurelet`: the meaning of the control sequence just read (`cur_cs`, D9's
+  `K_LETCS`), *as it is at the replay*. A `\global\let` therefore shares the very list the normal
+  path would share, so `iso.rs` pairs nodes one to one and the verifier's reference counts agree;
+- a `\parshape` made for the assignment, by its words.
+
+Anything else abandons the recording: a shared glue or token list from another source, e-TeX's
+penalty shapes, a sparse register's `\countdef`, or a box value. Box assignments inside the call
+are not logged: by §4.1 they are local to the call's groups, and so are undone before it ends.
+
+**Scalars.** `last_badness` is written by every `hpack`/`vpack` and read by `\badness`, which a
+recording refuses. Its final value is part of the entry, and the replay sets it. The verifier (§7)
+reports any other scalar that differs.
 
 ## 5. Replay
 
-1. `end_token_list` pops the body (and its parameters).
-2. With `rs_on`, the L5 read-set is told about every K3 control sequence and every assigned one, as
-   D9's `intr_report_reads` does.
-3. The effects are made in recorded order, through `geq_define`/`geq_word_define` and e-TeX's
-   `gsa_def`/`gsa_w_def`. That gives the `eq_destroy` of the old values, D9's watch reports
-   (`flashtex_intr_touch`) and `\tracingassigns`. Tracing is excluded anyway: a recording made
-   with tracing on printed, so it never committed.
-4. The recorded scalars are set.
+1. `end_token_list` pops the body and its parameters.
+2. With `rs_on`, the L5 read-set is told about the macro, every K3 control sequence, every assigned
+   control sequence and every `\let` source, as D9's `intr_report_reads` does.
+3. The log is replayed in order through `new_save_level`, `unsave`, `eq_define` and the rest, and
+   e-TeX's `find_sa_element(t,n,true)` with the `sa_def` family. That gives the `eq_destroy` of
+   old values, D9's watch reports (`flashtex_intr_touch`) and the save-stack entries. A recording
+   made with tracing on printed something, so it never committed.
+4. `last_badness` is set.
+
+The log of a `\fb@sizeofframe` around a TikZ frame holds a few thousand operations. Its replay
+costs a few M instructions, against 37–40 M for the call. Eliding operations whose group closes
+inside the call is MACRO-REPLAY revision 5's §11.5 and is not done here.
 
 ## 6. Storage, checkpoints and restores
 
@@ -227,9 +248,14 @@ The **effects** are what the call leaves behind, taken at the end:
 2. run the normal path, observed by a verifying recording (any refusal is a difference);
 3. capture N;
 4. restore C and replay;
-5. compare the replay's state I with N, over every word either path wrote: `mem` through what
-   reaches it, token lists by tokens and reference count, glue specs by fields, the save stack
-   entry by entry, and scalars except the verifier's scratch list.
+5. compare the replay's state I with N.
+
+*As prototyped:* a call the guard admits runs on the normal path under a fresh recording, which
+must not be abandoned. Its operation log and `last_badness` are then compared with the entry's.
+With the guard holding, equal logs replayed from an equal state leave equal `eqtb`, save stack and
+sparse registers; §4.2's end checks cover the rest. The full word-space diff of D9's verifier
+(`intrinsics_verify.rs`) is the gate's next step: it also catches a write the model does not
+expect.
 
 `FLASHTEX_BOXMEMO_VERIFY_FAIL=1` makes any difference exit 3.
 

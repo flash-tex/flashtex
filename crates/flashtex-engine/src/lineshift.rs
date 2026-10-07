@@ -104,6 +104,9 @@ struct St {
     taints: Vec<Taint>,
     /// The journal's entries since the last checkpoint.
     events: Vec<LineRead>,
+    /// The entries `record` has taken from `events` so far (BOX-MEMO's
+    /// count of entries made, `journal_mark`).
+    taken: u64,
 }
 
 thread_local! {
@@ -135,9 +138,26 @@ pub fn reset() {
 pub fn record(g: &Globals) -> Rec {
     let marks = marks(g);
     with(|s| Rec {
-        here: std::mem::take(&mut s.events),
+        here: {
+            s.taken += s.events.len() as u64;
+            std::mem::take(&mut s.events)
+        },
         marks,
         taints: s.taints.clone(),
+    })
+}
+
+/// For BOX-MEMO (src/boxmemo.rs): the journal entries made so far, the
+/// live taints, and whether a definition is confining reads. A recorded
+/// call whose run changes any of them is not replayed (a replay would make
+/// no entry and mark no list).
+pub fn journal_mark() -> (u64, Vec<(i32, i32)>, bool) {
+    with(|s| {
+        (
+            s.taken + s.events.len() as u64,
+            s.taints.iter().map(|t| (t.head, t.first)).collect(),
+            s.confine || !s.def_reads.is_empty(),
+        )
     })
 }
 

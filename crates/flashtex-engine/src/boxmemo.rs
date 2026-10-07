@@ -147,10 +147,20 @@ enum Op {
     End,
     /// `eqtb[p]`: kind 0 `eq_define`, 1 `eq_word_define`, 2 `geq_define`,
     /// 3 `geq_word_define`.
-    Def { p: i32, t: i32, v: Val, kind: i32 },
+    Def {
+        p: i32,
+        t: i32,
+        v: Val,
+        kind: i32,
+    },
     /// A sparse register (type, number): kind 0 `sa_def`, 1 `sa_w_def`,
     /// 2 `gsa_def`, 3 `gsa_w_def`.
-    Sa { t: i32, n: i32, v: Val, kind: i32 },
+    Sa {
+        t: i32,
+        n: i32,
+        v: Val,
+        kind: i32,
+    },
 }
 
 /// A control sequence's meaning as the key keeps it.
@@ -188,6 +198,8 @@ struct Entry {
     /// Box registers read before written, void when read (LaTeX's
     /// `\voidb@x`).
     voids: Vec<i32>,
+    /// `line` when the recording read `\inputlineno` (LaTeX's `\begin`).
+    line: Option<i32>,
     ops: Vec<Op>,
     last_badness: i32,
     last_used: u64,
@@ -215,6 +227,8 @@ struct Frame {
     interaction: i32,
     arm: (i32, i32),
     outputs: (i32, i32, u64, usize, usize),
+    /// The line-shift journal (`crate::lineshift::journal_mark`).
+    lines: (u64, Vec<(i32, i32)>, bool),
 }
 
 struct Rec {
@@ -231,6 +245,7 @@ struct Rec {
     k3: Vec<(i32, Meaning)>,
     absent: Vec<Vec<i32>>,
     voids: Vec<i32>,
+    line_read: bool,
     seen: HashSet<i32>,
     boxes: HashSet<i32>,
     ops: Vec<Op>,
@@ -269,7 +284,10 @@ fn with_config<R>(f: impl FnOnce(&Config) -> R) -> R {
                     .filter(|s| !s.is_empty())
                     .map(|s| s.as_bytes().to_vec())
                     .collect(),
-                Err(_) => DEFAULT_NAMES.iter().map(|s| s.as_bytes().to_vec()).collect(),
+                Err(_) => DEFAULT_NAMES
+                    .iter()
+                    .map(|s| s.as_bytes().to_vec())
+                    .collect(),
             };
             *c = Some(Config {
                 mode,
@@ -587,7 +605,10 @@ impl Globals {
                     self.str_start[t as usize + 1] as usize,
                 );
                 if b - a == name.len()
-                    && self.str_pool[a..b].iter().zip(name).all(|(&c, &n)| c as i32 == n)
+                    && self.str_pool[a..b]
+                        .iter()
+                        .zip(name)
+                        .all(|(&c, &n)| c as i32 == n)
                 {
                     return Some(p);
                 }
@@ -696,6 +717,7 @@ impl Globals {
                 crate::system::terminal_len(),
                 crate::system::external_effects_len(),
             ),
+            lines: crate::lineshift::journal_mark(),
         }
     }
 }
@@ -802,6 +824,9 @@ impl Globals {
             };
             for (i, e) in v.iter().enumerate() {
                 if e.k1 == k1 && e.ctx == ctx && e.k2 == k2 && e.k4 == k4 {
+                    if e.line.is_some_and(|l| l != self.line) {
+                        continue;
+                    }
                     return Some((i, e.k3.clone(), e.absent.clone(), e.voids.clone()));
                 }
             }
@@ -813,7 +838,11 @@ impl Globals {
                 None => true,
                 Some(p) => self.bm_eq(p).hh().b0() == k::undefined_cs,
             }) && voids.iter().all(|&n| self.bm_box_value(n) == 0);
-            if absent_ok && k3.iter().all(|(p, m)| self.bm_meaning(*p).as_ref() == Some(m)) {
+            if absent_ok
+                && k3
+                    .iter()
+                    .all(|(p, m)| self.bm_meaning(*p).as_ref() == Some(m))
+            {
                 if m == Mode::Verify {
                     return self.bm_start(cs, n, scanner, k1, ctx, k2, k4, Some(i));
                 }
@@ -860,6 +889,7 @@ impl Globals {
             k3: vec![],
             absent: vec![],
             voids: vec![],
+            line_read: false,
             seen: HashSet::new(),
             boxes: HashSet::new(),
             ops: vec![],
@@ -903,9 +933,9 @@ impl Globals {
                 s.stats.verified += 1;
                 s.stats.verify_differences += 1;
                 if s.stats.verify_details.len() < 20 {
-                    s.stats
-                        .verify_details
-                        .push(format!("normal path not pure after the guard passed: {why}"));
+                    s.stats.verify_details.push(format!(
+                        "normal path not pure after the guard passed: {why}"
+                    ));
                 }
                 // drop the entry: the guard let through a call it should not have
                 if let Some(v) = s.store.get_mut(&rec.cs) {
@@ -1237,6 +1267,12 @@ impl Globals {
                 // \gluestretch, \glueshrink, \mutoglue, \gluetomu, the
                 // \..expr scanners
                 6 | 20 | 26..=42 => true,
+                // \inputlineno: `line` joins the key (the call reads no
+                // file, so it is the same throughout)
+                4 => {
+                    self.bm_with_rec(|r| r.line_read = true);
+                    true
+                }
                 _ => false,
             };
             if !ok {
@@ -1336,9 +1372,7 @@ impl Globals {
             return;
         }
         let end = self.bm_frame();
-        let (start, scanner) = self
-            .bm_with_rec(|r| (r.start.clone(), r.scanner))
-            .unwrap();
+        let (start, scanner) = self.bm_with_rec(|r| (r.start.clone(), r.scanner)).unwrap();
         let why = if end.cur_level != start.cur_level || end.save_ptr != start.save_ptr {
             Some("Group")
         } else if end.cond != start.cond {
@@ -1351,9 +1385,7 @@ impl Globals {
             Some("Error")
         } else if self.after_token != 0 || self.scanner_status != scanner {
             Some("State")
-        } else if end.nest_ptr != start.nest_ptr
-            || end.mode != start.mode
-            || end.tail != start.tail
+        } else if end.nest_ptr != start.nest_ptr || end.mode != start.mode || end.tail != start.tail
         {
             Some("OuterList")
         } else if end.page != start.page {
@@ -1368,6 +1400,8 @@ impl Globals {
             Some("State")
         } else if end.outputs != start.outputs {
             Some("Output")
+        } else if end.lines != start.lines {
+            Some("LineShift")
         } else {
             None
         };
@@ -1384,6 +1418,7 @@ impl Globals {
     }
 
     fn bm_commit(&mut self, rec: Rec, last_badness: i32) {
+        let line = self.line;
         let bytes = 4 * (rec.k1.len() + rec.k2.len() + rec.k4.len())
             + rec
                 .k3
@@ -1397,10 +1432,18 @@ impl Globals {
                 .ops
                 .iter()
                 .map(|o| match o {
-                    Op::Def { v: Val::FreshList(l), .. } | Op::Sa { v: Val::FreshList(l), .. } => {
-                        32 + 4 * l.len()
+                    Op::Def {
+                        v: Val::FreshList(l),
+                        ..
                     }
-                    Op::Def { v: Val::FreshShape(l), .. } => 32 + 4 * l.len(),
+                    | Op::Sa {
+                        v: Val::FreshList(l),
+                        ..
+                    } => 32 + 4 * l.len(),
+                    Op::Def {
+                        v: Val::FreshShape(l),
+                        ..
+                    } => 32 + 4 * l.len(),
                     _ => 32,
                 })
                 .sum::<usize>();
@@ -1422,6 +1465,7 @@ impl Globals {
                 k3: rec.k3,
                 absent: rec.absent,
                 voids: rec.voids,
+                line: rec.line_read.then_some(line),
                 ops: rec.ops,
                 last_badness,
                 last_used: now,
@@ -1454,7 +1498,9 @@ impl Globals {
                 let victim = s
                     .store
                     .iter()
-                    .flat_map(|(&cs, v)| v.iter().enumerate().map(move |(i, e)| (e.last_used, cs, i)))
+                    .flat_map(|(&cs, v)| {
+                        v.iter().enumerate().map(move |(i, e)| (e.last_used, cs, i))
+                    })
                     .min();
                 let Some((_, cs, i)) = victim else { break };
                 let e = s.store.get_mut(&cs).unwrap().remove(i);
