@@ -446,8 +446,12 @@ thread_local! {
 /// The scalars a command reads only after writing them (D9's verifier's
 /// `EXCLUDED_SCALARS`, which every convergence point also has equal): the
 /// replay leaves them as the normal path did.
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 struct Scratch {
+    // scratch arrays, written before they are read (D9's list)
+    dig: Vec<i32>,
+    trick_buf: Vec<i32>,
+    pstack: Vec<i32>,
     cur_cmd: i32,
     cur_chr: i32,
     cur_cs: i32,
@@ -471,6 +475,9 @@ struct Scratch {
 impl Scratch {
     fn take(g: &Globals) -> Scratch {
         Scratch {
+            dig: (0..g.dig.len()).map(|i| g.dig[i]).collect(),
+            trick_buf: (0..g.trick_buf.len()).map(|i| g.trick_buf[i]).collect(),
+            pstack: (0..g.pstack.len()).map(|i| g.pstack[i]).collect(),
             cur_cmd: g.cur_cmd,
             cur_chr: g.cur_chr,
             cur_cs: g.cur_cs,
@@ -490,6 +497,21 @@ impl Scratch {
         }
     }
     fn put(self, g: &mut Globals) {
+        for (i, &v) in self.dig.iter().enumerate() {
+            if g.dig[i] != v {
+                g.dig[i] = v;
+            }
+        }
+        for (i, &v) in self.trick_buf.iter().enumerate() {
+            if g.trick_buf[i] != v {
+                g.trick_buf[i] = v;
+            }
+        }
+        for (i, &v) in self.pstack.iter().enumerate() {
+            if g.pstack[i] != v {
+                g.pstack[i] = v;
+            }
+        }
         g.cur_cmd = self.cur_cmd;
         g.cur_chr = self.cur_chr;
         g.cur_cs = self.cur_cs;
