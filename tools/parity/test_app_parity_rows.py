@@ -33,7 +33,7 @@ SWIFT_EXT = """extension FooTests {
 @MainActor final class BarTests: XCTestCase { func testHost() async throws {} }
 """
 
-RUST = "#[test]\nfn builds_it() {}\n"
+RUST = "#[test]\nfn builds_it() {}\n#[test]\nfn skips_quietly() {\n    if true {\n        return;\n    }\n}\n"
 
 
 def rows(**over):
@@ -90,6 +90,14 @@ class CheckTests(unittest.TestCase):
         with Tree() as root:
             errs = apr.check(rows(C25={"tests": ["rust:crates/x/tests/cli.rs::nope"]}), root)
             self.assertTrue(any("nope" in e for e in errs), errs)
+
+    def test_a_rust_test_that_skips_without_the_switch_fails_the_check(self):
+        with Tree() as root:
+            errs = apr.check(rows(C25={"tests": ["rust:crates/x/tests/cli.rs::skips_quietly"]}), root)
+            self.assertTrue(any("self-skips" in e and "skips_quietly" in e for e in errs), errs)
+            with open(os.path.join(root, "crates/x/tests/common.rs"), "w") as f:
+                f.write('pub fn skip() { if std::env::var_os("FLASHTEX_REQUIRE_TEXLIVE").is_some() { panic!() } }')
+            self.assertEqual(apr.check(rows(C25={"tests": ["rust:crates/x/tests/cli.rs::skips_quietly"]}), root), [])
 
     def test_rows_must_be_the_checklists(self):
         with Tree() as root:
