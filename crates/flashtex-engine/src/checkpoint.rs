@@ -1290,6 +1290,20 @@ impl Globals {
         b.get(..to.checked_sub(from)? as usize).map(|s| s.to_vec())
     }
 
+    /// Where the old run's kept bytes of output file `path` begin (its
+    /// length at the restore target; 0 when it was not open there or the
+    /// old run opened it again after it), from the branch the last
+    /// `restore` detached (`None`: not kept). Before it, the file holds
+    /// the bytes both runs had at the target.
+    pub fn pending_old_base(&self, path: &str) -> Option<u64> {
+        let p = self.layer_ref()?.pending.as_ref()?;
+        let k = system::out_key(path);
+        p.tails
+            .iter()
+            .find(|t| system::out_key(&t.path) == k)
+            .map(|t| t.base)
+    }
+
     /// The old run's whole content of output file `path`, from the branch
     /// the last `restore` detached: its tail, after the first bytes the
     /// target had, which `guard_outputs` kept when the new run truncated
