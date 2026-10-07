@@ -1356,6 +1356,23 @@ fn own_outputs(j: &ReadLog) -> Vec<String> {
     v
 }
 
+/// The files of the old run's journal `old` that a stopped run (its reads
+/// so far, `live`) has opened for output: what it holds on disk is the
+/// stopped run's own partial output, whether or not the run has read it.
+fn being_written(live: &ReadLog, old: &ReadLog) -> Vec<String> {
+    let norm = |p: &str| p.strip_prefix("./").unwrap_or(p).to_string();
+    let outs: Vec<String> = live.outputs.iter().map(|p| norm(p)).collect();
+    let mut v: Vec<String> = old
+        .files
+        .iter()
+        .filter(|f| outs.contains(&norm(&f.path)))
+        .map(|f| f.path.clone())
+        .collect();
+    v.sort();
+    v.dedup();
+    v
+}
+
 /// Write each baseline's content back (`Session::baseline`), as the
 /// engine's own output.
 fn put_back<'a>(bs: impl Iterator<Item = &'a Baseline>) -> Result<(), String> {
@@ -4199,15 +4216,25 @@ impl Session {
         // answer did, keeps the run from converging before it. (The run's
         // own reads so far are not checked here: `compile` settles or
         // abandons a stopped run whose reads changed.) What the stopped run
-        // is writing itself (the `.aux` it reopened) is not a change, as in
-        // `paused_vs_changes`. The journal is left as it was, as `dirty`
-        // leaves it.
+        // is writing itself is not a change, as in `paused_vs_changes`: the
+        // `.aux` it reopened, and a file it writes and has yet to read back
+        // (a book's hints written through its body and `\input` at its end:
+        // on disk it holds the stopped run's part so far, not what the old
+        // run read). The old run's later read of such a file is a barrier of
+        // its own (`Obs::test`'s (b'), a file one of the runs writes): the
+        // pages before it can be kept, and the run goes on live from there.
+        // The journal is left as it was, as `dirty` leaves it.
         let saved = self.journal.clone();
-        let own = system::reads_so_far()
-            .map(|l| own_outputs(&l))
+        let live = system::reads_so_far();
+        let own = live.as_ref().map(own_outputs).unwrap_or_default();
+        let writing = live
+            .as_ref()
+            .zip(self.journal.as_ref())
+            .map(|(l, j)| being_written(l, j))
             .unwrap_or_default();
         let mut fixed = self.fixed_inputs.clone();
         fixed.extend(own);
+        fixed.extend(writing);
         let saved_fixed = std::mem::replace(&mut self.fixed_inputs, fixed);
         let again = self.changes();
         self.fixed_inputs = saved_fixed;
