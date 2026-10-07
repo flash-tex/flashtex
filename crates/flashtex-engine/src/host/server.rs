@@ -604,6 +604,12 @@ fn prepare(engine: &Path, formats: &[String]) -> Json {
         ("texlive", texlive),
         ("resolver", js(resolver)),
         ("bundle", bundle),
+        // Why typesetting cannot start (no TeX Live, bundle unusable), with
+        // what to do; null when it can.
+        (
+            "setup",
+            crate::resolver::setup_problem().map_or(Json::Null, |p| js(p.message())),
+        ),
         ("formats", Json::Arr(ready)),
     ])
 }

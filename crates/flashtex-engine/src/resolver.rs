@@ -894,6 +894,66 @@ pub const TEXLIVE_SHELL_ESCAPE_COMMANDS: &str = "bibtex,bibtex8,extractbb,gregor
 l3sys-query,latexminted,makeindex,memoize-extract.pl,memoize-extract.py,repstopdf,r-mpost,\
 texosquery-jre8,";
 
+/// Why a run cannot start for want of TeX files, found before TeX runs
+/// ([`setup_problem`]); [`SetupProblem::message`] says what to do.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SetupProblem {
+    /// No TeX Live and no bundle configured.
+    NoTexFiles,
+    /// A `flashtex-bundle.lock` bundle, not in the cache, that the user has
+    /// not agreed to download.
+    NoConsent,
+    /// Offline (`FLASHTEX_BUNDLE_OFFLINE`) with the bundle not in the cache.
+    OfflineUncached,
+}
+
+impl SetupProblem {
+    /// One actionable message, for the CLI's stderr and the host's HELLO.
+    pub fn message(self) -> &'static str {
+        match self {
+            SetupProblem::NoTexFiles => {
+                "flashtex: no TeX Live installation was found and no FlashTeX TeX bundle is set up, \
+so there are no TeX files (pdflatex.fmt and the rest) to typeset with. Either: \
+in the FlashTeX app, choose \"Download TeX Files\" and click Download; \
+on the command line, set FLASHTEX_BUNDLE_URL and FLASHTEX_BUNDLE_DIGEST to a bundle \
+(or FLASHTEX_BUNDLE_LOCK to a flashtex-bundle.lock) and FLASHTEX_BUNDLE_ALLOW_FETCH=1; \
+or install TeX Live (MacTeX on macOS)."
+            }
+            SetupProblem::NoConsent => {
+                "flashtex: no TeX Live installation was found, and the FlashTeX TeX bundle \
+(flashtex-bundle.lock) has not been downloaded because downloading it has not been allowed. \
+In the FlashTeX app, choose \"Download TeX Files\" and click Download; \
+on the command line, set FLASHTEX_BUNDLE_ALLOW_FETCH=1 (and unset FLASHTEX_BUNDLE_OFFLINE); \
+or install TeX Live (MacTeX on macOS)."
+            }
+            SetupProblem::OfflineUncached => {
+                "flashtex: no TeX Live installation was found, and the FlashTeX TeX bundle is not \
+in the cache while offline mode (FLASHTEX_BUNDLE_OFFLINE) is on. Connect to the network and \
+run once with FLASHTEX_BUNDLE_OFFLINE unset so the bundle is downloaded, \
+point FLASHTEX_BUNDLE_CACHE_DIR at a cache that holds it, or install TeX Live (MacTeX on macOS)."
+            }
+        }
+    }
+}
+
+/// The [`SetupProblem`] of this process, if a run with the default resolver
+/// cannot start: no TeX Live, and the bundle unconfigured, not agreed to, or
+/// offline and uncached. None with TeX Live, or another `FLASHTEX_RESOLVER`.
+pub fn setup_problem() -> Option<SetupProblem> {
+    let which = std::env::var("FLASHTEX_RESOLVER").unwrap_or_default();
+    if !(which.is_empty() || which == "kpathsea") || find_texlive_bin().is_some() {
+        return None;
+    }
+    #[cfg(all(feature = "distribution", not(feature = "tex82")))]
+    return crate::bundle::setup_problem_with(
+        &|k| std::env::var(k).ok(),
+        &crate::bundle::lock_candidates(),
+        crate::bundle::default_cache_dir().as_deref(),
+    );
+    #[allow(unreachable_code)]
+    Some(SetupProblem::NoTexFiles)
+}
+
 /// The fetched bundle of `FLASHTEX_BUNDLE_DIGEST` (src/bundle/), if one is
 /// configured; a bundle that cannot be opened is reported, and then there
 /// is none.
@@ -903,7 +963,10 @@ fn fetched_bundle(progname: &str, engine: &str) -> Option<Box<dyn FileResolver>>
     match crate::bundle::BundleResolver::from_env(progname, engine)? {
         Ok(r) => return Some(Box::new(r)),
         Err(e) => {
-            eprintln!("flashtex: bundle: {e}");
+            match setup_problem() {
+                Some(p) => eprintln!("{}", p.message()),
+                None => eprintln!("flashtex: bundle: {e}"),
+            }
             return None;
         }
     }
@@ -943,6 +1006,10 @@ pub fn default_resolver(progname: &str, engine: &str) -> Box<dyn FileResolver> {
             // No TeX Live: the bundle, if one is configured (DESIGN.md 4.4).
             if let Some(r) = fetched_bundle(progname, engine) {
                 return r;
+            }
+            // Neither: say what to do before TeX fails to find its format.
+            if setup_problem() == Some(SetupProblem::NoTexFiles) {
+                eprintln!("{}", SetupProblem::NoTexFiles.message());
             }
         }
     }
