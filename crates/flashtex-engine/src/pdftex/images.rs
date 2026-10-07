@@ -11,6 +11,7 @@ use super::writejbig2::Jbig2Image;
 use super::writejpg::JpgImage;
 use super::writepng::PngImage;
 use crate::generated::Globals;
+use crate::persist::Codec;
 
 pub const IMAGE_TYPE_NONE: i32 = 0;
 pub const IMAGE_TYPE_PDF: i32 = 1;
@@ -74,6 +75,14 @@ pub struct ImageEntry {
     /// `group_ref`: if it's <= 0, the page has no group.
     pub group_ref: i32,
     pub data: ImageData,
+    /// Not pdfTeX's: the content hash of the file `read_image` read, which
+    /// a persisted S₀ compares with the file when it is reopened
+    /// ([`Globals::verify_persisted_images`]); `None` for an image read
+    /// with the format.
+    pub hash: Option<[u64; 2]>,
+    /// Not pdfTeX's: `write_image` has written the image (an S₀ that holds
+    /// such an image is not reopened, see [`State`]'s codec).
+    pub written: bool,
 }
 
 /// Cloned at every checkpoint (`crate::checkpoint`): the entries are
@@ -90,6 +99,17 @@ pub struct State {
     pub png: super::writepng::State,
     pub jbig2: super::writejbig2::State,
     pub epdf: pdftoepdf::State,
+    /// Not pdfTeX's: a table decoded from a persisted S₀ whose files are not
+    /// read again yet ([`Globals::verify_persisted_images`]).
+    pending: Option<Box<Pending>>,
+}
+
+/// What a table decoded from a persisted S₀ keeps for the check against
+/// its files: the position each JPEG reader had reached in its file (entry,
+/// `ftell`, `feof`), which a reader opened again must reach too.
+#[derive(Default, Clone)]
+struct Pending {
+    jpg: Vec<(usize, i64, bool)>,
 }
 
 /// `strcasecmp(a, b) == 0` for ASCII.
@@ -257,6 +277,8 @@ impl Globals {
         let Some(mut file) = super::cfile::CFile::open(&name) else {
             self.fatal_perror(&name);
         };
+        // (not pdfTeX's: the file as read, for a persisted S₀)
+        e.hash = Some(crate::persist::hash128(file.bytes()));
         let mut header = [0u8; 8];
         for h in header.iter_mut() {
             *h = file.getc() as u8;
@@ -305,6 +327,9 @@ impl Globals {
     /// opened): the program name, the file name and the system's reason on
     /// stderr, then exit.
     pub(crate) fn fatal_perror(&mut self, name: &[u8]) -> ! {
+        if probing() {
+            probe_fail(format!("{}: cannot open it", String::from_utf8_lossy(name)));
+        }
         // perror's text is strerror's: io::Error's without " (os error N)"
         let reason = match std::fs::File::open(super::cfile::os_path(name)) {
             Err(e) => {
@@ -330,6 +355,194 @@ impl Globals {
     /// as in every pdfTeX C file, hence `pas_round`, not `f64::round`.
     fn bp2int(&self, p: f32) -> i32 {
         crate::system::pas_round(p as f64 * (self.one_hundred_bp as f64 / 100.0))
+    }
+
+    /// Not pdfTeX's: finish an image table that a persisted S₀ brought
+    /// (`host::read_s0`, once the C state is in place). Every image is read
+    /// again, as `undumpimagemeta` reads the format's: with `read_image`'s
+    /// readers, in the table's order, so that the included documents'
+    /// handles and their reuse come out as the run left them. Then the
+    /// files must have the content they had when they were read, and
+    /// everything read again must equal what the table holds. `Err` says
+    /// why not (an image written already, a file changed, anything that
+    /// differs or cannot be read): the caller then runs in full. A table
+    /// not decoded from a file is left alone.
+    pub fn verify_persisted_images(&mut self) -> Result<(), String> {
+        self.with_images(|g, st| {
+            let Some(pending) = st.pending.take() else {
+                return Ok(());
+            };
+            let r = g.verify_images(st, &pending);
+            if r.is_err() {
+                *st = State::default();
+            }
+            r
+        })
+    }
+
+    fn verify_images(&mut self, st: &mut State, pending: &Pending) -> Result<(), String> {
+        fn enc_of<T: crate::persist::Codec>(x: &T) -> Vec<u8> {
+            let mut w = vec![];
+            x.enc(&mut w);
+            w
+        }
+        st.check_files()?;
+        // The readers' state, built again from nothing; the PNG reader's
+        // from the table's (`read_png_info` makes a page-group object only
+        // while there is none: it must make none here).
+        let mut epdf = pdftoepdf::State::default();
+        let mut jbig2 = super::writejbig2::State::default();
+        let mut png = st.png.clone();
+        let (major, minor) = (self.fixed_pdf_major_version, self.fixed_pdf_minor_version);
+        for (i, e) in st.images.iter_mut().enumerate() {
+            let name = e.name.clone().unwrap_or_default();
+            let shown = String::from_utf8_lossy(&name).into_owned();
+            let differs =
+                |what: &str| format!("image {i} ({shown}): {what} differs when read again");
+            let failed = |m: String| format!("image {i} ({shown}) cannot be read again: {m}");
+            let mut f = ImageEntry {
+                name: Some(name.clone()),
+                file: Some(name.clone()),
+                hash: e.hash,
+                image_type: e.image_type,
+                colorspace_ref: e.colorspace_ref,
+                ..ImageEntry::default()
+            };
+            match e.image_type {
+                IMAGE_TYPE_PDF => {
+                    let ImageData::Pdf(p) = &e.data else {
+                        return Err(differs("its type"));
+                    };
+                    let p = p.clone();
+                    // By page number, as `undumpimagemeta` does (a named
+                    // destination has selected `selected_page`); no version
+                    // warning (`errorlevel` < 0): the read gave it.
+                    let info = probe(|| {
+                        self.read_pdf_info(
+                            &mut epdf,
+                            &name,
+                            None,
+                            p.selected_page,
+                            p.page_box,
+                            major,
+                            minor,
+                            -1,
+                        )
+                    })
+                    .map_err(failed)?;
+                    f.width = self.bp2int(info.width);
+                    f.height = self.bp2int(info.height);
+                    f.rotate = info.rotate as i32;
+                    f.num_pages = info.num_pages;
+                    f.group_ref = if info.has_page_group { -1 } else { 0 };
+                    // (a page group's object number is made when the image
+                    // is first put on a page, pdftex.web)
+                    if f.group_ref == -1 && e.group_ref > 0 {
+                        f.group_ref = e.group_ref;
+                    }
+                    let q = PdfImage {
+                        orig_x: self.bp2int(info.orig_x),
+                        orig_y: self.bp2int(info.orig_y),
+                        selected_page: info.page_num,
+                        page_box: p.page_box,
+                        doc: info.doc,
+                        box_bp: [info.orig_x, info.orig_y, info.width, info.height],
+                    };
+                    let key = |p: &PdfImage| {
+                        (
+                            [p.orig_x, p.orig_y, p.selected_page, p.page_box],
+                            p.doc,
+                            p.box_bp.map(f32::to_bits),
+                        )
+                    };
+                    if key(&q) != key(&p) {
+                        return Err(differs("the page"));
+                    }
+                    f.data = ImageData::Pdf(q);
+                }
+                IMAGE_TYPE_PNG => {
+                    if !matches!(e.data, ImageData::Png(_)) {
+                        return Err(differs("its type"));
+                    }
+                    f.num_pages = 1;
+                    let (objs, group) = (self.obj_ptr, self.pdf_page_group_val);
+                    let r = probe(|| self.read_png_info(&mut png, &mut f));
+                    let made_object = self.obj_ptr != objs;
+                    self.pdf_page_group_val = group;
+                    r.map_err(failed)?;
+                    if made_object {
+                        return Err(differs("the page group"));
+                    }
+                    // The page group in force when it was read: the file
+                    // says only whether it needs one.
+                    if (f.group_ref != 0) != (e.group_ref != 0) {
+                        return Err(differs("the page group"));
+                    }
+                    f.group_ref = e.group_ref;
+                }
+                IMAGE_TYPE_JPG => {
+                    let ImageData::Jpg(j) = &e.data else {
+                        return Err(differs("its type"));
+                    };
+                    let had = (j.color_space, j.bits_per_component, j.length);
+                    f.num_pages = 1;
+                    probe(|| self.read_jpg_info(&mut f)).map_err(failed)?;
+                    let ImageData::Jpg(k) = &f.data else {
+                        return Err(differs("its type"));
+                    };
+                    let at = pending.jpg.iter().find(|x| x.0 == i).map(|x| (x.1, x.2));
+                    if (k.color_space, k.bits_per_component, k.length) != had
+                        || at != Some((k.file.tell(), k.file.feof()))
+                    {
+                        return Err(differs("the JPEG header"));
+                    }
+                    if Some(crate::persist::hash128(k.file.bytes())) != e.hash {
+                        return Err(format!("image {i} ({shown}) changed"));
+                    }
+                }
+                IMAGE_TYPE_JBIG2 => {
+                    let ImageData::Jbig2(j) = &e.data else {
+                        return Err(differs("its type"));
+                    };
+                    f.data = ImageData::Jbig2(j.clone());
+                    probe(|| self.read_jbig2_info(&mut jbig2, &mut f)).map_err(failed)?;
+                }
+                _ => return Err(differs("its type")),
+            }
+            let plain = |e: &ImageEntry| {
+                (
+                    (e.name.clone(), e.file.clone(), e.hash, e.written),
+                    [
+                        e.image_type,
+                        e.color_type,
+                        e.width,
+                        e.height,
+                        e.rotate,
+                        e.x_res,
+                        e.y_res,
+                        e.num_pages,
+                        e.colorspace_ref,
+                        e.group_ref,
+                    ],
+                )
+            };
+            if plain(&f) != plain(&*e) {
+                return Err(differs("what the table holds"));
+            }
+            // the readers opened again stand for the run's
+            *e = f;
+        }
+        if enc_of(&png) != enc_of(&st.png) {
+            return Err("the PNG reader's state differs when the images are read again".into());
+        }
+        if enc_of(&jbig2) != enc_of(&st.jbig2) {
+            return Err("the JBIG2 reader's state differs when the images are read again".into());
+        }
+        if enc_of(&epdf) != enc_of(&st.epdf) {
+            return Err("the included PDF documents differ when the images are read again".into());
+        }
+        st.epdf = epdf;
+        Ok(())
     }
 
     /// `readimage` (`\pdfximage`): find and read image `s`, and return its
@@ -437,6 +650,7 @@ impl Globals {
                 g.pdftex_fail("unknown type of image");
             };
             let name = e.name.clone().unwrap_or_default();
+            e.written = true;
             super::output::set_cur_file_name(Some(&name));
             let mut s = b" <".to_vec();
             s.extend_from_slice(&name);
@@ -626,7 +840,67 @@ impl Globals {
     }
 }
 
+thread_local! {
+    /// [`probe`] is running: a reader's failure returns to it.
+    static PROBING: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Not pdfTeX's: a reader's failure while [`probing`] (what `pdftex_fail`
+/// or a fatal file error would have printed), unwound to [`probe`].
+struct ProbeFail(String);
+
+/// A reader is reading an image again for a persisted S₀
+/// ([`Globals::verify_persisted_images`]): `pdftex_fail` and the fatal file
+/// errors return to [`probe`], printing nothing, instead of ending the run.
+pub(crate) fn probing() -> bool {
+    PROBING.with(|p| p.get())
+}
+
+/// Return from a reader to [`probe`] with `msg`.
+pub(crate) fn probe_fail(msg: String) -> ! {
+    std::panic::resume_unwind(Box::new(ProbeFail(msg)))
+}
+
+/// Run a reader for [`Globals::verify_persisted_images`]: its failure is an
+/// `Err`, as is a panic (an S₀ that cannot be checked is not used).
+fn probe<R>(f: impl FnOnce() -> R) -> Result<R, String> {
+    let was = PROBING.with(|p| p.replace(true));
+    let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(f));
+    PROBING.with(|p| p.set(was));
+    r.map_err(|e| match e.downcast::<ProbeFail>() {
+        Ok(p) => p.0,
+        Err(_) => "the reader panicked".to_string(),
+    })
+}
+
 impl State {
+    /// [`Globals::verify_persisted_images`]'s first test, before a reader
+    /// opens anything: no image is written or freed (an S₀ is reopened only
+    /// while its images are read and no more), each has its file's content
+    /// hash, and each file has that content now.
+    fn check_files(&self) -> Result<(), String> {
+        for (i, e) in self.images.iter().enumerate() {
+            let shown = String::from_utf8_lossy(e.file.as_deref().unwrap_or_default()).into_owned();
+            let Some(name) = &e.name else {
+                return Err(format!("image {i} ({shown}) was written before S0"));
+            };
+            if e.written {
+                return Err(format!("image {i} ({shown}) was written before S0"));
+            }
+            let Some(hash) = e.hash else {
+                return Err(format!(
+                    "image {i} ({shown}) has no content hash (it came with the format)"
+                ));
+            };
+            let now = std::fs::read(super::cfile::os_path(name))
+                .map_err(|err| format!("image {i} ({shown}): {err}"))?;
+            if crate::persist::hash128(&now) != hash {
+                return Err(format!("image {i} ({shown}) changed"));
+            }
+        }
+        Ok(())
+    }
+
     /// The same image table (`CState::same_as`), for two copies that are
     /// not the same one: an image read, written or deleted after the
     /// restart point makes a convergence test fail (a missed convergence,
@@ -637,23 +911,244 @@ impl State {
 }
 
 /// A persisted checkpoint (`host::Session::save_s0`) carries the image
-/// table only while it is empty: an open image is a reader of a file that
-/// the checkpoint's read-set already keys, but its handles are not bytes.
-/// Decoding a table that had images fails, and the caller runs in full.
+/// table as `dumpimagemeta` dumps it into a format, with what a copy of the
+/// table carries besides (`crate::checkpoint`): every entry's fields (a
+/// freed one's too), its type's keys, the readers' state, the included PDF
+/// documents by handle, and each file's content hash. The open readers are
+/// not bytes: a decoded table is `pending` until
+/// [`Globals::verify_persisted_images`] has read every image again and
+/// compared.
 impl crate::persist::Codec for State {
     fn enc(&self, w: &mut Vec<u8>) {
         self.images.len().enc(w);
+        for e in &self.images {
+            e.name.enc(w);
+            e.file.enc(w);
+            e.hash.enc(w);
+            e.written.enc(w);
+            [
+                e.image_type,
+                e.color_type,
+                e.width,
+                e.height,
+                e.rotate,
+                e.x_res,
+                e.y_res,
+                e.num_pages,
+                e.colorspace_ref,
+                e.group_ref,
+            ]
+            .enc(w);
+            match &e.data {
+                ImageData::None => 0u8.enc(w),
+                ImageData::Pdf(p) => {
+                    1u8.enc(w);
+                    [p.orig_x, p.orig_y, p.selected_page, p.page_box].enc(w);
+                    p.doc.enc(w);
+                    p.box_bp.map(f32::to_bits).enc(w);
+                }
+                ImageData::Png(_) => 2u8.enc(w),
+                ImageData::Jpg(j) => {
+                    3u8.enc(w);
+                    j.color_space.enc(w);
+                    j.bits_per_component.enc(w);
+                    j.length.enc(w);
+                    j.file.tell().enc(w);
+                    j.file.feof().enc(w);
+                }
+                ImageData::Jbig2(j) => {
+                    4u8.enc(w);
+                    j.selected_page.enc(w);
+                }
+            }
+        }
         self.image_limit.enc(w);
         self.allocated.enc(w);
+        self.png.enc(w);
+        self.jbig2.enc(w);
+        self.epdf.enc(w);
     }
     fn dec(r: &mut crate::persist::Reader) -> Result<Self, String> {
-        if usize::dec(r)? != 0 {
-            return Err("the persisted state holds images".into());
+        let n = usize::dec(r)?;
+        if n > r.buf.len() {
+            return Err("persisted state: bad length".into());
+        }
+        let mut pending = Pending::default();
+        let mut images = Vec::with_capacity(n);
+        for i in 0..n {
+            let mut e = ImageEntry {
+                name: Codec::dec(r)?,
+                file: Codec::dec(r)?,
+                hash: Codec::dec(r)?,
+                written: Codec::dec(r)?,
+                ..ImageEntry::default()
+            };
+            let [t, c, wd, ht, rot, xr, yr, np, cs, gr] = <[i32; 10]>::dec(r)?;
+            (e.image_type, e.color_type, e.width, e.height, e.rotate) = (t, c, wd, ht, rot);
+            (e.x_res, e.y_res, e.num_pages, e.colorspace_ref, e.group_ref) = (xr, yr, np, cs, gr);
+            e.data = match u8::dec(r)? {
+                0 => ImageData::None,
+                1 => {
+                    let [orig_x, orig_y, selected_page, page_box] = <[i32; 4]>::dec(r)?;
+                    ImageData::Pdf(PdfImage {
+                        orig_x,
+                        orig_y,
+                        selected_page,
+                        page_box,
+                        doc: usize::dec(r)?,
+                        box_bp: <[u32; 4]>::dec(r)?.map(f32::from_bits),
+                    })
+                }
+                2 => ImageData::Png(PngImage::unopened(e.name.as_deref().unwrap_or_default())),
+                3 => {
+                    let j = JpgImage {
+                        color_space: i32::dec(r)?,
+                        bits_per_component: i32::dec(r)?,
+                        length: u64::dec(r)?,
+                        // (the file's bytes come with the check)
+                        file: super::cfile::CFile::from_bytes(Vec::new()),
+                    };
+                    pending.jpg.push((i, i64::dec(r)?, bool::dec(r)?));
+                    ImageData::Jpg(j)
+                }
+                4 => ImageData::Jbig2(Jbig2Image {
+                    selected_page: i32::dec(r)?,
+                }),
+                k => return Err(format!("persisted state: image data of kind {k}")),
+            };
+            images.push(e);
         }
         Ok(State {
+            images,
             image_limit: i32::dec(r)?,
             allocated: bool::dec(r)?,
-            ..State::default()
+            png: Codec::dec(r)?,
+            jbig2: Codec::dec(r)?,
+            epdf: Codec::dec(r)?,
+            pending: Some(Box::new(pending)),
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::super::cfile::{CFile, Whence};
+    use super::*;
+    use crate::persist::{hash128, Reader};
+
+    fn enc_of(st: &State) -> Vec<u8> {
+        let mut w = vec![];
+        st.enc(&mut w);
+        w
+    }
+
+    fn table(name: &[u8], hash: [u64; 2]) -> State {
+        let mut jpg = CFile::from_bytes(b"\xFF\xD8xyz".to_vec());
+        jpg.seek(3, Whence::Set);
+        let e = |t: i32, data: ImageData| ImageEntry {
+            name: Some(name.to_vec()),
+            file: Some(name.to_vec()),
+            hash: Some(hash),
+            image_type: t,
+            width: 100,
+            height: -7,
+            data,
+            ..ImageEntry::default()
+        };
+        State {
+            images: vec![
+                e(
+                    IMAGE_TYPE_PDF,
+                    ImageData::Pdf(PdfImage {
+                        orig_x: 1,
+                        orig_y: 2,
+                        selected_page: 3,
+                        page_box: 2,
+                        doc: 0,
+                        box_bp: [0.5, -1.25, 612.0, 791.999],
+                    }),
+                ),
+                e(
+                    IMAGE_TYPE_JPG,
+                    ImageData::Jpg(JpgImage {
+                        color_space: 3,
+                        bits_per_component: 8,
+                        length: 5,
+                        file: jpg,
+                    }),
+                ),
+                e(
+                    IMAGE_TYPE_JBIG2,
+                    ImageData::Jbig2(Jbig2Image { selected_page: 2 }),
+                ),
+                ImageEntry {
+                    name: None,
+                    ..e(IMAGE_TYPE_PNG, ImageData::None)
+                },
+            ],
+            image_limit: 256,
+            allocated: true,
+            ..State::default()
+        }
+    }
+
+    /// Every field the codec carries comes back, and the JPEG reader's
+    /// position waits for the check.
+    #[test]
+    fn the_table_round_trips() {
+        let mut st = table(b"./a.pdf", [1, 2]);
+        let w = enc_of(&st);
+        let back = State::dec(&mut Reader::new(&w)).unwrap();
+        // (the decoded JPEG reader has no file yet: its position is pending)
+        if let ImageData::Jpg(j) = &mut st.images[1].data {
+            j.file.seek(0, Whence::Set);
+        }
+        assert_eq!(enc_of(&back), enc_of(&st));
+        let p = back.pending.as_ref().expect("a decoded table is pending");
+        assert_eq!(p.jpg, vec![(1, 3, false)]);
+    }
+
+    /// The check before any reader runs: a written (or freed) image, an
+    /// image without a hash and a changed file each refuse the table, with
+    /// a reason naming the file.
+    #[test]
+    fn a_changed_or_written_image_is_refused() {
+        let d = std::env::temp_dir().join(format!("flashtex-s0img-{}", std::process::id()));
+        std::fs::create_dir_all(&d).unwrap();
+        let f = d.join("pic.png");
+        std::fs::write(&f, b"first").unwrap();
+        let name = f.to_str().unwrap().as_bytes().to_vec();
+        let mut st = table(&name, hash128(b"first"));
+        let freed = st.images.pop().unwrap();
+        st.check_files().unwrap();
+        // the file changes
+        std::fs::write(&f, b"second").unwrap();
+        let err = st.check_files().unwrap_err();
+        assert!(err.contains("pic.png") && err.contains("changed"), "{err}");
+        std::fs::write(&f, b"first").unwrap();
+        st.check_files().unwrap();
+        // a written image
+        st.images[0].written = true;
+        assert!(st.check_files().unwrap_err().contains("written"));
+        st.images[0].written = false;
+        // a freed one
+        st.images.push(freed);
+        assert!(st.check_files().unwrap_err().contains("written"));
+        st.images.pop();
+        // one that came with the format
+        st.images[1].hash = None;
+        assert!(st.check_files().unwrap_err().contains("no content hash"));
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    /// A failure inside a probe returns to it; outside one, `probing` is
+    /// off.
+    #[test]
+    fn a_probe_returns_a_failure() {
+        assert!(!probing());
+        let r: Result<(), String> = probe(|| probe_fail("no such page".into()));
+        assert_eq!(r, Err("no such page".to_string()));
+        assert!(!probing());
+        assert_eq!(probe(|| 7), Ok(7));
     }
 }
