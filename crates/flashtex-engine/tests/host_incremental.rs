@@ -154,6 +154,8 @@ struct Outcome {
     first_page: Option<Duration>,
     /// `PROGRESS` heartbeats received (`progress-v1`, spec §6.8).
     progress: usize,
+    /// The `file` of the last `PROGRESS` that named one.
+    progress_file: Option<String>,
 }
 
 fn compile(c: &mut Client, view: &mut View, req: &CompileRequest) -> Outcome {
@@ -164,6 +166,7 @@ fn compile(c: &mut Client, view: &mut View, req: &CompileRequest) -> Outcome {
     let mut pages_msgs = vec![];
     let mut first_page = None;
     let mut progress = 0;
+    let mut progress_file = None;
     let done = loop {
         match c.next_event().unwrap().expect("host closed the connection") {
             Event::Started(j) => {
@@ -213,7 +216,13 @@ fn compile(c: &mut Client, view: &mut View, req: &CompileRequest) -> Outcome {
             Event::Image(j) => view.images.push(j),
             Event::Done(d) => break d,
             Event::Error(e) => panic!("host error: {e}"),
-            Event::Other(k, _) if k == flashtex_display_list::kind::PROGRESS => progress += 1,
+            Event::Other(k, body) if k == flashtex_display_list::kind::PROGRESS => {
+                progress += 1;
+                let j = Json::parse(std::str::from_utf8(&body).unwrap()).unwrap();
+                if let Some(f) = j.str_field("file") {
+                    progress_file = Some(f.to_string());
+                }
+            }
             _ => {}
         }
     };
@@ -227,6 +236,7 @@ fn compile(c: &mut Client, view: &mut View, req: &CompileRequest) -> Outcome {
         pages_msgs,
         first_page,
         progress,
+        progress_file,
     }
 }
 
@@ -1022,6 +1032,15 @@ fn the_progress_heartbeat_changes_no_page() {
         first.progress > 0,
         "PROGRESS while typesetting: {}",
         first.done
+    );
+    // It names the file TeX reads (the innermost `\input`).
+    assert!(
+        first
+            .progress_file
+            .as_deref()
+            .is_some_and(|f| f.ends_with("main.tex")),
+        "PROGRESS names the file: {:?}",
+        first.progress_file
     );
     // An edit near the middle: an incremental compile, with the heartbeat.
     let at = text.len() / 2;

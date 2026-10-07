@@ -508,9 +508,10 @@ const PROTECT_PAGES: usize = 3;
 /// Whether newer work waits: (pass, pages the run shipped) -> stop now.
 pub type Preempt = std::rc::Rc<dyn Fn(usize, usize) -> bool>;
 
-/// A heartbeat: (pass, pages the run shipped), at every page and segment
-/// checkpoint (the host's `progress-v1`, spec §6.8). It never stops a run.
-pub type Progress = std::rc::Rc<dyn Fn(usize, usize)>;
+/// A heartbeat: (pass, pages the run shipped, the engine's state to read
+/// the file it is in from), at every page and segment checkpoint (the
+/// host's `progress-v1`, spec §6.8). It never stops a run and only reads.
+pub type Progress = std::rc::Rc<dyn Fn(usize, usize, &Globals)>;
 
 /// A convergence test stopped by newer work (`Obs::test`).
 const PREEMPTED: &str = "preempted during the test";
@@ -1933,7 +1934,7 @@ impl Observer for Obs {
 
     fn on_checkpoint(&mut self, g: &mut Globals, id: CheckpointId, why: Point) -> Action {
         if let Some(p) = &self.progress {
-            p(self.pass, self.pages_so_far());
+            p(self.pass, self.pages_so_far(), g);
         }
         if self.taken.len() % 32 == 31 && g.arena.log_bytes() > self.budget {
             self.thin(g);
