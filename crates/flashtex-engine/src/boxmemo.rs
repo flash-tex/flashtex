@@ -855,24 +855,32 @@ impl Globals {
         let k2 = self.bm_k2();
         let k4 = self.bm_k4();
         let hash = key_hash(&k1, &ctx, &k2, &k4);
-        // find a variant whose key holds
-        let found = ST.with(|s| {
-            let s = s.borrow();
-            let Some(v) = s.store.get(&cs) else {
-                return None;
-            };
-            for (i, e) in v.iter().enumerate() {
-                if e.hash == hash && e.k1 == k1 && e.ctx == ctx && e.k2 == k2 && e.k4 == k4 {
-                    if e.line.is_some_and(|l| l != self.line) {
-                        continue;
-                    }
-                    return Some((i, e.k3.clone(), e.absent.clone(), e.voids.clone()));
-                }
-            }
-            None
-        });
+        // the variants whose K1, context, K2 and K4 hold (most recent first)
+        let candidates: Vec<(usize, Vec<(i32, Meaning)>, Vec<Vec<i32>>, Vec<i32>)> =
+            ST.with(|s| {
+                let s = s.borrow();
+                let Some(v) = s.store.get(&cs) else {
+                    return vec![];
+                };
+                let mut c: Vec<_> = v
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, e)| {
+                        e.hash == hash
+                            && e.k1 == k1
+                            && e.ctx == ctx
+                            && e.k2 == k2
+                            && e.k4 == k4
+                            && e.line.is_none_or(|l| l == self.line)
+                    })
+                    .map(|(i, e)| (e.last_used, i, e.k3.clone(), e.absent.clone(), e.voids.clone()))
+                    .collect();
+                c.sort_by_key(|x| std::cmp::Reverse(x.0));
+                c.into_iter().map(|(_, i, a, b, d)| (i, a, b, d)).collect()
+            });
         let mut why = "NotRecorded";
-        if let Some((i, k3, absent, voids)) = found {
+        // ... and of those, the first whose K3 and K7 hold
+        for (i, k3, absent, voids) in candidates {
             let absent_ok = absent.iter().all(|n| match self.bm_find_cs(n) {
                 None => true,
                 Some(p) => self.bm_eq(p).hh().b0() == k::undefined_cs,
