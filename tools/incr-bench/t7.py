@@ -36,6 +36,12 @@ into a chapter (docspec.py) and whose preamble edits into the main file. The pha
   preamble                                  a \\newcommand line after the \\documentclass line, added
                                             and removed: S0 changes, a full run from the format
 
+Documents: plain-N and full-N (gen.py) and two beamer decks (genbeamer.py, lane BEAMER-LATENCY):
+beamer-5, the owner's five-frame deck, and beamer-30, thirty frames with a theme, sections and
+overlays. A beamer frame's body is typeset at `\\end{frame}`, so dl3-keys cannot place a frame's
+prose line on a page; a deck gives its edit lines in `docs/DOC/t7.json`, and `--at F` becomes
+`--line N --page P` there (`located`).
+
 The six in-body phases run in `--order` (default `rotate`: document i starts at phase i mod 6, so
 no phase always follows the same one: each phase carries the host's state, its checkpoint history
 and its RSS, over to the next); the typing phases follow them, the preamble always runs last (its
@@ -103,7 +109,8 @@ sys.path.insert(0, S)
 import docspec  # noqa: E402
 W = os.path.dirname(os.path.dirname(S))
 IB = os.environ.get('INCR_BENCH_DIR', '/tmp/incr-bench')
-DOCS = ['plain-10', 'full-10', 'plain-100', 'full-100', 'plain-300', 'full-300', 'plain-1000', 'full-1000']
+DOCS = ['plain-10', 'full-10', 'plain-100', 'full-100', 'plain-300', 'full-300', 'plain-1000', 'full-1000',
+        'beamer-5', 'beamer-30']
 # books (mkbook.py, fetched at a pinned commit when named in --docs; not in the default list):
 # Infinite Descent, and the owner's heavy benchmark of 2026-10-06, the book twice (1,142 pages)
 BOOKS = ['infdesc', 'infdesc-x2']
@@ -334,13 +341,37 @@ def keys(eng, sock, work, args, out, timeout):
     return recs, p.stderr.strip()
 
 
-def body_line(text, frac):
-    """The byte offset inside the second word of the prose line about `frac` into the body."""
+def body_line(text, frac, given=None):
+    """The byte offset inside the second word of the prose line about `frac` into the body (or of
+    the 1-based line `given`)."""
     lines = text.split('\n')
-    prose = [i for i, l in enumerate(lines) if len(l.split(' ')) > 40]
-    i = prose[min(len(prose) - 1, int(len(prose) * frac))]
+    if given is not None:
+        i = given - 1
+    else:
+        prose = [i for i, l in enumerate(lines) if len(l.split(' ')) > 40]
+        i = prose[min(len(prose) - 1, int(len(prose) * frac))]
     off = sum(len(l) + 1 for l in lines[:i])
-    return off + lines[i].index(' ') + 3
+    return off + lines[i].index(' ', len(lines[i]) - len(lines[i].lstrip(' '))) + 3
+
+
+def edit_lines(doc_dir):
+    """A document's edit locations, when it gives them (`t7.json` next to its main.tex: {"lines":
+    {"0.5": [LINE, PAGE], ...}}): beamer decks, whose frame bodies dl3-keys' prose-line search
+    cannot place on a page (genbeamer.py). None: the search finds them."""
+    p = f'{doc_dir}/t7.json'
+    if not os.path.exists(p):
+        return None
+    return {float(k): tuple(v) for k, v in json.load(open(p))['lines'].items()}
+
+
+def located(args, lines):
+    """dl3-keys arguments with `--at F` replaced by the document's `--line N --page P` for the
+    nearest fraction it gives (`edit_lines`)."""
+    if lines is None or '--at' not in args:
+        return args
+    i = args.index('--at')
+    line, page = lines[min(lines, key=lambda f: abs(f - float(args[i + 1])))]
+    return args[:i] + ['--line', str(line), '--page', str(page)] + args[i + 2:]
 
 
 def phase_order(order, i, seed):
@@ -366,6 +397,7 @@ def run_doc(a, eng, doc, out, i):
     edit = docspec.edit_args(IB, doc)
     log = f'{out}/raw/{doc}.host-stderr'
     hostargs = a.host_args.split()
+    lines = edit_lines(f'{IB}/docs/{doc}')
     res = dict(doc=doc, phases={}, reopen=[], order=[])
     h = Host(eng, sock, s0, log, hostargs)
     res['host_startup'], res['host_ready_ms'] = h.startup, round(h.ready_ms, 1)
@@ -379,7 +411,7 @@ def run_doc(a, eng, doc, out, i):
             l0 = load1()
             t = time.time()
             # (a preamble edit goes into the main file; the others into a book's chapter)
-            recs, err = keys(eng, sock, work, args + (edit if name != 'preamble' else []) +
+            recs, err = keys(eng, sock, work, located(args, lines) + (edit if name != 'preamble' else []) +
                              ['--keys', str(n), '--gap-ms', str(a.gap_ms)],
                              f'{out}/raw/{doc}-{name}.jsonl', a.timeout)
             opens = [r for r in recs if 'open' in r]
@@ -400,7 +432,7 @@ def run_doc(a, eng, doc, out, i):
         rss.append(h.stop())
     # reopen: edit on disk, a new host from the persisted S0, page 1
     if a.reopen and 'reopen' in a.phases:
-        at = body_line(open(src).read(), 0.5)
+        at = body_line(open(src).read(), 0.5, int(located(['--at', '0.5'], lines)[1]) if lines else None)
         ef = f'{work}/{docspec.edit_file(IB, doc)}'
         for k in range(a.reopen):
             text = open(ef).read()
@@ -670,7 +702,7 @@ def main():
                                env=dict(os.environ, CARGO_BUILD_JOBS=jobs))
             if b.returncode or subprocess.run([f'{S}/mkeng.sh', a.engine], cwd=W).returncode:
                 error = 'build failed'
-        if not error and not os.path.exists(f'{IB}/docs/full-1000/main.tex'):
+        if not error and not all(os.path.exists(f'{IB}/docs/{d}/main.tex') for d in ('full-1000', 'beamer-30')):
             subprocess.run([sys.executable, f'{S}/mkdocs.py'], check=True)
         books = [d for d in docs if d in BOOKS]
         if not error and books:
