@@ -113,16 +113,20 @@ static PEAK_BY: [AtomicI64; tag::N] = [ZERO; tag::N];
 static PEAK_SNAP: AtomicI64 = AtomicI64::new(0);
 
 /// The counting allocator (feature `mem-stats`): the host's allocator
-/// (`crate::logalloc` on Linux, else `System`) with a header holding the
+/// (`crate::logalloc` on Linux and macOS, else `System`) with a header holding the
 /// allocation's tag.
 #[cfg(feature = "mem-stats")]
 pub struct Counting;
 
-#[cfg(all(feature = "mem-stats", target_os = "linux", not(feature = "tex82")))]
+#[cfg(all(
+    feature = "mem-stats",
+    any(target_os = "linux", target_os = "macos"),
+    not(feature = "tex82")
+))]
 const INNER: crate::logalloc::HostAlloc = crate::logalloc::HostAlloc;
 #[cfg(all(
     feature = "mem-stats",
-    not(all(target_os = "linux", not(feature = "tex82")))
+    not(all(any(target_os = "linux", target_os = "macos"), not(feature = "tex82")))
 ))]
 const INNER: std::alloc::System = std::alloc::System;
 
