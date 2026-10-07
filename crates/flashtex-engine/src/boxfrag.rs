@@ -207,7 +207,13 @@ impl Ser<'_> {
         fields: Vec<(i32, bool, Ref)>,
     ) -> Node {
         let copy = if synctex { size - SYNCTEX_FIELDS } else { size };
-        let words = (0..copy).map(|w| self.g.mem[(p + w) as usize].0).collect();
+        let mut words: Vec<u64> = (0..copy).map(|w| self.g.mem[(p + w) as usize].0).collect();
+        // addresses are not kept: the link, and each pointer field
+        words[0] &= !0xffff_ffffu64;
+        for (w, left, _) in &fields {
+            let m = if *left { !(0xffff_ffffu64 << 32) } else { !0xffff_ffffu64 };
+            words[*w as usize] &= m;
+        }
         Node::Big {
             size,
             copy,
