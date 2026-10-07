@@ -835,11 +835,33 @@ impl Globals {
         }
     }
 
+    /// `dl_free(p)`: word `p` was given back (`free_avail`, `flush_list`).
+    /// Its side-table entry goes back to 0: only what is allocated has a
+    /// position, so the convergence test can compare the table
+    /// (changes/displaylist.ch, `crate::incr::same_words`).
+    #[inline(always)]
+    pub fn dl_free(&mut self, p: i32) {
+        if enabled() {
+            self.side_set(p, 0);
+        }
+    }
+
+    /// `dl_free_node(p, s)`: the `s` words from `p` were given back
+    /// (`free_node`).
+    #[inline(always)]
+    pub fn dl_free_node(&mut self, p: i32, s: i32) {
+        if enabled() {
+            for k in 0..s {
+                self.side_set(p + k, 0);
+            }
+        }
+    }
+
     /// `back_input` allocates its token, `conditional` its condition-stack
     /// node (changes/displaylist.ch): neither becomes part of a list TeX
     /// ships, so neither needs a source position. The side table's entry
-    /// of the location keeps whatever it held; the location is noted again
-    /// when it is next allocated as a node, before anything reads it.
+    /// of the location stays 0 (`dl_free` cleared it when it was freed);
+    /// the location is noted again when it is next allocated as a node.
     #[inline(always)]
     pub fn dl_token_begin(&mut self) {
         NOT_A_NODE.store(true, Ordering::Relaxed);

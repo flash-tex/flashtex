@@ -206,6 +206,10 @@ pub trait Observer {
     }
     /// The observer as `Any`, to take it back after a run.
     fn into_any(self: Box<Self>) -> Box<dyn std::any::Any>;
+    /// The pages the run has shipped so far (with those before its start).
+    fn shipped(&self) -> usize {
+        0
+    }
 }
 
 /// The exit status of a run an [`Observer`] stopped.
@@ -650,7 +654,10 @@ impl Globals {
         self.arena.diff_branch(&p.branch, old)
     }
 
-    /// [`diff_pending`](Self::diff_pending), asking `stop` while it works:
+    /// The convergence test's comparison: [`diff_pending`](Self::diff_pending)
+    /// with the display list's side table too (the jump adopts it, and a
+    /// node still to be shipped keeps its source position from there:
+    /// `crate::incr::same_words`), asking `stop` while it works:
     /// `Ok(None)` when it said to stop.
     pub fn diff_pending_until(
         &mut self,
@@ -660,7 +667,7 @@ impl Globals {
         self.spill_scalars();
         let l = self.layer_ref().ok_or("no checkpoint layer")?;
         let p = l.pending.as_ref().ok_or("no restore is pending")?;
-        self.arena.diff_branch_until(&p.branch, old, stop)
+        self.arena.diff_branch_all_until(&p.branch, old, stop)
     }
 
     /// The host record of checkpoint `old` of the pending branch.

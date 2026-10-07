@@ -91,6 +91,7 @@ impl Globals {
         {
             { let __ix167 = self.pseudo_files; let __v168 = self.avail; __av_mem[crate::ix::U((__ix167) as usize)].set_hh_rh(__v168); }
             self.avail = self.pseudo_files;
+            self.dl_free(self.pseudo_files);
             self.dyn_used = (self.dyn_used).wrapping_sub(1i32);
         }
         self.pseudo_files = p;
@@ -3134,6 +3135,7 @@ impl Globals {
                                                 {
                                                     { let __v264 = self.avail; __av_mem[crate::ix::U((p) as usize)].set_hh_rh(__v264); }
                                                     self.avail = p;
+                                                    self.dl_free(p);
                                                     self.dyn_used = (self.dyn_used).wrapping_sub(1i32);
                                                 }
                                                 p = __av_mem[crate::ix::U((temp_head) as usize)].hh().rh();
@@ -3141,6 +3143,7 @@ impl Globals {
                                                 {
                                                     { let __v266 = self.avail; __av_mem[crate::ix::U((p) as usize)].set_hh_rh(__v266); }
                                                     self.avail = p;
+                                                    self.dl_free(p);
                                                     self.dyn_used = (self.dyn_used).wrapping_sub(1i32);
                                                 }
                                             }
@@ -5793,6 +5796,7 @@ impl Globals {
                                                                     {
                                                                         { let __v330 = self.avail; __av_mem[crate::ix::U((q) as usize)].set_hh_rh(__v330); }
                                                                         self.avail = q;
+                                                                        self.dl_free(q);
                                                                         self.dyn_used = (self.dyn_used).wrapping_sub(1i32);
                                                                     }
                                                                 }

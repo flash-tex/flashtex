@@ -387,6 +387,7 @@ impl Globals {
                                             {
                                                 { let __ix1668 = self.temp_ptr; let __v1669 = self.avail; __av_mem[crate::ix::U((__ix1668) as usize)].set_hh_rh(__v1669); }
                                                 self.avail = self.temp_ptr;
+                                                self.dl_free(self.temp_ptr);
                                                 self.dyn_used = (self.dyn_used).wrapping_sub(1i32);
                                             }
                                         }
@@ -606,6 +607,7 @@ impl Globals {
                                                                             {
                                                                                 { let __ix1689 = self.temp_ptr; let __v1690 = self.avail; __av_mem[crate::ix::U((__ix1689) as usize)].set_hh_rh(__v1690); }
                                                                                 self.avail = self.temp_ptr;
+                                                                                self.dl_free(self.temp_ptr);
                                                                                 self.dyn_used = (self.dyn_used).wrapping_sub(1i32);
                                                                             }
                                                                         }
@@ -726,6 +728,7 @@ impl Globals {
                                         {
                                             { let __ix1695 = self.temp_ptr; let __v1696 = self.avail; __av_mem[crate::ix::U((__ix1695) as usize)].set_hh_rh(__v1696); }
                                             self.avail = self.temp_ptr;
+                                            self.dl_free(self.temp_ptr);
                                             self.dyn_used = (self.dyn_used).wrapping_sub(1i32);
                                         }
                                     }
@@ -3219,6 +3222,7 @@ impl Globals {
                                     {
                                         { let __ix1854 = self.def_ref; let __v1855 = self.avail; __av_mem[crate::ix::U((__ix1854) as usize)].set_hh_rh(__v1855); }
                                         self.avail = self.def_ref;
+                                        self.dl_free(self.def_ref);
                                         self.dyn_used = (self.dyn_used).wrapping_sub(1i32);
                                     }
                                 }
@@ -3807,6 +3811,7 @@ impl Globals {
         {
             { let __ix1867 = self.def_ref; let __v1868 = self.avail; __av_mem[crate::ix::U((__ix1867) as usize)].set_hh_rh(__v1868); }
             self.avail = self.def_ref;
+            self.dl_free(self.def_ref);
             self.dyn_used = (self.dyn_used).wrapping_sub(1i32);
         }
     }
@@ -5643,6 +5648,7 @@ impl Globals {
         {
             { let __v2025 = self.avail; __av_mem[crate::ix::U((r) as usize)].set_hh_rh(__v2025); }
             self.avail = r;
+            self.dl_free(r);
             self.dyn_used = (self.dyn_used).wrapping_sub(1i32);
         }
         concat_tokens = q;
@@ -8156,6 +8162,7 @@ impl Globals {
                         {
                             { let __ix2229 = self.lig_stack; let __v2230 = self.avail; __av_mem[crate::ix::U((__ix2229) as usize)].set_hh_rh(__v2230); }
                             self.avail = self.lig_stack;
+                            self.dl_free(self.lig_stack);
                             self.dyn_used = (self.dyn_used).wrapping_sub(1i32);
                         }
                         { __goto_1 = 1; continue 'l_dispatch_1; }
@@ -8168,6 +8175,7 @@ impl Globals {
                         {
                             { let __ix2231 = self.lig_stack; let __v2232 = self.avail; __av_mem[crate::ix::U((__ix2231) as usize)].set_hh_rh(__v2232); }
                             self.avail = self.lig_stack;
+                            self.dl_free(self.lig_stack);
                             self.dyn_used = (self.dyn_used).wrapping_sub(1i32);
                         }
                         { __goto_1 = 1; continue 'l_dispatch_1; }

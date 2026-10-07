@@ -1288,10 +1288,12 @@ impl Drop for Core {
 }
 
 /// Arrays that are not the engine's state, which `Arena::diff_branch`
-/// leaves out (the convergence test, DESIGN.md §5.3): the display list's
-/// side table (changes/displaylist.ch), source positions that nothing TeX
-/// computes reads. Only its chunks that hold nothing else are left out;
-/// `crate::incr`'s word comparison drops the rest of it. The convergence
+/// leaves out (L5's `.aux` comparison, `crate::readset::aux_delta`): the
+/// display list's side table (changes/displaylist.ch), source positions
+/// that nothing TeX computes reads. Only its chunks that hold nothing else
+/// are left out. The convergence test compares it
+/// (`Globals::diff_pending_until`, `crate::incr::same_words`): a node still
+/// to be shipped keeps its position from the jump. The convergence
 /// jump adopts them like every other array ([`Arena::diff_branch_all`]):
 /// the side table must describe the nodes of the `mem` it adopts (left out,
 /// nodes live at the jump kept the new run's positions for the old run's

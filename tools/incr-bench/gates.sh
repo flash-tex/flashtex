@@ -29,6 +29,9 @@
 #   sound-book soundness: 8 single-character edits + 4 sentences (+ reverts) on the owner's
 #              1,072-page book.tex (copied to $B/src-book/book.tex beforehand)
 #   gate       scripts/gate.sh pr
+# Lanes run the sweeps (sound-*, span, readers) on GitHub-hosted runners instead:
+# `gh workflow run sweeps.yml -f ref=<branch>` (sweeps.py holds the same runs, sharded; change both
+# together). The NixOS PC is for timing and latency measurements only (README.md).
 # The checkout is this script's (on NixOS it needs PR #1232's rpath fix for libstdc++).
 # Raw output: $R. Every engine run has a time limit (incr_bench.py, soundness.py, timeout(1)).
 #

@@ -26,7 +26,8 @@ kept next to its output (`*.host-stderr`): the host says there why it ended
 | script | measures |
 |---|---|
 | `mkeng.sh NAME [--keep-fmt]` | copies this checkout's `target/release` binaries to `$INCR_BENCH_DIR/NAME` and builds the format |
-| `mkdocs.py` | the generated documents: `plain-N`, `full-N` (N = 10, 100, 120, 300, 1000; `gen.py`), `refs-30`, `refs-120` (`genrefs.py`) |
+| `mkdocs.py` | the generated documents: `plain-N`, `full-N` (N = 10, 100, 120, 300, 1000; `gen.py`), `refs-30`, `refs-120` (`genrefs.py`), `beamer-5`, `beamer-30` (`genbeamer.py`) |
+| `mkbook.py [BOOK ...]` | the book documents: `infdesc` (*Infinite Descent*, 592 pages, the `books.json` entry fetched at its pinned commit and checked by SHA-256 into `$INCR_BENCH_DIR/cache`, never committed) and `infdesc-x2` (the book twice, 1,142 pages: the owner's heavy benchmark, `tools/parity/corpus/infdesc_x2.py`); `docs/BOOK/doc.json` names the chapter in-body keystrokes go into (`docspec.py`) |
 | `incr_bench.py ENGINE SRCDIR DOC ...` | one iserve session: random edits (`--kinds`: letters, sentences, structural, and the line/paragraph kinds `newline`, `split`, `join` and the meaning-changing context kinds `math_par`, `verbatim_blank`, `cell_blank` from `edits.py`), each compiled and, with `--verify`, compared byte for byte (PDF, log, aux, out, toc, terminal) with from-scratch runs |
 | `matrix.py ENGINE OUTDIR [DOC...]` | the §1.2 matrix: plain/full × 10/100/300/1000 × start/middle/end × (8 letters, 3 sentences, each reverted); `matrix_table.py`/`matrix_sum.py` summarise the edited-page latency |
 | `convergence.py OUTDIR` | the matrix's convergence rate per document and why the last test of each unconverged compile failed (review 2026-09-30, track 1) |
@@ -38,9 +39,69 @@ kept next to its output (`*.host-stderr`): the host says there why it ended
 | `mem.py ENGINE DOC --pages P,... --keys N` | the socket host's memory while typing (`FLASHTEX_MEMSTAT=1`: DONE carries `mem`, the process's resident bytes and the checkpoint layer's parts; a `mem-stats` build adds the heap by tag); samples RSS, kills the host above `--limit-gb`, fails above `--gate-gb`; `MEM_HOSTARGS` for the host |
 | `mem_table.py FILE...` | mem.py's summaries as a table: peak RSS and where the memory is; pooled latency and peak per engine for rounds tagged `TAG-ENGINE-rN` |
 | `mem_gate.sh [--build]` | the memory gate (nightly): peak RSS of plain/full-120 and plain/full-1000 against a limit per size |
-| `t7.py [--build] [--docs ...] [--quick]` | **T7, the latency gate** (DESIGN.md §8, §12's P4 exit gate): over the host's socket, per document (plain/full × 10/100/300/1000), letter edits at the start, middle and end, a reflowing sentence, a newline, a paragraph split/join (edits.py's), continuous typing every 100 and 150 ms (each keystroke must get its own page), a preamble edit, and a reopen from the persisted S₀ (report-only); p50/p95/max against §1.2's targets (edited page: the host's ≤ 11 ms share), the convergence rate and the pages re-typeset per edit (held against `t7-baseline.json`), whether later pages were marked stale and all current at `DONE`, and the host's peak RSS. Exit 1 on a miss. See below |
+| `t7.py [--build] [--docs ...] [--quick]` | **T7, the latency gate** (DESIGN.md §8, §12's P4 exit gate): over the host's socket, per document (plain/full × 10/100/300/1000, and the beamer decks beamer-5 and beamer-30 of `genbeamer.py`, which give their edit lines in `t7.json`; the books `infdesc` and `infdesc-x2` when named in `--docs`), letter edits at the start, middle and end, a reflowing sentence, a newline, a paragraph split/join (edits.py's), continuous typing every 50, 60, 80, 100 and 150 ms (each keystroke must get its own page), a preamble edit, and a reopen from the persisted S₀ (report-only); p50/p95/max against §1.2's targets (edited page: the host's ≤ 11 ms share), the convergence rate and the pages re-typeset per edit (held against `t7-baseline.json`), whether later pages were marked stale and all current at `DONE`, and the host's peak RSS. Exit 1 on a miss. See below |
 | `test_t7.py`, `test_edits.py` | unit tests (`python3 -m unittest discover -s tools/incr-bench -p 'test_*.py'`); `testdata/t7-summary-trim.json` is a trimmed real summary |
-| `gates.sh [GATE...]` | the engine gates a lane runs before landing (parity, lockstep, trip, etrip, drift, display-list positions, cargo tests, soundness A/C/D, `gate.sh pr`), for a Linux runner with TeX Live 2026 |
+| `gates.sh [GATE...]` | the engine gates a lane runs before landing (parity, lockstep, trip, etrip, drift, display-list positions, cargo tests, soundness A/C/D, `gate.sh pr`), for a Linux runner with TeX Live 2026. Its sweeps now run on GitHub-hosted runners: see [Sweeps on hosted runners](#sweeps-on-hosted-runners) |
+| `sweeps.py {gates,plan,run,summary,costs}` | gates.sh's sweeps cut into shards for `.github/workflows/sweeps.yml`; `sweeps-costs.json` is each unit's measured seconds |
+
+## Sweeps on hosted runners
+
+**Lanes run the soundness sweeps on GitHub-hosted runners, not on the NixOS PC:**
+
+```sh
+gh workflow run sweeps.yml -f ref=<branch>                         # every sweep
+gh workflow run sweeps.yml -f ref=<branch> -f gates=sound-a,span   # some
+gh workflow run sweeps.yml -f ref=<branch> -f base_ref=main        # plus main's rows (A/B)
+gh run list --workflow sweeps.yml --limit 3                        # then: gh run watch <id>
+```
+
+`ref` is a branch, a SHA or `refs/pull/N/head` (a fork's pull request). Adding the `run-sweeps`
+label to a pull request does the same for its head, once its branch has the workflow. The run's
+summary is one table, a row per gate: units (reported/planned), compiles, ok, bad, wrong (span:
+glyphs whose source line or column differs from a from-scratch host's), aborts (a unit that failed
+or timed out: the verify modes abort the host on a disagreement), skipped. The run is red if any
+gate of `ref` has a bad or wrong compile, an abort, or a unit that did not report; `base_ref`'s
+rows never fail it. The table, `costs.json` and the plan are the `sweeps-summary` artifact; each
+shard's raw records (soundness.py's JSONL, each unit's output, and for a failed unit its hosts'
+stderr as `.diag`) are `result-<side>-<k>`.
+
+The gates (`sweeps.py gates`): `sound-a sound-budget sound-budget-d sound-timed sound-vol
+sound-lookup sound-lines span readers sound-c sound-d`, with gates.sh's trials, kinds, host
+options and documents. `readers` runs only when the tree under test has `readers.py` (#1613);
+otherwise its row says `n/a`. `sound-book` (the owner's book, not in the repository) and the
+non-sweep gates (parity, lockstep, trip, etrip, drift, positions, tests, `gate.sh pr`) are not
+here: `ci.yml` runs parity, lockstep and the engine's tests on every pull request.
+
+How it is cut: a unit is one soundness.py run over one document (`--only DOC`), one dlspan.py run,
+or readers.py. soundness.py seeds each document's edits from its name alone, so a document gets
+exactly the edits it gets in gates.sh's unsharded sweep (the hosted counts equal the PC's: sound-a
+8,800 compiles, C 1,974, timed 1,720, budget 3,520). `sweeps.py plan` packs all the gates' units
+together, longest first, into shards of about 15 minutes of 4 units at a time, from the measured
+seconds in `sweeps-costs.json` (a rough guess per trial for a unit it has no measurement of);
+readers.py, timing-dependent, gets a shard of its own. Mixing gates matters: the whole set is about
+150 unit-minutes (40 runner-minutes), so per-gate shards would be one-minute jobs, each paying the
+queue. After a change that moves the costs, refresh it from a green run's `costs.json`:
+`gh run download <id> -n sweeps-summary -D /tmp/s && cp /tmp/s/costs.json tools/incr-bench/sweeps-costs.json`.
+
+The harness (`sweeps.py`) is the workflow's own commit (main's, for a dispatch from main); what it
+runs (soundness.py, incr_bench.py, edits.py, dlspan.py, readers.py, the generators, the fixtures)
+and the engine are `ref`'s. A branch that changes a sweep's definition dispatches its own workflow:
+`gh workflow run sweeps.yml --ref <branch> -f ref=<branch>`. gates.sh keeps the same definitions
+for a local run; change both together.
+
+Two environment findings from the first hosted runs (2026-10-06), both handled in the workflow:
+the hosted TeX Live is scheme-medium plus pinned extras, and without `siunitx` and `cleveref` every
+`full-N` and `refs-N` compile stopped in the preamble, engine and reference alike, so those units
+passed while testing nothing (`prepare` now compiles the generated documents with pdfTeX first).
+And with `INCR_BENCH_DIR` under a path containing `..` (`$GITHUB_WORKSPACE/../ib`), `span`'s
+plain-120 seeds 4 and 5 (the line kinds) reported about 2 M wrong source lines on main: after a
+converging `newline`/`split` edit, the kept pages' spans did not move with their lines. Under a
+canonical path (`$RUNNER_TEMP/ib`, as `/tmp/incr-bench` on the PC) the same runs give 0 wrong.
+That is a host bug with such paths (DESIGN.md §5.3 rule (c)); reproduce with
+`INCR_BENCH_DIR=/some/dir/../ib tools/incr-bench/dlspan.py gates plain-120 --edits 12 --seed 4 --from 0.3 --kinds letter,newline,split`.
+
+**The NixOS PC is for timing and latency measurements only** (T7, `keys*.sh`, `mem*.py`, the
+instruction counts): numbers that need a quiet, known machine. Correctness does not depend on load.
 
 ## Machines
 

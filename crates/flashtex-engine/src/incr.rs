@@ -1012,8 +1012,19 @@ fn same_words(
         .filter(|w| !crate::lineshift::shifted_word(g, w, &layout))
         .filter(|w| !(last_byte_dead && w.scalar == Some("pdf_last_byte")))
         .partition(|w| position_only(g, w));
+    // The side table's differing words (changes/displaylist.ch: free words
+    // hold 0, so these are allocated words' positions) are for the walk.
+    let (side, left): (Vec<_>, Vec<_>) = left.into_iter().partition(|w| w.region == "dl_side");
+    let bad_side: Vec<usize> = side.iter().map(|w| w.index).collect();
+    if !bad_side.is_empty() && !relabel {
+        return Err(format!(
+            "{} source positions differ: {}",
+            bad_side.len(),
+            crate::statediff::summary(&side)
+        ));
+    }
     let (left, (free_o, free_n)) = drop_free_mem(g, &d, &layout, left);
-    if !left.is_empty() && relabel {
+    if (!left.is_empty() || !bad_side.is_empty()) && relabel {
         // Nodes allocated in other places: compare the structures.
         if let Some(w) = left.iter().find(|w| w.region != "mem" && !iso_covers(g, w)) {
             if debug && w.region == "pdf_mem" {
@@ -1057,6 +1068,7 @@ fn same_words(
             free_o.as_deref(),
             free_n.as_deref(),
             &bad_mem,
+            &bad_side,
             g.hyph_list.len(),
             dest_dims_dead,
             &mut *stop,
@@ -1164,15 +1176,10 @@ fn dead_word(g: &Globals, w: &crate::statediff::WordDiff) -> bool {
     if w.region == "rs_seen" {
         return true;
     }
-    // The display list's side table (changes/displaylist.ch): the source
-    // position of each node, which nothing TeX computes reads (DESIGN.md
-    // §6.1); the test left it out before it moved into the word space, too.
-    // The jump takes the old run's side table over with the rest of its
-    // state (`Globals::redo_to_remapped`, `Arena::diff_branch_all`): the
-    // positions must follow the node addresses the jump adopts.
-    if w.region == "dl_side" {
-        return true;
-    }
+    // (The display list's side table, `dl_side`, is not dead: the jump
+    // takes the old run's over, and a node still to be shipped keeps its
+    // position from there. `same_words` hands its differing words to the
+    // structural comparison, which requires a live node's to be equal.)
     // The intrinsics' recording scratch (`crate::intrinsics`: `intr_state`
     // elements 2..=23, `S_REC_BASE` .. `S_REC_SCANNER`): the start of every
     // recording sets them all before anything reads them, and they are read
@@ -1909,6 +1916,10 @@ impl Observer for Obs {
         self
     }
 
+    fn shipped(&self) -> usize {
+        self.pages_so_far()
+    }
+
     /// Held back before the edited page: taken where newer work stops the
     /// run (`on_checkpoint` stops it there, as at any segment checkpoint).
     fn take_held_segment(&mut self, g: &mut Globals) -> bool {
@@ -2197,6 +2208,8 @@ pub struct Session {
     preempt: Option<Preempt>,
     /// `set_cancel`.
     cancel: Option<Preempt>,
+    /// `set_on_continue`.
+    on_continue: Option<std::rc::Rc<dyn Fn(usize)>>,
     /// The heartbeat every run reports to (`set_progress`).
     progress: Option<Progress>,
     /// The last incremental pass's restart point: the next edit, typed
@@ -2316,6 +2329,7 @@ impl Session {
             defpatch: HashMap::new(),
             preempt: None,
             cancel: None,
+            on_continue: None,
             progress: None,
             last_restart: None,
             next_edits: vec![],
@@ -2614,6 +2628,25 @@ impl Session {
         self.cancel = c;
     }
 
+    /// A compile found nothing new against the run a newer keystroke had
+    /// stopped (typing a letter and deleting it again): that run is this
+    /// compile's and goes on (`finish`). Before it does, `c(pages)` is told
+    /// how many pages it has shipped: they are this compile's already, and
+    /// the caller hands them over at once (the host delivers them and says
+    /// they are current), instead of when the run ships its next page (lane
+    /// P4-TYPING-200WPM).
+    pub fn set_on_continue(&mut self, c: Option<std::rc::Rc<dyn Fn(usize)>>) {
+        self.on_continue = c;
+    }
+
+    /// The pages the paused run has shipped (0: none paused).
+    fn paused_pages(&mut self) -> usize {
+        self.g
+            .as_mut()
+            .and_then(|g| g.layer().observer.as_ref().map(|o| o.shipped()))
+            .unwrap_or(0)
+    }
+
     /// The heartbeat every later run reports to (`None`: none).
     pub fn set_progress(&mut self, p: Option<Progress>) {
         self.progress = p;
@@ -2860,8 +2893,12 @@ impl Session {
                 );
             }
             match vs {
-                // nothing new: it goes on
+                // nothing new: it goes on (its pages so far are this
+                // compile's: handed over first, `set_on_continue`)
                 Some(false) => {
+                    if let Some(c) = self.on_continue.clone() {
+                        c(self.paused_pages());
+                    }
                     let paused_s = t0.elapsed().as_secs_f64();
                     let paused_instr = i0.zip(crate::os::thread_counts()).map(|(a, b)| b.0 - a.0);
                     let mut rep = self.finish()?;

@@ -368,7 +368,7 @@ impl<S: Space> St<'_, S> {
     fn eqtb(&self, p: i32) -> u64 {
         self.sp.word(self.l.eqtb + (p as usize - 1) * 8)
     }
-    /// The side table's entry for node `p` (0 without one).
+    /// The display list's side-table entry of node `p` (0 without one).
     fn side(&self, p: i32) -> u64 {
         let (off, n) = self.l.dl_side;
         if off == usize::MAX || p < 0 || p as usize >= n {
@@ -756,10 +756,10 @@ impl<'a, O: Space, N: Space> Iso<'a, O, N> {
         }
         // The node's source position (file, line, column) in the display
         // list's side table. Nothing TeX computes reads it, but the node is
-        // live: a later page ships it, and its glyphs name that position.
-        // The convergence keeps the old run's side table, so the two must
-        // agree (spans are the host's, moved with their lines: an equal
-        // entry is the same place).
+        // live: a later page ships it, and its glyphs name that position,
+        // which the convergence takes over from the old run. Spans are the
+        // host's and move with their lines, so equal entries are the same
+        // place.
         let (so, sn) = (self.o.side(a), self.n.side(b));
         if so != sn {
             fail!(
@@ -2528,6 +2528,7 @@ impl<'a> Iso<'a, Old<'a>, Live<'a>> {
         free_o: Option<&[u64]>,
         free_n: Option<&[u64]>,
         bad_mem: &[usize],
+        bad_side: &[usize],
         hyph_len: usize,
         dest_dims_dead: bool,
         stop: &'a mut dyn FnMut() -> bool,
@@ -2569,6 +2570,20 @@ impl<'a> Iso<'a, Old<'a>, Live<'a>> {
         w.finish();
         if let Some(e) = w.err {
             return Err(e);
+        }
+        // A differing side-table entry is a position the walk compared (a
+        // node's, above) or one nothing reads (a token's, or a node's inner
+        // word), in each state; free words have none (`dl_free`).
+        for &p in bad_side {
+            let p = p as i32;
+            let ok = |cov: &[u64], free: Option<&[u64]>| {
+                Self::in_mem(p) && (bit(cov, p) || free.is_some_and(|f| bit(f, p)))
+            };
+            if !(ok(&w.cov_o, free_o) && ok(&w.cov_n, free_n)) {
+                return Err(format!(
+                    "the source position of mem[{p}] differs outside what the walk compared"
+                ));
+            }
         }
         for &p in bad_mem {
             let p = p as i32;
