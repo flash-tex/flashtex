@@ -33,6 +33,12 @@ runs one host per open document. The phases:
   preamble                                  a \\newcommand line after the \\documentclass line, added
                                             and removed: S0 changes, a full run from the format
 
+Documents: plain-N and full-N (gen.py) and two beamer decks (genbeamer.py, lane BEAMER-LATENCY):
+beamer-5, the owner's five-frame deck, and beamer-30, thirty frames with a theme, sections and
+overlays. A beamer frame's body is typeset at `\\end{frame}`, so dl3-keys cannot place a frame's
+prose line on a page; a deck gives its edit lines in `docs/DOC/t7.json`, and `--at F` becomes
+`--line N --page P` there (`located`).
+
 The six in-body phases run in `--order` (default `rotate`: document i starts at phase i mod 6, so
 no phase always follows the same one: each phase carries the host's state, its checkpoint history
 and its RSS, over to the next); the typing phases follow them, the preamble always runs last (its
@@ -98,7 +104,8 @@ import time
 S = os.path.dirname(os.path.abspath(__file__))
 W = os.path.dirname(os.path.dirname(S))
 IB = os.environ.get('INCR_BENCH_DIR', '/tmp/incr-bench')
-DOCS = ['plain-10', 'full-10', 'plain-100', 'full-100', 'plain-300', 'full-300', 'plain-1000', 'full-1000']
+DOCS = ['plain-10', 'full-10', 'plain-100', 'full-100', 'plain-300', 'full-300', 'plain-1000', 'full-1000',
+        'beamer-5', 'beamer-30']
 # (phase, dl3-keys arguments); the in-body ones are ordered by --order, the preamble runs last
 BODY_PHASES = [
     ('letter@start', ['--kind', 'letter', '--at', '0.02']),
@@ -326,13 +333,37 @@ def keys(eng, sock, work, args, out, timeout):
     return recs, p.stderr.strip()
 
 
-def body_line(text, frac):
-    """The byte offset inside the second word of the prose line about `frac` into the body."""
+def body_line(text, frac, given=None):
+    """The byte offset inside the second word of the prose line about `frac` into the body (or of
+    the 1-based line `given`)."""
     lines = text.split('\n')
-    prose = [i for i, l in enumerate(lines) if len(l.split(' ')) > 40]
-    i = prose[min(len(prose) - 1, int(len(prose) * frac))]
+    if given is not None:
+        i = given - 1
+    else:
+        prose = [i for i, l in enumerate(lines) if len(l.split(' ')) > 40]
+        i = prose[min(len(prose) - 1, int(len(prose) * frac))]
     off = sum(len(l) + 1 for l in lines[:i])
-    return off + lines[i].index(' ') + 3
+    return off + lines[i].index(' ', len(lines[i]) - len(lines[i].lstrip(' '))) + 3
+
+
+def edit_lines(doc_dir):
+    """A document's edit locations, when it gives them (`t7.json` next to its main.tex: {"lines":
+    {"0.5": [LINE, PAGE], ...}}): beamer decks, whose frame bodies dl3-keys' prose-line search
+    cannot place on a page (genbeamer.py). None: the search finds them."""
+    p = f'{doc_dir}/t7.json'
+    if not os.path.exists(p):
+        return None
+    return {float(k): tuple(v) for k, v in json.load(open(p))['lines'].items()}
+
+
+def located(args, lines):
+    """dl3-keys arguments with `--at F` replaced by the document's `--line N --page P` for the
+    nearest fraction it gives (`edit_lines`)."""
+    if lines is None or '--at' not in args:
+        return args
+    i = args.index('--at')
+    line, page = lines[min(lines, key=lambda f: abs(f - float(args[i + 1])))]
+    return args[:i] + ['--line', str(line), '--page', str(page)] + args[i + 2:]
 
 
 def phase_order(order, i, seed):
@@ -357,6 +388,7 @@ def run_doc(a, eng, doc, out, i):
     shutil.copy(src, f'{work}/main.tex')
     log = f'{out}/raw/{doc}.host-stderr'
     hostargs = a.host_args.split()
+    lines = edit_lines(os.path.dirname(src))
     res = dict(doc=doc, phases={}, reopen=[], order=[])
     h = Host(eng, sock, s0, log, hostargs)
     res['host_startup'], res['host_ready_ms'] = h.startup, round(h.ready_ms, 1)
@@ -369,7 +401,7 @@ def run_doc(a, eng, doc, out, i):
             n = a.preamble if name == 'preamble' else a.typing_keys if name in TYPING_NAMES else a.keys
             l0 = load1()
             t = time.time()
-            recs, err = keys(eng, sock, work, args + ['--keys', str(n), '--gap-ms', str(a.gap_ms)],
+            recs, err = keys(eng, sock, work, located(args, lines) + ['--keys', str(n), '--gap-ms', str(a.gap_ms)],
                              f'{out}/raw/{doc}-{name}.jsonl', a.timeout)
             opens = [r for r in recs if 'open' in r]
             if 'open_ms' not in res and opens:
@@ -389,7 +421,7 @@ def run_doc(a, eng, doc, out, i):
         rss.append(h.stop())
     # reopen: edit on disk, a new host from the persisted S0, page 1
     if a.reopen and 'reopen' in a.phases:
-        at = body_line(open(src).read(), 0.5)
+        at = body_line(open(src).read(), 0.5, int(located(['--at', '0.5'], lines)[1]) if lines else None)
         for k in range(a.reopen):
             text = open(f'{work}/main.tex').read()
             text = text[:at] + 'x' + text[at:] if k % 2 == 0 else text[:at] + text[at + 1:]
@@ -658,7 +690,7 @@ def main():
                                env=dict(os.environ, CARGO_BUILD_JOBS=jobs))
             if b.returncode or subprocess.run([f'{S}/mkeng.sh', a.engine], cwd=W).returncode:
                 error = 'build failed'
-        if not error and not os.path.exists(f'{IB}/docs/full-1000/main.tex'):
+        if not error and not all(os.path.exists(f'{IB}/docs/{d}/main.tex') for d in ('full-1000', 'beamer-30')):
             subprocess.run([sys.executable, f'{S}/mkdocs.py'], check=True)
         for need in ('flashtex-host', 'dl3-keys', 'pdftex.pool'):
             if not error and not os.path.exists(f'{eng}/{need}'):
