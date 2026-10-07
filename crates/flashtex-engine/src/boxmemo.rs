@@ -269,6 +269,8 @@ struct Entry {
     /// and the list's `aux` after them.
     frag: Option<crate::boxfrag::Frag>,
     aux: u64,
+    /// A last `\\ignorespaces` (its token), run after the replay.
+    trailer: Option<i32>,
     ops: Vec<Op>,
     last_badness: i32,
     last_used: u64,
@@ -1327,7 +1329,11 @@ impl Globals {
                     }
                     return self.bm_start(cs, n, scanner, k1, ctx, k2, k4, Some(i));
                 }
-                return self.bm_replay(cs, i);
+                if let Some(t) = self.bm_replay(cs, i) {
+                    self.cur_tok = t;
+                    self.back_input();
+                }
+                return;
             }
             why = "Meanings";
             if debug() {
@@ -2007,6 +2013,16 @@ impl Globals {
     #[inline(never)]
     pub fn flashtex_bm_command(&mut self) {
         let (c, chr) = (self.cur_cmd, self.cur_chr);
+        // `\\ignorespaces` as the body's last command reads the tokens after
+        // the call: the recording ends before it runs (`bm_finish`'s
+        // trailer), and a replay runs it again
+        if c == k::ignore_spaces && chr == 0 {
+            let base = self.bm_with_rec(|r| r.base).unwrap_or(i32::MAX);
+            if base != i32::MAX && self.bm_exhausted(base) {
+                let tok = self.cur_tok;
+                return self.bm_finish(Some(tok));
+            }
+        }
         let outer = self.bm_with_rec(|r| r.start.nest_ptr).unwrap_or(i32::MAX);
         let ok = if c == k::extension {
             [
@@ -2104,6 +2120,14 @@ impl Globals {
         if !self.bm_exhausted(base) {
             return;
         }
+        self.bm_finish(None);
+    }
+
+    /// The recording is done: its body is used up, and `trailer` is the
+    /// token of a last command that reads past the body (an `\\ignorespaces`
+    /// that `main_control` is about to run), left out of the recording and
+    /// run again after a replay.
+    fn bm_finish(&mut self, trailer: Option<i32>) {
         let end = self.bm_frame();
         let (start, scanner) = self.bm_with_rec(|r| (r.start.clone(), r.scanner)).unwrap();
         let why = if end.cur_level != start.cur_level
@@ -2190,10 +2214,10 @@ impl Globals {
         let last_badness = self.last_badness;
         if let Some(i) = rec.verify {
             let (cs, scanner) = (rec.cs, rec.scanner);
-            self.bm_verified(rec, i, last_badness, &frag);
+            self.bm_verified(rec, i, last_badness, &frag, trailer);
             return self.bm_verify_full(cs, i, scanner);
         }
-        self.bm_commit(rec, last_badness, frag, aux);
+        self.bm_commit(rec, last_badness, frag, aux, trailer);
     }
 
     /// Abandon a recording already taken out of the state (its end check).
@@ -2209,6 +2233,7 @@ impl Globals {
         last_badness: i32,
         frag: Option<crate::boxfrag::Frag>,
         aux: u64,
+        trailer: Option<i32>,
     ) {
         let line = self.line;
         let bytes = 4 * (rec.k1.len() + rec.k2.len() + rec.k4.len())
@@ -2262,6 +2287,7 @@ impl Globals {
                 holes: rec.holes.iter().map(|h| (h.0, h.2.clone())).collect(),
                 frag,
                 aux,
+                trailer,
                 voids: rec.voids,
                 line: rec.line_read.then_some(line),
                 ops: rec.ops,
@@ -2315,6 +2341,7 @@ impl Globals {
         i: usize,
         last_badness: i32,
         frag: &Option<crate::boxfrag::Frag>,
+        trailer: Option<i32>,
     ) {
         let name = self.cs_name_string(rec.cs);
         let fail = with_config(|c| c.verify_fail);
@@ -2340,6 +2367,9 @@ impl Globals {
             }
             if e.frag != *frag {
                 diffs.push("the output nodes differ".to_string());
+            }
+            if e.trailer != trailer {
+                diffs.push("the last \\ignorespaces differs".to_string());
             }
             if e.last_badness != last_badness {
                 diffs.push(format!(
@@ -2558,7 +2588,9 @@ impl Globals {
         }
     }
 
-    fn bm_replay(&mut self, cs: i32, i: usize) {
+    /// Replay entry `i` of `cs`; its trailer token, if any, for the caller
+    /// to back up (`main_control` then runs it).
+    fn bm_replay(&mut self, cs: i32, i: usize) -> Option<i32> {
         let t0 = std::time::Instant::now();
         // Take the entry's operations (an entry is never replayed inside
         // itself: a replay runs no recorded hook).
@@ -2576,7 +2608,7 @@ impl Globals {
             ))
         });
         let Some((ops, last_badness, k3)) = taken else {
-            return;
+            return None;
         };
         // the body, used up: as `get_next` pops it
         self.end_token_list();
@@ -2667,6 +2699,13 @@ impl Globals {
             );
         }
         write_stats(false);
+        ST.with(|s| {
+            s.borrow()
+                .store
+                .get(&cs)
+                .and_then(|v| v.get(i))
+                .and_then(|e| e.trailer)
+        })
     }
 
     /// The end of the run: the statistics.
