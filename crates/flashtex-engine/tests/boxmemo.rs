@@ -35,7 +35,7 @@ fn run(dir: &Path, mode: &str, names: &str) -> Run {
     let stats = dir.join(format!("stats-{mode}.txt"));
     let _ = std::fs::remove_file(&stats);
     let out = Command::new(env!("CARGO_BIN_EXE_flashtex-initex"))
-        .args(["-ini", "-etex", "*\\input t"])
+        .args(["-ini", "-etex", "\\input t"])
         .current_dir(dir)
         .env("FLASHTEX_POOL", pool)
         .env("FLASHTEX_RESOLVER", "cwd")
