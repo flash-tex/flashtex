@@ -3692,7 +3692,13 @@ fn rv1685_jbig2_pages_and_moved_file() {
     }
     drop(h);
     std::fs::rename(dir.join("img-d.jb2"), dir.join("moved.jb2")).unwrap();
-    drop(rv_refused(&e, &dir, &s0, "img-d.jb2", "rv1685-a: moved image"));
+    drop(rv_refused(
+        &e,
+        &dir,
+        &s0,
+        "img-d.jb2",
+        "rv1685-a: moved image",
+    ));
     std::fs::rename(dir.join("moved.jb2"), dir.join("img-d.jb2")).unwrap();
     let mut h = Host::start(&e, &dir);
     let r = h.cmd(&format!("open {}", s0.display()));
