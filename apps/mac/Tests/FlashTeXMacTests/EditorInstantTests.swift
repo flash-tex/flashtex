@@ -393,6 +393,7 @@ final class EditorInstantTests: XCTestCase {
         var burstSections: [String: [Double]] = [:]
         for (k, b) in MainThreadProbe.buckets { burstSections[k] = [Double(b.totalNs) / 1e6, Double(b.count), Double(b.maxNs) / 1e6] }
 
+        print("EditorInstantEnv: bridge \(model.bridgeStatus)")
         report([idle, coldPhase, steady, bursts], extra: ["pages": n, "document_bytes": text.utf8.count, "burst_applied_ms": burstMs,
                                                   "burst_bodies": ViewBodyProbe.counts, "burst_main_sections_ms": burstSections])
         XCTAssertEqual(s.pageCount, n)
