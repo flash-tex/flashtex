@@ -54,11 +54,11 @@ VOL = ('vol-closed', 'vol-open')
 
 
 def S(tag, trials, extras=(), fixtures=True, kinds=None, interleave=False, host=None, toggle=False,
-      allow_no_trials=False):
+      allow_no_trials=False, first_open=False):
     """One soundness.py run (gates.sh: `soundness.py gates ...`)."""
     return dict(tool='soundness', tag=tag, trials=trials, extras=list(extras), fixtures=fixtures,
                 kinds=kinds, interleave=interleave, host=host, toggle=toggle,
-                allow_no_trials=allow_no_trials)
+                allow_no_trials=allow_no_trials, first_open=first_open)
 
 
 def SPAN(doc, edits, seed, frac=None, kinds=None, eol=None):
@@ -93,6 +93,9 @@ GATES = {
     'readers': [dict(tool='readers', tag='readers')],
     'sound-c': [S('c', 20, REFS, kinds='sentence,section,label,ref,cite,footnote,unlabel,unsection')],
     'sound-d': [S('d', 12, REFS, kinds=KD, interleave=True)],
+    # lane COLD-OPEN: interleaved edits interrupting a first compile (no .aux) in its first pass
+    'sound-first': [S('first', 10, ('refs-30', 'full-100'), kinds='replace,insert,sentence,section,label,ref',
+                      interleave=True, first_open=True)],
 }
 
 # Seconds per unit with no measurement in sweeps-costs.json (a new fixture or run): per trial (an
@@ -254,6 +257,8 @@ def _run_unit(tree, bench, out, u, timeout):
             cmd += ['--toggle-files', names]
         if u['allow_no_trials']:
             cmd += ['--allow-no-trials']
+        if u.get('first_open'):
+            cmd += ['--first-open']
     elif u['tool'] == 'span':
         cmd = [sys.executable, f'{ib}/dlspan.py', ENGINE, u['doc'], '--edits', str(u['edits']), '--seed', str(u['seed']),
                '--timeout', '7000']
