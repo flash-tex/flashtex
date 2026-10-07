@@ -33,9 +33,16 @@
 #   gate       scripts/gate.sh pr
 # Lanes run the sweeps (sound-*, span, readers) on GitHub-hosted runners instead:
 # `gh workflow run sweeps.yml -f ref=<branch>` (sweeps.py holds the same runs, sharded; change both
-# together). The NixOS PC is for timing and latency measurements only (README.md).
+# together). Timing and latency run on the M1 Max: t7-reference.yml (README.md).
 # The checkout is this script's (on NixOS it needs PR #1232's rpath fix for libstdc++).
 # Raw output: $R. Every engine run has a time limit (incr_bench.py, soundness.py, timeout(1)).
+#
+# Performance modes (lane PERF-MODES, src/profile.rs): FLASHTEX_PROFILE=low-memory|balanced|
+# high-performance runs every sweep in that mode (iserve and the socket host both read it; a
+# sweep's own --budget/--timed still pin their knob), e.g.
+#   FLASHTEX_PROFILE=low-memory R=$B/raw-low tools/incr-bench/gates.sh sound-a sound-c sound-d
+# The default is Balanced, today's behaviour. SWEEP_SCALE_PCT (default 100) scales every sweep's
+# trials (at least one), for a quicker sweep per mode on a shared machine.
 #
 # Every engine run here has the incremental engine's verify modes on (LIVE-30MS review: a
 # mutation of the convergence jump's adopted chunks gave matching outputs 6/6 with them off;
@@ -57,6 +64,7 @@ TL=$HOME/texlive/2026/bin/x86_64-linux
 export PATH=$TL:$HOME/.nix-profile/bin:$PATH
 export CARGO_BUILD_JOBS=${CARGO_BUILD_JOBS:-12}
 mkdir -p $R
+trials() { local n=$(( ($1 * ${SWEEP_SCALE_PCT:-100} + 99) / 100 )); echo $(( n < 1 ? 1 : n )); }
 cd $W
 echo "engine $(git rev-parse --short HEAD) ($(git log -1 --format=%s | head -c 80)); $(uname -srm); start $(date -u +%FT%TZ) $(uptime)" >> $R/environment.txt
 export FLASHTEX_VERIFY_JUMP=1 FLASHTEX_VERIFY_OLDCACHE=1 FLASHTEX_VERIFY_PREPARED=1 FLASHTEX_VERIFY_RELOC=1
@@ -94,20 +102,20 @@ for g in ${@:-build parity lockstep trip etrip drift positions tests sound-a sou
       timeout 3600 cargo test --release -p flashtex-engine --lib > $R/tests-lib.txt 2>&1; echo "lib tests exit $?" >> $R/tests-lib.txt
       timeout 3600 cargo test --release -p flashtex-display-list > $R/tests-display-list.txt 2>&1; echo "display-list tests exit $?" >> $R/tests-display-list.txt ;;
     sound-a)
-      PYTHONHASHSEED=0 timeout 36000 python3 $S/soundness.py gates -j $J --trials 50 --dir $B/sound-a --out $R/soundness-a.jsonl \
+      PYTHONHASHSEED=0 timeout 36000 python3 $S/soundness.py gates -j $J --trials $(trials 50) --dir $B/sound-a --out $R/soundness-a.jsonl \
         --extra $B/src-plain-120:plain-120 --extra $B/src-full-100:full-100 > $R/soundness-a.txt 2>&1
       echo "soundness A exit $?" >> $R/soundness-a.txt ;;
     sound-budget)
       # retention (`thin`) under a 4 MB undo-log budget, so that every run drops and merges
       # checkpoints (the default 1 GB is never reached by these documents)
-      PYTHONHASHSEED=0 timeout 36000 python3 $S/soundness.py gates -j $J --trials 20 --dir $B/sound-budget \
+      PYTHONHASHSEED=0 timeout 36000 python3 $S/soundness.py gates -j $J --trials $(trials 20) --dir $B/sound-budget \
         --out $R/soundness-budget.jsonl --host-args "--budget 4194304" \
         --extra $B/src-plain-120:plain-120 --extra $B/src-full-100:full-100 > $R/soundness-budget.txt 2>&1
       echo "soundness budget exit $?" >> $R/soundness-budget.txt ;;
     sound-budget-d)
       # the same budget with interleaved (preempted) edits: retention in the middle of a run that
       # stops early (the review of #1300 ran it first)
-      PYTHONHASHSEED=0 timeout 36000 python3 $S/soundness.py gates -j $J --trials 8 --interleave \
+      PYTHONHASHSEED=0 timeout 36000 python3 $S/soundness.py gates -j $J --trials $(trials 8) --interleave \
         --kinds replace,insert,sentence,section,label,ref,unlabel --dir $B/sound-budget-d \
         --out $R/soundness-budget-d.jsonl --host-args "--budget 4194304" \
         --extra $B/src-refs-30:refs-30 --extra $B/src-refs-120:refs-120 --extra $B/src-full-100:full-100 \
@@ -117,7 +125,7 @@ for g in ${@:-build parity lockstep trip etrip drift positions tests sound-a sou
       # a timed checkpoint every 0.2 ms of engine time, so that checkpoints fall inside what
       # a load-dependent placement only sometimes hits (beamer's fragile frames, with their
       # .vrb open for output: checkpoint.rs's rewritten_since)
-      PYTHONHASHSEED=0 timeout 36000 python3 $S/soundness.py gates -j $J --trials 10 --dir $B/sound-timed \
+      PYTHONHASHSEED=0 timeout 36000 python3 $S/soundness.py gates -j $J --trials $(trials 10) --dir $B/sound-timed \
         --out $R/soundness-timed.jsonl --host-args "--timed 0.0002" > $R/soundness-timed.txt 2>&1
       echo "soundness timed exit $?" >> $R/soundness-timed.txt ;;
     sound-vol)
@@ -126,17 +134,17 @@ for g in ${@:-build parity lockstep trip etrip drift positions tests sound-a sou
       # reverts each, with a timed checkpoint every 0.2 ms and with the default checkpoints.
       # The `cold` modes count the full recompiles the restarts fell back to.
       python3 $S/genvol.py $B > /dev/null
-      PYTHONHASHSEED=0 timeout 36000 python3 $S/soundness.py gates -j $J --trials 20 --no-fixtures \
+      PYTHONHASHSEED=0 timeout 36000 python3 $S/soundness.py gates -j $J --trials $(trials 20) --no-fixtures \
         --dir $B/sound-vol-timed --out $R/soundness-vol-timed.jsonl --host-args "--timed 0.0002" \
         --extra $B/src-vol-closed:vol-closed --extra $B/src-vol-open:vol-open > $R/soundness-vol.txt 2>&1
       e1=$?
-      PYTHONHASHSEED=0 timeout 36000 python3 $S/soundness.py gates -j $J --trials 20 --no-fixtures \
+      PYTHONHASHSEED=0 timeout 36000 python3 $S/soundness.py gates -j $J --trials $(trials 20) --no-fixtures \
         --dir $B/sound-vol --out $R/soundness-vol.jsonl \
         --extra $B/src-vol-closed:vol-closed --extra $B/src-vol-open:vol-open >> $R/soundness-vol.txt 2>&1
       e2=$?
       # interleaved (preempted) edits, as sweep D (#1550: an edit broke a `\closeout`, and the file,
       # still open for output, was read back with the line a checkpoint had flushed)
-      PYTHONHASHSEED=0 timeout 36000 python3 $S/soundness.py gates -j $J --trials 12 --no-fixtures --interleave \
+      PYTHONHASHSEED=0 timeout 36000 python3 $S/soundness.py gates -j $J --trials $(trials 12) --no-fixtures --interleave \
         --kinds replace,insert,sentence,section,label,ref,unlabel --dir $B/sound-vol-d --out $R/soundness-vol-d.jsonl \
         --extra $B/src-vol-closed:vol-closed --extra $B/src-vol-open:vol-open >> $R/soundness-vol.txt 2>&1
       echo "soundness vol exit $e1 $e2 $?" >> $R/soundness-vol.txt ;;
@@ -144,24 +152,24 @@ for g in ${@:-build parity lockstep trip etrip drift positions tests sound-a sou
       # a later lookup whose answer changed (#1502): genlookup.py's document tests for five files at
       # five pages, and half the edits create or delete one of them first (put back before the revert)
       python3 $S/genlookup.py $B > /dev/null
-      PYTHONHASHSEED=0 timeout 36000 python3 $S/soundness.py gates -j $J --trials 30 --no-fixtures \
+      PYTHONHASHSEED=0 timeout 36000 python3 $S/soundness.py gates -j $J --trials $(trials 30) --no-fixtures \
         --kinds replace,insert,delete,sentence --dir $B/sound-lookup --out $R/soundness-lookup.jsonl \
         --toggle-files "$(python3 $S/genlookup.py --names)" --extra $B/src-lookup:lookup > $R/soundness-lookup.txt 2>&1
       echo "soundness lookup exit $?" >> $R/soundness-lookup.txt
       # the preempt/continue path (#1514): a compile stopped by newer work, a file toggled, no edit
-      PYTHONHASHSEED=0 timeout 36000 python3 $S/soundness.py gates -j $J --trials 12 --no-fixtures --interleave \
+      PYTHONHASHSEED=0 timeout 36000 python3 $S/soundness.py gates -j $J --trials $(trials 12) --no-fixtures --interleave \
         --kinds replace,insert,delete,sentence --dir $B/sound-lookup-d --out $R/soundness-lookup-d.jsonl \
         --toggle-files "$(python3 $S/genlookup.py --names)" --extra $B/src-lookup:lookup > $R/soundness-lookup-d.txt 2>&1
       echo "soundness lookup-d exit $?" >> $R/soundness-lookup-d.txt ;;
     sound-lines)
-      PYTHONHASHSEED=0 timeout 36000 python3 $S/soundness.py gates -j $J --trials 20 --kinds newline,split,join --allow-no-trials \
+      PYTHONHASHSEED=0 timeout 36000 python3 $S/soundness.py gates -j $J --trials $(trials 20) --kinds newline,split,join --allow-no-trials \
         --dir $B/sound-lines --out $R/soundness-lines.jsonl \
         --extra $B/src-plain-120:plain-120 --extra $B/src-full-100:full-100 > $R/soundness-lines.txt 2>&1
       e1=$?
-      PYTHONHASHSEED=0 timeout 36000 python3 $S/soundness.py gates -j $J --trials 10 --kinds newline,split,join --allow-no-trials \
+      PYTHONHASHSEED=0 timeout 36000 python3 $S/soundness.py gates -j $J --trials $(trials 10) --kinds newline,split,join --allow-no-trials \
         --dir $B/sound-lines-timed --out $R/soundness-lines-timed.jsonl --host-args "--timed 0.0002" >> $R/soundness-lines.txt 2>&1
       e2=$?
-      PYTHONHASHSEED=0 timeout 36000 python3 $S/soundness.py gates -j $J --trials 8 --interleave --allow-no-trials \
+      PYTHONHASHSEED=0 timeout 36000 python3 $S/soundness.py gates -j $J --trials $(trials 8) --interleave --allow-no-trials \
         --kinds newline,split,join,replace,sentence --dir $B/sound-lines-d --out $R/soundness-lines-d.jsonl \
         --extra $B/src-plain-120:plain-120 --extra $B/src-full-100:full-100 >> $R/soundness-lines.txt 2>&1
       echo "soundness lines exit $e1 $e2 $?" >> $R/soundness-lines.txt ;;
@@ -193,12 +201,12 @@ for g in ${@:-build parity lockstep trip etrip drift positions tests sound-a sou
       timeout 7200 python3 $S/readers.py $D $R/readers > $R/readers.txt 2>&1
       echo "readers exit $?" >> $R/readers.txt ;;
     sound-c)
-      PYTHONHASHSEED=0 timeout 36000 python3 $S/soundness.py gates -j $J --trials 20 --dir $B/sound-c --out $R/soundness-c.jsonl \
+      PYTHONHASHSEED=0 timeout 36000 python3 $S/soundness.py gates -j $J --trials $(trials 20) --dir $B/sound-c --out $R/soundness-c.jsonl \
         --kinds sentence,section,label,ref,cite,footnote,unlabel,unsection \
         --extra $B/src-refs-30:refs-30 --extra $B/src-refs-120:refs-120 --extra $B/src-full-100:full-100 > $R/soundness-c.txt 2>&1
       echo "soundness C exit $?" >> $R/soundness-c.txt ;;
     sound-d)
-      PYTHONHASHSEED=0 timeout 36000 python3 $S/soundness.py gates -j $J --trials 12 --interleave --dir $B/sound-d --out $R/soundness-d.jsonl \
+      PYTHONHASHSEED=0 timeout 36000 python3 $S/soundness.py gates -j $J --trials $(trials 12) --interleave --dir $B/sound-d --out $R/soundness-d.jsonl \
         --kinds replace,insert,sentence,section,label,ref,unlabel \
         --extra $B/src-refs-30:refs-30 --extra $B/src-refs-120:refs-120 --extra $B/src-full-100:full-100 > $R/soundness-d.txt 2>&1
       echo "soundness D exit $?" >> $R/soundness-d.txt ;;
@@ -208,9 +216,9 @@ for g in ${@:-build parity lockstep trip etrip drift positions tests sound-a sou
         --extra $B/src-refs-30:refs-30 --extra $B/src-full-100:full-100 > $R/soundness-first.txt 2>&1
       echo "soundness first exit $?" >> $R/soundness-first.txt ;;
     sound-book)
-      PYTHONHASHSEED=0 timeout 36000 python3 $S/soundness.py gates -j 4 --trials 8 --no-fixtures --dir $B/sound-book --out $R/soundness-book.jsonl \
+      PYTHONHASHSEED=0 timeout 36000 python3 $S/soundness.py gates -j 4 --trials $(trials 8) --no-fixtures --dir $B/sound-book --out $R/soundness-book.jsonl \
         --extra $B/src-book:book > $R/soundness-book.txt 2>&1
-      PYTHONHASHSEED=0 timeout 36000 python3 $S/soundness.py gates -j 4 --trials 4 --no-fixtures --kinds sentence --dir $B/sound-book-s --out $R/soundness-book-s.jsonl \
+      PYTHONHASHSEED=0 timeout 36000 python3 $S/soundness.py gates -j 4 --trials $(trials 4) --no-fixtures --kinds sentence --dir $B/sound-book-s --out $R/soundness-book-s.jsonl \
         --extra $B/src-book:book >> $R/soundness-book.txt 2>&1
       echo "soundness book exit $?" >> $R/soundness-book.txt ;;
     gate)

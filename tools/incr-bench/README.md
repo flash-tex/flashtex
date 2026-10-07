@@ -100,8 +100,11 @@ canonical path (`$RUNNER_TEMP/ib`, as `/tmp/incr-bench` on the PC) the same runs
 That is a host bug with such paths (DESIGN.md §5.3 rule (c)); reproduce with
 `INCR_BENCH_DIR=/some/dir/../ib tools/incr-bench/dlspan.py gates plain-120 --edits 12 --seed 4 --from 0.3 --kinds letter,newline,split`.
 
-**The NixOS PC is for timing and latency measurements only** (T7, `keys*.sh`, `mem*.py`, the
-instruction counts): numbers that need a quiet, known machine. Correctness does not depend on load.
+**Timing and latency (T7, `keys*.sh`, `mem*.py`, instruction counts) run only on the M1 Max**, the
+owner's T7 reference class, through `.github/workflows/t7-reference.yml`
+(`gh workflow run t7-reference.yml -f ref=<branch> [-f docs=...] [-f quick=true] [-f t7_args='...']`).
+The NixOS PC has a hard 5-core cap (owner, 2026-10-07), so its numbers are not reference numbers.
+Correctness does not depend on load.
 
 ## Machines
 

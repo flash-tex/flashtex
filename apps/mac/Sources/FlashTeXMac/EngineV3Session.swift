@@ -313,6 +313,9 @@ final class EngineV3Session {
     }
     /// Removed in `stop()` and deinit.
     @ObservationIgnored nonisolated(unsafe) private var fontSmoothingObserver: NSObjectProtocol?
+    /// Settings > Performance changed (PerformanceMode.swift): the host is
+    /// told (`PROFILE`). Removed in deinit.
+    @ObservationIgnored nonisolated(unsafe) private var performanceObserver: NSObjectProtocol?
 
     /// `smoothFonts` nil: follow the Settings preference (the app's
     /// session); a value: fixed at it (tests).
@@ -322,10 +325,22 @@ final class EngineV3Session {
         if smoothFonts == nil {
             fontSmoothingObserver = PreviewFontSmoothing.observe { [weak self] on in self?.smoothFonts = on }
         }
+        performanceObserver = NotificationCenter.default.addObserver(forName: PerformanceMode.changed, object: nil, queue: .main) { [weak self] note in
+            guard let mode = (note.userInfo?["mode"] as? String).flatMap(PerformanceMode.init(rawValue:)) else { return }
+            MainActor.assumeIsolated { self?.performanceModeChanged(mode) }
+        }
+    }
+
+    /// Tell the host the new performance mode (spec §6.9): it applies it
+    /// between compiles. A host without `profile-v1` keeps its own.
+    private func performanceModeChanged(_ mode: PerformanceMode) {
+        guard let c = connection, c.offersProfiles else { return }
+        do { try c.setProfile(mode.hostProfile); log("performance mode: \(mode.hostProfile)") } catch { log("PROFILE: \(error)") }
     }
 
     deinit {
         if let fontSmoothingObserver { NotificationCenter.default.removeObserver(fontSmoothingObserver) }
+        if let performanceObserver { NotificationCenter.default.removeObserver(performanceObserver) }
         // A session released without `stop()` (its window's model went away):
         // nothing it installed may outlive it. Its host ends with it (the
         // process object terminates it in deinit, and the connection closes).
@@ -341,6 +356,7 @@ final class EngineV3Session {
     func start(model: ShellModel) {
         self.model = model
         stopping = false
+        PerformanceAdvisor.shared.start() // suggests Low Memory under memory pressure (PerformanceMode.swift)
         if NSWorkspace.shared.isVoiceOverEnabled { EngineV3GlyphText.warmUp() } // VoiceOver's page text (EngineV3Accessibility.swift), off main; else loaded on first use
 
         if keyMonitor == nil {
@@ -628,9 +644,10 @@ final class EngineV3Session {
     private func connect(socket: String) {
         let ref = EngineV3WeakRef(self)
         let plan = rasterPlan
+        let profile = PerformanceMode.current.hostProfile // Settings > Performance (spec §6.9)
         DispatchQueue.global(qos: .userInitiated).async {
             do {
-                let c = try DL3Connection(socketPath: socket, client: "FlashTeX (engine-v3 preview)", accept: [DL3Diag.capability] + (ProcessInfo.processInfo.environment["FLASHTEX_V3_NO_PROGRESS"] == "1" ? [] : [DL3.progressCapability]))
+                let c = try DL3Connection(socketPath: socket, client: "FlashTeX (engine-v3 preview)", accept: [DL3Diag.capability] + (ProcessInfo.processInfo.environment["FLASHTEX_V3_NO_PROGRESS"] == "1" ? [] : [DL3.progressCapability]), profile: profile)
                 let reader = EngineV3Reader(cache: .shared, plan: plan)
                 c.start(onTimedEvent: { ev, timing in
                     guard let out = reader.handle(ev, timing: timing) else { return }

@@ -5,7 +5,7 @@
 # NixOS PC, which is now for timing and latency measurements only.
 #
 #   gh workflow run sweeps.yml -f ref=<branch|sha|refs/pull/N/head> \
-#     [-f gates=sound-a,span] [-f base_ref=main]
+#     [-f gates=sound-a,span] [-f base_ref=main] [-f profile=low-memory|balanced|high-performance]
 #
 # Or add the `run-sweeps` label to a pull request (its head, once the PR's
 # branch has this file).
@@ -54,6 +54,10 @@ on:
         description: "minutes of work per shard"
         required: false
         default: "15"
+      profile:
+        description: "performance mode the engines run in (FLASHTEX_PROFILE: low-memory, balanced, high-performance; empty: balanced)"
+        required: false
+        default: ""
   pull_request:
     types: [labeled]
 
@@ -267,6 +271,8 @@ jobs:
           SIDE: ${{ matrix.side }}
           SHA: ${{ matrix.sha }}
           TARGET: ${{ needs.prepare.outputs.target }}
+          # a performance mode (lane PERF-MODES, src/profile.rs); every host and iserve reads it
+          FLASHTEX_PROFILE: ${{ inputs.profile }}
         run: |
           set -euo pipefail
           # A canonical path (no `..`, no symlink), as /tmp/incr-bench on the PC: under
@@ -275,7 +281,7 @@ jobs:
           export INCR_BENCH_DIR
           mkdir -p "$INCR_BENCH_DIR"
           tar -C "$INCR_BENCH_DIR" -xf "$RUNNER_TEMP/engine-$SIDE.tar"
-          echo "engine $(cat "$INCR_BENCH_DIR/gates/HEAD"); $(nproc) cpus; $(free -g | awk '/Mem:/ {print $2}') GB"
+          echo "engine $(cat "$INCR_BENCH_DIR/gates/HEAD"); profile ${FLASHTEX_PROFILE:-balanced}; $(nproc) cpus; $(free -g | awk '/Mem:/ {print $2}') GB"
           python3 harness/tools/incr-bench/sweeps.py run --tree "$PWD/tree" --gates "$GATES" --shard "$SHARD" \
             --side "$SIDE" --sha "$SHA" --target "$TARGET" -j "$JOBS" --out "$RUNNER_TEMP/out"
       - uses: actions/upload-artifact@v4

@@ -238,16 +238,26 @@ def read_log(paths):
     return out
 
 
-def outcome(test, results):
-    """'passed' | 'skipped' | 'failed' | 'absent' for one entry (a suite: all of its tests)."""
-    if "." in test:
-        got = results.get(test, set())
-    else:
-        got = set().union(*([v for k, v in results.items() if k.split(".", 1)[0] == test] or [set()]))
-    for o in ("failed", "skipped", "passed"):
+def _one(got):
+    """One test over every log: failed anywhere, else passed anywhere (a host-driven test
+    skips on the hosted leg and passes on the host leg), else skipped, else absent."""
+    for o in ("failed", "passed", "skipped"):
         if o in got:
             return o
     return "absent"
+
+
+def outcome(test, results):
+    """'passed' | 'skipped' | 'failed' | 'absent' for one entry (a suite: all of its tests)."""
+    if "." in test:
+        return _one(results.get(test, set()))
+    each = [_one(v) for k, v in results.items() if k.split(".", 1)[0] == test]
+    if not each:
+        return "absent"
+    for o in ("failed", "skipped"):
+        if o in each:
+            return o
+    return "passed"
 
 
 def log_problems(tests, results):
