@@ -1306,10 +1306,12 @@ fn a_cold_run_stopped_past_s0_is_kept() {
         compile_and_check(&e, &mut h, &dir, &[("doc.tex", base)], what);
     }
     // Opening a document compiled before (a new session's first compile is
-    // from the format), and one never compiled: its S₀ looked up a `.aux`
-    // that did not exist, and the stopped run wrote one, so the next
-    // compile starts from the format again (as a complete first compile's
-    // second pass does), as a scratch run would, without the partial `.aux`.
+    // from the format), and one never compiled (lane COLD-OPEN): with no
+    // `.aux` its `.aux` point is where `\document` begins, before the lookup
+    // that found none, so the `.aux` the stopped run wrote is not in S₀'s
+    // key; the next compile keeps what the stopped run typeset and restarts
+    // before the edit, taking the `.aux` as that run looked for it (not
+    // there: `fixed_created`), and its next pass sees the `.aux`.
     for (i, compiled) in [true, false].into_iter().enumerate() {
         let dir = e.dir.join(format!("cold-stop-open-{i}"));
         let _ = std::fs::remove_dir_all(&dir);
@@ -1334,10 +1336,36 @@ fn a_cold_run_stopped_past_s0_is_kept() {
         std::fs::write(dir.join("doc.tex"), &edited).unwrap();
         std::fs::write(reference.join("doc.tex"), &edited).unwrap();
         let r2 = h.cmd("compile");
-        let mode = if compiled { "incremental" } else { "cold" };
-        assert_eq!(field(&r2, "mode"), format!("\"{mode}\""), "{r2}");
+        assert_eq!(field(&r2, "mode"), "\"incremental\"", "{r2}");
         check_against(&e, &dir, &reference, &r2, "opened and stopped");
     }
+}
+
+/// Lane COLD-OPEN: a first compile (no `.aux`) takes its `.aux` point where
+/// `\document` begins, before it looks for the `.aux`, so the passes the new
+/// `.aux` asks for restart there, not from the format; the output is a
+/// scratch run's.
+#[test]
+fn a_first_compiles_later_passes_start_at_the_aux_point() {
+    let Some(e) = env() else {
+        common::no_texlive();
+        return;
+    };
+    let base = refs_doc("", 8);
+    let dir = e.dir.join("first-passes");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("doc.tex"), &base).unwrap();
+    let reference = dir.with_extension("ref");
+    copy_dir(&dir, &reference);
+    let mut h = Host::start(&e, &dir);
+    let r = h.cmd("compile");
+    assert_eq!(field(&r, "mode"), "\"cold\"", "{r}");
+    assert!(
+        r.contains("\"pass_modes\":[\"cold\", \"incremental\""),
+        "the second pass is from the format: {r}"
+    );
+    check_against(&e, &dir, &reference, &r, "a first compile");
 }
 
 /// P4-COLD-PREEMPT: newer work that arrives before a run from the format

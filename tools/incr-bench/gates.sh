@@ -2,7 +2,7 @@
 # gates.sh [GATE...]: the engine gates a lane runs before landing, on a Linux runner with TeX Live
 # 2026 (the NixOS PC; first written for lane P4-FINISH). Engine NAME "gates" under INCR_BENCH_DIR.   default: build parity lockstep trip etrip drift positions tests sound-a
 #                           sound-budget sound-budget-d sound-timed sound-vol sound-lookup sound-lines span sound-c sound-d
-#                           sound-book gate
+#                           sound-first sound-book gate
 #   build      release engine, display-list crate, web2rust; the pdflatex format; the documents
 #   parity     P-T1/P-T2 on the parity fixtures (tools/parity, --pt on)
 #   lockstep   tools/lockstep (260 cases)
@@ -24,6 +24,8 @@
 #              and sentences, then letters with the line kinds
 #   sound-c    soundness: 20 structural edits, fixtures + refs-30/120 + full-100
 #   sound-d    soundness: 12 interleaved (interrupted) edits
+#   sound-first soundness: 10 interleaved edits that interrupt a first compile (no .aux: the compiles'
+#              files removed first) in its first pass (lane COLD-OPEN)
 #   sound-book soundness: 8 single-character edits + 4 sentences (+ reverts) on the owner's
 #              1,072-page book.tex (copied to $B/src-book/book.tex beforehand)
 #   gate       scripts/gate.sh pr
@@ -53,7 +55,7 @@ mkdir -p $R
 cd $W
 echo "engine $(git rev-parse --short HEAD) ($(git log -1 --format=%s | head -c 80)); $(uname -srm); start $(date -u +%FT%TZ) $(uptime)" >> $R/environment.txt
 export FLASHTEX_VERIFY_JUMP=1 FLASHTEX_VERIFY_OLDCACHE=1 FLASHTEX_VERIFY_PREPARED=1 FLASHTEX_VERIFY_RELOC=1
-for g in ${@:-build parity lockstep trip etrip drift positions tests sound-a sound-budget sound-budget-d sound-timed sound-vol sound-lookup sound-lines span sound-c sound-d sound-book gate}; do
+for g in ${@:-build parity lockstep trip etrip drift positions tests sound-a sound-budget sound-budget-d sound-timed sound-vol sound-lookup sound-lines span sound-c sound-d sound-first sound-book gate}; do
   echo "== $g $(date -u +%T) $(uptime)" >> $R/environment.txt
   case $g in
     build)
@@ -188,6 +190,11 @@ for g in ${@:-build parity lockstep trip etrip drift positions tests sound-a sou
         --kinds replace,insert,sentence,section,label,ref,unlabel \
         --extra $B/src-refs-30:refs-30 --extra $B/src-refs-120:refs-120 --extra $B/src-full-100:full-100 > $R/soundness-d.txt 2>&1
       echo "soundness D exit $?" >> $R/soundness-d.txt ;;
+    sound-first)
+      PYTHONHASHSEED=0 timeout 36000 python3 $S/soundness.py gates -j $J --trials 10 --interleave --first-open --dir $B/sound-first --out $R/soundness-first.jsonl \
+        --kinds replace,insert,sentence,section,label,ref \
+        --extra $B/src-refs-30:refs-30 --extra $B/src-full-100:full-100 > $R/soundness-first.txt 2>&1
+      echo "soundness first exit $?" >> $R/soundness-first.txt ;;
     sound-book)
       PYTHONHASHSEED=0 timeout 36000 python3 $S/soundness.py gates -j 4 --trials 8 --no-fixtures --dir $B/sound-book --out $R/soundness-book.jsonl \
         --extra $B/src-book:book > $R/soundness-book.txt 2>&1
