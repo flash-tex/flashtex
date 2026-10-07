@@ -26,8 +26,20 @@ enum MainThreadProbe {
     /// When the editor's text view finished a draw (`CompletingTextView.draw`), CLOCK_UPTIME_RAW ns.
     private(set) static var editorDraws: [UInt64] = []
 
-    static func start() { buckets = [:]; editorDraws = []; isRecording = true }
-    static func stop() { isRecording = false }
+    static func start() { buckets = [:]; editorDraws = []; isRecording = true; recordingFlag = true }
+    static func stop() { isRecording = false; recordingFlag = false }
+
+    /// `isRecording`, readable off the main actor (PerfSignposts' sections).
+    nonisolated(unsafe) static var recordingFlag = false
+
+    /// A section timed outside the main actor's view (PerfSignposts.interval on the main thread).
+    nonisolated static func record(_ name: StaticString, since t0: UInt64) {
+        let d = MonotonicClock.nowNs() &- t0
+        MainActor.assumeIsolated {
+            guard isRecording else { return }
+            buckets["sp.\(name)", default: Bucket()].add(d)
+        }
+    }
 
     /// A section's start (0 when not recording); pass it to `end`.
     static func begin() -> UInt64 { isRecording ? MonotonicClock.nowNs() : 0 }
