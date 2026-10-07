@@ -1,0 +1,1645 @@
+{
+ "all_green": false,
+ "behind_tiers": [],
+ "engines": {
+  "new": {
+   "git_sha": "ac58ecfc717a5ff9e540a0523441307d7ff4d925",
+   "runs": [
+    {
+     "command": "python3 tools/parity/parity.py --tier fixtures --tier arxiv --tier templates --tier packages --texbin /home/kubar/texlive/2026/bin/x86_64-linux --oracle-pdftex /home/kubar/texlive/2026/bin/x86_64-linux/pdftex --texmf /home/kubar/texlive/2026/texmf-dist --raster none -j 2 --corpus-texmf /home/kubar/.cache/flashtex-corpus-texmf/texlive-2026 --engine /home/kubar/.flashtex-actions-runner-3/_work/_temp/p5/work/eng/flashtex-initex --engine-env FLASHTEX_FORMATS=/home/kubar/.flashtex-actions-runner-3/_work/_temp/p5/work/fmt --engine-env FLASHTEX_POOL=/home/kubar/.flashtex-actions-runner-3/_work/_temp/p5/work/eng/pdftex.pool --out /home/kubar/.flashtex-actions-runner-3/_work/_temp/p5/parity-new --work /home/kubar/.flashtex-actions-runner-3/_work/_temp/p5/work/parity-new",
+     "date": "2026-10-07",
+     "engine_kind": "tex",
+     "engine_sha256": "5b96720eae04bea92708cd14009eb60d3f39aeead5df3c8b0f4fe9b9c4ccea8f",
+     "engine_version": "pdfTeX 3.141592653-2.6-1.40.29 (FlashTeX engine)",
+     "host": "nixos",
+     "identity_problem": null,
+     "oracle": "pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026)",
+     "platform": "Linux 6.18.45 x86_64",
+     "source": "parity"
+    },
+    {
+     "date": "2026-10-07T07:23:06Z",
+     "documents_path": "/home/kubar/.flashtex-actions-runner-3/_work/_temp/t4-new/documents.json",
+     "engine_kind": "tex",
+     "engine_sha256": "4d42a00d944d98347f0de16ed3b2b4c062c45d1d3f4bf25f06e7d6a63394af6e",
+     "engine_version": "pdfTeX 3.141592653-2.6-1.40.29 (FlashTeX engine)",
+     "git_sha": "ac58ecfc717a5ff9e540a0523441307d7ff4d925",
+     "host": "nixos",
+     "host_label": "linux-00a377473e7a",
+     "identity_problem": "a different new engine binary: sha256 4d42a00d944d, the board's 5b96720eae04",
+     "ignored_tiers": [
+      "arxiv",
+      "packages",
+      "templates"
+     ],
+     "oracle": "pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026)",
+     "oracle_identity": {
+      "pdftex_sha256": "1c5ff71156ee990c3a18402cf06d3671ecf748bd84fb3983dbd5d62b600bc40b",
+      "texlive_root": "/home/kubar/texlive/2026",
+      "tlpdb_sha256": "909745461c89882e1afdaff0851db7277f055e2cdb35cd45630cf9b7e7d58934"
+     },
+     "platform": "Linux 6.18.45 x86_64",
+     "records_git_sha": true,
+     "source": "nightly"
+    },
+    {
+     "host": "nixos",
+     "identity_problem": null,
+     "source": "latex-suites"
+    },
+    {
+     "host": "nixos",
+     "identity_problem": null,
+     "source": "package-smoke"
+    },
+    {
+     "host": "nixos",
+     "identity_problem": null,
+     "source": "fonts"
+    }
+   ]
+  },
+  "old": {
+   "git_sha": "ac58ecfc717a5ff9e540a0523441307d7ff4d925",
+   "runs": [
+    {
+     "command": "python3 tools/parity/parity.py --tier fixtures --tier arxiv --tier templates --tier packages --texbin /home/kubar/texlive/2026/bin/x86_64-linux --oracle-pdftex /home/kubar/texlive/2026/bin/x86_64-linux/pdftex --texmf /home/kubar/texlive/2026/texmf-dist --raster none -j 2 --corpus-texmf /home/kubar/.cache/flashtex-corpus-texmf/texlive-2026 --engine /home/kubar/.flashtex-actions-runner-3/_work/_temp/p5/work/eng/flashtex --out /home/kubar/.flashtex-actions-runner-3/_work/_temp/p5/parity-old --work /home/kubar/.flashtex-actions-runner-3/_work/_temp/p5/work/parity-old",
+     "date": "2026-10-07",
+     "engine_kind": "flashtex-cli",
+     "engine_sha256": "c1e8bbec5f72b55906ecc49c895fd38a6a08bbf0d5b354294808c677465d9f1d",
+     "engine_version": "flashtex 0.1.0 (ac58ecfc717a)",
+     "host": "nixos",
+     "identity_problem": null,
+     "oracle": "pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026)",
+     "platform": "Linux 6.18.45 x86_64",
+     "source": "parity"
+    }
+   ]
+  }
+ },
+ "host_label": "nixos-7800x3d-3 (flashtex-linux; oracle pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026), LaTeX 2026-06-01, tlpdb 909745461c89 (/home/kubar/texlive/2026); tools c872ade8c)",
+ "oracle": {
+  "latex_format": "2026-06-01",
+  "pdftex_sha256": "1c5ff71156ee990c3a18402cf06d3671ecf748bd84fb3983dbd5d62b600bc40b",
+  "texlive_root": "/home/kubar/texlive/2026",
+  "tlpdb_sha256": "909745461c89882e1afdaff0851db7277f055e2cdb35cd45630cf9b7e7d58934"
+ },
+ "partial": [],
+ "red": 7,
+ "red_tiers": [],
+ "retirement": [
+  {
+   "app_parity": null,
+   "gate_state": "none",
+   "id": "S0",
+   "name": "vendor/ retired",
+   "other_preconditions": "none",
+   "scoreboard_gate": null,
+   "status": "done (#1183)"
+  },
+  {
+   "app_parity": null,
+   "gate_state": "none",
+   "id": "S1",
+   "name": "Decouple, no behaviour change (paragraph-layout tests, MIT features table, bundle verifier, check E)",
+   "other_preconditions": "none; supported-latex.json excluded until the owner rules (RQ5)",
+   "scoreboard_gate": null,
+   "status": "done (#1400, cba6c3470)"
+  },
+  {
+   "app_parity": null,
+   "gate_state": "none",
+   "id": "S1b",
+   "name": "S1 follow-ups (check E false negatives, baseline host field, stale probes, review-workflow.json path, S1(c) after RQ5)",
+   "other_preconditions": "S1; RQ5 for S1(c)",
+   "scoreboard_gate": null,
+   "status": "not started"
+  },
+  {
+   "app_parity": null,
+   "gate_state": "none",
+   "id": "S2",
+   "name": "No-consumer crates deleted (ruling 1): 9 crates, collaboration-core kept",
+   "other_preconditions": "S1 landed; #1120 closed; every live reference fixed in the same PR; the reference check with its named allowlist; packaging-selftest.sh; revert check (plan \u00a74.3)",
+   "scoreboard_gate": null,
+   "status": "next"
+  },
+  {
+   "app_parity": null,
+   "gate_state": "met",
+   "id": "S3",
+   "name": "Per-document engine choice (#1421, #1427)",
+   "other_preconditions": "none",
+   "scoreboard_gate": [
+    "fixtures:P-T2"
+   ],
+   "status": "partly landed (#1421, #1427)"
+  },
+  {
+   "app_parity": null,
+   "gate_state": "met",
+   "id": "S3r",
+   "name": "S3 remainder: capture features per engine, engine labels in logs and attribution tools",
+   "other_preconditions": "S3",
+   "scoreboard_gate": [
+    "fixtures:P-T2"
+   ],
+   "status": "not started"
+  },
+  {
+   "app_parity": null,
+   "gate_state": "none",
+   "id": "S4",
+   "name": "Gates P5 needs (board hosted fallback and complete run, T4 on the board, T2 green on main, no-TeX-Live gate scheduled and green, T7 reference run, parity fixtures on the engine, the app row -> test check)",
+   "other_preconditions": "none (Q1 and Q3 decided)",
+   "scoreboard_gate": null,
+   "status": "partly (#1461, #1563, #1574, #1336; #1598, #1605, #1609 open)"
+  },
+  {
+   "app_parity": {
+    "state": "met",
+    "why": []
+   },
+   "gate_state": "not met",
+   "id": "S5",
+   "name": "Flip: new documents default to the new engine (existing documents never switch silently)",
+   "other_preconditions": "decision 3 gate as confirmed (Q3): P-T2 >= 99% and P-T1 >= 98% on arXiv and T4, zero crashes on T4, new >= old on every tier; T2 clean; no-TeX-Live gate green; the S5 app-parity rows of docs/evidence/app-parity-2026-10-05 (plan \u00a74.4; app_parity_gate: tools/parity/app-parity-rows.json, its tests passing, not skipped, on mac-app and the host leg); T1 (lockstep) has 0 new differences, which this board does not measure; \u00a71.2 latency targets met on a T7 reference run; one shipped release carries #1421/#1427 records; the modes lane's fontspec fallback; S3, S3r and S4 landed",
+   "scoreboard_gate": "all",
+   "status": "not started"
+  },
+  {
+   "app_parity": null,
+   "gate_state": "none",
+   "id": "S6a",
+   "name": "Shared v2 pieces the v3 pane uses moved into v3 files (no behaviour change)",
+   "other_preconditions": "S5; swift build and the EngineV3Links, EngineV3Accessibility, EngineV3Search and EngineV3MathHover tests pass, not skipped",
+   "scoreboard_gate": null,
+   "status": "not started"
+  },
+  {
+   "app_parity": {
+    "state": "not met",
+    "why": [
+     "still on the previous engine's fallback: A9, A17",
+     "old-route rows open: E2, E3, E5"
+    ]
+   },
+   "gate_state": "not met",
+   "id": "S6",
+   "name": "App old route out",
+   "other_preconditions": "S5 and S6a landed (no soak); the S6 app-parity rows (plan \u00a74.4), each test passing and not skipped on S6's tip with the old helpers absent; the Unicode mode's M3 gate (modes Q1); source offer and \u00a73 legal review (RQ19); RQ6, RQ7 and RQ20 ruled; revert check",
+   "scoreboard_gate": "all",
+   "status": "not started"
+  },
+  {
+   "app_parity": null,
+   "gate_state": "not met",
+   "id": "S7",
+   "name": "Old engine deleted at once (compiler, render-pipeline, the old flashtex-cli, perf-bench, orphans)",
+   "other_preconditions": "S6 landed, queued immediately; T7 gating for >= 10 runs; RQ5 ruled; 0 open old-path PRs; revert check",
+   "scoreboard_gate": "all",
+   "status": "not started"
+  },
+  {
+   "app_parity": null,
+   "gate_state": "not met",
+   "id": "S8",
+   "name": "Oracles to tests/, final sweep",
+   "other_preconditions": "S7 landed; revert check",
+   "scoreboard_gate": "all",
+   "status": "not started"
+  }
+ ],
+ "rows": [
+  {
+   "gates": [
+    "S5",
+    "S6",
+    "S7",
+    "S8"
+   ],
+   "metric": "P-T1",
+   "new": {
+    "excluded": {},
+    "host": "nixos",
+    "invalid": null,
+    "note": null,
+    "of": 86,
+    "oracle": "pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026)",
+    "partial": null,
+    "passed": 86,
+    "skipped": 0,
+    "source": "parity",
+    "status": "measured"
+   },
+   "old": {
+    "excluded": {},
+    "host": "nixos",
+    "invalid": null,
+    "note": "n/a: the flashtex CLI is not a TeX engine and writes no box dumps or \\tracingall log; P-T1 applies to a pdfTeX-compatible --engine",
+    "of": null,
+    "oracle": "pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026)",
+    "partial": null,
+    "passed": null,
+    "skipped": 0,
+    "source": "parity",
+    "status": "n/a"
+   },
+   "target": "100% or baseline (old n/a)",
+   "tier": "fixtures",
+   "verdict": "ahead (old n/a)"
+  },
+  {
+   "gates": [
+    "S3",
+    "S3r",
+    "S5",
+    "S6",
+    "S7",
+    "S8"
+   ],
+   "metric": "P-T2",
+   "new": {
+    "excluded": {},
+    "host": "nixos",
+    "invalid": null,
+    "note": null,
+    "of": 86,
+    "oracle": "pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026)",
+    "partial": null,
+    "passed": 86,
+    "skipped": 0,
+    "source": "parity",
+    "status": "measured"
+   },
+   "old": {
+    "excluded": {},
+    "host": "nixos",
+    "invalid": null,
+    "note": null,
+    "of": 86,
+    "oracle": "pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026)",
+    "partial": null,
+    "passed": 0,
+    "skipped": 0,
+    "source": "parity",
+    "status": "measured"
+   },
+   "target": "new >= old",
+   "tier": "fixtures",
+   "verdict": "ahead"
+  },
+  {
+   "gates": [
+    "S5",
+    "S6",
+    "S7",
+    "S8"
+   ],
+   "metric": "L0",
+   "new": {
+    "excluded": {},
+    "host": "nixos",
+    "invalid": null,
+    "note": null,
+    "of": 86,
+    "oracle": "pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026)",
+    "partial": null,
+    "passed": 86,
+    "skipped": 0,
+    "source": "parity",
+    "status": "measured"
+   },
+   "old": {
+    "excluded": {},
+    "host": "nixos",
+    "invalid": null,
+    "note": null,
+    "of": 86,
+    "oracle": "pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026)",
+    "partial": null,
+    "passed": 84,
+    "skipped": 0,
+    "source": "parity",
+    "status": "measured"
+   },
+   "target": "new >= old",
+   "tier": "fixtures",
+   "verdict": "ahead"
+  },
+  {
+   "gates": [
+    "S5",
+    "S6",
+    "S7",
+    "S8"
+   ],
+   "metric": "L1",
+   "new": {
+    "excluded": {},
+    "host": "nixos",
+    "invalid": null,
+    "note": null,
+    "of": 86,
+    "oracle": "pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026)",
+    "partial": null,
+    "passed": 86,
+    "skipped": 0,
+    "source": "parity",
+    "status": "measured"
+   },
+   "old": {
+    "excluded": {},
+    "host": "nixos",
+    "invalid": null,
+    "note": null,
+    "of": 86,
+    "oracle": "pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026)",
+    "partial": null,
+    "passed": 84,
+    "skipped": 0,
+    "source": "parity",
+    "status": "measured"
+   },
+   "target": "new >= old",
+   "tier": "fixtures",
+   "verdict": "ahead"
+  },
+  {
+   "gates": [
+    "S5",
+    "S6",
+    "S7",
+    "S8"
+   ],
+   "metric": "L2",
+   "new": {
+    "excluded": {},
+    "host": "nixos",
+    "invalid": null,
+    "note": null,
+    "of": 86,
+    "oracle": "pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026)",
+    "partial": null,
+    "passed": 86,
+    "skipped": 0,
+    "source": "parity",
+    "status": "measured"
+   },
+   "old": {
+    "excluded": {},
+    "host": "nixos",
+    "invalid": null,
+    "note": null,
+    "of": 86,
+    "oracle": "pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026)",
+    "partial": null,
+    "passed": 74,
+    "skipped": 0,
+    "source": "parity",
+    "status": "measured"
+   },
+   "target": "new >= old",
+   "tier": "fixtures",
+   "verdict": "ahead"
+  },
+  {
+   "gates": [
+    "S5",
+    "S6",
+    "S7",
+    "S8"
+   ],
+   "metric": "L3",
+   "new": {
+    "excluded": {},
+    "host": "nixos",
+    "invalid": null,
+    "note": null,
+    "of": 86,
+    "oracle": "pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026)",
+    "partial": null,
+    "passed": 86,
+    "skipped": 0,
+    "source": "parity",
+    "status": "measured"
+   },
+   "old": {
+    "excluded": {},
+    "host": "nixos",
+    "invalid": null,
+    "note": null,
+    "of": 86,
+    "oracle": "pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026)",
+    "partial": null,
+    "passed": 64,
+    "skipped": 0,
+    "source": "parity",
+    "status": "measured"
+   },
+   "target": "new >= old",
+   "tier": "fixtures",
+   "verdict": "ahead"
+  },
+  {
+   "gates": [
+    "S5",
+    "S6",
+    "S7",
+    "S8"
+   ],
+   "metric": "P-T1",
+   "new": {
+    "excluded": {
+     "oracle": 22
+    },
+    "host": "nixos",
+    "invalid": null,
+    "note": null,
+    "of": 127,
+    "oracle": "pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026)",
+    "partial": null,
+    "passed": 127,
+    "skipped": 0,
+    "source": "parity",
+    "status": "measured"
+   },
+   "old": {
+    "excluded": {},
+    "host": "nixos",
+    "invalid": null,
+    "note": "n/a: the flashtex CLI is not a TeX engine and writes no box dumps or \\tracingall log; P-T1 applies to a pdfTeX-compatible --engine",
+    "of": null,
+    "oracle": "pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026)",
+    "partial": null,
+    "passed": null,
+    "skipped": 0,
+    "source": "parity",
+    "status": "n/a"
+   },
+   "target": ">= 98% (owner bar; old n/a)",
+   "tier": "arxiv",
+   "verdict": "ahead (old n/a)"
+  },
+  {
+   "gates": [
+    "S5",
+    "S6",
+    "S7",
+    "S8"
+   ],
+   "metric": "P-T2",
+   "new": {
+    "excluded": {
+     "oracle": 22
+    },
+    "host": "nixos",
+    "invalid": null,
+    "note": null,
+    "of": 127,
+    "oracle": "pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026)",
+    "partial": null,
+    "passed": 127,
+    "skipped": 0,
+    "source": "parity",
+    "status": "measured"
+   },
+   "old": {
+    "excluded": {
+     "oracle": 22
+    },
+    "host": "nixos",
+    "invalid": null,
+    "note": null,
+    "of": 127,
+    "oracle": "pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026)",
+    "partial": null,
+    "passed": 0,
+    "skipped": 0,
+    "source": "parity",
+    "status": "measured"
+   },
+   "target": "new >= old; >= 99% (owner bar)",
+   "tier": "arxiv",
+   "verdict": "ahead"
+  },
+  {
+   "gates": [
+    "S5",
+    "S6",
+    "S7",
+    "S8"
+   ],
+   "metric": "L0",
+   "new": {
+    "excluded": {
+     "oracle": 22
+    },
+    "host": "nixos",
+    "invalid": null,
+    "note": null,
+    "of": 127,
+    "oracle": "pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026)",
+    "partial": null,
+    "passed": 127,
+    "skipped": 0,
+    "source": "parity",
+    "status": "measured"
+   },
+   "old": {
+    "excluded": {
+     "oracle": 22
+    },
+    "host": "nixos",
+    "invalid": null,
+    "note": null,
+    "of": 127,
+    "oracle": "pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026)",
+    "partial": null,
+    "passed": 2,
+    "skipped": 0,
+    "source": "parity",
+    "status": "measured"
+   },
+   "target": "new >= old",
+   "tier": "arxiv",
+   "verdict": "ahead"
+  },
+  {
+   "gates": [
+    "S5",
+    "S6",
+    "S7",
+    "S8"
+   ],
+   "metric": "L1",
+   "new": {
+    "excluded": {
+     "oracle": 22
+    },
+    "host": "nixos",
+    "invalid": null,
+    "note": null,
+    "of": 127,
+    "oracle": "pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026)",
+    "partial": null,
+    "passed": 127,
+    "skipped": 0,
+    "source": "parity",
+    "status": "measured"
+   },
+   "old": {
+    "excluded": {
+     "oracle": 22
+    },
+    "host": "nixos",
+    "invalid": null,
+    "note": null,
+    "of": 127,
+    "oracle": "pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026)",
+    "partial": null,
+    "passed": 1,
+    "skipped": 0,
+    "source": "parity",
+    "status": "measured"
+   },
+   "target": "new >= old; >= 90%",
+   "tier": "arxiv",
+   "verdict": "ahead"
+  },
+  {
+   "gates": [
+    "S5",
+    "S6",
+    "S7",
+    "S8"
+   ],
+   "metric": "L2",
+   "new": {
+    "excluded": {
+     "oracle": 22
+    },
+    "host": "nixos",
+    "invalid": null,
+    "note": null,
+    "of": 127,
+    "oracle": "pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026)",
+    "partial": null,
+    "passed": 127,
+    "skipped": 0,
+    "source": "parity",
+    "status": "measured"
+   },
+   "old": {
+    "excluded": {
+     "oracle": 22
+    },
+    "host": "nixos",
+    "invalid": null,
+    "note": null,
+    "of": 127,
+    "oracle": "pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026)",
+    "partial": null,
+    "passed": 0,
+    "skipped": 0,
+    "source": "parity",
+    "status": "measured"
+   },
+   "target": "new >= old",
+   "tier": "arxiv",
+   "verdict": "ahead"
+  },
+  {
+   "gates": [
+    "S5",
+    "S6",
+    "S7",
+    "S8"
+   ],
+   "metric": "L3",
+   "new": {
+    "excluded": {
+     "oracle": 22
+    },
+    "host": "nixos",
+    "invalid": null,
+    "note": null,
+    "of": 127,
+    "oracle": "pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026)",
+    "partial": null,
+    "passed": 127,
+    "skipped": 0,
+    "source": "parity",
+    "status": "measured"
+   },
+   "old": {
+    "excluded": {
+     "oracle": 22
+    },
+    "host": "nixos",
+    "invalid": null,
+    "note": null,
+    "of": 127,
+    "oracle": "pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026)",
+    "partial": null,
+    "passed": 0,
+    "skipped": 0,
+    "source": "parity",
+    "status": "measured"
+   },
+   "target": "new >= old",
+   "tier": "arxiv",
+   "verdict": "ahead"
+  },
+  {
+   "gates": [
+    "S5",
+    "S6",
+    "S7",
+    "S8"
+   ],
+   "metric": "P-T1",
+   "new": {
+    "excluded": {
+     "oracle": 3
+    },
+    "host": "nixos",
+    "invalid": null,
+    "note": null,
+    "of": 17,
+    "oracle": "pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026)",
+    "partial": null,
+    "passed": 17,
+    "skipped": 0,
+    "source": "parity",
+    "status": "measured"
+   },
+   "old": {
+    "excluded": {},
+    "host": "nixos",
+    "invalid": null,
+    "note": "n/a: the flashtex CLI is not a TeX engine and writes no box dumps or \\tracingall log; P-T1 applies to a pdfTeX-compatible --engine",
+    "of": null,
+    "oracle": "pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026)",
+    "partial": null,
+    "passed": null,
+    "skipped": 0,
+    "source": "parity",
+    "status": "n/a"
+   },
+   "target": "100% or baseline (old n/a)",
+   "tier": "templates",
+   "verdict": "ahead (old n/a)"
+  },
+  {
+   "gates": [
+    "S5",
+    "S6",
+    "S7",
+    "S8"
+   ],
+   "metric": "P-T2",
+   "new": {
+    "excluded": {
+     "oracle": 3
+    },
+    "host": "nixos",
+    "invalid": null,
+    "note": null,
+    "of": 17,
+    "oracle": "pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026)",
+    "partial": null,
+    "passed": 17,
+    "skipped": 0,
+    "source": "parity",
+    "status": "measured"
+   },
+   "old": {
+    "excluded": {
+     "oracle": 3
+    },
+    "host": "nixos",
+    "invalid": null,
+    "note": null,
+    "of": 17,
+    "oracle": "pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026)",
+    "partial": null,
+    "passed": 0,
+    "skipped": 0,
+    "source": "parity",
+    "status": "measured"
+   },
+   "target": "new >= old",
+   "tier": "templates",
+   "verdict": "ahead"
+  },
+  {
+   "gates": [
+    "S5",
+    "S6",
+    "S7",
+    "S8"
+   ],
+   "metric": "L0",
+   "new": {
+    "excluded": {
+     "oracle": 3
+    },
+    "host": "nixos",
+    "invalid": null,
+    "note": null,
+    "of": 17,
+    "oracle": "pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026)",
+    "partial": null,
+    "passed": 17,
+    "skipped": 0,
+    "source": "parity",
+    "status": "measured"
+   },
+   "old": {
+    "excluded": {
+     "oracle": 3
+    },
+    "host": "nixos",
+    "invalid": null,
+    "note": null,
+    "of": 17,
+    "oracle": "pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026)",
+    "partial": null,
+    "passed": 2,
+    "skipped": 0,
+    "source": "parity",
+    "status": "measured"
+   },
+   "target": "new >= old",
+   "tier": "templates",
+   "verdict": "ahead"
+  },
+  {
+   "gates": [
+    "S5",
+    "S6",
+    "S7",
+    "S8"
+   ],
+   "metric": "L1",
+   "new": {
+    "excluded": {
+     "oracle": 3
+    },
+    "host": "nixos",
+    "invalid": null,
+    "note": null,
+    "of": 17,
+    "oracle": "pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026)",
+    "partial": null,
+    "passed": 17,
+    "skipped": 0,
+    "source": "parity",
+    "status": "measured"
+   },
+   "old": {
+    "excluded": {
+     "oracle": 3
+    },
+    "host": "nixos",
+    "invalid": null,
+    "note": null,
+    "of": 17,
+    "oracle": "pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026)",
+    "partial": null,
+    "passed": 2,
+    "skipped": 0,
+    "source": "parity",
+    "status": "measured"
+   },
+   "target": "new >= old",
+   "tier": "templates",
+   "verdict": "ahead"
+  },
+  {
+   "gates": [
+    "S5",
+    "S6",
+    "S7",
+    "S8"
+   ],
+   "metric": "L2",
+   "new": {
+    "excluded": {
+     "oracle": 3
+    },
+    "host": "nixos",
+    "invalid": null,
+    "note": null,
+    "of": 17,
+    "oracle": "pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026)",
+    "partial": null,
+    "passed": 17,
+    "skipped": 0,
+    "source": "parity",
+    "status": "measured"
+   },
+   "old": {
+    "excluded": {
+     "oracle": 3
+    },
+    "host": "nixos",
+    "invalid": null,
+    "note": null,
+    "of": 17,
+    "oracle": "pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026)",
+    "partial": null,
+    "passed": 0,
+    "skipped": 0,
+    "source": "parity",
+    "status": "measured"
+   },
+   "target": "new >= old",
+   "tier": "templates",
+   "verdict": "ahead"
+  },
+  {
+   "gates": [
+    "S5",
+    "S6",
+    "S7",
+    "S8"
+   ],
+   "metric": "L3",
+   "new": {
+    "excluded": {
+     "oracle": 3
+    },
+    "host": "nixos",
+    "invalid": null,
+    "note": null,
+    "of": 17,
+    "oracle": "pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026)",
+    "partial": null,
+    "passed": 17,
+    "skipped": 0,
+    "source": "parity",
+    "status": "measured"
+   },
+   "old": {
+    "excluded": {
+     "oracle": 3
+    },
+    "host": "nixos",
+    "invalid": null,
+    "note": null,
+    "of": 17,
+    "oracle": "pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026)",
+    "partial": null,
+    "passed": 0,
+    "skipped": 0,
+    "source": "parity",
+    "status": "measured"
+   },
+   "target": "new >= old",
+   "tier": "templates",
+   "verdict": "ahead"
+  },
+  {
+   "gates": [
+    "S5",
+    "S6",
+    "S7",
+    "S8"
+   ],
+   "metric": "P-T1",
+   "new": {
+    "excluded": {
+     "oracle": 4
+    },
+    "host": "nixos",
+    "invalid": null,
+    "note": null,
+    "of": 88,
+    "oracle": "pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026)",
+    "partial": null,
+    "passed": 88,
+    "skipped": 0,
+    "source": "parity",
+    "status": "measured"
+   },
+   "old": {
+    "excluded": {},
+    "host": "nixos",
+    "invalid": null,
+    "note": "n/a: the flashtex CLI is not a TeX engine and writes no box dumps or \\tracingall log; P-T1 applies to a pdfTeX-compatible --engine",
+    "of": null,
+    "oracle": "pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026)",
+    "partial": null,
+    "passed": null,
+    "skipped": 0,
+    "source": "parity",
+    "status": "n/a"
+   },
+   "target": "100% or baseline (old n/a)",
+   "tier": "packages",
+   "verdict": "ahead (old n/a)"
+  },
+  {
+   "gates": [
+    "S5",
+    "S6",
+    "S7",
+    "S8"
+   ],
+   "metric": "P-T2",
+   "new": {
+    "excluded": {
+     "oracle": 4
+    },
+    "host": "nixos",
+    "invalid": null,
+    "note": null,
+    "of": 88,
+    "oracle": "pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026)",
+    "partial": null,
+    "passed": 88,
+    "skipped": 0,
+    "source": "parity",
+    "status": "measured"
+   },
+   "old": {
+    "excluded": {
+     "oracle": 4
+    },
+    "host": "nixos",
+    "invalid": null,
+    "note": null,
+    "of": 88,
+    "oracle": "pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026)",
+    "partial": null,
+    "passed": 0,
+    "skipped": 0,
+    "source": "parity",
+    "status": "measured"
+   },
+   "target": "new >= old",
+   "tier": "packages",
+   "verdict": "ahead"
+  },
+  {
+   "gates": [
+    "S5",
+    "S6",
+    "S7",
+    "S8"
+   ],
+   "metric": "L0",
+   "new": {
+    "excluded": {
+     "oracle": 4
+    },
+    "host": "nixos",
+    "invalid": null,
+    "note": null,
+    "of": 88,
+    "oracle": "pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026)",
+    "partial": null,
+    "passed": 88,
+    "skipped": 0,
+    "source": "parity",
+    "status": "measured"
+   },
+   "old": {
+    "excluded": {
+     "oracle": 4
+    },
+    "host": "nixos",
+    "invalid": null,
+    "note": null,
+    "of": 88,
+    "oracle": "pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026)",
+    "partial": null,
+    "passed": 11,
+    "skipped": 0,
+    "source": "parity",
+    "status": "measured"
+   },
+   "target": "new >= old",
+   "tier": "packages",
+   "verdict": "ahead"
+  },
+  {
+   "gates": [
+    "S5",
+    "S6",
+    "S7",
+    "S8"
+   ],
+   "metric": "L1",
+   "new": {
+    "excluded": {
+     "oracle": 4
+    },
+    "host": "nixos",
+    "invalid": null,
+    "note": null,
+    "of": 88,
+    "oracle": "pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026)",
+    "partial": null,
+    "passed": 88,
+    "skipped": 0,
+    "source": "parity",
+    "status": "measured"
+   },
+   "old": {
+    "excluded": {
+     "oracle": 4
+    },
+    "host": "nixos",
+    "invalid": null,
+    "note": null,
+    "of": 88,
+    "oracle": "pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026)",
+    "partial": null,
+    "passed": 9,
+    "skipped": 0,
+    "source": "parity",
+    "status": "measured"
+   },
+   "target": "new >= old",
+   "tier": "packages",
+   "verdict": "ahead"
+  },
+  {
+   "gates": [
+    "S5",
+    "S6",
+    "S7",
+    "S8"
+   ],
+   "metric": "L2",
+   "new": {
+    "excluded": {
+     "oracle": 4
+    },
+    "host": "nixos",
+    "invalid": null,
+    "note": null,
+    "of": 88,
+    "oracle": "pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026)",
+    "partial": null,
+    "passed": 88,
+    "skipped": 0,
+    "source": "parity",
+    "status": "measured"
+   },
+   "old": {
+    "excluded": {
+     "oracle": 4
+    },
+    "host": "nixos",
+    "invalid": null,
+    "note": null,
+    "of": 88,
+    "oracle": "pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026)",
+    "partial": null,
+    "passed": 6,
+    "skipped": 0,
+    "source": "parity",
+    "status": "measured"
+   },
+   "target": "new >= old",
+   "tier": "packages",
+   "verdict": "ahead"
+  },
+  {
+   "gates": [
+    "S5",
+    "S6",
+    "S7",
+    "S8"
+   ],
+   "metric": "L3",
+   "new": {
+    "excluded": {
+     "oracle": 4
+    },
+    "host": "nixos",
+    "invalid": null,
+    "note": null,
+    "of": 88,
+    "oracle": "pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026)",
+    "partial": null,
+    "passed": 88,
+    "skipped": 0,
+    "source": "parity",
+    "status": "measured"
+   },
+   "old": {
+    "excluded": {
+     "oracle": 4
+    },
+    "host": "nixos",
+    "invalid": null,
+    "note": null,
+    "of": 88,
+    "oracle": "pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026)",
+    "partial": null,
+    "passed": 3,
+    "skipped": 0,
+    "source": "parity",
+    "status": "measured"
+   },
+   "target": "new >= old",
+   "tier": "packages",
+   "verdict": "ahead"
+  },
+  {
+   "gates": [
+    "S5",
+    "S6",
+    "S7",
+    "S8"
+   ],
+   "metric": "P-T1",
+   "new": {
+    "excluded": {
+     "P-T1 outside the --pt1-sample (by rule)": 3596,
+     "oracle": 1210
+    },
+    "host": "nixos",
+    "invalid": "a different new engine binary: sha256 4d42a00d944d, the board's 5b96720eae04",
+    "note": null,
+    "of": 193,
+    "oracle": "pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026)",
+    "partial": null,
+    "passed": 193,
+    "skipped": 0,
+    "source": "nightly",
+    "status": "measured"
+   },
+   "old": {
+    "excluded": {},
+    "invalid": null,
+    "note": "n/a: the flashtex CLI is not a TeX engine and writes no box dumps or \\tracingall log",
+    "of": null,
+    "partial": null,
+    "passed": null,
+    "skipped": 0,
+    "status": "n/a"
+   },
+   "target": ">= 98% (owner bar; old n/a)",
+   "tier": "nightly-5k",
+   "verdict": "invalid"
+  },
+  {
+   "gates": [
+    "S5",
+    "S6",
+    "S7",
+    "S8"
+   ],
+   "metric": "P-T2",
+   "new": {
+    "excluded": {
+     "oracle": 1210
+    },
+    "host": "nixos",
+    "invalid": "a different new engine binary: sha256 4d42a00d944d, the board's 5b96720eae04",
+    "note": null,
+    "of": 3789,
+    "oracle": "pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026)",
+    "partial": null,
+    "passed": 3789,
+    "skipped": 0,
+    "source": "nightly",
+    "status": "measured"
+   },
+   "old": {
+    "against": {
+     "of": 381,
+     "passed": 381,
+     "what": "the baseline's 440 IDs"
+    },
+    "excluded": {},
+    "invalid": null,
+    "note": "v1 one-off (decision 1, 2026-10-01); CROSS-ORACLE, v1 measured against texlive.tlpdb ca39e6791582 (/usr/local/texlive/2026), the board's 909745461c89 (/home/kubar/texlive/2026)",
+    "of": 440,
+    "partial": null,
+    "passed": 0,
+    "skipped": 0,
+    "source": "https://github.com/flash-tex/flashtex/issues/1315#issuecomment-5922325696",
+    "status": "baseline"
+   },
+   "target": "new >= old; >= 99% (owner bar)",
+   "tier": "nightly-5k",
+   "verdict": "invalid"
+  },
+  {
+   "gates": [
+    "S5",
+    "S6",
+    "S7",
+    "S8"
+   ],
+   "metric": "L0",
+   "new": {
+    "excluded": {
+     "oracle": 1210
+    },
+    "host": "nixos",
+    "invalid": "a different new engine binary: sha256 4d42a00d944d, the board's 5b96720eae04",
+    "note": null,
+    "of": 3790,
+    "oracle": "pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026)",
+    "partial": null,
+    "passed": 3790,
+    "skipped": 0,
+    "source": "nightly",
+    "status": "measured"
+   },
+   "old": {
+    "against": {
+     "of": 381,
+     "passed": 381,
+     "what": "the baseline's 440 IDs"
+    },
+    "excluded": {},
+    "invalid": null,
+    "note": "v1 one-off (decision 1, 2026-10-01); CROSS-ORACLE, v1 measured against texlive.tlpdb ca39e6791582 (/usr/local/texlive/2026), the board's 909745461c89 (/home/kubar/texlive/2026)",
+    "of": 440,
+    "partial": null,
+    "passed": 7,
+    "skipped": 0,
+    "source": "https://github.com/flash-tex/flashtex/issues/1315#issuecomment-5922325696",
+    "status": "baseline"
+   },
+   "target": "new >= old",
+   "tier": "nightly-5k",
+   "verdict": "invalid"
+  },
+  {
+   "gates": [
+    "S5",
+    "S6",
+    "S7",
+    "S8"
+   ],
+   "metric": "L1",
+   "new": {
+    "excluded": {
+     "oracle": 1210
+    },
+    "host": "nixos",
+    "invalid": "a different new engine binary: sha256 4d42a00d944d, the board's 5b96720eae04",
+    "note": null,
+    "of": 3790,
+    "oracle": "pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026)",
+    "partial": null,
+    "passed": 3790,
+    "skipped": 0,
+    "source": "nightly",
+    "status": "measured"
+   },
+   "old": {
+    "against": {
+     "of": 381,
+     "passed": 381,
+     "what": "the baseline's 440 IDs"
+    },
+    "excluded": {},
+    "invalid": null,
+    "note": "v1 one-off (decision 1, 2026-10-01); CROSS-ORACLE, v1 measured against texlive.tlpdb ca39e6791582 (/usr/local/texlive/2026), the board's 909745461c89 (/home/kubar/texlive/2026)",
+    "of": 440,
+    "partial": null,
+    "passed": 5,
+    "skipped": 0,
+    "source": "https://github.com/flash-tex/flashtex/issues/1315#issuecomment-5922325696",
+    "status": "baseline"
+   },
+   "target": "new >= old",
+   "tier": "nightly-5k",
+   "verdict": "invalid"
+  },
+  {
+   "gates": [
+    "S5",
+    "S6",
+    "S7",
+    "S8"
+   ],
+   "metric": "L2",
+   "new": {
+    "excluded": {
+     "oracle": 1210
+    },
+    "host": "nixos",
+    "invalid": "a different new engine binary: sha256 4d42a00d944d, the board's 5b96720eae04",
+    "note": null,
+    "of": 3790,
+    "oracle": "pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026)",
+    "partial": null,
+    "passed": 3790,
+    "skipped": 0,
+    "source": "nightly",
+    "status": "measured"
+   },
+   "old": {
+    "against": {
+     "of": 381,
+     "passed": 381,
+     "what": "the baseline's 440 IDs"
+    },
+    "excluded": {},
+    "invalid": null,
+    "note": "v1 one-off (decision 1, 2026-10-01); CROSS-ORACLE, v1 measured against texlive.tlpdb ca39e6791582 (/usr/local/texlive/2026), the board's 909745461c89 (/home/kubar/texlive/2026)",
+    "of": 440,
+    "partial": null,
+    "passed": 0,
+    "skipped": 0,
+    "source": "https://github.com/flash-tex/flashtex/issues/1315#issuecomment-5922325696",
+    "status": "baseline"
+   },
+   "target": "new >= old",
+   "tier": "nightly-5k",
+   "verdict": "invalid"
+  },
+  {
+   "gates": [
+    "S5",
+    "S6",
+    "S7",
+    "S8"
+   ],
+   "metric": "L3",
+   "new": {
+    "excluded": {
+     "oracle": 1210
+    },
+    "host": "nixos",
+    "invalid": "a different new engine binary: sha256 4d42a00d944d, the board's 5b96720eae04",
+    "note": null,
+    "of": 3790,
+    "oracle": "pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026)",
+    "partial": null,
+    "passed": 3790,
+    "skipped": 0,
+    "source": "nightly",
+    "status": "measured"
+   },
+   "old": {
+    "against": {
+     "of": 381,
+     "passed": 381,
+     "what": "the baseline's 440 IDs"
+    },
+    "excluded": {},
+    "invalid": null,
+    "note": "v1 one-off (decision 1, 2026-10-01); CROSS-ORACLE, v1 measured against texlive.tlpdb ca39e6791582 (/usr/local/texlive/2026), the board's 909745461c89 (/home/kubar/texlive/2026)",
+    "of": 440,
+    "partial": null,
+    "passed": 0,
+    "skipped": 0,
+    "source": "https://github.com/flash-tex/flashtex/issues/1315#issuecomment-5922325696",
+    "status": "baseline"
+   },
+   "target": "new >= old",
+   "tier": "nightly-5k",
+   "verdict": "invalid"
+  },
+  {
+   "gates": [
+    "S5",
+    "S6",
+    "S7",
+    "S8"
+   ],
+   "metric": "crashes",
+   "new": {
+    "excluded": {
+     "oracle": 1210
+    },
+    "host": "nixos",
+    "invalid": "a different new engine binary: sha256 4d42a00d944d, the board's 5b96720eae04",
+    "note": null,
+    "of": 3790,
+    "oracle": "pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026)",
+    "partial": null,
+    "passed": 3790,
+    "skipped": 0,
+    "source": "nightly",
+    "status": "measured"
+   },
+   "old": {
+    "excluded": {},
+    "invalid": null,
+    "note": "n/a: the v1 one-off baseline counts no crashes; the bar is 0 crashes (owner, 2026-10-05)",
+    "of": null,
+    "partial": null,
+    "passed": null,
+    "skipped": 0,
+    "status": "n/a"
+   },
+   "target": "0 crashes (owner bar; old n/a)",
+   "tier": "nightly-5k",
+   "verdict": "invalid"
+  },
+  {
+   "gates": [
+    "S5",
+    "S6",
+    "S7",
+    "S8"
+   ],
+   "metric": "tests",
+   "new": {
+    "excluded": {},
+    "host": "nixos",
+    "invalid": null,
+    "note": "22 failed, 0 unexpected against this host's pdfTeX (reference run); dirs: latex2e/base 799/800, latex2e/required/amsmath 39/39, latex2e/required/cyrillic 1/1, latex2e/required/firstaid 23/23, latex2e/required/graphics@etex 31/31, latex2e/required/latex-lab 316/330, latex2e/required/tools 129/132, latex3/l3kernel 202/206, latex3/l3kernel[config-backend]@etex-dvips 14/14, latex3/l3kernel[config-backend]@etex-dvisvgm 14/14",
+    "of": 1590,
+    "oracle": null,
+    "partial": null,
+    "passed": 1590,
+    "skipped": 0,
+    "source": "latex-suites",
+    "status": "measured",
+    "unexpected": []
+   },
+   "old": {
+    "excluded": {},
+    "invalid": null,
+    "note": "the harness drives a pdfTeX-compatible binary; the v1 flashtex CLI is not one, so it cannot be measured here",
+    "of": null,
+    "partial": null,
+    "passed": null,
+    "skipped": 0,
+    "status": "n/a"
+   },
+   "target": "100% or baseline (old n/a); 0 unexpected",
+   "tier": "latex-suites",
+   "verdict": "ahead (old n/a)"
+  },
+  {
+   "gates": [
+    "S5",
+    "S6",
+    "S7",
+    "S8"
+   ],
+   "metric": "documents",
+   "new": {
+    "excluded": {
+     "the reference does not compile it on this TeX Live; the candidate fails identically": 3
+    },
+    "host": "nixos",
+    "invalid": null,
+    "note": "excluded: tabls, tabu, thmtools",
+    "of": 481,
+    "oracle": null,
+    "partial": null,
+    "passed": 481,
+    "skipped": 0,
+    "source": "package-smoke",
+    "status": "measured"
+   },
+   "old": {
+    "excluded": {},
+    "invalid": null,
+    "note": "the harness drives a pdfTeX-compatible binary; the v1 flashtex CLI is not one, so it cannot be measured here",
+    "of": null,
+    "partial": null,
+    "passed": null,
+    "skipped": 0,
+    "status": "n/a"
+   },
+   "target": "100% or baseline (old n/a)",
+   "tier": "package-smoke",
+   "verdict": "ahead (old n/a)"
+  },
+  {
+   "gates": [
+    "S5",
+    "S6",
+    "S7",
+    "S8"
+   ],
+   "metric": "fonts",
+   "new": {
+    "excluded": {
+     "oracle fails too": 17
+    },
+    "host": "nixos",
+    "invalid": null,
+    "note": "per kind: opentype 0/0, pk 70/70, truetype 3/3, type1 294/294, vf 74/74",
+    "of": 441,
+    "oracle": null,
+    "partial": null,
+    "passed": 441,
+    "skipped": 0,
+    "source": "fonts",
+    "status": "measured"
+   },
+   "old": {
+    "excluded": {},
+    "invalid": null,
+    "note": "the harness drives a pdfTeX-compatible binary; the v1 flashtex CLI is not one, so it cannot be measured here",
+    "of": null,
+    "partial": null,
+    "passed": null,
+    "skipped": 0,
+    "status": "n/a"
+   },
+   "target": "100% or baseline (old n/a)",
+   "tier": "fonts",
+   "verdict": "ahead (old n/a)"
+  }
+ ],
+ "s5_scoreboard_gate_met": false,
+ "sample_note": null,
+ "samples": [],
+ "schema": "flashtex-p5-scoreboard/1",
+ "t4_v1_baseline": {
+  "decision": {
+   "date": "2026-10-02",
+   "name": "T4 decision 1",
+   "remeasure_when": "a D13 fix to v1 that touches typesetting broadly lands: re-measure v1 once on the same 440 documents (#1382, local to operator names, does not)",
+   "ruling": "yes: this one-off v1 measurement is the evidence for new >= old on T4; no recurring nightly v1 leg, because v1 is frozen to fixes only (D13)",
+   "url": "https://github.com/flash-tex/flashtex/issues/1319#issuecomment-5960583653"
+  },
+  "documents": {
+   "excluded_by_oracle": 60,
+   "measured": 440,
+   "selected": 500,
+   "selection": "500 documents of tools/parity/corpus/nightly-5k.json; 100 of them shared with daniel-muse-lead's 200-document slice (source comment)"
+  },
+  "engine": {
+   "build": "main 991949640 (v1, the flashtex CLI)",
+   "kind": "flashtex-cli",
+   "label": "old"
+  },
+  "id_list_sha256": "188e85cb0a1829be4ed1da288b55e39cdbc0a0fb3f7b3cdb83f9689b8acda690",
+  "measured_date": "2026-10-01",
+  "oracle": {
+   "host": "darwin-544927259beb (mac-m5pro-dq222)",
+   "latex_format": "2025-11-01",
+   "pdftex": "/usr/local/texlive/2026/bin/universal-darwin/pdftex",
+   "pdftex_sha256": "3ead7baeffb81c638fe75599602278566370e6319c0469f6ab00ff62bff4b0eb",
+   "platform": "Darwin 25.6.0 arm64",
+   "recorded": "oracle_provenance.py --json on the measuring host, 2026-10-03; texlive.tlpdb mtime 2026-03-22 and pdftex mtime 2026-02-23 predate the 2026-09-30 run, so the tree is the one measured",
+   "texlive_root": "/usr/local/texlive/2026",
+   "tlpdb": {
+    "l3kernel": "77438",
+    "latex": "76924",
+    "latex-bin": "78282",
+    "pdftex": "78401",
+    "release": "2026"
+   },
+   "tlpdb_sha256": "ca39e6791582be6bc55d34c5f82e72e1d2f97bffade5e892e7f0e537783d81d2",
+   "version": "pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026)"
+  },
+  "source": [
+   "https://github.com/flash-tex/flashtex/issues/1315#issuecomment-5922325696",
+   "https://github.com/flash-tex/flashtex/issues/1319#issuecomment-5960583653",
+   "https://github.com/flash-tex/flashtex/issues/1319#issuecomment-5973876329"
+  ],
+  "status": "FINAL"
+ }
+}
