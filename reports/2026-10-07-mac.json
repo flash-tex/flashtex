@@ -6,10 +6,10 @@
    "git_sha": "ac58ecfc717a5ff9e540a0523441307d7ff4d925",
    "runs": [
     {
-     "command": "python3 tools/parity/parity.py --tier fixtures --tier arxiv --tier templates --tier packages --texbin /home/kubar/texlive/2026/bin/x86_64-linux --oracle-pdftex /home/kubar/texlive/2026/bin/x86_64-linux/pdftex --texmf /home/kubar/texlive/2026/texmf-dist --raster none -j 2 --corpus-texmf /home/kubar/.cache/flashtex-corpus-texmf/texlive-2026 --engine /home/kubar/.flashtex-actions-runner-3/_work/_temp/p5/work/eng/flashtex-initex --engine-env FLASHTEX_FORMATS=/home/kubar/.flashtex-actions-runner-3/_work/_temp/p5/work/fmt --engine-env FLASHTEX_POOL=/home/kubar/.flashtex-actions-runner-3/_work/_temp/p5/work/eng/pdftex.pool --out /home/kubar/.flashtex-actions-runner-3/_work/_temp/p5/parity-new --work /home/kubar/.flashtex-actions-runner-3/_work/_temp/p5/work/parity-new",
+     "command": "python3 tools/parity/parity.py --tier fixtures --tier arxiv --tier templates --tier packages --texbin /home/kubar/texlive/2026/bin/x86_64-linux --oracle-pdftex /home/kubar/texlive/2026/bin/x86_64-linux/pdftex --texmf /home/kubar/texlive/2026/texmf-dist --raster none -j 2 --corpus-texmf /home/kubar/.cache/flashtex-corpus-texmf/texlive-2026 --engine /home/kubar/.flashtex-actions-runner-2/_work/_temp/p5/work/eng/flashtex-initex --engine-env FLASHTEX_FORMATS=/home/kubar/.flashtex-actions-runner-2/_work/_temp/p5/work/fmt --engine-env FLASHTEX_POOL=/home/kubar/.flashtex-actions-runner-2/_work/_temp/p5/work/eng/pdftex.pool --out /home/kubar/.flashtex-actions-runner-2/_work/_temp/p5/parity-new --work /home/kubar/.flashtex-actions-runner-2/_work/_temp/p5/work/parity-new",
      "date": "2026-10-07",
      "engine_kind": "tex",
-     "engine_sha256": "5b96720eae04bea92708cd14009eb60d3f39aeead5df3c8b0f4fe9b9c4ccea8f",
+     "engine_sha256": "03578d8e8ba74bdaa9065264d521dcab6797405e77566028a3a70620294c193a",
      "engine_version": "pdfTeX 3.141592653-2.6-1.40.29 (FlashTeX engine)",
      "host": "nixos",
      "identity_problem": null,
@@ -19,14 +19,14 @@
     },
     {
      "date": "2026-10-07T07:23:06Z",
-     "documents_path": "/home/kubar/.flashtex-actions-runner-3/_work/_temp/t4-new/documents.json",
+     "documents_path": "/home/kubar/.flashtex-actions-runner-2/_work/_temp/t4-new/documents.json",
      "engine_kind": "tex",
      "engine_sha256": "4d42a00d944d98347f0de16ed3b2b4c062c45d1d3f4bf25f06e7d6a63394af6e",
      "engine_version": "pdfTeX 3.141592653-2.6-1.40.29 (FlashTeX engine)",
      "git_sha": "ac58ecfc717a5ff9e540a0523441307d7ff4d925",
      "host": "nixos",
      "host_label": "linux-00a377473e7a",
-     "identity_problem": "a different new engine binary: sha256 4d42a00d944d, the board's 5b96720eae04",
+     "identity_problem": "a different new engine binary: sha256 4d42a00d944d, the board's 03578d8e8ba7",
      "ignored_tiers": [
       "arxiv",
       "packages",
@@ -63,10 +63,10 @@
    "git_sha": "ac58ecfc717a5ff9e540a0523441307d7ff4d925",
    "runs": [
     {
-     "command": "python3 tools/parity/parity.py --tier fixtures --tier arxiv --tier templates --tier packages --texbin /home/kubar/texlive/2026/bin/x86_64-linux --oracle-pdftex /home/kubar/texlive/2026/bin/x86_64-linux/pdftex --texmf /home/kubar/texlive/2026/texmf-dist --raster none -j 2 --corpus-texmf /home/kubar/.cache/flashtex-corpus-texmf/texlive-2026 --engine /home/kubar/.flashtex-actions-runner-3/_work/_temp/p5/work/eng/flashtex --out /home/kubar/.flashtex-actions-runner-3/_work/_temp/p5/parity-old --work /home/kubar/.flashtex-actions-runner-3/_work/_temp/p5/work/parity-old",
+     "command": "python3 tools/parity/parity.py --tier fixtures --tier arxiv --tier templates --tier packages --texbin /home/kubar/texlive/2026/bin/x86_64-linux --oracle-pdftex /home/kubar/texlive/2026/bin/x86_64-linux/pdftex --texmf /home/kubar/texlive/2026/texmf-dist --raster none -j 2 --corpus-texmf /home/kubar/.cache/flashtex-corpus-texmf/texlive-2026 --engine /home/kubar/.flashtex-actions-runner-2/_work/_temp/p5/work/eng/flashtex --out /home/kubar/.flashtex-actions-runner-2/_work/_temp/p5/parity-old --work /home/kubar/.flashtex-actions-runner-2/_work/_temp/p5/work/parity-old",
      "date": "2026-10-07",
      "engine_kind": "flashtex-cli",
-     "engine_sha256": "c1e8bbec5f72b55906ecc49c895fd38a6a08bbf0d5b354294808c677465d9f1d",
+     "engine_sha256": "76332463d8f46baa0bec6cee04621741486db5ac8770f2e86289e6d9326c6bc0",
      "engine_version": "flashtex 0.1.0 (ac58ecfc717a)",
      "host": "nixos",
      "identity_problem": null,
@@ -77,7 +77,7 @@
    ]
   }
  },
- "host_label": "nixos-7800x3d-3 (flashtex-linux; oracle pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026), LaTeX 2026-06-01, tlpdb 909745461c89 (/home/kubar/texlive/2026); tools c872ade8c)",
+ "host_label": "nixos-7800x3d-2 (flashtex-linux; oracle pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026), LaTeX 2026-06-01, tlpdb 909745461c89 (/home/kubar/texlive/2026); tools c872ade8c)",
  "oracle": {
   "latex_format": "2026-06-01",
   "pdftex_sha256": "1c5ff71156ee990c3a18402cf06d3671ecf748bd84fb3983dbd5d62b600bc40b",
@@ -1205,7 +1205,7 @@
      "oracle": 1210
     },
     "host": "nixos",
-    "invalid": "a different new engine binary: sha256 4d42a00d944d, the board's 5b96720eae04",
+    "invalid": "a different new engine binary: sha256 4d42a00d944d, the board's 03578d8e8ba7",
     "note": null,
     "of": 193,
     "oracle": "pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026)",
@@ -1242,7 +1242,7 @@
      "oracle": 1210
     },
     "host": "nixos",
-    "invalid": "a different new engine binary: sha256 4d42a00d944d, the board's 5b96720eae04",
+    "invalid": "a different new engine binary: sha256 4d42a00d944d, the board's 03578d8e8ba7",
     "note": null,
     "of": 3789,
     "oracle": "pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026)",
@@ -1285,7 +1285,7 @@
      "oracle": 1210
     },
     "host": "nixos",
-    "invalid": "a different new engine binary: sha256 4d42a00d944d, the board's 5b96720eae04",
+    "invalid": "a different new engine binary: sha256 4d42a00d944d, the board's 03578d8e8ba7",
     "note": null,
     "of": 3790,
     "oracle": "pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026)",
@@ -1328,7 +1328,7 @@
      "oracle": 1210
     },
     "host": "nixos",
-    "invalid": "a different new engine binary: sha256 4d42a00d944d, the board's 5b96720eae04",
+    "invalid": "a different new engine binary: sha256 4d42a00d944d, the board's 03578d8e8ba7",
     "note": null,
     "of": 3790,
     "oracle": "pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026)",
@@ -1371,7 +1371,7 @@
      "oracle": 1210
     },
     "host": "nixos",
-    "invalid": "a different new engine binary: sha256 4d42a00d944d, the board's 5b96720eae04",
+    "invalid": "a different new engine binary: sha256 4d42a00d944d, the board's 03578d8e8ba7",
     "note": null,
     "of": 3790,
     "oracle": "pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026)",
@@ -1414,7 +1414,7 @@
      "oracle": 1210
     },
     "host": "nixos",
-    "invalid": "a different new engine binary: sha256 4d42a00d944d, the board's 5b96720eae04",
+    "invalid": "a different new engine binary: sha256 4d42a00d944d, the board's 03578d8e8ba7",
     "note": null,
     "of": 3790,
     "oracle": "pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026)",
@@ -1457,7 +1457,7 @@
      "oracle": 1210
     },
     "host": "nixos",
-    "invalid": "a different new engine binary: sha256 4d42a00d944d, the board's 5b96720eae04",
+    "invalid": "a different new engine binary: sha256 4d42a00d944d, the board's 03578d8e8ba7",
     "note": null,
     "of": 3790,
     "oracle": "pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026)",

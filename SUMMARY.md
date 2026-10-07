@@ -1,9 +1,9 @@
 # P5 scoreboard summary
 
-Host: nixos-7800x3d-3 (flashtex-linux; oracle pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026), LaTeX 2026-06-01, tlpdb 909745461c89 (/home/kubar/texlive/2026); tools c872ade8c).
+Host: nixos-7800x3d-2 (flashtex-linux; oracle pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026), LaTeX 2026-06-01, tlpdb 909745461c89 (/home/kubar/texlive/2026); tools c872ade8c).
 Engines: new ac58ecfc717a5ff9e540a0523441307d7ff4d925, old ac58ecfc717a5ff9e540a0523441307d7ff4d925.
 
-Full table and notes: https://github.com/flash-tex/flashtex/actions/runs/37627824544
+Full table and notes: https://github.com/flash-tex/flashtex/actions/runs/37632646234
 
 **Not all green** (7 row(s) not green). Retirement from S5 on does not start.
 
