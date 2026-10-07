@@ -3395,3 +3395,72 @@ fn twin_files_edited_alike_both_shift() {
         assert!(conv + 3 < pages, "{what}: converged late: {r}");
     }
 }
+
+/// Performance modes (lane PERF-MODES, `crate::profile`): switching the mode
+/// between compiles, live, changes only which checkpoints are kept (the
+/// budget, the dense window), never the output. A tiny pinned budget keeps
+/// retention thinning at every compile, so the dense window of each mode
+/// (4, 16, 512 pages) decides what survives; the edits land near and far
+/// from the last cursor.
+#[test]
+fn edits_across_performance_mode_switches_equal_scratch_runs() {
+    let Some(e) = env() else {
+        common::no_texlive();
+        return;
+    };
+    let dir = e.dir.join("modes");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let doc = r"\documentclass{article}
+\usepackage{hyperref}
+\begin{document}
+\section{One}\label{one}
+See page~\pageref{two}.
+\input{body}
+\section{Two}\label{two}
+Back to page~\pageref{one}.
+\input{body}
+\end{document}
+";
+    let body: String = (0..60).map(|i| para(i, "alpha")).collect();
+    let mut h = Host::start_env(
+        &e,
+        &dir,
+        &[("FLASHTEX_BUDGET", "65536"), ("FLASHTEX_TIMED_S", "0.0002")],
+    );
+    for k in 0..4 {
+        let r = compile_and_check(
+            &e,
+            &mut h,
+            &dir,
+            &[("doc.tex", doc), ("body.tex", &body)],
+            "settle",
+        );
+        if r.contains("\"mode\":\"unchanged\"") || k == 3 {
+            break;
+        }
+    }
+    let modes = ["low-memory", "high-performance", "balanced", "low-memory"];
+    let mut text = body.clone();
+    for (k, (m, at)) in modes.iter().zip([55, 3, 30, 58]).enumerate() {
+        let p = h.cmd(&format!("profile {m}"));
+        assert!(p.contains(&format!("\"mode\":\"{m}\"")), "{p}");
+        assert!(p.contains("\"budget\":65536"), "the pinned budget: {p}");
+        let from = format!("Paragraph {at} with the word alpha");
+        let to = format!(
+            "Paragraph {at} with the word alph{}",
+            (b'b' + k as u8) as char
+        );
+        text = text.replacen(&from, &to, 1);
+        compile_and_check(
+            &e,
+            &mut h,
+            &dir,
+            &[("body.tex", &text)],
+            &format!("{m}: edit"),
+        );
+    }
+    h.cmd("profile high-performance");
+    compile_and_check(&e, &mut h, &dir, &[("body.tex", &body)], "revert");
+    compile_and_check(&e, &mut h, &dir, &[], "settle again");
+}
