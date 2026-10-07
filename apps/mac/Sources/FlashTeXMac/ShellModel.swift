@@ -1213,17 +1213,19 @@ final class ShellModel {
     }
 
     func updateActiveText(_ text: String) {
-        if engineV3Enabled { engineV3.textChanged(model: self, activeText: text) } // EngineV3Session.swift: first, before the model's own work
+        if engineV3Enabled { MainThreadProbe.time("model.v3TextChanged") { engineV3.textChanged(model: self, activeText: text) } } // EngineV3Session.swift: first, before the model's own work
         guard let i = documents.firstIndex(where: { $0.path == activePath }) else { return }
-        guard !documents[i].text.sameBytes(as: text) else { return }
+        guard !MainThreadProbe.time("model.compare", { documents[i].text.sameBytes(as: text) }) else { return }
         let old = documents[i].text, base = editorRevision
-        documents[i].text = text
-        editorRevision += 1
+        MainThreadProbe.time("model.store") { documents[i].text = text }
+        MainThreadProbe.time("model.revision") { editorRevision += 1 }
+        let probe = MainThreadProbe.begin()
         TypingBench.shared.noteRevision(editorRevision) // keystroke -> paint instrumentation
         if !engineV3Enabled { scheduleAutoCompile() } // with the engine-v3 preview on, the old worker does not auto-compile
         scheduleAutosave()
         caretFollow.note(.edit) // CaretFollow.swift: an edit also re-arms following after a manual scroll
         bridgeTextChanged(path: activePath, old: old, new: text, base: base, revision: editorRevision)
+        MainThreadProbe.end("model.rest", probe)
     }
 
     private func scheduleAutoCompile() {
