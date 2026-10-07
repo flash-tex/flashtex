@@ -237,8 +237,8 @@ final class EngineV3GlyphIndexTests: XCTestCase {
             .reduce(0) { $0 + $1.glyphs.count * glyphBytes }
         let summaryBytes = (0 ..< n).compactMap { s.pages[$0] }.reduce(0) { $0 + EngineV3GlyphIndexes.glyphSpans($1.page).count * 4 }
         let glyphs = DL3SourceIndex(Self.base).glyphs.count
-        print(String(format: "glyph-index bench (%d pages, %d glyphs a page, %d B a glyph): cold place %.0f µs (unbounded cache %.0f µs); "
-                     + "warm p50 %.1f µs (%.1f µs), p95 %.1f µs (%.1f µs); held %d indexes %.2f MB + summaries %.3f MB (unbounded %d indexes %.2f MB)",
+        print(String(format: "glyph-index bench (%ld pages, %ld glyphs a page, %ld B a glyph): cold place %.0f µs (unbounded cache %.0f µs); "
+                     + "warm p50 %.1f µs (%.1f µs), p95 %.1f µs (%.1f µs); held %ld indexes %.2f MB + summaries %.3f MB (unbounded %ld indexes %.2f MB)",
                      n, glyphs, glyphBytes, newCold, oldCold, newWarm[50], oldWarm[50], newWarm[95], oldWarm[95],
                      s.glyphIndexes.count, Double(heldBytes) / 1e6, Double(summaryBytes) / 1e6, old.count, Double(oldBytes) / 1e6))
         XCTAssertEqual(s.glyphIndexes.count, 1)
@@ -264,13 +264,13 @@ final class EngineV3GlyphIndexTests: XCTestCase {
         pressure.handle(.warning)
         XCTAssertEqual(s.pressureEvents, 1)
         XCTAssertEqual(s.glyphIndexes.count, 0, "no pane holds a page: every index goes")
-        XCTAssertEqual(s.glyphIndexes.summarized, 20, "the span summaries (small) stay")
+        XCTAssertEqual(s.glyphIndexes.summarized, 16, "the span summaries (small) of pages 0-15, searched, stay")
         XCTAssertEqual(DL3ResourceCache.shared.heldImages.count, 0)
         XCTAssertEqual(s.place(spans: [10 * 10_000], col: nil)?.page, 9, "built again on the next lookup")
         pressure.handle(.critical)
         XCTAssertEqual(s.trimsSent, 2)
         let frames = host.wait(for: 2)
-        XCTAssertEqual(frames.map(\.kind), [DL3.Kind.trim, DL3.Kind.trim])
+        XCTAssertEqual(frames.map { $0.kind }, [DL3.Kind.trim, DL3.Kind.trim])
         XCTAssertEqual(frames.map { (try? DL3JSON.parse($0.body))?["level"]?.string }, ["warning", "critical"])
         XCTAssertEqual(DL3.Kind.name(DL3.Kind.trim), "trim")
         XCTAssertEqual(DL3.Kind.trim, 0x08)
@@ -278,7 +278,7 @@ final class EngineV3GlyphIndexTests: XCTestCase {
         pressure.handle(.warning)
         XCTAssertEqual(s.pressureEvents, 2, "an unregistered session is not trimmed")
         s.stop()
-        XCTAssertEqual(host.wait(for: 3).map(\.kind), [DL3.Kind.trim, DL3.Kind.trim, DL3.Kind.bye])
+        XCTAssertEqual(host.wait(for: 3).map { $0.kind }, [DL3.Kind.trim, DL3.Kind.trim, DL3.Kind.bye])
     }
 
     func testNoTrimToAHostWithoutTrimV1() throws {
@@ -294,7 +294,7 @@ final class EngineV3GlyphIndexTests: XCTestCase {
         XCTAssertEqual(s.pressureEvents, 2)
         XCTAssertEqual(s.trimsSent, 0)
         s.stop()
-        XCTAssertEqual(host.wait(for: 1).map(\.kind), [DL3.Kind.bye], "nothing but the BYE")
+        XCTAssertEqual(host.wait(for: 1).map { $0.kind }, [DL3.Kind.bye], "nothing but the BYE")
     }
 
     /// The app-wide handler follows the sessions that run.
