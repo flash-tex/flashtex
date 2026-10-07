@@ -1071,6 +1071,131 @@ fn the_progress_heartbeat_changes_no_page() {
     let _ = std::fs::remove_dir_all(&base);
 }
 
+/// Performance modes over the socket (`profile-v1`, spec §6.9): the client
+/// names one in its `HELLO`, the host's `HELLO` says which knobs apply, a
+/// `PROFILE` switches it live (answered once applied), and the pages after
+/// each switch equal a from-scratch host's.
+#[test]
+fn a_performance_mode_switched_live_changes_no_page() {
+    if find_texlive_bin().is_none() {
+        common::no_texlive();
+        return;
+    }
+    let host = start_host_env("profile", &[("FLASHTEX_MEMSTAT", "1")]);
+    // (scratch compiles in their own host: the mode's host keeps its document)
+    let scratch = start_host("profile-scratch");
+    let base = common::fresh_dir("flashtex-host-profile");
+    let (proj, out) = (base.join("proj"), base.join("out"));
+    std::fs::create_dir_all(&proj).unwrap();
+    std::fs::create_dir_all(&out).unwrap();
+    let mut text = article(12);
+    std::fs::write(proj.join("main.tex"), &text).unwrap();
+    let mut c = Client::connect_with(&host.1, &[], Some("balanced")).unwrap();
+    let caps = c
+        .hello
+        .get("capabilities")
+        .and_then(Json::as_array)
+        .unwrap();
+    assert!(
+        caps.iter()
+            .any(|x| x.as_str() == Some(flashtex_display_list::PROFILE_CAPABILITY)),
+        "{}",
+        c.hello
+    );
+    let hp = c.hello.get("profile").expect("HELLO.profile");
+    assert_eq!(hp.str_field("mode"), Some("balanced"), "{}", c.hello);
+    let mut view = View::default();
+    let first = compile(&mut c, &mut view, &req(1, &proj, &out, "main.tex"));
+    let cache = |done: &Json| {
+        done.get("mem")
+            .and_then(|m| m.int_field("page_cache"))
+            .expect("DONE.mem.page_cache (FLASHTEX_MEMSTAT=1)")
+    };
+    let unpacked = cache(&first.done);
+    let mut id = 1;
+    for (mode, frac) in [
+        ("high-performance", 0.8),
+        ("low-memory", 0.3),
+        ("balanced", 0.6),
+        ("low-memory", 0.5),
+    ] {
+        c.set_profile(mode).unwrap();
+        let applied = loop {
+            match c.next_event().unwrap().expect("host closed") {
+                Event::Profile(j) => break j,
+                Event::Error(e) => panic!("host error: {e}"),
+                _ => {}
+            }
+        };
+        let p = applied.get("profile").expect("PROFILE.profile");
+        assert_eq!(p.str_field("mode"), Some(mode), "{applied}");
+        let at = (text.len() as f64 * frac) as usize;
+        let at = (at..text.len())
+            .find(|&i| text.as_bytes()[i] == b' ')
+            .unwrap();
+        id += 1;
+        let mut r = req(id, &proj, &out, "main.tex");
+        r.edits.push(Edit {
+            path: "main.tex".into(),
+            offset: at as u64,
+            delete: 0,
+            insert: " moded".into(),
+        });
+        let o = compile(&mut c, &mut view, &r);
+        assert_eq!(o.done.str_field("mode"), Some("incremental"), "{}", o.done);
+        text.insert_str(at, " moded");
+        std::fs::write(proj.join("main.tex"), &text).unwrap();
+        let (p2, o2) = snapshot(&base, &proj, &out, &format!("{mode}-{id}"));
+        compare_with_scratch(
+            &scratch.1,
+            &view,
+            &proj,
+            &out,
+            &p2,
+            &o2,
+            "main.tex",
+            &format!("after switching to {mode}"),
+        );
+    }
+    // Low Memory packs the page cache off the engine thread; a client that
+    // lacks the pages (a second, 3.0-style connection) gets them unpacked,
+    // equal to a scratch host's.
+    std::thread::sleep(Duration::from_millis(1500));
+    let mut other = Client::connect(&host.1).unwrap();
+    let mut ov = View::default();
+    let mut r = req(99, &proj, &out, "main.tex");
+    r.incremental = false;
+    let o = compile(&mut other, &mut ov, &r);
+    let packed = cache(&o.done);
+    assert!(
+        packed * 10 < unpacked * 7,
+        "Low Memory packs the page cache: {packed} of {unpacked} bytes"
+    );
+    let (p2, o2) = snapshot(&base, &proj, &out, "packed");
+    compare_with_scratch(
+        &scratch.1,
+        &ov,
+        &proj,
+        &out,
+        &p2,
+        &o2,
+        "main.tex",
+        "pages delivered from the packed cache",
+    );
+    let _ = other.bye();
+    // An unknown mode is refused, and the mode in effect stays.
+    c.set_profile("turbo").unwrap();
+    loop {
+        match c.next_event().unwrap().expect("host closed") {
+            Event::Error(_) => break,
+            Event::Profile(j) => panic!("an unknown mode was applied: {j}"),
+            _ => {}
+        }
+    }
+    let _ = c.bye();
+    let _ = std::fs::remove_dir_all(&base);
+}
+
 #[test]
 fn edits_stream_the_edited_page_and_equal_scratch_compiles_article() {
     let src = common::fresh_dir("flashtex-host-incr-src");
@@ -1983,5 +2108,193 @@ fn an_export_in_the_same_directory_leaves_the_next_compile_exact() {
         log1 == log2,
         "the log after an export differs\n{done1}\n{done2}"
     );
+    let _ = std::fs::remove_dir_all(&base);
+}
+
+/// Lane P4-TYPING-200WPM: a keystroke that undoes the one before (a letter
+/// typed and deleted, typed again) finds nothing new against the run the
+/// keystrokes stopped: that run goes on as its compile. The pages it had
+/// shipped, the edited one among them, are the compile's at once: before
+/// any page frame of it, `PAGES` says they are current (the client holds
+/// them), not when the run ships its next page. The client ends equal to a
+/// from-scratch compile.
+#[test]
+fn a_keystroke_that_changes_nothing_has_its_page_at_once() {
+    if find_texlive_bin().is_none() {
+        common::no_texlive();
+        return;
+    }
+    let base = common::fresh_dir("flashtex-host-continued");
+    let _ = std::fs::remove_dir_all(&base);
+    std::fs::create_dir_all(&base).unwrap();
+    let (proj, out) = (base.join("proj"), base.join("out"));
+    std::fs::create_dir_all(&proj).unwrap();
+    std::fs::create_dir_all(&out).unwrap();
+    let main = "main.tex";
+    std::fs::write(proj.join(main), article(60)).unwrap();
+    let host = start_host("u");
+    let scratch = start_host("v");
+    let mut c = Client::connect(&host.1).unwrap();
+    let mut view = View::default();
+    let mut id = 0;
+    for _ in 0..4 {
+        id += 1;
+        let o = compile(&mut c, &mut view, &req(id, &proj, &out, main));
+        if o.done.str_field("mode") == Some("unchanged") {
+            break;
+        }
+    }
+    // The first long prose line: a paragraph inserted there reflows the
+    // rest, so the run after it goes on long after its edited page.
+    let text = String::from_utf8_lossy(&std::fs::read(proj.join(main)).unwrap()).into_owned();
+    let lines: Vec<&str> = text.split('\n').collect();
+    let line = lines
+        .iter()
+        .position(|t| {
+            t.split(' ').count() > 6 && !t.trim_start().starts_with('%') && !t.starts_with('\\')
+        })
+        .expect("a prose line");
+    let offset: usize = lines[..line].iter().map(|l| l.len() + 1).sum();
+    let this = lines[line];
+    let para = format!("{this}\n\n{this}\n\n");
+    let insert = |at: usize| Edit {
+        path: main.into(),
+        offset: at as u64,
+        delete: 0,
+        insert: para.clone(),
+    };
+    let delete = Edit {
+        path: main.into(),
+        offset: offset as u64,
+        delete: para.len() as u64,
+        insert: String::new(),
+    };
+    let mut seen_current_first = 0;
+    for round in 0..3 {
+        let (id1, id2, id3) = (id + 1, id + 2, id + 3);
+        id += 3;
+        let mut r1 = req(id1, &proj, &out, main);
+        r1.edits = vec![insert(offset)];
+        c.compile(&r1).unwrap();
+        // r1's edited page: the first page frame of r1
+        let mut edited = None;
+        let mut dones = vec![];
+        while edited.is_none() && dones.is_empty() {
+            match c.next_event().unwrap().expect("host closed the connection") {
+                Event::Font(f) => {
+                    view.fonts.insert(f.id, f.key);
+                }
+                Event::Sources(s) => {
+                    for (i, p) in s.files {
+                        view.files.insert(i, p);
+                    }
+                    for (i, f, l) in s.spans {
+                        view.spans.insert(i, (f, l));
+                    }
+                }
+                Event::Page(p) => {
+                    edited = Some(p.index);
+                    view.page_fonts.insert(p.index, view.fonts.clone());
+                    view.pages.insert(p.index, p);
+                }
+                Event::Done(d) => dones.push(d),
+                Event::Error(e) => panic!("host error: {e}"),
+                _ => {}
+            }
+        }
+        let edited = edited.expect("r1's edited page");
+        // the delete and the insert again, right behind, as typing sends them
+        let mut r2 = req(id2, &proj, &out, main);
+        r2.edits = vec![delete.clone()];
+        let mut r3 = req(id3, &proj, &out, main);
+        r3.edits = vec![insert(offset)];
+        c.compile(&r2).unwrap();
+        c.compile(&r3).unwrap();
+        // r3's frames: which comes first, a page or `PAGES` with the edited page current
+        let mut started = 0;
+        let mut first_of_r3: Option<&'static str> = None;
+        while dones.len() < 3 {
+            match c.next_event().unwrap().expect("host closed the connection") {
+                Event::Started(j) => started = j.int_field("id").unwrap_or(0),
+                Event::Font(f) => {
+                    view.fonts.insert(f.id, f.key);
+                }
+                Event::Sources(s) => {
+                    for (i, p) in s.files {
+                        view.files.insert(i, p);
+                    }
+                    for (i, f, l) in s.spans {
+                        view.spans.insert(i, (f, l));
+                    }
+                }
+                Event::Page(p) => {
+                    if started == id3 && first_of_r3.is_none() {
+                        first_of_r3 = Some(if p.index == edited {
+                            "edited page"
+                        } else {
+                            "another page"
+                        });
+                    }
+                    view.page_fonts.insert(p.index, view.fonts.clone());
+                    view.pages.insert(p.index, p);
+                }
+                Event::Pages(j) => {
+                    let current = j.get("current").and_then(Json::as_array).is_some_and(|rs| {
+                        rs.iter().any(|r| {
+                            r.as_array().is_some_and(|a| {
+                                a.len() == 2
+                                    && a[0].as_i64().is_some_and(|lo| lo <= edited as i64)
+                                    && a[1].as_i64().is_some_and(|hi| edited as i64 <= hi)
+                            })
+                        })
+                    });
+                    if j.int_field("id") == Some(id3) && current && first_of_r3.is_none() {
+                        first_of_r3 = Some("current");
+                    }
+                }
+                Event::Done(d) => dones.push(d),
+                Event::Error(e) => panic!("host error: {e}"),
+                _ => {}
+            }
+        }
+        assert_eq!(dones[2].int_field("id"), Some(id3));
+        assert_eq!(dones[2].str_field("status"), Some("ok"), "{}", dones[2]);
+        // (when r1 had finished before r2 came, r3 is an ordinary compile)
+        if dones[0].str_field("status") == Some("cancelled")
+            && dones[1].str_field("status") == Some("cancelled")
+        {
+            assert!(
+                matches!(first_of_r3, Some("current") | Some("edited page")),
+                "round {round}: r3's first frame: {first_of_r3:?}"
+            );
+            if first_of_r3 == Some("current") {
+                seen_current_first += 1;
+            }
+        }
+        let count = dones[2].int_field("pages").unwrap_or(0) as usize;
+        view.count = count;
+        view.pages.retain(|&i, _| (i as usize) < count);
+        let (p2, o2) = snapshot(&base, &proj, &out, &format!("c{round}"));
+        compare_with_scratch(
+            &scratch.1,
+            &view,
+            &proj,
+            &out,
+            &p2,
+            &o2,
+            main,
+            &format!("continued round {round}"),
+        );
+        // back to the base text for the next round
+        let mut r4 = req(id + 1, &proj, &out, main);
+        id += 1;
+        r4.edits = vec![delete.clone()];
+        compile(&mut c, &mut view, &r4);
+    }
+    assert!(
+        seen_current_first > 0,
+        "no keystroke found its page current at once"
+    );
+    let _ = c.bye();
     let _ = std::fs::remove_dir_all(&base);
 }
