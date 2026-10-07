@@ -888,6 +888,24 @@ impl Globals {
                 return self.bm_replay(cs, i);
             }
             why = "Meanings";
+            if debug() {
+                let bad: Vec<String> = k3
+                    .iter()
+                    .filter(|(p, m)| self.bm_meaning(*p).as_ref() != Some(m))
+                    .take(4)
+                    .map(|(p, m)| {
+                        format!(
+                            "\\{} was {m:?} now {:?}",
+                            self.cs_name_string(*p),
+                            self.bm_meaning(*p)
+                        )
+                    })
+                    .collect();
+                eprintln!(
+                    "boxmemo: \\{} key differs: absent ok {absent_ok}; {bad:?}",
+                    self.cs_name_string(cs)
+                );
+            }
         }
         self.bm_miss(why);
         let refused = ST.with(|s| s.borrow().aborts.get(&cs).copied().unwrap_or(0) >= ABORT_BUDGET);
