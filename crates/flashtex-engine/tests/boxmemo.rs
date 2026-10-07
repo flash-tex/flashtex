@@ -133,7 +133,7 @@ fn the_key_falls_back() {
              \\n=7 \\measure{5pt}\\show\\n=0 \\def\\pad{4pt}\\measure{5pt}\\show\
              \\n=0 \\boxmaxdepth=0pt \\measure{5pt}\\show\
              \\n=0 \\def\\absent{}\\measure{5pt}\\show\
-             \\n=0 \\measure{5pt}\\show\\end\n"
+             \\n=0 \\measure{5pt}\\show\\n=0 \\measure{5pt}\\show\\end\n"
         ]
         .concat(),
     );
