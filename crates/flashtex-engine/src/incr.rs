@@ -48,6 +48,10 @@ use std::time::Instant;
 pub struct Page {
     /// The checkpoint taken after it, while retained.
     pub ckpt: Option<CheckpointId>,
+    /// The checkpoint at the end of the output routine that shipped it
+    /// (`Point::OutputEnd`), while retained: where its convergence test
+    /// runs (`Obs::on_checkpoint`).
+    pub end_ckpt: Option<CheckpointId>,
     /// The PDF bytes its interval wrote: hash and length.
     pub frame: [u64; 2],
     pub frame_len: u64,
@@ -147,6 +151,10 @@ pub struct Options {
     /// None of them in an edit's first pass before its edited page has
     /// shipped (`Obs::segment_hold`; FLASHTEX_SEGMENT_HOLD=0 takes them).
     pub segment_hold: bool,
+    /// Test a page's convergence at the end of the output routine that
+    /// shipped it (`Point::OutputEnd`) rather than just after its
+    /// `\shipout` (FLASHTEX_OUTPUT_END=0 tests at the shipout).
+    pub output_end: bool,
     /// Test convergence after each page of an incremental run.
     pub converge: bool,
     /// Print what differs at each convergence test to stderr.
@@ -179,6 +187,7 @@ impl Default for Options {
                 Err(_) => Some(DEFAULT_SEGMENT_S),
             },
             segment_hold: std::env::var("FLASHTEX_SEGMENT_HOLD").map_or(true, |v| v != "0"),
+            output_end: std::env::var("FLASHTEX_OUTPUT_END").map_or(true, |v| v != "0"),
             converge: true,
             debug: std::env::var_os("FLASHTEX_INCR_DEBUG").is_some(),
             relabel: std::env::var_os("FLASHTEX_NO_RELABEL").is_none(),
@@ -364,6 +373,9 @@ struct Obs {
     pdf: Option<(String, u64)>,
     /// The old run's pages from `base` on (convergence candidates).
     old_pages: Vec<Page>,
+    /// A page whose convergence test waits for the end of the output
+    /// routine that shipped it (`Point::OutputEnd`).
+    deferred_test: Option<usize>,
     edits: Vec<Edit>,
     /// Every file that changed (convergence: the old run must not read one
     /// after the convergence point).
@@ -536,6 +548,9 @@ impl Obs {
         for p in self.new_pages.iter_mut() {
             if p.ckpt.is_some_and(|c| !ids.contains(&c)) {
                 p.ckpt = None;
+            }
+            if p.end_ckpt.is_some_and(|c| !ids.contains(&c)) {
+                p.end_ckpt = None;
             }
         }
         self.taken.retain(|(c, _)| ids.contains(c));
@@ -852,7 +867,12 @@ impl Obs {
         read: Option<usize>,
         lines: Option<usize>,
     ) -> Option<CheckpointId> {
-        let at = self.old_pages.iter().position(|p| p.ckpt == Some(old))?;
+        // (`old` is a page's checkpoint, or the one at the end of the output
+        // routine that shipped it)
+        let at = self
+            .old_pages
+            .iter()
+            .position(|p| p.ckpt == Some(old) || p.end_ckpt == Some(old))?;
         let order: HashMap<CheckpointId, usize> = match lines {
             Some(_) => g
                 .pending_ids()
@@ -1902,6 +1922,29 @@ impl Observer for Obs {
         if self.taken.len() % 32 == 31 && g.arena.log_bytes() > self.budget {
             self.thin(g);
         }
+        if why == Point::OutputEnd {
+            let j = self.pages_so_far();
+            self.taken.push((id, j));
+            // (this run shipped the page: its checkpoint is the last new one)
+            if let Some(p) = self.new_pages.last_mut().filter(|p| p.end_ckpt.is_none()) {
+                p.end_ckpt = Some(id);
+            }
+            if self.deferred_test.take() != Some(j) {
+                return Action::Continue;
+            }
+            if self.stop_at != Some(j) && self.preempt_now(g) {
+                return Action::Stop;
+            }
+            let old = self
+                .old_pages
+                .get(j - self.base - 1)
+                .and_then(|p| p.end_ckpt)
+                .filter(|o| g.pending_ids().contains(o));
+            let (Some(old), Ok(rec)) = (old, g.record_of(id)) else {
+                return Action::Continue;
+            };
+            return self.page_test(g, j, &rec, old).unwrap_or(Action::Continue);
+        }
         if why != Point::Shipout {
             self.taken.push((id, self.pages_so_far()));
             if why == Point::Segment && self.preempt_now(g) {
@@ -1916,6 +1959,7 @@ impl Observer for Obs {
         let (frame, frame_len) = self.frame(&rec);
         self.new_pages.push(Page {
             ckpt: Some(id),
+            end_ckpt: None,
             frame,
             frame_len,
         });
@@ -1961,48 +2005,22 @@ impl Observer for Obs {
             self.skipped_unchanged = true;
         }
         if self.converge && j >= self.next_test && !skip {
-            if let Some(old) = self
-                .old_pages
-                .get(j - self.base - 1)
-                .and_then(|p| p.ckpt)
-                .filter(|o| g.pending_ids().contains(o))
-            {
-                // (interruptible at the requested page too: the page is out
-                // before its test, and an interrupted test only failed)
-                self.interruptible = true;
-                if self.converged(g, &rec, old) {
-                    // Newer work came while the test ran: the jump (which
-                    // cannot stop once it changes the state) waits; the run
-                    // stops here as if the work had come before the test.
-                    if !self.protecting() && self.preempt_now(g) {
-                        return Action::Stop;
-                    }
-                    self.converged = Some((j, old));
-                    self.positions = new_positions(g, self.pdf_len_r);
-                    return Action::Stop;
+            let pending = g.pending_ids();
+            let page = self.old_pages.get(j - self.base - 1);
+            let old_end = page
+                .and_then(|p| p.end_ckpt)
+                .filter(|o| pending.contains(o));
+            let old = page.and_then(|p| p.ckpt).filter(|o| pending.contains(o));
+            if g.output_active && g.layer().output_end && old_end.is_some() {
+                // Inside the output routine, with the old run's checkpoint
+                // at its end: the test waits for this run's there
+                // (`Point::OutputEnd`), where `\ShipoutBox` and the rest of
+                // the routine's group are given back as both runs had them.
+                self.deferred_test = Some(j);
+            } else if let Some(old) = old {
+                if let Some(a) = self.page_test(g, j, &rec, old) {
+                    return a;
                 }
-                if self.preempted && self.protecting() {
-                    // newer work came during the test, but this run goes on
-                    // to its edited page first: the test only failed (and
-                    // is not counted as a miss)
-                    self.preempted = false;
-                    if self.stop_at == Some(j) {
-                        return Action::Stop;
-                    }
-                    return Action::Continue;
-                }
-                if self.preempted {
-                    // newer work came during the test
-                    return Action::Stop;
-                }
-                // Back off after three misses (an edit that reflows the
-                // rest never converges): test at 1, 2, 4, ... pages on.
-                self.fails += 1;
-                self.next_test = j + if self.fails < 3 {
-                    1
-                } else {
-                    1 << (self.fails - 2).min(6)
-                };
             }
         }
         if self.stop_at == Some(j) {
@@ -2013,6 +2031,54 @@ impl Observer for Obs {
 }
 
 impl Obs {
+    /// Page `j`'s convergence test at the live checkpoint `rec` against the
+    /// old run's `old`: `Some` when the run stops or goes on at once.
+    fn page_test(
+        &mut self,
+        g: &mut Globals,
+        j: usize,
+        rec: &ExtRecord,
+        old: CheckpointId,
+    ) -> Option<Action> {
+        // (interruptible at the requested page too: the page is out
+        // before its test, and an interrupted test only failed)
+        self.interruptible = true;
+        if self.converged(g, rec, old) {
+            // Newer work came while the test ran: the jump (which
+            // cannot stop once it changes the state) waits; the run
+            // stops here as if the work had come before the test.
+            if !self.protecting() && self.preempt_now(g) {
+                return Some(Action::Stop);
+            }
+            self.converged = Some((j, old));
+            self.positions = new_positions(g, self.pdf_len_r);
+            return Some(Action::Stop);
+        }
+        if self.preempted && self.protecting() {
+            // newer work came during the test, but this run goes on
+            // to its edited page first: the test only failed (and
+            // is not counted as a miss)
+            self.preempted = false;
+            if self.stop_at == Some(j) {
+                return Some(Action::Stop);
+            }
+            return Some(Action::Continue);
+        }
+        if self.preempted {
+            // newer work came during the test
+            return Some(Action::Stop);
+        }
+        // Back off after three misses (an edit that reflows the
+        // rest never converges): test at 1, 2, 4, ... pages on.
+        self.fails += 1;
+        self.next_test = j + if self.fails < 3 {
+            1
+        } else {
+            1 << (self.fails - 2).min(6)
+        };
+        None
+    }
+
     /// Newer work may not stop the run yet (`protect_edit`); a cancel
     /// always may.
     fn protecting(&self) -> bool {
@@ -2423,6 +2489,7 @@ impl Session {
             l.aux_armed = true;
         }
         g.checkpoint_every_shipout(true);
+        g.layer().output_end = self.opts.output_end;
         g.layer().timed_s = self.opts.timed_s;
         g.checkpoint_segments(self.opts.segment_s);
         g.layer().segment_hold = false;
@@ -2664,6 +2731,9 @@ impl Session {
         for p in self.pages.iter_mut() {
             if p.ckpt.is_some_and(|c| !ids.contains(&c)) {
                 p.ckpt = None;
+            }
+            if p.end_ckpt.is_some_and(|c| !ids.contains(&c)) {
+                p.end_ckpt = None;
             }
         }
         Ok(())
@@ -3791,6 +3861,7 @@ impl Session {
             new_pages: vec![],
             pdf: None,
             old_pages: vec![],
+            deferred_test: None,
             edits: vec![],
             changed: vec![],
             old_journal_files: vec![],
@@ -3919,6 +3990,7 @@ impl Session {
         g.arm_begin_document();
         g.layer().want_aux_point = self.opts.aux_point;
         g.checkpoint_every_shipout(true);
+        g.layer().output_end = self.opts.output_end;
         g.layer().timed_s = self.opts.timed_s;
         g.checkpoint_segments(self.opts.segment_s);
         g.layer().segment_hold = false;
@@ -4106,7 +4178,7 @@ impl Session {
         obs.old_lines = obs
             .old_pages
             .iter()
-            .filter_map(|p| p.ckpt)
+            .flat_map(|p| p.ckpt.into_iter().chain(p.end_ckpt))
             .filter_map(|c| {
                 let v = &self.reloc.get(&c)?.lines;
                 (!v.is_empty()).then(|| (c, v.clone()))
@@ -4134,6 +4206,7 @@ impl Session {
         obs.first_incremental = self.pass == 1;
         obs.protect_edit = self.pass == 1 && self.starved;
         g.checkpoint_every_shipout(true);
+        g.layer().output_end = self.opts.output_end;
         g.layer().timed_s = self.opts.timed_s;
         g.checkpoint_segments(self.opts.segment_s);
         // Segment checkpoints (DESIGN.md §5.2) before the edited page only
@@ -4578,6 +4651,9 @@ impl Session {
             if p.ckpt.is_some_and(|c| !ids.contains(&c)) {
                 p.ckpt = None;
             }
+            if p.end_ckpt.is_some_and(|c| !ids.contains(&c)) {
+                p.end_ckpt = None;
+            }
         }
         self.enforce_budget();
         let g = self.g.as_mut().unwrap();
@@ -4660,6 +4736,9 @@ impl Session {
         for p in self.pages.iter_mut() {
             if p.ckpt.is_some_and(|c| !ids.contains(&c)) {
                 p.ckpt = None;
+            }
+            if p.end_ckpt.is_some_and(|c| !ids.contains(&c)) {
+                p.end_ckpt = None;
             }
         }
     }

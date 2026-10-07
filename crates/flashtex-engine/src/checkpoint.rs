@@ -163,6 +163,13 @@ pub enum Point {
     Shipout,
     /// After ~20 ms of engine time without one (§5.2: heavy pages).
     Timed,
+    /// The first `big_switch` outside the output routine after a
+    /// `\shipout` inside it, when no other `\shipout` came between (the
+    /// convergence test's point: `crate::incr`). LaTeX's `\shipout`
+    /// leaves the page in `\ShipoutBox`, set within the output routine's
+    /// group, until that group ends; a test at the page's own checkpoint,
+    /// still inside it, then fails on every edited page.
+    OutputEnd,
     /// After `build_page` moved contributions to the current page, between
     /// shipouts (§5.2's checkpoints between pages, at §5.7's segment
     /// boundaries), at least `Layer::segment_s` after the last checkpoint.
@@ -216,6 +223,7 @@ const REQ_TIMED: i32 = 5;
 const REQ_AUX: i32 = 6;
 const REQ_SEGMENT: i32 = 7;
 const REQ_AUX_DONE: i32 = 8;
+const REQ_OUTPUT_END: i32 = 9;
 
 /// `hash_base` (tex.web §222): `active_base + 256 + 256 + 1`, the same in
 /// every configuration.
@@ -408,6 +416,9 @@ pub struct Layer {
     /// (`Observer::take_held_segment`; `crate::incr`: an edit's run until its
     /// edited page has shipped).
     pub segment_hold: bool,
+    /// After a page checkpoint taken inside the output routine, another
+    /// at its end (`Point::OutputEnd`).
+    pub output_end: bool,
     /// Lines read (`input_ln`) so far, and when the last checkpoint was
     /// taken: a segment checkpoint needs a line read since the last one
     /// (two checkpoints with the same input consumed are the same restart
@@ -1758,7 +1769,24 @@ impl Globals {
                 }
             }
             REQ_BEGIN_DOCUMENT => self.hook_checkpoint(Point::BeginDocument),
-            REQ_SHIPOUT => self.hook_checkpoint(Point::Shipout),
+            REQ_SHIPOUT => {
+                // Inside the output routine: the end of it is asked for
+                // before the page's checkpoint is taken, so that a run
+                // resumed from that checkpoint asks for it too. A later
+                // `\shipout` asks for its own page's checkpoint instead,
+                // and so for the end after it.
+                if self.output_active && self.layer().output_end {
+                    self.ckpt_request = REQ_OUTPUT_END;
+                }
+                self.hook_checkpoint(Point::Shipout)
+            }
+            REQ_OUTPUT_END => {
+                if self.output_active {
+                    self.ckpt_request = REQ_OUTPUT_END;
+                } else {
+                    self.hook_checkpoint(Point::OutputEnd)
+                }
+            }
             REQ_TIMED => self.hook_checkpoint(Point::Timed),
             REQ_AUX => {
                 // L5: the read-set begins when this `.aux` has been read
