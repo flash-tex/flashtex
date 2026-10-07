@@ -5,7 +5,7 @@
   "machine": "mac-m1max-a",
   "note": null,
   "started_utc": "2026-10-06T21:23:57Z",
-  "state": "claimed",
+  "state": "released",
   "task_id": "COMPILE-SPEED",
-  "updated_utc": "2026-10-07T01:08:26Z"
+  "updated_utc": "2026-10-07T02:13:38Z"
 }
