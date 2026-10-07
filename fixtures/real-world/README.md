@@ -104,6 +104,18 @@ count and argv. The twelve fixtures added on 2026-09-14 were generated with
 TeX Live 2025 instead and say so in their sidecar's `reference_engine`.
 pdflatex is an oracle only and never runs in the product.
 
+## 2026-10-07 additions — framed boxes with TikZ frames and tikz-cd
+
+Owner: lane P6-INFDESC-PAGE (kabir-claude). Written for this corpus so that the soundness sweeps
+exercise BOX-MEMO (`docs/design/engine-v2/BOX-MEMO.md`): every framed environment measures its frame
+with framed.sty's `\fb@sizeofframe`, which edits then replay. References: TeX Live 2026 pdflatex on
+the NixOS PC, to convergence (oracle only); the engine's PDF is byte-identical to them.
+
+| fixture | what it exercises | pdfLaTeX pages / overfull |
+|---|---|---|
+| `framed-tikz-theorems` | ntheorem `[framed]` with TikZ frames as in *An Infinite Descent into Pure Mathematics* (`\newframedtheorem`, `\theoremframecommand` drawing a `tikzpicture` node and a rule), theorem/lemma/definition/proof boxes, a proof split across a page break, `itemize` and `align*` inside boxes, a5paper | 3 / 0 |
+| `tikzcd-shaded-notes` | tikz-cd diagrams in `center`, display math and inside framed.sty's `shaded` and `leftbar`, a `\MakeFramed` environment framed by `\fcolorbox`, a shaded box split across pages | 2 / 0 |
+
 ## Adding a fixture
 
 Create `fixtures/real-world/<id>/main.tex` (plus any `\input` files below it),

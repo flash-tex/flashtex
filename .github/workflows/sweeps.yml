@@ -78,13 +78,20 @@ env:
   # refs-N compile stopped in the preamble, so the sweeps compared two equal
   # error runs ("cold" 100 of 100) and span's hosts had nothing to keep
   # (measured 2026-10-06). The `prepare` job's preflight now catches that.
-  # siunitx r80407 (3.6.3), cleveref r79618 (0.21.4).
+  # siunitx r80407 (3.6.3), cleveref r79618 (0.21.4). framed r77682, ntheorem r79618
+  # (collection-latexextra) and tikz-cd r77682 (collection-pictures), for the
+  # framed/TikZ fixtures that exercise BOX-MEMO (fixtures/real-world/
+  # framed-tikz-theorems, tikzcd-shaded-notes): without them every compile of
+  # those stopped in the preamble and ran cold (measured 2026-10-07).
   TEXLIVE_IMAGE: texlive/texlive@sha256:961215b30a17099ee677cedbb9163fe755ebca1d7e8b0b9fa73248a2f53bd198
   TEXLIVE_EXTRA: |
     sansmathaccent 62cf97334eb2c1d4056cb7f72ef2e59d99edaef151c3f4870116cc23056394b9
     translations a7766687fd777e7077a68d6d908cb43da0673616e58ebc31741b22108d4af591
     siunitx 28573d661ab5cb9472eaed3dd46c30fcaee569ce5f227eb437fd1b18cac6c708
     cleveref 2d52e8f485c20dd4352dda55d14abf94666e845adeb5f630f73d3c67692d22a1
+    framed 55e43198fa63236b7f97cfa6b70d141dc0be1976dc385cac3d6cad3f1610ff25
+    ntheorem 030413280971d17decff54f02ac44749010eb127fa684033e811417e391eb84d
+    tikz-cd e225b02dcc2a334508529e27a7d7b3f283939b57507019ab6bcf99ff453ac2cb
   JOBS: "4"
 
 jobs:
@@ -196,6 +203,16 @@ jobs:
                 grep -E '^!|not found' "$ib/src-$doc/$doc.log" | head -5 || true
                 echo "::error::$side: TeX Live's pdflatex does not compile $doc (a missing package? add it to TEXLIVE_EXTRA)"; exit 1; }
               echo "$side: $doc ok ($(grep -c . "$ib/src-$doc/$doc.log") log lines)"
+            done
+            # and the fixtures that need the pinned extra packages
+            for fx in framed-tikz-theorems tikzcd-shaded-notes; do
+              src="$side/fixtures/real-world/$fx"
+              [[ -d "$src" ]] || continue
+              d="$ib/fx-$fx"; mkdir -p "$d"; cp "$src/main.tex" "$d/"
+              (cd "$d" && pdflatex -interaction=nonstopmode -halt-on-error main.tex > /dev/null 2>&1) || {
+                grep -E '^!|not found' "$d/main.log" | head -5 || true
+                echo "::error::$side: TeX Live's pdflatex does not compile fixture $fx (a missing package? add it to TEXLIVE_EXTRA)"; exit 1; }
+              echo "$side: fixture $fx ok"
             done
           done
       - uses: dtolnay/rust-toolchain@stable

@@ -187,6 +187,13 @@ def shards(tree, gates, target_s, j, costs=None):
 def env():
     e = dict(os.environ, PYTHONHASHSEED='0', FLASHTEX_VERIFY_JUMP='1', FLASHTEX_VERIFY_OLDCACHE='1',
              FLASHTEX_VERIFY_PREPARED='1', FLASHTEX_VERIFY_RELOC='1')
+    # BOX-MEMO (docs/design/engine-v2/BOX-MEMO.md, off by default in the product): every sweep runs
+    # it in verify mode -- each call the guard admits is run normally and replayed, the whole
+    # engine state compared, and the run goes on from the replay; a difference ends the host
+    # (exit 3), which the sweep reports. The framed/TikZ fixtures (fixtures/real-world/
+    # framed-tikz-theorems, tikzcd-shaded-notes) make edits replay calls.
+    e.setdefault('FLASHTEX_BOXMEMO', 'verify')
+    e.setdefault('FLASHTEX_BOXMEMO_VERIFY_FAIL', '1')
     return e
 
 

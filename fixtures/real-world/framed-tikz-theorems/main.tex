@@ -1,0 +1,167 @@
+% Theorem boxes framed by TikZ through ntheorem's [framed] option (\newshadedtheorem with
+% \theoremframecommand) and framed.sty,
+% as in "An Infinite Descent into Pure Mathematics" (book/includes/theorems.tex):
+% each environment's body is boxed, measured by \fb@sizeofframe (which draws the
+% whole TikZ frame around a rule) and framed, split across pages when long.
+% Written for the corpus (lane P6-INFDESC-PAGE, BOX-MEMO's sweep coverage).
+\documentclass[10pt]{article}
+\usepackage[a5paper,margin=18mm]{geometry}
+\usepackage{amsmath,amssymb}
+\usepackage{xcolor}
+\usepackage{tikz}
+\usepackage{framed}
+\usepackage[thmmarks,framed]{ntheorem}
+
+\definecolor{thmbgcol}{RGB}{238,244,252}
+\definecolor{thmbdcol}{RGB}{40,90,170}
+\definecolor{defbgcol}{RGB}{246,240,252}
+\definecolor{defbdcol}{RGB}{120,60,160}
+\definecolor{pfbdcol}{RGB}{150,150,150}
+
+\tikzstyle{thmbox} = [rectangle, fill=thmbgcol, inner xsep=4pt]
+\newcommand\thmbox[1]{%
+  \noindent\begin{tikzpicture}%
+  \node [thmbox] (box){%
+    \begin{minipage}{\linewidth}%
+      #1%
+    \end{minipage}%
+  };%
+  \draw[color=thmbdcol, line width=1.5pt] (box.south west) -- (box.north west) ;
+  \end{tikzpicture}}
+\tikzstyle{defbox} = [rectangle, fill=defbgcol, inner xsep=4pt]
+\newcommand\defbox[1]{%
+  \noindent\begin{tikzpicture}%
+  \node [defbox] (box){%
+    \begin{minipage}{\linewidth}%
+      #1%
+    \end{minipage}%
+  };%
+  \draw[color=defbdcol, line width=1.5pt] (box.south west) -- (box.north west) ;
+  \end{tikzpicture}}
+\tikzstyle{pfbox} = [rectangle, inner xsep=4pt]
+\newcommand\pfbox[1]{%
+  \noindent\begin{tikzpicture}%
+  \node [pfbox] (box){%
+    \begin{minipage}{\linewidth}%
+      #1%
+    \end{minipage}%
+  };%
+  \draw[color=pfbdcol, line width=0.75pt] (box.south west) -- (box.north west) ;
+  \end{tikzpicture}}
+
+\theoremstyle{break}
+\theorembodyfont{\normalfont}
+\theoremheaderfont{\bfseries\color{thmbdcol}}
+\theorempreskip{0pt}\theorempostskip{0pt}
+\theoremsymbol{}
+\let\theoremframecommand\thmbox
+\newshadedtheorem{theorem}{Theorem}[section]
+\newshadedtheorem{lemma}[theorem]{Lemma}
+\theoremheaderfont{\bfseries\color{defbdcol}}
+\let\theoremframecommand\defbox
+\newshadedtheorem{definition}[theorem]{Definition}
+\theoremheaderfont{\itshape}
+\theoremsymbol{\ensuremath{\square}}
+\let\theoremframecommand\pfbox
+\theoremnumbering{arabic}
+\newshadedtheorem{proof}{Proof}
+
+\begin{document}
+
+\section{Equivalence relations}
+
+A relation on a set is a way of saying which elements are related. We begin
+with the definition and then prove that equivalence relations and partitions of
+a set are two descriptions of the same thing.
+
+\begin{definition}
+Let $X$ be a set. A relation $\sim$ on $X$ is an \emph{equivalence relation}
+if it is reflexive ($x \sim x$ for all $x \in X$), symmetric ($x \sim y$ implies
+$y \sim x$) and transitive ($x \sim y$ and $y \sim z$ imply $x \sim z$).
+\end{definition}
+
+Given an equivalence relation, each element determines the set of elements
+related to it, its \emph{equivalence class} $[x] = \{ y \in X \mid x \sim y \}$.
+The classes cover $X$, since $x \in [x]$, and two of them are either equal or
+disjoint.
+
+\begin{lemma}
+Let $\sim$ be an equivalence relation on $X$ and let $x, y \in X$. Then
+$[x] = [y]$ if and only if $x \sim y$, and if $[x] \ne [y]$ then
+$[x] \cap [y] = \varnothing$.
+\end{lemma}
+
+\begin{proof}
+Suppose $[x] = [y]$. Since $y \in [y] = [x]$ we have $x \sim y$. Conversely,
+suppose $x \sim y$ and let $z \in [y]$, so that $y \sim z$; by transitivity
+$x \sim z$, so $z \in [x]$. Hence $[y] \subseteq [x]$, and by symmetry
+$[x] \subseteq [y]$. Finally, if $z \in [x] \cap [y]$ then $x \sim z$ and
+$y \sim z$, so $x \sim y$ by symmetry and transitivity, and $[x] = [y]$.
+\end{proof}
+
+\begin{theorem}
+Let $X$ be a set. For every equivalence relation $\sim$ on $X$ the set
+$X/{\sim} = \{ [x] \mid x \in X \}$ is a partition of $X$, and every partition
+of $X$ arises in this way from exactly one equivalence relation.
+\end{theorem}
+
+\begin{proof}
+That $X/{\sim}$ is a partition is the previous lemma together with $x \in [x]$.
+Conversely, let $\mathcal{U}$ be a partition of $X$ and define $x \approx y$ if
+and only if $x$ and $y$ lie in the same block of $\mathcal{U}$.
+\begin{itemize}
+\item Each $x$ lies in some block, so $x \approx x$.
+\item If $x$ and $y$ share a block then so do $y$ and $x$.
+\item If $x, y$ share a block $U$ and $y, z$ share a block $V$, then
+$y \in U \cap V$, and since blocks are disjoint or equal, $U = V$; so $x, z$
+share a block.
+\end{itemize}
+The equivalence classes of $\approx$ are exactly the blocks of $\mathcal{U}$:
+\begin{align*}
+[x]_{\approx} &= \{ y \in X \mid x \approx y \} && \text{by definition} \\
+&= \{ y \in X \mid y \in U_x \} && \text{where $U_x$ is the block of $x$} \\
+&= U_x .
+\end{align*}
+If two equivalence relations have the same classes they relate the same pairs,
+so the relation is unique. This completes the proof, which is long enough to
+show how a framed box is split across a page break: the frame is measured again
+for the first and the last part, and each part is drawn with its own picture.
+We add a few more lines of reasoning so that the box needs more room than the
+page has left. Suppose that $f : X \to Y$ is any function; then $x \sim y$ if
+and only if $f(x) = f(y)$ defines an equivalence relation whose classes are the
+non-empty fibres $f^{-1}[\{y\}]$, and the quotient map $q : X \to X/{\sim}$ is a
+surjection through which $f$ factors uniquely as $f = \bar{f} \circ q$ with
+$\bar{f}$ injective. In particular $|X/{\sim}| = |f[X]|$.
+\end{proof}
+
+\section{Modular arithmetic}
+
+\begin{definition}
+Fix an integer $n > 0$. Integers $a$ and $b$ are \emph{congruent modulo $n$},
+written $a \equiv b \pmod{n}$, if $n$ divides $a - b$.
+\end{definition}
+
+\begin{theorem}
+Congruence modulo $n$ is an equivalence relation on $\mathbb{Z}$ with exactly
+$n$ classes, $[0], [1], \dots, [n-1]$.
+\end{theorem}
+
+\begin{proof}
+Reflexivity and symmetry are clear since $n \mid 0$ and $n \mid -(a-b)$. If
+$n \mid a-b$ and $n \mid b-c$ then $n \mid (a-b)+(b-c) = a-c$. By the division
+theorem every $a$ is $qn + r$ with $0 \le r < n$, so $a \equiv r$, and two
+distinct remainders are not congruent since their difference has absolute value
+less than $n$.
+\end{proof}
+
+\begin{lemma}
+If $a \equiv a'$ and $b \equiv b' \pmod{n}$ then $a + b \equiv a' + b'$ and
+$ab \equiv a'b' \pmod{n}$.
+\end{lemma}
+
+\begin{proof}
+We have $(a+b) - (a'+b') = (a-a') + (b-b')$ and
+$ab - a'b' = a(b-b') + b'(a-a')$, both multiples of $n$.
+\end{proof}
+
+\end{document}

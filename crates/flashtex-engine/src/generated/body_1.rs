@@ -6245,6 +6245,9 @@ impl Globals {
                                     if self.intr_on {
                                         self.flashtex_intr_new_cs(p);
                                     }
+                                    if self.bm_on {
+                                        self.flashtex_bm_new_cs(p);
+                                    }
                                 }
                             }
                             // §278
@@ -6257,6 +6260,9 @@ impl Globals {
         }
         if self.rs_on {
             self.flashtex_id_read(j, l, p);
+        }
+        if self.bm_rec_on {
+            self.flashtex_bm_id(j, l, p);
         }
         id_lookup = p;
         id_lookup

@@ -1123,6 +1123,21 @@ fn same_words(
     Err(s)
 }
 
+/// BOX-MEMO's full verifier (`crate::boxmemo`, docs/design/engine-v2/
+/// BOX-MEMO.md §7): the live state (a replay) against checkpoint `n` of the
+/// pending branch (the same call run normally from the same state), by the
+/// convergence test's own comparison -- every word, dead words and free
+/// cells aside, nodes allocated elsewhere compared structurally.
+pub(crate) fn same_state(g: &mut Globals, n: CheckpointId) -> Result<usize, String> {
+    let debug = std::env::var_os("FLASHTEX_BOXMEMO_DEBUG").is_some();
+    let mut char_or = vec![];
+    let r = same_words(g, n, false, false, true, debug, Box::new(|| false), &mut char_or);
+    if r.is_ok() && !char_or.is_empty() {
+        return Err(format!("pdf_char_used differs in {} words", char_or.len()));
+    }
+    r
+}
+
 /// Arrays whose elements from a pointer on are dead between two commands,
 /// with that pointer (tex.web: the unused parts of stacks and buffers,
 /// which are always written before they are read again). The pointer
@@ -1239,6 +1254,12 @@ fn dead_word(g: &Globals, w: &crate::statediff::WordDiff) -> bool {
         // it right after the call, in the same command (`\vsplit` and an
         // insertion split).
         Some("best_height_plus_depth") => return true,
+        // changes/boxmemo.ch: fresh numbers naming the state of the fonts'
+        // parameters and of the hyphenation exceptions, read only by
+        // BOX-MEMO's keys (src/boxmemo.rs), never by TeX; the arrays they
+        // name are compared themselves. Two runs that both changed a font
+        // after the restart point hold different numbers for equal arrays.
+        Some("bm_font_version" | "bm_hyph_version") => return true,
         // pdftex.web §693: outside text mode (`pdf_doing_text` false, which
         // is compared), `pdf_begin_string` calls `pdf_begin_text` before it
         // reads any of these, and `pdf_begin_text` sets them all (the first
@@ -2053,6 +2074,7 @@ impl Observer for Obs {
         }
         if self.edited.is_none() && !unchanged {
             self.edited = Some((j, self.page_s, cpu));
+            crate::boxmemo::record_window(false);
             let now = crate::os::thread_counts();
             if self.first_incremental {
                 crate::os::perf_mark(false);
@@ -4144,6 +4166,7 @@ impl Session {
         system::record_reads_into(Some(ReadLog::keeping_content()));
         system::set_command_line(vec![self.first_line.clone()]);
         let mut g = Globals::new();
+        crate::boxmemo::record_window(false);
         g.arm_begin_document();
         g.layer().want_aux_point = self.opts.aux_point;
         // (with no `.aux` yet, the `.aux` point is where `\document` begins:
@@ -4417,6 +4440,7 @@ impl Session {
         let mid = !self.pages.iter().any(|p| p.ckpt == Some(r));
         let g = self.g.as_mut().unwrap();
         obs.instr_go = crate::os::thread_counts();
+        crate::boxmemo::record_window(obs.first_incremental);
         if obs.first_incremental {
             crate::os::perf_mark(true);
             crate::macroprof::window_open(g);

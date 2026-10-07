@@ -1,0 +1,89 @@
+% Commutative diagrams (tikz-cd) between and inside shaded and leftbar boxes
+% (framed.sty), and a framed box whose frame is an \fcolorbox: every framed
+% environment measures its frame with \fb@sizeofframe. Written for the corpus
+% (lane P6-INFDESC-PAGE, BOX-MEMO's sweep coverage).
+\documentclass[11pt]{article}
+\usepackage[a5paper,margin=16mm]{geometry}
+\usepackage{amsmath,amssymb}
+\usepackage{xcolor}
+\usepackage{tikz-cd}
+\usepackage{framed}
+\definecolor{shadecolor}{RGB}{240,240,232}
+\newenvironment{note}{%
+  \def\FrameCommand{\fboxsep=4pt\fcolorbox{gray}{white}}%
+  \MakeFramed{\advance\hsize-\width \FrameRestore}}%
+  {\endMakeFramed}
+
+\begin{document}
+
+\section*{Quotients}
+
+A surjection $p : X \to Z$ induces an equivalence relation $\sim$ on $X$, and
+$p$ factors through the quotient map:
+\begin{center}
+\begin{tikzcd}
+X \arrow[r, "q"] \arrow[dr, "p"'] & X/{\sim} \arrow[d, "\bar p", "\cong"'] \\
+& Z
+\end{tikzcd}
+\end{center}
+
+\begin{shaded}
+\textbf{Universal property.} For every function $f : X \to Y$ that is constant
+on equivalence classes there is exactly one $\bar f$ with $f = \bar f \circ q$:
+\[
+\begin{tikzcd}
+X \arrow[r, "q"] \arrow[rd, "f"'] & X/{\sim} \arrow[d, dashed, "\exists!\,\bar f"] \\
+& Y
+\end{tikzcd}
+\]
+\end{shaded}
+
+\begin{leftbar}
+The three descriptions are equivalent: equivalence relations on $X$, partitions
+of $X$ and surjections with domain $X$ (up to bijection of the codomain).
+\begin{center}
+\begin{tikzcd}[row sep=large, column sep=small]
+& \text{relations} \arrow[dl, leftrightarrow] \arrow[dr, leftrightarrow] & \\
+\text{partitions} \arrow[rr, leftrightarrow, dashed] & & \text{surjections}
+\end{tikzcd}
+\end{center}
+\end{leftbar}
+
+\begin{note}
+\textbf{Exercise.} Show that the composite of two quotient maps is a quotient
+map, and draw the square
+\[
+\begin{tikzcd}
+A \arrow[r] \arrow[d] & B \arrow[d] \\
+C \arrow[r] & D
+\end{tikzcd}
+\]
+for the quotients of $\mathbb{Z}$ by $4\mathbb{Z}$ and $2\mathbb{Z}$.
+\end{note}
+
+\begin{shaded}
+\textbf{Products.} The product $X \times Y$ comes with projections, and maps
+into it are pairs of maps:
+\[
+\begin{tikzcd}
+& W \arrow[dl, "f"'] \arrow[dr, "g"] \arrow[d, dashed, "{(f,g)}"] & \\
+X & X \times Y \arrow[l, "\pi_1"] \arrow[r, "\pi_2"'] & Y
+\end{tikzcd}
+\]
+Text after the diagram fills the box so that it continues to the next page if
+the page is short: the frame is then measured and drawn for each part. A box
+split across pages is a framed environment's hardest case, and the one
+\texttt{framed} measures most often.
+\end{shaded}
+
+\begin{note}
+\textbf{Coproducts.} Dually, maps out of a disjoint union are pairs of maps.
+\[
+\begin{tikzcd}
+X \arrow[r, "\iota_1"] \arrow[dr, "f"'] & X \sqcup Y \arrow[d, dashed] & Y \arrow[l, "\iota_2"'] \arrow[dl, "g"] \\
+& W &
+\end{tikzcd}
+\]
+\end{note}
+
+\end{document}
