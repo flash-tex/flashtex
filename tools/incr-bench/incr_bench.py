@@ -419,7 +419,7 @@ def structural(kind, src, p, i):
             return None
         m = min(ms, key=lambda m: abs(m.start() - p))
         return src[:m.start()] + src[m.end():]
-    if kind in ('newline', 'split', 'join', 'math_par', 'verbatim_blank', 'cell_blank'):
+    if kind in edits.LINE_KINDS + edits.CONTEXT_KINDS + edits.PREAMBLE_KINDS:
         return getattr(edits, kind)(src, p)
     if kind == 'unsection':
         ms = [m for m in re.finditer(rb'\\section\{[^}\n]*\}', src)]
