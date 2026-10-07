@@ -1,0 +1,13 @@
+plain-1000-memr-r2       peak 538 MB steady 469 MB | open: 89.63 G instructions | :0.5:letter:6: edited 67.3 M, key 650 M | :0.5:sentence:3: edited 71.2 M, key 82212 M | :0.98:letter:4: edited 35.9 M, key 371 M | steady: edited nan M, key 43 M
+plain-1000-memr-je-r2    peak 512 MB steady 477 MB | open: 90.05 G instructions | :0.5:letter:6: edited 76.4 M, key 659 M | :0.5:sentence:3: edited 69.2 M, key 81731 M | :0.98:letter:4: edited 37.0 M, key 374 M | steady: edited nan M, key 43 M
+plain-1000-memr-r3       peak 536 MB steady 481 MB | open: 89.14 G instructions | :0.5:letter:6: edited 70.7 M, key 653 M | :0.5:sentence:3: edited 69.3 M, key 81829 M | :0.98:letter:4: edited 36.3 M, key 372 M | steady: edited nan M, key 43 M
+plain-1000-memr-je-r3    peak 507 MB steady 473 MB | open: 88.87 G instructions | :0.5:letter:6: edited 68.3 M, key 651 M | :0.5:sentence:3: edited 69.1 M, key 81686 M | :0.98:letter:4: edited 37.0 M, key 373 M | steady: edited nan M, key 44 M
+full-1000-memr-r2        peak 649 MB steady 565 MB | open: 651.79 G instructions | :0.5:letter:6: edited 98.3 M, key 4655 M | :0.5:sentence:3: edited 96.0 M, key 4615 M | :0.98:letter:4: edited 107.6 M, key 802 M | steady: edited nan M, key 43 M
+full-1000-memr-je-r2     peak 605 MB steady 561 MB | open: 651.77 G instructions | :0.5:letter:6: edited 96.4 M, key 4634 M | :0.5:sentence:3: edited 96.0 M, key 4603 M | :0.98:letter:4: edited 105.7 M, key 806 M | steady: edited nan M, key 42 M
+full-1000-memr-r3        peak 649 MB steady 577 MB | open: 325.09 G instructions | :0.5:letter:6: edited 98.5 M, key 4629 M | :0.5:sentence:3: edited 96.2 M, key 4658 M | :0.98:letter:4: edited 124.6 M, key 824 M | steady: edited nan M, key 43 M
+full-1000-memr-je-r3     peak 602 MB steady 567 MB | open: 325.11 G instructions | :0.5:letter:6: edited 109.2 M, key 4659 M | :0.5:sentence:3: edited 98.1 M, key 4650 M | :0.98:letter:4: edited 104.1 M, key 804 M | steady: edited nan M, key 43 M
+full-1000-memr-mi        peak 641 MB steady 601 MB | open: 322.96 G instructions | :0.5:letter:6: edited 95.5 M, key 4598 M | :0.5:sentence:3: edited 95.8 M, key 4597 M | :0.98:letter:4: edited 107.2 M, key 798 M | steady: edited nan M, key 38 M
+full-1000-memr-ar2       peak 648 MB steady 563 MB | open: 324.93 G instructions | :0.5:letter:6: edited 97.7 M, key 4664 M | :0.5:sentence:3: edited 119.5 M, key 4639 M | :0.98:letter:4: edited 105.3 M, key 805 M | steady: edited nan M, key 43 M
+# round 1 (json overwritten by round 2; values from memr.py .out lines):
+# full-1000-memr    peak 650 MB steady 568 MB, open 326.55 G, letter@0.5 edited 96.7 M
+# full-1000-memr-je peak 601 MB steady 563 MB, open 326.50 G, letter@0.5 edited 96.4 M
