@@ -950,9 +950,12 @@ final class EngineV3PagesView: NSView {
         // VoiceOver: a page landmark with its text (EngineV3Accessibility.swift).
         v.owner = self
         v.index = i
-        v.setLabel(number: i + 1, dark: pageAppearance == .dark, contentsScale: backingScale)
         v.tiles.onCommitted = { [weak self] compile, t0, t1 in self?.recordCommit(compileID: compile, page: i, installNs: t0, commitNs: t1) }
         addSubview(v)
+        // After it is in the layer tree: the label's place depends on whether
+        // the tree is flipped. (Before, a later relayout re-placed it; with one
+        // layout per drain there may be none: the label sat at the top.)
+        v.setLabel(number: i + 1, dark: pageAppearance == .dark, contentsScale: backingScale)
         pageViews[i] = v
         return v
     }
