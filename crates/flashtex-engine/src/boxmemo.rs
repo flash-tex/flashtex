@@ -324,7 +324,8 @@ fn with_config<R>(f: impl FnOnce(&Config) -> R) -> R {
             let mode = match std::env::var("FLASHTEX_BOXMEMO").as_deref() {
                 Ok("on") | Ok("1") => Mode::On,
                 Ok("verify") => Mode::Verify,
-                _ => Mode::Off,
+                Ok("off") | Ok("0") => Mode::Off,
+                _ => Mode::On, // SWEEP BRANCH ONLY: on by default
             };
             let names = match std::env::var("FLASHTEX_BOXMEMO_NAMES") {
                 Ok(v) => v
