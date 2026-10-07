@@ -2243,6 +2243,11 @@ impl Globals {
                     }
                 }
             }
+            if self.bm_rec_on {
+                if (q != register) {
+                    self.flashtex_bm_reg_loc(l, e);
+                }
+            }
             if (q == register) {
                 self.scan_optional_equals();
             } else {

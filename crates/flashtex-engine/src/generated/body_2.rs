@@ -4622,6 +4622,9 @@ impl Globals {
                                         if (m == mem_bot) {
                                             {
                                                 self.scan_register_num();
+                                                if self.bm_rec_on {
+                                                    self.flashtex_bm_reg_read(tok_val, self.cur_val);
+                                                }
                                                 if (self.cur_val < 256i32) {
                                                     self.cur_val = __av_eqtb[crate::ix::U((((toks_base).wrapping_add(self.cur_val)) - 1) as usize)].hh().rh();
                                                 } else {
@@ -4636,7 +4639,12 @@ impl Globals {
                                                 }
                                             }
                                         } else {
-                                            self.cur_val = __av_mem[crate::ix::U(((m).wrapping_add(1i32)) as usize)].hh().rh();
+                                            {
+                                                if self.bm_rec_on {
+                                                    self.flashtex_bm_sa_read(m);
+                                                }
+                                                self.cur_val = __av_mem[crate::ix::U(((m).wrapping_add(1i32)) as usize)].hh().rh();
+                                            }
                                         }
                                     } else {
                                         self.cur_val = __av_eqtb[crate::ix::U(((m) - 1) as usize)].hh().rh();
@@ -4953,6 +4961,9 @@ impl Globals {
                         {
                             if ((m < mem_bot) || (m > lo_mem_stat_max)) {
                                 {
+                                    if self.bm_rec_on {
+                                        self.flashtex_bm_sa_read(m);
+                                    }
                                     self.cur_val_level = (__av_mem[crate::ix::U((m) as usize)].hh().b0() / 16i32);
                                     if (self.cur_val_level < glue_val) {
                                         self.cur_val = __av_mem[crate::ix::U(((m).wrapping_add(2i32)) as usize)].int();
@@ -4964,6 +4975,9 @@ impl Globals {
                                 {
                                     self.scan_register_num();
                                     self.cur_val_level = (m).wrapping_sub(0i32);
+                                    if self.bm_rec_on {
+                                        self.flashtex_bm_reg_read(self.cur_val_level, self.cur_val);
+                                    }
                                     if (self.cur_val > 255i32) {
                                         {
                                             self.find_sa_element(self.cur_val_level, self.cur_val, false);
