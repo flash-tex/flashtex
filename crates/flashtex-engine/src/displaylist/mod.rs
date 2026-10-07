@@ -185,6 +185,12 @@ struct State {
     font_kinds: HashMap<u32, FontKind>,
     capture: Option<Capture>,
     cwd: Option<std::path::PathBuf>,
+    /// The last page or form emitted at each index, with what it was made
+    /// from (`Memo`): a stream shipped again from the same inputs -- a
+    /// document's next `.aux` pass, the unchanged pages a restart re-runs --
+    /// is the same display list, which is then not built again. Names, like
+    /// the spans: it outlives restores (each entry checks itself).
+    memo: HashMap<(bool, u32), Memo>,
 }
 
 impl State {
@@ -208,6 +214,7 @@ impl State {
             font_kinds: HashMap::new(),
             capture: None,
             cwd: std::env::current_dir().ok(),
+            memo: HashMap::new(),
         }
     }
 
@@ -835,33 +842,11 @@ impl Globals {
         }
     }
 
-    /// `dl_free(p)`: word `p` was given back (`free_avail`, `flush_list`).
-    /// Its side-table entry goes back to 0: only what is allocated has a
-    /// position, so the convergence test can compare the table
-    /// (changes/displaylist.ch, `crate::incr::same_words`).
-    #[inline(always)]
-    pub fn dl_free(&mut self, p: i32) {
-        if enabled() {
-            self.side_set(p, 0);
-        }
-    }
-
-    /// `dl_free_node(p, s)`: the `s` words from `p` were given back
-    /// (`free_node`).
-    #[inline(always)]
-    pub fn dl_free_node(&mut self, p: i32, s: i32) {
-        if enabled() {
-            for k in 0..s {
-                self.side_set(p + k, 0);
-            }
-        }
-    }
-
     /// `back_input` allocates its token, `conditional` its condition-stack
     /// node (changes/displaylist.ch): neither becomes part of a list TeX
     /// ships, so neither needs a source position. The side table's entry
-    /// of the location stays 0 (`dl_free` cleared it when it was freed);
-    /// the location is noted again when it is next allocated as a node.
+    /// of the location keeps whatever it held; the location is noted again
+    /// when it is next allocated as a node, before anything reads it.
     #[inline(always)]
     pub fn dl_token_begin(&mut self) {
         NOT_A_NODE.store(true, Ordering::Relaxed);
@@ -1126,14 +1111,68 @@ impl Globals {
         } else {
             Mat::IDENTITY
         };
-        let mut env = WidthEnv {
-            g: self,
-            prefix: Vec::new(),
-        };
-        env.prefix = if env.g.pdf_resname_prefix != 0 {
-            env.g.str_bytes(env.g.pdf_resname_prefix)
+        let prefix = if self.pdf_resname_prefix != 0 {
+            self.str_bytes(self.pdf_resname_prefix)
         } else {
             Vec::new()
+        };
+        // What the page carries besides its content (independent of it):
+        // the counts and the links (`dl_links` reads pdfTeX's lists).
+        let mut frame = Page::new(kind, cap.id);
+        frame.width = wsp;
+        frame.height = hsp;
+        frame.pdf_box = [0.0, 0.0, bw.to_f64(), bh.to_f64()];
+        if !cap.form {
+            for k in 0..10 {
+                frame.counts[k] = self.eqtb[COUNT_BASE + k - 1].int();
+            }
+            self.dl_links(&mut frame, mag);
+        }
+        // Everything the display list is a function of, but the engine's
+        // answers to the interpreter (`Memo::queries`) and the resource keys.
+        let digest = {
+            let mut m: Vec<u8> = Vec::with_capacity(256 + cap.markers.len() * 10);
+            m.push(cap.form as u8);
+            m.push(cap.draft as u8);
+            m.extend(cap.id.to_le_bytes());
+            for v in [bw.0, bh.0].into_iter().chain(ctm.0.iter().map(|f| f.0)) {
+                m.extend(v.to_le_bytes());
+            }
+            m.extend((prefix.len() as u64).to_le_bytes());
+            m.extend(&prefix);
+            for mk in &cap.markers {
+                m.extend(mk.offset.to_le_bytes());
+                m.extend(mk.span.to_le_bytes());
+                m.extend(mk.col.to_le_bytes());
+            }
+            m.extend(frame.encode());
+            let (a, b) = (
+                crate::persist::hash128(&m),
+                crate::persist::hash128(&cap.bytes),
+            );
+            [a[0], a[1], b[0], b[1]]
+        };
+        // (FLASHTEX_NO_DL_MEMO=1 builds every display list, for A/B)
+        static OFF: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+        let off = *OFF.get_or_init(|| std::env::var_os("FLASHTEX_NO_DL_MEMO").is_some());
+        let memo = with(|st| st.memo.get(&(cap.form, cap.id)).cloned())
+            .flatten()
+            .filter(|_| !off);
+        if let Some(m) = memo.filter(|m| m.digest == digest) {
+            let holds = self.dl_memo_holds(&m, &prefix);
+            self.scaled_out = saved_scaled_out;
+            if holds {
+                EMIT_NS.with(|c| c.set(c.get() + t_emit.elapsed().as_nanos() as u64));
+                with_sink(|s| s.emit(m.emitted));
+                return;
+            }
+        }
+        let mut env = Recording {
+            env: WidthEnv {
+                g: self,
+                prefix: prefix.clone(),
+            },
+            queries: HashMap::new(),
         };
         let mut out = if cap.draft {
             let mut p = Page::new(kind, cap.id);
@@ -1147,16 +1186,15 @@ impl Globals {
         } else {
             interp::interpret(&mut env, kind, cap.id, &cap.bytes, bh, ctm, &cap.markers)
         };
+        let mut queries: Vec<(Query, Answer)> = env.queries.into_iter().collect();
+        queries.sort_unstable_by_key(|q| q.0);
         let page = &mut out.page;
         page.width = wsp;
         page.height = hsp;
-        page.pdf_box = [0.0, 0.0, bw.to_f64(), bh.to_f64()];
-        if !cap.form {
-            for k in 0..10 {
-                page.counts[k] = self.eqtb[COUNT_BASE + k - 1].int();
-            }
-            self.dl_links(page, mag);
-        }
+        page.pdf_box = frame.pdf_box;
+        page.counts = frame.counts;
+        page.links.append(&mut frame.links);
+        page.dests.append(&mut frame.dests);
         // The keys of the fonts and images the items use, then the spans
         // the items and links name.
         let fonts: Vec<(u32, [u8; 32])> = out
@@ -1164,10 +1202,14 @@ impl Globals {
             .iter()
             .map(|&f| (f, self.dl_font_key(f)))
             .collect();
-        let images: Vec<(u32, [u8; 32])> = out
+        let image_keys: Vec<(u32, Option<[u8; 32]>)> = out
             .images
             .iter()
-            .filter_map(|&n| self.dl_image_key(n).map(|k| (n, k)))
+            .map(|&n| (n, self.dl_image_key(n)))
+            .collect();
+        let images: Vec<(u32, [u8; 32])> = image_keys
+            .iter()
+            .filter_map(|&(n, k)| k.map(|k| (n, k)))
             .collect();
         let fk = |f: u16| {
             fonts
@@ -1201,8 +1243,37 @@ impl Globals {
             forms: out.forms.clone(),
             spans,
         };
+        with(|st| {
+            st.memo.insert(
+                (e.form, e.index),
+                Memo {
+                    digest,
+                    queries: Arc::new(queries),
+                    image_keys: Arc::new(image_keys),
+                    emitted: e.clone(),
+                },
+            )
+        });
         EMIT_NS.with(|c| c.set(c.get() + t_emit.elapsed().as_nanos() as u64));
         with_sink(|s| s.emit(e));
+    }
+
+    /// Whether a memo's display list is the one the engine would build now
+    /// from the same stream (its `digest` matched): the engine still gives
+    /// the interpreter the same answers, and the fonts and images it names
+    /// still have the same keys.
+    fn dl_memo_holds(&mut self, m: &Memo, prefix: &[u8]) -> bool {
+        let mut env = WidthEnv {
+            g: self,
+            prefix: prefix.to_vec(),
+        };
+        let same = m.queries.iter().all(|(q, a)| q.ask(&mut env) == *a);
+        same && m
+            .emitted
+            .fonts
+            .iter()
+            .all(|&(f, k)| self.dl_font_key(f) == k)
+            && m.image_keys.iter().all(|&(n, k)| self.dl_image_key(n) == k)
     }
 
     /// `pdf_print_bp(s)`'s number, exactly.
@@ -1248,6 +1319,84 @@ fn format_real(m: i32, d: u32) -> String {
         s.push_str(digits.trim_end_matches('0'));
     }
     s
+}
+
+/// A display list as `dl_emit` built it (`State::memo`).
+#[derive(Clone)]
+struct Memo {
+    /// The stream's bytes and markers, its index and box, the counts and
+    /// links (`dl_emit`).
+    digest: [u64; 4],
+    /// Every question the interpreter asked the engine, with its answer.
+    queries: Arc<Vec<(Query, Answer)>>,
+    /// The images the items name, with their keys as `dl_image_key` gave them.
+    image_keys: Arc<Vec<(u32, Option<[u8; 32]>)>>,
+    emitted: Emitted,
+}
+
+/// A question the interpreter asks the engine (`interp::Env`).
+#[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+enum Query {
+    Width(u32, u8),
+    Advance(u32, u8),
+    FontProblem(u32),
+}
+
+#[derive(Clone, PartialEq)]
+enum Answer {
+    Width(Option<i64>),
+    Advance(Option<(i64, i64)>),
+    FontProblem(Option<String>),
+}
+
+impl Query {
+    fn ask(self, env: &mut WidthEnv<'_>) -> Answer {
+        use interp::Env;
+        match self {
+            Query::Width(f, c) => Answer::Width(env.width(f, c)),
+            Query::Advance(f, c) => Answer::Advance(env.advance(f, c)),
+            Query::FontProblem(f) => Answer::FontProblem(env.font_problem(f)),
+        }
+    }
+}
+
+/// The engine's answers to the interpreter, noted (`Memo::queries`).
+struct Recording<'a> {
+    env: WidthEnv<'a>,
+    queries: HashMap<Query, Answer>,
+}
+
+impl interp::Env for Recording<'_> {
+    fn width(&mut self, font: u32, code: u8) -> Option<i64> {
+        let q = Query::Width(font, code);
+        if let Some(Answer::Width(a)) = self.queries.get(&q) {
+            return *a;
+        }
+        let a = self.env.width(font, code);
+        self.queries.insert(q, Answer::Width(a));
+        a
+    }
+    fn advance(&mut self, font: u32, code: u8) -> Option<(i64, i64)> {
+        let q = Query::Advance(font, code);
+        if let Some(Answer::Advance(a)) = self.queries.get(&q) {
+            return *a;
+        }
+        let a = self.env.advance(font, code);
+        self.queries.insert(q, Answer::Advance(a));
+        a
+    }
+    fn font_problem(&mut self, font: u32) -> Option<String> {
+        let q = Query::FontProblem(font);
+        if let Some(Answer::FontProblem(a)) = self.queries.get(&q) {
+            return a.clone();
+        }
+        let a = self.env.font_problem(font);
+        self.queries.insert(q, Answer::FontProblem(a.clone()));
+        a
+    }
+    fn resname_prefix(&self) -> &[u8] {
+        self.env.resname_prefix()
+    }
 }
 
 struct WidthEnv<'a> {

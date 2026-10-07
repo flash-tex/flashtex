@@ -1288,12 +1288,12 @@ impl Drop for Core {
 }
 
 /// Arrays that are not the engine's state, which `Arena::diff_branch`
-/// leaves out (L5's `.aux` comparison, `crate::readset::aux_delta`): the
-/// display list's side table (changes/displaylist.ch), source positions
-/// that nothing TeX computes reads. Only its chunks that hold nothing else
-/// are left out. The convergence test compares it
-/// (`Globals::diff_pending_until`, `crate::incr::same_words`): a node still
-/// to be shipped keeps its position from the jump. The convergence
+/// leaves out: the display list's side table (changes/displaylist.ch),
+/// source positions that nothing TeX computes reads. Only its chunks that
+/// hold nothing else are left out. The convergence test compares it node
+/// by node instead (`crate::iso`: a node still to be shipped keeps its
+/// position from the jump), rewinding only the chunks of live nodes
+/// ([`Arena::branch_old_chunks`]). The convergence
 /// jump adopts them like every other array ([`Arena::diff_branch_all`]):
 /// the side table must describe the nodes of the `mem` it adopts (left out,
 /// nodes live at the jump kept the new run's positions for the old run's
@@ -1889,6 +1889,91 @@ impl Arena {
         stop: &mut dyn FnMut() -> bool,
     ) -> Result<Option<ChunkDiff>, String> {
         self.diff_branch_inner(b, old, stop, false)
+    }
+
+    /// The chunks of region `name` that either run wrote since the restore
+    /// target of `b` (the old run up to its checkpoint `old`, the live run
+    /// since the restore), as a bitmap by chunk: every other chunk of the
+    /// region holds the same words in the old run's state at `old` as now.
+    pub fn branch_written(
+        &self,
+        b: &Branch,
+        old: CheckpointId,
+        name: &str,
+    ) -> Result<Vec<u64>, String> {
+        let core = self.core();
+        let r = *b.ids.first().ok_or("empty branch")?;
+        let kr = core
+            .index_of(r)
+            .ok_or_else(|| format!("restore target {r} is not in the live chain"))?;
+        let jj = b
+            .ids
+            .iter()
+            .position(|&x| x == old)
+            .ok_or_else(|| format!("checkpoint {old} is not in the detached run"))?;
+        let Some(reg) = self.regions.iter().find(|r| r.name == name) else {
+            return Ok(vec![]);
+        };
+        let (lo, hi) = (
+            reg.off / CHUNK_BYTES,
+            (reg.off + reg.bytes).div_ceil(CHUNK_BYTES),
+        );
+        let mut seen = vec![0u64; core.nchunks.div_ceil(64)];
+        for log in b.logs[..jj].iter().chain(&core.logs[kr..]) {
+            for c in log.chunk_ids() {
+                if (lo..hi).contains(&(c as usize)) {
+                    set_bit(&mut seen, c as usize);
+                }
+            }
+        }
+        Ok(seen)
+    }
+
+    /// The old run's value at its checkpoint `old` of each chunk of `cs`
+    /// (sorted, each written since the restore target: `branch_written`),
+    /// rewound only for those chunks: [`diff_branch`](Self::diff_branch)'s
+    /// rule for one chunk. `Ok(None)` when `stop` said to stop.
+    pub fn branch_old_chunks(
+        &self,
+        b: &Branch,
+        old: CheckpointId,
+        cs: &[u32],
+        stop: &mut dyn FnMut() -> bool,
+    ) -> Result<Option<HashMap<u32, Vec<u64>>>, String> {
+        let core = self.core();
+        let r = *b.ids.first().ok_or("empty branch")?;
+        let kr = core
+            .index_of(r)
+            .ok_or_else(|| format!("restore target {r} is not in the live chain"))?;
+        let jj = b
+            .ids
+            .iter()
+            .position(|&x| x == old)
+            .ok_or_else(|| format!("checkpoint {old} is not in the detached run"))?;
+        let want: std::collections::HashSet<u32> = cs.iter().copied().collect();
+        let mut redo_of: HashMap<u32, *const u64> = HashMap::new();
+        for &(c, p) in &b.redo {
+            if want.contains(&c) {
+                redo_of.insert(c, p as *const u64);
+            }
+        }
+        let (in_old, at_r): (Vec<u32>, Vec<u32>) = cs.iter().partition(|c| redo_of.contains_key(c));
+        let n = core.nchunks;
+        let Some(o) = rewound_until(n, &in_old, &|c| redo_of[&c], &b.logs[jj..], stop) else {
+            return Ok(None);
+        };
+        let live = |c: u32| core.chunk_ptr(c as usize) as *const u64;
+        let Some(a) = rewound_until(n, &at_r, &live, &core.logs[kr..], stop) else {
+            return Ok(None);
+        };
+        let mut out = HashMap::with_capacity(cs.len());
+        for (i, &c) in in_old.iter().enumerate() {
+            out.insert(c, o[i * CHUNK_WORDS..(i + 1) * CHUNK_WORDS].to_vec());
+        }
+        for (i, &c) in at_r.iter().enumerate() {
+            out.insert(c, a[i * CHUNK_WORDS..(i + 1) * CHUNK_WORDS].to_vec());
+        }
+        Ok(Some(out))
     }
 
     fn diff_branch_inner(
