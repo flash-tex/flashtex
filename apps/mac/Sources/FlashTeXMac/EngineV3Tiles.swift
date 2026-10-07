@@ -31,8 +31,9 @@ enum EngineV3TileGrid {
     /// scroll step usually finds its next row ready.
     static let prefetchPixels: CGFloat = 256
     /// Tile jobs run here in order (visible tiles first); each job draws its
-    /// tiles in parallel.
-    static let queue = DispatchQueue(label: "flashtex.engine-v3.tiles", qos: .userInteractive)
+    /// tiles in parallel. `.workItem`: a job's autoreleased tiles and kept
+    /// rasters are released when the job ends.
+    static let queue = DispatchQueue(label: "flashtex.engine-v3.tiles", qos: .userInteractive, autoreleaseFrequency: .workItem)
 
     struct Index: Hashable { var column: Int; var row: Int }
 

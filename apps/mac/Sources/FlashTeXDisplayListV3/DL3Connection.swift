@@ -143,23 +143,39 @@ public final class DL3Connection: @unchecked Sendable {
     public func start(onTimedEvent: @escaping @Sendable (DL3Event, Timing) -> Void, onClose: @escaping @Sendable (DL3Error?) -> Void) {
         let fd = self.fd
         let thread = Thread {
-            while true {
+            // One autorelease pool per frame. The thread lives as long as the
+            // connection, and its own pool drains only when it exits: what a
+            // frame's handler autoreleases (a page raster installed as layer
+            // contents, the contents it replaced, Core Animation's commit
+            // state) would otherwise stay alive for the whole session, one
+            // full-page IOSurface per page per compile (9 GB, APP-PREVIEW-MEMORY).
+            while Self.withFramePool({
                 do {
-                    guard let (k, body) = try Self.readFrame(fd) else { onClose(nil); return }
+                    guard let (k, body) = try Self.readFrame(fd) else { onClose(nil); return false }
                     let read = DispatchTime.now().uptimeNanoseconds
                     let ev = try DL3Event.decode(kind: k, body: body)
                     onTimedEvent(ev, Timing(readNs: read, decodedNs: DispatchTime.now().uptimeNanoseconds))
+                    return true
                 } catch let e as DL3Error {
-                    onClose(e); return
+                    onClose(e); return false
                 } catch {
-                    onClose(DL3Error("\(error)")); return
+                    onClose(DL3Error("\(error)")); return false
                 }
-            }
+            }) {}
         }
         thread.name = "flashtex.dl3.reader"
         thread.qualityOfService = .userInteractive
         thread.stackSize = 4 << 20
         thread.start()
+    }
+
+    /// `body` in its own autorelease pool where there is one (Darwin).
+    static func withFramePool<T>(_ body: () -> T) -> T {
+        #if canImport(ObjectiveC)
+        return autoreleasepool(invoking: body)
+        #else
+        return body()
+        #endif
     }
 
     public func compile(_ request: DL3CompileRequest) throws { try send(DL3.Kind.compile, request.json) }

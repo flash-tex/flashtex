@@ -219,7 +219,7 @@ final class EngineV3Session {
     /// The project's input files when the copy was last synced (what the
     /// compiles since have read): a snapshot is saved only while they are unchanged.
     @ObservationIgnored private var inputsAtSync: [String: String]?
-    static let snapshotQueue = DispatchQueue(label: "flashtex.engine-v3.snapshot", qos: .utility)
+    static let snapshotQueue = DispatchQueue(label: "flashtex.engine-v3.snapshot", qos: .utility, autoreleaseFrequency: .workItem)
     /// SOURCES of the connection: span id → (file, line) (EngineV3SourceMap.swift).
     @ObservationIgnored var sourceMap = DL3SourceMap()
     /// Per-page glyph indexes for forward/reverse search, built on first use.
