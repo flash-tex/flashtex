@@ -541,6 +541,11 @@ impl Globals {
         if enc_of(&epdf) != enc_of(&st.epdf) {
             return Err("the included PDF documents differ when the images are read again".into());
         }
+        // Once more, after the readers: a file changed between the first
+        // check and its reader's open would otherwise pass where the reader
+        // returns nothing the table compares (a PNG's bit depth, which TeX
+        // sees as `\pdflastximagecolordepth`; #1685 review).
+        st.check_files()?;
         st.epdf = epdf;
         Ok(())
     }
@@ -865,7 +870,10 @@ pub(crate) fn probe_fail(msg: String) -> ! {
 /// `Err`, as is a panic (an S₀ that cannot be checked is not used).
 fn probe<R>(f: impl FnOnce() -> R) -> Result<R, String> {
     let was = PROBING.with(|p| p.replace(true));
+    // (xpdf's own messages too: a reopen prints nothing a run did not)
+    super::xpdf::set_quiet(true);
     let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(f));
+    super::xpdf::set_quiet(false);
     PROBING.with(|p| p.set(was));
     r.map_err(|e| match e.downcast::<ProbeFail>() {
         Ok(p) => p.0,
