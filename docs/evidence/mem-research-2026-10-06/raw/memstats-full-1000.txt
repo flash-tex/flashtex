@@ -1,0 +1,45 @@
+== open peak RSS 650
+  rss=630.2 heap=453.9 heap_peak=487.5 malloc_in_use=268.9 malloc_held=348.9 sealed_bytes=282.8 branch_sealed=0.0 checkpoints=1079 space_touched=36.8 space_resident=37.9 slab_mapped=11.0 slab_live=0.5 slab_resident=10.4 prepared=0.0 page_cache=97.6 form_cache=0.0 spare_tails=13.4 records=1079 record_lines=164900 terminal=0.0 texts=4.1 written=0.0 old_cache=2.0
+  heap now: log=282.9 dl=103.9 engine=32.9 branch=15.3 cow=7.1 record=6.8 other=5.1
+  heap at peak: log=315.0 dl=103.9 engine=33.7 branch=16.5 cow=9.5 record=7.5 other=1.0
+  word space resident: mem=6.3 font_info=4.9 eqtb=4.8 hash=4.8 str_pool=4.7 dl_side=4.3 trie=3.3 pdf_char_used=1.1
+== :0.5:letter:8 peak RSS 651
+  rss=643.6 heap=462.3 heap_peak=493.0 malloc_in_use=279.3 malloc_held=360.3 sealed_bytes=282.3 branch_sealed=0.0 checkpoints=1070 space_touched=36.8 space_resident=38.4 slab_mapped=11.0 slab_live=0.5 slab_resident=10.4 prepared=0.0 page_cache=97.6 form_cache=0.0 spare_tails=13.4 records=1070 record_lines=163417 terminal=0.0 texts=4.1 written=3.9 old_cache=10.0
+  heap now: log=282.4 dl=103.6 engine=31.1 branch=14.8 test=10.1 other=9.3 cow=7.2 record=3.8
+  heap at peak: log=294.6 dl=103.6 engine=31.4 test=23.1 branch=15.4 other=13.1 cow=7.4 record=4.3
+  word space resident: mem=6.3 font_info=4.9 eqtb=4.8 hash=4.8 str_pool=4.7 dl_side=4.3 trie=3.3 pdf_char_used=1.1
+== :0.5:sentence:6 peak RSS 651
+  rss=643.6 heap=462.1 heap_peak=493.0 malloc_in_use=280.6 malloc_held=360.3 sealed_bytes=282.2 branch_sealed=0.0 checkpoints=1064 space_touched=36.8 space_resident=38.4 slab_mapped=11.0 slab_live=0.5 slab_resident=10.4 prepared=0.0 page_cache=97.6 form_cache=0.0 spare_tails=13.4 records=1064 record_lines=163292 terminal=0.0 texts=4.1 written=3.9 old_cache=10.0
+  heap now: log=282.3 dl=103.6 engine=31.1 branch=14.8 test=10.1 other=9.3 cow=7.2 record=3.8
+  heap at peak: log=294.6 dl=103.6 engine=31.4 test=23.1 branch=15.4 other=13.1 cow=7.4 record=4.3
+  word space resident: mem=6.3 font_info=4.9 eqtb=4.8 hash=4.8 str_pool=4.7 dl_side=4.3 trie=3.3 pdf_char_used=1.1
+== :0.98:letter:6 peak RSS 645
+  rss=644.9 heap=462.0 heap_peak=493.0 malloc_in_use=280.8 malloc_held=360.3 sealed_bytes=280.8 branch_sealed=0.0 checkpoints=1018 space_touched=36.8 space_resident=38.4 slab_mapped=11.0 slab_live=0.5 slab_resident=10.4 prepared=0.0 page_cache=97.6 form_cache=0.0 spare_tails=13.4 records=1018 record_lines=157001 terminal=0.0 texts=4.1 written=3.9 old_cache=12.0
+  heap now: log=280.9 dl=103.6 engine=31.3 branch=14.1 test=12.1 other=9.3 cow=7.4 record=3.4
+  heap at peak: log=294.6 dl=103.6 engine=31.4 test=23.1 branch=15.4 other=13.1 cow=7.4 record=4.3
+  word space resident: mem=6.3 font_info=4.9 eqtb=4.8 hash=4.8 str_pool=4.7 dl_side=4.3 trie=3.3 pdf_char_used=1.1
+== steady peak RSS 573
+  rss=573.0 heap=448.9 heap_peak=493.0 malloc_in_use=267.6 malloc_held=338.0 sealed_bytes=280.8 branch_sealed=0.0 checkpoints=1018 space_touched=36.8 space_resident=38.4 slab_mapped=11.0 slab_live=2.9 slab_resident=10.4 prepared=5.4 page_cache=97.6 form_cache=0.0 spare_tails=13.4 records=1018 record_lines=157001 terminal=0.0 texts=4.1 written=3.9 old_cache=0.0
+  heap now: log=280.9 dl=103.6 engine=31.2 branch=14.1 cow=7.4 other=5.4 record=3.4 prepare=3.0
+  heap at peak: log=294.6 dl=103.6 engine=31.4 test=23.1 branch=15.4 other=13.1 cow=7.4 record=4.3
+  word space resident: mem=6.3 font_info=4.9 eqtb=4.8 hash=4.8 str_pool=4.7 dl_side=4.3 trie=3.3 pdf_char_used=1.1
+smaps at peak: RSS 649 MB
+   [anon 1-60M]           n=   22 rss=  326.4 anon=  326.4
+   [anon <1M]             n= 1033 rss=  229.7 anon=  229.7
+   [anon >=256M]          n=    2 rss=   37.9 anon=   37.9
+   [heap]                 n=    1 rss=   36.3 anon=   36.3
+   file:flashtex-host     n=    4 rss=    6.6 anon=    0.3
+   file:libc.so.6         n=    5 rss=    1.8 anon=    0.0
+   file:libstdc++.so.6.0.34 n=    5 rss=    1.4 anon=    0.1
+   file:libm.so.6         n=    5 rss=    0.7 anon=    0.0
+   file:ld-linux-x86-64.so.2 n=    5 rss=    0.2 anon=    0.0
+smaps at steady: RSS 573 MB
+   [anon 1-60M]           n=   21 rss=  279.4 anon=  279.4
+   [anon <1M]             n= 1035 rss=  231.0 anon=  231.0
+   [anon >=256M]          n=    2 rss=   37.9 anon=   37.9
+   [heap]                 n=    1 rss=   14.2 anon=   14.2
+   file:flashtex-host     n=    4 rss=    6.6 anon=    0.3
+   file:libc.so.6         n=    5 rss=    1.8 anon=    0.0
+   file:libstdc++.so.6.0.34 n=    5 rss=    1.4 anon=    0.1
+   file:libm.so.6         n=    5 rss=    0.7 anon=    0.0
+   file:ld-linux-x86-64.so.2 n=    5 rss=    0.2 anon=    0.0

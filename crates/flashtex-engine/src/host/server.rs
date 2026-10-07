@@ -30,7 +30,8 @@
 //!
 //! ```text
 //! flashtex-host --socket /tmp/flashtex.sock [--engine PATH] [--format NAME]...
-//!     [--once [--accept-timeout SECONDS]] [--no-warm] [--s0-cache DIR] [--budget BYTES] [--timed SECONDS]
+//!     [--once [--accept-timeout SECONDS]] [--no-warm] [--s0-cache DIR]
+//!     [--profile low-memory|balanced|high-performance] [--budget BYTES] [--timed SECONDS]
 //!     [--keep-warm MS] [--keep-warm-pause US]
 //!     [--external-tools off|auto] [--tool-timeout SECONDS]
 //! ```
@@ -40,8 +41,14 @@
 //! it is gone (Unix: its parent changed), or after `--accept-timeout`
 //! seconds, so a client killed before it connected leaves no host behind.
 //!
+//! `--profile NAME` (or `FLASHTEX_PROFILE`): the performance mode the host
+//! starts in, `balanced` by default (`crate::profile`: the checkpoints'
+//! budget and spacing, keep-warm, prepare-ahead, idle trimming); a client
+//! may choose another (`HELLO.profile`, `PROFILE`; capability `profile-v1`).
+//! `--budget`, `--timed` and `--keep-warm` pin their knob in every mode.
+//!
 //! `--keep-warm MS` (or `FLASHTEX_HOST_KEEP_WARM_MS`; default 2000, the
-//! owner's decision 10A; 0 turns it off): after each compile the engine
+//! owner's decision 10A, and High Performance's 10000; 0 turns it off): after each compile the engine
 //! thread polls for the next request for MS milliseconds instead of
 //! sleeping, so that the next keystroke's compile starts on a core already
 //! at full speed (an idle Apple Silicon core runs a burst at a half to a
@@ -78,8 +85,6 @@ use std::time::Instant;
 
 pub(crate) type Out = Arc<Mutex<BufWriter<Stream>>>;
 
-/// `--keep-warm`'s default (ms after each compile).
-const DEFAULT_KEEP_WARM_MS: u64 = 2000;
 /// `--keep-warm-pause`'s default: 100 us sleeps between 100 us spins kept
 /// the latency of a full spin (plain/full 10/120/1,000, 300 ms between
 /// keystrokes) at about half its CPU: 30-33 against 60 CPU s per minute of
@@ -144,11 +149,18 @@ pub(crate) struct Config {
     pub texmf: Json,
     /// Where S₀ of each document persists (DESIGN.md §5.1), if anywhere.
     pub s0_cache: Option<PathBuf>,
-    /// The resident engine's options (budget, timed checkpoints).
+    /// The resident engine's options; a performance mode's knobs (budget,
+    /// checkpoint spacing) are applied over them (`crate::profile`).
     pub opts: crate::incr::Options,
-    /// `--keep-warm MS`: after a compile, the engine thread polls for the
-    /// next request this long instead of sleeping (`resident::Engine::run`).
-    pub keep_warm: std::time::Duration,
+    /// The performance mode the host starts in (`--profile`,
+    /// `FLASHTEX_PROFILE`; Balanced by default): its knobs include the
+    /// keep-warm window (`--keep-warm MS`: after a compile, the engine
+    /// thread polls for the next request this long instead of sleeping,
+    /// `resident::Engine::run`). A client's `HELLO` or `PROFILE` changes it.
+    pub profile: crate::profile::Profile,
+    /// Knobs the command line or the environment fixed: no profile changes
+    /// them.
+    pub pinned: crate::profile::Pinned,
     /// `--keep-warm-pause US`: while warm, alternate sleeps and spins of
     /// this length instead of spinning throughout (0: spin).
     pub keep_warm_pause: std::time::Duration,
@@ -193,6 +205,14 @@ pub(crate) enum Req {
     },
     Closed(u64),
     Warm(mpsc::Sender<Result<f64, String>>),
+    /// A client chose a performance mode (`HELLO.profile` or `PROFILE`,
+    /// capability `profile-v1`): applied between compiles; `reply`: send
+    /// the client a `PROFILE` with the effective knobs once applied.
+    Profile {
+        conn: Arc<Conn>,
+        profile: crate::profile::Profile,
+        reply: bool,
+    },
     /// The external tools' worker is done (`super::external`).
     ToolsDone {
         gen: u64,
@@ -219,10 +239,8 @@ pub fn main(args: Vec<String>) -> i32 {
     let mut warm = true;
     let mut s0_cache = std::env::var_os("FLASHTEX_S0_CACHE").map(PathBuf::from);
     let mut opts = crate::incr::Options::default();
-    let mut keep_warm_ms: u64 = std::env::var("FLASHTEX_HOST_KEEP_WARM_MS")
-        .ok()
-        .and_then(|v| v.parse().ok())
-        .unwrap_or(DEFAULT_KEEP_WARM_MS);
+    let mut pinned = crate::profile::Pinned::from_env();
+    let mut mode = crate::profile::Mode::from_env();
     let mut keep_warm_pause_us: u64 = std::env::var("FLASHTEX_HOST_KEEP_WARM_PAUSE_US")
         .ok()
         .and_then(|v| v.parse().ok())
@@ -258,9 +276,19 @@ pub fn main(args: Vec<String>) -> i32 {
                 s0_cache = v.map(PathBuf::from);
                 i += 1;
             }
+            "--profile" => {
+                match v.as_deref().and_then(crate::profile::Mode::parse) {
+                    Some(m) => mode = m,
+                    None => {
+                        eprintln!("flashtex-host: --profile low-memory|balanced|high-performance");
+                        return 2;
+                    }
+                }
+                i += 1;
+            }
             "--budget" => {
                 match v.and_then(|v| v.parse().ok()) {
-                    Some(b) => opts.budget = b,
+                    Some(b) => pinned.budget = Some(b),
                     None => {
                         eprintln!("flashtex-host: --budget BYTES");
                         return 2;
@@ -270,7 +298,7 @@ pub fn main(args: Vec<String>) -> i32 {
             }
             "--timed" => {
                 match v.and_then(|v| v.parse().ok()) {
-                    Some(t) => opts.timed_s = t,
+                    Some(t) => pinned.timed_s = Some(t),
                     None => {
                         eprintln!("flashtex-host: --timed SECONDS");
                         return 2;
@@ -280,7 +308,7 @@ pub fn main(args: Vec<String>) -> i32 {
             }
             "--keep-warm" => {
                 match v.and_then(|v| v.parse().ok()) {
-                    Some(t) => keep_warm_ms = t,
+                    Some(t) => pinned.keep_warm_ms = Some(t),
                     None => {
                         eprintln!("flashtex-host: --keep-warm MS");
                         return 2;
@@ -325,7 +353,7 @@ pub fn main(args: Vec<String>) -> i32 {
                 i += 1;
             }
             "--help" | "-h" => {
-                println!("usage: flashtex-host --socket PATH [--engine PATH] [--format NAME]... [--once [--accept-timeout SECONDS]] [--no-warm] [--s0-cache DIR] [--budget BYTES] [--timed SECONDS] [--keep-warm MS] [--keep-warm-pause US] [--external-tools off|auto] [--tool-timeout SECONDS]");
+                println!("usage: flashtex-host --socket PATH [--engine PATH] [--format NAME]... [--once [--accept-timeout SECONDS]] [--no-warm] [--s0-cache DIR] [--profile low-memory|balanced|high-performance] [--budget BYTES] [--timed SECONDS] [--keep-warm MS] [--keep-warm-pause US] [--external-tools off|auto] [--tool-timeout SECONDS]");
                 println!("       flashtex-host serve|iserve|bench|open|selftest|layout ... (see src/host/tools.rs)");
                 return 0;
             }
@@ -368,13 +396,16 @@ pub fn main(args: Vec<String>) -> i32 {
         kv.push(("tools".into(), tools.programs.json()));
         kv.push(("external_tools".into(), js(tools.default.name())));
     }
+    let profile = crate::profile::Profile::new(mode, &pinned);
+    opts.apply_profile(&profile);
     let cfg = Arc::new(Config {
         engine,
         engine_version,
         texmf,
         s0_cache,
         opts,
-        keep_warm: std::time::Duration::from_millis(keep_warm_ms),
+        profile,
+        pinned,
         keep_warm_pause: std::time::Duration::from_micros(keep_warm_pause_us),
         tools,
     });
@@ -654,6 +685,8 @@ pub(crate) const CAPABILITIES: &[&str] = &[
     "halt-on-error",
     flashtex_display_list::diag::CAPABILITY,
     flashtex_display_list::PROGRESS_CAPABILITY,
+    // HELLO `profile` and the PROFILE message: performance modes (spec §6.9).
+    flashtex_display_list::PROFILE_CAPABILITY,
 ];
 
 fn connection(stream: Stream, cfg: &Config, tx: mpsc::Sender<Req>) {
@@ -667,6 +700,7 @@ fn connection(stream: Stream, cfg: &Config, tx: mpsc::Sender<Req>) {
     // HELLO
     let diag;
     let progress;
+    let profile;
     let minor = match read_frame(&mut r) {
         Ok(Some((k, body))) if k == kind::C_HELLO => {
             let j = std::str::from_utf8(&body)
@@ -692,6 +726,12 @@ fn connection(stream: Stream, cfg: &Config, tx: mpsc::Sender<Req>) {
                 a.iter()
                     .any(|x| x.as_str() == Some(flashtex_display_list::PROGRESS_CAPABILITY))
             });
+            // A mode the host does not know is ignored, as unknown names are
+            // (the host's own then stays, and its HELLO says which).
+            profile = j
+                .str_field("profile")
+                .and_then(crate::profile::Mode::parse)
+                .map(|m| crate::profile::Profile::new(m, &cfg.pinned));
             version
                 .and_then(|a| a.get(1))
                 .and_then(Json::as_i64)
@@ -721,6 +761,7 @@ fn connection(stream: Stream, cfg: &Config, tx: mpsc::Sender<Req>) {
             "capabilities",
             Json::Arr(CAPABILITIES.iter().map(|c| js(*c)).collect()),
         ),
+        ("profile", profile.as_ref().unwrap_or(&cfg.profile).json()),
     ]);
     if !send_json(&out, kind::HELLO, &hello) {
         return;
@@ -734,6 +775,13 @@ fn connection(stream: Stream, cfg: &Config, tx: mpsc::Sender<Req>) {
         diag,
         progress,
     });
+    if let Some(p) = profile {
+        let _ = tx.send(Req::Profile {
+            conn: conn.clone(),
+            profile: p,
+            reply: false,
+        });
+    }
     let mut export: Option<Running> = None;
     loop {
         let (k, body) = match read_frame(&mut r) {
@@ -790,6 +838,24 @@ fn connection(stream: Stream, cfg: &Config, tx: mpsc::Sender<Req>) {
                         .lock()
                         .unwrap_or_else(|p| p.into_inner())
                         .insert(c);
+                }
+            }
+            kind::C_PROFILE => {
+                let m = j.as_ref().and_then(|j| j.str_field("profile"));
+                match m.and_then(crate::profile::Mode::parse) {
+                    Some(m) => {
+                        let _ = tx.send(Req::Profile {
+                            conn: conn.clone(),
+                            profile: crate::profile::Profile::new(m, &cfg.pinned),
+                            reply: true,
+                        });
+                    }
+                    None => error(
+                        &out,
+                        None,
+                        "request",
+                        "PROFILE: profile is low-memory, balanced or high-performance",
+                    ),
                 }
             }
             kind::BYE => break,
