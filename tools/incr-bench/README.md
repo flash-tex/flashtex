@@ -127,7 +127,13 @@ quiet one. On Linux, `perf stat` or `perf record` on the host shares the counter
 counts then fall short. To profile only the typesetting to the edited page, start the host with
 `FLASHTEX_PERF_MARKS=FILE`: it appends `b NS` when an edit's engine resumes after the restore and
 `e NS` at the edited page's shipout (CLOCK_MONOTONIC), and the samples of
-`perf record -k CLOCK_MONOTONIC` between a `b` and the next `e` are that interval. `dl3-keys --edit FILE`
+`perf record -k CLOCK_MONOTONIC` between a `b` and the next `e` are that interval. The same interval
+at TeX level: `FLASHTEX_MACRO_PROFILE=FILE` in the host's environment writes the macro profile of each
+such interval to `FILE.N` (`src/macroprof.rs`). Add `FLASHTEX_MACRO_PROFILE_CLOCK=instr` to count
+retired instructions instead of time, so the profile does not move with load. Add
+`FLASHTEX_MACRO_PROFILE_ROOTS=a,b,...` (macro names) for `# root` lines, which charge every
+instruction to the innermost listed macro then active.
+`docs/evidence/p6-infdesc-page-2026-10-06/` uses all three. `dl3-keys --edit FILE`
 types in another file of the project than `--main` (a book's chapter).
 
 ## T7: the latency gate
