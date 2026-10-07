@@ -2553,15 +2553,20 @@ impl Globals {
         let mut __av_mem = self.mem.view();
         c = self.cur_chr;
         self.scan_register_num();
-        if (self.cur_val < 256i32) {
-            b = __av_eqtb[crate::ix::U((((box_base).wrapping_add(self.cur_val)) - 1) as usize)].hh().rh();
-        } else {
-            {
-                self.find_sa_element(box_val, self.cur_val, false);
-                if (self.cur_ptr == null) {
-                    b = null;
-                } else {
-                    b = __av_mem[crate::ix::U(((self.cur_ptr).wrapping_add(1i32)) as usize)].hh().rh();
+        {
+            if self.bm_rec_on {
+                self.flashtex_bm_box(self.cur_val);
+            }
+            if (self.cur_val < 256i32) {
+                b = __av_eqtb[crate::ix::U((((box_base).wrapping_add(self.cur_val)) - 1) as usize)].hh().rh();
+            } else {
+                {
+                    self.find_sa_element(box_val, self.cur_val, false);
+                    if (self.cur_ptr == null) {
+                        b = null;
+                    } else {
+                        b = __av_mem[crate::ix::U(((self.cur_ptr).wrapping_add(1i32)) as usize)].hh().rh();
+                    }
                 }
             }
         }
@@ -2879,6 +2884,9 @@ impl Globals {
                 // §1389
                 if self.intr_rec_on {
                     self.flashtex_intr_command();
+                }
+                if self.bm_rec_on {
+                    self.flashtex_bm_command();
                 }
                 match self.cur_cmd {
                     set_font => {
@@ -3530,6 +3538,9 @@ impl Globals {
                             }
                         } else {
                             {
+                                if self.bm_on {
+                                    self.flashtex_bm_hyph_changed();
+                                }
                                 self.new_hyph_exceptions();
                                 break 'l_done_f;
                             }
@@ -3538,6 +3549,9 @@ impl Globals {
                     assign_font_dimen => {
                         // §1431
                         {
+                            if self.bm_on {
+                                self.flashtex_bm_font_changed();
+                            }
                             self.find_font_dimen(true);
                             k = self.cur_val;
                             self.scan_optional_equals();
@@ -3547,6 +3561,9 @@ impl Globals {
                     }
                     assign_font_int => {
                         {
+                            if self.bm_on {
+                                self.flashtex_bm_font_changed();
+                            }
                             n = self.cur_chr;
                             self.scan_font_ident();
                             f = self.cur_val;
@@ -3840,15 +3857,20 @@ impl Globals {
                     // §1474
                     {
                         self.scan_register_num();
-                        if (self.cur_val < 256i32) {
-                            p = __av_eqtb[crate::ix::U((((box_base).wrapping_add(self.cur_val)) - 1) as usize)].hh().rh();
-                        } else {
-                            {
-                                self.find_sa_element(box_val, self.cur_val, false);
-                                if (self.cur_ptr == null) {
-                                    p = null;
-                                } else {
-                                    p = __av_mem[crate::ix::U(((self.cur_ptr).wrapping_add(1i32)) as usize)].hh().rh();
+                        {
+                            if self.bm_rec_on {
+                                self.flashtex_bm_box(self.cur_val);
+                            }
+                            if (self.cur_val < 256i32) {
+                                p = __av_eqtb[crate::ix::U((((box_base).wrapping_add(self.cur_val)) - 1) as usize)].hh().rh();
+                            } else {
+                                {
+                                    self.find_sa_element(box_val, self.cur_val, false);
+                                    if (self.cur_ptr == null) {
+                                        p = null;
+                                    } else {
+                                        p = __av_mem[crate::ix::U(((self.cur_ptr).wrapping_add(1i32)) as usize)].hh().rh();
+                                    }
                                 }
                             }
                         }
@@ -6350,8 +6372,14 @@ impl Globals {
                 }
             }
             pdf_font_expand_code => {
-                // §1535
-                self.read_expand_font();
+                // §1528
+                {
+                    if self.bm_on {
+                        self.flashtex_bm_font_changed();
+                    }
+                    // §1535
+                    self.read_expand_font();
+                }
             }
             pdf_include_chars_code => {
                 // §1588
@@ -6893,15 +6921,20 @@ impl Globals {
                         self.pdf_mem[crate::ix::U(((self.obj_tab[crate::ix::U((k) as usize)].int4).wrapping_add(5i32)) as usize)] = null;
                     }
                     self.scan_register_num();
-                    if (self.cur_val < 256i32) {
-                        p = __av_eqtb[crate::ix::U((((box_base).wrapping_add(self.cur_val)) - 1) as usize)].hh().rh();
-                    } else {
-                        {
-                            self.find_sa_element(box_val, self.cur_val, false);
-                            if (self.cur_ptr == null) {
-                                p = null;
-                            } else {
-                                p = __av_mem[crate::ix::U(((self.cur_ptr).wrapping_add(1i32)) as usize)].hh().rh();
+                    {
+                        if self.bm_rec_on {
+                            self.flashtex_bm_box(self.cur_val);
+                        }
+                        if (self.cur_val < 256i32) {
+                            p = __av_eqtb[crate::ix::U((((box_base).wrapping_add(self.cur_val)) - 1) as usize)].hh().rh();
+                        } else {
+                            {
+                                self.find_sa_element(box_val, self.cur_val, false);
+                                if (self.cur_ptr == null) {
+                                    p = null;
+                                } else {
+                                    p = __av_mem[crate::ix::U(((self.cur_ptr).wrapping_add(1i32)) as usize)].hh().rh();
+                                }
                             }
                         }
                     }
@@ -7449,8 +7482,17 @@ impl Globals {
                         self.intr_at_switch = true;
                     }
                 }
+                if self.bm_on {
+                    {
+                        if self.bm_rec_on {
+                            self.flashtex_bm_switch();
+                        }
+                        self.bm_at_switch = true;
+                    }
+                }
                 self.get_x_token();
                 self.intr_at_switch = false;
+                self.bm_at_switch = false;
             }
             if __goto_1 <= 2 { // reswitch
                 if (self.interrupt != 0i32) {
@@ -7473,6 +7515,9 @@ impl Globals {
                 // §1207
                 if self.intr_rec_on {
                     self.flashtex_intr_command();
+                }
+                if self.bm_rec_on {
+                    self.flashtex_bm_command();
                 }
                 match ((self.cur_list.mode_field).wrapping_abs()).wrapping_add(self.cur_cmd) {
                     116 | 117 | 173 => {
