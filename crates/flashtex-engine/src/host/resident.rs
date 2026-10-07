@@ -662,17 +662,22 @@ impl Engine {
         }
     }
 
-    /// Warm the process up: a one-page LaTeX document in a scratch
-    /// directory starts kpathsea, reads the font map and loads the format,
-    /// so that a document's first compile (or its reopening from S₀) does
-    /// not pay for them.
+    /// Warm the process up: a one-page job in a scratch directory starts
+    /// kpathsea, reads the font map and loads the format, so that a
+    /// document's first compile (or its reopening from S₀) does not pay
+    /// for them. The page is one character of cmr10 shipped with the
+    /// primitive `\shipout`, which is all it takes to read the font map
+    /// (pdfTeX reads it at the first font it sets): no class, no
+    /// `\begin{document}`. A one-page article typeset its class and LaTeX's
+    /// start of a document first, which the first compile (it follows at
+    /// once when a project opens) waited for and gained little from.
     fn warm(&mut self) -> Result<f64, String> {
         let t = Instant::now();
         let dir = std::env::temp_dir().join(format!("flashtex-host-warm-{}", std::process::id()));
         std::fs::create_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
         std::fs::write(
             dir.join("flashtex-warm.tex"),
-            "\\documentclass{article}\\begin{document}Warm.\\end{document}\n",
+            "\\font\\warmfont=cmr10 \\pdfprimitive\\shipout\\hbox{\\warmfont W}\\csname @@end\\endcsname\\end\n",
         )
         .map_err(|e| e.to_string())?;
         let here = std::env::current_dir().ok();

@@ -372,17 +372,28 @@ pub fn main(args: Vec<String>) -> i32 {
         .map(PathBuf::from)
         .or_else(|| std::env::current_exe().ok())
         .unwrap_or_else(|| PathBuf::from("flashtex-initex"));
-    let engine_version = crate::os::engine_command(&engine)
-        .arg("-version")
-        .output()
-        .ok()
-        .and_then(|o| {
-            String::from_utf8_lossy(&o.stdout)
-                .lines()
-                .next()
-                .map(str::to_string)
-        })
-        .unwrap_or_default();
+    // This program's own version needs no process (a process start costs
+    // tens of milliseconds before the first compile); another engine's is
+    // asked for.
+    let engine_version = if is_this_program(&engine) {
+        crate::system::version_text()
+            .lines()
+            .next()
+            .unwrap_or_default()
+            .to_string()
+    } else {
+        crate::os::engine_command(&engine)
+            .arg("-version")
+            .output()
+            .ok()
+            .and_then(|o| {
+                String::from_utf8_lossy(&o.stdout)
+                    .lines()
+                    .next()
+                    .map(str::to_string)
+            })
+            .unwrap_or_default()
+    };
     if formats.is_empty() {
         formats.push("pdflatex".into());
     }
@@ -552,14 +563,40 @@ fn prepare(engine: &Path, formats: &[String]) -> Json {
             )])
         ))
     });
-    let resolver =
-        crate::resolver::default_resolver("pdflatex", crate::system::ENGINE_NAME).describe();
+    // The process's own resolver, started once: the first compile (run as
+    // `pdflatex`) keeps it, so kpathsea's start-up is not paid twice.
+    let resolver = crate::system::with_resolver_for("pdflatex", |r| r.describe());
     let bundle = bundle_json(&resolver);
     let dir = std::env::temp_dir().join(format!("flashtex-host-prepare-{}", std::process::id()));
-    let _ = std::fs::create_dir_all(&dir);
     let mut ready = Vec::new();
-    for f in formats {
+    // `pdflatex` last, so that the resolver left running is the one its
+    // compiles keep.
+    let mut order: Vec<&String> = formats.iter().filter(|f| *f != "pdflatex").collect();
+    order.extend(formats.iter().filter(|f| *f == "pdflatex"));
+    for f in order {
         let t0 = Instant::now();
+        if let Some(r) = ready_in_process(engine, f) {
+            let mut kv = vec![
+                ("name".to_string(), js(f.as_str())),
+                (
+                    "status".to_string(),
+                    js(if r.is_ok() { "ready" } else { "failed" }),
+                ),
+                (
+                    "ms".to_string(),
+                    Json::Num((t0.elapsed().as_secs_f64() * 1e4).round() / 10.0),
+                ),
+            ];
+            if let Err(why) = r {
+                kv.push((
+                    "error".into(),
+                    js(why.chars().take(400).collect::<String>()),
+                ));
+            }
+            ready.push((f, Json::Obj(kv)));
+            continue;
+        }
+        let _ = std::fs::create_dir_all(&dir);
         // Load the format and stop at once (\@@end in LaTeX, \end in plain).
         let st = crate::os::engine_command(engine)
             .arg(format!("-fmt={f}"))
@@ -597,15 +634,65 @@ fn prepare(engine: &Path, formats: &[String]) -> Json {
         if !ok {
             kv.push(("error".into(), js(why)));
         }
-        ready.push(Json::Obj(kv));
+        ready.push((f, Json::Obj(kv)));
     }
     let _ = std::fs::remove_dir_all(&dir);
+    // In the order asked for.
+    let ready: Vec<Json> = formats
+        .iter()
+        .filter_map(|f| ready.iter().find(|(g, _)| *g == f).map(|(_, j)| j.clone()))
+        .collect();
     obj([
         ("texlive", texlive),
         ("resolver", js(resolver)),
         ("bundle", bundle),
         ("formats", Json::Arr(ready)),
     ])
+}
+
+/// Whether `engine` is this program (the default `--engine`).
+fn is_this_program(engine: &Path) -> bool {
+    let canon = |p: &Path| std::fs::canonicalize(p).ok();
+    std::env::current_exe()
+        .ok()
+        .and_then(|me| canon(&me))
+        .is_some_and(|me| canon(engine).is_some_and(|e| e == me))
+}
+
+/// A format made ready in this process, exactly as a compile finds it
+/// (system.rs `find_format`: the format cache, `formats::ensure_format`,
+/// with the process's resolver), instead of in an engine process started
+/// for it: that process's start, kpathsea start-up and format load were
+/// about a quarter of a second before every host could listen. A build,
+/// when the cache has no valid format, still runs INITEX in its own
+/// process (`FormatCache::build`). `None` where a compile would not take
+/// the cache path (another `--engine`, `FLASHTEX_FORMATS`, a format on the
+/// search path, the cache turned off): there the engine process loads the
+/// format as before.
+#[cfg(feature = "distribution")]
+fn ready_in_process(engine: &Path, f: &str) -> Option<Result<(), String>> {
+    if !is_this_program(engine)
+        || !crate::formats::cache_enabled()
+        || std::env::var("FLASHTEX_FORMATS").is_ok_and(|d| !d.is_empty())
+    {
+        return None;
+    }
+    crate::system::with_resolver_for(f, |r| {
+        let name = format!("{f}.fmt");
+        if r.find(&name, crate::resolver::Format::Fmt).is_some() {
+            return None;
+        }
+        Some(
+            crate::formats::ensure_format(f, f, r)
+                .map(|_| ())
+                .map_err(|e| e.to_string()),
+        )
+    })
+}
+
+#[cfg(not(feature = "distribution"))]
+fn ready_in_process(_engine: &Path, _f: &str) -> Option<Result<(), String>> {
+    None
 }
 
 /// `HELLO.texmf.bundle`: the configured bundle (`bundle::BundleSpec::

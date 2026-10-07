@@ -1538,6 +1538,19 @@ fn reset_resolver(prog: &str, keep_allowed: bool) {
 /// so they live apart from pdfTeX's `web2c/pdftex`.
 pub const ENGINE_NAME: &str = "flashtex";
 
+/// A host's start-up (host/server.rs `prepare`): the process's resolver for
+/// program name `prog`, started now if it is not running, and `f` run with
+/// it. It is the resolver the first compile run as `prog` keeps
+/// (`reset_resolver(prog, true)` in `configure`), so kpathsea's start-up
+/// (texmf.cnf, the `ls-R` databases) happens once per process, not once
+/// to describe it and again for the first compile.
+pub fn with_resolver_for<T>(prog: &str, f: impl FnOnce(&mut dyn FileResolver) -> T) -> T {
+    reset_resolver(prog, true);
+    let mut g = RESOLVER.lock().unwrap();
+    let r = g.get_or_insert_with(|| crate::resolver::default_resolver(prog, ENGINE_NAME));
+    f(r.as_mut())
+}
+
 fn with_resolver<T>(f: impl FnOnce(&mut dyn FileResolver) -> T) -> T {
     let prog = run().program_name;
     let mut g = RESOLVER.lock().unwrap();
