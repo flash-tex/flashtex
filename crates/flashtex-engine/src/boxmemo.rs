@@ -55,7 +55,6 @@ const REGISTER: i32 = k::register;
 const TOKS_REGISTER: i32 = k::toks_register;
 const LO_MEM_STAT_MAX: i32 = k::lo_mem_stat_max;
 const GLUE_SPEC_SIZE: i32 = k::glue_spec_size;
-const LEVEL_ONE: i32 = k::level_one;
 const CONTRIB_HEAD: i32 = k::contrib_head;
 const PAGE_HEAD: i32 = k::page_head;
 const TOKEN_LIST: i32 = k::token_list;
@@ -1711,14 +1710,15 @@ impl Globals {
     pub fn flashtex_bm_def(&mut self, p: i32, t: i32, e: i32, kind: i32) {
         let level = self.bm_with_rec(|r| r.start.cur_level).unwrap_or(0);
         let global = kind >= 2;
-        if !global && self.cur_level == level && self.cur_level > LEVEL_ONE {
-            if debug() {
-                eprintln!(
-                    "boxmemo: local assignment at the call's own level to {} ({p})",
-                    if Self::bm_is_cs(p) { self.cs_name_string(p) } else { self.bm_loc_name(p) }
-                );
-            }
-            return self.bm_abort("OuterLocal");
+        // A local assignment at the call's own level outlives the call (to
+        // the end of the group it was called in): an effect like a global
+        // one, which the replay's `eq_define` at the same level makes again
+        // with the same save-stack entry (LaTeX's `\begin` defines
+        // `\reserved@a` before its `\begingroup`). Box registers are not
+        // logged, so a box assigned there is refused.
+        let outer = !global && self.cur_level == level;
+        if outer && (BOX_BASE..BOX_BASE + 256).contains(&p) {
+            return self.bm_abort("OuterBox");
         }
         if (BOX_BASE..BOX_BASE + 256).contains(&p) {
             // A box made inside the call stays inside it (its local
@@ -1742,7 +1742,7 @@ impl Globals {
         // normal path did. A global assignment makes later reads the call's
         // own; a local one is undone when its group ends, and a later read
         // then sees the old value, so that value is keyed now.
-        if global {
+        if global || outer {
             if Self::bm_is_register(p) {
                 self.bm_with_rec(|r| r.gwritten.insert(RegId::Eqtb(p)));
             } else if Self::bm_is_cs(p) {
@@ -1777,9 +1777,7 @@ impl Globals {
     pub fn flashtex_bm_sa_def(&mut self, p: i32, e: i32, kind: i32) {
         let level = self.bm_with_rec(|r| r.start.cur_level).unwrap_or(0);
         let global = kind >= 2;
-        if !global && self.cur_level == level && self.cur_level > LEVEL_ONE {
-            return self.bm_abort("OuterLocal");
-        }
+        let outer = !global && self.cur_level == level;
         let t = self.mem[p as usize].hh().b0() / 16;
         let n = if t <= DIMEN_VAL {
             self.bm_link(p + 1)
@@ -1787,6 +1785,9 @@ impl Globals {
             self.bm_sa_number(p)
         };
         if t == BOX_VAL {
+            if outer {
+                return self.bm_abort("OuterBox");
+            }
             if global {
                 self.bm_with_rec(|r| {
                     if !r.gboxes.contains(&n) {
@@ -1797,7 +1798,7 @@ impl Globals {
             self.bm_with_rec(|r| r.boxes.insert(n));
             return;
         }
-        if global {
+        if global || outer {
             self.bm_with_rec(|r| r.gwritten.insert(RegId::Sa(t, n)));
         } else {
             self.bm_note_reg(RegId::Sa(t, n));
@@ -2059,6 +2060,23 @@ impl Globals {
         }
     }
 
+    /// The save-stack entries a call left at its own level: only those of
+    /// local assignments (`eq_save`'s `restore_old_value` and
+    /// `restore_zero`, e-TeX's `restore_sa`), not an `\\aftergroup` token
+    /// or a group boundary. Walked down from the top as `unsave` pops them.
+    fn bm_saves_only(&self, lo: i32, hi: i32) -> bool {
+        let mut k = hi - 1;
+        while k >= lo {
+            let w = self.save_stack[k as usize].hh();
+            match w.b0() {
+                t if t == k::restore_old_value => k -= 2,
+                t if t == k::restore_zero || t == k::restore_sa => k -= 1,
+                _ => return false,
+            }
+        }
+        k == lo - 1
+    }
+
     /// Is the recorded body used up (every input level from the body's on
     /// a token list with nothing left)?
     fn bm_exhausted(&self, base: i32) -> bool {
@@ -2088,7 +2106,10 @@ impl Globals {
         }
         let end = self.bm_frame();
         let (start, scanner) = self.bm_with_rec(|r| (r.start.clone(), r.scanner)).unwrap();
-        let why = if end.cur_level != start.cur_level || end.save_ptr != start.save_ptr {
+        let why = if end.cur_level != start.cur_level
+            || end.save_ptr < start.save_ptr
+            || !self.bm_saves_only(start.save_ptr, end.save_ptr)
+        {
             Some("Group")
         } else if end.cond != start.cond {
             Some("Cond")
