@@ -1,0 +1,102 @@
+# scripts/logana.py on the prototype's dumps (~/ib-memr/dump/{full-1000,plain-1000,infdesc}.logs on the PC),
+# each taken at the steady open after scripts/dump.sh's steps (2026-10-06, engine 8553c7d99 + dump hook).
+# The dumps are 0.4-0.5 GB each and stay on the PC. Output as printed.
+
+== full-1000 (open, 4 letters at 0.5, 4 at 0.98)
+logs 1013  deltas 2,305,634  words 51,581,767  words/delta 22.4
+NOW: sealed (capacity) 280.3 MB = delta headers 52.8 + packed words 227.6 + Vec slack 0.0; raw words would be 393.5 MB
+codec check: recomputed packed 227.6 MB vs dump 227.6
+words by region (share of words, packed MB):
+   mem                       53.1 %    140.7 MB
+   dl_side                   30.9 %     63.6 MB
+   pdf_op_buf                11.8 %     14.5 MB
+   save_stack                 1.2 %      3.7 MB
+   pdf_os_buf                 1.0 %      1.2 MB
+   buffer                     0.8 %      1.0 MB
+   eqtb                       0.2 %      0.9 MB
+   (scalars)                  0.2 %      0.3 MB
+   str_pool                   0.2 %      0.1 MB
+   input_stack                0.1 %      0.3 MB
+   intr_data                  0.1 %      0.1 MB
+   obj_tab                    0.1 %      0.0 MB
+  words as pre (now)              226.9 MB   (per-word best-of with 1 flag bit:   233.0 MB)
+  words as xor post               223.4 MB   (per-word best-of with 1 flag bit:   200.3 MB)
+  words as pre-post (64-bit)      237.4 MB   (per-word best-of with 1 flag bit:   199.8 MB)
+  words as pre-post per half      221.5 MB   (per-word best-of with 1 flag bit:   198.7 MB)
+  pre-image half zero: lo 9 % hi 36 %; only one half changed: 47 %
+headers: now 52.8 MB; varint gap + run-coded mask + an offset every 16: 20.2 MB
+dedup: identical (chunk, mask, values) in another log: 4.1 MB; identical (mask, values) anywhere: 4.5 MB
+per-log compression (40 sampled logs, 10.5 MB as now): zstd-1 0.58, zstd-3 0.52, zlib-1 0.53
+groups of 32 logs: zstd-3 0.49
+log sizes (deltas): p50 2275 p95 2354 max 5414
+keep 1 checkpoint in  2: 1,185,224 deltas, 29,395,908 words, 154.8 MB (now 280.3)
+keep 1 checkpoint in  4: 609,539 deltas, 16,535,819 words, 84.7 MB (now 280.3)
+keep 1 checkpoint in  8: 314,835 deltas, 9,126,599 words, 45.3 MB (now 280.3)
+keep 1 checkpoint in 16: 163,725 deltas, 4,954,669 words, 23.7 MB (now 280.3)
+bytes by decile of the chain (oldest first), MB: 29 29 28 28 28 28 28 28 28 26
+
+== plain-1000 (open, 4 letters at 0.5, 4 at 0.98)
+logs 1011  deltas 1,766,593  words 39,724,597  words/delta 22.5
+NOW: sealed (capacity) 219.1 MB = delta headers 40.4 + packed words 178.7 + Vec slack 0.0; raw words would be 303.1 MB
+codec check: recomputed packed 178.7 MB vs dump 178.7
+words by region (share of words, packed MB):
+   mem                       53.0 %    112.7 MB
+   dl_side                   29.7 %     48.6 MB
+   pdf_op_buf                15.2 %     14.4 MB
+   buffer                     1.0 %      0.9 MB
+   pdf_os_buf                 0.2 %      0.2 MB
+   (scalars)                  0.2 %      0.2 MB
+   save_stack                 0.2 %      0.5 MB
+   input_stack                0.1 %      0.2 MB
+   eqtb                       0.1 %      0.3 MB
+   nest                       0.1 %      0.1 MB
+   param_stack                0.0 %      0.1 MB
+   obj_tab                    0.0 %      0.0 MB
+  words as pre (now)              178.2 MB   (per-word best-of with 1 flag bit:   183.0 MB)
+  words as xor post               164.4 MB   (per-word best-of with 1 flag bit:   151.7 MB)
+  words as pre-post (64-bit)      176.0 MB   (per-word best-of with 1 flag bit:   151.6 MB)
+  words as pre-post per half      163.2 MB   (per-word best-of with 1 flag bit:   150.6 MB)
+  pre-image half zero: lo 8 % hi 35 %; only one half changed: 49 %
+headers: now 40.4 MB; varint gap + run-coded mask + an offset every 16: 17.7 MB
+dedup: identical (chunk, mask, values) in another log: 2.0 MB; identical (mask, values) anywhere: 2.1 MB
+per-log compression (40 sampled logs, 8.0 MB as now): zstd-1 0.58, zstd-3 0.52, zlib-1 0.54
+groups of 32 logs: zstd-3 0.49
+log sizes (deltas): p50 1758 p95 1794 max 2300
+keep 1 checkpoint in  2: 905,245 deltas, 22,611,142 words, 121.7 MB (now 219.1)
+keep 1 checkpoint in  4: 459,123 deltas, 12,458,222 words, 65.7 MB (now 219.1)
+keep 1 checkpoint in  8: 232,403 deltas, 6,696,205 words, 34.7 MB (now 219.1)
+keep 1 checkpoint in 16: 118,441 deltas, 3,504,237 words, 17.9 MB (now 219.1)
+bytes by decile of the chain (oldest first), MB: 22 22 22 22 22 22 22 22 22 21
+
+== infdesc (open, 4 letters in number-theory/divisibility.tex, 4 in real-numbers/series-sums.tex)
+logs 730  deltas 2,145,976  words 44,456,997  words/delta 20.7
+NOW: sealed (capacity) 231.1 MB = delta headers 49.1 + packed words 181.9 + Vec slack 0.0; raw words would be 339.2 MB
+codec check: recomputed packed 181.9 MB vs dump 181.9
+words by region (share of words, packed MB):
+   mem                       58.3 %    120.5 MB
+   dl_side                   28.7 %     46.3 MB
+   pdf_op_buf                 8.1 %      8.5 MB
+   str_pool                   1.2 %      0.3 MB
+   save_stack                 0.9 %      2.3 MB
+   pdf_os_buf                 0.9 %      0.9 MB
+   font_info                  0.4 %      0.1 MB
+   eqtb                       0.3 %      1.0 MB
+   buffer                     0.3 %      0.3 MB
+   input_stack                0.2 %      0.4 MB
+   (scalars)                  0.2 %      0.2 MB
+   hash                       0.1 %      0.1 MB
+  words as pre (now)              181.3 MB   (per-word best-of with 1 flag bit:   186.6 MB)
+  words as xor post               206.4 MB   (per-word best-of with 1 flag bit:   170.6 MB)
+  words as pre-post (64-bit)      216.2 MB   (per-word best-of with 1 flag bit:   169.9 MB)
+  words as pre-post per half      204.0 MB   (per-word best-of with 1 flag bit:   169.1 MB)
+  pre-image half zero: lo 16 % hi 39 %; only one half changed: 43 %
+headers: now 49.1 MB; varint gap + run-coded mask + an offset every 16: 18.6 MB
+dedup: identical (chunk, mask, values) in another log: 2.0 MB; identical (mask, values) anywhere: 4.7 MB
+per-log compression (40 sampled logs, 14.2 MB as now): zstd-1 0.55, zstd-3 0.49, zlib-1 0.50
+groups of 32 logs: zstd-3 0.49
+log sizes (deltas): p50 3272 p95 3974 max 22219
+keep 1 checkpoint in  2: 1,226,801 deltas, 29,078,900 words, 143.0 MB (now 231.1)
+keep 1 checkpoint in  4: 686,615 deltas, 18,788,501 words, 86.7 MB (now 231.1)
+keep 1 checkpoint in  8: 386,033 deltas, 12,094,569 words, 51.1 MB (now 231.1)
+keep 1 checkpoint in 16: 221,765 deltas, 8,008,875 words, 30.4 MB (now 231.1)
+bytes by decile of the chain (oldest first), MB: 27 28 27 27 28 7 7 25 26 29

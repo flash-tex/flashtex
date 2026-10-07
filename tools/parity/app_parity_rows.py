@@ -12,7 +12,9 @@ says what each row needs before S5 (the flip):
        "s6" / "s7" not gated at S5 (old-route rows; the CLI)
 
 A test is `Suite.testName` (XCTest, apps/mac/Tests), `Suite` (every test of that
-suite), or `rust:<file>::<fn>`. `host_driven` lists the Swift tests that need a
+suite), or `rust:<file>::<fn>`. A Rust row test that can return early (skip) must
+honour FLASHTEX_REQUIRE_TEXLIVE=1, which turns the skip into a failure, and the legs
+that run it set it (`check` enforces the first). `host_driven` lists the Swift tests that need a
 real flashtex-host and TeX Live: they skip on the hosted mac-app job and must run
 on the host leg instead.
 
@@ -111,6 +113,62 @@ def missing_tests(doc, root=ROOT):
     return out
 
 
+REQUIRE_ENV = "FLASHTEX_REQUIRE_TEXLIVE"
+
+
+def rust_fn_body(text, fn):
+    """The body of `fn <fn>(`, by brace matching from its first `{`, or None.
+
+    Braces inside strings or comments can unbalance it; the test bodies this reads are
+    plain enough, and an unbalanced body only makes the check stricter."""
+    m = re.search(r"\bfn\s+%s\s*\(" % re.escape(fn), text)
+    if not m:
+        return None
+    start = text.find("{", m.end())
+    if start < 0:
+        return None
+    depth = 0
+    for i in range(start, len(text)):
+        if text[i] == "{":
+            depth += 1
+        elif text[i] == "}":
+            depth -= 1
+            if depth == 0:
+                return text[start:i + 1]
+    return text[start:]
+
+
+def rust_self_skips(doc, root=ROOT):
+    """Named Rust tests that can skip (an early `return`) without FLASHTEX_REQUIRE_TEXLIVE=1
+    turning that skip into a failure: in the test, its file, or the tests' `common` module.
+
+    A Rust test that returns early still reports `ok`, so a leg without a host or TeX Live
+    would "pass" the row; under the switch the same run fails instead."""
+    out = []
+    for r in doc["rows"]:
+        for t in r["tests"]:
+            if not t.startswith("rust:"):
+                continue
+            path, _, fn = t[5:].partition("::")
+            full = os.path.join(root, path)
+            if not os.path.isfile(full):
+                continue
+            with open(full, encoding="utf-8") as f:
+                text = f.read()
+            body = rust_fn_body(text, fn)
+            if body is None or not re.search(r"\breturn\b", body):
+                continue
+            seen = text
+            for c in ("common/mod.rs", "common.rs"):
+                cp = os.path.join(os.path.dirname(full), c)
+                if os.path.isfile(cp):
+                    with open(cp, encoding="utf-8") as f:
+                        seen += f.read()
+            if REQUIRE_ENV not in seen:
+                out.append("%s: %s can skip without %s=1 failing it" % (r["id"], t, REQUIRE_ENV))
+    return out
+
+
 def check(doc, root=ROOT):
     errors = []
     if doc.get("schema") != SCHEMA:
@@ -138,6 +196,7 @@ def check(doc, root=ROOT):
         if "." not in t or t.startswith("rust:"):
             errors.append("host_driven names %s, which is not one Swift test" % t)
     errors += ["test not found in the source: %s" % m for m in missing_tests(doc, root)]
+    errors += ["a Rust row test self-skips: %s" % m for m in rust_self_skips(doc, root)]
     return errors
 
 
@@ -179,16 +238,26 @@ def read_log(paths):
     return out
 
 
-def outcome(test, results):
-    """'passed' | 'skipped' | 'failed' | 'absent' for one entry (a suite: all of its tests)."""
-    if "." in test:
-        got = results.get(test, set())
-    else:
-        got = set().union(*([v for k, v in results.items() if k.split(".", 1)[0] == test] or [set()]))
-    for o in ("failed", "skipped", "passed"):
+def _one(got):
+    """One test over every log: failed anywhere, else passed anywhere (a host-driven test
+    skips on the hosted leg and passes on the host leg), else skipped, else absent."""
+    for o in ("failed", "passed", "skipped"):
         if o in got:
             return o
     return "absent"
+
+
+def outcome(test, results):
+    """'passed' | 'skipped' | 'failed' | 'absent' for one entry (a suite: all of its tests)."""
+    if "." in test:
+        return _one(results.get(test, set()))
+    each = [_one(v) for k, v in results.items() if k.split(".", 1)[0] == test]
+    if not each:
+        return "absent"
+    for o in ("failed", "skipped"):
+        if o in each:
+            return o
+    return "passed"
 
 
 def log_problems(tests, results):

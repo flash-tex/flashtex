@@ -645,7 +645,7 @@ final class V2PageRasterizer {
         r.fontSmoothingObserver = PreviewFontSmoothing.observe { [weak r] on in r?.smoothFonts = on }
         return r
     }()
-    static let queue = DispatchQueue(label: "flashtex.preview-v2.raster", qos: .userInteractive)
+    static let queue = DispatchQueue(label: "flashtex.preview-v2.raster", qos: .userInteractive, autoreleaseFrequency: .workItem)
 
     /// One observable slot per key: a page body reads its own slot's `image`,
     /// so a bitmap arriving for page 3 re-evaluates page 3 only.

@@ -94,6 +94,7 @@ length 0, is a corrupt stream: the reader stops (§7).
 | `0x04` | `BYE` | client → host | JSON `{}` |
 | `0x05` | `RESOLVE` | client → host | JSON (§11.6; 3.3, host capability `resolve-v1`) |
 | `0x06` | `LOCATE` | client → host | JSON (§11.6; 3.3, host capability `resolve-v1`) |
+| `0x07` | `PROFILE` | client → host | JSON (§6.9; host capability `profile-v1`) |
 | `0x41` | `HELLO` | host → client | JSON (§6.2) |
 | `0x42` | `STARTED` | host → client | JSON (§6.4) |
 | `0x43` | `FONT` | host → client | binary (§5.1) |
@@ -110,6 +111,7 @@ length 0, is a corrupt stream: the reader stops (§7).
 | `0x4E` | `RESOLVED` | host → client | JSON (§11.6; 3.3) |
 | `0x4F` | `LOCATED` | host → client | JSON (§11.6; 3.3) |
 | `0x50` | `PACKAGE` | host → client | JSON (§11.8; Typst host, `accept` `packages-v1`) |
+| `0x51` | `PROFILE` | host → client | JSON (§6.9; the reply to a client's `PROFILE`) |
 | `0x60` | `DIAG` | host → client | JSON (§6.7; `diag-v1`, capability-gated) |
 | `0x70` | `PROGRESS` | host → client | JSON (§6.8; `progress-v1`, capability-gated) |
 
@@ -140,6 +142,12 @@ length 0, is a corrupt stream: the reader stops (§7).
 - **`progress-v1`** (2026-10-03): the `PROGRESS` heartbeat (§6.8),
   capability-gated like `diag-v1`, so it needs no minor number: a client
   that does not accept it sees nothing new.
+- **`profile-v1`** (2026-10-06, lane PERF-MODES): performance modes
+  (§6.9), capability-gated like `progress-v1`, so it needs no minor number:
+  the `HELLO` key `profile` in both directions and the `PROFILE` messages.
+  A host without the capability ignores the client's `HELLO.profile` (an
+  unknown key) and never receives a `PROFILE` from a client that checks the
+  capability first.
 - **3.3** (§11; DESIGN.md §15.4, E1–E8) adds, all of it for the Typst
   host and none of it required of the LaTeX host: `FONT.format`
   `opentype` with glyph ids and variation coordinates (§11.1), page
@@ -581,7 +589,7 @@ below listens on a Unix-domain stream socket; a Windows host would listen
 on AF_UNIX (Windows 10 1803+, stream sockets only) or a named pipe.
 
 `flashtex-host --socket PATH [--engine PATH] [--format NAME]... [--no-warm]
-[--s0-cache DIR] [--budget BYTES] [--timed SECONDS] [--external-tools off|auto]
+[--s0-cache DIR] [--profile MODE] [--budget BYTES] [--timed SECONDS] [--external-tools off|auto]
 [--tool-timeout SECONDS]` first finds the TeX
 Live the engine will read (without a shell environment: the app's PATH is
 launchd's) or the bundle, and makes each format ready (default
@@ -603,9 +611,11 @@ arrive. With `--s0-cache DIR` (or `FLASHTEX_S0_CACHE`), each document's
 begin-document snapshot S₀ is saved there after a full run, and the first
 compile of the document in a new host starts from it when nothing it read
 has changed (DESIGN.md §1.2's reopen target); each save prints one line,
-`flashtex-host: {"saved_s0": PATH, "bytes": N, "ms": T}`. `--budget` and `--timed` are
-the checkpoints' memory budget (default 1 GiB) and timed interval (default
-0.02 s). `--engine` names the engine program that `export` compiles and
+`flashtex-host: {"saved_s0": PATH, "bytes": N, "ms": T}`. `--profile` is the
+performance mode the host starts in (§6.9; default `balanced`, or
+`FLASHTEX_PROFILE`). `--budget` and `--timed` are
+the checkpoints' memory budget (default 1 GiB, the Balanced mode's) and timed interval (default
+0.02 s); given, they hold in every mode. `--engine` names the engine program that `export` compiles and
 the format preparation run (default: `flashtex-host` itself, which runs as
 the engine when invoked as `pdftex`).
 
@@ -751,7 +761,12 @@ connection stay valid; `false`: drop them first.
 an earlier compile, still to be re-typeset (show them marked stale). Sent
 after the first re-typeset page, after a `viewport` stop, and before
 `DONE` (`complete: true`, all `count` pages current; a client drops pages
-at or past `count`).
+at or past `count`). Also sent, without a page of its own, when the compile
+finds nothing new against a run newer work stopped and continues that run
+as its own (fast typing: a letter typed, deleted and typed again): the
+pages the stopped run had shipped are this compile's at once, so the host
+sends those the client lacks from its cache and then `PAGES` with them
+current, before the run ships its next page.
 
 `DIAGNOSTIC`: `{"id", "severity": "error"|"warning", "message", "file"?, "line"?}`
 (3.3 adds `column` and `hints`, §11.7)
@@ -1103,6 +1118,51 @@ first pass and the `.aux` passes behind it), whether or not those pages are
 sent. Nothing is sent between checkpoints: an endless loop that reaches
 none sends none, which is what a client's bound detects. A client treats
 any `PROGRESS` as the compile making progress and otherwise ignores it.
+
+### 6.9 `PROFILE`: performance modes (`profile-v1`)
+
+An additive, capability-gated feature like `progress-v1` (§6.8): no page,
+section or earlier message changes, and the protocol version stays as it
+is. DESIGN.md §1.2 ("Performance modes"), lane PERF-MODES.
+
+**What a mode is.** A named set of the host's knobs: how much memory the
+checkpoints may hold, how densely they are kept near the cursor, how long
+the engine stays warm after a compile, whether it works out the next
+restore while it waits, and how soon it gives freed memory back. **A mode
+never changes what a compile produces**: every page, the PDF and the log
+are identical in every mode; only latency and memory differ.
+
+| mode | for |
+|---|---|
+| `low-memory` | the least memory: a small checkpoint budget, few checkpoints far from the cursor, memory given back soon after typing stops; edits far from the last one take longer |
+| `balanced` | the default: the latency and memory targets of DESIGN.md §1.2 and §5.2 |
+| `high-performance` | the lowest latency: a large checkpoint budget (a quarter of the machine's memory, 1–4 GiB), checkpoints dense near the cursor, a longer keep-warm window, nothing trimmed |
+
+**Negotiation.** The host lists `"profile-v1"` in `HELLO.capabilities`. A
+client may add `"profile": MODE` to its `HELLO`; a mode the host does not
+know is ignored. Either way the host's `HELLO` carries `profile`, the knobs
+in effect for this connection's compiles:
+
+```json
+"profile": {"mode": "balanced", "budget": 1073741824, "dense": 16,
+            "segment_ms": 0.5, "timed_ms": 20.0, "keep_warm_ms": 2000,
+            "prepare": true, "trim_after_ms": 2000}
+```
+
+`budget` is bytes; `segment_ms` and `trim_after_ms` are null when off
+(High Performance never trims). The keys are informative: a client shows or
+logs them and does not depend on any one. A knob the host's command line
+fixed (`--budget`, `--timed`, `--keep-warm`) keeps its value in every mode.
+
+**Message** (`0x07`, client → host, JSON): `{"profile": MODE}` switches the
+mode live. The host applies it between compiles, in the order requests
+arrive (a running compile finishes under the old mode), and answers with
+`PROFILE` (`0x51`, host → client, JSON) `{"profile": {...}}`, the knobs now
+in effect, as in `HELLO`. A smaller budget or dense window thins the
+resident document's checkpoints at once and gives the freed memory back
+before the reply. An unknown mode gets `ERROR` (`request`) and changes
+nothing. The mode is the host's: with one host per document, it is that
+document's.
 
 ## 7. Errors
 

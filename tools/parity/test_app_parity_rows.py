@@ -33,7 +33,7 @@ SWIFT_EXT = """extension FooTests {
 @MainActor final class BarTests: XCTestCase { func testHost() async throws {} }
 """
 
-RUST = "#[test]\nfn builds_it() {}\n"
+RUST = "#[test]\nfn builds_it() {}\n#[test]\nfn skips_quietly() {\n    if true {\n        return;\n    }\n}\n"
 
 
 def rows(**over):
@@ -90,6 +90,14 @@ class CheckTests(unittest.TestCase):
         with Tree() as root:
             errs = apr.check(rows(C25={"tests": ["rust:crates/x/tests/cli.rs::nope"]}), root)
             self.assertTrue(any("nope" in e for e in errs), errs)
+
+    def test_a_rust_test_that_skips_without_the_switch_fails_the_check(self):
+        with Tree() as root:
+            errs = apr.check(rows(C25={"tests": ["rust:crates/x/tests/cli.rs::skips_quietly"]}), root)
+            self.assertTrue(any("self-skips" in e and "skips_quietly" in e for e in errs), errs)
+            with open(os.path.join(root, "crates/x/tests/common.rs"), "w") as f:
+                f.write('pub fn skip() { if std::env::var_os("FLASHTEX_REQUIRE_TEXLIVE").is_some() { panic!() } }')
+            self.assertEqual(apr.check(rows(C25={"tests": ["rust:crates/x/tests/cli.rs::skips_quietly"]}), root), [])
 
     def test_rows_must_be_the_checklists(self):
         with Tree() as root:
@@ -155,6 +163,19 @@ class LogTests(unittest.TestCase):
             self.assertEqual(apr.outcome("BarTests", apr.read_log([p])), "absent")
         finally:
             os.unlink(p)
+
+    def test_a_test_skipped_on_one_leg_and_passed_on_the_other_is_passed(self):
+        hosted = log(("BarTests.testHost", "skipped"), ("FooTests.testOne", "passed"))
+        host = log(("BarTests.testHost", "passed"))
+        bad = log(("FooTests.testOne", "failed"))
+        try:
+            res = apr.read_log([hosted, host])
+            self.assertEqual(apr.outcome("BarTests.testHost", res), "passed")
+            self.assertEqual(apr.outcome("BarTests", res), "passed")
+            self.assertEqual(apr.outcome("FooTests.testOne", apr.read_log([hosted, bad])), "failed")
+        finally:
+            for p in (hosted, host, bad):
+                os.unlink(p)
 
     def test_check_log_exit_codes(self):
         with Tree() as root:
