@@ -1219,13 +1219,11 @@ final class ShellModel {
         let old = documents[i].text, base = editorRevision
         MainThreadProbe.time("model.store") { documents[i].text = text }
         MainThreadProbe.time("model.revision") { editorRevision += 1 }
-        let probe = MainThreadProbe.begin()
-        TypingBench.shared.noteRevision(editorRevision) // keystroke -> paint instrumentation
+        MainThreadProbe.time("model.typingBench") { TypingBench.shared.noteRevision(editorRevision) } // keystroke -> paint instrumentation
         if !engineV3Enabled { scheduleAutoCompile() } // with the engine-v3 preview on, the old worker does not auto-compile
-        scheduleAutosave()
-        caretFollow.note(.edit) // CaretFollow.swift: an edit also re-arms following after a manual scroll
-        bridgeTextChanged(path: activePath, old: old, new: text, base: base, revision: editorRevision)
-        MainThreadProbe.end("model.rest", probe)
+        MainThreadProbe.time("model.autosave") { scheduleAutosave() }
+        MainThreadProbe.time("model.caretFollow") { caretFollow.note(.edit) } // CaretFollow.swift: an edit also re-arms following after a manual scroll
+        MainThreadProbe.time("model.bridge") { bridgeTextChanged(path: activePath, old: old, new: text, base: base, revision: editorRevision) }
     }
 
     private func scheduleAutoCompile() {
