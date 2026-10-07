@@ -384,7 +384,7 @@ struct PreviewPane: View {
         .accessibilityElement(children: .contain)
         .accessibilityLabel(Self.accessibilityLabel)
         .accessibilityValue(Self.accessibilityValue(page: model.previewVisiblePage,
-                                                    of: model.engineV3Enabled ? model.engineV3.pageCount : model.toolbarPageCount) ?? "")
+                                                    of: model.previewPageCount) ?? "")
         .onChange(of: model.previewZoom) { _, _ in hudActivity &+= 1 }
         .onChange(of: model.previewVisiblePage) { _, _ in hudActivity &+= 1 }
         // Double-click to Fit Width (⌘9 does the same). Used to live on the
@@ -429,7 +429,7 @@ struct PreviewPane: View {
 /// pointer-over and for a beat after scroll or page changes, then fades.
 /// Fading never reflows anything (§14); a healthy live preview at rest
 /// shows no chrome at all over the pages (§8, Canvas treatment).
-private struct PreviewHUD: View {
+struct PreviewHUD: View {
     @Environment(ShellModel.self) var model
     var hovering = false
     /// Bumped by the pane on scroll/page/zoom; each bump re-arms the fade.
@@ -474,13 +474,12 @@ private struct PreviewHUD: View {
             // Both panes. This was gated on `!model.previewV2` while
             // `previewV2` defaults true, so on the shipped default nobody ever
             // saw a page number.
-            let pageCount = model.engineV3Enabled ? model.engineV3.pageCount : model.toolbarPageCount
-            if pageCount > 0 {
-                let page = min(model.previewVisiblePage, pageCount)
-                Text("\(page) / \(pageCount)")
+            let pageCount = model.previewPageCount
+            if let readout = Self.pageReadout(page: model.previewVisiblePage, of: pageCount) {
+                Text(readout)
                     .font(DS.Fonts.monoSecondary).foregroundStyle(DS.Colors.textSecondary)
                     .help("Page under the top of the view")
-                    .accessibilityLabel("Page \(page) of \(pageCount)")
+                    .accessibilityLabel(PreviewPane.accessibilityValue(page: model.previewVisiblePage, of: pageCount) ?? "")
                     .accessibilityIdentifier("preview.page-readout")
             }
         }
@@ -493,10 +492,7 @@ private struct PreviewHUD: View {
         .allowsHitTesting(visible)
         .animation(DS.Motion.quick, value: visible)
         .accessibilityHidden(!visible)
-        .help(chrome.route == .engineV3 ? "Engine v3 preview — " + chrome.routeHelp // not the old producer's summary (gap C21)
-              : chrome.previewSource == .fixture
-              ? "Fixture\(chrome.fixtureName.map { ": " + $0 } ?? "") — not a real compile. Layout: \(chrome.acceptedCapabilities.isEmpty ? "legacy (U+2500 fraction bars are an approximation)" : chrome.acceptedCapabilities.joined(separator: ", "))"
-              : model.producerSummary + " — layout: \(chrome.acceptedCapabilities.isEmpty ? "legacy (U+2500 fraction bars are an approximation)" : chrome.acceptedCapabilities.joined(separator: ", "))")
+        .help(Self.help(chrome: chrome, producerSummary: model.producerSummary))
         // The linger timer is a real pending Task for as long as it runs;
         // under XCTest that outlives the surface being captured and makes
         // both this shot and the next one depend on when it fires, so
@@ -530,6 +526,21 @@ private struct PreviewHUD: View {
 
     private func statusColor(_ s: RuntimeV1.Status) -> Color {
         switch s { case .ok: DS.Colors.severitySuccess; case .recovered: DS.Colors.severityWarning; case .failed: DS.Colors.severityError }
+    }
+
+    /// The HUD's tooltip: under the new engine, that engine's route help
+    /// (`ShellChrome.routeHelp`), never the old producer's summary (gap C21);
+    /// otherwise the fixture or the old producer, with the layout capabilities.
+    static func help(chrome: ShellChrome, producerSummary: String) -> String {
+        let layout = chrome.acceptedCapabilities.isEmpty ? "legacy (U+2500 fraction bars are an approximation)" : chrome.acceptedCapabilities.joined(separator: ", ")
+        if chrome.route == .engineV3 { return "Engine v3 preview — " + chrome.routeHelp }
+        if chrome.previewSource == .fixture { return "Fixture\(chrome.fixtureName.map { ": " + $0 } ?? "") — not a real compile. Layout: \(layout)" }
+        return producerSummary + " — layout: \(layout)"
+    }
+
+    /// The "N / M" page readout (page clamped to the count), nil with no pages.
+    static func pageReadout(page: Int, of total: Int) -> String? {
+        total > 0 ? "\(min(page, total)) / \(total)" : nil
     }
 }
 

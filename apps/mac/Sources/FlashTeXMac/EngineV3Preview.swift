@@ -99,8 +99,12 @@ private struct PreviewV3StatusHUD: View {
             case .failed(let why):
                 Text(why).foregroundStyle(.red)
             }
-            if !session.environmentNote.isEmpty, session.phase == .ready, model.previewDebugStatus {
-                Text(session.environmentNote)
+            if model.previewDebugStatus {
+                // The v2 pane's debug strip, as v3 has it (gap C25): host,
+                // compiles, pages, latency and the environment note.
+                Text(session.debugLine)
+                    .foregroundStyle(.secondary).lineLimit(2).textSelection(.enabled)
+                    .accessibilityIdentifier("engine-v3.debug-status")
             }
         }
         .font(.caption)

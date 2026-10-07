@@ -317,6 +317,10 @@ final class ShellModel {
     /// HUD reads this; before it existed the readout was wired only to the v1
     /// pane's callback and so showed nothing on the default v2 route.
     var previewVisiblePage = 1
+    /// Pages the preview shows: the new engine's (`EngineV3Session.pageCount`)
+    /// under it, else the old route's `toolbarPageCount`. The HUD's "N / M"
+    /// readout and the pane's accessibility value both count these.
+    var previewPageCount: Int { engineV3Enabled ? engineV3.pageCount : toolbarPageCount }
     /// `!documents.isEmpty`, change-only: File > Print Source… must not read
     /// `documents` from the App scene (a keystroke reassigns the array).
     private(set) var toolbarHasDocument = false
