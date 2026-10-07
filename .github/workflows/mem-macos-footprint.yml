@@ -1,0 +1,67 @@
+# macOS phys_footprint of the resident host, undo-log mappings on and off (lane MEM-IMPL-HOST,
+# item 5: crates/flashtex-engine/src/logalloc.rs on macOS), plus the research's memfp.c table
+# (docs/evidence/mem-research-2026-10-06/ §2.7). Measurement only, by hand; on a team Mac's
+# self-hosted runner, never on the owner's Mac. The script says what it runs:
+# docs/evidence/mem-logalloc-macos-2026-10-06/scripts/run-mac.sh.
+name: mem-macos-footprint
+
+on:
+  workflow_dispatch:
+    inputs:
+      rounds:
+        description: "A/B rounds per document"
+        default: "2"
+      docs:
+        description: "documents (tools/incr-bench/mkdocs.py names)"
+        default: "full-1000 plain-1000 full-100"
+      skip_memfp:
+        description: "1: leave out memfp.c"
+        default: "0"
+  # TEMPORARY (a workflow off the default branch cannot be dispatched): runs on pushes to the
+  # lane's branch; removed before the PR leaves draft.
+  push:
+    branches: [agent/kabir-claude/mem-logalloc-macos]
+    paths: [.github/workflows/mem-macos-footprint.yml]
+
+permissions:
+  contents: read
+
+jobs:
+  footprint:
+    name: "macOS host phys_footprint, log mappings on/off, and memfp"
+    runs-on: [self-hosted, macOS, ARM64]
+    concurrency:
+      group: flashtex-mac-heavy
+      cancel-in-progress: false
+    timeout-minutes: 180
+    env:
+      CARGO_BUILD_JOBS: "4"
+      ROUNDS: ${{ github.event.inputs.rounds || '2' }}
+      DOCS: ${{ github.event.inputs.docs || 'full-1000 plain-1000 full-100' }}
+      SKIP_MEMFP: ${{ github.event.inputs.skip_memfp || '0' }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@stable
+      - name: this Mac's build directory (shared by the heavy jobs, size-capped)
+        run: scripts/ci/mac-heavy-target.sh >> "$GITHUB_ENV"
+      - name: memfp, then the host A/B
+        run: |
+          set -o pipefail
+          docs/evidence/mem-logalloc-macos-2026-10-06/scripts/run-mac.sh "$RUNNER_TEMP/fp" \
+            2>&1 | tee "$RUNNER_TEMP/run-mac.log"
+      - name: summary
+        if: always()
+        run: |
+          [ -f "$RUNNER_TEMP/fp/sessions.txt" ] || exit 0
+          { echo '### host sessions'; echo '```'; grep SUMMARY "$RUNNER_TEMP/fp/sessions.txt"; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+      - name: keep the results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mem-macos-footprint
+          path: |
+            ${{ runner.temp }}/fp/
+            ${{ runner.temp }}/run-mac.log
+          if-no-files-found: ignore
