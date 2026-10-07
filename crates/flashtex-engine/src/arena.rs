@@ -329,9 +329,13 @@ fn rewound_until(
         let src = unsafe { std::slice::from_raw_parts(start(c), CHUNK_WORDS) };
         buf[i * CHUNK_WORDS..(i + 1) * CHUNK_WORDS].copy_from_slice(src);
     }
+    // the wanted chunks' bits (a test per entry), and each one's index in
+    // `cs` (a lookup per match, not a binary search)
     let mut want = vec![0u64; nchunks.div_ceil(64)];
-    for &c in cs {
+    let mut slot = vec![0u32; nchunks];
+    for (i, &c) in cs.iter().enumerate() {
         set_bit(&mut want, c as usize);
+        slot[c as usize] = i as u32;
     }
     let mut done = vec![[0u64; MASK_WORDS]; cs.len()];
     for (k, log) in logs.iter().enumerate() {
@@ -340,7 +344,7 @@ fn rewound_until(
         }
         for &(c, p) in &log.entries {
             if bit(&want, c as usize) {
-                let i = cs.binary_search(&c).unwrap();
+                let i = slot[c as usize] as usize;
                 // SAFETY: a slab chunk; a chunk of `buf`.
                 unsafe {
                     apply_whole_under(p, buf.as_mut_ptr().add(i * CHUNK_WORDS), &mut done[i])
@@ -349,7 +353,7 @@ fn rewound_until(
         }
         for d in &log.deltas {
             if bit(&want, d.c as usize) {
-                let i = cs.binary_search(&d.c).unwrap();
+                let i = slot[d.c as usize] as usize;
                 // SAFETY: a chunk of `buf`.
                 unsafe {
                     d.apply_under(
@@ -1910,21 +1914,33 @@ impl Arena {
         let mut seen = vec![0u64; n.div_ceil(64)];
         let mut cand: Vec<u32> = Vec::new();
         // Chunks wholly inside an array the comparison leaves out
-        // (`UNSTATED`) are not candidates: taken as seen.
+        // (`UNSTATED`) are not candidates. Their old values are rewound
+        // anyway, in the same pass, and kept (`OldCache`): a test that
+        // passes is followed by the jump's comparison at the same
+        // checkpoint, which reads them (`diff_branch_all`), and it then
+        // rewinds nothing (lane P4-TYPING-200WPM (b): on *Infinite Descent*
+        // each rewind is a pass over 3,100 logs, 4.5 M entries, ~140 M
+        // instructions).
+        let mut unstated = vec![0u64; n.div_ceil(64)];
         for r in self
             .regions
             .iter()
             .filter(|r| skip_unstated && UNSTATED.contains(&r.name))
         {
             for c in r.off.div_ceil(CHUNK_BYTES)..(r.off + r.bytes) / CHUNK_BYTES {
-                set_bit(&mut seen, c);
+                set_bit(&mut unstated, c);
             }
         }
+        let mut extra: Vec<u32> = Vec::new();
         for log in b.logs[..jj].iter().chain(&core.logs[kr..]) {
             for c in log.chunk_ids() {
                 if !bit(&seen, c as usize) {
                     set_bit(&mut seen, c as usize);
-                    cand.push(c);
+                    if bit(&unstated, c as usize) {
+                        extra.push(c);
+                    } else {
+                        cand.push(c);
+                    }
                 }
             }
         }
@@ -1939,6 +1955,7 @@ impl Arena {
             cand.iter().partition(|c| redo_of.contains_key(c));
         in_old.sort_unstable();
         at_r.sort_unstable();
+        extra.retain(|c| redo_of.contains_key(c));
         let t = std::time::Instant::now();
         // The old run's values at `old`: those `OldCache` holds, the rest
         // rewound from the old run's end (every one with
@@ -1951,21 +1968,43 @@ impl Arena {
                 .iter()
                 .partition(|&&c| cache.get(old, gen, c).is_some())
         };
-        let rewind: &[u32] = if verify { &in_old } else { &misses };
-        let Some(rew) = rewound_until(n, rewind, &|c| redo_of[&c], &b.logs[jj..], stop) else {
+        // (the unstated ones not kept yet, with them)
+        let extra_misses: Vec<u32> = {
+            let cache = self.old_cache.borrow();
+            extra
+                .iter()
+                .copied()
+                .filter(|&c| cache.get(old, gen, c).is_none())
+                .collect()
+        };
+        let mut rewind: Vec<u32> = if verify {
+            in_old.clone()
+        } else {
+            misses.clone()
+        };
+        if !misses.is_empty() || verify {
+            rewind.extend(&extra_misses);
+            rewind.sort_unstable();
+        }
+        // (nothing to rewind: no pass over the logs)
+        let rew = if rewind.is_empty() {
+            Some(Vec::new())
+        } else {
+            rewound_until(n, &rewind, &|c| redo_of[&c], &b.logs[jj..], stop)
+        };
+        let Some(rew) = rew else {
             return Ok(None);
         };
         let mut old_buf = vec![0u64; in_old.len() * CHUNK_WORDS];
         {
             let cache = self.old_cache.borrow();
-            let mut r = 0;
             for (i, &c) in in_old.iter().enumerate() {
                 let dst = &mut old_buf[i * CHUNK_WORDS..(i + 1) * CHUNK_WORDS];
-                let mine = rewind.get(r) == Some(&c);
-                if mine {
+                let mine = rewind.binary_search(&c).ok();
+                if let Some(r) = mine {
                     dst.copy_from_slice(&rew[r * CHUNK_WORDS..(r + 1) * CHUNK_WORDS]);
-                    r += 1;
                 }
+                let mine = mine.is_some();
                 if let Some(v) = cache.get(old, gen, c) {
                     if mine && v != &dst[..] {
                         // (a verify mode: loud, so that a sweep fails)
@@ -1980,14 +2019,22 @@ impl Arena {
         }
         OLD_CACHE_HITS.fetch_add(cached.len() as u64, std::sync::atomic::Ordering::Relaxed);
         OLD_CACHE_MISSES.fetch_add(misses.len() as u64, std::sync::atomic::Ordering::Relaxed);
-        if !misses.is_empty() {
-            // (`rew` holds them in `rewind`'s order, which is in_old's or theirs)
-            let mut mb = Vec::with_capacity(misses.len() * CHUNK_WORDS);
-            for &c in &misses {
+        // (kept: every one rewound that was not, in `rewind`'s order)
+        let keep: Vec<u32> = {
+            let cache = self.old_cache.borrow();
+            rewind
+                .iter()
+                .copied()
+                .filter(|&c| cache.get(old, gen, c).is_none())
+                .collect()
+        };
+        if !keep.is_empty() {
+            let mut mb = Vec::with_capacity(keep.len() * CHUNK_WORDS);
+            for &c in &keep {
                 let i = rewind.binary_search(&c).expect("a rewound chunk");
                 mb.extend_from_slice(&rew[i * CHUNK_WORDS..(i + 1) * CHUNK_WORDS]);
             }
-            self.old_cache.borrow_mut().put(old, gen, &misses, &mb);
+            self.old_cache.borrow_mut().put(old, gen, &keep, &mb);
         }
         let t_old = t.elapsed();
         let live = |c: u32| core.chunk_ptr(c as usize) as *const u64;
@@ -3034,6 +3081,54 @@ mod tests {
         // another history: everything older goes
         c.put(100, 1, &[3], &[2u64; CHUNK_WORDS]);
         assert_eq!(c.at.len(), 1);
+    }
+
+    /// P4-TYPING-200WPM (b): a convergence test rewinds the `UNSTATED`
+    /// arrays' chunks too, in its one pass, and keeps them: the jump's
+    /// comparison at the same checkpoint (`diff_branch_all`) then rewinds
+    /// nothing, and its old values equal a fresh rewind's (nothing kept)
+    /// word for word, the unstated array's too.
+    #[test]
+    fn a_test_keeps_what_the_jump_compares() {
+        let mut p = Plan::new(64);
+        let rt = p.reserve::<u64>("t", 150_000);
+        let ru = p.reserve::<u64>("dl_side", 50_000);
+        let mut a = p.build();
+        let mut t = a.arr(rt, 150_000);
+        let mut u = a.arr(ru, 50_000);
+        scribble(&mut t, 41, 5000);
+        scribble(&mut u, 42, 2000);
+        let mut ids = vec![];
+        for k in 0..12 {
+            ids.push(a.checkpoint());
+            scribble(&mut t, 400 + k, 2000);
+            scribble(&mut u, 500 + k, 800);
+        }
+        let br = a.restore_branch(ids[3]).unwrap();
+        scribble(&mut t, 990, 1500);
+        scribble(&mut u, 991, 600);
+        a.checkpoint();
+        let all_words = |a: &Arena, d: &ChunkDiff| -> Vec<u64> {
+            (0..a.bytes().len() / 8)
+                .filter(|w| d.old_at.contains_key(&(((w * 8) >> CHUNK_SHIFT) as u32)))
+                .map(|w| d.old_word(a, w * 8))
+                .collect()
+        };
+        for j in [4usize, 6] {
+            a.drop_old_cache();
+            drop(a.diff_branch(&br, ids[j]).unwrap());
+            let misses0 = OLD_CACHE_MISSES.load(std::sync::atomic::Ordering::Relaxed);
+            let kept = all_words(&a, &a.diff_branch_all(&br, ids[j]).unwrap());
+            let misses = OLD_CACHE_MISSES.load(std::sync::atomic::Ordering::Relaxed) - misses0;
+            assert_eq!(misses, 0, "the jump's comparison at {j} rewound again");
+            a.drop_old_cache();
+            let fresh = all_words(&a, &a.diff_branch_all(&br, ids[j]).unwrap());
+            assert!(
+                kept == fresh,
+                "at {j}: the kept values differ from a fresh rewind"
+            );
+        }
+        a.drop_branch(br);
     }
 
     #[test]
