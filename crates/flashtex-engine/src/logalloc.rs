@@ -23,7 +23,9 @@
 //!
 //! The mapped blocks are recorded in a fixed table (no allocation inside the
 //! allocator); `dealloc` and `realloc` of a block of at least `BIG` bytes
-//! look it up there. When the table is full a block goes to `System`.
+//! look it up there. When the table is full, or [`MAX_MAPS`] mappings are
+//! live (Linux allows a process 65,530 by default, `vm.max_map_count`, which
+//! everything else in the process shares), a block goes to `System`.
 
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::ffi::c_void;
@@ -43,6 +45,13 @@ const PROBES: usize = 64;
 
 static TABLE: [AtomicUsize; SLOTS] = [const { AtomicUsize::new(0) }; SLOTS];
 
+/// Mappings this allocator holds at most: half of Linux's default
+/// `vm.max_map_count` (65,530), the rest left to the process (the word
+/// space, the slab, glibc's own, file mappings).
+const MAX_MAPS: usize = 32 << 10;
+/// Mappings this allocator holds now.
+static MAPS: AtomicUsize = AtomicUsize::new(0);
+
 extern "C" {
     fn mmap(addr: *mut c_void, len: usize, prot: i32, flags: i32, fd: i32, off: i64)
         -> *mut c_void;
@@ -53,7 +62,6 @@ const PROT_READ: i32 = 1;
 const PROT_WRITE: i32 = 2;
 const MAP_PRIVATE: i32 = 2;
 const MAP_ANONYMOUS: i32 = 0x20;
-const MREMAP_MAYMOVE: i32 = 1;
 
 fn mapped_len(size: usize) -> usize {
     (size + PAGE - 1) & !(PAGE - 1)
@@ -94,6 +102,11 @@ fn find(p: usize) -> Option<&'static AtomicUsize> {
 /// A fresh mapping of at least `size` bytes, recorded; `None` if there is
 /// none (then the caller uses `System`).
 fn map(size: usize) -> Option<*mut u8> {
+    // (a reservation: given back below when no mapping is made)
+    if MAPS.fetch_add(1, Ordering::Relaxed) >= MAX_MAPS {
+        MAPS.fetch_sub(1, Ordering::Relaxed);
+        return None;
+    }
     let len = mapped_len(size);
     // SAFETY: an anonymous private mapping has no preconditions.
     let p = unsafe {
@@ -107,6 +120,7 @@ fn map(size: usize) -> Option<*mut u8> {
         )
     };
     if p as isize == -1 {
+        MAPS.fetch_sub(1, Ordering::Relaxed);
         return None;
     }
     if insert(p as usize) {
@@ -114,8 +128,20 @@ fn map(size: usize) -> Option<*mut u8> {
     } else {
         // SAFETY: the mapping just made, unused.
         unsafe { munmap(p, len) };
+        MAPS.fetch_sub(1, Ordering::Relaxed);
         None
     }
+}
+
+/// Unmap a recorded block (`e` its entry): the entry first, so that no
+/// lookup finds the address once another mapping may reuse it.
+///
+/// # Safety
+/// `p` is the block `e` records, `len` its mapped length, unused from now on.
+unsafe fn unmap(e: &AtomicUsize, p: *mut u8, len: usize) {
+    e.store(GONE, Ordering::Release);
+    munmap(p as *mut c_void, len);
+    MAPS.fetch_sub(1, Ordering::Relaxed);
 }
 
 /// Whether this block is one of the mapped ones (only blocks of at least
@@ -170,8 +196,7 @@ unsafe impl GlobalAlloc for HostAlloc {
 
     unsafe fn dealloc(&self, p: *mut u8, l: Layout) {
         if let Some(e) = is_mapped(p, l.size()) {
-            e.store(GONE, Ordering::Release);
-            munmap(p as *mut c_void, mapped_len(l.size()));
+            unmap(e, p, mapped_len(l.size()));
             return;
         }
         System.dealloc(p, l)
@@ -179,37 +204,32 @@ unsafe impl GlobalAlloc for HostAlloc {
 
     unsafe fn realloc(&self, p: *mut u8, l: Layout, new: usize) -> *mut u8 {
         if let Some(e) = is_mapped(p, l.size()) {
-            if new >= BIG {
-                let q = mremap(
-                    p as *mut c_void,
-                    mapped_len(l.size()),
-                    mapped_len(new),
-                    MREMAP_MAYMOVE,
-                );
-                if q as isize == -1 {
-                    return std::ptr::null_mut();
+            let (old_len, new_len) = (mapped_len(l.size()), mapped_len(new));
+            // In place, where the kernel can (never moved by it: a moved
+            // block would leave its old address recorded for a moment, and
+            // could not be given back if the new one found no slot).
+            if new >= BIG && new_len <= old_len {
+                if new_len < old_len {
+                    // (the tail goes now: `dealloc` unmaps `new`'s length)
+                    munmap(p.add(new_len) as *mut c_void, old_len - new_len);
                 }
-                if q as *mut u8 != p {
-                    e.store(GONE, Ordering::Release);
-                    if !insert(q as usize) {
-                        // (cannot keep it recorded: give it to System)
-                        let s = System.alloc(Layout::from_size_align_unchecked(new, l.align()));
-                        if !s.is_null() {
-                            std::ptr::copy_nonoverlapping(q as *const u8, s, new);
-                        }
-                        munmap(q, mapped_len(new));
-                        return s;
-                    }
-                }
-                return q as *mut u8;
+                return p;
             }
-            let s = System.alloc(Layout::from_size_align_unchecked(new, l.align()));
-            if !s.is_null() {
-                std::ptr::copy_nonoverlapping(p, s, new);
-                e.store(GONE, Ordering::Release);
-                munmap(p as *mut c_void, mapped_len(l.size()));
+            if new >= BIG && mremap(p as *mut c_void, old_len, new_len, 0) as *mut u8 == p {
+                return p;
             }
-            return s;
+            // Moved by hand: a new block, recorded or `System`'s, and the old
+            // one given back only once the copy is made. A null leaves the old
+            // block as it was, as `realloc` must.
+            let q = match (new >= BIG).then(|| map(new)).flatten() {
+                Some(q) => q,
+                None => System.alloc(Layout::from_size_align_unchecked(new, l.align())),
+            };
+            if !q.is_null() {
+                std::ptr::copy_nonoverlapping(p, q, l.size().min(new));
+                unmap(e, p, old_len);
+            }
+            return q;
         }
         let nl = Layout::from_size_align_unchecked(new, l.align());
         if wanted(&nl) {
@@ -257,5 +277,27 @@ mod tests {
         assert_eq!(unsafe { *t.add(999) }, 9);
         unsafe { a.dealloc(t, Layout::from_size_align(BIG * 2, 8).unwrap()) };
         assert!(find(t as usize).is_none());
+        // a growth nothing can give: null, and the block stays as it was
+        // (recorded, its contents kept), as `realloc` must leave it
+        let l4 = Layout::from_size_align(BIG * 4, 8).unwrap();
+        let u = unsafe { a.alloc(l4) };
+        assert!(find(u as usize).is_some());
+        unsafe { u.write_bytes(5, l4.size()) };
+        let huge = (isize::MAX as usize / 2) & !(PAGE - 1);
+        assert!(unsafe { a.realloc(u, l4, huge) }.is_null());
+        assert!(find(u as usize).is_some(), "still recorded");
+        assert_eq!(unsafe { *u.add(l4.size() - 1) }, 5, "still there");
+        // shrunk within its mapping: in place, the tail given back
+        let v = unsafe { a.realloc(u, l4, BIG * 2) };
+        assert_eq!(v, u);
+        assert_eq!(unsafe { *v.add(BIG * 2 - 1) }, 5);
+        let maps = MAPS.load(Ordering::Relaxed);
+        unsafe { a.dealloc(v, Layout::from_size_align(BIG * 2, 8).unwrap()) };
+        assert!(find(v as usize).is_none());
+        assert_eq!(
+            MAPS.load(Ordering::Relaxed),
+            maps - 1,
+            "the mapping count follows"
+        );
     }
 }
