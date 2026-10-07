@@ -2072,11 +2072,13 @@ impl Observer for Obs {
                 .and_then(|p| p.end_ckpt)
                 .filter(|o| pending.contains(o));
             let old = page.and_then(|p| p.ckpt).filter(|o| pending.contains(o));
-            if g.output_active && g.layer().output_end && old_end.is_some() {
+            if g.output_active && g.layer().output_end && old_end.is_some() && old.is_some() {
                 // Inside the output routine, with the old run's checkpoint
                 // at its end: the test waits for this run's there
                 // (`Point::OutputEnd`), where `\ShipoutBox` and the rest of
                 // the routine's group are given back as both runs had them.
+                // (Only where the old page's own checkpoint is retained too:
+                // the tests stay where retention put them, `thin`.)
                 self.deferred_test = Some(j);
             } else if let Some(old) = old {
                 if let Some(a) = self.page_test(g, j, &rec, old) {
