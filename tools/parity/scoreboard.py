@@ -859,6 +859,20 @@ def load_stages(path=STAGES_FILE):
     return _read_json(path)["stages"]
 
 
+def app_parity_state(stage):
+    """The stage's app-parity rows (app-parity-rows.json, plan §4.4), or None when it has none.
+
+    From the file alone: every gating row names its tests and every "different" row is
+    ruled. That the tests pass and are not skipped is mac-app's and the host leg's
+    `app_parity_rows.py check-log`, on every run."""
+    if not stage:
+        return None
+    sys.path.insert(0, HERE)
+    import app_parity_rows
+    state, why = app_parity_rows.stage_state(app_parity_rows.load(), stage)
+    return {"state": state, "why": why}
+
+
 def gated_stages(tier, metric, stages):
     out = []
     for st in stages:
@@ -1171,6 +1185,7 @@ def build(sources, shas=None, sample_note=None, stages=None, host_label=None, na
                 and not sample_note else "not met"
         stage_rows.append({"id": st["id"], "name": st["name"], "status": st["status"],
                            "scoreboard_gate": g, "gate_state": gate,
+                           "app_parity": app_parity_state(st.get("app_parity_gate")),
                            "other_preconditions": st.get("other_preconditions")})
     return {"schema": SCHEMA, "host_label": host_label, "sample_note": sample_note,
             "oracle": oracle_key(oracle),
@@ -1276,13 +1291,15 @@ def render_md(board, title="P5 scoreboard: new engine vs v1, pdflatex as the ora
         out += ["## Denominators and notes", ""] + notes + [""]
     out += ["## Retirement stages (#1236)", "",
             "Only the scoreboard part of each precondition is evaluated here; the rest is listed.", "",
-            "| stage | name | recorded status | scoreboard gate | gate | other preconditions |",
-            "|---|---|---|---|---|---|"]
+            "| stage | name | recorded status | scoreboard gate | gate | app parity (§4.4) | other preconditions |",
+            "|---|---|---|---|---|---|---|"]
     for s in board["retirement"]:
         g = s["scoreboard_gate"]
         gs = "every row" if g == "all" else (", ".join(g) if g else "—")
-        out.append("| %s | %s | %s | %s | %s | %s |" % (s["id"], s["name"], s["status"], gs,
-                                                    s["gate_state"], s["other_preconditions"] or "—"))
+        ap = s.get("app_parity")
+        aps = "—" if not ap else ap["state"] + "".join("; " + w for w in ap["why"])
+        out.append("| %s | %s | %s | %s | %s | %s | %s |" % (s["id"], s["name"], s["status"], gs,
+                                                         s["gate_state"], aps, s["other_preconditions"] or "—"))
     return "\n".join(out) + "\n"
 
 

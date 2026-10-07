@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # gates.sh [GATE...]: the engine gates a lane runs before landing, on a Linux runner with TeX Live
 # 2026 (the NixOS PC; first written for lane P4-FINISH). Engine NAME "gates" under INCR_BENCH_DIR.   default: build parity lockstep trip etrip drift positions tests sound-a
-#                           sound-budget sound-budget-d sound-timed sound-vol sound-lookup sound-lines span sound-c sound-d
+#                           sound-budget sound-budget-d sound-timed sound-vol sound-lookup sound-lines span readers sound-c sound-d
 #                           sound-book gate
 #   build      release engine, display-list crate, web2rust; the pdflatex format; the documents
 #   parity     P-T1/P-T2 on the parity fixtures (tools/parity, --pt on)
@@ -22,11 +22,16 @@
 #              checkpoint every 0.2 ms; 8 interleaved with letters and sentences
 #   span       display-list source spans after each edit against a from-scratch host (dlspan.py), letters
 #              and sentences, then letters with the line kinds
+#   readers    readers.py: a program polling main.pdf/.aux/.log during typing sees no hole, no more
+#              complete-looking but wrong PDFs than main (0.5 %), and the opening compile's files at the end
 #   sound-c    soundness: 20 structural edits, fixtures + refs-30/120 + full-100
 #   sound-d    soundness: 12 interleaved (interrupted) edits
 #   sound-book soundness: 8 single-character edits + 4 sentences (+ reverts) on the owner's
 #              1,072-page book.tex (copied to $B/src-book/book.tex beforehand)
 #   gate       scripts/gate.sh pr
+# Lanes run the sweeps (sound-*, span, readers) on GitHub-hosted runners instead:
+# `gh workflow run sweeps.yml -f ref=<branch>` (sweeps.py holds the same runs, sharded; change both
+# together). The NixOS PC is for timing and latency measurements only (README.md).
 # The checkout is this script's (on NixOS it needs PR #1232's rpath fix for libstdc++).
 # Raw output: $R. Every engine run has a time limit (incr_bench.py, soundness.py, timeout(1)).
 #
@@ -61,7 +66,7 @@ trials() { local n=$(( ($1 * ${SWEEP_SCALE_PCT:-100} + 99) / 100 )); echo $(( n 
 cd $W
 echo "engine $(git rev-parse --short HEAD) ($(git log -1 --format=%s | head -c 80)); $(uname -srm); start $(date -u +%FT%TZ) $(uptime)" >> $R/environment.txt
 export FLASHTEX_VERIFY_JUMP=1 FLASHTEX_VERIFY_OLDCACHE=1 FLASHTEX_VERIFY_PREPARED=1 FLASHTEX_VERIFY_RELOC=1
-for g in ${@:-build parity lockstep trip etrip drift positions tests sound-a sound-budget sound-budget-d sound-timed sound-vol sound-lookup sound-lines span sound-c sound-d sound-book gate}; do
+for g in ${@:-build parity lockstep trip etrip drift positions tests sound-a sound-budget sound-budget-d sound-timed sound-vol sound-lookup sound-lines span readers sound-c sound-d sound-book gate}; do
   echo "== $g $(date -u +%T) $(uptime)" >> $R/environment.txt
   case $g in
     build)
@@ -186,6 +191,13 @@ for g in ${@:-build parity lockstep trip etrip drift positions tests sound-a sou
       wait
       python3 -c "import json,sys; s=[json.loads(l) for l in open(sys.argv[1]) if '\"summary\"' in l]; [print(x) for x in s]; bad=sum(x['line_bad']+x['col_bad']+x['glyph_count_bad'] for x in s); print('span: %d runs, %d edits, %d glyphs, %d wrong' % (len(s), sum(x['edits'] for x in s), sum(x['glyphs'] for x in s), bad)); sys.exit(1 if bad or len(s) < 13 else 0)" $R/span.jsonl > $R/span.txt 2>&1
       echo "span exit $?" >> $R/span.txt ;;
+    readers)
+      # what a program reading main.pdf, .aux and .log while the host types sees (readers.py, the
+      # #1613 review's probe): no zero-filled hole, the final files the opening compile's, and
+      # files that look complete but are not (eof-bad) no more often than main's
+      rm -f $R/readers.jsonl
+      timeout 7200 python3 $S/readers.py $D $R/readers > $R/readers.txt 2>&1
+      echo "readers exit $?" >> $R/readers.txt ;;
     sound-c)
       PYTHONHASHSEED=0 timeout 36000 python3 $S/soundness.py gates -j $J --trials $(trials 20) --dir $B/sound-c --out $R/soundness-c.jsonl \
         --kinds sentence,section,label,ref,cite,footnote,unlabel,unsection \

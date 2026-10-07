@@ -321,6 +321,10 @@ fn rewound_until(
 ) -> Option<Vec<u64>> {
     let mut buf = vec![0u64; cs.len() * CHUNK_WORDS];
     for (i, &c) in cs.iter().enumerate() {
+        // (the copy is tens of MB on a 1,000-page document: asked here too)
+        if i % STOP_CHUNKS == STOP_CHUNKS - 1 && stop() {
+            return None;
+        }
         // SAFETY: `start` gives a whole chunk.
         let src = unsafe { std::slice::from_raw_parts(start(c), CHUNK_WORDS) };
         buf[i * CHUNK_WORDS..(i + 1) * CHUNK_WORDS].copy_from_slice(src);
@@ -362,6 +366,11 @@ fn rewound_until(
 
 /// Logs between two questions to `rewound_until`'s `stop` (about 0.3 ms).
 const STOP_LOGS: usize = 64;
+
+/// Chunks copied between two questions to a `stop` (256 KB, tens of µs;
+/// lane P4-TYPING-200WPM: `prepare_restore` held a keystroke 42 M cycles in
+/// its copies, which asked nothing).
+const STOP_CHUNKS: usize = 256;
 
 /// `older` then `newer`, two adjacent sealed logs, as one: the state at
 /// `older`'s checkpoint from the state after `newer`'s. Where both hold a
@@ -796,7 +805,11 @@ impl Core {
         let mut mark = std::mem::take(&mut self.mark);
         mark.fill(0);
         let mut cs: Vec<u32> = Vec::new();
-        for log in &self.logs[k..] {
+        for (n, log) in self.logs[k..].iter().enumerate() {
+            if n % STOP_LOGS == STOP_LOGS - 1 && stop() {
+                self.mark = mark;
+                return false;
+            }
             for c in log.chunk_ids() {
                 if !bit(&mark, c as usize) {
                     set_bit(&mut mark, c as usize);
@@ -811,7 +824,9 @@ impl Core {
         let Some(buf) = rewound_until(self.nchunks, &cs, &live, &self.logs[k..], stop) else {
             return false;
         };
-        let pre = self.pre_redo(&cs);
+        let Some(pre) = self.pre_redo_until(&cs, stop) else {
+            return false;
+        };
         self.prepared = Some(Prepared {
             id,
             ids: self.ids.clone(),
@@ -821,6 +836,24 @@ impl Core {
             pre,
         });
         true
+    }
+
+    /// `pre_redo`, asking `stop` every `STOP_CHUNKS` chunks: `None` (the
+    /// copies given back) when it said to stop.
+    fn pre_redo_until(
+        &mut self,
+        cs: &[u32],
+        stop: &mut dyn FnMut() -> bool,
+    ) -> Option<Vec<ChunkPtr>> {
+        let mut pre = Vec::with_capacity(cs.len());
+        for (i, ch) in cs.chunks(STOP_CHUNKS).enumerate() {
+            if i > 0 && stop() {
+                self.give_pre(pre);
+                return None;
+            }
+            pre.extend(self.pre_redo(ch));
+        }
+        Some(pre)
     }
 
     /// `Prepared::pre` for chunks `cs`: a copy of each live chunk the
@@ -2716,6 +2749,29 @@ mod tests {
         let _ = extra;
         // stopped
         assert!(!a.prepare_restore(ids[2], &mut || true) || ids.len() < 64);
+        // stopped inside the copies (fewer logs than one `STOP_LOGS` but more
+        // chunks than one `STOP_CHUNKS`: P4-TYPING-200WPM), at each question
+        // in turn: nothing prepared, every slab chunk given back, and the
+        // next restore is the plain one
+        let live0 = a.core().slab.live;
+        for n in 1..6 {
+            let mut asked = 0;
+            assert!(!a.prepare_restore(ids[0], &mut || {
+                asked += 1;
+                asked >= n
+            }));
+            assert!(a.core().prepared.is_none());
+            assert_eq!(
+                a.core().slab.live,
+                live0,
+                "the redo made ahead is given back ({n})"
+            );
+        }
+        let end = arr.to_vec();
+        let br = a.restore_branch(ids[0]).unwrap();
+        assert!(arr[..] == copies[0][..], "a plain restore after the stops");
+        a.converge(br, ids[0]).unwrap();
+        assert!(arr[..] == end[..]);
     }
 
     /// A reattach leaves a prepared restore to its target (LIVE-30MS): the
