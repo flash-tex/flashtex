@@ -112,6 +112,27 @@
 % and \csname's own lookup, so the pair changes nothing here. An undelimited
 % parameter never reaches the loop, so its cost is unchanged.
 %
+% [7] macro_call (section 399): a braced argument's tokens, read in place.
+%
+% Section 399 stores the tokens of a braced argument: each round stores
+% cur_tok, calls get_token, aborts on a \par of a macro that is not \long,
+% counts unbalance up for a left brace and down for a right brace, and
+% leaves the loop (done1) when unbalance reaches 0. Here, after the store and
+% while no intrinsic is being recorded, the following tokens of a token list
+% that [3]'s fast path would take (as in [5]) are read in place, except
+% par_token and a right brace that would bring unbalance to 0: loc moves
+% on; a control sequence's read-set hook runs as in [3]; a left brace steps
+% align_state up (as get_next does, section 357) and unbalance up, a right
+% brace steps both down (unbalance stays positive); and the token is stored
+% (fast_store_new_token, the store the next round would make). That is what
+% the rounds of section 399 do for these tokens: get_token reads the token
+% (cur_tok = tt), the \par test fails, the brace test steps unbalance and
+% does not leave, and the next round stores cur_tok. Any other token, and
+% the end of a list, goes to get_token, as before, with unbalance and
+% align_state as the skipped rounds left them. cur_cs, cur_cmd, cur_chr
+% and cur_tok are not stored for a token read in place: nothing reads them
+% before get_token sets them, for the reasons given in [5].
+%
 % [6] scan_toks (section 477): a body's tokens, read in place.
 %
 % The same for the body of a definition or a token list that is not
@@ -248,7 +269,7 @@ procedure macro_call; {invokes a user-defined control sequence}
 label exit, continue, done, done1, found;
 @y
 procedure macro_call; {invokes a user-defined control sequence}
-label exit, continue, done, done1, found, found1;
+label exit, continue, done, done1, done2, found, found1;
 @z
 
 @x [25] m.389 l.9341 - macro_call: a delimited argument's tokens, read in place [5]
@@ -310,6 +331,40 @@ if (info(r)>end_match_token)or(info(r)<match_token) then
     end;
   goto continue;
   end;
+@z
+
+@x [25] m.399 l.9522 - macro_call: a braced argument's tokens, read in place [7]
+loop@+  begin fast_store_new_token(cur_tok); get_token;
+@y
+loop@+  begin fast_store_new_token(cur_tok);
+  if not intr_rec_on then
+    loop@+  begin if state<>token_list then goto done2;
+      if loc=null then goto done2;
+      tt:=info(loc);
+      if tt>=cs_token_flag then
+        begin if tt=par_token then goto done2;
+        c:=eq_type(tt-cs_token_flag);
+        if c>=outer_call then goto done2;
+        if (c<=car_ret)and(c>=tab_mark)and(align_state=0) then goto done2;
+        loc:=link(loc);
+        if rs_on then if not rs_seen[tt-cs_token_flag] then
+          flashtex_cs_read(tt-cs_token_flag);
+        end
+      else  begin c:=tt div @'400;
+        if c=out_param then goto done2;
+        if (c=tab_mark)and(align_state=0) then goto done2;
+        if c=left_brace then
+          begin loc:=link(loc); incr(align_state); incr(unbalance);
+          end
+        else if c=right_brace then
+          begin if unbalance=1 then goto done2;
+          loc:=link(loc); decr(align_state); decr(unbalance);
+          end
+        else loc:=link(loc);
+        end;
+      fast_store_new_token(tt);
+      end;
+  done2: get_token;
 @z
 
 @x [27] m.473 l.11456 - scan_toks: a body's tokens, read in place [6]

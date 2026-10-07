@@ -2983,23 +2983,106 @@ impl Globals {
                                                 unbalance = 1i32;
                                                 while true {
                                                     {
-                                                        {
+                                                        'l_done2_f: {
                                                             {
-                                                                q = self.avail;
-                                                                if (q == null) {
-                                                                    q = self.get_avail();
-                                                                } else {
+                                                                {
+                                                                    q = self.avail;
+                                                                    if (q == null) {
+                                                                        q = self.get_avail();
+                                                                    } else {
+                                                                        {
+                                                                            self.avail = __av_mem[crate::ix::U((q) as usize)].hh().rh();
+                                                                            __av_mem[crate::ix::U((q) as usize)].set_hh_rh(null);
+                                                                            self.dyn_used = (self.dyn_used).wrapping_add(1i32);
+                                                                            self.dl_new_node(q);
+                                                                        }
+                                                                    }
+                                                                }
+                                                                __av_mem[crate::ix::U((p) as usize)].set_hh_rh(q);
+                                                                { let __v260 = self.cur_tok; __av_mem[crate::ix::U((q) as usize)].set_hh_lh(__v260); }
+                                                                p = q;
+                                                            }
+                                                            if (!self.intr_rec_on) {
+                                                                while true {
                                                                     {
-                                                                        self.avail = __av_mem[crate::ix::U((q) as usize)].hh().rh();
-                                                                        __av_mem[crate::ix::U((q) as usize)].set_hh_rh(null);
-                                                                        self.dyn_used = (self.dyn_used).wrapping_add(1i32);
-                                                                        self.dl_new_node(q);
+                                                                        if (self.cur_input.state_field != token_list) {
+                                                                            break 'l_done2_f;
+                                                                        }
+                                                                        if (self.cur_input.loc_field == null) {
+                                                                            break 'l_done2_f;
+                                                                        }
+                                                                        tt = __av_mem[crate::ix::U((self.cur_input.loc_field) as usize)].hh().lh();
+                                                                        if (tt >= cs_token_flag) {
+                                                                            {
+                                                                                if (tt == self.par_token) {
+                                                                                    break 'l_done2_f;
+                                                                                }
+                                                                                c = __av_eqtb[crate::ix::U((((tt).wrapping_sub(4095i32)) - 1) as usize)].hh().b0();
+                                                                                if (c >= outer_call) {
+                                                                                    break 'l_done2_f;
+                                                                                }
+                                                                                if (((c <= car_ret) && (c >= tab_mark)) && (self.align_state == 0i32)) {
+                                                                                    break 'l_done2_f;
+                                                                                }
+                                                                                self.cur_input.loc_field = __av_mem[crate::ix::U((self.cur_input.loc_field) as usize)].hh().rh();
+                                                                                if self.rs_on {
+                                                                                    if (!self.rs_seen[crate::ix::U(((tt).wrapping_sub(4095i32)) as usize)]) {
+                                                                                        self.flashtex_cs_read((tt).wrapping_sub(4095i32));
+                                                                                    }
+                                                                                }
+                                                                            }
+                                                                        } else {
+                                                                            {
+                                                                                c = (tt / 256i32);
+                                                                                if (c == out_param) {
+                                                                                    break 'l_done2_f;
+                                                                                }
+                                                                                if ((c == tab_mark) && (self.align_state == 0i32)) {
+                                                                                    break 'l_done2_f;
+                                                                                }
+                                                                                if (c == left_brace) {
+                                                                                    {
+                                                                                        self.cur_input.loc_field = __av_mem[crate::ix::U((self.cur_input.loc_field) as usize)].hh().rh();
+                                                                                        self.align_state = (self.align_state).wrapping_add(1i32);
+                                                                                        unbalance = (unbalance).wrapping_add(1i32);
+                                                                                    }
+                                                                                } else {
+                                                                                    if (c == right_brace) {
+                                                                                        {
+                                                                                            if (unbalance == 1i32) {
+                                                                                                break 'l_done2_f;
+                                                                                            }
+                                                                                            self.cur_input.loc_field = __av_mem[crate::ix::U((self.cur_input.loc_field) as usize)].hh().rh();
+                                                                                            self.align_state = (self.align_state).wrapping_sub(1i32);
+                                                                                            unbalance = (unbalance).wrapping_sub(1i32);
+                                                                                        }
+                                                                                    } else {
+                                                                                        self.cur_input.loc_field = __av_mem[crate::ix::U((self.cur_input.loc_field) as usize)].hh().rh();
+                                                                                    }
+                                                                                }
+                                                                            }
+                                                                        }
+                                                                        {
+                                                                            {
+                                                                                q = self.avail;
+                                                                                if (q == null) {
+                                                                                    q = self.get_avail();
+                                                                                } else {
+                                                                                    {
+                                                                                        self.avail = __av_mem[crate::ix::U((q) as usize)].hh().rh();
+                                                                                        __av_mem[crate::ix::U((q) as usize)].set_hh_rh(null);
+                                                                                        self.dyn_used = (self.dyn_used).wrapping_add(1i32);
+                                                                                        self.dl_new_node(q);
+                                                                                    }
+                                                                                }
+                                                                            }
+                                                                            __av_mem[crate::ix::U((p) as usize)].set_hh_rh(q);
+                                                                            __av_mem[crate::ix::U((q) as usize)].set_hh_lh(tt);
+                                                                            p = q;
+                                                                        }
                                                                     }
                                                                 }
                                                             }
-                                                            __av_mem[crate::ix::U((p) as usize)].set_hh_rh(q);
-                                                            { let __v260 = self.cur_tok; __av_mem[crate::ix::U((q) as usize)].set_hh_lh(__v260); }
-                                                            p = q;
                                                         }
                                                         self.get_token();
                                                         if (self.cur_tok == self.par_token) {
