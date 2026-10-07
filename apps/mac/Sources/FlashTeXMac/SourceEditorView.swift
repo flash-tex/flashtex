@@ -931,10 +931,34 @@ struct SourceEditorView: NSViewRepresentable {
             }
             func lineOf(_ loc: Int) -> Int { table.line(at: min(max(0, loc), length - 1)) }
             gutter.foldedLines = Set(tv.folds.foldedLineStarts.map(lineOf))
-            if rescan || tv.folds.cacheIsWarm {
+            if tv.folds.cacheIsWarm {
+                // Cached: no scan (and no copy of the text).
+                gutter.foldableLines = Set(tv.folds.foldableLineStarts(in: tv.textStorage?.mutableString ?? NSMutableString()).map(lineOf))
+            } else if rescan, length > Self.foldScanOffMainUTF16 {
+                // A long document's whole-buffer scan (every environment pair
+                // and the outline) runs off the main thread: it ran here when
+                // typing paused, holding the next key (APP-EDITOR-INSTANT).
+                // Installed only if no edit came meanwhile.
+                let generation = tv.folds.currentGeneration
+                let text = tv.string // an immutable copy for the other thread
+                DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+                    let regions = EditorFolding.regions(in: text as NSString)
+                    DispatchQueue.main.async {
+                        MainActor.assumeIsolated {
+                            guard let self, let tv = self.textView as? CompletingTextView,
+                                  tv.folds.currentGeneration == generation else { return }
+                            tv.folds.replaceCache(regions: regions)
+                            self.refreshFoldGutter(rescan: false)
+                        }
+                    }
+                }
+            } else if rescan {
                 gutter.foldableLines = Set(tv.folds.foldableLineStarts(in: tv.string as NSString).map(lineOf))
             }
         }
+
+        /// Above this many UTF-16 units the fold rescan runs off the main thread.
+        static let foldScanOffMainUTF16 = 100_000
 
         /// Debounced whole-buffer fold-triangle rescan. Also called from
         /// `updateNSView` on a text reset: that path posts no `textDidChange`.
