@@ -398,6 +398,21 @@ fn fresh_version() -> i32 {
     NEXT.fetch_add(1, Ordering::Relaxed)
 }
 
+thread_local! {
+    /// Where BOX-MEMO may record (replays are allowed everywhere): `None`
+    /// (the command line) anywhere; in the host, only in an edit's window,
+    /// from the engine's resumption to the edited page's shipout -- the
+    /// calls the next keystroke runs again. A cold pass's calls never hit
+    /// (pgf's picture serial is in their key, BOX-MEMO.md §9), so
+    /// recording them would only cost.
+    static WINDOW: std::cell::Cell<Option<bool>> = const { std::cell::Cell::new(None) };
+}
+
+/// The host: an edit's window opens (`true`) or closes.
+pub fn record_window(open: bool) {
+    WINDOW.with(|w| w.set(Some(open)));
+}
+
 /// The engine restored a checkpoint (`Globals::fill_scalars`): a recording
 /// in progress, in this timeline or in the one left, cannot continue.
 pub fn after_restore(g: &mut Globals) {
@@ -926,6 +941,9 @@ impl Globals {
             }
         }
         self.bm_miss(why);
+        if WINDOW.with(|w| w.get()) == Some(false) {
+            return;
+        }
         let refused = ST.with(|s| s.borrow().aborts.get(&cs).copied().unwrap_or(0) >= ABORT_BUDGET);
         if refused {
             return;
@@ -952,7 +970,7 @@ impl Globals {
         verify: Option<usize>,
     ) {
         let start = self.bm_frame();
-        let mut rec = Rec {
+        let rec = Rec {
             cs,
             base: self.input_ptr,
             scanner,

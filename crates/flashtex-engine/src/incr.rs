@@ -1943,6 +1943,7 @@ impl Observer for Obs {
         }
         if self.edited.is_none() && !unchanged {
             self.edited = Some((j, self.page_s, cpu));
+            crate::boxmemo::record_window(false);
             let now = crate::os::thread_counts();
             if self.first_incremental {
                 crate::os::perf_mark(false);
@@ -3923,6 +3924,7 @@ impl Session {
         system::record_reads_into(Some(ReadLog::keeping_content()));
         system::set_command_line(vec![self.first_line.clone()]);
         let mut g = Globals::new();
+        crate::boxmemo::record_window(false);
         g.arm_begin_document();
         g.layer().want_aux_point = self.opts.aux_point;
         g.checkpoint_every_shipout(true);
@@ -4169,6 +4171,7 @@ impl Session {
         let mid = !self.pages.iter().any(|p| p.ckpt == Some(r));
         let g = self.g.as_mut().unwrap();
         obs.instr_go = crate::os::thread_counts();
+        crate::boxmemo::record_window(obs.first_incremental);
         if obs.first_incremental {
             crate::os::perf_mark(true);
             crate::macroprof::window_open(g);
