@@ -1107,6 +1107,22 @@ impl Globals {
     /// that holds it (the one `scan_glue` just read, which took a reference
     /// to it), or `None` when it is not exactly one.
     fn bm_glue_source(&self, e: i32) -> Option<Val> {
+        // The register `scan_glue` just read is still the current token's
+        // (`\skipdef`'d: `assign_glue` with its location; e-TeX's sparse one:
+        // `register` with its element).
+        let (c, chr) = (self.cur_cmd, self.cur_chr);
+        if (c == k::assign_glue || c == k::assign_mu_glue)
+            && (GLUE_BASE..LOCAL_BASE).contains(&chr)
+            && self.bm_eq(chr).hh().rh() == e
+        {
+            return Some(Val::GlueFrom(chr, 0));
+        }
+        if c == REGISTER && chr > LO_MEM_STAT_MAX && self.bm_link(chr + 1) == e {
+            let t = self.mem[chr as usize].hh().b0() / 16;
+            if t == GLUE_VAL || t == MU_VAL {
+                return Some(Val::GlueFrom(-t, self.bm_sa_number(chr)));
+            }
+        }
         let mut found: Vec<Val> = vec![];
         for p in GLUE_BASE..LOCAL_BASE {
             if self.bm_eq(p).hh().rh() == e {
