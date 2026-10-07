@@ -259,22 +259,47 @@ inside the call is MACRO-REPLAY revision 5's §11.5 and is not done here.
 
 ## 7. Verification
 
-`FLASHTEX_BOXMEMO=verify` runs both paths for every call the guard admits, the way
-`intrinsics_verify.rs` does:
-1. checkpoint C;
-2. run the normal path, observed by a verifying recording (any refusal is a difference);
-3. capture N;
-4. restore C and replay;
-5. compare the replay's state I with N.
+`FLASHTEX_BOXMEMO=verify` runs both paths for every call the guard admits and compares the whole
+engine state. As built (`src/boxmemo.rs` `bm_verify_full`):
 
-*As prototyped:* a call the guard admits runs on the normal path under a fresh recording, which
-must not be abandoned. Its operation log and `last_badness` are then compared with the entry's.
-With the guard holding, equal logs replayed from an equal state leave equal `eqtb`, save stack and
-sparse registers; §4.2's end checks cover the rest. The full word-space diff of D9's verifier
-(`intrinsics_verify.rs`) is the gate's next step: it also catches a write the model does not
-expect.
+1. Where the call is admitted, take a checkpoint C.
+2. Run the normal path under a verifying recording. If the recording is abandoned, the guard let
+   through an impure call: that counts as a difference.
+3. When the body is used up (`big_switch`), the op-log check runs: the normal path's operation log
+   and `last_badness` against the entry's. Then the used-up input levels are popped and a
+   checkpoint N is taken.
+4. Restore C, which keeps N in the pending branch. Replay, and do what `macro_call`'s exit did on
+   the normal path (`scanner_status`, `warning_index`).
+5. Compare the replay's state I with N using **the convergence test's own comparison**
+   (`incr::same_state`, which is `same_words` with the structural comparison `iso.rs`):
+   - every word of the word space either path wrote;
+   - dead words and free cells aside;
+   - nodes allocated in other places compared structurally;
+   - pdfTeX's C-part state.
+6. The run goes on from I. C is dropped.
 
-`FLASHTEX_BOXMEMO_VERIFY_FAIL=1` makes any difference exit 3.
+Before comparing, the replay's state takes the normal path's values of what each command writes
+before it reads. Each item is cited:
+- D9's scratch list: the scanner's result registers, `def_ref`, `long_state`, the
+  pseudo-printing state, `dig`, `trick_buf`, `pstack`, and `big_switch`'s two flags.
+- `remainder`. `x_over_n` and `xn_over_d` set it (tex.web §106, §107), and it is read only right
+  after (§458, §461, §716, §717).
+- `hpack` and `vpack`'s `total_stretch` and `total_shrink`. Each pack zeroes all four orders first
+  (§650, §668).
+- `link(hold_head)`, made null on both paths. The alignment preamble scan (§779–§784),
+  `init_span` (§789), `fin_col` (§808), `reconstitute` (§905) and the hyphenation loop
+  (§913–§918) each set it before reading it. Between two commands it is a dangling pointer to cells
+  either path may have reused. The convergence test already treats `temp_head` and `backup_head`
+  the same way.
+
+Each of these was found by the verifier as a false positive on *Infinite Descent*. Once covered, 0
+differences remained.
+
+- **In the host,** the verifier's restore replaces the edit's pending branch, so a compile with a
+  verified call does not converge. That is acceptable in a gate mode, where the output must still
+  equal a full run's.
+- `FLASHTEX_BOXMEMO_VERIFY_FAIL=1` exits with status 3 at the first difference. The sweeps run with
+  both settings (`tools/incr-bench/sweeps.py`).
 
 ## 8. Gates (adopted unless the review says otherwise)
 
