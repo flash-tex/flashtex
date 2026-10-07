@@ -25,8 +25,21 @@ fn host() -> Option<PathBuf> {
 
 /// A skipped test says so where it is seen: the test harness captures
 /// `eprintln!` of a passing test, but not a direct write to stderr.
+///
+/// A run that must have both sets `FLASHTEX_REQUIRE_TEXLIVE=1`, as the
+/// engine's TeX Live tests read it (crates/flashtex-engine/tests/common):
+/// then a missing host or TeX Live fails the test instead, so the leg that
+/// sets it (ci.yml's `rust workspace` on a self-hosted Mac, app-parity row
+/// D5) proves these tests ran.
 fn skip(why: &str) {
     use std::io::Write;
+    if std::env::var_os("FLASHTEX_REQUIRE_TEXLIVE").is_some_and(|v| v == "1") {
+        panic!(
+            "{why}, and FLASHTEX_REQUIRE_TEXLIVE=1 says this run must have both \
+             (cargo build --release -p flashtex-engine --bin flashtex-host, or \
+             $FLASHTEX_HOST; pdflatex on PATH or in /Library/TeX/texbin)"
+        );
+    }
     let _ = writeln!(std::io::stderr(), "SKIPPED {}: {why} (build it: cargo build --release -p flashtex-engine --bin flashtex-host)", std::thread::current().name().unwrap_or("?"));
 }
 

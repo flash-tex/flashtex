@@ -963,6 +963,51 @@ pub fn rebuild_seen(g: &mut Globals) {
     }
 }
 
+/// `rebuild_seen`, giving the bytes of `rs_seen` it changed from what the
+/// state held (slot, value): the restore of one checkpoint changes the same
+/// bytes every time, so the session keeps them (`incr::SeenMemo`).
+pub fn rebuild_seen_diff(g: &mut Globals) -> Vec<(u32, u8)> {
+    let n = g.rs_seen.len();
+    let off = g
+        .arena
+        .regions
+        .iter()
+        .find(|r| r.name == "rs_seen")
+        .map(|r| r.off);
+    let Some(off) = off else { return vec![] };
+    let events = std::mem::take(&mut g.layer().rs.events);
+    let mut want = vec![0u8; n];
+    for e in &events {
+        if e.p > 0 && (e.p as usize) < n && name_key(g, e.p) == e.name {
+            want[e.p as usize] = 1;
+        }
+    }
+    g.layer().rs.events = events;
+    let diff: Vec<(u32, u8)> = g
+        .arena
+        .read(off, n)
+        .iter()
+        .zip(&want)
+        .enumerate()
+        .filter(|(_, (a, b))| a != b)
+        .map(|(i, (_, &b))| (i as u32, b))
+        .collect();
+    apply_seen_diff(g, &diff);
+    diff
+}
+
+/// Write bytes of `rs_seen` (`rebuild_seen_diff`'s).
+pub fn apply_seen_diff(g: &mut Globals, diff: &[(u32, u8)]) {
+    for &(p, v) in diff {
+        g.rs_seen[p as usize] = v != 0;
+    }
+}
+
+/// The read-set's events (`incr::SeenMemo` keys its rebuilds by them).
+pub fn events(g: &mut Globals) -> &[Event] {
+    &g.layer().rs.events
+}
+
 impl Globals {
     /// `get_next` read the meaning of `p` for the first time since the
     /// read-set began (`changes/readset.ch`).

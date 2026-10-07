@@ -540,6 +540,10 @@ fn rewound_until(
 ) -> Option<Vec<u64>> {
     let mut buf = vec![0u64; cs.len() * CHUNK_WORDS];
     for (i, &c) in cs.iter().enumerate() {
+        // (the copy is tens of MB on a 1,000-page document: asked here too)
+        if i % STOP_CHUNKS == STOP_CHUNKS - 1 && stop() {
+            return None;
+        }
         // SAFETY: `start` gives a whole chunk.
         let src = unsafe { std::slice::from_raw_parts(start(c), CHUNK_WORDS) };
         buf[i * CHUNK_WORDS..(i + 1) * CHUNK_WORDS].copy_from_slice(src);
@@ -581,6 +585,11 @@ fn rewound_until(
 
 /// Logs between two questions to `rewound_until`'s `stop` (about 0.3 ms).
 const STOP_LOGS: usize = 64;
+
+/// Chunks copied between two questions to a `stop` (256 KB, tens of µs;
+/// lane P4-TYPING-200WPM: `prepare_restore` held a keystroke 42 M cycles in
+/// its copies, which asked nothing).
+const STOP_CHUNKS: usize = 256;
 
 /// `older` then `newer`, two adjacent sealed logs, as one: the state at
 /// `older`'s checkpoint from the state after `newer`'s. Where both hold a
@@ -1055,7 +1064,11 @@ impl Core {
         let mut mark = std::mem::take(&mut self.mark);
         mark.fill(0);
         let mut cs: Vec<u32> = Vec::new();
-        for log in &self.logs[k..] {
+        for (n, log) in self.logs[k..].iter().enumerate() {
+            if n % STOP_LOGS == STOP_LOGS - 1 && stop() {
+                self.mark = mark;
+                return false;
+            }
             for c in log.chunk_ids() {
                 if !bit(&mark, c as usize) {
                     set_bit(&mut mark, c as usize);
@@ -1070,7 +1083,9 @@ impl Core {
         let Some(buf) = rewound_until(self.nchunks, &cs, &live, &self.logs[k..], stop) else {
             return false;
         };
-        let pre = self.pre_redo(&cs);
+        let Some(pre) = self.pre_redo_until(&cs, stop) else {
+            return false;
+        };
         self.prepared = Some(Prepared {
             id,
             ids: self.ids.clone(),
@@ -1080,6 +1095,24 @@ impl Core {
             pre,
         });
         true
+    }
+
+    /// `pre_redo`, asking `stop` every `STOP_CHUNKS` chunks: `None` (the
+    /// copies given back) when it said to stop.
+    fn pre_redo_until(
+        &mut self,
+        cs: &[u32],
+        stop: &mut dyn FnMut() -> bool,
+    ) -> Option<Vec<ChunkPtr>> {
+        let mut pre = Vec::with_capacity(cs.len());
+        for (i, ch) in cs.chunks(STOP_CHUNKS).enumerate() {
+            if i > 0 && stop() {
+                self.give_pre(pre);
+                return None;
+            }
+            pre.extend(self.pre_redo(ch));
+        }
+        Some(pre)
     }
 
     /// `Prepared::pre` for chunks `cs`: a copy of each live chunk the
@@ -1517,10 +1550,12 @@ impl Drop for Core {
 }
 
 /// Arrays that are not the engine's state, which `Arena::diff_branch`
-/// leaves out (the convergence test, DESIGN.md §5.3): the display list's
-/// side table (changes/displaylist.ch), source positions that nothing TeX
-/// computes reads. Only its chunks that hold nothing else are left out;
-/// `crate::incr`'s word comparison drops the rest of it. The convergence
+/// leaves out: the display list's side table (changes/displaylist.ch),
+/// source positions that nothing TeX computes reads. Only its chunks that
+/// hold nothing else are left out. The convergence test compares it node
+/// by node instead (`crate::iso`: a node still to be shipped keeps its
+/// position from the jump), rewinding only the chunks of live nodes
+/// ([`Arena::branch_old_chunks`]). The convergence
 /// jump adopts them like every other array ([`Arena::diff_branch_all`]):
 /// the side table must describe the nodes of the `mem` it adopts (left out,
 /// nodes live at the jump kept the new run's positions for the old run's
@@ -2143,6 +2178,91 @@ impl Arena {
         stop: &mut dyn FnMut() -> bool,
     ) -> Result<Option<ChunkDiff>, String> {
         self.diff_branch_inner(b, old, stop, false)
+    }
+
+    /// The chunks of region `name` that either run wrote since the restore
+    /// target of `b` (the old run up to its checkpoint `old`, the live run
+    /// since the restore), as a bitmap by chunk: every other chunk of the
+    /// region holds the same words in the old run's state at `old` as now.
+    pub fn branch_written(
+        &self,
+        b: &Branch,
+        old: CheckpointId,
+        name: &str,
+    ) -> Result<Vec<u64>, String> {
+        let core = self.core();
+        let r = *b.ids.first().ok_or("empty branch")?;
+        let kr = core
+            .index_of(r)
+            .ok_or_else(|| format!("restore target {r} is not in the live chain"))?;
+        let jj = b
+            .ids
+            .iter()
+            .position(|&x| x == old)
+            .ok_or_else(|| format!("checkpoint {old} is not in the detached run"))?;
+        let Some(reg) = self.regions.iter().find(|r| r.name == name) else {
+            return Ok(vec![]);
+        };
+        let (lo, hi) = (
+            reg.off / CHUNK_BYTES,
+            (reg.off + reg.bytes).div_ceil(CHUNK_BYTES),
+        );
+        let mut seen = vec![0u64; core.nchunks.div_ceil(64)];
+        for log in b.logs[..jj].iter().chain(&core.logs[kr..]) {
+            for c in log.chunk_ids() {
+                if (lo..hi).contains(&(c as usize)) {
+                    set_bit(&mut seen, c as usize);
+                }
+            }
+        }
+        Ok(seen)
+    }
+
+    /// The old run's value at its checkpoint `old` of each chunk of `cs`
+    /// (sorted, each written since the restore target: `branch_written`),
+    /// rewound only for those chunks: [`diff_branch`](Self::diff_branch)'s
+    /// rule for one chunk. `Ok(None)` when `stop` said to stop.
+    pub fn branch_old_chunks(
+        &self,
+        b: &Branch,
+        old: CheckpointId,
+        cs: &[u32],
+        stop: &mut dyn FnMut() -> bool,
+    ) -> Result<Option<HashMap<u32, Vec<u64>>>, String> {
+        let core = self.core();
+        let r = *b.ids.first().ok_or("empty branch")?;
+        let kr = core
+            .index_of(r)
+            .ok_or_else(|| format!("restore target {r} is not in the live chain"))?;
+        let jj = b
+            .ids
+            .iter()
+            .position(|&x| x == old)
+            .ok_or_else(|| format!("checkpoint {old} is not in the detached run"))?;
+        let want: std::collections::HashSet<u32> = cs.iter().copied().collect();
+        let mut redo_of: HashMap<u32, *const u64> = HashMap::new();
+        for &(c, p) in &b.redo {
+            if want.contains(&c) {
+                redo_of.insert(c, p as *const u64);
+            }
+        }
+        let (in_old, at_r): (Vec<u32>, Vec<u32>) = cs.iter().partition(|c| redo_of.contains_key(c));
+        let n = core.nchunks;
+        let Some(o) = rewound_until(n, &in_old, &|c| redo_of[&c], &b.logs[jj..], stop) else {
+            return Ok(None);
+        };
+        let live = |c: u32| core.chunk_ptr(c as usize) as *const u64;
+        let Some(a) = rewound_until(n, &at_r, &live, &core.logs[kr..], stop) else {
+            return Ok(None);
+        };
+        let mut out = HashMap::with_capacity(cs.len());
+        for (i, &c) in in_old.iter().enumerate() {
+            out.insert(c, o[i * CHUNK_WORDS..(i + 1) * CHUNK_WORDS].to_vec());
+        }
+        for (i, &c) in at_r.iter().enumerate() {
+            out.insert(c, a[i * CHUNK_WORDS..(i + 1) * CHUNK_WORDS].to_vec());
+        }
+        Ok(Some(out))
     }
 
     fn diff_branch_inner(
@@ -3168,6 +3288,29 @@ mod tests {
         let _ = extra;
         // stopped
         assert!(!a.prepare_restore(ids[2], &mut || true) || ids.len() < 64);
+        // stopped inside the copies (fewer logs than one `STOP_LOGS` but more
+        // chunks than one `STOP_CHUNKS`: P4-TYPING-200WPM), at each question
+        // in turn: nothing prepared, every slab chunk given back, and the
+        // next restore is the plain one
+        let live0 = a.core().slab.live;
+        for n in 1..6 {
+            let mut asked = 0;
+            assert!(!a.prepare_restore(ids[0], &mut || {
+                asked += 1;
+                asked >= n
+            }));
+            assert!(a.core().prepared.is_none());
+            assert_eq!(
+                a.core().slab.live,
+                live0,
+                "the redo made ahead is given back ({n})"
+            );
+        }
+        let end = arr.to_vec();
+        let br = a.restore_branch(ids[0]).unwrap();
+        assert!(arr[..] == copies[0][..], "a plain restore after the stops");
+        a.converge(br, ids[0]).unwrap();
+        assert!(arr[..] == end[..]);
     }
 
     /// A reattach leaves a prepared restore to its target (LIVE-30MS): the
