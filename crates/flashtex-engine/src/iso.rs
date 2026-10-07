@@ -2548,8 +2548,11 @@ impl<O: Space, N: Space> Iso<'_, O, N> {
 /// the old run's value of some of them (`Globals::pending_old_chunks`).
 pub struct SideOld<'a> {
     pub written: &'a [u64],
-    pub fetch: &'a mut dyn FnMut(&[u32]) -> Result<Option<HashMap<u32, Vec<u64>>>, String>,
+    pub fetch: &'a mut OldChunks<'a>,
 }
+
+/// The old run's chunks `cs` by chunk (`None`: stopped for newer work).
+pub type OldChunks<'a> = dyn FnMut(&[u32]) -> Result<Option<HashMap<u32, Vec<u64>>>, String> + 'a;
 
 /// The entry points (the walk's types are chosen here).
 impl<'a> Iso<'a, Old<'a>, Live<'a>> {
