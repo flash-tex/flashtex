@@ -280,7 +280,6 @@ struct Rec {
     absent: Vec<Vec<i32>>,
     voids: Vec<i32>,
     line_read: bool,
-    seen: HashSet<i32>,
     boxes: HashSet<i32>,
     /// Box registers assigned globally: each must be void when the call
     /// ends, and the replay makes it so (`\global\setbox` to void, at the
@@ -302,7 +301,18 @@ struct State {
     stats_dirty: u64,
 }
 
+/// The recording's hot state, outside `ST`'s `RefCell` borrow: the body's
+/// input level, and which control sequences it has looked at (`seen[p] ==
+/// stamp`), so that `get_next`'s hook costs a load and a compare.
+#[derive(Default)]
+struct Fast {
+    base: i32,
+    stamp: u32,
+    seen: Vec<u32>,
+}
+
 thread_local! {
+    static FAST: RefCell<Fast> = RefCell::new(Fast::default());
     static CONFIG: RefCell<Option<Config>> = const { RefCell::new(None) };
     static ST: RefCell<State> = RefCell::new(State::default());
 }
@@ -955,14 +965,25 @@ impl Globals {
             absent: vec![],
             voids: vec![],
             line_read: false,
-            seen: HashSet::new(),
             boxes: HashSet::new(),
             gboxes: vec![],
             ops: vec![],
             verify,
         };
         // the macro's own meaning is part of K1; mark it seen
-        rec.seen.insert(cs);
+        let base = self.input_ptr;
+        let size = (k::eqtb_top + 1) as usize;
+        FAST.with(|f| {
+            let mut f = f.borrow_mut();
+            f.base = base;
+            f.stamp = f.stamp.wrapping_add(1);
+            if f.stamp == 0 || f.seen.len() < size {
+                f.seen = vec![0; size];
+                f.stamp = 1;
+            }
+            let st = f.stamp;
+            f.seen[cs as usize] = st;
+        });
         ST.with(|s| {
             let mut s = s.borrow_mut();
             s.stats.recordings += 1;
@@ -1037,14 +1058,20 @@ impl Globals {
         if !Self::bm_is_cs(p) {
             return;
         }
-        let seen = self.bm_with_rec(|r| r.seen.contains(&p)).unwrap_or(true);
+        let seen = FAST.with(|f| {
+            let mut f = f.borrow_mut();
+            let st = f.stamp;
+            let e = &mut f.seen[p as usize];
+            let was = *e == st;
+            *e = st;
+            was
+        });
         if seen {
             return;
         }
         match self.bm_meaning(p) {
             Some(m) => {
                 self.bm_with_rec(|r| {
-                    r.seen.insert(p);
                     r.k3.push((p, m));
                 });
             }
@@ -1056,7 +1083,7 @@ impl Globals {
     #[cold]
     #[inline(never)]
     pub fn flashtex_bm_next(&mut self) {
-        let base = self.bm_with_rec(|r| r.base).unwrap_or(i32::MAX);
+        let base = FAST.with(|f| f.borrow().base);
         if self.input_ptr < base {
             return self.bm_abort("Level");
         }
