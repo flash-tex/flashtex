@@ -1926,6 +1926,47 @@ impl Globals {
         fail_now();
     }
 
+    /// Debugging a full-state difference: where the lists the message names
+    /// hang (the static heads, the box registers, the semantic nest).
+    fn bm_locate_debug(&self, msg: &str) {
+        let ptrs: Vec<i32> = msg
+            .split(|c: char| !c.is_ascii_digit())
+            .filter_map(|t| t.parse::<i32>().ok())
+            .filter(|&p| p > 1000)
+            .collect();
+        let heads = [
+            ("contrib_head", k::contrib_head),
+            ("page_head", k::page_head),
+            ("temp_head", k::temp_head),
+            ("hold_head", k::hold_head),
+            ("adjust_head", k::adjust_head),
+            ("align_head", k::align_head),
+            ("backup_head", k::backup_head),
+        ];
+        let mut out = vec![];
+        for (n, h) in heads {
+            out.push(format!("{n}->{}", self.bm_link(h)));
+        }
+        for &p in &ptrs {
+            for b in 0..256 {
+                if self.bm_eq(BOX_BASE + b).hh().rh() == p {
+                    out.push(format!("{p} = box{b}"));
+                }
+            }
+            for j in 0..=self.nest_ptr {
+                let l = if j == self.nest_ptr {
+                    self.cur_list
+                } else {
+                    self.nest[j as usize]
+                };
+                if self.bm_link(l.head_field) == p || l.head_field == p {
+                    out.push(format!("{p} = nest[{j}] list"));
+                }
+            }
+        }
+        eprintln!("boxmemo verify debug: {out:?}");
+    }
+
     /// The full verifier (BOX-MEMO.md §7): the normal path is done; take
     /// its state N, restore the admission point C, replay, and compare the
     /// replay's state with N by the convergence test's comparison. The run
@@ -1947,6 +1988,9 @@ impl Globals {
             pop_used_up(self);
             scratch.put(self);
             let r = crate::incr::same_state(self, n);
+            if r.is_err() && debug() {
+                self.bm_locate_debug(r.as_ref().err().unwrap());
+            }
             self.abandon_pending();
             r
         })();
