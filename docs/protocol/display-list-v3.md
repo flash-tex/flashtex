@@ -751,7 +751,12 @@ connection stay valid; `false`: drop them first.
 an earlier compile, still to be re-typeset (show them marked stale). Sent
 after the first re-typeset page, after a `viewport` stop, and before
 `DONE` (`complete: true`, all `count` pages current; a client drops pages
-at or past `count`).
+at or past `count`). Also sent, without a page of its own, when the compile
+finds nothing new against a run newer work stopped and continues that run
+as its own (fast typing: a letter typed, deleted and typed again): the
+pages the stopped run had shipped are this compile's at once, so the host
+sends those the client lacks from its cache and then `PAGES` with them
+current, before the run ships its next page.
 
 `DIAGNOSTIC`: `{"id", "severity": "error"|"warning", "message", "file"?, "line"?}`
 (3.3 adds `column` and `hints`, §11.7)
