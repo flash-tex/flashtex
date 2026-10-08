@@ -4405,6 +4405,8 @@ impl Session {
                 p.resolve(line, at)
             })
             .collect();
+        // (the definitions this run makes are in the new numbering)
+        crate::diag::new_run();
         system::record_reads_into(Some(truncate_journal(&jr, rec.reads, &self.dirs_checked)));
         let restore_s = t1.elapsed().as_secs_f64();
         drop(busy_restore);
@@ -4731,6 +4733,7 @@ impl Session {
             // The old run's diagnostics from the convergence point on, in the
             // new numbering (DESIGN.md §5.3 rule (c), `crate::lineshift`).
             crate::diag::move_lines(notes_new, &obs.shifts);
+            crate::diag::move_def_lines(&obs.shifts);
             // the new run's extra characters, into the old run's states
             // from the convergence point on (see `same_words`)
             for &(off, bits) in &obs.char_or {
