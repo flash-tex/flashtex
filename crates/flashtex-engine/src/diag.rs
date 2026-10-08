@@ -224,10 +224,32 @@ pub const FLAG_NOT_ON_TERMINAL: u32 = 2;
 pub struct Site {
     pub file: Vec<u8>,
     pub line: i32,
+    /// The column of the token TeX had read last in that line when the
+    /// definition was made: the defined name of a `\def\x` in the file;
+    /// for a definition a macro makes (`\newcommand`), the last token of
+    /// its arguments.
+    pub col: i32,
     /// A fingerprint of the token list's first tokens when it was defined.
     pub print: u64,
 }
-crate::codec_struct!(Site { file, line, print });
+crate::codec_struct!(Site {
+    file,
+    line,
+    col,
+    print
+});
+
+/// A definition site in `St::defs`.
+#[derive(Clone, Copy, Debug)]
+struct Def {
+    /// The file (in `St::files`).
+    file: u32,
+    line: i32,
+    col: i32,
+    print: u64,
+    /// The run that made it (`St::gen`, `move_def_lines`).
+    gen: u32,
+}
 
 #[derive(Default)]
 struct St {
@@ -239,12 +261,14 @@ struct St {
     write: Option<(usize, bool)>,
     /// `dg_box_begin`.
     box_at: Option<usize>,
-    /// `dg_def_begin`: the file (in `files`) and line.
-    def_at: Option<(u32, i32)>,
-    /// Token list (a macro's `def_ref`) -> where it was defined: the file
-    /// (in `files`), the line and the fingerprint (a `Site`, its name
-    /// kept once in `files`: `\def`s come by the million).
-    defs: HashMap<i32, (u32, i32, u64), BuildHasherDefault<crate::iso::FastHasher>>,
+    /// `dg_def_begin`: the file (in `files`), line and column.
+    def_at: Option<(u32, i32, i32)>,
+    /// Token list (a macro's `def_ref`) -> where it was defined (a `Site`,
+    /// its name kept once in `files`: `\def`s come by the million).
+    defs: HashMap<i32, Def, BuildHasherDefault<crate::iso::FastHasher>>,
+    /// The run now going (`new_run`): definitions made in an
+    /// earlier one are in its line numbering.
+    gen: u32,
     /// The names of the files definitions were made in, each once, and
     /// their numbers.
     files: Vec<Vec<u8>>,
@@ -264,11 +288,12 @@ impl St {
         id
     }
 
-    fn site(&self, d: &(u32, i32, u64)) -> Site {
+    fn site(&self, d: &Def) -> Site {
         Site {
-            file: self.files[d.0 as usize].clone(),
-            line: d.1,
-            print: d.2,
+            file: self.files[d.file as usize].clone(),
+            line: d.line,
+            col: d.col,
+            print: d.print,
         }
     }
 }
@@ -386,6 +411,38 @@ pub fn move_lines(from: usize, shifts: &[crate::lineshift::Shift]) {
     })
 }
 
+/// A run starts from a restart point: definitions made from now on are in
+/// its numbering (`move_def_lines`).
+pub fn new_run() {
+    with(|s| s.gen = s.gen.wrapping_add(1))
+}
+
+/// The definition sites earlier runs recorded, after the current run
+/// converged with the old run past an edit that moved lines (`move_lines`):
+/// the old run's definitions from the convergence point on are in force
+/// again, in the old numbering, and later notes name them. Those the
+/// current run made are in the new numbering already (and the old run's
+/// from before the edit are above it, where nothing moved).
+pub fn move_def_lines(shifts: &[crate::lineshift::Shift]) {
+    if shifts.is_empty() {
+        return;
+    }
+    with(|s| {
+        let gen = s.gen;
+        let files = &s.files;
+        for d in s.defs.values_mut().filter(|d| d.gen != gen) {
+            let f = String::from_utf8_lossy(&files[d.file as usize]);
+            d.line += shifts
+                .iter()
+                .filter(|sh| {
+                    d.line >= sh.after && sh.names().any(|n| crate::lineshift::same_path(&f, n))
+                })
+                .map(|sh| sh.delta)
+                .sum::<i32>();
+        }
+    })
+}
+
 /// A new run from scratch (a new engine): no notes, no definition sites.
 pub fn reset() {
     with(|s| *s = St::default())
@@ -406,7 +463,17 @@ pub fn set_sites(v: Vec<(i32, Site)>) {
         s.defs.clear();
         for (k, site) in v {
             let id = s.file_id(&site.file);
-            s.defs.insert(k, (id, site.line, site.print));
+            let gen = s.gen;
+            s.defs.insert(
+                k,
+                Def {
+                    file: id,
+                    line: site.line,
+                    col: site.col,
+                    print: site.print,
+                    gen,
+                },
+            );
         }
     })
 }
@@ -610,7 +677,12 @@ fn cap_before(b: &mut Vec<u8>) {
 
 /// A fingerprint of a token list's first 64 tokens and whether it has
 /// more (definition sites are checked against it when read).
-fn fingerprint(g: &Globals, mut p: i32) -> u64 {
+fn fingerprint(g: &Globals, p: i32) -> u64 {
+    // (after the reference count, which every use of the macro changes)
+    if !in_token_mem(g, p) {
+        return 0;
+    }
+    let mut p = link(g, p);
     let mut h: u64 = 0xcbf2_9ce4_8422_2325;
     let mut k = 0;
     while p != 0 && k < 64 {
@@ -671,18 +743,23 @@ impl Globals {
     }
 
     /// Where TeX is reading: the innermost file level (the level TeX's
-    /// context display ends with), cheaply (no text).
-    fn dg_here(&self) -> Option<(u32, i32)> {
+    /// context display ends with), cheaply (no text): the file, the line,
+    /// and, when TeX is reading the file itself (not a macro called from
+    /// it), the column of the token it read last; else -1.
+    fn dg_here(&self) -> Option<(u32, i32, i32)> {
         let is_file =
             |r: &crate::generated::types::in_state_record| r.state_field != 0 && r.name_field > 19;
-        let rec = if is_file(&self.cur_input) {
-            self.cur_input
+        let (rec, col) = if is_file(&self.cur_input) {
+            let r = self.cur_input;
+            let (start, limit) = (r.start_field, r.limit_field);
+            let split = r.loc_field.clamp(start, (limit + 1).max(start));
+            (r, token_start(self, start, split) - start)
         } else {
-            self.file_level(&DEF_LEVEL, is_file)?
+            (self.file_level(&DEF_LEVEL, is_file)?, -1)
         };
         let index = rec.index_field;
         let name = self.full_source_filename_stack[index as usize];
-        Some((self.dg_name_id(name), self.dg_level_line(index)))
+        Some((self.dg_name_id(name), self.dg_level_line(index), col))
     }
 
     /// The input stack, innermost level first, as `show_context` walks it
@@ -798,7 +875,7 @@ impl Globals {
                         .map(|s| Pos {
                             file: s.file,
                             line: s.line,
-                            col: -1,
+                            col: s.col,
                             from: -1,
                         });
                 }
@@ -1066,10 +1143,20 @@ impl Globals {
     /// `\def` made token list `p` the macro's meaning.
     pub fn dg_def(&mut self, p: i32) {
         if enabled() {
-            if let Some((file, line)) = with(|s| s.def_at.take()) {
+            if let Some((file, line, col)) = with(|s| s.def_at.take()) {
                 let print = fingerprint(self, p);
                 with(|s| {
-                    s.defs.insert(p, (file, line, print));
+                    let gen = s.gen;
+                    s.defs.insert(
+                        p,
+                        Def {
+                            file,
+                            line,
+                            col,
+                            print,
+                            gen,
+                        },
+                    );
                 });
             }
         }

@@ -134,9 +134,9 @@ final class ShellChrome {
             if self[keyPath: keyPath] != value { self[keyPath: keyPath] = value }
         }
         set(\.editorRevision, model.editorRevision)
-        let (errors, warnings, gaps) = EditorDiagnostics.counts(model.displayedDiagnostics)
+        let (errors, warnings, gaps) = MainThreadProbe.time("chrome.problems") { EditorDiagnostics.counts(model.displayedDiagnostics) }
         set(\.problems, ProblemCounts(errors: errors, warnings: warnings, gaps: gaps))
-        set(\.note, model.navigationNote ?? model.editorMarkReport.staleNote ?? model.explanationStatus)
+        set(\.note, MainThreadProbe.time("chrome.marks") { model.navigationNote ?? model.editorMarkReport.staleNote ?? model.explanationStatus })
         set(\.captureNote, model.captureNote)
         set(\.durableRevision, model.controllerState.durable[model.activePath]?.revision)
         set(\.carriedLine, model.editorMarkReport.carried?.line)
@@ -146,9 +146,9 @@ final class ShellChrome {
         let text = model.activeText
         set(\.activeTextBytes, text.utf8.count)
         set(\.activeTextUTF16, text.utf16.count)
-        set(\.listing, model.project.listing)
+        set(\.listing, MainThreadProbe.time("chrome.listing") { model.project.listing })
         set(\.entryPath, model.project.entryPath)
-        set(\.closure, model.project.discoverClosure())
+        set(\.closure, MainThreadProbe.time("chrome.closure") { model.project.discoverClosure() })
         set(\.packageInputs, model.manifest.rows + model.projectPackages.rows) // ProjectPackages.swift: resolved packages, after the project's own
         // The preview's route, result and stale line come from one engine or
         // the other, each field assigned once per refresh: assigning the old

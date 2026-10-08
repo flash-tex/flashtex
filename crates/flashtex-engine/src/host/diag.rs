@@ -124,7 +124,7 @@ impl<'a> Builder<'a> {
                 def: f.def.as_ref().map(|p| Loc {
                     file: Some(self.path(&p.file)),
                     line: Some(p.line as i64),
-                    col: None,
+                    col: (p.col >= 0).then_some(p.col as i64),
                     span: None,
                 }),
             })

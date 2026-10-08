@@ -63,8 +63,8 @@
 #     the NixOS PC, [self-hosted, Linux, X64, flashtex-linux]. Its runners are
 #     user services in `flashtex.slice` (MemoryMax 20G, no swap, CPUQuota 800 %,
 #     shared with agents' runs, DESIGN §13 2026-10-05), and the board runs in a
-#     scope of its own inside that slice (MemoryMax 10G, nice 10), so the board
-#     and a T4 night on the same PC cannot take the slice's 20 GB between them.
+#     scope of its own inside that slice (MemoryMax 8G, nice 10), and never
+#     beside a T4 night: both take the concurrency group `flashtex-pc-heavy`.
 #     Its TeX Live has no doc files, so the templates and packages tiers read
 #     their pinned documents from ~/.cache/flashtex-corpus-texmf/texlive-2026
 #     (tools/parity/README.md, "The board's host"); a forced `pc` while the PC
@@ -186,12 +186,13 @@ jobs:
     if: needs.pick.outputs.route != ''
     # the route pick chose (see WHERE)
     runs-on: ${{ needs.pick.outputs.route == 'pc' && fromJSON('["self-hosted","Linux","X64","flashtex-linux"]') || fromJSON('["self-hosted","macOS","ARM64","flashtex","flashtex-heavy"]') }}
-    # On a Mac: one heavy job at a time across p5-scoreboard and nightly on
-    # the flashtex-heavy runner; the general Mac serves the merge queue.
-    # On the PC: a group of its own run (no constraint beyond the workflow's
-    # group), as before.
+    # One heavy job at a time per host: on the PC the board and nightly.yml's T4
+    # share `flashtex-pc-heavy` (10-06: together beside the agents' runs they
+    # pushed flashtex.slice to 86 % full memory pressure and GitHub dropped the
+    # board, 37525986631); on a Mac, `flashtex-mac-heavy` across p5-scoreboard and
+    # nightly on the flashtex-heavy runner (the general Mac serves the merge queue).
     concurrency:
-      group: ${{ needs.pick.outputs.route == 'pc' && format('p5-scoreboard-pc-{0}', github.run_id) || 'flashtex-mac-heavy' }}
+      group: ${{ needs.pick.outputs.route == 'pc' && 'flashtex-pc-heavy' || 'flashtex-mac-heavy' }}
       cancel-in-progress: false
     # A Mac has fewer cores to spare (-j 2 beside the agents and the other
     # runner): the local subset on 2026-10-03 took up to 434 s per arXiv
@@ -291,7 +292,7 @@ jobs:
             # OOMPolicy=continue: an OOM kill takes its victim only (parity.py records a
             # worker_died document), not the whole scope (systemd's default is stop).
             # No scope, no run: never unbounded in the runner's own cgroup.
-            scope=(systemd-run --user --scope --quiet --slice=flashtex.slice -p MemoryMax=10G -p MemorySwapMax=0 -p OOMPolicy=continue)
+            scope=(systemd-run --user --scope --quiet --slice=flashtex.slice -p MemoryMax=8G -p MemoryHigh=7G -p MemorySwapMax=0 -p OOMPolicy=continue)
             if "${scope[@]}" true 2>/dev/null; then wrap=("${scope[@]}" nice -n 10)
             else echo "::error::systemd-run --user is unavailable: the official board runs only in its own scope (see WHERE)"; exit 1; fi
           fi
