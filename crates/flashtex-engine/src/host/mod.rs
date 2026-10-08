@@ -189,12 +189,20 @@ impl Key {
     /// The test, and the signatures it verified by other means: (index,
     /// signature now) of files and prefixes compared by content, and every
     /// directory's signature when the lookups ran again and all held.
-    fn check_fresh<'a>(
-        &'a self,
-        session_clock: (i64, i32),
-        first_line: &[u8],
-    ) -> Result<Fresh, String> {
-        let mut fresh = Fresh::default();
+    // (merging #1551 into #1552's test: #1551's `check_run`, which a
+    // preamble restart uses alone, and `check_files`; #1552's `Fresh`
+    // signatures come out of `check_files`)
+    fn check_fresh(&self, session_clock: (i64, i32), first_line: &[u8]) -> Result<Fresh, String> {
+        self.check_run(session_clock, first_line)?;
+        if let Some(b) = self.barriers.first() {
+            return Err(format!("the preamble ran an external command ({b})"));
+        }
+        self.check_files()
+    }
+
+    /// The part of `check` that is not about what the run read: the engine
+    /// build, the clock, the date variables, the first line.
+    pub fn check_run(&self, session_clock: (i64, i32), first_line: &[u8]) -> Result<(), String> {
         if self.build != engine_build() {
             return Err("the engine build changed".into());
         }
@@ -209,9 +217,12 @@ impl Key {
         if self.first_line != first_line {
             return Err("the first line changed".into());
         }
-        if let Some(b) = self.barriers.first() {
-            return Err(format!("the preamble ran an external command ({b})"));
-        }
+        Ok(())
+    }
+
+    /// The part of `check` about the files and lookups the run read.
+    fn check_files<'a>(&'a self) -> Result<Fresh, String> {
+        let mut fresh = Fresh::default();
         // One signature and one content hash per path: a preamble opens
         // many files more than once (beamer's: 432 reads of 189 files), and
         // the key lists every read. Each read is still compared with what
