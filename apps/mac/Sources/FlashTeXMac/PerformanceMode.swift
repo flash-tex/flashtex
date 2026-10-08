@@ -170,7 +170,7 @@ final class PerformanceAdvisor {
 struct MemoryPressureBanner: View {
 
     static let headline = "This Mac is low on memory."
-    static let detail = "Low Memory mode makes the preview use less memory, at a little speed. Change it any time in Settings > Performance."
+    static let detail = "Low Memory mode makes the preview use less memory, at a little speed. Change it any time in Settings > Compile."
 
     var body: some View {
         let advisor = PerformanceAdvisor.shared
@@ -200,7 +200,7 @@ struct MemoryPressureBanner: View {
     }
 }
 
-/// Settings > Performance.
+/// Settings > Compile, Performance section.
 struct PerformanceSettingsSection: View {
     @State private var mode = PerformanceMode.stored
 
