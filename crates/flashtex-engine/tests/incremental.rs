@@ -3943,52 +3943,6 @@ fn twin_files_edited_alike_both_shift() {
     }
 }
 
-fn check_against_env(
-    e: &Env,
-    dir: &Path,
-    reference: &Path,
-    report: &str,
-    what: &str,
-    env: &[(&str, &str)],
-) {
-    let mut seen = vec![];
-    for _ in 0..5 {
-        seen.push(dir_state(reference));
-        let mut c = Command::new(e.fmt.join("pdftex"));
-        c.args(ARGS).current_dir(reference);
-        engine_env(&mut c, e);
-        c.envs(env.iter().copied());
-        c.env("FLASHTEX_PREVIEW", "1");
-        c.stdin(Stdio::null()).stdout(Stdio::null());
-        c.status().unwrap();
-        if seen.contains(&dir_state(reference)) {
-            break;
-        }
-    }
-    for ext in ["pdf", "log", "aux"] {
-        // (a run that fails produces no PDF: then neither may have one)
-        let (x, y) = (
-            std::fs::read(dir.join(format!("doc.{ext}"))).ok(),
-            std::fs::read(reference.join(format!("doc.{ext}"))).ok(),
-        );
-        if ext == "log" && x != y {
-            if let (Some(a), Some(b)) = (&x, &y) {
-                if strict_log(a) == strict_log(b) {
-                    // DESIGN.md §1.1 (ruling N2): the end-of-run capacity
-                    // accounting is reported, not compared
-                    eprintln!("{what}: the log differs in its accounting only");
-                    continue;
-                }
-            }
-        }
-        assert!(
-            x == y,
-            "{what}: doc.{ext} differs from a scratch run ({:?} vs {:?} bytes)\n{report}",
-            x.as_ref().map(|v| v.len()),
-            y.as_ref().map(|v| v.len())
-        );
-    }
-}
 
 /// Issue #1562: with the working directory unchanged, a file appearing in a
 /// `TEXMFHOME` subtree, a dangling link's target appearing, and the file
