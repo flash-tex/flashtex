@@ -1137,6 +1137,8 @@ struct SourceEditorView: NSViewRepresentable {
         }
 
         func textDidChange(_ notification: Notification) {
+            let probe = MainThreadProbe.begin()
+            defer { MainThreadProbe.end("editor.textDidChange", probe) }
             PerfSignposts.interval("editorChange") { textDidChange(notification, signposted: ()) }
         }
 

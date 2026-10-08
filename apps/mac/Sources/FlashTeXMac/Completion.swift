@@ -3599,6 +3599,7 @@ final class CompletingTextView: NSTextView {
         foregroundDecorator?(dirtyRect)
         folds.drawPlaceholders(in: dirtyRect, textView: self)
         texpandEditor?.draw(dirtyRect) // capture region and expansion preview (TeXpandEditor.swift)
+        MainThreadProbe.editorDrew() // key → glyph drawn (EditorInstantTests); one Bool test when off
     }
 
     /// Scroll view + text view pair, like `NSTextView.scrollableTextView()`

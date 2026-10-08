@@ -303,8 +303,13 @@ jobs:
       github.ref == 'refs/heads/main'
     runs-on: [self-hosted, Linux, X64, flashtex-linux]
     timeout-minutes: 1440
+    # One heavy job at a time on the PC: T4 and the P5 board (p5-scoreboard.yml's PC
+    # route) share this group. On 10-06 the board (a 10G scope) and a T4 night (5
+    # workers, 8.7G) ran together beside the agents' runs; flashtex.slice (MemoryHigh
+    # 18G) went to 86 % full memory pressure, the runners' listeners stalled, and
+    # GitHub dropped the board after 52 min ("lost communication", 37525986631).
     concurrency:
-      group: nightly-corpus-t4
+      group: flashtex-pc-heavy
       cancel-in-progress: false
     env:
       # a baseline is recorded only by hand, and only from main's engine
@@ -374,8 +379,9 @@ jobs:
         # has available at the start of the job (other runner instances share it).
         #
         # The workers run in a scope of their own inside flashtex.slice, capped
-        # at 10G (MemoryHigh 9G), and their count is fitted to it (at most 8,
-        # 1.5625 GiB each: 5). On 10-06 (37423737667) the 8 workers ran in the
+        # at 8G (MemoryHigh 7G), and their count is fitted to a 6.5 GiB budget (at
+        # most 8, 1.5625 GiB each: 4), so T4 leaves room in the 18G slice for the
+        # agents' runs (10-06: 5 workers peaked at 8.7G). On 10-06 (37423737667) the 8 workers ran in the
         # runner's own service cgroup, whose MemoryHigh is 9G: reclaim stalled
         # the whole cgroup, the runner's listener with it, its job renewals
         # timed out (11:27Z on), and GitHub dropped the job after 46 of 50
@@ -389,13 +395,13 @@ jobs:
         # a resume of 4 missing shards started over at shard 0).
         run: |
           set -euo pipefail
-          budget="$(awk '/^MemAvailable:/ { b = $2 * 0.7 / 1048576; if (b > 8) b = 8; printf "%.1f", b }' /proc/meminfo)"
+          budget="$(awk '/^MemAvailable:/ { b = $2 * 0.7 / 1048576; if (b > 6.5) b = 6.5; printf "%.1f", b }' /proc/meminfo)"
           jobs="$(awk -v b="$budget" 'BEGIN { j = int(b / 1.5625); if (j > 8) j = 8; if (j < 1) j = 1; print j }')"
           wrap=()
           # OOMPolicy=continue: an OOM kill takes its victim only (parity.py records a
           # worker_died document), not the whole scope (systemd's default is stop).
           # No scope, no run: never unbounded in the runner's own cgroup.
-          scope=(systemd-run --user --scope --quiet --slice=flashtex.slice -p MemoryMax=10G -p MemoryHigh=9G -p MemorySwapMax=0 -p OOMPolicy=continue)
+          scope=(systemd-run --user --scope --quiet --slice=flashtex.slice -p MemoryMax=8G -p MemoryHigh=7G -p MemorySwapMax=0 -p OOMPolicy=continue)
           if "${scope[@]}" true 2>/dev/null; then wrap=("${scope[@]}" nice -n 10)
           else echo "::error::systemd-run --user is unavailable: T4's workers run only in their own scope, never in the runner's cgroup (37423737667)"; exit 1; fi
           echo "T4: $jobs workers, memory budget $budget GiB"

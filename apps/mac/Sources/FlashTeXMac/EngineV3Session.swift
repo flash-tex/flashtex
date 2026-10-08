@@ -182,6 +182,9 @@ final class EngineV3Session {
     private(set) var mainFile = ""
 
     @ObservationIgnored private(set) var pages: [Int: DL3PreparedPage] = [:]
+    /// Each page's size (bp), kept with `pages`: the layout reads every page's
+    /// size, and a `DL3PreparedPage` copy out of `pages` retains a dozen arrays.
+    @ObservationIgnored private var pageSizes: [Int: CGSize] = [:]
     @ObservationIgnored private(set) var stale: Set<Int> = []
     @ObservationIgnored private(set) var forms: [UInt32: DL3PreparedPage] = [:]
     /// Pages whose PDF rendering replaces the display list (INCOMPLETE, or a
@@ -219,7 +222,7 @@ final class EngineV3Session {
     /// The project's input files when the copy was last synced (what the
     /// compiles since have read): a snapshot is saved only while they are unchanged.
     @ObservationIgnored private var inputsAtSync: [String: String]?
-    static let snapshotQueue = DispatchQueue(label: "flashtex.engine-v3.snapshot", qos: .utility)
+    static let snapshotQueue = DispatchQueue(label: "flashtex.engine-v3.snapshot", qos: .utility, autoreleaseFrequency: .workItem)
     /// SOURCES of the connection: span id → (file, line) (EngineV3SourceMap.swift).
     @ObservationIgnored var sourceMap = DL3SourceMap()
     /// Per-page glyph indexes for forward/reverse search, built on first use.
@@ -313,19 +316,35 @@ final class EngineV3Session {
     }
     /// Removed in `stop()` and deinit.
     @ObservationIgnored nonisolated(unsafe) private var fontSmoothingObserver: NSObjectProtocol?
+    /// Settings > Performance changed (PerformanceMode.swift): the host is
+    /// told (`PROFILE`). Removed in deinit.
+    @ObservationIgnored nonisolated(unsafe) private var performanceObserver: NSObjectProtocol?
 
     /// `smoothFonts` nil: follow the Settings preference (the app's
     /// session); a value: fixed at it (tests).
     init(smoothFonts: Bool? = nil) {
         self.smoothFonts = smoothFonts ?? PreviewFontSmoothing.enabled
         rasterPlan.smoothFonts = self.smoothFonts
+        delivery = EngineV3Delivery(EngineV3WeakRef(self))
         if smoothFonts == nil {
             fontSmoothingObserver = PreviewFontSmoothing.observe { [weak self] on in self?.smoothFonts = on }
         }
+        performanceObserver = NotificationCenter.default.addObserver(forName: PerformanceMode.changed, object: nil, queue: .main) { [weak self] note in
+            guard let mode = (note.userInfo?["mode"] as? String).flatMap(PerformanceMode.init(rawValue:)) else { return }
+            MainActor.assumeIsolated { self?.performanceModeChanged(mode) }
+        }
+    }
+
+    /// Tell the host the new performance mode (spec §6.9): it applies it
+    /// between compiles. A host without `profile-v1` keeps its own.
+    private func performanceModeChanged(_ mode: PerformanceMode) {
+        guard let c = connection, c.offersProfiles else { return }
+        do { try c.setProfile(mode.hostProfile); log("performance mode: \(mode.hostProfile)") } catch { log("PROFILE: \(error)") }
     }
 
     deinit {
         if let fontSmoothingObserver { NotificationCenter.default.removeObserver(fontSmoothingObserver) }
+        if let performanceObserver { NotificationCenter.default.removeObserver(performanceObserver) }
         // A session released without `stop()` (its window's model went away):
         // nothing it installed may outlive it. Its host ends with it (the
         // process object terminates it in deinit, and the connection closes).
@@ -341,6 +360,7 @@ final class EngineV3Session {
     func start(model: ShellModel) {
         self.model = model
         stopping = false
+        PerformanceAdvisor.shared.start() // suggests Low Memory under memory pressure (PerformanceMode.swift)
         if NSWorkspace.shared.isVoiceOverEnabled { EngineV3GlyphText.warmUp() } // VoiceOver's page text (EngineV3Accessibility.swift), off main; else loaded on first use
 
         if keyMonitor == nil {
@@ -457,7 +477,7 @@ final class EngineV3Session {
         host = nil
         phase = .idle
         sentTexts = [:]; hostBytes = [:]; fastPending = []; fastAnchors = [:]; fastCheck = [:]; compiledTexts = [:]; fastSentID = [:]; caretWindows = [:]; caretWindow = nil
-        pages = [:]; stale = []; forms = [:]; pdfFallback = [:]
+        pages = [:]; pageSizes = [:]; stale = []; forms = [:]; pdfFallback = [:]
         pageCount = 0
         layoutRevision &+= 1
         if let keyMonitor { NSEvent.removeMonitor(keyMonitor) }
@@ -628,13 +648,15 @@ final class EngineV3Session {
     private func connect(socket: String) {
         let ref = EngineV3WeakRef(self)
         let plan = rasterPlan
+        let profile = PerformanceMode.current.hostProfile // Settings > Performance (spec §6.9)
         DispatchQueue.global(qos: .userInitiated).async {
             do {
-                let c = try DL3Connection(socketPath: socket, client: "FlashTeX (engine-v3 preview)", accept: [DL3Diag.capability] + (ProcessInfo.processInfo.environment["FLASHTEX_V3_NO_PROGRESS"] == "1" ? [] : [DL3.progressCapability]))
+                let c = try DL3Connection(socketPath: socket, client: "FlashTeX (engine-v3 preview)", accept: [DL3Diag.capability] + (ProcessInfo.processInfo.environment["FLASHTEX_V3_NO_PROGRESS"] == "1" ? [] : [DL3.progressCapability]), profile: profile)
                 let reader = EngineV3Reader(cache: .shared, plan: plan)
+                let delivery = EngineV3Delivery(ref)
                 c.start(onTimedEvent: { ev, timing in
                     guard let out = reader.handle(ev, timing: timing) else { return }
-                    EngineV3Session.onMain { ref.value?.apply(out, connection: c) }
+                    delivery.post(out, connection: c)
                 }, onClose: { err in
                     EngineV3Session.onMain { ref.value?.closed(err, connection: c) }
                 })
@@ -1159,14 +1181,17 @@ final class EngineV3Session {
         if project == nil || project?.source != projectRoot || generation != model.projectGeneration {
             // Another project (or file) in this window: a fresh copy, every
             // document sent again as a buffer, the old pages gone.
-            if project?.source != projectRoot || project == nil { project = EngineV3Mirror(source: projectRoot, session: serial) }
+            var made = false
+            if project?.source != projectRoot || project == nil { project = EngineV3Mirror(source: projectRoot, session: serial); made = true }
             // Emptied on the walk queue, before this project's walk (same serial queue): not on main.
-            if let p = project { Self.walkQueue.async { p.clear() } }
+            // A copy just taken over keeps its output (its .aux, checked by
+            // `takeOver`): the point of taking it over.
+            if let p = project { let keep = made && p.takenOver; Self.walkQueue.async { p.clear(keepingOutput: keep) } }
             generation = model.projectGeneration
             sentTexts = [:]; hostBytes = [:]; fastPending = []; fastAnchors = [:]; fastCheck = [:]; compiledTexts = [:]; fastSentID = [:]; caretWindows = [:]; caretWindow = nil; inputsAtSync = nil
             toolDiagnostics = []; texProblems = []; toolNote = nil; toolCycleID = -1
             if model.engineV3ResultStatus != nil { model.engineV3ResultStatus = nil } // another project: no "failed" of the last one's
-            pages = [:]; stale = []; forms = [:]; pdfFallback = [:]; pageCount = 0; layoutRevision &+= 1
+            pages = [:]; pageSizes = [:]; stale = []; forms = [:]; pdfFallback = [:]; pageCount = 0; layoutRevision &+= 1
             staleChangedNow()
             statusNote = ""; firstError = nil
             showSnapshot(model: model) // this project's stored pages, if still valid
@@ -1283,6 +1308,13 @@ final class EngineV3Session {
         case .running, .ending: true
         case .syncing, nil: false
         }
+    }
+
+    /// The export's waiting state, for a test that times out waiting for its run.
+    var exportDebugState: String {
+        "stage \(String(describing: exportStage)), compiling \(compiling), lastDone \(lastDoneID), lastSent \(lastSentID), "
+            + "toolsAuto \(lastToolsAutoID), settled \(lastSettledID), walkInFlight \(walkInFlight), held \(heldDuringExport), "
+            + "inbox drains \(delivery?.drains ?? -1)"
     }
 
     /// Whether Export PDF… and Print… have a document to produce.
@@ -1498,17 +1530,37 @@ final class EngineV3Session {
 
     // MARK: events from the reader
 
-    private func apply(_ out: EngineV3Reader.Output, connection c: DL3Connection) {
-        guard c === connection else { return } // a replaced connection's late frames
-        handle(out)
+    /// One event from the inbox (`EngineV3Delivery.drain`), without the
+    /// per-drain work (`flushEvents`). `c` nil: a test's feed, as from the
+    /// current connection.
+    fileprivate func applyQueued(_ out: EngineV3Reader.Output, connection c: DL3Connection?) {
+        guard c == nil || c === connection else { return } // a replaced connection's late frames
+        MainThreadProbe.time("v3.event") { handleOne(out) }
         afterEvent?(out)
     }
+
+    /// What waits for the end of a drain: the pages' layout, once for every
+    /// page that arrived in it (a page past the laid-out ones used to lay out
+    /// all of them: O(pages²) over a cold compile).
+    func flushEvents() {
+        view?.flushLayout()
+    }
+
+    /// Hands host events to the main thread as the reader thread does (tests:
+    /// `EditorInstantTests` feeds a synthetic compile through it).
+    @ObservationIgnored private(set) var delivery: EngineV3Delivery!
 
     /// Tests: called after each event from the host has been applied.
     @ObservationIgnored var afterEvent: ((EngineV3Reader.Output) -> Void)?
 
-    /// Applies one event from the host (internal for tests).
+    /// Applies one event from the host and flushes (tests; the inbox
+    /// applies a drain's events, then flushes once).
     func handle(_ out: EngineV3Reader.Output) {
+        handleOne(out)
+        flushEvents()
+    }
+
+    private func handleOne(_ out: EngineV3Reader.Output) {
         lastEventNs = MonotonicClock.nowNs()
         lastHostActivityNs = lastEventNs // the stall bound: the host is alive and working
         switch out {
@@ -1519,7 +1571,10 @@ final class EngineV3Session {
                 newestClientStartedID = max(newestClientStartedID, id)
                 if let cycle = toolsCycleID, id > cycle { toolsCycleID = nil }
             }
-            errorCount = 0; warningCount = 0; firstError = nil; compileFatal = false
+            if errorCount != 0 { errorCount = 0 }
+            if warningCount != 0 { warningCount = 0 }
+            if firstError != nil { firstError = nil }
+            compileFatal = false
             diagnostics = []; diags = []
             if j["keep"]?.bool == false {
                 sourceMap.reset() // span ids restart with the resource ids
@@ -1533,14 +1588,21 @@ final class EngineV3Session {
             let changed = pages[index]?.page.hash != p.page.hash
             let sizeChanged = pages[index].map { $0.widthPt != p.widthPt || $0.heightPt != p.heightPt } ?? true
             pages[index] = p
+            pageSizes[index] = CGSize(width: p.widthPt, height: p.heightPt)
             sourceIndexes[index] = nil
             pageInstalls &+= 1
             stale.remove(index)
             pdfFallback[index] = nil
             if index >= pageCount {
+                let before = pageCount
                 pageCount = index + 1; layoutRevision &+= 1
-                // Stored pages the count now reaches again stay stale.
-                if snapshot != nil { markStale(stale) }
+                // Stored pages the count now reaches again stay stale: only
+                // the indexes it newly reaches (`markStale(stale)` walked
+                // every page, per page: O(pages²) over a cold compile).
+                if let s = snapshot?.0, before < min(pageCount, s.pages.count) {
+                    for i in before ..< min(pageCount, s.pages.count) where pages[i] == nil { stale.insert(i) }
+                    staleChangedNow()
+                }
             } else if sizeChanged { layoutRevision &+= 1 }
             // (pageArrived re-lays out itself when the page is new or resized:
             // it does not wait for SwiftUI's updateNSView.)
@@ -1586,13 +1648,18 @@ final class EngineV3Session {
             exportDone(j)
         case .done(let j, let compileID):
             let doneStart = DispatchTime.now().uptimeNanoseconds
-            defer { lastDoneMainMs = Double(DispatchTime.now().uptimeNanoseconds - doneStart) / 1e6 }
+            let probe = MainThreadProbe.begin()
+            defer { lastDoneMainMs = Double(DispatchTime.now().uptimeNanoseconds - doneStart) / 1e6; MainThreadProbe.end("v3.done", probe) }
             let status = j["status"]?.string ?? "?"
             if logDone { log("DONE \(j)") }
             doneCount &+= 1
             lastDone = j
             if status == "failed", let project, !project.exists, let model {
                 compile(model: model, reason: "recover") // the copy vanished under the host
+            }
+            if status == "ok" || status == "error", let p = project {
+                // what the run left is whole: the next copy may take it over
+                Self.walkQueue.async { p.markComplete() }
             }
             if status != "cancelled" {
                 let made = j["pages"]?.int.map(Int.init)
@@ -1697,7 +1764,7 @@ final class EngineV3Session {
 
     /// The page size to lay out page `i` with: its display list's, else the snapshot's.
     func pageSize(_ i: Int) -> CGSize? {
-        if let p = pages[i] { return CGSize(width: p.widthPt, height: p.heightPt) }
+        if let size = pageSizes[i] { return size }
         guard let s = snapshot?.0, i < s.pages.count else { return nil }
         return CGSize(width: s.pages[i].width, height: s.pages[i].height)
     }
@@ -1779,18 +1846,21 @@ final class EngineV3Session {
         // does not count) and of the input files as last synced.
         guard let model, let key = EngineV3Snapshot.key(for: model), let root = project?.source, root == model.project.projectRoot,
               let synced = inputsAtSync, fastPending.isEmpty,
-              pageCount > 0, (0 ..< pageCount).allSatisfy({ pages[$0] != nil }) else { return }
+              pageCount > 0, (0 ..< pageCount).allSatisfy({ pageSizes[$0] != nil }) else { return }
         let visible = visiblePage
         var chosen: [Int: DL3PreparedPage] = [:]
         for i in Array(0 ..< min(3, pageCount)) + Array(max(0, visible - 2) ... min(pageCount - 1, visible + 5)) where chosen.count < EngineV3Snapshot.maxPages {
             chosen[i] = pages[i]
         }
-        let sizes = (0 ..< pageCount).map { CGSize(width: pages[$0]!.widthPt, height: pages[$0]!.heightPt) }
-        let docs = EngineV3Snapshot.hashes(model.documents.map { ($0.path, sentTexts[$0.path] ?? $0.text) })
+        let sizes = (0 ..< pageCount).map { pageSizes[$0]! }
+        // The texts' SHA-256 on the snapshot queue, not here: a 4 MB document
+        // is milliseconds of main thread at every keystroke's DONE.
+        let texts = model.documents.map { (path: $0.path, text: sentTexts[$0.path] ?? $0.text) }
         let formsCopy = forms, main = mainFile
         let ppp = view?.currentPixelsPerPoint ?? 2
         let dark = model.darkPreview
         let item = DispatchWorkItem {
+            let docs = EngineV3Snapshot.hashes(texts)
             // An input changed since the sync (outside the app): the pages
             // may not show it, so nothing is saved (the old snapshot no
             // longer matches either).
@@ -1822,20 +1892,20 @@ final class EngineV3Session {
     /// package file) keeps its place in the message.
     static func problems(_ diags: [DL3JSON], model: ShellModel, projectRoot: URL?, texts: [String: String]? = nil,
                          mode: EngineV3ErrorPolicy.Mode = .bestEffort) -> [RuntimeV1.Diagnostic] {
-        let root = projectRoot.map { $0.standardizedFileURL.path + "/" }
+        let roots = Self.copyRoots(projectRoot)
         let kept = EngineV3ErrorPolicy.keptErrors(diags.map(Self.policyItem), mode: mode)
+        var lines = EngineV3LineIndexes()
         return diags.enumerated().map { i, d in
             let error = d["severity"]?.string == "error"
             let severity: RuntimeV1.Severity = error && kept.contains(i) ? .error : .warning
             var message = d["message"]?.string ?? "(no message)"
             if error, !kept.contains(i) { message = EngineV3ErrorPolicy.marked(message) }
             var source: RuntimeV1.SourceRange?
-            if var file = d["file"]?.string {
-                if file.hasPrefix("./") { file.removeFirst(2) }
-                if let root, file.hasPrefix(root) { file.removeFirst(root.count) }
+            if let reported = d["file"]?.string {
+                let file = Self.relativeToCopy(reported, roots: roots)
                 let line = Int(d["line"]?.int ?? 0)
                 if let text = texts?[file] ?? model.documents.first(where: { $0.path == file })?.text, line > 0,
-                   let range = lineByteRange(text, line: line) {
+                   let range = lines.range(file, text, line: line) {
                     source = RuntimeV1.SourceRange(path: file, startByte: range.lowerBound, endByte: range.upperBound)
                 } else {
                     message = "\((file as NSString).lastPathComponent)\(line > 0 ? ":\(line)" : ""): " + message
@@ -1845,27 +1915,63 @@ final class EngineV3Session {
         }
     }
 
+    /// Every spelling of the project copy's root, each ending in "/": as the
+    /// app made it (standardized: /var/folders/...), its real path (realpath:
+    /// /private/var/folders/..., what the host's getcwd() returns and so what
+    /// the display list's side table names a box's place by), and
+    /// Foundation's resolution of its links. Empty without a root.
+    static func copyRoots(_ root: URL?) -> [String] {
+        guard let root else { return [] }
+        let standardized: String = root.standardizedFileURL.path
+        var spellings: [String] = [standardized]
+        if let p = realpath(standardized, nil) {
+            spellings.append(String(cString: p))
+            free(p)
+        }
+        spellings.append(root.resolvingSymlinksInPath().path)
+        var out: [String] = []
+        for r in spellings {
+            let prefix = r.hasSuffix("/") ? r : r + "/"
+            if !out.contains(prefix) { out.append(prefix) }
+        }
+        return out
+    }
+
+    /// A file the engine names, relative to the project copy when it is
+    /// inside it under any of `roots` (`copyRoots`), else as given; a
+    /// leading "./" dropped. An absolute name under none of them is matched
+    /// once more by its own real path (a link anywhere above the copy).
+    static func relativeToCopy(_ file: String, roots: [String]) -> String {
+        var f: String = file
+        while f.hasPrefix("./") { f.removeFirst(2) }
+        if let r = roots.first(where: { f.hasPrefix($0) }) {
+            f.removeFirst(r.count)
+            return f
+        }
+        guard f.hasPrefix("/"), !roots.isEmpty, let p = realpath(f, nil) else { return f }
+        let real = String(cString: p)
+        free(p)
+        if let r = roots.first(where: { real.hasPrefix($0) }) { return String(real.dropFirst(r.count)) }
+        return f
+    }
+
     /// diag-v1 DIAGs as Problems-panel diagnostics: the source range is the
     /// reported token/command (`range`, byte columns of `line`) or TeX's split
     /// (`col`), so a click lands on the exact column; the macro chain and
     /// TeX's help text become the row's notes and help.
     static func problems(diags: [DL3Diag], model: ShellModel, projectRoot: URL?, texts: [String: String]? = nil,
                          mode: EngineV3ErrorPolicy.Mode = .bestEffort) -> [RuntimeV1.Diagnostic] {
-        let root = projectRoot.map { $0.standardizedFileURL.path + "/" }
+        let roots = Self.copyRoots(projectRoot)
         // TeX's errors it recovered from (EngineV3ErrorPolicy): warnings under best effort.
         let kept = EngineV3ErrorPolicy.keptErrors(diags.map(Self.policyItem), mode: mode)
         let recovered = Set(diags.indices.filter { diags[$0].severity == "error" && !kept.contains($0) })
-        func rel(_ file: String) -> String {
-            var f = file
-            if f.hasPrefix("./") { f.removeFirst(2) }
-            if let root, f.hasPrefix(root) { f.removeFirst(root.count) }
-            return f
-        }
+        func rel(_ file: String) -> String { Self.relativeToCopy(file, roots: roots) }
         // Rows that say the same thing as another fold into it (EngineV3DiagPresent.folds).
         let folds = EngineV3DiagPresent.folds(diags, kept: kept)
         let stopped = Set(folds.filter { EngineV3DiagPresent.isStop(diags[$0.key].code) && !EngineV3DiagPresent.isStop(diags[$0.value].code) }.map(\.value))
         let projectTexts: [String: String] = texts ?? Dictionary(model.documents.map { ($0.path, $0.text) }, uniquingKeysWith: { a, _ in a })
         func text(_ file: String) -> String? { texts?[file] ?? model.documents.first(where: { $0.path == file })?.text }
+        var lines = EngineV3LineIndexes()
         return diags.enumerated().compactMap { i, d in
             guard d.severity != "info" else { return nil } // \show, tight/loose boxes: not problems
             guard folds[i] == nil else { return nil }
@@ -1873,7 +1979,7 @@ final class EngineV3Session {
             var message = recovered.contains(i) ? EngineV3ErrorPolicy.marked(headline) : headline
             var source: RuntimeV1.SourceRange?
             if let file = d.file.map(rel) {
-                if let line = d.line, let text = text(file), let lineRange = lineByteRange(text, line: line) {
+                if let line = d.line, let text = text(file), let lineRange = lines.range(file, text, line: line) {
                     let len = lineRange.count
                     let (a, b): (Int, Int) = {
                         if let r = d.range { return (min(r.0, len), min(max(r.1, r.0), len)) }
@@ -1883,7 +1989,7 @@ final class EngineV3Session {
                     var end = lineRange.lowerBound + b
                     // A box: from its first character to its last (the display list's side table).
                     if EngineV3DiagPresent.boxKind(d.code) != nil, let e = d.end, e.file.map(rel) == file, let el = e.line, let ec = e.col,
-                       el >= line, let endLine = lineByteRange(text, line: el), lineRange.lowerBound + a <= endLine.lowerBound + min(ec, endLine.count) {
+                       el >= line, let endLine = lines.range(file, text, line: el), lineRange.lowerBound + a <= endLine.lowerBound + min(ec, endLine.count) {
                         end = endLine.lowerBound + min(ec, endLine.count)
                     }
                     source = RuntimeV1.SourceRange(path: file, startByte: lineRange.lowerBound + a, endByte: end)
@@ -1903,8 +2009,12 @@ final class EngineV3Session {
             for (k, f) in macros.enumerated() {
                 let name = (f.name ?? "a macro").trimmingCharacters(in: .whitespaces)
                 var def = f.def.flatMap { l in l.file.map { "\(rel($0))\(l.line.map { ":\($0)" } ?? "")" } }
-                // The engine names no definition site: the project's one definition of it.
-                if def == nil, let found = EngineV3DiagPresent.definition(of: name, in: projectTexts) {
+                // The definition in the project's text: where the engine says it was made (#1593),
+                // else (the engine names no site) the project's one definition of it.
+                let near = f.def.flatMap { l in l.file.map { (path: rel($0), line: l.line ?? Int.max) } }
+                let found = near.flatMap { EngineV3DiagPresent.definition(of: name, in: projectTexts, near: $0) }
+                    ?? (def == nil ? EngineV3DiagPresent.definition(of: name, in: projectTexts) : nil)
+                if let found {
                     def = found.site.label
                     labels.append(.init(source: found.site.source, text: "\(name) is defined at \(found.site.label)", primary: false))
                     // The error is inside this (innermost) macro: the undefined name in its definition.
@@ -1989,7 +2099,8 @@ final class EngineV3Session {
         if firstError != first { firstError = first }
     }
 
-    /// Bytes of 1-based `line` in `text`, without its newline.
+    /// Bytes of 1-based `line` in `text`, without its newline (one lookup;
+    /// many: `EngineV3LineStarts`).
     static func lineByteRange(_ text: String, line: Int) -> Range<Int>? {
         var n = 1, start = 0, i = 0
         for b in text.utf8 {
@@ -2008,7 +2119,7 @@ final class EngineV3Session {
         guard n != pageCount || complete else { return }
         guard complete || n > pageCount else { return }
         if complete, n < pageCount {
-            for i in n ..< pageCount { pages[i] = nil; stale.remove(i); pdfFallback[i] = nil }
+            for i in n ..< pageCount { pages[i] = nil; pageSizes[i] = nil; stale.remove(i); pdfFallback[i] = nil }
         }
         if n != pageCount { pageCount = n; layoutRevision &+= 1 }
     }
@@ -2030,10 +2141,161 @@ final class EngineV3Session {
     }
 }
 
+/// Where each line of a text starts (UTF-8 bytes), found in one pass: a
+/// DONE maps every diagnostic's line to bytes, and `lineByteRange` walked the
+/// text from the start for each (100 warnings in a 4 MB book: 200 MB walked
+/// on main per DONE).
+struct EngineV3LineStarts {
+    /// `starts[k]`: the first byte of line k + 1.
+    private(set) var starts: [Int] = [0]
+    private(set) var byteCount = 0
+
+    init(_ text: String) {
+        var copy = text
+        var found: [Int] = [0]
+        byteCount = copy.withUTF8 { b -> Int in
+            guard let base = b.baseAddress else { return 0 }
+            var off = 0
+            while off < b.count, let hit = memchr(base + off, 0x0A, b.count - off) {
+                let at = UnsafeRawPointer(base).distance(to: UnsafeRawPointer(hit))
+                found.append(at + 1)
+                off = at + 1
+            }
+            return b.count
+        }
+        starts = found
+    }
+
+    /// `EngineV3Session.lineByteRange(text, line:)`, from the index.
+    func range(line: Int) -> Range<Int>? {
+        guard line >= 1, line <= starts.count else { return nil }
+        let a = starts[line - 1]
+        return a ..< (line < starts.count ? starts[line] - 1 : byteCount)
+    }
+}
+
+/// One `EngineV3LineStarts` per file, built on first use.
+struct EngineV3LineIndexes {
+    private var byFile: [String: EngineV3LineStarts] = [:]
+    mutating func range(_ file: String, _ text: String, line: Int) -> Range<Int>? {
+        if let ix = byFile[file] { return ix.range(line: line) }
+        let ix = EngineV3LineStarts(text)
+        byFile[file] = ix
+        return ix.range(line: line)
+    }
+}
+
 /// A weak reference that may cross threads (it is only dereferenced on main).
 final class EngineV3WeakRef: @unchecked Sendable {
     weak var value: EngineV3Session?
     init(_ v: EngineV3Session) { value = v }
+}
+
+/// How the reader thread's events reach the main thread (APP-EDITOR-INSTANT,
+/// docs/evidence/editor-instant-2026-10-06). Any thread posts; main drains.
+///
+/// Each event used to be its own main-thread block, and Core Foundation runs
+/// every block queued when it gets to them: a cold compile's thousand PAGEs
+/// (each laying out every page) held the main thread, and the keys typed
+/// meanwhile, for as long as the backlog took. Now the events queue here and
+/// main applies them in drains: a drain stops after `budgetNs` of work and
+/// the rest waits for the next one; while events keep coming, drains are at
+/// least a frame (`frameNs`) apart, so a key never waits behind more than
+/// one budget of preview work, and the SwiftUI and layout work an event
+/// causes is done once per drain (`EngineV3Session.flushEvents`). A drain
+/// after a quiet spell starts at once (a keystroke's compile is not delayed;
+/// its page is installed on the reader thread anyway).
+/// `FLASHTEX_V3_COALESCE=0`: every event in its own block, as before (A/B).
+final class EngineV3Delivery: @unchecked Sendable {
+    let ref: EngineV3WeakRef
+    let coalesce: Bool
+    /// Main-thread time one drain may spend before it yields (`FLASHTEX_V3_DRAIN_MS`, default 3).
+    let budgetNs: UInt64
+    /// Drains while events keep coming are at least this far apart (a 120 Hz frame).
+    let frameNs: UInt64 = 8_333_333
+    private let lock = NSLock()
+    private var queue: [(EngineV3Reader.Output, DL3Connection?)?] = []
+    private var head = 0
+    private var scheduled = false
+    private var lastDrainNs: UInt64 = 0
+    /// Drains run, and those that yielded with events left (tests, evidence).
+    private(set) var drains = 0
+    private(set) var yielded = 0
+
+    init(_ ref: EngineV3WeakRef) {
+        self.ref = ref
+        let env = ProcessInfo.processInfo.environment
+        coalesce = env["FLASHTEX_V3_COALESCE"] != "0"
+        budgetNs = UInt64((env["FLASHTEX_V3_DRAIN_MS"].flatMap(Double.init) ?? 3) * 1e6)
+    }
+
+    /// One decoded event from connection `c` (nil: a test's feed), applied on main.
+    func post(_ out: EngineV3Reader.Output, connection c: DL3Connection?) {
+        guard coalesce else {
+            let ref = self.ref
+            EngineV3Session.onMain {
+                guard let s = ref.value else { return }
+                s.applyQueued(out, connection: c)
+                s.flushEvents()
+            }
+            return
+        }
+        lock.lock()
+        queue.append((out, c))
+        let schedule = !scheduled
+        scheduled = true
+        let last = lastDrainNs
+        lock.unlock()
+        if schedule { scheduleDrain(after: last) }
+    }
+
+    /// At once after a quiet frame, else a frame after the last drain began.
+    private func scheduleDrain(after last: UInt64) {
+        let now = MonotonicClock.nowNs()
+        let due = last &+ frameNs
+        if last == 0 || now >= due {
+            EngineV3Session.onMain { self.drain() }
+        } else {
+            DispatchQueue.main.asyncAfter(deadline: .now() + .nanoseconds(Int(due &- now))) {
+                MainActor.assumeIsolated { self.drain() }
+            }
+        }
+    }
+
+    @MainActor
+    private func drain() {
+        let t0 = MonotonicClock.nowNs()
+        let probe = MainThreadProbe.begin()
+        lock.lock(); lastDrainNs = t0; lock.unlock()
+        let session = ref.value
+        var more = false
+        while true {
+            lock.lock()
+            guard head < queue.count else {
+                queue.removeAll(keepingCapacity: true); head = 0; scheduled = false
+                lock.unlock()
+                break
+            }
+            let item = queue[head]
+            queue[head] = nil // its page is released when applied
+            head += 1
+            lock.unlock()
+            if let item { session?.applyQueued(item.0, connection: item.1) }
+            if MonotonicClock.nowNs() &- t0 >= budgetNs {
+                lock.lock()
+                more = head < queue.count
+                if !more { queue.removeAll(keepingCapacity: true); head = 0; scheduled = false }
+                else if head >= 4096 { queue.removeFirst(head); head = 0 } // a backlog that never empties stays bounded
+                lock.unlock()
+                break
+            }
+        }
+        session?.flushEvents()
+        drains &+= 1
+        if more { yielded &+= 1 }
+        MainThreadProbe.end("v3.drain", probe)
+        if more { scheduleDrain(after: t0) }
+    }
 }
 
 /// Which pages the reader thread may rasterise as they arrive: the ones on
@@ -2282,21 +2544,172 @@ final class EngineV3Mirror: @unchecked Sendable { // only `let`s; its walks touc
     let base: URL
     let root: URL
     let output: URL
+    /// The copy is the project's last one, taken over (`takeOver`).
+    let takenOver: Bool
 
-    /// The copy of `source` owned by THIS app instance:
-    /// `projects/<hash of the project path>-<pid>`, with an `owner` file
+    /// The copy of `source` owned by THIS app instance, with an `owner` file
     /// ("pid start-sec start-usec"). Another running instance (the same
     /// project open twice, a second app, a bench) has its own copy; nothing
     /// here ever removes a copy whose owner still runs.
     /// `session`: the owning session's number in this process (two windows
     /// with the same project get two copies, as two hosts compile them).
+    ///
+    /// The copy is the project's last copy when its instance has exited
+    /// (`takeOver`), else a new one, `projects/<hash of the project
+    /// path>-<pid>-<session>`. Taking the last copy over keeps its output
+    /// (`.aux`, `.toc`, `.ind`), as a pdflatex user's next run starts from
+    /// the last run's files, and its paths, which the host's persisted S₀
+    /// is keyed by: reopening a document compiles once from S₀, not from
+    /// the format once per `.aux` pass from nothing (for a book, three
+    /// passes that each re-typeset every page).
     init(source: URL?, session: Int = 0) {
         self.source = source
-        let key = SHA256.hash(data: Data((source?.path ?? "untitled").utf8)).prefix(8).map { String(format: "%02x", $0) }.joined()
-        base = EngineV3.cacheDirectory.appendingPathComponent("projects/\(key)-\(getpid())-\(session)", isDirectory: true)
+        let key = Self.key(source)
+        let taken = source == nil ? nil : Self.takeOver(key: key, source: source)
+        takenOver = taken != nil
+        base = taken
+            ?? EngineV3.cacheDirectory.appendingPathComponent("projects/\(key)-\(getpid())-\(session)", isDirectory: true)
         root = base.appendingPathComponent("src", isDirectory: true)
         output = base.appendingPathComponent("out", isDirectory: true)
         ensure()
+    }
+
+    // MARK: whether a copy's output is whole
+
+    /// The stamp of a copy whose last compile ended (`markComplete`): when,
+    /// which project folder it was (inode and creation date: a new project
+    /// at the same path is another), and every file the run wrote in the
+    /// output folder with its size and modification time. A run stopped
+    /// midway (a crash, a kill) leaves files that differ from it.
+    static let stampName = "complete"
+
+    /// Files the external tools write after a compile (`TOOL`), and the PDF
+    /// and log: not what a later run reads as its own earlier output.
+    static let notRunInputs: Set<String> = ["ind", "ilg", "bbl", "blg", "pdf", "log", "synctex", "gz"]
+
+    /// The output folder's files a run reads back (by relative path): size
+    /// and modification time. Symbolic links are not followed.
+    static func outputListing(_ out: URL) -> [String: [Double]] {
+        let fm = FileManager.default
+        var r: [String: [Double]] = [:]
+        guard let e = fm.enumerator(at: out, includingPropertiesForKeys: [.isRegularFileKey, .isSymbolicLinkKey, .fileSizeKey, .contentModificationDateKey], options: []) else { return r }
+        let prefix = out.standardizedFileURL.path + "/"
+        for case let u as URL in e {
+            guard let v = try? u.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey, .fileSizeKey, .contentModificationDateKey]) else { continue }
+            if v.isSymbolicLink == true {
+                e.skipDescendants()
+                continue
+            }
+            guard v.isRegularFile == true, !notRunInputs.contains(u.pathExtension.lowercased()) else { continue }
+            let rel = u.standardizedFileURL.path.hasPrefix(prefix) ? String(u.standardizedFileURL.path.dropFirst(prefix.count)) : u.lastPathComponent
+            r[rel] = [Double(v.fileSize ?? -1), v.contentModificationDate?.timeIntervalSince1970 ?? 0]
+        }
+        return r
+    }
+
+    /// The project folder's identity: inode and creation date.
+    static func sourceIdentity(_ source: URL?) -> [Double] {
+        guard let source, let a = try? FileManager.default.attributesOfItem(atPath: source.path) else { return [] }
+        return [Double((a[.systemFileNumber] as? NSNumber)?.uint64Value ?? 0), (a[.creationDate] as? Date)?.timeIntervalSince1970 ?? 0]
+    }
+
+    /// A compile ended: stamp what the output folder holds (written whole,
+    /// then renamed into place).
+    func markComplete() { Self.markComplete(base: base, source: source) }
+
+    static func markComplete(base: URL, source: URL?) {
+        let stamp: [String: Any] = [
+            "time": Date().timeIntervalSince1970,
+            "source": sourceIdentity(source),
+            "files": outputListing(base.appendingPathComponent("out", isDirectory: true)),
+        ]
+        guard let d = try? JSONSerialization.data(withJSONObject: stamp) else { return }
+        let tmp = base.appendingPathComponent("\(stampName).tmp-\(getpid())")
+        let dst = base.appendingPathComponent(stampName)
+        guard (try? d.write(to: tmp)) != nil else { return }
+        if rename(tmp.path, dst.path) != 0 { try? FileManager.default.removeItem(at: tmp) }
+    }
+
+    static func readStamp(_ base: URL) -> [String: Any]? {
+        guard let d = try? Data(contentsOf: base.appendingPathComponent(stampName)),
+              let j = try? JSONSerialization.jsonObject(with: d) as? [String: Any] else { return nil }
+        return j
+    }
+
+    /// Whether `base`'s output folder is as its last compile left it, for
+    /// the project folder `source`: else its next copy starts it empty.
+    static func outputIsWhole(_ base: URL, source: URL?) -> Bool {
+        guard let st = readStamp(base),
+              let src = st["source"] as? [Double], src == sourceIdentity(source), !src.isEmpty,
+              let files = st["files"] as? [String: [Double]] else { return false }
+        let now = outputListing(base.appendingPathComponent("out", isDirectory: true))
+        guard Set(now.keys) == Set(files.keys) else { return false }
+        for (k, v) in files {
+            guard let n = now[k], n.count == 2, v.count == 2, n[0] == v[0], abs(n[1] - v[1]) < 0.001 else { return false }
+        }
+        return true
+    }
+
+    /// The project's key in `projects/`: a hash of its path.
+    static func key(_ source: URL?) -> String {
+        SHA256.hash(data: Data((source?.path ?? "untitled").utf8)).prefix(8).map { String(format: "%02x", $0) }.joined()
+    }
+
+    /// The copies of exited instances, by project key (the newest first):
+    /// directories `<key>-...` whose owner file names an instance that has
+    /// exited (not this one).
+    static func exitedCopies() -> [String: [(url: URL, owner: String, modified: Date)]] {
+        let dir = EngineV3.cacheDirectory.appendingPathComponent("projects", isDirectory: true)
+        let fm = FileManager.default
+        var r: [String: [(url: URL, owner: String, modified: Date)]] = [:]
+        for name in (try? fm.contentsOfDirectory(atPath: dir.path)) ?? [] {
+            let base = dir.appendingPathComponent(name)
+            guard let owner = try? String(contentsOf: base.appendingPathComponent("owner"), encoding: .utf8),
+                  owner != EngineV3.instanceOwner, !EngineV3.ownerAlive(owner) else { continue }
+            // (not a symbolic link: nothing here is followed out of the cache)
+            if (try? fm.attributesOfItem(atPath: base.path))?[.type] as? FileAttributeType == .typeSymbolicLink { continue }
+            // the last compile's stamp, else when the owner last wrote its file
+            let modified = (readStamp(base)?["time"] as? Double).map { Date(timeIntervalSince1970: $0) }
+                ?? ((try? fm.attributesOfItem(atPath: base.appendingPathComponent("owner").path))?[.modificationDate] as? Date)
+                ?? .distantPast
+            r[String(name.split(separator: "-").first ?? ""), default: []].append((base, owner, modified))
+        }
+        for k in r.keys { r[k]!.sort { $0.modified > $1.modified } }
+        return r
+    }
+
+    /// Claim an exited instance's copy for this one: the owner file is
+    /// renamed away (one rename succeeds, whoever else tries), checked to
+    /// still name the exited `owner`, and written anew. `false`: another
+    /// instance claimed it first (or something else changed it).
+    static func claim(_ base: URL, from owner: String) -> Bool {
+        let fm = FileManager.default
+        let file = base.appendingPathComponent("owner")
+        let held = base.appendingPathComponent("owner.claim-\(getpid())-\(UUID().uuidString)")
+        guard (try? fm.moveItem(at: file, to: held)) != nil else { return false }
+        guard (try? String(contentsOf: held, encoding: .utf8)) == owner else {
+            try? fm.moveItem(at: held, to: file) // a live instance's: put it back
+            return false
+        }
+        try? Data(EngineV3.instanceOwner.utf8).write(to: file)
+        try? fm.removeItem(at: held)
+        return true
+    }
+
+    /// The newest copy of the project `key` whose instance has exited,
+    /// claimed for this instance (`claim`), if there is one. Its output is
+    /// kept only if it is whole for this project folder (`outputIsWhole`).
+    static func takeOver(key: String, source: URL?) -> URL? {
+        for c in exitedCopies()[key] ?? [] where claim(c.url, from: c.owner) {
+            if !outputIsWhole(c.url, source: source) {
+                let fm = FileManager.default
+                let out = c.url.appendingPathComponent("out", isDirectory: true)
+                for name in (try? fm.contentsOfDirectory(atPath: out.path)) ?? [] { try? fm.removeItem(at: out.appendingPathComponent(name)) }
+            }
+            try? FileManager.default.removeItem(at: c.url.appendingPathComponent(stampName))
+            return c.url
+        }
+        return nil
     }
 
     /// Whether the copy is still there (something outside may remove it).
@@ -2309,26 +2722,59 @@ final class EngineV3Mirror: @unchecked Sendable { // only `let`s; its walks touc
         try? Data(EngineV3.instanceOwner.utf8).write(to: base.appendingPathComponent("owner"))
     }
 
-    /// Removes project copies whose owner instance has exited. Copies
-    /// without an owner file (made by an older build that may still be
-    /// running) and copies of running instances are left alone.
+    /// Removes project copies whose owner instance has exited, but the
+    /// newest of each project's, which its next copy takes over (`init`),
+    /// until it is `keptCopyDays` old. Copies without an owner file (made
+    /// by an older build that may still be running) and copies of running
+    /// instances are left alone. Each copy is claimed before it is removed
+    /// (`claim`), so a copy another instance takes over at the same moment
+    /// stays.
     static func removeAbandoned(log: (String) -> Void) {
-        let dir = EngineV3.cacheDirectory.appendingPathComponent("projects", isDirectory: true)
-        let fm = FileManager.default
-        for name in (try? fm.contentsOfDirectory(atPath: dir.path)) ?? [] {
-            let base = dir.appendingPathComponent(name)
-            guard let owner = try? String(contentsOf: base.appendingPathComponent("owner"), encoding: .utf8),
-                  owner != EngineV3.instanceOwner, !EngineV3.ownerAlive(owner) else { continue }
-            try? fm.removeItem(at: base)
-            log("removed the project copy \(name) of exited instance \(owner)")
+        let old = Date().addingTimeInterval(-Double(keptCopyDays) * 86_400)
+        var kept: [(url: URL, owner: String, modified: Date)] = []
+        func remove(_ c: (url: URL, owner: String, modified: Date)) {
+            guard claim(c.url, from: c.owner) else { return }
+            try? FileManager.default.removeItem(at: c.url)
+            log("removed the project copy \(c.url.lastPathComponent) of exited instance \(c.owner)")
+        }
+        for (key, copies) in exitedCopies() {
+            // (a project key is 16 hex digits; other names are not kept)
+            let keep = key.count == 16 && key.allSatisfy(\.isHexDigit)
+            for (i, c) in copies.enumerated() {
+                if keep && i == 0 && c.modified > old { kept.append(c) } else { remove(c) }
+            }
+        }
+        // the kept copies within their budget, the most recent first
+        var total = 0
+        for c in kept.sorted(by: { $0.modified > $1.modified }) {
+            total += Self.bytes(of: c.url)
+            if total > keptCopyBytes { remove(c) }
         }
     }
 
+    /// The most the kept copies of exited instances may hold together.
+    static let keptCopyBytes = 256 << 20
+
+    /// The bytes of the regular files under `dir` (symbolic links not followed).
+    static func bytes(of dir: URL) -> Int {
+        guard let e = FileManager.default.enumerator(at: dir, includingPropertiesForKeys: [.isRegularFileKey, .fileSizeKey], options: []) else { return 0 }
+        var n = 0
+        for case let u as URL in e {
+            if let v = try? u.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey]), v.isRegularFile == true { n += v.fileSize ?? 0 }
+        }
+        return n
+    }
+
+    /// How long a project's last copy waits for the project to be opened again.
+    static let keptCopyDays = 30
+
     /// Empties this instance's copy (another project or file now uses it).
-    func clear() {
+    /// `keepingOutput`: the output folder of a copy just taken over stays
+    /// (its `.aux` is the next run's input).
+    func clear(keepingOutput: Bool = false) {
         texInputLock.lock(); texInputNames = []; texInputLock.unlock()
         let fm = FileManager.default
-        for dir in [root, output] {
+        for dir in keepingOutput ? [root] : [root, output] {
             for name in (try? fm.contentsOfDirectory(atPath: dir.path)) ?? [] { try? fm.removeItem(at: dir.appendingPathComponent(name)) }
         }
         ensure()
