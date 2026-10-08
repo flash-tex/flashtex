@@ -3943,7 +3943,6 @@ fn twin_files_edited_alike_both_shift() {
     }
 }
 
-
 /// Issue #1562: with the working directory unchanged, a file appearing in a
 /// `TEXMFHOME` subtree, a dangling link's target appearing, and the file
 /// found becoming unreadable all change what a lookup finds; each
