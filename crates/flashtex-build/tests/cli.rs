@@ -504,3 +504,66 @@ fn a_run_sweeps_what_a_killed_run_left() {
     );
     let _ = std::fs::remove_dir_all(&tmp);
 }
+
+/// Progress (lane CLI-PROGRESS) is for a terminal: without one (a pipe, as
+/// here, as in CI and scripts) `build` prints exactly what it printed before
+/// it existed, one line on stderr and nothing on stdout, and no `\r` or
+/// escape sequence; `--quiet` prints nothing; `--progress` asks for plain
+/// lines (a pass, the export) and keeps the last line.
+#[test]
+fn without_a_terminal_progress_prints_nothing_unless_asked() {
+    let Some(host) = host() else {
+        skip("no flashtex-host");
+        return;
+    };
+    if pdflatex().is_none() {
+        skip("no TeX Live");
+        return;
+    }
+    let dir = project("progress", &[("paper.tex", DOC)]);
+    let run = |extra: &[&str]| {
+        let mut c = cli();
+        c.args([
+            "build",
+            &dir.to_string_lossy(),
+            "--host",
+            &host.to_string_lossy(),
+        ])
+        .args(extra);
+        let out = c.output().unwrap();
+        assert!(
+            out.status.success(),
+            "{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        assert!(out.stdout.is_empty(), "stdout stays empty");
+        String::from_utf8(out.stderr).unwrap()
+    };
+    // As before progress: `flashtex-v3: wrote <pdf> (<n> ms)` and a newline.
+    let plain = run(&[]);
+    let pdf = dir.join("paper.pdf").canonicalize().unwrap();
+    let ms = plain
+        .strip_prefix(&format!("flashtex-v3: wrote {} (", pdf.display()))
+        .and_then(|r| r.strip_suffix(" ms)\n"));
+    assert!(
+        ms.is_some_and(|n| !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit())),
+        "{plain:?}"
+    );
+    assert_eq!(run(&["--no-progress"]).lines().count(), 1);
+    assert_eq!(run(&["--quiet"]), "");
+    let asked = run(&["--progress"]);
+    assert!(
+        !asked.contains('\r') && !asked.contains('\x1b'),
+        "{asked:?}"
+    );
+    let lines: Vec<&str> = asked.lines().collect();
+    assert!(lines.contains(&"flashtex-v3: pass 1"), "{asked}");
+    assert!(lines.contains(&"flashtex-v3: writing the PDF"), "{asked}");
+    assert!(
+        lines
+            .last()
+            .is_some_and(|l| l.starts_with("flashtex-v3: wrote ")),
+        "{asked}"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}

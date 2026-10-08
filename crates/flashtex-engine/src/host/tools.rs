@@ -61,6 +61,9 @@ struct HostOpts {
     /// interval in seconds, no preview mode, no convergence.
     budget: Option<usize>,
     timed: Option<f64>,
+    /// `iserve --profile NAME`: a performance mode (`crate::profile`);
+    /// `--budget` and `--timed` pin their knobs over it.
+    profile: Option<crate::profile::Mode>,
     no_preview: bool,
     no_converge: bool,
 }
@@ -95,6 +98,7 @@ pub fn main(argv: Vec<String>) -> i32 {
         argv0: "pdftex".into(),
         budget: None,
         timed: None,
+        profile: None,
         no_preview: false,
         no_converge: false,
     };
@@ -133,6 +137,14 @@ pub fn main(argv: Vec<String>) -> i32 {
             }
             "--timed" => {
                 ho.timed = Some(v.and_then(|v| v.parse().ok()).unwrap_or_else(|| usage()));
+                i += 1;
+            }
+            "--profile" => {
+                ho.profile = Some(
+                    v.as_deref()
+                        .and_then(crate::profile::Mode::parse)
+                        .unwrap_or_else(|| usage()),
+                );
                 i += 1;
             }
             "--no-preview" => ho.no_preview = true,
@@ -218,13 +230,17 @@ fn iserve(o: crate::system::RunOptions, ho: &HostOpts) -> i32 {
 
 fn iserve_on_this_thread(o: crate::system::RunOptions, ho: &HostOpts) -> i32 {
     use crate::incr::{Options, Session};
+    use crate::profile::{Mode, Pinned, Profile};
     let mut opts = Options::default();
+    let mut pinned = Pinned::from_env();
     if let Some(b) = ho.budget {
-        opts.budget = b;
+        pinned.budget = Some(b);
     }
     if let Some(t) = ho.timed {
-        opts.timed_s = t;
+        pinned.timed_s = Some(t);
     }
+    let mut profile = Profile::new(ho.profile.unwrap_or_else(Mode::from_env), &pinned);
+    opts.apply_profile(&profile);
     opts.preview = !ho.no_preview;
     opts.converge = !ho.no_converge;
     let mut s = Session::new(o, None, opts);
@@ -305,6 +321,19 @@ fn iserve_on_this_thread(o: crate::system::RunOptions, ho: &HostOpts) -> i32 {
             }
         } else if line == "finish" {
             s.finish().map(|r| r.json())
+        } else if let Some(m) = line.strip_prefix("profile ") {
+            // a performance mode, live, between compiles (the socket's
+            // PROFILE message; `Session::apply_profile`)
+            match Mode::parse(m.trim()) {
+                Some(m) => {
+                    profile = Profile::new(m, &pinned);
+                    s.apply_profile(&profile);
+                    Ok(format!("{{\"profile\":{}}}", profile.json()))
+                }
+                None => Err(format!(
+                    "profile low-memory|balanced|high-performance, not {m}"
+                )),
+            }
         } else if let Some(p) = line.strip_prefix("save ") {
             let t = std::time::Instant::now();
             s.save_s0(p.trim()).map(|(len, disk)| {
@@ -373,8 +402,17 @@ fn iserve_on_this_thread(o: crate::system::RunOptions, ho: &HostOpts) -> i32 {
         // as the socket host does after each compile's DONE (and so that
         // the soundness sweeps run through prepared restores);
         // FLASHTEX_NO_PREPARE=1 leaves it out
-        if line.starts_with("compile") && std::env::var_os("FLASHTEX_NO_PREPARE").is_none() {
+        if line.starts_with("compile") && profile.prepare {
             s.prepare_next(&mut || false);
+        }
+        // and, where the profile trims soon after a compile (Low Memory),
+        // as its idle trim does: the old run's cached chunks go
+        if line.starts_with("compile") && profile.trim_after_ms.is_some_and(|t| t <= 500) {
+            if profile.lean {
+                s.trim_caches_deep();
+            } else {
+                s.trim_caches();
+            }
         }
     }
     super::crash::exit(reason);
