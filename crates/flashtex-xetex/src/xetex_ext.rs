@@ -4,12 +4,12 @@
 //! own code is MIT-licensed (third_party/xetex/COPYING); the ports here keep
 //! its behaviour, and its notices are in `LICENSE` of this crate.
 //!
-//! Native fonts (phase S1) are in `crate::native`. What serves graphics,
-//! OpenType math, Graphite and AAT is still a stub that answers as TeX
-//! Live's XeTeX does when nothing is found: `find_pic_file` finds no
+//! Native fonts (phase S1) and OpenType math (S2) are in `crate::native`.
+//! What serves graphics, Graphite and AAT is still a stub that answers as
+//! TeX Live's XeTeX does when nothing is found: `find_pic_file` finds no
 //! picture, and the AAT and Graphite routines are never reached because no
 //! AAT or Graphite engine is made (docs/design/xetex/PLAN.md §3.1). Phase
-//! S2 replaces the math and picture stubs.
+//! S2 replaces the picture stubs.
 
 use crate::generated::types::{real_point, real_rect, transform};
 use crate::generated::Globals;
@@ -433,68 +433,6 @@ impl Globals {
             Some(o) => self.host.handles.alloc(o),
             None => 0,
         }
-    }
-
-    // ---- XeTeXOTMath.cpp (reached only with an OpenType math font) --------
-
-    pub fn get_native_mathsy_param(&mut self, _f: i32, _n: i32) -> i32 {
-        0
-    }
-    pub fn get_native_mathex_param(&mut self, _f: i32, _n: i32) -> i32 {
-        0
-    }
-    pub fn get_ot_math_variant(
-        &mut self,
-        _f: i32,
-        g: i32,
-        _v: i32,
-        adv: &mut i32,
-        _horiz: i32,
-    ) -> i32 {
-        *adv = -1;
-        g
-    }
-    pub fn get_ot_assembly_ptr(&mut self, _f: i32, _g: i32, _horiz: i32) -> i32 {
-        0
-    }
-    pub fn free_ot_assembly(&mut self, _a: i32) {}
-    pub fn get_ot_math_ital_corr(&mut self, _f: i32, _g: i32) -> i32 {
-        0
-    }
-    pub fn get_ot_math_accent_pos(&mut self, _f: i32, _g: i32) -> i32 {
-        0x7fffffff
-    }
-    pub fn get_ot_math_kern(
-        &mut self,
-        _f: i32,
-        _g: i32,
-        _sf: i32,
-        _sg: i32,
-        _cmd: i32,
-        _shift: i32,
-    ) -> i32 {
-        0
-    }
-    pub fn ot_part_count(&mut self, _a: i32) -> i32 {
-        0
-    }
-    pub fn ot_part_glyph(&mut self, _a: i32, _i: i32) -> i32 {
-        0
-    }
-    pub fn ot_part_is_extender(&mut self, _a: i32, _i: i32) -> bool {
-        false
-    }
-    pub fn ot_part_start_connector(&mut self, _f: i32, _a: i32, _i: i32) -> i32 {
-        0
-    }
-    pub fn ot_part_end_connector(&mut self, _f: i32, _a: i32, _i: i32) -> i32 {
-        0
-    }
-    pub fn ot_part_full_advance(&mut self, _f: i32, _a: i32, _i: i32) -> i32 {
-        0
-    }
-    pub fn ot_min_connector_overlap(&mut self, _f: i32) -> i32 {
-        0
     }
 
     // ---- XeTeX_pic.c and trans.c ------------------------------------------

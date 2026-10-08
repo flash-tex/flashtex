@@ -16,6 +16,7 @@
 
 pub mod font_inst;
 pub mod layout;
+pub mod otmath;
 
 use crate::fontlibs::hb;
 use crate::generated::consts::otgr_font_flag;
@@ -1266,12 +1267,6 @@ impl Globals {
 
     /// `terminatefontmanager`.
     pub fn terminate_font_manager(&mut self) {}
-
-    /// `get_ot_math_constant` would be the MATH table's constant (phase
-    /// S2); an OpenType math font's extra fontdimens are 0 until then.
-    pub fn get_ot_math_constant(&mut self, _f: i32, _n: i32) -> i32 {
-        0
-    }
 }
 
 /// `getCachedGlyphBBox`/`cacheGlyphBBox` around `getGlyphBounds`.

@@ -2851,9 +2851,9 @@ impl Globals {
                             self.get_r_token();
                             p = self.cur_cs;
                             if (a >= 4i32) {
-                                self.geq_define(p, relax, 256i32);
+                                self.geq_define(p, relax, too_big_usv);
                             } else {
-                                self.eq_define(p, relax, 256i32);
+                                self.eq_define(p, relax, too_big_usv);
                             }
                             self.scan_optional_equals();
                             match n {
