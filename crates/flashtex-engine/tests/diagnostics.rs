@@ -595,9 +595,8 @@ fn macro_definition_sites_are_recorded() {
         }
     }
     doc.push_str("\\end{document}\n");
-    let line_of = |d: &str, needle: &str| {
-        d.lines().position(|l| l.contains(needle)).unwrap() as i64 + 1
-    };
+    let line_of =
+        |d: &str, needle: &str| d.lines().position(|l| l.contains(needle)).unwrap() as i64 + 1;
     // The innermost macro frame's definition site: (file name, line, column).
     let site = |ds: &[Json], name: &str| -> Option<(String, i64, Option<i64>)> {
         let f = ds
@@ -617,7 +616,7 @@ fn macro_definition_sites_are_recorded() {
     };
     std::fs::write(dir.join("doc.tex"), &doc).unwrap();
     let mut h = Host::start(&e, &dir, "doc.tex");
-    let mut check = |h: &mut Host, text: &str, what: &str| {
+    let check = |h: &mut Host, text: &str, what: &str| {
         std::fs::write(dir.join("doc.tex"), text).unwrap();
         let reference = dir.with_extension("ref");
         let _ = std::fs::remove_dir_all(&reference);
