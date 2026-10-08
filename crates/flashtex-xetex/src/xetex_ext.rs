@@ -13,6 +13,89 @@
 
 use crate::generated::types::{real_point, real_rect, transform};
 use crate::generated::Globals;
+use crate::state::Object;
+use crate::teckit;
+use std::sync::{Arc, Mutex};
+
+/// A TECkit converter (XeTeX_ext.c's `TECkit_Converter`), the object of a
+/// font mapping's handle in `Host::handles`. XeTeX never frees one; it is
+/// disposed of when the last engine state (or checkpoint) holding it goes.
+/// Every conversion resets it, so between calls it holds no state and
+/// checkpoints can share it. The mutex makes it Send + Sync (an engine may
+/// move between threads, `Globals` is `Send`); a mapping is used by one
+/// engine at a time, so it is never contended.
+pub struct Mapping(Mutex<Converter>);
+
+/// TECkit's converter pointer. TECkit keeps no thread-local or global state
+/// per converter, so it may be used from any one thread at a time.
+pub struct Converter(teckit::TECkit_Converter);
+
+// SAFETY: see `Converter`; `Mapping`'s mutex serialises every use.
+unsafe impl Send for Converter {}
+
+impl Mapping {
+    /// `TECkit_CreateConverter` over a compiled mapping (`.tec` bytes, which
+    /// TECkit copies): a byte mapping (Unicode to bytes, the mapping's
+    /// reverse direction) for a TFM font, else UTF-16 to UTF-16 forward,
+    /// as XeTeX_ext.c's `load_mapping_file` makes them. None if TECkit
+    /// cannot use the file.
+    pub fn new(mut tec: Vec<u8>, byte_mapping: bool) -> Option<Mapping> {
+        let mut cnv: teckit::TECkit_Converter = std::ptr::null_mut();
+        let (forward, target) = if byte_mapping {
+            (0, teckit::kForm_Bytes)
+        } else {
+            (1, teckit::UTF16_NATIVE)
+        };
+        // SAFETY: `tec` is valid for its length for the call.
+        unsafe {
+            teckit::TECkit_CreateConverter(
+                tec.as_mut_ptr(),
+                tec.len() as u32,
+                forward,
+                teckit::UTF16_NATIVE,
+                target,
+                &mut cnv,
+            );
+        }
+        (!cnv.is_null()).then(|| Mapping(Mutex::new(Converter(cnv))))
+    }
+
+    /// XeTeX_ext.c's normalizer for `apply_normalization`: no mapping,
+    /// native UTF-32 to native UTF-32 in NFC (`nfd` false) or NFD. Err is
+    /// TECkit's status if it cannot be made.
+    pub fn normalizer(nfd: bool) -> Result<Mapping, teckit::TECkit_Status> {
+        let mut cnv: teckit::TECkit_Converter = std::ptr::null_mut();
+        let form = if nfd {
+            teckit::kForm_NFD
+        } else {
+            teckit::kForm_NFC
+        };
+        // SAFETY: TECkit accepts no mapping (null, 0) for a normalizer.
+        let status = unsafe {
+            teckit::TECkit_CreateConverter(
+                std::ptr::null_mut(),
+                0,
+                1,
+                teckit::NATIVE_UTF32,
+                teckit::NATIVE_UTF32 | form,
+                &mut cnv,
+            )
+        };
+        if status != teckit::kStatus_NoError || cnv.is_null() {
+            return Err(status);
+        }
+        Ok(Mapping(Mutex::new(Converter(cnv))))
+    }
+}
+
+impl Drop for Mapping {
+    fn drop(&mut self) {
+        // SAFETY: a converter TECkit made, disposed of once.
+        unsafe {
+            teckit::TECkit_DisposeConverter(self.0.get_mut().unwrap_or_else(|e| e.into_inner()).0);
+        }
+    }
+}
 
 impl Globals {
     // ---- xetex.h: the bit fields of a math code ---------------------------
@@ -112,33 +195,228 @@ impl Globals {
         -1
     }
 
-    // ---- TECkit mappings (S0: none) ---------------------------------------
+    // ---- TECkit mappings (XeTeX_ext.c) -------------------------------------
 
     /// `checkfortfmfontmapping`: a `:mapping=NAME` after a TFM font's name
-    /// is cut off `name_of_file` (and would name a TECkit mapping, which
-    /// phase S0 does not load).
+    /// is cut off `name_of_file`, and NAME (from its first character above
+    /// a space) is kept for `load_tfm_font_mapping`, which loads it once
+    /// the TFM file has been read. C's `saved_mapping_name` is
+    /// `Host::saved_mapping_name`.
     pub fn check_for_tfm_font_mapping(&mut self) {
+        self.host.saved_mapping_name = None;
+        // C's strstr((char*)nameoffile + 1, ":mapping="): the name
+        // (`name_of_file[0..name_length]` here) ends at a NUL.
         let n = (self.name_length.max(0) as usize).min(self.name_of_file.len());
+        let name = &self.name_of_file[..n];
+        let name = &name[..name.iter().position(|&b| b == 0).unwrap_or(n)];
         let pat = b":mapping=";
-        if let Some(i) = self.name_of_file[..n]
-            .windows(pat.len())
-            .position(|w| w == pat)
-        {
+        if let Some(i) = name.windows(pat.len()).position(|w| w == pat) {
+            let rest = &name[i + pat.len()..];
+            // `while (*cp && *cp <= ' ') ++cp;` with C's signed `char`
+            // (TeX Live's macOS and x86 builds): bytes from 0x80 are skipped
+            // too.
+            let start = rest
+                .iter()
+                .position(|&b| b as i8 > b' ' as i8)
+                .unwrap_or(rest.len());
+            if start < rest.len() {
+                self.host.saved_mapping_name = Some(rest[start..].to_vec());
+            }
             self.name_of_file[i] = 0;
             self.name_length = i as i32;
         }
     }
+
+    /// `loadtfmfontmapping`: the mapping `check_for_tfm_font_mapping` kept,
+    /// loaded as a byte mapping (a handle, 0 if none); it is then
+    /// forgotten.
     pub fn load_tfm_font_mapping(&mut self) -> i32 {
-        0
+        match self.host.saved_mapping_name.take() {
+            Some(name) => self.load_mapping_file(&name, true),
+            None => 0,
+        }
     }
-    pub fn apply_tfm_font_mapping(&mut self, _m: i32, c: i32) -> i32 {
-        c
+
+    /// `applytfmfontmapping`: character `c` of a TFM font through its byte
+    /// mapping (Unicode to bytes): the first byte out, or 0 if none.
+    pub fn apply_tfm_font_mapping(&mut self, m: i32, c: i32) -> i32 {
+        let Some(map) = self.mapping(m) else {
+            return 0;
+        };
+        // C: `UniChar in = c`.
+        let input = (c as u16).to_ne_bytes();
+        let mut out = [0u8; 2];
+        let (mut in_used, mut out_used) = (0u32, 0u32);
+        let conv = map.0.lock().unwrap_or_else(|e| e.into_inner());
+        // SAFETY: a live converter; the buffers are as long as said.
+        unsafe {
+            teckit::TECkit_ConvertBuffer(
+                conv.0,
+                input.as_ptr(),
+                input.len() as u32,
+                &mut in_used,
+                out.as_mut_ptr(),
+                out.len() as u32,
+                &mut out_used,
+                1,
+            );
+            teckit::TECkit_ResetConverter(conv.0);
+        }
+        if out_used < 1 {
+            0
+        } else {
+            i32::from(out[0])
+        }
     }
-    pub fn apply_mapping_pool(&mut self, _m: i32, _s: i32, _len: i32) -> i32 {
-        0
+
+    /// xetex.web's `apply_mapping(font_mapping[f],
+    /// addressof(str_pool[s]), len)`: `str_pool[s..s+len]` through the
+    /// mapping into `mapped_text`; the number of UTF-16 units there.
+    pub fn apply_mapping_pool(&mut self, m: i32, s: i32, len: i32) -> i32 {
+        let (s, len) = (s.max(0) as usize, len.max(0) as usize);
+        let text: Vec<u16> = self.str_pool[s..s + len]
+            .iter()
+            .map(|&u| u as u16)
+            .collect();
+        self.apply_mapping(m, &text)
     }
-    pub fn apply_mapping_native(&mut self, _m: i32, _len: i32) -> i32 {
-        0
+
+    /// xetex.web's `apply_mapping(font_mapping[f], native_text, len)`:
+    /// `native_text[0..len]` through the mapping into `mapped_text`.
+    pub fn apply_mapping_native(&mut self, m: i32, len: i32) -> i32 {
+        let len = len.max(0) as usize;
+        let text: Vec<u16> = self.native_text[..len].iter().map(|&u| u as u16).collect();
+        self.apply_mapping(m, &text)
+    }
+
+    /// `applymapping`: `txt` (UTF-16) through the mapping into
+    /// `mapped_text`; the number of UTF-16 units written, or 0 on an error.
+    ///
+    /// The output buffer is C's: `txtLen * 2 + 32` bytes at least, kept
+    /// between calls (`Host::mapping_out_length`), and grown by as much and
+    /// the conversion started again while TECkit says it is full. C's
+    /// `mappedtext` grows with it; here the result is copied into the
+    /// `mapped_text` array, which grows to fit up to the
+    /// `mapped_text_size + 1` units reserved for it (`changes/ext.ch`, the
+    /// bound `native_text` has too).
+    fn apply_mapping(&mut self, m: i32, txt: &[u16]) -> i32 {
+        let Some(map) = self.mapping(m) else {
+            return 0;
+        };
+        let input: Vec<u8> = txt.iter().flat_map(|u| u.to_ne_bytes()).collect();
+        let step = (txt.len() as u64 * 2 + 32) as u32;
+        if u64::from(self.host.mapping_out_length) < u64::from(step) {
+            self.host.mapping_out_length = step;
+        }
+        loop {
+            let mut out = vec![0u8; self.host.mapping_out_length as usize];
+            let (mut in_used, mut out_used) = (0u32, 0u32);
+            let conv = map.0.lock().unwrap_or_else(|e| e.into_inner());
+            // SAFETY: a live converter; the buffers are as long as said.
+            let status = unsafe {
+                let s = teckit::TECkit_ConvertBuffer(
+                    conv.0,
+                    input.as_ptr(),
+                    input.len() as u32,
+                    &mut in_used,
+                    out.as_mut_ptr(),
+                    out.len() as u32,
+                    &mut out_used,
+                    1,
+                );
+                teckit::TECkit_ResetConverter(conv.0);
+                s
+            };
+            match status {
+                teckit::kStatus_NoError => {
+                    let n = out_used as usize / 2;
+                    if n > self.mapped_text.len() {
+                        self.mapped_text.resize_len(n);
+                    }
+                    let dst = self.mapped_text.slice_mut(0, n);
+                    for (d, u) in dst.iter_mut().zip(out[..2 * n].as_chunks::<2>().0) {
+                        *d = i32::from(u16::from_ne_bytes(*u));
+                    }
+                    return n as i32;
+                }
+                teckit::kStatus_OutputBufferFull => {
+                    self.host.mapping_out_length = self.host.mapping_out_length.wrapping_add(step);
+                }
+                _ => return 0,
+            }
+        }
+    }
+
+    /// XeTeX_ext.c's `apply_normalization` (`\XeTeXinputnormalization`
+    /// 1: NFC, 2: NFD) of an input line's UTF-32 `text`, without its
+    /// writing into `buffer`: the normalized characters, or None where C
+    /// calls `buffer_overflow` (TECkit's status is not `NoError`, which
+    /// includes a result longer than `room`, C's `bufsize - first`, the
+    /// room for it in `buffer`). The caller stores the result at `first`
+    /// and sets `last`.
+    ///
+    /// As in C, one converter per form is made on first use and kept for
+    /// the run (`Host::normalizers`, C's `static normalizers[2]`), and
+    /// reset after each conversion. If TECkit cannot make one, C prints
+    /// "! Failed to create normalizer: error code = N" and exits with 1;
+    /// so does this.
+    pub fn normalize_utf32(&mut self, text: &[u32], nfd: bool, room: usize) -> Option<Vec<u32>> {
+        let slot = usize::from(nfd);
+        let cnv = match self.host.normalizers[slot].clone() {
+            Some(c) => c,
+            None => match Mapping::normalizer(nfd) {
+                Ok(m) => {
+                    let m = Arc::new(m);
+                    self.host.normalizers[slot] = Some(m.clone());
+                    m
+                }
+                Err(status) => {
+                    eprintln!(
+                        "! Failed to create normalizer: error code = {}",
+                        status as i32
+                    );
+                    std::process::exit(1);
+                }
+            },
+        };
+        let input: Vec<u8> = text.iter().flat_map(|c| c.to_ne_bytes()).collect();
+        let mut out = vec![0u8; room.saturating_mul(4)];
+        let (mut in_used, mut out_used) = (0u32, 0u32);
+        let conv = cnv.0.lock().unwrap_or_else(|e| e.into_inner());
+        // SAFETY: a live converter; the buffers are as long as said.
+        let status = unsafe {
+            let s = teckit::TECkit_ConvertBuffer(
+                conv.0,
+                input.as_ptr(),
+                input.len() as u32,
+                &mut in_used,
+                out.as_mut_ptr(),
+                out.len() as u32,
+                &mut out_used,
+                1,
+            );
+            teckit::TECkit_ResetConverter(conv.0);
+            s
+        };
+        if status != teckit::kStatus_NoError {
+            return None;
+        }
+        Some(
+            out[..out_used as usize / 4 * 4]
+                .as_chunks::<4>()
+                .0
+                .iter()
+                .map(|b| u32::from_ne_bytes(*b))
+                .collect(),
+        )
+    }
+
+    /// The TECkit converter of handle `m`.
+    fn mapping(&self, m: i32) -> Option<Arc<Mapping>> {
+        match self.host.handles.get(m)? {
+            Object::Other(o) => o.clone().downcast::<Mapping>().ok(),
+            _ => None,
+        }
     }
 
     // ---- glyph-info arrays: handles of `Host::handles` (state.rs) --------

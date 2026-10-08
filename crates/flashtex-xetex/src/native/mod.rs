@@ -645,19 +645,51 @@ impl Globals {
         0
     }
 
-    /// `load_mapping_file`: a TECkit mapping, as a handle (0 if none).
-    /// TECkit lands later in S1; until then a mapping is reported as not
-    /// found, as XeTeX reports a `.tec` file kpathsea does not find.
-    pub(crate) fn load_mapping_file(&mut self, name: &[u8], _byte_mapping: bool) -> i32 {
-        let mut buffer = name.to_vec();
+    /// `load_mapping_file`: the TECkit mapping `name.tec`, found as kpathsea's
+    /// `misc fonts`, as a handle (0 if none): a byte mapping for a TFM font
+    /// (`byte_mapping`), else a UTF-16 one. Reported as XeTeX does: not
+    /// found (1), not usable (2), or, with `\XeTeXtracingfonts` above 1,
+    /// loaded (0).
+    ///
+    /// C's `kpse_find_file(buffer, kpse_miscfonts_format, 1)` is the
+    /// resolver's lookup of the name, which searches what kpathsea's
+    /// `ls-R` databases and the path's plain directories (`.`) hold;
+    /// `must_exist`'s further disk search of `ls-R` trees is not made.
+    pub(crate) fn load_mapping_file(&mut self, name: &[u8], byte_mapping: bool) -> i32 {
+        use flashtex_engine::resolver::Format;
+        // strncpy(buffer, s, e - s): the name ends at a NUL.
+        let mut buffer = name[..name.iter().position(|&b| b == 0).unwrap_or(name.len())].to_vec();
         buffer.extend_from_slice(b".tec");
-        let h = self
-            .host
-            .handles
-            .alloc(Object::Other(Arc::new(buffer.clone())));
-        self.font_mapping_warning(h, buffer.len() as i32, 1);
-        self.host.handles.free(h);
-        0
+        let file = String::from_utf8_lossy(&buffer).into_owned();
+        let (mapping, warning) = match flashtex_engine::system::find_file(&file, Format::MiscFonts)
+        {
+            Some(path) => {
+                let mapping = std::fs::read(&path)
+                    .ok()
+                    .and_then(|tec| crate::xetex_ext::Mapping::new(tec, byte_mapping));
+                let warning = if mapping.is_none() {
+                    Some(2)
+                } else if self.get_tracing_fonts_state() > 1 {
+                    Some(0)
+                } else {
+                    None
+                };
+                (mapping, warning)
+            }
+            None => (None, Some(1)),
+        };
+        if let Some(w) = warning {
+            let h = self
+                .host
+                .handles
+                .alloc(Object::Other(Arc::new(buffer.clone())));
+            self.font_mapping_warning(h, buffer.len() as i32, w);
+            self.host.handles.free(h);
+        }
+        match mapping {
+            Some(m) => self.host.handles.alloc(Object::Other(Arc::new(m))),
+            None => 0,
+        }
     }
 
     /// `releasefontengine`.

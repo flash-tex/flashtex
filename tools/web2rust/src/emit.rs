@@ -650,6 +650,20 @@ impl<'a> E<'a> {
                 } else {
                     format!("(({inner}) + {}) as usize", -lo)
                 };
+                // A subscript that calls a translated routine (which needs
+                // `&mut self`) is evaluated into a temporary first: the
+                // array's `Index` would otherwise hold `&self` across the
+                // call (tex.ch's `char_info`, whose subscript calls
+                // `effective_char`). Pascal evaluates the subscript before
+                // the element is read anyway.
+                if ix.len() == 1 && self.has_call(&ix[0]) {
+                    let n = self.fresh();
+                    return format!(
+                        "{{ let __s{n} = {idx}; {}[{}] }}",
+                        self.view_of(b).unwrap_or_else(|| self.ex(b)),
+                        self.subscript(format!("__s{n}"))
+                    );
+                }
                 let mut s = format!(
                     "{}[{}]",
                     self.view_of(b).unwrap_or_else(|| self.ex(b)),

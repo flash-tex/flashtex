@@ -712,6 +712,99 @@ ncase("n022-name-not-found", "a font name that the index does not have",
 \lsshipbox0
 \end""", no_halt=True)
 
+# --- TECkit font mappings (phase S1): `mapping=` on native and TFM fonts ---
+
+def mcase(name, desc, body, no_halt=False):
+    ncase(name, desc, body, no_halt)
+    cases[name] = cases[name].replace(
+        b"phase S1: native fonts)", b"phase S1: TECkit font mappings)", 1)
+
+
+TEXTEXT = "``quotes'' `single' -- en --- em ?` !` ,,low'' <<guillemets>> x--y---z"
+
+mcase("m001-tex-text", "mapping=tex-text on a native font by file name: quotes, dashes, ?` !`, ,, << >>",
+      r"""\font\x="[lmroman10-regular.otf]:mapping=tex-text" \x
+\setbox0=\hbox{""" + TEXTEXT + r"""}
+\setbox1=\hbox{\font\y="[lmroman10-regular.otf]" \y """ + TEXTEXT + r"""}
+\setbox2=\vbox{\box0 \box1}
+\lsshipbox2
+\end""")
+
+mcase("m002-tex-text-paragraph", "a paragraph in a mapped font broken into lines, with hyphenation and dash breaks",
+      PARA + r"""\hyphenation{dif-fi-cult ef-fi-cient af-flu-ent}
+\font\x="[texgyretermes-regular.otf]:mapping=tex-text" \x \hyphenchar\x=`-
+\XeTeXdashbreakstate=1
+\setbox0=\vbox{""" + WORDS + " " + TEXTEXT + " " + WORDS + r"""\par}
+\lsshipbox0
+\end""")
+
+mcase("m003-mapping-single-chars", "a mapping applied to single characters: \\char, \\accent and a character in math text",
+      r"""\font\x="[lmroman10-regular.otf]:mapping=tex-text" \x
+\setbox0=\hbox{\char`\` \char`\'\char`\' -\char`\-\char`\- \accent`\` e \accent`\' o}
+\lsshipbox0
+\end""")
+
+mcase("m004-mapping-expands", "unimath-bf: a mapping into the supplementary plane (surrogate pairs), a word longer than TECkit's first output buffer",
+      r"""\font\m="[latinmodern-math.otf]:mapping=unimath-bf" \m
+\setbox0=\hbox{abc XYZ abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghij}
+\setbox1=\hbox{\font\n="[latinmodern-math.otf]:mapping=unimath-it" \n mapped italic \char`h}
+\setbox2=\vbox{\box0 \box1}
+\lsshipbox2
+\end""")
+
+mcase("m005-tfm-byte-mapping", "a TFM font with :mapping= (a byte mapping, qx-unicode): characters mapped at \\shipout",
+      r"""\font\q=cmr10:mapping=qx-unicode \q
+\setbox0=\hbox{abc \char"E9\char"FC\char"DF\char"27 xyz}
+\font\r="cmr10:mapping=  qx-unicode" \font\s="cmr10:mapping=" \font\t=cmr10
+\message{[\fontname\q][\fontname\r][\fontname\s][\fontname\t]}
+\setbox1=\hbox{\r abc \s abc \t abc}
+\setbox2=\vbox{\box0 \box1}
+\lsshipbox2
+\end""")
+
+mcase("m006-tfm-unusable-mapping", "a TFM font with a Unicode-to-Unicode mapping (tex-text): not usable",
+      r"""\font\t=cmr10:mapping=tex-text \t
+\setbox0=\hbox{``x''}
+\lsshipbox0
+\end""")
+
+mcase("m007-missing-mapping", "a mapping file that does not exist, on a native and on a TFM font",
+      r"""\font\a="[lmroman10-regular.otf]:mapping=nosuchmapping" \a
+\font\b=cmr10:mapping=nosuchmapping
+\setbox0=\hbox{\a ``a'' \b ``b''}
+\lsshipbox0
+\end""")
+
+mcase("m008-tracing-fonts-mappings", "\\XeTeXtracingfonts=2 reports each mapping loaded",
+      r"""\XeTeXtracingfonts=2
+\font\a="[lmroman10-regular.otf]:mapping=tex-text" \font\b=cmr10:mapping=qx-unicode
+\font\c="[lmroman10-regular.otf]:mapping=nosuchmapping;+smcp"
+\XeTeXtracingfonts=1 \font\d="[lmroman10-bold.otf]:mapping=tex-text"
+\setbox0=\hbox{\a ``a'' \b b \c c \d ``d''}
+\lsshipbox0
+\end""")
+
+mcase("m009-tfm-mapping-paragraph", "a paragraph in a mapped TFM font: ligatures (not mapped twice), kerns, hyphenation and discretionaries",
+      PARA + r"""\hyphenation{dif-fi-cult ef-fi-cient af-flu-ent}
+\font\q=cmr10:mapping=qx-unicode \q \hyphenchar\q=`-
+\setbox0=\vbox{We shall find that office workers, efficient and affluent, flatly refuse
+difficult fjords; AVATAR, Wo, Ta, T. Yo! -- or not --- ``quoted'' text, ff ffi ffl fi fl.
+dif\-fi\-cult of\discretionary{f-}{fi}{ffi}ce \par}
+\lsshipbox0
+\end""")
+
+mcase("m010-tfm-mapping-chars", "characters of a mapped TFM font whose mapped code is missing or another; \\accent; \\fontcharwd",
+      r"""\font\q=cmr10:mapping=qx-unicode \q
+\setbox0=\hbox{\char"19\char"1B\char"7F\char"5C\char"22\char"7B\char"7D\char"3C\char"3E\char"7C x\accent"7F e\accent18 a\accent"5E o}
+\message{[\the\fontcharwd\q"DF][\the\fontcharwd\q"19][\the\fontcharwd\q"41][\the\wd0]}
+\font\sy=cmsy10 \font\ex=cmex10 \textfont2=\sy \scriptfont2=\sy \scriptscriptfont2=\sy
+\textfont3=\ex \scriptfont3=\ex \scriptscriptfont3=\ex
+\textfont0=\q \scriptfont0=\q \scriptscriptfont0=\q
+\setbox1=\hbox{$\fam0 a^b\mathchar"7019 ff\mathchar"7022\mathaccent"7015 x$}
+\setbox2=\vbox{\box0 \box1}
+\lsshipbox2
+\end""")
+
 for name, data in cases.items():
     with open(os.path.join(OUT, name + ".tex"), "wb") as fh:
         fh.write(data)

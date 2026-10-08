@@ -98,7 +98,7 @@ the engine and how it shares one runtime and one engine interface with the pdfTe
   `.tec` files (`tex-text.tec` comes from the bundle or TeX Live); ICU for
   encodings, normalisation and line breaking is pinned the same way, at the
   version TeX Live 2026 builds with.
-- **Vendored (S1):** [`third_party/harfbuzz`](../../../third_party/harfbuzz/README.md) and [`third_party/freetype`](../../../third_party/freetype/README.md), built by `crates/flashtex-xetex/fontlibs` and pinned by `crates/flashtex-xetex/tests/pinned_libs.rs`.
+- **Vendored (S1):** [`third_party/harfbuzz`](../../../third_party/harfbuzz/README.md) and [`third_party/freetype`](../../../third_party/freetype/README.md), built by `crates/flashtex-xetex/fontlibs`, and [`third_party/teckit`](../../../third_party/teckit/README.md) (TECkit 2.5.13's engine, used under its LGPL-2.1-or-later option, with TeX Live's zlib), built by `crates/flashtex-xetex/teckit`; all pinned by `crates/flashtex-xetex/tests/pinned_libs.rs`. A TFM font's `:mapping=` goes through tex.ch's ML\TeX `effective_char` as in TeX Live (`changes/mltex.ch`).
 - **Font lookup, platform-free.** XeTeX asks Core Text (macOS) or fontconfig
   (elsewhere) for the installed fonts; FlashTeX does not. A name is resolved
   by XeTeX's own matching rules, rewritten, over a platform-free index of the

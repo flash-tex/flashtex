@@ -139,9 +139,18 @@ def main(argv=None):
             return 1
         fmts[who] = d
         logs[who] = X.normalise(log, d).split("\n")
-    # The format logs differ in one known line: TeX Live's xetex starts with
-    # 15 more pool strings than the port (S0; reported in the S1 PR). It is
-    # shown, not hidden.
+    # The format logs differ in one known line, `\dump`'s "N strings of
+    # total length L" (capacity accounting, DESIGN.md §1.1): TeX Live's
+    # xetex has 15 more pool strings (428 more characters) than the port.
+    # Measured by diffing the two formats' string pools: TeX Live's tex.ch
+    # changes string literals without changing what is printed
+    # (print_mode/print_in_mode's "vertical mode" and "' in vertical mode",
+    # runaway's "Runaway definition", " while scanning definition", the
+    # plurals " lines", " preloaded fonts", " hyphenation exceptions",
+    # " ops") and adds ML\TeX's strings ("charsubdef", "substitution for
+    # ", ...), while the port keeps xetex.web's split literals and
+    # "TeXinputs:"/"TeXfonts:". Only string numbers and this count differ.
+    # It is shown, not hidden.
     fa, fb = logs["reference"], logs["candidate"]
     fdiff = [(x, y) for x, y in zip(fa, fb) if x != y]
     print("format logs: %d lines, %d differ%s" % (
