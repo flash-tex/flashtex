@@ -14,15 +14,6 @@
 
 use crate::generated::types::{real_point, real_rect, transform};
 use crate::generated::Globals;
-use std::collections::HashMap;
-use std::sync::Mutex;
-
-/// `hz.cpp`'s `leftProt` and `rightProt`: character protrusion codes by
-/// (font, code, side), for every font (`\lpcode`, `\rpcode`).
-static PROTRUSION: Mutex<Option<Protrusion>> = Mutex::new(None);
-
-/// A protrusion code by (font, character or glyph, side).
-type Protrusion = HashMap<(i32, u32, i32), i32>;
 
 impl Globals {
     // ---- xetex.h: the bit fields of a math code ---------------------------
@@ -49,17 +40,14 @@ impl Globals {
     // ---- hz.cpp -----------------------------------------------------------
 
     pub fn get_cp_code(&mut self, f: i32, c: i32, side: i32) -> i32 {
-        let g = PROTRUSION.lock().unwrap();
-        g.as_ref()
-            .and_then(|m| m.get(&(f, c as u32, side)).copied())
+        self.host
+            .protrusion
+            .get(&(f, c as u32, side))
+            .copied()
             .unwrap_or(0)
     }
     pub fn set_cp_code(&mut self, f: i32, c: i32, side: i32, v: i32) {
-        PROTRUSION
-            .lock()
-            .unwrap()
-            .get_or_insert_with(HashMap::new)
-            .insert((f, c as u32, side), v);
+        self.host.protrusion.insert((f, c as u32, side), v);
     }
 
     // ---- XeTeX_ext.c: native fonts (S0: none is ever found) ---------------
@@ -259,11 +247,20 @@ impl Globals {
         0
     }
 
-    // ---- glyph-info arrays (S0: none exists) ------------------------------
+    // ---- glyph-info arrays: handles of `Host::handles` (state.rs) --------
 
-    pub fn free_glyph_info(&mut self, _h: i32) {}
-    pub fn copy_glyph_info(&mut self, _h: i32) -> i32 {
-        0
+    /// xetex.web's `libc_free(native_glyph_info_ptr(p))`.
+    pub fn free_glyph_info(&mut self, h: i32) {
+        self.host.handles.free(h);
+    }
+    /// xetex.web's copy of a glyph-info array (`xmalloc_array` and
+    /// `memcpy`): a new handle for the same glyphs. The arrays are never
+    /// changed in place, so the copy shares them.
+    pub fn copy_glyph_info(&mut self, h: i32) -> i32 {
+        match self.host.handles.get(h).cloned() {
+            Some(o) => self.host.handles.alloc(o),
+            None => 0,
+        }
     }
 
     // ---- XeTeXOTMath.cpp (reached only with an OpenType math font) --------
@@ -436,7 +433,7 @@ impl Globals {
 
     /// `initstarttime` (texmfmp.c): `SOURCE_DATE_EPOCH`, else the clock.
     pub fn init_start_time(&mut self) {
-        let _ = start_time();
+        let _ = self.start_time();
     }
 
     /// `get_seconds_and_micros` (texmfmp.c).
@@ -454,7 +451,7 @@ impl Globals {
     pub fn date_and_time(&mut self, t: &mut i32, d: &mut i32, m: &mut i32, y: &mut i32) {
         let forced = std::env::var("FORCE_SOURCE_DATE").map(|v| v == "1") == Ok(true);
         let tm = if forced {
-            flashtex_engine::os::broken_down(start_time(), true)
+            flashtex_engine::os::broken_down(self.start_time(), true)
         } else {
             flashtex_engine::os::broken_down(now_secs(), false)
         };
@@ -474,7 +471,7 @@ impl Globals {
 
     /// `getcreationdate` (texmfmp.c).
     pub fn getcreationdate(&mut self) {
-        let s = start_time_str();
+        let s = self.start_time_str();
         if self.pool_ptr as usize + s.len() >= crate::generated::consts::pool_size as usize {
             self.pool_ptr = crate::generated::consts::pool_size;
             return;
@@ -581,10 +578,6 @@ impl Globals {
     }
 }
 
-/// The start time of the run and its `D:` string (texmfmp.c's
-/// `start_time` and `start_time_str`).
-static START: Mutex<Option<(i64, Vec<u8>)>> = Mutex::new(None);
-
 fn now_secs() -> i64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -592,23 +585,31 @@ fn now_secs() -> i64 {
         .unwrap_or(0)
 }
 
-fn start_time() -> i64 {
-    let mut g = START.lock().unwrap();
-    if let Some((t, _)) = g.as_ref() {
-        return *t;
+impl Globals {
+    /// texmfmp.c's `start_time`: `SOURCE_DATE_EPOCH`, else the clock, read
+    /// once per run (`Host::start`).
+    fn start_time(&mut self) -> i64 {
+        if let Some((t, _)) = self.host.start.as_ref() {
+            return *t;
+        }
+        let (t, sde) = match std::env::var("SOURCE_DATE_EPOCH") {
+            Ok(v) => (v.trim().parse::<i64>().unwrap_or(0), true),
+            Err(_) => (now_secs(), false),
+        };
+        let s = flashtex_engine::pdftex::utils::make_pdf_time(t, sde);
+        self.host.start = Some((t, s));
+        t
     }
-    let (t, sde) = match std::env::var("SOURCE_DATE_EPOCH") {
-        Ok(v) => (v.trim().parse::<i64>().unwrap_or(0), true),
-        Err(_) => (now_secs(), false),
-    };
-    let s = flashtex_engine::pdftex::utils::make_pdf_time(t, sde);
-    *g = Some((t, s));
-    t
-}
 
-fn start_time_str() -> Vec<u8> {
-    start_time();
-    START.lock().unwrap().as_ref().unwrap().1.clone()
+    /// texmfmp.c's `start_time_str`: the start time as a PDF date.
+    fn start_time_str(&mut self) -> Vec<u8> {
+        self.start_time();
+        self.host
+            .start
+            .as_ref()
+            .map(|s| s.1.clone())
+            .unwrap_or_default()
+    }
 }
 
 /// Whether `FORCE_SOURCE_DATE` and `SOURCE_DATE_EPOCH` are both set.

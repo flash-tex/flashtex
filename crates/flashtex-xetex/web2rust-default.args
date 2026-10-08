@@ -31,6 +31,10 @@
 --change third_party/xetex/char-warning-xetex.ch
 --change crates/flashtex-xetex/changes/web2c-run.ch
 
+# The engine's state outside the word space (src/state.rs; PLAN.md 4.7): a
+# field `host` of Globals, so that the crate has no process-wide state.
+--host-state crate::state::Host
+
 # Every array subscript becomes crate::ix::U(...), as in the pdfTeX engine.
 --index-type crate::ix::U
 

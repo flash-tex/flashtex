@@ -14,6 +14,12 @@
 //! * `xetex_ext.rs` holds XeTeX's other C parts behind the interface
 //!   `changes/ext.ch` declares. In S0 the native-font, graphics and TECkit
 //!   routines are stubs: no installed font is ever found.
+//! * `state.rs` is the engine's state outside the word space (`Globals::host`,
+//!   web2rust's `--host-state`): the handle tables of `changes/ext.ch`, saved
+//!   with the word space at a checkpoint, and what TeX Live keeps in C
+//!   globals. This crate has no process-wide mutable state; the runtime it
+//!   shares with the pdfTeX engine still has some, which moves to per-engine
+//!   state in phase S3 (docs/design/xetex/PLAN.md §3.3).
 //! * `fontmgr/` is XeTeX's font lookup (`XeTeXFontMgr`, `splitFontName`,
 //!   `findnativefont` up to loading), platform-free over
 //!   `crates/font-discovery`'s index. Not yet called by `xetex_ext.rs`.
@@ -30,6 +36,7 @@ pub use flashtex_xetex_fontlibs as fontlibs;
 
 pub mod fontmgr;
 pub mod generated;
+pub mod state;
 pub mod system;
 pub mod xetex_ext;
 

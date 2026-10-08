@@ -854,6 +854,8 @@ pub struct Globals {
     pub translate_filename_p: bool,
     /// The word space every `Arr` above lives in (crates/flashtex-engine/src/arena.rs).
     pub arena: crate::arena::Arena,
+    /// The engine's state outside the word space (`--host-state`).
+    pub host: crate::state::Host,
 }
 
 /// Bytes of the scalar globals' region at the start of the word space.
@@ -1703,6 +1705,7 @@ impl Globals {
             eight_bit_p: false,
             translate_filename_p: false,
             arena: __arena,
+            host: Default::default(),
         })
     }
 
