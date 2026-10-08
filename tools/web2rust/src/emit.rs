@@ -2558,6 +2558,9 @@ fn emit_packed(s: &mut String, q: &Packed, e: &E) {
         let _ = writeln!(s, "    pub fn {m}(&self) -> {ret} {{ {get} }}");
         let _ = writeln!(s, "    #[inline(always)]");
         let setter = match l.kind {
+            Scalar::I32 | Scalar::U8 if narrow_store(l.bits, l.off, q.width).is_some() => {
+                narrow_store(l.bits, l.off, q.width).unwrap()
+            }
             Scalar::F64 => format!("self.0 = v.to_bits().rotate_right(32) as {backing};"),
             Scalar::F32 => format!(
                 "self.0 = (self.0 & !(({mask} as {backing}) << {off})) | (((v.to_bits() as {backing}) & ({mask} as {backing})) << {off});",
@@ -2591,14 +2594,48 @@ fn emit_packed(s: &mut String, q: &Packed, e: &E) {
             rid(tn)
         );
         let _ = writeln!(s, "    #[inline(always)]");
+        let setter = match narrow_store(*w, *off, q.width) {
+            Some(st) => st.replace("v as ", "v.0 as "),
+            None => format!(
+                "self.0 = (self.0 & !(({mask} as {backing}) << {off})) | (((v.0 as {backing}) & ({mask} as {backing})) << {off});"
+            ),
+        };
         let _ = writeln!(
             s,
-            "    pub fn set_{}(&mut self, v: {}) {{ self.0 = (self.0 & !(({mask} as {backing}) << {off})) | (((v.0 as {backing}) & ({mask} as {backing})) << {off}); }}",
+            "    pub fn set_{}(&mut self, v: {}) {{ {setter} }}",
             rid(path),
             rid(tn)
         );
     }
     let _ = writeln!(s, "}}");
+}
+
+/// The setter of a field that is a whole byte, half-word or word of a packed
+/// record (`bits` wide at bit `off` of a `width`-bit record), as a store of
+/// that field alone; `None` for any other field. The read-modify-write form
+/// (`self.0 = (self.0 & !mask) | v`) loads the whole record first, and a
+/// node or token just taken off a free list is rarely in the cache: on
+/// *Infinite Descent* the load before linking a token (`mem[p].rh := q`) was
+/// the hottest instruction of `macro_call` (P6-ENGINE-SPEED). The bytes
+/// stored are the ones the masked form writes, so the program is unchanged.
+fn narrow_store(bits: u32, off: u32, width: u32) -> Option<String> {
+    let ty = match bits {
+        8 => "u8",
+        16 => "u16",
+        32 => "u32",
+        _ => return None,
+    };
+    if off % bits != 0 || off + bits > width || !(width == 32 || width == 64) {
+        return None;
+    }
+    let (le, be) = (off / 8, (width - off - bits) / 8);
+    Some(format!(
+        "let k = if cfg!(target_endian = \"little\") {{ {le} }} else {{ {be} }}; \
+         let p = (&mut self.0 as *mut _ as *mut u8).wrapping_add(k) as *mut {ty}; \
+         // SAFETY: the field is bytes k..k+{n} of this record, which `self` borrows mutably.\n        \
+         unsafe {{ p.write_unaligned(v as {ty}) }}",
+        n = bits / 8
+    ))
 }
 
 fn header(what: &str) -> String {

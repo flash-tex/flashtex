@@ -20,6 +20,9 @@
 //!   globals. This crate has no process-wide mutable state; the runtime it
 //!   shares with the pdfTeX engine still has some, which moves to per-engine
 //!   state in phase S3 (docs/design/xetex/PLAN.md §3.3).
+//! * `fontmgr/` is XeTeX's font lookup (`XeTeXFontMgr`, `splitFontName`,
+//!   `findnativefont` up to loading), platform-free over
+//!   `crates/font-discovery`'s index. Not yet called by `xetex_ext.rs`.
 //! * The word space (`arena`), the checked array index (`ix`), the command
 //!   line, the run's configuration and the file resolver (kpathsea) are the
 //!   pdfTeX engine's (`crates/flashtex-engine`), used through its public
@@ -31,6 +34,7 @@ pub use flashtex_engine::ix;
 /// docs/design/xetex/PLAN.md §3.1): `fontlibs::hb`, `fontlibs::ft`.
 pub use flashtex_xetex_fontlibs as fontlibs;
 
+pub mod fontmgr;
 pub mod generated;
 pub mod state;
 pub mod system;

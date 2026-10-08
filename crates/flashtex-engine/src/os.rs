@@ -407,6 +407,67 @@ pub fn file_stat(m: &std::fs::Metadata) -> FileStat {
     }
 }
 
+/// The buffer C's stdio gives a `FILE` that pdfTeX opens for output on a
+/// file with metadata `m` (`None`: `fstat` failed), so that a `\write`
+/// stream reaches the disk where pdfTeX's does (issue #1557: a file read
+/// back while still open for output holds only what stdio has flushed).
+/// web2c's `open_output` is a plain `fopen` with no `setvbuf`, and pdfTeX
+/// writes a text file one `putc` at a time; every C library below writes
+/// out its full buffer when the byte after it comes, as `BufWriter` does
+/// with one-byte writes.
+/// - macOS (FreeBSD's `__swhatbuf`): `st_blksize`, or `BUFSIZ` (1024) when
+///   it is 0 (4096 on APFS, measured on macOS 26).
+/// - Linux (glibc's `_IO_file_doallocate`): `st_blksize` when it is below
+///   `BUFSIZ` (8192), else `BUFSIZ`. (musl's buffer is `BUFSIZ`, 1024,
+///   and its overflow writes the buffer and the new byte together; TeX
+///   Live's Linux binaries are glibc's, so that is not mirrored.)
+/// - Windows (the UCRT's `_getbuf`): `_INTERNAL_BUFSIZ`, 4096.
+/// - WASI (wasi-libc, musl's stdio): `BUFSIZ`, 1024.
+pub fn stdio_buffer_size(m: Option<&std::fs::Metadata>) -> usize {
+    #[cfg(target_os = "macos")]
+    {
+        use std::os::unix::fs::MetadataExt;
+        match m.map_or(0, |m| m.blksize()) {
+            0 => 1024,
+            b => b as usize,
+        }
+    }
+    #[cfg(target_os = "linux")]
+    {
+        use std::os::unix::fs::MetadataExt;
+        match m.map_or(0, |m| m.blksize()) {
+            b @ 1..=8191 => b as usize,
+            _ => 8192,
+        }
+    }
+    #[cfg(windows)]
+    {
+        let _ = m;
+        4096
+    }
+    #[cfg(target_os = "wasi")]
+    {
+        let _ = m;
+        1024
+    }
+}
+
+/// The metadata of a pipe to a child's stdin (`\openout|`), for
+/// `stdio_buffer_size` (pdfTeX's `popen` stream `fstat`s the pipe).
+pub fn pipe_metadata(p: &std::process::ChildStdin) -> Option<std::fs::Metadata> {
+    #[cfg(unix)]
+    {
+        use std::os::fd::AsFd;
+        let fd = p.as_fd().try_clone_to_owned().ok()?;
+        std::fs::File::from(fd).metadata().ok()
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = p;
+        None
+    }
+}
+
 /// Write all of `buf` at byte `offset` of `f` (`pwrite`; on Windows
 /// `seek_write`, which moves the file position, which no caller relies on).
 pub fn write_all_at(f: &std::fs::File, buf: &[u8], offset: u64) -> std::io::Result<()> {

@@ -78,7 +78,7 @@ final class EngineV3OwnerStateTests: XCTestCase {
         let cache = FileManager.default.temporaryDirectory.appendingPathComponent("engine-v3-owner-state-\(getpid())")
         env.set("FLASHTEX_V3_CACHE", cache.path)
         defer { try? FileManager.default.removeItem(at: cache) }
-        guard EngineV3.locateHost() != nil else { throw XCTSkip("no flashtex-host built") }
+        guard EngineV3.locateHost() != nil else { throw EngineV3TestHost.unavailable("no flashtex-host built") }
         let dir = FileManager.default.temporaryDirectory.appendingPathComponent("engine-v3-owner-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: dir) }
@@ -90,7 +90,7 @@ final class EngineV3OwnerStateTests: XCTestCase {
         let s = model.engineV3
         let start = Date()
         while !(s.statusNote.hasPrefix("ok") && !s.compiling) {
-            if case .failed(let why) = s.phase { throw XCTSkip("host did not start: \(why)") }
+            if case .failed(let why) = s.phase { throw EngineV3TestHost.unavailable("host did not start: \(why)") }
             if Date().timeIntervalSince(start) > 90 { return XCTFail("no compile") }
             try await Task.sleep(nanoseconds: 20_000_000)
         }
