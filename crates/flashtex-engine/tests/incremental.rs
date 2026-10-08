@@ -453,13 +453,18 @@ fn field<'a>(report: &'a str, name: &str) -> &'a str {
 /// bibliography: the edits of `structural_edits_equal_scratch_runs` change
 /// the `.aux` and `.toc` in every way a pass can see.
 fn refs_doc(extra: &str, sections: usize) -> String {
+    refs_doc_at(extra, sections, 2)
+}
+
+/// `refs_doc` with `extra` in section `at`.
+fn refs_doc_at(extra: &str, sections: usize, at: usize) -> String {
     let mut s = String::from(
         "\\documentclass{article}\n\\usepackage{hyperref}\n\\begin{document}\n\
          \\tableofcontents\n",
     );
     for k in 0..sections {
         s.push_str(&format!("\\section{{Part {k}}}\\label{{sec:{k}}}\n"));
-        if k == 2 {
+        if k == at {
             s.push_str(extra);
         }
         for i in 0..6 {
@@ -556,6 +561,38 @@ fn structural_edits_equal_scratch_runs() {
         l5_restarts > 0,
         "no pass restarted at the first read of a changed .aux entry: {notes:#?}"
     );
+}
+
+/// DESIGN.md §5.2: retention keeps checkpoints dense near the cursor, the
+/// page the user edits. An edit that changes the `.aux` runs a second
+/// pass, which restarts before the edit (at the `.aux` point, or the first
+/// read of a changed entry); the cursor stays at the first pass's restart
+/// (#1573's review: it moved to the second pass's, page 0, and the next
+/// keystroke there restarted at its page's start).
+#[test]
+fn an_aux_pass_leaves_the_retention_cursor_at_the_edit() {
+    let Some(e) = env() else {
+        common::no_texlive();
+        return;
+    };
+    let dir = e.dir.join("cursor");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let base = refs_doc_at("", 30, 24);
+    let mut h = Host::start(&e, &dir);
+    for _ in 0..3 {
+        let r = compile_and_check(&e, &mut h, &dir, &[("doc.tex", &base)], "settle");
+        if r.contains("\"mode\":\"unchanged\"") {
+            break;
+        }
+    }
+    let doc = refs_doc_at(&"Words that move the labels. ".repeat(60), 30, 24);
+    let r = compile_and_check(&e, &mut h, &dir, &[("doc.tex", &doc)], "a sentence late");
+    let passes: usize = field(&r, "passes").parse().unwrap();
+    let restart: usize = field(&r, "restart_pages").parse().unwrap();
+    assert!(passes >= 2, "the edit should change the .aux: {r}");
+    assert!(restart > 0, "{r}");
+    assert_eq!(field(&r, "cursor"), restart.to_string(), "{r}");
 }
 
 /// DESIGN.md §5.3's barriers: a document that reads `\pdfelapsedtime`

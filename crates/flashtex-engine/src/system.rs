@@ -513,6 +513,18 @@ impl AlphaFile {
         self.path.as_deref()
     }
 
+    /// How far an input file has been read (what a checkpoint records as
+    /// its offset); `None` for anything else.
+    pub fn read_offset(&mut self) -> Option<u64> {
+        match self.input.as_mut() {
+            Some(TextIn::File(r)) => {
+                use std::io::Seek;
+                r.stream_position().ok()
+            }
+            _ => None,
+        }
+    }
+
     fn refresh(&mut self) {
         self.buf = if !self.have_line {
             b' '
