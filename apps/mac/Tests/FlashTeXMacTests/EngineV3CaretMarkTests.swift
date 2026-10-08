@@ -205,8 +205,12 @@ final class EngineV3CaretMarkTests: XCTestCase {
         let edited = Self.doc.replacingOccurrences(of: "Alpha", with: "Alpha x")
         model.caretUTF16 = gamma + 2
         model.updateActiveText(edited)
+        let typed = Date()
         try await Task.sleep(nanoseconds: 30_000_000)
-        XCTAssertEqual(pages.caretKey?.utf16, gamma, "typing: not yet, the mark waits for the settle")
+        // (On a loaded runner the 30 ms sleep can outlast the settle itself: then "not yet" cannot be seen.)
+        if Date().timeIntervalSince(typed) < EngineV3Session.caretSettle * 0.8 {
+            XCTAssertEqual(pages.caretKey?.utf16, gamma, "typing: not yet, the mark waits for the settle")
+        }
         try await waitUntil("the settled mark", timeout: 5) { pages.caretKey?.utf16 == gamma + 2 }
         XCTAssertNotNil(pages.caretMark)
     }

@@ -50,7 +50,7 @@ final class EngineV3AccessibilityTests: XCTestCase {
     /// The real table is TeX Live's `glyphtounicode.tex`, as pdfTeX's
     /// `\pdfgentounicode` uses it.
     func testTeXLivesTableIsReadWhenPresent() throws {
-        try XCTSkipIf(EngineV3GlyphText.locate("glyphtounicode.tex") == nil, "no TeX Live")
+        if EngineV3GlyphText.locate("glyphtounicode.tex") == nil { throw EngineV3TestHost.unavailable("no TeX Live (glyphtounicode.tex)") }
         let t = EngineV3GlyphText.table
         XCTAssertGreaterThan(t.count, 4000)
         XCTAssertEqual(t["ffi"], "ffi")

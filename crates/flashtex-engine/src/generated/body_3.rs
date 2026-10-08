@@ -1186,6 +1186,10 @@ impl Globals {
         let mut q: halfword = 0; // §499
         let mut unbalance: halfword = 0; // §499
         let mut hash_brace: halfword = 0; // §499
+        let mut tt: halfword = 0; // §499
+        let mut c: i32 = 0; // §499
+        #[allow(unused_mut)]
+        let mut __av_eqtb = self.eqtb.view();
         #[allow(unused_mut)]
         let mut __av_mem = self.mem.view();
         'l_found_f: {
@@ -1380,9 +1384,104 @@ impl Globals {
                     } else {
                         // §503
                         {
-                            self.intr_weak = true;
-                            self.get_token();
-                            self.intr_weak = false;
+                            'l_found1_f: {
+                                'l_done3_f: {
+                                    if (!self.intr_rec_on) {
+                                        while true {
+                                            {
+                                                if (self.cur_input.state_field != token_list) {
+                                                    break 'l_done3_f;
+                                                }
+                                                if (self.cur_input.loc_field == null) {
+                                                    break 'l_done3_f;
+                                                }
+                                                tt = __av_mem[crate::ix::U((self.cur_input.loc_field) as usize)].hh().lh();
+                                                if (tt >= cs_token_flag) {
+                                                    {
+                                                        c = __av_eqtb[crate::ix::U((((tt).wrapping_sub(4095i32)) - 1) as usize)].hh().b0();
+                                                        if (c >= outer_call) {
+                                                            break 'l_done3_f;
+                                                        }
+                                                        if (((c <= car_ret) && (c >= tab_mark)) && (self.align_state == 0i32)) {
+                                                            break 'l_done3_f;
+                                                        }
+                                                        if (c == mac_param) {
+                                                            {
+                                                                self.cur_cs = (tt).wrapping_sub(4095i32);
+                                                                self.cur_input.loc_field = __av_mem[crate::ix::U((self.cur_input.loc_field) as usize)].hh().rh();
+                                                                self.cur_cmd = c;
+                                                                self.cur_chr = __av_eqtb[crate::ix::U(((self.cur_cs) - 1) as usize)].hh().rh();
+                                                                if self.rs_on {
+                                                                    if (!self.rs_seen[crate::ix::U((self.cur_cs) as usize)]) {
+                                                                        self.flashtex_cs_read(self.cur_cs);
+                                                                    }
+                                                                }
+                                                                self.cur_tok = tt;
+                                                                break 'l_found1_f;
+                                                            }
+                                                        }
+                                                        self.cur_input.loc_field = __av_mem[crate::ix::U((self.cur_input.loc_field) as usize)].hh().rh();
+                                                        if self.rs_on {
+                                                            if (!self.rs_seen[crate::ix::U(((tt).wrapping_sub(4095i32)) as usize)]) {
+                                                                self.flashtex_cs_read((tt).wrapping_sub(4095i32));
+                                                            }
+                                                        }
+                                                    }
+                                                } else {
+                                                    {
+                                                        c = (tt / 256i32);
+                                                        if (c == out_param) {
+                                                            break 'l_done3_f;
+                                                        }
+                                                        if ((c == tab_mark) && (self.align_state == 0i32)) {
+                                                            break 'l_done3_f;
+                                                        }
+                                                        if ((tt < right_brace_limit) || (c == mac_param)) {
+                                                            {
+                                                                self.cur_cs = 0i32;
+                                                                self.cur_input.loc_field = __av_mem[crate::ix::U((self.cur_input.loc_field) as usize)].hh().rh();
+                                                                self.cur_cmd = c;
+                                                                self.cur_chr = (tt % 256i32);
+                                                                if (c == left_brace) {
+                                                                    self.align_state = (self.align_state).wrapping_add(1i32);
+                                                                } else {
+                                                                    if (c == right_brace) {
+                                                                        self.align_state = (self.align_state).wrapping_sub(1i32);
+                                                                    }
+                                                                }
+                                                                self.cur_tok = tt;
+                                                                break 'l_found1_f;
+                                                            }
+                                                        }
+                                                        self.cur_input.loc_field = __av_mem[crate::ix::U((self.cur_input.loc_field) as usize)].hh().rh();
+                                                    }
+                                                }
+                                                {
+                                                    {
+                                                        q = self.avail;
+                                                        if (q == null) {
+                                                            q = self.get_avail();
+                                                        } else {
+                                                            {
+                                                                self.avail = __av_mem[crate::ix::U((q) as usize)].hh().rh();
+                                                                __av_mem[crate::ix::U((q) as usize)].set_hh_rh(null);
+                                                                self.dyn_used = (self.dyn_used).wrapping_add(1i32);
+                                                                self.dl_new_node(q);
+                                                            }
+                                                        }
+                                                    }
+                                                    __av_mem[crate::ix::U((p) as usize)].set_hh_rh(q);
+                                                    __av_mem[crate::ix::U((q) as usize)].set_hh_lh(tt);
+                                                    p = q;
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                                self.intr_weak = true;
+                                self.get_token();
+                                self.intr_weak = false;
+                            }
                         }
                     }
                     if (self.cur_tok < right_brace_limit) {
