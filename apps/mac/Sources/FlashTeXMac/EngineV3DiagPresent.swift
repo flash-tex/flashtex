@@ -170,22 +170,40 @@ enum EngineV3DiagPresent {
     /// defined in the project: one `\newcommand`-family, `\def`-family or
     /// xparse definition of it, or (for an environment's `\X` / `\endX`) one
     /// `\newenvironment{X}`. Nil when there is none or more than one.
-    static func definition(of name: String, in texts: [String: String]) -> (site: Site, body: Range<Int>?)? {
+    ///
+    /// `near`: where the engine says the definition was made (the trace's
+    /// `def`: the file and the line TeX was reading, #1593). Then the
+    /// definition is the last one of `name` in that file starting on or
+    /// before that line (a `\newcommand` is made when its arguments have
+    /// been read, so the line may be its last), however many the project
+    /// has; nil when that file has none there.
+    static func definition(of name: String, in texts: [String: String],
+                           near: (path: String, line: Int)? = nil) -> (site: Site, body: Range<Int>?)? {
+        if let near {
+            guard let text = texts[near.path] else { return nil }
+            return definitions(of: name, in: [near.path: text])
+                .filter { $0.site.line <= near.line }
+                .max { $0.site.start < $1.site.start }
+                .map { ($0.site, body(in: text, after: $0.site.end, groups: $0.environment ? 2 : 1)) }
+        }
+        let all = definitions(of: name, in: texts)
+        guard all.count == 1, let one = all.first, let text = texts[one.site.path] else { return nil }
+        return (one.site, body(in: text, after: one.site.end, groups: one.environment ? 2 : 1))
+    }
+
+    /// Every project definition of `name` (see `definition(of:in:near:)`):
+    /// commands and `\def`s, else environments.
+    private static func definitions(of name: String, in texts: [String: String]) -> [(site: Site, environment: Bool)] {
         let cs = name.trimmingCharacters(in: .whitespaces)
-        guard cs.hasPrefix("\\"), cs.count > 1, !cs.contains("@") else { return nil }
+        guard cs.hasPrefix("\\"), cs.count > 1, !cs.contains("@") else { return [] }
         let bare = NSRegularExpression.escapedPattern(for: String(cs.dropFirst()))
         let command = #"\\(?:(?:re)?newcommand|providecommand|DeclareRobustCommand|(?:New|Renew|Provide|Declare)DocumentCommand)\*?\s*\{?\s*(\\"# + bare + #")(?![A-Za-z@])"#
         let def = #"\\[gex]?def\s*(\\"# + bare + #")(?![A-Za-z@])"#
-        var sites = matches(command, in: texts, group: 1) + matches(def, in: texts, group: 1)
-        var environment = false
-        if sites.isEmpty {
-            let env = cs.hasPrefix("\\end") && cs.count > 4 ? String(cs.dropFirst(4)) : String(cs.dropFirst())
-            let pattern = #"\\(?:(?:re)?newenvironment|(?:New|Renew|Provide)DocumentEnvironment)\*?\s*\{("# + NSRegularExpression.escapedPattern(for: env) + #")\}"#
-            sites = matches(pattern, in: texts, group: 1)
-            environment = true
-        }
-        guard sites.count == 1, let site = sites.first, let text = texts[site.path] else { return nil }
-        return (site, body(in: text, after: site.end, groups: environment ? 2 : 1))
+        let sites = matches(command, in: texts, group: 1) + matches(def, in: texts, group: 1)
+        if !sites.isEmpty { return sites.map { ($0, false) } }
+        let env = cs.hasPrefix("\\end") && cs.count > 4 ? String(cs.dropFirst(4)) : String(cs.dropFirst())
+        let pattern = #"\\(?:(?:re)?newenvironment|(?:New|Renew|Provide)DocumentEnvironment)\*?\s*\{("# + NSRegularExpression.escapedPattern(for: env) + #")\}"#
+        return matches(pattern, in: texts, group: 1).map { ($0, true) }
     }
 
     /// The byte range of a definition's body after `from`: optional `[…]`

@@ -382,3 +382,55 @@ int flashtex_kpse_db_hazard(void *k, int format, const char *name)
   }
   return hazard;
 }
+
+/* The names kpathsea_find_file_generic tries for NAME of FORMAT, in any
+   order: NAME (where the format allows a name without its suffix, or NAME
+   has one), and NAME with each of the format's suffixes appended (where it
+   has none), as tex-file.c's target_asis_name and target_suffixed_names
+   build them (fontmap aliases aside: flashtex_kpse_has_alias). A malloc'd
+   NULL-terminated list (flashtex_kpse_free_list). The incremental journal
+   checks the directories a lookup searched for entries under these names
+   that kpathsea passes over (system.rs, `note_lookup`; #1562). */
+char **flashtex_kpse_try_names(void *k, int format, const char *name)
+{
+  kpathsea kpse = (kpathsea) k;
+  kpse_format_info_type *f;
+  const_string *ext;
+  size_t name_len = strlen(name), n = 0, cap = 4;
+  int has_potential_suffix = 0;
+  char **out = (char **) xmalloc(cap * sizeof(char *));
+  if (!kpse->format_info[format].type)
+    kpathsea_init_format(kpse, (kpse_file_format_type) format);
+  f = &kpse->format_info[format];
+  for (ext = f->suffix; ext && !has_potential_suffix && *ext; ext++) {
+    size_t l = strlen(*ext);
+    has_potential_suffix = name_len >= l && FILESTRCASEEQ(*ext, name + name_len - l);
+  }
+  for (ext = f->alt_suffix; ext && !has_potential_suffix && *ext; ext++) {
+    size_t l = strlen(*ext);
+    has_potential_suffix = name_len >= l && FILESTRCASEEQ(*ext, name + name_len - l);
+  }
+  if (has_potential_suffix || !f->suffix_search_only)
+    out[n++] = xstrdup(name);
+  for (ext = f->suffix; ext && !has_potential_suffix && *ext; ext++) {
+    if (n + 2 > cap) {
+      cap *= 2;
+      out = (char **) xrealloc(out, cap * sizeof(char *));
+    }
+    out[n++] = concat(name, *ext);
+  }
+  out[n] = NULL;
+  return out;
+}
+
+/* Whether kpathsea_make_tex may run FORMAT's mktex script (tex-make.c:
+   the format has a program, and it is enabled). Where it may not, a
+   lookup with must_exist that found nothing searched no more than one
+   without it: an ls-R tree (`!!`) is not searched on disk either way. */
+int flashtex_kpse_make_enabled(void *k, int format)
+{
+  kpathsea kpse = (kpathsea) k;
+  if (!kpse->format_info[format].type)
+    kpathsea_init_format(kpse, (kpse_file_format_type) format);
+  return kpse->format_info[format].program && kpse->format_info[format].program_enabled_p;
+}
