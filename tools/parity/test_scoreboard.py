@@ -427,6 +427,18 @@ class Review1299(unittest.TestCase):
         stages = {s["id"]: s for s in sb.load_stages()}
         self.assertIn("T1 (lockstep) has 0 new differences", stages["S5"]["other_preconditions"])
 
+    def test_6_s5_and_s6_carry_their_app_parity_rows(self):
+        stages = {s["id"]: s for s in sb.load_stages()}
+        self.assertEqual(stages["S5"].get("app_parity_gate"), "S5")
+        self.assertEqual(stages["S6"].get("app_parity_gate"), "S6")
+        self.assertIsNone(sb.app_parity_state(None))
+        ap = sb.app_parity_state("S5")
+        self.assertIn(ap["state"], ("met", "not met"))
+        self.assertEqual(ap["state"] == "met", ap["why"] == [])
+        board = complete_board(self.tmp)
+        for st in board["retirement"]:
+            self.assertIn("app_parity", st)
+
 
 BACKEND = ("latex3/l3kernel[config-backend]@etex-dvips: PASS %d / FAIL %d / SKIP 0\n%s"
            "latex3/l3kernel[config-backend]@etex-dvisvgm: PASS %d / FAIL %d / SKIP 0\n%s"

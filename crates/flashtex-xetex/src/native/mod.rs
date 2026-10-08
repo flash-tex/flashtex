@@ -824,6 +824,8 @@ impl Globals {
         let ls = self.font_letter_space[f as usize];
         if ls != 0 {
             let mut delta = 0i32;
+            // (indexed as XeTeX's C loop is; two arrays move together)
+            #[allow(clippy::needless_range_loop)]
             for i in 0..info.ids.len() {
                 if glyph_advances[i] == 0 && delta != 0 {
                     delta -= ls;

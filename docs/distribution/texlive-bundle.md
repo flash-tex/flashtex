@@ -103,3 +103,17 @@ requires each PDF to be byte-identical to TeX Live's pdflatex's in the bundle's 
 (`oracle-refs.json`: hashes only; no third-party PDF is published). `tl2026/gaps.json` lists
 the known gaps: fonts METAFONT makes at run time and EPS figures converted through
 `\write18`, until those lanes land.
+
+The same job then runs `scripts/notex-host-check.sh`, the app's own path: `flashtex-host`
+configured as the app configures it (`FLASHTEX_BUNDLE_LOCK` and the user's consent as
+`FLASHTEX_BUNDLE_ALLOW_FETCH=<digest>@<url>`, `EngineV3Bundle.swift`), compiling over its socket
+(`dl3-client`) the app's blank template, an article with amsmath, graphicx and hyperref, and a
+beamer deck, cold and then warm. The host must report no TeX Live, the bundle's resolver and a
+ready `pdflatex` format. On a Mac with TeX Live it hides it with `sandbox-exec`, so it also runs
+locally:
+
+    cargo build --release -p flashtex-engine --bin flashtex-host -p flashtex-display-list --bin dl3-client
+    scripts/notex-host-check.sh --host target/release/flashtex-host \
+        --client target/release/dl3-client --out /tmp/notex-host
+
+It checks that the path works; byte identity is the gate's job.

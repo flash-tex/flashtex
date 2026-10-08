@@ -9,7 +9,8 @@
 # Usage: apps/mac/scripts/make-app.sh [--debug] [--version <x.y.z>] [--helper-root <repo>]
 #          [--cli <path>] [--compiler <path>] [--pdf <path>] [--bridge <path>] [--ledger <path>]
 #          [--render <path>] [--pdf-exact <path>] [--controller <path>] [--project-files <path>]
-#          [--explain <path>] [--engine-host <path>] [--source-sha <key>=<sha>]
+#          [--explain <path>] [--engine-host <path>] [--require-engine-host]
+#          [--source-sha <key>=<sha>]
 #          [--sign <identity>] [--entitlements <file>] [--notarize <keychain-profile>]
 #          [--open] [--install] [--install-dir <dir>] [--dmg]
 #
@@ -35,6 +36,9 @@
 # the pinned no-TeX-Live bundle's lock, tools/bundle/tl2026/flashtex-bundle.lock,
 # as Contents/Resources/engine/flashtex-bundle.lock; it is
 # signed like the other helpers (hardened runtime with --sign) before the app.
+# --require-engine-host (a release, .github/workflows/release.yml): a missing
+# host, or its pool or licence, fails the packaging before the build instead of
+# being skipped (app-parity row D5); without it the host stays optional.
 # Helpers default to <crate target dir>/release/<name> (scripts/crate-target-dir.sh);
 # --helper-root defaults to this repository (set it to the main checkout when
 # packaging from a worktree). No credential is ever printed by this script.
@@ -71,6 +75,7 @@ DO_INSTALL=0
 INSTALL_DIR="$HOME/Applications"
 DO_DMG=0
 ENGINE_HOST=""
+REQUIRE_ENGINE_HOST=0
 
 # Bundled helpers, in components.json order. Fields: components.json key,
 # executable name, crate directory (relative to --helper-root), CLI flag.
@@ -146,6 +151,10 @@ while [[ $# -gt 0 ]]; do
       ENGINE_HOST="${2:?--engine-host needs a path}"
       shift 2
       ;;
+    --require-engine-host)
+      REQUIRE_ENGINE_HOST=1
+      shift
+      ;;
     --sign)
       SIGN_IDENTITY="${2:?--sign needs a codesigning identity}"
       shift 2
@@ -182,7 +191,7 @@ while [[ $# -gt 0 ]]; do
       shift 2
       ;;
     -h|--help)
-      sed -n '2,30p' "${BASH_SOURCE[0]}"
+      sed -n '2,34p' "${BASH_SOURCE[0]}"
       exit 0
       ;;
     *)
@@ -276,6 +285,22 @@ TEXMF_PREFLIGHT="$(python3 "$BUNDLE_TEXMF_TOOL" check "$BUNDLE_TEXMF_ROOT" "$BUN
   die "pinned bundle metric refused under $BUNDLE_TEXMF_ROOT, or a Latin Modern face refused/unpinned under $BUNDLE_FONTS_DIR (hash/length mismatch, missing, symlink, or an .otf no pin lists; see above). Nothing is downloaded and the host TeX tree is never used."
 }
 echo "==> Pinned rooted TFM metrics and Latin Modern faces verified under $BUNDLE_TEXMF_ROOT / $BUNDLE_FONTS_DIR ($(( $(grep -c '"status": "verified"' <<< "$TEXMF_PREFLIGHT") - 1 )) entries)"
+
+# --- Pre-flight: the engine-v3 preview host ----------------------------------
+# Found here (it does not depend on the app build): --engine-host, else the
+# engine crate's release build. A release (--require-engine-host) refuses to
+# go on without it, its string pool and its licence.
+ENGINE_CRATE="$HELPER_ROOT/crates/flashtex-engine"
+if [[ -z "$ENGINE_HOST" && -f "$ENGINE_CRATE/Cargo.toml" ]]; then
+  engine_target="$("$REPO_ROOT/scripts/crate-target-dir.sh" "$ENGINE_CRATE" 2>/dev/null)" || engine_target="$HELPER_ROOT/target"
+  [[ -f "$engine_target/release/flashtex-host" ]] && ENGINE_HOST="$engine_target/release/flashtex-host"
+fi
+if [[ "$REQUIRE_ENGINE_HOST" -eq 1 ]]; then
+  [[ -n "$ENGINE_HOST" && -f "$ENGINE_HOST" ]] || die "--require-engine-host: no flashtex-host${ENGINE_HOST:+ at $ENGINE_HOST} (cargo build --release -p flashtex-engine --bin flashtex-host, or --engine-host <path>); a release app without it has no engine-v3 preview"
+  [[ -f "$ENGINE_CRATE/pdftex.pool" ]] || die "--require-engine-host: the host's string pool $ENGINE_CRATE/pdftex.pool is missing"
+  [[ -f "$ENGINE_CRATE/LICENSE" ]] || die "--require-engine-host: the host's licence $ENGINE_CRATE/LICENSE is missing"
+  echo "==> Engine host (required): $ENGINE_HOST"
+fi
 
 # Resolves the short git SHA of the repo that CONTAINS $1 (the resolved source
 # path of a bundled binary, before it is copied into the bundle) — never the
@@ -471,11 +496,6 @@ done
 # A separate GPL process the app starts and talks to over a socket (never
 # linked). Optional: without it the flag-gated preview says it is not found.
 HELPERS_DIR="$CONTENTS_DIR/Helpers"
-ENGINE_CRATE="$HELPER_ROOT/crates/flashtex-engine"
-if [[ -z "$ENGINE_HOST" && -f "$ENGINE_CRATE/Cargo.toml" ]]; then
-  engine_target="$("$REPO_ROOT/scripts/crate-target-dir.sh" "$ENGINE_CRATE" 2>/dev/null)" || engine_target="$HELPER_ROOT/target"
-  [[ -f "$engine_target/release/flashtex-host" ]] && ENGINE_HOST="$engine_target/release/flashtex-host"
-fi
 ENGINE_HOST_BUNDLED=""
 BUNDLE_LOCK="$REPO_ROOT/tools/bundle/tl2026/flashtex-bundle.lock"
 [[ -f "$BUNDLE_LOCK" ]] || die "missing $BUNDLE_LOCK (the pinned no-TeX-Live bundle)"
@@ -492,6 +512,7 @@ if [[ -n "$ENGINE_HOST" && -f "$ENGINE_HOST" && -f "$ENGINE_CRATE/pdftex.pool" ]
   ENGINE_HOST_BUNDLED="$HELPERS_DIR/flashtex-host"
   echo "    bundled flashtex-host from $ENGINE_HOST (+ Resources/engine/pdftex.pool, LICENSE, flashtex-bundle.lock)"
 else
+  [[ "$REQUIRE_ENGINE_HOST" -eq 0 ]] || die "--require-engine-host: flashtex-host was not staged into $HELPERS_DIR"
   echo "    no flashtex-host found (cargo build --release -p flashtex-engine --bin flashtex-host, or --engine-host <path>); skipping"
 fi
 

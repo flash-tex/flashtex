@@ -75,7 +75,9 @@ public final class DL3Connection: @unchecked Sendable {
     /// Connects and exchanges HELLO (blocking; call off the main thread).
     /// `accept`: optional message families to receive (`HELLO.accept`, e.g.
     /// `DL3Diag.capability`); a host that does not offer one ignores it.
-    public init(socketPath: String, client: String = "FlashTeX", accept: [String] = []) throws {
+    /// `profile`: a performance mode for `HELLO.profile` (§6.9: `low-memory`,
+    /// `balanced`, `high-performance`); a host without `profile-v1` ignores it.
+    public init(socketPath: String, client: String = "FlashTeX", accept: [String] = [], profile: String? = nil) throws {
         let fd = socket(AF_UNIX, Int32(SOCK_STREAM), 0)
         guard fd >= 0 else { throw DL3Error("socket: \(String(cString: strerror(errno)))") }
         var addr = sockaddr_un()
@@ -106,6 +108,7 @@ public final class DL3Connection: @unchecked Sendable {
                                               "version": .array([.int(Int64(DL3.versionMajor)), .int(Int64(DL3.versionMinor))]),
                                               "client": .string(client)]
         if !accept.isEmpty { helloFields["accept"] = .array(accept.map(DL3JSON.string)) }
+        if let profile { helloFields["profile"] = .string(profile) }
         let helloJSON: DL3JSON = .object(helloFields)
         do {
             try Self.writeAll(fd, DL3Frames.encode(kind: DL3.Kind.cHello, body: helloJSON.data()))
@@ -143,18 +146,25 @@ public final class DL3Connection: @unchecked Sendable {
     public func start(onTimedEvent: @escaping @Sendable (DL3Event, Timing) -> Void, onClose: @escaping @Sendable (DL3Error?) -> Void) {
         let fd = self.fd
         let thread = Thread {
-            while true {
+            // One autorelease pool per frame. The thread lives as long as the
+            // connection, and its own pool drains only when it exits: what a
+            // frame's handler autoreleases (a page raster installed as layer
+            // contents, the contents it replaced, Core Animation's commit
+            // state) would otherwise stay alive for the whole session, one
+            // full-page IOSurface per page per compile (9 GB, APP-PREVIEW-MEMORY).
+            while Self.withFramePool({
                 do {
-                    guard let (k, body) = try Self.readFrame(fd) else { onClose(nil); return }
+                    guard let (k, body) = try Self.readFrame(fd) else { onClose(nil); return false }
                     let read = DispatchTime.now().uptimeNanoseconds
                     let ev = try DL3Event.decode(kind: k, body: body)
                     onTimedEvent(ev, Timing(readNs: read, decodedNs: DispatchTime.now().uptimeNanoseconds))
+                    return true
                 } catch let e as DL3Error {
-                    onClose(e); return
+                    onClose(e); return false
                 } catch {
-                    onClose(DL3Error("\(error)")); return
+                    onClose(DL3Error("\(error)")); return false
                 }
-            }
+            }) {}
         }
         thread.name = "flashtex.dl3.reader"
         thread.qualityOfService = .userInteractive
@@ -162,8 +172,23 @@ public final class DL3Connection: @unchecked Sendable {
         thread.start()
     }
 
+    /// `body` in its own autorelease pool where there is one (Darwin).
+    static func withFramePool<T>(_ body: () -> T) -> T {
+        #if canImport(ObjectiveC)
+        return autoreleasepool(invoking: body)
+        #else
+        return body()
+        #endif
+    }
+
     public func compile(_ request: DL3CompileRequest) throws { try send(DL3.Kind.compile, request.json) }
     public func cancel(id: Int) throws { try send(DL3.Kind.cancel, .object(["id": .int(Int64(id))])) }
+    /// Switch the host's performance mode live (`PROFILE`, §6.9; only to a
+    /// host whose HELLO lists `DL3.profileCapability`). The host answers
+    /// with a `PROFILE` (decoded as `.other`) once it applies, between compiles.
+    public func setProfile(_ mode: String) throws { try send(DL3.Kind.cProfile, .object(["profile": .string(mode)])) }
+    /// Whether the host offers performance modes.
+    public var offersProfiles: Bool { hello["capabilities"]?.array?.contains(.string(DL3.profileCapability)) ?? false }
     public func bye() { try? send(DL3.Kind.bye, .object([:])); shutdownSocket() }
 
     private func send(_ kind: UInt8, _ json: DL3JSON) throws {
