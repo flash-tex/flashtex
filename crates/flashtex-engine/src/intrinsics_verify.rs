@@ -117,12 +117,25 @@ const EXCLUDED_REGIONS: &[&str] = &[
     "ls_tag_file",
 ];
 
+/// A call at the argument site (MACRO-REPLAY.md §3.1): the macro, the
+/// argument count, and what `macro_call`'s `exit` restores.
+#[derive(Clone, Copy)]
+pub(crate) struct ArgCall {
+    pub cs: i32,
+    pub n: usize,
+    pub ss: i32,
+    pub sw: i32,
+}
+
 struct Pending {
     slot: usize,
     ck: CheckpointId,
     save_ptr0: i32,
     log0: u64,
     normal_ops: usize,
+    args: Option<ArgCall>,
+    /// `dyn_used` and `var_used` at the checkpoint (the leak check).
+    mem0: (i32, i32),
 }
 
 thread_local! {
@@ -582,8 +595,9 @@ fn pop_used_up(g: &mut Globals) {
     }
 }
 
-/// The guard passed in a verifying run: checkpoint, then let the macro expand.
-pub(crate) fn begin(g: &mut Globals, slot: usize) {
+/// The guard passed in a verifying run: checkpoint, then let the macro
+/// expand. `args`: a call at the argument site.
+pub(crate) fn begin(g: &mut Globals, slot: usize, args: Option<ArgCall>) {
     let ck = match g.checkpoint() {
         Ok(id) => id,
         Err(e) => {
@@ -604,9 +618,15 @@ pub(crate) fn begin(g: &mut Globals, slot: usize) {
             save_ptr0: g.save_ptr,
             log0,
             normal_ops: 0,
+            args,
+            mem0: (g.dyn_used, g.var_used),
         })
     });
-    g.intr_rec_start_verify(slot);
+    let (cs, scanner) = match args {
+        Some(a) => (a.cs, a.ss),
+        None => (g.cur_cs, g.scanner_status),
+    };
+    g.intr_rec_start_verify(slot, cs, scanner);
 }
 
 /// An operation of the normal path (counted, and compared by count).
@@ -632,13 +652,32 @@ pub(crate) fn normal_path_done(g: &mut Globals, slot: usize) {
         .collect();
     pop_used_up(g);
     let n = g.capture(&p, true, &targets);
+    // The leak check (MACRO-REPLAY.md §6.1): the comparison leaves the
+    // allocation state out, so a replay that kept a list the normal path
+    // frees (the arguments) would pass it; the net change of the memory in
+    // use must be the same.
+    let mem_n = (g.dyn_used - p.mem0.0, g.var_used - p.mem0.1);
     let mut diffs = vec![];
     if let Err(e) = g.restore_discard(p.ck) {
         diffs.push(format!("cannot restore the checkpoint: {e}"));
     } else {
-        g.replay(slot);
+        match p.args {
+            Some(a) => {
+                g.replay_args(slot, a.n);
+                // `macro_call`'s `exit`
+                g.scanner_status = a.ss;
+                g.warning_index = a.sw;
+            }
+            None => g.replay(slot),
+        }
         pop_used_up(g);
         diffs = g.compare(&p, &n);
+        let mem_i = (g.dyn_used - p.mem0.0, g.var_used - p.mem0.1);
+        if mem_n != mem_i {
+            diffs.push(format!(
+                "memory in use (dyn_used, var_used) changed by {mem_n:?} on the normal path, {mem_i:?} replayed"
+            ));
+        }
     }
     if std::env::var_os("FLASHTEX_INTRINSICS_DEBUG").is_some() {
         eprintln!(
@@ -690,6 +729,18 @@ pub(crate) fn normal_path_done(g: &mut Globals, slot: usize) {
             }
         }
     });
+}
+
+/// A checkpoint is taken while the normal path runs: give the
+/// verification up (the run goes on along the normal path; not a
+/// difference).
+pub(crate) fn verify_skipped(g: &mut Globals) {
+    let Some(p) = PENDING.with(|p| p.borrow_mut().take()) else {
+        return;
+    };
+    let ck = p.ck;
+    g.retain_checkpoints(&|id| id != ck);
+    STATS.with(|s| s.borrow_mut().verify_skipped += 1);
 }
 
 /// The normal path of a call the guard let through was not pure.

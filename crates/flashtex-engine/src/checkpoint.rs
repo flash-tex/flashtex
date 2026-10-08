@@ -1809,6 +1809,10 @@ impl Globals {
     /// Called at `big_switch` whenever `ckpt_request` is nonzero
     /// (changes/checkpoint.ch).
     pub fn flashtex_checkpoint_hook(&mut self) {
+        // (no checkpoint holds a recording in progress: MACRO-REPLAY.md §7.1)
+        if self.intr_rec_on {
+            self.intr_before_checkpoint();
+        }
         let req = std::mem::replace(&mut self.ckpt_request, 0);
         match req {
             REQ_LOOKUP => {

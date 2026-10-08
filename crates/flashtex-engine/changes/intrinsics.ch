@@ -16,6 +16,24 @@
 %   returns at once, exactly as if the body had been fed to the scanner and
 %   |main_control| had executed all of it), or returns |false|, and the macro
 %   is expanded as usual -- possibly while |intr_rec_on| records it.
+%   |intr_at_switch| is true while |big_switch|'s |get_x_token| runs and no
+%   |expand| is in progress below it: |expand| clears it, and gives the
+%   value it found back when it returns, so a macro that |get_x_token|
+%   meets after an expandable primitive it expanded itself (\.{\\fi},
+%   \.{\\expandafter}, \.{\\csname}) is offered as well (MACRO-REPLAY.md
+%   section 3.1: there |get_x_token| is about to read on exactly as it
+%   would be at |big_switch|). For now only with |intr_args_on|: until
+%   the gates of MACRO-REPLAY.md section 6.4 pass, nothing changes by
+%   default.
+%
+% * |intr_args_on|: macros with parameters are offered too, at a second
+%   call site: once |macro_call| has scanned the arguments and popped the
+%   used-up input levels, just before it feeds the body to the scanner
+%   (docs/design/engine-v2/MACRO-REPLAY.md section 3.1). The macro is
+%   |warning_index| there, not |cur_cs| (the last argument token), so the
+%   hook passes it, the body |ref_count|, the argument count |n| and
+%   |macro_call|'s saved |scanner_status| and |warning_index| explicitly;
+%   a replay leaves through |macro_call|'s own |exit|.
 %
 % * |intr_rec_on|: a recording is in progress. The hooks behind it report
 %   every state the recorded run reads (the meaning of every control
@@ -152,13 +170,38 @@ exit: if intr_rec_on then flashtex_intr_next;
 end;
 @z
 
-@x pdftex.web l.8961 - an expansion that is not |big_switch|'s own ends |intr_at_switch|
+@x pdftex.web l.8957 (after changes/web2c.ch) - an expansion that is not |big_switch|'s own ends |intr_at_switch| ...
+@!save_scanner_status:small_number; {temporary storage of |scanner_status|}
+begin
+incr(expand_depth_count);
+if expand_depth_count>=expand_depth then overflow("expansion depth",expand_depth);
+cv_backup:=cur_val; cvl_backup:=cur_val_level; radix_backup:=radix;
+co_backup:=cur_order; backup_backup:=link(backup_head);
 reswitch:
 if cur_cmd<call then @<Expand a nonmacro@>
 @y
+@!save_scanner_status:small_number; {temporary storage of |scanner_status|}
+@!save_at_switch:boolean; {|intr_at_switch| on entry}
+begin
+incr(expand_depth_count);
+if expand_depth_count>=expand_depth then overflow("expansion depth",expand_depth);
+cv_backup:=cur_val; cvl_backup:=cur_val_level; radix_backup:=radix;
+co_backup:=cur_order; backup_backup:=link(backup_head);
+save_at_switch:=intr_at_switch;
 reswitch: intr_at_switch:=false;
 if intr_rec_on then flashtex_intr_expand;
 if cur_cmd<call then @<Expand a nonmacro@>
+@z
+
+@x pdftex.web l.8966 (after changes/web2c.ch) - ... and gives it back once the expansion is over
+cur_order:=co_backup; link(backup_head):=backup_backup;
+decr(expand_depth_count);
+end;
+@y
+cur_order:=co_backup; link(backup_head):=backup_backup;
+decr(expand_depth_count);
+if intr_args_on then intr_at_switch:=save_at_switch;
+end;
 @z
 
 @x pdftex.web l.9117 - \.{\\csname} reads the meaning it tests
@@ -178,13 +221,23 @@ if intr_at_switch then if (intr_cand[cur_cs]<>0)or intr_all then
   if flashtex_intr_call then return;
 @z
 
-@x pdftex.web l.9360 (after changes/checkpoint.ch) - entering a macro body is reported
+@x pdftex.web l.9358 (after changes/checkpoint.ch) - a macro with arguments may be replayed; entering a macro body is reported
+while (loc=null)and(token_type<>v_template)
+      and(token_type<>output_text) do
+  end_token_list; {conserve stack space}
 begin_token_list(ref_count,macro); name:=warning_index; loc:=link(r);
 if ckpt_arm_cs<>null then if warning_index=ckpt_arm_cs then
   begin ckpt_arm_level:=input_ptr; ckpt_arm_cs:=null;
   if ckpt_on_arm<>0 then ckpt_request:=ckpt_on_arm;
   end;
 @y
+while (loc=null)and(token_type<>v_template)
+      and(token_type<>output_text) do
+  end_token_list; {conserve stack space}
+if intr_at_switch then if intr_args_on then
+  if (intr_cand[warning_index]<>0)or intr_all_args then
+    if flashtex_intr_call_args(warning_index,ref_count,n,save_scanner_status,
+      save_warning_index) then goto exit;
 begin_token_list(ref_count,macro); name:=warning_index; loc:=link(r);
 if ckpt_arm_cs<>null then if warning_index=ckpt_arm_cs then
   begin ckpt_arm_level:=input_ptr; ckpt_arm_cs:=null;
@@ -386,6 +439,8 @@ src/intrinsics.rs.
 @!intr_at_switch:boolean; {|big_switch|'s |get_x_token| is expanding}
 @!intr_rec_on:boolean; {a recording is in progress}
 @!intr_all:boolean; {every parameterless macro is a candidate (a stress test)}
+@!intr_args_on:boolean; {macros with parameters are offered after their argument scan}
+@!intr_all_args:boolean; {every macro with parameters is a candidate (a stress test)}
 @!intr_weak:boolean; {|get_next|'s caller looks only at the token, not its meaning}
 @!intr_state:array[0..intr_state_size] of integer;
 @!intr_cand:array[0..eqtb_top] of integer; {first slot of a registered macro, plus one}
@@ -418,6 +473,8 @@ procedure flashtex_intr_loaded; external;
 procedure flashtex_prof_enter(@!cs:pointer); external;
 procedure flashtex_prof_leave; external;
 function flashtex_intr_call:boolean; external;
+function flashtex_intr_call_args(@!cs,@!rc:pointer;@!n:integer;
+  @!ss:integer;@!sw:pointer):boolean; external;
 procedure flashtex_intr_new_cs(@!p:pointer); external;
 procedure flashtex_intr_group(@!c:group_code); external;
 procedure flashtex_intr_unsave; external;

@@ -1233,6 +1233,10 @@ pub struct Globals {
     // §1915
     pub intr_all: bool,
     // §1915
+    pub intr_args_on: bool,
+    // §1915
+    pub intr_all_args: bool,
+    // §1915
     pub intr_weak: bool,
     // §1915
     pub intr_state: crate::arena::Arr<i32>,
@@ -1755,6 +1759,8 @@ pub const SCALAR_BYTES: usize = 0
     + crate::arena::slot::<i32>()
     + crate::arena::slot::<i32>()
     + crate::arena::slot::<i32>()
+    + crate::arena::slot::<bool>()
+    + crate::arena::slot::<bool>()
     + crate::arena::slot::<bool>()
     + crate::arena::slot::<bool>()
     + crate::arena::slot::<bool>()
@@ -2555,6 +2561,8 @@ impl Globals {
             intr_at_switch: false,
             intr_rec_on: false,
             intr_all: false,
+            intr_args_on: false,
+            intr_all_args: false,
             intr_weak: false,
             intr_state: __arena.arr(__r_intr_state, 4096),
             intr_cand: __arena.arr(__r_intr_cand, 630193),
@@ -3073,6 +3081,8 @@ impl Globals {
         v.pod(&mut self.intr_at_switch);
         v.pod(&mut self.intr_rec_on);
         v.pod(&mut self.intr_all);
+        v.pod(&mut self.intr_args_on);
+        v.pod(&mut self.intr_all_args);
         v.pod(&mut self.intr_weak);
         v.pod(&mut self.ls_cond_depth);
     }

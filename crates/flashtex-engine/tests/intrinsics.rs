@@ -29,6 +29,12 @@ struct Run {
 
 /// Run `\input t` in INITEX with the intrinsics in `mode`.
 fn run(dir: &Path, mode: &str, names: &str) -> Run {
+    run_with(dir, mode, names, false)
+}
+
+/// The same, with macros with parameters offered (`args`,
+/// `FLASHTEX_INTRINSICS_ARGS=on`; MACRO-REPLAY.md).
+fn run_with(dir: &Path, mode: &str, names: &str, args: bool) -> Run {
     let pool = Path::new(env!("CARGO_MANIFEST_DIR")).join("pdftex.pool");
     let stats = dir.join(format!("stats-{mode}.txt"));
     let _ = std::fs::remove_file(&stats);
@@ -42,6 +48,7 @@ fn run(dir: &Path, mode: &str, names: &str) -> Run {
         .env("FLASHTEX_INTRINSICS", mode)
         .env("FLASHTEX_INTRINSIC_NAMES", names)
         .env("FLASHTEX_INTRINSICS_STATS", &stats)
+        .env("FLASHTEX_INTRINSICS_ARGS", if args { "on" } else { "off" })
         .stdin(Stdio::null())
         .output()
         .expect("run flashtex-initex");
@@ -215,4 +222,135 @@ fn verify_all_on_the_test_file() {
     assert_eq!(off.log, all.log);
     assert_eq!(stat(&all.stats, "verify_differences"), 0, "{}", all.stats);
     assert!(stat(&all.stats, "verified") >= 2, "{}", all.stats);
+}
+
+// ---------------------------------------------------------------------------
+// Macros with parameters (docs/design/engine-v2/MACRO-REPLAY.md): the call
+// site after the argument scan, keyed on the argument tokens.
+// ---------------------------------------------------------------------------
+
+/// Run `src` off, on and verify with macros with parameters offered and
+/// `names` registered; the logs must agree, the verifier find nothing (the
+/// leak check included) and verify every call the "on" run replays.
+/// Returns the "on" statistics.
+fn check_args(tag: &str, src: &str, names: &str) -> String {
+    let d = scratch(tag);
+    std::fs::write(d.join("t.tex"), src).unwrap();
+    let off = run_with(&d, "off", names, true);
+    let on = run_with(&d, "on", names, true);
+    let verify = run_with(&d, "verify", names, true);
+    assert_eq!(off.log, on.log, "{tag}: log with replays differs");
+    assert_eq!(
+        off.log, verify.log,
+        "{tag}: log in verification mode differs"
+    );
+    assert_eq!(
+        stat(&verify.stats, "verify_differences"),
+        0,
+        "{tag}: {}",
+        verify.stats
+    );
+    assert_eq!(
+        stat(&verify.stats, "verified"),
+        stat(&on.stats, "replays"),
+        "{tag}: {}\n{}",
+        verify.stats,
+        on.stats
+    );
+    on.stats
+}
+
+const ARGS_PRELUDE: &str = "\\catcode`\\{=1 \\catcode`\\}=2 \\catcode`\\#=6 \\scrollmode\n\
+    \\def\\a{A}\\def\\b{B}\\def\\c{C}\n\
+    \\def\\cl#1#2{\\begingroup\\edef\\x{#1:#2}\\global\\let\\cur\\x\\endgroup\\let\\last=#1\\relax}\n\
+    \\def\\show{\\message{[\\meaning\\cur|\\meaning\\last]}}\n";
+
+#[test]
+fn a_macro_with_arguments_replays_per_argument_list() {
+    let s = check_args(
+        "args-basic",
+        &format!(
+            "{ARGS_PRELUDE}\\cl\\a\\b\\show\\cl\\a\\b\\show\\cl\\a\\c\\show\\cl\\a\\b\\show\
+             \\cl\\a\\c\\show\\cl{{x}}{{y}}\\show\\cl{{x}}{{y}}\\show\\end\n"
+        ),
+        "cl",
+    );
+    // calls 2, 4, 5 and 7 replay; 3 and 6 have new argument lists
+    assert_eq!(stat(&s, "args_replays"), 4, "{s}");
+    assert!(stat(&s, "ArgsDiffer") >= 2, "{s}");
+}
+
+#[test]
+fn a_changed_meaning_of_an_argument_falls_back() {
+    // the body expands its first argument: the meaning of \z is read
+    let s = check_args(
+        "args-meaning",
+        &format!(
+            "{ARGS_PRELUDE}\\let\\z\\a \\cl\\z\\b\\show\\cl\\z\\b\\show\
+             \\let\\z\\c \\cl\\z\\b\\show\\cl\\z\\b\\show\\def\\b{{BB}}\\cl\\z\\b\\show\\end\n"
+        ),
+        "cl",
+    );
+    assert!(stat(&s, "Deps") >= 2, "{s}");
+    assert_eq!(stat(&s, "args_replays"), 2, "{s}");
+}
+
+#[test]
+fn delimited_and_conditional_arguments() {
+    // (the body ends in a command: one that ends in an expansion, here
+    // `\fi` after a true branch, makes `get_x_token` read the token after
+    // the call before `big_switch` sees the body done, which abandons the
+    // recording, as for a macro without parameters; and the tokens a
+    // false branch skips are read as meanings, so each branch defines a
+    // macro of its own)
+    let src = "\\catcode`\\{=1 \\catcode`\\}=2 \\catcode`\\#=6 \\scrollmode\n\
+        \\def\\a{A}\\def\\b{B}\n\
+        \\def\\dl#1.#2\\stop{\\ifx#1\\a\\def\\r{yes #2}\\else\\def\\s{no #2}\\fi\\relax}\n\
+        \\def\\show{\\message{[\\meaning\\r|\\meaning\\s]}}\n\
+        \\dl\\a.x y\\stop\\show\\dl\\a.x y\\stop\\show\\dl\\b.x y\\stop\\show\
+        \\dl\\b.x y\\stop\\show\\dl\\a.{x}y\\stop\\show\\end\n";
+    let s = check_args("args-delim", src, "dl");
+    assert_eq!(stat(&s, "args_replays"), 2, "{s}");
+}
+
+#[test]
+fn a_body_that_reads_past_its_arguments_is_not_replayed() {
+    // \la's body ends in a \let whose source is the token after the call
+    let src = "\\catcode`\\{=1 \\catcode`\\}=2 \\catcode`\\#=6 \\scrollmode\n\
+        \\def\\a{A}\\def\\la#1{\\def\\q{#1}\\let\\next=}\n\
+        \\la x\\a\\la x\\a\\la x\\a\\message{[\\meaning\\q|\\meaning\\next]}\\end\n";
+    let s = check_args("args-lookahead", src, "la");
+    assert_eq!(stat(&s, "args_replays"), 0, "{s}");
+}
+
+#[test]
+fn macros_with_arguments_are_off_by_default() {
+    let d = scratch("args-default");
+    std::fs::write(
+        d.join("t.tex"),
+        format!("{ARGS_PRELUDE}\\cl\\a\\b\\show\\cl\\a\\b\\show\\end\n"),
+    )
+    .unwrap();
+    let on = run(&d, "on", "cl");
+    assert_eq!(stat(&on.stats, "args_calls"), 0, "{}", on.stats);
+    assert_eq!(stat(&on.stats, "replays"), 0, "{}", on.stats);
+}
+
+#[test]
+fn verify_all_args_on_the_test_file() {
+    // every macro with parameters big_switch expands is a candidate
+    let d = scratch("args-all");
+    std::fs::write(
+        d.join("t.tex"),
+        format!(
+            "{ARGS_PRELUDE}\\def\\two#1#2{{\\def\\p{{#2#1}}}}\\two xy\\two xy\\two yx\
+             \\cl\\a\\b\\show\\cl\\a\\b\\show\\def\\a{{x}}\\cl\\a\\b\\show\\cl\\a\\b\\show\\two xy\\end\n"
+        ),
+    )
+    .unwrap();
+    let off = run_with(&d, "off", "", true);
+    let all = run_with(&d, "verify-all-args", "", true);
+    assert_eq!(off.log, all.log);
+    assert_eq!(stat(&all.stats, "verify_differences"), 0, "{}", all.stats);
+    assert!(stat(&all.stats, "verified") >= 3, "{}", all.stats);
 }
