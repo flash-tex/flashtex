@@ -470,6 +470,8 @@ kpathsea_init_db (kpathsea kpse)
        rebuild it), but clear `buckets' (so we don't look in it).  */
     free (kpse->db.buckets);
     kpse->db.buckets = NULL;
+    free (kpse->db.tails); /* FlashTeX change (2026-10-06): see hash.c.  */
+    kpse->db.tails = NULL;
   }
 
   free (orig_db_files);
@@ -493,6 +495,8 @@ kpathsea_init_db (kpathsea kpse)
   if (!ok) {
     free (kpse->alias_db.buckets);
     kpse->alias_db.buckets = NULL;
+    free (kpse->alias_db.tails); /* FlashTeX change (2026-10-06): see hash.c.  */
+    kpse->alias_db.tails = NULL;
   }
 
   free (orig_db_files);
