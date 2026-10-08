@@ -220,7 +220,7 @@ final class EngineV3PackagesTests: XCTestCase {
     func testFetchIsOfferedAndFetchesIntoTheCacheUnderTheNewEngine() async throws {
         try EngineV3TestHost.require()
         guard ProjectFilesClient.locate() != nil else {
-            throw XCTSkip("no flashtex-project-files built (cargo build -p flashtex-project-files)")
+            throw EngineV3TestHost.unavailable("no flashtex-project-files built (cargo build -p flashtex-project-files)")
         }
         let base = try dir("fetch")
         let archive = base.appendingPathComponent("archive/macros/latex/contrib/fxpkgtest")
@@ -282,7 +282,7 @@ final class EngineV3PackagesTests: XCTestCase {
     func testTheRealHelperResolvesTheLibraryOfflineBeforeTheFirstCompile() async throws {
         try EngineV3TestHost.require()
         guard ProjectFilesClient.locate() != nil else {
-            throw XCTSkip("no flashtex-project-files built (cargo build -p flashtex-project-files)")
+            throw EngineV3TestHost.unavailable("no flashtex-project-files built (cargo build -p flashtex-project-files)")
         }
         let base = try dir("real-helper")
         let cache = base.appendingPathComponent("cache")

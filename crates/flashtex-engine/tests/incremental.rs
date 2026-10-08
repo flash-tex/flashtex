@@ -475,13 +475,18 @@ fn field<'a>(report: &'a str, name: &str) -> &'a str {
 /// bibliography: the edits of `structural_edits_equal_scratch_runs` change
 /// the `.aux` and `.toc` in every way a pass can see.
 fn refs_doc(extra: &str, sections: usize) -> String {
+    refs_doc_at(extra, sections, 2)
+}
+
+/// `refs_doc` with `extra` in section `at`.
+fn refs_doc_at(extra: &str, sections: usize, at: usize) -> String {
     let mut s = String::from(
         "\\documentclass{article}\n\\usepackage{hyperref}\n\\begin{document}\n\
          \\tableofcontents\n",
     );
     for k in 0..sections {
         s.push_str(&format!("\\section{{Part {k}}}\\label{{sec:{k}}}\n"));
-        if k == 2 {
+        if k == at {
             s.push_str(extra);
         }
         for i in 0..6 {
@@ -507,6 +512,11 @@ fn refs_doc(extra: &str, sections: usize) -> String {
 /// compile, with its further passes, equals from-scratch runs repeated by
 /// the same rule, and a pass whose `.aux` changed restarts at the first
 /// read of a changed entry rather than at the `.aux` point.
+///
+/// The host keeps checkpoints at shipouts and the `.aux` points only (no
+/// segment or timed ones, which are spaced in engine time): which ones a
+/// pass keeps, and so whether one restarts past the `.aux` point, must not
+/// depend on the machine's load.
 #[test]
 fn structural_edits_equal_scratch_runs() {
     let Some(e) = env() else {
@@ -517,7 +527,11 @@ fn structural_edits_equal_scratch_runs() {
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
     let base = refs_doc("", 8);
-    let mut h = Host::start(&e, &dir);
+    let mut h = Host::start_env(
+        &e,
+        &dir,
+        &[("FLASHTEX_SEGMENT_S", "off"), ("FLASHTEX_TIMED_S", "0")],
+    );
     for _ in 0..3 {
         let r = compile_and_check(&e, &mut h, &dir, &[("doc.tex", &base)], "settle");
         if r.contains("\"mode\":\"unchanged\"") {
@@ -569,6 +583,38 @@ fn structural_edits_equal_scratch_runs() {
         l5_restarts > 0,
         "no pass restarted at the first read of a changed .aux entry: {notes:#?}"
     );
+}
+
+/// DESIGN.md §5.2: retention keeps checkpoints dense near the cursor, the
+/// page the user edits. An edit that changes the `.aux` runs a second
+/// pass, which restarts before the edit (at the `.aux` point, or the first
+/// read of a changed entry); the cursor stays at the first pass's restart
+/// (#1573's review: it moved to the second pass's, page 0, and the next
+/// keystroke there restarted at its page's start).
+#[test]
+fn an_aux_pass_leaves_the_retention_cursor_at_the_edit() {
+    let Some(e) = env() else {
+        common::no_texlive();
+        return;
+    };
+    let dir = e.dir.join("cursor");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let base = refs_doc_at("", 30, 24);
+    let mut h = Host::start(&e, &dir);
+    for _ in 0..3 {
+        let r = compile_and_check(&e, &mut h, &dir, &[("doc.tex", &base)], "settle");
+        if r.contains("\"mode\":\"unchanged\"") {
+            break;
+        }
+    }
+    let doc = refs_doc_at(&"Words that move the labels. ".repeat(60), 30, 24);
+    let r = compile_and_check(&e, &mut h, &dir, &[("doc.tex", &doc)], "a sentence late");
+    let passes: usize = field(&r, "passes").parse().unwrap();
+    let restart: usize = field(&r, "restart_pages").parse().unwrap();
+    assert!(passes >= 2, "the edit should change the .aux: {r}");
+    assert!(restart > 0, "{r}");
+    assert_eq!(field(&r, "cursor"), restart.to_string(), "{r}");
 }
 
 /// DESIGN.md §5.3's barriers: a document that reads `\pdfelapsedtime`
@@ -1183,6 +1229,62 @@ fn a_file_read_while_open_for_output_is_read_as_from_scratch() {
     compile_and_check(&e, &mut h, &dir, &[("doc.tex", &lost)], "first compile");
 }
 
+/// Issue #1557: pdfTeX's stdio writes a `\write` stream out a buffer
+/// (`st_blksize`, 4096 bytes on APFS and ext4) at a time, so a file of
+/// about 6 KB `\input` while still open for output reads its first 4096
+/// bytes (41 lines and a part), not nothing. With the `\closeout` lost,
+/// the incremental runs read what a run from scratch reads, flushed by the
+/// stream or not, with checkpoints between the writes and the read.
+#[test]
+fn a_file_read_while_open_for_output_past_the_stdio_buffer() {
+    let Some(e) = env() else {
+        common::no_texlive();
+        return;
+    };
+    // each block writes 60 lines of 100 bytes after its first line
+    let lines: String = (0..60)
+        .map(|i| {
+            format!(
+                "\\immediate\\write\\tmp{{Line {i:02} of the block, {}.}}\n",
+                "y".repeat(76)
+            )
+        })
+        .collect();
+    let base = vol_closed_doc().replace(
+        "\\immediate\\closeout\\tmp",
+        &format!("{lines}\\immediate\\closeout\\tmp"),
+    );
+    let lost =
+        base.replacen("\\closeout", "\\closeouet", 2)
+            .replacen("\\closeouet", "\\closeout", 1);
+    assert_ne!(base, lost);
+    let dir = e.dir.join("read-while-open-big");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let mut h = Host::start(&e, &dir);
+    for _ in 0..2 {
+        compile_and_check(&e, &mut h, &dir, &[("doc.tex", &base)], "settle");
+    }
+    compile_and_check(&e, &mut h, &dir, &[("doc.tex", &lost)], "closeout lost");
+    let edited = lost.replacen("Paragraph 40 with", "Paragraph 40 now with", 1);
+    compile_and_check(
+        &e,
+        &mut h,
+        &dir,
+        &[("doc.tex", &edited)],
+        "an edit after it",
+    );
+    let edited = edited.replacen("Line 59 of", "Line 59 now of", 1);
+    compile_and_check(
+        &e,
+        &mut h,
+        &dir,
+        &[("doc.tex", &edited)],
+        "an edit to the writes",
+    );
+    compile_and_check(&e, &mut h, &dir, &[("doc.tex", &base)], "back");
+}
+
 /// Issue #1550 as sweep D found it: the broken `\closeout` arrives while
 /// the compile of an earlier edit is stopped.
 #[test]
@@ -1350,10 +1452,12 @@ fn a_cold_run_stopped_past_s0_is_kept() {
     // (the cases with hyperref, at least)
     assert!(restarted >= 4, "{restarted} preamble restarts");
     // Opening a document compiled before (a new session's first compile is
-    // from the format), and one never compiled: its S₀ looked up a `.aux`
-    // that did not exist, and the stopped run wrote one, so the next
-    // compile starts from the format again (as a complete first compile's
-    // second pass does), as a scratch run would, without the partial `.aux`.
+    // from the format), and one never compiled (lane COLD-OPEN): with no
+    // `.aux` its `.aux` point is where `\document` begins, before the lookup
+    // that found none, so the `.aux` the stopped run wrote is not in S₀'s
+    // key; the next compile keeps what the stopped run typeset and restarts
+    // before the edit, taking the `.aux` as that run looked for it (not
+    // there: `fixed_created`), and its next pass sees the `.aux`.
     for (i, compiled) in [true, false].into_iter().enumerate() {
         let dir = e.dir.join(format!("cold-stop-open-{i}"));
         let _ = std::fs::remove_dir_all(&dir);
@@ -1378,17 +1482,44 @@ fn a_cold_run_stopped_past_s0_is_kept() {
         std::fs::write(dir.join("doc.tex"), &edited).unwrap();
         std::fs::write(reference.join("doc.tex"), &edited).unwrap();
         let r2 = h.cmd("compile");
-        let mode = if compiled { "incremental" } else { "cold" };
-        // (or, never compiled -- PREAMBLE-FAST -- from a checkpoint before
+        // (COLD-OPEN: a stopped first compile restarts at its anchor, so
+        // incrementally; or -- PREAMBLE-FAST -- from a checkpoint before
         // S₀, before the `.aux` lookup whose answer changed, which the run
         // makes again without the partial `.aux`)
         assert!(
-            field(&r2, "mode") == format!("\"{mode}\"")
+            field(&r2, "mode") == "\"incremental\""
                 || (!compiled && field(&r2, "restart_preamble") == "true"),
             "{r2}"
         );
         check_against(&e, &dir, &reference, &r2, "opened and stopped");
     }
+}
+
+/// Lane COLD-OPEN: a first compile (no `.aux`) takes its `.aux` point where
+/// `\document` begins, before it looks for the `.aux`, so the passes the new
+/// `.aux` asks for restart there, not from the format; the output is a
+/// scratch run's.
+#[test]
+fn a_first_compiles_later_passes_start_at_the_aux_point() {
+    let Some(e) = env() else {
+        common::no_texlive();
+        return;
+    };
+    let base = refs_doc("", 8);
+    let dir = e.dir.join("first-passes");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("doc.tex"), &base).unwrap();
+    let reference = dir.with_extension("ref");
+    copy_dir(&dir, &reference);
+    let mut h = Host::start(&e, &dir);
+    let r = h.cmd("compile");
+    assert_eq!(field(&r, "mode"), "\"cold\"", "{r}");
+    assert!(
+        r.contains("\"pass_modes\":[\"cold\", \"incremental\""),
+        "the second pass is from the format: {r}"
+    );
+    check_against(&e, &dir, &reference, &r, "a first compile");
 }
 
 /// P4-COLD-PREEMPT: newer work that arrives before a run from the format
@@ -2663,6 +2794,164 @@ fn a_late_barrier_keeps_the_pages_before_it() {
     }
 }
 
+/// A file written through the body and read back at the end, opened at
+/// `\begin{document}` (*Infinite Descent*'s hints and solutions: `\hint`s
+/// written to `\jobname.hnt` in every chapter, `\input` in the appendix).
+/// `word` is in paragraph 30, `hint` in the hint written at paragraph 60,
+/// `tail` in paragraph 145, after the read.
+fn hints_doc(word: &str, hint: &str, tail: &str) -> String {
+    let mut s = String::from(
+        "\\documentclass{article}\n\\newwrite\\hnt\n\
+         \\AtBeginDocument{\\immediate\\openout\\hnt=\\jobname.hnt}\n\\begin{document}\n",
+    );
+    for i in 0..140 {
+        s.push_str(&para(i, if i == 30 { word } else { "lorem" }));
+        if i % 20 == 0 {
+            let h = if i == 60 { hint } else { "lorem" };
+            s.push_str(&format!("\\immediate\\write\\hnt{{Hint {i}: {h}.}}\n"));
+        }
+    }
+    s.push_str("\\immediate\\closeout\\hnt\n\\clearpage\\input{\\jobname.hnt}\n\n");
+    for i in 140..150 {
+        s.push_str(&para(i, if i == 145 { tail } else { "lorem" }));
+    }
+    s.push_str("\\end{document}\n");
+    s
+}
+
+/// A compile with page `stop` requested first (the viewport: the app's
+/// request), continued (`finish`) when it stopped there, checked against
+/// scratch runs: the report of each.
+fn paused_then_finished(
+    e: &Env,
+    h: &mut Host,
+    dir: &Path,
+    text: &str,
+    stop: usize,
+    what: &str,
+) -> (String, String) {
+    std::fs::write(dir.join("doc.tex"), text).unwrap();
+    let reference = dir.with_extension("ref");
+    copy_dir(dir, &reference);
+    let first = h.cmd(&format!("compile {stop}"));
+    // (a run that converged before the page, or restarted after it, did
+    // not stop)
+    let r = if first.contains("\"paused\":true") {
+        h.cmd("finish")
+    } else {
+        first.clone()
+    };
+    check_against(e, dir, &reference, &r, what);
+    (first, r)
+}
+
+/// A run stopped at the requested page and continued compared the old
+/// run's journal with the files again (#1514), and took a file it writes
+/// itself and reads back later, opened before the restart (the hints of
+/// *Infinite Descent*), for a changed input: on disk it held the stopped
+/// run's part so far. The old run "read the changed file later", so no
+/// test after the edited page could pass, and every keystroke re-typeset
+/// the book to its end. Now such a file is the stopped run's own output,
+/// and the old run's read of it is no change. Where the file holds the
+/// same bytes in both runs at the convergence point, the old run's read of
+/// it is kept too (`written_same`): the run converges and keeps the old
+/// run's pages to the end (i). Where it does not (an edit inside a hint,
+/// ii), the read is a barrier (a file one of the runs writes): the run
+/// keeps the old run's pages before the read and runs on live from there.
+/// Every compile equals scratch runs, when the edit leaves the hints alone
+/// (i), changes what is written to them (ii), lies after the read (iii),
+/// and when a second keystroke comes before the first compile is continued
+/// (iv).
+#[test]
+fn a_file_written_and_read_back_converges_after_a_stopped_run() {
+    let Some(e) = env() else {
+        common::no_texlive();
+        return;
+    };
+    let dir = e.dir.join("hints");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let base = hints_doc("lorem", "lorem", "lorem");
+    let mut h = Host::start(&e, &dir);
+    for k in 0..4 {
+        let r = compile_and_check(&e, &mut h, &dir, &[("doc.tex", &base)], "settle");
+        if r.contains("\"mode\":\"unchanged\"") || k == 3 {
+            break;
+        }
+    }
+    // (i) an edit that leaves the written file alone: converges, and keeps
+    // the old run's pages to the end, the read of the file too, which holds
+    // the same bytes in both runs (the same letters: the fonts' used
+    // characters stay the same)
+    for (word, what) in [
+        ("lorme", "(i) an edit on page 2"),
+        ("lorem", "(i) its revert"),
+    ] {
+        let doc = hints_doc(word, "lorem", "lorem");
+        let (first, r) = paused_then_finished(&e, &mut h, &dir, &doc, 2, what);
+        assert!(
+            first.contains("\"paused\":true"),
+            "{what}: not stopped: {first}"
+        );
+        let conv: usize = field(&r, "converged_at")
+            .parse()
+            .unwrap_or_else(|_| panic!("{what}: no convergence before the read: {r}"));
+        assert!(
+            conv <= 3 && field(&r, "rerun_from") == "null",
+            "{what}: re-typeset from the read of the unchanged hints: {r}"
+        );
+    }
+    // (ii) an edit of what is written: converges, keeps the old run's pages
+    // up to the read, and typesets the pages from there again from the new
+    // hints
+    for (hint, what) in [
+        ("lorme", "(ii) an edit of a hint"),
+        ("lorem", "(ii) its revert"),
+    ] {
+        let doc = hints_doc("lorem", hint, "lorem");
+        let (_, r) = paused_then_finished(&e, &mut h, &dir, &doc, 5, what);
+        let conv: usize = field(&r, "converged_at")
+            .parse()
+            .unwrap_or_else(|_| panic!("{what}: no convergence before the read: {r}"));
+        let kept: usize = field(&r, "rerun_from")
+            .parse()
+            .unwrap_or_else(|_| panic!("{what}: no live run from before the read: {r}"));
+        let pages: usize = field(&r, "pages").parse().unwrap();
+        assert!(conv < kept && kept < pages, "{what}: {r}");
+    }
+    // (iii) an edit after the read
+    for (tail, what) in [
+        ("lorme", "(iii) an edit after the read"),
+        ("lorem", "(iii) its revert"),
+    ] {
+        let doc = hints_doc("lorem", "lorem", tail);
+        let r = compile_and_check(&e, &mut h, &dir, &[("doc.tex", &doc)], what);
+        assert!(r.contains("\"mode\":\"incremental\""), "{what}: {r}");
+    }
+    // (iv) a second keystroke before the first compile is continued: the
+    // stopped run is settled or abandoned, and the second compile, stopped
+    // too, is continued
+    std::fs::write(dir.join("doc.tex"), hints_doc("lorme", "lorem", "lorem")).unwrap();
+    let first = h.cmd("compile 2");
+    assert!(
+        first.contains("\"paused\":true"),
+        "(iv) not stopped: {first}"
+    );
+    for (doc, what) in [
+        (
+            hints_doc("loerm", "lorem", "lorem"),
+            "(iv) a second keystroke",
+        ),
+        (base.clone(), "(iv) the revert"),
+    ] {
+        let (first, _) = paused_then_finished(&e, &mut h, &dir, &doc, 2, what);
+        assert!(
+            first.contains("\"paused\":true"),
+            "{what}: not stopped: {first}"
+        );
+    }
+}
+
 /// PREAMBLE-FAST: an edit in the preamble after its packages restarts at a
 /// checkpoint between the preamble's lines (`Point::PreambleLine`) instead
 /// of from the format, takes S₀ again, and equals a scratch run: a letter in
@@ -3652,4 +3941,73 @@ fn twin_files_edited_alike_both_shift() {
             .unwrap_or_else(|_| panic!("{what}: no convergence: {r}"));
         assert!(conv + 3 < pages, "{what}: converged late: {r}");
     }
+}
+
+/// Performance modes (lane PERF-MODES, `crate::profile`): switching the mode
+/// between compiles, live, changes only which checkpoints are kept (the
+/// budget, the dense window), never the output. A tiny pinned budget keeps
+/// retention thinning at every compile, so the dense window of each mode
+/// (4, 16, 512 pages) decides what survives; the edits land near and far
+/// from the last cursor.
+#[test]
+fn edits_across_performance_mode_switches_equal_scratch_runs() {
+    let Some(e) = env() else {
+        common::no_texlive();
+        return;
+    };
+    let dir = e.dir.join("modes");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let doc = r"\documentclass{article}
+\usepackage{hyperref}
+\begin{document}
+\section{One}\label{one}
+See page~\pageref{two}.
+\input{body}
+\section{Two}\label{two}
+Back to page~\pageref{one}.
+\input{body}
+\end{document}
+";
+    let body: String = (0..60).map(|i| para(i, "alpha")).collect();
+    let mut h = Host::start_env(
+        &e,
+        &dir,
+        &[("FLASHTEX_BUDGET", "65536"), ("FLASHTEX_TIMED_S", "0.0002")],
+    );
+    for k in 0..4 {
+        let r = compile_and_check(
+            &e,
+            &mut h,
+            &dir,
+            &[("doc.tex", doc), ("body.tex", &body)],
+            "settle",
+        );
+        if r.contains("\"mode\":\"unchanged\"") || k == 3 {
+            break;
+        }
+    }
+    let modes = ["low-memory", "high-performance", "balanced", "low-memory"];
+    let mut text = body.clone();
+    for (k, (m, at)) in modes.iter().zip([55, 3, 30, 58]).enumerate() {
+        let p = h.cmd(&format!("profile {m}"));
+        assert!(p.contains(&format!("\"mode\":\"{m}\"")), "{p}");
+        assert!(p.contains("\"budget\":65536"), "the pinned budget: {p}");
+        let from = format!("Paragraph {at} with the word alpha");
+        let to = format!(
+            "Paragraph {at} with the word alph{}",
+            (b'b' + k as u8) as char
+        );
+        text = text.replacen(&from, &to, 1);
+        compile_and_check(
+            &e,
+            &mut h,
+            &dir,
+            &[("body.tex", &text)],
+            &format!("{m}: edit"),
+        );
+    }
+    h.cmd("profile high-performance");
+    compile_and_check(&e, &mut h, &dir, &[("body.tex", &body)], "revert");
+    compile_and_check(&e, &mut h, &dir, &[], "settle again");
 }

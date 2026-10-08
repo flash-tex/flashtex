@@ -276,10 +276,22 @@ struct Layout {
     ls_nest_tag: usize,
     ls_grp_tag: usize,
     ls_cond_tag: usize,
+    /// The display list's side table (`crate::displaylist`): its offset
+    /// and element count, `usize::MAX`/0 without one.
+    dl_side: (usize, usize),
     scalars: HashMap<&'static str, (usize, usize)>,
 }
 
 impl Layout {
+    /// The space's chunk holding node `p`'s side-table entry.
+    fn side_chunk(&self, p: i32) -> Option<u32> {
+        let (off, n) = self.dl_side;
+        if off == usize::MAX || p < 0 || p as usize >= n {
+            return None;
+        }
+        Some(((off + p as usize * 8) >> CHUNK_SHIFT) as u32)
+    }
+
     fn new(g: &Globals, slots: &[ScalarSlot]) -> Layout {
         let off = |n: &str| {
             g.arena
@@ -311,6 +323,12 @@ impl Layout {
             ls_nest_tag: off("ls_nest_tag"),
             ls_grp_tag: off("ls_grp_tag"),
             ls_cond_tag: off("ls_cond_tag"),
+            dl_side: g
+                .arena
+                .regions
+                .iter()
+                .find(|r| r.name == "dl_side")
+                .map_or((usize::MAX, 0), |r| (r.off, r.bytes / r.elem.max(1))),
             scalars: slots.iter().map(|s| (s.name, (s.off, s.size))).collect(),
         }
     }
@@ -358,6 +376,14 @@ impl<S: Space> St<'_, S> {
     }
     fn eqtb(&self, p: i32) -> u64 {
         self.sp.word(self.l.eqtb + (p as usize - 1) * 8)
+    }
+    /// The display list's side-table entry of node `p` (0 without one).
+    fn side(&self, p: i32) -> u64 {
+        let (off, n) = self.l.dl_side;
+        if off == usize::MAX || p < 0 || p as usize >= n {
+            return 0;
+        }
+        self.sp.word(off + p as usize * 8)
     }
     fn save(&self, k: i32) -> u64 {
         self.sp.word(self.l.save_stack + k as usize * 8)
@@ -464,6 +490,11 @@ pub struct Iso<'a, O: Space, N: Space> {
     /// Asked every [`STOP_EVERY`] tasks: newer work stops the walk
     /// ([`STOPPED`]).
     stop: Option<&'a mut dyn FnMut() -> bool>,
+    /// The convergence test's side-table comparison (`check`): the chunks of
+    /// the table either run wrote since the restore target, and the paired
+    /// live nodes whose old entries lie there, with their live entries.
+    side_written: Option<&'a [u64]>,
+    side_later: Vec<(i32, u64)>,
     steps: usize,
     cur_task: Option<(K, i32, i32)>,
 }
@@ -544,6 +575,8 @@ impl<'a, O: Space, N: Space> Iso<'a, O, N> {
             dest_dims_dead: false,
             scratch_heads_dead: false,
             stop: None,
+            side_written: None,
+            side_later: Vec::new(),
             steps: 0,
         }
     }
@@ -582,7 +615,8 @@ impl<'a, O: Space, N: Space> Iso<'a, O, N> {
     }
 
     fn partner(&self, a: i32) -> Option<i32> {
-        bit(&self.head_o, a).then(|| self.fwd.get(&a).copied().unwrap_or(a))
+        // (a pointer outside `mem` pairs with nothing: the check fails)
+        (Self::in_mem(a) && bit(&self.head_o, a)).then(|| self.fwd.get(&a).copied().unwrap_or(a))
     }
 
     /// The SyncTeX words of a synchronized node of `size` words
@@ -736,6 +770,31 @@ impl<'a, O: Space, N: Space> Iso<'a, O, N> {
         let (ca, cb) = (self.o.is_char(a), self.n.is_char(b));
         if ca != cb {
             fail!(self, "a char node in one state only");
+        }
+        // The node's source position (file, line, column) in the display
+        // list's side table. Nothing TeX computes reads it, but the node is
+        // live: a later page ships it, and its glyphs name that position,
+        // which the convergence takes over from the old run. Spans are the
+        // host's and move with their lines, so equal entries are the same
+        // place.
+        if let Some(written) = self.side_written {
+            // (the live state's entry; the old run's is the live one where
+            // neither run wrote the table since the restore target, and is
+            // rewound once the walk is done otherwise: `check`)
+            let sn = self.n.side(b);
+            match self.n.l.side_chunk(a) {
+                Some(c) if bit(written, c as i32) => self.side_later.push((a, sn)),
+                Some(_) => {
+                    let so = self.n.side(a);
+                    if so != sn {
+                        fail!(
+                            self,
+                            "a node's source position differs ({so:#x} vs {sn:#x})"
+                        );
+                    }
+                }
+                None => {}
+            }
         }
         let w0o = self.o.mem(a);
         let w0n = self.n.mem(b);
@@ -2484,6 +2543,17 @@ impl<O: Space, N: Space> Iso<'_, O, N> {
     }
 }
 
+/// The display list's side table for [`Iso::check`]: the chunks of it either
+/// run wrote since the restore target (a bitmap by chunk), and how to get
+/// the old run's value of some of them (`Globals::pending_old_chunks`).
+pub struct SideOld<'a> {
+    pub written: &'a [u64],
+    pub fetch: &'a mut OldChunks<'a>,
+}
+
+/// The old run's chunks `cs` by chunk (`None`: stopped for newer work).
+pub type OldChunks<'a> = dyn FnMut(&[u32]) -> Result<Option<HashMap<u32, Vec<u64>>>, String> + 'a;
+
 /// The entry points (the walk's types are chosen here).
 impl<'a> Iso<'a, Old<'a>, Live<'a>> {
     /// Compare O (the old run's checkpoint, through `d`) with the live state.
@@ -2498,6 +2568,7 @@ impl<'a> Iso<'a, Old<'a>, Live<'a>> {
         free_o: Option<&[u64]>,
         free_n: Option<&[u64]>,
         bad_mem: &[usize],
+        side: Option<SideOld<'a>>,
         hyph_len: usize,
         dest_dims_dead: bool,
         stop: &'a mut dyn FnMut() -> bool,
@@ -2535,13 +2606,48 @@ impl<'a> Iso<'a, Old<'a>, Live<'a>> {
         w.dest_dims_dead = dest_dims_dead;
         w.scratch_heads_dead = true;
         w.stop = Some(stop);
+        let mut fetch = None;
+        if let Some(sd) = side {
+            w.side_written = Some(sd.written);
+            fetch = Some(sd.fetch);
+        }
         w.roots();
         w.finish();
         if let Some(e) = w.err {
             return Err(e);
         }
+        // The old run's side-table entries of the live nodes in chunks
+        // either run wrote: those chunks alone rewound.
+        if let Some(fetch) = fetch.filter(|_| !w.side_later.is_empty()) {
+            let l = w.n.l;
+            let mut cs: Vec<u32> = w
+                .side_later
+                .iter()
+                .filter_map(|&(a, _)| l.side_chunk(a))
+                .collect();
+            cs.sort_unstable();
+            cs.dedup();
+            let Some(old) = fetch(&cs)? else {
+                return Err(STOPPED.into());
+            };
+            for &(a, sn) in &w.side_later {
+                let (off, _) = l.dl_side;
+                let at = off + a as usize * 8;
+                let c = (at >> CHUNK_SHIFT) as u32;
+                let so = old[&c][(at & (CHUNK_BYTES - 1)) >> 3];
+                if so != sn {
+                    return Err(format!(
+                        "a node's source position differs ({so:#x} vs {sn:#x}, node {a})"
+                    ));
+                }
+            }
+        }
         for &p in bad_mem {
             let p = p as i32;
+            // (a word past the walk's range: nothing explains it)
+            if !Self::in_mem(p) {
+                return Err(format!("mem[{p}] differs outside the walked range"));
+            }
             let ok_o = bit(&w.cov_o, p) || free_o.is_some_and(|f| bit(f, p));
             let ok_n = bit(&w.cov_n, p) || free_n.is_some_and(|f| bit(f, p));
             if !(ok_o && ok_n) {

@@ -30,6 +30,7 @@ flashtex-v3 build paper -o out.pdf      # a directory: its one file with \docume
 flashtex-v3 build main.tex --no-tools   # without bibtex, biber and makeindex
 flashtex-v3 check main.tex [--json]     # TeX's diagnostics: file:line:col: severity: message; exit 1 on an error
 flashtex-v3 watch main.tex [--interval MS]
+flashtex-v3 build main.tex --no-progress   # no progress line (also: --progress, -q/--quiet)
 ```
 
 - `build` compiles as latexmk would. It runs bibtex, biber and makeindex
@@ -56,6 +57,45 @@ flashtex-v3 watch main.tex [--interval MS]
   `$FLASHTEX_POOL`, else beside the host.
 - Exit status: 0 on success, 1 on a TeX error or when no PDF was written, 2
   for a usage error.
+
+### Progress
+
+When stderr is a terminal, `build`, `check` and `watch` show one status line
+on stderr, redrawn in place about ten times a second, and a summary at the end:
+
+```text
+    Starting the engine host  0.7s
+   Compiling thesis.tex  pass 2  [===========>                  ] 210/~541 pages  chapters/ch6.tex  8.8s  ETA 5.1s
+     Running bibtex thesis.aux
+     Writing thesis.pdf  [=====================>        ] 386/541 pages  19.6s  ETA 2.9s
+    Finished thesis.pdf — 541 pages, 2 passes, 21.7s
+```
+
+- **pass**: the engine's passes over the document, counting a further pass
+  for the `.aux` and the passes after bibtex, biber or makeindex (each tool
+  has a `Running` line of its own). **Writing** is the export run that
+  writes the PDF pdflatex writes.
+- **pages**: the pages the pass has shipped out, out of the last build's
+  count (`~541`, kept in `flashtex/progress/` in the user's cache
+  directory) or, for the export, the exact count. Without a last build, a
+  spinner and a count. The ETA is shown when the total is known.
+- **the file**: the innermost `\input`, `\include` or package TeX is reading,
+  relative to the project.
+- **Finished**: the pages, the passes and the time, and the number of
+  errors (printed above it) and warnings (`flashtex-v3 check` lists them).
+- The line fits the terminal's width (it drops the ETA, then the bar, then
+  shortens the file name). `NO_COLOR` turns the colour off; `TERM=dumb`
+  turns the line off.
+- **Not a terminal** (a pipe, CI, a script): no progress at all, so the
+  output is byte for byte what it was without it (one `flashtex-v3: wrote …`
+  line). `--progress` asks for plain lines there instead (`flashtex-v3:
+  pass 2`, at most one more every 5 s, and the tools and the export).
+  `--no-progress` turns it off on a terminal; `-q`/`--quiet` turns it off and
+  drops the line for a successful build (errors and warnings still print).
+- Progress never goes to stdout (where `check` prints its diagnostics) and
+  costs the build nothing measurable: it comes from the host's `progress-v1`
+  heartbeat (display-list-v3 §6.8), sent at page checkpoints at most every
+  250 ms, which `flashtex-v3` asks for only when it shows progress.
 
 ## Install
 

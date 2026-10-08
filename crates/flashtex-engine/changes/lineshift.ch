@@ -242,6 +242,9 @@ still known to be that file's.
 @!ls_grp_tag:array[0..max_quarterword] of integer; {a group's line's file}
 @!ls_cond_tag:array[0..ls_cond_size] of integer; {a conditional's line's file}
 @!ls_cond_depth:integer; {conditionals open}
+@!ls_taints:integer; {definitions holding confined reads (the hooks' fast test)}
+@!ls_the_def:boolean; {|scan_toks|'s \.{\\the} in a definition is next}
+@!ls_def_reads:boolean; {the definition being scanned holds confined reads}
 @!ls_tag_file:array[0..ls_tag_size] of str_number;
   {the full name of the file each SyncTeX tag was given to}
 

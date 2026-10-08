@@ -43,6 +43,7 @@ use crate::generated::Globals;
 use crate::persist::{hash128, Codec, Reader};
 use crate::resolver::Format;
 use crate::system::{self, Lookup, RunOptions, StatSig, Stream};
+use std::collections::HashMap;
 use std::time::Instant;
 
 /// What S₀ depends on.
@@ -220,16 +221,25 @@ impl Key {
     }
 
     /// The part of `check` about the files and lookups the run read.
-    fn check_files(&self) -> Result<Fresh, String> {
+    fn check_files<'a>(&'a self) -> Result<Fresh, String> {
         let mut fresh = Fresh::default();
+        // One signature and one content hash per path: a preamble opens
+        // many files more than once (beamer's: 432 reads of 189 files), and
+        // the key lists every read. Each read is still compared with what
+        // it recorded, against the file as this check found it.
+        let mut sigs: HashMap<&str, Option<StatSig>> = HashMap::new();
+        let mut sig_of = |path: &'a str| *sigs.entry(path).or_insert_with(|| StatSig::of(path));
+        let mut hashes: HashMap<&str, Option<[u64; 2]>> = HashMap::new();
         // A file both written before S₀ and read before it is keyed by
         // what was read; `rewrite_outputs` puts back what was written.
         for (i, (path, hash, stat)) in self.files.iter().enumerate() {
-            let sig = StatSig::of(path);
+            let sig = sig_of(path);
             if sig.as_ref() == Some(stat) {
                 continue;
             }
-            let now = std::fs::read(path).map(|d| hash128(&d)).ok();
+            let now = *hashes
+                .entry(path)
+                .or_insert_with(|| std::fs::read(path).map(|d| hash128(&d)).ok());
             if now != Some(*hash) {
                 return Err(format!("{path} changed"));
             }
@@ -238,7 +248,7 @@ impl Key {
             }
         }
         for (i, (path, len, hash, stat)) in self.prefixes.iter().enumerate() {
-            let sig = StatSig::of(path);
+            let sig = sig_of(path);
             if sig.as_ref() == Some(stat) {
                 continue;
             }
