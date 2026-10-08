@@ -250,13 +250,18 @@ impl Key {
         }
         // (taken before the lookups: a directory changed while they run
         // shows as changed next time)
-        let now: Vec<Option<StatSig>> = self.dirs.iter().map(|(d, _)| StatSig::of(d)).collect();
+        let now: Vec<Option<StatSig>> = self.dirs.iter().map(|(d, _)| system::dep_sig(d)).collect();
         let dirs_same = !self.dirs.is_empty()
             && self
                 .dirs
                 .iter()
                 .zip(&now)
                 .all(|((_, s), n)| n.as_ref() == Some(s));
+        // Whether the answers depend on nothing the key does not watch (a
+        // lookup that finds the same may depend on more than when S₀ was
+        // taken, #1562): if they do, the signatures stay as they were, and
+        // every check makes the lookups again.
+        let mut covered = true;
         for (name, fmt, must, found) in self.lookups.iter().filter(|_| !dirs_same) {
             let l = Lookup {
                 name: name.clone(),
@@ -264,11 +269,15 @@ impl Key {
                 must_exist: *must,
                 found: found.clone(),
             };
-            if system::lookup_again(&l) != *found {
+            let (again, deps) = system::lookup_again_deps(&l);
+            if again != *found {
                 return Err(format!("looking up {name} finds another file now"));
             }
+            covered &= deps
+                .iter()
+                .all(|(d, _)| self.dirs.iter().any(|(x, _)| x == d));
         }
-        if !dirs_same && now.iter().all(Option::is_some) {
+        if !dirs_same && covered && now.iter().all(Option::is_some) {
             fresh.dirs = Some(now.into_iter().flatten().collect());
         }
         Ok(fresh)

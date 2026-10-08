@@ -3539,6 +3539,163 @@ fn twin_files_edited_alike_both_shift() {
     }
 }
 
+fn check_against_env(
+    e: &Env,
+    dir: &Path,
+    reference: &Path,
+    report: &str,
+    what: &str,
+    env: &[(&str, &str)],
+) {
+    let mut seen = vec![];
+    for _ in 0..5 {
+        seen.push(dir_state(reference));
+        let mut c = Command::new(e.fmt.join("pdftex"));
+        c.args(ARGS).current_dir(reference);
+        engine_env(&mut c, e);
+        c.envs(env.iter().copied());
+        c.env("FLASHTEX_PREVIEW", "1");
+        c.stdin(Stdio::null()).stdout(Stdio::null());
+        c.status().unwrap();
+        if seen.contains(&dir_state(reference)) {
+            break;
+        }
+    }
+    for ext in ["pdf", "log", "aux"] {
+        // (a run that fails produces no PDF: then neither may have one)
+        let (x, y) = (
+            std::fs::read(dir.join(format!("doc.{ext}"))).ok(),
+            std::fs::read(reference.join(format!("doc.{ext}"))).ok(),
+        );
+        if ext == "log" && x != y {
+            if let (Some(a), Some(b)) = (&x, &y) {
+                if strict_log(a) == strict_log(b) {
+                    // DESIGN.md §1.1 (ruling N2): the end-of-run capacity
+                    // accounting is reported, not compared
+                    eprintln!("{what}: the log differs in its accounting only");
+                    continue;
+                }
+            }
+        }
+        assert!(
+            x == y,
+            "{what}: doc.{ext} differs from a scratch run ({:?} vs {:?} bytes)\n{report}",
+            x.as_ref().map(|v| v.len()),
+            y.as_ref().map(|v| v.len())
+        );
+    }
+}
+
+/// Issue #1562: with the working directory unchanged, a file appearing in a
+/// `TEXMFHOME` subtree, a dangling link's target appearing, and the file
+/// found becoming unreadable all change what a lookup finds; each
+/// compile equals a scratch run.
+#[test]
+fn lookups_follow_the_directories_kpathsea_searched() {
+    let Some(e) = env() else {
+        common::no_texlive();
+        return;
+    };
+    let dir = e.dir.join("lookup-dirs");
+    let home = e.dir.join("lookup-dirs-home");
+    let ext = e.dir.join("lookup-dirs-ext");
+    for d in [&dir, &home, &ext] {
+        let _ = std::fs::remove_dir_all(d);
+    }
+    let sub = home.join("tex/latex/flashprobe");
+    std::fs::create_dir_all(&sub).unwrap();
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::create_dir_all(&ext).unwrap();
+    std::fs::write(sub.join("flashother.sty"), "% other\n").unwrap();
+    let home_s = home.to_string_lossy().into_owned();
+    let env: [(&str, &str); 1] = [("TEXMFHOME", &home_s)];
+    // directory times well in the past, a different one each time
+    let mut tick = 0u64;
+    let mut set_back = |d: &Path| {
+        tick += 1;
+        let t = std::time::SystemTime::now() - std::time::Duration::from_secs(600 - tick);
+        std::fs::File::open(d).unwrap().set_modified(t).unwrap();
+    };
+    set_back(&sub);
+    let body: String = (0..12).map(|i| para(i, "kappa")).collect();
+    let doc = format!(
+        "\\documentclass{{article}}\n\\begin{{document}}\n{body}\
+         \\IfFileExists{{flashprobe.sty}}{{\\typeout{{PROBE yes}}Probe: yes.}}{{\\typeout{{PROBE no}}Probe: no.}}\n\n\
+         \\IfFileExists{{flashlink.sty}}{{\\typeout{{LINK yes}}Link: yes.}}{{\\typeout{{LINK no}}Link: no.}}\n\n\
+         \\IfFileExists{{flashlocked.sty}}{{\\typeout{{LOCKED yes}}Locked: yes.}}{{\\typeout{{LOCKED no}}Locked: no.}}\n\n\
+         \\newpage Closing words.\n\
+         \\end{{document}}\n"
+    );
+    let mut h = Host::start_env(&e, &dir, &env);
+    let check = |h: &mut Host, files: &[(&str, &str)], what: &str| -> String {
+        for (name, text) in files {
+            std::fs::write(dir.join(name), text).unwrap();
+        }
+        let reference = dir.with_extension("ref");
+        let _ = std::fs::remove_dir_all(&reference);
+        copy_dir(&dir, &reference);
+        let report = h.cmd("compile");
+        check_against_env(&e, &dir, &reference, &report, what, &env);
+        report
+    };
+    for _ in 0..3 {
+        check(&mut h, &[("doc.tex", &doc)], "settle");
+    }
+    let says = |line: &str| -> bool {
+        std::fs::read_to_string(dir.join("doc.log"))
+            .unwrap_or_default()
+            .lines()
+            .any(|l| l == line)
+    };
+    assert!(says("PROBE no") && says("LINK no") && says("LOCKED no"));
+    // a file appears in the subtree, then goes
+    std::fs::write(sub.join("flashprobe.sty"), "% probe\n").unwrap();
+    set_back(&sub);
+    check(&mut h, &[], "the file appeared");
+    check(&mut h, &[], "again");
+    assert!(says("PROBE yes"));
+    std::fs::remove_file(sub.join("flashprobe.sty")).unwrap();
+    set_back(&sub);
+    check(&mut h, &[], "the file went");
+    assert!(says("PROBE no"));
+    // a dangling link, whose target appears outside the subtree
+    let target = ext.join("flashlink.sty");
+    #[cfg(unix)]
+    std::os::unix::fs::symlink(&target, sub.join("flashlink.sty")).unwrap();
+    set_back(&sub);
+    // (an edit after the lookups: the run restarts after them, keeping
+    // their answers, made again; what they depend on now includes the link)
+    let closing = doc.replace("Closing words.", "Closing words, edited.");
+    check(
+        &mut h,
+        &[("doc.tex", &closing)],
+        "a dangling link, an edit after it",
+    );
+    check(&mut h, &[], "again");
+    check(&mut h, &[], "again");
+    assert!(says("LINK no"));
+    std::fs::write(&target, "% target\n").unwrap();
+    check(&mut h, &[], "the link's target appeared");
+    assert!(says("LINK yes"));
+    // the file found becomes unreadable
+    std::fs::write(sub.join("flashlocked.sty"), "% locked\n").unwrap();
+    set_back(&sub);
+    check(&mut h, &[], "a readable file");
+    check(&mut h, &[], "again");
+    assert!(says("LOCKED yes"));
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let f = sub.join("flashlocked.sty");
+        std::fs::set_permissions(&f, std::fs::Permissions::from_mode(0o000)).unwrap();
+        check(&mut h, &[], "the file became unreadable");
+        assert!(says("LOCKED no"));
+        std::fs::set_permissions(&f, std::fs::Permissions::from_mode(0o644)).unwrap();
+        check(&mut h, &[], "readable again");
+        assert!(says("LOCKED yes"));
+    }
+}
+
 /// Performance modes (lane PERF-MODES, `crate::profile`): switching the mode
 /// between compiles, live, changes only which checkpoints are kept (the
 /// budget, the dense window), never the output. A tiny pinned budget keeps

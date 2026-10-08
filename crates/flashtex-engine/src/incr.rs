@@ -3906,16 +3906,18 @@ impl Session {
         let seen: Vec<(String, StatSig)> = j
             .dirs
             .iter()
-            .map(|(d, _)| (d.clone(), StatSig::of(d).unwrap_or_default()))
+            .map(|(d, _)| (d.clone(), system::dep_sig(d).unwrap_or_default()))
             .collect();
         let dirs_same = !self.lookup_dirs.is_empty()
             && self
                 .lookup_dirs
                 .iter()
-                .all(|(d, s)| StatSig::of(d).as_ref() == Some(s));
+                .all(|(d, s)| system::dep_sig(d).as_ref() == Some(s));
         // (a lookup the journal lists more than once is made again once)
         let mut again: HashMap<(&str, crate::resolver::Format, Option<bool>), Option<String>> =
             HashMap::new();
+        // what the answers made again depend on now (#1562)
+        let mut deps: Vec<(String, StatSig)> = vec![];
         self.aux_appeared = false;
         for (i, l) in j
             .lookups
@@ -3926,7 +3928,11 @@ impl Session {
         {
             let now = again
                 .entry((l.name.as_str(), l.format, l.must_exist))
-                .or_insert_with(|| system::lookup_again(l));
+                .or_insert_with(|| {
+                    let (now, d) = system::lookup_again_deps(l);
+                    deps.extend(d);
+                    now
+                });
             if *now != l.found {
                 // (a file the run this pass stands for wrote, which it
                 // looked for before and did not find: `fixed_created`)
@@ -3944,6 +3950,20 @@ impl Session {
                 // convergence (`Obs::test`)
                 bad.get_or_insert(i);
                 bad_last = Some(i);
+            }
+        }
+        drop(again);
+        // A lookup kept with the same answer may depend on more than when
+        // the run made it (a directory searched that appeared, an entry
+        // kpathsea passes over put beside its answer): the journal, and the
+        // signatures the run started now takes over, watch that too.
+        let mut seen = seen;
+        for (d, s) in deps {
+            if !j.dirs.iter().any(|(x, _)| *x == d) {
+                j.dirs.push((d.clone(), s));
+            }
+            if !seen.iter().any(|(x, _)| *x == d) {
+                seen.push((d, s));
             }
         }
         self.changed_lookup_last = bad_last;

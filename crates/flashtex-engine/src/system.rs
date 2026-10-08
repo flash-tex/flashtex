@@ -1882,7 +1882,13 @@ fn resolve_ex(name: &str, format: Format, must_exist: bool) -> Option<String> {
     if reads_confined() && format != Format::Fmt && !confined_name_ok(name) {
         return None;
     }
-    let (found, made) = with_resolver(|r| r.find_ex(name, format, must_exist));
+    let (found, made, deps) = with_resolver(|r| {
+        let (found, made) = r.find_ex(name, format, must_exist);
+        // (a file an mktex script made is a barrier: nothing to depend on)
+        let deps = (recording_reads() && !made)
+            .then(|| r.lookup_dirs(name, format, Some(must_exist), found.as_deref()));
+        (found, made, deps)
+    });
     let found = found
         .map(|p| p.to_string_lossy().into_owned())
         .filter(|p| confined_found_ok(name, p, format, true));
@@ -1890,7 +1896,7 @@ fn resolve_ex(name: &str, format: Format, must_exist: bool) -> Option<String> {
     if made {
         record_effect("mktex", name.as_bytes());
     }
-    note_lookup(name, format, Some(must_exist), found.as_deref());
+    note_lookup(name, format, Some(must_exist), found.as_deref(), deps);
     found
 }
 
@@ -1961,10 +1967,13 @@ fn resolve(name: &str, format: Format) -> Option<String> {
             );
         }
         read_set_lookup(name, format, false, found.as_deref());
-        found
+        let deps = recording_reads()
+            .then(|| r.lookup_dirs(name, format, None, found.as_deref().map(Path::new)));
+        (found, deps)
     });
+    let (found, deps) = found;
     let found = found.filter(|p| confined_found_ok(name, p, format, true));
-    note_lookup(name, format, None, found.as_deref());
+    note_lookup(name, format, None, found.as_deref(), deps);
     found
 }
 
@@ -4190,11 +4199,31 @@ pub struct ReadLog {
     /// Keep the content of the user's files read (`FileRead::content`).
     pub keep_content: bool,
     /// The directories lookups depended on, each with its stat signature
-    /// the first time (`host::Key::dirs`).
+    /// the first time (`host::Key::dirs`), and what else they depended on
+    /// ([`dep_sig`]: [`DEP_UNKNOWN`], [`DEP_READABLE`]).
     pub dirs: Vec<(String, StatSig)>,
+    /// The directories `note_lookup_dirs` listed, each once a run: their
+    /// entries' names, lower-cased and sorted (`None`: not listable).
+    listings: std::collections::HashMap<String, Option<Vec<String>>>,
 }
 
 impl ReadLog {
+    /// `dir`'s entries, lower-cased and sorted, listed once.
+    fn listing(&mut self, dir: &str) -> Option<&Vec<String>> {
+        self.listings
+            .entry(dir.to_string())
+            .or_insert_with(|| {
+                let mut v: Vec<String> = std::fs::read_dir(dir)
+                    .ok()?
+                    .map(|e| e.map(|e| e.file_name().to_string_lossy().to_ascii_lowercase()))
+                    .collect::<Result<_, _>>()
+                    .ok()?;
+                v.sort();
+                Some(v)
+            })
+            .as_ref()
+    }
+
     /// A log that keeps the content of the user's files it notes.
     pub fn keeping_content() -> ReadLog {
         let mut l = ReadLog {
@@ -4271,9 +4300,125 @@ pub fn reads_so_far() -> Option<ReadLog> {
     READS.with(|r| r.borrow().clone())
 }
 
-fn note_lookup(name: &str, format: Format, must_exist: Option<bool>, found: Option<&str>) {
+/// Whether a read-set is being recorded (`record_reads`).
+fn recording_reads() -> bool {
+    READS.with(|r| r.borrow().is_some())
+}
+
+/// An entry of [`ReadLog::dirs`] (`host::Key::dirs`) for a lookup whose
+/// dependencies are not known (`FileResolver::lookup_dirs`, #1562): it has
+/// no signature, so it never equals the one recorded, and the lookups are
+/// made again at every check.
+pub const DEP_UNKNOWN: &str = "\0lookup dependencies not known";
+
+/// The prefix of an entry of [`ReadLog::dirs`] for a lookup's answer found
+/// on disk, which must stay a readable file (kpathsea's
+/// `kpathsea_readable_file`): a file made unreadable keeps its directory's
+/// listing (#1562). Its "signature" says whether it is readable.
+const DEP_READABLE: &str = "\0readable\0";
+
+/// The signature of an entry of [`ReadLog::dirs`]: a directory's
+/// `StatSig`; for [`DEP_READABLE`], whether the file is readable; for
+/// [`DEP_UNKNOWN`], none.
+pub fn dep_sig(entry: &str) -> Option<StatSig> {
+    if let Some(p) = entry.strip_prefix(DEP_READABLE) {
+        // (kpathsea's READABLE: `access(R_OK)`, and not a directory)
+        let ok = std::fs::metadata(p).is_ok_and(|m| !m.is_dir()) && File::open(p).is_ok();
+        return Some(StatSig {
+            len: ok as u64,
+            ..StatSig::default()
+        });
+    }
+    if entry.starts_with('\0') {
+        return None;
+    }
+    StatSig::of(entry)
+}
+
+/// `entry` among `log.dirs`, signed now if it is new.
+fn note_dep(log: &mut ReadLog, entry: &str) {
+    if !log.dirs.iter().any(|(x, _)| x == entry) {
+        let sig = dep_sig(entry).unwrap_or_default();
+        log.dirs.push((entry.to_string(), sig));
+    }
+}
+
+/// What a lookup's answer depends on (`FileResolver::lookup_dirs`), in
+/// `log.dirs` (#1562): every directory it searched on disk, signed; the
+/// answer, if found in one of them, which must stay readable; and
+/// [`DEP_UNKNOWN`] where the dependencies are not known, or an entry
+/// kpathsea tries in one of those directories is not the answer (a
+/// dangling link or an unreadable file it passed over, which can become
+/// readable with the listing unchanged).
+fn note_lookup_dirs(
+    log: &mut ReadLog,
+    name: &str,
+    deps: Result<crate::resolver::LookupDirs, &'static str>,
+    found: Option<&str>,
+) {
+    let d = match deps {
+        Ok(d) => d,
+        Err(why) => {
+            file_trace(|| format!("lookup {name}: dependencies not known ({why})"));
+            note_dep(log, DEP_UNKNOWN);
+            return;
+        }
+    };
+    for a in &d.above {
+        note_dep(log, a);
+    }
+    let found = found.map(Path::new);
+    let found_dir = found.and_then(Path::parent);
+    let found_base = found
+        .and_then(Path::file_name)
+        .map(|b| b.to_string_lossy().to_ascii_lowercase());
+    let tries: Vec<String> = d.tries.iter().map(|t| t.to_ascii_lowercase()).collect();
+    let mut passed_over = false;
+    let mut in_listed = false;
+    for dir in &d.listed {
+        // (signed before it is listed: a change after that is a change)
+        note_dep(log, dir);
+        let here = found_dir.is_some_and(|f| Path::new(dir).components().eq(f.components()));
+        in_listed |= here;
+        if passed_over {
+            continue;
+        }
+        let Some(entries) = log.listing(dir) else {
+            passed_over = true;
+            continue;
+        };
+        for t in &tries {
+            // (kpathsea also matches case-insensitively: the entries are
+            // kept lower-cased; the answer is one of them, once)
+            let n = entries.partition_point(|e| e < t);
+            let m = entries[n..].iter().take_while(|e| *e == t).count();
+            let mine = (here && found_base.as_deref() == Some(t.as_str())) as usize;
+            if m > mine {
+                passed_over = true;
+            }
+        }
+    }
+    if passed_over {
+        file_trace(|| format!("lookup {name}: an entry kpathsea tries is not the answer"));
+        note_dep(log, DEP_UNKNOWN);
+    }
+    if let (Some(f), true) = (found, in_listed) {
+        note_dep(log, &format!("{DEP_READABLE}{}", f.to_string_lossy()));
+    }
+}
+
+fn note_lookup(
+    name: &str,
+    format: Format,
+    must_exist: Option<bool>,
+    found: Option<&str>,
+    deps: Option<Result<crate::resolver::LookupDirs, &'static str>>,
+) {
     READS.with(|r| {
         if let Some(log) = r.borrow_mut().as_mut() {
+            if let Some(deps) = deps {
+                note_lookup_dirs(log, name, deps, found);
+            }
             let l = Lookup {
                 name: name.to_string(),
                 format,
@@ -4443,6 +4588,26 @@ fn note_barrier(kind: &str) {
             log.barriers.push(kind.to_string());
         }
     })
+}
+
+/// `lookup_again`, and what its answer depends on now, as `note_lookup`
+/// records it (#1562). A lookup made again that finds the same may now
+/// depend on more than when the run made it: a directory searched that
+/// has appeared, an entry kpathsea now passes over (a dangling link put
+/// next to where it looked). Its dependencies are watched from then on.
+pub fn lookup_again_deps(l: &Lookup) -> (Option<String>, Vec<(String, StatSig)>) {
+    let found = lookup_again(l);
+    let deps = with_resolver(|r| {
+        r.lookup_dirs(
+            &l.name,
+            l.format,
+            l.must_exist,
+            found.as_deref().map(Path::new),
+        )
+    });
+    let mut log = ReadLog::default();
+    note_lookup_dirs(&mut log, &l.name, deps, found.as_deref());
+    (found, log.dirs)
 }
 
 /// Look `name` up again, exactly as the run did: `open_input` tries a
