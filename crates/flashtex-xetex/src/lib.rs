@@ -22,7 +22,10 @@
 //!   state in phase S3 (docs/design/xetex/PLAN.md §3.3).
 //! * `fontmgr/` is XeTeX's font lookup (`XeTeXFontMgr`, `splitFontName`,
 //!   `findnativefont` up to loading), platform-free over
-//!   `crates/font-discovery`'s index. Not yet called by `xetex_ext.rs`.
+//!   `crates/font-discovery`'s index; `native/` loads what it finds.
+//! * `native/` holds native fonts: XeTeX's font loading, shaping and
+//!   metrics over TeX Live's HarfBuzz and FreeType (`fontlibs`), native
+//!   word nodes and their XDV records.
 //! * The word space (`arena`), the checked array index (`ix`), the command
 //!   line, the run's configuration and the file resolver (kpathsea) are the
 //!   pdfTeX engine's (`crates/flashtex-engine`), used through its public
@@ -36,6 +39,7 @@ pub use flashtex_xetex_fontlibs as fontlibs;
 
 pub mod fontmgr;
 pub mod generated;
+pub mod native;
 pub mod state;
 pub mod system;
 pub mod xetex_ext;

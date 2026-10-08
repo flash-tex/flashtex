@@ -132,11 +132,23 @@ pub struct Host {
     pub protrusion: Protrusion,
     /// The objects of `changes/ext.ch`'s handles.
     pub handles: Handles,
+    /// XeTeX's font manager (`XeTeXFontMgr::GetFontManager`), made on the
+    /// first lookup by name. What it has cached changes later answers, so
+    /// a checkpoint keeps it (copied on write).
+    pub font_mgr: Option<std::sync::Arc<crate::fontmgr::FontMgr>>,
+    /// XeTeXFontMgr's `sReqEngine`: the renderer the last font name asked
+    /// for (`/AAT`, `/OT` or `/ICU`, `/GR`), or 0.
+    pub req_engine: u8,
+    /// Whether text needing ICU's bidi analysis was reported (once).
+    pub bidi_warned: bool,
     /// The host state at each retained checkpoint of the word space. Each
     /// copies the handle table and the protrusion codes (the objects
     /// themselves are shared): O(live handles) per checkpoint, to be made
     /// persistent when S3 brings checkpoints into the Unicode host.
     checkpoints: HashMap<flashtex_engine::arena::CheckpointId, Saved>,
+    /// FreeType (XeTeXFontInst.cpp's `gFreeTypeLibrary`), made on first
+    /// use; each font keeps it alive.
+    pub ft_library: Option<std::sync::Arc<crate::native::font_inst::FtLibrary>>,
 }
 
 /// `-no-pdf`, true unless set otherwise.
@@ -159,6 +171,7 @@ pub type Protrusion = HashMap<(i32, u32, i32), i32>;
 /// is the run's: none of them changes between checkpoints.
 #[derive(Clone)]
 struct Saved {
+    font_mgr: Option<std::sync::Arc<crate::fontmgr::FontMgr>>,
     full_name_of_file: Option<String>,
     protrusion: Protrusion,
     handles: Handles,
@@ -173,6 +186,7 @@ impl Globals {
         self.spill_scalars();
         let id = self.arena.checkpoint();
         let saved = Saved {
+            font_mgr: self.host.font_mgr.clone(),
             full_name_of_file: self.host.full_name_of_file.clone(),
             protrusion: self.host.protrusion.clone(),
             handles: self.host.handles.clone(),
@@ -194,6 +208,7 @@ impl Globals {
         self.fill_scalars();
         let kept: Vec<_> = self.arena.checkpoint_ids().to_vec();
         self.host.checkpoints.retain(|k, _| kept.contains(k));
+        self.host.font_mgr = saved.font_mgr;
         self.host.full_name_of_file = saved.full_name_of_file;
         self.host.protrusion = saved.protrusion;
         self.host.handles = saved.handles;

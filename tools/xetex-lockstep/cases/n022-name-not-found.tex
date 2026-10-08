@@ -1,0 +1,9 @@
+% n022-name-not-found: a font name that the index does not have
+% XeTeX-specific (docs/design/xetex/PLAN.md, phase S1: native fonts)
+% lockstep: no-halt
+\input prelude
+\def\space{ }
+\font\a="No Such Font Family Anywhere"
+\setbox0=\hbox{x}
+\lsshipbox0
+\end

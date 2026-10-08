@@ -69,6 +69,7 @@ pub struct Found {
 }
 
 /// XeTeX's font manager over a catalog.
+#[derive(Clone)]
 pub struct FontMgr {
     catalog: Arc<FontCatalog>,
     fonts: Vec<Font>,
