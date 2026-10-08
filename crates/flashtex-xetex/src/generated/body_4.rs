@@ -2515,7 +2515,11 @@ impl Globals {
         self.print_scaled(self.mem[crate::ix::U(((p).wrapping_add(7i32)) as usize)].hh().rh());
         self.print(32i32);
         self.print(66772i32);
-        self.print_int(self.mem[crate::ix::U(((p).wrapping_add(4i32)) as usize)].hh().b1());
+        if (self.mem[crate::ix::U(((p).wrapping_add(4i32)) as usize)].hh().b1() > 32767i32) {
+            self.print_int((self.mem[crate::ix::U(((p).wrapping_add(4i32)) as usize)].hh().b1()).wrapping_sub(65536i32));
+        } else {
+            self.print_int(self.mem[crate::ix::U(((p).wrapping_add(4i32)) as usize)].hh().b1());
+        }
         self.print(32i32);
         match self.mem[crate::ix::U(((p).wrapping_add(8i32)) as usize)].hh().b0() {
             pdfbox_crop => {

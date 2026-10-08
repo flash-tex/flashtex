@@ -51,6 +51,7 @@ ROOT = os.path.dirname(os.path.dirname(HERE))
 LOCKSTEP = os.path.join(ROOT, "tools", "lockstep")
 LOCKSTEP_CASES = os.path.join(LOCKSTEP, "cases")
 OWN_CASES = os.path.join(HERE, "cases")
+PICTURES = os.path.join(HERE, "pictures")
 PRELUDE = os.path.join(HERE, "prelude.tex")
 SUITE = os.path.join(HERE, "suite.txt")
 XETEX_TESTS = os.path.join(ROOT, "third_party", "xetex", "tests")
@@ -258,6 +259,10 @@ def run_one(binary, workdir, args, job, timeout):
 def stage_case(src, name, tmp):
     shutil.copy(PRELUDE, os.path.join(tmp, "prelude.tex"))
     shutil.copy(src, os.path.join(tmp, name + ".tex"))
+    # The picture files of the p-cases (make_cases.py writes them).
+    if os.path.basename(name).startswith("p") and os.path.isdir(PICTURES):
+        for f in sorted(os.listdir(PICTURES)):
+            shutil.copy(os.path.join(PICTURES, f), os.path.join(tmp, f))
 
 
 def case_source(name):

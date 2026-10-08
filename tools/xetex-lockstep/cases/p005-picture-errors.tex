@@ -1,0 +1,15 @@
+% p005-picture-errors: a missing picture, a file that is no picture, a late pHYs, and bad sizes
+% XeTeX-specific (docs/design/xetex/PLAN.md, phase S2: pictures)
+% lockstep: no-halt
+\input prelude
+\def\space{ }
+\setbox0=\vbox{
+\hbox{\XeTeXpicfile nosuchpicture.png }
+\hbox{\XeTeXpicfile p-notimage.png }
+\hbox{\XeTeXpdffile p-plain.png }
+\hbox{\XeTeXpicfile p-late-phys.png }
+\hbox{\XeTeXpicfile p-plain.png width -1pt }
+\hbox{\XeTeXpicfile p-plain.png height 0pt }
+}
+\lsshipbox0
+\end

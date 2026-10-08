@@ -4,14 +4,12 @@
 //! own code is MIT-licensed (third_party/xetex/COPYING); the ports here keep
 //! its behaviour, and its notices are in `LICENSE` of this crate.
 //!
-//! Native fonts (phase S1) and OpenType math (S2) are in `crate::native`.
-//! What serves graphics, Graphite and AAT is still a stub that answers as
-//! TeX Live's XeTeX does when nothing is found: `find_pic_file` finds no
-//! picture, and the AAT and Graphite routines are never reached because no
-//! AAT or Graphite engine is made (docs/design/xetex/PLAN.md §3.1). Phase
-//! S2 replaces the picture stubs.
+//! Native fonts (phase S1) and OpenType math (S2) are in `crate::native`,
+//! pictures (S2) in `crate::pic`. The AAT and Graphite routines are never
+//! reached because no AAT or Graphite engine is made
+//! (docs/design/xetex/PLAN.md §3.1).
 
-use crate::generated::types::{real_point, real_rect, transform};
+use crate::generated::types::{real_point, transform};
 use crate::generated::Globals;
 use crate::state::Object;
 use crate::teckit;
@@ -437,32 +435,11 @@ impl Globals {
 
     // ---- XeTeX_pic.c and trans.c ------------------------------------------
 
-    /// `find_pic_file`: no picture is read in phase S0; the answer is
-    /// XeTeX_pic.c's for a file kpathsea does not find (-1, which xetex.web
-    /// reports as "not a recognized image format").
-    pub fn find_pic_file(
-        &mut self,
-        path: &mut i32,
-        bounds: &mut real_rect,
-        _pdf_box_type: i32,
-        _page: i32,
-    ) -> i32 {
-        *path = 0;
-        *bounds = real_rect::default();
-        -1
-    }
-    pub fn pic_path_len(&mut self, _path: i32) -> i32 {
-        0
-    }
-    pub fn pic_path_to_mem(&mut self, _path: i32, _p: i32) {}
     /// `pic_path_byte(p, i)`: byte `i` of the path stored after a picture
     /// node's `pic_node_size` words, eight to a word.
     pub fn pic_path_byte(&mut self, p: i32, i: i32) -> i32 {
         let w = self.mem[(p + crate::generated::consts::pic_node_size + i / 8) as usize];
         ((w.to_bits() >> (8 * (i % 8))) & 0xFF) as i32
-    }
-    pub fn count_pdf_file_pages(&mut self) -> i32 {
-        0
     }
     #[allow(non_snake_case)]
     pub fn D2Fix(&mut self, d: f64) -> i32 {
@@ -471,11 +448,6 @@ impl Globals {
     #[allow(non_snake_case)]
     pub fn Fix2D(&mut self, f: i32) -> f64 {
         f as f64 / 65536.0
-    }
-    #[allow(non_snake_case)]
-    pub fn setPoint(&mut self, p: &mut real_point, x: f64, y: f64) {
-        p.x = x;
-        p.y = y;
     }
     pub fn make_identity(&mut self, t: &mut transform) {
         *t = transform {
@@ -518,9 +490,10 @@ impl Globals {
         };
     }
     pub fn transform_point(&mut self, p: &mut real_point, t: &mut transform) {
+        // Computed in double, stored into C's `float` point.
         let r = real_point {
-            x: t.a * p.x + t.c * p.y + t.x,
-            y: t.b * p.x + t.d * p.y + t.y,
+            x: crate::pic::round_f32(t.a * p.x + t.c * p.y + t.x),
+            y: crate::pic::round_f32(t.b * p.x + t.d * p.y + t.y),
         };
         *p = r;
     }

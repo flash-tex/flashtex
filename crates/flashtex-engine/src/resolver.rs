@@ -47,6 +47,9 @@ pub enum Format {
     OpenType,
     /// `subfont definition files` (`.sfd`).
     Sfd,
+    /// `graphic/figure` (`kpse_pict_format`): the XeTeX-derived engine's
+    /// `\\XeTeXpicfile` and `\\XeTeXpdffile` (crates/flashtex-xetex).
+    Pict,
 }
 
 impl Format {
@@ -68,6 +71,7 @@ impl Format {
             Format::TrueType => "truetype fonts",
             Format::OpenType => "opentype fonts",
             Format::Sfd => "subfont definition files",
+            Format::Pict => "graphic/figure",
         }
     }
 
@@ -89,6 +93,7 @@ impl Format {
             Format::TrueType,
             Format::OpenType,
             Format::Sfd,
+            Format::Pict,
         ]
     }
 
