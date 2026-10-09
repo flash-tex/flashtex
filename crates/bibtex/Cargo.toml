@@ -1,0 +1,15 @@
+[package]
+name = "flashtex-bibtex"
+version = "0.1.0"
+edition = "2021"
+# BibTeX 0.99e (TeX Live 2026's bibtex.web and bibtex.ch) translated to Rust by
+# tools/web2rust: src/generated/ is under BibTeX's own terms (those of Knuth's
+# TeX), FlashTeX's code under MIT; see LICENSE in this directory. The engine
+# (crates/flashtex-engine) runs it in-process (src/bibtex.rs there).
+license-file = "LICENSE"
+description = "BibTeX 0.99e (TeX Live 2026), translated to Rust to run in-process."
+publish = false
+
+[lib]
+name = "flashtex_bibtex"
+path = "src/lib.rs"
