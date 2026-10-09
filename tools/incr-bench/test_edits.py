@@ -283,5 +283,23 @@ class CommandLineTests(unittest.TestCase):
         self.assertIn("unknown or empty edit kind", r.stderr)
 
 
+class AfterPackageTests(unittest.TestCase):
+    SRC = (b"\\documentclass{article}\n\\usepackage{amsmath}\n\\usepackage{hyperref}\n"
+           b"\\title{A title}\n\\author{Jo}\n\\begin{document}\nText.\n\\end{document}\n")
+
+    def test_a_letter_in_the_line_after_the_last_usepackage(self):
+        for p in range(6):
+            out = edits.pre_after_package(self.SRC, p)
+            self.assertEqual(out.replace(b"x", b"", 1), self.SRC)
+            line = out.split(b"\n")[3]
+            self.assertTrue(line.startswith(b"\\title{"), line)
+            self.assertEqual(line.count(b"x"), 1)
+
+    def test_none_without_a_line_after_a_package(self):
+        src = b"\\documentclass{article}\n\\usepackage{amsmath}\n\\begin{document}\nText.\n\\end{document}\n"
+        self.assertIsNone(edits.pre_after_package(src, 0))
+        self.assertIn("pre_after_package", edits.PREAMBLE_KINDS)
+
+
 if __name__ == "__main__":
     unittest.main()
