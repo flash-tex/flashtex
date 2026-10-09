@@ -1,0 +1,10 @@
+This is makeindex, version 2.18 [TeX Live 2026] (kpathsea + Thai support).
+Scanning input file doc.idx...
+!! Input index error (file = doc.idx, line = 1):
+   -- Page number 1 has too many fields (max. 10).!! Input index error (file = doc.idx, line = 2):
+   -- Unknown index keyword \indexentry.
+.done (1 entries accepted, 2 rejected).
+Sorting entries...done (0 comparisons).
+Generating output file doc.ind....done (5 lines written, 0 warnings).
+Output written in doc.ind.
+Transcript written in doc.ilg.

@@ -1,0 +1,16 @@
+idx                      tool               instr (med)   cycles (med)     wall s
+infdesc-infdesc.idx      port                 533886911      354912831      0.578
+infdesc-infdesc.idx      texlive              524960025      355000769      0.515
+infdesc-infdesc.idx      texlive-via-sh       545268794      363282408      0.503
+infdesc-latex.idx        port                 528556441      358870898      0.530
+infdesc-latex.idx        texlive              518298317      355857734      0.552
+infdesc-latex.idx        texlive-via-sh       539009791      359951591      0.559
+infdesc-notation.idx     port                 526982833      347606866      0.471
+infdesc-notation.idx     texlive              514500571      350838603      0.507
+infdesc-notation.idx     texlive-via-sh       534024481      353003546      0.466
+infdesc-vocabulary.idx   port                 524187518      360447314      0.496
+infdesc-vocabulary.idx   texlive              509935142      348653263      0.461
+infdesc-vocabulary.idx   texlive-via-sh       531446523      360590579      0.498
+tiny.idx                 port                 523557038      363588852      0.645
+tiny.idx                 texlive              509949797      358906967      0.559
+tiny.idx                 texlive-via-sh       530159833      378761440      0.702

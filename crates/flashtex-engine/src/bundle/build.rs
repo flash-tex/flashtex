@@ -67,6 +67,7 @@ pub fn format_for(name: &str) -> Format {
         "ttf" | "ttc" => Format::TrueType,
         "otf" => Format::OpenType,
         "sfd" => Format::Sfd,
+        "ist" => Format::Ist,
         "pgc" => Format::MiscFonts,
         "cnf" if name == "fmtutil.cnf" || name == "texmf.cnf" => Format::Cnf,
         _ => Format::Tex,

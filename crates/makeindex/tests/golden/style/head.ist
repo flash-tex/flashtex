@@ -1,0 +1,10 @@
+headings_flag 1
+heading_prefix "{\\bfseries "
+heading_suffix "}\\hfil\\nopagebreak\n"
+delim_0 "\\dotfill "
+line_max 30
+indent_space "    "
+indent_length 4
+page_precedence "nrA"
+unknown_thing "x"
+quote 'ab'

@@ -192,6 +192,8 @@ struct FlashTeXMacApp: App {
                 // The engine for the open document (EngineChoice.swift): saved per
                 // document; Settings > Compile for the others; FLASHTEX_ENGINE_V3 forces.
                 Menu("Engine for This Document") { EngineChoiceMenuItems(model: model) }
+                // Classic or Unicode, kept in flashtex.toml (ProjectMode.swift).
+                Menu("Mode for This Document") { ModeMenuItems(model: model) }
                 // Helper display-candidate route (ShellModel+DisplayCandidates.swift): default OFF; untrusted v2 siblings painted in the v2 pane.
                 Toggle("Helper Display Candidates", isOn: Binding(get: { model.displayCandidates.requested }, set: { model.setDisplayCandidates($0) }))
                     .disabled(!model.controllerAttached)

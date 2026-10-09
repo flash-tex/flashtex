@@ -15,7 +15,10 @@
 # It asserts the host's HELLO says no TeX Live, a bundle resolver and a ready
 # pdflatex format, and that each document compiles (status ok, pages > 0),
 # cold and then warm. It checks that the path works, not byte identity: the
-# gate compares PDFs with pdflatex's.
+# gate compares PDFs with pdflatex's. A fourth document (fixtures/notex-tools)
+# has a bibliography and an index: with external tools allowed, the host's
+# own bibtex and makeindex must make TeX Live's .bbl, .blg, .ind and .ilg
+# byte for byte, from the bundle alone.
 #
 #   scripts/notex-host-check.sh --host target/release/flashtex-host \
 #       --client target/release/dl3-client --out DIR \
@@ -167,6 +170,54 @@ PY
   echo "| $d | $ok |" >> "$report"
   [[ "$ok" == *"| ok" ]] || { failed=1; echo "notex-host-check: $d failed:"; cat "$out/$d.jsonl" "$out/$d.err"; }
 done
+
+# Bibliography and index with no TeX Live (lane RUST-TOOLS): with external
+# tools allowed, as the app allows them for a trusted project, the host runs
+# its own bibtex and makeindex (src/bibtex.rs, src/makeindex.rs) with .bst and
+# .ist files from the bundle, then compiles again. Their outputs must be
+# byte-identical to TeX Live 2026's bibtex and makeindex on the same document
+# (fixtures/notex-tools/expected, made by TeX Live's programs as latexmk runs
+# them: `bibtex main`, `makeindex -o main.ind main.idx`). The project carries
+# TeX Live's plain.bst (unmodified): the published bundle packs the packages
+# compiled documents read, and TeX Live's `bibtex` package, which holds the
+# standard styles, is not one of them yet (fixtures/notex-tools/README).
+tools_doc="$work/docs/tools"
+mkdir -p "$tools_doc"
+cp "$here/fixtures/notex-tools/main.tex" "$here/fixtures/notex-tools/refs.bib" \
+   "$here/fixtures/notex-tools/plain.bst" "$tools_doc/"
+set +e
+"$client" --socket "$sock" --root "$tools_doc" --main main.tex --output-dir "$tools_doc/out" \
+  --external-tools auto > "$out/tools.jsonl" 2> "$out/tools.err"
+code=$?
+set -e
+tools_ok="$(python3 - "$out/tools.jsonl" "$code" "$tools_doc/out" "$here/fixtures/notex-tools/expected" <<'PY'
+import json, os, sys
+rows = [json.loads(l) for l in open(sys.argv[1]) if l.startswith("{")]
+bad = []
+if sys.argv[2] != "0" or len(rows) != 1 or rows[0].get("status") != "ok":
+    bad.append("the compile failed")
+r = rows[0] if rows else {}
+done = {t.get("tool"): t for t in r.get("tools", []) if t.get("event") == "done"}
+skips = [t for t in r.get("tools", []) if t.get("event") == "skip"]
+for tool in ("bibtex", "makeindex"):
+    t = done.get(tool)
+    if t is None:
+        bad.append(f"{tool} did not run (skips: {skips})")
+    elif t.get("status") not in ("ok", "warnings") or not t.get("changed"):
+        bad.append(f"{tool}: {t}")
+if not r.get("followups"):
+    bad.append("no follow-up compile")
+for name in sorted(os.listdir(sys.argv[4])):
+    got = os.path.join(sys.argv[3], name)
+    want = open(os.path.join(sys.argv[4], name), "rb").read()
+    if not os.path.isfile(got) or open(got, "rb").read() != want:
+        bad.append(f"{name} differs from TeX Live's")
+print("ok" if not bad else "FAILED: " + "; ".join(bad))
+PY
+)"
+echo >> "$report"
+echo "Bibliography and index (bibtex and makeindex in the host, no TeX Live): $tools_ok" >> "$report"
+[[ "$tools_ok" == ok ]] || { failed=1; echo "notex-host-check: tools: $tools_ok"; cat "$out/tools.jsonl" "$out/tools.err"; }
 cleanup
 trap - EXIT
 
