@@ -20,6 +20,12 @@ path = "src/lib.rs"
 name = "flashtex-xetex"
 path = "src/main.rs"
 
+# Unicode mode's engine host (src/host, PLAN.md §3.3): display-list-v3 over a
+# Unix socket, the counterpart of the pdfTeX engine's `flashtex-host`.
+[[bin]]
+name = "flashtex-host-unicode"
+path = "src/bin/flashtex-host-unicode.rs"
+
 [dependencies]
 # The pdfTeX engine's runtime: the word space (`arena`), checked indexing
 # (`ix`), the command line (`cli`), the run's configuration and kpathsea

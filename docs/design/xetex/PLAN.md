@@ -484,6 +484,42 @@ whose `OS/2` `fsType` forbids embedding is written without its program, with
 a warning; CID-keyed CFF fonts (CJK) are drawn by CID and embedded whole
 (not subset yet); `/Flags` and `/StemV` come from the face.
 
+## 4C. Phase S3, stage 1 (2026-10-09): `flashtex-host-unicode`, cold
+
+Lane XETEX-S3. **Ordering (lane decision, for review):** §3.3 moves the
+shared runtime out of `crates/flashtex-engine` first. The Commander's
+instruction for this stage is that Classic stays untouched, so stage 1
+builds the Unicode host **beside** Classic's, in this crate, over the
+pdfTeX engine's public interface only (`flashtex-engine` gains nothing,
+changes nothing). The runtime extraction, the engine trait and the
+resident, incremental engine for Unicode (§5 of DESIGN.md) are the next
+stages; they change Classic's code under its gates and need that go-ahead.
+
+- `flashtex-host-unicode --socket PATH` (`src/host`) speaks
+  `display-list-v3` (§6 of the protocol) as `flashtex-host` does: `HELLO`
+  (capabilities `compile`, `cancel`, `diagnostics`, `font-programs`,
+  `font-formats`, `have-fonts`, `export`, `external-tools`,
+  `halt-on-error`, `buffers`, `edits`), `COMPILE` (buffers and edits applied
+  first; a newer one supersedes the running one), `CANCEL`, `BYE`. Each
+  compile runs the engine in full as a child of the host invoked as
+  `xelatex`, its pages streamed through a socket of its own; `.aux`-type
+  changes give further passes (latexmk's rule, up to 5), each pass's
+  pages replacing the previous; bibtex, biber and makeindex then run as
+  latexmk would (`external_tools: auto`), with follow-up compiles; 3.3
+  items a client did not accept are left out and the page flagged
+  INCOMPLETE. `DONE` says `mode: cold`.
+- Formats are FlashTeX's own: `xelatex.fmt` built by the engine as
+  fmtutil does (`-ini -etex xelatex.ini`), cached under the engine build
+  and validated against everything the INITEX run read and looked up.
+- **Verified** (mac-m1max-a, TeX Live 2026): `flashtex-v3 build` with
+  `FLASHTEX_HOST=flashtex-host-unicode` builds all 15 cases of
+  `tools/xetex-pdfparity` (l001–l010, d01–d05) in 1.0–2.3 s each, and the
+  PDFs equal `xelatex`'s structurally as the #1708 gate's baseline does
+  (every glyph matched; the known `ToUnicode` differences). Format cache:
+  12 s to build, 87 ms to validate on a hit. `tests/host.rs` (two passes,
+  OpenType fonts on the wire, an edit and its diagnostic, export, cancel).
+  Release binary 6.3 MB (Classic's `flashtex-host` unchanged, not linked).
+
 ## 5. Risks carried into S1–S3
 
 | risk | mitigation |
