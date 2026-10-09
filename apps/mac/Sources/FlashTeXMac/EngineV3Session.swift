@@ -1053,6 +1053,9 @@ final class EngineV3Session {
     /// compile follows that, `packagesChanged`).
     func manifestChanged(model: ShellModel) {
         guard model.engineV3Enabled, let project, project.source == model.project.projectRoot else { return }
+        // `[project] mode` changed (the mode item, an outside edit): the host
+        // restarts in the mode, and its first compile follows.
+        if relaunchIfModeChanged(model: model) { return }
         if model.projectPackages.prepareForEngineV3() { return }
         let held = heldForManifest
         heldForManifest = false

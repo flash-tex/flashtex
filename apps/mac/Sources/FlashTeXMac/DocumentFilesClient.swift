@@ -217,6 +217,10 @@ enum ProjectFilesV1 {
     struct SetFontsRequest: Encodable {
         var id: String; var operation = "set_fonts"; var entry: String?; var fonts: [String: String]
     }
+    /// `set_mode`: `[project] mode` set; the reply has `SetFonts`'s shape.
+    struct SetModeRequest: Encodable {
+        var id: String; var operation = "set_mode"; var entry: String?; var mode: String
+    }
     struct ReadRequest: Encodable { var id: String; var operation = "read"; var path: String }
     struct StatusRequest: Encodable {
         var id: String; var operation = "status"; var path: String; var expectedSha256: String?
