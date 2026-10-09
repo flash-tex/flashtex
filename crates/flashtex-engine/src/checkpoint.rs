@@ -1854,7 +1854,22 @@ impl Globals {
                     self.ckpt_arm_cs = cs;
                 }
             }
-            REQ_BEGIN_DOCUMENT => self.hook_checkpoint(Point::BeginDocument),
+            REQ_BEGIN_DOCUMENT => {
+                if self.document_begun() {
+                    self.hook_checkpoint(Point::BeginDocument)
+                } else {
+                    // The armed level ended, but `\begin{document}` has not
+                    // run: a package expanded `\document` in the preamble
+                    // and took its body apart (auxhook, which zref, lastpage
+                    // and others load: `\expandafter\x\auxhook@document`,
+                    // where `\x`'s arguments swallow the body). S₀ is not
+                    // here; arm again for the real one.
+                    let name = self.layer().arm_name.clone();
+                    if let Some(cs) = name.and_then(|n| self.find_cs(&n)) {
+                        self.ckpt_arm_cs = cs;
+                    }
+                }
+            }
             REQ_SHIPOUT => self.hook_checkpoint(Point::Shipout),
             REQ_TIMED => self.hook_checkpoint(Point::Timed),
             REQ_AUX => {
@@ -1897,8 +1912,12 @@ impl Globals {
                 // lookup, so that the lookup -- and what a later pass finds
                 // there -- is after the anchor (DESIGN.md §5.5), not in S₀'s
                 // key. With an `.aux` the point is its open (`note_aux_open`).
+                // (inside `\document`'s body: an armed level that a
+                // preamble expansion already ended is not `\begin{document}`)
+                let inside = self.ckpt_arm_level > 0;
                 let l = self.layer();
-                if l.want_aux_point
+                if inside
+                    && l.want_aux_point
                     && l.aux_point.is_none()
                     && l.s0.is_none()
                     && !self.aux_file_found()
@@ -2071,6 +2090,16 @@ impl Globals {
     /// point where `\document`'s body is pushed (`REQ_AUX_ARM`).
     pub fn aux_point_at_arm(&mut self, on: bool) {
         self.ckpt_on_arm = if on { REQ_AUX_ARM } else { 0 };
+    }
+
+    /// Whether `\begin{document}` has run: LaTeX's `\document` ends with
+    /// `\global\let\@nodocument\relax` (latex.ltx), which is an error
+    /// macro until then. A format without `\@nodocument` (not LaTeX): yes.
+    fn document_begun(&self) -> bool {
+        match self.find_cs(b"@nodocument") {
+            Some(p) => self.eqtb[(p - 1) as usize].hh().b0() == crate::generated::consts::relax,
+            None => true,
+        }
     }
 
     /// Whether `\document`'s `\IfFileExists{\jobname.aux}` would find a file

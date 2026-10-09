@@ -1522,6 +1522,49 @@ fn a_first_compiles_later_passes_start_at_the_aux_point() {
     check_against(&e, &dir, &reference, &r, "a first compile");
 }
 
+/// A package that expands `\document` in the preamble and takes its body
+/// apart (auxhook, which zref, lastpage and others load, does
+/// `\expandafter\x\auxhook@document`) does not end the armed level for S₀:
+/// S₀ and the `.aux` point are where `\begin{document}` runs. Before, S₀ was
+/// taken in the preamble, no `.aux` point was taken at all, and an edit that
+/// changes the `.aux` had no L5 ("no .aux point"; *Infinite Descent*, every
+/// compile). The output is a scratch run's.
+#[test]
+fn a_preamble_expansion_of_document_is_not_begin_document() {
+    let Some(e) = env() else {
+        common::no_texlive();
+        return;
+    };
+    // auxhook's move, without the package: `\document` expanded once, its
+    // body swallowed by a delimited argument
+    let grab = "\\documentclass{article}\n\\long\\def\\grabdoc#1\\grabend{}\n\
+                \\expandafter\\grabdoc\\document\\grabend\n";
+    let doc = |extra: &str| refs_doc(extra, 8).replacen("\\documentclass{article}\n", grab, 1);
+    let dir = e.dir.join("preamble-document");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let mut h = Host::start(&e, &dir);
+    for _ in 0..3 {
+        let r = compile_and_check(&e, &mut h, &dir, &[("doc.tex", &doc(""))], "settle");
+        if r.contains("\"mode\":\"unchanged\"") {
+            break;
+        }
+    }
+    // a new section moves every later label: the `.aux` changes
+    let r = compile_and_check(
+        &e,
+        &mut h,
+        &dir,
+        &[("doc.tex", &doc("\\section{Inserted}\\label{sec:new}\n"))],
+        "a section inserted",
+    );
+    let l5 = r.split("\"l5\":").nth(1).unwrap_or("");
+    assert!(
+        !l5.contains("no .aux point"),
+        "S₀ or the .aux point was taken at the preamble's expansion of \\document: {l5}"
+    );
+}
+
 /// P4-COLD-PREEMPT: newer work that arrives before a run from the format
 /// has taken S₀ stops it at its first page or segment checkpoint after S₀,
 /// not before (the preamble has checkpoints: each `\par` of a package runs
