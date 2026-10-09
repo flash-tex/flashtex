@@ -51,6 +51,10 @@ pub fn enabled() -> bool {
 /// run's checkpoint `p1` there; equal, restart at `p2`.
 #[derive(Clone)]
 pub struct Probe {
+    /// The windows left out so far, this one last (journal indices), and
+    /// the first lookup whose answer changed.
+    pub windows: Vec<(usize, usize)>,
+    pub bad_lookup: Option<usize>,
     pub page: usize,
     pub p1: CheckpointId,
     pub p2: CheckpointId,
@@ -64,16 +68,23 @@ pub struct Probe {
     pub now: HashMap<String, Arc<Vec<u8>>>,
 }
 
-/// `j` with the reads `from..to` left out (their paths blanked, so that
-/// the indices of the others hold).
-pub fn window_journal(j: &ReadLog, from: usize, to: usize) -> ReadLog {
+/// `j` with the reads of each window `from..to` left out (their paths
+/// blanked, so that the indices of the others hold).
+pub fn window_journal(j: &ReadLog, windows: &[(usize, usize)]) -> ReadLog {
     let mut w = j.clone();
-    let to = to.min(w.files.len());
-    for f in w.files[from.min(to)..to].iter_mut() {
-        f.path = String::new();
+    for &(from, to) in windows {
+        let to = to.min(w.files.len());
+        for f in w.files[from.min(to)..to].iter_mut() {
+            f.path = String::new();
+        }
     }
     w
 }
+
+/// At most this many windows in a row in one compile: each restart at a
+/// `P2` may meet the next read that holds it back (a focused chapter's
+/// `\includeonly` lookup, then `\include`'s own), and revalidate again.
+pub const MAX_CHAIN: usize = 4;
 
 /// Every stream `rec` has open on a changed file is before its change (has
 /// read nothing from the change on, `incr::read_through`).
@@ -219,9 +230,9 @@ mod tests {
                 stamp: None,
             });
         }
-        let w = window_journal(&j, 1, 3);
+        let w = window_journal(&j, &[(1, 2), (2, 3)]);
         let paths: Vec<&str> = w.files.iter().map(|f| f.path.as_str()).collect();
         assert_eq!(paths, ["a", "", "", "d"]);
-        assert_eq!(window_journal(&j, 3, 9).files.len(), 4);
+        assert_eq!(window_journal(&j, &[(3, 9)]).files.len(), 4);
     }
 }

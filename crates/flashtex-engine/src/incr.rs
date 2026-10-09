@@ -3553,7 +3553,7 @@ impl Session {
         // READ-REVALIDATE: a later restart point, if what holds this one
         // back left nothing behind (`crate::revalidate`)
         let probe = if ordinary == Some(r) && patch.is_none() && !self.no_tests {
-            self.revalidation(r, &edits, &changed, bad_lookup)
+            self.revalidation(r, &edits, &changed, bad_lookup, &[])
         } else {
             None
         };
@@ -4309,8 +4309,12 @@ impl Session {
         edits: &[Edit],
         changed: &[String],
         bad_lookup: Option<usize>,
+        prior: &[(usize, usize)],
     ) -> Option<crate::revalidate::Probe> {
-        if !crate::revalidate::enabled() || edits.is_empty() {
+        if !crate::revalidate::enabled()
+            || edits.is_empty()
+            || prior.len() >= crate::revalidate::MAX_CHAIN
+        {
             return None;
         }
         let debug = self.opts.debug;
@@ -4338,7 +4342,9 @@ impl Session {
         if bad_lookup.is_some_and(|b| b < r1.reads.1) {
             return None;
         }
-        let w = crate::revalidate::window_journal(j, r0.reads.0, r1.reads.0);
+        let mut windows = prior.to_vec();
+        windows.push((r0.reads.0, r1.reads.0));
+        let w = crate::revalidate::window_journal(j, &windows);
         let first_read = first_reads(&w);
         let now: HashMap<String, std::sync::Arc<Vec<u8>>> = edits
             .iter()
@@ -4382,6 +4388,8 @@ impl Session {
             return None;
         }
         Some(crate::revalidate::Probe {
+            windows,
+            bad_lookup,
             page,
             p1,
             p2,
@@ -4583,16 +4591,15 @@ impl Session {
         probe: Option<crate::revalidate::Probe>,
     ) -> Result<Report, String> {
         // (what a restart at the revalidated point needs again)
-        let again = probe
-            .as_ref()
-            .map(|_| {
-                (
-                    edits.clone(),
-                    changed.clone(),
-                    self.line_shifts.clone(),
-                    fixed_writes.clone(),
-                )
-            });
+        let chain = probe.as_ref().map(|p| (p.windows.clone(), p.bad_lookup));
+        let again = probe.as_ref().map(|_| {
+            (
+                edits.clone(),
+                changed.clone(),
+                self.line_shifts.clone(),
+                fixed_writes.clone(),
+            )
+        });
         let base = *self
             .ck_pages
             .get(&r)
@@ -4875,6 +4882,10 @@ impl Session {
                         if self.opts.debug {
                             eprintln!("[incr] revalidated: restart at {p2} instead of {r}");
                         }
+                        // (the next window, from `p2`: `revalidate::MAX_CHAIN`)
+                        let next = chain.and_then(|(windows, bad)| {
+                            self.revalidation(p2, &edits, &changed, bad, &windows)
+                        });
                         let rep = self.incremental(
                             t0,
                             p2,
@@ -4885,7 +4896,7 @@ impl Session {
                             None,
                             fixed_writes,
                             before_s0,
-                            None,
+                            next,
                         );
                         return rep.map(|mut rep| {
                             rep.revalidated = Some(true);
