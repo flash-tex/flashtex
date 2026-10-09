@@ -750,6 +750,11 @@ impl Core {
         unsafe { std::slice::from_raw_parts_mut(self.saved, self.nchunks) }
     }
 
+    fn saved_ref(&self) -> &[u8] {
+        // SAFETY: as `saved`.
+        unsafe { std::slice::from_raw_parts(self.saved, self.nchunks) }
+    }
+
     fn chunk_ptr(&self, c: usize) -> *mut u64 {
         debug_assert!(c < self.nchunks);
         // SAFETY: c < nchunks, so the chunk lies inside the mapping.
@@ -1055,6 +1060,17 @@ impl Core {
         }
     }
 
+    /// Give back a kept `PartPrep`, if any: its copies were made from logs
+    /// that are being replaced. (`take_part`'s check of the checkpoint list
+    /// would not always catch it: a `reattach` of a branch holding only its
+    /// target, with no checkpoint taken while it was detached, leaves the
+    /// same list over other logs and another live state.)
+    fn drop_part(&mut self) {
+        if let Some(p) = self.part.take() {
+            self.give_pre(p.pre);
+        }
+    }
+
     /// The kept `PartPrep` if it is for `id` and still valid; any other is
     /// given back.
     fn take_part(&mut self, id: CheckpointId) -> Option<PartPrep> {
@@ -1134,7 +1150,7 @@ impl Core {
                     // SAFETY: a chunk of `buf`.
                     unsafe {
                         d.apply_under(
-                            &log.words,
+                            &log.bytes,
                             p.buf.as_mut_ptr().add(i * CHUNK_WORDS),
                             &mut p.done[i],
                         )
@@ -1283,9 +1299,7 @@ impl Core {
 
     /// Restore to `id` and discard every later checkpoint (the plain restart).
     fn restore_discard(&mut self, id: CheckpointId) -> Result<(), String> {
-        if let Some(p) = self.part.take() {
-            self.give_pre(p.pre);
-        }
+        self.drop_part();
         let k = self
             .index_of(id)
             .ok_or_else(|| format!("checkpoint {id} is not retained"))?;
@@ -1315,14 +1329,15 @@ impl Core {
             Some(mut p) => {
                 if std::env::var_os("FLASHTEX_INCR_DEBUG").is_some() {
                     eprintln!(
-                    "[arena] preparation for {id} goes on (logs {}/{} looked through, {}/{} copied, {} rewound, {} redo)",
-                    p.collected,
-                    self.logs.len() - k,
-                    p.copied,
-                    p.cs.len(),
-                    p.rewound,
-                    p.pre.len()
-                );
+                        "[arena] preparation for {id} goes on (logs {}/{} looked through, \
+                         {}/{} copied, {} rewound, {} redo)",
+                        p.collected,
+                        self.logs.len() - k,
+                        p.copied,
+                        p.cs.len(),
+                        p.rewound,
+                        p.pre.len()
+                    );
                 }
                 if self.prepare_go_on(&mut p, k, &mut || false) {
                     prepared = Some(Prepared {
@@ -1333,6 +1348,9 @@ impl Core {
                         buf: p.buf,
                         pre: p.pre,
                     });
+                } else {
+                    // (not reached: nothing asks it to stop)
+                    self.give_pre(p.pre);
                 }
             }
             None => {}
@@ -1361,6 +1379,15 @@ impl Core {
             }
             None => None,
         };
+        if let Some(p) = &prepared {
+            if std::env::var_os("FLASHTEX_VERIFY_PREPARED").is_some() {
+                if let Err(e) = self.verify_prepared_use(p, k) {
+                    // (a verify mode: loud, so that a sweep fails)
+                    eprintln!("{e}");
+                    std::process::abort();
+                }
+            }
+        }
         let old_logs = self.logs.split_off(k);
         let old_ids = self.ids.split_off(k);
         if std::env::var_os("FLASHTEX_INCR_DEBUG").is_some() {
@@ -1392,6 +1419,7 @@ impl Core {
     /// nothing written since. Jump to the old run's latest state and keep its
     /// checkpoints from `old` on.
     fn converge(&mut self, branch: Branch, old: CheckpointId) -> Result<(), String> {
+        self.drop_part();
         let Some(j) = branch.ids.iter().position(|&x| x == old) else {
             let b = branch;
             self.drop_branch(b);
@@ -1464,6 +1492,7 @@ impl Core {
     /// run's latest state (the redo log) and its checkpoints back -- as if
     /// the restore had not happened.
     fn reattach(&mut self, branch: Branch) -> Result<(), String> {
+        self.drop_part();
         let target = *branch.ids.first().ok_or("empty branch")?;
         let Some(k) = self.index_of(target) else {
             self.drop_branch(branch);
@@ -1531,6 +1560,61 @@ impl Core {
                 // (a verify mode: loud, so that a sweep fails)
                 eprintln!("{e}");
                 std::process::abort();
+            }
+        }
+        Ok(())
+    }
+
+    /// `FLASHTEX_VERIFY_PREPARED`, where `restore_branch` uses `p` (the
+    /// logs from index `k` on): it holds every chunk the sealed logs from
+    /// its checkpoint on hold, and only chunks those logs or the open one
+    /// hold (the open log may have taken new chunks since: their pre-images
+    /// there are their values at the checkpoint, `rewind_prepared`); each
+    /// chunk is what rewinding the logs as they are now gives; and each
+    /// redo made ahead of a chunk the barrier has not saved since is the
+    /// live chunk.
+    fn verify_prepared_use(&self, p: &Prepared, k: usize) -> Result<(), String> {
+        let logs = &self.logs[k..];
+        let (sealed, open) = logs.split_at(logs.len().saturating_sub(1));
+        let mut must: Vec<u32> = sealed.iter().flat_map(|l| l.chunk_ids()).collect();
+        must.sort_unstable();
+        must.dedup();
+        if let Some(c) = must.iter().find(|c| p.cs.binary_search(c).is_err()) {
+            return Err(format!(
+                "FLASHTEX_VERIFY_PREPARED: chunk {c} of a sealed log is not prepared"
+            ));
+        }
+        let mut open_ids: Vec<u32> = open.iter().flat_map(|l| l.chunk_ids()).collect();
+        open_ids.sort_unstable();
+        let held = |c: &u32| must.binary_search(c).is_ok() || open_ids.binary_search(c).is_ok();
+        if let Some(c) = p.cs.iter().find(|c| !held(c)) {
+            return Err(format!(
+                "FLASHTEX_VERIFY_PREPARED: chunk {c} is prepared, no log holds it"
+            ));
+        }
+        let live = |c: u32| self.chunk_ptr(c as usize) as *const u64;
+        if rewound(self.nchunks, &p.cs, &live, logs) != p.buf {
+            return Err(
+                "FLASHTEX_VERIFY_PREPARED: a prepared chunk differs from the rewound one".into(),
+            );
+        }
+        let saved = self.saved_ref();
+        for (i, &d) in p.pre.iter().enumerate() {
+            let c = p.cs[i] as usize;
+            if d.is_null() || saved[c] != 0 {
+                continue;
+            }
+            // SAFETY: a slab chunk and a live chunk, CHUNK_WORDS words each.
+            let (a, b) = unsafe {
+                (
+                    std::slice::from_raw_parts(d as *const u64, CHUNK_WORDS),
+                    std::slice::from_raw_parts(self.chunk_ptr(c), CHUNK_WORDS),
+                )
+            };
+            if a != b {
+                return Err(format!(
+                    "FLASHTEX_VERIFY_PREPARED: the redo made ahead of chunk {c} is stale"
+                ));
             }
         }
         Ok(())
@@ -3286,6 +3370,58 @@ mod tests {
         let br = a.restore_branch(ids[6]).unwrap();
         assert!(arr[..] == copies[&6][..], "restore after a checkpoint");
         a.drop_branch(br);
+    }
+
+    /// A preparation stopped while a branch was detached, then the branch
+    /// reattached: the part was copied from the abandoned run's state and
+    /// rewound through its logs, so it is not used. (When the branch holds
+    /// only its target and no checkpoint was taken while it was detached,
+    /// the checkpoint list after the reattach is the one the part saw:
+    /// `reattach` drops the part itself.)
+    #[test]
+    fn a_part_from_before_a_reattach_is_not_used() {
+        let after = |n: usize| {
+            let mut k = 0usize;
+            move || {
+                k += 1;
+                k > n
+            }
+        };
+        for n in [1usize, 2, 3, 5] {
+            let (mut a, mut arr) = space(400_000);
+            scribble(&mut arr, 3, 20_000);
+            for k in 0..8u64 {
+                a.checkpoint();
+                scribble(&mut arr, 300 + k, 400);
+            }
+            let target = a.checkpoint();
+            let at_target = arr.to_vec();
+            // the old run writes after its newest checkpoint
+            scribble(&mut arr, 77 + n as u64, 3000);
+            let old_end = arr.to_vec();
+            let br = a.restore_branch(target).unwrap();
+            assert_eq!(br.ids, vec![target]);
+            assert!(arr[..] == at_target[..]);
+            // the new run writes elsewhere, takes no checkpoint, and a
+            // preparation to the same target stops in its copies
+            scribble(&mut arr, 880 + n as u64, 3000);
+            assert!(!a.prepare_restore(target, &mut after(n)));
+            assert!(a.core().part.is_some(), "stopped part way ({n})");
+            let ids = a.checkpoint_ids().to_vec();
+            a.reattach(br).unwrap();
+            assert!(arr[..] == old_end[..]);
+            assert_eq!(a.checkpoint_ids(), &ids[..], "the same checkpoint list");
+            assert!(
+                a.core().part.is_none(),
+                "the reattach dropped the part ({n})"
+            );
+            // the next preparation (`prepare_next`) starts afresh
+            assert!(a.prepare_restore(target, &mut || false));
+            let br = a.restore_branch(target).unwrap();
+            assert!(arr[..] == at_target[..], "restore after the reattach ({n})");
+            a.converge(br, target).unwrap_or_else(|e| panic!("{e}"));
+            assert!(arr[..] == old_end[..], "jump back ({n})");
+        }
     }
 
     /// A prepared restore equals a plain one, also when the live state was
