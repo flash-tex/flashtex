@@ -47,6 +47,10 @@ use std::collections::HashMap;
 use std::time::Instant;
 
 /// What S₀ depends on.
+/// A whole read at `\document`'s start (`Key::arm`): path, length, time,
+/// content hash.
+pub type ArmRead = (String, Option<u64>, Option<i64>, [u64; 2]);
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct Key {
     /// The engine build: a hash of the running executable.
@@ -78,6 +82,13 @@ pub struct Key {
     /// again: the distribution's trees are taken as unchanged for the
     /// session, as kpathsea's own `ls-R` cache takes them.
     pub dirs: Vec<(String, StatSig)>,
+    /// The whole reads between `\document`'s start and the anchor
+    /// (`whole_after_arm`), which `files` leaves out: path, the length a
+    /// `\pdffilesize` read, the time a `\pdffilemoddate` read, the content's
+    /// hash. In a session `incr::Session::arm_window` checks them; a host
+    /// opened from a persisted S₀ has no checkpoint before it, so
+    /// `check_arm` refuses the S₀ when one changed (review of #1739).
+    pub arm: Vec<ArmRead>,
 }
 
 impl Codec for StatSig {
@@ -113,7 +124,8 @@ crate::codec_struct!(Key {
     lookups,
     barriers,
     written,
-    dirs
+    dirs,
+    arm
 });
 
 fn format_index(f: Format) -> u8 {
@@ -198,6 +210,23 @@ impl Key {
             return Err(format!("the preamble ran an external command ({b})"));
         }
         self.check_files()
+    }
+
+    /// The reads between `\document`'s start and the anchor (`arm`), for an
+    /// S₀ with no checkpoint before it (one opened from disk, or the
+    /// whole-run host's): each the same length, time or content.
+    pub fn check_arm(&self) -> Result<(), String> {
+        for (path, size, stamp, hash) in &self.arm {
+            let same = match (size, stamp) {
+                (Some(n), _) => std::fs::metadata(path).ok().map(|m| m.len()) == Some(*n),
+                (_, Some(t)) => system::mtime_secs(path) == Some(*t),
+                _ => std::fs::read(path).ok().map(|d| hash128(&d)) == Some(*hash),
+            };
+            if !same {
+                return Err(format!("{path}, read at the document's start, changed"));
+            }
+        }
+        Ok(())
     }
 
     /// The part of `check` that is not about what the run read: the engine
@@ -447,7 +476,9 @@ impl Session {
             let v = if std::mem::take(&mut self.fresh) {
                 Ok(())
             } else {
-                s0.key.check(self.clock, &self.first_line)
+                s0.key
+                    .check(self.clock, &self.first_line)
+                    .and_then(|()| s0.key.check_arm())
             };
             let validate_s = t0.elapsed().as_secs_f64();
             match v {
@@ -689,7 +720,20 @@ pub fn make_key(
             String::new()
         };
         let dirs = reads.dirs.clone();
+        let arm = reads.files[..nf.min(reads.files.len())]
+            .iter()
+            .enumerate()
+            .filter(|(i, f)| whole_after_arm(g.layer().arm_reads, *i, f))
+            .map(|(_, f)| {
+                let hash = match (&f.content, f.hash) {
+                    (Some(c), [0, 0]) => hash128(c),
+                    (_, h) => h,
+                };
+                (f.path.clone(), f.size, f.stamp, hash)
+            })
+            .collect();
         Ok(Key {
+            arm,
             build: engine_build(),
             clock,
             source_date_epoch: std::env::var("SOURCE_DATE_EPOCH").ok(),
@@ -739,6 +783,7 @@ impl Session {
         let (g, s0, rep) = read_s0(path, &mut |key| {
             let t = Session::new(o.clone(), Some(key.clock));
             key.check(t.clock, &t.first_line)?;
+            key.check_arm()?;
             s = Some(t);
             Ok(())
         })?;
@@ -1034,6 +1079,7 @@ mod key_tests {
             barriers: vec![],
             written: vec![],
             dirs: vec![(dp.clone(), ds)],
+            arm: vec![],
         };
         // the tick passes (the files' times put back a minute)
         let old = std::time::SystemTime::now() - std::time::Duration::from_secs(60);

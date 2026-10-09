@@ -1971,8 +1971,9 @@ impl Globals {
                 // there -- is after the anchor (DESIGN.md §5.5), not in S₀'s
                 // key. With an `.aux` the point is its open (`note_aux_open`).
                 let l = self.layer();
-                let at_start =
-                    l.s0.is_none() && l.aux_point.is_none() && l.preamble_line_s.is_some();
+                // (with preamble line checkpoints off too: without it a
+                // changed read there runs from the format)
+                let at_start = l.s0.is_none() && l.aux_point.is_none();
                 if l.want_aux_point
                     && l.aux_point.is_none()
                     && l.s0.is_none()
