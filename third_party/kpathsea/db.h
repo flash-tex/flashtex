@@ -50,6 +50,11 @@ extern str_list_type *kpathsea_db_search_list (kpathsea kpse,
    were packed (db.c).  */
 extern const_string *flashtex_db_lookup (kpathsea kpse, const_string key);
 
+/* FlashTeX change (2026-10-09): the directory of ls-R's index cache files
+   (db.c, packed_build), or NULL for none. The program sets it before a
+   kpathsea instance reads ls-R.  */
+extern char *flashtex_lsr_cache_dir;
+
 /* Insert the filename FNAME into the database.
    Called by mktex() in tex-make.c.  */
 extern void kpathsea_db_insert (kpathsea kpse, const_string fname);
