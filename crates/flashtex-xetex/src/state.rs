@@ -167,6 +167,9 @@ pub struct Host {
     /// Not saved at a checkpoint yet: the Unicode host's checkpoints
     /// (phase S3) will restore it with the pages it holds.
     pub out: Option<Box<crate::out::Output>>,
+    /// The paths `find_pic_file` found, for the output (`crate::out`), which
+    /// takes them from here at each page.
+    pub pictures: std::collections::BTreeSet<String>,
 }
 
 /// `-no-pdf`, true unless set otherwise.

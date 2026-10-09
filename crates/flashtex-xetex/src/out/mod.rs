@@ -172,18 +172,6 @@ impl page::Metrics for EngineMetrics<'_> {
     }
 }
 
-/// The byte at absolute position `p` of the DVI stream that is still in
-/// `dvi_buf` (`p >= dvi_gone`).
-fn buffered(g: &Globals, p: i64) -> u8 {
-    let off = g.dvi_offset as i64;
-    let i = if p >= off {
-        p - off
-    } else {
-        p - off + dvi_buf_size as i64
-    };
-    g.dvi_buf[i as usize] as u8
-}
-
 /// `ship_out` has written a page (its `fflush`): read it into the
 /// display list.
 pub fn page_done(g: &mut Globals, f: &mut ByteFile) {
@@ -194,30 +182,49 @@ pub fn page_done(g: &mut Globals, f: &mut ByteFile) {
     let end = g.dvi_offset as i64 + g.dvi_ptr as i64;
     let gone = g.dvi_gone as i64;
     let mut bytes = Vec::with_capacity((end - start).max(0) as usize);
+    let mut missing = None;
     if let Some(m) = f.mem.as_mut() {
-        for p in start..end {
+        let byte = |p: i64| -> Option<u8> {
             if p < gone {
-                let i = p - m.base as i64;
-                bytes.push(if i >= 0 {
-                    m.buf.get(i as usize).copied().unwrap_or(0)
-                } else {
-                    0
-                });
+                let i = usize::try_from(p - m.base as i64).ok()?;
+                m.buf.get(i).copied()
             } else {
-                bytes.push(buffered(g, p));
+                let off = g.dvi_offset as i64;
+                let i = if p >= off {
+                    p - off
+                } else {
+                    p - off + dvi_buf_size as i64
+                };
+                usize::try_from(i)
+                    .ok()
+                    .filter(|&i| i < dvi_buf_size as usize)
+                    .map(|i| g.dvi_buf[i] as u8)
+            }
+        };
+        for p in start..end {
+            match byte(p) {
+                Some(b) => bytes.push(b),
+                None => {
+                    missing = Some(p);
+                    break;
+                }
             }
         }
         m.consumed(end as u64);
     }
+    out.doc.pictures.append(&mut g.host.pictures);
     let mag = g.eqtb[(int_base + mag_code - 1) as usize].int();
     let page_no = g.total_pages as u32; // already counted
-    let built = page::Builder::page(&mut out.doc, &EngineMetrics(g), mag, page_no, &bytes);
+    let built = match missing {
+        Some(p) => Err(format!("byte {p} of the XDV stream is not in memory")),
+        None => page::Builder::page(&mut out.doc, &EngineMetrics(g), mag, page_no, &bytes),
+    };
     match built {
         Ok(b) => {
             send_page(&mut out, &b);
             out.doc.pages.push(b);
         }
-        Err(e) => out.doc.diag(format!("page {page_no}: {e}")),
+        Err(e) => out.doc.errors.push(format!("page {page_no}: {e}")),
     }
     g.host.out = Some(out);
 }
@@ -239,6 +246,10 @@ pub fn finish(g: &mut Globals) -> i32 {
     }
     for d in &out.doc.diagnostics {
         eprintln!("FlashTeX output: {d}");
+    }
+    for e in &out.doc.errors {
+        eprintln!("! FlashTeX output: {e}");
+        rc = 1;
     }
     // The PDF writer over the display list is the next step of S2 part 2.
     if out.pdf.is_some() {

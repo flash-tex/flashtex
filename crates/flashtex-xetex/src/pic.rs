@@ -692,6 +692,9 @@ impl Globals {
         let Some([x, y, wd, ht]) = pic_bounds(&found, pdf_box_type, page) else {
             return -1;
         };
+        if !self.host.no_pdf.0 {
+            self.host.pictures.insert(found.clone());
+        }
         *bounds = real_rect {
             x: round_f32(x),
             y: round_f32(y),

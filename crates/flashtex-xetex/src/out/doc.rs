@@ -137,6 +137,12 @@ pub struct Doc {
     /// pages (dvipdfmx keeps it).
     pub paper: Option<(Fx, Fx)>,
     pub pages: Vec<Built>,
+    /// The picture files the engine's own lookup found (`find_pic_file`):
+    /// `pdf:image` takes these paths as they are.
+    pub pictures: std::collections::BTreeSet<String>,
+    /// What went wrong reading the output: the run fails (a page that
+    /// cannot be read is never dropped silently).
+    pub errors: Vec<String>,
 }
 
 impl Doc {
