@@ -17,9 +17,12 @@
 //! one. A host killed with a write pending leaves the previous S₀ (or none):
 //! S₀ is a cache, and its key is checked whenever it is opened.
 //!
-//! **Readers.** Before the host opens a persisted S₀, or exits, it waits for
-//! that path's pending write ([`flush`]), so a reopen in this process finds
-//! what the last save wrote.
+//! **Readers.** Before the host opens a persisted S₀ it waits for that
+//! path's pending write ([`flush`]), so a reopen in this process finds what
+//! the last save wrote. A host that ends does not wait: as when the save ran
+//! on the engine thread, a save cut off at exit leaves the previous S₀ (the
+//! rename never happened), and the host's lifetime stays what the app
+//! expects.
 
 use super::S0Image;
 use std::collections::{HashMap, VecDeque};
