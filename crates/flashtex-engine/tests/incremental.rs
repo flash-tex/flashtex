@@ -921,6 +921,67 @@ fn l5_shared_bodies_and_deeper_aux_reads_equal_scratch_runs() {
     }
 }
 
+/// Convergence test (b) counts only reads before the old run's last page
+/// checkpoint: from there `\end{document}` re-runs live and re-reads the
+/// `.aux` the pages wrote. An edit on the first page changes an `.aux`
+/// entry that only the first page shows; the `.aux` pass re-typesets that
+/// page and converges on the next, where before every test failed with
+/// "the old run reads the changed .aux later" and the pass ran to the end.
+/// Each compile equals scratch runs, so does a toggle whose entry the last
+/// page shows (read after the convergence point, before the end: no
+/// convergence there).
+#[test]
+fn an_aux_pass_converges_before_end_document_rereads_the_aux() {
+    let Some(e) = env() else {
+        common::no_texlive();
+        return;
+    };
+    let dir = e.dir.join("aux-pass-converges");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let doc = |first: &str, last: &str| -> String {
+        let mut s = String::from(
+            "\\documentclass{article}\n\\begin{document}\n\\makeatletter\n\
+             First: \\@ifundefined{flagA}{unset}{\\flagA}.\n\n\
+             \\makeatother\n",
+        );
+        s.push_str(&format!(
+            "\\makeatletter\\immediate\\write\\@auxout{{\\string\\gdef\\string\\flagA{{{first}}}}}\\makeatother\n\n"
+        ));
+        for i in 0..150 {
+            s.push_str(&para(i, "mu"));
+        }
+        s.push_str(&format!(
+            "\\makeatletter\\immediate\\write\\@auxout{{\\string\\gdef\\string\\flagB{{{last}}}}}\n\
+             Last: \\@ifundefined{{flagB}}{{unset}}{{\\flagB}}.\n\\makeatother\n\\end{{document}}\n"
+        ));
+        s
+    };
+    let mut h = Host::start(&e, &dir);
+    for _ in 0..3 {
+        let r = compile_and_check(&e, &mut h, &dir, &[("doc.tex", &doc("one", "x"))], "settle");
+        if r.contains("\"mode\":\"unchanged\"") {
+            break;
+        }
+    }
+    for (what, first) in [("the first page's entry", "two"), ("and back", "one")] {
+        let r = compile_and_check(&e, &mut h, &dir, &[("doc.tex", &doc(first, "x"))], what);
+        assert!(
+            r.contains("\"passes\":2"),
+            "{what}: the .aux changed, a second pass: {r}"
+        );
+        assert!(
+            !r.contains("the old run reads the changed ./doc.aux later"),
+            "{what}: the .aux pass's tests failed on \\end{{document}}'s re-read: {r}"
+        );
+        assert_ne!(field(&r, "converged_at"), "null", "{what}: {r}");
+    }
+    // an entry the last page shows: read after any convergence point
+    for (what, last) in [("the last page's entry", "y"), ("and back", "x")] {
+        compile_and_check(&e, &mut h, &dir, &[("doc.tex", &doc("one", last))], what);
+    }
+}
+
 /// Lane P4-MULTIPASS, soundness case 2032: case 2030's shared body when the
 /// only other control sequences sharing it live in tex.ch's `hash_extra`
 /// region above `eqtb_size` (#1285). A 22,000-name preamble flood fills the
