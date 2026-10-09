@@ -361,7 +361,7 @@ int flashtex_kpse_db_hazard(void *k, int format, const char *name)
       continue;
     for (ext = exts; l < 0 || *ext; ext = ext ? ext + 1 : NULL) {
       string n = l < 0 ? xstrdup(name) : concat(name, *ext);
-      const_string *dirs = hash_lookup(kpse->db, n);
+      const_string *dirs = flashtex_db_lookup(kpse, n);
       const_string *d;
       for (d = dirs; d && *d && !hazard; d++) {
         string file = concat(*d, n);

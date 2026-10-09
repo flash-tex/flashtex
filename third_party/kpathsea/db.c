@@ -82,6 +82,153 @@ ignore_dir_p (const_string dirname)
   return false;
 }
 
+/* FlashTeX change (2026-10-09): ls-R's entries are packed. Each file of
+   ls-R used to be one hash_element (key, value and next pointers: 24 bytes,
+   32 with the allocator's rounding, one malloc each) in a table of 64,007
+   buckets plus their tails: about 9 MB for TeX Live's 248,000 files, in
+   every process. Here an entry is 12 bytes, three 32-bit numbers: the
+   file name's offset in its ls-R buffer, its directory, and the next entry
+   of its bucket. Entries live in fixed chunks (no reallocation), buckets
+   are 2^16 head and tail indexes. A bucket's chain is in insertion order,
+   as hash.c's is, so a lookup returns the same directories in the same
+   order. Files inserted while running (kpathsea_db_insert) still go to
+   `kpse->db', now a small hash table, and are returned after the packed
+   ones, as they were inserted after them. Only where file names compare
+   exactly (no MONOCASE_FILENAMES); elsewhere ls-R goes to `kpse->db' as
+   before.  */
+#if !defined (MONOCASE_FILENAMES)
+#define PACKED_DB 1
+#endif
+
+#ifdef PACKED_DB
+#define PACKED_NONE 0xffffffffu
+#define PACKED_CHUNK_BITS 16
+#define PACKED_CHUNK (1u << PACKED_CHUNK_BITS)
+#define PACKED_BUCKETS (1u << 16)
+
+typedef struct {
+  unsigned key;   /* offset of the name in its directory's buffer */
+  unsigned dir;   /* index in `dirs' */
+  unsigned next;  /* next entry of the bucket, or PACKED_NONE */
+} packed_entry;
+
+typedef struct {
+  const_string name;  /* with its trailing slash, as cur_dir was */
+  const_string buf;   /* the ls-R buffer its file names are in */
+} packed_dir;
+
+struct flashtex_packed_db {
+  packed_entry **chunks;
+  unsigned nchunks, n;
+  packed_dir *dirs;
+  unsigned ndirs, dir_cap;
+  unsigned *head, *tail;
+};
+
+static unsigned
+packed_hash (const_string key)
+{
+  unsigned h = 2166136261u;  /* FNV-1a */
+  while (*key)
+    h = (h ^ (unsigned char) *key++) * 16777619u;
+  return h & (PACKED_BUCKETS - 1);
+}
+
+static struct flashtex_packed_db *
+packed_db (kpathsea kpse)
+{
+  struct flashtex_packed_db *p = kpse->flashtex_packed_db;
+  if (!p) {
+    unsigned b;
+    p = (struct flashtex_packed_db *) xcalloc (1, sizeof (*p));
+    p->head = (unsigned *) xmalloc (PACKED_BUCKETS * sizeof (unsigned));
+    p->tail = (unsigned *) xmalloc (PACKED_BUCKETS * sizeof (unsigned));
+    for (b = 0; b < PACKED_BUCKETS; b++)
+      p->head[b] = p->tail[b] = PACKED_NONE;
+    kpse->flashtex_packed_db = p;
+  }
+  return p;
+}
+
+static packed_entry *
+packed_at (struct flashtex_packed_db *p, unsigned i)
+{
+  return &p->chunks[i >> PACKED_CHUNK_BITS][i & (PACKED_CHUNK - 1)];
+}
+
+/* A new directory of buffer BUF; its index.  */
+static unsigned
+packed_add_dir (struct flashtex_packed_db *p, const_string name,
+                const_string buf)
+{
+  if (p->ndirs == p->dir_cap) {
+    p->dir_cap = p->dir_cap ? 2 * p->dir_cap : 1024;
+    p->dirs = (packed_dir *) xrealloc (p->dirs, p->dir_cap * sizeof (packed_dir));
+  }
+  p->dirs[p->ndirs].name = name;
+  p->dirs[p->ndirs].buf = buf;
+  return p->ndirs++;
+}
+
+/* File KEY (in directory DIR's buffer) at the end of its bucket.  */
+static void
+packed_add (struct flashtex_packed_db *p, const_string key, unsigned dir)
+{
+  unsigned i = p->n, b = packed_hash (key);
+  packed_entry *e;
+  if ((i >> PACKED_CHUNK_BITS) == p->nchunks) {
+    p->chunks = (packed_entry **) xrealloc (p->chunks,
+                    (p->nchunks + 1) * sizeof (packed_entry *));
+    p->chunks[p->nchunks++] =
+      (packed_entry *) xmalloc (PACKED_CHUNK * sizeof (packed_entry));
+  }
+  e = packed_at (p, i);
+  e->key = (unsigned) (key - p->dirs[dir].buf);
+  e->dir = dir;
+  e->next = PACKED_NONE;
+  if (p->tail[b] == PACKED_NONE)
+    p->head[b] = i;
+  else
+    packed_at (p, p->tail[b])->next = i;
+  p->tail[b] = i;
+  p->n++;
+}
+#endif /* PACKED_DB */
+
+/* FlashTeX change (2026-10-09): `hash_lookup (kpse->db, KEY)', with ls-R's
+   packed entries first (see above): the directories of every file named
+   KEY, in insertion order, null-terminated; NULL if none.  */
+const_string *
+flashtex_db_lookup (kpathsea kpse, const_string key)
+{
+#ifdef PACKED_DB
+  struct flashtex_packed_db *p = kpse->flashtex_packed_db;
+  cstr_list_type ret;
+  const_string *more, *r;
+  unsigned i;
+  if (!p)
+    return hash_lookup (kpse->db, key);
+  ret = cstr_list_init ();
+  for (i = p->head[packed_hash (key)]; i != PACKED_NONE; ) {
+    packed_entry *e = packed_at (p, i);
+    if (STREQ (key, p->dirs[e->dir].buf + e->key))
+      cstr_list_add (&ret, p->dirs[e->dir].name);
+    i = e->next;
+  }
+  more = hash_lookup (kpse->db, key);
+  if (more) {
+    for (r = more; *r; r++)
+      cstr_list_add (&ret, *r);
+    free ((void *) more);
+  }
+  if (STR_LIST (ret))
+    cstr_list_add (&ret, NULL);
+  return STR_LIST (ret);
+#else
+  return hash_lookup (kpse->db, key);
+#endif
+}
+
 /* If no DB_FILENAME, return false (maybe they aren't using this feature).
    Otherwise, add entries from DB_FILENAME to TABLE, and return true.  */
 
@@ -110,8 +257,20 @@ db_build (kpathsea kpse, hash_table_type *table,  const_string db_filename)
        are exactly `read_line''s: a line ends at LF, CR or CR LF, the last
        one need not end, and null bytes are dropped.  */
     size_t buf_size = 0, buf_cap = 1 << 20, got;
-    string buf = (string) xmalloc (buf_cap + 1);
-    string next, buf_end;
+    string buf, next, buf_end;
+#ifdef PACKED_DB
+    struct flashtex_packed_db *pdb = packed_db (kpse);
+    unsigned cur_dir_index = 0;
+#endif
+    /* FlashTeX change (2026-10-09): the buffer is the file's size (plus
+       one), so that it is read without growing: the blocks a growing
+       buffer frees (1, 2 and 4 MB) stay in the process on macOS.  */
+    {
+      struct stat st;
+      if (fstat (fileno (db_file), &st) == 0 && st.st_size > 0)
+        buf_cap = (size_t) st.st_size + 1;
+    }
+    buf = (string) xmalloc (buf_cap + 1);
     while ((got = fread (buf + buf_size, 1, buf_cap - buf_size, db_file)) > 0) {
       buf_size += got;
       if (buf_size == buf_cap) {
@@ -159,6 +318,9 @@ db_build (kpathsea kpse, hash_table_type *table,  const_string db_filename)
              waste of space, anyway.  This will lose on `../', but `match'
              won't work there, either, so it doesn't matter.  */
           cur_dir = *line == '.' ? concat (top_dir, line + 2) : xstrdup (line);
+#ifdef PACKED_DB
+          cur_dir_index = packed_add_dir (pdb, cur_dir, buf);
+#endif
           dir_count++;
         } else {
           cur_dir = NULL;
@@ -178,7 +340,12 @@ db_build (kpathsea kpse, hash_table_type *table,  const_string db_filename)
            Note that we assume that all names in the ls-R file have already
            been case-smashed to lowercase where appropriate.
         */
+#ifdef PACKED_DB
+        (void) table;
+        packed_add (pdb, line, cur_dir_index);
+#else
         hash_insert_normalized (table, line, cur_dir);
+#endif
         file_count++;
 
       } /* else ignore blank lines or top-level files
@@ -485,7 +652,13 @@ kpathsea_init_db (kpathsea kpse)
 
   /* Must do this after the path searching (which ends up calling
      kpse_db_search recursively), so kpse->db.buckets stays NULL.  */
+#ifdef PACKED_DB
+  /* FlashTeX change (2026-10-09): ls-R's entries are packed (see
+     packed_add); this table holds only the files inserted while running. */
+  kpse->db = hash_create (ALIAS_HASH_SIZE);
+#else
   kpse->db = hash_create (DB_HASH_SIZE);
+#endif
 
   while (db_files && *db_files) {
     if (db_build (kpse, &(kpse->db), *db_files))
@@ -610,7 +783,7 @@ kpathsea_db_search (kpathsea kpse, const_string name,
     const_string ctry = *r;
 
     /* We have an ls-R db.  Look up `try'.  */
-    orig_dirs = db_dirs = hash_lookup (kpse->db, ctry);
+    orig_dirs = db_dirs = flashtex_db_lookup (kpse, ctry);
 
     ret = XTALLOC1 (str_list_type);
     *ret = str_list_init ();
@@ -771,7 +944,7 @@ kpathsea_db_search_list (kpathsea kpse, string* names,
           const_string ctry = *r;
 
           /* We have an ls-R db.  Look up `try'.  */
-          orig_dirs = db_dirs = hash_lookup (kpse->db, ctry);
+          orig_dirs = db_dirs = flashtex_db_lookup (kpse, ctry);
 
           /* For each filename found, see if it matches the path element.  For
              example, if we have .../cx/cmr10.300pk and .../ricoh/cmr10.300pk,
