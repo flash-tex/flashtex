@@ -586,6 +586,8 @@ jobs:
       # that need pdfTeX or qpdf skip on this runner).
       - name: "parity, P5 board and package-smoke self-tests"
         if: ${{ !cancelled() && runner.os == 'Linux' }}
+        # ~1 min when green; a hang (WorkerDeath's pool, 2026-10) must fail this step, not eat the job
+        timeout-minutes: 10
         run: |
           set -euo pipefail
           # qpdf: package-smoke's runner and P-T2 compare PDFs through it (its tests skip without it)
