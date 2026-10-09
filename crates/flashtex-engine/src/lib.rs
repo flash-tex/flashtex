@@ -45,6 +45,7 @@ pub mod displaylist;
 #[cfg(feature = "distribution")]
 pub mod formats;
 pub mod generated;
+pub mod hashcache;
 #[cfg(not(feature = "tex82"))]
 pub mod host;
 #[cfg(not(feature = "tex82"))]

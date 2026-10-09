@@ -420,9 +420,13 @@ pub fn read_logical(path: &str) -> std::io::Result<Vec<u8>> {
 }
 
 /// `hash128(&read_logical(path)?)`, without reading the file into memory
-/// (`persist::hash128_file`).
+/// (`persist::hash128_file`); a file this process does not write is hashed
+/// once while it is unchanged (`crate::hashcache`).
 pub fn hash_logical(path: &str) -> std::io::Result<[u64; 2]> {
-    crate::persist::hash128_file(path, logical_len(path)).map(|(h, _)| h)
+    match logical_len(path) {
+        None => crate::hashcache::hash_file(path),
+        len => crate::persist::hash128_file(path, len).map(|(h, _)| h),
+    }
 }
 
 /// A new engine: no file's logical end is known any more. Each file still
@@ -4190,7 +4194,7 @@ pub struct StatSig {
 /// (`FLASHTEX_RACY_MS` changes it, for the tests).
 pub const RACY_NS: i128 = 2_000_000_000;
 
-fn racy_ns() -> i128 {
+pub(crate) fn racy_ns() -> i128 {
     static R: std::sync::OnceLock<i128> = std::sync::OnceLock::new();
     *R.get_or_init(|| {
         std::env::var("FLASHTEX_RACY_MS")

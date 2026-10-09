@@ -237,11 +237,9 @@ impl Key {
             if sig.as_ref() == Some(stat) {
                 continue;
             }
-            let now = *hashes.entry(path).or_insert_with(|| {
-                crate::persist::hash128_file(path, None)
-                    .ok()
-                    .map(|(h, _)| h)
-            });
+            let now = *hashes
+                .entry(path)
+                .or_insert_with(|| crate::hashcache::hash_file(path).ok());
             if now != Some(*hash) {
                 return Err(format!("{path} changed"));
             }
