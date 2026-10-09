@@ -74,15 +74,17 @@ final class EngineV3FocusChapterTests: XCTestCase {
     /// The names the host takes (host/server.rs `includeonly_list`).
     func testNamesMatchTheHostsRules() {
         for ok in ["ch1", "chapters/03", "part 2/ch.tex", "ü/ch"] { XCTAssertTrue(EngineV3Focus.validName(ok), ok) }
-        for bad in ["", " lead", "trail ", "a,b", "a{b", "a}b", "\\x", "a%", "#1", "\"q\"", "/abs", "../up", "a/../b", "line\nbreak"] {
+        for bad in ["", " lead", "trail ", "a,b", "a{b", "a}b", "\\x", "a%", "#1", "\"q\"", "/abs", "C:ch1", "c:/abs", "../up", "a/../b", "line\nbreak"] {
             XCTAssertFalse(EngineV3Focus.validName(bad), bad)
         }
     }
 
     // MARK: the focus output folder
 
-    /// Started from the whole document's output: its auxiliary files and
-    /// folders, not its PDF or log, and nothing left of an earlier focus.
+    /// Started from the whole document's output as a finished compile left
+    /// it (the copy's `complete` stamp, before and after copying): its
+    /// auxiliary files and folders, not its PDF or log, and nothing left of
+    /// an earlier focus; never from a `.aux` a run is still writing.
     func testTheFocusFolderStartsFromTheWholeDocumentsFiles() throws {
         let base = try tempDir("seed")
         let out = base.appendingPathComponent("out"), focus = EngineV3Focus.output(base: base)
@@ -96,8 +98,20 @@ final class EngineV3FocusChapterTests: XCTestCase {
         try fm.createSymbolicLink(at: out.appendingPathComponent("link.aux"), withDestinationURL: out.appendingPathComponent("main.aux"))
         try fm.createDirectory(at: focus, withIntermediateDirectories: true)
         try "stale".write(to: focus.appendingPathComponent("old.aux"), atomically: true, encoding: .utf8)
+        let source = try tempDir("seed-source") // the project folder the stamp names
 
-        EngineV3Focus.seed(from: out, to: focus)
+        // Not stamped by a finished compile: nothing is taken, the old folder stays.
+        XCTAssertFalse(EngineV3Focus.seed(from: out, to: focus, base: base, source: source, tries: 1))
+        XCTAssertTrue(fm.fileExists(atPath: focus.appendingPathComponent("old.aux").path))
+        // Stamped, then a run writes the .aux again: not a finished output either.
+        EngineV3Mirror.markComplete(base: base, source: source)
+        try "\\relax half".write(to: out.appendingPathComponent("main.aux"), atomically: true, encoding: .utf8)
+        XCTAssertFalse(EngineV3Focus.seed(from: out, to: focus, base: base, source: source, tries: 2))
+        XCTAssertTrue(fm.fileExists(atPath: focus.appendingPathComponent("old.aux").path))
+        try "\\@input{chapters/ch1.aux}".write(to: out.appendingPathComponent("main.aux"), atomically: true, encoding: .utf8)
+        EngineV3Mirror.markComplete(base: base, source: source) // its DONE
+
+        XCTAssertTrue(EngineV3Focus.seed(from: out, to: focus, base: base, source: source))
         XCTAssertEqual(focus.lastPathComponent, "out-focus")
         for path in ["main.aux", "main.toc", "main.bbl", "chapters/ch1.aux"] {
             XCTAssertEqual(try String(contentsOf: focus.appendingPathComponent(path), encoding: .utf8),

@@ -1139,9 +1139,15 @@ fn includeonly_list(names: &[Json], main: &str) -> Result<String, String> {
         let Some(name) = n.as_str() else {
             return Err("includeonly is an array of \\include names".into());
         };
+        // Rooted on any platform, whatever `Path` says on this one: on
+        // Windows `/abs` is not `is_absolute` (no drive), and `C:x` is
+        // relative to drive C's current directory.
+        let rooted = name.starts_with(['/', '\\'])
+            || matches!(name.as_bytes(), [d, b':', ..] if d.is_ascii_alphabetic());
         if name.is_empty()
             || name.trim() != name
             || name.chars().any(bad)
+            || rooted
             || !inside(Path::new(name))
         {
             return Err(format!(
@@ -1610,6 +1616,8 @@ mod job_tests {
             names(&["\"q\""]),
             names(&["../outside"]),
             names(&["/abs"]),
+            names(&["C:ch1"]),
+            names(&["c:/abs"]),
             names(&[" lead"]),
             names(&[""]),
             names(&["line\nbreak"]),

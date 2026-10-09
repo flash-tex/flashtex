@@ -88,8 +88,15 @@ final class EngineV3Focus {
         if seededFor != names {
             seededFor = names
             seeds += 1
-            let from = project.output
-            EngineV3Session.sendQueue.async { Self.seed(from: from, to: output) }
+            let (from, base, source, set) = (project.output, project.base, project.source, names)
+            // (before this COMPILE, which the send queue writes after it)
+            EngineV3Session.sendQueue.async {
+                guard !Self.seed(from: from, to: output, base: base, source: source) else { return }
+                // no finished whole-document output: the next compile tries again
+                DispatchQueue.main.async { [weak self] in
+                    MainActor.assumeIsolated { if self?.seededFor == set { self?.seededFor = nil } }
+                }
+            }
         }
         return (names, output)
     }
@@ -114,6 +121,9 @@ final class EngineV3Focus {
     nonisolated static func validName(_ name: String) -> Bool {
         guard !name.isEmpty, name.trimmingCharacters(in: .whitespacesAndNewlines) == name,
               !name.hasPrefix("/") else { return false }
+        // a drive prefix (`C:x`) is rooted on Windows: the host refuses it
+        let b = Array(name.utf8)
+        if b.count >= 2, b[1] == UInt8(ascii: ":"), (b[0] | 0x20) >= UInt8(ascii: "a"), (b[0] | 0x20) <= UInt8(ascii: "z") { return false }
         if name.unicodeScalars.contains(where: { ",{}\\%#\"".unicodeScalars.contains($0) || CharacterSet.controlCharacters.contains($0) }) { return false }
         return !name.split(separator: "/", omittingEmptySubsequences: false).contains("..")
     }
@@ -125,13 +135,38 @@ final class EngineV3Focus {
     /// A file larger than this is not an auxiliary file; not copied.
     nonisolated static let maxCopiedBytes = 64 << 20
 
-    /// Starts `to` from the whole document's output `from`, as a pdflatex
-    /// user's focused run starts from their last full run's files: emptied,
-    /// then every `.aux`, `.toc`, `.bbl`, … copied (subfolders kept:
-    /// `chapters/03.aux`). Symbolic links are not followed.
-    nonisolated static func seed(from: URL, to: URL) {
+    /// Starts `to` from the whole document's output `from` (the copy at
+    /// `base` of `source`), as a pdflatex user's focused run starts from
+    /// their last full run's files: every `.aux`, `.toc`, `.bbl`, … copied
+    /// (subfolders kept: `chapters/03.aux`), symbolic links not followed.
+    ///
+    /// Only an output a compile finished: `from` must match the copy's
+    /// `complete` stamp (`EngineV3Mirror.outputIsWhole`, written at each
+    /// DONE) before and after the copy, so a `.aux` a run is still writing is
+    /// never taken. The copy is made beside `to` and renamed into place, so
+    /// `to` is either the old folder or the whole new one. Waits up to
+    /// `tries` × 50 ms for the stamp (it is written just after DONE); false,
+    /// with `to` untouched, when it never matches.
+    @discardableResult
+    nonisolated static func seed(from: URL, to: URL, base: URL, source: URL?, tries: Int = 20) -> Bool {
         let fm = FileManager.default
-        try? fm.removeItem(at: to)
+        for attempt in 0 ..< max(1, tries) {
+            if attempt > 0 { usleep(50_000) }
+            guard EngineV3Mirror.outputIsWhole(base, source: source) else { continue }
+            let tmp = to.deletingLastPathComponent().appendingPathComponent("\(to.lastPathComponent).tmp-\(getpid())")
+            try? fm.removeItem(at: tmp)
+            copyOutput(from: from, to: tmp)
+            guard EngineV3Mirror.outputIsWhole(base, source: source) else { try? fm.removeItem(at: tmp); continue }
+            try? fm.removeItem(at: to)
+            if (try? fm.moveItem(at: tmp, to: to)) != nil { return true }
+            try? fm.removeItem(at: tmp)
+        }
+        return false
+    }
+
+    /// The copy itself (`seed`): folders and the files a run reads back.
+    nonisolated private static func copyOutput(from: URL, to: URL) {
+        let fm = FileManager.default
         try? fm.createDirectory(at: to, withIntermediateDirectories: true)
         let keys: [URLResourceKey] = [.isRegularFileKey, .isDirectoryKey, .isSymbolicLinkKey, .fileSizeKey]
         guard let e = fm.enumerator(at: from, includingPropertiesForKeys: keys, options: []) else { return }
@@ -164,7 +199,29 @@ extension EngineV3Session {
             guard chapters != focus.chapters else { return }
             focus.set(chapters, scope: .init(root: model.project.projectRoot, main: Self.mainFile(model: model), generation: model.projectGeneration))
         }
-        compileNow(model: model, reason: "focus")
+        compileWhenSettled(model: model)
+    }
+
+    /// Compiles the new focus once no compile is out (its DONE came): a run
+    /// still writing the whole document's `.aux` would otherwise be cut
+    /// short, and its output is what the focus folder starts from
+    /// (`EngineV3Focus.seed`, which also checks the output is a finished
+    /// run's).
+    private func compileWhenSettled(model: ShellModel) {
+        guard compiling else {
+            compileNow(model: model, reason: "focus")
+            return
+        }
+        withObservationTracking {
+            _ = compiling
+        } onChange: { [weak self, weak model] in
+            DispatchQueue.main.async {
+                MainActor.assumeIsolated {
+                    guard let self, let model else { return }
+                    self.compileWhenSettled(model: model)
+                }
+            }
+        }
     }
 }
 
