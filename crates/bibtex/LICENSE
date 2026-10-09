@@ -1,0 +1,46 @@
+This crate is a translation of BibTeX into Rust: Oren Patashnik's bibtex.web
+(BibTeX 0.99e) with TeX Live's change file bibtex.ch, as distributed in TeX
+Live 2026 (texk/web2c of the TeX Live source tree,
+https://github.com/TeX-Live/texlive-source, tag texlive-2026.1, commit
+6a300188053b8f2ded89dbd52293732a706b9c0e). Both files are kept unmodified in
+third_party/bibtex/ of the FlashTeX repository
+(https://github.com/flash-tex/flashtex); every change is a WEB change file
+(changes/flashtex.ch), applied by tools/web2rust as TANGLE applies one.
+
+1. src/generated/ (translated from bibtex.web and the change files)
+
+bibtex.web states its terms:
+
+    This program is copyright (C) 1985, 1988, 2010, 2025 by Oren Patashnik;
+    all rights are reserved.
+
+    This program, BibTeX, is available under the same terms as
+    Donald Knuth's TeX program.
+
+    (Request to implementors: The WEB system provides for alterations via
+    an auxiliary file; the master file should stay intact.)
+
+Knuth's terms for TeX (tex.web): copying is authorized if you make absolutely
+no changes to your copy; alterations go in an auxiliary (change) file, and the
+master file stays intact. That is how this crate is made: bibtex.web is
+unchanged in third_party/bibtex/, and what TeX Live and FlashTeX change is in
+change files.
+
+TeX Live's bibtex.ch is in the public domain (TeX Live's web2c change files,
+texk/web2c).
+
+2. Everything else in this crate (src/lib.rs, src/system.rs, src/arena.rs,
+changes/flashtex.ch, examples/, tests/golden.rs) is FlashTeX's own work under
+the MIT licence of the repository (LICENSE at its root).
+
+3. tests/golden/ holds test data: unmodified copies of TeX Live's standard
+styles plain.bst and alpha.bst (whose terms allow unmodified copies), of TeX
+Live's xampl.bib, renamed variants of those styles damaged by a fuzzer
+(mystyle.bst; their terms ask that changed copies be renamed), small styles
+and databases the fuzzer generated, and the output of TeX Live's bibtex on
+them.
+
+The program prints "This is BibTeX, Version 0.99e (TeX Live 2026)" in its
+transcript, as TeX Live's does, because its output is byte-identical to that
+program's; whether a product may print that name is for the owner's legal
+review (DESIGN.md section 3).

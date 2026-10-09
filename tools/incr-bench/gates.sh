@@ -25,7 +25,7 @@
 #   readers    readers.py: a program polling main.pdf/.aux/.log during typing sees no hole, no more
 #              complete-looking but wrong PDFs than main (0.5 %), and the opening compile's files at the end
 #   sound-c    soundness: 20 structural edits, fixtures + refs-30/120 + full-100 + book-inc (its ch03)
-#   sound-d    soundness: 12 interleaved (interrupted) edits
+#   sound-d    soundness: 12 interleaved (interrupted) edits, preparations stopped part way (FLASHTEX_SWEEP_STOP_PREPARE)
 #   sound-pre  the preamble kinds (edits.py's pre_*; restarts before S0, in the middle of the line after a
 #              package): 8 edits + reverts, fixtures + full-100 + full-100t + refs-30; then 6 interleaved
 #   sound-first soundness: 10 interleaved edits that interrupt a first compile (no .aux: the compiles'
@@ -210,7 +210,7 @@ for g in ${@:-build parity lockstep trip etrip drift positions tests sound-a sou
         --extra $B/src-book-inc:book-inc:ch03.tex > $R/soundness-c.txt 2>&1
       echo "soundness C exit $?" >> $R/soundness-c.txt ;;
     sound-d)
-      PYTHONHASHSEED=0 timeout 36000 python3 $S/soundness.py gates -j $J --trials $(trials 12) --interleave --dir $B/sound-d --out $R/soundness-d.jsonl \
+      PYTHONHASHSEED=0 FLASHTEX_SWEEP_STOP_PREPARE=2 timeout 36000 python3 $S/soundness.py gates -j $J --trials $(trials 12) --interleave --dir $B/sound-d --out $R/soundness-d.jsonl \
         --kinds replace,insert,sentence,section,label,ref,unlabel \
         --extra $B/src-refs-30:refs-30 --extra $B/src-refs-120:refs-120 --extra $B/src-full-100:full-100 \
         --extra $B/src-book-inc:book-inc:ch03.tex > $R/soundness-d.txt 2>&1

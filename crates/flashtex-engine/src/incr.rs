@@ -1456,6 +1456,19 @@ fn dead_word(g: &Globals, w: &crate::statediff::WordDiff) -> bool {
         // it right after the call, in the same command (`\vsplit` and an
         // insertion split).
         Some("best_height_plus_depth") => return true,
+        // pdftex.web l. 9384: `macro_call` sets it from the macro's
+        // `eq_type` when it starts to scan parameters ("Scan the parameters
+        // and make link(r) point to the macro body"), and it is read only
+        // during that scan (l. 9410, 9461, 9523, and throughput.ch's
+        // in-place copies of them), or written during one, by
+        // `check_outer_validity` (l. 8479, `scanner_status=matching`) and the
+        // runaway recovery (l. 9454). A scan is inside one command's
+        // expansion, so at a checkpoint (a `big_switch`) none is in
+        // progress and the next read follows the next scan's own set. Which
+        // macro with parameters ran last (a `\long` one or not) differs
+        // after an `.aux` read whose last such entry changed (the arXiv
+        // paper's L5 patch: "long_state: 0x72 -> 0x73").
+        Some("long_state") => return true,
         // pdftex.web §693: outside text mode (`pdf_doing_text` false, which
         // is compared), `pdf_begin_string` calls `pdf_begin_text` before it
         // reads any of these, and `pdf_begin_text` sets them all (the first
@@ -2909,8 +2922,10 @@ impl Session {
     }
 
     pub fn trim_caches(&mut self) {
-        if let Some(g) = self.g.as_ref() {
+        if let Some(g) = self.g.as_mut() {
             g.arena.drop_old_cache();
+            // (a preparation newer work stopped: its copies of the chunks)
+            g.arena.drop_stopped_preparation();
         }
     }
 
@@ -3412,15 +3427,33 @@ impl Session {
             return None;
         }
         let (clock, first_line) = (self.clock, self.first_line.clone());
-        let s0 = self.s0.as_mut()?;
-        if s0.key.check_refresh(clock, &first_line).is_err() {
-            return Some(true);
+        match self.s0.as_mut() {
+            Some(s0) => {
+                if s0.key.check_refresh(clock, &first_line).is_err() {
+                    return Some(true);
+                }
+            }
+            // No S₀ (the run took none): no key covers the files read
+            // before it, and the journal holds all the run read
+            // (`key_cover` is empty), so `changes` checks them all. With no
+            // journal either, nothing says the run's inputs are unchanged:
+            // another pass, from the format.
+            None if self.journal.is_none() => return Some(true),
+            None => {}
         }
         let saved = self.journal.clone();
         // (what the last pass found missing and wrote is a change for the
         // next pass: `fixed_created` is the last pass's own)
         let created = std::mem::take(&mut self.fixed_created);
+        // (without S₀ no key covers any of it)
+        let cover = self
+            .s0
+            .is_none()
+            .then(|| std::mem::take(&mut self.key_cover));
         let r = self.changes();
+        if let Some(c) = cover {
+            self.key_cover = c;
+        }
         self.fixed_created = created;
         self.journal = saved;
         // A file the run wrote before it read it (beamer's `.vrb`) holds

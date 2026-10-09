@@ -245,6 +245,12 @@ fn iserve_on_this_thread(o: crate::system::RunOptions, ho: &HostOpts) -> i32 {
     opts.converge = !ho.no_converge;
     let mut s = Session::new(o, None, opts);
     let mut reason = "end of input";
+    // (a sweep's stopped preparations: below)
+    let stop_prepare: Option<usize> = std::env::var("FLASHTEX_SWEEP_STOP_PREPARE")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .filter(|&n| n > 0);
+    let mut prepared = 0usize;
     // FLASHTEX_DISPLAY_LIST (`/dev/null` will do): the display list's side
     // table, which gives box reports their first and last character.
     crate::displaylist::init_from_env();
@@ -403,7 +409,42 @@ fn iserve_on_this_thread(o: crate::system::RunOptions, ho: &HostOpts) -> i32 {
         // the soundness sweeps run through prepared restores);
         // FLASHTEX_NO_PREPARE=1 leaves it out
         if line.starts_with("compile") && profile.prepare {
-            s.prepare_next(&mut || false);
+            match stop_prepare {
+                None => {
+                    s.prepare_next(&mut || false);
+                }
+                Some(n) => {
+                    // FLASHTEX_SWEEP_STOP_PREPARE=N (sweep D): newer work
+                    // stops the preparation as a keystroke would, after N
+                    // of its questions, in turn: not stopped; stopped once
+                    // (the restore takes the part); stopped, then gone on
+                    // from there and stopped again after 2N; stopped, then
+                    // gone on to the end; stopped after 3N. The restores
+                    // take parts stopped at every stage (`arena::PartPrep`).
+                    prepared += 1;
+                    let ask = |s: &mut Session, budget: Option<usize>| {
+                        let mut asked = 0usize;
+                        s.prepare_next(&mut || {
+                            asked += 1;
+                            budget.is_some_and(|b| asked > b)
+                        })
+                    };
+                    // (a cycle of five, odd: the edit and the revert of an
+                    // edit-revert pair, compiles in a row, take every regime)
+                    let budgets: &[Option<usize>] = match prepared % 5 {
+                        0 => &[None],
+                        1 => &[Some(n)],
+                        2 => &[Some(n), Some(2 * n)],
+                        3 => &[Some(n), None],
+                        _ => &[Some(3 * n)],
+                    };
+                    for &b in budgets {
+                        if ask(&mut s, b) {
+                            break;
+                        }
+                    }
+                }
+            }
         }
         // and, where the profile trims soon after a compile (Low Memory),
         // as its idle trim does: the old run's cached chunks go

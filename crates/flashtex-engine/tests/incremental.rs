@@ -921,6 +921,68 @@ fn l5_shared_bodies_and_deeper_aux_reads_equal_scratch_runs() {
     }
 }
 
+/// `long_state` is dead at a checkpoint (`incr::dead_word`): an `.aux` whose
+/// last macro with parameters is `\long` in one pass and not in the other
+/// leaves `long_state` different after the read (`call` against
+/// `long_call`), and nothing else. The L5 patch is taken (it was refused:
+/// "long_state: 0x72 -> 0x73" on the arXiv paper), the `.aux` pass restarts
+/// at the entry's first read, and each compile equals scratch runs. A
+/// paragraph that is `\par`-delimited in the long variant would read
+/// `long_state` in the scan of the next call, after that call's own set.
+#[test]
+fn l5_a_long_macro_last_in_the_aux_equals_scratch_runs() {
+    let Some(e) = env() else {
+        common::no_texlive();
+        return;
+    };
+    let dir = e.dir.join("l5-long-state");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let doc = |which: &str| -> String {
+        let mut s = String::from(
+            "\\documentclass{article}\n\\makeatletter\n\
+             \\def\\shortgobble#1{}\\long\\def\\longgobble#1{}\n\
+             \\def\\shownote#1{[#1]}\\long\\def\\longnote#1{[#1]}\n\
+             \\makeatother\n\\begin{document}\n",
+        );
+        for i in 0..40 {
+            s.push_str(&para(i, "lambda"));
+            if i % 10 == 9 {
+                s.push_str("\\shownote{a} \\longnote{b\n\nc}\n\n");
+            }
+        }
+        s.push_str(&format!(
+            "\\makeatletter\n\\immediate\\write\\@auxout{{\\string\\{which}{{x}}}}\n\\makeatother\n"
+        ));
+        s.push_str("\\end{document}\n");
+        s
+    };
+    let mut h = Host::start(&e, &dir);
+    for _ in 0..3 {
+        let r = compile_and_check(
+            &e,
+            &mut h,
+            &dir,
+            &[("doc.tex", &doc("shortgobble"))],
+            "settle",
+        );
+        if r.contains("\"mode\":\"unchanged\"") {
+            break;
+        }
+    }
+    for (what, which) in [
+        ("the .aux's last call \\long", "longgobble"),
+        ("and not \\long again", "shortgobble"),
+    ] {
+        let r = compile_and_check(&e, &mut h, &dir, &[("doc.tex", &doc(which))], what);
+        let l5 = r.split("\"l5\":").nth(1).unwrap_or("");
+        assert!(
+            !l5.contains("long_state"),
+            "{what}: the L5 patch was refused on long_state: {l5}"
+        );
+    }
+}
+
 /// Convergence test (b) counts only reads before the old run's last page
 /// checkpoint: from there `\end{document}` re-runs live and re-reads the
 /// `.aux` the pages wrote. An edit on the first page changes an `.aux`
@@ -1206,13 +1268,20 @@ fn a_reverted_label_removal_interrupted_in_the_aux_pass() {
 /// PDF stayed on disk where a scratch run leaves the last complete run's.
 /// The settled run's truncated files are now put back as that run left
 /// them when a restart is before their truncation.
+///
+/// The first page reads the label (`\ref`), so the `.aux` pass re-typesets
+/// it and ships it again, truncating the PDF. Without that read, L5 takes
+/// the `.aux` patch (since `long_state` is dead, `incr::dead_word`) and
+/// restarts the pass at `\end{document}`'s re-read, after the only page:
+/// the pass ships nothing and has no page to be interrupted after.
 #[test]
 fn a_fatal_edit_after_an_interrupted_aux_pass_keeps_the_pdf() {
     let Some(e) = env() else {
         common::no_texlive();
         return;
     };
-    let base = "\\documentclass{article}\n\\begin{document}\n\nBody text before.\n\n\
+    let base =
+        "\\documentclass{article}\n\\begin{document}\n\nBody text before, see~\\ref{lab:new}.\n\n\
                 Body text after the float, up by the height of the table.\n\\end{document}\n";
     let label = base.replacen("the height", "the height\\label{lab:new}", 1);
     let fatal = label.replacen("\\end{document}", "\\jend{document}", 1);
@@ -1581,6 +1650,176 @@ fn a_first_compiles_later_passes_start_at_the_aux_point() {
         "the second pass is from the format: {r}"
     );
     check_against(&e, &dir, &reference, &r, "a first compile");
+}
+
+/// A package that expands `\document` in the preamble and takes its body
+/// apart (auxhook, which zref, lastpage and others load, does
+/// `\expandafter\x\auxhook@document`) does not end the armed level for S₀:
+/// S₀ and the `.aux` point are where `\begin{document}` runs. Before, S₀ was
+/// taken in the preamble, no `.aux` point was taken at all, and an edit that
+/// changes the `.aux` had no L5 ("no .aux point"; *Infinite Descent*, every
+/// compile). The output is a scratch run's.
+#[test]
+fn a_preamble_expansion_of_document_is_not_begin_document() {
+    let Some(e) = env() else {
+        common::no_texlive();
+        return;
+    };
+    // auxhook's move, without the package: `\document` expanded once, its
+    // body swallowed by a delimited argument
+    let grab = "\\documentclass{article}\n\\long\\def\\grabdoc#1\\grabend{}\n\
+                \\expandafter\\grabdoc\\document\\grabend\n";
+    let doc = |extra: &str| refs_doc(extra, 8).replacen("\\documentclass{article}\n", grab, 1);
+    let dir = e.dir.join("preamble-document");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let mut h = Host::start(&e, &dir);
+    for _ in 0..3 {
+        let r = compile_and_check(&e, &mut h, &dir, &[("doc.tex", &doc(""))], "settle");
+        if r.contains("\"mode\":\"unchanged\"") {
+            break;
+        }
+    }
+    // a new section moves every later label: the `.aux` changes
+    let r = compile_and_check(
+        &e,
+        &mut h,
+        &dir,
+        &[("doc.tex", &doc("\\section{Inserted}\\label{sec:new}\n"))],
+        "a section inserted",
+    );
+    let l5 = r.split("\"l5\":").nth(1).unwrap_or("");
+    assert!(
+        !l5.contains("no .aux point"),
+        "S₀ or the .aux point was taken at the preamble's expansion of \\document: {l5}"
+    );
+}
+
+/// A preamble that wraps `\document` and calls the saved original last
+/// (`\let\my@olddocument\document \def\document{...\my@olddocument}`): the
+/// armed level (the wrapper's) ends before the original body runs, so S₀
+/// is taken where that body has made `\@nodocument` `\relax`
+/// (`REQ_S0_WAIT`), not never. Before, no S₀ was taken: after a preamble
+/// edit every compile ran from the format and stopped after one pass, so a
+/// new `\ref` showed "??" (strict review of #1727). Every compile equals
+/// scratch runs, the body edits are incremental, and the `.aux` change has
+/// its `.aux` point.
+#[test]
+fn a_wrapped_document_calling_the_original_last_takes_s0() {
+    let Some(e) = env() else {
+        common::no_texlive();
+        return;
+    };
+    let wrap = "\\documentclass{article}\n\\makeatletter\n\
+                \\let\\my@olddocument\\document\n\
+                \\def\\document{\\typeout{x}\\my@olddocument}\n\\makeatother\n\
+                \\title{One}\n";
+    let doc = |title: &str, extra: &str| {
+        refs_doc(extra, 8)
+            .replacen("\\documentclass{article}\n", wrap, 1)
+            .replacen("\\title{One}", &format!("\\title{{{title}}}"), 1)
+            .replacen("\\tableofcontents", "\\maketitle\\tableofcontents", 1)
+    };
+    let dir = e.dir.join("wrapped-document");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let mut h = Host::start(&e, &dir);
+    for _ in 0..3 {
+        let r = compile_and_check(&e, &mut h, &dir, &[("doc.tex", &doc("One", ""))], "settle");
+        if r.contains("\"mode\":\"unchanged\"") {
+            break;
+        }
+    }
+    let r = compile_and_check(
+        &e,
+        &mut h,
+        &dir,
+        &[("doc.tex", &doc("Two", ""))],
+        "a title edit",
+    );
+    assert_ne!(field(&r, "mode"), "\"unchanged\"", "{r}");
+    let r = compile_and_check(
+        &e,
+        &mut h,
+        &dir,
+        &[(
+            "doc.tex",
+            &doc(
+                "Two",
+                "\\section{Inserted}\\label{sec:new} See \\ref{sec:new}.\n",
+            ),
+        )],
+        "a section and its reference inserted",
+    );
+    assert_eq!(
+        field(&r, "mode"),
+        "\"incremental\"",
+        "no S₀ after the title edit: {r}"
+    );
+    let l5 = r.split("\"l5\":").nth(1).unwrap_or("");
+    assert!(!l5.contains("no .aux point"), "{l5}");
+}
+
+/// Without S₀ (a run that takes none: `\document` wrapped as above and
+/// called directly, not by `\begin{document}`, after a preamble edit, so
+/// that no `.aux` point stands in for it either), the passes still go on
+/// while the run changed a file it read (`Session::dirty`): the compile
+/// runs from the format, and a new `\ref` is resolved by the next pass, as
+/// in scratch runs. Before, `dirty` said clean without S₀ and the compile
+/// stopped after one pass ("??").
+#[test]
+fn passes_go_on_without_s0() {
+    let Some(e) = env() else {
+        common::no_texlive();
+        return;
+    };
+    let doc = |title: &str, extra: &str| {
+        refs_doc(extra, 8)
+            .replacen(
+                "\\documentclass{article}\n",
+                &format!(
+                    "\\documentclass{{article}}\n\\makeatletter\n\
+                     \\let\\my@olddocument\\document\n\
+                     \\def\\document{{\\typeout{{x}}\\my@olddocument}}\n\\makeatother\n\
+                     \\title{{{title}}}\n"
+                ),
+                1,
+            )
+            .replacen("\\tableofcontents", "\\maketitle\\tableofcontents", 1)
+            .replacen("\\begin{document}", "\\document", 1)
+            .replacen("\\end{document}", "\\enddocument", 1)
+    };
+    let dir = e.dir.join("passes-without-s0");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let mut h = Host::start(&e, &dir);
+    for _ in 0..3 {
+        let r = compile_and_check(&e, &mut h, &dir, &[("doc.tex", &doc("One", ""))], "settle");
+        if r.contains("\"mode\":\"unchanged\"") {
+            break;
+        }
+    }
+    compile_and_check(
+        &e,
+        &mut h,
+        &dir,
+        &[("doc.tex", &doc("Two", ""))],
+        "a title edit",
+    );
+    let r = compile_and_check(
+        &e,
+        &mut h,
+        &dir,
+        &[(
+            "doc.tex",
+            &doc(
+                "Two",
+                "\\section{Inserted}\\label{sec:new} See \\ref{sec:new}.\n",
+            ),
+        )],
+        "a section and its reference inserted",
+    );
+    assert_ne!(field(&r, "passes"), "1", "one pass for a changed .aux: {r}");
 }
 
 /// P4-COLD-PREEMPT: newer work that arrives before a run from the format

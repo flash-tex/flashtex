@@ -1552,7 +1552,14 @@ impl Engine {
         let spawned = std::thread::Builder::new()
             .name("tools".into())
             .spawn(move || {
-                let report = job.run();
+                // A panic in a tool (an in-process port's bug) must not
+                // leave `doc.tools.running` set: the engine thread is told
+                // the tools are done either way.
+                let report = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| job.run()))
+                    .unwrap_or_else(|_| {
+                        eprintln!("flashtex-host: the external tools' run panicked");
+                        external::Report { outcomes: vec![] }
+                    });
                 let _ = tx.send(Req::ToolsDone {
                     gen,
                     conn,

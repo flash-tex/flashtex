@@ -52,7 +52,8 @@ The engine runs the same three passes; **every pass's PDF is byte-identical to p
 Fixed costs (`raw/fixed-cost.txt`): the format load and kpathsea start take 0.78 G instructions (0.3 %
 of a pass), and the same for pdftex. **makeindex** (`raw/makeindex.txt`): imakeidx runs it 4 times
 per pass through restricted `\write18`, at 0.51-0.53 G instructions and 0.12 s each (about 0.5 s
-and 0.7 % of a pass).
+and 0.7 % of a pass). Item 2 runs it in-process instead (a Rust port, identical to TeX Live's
+on 10,000 fuzz cases and 6,160 corpus runs): `makeindex/README.md`.
 
 At TeX level (`raw/macroprof-top300.tsv`, inclusive): ntheorem's framed theorem boxes with TikZ
 frames (`\fb@put@frame`, 1,531 boxes, each frame measured and drawn by a `tikzpicture`) take 45 % of

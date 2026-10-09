@@ -32,6 +32,8 @@
 //! translation of Knuth's `tex.web` and so leaves out `pdftex/`.
 
 pub mod arena;
+#[cfg(all(feature = "bibtex", not(feature = "tex82")))]
+pub mod bibtex;
 #[cfg(all(feature = "distribution", not(feature = "tex82")))]
 pub mod bundle;
 pub mod busy;
@@ -63,6 +65,8 @@ pub mod lineshift;
 pub mod logalloc;
 #[cfg(not(feature = "tex82"))]
 pub mod macroprof;
+#[cfg(all(feature = "makeindex", not(feature = "tex82")))]
+pub mod makeindex;
 pub mod memstat;
 #[cfg(not(feature = "tex82"))]
 pub mod midline;
