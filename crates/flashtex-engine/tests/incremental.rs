@@ -1207,13 +1207,20 @@ fn a_reverted_label_removal_interrupted_in_the_aux_pass() {
 /// PDF stayed on disk where a scratch run leaves the last complete run's.
 /// The settled run's truncated files are now put back as that run left
 /// them when a restart is before their truncation.
+///
+/// The first page reads the label (`\ref`), so the `.aux` pass re-typesets
+/// it and ships it again, truncating the PDF. Without that read, L5 takes
+/// the `.aux` patch (since `long_state` is dead, `incr::dead_word`) and
+/// restarts the pass at `\end{document}`'s re-read, after the only page:
+/// the pass ships nothing and has no page to be interrupted after.
 #[test]
 fn a_fatal_edit_after_an_interrupted_aux_pass_keeps_the_pdf() {
     let Some(e) = env() else {
         common::no_texlive();
         return;
     };
-    let base = "\\documentclass{article}\n\\begin{document}\n\nBody text before.\n\n\
+    let base =
+        "\\documentclass{article}\n\\begin{document}\n\nBody text before, see~\\ref{lab:new}.\n\n\
                 Body text after the float, up by the height of the table.\n\\end{document}\n";
     let label = base.replacen("the height", "the height\\label{lab:new}", 1);
     let fatal = label.replacen("\\end{document}", "\\jend{document}", 1);
