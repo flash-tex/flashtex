@@ -584,6 +584,17 @@ pub fn written_before(rec: &ExtRecord, reads: &system::ReadLog) -> Result<Writte
 /// S₀'s key: what the run read before S₀ (`reads`, whose files and lookups
 /// may run past S₀: only the first `rec.reads` count), with S₀'s host
 /// record `rec`.
+/// A whole read (`system::note_whole_read`) the run made after
+/// `\document`'s body was pushed (`Layer::arm_reads`), before S₀'s anchor:
+/// `\document`'s `\IfFileExists{\jobname.aux}` (l3's lookup takes the
+/// file's `\pdffilesize`). The anchor is the `.aux` point, and the `.aux`
+/// is the journal's (L5, `crate::readset`), not S₀'s key's: such a read is
+/// left out of the key, and the session checks it with the journal
+/// (`incr::Session::take_s0`'s list of files not keyed whole).
+pub fn whole_after_arm(arm: Option<usize>, i: usize, f: &system::FileRead) -> bool {
+    f.closed_at == Some(u64::MAX) && arm.is_some_and(|a| i >= a)
+}
+
 pub fn make_key(
     g: &mut Globals,
     id: CheckpointId,
@@ -625,8 +636,15 @@ pub fn make_key(
         // by the time too: mixed into the hash, so that a file whose time
         // changed fails the test by content (and the session finds the
         // read in `changes`).
+        // (a whole read after `\document`'s body was pushed, before the
+        // anchor -- its `\IfFileExists{\jobname.aux}` -- is the journal's:
+        // `whole_after_arm`)
+        let arm = g.layer().arm_reads;
         let files = reads.files[..nf.min(reads.files.len())]
             .iter()
+            .enumerate()
+            .filter(|(i, f)| !whole_after_arm(arm, *i, f))
+            .map(|(_, f)| f)
             .filter(|f| !open_paths.contains(&f.path) || f.closed_at == Some(u64::MAX))
             .map(|f| {
                 let hash = match (&f.content, f.hash) {
