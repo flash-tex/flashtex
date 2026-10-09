@@ -2572,12 +2572,18 @@ impl Session {
         let mut open = vec![];
         for f in &rec.files {
             if let Stream::In { path, .. } = &f.stream {
-                let d = system::read_logical(path).map_err(|e| format!("{path}: {e}"))?;
+                let err = |e: std::io::Error| format!("{path}: {e}");
+                let (hash, content) = if system::is_user_file(path) {
+                    let d = system::read_logical(path).map_err(err)?;
+                    (hash128(&d), Some(std::sync::Arc::new(d)))
+                } else {
+                    (system::hash_logical(path).map_err(err)?, None)
+                };
                 j.files.push(FileRead {
                     path: path.clone(),
-                    hash: hash128(&d),
+                    hash,
                     stat: StatSig::of(path).unwrap_or_default(),
-                    content: system::is_user_file(path).then(|| std::sync::Arc::new(d)),
+                    content,
                     closed_at: None,
                     written_before: false,
                 });
@@ -3242,9 +3248,7 @@ impl Session {
             .read_state()
             .into_iter()
             .map(|(p, _)| {
-                let h = system::read_logical(&p)
-                    .map(|d| hash128(&d))
-                    .unwrap_or([0, 0]);
+                let h = system::hash_logical(&p).unwrap_or([0, 0]);
                 (p, h)
             })
             .collect();
