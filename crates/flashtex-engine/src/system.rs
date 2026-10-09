@@ -419,6 +419,12 @@ pub fn read_logical(path: &str) -> std::io::Result<Vec<u8>> {
     Ok(d)
 }
 
+/// `hash128(&read_logical(path)?)`, without reading the file into memory
+/// (`persist::hash128_file`).
+pub fn hash_logical(path: &str) -> std::io::Result<[u64; 2]> {
+    crate::persist::hash128_file(path, logical_len(path)).map(|(h, _)| h)
+}
+
 /// A new engine: no file's logical end is known any more. Each file still
 /// longer than its logical end is cut to it first, as the old engine's
 /// runs left it (the new run may not open it for output again), unless
@@ -4548,14 +4554,18 @@ fn note_file(path: &str) {
             return;
         }
         let stat = StatSig::of(path).unwrap_or_default();
-        let data = read_logical(path).ok();
-        let hash = data
-            .as_deref()
-            .map(crate::persist::hash128)
-            .unwrap_or([0, 0]);
-        let content = data
-            .filter(|_| log.keep_content && is_user_file(path))
-            .map(std::sync::Arc::new);
+        // A file whose bytes are kept is read whole; any other (the format,
+        // the font map, TeX Live's files) only hashed, through a buffer.
+        let (hash, content) = if log.keep_content && is_user_file(path) {
+            let data = read_logical(path).ok();
+            let hash = data
+                .as_deref()
+                .map(crate::persist::hash128)
+                .unwrap_or([0, 0]);
+            (hash, data.map(std::sync::Arc::new))
+        } else {
+            (hash_logical(path).unwrap_or([0, 0]), None)
+        };
         let norm = |p: &str| p.strip_prefix("./").unwrap_or(p).to_string();
         let written_before = log.outputs.iter().any(|o| norm(o) == norm(path));
         log.files.push(FileRead {

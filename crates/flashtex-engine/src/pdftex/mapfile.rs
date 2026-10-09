@@ -303,6 +303,23 @@ mod disk {
         Sha256::digest(data).to_vec()
     }
 
+    /// `sha256` of the file at `path`, read through a buffer.
+    fn sha256_file(path: &str) -> Option<Vec<u8>> {
+        use std::io::Read;
+        let mut f = std::fs::File::open(path).ok()?;
+        let mut h = Sha256::new();
+        let mut buf = [0u8; 64 << 10];
+        loop {
+            match f.read(&mut buf) {
+                Ok(0) => break,
+                Ok(n) => h.update(&buf[..n]),
+                Err(e) if e.kind() == std::io::ErrorKind::Interrupted => {}
+                Err(_) => return None,
+            }
+        }
+        Some(h.finalize().to_vec())
+    }
+
     /// The header: the key in full, then the content's signature and hash.
     fn header(k: &MapKey, w: &mut Vec<u8>) {
         w.extend_from_slice(MAGIC);
@@ -315,7 +332,11 @@ mod disk {
 
     pub(super) fn get(k: &MapKey) -> Option<MapParse> {
         let f = file(k)?;
-        let buf = std::fs::read(&f).ok()?;
+        // Mapped, not read: the decoded entries are what stays, and a
+        // read buffer this size (7 MB) would stay too, as a free block the
+        // macOS allocator keeps (lane MEM-MODES).
+        let map = crate::os::MappedFile::open(f.to_str()?).ok()?;
+        let buf = map.bytes();
         let mut want = Vec::new();
         header(k, &mut want);
         if !buf.starts_with(&want) {
@@ -336,11 +357,8 @@ mod disk {
         };
         // `==` is false when either signature is racy.
         let rehashed = k.stat != stored;
-        if rehashed {
-            let now = std::fs::read(&k.path).ok()?;
-            if sha256(&now) != hash {
-                return None;
-            }
+        if rehashed && sha256_file(&k.path)? != hash {
+            return None;
         }
         let body = r.pos;
         let parse = decode(&r.buf[body..])?;
