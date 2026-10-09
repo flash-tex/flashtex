@@ -1122,6 +1122,11 @@ pub fn run() -> Run {
     RUN.lock().unwrap().get_or_insert_with(Run::default).clone()
 }
 
+/// `run().output_directory`, without copying the rest.
+pub fn output_directory() -> Option<String> {
+    with_run(|r| r.output_directory.clone())
+}
+
 fn with_run<T>(f: impl FnOnce(&mut Run) -> T) -> T {
     f(RUN.lock().unwrap().get_or_insert_with(Run::default))
 }
@@ -1972,18 +1977,6 @@ fn resolve_ex(name: &str, format: Format, must_exist: bool) -> Option<String> {
         // (a file an mktex script made is a barrier: nothing to depend on)
         let deps = (recording_reads() && !made)
             .then(|| r.lookup_dirs(name, format, Some(must_exist), found.as_deref()));
-        if let Some(d) = &deps {
-            let f = found.as_deref().map(|p| p.to_string_lossy());
-            let od = run().output_directory;
-            crate::lookupproof::note(
-                name,
-                format,
-                Some(must_exist),
-                f.as_deref(),
-                d,
-                od.as_deref(),
-            );
-        }
         (found, made, deps)
     });
     let found = found
@@ -2066,10 +2059,6 @@ fn resolve(name: &str, format: Format) -> Option<String> {
         read_set_lookup(name, format, false, found.as_deref());
         let deps = recording_reads()
             .then(|| r.lookup_dirs(name, format, None, found.as_deref().map(Path::new)));
-        if let Some(d) = &deps {
-            let od = run().output_directory;
-            crate::lookupproof::note(name, format, None, found.as_deref(), d, od.as_deref());
-        }
         (found, deps)
     });
     let (found, deps) = found;
@@ -4325,25 +4314,27 @@ pub struct ReadLog {
     /// ([`dep_sig`]: [`DEP_UNKNOWN`], [`DEP_READABLE`]).
     pub dirs: Vec<(String, StatSig)>,
     /// The directories `note_lookup_dirs` listed, each once a run: their
-    /// entries' names, lower-cased and sorted (`None`: not listable).
+    /// entries' names, lower-cased (`lookupproof::folded_listing`) and
+    /// sorted (`None`: not listable).
     listings: std::collections::HashMap<String, Option<Vec<String>>>,
+    /// Where `note_dep` put each entry of `dirs` (a hint: `dirs` is public
+    /// and may have been replaced since, so a position is used only where
+    /// it still holds the entry; an entry it does not know is added again,
+    /// which only makes the check stricter).
+    dir_at: std::collections::HashMap<String, usize>,
 }
 
 impl ReadLog {
-    /// `dir`'s entries, lower-cased and sorted, listed once.
+    /// `dir`'s entries, lower-cased (case-folded: `lookupproof::fold`) and
+    /// sorted, listed once (a directory listed under the same signature
+    /// before, by this run or an earlier one, is not listed again:
+    /// `lookupproof::folded_listing`).
     fn listing(&mut self, dir: &str) -> Option<&Vec<String>> {
-        self.listings
-            .entry(dir.to_string())
-            .or_insert_with(|| {
-                let mut v: Vec<String> = std::fs::read_dir(dir)
-                    .ok()?
-                    .map(|e| e.map(|e| e.file_name().to_string_lossy().to_ascii_lowercase()))
-                    .collect::<Result<_, _>>()
-                    .ok()?;
-                v.sort();
-                Some(v)
-            })
-            .as_ref()
+        if !self.listings.contains_key(dir) {
+            let l = crate::lookupproof::folded_listing(dir);
+            self.listings.insert(dir.to_string(), l);
+        }
+        self.listings.get(dir)?.as_ref()
     }
 
     /// A log that keeps the content of the user's files it notes.
@@ -4465,8 +4456,15 @@ pub fn dep_sig(entry: &str) -> Option<StatSig> {
 
 /// `entry` among `log.dirs`, signed now if it is new.
 fn note_dep(log: &mut ReadLog, entry: &str) {
-    if !log.dirs.iter().any(|(x, _)| x == entry) {
+    // (a TFM lookup depends on every directory of a `//` subtree, 60 with
+    // mktextfm's `TEXMFVAR`: a scan of `dirs` for each was quadratic)
+    let known = log
+        .dir_at
+        .get(entry)
+        .is_some_and(|&i| log.dirs.get(i).is_some_and(|(x, _)| x == entry));
+    if !known && !log.dirs.iter().any(|(x, _)| x == entry) {
         let sig = dep_sig(entry).unwrap_or_default();
+        log.dir_at.insert(entry.to_string(), log.dirs.len());
         log.dirs.push((entry.to_string(), sig));
     }
 }
@@ -4506,7 +4504,11 @@ fn note_lookup_dirs(
     for dir in &d.listed {
         // (signed before it is listed: a change after that is a change)
         note_dep(log, dir);
-        let here = found_dir.is_some_and(|f| Path::new(dir).components().eq(f.components()));
+        // (the last component first: a TFM lookup lists 60 directories)
+        let here = found_dir.is_some_and(|f| {
+            Path::new(dir).file_name() == f.file_name()
+                && Path::new(dir).components().eq(f.components())
+        });
         in_listed |= here;
         if passed_over {
             continue;
@@ -4737,7 +4739,7 @@ pub fn lookup_again_deps(l: &Lookup) -> (Option<String>, Vec<(String, StatSig)>)
             found.as_deref().map(Path::new),
         )
     });
-    let od = run().output_directory;
+    let od = output_directory();
     crate::lookupproof::note(
         &l.name,
         l.format,

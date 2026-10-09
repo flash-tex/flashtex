@@ -13,10 +13,13 @@
 //!
 //! A lookup's answer can change only if an entry under a name kpathsea
 //! tries for it appears, goes or changes in a directory it searches on
-//! disk, or its answer stops being readable. So each lookup keeps a
-//! [`Proof`]: the names kpathsea tries (`LookupDirs::tries`), the
-//! directories it searches on disk in order (`LookupDirs::listed`, a `//`
-//! subtree as kpathsea expanded it), and the answer. The check
+//! disk, or its answer stops being readable. So a lookup made again
+//! (`system::lookup_again_deps`) keeps a [`Proof`], for the session: the
+//! names kpathsea tries (`LookupDirs::tries`), the directories it searches
+//! on disk in order (`LookupDirs::listed`, a `//` subtree as kpathsea
+//! expanded it), and the answer. (Not the run's own lookups: making a proof
+//! there cost the run more than it saved, and a lookup is made again once
+//! before its proof answers.) The check
 //! ([`Verifier::lookup_again_deps`]) lists each of those directories as it
 //! is now (once per directory, and only when its signature differs from
 //! the one its listing was last taken under) and holds when:
@@ -26,8 +29,10 @@
 //!   (`kpathsea_readable_file`);
 //! - with `-output-directory`, the name is not a file there
 //!   (`system::lookup_again` tries that first);
-//! - the working directory, the output directory and the resolver are the
-//!   ones the proof was made under.
+//! - the output directory and the resolver are the ones the proof was made
+//!   under. (The working directory need not be: a relative directory is
+//!   listed here as kpathsea searches it, in the working directory of
+//!   now.)
 //!
 //! These say what kpathsea finds now, not what changed since the run: in
 //! every directory it searches before the answer's there is nothing under
@@ -37,7 +42,9 @@
 //! trees (`!!`) are taken as unchanged for the session, as kpathsea and the
 //! check before this one take them. A lookup whose dependencies are not
 //! known, or that searched a directory that does not exist
-//! (`LookupDirs::above`), has no proof and is made again, as before.
+//! (`LookupDirs::above`), has no proof and is made again, as before. A
+//! proof does not depend on when it was made: it states what kpathsea
+//! finds in the directories as they are when it is checked.
 //!
 //! A listing is trusted only under the signature taken just before it was
 //! listed, and a racy signature equals nothing (`StatSig`), so a change
@@ -55,7 +62,6 @@ use std::sync::{Arc, Mutex};
 struct Proof {
     /// The resolver it was made with ([`resolver_changed`]).
     generation: u64,
-    cwd: PathBuf,
     output_directory: Option<String>,
     /// The names kpathsea tries, lower-cased (ASCII), each once.
     tries: Vec<String>,
@@ -111,64 +117,62 @@ pub fn note(
     output_directory: Option<&str>,
 ) {
     let key = (name.to_string(), format, must_exist);
-    let proof = (|| {
-        if off() {
-            return None;
-        }
-        let d = deps.as_ref().ok()?;
-        // (an ASCII name is compared with each entry's case-folding below;
-        // others are left to kpathsea)
-        if !d.tries.iter().all(|t| t.is_ascii()) {
-            return None;
-        }
-        // (a directory searched that does not exist: which name would
-        // make it is not kept, so no proof)
-        if !d.above.is_empty() {
-            return None;
-        }
-        // (the output directory's file: not kpathsea's answer)
-        if let (Some(od), Some(f)) = (output_directory, found) {
-            if !name.starts_with('/') && f == format!("{od}/{name}") {
-                return None;
-            }
-        }
-        let found_in = match found {
-            None => None,
-            Some(f) => {
-                let p = Path::new(f);
-                let dir = p.parent()?;
-                let base = p.file_name()?.to_str()?.to_string();
-                d.listed
-                    .iter()
-                    .position(|l| Path::new(l).components().eq(dir.components()))
-                    .map(|i| (i, base))
-            }
-        };
-        Some(Arc::new(Proof {
-            generation: GENERATION.load(Ordering::Relaxed),
-            cwd: std::env::current_dir().ok()?,
+    let d = deps.as_ref().ok().filter(|d| {
+        !off()
+            // (an ASCII name is compared with each entry's case-folding
+            // below; others are left to kpathsea)
+            && d.tries.iter().all(|t| t.is_ascii())
+            // (a directory searched that does not exist: which name would
+            // make it is not kept)
+            && d.above.is_empty()
+            // (the output directory's file is not kpathsea's answer)
+            && !matches!((output_directory, found), (Some(od), Some(f))
+                if !name.starts_with('/') && f == format!("{od}/{name}"))
+    });
+    let mut g = PROOFS.lock().unwrap();
+    let m = g.get_or_insert_with(HashMap::new);
+    let Some(d) = d else {
+        m.remove(&key);
+        return;
+    };
+    let found_in = found.and_then(|f| {
+        let p = Path::new(f);
+        let (dir, base) = (p.parent()?, p.file_name()?.to_str()?);
+        d.listed
+            .iter()
+            .position(|l| {
+                let l = Path::new(l);
+                // (the last component first: a TFM lookup's 60 directories)
+                l.file_name() == dir.file_name() && l.components().eq(dir.components())
+            })
+            .map(|i| (i, base.to_string()))
+    });
+    let mut tries: Vec<String> = d.tries.iter().map(|t| t.to_ascii_lowercase()).collect();
+    tries.sort();
+    tries.dedup();
+    let generation = GENERATION.load(Ordering::Relaxed);
+    // (the same lookup made again, with the same dependencies: kept)
+    if m.get(&key).is_some_and(|p| {
+        p.generation == generation
+            && p.output_directory.as_deref() == output_directory
+            && p.found.as_deref() == found
+            && p.found_in == found_in
+            && p.tries == tries
+            && p.listed == d.listed
+    }) {
+        return;
+    }
+    m.insert(
+        key,
+        Arc::new(Proof {
+            generation,
             output_directory: output_directory.map(str::to_string),
-            tries: {
-                let mut t: Vec<String> = d.tries.iter().map(|t| t.to_ascii_lowercase()).collect();
-                t.sort();
-                t.dedup();
-                t
-            },
+            tries,
             listed: d.listed.clone(),
             found: found.map(str::to_string),
             found_in,
-        }))
-    })();
-    let mut g = PROOFS.lock().unwrap();
-    let m = g.get_or_insert_with(HashMap::new);
-    match proof {
-        Some(p) => {
-            m.insert(key, p);
-        }
-        None => {
-            m.remove(&key);
-        }
-    }
+        }),
+    );
 }
 
 /// Checks lookups against their proofs, for one pass over a journal's or a
@@ -208,7 +212,7 @@ impl Verifier {
         Verifier {
             generation: GENERATION.load(Ordering::Relaxed),
             cwd: std::env::current_dir().ok(),
-            output_directory: system::run().output_directory,
+            output_directory: system::output_directory(),
             dirs: HashMap::new(),
             held: 0,
             made: 0,
@@ -240,27 +244,7 @@ impl Verifier {
             Some(c) if !Path::new(dir).is_absolute() => c.join(dir).to_string_lossy().into_owned(),
             _ => dir.to_string(),
         };
-        let sig = StatSig::of(dir);
-        let cached = sig.and_then(|s| {
-            let g = LISTINGS.lock().unwrap();
-            let (was, l) = g.as_ref()?.get(&key)?;
-            // (racy signatures equal nothing)
-            (*was == s).then(|| l.clone())
-        });
-        let listing = match cached {
-            Some(l) => l,
-            None => {
-                let l = list(dir);
-                if let Some(s) = sig {
-                    LISTINGS
-                        .lock()
-                        .unwrap()
-                        .get_or_insert_with(HashMap::new)
-                        .insert(key, (s, l.clone()));
-                }
-                l
-            }
-        };
+        let (sig, listing) = listed_now(&key, dir);
         self.dirs.insert(dir.to_string(), (sig, listing.clone()));
         (sig, listing)
     }
@@ -272,10 +256,7 @@ impl Verifier {
             .as_ref()?
             .get(&(l.name.clone(), l.format, l.must_exist))?
             .clone();
-        if p.generation != self.generation
-            || self.cwd.as_ref() != Some(&p.cwd)
-            || p.output_directory != self.output_directory
-        {
+        if p.generation != self.generation || p.output_directory != self.output_directory {
             return None;
         }
         // `lookup_again` tries the output directory first.
@@ -324,6 +305,47 @@ impl Verifier {
         }
         Some((p.found.clone(), deps))
     }
+}
+
+/// `dir` now: its signature, and its listing taken after the signature,
+/// or (the cache, under `key`) before it under the same signature, which is
+/// not racy (a racy signature equals nothing).
+fn listed_now(key: &str, dir: &str) -> (Option<StatSig>, Option<Listing>) {
+    let sig = StatSig::of(dir);
+    let cached = sig.and_then(|s| {
+        let g = LISTINGS.lock().unwrap();
+        let (was, l) = g.as_ref()?.get(key)?;
+        (*was == s).then(|| l.clone())
+    });
+    let listing = match cached {
+        Some(l) => l,
+        None => {
+            let l = list(dir);
+            if let Some(s) = sig {
+                LISTINGS
+                    .lock()
+                    .unwrap()
+                    .get_or_insert_with(HashMap::new)
+                    .insert(key.to_string(), (s, l.clone()));
+            }
+            l
+        }
+    };
+    (sig, listing)
+}
+
+/// `system::ReadLog::listing`: `dir`'s entries as an ASCII name kpathsea
+/// tries could match them ([`fold`]), sorted; an absolute directory's from
+/// the cache while its signature is the one it was listed under
+/// ([`listed_now`]: as a listing taken now). The caller signs `dir` before
+/// it asks (a change after the listing is a change).
+pub fn folded_listing(dir: &str) -> Option<Vec<String>> {
+    let l = if Path::new(dir).is_absolute() {
+        listed_now(dir, dir).1
+    } else {
+        list(dir)
+    };
+    l.map(|l| l.iter().map(|(f, _)| f.clone()).collect())
 }
 
 /// How many entries of `listing` fold to `lower`.
