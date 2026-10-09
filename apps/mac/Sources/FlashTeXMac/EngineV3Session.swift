@@ -263,6 +263,7 @@ final class EngineV3Session {
             parts.append(String(format: "keystroke to screen median %.0f ms over %d", ms.sorted()[ms.count / 2], ms.count))
         }
         if !environmentNote.isEmpty { parts.append(environmentNote) }
+        if let modeWarning { parts.append(modeWarning) }
         return parts.joined(separator: " · ")
     }
     @ObservationIgnored private var connection: DL3Connection?
@@ -414,15 +415,37 @@ final class EngineV3Session {
     /// manifest's `[project] mode`, the main file's `% !TEX program` line.
     /// `activeText`: the active document's newest text (an edit the model
     /// has not stored yet).
-    static func mode(_ model: ShellModel?, main: String, activeText: String? = nil) -> (mode: EngineV3Mode, source: String) {
+    static func mode(_ model: ShellModel?, main: String, activeText: String? = nil) -> EngineV3Mode.Resolution {
         let text = model.flatMap { m -> String? in
-            let path = m.documents.contains { $0.path == main } ? main : m.activePath
+            // the main file: the editor's newest text when it is open (and
+            // active), else its own as the model has it, else from the disk
+            // (a main file not open, say while a chapter is edited)
+            let path = main.isEmpty ? m.activePath : main
             if let activeText, path == m.activePath { return activeText }
-            return m.documents.first { $0.path == path }?.text
+            if let d = m.documents.first(where: { $0.path == path }) { return d.text }
+            return m.project.projectRoot.flatMap { Self.head(of: $0.appendingPathComponent(path)) }
         }
+        let snapshot = model?.manifest.snapshot
+        let warning = snapshot?.warnings.first { $0.key == "project.mode" }.map { "\($0.key): \($0.message)" }
         return EngineV3Mode.resolve(environment: ProcessInfo.processInfo.environment["FLASHTEX_MODE"],
-                                    manifest: model?.manifest.snapshot?.manifest.project.mode, mainText: text)
+                                    manifest: snapshot?.manifest.project.mode, manifestWarning: warning, mainText: text)
     }
+
+    /// The first 4 KB of a file, as text (the `% !TEX` lines are there).
+    nonisolated static func head(of url: URL) -> String? {
+        guard let h = try? FileHandle(forReadingFrom: url) else { return nil }
+        defer { try? h.close() }
+        return (try? h.read(upToCount: 4096)).flatMap { String(decoding: $0, as: UTF8.self) }
+    }
+
+    /// The mode a relaunch was decided for (`relaunchIfModeChanged`), which
+    /// the host it starts uses: the editor's text it was decided from may
+    /// not be the model's yet.
+    @ObservationIgnored private var pendingMode: EngineV3Mode.Resolution?
+
+    /// What could not be followed in choosing the mode (a `% !TEX program =
+    /// lualatex` line, a manifest value this version does not know).
+    private(set) var modeWarning: String?
 
     /// Relaunches the host when the document's mode no longer matches the
     /// running host's (a `% !TEX program` line or `[project] mode` changed,
@@ -431,8 +454,9 @@ final class EngineV3Session {
     func relaunchIfModeChanged(model: ShellModel, activeText: String? = nil) -> Bool {
         guard let host else { return false }
         let want = Self.mode(model, main: mainFile, activeText: activeText)
-        guard host.mode != want.mode else { return false }
+        guard host.mode != want.mode || host.format != want.format else { return false }
         log("relaunching the host in \(want.mode.rawValue) mode (\(want.source))")
+        pendingMode = want
         stopRunningCompile(statusNote: "restarting the engine in \(want.mode == .unicode ? "Unicode" : "Classic") mode", firstError: nil)
         stalledTexts = nil
         return true
@@ -442,7 +466,10 @@ final class EngineV3Session {
     var hostMode: EngineV3Mode? { host?.mode }
 
     private func launchHost() {
-        let mode = Self.mode(model, main: mainFile)
+        let mode = pendingMode ?? Self.mode(model, main: mainFile)
+        pendingMode = nil
+        if modeWarning != mode.warning { modeWarning = mode.warning }
+        if let w = mode.warning { log("mode: \(w)") }
         guard let exe = EngineV3.locateHost(mode: mode.mode) else {
             phase = .failed(mode.mode == .unicode
                 ? "flashtex-host-unicode not found. Build it (cd crates/flashtex-xetex && cargo build --release --bin flashtex-host-unicode) or set FLASHTEX_HOST_UNICODE / the \(EngineV3.hostPathKey).unicode default."
@@ -470,7 +497,7 @@ final class EngineV3Session {
         do {
             // A Live Share session (or a session copy) compiles in a host
             // launched confined; `compile` relaunches when that changes.
-            let h = try EngineV3HostProcess(executable: exe, mode: mode.mode, confineRoots: model.flatMap(Self.confineRoots)) { event in
+            let h = try EngineV3HostProcess(executable: exe, mode: mode.mode, format: mode.format, confineRoots: model.flatMap(Self.confineRoots)) { event in
                 EngineV3Session.onMain { ref.value?.hostEvent(event) }
             }
             host = h
@@ -926,9 +953,14 @@ final class EngineV3Session {
         let path = model.activePath
         // An edit that changes the mode (a `% !TEX program` line) goes to
         // `compile`, which relaunches the host, whatever the fast path sent.
-        if let activeText, let host, host.mode != Self.mode(model, main: mainFile, activeText: activeText).mode {
-            compile(model: model, reason: "mode", activeText: activeText)
-            return
+        // (Only an edit of the main file can change it here: no file is
+        // read on this path.)
+        if let activeText, let host, mainFile.isEmpty || path == mainFile {
+            let want = Self.mode(model, main: mainFile, activeText: activeText)
+            if host.mode != want.mode || host.format != want.format {
+                compile(model: model, reason: "mode", activeText: activeText)
+                return
+            }
         }
         if let activeText, fastPending.contains(path) {
             fastPending.remove(path)
@@ -1143,7 +1175,7 @@ final class EngineV3Session {
         var req = DL3CompileRequest(id: nextID, root: project.root.path, main: entry)
         nextID += 1
         req.outputDir = project.output.path
-        req.format = host?.mode.format ?? EngineV3Mode.classic.format
+        req.format = host?.format ?? EngineV3Mode.classic.format
         req.jobname = (entry as NSString).lastPathComponent.replacingOccurrences(of: ".tex", with: "")
         req.haveFonts = DL3ResourceCache.shared.heldFontKeys
         req.fontFormats = ["type3", "truetype", "opentype"] // DL3Renderer draws these (lane P3-FONTS-2)

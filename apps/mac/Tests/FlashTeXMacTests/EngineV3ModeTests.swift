@@ -11,12 +11,15 @@ final class EngineV3ModeTests: XCTestCase {
     override func tearDown() { env.restore() }
 
     func testMagicComments() {
-        XCTAssertEqual(EngineV3Mode.magicComment("% !TEX program = xelatex\n\\documentclass{article}"), .unicode)
-        XCTAssertEqual(EngineV3Mode.magicComment("%!TEX TS-program = XeLaTeX\r\n\\documentclass{article}"), .unicode)
-        XCTAssertEqual(EngineV3Mode.magicComment("% !TeX program=pdflatex\n"), .classic)
-        XCTAssertEqual(EngineV3Mode.magicComment("\n% a comment\n% !TEX program = xetex\n"), .unicode)
+        let u = EngineV3Mode.Program.known(.unicode, format: "xelatex")
+        XCTAssertEqual(EngineV3Mode.magicComment("% !TEX program = xelatex\n\\documentclass{article}"), u)
+        XCTAssertEqual(EngineV3Mode.magicComment("%!TEX TS-program = XeLaTeX\r\n\\documentclass{article}"), u)
+        XCTAssertEqual(EngineV3Mode.magicComment("\u{feff}% !TEX program = xelatex\n"), u, "after a byte-order mark")
+        XCTAssertEqual(EngineV3Mode.magicComment("% ! TeX program = xelatex\n"), u, "VS Code's spelling")
+        XCTAssertEqual(EngineV3Mode.magicComment("% !TeX program=pdflatex\n"), .known(.classic, format: "pdflatex"))
+        XCTAssertEqual(EngineV3Mode.magicComment("\n% a comment\n% !TEX program = xetex\n"), .known(.unicode, format: "xetex"), "plain XeTeX")
         XCTAssertNil(EngineV3Mode.magicComment("\\documentclass{article}\n% !TEX program = xelatex\n"), "only the leading comments")
-        XCTAssertNil(EngineV3Mode.magicComment("% !TEX program = lualatex\n"))
+        XCTAssertEqual(EngineV3Mode.magicComment("% !TEX program = lualatex\n"), .unsupported("lualatex"))
         XCTAssertNil(EngineV3Mode.magicComment("% !TEX root = main.tex\n"))
     }
 
@@ -28,7 +31,16 @@ final class EngineV3ModeTests: XCTestCase {
         XCTAssertEqual(EngineV3Mode.resolve(environment: "", manifest: nil, mainText: "\\documentclass{x}").source, "default")
         let native = EngineV3Mode.resolve(environment: nil, manifest: "flashtex", mainText: doc)
         XCTAssertEqual(native.mode, .classic)
-        XCTAssertTrue(native.source.contains("not available"), native.source)
+        XCTAssertTrue(native.warning?.contains("not available") == true, "\(native)")
+        // a manifest value this version does not know: Classic, said, and
+        // the line does not overrule it
+        let bad = EngineV3Mode.resolve(environment: nil, manifest: nil, manifestWarning: "project.mode: expected classic", mainText: doc)
+        XCTAssertEqual(bad.mode, .classic)
+        XCTAssertNotNil(bad.warning)
+        let lua = EngineV3Mode.resolve(environment: nil, manifest: nil, mainText: "% !TEX program = lualatex\n")
+        XCTAssertEqual(lua.mode, .classic)
+        XCTAssertTrue(lua.warning?.contains("LuaTeX isn't supported") == true, "\(lua)")
+        XCTAssertEqual(EngineV3Mode.resolve(environment: nil, manifest: nil, mainText: "% !TEX program = xetex\n").format, "xetex")
     }
 
     func testEachModeHasItsHostAndFormat() throws {

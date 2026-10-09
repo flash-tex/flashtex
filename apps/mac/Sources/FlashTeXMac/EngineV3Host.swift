@@ -172,8 +172,10 @@ final class EngineV3HostProcess: @unchecked Sendable {
 
     let executable: URL
     let socketPath: String
-    /// The mode this host typesets (its program and format).
+    /// The mode this host typesets (its program) and the format its
+    /// compiles ask for.
     let mode: EngineV3Mode
+    let format: String
     private let process = Process()
     private var buffer = Data()
     private let lock = NSLock()
@@ -181,9 +183,10 @@ final class EngineV3HostProcess: @unchecked Sendable {
     /// `confineRoots`: the host compiles text from a Live Share session and
     /// may read only inside these folders besides the job's own
     /// (`confinedEnvironment`); nil for an ordinary host.
-    init(executable: URL, mode: EngineV3Mode = .classic, confineRoots: [String]? = nil, onEvent: @escaping @Sendable (Event) -> Void) throws {
+    init(executable: URL, mode: EngineV3Mode = .classic, format: String? = nil, confineRoots: [String]? = nil, onEvent: @escaping @Sendable (Event) -> Void) throws {
         self.executable = executable
         self.mode = mode
+        self.format = format ?? mode.format
         self.confineRoots = confineRoots
         let dir = NSTemporaryDirectory()
         socketPath = (dir as NSString).appendingPathComponent("ftx-\(getpid())-\(UInt32.random(in: 0 ... .max)).sock")
@@ -193,10 +196,15 @@ final class EngineV3HostProcess: @unchecked Sendable {
         // --once: serve one connection, then exit. The app's connection closes
         // when the app quits or dies (the kernel closes the socket), so the
         // host never outlives it once connected.
-        process.arguments = ["--socket", socketPath, "--s0-cache", s0.path, "--once"]
-        // Checkpoint interval inside a page (engine default 0.02 s): the
-        // restart re-typesets up to that much before an edit. A/B knob.
-        if let t = ProcessInfo.processInfo.environment["FLASHTEX_V3_TIMED"], Double(t) != nil { process.arguments! += ["--timed", t] }
+        process.arguments = ["--socket", socketPath, "--once"]
+        // The resident pdfTeX host's S0 cache and checkpoint interval
+        // (engine default 0.02 s: the restart re-typesets up to that much
+        // before an edit; FLASHTEX_V3_TIMED, an A/B knob). The Unicode host
+        // compiles cold and takes neither.
+        if mode == .classic {
+            process.arguments! += ["--s0-cache", s0.path]
+            if let t = ProcessInfo.processInfo.environment["FLASHTEX_V3_TIMED"], Double(t) != nil { process.arguments! += ["--timed", t] }
+        }
         process.environment = confineRoots.map { Self.confinedEnvironment(Self.environment(host: executable), roots: $0) }
             ?? Self.environment(host: executable)
         let out = Pipe(), err = Pipe()
@@ -332,8 +340,19 @@ final class EngineV3HostProcess: @unchecked Sendable {
     var pid: Int32 { process.processIdentifier }
     var isRunning: Bool { process.isRunning }
 
-    func terminate() {
-        if process.isRunning { process.terminate() }
+    /// Ends the host: the caller has said BYE (the host leaves on its own,
+    /// its compile cancelled), and SIGTERM follows after `grace` should it
+    /// still run. The engine of a Unicode host ends with the host however
+    /// it ends (its lifeline, crates/flashtex-xetex/src/host/proc.rs).
+    func terminate(grace: TimeInterval = 1) {
+        let p = process
+        if p.isRunning {
+            if grace <= 0 {
+                p.terminate()
+            } else {
+                DispatchQueue.global().asyncAfter(deadline: .now() + grace) { if p.isRunning { p.terminate() } }
+            }
+        }
         unlink(socketPath) // the host removes it itself when it exits normally
     }
 
