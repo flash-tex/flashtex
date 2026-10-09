@@ -16,6 +16,7 @@ python3 tools/xetex-pdfparity/xdvmeasure.py             # xdvipdfmx's precision 
 ```
 
 Common options: `--tol` (bp, default 0.01), `--rel-tol` (em, default 0.005),
+`--width-tol` (glyph-space units, default 1),
 `--scale` (raster px per bp, default 2), `--no-visual`, `--smooth`,
 `--diff-dir`, `--examples N`, `--glyph-identity gid|outline`. `run.py
 --formats DIR` keeps the two `xelatex.fmt` files for later runs. Building a
@@ -94,9 +95,18 @@ xdvipdfmx (below) and does not gate.
   from the embedded program, rounded to 1/100 unit. `--glyph-identity
   outline` pairs glyphs by digest instead of id, so a writer that renumbers
   its subsets compares equal.
-* **Per font and glyph used**: subtype, CIDFont subtype and embedded program
-  kind (`font`); the advance width from `/W` or `/Widths` (`glyph-width`);
-  the ToUnicode text (`tounicode`); the outline digest (`glyph-outline`).
+* **Per font and glyph used**:
+  * the subtype and CIDFont subtype (`font`);
+  * the advance width from `/W` or `/Widths`, within `--width-tol` (1
+    glyph-space unit; xdvipdfmx writes integers, for example CMMI10 `a` as
+    528 against 528.59) (`glyph-width`);
+  * the ToUnicode text (`tounicode`);
+  * the outline digest (`glyph-outline`).
+
+  The embedded program's kind is only a **note**, outside the difference
+  total. PLAN §3.5 names a font by PostScript name, face and glyph id, so a
+  TFM font embedded as Type 1 `/FontFile`, where xdvipdfmx writes
+  `/FontFile3 /Type1C`, is not a parity difference.
 * **Rules**: a filled axis-aligned rectangle (`re f`, or TikZ's
   `m l l l h f`) and a butt-capped, undashed, axis-aligned stroked segment
   (xdvipdfmx's `q .3985 w x0 y m x1 y l S Q` for thin rules) both count as
@@ -115,8 +125,16 @@ xdvipdfmx (below) and does not gate.
   images are included.
 * **Forms** (included PDF pages): the CTM at `Do` times `/Matrix`, `/BBox`,
   `/Group`. Their content counts as the page's glyphs, paths and images.
-  **Shadings** (`sh`): the CTM and the shading (type, colour space, coords,
-  extend, a canonical digest of the function).
+  **Shadings** (`sh`): the CTM and the shading's whole dictionary.
+* **Shadings, patterns, functions, soft masks, a form's `/Group`, Separation
+  and DeviceN tint functions** are compared **structurally**, with numbers
+  as values within `--tol` (`0.0` equals `0`, `100.00128` equals
+  `100.001`). They use the canonical form with references resolved. Streams
+  that are text (a tiling pattern's cell, a form, a PostScript calculator
+  function) are compared as token lists, so whitespace, comments and number
+  formatting do not count; other streams (sampled functions, ICC profiles)
+  are compared by a digest of their data. A difference names the first
+  path that differs, for example `/Function/C0[0]: 1 vs 0.9`.
 * **Links**: rect (within `--tol`); action (`URI`, `GoTo` by name, also
   resolved to page/kind/coordinates, explicit destinations); border, `/BS`,
   `/C`, `/H` and `/F`. **Other annotations**: subtype, rect, and a canonical
@@ -188,7 +206,7 @@ concrete cases, and `--json` writes everything.
   * a named destination's x changed: `dest`;
   * the XDV check: xdvipdfmx's PDF pairs every glyph with the XDV and is off
     by less than 0.02 bp; a text object moved by 0.05 bp shows by that much.
-* **Unit tests** (`test_content.py`, 26 tests, OK):
+* **Unit tests** (`test_content.py`, 27 tests, OK):
   * the tokenizer: numbers, literal strings with escapes and nesting, hex,
     names with `#xx`, dictionaries, inline images;
   * matrices;
@@ -198,11 +216,26 @@ concrete cases, and `--json` writes everything.
   * a form with an image (nested CTMs) and an inline image;
   * ToUnicode;
   * the matching: rule equivalence, both tolerances, content order, moved,
-    swapped, missing/extra, path colour/geometry.
+    swapped, missing/extra, path colour/geometry;
+  * structural comparison: numbers as values, the first differing path,
+    pattern and function tokens.
 * **Outline digests are stable across subsets**: 1,164 distinct
   (font, glyph) pairs in the 14 reference PDFs, 133 of them in more than one
   PDF's subset, and none with two digests. Every glyph has a digest,
   including the Type 1 `FontFile`s of the PDFs l010 includes.
+
+## Visual floor
+
+0 differing pixels is the target only for a writer that places glyphs as
+xdvipdfmx does. FlashTeX's writer places them at TeX's exact positions (the
+XDV check, 0.001 bp), and xdvipdfmx's own glyphs are up to ±0.005 em away
+from those (below). At 2× a shift of a few thousandths of a bp moves a
+glyph's anti-aliased edge pixels, so those pixels differ while the glyphs
+are the same and correctly placed. The floor is therefore the per-case
+pixel count of a run of the writer whose structural report is clean.
+
+TODO (lane lead): the measured floor per case (pixels at 2×, from a
+candidate run with 0 structural differences), with its date and binary.
 
 ## Measurements: xdvipdfmx's precision (VERIFIED 2026-10-09)
 
@@ -307,10 +340,8 @@ rendered.
 * The XDV comes from the reference engine. A candidate whose typesetting
   differs (its own XDV, P-T1) is caught by tools/xetex-lockstep, not here.
 
-* A tiling pattern's colour, a shading's function, a form's `/Group` and a
-  non-link annotation are compared by canonical digest. An equivalent object
-  written differently, for example a pattern cell's content stream with
-  other whitespace, is reported as different.
+* Non-link annotations and sampled-function and ICC data are compared
+  exactly (by canonical value or digest), not within a tolerance.
 * Glyph order is compared only among paired glyphs. The painting order of
   paths, images and forms is not compared; the visual comparison catches
   visible order changes.

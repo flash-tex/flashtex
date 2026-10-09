@@ -47,7 +47,7 @@ class FakeDoc:
         x = self.get(x)
         return x if isinstance(x, Stream) else None
 
-    def canon(self, x, skip=(), depth=0, seen=None):
+    def canon(self, x, skip=(), depth=0, seen=None, text_streams=False):
         x = self.get(x)
         if isinstance(x, Stream):
             return {"dict": self.canon(x.dict), "data": x.data.hex()}
@@ -188,7 +188,7 @@ class Paths(unittest.TestCase):
         objs = {"5 0 R": ["/Separation", "/Spot", "/DeviceCMYK", {"/FunctionType": 2}]}
         res = {"/ColorSpace": {"/CS0": "5 0 R"}}
         p = run(b"/CS0 cs 0.3 scn 0 0 1 1 re f 0.1 0.2 0.3 0.4 k 0 0 1 1 re f 0.5 g 0 0 1 1 re f", objs, res)
-        self.assertTrue(p.paths[0]["fill"][0].startswith("Separation(Spot,DeviceCMYK,"))
+        self.assertEqual(p.paths[0]["fill"][0][:3], ("Separation", "Spot", "DeviceCMYK"))
         self.assertEqual(p.paths[0]["fill"][1], (0.3,))
         self.assertEqual(p.paths[1]["fill"], ("DeviceCMYK", (0.1, 0.2, 0.3, 0.4)))
         self.assertEqual(p.paths[2]["fill"], ("DeviceGray", (0.5,)))
@@ -290,6 +290,21 @@ class Matching(unittest.TestCase):
         self.assertEqual(rep.kinds["glyph-id"]["count"], 1)
         self.assertEqual(rep.kinds["glyph-missing"]["count"], 1)
         self.assertEqual(rep.kinds["glyph-extra"]["count"], 1)
+
+    def test_structs_compare_numbers_as_values(self):
+        from pdfdoc import Struct, ps_tokens
+        Struct.tol = 0.01
+        a = Struct({"/Coords": [0.0, 0, 0, 100.00128], "/Function": {"/C0": [1, 0, 0], "/N": 1}})
+        b = Struct({"/Coords": [0, 0, 0, 100.001], "/Function": {"/C0": [1.0, 0.0, 0.0], "/N": 1.0}})
+        c = Struct({"/Coords": [0, 0, 0, 100.001], "/Function": {"/C0": [0.9, 0.0, 0.0], "/N": 1.0}})
+        self.assertEqual(a, b)
+        self.assertEqual(hash(a), hash(b))
+        self.assertNotEqual(a, c)
+        self.assertEqual(a.diff(c), "/Function/C0[0]: 1 vs 0.9")
+        self.assertEqual({("Pattern", a): 1}.get(("Pattern", b)), 1)
+        # Pattern cells and calculator functions: tokens, numbers as values.
+        self.assertEqual(ps_tokens(b"q 0.50 0 0 1.0 re f % x\n{ 2 exch -.5 mul }"),
+                         ["q", 0.5, 0, 0, 1.0, "re", "f", "{", 2, "exch", -0.5, "mul", "}"])
 
     def test_colour_and_path_geometry(self):
         a = run(b"1 0 0 RG 0 0 m 10 5 l 20 0 l S").paths

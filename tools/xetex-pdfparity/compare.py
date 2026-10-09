@@ -47,15 +47,17 @@ sys.path.insert(0, HERE)
 
 from content import scale_of  # noqa: E402
 from model import extract  # noqa: E402
+from pdfdoc import Struct, close  # noqa: E402
 
 INF = float("inf")
 
 
 class Options:
     def __init__(self, tol=0.01, rel_tol=0.005, scale=2.0, visual=True, diff_dir=None,
-                 examples=5, glyph_identity="gid", smooth=False):
+                 examples=5, glyph_identity="gid", smooth=False, width_tol=1.0):
         self.tol, self.rel_tol, self.scale, self.visual = tol, rel_tol, scale, visual
         self.diff_dir, self.examples, self.glyph_identity, self.smooth = diff_dir, examples, glyph_identity, smooth
+        self.width_tol = width_tol
 
 
 class Report:
@@ -63,6 +65,7 @@ class Report:
         self.kinds = defaultdict(lambda: {"count": 0, "examples": []})
         self.examples = examples
         self.stats = {}
+        self.notes = []  # informational: not differences
 
     def add(self, kind, msg):
         k = self.kinds[kind]
@@ -85,6 +88,7 @@ class Report:
         return {"structural_differences": self.structural,
                 "visual_pixels": self.visual,
                 "kinds": {k: dict(v) for k, v in sorted(self.kinds.items())},
+                "notes": self.notes,
                 "stats": self.stats}
 
     def text(self, indent=""):
@@ -93,6 +97,8 @@ class Report:
             lines.append("%s%s: %d" % (indent, k, v["count"]))
             for e in v["examples"]:
                 lines.append("%s    %s" % (indent, e))
+        for n in self.notes:
+            lines.append("%snote (not a difference): %s" % (indent, n))
         return "\n".join(lines)
 
 
@@ -241,8 +247,12 @@ def compare_glyphs(pno, A, B, opt, rep, stats):
     stats["glyphs_matched"] = stats.get("glyphs_matched", 0) + len(pairs)
 
 
-def compare_fonts(ma, mb, rep):
-    """Per font: subtype and program; per glyph used: width, ToUnicode, outline."""
+def compare_fonts(ma, mb, opt, rep):
+    """Per font: subtype (a difference) and embedded program kind (a note:
+    PLAN §3.5 names a font by PostScript name, face and glyph id, so a TFM
+    font embedded as Type 1 /FontFile rather than xdvipdfmx's /FontFile3
+    /Type1C is not a parity difference); per glyph used: width (within
+    --width-tol: xdvipdfmx writes integers), ToUnicode, outline."""
     def collect(m):
         fonts = {}
         glyphs = {}
@@ -257,13 +267,19 @@ def compare_fonts(ma, mb, rep):
     fa, ga = collect(ma)
     fb, gb = collect(mb)
     for n in sorted(set(fa) & set(fb)):
-        if fa[n] != fb[n]:
-            rep.add("font", "%s: %s vs %s" % (n, sorted(fa[n]), sorted(fb[n])))
+        ta = {(d["subtype"], d["cid_subtype"]) for d in map(dict, fa[n])}
+        tb = {(d["subtype"], d["cid_subtype"]) for d in map(dict, fb[n])}
+        if ta != tb:
+            rep.add("font", "%s: %s vs %s" % (n, sorted(ta, key=str), sorted(tb, key=str)))
+        pa = sorted({dict(d)["program"] for d in fa[n]})
+        pb = sorted({dict(d)["program"] for d in fb[n]})
+        if pa != pb:
+            rep.notes.append("font program %s: %s vs %s" % (n, "/".join(pa), "/".join(pb)))
     for k in sorted(set(ga) & set(gb)):
         a, b = sorted(ga[k], key=str), sorted(gb[k], key=str)
-        wa, wb = {x[0] for x in a}, {x[0] for x in b}
-        if wa != wb and not (len(wa) == len(wb) == 1 and abs(float(next(iter(wa))) - float(next(iter(wb)))) <= 1e-3):
-            rep.add("glyph-width", "%s %s: width %s vs %s" % (k[0], k[1], sorted(wa), sorted(wb)))
+        wa, wb = sorted({float(x[0]) for x in a}), sorted({float(x[0]) for x in b})
+        if len(wa) != len(wb) or any(abs(x - y) > opt.width_tol + 1e-9 for x, y in zip(wa, wb)):
+            rep.add("glyph-width", "%s %s: width %s vs %s" % (k[0], k[1], wa, wb))
         ua, ub = {x[1] for x in a}, {x[1] for x in b}
         if ua != ub:
             rep.add("tounicode", "%s %s: %r vs %r" % (k[0], k[1], sorted(ua, key=str), sorted(ub, key=str)))
@@ -447,7 +463,8 @@ def compare_placed(pno, kind, A, B, key, placement, describe, opt, rep):
     apairs, ra, rb = match(A, B, lambda x: 0, lambda x: placement(x)[4], d, lambda x: opt.tol, ra, rb)
     for i, j, _ in apairs:
         ka, kb = key(A[i]), key(B[j])
-        diffs = ["%s %s vs %s" % (n, x, y) for (n, x), (_, y) in zip(ka, kb) if x != y]
+        diffs = [("%s %s" % (n, x.diff(y))) if isinstance(x, Struct) and isinstance(y, Struct)
+                 else "%s %s vs %s" % (n, x, y) for (n, x), (_, y) in zip(ka, kb) if x != y]
         rep.add(kind + "-attributes", "%s: %s" % (describe(A[i]), "; ".join(diffs)))
     gpairs, ra, rb = match(A, B, key, lambda x: 0, d, lambda x: INF, ra, rb)
     for i, j, dd in gpairs:
@@ -466,7 +483,7 @@ def image_key(x):
 
 
 def form_key(x):
-    return (("bbox", tuple(round(v, 3) for v in x["bbox"])), ("group", json.dumps(x["group"], sort_keys=True)))
+    return (("bbox", tuple(round(v, 3) for v in x["bbox"])), ("group", x["group"]))
 
 
 def form_place(x):
@@ -475,22 +492,12 @@ def form_place(x):
 
 
 def shading_key(x):
-    return (("shading", json.dumps(x["shading"], sort_keys=True)), ("alpha", x["alpha"]))
+    return (("shading", x["shading"]["struct"]), ("alpha", x["alpha"]))
 
 
 # ---------------------------------------------------------------------------
 # Document level
 # ---------------------------------------------------------------------------
-def close(a, b, tol):
-    if isinstance(a, (int, float)) and isinstance(b, (int, float)) and not isinstance(a, bool):
-        return abs(a - b) <= tol + 1e-9
-    if isinstance(a, list) and isinstance(b, list):
-        return len(a) == len(b) and all(close(x, y, tol) for x, y in zip(a, b))
-    if isinstance(a, dict) and isinstance(b, dict):
-        return a.keys() == b.keys() and all(close(a[k], b[k], tol) for k in a)
-    return a == b
-
-
 def js(x):
     return json.dumps(x, sort_keys=True, ensure_ascii=False)
 
@@ -560,7 +567,7 @@ def compare_docs(ma, mb, opt, rep):
             for op, k in c.unknown.items():
                 u = stats.setdefault("unknown_operators_" + who, {})
                 u[op] = u.get(op, 0) + k
-    compare_fonts(ma, mb, rep)
+    compare_fonts(ma, mb, opt, rep)
     # Named destinations.
     for k in sorted(set(ma.dests) - set(mb.dests)):
         rep.add("dest-missing", "%s -> %s" % (k, js(ma.dests[k])))
@@ -591,6 +598,7 @@ def compare_docs(ma, mb, opt, rep):
 def compare(ref, cand, opt=None, tag=None):
     """Compare two PDF files; returns a Report."""
     opt = opt or Options()
+    Struct.tol = opt.tol
     rep = Report(opt.examples)
     ma, mb = extract(ref), extract(cand)
     rep.models = (ma, mb)
@@ -620,12 +628,16 @@ def add_options(ap):
     ap.add_argument("--no-visual", action="store_true")
     ap.add_argument("--diff-dir", help="write diff PNGs of differing pages here")
     ap.add_argument("--examples", type=int, default=5, help="examples shown per kind")
+    ap.add_argument("--width-tol", type=float, default=1.0,
+                    help="glyph widths (/W, /Widths) tolerance in glyph-space units (default 1: "
+                         "xdvipdfmx writes integers)")
     ap.add_argument("--glyph-identity", choices=("gid", "outline"), default="gid",
                     help="match glyphs by glyph id (default) or by outline digest")
 
 
 def options_from(a):
-    return Options(a.tol, a.rel_tol, a.scale, not a.no_visual, a.diff_dir, a.examples, a.glyph_identity, a.smooth)
+    return Options(a.tol, a.rel_tol, a.scale, not a.no_visual, a.diff_dir, a.examples, a.glyph_identity, a.smooth,
+                   a.width_tol)
 
 
 def summary_line(rep):

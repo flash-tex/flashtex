@@ -179,10 +179,13 @@ class Doc:
         return out
 
     # -- canonical form ------------------------------------------------------
-    def canon(self, x, skip=("/Parent", "/P", "/Length"), depth=0, seen=None):
+    def canon(self, x, skip=("/Parent", "/P", "/Length"), depth=0, seen=None, text_streams=False):
         """x with references resolved, pages as "page#i", streams as their
         dictionary plus a digest of their (decoded) data: two PDFs that say
-        the same thing in different objects get the same canonical value."""
+        the same thing in different objects get the same canonical value.
+        With text_streams, a content stream (a pattern's cell, a form) or a
+        PostScript calculator function is its token list instead, numbers
+        as numbers, so it can be compared with a tolerance."""
         if seen is None:
             seen = set()
         if depth > 40:
@@ -195,13 +198,16 @@ class Doc:
             seen = seen | {x}
             x = self.obj(x)
         if isinstance(x, Stream):
-            return {"dict": self.canon(x.dict, skip, depth + 1, seen),
-                    "data": digest(x.data)}
+            d = x.dict
+            textual = text_streams and ("/PatternType" in d or d.get("/FunctionType") == 4
+                                        or d.get("/Subtype") == "/Form")
+            return {"dict": self.canon(d, skip, depth + 1, seen, text_streams),
+                    "data": ps_tokens(x.data) if textual else digest(x.data)}
         if isinstance(x, dict):
-            return {k: self.canon(v, skip, depth + 1, seen)
+            return {k: self.canon(v, skip, depth + 1, seen, text_streams)
                     for k, v in sorted(x.items()) if k not in skip}
         if isinstance(x, list):
-            return [self.canon(v, skip, depth + 1, seen) for v in x]
+            return [self.canon(v, skip, depth + 1, seen, text_streams) for v in x]
         if isinstance(x, float):
             return round(x, 6)
         return x
@@ -213,3 +219,102 @@ def digest(data):
 
 def canon_digest(doc, x, **kw):
     return digest(json.dumps(doc.canon(x, **kw), sort_keys=True).encode())
+
+
+_PS = re.compile(rb"[+-]?(?:\d+\.?\d*|\.\d+)(?![^\s()<>\[\]{}/%])|/[^\s()<>\[\]{}/%]*|<<|>>"
+                 rb"|<[0-9A-Fa-f\s]*>|\((?:[^()\\]|\\.)*\)|[\[\]{}]|[^\s()<>\[\]{}/%]+")
+
+
+def ps_tokens(data):
+    """A content stream or PostScript function as tokens: numbers as numbers
+    (0.0 == 0), everything else as its text; comments dropped."""
+    data = re.sub(rb"%[^\r\n]*", b"", data)
+    out = []
+    for m in _PS.finditer(data):
+        t = m.group()
+        if t[:1].isdigit() or t[:1] in b"+-." and len(t) > 1 and t[1:2] not in b"-+":
+            try:
+                out.append(round(float(t), 6))
+                continue
+            except ValueError:
+                pass
+        out.append(t.decode("latin-1"))
+    return out
+
+
+def close(a, b, tol):
+    """a and b equal, numbers within tol (booleans and strings exactly)."""
+    num = (int, float)
+    if isinstance(a, num) and isinstance(b, num) and not isinstance(a, bool) and not isinstance(b, bool):
+        return abs(a - b) <= tol + 1e-9
+    if isinstance(a, (list, tuple)) and isinstance(b, (list, tuple)):
+        return len(a) == len(b) and all(close(x, y, tol) for x, y in zip(a, b))
+    if isinstance(a, dict) and isinstance(b, dict):
+        return a.keys() == b.keys() and all(close(a[k], b[k], tol) for k in a)
+    return a == b
+
+
+def first_diff(a, b, tol, path=""):
+    """Where a and b first differ (close's rules), as 'path: a vs b'."""
+    num = (int, float)
+    if isinstance(a, num) and isinstance(b, num) and not isinstance(a, bool) and not isinstance(b, bool):
+        return None if abs(a - b) <= tol + 1e-9 else "%s: %r vs %r" % (path or ".", a, b)
+    if isinstance(a, (list, tuple)) and isinstance(b, (list, tuple)):
+        for i, (x, y) in enumerate(zip(a, b)):
+            d = first_diff(x, y, tol, "%s[%d]" % (path, i))
+            if d:
+                return d
+        return None if len(a) == len(b) else "%s: %d items vs %d" % (path or ".", len(a), len(b))
+    if isinstance(a, dict) and isinstance(b, dict):
+        for k in sorted(set(a) | set(b)):
+            if k not in a or k not in b:
+                return "%s%s: %s vs %s" % (path, k, "-" if k not in a else "present",
+                                           "-" if k not in b else "present")
+            d = first_diff(a[k], b[k], tol, path + k)
+            if d:
+                return d
+        return None
+    return None if a == b else "%s: %s vs %s" % (path or ".", str(a)[:60], str(b)[:60])
+
+
+def _skeleton(v):
+    if isinstance(v, bool) or v is None or isinstance(v, str):
+        return v
+    if isinstance(v, (int, float)):
+        return "#"
+    if isinstance(v, (list, tuple)):
+        return [_skeleton(x) for x in v]
+    if isinstance(v, dict):
+        return {k: _skeleton(x) for k, x in v.items()}
+    return str(v)
+
+
+class Struct:
+    """A canonical object (Doc.canon with text_streams) that equals another
+    when close() says so, numbers within Struct.tol (compare.py sets it from
+    --tol). Hashed by its shape without the numbers, so it can be a key."""
+    tol = 0.01
+    __slots__ = ("v", "_h")
+
+    def __init__(self, v):
+        self.v = v
+        self._h = hash(json.dumps(_skeleton(v), sort_keys=True, default=str))
+
+    def __hash__(self):
+        return self._h
+
+    def __eq__(self, other):
+        return isinstance(other, Struct) and self._h == other._h and close(self.v, other.v, Struct.tol)
+
+    def __ne__(self, other):
+        return not self.__eq__(other)
+
+    def __repr__(self):
+        return "{%s}" % digest(json.dumps(self.v, sort_keys=True, default=str).encode())[:8]
+
+    def diff(self, other):
+        return first_diff(self.v, other.v, Struct.tol)
+
+
+def struct(doc, x):
+    return Struct(doc.canon(x, text_streams=True))

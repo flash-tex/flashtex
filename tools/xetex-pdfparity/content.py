@@ -21,7 +21,7 @@ named space resolved through the resources to a canonical description, or
 import math
 import re
 
-from pdfdoc import Stream, canon_digest, digest, name
+from pdfdoc import Stream, canon_digest, digest, name, struct
 
 WS = b"\x00\t\n\x0c\r "
 _TOKEN = re.compile(rb"""
@@ -366,14 +366,14 @@ class Interp:
             n = doc.get(s.get("/N")) if s else 0
             return "ICCBased(%s,%s)" % (n, digest(s.data) if s else "?"), n or 0
         if fam in ("CalRGB", "CalGray", "Lab"):
-            return "%s(%s)" % (fam, canon_digest(doc, obj[1])), {"CalRGB": 3, "CalGray": 1, "Lab": 3}[fam]
+            return (fam, struct(doc, obj[1])), {"CalRGB": 3, "CalGray": 1, "Lab": 3}[fam]
         if fam == "Separation":
             alt = self.cs_desc(obj[2])[0]
-            return "Separation(%s,%s,%s)" % (name(doc.get(obj[1])), alt, canon_digest(doc, obj[3])), 1
+            return ("Separation", name(doc.get(obj[1])), alt, struct(doc, obj[3])), 1
         if fam == "DeviceN":
             names = [name(doc.get(x)) for x in doc.get(obj[1])]
             alt = self.cs_desc(obj[2])[0]
-            return "DeviceN(%s,%s,%s)" % (",".join(names), alt, canon_digest(doc, obj[3])), len(names)
+            return ("DeviceN", tuple(names), alt, struct(doc, obj[3])), len(names)
         if fam == "Indexed":
             base = self.cs_desc(obj[1])[0]
             lk = doc.get(obj[3])
@@ -473,7 +473,7 @@ class Interp:
                     sp = g.fill_cs if op.islower() else g.stroke_cs
                     if ops and isinstance(ops[-1], Name):
                         ref, pat = self._res(res, "Pattern", str(ops[-1]))
-                        col = ("Pattern", (canon_digest(doc, ref),) + tuple(_r(x) for x in ops[:-1]))
+                        col = ("Pattern", (struct(doc, ref),) + tuple(_r(x) for x in ops[:-1]))
                     else:
                         col = (sp, tuple(_r(x) for x in ops))
                     if op.islower():
@@ -565,7 +565,7 @@ class Interp:
             elif k == "/BM":
                 g.blend = name(v) if name(v) else str(v)
             elif k == "/SMask":
-                g.smask = None if name(v) == "None" else canon_digest(doc, d.get(k))
+                g.smask = None if name(v) == "None" else struct(doc, d.get(k))
 
     def _shading_desc(self, ref):
         doc = self.doc
@@ -573,14 +573,9 @@ class Interp:
         d = sh.dict if isinstance(sh, Stream) else sh
         if not isinstance(d, dict):
             return "missing"
-        t = doc.get(d.get("/ShadingType"))
-        cs = self.cs_desc(d.get("/ColorSpace"))[0]
-        coords = doc.get(d.get("/Coords"))
-        coords = [_r(doc.get(x), 3) for x in coords] if isinstance(coords, list) else None
-        return {"type": t, "cs": cs, "coords": coords,
-                "extend": doc.canon(d.get("/Extend")),
-                "function": canon_digest(doc, d.get("/Function")),
-                "all": canon_digest(doc, ref, skip=("/Length",))}
+        # The whole dictionary (function, coords, extend, colour space, ...)
+        # with numbers as numbers: compared within --tol.
+        return {"type": doc.get(d.get("/ShadingType")), "struct": struct(doc, ref)}
 
     def _path(self, out, g, path, paint, clip, where):
         segs = []
@@ -676,7 +671,7 @@ class Interp:
             bbox = [float(doc.get(v)) for v in (doc.get(x.get("/BBox")) or [])]
             fid = len(out.forms)
             out.forms.append({"ctm": g.ctm, "matrix": matrix, "bbox": bbox,
-                              "group": doc.canon(x.get("/Group")), "where": where,
+                              "group": struct(doc, x.get("/Group")), "where": where,
                               "id": "%s/form%d" % (where, fid)})
             g2 = g.copy()
             g2.ctm = mul(matrix, g.ctm)
