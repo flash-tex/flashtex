@@ -1123,12 +1123,14 @@ pub struct FancyField {
 }
 
 /// fancyhdr's running head and foot (compiler `parser::FancyHdr`): the
-/// left, centre and right fields of each (`None`: empty) and the rule
-/// widths.
+/// left, centre and right fields of each (`None`: empty), on odd pages
+/// and on even pages of a `twoside` document, and the rule widths.
 #[derive(Debug, Clone, PartialEq)]
 pub struct FancyChrome {
     pub head: [Option<FancyField>; 3],
     pub foot: [Option<FancyField>; 3],
+    pub even_head: [Option<FancyField>; 3],
+    pub even_foot: [Option<FancyField>; 3],
     pub headrule_pt: f64,
     pub footrule_pt: f64,
 }
@@ -2286,6 +2288,8 @@ pub fn adapt_cached(
         FancyChrome {
             head: [fancy_field(&f.head[0]), fancy_field(&f.head[1]), fancy_field(&f.head[2])],
             foot: [fancy_field(&f.foot[0]), fancy_field(&f.foot[1]), fancy_field(&f.foot[2])],
+            even_head: [fancy_field(&f.even_head[0]), fancy_field(&f.even_head[1]), fancy_field(&f.even_head[2])],
+            even_foot: [fancy_field(&f.even_foot[0]), fancy_field(&f.even_foot[1]), fancy_field(&f.even_foot[2])],
             headrule_pt: f.headrule_pt,
             footrule_pt: f.footrule_pt,
         }

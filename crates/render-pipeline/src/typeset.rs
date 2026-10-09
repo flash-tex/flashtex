@@ -13975,7 +13975,11 @@ fn page_chrome(ctx: &mut Context, frames: &[&flashtex_class_geometry::ResolvedDo
                 // `\leftmark` is `\botmark`'s left half, `\rightmark`
                 // `\firstmark`'s right half, as the class's own head reads them.
                 let marks = FancyPageValues { page: &page_no, page_number: number, left: &bot.0, right: &first.1, counters: &the_counters };
-                fancy_page_chrome(ctx, fields, frame, width, dx, &marks, blocks, &mut pages.pages[pi], &mut line_dx[pi]);
+                // `\@oddhead`/`\@evenhead`: fancyhdr's `\ifodd\c@page`
+                // switch, which only a `twoside` document reaches (#1123).
+                let even = g.flags.twoside && number % 2 == 0;
+                let (head, foot) = if even { (&fields.even_head, &fields.even_foot) } else { (&fields.head, &fields.foot) };
+                fancy_page_chrome(ctx, fields, head, foot, frame, width, dx, &marks, blocks, &mut pages.pages[pi], &mut line_dx[pi]);
             }
             top = bot;
             continue;
@@ -14036,6 +14040,8 @@ fn page_chrome(ctx: &mut Context, frames: &[&flashtex_class_geometry::ResolvedDo
 fn fancy_page_chrome(
     ctx: &mut Context,
     fields: &adapter::FancyChrome,
+    head: &[Option<adapter::FancyField>; 3],
+    foot: &[Option<adapter::FancyField>; 3],
     frame: &flashtex_class_geometry::PageFrame,
     width: f64,
     dx: f64,
@@ -14050,10 +14056,10 @@ fn fancy_page_chrome(
     let mut head_lines = Vec::new();
     let head_bottom = frame_pt(frame.head_baseline);
     let mut wrapped = Vec::new();
-    let line = ctx.fancy_line(&fields.head, page_no, width, &mut wrapped);
+    let line = ctx.fancy_line(head, page_no, width, &mut wrapped);
     let pieces: Vec<_> = wrapped
         .iter()
-        .filter_map(|&k| fields.head[k].as_ref().and_then(|f| ctx.fancy_wrapped(f, k, page_no, width)))
+        .filter_map(|&k| head[k].as_ref().and_then(|f| ctx.fancy_wrapped(f, k, page_no, width)))
         .collect();
     // `[b]` parboxes side by side: their last baselines line up, the
     // hbox's depth (the deepest last line) above the rule. `\f@nch@vbox`
@@ -14115,10 +14121,10 @@ fn fancy_page_chrome(
     // Foot: rule then text, after the body.
     let foot_baseline = frame_pt(frame.foot_baseline);
     let mut wrapped = Vec::new();
-    let line = ctx.fancy_line(&fields.foot, page_no, width, &mut wrapped);
+    let line = ctx.fancy_line(foot, page_no, width, &mut wrapped);
     let pieces: Vec<_> = wrapped
         .iter()
-        .filter_map(|&k| fields.foot[k].as_ref().and_then(|f| ctx.fancy_wrapped(f, k, page_no, width)))
+        .filter_map(|&k| foot[k].as_ref().and_then(|f| ctx.fancy_wrapped(f, k, page_no, width)))
         .collect();
     if line.is_some() || !pieces.is_empty() {
         // `[t]` parboxes: first baselines line up at the class's foot
