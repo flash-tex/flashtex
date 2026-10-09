@@ -1145,6 +1145,11 @@ impl Engine {
                         "restart_preamble".to_string(),
                         Json::Bool(rep.restart_preamble),
                     ),
+                    // READ-REVALIDATE: a later restart point tried (`crate::revalidate`)
+                    (
+                        "revalidated".to_string(),
+                        rep.revalidated.map(Json::Bool).unwrap_or(Json::Null),
+                    ),
                     (
                         "restart_next_gap".to_string(),
                         rep.restart_next_gap.map(Json::Int).unwrap_or(Json::Null),

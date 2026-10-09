@@ -74,6 +74,8 @@ pub mod profile;
 pub mod readset;
 pub mod resolver;
 #[cfg(not(feature = "tex82"))]
+pub mod revalidate;
+#[cfg(not(feature = "tex82"))]
 pub mod statediff;
 pub mod system;
 #[cfg(not(feature = "tex82"))]
