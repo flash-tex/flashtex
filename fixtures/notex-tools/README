@@ -1,0 +1,14 @@
+A bibliography and an index, compiled by the engine host with no TeX Live
+(scripts/notex-host-check.sh, notex-gate.yml): with external tools allowed the
+host runs its own bibtex and makeindex (lane RUST-TOOLS), and their outputs
+must equal expected/, which TeX Live 2026's bibtex and makeindex made from the
+same files as latexmk runs them (`pdflatex main`, `bibtex main`,
+`makeindex -o main.ind main.idx`).
+
+plain.bst is TeX Live 2026's, unmodified (its terms allow unmodified copies).
+It is here because the published bundle (texbundle-tl2026-1) does not carry
+TeX Live's `bibtex` package, which holds the standard styles plain, alpha,
+abbrv and unsrt: the bundle packs the packages that compiled documents read,
+and bibtex's reads were never recorded. Until a bundle carries it, a project
+in bundle mode needs its .bst beside it, or a style from a package the bundle
+has (natbib's, amscls's, ...).

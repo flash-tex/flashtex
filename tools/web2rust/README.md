@@ -191,6 +191,29 @@ The tangle stage needed nothing new: `web2rust --pool --emit-pascal` on
 and a byte-identical pool (1795 strings, checksum `400476366`), checked
 2026-09-29 with `tools/pascal_tokens.py` as for tex.web below.
 
+## What bibtex.web needs
+
+`third_party/bibtex/bibtex.web` (BibTeX 0.99e, the port in `crates/bibtex`,
+lane RUST-TOOLS) is translated with TeX Live's own `bibtex.ch` unchanged and
+then `crates/bibtex/changes/flashtex.ch`, which restates `bibtex.ch`'s C (what
+web2c's `convert`, `cvtbib.sed` and `fixwrites` do with it) as Pascal and
+`external` routines. Two things are new in the translator, and neither changes
+the pdfTeX or XeTeX translations (both drift tests pass):
+
+- **`--translate NAME`**: a routine whose name is one the engines write by
+  hand (`input_ln`, `a_open_in`, ...) is translated anyway. BibTeX's
+  `input_ln` is its own Pascal.
+- **`const_cstring`**, web2c's type of a C string literal passed to C, is a
+  Rust `&'static str` (BibTeX's `pds_type`, the pre-defined strings).
+
+The runtime the translation uses (`crate::arena`, `crate::system`) is the
+crate's own: no checkpoints, so each array global is a growable vector, and
+the `var` parameters of a pointer type (`var buf: buf_type`) take the array's
+`Vec`. BibTeX's nonlocal `goto`s (`close_up_shop` from anywhere, `bst_done`
+from inside the style-file parser) are cvtbib.sed's `longjmp`s; the change
+file turns them into calls of `external` routines that unwind to a catching
+wrapper. Its drift test is the third test of `tests/drift.rs`.
+
 ## Change files against TANGLE
 
 `tests/changefile/` holds a small WEB program and a change file that exercise

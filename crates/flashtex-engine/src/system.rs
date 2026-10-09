@@ -2282,19 +2282,24 @@ pub fn runsystem(cmd: &[u8]) -> i32 {
 }
 
 /// A `\write18` command the engine runs itself instead of through the
-/// shell: makeindex (`crate::makeindex`), unless `FLASHTEX_MAKEINDEX=external`.
-/// Its exit status, as the shell's would be; `None` to use the shell.
-#[cfg(feature = "makeindex")]
+/// shell: makeindex (`crate::makeindex`, unless
+/// `FLASHTEX_MAKEINDEX=external`) and bibtex (`crate::bibtex`, unless
+/// `FLASHTEX_BIBTEX=external`). Its exit status, as the shell's would be;
+/// `None` to use the shell.
+#[allow(unused_variables)]
 fn in_process_tool(cmd: &[u8], restricted: bool) -> Option<i32> {
-    if !crate::makeindex::in_process() {
-        return None;
+    #[cfg(feature = "makeindex")]
+    if crate::makeindex::in_process() {
+        if let Some(args) = crate::makeindex::command_args(cmd, restricted) {
+            return Some(crate::makeindex::run_in_process(&args));
+        }
     }
-    let args = crate::makeindex::command_args(cmd, restricted)?;
-    Some(crate::makeindex::run_in_process(&args))
-}
-
-#[cfg(not(feature = "makeindex"))]
-fn in_process_tool(_cmd: &[u8], _restricted: bool) -> Option<i32> {
+    #[cfg(feature = "bibtex")]
+    if crate::bibtex::in_process() {
+        if let Some(args) = crate::bibtex::command_args(cmd, restricted) {
+            return Some(crate::bibtex::run_in_process(&args));
+        }
+    }
     None
 }
 
