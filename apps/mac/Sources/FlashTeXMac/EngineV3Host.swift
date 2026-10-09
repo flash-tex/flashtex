@@ -43,26 +43,33 @@ enum EngineV3 {
         defaults.removePersistentDomain(forName: testDefaultsSuite)
     }
 
-    /// Finds `flashtex-host`: `FLASHTEX_HOST`, the `FlashTeX.EngineV3.hostPath`
-    /// default, the app bundle's helper (`Contents/Helpers/flashtex-host`, or
-    /// beside the app executable), then a repository build
+    /// Finds the mode's host (EngineV3Mode.swift), `flashtex-host` for
+    /// Classic: `FLASHTEX_HOST`, the `FlashTeX.EngineV3.hostPath` default,
+    /// the app bundle's helper (`Contents/Helpers/flashtex-host`, or beside
+    /// the app executable), then a repository build
     /// (`target/release/flashtex-host`, then `target/debug`).
-    /// `FLASHTEX_HOST=none` finds none.
-    static func locateHost() -> URL? {
+    /// `FLASHTEX_HOST=none` finds none. For Unicode, `flashtex-host-unicode`
+    /// the same way, from `FLASHTEX_HOST_UNICODE` and the
+    /// `FlashTeX.EngineV3.hostPath.unicode` default, and among the
+    /// repository builds also the xetex crate's own target
+    /// (`crates/flashtex-xetex/target/release`, it is its own workspace).
+    static func locateHost(mode: EngineV3Mode = .classic) -> URL? {
         let fm = FileManager.default
+        let name = mode.hostName
         var candidates: [String] = []
-        if let env = ProcessInfo.processInfo.environment["FLASHTEX_HOST"] {
+        if let env = ProcessInfo.processInfo.environment[mode == .unicode ? "FLASHTEX_HOST_UNICODE" : "FLASHTEX_HOST"] {
             if env == "none" { return nil } // no host at all (tests of the app side alone)
             candidates.append(env)
         }
-        if let d = defaults.string(forKey: hostPathKey) { candidates.append(d) }
+        if let d = defaults.string(forKey: mode == .unicode ? hostPathKey + ".unicode" : hostPathKey) { candidates.append(d) }
         if let exe = Bundle.main.executableURL {
-            candidates.append(exe.deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("Helpers/flashtex-host").path)
-            candidates.append(exe.deletingLastPathComponent().appendingPathComponent("flashtex-host").path)
+            candidates.append(exe.deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("Helpers/\(name)").path)
+            candidates.append(exe.deletingLastPathComponent().appendingPathComponent(name).path)
         }
         for root in repoRoots() {
-            candidates.append(root.appendingPathComponent("target/release/flashtex-host").path)
-            candidates.append(root.appendingPathComponent("target/debug/flashtex-host").path)
+            candidates.append(root.appendingPathComponent("target/release/\(name)").path)
+            if mode == .unicode { candidates.append(root.appendingPathComponent("crates/flashtex-xetex/target/release/\(name)").path) }
+            candidates.append(root.appendingPathComponent("target/debug/\(name)").path)
         }
         return candidates.first { fm.isExecutableFile(atPath: $0) }.map { URL(fileURLWithPath: $0) }
     }
@@ -165,6 +172,10 @@ final class EngineV3HostProcess: @unchecked Sendable {
 
     let executable: URL
     let socketPath: String
+    /// The mode this host typesets (its program) and the format its
+    /// compiles ask for.
+    let mode: EngineV3Mode
+    let format: String
     private let process = Process()
     private var buffer = Data()
     private let lock = NSLock()
@@ -172,8 +183,10 @@ final class EngineV3HostProcess: @unchecked Sendable {
     /// `confineRoots`: the host compiles text from a Live Share session and
     /// may read only inside these folders besides the job's own
     /// (`confinedEnvironment`); nil for an ordinary host.
-    init(executable: URL, confineRoots: [String]? = nil, onEvent: @escaping @Sendable (Event) -> Void) throws {
+    init(executable: URL, mode: EngineV3Mode = .classic, format: String? = nil, confineRoots: [String]? = nil, onEvent: @escaping @Sendable (Event) -> Void) throws {
         self.executable = executable
+        self.mode = mode
+        self.format = format ?? mode.format
         self.confineRoots = confineRoots
         let dir = NSTemporaryDirectory()
         socketPath = (dir as NSString).appendingPathComponent("ftx-\(getpid())-\(UInt32.random(in: 0 ... .max)).sock")
@@ -183,10 +196,15 @@ final class EngineV3HostProcess: @unchecked Sendable {
         // --once: serve one connection, then exit. The app's connection closes
         // when the app quits or dies (the kernel closes the socket), so the
         // host never outlives it once connected.
-        process.arguments = ["--socket", socketPath, "--s0-cache", s0.path, "--once"]
-        // Checkpoint interval inside a page (engine default 0.02 s): the
-        // restart re-typesets up to that much before an edit. A/B knob.
-        if let t = ProcessInfo.processInfo.environment["FLASHTEX_V3_TIMED"], Double(t) != nil { process.arguments! += ["--timed", t] }
+        process.arguments = ["--socket", socketPath, "--once"]
+        // The resident pdfTeX host's S0 cache and checkpoint interval
+        // (engine default 0.02 s: the restart re-typesets up to that much
+        // before an edit; FLASHTEX_V3_TIMED, an A/B knob). The Unicode host
+        // compiles cold and takes neither.
+        if mode == .classic {
+            process.arguments! += ["--s0-cache", s0.path]
+            if let t = ProcessInfo.processInfo.environment["FLASHTEX_V3_TIMED"], Double(t) != nil { process.arguments! += ["--timed", t] }
+        }
         process.environment = confineRoots.map { Self.confinedEnvironment(Self.environment(host: executable), roots: $0) }
             ?? Self.environment(host: executable)
         let out = Pipe(), err = Pipe()
@@ -206,9 +224,11 @@ final class EngineV3HostProcess: @unchecked Sendable {
             self.lock.unlock()
             for line in lines {
                 onEvent(.line(line))
-                if line.hasPrefix("flashtex-host: listening on") {
+                // Either host program names itself (`flashtex-host-unicode: …`).
+                let said = Self.hostLine(line)
+                if said?.hasPrefix("listening on") == true {
                     onEvent(.listening(socket: socketPath))
-                } else if line.hasPrefix("flashtex-host: {"), let j = try? DL3JSON.parse(Array(line.dropFirst("flashtex-host: ".count).utf8)) {
+                } else if let said, said.hasPrefix("{"), let j = try? DL3JSON.parse(Array(said.utf8)) {
                     if let p = j["bundle_progress"] {
                         onEvent(.bundleProgress(what: p["what"]?.string ?? "", name: p["name"]?.string ?? "",
                                                 done: p["done"]?.int ?? 0, total: p["total"]?.int ?? 0))
@@ -231,6 +251,13 @@ final class EngineV3HostProcess: @unchecked Sendable {
         }
         try process.run()
         Self.remember(pid: process.processIdentifier)
+    }
+
+    /// What a host printed after its name (`flashtex-host: ` or
+    /// `flashtex-host-unicode: `), nil for any other line.
+    static func hostLine(_ line: String) -> Substring? {
+        for p in ["flashtex-host: ", "flashtex-host-unicode: "] where line.hasPrefix(p) { return line.dropFirst(p.count) }
+        return nil
     }
 
     // MARK: stale hosts (the app died before its host connected)
@@ -256,7 +283,8 @@ final class EngineV3HostProcess: @unchecked Sendable {
             if owner != 0, owner != getpid(), kill(owner, 0) == 0 { continue } // its app is alive
             if owner == getpid() { continue }
             var buf = [CChar](repeating: 0, count: 4096)
-            if proc_pidpath(pid, &buf, UInt32(buf.count)) > 0, String(cString: buf).hasSuffix("/flashtex-host") {
+            if proc_pidpath(pid, &buf, UInt32(buf.count)) > 0,
+               String(cString: buf).hasSuffix("/flashtex-host") || String(cString: buf).hasSuffix("/flashtex-host-unicode") {
                 kill(pid, SIGTERM)
                 log("killed stale host \(pid) (its app \(owner) is gone)")
             }
@@ -312,8 +340,19 @@ final class EngineV3HostProcess: @unchecked Sendable {
     var pid: Int32 { process.processIdentifier }
     var isRunning: Bool { process.isRunning }
 
-    func terminate() {
-        if process.isRunning { process.terminate() }
+    /// Ends the host: the caller has said BYE (the host leaves on its own,
+    /// its compile cancelled), and SIGTERM follows after `grace` should it
+    /// still run. The engine of a Unicode host ends with the host however
+    /// it ends (its lifeline, crates/flashtex-xetex/src/host/proc.rs).
+    func terminate(grace: TimeInterval = 1) {
+        let p = process
+        if p.isRunning {
+            if grace <= 0 {
+                p.terminate()
+            } else {
+                DispatchQueue.global().asyncAfter(deadline: .now() + grace) { if p.isRunning { p.terminate() } }
+            }
+        }
         unlink(socketPath) // the host removes it itself when it exits normally
     }
 
