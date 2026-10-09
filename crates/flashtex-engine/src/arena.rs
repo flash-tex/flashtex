@@ -1323,9 +1323,24 @@ impl Core {
         let mut prepared = self.prepared.take();
         // a preparation newer work stopped: finished here, from where it got
         // (a whole one, when there is one, is newer: `prepare_restore` drops
-        // the other kind)
+        // the other kind) -- once its rewind is done. Before that, going on
+        // costs more than the plain restore: the rest of a serial rewind
+        // into a copy of every chunk, then the copies in, against `rewind`'s
+        // one parallel pass over the live space (measured on Infinite
+        // Descent x2 with 60 ms between keys: the restore's engine-thread
+        // instructions 82 M plain, 358 M going on from early parts).
         match self.take_part(id) {
             Some(p) if prepared.is_some() => self.give_pre(p.pre),
+            Some(p) if p.rewound < self.logs.len() - k => {
+                if std::env::var_os("FLASHTEX_INCR_DEBUG").is_some() {
+                    eprintln!(
+                        "[arena] preparation for {id} dropped: {}/{} logs rewound",
+                        p.rewound,
+                        self.logs.len() - k
+                    );
+                }
+                self.give_pre(p.pre);
+            }
             Some(mut p) => {
                 if std::env::var_os("FLASHTEX_INCR_DEBUG").is_some() {
                     eprintln!(
