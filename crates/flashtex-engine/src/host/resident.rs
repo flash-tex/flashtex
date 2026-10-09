@@ -1522,7 +1522,14 @@ impl Engine {
             )),
             Err(e) => eprintln!("flashtex-host: saving S0: {e}"),
         });
-        super::s0write::submit(&p.to_string_lossy(), image, done);
+        if self.profile.lean {
+            // (Low Memory: no second copy alive; written here, as before)
+            let t = Instant::now();
+            let r = image.write(&p.to_string_lossy(), &|| false);
+            done(r, t.elapsed().as_secs_f64());
+        } else {
+            super::s0write::submit(&p.to_string_lossy(), image, done);
+        }
     }
 
     /// After a compile's `DONE`: let the tools look at what it left

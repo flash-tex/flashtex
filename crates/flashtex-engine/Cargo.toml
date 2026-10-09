@@ -57,6 +57,9 @@ flashtex-display-list = { path = "../display-list-v3" }
 # GPL-2.0-or-later: the runtime shared with the XeTeX-derived engine
 # (docs/design/xetex/PLAN.md §3.3), re-exported under its old module paths.
 flashtex-runtime = { path = "../flashtex-runtime" }
+# MIT OR Apache-2.0: `statfs`, whether a file is on a local volume
+# (src/hashcache.rs).
+libc = "0.2"
 # SHA-256 for the format cache's read-set keys and the bundle's pinned
 # content hashes (feature `distribution`). MIT OR Apache-2.0.
 sha2 = { version = "0.10", optional = true }

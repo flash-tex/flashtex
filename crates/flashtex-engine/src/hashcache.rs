@@ -29,6 +29,12 @@
 //! after the read; the hash is kept only when both are the same, so a kept
 //! hash is always of the bytes the identity stands for.
 //!
+//! **Local volumes only.** A network file system's times come from another
+//! machine's clock and its attributes from a cache, so another client's
+//! rewrite may keep a signature here: a file on a volume that is not local
+//! (`statfs`: macOS's `MNT_LOCAL`; on Linux not NFS, SMB/CIFS, FUSE, AFS,
+//! Ceph, 9P, Coda) is hashed every time. The answer is kept per device.
+//!
 //! **Unix only.** Elsewhere `os::file_stat` has no inode and no
 //! status-change time (Windows gives the creation time, which NTFS carries
 //! over to a file re-created under the same name), so a rewrite to the same
@@ -72,6 +78,66 @@ impl Ident {
     }
 }
 
+/// Whether the file system holding `path` (device `dev`) is local, once per
+/// device.
+fn local(path: &str, dev: u64) -> bool {
+    static LOCAL: Mutex<Option<HashMap<u64, bool>>> = Mutex::new(None);
+    if let Some(&l) = LOCAL
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .as_ref()
+        .and_then(|m| m.get(&dev))
+    {
+        return l;
+    }
+    let l = statfs_local(path);
+    LOCAL
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .get_or_insert_with(HashMap::new)
+        .insert(dev, l);
+    l
+}
+
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+fn statfs_local(path: &str) -> bool {
+    let Ok(c) = std::ffi::CString::new(path) else {
+        return false;
+    };
+    let mut s: libc::statfs = unsafe { std::mem::zeroed() };
+    // SAFETY: a NUL-terminated path and a buffer of the type statfs fills.
+    if unsafe { libc::statfs(c.as_ptr(), &mut s) } != 0 {
+        return false;
+    }
+    #[cfg(target_os = "macos")]
+    {
+        s.f_flags & libc::MNT_LOCAL as u32 != 0
+    }
+    #[cfg(target_os = "linux")]
+    {
+        // statfs(2)'s magic numbers of the network and user-space file
+        // systems: NFS, SMB, CIFS, SMB2, FUSE, AFS, Ceph, 9P, Coda, NCP.
+        const REMOTE: [i64; 10] = [
+            0x6969,
+            0x517B,
+            0xFF53_4D42u32 as i64,
+            0xFE53_4D42u32 as i64,
+            0x6573_5546,
+            0x5346_414F,
+            0x00C3_6400,
+            0x0102_1997,
+            0x7375_7245,
+            0x564C,
+        ];
+        !REMOTE.contains(&(s.f_type as i64))
+    }
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "linux")))]
+fn statfs_local(_path: &str) -> bool {
+    false
+}
+
 /// More entries than any document reads; past it the cache starts afresh.
 const MAX_ENTRIES: usize = 1 << 16;
 
@@ -92,7 +158,7 @@ pub fn hash_file(path: &str) -> std::io::Result<[u64; 2]> {
 
 fn hash_file_within(path: &str, window: i128) -> std::io::Result<[u64; 2]> {
     let before = Ident::of(path)?;
-    let keep = cfg!(unix) && !before.racy(window);
+    let keep = cfg!(unix) && !before.racy(window) && local(path, before.dev);
     if keep {
         let c = CACHE.lock().unwrap_or_else(|e| e.into_inner());
         if let Some((id, h)) = c.as_ref().and_then(|m| m.get(path)) {
