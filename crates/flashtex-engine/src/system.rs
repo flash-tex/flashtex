@@ -2295,19 +2295,24 @@ pub fn runsystem(cmd: &[u8]) -> i32 {
 }
 
 /// A `\write18` command the engine runs itself instead of through the
-/// shell: makeindex (`crate::makeindex`), unless `FLASHTEX_MAKEINDEX=external`.
-/// Its exit status, as the shell's would be; `None` to use the shell.
-#[cfg(feature = "makeindex")]
+/// shell: makeindex (`crate::makeindex`, unless
+/// `FLASHTEX_MAKEINDEX=external`) and bibtex (`crate::bibtex`, unless
+/// `FLASHTEX_BIBTEX=external`). Its exit status, as the shell's would be;
+/// `None` to use the shell.
+#[allow(unused_variables)]
 fn in_process_tool(cmd: &[u8], restricted: bool) -> Option<i32> {
-    if !crate::makeindex::in_process() {
-        return None;
+    #[cfg(feature = "makeindex")]
+    if crate::makeindex::in_process() {
+        if let Some(args) = crate::makeindex::command_args(cmd, restricted) {
+            return Some(crate::makeindex::run_in_process(&args));
+        }
     }
-    let args = crate::makeindex::command_args(cmd, restricted)?;
-    Some(crate::makeindex::run_in_process(&args))
-}
-
-#[cfg(not(feature = "makeindex"))]
-fn in_process_tool(_cmd: &[u8], _restricted: bool) -> Option<i32> {
+    #[cfg(feature = "bibtex")]
+    if crate::bibtex::in_process() {
+        if let Some(args) = crate::bibtex::command_args(cmd, restricted) {
+            return Some(crate::bibtex::run_in_process(&args));
+        }
+    }
     None
 }
 
@@ -4270,6 +4275,11 @@ pub struct FileRead {
     /// read, it wrote itself (beamer's `.vrb`), so it is not an input a
     /// further pass would see changed (`crate::incr`'s passes).
     pub written_before: bool,
+    /// A whole read whose result was the file's modification time
+    /// (`\pdffilemoddate`: `note_stamp`), in seconds as the run read it: a
+    /// file whose time changed, its content the same, has changed for
+    /// that read (`crate::incr`'s `changes`, `host::make_key`).
+    pub stamp: Option<i64>,
 }
 
 /// Whether `path` is one of the user's files rather than the TeX
@@ -4661,6 +4671,7 @@ fn note_file(path: &str) {
             content,
             closed_at: None,
             written_before,
+            stamp: None,
         });
     })
 }
@@ -4702,8 +4713,49 @@ pub fn note_whole_read(path: &str) {
         };
         let mut e = first.clone();
         e.closed_at = Some(u64::MAX);
+        e.stamp = None;
         log.files.push(e);
     })
+}
+
+/// `\pdffilesize` of `path` (texmfmp.c's `getfilesize`): the result is a
+/// function of the content, so for the incremental journal it is a read of
+/// the whole file (`note_whole_read`), not only the lookup that found it
+/// (a letter added to the main file changed `\pdffilesize{\jobname.tex}`,
+/// and a restart after the read kept the old size).
+pub fn note_size_read(path: &str) {
+    note_whole_read(path);
+}
+
+/// `\pdffilemoddate` of `path` (texmfmp.c's `getfilemoddate`): a read of
+/// the whole file (its content changing changes nothing, but a run from the
+/// start reads the time again), and of its modification time in seconds,
+/// `mtime` (`FileRead::stamp`): the time changing alone changes the read.
+pub fn note_stamp(path: &str, mtime: i64) {
+    note_whole_read(path);
+    READS.with(|r| {
+        let mut b = r.borrow_mut();
+        let Some(log) = b.as_mut() else { return };
+        if let Some(e) = log
+            .files
+            .iter_mut()
+            .rev()
+            .find(|f| f.path == path && f.closed_at == Some(u64::MAX))
+        {
+            e.stamp = Some(mtime);
+        }
+    })
+}
+
+/// A file's modification time in whole seconds, as `\pdffilemoddate` reads
+/// it (`FileRead::stamp`).
+pub fn mtime_secs(path: &str) -> Option<i64> {
+    std::fs::metadata(path)
+        .ok()?
+        .modified()
+        .ok()
+        .and_then(|m| m.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|d| d.as_secs() as i64)
 }
 
 fn note_output(path: &str) {

@@ -589,6 +589,17 @@ pub fn written_before(rec: &ExtRecord, reads: &system::ReadLog) -> Result<Writte
 /// S₀'s key: what the run read before S₀ (`reads`, whose files and lookups
 /// may run past S₀: only the first `rec.reads` count), with S₀'s host
 /// record `rec`.
+/// A whole read (`system::note_whole_read`) the run made after
+/// `\document`'s body was pushed (`Layer::arm_reads`), before S₀'s anchor:
+/// `\document`'s `\IfFileExists{\jobname.aux}` (l3's lookup takes the
+/// file's `\pdffilesize`). The anchor is the `.aux` point, and the `.aux`
+/// is the journal's (L5, `crate::readset`), not S₀'s key's: such a read is
+/// left out of the key, and the session checks it with the journal
+/// (`incr::Session::take_s0`'s list of files not keyed whole).
+pub fn whole_after_arm(arm: Option<usize>, i: usize, f: &system::FileRead) -> bool {
+    f.closed_at == Some(u64::MAX) && arm.is_some_and(|a| i >= a)
+}
+
 pub fn make_key(
     g: &mut Globals,
     id: CheckpointId,
@@ -623,10 +634,37 @@ pub fn make_key(
             Some(k) => wa.swap_remove(k).1,
             None => written_before(rec, reads)?,
         };
+        // A file open at S₀ is keyed by the prefix consumed, unless the run
+        // also read all of it at once (`\pdffilesize{\jobname.tex}`:
+        // `system::note_whole_read`): then by all of it. A read of its
+        // modification time (`\pdffilemoddate`, `FileRead::stamp`) is keyed
+        // by the time too: mixed into the hash, so that a file whose time
+        // changed fails the test by content (and the session finds the
+        // read in `changes`).
+        // (a whole read after `\document`'s body was pushed, before the
+        // anchor -- its `\IfFileExists{\jobname.aux}` -- is the journal's:
+        // `whole_after_arm`)
+        let arm = g.layer().arm_reads;
         let files = reads.files[..nf.min(reads.files.len())]
             .iter()
-            .filter(|f| !open_paths.contains(&f.path))
-            .map(|f| (f.path.clone(), f.hash, f.stat))
+            .enumerate()
+            .filter(|(i, f)| !whole_after_arm(arm, *i, f))
+            .map(|(_, f)| f)
+            .filter(|f| !open_paths.contains(&f.path) || f.closed_at == Some(u64::MAX))
+            .map(|f| {
+                let hash = match (&f.content, f.hash) {
+                    (Some(c), [0, 0]) => crate::persist::hash128(c),
+                    (_, h) => h,
+                };
+                let hash = match f.stamp {
+                    Some(t) => [
+                        hash[0] ^ (t as u64).rotate_left(17) ^ 0x5354_414d_5000_0000,
+                        hash[1],
+                    ],
+                    None => hash,
+                };
+                (f.path.clone(), hash, f.stat)
+            })
             .collect();
         // (the journal lists a repeated lookup each time; the key once)
         let mut lookup_seen = std::collections::HashSet::new();

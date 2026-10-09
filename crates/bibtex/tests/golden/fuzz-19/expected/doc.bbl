@@ -1,0 +1,22 @@
+\newcommand{\noop}[1]{}\newcommand{\noop}[1]{}
+\begin{thebibliography}{1}
+
+\bibitem{proc1}
+
+
+\bibitem{book1}
+
+
+\bibitem{k0}
+Number programming {\bf bold} {L}aTeX. 1990.
+
+\bibitem{a1}
+
+
+\bibitem{Knuth:84}
+Kurt d'Alembert, {Barnes and Noble}, and Erwin Smith.
+\newblock {\em The Practice A}.
+\newblock of programming theory {\'e}t{\'e} of the note e.g. programming e.g. ?
+  multi-word edition, May.
+
+\end{thebibliography}

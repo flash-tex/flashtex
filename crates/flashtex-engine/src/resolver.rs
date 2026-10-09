@@ -136,6 +136,12 @@ pub trait FileResolver: Send {
     fn config_var(&mut self, _var: &str) -> Option<String> {
         None
     }
+    /// [`FileResolver::config_var`] as program `prog` sees it
+    /// (`VAR.prog` before `VAR`), for a tool run in-process: bibtex's
+    /// `max_strings.bibtex`. None where there is no texmf.cnf.
+    fn config_var_for(&mut self, _var: &str, _prog: &str) -> Option<String> {
+        None
+    }
     /// kpathsea's `kpse_in_name_ok` (`write` false) or `kpse_out_name_ok`
     /// (`write` true): may the file be opened, under texmf.cnf's
     /// `openin_any` and `openout_any`? Without texmf.cnf, yes.
@@ -303,6 +309,14 @@ impl FileResolver for CwdResolver {
         if format == Format::Tex && !name.ends_with(".tex") {
             if let Some(p) = self.find_one(&format!("{name}.tex"), format) {
                 return Some(p);
+            }
+        }
+        // The same rule for bibtex's `.bib` and `.bst` (crate::bibtex).
+        for (f, suffix) in [(Format::Bib, ".bib"), (Format::Bst, ".bst")] {
+            if format == f && !name.ends_with(suffix) {
+                if let Some(p) = self.find_one(&format!("{name}{suffix}"), format) {
+                    return Some(p);
+                }
             }
         }
         // TFM files, which tex.ch packs without `.tfm` (tex.ch [30.563]:
@@ -634,6 +648,11 @@ mod kpse {
         fn flashtex_kpse_set_lsr_cache(dir: *const c_char);
         fn flashtex_kpse_find(k: *mut c_void, name: *const c_char, format: c_int) -> *mut c_char;
         fn flashtex_kpse_var_value(k: *mut c_void, var: *const c_char) -> *mut c_char;
+        fn flashtex_kpse_var_value_prog(
+            k: *mut c_void,
+            var: *const c_char,
+            prog: *const c_char,
+        ) -> *mut c_char;
         fn flashtex_kpse_free(p: *mut c_void);
         fn flashtex_kpse_set_make_tex_discard_errors(k: *mut c_void, discard: c_int);
         fn flashtex_kpse_get_make_tex_discard_errors(k: *mut c_void) -> c_int;
@@ -1355,6 +1374,14 @@ mod kpse {
         }
         fn config_var(&mut self, var: &str) -> Option<String> {
             self.var_value(var)
+        }
+        fn config_var_for(&mut self, var: &str, prog: &str) -> Option<String> {
+            let v = CString::new(var).ok()?;
+            let p = CString::new(prog).ok()?;
+            // SAFETY: `self.k` is the live kpathsea instance; both strings
+            // are NUL-terminated and outlive the call, which restores the
+            // instance's program name before it returns.
+            take(unsafe { flashtex_kpse_var_value_prog(self.k, v.as_ptr(), p.as_ptr()) })
         }
         fn name_ok(&mut self, name: &str, write: bool) -> bool {
             let Ok(n) = CString::new(name) else {

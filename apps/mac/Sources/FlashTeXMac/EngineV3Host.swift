@@ -197,12 +197,11 @@ final class EngineV3HostProcess: @unchecked Sendable {
         // when the app quits or dies (the kernel closes the socket), so the
         // host never outlives it once connected.
         process.arguments = ["--socket", socketPath, "--once"]
-        // The resident pdfTeX host's S0 cache and checkpoint interval
-        // (engine default 0.02 s: the restart re-typesets up to that much
-        // before an edit; FLASHTEX_V3_TIMED, an A/B knob). The Unicode host
-        // compiles cold and takes neither.
+        // The resident pdfTeX host's S0 cache, performance mode and checkpoint
+        // interval. The Unicode host compiles cold and takes none of them.
         if mode == .classic {
             process.arguments! += ["--s0-cache", s0.path]
+            process.arguments! += ["--profile", PerformanceMode.current.hostProfile]
             if let t = ProcessInfo.processInfo.environment["FLASHTEX_V3_TIMED"], Double(t) != nil { process.arguments! += ["--timed", t] }
         }
         process.environment = confineRoots.map { Self.confinedEnvironment(Self.environment(host: executable), roots: $0) }

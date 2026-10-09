@@ -264,6 +264,10 @@ name = "flashtex-bibliography"
 version = "0.1.0"
 
 [[package]]
+name = "flashtex-bibtex"
+version = "0.1.0"
+
+[[package]]
 name = "flashtex-bridge"
 version = "0.1.0"
 dependencies = [
@@ -358,6 +362,7 @@ name = "flashtex-engine"
 version = "0.1.0"
 dependencies = [
  "cc",
+ "flashtex-bibtex",
  "flashtex-display-list",
  "flashtex-engine-build-id",
  "flashtex-makeindex",

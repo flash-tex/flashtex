@@ -814,6 +814,9 @@ impl FileResolver for BundleResolver {
     fn config_var(&mut self, var: &str) -> Option<String> {
         self.kpse.config_var(var)
     }
+    fn config_var_for(&mut self, var: &str, prog: &str) -> Option<String> {
+        self.kpse.config_var_for(var, prog)
+    }
     fn name_ok(&mut self, name: &str, write: bool) -> bool {
         self.kpse.name_ok(name, write)
     }

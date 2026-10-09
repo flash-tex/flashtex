@@ -126,3 +126,48 @@ fn committed_xetex_matches_a_fresh_translation() {
         drift.join(", ")
     );
 }
+
+/// The same check for the BibTeX port (crates/bibtex, lane RUST-TOOLS):
+/// crates/bibtex/src/generated/ must be what web2rust produces from
+/// third_party/bibtex/bibtex.web with crates/bibtex/web2rust.args (TeX Live's
+/// bibtex.ch, then crates/bibtex/changes/flashtex.ch). BibTeX has no pool
+/// file: it makes its strings at run time.
+#[test]
+fn committed_bibtex_matches_a_fresh_translation() {
+    let root = root();
+    let crate_dir = root.join("crates/bibtex");
+    let out = std::env::temp_dir().join(format!("web2rust-drift-bibtex-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&out);
+    std::fs::create_dir_all(out.join("generated")).unwrap();
+
+    let status = Command::new(env!("CARGO_BIN_EXE_web2rust"))
+        .current_dir(&root)
+        .arg("third_party/bibtex/bibtex.web")
+        .arg("@crates/bibtex/web2rust.args")
+        .arg("--out-dir")
+        .arg(out.join("generated"))
+        .status()
+        .expect("run web2rust");
+    assert!(status.success(), "web2rust failed");
+
+    let committed = crate_dir.join("src/generated");
+    let fresh = out.join("generated");
+    assert_eq!(
+        files(&committed),
+        files(&fresh),
+        "set of generated files differs"
+    );
+    let mut drift = vec![];
+    for f in files(&committed) {
+        if std::fs::read(committed.join(&f)).unwrap() != std::fs::read(fresh.join(&f)).unwrap() {
+            drift.push(format!("src/generated/{f}"));
+        }
+    }
+    let _ = std::fs::remove_dir_all(&out);
+    assert!(
+        drift.is_empty(),
+        "committed BibTeX port differs from a fresh translation in: {}\n\
+         regenerate with scripts/bibtex-regenerate.sh",
+        drift.join(", ")
+    );
+}
