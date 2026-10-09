@@ -983,6 +983,67 @@ fn l5_a_long_macro_last_in_the_aux_equals_scratch_runs() {
     }
 }
 
+/// Convergence test (b) counts only reads before the old run's last page
+/// checkpoint: from there `\end{document}` re-runs live and re-reads the
+/// `.aux` the pages wrote. An edit on the first page changes an `.aux`
+/// entry that only the first page shows; the `.aux` pass re-typesets that
+/// page and converges on the next, where before every test failed with
+/// "the old run reads the changed .aux later" and the pass ran to the end.
+/// Each compile equals scratch runs, so does a toggle whose entry the last
+/// page shows (read after the convergence point, before the end: no
+/// convergence there).
+#[test]
+fn an_aux_pass_converges_before_end_document_rereads_the_aux() {
+    let Some(e) = env() else {
+        common::no_texlive();
+        return;
+    };
+    let dir = e.dir.join("aux-pass-converges");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let doc = |first: &str, last: &str| -> String {
+        let mut s = String::from(
+            "\\documentclass{article}\n\\begin{document}\n\\makeatletter\n\
+             First: \\@ifundefined{flagA}{unset}{\\flagA}.\n\n\
+             \\makeatother\n",
+        );
+        s.push_str(&format!(
+            "\\makeatletter\\immediate\\write\\@auxout{{\\string\\gdef\\string\\flagA{{{first}}}}}\\makeatother\n\n"
+        ));
+        for i in 0..150 {
+            s.push_str(&para(i, "mu"));
+        }
+        s.push_str(&format!(
+            "\\makeatletter\\immediate\\write\\@auxout{{\\string\\gdef\\string\\flagB{{{last}}}}}\n\
+             Last: \\@ifundefined{{flagB}}{{unset}}{{\\flagB}}.\n\\makeatother\n\\end{{document}}\n"
+        ));
+        s
+    };
+    let mut h = Host::start(&e, &dir);
+    for _ in 0..3 {
+        let r = compile_and_check(&e, &mut h, &dir, &[("doc.tex", &doc("one", "x"))], "settle");
+        if r.contains("\"mode\":\"unchanged\"") {
+            break;
+        }
+    }
+    for (what, first) in [("the first page's entry", "two"), ("and back", "one")] {
+        let r = compile_and_check(&e, &mut h, &dir, &[("doc.tex", &doc(first, "x"))], what);
+        assert!(
+            r.contains("\"passes\":2"),
+            "{what}: the .aux changed, a second pass: {r}"
+        );
+        assert!(
+            !r.contains("the old run reads the changed ./doc.aux later"),
+            "{what}: the .aux pass's tests failed on \\end{{document}}'s re-read: {r}"
+        );
+        assert_ne!(field(&r, "converged_at"), "null", "{what}: {r}");
+    }
+    // an entry the last page shows: read after any convergence point
+    for (what, last) in [("the last page's entry", "y"), ("and back", "x")] {
+        compile_and_check(&e, &mut h, &dir, &[("doc.tex", &doc("one", last))], what);
+    }
+}
+
 /// Lane P4-MULTIPASS, soundness case 2032: case 2030's shared body when the
 /// only other control sequences sharing it live in tex.ch's `hash_extra`
 /// region above `eqtb_size` (#1285). A 22,000-name preamble flood fills the
@@ -3081,11 +3142,239 @@ fn preamble_edits_restart_before_s0() {
         compile_and_check(&e, &mut h, &dir, &[], "settle again");
     }
     // the line after `\documentclass` is read with the class (its look for
-    // an optional argument): no checkpoint before it, a run from the format
+    // an optional argument): a restart after the class is loaded, in the
+    // middle of that line, which is read again (PREAMBLE-MIDLINE, #1594)
     let early = doc.replacen("\\usepackage{amsmath}", "\\usepackage{amssymb}", 1);
     let r = compile_and_check(&e, &mut h, &dir, &[("doc.tex", &early)], "the first line");
+    assert_eq!(field(&r, "restart_midline"), "true", "{r}");
+    compile_and_check(&e, &mut h, &dir, &[("doc.tex", &doc)], "the revert");
+    // ... but not where the class's look ahead read it (`\usepackage` and
+    // what `get_next` looked at past it): no checkpoint before that, a run
+    // from the format
+    let early = doc.replacen("\\usepackage{amsmath}", "\\usepackage[fleqn]{amsmath}", 1);
+    let r = compile_and_check(&e, &mut h, &dir, &[("doc.tex", &early)], "the first token");
     assert_eq!(field(&r, "mode"), "\"cold\"", "{r}");
     compile_and_check(&e, &mut h, &dir, &[("doc.tex", &doc)], "the revert");
+}
+
+/// PREAMBLE-MIDLINE (#1594): `\usepackage` looks for an optional date on
+/// the next line before it loads the package, so `\title` on the line after
+/// hyperref is read before hyperref is. A keystroke in the title restarts
+/// after hyperref, in the middle of the title's line, and reads the rest of
+/// the line again: letters, consecutive keystrokes (each from the
+/// checkpoint the one before took), a newline (the later lines move), an
+/// edit where the look ahead read the line (a restart before hyperref), the
+/// next line, then the body. Every compile equals scratch runs.
+#[test]
+fn a_title_keystroke_restarts_mid_line_after_hyperref() {
+    let Some(e) = env() else {
+        common::no_texlive();
+        return;
+    };
+    let dir = e.dir.join("midline-title");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let body: String = (0..30).map(|i| para(i, "omega")).collect();
+    let doc = format!(
+        r"\documentclass{{article}}
+\usepackage{{amsmath}}
+\usepackage{{amssymb}}
+\usepackage{{graphicx}}
+\usepackage{{hyperref}}
+\title{{a title about latency}}
+\author{{Jane Doe}}
+
+\begin{{document}}
+\maketitle
+\section{{One}}\label{{one}}
+{body}See page~\pageref{{one}}.
+\end{{document}}
+"
+    );
+    let mut h = Host::start(&e, &dir);
+    for k in 0..4 {
+        let r = compile_and_check(&e, &mut h, &dir, &[("doc.tex", &doc)], "settle");
+        if r.contains("\"mode\":\"unchanged\"") || k == 3 {
+            break;
+        }
+    }
+    let t = |a: &str| doc.replacen("a title about latency", a, 1);
+    // (the text, what, a mid-line restart)
+    let edits = [
+        (t("a titlex about latency"), "a letter", true),
+        (t("a titlexy about latency"), "the next letter", true),
+        (t("a titlexyz about latency"), "and the next", true),
+        (doc.clone(), "the revert", true),
+        (t("a title\nabout latency"), "a newline in the title", true),
+        (doc.clone(), "the revert", true),
+        (
+            t("A title about latency"),
+            "where the look ahead read",
+            false,
+        ),
+        (doc.clone(), "the revert", false),
+        (
+            doc.replacen("Jane Doe", "Jane Dot", 1),
+            "the next line",
+            false,
+        ),
+        (doc.clone(), "the revert", false),
+    ];
+    for (text, what, mid) in &edits {
+        let r = compile_and_check(&e, &mut h, &dir, &[("doc.tex", text)], what);
+        assert_eq!(field(&r, "mode"), "\"incremental\"", "{what}: {r}");
+        assert_eq!(field(&r, "restart_preamble"), "true", "{what}: {r}");
+        assert_eq!(field(&r, "restart_midline"), mid.to_string(), "{what}: {r}");
+    }
+    compile_and_check(&e, &mut h, &dir, &[], "settle again");
+    let body_edit = doc.replacen("Paragraph 3 with", "Paragraph 3 wiht", 1);
+    let r = compile_and_check(&e, &mut h, &dir, &[("doc.tex", &body_edit)], "the body");
+    assert_eq!(field(&r, "restart_preamble"), "false", "{r}");
+    compile_and_check(&e, &mut h, &dir, &[("doc.tex", &doc)], "the revert");
+}
+
+/// PREAMBLE-MIDLINE (#1594): what a mid-line restart point depends on, a
+/// case each (packages of the test's own, a checkpoint after each). Every
+/// compile equals scratch runs; `true`: the restart is in the middle of the
+/// line.
+/// * what `get_next` looked at past the token it read: a letter appended to
+///   the control word (`\mytitle` becomes `\mytitles`);
+/// * `\endlinechar` as it was when the line was read: the package sets it to
+///   -1, and the title's line still ends in a space;
+/// * trailing blanks, which `input_ln` drops (under `\obeyspaces` they would
+///   be active spaces);
+/// * CR LF and CR line ends, and a CR that becomes a CR LF (the look ahead
+///   read the byte after the CR);
+/// * `\show` (its context prints the rest of the line): no mid-line restart
+///   after it, one before it;
+/// * a `^^` sequence in the control word's name, which rewrites the buffer;
+/// * `\pausing` in `\nonstopmode`, which shows nothing.
+#[test]
+fn mid_line_restarts_keep_what_the_line_was_read_with() {
+    let Some(e) = env() else {
+        common::no_texlive();
+        return;
+    };
+    let pkg =
+        "\\ProvidesPackage{mlpkg}\n\\def\\mytitle#1{\\title{#1}}\\def\\mytitles#1{\\title{#1 s}}\n";
+    let eol = "\\ProvidesPackage{mleol}\n\\endlinechar=-1\\relax\n";
+    let sp = "\\ProvidesPackage{mlsp}\n\\obeyspaces\n";
+    let doc = |pre: &str, title: &str| {
+        let body: String = (0..6).map(|i| para(i, "kappa")).collect();
+        format!(
+            "\\documentclass{{article}}\n\\def\\x{{1}}\n{pre}{title}\n\\author{{Jane Doe}}\n\
+             \\begin{{document}}\n\\maketitle\n{body}\\end{{document}}\n"
+        )
+    };
+    let p = "\\usepackage{mlpkg}\n";
+    let pe = "\\usepackage{mleol}\n";
+    let ps = "\\usepackage{mlsp}\n";
+    let crlf = |s: String| s.replace('\n', "\r\n");
+    let cr = |s: String| s.replace('\n', "\r");
+    let eolt = |a: &str| {
+        doc(
+            pe,
+            &format!("\\title{{{a} beta\ngamma}}\\endlinechar=13\\relax"),
+        )
+    };
+    let spt = |a: &str| {
+        doc(
+            ps,
+            &format!("\\title{{{a}   \ngamma}}\\catcode`\\ =10\\relax"),
+        )
+    };
+    let show = |n: &str| {
+        doc(
+            &format!(
+                "\\usepackage{{mlpkg}}\n\\show\\x\\usepackage{{mlsp}}\\relax% note {n}\n\
+                 \\catcode`\\ =10\\relax\n"
+            ),
+            "\\title{T}",
+        )
+    };
+    let pause = "\\pausing=1\\relax\n\\usepackage{mlpkg}\n";
+    // (case, the document, its edits: text, a mid-line restart)
+    type Case<'a> = (&'a str, String, Vec<(String, bool)>);
+    let cases: Vec<Case> = vec![
+        (
+            "a letter after the control word",
+            doc(p, "\\mytitle{Hello world}"),
+            vec![
+                (doc(p, "\\mytitles{Hello world}"), false),
+                (doc(p, "\\mytitle{Hello world}"), false),
+                (doc(p, "\\mytitle{Hello worle}"), true),
+            ],
+        ),
+        ("endlinechar", eolt("Alpha"), vec![(eolt("Alphx"), true)]),
+        (
+            "trailing blanks",
+            spt("Alpha beta"),
+            vec![(spt("Alphx beta"), true), (spt("Alphx beta   x"), true)],
+        ),
+        (
+            "CR LF",
+            crlf(doc(p, "\\mytitle{Hello world}")),
+            vec![
+                (crlf(doc(p, "\\mytitle{Hello worle}")), true),
+                (crlf(doc(p, "\\mytitle{Hello\nworld}")), true),
+            ],
+        ),
+        (
+            "CR",
+            cr(doc(p, "\\mytitle{Hello world}")),
+            vec![
+                (cr(doc(p, "\\mytitle{Hello worle}")), true),
+                // (the line's CR becomes a CR LF: the look ahead read the
+                // byte after the CR, and the line is the same)
+                (
+                    cr(doc(p, "\\mytitle{Hello world}")).replacen(
+                        "\\mytitle{Hello world}\r",
+                        "\\mytitle{Hello world}\r\n",
+                        1,
+                    ),
+                    true,
+                ),
+            ],
+        ),
+        ("show", show("abc"), vec![(show("abd"), true)]),
+        (
+            "a ^^ in the name",
+            doc(p, "\\mytitle^^73{Hello world}"),
+            vec![(doc(p, "\\mytitle^^73{Hello worle}"), false)],
+        ),
+        (
+            "pausing",
+            doc(pause, "\\mytitle{Hello world}\\pausing=0\\relax"),
+            vec![(doc(pause, "\\mytitle{Hello worle}\\pausing=0\\relax"), true)],
+        ),
+    ];
+    for (i, (case, text, edits)) in cases.iter().enumerate() {
+        let dir = e.dir.join(format!("midline-{i}"));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let files = [
+            ("mlpkg.sty", pkg),
+            ("mleol.sty", eol),
+            ("mlsp.sty", sp),
+            ("doc.tex", text.as_str()),
+        ];
+        // (a checkpoint after every package, however quick)
+        let mut h = Host::start_env(&e, &dir, &[("FLASHTEX_PREAMBLE_LINE_S", "0.000001")]);
+        for k in 0..4 {
+            let r = compile_and_check(&e, &mut h, &dir, &files, &format!("{case}: settle"));
+            if r.contains("\"mode\":\"unchanged\"") || k == 3 {
+                break;
+            }
+        }
+        for (j, (new, mid)) in edits.iter().enumerate() {
+            let what = format!("{case}: edit {j}");
+            let r = compile_and_check(&e, &mut h, &dir, &[("doc.tex", new)], &what);
+            assert_eq!(field(&r, "mode"), "\"incremental\"", "{what}: {r}");
+            assert_eq!(field(&r, "restart_midline"), mid.to_string(), "{what}: {r}");
+        }
+        let what = format!("{case}: revert");
+        compile_and_check(&e, &mut h, &dir, &[("doc.tex", text)], &what);
+    }
 }
 
 /// Review of #1551 (PREAMBLE-FAST): a file `\input` twice, then text
@@ -4010,6 +4299,71 @@ fn twin_files_edited_alike_both_shift() {
             .unwrap_or_else(|_| panic!("{what}: no convergence: {r}"));
         assert!(conv + 3 < pages, "{what}: converged late: {r}");
     }
+}
+
+/// Lane P4-MEMORY-BUDGET (`Obs::thin_pending`): a run that does not
+/// converge -- extra text early on moves every later page break and label
+/// -- thins the old run's future behind it (here once it is a page past its
+/// restart page: `FLASHTEX_BRANCH_WINDOW=1`, and a restart point at most
+/// input lines, `FLASHTEX_TIMED_S`, so that the thinning runs often). Each
+/// compile equals from-scratch runs: the edit, its revert interrupted
+/// mid-document and replaced by another edit (the thinned old run comes back
+/// by reattach, then the new run converges with it), and the revert.
+#[test]
+fn a_rerun_thins_the_old_run_behind_it() {
+    let Some(e) = env() else {
+        common::no_texlive();
+        return;
+    };
+    let dir = e.dir.join("thin-behind");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let base = refs_doc("", 40);
+    let moved = refs_doc(&"Words that move every later page. ".repeat(40), 40);
+    let late = base.replacen("Paragraph 200 with", "Paragraph 200 now with", 1);
+    let mut h = Host::start_env(
+        &e,
+        &dir,
+        &[
+            ("FLASHTEX_BRANCH_WINDOW", "1"),
+            ("FLASHTEX_TIMED_S", "0.0000001"),
+        ],
+    );
+    for _ in 0..3 {
+        let r = compile_and_check(&e, &mut h, &dir, &[("doc.tex", &base)], "settle");
+        if r.contains("\"mode\":\"unchanged\"") {
+            break;
+        }
+    }
+    let thinned = |h: &mut Host| -> i64 {
+        let m = h.cmd("mem");
+        field(&m, "branch_thinned").parse().unwrap_or(0)
+    };
+    let t0 = thinned(&mut h);
+    let r = compile_and_check(&e, &mut h, &dir, &[("doc.tex", &moved)], "the move");
+    assert!(r.contains("\"mode\":\"incremental\""), "the move: {r}");
+    let t1 = thinned(&mut h);
+    assert!(t1 > t0, "the move thinned nothing of the old run: {r}");
+    // the revert, interrupted mid-document in its first pass, then a late
+    // edit: the move's run comes back whole but for what was thinned
+    let reference = dir.with_extension("ref");
+    copy_dir(&dir, &reference);
+    std::fs::write(dir.join("doc.tex"), &base).unwrap();
+    let r = h.cmd("compile-interrupt 1 12");
+    assert!(r.contains("\"preempted\":true"), "not interrupted: {r}");
+    assert!(thinned(&mut h) > t1, "the revert thinned nothing: {r}");
+    std::fs::write(dir.join("doc.tex"), &late).unwrap();
+    std::fs::write(reference.join("doc.tex"), &late).unwrap();
+    let r = h.cmd("compile");
+    check_against(
+        &e,
+        &dir,
+        &reference,
+        &r,
+        "a late edit after the interrupted revert",
+    );
+    compile_and_check(&e, &mut h, &dir, &[("doc.tex", &base)], "the revert");
+    compile_and_check(&e, &mut h, &dir, &[], "settle again");
 }
 
 /// Issue #1562: with the working directory unchanged, a file appearing in a

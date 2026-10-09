@@ -500,9 +500,13 @@ fn rewound_until(
         let src = unsafe { std::slice::from_raw_parts(start(c), CHUNK_WORDS) };
         buf[i * CHUNK_WORDS..(i + 1) * CHUNK_WORDS].copy_from_slice(src);
     }
+    // the wanted chunks' bits (a test per entry), and each one's index in
+    // `cs` (a lookup per match, not a binary search)
     let mut want = vec![0u64; nchunks.div_ceil(64)];
-    for &c in cs {
+    let mut slot = vec![0u32; nchunks];
+    for (i, &c) in cs.iter().enumerate() {
         set_bit(&mut want, c as usize);
+        slot[c as usize] = i as u32;
     }
     let mut done = vec![[0u64; MASK_WORDS]; cs.len()];
     for (k, log) in logs.iter().enumerate() {
@@ -511,7 +515,7 @@ fn rewound_until(
         }
         for &(c, p) in &log.entries {
             if bit(&want, c as usize) {
-                let i = cs.binary_search(&c).unwrap();
+                let i = slot[c as usize] as usize;
                 // SAFETY: a slab chunk; a chunk of `buf`.
                 unsafe {
                     apply_whole_under(p, buf.as_mut_ptr().add(i * CHUNK_WORDS), &mut done[i])
@@ -520,7 +524,7 @@ fn rewound_until(
         }
         for d in &log.deltas {
             if bit(&want, d.c as usize) {
-                let i = cs.binary_search(&d.c).unwrap();
+                let i = slot[d.c as usize] as usize;
                 // SAFETY: a chunk of `buf`.
                 unsafe {
                     d.apply_under(
@@ -672,6 +676,8 @@ pub(crate) struct Core {
     sealed_bytes: usize,
     /// A restore worked out ahead of time (`prepare_restore`, `reattach`).
     prepared: Option<Prepared>,
+    /// One `prepare_restore` stopped before it was done (`PartPrep`).
+    part: Option<PartPrep>,
     /// `reattach` leaves a prepared restore to its target (default on;
     /// `FLASHTEX_NO_PREPARE=1` turns it off, for A/B).
     prepare_on_reattach: bool,
@@ -702,6 +708,37 @@ struct Prepared {
     pre: Vec<ChunkPtr>,
 }
 
+/// A `prepare_restore` that newer work stopped (a keystroke): how far it
+/// got, kept so that the next `prepare_restore` to the same target, or the
+/// restore itself, goes on from there instead of starting again (lane
+/// P4-TYPING-200WPM (a): on *Infinite Descent* a preparation takes 300 to
+/// 600 ms and the next keystroke came first, every time). Valid while
+/// `Prepared` would be: the same target, the checkpoint list `ids`, no log
+/// changed in place (`history_gen`); the open log may grow meanwhile, as
+/// it may after a whole preparation, and is rewound through last (its
+/// entries hold the chunks' values at the newest checkpoint, which a chunk
+/// copied before or after its first write since then both end with).
+/// Anything else discards it.
+struct PartPrep {
+    id: CheckpointId,
+    ids: Vec<CheckpointId>,
+    history_gen: u64,
+    /// Logs from the target's on looked through for their chunks.
+    collected: usize,
+    /// The chunks found (sorted once all are found), and their bits.
+    cs: Vec<u32>,
+    seen: Vec<u64>,
+    sorted: bool,
+    /// The copies: how many taken from the live space, then the logs
+    /// rewound through (oldest first), with each word's done bits.
+    copied: usize,
+    buf: Vec<u64>,
+    done: Vec<[u64; MASK_WORDS]>,
+    rewound: usize,
+    /// `Prepared::pre`, as far as it got.
+    pre: Vec<ChunkPtr>,
+}
+
 #[inline(always)]
 fn bit(bits: &[u64], c: usize) -> bool {
     bits[c >> 6] & (1u64 << (c & 63)) != 0
@@ -715,6 +752,11 @@ impl Core {
     fn saved(&mut self) -> &mut [u8] {
         // SAFETY: `saved` is an allocation of `nchunks` bytes owned by the core.
         unsafe { std::slice::from_raw_parts_mut(self.saved, self.nchunks) }
+    }
+
+    fn saved_ref(&self) -> &[u8] {
+        // SAFETY: as `saved`.
+        unsafe { std::slice::from_raw_parts(self.saved, self.nchunks) }
     }
 
     fn chunk_ptr(&self, c: usize) -> *mut u64 {
@@ -979,65 +1021,161 @@ impl Core {
 
     /// Work out `restore_branch(id)`'s rewind ahead of time
     /// (`Prepared`), asking `stop` as it goes: false if it stopped or `id`
-    /// is not in the live chain.
+    /// is not in the live chain. Stopped, what it did is kept (`PartPrep`):
+    /// the next call for the same target, or the restore, goes on from
+    /// there.
     fn prepare_restore(&mut self, id: CheckpointId, stop: &mut dyn FnMut() -> bool) -> bool {
         let _m = crate::memstat::scope(crate::memstat::tag::PREPARE);
         self.set_prepared(None);
+        let part = self.take_part(id);
         let Some(k) = self.index_of(id) else {
-            return false;
-        };
-        let mut mark = std::mem::take(&mut self.mark);
-        mark.fill(0);
-        let mut cs: Vec<u32> = Vec::new();
-        for (n, log) in self.logs[k..].iter().enumerate() {
-            if n % STOP_LOGS == STOP_LOGS - 1 && stop() {
-                self.mark = mark;
-                return false;
+            if let Some(p) = part {
+                self.give_pre(p.pre);
             }
-            for c in log.chunk_ids() {
-                if !bit(&mark, c as usize) {
-                    set_bit(&mut mark, c as usize);
-                    cs.push(c);
-                }
-            }
-        }
-        self.mark = mark;
-        cs.sort_unstable();
-        let base = self.base as usize;
-        let live = |c: u32| (base + ((c as usize) << CHUNK_SHIFT)) as *const u64;
-        let Some(buf) = rewound_until(self.nchunks, &cs, &live, &self.logs[k..], stop) else {
             return false;
         };
-        let Some(pre) = self.pre_redo_until(&cs, stop) else {
-            return false;
-        };
-        self.prepared = Some(Prepared {
+        let mut p = part.unwrap_or_else(|| PartPrep {
             id,
             ids: self.ids.clone(),
             history_gen: self.history_gen,
-            cs,
-            buf,
-            pre,
+            collected: 0,
+            cs: Vec::new(),
+            seen: vec![0u64; self.nchunks.div_ceil(64)],
+            sorted: false,
+            copied: 0,
+            buf: Vec::new(),
+            done: Vec::new(),
+            rewound: 0,
+            pre: Vec::new(),
         });
-        true
+        if self.prepare_go_on(&mut p, k, stop) {
+            self.prepared = Some(Prepared {
+                id,
+                ids: p.ids,
+                history_gen: p.history_gen,
+                cs: p.cs,
+                buf: p.buf,
+                pre: p.pre,
+            });
+            true
+        } else {
+            self.part = Some(p);
+            false
+        }
     }
 
-    /// `pre_redo`, asking `stop` every `STOP_CHUNKS` chunks: `None` (the
-    /// copies given back) when it said to stop.
-    fn pre_redo_until(
-        &mut self,
-        cs: &[u32],
-        stop: &mut dyn FnMut() -> bool,
-    ) -> Option<Vec<ChunkPtr>> {
-        let mut pre = Vec::with_capacity(cs.len());
-        for (i, ch) in cs.chunks(STOP_CHUNKS).enumerate() {
-            if i > 0 && stop() {
-                self.give_pre(pre);
-                return None;
-            }
-            pre.extend(self.pre_redo(ch));
+    /// Give back a kept `PartPrep`, if any: its copies were made from logs
+    /// that are being replaced. (`take_part`'s check of the checkpoint list
+    /// would not always catch it: a `reattach` of a branch holding only its
+    /// target, with no checkpoint taken while it was detached, leaves the
+    /// same list over other logs and another live state.)
+    fn drop_part(&mut self) {
+        if let Some(p) = self.part.take() {
+            self.give_pre(p.pre);
         }
-        Some(pre)
+    }
+
+    /// The kept `PartPrep` if it is for `id` and still valid; any other is
+    /// given back.
+    fn take_part(&mut self, id: CheckpointId) -> Option<PartPrep> {
+        let p = self.part.take()?;
+        if p.id == id && p.ids == self.ids && p.history_gen == self.history_gen {
+            return Some(p);
+        }
+        self.give_pre(p.pre);
+        None
+    }
+
+    /// `prepare_restore`'s work on `p` (the logs from index `k` on), from
+    /// where it stopped last: true when done, false when `stop` said to
+    /// stop (`p` holds how far it got).
+    fn prepare_go_on(
+        &mut self,
+        p: &mut PartPrep,
+        k: usize,
+        stop: &mut dyn FnMut() -> bool,
+    ) -> bool {
+        // the chunks the logs from the target's on hold
+        let n = self.logs.len() - k;
+        while p.collected < n {
+            if p.collected % STOP_LOGS == STOP_LOGS - 1 && stop() {
+                return false;
+            }
+            for c in self.logs[k + p.collected].chunk_ids() {
+                if !bit(&p.seen, c as usize) {
+                    set_bit(&mut p.seen, c as usize);
+                    p.cs.push(c);
+                }
+            }
+            p.collected += 1;
+        }
+        if !p.sorted {
+            p.cs.sort_unstable();
+            p.buf = vec![0u64; p.cs.len() * CHUNK_WORDS];
+            p.done = vec![[0u64; MASK_WORDS]; p.cs.len()];
+            p.sorted = true;
+        }
+        // their live copies
+        let base = self.base as usize;
+        while p.copied < p.cs.len() {
+            if p.copied % STOP_CHUNKS == STOP_CHUNKS - 1 && stop() {
+                return false;
+            }
+            let (i, c) = (p.copied, p.cs[p.copied]);
+            let live = (base + ((c as usize) << CHUNK_SHIFT)) as *const u64;
+            // SAFETY: a whole live chunk.
+            let src = unsafe { std::slice::from_raw_parts(live, CHUNK_WORDS) };
+            p.buf[i * CHUNK_WORDS..(i + 1) * CHUNK_WORDS].copy_from_slice(src);
+            p.copied += 1;
+        }
+        // rewound through the logs, oldest first, each word once (as
+        // `rewound_until`; the open log last, whole, as it is now)
+        while p.rewound < n {
+            if p.rewound % STOP_LOGS == STOP_LOGS - 1 && stop() {
+                return false;
+            }
+            let log = &self.logs[k + p.rewound];
+            for &(c, q) in &log.entries {
+                if bit(&p.seen, c as usize) {
+                    let i = p.cs.binary_search(&c).unwrap();
+                    // SAFETY: a slab chunk; a chunk of `buf`.
+                    unsafe {
+                        apply_whole_under(
+                            q,
+                            p.buf.as_mut_ptr().add(i * CHUNK_WORDS),
+                            &mut p.done[i],
+                        )
+                    };
+                }
+            }
+            for d in &log.deltas {
+                if bit(&p.seen, d.c as usize) {
+                    let i = p.cs.binary_search(&d.c).unwrap();
+                    // SAFETY: a chunk of `buf`.
+                    unsafe {
+                        d.apply_under(
+                            &log.bytes,
+                            p.buf.as_mut_ptr().add(i * CHUNK_WORDS),
+                            &mut p.done[i],
+                        )
+                    };
+                }
+            }
+            p.rewound += 1;
+        }
+        // the redo made ahead
+        while p.pre.len() < p.cs.len() {
+            if !p.pre.is_empty() && stop() {
+                return false;
+            }
+            let from = p.pre.len();
+            let to = (from + STOP_CHUNKS).min(p.cs.len());
+            let more = self.pre_redo(&p.cs[from..to]);
+            p.pre.extend(more);
+        }
+        p.done = Vec::new();
+        p.seen = Vec::new();
+        true
     }
 
     /// `Prepared::pre` for chunks `cs`: a copy of each live chunk the
@@ -1165,6 +1303,7 @@ impl Core {
 
     /// Restore to `id` and discard every later checkpoint (the plain restart).
     fn restore_discard(&mut self, id: CheckpointId) -> Result<(), String> {
+        self.drop_part();
         let k = self
             .index_of(id)
             .ok_or_else(|| format!("checkpoint {id} is not retained"))?;
@@ -1185,7 +1324,56 @@ impl Core {
         let k = self
             .index_of(id)
             .ok_or_else(|| format!("checkpoint {id} is not retained"))?;
-        let prepared = self.prepared.take();
+        let mut prepared = self.prepared.take();
+        // a preparation newer work stopped: finished here, from where it got
+        // (a whole one, when there is one, is newer: `prepare_restore` drops
+        // the other kind) -- once its rewind is done. Before that, going on
+        // costs more than the plain restore: the rest of a serial rewind
+        // into a copy of every chunk, then the copies in, against `rewind`'s
+        // one parallel pass over the live space (measured on Infinite
+        // Descent x2 with 60 ms between keys: the restore's engine-thread
+        // instructions 82 M plain, 358 M going on from early parts).
+        match self.take_part(id) {
+            Some(p) if prepared.is_some() => self.give_pre(p.pre),
+            Some(p) if p.rewound < self.logs.len() - k => {
+                if std::env::var_os("FLASHTEX_INCR_DEBUG").is_some() {
+                    eprintln!(
+                        "[arena] preparation for {id} dropped: {}/{} logs rewound",
+                        p.rewound,
+                        self.logs.len() - k
+                    );
+                }
+                self.give_pre(p.pre);
+            }
+            Some(mut p) => {
+                if std::env::var_os("FLASHTEX_INCR_DEBUG").is_some() {
+                    eprintln!(
+                        "[arena] preparation for {id} goes on (logs {}/{} looked through, \
+                         {}/{} copied, {} rewound, {} redo)",
+                        p.collected,
+                        self.logs.len() - k,
+                        p.copied,
+                        p.cs.len(),
+                        p.rewound,
+                        p.pre.len()
+                    );
+                }
+                if self.prepare_go_on(&mut p, k, &mut || false) {
+                    prepared = Some(Prepared {
+                        id,
+                        ids: p.ids,
+                        history_gen: p.history_gen,
+                        cs: p.cs,
+                        buf: p.buf,
+                        pre: p.pre,
+                    });
+                } else {
+                    // (not reached: nothing asks it to stop)
+                    self.give_pre(p.pre);
+                }
+            }
+            None => {}
+        }
         if std::env::var_os("FLASHTEX_INCR_DEBUG").is_some() {
             match &prepared {
                 Some(p) => eprintln!(
@@ -1210,6 +1398,15 @@ impl Core {
             }
             None => None,
         };
+        if let Some(p) = &prepared {
+            if std::env::var_os("FLASHTEX_VERIFY_PREPARED").is_some() {
+                if let Err(e) = self.verify_prepared_use(p, k) {
+                    // (a verify mode: loud, so that a sweep fails)
+                    eprintln!("{e}");
+                    std::process::abort();
+                }
+            }
+        }
         let old_logs = self.logs.split_off(k);
         let old_ids = self.ids.split_off(k);
         if std::env::var_os("FLASHTEX_INCR_DEBUG").is_some() {
@@ -1241,6 +1438,7 @@ impl Core {
     /// nothing written since. Jump to the old run's latest state and keep its
     /// checkpoints from `old` on.
     fn converge(&mut self, branch: Branch, old: CheckpointId) -> Result<(), String> {
+        self.drop_part();
         let Some(j) = branch.ids.iter().position(|&x| x == old) else {
             let b = branch;
             self.drop_branch(b);
@@ -1313,6 +1511,7 @@ impl Core {
     /// run's latest state (the redo log) and its checkpoints back -- as if
     /// the restore had not happened.
     fn reattach(&mut self, branch: Branch) -> Result<(), String> {
+        self.drop_part();
         let target = *branch.ids.first().ok_or("empty branch")?;
         let Some(k) = self.index_of(target) else {
             self.drop_branch(branch);
@@ -1385,6 +1584,61 @@ impl Core {
         Ok(())
     }
 
+    /// `FLASHTEX_VERIFY_PREPARED`, where `restore_branch` uses `p` (the
+    /// logs from index `k` on): it holds every chunk the sealed logs from
+    /// its checkpoint on hold, and only chunks those logs or the open one
+    /// hold (the open log may have taken new chunks since: their pre-images
+    /// there are their values at the checkpoint, `rewind_prepared`); each
+    /// chunk is what rewinding the logs as they are now gives; and each
+    /// redo made ahead of a chunk the barrier has not saved since is the
+    /// live chunk.
+    fn verify_prepared_use(&self, p: &Prepared, k: usize) -> Result<(), String> {
+        let logs = &self.logs[k..];
+        let (sealed, open) = logs.split_at(logs.len().saturating_sub(1));
+        let mut must: Vec<u32> = sealed.iter().flat_map(|l| l.chunk_ids()).collect();
+        must.sort_unstable();
+        must.dedup();
+        if let Some(c) = must.iter().find(|c| p.cs.binary_search(c).is_err()) {
+            return Err(format!(
+                "FLASHTEX_VERIFY_PREPARED: chunk {c} of a sealed log is not prepared"
+            ));
+        }
+        let mut open_ids: Vec<u32> = open.iter().flat_map(|l| l.chunk_ids()).collect();
+        open_ids.sort_unstable();
+        let held = |c: &u32| must.binary_search(c).is_ok() || open_ids.binary_search(c).is_ok();
+        if let Some(c) = p.cs.iter().find(|c| !held(c)) {
+            return Err(format!(
+                "FLASHTEX_VERIFY_PREPARED: chunk {c} is prepared, no log holds it"
+            ));
+        }
+        let live = |c: u32| self.chunk_ptr(c as usize) as *const u64;
+        if rewound(self.nchunks, &p.cs, &live, logs) != p.buf {
+            return Err(
+                "FLASHTEX_VERIFY_PREPARED: a prepared chunk differs from the rewound one".into(),
+            );
+        }
+        let saved = self.saved_ref();
+        for (i, &d) in p.pre.iter().enumerate() {
+            let c = p.cs[i] as usize;
+            if d.is_null() || saved[c] != 0 {
+                continue;
+            }
+            // SAFETY: a slab chunk and a live chunk, CHUNK_WORDS words each.
+            let (a, b) = unsafe {
+                (
+                    std::slice::from_raw_parts(d as *const u64, CHUNK_WORDS),
+                    std::slice::from_raw_parts(self.chunk_ptr(c), CHUNK_WORDS),
+                )
+            };
+            if a != b {
+                return Err(format!(
+                    "FLASHTEX_VERIFY_PREPARED: the redo made ahead of chunk {c} is stale"
+                ));
+            }
+        }
+        Ok(())
+    }
+
     /// `FLASHTEX_VERIFY_PREPARED`: the prepared restore holds exactly the
     /// chunks the logs from its checkpoint on hold, each as rewinding those
     /// logs gives it.
@@ -1421,6 +1675,42 @@ impl Core {
         for (_, p) in b.redo {
             self.slab.give(p);
         }
+    }
+
+    /// `retain` for a detached branch (the old run's future): drop every
+    /// checkpoint of `b` that `keep` rejects, except its first (the restore
+    /// target, in the live chain too) and its newest, merging each dropped
+    /// log into its predecessor. What the branch is for stays exact: the
+    /// old run's state at every checkpoint kept (rewound from its end
+    /// through the logs after it, which are untouched or merged), the
+    /// chunks it wrote after the target (a merged log holds the union of
+    /// its parts'), and `reattach`, which puts back a chain with fewer
+    /// checkpoints.
+    fn retain_branch(&mut self, b: &mut Branch, keep: &dyn Fn(CheckpointId) -> bool) {
+        let _m = crate::memstat::scope(crate::memstat::tag::LOG);
+        let n = b.ids.len();
+        let ids = std::mem::take(&mut b.ids);
+        let logs = std::mem::take(&mut b.logs);
+        let mut out_ids = Vec::with_capacity(n);
+        let mut out_logs: Vec<Log> = Vec::with_capacity(n);
+        for (i, (id, log)) in ids.into_iter().zip(logs).enumerate() {
+            let sealed = |l: &Log| l.entries.is_empty();
+            let dst = out_logs.last_mut();
+            match dst {
+                Some(dst) if i + 1 < n && !keep(id) && sealed(dst) && sealed(&log) => {
+                    let merged = merge_sealed(dst, &log);
+                    self.sealed_bytes += merged.sealed_bytes();
+                    self.sealed_bytes -= dst.sealed_bytes() + log.sealed_bytes();
+                    *dst = merged;
+                }
+                _ => {
+                    out_ids.push(id);
+                    out_logs.push(log);
+                }
+            }
+        }
+        b.ids = out_ids;
+        b.logs = out_logs;
     }
 
     /// Drop every checkpoint `keep` rejects, except the newest, merging each
@@ -1546,6 +1836,11 @@ struct OldCache {
     /// (checkpoint, history_gen, chunk -> index into `words` / CHUNK_WORDS),
     /// most recently used last.
     at: Vec<OldAt>,
+    /// Chunks `diff_branch_inner` took from here, and rewound, over this
+    /// space's life (for DONE's stages: cumulative). Per space, not
+    /// process-wide: tests running in parallel each read their own.
+    hits: u64,
+    misses: u64,
 }
 
 /// One checkpoint's kept chunks: (checkpoint, history_gen, chunk -> index
@@ -1555,11 +1850,6 @@ type OldAt = (CheckpointId, u64, HashMap<u32, usize>, Vec<u64>);
 /// Checkpoints `OldCache` keeps, and the chunks it keeps in all (1 KB each).
 const OLD_CACHE_CHECKPOINTS: usize = 4;
 const OLD_CACHE_CHUNKS: usize = 16 * 1024;
-
-/// Chunks `diff_branch_inner` took from `OldCache` and rewound (for
-/// DONE's stages: cumulative).
-pub static OLD_CACHE_HITS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-pub static OLD_CACHE_MISSES: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
 impl OldCache {
     fn get(&self, id: CheckpointId, gen: u64, c: u32) -> Option<&[u64]> {
@@ -1652,6 +1942,7 @@ impl Arena {
             threads: 0,
             sealed_bytes: 0,
             prepared: None,
+            part: None,
             history_gen: 0,
             prepare_on_reattach: std::env::var_os("FLASHTEX_NO_PREPARE").is_none(),
         });
@@ -1915,6 +2206,10 @@ impl Arena {
         self.core_mut().drop_branch(b)
     }
 
+    pub fn retain_branch(&mut self, b: &mut Branch, keep: &dyn Fn(CheckpointId) -> bool) {
+        self.core_mut().retain_branch(b, keep)
+    }
+
     pub fn reattach(&mut self, b: Branch) -> Result<(), String> {
         self.core_mut().reattach(b)
     }
@@ -1928,6 +2223,13 @@ impl Arena {
     /// when it has been idle a while (its memory goes back to the system).
     pub fn drop_old_cache(&self) {
         self.old_cache.borrow_mut().at = Vec::new();
+    }
+
+    /// The convergence tests' old chunks taken from `OldCache` and rewound,
+    /// over this space's life: (kept, rewound).
+    pub fn old_cache_counts(&self) -> (u64, u64) {
+        let c = self.old_cache.borrow();
+        (c.hits, c.misses)
     }
 
     /// Bytes the old checkpoints' kept chunks hold.
@@ -1974,14 +2276,10 @@ impl Arena {
         cs.sort_unstable();
         let live = |c: u32| core.chunk_ptr(c as usize) as *const u64;
         let bufs = rewound(core.nchunks, &cs, &live, &core.logs[k..]);
-        let mut over: Vec<*const u64> = vec![std::ptr::null(); core.nchunks];
-        for (i, &c) in cs.iter().enumerate() {
-            over[c as usize] = bufs[i * CHUNK_WORDS..].as_ptr();
-        }
         Ok(View {
             arena: self,
-            over,
-            _bufs: bufs,
+            cs,
+            bufs,
         })
     }
 
@@ -2188,21 +2486,33 @@ impl Arena {
         let mut seen = vec![0u64; n.div_ceil(64)];
         let mut cand: Vec<u32> = Vec::new();
         // Chunks wholly inside an array the comparison leaves out
-        // (`UNSTATED`) are not candidates: taken as seen.
+        // (`UNSTATED`) are not candidates. Their old values are rewound
+        // anyway, in the same pass, and kept (`OldCache`): a test that
+        // passes is followed by the jump's comparison at the same
+        // checkpoint, which reads them (`diff_branch_all`), and it then
+        // rewinds nothing (lane P4-TYPING-200WPM (b): on *Infinite Descent*
+        // each rewind is a pass over 3,100 logs, 4.5 M entries, ~140 M
+        // instructions).
+        let mut unstated = vec![0u64; n.div_ceil(64)];
         for r in self
             .regions
             .iter()
             .filter(|r| skip_unstated && UNSTATED.contains(&r.name))
         {
             for c in r.off.div_ceil(CHUNK_BYTES)..(r.off + r.bytes) / CHUNK_BYTES {
-                set_bit(&mut seen, c);
+                set_bit(&mut unstated, c);
             }
         }
+        let mut extra: Vec<u32> = Vec::new();
         for log in b.logs[..jj].iter().chain(&core.logs[kr..]) {
             for c in log.chunk_ids() {
                 if !bit(&seen, c as usize) {
                     set_bit(&mut seen, c as usize);
-                    cand.push(c);
+                    if bit(&unstated, c as usize) {
+                        extra.push(c);
+                    } else {
+                        cand.push(c);
+                    }
                 }
             }
         }
@@ -2217,6 +2527,7 @@ impl Arena {
             cand.iter().partition(|c| redo_of.contains_key(c));
         in_old.sort_unstable();
         at_r.sort_unstable();
+        extra.retain(|c| redo_of.contains_key(c));
         let t = std::time::Instant::now();
         // The old run's values at `old`: those `OldCache` holds, the rest
         // rewound from the old run's end (every one with
@@ -2229,21 +2540,43 @@ impl Arena {
                 .iter()
                 .partition(|&&c| cache.get(old, gen, c).is_some())
         };
-        let rewind: &[u32] = if verify { &in_old } else { &misses };
-        let Some(rew) = rewound_until(n, rewind, &|c| redo_of[&c], &b.logs[jj..], stop) else {
+        // (the unstated ones not kept yet, with them)
+        let extra_misses: Vec<u32> = {
+            let cache = self.old_cache.borrow();
+            extra
+                .iter()
+                .copied()
+                .filter(|&c| cache.get(old, gen, c).is_none())
+                .collect()
+        };
+        let mut rewind: Vec<u32> = if verify {
+            in_old.clone()
+        } else {
+            misses.clone()
+        };
+        if !misses.is_empty() || verify {
+            rewind.extend(&extra_misses);
+            rewind.sort_unstable();
+        }
+        // (nothing to rewind: no pass over the logs)
+        let rew = if rewind.is_empty() {
+            Some(Vec::new())
+        } else {
+            rewound_until(n, &rewind, &|c| redo_of[&c], &b.logs[jj..], stop)
+        };
+        let Some(rew) = rew else {
             return Ok(None);
         };
         let mut old_buf = vec![0u64; in_old.len() * CHUNK_WORDS];
         {
             let cache = self.old_cache.borrow();
-            let mut r = 0;
             for (i, &c) in in_old.iter().enumerate() {
                 let dst = &mut old_buf[i * CHUNK_WORDS..(i + 1) * CHUNK_WORDS];
-                let mine = rewind.get(r) == Some(&c);
-                if mine {
+                let mine = rewind.binary_search(&c).ok();
+                if let Some(r) = mine {
                     dst.copy_from_slice(&rew[r * CHUNK_WORDS..(r + 1) * CHUNK_WORDS]);
-                    r += 1;
                 }
+                let mine = mine.is_some();
                 if let Some(v) = cache.get(old, gen, c) {
                     if mine && v != &dst[..] {
                         // (a verify mode: loud, so that a sweep fails)
@@ -2256,16 +2589,27 @@ impl Arena {
                 }
             }
         }
-        OLD_CACHE_HITS.fetch_add(cached.len() as u64, std::sync::atomic::Ordering::Relaxed);
-        OLD_CACHE_MISSES.fetch_add(misses.len() as u64, std::sync::atomic::Ordering::Relaxed);
-        if !misses.is_empty() {
-            // (`rew` holds them in `rewind`'s order, which is in_old's or theirs)
-            let mut mb = Vec::with_capacity(misses.len() * CHUNK_WORDS);
-            for &c in &misses {
+        {
+            let mut cache = self.old_cache.borrow_mut();
+            cache.hits += cached.len() as u64;
+            cache.misses += misses.len() as u64;
+        }
+        // (kept: every one rewound that was not, in `rewind`'s order)
+        let keep: Vec<u32> = {
+            let cache = self.old_cache.borrow();
+            rewind
+                .iter()
+                .copied()
+                .filter(|&c| cache.get(old, gen, c).is_none())
+                .collect()
+        };
+        if !keep.is_empty() {
+            let mut mb = Vec::with_capacity(keep.len() * CHUNK_WORDS);
+            for &c in &keep {
                 let i = rewind.binary_search(&c).expect("a rewound chunk");
                 mb.extend_from_slice(&rew[i * CHUNK_WORDS..(i + 1) * CHUNK_WORDS]);
             }
-            self.old_cache.borrow_mut().put(old, gen, &misses, &mb);
+            self.old_cache.borrow_mut().put(old, gen, &keep, &mb);
         }
         let t_old = t.elapsed();
         let live = |c: u32| core.chunk_ptr(c as usize) as *const u64;
@@ -2385,6 +2729,14 @@ impl Arena {
                 + p.cs.capacity() * 4
                 + p.ids.capacity() * 8
                 + p.pre.iter().filter(|d| !d.is_null()).count() * CHUNK_BYTES
+        }) + c.part.as_ref().map_or(0, |p| {
+            // (a stopped one, `PartPrep`, kept to go on)
+            p.buf.capacity() * 8
+                + p.cs.capacity() * 4
+                + p.ids.capacity() * 8
+                + p.seen.capacity() * 8
+                + p.done.capacity() * MASK_WORDS * 8
+                + p.pre.iter().filter(|d| !d.is_null()).count() * CHUNK_BYTES
         });
         vec![
             ("space_reserved", c.bytes as i64),
@@ -2498,22 +2850,22 @@ impl ChunkDiff {
 /// The space at a checkpoint (`Arena::view_at`).
 pub struct View<'a> {
     arena: &'a Arena,
-    over: Vec<*const u64>,
-    /// Where `over` points.
-    _bufs: Vec<u64>,
+    /// The chunks that differ from the live space, sorted; chunk `cs[i]`'s
+    /// words are `bufs[i * CHUNK_WORDS..]`. (Not a pointer per chunk of
+    /// the space: that was a 4 MB vector, freed after each S₀ save and
+    /// then kept by the macOS allocator; lane MEM-MODES.)
+    cs: Vec<u32>,
+    bufs: Vec<u64>,
 }
 
 impl View<'_> {
     pub fn chunk(&self, c: usize) -> &[u8] {
-        let p = self.over[c];
-        if p.is_null() {
-            let w = self.arena.chunk(c);
-            // SAFETY: a chunk of CHUNK_WORDS words viewed as bytes.
-            unsafe { std::slice::from_raw_parts(w.as_ptr() as *const u8, CHUNK_BYTES) }
-        } else {
-            // SAFETY: a chunk of `_bufs`, alive and unchanged with `self`.
-            unsafe { std::slice::from_raw_parts(p as *const u8, CHUNK_BYTES) }
-        }
+        let w: &[u64] = match self.cs.binary_search(&(c as u32)) {
+            Ok(i) => &self.bufs[i * CHUNK_WORDS..(i + 1) * CHUNK_WORDS],
+            Err(_) => self.arena.chunk(c),
+        };
+        // SAFETY: a chunk of CHUNK_WORDS words viewed as bytes.
+        unsafe { std::slice::from_raw_parts(w.as_ptr() as *const u8, CHUNK_BYTES) }
     }
 }
 
@@ -3062,6 +3414,124 @@ mod tests {
         assert_eq!(a.checkpoint_ids(), &ids[..=5]);
     }
 
+    /// P4-TYPING-200WPM (a): a preparation stopped part way (at every kind
+    /// of step: looking through the logs, copying, rewinding, the redo) is
+    /// kept and goes on from there, in the next `prepare_restore` to the
+    /// same target or in the restore itself, also when the live state was
+    /// written in between; the restore equals a plain one and the jump back
+    /// gives the old state. One for another target, or from before a new
+    /// checkpoint, is not used.
+    #[test]
+    fn stopped_preparations_go_on_where_they_stopped() {
+        // (more than STOP_LOGS logs and STOP_CHUNKS chunks: every step can
+        // be stopped)
+        let (mut a, mut arr) = space(400_000);
+        scribble(&mut arr, 3, 20_000);
+        let mut ids = vec![];
+        let mut copies = std::collections::HashMap::new();
+        for k in 0..150u64 {
+            ids.push(a.checkpoint());
+            if [0, 4, 5, 6, 9, 13, 70].contains(&k) {
+                copies.insert(k as usize, arr.to_vec());
+            }
+            scribble(&mut arr, 300 + k, 400);
+        }
+        // a stop after `n` questions
+        let after = |n: usize| {
+            let mut k = 0usize;
+            move || {
+                k += 1;
+                k > n
+            }
+        };
+        let mut round = 0u64;
+        for i in [0usize, 5, 13, 70] {
+            for n in [0usize, 1, 2, 3, 5, 8, 40] {
+                round += 1;
+                let _ = a.prepare_restore(ids[i], &mut after(n));
+                // written in between, then stopped again further on
+                scribble(&mut arr, 900 + round, 150);
+                let _ = a.prepare_restore(ids[i], &mut after(n + 1));
+                scribble(&mut arr, 1900 + round, 150);
+                let end = arr.to_vec();
+                let br = a.restore_branch(ids[i]).unwrap();
+                assert!(
+                    arr[..] == copies[&i][..],
+                    "restore to {i}, stopped after {n}"
+                );
+                a.converge(br, ids[i]).unwrap();
+                assert!(arr[..] == end[..], "jump back from {i}, stopped after {n}");
+            }
+        }
+        // stopped for one target, restored to another: not used
+        let _ = a.prepare_restore(ids[4], &mut after(2));
+        let end = arr.to_vec();
+        let br = a.restore_branch(ids[9]).unwrap();
+        assert!(arr[..] == copies[&9][..], "restore to another target");
+        a.converge(br, ids[9]).unwrap();
+        assert!(arr[..] == end[..]);
+        // stopped, then a checkpoint: not used
+        let _ = a.prepare_restore(ids[6], &mut after(2));
+        scribble(&mut arr, 4000, 100);
+        let last = a.checkpoint();
+        let _ = last;
+        let br = a.restore_branch(ids[6]).unwrap();
+        assert!(arr[..] == copies[&6][..], "restore after a checkpoint");
+        a.drop_branch(br);
+    }
+
+    /// A preparation stopped while a branch was detached, then the branch
+    /// reattached: the part was copied from the abandoned run's state and
+    /// rewound through its logs, so it is not used. (When the branch holds
+    /// only its target and no checkpoint was taken while it was detached,
+    /// the checkpoint list after the reattach is the one the part saw:
+    /// `reattach` drops the part itself.)
+    #[test]
+    fn a_part_from_before_a_reattach_is_not_used() {
+        let after = |n: usize| {
+            let mut k = 0usize;
+            move || {
+                k += 1;
+                k > n
+            }
+        };
+        for n in [1usize, 2, 3, 5] {
+            let (mut a, mut arr) = space(400_000);
+            scribble(&mut arr, 3, 20_000);
+            for k in 0..8u64 {
+                a.checkpoint();
+                scribble(&mut arr, 300 + k, 400);
+            }
+            let target = a.checkpoint();
+            let at_target = arr.to_vec();
+            // the old run writes after its newest checkpoint
+            scribble(&mut arr, 77 + n as u64, 3000);
+            let old_end = arr.to_vec();
+            let br = a.restore_branch(target).unwrap();
+            assert_eq!(br.ids, vec![target]);
+            assert!(arr[..] == at_target[..]);
+            // the new run writes elsewhere, takes no checkpoint, and a
+            // preparation to the same target stops in its copies
+            scribble(&mut arr, 880 + n as u64, 3000);
+            assert!(!a.prepare_restore(target, &mut after(n)));
+            assert!(a.core().part.is_some(), "stopped part way ({n})");
+            let ids = a.checkpoint_ids().to_vec();
+            a.reattach(br).unwrap();
+            assert!(arr[..] == old_end[..]);
+            assert_eq!(a.checkpoint_ids(), &ids[..], "the same checkpoint list");
+            assert!(
+                a.core().part.is_none(),
+                "the reattach dropped the part ({n})"
+            );
+            // the next preparation (`prepare_next`) starts afresh
+            assert!(a.prepare_restore(target, &mut || false));
+            let br = a.restore_branch(target).unwrap();
+            assert!(arr[..] == at_target[..], "restore after the reattach ({n})");
+            a.converge(br, target).unwrap_or_else(|e| panic!("{e}"));
+            assert!(arr[..] == old_end[..], "jump back ({n})");
+        }
+    }
+
     /// A prepared restore equals a plain one, also when the live state was
     /// written after the preparation, and a stale one is not used.
     #[test]
@@ -3114,8 +3584,9 @@ mod tests {
         assert!(!a.prepare_restore(ids[2], &mut || true) || ids.len() < 64);
         // stopped inside the copies (fewer logs than one `STOP_LOGS` but more
         // chunks than one `STOP_CHUNKS`: P4-TYPING-200WPM), at each question
-        // in turn: nothing prepared, every slab chunk given back, and the
-        // next restore is the plain one
+        // in turn: nothing prepared, no slab chunk in use but the kept
+        // part's redo made ahead (`PartPrep`), and the restore after the
+        // stops, which takes the part, equals a plain one
         let live0 = a.core().slab.live;
         for n in 1..6 {
             let mut asked = 0;
@@ -3124,15 +3595,21 @@ mod tests {
                 asked >= n
             }));
             assert!(a.core().prepared.is_none());
+            let held = a
+                .core()
+                .part
+                .as_ref()
+                .map_or(0, |p| p.pre.iter().filter(|d| !d.is_null()).count());
             assert_eq!(
                 a.core().slab.live,
-                live0,
-                "the redo made ahead is given back ({n})"
+                live0 + held,
+                "only the kept part holds slab chunks ({n})"
             );
         }
         let end = arr.to_vec();
         let br = a.restore_branch(ids[0]).unwrap();
-        assert!(arr[..] == copies[0][..], "a plain restore after the stops");
+        assert!(a.core().part.is_none(), "the restore took the kept part");
+        assert!(arr[..] == copies[0][..], "a restore after the stops");
         a.converge(br, ids[0]).unwrap();
         assert!(arr[..] == end[..]);
     }
@@ -3399,6 +3876,136 @@ mod tests {
         assert_eq!(c.at.len(), 1);
     }
 
+    /// P4-TYPING-200WPM (b): a convergence test rewinds the `UNSTATED`
+    /// arrays' chunks too, in its one pass, and keeps them: the jump's
+    /// comparison at the same checkpoint (`diff_branch_all`) then rewinds
+    /// nothing, and its old values equal a fresh rewind's (nothing kept)
+    /// word for word, the unstated array's too.
+    #[test]
+    fn a_test_keeps_what_the_jump_compares() {
+        let mut p = Plan::new(64);
+        let rt = p.reserve::<u64>("t", 150_000);
+        let ru = p.reserve::<u64>("dl_side", 50_000);
+        let mut a = p.build();
+        let mut t = a.arr(rt, 150_000);
+        let mut u = a.arr(ru, 50_000);
+        scribble(&mut t, 41, 5000);
+        scribble(&mut u, 42, 2000);
+        let mut ids = vec![];
+        for k in 0..12 {
+            ids.push(a.checkpoint());
+            scribble(&mut t, 400 + k, 2000);
+            scribble(&mut u, 500 + k, 800);
+        }
+        let br = a.restore_branch(ids[3]).unwrap();
+        scribble(&mut t, 990, 1500);
+        scribble(&mut u, 991, 600);
+        a.checkpoint();
+        let all_words = |a: &Arena, d: &ChunkDiff| -> Vec<u64> {
+            (0..a.bytes().len() / 8)
+                .filter(|w| d.old_at.contains_key(&(((w * 8) >> CHUNK_SHIFT) as u32)))
+                .map(|w| d.old_word(a, w * 8))
+                .collect()
+        };
+        for j in [4usize, 6] {
+            a.drop_old_cache();
+            drop(a.diff_branch(&br, ids[j]).unwrap());
+            let misses0 = a.old_cache_counts().1;
+            let kept = all_words(&a, &a.diff_branch_all(&br, ids[j]).unwrap());
+            let misses = a.old_cache_counts().1 - misses0;
+            assert_eq!(misses, 0, "the jump's comparison at {j} rewound again");
+            a.drop_old_cache();
+            let fresh = all_words(&a, &a.diff_branch_all(&br, ids[j]).unwrap());
+            assert!(
+                kept == fresh,
+                "at {j}: the kept values differ from a fresh rewind"
+            );
+        }
+        a.drop_branch(br);
+    }
+
+    /// P4-CONVERGE-REWIND: the `UNSTATED` chunks a convergence test kept
+    /// (`OldCache`) are the old run's values at that checkpoint, whatever
+    /// the new run writes after the test: written on (the chunks the test
+    /// saw again, and chunks it never saw, in both arrays), the jump's
+    /// comparison at the same checkpoint gives a fresh rewind's old values
+    /// word for word, and adopting what differs, then converging, gives
+    /// exactly the old run's latest state.
+    #[test]
+    fn values_a_test_kept_hold_for_chunks_written_after_it() {
+        let mut p = Plan::new(64);
+        let rt = p.reserve::<u64>("t", 150_000);
+        let ru = p.reserve::<u64>("dl_side", 50_000);
+        let mut a = p.build();
+        let mut t = a.arr(rt, 150_000);
+        let mut u = a.arr(ru, 50_000);
+        scribble(&mut t, 61, 5000);
+        scribble(&mut u, 62, 2000);
+        let mut ids = vec![];
+        for k in 0..12 {
+            ids.push(a.checkpoint());
+            scribble(&mut t, 600 + k, 2000);
+            scribble(&mut u, 700 + k, 800);
+        }
+        let (t_end, u_end) = (t.to_vec(), u.to_vec());
+        let j = 6;
+        let br = a.restore_branch(ids[3]).unwrap();
+        scribble(&mut t, 1990, 1500);
+        scribble(&mut u, 1991, 600);
+        a.checkpoint();
+        let all_words = |a: &Arena, d: &ChunkDiff| -> Vec<(usize, u64)> {
+            (0..a.bytes().len() / 8)
+                .filter(|w| d.old_at.contains_key(&(((w * 8) >> CHUNK_SHIFT) as u32)))
+                .map(|w| (w, d.old_word(a, w * 8)))
+                .collect()
+        };
+        a.drop_old_cache();
+        // the test, which keeps the unstated chunks it rewinds
+        let seen_by_test = a.diff_branch(&br, ids[j]).unwrap().compared;
+        // the new run writes on: again where it wrote, and elsewhere
+        scribble(&mut t, 2990, 3000);
+        scribble(&mut u, 2991, 3000);
+        a.checkpoint();
+        let kept = all_words(&a, &a.diff_branch_all(&br, ids[j]).unwrap());
+        a.drop_old_cache();
+        let fresh_d = a.diff_branch_all(&br, ids[j]).unwrap();
+        assert!(
+            fresh_d.compared > seen_by_test,
+            "the new run wrote new chunks"
+        );
+        let fresh = all_words(&a, &fresh_d);
+        assert!(kept == fresh, "kept values differ from a fresh rewind");
+        drop(fresh_d);
+        // the jump: the test kept them again, then the comparison adopts
+        // what differs from the old run's state at `j`
+        drop(a.diff_branch(&br, ids[j]).unwrap());
+        let d = a.diff_branch_all(&br, ids[j]).unwrap();
+        let adopt: Vec<(usize, Vec<u8>)> = d
+            .differing
+            .iter()
+            .map(|&(c, old_p, _)| {
+                // SAFETY: a chunk of the comparison's own buffers or the
+                // arena, unchanged while `d` lives.
+                let b = unsafe { std::slice::from_raw_parts(old_p as *const u8, CHUNK_BYTES) };
+                ((c as usize) << CHUNK_SHIFT, b.to_vec())
+            })
+            .collect();
+        drop(d);
+        for (off, b) in &adopt {
+            a.write_through(*off, b);
+        }
+        a.checkpoint();
+        a.converge(br, ids[j]).unwrap();
+        assert!(
+            t[..] == t_end[..],
+            "the jump gives the old run's latest state"
+        );
+        assert!(
+            u[..] == u_end[..],
+            "the jump gives the old run's latest side table"
+        );
+    }
+
     #[test]
     fn kept_old_chunks_equal_rewound_ones() {
         let (mut a, mut arr) = space(200_000);
@@ -3423,7 +4030,7 @@ mod tests {
         };
         let end = arr.to_vec();
         for round in 0..4u64 {
-            let hits0 = OLD_CACHE_HITS.load(std::sync::atomic::Ordering::Relaxed);
+            let hits0 = a.old_cache_counts().0;
             let br = a.restore_branch(ids[3]).unwrap();
             scribble(&mut arr, 900 + round, 1500);
             a.checkpoint();
@@ -3433,7 +4040,7 @@ mod tests {
             }
             if round > 0 {
                 assert!(
-                    OLD_CACHE_HITS.load(std::sync::atomic::Ordering::Relaxed) > hits0,
+                    a.old_cache_counts().0 > hits0,
                     "round {round}: nothing kept was used"
                 );
             }

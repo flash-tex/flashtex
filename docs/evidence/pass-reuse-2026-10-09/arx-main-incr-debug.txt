@@ -1,0 +1,13 @@
+[incr] restart point: 0 of 270 checkpoints, 0 walked back, 0.119 ms
+[incr] fixed inputs [], restart 275 (anchor Some(275); an .aux appeared: true; bad lookup Some(353); changed [])
+[incr] restart point: 14 of 275 checkpoints, 0 walked back, 0.094 ms
+[incr] restart point: 0 of 275 checkpoints, 0 walked back, 0.112 ms
+[incr] fixed inputs [], restart 916 (anchor Some(916); an .aux appeared: false; bad lookup None; changed ["./p-trees.aux", "./p-trees.toc"])
+[incr] page 1: the old run reads the changed ./p-trees.aux later
+[incr] page 2: the old run reads the changed ./p-trees.aux later
+[incr] page 3: the old run reads the changed ./p-trees.aux later
+[incr] page 5: the old run reads the changed ./p-trees.aux later
+[incr] page 9: the old run reads the changed ./p-trees.aux later
+[incr] page 17: the old run reads the changed ./p-trees.aux later
+[incr] page 33: the old run reads the changed ./p-trees.aux later
+[incr] prepared the restore to 916: true, 5.15 ms
