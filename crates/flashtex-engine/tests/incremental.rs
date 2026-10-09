@@ -98,6 +98,11 @@ impl Host {
 
     /// With `iserve`'s own options (`--budget`).
     fn start_args(e: &Env, dir: &Path, args: &[&str], env: &[(&str, &str)]) -> Host {
+        Host::start_full(e, dir, args, env, Stdio::null())
+    }
+
+    /// With its stderr to `err`.
+    fn start_full(e: &Env, dir: &Path, args: &[&str], env: &[(&str, &str)], err: Stdio) -> Host {
         let mut c = Command::new(env!("CARGO_BIN_EXE_flashtex-host"));
         c.arg("iserve")
             .args(args)
@@ -109,7 +114,7 @@ impl Host {
         let mut child = c
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            .stderr(Stdio::null())
+            .stderr(err)
             .spawn()
             .unwrap();
         let stdin = child.stdin.take().unwrap();
@@ -5066,4 +5071,61 @@ fn file_size_and_mod_date_are_reads_of_the_file() {
         "touched, and a letter in the body",
     );
     step(Some(&doc), None, "the revert");
+}
+
+/// Lane COLD-FIXED (`src/fmtimage.rs`): a run from the format after the
+/// first in a process installs the first load's image instead of reading
+/// the format again, when the state before the load is the same. Edits of
+/// the class options run from the format; with `FLASHTEX_FMT_IMAGE=verify`
+/// each such load is made anyway and compared with the image word for word,
+/// and every compile equals scratch runs.
+#[test]
+fn a_format_loaded_again_is_its_first_load() {
+    let Some(e) = env() else {
+        common::no_texlive();
+        return;
+    };
+    // No image is kept of a format younger than the racy window (2 s).
+    let made = std::fs::metadata(e.fmt.join("pdflatex.fmt"))
+        .and_then(|m| m.modified())
+        .unwrap();
+    while made.elapsed().unwrap_or_default() < std::time::Duration::from_millis(2100) {
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+    let dir = e.dir.join("fmt-image");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let doc = |opt: &str| {
+        let body: String = (0..12).map(|i| para(i, "omega")).collect();
+        format!(
+            "\\documentclass[{opt}]{{article}}\n\\usepackage{{amsmath}}\n\n\
+             \\begin{{document}}\n\\section{{One}}\\label{{one}}\n{body}\
+             See page~\\pageref{{one}}.\n\\end{{document}}\n"
+        )
+    };
+    let log = dir.with_extension("stderr");
+    for verify in [true, false] {
+        let err = std::fs::File::create(&log).unwrap();
+        let env: &[(&str, &str)] = if verify {
+            &[("FLASHTEX_FMT_IMAGE", "verify")]
+        } else {
+            &[]
+        };
+        let mut h = Host::start_full(&e, &dir, &[], env, Stdio::from(err));
+        for (k, opt) in ["11pt", "12pt", "11pt", "10pt"].iter().enumerate() {
+            let r = compile_and_check(&e, &mut h, &dir, &[("doc.tex", &doc(opt))], opt);
+            if k > 0 {
+                assert_eq!(field(&r, "mode"), "\"cold\"", "{opt}: {r}");
+            }
+        }
+        drop(h);
+        let said = std::fs::read_to_string(&log).unwrap();
+        if verify {
+            assert!(
+                said.contains("fmtimage: verified"),
+                "no load was the image's: {said}"
+            );
+            assert!(!said.contains("MISMATCH"), "{said}");
+        }
+    }
 }
