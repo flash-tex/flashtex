@@ -16,7 +16,8 @@
 #           Needs TeX Live 2026.
 #   leaks   macOS only: the release host through three socket sessions, Apple's `leaks` after
 #           each (scripts/leaks_session.py): at most 2 MB lost by start-up and at most 1 KB a
-#           keystroke after it, on plain-10 and full-120. LSan missed the three host leaks fixed
+#           keystroke after it, on plain-10 and full-120, each with the project directory
+#           unchanged and changing between keystrokes (--changing-dir). LSan missed the three host leaks fixed
 #           on 2026-10-04 (zlib per restore, kpathsea per lookup, 18 MB at start); this did not.
 #           Needs TeX Live 2026; uses $CARGO_TARGET_DIR's release build (it builds it).
 #   sweep   the fixture-wide incremental soundness test (host_incremental.rs
@@ -88,9 +89,12 @@ leg_leaks() {
     INCR_BENCH_DIR=$work/ib python3 "$root/tools/incr-bench/mkdocs.py" >/dev/null
     local r=0
     for doc in plain-10 full-120; do
-        echo "== leaks: $doc"
-        FLASHTEX_FORMAT_CACHE_DIR=$work/format-cache \
-            python3 "$root/scripts/leaks_session.py" "$work/ib" rel "$doc" --work-root "$work/leaks" || r=1
+        for leg in "" --changing-dir; do
+            echo "== leaks: $doc $leg"
+            FLASHTEX_FORMAT_CACHE_DIR=$work/format-cache \
+                python3 "$root/scripts/leaks_session.py" "$work/ib" rel "$doc" $leg \
+                --work-root "$work/leaks" || r=1
+        done
     done
     return $r
 }
