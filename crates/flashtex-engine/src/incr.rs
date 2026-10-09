@@ -137,8 +137,12 @@ pub struct Options {
     /// is a separate full run; the engine state and the P-T1 log are those
     /// of a normal run but for the PDF's byte count).
     pub preview: bool,
-    /// Bytes the undo logs may hold (DESIGN.md §5.2: 1 GB by default).
+    /// Bytes the undo logs may hold (DESIGN.md §5.2: 1 GB by default), and
+    /// the loaded format's image with them (`crate::fmtimage`).
     pub budget: usize,
+    /// Keep the loaded format's image (`crate::fmtimage`): not under a
+    /// `lean` performance mode (Low Memory).
+    pub fmt_image: bool,
     /// Pages around the cursor whose checkpoints all stay (`thin`;
     /// `DEFAULT_DENSE`, a performance mode's `crate::profile::Profile::dense`).
     pub dense: usize,
@@ -183,6 +187,7 @@ impl Default for Options {
         let mut o = Options {
             preview: true,
             budget: 0,
+            fmt_image: true,
             dense: 0,
             timed_s: 0.0,
             segment_s: None,
@@ -217,6 +222,7 @@ impl Options {
         self.dense = p.dense;
         self.timed_s = p.timed_s;
         self.segment_s = p.segment_s;
+        self.fmt_image = !p.lean;
     }
 }
 
@@ -2660,6 +2666,7 @@ impl Session {
         system::configure(o.clone());
         system::capture_terminal(true);
         crate::diag::set_enabled(opts.diagnostics);
+        crate::fmtimage::set_allowed(opts.fmt_image);
         crate::diag::reset();
         crate::pdftex::set_preview(opts.preview);
         // a fatal run's PDF is set aside, not lost (system::remove_output)
@@ -2976,6 +2983,7 @@ impl Session {
     pub fn apply_profile(&mut self, p: &crate::profile::Profile) {
         let shrinks = p.budget < self.opts.budget || p.dense < self.opts.dense;
         self.opts.apply_profile(p);
+        crate::fmtimage::set_allowed(self.opts.fmt_image);
         if shrinks && self.paused.is_none() && self.g.is_some() {
             self.enforce_budget();
         }
@@ -2989,6 +2997,8 @@ impl Session {
     }
 
     pub fn trim_caches(&mut self) {
+        // (the loaded format's image: the next run from the format loads it)
+        crate::fmtimage::forget();
         if let Some(g) = self.g.as_mut() {
             g.arena.drop_old_cache();
             // (a preparation newer work stopped: its copies of the chunks)
@@ -5961,7 +5971,8 @@ impl Session {
     fn enforce_budget(&mut self) {
         let cursor = self.cursor;
         let s0 = self.s0.as_ref().map(|s| s.id);
-        let budget = self.opts.budget;
+        // (the loaded format's image is held within the same budget)
+        let budget = self.opts.budget.saturating_sub(crate::fmtimage::bytes());
         let dense = self.opts.dense;
         let Some(g) = self.g.as_mut() else { return };
         // (`crate::midline`: the checkpoints a refill left holding the old line)

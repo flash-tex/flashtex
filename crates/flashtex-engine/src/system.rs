@@ -670,6 +670,13 @@ pub struct WordFile {
     path: Option<String>,
 }
 
+impl WordFile {
+    /// The file opened.
+    pub fn path(&self) -> Option<&str> {
+        self.path.as_deref()
+    }
+}
+
 // ---------------------------------------------------------------------------
 // The Pascal built-ins the generated code calls
 // ---------------------------------------------------------------------------
@@ -4208,7 +4215,7 @@ pub struct StatSig {
 /// (`FLASHTEX_RACY_MS` changes it, for the tests).
 pub const RACY_NS: i128 = 2_000_000_000;
 
-fn racy_ns() -> i128 {
+pub(crate) fn racy_ns() -> i128 {
     static R: std::sync::OnceLock<i128> = std::sync::OnceLock::new();
     *R.get_or_init(|| {
         std::env::var("FLASHTEX_RACY_MS")
