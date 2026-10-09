@@ -14,7 +14,7 @@
 //! | [`mapfile`] | `mapfile.c` | ported |
 //! | [`subfont`] | `subfont.c` | ported: subfont map entries (`name@sfd@`) |
 //! | [`writefont`] | `writefont.c` | ported |
-//! | [`writet1`] | `writet1.c` | ported: Type 1 embedding and subsetting |
+//! | [`writet1`] | `writet1.c` | rewritten into idiomatic Rust (docs/design/engine-v2/REWRITE.md §6): Type 1 embedding and subsetting |
 //! | [`writeenc`] | `writeenc.c` | ported |
 //! | [`tounicode`] | `tounicode.c` | ported |
 //! | [`writet3`] | `writet3.c`, `pkin.c` | ported: PK bitmap fonts (found or made by kpathsea's linked `kpse_find_pk`, which runs mktexpk) and `.pgc` files as Type 3 |
@@ -151,6 +151,7 @@ pub fn note_printed() {
 pub fn reset_state() {
     STATE.with(|s| *s.borrow_mut() = CState::default());
     crate::displaylist::engine_reset();
+    crate::lineshift::reset();
 }
 
 crate::codec_struct!(CState {
@@ -190,7 +191,7 @@ impl CState {
     pub fn same_as(&self, o: &CState) -> bool {
         let (f, g) = (&self.fonts, &o.fonts);
         same_enc(&self.utils, &o.utils)
-            && same_shared(&self.vf, &o.vf)
+            && (shared::Shared::ptr_eq(&self.vf, &o.vf) || self.vf.same_as(&o.vf))
             && self.avl.same_as(&o.avl)
             && self.fonts_busy == o.fonts_busy
             && same_enc(&self.out, &o.out)

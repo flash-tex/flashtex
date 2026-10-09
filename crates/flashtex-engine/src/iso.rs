@@ -44,6 +44,9 @@ const LO_MEM_STAT_MAX: i32 = 19; // fil_neg_glue + glue_spec_size - 1
 
 // node sizes with SyncTeX's two words (changes/synctex.ch)
 const SYNCTEX_FIELD_SIZE: i32 = 2;
+// changes/lineshift.ch's `ls_cond_size`: conditionals whose line's file is
+// known
+const LS_COND_SIZE: i32 = 1000;
 const BOX_NODE_SIZE: i32 = crate::generated::consts::box_node_size;
 const RULE_NODE_SIZE: i32 = crate::generated::consts::rule_node_size;
 const MEDIUM_NODE_SIZE: i32 = crate::generated::consts::medium_node_size;
@@ -211,12 +214,12 @@ fn int(w: u64) -> i32 {
 // ---------------------------------------------------------------------------
 
 /// A state's word space, read by byte offset.
-trait Space {
+pub trait Space {
     fn word(&self, off: usize) -> u64;
 }
 
 /// The live space.
-struct Live<'a> {
+pub struct Live<'a> {
     bytes: &'a [u8],
 }
 
@@ -228,7 +231,7 @@ impl Space for Live<'_> {
 }
 
 /// The old run's space at a checkpoint, through a chunk table.
-struct Old<'a> {
+pub struct Old<'a> {
     table: Vec<*const u64>,
     d: &'a ChunkDiff,
     g: &'a Globals,
@@ -268,10 +271,27 @@ struct Layout {
     pdf_link_stack: usize,
     intr_state: usize,
     intr_data: usize,
+    // the files the open levels', groups' and conditionals' lines are of
+    // (changes/lineshift.ch)
+    ls_nest_tag: usize,
+    ls_grp_tag: usize,
+    ls_cond_tag: usize,
+    /// The display list's side table (`crate::displaylist`): its offset
+    /// and element count, `usize::MAX`/0 without one.
+    dl_side: (usize, usize),
     scalars: HashMap<&'static str, (usize, usize)>,
 }
 
 impl Layout {
+    /// The space's chunk holding node `p`'s side-table entry.
+    fn side_chunk(&self, p: i32) -> Option<u32> {
+        let (off, n) = self.dl_side;
+        if off == usize::MAX || p < 0 || p as usize >= n {
+            return None;
+        }
+        Some(((off + p as usize * 8) >> CHUNK_SHIFT) as u32)
+    }
+
     fn new(g: &Globals, slots: &[ScalarSlot]) -> Layout {
         let off = |n: &str| {
             g.arena
@@ -300,19 +320,30 @@ impl Layout {
             pdf_link_stack: off("pdf_link_stack"),
             intr_state: off("intr_state"),
             intr_data: off("intr_data"),
+            ls_nest_tag: off("ls_nest_tag"),
+            ls_grp_tag: off("ls_grp_tag"),
+            ls_cond_tag: off("ls_cond_tag"),
+            dl_side: g
+                .arena
+                .regions
+                .iter()
+                .find(|r| r.name == "dl_side")
+                .map_or((usize::MAX, 0), |r| (r.off, r.bytes / r.elem.max(1))),
             scalars: slots.iter().map(|s| (s.name, (s.off, s.size))).collect(),
         }
     }
 }
 
-/// One of the two states.
-struct St<'a> {
-    sp: &'a dyn Space,
+/// One of the two states. Generic over the space, so that every word read
+/// is a direct load the walk's loops inline (a `dyn Space` cost an indirect
+/// call per word; P6-HYPEROPT).
+struct St<'a, S: Space> {
+    sp: &'a S,
     l: &'a Layout,
     hi_mem_min: i32,
 }
 
-impl St<'_> {
+impl<S: Space> St<'_, S> {
     #[inline]
     fn mem(&self, p: i32) -> u64 {
         self.sp.word(self.l.mem + p as usize * 8)
@@ -345,6 +376,14 @@ impl St<'_> {
     }
     fn eqtb(&self, p: i32) -> u64 {
         self.sp.word(self.l.eqtb + (p as usize - 1) * 8)
+    }
+    /// The display list's side-table entry of node `p` (0 without one).
+    fn side(&self, p: i32) -> u64 {
+        let (off, n) = self.l.dl_side;
+        if off == usize::MAX || p < 0 || p as usize >= n {
+            return 0;
+        }
+        self.sp.word(off + p as usize * 8)
     }
     fn save(&self, k: i32) -> u64 {
         self.sp.word(self.l.save_stack + k as usize * 8)
@@ -420,14 +459,14 @@ enum K {
     Head,
 }
 
-pub struct Iso<'a> {
-    o: St<'a>,
-    n: St<'a>,
+pub struct Iso<'a, O: Space, N: Space> {
+    o: St<'a, O>,
+    n: St<'a, N>,
     /// Paired node heads: visited bits per state, and the partner of each
     /// relocated O node.
     head_o: Vec<u64>,
     head_n: Vec<u64>,
-    fwd: HashMap<i32, i32>,
+    fwd: HashMap<i32, i32, FastHash>,
     /// Cells of the nodes compared, per state.
     cov_o: Vec<u64>,
     cov_n: Vec<u64>,
@@ -445,11 +484,54 @@ pub struct Iso<'a> {
     /// Nothing from here on reads the dimensions of a destination other
     /// than `fitr` (see `whatsit`).
     dest_dims_dead: bool,
+    /// The scratch heads' links are dead (the convergence test): see
+    /// `roots`.
+    scratch_heads_dead: bool,
     /// Asked every [`STOP_EVERY`] tasks: newer work stops the walk
     /// ([`STOPPED`]).
     stop: Option<&'a mut dyn FnMut() -> bool>,
+    /// The convergence test's side-table comparison (`check`): the chunks of
+    /// the table either run wrote since the restore target, and the paired
+    /// live nodes whose old entries lie there, with their live entries.
+    side_written: Option<&'a [u64]>,
+    side_later: Vec<(i32, u64)>,
     steps: usize,
     cur_task: Option<(K, i32, i32)>,
+}
+
+/// The hasher of the relocation map (`Iso::fwd`, keyed by `mem` address,
+/// looked up for every node the walk pairs again): a multiplicative hash
+/// instead of SipHash. The keys are the engine's own addresses, not input
+/// chosen to collide, and a collision costs time only.
+#[derive(Clone, Copy, Default)]
+pub struct FastHash;
+
+impl std::hash::BuildHasher for FastHash {
+    type Hasher = FastHasher;
+    fn build_hasher(&self) -> FastHasher {
+        FastHasher(0)
+    }
+}
+
+#[derive(Default)]
+pub struct FastHasher(u64);
+
+impl std::hash::Hasher for FastHasher {
+    fn finish(&self) -> u64 {
+        self.0
+    }
+    fn write(&mut self, bytes: &[u8]) {
+        for &b in bytes {
+            self.write_u64(b as u64);
+        }
+    }
+    fn write_u64(&mut self, x: u64) {
+        let h = (self.0.rotate_left(5) ^ x).wrapping_mul(0x9E37_79B9_7F4A_7C15);
+        self.0 = h ^ (h >> 32);
+    }
+    fn write_i32(&mut self, x: i32) {
+        self.write_u64(x as u32 as u64);
+    }
 }
 
 fn bit(v: &[u64], p: i32) -> bool {
@@ -468,15 +550,15 @@ macro_rules! fail {
     }};
 }
 
-impl<'a> Iso<'a> {
-    fn new(o: St<'a>, n: St<'a>) -> Iso<'a> {
+impl<'a, O: Space, N: Space> Iso<'a, O, N> {
+    fn new(o: St<'a, O>, n: St<'a, N>) -> Iso<'a, O, N> {
         let words = (MEM_TOP as usize + 64) / 64 + 1;
         Iso {
             o,
             n,
             head_o: vec![0; words],
             head_n: vec![0; words],
-            fwd: HashMap::new(),
+            fwd: HashMap::default(),
             cov_o: vec![0; words],
             cov_n: vec![0; words],
             todo: Vec::new(),
@@ -491,7 +573,10 @@ impl<'a> Iso<'a> {
                 .unwrap_or(-1),
             cur_task: None,
             dest_dims_dead: false,
+            scratch_heads_dead: false,
             stop: None,
+            side_written: None,
+            side_later: Vec::new(),
             steps: 0,
         }
     }
@@ -530,24 +615,50 @@ impl<'a> Iso<'a> {
     }
 
     fn partner(&self, a: i32) -> Option<i32> {
-        bit(&self.head_o, a).then(|| self.fwd.get(&a).copied().unwrap_or(a))
+        // (a pointer outside `mem` pairs with nothing: the check fails)
+        (Self::in_mem(a) && bit(&self.head_o, a)).then(|| self.fwd.get(&a).copied().unwrap_or(a))
     }
 
     /// The SyncTeX words of a synchronized node of `size` words
     /// (changes/synctex.ch): the `int` halves of its last two words, the
-    /// file tag and the line that `get_node` or a copy wrote there.
+    /// file tag and the line that `get_node` or a copy wrote there. The
+    /// tag is compared. The line is not: only `get_node` writes it and only
+    /// `copy_node_list` reads it, into another node's line, since the
+    /// `.synctex` file is not written. So it is dead like a free cell's
+    /// words, which it becomes when the node is freed. An edit that adds a
+    /// line break moves the lines of every node made after it (DESIGN.md
+    /// §5.3 rule (c), `crate::lineshift`).
     fn sync_fields(&mut self, a: i32, b: i32, size: i32) {
-        let (t, l) = (size - SYNCTEX_FIELD_SIZE, size - SYNCTEX_FIELD_SIZE + 1);
+        let t = size - SYNCTEX_FIELD_SIZE;
         self.eq(
             "synctex tag",
             int(self.o.mem(a + t)),
             int(self.n.mem(b + t)),
         );
-        self.eq(
-            "synctex line",
-            int(self.o.mem(a + l)),
-            int(self.n.mem(b + l)),
-        );
+    }
+
+    /// A line number the state holds, of the file whose reading level had
+    /// SyncTeX tag `tag` (the new state's; the tags are compared as words):
+    /// equal, or moved by an edit of that file (DESIGN.md §5.3 rule (c),
+    /// `crate::lineshift::held_ok`).
+    fn eq_line(&mut self, what: &'static str, tag: i32, x: i32, y: i32) {
+        if x != y && !crate::lineshift::held_ok(tag, x, y) {
+            self.eq(what, x, y);
+        } else if x == y && !crate::lineshift::held_ok(tag, x, y) {
+            fail!(
+                self,
+                "{what}: {x} is a line an edit moved, the same in both states"
+            );
+        }
+    }
+
+    /// The tag of `ls_*_tag[k]` in the new state (-1 outside it).
+    fn line_tag(&self, base: usize, k: i32, max: i32) -> i32 {
+        if base == usize::MAX || k < 0 || k > max {
+            -1
+        } else {
+            self.n.i32_at(base, k as usize)
+        }
     }
 
     fn cover(&mut self, a: i32, b: i32, size: i32) {
@@ -659,6 +770,31 @@ impl<'a> Iso<'a> {
         let (ca, cb) = (self.o.is_char(a), self.n.is_char(b));
         if ca != cb {
             fail!(self, "a char node in one state only");
+        }
+        // The node's source position (file, line, column) in the display
+        // list's side table. Nothing TeX computes reads it, but the node is
+        // live: a later page ships it, and its glyphs name that position,
+        // which the convergence takes over from the old run. Spans are the
+        // host's and move with their lines, so equal entries are the same
+        // place.
+        if let Some(written) = self.side_written {
+            // (the live state's entry; the old run's is the live one where
+            // neither run wrote the table since the restore target, and is
+            // rewound once the walk is done otherwise: `check`)
+            let sn = self.n.side(b);
+            match self.n.l.side_chunk(a) {
+                Some(c) if bit(written, c as i32) => self.side_later.push((a, sn)),
+                Some(_) => {
+                    let so = self.n.side(a);
+                    if so != sn {
+                        fail!(
+                            self,
+                            "a node's source position differs ({so:#x} vs {sn:#x})"
+                        );
+                    }
+                }
+                None => {}
+            }
         }
         let w0o = self.o.mem(a);
         let w0n = self.n.mem(b);
@@ -1285,6 +1421,21 @@ impl<'a> Iso<'a> {
     /// The conditional stack (§489): `link` the enclosing one, type
     /// `if_limit`, subtype `cur_if`, then `if_line`.
     fn cond(&mut self, mut a: i32, mut b: i32) {
+        // node j from the top holds conditional depth-1-j's line; a walk
+        // that starts below the top (from `if_stack`) finds its place
+        let depth = self.n.sc("ls_cond_depth");
+        let mut k = {
+            let (mut p, mut j) = (self.n.sc("cond_ptr"), 0);
+            while p != NULL && p != b && j <= depth {
+                p = rh(self.n.mem(p));
+                j += 1;
+            }
+            if p == b {
+                depth - 1 - j
+            } else {
+                -1
+            }
+        };
         loop {
             if a == NULL && b == NULL {
                 return;
@@ -1301,7 +1452,10 @@ impl<'a> Iso<'a> {
             let (x, y) = (self.o.mem(a), self.n.mem(b));
             self.eq("conditional", lh(x), lh(y));
             let (x1, y1) = (self.o.mem(a + 1), self.n.mem(b + 1));
-            self.eq("if_line", int(x1), int(y1));
+            let tag = self.line_tag(self.n.l.ls_cond_tag, k.max(0), LS_COND_SIZE);
+            let tag = if k >= 1 { tag } else { -1 };
+            self.eq_line("if_line", tag, int(x1), int(y1));
+            k -= 1;
             a = rh(x);
             b = rh(y);
         }
@@ -1586,7 +1740,7 @@ const DEAD_SCALARS: &[&str] = &[
     "tmp_w",
 ];
 
-impl<'a> Iso<'a> {
+impl<O: Space, N: Space> Iso<'_, O, N> {
     /// Every root of both states, queued or compared.
     fn roots(&mut self) {
         let (o, n) = (&self.o, &self.n);
@@ -1603,11 +1757,51 @@ impl<'a> Iso<'a> {
         ];
         let mut q = vec![];
         for (h, k) in heads {
+            // Two scratch heads' links are dead between two commands, where
+            // every checkpoint is taken (`big_switch`, changes/checkpoint.ch;
+            // no procedure that uses them is on the stack there), so the
+            // convergence test does not follow them. pdftex.web reads each
+            // only after writing it in the same command:
+            // * `link(temp_head)`: `macro_call` sets it before scanning each
+            //   argument (and `runaway` prints it only while that scan is
+            //   matching); `str_toks` and `the_toks` set it, and their
+            //   callers (`ins_the_toks`, `conv_toks`, the pdfTeX string
+            //   primitives, `show_whatever`, the `\edef` expansion loop)
+            //   read it at once; `mlist_to_hlist` sets it, and its callers
+            //   read the hlist at once; `line_break` moves the paragraph
+            //   there and `post_line_break` (with e-TeX's LR nodes)
+            //   consumes it; `prune_page_top`, `insert_dollar_sign` and
+            //   e-TeX's `scan_general_text` set it before they read it.
+            // * `link(backup_head)`: `scan_keyword` sets it to null before
+            //   it stores the tokens it matched there, and backs them up or
+            //   flushes them before it returns; `expand` saves and restores
+            //   it around a nested expansion (§366).
+            // Each is left pointing at the list it last held, freed or
+            // reused since (a paragraph's line, the matched keyword's
+            // tokens): after an edit the runs had different nodes there,
+            // and every later test failed until the allocations met again
+            // (plain-100: 33 pages re-typeset per keystroke instead of 2;
+            // P6-HYPEROPT).
+            if (h == TEMP_HEAD || h == BACKUP_HEAD) && self.scratch_heads_dead {
+                continue;
+            }
             q.push((k, rh(o.mem(h)), rh(n.mem(h))));
         }
         let _ = (ACTIVE, END_SPAN, NULL_LIST, LIG_TRICK, HI_MEM_STAT_MIN);
         for (k, a, b) in q {
             self.ptr(k, a, b);
+        }
+        // Walk these lists first. The page builder's lists hold the page
+        // being built, which is where a run that has not converged yet
+        // usually differs (the rest of a reflowed paragraph); queued with
+        // the other roots they were walked last, after every macro body in
+        // `eqtb`, so a failing test cost a whole walk. Whether the walk
+        // succeeds does not depend on its order: a pair is made where both
+        // states reach a node from the same place, and reaching it again
+        // from elsewhere only checks the pairing (`pair`).
+        self.run();
+        if self.err.is_some() {
+            return;
         }
         // the static words themselves compare equal apart from those links
         for p in HI_MEM_STAT_MIN..=MEM_TOP {
@@ -1788,32 +1982,35 @@ impl<'a> Iso<'a> {
             fail!(self, "a recording is in progress ({ro}, {rn})");
         }
         // (the same words in both: their bookkeeping is plain values)
-        let mut live = [vec![], vec![]];
-        for (s, v) in [&self.o, &self.n].into_iter().zip(live.iter_mut()) {
-            let r = crate::intrinsics::live_words(
-                &|i| s.i32_at(l.intr_state, i),
-                &|i| s.i32_at(l.intr_data, i),
-                &mut |w| v.push(w),
-            );
-            if let Err(e) = r {
-                fail!(self, "{e}");
-            }
+        let (mut live, mut live_n) = (vec![], vec![]);
+        let ro = crate::intrinsics::live_words(
+            &|i| self.o.i32_at(l.intr_state, i),
+            &|i| self.o.i32_at(l.intr_data, i),
+            &mut |w| live.push(w),
+        );
+        let rn = crate::intrinsics::live_words(
+            &|i| self.n.i32_at(l.intr_state, i),
+            &|i| self.n.i32_at(l.intr_data, i),
+            &mut |w| live_n.push(w),
+        );
+        if let Err(e) = ro.and(rn) {
+            fail!(self, "{e}");
         }
-        let [live, live_n] = live;
         if live != live_n {
             fail!(self, "the intrinsics' recordings differ in shape");
         }
         use crate::intrinsics::LiveWord;
         for w in live {
-            let at = |s: &St, i: usize| s.i32_at(l.intr_data, i);
+            let ao = |s: &Self, i: usize| s.o.i32_at(l.intr_data, i);
+            let an = |s: &Self, i: usize| s.n.i32_at(l.intr_data, i);
             match w {
-                LiveWord::Value(i) => self.eq("intrinsics word", at(&self.o, i), at(&self.n, i)),
+                LiveWord::Value(i) => self.eq("intrinsics word", ao(self, i), an(self, i)),
                 LiveWord::Equiv { ty, at: i } => {
-                    let t = at(&self.o, ty);
-                    self.eq("intrinsics eq_type", t, at(&self.n, ty));
-                    self.equiv(t, at(&self.o, i), at(&self.n, i));
+                    let t = ao(self, ty);
+                    self.eq("intrinsics eq_type", t, an(self, ty));
+                    self.equiv(t, ao(self, i), an(self, i));
                 }
-                LiveWord::Tok(i) => self.ptr(K::Tok, at(&self.o, i), at(&self.n, i)),
+                LiveWord::Tok(i) => self.ptr(K::Tok, ao(self, i), an(self, i)),
             }
             if self.err.is_some() {
                 return;
@@ -1859,6 +2056,7 @@ impl<'a> Iso<'a> {
             return;
         }
         let etex = self.o.sc("eTeX_mode") == 1;
+        let mut lvl = self.n.sc("cur_level");
         let mut top = so; // the entries of the current group are below this
         let mut bnd = bo;
         let mut grp = go;
@@ -1944,8 +2142,10 @@ impl<'a> Iso<'a> {
             let base = bnd - if etex { 1 } else { 0 };
             if etex {
                 let (x, y) = (self.o.save(bnd - 1), self.n.save(bnd - 1));
-                self.eq("saved line", int(x), int(y));
+                let tag = self.line_tag(self.n.l.ls_grp_tag, lvl, 255);
+                self.eq_line("saved line", tag, int(x), int(y));
             }
+            lvl -= 1;
             for k in 1..=extras {
                 let (x, y) = (self.o.save(base - k), self.n.save(base - k));
                 if grp == MATH_GROUP {
@@ -2004,10 +2204,11 @@ impl<'a> Iso<'a> {
         }
     }
 
-    fn nest_record(&mut self, x: &list_state_record, y: &list_state_record) {
+    fn nest_record(&mut self, k: i32, x: &list_state_record, y: &list_state_record) {
         self.eq("mode", x.mode_field, y.mode_field);
         self.eq("prev_graf", x.pg_field, y.pg_field);
-        self.eq("mode_line", x.ml_field, y.ml_field);
+        let tag = self.line_tag(self.n.l.ls_nest_tag, k, i32::MAX);
+        self.eq_line("mode_line", tag, x.ml_field, y.ml_field);
         self.ptr(K::List, x.head_field, y.head_field);
         self.later("tail", x.tail_field, y.tail_field);
         let m = x.mode_field.abs();
@@ -2045,11 +2246,11 @@ impl<'a> Iso<'a> {
         }
         for k in 0..po {
             let (x, y) = (self.o.nest(k), self.n.nest(k));
-            self.nest_record(&x, &y);
+            self.nest_record(k, &x, &y);
         }
         let x: list_state_record = rec_from(&self.o.sc_bytes("cur_list"));
         let y: list_state_record = rec_from(&self.n.sc_bytes("cur_list"));
-        self.nest_record(&x, &y);
+        self.nest_record(po, &x, &y);
     }
 
     fn input_record(&mut self, x: &in_state_record, y: &in_state_record) {
@@ -2165,8 +2366,6 @@ impl<'a> Iso<'a> {
         self.eq("pdf_link_stack_ptr", lp, self.n.sc("pdf_link_stack_ptr"));
         let size = std::mem::size_of::<crate::generated::types::pdf_link_stack_record>();
         for k in 1..=lp.max(0) as usize {
-            let at = |s: &St, f: usize| s.i32_at(l.pdf_link_stack + k * size, f);
-            let _ = at;
             let rx: crate::generated::types::pdf_link_stack_record =
                 rec_from(&self.o.bytes_at(l.pdf_link_stack + k * size, size));
             let ry: crate::generated::types::pdf_link_stack_record =
@@ -2215,7 +2414,7 @@ impl<'a> Iso<'a> {
         }
     }
 
-    fn pdf_mem(&self, s: &St, k: i32) -> i32 {
+    fn pdf_mem<S: Space>(&self, s: &St<S>, k: i32) -> i32 {
         s.i32_at(s.l.pdf_mem, k as usize)
     }
 
@@ -2311,7 +2510,7 @@ impl<'a> Iso<'a> {
 // Entry points
 // ---------------------------------------------------------------------------
 
-impl<'a> Iso<'a> {
+impl<O: Space, N: Space> Iso<'_, O, N> {
     fn finish(&mut self) {
         self.run();
         if self.err.is_some() {
@@ -2342,7 +2541,21 @@ impl<'a> Iso<'a> {
             }
         }
     }
+}
 
+/// The display list's side table for [`Iso::check`]: the chunks of it either
+/// run wrote since the restore target (a bitmap by chunk), and how to get
+/// the old run's value of some of them (`Globals::pending_old_chunks`).
+pub struct SideOld<'a> {
+    pub written: &'a [u64],
+    pub fetch: &'a mut OldChunks<'a>,
+}
+
+/// The old run's chunks `cs` by chunk (`None`: stopped for newer work).
+pub type OldChunks<'a> = dyn FnMut(&[u32]) -> Result<Option<HashMap<u32, Vec<u64>>>, String> + 'a;
+
+/// The entry points (the walk's types are chosen here).
+impl<'a> Iso<'a, Old<'a>, Live<'a>> {
     /// Compare O (the old run's checkpoint, through `d`) with the live state.
     /// `Ok(nodes compared)` or `Err(why not the same)`. `bad_mem` are the
     /// differing mem words left by the byte comparison: each must lie in a
@@ -2355,6 +2568,7 @@ impl<'a> Iso<'a> {
         free_o: Option<&[u64]>,
         free_n: Option<&[u64]>,
         bad_mem: &[usize],
+        side: Option<SideOld<'a>>,
         hyph_len: usize,
         dest_dims_dead: bool,
         stop: &'a mut dyn FnMut() -> bool,
@@ -2390,14 +2604,50 @@ impl<'a> Iso<'a> {
         let mut w = Iso::new(o, n);
         w.hyph_len = hyph_len;
         w.dest_dims_dead = dest_dims_dead;
+        w.scratch_heads_dead = true;
         w.stop = Some(stop);
+        let mut fetch = None;
+        if let Some(sd) = side {
+            w.side_written = Some(sd.written);
+            fetch = Some(sd.fetch);
+        }
         w.roots();
         w.finish();
         if let Some(e) = w.err {
             return Err(e);
         }
+        // The old run's side-table entries of the live nodes in chunks
+        // either run wrote: those chunks alone rewound.
+        if let Some(fetch) = fetch.filter(|_| !w.side_later.is_empty()) {
+            let l = w.n.l;
+            let mut cs: Vec<u32> = w
+                .side_later
+                .iter()
+                .filter_map(|&(a, _)| l.side_chunk(a))
+                .collect();
+            cs.sort_unstable();
+            cs.dedup();
+            let Some(old) = fetch(&cs)? else {
+                return Err(STOPPED.into());
+            };
+            for &(a, sn) in &w.side_later {
+                let (off, _) = l.dl_side;
+                let at = off + a as usize * 8;
+                let c = (at >> CHUNK_SHIFT) as u32;
+                let so = old[&c][(at & (CHUNK_BYTES - 1)) >> 3];
+                if so != sn {
+                    return Err(format!(
+                        "a node's source position differs ({so:#x} vs {sn:#x}, node {a})"
+                    ));
+                }
+            }
+        }
         for &p in bad_mem {
             let p = p as i32;
+            // (a word past the walk's range: nothing explains it)
+            if !Self::in_mem(p) {
+                return Err(format!("mem[{p}] differs outside the walked range"));
+            }
             let ok_o = bit(&w.cov_o, p) || free_o.is_some_and(|f| bit(f, p));
             let ok_n = bit(&w.cov_n, p) || free_n.is_some_and(|f| bit(f, p));
             if !(ok_o && ok_n) {

@@ -244,7 +244,8 @@ impl Globals {
             self.b_close(&mut f);
             self.pdf_file = f;
             let name = self.str_bytes(self.output_file_name);
-            let _ = std::fs::remove_file(String::from_utf8_lossy(&name).as_ref());
+            // (a resident session sets it aside: crate::system::remove_output)
+            crate::system::remove_output(String::from_utf8_lossy(&name).as_ref());
         }
     }
 

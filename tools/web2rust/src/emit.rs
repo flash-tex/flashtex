@@ -131,6 +131,15 @@ struct E<'a> {
     arena_globals: HashMap<String, Ty>,
     /// `--index-type`: the wrapper of every array subscript, if any.
     index_type: Option<String>,
+    /// `--inline NAME=always|never` (main.rs): routine name -> attribute.
+    inline: HashMap<String, String>,
+    /// `--array-view` (main.rs): the fixed-length arena arrays a routine
+    /// indexes through a local view (`crate::arena::ArrView`), and whether
+    /// the routine being emitted does.
+    views: HashSet<String>,
+    view_on: bool,
+    /// The views the routine being emitted uses.
+    used_views: std::cell::RefCell<std::collections::BTreeSet<String>>,
 }
 
 /// How a global is stored.
@@ -580,6 +589,20 @@ impl<'a> E<'a> {
         rid(n)
     }
 
+    /// The local view (`--array-view`) through which the array `b` is
+    /// indexed in the routine being emitted, if it is one.
+    fn view_of(&self, b: &Expr) -> Option<String> {
+        match b {
+            Expr::Var(g)
+                if self.view_on && self.views.contains(g) && self.lookup_local(g).is_none() =>
+            {
+                self.used_views.borrow_mut().insert(g.clone());
+                Some(format!("__av_{}", rid(g)))
+            }
+            _ => None,
+        }
+    }
+
     /// A use of the macro constant `n`.
     fn macro_const(&self, n: &str) -> String {
         self.used_macros.borrow_mut().insert(n.to_string());
@@ -627,7 +650,25 @@ impl<'a> E<'a> {
                 } else {
                     format!("(({inner}) + {}) as usize", -lo)
                 };
-                let mut s = format!("{}[{}]", self.ex(b), self.subscript(idx));
+                // A subscript that calls a translated routine (which needs
+                // `&mut self`) is evaluated into a temporary first: the
+                // array's `Index` would otherwise hold `&self` across the
+                // call (tex.ch's `char_info`, whose subscript calls
+                // `effective_char`). Pascal evaluates the subscript before
+                // the element is read anyway.
+                if ix.len() == 1 && self.has_call(&ix[0]) {
+                    let n = self.fresh();
+                    return format!(
+                        "{{ let __s{n} = {idx}; {}[{}] }}",
+                        self.view_of(b).unwrap_or_else(|| self.ex(b)),
+                        self.subscript(format!("__s{n}"))
+                    );
+                }
+                let mut s = format!(
+                    "{}[{}]",
+                    self.view_of(b).unwrap_or_else(|| self.ex(b)),
+                    self.subscript(idx)
+                );
                 for extra in &ix[1..] {
                     let e2 = self.subscript(format!("({}) as usize", self.ex(extra)));
                     s = format!("{s}[{e2}]");
@@ -1438,7 +1479,7 @@ impl<'a> E<'a> {
     fn place_lets(&self, e: &Expr, lets: &mut String) -> String {
         match e {
             Expr::Index(b, ix) => {
-                let base = self.place_lets(b, lets);
+                let base = self.view_of(b).unwrap_or_else(|| self.place_lets(b, lets));
                 let bt = resolve(&self.ty_of(b), self.p);
                 let lo = match &bt {
                     Ty::Array { lo, .. } => *lo,
@@ -1655,6 +1696,10 @@ impl<'a> E<'a> {
                 return sys(&self.file_fn("rewrite", &args[0]), a);
             }
             "close" => return sys("close", format!("&mut {}", self.ex(&args[0]))),
+            // web2c's C `break` (xetex.web §619: `if q = p then break`): a
+            // statement `break` without an argument leaves the innermost
+            // loop. With one it is Pascal's `break(f)`, which flushes `f`.
+            "break" if args.is_empty() => return format!("{pad}break;\n"),
             "break" => return sys("break_out", format!("&mut {}", self.ex(&args[0]))),
             "break_in" => {
                 return sys(
@@ -1840,6 +1885,7 @@ fn doc_of(t: &Tangled, sec: u32) -> String {
 
 /// `sources`: the WEB file, then the change files applied to it, as given on
 /// the command line (for the generated `mod.rs` header).
+#[allow(clippy::too_many_arguments)]
 pub fn emit(
     p: &Program,
     t: &Tangled,
@@ -1847,7 +1893,15 @@ pub fn emit(
     sources: &[String],
     arena_caps: &[(String, String)],
     index_type: Option<&str>,
+    host_state: Option<&str>,
+    inline: &[(String, String)],
+    array_views: &[String],
 ) -> Result<(), String> {
+    for (n, _) in inline {
+        if !p.routines.iter().any(|r| r.name == *n) {
+            return Err(format!("--inline: no routine {n}"));
+        }
+    }
     let lay = build_layout(p);
     let mut sigs: HashMap<String, (Vec<Ty>, Option<Ty>)> = HashMap::new();
     for r in &p.routines {
@@ -1914,6 +1968,10 @@ pub fn emit(
         fixed_alias: HashMap::new(),
         arena_globals: HashMap::new(),
         index_type: index_type.map(str::to_string),
+        inline: inline.iter().cloned().collect(),
+        views: HashSet::new(),
+        view_on: false,
+        used_views: std::cell::RefCell::new(std::collections::BTreeSet::new()),
     };
 
     // Array type aliases become `[T; N]`, so that an array of them can live
@@ -1931,14 +1989,27 @@ pub fn emit(
     let mut kinds: Vec<GKind> = vec![];
     for g in &p.globals {
         let k = e.classify(&g.name, &g.ty, arena_caps, &allocs)?;
-        if let GKind::Arr { elem, .. } = &k {
+        if let GKind::Arr { elem, cap, len } = &k {
             e.arena_globals.insert(g.name.clone(), elem.clone());
+            // Created at its full length and never (re)allocated: its
+            // length never changes, so a view of it stays exact.
+            if array_views.contains(&g.name) {
+                if len != cap || allocs.contains_key(&g.name) {
+                    return Err(format!("--array-view {}: not a fixed-length array", g.name));
+                }
+                e.views.insert(g.name.clone());
+            }
         }
         kinds.push(k);
     }
     for (n, _) in arena_caps {
         if !e.arena_globals.contains_key(n) {
             return Err(format!("--arena-cap {n}: not an array global"));
+        }
+    }
+    for n in array_views {
+        if !e.views.contains(n) {
+            return Err(format!("--array-view {n}: not an array global"));
         }
     }
 
@@ -2011,6 +2082,13 @@ pub fn emit(
         "    /// The word space every `Arr` above lives in (crates/flashtex-engine/src/arena.rs)."
     );
     let _ = writeln!(s, "    pub arena: crate::arena::Arena,");
+    if let Some(t) = host_state {
+        let _ = writeln!(
+            s,
+            "    /// The engine's state outside the word space (`--host-state`)."
+        );
+        let _ = writeln!(s, "    pub host: {t},");
+    }
     let _ = writeln!(s, "}}\n");
     // The scalar region: every scalar global, in declaration order, then the
     // length of every growable array.
@@ -2059,6 +2137,9 @@ pub fn emit(
         let _ = writeln!(s, "            {}: {},", rid(&g.name), init);
     }
     let _ = writeln!(s, "            arena: __arena,");
+    if host_state.is_some() {
+        let _ = writeln!(s, "            host: Default::default(),");
+    }
     let _ = writeln!(s, "        }})");
     let _ = writeln!(s, "    }}\n");
     let _ = writeln!(
@@ -2332,6 +2413,9 @@ fn emit_routine(s: &mut String, r: &Routine, e: &mut E) {
         let _ = writeln!(s, "    {l}");
     }
     let _ = writeln!(s, "    // §{}", r.sec);
+    if let Some(k) = e.inline.get(&r.name) {
+        let _ = writeln!(s, "    #[inline({k})]");
+    }
     let mut sig = format!("    pub fn {}(&mut self", rid(&r.name));
     for pm in &r.params {
         let t = e.rust_ty(&pm.ty);
@@ -2385,7 +2469,17 @@ fn emit_routine(s: &mut String, r: &Routine, e: &mut E) {
         );
     }
     let mut body = String::new();
+    e.view_on = !e.views.is_empty();
+    e.used_views.borrow_mut().clear();
     e.seq(&r.body, &mut body, 2);
+    e.view_on = false;
+    for g in std::mem::take(&mut *e.used_views.borrow_mut()) {
+        let _ = writeln!(
+            s,
+            "        #[allow(unused_mut)]\n        let mut __av_{0} = self.{0}.view();",
+            rid(&g)
+        );
+    }
     s.push_str(&body);
     if r.ret.is_some() {
         let _ = writeln!(s, "        {}", rid(&r.name));
@@ -2478,6 +2572,9 @@ fn emit_packed(s: &mut String, q: &Packed, e: &E) {
         let _ = writeln!(s, "    pub fn {m}(&self) -> {ret} {{ {get} }}");
         let _ = writeln!(s, "    #[inline(always)]");
         let setter = match l.kind {
+            Scalar::I32 | Scalar::U8 if narrow_store(l.bits, l.off, q.width).is_some() => {
+                narrow_store(l.bits, l.off, q.width).unwrap()
+            }
             Scalar::F64 => format!("self.0 = v.to_bits().rotate_right(32) as {backing};"),
             Scalar::F32 => format!(
                 "self.0 = (self.0 & !(({mask} as {backing}) << {off})) | (((v.to_bits() as {backing}) & ({mask} as {backing})) << {off});",
@@ -2511,14 +2608,48 @@ fn emit_packed(s: &mut String, q: &Packed, e: &E) {
             rid(tn)
         );
         let _ = writeln!(s, "    #[inline(always)]");
+        let setter = match narrow_store(*w, *off, q.width) {
+            Some(st) => st.replace("v as ", "v.0 as "),
+            None => format!(
+                "self.0 = (self.0 & !(({mask} as {backing}) << {off})) | (((v.0 as {backing}) & ({mask} as {backing})) << {off});"
+            ),
+        };
         let _ = writeln!(
             s,
-            "    pub fn set_{}(&mut self, v: {}) {{ self.0 = (self.0 & !(({mask} as {backing}) << {off})) | (((v.0 as {backing}) & ({mask} as {backing})) << {off}); }}",
+            "    pub fn set_{}(&mut self, v: {}) {{ {setter} }}",
             rid(path),
             rid(tn)
         );
     }
     let _ = writeln!(s, "}}");
+}
+
+/// The setter of a field that is a whole byte, half-word or word of a packed
+/// record (`bits` wide at bit `off` of a `width`-bit record), as a store of
+/// that field alone; `None` for any other field. The read-modify-write form
+/// (`self.0 = (self.0 & !mask) | v`) loads the whole record first, and a
+/// node or token just taken off a free list is rarely in the cache: on
+/// *Infinite Descent* the load before linking a token (`mem[p].rh := q`) was
+/// the hottest instruction of `macro_call` (P6-ENGINE-SPEED). The bytes
+/// stored are the ones the masked form writes, so the program is unchanged.
+fn narrow_store(bits: u32, off: u32, width: u32) -> Option<String> {
+    let ty = match bits {
+        8 => "u8",
+        16 => "u16",
+        32 => "u32",
+        _ => return None,
+    };
+    if !off.is_multiple_of(bits) || off + bits > width || !(width == 32 || width == 64) {
+        return None;
+    }
+    let (le, be) = (off / 8, (width - off - bits) / 8);
+    Some(format!(
+        "let k = if cfg!(target_endian = \"little\") {{ {le} }} else {{ {be} }}; \
+         let p = (&mut self.0 as *mut _ as *mut u8).wrapping_add(k) as *mut {ty}; \
+         // SAFETY: the field is bytes k..k+{n} of this record, which `self` borrows mutably.\n        \
+         unsafe {{ p.write_unaligned(v as {ty}) }}",
+        n = bits / 8
+    ))
 }
 
 fn header(what: &str) -> String {

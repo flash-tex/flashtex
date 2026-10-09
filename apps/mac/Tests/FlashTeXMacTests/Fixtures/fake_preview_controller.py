@@ -30,6 +30,19 @@ Frames (JSON Lines, `protocol_version:1`, configured `session_id`):
                                     on receipt; with FAKE_PC_EXPORT_RELEASE set,
                                     the reply (and every later frame) waits until
                                     that file exists — a deterministically slow export
+  snapshot {}                    -> result {source_versions, membership_generation:0}
+  apply_group {path, command:{command_id, expected_revision, expected_sha256,
+               label, edits:[{start_byte, end_byte, removed_text, replacement}]}}
+                                 -> applies the byte edits as one durable
+                                    revision, then ONE write carries both the
+                                    result {history:{document, replayed_command:
+                                    false}, preview_error:null} and the
+                                    follow-up compile's preview: the reply and
+                                    the compile outcome arrive in the same read.
+                                    With FAKE_PC_APPLY_MARK set, that file is
+                                    created on receipt; with FAKE_PC_APPLY_RELEASE
+                                    set, the write waits until that file exists;
+                                    FAKE_PC_APPLY_EMITTED is created after it.
   close {}                       -> result {closed:true}, exit
   anything else                  -> error "unknown operation"
 
@@ -53,6 +66,12 @@ Scripted history (directives at the START of the entry text, like fake_worker):
                   this helper): the historical state A paints stays up until
                   the test moves on, whatever the main-actor scheduling. With
                   no held A, %withhold does nothing.
+  In the default (history-before-B) order, B's preview follows A's snapshot
+  after FAKE_PC_GAP_MS (150 ms) -- an ordering a starved runner does not
+  honour, since native paints A on a later main-queue turn. With
+  FAKE_PC_HISTORY_RELEASE set to a path, B's preview (and every later frame)
+  instead waits until that file exists: the test creates it after it has
+  observed A painted, so the order is the test's, not the scheduler's.
   Without an acknowledged `completed-snapshots-v1` negotiation, or when A's
   submission carried no `source_binding_token`, the held compile A is reported
   as `update {kind:"stale", request_id, compile_revision}` only — the wire an
@@ -85,7 +104,13 @@ def sha256(text):
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
+coalesced = None  # while a list, frames are collected for one combined write (apply_group)
+
+
 def emit(frame):
+    if coalesced is not None:
+        coalesced.append(json.dumps(frame) + "\n")
+        return
     sys.stdout.write(json.dumps(frame) + "\n")
     sys.stdout.flush()
 
@@ -213,9 +238,14 @@ def run_compile(token):
     previous, held = held, None
     if previous is not None and "%after" not in f:
         emit_history(previous, rev, f)
-        time.sleep(GAP_S)  # let native paint A before B arrives (deterministic order for tests)
         if "%withhold" in f:
             return
+        release = os.environ.get("FAKE_PC_HISTORY_RELEASE")
+        if release:
+            while not os.path.exists(release):
+                time.sleep(0.01)
+        else:
+            time.sleep(GAP_S)  # usually lets native paint A before B arrives; not guaranteed under load
     emit_preview(frame)
     if previous is not None and "%after" in f:
         time.sleep(GAP_S)
@@ -307,6 +337,44 @@ for raw in sys.stdin:
         with open(os.path.join(ROOT, path), "w", encoding="utf-8") as fh:
             fh.write(d["text"])
         result(rid, {"path": path, "sha256": sha256(d["text"]), "bytes": len(d["text"].encode("utf-8"))})
+    elif op == "snapshot":
+        result(rid, {"source_versions": source_versions(), "membership_generation": 0})
+    elif op == "apply_group":
+        path = p.get("path")
+        cmd = p.get("command") or {}
+        if path not in documents:
+            error(rid, "unknown document %s" % path)
+            continue
+        d = documents[path]
+        if cmd.get("expected_revision") != d["revision"] or cmd.get("expected_sha256") != sha256(d["text"]):
+            error(rid, "document_conflict: expected r%s, durable r%d" % (cmd.get("expected_revision"), d["revision"]))
+            continue
+        data = d["text"].encode("utf-8")
+        refused = None
+        for e in sorted(cmd.get("edits") or [], key=lambda e: e["start_byte"], reverse=True):
+            s, t = e["start_byte"], e["end_byte"]
+            if data[s:t] != e["removed_text"].encode("utf-8"):
+                refused = "removed_text mismatch at %d..%d" % (s, t)
+                break
+            data = data[:s] + e["replacement"].encode("utf-8") + data[t:]
+        if refused:
+            error(rid, refused)
+            continue
+        if os.environ.get("FAKE_PC_APPLY_MARK"):
+            open(os.environ["FAKE_PC_APPLY_MARK"], "w").close()
+        release = os.environ.get("FAKE_PC_APPLY_RELEASE")
+        while release and not os.path.exists(release):
+            time.sleep(0.01)
+        d["revision"] += 1
+        d["text"] = data.decode("utf-8")
+        coalesced = []
+        result(rid, {"history": {"document": document_payload(path), "replayed_command": False}, "preview_error": None})
+        run_compile(None)
+        frames, coalesced = "".join(coalesced), None
+        sys.stdout.write(frames)
+        sys.stdout.flush()
+        if os.environ.get("FAKE_PC_APPLY_EMITTED"):
+            open(os.environ["FAKE_PC_APPLY_EMITTED"], "w").close()
     elif op == "restart":
         negotiated = False
         held = None

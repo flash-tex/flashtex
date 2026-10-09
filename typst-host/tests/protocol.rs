@@ -14,7 +14,6 @@ use flashtex_display_list::kind;
 use flashtex_display_list::page::Item;
 use flashtex_display_list::sha256::hex;
 use flashtex_typst_host::convert::PROGRAM_REFS;
-use flashtex_typst_host::v33;
 
 const DOC: &str = "#set page(width: 8cm, height: 5cm, margin: 5mm)\n#set text(font: \"Libertinus Serif\")\nHello, world!\n#pagebreak()\nSecond *page*.\n#pagebreak()\nThird page.\n";
 
@@ -62,14 +61,19 @@ fn hello_negotiates_the_minor_version() {
     );
     drop(c);
 
-    // A later minor is answered with ours. The reference client says [3, 2]
-    // (external tools, #1296), which must not get the Typst 3.3 additions.
+    // A later minor is answered with ours; the reference client says 3.3
+    // now that the additions are in the shared spec (§11); a 3.2 client
+    // gets none of them.
     let mut c = host.connect();
     assert_eq!(c.hello(3, 9).1.get("version").unwrap().to_string(), "[3,3]");
     drop(c);
     let r = Client::connect(&host.socket).unwrap();
-    assert_eq!(r.hello.get("version").unwrap().to_string(), "[3,2]");
-    let rcaps = strs(&r.hello, "capabilities");
+    assert_eq!(r.hello.get("version").unwrap().to_string(), "[3,3]");
+    drop(r);
+    let mut c = host.connect();
+    let (_, h32) = c.hello(3, 2);
+    assert_eq!(h32.get("version").unwrap().to_string(), "[3,2]");
+    let rcaps = strs(&h32, "capabilities");
     for cap in ["origins-f64", "page-meta", "opentype-glyphs"] {
         assert!(
             !rcaps.contains(&cap.to_string()),
@@ -197,40 +201,23 @@ fn compile_round_trip_v33() {
                 }
                 assert!(!glyphs.is_empty());
                 // 3.3 sections: origins agree with the rounded positions.
-                let secs = v33::sections(body).unwrap();
-                let o = v33::decode_origins(
-                    secs.iter()
-                        .find(|(t, _)| *t == v33::tag::ORIGINS_F64)
-                        .unwrap()
-                        .1,
-                )
-                .unwrap();
+                let _ = body;
+                let o = &p.origins;
                 assert_eq!(o.len(), glyphs.len());
                 let h = p.pdf_box[3];
-                for ((x, y), (ox, oy)) in glyphs.iter().zip(&o) {
+                for ((x, y), [ox, oy]) in glyphs.iter().zip(o) {
                     assert_eq!(*x, (ox * 65_781.76).round() as i32);
                     assert_eq!(*y, ((h - oy) * 65_781.76).round() as i32);
                 }
-                let meta = json_of(
-                    secs.iter()
-                        .find(|(t, _)| *t == v33::tag::PAGE_META)
-                        .unwrap()
-                        .1,
-                );
+                let meta = json_of(p.meta.as_ref().expect("PAGE_META").as_bytes());
                 assert_eq!(meta.str_field("engine"), Some("typst"));
                 assert_eq!(meta.int_field("number"), Some(page_no as i64));
-                // The hash: v3's over what is drawn, extended by the 3.3 sections.
-                // The reference decoder reads ORIGINS_F64 as its ORIGINS (tag 7);
-                // the 3.3 draft hashes the page without it, then extends.
-                let mut base = p.clone();
-                base.origins.clear();
-                let v3 = base.content_hash(&|id| fonts[&id], &|_| [0; 32]);
-                let ext: Vec<(u32, Vec<u8>)> = secs
-                    .iter()
-                    .filter(|(t, _)| *t >= 7)
-                    .map(|(t, d)| (*t, d.to_vec()))
-                    .collect();
-                assert_eq!(p.hash, v33::extended_hash(v3, &ext));
+                // The hash is the shared spec's (§4.6), over ORIGINS and
+                // PAGE_META too.
+                assert_eq!(p.hash, p.content_hash(&|id| fonts[&id], &|_| [0; 32]));
+                let mut bare = p.clone();
+                bare.meta = None;
+                assert_ne!(p.hash, bare.content_hash(&|id| fonts[&id], &|_| [0; 32]));
             }
             _ => {}
         }
@@ -253,9 +240,10 @@ fn compile_round_trip_v33() {
     assert!(std::path::Path::new(done.str_field("pdf").unwrap()).is_file());
 }
 
-/// A 3.2 client (the reference `Client`) cannot draw OpenType glyph ids: it
-/// gets every page INCOMPLETE, no 3.3 sections, no font programs, and falls
-/// back to DONE.pdf (DESIGN.md §15.4).
+/// A client that does not take `opentype` programs (the reference `Client`
+/// without `font_formats`) cannot draw OpenType glyph ids: it gets every
+/// page INCOMPLETE, no font programs, and falls back to DONE.pdf (DESIGN.md
+/// §15.4); a 3.1 client gets no 3.3 sections either.
 #[test]
 fn a_31_client_gets_incomplete_pages() {
     let host = HostProc::start("v31");
@@ -292,7 +280,12 @@ fn a_31_client_gets_incomplete_pages() {
     );
     for (k, b) in raw.until_done() {
         if k == kind::PAGE {
-            assert!(v33::sections(&b).unwrap().iter().all(|(t, _)| *t <= 6));
+            let p = flashtex_display_list::page::Page::decode(
+                flashtex_display_list::page::StreamKind::Page,
+                &b,
+            )
+            .unwrap();
+            assert!(p.origins.is_empty() && p.meta.is_none());
         }
     }
 }

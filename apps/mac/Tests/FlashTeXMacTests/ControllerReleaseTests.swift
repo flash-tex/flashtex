@@ -150,10 +150,12 @@ final class ControllerReleaseTests: XCTestCase {
         XCTAssertEqual(firstItemText(model), "B text")
     }
 
-    private func waitUntil(_ what: String, timeout: TimeInterval = 10, _ cond: () -> Bool) async throws {
+    /// Waits on a helper process (the Python preview-controller double); generous because a loaded runner
+    /// delays process start-up and replies by seconds, not because anything is timed.
+    private func waitUntil(_ what: String, timeout: TimeInterval = 30, _ cond: () -> Bool) async throws {
         let start = Date()
         while !cond() {
-            if Date().timeIntervalSince(start) > timeout { XCTFail("timed out waiting for \(what)"); throw XCTSkip("timeout: \(what)") }
+            if Date().timeIntervalSince(start) > timeout { XCTFail("timed out after \(Int(timeout)) s waiting for \(what) from the helper double"); throw XCTSkip("timeout: \(what)") }
             try await Task.sleep(nanoseconds: 20_000_000)
         }
     }

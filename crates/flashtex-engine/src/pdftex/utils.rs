@@ -100,8 +100,8 @@ fn regex_match(
     Ok((r == 1, so.into_iter().zip(eo).collect()))
 }
 
-/// Without the `regex` feature (or on Windows, build.rs) there is no
-/// regular-expression engine.
+/// Without the `regex` feature (the trip tests' scratch packages) there is
+/// no regular-expression engine.
 #[cfg(not(flashtex_regex))]
 fn regex_match(_: &[u8], _: &[u8], _: bool, _: i32) -> Result<(bool, Vec<(i64, i64)>), String> {
     Err("regular expressions are not available in this build".into())
@@ -960,6 +960,9 @@ impl Globals {
     /// `pdftex_fail` (utils.c): the same layout as pdftex.web's `pdf_error`,
     /// then the run ends.
     pub fn pdftex_fail(&mut self, msg: &str) -> ! {
+        if super::images::probing() {
+            super::images::probe_fail(msg.to_string());
+        }
         // safe_print: `print` of each character code
         fn safe_print(g: &mut Globals, s: &[u8]) {
             for &c in s {
@@ -1016,5 +1019,29 @@ mod tests {
     #[test]
     fn pdf_time_in_utc() {
         assert_eq!(super::make_pdf_time(0, true), b"D:19700101000000Z");
+    }
+
+    /// `\pdfmatch`'s regcomp/regexec: REG_EXTENDED, spans of the
+    /// subexpressions, -1 for one that took no part.
+    #[cfg(flashtex_regex)]
+    #[test]
+    fn pdfmatch_regex() {
+        let m = super::regex_match(b"(a+)(c)?b", b"xaab", false, 4).unwrap();
+        assert_eq!(m, (true, vec![(1, 4), (1, 3), (-1, -1), (-1, -1)]));
+        let m = super::regex_match(b"A+B", b"xaab", true, 1).unwrap();
+        assert_eq!(m, (true, vec![(1, 4)]));
+        assert!(!super::regex_match(b"^b", b"ab", false, 1).unwrap().0);
+        assert!(super::regex_match(b"(", b"", false, 1).is_err());
+    }
+
+    /// On Windows the regex is pdfTeX's copy of glibc's
+    /// (third_party/pdftex-regex), whose messages are glibc's.
+    #[cfg(all(flashtex_regex, windows))]
+    #[test]
+    fn pdfmatch_regex_is_glibc_on_windows() {
+        assert_eq!(
+            super::regex_match(b"(", b"", false, 1),
+            Err("Unmatched ( or \\(".to_string())
+        );
     }
 }

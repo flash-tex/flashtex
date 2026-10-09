@@ -863,26 +863,24 @@ struct SettingsRootView: View {
                 .tabItem { Label("Themes", systemImage: "paintpalette") }
             HybridConcealSettingsView() // master switch, reveal mode, classes, deny list (HybridConcealSettings.swift)
                 .tabItem { Label("Conceal", systemImage: "eye.slash") }
-            Form { EnvironmentRulesSection(rules: $prefs.environmentRules) } // Return inside \begin{…}: indent, and what each new line starts with (EnvironmentRulesSettings.swift)
+            // Seven tabs: related panes share one grouped Form so every tab fits the
+            // toolbar at settingsWidth (ten overflowed into an unclickable » menu, PR #1652).
+            Form { EnvironmentRulesSection(rules: $prefs.environmentRules); TeXpandSettingsSection() } // Return inside \begin{…} (EnvironmentRulesSettings.swift); TeXpand abbreviations (TeXpandSettingsView.swift)
                 .formStyle(.grouped)
                 .frame(width: DS.Layout.settingsWidth)
-                .tabItem { Label("Environments", systemImage: "list.bullet.indent") }
-            Form { TeXpandSettingsSection() } // TeXpand abbreviations: master switch (off), kinds, leader, packs (TeXpandSettingsView.swift)
-                .formStyle(.grouped)
-                .frame(width: DS.Layout.settingsWidth)
-                .tabItem { Label("Abbreviations", systemImage: "text.badge.plus") }
-            Form { CompilePreferencesSection(); EngineChoiceSettingsSection() } // auto-compile (moved out of the toolbar's producer menu, #653 review); the engine for other documents (EngineChoice.swift)
+                .tabItem { Label("Typing", systemImage: "keyboard") }
+            Form { CompilePreferencesSection(); EngineChoiceSettingsSection(); PerformanceSettingsSection() } // auto-compile (#653 review); engine choice (EngineChoice.swift); Low Memory / Balanced / High Performance (PerformanceMode.swift)
                 .formStyle(.grouped)
                 .frame(width: DS.Layout.settingsWidth)
                 .tabItem { Label("Compile", systemImage: "play.circle") }
-            Form { ConversionPreferencesSection() } // provider picker, model, API key (Keychain) (ConversionPreferencesView.swift)
+            Form { ConversionPreferencesSection(); PasteImageSettingsSection() } // capture conversion provider/model/key (ConversionPreferencesView.swift); paste an image as a figure (PasteImage.swift)
                 .formStyle(.grouped)
                 .frame(width: DS.Layout.settingsWidth)
-                .tabItem { Label("Conversion", systemImage: "wand.and.stars") }
-            Form { PasteImageSettingsSection() } // paste an image as a figure (PasteImage.swift)
+                .tabItem { Label("Import", systemImage: "square.and.arrow.down") }
+            Form { LiveShareSettingsSection() } // Live Share (preview), off by default (LiveShareViews.swift)
                 .formStyle(.grouped)
                 .frame(width: DS.Layout.settingsWidth)
-                .tabItem { Label("Images", systemImage: "photo") }
+                .tabItem { Label("Live Share", systemImage: "person.2") }
         }
     }
 }
@@ -903,6 +901,15 @@ struct CompilePreferencesSection: View {
             Text(model.canCompile ? "Edits compile as you type; ⌘B compiles at any time."
                                       : "No producer attached — File > Attach Built Compiler (⌘⇧K) first.")
                 .font(DS.Fonts.secondary).foregroundStyle(DS.Colors.textSecondary)
+            Toggle("Stop at the first error", isOn: $model.strictTeXErrors)
+                .accessibilityHint("While off, errors TeX recovers from are shown as warnings and the preview shows every page. While on, the new engine stops at the first error, like pdflatex -halt-on-error.")
+            Text(model.strictTeXErrors ? "Like pdflatex -halt-on-error: TeX stops at the first error and every error is an error."
+                                       : "Best effort: an error pdfLaTeX recovers from is a warning (“pdfLaTeX would report an error here”) and the preview goes on.")
+                .font(DS.Fonts.secondary).foregroundStyle(DS.Colors.textSecondary)
+            if model.strictTeXErrors, model.engineV3.strictModeIgnored {
+                Text("This engine host does not stop at the first error: errors are shown as errors, but TeX goes on. Update FlashTeX's engine to stop.")
+                    .font(DS.Fonts.secondary).foregroundStyle(.orange)
+            }
         }
     }
 }

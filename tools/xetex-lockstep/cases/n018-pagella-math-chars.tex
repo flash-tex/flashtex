@@ -1,0 +1,8 @@
+% n018-pagella-math-chars: punctuation, digits, symbols and combining marks in TeX Gyre Pagella
+% XeTeX-specific (docs/design/xetex/PLAN.md, phase S1: native fonts)
+\input prelude
+\def\space{ }
+\font\x="[texgyrepagella-regular.otf]" \x
+\setbox0=\hbox{0123456789 +−×÷=≠ ¶§†‡ ©®™ ½ e\char"0301 o\char"0308 fi ffl ſt}
+\lsshipbox0
+\end

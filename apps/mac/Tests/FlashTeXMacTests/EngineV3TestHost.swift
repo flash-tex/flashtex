@@ -7,16 +7,33 @@ import XCTest
 /// `flashtex-host` and a TeX Live it can build the pdfLaTeX format from.
 /// Without either they skip at once (XCTSkip). With both, a host that fails
 /// to start or is not ready in time FAILS the test (a host-start regression
-/// is never masked as a skip). The Mac CI job builds no host today, so there
-/// these tests skip; running them in CI needs a workflow step (Commander-owned).
+/// is never masked as a skip). The `mac app` CI job builds no host, so there
+/// these tests skip. The `mac app: engine-v3 host tests` job (ci.yml) builds
+/// the host, installs a TeX and sets FLASHTEX_REQUIRE_HOST=1, so there a
+/// missing host or TeX Live FAILS instead of skipping.
 @MainActor
 enum EngineV3TestHost {
-    /// Skips unless a host is built and a TeX Live answers `kpsewhich pdflatex.ini`.
-    static func require() throws {
+    /// Skips unless a host is built and a TeX Live answers `kpsewhich pdflatex.ini`;
+    /// with FLASHTEX_REQUIRE_HOST=1 either missing is a failure, not a skip.
+    static func require(file: StaticString = #filePath, line: UInt = #line) throws {
         guard EngineV3.locateHost() != nil else {
-            throw XCTSkip("no flashtex-host built (cargo build --release -p flashtex-engine --bin flashtex-host)")
+            throw unavailable("no flashtex-host built (cargo build --release -p flashtex-engine --bin flashtex-host)", file: file, line: line)
         }
-        guard texLive != nil else { throw XCTSkip("no TeX Live found (kpsewhich pdflatex.ini)") }
+        guard texLive != nil else { throw unavailable("no TeX Live found (kpsewhich pdflatex.ini)", file: file, line: line) }
+    }
+
+    /// Whether a missing host or TeX Live fails the test (FLASHTEX_REQUIRE_HOST=1).
+    nonisolated static var hostRequired: Bool { ProcessInfo.processInfo.environment["FLASHTEX_REQUIRE_HOST"] == "1" }
+
+    struct HostMissing: Error, CustomStringConvertible { let description: String }
+
+    /// What a test throws when it cannot have a working host: an XCTSkip,
+    /// or, under FLASHTEX_REQUIRE_HOST=1, a recorded failure (and an error
+    /// that ends the test). `throw EngineV3TestHost.unavailable("...")`.
+    nonisolated static func unavailable(_ why: String, file: StaticString = #filePath, line: UInt = #line) -> Error {
+        guard hostRequired else { return XCTSkip(why) }
+        XCTFail("FLASHTEX_REQUIRE_HOST=1: " + why, file: file, line: line)
+        return HostMissing(description: why)
     }
 
     /// The `pdflatex.ini` a TeX Live resolves, or nil when none is installed.

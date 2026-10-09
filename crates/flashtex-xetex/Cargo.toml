@@ -1,0 +1,63 @@
+[package]
+name = "flashtex-xetex"
+version = "0.1.0"
+edition = "2021"
+# GPL-2.0-or-later: src/generated/ is a translation of TeX Live's xetex.web
+# (third_party/xetex/xetex.web; XeTeX's own parts are MIT, the TeX and e-TeX
+# parts are Knuth's and Breitenlohner's), and the crate links
+# crates/flashtex-engine, which is GPL-2.0-or-later. See LICENSE in this
+# directory and docs/design/engine-v2/DESIGN.md §3: nothing MIT may link
+# this crate.
+license = "GPL-2.0-or-later"
+description = "XeTeX-compatible engine core (phase S0: TFM fonts), translated from xetex.web by tools/web2rust."
+publish = false
+
+[lib]
+name = "flashtex_xetex"
+path = "src/lib.rs"
+
+[[bin]]
+name = "flashtex-xetex"
+path = "src/main.rs"
+
+[dependencies]
+# The pdfTeX engine's runtime: the word space (`arena`), checked indexing
+# (`ix`), the command line (`cli`), the run's configuration and kpathsea
+# (`system`, `resolver`), dates and MD5. Only its public interface is used;
+# nothing of it changes for this crate.
+flashtex-engine = { path = "../flashtex-engine", default-features = false, features = ["kpathsea"] }
+# TeX Live 2026's HarfBuzz 12.3.2 and FreeType 2.14.1, vendored unmodified
+# (third_party/harfbuzz, third_party/freetype) and built as TeX Live builds
+# them, for native fonts (docs/design/xetex/PLAN.md §3.1, phase S1).
+flashtex-xetex-fontlibs = { path = "fontlibs" }
+# The platform-free index of installed fonts (MIT, no dependencies): the file
+# list XeTeX's font manager searches by name (src/fontmgr, PLAN.md §3.1). Only
+# its directory list and scan are used; every name XeTeX matches on is read
+# from the font files by src/fontmgr itself.
+flashtex-font-discovery = { path = "../font-discovery" }
+# TeX Live 2026's TECkit 2.5.13 (LGPL-2.1-or-later), vendored unmodified
+# (third_party/teckit) and built as TeX Live builds it, for font mappings
+# (`mapping=tex-text`, PLAN.md §3.1, phase S1).
+flashtex-xetex-teckit = { path = "teckit" }
+# display-list-v3 (MIT): the pages Unicode mode's output builds
+# (src/out, PLAN.md §3.2), the same encoder the pdfTeX engine uses.
+flashtex-display-list = { path = "../display-list-v3" }
+# FlashTeX's own font-file readers (MIT, no dependencies): the OpenType
+# table reader for native fonts' metrics, Type 1's built-in encodings.
+flashtex-pdf = { path = "../pdf" }
+
+[dev-dependencies]
+# tests/pinned_libs.rs: the sha256 of every vendored HarfBuzz/FreeType/TECkit file.
+sha2 = "0.10"
+
+# Built on its own (the root workspace excludes it, see the root Cargo.toml):
+# scripts/xetex-lockstep.sh builds it with its own lockfile and target.
+[workspace]
+members = [".", "fontlibs", "teckit"]
+
+[profile.release]
+opt-level = 3
+lto = false
+codegen-units = 16
+panic = "unwind"
+debug = false

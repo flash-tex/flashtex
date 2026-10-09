@@ -69,13 +69,24 @@ ap.add_argument('--keep', action='store_true')
 ap.add_argument('--quiet', action='store_true')
 ap.add_argument('--any-letter', action='store_true', help='with few prose positions, edit any letter of the body')
 ap.add_argument('--no-revert', action='store_true', help='keep each edit (the next edits build on it)')
+ap.add_argument('--toggle-files', default='',
+                help='comma-separated names: before half the edits, one of these files is created (or deleted, if '
+                     'it exists) in the work directory, and put back as it was before the revert; the reference '
+                     'starts from the same directory (#1502: a later lookup whose answer changed)')
 ap.add_argument('--interleave', action='store_true',
                 help='interrupt each edit\'s compile (pass 1 or 2, after 1-4 pages) with a second edit, '
-                     'which is then compiled and verified')
+                     'which is then compiled and verified; with --toggle-files, half of the interrupted '
+                     'compiles get no second edit but a file created or deleted, and the next compile '
+                     'continues the stopped run (#1514)')
 ap.add_argument('--cold', action='store_true',
                 help='with --interleave: the first edit also adds a comment line to the preamble, so that its '
                      'compile runs from the format (the one interrupted, in pass 1); the second edit keeps it '
                      '(a restart from the stopped run\'s S0) or reverts both (from the format again)')
+ap.add_argument('--first-open', action='store_true',
+                help='with --interleave: before each interrupted edit, the files the compiles wrote (.aux, .toc, '
+                     '.out, the PDF, ...) are removed, as on a document\'s first open, so that the compile runs '
+                     'from the format with no .aux and is interrupted in its first pass (lane COLD-OPEN: the '
+                     '.aux point at \\document\'s start, a keystroke during the initial compile)')
 a = ap.parse_args()
 import edits  # noqa: E402
 try:
@@ -97,6 +108,8 @@ for n in os.listdir(a.srcdir):
     if os.path.isfile(p):
         shutil.copy(p, work)
 editfile = a.edit or f'{a.doc}.tex'
+# (`--first-open`: what the document's directory holds before any compile)
+source_files = set(os.listdir(work))
 cmdline = ['-fmt=pdflatex', '-interaction=batchmode', f'{a.doc}.tex']
 prof = os.environ.get('PROFILE_OUT')
 pre = ['samply', 'record', '-s', '--unstable-presymbolicate', '-r', '4000', '-o', prof] if prof else []
@@ -207,6 +220,12 @@ def run_cli(pre, content, tag):
     for n, b in pre.items():
         with open(os.path.join(d, n), 'wb') as f:
             f.write(b)
+        # the modification time the compile saw (`\pdffilemoddate`, genlookup.py's `mtime`
+        # probe): a fresh copy's crossed a second now and then, a difference of the reference
+        w = os.path.join(work, n)
+        if n != editfile and os.path.isfile(w) and open(w, 'rb').read() == b:
+            st = os.stat(w)
+            os.utime(os.path.join(d, n), ns=(st.st_atime_ns, st.st_mtime_ns))
     with open(os.path.join(d, editfile), 'wb') as f:
         f.write(content)
     e2 = dict(env, FLASHTEX_PREVIEW='1')
@@ -321,6 +340,7 @@ def one(content, tag, interrupt=None, pre=None):
                passes=r.get('passes', 1), pass_modes=r.get('pass_modes'), pass_s=r.get('pass_s'),
                oscillation=r.get('oscillation'), ref_runs=REFRUNS.get(tag),
                restart_mid_page=r.get('restart_mid_page'), restart_gap=r.get('restart_gap'),
+               restart_preamble=r.get('restart_preamble'), restart_midline=r.get('restart_midline'),
                l5=r.get('l5'), rs_events=r.get('rs_events'), ck_stats=r.get('ck_stats'))
     results.append(rec)
     if out:
@@ -334,6 +354,30 @@ def one(content, tag, interrupt=None, pre=None):
         f'{"OK" if bad == [] else ("MISMATCH " + str(bad)) if bad else ""}'
         + (f' diff={r["diffs"][:1]}' if r['diffs'] and r['converged_at'] is None else ''))
     return rec
+
+
+TOGGLE = [n for n in a.toggle_files.split(',') if n]
+
+
+def toggle(name):
+    """Create `name` in the work directory, or delete it if it is there."""
+    if not name:
+        return
+    p = os.path.join(work, name)
+    if os.path.exists(p):
+        os.unlink(p)
+    else:
+        with open(p, 'w') as f:
+            f.write(f'Probe file {name} is here.\n')
+
+
+def toggle_one(i):
+    """Before half the edits (`--toggle-files`), toggle one of the files; its name."""
+    if not TOGGLE or rng.random() < 0.5:
+        return None
+    name = rng.choice(TOGGLE)
+    toggle(name)
+    return name
 
 
 def paragraph_starts(src):
@@ -383,7 +427,7 @@ def structural(kind, src, p, i):
             return None
         m = min(ms, key=lambda m: abs(m.start() - p))
         return src[:m.start()] + src[m.end():]
-    if kind in ('newline', 'split', 'join', 'math_par', 'verbatim_blank', 'cell_blank'):
+    if kind in edits.LINE_KINDS + edits.CONTEXT_KINDS + edits.PREAMBLE_KINDS:
         return getattr(edits, kind)(src, p)
     if kind == 'unsection':
         ms = [m for m in re.finditer(rb'\\section\{[^}\n]*\}', src)]
@@ -420,9 +464,16 @@ for i in range(a.trials):
         new = structural(kind, src, p, i)
         if new is None:
             continue
+    toggled = toggle_one(i)
     if a.interleave:
+        if a.first_open:
+            # (a first open: none of the compiles' files; the reference
+            # starts without them too)
+            for n in os.listdir(work):
+                if n not in source_files and os.path.isfile(os.path.join(work, n)):
+                    os.unlink(os.path.join(work, n))
         pre_c = snapshot(work)
-        at = (rng.choice([1, 1, 2]), rng.randint(1, 4))
+        at = (rng.choice([1, 1, 2]) if not a.first_open else 1, rng.randint(1, 4))
         shift = 0
         if a.cold:
             # (a preamble edit: the compile of this edit is from the format)
@@ -433,7 +484,23 @@ for i in range(a.trials):
                 shift = len(mark)
                 at = (1, at[1])
         r1 = one(new, f'{i}:{kind}@{p}' + ('+preamble' if shift else ''), interrupt=at)
-        if r1.get('paused'):
+        if r1.get('paused') and TOGGLE and rng.random() < 0.5:
+            # (#1514) no second edit: a file appears or goes while the
+            # compile is stopped, and the next compile continues the stopped
+            # run; the reference starts from the directory as the last
+            # complete compile left it, with that file as it is now
+            name = rng.choice(TOGGLE)
+            toggle(name)
+            pre_t = dict(pre_c)
+            if os.path.exists(os.path.join(work, name)):
+                pre_t[name] = open(os.path.join(work, name), 'rb').read()
+            else:
+                pre_t.pop(name, None)
+            one(new, f'{i}:toggle-after-interrupt+{name}', pre=pre_t)
+            toggle(name)
+            toggle(toggled)
+            one(src, f'{i}:revert')
+        elif r1.get('paused'):
             # the second edit: the revert, or one more letter near the first
             if rng.random() < 0.5:
                 one(src, f'{i}:revert-after-interrupt', pre=pre_c)
@@ -443,13 +510,15 @@ for i in range(a.trials):
                 one(second, f'{i}:second-after-interrupt', pre=pre_c)
                 one(src, f'{i}:revert')
         else:
+            toggle(toggled)
             one(src, f'{i}:revert')
         continue
-    one(new, f'{i}:{kind}@{p}')
+    one(new, f'{i}:{kind}@{p}' + (f'+{toggled}' if toggled else ''))
     if a.no_revert:
         src = new
         cands = prose_positions(src)
     else:
+        toggle(toggled)
         one(src, f'{i}:revert')
 
 host.stdin.write('quit\n')

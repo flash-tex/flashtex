@@ -1,14 +1,16 @@
 # `display-list-v3`: the preview wire format and the engine-host protocol
 
-- **Status:** version 3.2, implemented. 3.0: lane P3-DISPLAYLIST
+- **Status:** version 3.3. 3.0: lane P3-DISPLAYLIST
   (2026-09-29); 3.1 (the resident, incremental host: §6): lane
   P3P4-HOST-UNIFY (2026-09-29); 3.2 (external tools: bibtex, biber,
   makeindex, §6.3–§6.4): lane P5-EXTERNAL-TOOLS (2026-09-30). Page sections
   `ORIGINS` and `RULE_GEOMETRY` (§4.2, §4.4; host capability
-  `exact-geometry`): lane J1 P3-ZERO-TOLERANCE (2026-10-02), a minor-compatible
-  addition whose minor number the protocol owner assigns in landing order
-  (DESIGN.md §6.1). Producer: `crates/flashtex-engine`
-  (`src/displaylist/`, `src/host/`).
+  `exact-geometry`): lane J1 P3-ZERO-TOLERANCE (2026-10-02), gated by that
+  capability like `progress-v1`, so it takes no minor number (protocol
+  owner's ruling, DESIGN.md §13, 2026-10-05). 3.3 (the Typst host's additions E1–E8, DESIGN.md §15.4:
+  §11): lane TYPST-T0T1 (2026-10-04), drafted in `typst-host/` by #1303 and
+  #1335. Producers: `crates/flashtex-engine` (`src/displaylist/`,
+  `src/host/`) for LaTeX, `typst-host/` (`flashtex-typst-host`) for Typst.
   Reference decoder and client: `crates/display-list-v3` (Rust crate
   `flashtex-display-list`).
 - **Licence:** this specification and the reference crate are **MIT**. A
@@ -90,6 +92,9 @@ length 0, is a corrupt stream: the reader stops (§7).
 | `0x02` | `COMPILE` | client → host | JSON (§6.3) |
 | `0x03` | `CANCEL` | client → host | JSON `{"id": n}` |
 | `0x04` | `BYE` | client → host | JSON `{}` |
+| `0x05` | `RESOLVE` | client → host | JSON (§11.6; 3.3, host capability `resolve-v1`) |
+| `0x06` | `LOCATE` | client → host | JSON (§11.6; 3.3, host capability `resolve-v1`) |
+| `0x07` | `PROFILE` | client → host | JSON (§6.9; host capability `profile-v1`) |
 | `0x41` | `HELLO` | host → client | JSON (§6.2) |
 | `0x42` | `STARTED` | host → client | JSON (§6.4) |
 | `0x43` | `FONT` | host → client | binary (§5.1) |
@@ -102,13 +107,20 @@ length 0, is a corrupt stream: the reader stops (§7).
 | `0x4A` | `ERROR` | host → client | JSON (§7) |
 | `0x4B` | `PAGES` | host → client | JSON (§6.4; 3.1) |
 | `0x4C` | `TOOL` | host → client | JSON (§6.4; 3.2) |
+| `0x4D` | `IMAGE_DATA` | host → client | binary (§11.5; 3.3, `accept` `image-data`) |
+| `0x4E` | `RESOLVED` | host → client | JSON (§11.6; 3.3) |
+| `0x4F` | `LOCATED` | host → client | JSON (§11.6; 3.3) |
+| `0x50` | `PACKAGE` | host → client | JSON (§11.8; Typst host, `accept` `packages-v1`) |
+| `0x51` | `PROFILE` | host → client | JSON (§6.9; the reply to a client's `PROFILE`) |
 | `0x60` | `DIAG` | host → client | JSON (§6.7; `diag-v1`, capability-gated) |
 | `0x70` | `PROGRESS` | host → client | JSON (§6.8; `progress-v1`, capability-gated) |
 
 ## 3. Versioning
 
 - The protocol name is `display-list-v3`; the version is `[major, minor]`,
-  now `[3, 2]`.
+  now `[3, 3]`. `flashtex-host` (LaTeX) implements 3.2 and answers
+  `[3, 2]` to any 3.x client: 3.3 (§11) adds nothing a LaTeX host must send.
+  The reference client says `[3, 3]`.
 - **Major** changes break readers (a new item opcode, a changed layout).
   Peers of different majors refuse each other at `HELLO` (§6.2).
 - **Minor** changes only add: new JSON keys, new page sections (§4.1), new
@@ -130,9 +142,30 @@ length 0, is a corrupt stream: the reader stops (§7).
 - **`progress-v1`** (2026-10-03): the `PROGRESS` heartbeat (§6.8),
   capability-gated like `diag-v1`, so it needs no minor number: a client
   that does not accept it sees nothing new.
-- **Exact geometry** (J1, 2026-10-02; minor number to be assigned by the
-  protocol owner, so `version` stays `[3, 2]` here; 3.3 is the Typst host's
-  draft (#1335), so the next free minor is 3.4) adds page sections 7
+- **`profile-v1`** (2026-10-06, lane PERF-MODES): performance modes
+  (§6.9), capability-gated like `progress-v1`, so it needs no minor number:
+  the `HELLO` key `profile` in both directions and the `PROFILE` messages.
+  A host without the capability ignores the client's `HELLO.profile` (an
+  unknown key) and never receives a `PROFILE` from a client that checks the
+  capability first.
+- **3.3** (§11; DESIGN.md §15.4, E1–E8) adds, all of it for the Typst
+  host and none of it required of the LaTeX host: `FONT.format`
+  `opentype` with glyph ids and variation coordinates (§11.1), page
+  sections 8 `PAGE_META` and 10 `COLORSPACES` (§11.2, §11.3), section 7
+  `ORIGINS` on every Typst page (§11.2; the section is exact geometry's,
+  below, and has one layout for both hosts), item opcodes
+  `0x0F`–`0x13` for colour spaces, constant alpha and the text line state
+  (§11.3, §11.4), images from bytes (`IMAGE_DATA`, §11.5), on-demand
+  source mapping (`RESOLVE`/`LOCATE`, §11.6) and, for a client that
+  accepts `packages-v1`, the `PACKAGE` message (§11.8), plus `DIAGNOSTIC`
+  keys `column` and `hints`. Sections and JSON keys follow the minor rules
+  above. **The new opcodes are sent only to a client that said `[3, 3]`
+  and listed the feature in its `HELLO` `accept`** (§11.7): an item opcode
+  a reader does not know is otherwise a major change. A 3.1 or 3.2 client
+  of the Typst host gets its glyph pages INCOMPLETE and draws `DONE.pdf`.
+- **Exact geometry** (J1, 2026-10-02; gated by the `exact-geometry`
+  capability like `progress-v1`, so it takes no minor number: protocol
+  owner's ruling, DESIGN.md §13, 2026-10-05) adds page sections 7
   `ORIGINS` and 9 `RULE_GEOMETRY` (§4.1, §4.2, §4.4) and the host capability
   `exact-geometry`, which says every `PAGE` and `FORM` carries both. Both
   directions are handled without negotiation: a reader that does not know
@@ -176,9 +209,10 @@ The fixed header is 124 bytes. Section tags:
 | 4 | `LINKS` | `u32 n`, then n links (§4.5) |
 | 5 | `DESTS` | `u32 n`, then n destinations (§4.5) |
 | 6 | `UNSUPPORTED` | `u32 n`, then n × {`u16 len`, UTF-8 text}: what the page used that v3 cannot express |
-| 7 | `ORIGINS` | `u32 n`, then n × `f64[2]`: each GLYPH's origin (X, Y) in stream space, in item order (§4.2); the Typst host's `ORIGINS_F64` (#1335) is this section |
-| 8 | (`PAGE_META`) | the Typst host's 3.3 draft (#1335): JSON; not read by this decoder |
-| 9 | `RULE_GEOMETRY` | `u32 n`, then n × `f64[7]`: what the PDF draws each RULE with, in item order (§4.4) |
+| 7 | `ORIGINS` | exact geometry (§3), and every 3.3 Typst page (§11.2): `u32 n`, then n × `f64[2]`: each GLYPH's origin (X, Y) in stream space, in item order (§4.2); the Typst host's `ORIGINS_F64` (#1335) is this section |
+| 8 | `PAGE_META` | 3.3: UTF-8 JSON, the page's metadata (§11.2) |
+| 9 | `RULE_GEOMETRY` | exact geometry (§3): `u32 n`, then n × `f64[7]`: what the PDF draws each RULE with, in item order (§4.4) |
+| 10 | `COLORSPACES` | 3.3: `u32 n`, then n colour spaces, referenced as 1..n (§11.3) |
 
 Any other tag: skip `len` bytes (a later minor version's section).
 
@@ -254,12 +288,19 @@ executes them in order; the state they set is sticky:
 | `0x0C` | SPAN | `u32 span` | the source span of the following items (0: none) (§5.3) |
 | `0x0D` | TEXT_RENDER | `u8 mode` | PDF text render mode: 0 fill, 1 stroke, 2 fill then stroke, 3 invisible |
 | `0x0E` | UNSUPPORTED | `u32 n` | entry n of `UNSUPPORTED` was skipped here |
+| `0x0F` | FILL_COLOR_CS | `u32 cs, u8 n, f64[n]` | 3.3 (`accept` `color-spaces`): the fill colour in colour space `cs` of `COLORSPACES` (§11.3) |
+| `0x10` | STROKE_COLOR_CS | `u32 cs, u8 n, f64[n]` | 3.3: the same, for stroking |
+| `0x11` | FILL_ALPHA | `f64 a` | 3.3 (`color-spaces`): constant fill alpha, the PDF's `ca` (§11.3) |
+| `0x12` | STROKE_ALPHA | `f64 a` | 3.3 (`color-spaces`): constant stroke alpha, the PDF's `CA` |
+| `0x13` | LINE_STATE | `f64 width, u8 cap, u8 join, f64 miter, u16 k, f64[k] dash, f64 phase` | 3.3 (`accept` `line-state`): the line state stroked glyphs use (text render modes 1 and 2; §11.4) |
 
 The state at the start of every page and form: fill and stroke colour
 DeviceGray 0 (black), text render mode 0, glyph matrix unset, span 0, the
-clip the whole box. SAVE/RESTORE scope the colours, the text render mode
-and the clip, as PDF's `q`/`Q` do; the glyph matrix and the span are not
-graphics state and are not restored.
+clip the whole box; 3.3: fill and stroke alpha 1, the line state of a new
+PDF graphics state (width 1, butt caps, miter joins, miter limit 10, no
+dash). SAVE/RESTORE scope the colours, the text render mode and the clip,
+as PDF's `q`/`Q` do, and in 3.3 the alphas and the line state; the glyph
+matrix and the span are not graphics state and are not restored.
 
 ### 4.4 Glyphs, rules, paths
 
@@ -346,8 +387,10 @@ Destinations (`\pdfdest`, hyperref anchors) on the page:
 u8     named    1: name is a name; 0: a number in decimal
 u32 nl; u8[nl]  name
 u8     kind     0 xyz, 1 fit, 2 fith, 3 fitv, 4 fitb, 5 fitbh, 6 fitbv, 7 fitr
-i32[4] rect     left, top, right, bottom (page space, sp); xyz uses left, top
-i32    zoom     xyz zoom in thousandths, 0 = keep
+i32[4] rect     left, top, right, bottom (page space, sp): the ones pdfTeX
+                writes for the kind (xyz left, top; fith, fitbh top; fitv,
+                fitbv left; fitr all four), the others 0
+i32    zoom     xyz zoom in thousandths, 0 = keep; 0 for the other kinds
 ```
 
 A `goto name` link resolves to the page whose `DESTS` hold that name.
@@ -364,6 +407,7 @@ i32  width, i32 height, f64[4] box
 for MATRICES, PATHS, ITEMS', UNSUPPORTED:   u64 length, then the section data
      ITEMS' = ITEMS without SPAN items and with every GLYPH's col = 0
 for ORIGINS, then RULE_GEOMETRY, if the page has it:   u64 length, then the section data
+3.3: for PAGE_META, then COLORSPACES, if the page has it: u64 length, then the section data
 for each font id the items use, in order of first use:   u16 id, u8[32] key
 for each image id the items use, in order of first use:  u32 id, u8[32] key
 ```
@@ -412,7 +456,7 @@ u32 pl; u8[pl]   the font program (empty: see "held" below)
 | `pdf_name` | the PDF resource name, e.g. `F41` |
 | `tex_name`, `tex_size` | the TFM name and its size in sp (the font that owns `/F<n>`; other sizes of it share the resource, their size is in the glyph matrix) |
 | `ps_name` | PostScript name from the font map |
-| `format` | `type1`: the program is a Type 1 font file (PFB if it starts with 0x80, else PFA); `none`: not embedded (a base-14 font the viewer supplies: draw with the named font); `truetype`: the program is the TrueType file (`.ttf`, or a `.ttc` collection whose first font pdfTeX uses); `opentype`: the program is the OpenType (CFF) file (`.otf`); `type3`: a bitmap (PK) font pdfTeX writes as Type 3, the program is its glyphs as bitmaps (§5.1.1). The last three are sent only to a client that lists them in `COMPILE.font_formats` (§6.3); to another the `FONT` comes with an empty program, as if held |
+| `format` | `type1`: the program is a Type 1 font file (PFB if it starts with 0x80, else PFA); `none`: not embedded (a base-14 font the viewer supplies: draw with the named font); `truetype`: the program is the TrueType file (`.ttf`, or a `.ttc` collection whose first font pdfTeX uses); `opentype`: the program is the OpenType (CFF) file (`.otf`) (3.3: with `glyph_ids`, a Typst font instance whose codes are glyph ids, §11.1); `type3`: a bitmap (PK) font pdfTeX writes as Type 3, the program is its glyphs as bitmaps (§5.1.1). The last three are sent only to a client that lists them in `COMPILE.font_formats` (§6.3); to another the `FONT` comes with an empty program, as if held |
 | `file` | the font file the engine read |
 | `program_sha256`, `program_bytes` | of the complete program |
 | `encoding` | 256 glyph names: code → glyph. From the font map's `.enc` file when the font is re-encoded, else the program's built-in `/Encoding` |
@@ -545,7 +589,7 @@ below listens on a Unix-domain stream socket; a Windows host would listen
 on AF_UNIX (Windows 10 1803+, stream sockets only) or a named pipe.
 
 `flashtex-host --socket PATH [--engine PATH] [--format NAME]... [--no-warm]
-[--s0-cache DIR] [--budget BYTES] [--timed SECONDS] [--external-tools off|auto]
+[--s0-cache DIR] [--profile MODE] [--budget BYTES] [--timed SECONDS] [--external-tools off|auto]
 [--tool-timeout SECONDS]` first finds the TeX
 Live the engine will read (without a shell environment: the app's PATH is
 launchd's) or the bundle, and makes each format ready (default
@@ -567,9 +611,11 @@ arrive. With `--s0-cache DIR` (or `FLASHTEX_S0_CACHE`), each document's
 begin-document snapshot S₀ is saved there after a full run, and the first
 compile of the document in a new host starts from it when nothing it read
 has changed (DESIGN.md §1.2's reopen target); each save prints one line,
-`flashtex-host: {"saved_s0": PATH, "bytes": N, "ms": T}`. `--budget` and `--timed` are
-the checkpoints' memory budget (default 1 GiB) and timed interval (default
-0.02 s). `--engine` names the engine program that `export` compiles and
+`flashtex-host: {"saved_s0": PATH, "bytes": N, "ms": T}`. `--profile` is the
+performance mode the host starts in (§6.9; default `balanced`, or
+`FLASHTEX_PROFILE`). `--budget` and `--timed` are
+the checkpoints' memory budget (default 1 GiB, the Balanced mode's) and timed interval (default
+0.02 s); given, they hold in every mode. `--engine` names the engine program that `export` compiles and
 the format preparation run (default: `flashtex-host` itself, which runs as
 the engine when invoked as `pdftex`).
 
@@ -589,7 +635,7 @@ The host answers with its own `HELLO`, or with `ERROR` `{"code":
  "engine": "pdfTeX 3.141592653-2.6-1.40.29 (FlashTeX engine)",
  "capabilities": ["compile", "cancel", "diagnostics", "font-programs", "font-formats", "have-fonts",
                   "resident", "incremental", "buffers", "edits", "viewport",
-                  "pages-status", "export", "external-tools", "exact-geometry", "diag-v1"],
+                  "pages-status", "export", "external-tools", "exact-geometry", "halt-on-error", "diag-v1"],
  "texmf": {"texlive": "/Library/TeX/texbin (PATH) -> /usr/local/texlive/2026/bin/universal-darwin",
            "resolver": "kpathsea (/Library/TeX/texbin)",
            "bundle": null,
@@ -601,7 +647,8 @@ The host answers with its own `HELLO`, or with `ERROR` `{"code":
 
 A client may add `"accept": [...]` to its `HELLO`: the optional message
 families it wants, of those the host lists in `capabilities` (`diag-v1`,
-§6.7). The host ignores names it does not know.
+§6.7; `progress-v1`, §6.8; 3.3's features, §11.7). The host ignores names
+it does not know.
 
 `texmf.texlive` is null when no TeX Live was found (the resolver is then
 the bundle, if one is configured); a format whose `status` is `failed`
@@ -649,6 +696,7 @@ demand later) the host prints progress lines
 | `main` | yes | the main file, relative to `root` (no `..`) |
 | `format` | no | format name, default `pdflatex` |
 | `shell_escape` | no | `\write18`: `default` (texmf.cnf's: restricted in TeX Live), `off`, `restricted`, `on` |
+| `halt_on_error` | no | (capability `halt-on-error`; an older host ignores the field) `true`: `-halt-on-error`, TeX stops at the first error (a client's strict mode); default `false`: nonstopmode, recovering as pdflatex does. Another job: the resident document is replaced |
 | `output_dir` | no | where the PDF, log and auxiliary files go (default: a per-connection temporary directory) |
 | `jobname` | no | default: the main file's name |
 | `have_fonts` | no | font keys (hex) the client holds (§5.1) |
@@ -678,7 +726,13 @@ a bibliography or an index: see "External tools" in §6.4.
 **A `COMPILE` while one is running supersedes it**: the running compile
 goes on (a page is never interrupted) without sending, its `DONE` says
 `cancelled`, and the next compile sends what is current; a compile
-superseded before it started only applies its edits. An `export` compile
+superseded before it started only applies its edits. One exception keeps
+fast typing visible: an incremental compile is not stopped before its first
+changed page has shipped (or three pages have, none changed), and it sends
+that page (with the forms it draws) even when superseded, so every
+keystroke's edit reaches the screen however fast the next one comes (lane
+LIVE-30MS). That `PAGE` comes after the newer `COMPILE` was sent and before
+the superseded compile's `DONE`; a client takes it like any other page. An `export` compile
 is killed as in 3.0.
 
 ### 6.4 Replies
@@ -707,9 +761,15 @@ connection stay valid; `false`: drop them first.
 an earlier compile, still to be re-typeset (show them marked stale). Sent
 after the first re-typeset page, after a `viewport` stop, and before
 `DONE` (`complete: true`, all `count` pages current; a client drops pages
-at or past `count`).
+at or past `count`). Also sent, without a page of its own, when the compile
+finds nothing new against a run newer work stopped and continues that run
+as its own (fast typing: a letter typed, deleted and typed again): the
+pages the stopped run had shipped are this compile's at once, so the host
+sends those the client lacks from its cache and then `PAGES` with them
+current, before the run ships its next page.
 
 `DIAGNOSTIC`: `{"id", "severity": "error"|"warning", "message", "file"?, "line"?}`
+(3.3 adds `column` and `hints`, §11.7)
 — TeX errors (`file:line: message` or `! message`) and LaTeX/package
 warnings from the engine's terminal output. A client that accepted
 `diag-v1` gets `DIAG`s (§6.7) instead: the column, the byte range, the
@@ -733,6 +793,37 @@ from a persisted S₀), `restart_page` (pages before the restart point),
 null), `typeset_pages` (pages this compile shipped), `first_page_ms`
 (`COMPILE` to the first re-typeset page on the socket), `viewport_ms`,
 `run_ms`, `keep`, and `cold_reason` when a full run was needed.
+
+The resident engine's `DONE` may also carry `stages`, an object of
+**optional diagnostics** for benchmarks (`tools/incr-bench`): a client must
+not depend on any of its keys, which may change without a protocol version.
+Times are in ms (`queue`, `apply`, `move_spans`, `find`, `key`, `changes`, `restore`,
+`first_page`, `first_page_cpu`, `first_page_dl`, `first_page_send`,
+`edited_wall`, `edited_cpu`, `test`, `dl`, `send`, `cpu`; `tests` and
+`edited_page` are counts and a page index). `queue_by` splits `queue` (the
+request's wait for the engine thread) by what the engine thread did
+meanwhile, in ms per part (`restore`, `typeset`, `test`, `jump`, `paused`,
+`done`, `prepare`, `request`, `idle`, `other`). When the compile found a
+run that newer work had stopped (typing: the previous compile's background
+work), `paused_how` says what it did with it first (`continued`,
+`settled`, `abandoned`) and `paused` (ms) and `paused_instr_k` what that
+took, inside `key` and `find`. `old_kept` and
+`old_rewound` count, since the host started, the old checkpoints' chunks
+the convergence comparisons took from their cache and rewound. On macOS and
+Linux the engine thread's counter readings are added, in thousands
+(`os::thread_counts`: macOS's fixed counters; Linux's `perf_event_open`,
+user space only; absent where the system does not give them): `instr_k` and
+`cycles_k` for the whole compile, `first_page_instr_k` to the first page,
+`restore_instr_k` for the restore, `edited_instr_k` from just before the
+restore to the edited page's shipout, `typeset_instr_k` and
+`typeset_cycles_k` from the engine's resumption after the restore to the
+edited page's shipout (the typesetting alone), `test_instr_k` for the
+convergence tests, and two absolute cycle marks of the engine thread,
+`arrival_mark_kc` (when the `COMPILE` arrived; also on a `DONE` cancelled
+before its compile started) and `first_page_mark_kc` (its first page): a
+keystroke's latency in engine cycles is the second mark of the compile that
+painted it less the first of its own (`dl3-keys --interval-ms`,
+`docs/evidence/live-30ms-2026-10-04/scripts/interval.py`).
 
 **External tools (3.2).** For a `COMPILE` with `"external_tools":
 "auto"`, once its `DONE` is out (never before: the edited page is not
@@ -840,9 +931,11 @@ engine reported them, after the compile's last `PAGE`/`PAGES` and before
 something, what TeX itself knows then (`changes/diagnostics.ch`,
 `src/diag.rs`): TeX's `error`, `pdf_warning`, the overfull/underfull box
 reports of `hpack`/`vpackage`, `\write`s to the terminal (LaTeX's, packages'
-and classes' warnings are `\immediate\write`s), and `\def` (definition
-sites). The hooks only read TeX's variables and never print: the terminal
-and the log are byte-identical with and without them (P-T1). The record
+and classes' warnings are `\immediate\write`s), `\def` (definition
+sites), and a source line too long for TeX's buffer (texmfmp.c's
+`input_line`, which prints to stderr, not the terminal: an `error` at the
+file and line being read, with no `col`). The hooks only read TeX's
+variables and never print: the terminal and the log are byte-identical with and without them (P-T1). The record
 travels with the engine's checkpoints, so an incremental compile reports
 every diagnostic of the document — those of pages it kept too — exactly as
 a run from scratch does, and a persisted S₀ carries the preamble's.
@@ -883,7 +976,7 @@ a run from scratch does, and a persisted S₀ carries the preamble's.
 | `span` | no | the display-list span (§5.3) of (`file`, `line`), declared in a `SOURCES` before the `DIAG` if the client lacks it; it moves with its line across edits like the pages' spans |
 | `end` | no | `{"file","line","col","span"}`: where the material ends (box reports: the box's last character) |
 | `lines` | no | TeX's line range (box reports: "at lines a--b"; "detected at line n" is `[n, n]`) |
-| `trace` | no | the input stack when TeX reported it, **innermost level first**, every level up to 24 (the innermost 23 and the file level; TeX shows only `\errorcontextlines` of them, and LaTeX sets that to −1): `kind` (`macro`, `argument`, `template`, `backed_up`, `recently_read`, `inserted`, `output`, `everypar`, `everymath`, `everydisplay`, `everyhbox`, `everyvbox`, `everyjob`, `everycr`, `mark`, `everyeof`, `write`, `file`, `scantokens`, `terminal`, `insert`, `read`; a client shows an unknown kind as its name), `name` (a macro's), `text` (`[read, still to read]`, as TeX shows the level; each side at most 240 bytes), a file level's `file`/`line`/`col`, a macro's `def` (`file`, `line`: where this run defined it, when it saw the definition; macros of the format have none) |
+| `trace` | no | the input stack when TeX reported it, **innermost level first**, every level up to 24 (the innermost 23 and the file level; TeX shows only `\errorcontextlines` of them, and LaTeX sets that to −1): `kind` (`macro`, `argument`, `template`, `backed_up`, `recently_read`, `inserted`, `output`, `everypar`, `everymath`, `everydisplay`, `everyhbox`, `everyvbox`, `everyjob`, `everycr`, `mark`, `everyeof`, `write`, `file`, `scantokens`, `terminal`, `insert`, `read`; a client shows an unknown kind as its name), `name` (a macro's), `text` (`[read, still to read]`, as TeX shows the level; each side at most 240 bytes), a file level's `file`/`line`/`col`, a macro's `def` (`file`, `line`: where this run defined it, when it saw the definition; macros of the format have none). After the compile's first 1,000 reports, a report's `trace` keeps only its file level |
 | `help` | no | TeX's help lines (the log has them; the terminal does not), or the `\errhelp` text of `\errmessage` (LaTeX's `\PackageError` help) |
 | `fatal` | no | `true`: TeX stopped (emergency stop, capacity exceeded, `==> Fatal error occurred`) |
 | `output` | no | `true`: reported while `\output` was active (a box report then has no line range) |
@@ -907,23 +1000,59 @@ place is line `a` of the file TeX was reading.
 **Codes.** `origin/slug` or `origin/package/slug`: `tex/…`
 (`undefined-control-sequence`, `missing-dollar`, `missing-left-brace`,
 `missing-right-brace`, `extra-right-brace-or-forgotten-dollar`,
-`too-many-right-braces`, `missing-number`, `illegal-unit`,
+`extra-right-brace-or-forgotten-endgroup`, `too-many-right-braces`,
+`display-math-should-end-with-dollars`, `missing-number`, `illegal-unit`,
 `paragraph-ended-before-argument-complete`, `file-ended-while-scanning`,
 `emergency-stop`, `capacity-exceeded`, `file-not-found`,
 `cannot-use-in-this-mode`, `misplaced-alignment-tab`, `extra-alignment-tab`,
-`double-superscript`, `fatal-error-no-output`, `show`, `overfull-hbox`,
+`double-superscript`, `double-subscript`, `missing-right-delimiter`,
+`extra-right-delimiter`, `missing-character`, `fatal-error-no-output`, `show`, `overfull-hbox`,
 `underfull-hbox`, `tight-hbox`, `loose-hbox`, the same for `vbox`),
 `latex/…` (`file-not-found`, `environment-undefined`,
 `environment-mismatch`, `missing-begin-document`, `missing-item`,
 `lonely-item`, `verb-ended-by-end-of-line`, `option-clash`,
 `unknown-option`, `command-already-defined`, `undefined-reference`,
-`undefined-citation`, `multiply-defined-label`, `rerun`),
+`undefined-citation`, `multiply-defined-label`, `rerun`, `float-too-large`,
+`unicode-not-set-up`, `caption-outside-float`, `no-file`),
 `latex-font/font-shape-undefined`, `package/<name>/…`, `class/<name>/…`,
 `pdftex/<category>` (`pdftex/dest`). Every other message's slug is its text
 with quoted names (`` `x' ``), control sequence names, arguments in braces,
 numbers and "on input line N" left out, lower case, words joined by `-`
 (`Undefined color `x'.` → `undefined-color`), at most 60 characters. A code
 names the kind of problem, never its instance.
+
+*Added 2026-10-05 (lane DIAG-PARITY, #1592).*
+- **Two codes are new reports** that a `diag-v1` client did not get before. Both are
+  read from the terminal (`exact: false`), and neither has a place:
+  - `latex/no-file`: "No file X.tex.", LaTeX's `\typeout` for an `\include` or
+    `\InputIfFileExists` of a missing `.tex` file. The `.aux` and `.toc` files of a
+    first run are not reported.
+  - `tex/missing-character`: "Missing character: There is no X in font Y!", shown
+    on the terminal when `\tracinglostchars` > 1.
+- **Five codes replace slugs** the rule above used to produce:
+
+  | Before | Now |
+  |---|---|
+  | `tex/missing-inserted` | `tex/missing-right-delimiter` |
+  | `tex/extra` | `tex/extra-right-delimiter` |
+  | `latex/unicode-character-u` | `latex/unicode-not-set-up` |
+  | `latex/outside-float` | `latex/caption-outside-float` |
+  | `latex/float-too-large-for-page-by-pt` | `latex/float-too-large` |
+
+- **Why the renames need no alias or gate:**
+  - Two of the old codes broke the rule that a code names a kind. `tex/extra` was
+    also the slug of "Extra \else", "Extra \fi" and "Extra \or". `tex/missing-inserted`
+    was also the slug of "Missing \endcsname inserted".
+  - `diag-v1` is capability-gated, and codes are not listed in HELLO.
+  - The only consumers of codes are:
+    - the app (`EngineV3Explain`, `EngineV3Fixes`, `EngineV3ErrorPolicy`,
+      `EngineV3DiagPresent`);
+    - the engine's `tests/diagnostics.rs`;
+    - `tools/diag-oracle`.
+  - On #1592's tree none of them names an old code: a search for them in `apps/`, `crates/` and
+    `tools/` finds nothing.
+  - A client that keyed on an old slug falls back, as for any unknown code, to the
+    message.
 
 **Precision** (measured, lane P5-DIAGNOSTICS: `crates/flashtex-engine/tests/diagnostics/`,
 docs/evidence/p5-diagnostics-2026-09-30/): on an 80-document corpus of
@@ -980,9 +1109,13 @@ tell such a pass from a loop.
 **Negotiation.** The host lists `"progress-v1"` in `HELLO.capabilities`; a
 client adds `"progress-v1"` to its `HELLO.accept`.
 
-**Message** (`0x70`, JSON): `{"id", "pass", "page"}`. `id` is the compile;
+**Message** (`0x70`, JSON): `{"id", "pass", "page", "file"?}`. `id` is the compile;
 `pass` is the run's pass (1, then 2, ... for further `.aux` passes); `page`
-is the number of pages that run has shipped. The host sends one at the
+is the number of pages that run has shipped; `file` (added 2026-10-06, for
+`flashtex-v3`'s progress line; absent at the terminal level) is the
+innermost file TeX is reading, as TeX opened it (`./chapters/a.tex`, a
+TeX Live path), the name `-file-line-error` gives. A client that does not
+know a key ignores it. The host sends one at the
 first page or segment checkpoint of each pass and then at most every 250 ms
 while the pass reaches checkpoints, in every run (cold or incremental, the
 first pass and the `.aux` passes behind it), whether or not those pages are
@@ -990,12 +1123,58 @@ sent. Nothing is sent between checkpoints: an endless loop that reaches
 none sends none, which is what a client's bound detects. A client treats
 any `PROGRESS` as the compile making progress and otherwise ignores it.
 
+### 6.9 `PROFILE`: performance modes (`profile-v1`)
+
+An additive, capability-gated feature like `progress-v1` (§6.8): no page,
+section or earlier message changes, and the protocol version stays as it
+is. DESIGN.md §1.2 ("Performance modes"), lane PERF-MODES.
+
+**What a mode is.** A named set of the host's knobs: how much memory the
+checkpoints may hold, how densely they are kept near the cursor, how long
+the engine stays warm after a compile, whether it works out the next
+restore while it waits, and how soon it gives freed memory back. **A mode
+never changes what a compile produces**: every page, the PDF and the log
+are identical in every mode; only latency and memory differ.
+
+| mode | for |
+|---|---|
+| `low-memory` | the least memory: a small checkpoint budget, few checkpoints far from the cursor, memory given back soon after typing stops; edits far from the last one take longer |
+| `balanced` | the default: the latency and memory targets of DESIGN.md §1.2 and §5.2 |
+| `high-performance` | the lowest latency: a large checkpoint budget (a quarter of the machine's memory, 1–4 GiB), checkpoints dense near the cursor, a longer keep-warm window, nothing trimmed |
+
+**Negotiation.** The host lists `"profile-v1"` in `HELLO.capabilities`. A
+client may add `"profile": MODE` to its `HELLO`; a mode the host does not
+know is ignored. Either way the host's `HELLO` carries `profile`, the knobs
+in effect for this connection's compiles:
+
+```json
+"profile": {"mode": "balanced", "budget": 1073741824, "dense": 16,
+            "segment_ms": 0.5, "timed_ms": 20.0, "keep_warm_ms": 2000,
+            "prepare": true, "trim_after_ms": 2000}
+```
+
+`budget` is bytes; `segment_ms` and `trim_after_ms` are null when off
+(High Performance never trims). The keys are informative: a client shows or
+logs them and does not depend on any one. A knob the host's command line
+fixed (`--budget`, `--timed`, `--keep-warm`) keeps its value in every mode.
+
+**Message** (`0x07`, client → host, JSON): `{"profile": MODE}` switches the
+mode live. The host applies it between compiles, in the order requests
+arrive (a running compile finishes under the old mode), and answers with
+`PROFILE` (`0x51`, host → client, JSON) `{"profile": {...}}`, the knobs now
+in effect, as in `HELLO`. A smaller budget or dense window thins the
+resident document's checkpoints at once and gives the freed memory back
+before the reply. An unknown mode gets `ERROR` (`request`) and changes
+nothing. The mode is the host's: with one host per document, it is that
+document's.
+
 ## 7. Errors
 
 - **Decoding fails closed.** A frame of bad length, a body shorter than its
-  layout, an unknown item opcode, an item that names a path, matrix or
-  unsupported entry that does not exist, a colour of other than 1, 3 or 4
-  components: the reader rejects the message and treats the connection as
+  layout, an unknown item opcode, an item that names a path, matrix,
+  unsupported entry or colour space that does not exist, a colour of other
+  than 1, 3 or 4 components (or, 3.3, of other than its colour space's
+  count): the reader rejects the message and treats the connection as
   broken (reconnect and recompile). It never draws a partial page it could
   not decode.
 - **Unknown** message kinds, section tags and JSON keys are skipped.
@@ -1193,7 +1372,7 @@ SAVE/RESTORE to `saveGState`/`restoreGState` and CLIP to `addPath` + `clip`.
     `file`/`line`/`col`/`range` for the underline, `trace` and `help` as
     sub-rows, `span` to keep a row on its line across edits.
 
-## 10. Limits of version 3.2
+## 10. Limits of version 3.3
 
 - Extended graphics state (`gs`: transparency), shadings, patterns,
   separation colour spaces, inline images and text clipping are flagged
@@ -1217,3 +1396,390 @@ SAVE/RESTORE to `saveGState`/`restoreGState` and CLIP to `addPath` + `clip`.
 - S₀ persisted with `--s0-cache` does not carry source spans: after a
   reopen, material made before `\begin{document}` (none that a page shows,
   in practice) has no span.
+- Typst (3.3, §11): the Typst host produces E1–E4 and E7 (E3, E4 for a
+  client that accepts them); images and islands (E5, E6) are flagged
+  INCOMPLETE and `RESOLVE`/`LOCATE` (E8) is not answered yet.
+
+## 11. Version 3.3: the Typst host's additions
+
+3.3 carries what a Typst document draws and v3.2 cannot express (DESIGN.md
+§15.1, §15.4: E1–E8). Its producer is `flashtex-typst-host` (`typst-host/`,
+MIT, its own workspace), which speaks this protocol (§6) for one open
+`.typ` document per process. The LaTeX host is never required to send any
+of it. Everything here is additive: JSON keys, section tags and message
+kinds a 3.2 reader skips (§3), and item opcodes sent only to a client that
+asked for them (§11.7).
+
+What the Typst host sends today is marked **produced**; the rest is
+specified, decoded by the reference crate, and not yet produced. Produced
+or not, a class of items needs its 2×/3× pixel gate row in DESIGN.md §15.5
+(the app's renderer against typst-pdf's PDF) before a page using it is
+drawn rather than flagged INCOMPLETE: until then the Typst host sends the
+items **and** flags the page INCOMPLETE, with an UNSUPPORTED entry
+"…: pixel gate row pending (DESIGN.md §15.5)", so the client shows
+`DONE.pdf`. The host's `--draw-ungated` drops that flag, for measuring the
+rows only. Pending today: ICCBased and Separation colours
+(`FILL_COLOR_CS`, `STROKE_COLOR_CS`), alpha other than 1, stroked glyphs.
+
+For a Typst document **the PDF** of §4.2 and §4.4 is typst-pdf's export of
+the same compile (`DONE.pdf`; the host's per-page positions come from a
+one-page export of the page, whose content stream draws the same).
+Positions, colours and paths are the numbers that PDF draws with, read as
+§4.2 says.
+
+### 11.1 `FONT.format` `opentype` with glyph ids (E1; produced)
+
+A Typst font resource is one **font instance**: a font file, a face in it,
+and variation coordinates. Its `FONT` has `format` `opentype` (whatever the
+outlines: `outlines` says which) and these JSON keys instead of the TeX
+ones:
+
+| key | meaning |
+|---|---|
+| `glyph_ids` | `true`: a GLYPH's `code` is the **glyph id** in the face (no `encoding`) |
+| `face_index` | the face in a collection (`.ttc`/`.otc`), else 0 |
+| `units_per_em` | the face's units per em |
+| `font_matrix` | `"1/upm 0 0 1/upm 0 0"`: glyph space to text space |
+| `outlines` | `cff` (CFF or CFF2) or `truetype` (`glyf`) |
+| `variations` | `[[tag, value], ...]`: the variation coordinates (`wght` 700, …), in the font's axis units; `[]` for the default instance |
+| `family`, `ps_name` | the family and PostScript name, for display and font-list checks |
+| `file` | the font file the host read (absolute path) |
+| `program_sha256`, `program_bytes` | of the whole file |
+| `program_from` | `accept` `font-program-refs`: the id of an earlier `FONT` on this connection that carried this program (another instance of the same file); the program is then empty |
+
+The program is the **whole font file** (a collection included): Core Text
+and FreeType load it from the bytes and select `face_index`, then apply
+`variations`. The PDF embeds a CFF or TrueType subset of the same outlines
+(an instanced one for a variable font) whose hints and outlines are the
+file's (DESIGN.md §15.5), so the pixels are the same.
+
+The program is sent once per connection: in the first `FONT` that takes it,
+and, to a client that accepts `font-program-refs`, never again
+(`program_from`); to any other client it is sent whole in every `FONT`,
+bounded per compile by the host (`--font-program-budget`; past it the
+compile fails with a diagnostic rather than silently dropping a font). A
+client that accepts `font-files` may receive an empty program with `file`
+and `program_sha256` for any font: it reads the file itself and must refuse
+it (and reconnect without `font-files`) when the file's SHA-256 differs.
+This keeps 20 MB CJK collections off the socket.
+
+`key` = SHA-256(`"display-list-v3 font\0"`, `"opentype"`, `0x00`,
+SHA-256(file), `"\0face\0"`, `u32 face_index`, then for each variation
+coordinate in order `"\0var\0"`, the tag's four bytes, `f32 value`)
+(`resource::opentype_font_key`). It depends on neither the id, the path
+nor the font's names.
+
+A 3.1 or 3.2 client, or one that does not list `opentype` in
+`COMPILE.font_formats`, gets every Typst page with glyphs INCOMPLETE (the
+fonts' programs empty) and draws `DONE.pdf`.
+
+### 11.2 `ORIGINS` and `PAGE_META` for Typst pages (E2, E7; produced)
+
+**`ORIGINS`** (section 7, §4.2) carries every GLYPH's origin as the
+reference viewer computes it from the PDF's content stream (typst-pdf's,
+§11): one `f64[2]` per GLYPH, in item order. A Typst page always has it.
+Typst's own frame positions are not enough: typst-pdf (krilla) writes
+positions in f32, so the frame positions miss the PDF's by up to 6 × 10⁻⁵
+bp, which moves 31–5,324 pixels at 2× and 3× (DESIGN.md §15.5). The GLYPH's
+own x and y are those origins rounded to sp (§4.2), its glyph matrix (MATRIX)
+is the linear part of the PDF's text rendering matrix as the viewer computes
+it, and every PATH and CLIP of a Typst page carries the PDF's own path: its
+CTM, segments and line state as the content stream writes them (§4.4), not
+Typst's frame numbers (the frame's rules miss the PDF's by up to 4.8 × 10⁻⁵
+bp, enough for 408 pixels at 3×: `docs/evidence/typst-t0-2026-10-04/`).
+
+**`PAGE_META`** (section 8) is a UTF-8 JSON object:
+
+| key | meaning |
+|---|---|
+| `engine` | `"typst"` (a LaTeX page has no `PAGE_META`) |
+| `number` | the page's logical number (Typst's page counter at the page) |
+| `label` | the page label the PDF gives the page (`/PageLabels`), when there is one |
+| `bleed` | `[left, top, right, bottom]` in bp: the page's bleed; `box` (the MediaBox) includes it |
+| `trim` | `[x0, y0, x1, y1]` in bp, stream space: the TrimBox, when the page has bleed |
+
+`counts` stay TeX's and are zero on a Typst page.
+
+### 11.3 Colour spaces and constant alpha (E3; produced)
+
+Every page of a plain Typst document paints in **ICCBased** colour spaces
+(sRGB, and a grey profile), and Typst also has spot colours and constant
+alpha. A client that accepts `color-spaces` may receive:
+
+**`COLORSPACES`** (section 10): `u32 n`, then n colour spaces, numbered
+1..n in order:
+
+```
+u8 kind
+kind 1, ICCBased:   u8 n (components: 1, 3 or 4); u32 len; u8[len] profile
+                    (the ICC profile bytes as the PDF's stream decodes them)
+kind 2, Separation: u16 len; u8[len] colorant (the name, decoded from the PDF name);
+                    u32 alternate: 0x80000001 DeviceGray, 0x80000003 DeviceRGB,
+                       0x80000004 DeviceCMYK, else the number of an
+                       earlier ICCBased entry of this section;
+                    u8 m; f64[m] c0; f64[m] c1; f64 e
+                    (the tint transform, a PDF Type 2 function over [0, 1]:
+                     alternate = c0 + t^e × (c1 − c0))
+```
+
+**`FILL_COLOR_CS`** / **`STROKE_COLOR_CS`** (`0x0F`, `0x10`): `u32 cs` (1..n
+of `COLORSPACES`), `u8 n`, then the n components the PDF's `scn`/`SCN`
+writes (for a Separation, n = 1: the tint), read as §4.2 reads a number. A
+component count other than the space's is a corrupt page (§7).
+`FILL_COLOR`/`STROKE_COLOR` (`0x09`, `0x0A`) remain the Device spaces.
+
+**`FILL_ALPHA`** / **`STROKE_ALPHA`** (`0x11`, `0x12`): `f64`, the PDF's
+`ca` / `CA` from the `ExtGState` the content stream selects with `gs`. Both
+are graphics state: SAVE/RESTORE scope them. Of an `ExtGState`, v3.3
+carries `ca`, `CA` and `LW` only (`/SMask /None`, `/BM /Normal` or
+`/Compatible` and `/AIS false` are their defaults): a glyph, path or image
+painted while any other key is in effect (a soft mask, a blend mode,
+overprint, a transfer function, ...) makes the page INCOMPLETE.
+
+**Colours are the PDF's** (spec §4.2's reading of each `scn`/`SCN`, `g`,
+`rg`, `k` operand, and each `ca`/`CA`), for every glyph and path, whichever
+space carries them: the Typst host reads them from typst-pdf's export with
+the positions (§11.2). ICCBased spaces carry the PDF's profile bytes.
+
+A Separation's tint transform is read as PDF 32000-1 §7.10.3 defines a
+Type 2 function: `C0` defaults to `[0]` and `C1` to `[1]`, `/Domain` must
+be `[0 1]`, and `C0`/`C1` must have the alternate space's component count;
+anything else fails the page's derivation (INCOMPLETE).
+
+Without `color-spaces` the Typst host draws ICCBased sRGB and grey as
+DeviceRGB and DeviceGray with the same components and flags a page that
+uses alpha or a spot colour INCOMPLETE; it sends no `COLORSPACES` and none
+of `0x0F`–`0x13`. (Whether that is pixel-exact for non-black colour is a
+gate row, DESIGN.md §15.5.)
+
+### 11.4 Stroked glyphs: `LINE_STATE` (E4; produced)
+
+**`LINE_STATE`** (`0x13`, `accept` `line-state`): the line width, cap, join,
+miter limit, dash array and phase (the same encoding and meaning as a
+path's stroke, §4.4) for glyphs drawn with text render mode 1 (stroke) or 2
+(fill, then stroke), as the PDF's `w`, `J`, `j`, `M`, `d` set them before
+the text object. It is graphics state (SAVE/RESTORE scope it). Without
+`line-state` a page with stroked text is INCOMPLETE.
+
+**For glyphs the width, dash array and phase are in stream space**, because
+a GLYPH carries only the glyph matrix, not the CTM the PDF strokes under.
+The PDF's `w` and `d` are user space; under a CTM whose linear part is a
+similarity, `[a b −b a]` or `[a b b −a]`, a circular pen of width `w` in
+user space is one of width `w × s` in stream space, with
+`s = sqrt(a·a + b·b)` in binary64 (each product, the sum and the square root
+correctly rounded). The Typst host sends the width, the dashes and the phase
+multiplied by `s`; the cap, join and miter limit are unchanged. A client
+strokes the glyph's outline, mapped by the glyph matrix, with that pen in
+stream space. Under a CTM that is not a similarity (a non-uniform scale, a
+skew) the pen is no circle and has no one width: the page is INCOMPLETE.
+
+### 11.5 Images from bytes and PDF islands (E5, E6; specified)
+
+Typst images come from bytes as often as from files (`image(bytes)`,
+packages), and typst-pdf re-encodes them. For a client that accepts
+`image-data`, an `IMAGE` (§5.2) may say `"data": true` instead of naming a
+`file`: its bytes follow in an **`IMAGE_DATA`** frame (`0x4D`) sent right
+after it:
+
+```
+u32 id                 the IMAGE's id
+u32 n                  parts, then n × { u32 len; u8[len] }:
+                       part 0: the image data;
+                       part 1 (when the IMAGE says "smask": true): the soft mask
+                         samples, 8 bits per pixel, rows top first;
+                       part 2 (when the IMAGE says "icc": true): the ICC profile
+```
+
+3.3 `IMAGE` keys:
+
+| key | meaning |
+|---|---|
+| `data` | `true`: the bytes are in `IMAGE_DATA`, not in `file` |
+| `type` | besides §5.2's: `gif`, `webp` (the file's bytes), and `raw`: the samples of the PDF's image XObject |
+| `components`, `bits` | `raw`: components per pixel (1, 3, 4) and bits per component |
+| `interpolate` | the PDF's `/Interpolate` (Typst's `smooth` scaling) |
+| `smask`, `icc` | parts 1 and 2 are present |
+| `island` | `true`: a **PDF island** (E5), below |
+
+For parity a client draws **the pixels the PDF has**: the host sends `raw`
+samples (what typst-pdf wrote, after its decoding and colour conversion)
+unless the PDF carries the file's own bytes (a JPEG it passes through), when
+`type` is `jpeg` and the data is the file.
+
+**PDF islands (E5).** What v3 cannot draw item by item — gradients
+(conic included), tilings, SVG images, colour glyphs, gradient-filled text
+— the Typst host may send as a one-page PDF that typst-pdf exports for the
+construct's bounding box (`page_ranges`, untagged): an `IMAGE` with
+`"type": "pdf"`, `"island": true`, `"data": true`, `page` 1, `page_box`
+`media`, its `width`/`height` and `orig_x`/`orig_y` in bp, drawn by an IMAGE
+item whose matrix maps the island's page space to stream space (§5.2). A
+page that would need an island but whose client does not accept
+`image-data` is INCOMPLETE. Parity by construction is a **belief** until its
+gate row passes (DESIGN.md §15.4).
+
+### 11.6 On-demand source mapping: `RESOLVE`, `LOCATE` (E8; specified)
+
+Re-declaring every span of a long Typst document after each edit costs
+about 0.5 s at 300 pages (DESIGN.md §15.4), so a host that lists
+`resolve-v1` in its `HELLO` capabilities also answers queries:
+
+- `RESOLVE` (`0x05`): `{"id", "compile", "page", "x", "y"}` — click →
+  source: the point (x, y) in page space (sp) of page `page` (0-based) of
+  compile `compile`. Reply `RESOLVED` (`0x4E`): `{"id", "file", "line",
+  "column", "byte"}` (1-based line, 0-based byte column, byte offset in the
+  file), or `{"id", "none": true}`.
+- `LOCATE` (`0x06`): `{"id", "compile", "file", "byte"}` — source → page:
+  reply `LOCATED` (`0x4F`): `{"id", "positions": [[page, x, y], ...]}` (page
+  space, sp), empty when nothing is drawn from there.
+
+`compile` names the compile whose pages the client shows; a host that has
+compiled since answers `{"id", "stale": true}` and the client asks again.
+The ids are the client's, separate from compile ids. The replies may
+interleave with a compile's frames.
+
+### 11.7 Negotiation
+
+The client says `[3, 3]` in `HELLO` and lists in `accept` (§6.2) what it
+draws: `color-spaces` (§11.3), `line-state` (§11.4), `image-data` (§11.5),
+`font-program-refs` and `font-files` (§11.1). The host lists in
+`capabilities` what it can send: the Typst host says `opentype-glyphs`,
+`origins-f64`, `page-meta`, `font-program-refs`, `color-spaces` and
+`line-state` today, and `resolve-v1` once it answers §11.6. An item opcode or message the client did not accept
+is never sent: the host flags the page INCOMPLETE instead (§4.7). A host may
+send sections 8 and 10 to any 3.x client; a reader that does not know them
+skips them.
+
+`DIAGNOSTIC` (§6.4) gains, in 3.3, `column` (the 0-based byte column of the
+diagnostic's start, with `line`) and `hints` (an array of strings).
+
+### 11.8 Packages and the project's lock (Typst host; produced)
+
+The Typst host resolves `#import "@ns/name:version"` from, in order, the
+project (`typst-packages/<ns>/<name>/<version>/`, vendored), the host's
+read-only package paths (`--package-path`), its package cache
+(`--package-cache`) and, for `@preview` only, the Universe or a mirror
+(`--package-mirror`). It reads a package's files only inside that package's
+canonical root, as it reads the project's only inside the project root;
+it opens each file by walking from that root with `O_NOFOLLOW`, so a
+symlink swapped in after the check is not followed. A mirror must be
+`https://` (redirects only to https) or a local `file://` directory;
+`http://` is refused.
+**It never fetches unless the compile allows it**: offline is the default,
+and `--offline` overrides any client. The app allows it after its first-use
+consent sheet (DESIGN.md §15.2). Each project's **lock**,
+`flashtex-typst.lock` in `root` (a TOML subset the host writes, meant to be
+committed), records the SHA-256 of each fetched package's tarball and of
+each font file the document's text uses. The host writes it under an
+exclusive `flock` on the project root, re-reading it first (so two hosts
+of one project lose nothing), to a new file renamed over it (never through
+a symlink); tables and keys of a later version are kept verbatim. Its
+first line is a stamp, the SHA-256 of the rest as the host wrote it: a lock
+changed outside FlashTeX since (no stamp, or a stamp that does not match) is
+never overwritten — a `DIAGNOSTIC` with `"kind": "lock"` says so — until a
+`COMPILE` says `"lock": "update"`. A project whose directory or lock is not
+writable, or whose root another host keeps locked for more than 2 s (the
+host never waits longer), is not written: what the host records is kept in
+memory for the session, checked from there and merged with the file when
+it is re-read, and one `DIAGNOSTIC` with `"kind": "lock"` says so.
+
+`COMPILE` keys:
+
+| key | meaning |
+|---|---|
+| `packages` | `offline` (default): use only what is on disk; `online`: this compile may fetch a missing `@preview` package |
+| `lock` | `record` (default): check the lock and add what it lacks; `update`: also re-record the fonts as the document uses them now (accepting changed fonts; a package's hash is never replaced); `off`: record nothing and write nothing, report nothing about fonts, but still refuse a package tarball whose hash the lock knows otherwise |
+
+A missing package never makes a compile wait for the network: the host
+starts the fetch on its own thread; the compile that started it waits at
+most 200 ms, any other compile not at all, and otherwise fails with a
+located `DIAGNOSTIC` at the import ("downloading @preview/x:1.2.3 …"). A
+fetched tarball, or a cached package's tarball, whose SHA-256 differs from
+the lock's entry is refused with a located error and never unpacked or
+used; the lock is never changed to accept it. A tarball is unpacked only
+if every entry is a regular file or directory inside the package (no `..`,
+no absolute path, no link or device) and there are at most 20,000 entries
+and 256 MiB in all; otherwise it is refused with a located error, not kept
+and not recorded. A cached package's unpacked
+files are checked against its tarball once per host process (same files,
+same bytes, nothing more); a tree that differs is replaced by a fresh
+unpack of the tarball before any file is read. A failed fetch is retried
+after 5 s, doubling up to 5 minutes; until then a compile that needs the
+package reports the failure without fetching.
+
+**`PACKAGE`** (`0x50`, host → client, JSON; only to a client whose `HELLO`
+`accept` lists `packages-v1`, a capability the Typst host lists): what
+happened to a package, outside any compile's frames (between compiles, or
+interleaved with one like a diagnostic):
+
+```json
+{"package": "@preview/cetz:0.3.1", "event": "ready", "sha256": "…", "bytes": 123456}
+```
+
+`event`: `needed` (a compile needed it offline: the app may ask the user
+for consent, then compile with `"packages": "online"`), `fetching`, `ready`
+(compile again), `failed` (with `message`). The reference decoder reads it
+as `Event::Package`. The fetch uses the system `curl` (an absolute path,
+without the user's `.curlrc`) with a FlashTeX User-Agent, restricted to the
+mirror's URL scheme and to 64 MiB, counted while reading.
+
+**Font notes.** After each compile's `DONE` (never before its pages: it may
+hash font files) the host records new fonts and checks the lock's fonts
+against the installed ones; what it finds goes with **the next compile**
+(a `DIAGNOSTIC` after `DONE` would fall outside the compile's frames), and
+with every compile after until it is fixed, as a
+`DIAGNOSTIC` `{"severity": "warning", "kind": "font", "file": <the lock>,
+"message"}` for a recorded font that is missing, replaced by another
+variant, or a different file (another SHA-256): an unknown family is only a
+quiet warning in Typst, and a different file reflows the document. `kind`
+`lock` reports a lock that cannot be read or written (a symlink, a newer
+version); such a lock is never overwritten. `HELLO.typst.packages`
+describes the host's setup: `{"lock", "vendor", "cache", "mirror",
+"offline"}`.
+
+### 11.9 The Typst host's seeded compiles and their check
+
+For an incremental `COMPILE` (not `export`), the Typst host runs Typst's
+layout loop seeded with the previous compile's introspection (DESIGN.md
+§15.3): usually one layout iteration instead of about four. `DONE` says
+how each compile ran:
+
+| key | meaning |
+|---|---|
+| `seeded` | `true`: the seeded loop produced the pages; `false`: Typst's standard compile did (the first compile, an export, an error, or the seeded loop declined) |
+| `iterations` | the seeded loop's layout iterations (0 when `seeded` is false) |
+| `verified` | `true`/`false`: the pages were checked against the standard compile and were equal/different; `null`: not checked yet |
+| `verify_ms` | what the check cost |
+
+The host checks a seeded compile against the standard one, either before
+sending its pages (`--verify every`: the standard pages are sent when
+they differ) or **when idle** (the default: after a second without a
+message from the client). When the idle check finds different pages, the
+host compiles again by itself, as for external tools (§6.4): a follow-up
+compile with the last compile's `id` and `"cause": "verify"` (`STARTED`,
+the pages that differ, `PAGES`, `DONE`), which a client treats like any
+compile. A newer `COMPILE` comes first: the check runs only while the
+client is quiet.
+
+### 11.10 The Typst host's watchdog
+
+A Typst compile cannot be cancelled (a WASM plugin runs without a fuel or
+memory limit; a `for` over a huge range is unbounded), so the Typst host
+watches its own compiles (the first of two layers; the app, the second,
+restarts a host on any exit): when **the compile itself** (not the socket
+writes, the export, font hashing or eviction after it, so that a slow
+client never gets a healthy host killed) runs longer than its wall-time budget
+(`--watchdog-secs`, default 10 s; `--watchdog-cold-secs`, default 180 s, for
+the first compile of a document and for the idle check of §11.9, both standard
+compiles; a 722-page document took 73 s cold to its first page on a loaded
+machine, so the app should raise it from a document's last cold time), or the
+process's resident memory passes
+its ceiling (`--rss-ceiling-mb`, default 4096; 0: none), it writes one line
+to stderr, `flashtex-typst-host: {"watchdog": "wall"|"rss", "id", ...}`
+(with `over_ms`, how long after the budget ended, or `since_under_ms`, how
+long after memory was last seen under the ceiling), kills its children
+(package downloads), removes its temporary directory and **`_exit`s with
+status 86**; a host starting up removes the temporary directories of hosts
+that no longer run. The client sees the socket close during a compile
+(no `DONE`): it starts a new host, marks the pages it shows stale and
+compiles cold; a client may also kill a host it cannot reach, by `pid`.
+`HELLO.watchdog` is `{"wall_ms", "wall_cold_ms", "rss_mb", "exit_code"}`.

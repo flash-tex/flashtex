@@ -34,6 +34,7 @@
 pub mod arena;
 #[cfg(all(feature = "distribution", not(feature = "tex82")))]
 pub mod bundle;
+pub mod busy;
 #[cfg(not(feature = "tex82"))]
 pub mod checkpoint;
 pub mod cli;
@@ -57,18 +58,28 @@ pub mod iso;
 #[cfg(not(feature = "tex82"))]
 pub mod ix;
 #[cfg(not(feature = "tex82"))]
+pub mod lineshift;
+#[cfg(all(any(target_os = "linux", target_os = "macos"), not(feature = "tex82")))]
+pub mod logalloc;
+#[cfg(not(feature = "tex82"))]
 pub mod macroprof;
 pub mod memstat;
+#[cfg(not(feature = "tex82"))]
+pub mod midline;
 pub mod os;
 #[cfg(not(feature = "tex82"))]
 pub mod pdftex;
 pub mod persist;
+#[cfg(not(feature = "tex82"))]
+pub mod profile;
 #[cfg(not(feature = "tex82"))]
 pub mod readset;
 pub mod resolver;
 #[cfg(not(feature = "tex82"))]
 pub mod statediff;
 pub mod system;
+#[cfg(not(feature = "tex82"))]
+pub mod texlines;
 
 pub use generated::Globals;
 

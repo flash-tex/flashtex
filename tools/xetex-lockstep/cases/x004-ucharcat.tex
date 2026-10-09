@@ -1,0 +1,12 @@
+% x004-ucharcat: \Ucharcat makes a character token of a given category
+% XeTeX-specific (docs/design/xetex/PLAN.md, phase S0: TFM fonts)
+\input prelude
+\def\space{ }
+\font\x=cmr10 \x
+\edef\a{\Ucharcat"41 11 \Ucharcat"42 12 \Ucharcat"20 10 \Ucharcat"5B 1 \Ucharcat"5D 2 }
+\message{x004 \meaning\a}
+\edef\b{\Ucharcat`\$ 3 \Ucharcat`\& 4 \Ucharcat`\^ 7 \Ucharcat`\_ 8 }
+\message{x004 \meaning\b}
+\setbox0=\hbox{\Ucharcat"61 11 \Ucharcat"62 12}
+\lsshipbox0
+\end

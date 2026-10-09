@@ -1,0 +1,40 @@
+% o008-mixed-sizes: an OpenType math font with a TFM text family 0 and other script sizes (\fontdimen with scaled fonts)
+% XeTeX-specific (docs/design/xetex/PLAN.md, phase S2: OpenType math)
+\input prelude
+\def\space{ }
+\def\loop#1\repeat{\def\body{#1}\iterate}\let\repeat=\fi
+\def\iterate{\body \let\next\iterate \else\let\next\relax\fi \next}
+\font\mt="[STIXTwoMath-Regular.otf]" at 12pt \font\ms="[STIXTwoMath-Regular.otf]" at 8pt \font\mss="[STIXTwoMath-Regular.otf]" at 6pt
+\textfont0=\mt \scriptfont0=\ms \scriptscriptfont0=\mss
+\textfont1=\mt \scriptfont1=\ms \scriptscriptfont1=\mss
+\textfont2=\mt \scriptfont2=\ms \scriptscriptfont2=\mss
+\textfont3=\mt \scriptfont3=\ms \scriptscriptfont3=\mss
+\delimiterfactor=901 \delimitershortfall=5pt \nulldelimiterspace=1.2pt \scriptspace=0.5pt
+\thinmuskip=3mu \medmuskip=4mu plus 2mu minus 4mu \thickmuskip=5mu plus 5mu
+\hsize=300pt \parindent=0pt \parfillskip=0pt plus 1fil \baselineskip=12pt
+\count255=`a \loop \Umathcode\count255="7 "1 \numexpr"1D44E+\count255-`a\relax
+  \advance\count255 1 \ifnum\count255<`\{\repeat
+\Umathcode`h="7 "1 "210E
+\count255=`A \loop \Umathcode\count255="7 "1 \numexpr"1D434+\count255-`A\relax
+  \advance\count255 1 \ifnum\count255<`\[\repeat
+\count255=`0 \loop \Umathcode\count255="0 "0 \count255
+  \advance\count255 1 \ifnum\count255<`\:\repeat
+\Umathcode`+="2 "0 "2B \Umathcode`-="2 "0 "2212 \Umathcode`=="3 "0 "3D
+\Umathcode`,="6 "0 "2C \Umathcode`(="4 "0 "28 \Umathcode`)="5 "0 "29
+\Umathcode`[="4 "0 "5B \Umathcode`]="5 "0 "5D \Umathcode`/="0 "0 "2F
+\Udelcode`(="0 "28 \Udelcode`)="0 "29 \Udelcode`[="0 "5B \Udelcode`]="0 "5D
+\Udelcode`|="0 "7C \Udelcode`/="0 "2F \Udelcode`.="0 "0
+\Umathchardef\sum="1 "0 "2211 \Umathchardef\int="1 "0 "222B \Umathchardef\prod="1 "0 "220F
+\Umathchardef\alpha="7 "1 "1D6FC \Umathchardef\beta="7 "1 "1D6FD \Umathchardef\infty="0 "0 "221E
+\Umathchardef\partial="0 "0 "1D715 \Umathchardef\prime="0 "0 "2032
+\def\lbrace{\Udelimiter "4 "0 "7B}\def\rbrace{\Udelimiter "5 "0 "7D}
+\def\sqrt{\Uradical "0 "221A }\def\,{\mskip\thinmuskip}
+\def\hat{\Umathaccent "0 "0 "0302 }\def\widehat{\Umathaccent "0 "0 "0302 }
+\def\tilde{\Umathaccent "0 "0 "0303 }\def\vec{\Umathaccent "0 "0 "20D7 }
+\def\overbrace{\Umathaccent "0 "0 "23DE }\def\underbrace{\Umathaccent bottom "0 "0 "23DF }
+\font\tr=cmr10 \textfont0=\tr \scriptfont0=\tr \scriptscriptfont0=\tr
+\Umathcode`1="0 "0 `1 \Umathcode`2="0 "0 `2
+\setbox0=\vbox{$x_1^2 + {1\over 2} + \sqrt{12} + \left(x\over y\right)^{2}_{i}$
+$$\sum_{i=1}^{2} x_i^2 \int_1^2 \partial f$$\par}
+\lsshipbox0
+\end

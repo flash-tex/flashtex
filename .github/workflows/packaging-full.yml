@@ -1,0 +1,89 @@
+# Packaging, full: make-app.sh's distribution path on a GitHub-hosted Mac.
+# apps/mac/scripts/packaging-selftest.sh --full builds the app four times
+# (repro-check.sh: ad-hoc, then `--sign -` with the hardened runtime and a
+# DMG), launches it and the DMG, and checks that the engine host is bundled
+# and signed (--require-engine-host, as release.yml passes; app-parity row
+# D5). It signs with the ad-hoc identity only: CI has no Developer ID
+# certificate (release.yml's MAC_CERT_P12 is unset), so nothing here is
+# notarized, and nothing is published or released.
+#
+# Runs on a pull request that changes the packaging, and by hand
+# (workflow_dispatch). Hosted only: the team's self-hosted Macs are laptops,
+# and this launches the app.
+name: packaging (full)
+
+on:
+  pull_request:
+    paths:
+      - apps/mac/scripts/make-app.sh
+      - apps/mac/scripts/packaging-selftest.sh
+      - apps/mac/scripts/repro-check.sh
+      - apps/mac/scripts/launch-check.sh
+      - apps/mac/scripts/texmf-acceptance.sh
+      - apps/mac/Resources/**
+      - scripts/ci/build-helpers.sh
+      - .github/workflows/packaging-full.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: packaging-full-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: "0"
+
+jobs:
+  full:
+    name: packaging-selftest --full (hosted macOS)
+    # Never a fork's pull request (it would build and run its code here).
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: macos-26
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - name: Select the newest stable Xcode
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: latest-stable
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: packaging-full
+      - name: Build the bundled helpers and the engine host (release)
+        run: |
+          set -euo pipefail
+          scripts/ci/build-helpers.sh > "$RUNNER_TEMP/helpers.env"
+          cargo build --release --locked -p flashtex-engine --bin flashtex-host
+          ls -l target/release/flashtex-host
+      - name: packaging-selftest.sh --full
+        env:
+          # texmf-acceptance.sh's `removed` producer-diagnostic check fails on
+          # main too (the old engine's flashtex-render reports no missing
+          # metric; runs 37536036219 and 37529780962): skipped here only,
+          # until https://github.com/flash-tex/flashtex/issues/1651 is resolved.
+          FLASHTEX_TEXMF_ACCEPTANCE_SKIP_REMOVED: "1"
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/evidence"
+          apps/mac/scripts/packaging-selftest.sh --full --evidence "$RUNNER_TEMP/evidence/packaging-selftest.md"
+      - name: The built app's engine host and signature
+        if: always()
+        run: |
+          set -uo pipefail
+          app=apps/mac/build/FlashTeX.app
+          ls -l "$app/Contents/Helpers/"
+          codesign --verify --strict --verbose=2 "$app/Contents/Helpers/flashtex-host"
+          codesign --verify --deep --strict --verbose=2 "$app"
+          codesign -dvv "$app/Contents/Helpers/flashtex-host" 2>&1 | grep -E '^(Executable|Identifier|Format|CodeDirectory|Signature|TeamIdentifier)'
+          python3 -c 'import json,sys; print("engine_host:", json.load(open(sys.argv[1]))["engine_host"])' "$app/Contents/Resources/components.json"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: packaging-full-evidence
+          path: ${{ runner.temp }}/evidence/
+          if-no-files-found: warn
+          retention-days: 14

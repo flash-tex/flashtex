@@ -123,6 +123,12 @@ final class ProjectPackagesState {
     @ObservationIgnored private var engineV3RetryWork: DispatchWorkItem?
     /// The first retry's delay (tests shorten it).
     @ObservationIgnored var engineV3RetryBase: TimeInterval = 1
+    /// The clock and the timer behind the retry delay (tests replace both, so
+    /// a slow machine cannot make the retry come early or late).
+    @ObservationIgnored var engineV3Now: () -> Date = Date.init
+    @ObservationIgnored var engineV3Schedule: (TimeInterval, DispatchWorkItem) -> Void = { delay, work in
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: work)
+    }
     /// Offline resolutions run, failed in a row (tests).
     private(set) var engineV3Preparations = 0
     private(set) var engineV3Failures = 0
@@ -179,7 +185,8 @@ final class ProjectPackagesState {
     /// The file a LaTeX "File `x' not found" error names (`\usepackage`,
     /// `\documentclass`, `\input` under the new engine), nil otherwise.
     nonisolated static func texMissingFile(in message: String) -> String? {
-        guard let open = message.range(of: "LaTeX Error: File `"),
+        // TeX's message, or the Problems row's headline without "LaTeX Error: " (EngineV3DiagPresent).
+        guard let open = message.range(of: "LaTeX Error: File `") ?? (message.hasPrefix("File `") ? message.range(of: "File `") : nil),
               let close = message.range(of: "' not found", range: open.upperBound ..< message.endIndex) else { return nil }
         let name = String(message[open.upperBound ..< close.lowerBound])
         return name.isEmpty ? nil : name
@@ -248,14 +255,159 @@ final class ProjectPackagesState {
     func noteCompileResult(diagnostics: [RuntimeV1.Diagnostic]? = nil) {
         guard let projectRoot = model.project.projectRoot else { return }
         if root != projectRoot { reset(for: projectRoot) }
+        let found = Self.unresolvedNames(in: diagnostics ?? model.result?.diagnostics ?? [])
+        if holdWhileTyping(found, engineV3: diagnostics != nil) { return }
         let pending = Set(offers.map(\.name))
-        let names = Self.unresolvedNames(in: diagnostics ?? model.result?.diagnostics ?? []).filter { name in
+        let names = found.filter { name in
             delivered[name] == nil && unavailable[name] == nil && !declined.contains(name) && !inFlight.contains(name) && !pending.contains(name)
         }
         guard !names.isEmpty else { return }
         if diagnostics != nil, model.engineV3Enabled { spawn { await $0.resolveForEngineV3(names) }; return }
         let consent = manifestFetch == "always"
         spawn { await $0.resolve(names, consent: consent) }
+    }
+
+    // MARK: the grace period while a name is being typed
+
+    /// A compile while the caret is in a `\usepackage{…}` (or `\documentclass`,
+    /// `\RequirePackage`, `\input`, `\includegraphics`, …) argument edited
+    /// less than `graceDelay` ago names a half-typed package (`a` on the way
+    /// to `amsmath`): the sheet and the not-found underline wait. They come
+    /// once that argument has gone `graceDelay` without an edit, at once when
+    /// the caret leaves it, on ⌘B or ⌘S, and through Fetch Missing Packages…
+    /// as before. Compiling and the preview are unaffected; both engines
+    /// report through `noteCompileResult`, so both wait the same way.
+    @ObservationIgnored var graceDelay: TimeInterval = 3
+    /// The names a held compile reported missing: the editor hides their
+    /// not-found underlines until the hold ends (`withholding`).
+    private(set) var heldNames: Set<String> = []
+    /// Whether the held compile was the new engine's (its rows are re-read).
+    @ObservationIgnored private var heldEngineV3 = false
+    /// The load argument the caret was last seen in, and since when its text
+    /// has been what it is (an edit to it restarts the clock).
+    @ObservationIgnored private var argumentSeen: (argument: LoadArgument, since: Date)?
+    @ObservationIgnored private var graceWork: DispatchWorkItem?
+    /// Set by ⌘B / ⌘S / leaving the argument: the next check shows at once.
+    @ObservationIgnored private var graceBypass = false
+
+    /// A file-loading command's brace argument: where its text starts
+    /// (UTF-16, after `{`) in which document, and the text so far.
+    struct LoadArgument: Equatable {
+        var path: String
+        var start: Int
+        var text: String
+    }
+
+    /// Commands whose argument names a file the compile may not find.
+    nonisolated static let loadCommands: Set<String> = [
+        "usepackage", "RequirePackage", "documentclass", "LoadClass", "input", "include", "includegraphics", "InputIfFileExists",
+    ]
+
+    /// The load argument the caret (UTF-16) is inside or at the end of:
+    /// `\usepackage{a|}`, `\usepackage[opt]{am|`, `\usepackage{amsmath}|`.
+    nonisolated static func loadArgument(in text: String, caret: Int, path: String = "") -> LoadArgument? {
+        let s = text as NSString
+        guard caret >= 0, caret <= s.length else { return nil }
+        let open: unichar = 0x7B, close: unichar = 0x7D, newline: unichar = 0x0A, backslash: unichar = 0x5C
+        // Back from the caret to the argument's `{` (a `}` right before the caret ends it).
+        var i = caret - 1
+        if i >= 0, s.character(at: i) == close { i -= 1 }
+        let floor = max(0, caret - 256)
+        while i >= floor, s.character(at: i) != open {
+            let c = s.character(at: i)
+            if c == close || c == newline { return nil }
+            i -= 1
+        }
+        guard i >= floor, i >= 0 else { return nil }
+        let start = i + 1
+        // Before `{`: spaces and one `[options]`, then `\command`.
+        var j = i - 1
+        while j >= 0, s.character(at: j) == 0x20 { j -= 1 }
+        if j >= 0, s.character(at: j) == 0x5D {
+            while j >= 0, s.character(at: j) != 0x5B { j -= 1 }
+            j -= 1
+            while j >= 0, s.character(at: j) == 0x20 { j -= 1 }
+        }
+        let end = j + 1
+        while j >= 0, let u = Unicode.Scalar(s.character(at: j)), CharacterSet.letters.contains(u) { j -= 1 }
+        guard j >= 0, s.character(at: j) == backslash, end > j + 1,
+              loadCommands.contains(s.substring(with: NSRange(location: j + 1, length: end - j - 1))) else { return nil }
+        // Forward to `}` or the end of the line; the caret may sit just past the `}`.
+        var k = start
+        while k < s.length, s.character(at: k) != close, s.character(at: k) != newline { k += 1 }
+        guard caret <= k + (k < s.length && s.character(at: k) == close ? 1 : 0) else { return nil }
+        return LoadArgument(path: path, start: start, text: s.substring(with: NSRange(location: start, length: k - start)))
+    }
+
+    private func caretArgument() -> LoadArgument? {
+        Self.loadArgument(in: model.activeText, caret: model.caretUTF16, path: model.activePath)
+    }
+
+    /// How much longer a compile's missing packages wait (nil: show now).
+    /// Notes the argument at the caret; a change to its text restarts the clock.
+    private func graceRemaining() -> TimeInterval? {
+        guard let arg = caretArgument() else { argumentSeen = nil; return nil }
+        let now = engineV3Now()
+        if argumentSeen?.argument != arg { argumentSeen = (arg, now) }
+        let left = graceDelay - now.timeIntervalSince(argumentSeen?.since ?? now)
+        return left > 0 ? left : nil
+    }
+
+    /// Holds a compile's missing `names` while the argument at the caret is
+    /// being typed and schedules the re-check; false: go on now.
+    private func holdWhileTyping(_ names: [String], engineV3: Bool) -> Bool {
+        graceWork?.cancel()
+        graceWork = nil
+        let bypass = graceBypass
+        graceBypass = false
+        guard !bypass, !names.isEmpty, let wait = graceRemaining() else {
+            if !heldNames.isEmpty { heldNames = [] }
+            return false
+        }
+        if heldNames != Set(names) { heldNames = Set(names) }
+        heldEngineV3 = engineV3
+        let work = DispatchWorkItem { [weak self] in self?.recheckHeld() }
+        graceWork = work
+        engineV3Schedule(wait, work)
+        return true
+    }
+
+    /// The held compile again, from the latest rows (never a stale name).
+    private func recheckHeld() {
+        guard !heldNames.isEmpty else { return }
+        noteCompileResult(diagnostics: heldEngineV3 ? model.engineV3Diagnostics : nil)
+    }
+
+    /// The caret moved or the document switched (ShellModel): leaving the
+    /// held argument shows what was held at once. Free when nothing is held.
+    /// Checked on the next turn, once a keystroke's text and caret both landed.
+    func caretMoved() {
+        guard !heldNames.isEmpty else { return }
+        DispatchQueue.main.async { [weak self] in self?.caretMovedNow() }
+    }
+
+    private func caretMovedNow() {
+        guard !heldNames.isEmpty else { return }
+        if let arg = caretArgument(), let seen = argumentSeen?.argument, arg.path == seen.path, arg.start == seen.start { return }
+        graceBypass = true
+        recheckHeld()
+    }
+
+    /// ⌘B or ⌘S: what is held shows now, and so does the compile ⌘B starts.
+    func explicitRequest(compiling: Bool) {
+        if !heldNames.isEmpty { graceBypass = true; recheckHeld() }
+        if compiling { graceBypass = true }
+    }
+
+    /// The editor's marks without the not-found underlines of held names.
+    func withholding(_ report: EditorDiagnostics.Report) -> EditorDiagnostics.Report {
+        guard !heldNames.isEmpty else { return report }
+        var out = report
+        out.marks.removeAll { mark in
+            let row = RuntimeV1.Diagnostic(severity: mark.severity, message: mark.message, source: nil, recovery: nil, code: nil)
+            return Self.unresolvedNames(in: [row]).contains(where: heldNames.contains)
+        }
+        return out
     }
 
     /// The menu command: asks again about everything the last compile could
@@ -520,7 +672,7 @@ final class ProjectPackagesState {
             + libraries.sorted { $0.key < $1.key }.map { "\($0.key)=\($0.value)" }.joined(separator: ",")
         guard key != engineV3PreparedKey else { return false }
         // After a failure, the same manifest is asked again only once its delay is over.
-        if key == engineV3FailedKey, let at = engineV3RetryAt, Date() < at { return false }
+        if key == engineV3FailedKey, let at = engineV3RetryAt, engineV3Now() < at { return false }
         engineV3PreparedKey = key
         if pins.isEmpty, libraries.isEmpty {
             // The manifest no longer names any: what an earlier one brought goes.
@@ -553,7 +705,7 @@ final class ProjectPackagesState {
                 engineV3PreparedKey = nil
                 engineV3FailedKey = key
                 let delay = min(engineV3RetryBase * pow(2, Double(engineV3Failures - 1)), 60)
-                engineV3RetryAt = Date().addingTimeInterval(delay)
+                engineV3RetryAt = engineV3Now().addingTimeInterval(delay)
                 FlashTeXLog.write("packages: the pins and libraries could not be resolved for the new engine (\(f.why)); again in \(delay) s")
                 status = "packages: pins and libraries not resolved (\(f.why)); trying again in \(Int(delay.rounded(.up))) s"
                 let work = DispatchWorkItem { [weak self] in
@@ -564,7 +716,7 @@ final class ProjectPackagesState {
                 }
                 engineV3RetryWork?.cancel()
                 engineV3RetryWork = work
-                DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: work)
+                engineV3Schedule(delay, work)
                 model.engineV3.packagesChanged(model: model) // the held compile, with what was there before
                 return
             case .success(let r):

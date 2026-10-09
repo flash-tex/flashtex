@@ -318,3 +318,341 @@ fn a_removed_file_is_reported_as_gone() {
     let e = g.restore_discard(k).unwrap_err();
     assert!(e.contains("is gone"), "{e}");
 }
+
+/// A restore keeps the old run's tail in the file itself (lane
+/// P4-PAGE-COST): nothing is cut until the stream closes, an abandon puts
+/// back only what the new run wrote over, and a jump splices as before.
+#[test]
+fn a_kept_tail_stays_in_the_file_until_it_is_settled() {
+    let d = dir("kept");
+    let p = d.join("doc.pdf").to_string_lossy().into_owned();
+    let tail = "0123456789".repeat(20);
+    // the abandon: the new run writes over part of the tail, then more
+    // than the whole old file
+    for (new, more) in [
+        ("XY", ""),
+        ("edited", "and on past the old end".repeat(12).as_str()),
+    ] {
+        let mut g = Globals::new();
+        openout(&mut g, 0, &p);
+        write(&mut g, 0, "head");
+        let k = g.checkpoint().unwrap();
+        write(&mut g, 0, &tail);
+        g.checkpoint().unwrap();
+        g.restore(k).unwrap();
+        // nothing cut: the file still holds the old run's bytes, its end
+        // blanked (it reads as truncated, not as the old run's whole file)
+        assert_eq!(read(&p), format!("head{}", " ".repeat(tail.len())));
+        write(&mut g, 0, new);
+        write(&mut g, 0, more);
+        g.checkpoint().unwrap();
+        g.reattach_pending().unwrap();
+        close(&mut g, 0);
+        assert_eq!(read(&p), format!("head{tail}"), "abandon after {new:?}");
+    }
+    // the jump: the new run's bytes, then the old run's later ones
+    let mut g = Globals::new();
+    openout(&mut g, 0, &p);
+    write(&mut g, 0, "head");
+    let k = g.checkpoint().unwrap();
+    write(&mut g, 0, "page");
+    let j = g.checkpoint().unwrap();
+    write(&mut g, 0, &tail);
+    g.checkpoint().unwrap();
+    g.restore(k).unwrap();
+    write(&mut g, 0, "PAGE!");
+    g.redo_to(j).unwrap();
+    close(&mut g, 0);
+    assert_eq!(read(&p), format!("headPAGE!{tail}"));
+    // no jump and no abandon: the run's end cuts the file to what it wrote
+    let mut g = Globals::new();
+    openout(&mut g, 0, &p);
+    write(&mut g, 0, "head");
+    let k = g.checkpoint().unwrap();
+    write(&mut g, 0, &tail);
+    g.checkpoint().unwrap();
+    g.restore(k).unwrap();
+    write(&mut g, 0, "short");
+    g.checkpoint().unwrap();
+    // the record has the logical length, not the file's
+    let last = *g.checkpoints().last().unwrap();
+    let len = g
+        .record_of(last)
+        .unwrap()
+        .files
+        .iter()
+        .find_map(|f| match &f.stream {
+            Stream::Out { path, len, .. } if *path == p => Some(*len),
+            _ => None,
+        });
+    assert_eq!(len, Some(9));
+    close(&mut g, 0);
+    assert_eq!(read(&p), "headshort");
+}
+
+/// What another program reading a file sees while a restore keeps its
+/// tail (the #1613 review's polling reader): never a zero byte, never the
+/// file cut and then written on, and never the old run's end after the
+/// new run's bytes. Of a tail longer than `BLANK_END`, only the end is
+/// blanked, and the jump and the abandon give back every byte.
+#[test]
+fn a_kept_tail_is_blanked_at_its_end_only_and_comes_back_whole() {
+    let d = dir("blank");
+    let p = d.join("doc.pdf").to_string_lossy().into_owned();
+    let n = BLANK_END as usize;
+    let body: String = (0..3 * n)
+        .map(|i| (b'a' + (i % 26) as u8) as char)
+        .collect();
+    let tail = format!("{body}\nstartxref\n123\n%%EOF\n");
+    for jump in [false, true] {
+        let mut g = Globals::new();
+        openout(&mut g, 0, &p);
+        write(&mut g, 0, "head");
+        let k = g.checkpoint().unwrap();
+        write(&mut g, 0, "page");
+        let j = g.checkpoint().unwrap();
+        write(&mut g, 0, &tail);
+        g.checkpoint().unwrap();
+        g.restore(k).unwrap();
+        let old = format!("headpage{tail}");
+        let now = read(&p);
+        assert_eq!(now.len(), old.len());
+        assert_eq!(now[..old.len() - n], old[..old.len() - n]);
+        assert_eq!(now[old.len() - n..], " ".repeat(n));
+        assert!(!now.contains('\0'));
+        // the new run writes over part of the old bytes, not the end
+        write(&mut g, 0, "PAGE!");
+        g.checkpoint().unwrap();
+        if jump {
+            // (the old run's later bytes, the blanked ones too)
+            g.redo_to(j).unwrap();
+            close(&mut g, 0);
+            assert_eq!(read(&p), format!("headPAGE!{tail}"));
+        } else {
+            g.reattach_pending().unwrap();
+            close(&mut g, 0);
+            assert_eq!(read(&p), old);
+        }
+    }
+}
+
+/// A restore that drops the later run (`restore_discard`) of a file longer
+/// than the checkpoint had it: the file is not cut then written on (a
+/// reader could see a hole); its end is blanked and the run's end cuts it.
+#[test]
+fn a_discarding_restore_cuts_a_longer_file_at_the_runs_end() {
+    let d = dir("discard");
+    let p = d.join("doc.pdf").to_string_lossy().into_owned();
+    let tail = "0123456789".repeat(300);
+    let mut g = Globals::new();
+    openout(&mut g, 0, &p);
+    write(&mut g, 0, "head");
+    let k = g.checkpoint().unwrap();
+    write(&mut g, 0, &tail);
+    g.checkpoint().unwrap();
+    g.restore_discard(k).unwrap();
+    let now = read(&p);
+    let n = BLANK_END as usize;
+    assert_eq!(now.len(), 4 + tail.len());
+    assert_eq!(now[..now.len() - n], format!("head{tail}")[..now.len() - n]);
+    assert_eq!(now[now.len() - n..], " ".repeat(n));
+    // the record has the checkpoint's length, not the file's
+    write(&mut g, 0, "short");
+    g.checkpoint().unwrap();
+    let last = *g.checkpoints().last().unwrap();
+    let len = g
+        .record_of(last)
+        .unwrap()
+        .files
+        .iter()
+        .find_map(|f| match &f.stream {
+            Stream::Out { path, len, .. } if *path == p => Some(*len),
+            _ => None,
+        });
+    assert_eq!(len, Some(9));
+    close(&mut g, 0);
+    assert_eq!(read(&p), "headshort");
+}
+
+/// A new engine (a run from scratch) forgets the logical ends: a file
+/// still longer than its own is cut to it first, as the old engine's runs
+/// left it; a file another program wrote since keeps its bytes.
+#[test]
+fn a_new_engine_cuts_the_files_to_their_logical_ends_first() {
+    let d = dir("forget");
+    let p = d.join("doc.aux").to_string_lossy().into_owned();
+    let q = d.join("doc.pdf").to_string_lossy().into_owned();
+    let mut g = Globals::new();
+    openout(&mut g, 0, &p);
+    openout(&mut g, 1, &q);
+    write(&mut g, 0, "head");
+    write(&mut g, 1, "%PDF");
+    let k = g.checkpoint().unwrap();
+    write(&mut g, 0, &"the old run's later lines".repeat(10));
+    write(&mut g, 1, &"later pages".repeat(10));
+    g.checkpoint().unwrap();
+    g.restore(k).unwrap();
+    write(&mut g, 0, "short");
+    g.checkpoint().unwrap();
+    std::thread::sleep(std::time::Duration::from_millis(5));
+    std::fs::write(&q, "%PDF exported").unwrap();
+    drop(g);
+    forget_logical();
+    assert_eq!(read(&p), "headshort");
+    assert_eq!(read(&q), "%PDF exported");
+}
+
+/// An outside write to a tail the restore keeps in the file (an export in
+/// the same directory) between the restore and the jump: the jump refuses
+/// it (#1313's rule; the session then runs from scratch) rather than take
+/// the other program's bytes for the old run's.
+#[test]
+fn a_jump_refuses_a_kept_tail_another_program_wrote() {
+    let d = dir("jumpout");
+    let p = d.join("doc.pdf").to_string_lossy().into_owned();
+    let mut g = Globals::new();
+    openout(&mut g, 0, &p);
+    write(&mut g, 0, "head");
+    let k = g.checkpoint().unwrap();
+    write(&mut g, 0, "page");
+    let j = g.checkpoint().unwrap();
+    write(&mut g, 0, "the old run's later pages");
+    g.checkpoint().unwrap();
+    g.restore(k).unwrap();
+    write(&mut g, 0, "PAGE");
+    g.checkpoint().unwrap();
+    std::thread::sleep(std::time::Duration::from_millis(5));
+    std::fs::write(&p, "%PDF exported, compressed, longer than the preview was").unwrap();
+    assert!(g.jump_blocked().is_some());
+    let e = g.redo_to(j).unwrap_err();
+    assert!(e.contains("changed by another program"), "{e}");
+}
+
+/// A large file the run does not read (a preview PDF): its path, and the
+/// old run's text after a 4-byte head, `a` then `b` (#1608's cases, which
+/// deferred such a tail at an abandon; kept tails, `system::keep_tail`,
+/// leave it in the file instead).
+fn old_pdf(name: &str) -> (String, String, String) {
+    let d = dir(name);
+    let p = d.join("doc.pdf").to_string_lossy().into_owned();
+    let a: String = (0..100_000)
+        .map(|i| (b'a' + (i % 26) as u8) as char)
+        .collect();
+    let b: String = (0..300_000)
+        .map(|i| (b'A' + (i % 26) as u8) as char)
+        .collect();
+    (p, a, b)
+}
+
+/// An old run of `p`: "%PDF", checkpoint `k1`, `a`, checkpoint `k2`, `b`,
+/// a last checkpoint.
+fn old_run(g: &mut Globals, p: &str, a: &str, b: &str) -> (u64, u64) {
+    openout(g, 0, p);
+    write(g, 0, "%PDF");
+    let k1 = g.checkpoint().unwrap();
+    write(g, 0, a);
+    let k2 = g.checkpoint().unwrap();
+    write(g, 0, b);
+    g.checkpoint().unwrap();
+    (k1, k2)
+}
+
+#[test]
+fn an_abandoned_runs_tail_is_the_next_restores_tail() {
+    let (p, a, b) = old_pdf("defer-same");
+    let mut g = Globals::new();
+    let (k, _) = old_run(&mut g, &p, &a, &b);
+    // a keystroke's run, stopped and abandoned
+    g.restore(k).unwrap();
+    write(&mut g, 0, "first edit");
+    g.reattach_pending().unwrap();
+    // the old run's file, whole (only the bytes the new run wrote over
+    // were put back)
+    assert_eq!(read(&p), format!("%PDF{a}{b}"));
+    // the next keystroke restores the same point: its tail is kept again
+    g.restore(k).unwrap();
+    write(&mut g, 0, "second edit");
+    // abandoned too: the old run, whole
+    g.reattach_pending().unwrap();
+    close(&mut g, 0);
+    assert_eq!(read(&p), format!("%PDF{a}{b}"));
+}
+
+#[test]
+fn an_abandon_leaves_the_old_file() {
+    let (p, a, b) = old_pdf("defer-flush");
+    let mut g = Globals::new();
+    let (k, _) = old_run(&mut g, &p, &a, &b);
+    g.restore(k).unwrap();
+    write(&mut g, 0, "an edit");
+    g.reattach_pending().unwrap();
+    close(&mut g, 0);
+    assert_eq!(read(&p), format!("%PDF{a}{b}"));
+}
+
+#[test]
+fn an_abandoned_runs_tail_serves_a_later_and_an_earlier_restore() {
+    let (p, a, b) = old_pdf("defer-move");
+    let mut g = Globals::new();
+    let (k1, k2) = old_run(&mut g, &p, &a, &b);
+    // abandoned from k1, then a restore at the later k2: the old bytes
+    // between them are written, the rest is the tail
+    g.restore(k1).unwrap();
+    write(&mut g, 0, "x");
+    g.reattach_pending().unwrap();
+    g.restore(k2).unwrap();
+    write(&mut g, 0, "y");
+    g.reattach_pending().unwrap();
+    // abandoned from k2, then a restore at the earlier k1: the old bytes
+    // the disk holds between them, then the kept tail
+    g.restore(k1).unwrap();
+    write(&mut g, 0, "z");
+    g.reattach_pending().unwrap();
+    close(&mut g, 0);
+    assert_eq!(read(&p), format!("%PDF{a}{b}"));
+}
+
+#[test]
+fn a_run_after_an_abandon_writes_after_the_old_bytes() {
+    let (p, a, b) = old_pdf("defer-run");
+    let mut g = Globals::new();
+    let (k1, k2) = old_run(&mut g, &p, &a, &b);
+    g.restore(k1).unwrap();
+    write(&mut g, 0, "x");
+    g.reattach_pending().unwrap();
+    g.restore(k2).unwrap();
+    write(&mut g, 0, "the new end");
+    close(&mut g, 0);
+    assert_eq!(read(&p), format!("%PDF{a}the new end"));
+}
+
+#[test]
+fn a_tail_the_run_reads_is_the_old_runs_after_an_abandon() {
+    let (p, a, b) = old_pdf("defer-read");
+    let mut g = Globals::new();
+    let (k, _) = old_run(&mut g, &p, &a, &b);
+    g.restore(k).unwrap();
+    write(&mut g, 0, "an edit");
+    // (the caller says the run reads it)
+    g.reattach_pending().unwrap();
+    close(&mut g, 0);
+    assert_eq!(read(&p), format!("%PDF{a}{b}"));
+}
+
+#[test]
+fn a_restore_before_the_file_was_opened_sees_the_old_file() {
+    let (p, a, b) = old_pdf("defer-before-open");
+    let mut g = Globals::new();
+    let k0 = g.checkpoint().unwrap();
+    let (k1, _) = old_run(&mut g, &p, &a, &b);
+    g.restore(k1).unwrap();
+    write(&mut g, 0, "x");
+    g.reattach_pending().unwrap();
+    // not open at k0: the new run may read the file before it writes it,
+    // so the disk holds the old run's file again
+    g.restore(k0).unwrap();
+    assert_eq!(read(&p), format!("%PDF{a}{b}"));
+    g.reattach_pending().unwrap();
+    close(&mut g, 0);
+    assert_eq!(read(&p), format!("%PDF{a}{b}"));
+}

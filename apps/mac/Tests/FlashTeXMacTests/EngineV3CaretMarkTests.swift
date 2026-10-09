@@ -205,8 +205,12 @@ final class EngineV3CaretMarkTests: XCTestCase {
         let edited = Self.doc.replacingOccurrences(of: "Alpha", with: "Alpha x")
         model.caretUTF16 = gamma + 2
         model.updateActiveText(edited)
+        let typed = Date()
         try await Task.sleep(nanoseconds: 30_000_000)
-        XCTAssertEqual(pages.caretKey?.utf16, gamma, "typing: not yet, the mark waits for the settle")
+        // (On a loaded runner the 30 ms sleep can outlast the settle itself: then "not yet" cannot be seen.)
+        if Date().timeIntervalSince(typed) < EngineV3Session.caretSettle * 0.8 {
+            XCTAssertEqual(pages.caretKey?.utf16, gamma, "typing: not yet, the mark waits for the settle")
+        }
         try await waitUntil("the settled mark", timeout: 5) { pages.caretKey?.utf16 == gamma + 2 }
         XCTAssertNotNil(pages.caretMark)
     }
@@ -419,6 +423,78 @@ final class EngineV3CaretMarkTests: XCTestCase {
         XCTAssertGreaterThan(s.caretMapsByWindow, mapped, "mapped by the compile's window")
         // Mid-word: the "e" of "more".
         try assertBar(pages, s, at: gamma + 3, of: typed, "inside the typed word")
+    }
+
+    /// LIVE-30MS: the fast path's anchored splices (EngineV3Edits.fastSplice)
+    /// through a real text view: typing multi-byte characters, backspacing
+    /// over them and typing further on, each key sent from the storage
+    /// notification. The host's copy of the file ends byte for byte as the
+    /// editor's text, and the slow path never found a splice out of step.
+    /// LIVE-30MS (review of #1538): the storage notification comes for every
+    /// text storage of the app; an edit in another one (a search field's,
+    /// another editor's) leaves this editor's anchors alone.
+    func testAnEditElsewhereKeepsTheFastPathsAnchors() async throws {
+        try EngineV3TestHost.require()
+        let model = ShellModel()
+        model.replaceProject(entryText: Self.doc, named: "main.tex")
+        let (s, _, tv, window) = try await editorPane(model, autoCompile: true)
+        defer { s.stop(); window.contentView = nil }
+        let at = (Self.doc as NSString).range(of: "gamma").location
+        s.nextKeystrokeNs = MonotonicClock.nowNs()
+        tv.insertText("x", replacementRange: NSRange(location: at, length: 0))
+        model.updateActiveText(tv.string)
+        XCTAssertTrue(s.fastAnchored("main.tex"), "the fast path took anchors")
+        // another text view, in another window, edited
+        let other = NSTextView(usingTextLayoutManager: false)
+        other.string = "search"
+        let w2 = HostedWindowSupport.window(contentRect: NSRect(x: 0, y: 0, width: 200, height: 100), styleMask: [.titled])
+        w2.isReleasedWhenClosed = false
+        w2.contentView = other
+        other.insertText("ing", replacementRange: NSRange(location: 6, length: 0))
+        XCTAssertTrue(s.fastAnchored("main.tex"), "an edit elsewhere dropped the anchors")
+        // this editor's text replaced outside the fast path: they go
+        tv.string = tv.string + "\n"
+        XCTAssertFalse(s.fastAnchored("main.tex"), "a change the fast path did not send kept them")
+        w2.contentView = nil
+    }
+
+    func testAnchoredFastSplicesKeepTheHostsCopyExact() async throws {
+        try EngineV3TestHost.require()
+        let model = ShellModel()
+        model.replaceProject(entryText: Self.doc, named: "main.tex")
+        let (s, _, tv, window) = try await editorPane(model, autoCompile: true)
+        defer { s.stop(); window.contentView = nil }
+        let sent = s.fastEditsSent
+        var at = (Self.doc as NSString).range(of: "gamma").location
+        func type(_ str: String) {
+            for ch in str {
+                s.nextKeystrokeNs = MonotonicClock.nowNs()
+                let piece = String(ch)
+                tv.insertText(piece, replacementRange: NSRange(location: at, length: 0))
+                at += (piece as NSString).length
+                model.updateActiveText(tv.string)
+            }
+        }
+        func backspace(_ n: Int) {
+            for _ in 0 ..< n {
+                s.nextKeystrokeNs = MonotonicClock.nowNs()
+                let r = (tv.string as NSString).rangeOfComposedCharacterSequence(at: at - 1)
+                tv.insertText("", replacementRange: r)
+                at = r.location
+                model.updateActiveText(tv.string)
+            }
+        }
+        type("né😀日 ")
+        backspace(3)
+        type("x😀y")
+        backspace(2)
+        type("z ")
+        XCTAssertGreaterThanOrEqual(s.fastEditsSent, sent + 14, "the keys went out through the fast path")
+        let typed = tv.string
+        try await waitForCompiled(s, model, typed)
+        XCTAssertEqual(s.fastResyncs, 0, "no splice out of step")
+        let copy = try XCTUnwrap(s.projectCopy).appendingPathComponent("main.tex")
+        XCTAssertEqual(try String(contentsOf: copy, encoding: .utf8), typed, "the host's copy is the editor's text")
     }
 
     /// A reload (DocumentFiles.adoptReloadedDocument), a restored snapshot or

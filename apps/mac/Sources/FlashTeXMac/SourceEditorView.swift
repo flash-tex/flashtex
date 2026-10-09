@@ -62,6 +62,10 @@ struct SourceEditorView: NSViewRepresentable {
     /// bare editor) leaves Paste exactly AppKit's.
     var imagePasteHost: () -> PasteImage.Host? = { nil }
     var onCaretChange: (Int) -> Void = { _ in }
+    /// Where a newly made view puts the caret (UTF-16 offset), read once in
+    /// `makeNSView`; nil (the default) leaves AppKit's. The untitled document
+    /// starts on its empty line under `\section{Introduction}` (ContentView).
+    var initialCaretUTF16: () -> Int? = { nil }
     var onSelectionChange: (NSRange) -> Void = { _ in }
     var onEditApplied: (ShellModel.PendingEdit, String) -> Void = { _, _ in }
     /// A pending edit the view could not apply (the buffer moved on since it
@@ -131,6 +135,9 @@ struct SourceEditorView: NSViewRepresentable {
     /// VimMode.swift); returns a status message or nil. Nothing is wired by
     /// default: the command line then reports it as unavailable.
     var onExCommand: (VimMode.ExCommand) -> String? = { _ in "E319: Command not available here" }
+    /// Live Share (SourceEditorView+LiveShare.swift): the session file this
+    /// buffer is, or nil outside a session (the default; nothing changes).
+    var liveShare: LiveShareFileLink? = nil
 
     /// A navigation selection that would move the caret backwards is deferred
     /// while the last user edit is younger than this.
@@ -163,6 +170,11 @@ struct SourceEditorView: NSViewRepresentable {
         tv.setAccessibilityLabel("LaTeX source") // FlashTeXAccessibility: VoiceOver names the editor
         tv.setAccessibilityHelp("LaTeX source editor. Moving the selection announces the line and column, and any diagnostic under the insertion point.")
         tv.string = text
+        if let caret = initialCaretUTF16(), caret >= 0, caret <= (tv.string as NSString).length {
+            context.coordinator.programmaticChanges += 1 // placed, not moved: nothing is announced
+            tv.setSelectedRange(NSRange(location: caret, length: 0)) // onCaretChange → model.caretUTF16
+            context.coordinator.programmaticChanges -= 1
+        }
         context.coordinator.syntax.enabled = syntaxHighlighting
         context.coordinator.syntax.language = language // before attach: the first lex is already in the right language
         context.coordinator.syntax.attach(tv) // follows the storage from here on; paints the visible window
@@ -234,12 +246,16 @@ struct SourceEditorView: NSViewRepresentable {
         var textReset = false
         if text != co.lastKnownText {
             co.programmaticChanges += 1
+            co.liveShare.suspended += 1 // a reset is a document switch or a reload, not typing
             tv.string = text // drops temporary attributes; repaint marks below
+            co.liveShare.suspended -= 1
             co.programmaticChanges -= 1
             co.lastKnownText = text
+            co.textResets += 1
             co.textWasReset()
             textReset = true
         }
+        if liveShare != nil || co.liveShare.link != nil { co.syncLiveShare(liveShare, in: tv, textReset: textReset) }
         co.marks.update(marks, in: tv, reset: textReset)
         co.gutter?.update(marks: marks)
         co.errorLens.update(marks: marks)
@@ -549,7 +565,58 @@ struct SourceEditorView: NSViewRepresentable {
         /// Definition targets routed to the owner (evidence for tests).
         private(set) var definitionRequests: [EditorIntelligence.DefinitionTarget] = []
         /// The String instance last set on, or read from, the text view.
-        var lastKnownText: String
+        /// It is the storage's text when set: the shadow starts again from it.
+        var lastKnownText: String {
+            didSet { resetShadow() }
+        }
+        /// The storage's text kept in step edit by edit (EditorTextShadow.swift):
+        /// a keystroke hands the model this instead of transcoding the buffer.
+        private(set) var shadow: EditorTextShadow?
+        /// Keystrokes whose text came from the shadow, and from a transcode (tests, evidence).
+        private(set) var shadowHits = 0
+        private(set) var shadowMisses = 0
+        /// Shadow texts that differed from the storage under `verifyShadow` (tests: always 0).
+        private(set) var shadowDrifts = 0
+        /// Compare every shadow text with a transcode (tests).
+        static var verifyShadow = false
+        private var storageObserver: NSObjectProtocol?
+
+        private func resetShadow() {
+            guard EditorTextShadow.enabled, let storage = textView?.textStorage else { shadow = nil; return }
+            shadow = EditorTextShadow(text: lastKnownText, length16: storage.length)
+        }
+
+        /// Follows the storage's character edits into the shadow (from `attach`).
+        func observeStorage(of tv: NSTextView) {
+            guard EditorTextShadow.enabled, storageObserver == nil, let storage = tv.textStorage else { return }
+            storageObserver = NotificationCenter.default.addObserver(forName: NSTextStorage.didProcessEditingNotification,
+                                                                     object: storage, queue: nil) { [weak self] note in
+                guard let storage = note.object as? NSTextStorage, storage.editedMask.contains(.editedCharacters) else { return }
+                MainActor.assumeIsolated {
+                    guard let self else { return }
+                    // A whole-text reset or a programmatic edit ends by setting
+                    // `lastKnownText` from the storage, which restarts the shadow.
+                    guard self.programmaticChanges == 0, var s = self.shadow else { self.shadow = nil; return }
+                    self.shadow = s.apply(storage: storage.mutableString, edited: storage.editedRange, delta: storage.changeInLength) ? s : nil
+                }
+            }
+            resetShadow()
+        }
+
+        /// The storage's text as a native String: the shadow's when it is in
+        /// step, else a transcode (`nativeText`).
+        func storageText(of tv: NSTextView) -> String {
+            if let s = shadow, s.length16 == tv.textStorage?.length {
+                if Self.verifyShadow {
+                    let native = SourceEditorView.nativeText(of: tv)
+                    if !native.sameBytes(as: s.text) { shadowDrifts += 1; shadow = nil; shadowMisses += 1; return native }
+                }
+                shadowHits += 1
+                return s.text
+            }
+            shadowMisses += 1
+            return SourceEditorView.nativeText(of: tv)
+        }
         /// > 0 while this coordinator itself edits the text view (string reset,
         /// pending edit, navigation selection); the delegate then neither writes
         /// the binding nor announces.
@@ -573,6 +640,11 @@ struct SourceEditorView: NSViewRepresentable {
         var composing: Bool { textView?.hasMarkedText() ?? false }
         /// Composition selection changes observed (tests and evidence).
         private(set) var compositionSteps = 0
+        /// Live Share state (SourceEditorView+LiveShare.swift).
+        let liveShare = LiveShareEditorState()
+        /// Whole-buffer resets from the model (`tv.string = text`): a remote
+        /// change must never cause one (tests assert this stays put).
+        var textResets = 0
         /// VoiceOver sink; tests replace it to observe announcements.
         var announce: (String) -> Void = { _ in }
         /// Delimiter pair highlighted around the caret (temporary background).
@@ -584,6 +656,10 @@ struct SourceEditorView: NSViewRepresentable {
         /// hand-typed opener's closer (EditorKeyHandling.swift's hook from
         /// Completion.swift's snippet insertion).
         func registerPendingCloser(_ offset: Int) { pendingClosers.append(offset) }
+        /// A remote change moved the text (Live Share): keep auto-closers aligned.
+        func shiftPendingClosers(edit range: NSRange, replacementLength: Int) {
+            pendingClosers = AutoClose.shifted(pendingClosers, edit: range, replacementLength: replacementLength)
+        }
         /// The user edit AppKit is applying (from `shouldChangeTextIn` to `textDidChange`).
         private var lastEdit: (range: NSRange, replacement: String)?
         /// True while a linked name-span keystroke has an open undo group that
@@ -619,12 +695,14 @@ struct SourceEditorView: NSViewRepresentable {
         deinit {
             foldGutterWork?.cancel()
             if let boundsObserver { NotificationCenter.default.removeObserver(boundsObserver) }
+            if let storageObserver { NotificationCenter.default.removeObserver(storageObserver) }
             if let magnifyMonitor { NSEvent.removeMonitor(magnifyMonitor) }
             deferredTimer?.invalidate()
         }
 
         func attach(_ scroll: NSScrollView) {
             scrollView = scroll
+            if let tv = scroll.documentView as? NSTextView { observeStorage(of: tv) }
             scroll.contentView.postsBoundsChangedNotifications = true
             boundsObserver = NotificationCenter.default.addObserver(
                 forName: NSView.boundsDidChangeNotification, object: scroll.contentView, queue: nil
@@ -853,10 +931,34 @@ struct SourceEditorView: NSViewRepresentable {
             }
             func lineOf(_ loc: Int) -> Int { table.line(at: min(max(0, loc), length - 1)) }
             gutter.foldedLines = Set(tv.folds.foldedLineStarts.map(lineOf))
-            if rescan || tv.folds.cacheIsWarm {
+            if tv.folds.cacheIsWarm {
+                // Cached: no scan (and no copy of the text).
+                gutter.foldableLines = Set(tv.folds.foldableLineStarts(in: tv.textStorage?.mutableString ?? NSMutableString()).map(lineOf))
+            } else if rescan, length > Self.foldScanOffMainUTF16 {
+                // A long document's whole-buffer scan (every environment pair
+                // and the outline) runs off the main thread: it ran here when
+                // typing paused, holding the next key (APP-EDITOR-INSTANT).
+                // Installed only if no edit came meanwhile.
+                let generation = tv.folds.currentGeneration
+                let text = tv.string // an immutable copy for the other thread
+                DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+                    let regions = EditorFolding.regions(in: text as NSString)
+                    DispatchQueue.main.async {
+                        MainActor.assumeIsolated {
+                            guard let self, let tv = self.textView as? CompletingTextView,
+                                  tv.folds.currentGeneration == generation else { return }
+                            tv.folds.replaceCache(regions: regions)
+                            self.refreshFoldGutter(rescan: false)
+                        }
+                    }
+                }
+            } else if rescan {
                 gutter.foldableLines = Set(tv.folds.foldableLineStarts(in: tv.string as NSString).map(lineOf))
             }
         }
+
+        /// Above this many UTF-16 units the fold rescan runs off the main thread.
+        static let foldScanOffMainUTF16 = 100_000
 
         /// Debounced whole-buffer fold-triangle rescan. Also called from
         /// `updateNSView` on a text reset: that path posts no `textDidChange`.
@@ -1112,12 +1214,15 @@ struct SourceEditorView: NSViewRepresentable {
         }
 
         func textDidChange(_ notification: Notification) {
+            let probe = MainThreadProbe.begin()
+            defer { MainThreadProbe.end("editor.textDidChange", probe) }
             PerfSignposts.interval("editorChange") { textDidChange(notification, signposted: ()) }
         }
 
         private func textDidChange(_ notification: Notification, signposted: Void) {
             guard let tv = notification.object as? NSTextView else { return }
             TypingBench.shared.textViewDidChange() // stamps the delegate time for keystroke -> paint
+            if liveShare.link != nil, !liveShare.applyingRemote { liveShareSettle() } // Live Share: a committed composition reaches peers
             PerfSignposts.interval("syntaxFlush") { syntax.flush() } // the storage notification updated the line model; colours the changed lines now (deferred while composing)
             hover.dismiss()
             gutter?.layoutIfNeeded(lineCount: syntax.highlighter.lineCount)
@@ -1156,7 +1261,7 @@ struct SourceEditorView: NSViewRepresentable {
             }
             if commitFromComposition { commitFromComposition = false } else { autoClose(after: edit, in: tv) }
             syncLinkedEnvironmentPartner(in: tv, edit: edit)
-            let s = PerfSignposts.interval("bufferCopy") { SourceEditorView.nativeText(of: tv) }
+            let s = PerfSignposts.interval("bufferCopy") { storageText(of: tv) }
             lastKnownText = s
             parent.text = s
             (tv as? CompletingTextView)?.folds.revalidate(in: s as NSString)
@@ -1169,6 +1274,7 @@ struct SourceEditorView: NSViewRepresentable {
         func textViewDidChangeSelection(_ notification: Notification) {
             guard let tv = notification.object as? NSTextView else { return }
             if tv.hasMarkedText() { compositionStep(tv); return }
+            if liveShare.link != nil { liveShareSelectionChanged(tv, typing: textChangedThisTurn) }
             let range = tv.selectedRange()
             parent.onCaretChange(range.location)
             parent.onSelectionChange(range)

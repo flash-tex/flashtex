@@ -1,0 +1,101 @@
+{
+ "candidate": "flashtex-xetex from agent/mac-claude-a/xetex-s2b-pdf at 19c456c0f6aa9b8e25337dca395747b0e8f4bd53 (#1712, on #1710)",
+ "cases": {
+  "d01-hyperref": {
+   "px": 293,
+   "tounicode": []
+  },
+  "d02-xcolor": {
+   "px": 1050,
+   "tounicode": []
+  },
+  "d03-tikz": {
+   "px": 784,
+   "tounicode": []
+  },
+  "d04-hyperref-colorlinks": {
+   "px": 44,
+   "tounicode": []
+  },
+  "d05-transformed-text": {
+   "px": 241,
+   "tounicode": []
+  },
+  "l001-fontspec-files": {
+   "px": 505,
+   "tounicode": []
+  },
+  "l002-default-lm": {
+   "px": 590,
+   "tounicode": []
+  },
+  "l003-fontspec-features": {
+   "px": 794,
+   "tounicode": []
+  },
+  "l004-system-fonts": {
+   "px": 952,
+   "tounicode": [
+    {
+     "candidate": [
+      ";"
+     ],
+     "glyph": "TimesNewRomanPSMT gid:30",
+     "reference": [
+      ";"
+     ]
+    }
+   ]
+  },
+  "l005-multipage": {
+   "px": 20142,
+   "tounicode": []
+  },
+  "l006-microtype": {
+   "px": 4270,
+   "tounicode": []
+  },
+  "l007-unicode-math-lm": {
+   "px": 502,
+   "tounicode": [
+    {
+     "candidate": [
+      "|"
+     ],
+     "glyph": "LatinModernMath-Regular gid:2705",
+     "reference": [
+      "∣"
+     ]
+    }
+   ]
+  },
+  "l008-unicode-math-stix": {
+   "px": 460,
+   "tounicode": [
+    {
+     "candidate": [
+      "̂"
+     ],
+     "glyph": "STIXTwoMath-Regular gid:1397",
+     "reference": [
+      "ˆ"
+     ]
+    }
+   ]
+  },
+  "l009-unicode-math-libertinus": {
+   "px": 590,
+   "tounicode": []
+  },
+  "l010-graphicx": {
+   "px": 621,
+   "tounicode": []
+  }
+ },
+ "comment": "tools/xetex-pdfparity/run.py --baseline: per case, the differing pixels allowed at `scale` and the ToUnicode differences allowed. Written by --write-baseline.",
+ "rel_tol": 0.005,
+ "scale": 2.0,
+ "tol": 0.01,
+ "written": "2026-10-09",
+ "xdv_tol": 0.001
+}

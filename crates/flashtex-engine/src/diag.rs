@@ -43,6 +43,7 @@
 use crate::generated::Globals;
 use std::cell::RefCell;
 use std::collections::HashMap;
+use std::hash::BuildHasherDefault;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
@@ -76,8 +77,8 @@ const CS_TOKEN_FLAG: i32 = web::cs_token_flag;
 /// `list_ptr(r)` is `link(r+list_offset)`.
 const LIST_OFFSET: i32 = 5;
 /// Selector codes (§54).
-const TERM_ONLY: i32 = 17;
-const TERM_AND_LOG: i32 = 19;
+const TERM_ONLY: i32 = web::term_only;
+const TERM_AND_LOG: i32 = web::term_and_log;
 /// Text kept of one side of a context line.
 const TEXT_CAP: usize = 240;
 /// Levels kept of the input stack: the innermost `MAX_FRAMES - 1` and the
@@ -223,10 +224,32 @@ pub const FLAG_NOT_ON_TERMINAL: u32 = 2;
 pub struct Site {
     pub file: Vec<u8>,
     pub line: i32,
+    /// The column of the token TeX had read last in that line when the
+    /// definition was made: the defined name of a `\def\x` in the file;
+    /// for a definition a macro makes (`\newcommand`), the last token of
+    /// its arguments.
+    pub col: i32,
     /// A fingerprint of the token list's first tokens when it was defined.
     pub print: u64,
 }
-crate::codec_struct!(Site { file, line, print });
+crate::codec_struct!(Site {
+    file,
+    line,
+    col,
+    print
+});
+
+/// A definition site in `St::defs`.
+#[derive(Clone, Copy, Debug)]
+struct Def {
+    /// The file (in `St::files`).
+    file: u32,
+    line: i32,
+    col: i32,
+    print: u64,
+    /// The run that made it (`St::gen`, `move_def_lines`).
+    gen: u32,
+}
 
 #[derive(Default)]
 struct St {
@@ -238,18 +261,55 @@ struct St {
     write: Option<(usize, bool)>,
     /// `dg_box_begin`.
     box_at: Option<usize>,
-    /// `dg_def_begin`.
-    def_at: Option<(Vec<u8>, i32)>,
-    /// Token list (a macro's `def_ref`) -> where it was defined.
-    defs: HashMap<i32, Site>,
-    /// The file name last looked up: (string number, its bytes).
-    name_cache: Option<(i32, Vec<u8>)>,
+    /// `dg_def_begin`: the file (in `files`), line and column.
+    def_at: Option<(u32, i32, i32)>,
+    /// Token list (a macro's `def_ref`) -> where it was defined (a `Site`,
+    /// its name kept once in `files`: `\def`s come by the million).
+    defs: HashMap<i32, Def, BuildHasherDefault<crate::iso::FastHasher>>,
+    /// The run now going (`new_run`): definitions made in an
+    /// earlier one are in its line numbering.
+    gen: u32,
+    /// The names of the files definitions were made in, each once, and
+    /// their numbers.
+    files: Vec<Vec<u8>>,
+    file_ids: HashMap<Vec<u8>, u32>,
+    /// The file name last looked up: (string number, its number in `files`).
+    name_cache: Option<(i32, u32)>,
 }
+
+impl St {
+    fn file_id(&mut self, name: &[u8]) -> u32 {
+        if let Some(&id) = self.file_ids.get(name) {
+            return id;
+        }
+        let id = self.files.len() as u32;
+        self.files.push(name.to_vec());
+        self.file_ids.insert(name.to_vec(), id);
+        id
+    }
+
+    fn site(&self, d: &Def) -> Site {
+        Site {
+            file: self.files[d.file as usize].clone(),
+            line: d.line,
+            col: d.col,
+            print: d.print,
+        }
+    }
+}
+
+/// Where `dg_here` last found its file level (`Globals::file_level`).
+static DEF_LEVEL: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(usize::MAX);
 
 thread_local! {
     static ST: RefCell<St> = RefCell::new(St::default());
 }
 
+/// Out of line: inlined, the thread-local's address (a call to
+/// `_tlv_get_addr` on macOS) is hoisted to the entry of every generated
+/// routine with a `print_err` (`dg_mark`), which then pays it on each call
+/// even when diagnostics are off (1.2 % of long-deck's cycles, P6).
+#[inline(never)]
 fn with<R>(f: impl FnOnce(&mut St) -> R) -> R {
     ST.with(|s| f(&mut s.borrow_mut()))
 }
@@ -316,6 +376,73 @@ pub fn append(v: &[Arc<Note>], shift: i64) {
     })
 }
 
+/// A convergence kept the old run's notes from `from` on, which it made
+/// before an edit moved lines of the files of `shifts` (DESIGN.md §5.3 rule
+/// (c), `crate::lineshift`): their places in those files move with their
+/// lines. (Every place in such a note is in the old run's numbering; the
+/// convergence test made sure the old run read no moved line into what the
+/// note says.)
+pub fn move_lines(from: usize, shifts: &[crate::lineshift::Shift]) {
+    if shifts.is_empty() {
+        return;
+    }
+    let mv = |p: &mut Pos| -> bool {
+        let f = String::from_utf8_lossy(&p.file);
+        let d: i32 = shifts
+            .iter()
+            .filter(|s| p.line >= s.after && s.names().any(|n| crate::lineshift::same_path(&f, n)))
+            .map(|s| s.delta)
+            .sum();
+        p.line += d;
+        d != 0
+    };
+    with(|s| {
+        for n in s.notes.iter_mut().skip(from) {
+            let mut m = (**n).clone();
+            let mut moved = m.pos.as_mut().is_some_and(mv);
+            for f in m.frames.iter_mut() {
+                moved |= f.pos.as_mut().is_some_and(mv);
+                moved |= f.def.as_mut().is_some_and(mv);
+            }
+            if moved {
+                *n = Arc::new(m);
+            }
+        }
+    })
+}
+
+/// A run starts from a restart point: definitions made from now on are in
+/// its numbering (`move_def_lines`).
+pub fn new_run() {
+    with(|s| s.gen = s.gen.wrapping_add(1))
+}
+
+/// The definition sites earlier runs recorded, after the current run
+/// converged with the old run past an edit that moved lines (`move_lines`):
+/// the old run's definitions from the convergence point on are in force
+/// again, in the old numbering, and later notes name them. Those the
+/// current run made are in the new numbering already (and the old run's
+/// from before the edit are above it, where nothing moved).
+pub fn move_def_lines(shifts: &[crate::lineshift::Shift]) {
+    if shifts.is_empty() {
+        return;
+    }
+    with(|s| {
+        let gen = s.gen;
+        let files = &s.files;
+        for d in s.defs.values_mut().filter(|d| d.gen != gen) {
+            let f = String::from_utf8_lossy(&files[d.file as usize]);
+            d.line += shifts
+                .iter()
+                .filter(|sh| {
+                    d.line >= sh.after && sh.names().any(|n| crate::lineshift::same_path(&f, n))
+                })
+                .map(|sh| sh.delta)
+                .sum::<i32>();
+        }
+    })
+}
+
 /// A new run from scratch (a new engine): no notes, no definition sites.
 pub fn reset() {
     with(|s| *s = St::default())
@@ -324,7 +451,7 @@ pub fn reset() {
 /// The definition sites, for S₀.
 pub fn sites() -> Vec<(i32, Site)> {
     with(|s| {
-        let mut v: Vec<(i32, Site)> = s.defs.iter().map(|(k, v)| (*k, v.clone())).collect();
+        let mut v: Vec<(i32, Site)> = s.defs.iter().map(|(k, v)| (*k, s.site(v))).collect();
         v.sort_by_key(|x| x.0);
         v
     })
@@ -332,7 +459,23 @@ pub fn sites() -> Vec<(i32, Site)> {
 
 /// Put definition sites back (opening S₀).
 pub fn set_sites(v: Vec<(i32, Site)>) {
-    with(|s| s.defs = v.into_iter().collect())
+    with(|s| {
+        s.defs.clear();
+        for (k, site) in v {
+            let id = s.file_id(&site.file);
+            let gen = s.gen;
+            s.defs.insert(
+                k,
+                Def {
+                    file: id,
+                    line: site.line,
+                    col: site.col,
+                    print: site.print,
+                    gen,
+                },
+            );
+        }
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -534,7 +677,12 @@ fn cap_before(b: &mut Vec<u8>) {
 
 /// A fingerprint of a token list's first 64 tokens and whether it has
 /// more (definition sites are checked against it when read).
-fn fingerprint(g: &Globals, mut p: i32) -> u64 {
+fn fingerprint(g: &Globals, p: i32) -> u64 {
+    // (after the reference count, which every use of the macro changes)
+    if !in_token_mem(g, p) {
+        return 0;
+    }
+    let mut p = link(g, p);
     let mut h: u64 = 0xcbf2_9ce4_8422_2325;
     let mut k = 0;
     while p != 0 && k < 64 {
@@ -552,26 +700,37 @@ impl Globals {
     /// The bytes of file-name string `s` (the last one is cached: a
     /// definition asks for the same file's name again and again).
     fn dg_name(&self, s: i32) -> Vec<u8> {
+        let id = self.dg_name_id(s);
+        with(|st| st.files[id as usize].clone())
+    }
+
+    /// The number (in `St::files`) of file-name string `s`'s bytes.
+    fn dg_name_id(&self, s: i32) -> u32 {
         if s <= 0 {
-            return Vec::new();
+            return with(|st| st.file_id(b""));
         }
-        let hit = with(|st| match &st.name_cache {
-            Some((k, b)) if *k == s => {
+        let hit = with(|st| match st.name_cache {
+            Some((k, id)) if k == s => {
                 // the string may have been freed and remade since
+                let b = &st.files[id as usize];
                 let (a, e) = (self.str_start[s as usize], self.str_start[s as usize + 1]);
-                (e - a) as usize == b.len()
+                ((e - a) as usize == b.len()
                     && (a..e)
                         .zip(b.iter())
-                        .all(|(i, &c)| self.str_pool[i as usize] as u8 == c)
+                        .all(|(i, &c)| self.str_pool[i as usize] as u8 == c))
+                .then_some(id)
             }
-            _ => false,
+            _ => None,
         });
-        if hit {
-            return with(|st| st.name_cache.as_ref().unwrap().1.clone());
+        if let Some(id) = hit {
+            return id;
         }
         let b = str_bytes(self, s);
-        with(|st| st.name_cache = Some((s, b.clone())));
-        b
+        with(|st| {
+            let id = st.file_id(&b);
+            st.name_cache = Some((s, id));
+            id
+        })
     }
 
     /// The line a file level (`index` = its `in_open` level) is at.
@@ -584,21 +743,23 @@ impl Globals {
     }
 
     /// Where TeX is reading: the innermost file level (the level TeX's
-    /// context display ends with), cheaply (no text).
-    fn dg_here(&self) -> Option<(Vec<u8>, i32)> {
+    /// context display ends with), cheaply (no text): the file, the line,
+    /// and, when TeX is reading the file itself (not a macro called from
+    /// it), the column of the token it read last; else -1.
+    fn dg_here(&self) -> Option<(u32, i32, i32)> {
         let is_file =
             |r: &crate::generated::types::in_state_record| r.state_field != 0 && r.name_field > 19;
-        let rec = if is_file(&self.cur_input) {
-            self.cur_input
+        let (rec, col) = if is_file(&self.cur_input) {
+            let r = self.cur_input;
+            let (start, limit) = (r.start_field, r.limit_field);
+            let split = r.loc_field.clamp(start, (limit + 1).max(start));
+            (r, token_start(self, start, split) - start)
         } else {
-            *(0..self.input_ptr as usize)
-                .rev()
-                .map(|k| &self.input_stack[k])
-                .find(|r| is_file(r))?
+            (self.file_level(&DEF_LEVEL, is_file)?, -1)
         };
         let index = rec.index_field;
         let name = self.full_source_filename_stack[index as usize];
-        Some((self.dg_name(name), self.dg_level_line(index)))
+        Some((self.dg_name_id(name), self.dg_level_line(index), col))
     }
 
     /// The input stack, innermost level first, as `show_context` walks it
@@ -656,6 +817,8 @@ impl Globals {
                 cap_before(&mut f.before);
                 f.after = (split..j.max(split)).map(byte).take(TEXT_CAP).collect();
                 if r.name_field > 17 {
+                    // (the line's text: `crate::midline`)
+                    self.midline_note_shown(r.index_field);
                     let name = self.full_source_filename_stack[r.index_field as usize];
                     let line = self.dg_level_line(r.index_field);
                     let from = token_start(self, start, split);
@@ -709,12 +872,12 @@ impl Globals {
                 };
                 if t == 5 {
                     f.name = cs_name(self, r.name_field);
-                    f.def = with(|st| st.defs.get(&r.start_field).cloned())
+                    f.def = with(|st| st.defs.get(&r.start_field).map(|d| st.site(d)))
                         .filter(|s| s.print == fingerprint(self, r.start_field))
                         .map(|s| Pos {
                             file: s.file,
                             line: s.line,
-                            col: -1,
+                            col: s.col,
                             from: -1,
                         });
                 }
@@ -819,6 +982,35 @@ impl Globals {
                 },
         };
         push(note);
+    }
+
+    /// texmfmp.c's `input_line` gives up on a line that does not fit in
+    /// the buffer: its message and help line go to stderr, not to the
+    /// terminal TeX prints on, so they are noted here, as an error the
+    /// terminal did not show, at the file and line being read. (The line is
+    /// half read, so the context is left out.)
+    pub fn dg_input_line_overflow(&mut self, text: &[u8], help: &[u8]) {
+        if enabled() {
+            let now = crate::system::terminal_len();
+            let (_, mut pos) = self.dg_frames();
+            if let Some(p) = pos.as_mut() {
+                p.col = -1;
+                p.from = -1;
+            }
+            push(Note {
+                kind: Kind::Error,
+                at: now,
+                end: now,
+                text: text.to_vec(),
+                help: vec![help.to_vec()],
+                frames: Vec::new(),
+                pos,
+                lines: (0, self.line),
+                first: (0, 0),
+                last: (0, 0),
+                flags: FLAG_NOT_ON_TERMINAL,
+            });
+        }
     }
 
     /// `pdf_warning`: its message is on the terminal.
@@ -953,10 +1145,20 @@ impl Globals {
     /// `\def` made token list `p` the macro's meaning.
     pub fn dg_def(&mut self, p: i32) {
         if enabled() {
-            if let Some((file, line)) = with(|s| s.def_at.take()) {
+            if let Some((file, line, col)) = with(|s| s.def_at.take()) {
                 let print = fingerprint(self, p);
                 with(|s| {
-                    s.defs.insert(p, Site { file, line, print });
+                    let gen = s.gen;
+                    s.defs.insert(
+                        p,
+                        Def {
+                            file,
+                            line,
+                            col,
+                            print,
+                            gen,
+                        },
+                    );
                 });
             }
         }
@@ -1224,6 +1426,11 @@ mod tests {
         for e in std::fs::read_dir(dir).unwrap() {
             all.push_str(&std::fs::read_to_string(e.unwrap().path()).unwrap());
         }
+        // A routine indexes `eqtb` and `mem` through its local views
+        // (web2rust --array-view, crate::arena::ArrView): the same elements.
+        let all = all
+            .replace("__av_eqtb[", "self.eqtb[")
+            .replace("__av_mem[", "self.mem[");
         let body = |name: &str| {
             let s = all.split(&format!("pub fn {name}(")).nth(1).unwrap();
             s[..s.find("\n    pub fn ").unwrap_or(s.len())].to_string()

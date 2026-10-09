@@ -1,0 +1,12 @@
+% n011-system-ttc: macOS Helvetica.ttc faces by absolute path and index (shaped with HarfBuzz in the file form)
+% XeTeX-specific (docs/design/xetex/PLAN.md, phase S1: native fonts)
+\input prelude
+\def\space{ }
+\hsize=210pt \parindent=12pt \parfillskip=0pt plus 1fil
+\baselineskip=13pt \tolerance=10000 \pretolerance=-1
+\font\a="[/System/Library/Fonts/Helvetica.ttc]" \font\b="[/System/Library/Fonts/Helvetica.ttc:1]"
+\font\c="[/System/Library/Fonts/Times.ttc:0]"
+\message{[\fontname\a][\fontname\b][\the\fontdimen1\b]}
+\setbox0=\vbox{\a We shall find that office workers, efficient and affluent, flatly refuse difficult fjords; AVATAR, Wo, Ta, T. Yo! Naïve café owners in Zürich serve crème brûlée -- or not --- with 1234567890 “quotes” and ‘single’ ones. \b office AVAT \c We shall find that office workers, efficient and affluent, flatly refuse difficult fjords; AVATAR, Wo, Ta, T. Yo! Naïve café owners in Zürich serve crème brûlée -- or not --- with 1234567890 “quotes” and ‘single’ ones.\par}
+\lsshipbox0
+\end

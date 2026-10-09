@@ -184,6 +184,7 @@ final class EngineV3PackagesTests: XCTestCase {
         XCTAssertTrue(m.engineV3Enabled, m.engineChoice.explanation)
         XCTAssertNil(m.engineChoice.blocker, "pins and libraries no longer fall back")
         let s = m.engineV3
+        s.errorMode = .strict // the unpinned lipsum's undefined command is the error waited for
         try await EngineV3TestHost.awaitReady(s)
         try await waitUntil("the compile") { s.statusNote.hasPrefix("ok") && !s.compiling && s.pageCount == 1 }
         XCTAssertNil(s.firstError)
@@ -219,7 +220,7 @@ final class EngineV3PackagesTests: XCTestCase {
     func testFetchIsOfferedAndFetchesIntoTheCacheUnderTheNewEngine() async throws {
         try EngineV3TestHost.require()
         guard ProjectFilesClient.locate() != nil else {
-            throw XCTSkip("no flashtex-project-files built (cargo build -p flashtex-project-files)")
+            throw EngineV3TestHost.unavailable("no flashtex-project-files built (cargo build -p flashtex-project-files)")
         }
         let base = try dir("fetch")
         let archive = base.appendingPathComponent("archive/macros/latex/contrib/fxpkgtest")
@@ -281,7 +282,7 @@ final class EngineV3PackagesTests: XCTestCase {
     func testTheRealHelperResolvesTheLibraryOfflineBeforeTheFirstCompile() async throws {
         try EngineV3TestHost.require()
         guard ProjectFilesClient.locate() != nil else {
-            throw XCTSkip("no flashtex-project-files built (cargo build -p flashtex-project-files)")
+            throw EngineV3TestHost.unavailable("no flashtex-project-files built (cargo build -p flashtex-project-files)")
         }
         let base = try dir("real-helper")
         let cache = base.appendingPathComponent("cache")
@@ -374,11 +375,17 @@ final class EngineV3PackagesTests: XCTestCase {
         defer { m.engineV3.stop() }
         let state = m.projectPackages
         state.engineV3RetryBase = 0.2
+        // The test owns the clock and the timer: the backoff is checked by
+        // the delays it asks for, not by how long a loaded machine took.
+        var now = Date()
+        state.engineV3Now = { now }
+        var scheduled: [(delay: TimeInterval, work: DispatchWorkItem)] = []
+        state.engineV3Schedule = { scheduled.append(($0, $1)) }
         var answers: [ProjectFilesV1.ResolvePackages?] = [Self.reply(libraries: Self.lib("% v1")), nil, nil, Self.reply(packages: [Self.cached("fx", "% pinned fx")], libraries: Self.lib("% v2"))]
-        var calls: [(Date, [String])] = []
+        var calls: [[String]] = []
         state.offlineResolver = { _, names, libraries in
             XCTAssertTrue(libraries)
-            calls.append((Date(), names))
+            calls.append(names)
             let a = answers.isEmpty ? nil : answers.removeFirst()
             return a.map { .success($0) } ?? .failure(.init("the helper did not answer within 10 s"))
         }
@@ -393,13 +400,20 @@ final class EngineV3PackagesTests: XCTestCase {
         try await waitUntil("the failure", timeout: 5) { state.engineV3Failures == 1 && !state.engineV3Preparing }
         XCTAssertEqual(state.engineV3Documents().map(\.text), ["% v1"], "a failure keeps what was delivered")
         XCTAssertTrue(state.status.contains("trying again"), state.status)
+        XCTAssertEqual(scheduled.map(\.delay), [0.2])
+        now += 0.1
         XCTAssertFalse(state.prepareForEngineV3(), "within the backoff the same manifest is not asked again")
         XCTAssertEqual(calls.count, 2)
-        try await waitUntil("the retries", timeout: 10) { calls.count == 4 && !state.engineV3Preparing }
-        XCTAssertEqual(calls[1].1, ["fx"])
-        let first = calls[2].0.timeIntervalSince(calls[1].0), second = calls[3].0.timeIntervalSince(calls[2].0)
-        XCTAssertGreaterThanOrEqual(first, 0.2)
-        XCTAssertGreaterThanOrEqual(second, 0.4, "the delay doubles")
+
+        now += 0.1
+        scheduled.removeFirst().work.perform()
+        try await waitUntil("the second failure", timeout: 5) { state.engineV3Failures == 2 && !state.engineV3Preparing }
+        XCTAssertEqual(scheduled.map(\.delay), [0.4], "the delay doubles")
+        now += 0.4
+        scheduled.removeFirst().work.perform()
+        try await waitUntil("the retry that succeeds", timeout: 5) { calls.count == 4 && !state.engineV3Preparing }
+        XCTAssertEqual(calls[1], ["fx"])
+        XCTAssertTrue(scheduled.isEmpty, "a success schedules no retry")
         XCTAssertEqual(state.engineV3Failures, 0)
         XCTAssertEqual(Set(state.engineV3Documents().map(\.text)), ["% v2", "% pinned fx"], "the success replaces the deliveries")
     }

@@ -7,8 +7,9 @@
 //! * One document (job: `root` + `main`) per connection at a time; a
 //!   `COMPILE` for another job replaces it. The app runs one host process
 //!   per open Typst document (comemo's cache is process-global).
-//! * Each `COMPILE`: apply `buffers`/`edits`, `STARTED`, compile with the
-//!   standard `typst::compile`, then `DIAGNOSTIC`s, `FONT`/`SOURCES`/`PAGE`
+//! * Each `COMPILE`: apply `buffers`/`edits`, `STARTED`, compile (the
+//!   seeded loop for an incremental compile, [`crate::seeded`]; else the
+//!   standard `typst::compile`), then `DIAGNOSTIC`s, `FONT`/`SOURCES`/`PAGE`
 //!   in page order, `PAGES` (incremental clients), exactly one `DONE`.
 //!   `DONE.pdf` is typst-pdf's export of the same document: Typst's oracle.
 //! * A `COMPILE` that arrives while an earlier one is still queued
@@ -16,44 +17,158 @@
 //!   says `cancelled`. A Typst compile cannot be interrupted (Track A §6), so
 //!   a `CANCEL` for the running compile has no effect and `cancel` is not
 //!   offered as a capability.
-//! * `comemo::evict(10)` after every compile's pages are sent (§15.2).
+//! * `comemo::evict(3)` after every compile's pages are sent (§15.2, §13: 10 → 3).
+//! * When the client is quiet, a seeded compile is checked against the
+//!   standard one; pages that differ go out in a follow-up compile with
+//!   `"cause": "verify"` (spec §11.9).
 //!
-//! Not in T0 (DESIGN.md §15.10): the seeded 1-pass loop and its idle
-//! re-check, PDF-derived f64 positions, `viewport` ordering, packages, the
-//! watchdog (the app's job), `lang-v1`.
+//! * Packages and the project's lock ([`crate::packages`], spec §11.8):
+//!   `COMPILE.packages` (`offline`, the default, or `online`) and
+//!   `COMPILE.lock`; `PACKAGE` messages to a client that accepts
+//!   `packages-v1`; the font list's notes as `DIAGNOSTIC`s with `kind`.
+//! * The watchdog ([`crate::watchdog`]) stops the process when a compile
+//!   runs past its budget or memory past its ceiling (spec §11.10).
+//!
+//! Not yet (DESIGN.md §15.10): `viewport` ordering, `lang-v1`.
 
 use std::io::{self, BufReader, BufWriter, Write};
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
-use std::sync::mpsc;
+use std::sync::{mpsc, Arc};
 use std::time::Instant;
 
 use flashtex_display_list::frame::{read_frame, write_frame};
 use flashtex_display_list::json::Json;
-use flashtex_display_list::{kind, PROTOCOL, VERSION_MAJOR};
-use typst::diag::{Severity, SourceDiagnostic, Warned};
+use flashtex_display_list::{kind, LATEST_MINOR, PROTOCOL, VERSION_MAJOR};
+use typst::diag::{Severity, SourceDiagnostic, SourceResult, Warned};
+use typst::ecow::EcoVec;
 use typst::WorldExt;
 use typst_layout::PagedDocument;
 
 use crate::convert::{self, ClientCaps, Tables};
+use crate::packages::{self, LockMode, PackageEvent, PackageOptions, Packages};
+use crate::pdfpos;
+use crate::seeded;
+use crate::watchdog::{self, Watchdog};
 use crate::world::{open_for_write, FontOptions, Fonts, HostWorld};
-use crate::{v33, TYPST_VERSION};
+use crate::TYPST_VERSION;
 
 pub struct Host {
     fonts: Fonts,
+    packages: Arc<Packages>,
     /// Per-compile budget of font-program bytes (`--font-program-budget`).
     program_budget: u64,
+    /// Use the seeded loop for incremental compiles (`--seeded on|off`).
+    seeded: bool,
+    /// When the seeded loop is checked against the standard compile.
+    verify: Verify,
+    /// Seeded compiles found equal / different by a check (process life).
+    verified: std::cell::Cell<u64>,
+    mismatches: std::cell::Cell<u64>,
+    /// Stops the process when a compile runs too long or memory grows too
+    /// far (DESIGN.md §15.2; spec §11.10).
+    watchdog: Option<Watchdog>,
+    /// `comemo::evict` age after each compile (`--evict`, default 3).
+    evict: usize,
+    /// Draw classes without a pixel gate row as complete (`--draw-ungated`;
+    /// DESIGN.md §15.5).
+    ungated: bool,
+}
+
+/// The watchdog watches a compile while this lives.
+struct Watched<'a>(Option<&'a Watchdog>);
+
+impl Drop for Watched<'_> {
+    fn drop(&mut self) {
+        if let Some(w) = self.0 {
+            w.end();
+        }
+    }
+}
+
+/// When the seeded loop is re-checked (`--verify`; DESIGN.md §15.3).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Verify {
+    /// Never (benchmarks of the loop alone).
+    Off,
+    /// After this long without a message from the client.
+    Idle(std::time::Duration),
+    /// After every seeded compile, before its pages are sent.
+    Every,
+}
+
+/// What a compile did, for its `DONE`.
+#[derive(Default)]
+struct Check {
+    seeded: bool,
+    iterations: usize,
+    verified: Option<bool>,
+    verify_ms: Option<f64>,
+}
+
+struct Finish {
+    t0: Instant,
+    compile_ms: f64,
+    cold: bool,
+    keep: bool,
+    cause: Option<&'static str>,
+    check: Check,
+    /// The project lock's notes from the last check (spec §11.8).
+    lock_notes: Vec<crate::world::LockNote>,
+}
+
+/// Typst's per-page hash: what decides that a page changed. Hashing every
+/// page is on the path to the first page (about 0.8 ms a page under load),
+/// so long documents are hashed on several threads.
+fn page_hashes(doc: &PagedDocument) -> Vec<u128> {
+    let hash =
+        |p: &typst_layout::Page| typst::utils::hash128(&(&p.frame, &p.fill, &p.bleed, p.number));
+    let pages = doc.pages();
+    let threads = std::thread::available_parallelism()
+        .map(|n| n.get().min(8))
+        .unwrap_or(1);
+    if pages.len() < 16 || threads < 2 {
+        return pages.iter().map(hash).collect();
+    }
+    let chunk = pages.len().div_ceil(threads);
+    std::thread::scope(|s| {
+        let parts: Vec<_> = pages
+            .chunks(chunk)
+            .map(|c| s.spawn(move || c.iter().map(hash).collect::<Vec<u128>>()))
+            .collect();
+        parts
+            .into_iter()
+            .flat_map(|h| h.join().expect("hashing a page"))
+            .collect()
+    })
+}
+
+/// Two compiles' results show the same pages (or fail alike).
+fn same_pages(a: &SourceResult<PagedDocument>, b: &SourceResult<PagedDocument>) -> bool {
+    match (a, b) {
+        (Ok(a), Ok(b)) => page_hashes(a) == page_hashes(b),
+        (Err(_), Err(_)) => true,
+        _ => false,
+    }
 }
 
 enum Msg {
     Frame(u8, Vec<u8>),
     Closed,
+    /// A package fetch's progress (spec §11.8), from its thread.
+    Package(PackageEvent),
 }
 
 struct Job<'f> {
     root: PathBuf,
     main: String,
     world: HostWorld<'f>,
+    /// The last compile's document: the seeded loop's seed.
+    prev: Option<PagedDocument>,
+    /// The pages sent come from a seeded compile not yet checked.
+    unverified: bool,
+    /// The last request (a follow-up compile reuses it).
+    last: Option<Request>,
     tables: Tables,
     /// Page hashes of the last successful compile sent on this connection.
     hashes: Vec<u128>,
@@ -63,6 +178,7 @@ struct Job<'f> {
 }
 
 /// A parsed `COMPILE`.
+#[derive(Clone)]
 struct Request {
     id: i64,
     root: PathBuf,
@@ -75,6 +191,10 @@ struct Request {
     buffers: Vec<(String, String)>,
     edits: Vec<(String, u64, u64, String)>,
     export: bool,
+    /// `packages`: `online` lets this compile fetch (spec §11.8).
+    packages_online: bool,
+    /// `lock`: `record` (default), `update`, `off` (spec §11.8).
+    lock: LockMode,
 }
 
 fn err_json(id: Option<i64>, code: &str, message: &str) -> Json {
@@ -107,8 +227,60 @@ impl Host {
     pub fn new(fonts: &FontOptions) -> Host {
         Host {
             fonts: Fonts::load(fonts),
+            packages: Arc::new(Packages::new(PackageOptions::default())),
             program_budget: convert::DEFAULT_PROGRAM_BUDGET,
+            seeded: true,
+            verify: Verify::Idle(std::time::Duration::from_millis(1000)),
+            verified: Default::default(),
+            mismatches: Default::default(),
+            watchdog: None,
+            evict: 3,
+            ungated: false,
         }
+    }
+
+    /// Where packages come from (spec §11.8, [`crate::packages`]).
+    pub fn with_packages(mut self, opts: PackageOptions) -> Host {
+        self.packages = Arc::new(Packages::new(opts));
+        self
+    }
+
+    /// Draw what has no 2×/3× pixel gate row yet as complete (for
+    /// measuring those rows; DESIGN.md §15.5).
+    pub fn with_ungated(mut self, on: bool) -> Host {
+        self.ungated = on;
+        self
+    }
+
+    /// The `comemo::evict` age after each compile (DESIGN.md §15.2: 3).
+    pub fn with_evict(mut self, age: usize) -> Host {
+        self.evict = age;
+        self
+    }
+
+    /// Watch every compile with these limits.
+    pub fn with_watchdog(mut self, limits: watchdog::Limits) -> Host {
+        self.watchdog = Some(Watchdog::start(limits));
+        self
+    }
+
+    fn watch(&self, id: i64, cold: bool) -> Watched<'_> {
+        if let Some(w) = &self.watchdog {
+            w.begin(id, cold);
+        }
+        Watched(self.watchdog.as_ref())
+    }
+
+    /// Use (or not) the seeded loop for incremental compiles.
+    pub fn with_seeded(mut self, on: bool) -> Host {
+        self.seeded = on;
+        self
+    }
+
+    /// When the seeded loop is checked against the standard compile.
+    pub fn with_verify(mut self, v: Verify) -> Host {
+        self.verify = v;
+        self
     }
 
     /// Set the per-compile budget of font-program bytes.
@@ -144,6 +316,7 @@ impl Host {
     fn session(&self, stream: UnixStream) -> io::Result<()> {
         flashtex_display_list::widen_socket_buffers(&stream);
         let (tx, rx) = mpsc::channel();
+        let ptx = tx.clone();
         let rstream = stream.try_clone()?;
         std::thread::spawn(move || {
             let mut r = BufReader::with_capacity(1 << 20, rstream);
@@ -166,7 +339,7 @@ impl Host {
         };
 
         // HELLO (spec §6.2).
-        let (minor, program_refs) = match rx.recv() {
+        let (minor, accept, accept_packages) = match rx.recv() {
             Ok(Msg::Frame(kind::C_HELLO, body)) => {
                 let j = std::str::from_utf8(&body)
                     .ok()
@@ -193,16 +366,28 @@ impl Host {
                     c.json(kind::ERROR, &err_json(None, "version", &m))?;
                     return c.flush();
                 }
-                let minor = (minor.clamp(0, v33::MINOR as i64)) as u32;
-                // Draft 3.3 opt-in (typst-host only): FONT `program_from`.
-                let refs = minor >= 3
-                    && j.as_ref()
-                        .and_then(|j| j.get("capabilities"))
-                        .and_then(Json::as_array)
-                        .is_some_and(|a| {
-                            a.iter().any(|c| c.as_str() == Some(convert::PROGRAM_REFS))
-                        });
-                (minor, refs)
+                let minor = (minor.clamp(0, LATEST_MINOR as i64)) as u32;
+                // 3.3 `accept` (spec §11.7): FONT `program_from`, colour
+                // spaces and alpha (§11.3), the line state (§11.4).
+                let accepts = |token: &str| {
+                    minor >= 3
+                        && j.as_ref()
+                            .and_then(|j| j.get("accept"))
+                            .and_then(Json::as_array)
+                            .is_some_and(|a| a.iter().any(|c| c.as_str() == Some(token)))
+                };
+                let refs = convert::Accept {
+                    program_refs: accepts(convert::PROGRAM_REFS),
+                    color_spaces: accepts(flashtex_display_list::accept::COLOR_SPACES),
+                    line_state: accepts(flashtex_display_list::accept::LINE_STATE),
+                };
+                // `packages-v1` (spec §11.8): PACKAGE messages.
+                let pkgs = j
+                    .as_ref()
+                    .and_then(|j| j.get("accept"))
+                    .and_then(Json::as_array)
+                    .is_some_and(|a| a.iter().any(|c| c.as_str() == Some(packages::CAPABILITY)));
+                (minor, refs, pkgs)
             }
             Ok(Msg::Frame(..)) => {
                 c.json(
@@ -213,17 +398,70 @@ impl Host {
             }
             _ => return Ok(()),
         };
-        c.json(kind::HELLO, &hello(minor, self.fonts.len()))?;
+        let mut h = hello(minor, self.fonts.len(), &self.packages.describe());
+        if let (Json::Obj(kv), Some(w)) = (&mut h, &self.watchdog) {
+            let l = w.limits();
+            kv.push((
+                "watchdog".into(),
+                Json::Obj(vec![
+                    ("wall_ms".into(), Json::Int(l.wall.as_millis() as i64)),
+                    (
+                        "wall_cold_ms".into(),
+                        Json::Int(l.wall_cold.as_millis() as i64),
+                    ),
+                    (
+                        "rss_mb".into(),
+                        l.rss_bytes
+                            .map(|b| Json::Int((b >> 20) as i64))
+                            .unwrap_or(Json::Null),
+                    ),
+                    ("exit_code".into(), Json::Int(watchdog::EXIT_CODE as i64)),
+                ]),
+            ));
+        }
+        c.json(kind::HELLO, &h)?;
         c.flush()?;
+        // Package fetches report to this connection (one at a time).
+        self.packages.set_listener(Some(Box::new(move |ev| {
+            let _ = ptx.send(Msg::Package(ev));
+        })));
+        let r = self.serve_session(&mut c, &rx, minor, accept, accept_packages);
+        self.packages.set_listener(None);
+        r
+    }
 
+    fn serve_session(
+        &self,
+        c: &mut Conn,
+        rx: &mpsc::Receiver<Msg>,
+        minor: u32,
+        accept: convert::Accept,
+        accept_packages: bool,
+    ) -> io::Result<()> {
         let mut job: Option<Job> = None;
         let mut pending: std::collections::VecDeque<Msg> = Default::default();
         loop {
+            let idle = match self.verify {
+                Verify::Idle(d) if job.as_ref().is_some_and(|j| j.unverified) => Some(d),
+                _ => None,
+            };
             let msg = match pending.pop_front() {
                 Some(m) => m,
-                None => match rx.recv() {
-                    Ok(m) => m,
-                    Err(_) => return Ok(()),
+                None => match idle {
+                    None => match rx.recv() {
+                        Ok(m) => m,
+                        Err(_) => return Ok(()),
+                    },
+                    Some(d) => match rx.recv_timeout(d) {
+                        Ok(m) => m,
+                        Err(mpsc::RecvTimeoutError::Timeout) => {
+                            self.verify_idle(c, &mut job, minor, accept)?;
+                            c.flush()?;
+                            comemo::evict(self.evict);
+                            continue;
+                        }
+                        Err(mpsc::RecvTimeoutError::Disconnected) => return Ok(()),
+                    },
                 },
             };
             match msg {
@@ -244,8 +482,14 @@ impl Host {
                             continue;
                         }
                     };
-                    self.compile(&mut c, &mut job, req, minor, program_refs, superseded)?;
+                    self.compile(c, &mut job, req, minor, accept, superseded)?;
                     c.flush()?;
+                }
+                Msg::Package(ev) => {
+                    if accept_packages {
+                        c.json(packages::KIND, &ev.to_json())?;
+                        c.flush()?;
+                    }
                 }
                 // CANCEL: nothing is running between messages; C_HELLO again
                 // and unknown kinds are ignored (spec §7).
@@ -260,7 +504,7 @@ impl Host {
         job: &mut Option<Job<'f>>,
         req: Request,
         minor: u32,
-        program_refs: bool,
+        accept: convert::Accept,
         superseded: bool,
     ) -> io::Result<()> {
         let t0 = Instant::now();
@@ -270,12 +514,17 @@ impl Host {
             .as_ref()
             .is_some_and(|j| j.root == req.root && j.main == req.main);
         if !same {
-            match HostWorld::new(&req.root, &req.main, &self.fonts) {
+            match HostWorld::new(&req.root, &req.main, &self.fonts)
+                .map(|w| w.with_packages(Arc::clone(&self.packages)))
+            {
                 Ok(world) => {
                     *job = Some(Job {
                         root: req.root.clone(),
                         main: req.main.clone(),
                         world,
+                        prev: None,
+                        unverified: false,
+                        last: None,
                         tables: Tables::new(),
                         hashes: vec![],
                         incomplete: vec![],
@@ -297,9 +546,7 @@ impl Host {
         }
         let output_dir = match &req.output_dir {
             Some(d) => d.clone(),
-            None => {
-                std::env::temp_dir().join(format!("flashtex-typst-host-{}", std::process::id()))
-            }
+            None => watchdog::temp_dir(std::process::id()),
         };
         let mode = if req.export { "export" } else { "resident" };
         c.json(
@@ -331,10 +578,178 @@ impl Host {
         }
 
         j.world.reset();
+        j.world.set_compile_options(req.packages_online, req.lock);
         j.tables.begin_compile();
         let cold = !j.compiled;
-        let Warned { output, warnings } = typst::compile::<PagedDocument>(&j.world);
+        // The watchdog watches the compile itself, nothing after it.
+        let watched = self.watch(id, cold);
+        // The seeded loop for an incremental preview compile (DESIGN.md
+        // §15.3); an export always uses the standard compile.
+        let seed = if self.seeded && req.incremental && !req.export {
+            j.prev.as_ref()
+        } else {
+            None
+        };
+        let mut compiled = seeded::compile(&j.world, seed);
         let compile_ms = ms(t0);
+        let mut check = Check::default();
+        if !compiled.standard && self.verify == Verify::Every {
+            // Checked on every compile (`--verify every`): the standard
+            // compile's pages win when they differ.
+            let tv = Instant::now();
+            let std = seeded::standard(&j.world);
+            check.verified = Some(same_pages(&compiled.output.output, &std.output.output));
+            check.verify_ms = Some(ms(tv));
+            if check.verified == Some(false) {
+                self.mismatches.set(self.mismatches.get() + 1);
+                compiled = std;
+            }
+        }
+        drop(watched);
+        check.iterations = compiled.iterations;
+        check.seeded = !compiled.standard;
+        let Warned { output, warnings } = compiled.output;
+        if let Ok(doc) = &output {
+            j.prev = Some(doc.clone());
+            j.unverified = check.seeded && check.verified != Some(true);
+        }
+        j.last = Some(req.clone());
+        // The project's lock: what the last check found (spec §11.8); the
+        // check itself runs after DONE.
+        let lock_notes = j.world.lock_notes();
+        self.finish(
+            c,
+            j,
+            &req,
+            Finish {
+                t0,
+                compile_ms,
+                cold,
+                keep,
+                cause: None,
+                check,
+                lock_notes,
+            },
+            output,
+            warnings,
+            minor,
+            accept,
+        )
+    }
+
+    /// The idle re-check of the seeded loop (DESIGN.md §15.3): the standard
+    /// compile of what the last compile read; when its pages differ from
+    /// those sent, the host compiles again by itself: a follow-up compile
+    /// with the last `id` and `"cause": "verify"` (spec §11.8) sends the
+    /// standard compile's pages that differ.
+    fn verify_idle<'f>(
+        &'f self,
+        c: &mut Conn,
+        job: &mut Option<Job<'f>>,
+        minor: u32,
+        accept: convert::Accept,
+    ) -> io::Result<()> {
+        let Some(j) = job.as_mut() else {
+            return Ok(());
+        };
+        let Some(req) = j.last.clone() else {
+            return Ok(());
+        };
+        j.unverified = false;
+        // The idle check is a standard compile, about three times a seeded
+        // one: it gets the cold budget; only the compile is watched.
+        let watched = self.watch(req.id, true);
+        let t0 = Instant::now();
+        let std = seeded::standard(&j.world);
+        let verify_ms = ms(t0);
+        drop(watched);
+        // A standard compile that fails where the seeded one succeeded is a
+        // mismatch too: the follow-up sends its diagnostics.
+        let same = match &std.output.output {
+            Ok(doc) => page_hashes(doc) == j.hashes,
+            Err(_) => false,
+        };
+        if same {
+            self.verified.set(self.verified.get() + 1);
+            return Ok(());
+        }
+        self.mismatches.set(self.mismatches.get() + 1);
+        eprintln!(
+            "flashtex-typst-host: the seeded compile of {} differed from the standard one; resending (cause verify)",
+            req.id
+        );
+        j.prev = std.output.output.as_ref().ok().cloned();
+        let keep = req.incremental && j.compiled;
+        c.json(
+            kind::STARTED,
+            &Json::Obj(vec![
+                ("id".into(), Json::Int(req.id)),
+                ("pid".into(), Json::Int(std::process::id() as i64)),
+                ("argv".into(), Json::Arr(vec![])),
+                ("mode".into(), Json::Str("resident".into())),
+                ("keep".into(), Json::Bool(keep)),
+                ("incremental".into(), Json::Bool(req.incremental)),
+                ("cause".into(), Json::Str("verify".into())),
+                ("engine".into(), Json::Str(format!("Typst {TYPST_VERSION}"))),
+            ]),
+        )?;
+        j.tables.begin_compile();
+        let check = Check {
+            verified: Some(false),
+            verify_ms: Some(verify_ms),
+            ..Check::default()
+        };
+        let Warned { output, warnings } = std.output;
+        self.finish(
+            c,
+            j,
+            &req,
+            Finish {
+                t0,
+                compile_ms: verify_ms,
+                cold: false,
+                keep,
+                cause: Some("verify"),
+                check,
+                lock_notes: vec![],
+            },
+            output,
+            warnings,
+            minor,
+            accept,
+        )
+    }
+
+    /// Diagnostics, the pages that changed, `PAGES`, `DONE.pdf` and `DONE`
+    /// for one compile's result.
+    #[allow(clippy::too_many_arguments)]
+    fn finish(
+        &self,
+        c: &mut Conn,
+        j: &mut Job,
+        req: &Request,
+        f: Finish,
+        output: SourceResult<PagedDocument>,
+        warnings: EcoVec<SourceDiagnostic>,
+        minor: u32,
+        accept: convert::Accept,
+    ) -> io::Result<()> {
+        let Finish {
+            t0,
+            compile_ms,
+            cold,
+            keep,
+            cause,
+            check,
+            lock_notes,
+        } = f;
+        let id = req.id;
+        let output_dir = match &req.output_dir {
+            Some(d) => d.clone(),
+            None => watchdog::temp_dir(std::process::id()),
+        };
+        let mut positions_ms = 0.0;
+        let mut hash_ms = 0.0;
 
         let mut ndiag = 0;
         let mut errors = 0;
@@ -348,9 +763,9 @@ impl Host {
         for d in &warnings {
             send_diag(c, d, &j.world)?;
         }
-        let (status, pages, typeset, first_page_ms, pdf) = match output {
+        let (status, pages, typeset, first_page_ms, pdf) = match &output {
             Err(errs) => {
-                for d in &errs {
+                for d in errs.iter() {
                     send_diag(c, d, &j.world)?;
                 }
                 ("error", 0usize, 0usize, None, None)
@@ -359,30 +774,61 @@ impl Host {
                 let caps = ClientCaps {
                     minor,
                     opentype_programs: req.opentype,
-                    program_refs,
+                    program_refs: accept.program_refs,
+                    color_spaces: accept.color_spaces,
+                    line_state: accept.line_state,
+                    ungated: self.ungated,
                     program_budget: Some(self.program_budget),
                 };
-                let hashes: Vec<u128> = doc
-                    .pages()
-                    .iter()
-                    .map(|p| typst::utils::hash128(&(&p.frame, &p.fill, &p.bleed, p.number)))
-                    .collect();
+                let th = Instant::now();
+                let hashes = page_hashes(doc);
+                hash_ms = ms(th);
                 let mut first = None;
                 let mut typeset = 0;
                 let mut incomplete = vec![false; hashes.len()];
                 let mut failed = false;
+                let mut to_send = Vec::new();
                 for (i, h) in hashes.iter().enumerate() {
                     if keep && j.hashes.get(i) == Some(h) {
                         incomplete[i] = j.incomplete[i];
-                        continue;
+                    } else {
+                        to_send.push(i);
                     }
+                }
+                // Glyph positions from typst-pdf's export (DESIGN.md §15.5),
+                // for a client that draws the pages: the first page to send
+                // alone (it reaches the socket first), the rest in one export.
+                let draws = minor >= 3 && req.opentype;
+                let mut derived: Vec<Result<pdfpos::PagePos, String>> = Vec::new();
+                let derive = |pages: &[usize], out: &mut Vec<Result<pdfpos::PagePos, String>>| {
+                    match pdfpos::derive(doc, pages) {
+                        Ok(v) => out.extend(v.into_iter().map(Ok)),
+                        Err(e) => out.extend(pages.iter().map(|_| Err(e.clone()))),
+                    }
+                };
+                for (n, &i) in to_send.iter().enumerate() {
+                    let tp = Instant::now();
+                    if draws && n == 0 {
+                        derive(&to_send[..1], &mut derived);
+                    } else if draws && n == 1 {
+                        derive(&to_send[1..], &mut derived);
+                    }
+                    if draws && n <= 1 {
+                        positions_ms += ms(tp);
+                    }
+                    let positions = match derived.get(n) {
+                        Some(Ok(pp)) => convert::Positions::Pdf(pp),
+                        Some(Err(e)) => convert::Positions::Failed(e),
+                        None => convert::Positions::Frame,
+                    };
                     let out = match convert::page(
                         &j.world,
-                        &doc,
+                        doc,
                         i,
                         &mut j.tables,
                         caps,
                         &req.have_fonts,
+                        positions,
                     ) {
                         Ok(out) => out,
                         Err(e) => {
@@ -444,8 +890,34 @@ impl Host {
                 // draw the pages at all (3.1 or 3.2, or no `opentype` programs).
                 let need_pdf =
                     req.export || minor < 3 || !req.opentype || j.incomplete.iter().any(|&b| b);
+                // Always from the standard compile (DESIGN.md §15.3): a seeded
+                // document is compiled the standard way first, and pages that
+                // differ count as a mismatch the idle check will resend.
+                let standard_doc = if need_pdf && check.seeded {
+                    // A compile: watched (the cold budget), the export not.
+                    let watched = self.watch(id, true);
+                    let standard = seeded::standard(&j.world).output.output;
+                    drop(watched);
+                    match standard {
+                        Ok(d) => {
+                            if page_hashes(&d) != j.hashes {
+                                self.mismatches.set(self.mismatches.get() + 1);
+                                j.unverified = true;
+                            }
+                            Some(d)
+                        }
+                        Err(_) => {
+                            self.mismatches.set(self.mismatches.get() + 1);
+                            j.unverified = true;
+                            None
+                        }
+                    }
+                } else {
+                    None
+                };
                 let exported = if need_pdf {
-                    Some(typst_pdf::pdf(&doc, &typst_pdf::PdfOptions::default()))
+                    let pdf_doc = standard_doc.as_ref().unwrap_or(doc);
+                    Some(typst_pdf::pdf(pdf_doc, &typst_pdf::PdfOptions::default()))
                 } else {
                     None
                 };
@@ -484,6 +956,22 @@ impl Host {
                 )
             }
         };
+        for n in &lock_notes {
+            ndiag += 1;
+            c.json(
+                kind::DIAGNOSTIC,
+                &Json::Obj(vec![
+                    ("id".into(), Json::Int(id)),
+                    ("severity".into(), Json::Str("warning".into())),
+                    ("message".into(), Json::Str(n.message.clone())),
+                    (
+                        "file".into(),
+                        Json::Str(n.file.to_string_lossy().into_owned()),
+                    ),
+                    ("kind".into(), Json::Str(n.kind.into())),
+                ]),
+            )?;
+        }
         let mut done = vec![
             ("id".to_string(), Json::Int(id)),
             ("status".into(), Json::Str(status.into())),
@@ -495,6 +983,11 @@ impl Host {
             ("diagnostics".into(), Json::Int(ndiag)),
             ("elapsed_ms".into(), Json::Num(ms(t0))),
             ("compile_ms".into(), Json::Num(compile_ms)),
+            ("hash_ms".into(), Json::Num(hash_ms)),
+            (
+                "positions_ms".into(),
+                Json::Num((positions_ms * 1e3).round() / 1e3),
+            ),
             (
                 "first_page_ms".into(),
                 first_page_ms.map(Json::Num).unwrap_or(Json::Null),
@@ -506,20 +999,38 @@ impl Host {
             ("typeset_pages".into(), Json::Int(typeset as i64)),
             ("keep".into(), Json::Bool(keep)),
             ("engine".into(), Json::Str("typst".into())),
+            // The seeded loop (spec §11.8): its iterations (0: the standard
+            // compile ran) and, when checked, whether it matched.
+            ("seeded".into(), Json::Bool(check.seeded)),
+            ("iterations".into(), Json::Int(check.iterations as i64)),
+            (
+                "verified".into(),
+                check.verified.map(Json::Bool).unwrap_or(Json::Null),
+            ),
         ];
+        if let Some(v) = check.verify_ms {
+            done.push(("verify_ms".into(), Json::Num(v)));
+        }
+        if let Some(cause) = cause {
+            done.push(("cause".into(), Json::Str(cause.into())));
+        }
         if let Some(p) = pdf {
             done.push(("pdf".into(), Json::Str(p.to_string_lossy().into_owned())));
         }
         c.json(kind::DONE, &Json::Obj(done))?;
         c.flush()?;
+        // After DONE, never before the edited page: record the document's
+        // fonts in the project's lock and check them (hashing font files);
+        // what it finds goes with the next compile.
+        j.world.after_compile(output.as_ref().ok());
         // Mandatory eviction once the pages are out (DESIGN.md §15.2):
         // without it memory grows ~70 MB per keystroke at 300 pages.
-        comemo::evict(10);
+        comemo::evict(self.evict);
         Ok(())
     }
 }
 
-fn hello(minor: u32, fonts: usize) -> Json {
+fn hello(minor: u32, fonts: usize, packages: &Json) -> Json {
     let mut caps = vec![
         "compile",
         "diagnostics",
@@ -532,12 +1043,15 @@ fn hello(minor: u32, fonts: usize) -> Json {
         "edits",
         "pages-status",
         "export",
+        packages::CAPABILITY,
     ];
     if minor >= 3 {
         caps.extend([
             "opentype-glyphs",
             "origins-f64",
             "page-meta",
+            "color-spaces",
+            "line-state",
             convert::PROGRAM_REFS,
         ]);
     }
@@ -564,7 +1078,7 @@ fn hello(minor: u32, fonts: usize) -> Json {
             Json::Obj(vec![
                 ("version".into(), Json::Str(TYPST_VERSION.into())),
                 ("fonts".into(), Json::Int(fonts as i64)),
-                ("packages".into(), Json::Str("unavailable".into())),
+                ("packages".into(), packages.clone()),
             ]),
         ),
     ])
@@ -578,7 +1092,7 @@ fn simple_diag(id: i64, severity: &str, message: &str) -> Json {
     ])
 }
 
-/// `DIAGNOSTIC` (spec §6.4) with the 3.3-draft additions `column` (0-based
+/// `DIAGNOSTIC` (spec §6.4) with the 3.3 additions (§11.7) `column` (0-based
 /// byte column) and `hints`.
 fn diagnostic(id: i64, d: &SourceDiagnostic, w: &HostWorld) -> Json {
     let sev = match d.severity {
@@ -701,6 +1215,25 @@ fn parse_request(body: &[u8]) -> Result<Request, (Option<i64>, String)> {
             ins,
         ));
     }
+    let packages_online = match j.str_field("packages") {
+        None | Some("offline") => false,
+        Some("online") => true,
+        Some(o) => {
+            return Err(bad(format!(
+                "packages {o:?} is not \"offline\" or \"online\""
+            )))
+        }
+    };
+    let lock = match j.str_field("lock") {
+        None | Some("record") => LockMode::Record,
+        Some("update") => LockMode::Update,
+        Some("off") => LockMode::Off,
+        Some(o) => {
+            return Err(bad(format!(
+                "lock {o:?} is not \"record\", \"update\" or \"off\""
+            )))
+        }
+    };
     Ok(Request {
         id,
         root,
@@ -716,6 +1249,8 @@ fn parse_request(body: &[u8]) -> Result<Request, (Option<i64>, String)> {
         buffers,
         edits,
         export: j.get("export").and_then(Json::as_bool).unwrap_or(false),
+        packages_online,
+        lock,
     })
 }
 

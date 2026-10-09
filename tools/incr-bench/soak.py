@@ -26,7 +26,8 @@ bytes) and a summary line (also printed). Two measures, each at every DONE:
               the undo logs (retention and convergence drop and add checkpoints: +-40 MB on
               plain-120) and, on a machine short of memory, with what the system compresses or
               swaps out, which can hide a leak
-  heap        malloc's bytes in use less the undo logs (`mem.malloc_in_use - mem.sealed_bytes`):
+  heap        malloc's bytes in use less the undo logs it holds (`mem.malloc_in_use + mem.log_mapped -
+              mem.sealed_bytes`: the logs' large blocks are mappings of their own, `logalloc`):
               everything allocated that is not the budgeted logs, Rust's and the C libraries'
               alike, resident or not. It must not grow
 For each: warm (the median over the second half of warm-up, --warmup keystrokes, default 10 %),
@@ -444,14 +445,16 @@ def summarise(a, recs, samples):
         'edit_ms_p50': statistics.median(r['ms'] for r in ed),
         'edit_ms_p95': sorted(r['ms'] for r in ed)[int(0.95 * (n - 1))],
     })
-    heap = [(r['i'], (r['mem']['malloc_in_use'] - r['mem'].get('sealed_bytes', 0)) / MB)
-            for r in ed if r['mem'].get('malloc_in_use')]
+    def nolog(m):
+        return m['malloc_in_use'] + m.get('log_mapped', 0) - m.get('sealed_bytes', 0)
+
+    heap = [(r['i'], nolog(r['mem']) / MB) for r in ed if r['mem'].get('malloc_in_use')]
     if len(heap) == n:
         hw = [v for i, v in heap if warm // 2 < i <= warm] or [heap[0][1]]
         h2 = [(i, v) for i, v in heap if i > n // 2]
         s.update({
-            'heap_open_mb': round((recs[0]['mem']['malloc_in_use'] - recs[0]['mem'].get('sealed_bytes', 0))
-                                  / MB, 1) if recs[0].get('mem', {}).get('malloc_in_use') else None,
+            'heap_open_mb': round(nolog(recs[0]['mem']) / MB, 1)
+            if recs[0].get('mem', {}).get('malloc_in_use') else None,
             'heap_warm_mb': round(statistics.median(hw), 1),
             'heap_end_mb': round(statistics.median(v for _, v in heap[-max(1, n // 20):]), 1),
             'heap_max_mb': round(max(v for _, v in heap), 1),

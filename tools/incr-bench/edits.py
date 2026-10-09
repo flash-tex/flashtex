@@ -14,6 +14,14 @@ from-scratch run:
   verbatim, a blank line in a table cell. The document may then fail to
   compile; the from-scratch run fails the same way and the incremental result,
   including the terminal, must equal it.
+* preamble kinds (`pre_title`, `pre_author`, `pre_newcommand`, `pre_setlength`,
+  `pre_usepackage`, `pre_nopackage`, `pre_option`, `pre_after_package`;
+  PREAMBLE-FAST, PREAMBLE-MIDLINE) edit the preamble, which a restart before S0
+  re-runs (`incr::Session::preamble_restart`): a letter in `\\title`/`\\author`,
+  a letter in a `\\newcommand` body (or a new command used in the title), a
+  `\\setlength` line, a package added or removed, a package option, a letter in
+  the line right after a `\\usepackage` line (which the package's look ahead
+  read). The position only picks among the candidates.
 
 All functions are pure functions of the source bytes. Line endings are kept: a
 CRLF file stays CRLF, and a line holding only blanks is a paragraph break.
@@ -22,9 +30,11 @@ import re
 
 LINE_KINDS = ('newline', 'split', 'join')
 CONTEXT_KINDS = ('math_par', 'verbatim_blank', 'cell_blank')
+PREAMBLE_KINDS = ('pre_title', 'pre_author', 'pre_newcommand', 'pre_setlength', 'pre_usepackage',
+                  'pre_nopackage', 'pre_option', 'pre_after_package')
 LETTER_KINDS = ('replace', 'insert', 'delete', 'sentence')
 STRUCTURAL_KINDS = ('section', 'label', 'ref', 'cite', 'footnote', 'unlabel', 'unsection')
-ALL_KINDS = LETTER_KINDS + STRUCTURAL_KINDS + LINE_KINDS + CONTEXT_KINDS
+ALL_KINDS = LETTER_KINDS + STRUCTURAL_KINDS + LINE_KINDS + CONTEXT_KINDS + PREAMBLE_KINDS
 
 
 def parse_kinds(text):
@@ -385,6 +395,207 @@ def cell_blank(src, p):
     if best is None:
         return None
     return src[:best] + b' &' + nl + nl + src[best + 3:]
+
+
+# ----------------------------------------------------------------------
+# preamble kinds (PREAMBLE-FAST: a restart before S0)
+
+
+def _preamble(src):
+    """(start, end) of the preamble: from the end of the `\\documentclass` line
+    to `\\begin{document}`; None without either."""
+    dc = src.find(b'\\documentclass')
+    bd = src.find(b'\\begin{document}')
+    if dc < 0 or bd < 0 or bd < dc:
+        return None
+    eol = src.find(b'\n', dc)
+    if eol < 0 or eol > bd:
+        return None
+    return eol + 1, bd
+
+
+def _uncommented(src, s, e):
+    """Starts of the lines in [s, e) that do not begin with `%`."""
+    out = []
+    q = s
+    while q < e:
+        nl = src.find(b'\n', q)
+        nl = e if nl < 0 or nl > e else nl
+        if not src[q:nl].lstrip().startswith(b'%'):
+            out.append(q)
+        q = nl + 1
+    return out
+
+
+def _plain_letters(src, o, c):
+    """Letters in src[o:c] that are not part of a control word."""
+    return [q for q in range(o, c) if src[q:q + 1].isalpha()
+            and not re.search(rb'\\[A-Za-z]*$', src[o:q + 1])]
+
+
+def _letter_in_arg(src, p, cmd):
+    """A letter inserted into the argument of the preamble's first `\\cmd{...}`
+    on an uncommented line, before a letter picked by p."""
+    pr = _preamble(src)
+    if pr is None:
+        return None
+    for ls in _uncommented(src, *pr):
+        m = re.match(rb'[ \t]*\\' + cmd + rb'\s*\{', src[ls:pr[1]])
+        if not m:
+            continue
+        o = ls + m.end() - 1
+        letters = _plain_letters(src, o + 1, _brace_end(src, o) - 1)
+        if not letters:
+            return None
+        q = letters[p % len(letters)]
+        return src[:q] + b'x' + src[q:]
+    return None
+
+
+def pre_title(src, p):
+    return _letter_in_arg(src, p, b'title')
+
+
+def pre_author(src, p):
+    return _letter_in_arg(src, p, b'author')
+
+
+def pre_newcommand(src, p):
+    """A letter in the body of a preamble `\\newcommand`/`\\renewcommand` whose
+    body holds a letter outside a control word; else a new command
+    `\\flashtexProbe`, defined on the line before `\\title` and used in it."""
+    pr = _preamble(src)
+    if pr is None:
+        return None
+    for ls in _uncommented(src, *pr):
+        m = re.match(rb'[ \t]*\\(?:re)?newcommand\*?\s*(\{\\[A-Za-z]+\}|\\[A-Za-z]+)(\[\d\])?\s*\{',
+                     src[ls:pr[1]])
+        if not m:
+            continue
+        o = ls + m.end() - 1
+        letters = _plain_letters(src, o + 1, _brace_end(src, o) - 1)
+        if letters:
+            q = letters[p % len(letters)]
+            return src[:q] + b'x' + src[q:]
+    # (on the line before `\title`: a line right after `\documentclass` is
+    # read with the class, by its look for an optional argument)
+    line = b'\\newcommand\\flashtexProbe{probe %d}' % (p % 97) + _eol(src)
+    t = re.search(rb'\\title\s*\{', src[pr[0]:pr[1]])
+    if t is None:
+        return src[:pr[1]] + line + src[pr[1]:]
+    ls, q = pr[0] + t.start(), pr[0] + t.end()
+    return src[:ls] + line + src[ls:q] + b'\\flashtexProbe{} ' + src[q:]
+
+
+def pre_setlength(src, p):
+    """A `\\setlength` of `\\parindent`, `\\parskip` or `\\textwidth` (picked by
+    p) before `\\begin{document}`, to a length picked by p."""
+    pr = _preamble(src)
+    if pr is None:
+        return None
+    reg = (b'parindent', b'parskip', b'textwidth')[p % 3]
+    val = b'%dpt' % ((300 + p % 50) if reg == b'textwidth' else (3 + p % 17))
+    return src[:pr[1]] + b'\\setlength{\\' + reg + b'}{' + val + b'}' + _eol(src) + src[pr[1]:]
+
+
+ADD_PACKAGES = (b'xcolor', b'booktabs', b'array', b'bm', b'upgreek')
+
+
+def _usepackage_lines(src, pr):
+    return [ls for ls in _uncommented(src, *pr) if re.match(rb'[ \t]*\\usepackage', src[ls:pr[1]])]
+
+
+def _line_end(src, ls, limit):
+    e = src.find(b'\n', ls)
+    return limit if e < 0 or e >= limit else e + 1
+
+
+def pre_usepackage(src, p):
+    """A `\\usepackage` of a package (ADD_PACKAGES, picked by p) the document
+    does not load, after the preamble's last `\\usepackage` line (else before
+    `\\begin{document}`)."""
+    pr = _preamble(src)
+    if pr is None:
+        return None
+    have = set(x.strip() for m in re.finditer(rb'\\usepackage(?:\[[^\]]*\])?\{([^}]*)\}', src[:pr[1]])
+               for x in m.group(1).split(b','))
+    new = [x for x in ADD_PACKAGES if x not in have]
+    if not new:
+        return None
+    lines = _usepackage_lines(src, pr)
+    q = _line_end(src, lines[-1], pr[1]) if lines else pr[1]
+    return src[:q] + b'\\usepackage{' + new[p % len(new)] + b'}' + _eol(src) + src[q:]
+
+
+def pre_nopackage(src, p):
+    """A `\\usepackage` line of the preamble (picked by p) removed. The document
+    may then fail; the from-scratch run fails the same way."""
+    pr = _preamble(src)
+    if pr is None:
+        return None
+    lines = _usepackage_lines(src, pr)
+    if not lines:
+        return None
+    ls = lines[p % len(lines)]
+    return src[:ls] + src[_line_end(src, ls, pr[1]):]
+
+
+OPTIONS = {b'hyperref': b'hidelinks', b'geometry': b'margin=2cm', b'amsmath': b'fleqn',
+           b'graphicx': b'draft', b'xcolor': b'dvipsnames', b'caption': b'font=small'}
+
+
+def pre_after_package(src, p):
+    """A letter in the line right after a `\\usepackage` line (one of them,
+    picked by p, whose next line is not another `\\usepackage`; a `\\title` or
+    `\\author` line in the usual preamble), outside its control words.
+    `\\usepackage` reads that line before it loads the package, by its look
+    for an optional date (PREAMBLE-MIDLINE, #1594: a restart in the middle of
+    the line, which is read again)."""
+    pr = _preamble(src)
+    if pr is None:
+        return None
+    cands = []
+    for ls in _usepackage_lines(src, pr):
+        nx = _line_end(src, ls, pr[1])
+        if nx >= pr[1] or re.match(rb'[ \t]*(\\usepackage|%|\r?\n)', src[nx:pr[1]]):
+            continue
+        letters = _plain_letters(src, nx, _line_end(src, nx, pr[1]))
+        if letters:
+            cands.append(letters)
+    if not cands:
+        return None
+    letters = cands[p % len(cands)]
+    q = letters[(p // len(cands)) % len(letters)]
+    return src[:q] + b'x' + src[q:]
+
+
+def pre_option(src, p):
+    """An option added to a `\\usepackage{pkg}` of a package in OPTIONS (picked
+    by p), else `11pt` to the `\\documentclass`."""
+    pr = _preamble(src)
+    if pr is None:
+        return None
+    cands = []
+    for ls in _uncommented(src, *pr):
+        m = re.match(rb'[ \t]*\\usepackage(\[[^\]]*\])?\{([A-Za-z]+)\}', src[ls:pr[1]])
+        if m and m.group(2) in OPTIONS:
+            cands.append((ls, m))
+    if cands:
+        ls, m = cands[p % len(cands)]
+        opt = OPTIONS[m.group(2)]
+        if m.group(1):
+            q = ls + m.start(1) + 1
+            return src[:q] + opt + b',' + src[q:]
+        q = ls + m.start(2) - 1
+        return src[:q] + b'[' + opt + b']' + src[q:]
+    m = re.search(rb'\\documentclass(\[[^\]]*\])?\{', src)
+    if not m or (m.group(1) and b'pt' in m.group(1)):
+        return None
+    if m.group(1):
+        q = m.start(1) + 1
+        return src[:q] + b'11pt,' + src[q:]
+    q = m.end() - 1
+    return src[:q] + b'[11pt]' + src[q:]
 
 
 def apply(kind, src, p):

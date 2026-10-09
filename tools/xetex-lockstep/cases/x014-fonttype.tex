@@ -1,0 +1,9 @@
+% x014-fonttype: \XeTeXfonttype of TFM fonts and of \nullfont
+% XeTeX-specific (docs/design/xetex/PLAN.md, phase S0: TFM fonts)
+\input prelude
+\def\space{ }
+\font\x=cmr10
+\message{x014 \the\XeTeXfonttype\x\space\the\XeTeXfonttype\nullfont}
+\setbox0=\hbox{\x A}
+\lsshipbox0
+\end

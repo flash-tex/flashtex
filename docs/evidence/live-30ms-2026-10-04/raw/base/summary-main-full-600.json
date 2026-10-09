@@ -1,0 +1,346 @@
+{
+ "engine": "main",
+ "doc": "full-600",
+ "phases": {
+  "iso": {
+   "args": [
+    "--kind",
+    "letter",
+    "--gap-ms",
+    "300"
+   ],
+   "where": "dl3-keys: 601 pages; letter on line 4176 (page 300), byte 1223129",
+   "n": 19,
+   "stages": {
+    "queue": {
+     "p50": 0.215,
+     "p95": 6.13,
+     "max": 9.851,
+     "n": 19
+    },
+    "apply": {
+     "p50": 0.649,
+     "p95": 3.804,
+     "max": 15.542,
+     "n": 19
+    },
+    "find": {
+     "p50": 1.648,
+     "p95": 4.649,
+     "max": 7.763,
+     "n": 19
+    },
+    "key": {
+     "p50": 0.782,
+     "p95": 1.373,
+     "max": 3.493,
+     "n": 19
+    },
+    "changes": {
+     "p50": 0.772,
+     "p95": 3.626,
+     "max": 6.096,
+     "n": 19
+    },
+    "restore": {
+     "p50": 2.922,
+     "p95": 13.837,
+     "max": 26.06,
+     "n": 19
+    },
+    "first_page": {
+     "p50": 14.934,
+     "p95": 37.186,
+     "max": 51.998,
+     "n": 19
+    },
+    "first_page_dl": {
+     "p50": 2.261,
+     "p95": 3.573,
+     "max": 3.761,
+     "n": 19
+    },
+    "edited_wall": {
+     "p50": 30.567,
+     "p95": 87.87,
+     "max": 95.487,
+     "n": 19
+    },
+    "edited_cpu": {
+     "p50": 22.787,
+     "p95": 27.869,
+     "max": 28.147,
+     "n": 19
+    },
+    "test": {
+     "p50": 27.445,
+     "p95": 59.811,
+     "max": 137.477,
+     "n": 19
+    },
+    "tests": {
+     "p50": 1,
+     "p95": 1,
+     "max": 1,
+     "n": 19
+    },
+    "dl": {
+     "p50": 5.287,
+     "p95": 14.524,
+     "max": 19.007,
+     "n": 19
+    },
+    "send": {
+     "p50": 0.094,
+     "p95": 0.12,
+     "max": 0.122,
+     "n": 19
+    },
+    "cpu": {
+     "p50": 132.811,
+     "p95": 140.583,
+     "max": 145.894,
+     "n": 19
+    },
+    "instr_k": {
+     "p50": 1176992,
+     "p95": 1184043,
+     "max": 1206843,
+     "n": 19
+    },
+    "cycles_k": {
+     "p50": 321318,
+     "p95": 338130,
+     "max": 346988,
+     "n": 19
+    },
+    "restore_instr_k": {
+     "p50": 15824,
+     "p95": 16839,
+     "max": 43227,
+     "n": 19
+    },
+    "edited_instr_k": {
+     "p50": 150915,
+     "p95": 154719,
+     "max": 179805,
+     "n": 19
+    },
+    "test_instr_k": {
+     "p50": 236545,
+     "p95": 237646,
+     "max": 238288,
+     "n": 19
+    },
+    "first_page_instr_k": {
+     "p50": 64886,
+     "p95": 67175,
+     "max": 94824,
+     "n": 19
+    }
+   },
+   "edited_page_ms": {
+    "p50": 40.269167,
+    "p95": 86.33141699999999,
+    "max": 103.162875
+   },
+   "done_ms": {
+    "p50": 243.181875,
+    "p95": 345.51495900000003,
+    "max": 521.185917
+   },
+   "converged": 19,
+   "cancelled": 0,
+   "typeset_pages": [
+    3,
+    3,
+    3,
+    3,
+    3,
+    3,
+    3,
+    3,
+    3,
+    3,
+    3,
+    3,
+    3,
+    3,
+    3,
+    3,
+    3,
+    3,
+    3
+   ],
+   "load": [
+    131.31,
+    116.43
+   ],
+   "secs": 53.33077096939087
+  },
+  "typing": {
+   "args": [
+    "--kind",
+    "letter",
+    "--overlap",
+    "--gap-ms",
+    "100"
+   ],
+   "where": "dl3-keys: 601 pages; letter on line 4176 (page 300), byte 1223129",
+   "n": 19,
+   "stages": {
+    "queue": {
+     "p50": 11.353,
+     "p95": 11.353,
+     "max": 11.353,
+     "n": 1
+    },
+    "apply": {
+     "p50": 0.441,
+     "p95": 0.441,
+     "max": 0.441,
+     "n": 1
+    },
+    "find": {
+     "p50": 10.536,
+     "p95": 10.536,
+     "max": 10.536,
+     "n": 1
+    },
+    "key": {
+     "p50": 9.995,
+     "p95": 9.995,
+     "max": 9.995,
+     "n": 1
+    },
+    "changes": {
+     "p50": 0.445,
+     "p95": 0.445,
+     "max": 0.445,
+     "n": 1
+    },
+    "restore": {
+     "p50": 13.676,
+     "p95": 13.676,
+     "max": 13.676,
+     "n": 1
+    },
+    "first_page": {
+     "p50": 43.931,
+     "p95": 43.931,
+     "max": 43.931,
+     "n": 1
+    },
+    "first_page_dl": {
+     "p50": 2.049,
+     "p95": 2.049,
+     "max": 2.049,
+     "n": 1
+    },
+    "test": {
+     "p50": 16.078,
+     "p95": 16.078,
+     "max": 16.078,
+     "n": 1
+    },
+    "tests": {
+     "p50": 1,
+     "p95": 1,
+     "max": 1,
+     "n": 1
+    },
+    "dl": {
+     "p50": 3.426,
+     "p95": 3.426,
+     "max": 3.426,
+     "n": 1
+    },
+    "send": {
+     "p50": 0.064,
+     "p95": 0.064,
+     "max": 0.064,
+     "n": 1
+    },
+    "cpu": {
+     "p50": 101.355,
+     "p95": 101.355,
+     "max": 101.355,
+     "n": 1
+    },
+    "instr_k": {
+     "p50": 783289,
+     "p95": 783289,
+     "max": 783289,
+     "n": 1
+    },
+    "cycles_k": {
+     "p50": 241883,
+     "p95": 241883,
+     "max": 241883,
+     "n": 1
+    },
+    "restore_instr_k": {
+     "p50": 42411,
+     "p95": 42411,
+     "max": 42411,
+     "n": 1
+    },
+    "test_instr_k": {
+     "p50": 117047,
+     "p95": 117047,
+     "max": 117047,
+     "n": 1
+    },
+    "first_page_instr_k": {
+     "p50": 128208,
+     "p95": 128208,
+     "max": 128208,
+     "n": 1
+    }
+   },
+   "edited_page_ms": {
+    "p50": 93.168083,
+    "p95": 152.870417,
+    "max": 171.774583
+   },
+   "done_ms": null,
+   "converged": 1,
+   "cancelled": 17,
+   "typeset_pages": [
+    2
+   ],
+   "load": [
+    116.43,
+    115.52
+   ],
+   "secs": 4.297428846359253
+  }
+ },
+ "power": {
+  "source": "AC",
+  "battery_pct": 100,
+  "low_power_mode": true,
+  "thermal": "Note: No thermal warning level has been recorded; Note: No performance warning level has been recorded; Note: No CPU power status has been recorded",
+  "thermal_limited": false,
+  "load": [
+   131.31,
+   139.44,
+   104.9
+  ],
+  "ncpu": 10
+ },
+ "rss_peak": 1119485952,
+ "power_end": {
+  "source": "AC",
+  "battery_pct": 100,
+  "low_power_mode": true,
+  "thermal": "Note: No thermal warning level has been recorded; Note: No performance warning level has been recorded; Note: No CPU power status has been recorded",
+  "thermal_limited": false,
+  "load": [
+   115.52,
+   133.31,
+   104.95
+  ],
+  "ncpu": 10
+ }
+}

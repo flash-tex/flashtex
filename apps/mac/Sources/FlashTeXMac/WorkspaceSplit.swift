@@ -33,9 +33,14 @@ final class ThinSplitView: NSSplitView {
 class ThinSplitViewController: NSSplitViewController {
     /// Split positions persist through `NSSplitView` autosave — except under
     /// XCTest, where accumulated positions would make snapshot geometry
-    /// nondeterministic between runs.
+    /// nondeterministic between runs. `swift test` sets neither XCTest
+    /// variable (its `xctest` runner only loads the bundle), so the XCTest
+    /// class is checked too, as `EngineV3Host.underTest` does: without it the
+    /// shell snapshots restored whatever split width an earlier test left in
+    /// the runner's `com.apple.dt.xctest.tool` defaults domain.
     static let autosaveEnabled = ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] == nil
         && ProcessInfo.processInfo.environment["XCTestSessionIdentifier"] == nil
+        && NSClassFromString("XCTestCase") == nil
 
     init(vertical: Bool, autosaveName: String?) {
         super.init(nibName: nil, bundle: nil)

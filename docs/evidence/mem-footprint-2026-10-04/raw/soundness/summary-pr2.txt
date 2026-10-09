@@ -1,0 +1,6 @@
+/tmp/mfp/ib/sa-segpr/full-100.jsonl: 60 compiles, 0 mismatches, 57 converged, 0 interrupted, 0 accounting-only
+/tmp/mfp/ib/sa-segpr/plain-120.jsonl: 60 compiles, 0 mismatches, 57 converged, 0 interrupted, 0 accounting-only
+/tmp/mfp/ib/sc-segpr/full-100.jsonl: 22 compiles, 0 mismatches, 0 converged, 0 interrupted, 0 accounting-only
+/tmp/mfp/ib/sc-segpr/refs-120.jsonl: 24 compiles, 0 mismatches, 2 converged, 0 interrupted, 0 accounting-only
+/tmp/mfp/ib/sd-segpr/full-100.jsonl: 18 compiles, 0 mismatches, 9 converged, 4 interrupted, 0 accounting-only
+/tmp/mfp/ib/sd-segpr/refs-120.jsonl: 17 compiles, 0 mismatches, 11 converged, 2 interrupted, 0 accounting-only
