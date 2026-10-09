@@ -1928,6 +1928,354 @@ fn a_file_appearing_at_an_absolute_name_is_seen() {
     let _ = std::fs::remove_dir_all(&base);
 }
 
+/// The directories of a LOOKUP-SKIP test (`lookup_steps`).
+struct LookDirs {
+    proj: PathBuf,
+    out: PathBuf,
+    /// Absolute names: `pre.tex` (the preamble's), `body.tex`.
+    ext: PathBuf,
+    /// `TEXMFHOME`'s `tex/latex/flashprobe`, and a deeper directory of the
+    /// same `//` subtree.
+    sub: PathBuf,
+    deep: PathBuf,
+}
+
+impl LookDirs {
+    /// Put `d`'s modification time back, well in the past and a different
+    /// one each time: a changed signature that is not racy.
+    fn set_back(&self, d: &Path) {
+        static TICK: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let k = TICK.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let t = std::time::SystemTime::now() - Duration::from_secs(5000 - k);
+        std::fs::File::open(d).unwrap().set_modified(t).unwrap();
+    }
+}
+
+/// One step of `lookup_steps`: what it is, what it changes on disk, and an
+/// edit of the document (from, to), if any.
+type LookStep<'a> = (&'a str, &'a dyn Fn(&LookDirs), Option<(&'a str, &'a str)>);
+
+/// LOOKUP-SKIP (`crate::lookupproof`): a document whose preamble and body
+/// test for files in the places a lookup searches (`TEXMFHOME`'s `//`
+/// subtree with no `ls-R`, absolute names, the project, the output
+/// directory), compiled until it settles, then each step: its change on
+/// disk, an entry more in the output and project directories (what a
+/// compile's own writes do to them, so their signatures change at every
+/// compile and the lookups are checked rather than skipped wholesale), a
+/// compile, and every page compared with a scratch compile.
+fn lookup_steps(tag: &str, steps: &[LookStep]) {
+    if find_texlive_bin().is_none() {
+        common::no_texlive();
+        return;
+    }
+    let base = common::fresh_dir(&format!("flashtex-host-look-{tag}"));
+    let _ = std::fs::remove_dir_all(&base);
+    let home = base.join("home");
+    let d = LookDirs {
+        proj: base.join("proj"),
+        out: base.join("out"),
+        ext: base.join("ext"),
+        sub: home.join("tex/latex/flashprobe"),
+        deep: home.join("tex/latex/deep/er"),
+    };
+    for x in [&d.proj, &d.out, &d.ext, &d.sub, &d.deep] {
+        std::fs::create_dir_all(x).unwrap();
+    }
+    std::fs::write(d.sub.join("flashshadow.sty"), "Shadow: home.\n").unwrap();
+    std::fs::write(d.sub.join("flashother.sty"), "% other\n").unwrap();
+    for x in [
+        &home,
+        &home.join("tex"),
+        &home.join("tex/latex"),
+        &home.join("tex/latex/deep"),
+        &d.sub,
+        &d.deep,
+    ] {
+        d.set_back(x);
+    }
+    let filler: String = article(3)
+        .split("\\section{Start}")
+        .nth(1)
+        .unwrap()
+        .replace("\\end{document}\n", "");
+    let doc = format!(
+        "\\documentclass{{article}}\n\
+         \\IfFileExists{{flashpre.sty}}{{\\def\\pre{{yes}}}}{{\\def\\pre{{no}}}}\n\
+         \\IfFileExists{{{}}}{{\\def\\abspre{{yes}}}}{{\\def\\abspre{{no}}}}\n\
+         \\begin{{document}}\nPreamble: \\pre, \\abspre.\n\n{filler}\n\
+         \\IfFileExists{{flashprobe.sty}}{{Probe: yes.}}{{Probe: no.}}\n\n\
+         \\IfFileExists{{flashdeep.sty}}{{Deep: yes.}}{{Deep: no.}}\n\n\
+         \\InputIfFileExists{{flashshadow.sty}}{{}}{{Shadow: none.}}\n\n\
+         \\IfFileExists{{{}}}{{Absolute: yes.}}{{Absolute: no.}}\n\n\
+         \\InputIfFileExists{{flashout.tex}}{{}}{{Out: none.}}\n\n\
+         \\IfFileExists{{flashcase.sty}}{{Case: yes.}}{{Case: no.}}\n\n\
+         Closing words.\n\\end{{document}}\n",
+        d.ext.join("pre.tex").display(),
+        d.ext.join("body.tex").display()
+    );
+    let main = "main.tex";
+    std::fs::write(d.proj.join(main), &doc).unwrap();
+    let home_s = home.to_string_lossy().into_owned();
+    let env = [("TEXMFHOME", home_s.as_str())];
+    let host = start_host_env(tag, &env);
+    let scratch = start_host_env(&format!("{tag}s"), &env);
+    let mut c = Client::connect(&host.1).unwrap();
+    let mut view = View::default();
+    let mut id = 0;
+    for _ in 0..4 {
+        id += 1;
+        let o = compile(&mut c, &mut view, &req(id, &d.proj, &d.out, main));
+        if o.done.str_field("mode") == Some("unchanged") {
+            break;
+        }
+    }
+    let unrelated: LookStep = ("unrelated entries", &|_| {}, None);
+    for (k, (what, change, edit)) in std::iter::once(&unrelated).chain(steps).enumerate() {
+        change(&d);
+        std::fs::write(d.out.join(format!("junk{k}.log")), "x").unwrap();
+        std::fs::write(d.proj.join(format!("junk{k}.txt")), "x").unwrap();
+        id += 1;
+        let mut r = req(id, &d.proj, &d.out, main);
+        if let Some((from, to)) = edit {
+            let text = std::fs::read_to_string(d.proj.join(main)).unwrap();
+            let at = text.find(from).unwrap();
+            r.edits = vec![Edit {
+                path: main.into(),
+                offset: at as u64,
+                delete: from.len() as u64,
+                insert: (*to).into(),
+            }];
+        }
+        let o = compile(&mut c, &mut view, &r);
+        assert_eq!(o.done.str_field("status"), Some("ok"), "{what}: {}", o.done);
+        let (p2, o2) = snapshot(&base, &d.proj, &d.out, &format!("{tag}{k}"));
+        compare_with_scratch(&scratch.1, &view, &d.proj, &d.out, &p2, &o2, main, what);
+        let _ = std::fs::remove_dir_all(&p2);
+        let _ = std::fs::remove_dir_all(&o2);
+    }
+    let _ = c.bye();
+    let _ = std::fs::remove_dir_all(&base);
+}
+
+/// LOOKUP-SKIP, #1549's review case (a): a file appearing at an absolute
+/// name, in the body (the journal's lookups) and the preamble (S₀'s key),
+/// and going again. Its own directory decides the answer, not the working
+/// or the output directory.
+#[test]
+fn lookup_skip_a_absolute_names() {
+    lookup_steps(
+        "la",
+        &[
+            (
+                "(a) a file appeared at an absolute name",
+                &|d| std::fs::write(d.ext.join("body.tex"), "% body\n").unwrap(),
+                None,
+            ),
+            (
+                "(a) one in the preamble",
+                &|d| std::fs::write(d.ext.join("pre.tex"), "% pre\n").unwrap(),
+                None,
+            ),
+            (
+                "(a) both went",
+                &|d| {
+                    std::fs::remove_file(d.ext.join("body.tex")).unwrap();
+                    std::fs::remove_file(d.ext.join("pre.tex")).unwrap();
+                },
+                None,
+            ),
+        ],
+    );
+}
+
+/// LOOKUP-SKIP, #1549's review case (b): a file appearing in a `TEXMFHOME`
+/// tree without `ls-R`, in the body and the preamble, an edit after the
+/// lookups (the run restarts after them and keeps their answers), and the
+/// files going again.
+#[test]
+fn lookup_skip_b_texmfhome() {
+    lookup_steps(
+        "lb",
+        &[
+            (
+                "(b) a file appeared in TEXMFHOME",
+                &|d| {
+                    std::fs::write(d.sub.join("flashprobe.sty"), "% probe\n").unwrap();
+                    d.set_back(&d.sub);
+                },
+                None,
+            ),
+            (
+                "(b) an edit after the lookups",
+                &|_| {},
+                Some(("Closing words.", "Closing words, edited.")),
+            ),
+            (
+                "(b) one in the preamble",
+                &|d| {
+                    std::fs::write(d.sub.join("flashpre.sty"), "% pre\n").unwrap();
+                    d.set_back(&d.sub);
+                },
+                None,
+            ),
+            (
+                "(b) both went",
+                &|d| {
+                    std::fs::remove_file(d.sub.join("flashprobe.sty")).unwrap();
+                    std::fs::remove_file(d.sub.join("flashpre.sty")).unwrap();
+                    d.set_back(&d.sub);
+                },
+                None,
+            ),
+        ],
+    );
+}
+
+/// LOOKUP-SKIP, #1549's review case (c): a `//` subtree. A file appearing
+/// in a deeper directory of it, and a file in the project (searched first)
+/// shadowing the subtree's, and both going again.
+#[test]
+fn lookup_skip_c_subtrees() {
+    lookup_steps(
+        "lc",
+        &[
+            (
+                "(c) a file appeared deep in the subtree",
+                &|d| {
+                    std::fs::write(d.deep.join("flashdeep.sty"), "% deep\n").unwrap();
+                    d.set_back(&d.deep);
+                },
+                None,
+            ),
+            (
+                "(c) the project shadows the subtree's file",
+                &|d| std::fs::write(d.proj.join("flashshadow.sty"), "Shadow: project.\n").unwrap(),
+                None,
+            ),
+            (
+                "(c) both went",
+                &|d| {
+                    std::fs::remove_file(d.deep.join("flashdeep.sty")).unwrap();
+                    d.set_back(&d.deep);
+                    std::fs::remove_file(d.proj.join("flashshadow.sty")).unwrap();
+                },
+                None,
+            ),
+        ],
+    );
+}
+
+/// LOOKUP-SKIP: the output directory, which `lookup_again` (texmfmp.c's
+/// `open_input`) tries before kpathsea, and a name kpathsea finds only by
+/// folding case; each appearing and going again.
+#[test]
+fn lookup_skip_output_directory_and_case() {
+    lookup_steps(
+        "lo",
+        &[
+            (
+                "a file appeared in the output directory",
+                &|d| std::fs::write(d.out.join("flashout.tex"), "Out: here.\n").unwrap(),
+                None,
+            ),
+            (
+                "a name differing in case appeared",
+                &|d| std::fs::write(d.proj.join("FlashCase.STY"), "% case\n").unwrap(),
+                None,
+            ),
+            (
+                "both went",
+                &|d| {
+                    std::fs::remove_file(d.out.join("flashout.tex")).unwrap();
+                    std::fs::remove_file(d.proj.join("FlashCase.STY")).unwrap();
+                },
+                None,
+            ),
+        ],
+    );
+}
+
+/// LOOKUP-SKIP, #1549's review case (d): a directory's signature taken
+/// within its modification-time tick (racy) proves nothing. A rename in the
+/// project to a name a lookup tries keeps the directory's length and
+/// identity, and the time is put back as a coarse clock would leave it
+/// (`FLASHTEX_RACY_MS`, a one-day tick, as in
+/// `a_same_size_edit_within_the_mtime_tick_is_seen`): only the racy rule
+/// makes the check list the directory again. In the body (the journal) and
+/// the preamble (S₀'s key).
+#[test]
+fn lookup_skip_d_a_rename_within_the_mtime_tick() {
+    if find_texlive_bin().is_none() {
+        common::no_texlive();
+        return;
+    }
+    let base = common::fresh_dir("flashtex-host-look-ld");
+    let _ = std::fs::remove_dir_all(&base);
+    let (proj, out) = (base.join("proj"), base.join("out"));
+    std::fs::create_dir_all(&proj).unwrap();
+    std::fs::create_dir_all(&out).unwrap();
+    std::fs::write(proj.join("flashrac0.sty"), "% body\n").unwrap();
+    std::fs::write(proj.join("flashrap0.sty"), "% preamble\n").unwrap();
+    let filler: String = article(2)
+        .split("\\section{Start}")
+        .nth(1)
+        .unwrap()
+        .replace("\\end{document}\n", "");
+    let doc = format!(
+        "\\documentclass{{article}}\n\
+         \\IfFileExists{{flashrapy.sty}}{{\\def\\pre{{yes}}}}{{\\def\\pre{{no}}}}\n\
+         \\begin{{document}}\nPreamble: \\pre.\n\n{filler}\n\
+         \\IfFileExists{{flashracy.sty}}{{Body: yes.}}{{Body: no.}}\n\n\
+         \\end{{document}}\n"
+    );
+    let main = "main.tex";
+    std::fs::write(proj.join(main), &doc).unwrap();
+    let host = start_host_env("ld", &[("FLASHTEX_RACY_MS", "86400000")]);
+    let scratch = start_host("lds");
+    let mut c = Client::connect(&host.1).unwrap();
+    let mut view = View::default();
+    let mut id = 0;
+    for _ in 0..4 {
+        id += 1;
+        let o = compile(&mut c, &mut view, &req(id, &proj, &out, main));
+        if o.done.str_field("mode") == Some("unchanged") {
+            break;
+        }
+    }
+    for (k, (from, to)) in [
+        ("flashrac0.sty", "flashracy.sty"),
+        ("flashrap0.sty", "flashrapy.sty"),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let before = std::fs::metadata(&proj).unwrap();
+        std::fs::rename(proj.join(from), proj.join(to)).unwrap();
+        std::fs::File::open(&proj)
+            .unwrap()
+            .set_modified(before.modified().unwrap())
+            .unwrap();
+        let after = std::fs::metadata(&proj).unwrap();
+        assert_eq!(
+            (before.len(), before.modified().unwrap()),
+            (after.len(), after.modified().unwrap()),
+            "the rename must keep the directory's length and time"
+        );
+        id += 1;
+        let o = compile(&mut c, &mut view, &req(id, &proj, &out, main));
+        assert_ne!(
+            o.done.str_field("mode"),
+            Some("unchanged"),
+            "{to}: not seen: {}",
+            o.done
+        );
+        let (p2, o2) = snapshot(&base, &proj, &out, &format!("ld{k}"));
+        compare_with_scratch(&scratch.1, &view, &proj, &out, &p2, &o2, main, to);
+    }
+    let _ = c.bye();
+    let _ = std::fs::remove_dir_all(&base);
+}
+
 /// #1295: pdfTeX frees an image's name once it has written the XObject; a
 /// page that draws the image again after a restore (or in a later pass)
 /// must still get an `IMAGE` naming the file.

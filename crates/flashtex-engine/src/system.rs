@@ -1586,6 +1586,7 @@ fn default_format_file() -> String {
 static RESOLVER: Mutex<Option<Box<dyn FileResolver>>> = Mutex::new(None);
 
 pub fn set_resolver(r: Box<dyn FileResolver>) {
+    crate::lookupproof::resolver_changed();
     *RESOLVER.lock().unwrap() = Some(r);
 }
 
@@ -1604,6 +1605,7 @@ fn reset_resolver(prog: &str, keep_allowed: bool) {
         return;
     }
     *p = Some(prog.to_string());
+    crate::lookupproof::resolver_changed();
     *RESOLVER.lock().unwrap() = None;
 }
 
@@ -1621,14 +1623,20 @@ pub const ENGINE_NAME: &str = "flashtex";
 pub fn with_resolver_for<T>(prog: &str, f: impl FnOnce(&mut dyn FileResolver) -> T) -> T {
     reset_resolver(prog, true);
     let mut g = RESOLVER.lock().unwrap();
-    let r = g.get_or_insert_with(|| crate::resolver::default_resolver(prog, ENGINE_NAME));
+    let r = g.get_or_insert_with(|| {
+        crate::lookupproof::resolver_changed();
+        crate::resolver::default_resolver(prog, ENGINE_NAME)
+    });
     f(r.as_mut())
 }
 
 pub(crate) fn with_resolver<T>(f: impl FnOnce(&mut dyn FileResolver) -> T) -> T {
     let prog = run().program_name;
     let mut g = RESOLVER.lock().unwrap();
-    let r = g.get_or_insert_with(|| crate::resolver::default_resolver(&prog, ENGINE_NAME));
+    let r = g.get_or_insert_with(|| {
+        crate::lookupproof::resolver_changed();
+        crate::resolver::default_resolver(&prog, ENGINE_NAME)
+    });
     f(r.as_mut())
 }
 
@@ -1964,6 +1972,18 @@ fn resolve_ex(name: &str, format: Format, must_exist: bool) -> Option<String> {
         // (a file an mktex script made is a barrier: nothing to depend on)
         let deps = (recording_reads() && !made)
             .then(|| r.lookup_dirs(name, format, Some(must_exist), found.as_deref()));
+        if let Some(d) = &deps {
+            let f = found.as_deref().map(|p| p.to_string_lossy());
+            let od = run().output_directory;
+            crate::lookupproof::note(
+                name,
+                format,
+                Some(must_exist),
+                f.as_deref(),
+                d,
+                od.as_deref(),
+            );
+        }
         (found, made, deps)
     });
     let found = found
@@ -2046,6 +2066,10 @@ fn resolve(name: &str, format: Format) -> Option<String> {
         read_set_lookup(name, format, false, found.as_deref());
         let deps = recording_reads()
             .then(|| r.lookup_dirs(name, format, None, found.as_deref().map(Path::new)));
+        if let Some(d) = &deps {
+            let od = run().output_directory;
+            crate::lookupproof::note(name, format, None, found.as_deref(), d, od.as_deref());
+        }
         (found, deps)
     });
     let (found, deps) = found;
@@ -4415,6 +4439,12 @@ pub const DEP_UNKNOWN: &str = "\0lookup dependencies not known";
 /// listing (#1562). Its "signature" says whether it is readable.
 const DEP_READABLE: &str = "\0readable\0";
 
+/// The entry of [`ReadLog::dirs`] for an answer found on disk at `path`
+/// ([`DEP_READABLE`]).
+pub(crate) fn readable_dep(path: &str) -> String {
+    format!("{DEP_READABLE}{path}")
+}
+
 /// The signature of an entry of [`ReadLog::dirs`]: a directory's
 /// `StatSig`; for [`DEP_READABLE`], whether the file is readable; for
 /// [`DEP_UNKNOWN`], none.
@@ -4707,6 +4737,15 @@ pub fn lookup_again_deps(l: &Lookup) -> (Option<String>, Vec<(String, StatSig)>)
             found.as_deref().map(Path::new),
         )
     });
+    let od = run().output_directory;
+    crate::lookupproof::note(
+        &l.name,
+        l.format,
+        l.must_exist,
+        found.as_deref(),
+        &deps,
+        od.as_deref(),
+    );
     let mut log = ReadLog::default();
     note_lookup_dirs(&mut log, &l.name, deps, found.as_deref());
     (found, log.dirs)

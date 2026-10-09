@@ -1268,8 +1268,12 @@ mod kpse {
                             .and_then(|d| d.strip_suffix('/'))
                             .ok_or("an answer not under the name's directory")?
                     };
-                    // (the shim compares the directory, with its slash)
-                    Some(c(&format!("{top}/{base}"))?)
+                    // (the shim compares the directory, with its slash, and
+                    // looks an `ls-R` element up by the answer's own last
+                    // component: `cmr12.tfm` for the TFM name `cmr12`, which
+                    // kpathsea finds only with its suffix)
+                    let file = &s[s.rfind('/').map_or(0, |i| i + 1)..];
+                    Some(c(&format!("{top}/{file}"))?)
                 }
             };
             let dirs = self

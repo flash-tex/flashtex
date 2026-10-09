@@ -61,6 +61,7 @@ pub mod ix;
 pub mod lineshift;
 #[cfg(all(any(target_os = "linux", target_os = "macos"), not(feature = "tex82")))]
 pub mod logalloc;
+pub mod lookupproof;
 #[cfg(not(feature = "tex82"))]
 pub mod macroprof;
 #[cfg(all(feature = "makeindex", not(feature = "tex82")))]
