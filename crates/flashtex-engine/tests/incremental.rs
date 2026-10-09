@@ -3012,11 +3012,239 @@ fn preamble_edits_restart_before_s0() {
         compile_and_check(&e, &mut h, &dir, &[], "settle again");
     }
     // the line after `\documentclass` is read with the class (its look for
-    // an optional argument): no checkpoint before it, a run from the format
+    // an optional argument): a restart after the class is loaded, in the
+    // middle of that line, which is read again (PREAMBLE-MIDLINE, #1594)
     let early = doc.replacen("\\usepackage{amsmath}", "\\usepackage{amssymb}", 1);
     let r = compile_and_check(&e, &mut h, &dir, &[("doc.tex", &early)], "the first line");
+    assert_eq!(field(&r, "restart_midline"), "true", "{r}");
+    compile_and_check(&e, &mut h, &dir, &[("doc.tex", &doc)], "the revert");
+    // ... but not where the class's look ahead read it (`\usepackage` and
+    // what `get_next` looked at past it): no checkpoint before that, a run
+    // from the format
+    let early = doc.replacen("\\usepackage{amsmath}", "\\usepackage[fleqn]{amsmath}", 1);
+    let r = compile_and_check(&e, &mut h, &dir, &[("doc.tex", &early)], "the first token");
     assert_eq!(field(&r, "mode"), "\"cold\"", "{r}");
     compile_and_check(&e, &mut h, &dir, &[("doc.tex", &doc)], "the revert");
+}
+
+/// PREAMBLE-MIDLINE (#1594): `\usepackage` looks for an optional date on
+/// the next line before it loads the package, so `\title` on the line after
+/// hyperref is read before hyperref is. A keystroke in the title restarts
+/// after hyperref, in the middle of the title's line, and reads the rest of
+/// the line again: letters, consecutive keystrokes (each from the
+/// checkpoint the one before took), a newline (the later lines move), an
+/// edit where the look ahead read the line (a restart before hyperref), the
+/// next line, then the body. Every compile equals scratch runs.
+#[test]
+fn a_title_keystroke_restarts_mid_line_after_hyperref() {
+    let Some(e) = env() else {
+        common::no_texlive();
+        return;
+    };
+    let dir = e.dir.join("midline-title");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let body: String = (0..30).map(|i| para(i, "omega")).collect();
+    let doc = format!(
+        r"\documentclass{{article}}
+\usepackage{{amsmath}}
+\usepackage{{amssymb}}
+\usepackage{{graphicx}}
+\usepackage{{hyperref}}
+\title{{a title about latency}}
+\author{{Jane Doe}}
+
+\begin{{document}}
+\maketitle
+\section{{One}}\label{{one}}
+{body}See page~\pageref{{one}}.
+\end{{document}}
+"
+    );
+    let mut h = Host::start(&e, &dir);
+    for k in 0..4 {
+        let r = compile_and_check(&e, &mut h, &dir, &[("doc.tex", &doc)], "settle");
+        if r.contains("\"mode\":\"unchanged\"") || k == 3 {
+            break;
+        }
+    }
+    let t = |a: &str| doc.replacen("a title about latency", a, 1);
+    // (the text, what, a mid-line restart)
+    let edits = [
+        (t("a titlex about latency"), "a letter", true),
+        (t("a titlexy about latency"), "the next letter", true),
+        (t("a titlexyz about latency"), "and the next", true),
+        (doc.clone(), "the revert", true),
+        (t("a title\nabout latency"), "a newline in the title", true),
+        (doc.clone(), "the revert", true),
+        (
+            t("A title about latency"),
+            "where the look ahead read",
+            false,
+        ),
+        (doc.clone(), "the revert", false),
+        (
+            doc.replacen("Jane Doe", "Jane Dot", 1),
+            "the next line",
+            false,
+        ),
+        (doc.clone(), "the revert", false),
+    ];
+    for (text, what, mid) in &edits {
+        let r = compile_and_check(&e, &mut h, &dir, &[("doc.tex", text)], what);
+        assert_eq!(field(&r, "mode"), "\"incremental\"", "{what}: {r}");
+        assert_eq!(field(&r, "restart_preamble"), "true", "{what}: {r}");
+        assert_eq!(field(&r, "restart_midline"), mid.to_string(), "{what}: {r}");
+    }
+    compile_and_check(&e, &mut h, &dir, &[], "settle again");
+    let body_edit = doc.replacen("Paragraph 3 with", "Paragraph 3 wiht", 1);
+    let r = compile_and_check(&e, &mut h, &dir, &[("doc.tex", &body_edit)], "the body");
+    assert_eq!(field(&r, "restart_preamble"), "false", "{r}");
+    compile_and_check(&e, &mut h, &dir, &[("doc.tex", &doc)], "the revert");
+}
+
+/// PREAMBLE-MIDLINE (#1594): what a mid-line restart point depends on, a
+/// case each (packages of the test's own, a checkpoint after each). Every
+/// compile equals scratch runs; `true`: the restart is in the middle of the
+/// line.
+/// * what `get_next` looked at past the token it read: a letter appended to
+///   the control word (`\mytitle` becomes `\mytitles`);
+/// * `\endlinechar` as it was when the line was read: the package sets it to
+///   -1, and the title's line still ends in a space;
+/// * trailing blanks, which `input_ln` drops (under `\obeyspaces` they would
+///   be active spaces);
+/// * CR LF and CR line ends, and a CR that becomes a CR LF (the look ahead
+///   read the byte after the CR);
+/// * `\show` (its context prints the rest of the line): no mid-line restart
+///   after it, one before it;
+/// * a `^^` sequence in the control word's name, which rewrites the buffer;
+/// * `\pausing` in `\nonstopmode`, which shows nothing.
+#[test]
+fn mid_line_restarts_keep_what_the_line_was_read_with() {
+    let Some(e) = env() else {
+        common::no_texlive();
+        return;
+    };
+    let pkg =
+        "\\ProvidesPackage{mlpkg}\n\\def\\mytitle#1{\\title{#1}}\\def\\mytitles#1{\\title{#1 s}}\n";
+    let eol = "\\ProvidesPackage{mleol}\n\\endlinechar=-1\\relax\n";
+    let sp = "\\ProvidesPackage{mlsp}\n\\obeyspaces\n";
+    let doc = |pre: &str, title: &str| {
+        let body: String = (0..6).map(|i| para(i, "kappa")).collect();
+        format!(
+            "\\documentclass{{article}}\n\\def\\x{{1}}\n{pre}{title}\n\\author{{Jane Doe}}\n\
+             \\begin{{document}}\n\\maketitle\n{body}\\end{{document}}\n"
+        )
+    };
+    let p = "\\usepackage{mlpkg}\n";
+    let pe = "\\usepackage{mleol}\n";
+    let ps = "\\usepackage{mlsp}\n";
+    let crlf = |s: String| s.replace('\n', "\r\n");
+    let cr = |s: String| s.replace('\n', "\r");
+    let eolt = |a: &str| {
+        doc(
+            pe,
+            &format!("\\title{{{a} beta\ngamma}}\\endlinechar=13\\relax"),
+        )
+    };
+    let spt = |a: &str| {
+        doc(
+            ps,
+            &format!("\\title{{{a}   \ngamma}}\\catcode`\\ =10\\relax"),
+        )
+    };
+    let show = |n: &str| {
+        doc(
+            &format!(
+                "\\usepackage{{mlpkg}}\n\\show\\x\\usepackage{{mlsp}}\\relax% note {n}\n\
+                 \\catcode`\\ =10\\relax\n"
+            ),
+            "\\title{T}",
+        )
+    };
+    let pause = "\\pausing=1\\relax\n\\usepackage{mlpkg}\n";
+    // (case, the document, its edits: text, a mid-line restart)
+    type Case<'a> = (&'a str, String, Vec<(String, bool)>);
+    let cases: Vec<Case> = vec![
+        (
+            "a letter after the control word",
+            doc(p, "\\mytitle{Hello world}"),
+            vec![
+                (doc(p, "\\mytitles{Hello world}"), false),
+                (doc(p, "\\mytitle{Hello world}"), false),
+                (doc(p, "\\mytitle{Hello worle}"), true),
+            ],
+        ),
+        ("endlinechar", eolt("Alpha"), vec![(eolt("Alphx"), true)]),
+        (
+            "trailing blanks",
+            spt("Alpha beta"),
+            vec![(spt("Alphx beta"), true), (spt("Alphx beta   x"), true)],
+        ),
+        (
+            "CR LF",
+            crlf(doc(p, "\\mytitle{Hello world}")),
+            vec![
+                (crlf(doc(p, "\\mytitle{Hello worle}")), true),
+                (crlf(doc(p, "\\mytitle{Hello\nworld}")), true),
+            ],
+        ),
+        (
+            "CR",
+            cr(doc(p, "\\mytitle{Hello world}")),
+            vec![
+                (cr(doc(p, "\\mytitle{Hello worle}")), true),
+                // (the line's CR becomes a CR LF: the look ahead read the
+                // byte after the CR, and the line is the same)
+                (
+                    cr(doc(p, "\\mytitle{Hello world}")).replacen(
+                        "\\mytitle{Hello world}\r",
+                        "\\mytitle{Hello world}\r\n",
+                        1,
+                    ),
+                    true,
+                ),
+            ],
+        ),
+        ("show", show("abc"), vec![(show("abd"), true)]),
+        (
+            "a ^^ in the name",
+            doc(p, "\\mytitle^^73{Hello world}"),
+            vec![(doc(p, "\\mytitle^^73{Hello worle}"), false)],
+        ),
+        (
+            "pausing",
+            doc(pause, "\\mytitle{Hello world}\\pausing=0\\relax"),
+            vec![(doc(pause, "\\mytitle{Hello worle}\\pausing=0\\relax"), true)],
+        ),
+    ];
+    for (i, (case, text, edits)) in cases.iter().enumerate() {
+        let dir = e.dir.join(format!("midline-{i}"));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let files = [
+            ("mlpkg.sty", pkg),
+            ("mleol.sty", eol),
+            ("mlsp.sty", sp),
+            ("doc.tex", text.as_str()),
+        ];
+        // (a checkpoint after every package, however quick)
+        let mut h = Host::start_env(&e, &dir, &[("FLASHTEX_PREAMBLE_LINE_S", "0.000001")]);
+        for k in 0..4 {
+            let r = compile_and_check(&e, &mut h, &dir, &files, &format!("{case}: settle"));
+            if r.contains("\"mode\":\"unchanged\"") || k == 3 {
+                break;
+            }
+        }
+        for (j, (new, mid)) in edits.iter().enumerate() {
+            let what = format!("{case}: edit {j}");
+            let r = compile_and_check(&e, &mut h, &dir, &[("doc.tex", new)], &what);
+            assert_eq!(field(&r, "mode"), "\"incremental\"", "{what}: {r}");
+            assert_eq!(field(&r, "restart_midline"), mid.to_string(), "{what}: {r}");
+        }
+        let what = format!("{case}: revert");
+        compile_and_check(&e, &mut h, &dir, &[("doc.tex", text)], &what);
+    }
 }
 
 /// Review of #1551 (PREAMBLE-FAST): a file `\input` twice, then text

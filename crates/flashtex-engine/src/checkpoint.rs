@@ -446,6 +446,12 @@ pub struct Layer {
     /// (`build_page`'s segments, the timed ones) take over, so that the
     /// line's checkpoint is asked for again after them.
     preamble_line_pending: bool,
+    /// PREAMBLE-MIDLINE (`crate::midline`): what `input_ln` did with the
+    /// main file's current line, the mid-line checkpoints taken, and one
+    /// to take at once (after a refill).
+    pub main_read: std::cell::Cell<Option<crate::midline::MainRead>>,
+    pub midlines: Vec<(CheckpointId, crate::midline::MidLine)>,
+    pub midline_force: bool,
     /// Segment checkpoints only where the observer stops the run
     /// (`Observer::take_held_segment`; `crate::incr`: an edit's run until its
     /// edited page has shipped).
@@ -667,7 +673,7 @@ impl Globals {
             .expect("arena.extra holds the checkpoint layer")
     }
 
-    fn layer_ref(&self) -> Option<&Layer> {
+    pub(crate) fn layer_ref(&self) -> Option<&Layer> {
         self.arena.extra.as_ref()?.downcast_ref::<Layer>()
     }
 
@@ -859,6 +865,8 @@ impl Globals {
         crate::pdftex::set_last_byte_reads(rec.last_byte_reads);
         crate::pdftex::set_matrix_uses(rec.matrix_uses);
         self.layer().rs.truncate(rec.rs);
+        // (`crate::midline`: set again from a mid-line point's record)
+        self.layer().main_read.set(None);
         crate::lineshift::restore(self, &rec.lines);
         match err {
             Some(e) => Err(format!("cannot restore the files: {e}")),
@@ -1764,6 +1772,7 @@ impl Globals {
         let l = self.layer();
         l.records.clear();
         l.taken.clear();
+        l.midlines.clear();
         l.s0 = None;
     }
 
@@ -1782,6 +1791,7 @@ impl Globals {
         l.aux_done_pending = false;
         l.preamble_file_closed = false;
         l.preamble_line_pending = false;
+        l.midline_force = false;
     }
 
     // ---- the hook and its requests -------------------------------------
@@ -1874,12 +1884,19 @@ impl Globals {
                     return;
                 }
                 if !self.at_preamble_line_end() {
+                    // PREAMBLE-MIDLINE: the first `big_switch` back in the
+                    // main file's line from an `\input` file, or after the
+                    // line was read again (`crate::midline`)
+                    if std::mem::take(&mut self.layer().midline_force) {
+                        self.midline_checkpoint();
+                    }
                     // the line's commands are not done: ask again at the
                     // next `big_switch`
                     self.ckpt_request = REQ_PREAMBLE_LINE;
                     return;
                 }
                 let l = self.layer();
+                l.midline_force = false;
                 let due = l.preamble_line_s.is_some_and(|s| {
                     l.preamble_file_closed
                         || l.last_checkpoint
@@ -2095,6 +2112,7 @@ impl Globals {
         // used up (`Point::PreambleLine`)
         if self.in_open == 1 && self.in_preamble() {
             self.layer().preamble_line_pending = true;
+            self.midline_note_read();
         }
         if self.ckpt_request != 0 && self.ckpt_request != REQ_PREAMBLE_LINE {
             self.layer().lines += 1;
@@ -2114,13 +2132,45 @@ impl Globals {
         }
     }
 
+    /// PREAMBLE-MIDLINE (#1594): a `Point::PreambleLine` in the middle of
+    /// the main file's line, where `crate::midline::here` finds one.
+    fn midline_checkpoint(&mut self) {
+        let Some(m) = crate::midline::here(self) else {
+            return;
+        };
+        let n = self.layer().taken.len();
+        self.hook_checkpoint(Point::PreambleLine);
+        let ids: std::collections::HashSet<CheckpointId> =
+            self.arena.checkpoint_ids().iter().copied().collect();
+        let l = self.layer();
+        if let Some(&(id, _)) = l.taken.get(n) {
+            l.preamble_file_closed = false;
+            l.midlines.retain(|(i, _)| ids.contains(i));
+            l.midlines.push((id, m));
+        }
+    }
+
+    /// A mid-line checkpoint at the next `big_switch` (`crate::midline`:
+    /// the line just read again, as when an `\input` file closes).
+    pub(crate) fn request_midline_checkpoint(&mut self) {
+        let l = self.layer();
+        l.midline_force = true;
+        l.preamble_line_pending = true;
+        self.ckpt_request = REQ_PREAMBLE_LINE;
+    }
+
     /// An input file was closed (`system`'s `a_close`): back in the main
     /// file, its line may end a preamble command (`Point::PreambleLine`).
     pub fn note_input_close(&mut self) {
         if self.in_preamble() {
+            let in_input = self.in_open > 1;
             let l = self.layer();
             l.preamble_file_closed = true;
             l.preamble_line_pending = true;
+            // an `\input` file (or a stream inside one): a mid-line
+            // checkpoint where the main file is next at the top
+            // (`crate::midline`); not a `\closein` of the main file's
+            l.midline_force |= in_input;
             if self.ckpt_request == 0 {
                 self.ckpt_request = REQ_PREAMBLE_LINE;
             }
