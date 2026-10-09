@@ -5105,7 +5105,7 @@ impl Session {
             Ok(key) => {
                 self.s0 = Some(host::S0 { id, key });
                 self.ck_pages.insert(id, 0);
-                let open: Vec<String> = rec
+                let mut open: Vec<String> = rec
                     .files
                     .iter()
                     .filter_map(|f| match &f.stream {
@@ -5113,6 +5113,13 @@ impl Session {
                         _ => None,
                     })
                     .collect();
+                // (and the whole reads the key leaves to the journal)
+                let arm = g.layer().arm_reads;
+                for (i, f) in j.files[..rec.reads.0.min(j.files.len())].iter().enumerate() {
+                    if host::whole_after_arm(arm, i, f) && !open.contains(&f.path) {
+                        open.push(f.path.clone());
+                    }
+                }
                 self.key_cover = (rec.reads.0, open);
             }
             Err(e) => eprintln!("flashtex-host: no S0: {e}"),

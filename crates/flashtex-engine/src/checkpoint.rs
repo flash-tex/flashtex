@@ -405,6 +405,12 @@ pub struct Layer {
     pub arm_point: Option<CheckpointId>,
     pub aux_at_arm: bool,
     pub aux_moved: bool,
+    /// How many files the run had read when `\document`'s body was pushed
+    /// (`REQ_AUX_ARM`), before `\document` looks for the `.aux`: a whole
+    /// read from there to the anchor (its `\IfFileExists`, whose l3
+    /// lookup takes `\pdffilesize`) is the journal's, not S₀'s key's
+    /// (`host::make_key`, `incr::Session::take_s0`).
+    pub arm_reads: Option<usize>,
     /// Stop the run with `EngineExit(-1)` right after S₀ is taken.
     pub stop_at_s0: bool,
     /// Errors the hook met (a checkpoint it could not take).
@@ -1892,6 +1898,9 @@ impl Globals {
                 }
             }
             REQ_AUX_ARM => {
+                if self.layer().s0.is_none() {
+                    self.layer().arm_reads = Some(system::reads_len().0);
+                }
                 // A run with no `.aux` to read (a first compile): its
                 // `.aux` point is here, inside `\document` before the
                 // lookup, so that the lookup -- and what a later pass finds
