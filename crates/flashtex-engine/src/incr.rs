@@ -2832,6 +2832,15 @@ impl Session {
         }
     }
 
+    /// The convergence tests' old chunks kept and rewound
+    /// (`Arena::old_cache_counts`) over the engine space's life; (0, 0)
+    /// before there is one.
+    pub fn old_cache_counts(&self) -> (u64, u64) {
+        self.g
+            .as_ref()
+            .map_or((0, 0), |g| g.arena.old_cache_counts())
+    }
+
     /// While the engine waits for the next edit: work out the restore to
     /// the last compile's restart point now (`Arena::prepare_restore`), so
     /// that the next compile, if it restarts there, copies the state in

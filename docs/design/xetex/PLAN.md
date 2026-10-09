@@ -481,8 +481,16 @@ After review (#1710, #1712): files named by specials (`pdf:fstream`,
 (`FLASHTEX_CONFINE_READS`, tested); an unreadable page fails the run; the
 PDF is byte-identical across runs with `SOURCE_DATE_EPOCH` (tested); a font
 whose `OS/2` `fsType` forbids embedding is written without its program, with
-a warning; CID-keyed CFF fonts (CJK) are drawn by CID and embedded whole
-(not subset yet); `/Flags` and `/StemV` come from the face.
+a warning; CID-keyed CFF fonts (CJK) are drawn by CID, subset by FlashTeX's
+own CID-keyed subsetter (`src/out/cffcid.rs`: glyphs renumbered with their
+CIDs, unreached subroutines emptied in place) with the font's `ROS` as
+`CIDSystemInfo`, as xdvipdfmx writes them (a whole font, if one cannot be
+subset, has no subset tag); `/Flags` and `/StemV` come from the face. A glyph
+several code points reach reads as the highest, as xdvipdfmx's inverted
+`cmap` does (measured): 日 is U+65E5, not the Kangxi radical U+2F47.
+Verified: plain-XeTeX HaranoAji Mincho and Gothic against `xetex`: 46/46
+glyphs matched, 322 px at 2×; xdvipdfmx writes no `ToUnicode` for these
+fonts (viewers read the Adobe-Japan1 ordering), FlashTeX writes one.
 
 ## 5. Risks carried into S1–S3
 

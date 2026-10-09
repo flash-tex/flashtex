@@ -36,8 +36,12 @@ fn rd32(d: &[u8], o: usize) -> Option<u32> {
         .map(|s| u32::from_be_bytes([s[0], s[1], s[2], s[3]]))
 }
 
-/// The font's Unicode `cmap` backwards: each glyph's lowest code point
-/// (formats 4 and 12 of the (3, 10), (0, *) or (3, 1) subtable).
+/// The font's Unicode `cmap` backwards: for a glyph several code points
+/// reach, the highest, as xdvipdfmx's inverted `cmap` gives it (measured:
+/// U+037E over `;` in Times New Roman, U+2223 over `|` in Latin Modern
+/// Math; and so a CJK font's unified ideograph 日 U+65E5 over the Kangxi
+/// radical U+2F47 that maps to the same glyph). Formats 4 and 12 of the
+/// (3, 10), (0, *) or (3, 1) subtable.
 pub fn cmap_reverse(data: &[u8], index: u32) -> BTreeMap<u16, Vec<char>> {
     let mut out: BTreeMap<u16, Vec<char>> = BTreeMap::new();
     let Some(t) = table(data, index, b"cmap") else {
@@ -70,7 +74,12 @@ pub fn cmap_reverse(data: &[u8], index: u32) -> BTreeMap<u16, Vec<char>> {
             return;
         }
         if let Some(c) = char::from_u32(cp) {
-            out.entry(g).or_insert_with(|| vec![c]);
+            match out.get(&g) {
+                Some(old) if old[0] as u32 >= cp => {}
+                _ => {
+                    out.insert(g, vec![c]);
+                }
+            }
         }
     };
     match rd16(t, off) {
