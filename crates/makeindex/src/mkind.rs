@@ -545,12 +545,21 @@ impl<'h> Mk<'h> {
         host_path(self.host.cwd(), name)
     }
 
-    /// `fopen(name, "rb")`.
-    pub fn open_in(&self, name: &[u8]) -> Option<InFile> {
-        let mut f = std::fs::File::open(self.path(name)).ok()?;
-        let mut d = vec![];
-        let _ = std::io::Read::read_to_end(&mut f, &mut d);
-        Some(InFile::new(d))
+    /// `fopen(name, "rb")`, read whole, within [`crate::read_input`]'s
+    /// limits: a device, a FIFO or a file over [`crate::MAX_INPUT`] bytes is
+    /// refused with a message (the C program would read `/dev/zero`
+    /// without end), and then the open fails as for a missing file.
+    pub fn open_in(&mut self, name: &[u8]) -> Option<InFile> {
+        match crate::read_input(&self.path(name))? {
+            Ok(d) => Some(InFile::new(d)),
+            Err(why) => {
+                let mut m = b"makeindex: refusing to read ".to_vec();
+                m.extend_from_slice(name);
+                m.extend_from_slice(format!(": {why}\n").as_bytes());
+                let _ = self.host.stderr().write_all(&m);
+                None
+            }
+        }
     }
 
     /// `fopen(name, "wb")`.
