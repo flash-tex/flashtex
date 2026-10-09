@@ -59,6 +59,19 @@ extension ShellModel {
         if mode == .unicode, !unicodeModeAvailable {
             return refuseMode("Unicode mode's engine (flashtex-host-unicode) is not installed with this build")
         }
+        // flashtex.toml open in the editor with edits not saved: those are
+        // the user's; refuse rather than write over or beside them.
+        let manifestPaths = [manifest.snapshot?.path].compactMap { $0 } + [root.appendingPathComponent(ProjectManifest.fileName).path]
+        for open in documents.map(\.path) where ProjectManifest.isManifestPath(open) && open.hasSuffix(ProjectManifest.fileName) {
+            let abs = root.appendingPathComponent(open).standardizedFileURL.path
+            if manifestPaths.contains(where: { URL(fileURLWithPath: $0).standardizedFileURL.path == abs }), project.isDirty(open) {
+                return refuseMode("\(ProjectManifest.fileName) has unsaved edits in the editor; save or revert them first")
+            }
+        }
+        // What the helper rewrites is the file as it is now: the save checks
+        // it is still that (a write in between is a conflict, not lost).
+        let manifestURL = URL(fileURLWithPath: manifest.snapshot?.path ?? root.appendingPathComponent(ProjectManifest.fileName).path)
+        let before = (try? Data(contentsOf: manifestURL)).map { SourceDigest.sha256Hex($0) }
         let reply: ProjectFilesV1.SetFonts
         switch files.setMode(for: root, entry: project.entryPath, mode: mode.rawValue) {
         case .success(let r): reply = r
@@ -66,7 +79,9 @@ extension ShellModel {
         }
         if reply.changed, let text = reply.text {
             let url = URL(fileURLWithPath: reply.path)
-            switch files.save(url, text: text, expected: reply.exists ? .any : .newFile, force: false, recordsState: false) {
+            let expected: ProjectFilesV1.Expected = !reply.exists ? .newFile
+                : (url.standardizedFileURL == manifestURL.standardizedFileURL ? before.map { ProjectFilesV1.Expected.hash($0) } : nil) ?? .any
+            switch files.save(url, text: text, expected: expected, force: false, recordsState: false) {
             case .saved: break
             case .conflict(let c): return refuseMode("cannot write \(ProjectManifest.fileName): \(c.summary)")
             case .failed(let why): return refuseMode("cannot write \(ProjectManifest.fileName): \(why)")
@@ -212,7 +227,10 @@ struct UnicodeModeSuggestionBanner: View {
     /// What the banner says, if it shows: a document that needs Unicode
     /// mode, else `[fonts]` in a Classic project.
     @MainActor static func message(_ model: ShellModel) -> Message? {
-        guard model.documentMode.mode == .classic else { return nil }
+        // Classic chosen in flashtex.toml (or by FLASHTEX_MODE, or a
+        // `% !TEX program` line) is the user's choice: no suggestion.
+        let mode = model.documentMode
+        guard mode.mode == .classic, mode.source == "default" else { return nil }
         if let n = model.unicodeModeSuggestion {
             return Message(headline: "This document uses \(n.what), which needs Unicode mode.",
                            detail: "Classic mode is pdfLaTeX-compatible and cannot load OpenType fonts. Unicode mode typesets the project like XeLaTeX; until you switch, the compatibility engine typesets it.")

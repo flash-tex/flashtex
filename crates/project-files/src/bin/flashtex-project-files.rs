@@ -430,16 +430,20 @@ fn set_mode(root: &ProjectRoot, req: &Json) -> Result<Json, Failure> {
         }
         None => (root.path().join(flashtex_project_manifest::FILE_NAME), false, Manifest::template(&entry)),
     };
+    // The rewrite must read back as the original with only the mode set,
+    // or the file stays as it is.
+    let mut want = Manifest::parse(&current).map_err(|e| fail("manifest_syntax", format!("{}: {e}", path.display())))?.manifest;
+    want.project.mode = Some(mode);
     let text = Manifest::with_mode(&current, mode);
     match Manifest::parse(&text) {
-        Ok(parsed) if parsed.manifest.project.mode == Some(mode) => {}
-        Ok(parsed) => {
+        Ok(parsed) if parsed.manifest == want => {}
+        Ok(_) => {
             return Err(fail(
                 "manifest_rewrite",
-                format!("the rewritten {} does not read back mode {:?} (got {:?}); not written", path.display(), mode.as_str(), parsed.manifest.project.mode),
+                format!("setting mode = {:?} in {} would change other settings (an inline `project = {{ … }}` table?); not written", mode.as_str(), path.display()),
             ))
         }
-        Err(e) => return Err(fail("manifest_syntax", format!("{}: {e}", path.display()))),
+        Err(e) => return Err(fail("manifest_rewrite", format!("the rewritten {} does not parse: {e}; not written", path.display()))),
     }
     let mut payload = Json::object();
     payload

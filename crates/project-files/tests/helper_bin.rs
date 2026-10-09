@@ -337,6 +337,14 @@ fn set_mode_sets_project_mode_and_writes_nothing_itself() {
     );
     assert_eq!(error_code(&replies[1], "3"), "invalid_request");
     assert_eq!(error_code(&replies[2], "4"), "invalid_request");
+    // keys before the first table stay theirs; an inline table is refused, not rewritten
+    std::fs::write(root.join("flashtex.toml"), "project.entry = \"paper.tex\"\n\n[fonts]\ntext = \"G\"\n").unwrap();
+    let replies = run(root, &[r#"{"id":"5","operation":"set_mode","mode":"unicode"}"#]);
+    let text = payload(&replies[0], "5").get("text").and_then(Json::as_str).unwrap().to_string();
+    assert!(text.starts_with("project.entry = \"paper.tex\"\nproject.mode = \"unicode\"\n"), "{text}");
+    std::fs::write(root.join("flashtex.toml"), "project = { entry = \"paper.tex\" }\n").unwrap();
+    let replies = run(root, &[r#"{"id":"6","operation":"set_mode","mode":"unicode"}"#]);
+    assert_eq!(error_code(&replies[0], "6"), "manifest_rewrite");
 }
 
 #[test]

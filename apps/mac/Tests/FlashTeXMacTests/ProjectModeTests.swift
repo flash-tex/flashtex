@@ -101,6 +101,22 @@ final class ProjectModeTests: XCTestCase {
         XCTAssertNil(model.setProjectMode(.classic))
         let again = try String(contentsOf: tmp.appendingPathComponent("flashtex.toml"), encoding: .utf8)
         XCTAssertEqual(again, written.replacingOccurrences(of: "mode = \"unicode\"", with: "mode = \"classic\""))
+        for _ in 0 ..< 100 where model.documentMode.source != "flashtex.toml" || model.documentMode.mode != .classic {
+            try await Task.sleep(nanoseconds: 20_000_000)
+        }
+        // Classic set in flashtex.toml is the user's choice: no suggestion,
+        // even for a fontspec document
+        model.engineChoice = EngineChoice(preferred: .new, source: .builtInDefault,
+                                          blocker: .unicodeFonts(UnicodeFontsNeed(kind: .package("fontspec"), file: "main.tex")))
+        XCTAssertNil(UnicodeModeSuggestionBanner.message(model))
+        // flashtex.toml open with unsaved edits: refused, the file untouched
+        let opened = await model.project.openDocument("flashtex.toml")
+        XCTAssertEqual(opened, .opened(path: "flashtex.toml"))
+        _ = model.project.switchDocument(to: "flashtex.toml")
+        model.updateActiveText(again + "# my unsaved note\n")
+        let refusal = model.setProjectMode(.unicode)
+        XCTAssertTrue(refusal?.contains("unsaved edits") == true, refusal ?? "nil")
+        XCTAssertEqual(try String(contentsOf: tmp.appendingPathComponent("flashtex.toml"), encoding: .utf8), again)
     }
 
     func testFlashtexModeInTheEnvironmentRefusesTheSwitch() throws {
