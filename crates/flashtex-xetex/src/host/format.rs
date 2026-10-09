@@ -222,6 +222,18 @@ fn read_set(text: &str) -> (Vec<FileRec>, Vec<LookupRec>) {
 
 /// The directory holding format `fmt` (`<fmt>.fmt` in it), built if it is
 /// not cached or what it was made from changed. `exe` is this program.
+/// `data` into `path` by a rename (a reader sees the old file or the new
+/// one, never part of either).
+fn write_atomic(path: &Path, data: &[u8]) -> std::io::Result<()> {
+    let tmp = path.with_extension(format!("tmp-{}", std::process::id()));
+    File::create(&tmp)
+        .and_then(|mut f| f.write_all(data))
+        .and_then(|_| fs::rename(&tmp, path))
+        .inspect_err(|_| {
+            let _ = fs::remove_file(&tmp);
+        })
+}
+
 pub fn ensure(exe: &Path, fmt: &str) -> Result<PathBuf, String> {
     let args = ini_args(fmt).ok_or_else(|| format!("no format {fmt} for the Unicode engine"))?;
     let root = cache_root().ok_or("no cache directory (HOME unset)")?;
@@ -230,31 +242,42 @@ pub fn ensure(exe: &Path, fmt: &str) -> Result<PathBuf, String> {
     fs::create_dir_all(&slot).map_err(|e| format!("{}: {e}", slot.display()))?;
     let manifest = slot.join("manifest");
     let fmt_file = slot.join(format!("{fmt}.fmt"));
-    let check = || -> bool {
-        let Some(text) = fs::read_to_string(&manifest).ok() else {
-            return false;
-        };
-        let Some((mut files, lookups)) = decode(&text) else {
-            return false;
-        };
+    // Whether the format is valid, and the manifest with the signatures
+    // refreshed when a file was found unchanged by its content.
+    let check = || -> Option<Option<String>> {
+        let text = fs::read_to_string(&manifest).ok()?;
+        let (mut files, lookups) = decode(&text)?;
         if !fmt_file.is_file() || !still_valid(&mut files, &lookups, fmt) {
-            return false;
+            return None;
         }
-        let _ = fs::write(&manifest, encode(&files, &lookups));
-        true
+        let now = encode(&files, &lookups);
+        Some((now != text).then_some(now))
     };
-    if check() {
-        return Ok(slot);
+    let lock = || -> Result<File, String> {
+        let f = File::options()
+            .create(true)
+            .truncate(false)
+            .write(true)
+            .open(slot.join("lock"))
+            .map_err(|e| format!("{}: {e}", slot.display()))?;
+        f.lock()
+            .map_err(|e| format!("lock {}: {e}", slot.display()))?;
+        Ok(f)
+    };
+    match check() {
+        Some(None) => return Ok(slot),
+        Some(Some(_)) => {
+            // refreshed under the lock, by a rename
+            let _held = lock()?;
+            if let Some(Some(now)) = check() {
+                let _ = write_atomic(&manifest, now.as_bytes());
+            }
+            return Ok(slot);
+        }
+        None => {}
     }
-    let lock = File::options()
-        .create(true)
-        .truncate(false)
-        .write(true)
-        .open(slot.join("lock"))
-        .map_err(|e| format!("{}: {e}", slot.display()))?;
-    lock.lock()
-        .map_err(|e| format!("lock {}: {e}", slot.display()))?;
-    if check() {
+    let _held = lock()?;
+    if check().is_some() {
         return Ok(slot);
     }
     // fmtutil's `rebuild_one_format`: INITEX in an empty directory
@@ -293,10 +316,7 @@ pub fn ensure(exe: &Path, fmt: &str) -> Result<PathBuf, String> {
     fs::rename(&built, &tmp)
         .and_then(|_| fs::rename(&tmp, &fmt_file))
         .map_err(|e| format!("{}: {e}", fmt_file.display()))?;
-    let mtmp = slot.join("manifest.tmp");
-    File::create(&mtmp)
-        .and_then(|mut f| f.write_all(encode(&files, &lookups).as_bytes()))
-        .and_then(|_| fs::rename(&mtmp, &manifest))
+    write_atomic(&manifest, encode(&files, &lookups).as_bytes())
         .map_err(|e| format!("{}: {e}", manifest.display()))?;
     let _ = fs::remove_dir_all(&work);
     Ok(slot)

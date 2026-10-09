@@ -10,14 +10,17 @@
 //! for `JOB.idx`. A rule runs when what its program reads changed since
 //! its last run on this connection, or its output is missing.
 
+use super::compile::Running;
 use super::compile::{send_json, Job, Out};
+use super::proc::{kill_group, Children};
 use flashtex_display_list::json::{obj, s as js, Json};
 use flashtex_display_list::kind;
 use flashtex_display_list::sha256::sha256;
 use flashtex_engine::host::external::{self, Programs};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::Stdio;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 /// What the connection remembers of each rule: the state of its sources
@@ -135,17 +138,20 @@ fn program<'a>(p: &'a Programs, tool: &str) -> Option<&'a PathBuf> {
     }
 }
 
-/// Run a program with a timeout; its exit code (`None`: timed out or did
-/// not start) and how long it took.
+/// Run a program with a timeout, in a process group a cancel kills
+/// (`proc.rs`); its exit code (`None`: timed out, cancelled or did not
+/// start) and how long it took.
 fn run(
     prog: &Path,
     argv: &[String],
     dir: &Path,
     env: &[(&str, String)],
     timeout: Duration,
+    children: &Children,
+    running: &Arc<Mutex<Running>>,
 ) -> (Option<i32>, f64) {
     let t = Instant::now();
-    let mut c = Command::new(prog);
+    let mut c = children.tool(prog);
     c.args(argv)
         .current_dir(dir)
         .stdin(Stdio::null())
@@ -154,24 +160,38 @@ fn run(
     for (k, v) in env {
         c.env(k, v);
     }
-    let Ok(mut child) = c.spawn() else {
-        return (None, 0.0);
+    let mut child = {
+        let mut r = running.lock().unwrap();
+        if r.cancelled {
+            return (None, 0.0);
+        }
+        let Ok(child) = c.spawn() else {
+            return (None, 0.0);
+        };
+        r.group = Some(child.id());
+        child
     };
-    loop {
+    let code = loop {
         if let Ok(Some(s)) = child.try_wait() {
-            return (s.code(), t.elapsed().as_secs_f64() * 1e3);
+            break s.code();
         }
         if t.elapsed() > timeout {
-            let _ = child.kill();
+            kill_group(child.id());
             let _ = child.wait();
-            return (None, t.elapsed().as_secs_f64() * 1e3);
+            break None;
         }
         std::thread::sleep(Duration::from_millis(5));
-    }
+    };
+    // reaped (a cancel killed the group already, and the wait ended)
+    let mut r = running.lock().unwrap();
+    r.group = None;
+    let code = if r.cancelled { None } else { code };
+    (code, t.elapsed().as_secs_f64() * 1e3)
 }
 
 /// After a compile: run what is due (policy `auto`) or say what would have
 /// run (`off`). True when an output changed (a follow-up compile is due).
+#[allow(clippy::too_many_arguments)]
 pub fn after_compile(
     job: &Job,
     auto: bool,
@@ -179,9 +199,14 @@ pub fn after_compile(
     memory: &mut Memory,
     out: &Out,
     timeout: Duration,
+    children: &Children,
+    running: &Arc<Mutex<Running>>,
 ) -> (bool, bool) {
     let (mut ran, mut changed) = (false, false);
     for r in rules(job) {
+        if running.lock().unwrap().cancelled {
+            break;
+        }
         let key = format!("{}:{}", r.tool, r.file);
         let out_file = job.output_dir.join(&r.output);
         let have = std::fs::read(&out_file).ok().map(|d| sha256(&d));
@@ -240,7 +265,19 @@ pub fn after_compile(
             ("BSTINPUTS", format!("{root}:{dir}:")),
             ("INDEXSTYLE", format!("{root}:{dir}:")),
         ];
-        let (code, ms) = run(prog, &r.argv, &job.output_dir, &env, timeout);
+        let (code, ms) = run(
+            prog,
+            &r.argv,
+            &job.output_dir,
+            &env,
+            timeout,
+            children,
+            running,
+        );
+        if running.lock().unwrap().cancelled {
+            // stopped part way: its output is not the run's, nor remembered
+            break;
+        }
         ran = true;
         memory.last.insert(key.clone(), r.state);
         let now = std::fs::read(&out_file).ok().map(|d| sha256(&d));

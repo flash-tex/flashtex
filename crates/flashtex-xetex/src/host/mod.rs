@@ -30,6 +30,7 @@
 
 pub mod compile;
 pub mod format;
+pub mod proc;
 pub mod tools;
 
 use compile::{send_json, Accept, Job, Out, Running};
@@ -91,6 +92,12 @@ impl Opts {
                 }
                 // the pdfTeX host's warm-up has nothing to warm here
                 "--no-warm" => {}
+                // the resident pdfTeX host's S0 cache and checkpoint
+                // interval (the app passes them to either host): a cold
+                // host keeps neither
+                "--s0-cache" | "--timed" => {
+                    val()?;
+                }
                 _ => return Err(format!("unknown option {a}")),
             }
             i += 1;
@@ -114,6 +121,9 @@ pub fn main(argv: Vec<String>) -> i32 {
         .unwrap_or_default();
     if matches!(name.as_str(), "xetex" | "xelatex") {
         crate::driver::run(argv);
+    }
+    if argv.get(1).map(String::as_str) == Some(proc::RUN_TOOL) {
+        return proc::run_tool(&argv[2..]);
     }
     let opts = match Opts::parse(&argv[1..]) {
         Ok(o) => o,
@@ -187,9 +197,27 @@ fn serve(exe: &Path, opts: &Opts, texmf: Json, formats: HashMap<String, PathBuf>
         }
     };
     {
+        // owner only, or not at all (as `flashtex-host`, os::bind_owner_only)
         use std::os::unix::fs::PermissionsExt;
-        let _ = std::fs::set_permissions(&opts.socket, std::fs::Permissions::from_mode(0o600));
+        if let Err(e) =
+            std::fs::set_permissions(&opts.socket, std::fs::Permissions::from_mode(0o600))
+        {
+            let _ = std::fs::remove_file(&opts.socket);
+            eprintln!(
+                "flashtex-host-unicode: {}: cannot restrict the socket to its owner: {e}",
+                opts.socket.display()
+            );
+            return 1;
+        }
     }
+    let children = match proc::Children::new(exe) {
+        Ok(c) => c,
+        Err(e) => {
+            let _ = std::fs::remove_file(&opts.socket);
+            eprintln!("flashtex-host-unicode: the children's lifeline: {e}");
+            return 1;
+        }
+    };
     println!(
         "flashtex-host-unicode: listening on {}",
         opts.socket.display()
@@ -203,6 +231,7 @@ fn serve(exe: &Path, opts: &Opts, texmf: Json, formats: HashMap<String, PathBuf>
         programs: flashtex_engine::host::external::Programs::discover(),
         external_tools: opts.external_tools,
         tool_timeout: opts.tool_timeout,
+        children,
     });
     let _ = listener.set_nonblocking(opts.once);
     let mut n = 0u64;
@@ -246,6 +275,8 @@ struct Host {
     programs: flashtex_engine::host::external::Programs,
     external_tools: bool,
     tool_timeout: Duration,
+    /// Every child's process group and lifeline (`proc.rs`).
+    children: proc::Children,
 }
 
 impl Host {
@@ -264,7 +295,8 @@ impl Host {
 }
 
 enum Msg {
-    Compile(Job, Instant),
+    /// The job, when it came, and its sequence number (`Running::newest`).
+    Compile(Job, Instant, u64),
 }
 
 fn connection(host: &Arc<Host>, conn: UnixStream, n: u64) {
@@ -366,28 +398,27 @@ fn connection(host: &Arc<Host>, conn: UnixStream, n: u64) {
     let scratch =
         std::env::temp_dir().join(format!("flashtex-unicode-{}-{}", std::process::id(), n));
     let running = Arc::new(Mutex::new(Running::default()));
-    let current: Arc<Mutex<Option<i64>>> = Arc::new(Mutex::new(None));
     let (tx, rx) = mpsc::channel::<Msg>();
     let worker = {
-        let (host, out, running, current, scratch) = (
-            host.clone(),
-            out.clone(),
-            running.clone(),
-            current.clone(),
-            scratch.clone(),
-        );
-        std::thread::spawn(move || {
-            compile_thread(&host, &out, &running, &current, &scratch, &accept, rx)
-        })
+        let (host, out, running, scratch) =
+            (host.clone(), out.clone(), running.clone(), scratch.clone());
+        std::thread::spawn(move || compile_thread(&host, &out, &running, &scratch, &accept, rx))
     };
+    let mut seq = 0u64;
     while let Ok(Some((k, body))) = read_frame(&mut reader) {
         let j = Json::parse(&String::from_utf8_lossy(&body)).unwrap_or(Json::Null);
         match k {
             kind::COMPILE => match Job::parse(&j, &scratch) {
                 Ok(job) => {
-                    // a newer compile supersedes the running one (spec §6.3)
-                    cancel(&running);
-                    let _ = tx.send(Msg::Compile(job, Instant::now()));
+                    // a newer compile supersedes the running one (spec
+                    // §6.3) and any not started yet
+                    seq += 1;
+                    {
+                        let mut r = running.lock().unwrap();
+                        r.newest = seq;
+                        cancel_locked(&mut r);
+                    }
+                    let _ = tx.send(Msg::Compile(job, Instant::now(), seq));
                 }
                 Err(e) => {
                     let mut f = vec![
@@ -401,26 +432,33 @@ fn connection(host: &Arc<Host>, conn: UnixStream, n: u64) {
                 }
             },
             kind::CANCEL => {
-                if j.int_field("id").is_some() && j.int_field("id") == *current.lock().unwrap() {
-                    cancel(&running);
+                // under the lock the compile thread starts a job with
+                let mut r = running.lock().unwrap();
+                if let Some(id) = j.int_field("id") {
+                    if Some(id) == r.job {
+                        cancel_locked(&mut r);
+                    } else if r.cancelled_early.len() < 4096 {
+                        // not started yet (or not known): cancelled when it starts
+                        r.cancelled_early.insert(id);
+                    }
                 }
             }
             kind::BYE => break,
             _ => {}
         }
     }
-    cancel(&running);
+    cancel_locked(&mut running.lock().unwrap());
     drop(tx);
     let _ = worker.join();
     let _ = std::fs::remove_dir_all(&scratch);
 }
 
-/// Stop the running engine, if any (its compile's `DONE` says `cancelled`).
-fn cancel(running: &Arc<Mutex<Running>>) {
-    let mut r = running.lock().unwrap();
+/// Stop the running compile, if any: its engine or tool, with everything
+/// it started (its compile's `DONE` says `cancelled`).
+fn cancel_locked(r: &mut Running) {
     r.cancelled = true;
-    if let Some(c) = r.child.as_mut() {
-        let _ = c.kill();
+    if let Some(g) = r.group {
+        proc::kill_group(g);
     }
 }
 
@@ -428,24 +466,33 @@ fn compile_thread(
     host: &Arc<Host>,
     out: &Out,
     running: &Arc<Mutex<Running>>,
-    current: &Arc<Mutex<Option<i64>>>,
     scratch: &Path,
     accept: &Accept,
     rx: mpsc::Receiver<Msg>,
 ) {
     let mut memory = tools::Memory::default();
-    while let Ok(Msg::Compile(mut job, mut t0)) = rx.recv() {
-        // compiles superseded before they started only apply their edits
-        while let Ok(Msg::Compile(next, t)) = rx.try_recv() {
+    while let Ok(Msg::Compile(job, t0, seq)) = rx.recv() {
+        // A compile superseded before it started only applies its edits.
+        // Decided under the lock a COMPILE or CANCEL takes, so neither is
+        // lost between this test and the job's start.
+        let superseded = {
+            let mut r = running.lock().unwrap();
+            let early = r.cancelled_early.remove(&job.id);
+            let s = seq < r.newest || early;
+            if !s {
+                r.job = Some(job.id);
+                r.cancelled = false;
+                r.group = None;
+            }
+            s
+        };
+        if superseded {
             let _ = job.apply_files();
             done(out, &job, "cancelled", None, 0, 0, 0, None, t0, None);
-            job = next;
-            t0 = t;
+            continue;
         }
-        *current.lock().unwrap() = Some(job.id);
-        *running.lock().unwrap() = Running::default();
         run_job(host, out, running, scratch, accept, &job, t0, &mut memory);
-        *current.lock().unwrap() = None;
+        running.lock().unwrap().job = None;
     }
 }
 
@@ -499,7 +546,17 @@ fn run_job(
     let mut ran_any = false;
     loop {
         started(out, job, &host.exe);
-        let o = compile::compile(&host.exe, &fmt_dir, job, accept, out, running, t0, scratch);
+        let o = compile::compile(
+            &host.exe,
+            &fmt_dir,
+            job,
+            accept,
+            out,
+            running,
+            t0,
+            scratch,
+            &host.children,
+        );
         done(
             out,
             job,
@@ -515,8 +572,16 @@ fn run_job(
         if job.export || o.status == "cancelled" || o.status == "failed" {
             break;
         }
-        let (ran, changed) =
-            tools::after_compile(job, auto, &host.programs, memory, out, host.tool_timeout);
+        let (ran, changed) = tools::after_compile(
+            job,
+            auto,
+            &host.programs,
+            memory,
+            out,
+            host.tool_timeout,
+            &host.children,
+            running,
+        );
         ran_any |= ran;
         if !changed || rounds >= compile::MAX_ROUNDS || running.lock().unwrap().cancelled {
             if job.external_tools.is_some() {

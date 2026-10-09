@@ -52,6 +52,10 @@ flashtex-display-list = { path = "../display-list-v3" }
 # table reader for native fonts' metrics, Type 1's built-in encodings.
 flashtex-pdf = { path = "../pdf" }
 
+# The host's children (src/host/proc.rs): process groups, the lifeline pipe.
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
 [dev-dependencies]
 # tests/pinned_libs.rs: the sha256 of every vendored HarfBuzz/FreeType/TECkit file.
 sha2 = "0.10"
