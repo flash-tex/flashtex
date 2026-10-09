@@ -24,3 +24,97 @@ biblatex-apa
 biblatex-ext
 # a thesis's list of symbols: nomencl.sty and the nomencl.ist makeindex reads
 nomencl
+
+# Unicode mode (XeLaTeX-compatible, flashtex-host-unicode; docs/design/xetex/PLAN.md §3.4,
+# modes U3c). Derived like packages.txt, but by the Unicode engine: `texbundle.py derive`
+# over FLASHTEX_READ_SET recordings of building xelatex.fmt and compiling
+# tools/xetex-lockstep/latex-cases, tools/xetex-pdfparity/cases and fontspec, unicode-math,
+# polyglossia, xeCJK and beamer-with-fontspec documents (MacTeX 2026's tree).
+# xelatex.ini, and what fontspec, unicode-math and their defaults read: the OpenType
+# Latin Modern Math, TECkit's tex-text.tec (xetex), l3backend's xetex driver, unicode-data
+fontspec
+l3backend
+lm-math
+tex-ini-files
+unicode-data
+unicode-math
+xetex
+# the OpenType math fonts unicode-math documents name most (STIX Two, Libertinus,
+# TeX Gyre's)
+libertinus-fonts
+stix2-otf
+tex-gyre-math
+# languages and scripts: polyglossia; xeCJK with ctex's hook file and its default
+# Fandol fonts
+polyglossia
+xecjk
+ctex
+fandol
+# the UTF-8 hyphenation patterns xelatex.fmt loads that pdflatex.fmt reads converted
+# (the core has those): every language TeX Live's language.dat names
+dehyph-exptl
+hyphen-afrikaans
+hyphen-albanian
+hyphen-ancientgreek
+hyphen-arabic
+hyphen-armenian
+hyphen-base
+hyphen-basque
+hyphen-belarusian
+hyphen-bulgarian
+hyphen-catalan
+hyphen-chinese
+hyphen-churchslavonic
+hyphen-coptic
+hyphen-croatian
+hyphen-czech
+hyphen-danish
+hyphen-dutch
+hyphen-english
+hyphen-esperanto
+hyphen-estonian
+hyphen-ethiopic
+hyphen-farsi
+hyphen-finnish
+hyphen-french
+hyphen-friulan
+hyphen-galician
+hyphen-georgian
+hyphen-german
+hyphen-greek
+hyphen-hebrew
+hyphen-hungarian
+hyphen-icelandic
+hyphen-indic
+hyphen-indonesian
+hyphen-interlingua
+hyphen-irish
+hyphen-italian
+hyphen-kazakh
+hyphen-kurmanji
+hyphen-latin
+hyphen-latvian
+hyphen-lithuanian
+hyphen-macedonian
+hyphen-mongolian
+hyphen-norwegian
+hyphen-occitan
+hyphen-piedmontese
+hyphen-polish
+hyphen-portuguese
+hyphen-romanian
+hyphen-romansh
+hyphen-russian
+hyphen-sanskrit
+hyphen-serbian
+hyphen-slovak
+hyphen-slovenian
+hyphen-spanish
+hyphen-swedish
+hyphen-thai
+hyphen-turkish
+hyphen-turkmen
+hyphen-ukrainian
+hyphen-uppersorbian
+hyphen-vietnamese
+hyphen-welsh

@@ -20,7 +20,12 @@
 # own bibtex and makeindex must make TeX Live's .bbl, .blg, .ind and .ilg
 # byte for byte, from the bundle alone.
 #
+# With --host-unicode, it also starts flashtex-host-unicode (Unicode mode,
+# crates/flashtex-xetex) the same way and checks that it builds xelatex.fmt
+# from the bundle and compiles a fontspec and a unicode-math document.
+#
 #   scripts/notex-host-check.sh --host target/release/flashtex-host \
+#       [--host-unicode crates/flashtex-xetex/target/release/flashtex-host-unicode] \
 #       --client target/release/dl3-client --out DIR \
 #       [--lock tools/bundle/tl2026/flashtex-bundle.lock] [--url U --digest D]
 #
@@ -29,10 +34,11 @@
 set -euo pipefail
 
 here="$(cd "$(dirname "$0")/.." && pwd)"
-host="" client="" out="" lock="$here/tools/bundle/tl2026/flashtex-bundle.lock" url="" digest=""
+host="" host_u="" client="" out="" lock="$here/tools/bundle/tl2026/flashtex-bundle.lock" url="" digest=""
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --host) host="$2"; shift 2 ;;
+    --host-unicode) host_u="$2"; shift 2 ;;
     --client) client="$2"; shift 2 ;;
     --out) out="$2"; shift 2 ;;
     --lock) lock="$2"; shift 2 ;;
@@ -44,6 +50,10 @@ done
 [[ -x "$host" && -x "$client" && -n "$out" ]] || {
   echo "usage: $0 --host FLASHTEX_HOST --client DL3_CLIENT --out DIR [--lock F] [--url U --digest D]" >&2; exit 2; }
 host="$(cd "$(dirname "$host")" && pwd)/$(basename "$host")"
+if [[ -n "$host_u" ]]; then
+  [[ -x "$host_u" ]] || { echo "notex-host-check: --host-unicode $host_u is not executable" >&2; exit 2; }
+  host_u="$(cd "$(dirname "$host_u")" && pwd)/$(basename "$host_u")"
+fi
 client="$(cd "$(dirname "$client")" && pwd)/$(basename "$client")"
 lock="$(cd "$(dirname "$lock")" && pwd)/$(basename "$lock")"
 
@@ -243,6 +253,89 @@ for b in bad:
     print(f"notex-host-check: {b}", file=sys.stderr)
 sys.exit(1 if bad else 0)
 PY
+# Unicode mode with no TeX Live (--host-unicode; docs/design/xetex/PLAN.md
+# §3.4, modes U3c): flashtex-host-unicode in the same hidden environment and
+# bundle builds xelatex.fmt from the bundle (xelatex.ini, the UTF-8
+# patterns) and compiles a fontspec document (Latin Modern OpenType, TECkit's
+# tex-text mapping) and a unicode-math one (Latin Modern Math), cold and warm.
+if [[ -n "$host_u" ]]; then
+  doc ufontspec <<'EOF'
+\documentclass{article}
+\usepackage{fontspec}
+\begin{document}
+\section{Unicode}
+Naïve café, “quotes” -- and --- dashes, \textbf{bold}, \textit{italic},
+\texttt{mono}, \textsf{sans}: ä ö ü ß é è ñ.
+\end{document}
+EOF
+  doc umath <<'EOF'
+\documentclass{article}
+\usepackage{amsmath}
+\usepackage{unicode-math}
+\begin{document}
+$\alpha+\beta=\int_0^1 f(x)\,dx$, $\mathbb{R}$, $\mathcal{F}$,
+\[ \sum_{n=1}^{\infty}\frac{1}{n^2}=\frac{\pi^2}{6} \]
+\end{document}
+EOF
+  usock="$work/host-unicode.sock"
+  /usr/bin/env -i HOME="$work/home" TMPDIR="$work/tmp/" PATH=/usr/bin:/bin:/usr/sbin:/sbin LANG=C \
+    "${env_bundle[@]}" FLASHTEX_BUNDLE_CACHE_DIR="$out/bundle-cache" FLASHTEX_FORMAT_CACHE_DIR="$out/format-cache" \
+    "${wrap[@]}" "$host_u" --socket "$usock" > "$out/host-unicode.log" 2>&1 &
+  upid=$!
+  ucleanup() { kill "$upid" 2>/dev/null || true; wait "$upid" 2>/dev/null || true; }
+  trap ucleanup EXIT
+  # (the first start builds xelatex.fmt, fetching what it reads)
+  for _ in $(seq 1 3000); do [[ -S "$usock" ]] && break; kill -0 "$upid" 2>/dev/null || break; sleep 0.1; done
+  if [[ ! -S "$usock" ]]; then
+    failed=1; echo "notex-host-check: the Unicode host did not start"; cat "$out/host-unicode.log"
+  else
+    { echo; echo "### No TeX Live: Unicode mode (flashtex-host-unicode, bundle ${digest:0:12})"; echo
+      echo "| document | cold first page ms | cold done ms | warm done ms | pages | verdict |"; echo "|---|---|---|---|---|---|"; } >> "$report"
+    for d in ufontspec umath; do
+      set +e
+      "$client" --socket "$usock" --root "$work/docs/$d" --main main.tex --repeat 2 > "$out/$d.jsonl" 2> "$out/$d.err"
+      code=$?
+      set -e
+      ok="$(python3 - "$out/$d.jsonl" "$code" <<'PY'
+import json, sys
+rows = [json.loads(l) for l in open(sys.argv[1]) if l.startswith("{")]
+good = sys.argv[2] == "0" and len(rows) == 2 and all(r["status"] == "ok" and r["pages"] > 0 for r in rows)
+c = rows[0] if rows else {}
+w = rows[1] if len(rows) > 1 else {}
+print(f'{c.get("first_page_ms")} | {c.get("done_ms")} | {w.get("done_ms")} | {c.get("pages")} | {"ok" if good else "FAILED"}')
+PY
+)"
+      echo "| $d | $ok |" >> "$report"
+      [[ "$ok" == *"| ok" ]] || { failed=1; echo "notex-host-check: $d failed:"; cat "$out/$d.jsonl" "$out/$d.err"; }
+    done
+  fi
+  ucleanup
+  trap - EXIT
+  python3 - "$out/host-unicode.log" "$digest" >> "$report" <<'PY' || failed=1
+import json, sys
+hello = None
+for line in open(sys.argv[1], errors="replace"):
+    if line.startswith("flashtex-host-unicode: {") and '"resolver"' in line:
+        hello = json.loads(line.split(": ", 1)[1])
+bad = []
+if hello is None:
+    bad.append("no HELLO in the Unicode host's log")
+else:
+    if hello.get("texlive") is not None:
+        bad.append(f"the Unicode host found a TeX Live: {hello['texlive']}")
+    if not str(hello.get("resolver", "")).startswith("bundle " + sys.argv[2]):
+        bad.append(f"the Unicode host's resolver is {hello.get('resolver')!r}, not the bundle")
+    if not any(f.get("name") == "xelatex" and f.get("status") == "ready" for f in hello.get("formats", [])):
+        bad.append(f"xelatex format not ready: {hello.get('formats')}")
+print()
+print(f"Unicode HELLO: texlive `{hello and hello.get('texlive')}`, resolver `{hello and hello.get('resolver')}`, "
+      f"formats `{hello and hello.get('formats')}`")
+for b in bad:
+    print(f"- **FAILED**: {b}")
+    print(f"notex-host-check: {b}", file=sys.stderr)
+sys.exit(1 if bad else 0)
+PY
+fi
 cat "$report"
 rm -rf "$work"
 exit "$failed"
