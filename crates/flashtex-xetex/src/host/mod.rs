@@ -140,21 +140,30 @@ pub fn main(argv: Vec<String>) -> i32 {
             return 1;
         }
     };
-    let (texmf, formats) = prepare(&exe, &opts);
+    // Every child, the format's INITEX runs included, is on the lifeline
+    // (proc.rs) from the start.
+    let children = match proc::Children::new(&exe) {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("flashtex-host-unicode: the children's lifeline: {e}");
+            return 1;
+        }
+    };
+    let (texmf, formats) = prepare(&exe, &opts, &children);
     println!("flashtex-host-unicode: {texmf}");
-    serve(&exe, &opts, texmf, formats)
+    serve(&exe, &opts, texmf, formats, children)
 }
 
 /// The TeX Live the engine reads and each format made ready: `HELLO.texmf`
 /// and the directory of each ready format.
-fn prepare(exe: &Path, opts: &Opts) -> (Json, HashMap<String, PathBuf>) {
+fn prepare(exe: &Path, opts: &Opts, children: &proc::Children) -> (Json, HashMap<String, PathBuf>) {
     let texlive = flashtex_engine::resolver::discover_texlive().map(|t| t.describe());
     let resolver = flashtex_engine::system::with_resolver_for("xelatex", |r| r.describe());
     let mut ready = HashMap::new();
     let mut fj = vec![];
     for f in &opts.formats {
         let t = Instant::now();
-        match format::ensure(exe, f) {
+        match format::ensure(exe, f, children) {
             Ok(dir) => {
                 fj.push(obj([
                     ("name", js(f.clone())),
@@ -188,7 +197,13 @@ fn prepare(exe: &Path, opts: &Opts) -> (Json, HashMap<String, PathBuf>) {
     (texmf, ready)
 }
 
-fn serve(exe: &Path, opts: &Opts, texmf: Json, formats: HashMap<String, PathBuf>) -> i32 {
+fn serve(
+    exe: &Path,
+    opts: &Opts,
+    texmf: Json,
+    formats: HashMap<String, PathBuf>,
+    children: proc::Children,
+) -> i32 {
     let _ = std::fs::remove_file(&opts.socket);
     let listener = match UnixListener::bind(&opts.socket) {
         Ok(l) => l,
@@ -211,14 +226,6 @@ fn serve(exe: &Path, opts: &Opts, texmf: Json, formats: HashMap<String, PathBuf>
             return 1;
         }
     }
-    let children = match proc::Children::new(exe) {
-        Ok(c) => c,
-        Err(e) => {
-            let _ = std::fs::remove_file(&opts.socket);
-            eprintln!("flashtex-host-unicode: the children's lifeline: {e}");
-            return 1;
-        }
-    };
     println!(
         "flashtex-host-unicode: listening on {}",
         opts.socket.display()
@@ -286,7 +293,7 @@ impl Host {
         if let Some(d) = self.formats.lock().unwrap().get(f) {
             return Ok(d.clone());
         }
-        let d = format::ensure(&self.exe, f)?;
+        let d = format::ensure(&self.exe, f, &self.children)?;
         self.formats
             .lock()
             .unwrap()
@@ -417,6 +424,7 @@ fn connection(host: &Arc<Host>, conn: UnixStream, n: u64) {
                     {
                         let mut r = running.lock().unwrap();
                         r.newest = seq;
+                        r.queued.insert(job.id);
                         cancel_locked(&mut r);
                     }
                     let _ = tx.send(Msg::Compile(job, Instant::now(), seq));
@@ -438,8 +446,8 @@ fn connection(host: &Arc<Host>, conn: UnixStream, n: u64) {
                 if let Some(id) = j.int_field("id") {
                     if Some(id) == r.job {
                         cancel_locked(&mut r);
-                    } else if r.cancelled_early.len() < 4096 {
-                        // not started yet (or not known): cancelled when it starts
+                    } else if r.queued.contains(&id) {
+                        // not started yet: cancelled when its turn comes
                         r.cancelled_early.insert(id);
                     }
                 }
@@ -478,6 +486,7 @@ fn compile_thread(
         // lost between this test and the job's start.
         let superseded = {
             let mut r = running.lock().unwrap();
+            r.queued.remove(&job.id);
             let early = r.cancelled_early.remove(&job.id);
             let s = seq < r.newest || early;
             if !s {

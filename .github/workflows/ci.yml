@@ -300,7 +300,7 @@ jobs:
           # A merge group's diff is cumulative (main to the group's head), so
           # once an engine change is in the queue, every group behind it runs
           # parity too -- which is what testing that exact tree requires.
-          engine_paths='^(crates/(flashtex-engine|display-list-v3)/|Cargo\.(toml|lock)$|tools/(web2rust|lockstep|parity|visual-oracle|real-world-corpus)/|third_party/|fixtures/|scripts/engine-parity\.sh$|\.github/actions/texlive-2026/|\.github/workflows/ci\.yml$)'
+          engine_paths='^(crates/(flashtex-engine|flashtex-runtime|display-list-v3)/|Cargo\.(toml|lock)$|tools/(web2rust|lockstep|parity|visual-oracle|real-world-corpus)/|third_party/|fixtures/|scripts/engine-parity\.sh$|\.github/actions/texlive-2026/|\.github/workflows/ci\.yml$)'
           engine=false
           [ "$tier" = "all" ] && engine=true
           [ "$EVENT" = "workflow_dispatch" ] && engine=true
