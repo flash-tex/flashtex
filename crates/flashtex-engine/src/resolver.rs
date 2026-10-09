@@ -47,6 +47,9 @@ pub enum Format {
     OpenType,
     /// `subfont definition files` (`.sfd`).
     Sfd,
+    /// `ist`: makeindex style files (`INDEXSTYLE`), for makeindex run
+    /// in-process (crates/makeindex).
+    Ist,
     /// `graphic/figure` (`kpse_pict_format`): the XeTeX-derived engine's
     /// `\\XeTeXpicfile` and `\\XeTeXpdffile` (crates/flashtex-xetex).
     Pict,
@@ -71,6 +74,7 @@ impl Format {
             Format::TrueType => "truetype fonts",
             Format::OpenType => "opentype fonts",
             Format::Sfd => "subfont definition files",
+            Format::Ist => "ist",
             Format::Pict => "graphic/figure",
         }
     }
@@ -93,6 +97,7 @@ impl Format {
             Format::TrueType,
             Format::OpenType,
             Format::Sfd,
+            Format::Ist,
             Format::Pict,
         ]
     }
@@ -136,6 +141,12 @@ pub trait FileResolver: Send {
     /// `openin_any` and `openout_any`? Without texmf.cnf, yes.
     fn name_ok(&mut self, _name: &str, _write: bool) -> bool {
         true
+    }
+    /// [`FileResolver::name_ok`] without kpathsea's message on a refusal
+    /// (`kpse_out_name_ok_silent`), for a caller that reports it under
+    /// another program's name.
+    fn name_ok_silent(&mut self, name: &str, write: bool) -> bool {
+        self.name_ok(name, write)
     }
     /// pdftex.web's `kpse_init_prog(prefix, dpi, mode, nil)` and
     /// `kpse_set_program_enabled(kpse_pk_format, 1, kpse_src_compile)`, at
@@ -599,6 +610,8 @@ mod kpse {
         fn flashtex_kpse_set_make_tex_discard_errors(k: *mut c_void, discard: c_int);
         fn flashtex_kpse_get_make_tex_discard_errors(k: *mut c_void) -> c_int;
         fn flashtex_kpse_name_ok(k: *mut c_void, name: *const c_char, write: c_int) -> c_int;
+        fn flashtex_kpse_name_ok_silent(k: *mut c_void, name: *const c_char, write: c_int)
+            -> c_int;
         fn flashtex_kpse_find_all(
             k: *mut c_void,
             name: *const c_char,
@@ -903,6 +916,7 @@ mod kpse {
                 "OPENTYPEFONTS",
                 "MISCFONTS",
                 "SFDFONTS",
+                "INDEXSTYLE",
                 "TEXPOOL",
                 "MFINPUTS",
                 "TEXCONFIG",
@@ -1315,6 +1329,14 @@ mod kpse {
                 return false;
             };
             unsafe { flashtex_kpse_name_ok(self.k, n.as_ptr(), write as c_int) != 0 }
+        }
+        fn name_ok_silent(&mut self, name: &str, write: bool) -> bool {
+            let Ok(n) = CString::new(name) else {
+                return false;
+            };
+            // SAFETY: `self.k` is the live kpathsea instance and `n` a
+            // NUL-terminated string that outlives the call.
+            unsafe { flashtex_kpse_name_ok_silent(self.k, n.as_ptr(), write as c_int) != 0 }
         }
         fn set_make_tex_discard_errors(&mut self, discard: bool) {
             // SAFETY: `self.k` is the live kpathsea instance or null (an

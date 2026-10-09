@@ -63,6 +63,8 @@ pub mod lineshift;
 pub mod logalloc;
 #[cfg(not(feature = "tex82"))]
 pub mod macroprof;
+#[cfg(all(feature = "makeindex", not(feature = "tex82")))]
+pub mod makeindex;
 pub mod memstat;
 #[cfg(not(feature = "tex82"))]
 pub mod midline;

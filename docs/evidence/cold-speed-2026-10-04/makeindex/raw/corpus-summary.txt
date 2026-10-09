@@ -1,0 +1,25 @@
+bibtex-and-index-together    runs   280 mismatches 0
+idxbook-idx                  runs   280 mismatches 0
+idxbook-notation             runs   280 mismatches 0
+infdesc-infdesc              runs   280 mismatches 0
+infdesc-latex                runs   280 mismatches 0
+infdesc-notation             runs   280 mismatches 0
+infdesc-vocabulary           runs   280 mismatches 0
+makeindex-basic              runs   280 mismatches 0
+makeindex-see-and-pages      runs   280 mismatches 0
+tl-test-nested-range         runs   280 mismatches 0
+tl-test-nested-range-bb      runs   280 mismatches 0
+tl-test-pprecA               runs   280 mismatches 0
+tl-test-pprecB               runs   280 mismatches 0
+tl-test-range                runs   280 mismatches 0
+tl-test-romalpA              runs   280 mismatches 0
+tl-test-romalpB              runs   280 mismatches 0
+tl-test-romalpC              runs   280 mismatches 0
+tl-test-romalpD              runs   280 mismatches 0
+tl-test-sample               runs   280 mismatches 0
+tl-test-toodeep              runs   280 mismatches 0
+tl-test-tort                 runs   280 mismatches 0
+tl-test-tortW                runs   280 mismatches 0
+styles: none + 54 TeX Live + 15 local; option sets 4
+total runs 6160 mismatches 0
+exit 0

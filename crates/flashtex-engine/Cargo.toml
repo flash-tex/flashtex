@@ -26,6 +26,14 @@ path = "src/main.rs"
 name = "flashtex-host"
 path = "src/host/main.rs"
 
+# makeindex as a command (crates/makeindex through src/makeindex.rs, style
+# files through the engine's kpathsea): what \write18 runs in-process, for
+# the oracle comparison in docs/evidence/cold-speed-2026-10-04/makeindex/.
+[[bin]]
+name = "flashtex-makeindex"
+path = "src/bin/flashtex-makeindex.rs"
+required-features = ["makeindex", "kpathsea"]
+
 # The distribution tool (DESIGN.md 4.4): TeX Live report, format cache,
 # bundles. See src/bin/flashtex-dist.rs.
 [[bin]]
@@ -44,6 +52,11 @@ sha2 = { version = "0.10", optional = true }
 # The engine build id the format cache keys formats by (build-id/: a SHA-256
 # of every source of this crate, computed without rerunning build.rs).
 flashtex-engine-build-id = { path = "build-id", optional = true }
+# makeindex 2.18 (TeX Live 2026) ported to Rust, run in-process for
+# restricted \write18 and the host's external tools (src/makeindex.rs).
+# Under the MakeIndex Distribution Notice (crates/makeindex/LICENSE), not
+# MIT; only this GPL crate depends on it (DESIGN.md §3).
+flashtex-makeindex = { path = "../makeindex", optional = true }
 
 # Linux only: the host's heap other than its undo logs (feature `jemalloc`,
 # src/logalloc.rs). The crates are MIT OR Apache-2.0; the jemalloc 5.3.1 they
@@ -59,7 +72,10 @@ tikv-jemalloc-sys = { version = "0.7", optional = true }
 # Link TeX Live's kpathsea (vendored, LGPL-2.1-or-later) as the file resolver.
 # Without it only the working-directory resolver is available, which is what
 # the trip test uses.
-default = ["kpathsea", "regex", "distribution", "jemalloc"]
+default = ["kpathsea", "regex", "distribution", "jemalloc", "makeindex"]
+# makeindex in-process (src/makeindex.rs, crates/makeindex). Off in the trip
+# tests' scratch packages, which have no dependencies.
+makeindex = ["dep:flashtex-makeindex"]
 kpathsea = []
 # DESIGN.md 4.4: the format cache (src/formats.rs) and the bundle fallback
 # (src/bundle/). Off in the trip tests' scratch packages, which copy src/*.rs
@@ -73,7 +89,7 @@ regex = []
 # undo logs, which keep mappings of their own (src/logalloc.rs). With glibc
 # the host's peak was 27-47 MB higher at 1,000 pages for the same work
 # (docs/evidence/mem-research-2026-10-06/ §2.4). No effect on other systems.
-# Leave it out (`--no-default-features --features kpathsea,regex,distribution`)
+# Leave it out (`--no-default-features --features kpathsea,regex,distribution,makeindex`)
 # for tools that intercept malloc, such as heaptrack.
 jemalloc = ["dep:tikv-jemallocator", "dep:tikv-jemalloc-sys"]
 # Build against a translation of Knuth's tex.web instead of pdftex.web: only

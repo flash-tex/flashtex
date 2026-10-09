@@ -360,6 +360,7 @@ dependencies = [
  "cc",
  "flashtex-display-list",
  "flashtex-engine-build-id",
+ "flashtex-makeindex",
  "sha2",
  "tikv-jemalloc-sys",
  "tikv-jemallocator",
@@ -395,6 +396,13 @@ dependencies = [
  "serde_json",
  "sha2",
  "tempfile",
+]
+
+[[package]]
+name = "flashtex-makeindex"
+version = "0.1.0"
+dependencies = [
+ "libc",
 ]
 
 [[package]]

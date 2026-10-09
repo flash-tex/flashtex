@@ -817,6 +817,9 @@ impl FileResolver for BundleResolver {
     fn name_ok(&mut self, name: &str, write: bool) -> bool {
         self.kpse.name_ok(name, write)
     }
+    fn name_ok_silent(&mut self, name: &str, write: bool) -> bool {
+        self.kpse.name_ok_silent(name, write)
+    }
 }
 
 #[cfg(test)]

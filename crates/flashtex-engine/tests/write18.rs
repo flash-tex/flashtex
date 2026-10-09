@@ -132,3 +132,127 @@ fn matches_tex_live_default() {
     let _ = std::fs::remove_dir_all(&a);
     let _ = std::fs::remove_dir_all(&b);
 }
+
+/// makeindex through restricted `\write18` runs in-process (the makeindex
+/// port, crates/makeindex), so it needs no TeX Live program: here no
+/// `makeindex` is on PATH at all, and the `.ind` and `.ilg` are made all
+/// the same, with the run recorded as an external effect as before.
+/// `FLASHTEX_MAKEINDEX=external` goes back to the shell, which then finds
+/// no program.
+#[cfg(all(feature = "makeindex", unix))]
+#[test]
+fn makeindex_runs_in_process() {
+    const IDX_DOC: &str = "\\catcode`\\{=1 \\catcode`\\}=2\n\
+\\immediate\\write18{makeindex x.idx}\n\
+\\end\n";
+    let run = |tag: &str, extra: &[(&str, &str)]| {
+        let d = common::fresh_dir(&format!("flashtex-w18-mki-{tag}"));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).unwrap();
+        std::fs::write(d.join("w.tex"), IDX_DOC).unwrap();
+        std::fs::write(
+            d.join("x.idx"),
+            "\\indexentry{beta}{2}\n\\indexentry{alpha!one}{1}\n\\indexentry{alpha}{3}\n",
+        )
+        .unwrap();
+        let mut c = Command::new(env!("CARGO_BIN_EXE_flashtex-initex"));
+        c.args(["-ini", "w.tex"])
+            .current_dir(&d)
+            .env(
+                "FLASHTEX_POOL",
+                Path::new(env!("CARGO_MANIFEST_DIR")).join("pdftex.pool"),
+            )
+            .env("FLASHTEX_EXTERNAL_EFFECTS", d.join("effects.txt"))
+            .env("FLASHTEX_RESOLVER", "cwd")
+            .env("shell_escape", "p")
+            .env("shell_escape_commands", "makeindex")
+            .env("PATH", "/nonexistent")
+            .env_remove("FLASHTEX_MAKEINDEX")
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::piped());
+        for (k, v) in extra {
+            c.env(k, v);
+        }
+        let o = c.output().unwrap();
+        (d, String::from_utf8_lossy(&o.stderr).into_owned())
+    };
+
+    let (d, stderr) = run("in", &[]);
+    let log = std::fs::read_to_string(d.join("w.log")).unwrap();
+    assert!(
+        log.contains("runsystem(makeindex x.idx)...executed safely (allowed)."),
+        "{log}"
+    );
+    assert_eq!(
+        std::fs::read_to_string(d.join("effects.txt")).unwrap(),
+        "write18 makeindex 'x.idx'\n"
+    );
+    // TeX Live 2026's makeindex on the same .idx
+    assert_eq!(
+        std::fs::read_to_string(d.join("x.ind")).unwrap(),
+        "\\begin{theindex}\n\n  \\item alpha, 3\n    \\subitem one, 1\n\n  \
+\\indexspace\n\n  \\item beta, 2\n\n\\end{theindex}\n"
+    );
+    let ilg = std::fs::read_to_string(d.join("x.ilg")).unwrap();
+    assert!(
+        ilg.starts_with(
+            "This is makeindex, version 2.18 [TeX Live 2026] (kpathsea + Thai support).\n"
+        ),
+        "{ilg}"
+    );
+    assert!(stderr.contains("Output written in x.ind."), "{stderr}");
+    assert!(!stderr.contains("system returned"), "{stderr}");
+    let _ = std::fs::remove_dir_all(&d);
+
+    let (d, stderr) = run("ext", &[("FLASHTEX_MAKEINDEX", "external")]);
+    assert!(!d.join("x.ind").exists());
+    assert!(
+        stderr.contains("system returned with code 32512"),
+        "{stderr}"
+    );
+    let _ = std::fs::remove_dir_all(&d);
+}
+
+/// `\write18{makeindex z.idx}` with `z.idx` a link to `/dev/zero`: the C
+/// program would read without end; the in-process port refuses the file
+/// (not a regular file) and fails as for a missing input, so the engine
+/// (and a host running it) carries on.
+#[cfg(all(feature = "makeindex", unix))]
+#[test]
+fn makeindex_refuses_dev_zero() {
+    const DOC: &str = "\\catcode`\\{=1 \\catcode`\\}=2\n\
+\\immediate\\write18{makeindex z.idx}\n\
+\\end\n";
+    let d = common::fresh_dir("flashtex-w18-mki-zero");
+    let _ = std::fs::remove_dir_all(&d);
+    std::fs::create_dir_all(&d).unwrap();
+    std::fs::write(d.join("w.tex"), DOC).unwrap();
+    std::os::unix::fs::symlink("/dev/zero", d.join("z.idx")).unwrap();
+    let t0 = std::time::Instant::now();
+    let o = Command::new(env!("CARGO_BIN_EXE_flashtex-initex"))
+        .args(["-ini", "w.tex"])
+        .current_dir(&d)
+        .env(
+            "FLASHTEX_POOL",
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("pdftex.pool"),
+        )
+        .env("FLASHTEX_RESOLVER", "cwd")
+        .env("shell_escape", "p")
+        .env("shell_escape_commands", "makeindex")
+        .env("PATH", "/nonexistent")
+        .env_remove("FLASHTEX_MAKEINDEX")
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .output()
+        .unwrap();
+    assert!(t0.elapsed() < std::time::Duration::from_secs(60));
+    let stderr = String::from_utf8_lossy(&o.stderr);
+    assert!(
+        stderr.contains("makeindex: refusing to read z.idx: not a regular file"),
+        "{stderr}"
+    );
+    assert!(stderr.contains("system returned with code 256"), "{stderr}");
+    let _ = std::fs::remove_dir_all(&d);
+}
