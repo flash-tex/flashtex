@@ -57,7 +57,9 @@ struct WorkspaceSidebar: View {
             let revision = model.chrome.editorRevision, path = model.activePath
             if outlineFor.revision >= 0 { try? await Task.sleep(for: .milliseconds(150)) }
             guard !Task.isCancelled else { return }
-            outline = model.outline
+            let scanned = await DocumentOutline.scanOffMain(model.activeText)
+            guard !Task.isCancelled else { return }
+            outline = scanned
             outlineFor = (path, revision)
         })
         .background(IsolatedTask(id: { [outline] in "\(model.caretUTF16)/\(outline.count)/\(outline.first?.utf16.location ?? -1)" }) { _ in

@@ -64,6 +64,8 @@ pub mod logalloc;
 #[cfg(not(feature = "tex82"))]
 pub mod macroprof;
 pub mod memstat;
+#[cfg(not(feature = "tex82"))]
+pub mod midline;
 pub mod os;
 #[cfg(not(feature = "tex82"))]
 pub mod pdftex;
