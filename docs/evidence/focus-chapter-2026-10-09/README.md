@@ -39,7 +39,7 @@ pages (`\count0` and every glyph's font key, code and position), that an edit in
 chapter is `incremental` and equals a from-scratch focused compile, and that dropping the
 focus equals a from-scratch whole compile.
 
-## Latency (MEASURED, `scripts/bench_focus.sh`, load ~230)
+## Latency before #1724 (MEASURED, `scripts/bench_focus.sh`, load ~230; superseded below)
 
 Synthetic book: 44 `\include` chapters, 986 pages (`gen_book.py OUT 44 48`); focus on
 `chapters/ch22` (34 pages focused: contents + the chapter). Keystrokes: 40 letters
@@ -76,6 +76,44 @@ Engine suites on this branch: `incremental` 62/62, `checkpoint` 3/3, `host_tools
 `a_keystroke_that_changes_nothing_has_its_page_at_once`, fails the same way with the original
 `incr.rs` at this load (3 of 3 runs), a timing test. Soundness sweeps (hosted runners) are
 for the reviewer to run (`gh workflow run sweeps.yml -f ref=<branch>`).
+
+## After #1724 (`\pdffilesize` is a read of the file), merged
+
+#1724 records `\pdffilesize`/`\pdffilemoddate` as whole reads of the file (a soundness fix
+already needed on main). LaTeX's `\includeonly` takes the chapter's size, so in the focused
+job every checkpoint after it has read the chapter: **an edit in the focused chapter now
+restarts at S₀** (the restart-point refinement above no longer finds a later good checkpoint
+there; it still serves a file read and closed long before its `\input`, an `\IfFileExists`).
+The whole document is affected the same way at `\include`, whose own lookup takes the
+chapter's size: its restarts move to the chapter's first page.
+
+**Soundness (VERIFIED, `scripts/verify_focus.sh`, `incr_bench.py --verify`, every compile
+against from-scratch runs; the new `--first-line` gives the host's first line to both):** a
+6-chapter flat book, edits in `ch03`, which prints its own `\pdffilesize`:
+
+| book | focused (`\includeonly{ch03}`) | whole document |
+|---|---|---|
+| with `\pdffilesize{ch03.tex}` also on the contents page | 12/12 equal, restarts at page 0 | 12/12 equal, restarts at page 0 |
+| without it; kinds incl. section, label, ref | 16/16 equal, restarts at page 0 | 16/16 equal, restarts at the chapter (page 11) or 0 |
+
+**Latency (MEASURED, `bench_focus.sh`, same 986-page book, load average 4–6 this time, so
+not comparable with the table above):**
+
+| | whole document | focused |
+|---|---|---|
+| open, cold, to convergence | 15.2 s | 0.64 s |
+| keystroke → edited page, p50 / p95 / max | 77.7 / 89.4 / 136 ms | **104.2** / 140 / 158 ms |
+| keystroke → `DONE`, p50 / p95 | 196 / 210 ms | 230 / 283 ms |
+| restart page (40 keystrokes) | 478 (chapter start; edit on 488), 18 pages typeset | 0 (S₀), 34 pages typeset |
+| switch to it (stored S₀), all pages | 5.2 s | 0.24–0.33 s |
+
+So the focused keystroke speed-up **did not survive** #1724: focused edits now re-typeset the
+focused document from S₀ (contents and the chapter up to the edit) and are ~27 ms slower at
+p50 than the whole document's (which restarts at the chapter's start). Focus still cuts the
+cold open (15.2 s → 0.64 s) and the switch back (5.2 s → 0.3 s). Recovering the keystroke
+gain needs the size read by `\includeonly` to stop gating the chapter's checkpoints
+(l3 only compares the sizes of the chapter's two names, which are the same file), an engine
+question for the Commander, not something to special-case here.
 
 ## Not done / beliefs
 

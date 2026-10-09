@@ -4150,8 +4150,8 @@ impl Session {
     /// at an offset at or before the change, and every lookup it made still
     /// finds the same. Checkpoints are in the order the run took them, so
     /// their consumption only grows: a binary search finds the last good one
-    /// (and a second one, within the edited file, where a lookup of it long
-    /// before its `\input` leaves a gap of bad ones).
+    /// (and a second one, within the edited file, where a read of it closed
+    /// long before its `\input` leaves a gap of bad ones).
     fn restart_point(
         &mut self,
         edits: &[Edit],
@@ -4188,13 +4188,16 @@ impl Session {
         while a > lo && !g.restorable(ids[a]) {
             a -= 1;
         }
-        // The good checkpoints are not always a prefix: a file looked up
-        // long before it is read (LaTeX's `\includeonly` at
-        // `\begin{document}` looks the chapter up, lane FOCUS-CHAPTER) makes
-        // the checkpoints between the lookup and the file's `\input` bad (a
-        // changed file read before them, not open), while those in the file
-        // before the edit are good, and the search above stops before the
-        // gap. With one edited file: the last checkpoint that has not read
+        // The good checkpoints are not always a prefix: a file read long
+        // before its `\input` and closed before the edit (an `\IfFileExists`
+        // test, `\openin` and `\closein`) makes the checkpoints between that
+        // read and the `\input` bad (a changed file read before them, not
+        // open), while those in the file before the edit are good, and the
+        // search above stops before the gap. (A `\pdffilesize` read is a
+        // read of the whole file, #1724: nothing after it is good, so
+        // LaTeX's `\includeonly`, which takes the chapter's size, restarts
+        // a focused chapter's edit before it; lane FOCUS-CHAPTER, measured.)
+        // With one edited file: the last checkpoint that has not read
         // the file past the edit (not opened yet, then open at or before
         // the edit, then past it: that order only grows), taken when it is
         // later, good and restorable. `good` decides soundness for each

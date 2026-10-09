@@ -1107,8 +1107,9 @@ impl Job {
             // In the preamble its name lookup (l3's `\file_full_name:n`,
             // `\pdffilesize`) would put the chapter's content in S₀'s key,
             // and every keystroke in the focused chapter would be a cold
-            // run; after the `.aux` point it is a lookup of the body, and an
-            // edit restarts at its page.
+            // run from the format; after the `.aux` point it is a read of
+            // the body (of the whole chapter: its size, #1724), and an edit
+            // in the chapter restarts at S₀.
             // LaTeX's `\input` without a brace is the primitive (`\@@input`),
             // so the main file is read exactly as a bare first line reads it.
             Some(list) => format!(
