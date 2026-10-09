@@ -1145,6 +1145,11 @@ impl Engine {
                         "restart_preamble".to_string(),
                         Json::Bool(rep.restart_preamble),
                     ),
+                    // ... in the middle of the main file's line (`crate::midline`)
+                    (
+                        "restart_midline".to_string(),
+                        Json::Bool(rep.restart_midline),
+                    ),
                     (
                         "restart_next_gap".to_string(),
                         rep.restart_next_gap.map(Json::Int).unwrap_or(Json::Null),
@@ -1688,24 +1693,32 @@ fn settle(doc: &mut Doc, conn: &Conn, id: i64, limit: bool) {
 /// retention pass merged, a detached branch, the convergence test's
 /// buffers) mapped, so the host's resident memory stayed at its peak: on
 /// full-1000, 1.5 GB resident for a 0.47 GB heap
-/// (docs/evidence/p4-memory-2026-09-30/). macOS's allocator returns free
-/// pages itself. FLASHTEX_NO_TRIM=1 leaves it out (for A/B).
+/// (docs/evidence/p4-memory-2026-09-30/). With jemalloc as the host's heap
+/// (`crate::logalloc`, feature `jemalloc`) the Rust side's free pages go
+/// back by a purge of its arenas (`logalloc::give_back`), and glibc's trim
+/// is left with the C parts' blocks. macOS's allocator returns free pages
+/// itself. FLASHTEX_NO_TRIM=1 leaves it out (for A/B).
 fn give_back_free_memory() {
-    #[cfg(all(target_os = "linux", target_env = "gnu"))]
-    {
-        extern "C" {
-            fn malloc_trim(pad: usize) -> i32;
-        }
-        if std::env::var_os("FLASHTEX_NO_TRIM").is_none() {
-            let t = Instant::now();
+    #[cfg(target_os = "linux")]
+    if std::env::var_os("FLASHTEX_NO_TRIM").is_none() {
+        let t = Instant::now();
+        let purged = crate::logalloc::give_back();
+        let tp = t.elapsed();
+        #[cfg(target_env = "gnu")]
+        {
+            extern "C" {
+                fn malloc_trim(pad: usize) -> i32;
+            }
             // SAFETY: no preconditions; it only releases free memory.
             unsafe { malloc_trim(0) };
-            if std::env::var_os("FLASHTEX_MEMSTAT").is_some() {
-                eprintln!(
-                    "flashtex-host: malloc_trim {:.2} ms",
-                    t.elapsed().as_secs_f64() * 1e3
-                );
-            }
+        }
+        if std::env::var_os("FLASHTEX_MEMSTAT").is_some() {
+            eprintln!(
+                "flashtex-host: give back {:.2} ms (jemalloc purge {}: {:.2} ms)",
+                t.elapsed().as_secs_f64() * 1e3,
+                purged,
+                tp.as_secs_f64() * 1e3
+            );
         }
     }
     // macOS's allocator returns most free pages itself, but its magazines

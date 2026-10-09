@@ -3012,11 +3012,239 @@ fn preamble_edits_restart_before_s0() {
         compile_and_check(&e, &mut h, &dir, &[], "settle again");
     }
     // the line after `\documentclass` is read with the class (its look for
-    // an optional argument): no checkpoint before it, a run from the format
+    // an optional argument): a restart after the class is loaded, in the
+    // middle of that line, which is read again (PREAMBLE-MIDLINE, #1594)
     let early = doc.replacen("\\usepackage{amsmath}", "\\usepackage{amssymb}", 1);
     let r = compile_and_check(&e, &mut h, &dir, &[("doc.tex", &early)], "the first line");
+    assert_eq!(field(&r, "restart_midline"), "true", "{r}");
+    compile_and_check(&e, &mut h, &dir, &[("doc.tex", &doc)], "the revert");
+    // ... but not where the class's look ahead read it (`\usepackage` and
+    // what `get_next` looked at past it): no checkpoint before that, a run
+    // from the format
+    let early = doc.replacen("\\usepackage{amsmath}", "\\usepackage[fleqn]{amsmath}", 1);
+    let r = compile_and_check(&e, &mut h, &dir, &[("doc.tex", &early)], "the first token");
     assert_eq!(field(&r, "mode"), "\"cold\"", "{r}");
     compile_and_check(&e, &mut h, &dir, &[("doc.tex", &doc)], "the revert");
+}
+
+/// PREAMBLE-MIDLINE (#1594): `\usepackage` looks for an optional date on
+/// the next line before it loads the package, so `\title` on the line after
+/// hyperref is read before hyperref is. A keystroke in the title restarts
+/// after hyperref, in the middle of the title's line, and reads the rest of
+/// the line again: letters, consecutive keystrokes (each from the
+/// checkpoint the one before took), a newline (the later lines move), an
+/// edit where the look ahead read the line (a restart before hyperref), the
+/// next line, then the body. Every compile equals scratch runs.
+#[test]
+fn a_title_keystroke_restarts_mid_line_after_hyperref() {
+    let Some(e) = env() else {
+        common::no_texlive();
+        return;
+    };
+    let dir = e.dir.join("midline-title");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let body: String = (0..30).map(|i| para(i, "omega")).collect();
+    let doc = format!(
+        r"\documentclass{{article}}
+\usepackage{{amsmath}}
+\usepackage{{amssymb}}
+\usepackage{{graphicx}}
+\usepackage{{hyperref}}
+\title{{a title about latency}}
+\author{{Jane Doe}}
+
+\begin{{document}}
+\maketitle
+\section{{One}}\label{{one}}
+{body}See page~\pageref{{one}}.
+\end{{document}}
+"
+    );
+    let mut h = Host::start(&e, &dir);
+    for k in 0..4 {
+        let r = compile_and_check(&e, &mut h, &dir, &[("doc.tex", &doc)], "settle");
+        if r.contains("\"mode\":\"unchanged\"") || k == 3 {
+            break;
+        }
+    }
+    let t = |a: &str| doc.replacen("a title about latency", a, 1);
+    // (the text, what, a mid-line restart)
+    let edits = [
+        (t("a titlex about latency"), "a letter", true),
+        (t("a titlexy about latency"), "the next letter", true),
+        (t("a titlexyz about latency"), "and the next", true),
+        (doc.clone(), "the revert", true),
+        (t("a title\nabout latency"), "a newline in the title", true),
+        (doc.clone(), "the revert", true),
+        (
+            t("A title about latency"),
+            "where the look ahead read",
+            false,
+        ),
+        (doc.clone(), "the revert", false),
+        (
+            doc.replacen("Jane Doe", "Jane Dot", 1),
+            "the next line",
+            false,
+        ),
+        (doc.clone(), "the revert", false),
+    ];
+    for (text, what, mid) in &edits {
+        let r = compile_and_check(&e, &mut h, &dir, &[("doc.tex", text)], what);
+        assert_eq!(field(&r, "mode"), "\"incremental\"", "{what}: {r}");
+        assert_eq!(field(&r, "restart_preamble"), "true", "{what}: {r}");
+        assert_eq!(field(&r, "restart_midline"), mid.to_string(), "{what}: {r}");
+    }
+    compile_and_check(&e, &mut h, &dir, &[], "settle again");
+    let body_edit = doc.replacen("Paragraph 3 with", "Paragraph 3 wiht", 1);
+    let r = compile_and_check(&e, &mut h, &dir, &[("doc.tex", &body_edit)], "the body");
+    assert_eq!(field(&r, "restart_preamble"), "false", "{r}");
+    compile_and_check(&e, &mut h, &dir, &[("doc.tex", &doc)], "the revert");
+}
+
+/// PREAMBLE-MIDLINE (#1594): what a mid-line restart point depends on, a
+/// case each (packages of the test's own, a checkpoint after each). Every
+/// compile equals scratch runs; `true`: the restart is in the middle of the
+/// line.
+/// * what `get_next` looked at past the token it read: a letter appended to
+///   the control word (`\mytitle` becomes `\mytitles`);
+/// * `\endlinechar` as it was when the line was read: the package sets it to
+///   -1, and the title's line still ends in a space;
+/// * trailing blanks, which `input_ln` drops (under `\obeyspaces` they would
+///   be active spaces);
+/// * CR LF and CR line ends, and a CR that becomes a CR LF (the look ahead
+///   read the byte after the CR);
+/// * `\show` (its context prints the rest of the line): no mid-line restart
+///   after it, one before it;
+/// * a `^^` sequence in the control word's name, which rewrites the buffer;
+/// * `\pausing` in `\nonstopmode`, which shows nothing.
+#[test]
+fn mid_line_restarts_keep_what_the_line_was_read_with() {
+    let Some(e) = env() else {
+        common::no_texlive();
+        return;
+    };
+    let pkg =
+        "\\ProvidesPackage{mlpkg}\n\\def\\mytitle#1{\\title{#1}}\\def\\mytitles#1{\\title{#1 s}}\n";
+    let eol = "\\ProvidesPackage{mleol}\n\\endlinechar=-1\\relax\n";
+    let sp = "\\ProvidesPackage{mlsp}\n\\obeyspaces\n";
+    let doc = |pre: &str, title: &str| {
+        let body: String = (0..6).map(|i| para(i, "kappa")).collect();
+        format!(
+            "\\documentclass{{article}}\n\\def\\x{{1}}\n{pre}{title}\n\\author{{Jane Doe}}\n\
+             \\begin{{document}}\n\\maketitle\n{body}\\end{{document}}\n"
+        )
+    };
+    let p = "\\usepackage{mlpkg}\n";
+    let pe = "\\usepackage{mleol}\n";
+    let ps = "\\usepackage{mlsp}\n";
+    let crlf = |s: String| s.replace('\n', "\r\n");
+    let cr = |s: String| s.replace('\n', "\r");
+    let eolt = |a: &str| {
+        doc(
+            pe,
+            &format!("\\title{{{a} beta\ngamma}}\\endlinechar=13\\relax"),
+        )
+    };
+    let spt = |a: &str| {
+        doc(
+            ps,
+            &format!("\\title{{{a}   \ngamma}}\\catcode`\\ =10\\relax"),
+        )
+    };
+    let show = |n: &str| {
+        doc(
+            &format!(
+                "\\usepackage{{mlpkg}}\n\\show\\x\\usepackage{{mlsp}}\\relax% note {n}\n\
+                 \\catcode`\\ =10\\relax\n"
+            ),
+            "\\title{T}",
+        )
+    };
+    let pause = "\\pausing=1\\relax\n\\usepackage{mlpkg}\n";
+    // (case, the document, its edits: text, a mid-line restart)
+    type Case<'a> = (&'a str, String, Vec<(String, bool)>);
+    let cases: Vec<Case> = vec![
+        (
+            "a letter after the control word",
+            doc(p, "\\mytitle{Hello world}"),
+            vec![
+                (doc(p, "\\mytitles{Hello world}"), false),
+                (doc(p, "\\mytitle{Hello world}"), false),
+                (doc(p, "\\mytitle{Hello worle}"), true),
+            ],
+        ),
+        ("endlinechar", eolt("Alpha"), vec![(eolt("Alphx"), true)]),
+        (
+            "trailing blanks",
+            spt("Alpha beta"),
+            vec![(spt("Alphx beta"), true), (spt("Alphx beta   x"), true)],
+        ),
+        (
+            "CR LF",
+            crlf(doc(p, "\\mytitle{Hello world}")),
+            vec![
+                (crlf(doc(p, "\\mytitle{Hello worle}")), true),
+                (crlf(doc(p, "\\mytitle{Hello\nworld}")), true),
+            ],
+        ),
+        (
+            "CR",
+            cr(doc(p, "\\mytitle{Hello world}")),
+            vec![
+                (cr(doc(p, "\\mytitle{Hello worle}")), true),
+                // (the line's CR becomes a CR LF: the look ahead read the
+                // byte after the CR, and the line is the same)
+                (
+                    cr(doc(p, "\\mytitle{Hello world}")).replacen(
+                        "\\mytitle{Hello world}\r",
+                        "\\mytitle{Hello world}\r\n",
+                        1,
+                    ),
+                    true,
+                ),
+            ],
+        ),
+        ("show", show("abc"), vec![(show("abd"), true)]),
+        (
+            "a ^^ in the name",
+            doc(p, "\\mytitle^^73{Hello world}"),
+            vec![(doc(p, "\\mytitle^^73{Hello worle}"), false)],
+        ),
+        (
+            "pausing",
+            doc(pause, "\\mytitle{Hello world}\\pausing=0\\relax"),
+            vec![(doc(pause, "\\mytitle{Hello worle}\\pausing=0\\relax"), true)],
+        ),
+    ];
+    for (i, (case, text, edits)) in cases.iter().enumerate() {
+        let dir = e.dir.join(format!("midline-{i}"));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let files = [
+            ("mlpkg.sty", pkg),
+            ("mleol.sty", eol),
+            ("mlsp.sty", sp),
+            ("doc.tex", text.as_str()),
+        ];
+        // (a checkpoint after every package, however quick)
+        let mut h = Host::start_env(&e, &dir, &[("FLASHTEX_PREAMBLE_LINE_S", "0.000001")]);
+        for k in 0..4 {
+            let r = compile_and_check(&e, &mut h, &dir, &files, &format!("{case}: settle"));
+            if r.contains("\"mode\":\"unchanged\"") || k == 3 {
+                break;
+            }
+        }
+        for (j, (new, mid)) in edits.iter().enumerate() {
+            let what = format!("{case}: edit {j}");
+            let r = compile_and_check(&e, &mut h, &dir, &[("doc.tex", new)], &what);
+            assert_eq!(field(&r, "mode"), "\"incremental\"", "{what}: {r}");
+            assert_eq!(field(&r, "restart_midline"), mid.to_string(), "{what}: {r}");
+        }
+        let what = format!("{case}: revert");
+        compile_and_check(&e, &mut h, &dir, &[("doc.tex", text)], &what);
+    }
 }
 
 /// Review of #1551 (PREAMBLE-FAST): a file `\input` twice, then text
@@ -4120,4 +4348,259 @@ Back to page~\pageref{one}.
     h.cmd("profile high-performance");
     compile_and_check(&e, &mut h, &dir, &[("body.tex", &body)], "revert");
     compile_and_check(&e, &mut h, &dir, &[], "settle again");
+}
+
+/// Copy `tests/images/NAME` into `dir` as `to`.
+fn test_image(dir: &Path, name: &str, to: &str) {
+    let from = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/images")
+        .join(name);
+    std::fs::copy(from, dir.join(to)).unwrap();
+}
+
+/// Settle `doc` in a host, store its S₀ in `s0`, and open that in a new
+/// host (a host restart): the open must restore S₀ (mode `open`) and equal
+/// scratch runs. Returns the new host.
+fn reopen_from_stored_s0(e: &Env, dir: &Path, doc: &str, s0: &Path, what: &str) -> Host {
+    let _ = std::fs::remove_file(s0);
+    {
+        let mut h = Host::start(e, dir);
+        for k in 0..4 {
+            let r = compile_and_check(e, &mut h, dir, &[("doc.tex", doc)], "settle");
+            if r.contains("\"mode\":\"unchanged\"") || k == 3 {
+                break;
+            }
+        }
+        let r = h.cmd(&format!("save {}", s0.display()));
+        assert!(r.contains("\"saved\""), "{what}: {r}");
+    }
+    let mut h = Host::start(e, dir);
+    let reference = dir.with_extension("ref");
+    copy_dir(dir, &reference);
+    let r = h.cmd(&format!("open {}", s0.display()));
+    assert!(
+        r.contains("\"mode\":\"open\""),
+        "{what}: not opened from S0: {r}"
+    );
+    check_against(e, dir, &reference, &r, what);
+    h
+}
+
+/// Lane COLD-OPEN: a stored S₀ whose preamble read images (`\pdfximage` of
+/// two pages of one PDF, a PNG with alpha, a JPEG and a JBIG2 page) reopens
+/// in a new host, equal to scratch runs, and the body's edits then run from
+/// it; with an image file changed after the save, the open is refused with
+/// a reason and the compile runs in full.
+#[test]
+fn a_stored_s0_with_images_reopens() {
+    let Some(e) = env() else {
+        common::no_texlive();
+        return;
+    };
+    let dir = e.dir.join("s0-images");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    test_image(&dir, "pdf-hand.pdf", "img-a.pdf");
+    test_image(&dir, "png-rgba8.png", "img-b.png");
+    test_image(&dir, "jpg-rgb.jpg", "img-c.jpg");
+    test_image(&dir, "jbig2-sequential.jb2", "img-d.jb2");
+    let doc = |word: &str| {
+        format!(
+            "\\documentclass{{article}}\n\
+             \\pdfximage page 2{{img-a.pdf}}\\edef\\imgA{{\\the\\pdflastximage}}\n\
+             \\pdfximage width 2cm{{img-b.png}}\\edef\\imgB{{\\the\\pdflastximage}}\n\
+             \\pdfximage width 2cm{{img-c.jpg}}\\edef\\imgC{{\\the\\pdflastximage}}\n\
+             \\pdfximage width 2cm page 1{{img-d.jb2}}\\edef\\imgD{{\\the\\pdflastximage}}\n\
+             \\pdfximage page 1{{img-a.pdf}}\\edef\\imgE{{\\the\\pdflastximage}}\n\
+             \\begin{{document}}\n\
+             {}\
+             \\noindent\\pdfrefximage\\imgA\\par\\pdfrefximage\\imgB\\par\\clearpage\n\
+             {}\
+             \\noindent\\pdfrefximage\\imgC\\ \\pdfrefximage\\imgD\\par\\pdfrefximage\\imgE\n\
+             \\end{{document}}\n",
+            paras(0, 3, word),
+            paras(3, 6, "alpha"),
+        )
+    };
+    let base = doc("alpha");
+    let s0 = dir.with_extension("s0");
+    let mut h = reopen_from_stored_s0(&e, &dir, &base, &s0, "s0-images: the open");
+    for (word, what) in [
+        ("gamma", "s0-images: an edit after the open"),
+        ("alpha", "s0-images: its revert"),
+    ] {
+        compile_and_check(&e, &mut h, &dir, &[("doc.tex", &doc(word))], what);
+    }
+    drop(h);
+    // An image changed after the save: a new host does not open S₀.
+    test_image(&dir, "png-rgb8.png", "img-b.png");
+    let mut h = Host::start(&e, &dir);
+    writeln!(h.stdin, "open {}", s0.display()).unwrap();
+    h.stdin.flush().unwrap();
+    let mut line = String::new();
+    h.stdout.read_line(&mut line).unwrap();
+    assert!(
+        line.contains("\"error\"") && line.contains("img-b.png"),
+        "S0 opened with a changed image: {line}"
+    );
+    let r = compile_and_check(
+        &e,
+        &mut h,
+        &dir,
+        &[("doc.tex", &base)],
+        "s0-images: after the refused open",
+    );
+    assert!(r.contains("\"mode\":\"cold\""), "{r}");
+}
+
+/// Lane COLD-OPEN: a beamer document (its preamble declares the navigation
+/// symbols' PDF images, `\pgfdeclareimage`) reopens from a stored S₀.
+#[test]
+fn a_stored_beamer_s0_reopens() {
+    let Some(e) = env() else {
+        common::no_texlive();
+        return;
+    };
+    let dir = e.dir.join("s0-beamer");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let doc = |word: &str| -> String {
+        let mut s = String::from("\\documentclass{beamer}\n\\begin{document}\n");
+        for k in 0..4 {
+            let w = if k == 1 { word } else { "omega" };
+            s.push_str(&format!(
+                "\\begin{{frame}}{{Frame {k}}}\nFrame {k} with the word {w}.\n\\end{{frame}}\n"
+            ));
+        }
+        s.push_str("\\end{document}\n");
+        s
+    };
+    let s0 = dir.with_extension("s0");
+    let mut h = reopen_from_stored_s0(&e, &dir, &doc("omega"), &s0, "s0-beamer: the open");
+    compile_and_check(
+        &e,
+        &mut h,
+        &dir,
+        &[("doc.tex", &doc("omegb"))],
+        "s0-beamer: an edit after the open",
+    );
+}
+
+/// Reviewer (#1685): open S₀ in a new host and expect a refusal naming
+/// `needle`.
+fn rv_refused(e: &Env, dir: &Path, s0: &Path, needle: &str, what: &str) -> Host {
+    let mut h = Host::start(e, dir);
+    writeln!(h.stdin, "open {}", s0.display()).unwrap();
+    h.stdin.flush().unwrap();
+    let mut line = String::new();
+    h.stdout.read_line(&mut line).unwrap();
+    assert!(
+        line.contains("\"error\"") && line.contains(needle),
+        "{what}: S0 opened: {line}"
+    );
+    h
+}
+
+/// Reviewer (#1685): two pages of one JBIG2 file (one file table), two PNGs
+/// with alpha, a grouped PDF page placed twice, `\pdflastximagecolordepth`
+/// and `\pdflastximagepages` used in the body; a moved image refuses the
+/// open, and the restored file opens again.
+#[test]
+fn rv1685_jbig2_pages_and_moved_file() {
+    let Some(e) = env() else {
+        common::no_texlive();
+        return;
+    };
+    let dir = e.dir.join("rv1685-a");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    test_image(&dir, "pdf-hand.pdf", "img-a.pdf");
+    test_image(&dir, "png-rgba8.png", "img-b.png");
+    test_image(&dir, "png-ga8.png", "img-f.png");
+    test_image(&dir, "jbig2-sequential.jb2", "img-d.jb2");
+    let doc = |word: &str| {
+        format!(
+            "\\documentclass{{article}}\n\
+             \\pdfximage page 2{{img-a.pdf}}\\edef\\imgA{{\\the\\pdflastximage}}\n\
+             \\pdfximage width 2cm{{img-b.png}}\\edef\\imgB{{\\the\\pdflastximage}}\n\
+             \\pdfximage width 2cm page 1{{img-d.jb2}}\\edef\\imgD{{\\the\\pdflastximage}}\n\
+             \\pdfximage width 2cm page 2{{img-d.jb2}}\\edef\\imgG{{\\the\\pdflastximage}}\n\
+             \\pdfximage width 2cm{{img-f.png}}\\edef\\imgF{{\\the\\pdflastximage}}\n\
+             \\edef\\depth{{\\the\\pdflastximagecolordepth/\\the\\pdflastximagepages}}\n\
+             \\begin{{document}}\n\
+             {}\
+             \\noindent\\pdfrefximage\\imgD\\ \\pdfrefximage\\imgB\\par\\depth\\clearpage\n\
+             {}\
+             \\noindent\\pdfrefximage\\imgG\\ \\pdfrefximage\\imgF\\ \\pdfrefximage\\imgA\\par\n\
+             \\pdfrefximage\\imgA\n\
+             \\end{{document}}\n",
+            paras(0, 3, word),
+            paras(3, 6, "alpha"),
+        )
+    };
+    let base = doc("alpha");
+    let s0 = dir.with_extension("s0");
+    let mut h = reopen_from_stored_s0(&e, &dir, &base, &s0, "rv1685-a: the open");
+    for (word, what) in [
+        ("gamma", "rv1685-a: an edit after the open"),
+        ("alpha", "rv1685-a: its revert"),
+    ] {
+        compile_and_check(&e, &mut h, &dir, &[("doc.tex", &doc(word))], what);
+    }
+    drop(h);
+    std::fs::rename(dir.join("img-d.jb2"), dir.join("moved.jb2")).unwrap();
+    drop(rv_refused(
+        &e,
+        &dir,
+        &s0,
+        "img-d.jb2",
+        "rv1685-a: moved image",
+    ));
+    std::fs::rename(dir.join("moved.jb2"), dir.join("img-d.jb2")).unwrap();
+    let mut h = Host::start(&e, &dir);
+    let r = h.cmd(&format!("open {}", s0.display()));
+    assert!(r.contains("\"mode\":\"open\""), "rv1685-a: restored: {r}");
+}
+
+/// Reviewer (#1685): images written before S₀ (`\immediate\pdfximage`, and a
+/// grouped PDF page placed in an `\immediate\pdfxform`) refuse the open; the
+/// full run then equals scratch.
+#[test]
+fn rv1685_written_before_s0_refuses() {
+    let Some(e) = env() else {
+        common::no_texlive();
+        return;
+    };
+    let dir = e.dir.join("rv1685-b");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    test_image(&dir, "pdf-hand.pdf", "img-a.pdf");
+    test_image(&dir, "png-rgba8.png", "img-b.png");
+    let doc = format!(
+        "\\documentclass{{article}}\n\
+         \\pdfximage page 2{{img-a.pdf}}\\edef\\imgA{{\\the\\pdflastximage}}\n\
+         \\setbox0\\hbox{{\\pdfrefximage\\imgA}}\\immediate\\pdfxform0\\edef\\fm{{\\the\\pdflastxform}}\n\
+         \\immediate\\pdfximage width 2cm{{img-b.png}}\\edef\\imgB{{\\the\\pdflastximage}}\n\
+         \\begin{{document}}\n\
+         {}\
+         \\noindent\\pdfrefxform\\fm\\ \\pdfrefximage\\imgB\\par\n\
+         \\end{{document}}\n",
+        paras(0, 3, "alpha"),
+    );
+    let s0 = dir.with_extension("s0");
+    let _ = std::fs::remove_file(&s0);
+    {
+        let mut h = Host::start(&e, &dir);
+        for k in 0..4 {
+            let r = compile_and_check(&e, &mut h, &dir, &[("doc.tex", &doc)], "settle");
+            if r.contains("\"mode\":\"unchanged\"") || k == 3 {
+                break;
+            }
+        }
+        let r = h.cmd(&format!("save {}", s0.display()));
+        assert!(r.contains("\"saved\""), "rv1685-b: {r}");
+    }
+    let mut h = rv_refused(&e, &dir, &s0, "written", "rv1685-b: written before S0");
+    let r = compile_and_check(&e, &mut h, &dir, &[("doc.tex", &doc)], "rv1685-b: cold");
+    assert!(r.contains("\"mode\":\"cold\""), "rv1685-b: {r}");
 }

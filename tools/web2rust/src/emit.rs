@@ -2639,7 +2639,7 @@ fn narrow_store(bits: u32, off: u32, width: u32) -> Option<String> {
         32 => "u32",
         _ => return None,
     };
-    if off % bits != 0 || off + bits > width || !(width == 32 || width == 64) {
+    if !off.is_multiple_of(bits) || off + bits > width || !(width == 32 || width == 64) {
         return None;
     }
     let (le, be) = (off / 8, (width - off - bits) / 8);

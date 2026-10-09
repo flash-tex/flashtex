@@ -46,6 +46,8 @@ if tarball="$("$PKG" 9.9.9 selftest "$WORK/out1" "${ALL[@]}" --require flashtex-
   done
   check "bin/pdftex.pool is the engine's pool, beside the host" cmp -s "$d/bin/pdftex.pool" "$ENGINE/pdftex.pool"
   check "share/flashtex/engine/LICENSE is the engine's licence" cmp -s "$d/share/flashtex/engine/LICENSE" "$ENGINE/LICENSE"
+  check "share/flashtex/engine/THIRD-PARTY-NOTICES is the engine's notices" cmp -s "$d/share/flashtex/engine/THIRD-PARTY-NOTICES" "$ENGINE/THIRD-PARTY-NOTICES"
+  check "the notices carry jemalloc's" grep -q 'Copyright (C) 2002-present Jason Evans' "$d/share/flashtex/engine/THIRD-PARTY-NOTICES"
   check "README lists bin/flashtex-v3 and bin/flashtex-host" grep -q 'bin/flashtex-host`$' "$d/README.md"
   check "README shows flashtex-v3's usage" grep -q '^bin/flashtex-v3 build main.tex' "$d/README.md"
   check "README states the host's licence" grep -q 'GNU General Public License, version 2 or later' "$d/README.md"
