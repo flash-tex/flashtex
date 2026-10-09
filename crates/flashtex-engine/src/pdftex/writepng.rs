@@ -125,6 +125,16 @@ impl Clone for PngImage {
 }
 
 impl PngImage {
+    /// The image `name` as a copy holds it: not open yet (a persisted S₀'s
+    /// table, `images::State`'s codec).
+    pub(crate) fn unopened(name: &[u8]) -> PngImage {
+        let end = name.iter().position(|&b| b == 0).unwrap_or(name.len());
+        PngImage {
+            raw: std::cell::Cell::new(std::ptr::null_mut()),
+            name: CString::new(&name[..end]).expect("no NUL"),
+        }
+    }
+
     /// The handle, opened again if this is a copy.
     fn h(&self) -> *mut FtPng {
         let mut p = self.raw.get();
@@ -201,6 +211,12 @@ pub struct State {
     /// `transparent_page_group_was_written`.
     transparent_page_group_was_written: bool,
 }
+
+crate::codec_struct!(State {
+    transparent_page_group,
+    last_png_needs_page_group,
+    transparent_page_group_was_written
+});
 
 /// How a decoded byte is routed: `write_simple_pixel` and the alpha
 /// splitters `write_gray_pixel_8/16`, `write_rgb_pixel_8/16`.

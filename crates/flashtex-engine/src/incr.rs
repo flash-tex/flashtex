@@ -232,6 +232,9 @@ pub struct Report {
     /// The restart point is before S₀ (`Session::preamble_restart`): the
     /// run took S₀ again.
     pub restart_preamble: bool,
+    /// ... in the middle of the main file's line, which the run read again
+    /// (`crate::midline`).
+    pub restart_midline: bool,
     pub restart_gap: u64,
     /// Where the checkpoint after the restart point reads the edited file,
     /// in bytes from the (first) edit: past it (positive), which is why the
@@ -318,7 +321,7 @@ pub struct Report {
 impl Report {
     pub fn json(&self) -> String {
         format!(
-            "{{\"mode\":\"{}\",\"cold_reason\":{},\"status\":{},\"paused\":{},\"restart_pages\":{},\"cursor\":{},\"restart_mid_page\":{},\"restart_preamble\":{},\"restart_gap\":{},\"converged_at\":{},\"rerun_from\":{},\"rerun_pages\":{},\"pages\":{},\"find_s\":{:.6},\"key_s\":{:.6},\"changes_s\":{:.6},\"restore_s\":{:.6},\"page_s\":{:.6},\"total_s\":{:.6},\"tests\":{},\"test_s\":{:.6},\"log_bytes\":{},\"checkpoints\":{},\"diffs\":{:?},\"page_times\":[{}],\"edited\":{},\"passes\":{},\"pass_modes\":{:?},\"pass_s\":[{}],\"oscillation\":{},\"ck_stats\":{},\"l5\":{:?},\"rs_events\":{},\"preempted\":{},\"deferred\":{}}}",
+            "{{\"mode\":\"{}\",\"cold_reason\":{},\"status\":{},\"paused\":{},\"restart_pages\":{},\"cursor\":{},\"restart_mid_page\":{},\"restart_preamble\":{},\"restart_midline\":{},\"restart_gap\":{},\"converged_at\":{},\"rerun_from\":{},\"rerun_pages\":{},\"pages\":{},\"find_s\":{:.6},\"key_s\":{:.6},\"changes_s\":{:.6},\"restore_s\":{:.6},\"page_s\":{:.6},\"total_s\":{:.6},\"tests\":{},\"test_s\":{:.6},\"log_bytes\":{},\"checkpoints\":{},\"diffs\":{:?},\"page_times\":[{}],\"edited\":{},\"passes\":{},\"pass_modes\":{:?},\"pass_s\":[{}],\"oscillation\":{},\"ck_stats\":{},\"l5\":{:?},\"rs_events\":{},\"preempted\":{},\"deferred\":{}}}",
             self.mode,
             self.cold_reason
                 .as_ref()
@@ -330,6 +333,7 @@ impl Report {
             self.cursor,
             self.restart_mid_page,
             self.restart_preamble,
+            self.restart_midline,
             self.restart_gap,
             self.converged_at
                 .map(|p| p.to_string())
@@ -2342,6 +2346,11 @@ pub struct Session {
     /// restored run's differ from: the next pass restarts there at the
     /// latest, so that they are shipped again (a display holds them).
     reemit_from: Option<CheckpointId>,
+    /// PREAMBLE-MIDLINE: the refill of the restart point `preamble_restart`
+    /// chose, and the checkpoints such a refill left holding the old line
+    /// (dropped after the run: `enforce_budget`).
+    midline_refill: Option<(CheckpointId, crate::midline::Refill)>,
+    stale_midline: Vec<CheckpointId>,
     /// The last compile's first pass was stopped by newer work before it
     /// shipped a changed page: the next one is protected (`Obs::protect_edit`).
     starved: bool,
@@ -2456,6 +2465,8 @@ impl Session {
             no_tests: false,
             before_pass: None,
             reemit_from: None,
+            midline_refill: None,
+            stale_midline: vec![],
             starved: false,
             lookup_dirs: vec![],
             changed_lookup_last: None,
@@ -4071,12 +4082,24 @@ impl Session {
     /// edits and changed files over the whole journal. `Err`: why not (the
     /// caller runs from the format).
     fn preamble_restart(&mut self) -> Result<(CheckpointId, Vec<Edit>, Vec<String>), String> {
+        self.midline_refill = None;
         if self.opts.preamble_line_s.is_none() {
             return Err("preamble restarts are off".into());
         }
         let s0 = self.s0.as_ref().ok_or("no S0")?;
         s0.key.check_run(self.clock, &self.first_line)?;
         let anchor = s0.id;
+        // (the user's files as the last run read them, for `crate::midline`)
+        let old: HashMap<String, std::sync::Arc<Vec<u8>>> = self
+            .journal
+            .as_ref()
+            .map(|j| {
+                j.files
+                    .iter()
+                    .filter_map(|f| Some((f.path.clone(), f.content.clone()?)))
+                    .collect()
+            })
+            .unwrap_or_default();
         // every file the run read, those the key covers included
         let cover = std::mem::take(&mut self.key_cover);
         let r = self.changes();
@@ -4115,17 +4138,64 @@ impl Session {
             if self.ck_pages.get(&id) != Some(&0) {
                 continue;
             }
-            let rec = g.record_of(id)?;
+            let mut rec = g.record_of(id)?;
             // an external command before it: S₀'s key's barriers
             if rec.effects_len > 0 {
                 continue;
             }
+            // PREAMBLE-MIDLINE: a checkpoint in the middle of the main
+            // file's line, consumed up to the line's start and read again
+            // from there (`crate::midline`)
+            let mid = g
+                .layer()
+                .midlines
+                .iter()
+                .find(|(i, _)| *i == id)
+                .map(|(_, m)| m.clone());
+            let now = |p: &str| {
+                j.files
+                    .iter()
+                    .find(|f| f.path == p && f.content.is_some())
+                    .and_then(|f| f.content.as_deref())
+                    .map(|v| v.as_slice())
+            };
+            let verdict = crate::midline::check(
+                g,
+                &rec,
+                mid.as_ref(),
+                &edits,
+                |p| old.get(p).map(|v| v.as_slice()),
+                now,
+            );
+            if self.opts.debug {
+                if let Some(m) = &mid {
+                    let at = rec.files.get(4).map(|f| &f.stream);
+                    eprintln!(
+                        "[incr] mid-line checkpoint {id} (line {}, column {}, {at:?}): {verdict:?}",
+                        m.line,
+                        m.loc - m.start
+                    );
+                }
+            }
+            let refill = match verdict {
+                crate::midline::Verdict::Stale => continue,
+                crate::midline::Verdict::Plain => None,
+                crate::midline::Verdict::Refill(f) => {
+                    if let Some(Stream::In { offset, .. }) =
+                        rec.files.get_mut(4).map(|f| &mut f.stream)
+                    {
+                        *offset = f.at;
+                    }
+                    Some(f)
+                }
+            };
             if !consumed_nothing_changed(j, &first_read, &rec, &edits, &changed, bad) {
                 continue;
             }
             if !g.restorable(id) {
                 continue;
             }
+            self.midline_refill = refill.map(|f| (id, f));
             if self.opts.debug {
                 eprintln!(
                     "[incr] preamble restart at {id} ({} of {lo} checkpoints before S0)",
@@ -4487,6 +4557,47 @@ impl Session {
             g.forget_anchor();
             obs.preempt_after_s0 = true;
         }
+        // PREAMBLE-MIDLINE: the rest of the restart point's line read again
+        // (`crate::midline`)
+        let refill = self
+            .midline_refill
+            .take()
+            .filter(|(id, _)| *id == r)
+            .map(|(_, f)| f);
+        let mut rec = rec;
+        if before_s0 {
+            if let Err(e) = g.midline_after_restore(r, refill.as_ref()) {
+                return self.cold(
+                    t0,
+                    stop_at,
+                    Some(format!("cannot read the line again: {e}")),
+                );
+            }
+        }
+        let midline = refill.is_some();
+        if let Some(f) = refill {
+            // the checkpoints that hold the old line: this one and those
+            // before it on the line
+            for id in g.checkpoints() {
+                let same = g.record_of(id).is_ok_and(|c| {
+                    matches!(c.files.get(4).map(|x| &x.stream),
+                        Some(Stream::In { path, offset }) if *path == f.path && *offset == f.old_end)
+                });
+                if same {
+                    self.stale_midline.push(id);
+                }
+                if id == r {
+                    break;
+                }
+            }
+            if let Some(x) = rec.files.get_mut(4) {
+                x.stream = Stream::In {
+                    path: f.path.clone(),
+                    offset: f.end,
+                };
+                x.line = f.line.clone();
+            }
+        }
         if g.layer().aux_point == Some(r) {
             // the run reads the `.aux` again: its close begins the read-set
             g.layer().aux_armed = true;
@@ -4629,6 +4740,7 @@ impl Session {
         let mut rep = Report {
             mode: "incremental".into(),
             restart_preamble: before_s0,
+            restart_midline: midline,
             restart_mid_page: mid,
             restart_gap: gap,
             restart_next_gap: next_gap,
@@ -5131,6 +5243,11 @@ impl Session {
         let budget = self.opts.budget;
         let dense = self.opts.dense;
         let Some(g) = self.g.as_mut() else { return };
+        // (`crate::midline`: the checkpoints a refill left holding the old line)
+        let stale = std::mem::take(&mut self.stale_midline);
+        if !stale.is_empty() {
+            g.retain_checkpoints(&|id| !stale.contains(&id));
+        }
         let pages: HashMap<CheckpointId, usize> = self
             .pages
             .iter()
@@ -5168,7 +5285,7 @@ fn first_reads(j: &ReadLog) -> HashMap<&str, usize> {
 /// `\r`, has seen the byte at `offset` (or the end). `now` is the file as it
 /// is now, the same as before the change `e` up to `e.prefix`; without it,
 /// the conservative answer.
-fn read_through(offset: u64, e: &Edit, now: Option<&Vec<u8>>) -> u64 {
+pub(crate) fn read_through(offset: u64, e: &Edit, now: Option<&[u8]>) -> u64 {
     if offset > e.prefix {
         return offset;
     }
@@ -5229,7 +5346,8 @@ fn consumed_nothing_changed(
             .files
             .iter()
             .find(|f| f.path == *p && f.content.is_some())
-            .and_then(|f| f.content.as_deref());
+            .and_then(|f| f.content.as_deref())
+            .map(|v| v.as_slice());
         let open_before = r.files.iter().any(|f| match &f.stream {
             Stream::In { path, offset } => {
                 path == p && e.is_some_and(|e| read_through(*offset, e, now) <= e.prefix)
