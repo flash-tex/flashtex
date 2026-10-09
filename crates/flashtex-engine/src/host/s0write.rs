@@ -165,6 +165,7 @@ mod tests {
         }
         S0Image {
             head: b"head of an S0 for the tests".to_vec(),
+            tail: Box::new(|h: &mut Vec<u8>| h.extend_from_slice(b", its tail")),
             chunks,
             data,
         }

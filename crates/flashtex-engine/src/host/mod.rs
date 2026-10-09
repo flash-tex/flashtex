@@ -726,12 +726,20 @@ pub fn write_s0(
     prepare_s0(g, id, key)?.write(path, &|| false)
 }
 
+/// Appends to an S₀ header, on whichever thread writes the file.
+type Encode = Box<dyn FnOnce(&mut Vec<u8>) + Send>;
+
 /// S₀ taken out of the engine for writing ([`prepare_s0`]): everything the
 /// file holds, so that [`S0Image::write`] needs nothing of the engine and may
 /// run on another thread ([`s0write`]) while the engine goes on.
 pub struct S0Image {
-    /// The header up to the list of nonzero chunks, which the write works out.
+    /// The header up to the definition sites.
     head: Vec<u8>,
+    /// Encodes the rest of the header up to the list of nonzero chunks
+    /// (which the write works out): the definition sites, made from the
+    /// table taken at S₀ (5.6 MB and 96 M instructions on a beamer deck's
+    /// preamble), the output opens and the space's sizes.
+    tail: Encode,
     /// Every chunk ever written, ascending, and its bytes at S₀ (the
     /// display list's side table blanked), `CHUNK_BYTES` each in `data`.
     chunks: Vec<u32>,
@@ -739,8 +747,9 @@ pub struct S0Image {
 }
 
 /// Take S₀ (checkpoint `id` of `g`, with its key) out of the engine for
-/// writing: the header and a copy of the chunks, on the engine's thread;
-/// the scan for zero chunks, the file and its rename are the write's.
+/// writing: the header (but its definition sites, of which a table is
+/// taken) and a copy of the chunks, on the engine's thread; the sites, the
+/// scan for zero chunks, the file and its rename are the write's.
 pub fn prepare_s0(g: &mut Globals, id: CheckpointId, key: &Key) -> Result<S0Image, String> {
     let rec = g.record_of(id)?;
     // The output files' contents up to their length at S₀, and the
@@ -806,19 +815,27 @@ pub fn prepare_s0(g: &mut Globals, id: CheckpointId, key: &Key) -> Result<S0Imag
         .map(|n| (**n).clone())
         .collect::<Vec<crate::diag::Note>>()
         .enc(&mut head);
-    crate::diag::sites().enc(&mut head);
+    let sites = crate::diag::sites_snapshot();
     // The files opened for output before S₀, by name: a process that
     // opens S₀ must know them (`system::rewritten_at`: a file the
     // preamble wrote and the body writes again, #1348).
-    let opens = system::opens_since(0);
-    opens
+    let opens = system::opens_since(0)
         .get(..rec.opens)
         .ok_or("the output opens are fewer than at S0")?
-        .to_vec()
-        .enc(&mut head);
-    (g.arena.len_bytes() as u64).enc(&mut head);
-    (g.arena.scalar_bytes() as u64).enc(&mut head);
-    Ok(S0Image { head, chunks, data })
+        .to_vec();
+    let sizes = (g.arena.len_bytes() as u64, g.arena.scalar_bytes() as u64);
+    let tail: Encode = Box::new(move |head: &mut Vec<u8>| {
+        sites.sites().enc(head);
+        opens.enc(head);
+        sizes.0.enc(head);
+        sizes.1.enc(head);
+    });
+    Ok(S0Image {
+        head,
+        tail,
+        chunks,
+        data,
+    })
 }
 
 impl S0Image {
@@ -836,9 +853,11 @@ impl S0Image {
     pub fn write(self, path: &str, cancelled: &dyn Fn() -> bool) -> Result<(u64, u64), String> {
         let S0Image {
             mut head,
+            tail,
             chunks,
             data,
         } = self;
+        tail(&mut head);
         let nonzero = |d: &[u8]| {
             d.as_chunks::<8>()
                 .0
