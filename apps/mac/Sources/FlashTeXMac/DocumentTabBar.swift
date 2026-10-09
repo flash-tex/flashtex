@@ -79,7 +79,11 @@ private struct DocumentTab: View {
                         }
                     }
                 } label: {
-                    Image(systemName: "xmark").font(DS.Fonts.header)
+                    // Not DS.Fonts.header: a bare icon glyph in a fixed
+                    // inlineIconButton box, same "icon, not text" rule as
+                    // railIcon/toolbarIcon -- DS.Fonts.header would scale
+                    // with Text Size and can overflow this fixed box.
+                    Image(systemName: "xmark").font(.system(size: 11, weight: .semibold))
                         .foregroundStyle(DS.Colors.textSecondary)
                         .frame(width: DS.Size.inlineIconButton, height: DS.Size.inlineIconButton)
                         .background(hovering ? DS.Colors.hover : .clear, in: RoundedRectangle(cornerRadius: DS.Radius.control))
