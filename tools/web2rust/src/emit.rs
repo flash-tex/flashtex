@@ -650,6 +650,20 @@ impl<'a> E<'a> {
                 } else {
                     format!("(({inner}) + {}) as usize", -lo)
                 };
+                // A subscript that calls a translated routine (which needs
+                // `&mut self`) is evaluated into a temporary first: the
+                // array's `Index` would otherwise hold `&self` across the
+                // call (tex.ch's `char_info`, whose subscript calls
+                // `effective_char`). Pascal evaluates the subscript before
+                // the element is read anyway.
+                if ix.len() == 1 && self.has_call(&ix[0]) {
+                    let n = self.fresh();
+                    return format!(
+                        "{{ let __s{n} = {idx}; {}[{}] }}",
+                        self.view_of(b).unwrap_or_else(|| self.ex(b)),
+                        self.subscript(format!("__s{n}"))
+                    );
+                }
                 let mut s = format!(
                     "{}[{}]",
                     self.view_of(b).unwrap_or_else(|| self.ex(b)),
@@ -1879,6 +1893,7 @@ pub fn emit(
     sources: &[String],
     arena_caps: &[(String, String)],
     index_type: Option<&str>,
+    host_state: Option<&str>,
     inline: &[(String, String)],
     array_views: &[String],
 ) -> Result<(), String> {
@@ -2067,6 +2082,13 @@ pub fn emit(
         "    /// The word space every `Arr` above lives in (crates/flashtex-engine/src/arena.rs)."
     );
     let _ = writeln!(s, "    pub arena: crate::arena::Arena,");
+    if let Some(t) = host_state {
+        let _ = writeln!(
+            s,
+            "    /// The engine's state outside the word space (`--host-state`)."
+        );
+        let _ = writeln!(s, "    pub host: {t},");
+    }
     let _ = writeln!(s, "}}\n");
     // The scalar region: every scalar global, in declaration order, then the
     // length of every growable array.
@@ -2115,6 +2137,9 @@ pub fn emit(
         let _ = writeln!(s, "            {}: {},", rid(&g.name), init);
     }
     let _ = writeln!(s, "            arena: __arena,");
+    if host_state.is_some() {
+        let _ = writeln!(s, "            host: Default::default(),");
+    }
     let _ = writeln!(s, "        }})");
     let _ = writeln!(s, "    }}\n");
     let _ = writeln!(
@@ -2547,6 +2572,9 @@ fn emit_packed(s: &mut String, q: &Packed, e: &E) {
         let _ = writeln!(s, "    pub fn {m}(&self) -> {ret} {{ {get} }}");
         let _ = writeln!(s, "    #[inline(always)]");
         let setter = match l.kind {
+            Scalar::I32 | Scalar::U8 if narrow_store(l.bits, l.off, q.width).is_some() => {
+                narrow_store(l.bits, l.off, q.width).unwrap()
+            }
             Scalar::F64 => format!("self.0 = v.to_bits().rotate_right(32) as {backing};"),
             Scalar::F32 => format!(
                 "self.0 = (self.0 & !(({mask} as {backing}) << {off})) | (((v.to_bits() as {backing}) & ({mask} as {backing})) << {off});",
@@ -2580,14 +2608,48 @@ fn emit_packed(s: &mut String, q: &Packed, e: &E) {
             rid(tn)
         );
         let _ = writeln!(s, "    #[inline(always)]");
+        let setter = match narrow_store(*w, *off, q.width) {
+            Some(st) => st.replace("v as ", "v.0 as "),
+            None => format!(
+                "self.0 = (self.0 & !(({mask} as {backing}) << {off})) | (((v.0 as {backing}) & ({mask} as {backing})) << {off});"
+            ),
+        };
         let _ = writeln!(
             s,
-            "    pub fn set_{}(&mut self, v: {}) {{ self.0 = (self.0 & !(({mask} as {backing}) << {off})) | (((v.0 as {backing}) & ({mask} as {backing})) << {off}); }}",
+            "    pub fn set_{}(&mut self, v: {}) {{ {setter} }}",
             rid(path),
             rid(tn)
         );
     }
     let _ = writeln!(s, "}}");
+}
+
+/// The setter of a field that is a whole byte, half-word or word of a packed
+/// record (`bits` wide at bit `off` of a `width`-bit record), as a store of
+/// that field alone; `None` for any other field. The read-modify-write form
+/// (`self.0 = (self.0 & !mask) | v`) loads the whole record first, and a
+/// node or token just taken off a free list is rarely in the cache: on
+/// *Infinite Descent* the load before linking a token (`mem[p].rh := q`) was
+/// the hottest instruction of `macro_call` (P6-ENGINE-SPEED). The bytes
+/// stored are the ones the masked form writes, so the program is unchanged.
+fn narrow_store(bits: u32, off: u32, width: u32) -> Option<String> {
+    let ty = match bits {
+        8 => "u8",
+        16 => "u16",
+        32 => "u32",
+        _ => return None,
+    };
+    if !off.is_multiple_of(bits) || off + bits > width || !(width == 32 || width == 64) {
+        return None;
+    }
+    let (le, be) = (off / 8, (width - off - bits) / 8);
+    Some(format!(
+        "let k = if cfg!(target_endian = \"little\") {{ {le} }} else {{ {be} }}; \
+         let p = (&mut self.0 as *mut _ as *mut u8).wrapping_add(k) as *mut {ty}; \
+         // SAFETY: the field is bytes k..k+{n} of this record, which `self` borrows mutably.\n        \
+         unsafe {{ p.write_unaligned(v as {ty}) }}",
+        n = bits / 8
+    ))
 }
 
 fn header(what: &str) -> String {

@@ -158,6 +158,8 @@ struct EngineV3ScrollView: NSViewRepresentable {
     }
 
     func updateNSView(_ scroll: NSScrollView, context: Context) {
+        let probe = MainThreadProbe.begin()
+        defer { MainThreadProbe.end("v3.updateNSView", probe) }
         let revision = session.layoutRevision // observed: page count/sizes changed
         let pages = scroll.documentView as? EngineV3PagesView
         pages?.setAppearance(dark ? .dark : .light)
@@ -296,6 +298,15 @@ final class EngineV3PageView: NSView {
     var labelFrameInView: CGRect {
         let h: CGFloat = 14, pad: CGFloat = 4
         return CGRect(x: pad, y: bounds.height - h - pad, width: max(0, bounds.width - 2 * pad), height: h)
+    }
+
+    /// The label's place depends on whether the layer tree is flipped,
+    /// known once the view is in a window: placed again then.
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        CATransaction.begin(); CATransaction.setDisableActions(true)
+        placeLabel()
+        CATransaction.commit()
     }
 
     private func placeLabel() {
@@ -739,6 +750,8 @@ final class EngineV3PagesView: NSView {
     /// stays where it is in the viewport.
     func relayout(revision: Int? = nil, anchor: CGPoint? = nil) {
         guard let session else { return }
+        let probe = MainThreadProbe.begin()
+        defer { MainThreadProbe.end("v3.relayout", probe) }
         let n = session.pageCount
         let avail = available
         // `pageSize`: a compiled page, or a stored one of an instant reopen.
@@ -791,7 +804,9 @@ final class EngineV3PagesView: NSView {
         frames = f
         scale = newScale
         fitScale = fit
-        laidOut = (revision ?? laidOut?.revision ?? session.layoutRevision, PreviewZoom.clamped(zoom), avail, widest)
+        // Laid out from the session as it is now: its current revision (so
+        // SwiftUI's update for that revision lays out nothing again).
+        laidOut = (revision ?? session.layoutRevision, PreviewZoom.clamped(zoom), avail, widest)
         if let model = session.model, abs(model.previewFitScale - CGFloat(fit)) > 1e-6 { model.previewFitScale = CGFloat(fit) }
         publishFitPage()
         if frame.size != CGSize(width: width, height: height) { setFrameSize(CGSize(width: width, height: height)) }
@@ -949,9 +964,12 @@ final class EngineV3PagesView: NSView {
         // VoiceOver: a page landmark with its text (EngineV3Accessibility.swift).
         v.owner = self
         v.index = i
-        v.setLabel(number: i + 1, dark: pageAppearance == .dark, contentsScale: backingScale)
         v.tiles.onCommitted = { [weak self] compile, t0, t1 in self?.recordCommit(compileID: compile, page: i, installNs: t0, commitNs: t1) }
         addSubview(v)
+        // After it is in the layer tree: the label's place depends on whether
+        // the tree is flipped. (Before, a later relayout re-placed it; with one
+        // layout per drain there may be none: the label sat at the top.)
+        v.setLabel(number: i + 1, dark: pageAppearance == .dark, contentsScale: backingScale)
         pageViews[i] = v
         return v
     }
@@ -1104,7 +1122,13 @@ final class EngineV3PagesView: NSView {
             if changed, let compile, let committed { recordCommit(compileID: compile, page: i, installNs: image.committedNs == nil ? t0 : image.installNs, commitNs: committed) }
             return frames[i].intersects(visibleRect)
         }
-        if i >= frames.count || (frames[i].width - CGFloat((session?.pages[i]?.widthPt ?? 0) * scale)).magnitude > 0.5 { relayout() }
+        if i >= frames.count || (frames[i].width - CGFloat((session?.pages[i]?.widthPt ?? 0) * scale)).magnitude > 0.5 {
+            // Laid out once at the end of the drain (`flushLayout`), for every
+            // page that arrived in it; whether it is on screen is known then.
+            layoutPending = true
+            if changed { arrivedBeforeLayout[i] = compileID }
+            return true
+        }
         // Rastered by the relayout — except a refused raster, which is redrawn below.
         if pendingCompile[i] == nil, !redraw { return i < frames.count && frames[i].intersects(visibleRect) }
         if i < frames.count, pageViews[i] == nil, frames[i].intersects(visibleRect.insetBy(dx: 0, dy: -visibleRect.height)) {
@@ -1119,6 +1143,26 @@ final class EngineV3PagesView: NSView {
         }
         pendingCompile[i] = nil
         return false
+    }
+
+    /// A page arrived past the laid-out ones (or resized): lay out at the
+    /// end of the drain (`EngineV3Session.flushEvents`).
+    private var layoutPending = false
+    /// The changed pages that waited for that layout, with their compile.
+    private var arrivedBeforeLayout: [Int: Int] = [:]
+
+    /// The layout the drain's pages need, once; a changed page that turned
+    /// out off screen is reported so (its keystroke sample is not waited for).
+    func flushLayout() {
+        guard layoutPending else { return }
+        layoutPending = false
+        relayout()
+        let arrived = arrivedBeforeLayout
+        arrivedBeforeLayout = [:]
+        for (i, compile) in arrived {
+            if pageViews[i] == nil { pendingCompile[i] = nil }
+            if !(i < frames.count && frames[i].intersects(visibleRect)) { session?.latency.offscreen(compile: compile) }
+        }
     }
 
     func formArrived(_ id: UInt32) {

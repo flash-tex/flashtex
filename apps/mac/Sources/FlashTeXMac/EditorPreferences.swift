@@ -863,34 +863,24 @@ struct SettingsRootView: View {
                 .tabItem { Label("Themes", systemImage: "paintpalette") }
             HybridConcealSettingsView() // master switch, reveal mode, classes, deny list (HybridConcealSettings.swift)
                 .tabItem { Label("Conceal", systemImage: "eye.slash") }
-            Form { EnvironmentRulesSection(rules: $prefs.environmentRules) } // Return inside \begin{…}: indent, and what each new line starts with (EnvironmentRulesSettings.swift)
+            // Seven tabs: related panes share one grouped Form so every tab fits the
+            // toolbar at settingsWidth (ten overflowed into an unclickable » menu, PR #1652).
+            Form { EnvironmentRulesSection(rules: $prefs.environmentRules); TeXpandSettingsSection() } // Return inside \begin{…} (EnvironmentRulesSettings.swift); TeXpand abbreviations (TeXpandSettingsView.swift)
                 .formStyle(.grouped)
                 .frame(width: DS.Layout.settingsWidth)
-                .tabItem { Label("Environments", systemImage: "list.bullet.indent") }
-            Form { TeXpandSettingsSection() } // TeXpand abbreviations: master switch (off), kinds, leader, packs (TeXpandSettingsView.swift)
-                .formStyle(.grouped)
-                .frame(width: DS.Layout.settingsWidth)
-                .tabItem { Label("Abbreviations", systemImage: "text.badge.plus") }
-            Form { CompilePreferencesSection(); EngineChoiceSettingsSection() } // auto-compile (moved out of the toolbar's producer menu, #653 review); the engine for other documents (EngineChoice.swift)
+                .tabItem { Label("Typing", systemImage: "keyboard") }
+            Form { CompilePreferencesSection(); EngineChoiceSettingsSection(); PerformanceSettingsSection() } // auto-compile (#653 review); engine choice (EngineChoice.swift); Low Memory / Balanced / High Performance (PerformanceMode.swift)
                 .formStyle(.grouped)
                 .frame(width: DS.Layout.settingsWidth)
                 .tabItem { Label("Compile", systemImage: "play.circle") }
-            Form { ConversionPreferencesSection() } // provider picker, model, API key (Keychain) (ConversionPreferencesView.swift)
+            Form { ConversionPreferencesSection(); PasteImageSettingsSection() } // capture conversion provider/model/key (ConversionPreferencesView.swift); paste an image as a figure (PasteImage.swift)
                 .formStyle(.grouped)
                 .frame(width: DS.Layout.settingsWidth)
-                .tabItem { Label("Conversion", systemImage: "wand.and.stars") }
-            Form { PasteImageSettingsSection() } // paste an image as a figure (PasteImage.swift)
-                .formStyle(.grouped)
-                .frame(width: DS.Layout.settingsWidth)
-                .tabItem { Label("Images", systemImage: "photo") }
+                .tabItem { Label("Import", systemImage: "square.and.arrow.down") }
             Form { LiveShareSettingsSection() } // Live Share (preview), off by default (LiveShareViews.swift)
                 .formStyle(.grouped)
                 .frame(width: DS.Layout.settingsWidth)
                 .tabItem { Label("Live Share", systemImage: "person.2") }
-            Form { PerformanceSettingsSection() } // Low Memory / Balanced / High Performance (PerformanceMode.swift)
-                .formStyle(.grouped)
-                .frame(width: DS.Layout.settingsWidth)
-                .tabItem { Label("Performance", systemImage: "gauge.with.dots.needle.67percent") }
         }
     }
 }

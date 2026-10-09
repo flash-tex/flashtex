@@ -28,7 +28,7 @@ kept next to its output (`*.host-stderr`): the host says there why it ended
 | `mkeng.sh NAME [--keep-fmt]` | copies this checkout's `target/release` binaries to `$INCR_BENCH_DIR/NAME` and builds the format |
 | `mkdocs.py` | the generated documents: `plain-N`, `full-N` (N = 10, 100, 120, 300, 1000; `gen.py`), `refs-30`, `refs-120` (`genrefs.py`), `beamer-5`, `beamer-30` (`genbeamer.py`) |
 | `mkbook.py [BOOK ...]` | the book documents: `infdesc` (*Infinite Descent*, 592 pages, the `books.json` entry fetched at its pinned commit and checked by SHA-256 into `$INCR_BENCH_DIR/cache`, never committed) and `infdesc-x2` (the book twice, 1,142 pages: the owner's heavy benchmark, `tools/parity/corpus/infdesc_x2.py`); `docs/BOOK/doc.json` names the chapter in-body keystrokes go into (`docspec.py`) |
-| `incr_bench.py ENGINE SRCDIR DOC ...` | one iserve session: random edits (`--kinds`: letters, sentences, structural, and the line/paragraph kinds `newline`, `split`, `join` and the meaning-changing context kinds `math_par`, `verbatim_blank`, `cell_blank` from `edits.py`), each compiled and, with `--verify`, compared byte for byte (PDF, log, aux, out, toc, terminal) with from-scratch runs |
+| `incr_bench.py ENGINE SRCDIR DOC ...` | one iserve session: random edits (`--kinds`: letters, sentences, structural, and the line/paragraph kinds `newline`, `split`, `join` and the meaning-changing context kinds `math_par`, `verbatim_blank`, `cell_blank` and the preamble kinds `pre_title`, `pre_author`, `pre_newcommand`, `pre_setlength`, `pre_usepackage`, `pre_nopackage`, `pre_option` (PREAMBLE-FAST: a restart before S₀) from `edits.py`), each compiled and, with `--verify`, compared byte for byte (PDF, log, aux, out, toc, terminal) with from-scratch runs |
 | `matrix.py ENGINE OUTDIR [DOC...]` | the §1.2 matrix: plain/full × 10/100/300/1000 × start/middle/end × (8 letters, 3 sentences, each reverted); `matrix_table.py`/`matrix_sum.py` summarise the edited-page latency |
 | `convergence.py OUTDIR` | the matrix's convergence rate per document and why the last test of each unconverged compile failed (review 2026-09-30, track 1) |
 | `soundness.py ENGINE ...` | the soundness sweep (every parity fixture plus `--extra DIR:DOC`), `--kinds`, `--interleave` (preempted compiles) |
@@ -127,7 +127,13 @@ quiet one. On Linux, `perf stat` or `perf record` on the host shares the counter
 counts then fall short. To profile only the typesetting to the edited page, start the host with
 `FLASHTEX_PERF_MARKS=FILE`: it appends `b NS` when an edit's engine resumes after the restore and
 `e NS` at the edited page's shipout (CLOCK_MONOTONIC), and the samples of
-`perf record -k CLOCK_MONOTONIC` between a `b` and the next `e` are that interval. `dl3-keys --edit FILE`
+`perf record -k CLOCK_MONOTONIC` between a `b` and the next `e` are that interval. The same interval
+at TeX level: `FLASHTEX_MACRO_PROFILE=FILE` in the host's environment writes the macro profile of each
+such interval to `FILE.N` (`src/macroprof.rs`). Add `FLASHTEX_MACRO_PROFILE_CLOCK=instr` to count
+retired instructions instead of time, so the profile does not move with load. Add
+`FLASHTEX_MACRO_PROFILE_ROOTS=a,b,...` (macro names) for `# root` lines, which charge every
+instruction to the innermost listed macro then active.
+`docs/evidence/p6-infdesc-page-2026-10-06/` uses all three. `dl3-keys --edit FILE`
 types in another file of the project than `--main` (a book's chapter).
 
 ## T7: the latency gate

@@ -29,7 +29,6 @@ fn main() {
         keep.push(a.clone());
     }
     argv = keep;
-    system::set_no_pdf(true);
     let mut o = flashtex_engine::cli::parse(&argv);
     // Invoked under its own name, the program is xetex (kpathsea's program
     // name selects the search paths).
@@ -47,11 +46,12 @@ fn main() {
             }
         }
     }
-    if !args.is_empty() {
-        system::set_first_line(system::command_line(&args));
-    }
     flashtex_engine::system::configure(o);
     let mut g = flashtex_xetex::Globals::new();
+    system::set_no_pdf(&mut g, true);
+    if !args.is_empty() {
+        system::set_first_line(&mut g, system::command_line(&args));
+    }
     g.tex_body();
     system::final_end(&mut g)
 }

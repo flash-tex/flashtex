@@ -1,0 +1,10 @@
+% n002-lm-paragraph: a paragraph in Latin Modern Roman broken into lines
+% XeTeX-specific (docs/design/xetex/PLAN.md, phase S1: native fonts)
+\input prelude
+\def\space{ }
+\hsize=210pt \parindent=12pt \parfillskip=0pt plus 1fil
+\baselineskip=13pt \tolerance=10000 \pretolerance=-1
+\font\x="[lmroman10-regular.otf]" \x
+\setbox0=\vbox{We shall find that office workers, efficient and affluent, flatly refuse difficult fjords; AVATAR, Wo, Ta, T. Yo! Naïve café owners in Zürich serve crème brûlée -- or not --- with 1234567890 “quotes” and ‘single’ ones. We shall find that office workers, efficient and affluent, flatly refuse difficult fjords; AVATAR, Wo, Ta, T. Yo! Naïve café owners in Zürich serve crème brûlée -- or not --- with 1234567890 “quotes” and ‘single’ ones.\par}
+\lsshipbox0
+\end

@@ -652,6 +652,59 @@ impl Globals {
     }
 }
 
+// A persisted S₀ (`images::State`'s codec) carries the file table whole:
+// it is plain data read from the files, which a reopened S₀ reads again
+// and compares (`Globals::verify_persisted_images`).
+crate::codec_enum!(Phase { Initial, HaveInfo });
+crate::codec_struct!(SegInfo {
+    segnum,
+    isrefered,
+    refers,
+    seghdrflags,
+    pageassocsizeflag,
+    reftosegcount,
+    countofrefered,
+    fieldlen,
+    segnumwidth,
+    segpage,
+    segdatalen,
+    hdrstart,
+    hdrend,
+    datastart,
+    dataend,
+    endofstripeflag,
+    endofpageflag,
+    pageinfoflag,
+    endoffileflag
+});
+crate::codec_struct!(PageInfo {
+    segments,
+    seg_tree,
+    pagenum,
+    width,
+    height,
+    xres,
+    yres,
+    pagesegmentflags,
+    stripinginfo,
+    stripedheight
+});
+crate::codec_struct!(FileInfo {
+    filename,
+    filesize,
+    pages,
+    page_tree,
+    page0,
+    filehdrflags,
+    sequentialaccess,
+    numofpages,
+    streamstart,
+    pdfpage0objnum,
+    phase,
+    depth
+});
+crate::codec_struct!(State { files });
+
 /// `getstreamlen`: the bytes of the segments written (all of a page's, or
 /// the referred ones of page 0).
 fn getstreamlen(segs: &[SegInfo], refer: bool) -> i64 {

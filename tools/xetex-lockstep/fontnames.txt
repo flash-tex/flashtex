@@ -1,0 +1,191 @@
+# Font lookups measured by fontmatch.py: one \font name per line, optionally
+# followed by a tab and a size (`12` = at 12pt, `scaled 1200`). Families
+# installed with macOS, their style variants (/B /I /BI), Family-Style and
+# PostScript names, full names, engine and feature suffixes, sizes, the
+# [file] form, user-installed fonts and names no font has.
+Helvetica
+Helvetica/B
+Helvetica/I
+Helvetica/BI
+Helvetica Bold
+Helvetica-Bold
+Helvetica-Oblique
+Helvetica Light
+Helvetica-Light/B
+Helvetica Neue
+Helvetica Neue/B
+Helvetica Neue/I
+Helvetica Neue/BI
+Helvetica Neue Light
+HelveticaNeue-Medium
+Helvetica Neue-Bold
+Helvetica Neue Condensed Bold
+Helvetica Neue UltraLight/I
+Times
+Times/B
+Times/I
+Times/BI
+Times-Roman
+Times Bold
+Times-BoldItalic
+Times New Roman
+Times New Roman/B
+Times New Roman/I
+Times New Roman/BI
+TimesNewRomanPSMT
+TimesNewRomanPS-BoldMT
+Times New Roman Bold Italic
+Times New Roman-Bold
+Arial
+Arial/B
+Arial/I
+Arial/BI
+Arial Black
+Arial Narrow
+Arial Narrow/B
+ArialMT
+Arial-BoldMT
+Arial Rounded MT Bold
+Arial Unicode MS
+Georgia
+Georgia/B
+Georgia/BI
+Georgia-Bold
+Georgia Italic
+Menlo
+Menlo/B
+Menlo/I
+Menlo-Regular
+Menlo Bold Italic
+Courier
+Courier/B
+Courier/I
+Courier-Bold
+Courier New
+Courier New/B
+Courier New Bold Italic
+CourierNewPSMT
+Palatino
+Palatino/B
+Palatino/I
+Palatino/BI
+Palatino-Roman
+Palatino Bold
+Avenir
+Avenir/B
+Avenir/I
+Avenir Book
+Avenir-Heavy
+Avenir Black Oblique
+Avenir Next
+Avenir Next/B
+Avenir Next/I
+Avenir Next/BI
+Avenir Next Demi Bold
+AvenirNext-UltraLight
+Avenir Next Condensed
+Avenir Next Condensed/B
+Optima
+Optima/B
+Optima/I
+Optima-ExtraBlack
+Futura
+Futura/B
+Futura/I
+Futura Medium
+Futura-CondensedExtraBold
+Gill Sans
+Gill Sans/B
+Gill Sans/I
+GillSans-Light
+Gill Sans SemiBold
+Didot
+Didot/B
+Didot/I
+Baskerville
+Baskerville/B
+Baskerville/I
+Baskerville/BI
+Baskerville SemiBold
+Hoefler Text
+Hoefler Text/B
+Hoefler Text/I
+Hoefler Text/BI
+Hoefler Text Black
+Hoefler Text Ornaments
+American Typewriter
+American Typewriter/B
+American Typewriter Condensed
+AmericanTypewriter-Light
+Charter
+Charter/B
+Charter/I
+Charter/BI
+Charter Black
+Charter-Roman
+STIX Two Text
+STIX Two Text/B
+STIX Two Text/I
+STIX Two Text/BI
+STIX Two Text Bold
+STIX Two Math
+STIXGeneral
+STIXGeneral/B
+# CJK and other non-Latin families, emoji, fonts macOS downloads on demand
+PingFang SC
+PingFang TC/B
+Hiragino Sans
+Hiragino Mincho ProN/B
+Songti SC
+Songti SC/B
+Apple SD Gothic Neo/B
+Hannotate SC
+Osaka
+Apple Color Emoji
+Kohinoor Devanagari
+# engine options and features
+Helvetica Neue:+smcp
+Times New Roman/B:mapping=tex-text
+Avenir Next/OT:+onum
+Hoefler Text/AAT:Ligatures=Rare
+Palatino/ICU/B
+Menlo/GR
+Georgia/S=12
+# sizes (optical sizing only acts on a 'size' feature with a range)
+Helvetica	5
+Avenir Next	scaled 1200
+Times New Roman	24
+NewComputerModern10	6
+NewComputerModern10	scaled 1200
+NewComputerModern08
+[lmroman5-regular.otf]
+[lmroman10-regular.otf]	scaled 1500
+# user-installed fonts (~/Library/Fonts, /Library/Fonts)
+SF Pro Text
+SF Pro Text/B
+SF Pro Display/I
+SF Mono
+SF Mono/B
+SFMono-Regular
+JetBrains Mono
+JetBrains Mono/BI
+JetBrainsMono-Bold
+Libertinus Serif
+Libertinus Serif/B
+Libertinus Serif/I
+LibertinusSerif-Semibold
+NewComputerModern10
+NewComputerModern10/B
+NewComputerModern10-Book
+IBM Plex Serif
+IBM Plex Serif/B
+Inter
+# the [file] form (kpathsea)
+[lmroman10-regular.otf]
+[lmroman10-bold.otf]/OT
+[texgyretermes-regular.otf]:+smcp
+[/System/Library/Fonts/Helvetica.ttc:2]
+# names no font has
+helvetica
+Nonexistent Font Family
+Times-Black

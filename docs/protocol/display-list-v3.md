@@ -1109,9 +1109,13 @@ tell such a pass from a loop.
 **Negotiation.** The host lists `"progress-v1"` in `HELLO.capabilities`; a
 client adds `"progress-v1"` to its `HELLO.accept`.
 
-**Message** (`0x70`, JSON): `{"id", "pass", "page"}`. `id` is the compile;
+**Message** (`0x70`, JSON): `{"id", "pass", "page", "file"?}`. `id` is the compile;
 `pass` is the run's pass (1, then 2, ... for further `.aux` passes); `page`
-is the number of pages that run has shipped. The host sends one at the
+is the number of pages that run has shipped; `file` (added 2026-10-06, for
+`flashtex-v3`'s progress line; absent at the terminal level) is the
+innermost file TeX is reading, as TeX opened it (`./chapters/a.tex`, a
+TeX Live path), the name `-file-line-error` gives. A client that does not
+know a key ignores it. The host sends one at the
 first page or segment checkpoint of each pass and then at most every 250 ms
 while the pass reaches checkpoints, in every run (cold or incremental, the
 first pass and the `.aux` passes behind it), whether or not those pages are

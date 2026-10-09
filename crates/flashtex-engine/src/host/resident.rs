@@ -502,6 +502,10 @@ struct Doc {
     /// keeps): S₀ is persisted after the next compile that completes, not
     /// while that work waits.
     s0_unsaved: bool,
+    /// A restart in the preamble took S₀ again (PREAMBLE-FAST): S₀ is
+    /// persisted once the host is idle (`TRIM_AFTER`), not after every
+    /// keystroke in the preamble (20 MB each).
+    s0_when_idle: bool,
 }
 
 /// The external tools of the resident document (`super::external`).
@@ -573,6 +577,12 @@ impl Engine {
                 .profile
                 .trim_after_ms
                 .map(std::time::Duration::from_millis);
+            let idle_wait = trim_after.or_else(|| {
+                self.doc
+                    .as_ref()
+                    .is_some_and(|d| d.s0_when_idle)
+                    .then_some(std::time::Duration::from_secs(2))
+            });
             let req = match hot_until {
                 Some(t) if Instant::now() < t && pause.is_zero() => match rx.try_recv() {
                     Ok(r) => r,
@@ -595,12 +605,26 @@ impl Engine {
                     }
                     Err(mpsc::RecvTimeoutError::Disconnected) => break,
                 },
-                _ if trim_due && trim_after.is_some() => {
-                    match rx.recv_timeout(trim_after.unwrap_or_default()) {
+                // (merged: the profile's idle trim, and #1551's save of an
+                // S₀ a preamble restart took; a profile without the trim
+                // still saves that S₀ after the old 2 s idle wait)
+                _ if trim_due && idle_wait.is_some() => {
+                    match rx.recv_timeout(idle_wait.unwrap_or_default()) {
                         Ok(r) => r,
                         Err(mpsc::RecvTimeoutError::Timeout) => {
                             trim_due = false;
-                            self.trim();
+                            if trim_after.is_some() {
+                                self.trim();
+                            }
+                            // (S₀ a restart in the preamble took, now that
+                            // the keystrokes have stopped)
+                            if self
+                                .doc
+                                .as_ref()
+                                .is_some_and(|d| d.s0_when_idle && !d.session.is_paused())
+                            {
+                                self.save_s0();
+                            }
                             continue;
                         }
                         Err(mpsc::RecvTimeoutError::Disconnected) => break,
@@ -662,17 +686,22 @@ impl Engine {
         }
     }
 
-    /// Warm the process up: a one-page LaTeX document in a scratch
-    /// directory starts kpathsea, reads the font map and loads the format,
-    /// so that a document's first compile (or its reopening from S₀) does
-    /// not pay for them.
+    /// Warm the process up: a one-page job in a scratch directory starts
+    /// kpathsea, reads the font map and loads the format, so that a
+    /// document's first compile (or its reopening from S₀) does not pay
+    /// for them. The page is one character of cmr10 shipped with the
+    /// primitive `\shipout`, which is all it takes to read the font map
+    /// (pdfTeX reads it at the first font it sets): no class, no
+    /// `\begin{document}`. A one-page article typeset its class and LaTeX's
+    /// start of a document first, which the first compile (it follows at
+    /// once when a project opens) waited for and gained little from.
     fn warm(&mut self) -> Result<f64, String> {
         let t = Instant::now();
         let dir = std::env::temp_dir().join(format!("flashtex-host-warm-{}", std::process::id()));
         std::fs::create_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
         std::fs::write(
             dir.join("flashtex-warm.tex"),
-            "\\documentclass{article}\\begin{document}Warm.\\end{document}\n",
+            "\\font\\warmfont=cmr10 \\pdfprimitive\\shipout\\hbox{\\warmfont W}\\csname @@end\\endcsname\\end\n",
         )
         .map_err(|e| e.to_string())?;
         let here = std::env::current_dir().ok();
@@ -779,6 +808,7 @@ impl Engine {
             texts: HashMap::new(),
             tools: DocTools::default(),
             s0_unsaved: false,
+            s0_when_idle: false,
         });
         Ok(())
     }
@@ -974,18 +1004,25 @@ impl Engine {
         doc.session.set_progress(conn.progress.then(|| {
             let c = conn.clone();
             let last = std::cell::Cell::new((0usize, None::<Instant>));
-            std::rc::Rc::new(move |pass: usize, pages: usize| {
-                let (last_pass, at) = last.get();
-                if pass != last_pass || at.is_none_or(|t| t.elapsed().as_millis() >= 250) {
-                    last.set((pass, Some(Instant::now())));
-                    let j = obj([
-                        ("id", Json::Int(id)),
-                        ("pass", Json::Int(pass as i64)),
-                        ("page", Json::Int(pages as i64)),
-                    ]);
-                    server::send_json(&c.out, kind::PROGRESS, &j);
-                }
-            }) as incr::Progress
+            std::rc::Rc::new(
+                move |pass: usize, pages: usize, g: &crate::generated::Globals| {
+                    let (last_pass, at) = last.get();
+                    if pass != last_pass || at.is_none_or(|t| t.elapsed().as_millis() >= 250) {
+                        last.set((pass, Some(Instant::now())));
+                        let mut j = obj([
+                            ("id", Json::Int(id)),
+                            ("pass", Json::Int(pass as i64)),
+                            ("page", Json::Int(pages as i64)),
+                        ]);
+                        // `file`: the innermost file TeX reads (only read
+                        // here, at most every 250 ms; never per token).
+                        if let (Some(f), Json::Obj(kv)) = (reading(g), &mut j) {
+                            kv.push(("file".into(), js(f)));
+                        }
+                        server::send_json(&c.out, kind::PROGRESS, &j);
+                    }
+                },
+            ) as incr::Progress
         }));
         // Lane P4-MULTIPASS: when a pass leaves work for the external tools
         // (latexmk's rules: a new `.bcf`, `\citation`s, an `.idx`), the
@@ -1102,6 +1139,11 @@ impl Engine {
                     (
                         "restart_mid_page".to_string(),
                         Json::Bool(rep.restart_mid_page),
+                    ),
+                    // before S₀: a preamble edit (the run took S₀ again)
+                    (
+                        "restart_preamble".to_string(),
+                        Json::Bool(rep.restart_preamble),
                     ),
                     (
                         "restart_next_gap".to_string(),
@@ -1384,6 +1426,7 @@ impl Engine {
         server::send_json(&out, kind::DONE, &Json::Obj(kv));
         let failed = result.is_err();
         let cold = matches!(mode.as_str(), "cold");
+        let preamble = matches!(&result, Ok(r) if r.restart_preamble);
         self.peers.insert(conn.id, t.ps);
         if failed {
             // The engine's state is unknown: start the document afresh.
@@ -1401,31 +1444,43 @@ impl Engine {
         let _busy = crate::busy::enter(crate::busy::Part::Other);
         let save = (cold || doc.s0_unsaved) && !stopped;
         doc.s0_unsaved = (cold || doc.s0_unsaved) && stopped;
+        doc.s0_when_idle = !save && (preamble || doc.s0_when_idle);
         if save {
-            if let Some(p) = &s0_path {
-                if let Some(d) = p.parent() {
-                    let _ = std::fs::create_dir_all(d);
-                }
-                let t = Instant::now();
-                match doc.session.save_s0(&p.to_string_lossy()) {
-                    // One line for a supervisor (and the measurements).
-                    Ok((bytes, _)) => server::say(&format!(
-                        "flashtex-host: {}",
-                        obj([
-                            ("saved_s0", js(p.display().to_string())),
-                            ("bytes", Json::Int(bytes as i64)),
-                            (
-                                "ms",
-                                Json::Num((t.elapsed().as_secs_f64() * 1e4).round() / 10.0)
-                            ),
-                        ])
-                    )),
-                    Err(e) => eprintln!("flashtex-host: saving S0: {e}"),
-                }
-            }
+            self.save_s0();
         }
         if !cancelled {
             self.after_compile(conn, req, id, cause);
+        }
+    }
+
+    /// Persist the resident document's S₀ (`--s0-cache`), with one line
+    /// for a supervisor (and the measurements).
+    fn save_s0(&mut self) {
+        let path = self.doc.as_ref().and_then(|d| self.s0_path(&d.job));
+        let Some(doc) = self.doc.as_mut() else {
+            return;
+        };
+        doc.s0_when_idle = false;
+        let Some(p) = path else {
+            return;
+        };
+        if let Some(d) = p.parent() {
+            let _ = std::fs::create_dir_all(d);
+        }
+        let t = Instant::now();
+        match doc.session.save_s0(&p.to_string_lossy()) {
+            Ok((bytes, _)) => server::say(&format!(
+                "flashtex-host: {}",
+                obj([
+                    ("saved_s0", js(p.display().to_string())),
+                    ("bytes", Json::Int(bytes as i64)),
+                    (
+                        "ms",
+                        Json::Num((t.elapsed().as_secs_f64() * 1e4).round() / 10.0)
+                    ),
+                ])
+            )),
+            Err(e) => eprintln!("flashtex-host: saving S0: {e}"),
         }
     }
 
@@ -2024,6 +2079,18 @@ fn lf_count_words(b: &[u8]) -> usize {
         n += z.count_ones() as usize;
     }
     n + rest.iter().filter(|&&c| c == b'\n').count()
+}
+
+/// The innermost file the engine reads (`\input`, `\include`, a package),
+/// as TeX opened it: `full_source_filename_stack[in_open]`, which
+/// `-file-line-error` names too. `None` at the terminal level.
+fn reading(g: &crate::generated::Globals) -> Option<String> {
+    let level = g.in_open;
+    if level <= 0 {
+        return None;
+    }
+    let name = g.full_source_filename_stack[level as usize];
+    (name > 0).then(|| String::from_utf8_lossy(&g.str_bytes(name)).into_owned())
 }
 
 #[cfg(test)]

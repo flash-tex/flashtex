@@ -1255,6 +1255,12 @@ pub struct Globals {
     // §1920
     pub ls_cond_depth: i32,
     // §1920
+    pub ls_taints: i32,
+    // §1920
+    pub ls_the_def: bool,
+    // §1920
+    pub ls_def_reads: bool,
+    // §1920
     pub ls_tag_file: crate::arena::Arr<str_number>,
     /// The word space every `Arr` above lives in (crates/flashtex-engine/src/arena.rs).
     pub arena: crate::arena::Arena,
@@ -1762,7 +1768,10 @@ pub const SCALAR_BYTES: usize = 0
     + crate::arena::slot::<bool>()
     + crate::arena::slot::<bool>()
     + crate::arena::slot::<bool>()
-    + crate::arena::slot::<i32>();
+    + crate::arena::slot::<i32>()
+    + crate::arena::slot::<i32>()
+    + crate::arena::slot::<bool>()
+    + crate::arena::slot::<bool>();
 
 impl Globals {
     pub fn new() -> Box<Globals> {
@@ -2566,6 +2575,9 @@ impl Globals {
             ls_grp_tag: __arena.arr(__r_ls_grp_tag, 256),
             ls_cond_tag: __arena.arr(__r_ls_cond_tag, 1001),
             ls_cond_depth: 0,
+            ls_taints: 0,
+            ls_the_def: false,
+            ls_def_reads: false,
             ls_tag_file: __arena.arr(__r_ls_tag_file, 65536),
             arena: __arena,
         })
@@ -3075,6 +3087,9 @@ impl Globals {
         v.pod(&mut self.intr_all);
         v.pod(&mut self.intr_weak);
         v.pod(&mut self.ls_cond_depth);
+        v.pod(&mut self.ls_taints);
+        v.pod(&mut self.ls_the_def);
+        v.pod(&mut self.ls_def_reads);
     }
 
     /// Every file global, in declaration order (the checkpoint's host-state record).

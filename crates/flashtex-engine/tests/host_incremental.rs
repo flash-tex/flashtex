@@ -154,6 +154,8 @@ struct Outcome {
     first_page: Option<Duration>,
     /// `PROGRESS` heartbeats received (`progress-v1`, spec §6.8).
     progress: usize,
+    /// The `file`s the `PROGRESS` heartbeats named, in order.
+    progress_files: Vec<String>,
 }
 
 fn compile(c: &mut Client, view: &mut View, req: &CompileRequest) -> Outcome {
@@ -164,6 +166,7 @@ fn compile(c: &mut Client, view: &mut View, req: &CompileRequest) -> Outcome {
     let mut pages_msgs = vec![];
     let mut first_page = None;
     let mut progress = 0;
+    let mut progress_files = vec![];
     let done = loop {
         match c.next_event().unwrap().expect("host closed the connection") {
             Event::Started(j) => {
@@ -213,7 +216,13 @@ fn compile(c: &mut Client, view: &mut View, req: &CompileRequest) -> Outcome {
             Event::Image(j) => view.images.push(j),
             Event::Done(d) => break d,
             Event::Error(e) => panic!("host error: {e}"),
-            Event::Other(k, _) if k == flashtex_display_list::kind::PROGRESS => progress += 1,
+            Event::Other(k, body) if k == flashtex_display_list::kind::PROGRESS => {
+                progress += 1;
+                let j = Json::parse(std::str::from_utf8(&body).unwrap()).unwrap();
+                if let Some(f) = j.str_field("file") {
+                    progress_files.push(f.to_string());
+                }
+            }
             _ => {}
         }
     };
@@ -227,6 +236,7 @@ fn compile(c: &mut Client, view: &mut View, req: &CompileRequest) -> Outcome {
         pages_msgs,
         first_page,
         progress,
+        progress_files,
     }
 }
 
@@ -1022,6 +1032,20 @@ fn the_progress_heartbeat_changes_no_page() {
         first.progress > 0,
         "PROGRESS while typesetting: {}",
         first.done
+    );
+    // It names the file TeX reads (the innermost `\input`). (Integration
+    // of #1551/#1684: a pass's first heartbeat now comes at its first
+    // checkpoint in the preamble -- a `Point::PreambleLine` after a
+    // package, or the `.aux` anchor -- so on this short document, done in
+    // under 250 ms a pass, it may name the class or the `.aux`, not main.tex.)
+    assert!(
+        !first.progress_files.is_empty()
+            && first
+                .progress_files
+                .iter()
+                .all(|f| Path::new(f).is_file() || proj.join(f).is_file()),
+        "PROGRESS names the file: {:?}",
+        first.progress_files
     );
     // An edit near the middle: an incremental compile, with the heartbeat.
     let at = text.len() / 2;
@@ -2295,6 +2319,75 @@ fn a_keystroke_that_changes_nothing_has_its_page_at_once() {
         seen_current_first > 0,
         "no keystroke found its page current at once"
     );
+    let _ = c.bye();
+    let _ = std::fs::remove_dir_all(&base);
+}
+
+/// The display list's side table at a convergence (BEAMER-LATENCY, #1319):
+/// one source line long enough to fill three pages, and an edit at its
+/// start that changes no glyph (a second space after its first word) but
+/// moves the column of every later character of the line. The pages it
+/// re-typesets equal the old ones, and the convergence test compares the
+/// state, where the rest of the paragraph still waits to be shipped. Those
+/// nodes' source positions (in `dl_side`) were dead for the test: the run
+/// converged and kept the old run's next pages, whose glyphs named the old
+/// columns. A live node's position is compared now, so the run goes on
+/// until the line is shipped, and every page equals a from-scratch compile.
+#[test]
+fn a_kept_page_never_names_a_moved_column() {
+    if find_texlive_bin().is_none() {
+        common::no_texlive();
+        return;
+    }
+    let base = common::fresh_dir("flashtex-host-cols");
+    let _ = std::fs::remove_dir_all(&base);
+    let (proj, out) = (base.join("proj"), base.join("out"));
+    std::fs::create_dir_all(&proj).unwrap();
+    std::fs::create_dir_all(&out).unwrap();
+    let doc = article(8);
+    let cut = doc.find("\n\n").unwrap() + 2;
+    // one line, about three pages of words
+    let words: Vec<String> = (0..1800).map(|i| format!("word{}", i % 97)).collect();
+    let long = format!("Begin {}.\n\n", words.join(" "));
+    let text = format!("{}{}{}", &doc[..cut], long, &doc[cut..]);
+    std::fs::write(proj.join("main.tex"), &text).unwrap();
+    let host = start_host("c");
+    let scratch = start_host("cs");
+    let mut c = Client::connect(&host.1).unwrap();
+    let mut view = View::default();
+    let mut id = 0;
+    for _ in 0..4 {
+        id += 1;
+        let o = compile(&mut c, &mut view, &req(id, &proj, &out, "main.tex"));
+        if o.done.str_field("mode") == Some("unchanged") {
+            break;
+        }
+    }
+    let at = text.find("Begin ").unwrap() + "Begin ".len();
+    for (k, (delete, insert)) in [(0, " "), (1, "")].into_iter().enumerate() {
+        id += 1;
+        let mut r = req(id, &proj, &out, "main.tex");
+        r.edits = vec![Edit {
+            path: "main.tex".into(),
+            offset: at as u64,
+            delete,
+            insert: insert.into(),
+        }];
+        let o = compile(&mut c, &mut view, &r);
+        let what = if k == 0 {
+            "a second space"
+        } else {
+            "its revert"
+        };
+        assert_eq!(
+            o.done.str_field("mode"),
+            Some("incremental"),
+            "{what}: {}",
+            o.done
+        );
+        let (p2, o2) = snapshot(&base, &proj, &out, &k.to_string());
+        compare_with_scratch(&scratch.1, &view, &proj, &out, &p2, &o2, "main.tex", what);
+    }
     let _ = c.bye();
     let _ = std::fs::remove_dir_all(&base);
 }
