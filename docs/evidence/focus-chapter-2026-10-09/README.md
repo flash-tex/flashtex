@@ -115,6 +115,20 @@ gain needs the size read by `\includeonly` to stop gating the chapter's checkpoi
 (l3 only compares the sizes of the chapter's two names, which are the same file), an engine
 question for the Commander, not something to special-case here.
 
+**Reduced sweeps (VERIFIED, `tools/incr-bench/gates.sh sound-a sound-c sound-d sound-lookup` at
+`SWEEP_SCALE_PCT=20`, `J=4`, on this Mac at `47690ec20`; a `timeout(1)` shim, macOS has none):**
+
+| gate | compiles | ok | bad | interrupted | err |
+|---|---|---|---|---|---|
+| sound-a | 1,760 | 1,760 | 0 | 0 | 0 |
+| sound-c | 392 | 392 | 0 | 0 | 5 |
+| sound-d | 415 | 361 | 0 | 54 | 5 |
+| sound-lookup | 12 | 12 | 0 | 0 | 0 |
+| sound-lookup (interleaved) | 8 | 5 | 0 | 3 | 0 |
+
+Every `err` is "0 trials … a run with no trials is not a pass": at 20 % of the trials, five
+small fixtures get no applicable structural edit. None is a mismatch.
+
 ## Not done / beliefs
 
 - Switching focus drops the resident document (a job change): the way back to the whole
