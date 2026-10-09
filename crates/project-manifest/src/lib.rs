@@ -80,6 +80,44 @@ pub struct Project {
     /// directory. `None`: each tool's own default (the CLI writes
     /// `<entry>.pdf` next to the entry).
     pub output: Option<String>,
+    /// The document's mode (docs/design/modes/PROPOSAL.md §4.3): which
+    /// engine typesets it. `None`: not set here (a `% !TEX program` line,
+    /// then Classic, decide).
+    pub mode: Option<Mode>,
+    /// `flashtex_version`: the version a `mode = "flashtex"` project is
+    /// pinned to (PROPOSAL.md §10.3); ignored in the other modes.
+    pub flashtex_version: Option<String>,
+}
+
+/// `[project] mode` (PROPOSAL.md §4.3, owner rulings Q3, Q5).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Mode {
+    /// pdfLaTeX-compatible (`flashtex-host`): the default.
+    Classic,
+    /// XeLaTeX-compatible (`flashtex-host-unicode`).
+    Unicode,
+    /// FlashTeX's own, not portable (PROPOSAL.md §10); needs
+    /// `flashtex_version`.
+    FlashTeX,
+}
+
+impl Mode {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Mode::Classic => "classic",
+            Mode::Unicode => "unicode",
+            Mode::FlashTeX => "flashtex",
+        }
+    }
+
+    pub fn parse(s: &str) -> Option<Mode> {
+        Some(match s {
+            "classic" => Mode::Classic,
+            "unicode" => Mode::Unicode,
+            "flashtex" => Mode::FlashTeX,
+            _ => return None,
+        })
+    }
 }
 
 /// `[fonts]` — a setting, not a package (proposal §2.4). Read by S4; this
@@ -357,10 +395,20 @@ impl Manifest {
         let mut m = Manifest::default();
         w.unknown_keys(&table, "", &["project", "fonts", "packages", "library"]);
         if let Some(project) = w.table(&table, "project", "project") {
-            w.unknown_keys(project, "project", &["entry", "texinputs", "output"]);
+            w.unknown_keys(project, "project", &["entry", "texinputs", "output", "mode", "flashtex_version"]);
             m.project.entry = w.string(project, "entry", "project.entry");
             m.project.texinputs = w.string_list(project, "texinputs", "project.texinputs");
             m.project.output = w.string(project, "output", "project.output");
+            if let Some(s) = w.string(project, "mode", "project.mode") {
+                m.project.mode = Mode::parse(&s);
+                if m.project.mode.is_none() {
+                    w.warn(
+                        "project.mode",
+                        format!("expected \"classic\", \"unicode\" or \"flashtex\", got {s:?}; using \"classic\""),
+                    );
+                }
+            }
+            m.project.flashtex_version = w.string(project, "flashtex_version", "project.flashtex_version");
         }
         if let Some(fonts) = w.table(&table, "fonts", "fonts") {
             w.unknown_keys(fonts, "fonts", &["text", "math", "mono", "sans"]);
@@ -443,6 +491,12 @@ impl Manifest {
         ));
         if let Some(o) = &self.project.output {
             out.push_str(&format!("output = {}\n", quote(o)));
+        }
+        if let Some(m) = self.project.mode {
+            out.push_str(&format!("mode = {}\n", quote(m.as_str())));
+        }
+        if let Some(v) = &self.project.flashtex_version {
+            out.push_str(&format!("flashtex_version = {}\n", quote(v)));
         }
         if !self.fonts.is_empty() {
             out.push_str("\n[fonts]\n");
@@ -1076,5 +1130,20 @@ name = "mylib"
         assert_eq!(Manifest::parse(&t).unwrap().manifest.packages.fetch, FetchPolicy::Never);
         assert_eq!(trailing_comment("fetch = \"a # not a comment\"   # real"), "   # real");
         assert_eq!(trailing_comment("fetch = \"ask\""), "");
+    }
+
+    #[test]
+    fn project_mode_is_read_and_written() {
+        let p = Manifest::parse("[project]\nmode = \"unicode\"\n").unwrap();
+        assert_eq!(p.manifest.project.mode, Some(Mode::Unicode));
+        assert!(p.warnings.is_empty());
+        let again = Manifest::parse(&p.manifest.to_toml()).unwrap();
+        assert_eq!(again.manifest, p.manifest);
+        let p = Manifest::parse("[project]\nmode = \"lualatex\"\n").unwrap();
+        assert_eq!(p.manifest.project.mode, None);
+        assert_eq!(p.warnings[0].key, "project.mode");
+        let p = Manifest::parse("[project]\nmode = \"flashtex\"\nflashtex_version = \"1.0\"\n").unwrap();
+        assert_eq!(p.manifest.project.mode, Some(Mode::FlashTeX));
+        assert_eq!(p.manifest.project.flashtex_version.as_deref(), Some("1.0"));
     }
 }

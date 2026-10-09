@@ -102,8 +102,8 @@ GATES = {
     'sound-d': [S('d', 12, REFS + BOOK, kinds=KD, interleave=True)],
     # lane COLD-OPEN: interleaved edits interrupting a first compile (no .aux) in its first pass
     # PREAMBLE-FAST / PREAMBLE-MIDLINE: preamble edits, then interleaved with letters
-    'sound-pre': [S('pre', 8, ('full-100', 'refs-30'), kinds=PRE, allow_no_trials=True),
-                  S('pre-d', 6, ('full-100', 'refs-30'), kinds=PRE + ',replace,insert', interleave=True,
+    'sound-pre': [S('pre', 8, ('full-100', 'full-100t', 'refs-30'), kinds=PRE, allow_no_trials=True),
+                  S('pre-d', 6, ('full-100', 'full-100t', 'refs-30'), kinds=PRE + ',replace,insert', interleave=True,
                     allow_no_trials=True)],
     'sound-first': [S('first', 10, ('refs-30', 'full-100'), kinds='replace,insert,sentence,section,label,ref',
                       interleave=True, first_open=True)],
@@ -112,7 +112,7 @@ GATES = {
 # Seconds per unit with no measurement in sweeps-costs.json (a new fixture or run): per trial (an
 # edit and its revert, each verified), by document; interleaved trials compile twice. Rough, from
 # the first hosted runs (2026-10-06: a small fixture ~0.3 s a trial, beamer ~3.5 s, full-100 ~3.5 s).
-PER_TRIAL = {'plain-120': 4, 'full-100': 4, 'book-inc': 3, 'refs-120': 4, 'refs-30': 2, 'lookup': 2,
+PER_TRIAL = {'plain-120': 4, 'full-100': 4, 'full-100t': 4, 'book-inc': 3, 'refs-120': 4, 'refs-30': 2, 'lookup': 2,
              'vol-closed': 1, 'vol-open': 1}
 SPAN_PER_EDIT = {'plain-10': 2, 'full-10': 3, 'plain-120': 10, 'full-100': 12}
 
