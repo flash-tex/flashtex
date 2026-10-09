@@ -640,8 +640,8 @@ The host answers with its own `HELLO`, or with `ERROR` `{"code":
            "resolver": "kpathsea (/Library/TeX/texbin)",
            "bundle": null,
            "formats": [{"name": "pdflatex", "status": "ready", "ms": 93.8}],
-           "tools": {"bibtex": "/Library/TeX/texbin/bibtex", "biber": "/Library/TeX/texbin/biber",
-                     "makeindex": "/Library/TeX/texbin/makeindex"},
+           "tools": {"bibtex": "built-in", "biber": "/Library/TeX/texbin/biber",
+                     "makeindex": "built-in"},
            "external_tools": "off"}}
 ```
 
@@ -654,6 +654,12 @@ it does not know.
 the bundle, if one is configured); a format whose `status` is `failed`
 carries `error`, and compiles with it will fail: the app says so before
 the user compiles.
+
+`texmf.tools` says how the host runs each external tool (§6.4, "External
+tools"): `"built-in"` for its own port, run in-process with or without a TeX
+Live (bibtex and makeindex, lane RUST-TOOLS; `FLASHTEX_BIBTEX=external` or
+`FLASHTEX_MAKEINDEX=external` makes it TeX Live's program instead), else the
+path of TeX Live's program, else null (biber without a TeX Live).
 
 `texmf.bundle` is the configured bundle (DESIGN.md §4.4), null when none
 is: `FLASHTEX_BUNDLE_URL` and `FLASHTEX_BUNDLE_DIGEST`, else the first
@@ -706,7 +712,7 @@ demand later) the host prints progress lines
 | `buffers` | no | 3.1: `[{"path", "text"}]`: files as the editor has them (path relative to `root`, `/`-separated, §1); the host writes each to its file, as saving would, before compiling |
 | `edits` | no | 3.1: `[{"path", "offset", "delete", "insert"}]`: byte splices of files under `root` (path relative to `root`, `/`-separated, §1), applied in order, before compiling |
 | `export` | no | `true`: a one-shot run of the engine as a child process instead of the resident engine: `DONE.pdf` is the compressed PDF pdflatex would write (P-T2), not the preview's |
-| `external_tools` | no | 3.2: `auto`: after the compile, run bibtex, biber and makeindex from the user's TeX Live when latexmk would, then compile again (§6.4, "External tools"); `off`: never. Default: the host's `--external-tools` (`off` unless the host was started with `auto`). The app sends `auto` only for a **trusted** project (DESIGN.md §4.5): an untrusted project runs no external program |
+| `external_tools` | no | 3.2: `auto`: after the compile, run bibtex, biber and makeindex when latexmk would (`HELLO.texmf.tools`), then compile again (§6.4, "External tools"); `off`: never. Default: the host's `--external-tools` (`off` unless the host was started with `auto`). The app sends `auto` only for a **trusted** project (DESIGN.md §4.5): an untrusted project runs no external program |
 
 The engine runs as pdflatex would:
 `pdftex -fmt=FORMAT -interaction=nonstopmode -file-line-error -output-directory=DIR -jobname=JOB [shell flag] MAIN`
@@ -829,7 +835,10 @@ painted it less the first of its own (`dl3-keys --interval-ms`,
 "auto"`, once its `DONE` is out (never before: the edited page is not
 delayed), the host decides as latexmk 4.87 does
 (`rdb_set_latex_deps`, `parse_aux`, `parse_bcf`) which programs the
-document needs, and runs them from the user's TeX Live (`HELLO.texmf.tools`)
+document needs, and runs them as `HELLO.texmf.tools` says: bibtex and
+makeindex are the host's own ports (in-process, so they need no TeX Live: in
+bundle mode their `.bst`, `.bib` and `.ist` files come from the bundle), biber
+is the user's TeX Live program;
 on a worker thread, one at a time, each with a timeout (`--tool-timeout`,
 default 120 s):
 
@@ -871,7 +880,8 @@ tools made, and asks again when it is done).
 - `"event": "skip"`: `{"tool", "file", "reason"}` — a program that would run
   does not: the compile has `external_tools` `off` ("…external tools are
   off for this project": the app can offer to trust it), a `.bib` file is
-  missing, or TeX Live has no such program. Said once per state of its
+  missing, or the program is not available (biber with no TeX Live:
+  "biber is not available: no TeX Live is installed, …"). Said once per state of its
   sources.
 - `"event": "settled"`: `{"ran", "rounds", "limit"?}` — the client's
   compile and its follow-ups are done as far as tools go (sent once per

@@ -34,6 +34,14 @@ name = "flashtex-makeindex"
 path = "src/bin/flashtex-makeindex.rs"
 required-features = ["makeindex", "kpathsea"]
 
+# bibtex as a command (crates/bibtex through src/bibtex.rs, .bib and .bst
+# files through the engine's kpathsea): what the host and \write18 run
+# in-process, for the oracle comparison in docs/evidence/rusttools-2026-10-09/.
+[[bin]]
+name = "flashtex-bibtex"
+path = "src/bin/flashtex-bibtex.rs"
+required-features = ["bibtex", "kpathsea"]
+
 # The distribution tool (DESIGN.md 4.4): TeX Live report, format cache,
 # bundles. See src/bin/flashtex-dist.rs.
 [[bin]]
@@ -57,15 +65,22 @@ flashtex-engine-build-id = { path = "build-id", optional = true }
 # Under the MakeIndex Distribution Notice (crates/makeindex/LICENSE), not
 # MIT; only this GPL crate depends on it (DESIGN.md §3).
 flashtex-makeindex = { path = "../makeindex", optional = true }
+# BibTeX 0.99e (TeX Live 2026's bibtex.web and bibtex.ch) translated to Rust,
+# run in-process for the host's external tools and restricted \write18
+# (src/bibtex.rs). Under BibTeX's own terms, those of Knuth's TeX
+# (crates/bibtex/LICENSE).
+flashtex-bibtex = { path = "../bibtex", optional = true }
 
 [features]
 # Link TeX Live's kpathsea (vendored, LGPL-2.1-or-later) as the file resolver.
 # Without it only the working-directory resolver is available, which is what
 # the trip test uses.
-default = ["kpathsea", "regex", "distribution", "makeindex"]
+default = ["kpathsea", "regex", "distribution", "makeindex", "bibtex"]
 # makeindex in-process (src/makeindex.rs, crates/makeindex). Off in the trip
 # tests' scratch packages, which have no dependencies.
 makeindex = ["dep:flashtex-makeindex"]
+# bibtex in-process (src/bibtex.rs, crates/bibtex), likewise.
+bibtex = ["dep:flashtex-bibtex"]
 kpathsea = []
 # DESIGN.md 4.4: the format cache (src/formats.rs) and the bundle fallback
 # (src/bundle/). Off in the trip tests' scratch packages, which copy src/*.rs

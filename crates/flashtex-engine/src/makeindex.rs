@@ -28,49 +28,10 @@ pub fn in_process() -> bool {
 }
 
 /// The arguments of `cmd` after the program name, if `cmd` runs makeindex
-/// and nothing else: the words `/bin/sh -c cmd` would pass it.
-///
-/// `restricted` (allow 2): `cmd` is texmfmp.c's re-quoted command, the
-/// program name followed by words that are runs of `QUOTE`-quoted segments
-/// separated by blanks, never containing the quote (`shell_cmd_is_allowed`
-/// refuses that). Otherwise (`-shell-escape`) only a plain command is
-/// taken: the name `makeindex`, then words of characters the shell treats
-/// literally, or single-quoted; anything else (`$`, `;`, `|`, `>`, a glob,
-/// ...) is left to the shell.
+/// and nothing else: the words `/bin/sh -c cmd` would pass it
+/// ([`crate::os::tool_command_args`]).
 pub fn command_args(cmd: &[u8], restricted: bool) -> Option<Vec<Vec<u8>>> {
-    let is_blank = |c: u8| c == b' ' || c == b'\t';
-    let quote = crate::os::SHELL_QUOTE;
-    let mut words: Vec<Vec<u8>> = vec![];
-    let mut cur: Option<Vec<u8>> = None;
-    let mut i = 0;
-    while i < cmd.len() {
-        let c = cmd[i];
-        if is_blank(c) {
-            if let Some(w) = cur.take() {
-                words.push(w);
-            }
-            i += 1;
-        } else if c == quote || (!restricted && c == b'\'') {
-            let end = cmd[i + 1..].iter().position(|&b| b == c)? + i + 1;
-            cur.get_or_insert_with(Vec::new)
-                .extend_from_slice(&cmd[i + 1..end]);
-            i = end + 1;
-        } else {
-            let literal = c.is_ascii_alphanumeric() || b"._-/+=,:@%".contains(&c);
-            if !restricted && !literal {
-                return None;
-            }
-            cur.get_or_insert_with(Vec::new).push(c);
-            i += 1;
-        }
-    }
-    if let Some(w) = cur.take() {
-        words.push(w);
-    }
-    if words.first().map(|w| &w[..]) != Some(b"makeindex") {
-        return None;
-    }
-    Some(words.split_off(1))
+    crate::os::tool_command_args(cmd, restricted, b"makeindex")
 }
 
 /// The port's view of the engine: the process's streams, a directory for

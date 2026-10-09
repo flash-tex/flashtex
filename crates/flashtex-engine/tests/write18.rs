@@ -213,3 +213,104 @@ fn makeindex_runs_in_process() {
     );
     let _ = std::fs::remove_dir_all(&d);
 }
+
+/// bibtex through restricted `\write18` runs in-process too (the BibTeX
+/// port, crates/bibtex): no `bibtex` on PATH, and the `.bbl` and `.blg` are
+/// made, the run recorded as an external effect. `FLASHTEX_BIBTEX=external`
+/// goes back to the shell, which then finds no program.
+#[cfg(all(feature = "bibtex", unix))]
+#[test]
+fn bibtex_runs_in_process() {
+    const BIB_DOC: &str = "\\catcode`\\{=1 \\catcode`\\}=2\n\
+\\immediate\\write18{bibtex x}\n\
+\\end\n";
+    // A style of the test's own: one line per entry.
+    const BST: &str = "ENTRY { title } {} {}\n\
+FUNCTION {book} { \"\\bibitem{\" cite$ * \"}\" * write$ newline$ title write$ newline$ }\n\
+READ\n\
+ITERATE {call.type$}\n";
+    let run = |tag: &str, extra: &[(&str, &str)]| {
+        let d = common::fresh_dir(&format!("flashtex-w18-bib-{tag}"));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).unwrap();
+        std::fs::write(d.join("w.tex"), BIB_DOC).unwrap();
+        std::fs::write(
+            d.join("x.aux"),
+            "\\citation{b}\n\\citation{a}\n\\bibstyle{one}\n\\bibdata{refs}\n",
+        )
+        .unwrap();
+        std::fs::write(d.join("one.bst"), BST).unwrap();
+        std::fs::write(
+            d.join("refs.bib"),
+            "@book{a, title = {Alpha}}\n@book{b, title = \"Beta\"}\n",
+        )
+        .unwrap();
+        let mut c = Command::new(env!("CARGO_BIN_EXE_flashtex-initex"));
+        c.args(["-ini", "w.tex"])
+            .current_dir(&d)
+            .env(
+                "FLASHTEX_POOL",
+                Path::new(env!("CARGO_MANIFEST_DIR")).join("pdftex.pool"),
+            )
+            .env("FLASHTEX_EXTERNAL_EFFECTS", d.join("effects.txt"))
+            .env("FLASHTEX_RESOLVER", "cwd")
+            .env("shell_escape", "p")
+            .env("shell_escape_commands", "bibtex")
+            .env("PATH", "/nonexistent")
+            .env_remove("FLASHTEX_BIBTEX")
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        for (k, v) in extra {
+            c.env(k, v);
+        }
+        let o = c.output().unwrap();
+        (
+            d,
+            String::from_utf8_lossy(&o.stdout).into_owned(),
+            String::from_utf8_lossy(&o.stderr).into_owned(),
+        )
+    };
+
+    let (d, stdout, stderr) = run("in", &[]);
+    let log = std::fs::read_to_string(d.join("w.log")).unwrap();
+    assert!(
+        log.contains("runsystem(bibtex x)...executed safely (allowed)."),
+        "{log}"
+    );
+    assert_eq!(
+        std::fs::read_to_string(d.join("effects.txt")).unwrap(),
+        "write18 bibtex 'x'\n"
+    );
+    // In citation order, as the style writes them.
+    assert_eq!(
+        std::fs::read_to_string(d.join("x.bbl")).unwrap(),
+        "\\bibitem{b}\nBeta\n\\bibitem{a}\nAlpha\n"
+    );
+    let blg = std::fs::read_to_string(d.join("x.blg")).unwrap();
+    // No texmf.cnf here: bibtex.ch's built-in capacities.
+    assert!(
+        blg.starts_with(
+            "This is BibTeX, Version 0.99e (TeX Live 2026)\n\
+Capacity: max_strings=4000, hash_size=5000, hash_prime=4253\n\
+The top-level auxiliary file: x.aux\n\
+The style file: one.bst\n\
+Database file #1: refs.bib\n"
+        ),
+        "{blg}"
+    );
+    assert!(
+        stdout.contains("The top-level auxiliary file: x.aux"),
+        "{stdout}"
+    );
+    assert!(!stderr.contains("system returned"), "{stderr}");
+    let _ = std::fs::remove_dir_all(&d);
+
+    let (d, _, stderr) = run("ext", &[("FLASHTEX_BIBTEX", "external")]);
+    assert!(!d.join("x.bbl").exists());
+    assert!(
+        stderr.contains("system returned with code 32512"),
+        "{stderr}"
+    );
+    let _ = std::fs::remove_dir_all(&d);
+}
