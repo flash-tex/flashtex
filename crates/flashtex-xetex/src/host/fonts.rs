@@ -49,6 +49,17 @@ pub fn setup(root: &Path, format: &str) -> Setup {
     let Some(path) = Manifest::locate(root) else {
         return s;
     };
+    // A copy of a project (the app compiles one under its caches) has no
+    // `.git` to stop the search: a stray manifest in the home directory or
+    // above it governs nothing.
+    if let Some(home) = std::env::var_os("HOME").filter(|h| !h.is_empty()) {
+        if path
+            .parent()
+            .is_some_and(|d| Path::new(&home).starts_with(d))
+        {
+            return s;
+        }
+    }
     let loaded = match Manifest::load(&path) {
         Ok(l) => l,
         Err(e) => {

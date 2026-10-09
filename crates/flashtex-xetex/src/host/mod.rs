@@ -92,6 +92,12 @@ impl Opts {
                 }
                 // the pdfTeX host's warm-up has nothing to warm here
                 "--no-warm" => {}
+                // the resident pdfTeX host's S0 cache and checkpoint
+                // interval (the app passes them to either host): a cold
+                // host keeps neither
+                "--s0-cache" | "--timed" => {
+                    val()?;
+                }
                 _ => return Err(format!("unknown option {a}")),
             }
             i += 1;
