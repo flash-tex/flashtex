@@ -184,6 +184,12 @@ final class EngineV3HostProcess: @unchecked Sendable {
         // when the app quits or dies (the kernel closes the socket), so the
         // host never outlives it once connected.
         process.arguments = ["--socket", socketPath, "--s0-cache", s0.path, "--once"]
+        // The performance mode the host starts in (HELLO and PROFILE switch
+        // it live). Low Memory also picks an allocator that returns freed
+        // memory at once, which only a start can do (profile.rs,
+        // `space_efficient_reexec`): a switch to it takes that part effect
+        // with the next host.
+        process.arguments! += ["--profile", PerformanceMode.current.hostProfile]
         // Checkpoint interval inside a page (engine default 0.02 s): the
         // restart re-typesets up to that much before an edit. A/B knob.
         if let t = ProcessInfo.processInfo.environment["FLASHTEX_V3_TIMED"], Double(t) != nil { process.arguments! += ["--timed", t] }

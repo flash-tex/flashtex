@@ -566,9 +566,14 @@ mod kpse {
             if crate::formats::cache_enabled() {
                 if let Some(d) = crate::formats::cache_dir().map(|d| d.join("lsr")) {
                     if std::fs::create_dir_all(&d).is_ok() {
-                        if let Ok(c) = CString::new(d.to_string_lossy().as_bytes()) {
-                            // SAFETY: the C side copies the string.
-                            unsafe { flashtex_kpse_set_lsr_cache(c.as_ptr()) };
+                        // keyed by the engine build too: another build's
+                        // parse is never read
+                        let salt = CString::new(crate::formats::engine_id()).ok();
+                        if let (Ok(c), Some(s)) =
+                            (CString::new(d.to_string_lossy().as_bytes()), salt)
+                        {
+                            // SAFETY: the C side copies both strings.
+                            unsafe { flashtex_kpse_set_lsr_cache(c.as_ptr(), s.as_ptr()) };
                         }
                     }
                 }
@@ -592,7 +597,7 @@ mod kpse {
             made: *mut c_int,
         ) -> *mut c_char;
         fn flashtex_kpse_format(k: *mut c_void, name: *const c_char) -> c_int;
-        fn flashtex_kpse_set_lsr_cache(dir: *const c_char);
+        fn flashtex_kpse_set_lsr_cache(dir: *const c_char, salt: *const c_char);
         fn flashtex_kpse_find(k: *mut c_void, name: *const c_char, format: c_int) -> *mut c_char;
         fn flashtex_kpse_var_value(k: *mut c_void, var: *const c_char) -> *mut c_char;
         fn flashtex_kpse_free(p: *mut c_void);

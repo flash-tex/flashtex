@@ -28,14 +28,23 @@ pub type PsKey = (Vec<u8>, i32, i32);
 
 /// The bytes of a [`Base`]: a mapped cache file or a buffer.
 enum Bytes {
-    Mapped(crate::os::MappedFile, usize),
+    Mapped(crate::os::MappedFile, usize, Origin),
     Owned(Vec<u8>),
+}
+
+/// The file a mapped base came from, as it was when it was mapped: its
+/// path, length and inode.
+struct Origin {
+    path: std::path::PathBuf,
+    len: u64,
+    #[cfg_attr(not(unix), allow(dead_code))]
+    ino: u64,
 }
 
 impl Bytes {
     fn get(&self) -> &[u8] {
         match self {
-            Bytes::Mapped(m, from) => &m.bytes()[*from..],
+            Bytes::Mapped(m, from, _) => &m.bytes()[*from..],
             Bytes::Owned(v) => v,
         }
     }
@@ -193,9 +202,49 @@ pub fn encode<'a>(
 impl Base {
     /// A base over a mapped cache file whose compact form starts at `from`;
     /// `None` if the bytes are not one (truncated, unsorted, out of range).
-    pub fn mapped(m: crate::os::MappedFile, from: usize) -> Option<Base> {
+    /// `path` is the file mapped; its length must still be the mapping's
+    /// (fstat now): a file cut short is no base.
+    pub fn mapped(m: crate::os::MappedFile, from: usize, path: &std::path::Path) -> Option<Base> {
         (from <= m.bytes().len()).then_some(())?;
-        Base::new(Bytes::Mapped(m, from))
+        let meta = std::fs::metadata(path).ok()?;
+        if meta.len() != m.bytes().len() as u64 {
+            return None;
+        }
+        #[cfg(unix)]
+        let ino = std::os::unix::fs::MetadataExt::ino(&meta);
+        #[cfg(not(unix))]
+        let ino = 0;
+        let origin = Origin {
+            path: path.to_path_buf(),
+            len: meta.len(),
+            ino,
+        };
+        Base::new(Bytes::Mapped(m, from, origin))
+    }
+
+    /// Whether the file a mapped base reads is still whole. The cache's
+    /// writer replaces a file by a rename, which leaves this mapping's
+    /// (old) file intact; only another program shortening the same file in
+    /// place could cut a mapping short, and reading a page past its new end
+    /// would raise SIGBUS. Checked (one `stat`) before a base is handed to
+    /// a new run (`MapCache`). Windows does not let a mapped file shrink.
+    pub fn file_intact(&self) -> bool {
+        let Bytes::Mapped(_, _, o) = &self.bytes else {
+            return true;
+        };
+        #[cfg(unix)]
+        {
+            match std::fs::metadata(&o.path) {
+                Ok(m) => std::os::unix::fs::MetadataExt::ino(&m) != o.ino || m.len() >= o.len,
+                // gone (unlinked): the mapping keeps the inode alive
+                Err(_) => true,
+            }
+        }
+        #[cfg(not(unix))]
+        {
+            let _ = &o.path;
+            true
+        }
     }
 
     /// A base over a buffer holding the compact form.
@@ -640,6 +689,59 @@ mod tests {
         // the same content in another form is the same table
         let again = FmTable::from_plain(fms, tfm, ps).unwrap();
         assert!(t.same_as(&again));
+    }
+
+    /// A mapped base knows when its file was cut short in place (and is
+    /// then not handed out again: `MapCache`), not when it was replaced by
+    /// a rename, which leaves the mapping's own file whole; a file shorter
+    /// than the mapping when it is mapped is no base.
+    #[test]
+    fn a_mapped_base_sees_its_file_cut_short() {
+        let (fms, tfm, ps) = plain();
+        let mut w = vec![];
+        encode(
+            fms.iter().map(Option::as_ref),
+            tfm.iter().map(|(k, &v)| (k.as_slice(), v)),
+            ps.iter().map(|(k, &v)| (k, v)),
+            &mut w,
+        );
+        let dir = std::env::temp_dir().join(format!("ftx-fmtable-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let f = dir.join("map.bin");
+        std::fs::write(&f, &w).unwrap();
+        let map = crate::os::MappedFile::open(f.to_str().unwrap()).unwrap();
+        let base = Base::mapped(map, 0, &f).unwrap();
+        assert!(base.file_intact());
+        // replaced by a rename: still whole
+        let g = dir.join("new.bin");
+        std::fs::write(&g, b"x").unwrap();
+        std::fs::rename(&g, &f).unwrap();
+        assert!(base.file_intact());
+        assert_eq!(
+            FmTable::from_base(Arc::new(base)).tfm_get(b"cmr10"),
+            Some(0)
+        );
+        // cut short in place (the same file): not whole (and not read)
+        std::fs::write(&f, &w).unwrap();
+        let map = crate::os::MappedFile::open(f.to_str().unwrap()).unwrap();
+        let base = Base::mapped(map, 0, &f).unwrap();
+        std::fs::OpenOptions::new()
+            .write(true)
+            .open(&f)
+            .unwrap()
+            .set_len(w.len() as u64 / 2)
+            .unwrap();
+        assert!(!base.file_intact());
+        // a file shorter than its mapping when it is mapped: no base
+        let map = crate::os::MappedFile::open(f.to_str().unwrap()).unwrap();
+        std::fs::OpenOptions::new()
+            .write(true)
+            .open(&f)
+            .unwrap()
+            .set_len(10)
+            .unwrap();
+        assert!(Base::mapped(map, 0, &f).is_none());
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

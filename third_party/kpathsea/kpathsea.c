@@ -23,6 +23,7 @@
  */
 
 #include <kpathsea/config.h>
+#include <kpathsea/db.h> /* FlashTeX change (2026-10-09): flashtex_db_free */
 
 kpathsea
 kpathsea_new (void)
@@ -122,6 +123,10 @@ kpathsea_finish (kpathsea kpse)
         kpse->suffixlist = NULL;
     }
 #endif /* WIN32 || __CYGWIN__ */
+    /* FlashTeX change (2026-10-09): the packed ls-R index (db.c) is given
+       back whatever KPATHSEA_CAN_FREE says: nothing points into it once
+       its instance is gone.  */
+    flashtex_db_free (kpse);
 #if defined (KPSE_COMPAT_API)
     if (kpse == kpse_def)
         return;
