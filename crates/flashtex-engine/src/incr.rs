@@ -2830,8 +2830,10 @@ impl Session {
     }
 
     pub fn trim_caches(&mut self) {
-        if let Some(g) = self.g.as_ref() {
+        if let Some(g) = self.g.as_mut() {
             g.arena.drop_old_cache();
+            // (a preparation newer work stopped: its copies of the chunks)
+            g.arena.drop_stopped_preparation();
         }
     }
 
