@@ -1,0 +1,26 @@
+# TeX Live 2026 packages the no-TeX-Live bundle carries whole besides packages.txt
+# (tools/bundle/texbundle.py pack reads both). packages.txt is derived from what the
+# ENGINE reads over the corpora (`texbundle.py derive`); these are read by the tools the
+# engine host runs in-process (bibtex, makeindex: lane RUST-TOOLS) or by common documents
+# the corpora do not have, so no recording can find them. Hand-picked and bounded: each
+# line says why. One name per line; every one must have a free licence (the packer checks).
+
+# bibtex's standard styles plain, alpha, abbrv, unsrt, acm, apalike, ieeetr, siam, and
+# xampl.bib (\bibliographystyle{plain} with no TeX Live needs it)
+bibtex
+# makeindex's styles (latex.ist, din.ist, icase.ist, ...)
+makeindex
+# common BibTeX styles a document names only in \bibliographystyle (read by bibtex, not
+# by the engine): urlbst's plainurl/abbrvurl/alphaurl/unsrturl, apacite, chicago, and
+# harvard's agsm/dcu/kluwer
+urlbst
+apacite
+chicago
+harvard
+# common biblatex styles (thesis and journal templates; read by the engine when used):
+# IEEE, APA (7th), and biblatex-ext's ext-* styles
+biblatex-ieee
+biblatex-apa
+biblatex-ext
+# a thesis's list of symbols: nomencl.sty and the nomencl.ist makeindex reads
+nomencl
