@@ -97,9 +97,13 @@ bibtex's reads were never recorded. The bundle does carry the styles of natbib, 
 amscls, elsarticle, revtex, splncs04 and ACM (37 `.bst` in all). So
 `\bibliographystyle{plain}` fails in bundle mode until a bundle carries the package. The
 no-TeX-Live check puts `plain.bst` beside its document for that reason
-(`fixtures/notex-tools/README`). **For the bundle owner:** add TeX Live's `bibtex` and
-`makeindex` packages (`.ist` styles) to the next bundle (`tools/bundle/tl2026/packages.txt`, or a
-tools tier in `texbundle.py derive`), and republish.
+(`fixtures/notex-tools/README`).
+
+**Fixed in `texbundle-tl2026-2`** (lane RUST-TOOLS, follow-up PR): `tools/bundle/tl2026/extra.txt`
+adds TeX Live's `bibtex` and `makeindex` packages, common BibTeX styles a document names only in
+`\bibliographystyle` (urlbst, apacite, chicago, harvard), common biblatex styles
+(biblatex-ieee, biblatex-apa, biblatex-ext) and nomencl. The no-TeX-Live check then runs with
+no `plain.bst` of its own.
 
 ## Licence (recorded)
 
