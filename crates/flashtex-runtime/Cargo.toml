@@ -1,0 +1,34 @@
+[package]
+name = "flashtex-runtime"
+version = "0.1.0"
+edition = "2021"
+# GPL-2.0-or-later: moved out of crates/flashtex-engine (docs/design/xetex/PLAN.md
+# §3.3), whose licence it keeps. See LICENSE in this directory and
+# docs/design/engine-v2/DESIGN.md §3: nothing MIT may link this crate.
+license = "GPL-2.0-or-later"
+description = "The runtime FlashTeX's engines share: the snapshot codec, OS and clock calls, the busy-time and memory accounting, the host's allocator."
+publish = false
+
+[dependencies]
+# MIT: the socket transport (`os::bind_owner_only`, `os::ExportChannel`). The
+# dependency points from GPL code to the MIT crate, never the other way.
+flashtex-display-list = { path = "../display-list-v3" }
+
+# Linux only: the host's heap other than its undo logs (feature `jemalloc`,
+# src/logalloc.rs). The crates are MIT OR Apache-2.0; the jemalloc 5.3.1 they
+# build from source (`configure`, `make`) and link statically is
+# BSD-2-Clause (its COPYING), which GPL-2.0-or-later code may link; a binary
+# distribution reproduces that notice: THIRD-PARTY-NOTICES, which
+# scripts/ci/package-cli.sh ships beside the host's LICENSE.
+[target.'cfg(target_os = "linux")'.dependencies]
+tikv-jemallocator = { version = "0.7", optional = true }
+tikv-jemalloc-sys = { version = "0.7", optional = true }
+
+[features]
+default = []
+# Set by flashtex-engine's features of the same names (see its Cargo.toml).
+jemalloc = ["dep:tikv-jemallocator", "dep:tikv-jemalloc-sys"]
+mem-stats = ["tikv-jemallocator?/stats"]
+# The trip test's scratch package (scripts/flashtex-trip.sh): no undo-log
+# allocator behind the counting one.
+tex82 = []

@@ -168,8 +168,10 @@ EOF
 # The display-list writer's wire format (MIT, crates/display-list-v3).
 # (Cargo reads the path natively: under Git Bash/MSYS2 on Windows, `/d/a/...`
 # is `D:/a/...`, which `cygpath -m` gives; elsewhere there is no cygpath.)
-printf '\n[dependencies]\nflashtex-display-list = { path = "%s/crates/display-list-v3" }\n' \
-    "$(cygpath -m "$root" 2>/dev/null || printf '%s' "$root")" >>"$pkg/Cargo.toml"
+# And the runtime shared with the XeTeX-derived engine (crates/flashtex-runtime).
+r="$(cygpath -m "$root" 2>/dev/null || printf '%s' "$root")"
+printf '\n[dependencies]\nflashtex-display-list = { path = "%s/crates/display-list-v3" }\nflashtex-runtime = { path = "%s/crates/flashtex-runtime" }\n' \
+    "$r" "$r" >>"$pkg/Cargo.toml"
 # The generated code's warnings are known and not ours to fix by hand.
 CARGO_TARGET_DIR=$work/target RUSTFLAGS=-Awarnings \
     cargo build --release --quiet --manifest-path "$pkg/Cargo.toml"
