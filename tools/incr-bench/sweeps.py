@@ -54,6 +54,10 @@ REFS = ('refs-30', 'refs-120', 'full-100')
 BOOK = ('book-inc',)
 EDIT = {'book-inc': 'ch03.tex'}
 VOL = ('vol-closed', 'vol-open')
+# the preamble kinds (edits.py: PREAMBLE-FAST's restarts before S0, PREAMBLE-MIDLINE's in the middle
+# of the line after a package)
+PRE = ('pre_title,pre_author,pre_newcommand,pre_setlength,pre_usepackage,pre_nopackage,pre_option,'
+       'pre_after_package')
 
 
 def S(tag, trials, extras=(), fixtures=True, kinds=None, interleave=False, host=None, toggle=False,
@@ -97,6 +101,10 @@ GATES = {
     'sound-c': [S('c', 20, REFS + BOOK, kinds='sentence,section,label,ref,cite,footnote,unlabel,unsection')],
     'sound-d': [S('d', 12, REFS + BOOK, kinds=KD, interleave=True)],
     # lane COLD-OPEN: interleaved edits interrupting a first compile (no .aux) in its first pass
+    # PREAMBLE-FAST / PREAMBLE-MIDLINE: preamble edits, then interleaved with letters
+    'sound-pre': [S('pre', 8, ('full-100', 'refs-30'), kinds=PRE, allow_no_trials=True),
+                  S('pre-d', 6, ('full-100', 'refs-30'), kinds=PRE + ',replace,insert', interleave=True,
+                    allow_no_trials=True)],
     'sound-first': [S('first', 10, ('refs-30', 'full-100'), kinds='replace,insert,sentence,section,label,ref',
                       interleave=True, first_open=True)],
 }

@@ -63,6 +63,14 @@ void *flashtex_kpse_new(const char *argv0, const char *progname, const char *eng
   return kpse;
 }
 
+/* The directory of ls-R's index cache (db.c, packed_build), copied; NULL
+   for none. Called before an instance reads ls-R. */
+void flashtex_kpse_set_lsr_cache(const char *dir)
+{
+  free(flashtex_lsr_cache_dir);
+  flashtex_lsr_cache_dir = dir ? xstrdup(dir) : NULL;
+}
+
 /* The kpse_file_format_type whose name (as `kpsewhich --help-formats`
    prints it) is TYPE, or -1. */
 int flashtex_kpse_format(void *k, const char *type)
@@ -361,7 +369,7 @@ int flashtex_kpse_db_hazard(void *k, int format, const char *name)
       continue;
     for (ext = exts; l < 0 || *ext; ext = ext ? ext + 1 : NULL) {
       string n = l < 0 ? xstrdup(name) : concat(name, *ext);
-      const_string *dirs = hash_lookup(kpse->db, n);
+      const_string *dirs = flashtex_db_lookup(kpse, n);
       const_string *d;
       for (d = dirs; d && *d && !hazard; d++) {
         string file = concat(*d, n);
