@@ -2605,3 +2605,107 @@ fn a_focused_compile_is_includeonly_and_keeps_the_documents_pages() {
     let _ = c.bye();
     let _ = std::fs::remove_dir_all(&base);
 }
+
+/// A file tested with `\openin`/`\closein` on page 1 and `\input` pages
+/// later (`incr::Session::restart_point`): the checkpoints between the test
+/// and the `\input` are not restart points for an edit in the file, those in
+/// it before the edit are. Each edit restarts after the gap, not at S₀, and
+/// every page equals a from-scratch compile.
+#[test]
+fn an_edit_after_an_early_openin_test_restarts_near_it() {
+    if find_texlive_bin().is_none() {
+        common::no_texlive();
+        return;
+    }
+    let base = common::fresh_dir("flashtex-host-openin");
+    let _ = std::fs::remove_dir_all(&base);
+    let (proj, out) = (base.join("proj"), base.join("out"));
+    std::fs::create_dir_all(&proj).unwrap();
+    std::fs::create_dir_all(&out).unwrap();
+    let words = [
+        "alpha", "beta", "gamma", "delta", "kernel", "glue", "penalty", "boxes", "rules", "marks",
+    ];
+    let paras = |seed: usize, n: usize| -> String {
+        (0..n)
+            .map(|p| {
+                let l: Vec<&str> = (0..70)
+                    .map(|w| words[(seed * 7 + p * 3 + w) % words.len()])
+                    .collect();
+                l.join(" ") + "."
+            })
+            .collect::<Vec<_>>()
+            .join("\n\n")
+    };
+    std::fs::write(
+        proj.join("main.tex"),
+        format!(
+            "\\documentclass{{article}}\n\\newread\\probe\n\\begin{{document}}\n\
+             \\openin\\probe=ch2.tex \\ifeof\\probe No chapter.\\else Chapter found.\\fi \\closein\\probe\n\
+             {}\n\\input ch2.tex\n{}\n\\end{{document}}\n",
+            paras(1, 30),
+            paras(3, 6)
+        ),
+    )
+    .unwrap();
+    let ch2 = format!("\\section{{Two}}\n{}\n", paras(2, 30));
+    std::fs::write(proj.join("ch2.tex"), &ch2).unwrap();
+    let host = start_host("o");
+    let scratch = start_host("os");
+    let mut c = Client::connect(&host.1).unwrap();
+    let mut view = View::default();
+    let o = compile(&mut c, &mut view, &req(1, &proj, &out, "main.tex"));
+    assert_eq!(o.done.str_field("status"), Some("ok"), "{}", o.done);
+    // the pages before ch2.tex's first one: the gap after the \openin test
+    let before = pages_of(&view, "ch2.tex").first().map(|p| p.0).unwrap();
+    assert!(before > 3, "ch2.tex starts on page {before}");
+    let mut id = 1;
+    // Each edit and its revert, at positions across the chapter (where the
+    // search lands depends on how many checkpoints the gap and the chapter
+    // hold; near the chapter's start it landed in the gap without the
+    // second search).
+    for (k, at) in [
+        ch2.len() / 12,
+        ch2.len() / 6,
+        ch2.len() / 2,
+        ch2.len() * 5 / 6,
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let at = at + ch2[at..].find(" kernel ").unwrap() + 1;
+        for (step, (delete, insert)) in [("kernel", "colonel"), ("colonel", "kernel")]
+            .into_iter()
+            .enumerate()
+        {
+            id += 1;
+            let mut r = req(id, &proj, &out, "main.tex");
+            r.edits = vec![Edit {
+                path: "ch2.tex".into(),
+                offset: at as u64,
+                delete: delete.len() as u64,
+                insert: insert.into(),
+            }];
+            let o = compile(&mut c, &mut view, &r);
+            assert_eq!(o.done.str_field("status"), Some("ok"), "{}", o.done);
+            let restart = o.done.int_field("restart_page").unwrap_or(0);
+            assert!(
+                restart >= before as i64 - 1,
+                "edit {k}.{step}: restarted on page {restart}, ch2.tex starts on {before}: {}",
+                o.done
+            );
+            let (p2, o2) = snapshot(&base, &proj, &out, &format!("o{k}{step}"));
+            compare_with_scratch(
+                &scratch.1,
+                &view,
+                &proj,
+                &out,
+                &p2,
+                &o2,
+                "main.tex",
+                "an edit after an early \\openin test",
+            );
+        }
+    }
+    let _ = c.bye();
+    let _ = std::fs::remove_dir_all(&base);
+}
