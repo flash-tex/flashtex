@@ -133,6 +133,7 @@ fn main() -> ExitCode {
         }
     }
     let Some(socket) = socket else { return usage() };
+    let cache_for_sweep = pkgs.cache.clone();
     let mut host = Host::new(&fonts)
         .with_packages(pkgs)
         .with_seeded(seeded)
@@ -156,6 +157,9 @@ fn main() -> ExitCode {
     );
     // Hosts the watchdog (or anyone) killed left their temporary directories.
     flashtex_typst_host::watchdog::sweep_stale_temp_dirs();
+    if let Some(cache) = &cache_for_sweep {
+        flashtex_typst_host::packages::sweep_stale_downloads(cache);
+    }
     let listener = match bind(&socket) {
         Ok(l) => l,
         Err(e) => {

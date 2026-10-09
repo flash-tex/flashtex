@@ -55,9 +55,19 @@ fn stopped_and_recovered(name: &str, body: &str, extra_files: &[(&str, &[u8])], 
         ),
     );
     let first = c.until_done();
-    let pid = json_of(&first[0].1).int_field("pid").unwrap();
-    let tmp = std::env::temp_dir().join(format!("flashtex-typst-host-{pid}"));
+    // The host's private temporary directory: where DONE.pdf went.
+    let done = json_of(&first.last().unwrap().1);
+    let tmp = std::path::Path::new(done.str_field("pdf").expect("DONE.pdf"))
+        .parent()
+        .unwrap()
+        .to_path_buf();
     assert!(tmp.is_dir(), "{name}: the export made {}", tmp.display());
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mode = std::fs::metadata(&tmp).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o700, "{name}: {} is private", tmp.display());
+    }
     let t = Instant::now();
     let edit = format!(
         r#""incremental":true,"font_formats":["opentype"],"buffers":[{{"path":"main.typ","text":{}}}]"#,
@@ -117,7 +127,9 @@ fn stopped_and_recovered(name: &str, body: &str, extra_files: &[(&str, &[u8])], 
     );
 }
 
-const WALL: &[&str] = &["--watchdog-secs", "1.5", "--watchdog-cold-secs", "1.5"];
+// The first (cold) compile of each test gets a generous budget, apart from
+// the one the test asserts on (the incremental compile's).
+const WALL: &[&str] = &["--watchdog-secs", "1.5", "--watchdog-cold-secs", "60"];
 
 #[test]
 fn a_hanging_plugin_is_stopped_and_the_host_recovers() {
@@ -141,7 +153,7 @@ fn a_runaway_for_is_stopped_and_the_host_recovers() {
             "--watchdog-secs",
             "1.5",
             "--watchdog-cold-secs",
-            "1.5",
+            "60",
             "--rss-ceiling-mb",
             "0",
         ],
@@ -196,21 +208,25 @@ fn a_slow_client_does_not_trip_the_watchdog() {
     }
     let mut host = HostProc::start_capturing(
         "wd-slow",
-        &["--watchdog-secs", "1", "--watchdog-cold-secs", "1"],
+        &["--watchdog-secs", "1", "--watchdog-cold-secs", "60"],
     );
     let root = project("wd-slow", &doc);
     let mut c = host.connect();
     c.hello(3, 3);
-    c.send(
-        kind::COMPILE,
-        &compile_json(
-            1,
+    let req = |id| {
+        compile_json(
+            id,
             &root,
             "main.typ",
             r#""font_formats":["opentype"],"export":true"#,
-        ),
-    );
-    // Read nothing for three budgets.
+        )
+    };
+    // The cold compile (generous budget), read at once.
+    c.send(kind::COMPILE, &req(1));
+    c.until_done();
+    // Again, not incremental: every page and font program again, under the
+    // 1 s budget, to a client that reads nothing for three budgets.
+    c.send(kind::COMPILE, &req(2));
     std::thread::sleep(Duration::from_secs(3));
     let f = c.until_done();
     let (k, b) = f.last().unwrap();

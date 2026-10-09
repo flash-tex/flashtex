@@ -546,7 +546,7 @@ impl Host {
         }
         let output_dir = match &req.output_dir {
             Some(d) => d.clone(),
-            None => watchdog::temp_dir(std::process::id()),
+            None => watchdog::temp_dir(),
         };
         let mode = if req.export { "export" } else { "resident" };
         c.json(
@@ -746,7 +746,7 @@ impl Host {
         let id = req.id;
         let output_dir = match &req.output_dir {
             Some(d) => d.clone(),
-            None => watchdog::temp_dir(std::process::id()),
+            None => watchdog::temp_dir(),
         };
         let mut positions_ms = 0.0;
         let mut hash_ms = 0.0;

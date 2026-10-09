@@ -716,7 +716,7 @@ fn the_watchdog_kills_curl_children() {
             "--watchdog-secs",
             "1",
             "--watchdog-cold-secs",
-            "1",
+            "60",
         ],
     );
     let root = project("wd-curl", "Fine.\n");
