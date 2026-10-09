@@ -51,6 +51,8 @@ flashtex-display-list = { path = "../display-list-v3" }
 # FlashTeX's own font-file readers (MIT, no dependencies): the OpenType
 # table reader for native fonts' metrics, Type 1's built-in encodings.
 flashtex-pdf = { path = "../pdf" }
+# The project manifest (MIT): `[fonts]` in Unicode mode (src/host/fonts.rs).
+flashtex-project-manifest = { path = "../project-manifest" }
 
 [dev-dependencies]
 # tests/pinned_libs.rs: the sha256 of every vendored HarfBuzz/FreeType/TECkit file.

@@ -520,6 +520,20 @@ stages; they change Classic's code under its gates and need that go-ahead.
   OpenType fonts on the wire, an edit and its diagnostic, export, cancel).
   Release binary 6.3 MB (Classic's `flashtex-host` unchanged, not linked).
 
+**`[fonts]` (stage 1b, modes PROPOSAL.md §4.5).** `src/host/fonts.rs`
+turns the manifest's roles into hook code on the engine's first line
+(`\AddToHook{class/after}` loads `fontspec` and sets text/sans/mono;
+`\AddToHook{begindocument/before}` loads `unicode-math` and sets the math
+font only when the document has not loaded `unicode-math`), each role an
+`info` diagnostic and a log line; a name with a TeX special character is
+refused with a warning. The oracle is `xelatex` on that same first line.
+**Verified** (mac-m1max-a): three documents with `[fonts]` = Times New
+Roman / Arial / Courier New / STIX Two Math against `xelatex` on the same
+line: 0 structural differences, 65/65 glyphs, max 0.023 bp; the
+document's `\setmainfont{Georgia}` wins over the role, and a document
+that loads `unicode-math` keeps Latin Modern Math. `tests/host.rs` covers
+the role, the info line, the refused name and the document's precedence.
+
 ## 5. Risks carried into S1–S3
 
 | risk | mitigation |

@@ -178,3 +178,87 @@ fn the_unicode_host_compiles_a_document() {
     drop(h);
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// `[fonts]` (PROPOSAL.md §4.5): the manifest's text role replaces the
+/// class's font, an `info` line says so (a name TeX cannot take is a
+/// warning), and the document's own `\setmainfont` still wins.
+#[test]
+fn the_manifest_fonts_apply_and_the_document_wins() {
+    if !texlive() {
+        eprintln!("skipped: no TeX Live");
+        return;
+    }
+    let dir = std::env::temp_dir().join(format!("flashtex-host-fonts-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    let proj = dir.join("proj");
+    std::fs::create_dir_all(&proj).unwrap();
+    std::fs::write(proj.join(".git"), "").unwrap();
+    std::fs::write(
+        proj.join("flashtex.toml"),
+        "[fonts]\ntext = \"texgyrepagella-regular.otf\"\nsans = \"bad}name\"\n",
+    )
+    .unwrap();
+    let h = start(&dir);
+    let mut c = Client::connect(&h.sock).unwrap();
+    let out = dir.join("out");
+    type Notes = Vec<(String, String)>;
+    let mut fonts_of = |id: i64, doc: &str| -> (Vec<String>, Notes) {
+        std::fs::write(proj.join("main.tex"), doc).unwrap();
+        let mut r = CompileRequest::new(id, proj.to_str().unwrap(), "main.tex");
+        r.output_dir = Some(out.to_string_lossy().into_owned());
+        c.compile(&r).unwrap();
+        let (ev, done) = events(&mut c, id);
+        assert_eq!(done.str_field("status"), Some("ok"), "{done:?}");
+        let mut fonts = vec![];
+        let mut notes = vec![];
+        for e in ev {
+            match e {
+                Event::Font(f) => fonts.push(f.info.str_field("ps_name").unwrap_or("").to_string()),
+                Event::Diagnostic(j) if j.str_field("file") == Some("flashtex.toml") => {
+                    notes.push((
+                        j.str_field("severity").unwrap_or("").to_string(),
+                        j.str_field("message").unwrap_or("").to_string(),
+                    ))
+                }
+                _ => {}
+            }
+        }
+        (fonts, notes)
+    };
+    let (fonts, notes) = fonts_of(
+        1,
+        "\\documentclass{article}\n\\begin{document}\nText.\n\\end{document}\n",
+    );
+    assert!(
+        fonts.iter().any(|p| p == "TeXGyrePagella-Regular"),
+        "{fonts:?}"
+    );
+    let applied = "FlashTeX [fonts]: \\setmainfont{texgyrepagella-regular.otf}";
+    assert!(
+        notes.contains(&("info".into(), applied.into())),
+        "{notes:?}"
+    );
+    assert!(
+        notes
+            .iter()
+            .any(|(s, m)| s == "warning" && m.contains("fonts.sans")),
+        "{notes:?}"
+    );
+    let log = std::fs::read_to_string(out.join("main.log")).unwrap();
+    assert!(log.contains(applied), "the log says it");
+    let (fonts, _) = fonts_of(
+        2,
+        "\\documentclass{article}\n\\usepackage{fontspec}\n\\setmainfont{texgyretermes-regular.otf}\n\\begin{document}\nText.\n\\end{document}\n",
+    );
+    assert!(
+        fonts.iter().any(|p| p == "TeXGyreTermes-Regular"),
+        "{fonts:?}"
+    );
+    assert!(
+        !fonts.iter().any(|p| p == "TeXGyrePagella-Regular"),
+        "{fonts:?}"
+    );
+    c.bye().unwrap();
+    drop(h);
+    let _ = std::fs::remove_dir_all(&dir);
+}
