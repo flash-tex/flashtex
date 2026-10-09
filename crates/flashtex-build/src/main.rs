@@ -820,9 +820,13 @@ impl Session {
             &project.root,
             &project.main,
         )?;
-        // A mode other than the default is said, with what chose it.
+        // A mode other than the default is said, with what chose it; what
+        // could not be followed always is.
         if mode.source != "default" && !o.quiet && !o.json {
             eprintln!("flashtex-v3: {} mode ({})", mode.mode.name(), mode.source);
+        }
+        for w in &mode.warnings {
+            eprintln!("flashtex-v3: warning: {w}");
         }
         p.begin(&project.main, &project.root, project.expected_pages(p));
         let started = (|| {
@@ -851,7 +855,7 @@ impl Session {
         self.next_id += 1;
         r.output_dir = Some(self.work.0.to_string_lossy().into_owned());
         r.jobname = Some(p.jobname());
-        r.format = self.mode.mode.format().to_string();
+        r.format = self.mode.format.to_string();
         r.export = export;
         if !export {
             r.external_tools = Some(if tools { "auto" } else { "off" }.into());
