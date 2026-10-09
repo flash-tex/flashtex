@@ -220,7 +220,13 @@ impl Key {
             let same = match (size, stamp) {
                 (Some(n), _) => std::fs::metadata(path).ok().map(|m| m.len()) == Some(*n),
                 (_, Some(t)) => system::mtime_secs(path) == Some(*t),
-                _ => std::fs::read(path).ok().map(|d| hash128(&d)) == Some(*hash),
+                // (through a buffer: a hook may hash a large file)
+                _ => {
+                    crate::persist::hash128_file(path, None)
+                        .ok()
+                        .map(|(h, _)| h)
+                        == Some(*hash)
+                }
             };
             if !same {
                 return Err(format!("{path}, read at the document's start, changed"));
@@ -728,7 +734,7 @@ pub fn make_key(
             .filter(|(i, f)| whole_after_arm(g.layer().arm_reads, *i, f))
             .map(|(_, f)| {
                 let hash = match (&f.content, f.hash) {
-                    (Some(c), [0, 0]) => hash128(c),
+                    (Some(c), [0, 0]) => crate::persist::hash128(c),
                     (_, h) => h,
                 };
                 (f.path.clone(), f.size, f.stamp, hash)
@@ -1002,7 +1008,8 @@ pub fn read_s0(
     }
 }
 
-const MAGIC: &[u8] = b"flashtex S0 v3";
+// (v4: the key's reads at the document's start, `Key::arm`)
+const MAGIC: &[u8] = b"flashtex S0 v4";
 
 /// How opening a persisted S₀ went.
 #[derive(Clone, Debug, Default)]
