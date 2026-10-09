@@ -22,10 +22,7 @@ impl Globals {
                         crate::system::wr_str(&mut self.log_file, "Illegal end of database file");
                     }
                     {
-                        crate::system::wr_str(
-                            &mut self.standard_output,
-                            "Illegal end of database file",
-                        );
+                        crate::system::wr_str(&mut self.standard_output, "Illegal end of database file");
                     }
                 }
                 self.bib_err_print();
@@ -129,10 +126,7 @@ impl Globals {
                     }
                     {
                         let __w1 = self.buf_size;
-                        crate::system::wr_str(
-                            &mut self.standard_output,
-                            "Your field is more than ",
-                        );
+                        crate::system::wr_str(&mut self.standard_output, "Your field is more than ");
                         crate::system::wr_int(&mut self.standard_output, __w1, 0i32);
                         crate::system::wr_str(&mut self.standard_output, " characters");
                     }
@@ -214,10 +208,7 @@ impl Globals {
                     crate::system::wr_str(&mut self.log_file, "Unknown database-file command");
                 }
                 {
-                    crate::system::wr_str(
-                        &mut self.standard_output,
-                        "Unknown database-file command",
-                    );
+                    crate::system::wr_str(&mut self.standard_output, "Unknown database-file command");
                 }
             }
             self.print_confusion();
@@ -314,16 +305,10 @@ impl Globals {
     pub fn print_missing_entry(&mut self, mut s: str_number) {
         {
             {
-                crate::system::wr_str(
-                    &mut self.log_file,
-                    "Warning--I didn't find a database entry for \"",
-                );
+                crate::system::wr_str(&mut self.log_file, "Warning--I didn't find a database entry for \"");
             }
             {
-                crate::system::wr_str(
-                    &mut self.standard_output,
-                    "Warning--I didn't find a database entry for \"",
-                );
+                crate::system::wr_str(&mut self.standard_output, "Warning--I didn't find a database entry for \"");
             }
         }
         self.print_a_pool_str(s);
@@ -418,10 +403,7 @@ impl Globals {
                     crate::system::wr_str(&mut self.log_file, "You can't mess with entries here");
                 }
                 {
-                    crate::system::wr_str(
-                        &mut self.standard_output,
-                        "You can't mess with entries here",
-                    );
+                    crate::system::wr_str(&mut self.standard_output, "You can't mess with entries here");
                 }
             }
             self.bst_ex_warn_print();
@@ -473,76 +455,84 @@ impl Globals {
         match stk_tp {
             stk_int => {
                 {
-                    let __w0 = stk_lt;
-                    crate::system::wr_int(&mut self.log_file, __w0, 0i32);
-                    crate::system::wr_str(&mut self.log_file, " is an integer literal");
-                }
-                {
-                    let __w0 = stk_lt;
-                    crate::system::wr_int(&mut self.standard_output, __w0, 0i32);
-                    crate::system::wr_str(&mut self.standard_output, " is an integer literal");
+                    {
+                        let __w0 = stk_lt;
+                        crate::system::wr_int(&mut self.log_file, __w0, 0i32);
+                        crate::system::wr_str(&mut self.log_file, " is an integer literal");
+                    }
+                    {
+                        let __w0 = stk_lt;
+                        crate::system::wr_int(&mut self.standard_output, __w0, 0i32);
+                        crate::system::wr_str(&mut self.standard_output, " is an integer literal");
+                    }
                 }
             }
             stk_str => {
                 {
                     {
-                        let __w0 = b'"';
-                        crate::system::wr_char(&mut self.log_file, __w0);
+                        {
+                            let __w0 = b'"';
+                            crate::system::wr_char(&mut self.log_file, __w0);
+                        }
+                        {
+                            let __w0 = b'"';
+                            crate::system::wr_char(&mut self.standard_output, __w0);
+                        }
                     }
+                    self.print_a_pool_str(stk_lt);
                     {
-                        let __w0 = b'"';
-                        crate::system::wr_char(&mut self.standard_output, __w0);
-                    }
-                }
-                self.print_a_pool_str(stk_lt);
-                {
-                    {
-                        crate::system::wr_str(&mut self.log_file, "\" is a string literal");
-                    }
-                    {
-                        crate::system::wr_str(&mut self.standard_output, "\" is a string literal");
+                        {
+                            crate::system::wr_str(&mut self.log_file, "\" is a string literal");
+                        }
+                        {
+                            crate::system::wr_str(&mut self.standard_output, "\" is a string literal");
+                        }
                     }
                 }
             }
             stk_fn => {
                 {
                     {
-                        let __w0 = b'`';
-                        crate::system::wr_char(&mut self.log_file, __w0);
+                        {
+                            let __w0 = b'`';
+                            crate::system::wr_char(&mut self.log_file, __w0);
+                        }
+                        {
+                            let __w0 = b'`';
+                            crate::system::wr_char(&mut self.standard_output, __w0);
+                        }
                     }
+                    self.print_a_pool_str(self.hash_text[(stk_lt) as usize]);
                     {
-                        let __w0 = b'`';
-                        crate::system::wr_char(&mut self.standard_output, __w0);
-                    }
-                }
-                self.print_a_pool_str(self.hash_text[(stk_lt) as usize]);
-                {
-                    {
-                        crate::system::wr_str(&mut self.log_file, "' is a function literal");
-                    }
-                    {
-                        crate::system::wr_str(&mut self.standard_output, "' is a function literal");
+                        {
+                            crate::system::wr_str(&mut self.log_file, "' is a function literal");
+                        }
+                        {
+                            crate::system::wr_str(&mut self.standard_output, "' is a function literal");
+                        }
                     }
                 }
             }
             stk_field_missing => {
                 {
                     {
-                        let __w0 = b'`';
-                        crate::system::wr_char(&mut self.log_file, __w0);
+                        {
+                            let __w0 = b'`';
+                            crate::system::wr_char(&mut self.log_file, __w0);
+                        }
+                        {
+                            let __w0 = b'`';
+                            crate::system::wr_char(&mut self.standard_output, __w0);
+                        }
                     }
+                    self.print_a_pool_str(stk_lt);
                     {
-                        let __w0 = b'`';
-                        crate::system::wr_char(&mut self.standard_output, __w0);
-                    }
-                }
-                self.print_a_pool_str(stk_lt);
-                {
-                    {
-                        crate::system::wr_str(&mut self.log_file, "' is a missing field");
-                    }
-                    {
-                        crate::system::wr_str(&mut self.standard_output, "' is a missing field");
+                        {
+                            crate::system::wr_str(&mut self.log_file, "' is a missing field");
+                        }
+                        {
+                            crate::system::wr_str(&mut self.standard_output, "' is a missing field");
+                        }
                     }
                 }
             }
@@ -564,27 +554,35 @@ impl Globals {
         match stk_tp {
             stk_int => {
                 {
-                    let __w0 = stk_lt;
-                    crate::system::wr_int(&mut self.log_file, __w0, 0i32);
-                    crate::system::wr_ln(&mut self.log_file);
-                }
-                {
-                    let __w0 = stk_lt;
-                    crate::system::wr_int(&mut self.standard_output, __w0, 0i32);
-                    crate::system::wr_ln(&mut self.standard_output);
+                    {
+                        let __w0 = stk_lt;
+                        crate::system::wr_int(&mut self.log_file, __w0, 0i32);
+                        crate::system::wr_ln(&mut self.log_file);
+                    }
+                    {
+                        let __w0 = stk_lt;
+                        crate::system::wr_int(&mut self.standard_output, __w0, 0i32);
+                        crate::system::wr_ln(&mut self.standard_output);
+                    }
                 }
             }
             stk_str => {
-                self.print_a_pool_str(stk_lt);
-                self.print_a_newline();
+                {
+                    self.print_a_pool_str(stk_lt);
+                    self.print_a_newline();
+                }
             }
             stk_fn => {
-                self.print_a_pool_str(self.hash_text[(stk_lt) as usize]);
-                self.print_a_newline();
+                {
+                    self.print_a_pool_str(self.hash_text[(stk_lt) as usize]);
+                    self.print_a_newline();
+                }
             }
             stk_field_missing => {
-                self.print_a_pool_str(stk_lt);
-                self.print_a_newline();
+                {
+                    self.print_a_pool_str(stk_lt);
+                    self.print_a_newline();
+                }
             }
             stk_empty => {
                 self.illegl_literal_confusion();
@@ -610,11 +608,7 @@ impl Globals {
                 {
                     'l_L15_f: {
                         while (self.out_buf_length > 0i32) {
-                            if (self.lex_class[(self.out_buf
-                                [((self.out_buf_length).wrapping_sub(1i32)) as usize])
-                                as usize]
-                                == white_space)
-                            {
+                            if (self.lex_class[(self.out_buf[((self.out_buf_length).wrapping_sub(1i32)) as usize]) as usize] == white_space) {
                                 self.out_buf_length = (self.out_buf_length).wrapping_sub(1i32);
                             } else {
                                 break 'l_L15_f;
@@ -628,8 +622,7 @@ impl Globals {
                     while (self.out_buf_ptr < self.out_buf_length) {
                         {
                             {
-                                let __w0 =
-                                    self.xchr[(self.out_buf[(self.out_buf_ptr) as usize]) as usize];
+                                let __w0 = self.xchr[(self.out_buf[(self.out_buf_ptr) as usize]) as usize];
                                 crate::system::wr_char(&mut self.bbl_file, __w0);
                             }
                             self.out_buf_ptr = (self.out_buf_ptr).wrapping_add(1i32);
@@ -678,10 +671,7 @@ impl Globals {
                 crate::system::wr_ln(&mut self.log_file);
             }
             {
-                crate::system::wr_str(
-                    &mut self.standard_output,
-                    "*Please notify the bibstyle designer*",
-                );
+                crate::system::wr_str(&mut self.standard_output, "*Please notify the bibstyle designer*");
                 crate::system::wr_ln(&mut self.standard_output);
             }
         }
@@ -707,10 +697,7 @@ impl Globals {
                     crate::system::wr_str(&mut self.log_file, "\" isn't a brace-balanced string");
                 }
                 {
-                    crate::system::wr_str(
-                        &mut self.standard_output,
-                        "\" isn't a brace-balanced string",
-                    );
+                    crate::system::wr_str(&mut self.standard_output, "\" isn't a brace-balanced string");
                 }
             }
             self.bst_mild_ex_warn_print();
@@ -727,14 +714,12 @@ impl Globals {
                     crate::system::wr_str(&mut self.log_file, "Unknown type of case conversion");
                 }
                 {
-                    crate::system::wr_str(
-                        &mut self.standard_output,
-                        "Unknown type of case conversion",
-                    );
+                    crate::system::wr_str(&mut self.standard_output, "Unknown type of case conversion");
                 }
             }
             self.print_confusion();
             crate::system::end_of_TEX(self);
         }
     }
+
 }

@@ -24,25 +24,15 @@ impl Globals {
         let mut ext_char: ASCII_code = 0; // §113
         'l_exit_f: {
             str_ends_with = false;
-            if ((self.str_start[((ext).wrapping_add(1i32)) as usize])
-                .wrapping_sub(self.str_start[(ext) as usize])
-                > (self.str_start[((s).wrapping_add(1i32)) as usize])
-                    .wrapping_sub(self.str_start[(s) as usize]))
-            {
+            if ((self.str_start[((ext).wrapping_add(1i32)) as usize]).wrapping_sub(self.str_start[(ext) as usize]) > (self.str_start[((s).wrapping_add(1i32)) as usize]).wrapping_sub(self.str_start[(s) as usize])) {
                 break 'l_exit_f;
             }
-            str_idx = ((self.str_start[((s).wrapping_add(1i32)) as usize])
-                .wrapping_sub(self.str_start[(s) as usize]))
-            .wrapping_sub(1i32);
-            ext_idx = ((self.str_start[((ext).wrapping_add(1i32)) as usize])
-                .wrapping_sub(self.str_start[(ext) as usize]))
-            .wrapping_sub(1i32);
+            str_idx = ((self.str_start[((s).wrapping_add(1i32)) as usize]).wrapping_sub(self.str_start[(s) as usize])).wrapping_sub(1i32);
+            ext_idx = ((self.str_start[((ext).wrapping_add(1i32)) as usize]).wrapping_sub(self.str_start[(ext) as usize])).wrapping_sub(1i32);
             while (ext_idx >= 0i32) {
                 {
-                    str_char = self.str_pool
-                        [((self.str_start[(s) as usize]).wrapping_add(str_idx)) as usize];
-                    ext_char = self.str_pool
-                        [((self.str_start[(ext) as usize]).wrapping_add(ext_idx)) as usize];
+                    str_char = self.str_pool[((self.str_start[(s) as usize]).wrapping_add(str_idx)) as usize];
+                    ext_char = self.str_pool[((self.str_start[(ext) as usize]).wrapping_add(ext_idx)) as usize];
                     if (str_char != ext_char) {
                         break 'l_exit_f;
                     }
@@ -73,21 +63,11 @@ impl Globals {
     // §113
     pub fn log_pr_bib_name(&mut self) {
         {
-            {
-                let mut __f0 = ::core::mem::take(&mut self.log_file);
-                let __r = self.out_pool_str(&mut __f0, self.bib_list[(self.bib_ptr) as usize]);
-                self.log_file = __f0;
-                __r
-            };
+            { let mut __f0 = ::core::mem::take(&mut self.log_file); let __r = self.out_pool_str(&mut __f0, self.bib_list[(self.bib_ptr) as usize]); self.log_file = __f0; __r };
         }
         if (!self.str_ends_with(self.bib_list[(self.bib_ptr) as usize], self.s_bib_extension)) {
             {
-                {
-                    let mut __f0 = ::core::mem::take(&mut self.log_file);
-                    let __r = self.out_pool_str(&mut __f0, self.s_bib_extension);
-                    self.log_file = __f0;
-                    __r
-                };
+                { let mut __f0 = ::core::mem::take(&mut self.log_file); let __r = self.out_pool_str(&mut __f0, self.s_bib_extension); self.log_file = __f0; __r };
             }
         }
         {
@@ -111,20 +91,10 @@ impl Globals {
     // §120
     pub fn log_pr_bst_name(&mut self) {
         {
-            {
-                let mut __f0 = ::core::mem::take(&mut self.log_file);
-                let __r = self.out_pool_str(&mut __f0, self.bst_str);
-                self.log_file = __f0;
-                __r
-            };
+            { let mut __f0 = ::core::mem::take(&mut self.log_file); let __r = self.out_pool_str(&mut __f0, self.bst_str); self.log_file = __f0; __r };
         }
         {
-            {
-                let mut __f0 = ::core::mem::take(&mut self.log_file);
-                let __r = self.out_pool_str(&mut __f0, self.s_bst_extension);
-                self.log_file = __f0;
-                __r
-            };
+            { let mut __f0 = ::core::mem::take(&mut self.log_file); let __r = self.out_pool_str(&mut __f0, self.s_bst_extension); self.log_file = __f0; __r };
         }
         {
             {
@@ -161,38 +131,14 @@ impl Globals {
     pub fn check_cite_overflow(&mut self, mut last_cite: cite_number) {
         if (last_cite == self.max_cites) {
             {
-                self.log_realloc(
-                    "cite_list",
-                    4i32,
-                    (self.max_cites).wrapping_add(MAX_CITES),
-                    self.max_cites,
-                );
-                self.cite_list
-                    .resize_len((((self.max_cites).wrapping_add(MAX_CITES)) as usize) + 1);
-                self.log_realloc(
-                    "type_list",
-                    4i32,
-                    (self.max_cites).wrapping_add(MAX_CITES),
-                    self.max_cites,
-                );
-                self.type_list
-                    .resize_len((((self.max_cites).wrapping_add(MAX_CITES)) as usize) + 1);
-                self.log_realloc(
-                    "entry_exists",
-                    4i32,
-                    (self.max_cites).wrapping_add(MAX_CITES),
-                    self.max_cites,
-                );
-                self.entry_exists
-                    .resize_len((((self.max_cites).wrapping_add(MAX_CITES)) as usize) + 1);
-                self.log_realloc(
-                    "cite_info",
-                    4i32,
-                    (self.max_cites).wrapping_add(MAX_CITES),
-                    self.max_cites,
-                );
-                self.cite_info
-                    .resize_len((((self.max_cites).wrapping_add(MAX_CITES)) as usize) + 1);
+                self.log_realloc("cite_list", 4i32, (self.max_cites).wrapping_add(MAX_CITES), self.max_cites);
+                self.cite_list.resize_len((((self.max_cites).wrapping_add(MAX_CITES)) as usize) + 1);
+                self.log_realloc("type_list", 4i32, (self.max_cites).wrapping_add(MAX_CITES), self.max_cites);
+                self.type_list.resize_len((((self.max_cites).wrapping_add(MAX_CITES)) as usize) + 1);
+                self.log_realloc("entry_exists", 4i32, (self.max_cites).wrapping_add(MAX_CITES), self.max_cites);
+                self.entry_exists.resize_len((((self.max_cites).wrapping_add(MAX_CITES)) as usize) + 1);
+                self.log_realloc("cite_info", 4i32, (self.max_cites).wrapping_add(MAX_CITES), self.max_cites);
+                self.cite_info.resize_len((((self.max_cites).wrapping_add(MAX_CITES)) as usize) + 1);
                 self.max_cites = (self.max_cites).wrapping_add(MAX_CITES);
                 while (last_cite < self.max_cites) {
                     {
@@ -276,12 +222,7 @@ impl Globals {
         self.bst_ln_num_print();
         self.print_bad_input_line();
         while (self.last != 0i32) {
-            if (!{
-                let mut __f0 = ::core::mem::take(&mut self.bst_file);
-                let __r = self.input_ln(&mut __f0);
-                self.bst_file = __f0;
-                __r
-            }) {
+            if (!{ let mut __f0 = ::core::mem::take(&mut self.bst_file); let __r = self.input_ln(&mut __f0); self.bst_file = __f0; __r }) {
                 self.jump_to_bst_done();
             } else {
                 self.bst_line_num = (self.bst_line_num).wrapping_add(1i32);
@@ -307,10 +248,7 @@ impl Globals {
                 crate::system::wr_str(&mut self.log_file, "Illegal end of style file in command: ");
             }
             {
-                crate::system::wr_str(
-                    &mut self.standard_output,
-                    "Illegal end of style file in command: ",
-                );
+                crate::system::wr_str(&mut self.standard_output, "Illegal end of style file in command: ");
             }
         }
     }
@@ -341,74 +279,92 @@ impl Globals {
         match self.fn_type[(fn_loc) as usize] {
             built_in => {
                 {
-                    crate::system::wr_str(&mut self.log_file, "built-in");
-                }
-                {
-                    crate::system::wr_str(&mut self.standard_output, "built-in");
+                    {
+                        crate::system::wr_str(&mut self.log_file, "built-in");
+                    }
+                    {
+                        crate::system::wr_str(&mut self.standard_output, "built-in");
+                    }
                 }
             }
             wiz_defined => {
                 {
-                    crate::system::wr_str(&mut self.log_file, "wizard-defined");
-                }
-                {
-                    crate::system::wr_str(&mut self.standard_output, "wizard-defined");
+                    {
+                        crate::system::wr_str(&mut self.log_file, "wizard-defined");
+                    }
+                    {
+                        crate::system::wr_str(&mut self.standard_output, "wizard-defined");
+                    }
                 }
             }
             int_literal => {
                 {
-                    crate::system::wr_str(&mut self.log_file, "integer-literal");
-                }
-                {
-                    crate::system::wr_str(&mut self.standard_output, "integer-literal");
+                    {
+                        crate::system::wr_str(&mut self.log_file, "integer-literal");
+                    }
+                    {
+                        crate::system::wr_str(&mut self.standard_output, "integer-literal");
+                    }
                 }
             }
             str_literal => {
                 {
-                    crate::system::wr_str(&mut self.log_file, "string-literal");
-                }
-                {
-                    crate::system::wr_str(&mut self.standard_output, "string-literal");
+                    {
+                        crate::system::wr_str(&mut self.log_file, "string-literal");
+                    }
+                    {
+                        crate::system::wr_str(&mut self.standard_output, "string-literal");
+                    }
                 }
             }
             field => {
                 {
-                    crate::system::wr_str(&mut self.log_file, "field");
-                }
-                {
-                    crate::system::wr_str(&mut self.standard_output, "field");
+                    {
+                        crate::system::wr_str(&mut self.log_file, "field");
+                    }
+                    {
+                        crate::system::wr_str(&mut self.standard_output, "field");
+                    }
                 }
             }
             int_entry_var => {
                 {
-                    crate::system::wr_str(&mut self.log_file, "integer-entry-variable");
-                }
-                {
-                    crate::system::wr_str(&mut self.standard_output, "integer-entry-variable");
+                    {
+                        crate::system::wr_str(&mut self.log_file, "integer-entry-variable");
+                    }
+                    {
+                        crate::system::wr_str(&mut self.standard_output, "integer-entry-variable");
+                    }
                 }
             }
             str_entry_var => {
                 {
-                    crate::system::wr_str(&mut self.log_file, "string-entry-variable");
-                }
-                {
-                    crate::system::wr_str(&mut self.standard_output, "string-entry-variable");
+                    {
+                        crate::system::wr_str(&mut self.log_file, "string-entry-variable");
+                    }
+                    {
+                        crate::system::wr_str(&mut self.standard_output, "string-entry-variable");
+                    }
                 }
             }
             int_global_var => {
                 {
-                    crate::system::wr_str(&mut self.log_file, "integer-global-variable");
-                }
-                {
-                    crate::system::wr_str(&mut self.standard_output, "integer-global-variable");
+                    {
+                        crate::system::wr_str(&mut self.log_file, "integer-global-variable");
+                    }
+                    {
+                        crate::system::wr_str(&mut self.standard_output, "integer-global-variable");
+                    }
                 }
             }
             str_global_var => {
                 {
-                    crate::system::wr_str(&mut self.log_file, "string-global-variable");
-                }
-                {
-                    crate::system::wr_str(&mut self.standard_output, "string-global-variable");
+                    {
+                        crate::system::wr_str(&mut self.log_file, "string-global-variable");
+                    }
+                    {
+                        crate::system::wr_str(&mut self.standard_output, "string-global-variable");
+                    }
                 }
             }
             _ => {
@@ -454,10 +410,7 @@ impl Globals {
                     let __w1 = self.xchr[(self.buffer[(self.buf_ptr2) as usize]) as usize];
                     crate::system::wr_char(&mut self.standard_output, __w0);
                     crate::system::wr_char(&mut self.standard_output, __w1);
-                    crate::system::wr_str(
-                        &mut self.standard_output,
-                        "\" begins identifier, command: ",
-                    );
+                    crate::system::wr_str(&mut self.standard_output, "\" begins identifier, command: ");
                 }
             }
         } else {
@@ -468,20 +421,14 @@ impl Globals {
                         let __w1 = self.xchr[(self.buffer[(self.buf_ptr2) as usize]) as usize];
                         crate::system::wr_char(&mut self.log_file, __w0);
                         crate::system::wr_char(&mut self.log_file, __w1);
-                        crate::system::wr_str(
-                            &mut self.log_file,
-                            "\" immediately follows identifier, command: ",
-                        );
+                        crate::system::wr_str(&mut self.log_file, "\" immediately follows identifier, command: ");
                     }
                     {
                         let __w0 = b'"';
                         let __w1 = self.xchr[(self.buffer[(self.buf_ptr2) as usize]) as usize];
                         crate::system::wr_char(&mut self.standard_output, __w0);
                         crate::system::wr_char(&mut self.standard_output, __w1);
-                        crate::system::wr_str(
-                            &mut self.standard_output,
-                            "\" immediately follows identifier, command: ",
-                        );
+                        crate::system::wr_str(&mut self.standard_output, "\" immediately follows identifier, command: ");
                     }
                 }
             } else {
@@ -646,14 +593,8 @@ impl Globals {
         if (total_fields > self.max_fields) {
             {
                 start_fields = self.max_fields;
-                self.log_realloc(
-                    "field_info",
-                    4i32,
-                    (total_fields).wrapping_add(MAX_FIELDS),
-                    self.max_fields,
-                );
-                self.field_info
-                    .resize_len((((total_fields).wrapping_add(MAX_FIELDS)) as usize) + 1);
+                self.log_realloc("field_info", 4i32, (total_fields).wrapping_add(MAX_FIELDS), self.max_fields);
+                self.field_info.resize_len((((total_fields).wrapping_add(MAX_FIELDS)) as usize) + 1);
                 self.max_fields = (total_fields).wrapping_add(MAX_FIELDS);
                 {
                     let __for_end_4 = (self.max_fields).wrapping_sub(1i32);
@@ -668,4 +609,5 @@ impl Globals {
             }
         }
     }
+
 }

@@ -64,18 +64,14 @@ impl Globals {
             self.total_ex_count = 0i32;
             while (self.blt_in_ptr < num_blt_in_fns) {
                 {
-                    self.total_ex_count = (self.total_ex_count)
-                        .wrapping_add(self.execution_count[(self.blt_in_ptr) as usize]);
+                    self.total_ex_count = (self.total_ex_count).wrapping_add(self.execution_count[(self.blt_in_ptr) as usize]);
                     self.blt_in_ptr = (self.blt_in_ptr).wrapping_add(1i32);
                 }
             }
             {
                 {
                     let __w1 = self.total_ex_count;
-                    crate::system::wr_str(
-                        &mut self.log_file,
-                        "and the built_in function-call counts, ",
-                    );
+                    crate::system::wr_str(&mut self.log_file, "and the built_in function-call counts, ");
                     crate::system::wr_int(&mut self.log_file, __w1, 0i32);
                     crate::system::wr_str(&mut self.log_file, " in all, are:");
                     crate::system::wr_ln(&mut self.log_file);
@@ -85,16 +81,7 @@ impl Globals {
             while (self.blt_in_ptr < num_blt_in_fns) {
                 {
                     {
-                        {
-                            let mut __f0 = ::core::mem::take(&mut self.log_file);
-                            let __r = self.out_pool_str(
-                                &mut __f0,
-                                self.hash_text
-                                    [(self.blt_in_loc[(self.blt_in_ptr) as usize]) as usize],
-                            );
-                            self.log_file = __f0;
-                            __r
-                        };
+                        { let mut __f0 = ::core::mem::take(&mut self.log_file); let __r = self.out_pool_str(&mut __f0, self.hash_text[(self.blt_in_loc[(self.blt_in_ptr) as usize]) as usize]); self.log_file = __f0; __r };
                     }
                     {
                         {
@@ -117,27 +104,17 @@ impl Globals {
     // §51
     pub fn start_name(&mut self, mut file_name: str_number) {
         let mut p_ptr: pool_pointer = 0; // §51
-        self.name_of_file.alloc_len(
-            ((((self.str_start[((file_name).wrapping_add(1i32)) as usize])
-                .wrapping_sub(self.str_start[(file_name) as usize]))
-            .wrapping_add(1i32)) as usize)
-                + 1,
-        );
+        self.name_of_file.alloc_len(((((self.str_start[((file_name).wrapping_add(1i32)) as usize]).wrapping_sub(self.str_start[(file_name) as usize])).wrapping_add(1i32)) as usize) + 1);
         self.name_ptr = 1i32;
         p_ptr = self.str_start[(file_name) as usize];
         while (p_ptr < self.str_start[((file_name).wrapping_add(1i32)) as usize]) {
             {
-                {
-                    let __ix3 = self.name_ptr;
-                    let __v4 = ((self.str_pool[(p_ptr) as usize]) as u8);
-                    self.name_of_file[(__ix3) as usize] = __v4;
-                }
+                { let __ix3 = self.name_ptr; let __v4 = ((self.str_pool[(p_ptr) as usize]) as u8); self.name_of_file[(__ix3) as usize] = __v4; }
                 self.name_ptr = (self.name_ptr).wrapping_add(1i32);
                 p_ptr = (p_ptr).wrapping_add(1i32);
             }
         }
-        self.name_length = (self.str_start[((file_name).wrapping_add(1i32)) as usize])
-            .wrapping_sub(self.str_start[(file_name) as usize]);
+        self.name_length = (self.str_start[((file_name).wrapping_add(1i32)) as usize]).wrapping_sub(self.str_start[(file_name) as usize]);
         self.name_of_file[((self.name_length).wrapping_add(1i32)) as usize] = ((0i32) as u8);
     }
 
@@ -152,19 +129,12 @@ impl Globals {
         p_ptr = self.str_start[(ext) as usize];
         while (p_ptr < self.str_start[((ext).wrapping_add(1i32)) as usize]) {
             {
-                {
-                    let __ix5 = self.name_ptr;
-                    let __v6 = ((self.str_pool[(p_ptr) as usize]) as u8);
-                    self.name_of_file[(__ix5) as usize] = __v6;
-                }
+                { let __ix5 = self.name_ptr; let __v6 = ((self.str_pool[(p_ptr) as usize]) as u8); self.name_of_file[(__ix5) as usize] = __v6; }
                 self.name_ptr = (self.name_ptr).wrapping_add(1i32);
                 p_ptr = (p_ptr).wrapping_add(1i32);
             }
         }
-        self.name_length = (self.name_length).wrapping_add(
-            (self.str_start[((ext).wrapping_add(1i32)) as usize])
-                .wrapping_sub(self.str_start[(ext) as usize]),
-        );
+        self.name_length = (self.name_length).wrapping_add((self.str_start[((ext).wrapping_add(1i32)) as usize]).wrapping_sub(self.str_start[(ext) as usize]));
         self.name_of_file[((self.name_length).wrapping_add(1i32)) as usize] = ((0i32) as u8);
     }
 
@@ -196,11 +166,7 @@ impl Globals {
             }
         }
         self.str_ptr = (self.str_ptr).wrapping_add(1i32);
-        {
-            let __ix7 = self.str_ptr;
-            let __v8 = self.pool_ptr;
-            self.str_start[(__ix7) as usize] = __v8;
-        }
+        { let __ix7 = self.str_ptr; let __v8 = self.pool_ptr; self.str_start[(__ix7) as usize] = __v8; }
         make_string = (self.str_ptr).wrapping_sub(1i32);
         make_string
     }
@@ -210,21 +176,12 @@ impl Globals {
     /// result is `true` if and only if the strings are equal.
     /// @<Procedures and functions for handling numbers, characters, and strings
     // §49
-    pub fn str_eq_buf(
-        &mut self,
-        mut s: str_number,
-        buf: &mut buf_type,
-        mut bf_ptr: buf_pointer,
-        mut len: buf_pointer,
-    ) -> bool {
+    pub fn str_eq_buf(&mut self, mut s: str_number, buf: &mut buf_type, mut bf_ptr: buf_pointer, mut len: buf_pointer) -> bool {
         let mut str_eq_buf: bool = false;
         let mut i: buf_pointer = 0; // §49
         let mut j: pool_pointer = 0; // §49
         'l_exit_f: {
-            if ((self.str_start[((s).wrapping_add(1i32)) as usize])
-                .wrapping_sub(self.str_start[(s) as usize])
-                != len)
-            {
+            if ((self.str_start[((s).wrapping_add(1i32)) as usize]).wrapping_sub(self.str_start[(s) as usize]) != len) {
                 {
                     str_eq_buf = false;
                     break 'l_exit_f;
@@ -256,11 +213,7 @@ impl Globals {
     pub fn str_eq_str(&mut self, mut s1: str_number, mut s2: str_number) -> bool {
         let mut str_eq_str: bool = false;
         'l_exit_f: {
-            if ((self.str_start[((s1).wrapping_add(1i32)) as usize])
-                .wrapping_sub(self.str_start[(s1) as usize])
-                != (self.str_start[((s2).wrapping_add(1i32)) as usize])
-                    .wrapping_sub(self.str_start[(s2) as usize]))
-            {
+            if ((self.str_start[((s1).wrapping_add(1i32)) as usize]).wrapping_sub(self.str_start[(s1) as usize]) != (self.str_start[((s2).wrapping_add(1i32)) as usize]).wrapping_sub(self.str_start[(s2) as usize])) {
                 {
                     str_eq_str = false;
                     break 'l_exit_f;
@@ -270,9 +223,7 @@ impl Globals {
             self.p_ptr2 = self.str_start[(s2) as usize];
             while (self.p_ptr1 < self.str_start[((s1).wrapping_add(1i32)) as usize]) {
                 {
-                    if (self.str_pool[(self.p_ptr1) as usize]
-                        != self.str_pool[(self.p_ptr2) as usize])
-                    {
+                    if (self.str_pool[(self.p_ptr1) as usize] != self.str_pool[(self.p_ptr2) as usize]) {
                         {
                             str_eq_str = false;
                             break 'l_exit_f;
@@ -291,12 +242,7 @@ impl Globals {
     /// lower case for the specified part of `buf`.  It is system independent
     /// because it uses only the internal representation for characters.
     // §55
-    pub fn lower_case(
-        &mut self,
-        buf: &mut buf_type,
-        mut bf_ptr: buf_pointer,
-        mut len: buf_pointer,
-    ) {
+    pub fn lower_case(&mut self, buf: &mut buf_type, mut bf_ptr: buf_pointer, mut len: buf_pointer) {
         let mut i: buf_pointer = 0; // §55
         if (len > 0i32) {
             {
@@ -316,12 +262,7 @@ impl Globals {
     /// that it converts lower- to upper-case letters.
     /// @<Procedures and functions for handling numbers, characters, and strings
     // §56
-    pub fn upper_case(
-        &mut self,
-        buf: &mut buf_type,
-        mut bf_ptr: buf_pointer,
-        mut len: buf_pointer,
-    ) {
+    pub fn upper_case(&mut self, buf: &mut buf_type, mut bf_ptr: buf_pointer, mut len: buf_pointer) {
         let mut i: buf_pointer = 0; // §56
         if (len > 0i32) {
             {
@@ -350,14 +291,7 @@ impl Globals {
     /// into the hash table though its string wouldn't be inserted into
     /// `str_pool` because it would already be there.
     // §61
-    pub fn str_lookup(
-        &mut self,
-        buf: &mut buf_type,
-        mut j: buf_pointer,
-        mut l: buf_pointer,
-        mut ilk: str_ilk,
-        mut insert_it: bool,
-    ) -> hash_loc {
+    pub fn str_lookup(&mut self, buf: &mut buf_type, mut j: buf_pointer, mut l: buf_pointer, mut ilk: str_ilk, mut insert_it: bool) -> hash_loc {
         let mut str_lookup: hash_loc = 0;
         let mut h: i32 = 0; // §61
         let mut p: hash_loc = 0; // §61
@@ -388,17 +322,7 @@ impl Globals {
                         // §63
                         {
                             if (self.hash_text[(p) as usize] > 0i32) {
-                                if {
-                                    let mut __f1 = ::core::mem::take(&mut (*buf));
-                                    let __r = self.str_eq_buf(
-                                        self.hash_text[(p) as usize],
-                                        &mut __f1,
-                                        j,
-                                        l,
-                                    );
-                                    (*buf) = __f1;
-                                    __r
-                                } {
+                                if { let mut __f1 = ::core::mem::take(&mut (*buf)); let __r = self.str_eq_buf(self.hash_text[(p) as usize], &mut __f1, j, l); (*buf) = __f1; __r } {
                                     if (self.hash_ilk[(p) as usize] == ilk) {
                                         {
                                             self.hash_found = true;
@@ -429,50 +353,24 @@ impl Globals {
                                                         {
                                                             {
                                                                 let __w1 = self.hash_size;
-                                                                crate::system::wr_str(
-                                                                    &mut self.log_file,
-                                                                    "hash size ",
-                                                                );
-                                                                crate::system::wr_int(
-                                                                    &mut self.log_file,
-                                                                    __w1,
-                                                                    0i32,
-                                                                );
-                                                                crate::system::wr_ln(
-                                                                    &mut self.log_file,
-                                                                );
+                                                                crate::system::wr_str(&mut self.log_file, "hash size ");
+                                                                crate::system::wr_int(&mut self.log_file, __w1, 0i32);
+                                                                crate::system::wr_ln(&mut self.log_file);
                                                             }
                                                             {
                                                                 let __w1 = self.hash_size;
-                                                                crate::system::wr_str(
-                                                                    &mut self.standard_output,
-                                                                    "hash size ",
-                                                                );
-                                                                crate::system::wr_int(
-                                                                    &mut self.standard_output,
-                                                                    __w1,
-                                                                    0i32,
-                                                                );
-                                                                crate::system::wr_ln(
-                                                                    &mut self.standard_output,
-                                                                );
+                                                                crate::system::wr_str(&mut self.standard_output, "hash size ");
+                                                                crate::system::wr_int(&mut self.standard_output, __w1, 0i32);
+                                                                crate::system::wr_ln(&mut self.standard_output);
                                                             }
                                                         }
                                                         crate::system::end_of_TEX(self);
                                                     }
                                                 }
-                                                self.hash_used =
-                                                    (self.hash_used).wrapping_sub(1i32);
-                                                if (self.hash_text[(self.hash_used) as usize]
-                                                    == 0i32)
-                                                {
-                                                    break;
-                                                }
+                                                self.hash_used = (self.hash_used).wrapping_sub(1i32);
+                                                if (self.hash_text[(self.hash_used) as usize] == 0i32) { break; }
                                             }
-                                            {
-                                                let __v9 = self.hash_used;
-                                                self.hash_next[(p) as usize] = __v9;
-                                            }
+                                            { let __v9 = self.hash_used; self.hash_next[(p) as usize] = __v9; }
                                             p = self.hash_used;
                                         }
                                     }
@@ -481,9 +379,7 @@ impl Globals {
                                     } else {
                                         {
                                             {
-                                                while ((self.pool_ptr).wrapping_add(l)
-                                                    > self.pool_size)
-                                                {
+                                                while ((self.pool_ptr).wrapping_add(l) > self.pool_size) {
                                                     self.pool_overflow();
                                                 }
                                             }
@@ -491,18 +387,13 @@ impl Globals {
                                             while (k < (j).wrapping_add(l)) {
                                                 {
                                                     {
-                                                        self.str_pool[(self.pool_ptr) as usize] =
-                                                            (*buf)[(k) as usize];
-                                                        self.pool_ptr =
-                                                            (self.pool_ptr).wrapping_add(1i32);
+                                                        self.str_pool[(self.pool_ptr) as usize] = (*buf)[(k) as usize];
+                                                        self.pool_ptr = (self.pool_ptr).wrapping_add(1i32);
                                                     }
                                                     k = (k).wrapping_add(1i32);
                                                 }
                                             }
-                                            {
-                                                let __v10 = self.make_string();
-                                                self.hash_text[(p) as usize] = __v10;
-                                            }
+                                            { let __v10 = self.make_string(); self.hash_text[(p) as usize] = __v10; }
                                         }
                                     }
                                     self.hash_ilk[(p) as usize] = ilk;
@@ -530,22 +421,11 @@ impl Globals {
             let __for_end_2 = len;
             i = 1i32;
             while i <= __for_end_2 {
-                {
-                    let __v11 = {
-                        let __s12 = ((self.c_char(pds, (i).wrapping_sub(1i32))) as u8) as usize;
-                        self.xord[__s12]
-                    };
-                    self.buffer[(i) as usize] = __v11;
-                }
+                { let __v11 = { let __s12 = (((self.c_char(pds, (i).wrapping_sub(1i32))) as u8)) as usize; self.xord[__s12] }; self.buffer[(i) as usize] = __v11; }
                 i = i.wrapping_add(1);
             }
         }
-        self.pre_def_loc = {
-            let mut __f0 = ::core::mem::take(&mut self.buffer);
-            let __r = self.str_lookup(&mut __f0, 1i32, len, ilk, true);
-            self.buffer = __f0;
-            __r
-        };
+        self.pre_def_loc = { let mut __f0 = ::core::mem::take(&mut self.buffer); let __r = self.str_lookup(&mut __f0, 1i32, len, ilk, true); self.buffer = __f0; __r };
     }
 
     /// This procedure takes the integer `int`, copies the appropriate
@@ -555,13 +435,7 @@ impl Globals {
     /// will be not be a~0 if the integer is nonzero, with a prepended minus
     /// sign if the integer is negative.
     // §190
-    pub fn int_to_ASCII(
-        &mut self,
-        mut the_int: i32,
-        int_buf: &mut buf_type,
-        mut int_begin: buf_pointer,
-        int_end: &mut buf_pointer,
-    ) {
+    pub fn int_to_ASCII(&mut self, mut the_int: i32, int_buf: &mut buf_type, mut int_begin: buf_pointer, int_end: &mut buf_pointer) {
         let mut int_ptr: buf_pointer = 0; // §190
         let mut int_xptr: buf_pointer = 0; // §190
         let mut int_tmp_val: ASCII_code = 0; // §190
@@ -588,9 +462,7 @@ impl Globals {
                 int_ptr = (int_ptr).wrapping_add(1i32);
             }
             the_int = (the_int / 10i32);
-            if (the_int == 0i32) {
-                break;
-            }
+            if (the_int == 0i32) { break; }
         }
         (*int_end) = int_ptr;
         int_ptr = (int_ptr).wrapping_sub(1i32);
@@ -613,18 +485,11 @@ impl Globals {
     // §256
     pub fn add_database_cite(&mut self, new_cite: &mut cite_number) {
         self.check_cite_overflow((*new_cite));
-        self.check_field_overflow((self.num_fields).wrapping_mul((*new_cite).wrapping_add(1i32)));
-        {
-            let __v13 = self.hash_text[(self.cite_loc) as usize];
-            self.cite_list[(*new_cite) as usize] = __v13;
-        }
+        self.check_field_overflow((self.num_fields).wrapping_mul(((*new_cite)).wrapping_add(1i32)));
+        { let __v13 = self.hash_text[(self.cite_loc) as usize]; self.cite_list[((*new_cite)) as usize] = __v13; }
         self.ilk_info[(self.cite_loc) as usize] = (*new_cite);
-        {
-            let __ix14 = self.lc_cite_loc;
-            let __v15 = self.cite_loc;
-            self.ilk_info[(__ix14) as usize] = __v15;
-        }
-        (*new_cite) = (*new_cite).wrapping_add(1i32);
+        { let __ix14 = self.lc_cite_loc; let __v15 = self.cite_loc; self.ilk_info[(__ix14) as usize] = __v15; }
+        (*new_cite) = ((*new_cite)).wrapping_add(1i32);
     }
 
     /// Occasionally we need to figure out the hash-table location of a given
@@ -646,53 +511,15 @@ impl Globals {
         self.tmp_end_ptr = self.str_start[((cite_str).wrapping_add(1i32)) as usize];
         while (self.tmp_ptr < self.tmp_end_ptr) {
             {
-                {
-                    let __ix16 = self.ex_buf_ptr;
-                    let __v17 = self.str_pool[(self.tmp_ptr) as usize];
-                    self.ex_buf[(__ix16) as usize] = __v17;
-                }
+                { let __ix16 = self.ex_buf_ptr; let __v17 = self.str_pool[(self.tmp_ptr) as usize]; self.ex_buf[(__ix16) as usize] = __v17; }
                 self.ex_buf_ptr = (self.ex_buf_ptr).wrapping_add(1i32);
                 self.tmp_ptr = (self.tmp_ptr).wrapping_add(1i32);
             }
         }
-        self.cite_loc = {
-            let mut __f0 = ::core::mem::take(&mut self.ex_buf);
-            let __r = self.str_lookup(
-                &mut __f0,
-                0i32,
-                (self.str_start[((cite_str).wrapping_add(1i32)) as usize])
-                    .wrapping_sub(self.str_start[(cite_str) as usize]),
-                cite_ilk,
-                false,
-            );
-            self.ex_buf = __f0;
-            __r
-        };
+        self.cite_loc = { let mut __f0 = ::core::mem::take(&mut self.ex_buf); let __r = self.str_lookup(&mut __f0, 0i32, (self.str_start[((cite_str).wrapping_add(1i32)) as usize]).wrapping_sub(self.str_start[(cite_str) as usize]), cite_ilk, false); self.ex_buf = __f0; __r };
         self.cite_hash_found = self.hash_found;
-        {
-            let mut __f0 = ::core::mem::take(&mut self.ex_buf);
-            let __r = self.lower_case(
-                &mut __f0,
-                0i32,
-                (self.str_start[((cite_str).wrapping_add(1i32)) as usize])
-                    .wrapping_sub(self.str_start[(cite_str) as usize]),
-            );
-            self.ex_buf = __f0;
-            __r
-        };
-        self.lc_cite_loc = {
-            let mut __f0 = ::core::mem::take(&mut self.ex_buf);
-            let __r = self.str_lookup(
-                &mut __f0,
-                0i32,
-                (self.str_start[((cite_str).wrapping_add(1i32)) as usize])
-                    .wrapping_sub(self.str_start[(cite_str) as usize]),
-                lc_cite_ilk,
-                false,
-            );
-            self.ex_buf = __f0;
-            __r
-        };
+        { let mut __f0 = ::core::mem::take(&mut self.ex_buf); let __r = self.lower_case(&mut __f0, 0i32, (self.str_start[((cite_str).wrapping_add(1i32)) as usize]).wrapping_sub(self.str_start[(cite_str) as usize])); self.ex_buf = __f0; __r };
+        self.lc_cite_loc = { let mut __f0 = ::core::mem::take(&mut self.ex_buf); let __r = self.str_lookup(&mut __f0, 0i32, (self.str_start[((cite_str).wrapping_add(1i32)) as usize]).wrapping_sub(self.str_start[(cite_str) as usize]), lc_cite_ilk, false); self.ex_buf = __f0; __r };
         if self.hash_found {
             find_cite_locs_for_this_cite_key = true;
         } else {
@@ -710,10 +537,7 @@ impl Globals {
     pub fn swap(&mut self, mut swap1: cite_number, mut swap2: cite_number) {
         let mut innocent_bystander: cite_number = 0; // §291
         innocent_bystander = self.cite_info[(swap2) as usize];
-        {
-            let __v18 = self.cite_info[(swap1) as usize];
-            self.cite_info[(swap2) as usize] = __v18;
-        }
+        { let __v18 = self.cite_info[(swap1) as usize]; self.cite_info[(swap2) as usize] = __v18; }
         self.cite_info[(swap1) as usize] = innocent_bystander;
     }
 
@@ -739,12 +563,8 @@ impl Globals {
             char_ptr = 0i32;
             while true {
                 {
-                    char1 = self.entry_strs[(((ptr1)
-                        .wrapping_mul((self.ent_str_size).wrapping_add(1i32)))
-                    .wrapping_add(char_ptr)) as usize];
-                    char2 = self.entry_strs[(((ptr2)
-                        .wrapping_mul((self.ent_str_size).wrapping_add(1i32)))
-                    .wrapping_add(char_ptr)) as usize];
+                    char1 = self.entry_strs[(((ptr1).wrapping_mul((self.ent_str_size).wrapping_add(1i32))).wrapping_add(char_ptr)) as usize];
+                    char2 = self.entry_strs[(((ptr2).wrapping_mul((self.ent_str_size).wrapping_add(1i32))).wrapping_add(char_ptr)) as usize];
                     if (char1 == end_of_string) {
                         if (char2 == end_of_string) {
                             if (arg1 < arg2) {
@@ -762,16 +582,10 @@ impl Globals {
                                     {
                                         {
                                             {
-                                                crate::system::wr_str(
-                                                    &mut self.log_file,
-                                                    "Duplicate sort key",
-                                                );
+                                                crate::system::wr_str(&mut self.log_file, "Duplicate sort key");
                                             }
                                             {
-                                                crate::system::wr_str(
-                                                    &mut self.standard_output,
-                                                    "Duplicate sort key",
-                                                );
+                                                crate::system::wr_str(&mut self.standard_output, "Duplicate sort key");
                                             }
                                         }
                                         self.print_confusion();
@@ -836,11 +650,7 @@ impl Globals {
                                     right = insert_ptr;
                                     while right >= __for_end_8 {
                                         {
-                                            if self.less_than(
-                                                self.cite_info
-                                                    [((right).wrapping_sub(1i32)) as usize],
-                                                self.cite_info[(right) as usize],
-                                            ) {
+                                            if self.less_than(self.cite_info[((right).wrapping_sub(1i32)) as usize], self.cite_info[(right) as usize]) {
                                                 break 'l_L24_f;
                                             }
                                             self.swap((right).wrapping_sub(1i32), right);
@@ -862,36 +672,21 @@ impl Globals {
                     left = (left_end).wrapping_add(4i32);
                     middle = ((left_end).wrapping_add(right_end) / 2i32);
                     right = (right_end).wrapping_sub(4i32);
-                    if self.less_than(
-                        self.cite_info[(left) as usize],
-                        self.cite_info[(middle) as usize],
-                    ) {
-                        if self.less_than(
-                            self.cite_info[(middle) as usize],
-                            self.cite_info[(right) as usize],
-                        ) {
+                    if self.less_than(self.cite_info[(left) as usize], self.cite_info[(middle) as usize]) {
+                        if self.less_than(self.cite_info[(middle) as usize], self.cite_info[(right) as usize]) {
                             self.swap(left_end, middle);
                         } else {
-                            if self.less_than(
-                                self.cite_info[(left) as usize],
-                                self.cite_info[(right) as usize],
-                            ) {
+                            if self.less_than(self.cite_info[(left) as usize], self.cite_info[(right) as usize]) {
                                 self.swap(left_end, right);
                             } else {
                                 self.swap(left_end, left);
                             }
                         }
                     } else {
-                        if self.less_than(
-                            self.cite_info[(right) as usize],
-                            self.cite_info[(middle) as usize],
-                        ) {
+                        if self.less_than(self.cite_info[(right) as usize], self.cite_info[(middle) as usize]) {
                             self.swap(left_end, middle);
                         } else {
-                            if self.less_than(
-                                self.cite_info[(right) as usize],
-                                self.cite_info[(left) as usize],
-                            ) {
+                            if self.less_than(self.cite_info[(right) as usize], self.cite_info[(left) as usize]) {
                                 self.swap(left_end, right);
                             } else {
                                 self.swap(left_end, left);
@@ -918,9 +713,7 @@ impl Globals {
                                 right = (right).wrapping_sub(1i32);
                             }
                         }
-                        if (left == (right).wrapping_add(1i32)) {
-                            break;
-                        }
+                        if (left == (right).wrapping_add(1i32)) { break; }
                     }
                     self.swap(left_end, right);
                     self.quick_sort(left_end, (right).wrapping_sub(1i32));
@@ -939,17 +732,11 @@ impl Globals {
     /// counts when keeping statistics.
     /// @<Procedures and functions for handling numbers, characters, and strings
     // §326
-    pub fn build_in(
-        &mut self,
-        mut pds: pds_type,
-        mut len: pds_len,
-        fn_hash_loc: &mut hash_loc,
-        mut blt_in_num: blt_in_range,
-    ) {
+    pub fn build_in(&mut self, mut pds: pds_type, mut len: pds_len, fn_hash_loc: &mut hash_loc, mut blt_in_num: blt_in_range) {
         self.pre_define(pds, len, bst_fn_ilk);
         (*fn_hash_loc) = self.pre_def_loc;
-        self.fn_type[(*fn_hash_loc) as usize] = built_in;
-        self.ilk_info[(*fn_hash_loc) as usize] = blt_in_num;
+        self.fn_type[((*fn_hash_loc)) as usize] = built_in;
+        self.ilk_info[((*fn_hash_loc)) as usize] = blt_in_num;
         self.blt_in_loc[(blt_in_num) as usize] = (*fn_hash_loc);
         self.execution_count[(blt_in_num) as usize] = 0i32;
     }
@@ -1009,228 +796,43 @@ impl Globals {
         self.pre_define("string      ", 6i32, bib_command_ilk);
         self.ilk_info[(self.pre_def_loc) as usize] = n_bib_string;
         // §325
-        {
-            let mut __f2 = ::core::mem::take(&mut self.b_equals);
-            let __r = self.build_in("=           ", 1i32, &mut __f2, n_equals);
-            self.b_equals = __f2;
-            __r
-        };
-        {
-            let mut __f2 = ::core::mem::take(&mut self.b_greater_than);
-            let __r = self.build_in(">           ", 1i32, &mut __f2, n_greater_than);
-            self.b_greater_than = __f2;
-            __r
-        };
-        {
-            let mut __f2 = ::core::mem::take(&mut self.b_less_than);
-            let __r = self.build_in("<           ", 1i32, &mut __f2, n_less_than);
-            self.b_less_than = __f2;
-            __r
-        };
-        {
-            let mut __f2 = ::core::mem::take(&mut self.b_plus);
-            let __r = self.build_in("+           ", 1i32, &mut __f2, n_plus);
-            self.b_plus = __f2;
-            __r
-        };
-        {
-            let mut __f2 = ::core::mem::take(&mut self.b_minus);
-            let __r = self.build_in("-           ", 1i32, &mut __f2, n_minus);
-            self.b_minus = __f2;
-            __r
-        };
-        {
-            let mut __f2 = ::core::mem::take(&mut self.b_concatenate);
-            let __r = self.build_in("*           ", 1i32, &mut __f2, n_concatenate);
-            self.b_concatenate = __f2;
-            __r
-        };
-        {
-            let mut __f2 = ::core::mem::take(&mut self.b_gets);
-            let __r = self.build_in(":=          ", 2i32, &mut __f2, n_gets);
-            self.b_gets = __f2;
-            __r
-        };
-        {
-            let mut __f2 = ::core::mem::take(&mut self.b_add_period);
-            let __r = self.build_in("add.period$ ", 11i32, &mut __f2, n_add_period);
-            self.b_add_period = __f2;
-            __r
-        };
-        {
-            let mut __f2 = ::core::mem::take(&mut self.b_call_type);
-            let __r = self.build_in("call.type$  ", 10i32, &mut __f2, n_call_type);
-            self.b_call_type = __f2;
-            __r
-        };
-        {
-            let mut __f2 = ::core::mem::take(&mut self.b_change_case);
-            let __r = self.build_in("change.case$", 12i32, &mut __f2, n_change_case);
-            self.b_change_case = __f2;
-            __r
-        };
-        {
-            let mut __f2 = ::core::mem::take(&mut self.b_chr_to_int);
-            let __r = self.build_in("chr.to.int$ ", 11i32, &mut __f2, n_chr_to_int);
-            self.b_chr_to_int = __f2;
-            __r
-        };
-        {
-            let mut __f2 = ::core::mem::take(&mut self.b_cite);
-            let __r = self.build_in("cite$       ", 5i32, &mut __f2, n_cite);
-            self.b_cite = __f2;
-            __r
-        };
-        {
-            let mut __f2 = ::core::mem::take(&mut self.b_duplicate);
-            let __r = self.build_in("duplicate$  ", 10i32, &mut __f2, n_duplicate);
-            self.b_duplicate = __f2;
-            __r
-        };
-        {
-            let mut __f2 = ::core::mem::take(&mut self.b_empty);
-            let __r = self.build_in("empty$      ", 6i32, &mut __f2, n_empty);
-            self.b_empty = __f2;
-            __r
-        };
-        {
-            let mut __f2 = ::core::mem::take(&mut self.b_format_name);
-            let __r = self.build_in("format.name$", 12i32, &mut __f2, n_format_name);
-            self.b_format_name = __f2;
-            __r
-        };
-        {
-            let mut __f2 = ::core::mem::take(&mut self.b_if);
-            let __r = self.build_in("if$         ", 3i32, &mut __f2, n_if);
-            self.b_if = __f2;
-            __r
-        };
-        {
-            let mut __f2 = ::core::mem::take(&mut self.b_int_to_chr);
-            let __r = self.build_in("int.to.chr$ ", 11i32, &mut __f2, n_int_to_chr);
-            self.b_int_to_chr = __f2;
-            __r
-        };
-        {
-            let mut __f2 = ::core::mem::take(&mut self.b_int_to_str);
-            let __r = self.build_in("int.to.str$ ", 11i32, &mut __f2, n_int_to_str);
-            self.b_int_to_str = __f2;
-            __r
-        };
-        {
-            let mut __f2 = ::core::mem::take(&mut self.b_missing);
-            let __r = self.build_in("missing$    ", 8i32, &mut __f2, n_missing);
-            self.b_missing = __f2;
-            __r
-        };
-        {
-            let mut __f2 = ::core::mem::take(&mut self.b_newline);
-            let __r = self.build_in("newline$    ", 8i32, &mut __f2, n_newline);
-            self.b_newline = __f2;
-            __r
-        };
-        {
-            let mut __f2 = ::core::mem::take(&mut self.b_num_names);
-            let __r = self.build_in("num.names$  ", 10i32, &mut __f2, n_num_names);
-            self.b_num_names = __f2;
-            __r
-        };
-        {
-            let mut __f2 = ::core::mem::take(&mut self.b_pop);
-            let __r = self.build_in("pop$        ", 4i32, &mut __f2, n_pop);
-            self.b_pop = __f2;
-            __r
-        };
-        {
-            let mut __f2 = ::core::mem::take(&mut self.b_preamble);
-            let __r = self.build_in("preamble$   ", 9i32, &mut __f2, n_preamble);
-            self.b_preamble = __f2;
-            __r
-        };
-        {
-            let mut __f2 = ::core::mem::take(&mut self.b_purify);
-            let __r = self.build_in("purify$     ", 7i32, &mut __f2, n_purify);
-            self.b_purify = __f2;
-            __r
-        };
-        {
-            let mut __f2 = ::core::mem::take(&mut self.b_quote);
-            let __r = self.build_in("quote$      ", 6i32, &mut __f2, n_quote);
-            self.b_quote = __f2;
-            __r
-        };
-        {
-            let mut __f2 = ::core::mem::take(&mut self.b_skip);
-            let __r = self.build_in("skip$       ", 5i32, &mut __f2, n_skip);
-            self.b_skip = __f2;
-            __r
-        };
-        {
-            let mut __f2 = ::core::mem::take(&mut self.b_stack);
-            let __r = self.build_in("stack$      ", 6i32, &mut __f2, n_stack);
-            self.b_stack = __f2;
-            __r
-        };
-        {
-            let mut __f2 = ::core::mem::take(&mut self.b_substring);
-            let __r = self.build_in("substring$  ", 10i32, &mut __f2, n_substring);
-            self.b_substring = __f2;
-            __r
-        };
-        {
-            let mut __f2 = ::core::mem::take(&mut self.b_swap);
-            let __r = self.build_in("swap$       ", 5i32, &mut __f2, n_swap);
-            self.b_swap = __f2;
-            __r
-        };
-        {
-            let mut __f2 = ::core::mem::take(&mut self.b_text_length);
-            let __r = self.build_in("text.length$", 12i32, &mut __f2, n_text_length);
-            self.b_text_length = __f2;
-            __r
-        };
-        {
-            let mut __f2 = ::core::mem::take(&mut self.b_text_prefix);
-            let __r = self.build_in("text.prefix$", 12i32, &mut __f2, n_text_prefix);
-            self.b_text_prefix = __f2;
-            __r
-        };
-        {
-            let mut __f2 = ::core::mem::take(&mut self.b_top_stack);
-            let __r = self.build_in("top$        ", 4i32, &mut __f2, n_top_stack);
-            self.b_top_stack = __f2;
-            __r
-        };
-        {
-            let mut __f2 = ::core::mem::take(&mut self.b_type);
-            let __r = self.build_in("type$       ", 5i32, &mut __f2, n_type);
-            self.b_type = __f2;
-            __r
-        };
-        {
-            let mut __f2 = ::core::mem::take(&mut self.b_warning);
-            let __r = self.build_in("warning$    ", 8i32, &mut __f2, n_warning);
-            self.b_warning = __f2;
-            __r
-        };
-        {
-            let mut __f2 = ::core::mem::take(&mut self.b_while);
-            let __r = self.build_in("while$      ", 6i32, &mut __f2, n_while);
-            self.b_while = __f2;
-            __r
-        };
-        {
-            let mut __f2 = ::core::mem::take(&mut self.b_width);
-            let __r = self.build_in("width$      ", 6i32, &mut __f2, n_width);
-            self.b_width = __f2;
-            __r
-        };
-        {
-            let mut __f2 = ::core::mem::take(&mut self.b_write);
-            let __r = self.build_in("write$      ", 6i32, &mut __f2, n_write);
-            self.b_write = __f2;
-            __r
-        };
+        { let mut __f2 = ::core::mem::take(&mut self.b_equals); let __r = self.build_in("=           ", 1i32, &mut __f2, n_equals); self.b_equals = __f2; __r };
+        { let mut __f2 = ::core::mem::take(&mut self.b_greater_than); let __r = self.build_in(">           ", 1i32, &mut __f2, n_greater_than); self.b_greater_than = __f2; __r };
+        { let mut __f2 = ::core::mem::take(&mut self.b_less_than); let __r = self.build_in("<           ", 1i32, &mut __f2, n_less_than); self.b_less_than = __f2; __r };
+        { let mut __f2 = ::core::mem::take(&mut self.b_plus); let __r = self.build_in("+           ", 1i32, &mut __f2, n_plus); self.b_plus = __f2; __r };
+        { let mut __f2 = ::core::mem::take(&mut self.b_minus); let __r = self.build_in("-           ", 1i32, &mut __f2, n_minus); self.b_minus = __f2; __r };
+        { let mut __f2 = ::core::mem::take(&mut self.b_concatenate); let __r = self.build_in("*           ", 1i32, &mut __f2, n_concatenate); self.b_concatenate = __f2; __r };
+        { let mut __f2 = ::core::mem::take(&mut self.b_gets); let __r = self.build_in(":=          ", 2i32, &mut __f2, n_gets); self.b_gets = __f2; __r };
+        { let mut __f2 = ::core::mem::take(&mut self.b_add_period); let __r = self.build_in("add.period$ ", 11i32, &mut __f2, n_add_period); self.b_add_period = __f2; __r };
+        { let mut __f2 = ::core::mem::take(&mut self.b_call_type); let __r = self.build_in("call.type$  ", 10i32, &mut __f2, n_call_type); self.b_call_type = __f2; __r };
+        { let mut __f2 = ::core::mem::take(&mut self.b_change_case); let __r = self.build_in("change.case$", 12i32, &mut __f2, n_change_case); self.b_change_case = __f2; __r };
+        { let mut __f2 = ::core::mem::take(&mut self.b_chr_to_int); let __r = self.build_in("chr.to.int$ ", 11i32, &mut __f2, n_chr_to_int); self.b_chr_to_int = __f2; __r };
+        { let mut __f2 = ::core::mem::take(&mut self.b_cite); let __r = self.build_in("cite$       ", 5i32, &mut __f2, n_cite); self.b_cite = __f2; __r };
+        { let mut __f2 = ::core::mem::take(&mut self.b_duplicate); let __r = self.build_in("duplicate$  ", 10i32, &mut __f2, n_duplicate); self.b_duplicate = __f2; __r };
+        { let mut __f2 = ::core::mem::take(&mut self.b_empty); let __r = self.build_in("empty$      ", 6i32, &mut __f2, n_empty); self.b_empty = __f2; __r };
+        { let mut __f2 = ::core::mem::take(&mut self.b_format_name); let __r = self.build_in("format.name$", 12i32, &mut __f2, n_format_name); self.b_format_name = __f2; __r };
+        { let mut __f2 = ::core::mem::take(&mut self.b_if); let __r = self.build_in("if$         ", 3i32, &mut __f2, n_if); self.b_if = __f2; __r };
+        { let mut __f2 = ::core::mem::take(&mut self.b_int_to_chr); let __r = self.build_in("int.to.chr$ ", 11i32, &mut __f2, n_int_to_chr); self.b_int_to_chr = __f2; __r };
+        { let mut __f2 = ::core::mem::take(&mut self.b_int_to_str); let __r = self.build_in("int.to.str$ ", 11i32, &mut __f2, n_int_to_str); self.b_int_to_str = __f2; __r };
+        { let mut __f2 = ::core::mem::take(&mut self.b_missing); let __r = self.build_in("missing$    ", 8i32, &mut __f2, n_missing); self.b_missing = __f2; __r };
+        { let mut __f2 = ::core::mem::take(&mut self.b_newline); let __r = self.build_in("newline$    ", 8i32, &mut __f2, n_newline); self.b_newline = __f2; __r };
+        { let mut __f2 = ::core::mem::take(&mut self.b_num_names); let __r = self.build_in("num.names$  ", 10i32, &mut __f2, n_num_names); self.b_num_names = __f2; __r };
+        { let mut __f2 = ::core::mem::take(&mut self.b_pop); let __r = self.build_in("pop$        ", 4i32, &mut __f2, n_pop); self.b_pop = __f2; __r };
+        { let mut __f2 = ::core::mem::take(&mut self.b_preamble); let __r = self.build_in("preamble$   ", 9i32, &mut __f2, n_preamble); self.b_preamble = __f2; __r };
+        { let mut __f2 = ::core::mem::take(&mut self.b_purify); let __r = self.build_in("purify$     ", 7i32, &mut __f2, n_purify); self.b_purify = __f2; __r };
+        { let mut __f2 = ::core::mem::take(&mut self.b_quote); let __r = self.build_in("quote$      ", 6i32, &mut __f2, n_quote); self.b_quote = __f2; __r };
+        { let mut __f2 = ::core::mem::take(&mut self.b_skip); let __r = self.build_in("skip$       ", 5i32, &mut __f2, n_skip); self.b_skip = __f2; __r };
+        { let mut __f2 = ::core::mem::take(&mut self.b_stack); let __r = self.build_in("stack$      ", 6i32, &mut __f2, n_stack); self.b_stack = __f2; __r };
+        { let mut __f2 = ::core::mem::take(&mut self.b_substring); let __r = self.build_in("substring$  ", 10i32, &mut __f2, n_substring); self.b_substring = __f2; __r };
+        { let mut __f2 = ::core::mem::take(&mut self.b_swap); let __r = self.build_in("swap$       ", 5i32, &mut __f2, n_swap); self.b_swap = __f2; __r };
+        { let mut __f2 = ::core::mem::take(&mut self.b_text_length); let __r = self.build_in("text.length$", 12i32, &mut __f2, n_text_length); self.b_text_length = __f2; __r };
+        { let mut __f2 = ::core::mem::take(&mut self.b_text_prefix); let __r = self.build_in("text.prefix$", 12i32, &mut __f2, n_text_prefix); self.b_text_prefix = __f2; __r };
+        { let mut __f2 = ::core::mem::take(&mut self.b_top_stack); let __r = self.build_in("top$        ", 4i32, &mut __f2, n_top_stack); self.b_top_stack = __f2; __r };
+        { let mut __f2 = ::core::mem::take(&mut self.b_type); let __r = self.build_in("type$       ", 5i32, &mut __f2, n_type); self.b_type = __f2; __r };
+        { let mut __f2 = ::core::mem::take(&mut self.b_warning); let __r = self.build_in("warning$    ", 8i32, &mut __f2, n_warning); self.b_warning = __f2; __r };
+        { let mut __f2 = ::core::mem::take(&mut self.b_while); let __r = self.build_in("while$      ", 6i32, &mut __f2, n_while); self.b_while = __f2; __r };
+        { let mut __f2 = ::core::mem::take(&mut self.b_width); let __r = self.build_in("width$      ", 6i32, &mut __f2, n_width); self.b_width = __f2; __r };
+        { let mut __f2 = ::core::mem::take(&mut self.b_write); let __r = self.build_in("write$      ", 6i32, &mut __f2, n_write); self.b_write = __f2; __r };
         // §330
         self.pre_define("            ", 0i32, text_ilk);
         self.s_null = self.hash_text[(self.pre_def_loc) as usize];
@@ -1269,37 +871,21 @@ impl Globals {
         // §331
         self.pre_define("crossref    ", 8i32, bst_fn_ilk);
         self.fn_type[(self.pre_def_loc) as usize] = field;
-        {
-            let __ix19 = self.pre_def_loc;
-            let __v20 = self.num_fields;
-            self.ilk_info[(__ix19) as usize] = __v20;
-        }
+        { let __ix19 = self.pre_def_loc; let __v20 = self.num_fields; self.ilk_info[(__ix19) as usize] = __v20; }
         self.crossref_num = self.num_fields;
         self.num_fields = (self.num_fields).wrapping_add(1i32);
         self.num_pre_defined_fields = self.num_fields;
         self.pre_define("sort.key$   ", 9i32, bst_fn_ilk);
         self.fn_type[(self.pre_def_loc) as usize] = str_entry_var;
-        {
-            let __ix21 = self.pre_def_loc;
-            let __v22 = self.num_ent_strs;
-            self.ilk_info[(__ix21) as usize] = __v22;
-        }
+        { let __ix21 = self.pre_def_loc; let __v22 = self.num_ent_strs; self.ilk_info[(__ix21) as usize] = __v22; }
         self.sort_key_num = self.num_ent_strs;
         self.num_ent_strs = (self.num_ent_strs).wrapping_add(1i32);
         self.pre_define("entry.max$  ", 10i32, bst_fn_ilk);
         self.fn_type[(self.pre_def_loc) as usize] = int_global_var;
-        {
-            let __ix23 = self.pre_def_loc;
-            let __v24 = self.ent_str_size;
-            self.ilk_info[(__ix23) as usize] = __v24;
-        }
+        { let __ix23 = self.pre_def_loc; let __v24 = self.ent_str_size; self.ilk_info[(__ix23) as usize] = __v24; }
         self.pre_define("global.max$ ", 11i32, bst_fn_ilk);
         self.fn_type[(self.pre_def_loc) as usize] = int_global_var;
-        {
-            let __ix25 = self.pre_def_loc;
-            let __v26 = self.glob_str_size;
-            self.ilk_info[(__ix25) as usize] = __v26;
-        }
+        { let __ix25 = self.pre_def_loc; let __v26 = self.glob_str_size; self.ilk_info[(__ix25) as usize] = __v26; }
     }
 
     /// This function scans the `buffer` for the next token, starting at the
@@ -1329,10 +915,7 @@ impl Globals {
     pub fn scan1_white(&mut self, mut char1: ASCII_code) -> bool {
         let mut scan1_white: bool = false;
         self.buf_ptr1 = self.buf_ptr2;
-        while (((self.lex_class[(self.buffer[(self.buf_ptr2) as usize]) as usize] != white_space)
-            && (self.buffer[(self.buf_ptr2) as usize] != char1))
-            && (self.buf_ptr2 < self.last))
-        {
+        while (((self.lex_class[(self.buffer[(self.buf_ptr2) as usize]) as usize] != white_space) && (self.buffer[(self.buf_ptr2) as usize] != char1)) && (self.buf_ptr2 < self.last)) {
             self.buf_ptr2 = (self.buf_ptr2).wrapping_add(1i32);
         }
         if (self.buf_ptr2 < self.last) {
@@ -1350,10 +933,7 @@ impl Globals {
     pub fn scan2(&mut self, mut char1: ASCII_code, mut char2: ASCII_code) -> bool {
         let mut scan2: bool = false;
         self.buf_ptr1 = self.buf_ptr2;
-        while (((self.buffer[(self.buf_ptr2) as usize] != char1)
-            && (self.buffer[(self.buf_ptr2) as usize] != char2))
-            && (self.buf_ptr2 < self.last))
-        {
+        while (((self.buffer[(self.buf_ptr2) as usize] != char1) && (self.buffer[(self.buf_ptr2) as usize] != char2)) && (self.buf_ptr2 < self.last)) {
             self.buf_ptr2 = (self.buf_ptr2).wrapping_add(1i32);
         }
         if (self.buf_ptr2 < self.last) {
@@ -1370,11 +950,7 @@ impl Globals {
     pub fn scan2_white(&mut self, mut char1: ASCII_code, mut char2: ASCII_code) -> bool {
         let mut scan2_white: bool = false;
         self.buf_ptr1 = self.buf_ptr2;
-        while ((((self.buffer[(self.buf_ptr2) as usize] != char1)
-            && (self.buffer[(self.buf_ptr2) as usize] != char2))
-            && (self.lex_class[(self.buffer[(self.buf_ptr2) as usize]) as usize] != white_space))
-            && (self.buf_ptr2 < self.last))
-        {
+        while ((((self.buffer[(self.buf_ptr2) as usize] != char1) && (self.buffer[(self.buf_ptr2) as usize] != char2)) && (self.lex_class[(self.buffer[(self.buf_ptr2) as usize]) as usize] != white_space)) && (self.buf_ptr2 < self.last)) {
             self.buf_ptr2 = (self.buf_ptr2).wrapping_add(1i32);
         }
         if (self.buf_ptr2 < self.last) {
@@ -1389,19 +965,10 @@ impl Globals {
     /// stop-characters as well as the end of the current line.
     /// @<Procedures and functions for input scanning
     // §80
-    pub fn scan3(
-        &mut self,
-        mut char1: ASCII_code,
-        mut char2: ASCII_code,
-        mut char3: ASCII_code,
-    ) -> bool {
+    pub fn scan3(&mut self, mut char1: ASCII_code, mut char2: ASCII_code, mut char3: ASCII_code) -> bool {
         let mut scan3: bool = false;
         self.buf_ptr1 = self.buf_ptr2;
-        while ((((self.buffer[(self.buf_ptr2) as usize] != char1)
-            && (self.buffer[(self.buf_ptr2) as usize] != char2))
-            && (self.buffer[(self.buf_ptr2) as usize] != char3))
-            && (self.buf_ptr2 < self.last))
-        {
+        while ((((self.buffer[(self.buf_ptr2) as usize] != char1) && (self.buffer[(self.buf_ptr2) as usize] != char2)) && (self.buffer[(self.buf_ptr2) as usize] != char3)) && (self.buf_ptr2 < self.last)) {
             self.buf_ptr2 = (self.buf_ptr2).wrapping_add(1i32);
         }
         if (self.buf_ptr2 < self.last) {
@@ -1419,9 +986,7 @@ impl Globals {
     pub fn scan_alpha(&mut self) -> bool {
         let mut scan_alpha: bool = false;
         self.buf_ptr1 = self.buf_ptr2;
-        while ((self.lex_class[(self.buffer[(self.buf_ptr2) as usize]) as usize] == alpha)
-            && (self.buf_ptr2 < self.last))
-        {
+        while ((self.lex_class[(self.buffer[(self.buf_ptr2) as usize]) as usize] == alpha) && (self.buf_ptr2 < self.last)) {
             self.buf_ptr2 = (self.buf_ptr2).wrapping_add(1i32);
         }
         if ((self.buf_ptr2).wrapping_sub(self.buf_ptr1) == 0i32) {
@@ -1431,4 +996,5 @@ impl Globals {
         }
         scan_alpha
     }
+
 }
