@@ -40,7 +40,7 @@ pub mod tools;
 use crate::arena::{CheckpointId, CHUNK_BYTES};
 use crate::checkpoint::ExtRecord;
 use crate::generated::Globals;
-use crate::persist::{hash128, Codec, Reader};
+use crate::persist::{Codec, Reader};
 use crate::resolver::Format;
 use crate::system::{self, Lookup, RunOptions, StatSig, Stream};
 use std::collections::HashMap;
@@ -138,18 +138,18 @@ pub fn engine_build() -> [u64; 2] {
     *BUILD.get_or_init(|| {
         std::env::current_exe()
             .ok()
-            .and_then(|p| std::fs::read(p).ok())
-            .map(|d| hash128(&d))
-            .unwrap_or([0, 0])
+            .and_then(|p| crate::persist::hash128_file(p.to_str()?, None).ok())
+            .map_or([0, 0], |(h, _)| h)
     })
 }
 
 fn hash_prefix(path: &str, len: u64) -> Result<[u64; 2], String> {
-    let d = std::fs::read(path).map_err(|e| format!("{path}: {e}"))?;
-    let p = d
-        .get(..len as usize)
-        .ok_or_else(|| format!("{path} is shorter than the {len} bytes read"))?;
-    Ok(hash128(p))
+    let (h, n) =
+        crate::persist::hash128_file(path, Some(len)).map_err(|e| format!("{path}: {e}"))?;
+    if n < len {
+        return Err(format!("{path} is shorter than the {len} bytes read"));
+    }
+    Ok(h)
 }
 
 impl Key {
@@ -237,9 +237,11 @@ impl Key {
             if sig.as_ref() == Some(stat) {
                 continue;
             }
-            let now = *hashes
-                .entry(path)
-                .or_insert_with(|| std::fs::read(path).map(|d| hash128(&d)).ok());
+            let now = *hashes.entry(path).or_insert_with(|| {
+                crate::persist::hash128_file(path, None)
+                    .ok()
+                    .map(|(h, _)| h)
+            });
             if now != Some(*hash) {
                 return Err(format!("{path} changed"));
             }
@@ -584,6 +586,17 @@ pub fn written_before(rec: &ExtRecord, reads: &system::ReadLog) -> Result<Writte
 /// S₀'s key: what the run read before S₀ (`reads`, whose files and lookups
 /// may run past S₀: only the first `rec.reads` count), with S₀'s host
 /// record `rec`.
+/// A whole read (`system::note_whole_read`) the run made after
+/// `\document`'s body was pushed (`Layer::arm_reads`), before S₀'s anchor:
+/// `\document`'s `\IfFileExists{\jobname.aux}` (l3's lookup takes the
+/// file's `\pdffilesize`). The anchor is the `.aux` point, and the `.aux`
+/// is the journal's (L5, `crate::readset`), not S₀'s key's: such a read is
+/// left out of the key, and the session checks it with the journal
+/// (`incr::Session::take_s0`'s list of files not keyed whole).
+pub fn whole_after_arm(arm: Option<usize>, i: usize, f: &system::FileRead) -> bool {
+    f.closed_at == Some(u64::MAX) && arm.is_some_and(|a| i >= a)
+}
+
 pub fn make_key(
     g: &mut Globals,
     id: CheckpointId,
@@ -625,12 +638,19 @@ pub fn make_key(
         // by the time too: mixed into the hash, so that a file whose time
         // changed fails the test by content (and the session finds the
         // read in `changes`).
+        // (a whole read after `\document`'s body was pushed, before the
+        // anchor -- its `\IfFileExists{\jobname.aux}` -- is the journal's:
+        // `whole_after_arm`)
+        let arm = g.layer().arm_reads;
         let files = reads.files[..nf.min(reads.files.len())]
             .iter()
+            .enumerate()
+            .filter(|(i, f)| !whole_after_arm(arm, *i, f))
+            .map(|(_, f)| f)
             .filter(|f| !open_paths.contains(&f.path) || f.closed_at == Some(u64::MAX))
             .map(|f| {
                 let hash = match (&f.content, f.hash) {
-                    (Some(c), [0, 0]) => hash128(c),
+                    (Some(c), [0, 0]) => crate::persist::hash128(c),
                     (_, h) => h,
                 };
                 let hash = match f.stamp {
@@ -1010,7 +1030,11 @@ mod key_tests {
             force_source_date: std::env::var("FORCE_SOURCE_DATE").ok(),
             first_line: b"main".to_vec(),
             job_name: "main".into(),
-            files: vec![(fp.clone(), hash128(&std::fs::read(&f).unwrap()), fs)],
+            files: vec![(
+                fp.clone(),
+                crate::persist::hash128(&std::fs::read(&f).unwrap()),
+                fs,
+            )],
             prefixes: vec![],
             lookups: vec![],
             barriers: vec![],

@@ -344,6 +344,7 @@ def one(content, tag, interrupt=None, pre=None):
                passes=r.get('passes', 1), pass_modes=r.get('pass_modes'), pass_s=r.get('pass_s'),
                oscillation=r.get('oscillation'), ref_runs=REFRUNS.get(tag),
                restart_mid_page=r.get('restart_mid_page'), restart_gap=r.get('restart_gap'),
+               restart_preamble=r.get('restart_preamble'), restart_midline=r.get('restart_midline'),
                l5=r.get('l5'), rs_events=r.get('rs_events'), ck_stats=r.get('ck_stats'))
     results.append(rec)
     if out:

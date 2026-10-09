@@ -893,6 +893,7 @@ impl Globals {
 
     /// File level `j`'s line is printed.
     pub fn ls_print_level(&mut self, j: i32) {
+        self.midline_note_shown(j);
         let r = level_read(self, j);
         with(|s| s.events.push(r));
     }

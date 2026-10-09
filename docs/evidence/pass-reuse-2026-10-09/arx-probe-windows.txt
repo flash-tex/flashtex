@@ -1,0 +1,6 @@
+changed names 360; pages 45; pages reading one 45
+pass-2 body instructions 18.59 G
+(a) page windows: 12.71 G = 68.4 %
+(b) checkpoint windows: 5.33 G = 28.7 %, 124 windows
+abspage-only=True: 12 pages, window fraction p50 0.28 mean 0.36
+abspage-only=False: 33 pages, window fraction p50 0.89 mean 0.82
