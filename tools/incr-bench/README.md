@@ -67,7 +67,7 @@ shard's raw records (soundness.py's JSONL, each unit's output, and for a failed 
 stderr as `.diag`) are `result-<side>-<k>`.
 
 The gates (`sweeps.py gates`): `sound-a sound-budget sound-budget-d sound-timed sound-vol
-sound-lookup sound-lines span readers sound-c sound-d`, with gates.sh's trials, kinds, host
+sound-lookup sound-lines span readers sound-c sound-d sound-pre`, with gates.sh's trials, kinds, host
 options and documents. `readers` runs only when the tree under test has `readers.py` (#1613);
 otherwise its row says `n/a`. `sound-book` (the owner's book, not in the repository) and the
 non-sweep gates (parity, lockstep, trip, etrip, drift, positions, tests, `gate.sh pr`) are not
