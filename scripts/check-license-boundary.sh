@@ -46,6 +46,11 @@
 #      the "check C" of the old-engine retirement plan (#1236, R4); C was
 #      taken by then.
 #
+#   F. The makeindex port (crates/makeindex, package flashtex-makeindex) is
+#      under the MakeIndex Distribution Notice, neither MIT nor GPL: no crate
+#      but the GPL engine has it in its `cargo metadata` resolve graph,
+#      other than through the engine (which check A already confines).
+#
 # The engine crate is created by another lane. Until crates/flashtex-engine
 # exists, check A says so and passes; check B runs regardless, because what it
 # enforces holds today and is what keeps the boundary cheap to defend later.
@@ -851,6 +856,63 @@ PY
     esac
   done < "$e_out"
   rm -f "$e_out"
+fi
+
+# ---------------------------------------------------------------------------
+# F. The makeindex port: only the engine links it
+# ---------------------------------------------------------------------------
+MKI_DIR="crates/makeindex"
+MKI_PKG="$(pkg_name "$MKI_DIR/Cargo.toml")"
+if [[ -z "$MKI_PKG" ]]; then
+  ok "F  $MKI_DIR does not exist, so nothing can depend on it"
+else
+  f_meta=""
+  if ! f_meta="$(cargo metadata --format-version 1 --locked 2>/dev/null)"; then
+    f_meta="$(cargo metadata --format-version 1 2>/dev/null || true)"
+  fi
+  f_file="$(mktemp "${TMPDIR:-/tmp}/flashtex-boundary-XXXXXX")"
+  printf '%s' "$f_meta" > "$f_file"
+  f_report="$(MKI="$MKI_PKG" ENGINE="${ENGINE_PKG:-flashtex-engine}" python3 - "$f_file" <<'PY'
+import collections, json, os, sys
+
+mki, engine = os.environ["MKI"], os.environ["ENGINE"]
+try:
+    meta = json.load(open(sys.argv[1], encoding="utf-8"))
+except ValueError:
+    print("FAIL\tcargo metadata failed; the dependency graph could not be checked")
+    raise SystemExit(0)
+name_of = {p["id"]: p["name"] for p in meta["packages"]}
+nodes = (meta.get("resolve") or {}).get("nodes") or []
+rev = collections.defaultdict(list)
+for n in nodes:
+    for dep in n.get("dependencies") or [d["pkg"] for d in n.get("deps", [])]:
+        rev[dep].append(n["id"])
+start = {i for i, n in name_of.items() if n == mki}
+seen, queue = set(start), collections.deque(start)
+while queue:
+    cur = queue.popleft()
+    if name_of.get(cur) == engine:
+        continue  # beyond the engine: check A's business
+    for up in rev.get(cur, ()):
+        if up not in seen:
+            seen.add(up)
+            queue.append(up)
+bad = sorted(name_of[i] for i in seen - start if name_of[i] != engine)
+if bad:
+    for b in bad:
+        print("FAIL\t%s depends on %s other than through %s" % (b, mki, engine))
+else:
+    print("OK\tonly %s links %s" % (engine, mki))
+PY
+)"
+  rm -f "$f_file"
+  while IFS="$(printf '\t')" read -r kind a; do
+    [[ -n "${kind:-}" ]] || continue
+    case "$kind" in
+      OK)   ok   "F  $a" ;;
+      *)    fail "F  $a" ;;
+    esac
+  done <<< "$f_report"
 fi
 
 echo

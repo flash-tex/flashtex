@@ -167,6 +167,15 @@ int flashtex_kpse_name_ok(void *k, const char *fname, int write)
   return write ? kpathsea_out_name_ok(kpse, fname) : kpathsea_in_name_ok(kpse, fname);
 }
 
+/* The same checks without the message, for a caller that reports a refusal
+   under another program's name (makeindex in-process: crates/makeindex). */
+int flashtex_kpse_name_ok_silent(void *k, const char *fname, int write)
+{
+  kpathsea kpse = (kpathsea) k;
+  return write ? kpathsea_out_name_ok_silent(kpse, fname)
+               : kpathsea_in_name_ok_silent(kpse, fname);
+}
+
 /* `kpsewhich -all NAME`: every match, in search order, as a malloc'd
    NULL-terminated array of malloc'd paths (never NULL). Free with
    flashtex_kpse_free_list. fmtutil reads every fmtutil.cnf this way. */

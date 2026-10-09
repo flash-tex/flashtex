@@ -60,6 +60,8 @@ pub mod ix;
 pub mod lineshift;
 #[cfg(not(feature = "tex82"))]
 pub mod macroprof;
+#[cfg(all(feature = "makeindex", not(feature = "tex82")))]
+pub mod makeindex;
 #[cfg(not(feature = "tex82"))]
 pub mod midline;
 #[cfg(not(feature = "tex82"))]

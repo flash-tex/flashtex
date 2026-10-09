@@ -1625,7 +1625,7 @@ pub fn with_resolver_for<T>(prog: &str, f: impl FnOnce(&mut dyn FileResolver) ->
     f(r.as_mut())
 }
 
-fn with_resolver<T>(f: impl FnOnce(&mut dyn FileResolver) -> T) -> T {
+pub(crate) fn with_resolver<T>(f: impl FnOnce(&mut dyn FileResolver) -> T) -> T {
     let prog = run().program_name;
     let mut g = RESOLVER.lock().unwrap();
     let r = g.get_or_insert_with(|| crate::resolver::default_resolver(&prog, ENGINE_NAME));
@@ -1763,6 +1763,40 @@ pub fn confined_found_ok(name: &str, found: &str, format: Format, searched: bool
         }
     }
     confined_path_ok(Path::new(found), &roots, searched)
+}
+
+/// The confinement rules for a file a tool the engine runs in-process
+/// (makeindex, bibtex) is about to read: `name` as the tool has it, `path`
+/// where it resolves. An absolute name is allowed only as the answer of a
+/// search (`searched`, a style or database kpathsea found), which must then
+/// be a TeX tree file or lie in a root; `tool_dir` (the scratch directory
+/// the host copied the tool's inputs into) is a root too. True when
+/// confinement is off.
+pub(crate) fn tool_read_ok(
+    name: &str,
+    path: &Path,
+    searched: bool,
+    tool_dir: Option<&Path>,
+) -> bool {
+    if !reads_confined() {
+        return true;
+    }
+    if !searched && !confined_name_ok(name) {
+        return false;
+    }
+    let mut roots: Vec<std::path::PathBuf> = confine_roots().to_vec();
+    if let Ok(cwd) = std::env::current_dir().and_then(std::fs::canonicalize) {
+        roots.push(cwd);
+    }
+    if let Some(dir) = run().output_directory {
+        if let Ok(d) = std::fs::canonicalize(&dir) {
+            roots.push(d);
+        }
+    }
+    if let Some(d) = tool_dir.and_then(|d| std::fs::canonicalize(d).ok()) {
+        roots.push(d);
+    }
+    confined_path_ok(path, &roots, searched)
 }
 
 /// The second rule on its own (tests call it directly).
@@ -2232,16 +2266,36 @@ pub fn runsystem(cmd: &[u8]) -> i32 {
     if allow == 1 || allow == 2 {
         let _ = std::io::stdout().flush();
         record_effect("write18", &safecmd);
-        let status = shell_command(&safecmd)
-            .status()
-            .map(|s| s.code().unwrap_or(-1))
-            .unwrap_or(127);
+        let status = match in_process_tool(&safecmd, allow == 2) {
+            Some(status) => status,
+            None => shell_command(&safecmd)
+                .status()
+                .map(|s| s.code().unwrap_or(-1))
+                .unwrap_or(127),
+        };
         if status != 0 {
             // system(3)'s status is the wait status: the code times 256.
             eprintln!("system returned with code {}", status * 256);
         }
     }
     allow
+}
+
+/// A `\write18` command the engine runs itself instead of through the
+/// shell: makeindex (`crate::makeindex`), unless `FLASHTEX_MAKEINDEX=external`.
+/// Its exit status, as the shell's would be; `None` to use the shell.
+#[cfg(feature = "makeindex")]
+fn in_process_tool(cmd: &[u8], restricted: bool) -> Option<i32> {
+    if !crate::makeindex::in_process() {
+        return None;
+    }
+    let args = crate::makeindex::command_args(cmd, restricted)?;
+    Some(crate::makeindex::run_in_process(&args))
+}
+
+#[cfg(not(feature = "makeindex"))]
+fn in_process_tool(_cmd: &[u8], _restricted: bool) -> Option<i32> {
+    None
 }
 
 /// The command `runpopen` works on. On WIN32, texmfmp.c's `runpopen` first
