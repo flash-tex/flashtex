@@ -113,6 +113,29 @@ tools tier in `texbundle.py derive`), and republish.
   the output is byte-identical. Whether a product may print that name is for the owner's §3
   legal review.
 
+**Open for the owner's §3 legal review before any public release:** the `.blg` banner above
+(TeX Live's program name and distribution in FlashTeX's output), and, for the makeindex port
+this PR stacks on, whether the MakeIndex Distribution Notice may be combined with GPL-2
+distribution of the engine that links it ([its README](../makeindex/README.md)).
+
+## Hardening after review (2026-10-09)
+
+The port reads an input whole where the C program streams it, so `refs.bib -> /dev/zero` (or an
+`.aux` linked there, through `\write18{bibtex ...}`) would fill a host's memory in seconds.
+Now every input (`.aux` and `\@input` files, `.bib`, `.bst`) must be a regular file after
+following links and at most `MAX_INPUT` (64 MiB); otherwise `bibtex: refusing to read NAME:
+not a regular file` (or the size) on standard error, and the open fails as for a file that
+does not exist ("I couldn't open ..."). A directory still opens as empty, as with `fopen`.
+This differs from TeX Live only where its program would hang or exhaust memory. kpathsea's
+answers in the engine's lookup are taken only when they are regular files, as the host rule's
+are, and the host rule's own reads and hashes refuse the same files (`host/external.rs`,
+`read`). With `FLASHTEX_CONFINE_READS` (Live Share) every read also goes through the
+engine's confinement (`system::tool_read_ok`; the document's names obey the name rule).
+Tests: `crates/bibtex/tests/limits.rs` (`/dev/zero` as `.bib` and as `.aux`, a FIFO, a sparse
+64 MiB + 1 `.bib`), `tests/write18.rs` (`bibtex_refuses_dev_zero`). A panic in the port was
+already caught (`CRASHED`); the host's tools thread now also catches any panic of a rule's run,
+so `ToolsDone` is always sent.
+
 ## biber: options for the owner
 
 biber is the backend of biblatex: about 25k lines of Perl. It relies on Text::BibTeX (C

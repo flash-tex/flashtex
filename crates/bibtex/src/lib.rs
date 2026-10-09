@@ -26,4 +26,6 @@ pub mod arena;
 pub mod generated;
 pub mod system;
 
-pub use system::{run, run_with_deadline, Format, Host, Outcome, CRASHED, TIMED_OUT};
+pub use system::{
+    run, run_with_deadline, Format, Host, Outcome, CRASHED, MAX_INPUT, TIMED_OUT,
+};

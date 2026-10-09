@@ -58,6 +58,11 @@ impl flashtex_bibtex::Host for EngineHost {
             flashtex_bibtex::Format::Bib => (Format::Bib, ".bib"),
             flashtex_bibtex::Format::Bst => (Format::Bst, ".bst"),
         };
+        // Confined reads: the name the document gave obeys the name rule (no
+        // absolute name, `~`, `$` or `..`), as `\input`'s does.
+        if !crate::system::input_name_confined_ok(&name) {
+            return None;
+        }
         if Path::new(&name).is_absolute() {
             return Self::in_dir(Path::new(""), &name, suffix).map(|p| path_bytes(&p));
         }
@@ -75,6 +80,11 @@ impl flashtex_bibtex::Host for EngineHost {
         if self.cwd.is_some() && !found.is_absolute() {
             // Found in the host process's own directory, which is not the
             // child's `.` (that one was searched above).
+            return None;
+        }
+        // A regular file only, as the host's rule finds them (a FIFO or a
+        // device is not a database; the port refuses it anyway).
+        if !found.is_file() {
             return None;
         }
         Some(path_bytes(&found))
@@ -100,6 +110,13 @@ impl flashtex_bibtex::Host for EngineHost {
 
     fn cwd(&self) -> Option<&Path> {
         self.cwd.as_deref()
+    }
+
+    fn read_ok(&mut self, name: &[u8], path: &Path, searched: bool) -> bool {
+        // Confined reads (FLASHTEX_CONFINE_READS, Live Share): the engine's
+        // own confinement (system::tool_read_ok); nothing otherwise.
+        let name = String::from_utf8_lossy(name).into_owned();
+        crate::system::tool_read_ok(&name, path, searched, self.cwd.as_deref())
     }
 
     fn stdout_stream(&mut self) -> Option<(Box<dyn std::io::Write>, usize)> {

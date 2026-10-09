@@ -46,6 +46,29 @@ pub trait Host {
     fn stdout_stream(&mut self) -> Option<(Box<dyn Write>, usize)> {
         None
     }
+    /// Whether the file `name`, resolved to `path`, may be read
+    /// (`searched`: kpathsea's answer for a `.bib` or `.bst`, not a name
+    /// the document gave); a host confining reads says no outside its
+    /// roots. TeX Live's kpathsea allows every read.
+    fn read_ok(&mut self, _name: &[u8], _path: &Path, _searched: bool) -> bool {
+        true
+    }
+}
+
+/// The largest input file BibTeX reads: 64 MiB, far more than any
+/// database (TeX Live's `tugboat.bib`, 5,196 entries, is 1.6 MB), and few
+/// enough bytes that a host running it in-process keeps running.
+pub const MAX_INPUT: u64 = 64 << 20;
+
+/// What `fopen(name, "rb")` gives.
+enum Opened {
+    Data(Vec<u8>),
+    /// No such file (or it cannot be opened): `fopen` fails.
+    Missing,
+    /// FlashTeX refuses it (a message is on standard error): a device or
+    /// FIFO, which the C program would read without end, a file over
+    /// [`MAX_INPUT`], or one outside a confined host's roots.
+    Refused,
 }
 
 /// A run's result.
@@ -455,15 +478,46 @@ impl Globals {
         }
     }
 
-    /// `fopen(name, "rb")`.
-    fn fopen_read(&mut self, name: &[u8]) -> Option<Vec<u8>> {
+    /// `fopen(name, "rb")`, read whole within FlashTeX's limits (see
+    /// [`Opened`]).
+    fn fopen_read(&mut self, name: &[u8], searched: bool) -> Opened {
         let p = self.host_path(name);
-        match std::fs::read(&p) {
-            Ok(d) => Some(d),
-            // fopen of a directory succeeds; reading it gives EOF at once
-            Err(_) if p.is_dir() => Some(vec![]),
-            Err(_) => None,
+        let Ok(meta) = std::fs::metadata(&p) else {
+            return Opened::Missing;
+        };
+        let refuse = |g: &mut Globals, why: &str| {
+            let mut m = format!("{MY_NAME}: refusing to read ").into_bytes();
+            m.extend_from_slice(name);
+            m.extend_from_slice(format!(": {why}\n").as_bytes());
+            g.host.stderr.extend_from_slice(&m);
+            Opened::Refused
+        };
+        if !self.host.host().read_ok(name, &p, searched) {
+            return refuse(self, "outside the files this host may read");
         }
+        if meta.is_dir() {
+            // fopen of a directory succeeds; reading it gives EOF at once
+            return Opened::Data(vec![]);
+        }
+        if !meta.is_file() {
+            return refuse(self, "not a regular file");
+        }
+        if meta.len() > MAX_INPUT {
+            let why = format!(
+                "{} bytes, more than FlashTeX's limit of {MAX_INPUT}",
+                meta.len()
+            );
+            return refuse(self, &why);
+        }
+        let Ok(f) = std::fs::File::open(&p) else {
+            return Opened::Missing;
+        };
+        let mut d = vec![];
+        let _ = std::io::Read::read_to_end(&mut std::io::Read::take(f, MAX_INPUT + 1), &mut d);
+        if d.len() as u64 > MAX_INPUT {
+            return refuse(self, "it grew past FlashTeX's limit");
+        }
+        Opened::Data(d)
     }
 
     /// `uexit(code)` (lib/uexit.c): exit with that status.
@@ -669,12 +723,12 @@ impl Globals {
         let name = c_name(self);
         if path < 0 {
             // no_file_path: fopen as given
-            match self.fopen_read(&name) {
-                Some(d) => {
+            match self.fopen_read(&name, false) {
+                Opened::Data(d) => {
                     f.input = Some(d);
                     true
                 }
-                None => false,
+                Opened::Missing | Opened::Refused => false,
             }
         } else {
             let format = if path == crate::generated::consts::kpse_bib_format {
@@ -694,13 +748,18 @@ impl Globals {
                 found.drain(..2);
             }
             // "This fopen is not allowed to fail" (xfopen).
-            let Some(d) = self.fopen_read(&found) else {
-                let _ = writeln!(
-                    self.host.stderr,
-                    "{MY_NAME}: fopen({}) failed",
-                    String::from_utf8_lossy(&found)
-                );
-                jump(Jump::Exit(1))
+            let d = match self.fopen_read(&found, true) {
+                Opened::Data(d) => d,
+                // refused by FlashTeX: as if kpathsea had not found it
+                Opened::Refused => return false,
+                Opened::Missing => {
+                    let _ = writeln!(
+                        self.host.stderr,
+                        "{MY_NAME}: fopen({}) failed",
+                        String::from_utf8_lossy(&found)
+                    );
+                    jump(Jump::Exit(1))
+                }
             };
             f.input = Some(d);
             set_c_name(self, &found);
