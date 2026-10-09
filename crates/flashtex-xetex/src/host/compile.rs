@@ -9,6 +9,7 @@
 //! list of figures, ...) changed is followed by another, as latexmk does,
 //! each pass's pages replacing the previous pass's (spec §6.4).
 
+use super::proc::Children;
 use flashtex_display_list::json::{obj, s as js, Json};
 use flashtex_display_list::page::{flags, Item, Page, StreamKind};
 use flashtex_display_list::resource::Font;
@@ -17,7 +18,7 @@ use std::collections::{HashMap, HashSet};
 use std::io::{BufReader, Write};
 use std::os::unix::net::UnixListener;
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Stdio};
+use std::process::{Command, Stdio};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -233,8 +234,19 @@ pub struct RunResult {
 /// A running engine the connection can stop (`CANCEL`, a newer `COMPILE`).
 #[derive(Default)]
 pub struct Running {
-    pub child: Option<Child>,
+    /// The compile running now: the one a `CANCEL` names.
+    pub job: Option<i64>,
     pub cancelled: bool,
+    /// The process group of the child running now (an engine run or a
+    /// tool), which a cancel kills (`proc.rs`).
+    pub group: Option<u32>,
+    /// The sequence number of the newest `COMPILE` received: an older one
+    /// not started yet is superseded.
+    pub newest: u64,
+    /// Compiles cancelled before they started (a `CANCEL` that came while
+    /// they waited behind another): each ends as cancelled when its turn
+    /// comes.
+    pub cancelled_early: HashSet<i64>,
 }
 
 /// The files whose change asks for another pass (latexmk's rerun rule,
@@ -262,6 +274,7 @@ pub fn run_once(
     running: &Arc<Mutex<Running>>,
     t0: Instant,
     sock_dir: &Path,
+    children: &Children,
 ) -> Result<RunResult, String> {
     std::fs::create_dir_all(&job.output_dir)
         .map_err(|e| format!("{}: {e}", job.output_dir.display()))?;
@@ -292,16 +305,21 @@ pub fn run_once(
         f.sort_unstable();
         cmd.env("FLASHTEX_DISPLAY_LIST_FONT_FORMATS", f.join(","));
     }
-    {
-        let r = running.lock().unwrap();
+    children.prepare(&mut cmd);
+    // Started under the lock a cancel takes: a cancel either comes first
+    // (and nothing starts) or finds the child's group to kill.
+    let mut child = {
+        let mut r = running.lock().unwrap();
         if r.cancelled {
             return Ok(RunResult {
                 cancelled: true,
                 ..RunResult::default()
             });
         }
-    }
-    let mut child = cmd.spawn().map_err(|e| format!("{}: {e}", exe.display()))?;
+        let c = cmd.spawn().map_err(|e| format!("{}: {e}", exe.display()))?;
+        r.group = Some(c.id());
+        c
+    };
     // the output's own reports (`flashtex_xetex::out`), read as they come so
     // that the pipe never fills
     let err_pipe = child.stderr.take();
@@ -313,7 +331,6 @@ pub fn run_once(
         }
         s
     });
-    running.lock().unwrap().child = Some(child);
     let mut res = RunResult::default();
     if let Some(l) = listener {
         l.set_nonblocking(true).ok();
@@ -322,15 +339,9 @@ pub fn run_once(
             match l.accept() {
                 Ok((s, _)) => break Some(s),
                 Err(_) => {
-                    let mut r = running.lock().unwrap();
-                    let exited = r
-                        .child
-                        .as_mut()
-                        .is_none_or(|c| c.try_wait().ok().flatten().is_some());
-                    if exited {
+                    if child.try_wait().ok().flatten().is_some() {
                         break None;
                     }
-                    drop(r);
                     std::thread::sleep(Duration::from_millis(2));
                 }
             }
@@ -341,13 +352,15 @@ pub fn run_once(
         }
         let _ = std::fs::remove_file(&sock);
     }
-    let child = running.lock().unwrap().child.take();
-    if let Some(mut c) = child {
-        let status = c.wait().map_err(|e| e.to_string())?;
-        res.exit_code = status.code();
+    let status = child.wait();
+    {
+        // reaped: its group is no longer one to kill
+        let mut r = running.lock().unwrap();
+        r.group = None;
+        res.cancelled = r.cancelled;
     }
+    res.exit_code = status.map_err(|e| e.to_string())?.code();
     res.stderr = err_reader.join().unwrap_or_default();
-    res.cancelled = running.lock().unwrap().cancelled;
     Ok(res)
 }
 
@@ -570,6 +583,7 @@ pub fn compile(
     running: &Arc<Mutex<Running>>,
     t0: Instant,
     sock_dir: &Path,
+    children: &Children,
 ) -> Outcome {
     let mut passes = 0;
     let mut last;
@@ -577,7 +591,9 @@ pub fn compile(
     loop {
         let before = pass_state(&job.output_dir, &job.jobname);
         passes += 1;
-        last = match run_once(exe, format_dir, job, accept, out, running, t0, sock_dir) {
+        last = match run_once(
+            exe, format_dir, job, accept, out, running, t0, sock_dir, children,
+        ) {
             Ok(r) => r,
             Err(e) => {
                 send_json(

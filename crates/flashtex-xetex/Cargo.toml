@@ -54,6 +54,10 @@ flashtex-pdf = { path = "../pdf" }
 # The project manifest (MIT): `[fonts]` in Unicode mode (src/host/fonts.rs).
 flashtex-project-manifest = { path = "../project-manifest" }
 
+# The host's children (src/host/proc.rs): process groups, the lifeline pipe.
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
 [dev-dependencies]
 # tests/pinned_libs.rs: the sha256 of every vendored HarfBuzz/FreeType/TECkit file.
 sha2 = "0.10"

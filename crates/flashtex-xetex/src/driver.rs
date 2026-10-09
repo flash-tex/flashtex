@@ -8,6 +8,9 @@ use crate::system;
 
 /// Run the engine with `argv` (as the process got it) and exit.
 pub fn run(argv: Vec<String>) -> ! {
+    // A child of `flashtex-host-unicode` ends with it (`host::proc`).
+    #[cfg(unix)]
+    crate::host::proc::watch_lifeline();
     // XeTeX's own options (xetexextra.c). `-no-pdf` writes XDV, as xetex
     // does; without it the PDF is FlashTeX's own (`crate::out`), never
     // xdvipdfmx's, so `-output-driver` has nothing to name.

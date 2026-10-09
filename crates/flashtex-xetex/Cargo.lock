@@ -106,6 +106,7 @@ dependencies = [
  "flashtex-project-manifest",
  "flashtex-xetex-fontlibs",
  "flashtex-xetex-teckit",
+ "libc",
  "sha2",
 ]
 

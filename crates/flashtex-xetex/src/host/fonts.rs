@@ -18,7 +18,7 @@
 //!   is not applied.
 
 use flashtex_project_manifest::Manifest;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 /// The generated setup and what to say about it.
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
@@ -30,13 +30,58 @@ pub struct Setup {
     pub notes: Vec<(&'static str, String)>,
 }
 
-/// A family name is passed inside a TeX group: no character that TeX
-/// would read as anything but a letter or other character there.
-fn safe(name: &str) -> bool {
-    !name.trim().is_empty()
-        && !name
-            .chars()
-            .any(|c| c.is_control() || "\\{}%#$&^_~".contains(c))
+/// The longest family name passed on (a font's names are far shorter;
+/// TeX's first line is a buffer of its own).
+pub const MAX_NAME: usize = 256;
+
+/// Why a family name is not passed inside a TeX group, if it is not: a
+/// character TeX would read as anything but a letter or other character
+/// there, or a name longer than [`MAX_NAME`] bytes.
+fn refused(name: &str) -> Option<String> {
+    if name.trim().is_empty() {
+        return Some("is empty".into());
+    }
+    if name.len() > MAX_NAME {
+        return Some(format!("is {} bytes long (at most {MAX_NAME})", name.len()));
+    }
+    name.chars()
+        .any(|c| c.is_control() || "\\{}%#$&^_~".contains(c))
+        .then(|| "has a character TeX cannot take in a font name".into())
+}
+
+/// The manifest governing a project at `root`: `flashtex.toml` in it or in
+/// a directory above, the search ending at a repository's root (`.git`,
+/// `.hg`, `.svn`), at the home directory (never read: a stray one there
+/// governs nothing, and the app compiles a copy of the project under its
+/// caches, with no repository to end the search), and at a directory this
+/// user does not own or that others may write (`/tmp`, a shared folder:
+/// anyone could put a manifest there).
+pub fn locate(root: &Path) -> Option<PathBuf> {
+    use std::os::unix::fs::MetadataExt;
+    // SAFETY: getuid(2) has no preconditions.
+    let uid = unsafe { libc::getuid() };
+    let home = std::env::var_os("HOME")
+        .filter(|h| !h.is_empty())
+        .map(PathBuf::from);
+    let mut dir = root.to_path_buf();
+    loop {
+        if home.as_deref().is_some_and(|h| h.starts_with(&dir)) {
+            return None;
+        }
+        let m = std::fs::metadata(&dir).ok()?;
+        if m.uid() != uid || m.mode() & 0o002 != 0 {
+            return None;
+        }
+        let candidate = dir.join(flashtex_project_manifest::FILE_NAME);
+        if let Ok(f) = std::fs::metadata(&candidate) {
+            if f.is_file() && f.uid() == uid {
+                return Some(candidate);
+            }
+        }
+        if [".git", ".hg", ".svn"].iter().any(|v| dir.join(v).exists()) || !dir.pop() {
+            return None;
+        }
+    }
 }
 
 /// The setup for a project at `root` compiled with `format` (only the
@@ -46,20 +91,9 @@ pub fn setup(root: &Path, format: &str) -> Setup {
     if format != "xelatex" {
         return s;
     }
-    let Some(path) = Manifest::locate(root) else {
+    let Some(path) = locate(root) else {
         return s;
     };
-    // A copy of a project (the app compiles one under its caches) has no
-    // `.git` to stop the search: a stray manifest in the home directory or
-    // above it governs nothing.
-    if let Some(home) = std::env::var_os("HOME").filter(|h| !h.is_empty()) {
-        if path
-            .parent()
-            .is_some_and(|d| Path::new(&home).starts_with(d))
-        {
-            return s;
-        }
-    }
     let loaded = match Manifest::load(&path) {
         Ok(l) => l,
         Err(e) => {
@@ -86,10 +120,11 @@ pub fn setup(root: &Path, format: &str) -> Setup {
         ("mono", "setmonofont", &f.mono),
     ] {
         let Some(name) = name else { continue };
-        if !safe(name) {
+        if let Some(why) = refused(name) {
+            let shown: String = name.chars().take(64).collect();
             s.notes.push((
                 "warning",
-                format!("flashtex.toml: fonts.{role} {name:?} has a character TeX cannot take in a font name; not applied"),
+                format!("flashtex.toml: fonts.{role} {shown:?} {why}; not applied"),
             ));
             continue;
         }
@@ -106,10 +141,11 @@ pub fn setup(root: &Path, format: &str) -> Setup {
         ));
     }
     if let Some(name) = &f.math {
-        if !safe(name) {
+        if let Some(why) = refused(name) {
+            let shown: String = name.chars().take(64).collect();
             s.notes.push((
                 "warning",
-                format!("flashtex.toml: fonts.math {name:?} has a character TeX cannot take in a font name; not applied"),
+                format!("flashtex.toml: fonts.math {shown:?} {why}; not applied"),
             ));
         } else {
             let name = name.trim();
@@ -152,6 +188,36 @@ mod tests {
             setup(&d, "xetex").code.is_empty(),
             "plain XeTeX has no hooks"
         );
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn long_names_are_refused() {
+        let long = "A".repeat(MAX_NAME + 1);
+        let d = project(&format!("[fonts]\ntext = \"{long}\"\n"));
+        let s = setup(&d, "xelatex");
+        assert!(s.code.is_empty());
+        assert!(s.notes[0].1.contains("bytes long"), "{:?}", s.notes);
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn no_manifest_from_a_shared_directory() {
+        // a directory others may write (as /tmp): its manifest is not read
+        use std::os::unix::fs::PermissionsExt;
+        let d = project("[fonts]\ntext = \"X\"\n");
+        std::fs::remove_file(d.join(".git")).unwrap();
+        let inner = d.join("doc");
+        std::fs::create_dir_all(&inner).unwrap();
+        assert!(
+            locate(&inner).is_some(),
+            "found above, in an owned directory"
+        );
+        std::fs::set_permissions(&d, std::fs::Permissions::from_mode(0o777)).unwrap();
+        assert!(locate(&inner).is_none(), "not in a world-writable one");
+        std::fs::set_permissions(&d, std::fs::Permissions::from_mode(0o755)).unwrap();
+        std::fs::write(inner.join(".git"), "").unwrap();
+        assert!(locate(&inner).is_none(), "nor above a repository's root");
         let _ = std::fs::remove_dir_all(&d);
     }
 
