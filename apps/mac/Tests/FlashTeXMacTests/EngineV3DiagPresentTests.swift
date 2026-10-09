@@ -146,6 +146,23 @@ final class EngineV3DiagPresentTests: XCTestCase {
         XCTAssertNil(rows([w], texts)[0].notes)
     }
 
+    /// #1593: the engine names where the macro was defined (`def`). The
+    /// project defines \note twice, so the source search alone finds no one
+    /// definition; the engine's line picks the one in force (the second),
+    /// and its label and fix are made there.
+    func testAnErrorInAMacroUsesTheEnginesDefinitionSite() throws {
+        let text = "\\documentclass{article}\n\\newcommand{\\note}[1]{\\textbf{Note:} #1}\n\\begin{document}\n\\renewcommand{\\note}[1]{\\emphh{#1}}\nFirst use: \\note{hello}.\n\\end{document}\n"
+        let texts = ["main.tex": text]
+        let d = try diag(##""severity":"error","code":"tex/undefined-control-sequence","origin":"tex","message":"Undefined control sequence.","file":"/tmp/copy/src/main.tex","line":5,"col":23,"range":[11,23],"trace":[{"kind":"macro","name":"\\note","text":["#1->\\emphh ","{#1}"],"def":{"file":"/tmp/copy/src/main.tex","line":4}},{"kind":"file","file":"/tmp/copy/src/main.tex","line":5,"col":23,"text":["",""]}],"help":["The control sequence at the end of the top line"]"##)
+        XCTAssertNil(EngineV3DiagPresent.definition(of: "\\note", in: texts), "two definitions: the search alone gives up")
+        let r = rows([d], texts, mode: .strict)[0]
+        XCTAssertTrue(r.notes?.contains("in \\note (defined at main.tex:4)") ?? false, r.notes?.description ?? "")
+        let secondary = r.labels?.filter { !$0.primary } ?? []
+        XCTAssertEqual(secondary.map { texts["main.tex"]!.utf8Slice($0.source.startByte, $0.source.endByte) }, ["\\note", "\\emphh"])
+        XCTAssertEqual(r.help?.message, "did you mean \\emph? (in the definition of \\note, main.tex:4)")
+        XCTAssertTrue(fixed(r, texts)["main.tex"]!.contains("\\renewcommand{\\note}[1]{\\emph{#1}}"))
+    }
+
     /// include-missing, align-no-amsmath, \mathbb without amssymb.
     func testMissingIncludeAndMissingPackagesAreLocatedAndFixed() throws {
         let text = "\\documentclass{article}\n\\begin{document}\nText.\n\\include{chap9}\n\\begin{align}x&=1\\end{align}\n$\\mathbb{R}$\n\\end{document}\n"

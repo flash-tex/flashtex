@@ -56,9 +56,90 @@ use std::time::Instant;
 
 /// A page (or form) the writer produced, as the cache keeps it.
 struct Cached {
+    /// Its `body` is empty while `packed` holds it.
     e: Emitted,
     /// Bumped every time the index is produced again.
     version: u64,
+    /// Low Memory (`Profile::lean`): the body gzip-packed (`Packer`), and
+    /// its length unpacked.
+    packed: Option<(Vec<u8>, usize)>,
+}
+
+impl Cached {
+    fn new(e: Emitted, version: u64) -> Cached {
+        Cached {
+            e,
+            version,
+            packed: None,
+        }
+    }
+
+    /// The page as emitted (unpacked if packed): identical bytes.
+    fn emitted(&self) -> std::borrow::Cow<'_, Emitted> {
+        match &self.packed {
+            None => std::borrow::Cow::Borrowed(&self.e),
+            Some((z, len)) => {
+                let mut e = self.e.clone();
+                e.body = Arc::new(Packer::unpack(z, *len));
+                std::borrow::Cow::Owned(e)
+            }
+        }
+    }
+
+    /// Bytes the cache holds for it.
+    fn bytes(&self) -> usize {
+        self.e.body.len() + self.packed.as_ref().map_or(0, |(z, _)| z.len())
+    }
+}
+
+/// Low Memory's page-cache packer (`Profile::lean`): a worker thread gzips
+/// cached pages' display lists, so the engine thread never waits for it; the
+/// engine thread swaps a packed body in (`Live::take_packed`) while the
+/// page's version is still the one packed. A delivery of a packed page
+/// unpacks it, so a client receives exactly the bytes emitted.
+struct Packer {
+    jobs: mpsc::Sender<(usize, u64, Arc<Vec<u8>>)>,
+    done: Arc<Mutex<Vec<PackedPage>>>,
+}
+
+/// A page the packer finished: (index, version, gzip of its body).
+type PackedPage = (usize, u64, Vec<u8>);
+
+impl Packer {
+    fn start() -> Option<Packer> {
+        #[cfg(feature = "distribution")]
+        {
+            let (jobs, rx) = mpsc::channel::<(usize, u64, Arc<Vec<u8>>)>();
+            let done = Arc::new(Mutex::new(Vec::new()));
+            let d2 = done.clone();
+            std::thread::Builder::new()
+                .name("page-packer".into())
+                .spawn(move || {
+                    for (i, v, body) in rx {
+                        let z = crate::bundle::gz::gzip(&body, 1);
+                        d2.lock().unwrap_or_else(|p| p.into_inner()).push((i, v, z));
+                    }
+                })
+                .ok()?;
+            Some(Packer { jobs, done })
+        }
+        #[cfg(not(feature = "distribution"))]
+        {
+            None
+        }
+    }
+
+    fn unpack(z: &[u8], len: usize) -> Vec<u8> {
+        #[cfg(feature = "distribution")]
+        {
+            crate::bundle::gz::gunzip(z, len).expect("a page the host packed itself unpacks")
+        }
+        #[cfg(not(feature = "distribution"))]
+        {
+            let _ = (z, len);
+            unreachable!("pages are packed only with the distribution feature")
+        }
+    }
 }
 
 /// What one client holds.
@@ -123,7 +204,7 @@ struct Target {
     first_emit_ms: Option<f64>,
     first_send_ms: Option<f64>,
     /// The engine thread's instructions and cycles at the start of the
-    /// compile and at the first page (`os::thread_counts`; macOS only).
+    /// compile and at the first page (`os::thread_counts`; macOS, Linux).
     pmu0: Option<(u64, u64)>,
     first_pmu: Option<(u64, u64)>,
 }
@@ -206,6 +287,9 @@ struct Live {
     forms: HashMap<u32, Cached>,
     next_version: u64,
     target: Option<Target>,
+    /// Pack the cached pages (Low Memory, `Profile::lean`); `None`: kept as
+    /// emitted.
+    packer: Option<Packer>,
 }
 
 impl Live {
@@ -215,12 +299,49 @@ impl Live {
             forms: HashMap::new(),
             next_version: 1,
             target: None,
+            packer: None,
         }
     }
 
     fn clear(&mut self) {
         self.pages.clear();
         self.forms.clear();
+    }
+
+    /// Pack the cached pages from now on (`on`), queueing those already
+    /// cached, or stop packing (pages packed so far stay packed: they
+    /// deliver the same bytes).
+    fn set_packing(&mut self, on: bool) {
+        if !on {
+            self.packer = None;
+            return;
+        }
+        if self.packer.is_none() {
+            self.packer = Packer::start();
+        }
+        if let Some(p) = &self.packer {
+            for (i, c) in self.pages.iter().enumerate() {
+                if let Some(c) = c.as_ref().filter(|c| c.packed.is_none()) {
+                    let _ = p.jobs.send((i, c.version, c.e.body.clone()));
+                }
+            }
+        }
+    }
+
+    /// Swap in the bodies the packer finished, where the page is still the
+    /// version it packed.
+    fn take_packed(&mut self) {
+        let Some(p) = &self.packer else { return };
+        let done = std::mem::take(&mut *p.done.lock().unwrap_or_else(|p| p.into_inner()));
+        for (i, v, z) in done {
+            if let Some(Some(c)) = self.pages.get_mut(i) {
+                if c.version == v && c.packed.is_none() {
+                    let len = c.e.body.len();
+                    c.e.body = Arc::new(Vec::new());
+                    c.packed = Some((z, len));
+                }
+            }
+        }
     }
 
     /// Deliver page `j` from the cache to `t` if the client lacks it, with
@@ -231,7 +352,7 @@ impl Live {
             return;
         };
         if t.ps.held.get(&j) != Some(&c.version) {
-            if !t.send(&c.e) {
+            if !t.send(&c.emitted()) {
                 return;
             }
             t.ps.held.insert(j, c.version);
@@ -269,7 +390,7 @@ impl Live {
                     t.ps.forms.insert(e.index, e.hash);
                 }
             }
-            self.forms.insert(e.index, Cached { e, version });
+            self.forms.insert(e.index, Cached::new(e, version));
             self.target = t;
             return;
         }
@@ -289,11 +410,12 @@ impl Live {
             .get(i)
             .and_then(|c| c.as_ref())
             .is_none_or(|c| c.e.hash != e.hash);
+        self.take_packed();
         let version = match &self.pages[i] {
             Some(c)
                 if delivered
                     && c.e.hash == e.hash
-                    && c.e.body == e.body
+                    && c.emitted().body == e.body
                     && c.e.fonts == e.fonts
                     && c.e.images == e.images
                     && c.e.forms == e.forms
@@ -303,7 +425,10 @@ impl Live {
             }
             _ => version,
         };
-        self.pages[i] = Some(Cached { e, version });
+        if let Some(p) = &self.packer {
+            let _ = p.jobs.send((i, version, e.body.clone()));
+        }
+        self.pages[i] = Some(Cached::new(e, version));
         let Some(mut t) = self.target.take() else {
             return;
         };
@@ -369,13 +494,18 @@ struct Doc {
     gen: u64,
     compiles: u64,
     /// The user's files as the last compile read them (to move source
-    /// spans with their lines when they are edited).
-    texts: HashMap<String, Arc<Vec<u8>>>,
+    /// spans with their lines when they are edited), each with its stat
+    /// signature then (`None`: unknown, so it is compared again).
+    texts: HashMap<String, (Arc<Vec<u8>>, Option<crate::system::StatSig>)>,
     tools: DocTools,
     /// A run from the format was stopped by newer work (past S₀, which it
     /// keeps): S₀ is persisted after the next compile that completes, not
     /// while that work waits.
     s0_unsaved: bool,
+    /// A restart in the preamble took S₀ again (PREAMBLE-FAST): S₀ is
+    /// persisted once the host is idle (`TRIM_AFTER`), not after every
+    /// keystroke in the preamble (20 MB each).
+    s0_when_idle: bool,
 }
 
 /// The external tools of the resident document (`super::external`).
@@ -399,6 +529,9 @@ struct DocTools {
 
 pub(crate) struct Engine {
     cfg: Arc<Config>,
+    /// The performance mode in effect (`crate::profile`): the host's
+    /// `--profile`, then each client's choice (`Req::Profile`).
+    profile: crate::profile::Profile,
     /// The engine thread's own queue: the tools' worker reports there.
     tx: mpsc::Sender<Req>,
     doc: Option<Doc>,
@@ -416,12 +549,15 @@ type Written = HashMap<PathBuf, (crate::system::StatSig, Arc<Vec<u8>>)>;
 
 impl Engine {
     pub fn new(cfg: Arc<Config>, tx: mpsc::Sender<Req>) -> Engine {
+        let live = Rc::new(RefCell::new(Live::new()));
+        live.borrow_mut().set_packing(cfg.profile.lean);
         Engine {
+            profile: cfg.profile.clone(),
             cfg,
             tx,
             doc: None,
             peers: HashMap::new(),
-            live: Rc::new(RefCell::new(Live::new())),
+            live,
             gens: 0,
             written: HashMap::new(),
         }
@@ -437,6 +573,16 @@ impl Engine {
         let mut trim_due = false;
         loop {
             let pause = self.cfg.keep_warm_pause;
+            let trim_after = self
+                .profile
+                .trim_after_ms
+                .map(std::time::Duration::from_millis);
+            let idle_wait = trim_after.or_else(|| {
+                self.doc
+                    .as_ref()
+                    .is_some_and(|d| d.s0_when_idle)
+                    .then_some(std::time::Duration::from_secs(2))
+            });
             let req = match hot_until {
                 Some(t) if Instant::now() < t && pause.is_zero() => match rx.try_recv() {
                     Ok(r) => r,
@@ -459,18 +605,31 @@ impl Engine {
                     }
                     Err(mpsc::RecvTimeoutError::Disconnected) => break,
                 },
-                _ if trim_due => match rx.recv_timeout(TRIM_AFTER) {
-                    Ok(r) => r,
-                    Err(mpsc::RecvTimeoutError::Timeout) => {
-                        trim_due = false;
-                        if let Some(d) = self.doc.as_mut() {
-                            d.session.trim_caches();
+                // (merged: the profile's idle trim, and #1551's save of an
+                // S₀ a preamble restart took; a profile without the trim
+                // still saves that S₀ after the old 2 s idle wait)
+                _ if trim_due && idle_wait.is_some() => {
+                    match rx.recv_timeout(idle_wait.unwrap_or_default()) {
+                        Ok(r) => r,
+                        Err(mpsc::RecvTimeoutError::Timeout) => {
+                            trim_due = false;
+                            if trim_after.is_some() {
+                                self.trim();
+                            }
+                            // (S₀ a restart in the preamble took, now that
+                            // the keystrokes have stopped)
+                            if self
+                                .doc
+                                .as_ref()
+                                .is_some_and(|d| d.s0_when_idle && !d.session.is_paused())
+                            {
+                                self.save_s0();
+                            }
+                            continue;
                         }
-                        give_back_free_memory();
-                        continue;
+                        Err(mpsc::RecvTimeoutError::Disconnected) => break,
                     }
-                    Err(mpsc::RecvTimeoutError::Disconnected) => break,
-                },
+                }
                 _ => match rx.recv() {
                     Ok(r) => r,
                     Err(_) => break,
@@ -484,6 +643,17 @@ impl Engine {
                 Req::Closed(id) => {
                     self.peers.remove(&id);
                 }
+                Req::Profile {
+                    conn,
+                    profile,
+                    reply,
+                } => {
+                    self.set_profile(profile);
+                    if reply {
+                        let j = obj([("profile", self.profile.json())]);
+                        server::send_json(&conn.out, kind::PROFILE, &j);
+                    }
+                }
                 Req::Compile { conn, req, t0 } => {
                     conn.queued.fetch_sub(1, Ordering::SeqCst);
                     let c = conn.clone();
@@ -491,7 +661,8 @@ impl Engine {
                     // DONE is out: prepare the next keystroke's restore
                     // while nothing waits (`incr::Session::prepare_next`)
                     // (FLASHTEX_NO_PREPARE=1 leaves it out, for A/B)
-                    let prepare = std::env::var_os("FLASHTEX_NO_PREPARE").is_none();
+                    // (the profile's `prepare`; FLASHTEX_NO_PREPARE pins it off)
+                    let prepare = self.profile.prepare;
                     if let Some(d) = self.doc.as_mut().filter(|_| prepare) {
                         let _busy = crate::busy::enter(crate::busy::Part::Prepare);
                         d.session
@@ -507,23 +678,30 @@ impl Engine {
                     report,
                 } => self.tools_done(gen, conn, req, id, report),
             }
-            if compiled && !self.cfg.keep_warm.is_zero() {
-                hot_until = Some(Instant::now() + self.cfg.keep_warm);
+            if compiled && self.profile.keep_warm_ms > 0 {
+                hot_until = Some(
+                    Instant::now() + std::time::Duration::from_millis(self.profile.keep_warm_ms),
+                );
             }
         }
     }
 
-    /// Warm the process up: a one-page LaTeX document in a scratch
-    /// directory starts kpathsea, reads the font map and loads the format,
-    /// so that a document's first compile (or its reopening from S₀) does
-    /// not pay for them.
+    /// Warm the process up: a one-page job in a scratch directory starts
+    /// kpathsea, reads the font map and loads the format, so that a
+    /// document's first compile (or its reopening from S₀) does not pay
+    /// for them. The page is one character of cmr10 shipped with the
+    /// primitive `\shipout`, which is all it takes to read the font map
+    /// (pdfTeX reads it at the first font it sets): no class, no
+    /// `\begin{document}`. A one-page article typeset its class and LaTeX's
+    /// start of a document first, which the first compile (it follows at
+    /// once when a project opens) waited for and gained little from.
     fn warm(&mut self) -> Result<f64, String> {
         let t = Instant::now();
         let dir = std::env::temp_dir().join(format!("flashtex-host-warm-{}", std::process::id()));
         std::fs::create_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
         std::fs::write(
             dir.join("flashtex-warm.tex"),
-            "\\documentclass{article}\\begin{document}Warm.\\end{document}\n",
+            "\\font\\warmfont=cmr10 \\pdfprimitive\\shipout\\hbox{\\warmfont W}\\csname @@end\\endcsname\\end\n",
         )
         .map_err(|e| e.to_string())?;
         let here = std::env::current_dir().ok();
@@ -539,7 +717,7 @@ impl Engine {
         .collect();
         let o = crate::cli::parse(&argv);
         let r = {
-            let mut s = incr::Session::new(o, None, self.cfg.opts.clone());
+            let mut s = incr::Session::new(o, None, self.opts());
             s.compile(None).map(|_| ())
         };
         if let Some(h) = here {
@@ -548,6 +726,50 @@ impl Engine {
         let _ = std::fs::remove_dir_all(&dir);
         r?;
         Ok(t.elapsed().as_secs_f64())
+    }
+
+    /// The resident engine's options under the current performance mode.
+    fn opts(&self) -> incr::Options {
+        let mut o = self.cfg.opts.clone();
+        o.apply_profile(&self.profile);
+        o
+    }
+
+    /// Change the performance mode between compiles (`Req::Profile`). Only
+    /// what is kept changes: a smaller budget or dense window thins the
+    /// resident document's checkpoints now, and a mode that trims gives the
+    /// freed memory back at once rather than after its idle wait.
+    fn set_profile(&mut self, p: crate::profile::Profile) {
+        if p == self.profile {
+            return;
+        }
+        let shrinks = p.budget < self.profile.budget
+            || p.dense < self.profile.dense
+            || (p.lean && !self.profile.lean);
+        self.profile = p;
+        self.live.borrow_mut().set_packing(self.profile.lean);
+        if let Some(d) = self.doc.as_mut() {
+            d.session.apply_profile(&self.profile);
+        }
+        if shrinks && self.profile.trim_after_ms.is_some() {
+            self.trim();
+        }
+    }
+
+    /// The idle trim (`Profile::trim_after_ms`): the old run's cached
+    /// chunks go (and, when lean, the restores' spare tail buffers), the
+    /// packed pages are swapped in, and the heap's free pages go back to the
+    /// system.
+    fn trim(&mut self) {
+        if let Some(d) = self.doc.as_mut() {
+            if self.profile.lean {
+                d.session.trim_caches_deep();
+            } else {
+                d.session.trim_caches();
+            }
+        }
+        self.live.borrow_mut().take_packed();
+        give_back_free_memory();
     }
 
     fn s0_path(&self, job: &Job) -> Option<PathBuf> {
@@ -574,7 +796,7 @@ impl Engine {
         let mut argv = vec!["pdftex".to_string()];
         argv.extend(job.argv());
         let o = crate::cli::parse(&argv);
-        let session = incr::Session::new(o, None, self.cfg.opts.clone());
+        let session = incr::Session::new(o, None, self.opts());
         displaylist::init_with_sink(Box::new(HostSink(self.live.clone())));
         self.live.borrow_mut().clear();
         self.gens += 1;
@@ -586,6 +808,7 @@ impl Engine {
             texts: HashMap::new(),
             tools: DocTools::default(),
             s0_unsaved: false,
+            s0_when_idle: false,
         });
         Ok(())
     }
@@ -594,8 +817,11 @@ impl Engine {
     /// the host starts itself after external tools changed an input.
     fn compile(&mut self, conn: Arc<Conn>, req: Json, t0: Instant, cause: Option<&'static str>) {
         let queue_ms = t0.elapsed().as_secs_f64() * 1e3;
+        // (Low Memory: the pages packed since the last compile)
+        self.live.borrow_mut().take_packed();
         // what the engine thread did while this request waited (LIVE-30MS)
         let queue_by = crate::busy::since(t0);
+        let queue_counts = crate::busy::counts_since(t0);
         let arrival_mark = crate::busy::cycles_at(t0);
         let _busy = crate::busy::enter(crate::busy::Part::Request);
         super::crash::serving(&format!(
@@ -625,6 +851,9 @@ impl Engine {
             }
         };
         let t_apply = Instant::now();
+        // (the host's copies stand for files only within the compile that
+        // wrote them: `system::KNOWN`)
+        crate::system::clear_known_content();
         if let Err(e) = apply_changes(&job.root, &req, &mut self.written) {
             server::error(&out, Some(id), "request", &e);
             return self.resume_deferred(&conn);
@@ -682,7 +911,7 @@ impl Engine {
         let doc = self.doc.as_mut().unwrap();
         // Source spans follow their lines through the edits.
         let t_moved = Instant::now();
-        move_spans(doc);
+        move_spans(doc, &self.written);
         let move_ms = t_moved.elapsed().as_secs_f64() * 1e3;
         let mut ps = self.peers.remove(&conn.id).unwrap_or_else(PeerState::new);
         let keep = incremental && ps.doc_gen == doc.gen;
@@ -752,6 +981,22 @@ impl Engine {
                 .set_cancel(Some(std::rc::Rc::new(move |_pass, _pages| {
                     c.is_cancelled(id)
                 })));
+            // Nothing new against the run a newer keystroke stopped (a letter
+            // typed and deleted again): the pages that run shipped are this
+            // compile's. Deliver them now and say they are current, instead
+            // of when the run ships its next page: the edited page among
+            // them is the keystroke's (lane P4-TYPING-200WPM).
+            let live = self.live.clone();
+            doc.session
+                .set_on_continue(Some(std::rc::Rc::new(move |pages: usize| {
+                    let mut l = live.borrow_mut();
+                    if let Some(mut t) = l.target.take() {
+                        l.catch_up(&mut t, pages as u32);
+                        let count = t.old_count.max(pages);
+                        t.pages_status(count, false);
+                        l.target = Some(t);
+                    }
+                })));
         }
         // The `progress-v1` heartbeat (spec §6.8): at a pass's first
         // checkpoint, then at most every 250 ms, in every run (a later
@@ -759,18 +1004,25 @@ impl Engine {
         doc.session.set_progress(conn.progress.then(|| {
             let c = conn.clone();
             let last = std::cell::Cell::new((0usize, None::<Instant>));
-            std::rc::Rc::new(move |pass: usize, pages: usize| {
-                let (last_pass, at) = last.get();
-                if pass != last_pass || at.is_none_or(|t| t.elapsed().as_millis() >= 250) {
-                    last.set((pass, Some(Instant::now())));
-                    let j = obj([
-                        ("id", Json::Int(id)),
-                        ("pass", Json::Int(pass as i64)),
-                        ("page", Json::Int(pages as i64)),
-                    ]);
-                    server::send_json(&c.out, kind::PROGRESS, &j);
-                }
-            }) as incr::Progress
+            std::rc::Rc::new(
+                move |pass: usize, pages: usize, g: &crate::generated::Globals| {
+                    let (last_pass, at) = last.get();
+                    if pass != last_pass || at.is_none_or(|t| t.elapsed().as_millis() >= 250) {
+                        last.set((pass, Some(Instant::now())));
+                        let mut j = obj([
+                            ("id", Json::Int(id)),
+                            ("pass", Json::Int(pass as i64)),
+                            ("page", Json::Int(pages as i64)),
+                        ]);
+                        // `file`: the innermost file TeX reads (only read
+                        // here, at most every 250 ms; never per token).
+                        if let (Some(f), Json::Obj(kv)) = (reading(g), &mut j) {
+                            kv.push(("file".into(), js(f)));
+                        }
+                        server::send_json(&c.out, kind::PROGRESS, &j);
+                    }
+                },
+            ) as incr::Progress
         }));
         // Lane P4-MULTIPASS: when a pass leaves work for the external tools
         // (latexmk's rules: a new `.bcf`, `\citation`s, an `.idx`), the
@@ -865,6 +1117,7 @@ impl Engine {
         let _busy = crate::busy::enter(crate::busy::Part::Done);
         doc.session.set_preempt(None);
         doc.session.set_cancel(None);
+        doc.session.set_on_continue(None);
         doc.session.set_progress(None);
         doc.session.set_defer(None);
         let deferred = matches!(&result, Ok(r) if r.deferred);
@@ -886,6 +1139,11 @@ impl Engine {
                     (
                         "restart_mid_page".to_string(),
                         Json::Bool(rep.restart_mid_page),
+                    ),
+                    // before S₀: a preamble edit (the run took S₀ again)
+                    (
+                        "restart_preamble".to_string(),
+                        Json::Bool(rep.restart_preamble),
                     ),
                     (
                         "restart_next_gap".to_string(),
@@ -910,6 +1168,22 @@ impl Engine {
                     // whether they stopped for the external tools
                     ("passes".to_string(), Json::Int(rep.passes as i64)),
                     ("deferred".to_string(), Json::Bool(rep.deferred)),
+                    // how each pass ran ("cold": from the format;
+                    // "incremental": from a checkpoint) and its seconds
+                    // (lane COLD-OPEN: a first open's later passes)
+                    (
+                        "pass_modes".to_string(),
+                        Json::Arr(rep.pass_modes.iter().map(|m| js(m.as_str())).collect()),
+                    ),
+                    (
+                        "pass_s".to_string(),
+                        Json::Arr(
+                            rep.pass_s
+                                .iter()
+                                .map(|s| Json::Num((s * 1e3).round() / 1e3))
+                                .collect(),
+                        ),
+                    ),
                 ];
                 if let Some(r) = &rep.cold_reason {
                     extra.push(("cold_reason".to_string(), js(r.as_str())));
@@ -947,6 +1221,26 @@ impl Engine {
                             .collect(),
                     ),
                 ),
+                // the same wait in the engine thread's instructions and cycles
+                // (thousands), by part: load-independent (P4-TYPING-200WPM)
+                (
+                    "queue_by_instr_k".to_string(),
+                    Json::Obj(
+                        queue_counts
+                            .iter()
+                            .map(|(k, i, _)| (k.to_string(), Json::Int((*i / 1000) as i64)))
+                            .collect(),
+                    ),
+                ),
+                (
+                    "queue_by_kc".to_string(),
+                    Json::Obj(
+                        queue_counts
+                            .iter()
+                            .map(|(k, _, c)| (k.to_string(), Json::Int((*c / 1000) as i64)))
+                            .collect(),
+                    ),
+                ),
                 ("apply".to_string(), m(apply_ms)),
                 ("move_spans".to_string(), m(move_ms)),
                 ("first_page".to_string(), o(t.first_page_ms)),
@@ -961,6 +1255,15 @@ impl Engine {
                 st.push(("restore".to_string(), m(rep.restore_s * 1e3)));
                 st.push(("tests".to_string(), Json::Int(rep.tests as i64)));
                 st.push(("test".to_string(), m(rep.test_s * 1e3)));
+                // (a run newer work stopped: what this compile did with it
+                // first, inside `key` and `find`)
+                if !rep.paused_how.is_empty() {
+                    st.push(("paused_how".to_string(), js(rep.paused_how)));
+                    st.push(("paused".to_string(), m(rep.paused_s * 1e3)));
+                    if let Some(i) = rep.paused_instr {
+                        st.push(("paused_instr_k".to_string(), Json::Int((i / 1000) as i64)));
+                    }
+                }
                 if let Some((p, w, c)) = rep.edited {
                     st.push(("edited_page".to_string(), Json::Int(p as i64)));
                     st.push(("edited_wall".to_string(), m(w * 1e3)));
@@ -1006,6 +1309,12 @@ impl Engine {
                     }
                     if let Some(e) = rep.edited_instr {
                         st.push(("edited_instr_k".to_string(), k(e)));
+                    }
+                    if let Some(e) = rep.typeset_instr {
+                        st.push(("typeset_instr_k".to_string(), k(e)));
+                    }
+                    if let Some(e) = rep.typeset_cycles {
+                        st.push(("typeset_cycles_k".to_string(), k(e)));
                     }
                     if let Some(e) = rep.test_instr {
                         st.push(("test_instr_k".to_string(), k(e)));
@@ -1091,9 +1400,8 @@ impl Engine {
         // session's parts (`incr::Session::mem_stats`) and the page cache.
         if std::env::var_os("FLASHTEX_MEMSTAT").is_some() {
             let live = self.live.borrow();
-            let body = |e: &Emitted| e.body.len() as i64;
-            let pages: i64 = live.pages.iter().flatten().map(|c| body(&c.e)).sum();
-            let forms: i64 = live.forms.values().map(|c| body(&c.e)).sum();
+            let pages: i64 = live.pages.iter().flatten().map(|c| c.bytes() as i64).sum();
+            let forms: i64 = live.forms.values().map(|c| c.bytes() as i64).sum();
             let mut m: Vec<(String, Json)> = doc
                 .session
                 .mem_stats()
@@ -1104,7 +1412,7 @@ impl Engine {
             m.push(("form_cache".into(), Json::Int(forms)));
             m.push((
                 "texts".into(),
-                Json::Int(doc.texts.values().map(|t| t.len() as i64).sum()),
+                Json::Int(doc.texts.values().map(|(t, _)| t.len() as i64).sum()),
             ));
             m.push((
                 "written".into(),
@@ -1118,6 +1426,7 @@ impl Engine {
         server::send_json(&out, kind::DONE, &Json::Obj(kv));
         let failed = result.is_err();
         let cold = matches!(mode.as_str(), "cold");
+        let preamble = matches!(&result, Ok(r) if r.restart_preamble);
         self.peers.insert(conn.id, t.ps);
         if failed {
             // The engine's state is unknown: start the document afresh.
@@ -1128,37 +1437,50 @@ impl Engine {
         let doc = self.doc.as_mut().unwrap();
         doc.compiles += 1;
         doc.tools.deferred = deferred.then(|| (conn.clone(), req.clone(), id));
+        crate::system::clear_known_content();
         remember_texts(doc);
         // Persist S₀ after a full run (off the keystroke path: DONE is out),
         // or after the first complete compile behind a stopped one.
         let _busy = crate::busy::enter(crate::busy::Part::Other);
         let save = (cold || doc.s0_unsaved) && !stopped;
         doc.s0_unsaved = (cold || doc.s0_unsaved) && stopped;
+        doc.s0_when_idle = !save && (preamble || doc.s0_when_idle);
         if save {
-            if let Some(p) = &s0_path {
-                if let Some(d) = p.parent() {
-                    let _ = std::fs::create_dir_all(d);
-                }
-                let t = Instant::now();
-                match doc.session.save_s0(&p.to_string_lossy()) {
-                    // One line for a supervisor (and the measurements).
-                    Ok((bytes, _)) => server::say(&format!(
-                        "flashtex-host: {}",
-                        obj([
-                            ("saved_s0", js(p.display().to_string())),
-                            ("bytes", Json::Int(bytes as i64)),
-                            (
-                                "ms",
-                                Json::Num((t.elapsed().as_secs_f64() * 1e4).round() / 10.0)
-                            ),
-                        ])
-                    )),
-                    Err(e) => eprintln!("flashtex-host: saving S0: {e}"),
-                }
-            }
+            self.save_s0();
         }
         if !cancelled {
             self.after_compile(conn, req, id, cause);
+        }
+    }
+
+    /// Persist the resident document's S₀ (`--s0-cache`), with one line
+    /// for a supervisor (and the measurements).
+    fn save_s0(&mut self) {
+        let path = self.doc.as_ref().and_then(|d| self.s0_path(&d.job));
+        let Some(doc) = self.doc.as_mut() else {
+            return;
+        };
+        doc.s0_when_idle = false;
+        let Some(p) = path else {
+            return;
+        };
+        if let Some(d) = p.parent() {
+            let _ = std::fs::create_dir_all(d);
+        }
+        let t = Instant::now();
+        match doc.session.save_s0(&p.to_string_lossy()) {
+            Ok((bytes, _)) => server::say(&format!(
+                "flashtex-host: {}",
+                obj([
+                    ("saved_s0", js(p.display().to_string())),
+                    ("bytes", Json::Int(bytes as i64)),
+                    (
+                        "ms",
+                        Json::Num((t.elapsed().as_secs_f64() * 1e4).round() / 10.0)
+                    ),
+                ])
+            )),
+            Err(e) => eprintln!("flashtex-host: saving S0: {e}"),
         }
     }
 
@@ -1358,13 +1680,10 @@ fn settle(doc: &mut Doc, conn: &Conn, id: i64, limit: bool) {
     server::send_json(&conn.out, kind::TOOL, &Json::Obj(kv));
 }
 
-/// Idle time after which the host trims its heap (`give_back_free_memory`),
-/// counted from the end of the keep-warm window (2 s by default): the trim
-/// runs 4 s after the last compile by default, and a request that arrives
-/// meanwhile starts the wait again.
-const TRIM_AFTER: std::time::Duration = std::time::Duration::from_secs(2);
-
-/// Once the engine has been idle for keep-warm + `TRIM_AFTER`: hand the heap's free pages
+/// Once the engine has been idle for keep-warm + the profile's
+/// `trim_after_ms` (Balanced: 2 s, so the trim runs 4 s after the last
+/// compile, and a request that arrives meanwhile starts the wait again;
+/// High Performance: never): hand the heap's free pages
 /// back to the system. glibc keeps what a compile freed (the logs a
 /// retention pass merged, a detached branch, the convergence test's
 /// buffers) mapped, so the host's resident memory stayed at its peak: on
@@ -1389,6 +1708,18 @@ fn give_back_free_memory() {
             }
         }
     }
+    // macOS's allocator returns most free pages itself, but its magazines
+    // keep some per thread: hand those back too (all zones; no goal).
+    #[cfg(target_os = "macos")]
+    {
+        extern "C" {
+            fn malloc_zone_pressure_relief(zone: *mut std::ffi::c_void, goal: usize) -> usize;
+        }
+        if std::env::var_os("FLASHTEX_NO_TRIM").is_none() {
+            // SAFETY: a null zone means every zone; it only releases free memory.
+            unsafe { malloc_zone_pressure_relief(std::ptr::null_mut(), 0) };
+        }
+    }
 }
 
 /// Write the `buffers` (whole files) and `edits` (byte splices) of a
@@ -1409,18 +1740,18 @@ fn apply_changes(root: &Path, req: &Json, written: &mut Written) -> Result<(), S
     };
     let sig = |path: &Path| StatSig::of(&path.to_string_lossy());
     // The file's bytes now: the host's copy while the file is as it left
-    // it, else read.
-    let current = |path: &Path, written: &mut Written| -> std::io::Result<Vec<u8>> {
+    // it, else read. (The copy may be shared with `Doc::texts`.)
+    let current = |path: &Path, written: &mut Written| -> std::io::Result<Arc<Vec<u8>>> {
         if let Some((s, d)) = written.remove(path) {
             // (the host's own last write, still in place: exact fields,
             // racy or not -- the file is the host's copy of the editor's
             // text, which nothing else writes, and a racy test here would
             // read the typed file back at every keystroke)
             if sig(path).is_some_and(|n| n.same_fields(&s)) {
-                return Ok(Arc::try_unwrap(d).unwrap_or_else(|d| (*d).clone()));
+                return Ok(d);
             }
         }
-        std::fs::read(path)
+        std::fs::read(path).map(Arc::new)
     };
     // Write `data` to `path`, whose bytes before `from` are already these.
     let write_from = |path: &Path, data: Vec<u8>, from: usize, written: &mut Written| {
@@ -1434,8 +1765,10 @@ fn apply_changes(root: &Path, req: &Json, written: &mut Written) -> Result<(), S
                 crate::os::write_all_at(&f, &data[from..], from as u64)
             });
         r.map_err(|e| format!("{}: {e}", path.display()))?;
-        if let Some(s) = sig(path) {
-            written.insert(path.to_path_buf(), (s, Arc::new(data)));
+        let held = sig(path).map(|s| (s, Arc::new(data)));
+        crate::system::note_known_content(path, held.clone());
+        if let Some(h) = held {
+            written.insert(path.to_path_buf(), h);
         }
         Ok::<(), String>(())
     };
@@ -1446,7 +1779,7 @@ fn apply_changes(root: &Path, req: &Json, written: &mut Written) -> Result<(), S
         match current(&path, written) {
             Ok(d) if d.as_slice() == text.as_bytes() => {
                 if let Some(s) = sig(&path) {
-                    written.insert(path, (s, Arc::new(d)));
+                    written.insert(path, (s, d));
                 }
             }
             _ => write_from(&path, text.as_bytes().to_vec(), 0, written)?,
@@ -1455,7 +1788,7 @@ fn apply_changes(root: &Path, req: &Json, written: &mut Written) -> Result<(), S
     for e in req.get("edits").and_then(Json::as_array).unwrap_or(&[]) {
         let p = e.str_field("path").ok_or("an edit needs path")?;
         let path = target(p)?;
-        let mut d = current(&path, written).map_err(|x| format!("{p}: {x}"))?;
+        let d = current(&path, written).map_err(|x| format!("{p}: {x}"))?;
         let at = e.int_field("offset").ok_or("an edit needs offset")?;
         let del = e.int_field("delete").unwrap_or(0);
         let ins = e.str_field("insert").unwrap_or("");
@@ -1466,11 +1799,26 @@ fn apply_changes(root: &Path, req: &Json, written: &mut Written) -> Result<(), S
         if d[at..at + del] == *ins.as_bytes() {
             // nothing changes (the file is left alone, as before)
             if let Some(s) = sig(&path) {
-                written.insert(path, (s, Arc::new(d)));
+                written.insert(path, (s, d));
             }
             continue;
         }
-        d.splice(at..at + del, ins.bytes());
+        // In place when the copy is the host's alone; else (`Doc::texts`
+        // holds it too) the new text in one copy rather than a copy and a
+        // splice.
+        let d = match Arc::try_unwrap(d) {
+            Ok(mut d) => {
+                d.splice(at..at + del, ins.bytes());
+                d
+            }
+            Err(d) => {
+                let mut n = Vec::with_capacity(d.len() - del + ins.len());
+                n.extend_from_slice(&d[..at]);
+                n.extend_from_slice(ins.as_bytes());
+                n.extend_from_slice(&d[at + del..]);
+                n
+            }
+        };
         write_from(&path, d, at, written)?;
     }
     Ok(())
@@ -1478,31 +1826,78 @@ fn apply_changes(root: &Path, req: &Json, written: &mut Written) -> Result<(), S
 
 /// The user's files the display list names, as they are now, compared
 /// with what the last compile read: spans after a change move with their
-/// lines ([`displaylist::move_lines`]).
-fn move_spans(doc: &mut Doc) {
-    for (path, old) in doc.texts.iter_mut() {
-        let Ok(new) = std::fs::read(path) else {
-            continue;
-        };
-        if new.as_slice() == old.as_slice() {
+/// lines ([`displaylist::move_lines`]). A file whose stat signature is the
+/// one it had then is unchanged; one the host wrote last (`written`, the
+/// same file with the same fields, as `apply_changes` takes it) is the
+/// host's copy, not read again (lane P4-PAGE-COST).
+fn move_spans(doc: &mut Doc, written: &Written) {
+    use crate::system::StatSig;
+    for (path, (old, sig)) in doc.texts.iter_mut() {
+        let now = StatSig::of(path);
+        if sig.is_some() && now == *sig {
             continue;
         }
-        let (from, old_end, new_end) = line_change(old, &new);
-        displaylist::move_lines(path, from, old_end, new_end);
-        *old = Arc::new(new);
+        // (by name and signature: the host names the file under the root
+        // it was given, the display list under the working directory)
+        let name = Path::new(path).file_name();
+        let ours = now.as_ref().and_then(|n| {
+            written
+                .iter()
+                .find(|(p, (s, _))| p.file_name() == name && n.same_fields(s))
+                .map(|(_, (_, d))| d.clone())
+        });
+        let (new, new_sig) = match ours {
+            Some(d) => (d, now),
+            None => match read_signed(path) {
+                Some((d, s)) => (Arc::new(d), s),
+                None => continue,
+            },
+        };
+        *sig = new_sig;
+        if !Arc::ptr_eq(&new, old) && new.as_slice() != old.as_slice() {
+            let (from, old_end, new_end) = line_change(old, &new);
+            displaylist::move_lines(path, from, old_end, new_end);
+        }
+        *old = new;
     }
+}
+
+/// `path`'s bytes and its stat signature from before the read (`None`
+/// when the file changed while it was read, so the signature does not
+/// describe these bytes).
+fn read_signed(path: &str) -> Option<(Vec<u8>, Option<crate::system::StatSig>)> {
+    use crate::system::StatSig;
+    let before = StatSig::of(path);
+    let d = std::fs::read(path).ok()?;
+    let after = StatSig::of(path);
+    let same = matches!((&before, &after), (Some(b), Some(a)) if b.same_fields(a));
+    Some((d, if same { before } else { None }))
+}
+
+/// Whether the display list's file `p` lies under the project root. The
+/// display list names files under the engine's working directory, which
+/// the system resolved; the root is as the client gave it, and may have
+/// `..` in it or pass through a link (`real_root`: its canonical form).
+/// Compared as given only, such a root matched no file: no text was kept,
+/// so no span moved with its lines (`move_spans`), and after a converging
+/// newline or split edit every kept page pointed lines away from its
+/// source (the hosted `span` sweep under `$GITHUB_WORKSPACE/../ib`,
+/// 2026-10-06: about 2 M wrong lines on plain-120).
+fn under_root(p: &Path, root: &Path, real_root: Option<&Path>) -> bool {
+    p.starts_with(root) || real_root.is_some_and(|r| p.starts_with(r))
 }
 
 /// Record the user's files the display list names that the host has not
 /// seen yet (as the compile just read them).
 fn remember_texts(doc: &mut Doc) {
     let root = doc.job.root.clone();
+    let real_root = std::fs::canonicalize(&root).ok();
     for (_, p) in displaylist::files() {
-        if doc.texts.contains_key(&p) || !Path::new(&p).starts_with(&root) {
+        if doc.texts.contains_key(&p) || !under_root(Path::new(&p), &root, real_root.as_deref()) {
             continue;
         }
-        if let Ok(d) = std::fs::read(&p) {
-            doc.texts.insert(p, Arc::new(d));
+        if let Some((d, s)) = read_signed(&p) {
+            doc.texts.insert(p, (Arc::new(d), s));
         }
     }
 }
@@ -1568,6 +1963,74 @@ fn line_change(old: &[u8], new: &[u8]) -> (u32, u32, u32) {
     (p as u32 + 1, (na - s) as u32 + 1, (nb - s) as u32 + 1)
 }
 
+/// The LFs in `b`. Sixteen bytes at a time where the target always has
+/// 128-bit vectors (x86_64's SSE2, aarch64's NEON): each byte lane counts
+/// the LFs it saw, at most 255 rounds, and the lanes are then summed. Three
+/// times the eight-byte word count below on a 4 MB source (0.27 -> 0.085 ms
+/// on the NixOS PC), which a keystroke's `line_change` runs over the whole
+/// file (lane P4-PAGE-COST).
+fn lf_count(b: &[u8]) -> usize {
+    #[cfg(target_arch = "x86_64")]
+    {
+        lf_count_x86(b)
+    }
+    #[cfg(target_arch = "aarch64")]
+    {
+        lf_count_neon(b)
+    }
+    #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
+    {
+        lf_count_words(b)
+    }
+}
+
+/// [`lf_count`] with SSE2, part of the x86_64 baseline.
+#[cfg(target_arch = "x86_64")]
+fn lf_count_x86(b: &[u8]) -> usize {
+    use std::arch::x86_64::*;
+    let (blocks, rest) = b.as_chunks::<16>();
+    let mut n = 0usize;
+    for round in blocks.chunks(255) {
+        // SAFETY: SSE2 is always present on x86_64; the loads are unaligned
+        // loads of whole 16-byte blocks of `b`.
+        unsafe {
+            let lf = _mm_set1_epi8(b'\n' as i8);
+            let mut acc = _mm_setzero_si128();
+            for v in round {
+                let v = _mm_loadu_si128(v.as_ptr() as *const __m128i);
+                // a match is -1: subtracting it counts it
+                acc = _mm_sub_epi8(acc, _mm_cmpeq_epi8(v, lf));
+            }
+            let s = _mm_sad_epu8(acc, _mm_setzero_si128());
+            n += _mm_cvtsi128_si64(s) as usize
+                + _mm_cvtsi128_si64(_mm_unpackhi_epi64(s, s)) as usize;
+        }
+    }
+    n + lf_count_words(rest)
+}
+
+/// [`lf_count`] with NEON, part of the aarch64 baseline.
+#[cfg(target_arch = "aarch64")]
+fn lf_count_neon(b: &[u8]) -> usize {
+    use std::arch::aarch64::*;
+    let (blocks, rest) = b.as_chunks::<16>();
+    let mut n = 0usize;
+    for round in blocks.chunks(255) {
+        // SAFETY: NEON is always present on aarch64; the loads are loads of
+        // whole 16-byte blocks of `b`.
+        unsafe {
+            let lf = vdupq_n_u8(b'\n');
+            let mut acc = vdupq_n_u8(0);
+            for v in round {
+                // a match is 0xff: subtracting it counts it
+                acc = vsubq_u8(acc, vceqq_u8(vld1q_u8(v.as_ptr()), lf));
+            }
+            n += vaddlvq_u8(acc) as usize;
+        }
+    }
+    n + lf_count_words(rest)
+}
+
 /// `line_change` of texts with CR line ends: line by line
 /// (`crate::texlines`; rare: such a file pays the split).
 fn line_change_tex(old: &[u8], new: &[u8]) -> (u32, u32, u32) {
@@ -1597,7 +2060,7 @@ fn line_change_tex(old: &[u8], new: &[u8]) -> (u32, u32, u32) {
 /// The LFs in `b`, eight bytes at a time: a byte of `w ^ LF` is zero
 /// exactly where `w` holds a LF, and the zero-byte test below sets the top
 /// bit of exactly those bytes (no carries cross bytes).
-fn lf_count(b: &[u8]) -> usize {
+fn lf_count_words(b: &[u8]) -> usize {
     const LO7: u64 = 0x7f7f_7f7f_7f7f_7f7f;
     const LF: u64 = 0x0a0a_0a0a_0a0a_0a0a;
     let (chunks, rest) = b.as_chunks::<8>();
@@ -1610,9 +2073,51 @@ fn lf_count(b: &[u8]) -> usize {
     n + rest.iter().filter(|&&c| c == b'\n').count()
 }
 
+/// The innermost file the engine reads (`\input`, `\include`, a package),
+/// as TeX opened it: `full_source_filename_stack[in_open]`, which
+/// `-file-line-error` names too. `None` at the terminal level.
+fn reading(g: &crate::generated::Globals) -> Option<String> {
+    let level = g.in_open;
+    if level <= 0 {
+        return None;
+    }
+    let name = g.full_source_filename_stack[level as usize];
+    (name > 0).then(|| String::from_utf8_lossy(&g.str_bytes(name)).into_owned())
+}
+
 #[cfg(test)]
 mod tests {
     use super::line_change;
+
+    /// A root given with `..` in it (or through a link) still holds the
+    /// files the display list names under the resolved directory.
+    #[test]
+    fn a_root_with_dotdot_holds_its_resolved_files() {
+        use super::under_root;
+        use std::path::Path;
+        let dir = std::env::temp_dir().join(format!("under-root-{}", std::process::id()));
+        std::fs::create_dir_all(dir.join("ib/doc")).unwrap();
+        let root = dir.join("x/../ib/doc");
+        std::fs::create_dir_all(dir.join("x")).unwrap();
+        let real = std::fs::canonicalize(&root).unwrap();
+        let file = real.join("main.tex");
+        assert!(
+            !file.starts_with(&root),
+            "as given, the root matches nothing"
+        );
+        assert!(under_root(&file, &root, Some(&real)));
+        assert!(under_root(&root.join("main.tex"), &root, Some(&real)));
+        assert!(!under_root(
+            Path::new("/elsewhere/main.tex"),
+            &root,
+            Some(&real)
+        ));
+        assert!(
+            !under_root(&file, &root, None),
+            "without the canonical root, as before"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     /// The line-by-line definition `line_change` computes.
     fn line_change_by_lines(old: &[u8], new: &[u8]) -> (u32, u32, u32) {
@@ -1705,6 +2210,16 @@ mod tests {
                 .collect();
             let want = v.iter().filter(|&&c| c == b'\n').count();
             assert_eq!(super::lf_count(&v), want);
+            assert_eq!(super::lf_count_words(&v), want);
+        }
+        // past a vector round's 255 blocks, every byte a LF (each lane's
+        // count at its most) and none, at every offset of the slice
+        for fill in *b"\nx" {
+            let v = vec![fill; 16 * 255 * 3 + 37];
+            for off in 0..17 {
+                let want = if fill == b'\n' { v.len() - off } else { 0 };
+                assert_eq!(super::lf_count(&v[off..]), want);
+            }
         }
     }
 

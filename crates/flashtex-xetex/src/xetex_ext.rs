@@ -4,25 +4,96 @@
 //! own code is MIT-licensed (third_party/xetex/COPYING); the ports here keep
 //! its behaviour, and its notices are in `LICENSE` of this crate.
 //!
-//! Phase S0 (docs/design/xetex/PLAN.md) supports TFM fonts only. What serves
-//! installed fonts, graphics and TECkit mappings is a stub that answers as
-//! TeX Live's XeTeX does when nothing is found: `find_native_font` finds no
-//! font, `find_pic_file` no picture, `load_tfm_font_mapping` no mapping. The
-//! routines that can only be reached through a native font, an OpenType
-//! assembly or a glyph-info array (which then never exist) answer 0. Phases
-//! S1-S2 replace them.
+//! Native fonts (phase S1) and OpenType math (S2) are in `crate::native`,
+//! pictures (S2) in `crate::pic`. The AAT and Graphite routines are never
+//! reached because no AAT or Graphite engine is made
+//! (docs/design/xetex/PLAN.md §3.1).
 
-use crate::generated::types::{real_point, real_rect, transform};
+use crate::generated::types::{real_point, transform};
 use crate::generated::Globals;
-use std::collections::HashMap;
-use std::sync::Mutex;
+use crate::state::Object;
+use crate::teckit;
+use std::sync::{Arc, Mutex};
 
-/// `hz.cpp`'s `leftProt` and `rightProt`: character protrusion codes by
-/// (font, code, side), for every font (`\lpcode`, `\rpcode`).
-static PROTRUSION: Mutex<Option<Protrusion>> = Mutex::new(None);
+/// A TECkit converter (XeTeX_ext.c's `TECkit_Converter`), the object of a
+/// font mapping's handle in `Host::handles`. XeTeX never frees one; it is
+/// disposed of when the last engine state (or checkpoint) holding it goes.
+/// Every conversion resets it, so between calls it holds no state and
+/// checkpoints can share it. The mutex makes it Send + Sync (an engine may
+/// move between threads, `Globals` is `Send`); a mapping is used by one
+/// engine at a time, so it is never contended.
+pub struct Mapping(Mutex<Converter>);
 
-/// A protrusion code by (font, character or glyph, side).
-type Protrusion = HashMap<(i32, u32, i32), i32>;
+/// TECkit's converter pointer. TECkit keeps no thread-local or global state
+/// per converter, so it may be used from any one thread at a time.
+pub struct Converter(teckit::TECkit_Converter);
+
+// SAFETY: see `Converter`; `Mapping`'s mutex serialises every use.
+unsafe impl Send for Converter {}
+
+impl Mapping {
+    /// `TECkit_CreateConverter` over a compiled mapping (`.tec` bytes, which
+    /// TECkit copies): a byte mapping (Unicode to bytes, the mapping's
+    /// reverse direction) for a TFM font, else UTF-16 to UTF-16 forward,
+    /// as XeTeX_ext.c's `load_mapping_file` makes them. None if TECkit
+    /// cannot use the file.
+    pub fn new(mut tec: Vec<u8>, byte_mapping: bool) -> Option<Mapping> {
+        let mut cnv: teckit::TECkit_Converter = std::ptr::null_mut();
+        let (forward, target) = if byte_mapping {
+            (0, teckit::kForm_Bytes)
+        } else {
+            (1, teckit::UTF16_NATIVE)
+        };
+        // SAFETY: `tec` is valid for its length for the call.
+        unsafe {
+            teckit::TECkit_CreateConverter(
+                tec.as_mut_ptr(),
+                tec.len() as u32,
+                forward,
+                teckit::UTF16_NATIVE,
+                target,
+                &mut cnv,
+            );
+        }
+        (!cnv.is_null()).then(|| Mapping(Mutex::new(Converter(cnv))))
+    }
+
+    /// XeTeX_ext.c's normalizer for `apply_normalization`: no mapping,
+    /// native UTF-32 to native UTF-32 in NFC (`nfd` false) or NFD. Err is
+    /// TECkit's status if it cannot be made.
+    pub fn normalizer(nfd: bool) -> Result<Mapping, teckit::TECkit_Status> {
+        let mut cnv: teckit::TECkit_Converter = std::ptr::null_mut();
+        let form = if nfd {
+            teckit::kForm_NFD
+        } else {
+            teckit::kForm_NFC
+        };
+        // SAFETY: TECkit accepts no mapping (null, 0) for a normalizer.
+        let status = unsafe {
+            teckit::TECkit_CreateConverter(
+                std::ptr::null_mut(),
+                0,
+                1,
+                teckit::NATIVE_UTF32,
+                teckit::NATIVE_UTF32 | form,
+                &mut cnv,
+            )
+        };
+        if status != teckit::kStatus_NoError || cnv.is_null() {
+            return Err(status);
+        }
+        Ok(Mapping(Mutex::new(Converter(cnv))))
+    }
+}
+
+impl Drop for Mapping {
+    fn drop(&mut self) {
+        // SAFETY: a converter TECkit made, disposed of once.
+        unsafe {
+            teckit::TECkit_DisposeConverter(self.0.get_mut().unwrap_or_else(|e| e.into_inner()).0);
+        }
+    }
+}
 
 impl Globals {
     // ---- xetex.h: the bit fields of a math code ---------------------------
@@ -49,57 +120,18 @@ impl Globals {
     // ---- hz.cpp -----------------------------------------------------------
 
     pub fn get_cp_code(&mut self, f: i32, c: i32, side: i32) -> i32 {
-        let g = PROTRUSION.lock().unwrap();
-        g.as_ref()
-            .and_then(|m| m.get(&(f, c as u32, side)).copied())
+        self.host
+            .protrusion
+            .get(&(f, c as u32, side))
+            .copied()
             .unwrap_or(0)
     }
     pub fn set_cp_code(&mut self, f: i32, c: i32, side: i32, v: i32) {
-        PROTRUSION
-            .lock()
-            .unwrap()
-            .get_or_insert_with(HashMap::new)
-            .insert((f, c as u32, side), v);
+        self.host.protrusion.insert((f, c as u32, side), v);
     }
 
     // ---- XeTeX_ext.c: native fonts (S0: none is ever found) ---------------
 
-    /// `findnativefont`: no installed font is found in phase S0, so every
-    /// font is a TFM font, as with TeX Live's XeTeX when the name is no
-    /// installed font.
-    pub fn find_native_font(&mut self, _s: i32) -> i32 {
-        0
-    }
-    pub fn release_font_engine(&mut self, _engine: i32, _type_flag: i32) {}
-    pub fn ot_get_font_metrics(
-        &mut self,
-        _engine: i32,
-        a: &mut i32,
-        d: &mut i32,
-        xh: &mut i32,
-        ch: &mut i32,
-        sl: &mut i32,
-    ) {
-        (*a, *d, *xh, *ch, *sl) = (0, 0, 0, 0, 0);
-    }
-    pub fn aat_get_font_metrics(
-        &mut self,
-        _engine: i32,
-        a: &mut i32,
-        d: &mut i32,
-        xh: &mut i32,
-        ch: &mut i32,
-        sl: &mut i32,
-    ) {
-        (*a, *d, *xh, *ch, *sl) = (0, 0, 0, 0, 0);
-    }
-    /// `makefontdef`: the definition of a native font for the XDV file.
-    pub fn make_font_def(&mut self, _f: i32) -> i32 {
-        0
-    }
-    pub fn make_xdv_glyph_array_data(&mut self, _p: i32) -> i32 {
-        0
-    }
     pub fn xdv_buffer_byte(&mut self, k: i32) -> i32 {
         self.xdv_buffer[k as usize]
     }
@@ -128,64 +160,9 @@ impl Globals {
             c
         }
     }
-    pub fn get_native_glyph(&mut self, _p: i32, _i: i32) -> i32 {
-        0
-    }
-    pub fn set_native_metrics(&mut self, _p: i32, _use_glyph_metrics: bool) {}
-    pub fn set_justified_native_glyphs(&mut self, _p: i32) {}
-    pub fn set_native_glyph_metrics(&mut self, _p: i32, _use_glyph_metrics: bool) {}
-    pub fn get_native_italic_correction(&mut self, _p: i32) -> i32 {
-        0
-    }
-    pub fn get_native_glyph_italic_correction(&mut self, _p: i32) -> i32 {
-        0
-    }
-    pub fn get_native_char_height_depth(&mut self, _f: i32, _c: i32, h: &mut i32, d: &mut i32) {
-        (*h, *d) = (0, 0);
-    }
-    pub fn get_native_char_sidebearings(&mut self, _f: i32, _c: i32, lsb: &mut i32, rsb: &mut i32) {
-        (*lsb, *rsb) = (0, 0);
-    }
-    pub fn getnativecharwd(&mut self, _f: i32, _c: i32) -> i32 {
-        0
-    }
-    pub fn getnativecharht(&mut self, _f: i32, _c: i32) -> i32 {
-        0
-    }
-    pub fn getnativechardp(&mut self, _f: i32, _c: i32) -> i32 {
-        0
-    }
-    pub fn getnativecharic(&mut self, _f: i32, _c: i32) -> i32 {
-        0
-    }
-    pub fn get_glyph_bounds(&mut self, _f: i32, _edge: i32, _gid: i32) -> i32 {
-        0
-    }
-    pub fn map_char_to_glyph(&mut self, _f: i32, _c: i32) -> i32 {
-        0
-    }
-    pub fn map_glyph_to_index(&mut self, _f: i32) -> i32 {
-        0
-    }
-    pub fn get_font_char_range(&mut self, _f: i32, _first: bool) -> i32 {
-        0
-    }
-    pub fn print_glyph_name(&mut self, _f: i32, _gid: i32) {}
-    pub fn get_native_word_cp(&mut self, _p: i32, _side: i32) -> i32 {
-        0
-    }
-    #[allow(non_snake_case)]
-    pub fn usingOpenType(&mut self, _engine: i32) -> bool {
-        false
-    }
-    #[allow(non_snake_case)]
-    pub fn usingGraphite(&mut self, _engine: i32) -> bool {
-        false
-    }
-    #[allow(non_snake_case)]
-    pub fn isOpenTypeMathFont(&mut self, _engine: i32) -> bool {
-        false
-    }
+
+    // ---- AAT and Graphite: no such engine is made (PLAN.md §3.1, S2) -----
+
     pub fn aat_font_get(&mut self, _what: i32, _engine: i32) -> i32 {
         0
     }
@@ -202,18 +179,6 @@ impl Globals {
         0
     }
     pub fn aat_print_font_name(&mut self, _what: i32, _engine: i32, _p1: i32, _p2: i32) {}
-    pub fn ot_font_get(&mut self, _what: i32, _engine: i32) -> i32 {
-        0
-    }
-    pub fn ot_font_get_1(&mut self, _what: i32, _engine: i32, _p: i32) -> i32 {
-        0
-    }
-    pub fn ot_font_get_2(&mut self, _what: i32, _engine: i32, _p1: i32, _p2: i32) -> i32 {
-        0
-    }
-    pub fn ot_font_get_3(&mut self, _what: i32, _engine: i32, _p1: i32, _p2: i32, _p3: i32) -> i32 {
-        0
-    }
     pub fn gr_font_get_named(&mut self, _what: i32, _engine: i32) -> i32 {
         0
     }
@@ -227,138 +192,254 @@ impl Globals {
     pub fn linebreak_next(&mut self) -> i32 {
         -1
     }
-    pub fn terminate_font_manager(&mut self) {}
-    pub fn print_utf8_str(&mut self, _s: i32, _len: i32) {}
 
-    // ---- TECkit mappings (S0: none) ---------------------------------------
+    // ---- TECkit mappings (XeTeX_ext.c) -------------------------------------
 
     /// `checkfortfmfontmapping`: a `:mapping=NAME` after a TFM font's name
-    /// is cut off `name_of_file` (and would name a TECkit mapping, which
-    /// phase S0 does not load).
+    /// is cut off `name_of_file`, and NAME (from its first character above
+    /// a space) is kept for `load_tfm_font_mapping`, which loads it once
+    /// the TFM file has been read. C's `saved_mapping_name` is
+    /// `Host::saved_mapping_name`.
     pub fn check_for_tfm_font_mapping(&mut self) {
+        self.host.saved_mapping_name = None;
+        // C's strstr((char*)nameoffile + 1, ":mapping="): the name
+        // (`name_of_file[0..name_length]` here) ends at a NUL.
         let n = (self.name_length.max(0) as usize).min(self.name_of_file.len());
+        let name = &self.name_of_file[..n];
+        let name = &name[..name.iter().position(|&b| b == 0).unwrap_or(n)];
         let pat = b":mapping=";
-        if let Some(i) = self.name_of_file[..n]
-            .windows(pat.len())
-            .position(|w| w == pat)
-        {
+        if let Some(i) = name.windows(pat.len()).position(|w| w == pat) {
+            let rest = &name[i + pat.len()..];
+            // `while (*cp && *cp <= ' ') ++cp;` with C's signed `char`
+            // (TeX Live's macOS and x86 builds): bytes from 0x80 are skipped
+            // too.
+            let start = rest
+                .iter()
+                .position(|&b| b as i8 > b' ' as i8)
+                .unwrap_or(rest.len());
+            if start < rest.len() {
+                self.host.saved_mapping_name = Some(rest[start..].to_vec());
+            }
             self.name_of_file[i] = 0;
             self.name_length = i as i32;
         }
     }
+
+    /// `loadtfmfontmapping`: the mapping `check_for_tfm_font_mapping` kept,
+    /// loaded as a byte mapping (a handle, 0 if none); it is then
+    /// forgotten.
     pub fn load_tfm_font_mapping(&mut self) -> i32 {
-        0
-    }
-    pub fn apply_tfm_font_mapping(&mut self, _m: i32, c: i32) -> i32 {
-        c
-    }
-    pub fn apply_mapping_pool(&mut self, _m: i32, _s: i32, _len: i32) -> i32 {
-        0
-    }
-    pub fn apply_mapping_native(&mut self, _m: i32, _len: i32) -> i32 {
-        0
+        match self.host.saved_mapping_name.take() {
+            Some(name) => self.load_mapping_file(&name, true),
+            None => 0,
+        }
     }
 
-    // ---- glyph-info arrays (S0: none exists) ------------------------------
-
-    pub fn free_glyph_info(&mut self, _h: i32) {}
-    pub fn copy_glyph_info(&mut self, _h: i32) -> i32 {
-        0
+    /// `applytfmfontmapping`: character `c` of a TFM font through its byte
+    /// mapping (Unicode to bytes): the first byte out, or 0 if none.
+    pub fn apply_tfm_font_mapping(&mut self, m: i32, c: i32) -> i32 {
+        let Some(map) = self.mapping(m) else {
+            return 0;
+        };
+        // C: `UniChar in = c`.
+        let input = (c as u16).to_ne_bytes();
+        let mut out = [0u8; 2];
+        let (mut in_used, mut out_used) = (0u32, 0u32);
+        let conv = map.0.lock().unwrap_or_else(|e| e.into_inner());
+        // SAFETY: a live converter; the buffers are as long as said.
+        unsafe {
+            teckit::TECkit_ConvertBuffer(
+                conv.0,
+                input.as_ptr(),
+                input.len() as u32,
+                &mut in_used,
+                out.as_mut_ptr(),
+                out.len() as u32,
+                &mut out_used,
+                1,
+            );
+            teckit::TECkit_ResetConverter(conv.0);
+        }
+        if out_used < 1 {
+            0
+        } else {
+            i32::from(out[0])
+        }
     }
 
-    // ---- XeTeXOTMath.cpp (reached only with an OpenType math font) --------
+    /// xetex.web's `apply_mapping(font_mapping[f],
+    /// addressof(str_pool[s]), len)`: `str_pool[s..s+len]` through the
+    /// mapping into `mapped_text`; the number of UTF-16 units there.
+    pub fn apply_mapping_pool(&mut self, m: i32, s: i32, len: i32) -> i32 {
+        let (s, len) = (s.max(0) as usize, len.max(0) as usize);
+        let text: Vec<u16> = self.str_pool[s..s + len]
+            .iter()
+            .map(|&u| u as u16)
+            .collect();
+        self.apply_mapping(m, &text)
+    }
 
-    pub fn get_native_mathsy_param(&mut self, _f: i32, _n: i32) -> i32 {
-        0
+    /// xetex.web's `apply_mapping(font_mapping[f], native_text, len)`:
+    /// `native_text[0..len]` through the mapping into `mapped_text`.
+    pub fn apply_mapping_native(&mut self, m: i32, len: i32) -> i32 {
+        let len = len.max(0) as usize;
+        let text: Vec<u16> = self.native_text[..len].iter().map(|&u| u as u16).collect();
+        self.apply_mapping(m, &text)
     }
-    pub fn get_native_mathex_param(&mut self, _f: i32, _n: i32) -> i32 {
-        0
+
+    /// `applymapping`: `txt` (UTF-16) through the mapping into
+    /// `mapped_text`; the number of UTF-16 units written, or 0 on an error.
+    ///
+    /// The output buffer is C's: `txtLen * 2 + 32` bytes at least, kept
+    /// between calls (`Host::mapping_out_length`), and grown by as much and
+    /// the conversion started again while TECkit says it is full. C's
+    /// `mappedtext` grows with it; here the result is copied into the
+    /// `mapped_text` array, which grows to fit up to the
+    /// `mapped_text_size + 1` units reserved for it (`changes/ext.ch`, the
+    /// bound `native_text` has too).
+    fn apply_mapping(&mut self, m: i32, txt: &[u16]) -> i32 {
+        let Some(map) = self.mapping(m) else {
+            return 0;
+        };
+        let input: Vec<u8> = txt.iter().flat_map(|u| u.to_ne_bytes()).collect();
+        let step = (txt.len() as u64 * 2 + 32) as u32;
+        if u64::from(self.host.mapping_out_length) < u64::from(step) {
+            self.host.mapping_out_length = step;
+        }
+        loop {
+            let mut out = vec![0u8; self.host.mapping_out_length as usize];
+            let (mut in_used, mut out_used) = (0u32, 0u32);
+            let conv = map.0.lock().unwrap_or_else(|e| e.into_inner());
+            // SAFETY: a live converter; the buffers are as long as said.
+            let status = unsafe {
+                let s = teckit::TECkit_ConvertBuffer(
+                    conv.0,
+                    input.as_ptr(),
+                    input.len() as u32,
+                    &mut in_used,
+                    out.as_mut_ptr(),
+                    out.len() as u32,
+                    &mut out_used,
+                    1,
+                );
+                teckit::TECkit_ResetConverter(conv.0);
+                s
+            };
+            match status {
+                teckit::kStatus_NoError => {
+                    let n = out_used as usize / 2;
+                    if n > self.mapped_text.len() {
+                        self.mapped_text.resize_len(n);
+                    }
+                    let dst = self.mapped_text.slice_mut(0, n);
+                    for (d, u) in dst.iter_mut().zip(out[..2 * n].as_chunks::<2>().0) {
+                        *d = i32::from(u16::from_ne_bytes(*u));
+                    }
+                    return n as i32;
+                }
+                teckit::kStatus_OutputBufferFull => {
+                    self.host.mapping_out_length = self.host.mapping_out_length.wrapping_add(step);
+                }
+                _ => return 0,
+            }
+        }
     }
-    pub fn get_ot_math_constant(&mut self, _f: i32, _n: i32) -> i32 {
-        0
+
+    /// XeTeX_ext.c's `apply_normalization` (`\XeTeXinputnormalization`
+    /// 1: NFC, 2: NFD) of an input line's UTF-32 `text`, without its
+    /// writing into `buffer`: the normalized characters, or None where C
+    /// calls `buffer_overflow` (TECkit's status is not `NoError`, which
+    /// includes a result longer than `room`, C's `bufsize - first`, the
+    /// room for it in `buffer`). The caller stores the result at `first`
+    /// and sets `last`.
+    ///
+    /// As in C, one converter per form is made on first use and kept for
+    /// the run (`Host::normalizers`, C's `static normalizers[2]`), and
+    /// reset after each conversion. If TECkit cannot make one, C prints
+    /// "! Failed to create normalizer: error code = N" and exits with 1;
+    /// so does this.
+    pub fn normalize_utf32(&mut self, text: &[u32], nfd: bool, room: usize) -> Option<Vec<u32>> {
+        let slot = usize::from(nfd);
+        let cnv = match self.host.normalizers[slot].clone() {
+            Some(c) => c,
+            None => match Mapping::normalizer(nfd) {
+                Ok(m) => {
+                    let m = Arc::new(m);
+                    self.host.normalizers[slot] = Some(m.clone());
+                    m
+                }
+                Err(status) => {
+                    eprintln!(
+                        "! Failed to create normalizer: error code = {}",
+                        status as i32
+                    );
+                    std::process::exit(1);
+                }
+            },
+        };
+        let input: Vec<u8> = text.iter().flat_map(|c| c.to_ne_bytes()).collect();
+        let mut out = vec![0u8; room.saturating_mul(4)];
+        let (mut in_used, mut out_used) = (0u32, 0u32);
+        let conv = cnv.0.lock().unwrap_or_else(|e| e.into_inner());
+        // SAFETY: a live converter; the buffers are as long as said.
+        let status = unsafe {
+            let s = teckit::TECkit_ConvertBuffer(
+                conv.0,
+                input.as_ptr(),
+                input.len() as u32,
+                &mut in_used,
+                out.as_mut_ptr(),
+                out.len() as u32,
+                &mut out_used,
+                1,
+            );
+            teckit::TECkit_ResetConverter(conv.0);
+            s
+        };
+        if status != teckit::kStatus_NoError {
+            return None;
+        }
+        Some(
+            out[..out_used as usize / 4 * 4]
+                .as_chunks::<4>()
+                .0
+                .iter()
+                .map(|b| u32::from_ne_bytes(*b))
+                .collect(),
+        )
     }
-    pub fn get_ot_math_variant(
-        &mut self,
-        _f: i32,
-        g: i32,
-        _v: i32,
-        adv: &mut i32,
-        _horiz: i32,
-    ) -> i32 {
-        *adv = -1;
-        g
+
+    /// The TECkit converter of handle `m`.
+    fn mapping(&self, m: i32) -> Option<Arc<Mapping>> {
+        match self.host.handles.get(m)? {
+            Object::Other(o) => o.clone().downcast::<Mapping>().ok(),
+            _ => None,
+        }
     }
-    pub fn get_ot_assembly_ptr(&mut self, _f: i32, _g: i32, _horiz: i32) -> i32 {
-        0
+
+    // ---- glyph-info arrays: handles of `Host::handles` (state.rs) --------
+
+    /// xetex.web's `libc_free(native_glyph_info_ptr(p))`.
+    pub fn free_glyph_info(&mut self, h: i32) {
+        self.host.handles.free(h);
     }
-    pub fn free_ot_assembly(&mut self, _a: i32) {}
-    pub fn get_ot_math_ital_corr(&mut self, _f: i32, _g: i32) -> i32 {
-        0
-    }
-    pub fn get_ot_math_accent_pos(&mut self, _f: i32, _g: i32) -> i32 {
-        0x7fffffff
-    }
-    pub fn get_ot_math_kern(
-        &mut self,
-        _f: i32,
-        _g: i32,
-        _sf: i32,
-        _sg: i32,
-        _cmd: i32,
-        _shift: i32,
-    ) -> i32 {
-        0
-    }
-    pub fn ot_part_count(&mut self, _a: i32) -> i32 {
-        0
-    }
-    pub fn ot_part_glyph(&mut self, _a: i32, _i: i32) -> i32 {
-        0
-    }
-    pub fn ot_part_is_extender(&mut self, _a: i32, _i: i32) -> bool {
-        false
-    }
-    pub fn ot_part_start_connector(&mut self, _f: i32, _a: i32, _i: i32) -> i32 {
-        0
-    }
-    pub fn ot_part_end_connector(&mut self, _f: i32, _a: i32, _i: i32) -> i32 {
-        0
-    }
-    pub fn ot_part_full_advance(&mut self, _f: i32, _a: i32, _i: i32) -> i32 {
-        0
-    }
-    pub fn ot_min_connector_overlap(&mut self, _f: i32) -> i32 {
-        0
+    /// xetex.web's copy of a glyph-info array (`xmalloc_array` and
+    /// `memcpy`): a new handle for the same glyphs. The arrays are never
+    /// changed in place, so the copy shares them.
+    pub fn copy_glyph_info(&mut self, h: i32) -> i32 {
+        match self.host.handles.get(h).cloned() {
+            Some(o) => self.host.handles.alloc(o),
+            None => 0,
+        }
     }
 
     // ---- XeTeX_pic.c and trans.c ------------------------------------------
 
-    /// `find_pic_file`: no picture is read in phase S0; the answer is
-    /// XeTeX_pic.c's for a file kpathsea does not find (-1, which xetex.web
-    /// reports as "not a recognized image format").
-    pub fn find_pic_file(
-        &mut self,
-        path: &mut i32,
-        bounds: &mut real_rect,
-        _pdf_box_type: i32,
-        _page: i32,
-    ) -> i32 {
-        *path = 0;
-        *bounds = real_rect::default();
-        -1
-    }
-    pub fn pic_path_len(&mut self, _path: i32) -> i32 {
-        0
-    }
-    pub fn pic_path_to_mem(&mut self, _path: i32, _p: i32) {}
     /// `pic_path_byte(p, i)`: byte `i` of the path stored after a picture
     /// node's `pic_node_size` words, eight to a word.
     pub fn pic_path_byte(&mut self, p: i32, i: i32) -> i32 {
         let w = self.mem[(p + crate::generated::consts::pic_node_size + i / 8) as usize];
         ((w.to_bits() >> (8 * (i % 8))) & 0xFF) as i32
-    }
-    pub fn count_pdf_file_pages(&mut self) -> i32 {
-        0
     }
     #[allow(non_snake_case)]
     pub fn D2Fix(&mut self, d: f64) -> i32 {
@@ -367,11 +448,6 @@ impl Globals {
     #[allow(non_snake_case)]
     pub fn Fix2D(&mut self, f: i32) -> f64 {
         f as f64 / 65536.0
-    }
-    #[allow(non_snake_case)]
-    pub fn setPoint(&mut self, p: &mut real_point, x: f64, y: f64) {
-        p.x = x;
-        p.y = y;
     }
     pub fn make_identity(&mut self, t: &mut transform) {
         *t = transform {
@@ -414,9 +490,10 @@ impl Globals {
         };
     }
     pub fn transform_point(&mut self, p: &mut real_point, t: &mut transform) {
+        // Computed in double, stored into C's `float` point.
         let r = real_point {
-            x: t.a * p.x + t.c * p.y + t.x,
-            y: t.b * p.x + t.d * p.y + t.y,
+            x: crate::pic::round_f32(t.a * p.x + t.c * p.y + t.x),
+            y: crate::pic::round_f32(t.b * p.x + t.d * p.y + t.y),
         };
         *p = r;
     }
@@ -436,7 +513,7 @@ impl Globals {
 
     /// `initstarttime` (texmfmp.c): `SOURCE_DATE_EPOCH`, else the clock.
     pub fn init_start_time(&mut self) {
-        let _ = start_time();
+        let _ = self.start_time();
     }
 
     /// `get_seconds_and_micros` (texmfmp.c).
@@ -454,7 +531,7 @@ impl Globals {
     pub fn date_and_time(&mut self, t: &mut i32, d: &mut i32, m: &mut i32, y: &mut i32) {
         let forced = std::env::var("FORCE_SOURCE_DATE").map(|v| v == "1") == Ok(true);
         let tm = if forced {
-            flashtex_engine::os::broken_down(start_time(), true)
+            flashtex_engine::os::broken_down(self.start_time(), true)
         } else {
             flashtex_engine::os::broken_down(now_secs(), false)
         };
@@ -474,7 +551,7 @@ impl Globals {
 
     /// `getcreationdate` (texmfmp.c).
     pub fn getcreationdate(&mut self) {
-        let s = start_time_str();
+        let s = self.start_time_str();
         if self.pool_ptr as usize + s.len() >= crate::generated::consts::pool_size as usize {
             self.pool_ptr = crate::generated::consts::pool_size;
             return;
@@ -581,10 +658,6 @@ impl Globals {
     }
 }
 
-/// The start time of the run and its `D:` string (texmfmp.c's
-/// `start_time` and `start_time_str`).
-static START: Mutex<Option<(i64, Vec<u8>)>> = Mutex::new(None);
-
 fn now_secs() -> i64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -592,23 +665,31 @@ fn now_secs() -> i64 {
         .unwrap_or(0)
 }
 
-fn start_time() -> i64 {
-    let mut g = START.lock().unwrap();
-    if let Some((t, _)) = g.as_ref() {
-        return *t;
+impl Globals {
+    /// texmfmp.c's `start_time`: `SOURCE_DATE_EPOCH`, else the clock, read
+    /// once per run (`Host::start`).
+    fn start_time(&mut self) -> i64 {
+        if let Some((t, _)) = self.host.start.as_ref() {
+            return *t;
+        }
+        let (t, sde) = match std::env::var("SOURCE_DATE_EPOCH") {
+            Ok(v) => (v.trim().parse::<i64>().unwrap_or(0), true),
+            Err(_) => (now_secs(), false),
+        };
+        let s = flashtex_engine::pdftex::utils::make_pdf_time(t, sde);
+        self.host.start = Some((t, s));
+        t
     }
-    let (t, sde) = match std::env::var("SOURCE_DATE_EPOCH") {
-        Ok(v) => (v.trim().parse::<i64>().unwrap_or(0), true),
-        Err(_) => (now_secs(), false),
-    };
-    let s = flashtex_engine::pdftex::utils::make_pdf_time(t, sde);
-    *g = Some((t, s));
-    t
-}
 
-fn start_time_str() -> Vec<u8> {
-    start_time();
-    START.lock().unwrap().as_ref().unwrap().1.clone()
+    /// texmfmp.c's `start_time_str`: the start time as a PDF date.
+    fn start_time_str(&mut self) -> Vec<u8> {
+        self.start_time();
+        self.host
+            .start
+            .as_ref()
+            .map(|s| s.1.clone())
+            .unwrap_or_default()
+    }
 }
 
 /// Whether `FORCE_SOURCE_DATE` and `SOURCE_DATE_EPOCH` are both set.

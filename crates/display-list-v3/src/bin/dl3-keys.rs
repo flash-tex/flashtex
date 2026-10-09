@@ -482,6 +482,42 @@ fn main() {
             let now = Instant::now();
             match ev {
                 Event::Started(j) => started = j.int_field("id").unwrap_or(0),
+                // A compile can find its keystroke's page already on screen:
+                // the run a newer keystroke had stopped typeset this very
+                // text (a letter typed and deleted again) and the client
+                // holds that page. The host says so in `PAGES`' `current`
+                // instead of sending the page again; for the user it is
+                // painted then (lane P4-TYPING-200WPM).
+                Event::Pages(j)
+                    if started >= first_id
+                        && j.int_field("id") == Some(started)
+                        && j.get("current").and_then(Json::as_array).is_some_and(|rs| {
+                            rs.iter().any(|r| {
+                                r.as_array().is_some_and(|a| {
+                                    a.len() == 2
+                                        && a[0].as_i64().is_some_and(|lo| lo <= page as i64)
+                                        && a[1].as_i64().is_some_and(|hi| page as i64 <= hi)
+                                })
+                            })
+                        }) =>
+                {
+                    let upto = (started - first_id + 1) as usize;
+                    let s = sent.lock().unwrap();
+                    while covered < upto.min(s.len()) {
+                        let l = (now - s[covered]).as_secs_f64() * 1e3;
+                        println!(
+                            "{}",
+                            Json::Obj(vec![
+                                ("key".into(), Json::Int(covered as i64)),
+                                ("edited_page_ms".into(), Json::Num(l)),
+                                ("by".into(), Json::Int(started)),
+                                ("current".into(), Json::Bool(true)),
+                            ])
+                        );
+                        lat.push(l);
+                        covered += 1;
+                    }
+                }
                 Event::Page(p) if p.index == page && started >= first_id => {
                     let upto = (started - first_id + 1) as usize;
                     let s = sent.lock().unwrap();

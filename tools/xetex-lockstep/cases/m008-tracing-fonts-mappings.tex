@@ -1,0 +1,11 @@
+% m008-tracing-fonts-mappings: \XeTeXtracingfonts=2 reports each mapping loaded
+% XeTeX-specific (docs/design/xetex/PLAN.md, phase S1: TECkit font mappings)
+\input prelude
+\def\space{ }
+\XeTeXtracingfonts=2
+\font\a="[lmroman10-regular.otf]:mapping=tex-text" \font\b=cmr10:mapping=qx-unicode
+\font\c="[lmroman10-regular.otf]:mapping=nosuchmapping;+smcp"
+\XeTeXtracingfonts=1 \font\d="[lmroman10-bold.otf]:mapping=tex-text"
+\setbox0=\hbox{\a ``a'' \b b \c c \d ``d''}
+\lsshipbox0
+\end

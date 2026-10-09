@@ -832,28 +832,30 @@ pub struct Globals {
     pub native_font_type_flag: i32,
     // §1714
     pub xtx_ligature_present: bool,
-    // §1715
+    // §1717
     pub error_line: i32,
-    // §1715
+    // §1717
     pub half_error_line: i32,
-    // §1715
+    // §1717
     pub max_print_line: i32,
-    // §1715
+    // §1717
     pub file_line_error_style_p: bool,
-    // §1715
+    // §1717
     pub halt_on_error_p: bool,
-    // §1715
+    // §1717
     pub halting_on_error_p: bool,
-    // §1715
+    // §1717
     pub parse_first_line_p: bool,
-    // §1715
+    // §1717
     pub dump_line: bool,
-    // §1715
+    // §1717
     pub eight_bit_p: bool,
-    // §1715
+    // §1717
     pub translate_filename_p: bool,
     /// The word space every `Arr` above lives in (crates/flashtex-engine/src/arena.rs).
     pub arena: crate::arena::Arena,
+    /// The engine's state outside the word space (`--host-state`).
+    pub host: crate::state::Host,
 }
 
 /// Bytes of the scalar globals' region at the start of the word space.
@@ -1703,6 +1705,7 @@ impl Globals {
             eight_bit_p: false,
             translate_filename_p: false,
             arena: __arena,
+            host: Default::default(),
         })
     }
 

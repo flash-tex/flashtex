@@ -1,0 +1,6 @@
+A-vf       full-100   fp  295.9M peak  296.0M malloc   186.4 held   273.7 logs   86.3 ckpts 541 edited p50/p95 23.5/59.3 ms, 102.1/144.3 Minstr n=24
+A-vf       infdesc    fp  982.4M peak    1.5G malloc  1105.9 held  1608.3 logs  810.2 ckpts 6849 edited p50/p95 141.5/445.9 ms, 505.6/591.1 Minstr n=18
+A-vf       long-deck  fp  267.4M peak  267.4M malloc   160.2 held   236.9 logs   69.2 ckpts 535 edited p50/p95 41.2/69.2 ms, 382.4/387.4 Minstr n=16
+B-seg      full-100   fp  246.9M peak  274.3M malloc   138.5 held   248.5 logs   48.9 ckpts 124 edited p50/p95 35.1/72.3 ms, 102.2/141.4 Minstr n=24
+B-seg      infdesc    fp  678.6M peak    1.3G malloc   532.0 held  1357.6 logs  381.9 ckpts 621 edited p50/p95 129.1/931.0 ms, 388.4/725.1 Minstr n=18
+B-seg      long-deck  fp  209.7M peak  233.9M malloc   125.6 held   207.5 logs   42.7 ckpts 131 edited p50/p95 166.4/356.3 ms, 383.8/385.5 Minstr n=16

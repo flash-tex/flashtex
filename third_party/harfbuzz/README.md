@@ -30,6 +30,8 @@ source file is patched.
 
 ## Files
 
+`version.ac` is TeX Live's `libs/harfbuzz/version.ac`, unmodified: the build takes HarfBuzz's version from it, as TeX Live's configure does (`hb-version.h` is generated from `src/hb-version.h.in`).
+
 `harfbuzz-src/` holds 361 files (5.2 MB): everything TeX Live's `libharfbuzz.a`
 compiles (`libharfbuzz_a_SOURCES` in `libs/harfbuzz/Makefile.am`:
 `src/harfbuzz.cc`, `src/graph/gsubgpos-context.cc` and the 16
@@ -65,7 +67,7 @@ compile to nothing here.
 | Flag | Source | Effect |
 |---|---|---|
 | `-DHAVE_CONFIG_H` | automake `DEFS` | `hb.hh` includes `config.h` |
-| `-DHB_NO_MT` | `AM_CPPFLAGS`, `libs/harfbuzz/Makefile.am` | no locking: HarfBuzz objects are used from one thread (XeTeX is single-threaded; so is the engine) |
+| (`-DHB_NO_MT`) | `AM_CPPFLAGS`, `libs/harfbuzz/Makefile.am` | **left out here**: TeX Live builds HarfBuzz without locking (XeTeX is single-threaded); FlashTeX's engine may move between threads (`Globals` is `Send`), so HarfBuzz keeps its mutexes and atomic lazy globals. Locking changes no shaping result |
 | `-DHAVE_FALLBACK=1` | `AM_CPPFLAGS` | builds the `fallback` shaper (`hb-fallback-shape.cc`), last in the shaper list |
 | `-I<config dir> -I harfbuzz-src/src` | `DEFAULT_INCLUDES`, `AM_CPPFLAGS` | `config.h`, `hb-version.h`, sources |
 | `-O2` | autoconf's default `CXXFLAGS` | applied whatever the cargo profile |

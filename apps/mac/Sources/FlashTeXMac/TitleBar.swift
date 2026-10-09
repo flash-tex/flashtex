@@ -55,6 +55,17 @@ struct TitleBarRow: View {
     }
 }
 
+extension TitleBarRow {
+    /// The Compile button's tooltip. Under the new engine it names that
+    /// engine with the route help the preview HUD shows (`ShellChrome.routeHelp`),
+    /// never the old producer's summary (app-parity gap C21); otherwise the
+    /// old producer, or the fixture.
+    static func compileHelp(route: ShellChrome.Route, routeHelp: String, isFixture: Bool, producerSummary: String) -> String {
+        if route == .engineV3 { return "Compile (File > Compile, ⌘B) — engine v3: " + routeHelp }
+        return "Compile (File > Compile, ⌘B) — producer: " + (isFixture ? "fixture (not a real compile)" : producerSummary)
+    }
+}
+
 /// Fills the custom title-bar row behind its controls: pressing an empty
 /// area moves the window exactly like a stock title bar, and double-click
 /// performs the system titlebar action (zoom, or what the user configured).
@@ -127,8 +138,10 @@ private struct CompileTitleBarButton: View {
         }
         .buttonStyle(PressableStyle())
         .onHover { hovering = $0 }
-        // `producerSummary`, not `workerStatus`: the title bar must not re-evaluate per request (ShellModel toolbar mirrors).
-        .help("Compile (File > Compile, ⌘B) — producer: " + (model.isFixture ? "fixture (not a real compile)" : model.producerSummary))
+        // The throttled chrome mirror and `producerSummary`, not `workerStatus`:
+        // the title bar must not re-evaluate per request (ShellModel toolbar mirrors).
+        .help(TitleBarRow.compileHelp(route: model.chrome.route, routeHelp: model.chrome.routeHelp,
+                                      isFixture: model.isFixture, producerSummary: model.producerSummary))
         .accessibilityLabel("Compile")
         .accessibilityIdentifier("toolbar.compile")
     }

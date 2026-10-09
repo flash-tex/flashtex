@@ -52,7 +52,7 @@
 //! `ExtRecord::lines`).
 
 use crate::generated::Globals;
-use std::cell::{Cell, RefCell};
+use std::cell::RefCell;
 
 /// A line number read or printed: the SyncTeX tag of the file it counts
 /// lines of (the opening of the file: changes/synctex.ch) when `known`, and
@@ -108,13 +108,6 @@ struct St {
 
 thread_local! {
     static ST: RefCell<St> = RefCell::new(St::default());
-    /// `ST.taints.len()`, for the hooks on hot paths.
-    static TAINTS: Cell<usize> = const { Cell::new(0) };
-    /// `scan_toks`'s `\the` in a definition's body is about to call
-    /// `the_toks` (`ls_the_begin`, taken by `ls_the_take`).
-    static THE_DEF: Cell<bool> = const { Cell::new(false) };
-    /// The definition being scanned holds confined reads (`def_reads`).
-    static DEF_READS: Cell<bool> = const { Cell::new(false) };
 }
 
 fn with<R>(f: impl FnOnce(&mut St) -> R) -> R {
@@ -124,9 +117,6 @@ fn with<R>(f: impl FnOnce(&mut St) -> R) -> R {
 /// A new job in this thread (`crate::pdftex::reset_state`).
 pub fn reset() {
     with(|s| *s = St::default());
-    TAINTS.with(|t| t.set(0));
-    THE_DEF.with(|t| t.set(false));
-    DEF_READS.with(|t| t.set(false));
 }
 
 /// This state's line record, for a checkpoint (or the record of a run's
@@ -142,16 +132,16 @@ pub fn record(g: &Globals) -> Rec {
 }
 
 /// Put a checkpoint's line record back: nothing has been read since it.
-pub fn restore(r: &Rec) {
+pub fn restore(g: &mut Globals, r: &Rec) {
     with(|s| {
         s.events.clear();
         s.taints = r.taints.clone();
         s.confine = false;
         s.def_reads.clear();
     });
-    TAINTS.with(|t| t.set(r.taints.len()));
-    THE_DEF.with(|t| t.set(false));
-    DEF_READS.with(|t| t.set(false));
+    g.ls_taints = r.taints.len() as i32;
+    g.ls_the_def = false;
+    g.ls_def_reads = false;
 }
 
 /// The largest line number the state holds without a file:
@@ -792,7 +782,7 @@ impl Globals {
             }
         });
         if confined {
-            DEF_READS.with(|t| t.set(true));
+            self.ls_def_reads = true;
         }
     }
 
@@ -800,14 +790,14 @@ impl Globals {
     /// of a definition.
     #[inline(always)]
     pub fn ls_the_begin(&mut self, d: bool) {
-        THE_DEF.with(|t| t.set(d));
+        self.ls_the_def = d;
     }
 
     /// `the_toks` starts: whether it is `scan_toks`'s `\the` in the body of
     /// a definition (and no `the_toks` nested inside it).
     #[inline(always)]
     pub fn ls_the_take(&mut self) -> bool {
-        THE_DEF.with(|t| t.replace(false))
+        std::mem::replace(&mut self.ls_the_def, false)
     }
 
     /// That `the_toks` has its token: `\inputlineno` itself, read next by
@@ -825,7 +815,7 @@ impl Globals {
             s.confine = false;
             std::mem::take(&mut s.def_reads)
         });
-        DEF_READS.with(|t| t.set(false));
+        self.ls_def_reads = false;
         if reads.is_empty() {
             return;
         }
@@ -840,13 +830,13 @@ impl Globals {
             s.taints.push(Taint { head, first, reads });
             s.taints.len()
         });
-        TAINTS.with(|t| t.set(n));
+        self.ls_taints = n as i32;
     }
 
     /// Token list `p` (its reference count) is expanded or compared.
     #[inline(always)]
     pub fn ls_use(&mut self, p: i32) {
-        if TAINTS.with(|t| t.get()) != 0 {
+        if self.ls_taints != 0 {
             self.ls_use_slow(p, false);
         }
     }
@@ -857,13 +847,13 @@ impl Globals {
     /// journalled.
     #[inline(always)]
     pub fn ls_show(&mut self, p: i32) {
-        if DEF_READS.with(|t| t.get()) {
+        if self.ls_def_reads {
             with(|s| {
                 let r = s.def_reads.clone();
                 s.events.extend(r)
             });
         }
-        if TAINTS.with(|t| t.get()) != 0 {
+        if self.ls_taints != 0 {
             self.ls_use_slow(p, true);
         }
     }
@@ -892,12 +882,12 @@ impl Globals {
     /// Token list `p` (its reference count) is freed.
     #[inline(always)]
     pub fn ls_free(&mut self, p: i32) {
-        if TAINTS.with(|t| t.get()) != 0 {
+        if self.ls_taints != 0 {
             let n = with(|s| {
                 s.taints.retain(|t| t.head != p);
                 s.taints.len()
             });
-            TAINTS.with(|t| t.set(n));
+            self.ls_taints = n as i32;
         }
     }
 

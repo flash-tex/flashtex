@@ -1,0 +1,14 @@
+% n003-lm-sizes: sizes: at, scaled, and the design size of the size feature
+% XeTeX-specific (docs/design/xetex/PLAN.md, phase S1: native fonts)
+\input prelude
+\def\space{ }
+\font\a="[lmroman10-regular.otf]" at 5pt
+\font\b="[lmroman10-regular.otf]" scaled 1200
+\font\c="[lmroman12-regular.otf]"
+\font\d="[lmroman17-regular.otf]" scaled 500
+\font\e="[lmroman10-regular.otf]" at 17.28pt
+\message{[\fontname\a][\fontname\b][\fontname\c][\fontname\d][\fontname\e]}
+\message{[\the\fontdimen6\c][\the\fontdimen6\d]}
+\setbox0=\hbox{\a office \b office \c office \d office \e office}
+\lsshipbox0
+\end

@@ -1,0 +1,29 @@
+% l005-multipage: several pages of running text, footnotes, a table and a float
+\documentclass{article}
+\usepackage{fontspec}
+\usepackage{lipsum}
+\usepackage{booktabs}
+\setmainfont{texgyreschola-regular.otf}[
+  BoldFont=texgyreschola-bold.otf,
+  ItalicFont=texgyreschola-italic.otf]
+\begin{document}
+\section{Running text}
+\lipsum[1-6]\footnote{\lipsum[7]}
+\begin{table}[ht]
+\centering
+\begin{tabular}{lrr}
+\toprule
+Item & Count & Share \\
+\midrule
+Office & 12 & 0.4 \\
+Efficient & 3 & 0.1 \\
+Affluent & 15 & 0.5 \\
+\bottomrule
+\end{tabular}
+\caption{A table of offices.}
+\end{table}
+\section{More}
+\lipsum[8-14]
+\subsection{Even more}
+\lipsum[15-20]
+\end{document}

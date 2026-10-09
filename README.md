@@ -1,6 +1,20 @@
-# FlashTeX
+<p align="center">
+  <a href="https://flash-tex.github.io/flashtex">
+    <picture>
+      <source media="(prefers-color-scheme: dark)" srcset="assets/brand/flashtex-logo-dark.svg">
+      <source media="(prefers-color-scheme: light)" srcset="assets/brand/flashtex-logo.svg">
+      <img alt="FlashTeX: an orange lightning-bolt mark beside the wordmark FlashTeX" src="assets/brand/flashtex-logo.svg" width="420">
+    </picture>
+  </a>
+</p>
 
-FlashTeX is a blazing ⚡️ fast (La)TeX engine written in Rust. 
+<p align="center">
+  <a href="https://flash-tex.github.io/flashtex">Website</a> ·
+  <a href="https://flash-tex.github.io/flashtex/download">Download &amp; setup</a> ·
+  <a href="https://discord.gg/J4kHDJmTrD">Discord</a>
+</p>
+
+FlashTeX is a blazing-fast (La)TeX engine written in Rust.
 This project actually consists of two things:
 
 - A _complete rewrite_ of the TeX compiler from scratch
@@ -11,14 +25,6 @@ This project actually consists of two things:
   for inline LaTeX/TiKZ OCR (including diagrams).
 
 ![FlashTeX rendering a real homework document: source on the left, live Latin Modern preview on the right, the Problems panel below](docs/images/flashtex-demo-0.1.5.png)
-
-## See Also
-
-- Landing page: https://flash-tex.github.io/flashtex
-- Quickstart/setup: https://flash-tex.github.io/flashtex/download
-- Discord server: https://discord.gg/J4kHDJmTrD
-
----
 
 **An incremental LaTeX engine with a command line, and a native macOS IDE
 built on it — no TeX distribution required.**

@@ -66,13 +66,13 @@ final class EngineV3CompileCommandTests: XCTestCase {
     }
 
     private func startedModel(opening file: URL) async throws -> ShellModel {
-        guard EngineV3.locateHost() != nil else { throw XCTSkip("no flashtex-host built (cargo build --release -p flashtex-engine --bin flashtex-host)") }
+        guard EngineV3.locateHost() != nil else { throw EngineV3TestHost.unavailable("no flashtex-host built (cargo build --release -p flashtex-engine --bin flashtex-host)") }
         let model = ShellModel()
         XCTAssertEqual(model.openTex(at: file, dirty: .discard), .opened)
         model.engineV3Enabled = true
         let s = model.engineV3
         try await waitUntil("the host") { s.phase == .ready || { if case .failed = s.phase { true } else { false } }() }
-        guard s.phase == .ready else { throw XCTSkip("host did not start: \(s.phase)") }
+        guard s.phase == .ready else { throw EngineV3TestHost.unavailable("host did not start: \(s.phase)") }
         try await waitUntil("the first compile") { s.statusNote.hasPrefix("ok") && !s.compiling }
         return model
     }

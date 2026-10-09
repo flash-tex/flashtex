@@ -164,9 +164,11 @@ struct State {
     file_ids: HashMap<Vec<u8>, u32>,
     /// Span id - 1 -> (file, line).
     spans: Vec<(u32, u32)>,
-    span_ids: HashMap<(u32, u32), u32>,
+    /// (file, line) -> the span of that line: the lowest live span there.
+    span_ids: SpanIndex,
     /// Spans of lines an edit replaced (`move_lines`): kept, never reused.
-    retired: HashSet<u32>,
+    /// A bit per span id.
+    retired: Vec<u64>,
     // Resources by key: descriptions that do not depend on engine state.
     fonts: HashMap<[u8; 32], FontRes>,
     images: HashMap<[u8; 32], Json>,
@@ -183,6 +185,12 @@ struct State {
     font_kinds: HashMap<u32, FontKind>,
     capture: Option<Capture>,
     cwd: Option<std::path::PathBuf>,
+    /// The last page or form emitted at each index, with what it was made
+    /// from (`Memo`): a stream shipped again from the same inputs -- a
+    /// document's next `.aux` pass, the unchanged pages a restart re-runs --
+    /// is the same display list, which is then not built again. Names, like
+    /// the spans: it outlives restores (each entry checks itself).
+    memo: HashMap<(bool, u32), Memo>,
 }
 
 impl State {
@@ -192,8 +200,8 @@ impl State {
             file_paths: Vec::new(),
             file_ids: HashMap::new(),
             spans: Vec::new(),
-            span_ids: HashMap::new(),
-            retired: HashSet::new(),
+            span_ids: SpanIndex::default(),
+            retired: Vec::new(),
             fonts: HashMap::new(),
             images: HashMap::new(),
             programs: HashMap::new(),
@@ -206,6 +214,7 @@ impl State {
             font_kinds: HashMap::new(),
             capture: None,
             cwd: std::env::current_dir().ok(),
+            memo: HashMap::new(),
         }
     }
 
@@ -234,13 +243,93 @@ impl State {
         if file == 0 {
             return 0;
         }
-        if let Some(&s) = self.span_ids.get(&(file, line)) {
+        if let Some(s) = self.span_ids.get(file, line) {
             return s;
         }
         self.spans.push((file, line));
         let id = self.spans.len() as u32;
-        self.span_ids.insert((file, line), id);
+        self.span_ids.insert_new(file, line, id);
         id
+    }
+
+    fn is_retired(&self, id: u32) -> bool {
+        self.retired
+            .get(id as usize / 64)
+            .is_some_and(|w| w >> (id % 64) & 1 == 1)
+    }
+
+    fn retire(&mut self, id: u32) {
+        let i = id as usize / 64;
+        if self.retired.len() <= i {
+            self.retired.resize(i + 1, 0);
+        }
+        self.retired[i] |= 1 << (id % 64);
+    }
+}
+
+/// `State::span_ids`: for each file, a table by line (lines below
+/// [`SpanIndex::DENSE`]), and a map for the lines past it. `move_lines`
+/// re-keys every span after an edit, which a hashed (file, line) map made
+/// a hash removal and insertion per span: 0.7 ms a keystroke in the middle
+/// of a 1,000-page document (lane P4-PAGE-COST).
+#[derive(Default)]
+struct SpanIndex {
+    /// File id - 1 -> line -> span id (0: none).
+    dense: Vec<Vec<u32>>,
+    far: HashMap<(u32, u32), u32>,
+}
+
+impl SpanIndex {
+    const DENSE: u32 = 1 << 20;
+
+    fn get(&self, file: u32, line: u32) -> Option<u32> {
+        if line >= Self::DENSE {
+            return self.far.get(&(file, line)).copied();
+        }
+        let id = *self.dense.get(file as usize - 1)?.get(line as usize)?;
+        (id != 0).then_some(id)
+    }
+
+    /// Key (file, line) to `id` unless it has a span already.
+    fn insert_new(&mut self, file: u32, line: u32, id: u32) {
+        if line >= Self::DENSE {
+            self.far.entry((file, line)).or_insert(id);
+            return;
+        }
+        let f = file as usize - 1;
+        if self.dense.len() <= f {
+            self.dense.resize_with(f + 1, Vec::new);
+        }
+        let t = &mut self.dense[f];
+        if t.len() <= line as usize {
+            t.resize(line as usize + 1, 0);
+        }
+        if t[line as usize] == 0 {
+            t[line as usize] = id;
+        }
+    }
+
+    /// Drop every key of `file` on a line from `from` on.
+    fn clear_from(&mut self, file: u32, from: u32) {
+        if let Some(t) = self.dense.get_mut(file as usize - 1) {
+            t.truncate(from as usize);
+        }
+        if !self.far.is_empty() {
+            self.far.retain(|&(f, l), _| f != file || l < from);
+        }
+    }
+
+    #[cfg(test)]
+    fn to_map(&self) -> HashMap<(u32, u32), u32> {
+        let mut m = self.far.clone();
+        for (f, t) in self.dense.iter().enumerate() {
+            for (l, &id) in t.iter().enumerate() {
+                if id != 0 {
+                    m.insert((f as u32 + 1, l as u32), id);
+                }
+            }
+        }
+        m
     }
 }
 
@@ -628,28 +717,27 @@ impl State {
     /// line keeps it, as when the whole table was rebuilt). A long document
     /// rebuilt the table at every keystroke (lane P4-SPLIT-LATENCY), and
     /// at every change of a file no span names a moved line of.
+    ///
+    /// Each key of the file from `from` on names a span on that line (keys
+    /// only ever name a span where it is), so they all go, and the moved
+    /// spans that are not retired take their new lines in span order.
     fn move_spans_of(&mut self, f: u32, from: u32, old_end: u32, new_end: u32) {
         let delta = new_end as i64 - old_end as i64;
-        let mut moved = vec![];
-        for (i, (file, line)) in self.spans.iter_mut().enumerate() {
-            if *file != f || *line < from {
+        self.span_ids.clear_from(f, from);
+        for i in 0..self.spans.len() {
+            let (file, line) = self.spans[i];
+            if file != f || line < from {
                 continue;
             }
             let id = i as u32 + 1;
-            if self.span_ids.get(&(*file, *line)) == Some(&id) {
-                self.span_ids.remove(&(*file, *line));
-            }
-            if *line < old_end {
-                self.retired.insert(id);
+            if line < old_end {
+                self.retire(id);
             } else {
-                *line = (*line as i64 + delta).max(1) as u32;
-                moved.push(id);
-            }
-        }
-        for id in moved {
-            if !self.retired.contains(&id) {
-                let at = self.spans[id as usize - 1];
-                self.span_ids.entry(at).or_insert(id);
+                let line = (line as i64 + delta).max(1) as u32;
+                self.spans[i].1 = line;
+                if !self.is_retired(id) {
+                    self.span_ids.insert_new(f, line, id);
+                }
             }
         }
     }
@@ -1023,14 +1111,68 @@ impl Globals {
         } else {
             Mat::IDENTITY
         };
-        let mut env = WidthEnv {
-            g: self,
-            prefix: Vec::new(),
-        };
-        env.prefix = if env.g.pdf_resname_prefix != 0 {
-            env.g.str_bytes(env.g.pdf_resname_prefix)
+        let prefix = if self.pdf_resname_prefix != 0 {
+            self.str_bytes(self.pdf_resname_prefix)
         } else {
             Vec::new()
+        };
+        // What the page carries besides its content (independent of it):
+        // the counts and the links (`dl_links` reads pdfTeX's lists).
+        let mut frame = Page::new(kind, cap.id);
+        frame.width = wsp;
+        frame.height = hsp;
+        frame.pdf_box = [0.0, 0.0, bw.to_f64(), bh.to_f64()];
+        if !cap.form {
+            for k in 0..10 {
+                frame.counts[k] = self.eqtb[COUNT_BASE + k - 1].int();
+            }
+            self.dl_links(&mut frame, mag);
+        }
+        // Everything the display list is a function of, but the engine's
+        // answers to the interpreter (`Memo::queries`) and the resource keys.
+        let digest = {
+            let mut m: Vec<u8> = Vec::with_capacity(256 + cap.markers.len() * 10);
+            m.push(cap.form as u8);
+            m.push(cap.draft as u8);
+            m.extend(cap.id.to_le_bytes());
+            for v in [bw.0, bh.0].into_iter().chain(ctm.0.iter().map(|f| f.0)) {
+                m.extend(v.to_le_bytes());
+            }
+            m.extend((prefix.len() as u64).to_le_bytes());
+            m.extend(&prefix);
+            for mk in &cap.markers {
+                m.extend(mk.offset.to_le_bytes());
+                m.extend(mk.span.to_le_bytes());
+                m.extend(mk.col.to_le_bytes());
+            }
+            m.extend(frame.encode());
+            let (a, b) = (
+                crate::persist::hash128(&m),
+                crate::persist::hash128(&cap.bytes),
+            );
+            [a[0], a[1], b[0], b[1]]
+        };
+        // (FLASHTEX_NO_DL_MEMO=1 builds every display list, for A/B)
+        static OFF: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+        let off = *OFF.get_or_init(|| std::env::var_os("FLASHTEX_NO_DL_MEMO").is_some());
+        let memo = with(|st| st.memo.get(&(cap.form, cap.id)).cloned())
+            .flatten()
+            .filter(|_| !off);
+        if let Some(m) = memo.filter(|m| m.digest == digest) {
+            let holds = self.dl_memo_holds(&m, &prefix);
+            self.scaled_out = saved_scaled_out;
+            if holds {
+                EMIT_NS.with(|c| c.set(c.get() + t_emit.elapsed().as_nanos() as u64));
+                with_sink(|s| s.emit(m.emitted));
+                return;
+            }
+        }
+        let mut env = Recording {
+            env: WidthEnv {
+                g: self,
+                prefix: prefix.clone(),
+            },
+            queries: HashMap::new(),
         };
         let mut out = if cap.draft {
             let mut p = Page::new(kind, cap.id);
@@ -1044,16 +1186,15 @@ impl Globals {
         } else {
             interp::interpret(&mut env, kind, cap.id, &cap.bytes, bh, ctm, &cap.markers)
         };
+        let mut queries: Vec<(Query, Answer)> = env.queries.into_iter().collect();
+        queries.sort_unstable_by_key(|q| q.0);
         let page = &mut out.page;
         page.width = wsp;
         page.height = hsp;
-        page.pdf_box = [0.0, 0.0, bw.to_f64(), bh.to_f64()];
-        if !cap.form {
-            for k in 0..10 {
-                page.counts[k] = self.eqtb[COUNT_BASE + k - 1].int();
-            }
-            self.dl_links(page, mag);
-        }
+        page.pdf_box = frame.pdf_box;
+        page.counts = frame.counts;
+        page.links.append(&mut frame.links);
+        page.dests.append(&mut frame.dests);
         // The keys of the fonts and images the items use, then the spans
         // the items and links name.
         let fonts: Vec<(u32, [u8; 32])> = out
@@ -1061,10 +1202,14 @@ impl Globals {
             .iter()
             .map(|&f| (f, self.dl_font_key(f)))
             .collect();
-        let images: Vec<(u32, [u8; 32])> = out
+        let image_keys: Vec<(u32, Option<[u8; 32]>)> = out
             .images
             .iter()
-            .filter_map(|&n| self.dl_image_key(n).map(|k| (n, k)))
+            .map(|&n| (n, self.dl_image_key(n)))
+            .collect();
+        let images: Vec<(u32, [u8; 32])> = image_keys
+            .iter()
+            .filter_map(|&(n, k)| k.map(|k| (n, k)))
             .collect();
         let fk = |f: u16| {
             fonts
@@ -1098,8 +1243,37 @@ impl Globals {
             forms: out.forms.clone(),
             spans,
         };
+        with(|st| {
+            st.memo.insert(
+                (e.form, e.index),
+                Memo {
+                    digest,
+                    queries: Arc::new(queries),
+                    image_keys: Arc::new(image_keys),
+                    emitted: e.clone(),
+                },
+            )
+        });
         EMIT_NS.with(|c| c.set(c.get() + t_emit.elapsed().as_nanos() as u64));
         with_sink(|s| s.emit(e));
+    }
+
+    /// Whether a memo's display list is the one the engine would build now
+    /// from the same stream (its `digest` matched): the engine still gives
+    /// the interpreter the same answers, and the fonts and images it names
+    /// still have the same keys.
+    fn dl_memo_holds(&mut self, m: &Memo, prefix: &[u8]) -> bool {
+        let mut env = WidthEnv {
+            g: self,
+            prefix: prefix.to_vec(),
+        };
+        let same = m.queries.iter().all(|(q, a)| q.ask(&mut env) == *a);
+        same && m
+            .emitted
+            .fonts
+            .iter()
+            .all(|&(f, k)| self.dl_font_key(f) == k)
+            && m.image_keys.iter().all(|&(n, k)| self.dl_image_key(n) == k)
     }
 
     /// `pdf_print_bp(s)`'s number, exactly.
@@ -1145,6 +1319,84 @@ fn format_real(m: i32, d: u32) -> String {
         s.push_str(digits.trim_end_matches('0'));
     }
     s
+}
+
+/// A display list as `dl_emit` built it (`State::memo`).
+#[derive(Clone)]
+struct Memo {
+    /// The stream's bytes and markers, its index and box, the counts and
+    /// links (`dl_emit`).
+    digest: [u64; 4],
+    /// Every question the interpreter asked the engine, with its answer.
+    queries: Arc<Vec<(Query, Answer)>>,
+    /// The images the items name, with their keys as `dl_image_key` gave them.
+    image_keys: Arc<Vec<(u32, Option<[u8; 32]>)>>,
+    emitted: Emitted,
+}
+
+/// A question the interpreter asks the engine (`interp::Env`).
+#[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+enum Query {
+    Width(u32, u8),
+    Advance(u32, u8),
+    FontProblem(u32),
+}
+
+#[derive(Clone, PartialEq)]
+enum Answer {
+    Width(Option<i64>),
+    Advance(Option<(i64, i64)>),
+    FontProblem(Option<String>),
+}
+
+impl Query {
+    fn ask(self, env: &mut WidthEnv<'_>) -> Answer {
+        use interp::Env;
+        match self {
+            Query::Width(f, c) => Answer::Width(env.width(f, c)),
+            Query::Advance(f, c) => Answer::Advance(env.advance(f, c)),
+            Query::FontProblem(f) => Answer::FontProblem(env.font_problem(f)),
+        }
+    }
+}
+
+/// The engine's answers to the interpreter, noted (`Memo::queries`).
+struct Recording<'a> {
+    env: WidthEnv<'a>,
+    queries: HashMap<Query, Answer>,
+}
+
+impl interp::Env for Recording<'_> {
+    fn width(&mut self, font: u32, code: u8) -> Option<i64> {
+        let q = Query::Width(font, code);
+        if let Some(Answer::Width(a)) = self.queries.get(&q) {
+            return *a;
+        }
+        let a = self.env.width(font, code);
+        self.queries.insert(q, Answer::Width(a));
+        a
+    }
+    fn advance(&mut self, font: u32, code: u8) -> Option<(i64, i64)> {
+        let q = Query::Advance(font, code);
+        if let Some(Answer::Advance(a)) = self.queries.get(&q) {
+            return *a;
+        }
+        let a = self.env.advance(font, code);
+        self.queries.insert(q, Answer::Advance(a));
+        a
+    }
+    fn font_problem(&mut self, font: u32) -> Option<String> {
+        let q = Query::FontProblem(font);
+        if let Some(Answer::FontProblem(a)) = self.queries.get(&q) {
+            return a.clone();
+        }
+        let a = self.env.font_problem(font);
+        self.queries.insert(q, Answer::FontProblem(a.clone()));
+        a
+    }
+    fn resname_prefix(&self) -> &[u8] {
+        self.env.resname_prefix()
+    }
 }
 
 struct WidthEnv<'a> {
@@ -2229,20 +2481,31 @@ mod tests {
             seed ^= seed << 17;
             (seed % n as u64) as u32
         };
-        for _ in 0..300 {
+        for round in 0..600 {
+            // every other round about the line the index's table ends at
+            let base = if round % 2 == 0 {
+                0
+            } else {
+                SpanIndex::DENSE - 15
+            };
             let mut st = State::new();
             for _ in 0..60 {
-                let (f, l) = (1 + rnd(2), 1 + rnd(30));
+                let (f, l) = (1 + rnd(2), base + 1 + rnd(30));
                 st.span_id(f, l);
             }
             for _ in 0..4 {
-                let from = 1 + rnd(30);
+                let from = base + 1 + rnd(30);
                 let old_end = from + rnd(4);
                 let new_end = (from + rnd(6)).max(1);
                 let f = 1 + rnd(2);
                 // the rebuild, on a copy
                 let mut spans = st.spans.clone();
-                let mut retired = st.retired.clone();
+                let retired_of = |st: &State| -> HashSet<u32> {
+                    (1..=st.spans.len() as u32)
+                        .filter(|&id| st.is_retired(id))
+                        .collect()
+                };
+                let mut retired = retired_of(&st);
                 let delta = new_end as i64 - old_end as i64;
                 for (i, (file, line)) in spans.iter_mut().enumerate() {
                     if *file != f || *line < from {
@@ -2262,11 +2525,11 @@ mod tests {
                 }
                 st.move_spans_of(f, from, old_end, new_end);
                 assert_eq!(st.spans, spans);
-                assert_eq!(st.retired, retired);
-                assert_eq!(st.span_ids, want);
+                assert_eq!(retired_of(&st), retired);
+                assert_eq!(st.span_ids.to_map(), want);
                 // new spans after the move, as a compile makes them
                 for _ in 0..10 {
-                    let (f, l) = (1 + rnd(2), 1 + rnd(30));
+                    let (f, l) = (1 + rnd(2), base + 1 + rnd(30));
                     st.span_id(f, l);
                 }
             }

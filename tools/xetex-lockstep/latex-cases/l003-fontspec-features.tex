@@ -1,0 +1,24 @@
+% l003-fontspec-features: fontspec font features, scaling, colour, letter spacing
+\documentclass{article}
+\usepackage{fontspec}
+\setmainfont{texgyrepagella-regular.otf}[
+  BoldFont=texgyrepagella-bold.otf,
+  ItalicFont=texgyrepagella-italic.otf]
+\newfontfamily\oldstyle{texgyrepagella-regular.otf}[Numbers=OldStyle]
+\newfontfamily\smallcaps{texgyrepagella-regular.otf}[Letters=SmallCaps]
+\newfontfamily\noligs{texgyrepagella-regular.otf}[Ligatures=NoCommon]
+\newfontfamily\spaced{texgyrepagella-regular.otf}[LetterSpace=8]
+\newfontfamily\scaled{texgyreheros-regular.otf}[Scale=MatchLowercase]
+\newfontfamily\colored{texgyrepagella-regular.otf}[Color=990000]
+\newfontfamily\fake{texgyrepagella-regular.otf}[FakeSlant=0.2,FakeStretch=1.1]
+\newfontfamily\bolder{texgyrepagella-regular.otf}[FakeBold=1.5]
+\begin{document}
+Figures 0123456789 and {\oldstyle old style 0123456789}.
+{\smallcaps Small Capitals From The Font.}
+Ligatures office fluffy, {\noligs without: office fluffy}.
+{\spaced Letter spaced office text.}
+Pagella with {\scaled Heros scaled to match} lower case.
+{\colored Coloured office text}, {\fake fake slant and stretch}, {\bolder fake bold}.
+\fontspec{texgyrepagella-regular.otf}[Numbers={Proportional,OldStyle}]
+Proportional old style 1111 0000.
+\end{document}

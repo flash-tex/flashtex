@@ -284,6 +284,12 @@ for k:=0 to biggest_lang do trie_used[k]:=min_quarterword;
   trie_max:=max_hyph_char;
 @z
 
+@x xetex.web l.27724 - xetex.ch [49.1222]: a shorthand definition starts as |relax| with |too_big_usv|, as \.{\\csname} makes one
+shorthand_def: begin n:=cur_chr; get_r_token; p:=cur_cs; define(p,relax,256);
+@y
+shorthand_def: begin n:=cur_chr; get_r_token; p:=cur_cs; define(p,relax,too_big_usv);
+@z
+
 @x xetex.web l.28902 - xetex.ch [50.1309]: only the pool strings' starts are dumped
 for k:=0 to str_ptr do dump_int(str_start[k]);
 @y
