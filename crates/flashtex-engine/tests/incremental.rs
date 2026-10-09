@@ -921,6 +921,68 @@ fn l5_shared_bodies_and_deeper_aux_reads_equal_scratch_runs() {
     }
 }
 
+/// `long_state` is dead at a checkpoint (`incr::dead_word`): an `.aux` whose
+/// last macro with parameters is `\long` in one pass and not in the other
+/// leaves `long_state` different after the read (`call` against
+/// `long_call`), and nothing else. The L5 patch is taken (it was refused:
+/// "long_state: 0x72 -> 0x73" on the arXiv paper), the `.aux` pass restarts
+/// at the entry's first read, and each compile equals scratch runs. A
+/// paragraph that is `\par`-delimited in the long variant would read
+/// `long_state` in the scan of the next call, after that call's own set.
+#[test]
+fn l5_a_long_macro_last_in_the_aux_equals_scratch_runs() {
+    let Some(e) = env() else {
+        common::no_texlive();
+        return;
+    };
+    let dir = e.dir.join("l5-long-state");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let doc = |which: &str| -> String {
+        let mut s = String::from(
+            "\\documentclass{article}\n\\makeatletter\n\
+             \\def\\shortgobble#1{}\\long\\def\\longgobble#1{}\n\
+             \\def\\shownote#1{[#1]}\\long\\def\\longnote#1{[#1]}\n\
+             \\makeatother\n\\begin{document}\n",
+        );
+        for i in 0..40 {
+            s.push_str(&para(i, "lambda"));
+            if i % 10 == 9 {
+                s.push_str("\\shownote{a} \\longnote{b\n\nc}\n\n");
+            }
+        }
+        s.push_str(&format!(
+            "\\makeatletter\n\\immediate\\write\\@auxout{{\\string\\{which}{{x}}}}\n\\makeatother\n"
+        ));
+        s.push_str("\\end{document}\n");
+        s
+    };
+    let mut h = Host::start(&e, &dir);
+    for _ in 0..3 {
+        let r = compile_and_check(
+            &e,
+            &mut h,
+            &dir,
+            &[("doc.tex", &doc("shortgobble"))],
+            "settle",
+        );
+        if r.contains("\"mode\":\"unchanged\"") {
+            break;
+        }
+    }
+    for (what, which) in [
+        ("the .aux's last call \\long", "longgobble"),
+        ("and not \\long again", "shortgobble"),
+    ] {
+        let r = compile_and_check(&e, &mut h, &dir, &[("doc.tex", &doc(which))], what);
+        let l5 = r.split("\"l5\":").nth(1).unwrap_or("");
+        assert!(
+            !l5.contains("long_state"),
+            "{what}: the L5 patch was refused on long_state: {l5}"
+        );
+    }
+}
+
 /// Lane P4-MULTIPASS, soundness case 2032: case 2030's shared body when the
 /// only other control sequences sharing it live in tex.ch's `hash_extra`
 /// region above `eqtb_size` (#1285). A 22,000-name preamble flood fills the

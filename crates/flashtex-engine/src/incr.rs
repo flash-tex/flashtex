@@ -1293,6 +1293,19 @@ fn dead_word(g: &Globals, w: &crate::statediff::WordDiff) -> bool {
         // it right after the call, in the same command (`\vsplit` and an
         // insertion split).
         Some("best_height_plus_depth") => return true,
+        // pdftex.web l. 9384: `macro_call` sets it from the macro's
+        // `eq_type` when it starts to scan parameters ("Scan the parameters
+        // and make link(r) point to the macro body"), and it is read only
+        // during that scan (l. 9410, 9461, 9523, and throughput.ch's
+        // in-place copies of them), or written during one, by
+        // `check_outer_validity` (l. 8479, `scanner_status=matching`) and the
+        // runaway recovery (l. 9454). A scan is inside one command's
+        // expansion, so at a checkpoint (a `big_switch`) none is in
+        // progress and the next read follows the next scan's own set. Which
+        // macro with parameters ran last (a `\long` one or not) differs
+        // after an `.aux` read whose last such entry changed (the arXiv
+        // paper's L5 patch: "long_state: 0x72 -> 0x73").
+        Some("long_state") => return true,
         // pdftex.web §693: outside text mode (`pdf_doing_text` false, which
         // is compared), `pdf_begin_string` calls `pdf_begin_text` before it
         // reads any of these, and `pdf_begin_text` sets them all (the first
