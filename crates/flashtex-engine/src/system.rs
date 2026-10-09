@@ -525,6 +525,43 @@ impl AlphaFile {
         }
     }
 
+    /// The line of an input file `input_ln` copied last, when all of it
+    /// is (`crate::midline`).
+    pub fn read_line(&self) -> Option<&[u8]> {
+        match self.input {
+            Some(TextIn::File(_)) if self.have_line && self.pos == self.line.len() => {
+                Some(&self.line)
+            }
+            _ => None,
+        }
+    }
+
+    /// `crate::midline`'s refill: this input file reopened at `at`, the
+    /// start of a line, with that line read and all of it consumed, as
+    /// `input_ln` leaves it: the line and the offset after it.
+    pub fn reread_line(&mut self, path: &str, at: u64) -> Result<(Vec<u8>, u64), String> {
+        use std::io::Seek;
+        let mut r = reopen_in(path, at)?;
+        let mut line = vec![];
+        if !read_tex_line(&mut r, &mut line) {
+            return Err(format!("{path}: no line at {at}"));
+        }
+        let end = r.stream_position().map_err(|e| format!("{path}: {e}"))?;
+        let err = self.err;
+        PasFile::close(self);
+        *self = AlphaFile {
+            line: line.clone(),
+            pos: line.len(),
+            have_line: true,
+            err,
+            input: Some(TextIn::File(r)),
+            path: Some(path.to_string()),
+            ..AlphaFile::default()
+        };
+        self.refresh();
+        Ok((line, end))
+    }
+
     fn refresh(&mut self) {
         self.buf = if !self.have_line {
             b' '

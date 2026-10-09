@@ -1145,6 +1145,11 @@ impl Engine {
                         "restart_preamble".to_string(),
                         Json::Bool(rep.restart_preamble),
                     ),
+                    // ... in the middle of the main file's line (`crate::midline`)
+                    (
+                        "restart_midline".to_string(),
+                        Json::Bool(rep.restart_midline),
+                    ),
                     (
                         "restart_next_gap".to_string(),
                         rep.restart_next_gap.map(Json::Int).unwrap_or(Json::Null),

@@ -15,11 +15,13 @@ from-scratch run:
   compile; the from-scratch run fails the same way and the incremental result,
   including the terminal, must equal it.
 * preamble kinds (`pre_title`, `pre_author`, `pre_newcommand`, `pre_setlength`,
-  `pre_usepackage`, `pre_nopackage`, `pre_option`; PREAMBLE-FAST) edit the
-  preamble, which a restart before S0 re-runs (`incr::Session::preamble_restart`):
-  a letter in `\\title`/`\\author`, a letter in a `\\newcommand` body (or a new
-  command used in the title), a `\\setlength` line, a package added or removed,
-  a package option. The position only picks among the candidates.
+  `pre_usepackage`, `pre_nopackage`, `pre_option`, `pre_after_package`;
+  PREAMBLE-FAST, PREAMBLE-MIDLINE) edit the preamble, which a restart before S0
+  re-runs (`incr::Session::preamble_restart`): a letter in `\\title`/`\\author`,
+  a letter in a `\\newcommand` body (or a new command used in the title), a
+  `\\setlength` line, a package added or removed, a package option, a letter in
+  the line right after a `\\usepackage` line (which the package's look ahead
+  read). The position only picks among the candidates.
 
 All functions are pure functions of the source bytes. Line endings are kept: a
 CRLF file stays CRLF, and a line holding only blanks is a paragraph break.
@@ -29,7 +31,7 @@ import re
 LINE_KINDS = ('newline', 'split', 'join')
 CONTEXT_KINDS = ('math_par', 'verbatim_blank', 'cell_blank')
 PREAMBLE_KINDS = ('pre_title', 'pre_author', 'pre_newcommand', 'pre_setlength', 'pre_usepackage',
-                  'pre_nopackage', 'pre_option')
+                  'pre_nopackage', 'pre_option', 'pre_after_package')
 LETTER_KINDS = ('replace', 'insert', 'delete', 'sentence')
 STRUCTURAL_KINDS = ('section', 'label', 'ref', 'cite', 'footnote', 'unlabel', 'unsection')
 ALL_KINDS = LETTER_KINDS + STRUCTURAL_KINDS + LINE_KINDS + CONTEXT_KINDS + PREAMBLE_KINDS
@@ -540,6 +542,31 @@ def pre_nopackage(src, p):
 
 OPTIONS = {b'hyperref': b'hidelinks', b'geometry': b'margin=2cm', b'amsmath': b'fleqn',
            b'graphicx': b'draft', b'xcolor': b'dvipsnames', b'caption': b'font=small'}
+
+
+def pre_after_package(src, p):
+    """A letter in the line right after a `\\usepackage` line (one of them,
+    picked by p, whose next line is not another `\\usepackage`; a `\\title` or
+    `\\author` line in the usual preamble), outside its control words.
+    `\\usepackage` reads that line before it loads the package, by its look
+    for an optional date (PREAMBLE-MIDLINE, #1594: a restart in the middle of
+    the line, which is read again)."""
+    pr = _preamble(src)
+    if pr is None:
+        return None
+    cands = []
+    for ls in _usepackage_lines(src, pr):
+        nx = _line_end(src, ls, pr[1])
+        if nx >= pr[1] or re.match(rb'[ \t]*(\\usepackage|%|\r?\n)', src[nx:pr[1]]):
+            continue
+        letters = _plain_letters(src, nx, _line_end(src, nx, pr[1]))
+        if letters:
+            cands.append(letters)
+    if not cands:
+        return None
+    letters = cands[p % len(cands)]
+    q = letters[(p // len(cands)) % len(letters)]
+    return src[:q] + b'x' + src[q:]
 
 
 def pre_option(src, p):
