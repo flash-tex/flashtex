@@ -2566,6 +2566,7 @@ impl Session {
                 content: None,
                 closed_at: None,
                 written_before: false,
+                stamp: None,
             });
             j.mark_seen(path);
         }
@@ -2580,6 +2581,7 @@ impl Session {
                     content: system::is_user_file(path).then(|| std::sync::Arc::new(d)),
                     closed_at: None,
                     written_before: false,
+                    stamp: None,
                 });
                 j.mark_seen(path);
                 open.push(path.clone());
@@ -3914,7 +3916,13 @@ impl Session {
                 }
                 _ => now.as_deref().map(|n| hash128(n)) == Some(f.hash),
             };
-            if same {
+            // (`\pdffilemoddate`'s read: the time changing alone changes it;
+            // with the same content, an edit of nothing at the file's end,
+            // which every whole read has consumed)
+            let moved = f
+                .stamp
+                .is_some_and(|t| system::mtime_secs(&f.path) != Some(t));
+            if same && !moved {
                 if let Some(s) = StatSig::of(&f.path) {
                     f.stat = s;
                 }

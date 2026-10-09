@@ -618,10 +618,30 @@ pub fn make_key(
             Some(k) => wa.swap_remove(k).1,
             None => written_before(rec, reads)?,
         };
+        // A file open at S₀ is keyed by the prefix consumed, unless the run
+        // also read all of it at once (`\pdffilesize{\jobname.tex}`:
+        // `system::note_whole_read`): then by all of it. A read of its
+        // modification time (`\pdffilemoddate`, `FileRead::stamp`) is keyed
+        // by the time too: mixed into the hash, so that a file whose time
+        // changed fails the test by content (and the session finds the
+        // read in `changes`).
         let files = reads.files[..nf.min(reads.files.len())]
             .iter()
-            .filter(|f| !open_paths.contains(&f.path))
-            .map(|f| (f.path.clone(), f.hash, f.stat))
+            .filter(|f| !open_paths.contains(&f.path) || f.closed_at == Some(u64::MAX))
+            .map(|f| {
+                let hash = match (&f.content, f.hash) {
+                    (Some(c), [0, 0]) => hash128(c),
+                    (_, h) => h,
+                };
+                let hash = match f.stamp {
+                    Some(t) => [
+                        hash[0] ^ (t as u64).rotate_left(17) ^ 0x5354_414d_5000_0000,
+                        hash[1],
+                    ],
+                    None => hash,
+                };
+                (f.path.clone(), hash, f.stat)
+            })
             .collect();
         // (the journal lists a repeated lookup each time; the key once)
         let mut lookup_seen = std::collections::HashSet::new();

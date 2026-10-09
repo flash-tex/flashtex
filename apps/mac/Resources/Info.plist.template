@@ -15,6 +15,8 @@
 	<string>FlashTeX</string>
 	<key>CFBundleIdentifier</key>
 	<string>tech.jay3332.flashtex.mac</string>
+	<key>CFBundleIconFile</key>
+	<string>AppIcon</string>
 	<key>CFBundleExecutable</key>
 	<string>FlashTeX</string>
 	<key>CFBundlePackageType</key>
