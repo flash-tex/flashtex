@@ -3180,15 +3180,33 @@ impl Session {
             return None;
         }
         let (clock, first_line) = (self.clock, self.first_line.clone());
-        let s0 = self.s0.as_mut()?;
-        if s0.key.check_refresh(clock, &first_line).is_err() {
-            return Some(true);
+        match self.s0.as_mut() {
+            Some(s0) => {
+                if s0.key.check_refresh(clock, &first_line).is_err() {
+                    return Some(true);
+                }
+            }
+            // No S₀ (the run took none): no key covers the files read
+            // before it, and the journal holds all the run read
+            // (`key_cover` is empty), so `changes` checks them all. With no
+            // journal either, nothing says the run's inputs are unchanged:
+            // another pass, from the format.
+            None if self.journal.is_none() => return Some(true),
+            None => {}
         }
         let saved = self.journal.clone();
         // (what the last pass found missing and wrote is a change for the
         // next pass: `fixed_created` is the last pass's own)
         let created = std::mem::take(&mut self.fixed_created);
+        // (without S₀ no key covers any of it)
+        let cover = self
+            .s0
+            .is_none()
+            .then(|| std::mem::take(&mut self.key_cover));
         let r = self.changes();
+        if let Some(c) = cover {
+            self.key_cover = c;
+        }
         self.fixed_created = created;
         self.journal = saved;
         // A file the run wrote before it read it (beamer's `.vrb`) holds
