@@ -523,6 +523,8 @@ pub fn main(args: Vec<String>) -> i32 {
         }
     }
     let _ = std::fs::remove_file(&socket);
+    // (the S₀ saves already asked for are written before the host ends)
+    super::s0write::flush(None, std::time::Duration::from_secs(30));
     super::crash::exit(if once {
         "the connection (--once) closed"
     } else {

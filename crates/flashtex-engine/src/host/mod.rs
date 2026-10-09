@@ -34,6 +34,7 @@ pub mod crash;
 pub mod diag;
 pub mod external;
 mod resident;
+pub mod s0write;
 pub mod server;
 pub mod tools;
 
@@ -722,101 +723,166 @@ pub fn write_s0(
     key: &Key,
     path: &str,
 ) -> Result<(u64, u64), String> {
+    prepare_s0(g, id, key)?.write(path, &|| false)
+}
+
+/// S₀ taken out of the engine for writing ([`prepare_s0`]): everything the
+/// file holds, so that [`S0Image::write`] needs nothing of the engine and may
+/// run on another thread ([`s0write`]) while the engine goes on.
+pub struct S0Image {
+    /// The header up to the list of nonzero chunks, which the write works out.
+    head: Vec<u8>,
+    /// Every chunk ever written, ascending, and its bytes at S₀ (the
+    /// display list's side table blanked), `CHUNK_BYTES` each in `data`.
+    chunks: Vec<u32>,
+    data: Vec<u8>,
+}
+
+/// Take S₀ (checkpoint `id` of `g`, with its key) out of the engine for
+/// writing: the header and a copy of the chunks, on the engine's thread;
+/// the scan for zero chunks, the file and its rename are the write's.
+pub fn prepare_s0(g: &mut Globals, id: CheckpointId, key: &Key) -> Result<S0Image, String> {
+    let rec = g.record_of(id)?;
+    // The output files' contents up to their length at S₀, and the
+    // terminal's.
+    let mut outputs: Vec<(String, Vec<u8>)> = vec![];
+    for f in &rec.files {
+        if let Stream::Out { path, len, .. } = &f.stream {
+            let d = std::fs::read(path).map_err(|e| format!("{path}: {e}"))?;
+            let p = d
+                .get(..*len as usize)
+                .ok_or_else(|| format!("{path} is shorter than at S0"))?;
+            outputs.push((path.clone(), p.to_vec()));
+        }
+    }
+    let terminal = system::terminal_bytes();
+    let terminal = terminal
+        .get(..rec.terminal_len)
+        .ok_or("the terminal is shorter than at S0")?
+        .to_vec();
+    let view = g.arena.view_at(id)?;
+    // The display list's side table (changes/displaylist.ch) is left out,
+    // as it always was: its entries name source spans of this process
+    // (`crate::displaylist`), which a new process numbers afresh. Nodes
+    // made before S₀ are restored without a source span.
+    let side = g
+        .arena
+        .regions
+        .iter()
+        .find(|r| r.name == "dl_side")
+        .map_or(0..0, |r| r.off..r.off + r.bytes);
+    let chunks: Vec<u32> = (0..g.arena.chunks())
+        .filter(|&c| g.arena.touched(c))
+        .map(|c| c as u32)
+        .collect();
+    let mut data = vec![0u8; chunks.len() * CHUNK_BYTES];
+    for (to, &c) in data
+        .as_chunks_mut::<CHUNK_BYTES>()
+        .0
+        .iter_mut()
+        .zip(&chunks)
     {
-        let rec = g.record_of(id)?;
-        // The output files' contents up to their length at S₀, and the
-        // terminal's.
-        let mut outputs: Vec<(String, Vec<u8>)> = vec![];
-        for f in &rec.files {
-            if let Stream::Out { path, len, .. } = &f.stream {
-                let d = std::fs::read(path).map_err(|e| format!("{path}: {e}"))?;
-                let p = d
-                    .get(..*len as usize)
-                    .ok_or_else(|| format!("{path} is shorter than at S0"))?;
-                outputs.push((path.clone(), p.to_vec()));
-            }
+        let c = c as usize;
+        to.copy_from_slice(view.chunk(c));
+        let (lo, hi) = (c * CHUNK_BYTES, (c + 1) * CHUNK_BYTES);
+        if hi > side.start && lo < side.end {
+            to[side.start.max(lo) - lo..side.end.min(hi) - lo].fill(0);
         }
-        let terminal = system::terminal_bytes();
-        let terminal = terminal
-            .get(..rec.terminal_len)
-            .ok_or("the terminal is shorter than at S0")?
-            .to_vec();
-        let view = g.arena.view_at(id)?;
-        // The display list's side table (changes/displaylist.ch) is left out,
-        // as it always was: its entries name source spans of this process
-        // (`crate::displaylist`), which a new process numbers afresh. Nodes
-        // made before S₀ are restored without a source span.
-        let side = g
-            .arena
-            .regions
-            .iter()
-            .find(|r| r.name == "dl_side")
-            .map_or(0..0, |r| r.off..r.off + r.bytes);
-        let chunk = |c: usize| -> std::borrow::Cow<'_, [u8]> {
-            let (lo, hi) = (c * CHUNK_BYTES, (c + 1) * CHUNK_BYTES);
-            let d = view.chunk(c);
-            if hi <= side.start || lo >= side.end {
-                return std::borrow::Cow::Borrowed(d);
-            }
-            let mut v = d.to_vec();
-            v[side.start.max(lo) - lo..side.end.min(hi) - lo].fill(0);
-            std::borrow::Cow::Owned(v)
+    }
+    let mut head = vec![];
+    MAGIC.to_vec().enc(&mut head);
+    key.enc(&mut head);
+    rec.enc(&mut head);
+    outputs.enc(&mut head);
+    terminal.enc(&mut head);
+    // The diagnostics side channel's notes up to S₀ and the definition
+    // sites (`crate::diag`), so that a reopened document reports what
+    // a full run reports.
+    let notes = crate::diag::notes();
+    notes
+        .get(..rec.notes)
+        .unwrap_or(&notes[..])
+        .iter()
+        .map(|n| (**n).clone())
+        .collect::<Vec<crate::diag::Note>>()
+        .enc(&mut head);
+    crate::diag::sites().enc(&mut head);
+    // The files opened for output before S₀, by name: a process that
+    // opens S₀ must know them (`system::rewritten_at`: a file the
+    // preamble wrote and the body writes again, #1348).
+    let opens = system::opens_since(0);
+    opens
+        .get(..rec.opens)
+        .ok_or("the output opens are fewer than at S0")?
+        .to_vec()
+        .enc(&mut head);
+    (g.arena.len_bytes() as u64).enc(&mut head);
+    (g.arena.scalar_bytes() as u64).enc(&mut head);
+    Ok(S0Image { head, chunks, data })
+}
+
+impl S0Image {
+    /// The bytes it holds in memory (the copy of the chunks).
+    pub fn bytes(&self) -> usize {
+        self.data.len() + self.head.len()
+    }
+
+    /// Write the file to `path`, through `path.tmp` and a rename, so that
+    /// `path` is always a whole S₀ or what it was: the header, the list of
+    /// the nonzero chunks, then those chunks, 16 KB-aligned, densely, in
+    /// index order. `cancelled` is asked as the chunks go out: once it says
+    /// yes, the write stops and the temporary file goes. Returns (bytes of
+    /// the file, bytes allocated on disk).
+    pub fn write(self, path: &str, cancelled: &dyn Fn() -> bool) -> Result<(u64, u64), String> {
+        let S0Image {
+            mut head,
+            chunks,
+            data,
+        } = self;
+        let nonzero = |d: &[u8]| {
+            d.as_chunks::<8>()
+                .0
+                .iter()
+                .any(|w| u64::from_ne_bytes(*w) != 0)
         };
-        let mut present: Vec<u32> = vec![];
-        for c in 0..g.arena.chunks() {
-            if g.arena.touched(c) && chunk(c).iter().any(|&b| b != 0) {
-                present.push(c as u32);
-            }
-        }
-        let mut head = vec![];
-        MAGIC.to_vec().enc(&mut head);
-        key.enc(&mut head);
-        rec.enc(&mut head);
-        outputs.enc(&mut head);
-        terminal.enc(&mut head);
-        // The diagnostics side channel's notes up to S₀ and the definition
-        // sites (`crate::diag`), so that a reopened document reports what
-        // a full run reports.
-        let notes = crate::diag::notes();
-        notes
-            .get(..rec.notes)
-            .unwrap_or(&notes[..])
+        let (present, at): (Vec<u32>, Vec<usize>) = chunks
             .iter()
-            .map(|n| (**n).clone())
-            .collect::<Vec<crate::diag::Note>>()
-            .enc(&mut head);
-        crate::diag::sites().enc(&mut head);
-        // The files opened for output before S₀, by name: a process that
-        // opens S₀ must know them (`system::rewritten_at`: a file the
-        // preamble wrote and the body writes again, #1348).
-        let opens = system::opens_since(0);
-        opens
-            .get(..rec.opens)
-            .ok_or("the output opens are fewer than at S0")?
-            .to_vec()
-            .enc(&mut head);
-        (g.arena.len_bytes() as u64).enc(&mut head);
-        (g.arena.scalar_bytes() as u64).enc(&mut head);
+            .enumerate()
+            .filter(|&(i, _)| nonzero(&data[i * CHUNK_BYTES..(i + 1) * CHUNK_BYTES]))
+            .map(|(i, &c)| (c, i))
+            .unzip();
         present.enc(&mut head);
         let data_off = (8 + head.len()).next_multiple_of(CHUNK_BYTES) as u64;
         use std::io::Write;
         let tmp = format!("{path}.tmp");
+        let gone = |e: String| {
+            let _ = std::fs::remove_file(&tmp);
+            e
+        };
         let f = std::fs::File::create(&tmp).map_err(|e| format!("{tmp}: {e}"))?;
         let mut f = std::io::BufWriter::with_capacity(1 << 20, f);
         let pad = vec![0u8; data_off as usize - 8 - head.len()];
         f.write_all(&(head.len() as u64).to_le_bytes())
             .and_then(|_| f.write_all(&head))
             .and_then(|_| f.write_all(&pad))
-            .map_err(|e| format!("{tmp}: {e}"))?;
+            .map_err(|e| gone(format!("{tmp}: {e}")))?;
         // The present chunks, densely, in index order.
-        for &c in &present {
-            f.write_all(&chunk(c as usize))
-                .map_err(|e| format!("{tmp}: {e}"))?;
+        for (k, &i) in at.iter().enumerate() {
+            if k % 1024 == 0 && cancelled() {
+                drop(f);
+                return Err(gone("superseded".into()));
+            }
+            f.write_all(&data[i * CHUNK_BYTES..(i + 1) * CHUNK_BYTES])
+                .map_err(|e| gone(format!("{tmp}: {e}")))?;
         }
-        let f = f.into_inner().map_err(|e| format!("{tmp}: {e}"))?;
+        drop(data);
+        let f = f.into_inner().map_err(|e| gone(format!("{tmp}: {e}")))?;
         f.sync_all().ok();
         drop(f);
-        std::fs::rename(&tmp, path).map_err(|e| format!("{path}: {e}"))?;
+        if cancelled() {
+            return Err(gone("superseded".into()));
+        }
+        std::fs::rename(&tmp, path).map_err(|e| gone(format!("{path}: {e}")))?;
         let m = std::fs::metadata(path).map_err(|e| format!("{path}: {e}"))?;
         #[cfg(unix)]
         let on_disk = std::os::unix::fs::MetadataExt::blocks(&m) * 512;
