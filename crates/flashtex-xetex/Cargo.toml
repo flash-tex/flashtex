@@ -20,6 +20,12 @@ path = "src/lib.rs"
 name = "flashtex-xetex"
 path = "src/main.rs"
 
+# Unicode mode's engine host (src/host, PLAN.md §3.3): display-list-v3 over a
+# Unix socket, the counterpart of the pdfTeX engine's `flashtex-host`.
+[[bin]]
+name = "flashtex-host-unicode"
+path = "src/bin/flashtex-host-unicode.rs"
+
 [dependencies]
 # The pdfTeX engine's runtime: the word space (`arena`), checked indexing
 # (`ix`), the command line (`cli`), the run's configuration and kpathsea
@@ -39,6 +45,18 @@ flashtex-font-discovery = { path = "../font-discovery" }
 # (third_party/teckit) and built as TeX Live builds it, for font mappings
 # (`mapping=tex-text`, PLAN.md §3.1, phase S1).
 flashtex-xetex-teckit = { path = "teckit" }
+# display-list-v3 (MIT): the pages Unicode mode's output builds
+# (src/out, PLAN.md §3.2), the same encoder the pdfTeX engine uses.
+flashtex-display-list = { path = "../display-list-v3" }
+# FlashTeX's own font-file readers (MIT, no dependencies): the OpenType
+# table reader for native fonts' metrics, Type 1's built-in encodings.
+flashtex-pdf = { path = "../pdf" }
+# The project manifest (MIT): `[fonts]` in Unicode mode (src/host/fonts.rs).
+flashtex-project-manifest = { path = "../project-manifest" }
+
+# The host's children (src/host/proc.rs): process groups, the lifeline pipe.
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
 
 [dev-dependencies]
 # tests/pinned_libs.rs: the sha256 of every vendored HarfBuzz/FreeType/TECkit file.

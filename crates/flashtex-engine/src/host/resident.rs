@@ -1145,6 +1145,11 @@ impl Engine {
                         "restart_preamble".to_string(),
                         Json::Bool(rep.restart_preamble),
                     ),
+                    // ... in the middle of the main file's line (`crate::midline`)
+                    (
+                        "restart_midline".to_string(),
+                        Json::Bool(rep.restart_midline),
+                    ),
                     (
                         "restart_next_gap".to_string(),
                         rep.restart_next_gap.map(Json::Int).unwrap_or(Json::Null),
@@ -1277,15 +1282,11 @@ impl Engine {
             st.push(("send".to_string(), m(t.send_ns as f64 * 1e-6)));
             st.push(("cpu".to_string(), m((incr::thread_cpu_s() - t.cpu0) * 1e3)));
             // the convergence tests' old chunks kept and rewound
-            // (`arena::OldCache`), since the host started
+            // (`arena::OldCache`), over this document's engine space
             {
-                use std::sync::atomic::Ordering::Relaxed;
-                let c = |a: &std::sync::atomic::AtomicU64| Json::Int(a.load(Relaxed) as i64);
-                st.push(("old_kept".to_string(), c(&crate::arena::OLD_CACHE_HITS)));
-                st.push((
-                    "old_rewound".to_string(),
-                    c(&crate::arena::OLD_CACHE_MISSES),
-                ));
+                let (kept, rewound) = doc.session.old_cache_counts();
+                st.push(("old_kept".to_string(), Json::Int(kept as i64)));
+                st.push(("old_rewound".to_string(), Json::Int(rewound as i64)));
             }
             // Instructions and cycles of the engine thread, in thousands:
             // the whole compile, to the first page, and (from the session)
@@ -1546,7 +1547,14 @@ impl Engine {
         let spawned = std::thread::Builder::new()
             .name("tools".into())
             .spawn(move || {
-                let report = job.run();
+                // A panic in a tool (an in-process port's bug) must not
+                // leave `doc.tools.running` set: the engine thread is told
+                // the tools are done either way.
+                let report = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| job.run()))
+                    .unwrap_or_else(|_| {
+                        eprintln!("flashtex-host: the external tools' run panicked");
+                        external::Report { outcomes: vec![] }
+                    });
                 let _ = tx.send(Req::ToolsDone {
                     gen,
                     conn,
@@ -1688,24 +1696,32 @@ fn settle(doc: &mut Doc, conn: &Conn, id: i64, limit: bool) {
 /// retention pass merged, a detached branch, the convergence test's
 /// buffers) mapped, so the host's resident memory stayed at its peak: on
 /// full-1000, 1.5 GB resident for a 0.47 GB heap
-/// (docs/evidence/p4-memory-2026-09-30/). macOS's allocator returns free
-/// pages itself. FLASHTEX_NO_TRIM=1 leaves it out (for A/B).
+/// (docs/evidence/p4-memory-2026-09-30/). With jemalloc as the host's heap
+/// (`crate::logalloc`, feature `jemalloc`) the Rust side's free pages go
+/// back by a purge of its arenas (`logalloc::give_back`), and glibc's trim
+/// is left with the C parts' blocks. macOS's allocator returns free pages
+/// itself. FLASHTEX_NO_TRIM=1 leaves it out (for A/B).
 fn give_back_free_memory() {
-    #[cfg(all(target_os = "linux", target_env = "gnu"))]
-    {
-        extern "C" {
-            fn malloc_trim(pad: usize) -> i32;
-        }
-        if std::env::var_os("FLASHTEX_NO_TRIM").is_none() {
-            let t = Instant::now();
+    #[cfg(target_os = "linux")]
+    if std::env::var_os("FLASHTEX_NO_TRIM").is_none() {
+        let t = Instant::now();
+        let purged = crate::logalloc::give_back();
+        let tp = t.elapsed();
+        #[cfg(target_env = "gnu")]
+        {
+            extern "C" {
+                fn malloc_trim(pad: usize) -> i32;
+            }
             // SAFETY: no preconditions; it only releases free memory.
             unsafe { malloc_trim(0) };
-            if std::env::var_os("FLASHTEX_MEMSTAT").is_some() {
-                eprintln!(
-                    "flashtex-host: malloc_trim {:.2} ms",
-                    t.elapsed().as_secs_f64() * 1e3
-                );
-            }
+        }
+        if std::env::var_os("FLASHTEX_MEMSTAT").is_some() {
+            eprintln!(
+                "flashtex-host: give back {:.2} ms (jemalloc purge {}: {:.2} ms)",
+                t.elapsed().as_secs_f64() * 1e3,
+                purged,
+                tp.as_secs_f64() * 1e3
+            );
         }
     }
     // macOS's allocator returns most free pages itself, but its magazines

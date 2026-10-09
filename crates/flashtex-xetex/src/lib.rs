@@ -26,6 +26,9 @@
 //! * `native/` holds native fonts: XeTeX's font loading, shaping and
 //!   metrics over TeX Live's HarfBuzz and FreeType (`fontlibs`), native
 //!   word nodes and their XDV records.
+//! * `out/` is Unicode mode's output (phase S2 part 2): each shipped page
+//!   read from the engine's XDV stream into `display-list-v3`, with
+//!   dvipdfmx's `\special` language, and the PDF written from it.
 //! * The word space (`arena`), the checked array index (`ix`), the command
 //!   line, the run's configuration and the file resolver (kpathsea) are the
 //!   pdfTeX engine's (`crates/flashtex-engine`), used through its public
@@ -39,9 +42,13 @@ pub use flashtex_xetex_fontlibs as fontlibs;
 /// TeX Live's TECkit 2.5.13 (font mappings, phase S1): `teckit::TECkit_*`.
 pub use flashtex_xetex_teckit as teckit;
 
+pub mod driver;
 pub mod fontmgr;
 pub mod generated;
+#[cfg(unix)]
+pub mod host;
 pub mod native;
+pub mod out;
 pub mod pic;
 pub mod state;
 pub mod system;

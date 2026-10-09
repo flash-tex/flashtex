@@ -258,7 +258,8 @@ extension EngineV3Session {
         let (line, col) = table.place(at, in: comp)
         let spans = sourceMap.spans(line: line) { self.projectPath(ofEngineFile: $0) == path }
         guard !spans.isEmpty else { return nil }
-        for i in candidates.sorted() {
+        // (a page whose glyphs carry none of the spans is skipped unindexed)
+        for i in candidates.sorted() where pageMayShow(i, spans: spans) {
             guard let ix = sourceIndex(page: i) else { continue }
             let gs = ix.glyphs(of: spans)
             if let m = EngineV3CaretMark.make(page: i, line: gs, index: ix, spans: spans, col: col) { return m }

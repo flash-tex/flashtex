@@ -47,6 +47,9 @@ pub enum Format {
     OpenType,
     /// `subfont definition files` (`.sfd`).
     Sfd,
+    /// `ist`: makeindex style files (`INDEXSTYLE`), for makeindex run
+    /// in-process (crates/makeindex).
+    Ist,
     /// `graphic/figure` (`kpse_pict_format`): the XeTeX-derived engine's
     /// `\\XeTeXpicfile` and `\\XeTeXpdffile` (crates/flashtex-xetex).
     Pict,
@@ -71,6 +74,7 @@ impl Format {
             Format::TrueType => "truetype fonts",
             Format::OpenType => "opentype fonts",
             Format::Sfd => "subfont definition files",
+            Format::Ist => "ist",
             Format::Pict => "graphic/figure",
         }
     }
@@ -93,6 +97,7 @@ impl Format {
             Format::TrueType,
             Format::OpenType,
             Format::Sfd,
+            Format::Ist,
             Format::Pict,
         ]
     }
@@ -136,6 +141,12 @@ pub trait FileResolver: Send {
     /// `openin_any` and `openout_any`? Without texmf.cnf, yes.
     fn name_ok(&mut self, _name: &str, _write: bool) -> bool {
         true
+    }
+    /// [`FileResolver::name_ok`] without kpathsea's message on a refusal
+    /// (`kpse_out_name_ok_silent`), for a caller that reports it under
+    /// another program's name.
+    fn name_ok_silent(&mut self, name: &str, write: bool) -> bool {
+        self.name_ok(name, write)
     }
     /// pdftex.web's `kpse_init_prog(prefix, dpi, mode, nil)` and
     /// `kpse_set_program_enabled(kpse_pk_format, 1, kpse_src_compile)`, at
@@ -555,6 +566,27 @@ mod kpse {
     use std::ffi::{c_char, c_int, c_void, CStr, CString};
     use std::path::{Path, PathBuf};
 
+    /// Where kpathsea keeps ls-R's packed index (db.c, `packed_build`):
+    /// `<format cache>/lsr`, beside the font maps' cache (DESIGN.md §4.4),
+    /// or none when the format cache is off. Set once, before the first
+    /// instance reads ls-R.
+    fn set_lsr_cache() {
+        static ONCE: std::sync::Once = std::sync::Once::new();
+        ONCE.call_once(|| {
+            #[cfg(feature = "distribution")]
+            if crate::formats::cache_enabled() {
+                if let Some(d) = crate::formats::cache_dir().map(|d| d.join("lsr")) {
+                    if std::fs::create_dir_all(&d).is_ok() {
+                        if let Ok(c) = CString::new(d.to_string_lossy().as_bytes()) {
+                            // SAFETY: the C side copies the string.
+                            unsafe { flashtex_kpse_set_lsr_cache(c.as_ptr()) };
+                        }
+                    }
+                }
+            }
+        });
+    }
+
     extern "C" {
         fn flashtex_kpse_new(
             argv0: *const c_char,
@@ -571,12 +603,15 @@ mod kpse {
             made: *mut c_int,
         ) -> *mut c_char;
         fn flashtex_kpse_format(k: *mut c_void, name: *const c_char) -> c_int;
+        fn flashtex_kpse_set_lsr_cache(dir: *const c_char);
         fn flashtex_kpse_find(k: *mut c_void, name: *const c_char, format: c_int) -> *mut c_char;
         fn flashtex_kpse_var_value(k: *mut c_void, var: *const c_char) -> *mut c_char;
         fn flashtex_kpse_free(p: *mut c_void);
         fn flashtex_kpse_set_make_tex_discard_errors(k: *mut c_void, discard: c_int);
         fn flashtex_kpse_get_make_tex_discard_errors(k: *mut c_void) -> c_int;
         fn flashtex_kpse_name_ok(k: *mut c_void, name: *const c_char, write: c_int) -> c_int;
+        fn flashtex_kpse_name_ok_silent(k: *mut c_void, name: *const c_char, write: c_int)
+            -> c_int;
         fn flashtex_kpse_find_all(
             k: *mut c_void,
             name: *const c_char,
@@ -881,6 +916,7 @@ mod kpse {
                 "OPENTYPEFONTS",
                 "MISCFONTS",
                 "SFDFONTS",
+                "INDEXSTYLE",
                 "TEXPOOL",
                 "MFINPUTS",
                 "TEXCONFIG",
@@ -924,6 +960,7 @@ mod kpse {
                 .collect();
             let mut ptrs: Vec<*const c_char> = kv.iter().map(|c| c.as_ptr()).collect();
             ptrs.push(std::ptr::null());
+            set_lsr_cache();
             let k = unsafe {
                 flashtex_kpse_new(
                     a.as_ptr(),
@@ -1292,6 +1329,14 @@ mod kpse {
                 return false;
             };
             unsafe { flashtex_kpse_name_ok(self.k, n.as_ptr(), write as c_int) != 0 }
+        }
+        fn name_ok_silent(&mut self, name: &str, write: bool) -> bool {
+            let Ok(n) = CString::new(name) else {
+                return false;
+            };
+            // SAFETY: `self.k` is the live kpathsea instance and `n` a
+            // NUL-terminated string that outlives the call.
+            unsafe { flashtex_kpse_name_ok_silent(self.k, n.as_ptr(), write as c_int) != 0 }
         }
         fn set_make_tex_discard_errors(&mut self, discard: bool) {
             // SAFETY: `self.k` is the live kpathsea instance or null (an

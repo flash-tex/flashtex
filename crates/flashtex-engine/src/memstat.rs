@@ -113,16 +113,20 @@ static PEAK_BY: [AtomicI64; tag::N] = [ZERO; tag::N];
 static PEAK_SNAP: AtomicI64 = AtomicI64::new(0);
 
 /// The counting allocator (feature `mem-stats`): the host's allocator
-/// (`crate::logalloc` on Linux, else `System`) with a header holding the
+/// (`crate::logalloc` on Linux and macOS, else `System`) with a header holding the
 /// allocation's tag.
 #[cfg(feature = "mem-stats")]
 pub struct Counting;
 
-#[cfg(all(feature = "mem-stats", target_os = "linux", not(feature = "tex82")))]
+#[cfg(all(
+    feature = "mem-stats",
+    any(target_os = "linux", target_os = "macos"),
+    not(feature = "tex82")
+))]
 const INNER: crate::logalloc::HostAlloc = crate::logalloc::HostAlloc;
 #[cfg(all(
     feature = "mem-stats",
-    not(all(target_os = "linux", not(feature = "tex82")))
+    not(all(any(target_os = "linux", target_os = "macos"), not(feature = "tex82")))
 ))]
 const INNER: std::alloc::System = std::alloc::System;
 
@@ -322,7 +326,8 @@ pub fn resident(p: *const u8, len: usize) -> Option<usize> {
 /// Bytes the C allocator has handed out and not taken back, from every
 /// caller (Rust's heap and the C parts': kpathsea, zlib, pdfTeX's C code),
 /// and the bytes it holds from the system for them (macOS
-/// `malloc_zone_statistics`; Linux `mallinfo2`, with the feature
+/// `malloc_zone_statistics`; Linux `mallinfo2` plus jemalloc's
+/// `stats.allocated` and `stats.resident` in the host, with the feature
 /// `mem-stats` only, else `None`). The difference from the
 /// counting allocator's total (feature `mem-stats`) is the C parts' heap.
 pub fn malloc_in_use() -> Option<(u64, u64)> {
@@ -368,7 +373,16 @@ pub fn malloc_in_use() -> Option<(u64, u64)> {
         }
         // SAFETY: no preconditions.
         let m = unsafe { mallinfo2() };
-        Some(((m.uordblks + m.hblkhd) as u64, (m.arena + m.hblkhd) as u64))
+        // With jemalloc under the host's allocator (`crate::logalloc`),
+        // glibc's are the C parts' blocks: add jemalloc's.
+        #[cfg(not(feature = "tex82"))]
+        let (ju, jh) = crate::logalloc::heap_stats().unwrap_or((0, 0));
+        #[cfg(feature = "tex82")]
+        let (ju, jh) = (0, 0);
+        Some((
+            (m.uordblks + m.hblkhd) as u64 + ju,
+            (m.arena + m.hblkhd) as u64 + jh,
+        ))
     }
     #[cfg(not(any(
         target_os = "macos",

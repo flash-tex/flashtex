@@ -419,6 +419,12 @@ pub fn read_logical(path: &str) -> std::io::Result<Vec<u8>> {
     Ok(d)
 }
 
+/// `hash128(&read_logical(path)?)`, without reading the file into memory
+/// (`persist::hash128_file`).
+pub fn hash_logical(path: &str) -> std::io::Result<[u64; 2]> {
+    crate::persist::hash128_file(path, logical_len(path)).map(|(h, _)| h)
+}
+
 /// A new engine: no file's logical end is known any more. Each file still
 /// longer than its logical end is cut to it first, as the old engine's
 /// runs left it (the new run may not open it for output again), unless
@@ -523,6 +529,43 @@ impl AlphaFile {
             }
             _ => None,
         }
+    }
+
+    /// The line of an input file `input_ln` copied last, when all of it
+    /// is (`crate::midline`).
+    pub fn read_line(&self) -> Option<&[u8]> {
+        match self.input {
+            Some(TextIn::File(_)) if self.have_line && self.pos == self.line.len() => {
+                Some(&self.line)
+            }
+            _ => None,
+        }
+    }
+
+    /// `crate::midline`'s refill: this input file reopened at `at`, the
+    /// start of a line, with that line read and all of it consumed, as
+    /// `input_ln` leaves it: the line and the offset after it.
+    pub fn reread_line(&mut self, path: &str, at: u64) -> Result<(Vec<u8>, u64), String> {
+        use std::io::Seek;
+        let mut r = reopen_in(path, at)?;
+        let mut line = vec![];
+        if !read_tex_line(&mut r, &mut line) {
+            return Err(format!("{path}: no line at {at}"));
+        }
+        let end = r.stream_position().map_err(|e| format!("{path}: {e}"))?;
+        let err = self.err;
+        PasFile::close(self);
+        *self = AlphaFile {
+            line: line.clone(),
+            pos: line.len(),
+            have_line: true,
+            err,
+            input: Some(TextIn::File(r)),
+            path: Some(path.to_string()),
+            ..AlphaFile::default()
+        };
+        self.refresh();
+        Ok((line, end))
     }
 
     fn refresh(&mut self) {
@@ -1582,7 +1625,7 @@ pub fn with_resolver_for<T>(prog: &str, f: impl FnOnce(&mut dyn FileResolver) ->
     f(r.as_mut())
 }
 
-fn with_resolver<T>(f: impl FnOnce(&mut dyn FileResolver) -> T) -> T {
+pub(crate) fn with_resolver<T>(f: impl FnOnce(&mut dyn FileResolver) -> T) -> T {
     let prog = run().program_name;
     let mut g = RESOLVER.lock().unwrap();
     let r = g.get_or_insert_with(|| crate::resolver::default_resolver(&prog, ENGINE_NAME));
@@ -1703,7 +1746,7 @@ fn confine_roots() -> &'static [std::path::PathBuf] {
 /// `input_name_confined_ok`); true when confinement is off. `searched`: the
 /// resolver found it along its search paths (only such a hit may be a TeX
 /// tree file; the output-directory shortcut never is).
-pub(crate) fn confined_found_ok(name: &str, found: &str, format: Format, searched: bool) -> bool {
+pub fn confined_found_ok(name: &str, found: &str, format: Format, searched: bool) -> bool {
     if !reads_confined() || format == Format::Fmt {
         return true;
     }
@@ -1720,6 +1763,40 @@ pub(crate) fn confined_found_ok(name: &str, found: &str, format: Format, searche
         }
     }
     confined_path_ok(Path::new(found), &roots, searched)
+}
+
+/// The confinement rules for a file a tool the engine runs in-process
+/// (makeindex, bibtex) is about to read: `name` as the tool has it, `path`
+/// where it resolves. An absolute name is allowed only as the answer of a
+/// search (`searched`, a style or database kpathsea found), which must then
+/// be a TeX tree file or lie in a root; `tool_dir` (the scratch directory
+/// the host copied the tool's inputs into) is a root too. True when
+/// confinement is off.
+pub(crate) fn tool_read_ok(
+    name: &str,
+    path: &Path,
+    searched: bool,
+    tool_dir: Option<&Path>,
+) -> bool {
+    if !reads_confined() {
+        return true;
+    }
+    if !searched && !confined_name_ok(name) {
+        return false;
+    }
+    let mut roots: Vec<std::path::PathBuf> = confine_roots().to_vec();
+    if let Ok(cwd) = std::env::current_dir().and_then(std::fs::canonicalize) {
+        roots.push(cwd);
+    }
+    if let Some(dir) = run().output_directory {
+        if let Ok(d) = std::fs::canonicalize(&dir) {
+            roots.push(d);
+        }
+    }
+    if let Some(d) = tool_dir.and_then(|d| std::fs::canonicalize(d).ok()) {
+        roots.push(d);
+    }
+    confined_path_ok(path, &roots, searched)
 }
 
 /// The second rule on its own (tests call it directly).
@@ -2189,16 +2266,36 @@ pub fn runsystem(cmd: &[u8]) -> i32 {
     if allow == 1 || allow == 2 {
         let _ = std::io::stdout().flush();
         record_effect("write18", &safecmd);
-        let status = shell_command(&safecmd)
-            .status()
-            .map(|s| s.code().unwrap_or(-1))
-            .unwrap_or(127);
+        let status = match in_process_tool(&safecmd, allow == 2) {
+            Some(status) => status,
+            None => shell_command(&safecmd)
+                .status()
+                .map(|s| s.code().unwrap_or(-1))
+                .unwrap_or(127),
+        };
         if status != 0 {
             // system(3)'s status is the wait status: the code times 256.
             eprintln!("system returned with code {}", status * 256);
         }
     }
     allow
+}
+
+/// A `\write18` command the engine runs itself instead of through the
+/// shell: makeindex (`crate::makeindex`), unless `FLASHTEX_MAKEINDEX=external`.
+/// Its exit status, as the shell's would be; `None` to use the shell.
+#[cfg(feature = "makeindex")]
+fn in_process_tool(cmd: &[u8], restricted: bool) -> Option<i32> {
+    if !crate::makeindex::in_process() {
+        return None;
+    }
+    let args = crate::makeindex::command_args(cmd, restricted)?;
+    Some(crate::makeindex::run_in_process(&args))
+}
+
+#[cfg(not(feature = "makeindex"))]
+fn in_process_tool(_cmd: &[u8], _restricted: bool) -> Option<i32> {
+    None
 }
 
 /// The command `runpopen` works on. On WIN32, texmfmp.c's `runpopen` first
@@ -4511,14 +4608,18 @@ fn note_file(path: &str) {
             return;
         }
         let stat = StatSig::of(path).unwrap_or_default();
-        let data = read_logical(path).ok();
-        let hash = data
-            .as_deref()
-            .map(crate::persist::hash128)
-            .unwrap_or([0, 0]);
-        let content = data
-            .filter(|_| log.keep_content && is_user_file(path))
-            .map(std::sync::Arc::new);
+        // A file whose bytes are kept is read whole; any other (the format,
+        // the font map, TeX Live's files) only hashed, through a buffer.
+        let (hash, content) = if log.keep_content && is_user_file(path) {
+            let data = read_logical(path).ok();
+            let hash = data
+                .as_deref()
+                .map(crate::persist::hash128)
+                .unwrap_or([0, 0]);
+            (hash, data.map(std::sync::Arc::new))
+        } else {
+            (hash_logical(path).unwrap_or([0, 0]), None)
+        };
         let norm = |p: &str| p.strip_prefix("./").unwrap_or(p).to_string();
         let written_before = log.outputs.iter().any(|o| norm(o) == norm(path));
         log.files.push(FileRead {
