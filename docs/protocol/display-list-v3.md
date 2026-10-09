@@ -1158,6 +1158,14 @@ in effect for this connection's compiles:
 logs them and does not depend on any one. A knob the host's command line
 fixed (`--budget`, `--timed`, `--keep-warm`) keeps its value in every mode.
 
+`allocator_returns_free_pages` (added 2026-10-09, lane MEM-MODES) says
+whether the host's allocator gives freed memory back to the system at once.
+It is fixed when the host starts: on macOS a host started in Low Memory
+(`--profile low-memory` or `FLASHTEX_PROFILE`) sets it, which halves its
+footprint for a few percent of CPU time, and a later switch neither sets nor
+clears it. A client that wants it for a host it starts passes the mode on
+the command line.
+
 **Message** (`0x07`, client → host, JSON): `{"profile": MODE}` switches the
 mode live. The host applies it between compiles, in the order requests
 arrive (a running compile finishes under the old mode), and answers with

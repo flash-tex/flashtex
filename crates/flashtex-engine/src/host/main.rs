@@ -37,6 +37,10 @@ fn main() {
         }
         engine(&argv);
     }
+    // Low Memory: the allocator that returns freed pages (macOS; re-runs
+    // this program once, before any thread starts).
+    #[cfg(target_os = "macos")]
+    flashtex_engine::profile::space_efficient_reexec(&argv);
     flashtex_engine::host::crash::install();
     #[cfg(target_os = "linux")]
     flashtex_engine::logalloc::set_enabled(std::env::var_os("FLASHTEX_NO_LOG_MAPS").is_none());
