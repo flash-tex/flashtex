@@ -173,6 +173,11 @@ pub fn install() {
         }
         let prev = std::panic::take_hook();
         std::panic::set_hook(Box::new(move |info| {
+            // A reader that panics while an image is read again to check a
+            // persisted S₀ makes the open refuse (`images::probe`): not a crash.
+            if crate::pdftex::images::probing() {
+                return;
+            }
             let n = LAST_LEN.load(Ordering::Acquire).min(CAP);
             // SAFETY: see `serving`.
             let last =

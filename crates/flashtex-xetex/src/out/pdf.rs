@@ -988,11 +988,6 @@ impl<'a> Writer<'a> {
     ) -> Result<(), String> {
         let font = flashtex_pdf::truetype::TrueTypeFont::parse_face(r.program.to_vec(), index)?;
         let upm = font.units_per_em as f64;
-        let tag = subset_tag(ps_name, used);
-        let base = format!(
-            "{tag}+{}",
-            if ps_name.is_empty() { "Font" } else { ps_name }
-        );
         let k = 1000.0 / upm;
         let info = FaceInfo::read(&r.program, index);
         // the codes of the content stream: glyph ids, or the CIDs of a
@@ -1007,11 +1002,18 @@ impl<'a> Writer<'a> {
             ));
             None
         } else {
-            let (file_key, sub, program) = font_program(&font, &r.program, cff, used)?;
+            let (file_key, sub, program, subset) = font_program(&font, &r.program, cff, used)?;
             let ff = self.alloc();
             self.stream(ff, sub.as_bytes(), &program, true);
-            Some(format!(" /{file_key} {ff} 0 R"))
+            Some((format!(" /{file_key} {ff} 0 R"), subset))
         };
+        // a subset's name has its tag (PDF 32000-1 §9.6.4); a whole font's not
+        let name = if ps_name.is_empty() { "Font" } else { ps_name };
+        let base = match &file {
+            Some((_, true)) => format!("{}+{name}", subset_tag(ps_name, used)),
+            _ => name.to_string(),
+        };
+        let file = file.map(|f| f.0);
         let fd = self.alloc();
         let [bx0, by0, bx1, by1] = font.bbox;
         let mut d = String::new();
@@ -1051,11 +1053,30 @@ impl<'a> Writer<'a> {
             wa.push(']');
         }
         wa.push_str(" ]");
+        // a CID-keyed font's own character collection, else Identity
+        let ros = if cids.is_some() {
+            font.cff_table().and_then(super::cffcid::ros)
+        } else {
+            None
+        };
+        let csi = match ros {
+            Some((r, o, sup)) => {
+                let (mut rs, mut os) = (Vec::new(), Vec::new());
+                super::pdfobj::write_string(&r, &mut rs);
+                super::pdfobj::write_string(&o, &mut os);
+                format!(
+                    "<</Registry {} /Ordering {} /Supplement {sup}>>",
+                    String::from_utf8_lossy(&rs),
+                    String::from_utf8_lossy(&os)
+                )
+            }
+            None => "<</Registry (Adobe) /Ordering (Identity) /Supplement 0>>".to_string(),
+        };
         let cid = self.alloc();
         let mut d = String::new();
         let _ = write!(
             d,
-            "<</Type /Font /Subtype /{} /BaseFont /{base} /CIDSystemInfo <</Registry (Adobe) /Ordering (Identity) /Supplement 0>> /FontDescriptor {fd} 0 R /DW {} /W {wa}{}>>",
+            "<</Type /Font /Subtype /{} /BaseFont /{base} /CIDSystemInfo {csi} /FontDescriptor {fd} 0 R /DW {} /W {wa}{}>>",
             if cff { "CIDFontType0" } else { "CIDFontType2" },
             n(font.advance(0) as f64 * k, 3),
             if cff { "" } else { " /CIDToGIDMap /Identity" }
@@ -1417,29 +1438,37 @@ impl std::fmt::Write for Bytes<'_> {
 }
 
 /// The program of a native font for its font descriptor: the key, the
-/// stream's subtype entry and the bytes.
+/// stream's subtype entry, the bytes, and whether they are a subset (which
+/// the font's name then says with its tag).
 fn font_program(
     font: &flashtex_pdf::truetype::TrueTypeFont,
     whole: &[u8],
     cff: bool,
     used: &BTreeSet<u16>,
-) -> Result<(&'static str, &'static str, Vec<u8>), String> {
+) -> Result<(&'static str, &'static str, Vec<u8>, bool), String> {
     if !cff {
-        return Ok(("FontFile2", "", font.subset_keep_gids(used)?));
+        return Ok(("FontFile2", "", font.subset_keep_gids(used)?, true));
     }
     let table = font.cff_table().ok_or("no CFF table")?;
     let parsed = flashtex_pdf::cff::CffFont::parse(table).map_err(|e| format!("{e:?}"))?;
     if parsed.is_cid_keyed() {
-        // A CID-keyed CFF (CJK fonts): embedded whole as the CIDFont
-        // program; the content stream writes its CIDs (`cid_map`). Not
-        // subset yet: FlashTeX's CFF subsetter takes name-keyed fonts.
-        return Ok(("FontFile3", "/Subtype /CIDFontType0C", table.to_vec()));
+        // A CID-keyed CFF (CJK fonts): its subset keeps the CIDs, which the
+        // content stream writes (`cid_map`); whole if it cannot be subset.
+        return Ok(match super::cffcid::subset(table, used) {
+            Ok(b) => ("FontFile3", "/Subtype /CIDFontType0C", b, true),
+            Err(_) => (
+                "FontFile3",
+                "/Subtype /CIDFontType0C",
+                table.to_vec(),
+                false,
+            ),
+        });
     }
     Ok(match parsed.subset(used) {
-        Ok(s) => ("FontFile3", "/Subtype /CIDFontType0C", s.bytes),
+        Ok(s) => ("FontFile3", "/Subtype /CIDFontType0C", s.bytes, true),
         // a `seac` glyph: the whole font, as OpenType (a name-keyed CFF's
         // CIDs are its glyph ids, PDF 32000-1 §9.7.4.2)
-        Err(_) => ("FontFile3", "/Subtype /OpenType", whole.to_vec()),
+        Err(_) => ("FontFile3", "/Subtype /OpenType", whole.to_vec(), false),
     })
 }
 
@@ -2121,9 +2150,45 @@ mod tests {
         let sub = ff.as_dict().unwrap().get("Subtype").and_then(Obj::as_name);
         assert_eq!(sub, Some("CIDFontType0C"));
         let program = pdf.decode_stream(ff).unwrap();
-        assert!(flashtex_pdf::cff::CffFont::parse(&program)
-            .unwrap()
-            .is_cid_keyed());
+        let sub = flashtex_pdf::cff::CffFont::parse(&program).unwrap();
+        assert!(sub.is_cid_keyed());
+        // a subset (xelatex's is 6.8 kB), so its name has a tag
+        assert_eq!(sub.glyph_count(), 2);
+        assert!(program.len() < 30_000, "{} bytes", program.len());
+        let base = f.get("BaseFont").and_then(Obj::as_name).unwrap();
+        assert_eq!(base.as_bytes()[6], b'+', "{base}");
+        // ToUnicode: the ideograph
+        let tu = pdf
+            .decode_stream(pdf.resolve(f.get("ToUnicode").unwrap()))
+            .unwrap();
+        let tu = String::from_utf8(tu).unwrap();
+        assert!(tu.contains(&format!("<{cid:04X}> <6F22>")), "{tu}");
+        // its character collection, as xdvipdfmx writes it
+        let csi = d.get("CIDSystemInfo").and_then(Obj::as_dict).unwrap();
+        assert_eq!(csi.get("Ordering"), Some(&Obj::String(b"Japan1".to_vec())));
+    }
+
+    /// 日 and 文 share their glyphs with the Kangxi radicals U+2F47 and
+    /// U+2F42: the text is the unified ideograph.
+    #[test]
+    fn cjk_glyphs_read_as_unified_ideographs() {
+        let Some(path) = std::process::Command::new("kpsewhich")
+            .arg("HaranoAjiMincho-Regular.otf")
+            .output()
+            .ok()
+            .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+            .filter(|p| !p.is_empty())
+        else {
+            eprintln!("skipped: no HaranoAjiMincho-Regular.otf (TeX Live)");
+            return;
+        };
+        let data = std::fs::read(&path).unwrap();
+        let rev = super::super::tounicode::cmap_reverse(&data, 0);
+        let font = flashtex_pdf::truetype::TrueTypeFont::parse(data).unwrap();
+        for c in ['日', '文'] {
+            let g = font.glyph_id(c).unwrap();
+            assert_eq!(rev.get(&g), Some(&vec![c]));
+        }
     }
 
     /// `/Flags`, `/StemV` and the embedding permission from the face: LM
