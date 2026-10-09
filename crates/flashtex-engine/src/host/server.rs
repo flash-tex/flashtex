@@ -1630,7 +1630,14 @@ mod job_tests {
                 "{bad:?} accepted"
             );
         }
-        assert!(Job::parse(&focused(names(&["ch1"]), Some("q\"uote.tex")), 1).is_err());
+        // A main file named with a quote: refused by the list itself (no file
+        // needed), and through `Job::parse` where such a file can exist
+        // (Windows refuses `"` in a file name: os error 123).
+        assert!(includeonly_list(&[js("ch1")], "q\"uote.tex").is_err());
+        assert!(includeonly_list(&[js("ch1")], "quote.tex").is_ok());
+        if cfg!(not(windows)) {
+            assert!(Job::parse(&focused(names(&["ch1"]), Some("q\"uote.tex")), 1).is_err());
+        }
     }
 
     /// The host says it honours the field (an older one ignores it and
