@@ -308,6 +308,38 @@ fn manifest_operation_serves_the_manifest_its_inputs_and_the_template() {
 /// nothing to write when there is none and nothing is named, and the
 /// refusals. It never writes: the consumer saves the text it returns.
 #[test]
+fn set_mode_sets_project_mode_and_writes_nothing_itself() {
+    let tmp = common::TempDir::new("helper-set-mode");
+    let root = tmp.root();
+    // No manifest: the template for `entry`, with the mode.
+    let replies = run(root, &[r#"{"id":"1","operation":"set_mode","entry":"paper.tex","mode":"unicode"}"#]);
+    let p = payload(&replies[0], "1");
+    assert_eq!(p.get("exists"), Some(&Json::Bool(false)));
+    assert_eq!(p.get("changed"), Some(&Json::Bool(true)));
+    let text = p.get("text").and_then(Json::as_str).unwrap();
+    assert!(text.contains("entry = \"paper.tex\"") && text.contains("\nmode = \"unicode\"\n"), "{text}");
+    assert!(!root.join("flashtex.toml").exists(), "set_mode writes nothing");
+    // An existing manifest: the rest byte for byte.
+    let original = "# mine\n[project]\nentry = \"paper.tex\"\n\n[fonts]\ntext = \"Georgia\"\n";
+    std::fs::write(root.join("flashtex.toml"), original).unwrap();
+    let replies = run(
+        root,
+        &[
+            r#"{"id":"2","operation":"set_mode","mode":"unicode"}"#,
+            r#"{"id":"3","operation":"set_mode","mode":"flashtex"}"#,
+            r#"{"id":"4","operation":"set_mode","mode":"lualatex"}"#,
+        ],
+    );
+    let p = payload(&replies[0], "2");
+    assert_eq!(
+        p.get("text").and_then(Json::as_str),
+        Some("# mine\n[project]\nentry = \"paper.tex\"\nmode = \"unicode\"\n\n[fonts]\ntext = \"Georgia\"\n")
+    );
+    assert_eq!(error_code(&replies[1], "3"), "invalid_request");
+    assert_eq!(error_code(&replies[2], "4"), "invalid_request");
+}
+
+#[test]
 fn set_fonts_rewrites_the_fonts_table_and_writes_nothing_itself() {
     let tmp = common::TempDir::new("helper-set-fonts");
     let root = tmp.root();

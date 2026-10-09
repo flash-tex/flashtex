@@ -35,6 +35,9 @@
 //!   `template` is the commented manifest the consumer may save as
 //!   `flashtex.toml` for `entry` (default `main.tex`); a `save` with
 //!   `"expected":"new"` writes it under the same rules as any file.
+//! - `{"id","operation":"set_mode","mode":"classic"|"unicode","entry"?}` →
+//!   payload `{"path","exists","changed","text"}`: like `set_fonts`, with
+//!   `[project] mode` set (`Manifest::with_mode`); the shell saves it.
 //! - `{"id","operation":"set_fonts","fonts":{"text"?,"math"?,"mono"?,"sans"?},
 //!   "entry"?}` → payload `{"path","exists","changed","text"?}`: the text of the
 //!   governing manifest (or of the template for `entry` when there is none)
@@ -402,6 +405,51 @@ fn manifest(root: &ProjectRoot, req: &Json) -> Result<Json, Failure> {
     Ok(payload)
 }
 
+/// `set_mode`: like `set_fonts`, the governing manifest's text (or the
+/// template's, for `entry`, when there is none) with `[project] mode` set
+/// (`Manifest::with_mode`), for the shell to save. The helper writes nothing.
+fn set_mode(root: &ProjectRoot, req: &Json) -> Result<Json, Failure> {
+    let entry = match req.get("entry") {
+        None | Some(Json::Null) => "main.tex".to_string(),
+        Some(v) => v
+            .as_str()
+            .ok_or_else(|| fail("invalid_request", "entry must be a string"))?
+            .to_string(),
+    };
+    let mode = req
+        .get("mode")
+        .and_then(|v| v.as_str())
+        .and_then(flashtex_project_manifest::Mode::parse)
+        .filter(|m| *m != flashtex_project_manifest::Mode::FlashTeX)
+        .ok_or_else(|| fail("invalid_request", "mode must be \"classic\" or \"unicode\""))?;
+    let found = Manifest::locate(root.path());
+    let (path, exists, current) = match &found {
+        Some(path) => {
+            let text = std::fs::read_to_string(path).map_err(|e| fail("io", format!("{}: {e}", path.display())))?;
+            (path.clone(), true, text)
+        }
+        None => (root.path().join(flashtex_project_manifest::FILE_NAME), false, Manifest::template(&entry)),
+    };
+    let text = Manifest::with_mode(&current, mode);
+    match Manifest::parse(&text) {
+        Ok(parsed) if parsed.manifest.project.mode == Some(mode) => {}
+        Ok(parsed) => {
+            return Err(fail(
+                "manifest_rewrite",
+                format!("the rewritten {} does not read back mode {:?} (got {:?}); not written", path.display(), mode.as_str(), parsed.manifest.project.mode),
+            ))
+        }
+        Err(e) => return Err(fail("manifest_syntax", format!("{}: {e}", path.display()))),
+    }
+    let mut payload = Json::object();
+    payload
+        .insert("path", path.to_string_lossy().into_owned())
+        .insert("exists", exists)
+        .insert("changed", text != current || !exists)
+        .insert("text", text);
+    Ok(payload)
+}
+
 /// `set_fonts`: see the module documentation. Reads the governing manifest
 /// (or takes the template) and answers with the rewritten text; the
 /// consumer saves it through `save`, so the rooted rules apply to the write.
@@ -679,6 +727,7 @@ fn handle(root: &ProjectRoot, req: &Json) -> Result<Json, Failure> {
         "save" => save(root, req),
         "manifest" => manifest(root, req),
         "set_fonts" => set_fonts(root, req),
+        "set_mode" => set_mode(root, req),
         "resolve_packages" => resolve_packages(root, req),
         "set_packages" => set_packages(root, req),
         other => Err(fail(

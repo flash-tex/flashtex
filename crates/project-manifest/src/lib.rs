@@ -722,6 +722,73 @@ path = {{}}         # local libraries, e.g. {{ mylib = \"../mylib\" }} — a dir
         out
     }
 
+    /// `text` with `[project] mode` set to `mode` -- the one writer the app's
+    /// mode item ("switch to Unicode mode") uses, through the helper's
+    /// `set_mode`. Every other line, comments and order included, is kept
+    /// byte for byte: a `mode = …` line (or a commented `# mode = …`) is
+    /// replaced in place, keeping a trailing `# comment`; without one the
+    /// key is added at the end of `[project]`; without a `[project]` table
+    /// one is put first in the file (where the template has it).
+    /// `parse(with_mode(t, m)).project.mode` is `Some(m)` for every `t` that
+    /// parses.
+    pub fn with_mode(text: &str, mode: Mode) -> String {
+        let value = quote(mode.as_str());
+        let is_header = |line: &str| line.trim_start().starts_with('[');
+        let is_project_header = |line: &str| {
+            let t = line.trim_start();
+            t.strip_prefix("[project]").is_some_and(|rest| rest.trim_start().is_empty() || rest.trim_start().starts_with('#'))
+        };
+        let is_mode = |line: &str| {
+            let t = line.trim_start();
+            let t = t.strip_prefix('#').map_or(t, str::trim_start);
+            t.strip_prefix("mode").is_some_and(|rest| rest.trim_start().starts_with('='))
+        };
+        let lines: Vec<&str> = text.split_inclusive('\n').collect();
+        let Some(start) = lines.iter().position(|l| is_project_header(l)) else {
+            let mut out = format!("[project]\nmode = {value}\n");
+            if !text.trim().is_empty() {
+                out.push('\n');
+                out.push_str(text);
+            }
+            return out;
+        };
+        let end = lines[start + 1..].iter().position(|l| is_header(l)).map_or(lines.len(), |i| start + 1 + i);
+        let mut out = String::new();
+        for l in &lines[..=start] {
+            out.push_str(l);
+        }
+        if !out.ends_with('\n') {
+            out.push('\n');
+        }
+        let body = &lines[start + 1..end];
+        let trailing_blank = body.iter().rev().take_while(|l| l.trim().is_empty()).count();
+        let mut written = false;
+        for l in &body[..body.len() - trailing_blank] {
+            if is_mode(l) {
+                if !written {
+                    out.push_str(&format!("mode = {value}{}\n", trailing_comment(l)));
+                    written = true;
+                }
+                // a duplicate line goes
+            } else {
+                out.push_str(l);
+            }
+        }
+        if !out.ends_with('\n') {
+            out.push('\n');
+        }
+        if !written {
+            out.push_str(&format!("mode = {value}\n"));
+        }
+        for _ in 0..trailing_blank {
+            out.push('\n');
+        }
+        for l in &lines[end..] {
+            out.push_str(l);
+        }
+        out
+    }
+
     /// Writes [`Manifest::template`] for `entry` at `path`, refusing to
     /// overwrite an existing file (`io::ErrorKind::AlreadyExists`).
     pub fn write_template(path: &Path, entry: &str) -> io::Result<()> {
@@ -1145,5 +1212,26 @@ name = "mylib"
         let p = Manifest::parse("[project]\nmode = \"flashtex\"\nflashtex_version = \"1.0\"\n").unwrap();
         assert_eq!(p.manifest.project.mode, Some(Mode::FlashTeX));
         assert_eq!(p.manifest.project.flashtex_version.as_deref(), Some("1.0"));
+    }
+
+    #[test]
+    fn with_mode_sets_the_key_and_keeps_the_rest() {
+        // no [project]: one goes first
+        let t = "[fonts]\ntext = \"X\"\n";
+        let w = Manifest::with_mode(t, Mode::Unicode);
+        assert_eq!(w, "[project]\nmode = \"unicode\"\n\n[fonts]\ntext = \"X\"\n");
+        // replaced in place, comment kept; the other keys and tables untouched
+        let t = "# mine\n[project]\nentry = \"a.tex\"\nmode = \"classic\" # chosen\n\n[fonts]\nmath = \"Y\"\n";
+        let w = Manifest::with_mode(t, Mode::Unicode);
+        assert_eq!(w, "# mine\n[project]\nentry = \"a.tex\"\nmode = \"unicode\" # chosen\n\n[fonts]\nmath = \"Y\"\n");
+        // added at the end of [project]
+        let t = "[project]\nentry = \"a.tex\"\n\n[packages]\nfetch = \"ask\"\n";
+        let w = Manifest::with_mode(t, Mode::Classic);
+        assert_eq!(w, "[project]\nentry = \"a.tex\"\nmode = \"classic\"\n\n[packages]\nfetch = \"ask\"\n");
+        // the template, and an empty file, read back with the mode
+        for t in [Manifest::template("main.tex"), String::new()] {
+            let w = Manifest::with_mode(&t, Mode::Unicode);
+            assert_eq!(Manifest::parse(&w).unwrap().manifest.project.mode, Some(Mode::Unicode), "{w}");
+        }
     }
 }

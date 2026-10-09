@@ -116,6 +116,17 @@ run, and a Unicode host's engine ends with the host however the host ends. `[fon
 or a repository build (`crates/flashtex-xetex/target/release` too). It is
 not yet bundled by `make-app.sh`.
 
+**The mode item** (status bar, and View › Mode for This Document;
+`ProjectMode.swift`) shows Classic or Unicode and where that comes from. Choosing
+the other mode writes `[project] mode` to `flashtex.toml` through the
+project-files helper's `set_mode` (creating the file next to the entry when there
+is none). Nothing is written until the user chooses. A Classic document that needs
+Unicode mode (fontspec, unicode-math, `\setmainfont`, … in its preamble, or a run
+stopped on fontspec's error), or a Classic project whose `flashtex.toml` sets
+`[fonts]` (not applied in Classic mode), gets a banner with one button, **Switch to
+Unicode Mode**. In Unicode mode neither rule sends the document to the
+compatibility engine.
+
 ## Where the host comes from
 
 The app looks for `flashtex-host` in these places, in order:
