@@ -2329,7 +2329,8 @@ fn an_abandoned_run_then_a_cold_run_keeps_no_stale_restart() {
 /// boundary; after an edit that moved the allocation they held other
 /// leftovers than the old run's. The convergence test compared them, so a
 /// deck re-typeset to its end after any such edit. The run converges now,
-/// and every compile equals scratch runs.
+/// and every compile equals scratch runs. (Unix only: elsewhere no image
+/// is kept, `fmtimage::Ident::of`.)
 #[test]
 fn beamer_navigation_actions_converge() {
     let Some(e) = env() else {
@@ -5078,7 +5079,8 @@ fn file_size_and_mod_date_are_reads_of_the_file() {
 /// the format again, when the state before the load is the same. Edits of
 /// the class options run from the format; with `FLASHTEX_FMT_IMAGE=verify`
 /// each such load is made anyway and compared with the image word for word,
-/// and every compile equals scratch runs.
+/// and every compile equals scratch runs. (Unix only: elsewhere no image
+/// is kept, `fmtimage::Ident::of`.)
 #[test]
 fn a_format_loaded_again_is_its_first_load() {
     let Some(e) = env() else {
@@ -5120,7 +5122,7 @@ fn a_format_loaded_again_is_its_first_load() {
         }
         drop(h);
         let said = std::fs::read_to_string(&log).unwrap();
-        if verify {
+        if verify && cfg!(unix) {
             assert!(
                 said.contains("fmtimage: verified"),
                 "no load was the image's: {said}"

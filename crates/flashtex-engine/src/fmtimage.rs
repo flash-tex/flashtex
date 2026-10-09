@@ -59,8 +59,15 @@ struct Ident {
 }
 
 impl Ident {
-    /// `None` when the file cannot be read or is racy.
+    /// `None` when the file cannot be read or is racy, and off Unix, where
+    /// `os::file_stat` has no inode and no status-change time (Windows gives
+    /// the creation time, which NTFS carries over to a file re-created under
+    /// the same name): a format rewritten to the same size with its
+    /// modification time put back would keep its identity there.
     fn of(path: &str) -> Option<Ident> {
+        if !cfg!(unix) {
+            return None;
+        }
         let m = std::fs::metadata(path).ok()?;
         let s = crate::os::file_stat(&m);
         let now = std::time::SystemTime::now()
