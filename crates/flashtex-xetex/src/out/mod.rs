@@ -27,6 +27,7 @@
 //! The display list goes to `FLASHTEX_DISPLAY_LIST` (spec §6.6) as pages
 //! complete; at the end [`pdf`] writes the PDF from the display list.
 
+pub mod cffcid;
 pub mod content;
 pub mod doc;
 pub mod fontmap;

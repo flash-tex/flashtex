@@ -1,7 +1,7 @@
 //! `flashtex-v3`: the command line on the new engine (DESIGN.md §10, row D5).
 //!
 //! ```text
-//! flashtex-v3 build [<main.tex>|<dir>] [-o out.pdf] [--no-tools] [--host PATH]
+//! flashtex-v3 build [<main.tex>|<dir>] [-o out.pdf] [--no-tools] [--host PATH] [--mode classic|unicode]
 //! flashtex-v3 check [<main.tex>|<dir>] [--json] [--no-tools] [--host PATH]
 //! flashtex-v3 watch [<main.tex>|<dir>] [-o out.pdf] [--interval MS] [--no-tools] [--host PATH]
 //! ```
@@ -33,13 +33,19 @@
 //! a terminal, nothing unless `--progress` (plain lines), so what scripts
 //! read is unchanged. `--no-progress`, `-q`/`--quiet` turn it off.
 //!
-//! The host: `--host`, else `$FLASHTEX_HOST`, else `flashtex-host` beside
-//! this program, else on `PATH`. It needs a TeX Live (D12); the string pool
+//! The mode (`--mode classic|unicode`, `$FLASHTEX_MODE`, the manifest's
+//! `[project] mode`, a `% !TEX program = xelatex` line, else Classic;
+//! `mode.rs`) picks the host: `flashtex-host` with `pdflatex` for Classic,
+//! `flashtex-host-unicode` with `xelatex` for Unicode (owner, Q10).
+//! The host: `--host`, else `$FLASHTEX_HOST` (Unicode:
+//! `$FLASHTEX_HOST_UNICODE`), else the mode's host program beside this
+//! program, else on `PATH`. It needs a TeX Live (D12); the string pool
 //! is found as the app finds it (`$FLASHTEX_POOL`, beside the host). It is
 //! started with `--once`: if this program is killed before it connects, the
 //! host notices its parent is gone, removes its socket and exits; once
 //! connected, the connection's end ends it.
 
+mod mode;
 mod progress;
 
 use flashtex_display_list::client::{Client, CompileRequest, Event};
@@ -86,7 +92,7 @@ fn main() -> ExitCode {
     }
 }
 
-const USAGE: &str = "usage: flashtex-v3 build|check|watch [<main.tex>|<dir>] [-o out.pdf] [--json] [--no-tools] [--interval MS] [--host PATH] [--progress|--no-progress] [-q|--quiet]";
+const USAGE: &str = "usage: flashtex-v3 build|check|watch [<main.tex>|<dir>] [-o out.pdf] [--json] [--no-tools] [--interval MS] [--host PATH] [--mode classic|unicode] [--progress|--no-progress] [-q|--quiet]";
 
 fn usage(why: &str) -> ExitCode {
     eprintln!("flashtex-v3: {why}\n{USAGE}");
@@ -102,6 +108,8 @@ struct Opts {
     tools: bool,
     interval_ms: u64,
     host: Option<PathBuf>,
+    /// `--mode`.
+    mode: Option<String>,
     /// `--progress` (Some(true)), `--no-progress` (Some(false)); none: on
     /// when stderr is a terminal (`progress::Mode`).
     progress: Option<bool>,
@@ -122,6 +130,7 @@ impl Opts {
             match a[i].as_str() {
                 "-o" | "--output" => o.out = Some(v.ok_or("-o needs a file")?.into()),
                 "--host" => o.host = Some(v.ok_or("--host needs a path")?.into()),
+                "--mode" => o.mode = Some(v.ok_or("--mode needs classic or unicode")?.clone()),
                 "--interval" => {
                     o.interval_ms = v
                         .and_then(|s| s.parse().ok())
@@ -308,37 +317,38 @@ struct Host {
 }
 
 impl Host {
-    fn exe_name() -> String {
-        format!("flashtex-host{}", std::env::consts::EXE_SUFFIX)
+    fn exe_name(m: mode::Mode) -> String {
+        format!("{}{}", m.host(), std::env::consts::EXE_SUFFIX)
     }
 
-    fn locate(explicit: Option<&Path>) -> Result<PathBuf, String> {
+    fn locate(explicit: Option<&Path>, m: mode::Mode) -> Result<PathBuf, String> {
         if let Some(p) = explicit {
             return Ok(p.into());
         }
-        if let Ok(p) = std::env::var("FLASHTEX_HOST") {
+        if let Ok(p) = std::env::var(m.host_env()) {
             if !p.is_empty() {
                 return Ok(p.into());
             }
         }
         if let Some(beside) = std::env::current_exe()
             .ok()
-            .and_then(|e| e.parent().map(|d| d.join(Self::exe_name())))
+            .and_then(|e| e.parent().map(|d| d.join(Self::exe_name(m))))
         {
             if beside.is_file() {
                 return Ok(beside);
             }
         }
         for dir in std::env::split_paths(&std::env::var_os("PATH").unwrap_or_default()) {
-            let p = dir.join(Self::exe_name());
+            let p = dir.join(Self::exe_name(m));
             if p.is_file() {
                 return Ok(p);
             }
         }
-        Err(
-            "flashtex-host not found (--host PATH, $FLASHTEX_HOST, beside flashtex-v3, or on PATH)"
-                .into(),
-        )
+        Err(format!(
+            "{} not found (--host PATH, ${}, beside flashtex-v3, or on PATH)",
+            m.host(),
+            m.host_env()
+        ))
     }
 
     /// The engine's string pool, as the app finds it: beside the host (a
@@ -400,7 +410,7 @@ impl Host {
         loop {
             if let Some(status) = self.child.try_wait().map_err(|e| e.to_string())? {
                 return Err(format!(
-                    "flashtex-host exited before it listened ({status})"
+                    "the engine host exited before it listened ({status})"
                 ));
             }
             if self.socket.exists() {
@@ -417,7 +427,7 @@ impl Host {
                 }
             }
             if t0.elapsed() > Duration::from_secs(600) {
-                return Err("flashtex-host did not listen within 10 minutes".into());
+                return Err("the engine host did not listen within 10 minutes".into());
             }
             std::thread::sleep(Duration::from_millis(50));
         }
@@ -792,6 +802,8 @@ fn is_error(d: &Diag) -> bool {
 /// one for a whole `watch` session.
 struct Session {
     project: Project,
+    /// The mode, and so the host and the format.
+    mode: mode::Resolved,
     work: WorkDir,
     client: Client,
     next_id: i64,
@@ -802,10 +814,24 @@ struct Session {
 impl Session {
     fn open(o: &Opts, warm: bool, p: &Progress) -> Result<Session, String> {
         let project = Project::resolve(o.target.as_deref())?;
+        let mode = mode::resolve(
+            o.mode.as_deref(),
+            std::env::var("FLASHTEX_MODE").ok(),
+            &project.root,
+            &project.main,
+        )?;
+        // A mode other than the default is said, with what chose it; what
+        // could not be followed always is.
+        if mode.source != "default" && !o.quiet && !o.json {
+            eprintln!("flashtex-v3: {} mode ({})", mode.mode.name(), mode.source);
+        }
+        for w in &mode.warnings {
+            eprintln!("flashtex-v3: warning: {w}");
+        }
         p.begin(&project.main, &project.root, project.expected_pages(p));
         let started = (|| {
             let work = WorkDir::new()?;
-            let exe = Host::locate(o.host.as_deref())?;
+            let exe = Host::locate(o.host.as_deref(), mode.mode)?;
             let mut host = Host::start(&exe, warm)?;
             let client = host.connect(p.on())?;
             Ok::<_, String>((work, host, client))
@@ -815,6 +841,7 @@ impl Session {
         })?;
         Ok(Session {
             project,
+            mode,
             work,
             client,
             next_id: 1,
@@ -828,6 +855,7 @@ impl Session {
         self.next_id += 1;
         r.output_dir = Some(self.work.0.to_string_lossy().into_owned());
         r.jobname = Some(p.jobname());
+        r.format = self.mode.format.to_string();
         r.export = export;
         if !export {
             r.external_tools = Some(if tools { "auto" } else { "off" }.into());

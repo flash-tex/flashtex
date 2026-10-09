@@ -51,6 +51,10 @@ LINES = 'newline,split,join'
 BIG = ('plain-120', 'full-100')
 REFS = ('refs-30', 'refs-120', 'full-100')
 VOL = ('vol-closed', 'vol-open')
+# the preamble kinds (edits.py: PREAMBLE-FAST's restarts before S0, PREAMBLE-MIDLINE's in the middle
+# of the line after a package)
+PRE = ('pre_title,pre_author,pre_newcommand,pre_setlength,pre_usepackage,pre_nopackage,pre_option,'
+       'pre_after_package')
 
 
 def S(tag, trials, extras=(), fixtures=True, kinds=None, interleave=False, host=None, toggle=False,
@@ -94,6 +98,10 @@ GATES = {
     'sound-c': [S('c', 20, REFS, kinds='sentence,section,label,ref,cite,footnote,unlabel,unsection')],
     'sound-d': [S('d', 12, REFS, kinds=KD, interleave=True)],
     # lane COLD-OPEN: interleaved edits interrupting a first compile (no .aux) in its first pass
+    # PREAMBLE-FAST / PREAMBLE-MIDLINE: preamble edits, then interleaved with letters
+    'sound-pre': [S('pre', 8, ('full-100', 'full-100t', 'refs-30'), kinds=PRE, allow_no_trials=True),
+                  S('pre-d', 6, ('full-100', 'full-100t', 'refs-30'), kinds=PRE + ',replace,insert', interleave=True,
+                    allow_no_trials=True)],
     'sound-first': [S('first', 10, ('refs-30', 'full-100'), kinds='replace,insert,sentence,section,label,ref',
                       interleave=True, first_open=True)],
 }
@@ -101,7 +109,7 @@ GATES = {
 # Seconds per unit with no measurement in sweeps-costs.json (a new fixture or run): per trial (an
 # edit and its revert, each verified), by document; interleaved trials compile twice. Rough, from
 # the first hosted runs (2026-10-06: a small fixture ~0.3 s a trial, beamer ~3.5 s, full-100 ~3.5 s).
-PER_TRIAL = {'plain-120': 4, 'full-100': 4, 'refs-120': 4, 'refs-30': 2, 'lookup': 2,
+PER_TRIAL = {'plain-120': 4, 'full-100': 4, 'full-100t': 4, 'refs-120': 4, 'refs-30': 2, 'lookup': 2,
              'vol-closed': 1, 'vol-open': 1}
 SPAN_PER_EDIT = {'plain-10': 2, 'full-10': 3, 'plain-120': 10, 'full-100': 12}
 

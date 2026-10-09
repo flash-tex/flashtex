@@ -51,11 +51,25 @@ public enum SourceMapping {
     private static func changedRegion(_ o: UnsafeBufferPointer<UInt8>, _ n: UnsafeBufferPointer<UInt8>) -> ChangedRegion {
         func isContinuation(_ b: UInt8) -> Bool { b & 0xC0 == 0x80 }
         var prefix = 0
+        // Word-at-a-time, then bytes: the editor's marks are rebased on every
+        // keystroke, and a byte loop over a 4 MB document was milliseconds of
+        // main thread per key (APP-EDITOR-INSTANT). Same result as the byte loop.
+        let common = min(o.count, n.count)
+        if let po = o.baseAddress, let pn = n.baseAddress {
+            while prefix + 8 <= common,
+                  UnsafeRawPointer(po + prefix).loadUnaligned(as: UInt64.self) == UnsafeRawPointer(pn + prefix).loadUnaligned(as: UInt64.self) { prefix += 8 }
+        }
         while prefix < o.count, prefix < n.count, o[prefix] == n[prefix] { prefix += 1 }
         while prefix > 0, (prefix < o.count && isContinuation(o[prefix])) || (prefix < n.count && isContinuation(n[prefix])) {
             prefix -= 1
         }
         var suffix = 0
+        let room = min(o.count, n.count) - prefix
+        if let po = o.baseAddress, let pn = n.baseAddress {
+            while suffix + 8 <= room,
+                  UnsafeRawPointer(po + o.count - suffix - 8).loadUnaligned(as: UInt64.self)
+                    == UnsafeRawPointer(pn + n.count - suffix - 8).loadUnaligned(as: UInt64.self) { suffix += 8 }
+        }
         while suffix < o.count - prefix, suffix < n.count - prefix,
               o[o.count - 1 - suffix] == n[n.count - 1 - suffix] { suffix += 1 }
         // The suffix bytes are identical in both strings, so one boundary check covers both.
