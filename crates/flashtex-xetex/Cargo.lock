@@ -92,6 +92,7 @@ dependencies = [
  "flashtex-pdf",
  "flashtex-xetex-fontlibs",
  "flashtex-xetex-teckit",
+ "libc",
  "sha2",
 ]
 
