@@ -96,14 +96,60 @@ pub const LOOPS_FOREVER: i32 = -1000;
 /// Run makeindex with the arguments after the program name; the result is
 /// its exit status (0, or 1 after a fatal error), minus the signal that
 /// would have killed it ([`KILLED_BY_SIGSEGV`]), or [`LOOPS_FOREVER`].
+///
+/// A panic inside the port (a bug: it reads past an array where the C
+/// program's behaviour is undefined) is caught here and reported as
+/// [`KILLED_BY_SIGSEGV`], so that a host running it in-process (the engine
+/// host's tools thread) carries on.
 pub fn run(args: &[Vec<u8>], host: &mut dyn Host) -> i32 {
     let mut mk = mkind::Mk::new(host);
-    let status = match mk.main(args) {
-        Ok(()) => 0,
-        Err(Exit(code)) => code,
+    let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| mk.main(args)));
+    let status = match r {
+        Ok(Ok(())) => 0,
+        Ok(Err(Exit(code))) => code,
+        Err(_) => KILLED_BY_SIGSEGV,
     };
     mk.finish(status == KILLED_BY_SIGSEGV || status == LOOPS_FOREVER);
     status
+}
+
+/// The largest input file makeindex reads: 64 MiB, far more than any index
+/// (Infinite Descent's four `.idx` files are 60 KB), and few enough bytes
+/// that a host keeps running.
+pub const MAX_INPUT: u64 = 64 << 20;
+
+/// An input file's bytes, if `path` opens (`None`: it does not, as
+/// `fopen` fails), or why it is refused: a file that is not a regular file
+/// after following links (a FIFO, a device such as `/dev/zero`, a socket)
+/// or one larger than [`MAX_INPUT`]. A directory opens and reads as empty,
+/// as `fopen` and `getc` do with one.
+pub fn read_input(path: &Path) -> Option<Result<Vec<u8>, String>> {
+    let meta = std::fs::metadata(path).ok()?;
+    if meta.is_dir() {
+        std::fs::File::open(path).ok()?;
+        return Some(Ok(vec![]));
+    }
+    if !meta.is_file() {
+        return Some(Err("not a regular file".into()));
+    }
+    if meta.len() > MAX_INPUT {
+        return Some(Err(format!(
+            "{} bytes, more than FlashTeX's limit of {MAX_INPUT}",
+            meta.len()
+        )));
+    }
+    let f = std::fs::File::open(path).ok()?;
+    Some(read_capped(f))
+}
+
+/// At most [`MAX_INPUT`] bytes of `r` (standard input, a file that grew).
+pub fn read_capped(r: impl std::io::Read) -> Result<Vec<u8>, String> {
+    let mut d = vec![];
+    let _ = std::io::Read::read_to_end(&mut r.take(MAX_INPUT + 1), &mut d);
+    if d.len() as u64 > MAX_INPUT {
+        return Err(format!("more than FlashTeX's limit of {MAX_INPUT} bytes"));
+    }
+    Ok(d)
 }
 
 /// `exit(code)`, from anywhere.
@@ -161,8 +207,6 @@ impl<F: FnMut(&[u8]) -> Option<Vec<u8>>> Host for ProcessHost<F> {
         &mut self.stderr
     }
     fn read_stdin(&mut self) -> Vec<u8> {
-        let mut v = vec![];
-        let _ = std::io::Read::read_to_end(&mut std::io::stdin(), &mut v);
-        v
+        read_capped(std::io::stdin()).unwrap_or_default()
     }
 }

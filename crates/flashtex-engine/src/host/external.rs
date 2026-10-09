@@ -283,8 +283,27 @@ impl Snapshot {
     }
 }
 
+/// The largest file a rule reads or hashes (an `.aux`, a `.bib`, an
+/// `.idx`): the tools' own limit (`flashtex_makeindex::MAX_INPUT`,
+/// `flashtex_bibtex::MAX_INPUT`).
+const MAX_INPUT: u64 = 64 << 20;
+
+/// A file's bytes, if it is a regular file (after following links) of at
+/// most [`MAX_INPUT`] bytes: a `refs.bib` that is a link to `/dev/zero`, a
+/// FIFO or a huge file is treated as missing, never read into memory.
 fn read(p: &Path) -> Option<Vec<u8>> {
-    std::fs::read(p).ok()
+    let m = std::fs::metadata(p).ok()?;
+    if !m.is_file() || m.len() > MAX_INPUT {
+        return None;
+    }
+    use std::io::Read;
+    let mut d = vec![];
+    std::fs::File::open(p)
+        .ok()?
+        .take(MAX_INPUT + 1)
+        .read_to_end(&mut d)
+        .ok()?;
+    (d.len() as u64 <= MAX_INPUT).then_some(d)
 }
 
 /// `path` (as the run named it) relative to `out`, if it is there.
@@ -553,7 +572,13 @@ impl Job {
             }
         }
         let key = (format.to_string(), with.clone());
-        if let Some(r) = self.memory.lock().unwrap().found.get(&key) {
+        if let Some(r) = self
+            .memory
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .found
+            .get(&key)
+        {
             if r.as_ref().is_none_or(|p| p.is_file()) {
                 return r.clone();
             }
@@ -566,7 +591,11 @@ impl Job {
         // to the host process's own directory is not the tool's.
         let r = crate::system::with_resolver(|r| r.find_ex(&with, fmt, true).0)
             .filter(|p| p.is_absolute());
-        self.memory.lock().unwrap().found.insert(key, r.clone());
+        self.memory
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .found
+            .insert(key, r.clone());
         r
     }
 
@@ -623,7 +652,13 @@ impl Job {
         let (ext, _) = r.key.tool.outputs();
         let out_file = self.snap.out.join(format!("{}.{ext}", r.key.base));
         let have = read(&out_file).map(|d| hash128(&d));
-        let last = self.memory.lock().unwrap().last.get(&r.key).cloned();
+        let last = self
+            .memory
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .last
+            .get(&r.key)
+            .cloned();
         match last {
             None => Some("first run".to_string()),
             Some((s, _)) if s != state => Some("its sources changed".to_string()),
@@ -665,7 +700,7 @@ impl Job {
             let file = js(r.key.source());
             let tool = js(r.key.tool.name());
             let skip = |why: String| {
-                let mut m = self.memory.lock().unwrap();
+                let mut m = self.memory.lock().unwrap_or_else(|e| e.into_inner());
                 if m.said.get(&r.key) == Some(&state) {
                     return;
                 }
@@ -695,7 +730,7 @@ impl Job {
                 // remembered: not retried until the sources change
                 self.memory
                     .lock()
-                    .unwrap()
+                    .unwrap_or_else(|e| e.into_inner())
                     .last
                     .insert(r.key.clone(), (state, None));
                 continue;
@@ -710,7 +745,7 @@ impl Job {
             let made = read(&out_file).map(|d| hash128(&d));
             self.memory
                 .lock()
-                .unwrap()
+                .unwrap_or_else(|e| e.into_inner())
                 .last
                 .insert(r.key.clone(), (state, made));
             outcomes.push(o);
@@ -1374,5 +1409,32 @@ Scanning input file main.idx...\n\
             Some("main.idx")
         );
         assert_eq!(rel_to(root, Path::new("/o"), "main.idx"), None);
+    }
+}
+
+#[cfg(test)]
+mod read_tests {
+    use super::{read, MAX_INPUT};
+
+    /// A rule's inputs are read only when they are regular files within the
+    /// limit: a `.bib` that links to `/dev/zero` must not fill the host's
+    /// memory while the rule's state is hashed.
+    #[test]
+    fn devices_and_huge_files_read_as_missing() {
+        let d = std::env::temp_dir().join(format!("flashtex-ext-read-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).unwrap();
+        std::fs::write(d.join("ok.bib"), "@misc{a}\n").unwrap();
+        assert_eq!(read(&d.join("ok.bib")).as_deref(), Some(&b"@misc{a}\n"[..]));
+        #[cfg(unix)]
+        {
+            std::os::unix::fs::symlink("/dev/zero", d.join("zero.bib")).unwrap();
+            assert_eq!(read(&d.join("zero.bib")), None);
+        }
+        let f = std::fs::File::create(d.join("big.bib")).unwrap();
+        f.set_len(MAX_INPUT + 1).unwrap();
+        drop(f);
+        assert_eq!(read(&d.join("big.bib")), None);
+        let _ = std::fs::remove_dir_all(&d);
     }
 }

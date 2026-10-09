@@ -619,9 +619,23 @@ pub const SHELL_QUOTE: u8 = if cfg!(windows) { b'"' } else { b'\'' };
 /// taken: the name `prog`, then words of characters the shell treats
 /// literally, or single-quoted; anything else (`$`, `;`, `|`, `>`, a glob,
 /// ...) is left to the shell.
+///
+/// On Windows the shell is cmd.exe, and the program splits its own command
+/// line (the C runtime's rules): there `'` is no quote, `%` expands a
+/// variable even inside `"..."` (texmfmp.c quotes restricted arguments
+/// with `"` and leaves `%` alone), and a backslash before a `"` changes
+/// the splitting. So a command with `%`, with `\"`, or (unrestricted)
+/// with any quote is left to the shell, which does all that.
 pub fn tool_command_args(cmd: &[u8], restricted: bool, prog: &[u8]) -> Option<Vec<Vec<u8>>> {
     let is_blank = |c: u8| c == b' ' || c == b'\t';
     let quote = SHELL_QUOTE;
+    if cfg!(windows)
+        && (cmd.contains(&b'%')
+            || cmd.windows(2).any(|w| w == b"\\\"")
+            || (!restricted && (cmd.contains(&b'"') || cmd.contains(&b'\''))))
+    {
+        return None;
+    }
     let mut words: Vec<Vec<u8>> = vec![];
     let mut cur: Option<Vec<u8>> = None;
     let mut i = 0;
@@ -632,7 +646,7 @@ pub fn tool_command_args(cmd: &[u8], restricted: bool, prog: &[u8]) -> Option<Ve
                 words.push(w);
             }
             i += 1;
-        } else if c == quote || (!restricted && c == b'\'') {
+        } else if (restricted && c == quote) || (!restricted && !cfg!(windows) && c == b'\'') {
             let end = cmd[i + 1..].iter().position(|&b| b == c)? + i + 1;
             cur.get_or_insert_with(Vec::new)
                 .extend_from_slice(&cmd[i + 1..end]);

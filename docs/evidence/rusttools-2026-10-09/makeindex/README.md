@@ -42,7 +42,39 @@ permissive; a modified version (a port is one) must carry an identical notice an
 source is. `crates/makeindex/LICENSE` carries the notice verbatim; only the GPL engine links the
 crate (`scripts/check-license-boundary.sh`, check F). A release that ships the engine must
 include that notice. Belief, not verified: compatible with distributing the engine under GPL-2,
-like the vendored libraries of DESIGN.md §3; it belongs in the owner's §3 legal review.
+like the vendored libraries of DESIGN.md §3. **Open for the owner's §3 legal review before any
+public release:** whether the MakeIndex Distribution Notice's conditions (identical notice,
+source available) may be combined with GPL-2 distribution of the engine that links the port, and
+the transcripts' program banners ("This is makeindex, version 2.18 [TeX Live 2026] ...",
+printed because the output is byte-identical to TeX Live's).
+
+## Hardening after review (2026-10-09)
+
+The port reads an input file whole, where the C program streams it, so a document could make a
+host that runs it in-process read without bound (`\write18{makeindex /dev/zero}`, a `.idx` that
+links to `/dev/zero`: gigabytes in seconds, then an out-of-memory abort). Now:
+
+- **Inputs** (`.idx`, `.ist`, `.log`) must be regular files after following links and at most
+  `MAX_INPUT` (64 MiB); a FIFO, a device or a larger file is refused with
+  `makeindex: refusing to read NAME: not a regular file` (or the size) on standard error, and
+  makeindex then fails as for a missing file. Standard input is read up to the same limit. A
+  directory still opens and reads as empty, as with `fopen`. This differs from TeX Live only
+  where TeX Live's program would hang or exhaust memory. Tests: `crates/makeindex/tests/limits.rs`
+  (a link to `/dev/zero`, as input and as style; a FIFO; a 64 MiB + 1 sparse file) and
+  `tests/write18.rs` (`makeindex_refuses_dev_zero`).
+- The host's rule reads and hashes its inputs (`.aux`, `.bib`, `.idx`) under the same rule
+  (`host/external.rs`, `read`): a `refs.bib` linked to `/dev/zero` reads as missing.
+- **Panics:** `flashtex_makeindex::run` catches a panic in the port (reported as
+  `KILLED_BY_SIGSEGV`), and the host's tools thread catches any panic of a rule's run, so the
+  engine thread always gets `ToolsDone` and `doc.tools.running` is cleared; the rules' memory
+  lock no longer propagates a poisoned lock.
+- **Confined reads** (`FLASHTEX_CONFINE_READS`, Live Share): the port's reads go through the
+  engine's confinement (`system::tool_read_ok`: the name rule, and the resolved file in an
+  allowed root or a link-free TeX tree file found by kpathsea), for `\write18` and the host rule.
+- **Windows** (`\write18` command splitting, `makeindex::command_args`): cmd.exe has no `'`
+  quotes and expands `%VAR%` even inside `"..."` (texmfmp.c quotes restricted arguments with
+  `"` and leaves `%` alone), and the C runtime treats `\"` specially; such commands now go to the
+  shell, which does all that, instead of running in-process.
 
 ## Reproduce
 

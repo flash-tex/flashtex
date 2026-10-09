@@ -314,3 +314,100 @@ Database file #1: refs.bib\n"
     );
     let _ = std::fs::remove_dir_all(&d);
 }
+
+/// `\write18{makeindex z.idx}` with `z.idx` a link to `/dev/zero`: the C
+/// program would read without end; the in-process port refuses the file
+/// (not a regular file) and fails as for a missing input, so the engine
+/// (and a host running it) carries on.
+#[cfg(all(feature = "makeindex", unix))]
+#[test]
+fn makeindex_refuses_dev_zero() {
+    const DOC: &str = "\\catcode`\\{=1 \\catcode`\\}=2\n\
+\\immediate\\write18{makeindex z.idx}\n\
+\\end\n";
+    let d = common::fresh_dir("flashtex-w18-mki-zero");
+    let _ = std::fs::remove_dir_all(&d);
+    std::fs::create_dir_all(&d).unwrap();
+    std::fs::write(d.join("w.tex"), DOC).unwrap();
+    std::os::unix::fs::symlink("/dev/zero", d.join("z.idx")).unwrap();
+    let t0 = std::time::Instant::now();
+    let o = Command::new(env!("CARGO_BIN_EXE_flashtex-initex"))
+        .args(["-ini", "w.tex"])
+        .current_dir(&d)
+        .env(
+            "FLASHTEX_POOL",
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("pdftex.pool"),
+        )
+        .env("FLASHTEX_RESOLVER", "cwd")
+        .env("shell_escape", "p")
+        .env("shell_escape_commands", "makeindex")
+        .env("PATH", "/nonexistent")
+        .env_remove("FLASHTEX_MAKEINDEX")
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .output()
+        .unwrap();
+    assert!(t0.elapsed() < std::time::Duration::from_secs(60));
+    let stderr = String::from_utf8_lossy(&o.stderr);
+    assert!(
+        stderr.contains("makeindex: refusing to read z.idx: not a regular file"),
+        "{stderr}"
+    );
+    assert!(stderr.contains("system returned with code 256"), "{stderr}");
+    let _ = std::fs::remove_dir_all(&d);
+}
+
+/// `\write18{bibtex ...}` with inputs linked to `/dev/zero`: the C program
+/// would read without end; the in-process port finds no database there
+/// (kpathsea's lookup takes regular files only) and refuses the `.aux`
+/// (not a regular file), so the engine carries on.
+#[cfg(all(feature = "bibtex", unix))]
+#[test]
+fn bibtex_refuses_dev_zero() {
+    const DOC: &str = "\\catcode`\\{=1 \\catcode`\\}=2\n\
+\\immediate\\write18{bibtex x}\n\
+\\immediate\\write18{bibtex y}\n\
+\\end\n";
+    let d = common::fresh_dir("flashtex-w18-bib-zero");
+    let _ = std::fs::remove_dir_all(&d);
+    std::fs::create_dir_all(&d).unwrap();
+    std::fs::write(d.join("w.tex"), DOC).unwrap();
+    std::fs::write(
+        d.join("x.aux"),
+        "\\citation{a}\n\\bibstyle{plain}\n\\bibdata{refs}\n",
+    )
+    .unwrap();
+    std::os::unix::fs::symlink("/dev/zero", d.join("refs.bib")).unwrap();
+    std::os::unix::fs::symlink("/dev/zero", d.join("y.aux")).unwrap();
+    let t0 = std::time::Instant::now();
+    let o = Command::new(env!("CARGO_BIN_EXE_flashtex-initex"))
+        .args(["-ini", "w.tex"])
+        .current_dir(&d)
+        .env(
+            "FLASHTEX_POOL",
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("pdftex.pool"),
+        )
+        .env("FLASHTEX_RESOLVER", "cwd")
+        .env("shell_escape", "p")
+        .env("shell_escape_commands", "bibtex")
+        .env("PATH", "/nonexistent")
+        .env_remove("FLASHTEX_BIBTEX")
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .output()
+        .unwrap();
+    assert!(t0.elapsed() < std::time::Duration::from_secs(60));
+    let stderr = String::from_utf8_lossy(&o.stderr);
+    let blg = std::fs::read_to_string(d.join("x.blg")).unwrap();
+    assert!(
+        blg.contains("I couldn't open database file refs.bib"),
+        "{blg}"
+    );
+    assert!(
+        stderr.contains("bibtex: refusing to read y.aux: not a regular file"),
+        "{stderr}"
+    );
+    let _ = std::fs::remove_dir_all(&d);
+}
