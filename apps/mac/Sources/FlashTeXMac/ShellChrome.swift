@@ -61,7 +61,6 @@ final class ShellChrome {
 
     // Document tab bar / sidebar
     private(set) var activeTextBytes = 0
-    private(set) var activeTextUTF16 = 0
     private(set) var listing: [ProjectDocument] = []
     private(set) var entryPath = "main.tex"
     private(set) var closure = ProjectDocuments.Closure(nodes: [], paths: [])
@@ -144,11 +143,27 @@ final class ShellChrome {
         set(\.fixtureName, model.fixtureURL?.lastPathComponent)
 
         let text = model.activeText
-        set(\.activeTextBytes, text.utf8.count)
-        set(\.activeTextUTF16, text.utf16.count)
-        set(\.listing, MainThreadProbe.time("chrome.listing") { model.project.listing })
+        set(\.activeTextBytes, text.utf8.count) // O(1); its UTF-16 count (unread) walked a non-ASCII text per refresh
+        let listing = MainThreadProbe.time("chrome.listing") { model.project.listing }
+        let documentSetChanged = listing.map(\.path) != self.listing.map(\.path)
+        set(\.listing, listing)
         set(\.entryPath, model.project.entryPath)
-        set(\.closure, MainThreadProbe.time("chrome.closure") { model.project.discoverClosure() })
+        // The include closure scans every open text (`ProjectIncludes.scan`:
+        // a 4 MB book is milliseconds of main thread), and typing rarely
+        // changes it: rescanned when the open documents change, else once
+        // the texts have been still for `closureQuiet` (APP-EDITOR-INSTANT).
+        let revision = model.documentsRevision, now = MonotonicClock.nowNs()
+        if revision != seenRevision { seenRevision = revision; seenRevisionNs = now }
+        var closureWaits = false
+        if revision != closureRevision {
+            if closureRevision < 0 || documentSetChanged || settleNext || now &- seenRevisionNs >= Self.closureQuietNs {
+                set(\.closure, MainThreadProbe.time("chrome.closure") { model.project.discoverClosure() })
+                closureRevision = revision
+            } else {
+                closureWaits = true
+            }
+        }
+        settleNext = false
         set(\.packageInputs, model.manifest.rows + model.projectPackages.rows) // ProjectPackages.swift: resolved packages, after the project's own
         // The preview's route, result and stale line come from one engine or
         // the other, each field assigned once per refresh: assigning the old
@@ -156,9 +171,18 @@ final class ShellChrome {
         // twice per refresh, and each flip re-evaluated the status bar and
         // the preview header although nothing they show changed
         // (P5-KEYSTROKE-MAIN).
-        if model.engineV3Enabled { compilingSeen = false; return refreshEngineV3(model.engineV3) }
-        return refreshOldEngine(from: model)
+        if model.engineV3Enabled { compilingSeen = false; return refreshEngineV3(model.engineV3) || closureWaits }
+        return refreshOldEngine(from: model) || closureWaits
     }
+
+    /// The include closure's text revision (`documentsRevision`), and when
+    /// the texts were last seen to change.
+    @ObservationIgnored private var closureRevision = -1
+    @ObservationIgnored private var seenRevision = -1
+    @ObservationIgnored private var seenRevisionNs: UInt64 = 0
+    /// The next refresh brings the closure up to date whatever the typing (`ShellModel.flushChrome`).
+    @ObservationIgnored var settleNext = false
+    static let closureQuietNs: UInt64 = 600_000_000
 
     /// The preview fields under the old engine (`refresh`).
     private func refreshOldEngine(from model: ShellModel) -> Bool {

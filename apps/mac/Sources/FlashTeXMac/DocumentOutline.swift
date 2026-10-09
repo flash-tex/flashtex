@@ -101,6 +101,15 @@ enum DocumentOutline {
     }()
 
     /// All items of `text` in document order.
+    /// `scan` on a background queue: the status bar's breadcrumb and the
+    /// sidebar's outline rescan the whole document when typing pauses, and
+    /// that scan held the next key on the main thread (APP-EDITOR-INSTANT).
+    static func scanOffMain(_ text: String) async -> [Item] {
+        await withCheckedContinuation { c in
+            DispatchQueue.global(qos: .userInitiated).async { c.resume(returning: scan(text)) }
+        }
+    }
+
     static func scan(_ text: String) -> [Item] {
         let ns = text as NSString
         guard ns.length <= maxScannedUTF16 else { return [] }

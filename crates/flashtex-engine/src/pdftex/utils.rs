@@ -960,6 +960,9 @@ impl Globals {
     /// `pdftex_fail` (utils.c): the same layout as pdftex.web's `pdf_error`,
     /// then the run ends.
     pub fn pdftex_fail(&mut self, msg: &str) -> ! {
+        if super::images::probing() {
+            super::images::probe_fail(msg.to_string());
+        }
         // safe_print: `print` of each character code
         fn safe_print(g: &mut Globals, s: &[u8]) {
             for &c in s {

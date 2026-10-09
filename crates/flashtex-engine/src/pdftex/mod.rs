@@ -38,6 +38,7 @@ pub mod avlstuff;
 pub mod cfile;
 pub mod cfmt;
 pub mod epdf;
+pub mod fmtable;
 pub mod fonts;
 pub mod images;
 pub mod macnames;

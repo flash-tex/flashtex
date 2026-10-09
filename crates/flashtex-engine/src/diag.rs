@@ -817,6 +817,8 @@ impl Globals {
                 cap_before(&mut f.before);
                 f.after = (split..j.max(split)).map(byte).take(TEXT_CAP).collect();
                 if r.name_field > 17 {
+                    // (the line's text: `crate::midline`)
+                    self.midline_note_shown(r.index_field);
                     let name = self.full_source_filename_stack[r.index_field as usize];
                     let line = self.dg_level_line(r.index_field);
                     let from = token_start(self, start, split);

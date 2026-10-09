@@ -1,0 +1,37 @@
+[incr] restart point: 451 of 1132 checkpoints, 0 walked back, 0.220 ms
+[incr] fixed inputs [], restart 525 (anchor Some(74); an .aux appeared: true; bad lookup Some(525); changed [])
+[incr] page 2: the old run makes a lookup later whose answer changed
+[incr] page 3: the old run makes a lookup later whose answer changed
+[incr] page 4: the old run makes a lookup later whose answer changed
+[incr] page 6: the old run makes a lookup later whose answer changed
+[incr] page 10: an input file's lookahead differs
+[incr] page 18: an input file's lookahead differs
+[incr] page 34: an input file's lookahead differs
+[incr] page 66: an input file's lookahead differs
+[incr] page 130: an input file's lookahead differs
+[incr] page 194: an input file's lookahead differs
+[incr] page 258: an input file's lookahead differs
+[incr] page 322: an input file's lookahead differs
+[incr] page 386: an input file's lookahead differs
+[incr] page 450: an input file's lookahead differs
+[incr] page 514: an input file's lookahead differs
+[incr] page 578: an input file's lookahead differs
+[incr] restart point: 451 of 1114 checkpoints, 0 walked back, 0.257 ms
+[incr] fixed inputs [], restart 525 (anchor Some(74); an .aux appeared: false; bad lookup None; changed ["./infdesc.aux", "./infdesc.toc"])
+[incr] page 2: the old run reads the changed ./infdesc.toc later
+[incr] page 3: the old run reads the changed ./infdesc.toc later
+[incr] page 4: the old run reads the changed ./infdesc.toc later
+[incr] page 6: the old run reads the changed ./infdesc.toc later
+[incr] page 10: the old run reads the changed ./infdesc.aux later
+[incr] page 18: the old run reads the changed ./infdesc.aux later
+[incr] page 34: the old run reads the changed ./infdesc.aux later
+[incr] page 66: the old run reads the changed ./infdesc.aux later
+[incr] page 130: the old run reads the changed ./infdesc.aux later
+[incr] page 194: the old run reads the changed ./infdesc.aux later
+[incr] page 258: the old run reads the changed ./infdesc.aux later
+[incr] page 322: the old run reads the changed ./infdesc.aux later
+[incr] page 386: the old run reads the changed ./infdesc.aux later
+[incr] page 450: the old run reads the changed ./infdesc.aux later
+[incr] page 514: the old run reads the changed ./infdesc.aux later
+[incr] page 578: the old run reads the changed ./infdesc.aux later
+[incr] prepared the restore to 525: true, 63.71 ms
