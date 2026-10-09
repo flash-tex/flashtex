@@ -3163,6 +3163,8 @@ fn mid_line_restarts_keep_what_the_line_was_read_with() {
         )
     };
     let pause = "\\pausing=1\\relax\n\\usepackage{mlpkg}\n";
+    // (the package's line and the title's are read with no end of line)
+    let noeol = "\\endlinechar=-1\\relax\n\\usepackage{mlpkg}\n";
     // (case, the document, its edits: text, a mid-line restart)
     type Case<'a> = (&'a str, String, Vec<(String, bool)>);
     let cases: Vec<Case> = vec![
@@ -3216,6 +3218,14 @@ fn mid_line_restarts_keep_what_the_line_was_read_with() {
             "pausing",
             doc(pause, "\\mytitle{Hello world}\\pausing=0\\relax"),
             vec![(doc(pause, "\\mytitle{Hello worle}\\pausing=0\\relax"), true)],
+        ),
+        (
+            "endlinechar inactive when the line was read",
+            doc(noeol, "\\mytitle{Hello world}\\endlinechar=13\\relax"),
+            vec![
+                (doc(noeol, "\\mytitle{Hello worle}\\endlinechar=13\\relax"), true),
+                (doc(noeol, "\\mytitle{Hello worle} \\endlinechar=13\\relax"), true),
+            ],
         ),
     ];
     for (i, (case, text, edits)) in cases.iter().enumerate() {
