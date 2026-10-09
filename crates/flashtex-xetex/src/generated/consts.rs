@@ -1855,5 +1855,5 @@ pub const null_ptr: i32 = 0i32;
 pub const mapped_text_size: i32 = 1048576i32;
 // §1692
 pub const xdv_buffer_size: i32 = 1048576i32;
-// §1715
+// §1717
 pub const ssup_error_line: i32 = 255i32;

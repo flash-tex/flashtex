@@ -348,8 +348,8 @@ public final class DL3ResourceCache: @unchecked Sendable {
     /// Image keys, least recently used first.
     private var imageOrder: [String] = []
     private var imageBytes = 0
-    public let imageLimit: Int
-    public let imageByteLimit: Int
+    public private(set) var imageLimit: Int
+    public private(set) var imageByteLimit: Int
     /// Programs by key, so `have_fonts` can name them (the host then sends an empty program).
     private var programs: Set<String> = []
 
@@ -361,6 +361,20 @@ public final class DL3ResourceCache: @unchecked Sendable {
     public var heldImages: (count: Int, bytes: Int) { lock.lock(); defer { lock.unlock() }; return (images.count, imageBytes) }
 
     public var heldFontKeys: [String] { lock.lock(); defer { lock.unlock() }; return programs.sorted() }
+
+    /// New limits for the decoded images (the app's performance mode):
+    /// images over them go now, least recently used first.
+    public func setImageLimits(count: Int, bytes: Int) {
+        lock.lock()
+        imageLimit = max(1, count); imageByteLimit = max(0, bytes)
+        var gone: [Result<DL3RenderImage, DL3Error>] = []
+        while !imageOrder.isEmpty, imageOrder.count > imageLimit || imageBytes > imageByteLimit {
+            let old = imageOrder.removeFirst()
+            if let g = images.removeValue(forKey: old) { imageBytes -= Self.cost(g); gone.append(g) }
+        }
+        lock.unlock()
+        _ = gone // (released after the lock)
+    }
 
     public func font(_ f: DL3Font) -> Result<DL3RenderFont, DL3Error> {
         let key = f.keyHex

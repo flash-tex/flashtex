@@ -1,0 +1,28 @@
+% l010-graphicx: graphicx with the xetex driver: PNG, JPEG and PDF images, scaled, rotated, trimmed and by page
+\documentclass{article}
+\usepackage{graphicx}
+\usepackage{fontspec}
+\begin{document}
+\section{Images}
+\includegraphics{example-image.png}
+
+\includegraphics[width=0.5\textwidth]{example-image-a.png}\hfill
+\includegraphics[height=2cm]{example-image.jpg}\hfill
+\includegraphics[scale=0.25]{example-grid-100x100bp.jpg}
+
+\begin{figure}[ht]
+  \centering
+  \includegraphics[width=4cm,angle=30]{example-image-golden.pdf}
+  \includegraphics[width=3cm,height=2cm]{example-image-b.pdf}
+  \includegraphics[page=2,width=3cm]{example-image-letter-numbered.pdf}
+  \caption{Rotated, stretched and paged PDF images.}
+\end{figure}
+
+\includegraphics[trim=10 20 30 40,clip,width=5cm]{example-image.pdf}
+\includegraphics[viewport=0 0 100 100,clip]{example-grid-100x100bp.pdf}
+\includegraphics[bb=0 0 50 50]{example-grid-100x100bp.png}
+\includegraphics[angle=-90,origin=c,totalheight=3cm]{example-image-c.png}
+\includegraphics[keepaspectratio,width=3cm,height=3cm]{example-image-16x9.png}
+\reflectbox{\includegraphics[width=2cm]{example-image-1x1.jpg}}
+\scalebox{0.5}[1]{\includegraphics[width=4cm]{example-image-10x16.pdf}}
+\end{document}

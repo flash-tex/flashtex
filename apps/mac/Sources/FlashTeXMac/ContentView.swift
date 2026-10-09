@@ -336,6 +336,8 @@ struct PreviewPane: View {
         // The previous engine typesets this project because the new one
         // cannot, and why (EngineChoice.swift); never a silent fallback.
         EngineFallbackBanner()
+        // Memory pressure: a suggestion to use Low Memory, never a silent switch (PerformanceMode.swift).
+        MemoryPressureBanner()
         ZStack(alignment: .topTrailing) {
             if model.engineV3Enabled {
                 PreviewV3Pane() // the new engine's preview (EngineV3Preview.swift), per document (EngineChoice.swift)
@@ -721,7 +723,9 @@ private struct StatusBreadcrumb: View {
         .background(IsolatedTask(id: { "\(model.activePath)@\(model.chrome.editorRevision)" }) { _ in
             if !items.isEmpty { try? await Task.sleep(for: .milliseconds(150)) }
             guard !Task.isCancelled else { return }
-            items = model.outline
+            let scanned = await DocumentOutline.scanOffMain(model.activeText)
+            guard !Task.isCancelled else { return }
+            items = scanned
             chain = DocumentOutline.breadcrumb(at: model.caretUTF16, in: items)
         })
         .background(IsolatedTask(id: { model.caretUTF16 }) { _ in

@@ -323,7 +323,7 @@ impl Globals {
         self.mltex_enabled_p = false;
         // §1709
         self.synctex_tag_counter = 0i32;
-        // §1717
+        // §1719
         self.halting_on_error_p = false;
         // §189
         {
@@ -1451,9 +1451,9 @@ impl Globals {
     /// filename in `full_source_filename_stack`, and if we fail to find
     /// one fall back on the non-file:line:error style.
     /// @<Basic print...
-    // §1719
+    // §1721
     pub fn print_file_line(&mut self) {
-        let mut level: i32 = 0; // §1719
+        let mut level: i32 = 0; // §1721
         level = self.in_open;
         while ((level > 0i32) && (self.full_source_filename_stack[crate::ix::U((level) as usize)] == 0i32)) {
             level = (level).wrapping_sub(1i32);

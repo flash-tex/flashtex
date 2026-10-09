@@ -1,0 +1,8 @@
+% m003-mapping-single-chars: a mapping applied to single characters: \char, \accent and a character in math text
+% XeTeX-specific (docs/design/xetex/PLAN.md, phase S1: TECkit font mappings)
+\input prelude
+\def\space{ }
+\font\x="[lmroman10-regular.otf]:mapping=tex-text" \x
+\setbox0=\hbox{\char`\` \char`\'\char`\' -\char`\-\char`\- \accent`\` e \accent`\' o}
+\lsshipbox0
+\end

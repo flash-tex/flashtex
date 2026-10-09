@@ -43,6 +43,7 @@ use crate::generated::Globals;
 use crate::persist::{hash128, Codec, Reader};
 use crate::resolver::Format;
 use crate::system::{self, Lookup, RunOptions, StatSig, Stream};
+use std::collections::HashMap;
 use std::time::Instant;
 
 /// What S₀ depends on.
@@ -188,8 +189,20 @@ impl Key {
     /// The test, and the signatures it verified by other means: (index,
     /// signature now) of files and prefixes compared by content, and every
     /// directory's signature when the lookups ran again and all held.
+    // (merging #1551 into #1552's test: #1551's `check_run`, which a
+    // preamble restart uses alone, and `check_files`; #1552's `Fresh`
+    // signatures come out of `check_files`)
     fn check_fresh(&self, session_clock: (i64, i32), first_line: &[u8]) -> Result<Fresh, String> {
-        let mut fresh = Fresh::default();
+        self.check_run(session_clock, first_line)?;
+        if let Some(b) = self.barriers.first() {
+            return Err(format!("the preamble ran an external command ({b})"));
+        }
+        self.check_files()
+    }
+
+    /// The part of `check` that is not about what the run read: the engine
+    /// build, the clock, the date variables, the first line.
+    pub fn check_run(&self, session_clock: (i64, i32), first_line: &[u8]) -> Result<(), String> {
         if self.build != engine_build() {
             return Err("the engine build changed".into());
         }
@@ -204,17 +217,29 @@ impl Key {
         if self.first_line != first_line {
             return Err("the first line changed".into());
         }
-        if let Some(b) = self.barriers.first() {
-            return Err(format!("the preamble ran an external command ({b})"));
-        }
+        Ok(())
+    }
+
+    /// The part of `check` about the files and lookups the run read.
+    fn check_files<'a>(&'a self) -> Result<Fresh, String> {
+        let mut fresh = Fresh::default();
+        // One signature and one content hash per path: a preamble opens
+        // many files more than once (beamer's: 432 reads of 189 files), and
+        // the key lists every read. Each read is still compared with what
+        // it recorded, against the file as this check found it.
+        let mut sigs: HashMap<&str, Option<StatSig>> = HashMap::new();
+        let mut sig_of = |path: &'a str| *sigs.entry(path).or_insert_with(|| StatSig::of(path));
+        let mut hashes: HashMap<&str, Option<[u64; 2]>> = HashMap::new();
         // A file both written before S₀ and read before it is keyed by
         // what was read; `rewrite_outputs` puts back what was written.
         for (i, (path, hash, stat)) in self.files.iter().enumerate() {
-            let sig = StatSig::of(path);
+            let sig = sig_of(path);
             if sig.as_ref() == Some(stat) {
                 continue;
             }
-            let now = std::fs::read(path).map(|d| hash128(&d)).ok();
+            let now = *hashes
+                .entry(path)
+                .or_insert_with(|| std::fs::read(path).map(|d| hash128(&d)).ok());
             if now != Some(*hash) {
                 return Err(format!("{path} changed"));
             }
@@ -223,7 +248,7 @@ impl Key {
             }
         }
         for (i, (path, len, hash, stat)) in self.prefixes.iter().enumerate() {
-            let sig = StatSig::of(path);
+            let sig = sig_of(path);
             if sig.as_ref() == Some(stat) {
                 continue;
             }
@@ -236,13 +261,18 @@ impl Key {
         }
         // (taken before the lookups: a directory changed while they run
         // shows as changed next time)
-        let now: Vec<Option<StatSig>> = self.dirs.iter().map(|(d, _)| StatSig::of(d)).collect();
+        let now: Vec<Option<StatSig>> = self.dirs.iter().map(|(d, _)| system::dep_sig(d)).collect();
         let dirs_same = !self.dirs.is_empty()
             && self
                 .dirs
                 .iter()
                 .zip(&now)
                 .all(|((_, s), n)| n.as_ref() == Some(s));
+        // Whether the answers depend on nothing the key does not watch (a
+        // lookup that finds the same may depend on more than when S₀ was
+        // taken, #1562): if they do, the signatures stay as they were, and
+        // every check makes the lookups again.
+        let mut covered = true;
         for (name, fmt, must, found) in self.lookups.iter().filter(|_| !dirs_same) {
             let l = Lookup {
                 name: name.clone(),
@@ -250,11 +280,15 @@ impl Key {
                 must_exist: *must,
                 found: found.clone(),
             };
-            if system::lookup_again(&l) != *found {
+            let (again, deps) = system::lookup_again_deps(&l);
+            if again != *found {
                 return Err(format!("looking up {name} finds another file now"));
             }
+            covered &= deps
+                .iter()
+                .all(|(d, _)| self.dirs.iter().any(|(x, _)| x == d));
         }
-        if !dirs_same && now.iter().all(Option::is_some) {
+        if !dirs_same && covered && now.iter().all(Option::is_some) {
             fresh.dirs = Some(now.into_iter().flatten().collect());
         }
         Ok(fresh)
@@ -862,6 +896,9 @@ pub fn read_s0(
         crate::diag::set_sites(sites);
         system::truncate_external_effects(0);
         g.restore_ext(&rec)?;
+        // The images S₀ holds: read again and compared with what it stored
+        // (`images::State`'s codec), or S₀ is not used.
+        g.verify_persisted_images()?;
         // (`restore_ext` left placeholders for the opens)
         system::truncate_opens(0);
         system::append_opens(&opens);

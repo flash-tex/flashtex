@@ -964,6 +964,7 @@ extension ShellModel {
 
     /// Menu-driven save: on a conflict, asks the user how to resolve it.
     func saveTexInteractive() {
+        projectPackages.explicitRequest(compiling: false) // ProjectPackages.swift: ⌘S ends the typing grace period
         // A non-entry document saves to its own rooted file (never to the
         // entry URL): ProjectDocuments.saveDocument, helper export or rooted
         // compare-and-replace, conflicts reported the same way.

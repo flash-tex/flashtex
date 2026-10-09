@@ -728,8 +728,11 @@ at the commit that T4 summary records.
 **The board's host (the NixOS PC).** Its runners are user services in
 `flashtex.slice` (MemoryMax 20G, no swap, CPUQuota 800 %, shared with agents'
 runs). The board runs in a scope of its own inside that slice
-(`systemd-run --user --scope --slice=flashtex.slice -p MemoryMax=10G`, nice
-10), so it and a T4 night cannot take the slice's 20 GB between them. Its TeX
+(`systemd-run --user --scope --slice=flashtex.slice -p MemoryMax=8G`, nice
+10), and never beside a T4 night: the board's PC job and nightly.yml's
+`corpus-t4` share the concurrency group `flashtex-pc-heavy`. On 10-06 the two
+together, beside the agents' runs, pushed the slice to 86 % full memory
+pressure, and GitHub dropped the board (37525986631). Its TeX
 Live 2026 is installed without doc files (`tlmgr option docfiles` is 0), and
 the templates and packages manifests pin files from TeX Live's `doc/` tree.
 Installing the docs would change the oracle's `texlive.tlpdb`, so the board
@@ -743,10 +746,18 @@ checked against the manifest's sha256 when it is fetched. It was copied on
 snapshot the manifests were pinned on; all 112 entries match). Without the
 directory, those tiers' documents are unmeasured and the tiers read partial.
 
-The engine is built alone, in its own `cargo build -p flashtex-engine`, as
-corpus-t4 builds it, so the two binaries' sha256 can match. Built together
-with `flashtex-cli`, shared dependencies unify features and the binary
-differs.
+**The new engine is the T4 run's own binary.** nightly.yml keeps it, with its
+formats and pool, in `~/.cache/flashtex-nightly/engines/<key>/` on the PC.
+`scoreboard-run.sh` uses it when the T4 summary names a binary on this host
+whose sha256 matches the one the summary records. A rebuild of the same
+commit is not the same binary: the engine's C sources (kpathsea and others)
+are compiled from the build's `OUT_DIR` and embed its path. On 2026-10-07 the
+board's build (`5b96720eae04`) and T4's (`4d42a00d944d`), both at
+`ac58ecfc7`, differed, and every T4 row read INVALID. Two scratch targets
+gave two more hashes. Without such a run, or with `--build-engine`, the
+engine is built alone, in its own `cargo build -p flashtex-engine`. Built
+together with `flashtex-cli`, shared dependencies unify features and the
+binary differs again.
 
 Disk. The first board on a Mac (run 37113092020) died after 5 h with "No
 space left on device". The script now bounds what it writes:

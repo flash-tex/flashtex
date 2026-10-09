@@ -1,0 +1,39 @@
+% l008-unicode-math-stix: amsmath and unicode-math with STIX Two Math
+\documentclass{article}
+\usepackage{amsmath}
+\usepackage{unicode-math}
+\setmathfont{STIXTwoMath-Regular.otf}
+\begin{document}
+\section{Inline and display}
+Let $f\colon \mathbb{R}\to\mathbb{R}$ with $f(x)=x^2+\alpha_1 x+\beta^{2}$, so that
+$\sum_{i=1}^{n} a_i \le \prod_{k} b_k$ and $\int_0^\infty e^{-x^2}\,dx=\frac{\sqrt{\pi}}{2}$.
+Primes $f'(x)$, $f''$, accents $\hat a$, $\tilde{x}$, $\vec{v}$, $\bar z$, $\widehat{xyz}$,
+$\overline{a+b}$, $\underline{c}$, and scripts $A^2_B$, $P_1$, $T^2$, $V_j$, $W^k$, $f_1$.
+\begin{equation}
+  \left( \frac{a}{b} \right)^{n} = \sum_{k=0}^{n} \binom{n}{k} \frac{a^{k}}{b^{n}}
+  \qquad \sqrt[3]{x^3+y^3} \ne \sqrt{x^2+y^2}
+\end{equation}
+\begin{align}
+  \nabla\cdot\symbf{E} &= \frac{\rho}{\varepsilon_0}, &
+  \nabla\times\symbf{B} &= \mu_0\symbf{J}+\mu_0\varepsilon_0\frac{\partial \symbf{E}}{\partial t}, \\
+  \oint_{\partial\Sigma} \symbf{E}\cdot d\symbf{\ell} &= -\frac{d}{dt}\iint_{\Sigma}\symbf{B}\cdot d\symbf{S}, &
+  \mathcal{L}\{f\}(s) &= \int_0^\infty f(t)e^{-st}\,dt .
+\end{align}
+\[
+  \left\{ \begin{array}{ll} x & x\ge 0 \\ -x & x<0 \end{array} \right.
+  \quad
+  \left[ \begin{matrix} a & b \\ c & d \end{matrix} \right]
+  \begin{pmatrix} 1 & 0 & 0 \\ 0 & \ddots & 0 \\ 0 & 0 & 1 \end{pmatrix}
+  \Biggl( \biggl( \Bigl( \bigl( x \bigr) \Bigr) \biggr) \Biggr)
+\]
+\[
+  \overbrace{a+b+\cdots+z}^{26} \quad \underbrace{1+1+\cdots+1}_{n}
+  \quad \lim_{x\to 0}\frac{\sin x}{x}=1 \quad \max_{i\in I} \lvert x_i \rvert
+  \quad \mathfrak{g}, \mathsf{A}, \mathtt{x}, \mathbfit{v}, \mathscr{F}
+\]
+\begin{gather*}
+  \left. \frac{\partial^2 u}{\partial t^2} \right|_{t=0} = c^2 \Delta u, \qquad
+  x = \cfrac{1}{1+\cfrac{1}{1+\cfrac{1}{1+x}}}
+\end{gather*}
+Text after the displays, $\frac{1}{2}$ inline, $\displaystyle\sum_{i}x_i$ and $\tfrac{3}{4}$.
+\end{document}
