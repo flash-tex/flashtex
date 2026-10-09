@@ -156,6 +156,9 @@ impl Globals {
 
     /// kpathsea's `FATAL_PERROR` with a given reason.
     pub(crate) fn fatal_perror_msg(&mut self, name: &[u8], reason: &str) -> ! {
+        if super::images::probing() {
+            super::images::probe_fail(format!("{}: {reason}", String::from_utf8_lossy(name)));
+        }
         eprintln!(
             "{}: {}: {}",
             crate::system::invocation_name(),
