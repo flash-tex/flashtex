@@ -32,6 +32,8 @@
 //! translation of Knuth's `tex.web` and so leaves out `pdftex/`.
 
 pub mod arena;
+#[cfg(all(feature = "bibtex", not(feature = "tex82")))]
+pub mod bibtex;
 #[cfg(all(feature = "distribution", not(feature = "tex82")))]
 pub mod bundle;
 #[cfg(not(feature = "tex82"))]

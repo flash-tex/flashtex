@@ -1,0 +1,1041 @@
+This is BibTeX, Version 0.99e (TeX Live 2026)
+Capacity: max_strings=200000, hash_size=200000, hash_prime=170003
+The top-level auxiliary file: doc.aux
+Case mismatch error between cite keys K0 and k0
+---line 9 of file doc.aux
+ : \citation{book1,K0
+ :                   ,proc1,proc1}
+I'm skipping whatever remains of this command
+Case mismatch error between cite keys K0 and k0
+---line 11 of file doc.aux
+ : \citation{book1,K0
+ :                   ,A1}
+I'm skipping whatever remains of this command
+Case mismatch error between cite keys A1 and a1
+---line 15 of file doc.aux
+ : \citation{A1
+ :             ,A1}
+I'm skipping whatever remains of this command
+Case mismatch error between cite keys A1 and a1
+---line 19 of file doc.aux
+ : \citation{A1
+ :             ,A1,A1,proc1}
+I'm skipping whatever remains of this command
+Case mismatch error between cite keys A1 and a1
+---line 21 of file doc.aux
+ : \citation{A1
+ :             ,a1,k0,A1}
+I'm skipping whatever remains of this command
+Case mismatch error between cite keys A1 and a1
+---line 27 of file doc.aux
+ : \citation{nokey,nokey,k0,A1
+ :                            }
+I'm skipping whatever remains of this command
+Case mismatch error between cite keys A1 and a1
+---line 29 of file doc.aux
+ : \citation{Knuth:84,book1,A1
+ :                            ,nokey}
+I'm skipping whatever remains of this command
+Case mismatch error between cite keys A1 and a1
+---line 31 of file doc.aux
+ : \citation{A1
+ :             ,proc1,Knuth:84}
+I'm skipping whatever remains of this command
+Case mismatch error between cite keys A1 and a1
+---line 33 of file doc.aux
+ : \citation{a1,proc1,A1
+ :                      ,A1}
+I'm skipping whatever remains of this command
+Case mismatch error between cite keys K0 and k0
+---line 35 of file doc.aux
+ : \citation{K0
+ :             ,nokey}
+I'm skipping whatever remains of this command
+Case mismatch error between cite keys A1 and a1
+---line 39 of file doc.aux
+ : \citation{book1,a1,A1
+ :                      ,proc1}
+I'm skipping whatever remains of this command
+Case mismatch error between cite keys A1 and a1
+---line 41 of file doc.aux
+ : \citation{A1
+ :             ,nokey}
+I'm skipping whatever remains of this command
+Case mismatch error between cite keys K0 and k0
+---line 49 of file doc.aux
+ : \citation{K0
+ :             ,K0}
+I'm skipping whatever remains of this command
+Case mismatch error between cite keys K0 and k0
+---line 51 of file doc.aux
+ : \citation{K0
+ :             ,k0}
+I'm skipping whatever remains of this command
+Case mismatch error between cite keys A1 and a1
+---line 57 of file doc.aux
+ : \citation{A1
+ :             }
+I'm skipping whatever remains of this command
+Case mismatch error between cite keys K0 and k0
+---line 59 of file doc.aux
+ : \citation{K0
+ :             ,nokey,a1}
+I'm skipping whatever remains of this command
+Case mismatch error between cite keys A1 and a1
+---line 65 of file doc.aux
+ : \citation{k0,A1
+ :                ,Knuth:84}
+I'm skipping whatever remains of this command
+Case mismatch error between cite keys A1 and a1
+---line 75 of file doc.aux
+ : \citation{a1,a1,A1
+ :                   ,Knuth:84}
+I'm skipping whatever remains of this command
+Case mismatch error between cite keys A1 and a1
+---line 77 of file doc.aux
+ : \citation{a1,A1
+ :                }
+I'm skipping whatever remains of this command
+Case mismatch error between cite keys A1 and a1
+---line 81 of file doc.aux
+ : \citation{A1
+ :             }
+I'm skipping whatever remains of this command
+Case mismatch error between cite keys K0 and k0
+---line 87 of file doc.aux
+ : \citation{K0
+ :             ,A1,a1}
+I'm skipping whatever remains of this command
+Case mismatch error between cite keys A1 and a1
+---line 97 of file doc.aux
+ : \citation{A1
+ :             }
+I'm skipping whatever remains of this command
+Case mismatch error between cite keys K0 and k0
+---line 105 of file doc.aux
+ : \citation{K0
+ :             ,A1,K0,book1}
+I'm skipping whatever remains of this command
+Case mismatch error between cite keys K0 and k0
+---line 107 of file doc.aux
+ : \citation{a1,proc1,K0
+ :                      }
+I'm skipping whatever remains of this command
+Case mismatch error between cite keys A1 and a1
+---line 111 of file doc.aux
+ : \citation{A1
+ :             ,A1,a1}
+I'm skipping whatever remains of this command
+Case mismatch error between cite keys K0 and k0
+---line 115 of file doc.aux
+ : \citation{K0
+ :             ,K0,book1,Knuth:84}
+I'm skipping whatever remains of this command
+Case mismatch error between cite keys A1 and a1
+---line 121 of file doc.aux
+ : \citation{Knuth:84,A1
+ :                      ,book1}
+I'm skipping whatever remains of this command
+Case mismatch error between cite keys K0 and k0
+---line 127 of file doc.aux
+ : \citation{K0
+ :             ,A1,nokey}
+I'm skipping whatever remains of this command
+Case mismatch error between cite keys A1 and a1
+---line 129 of file doc.aux
+ : \citation{A1
+ :             ,Knuth:84,Knuth:84,nokey}
+I'm skipping whatever remains of this command
+Case mismatch error between cite keys K0 and k0
+---line 135 of file doc.aux
+ : \citation{K0
+ :             ,proc1}
+I'm skipping whatever remains of this command
+Case mismatch error between cite keys K0 and k0
+---line 139 of file doc.aux
+ : \citation{nokey,nokey,nokey,K0
+ :                               }
+I'm skipping whatever remains of this command
+Case mismatch error between cite keys K0 and k0
+---line 141 of file doc.aux
+ : \citation{K0
+ :             ,proc1,a1,Knuth:84}
+I'm skipping whatever remains of this command
+Case mismatch error between cite keys K0 and k0
+---line 149 of file doc.aux
+ : \citation{K0
+ :             ,K0,proc1,nokey}
+I'm skipping whatever remains of this command
+Case mismatch error between cite keys A1 and a1
+---line 155 of file doc.aux
+ : \citation{A1
+ :             ,book1,book1}
+I'm skipping whatever remains of this command
+Case mismatch error between cite keys A1 and a1
+---line 159 of file doc.aux
+ : \citation{A1
+ :             ,proc1}
+I'm skipping whatever remains of this command
+Case mismatch error between cite keys K0 and k0
+---line 163 of file doc.aux
+ : \citation{Knuth:84,K0
+ :                      ,nokey,book1}
+I'm skipping whatever remains of this command
+Case mismatch error between cite keys K0 and k0
+---line 165 of file doc.aux
+ : \citation{K0
+ :             }
+I'm skipping whatever remains of this command
+Case mismatch error between cite keys K0 and k0
+---line 167 of file doc.aux
+ : \citation{K0
+ :             ,Knuth:84,k0}
+I'm skipping whatever remains of this command
+Case mismatch error between cite keys A1 and a1
+---line 175 of file doc.aux
+ : \citation{a1,proc1,k0,A1
+ :                         }
+I'm skipping whatever remains of this command
+Case mismatch error between cite keys K0 and k0
+---line 177 of file doc.aux
+ : \citation{nokey,K0
+ :                   ,book1}
+I'm skipping whatever remains of this command
+Case mismatch error between cite keys K0 and k0
+---line 183 of file doc.aux
+ : \citation{K0
+ :             }
+I'm skipping whatever remains of this command
+Case mismatch error between cite keys A1 and a1
+---line 187 of file doc.aux
+ : \citation{a1,k0,A1
+ :                   }
+I'm skipping whatever remains of this command
+Case mismatch error between cite keys A1 and a1
+---line 189 of file doc.aux
+ : \citation{A1
+ :             ,proc1}
+I'm skipping whatever remains of this command
+Case mismatch error between cite keys A1 and a1
+---line 191 of file doc.aux
+ : \citation{A1
+ :             ,book1}
+I'm skipping whatever remains of this command
+Case mismatch error between cite keys A1 and a1
+---line 193 of file doc.aux
+ : \citation{A1
+ :             ,book1}
+I'm skipping whatever remains of this command
+Case mismatch error between cite keys A1 and a1
+---line 195 of file doc.aux
+ : \citation{A1
+ :             ,book1,K0,nokey}
+I'm skipping whatever remains of this command
+Case mismatch error between cite keys K0 and k0
+---line 197 of file doc.aux
+ : \citation{proc1,K0
+ :                   }
+I'm skipping whatever remains of this command
+Case mismatch error between cite keys A1 and a1
+---line 199 of file doc.aux
+ : \citation{A1
+ :             ,proc1}
+I'm skipping whatever remains of this command
+Case mismatch error between cite keys A1 and a1
+---line 203 of file doc.aux
+ : \citation{proc1,book1,Knuth:84,A1
+ :                                  }
+I'm skipping whatever remains of this command
+Case mismatch error between cite keys A1 and a1
+---line 207 of file doc.aux
+ : \citation{A1
+ :             ,Knuth:84,a1,book1}
+I'm skipping whatever remains of this command
+Case mismatch error between cite keys K0 and k0
+---line 209 of file doc.aux
+ : \citation{Knuth:84,K0
+ :                      }
+I'm skipping whatever remains of this command
+Case mismatch error between cite keys A1 and a1
+---line 211 of file doc.aux
+ : \citation{nokey,A1
+ :                   ,proc1,K0}
+I'm skipping whatever remains of this command
+Case mismatch error between cite keys K0 and k0
+---line 213 of file doc.aux
+ : \citation{proc1,proc1,K0
+ :                         ,book1}
+I'm skipping whatever remains of this command
+Case mismatch error between cite keys A1 and a1
+---line 223 of file doc.aux
+ : \citation{A1
+ :             ,A1}
+I'm skipping whatever remains of this command
+Case mismatch error between cite keys K0 and k0
+---line 229 of file doc.aux
+ : \citation{K0
+ :             ,proc1}
+I'm skipping whatever remains of this command
+Case mismatch error between cite keys K0 and k0
+---line 233 of file doc.aux
+ : \citation{K0
+ :             ,k0,k0}
+I'm skipping whatever remains of this command
+Case mismatch error between cite keys A1 and a1
+---line 235 of file doc.aux
+ : \citation{a1,A1
+ :                }
+I'm skipping whatever remains of this command
+Case mismatch error between cite keys K0 and k0
+---line 237 of file doc.aux
+ : \citation{book1,Knuth:84,K0
+ :                            }
+I'm skipping whatever remains of this command
+Case mismatch error between cite keys K0 and k0
+---line 243 of file doc.aux
+ : \citation{K0
+ :             ,a1}
+I'm skipping whatever remains of this command
+Case mismatch error between cite keys K0 and k0
+---line 245 of file doc.aux
+ : \citation{book1,K0
+ :                   }
+I'm skipping whatever remains of this command
+Case mismatch error between cite keys K0 and k0
+---line 247 of file doc.aux
+ : \citation{K0
+ :             ,nokey,nokey}
+I'm skipping whatever remains of this command
+Case mismatch error between cite keys A1 and a1
+---line 251 of file doc.aux
+ : \citation{k0,A1
+ :                ,Knuth:84}
+I'm skipping whatever remains of this command
+Case mismatch error between cite keys A1 and a1
+---line 255 of file doc.aux
+ : \citation{proc1,nokey,Knuth:84,A1
+ :                                  }
+I'm skipping whatever remains of this command
+Case mismatch error between cite keys K0 and k0
+---line 257 of file doc.aux
+ : \citation{K0
+ :             ,A1,a1,A1}
+I'm skipping whatever remains of this command
+Case mismatch error between cite keys K0 and k0
+---line 263 of file doc.aux
+ : \citation{K0
+ :             ,a1,k0}
+I'm skipping whatever remains of this command
+Case mismatch error between cite keys A1 and a1
+---line 265 of file doc.aux
+ : \citation{A1
+ :             ,A1}
+I'm skipping whatever remains of this command
+Case mismatch error between cite keys A1 and a1
+---line 267 of file doc.aux
+ : \citation{A1
+ :             ,K0,a1}
+I'm skipping whatever remains of this command
+Case mismatch error between cite keys A1 and a1
+---line 271 of file doc.aux
+ : \citation{book1,A1
+ :                   }
+I'm skipping whatever remains of this command
+Case mismatch error between cite keys A1 and a1
+---line 273 of file doc.aux
+ : \citation{a1,A1
+ :                ,a1,nokey}
+I'm skipping whatever remains of this command
+Case mismatch error between cite keys A1 and a1
+---line 275 of file doc.aux
+ : \citation{Knuth:84,A1
+ :                      ,proc1}
+I'm skipping whatever remains of this command
+Case mismatch error between cite keys A1 and a1
+---line 279 of file doc.aux
+ : \citation{A1
+ :             ,proc1,proc1,k0}
+I'm skipping whatever remains of this command
+Case mismatch error between cite keys A1 and a1
+---line 285 of file doc.aux
+ : \citation{A1
+ :             ,A1,Knuth:84}
+I'm skipping whatever remains of this command
+Case mismatch error between cite keys K0 and k0
+---line 289 of file doc.aux
+ : \citation{K0
+ :             }
+I'm skipping whatever remains of this command
+Case mismatch error between cite keys A1 and a1
+---line 293 of file doc.aux
+ : \citation{A1
+ :             ,K0,nokey,K0}
+I'm skipping whatever remains of this command
+Case mismatch error between cite keys A1 and a1
+---line 295 of file doc.aux
+ : \citation{a1,nokey,nokey,A1
+ :                            }
+I'm skipping whatever remains of this command
+Case mismatch error between cite keys K0 and k0
+---line 297 of file doc.aux
+ : \citation{K0
+ :             ,A1}
+I'm skipping whatever remains of this command
+Case mismatch error between cite keys A1 and a1
+---line 299 of file doc.aux
+ : \citation{book1,book1,A1
+ :                         }
+I'm skipping whatever remains of this command
+Case mismatch error between cite keys K0 and k0
+---line 301 of file doc.aux
+ : \citation{k0,K0
+ :                ,a1}
+I'm skipping whatever remains of this command
+Case mismatch error between cite keys A1 and a1
+---line 315 of file doc.aux
+ : \citation{A1
+ :             ,A1,nokey,book1}
+I'm skipping whatever remains of this command
+Case mismatch error between cite keys A1 and a1
+---line 319 of file doc.aux
+ : \citation{A1
+ :             }
+I'm skipping whatever remains of this command
+Case mismatch error between cite keys A1 and a1
+---line 321 of file doc.aux
+ : \citation{A1
+ :             ,nokey}
+I'm skipping whatever remains of this command
+Case mismatch error between cite keys A1 and a1
+---line 325 of file doc.aux
+ : \citation{nokey,book1,A1
+ :                         ,a1}
+I'm skipping whatever remains of this command
+Case mismatch error between cite keys K0 and k0
+---line 331 of file doc.aux
+ : \citation{K0
+ :             ,A1,k0}
+I'm skipping whatever remains of this command
+Case mismatch error between cite keys K0 and k0
+---line 335 of file doc.aux
+ : \citation{K0
+ :             ,A1,nokey}
+I'm skipping whatever remains of this command
+Case mismatch error between cite keys K0 and k0
+---line 337 of file doc.aux
+ : \citation{book1,book1,K0
+ :                         ,proc1}
+I'm skipping whatever remains of this command
+Case mismatch error between cite keys A1 and a1
+---line 343 of file doc.aux
+ : \citation{A1
+ :             ,A1,k0,A1}
+I'm skipping whatever remains of this command
+Case mismatch error between cite keys K0 and k0
+---line 349 of file doc.aux
+ : \citation{k0,K0
+ :                }
+I'm skipping whatever remains of this command
+Case mismatch error between cite keys K0 and k0
+---line 351 of file doc.aux
+ : \citation{proc1,K0
+ :                   ,a1}
+I'm skipping whatever remains of this command
+Case mismatch error between cite keys K0 and k0
+---line 361 of file doc.aux
+ : \citation{K0
+ :             ,a1,Knuth:84}
+I'm skipping whatever remains of this command
+Case mismatch error between cite keys A1 and a1
+---line 363 of file doc.aux
+ : \citation{A1
+ :             ,proc1,book1}
+I'm skipping whatever remains of this command
+Case mismatch error between cite keys K0 and k0
+---line 365 of file doc.aux
+ : \citation{K0
+ :             ,proc1}
+I'm skipping whatever remains of this command
+Case mismatch error between cite keys A1 and a1
+---line 367 of file doc.aux
+ : \citation{A1
+ :             ,A1}
+I'm skipping whatever remains of this command
+Case mismatch error between cite keys A1 and a1
+---line 369 of file doc.aux
+ : \citation{Knuth:84,A1
+ :                      }
+I'm skipping whatever remains of this command
+Case mismatch error between cite keys K0 and k0
+---line 377 of file doc.aux
+ : \citation{book1,K0
+ :                   }
+I'm skipping whatever remains of this command
+Case mismatch error between cite keys K0 and k0
+---line 383 of file doc.aux
+ : \citation{K0
+ :             }
+I'm skipping whatever remains of this command
+Case mismatch error between cite keys K0 and k0
+---line 385 of file doc.aux
+ : \citation{nokey,K0
+ :                   ,Knuth:84}
+I'm skipping whatever remains of this command
+Case mismatch error between cite keys K0 and k0
+---line 387 of file doc.aux
+ : \citation{K0
+ :             }
+I'm skipping whatever remains of this command
+Case mismatch error between cite keys A1 and a1
+---line 391 of file doc.aux
+ : \citation{proc1,A1
+ :                   ,nokey,K0}
+I'm skipping whatever remains of this command
+Case mismatch error between cite keys K0 and k0
+---line 393 of file doc.aux
+ : \citation{K0
+ :             ,k0}
+I'm skipping whatever remains of this command
+Case mismatch error between cite keys K0 and k0
+---line 395 of file doc.aux
+ : \citation{K0
+ :             ,a1,a1}
+I'm skipping whatever remains of this command
+Case mismatch error between cite keys A1 and a1
+---line 401 of file doc.aux
+ : \citation{a1,A1
+ :                }
+I'm skipping whatever remains of this command
+Case mismatch error between cite keys A1 and a1
+---line 407 of file doc.aux
+ : \citation{A1
+ :             }
+I'm skipping whatever remains of this command
+Case mismatch error between cite keys A1 and a1
+---line 409 of file doc.aux
+ : \citation{A1
+ :             ,book1}
+I'm skipping whatever remains of this command
+Case mismatch error between cite keys K0 and k0
+---line 411 of file doc.aux
+ : \citation{K0
+ :             ,k0,A1}
+I'm skipping whatever remains of this command
+Case mismatch error between cite keys K0 and k0
+---line 419 of file doc.aux
+ : \citation{K0
+ :             ,proc1,Knuth:84}
+I'm skipping whatever remains of this command
+Case mismatch error between cite keys K0 and k0
+---line 423 of file doc.aux
+ : \citation{a1,K0
+ :                ,A1,proc1}
+I'm skipping whatever remains of this command
+Case mismatch error between cite keys K0 and k0
+---line 425 of file doc.aux
+ : \citation{Knuth:84,K0
+ :                      ,Knuth:84}
+I'm skipping whatever remains of this command
+Case mismatch error between cite keys K0 and k0
+---line 427 of file doc.aux
+ : \citation{Knuth:84,K0
+ :                      ,K0}
+I'm skipping whatever remains of this command
+Case mismatch error between cite keys A1 and a1
+---line 437 of file doc.aux
+ : \citation{A1
+ :             ,a1}
+I'm skipping whatever remains of this command
+Case mismatch error between cite keys A1 and a1
+---line 439 of file doc.aux
+ : \citation{A1
+ :             }
+I'm skipping whatever remains of this command
+Case mismatch error between cite keys K0 and k0
+---line 447 of file doc.aux
+ : \citation{K0
+ :             ,a1}
+I'm skipping whatever remains of this command
+Case mismatch error between cite keys A1 and a1
+---line 449 of file doc.aux
+ : \citation{a1,a1,A1
+ :                   }
+I'm skipping whatever remains of this command
+Case mismatch error between cite keys K0 and k0
+---line 455 of file doc.aux
+ : \citation{K0
+ :             ,K0,Knuth:84,K0}
+I'm skipping whatever remains of this command
+Case mismatch error between cite keys K0 and k0
+---line 457 of file doc.aux
+ : \citation{book1,K0
+ :                   ,Knuth:84}
+I'm skipping whatever remains of this command
+Case mismatch error between cite keys A1 and a1
+---line 459 of file doc.aux
+ : \citation{a1,A1
+ :                ,book1}
+I'm skipping whatever remains of this command
+Case mismatch error between cite keys A1 and a1
+---line 461 of file doc.aux
+ : \citation{A1
+ :             ,a1,K0}
+I'm skipping whatever remains of this command
+Case mismatch error between cite keys K0 and k0
+---line 463 of file doc.aux
+ : \citation{k0,K0
+ :                ,K0}
+I'm skipping whatever remains of this command
+Case mismatch error between cite keys A1 and a1
+---line 465 of file doc.aux
+ : \citation{A1
+ :             ,proc1,a1,nokey}
+I'm skipping whatever remains of this command
+Case mismatch error between cite keys A1 and a1
+---line 469 of file doc.aux
+ : \citation{k0,A1
+ :                ,Knuth:84}
+I'm skipping whatever remains of this command
+Case mismatch error between cite keys A1 and a1
+---line 475 of file doc.aux
+ : \citation{A1
+ :             ,k0}
+I'm skipping whatever remains of this command
+Case mismatch error between cite keys A1 and a1
+---line 477 of file doc.aux
+ : \citation{A1
+ :             ,Knuth:84,book1}
+I'm skipping whatever remains of this command
+Case mismatch error between cite keys A1 and a1
+---line 481 of file doc.aux
+ : \citation{A1
+ :             ,Knuth:84}
+I'm skipping whatever remains of this command
+Case mismatch error between cite keys K0 and k0
+---line 485 of file doc.aux
+ : \citation{proc1,Knuth:84,K0
+ :                            }
+I'm skipping whatever remains of this command
+Case mismatch error between cite keys K0 and k0
+---line 487 of file doc.aux
+ : \citation{K0
+ :             ,K0}
+I'm skipping whatever remains of this command
+Case mismatch error between cite keys A1 and a1
+---line 491 of file doc.aux
+ : \citation{A1
+ :             ,book1,proc1}
+I'm skipping whatever remains of this command
+Case mismatch error between cite keys K0 and k0
+---line 493 of file doc.aux
+ : \citation{book1,a1,K0
+ :                      ,proc1}
+I'm skipping whatever remains of this command
+Case mismatch error between cite keys K0 and k0
+---line 495 of file doc.aux
+ : \citation{book1,K0
+ :                   ,k0}
+I'm skipping whatever remains of this command
+Case mismatch error between cite keys K0 and k0
+---line 497 of file doc.aux
+ : \citation{a1,K0
+ :                ,K0}
+I'm skipping whatever remains of this command
+Case mismatch error between cite keys K0 and k0
+---line 501 of file doc.aux
+ : \citation{K0
+ :             ,proc1,k0,Knuth:84}
+I'm skipping whatever remains of this command
+Case mismatch error between cite keys K0 and k0
+---line 505 of file doc.aux
+ : \citation{Knuth:84,proc1,proc1,K0
+ :                                  }
+I'm skipping whatever remains of this command
+Case mismatch error between cite keys A1 and a1
+---line 507 of file doc.aux
+ : \citation{A1
+ :             ,K0,book1,proc1}
+I'm skipping whatever remains of this command
+Case mismatch error between cite keys A1 and a1
+---line 509 of file doc.aux
+ : \citation{Knuth:84,A1
+ :                      ,A1,K0}
+I'm skipping whatever remains of this command
+Case mismatch error between cite keys K0 and k0
+---line 513 of file doc.aux
+ : \citation{proc1,K0
+ :                   ,book1}
+I'm skipping whatever remains of this command
+Case mismatch error between cite keys K0 and k0
+---line 519 of file doc.aux
+ : \citation{K0
+ :             ,K0,nokey}
+I'm skipping whatever remains of this command
+Case mismatch error between cite keys A1 and a1
+---line 521 of file doc.aux
+ : \citation{Knuth:84,k0,A1
+ :                         ,book1}
+I'm skipping whatever remains of this command
+Case mismatch error between cite keys K0 and k0
+---line 523 of file doc.aux
+ : \citation{Knuth:84,K0
+ :                      }
+I'm skipping whatever remains of this command
+Case mismatch error between cite keys A1 and a1
+---line 529 of file doc.aux
+ : \citation{k0,k0,book1,A1
+ :                         }
+I'm skipping whatever remains of this command
+Case mismatch error between cite keys K0 and k0
+---line 539 of file doc.aux
+ : \citation{K0
+ :             ,Knuth:84,k0,proc1}
+I'm skipping whatever remains of this command
+Case mismatch error between cite keys A1 and a1
+---line 545 of file doc.aux
+ : \citation{proc1,A1
+ :                   }
+I'm skipping whatever remains of this command
+Case mismatch error between cite keys K0 and k0
+---line 547 of file doc.aux
+ : \citation{K0
+ :             }
+I'm skipping whatever remains of this command
+Case mismatch error between cite keys K0 and k0
+---line 551 of file doc.aux
+ : \citation{k0,Knuth:84,book1,K0
+ :                               }
+I'm skipping whatever remains of this command
+Case mismatch error between cite keys K0 and k0
+---line 553 of file doc.aux
+ : \citation{K0
+ :             }
+I'm skipping whatever remains of this command
+Case mismatch error between cite keys A1 and a1
+---line 555 of file doc.aux
+ : \citation{A1
+ :             ,nokey,book1,k0}
+I'm skipping whatever remains of this command
+Case mismatch error between cite keys A1 and a1
+---line 557 of file doc.aux
+ : \citation{Knuth:84,A1
+ :                      ,k0,nokey}
+I'm skipping whatever remains of this command
+Case mismatch error between cite keys A1 and a1
+---line 563 of file doc.aux
+ : \citation{A1
+ :             ,Knuth:84,k0}
+I'm skipping whatever remains of this command
+Case mismatch error between cite keys K0 and k0
+---line 567 of file doc.aux
+ : \citation{a1,K0
+ :                ,book1,nokey}
+I'm skipping whatever remains of this command
+Case mismatch error between cite keys K0 and k0
+---line 571 of file doc.aux
+ : \citation{K0
+ :             ,K0}
+I'm skipping whatever remains of this command
+Case mismatch error between cite keys K0 and k0
+---line 575 of file doc.aux
+ : \citation{K0
+ :             ,A1,A1}
+I'm skipping whatever remains of this command
+Case mismatch error between cite keys A1 and a1
+---line 577 of file doc.aux
+ : \citation{Knuth:84,A1
+ :                      ,K0,A1}
+I'm skipping whatever remains of this command
+Case mismatch error between cite keys A1 and a1
+---line 579 of file doc.aux
+ : \citation{A1
+ :             ,K0}
+I'm skipping whatever remains of this command
+Case mismatch error between cite keys A1 and a1
+---line 581 of file doc.aux
+ : \citation{k0,A1
+ :                }
+I'm skipping whatever remains of this command
+Case mismatch error between cite keys A1 and a1
+---line 583 of file doc.aux
+ : \citation{A1
+ :             ,Knuth:84}
+I'm skipping whatever remains of this command
+Case mismatch error between cite keys K0 and k0
+---line 589 of file doc.aux
+ : \citation{K0
+ :             ,k0,book1}
+I'm skipping whatever remains of this command
+Case mismatch error between cite keys K0 and k0
+---line 593 of file doc.aux
+ : \citation{proc1,Knuth:84,nokey,K0
+ :                                  }
+I'm skipping whatever remains of this command
+Case mismatch error between cite keys K0 and k0
+---line 595 of file doc.aux
+ : \citation{k0,Knuth:84,K0
+ :                         }
+I'm skipping whatever remains of this command
+Case mismatch error between cite keys A1 and a1
+---line 597 of file doc.aux
+ : \citation{Knuth:84,A1
+ :                      }
+I'm skipping whatever remains of this command
+Case mismatch error between cite keys K0 and k0
+---line 601 of file doc.aux
+ : \citation{nokey,K0
+ :                   ,K0}
+I'm skipping whatever remains of this command
+Case mismatch error between cite keys K0 and k0
+---line 603 of file doc.aux
+ : \citation{k0,book1,K0
+ :                      ,proc1}
+I'm skipping whatever remains of this command
+Case mismatch error between cite keys A1 and a1
+---line 609 of file doc.aux
+ : \citation{book1,k0,Knuth:84,A1
+ :                               }
+I'm skipping whatever remains of this command
+Case mismatch error between cite keys A1 and a1
+---line 613 of file doc.aux
+ : \citation{A1
+ :             }
+I'm skipping whatever remains of this command
+Case mismatch error between cite keys K0 and k0
+---line 617 of file doc.aux
+ : \citation{K0
+ :             ,k0,K0,k0}
+I'm skipping whatever remains of this command
+Case mismatch error between cite keys A1 and a1
+---line 621 of file doc.aux
+ : \citation{A1
+ :             }
+I'm skipping whatever remains of this command
+Case mismatch error between cite keys A1 and a1
+---line 623 of file doc.aux
+ : \citation{A1
+ :             ,a1,a1}
+I'm skipping whatever remains of this command
+Case mismatch error between cite keys A1 and a1
+---line 625 of file doc.aux
+ : \citation{A1
+ :             ,K0,book1}
+I'm skipping whatever remains of this command
+Case mismatch error between cite keys A1 and a1
+---line 631 of file doc.aux
+ : \citation{Knuth:84,A1
+ :                      ,a1}
+I'm skipping whatever remains of this command
+Case mismatch error between cite keys A1 and a1
+---line 633 of file doc.aux
+ : \citation{A1
+ :             ,book1}
+I'm skipping whatever remains of this command
+Case mismatch error between cite keys A1 and a1
+---line 635 of file doc.aux
+ : \citation{A1
+ :             ,K0}
+I'm skipping whatever remains of this command
+Case mismatch error between cite keys A1 and a1
+---line 637 of file doc.aux
+ : \citation{A1
+ :             }
+I'm skipping whatever remains of this command
+Case mismatch error between cite keys A1 and a1
+---line 639 of file doc.aux
+ : \citation{A1
+ :             ,K0,a1,proc1}
+I'm skipping whatever remains of this command
+Case mismatch error between cite keys A1 and a1
+---line 643 of file doc.aux
+ : \citation{book1,proc1,A1
+ :                         }
+I'm skipping whatever remains of this command
+Case mismatch error between cite keys A1 and a1
+---line 647 of file doc.aux
+ : \citation{book1,book1,A1
+ :                         ,book1}
+I'm skipping whatever remains of this command
+Case mismatch error between cite keys A1 and a1
+---line 651 of file doc.aux
+ : \citation{book1,k0,A1
+ :                      ,A1}
+I'm skipping whatever remains of this command
+Case mismatch error between cite keys K0 and k0
+---line 659 of file doc.aux
+ : \citation{a1,Knuth:84,K0
+ :                         ,book1}
+I'm skipping whatever remains of this command
+Case mismatch error between cite keys A1 and a1
+---line 661 of file doc.aux
+ : \citation{A1
+ :             ,a1,proc1}
+I'm skipping whatever remains of this command
+Case mismatch error between cite keys A1 and a1
+---line 663 of file doc.aux
+ : \citation{book1,A1
+ :                   ,proc1,A1}
+I'm skipping whatever remains of this command
+Case mismatch error between cite keys A1 and a1
+---line 665 of file doc.aux
+ : \citation{A1
+ :             ,Knuth:84,k0,proc1}
+I'm skipping whatever remains of this command
+Case mismatch error between cite keys A1 and a1
+---line 669 of file doc.aux
+ : \citation{A1
+ :             ,K0,A1}
+I'm skipping whatever remains of this command
+Case mismatch error between cite keys A1 and a1
+---line 673 of file doc.aux
+ : \citation{proc1,A1
+ :                   }
+I'm skipping whatever remains of this command
+Case mismatch error between cite keys A1 and a1
+---line 675 of file doc.aux
+ : \citation{A1
+ :             ,a1}
+I'm skipping whatever remains of this command
+Case mismatch error between cite keys A1 and a1
+---line 679 of file doc.aux
+ : \citation{book1,a1,A1
+ :                      ,a1}
+I'm skipping whatever remains of this command
+Case mismatch error between cite keys K0 and k0
+---line 681 of file doc.aux
+ : \citation{proc1,a1,K0
+ :                      ,A1}
+I'm skipping whatever remains of this command
+Case mismatch error between cite keys K0 and k0
+---line 693 of file doc.aux
+ : \citation{K0
+ :             ,proc1,book1,book1}
+I'm skipping whatever remains of this command
+Case mismatch error between cite keys K0 and k0
+---line 695 of file doc.aux
+ : \citation{Knuth:84,K0
+ :                      ,nokey}
+I'm skipping whatever remains of this command
+Case mismatch error between cite keys A1 and a1
+---line 703 of file doc.aux
+ : \citation{A1
+ :             ,a1}
+I'm skipping whatever remains of this command
+Case mismatch error between cite keys K0 and k0
+---line 705 of file doc.aux
+ : \citation{K0
+ :             ,nokey,proc1,Knuth:84}
+I'm skipping whatever remains of this command
+Case mismatch error between cite keys K0 and k0
+---line 707 of file doc.aux
+ : \citation{K0
+ :             ,A1,book1}
+I'm skipping whatever remains of this command
+Case mismatch error between cite keys A1 and a1
+---line 709 of file doc.aux
+ : \citation{A1
+ :             }
+I'm skipping whatever remains of this command
+The style file: plain.bst
+I couldn't open database file nofile.bib
+---line 715 of file doc.aux
+ : \bibdata{db0,db1,db2,nofile
+ :                            }
+I'm skipping whatever remains of this command
+Database file #1: db0.bib
+Warning--entry type for "proc1" isn't style-file defined
+--line 8 of file db0.bib
+Illegal end of database file---line 24 of file db0.bib
+ : }
+ :  
+I'm skipping whatever remains of this entry
+Database file #2: db1.bib
+Repeated entry---line 5 of file db1.bib
+ : @conference{Knuth:84
+ :                     ,
+I'm skipping whatever remains of this entry
+Repeated entry---line 15 of file db1.bib
+ : @inbook{proc1
+ :              ,
+I'm skipping whatever remains of this entry
+Repeated entry---line 25 of file db1.bib
+ : @online{a1
+ :           ,
+I'm skipping whatever remains of this entry
+I was expecting a `,' or a `}'---line 34 of file db1.bib
+ :   
+ :   edition = {programming Ångström ? art multi-word {L}aTeX : -- multi-word {\ss} xéy note}
+(Error may have been on previous line)
+I'm skipping whatever remains of this entry
+Database file #3: db2.bib
+Repeated entry---line 4 of file db2.bib
+ : @incollection{k0
+ :                 ,
+I'm skipping whatever remains of this entry
+Repeated entry---line 11 of file db2.bib
+ : @misc{Knuth:84
+ :               ,
+I'm skipping whatever remains of this entry
+Repeated entry---line 17 of file db2.bib
+ : @conference{book1
+ :                  ,
+I'm skipping whatever remains of this entry
+You're missing an entry type---line 23 of file db2.bib
+ : @
+ :  {x}
+I'm skipping whatever remains of this entry
+Warning--I didn't find a database entry for "nokey"
+Warning--to sort, need author or key in k0
+Warning--to sort, need author or key in proc1
+Warning--to sort, need author or key in book1
+Warning--empty title in book1
+Warning--empty author in k0
+Warning--empty title in k0
+Warning--empty booktitle in k0
+Warning--there's a number but no series in k0
+Warning--empty publisher in k0
+Warning--empty title in a1
+Warning--empty publisher in Knuth:84
+Warning--there's a month but no year in Knuth:84
+You've used 5 entries,
+            2118 wiz_defined-function locations,
+            527 strings with 4582 characters,
+and the built_in function-call counts, 917 in all, are:
+= -- 70
+> -- 22
+< -- 1
++ -- 12
+- -- 6
+* -- 65
+:= -- 116
+add.period$ -- 8
+call.type$ -- 5
+change.case$ -- 15
+chr.to.int$ -- 0
+cite$ -- 17
+duplicate$ -- 49
+empty$ -- 105
+format.name$ -- 6
+if$ -- 194
+int.to.chr$ -- 0
+int.to.str$ -- 5
+missing$ -- 3
+newline$ -- 21
+num.names$ -- 2
+pop$ -- 45
+preamble$ -- 2
+purify$ -- 14
+quote$ -- 0
+skip$ -- 33
+stack$ -- 0
+substring$ -- 26
+swap$ -- 5
+text.length$ -- 1
+text.prefix$ -- 0
+top$ -- 0
+type$ -- 18
+warning$ -- 12
+while$ -- 2
+width$ -- 6
+write$ -- 31
+(There were 197 error messages)

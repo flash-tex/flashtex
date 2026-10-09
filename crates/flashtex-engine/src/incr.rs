@@ -2682,6 +2682,7 @@ impl Session {
                 content: None,
                 closed_at: None,
                 written_before: false,
+                stamp: None,
             });
             j.mark_seen(path);
         }
@@ -2702,6 +2703,7 @@ impl Session {
                     content,
                     closed_at: None,
                     written_before: false,
+                    stamp: None,
                 });
                 j.mark_seen(path);
                 open.push(path.clone());
@@ -4086,7 +4088,13 @@ impl Session {
                 }
                 _ => now.as_deref().map(|n| hash128(n)) == Some(f.hash),
             };
-            if same {
+            // (`\pdffilemoddate`'s read: the time changing alone changes it;
+            // with the same content, an edit of nothing at the file's end,
+            // which every whole read has consumed)
+            let moved = f
+                .stamp
+                .is_some_and(|t| system::mtime_secs(&f.path) != Some(t));
+            if same && !moved {
                 if let Some(s) = StatSig::of(&f.path) {
                     f.stat = s;
                 }
@@ -5372,7 +5380,7 @@ impl Session {
             Ok(key) => {
                 self.s0 = Some(host::S0 { id, key });
                 self.ck_pages.insert(id, 0);
-                let open: Vec<String> = rec
+                let mut open: Vec<String> = rec
                     .files
                     .iter()
                     .filter_map(|f| match &f.stream {
@@ -5380,6 +5388,13 @@ impl Session {
                         _ => None,
                     })
                     .collect();
+                // (and the whole reads the key leaves to the journal)
+                let arm = g.layer().arm_reads;
+                for (i, f) in j.files[..rec.reads.0.min(j.files.len())].iter().enumerate() {
+                    if host::whole_after_arm(arm, i, f) && !open.contains(&f.path) {
+                        open.push(f.path.clone());
+                    }
+                }
                 self.key_cover = (rec.reads.0, open);
             }
             Err(e) => eprintln!("flashtex-host: no S0: {e}"),
