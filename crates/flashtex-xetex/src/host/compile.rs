@@ -56,6 +56,9 @@ pub struct Job {
     pub external_tools: Option<String>,
     pub buffers: Vec<(String, String)>,
     pub edits: Vec<(String, u64, u64, String)>,
+    /// TeX code run before the main file on the first line (`[fonts]`,
+    /// `fonts.rs`); empty: the main file's name alone.
+    pub preamble: String,
 }
 
 fn parse_key(h: &str) -> Option<[u8; 32]> {
@@ -154,6 +157,7 @@ impl Job {
             external_tools: j.str_field("external_tools").map(String::from),
             buffers,
             edits,
+            preamble: String::new(),
         })
     }
 
@@ -200,7 +204,11 @@ impl Job {
             "restricted" => a.push("-shell-restricted".into()),
             _ => {}
         }
-        a.push(self.main.clone());
+        if self.preamble.is_empty() {
+            a.push(self.main.clone());
+        } else {
+            a.push(format!("{}\\input{{{}}}", self.preamble, self.main));
+        }
         a
     }
 }
