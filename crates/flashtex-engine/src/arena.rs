@@ -1974,14 +1974,10 @@ impl Arena {
         cs.sort_unstable();
         let live = |c: u32| core.chunk_ptr(c as usize) as *const u64;
         let bufs = rewound(core.nchunks, &cs, &live, &core.logs[k..]);
-        let mut over: Vec<*const u64> = vec![std::ptr::null(); core.nchunks];
-        for (i, &c) in cs.iter().enumerate() {
-            over[c as usize] = bufs[i * CHUNK_WORDS..].as_ptr();
-        }
         Ok(View {
             arena: self,
-            over,
-            _bufs: bufs,
+            cs,
+            bufs,
         })
     }
 
@@ -2498,22 +2494,22 @@ impl ChunkDiff {
 /// The space at a checkpoint (`Arena::view_at`).
 pub struct View<'a> {
     arena: &'a Arena,
-    over: Vec<*const u64>,
-    /// Where `over` points.
-    _bufs: Vec<u64>,
+    /// The chunks that differ from the live space, sorted; chunk `cs[i]`'s
+    /// words are `bufs[i * CHUNK_WORDS..]`. (Not a pointer per chunk of
+    /// the space: that was a 4 MB vector, freed after each S₀ save and
+    /// then kept by the macOS allocator; lane MEM-MODES.)
+    cs: Vec<u32>,
+    bufs: Vec<u64>,
 }
 
 impl View<'_> {
     pub fn chunk(&self, c: usize) -> &[u8] {
-        let p = self.over[c];
-        if p.is_null() {
-            let w = self.arena.chunk(c);
-            // SAFETY: a chunk of CHUNK_WORDS words viewed as bytes.
-            unsafe { std::slice::from_raw_parts(w.as_ptr() as *const u8, CHUNK_BYTES) }
-        } else {
-            // SAFETY: a chunk of `_bufs`, alive and unchanged with `self`.
-            unsafe { std::slice::from_raw_parts(p as *const u8, CHUNK_BYTES) }
-        }
+        let w: &[u64] = match self.cs.binary_search(&(c as u32)) {
+            Ok(i) => &self.bufs[i * CHUNK_WORDS..(i + 1) * CHUNK_WORDS],
+            Err(_) => self.arena.chunk(c),
+        };
+        // SAFETY: a chunk of CHUNK_WORDS words viewed as bytes.
+        unsafe { std::slice::from_raw_parts(w.as_ptr() as *const u8, CHUNK_BYTES) }
     }
 }
 
