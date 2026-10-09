@@ -2433,3 +2433,131 @@ fn a_kept_page_never_names_a_moved_column() {
     let _ = c.bye();
     let _ = std::fs::remove_dir_all(&base);
 }
+
+/// Review of #1739: a host opened from a persisted S₀ (`--s0-cache`) has
+/// no checkpoint before S₀, so the whole reads between `\document`'s start
+/// and the anchor (`host::whole_after_arm`, left out of S₀'s key) are
+/// checked when it opens (`Key::check_arm`). A `begindocument/before` hook
+/// keeps (A) the `.aux`'s size, a `\label` added; (B) the main file's size,
+/// a letter typed; (D) a file's date, the file touched; (F) a file's MD5, the
+/// file edited -- each with no host running. A new host from the cache
+/// equals a scratch compile; for B, D and F it does not open the stored S₀.
+#[test]
+fn a_persisted_s0_checks_the_reads_at_the_document_start() {
+    if find_texlive_bin().is_none() {
+        common::no_texlive();
+        return;
+    }
+    let body: String = (0..14)
+        .map(|i| {
+            format!(
+                "Paragraph {i} with enough words to fill a few lines of the page, so that \
+                 the document ships more than one page; math $a^{i}+b$.\n\n"
+            )
+        })
+        .collect();
+    let doc = |hook: &str, extra: &str| {
+        format!(
+            "\\documentclass{{article}}\n\\AddToHook{{begindocument/before}}{{{hook}}}\n\
+             \\begin{{document}}\n\\section{{One}}\\label{{one}}\n{body}{extra}\
+             Kept: \\x. See~\\ref{{one}}.\n\\end{{document}}\n"
+        )
+    };
+    let t0 = std::time::UNIX_EPOCH + Duration::from_secs(1_600_000_000);
+    let t1 = std::time::UNIX_EPOCH + Duration::from_secs(1_600_000_500);
+    let touch = |p: &Path, t: std::time::SystemTime| {
+        std::fs::File::options()
+            .write(true)
+            .open(p)
+            .unwrap()
+            .set_modified(t)
+            .unwrap()
+    };
+    // (case, the hook, the body's edit, a side file and its new text, the
+    // stored S₀ refused)
+    type Case<'a> = (&'a str, &'a str, &'a str, Option<(&'a str, &'a str)>, bool);
+    let cases: [Case; 4] = [
+        (
+            "A",
+            "\\xdef\\x{\\pdffilesize{\\jobname.aux}}",
+            "\\section{Two}\\label{two}\n",
+            None,
+            false,
+        ),
+        (
+            "B",
+            "\\xdef\\x{\\pdffilesize{\\jobname.tex}}",
+            "A letter: x.\n",
+            None,
+            true,
+        ),
+        (
+            "D",
+            "\\xdef\\x{\\pdffilemoddate{stamp.tex}}",
+            "",
+            Some(("stamp.tex", "% a file whose date is read\n")),
+            true,
+        ),
+        (
+            "F",
+            "\\xdef\\x{\\pdfmdfivesum file {stamp.tex}}",
+            "",
+            Some(("stamp.tex", "% a file whose digest is read, edited\n")),
+            true,
+        ),
+    ];
+    for (case, hook, extra, side, refused) in cases {
+        let base = common::fresh_dir(&format!("flashtex-host-arm-{case}"));
+        let _ = std::fs::remove_dir_all(&base);
+        std::fs::create_dir_all(&base).unwrap();
+        let (proj, out, cache) = (base.join("proj"), base.join("out"), base.join("s0"));
+        std::fs::create_dir_all(&proj).unwrap();
+        std::fs::create_dir_all(&out).unwrap();
+        std::fs::write(proj.join("main.tex"), doc(hook, "")).unwrap();
+        std::fs::write(proj.join("stamp.tex"), "% a file whose date is read\n").unwrap();
+        touch(&proj.join("stamp.tex"), t0);
+        let cache_env = [("FLASHTEX_S0_CACHE", cache.to_str().unwrap())];
+        {
+            let host = start_host_env(&format!("a{case}"), &cache_env);
+            let mut c = Client::connect(&host.1).unwrap();
+            let mut view = View::default();
+            for id in 1..=4 {
+                let o = compile(&mut c, &mut view, &req(id, &proj, &out, "main.tex"));
+                if o.done.str_field("mode") == Some("unchanged") {
+                    break;
+                }
+            }
+            let _ = c.bye();
+        }
+        assert!(
+            std::fs::read_dir(&cache).is_ok_and(|mut d| d.next().is_some()),
+            "{case}: no S0 was stored"
+        );
+        // the edit, with no host running
+        std::fs::write(proj.join("main.tex"), doc(hook, extra)).unwrap();
+        if let Some((name, text)) = side {
+            std::fs::write(proj.join(name), text).unwrap();
+            touch(&proj.join(name), t1);
+        }
+        let host = start_host_env(&format!("b{case}"), &cache_env);
+        let scratch = start_host(&format!("s{case}"));
+        let mut c = Client::connect(&host.1).unwrap();
+        let mut view = View::default();
+        let o = compile(&mut c, &mut view, &req(1, &proj, &out, "main.tex"));
+        if refused {
+            assert_ne!(o.done.str_field("mode"), Some("open"), "{case}: {}", o.done);
+        }
+        for id in 2..=4 {
+            let o = compile(&mut c, &mut view, &req(id, &proj, &out, "main.tex"));
+            if o.done.str_field("mode") == Some("unchanged") {
+                break;
+            }
+        }
+        let (p2, o2) = snapshot(&base, &proj, &out, "x");
+        touch(&p2.join("stamp.tex"), if side.is_some() { t1 } else { t0 });
+        let what = format!("{case}: opened from the stored S0");
+        compare_with_scratch(&scratch.1, &view, &proj, &out, &p2, &o2, "main.tex", &what);
+        let _ = c.bye();
+        let _ = std::fs::remove_dir_all(&base);
+    }
+}

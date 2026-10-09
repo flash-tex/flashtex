@@ -2086,8 +2086,9 @@ impl Globals {
                 // preamble expansion already ended is not `\begin{document}`)
                 let inside = self.ckpt_arm_level > 0;
                 let l = self.layer();
-                let at_start =
-                    l.s0.is_none() && l.aux_point.is_none() && l.preamble_line_s.is_some();
+                // (with preamble line checkpoints off too: without it a
+                // changed read there runs from the format)
+                let at_start = l.s0.is_none() && l.aux_point.is_none();
                 if inside
                     && l.want_aux_point
                     && l.aux_point.is_none()
@@ -2104,10 +2105,12 @@ impl Globals {
                     // here and the anchor is left out of S₀'s key
                     // (`host::whole_after_arm`), and a run restarts here when
                     // its file changed (pinned with the preamble's points)
-                    let n = self.layer().taken.len();
+                    // (by id, the entry this call adds: not by position,
+                    // which a pruned `taken` would move)
+                    let before = self.layer().taken.last().map(|t| t.0);
                     self.hook_checkpoint(Point::PreambleLine);
                     let l = self.layer();
-                    l.arm_ck = l.taken.get(n).map(|t| t.0);
+                    l.arm_ck = l.taken.last().map(|t| t.0).filter(|&id| Some(id) != before);
                 }
             }
             REQ_SEGMENT => {

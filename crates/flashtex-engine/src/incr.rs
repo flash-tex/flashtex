@@ -2777,7 +2777,10 @@ impl Session {
             // The session's clock is the one S₀ was taken with.
             clock = key.clock;
             crate::pdftex::utils::pin_clock(Some(key.clock));
-            key.check(key.clock, &first_line)
+            key.check(key.clock, &first_line)?;
+            // (no checkpoint before S₀ here: a changed read at the
+            // document's start refuses it, `Key::check_arm`)
+            key.check_arm()
         })?;
         self.clock = clock;
         // The files the preamble wrote and closed, as it left them: a later
@@ -2811,7 +2814,7 @@ impl Session {
             });
             j.mark_seen(path);
         }
-        let mut open = vec![];
+        let mut open: Vec<String> = s0.key.arm.iter().map(|a| a.0.clone()).collect();
         for f in &rec.files {
             if let Stream::In { path, .. } = &f.stream {
                 let err = |e: std::io::Error| format!("{path}: {e}");
@@ -2834,6 +2837,28 @@ impl Session {
                 j.mark_seen(path);
                 open.push(path.clone());
             }
+        }
+        // The reads at the document's start, after the open files' (the journal
+        // checks them: `arm_window`, which has no checkpoint there now and
+        // runs from the format when one changes)
+        let arm_at = j.files.len();
+        for (path, size, stamp, hash) in &s0.key.arm {
+            j.files.push(FileRead {
+                path: path.clone(),
+                hash: *hash,
+                stat: StatSig::default(),
+                content: None,
+                closed_at: Some(u64::MAX),
+                written_before: false,
+                stamp: *stamp,
+                size: *size,
+            });
+            j.mark_seen(path);
+        }
+        if !s0.key.arm.is_empty() {
+            let l = g.layer();
+            l.arm_reads = Some(arm_at);
+            l.arm_ck = None;
         }
         for (name, fmt, must, found) in &s0.key.lookups {
             j.lookups.push(system::Lookup {
