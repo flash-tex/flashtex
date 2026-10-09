@@ -78,6 +78,7 @@ version = "0.1.0"
 dependencies = [
  "cc",
  "flashtex-display-list",
+ "flashtex-runtime",
 ]
 
 [[package]]
@@ -93,6 +94,13 @@ name = "flashtex-project-manifest"
 version = "0.1.0"
 dependencies = [
  "toml",
+]
+
+[[package]]
+name = "flashtex-runtime"
+version = "0.1.0"
+dependencies = [
+ "flashtex-display-list",
 ]
 
 [[package]]
