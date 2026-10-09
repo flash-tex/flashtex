@@ -410,9 +410,43 @@ final class EngineV3Session {
         launchHost()
     }
 
+    /// The document's mode (EngineV3Mode.swift): the environment, the
+    /// manifest's `[project] mode`, the main file's `% !TEX program` line.
+    /// `activeText`: the active document's newest text (an edit the model
+    /// has not stored yet).
+    static func mode(_ model: ShellModel?, main: String, activeText: String? = nil) -> (mode: EngineV3Mode, source: String) {
+        let text = model.flatMap { m -> String? in
+            let path = m.documents.contains { $0.path == main } ? main : m.activePath
+            if let activeText, path == m.activePath { return activeText }
+            return m.documents.first { $0.path == path }?.text
+        }
+        return EngineV3Mode.resolve(environment: ProcessInfo.processInfo.environment["FLASHTEX_MODE"],
+                                    manifest: model?.manifest.snapshot?.manifest.project.mode, mainText: text)
+    }
+
+    /// Relaunches the host when the document's mode no longer matches the
+    /// running host's (a `% !TEX program` line or `[project] mode` changed,
+    /// another project opened). Not counted as a crash.
+    @discardableResult
+    func relaunchIfModeChanged(model: ShellModel, activeText: String? = nil) -> Bool {
+        guard let host else { return false }
+        let want = Self.mode(model, main: mainFile, activeText: activeText)
+        guard host.mode != want.mode else { return false }
+        log("relaunching the host in \(want.mode.rawValue) mode (\(want.source))")
+        stopRunningCompile(statusNote: "restarting the engine in \(want.mode == .unicode ? "Unicode" : "Classic") mode", firstError: nil)
+        stalledTexts = nil
+        return true
+    }
+
+    /// The running host's mode (tests and evidence).
+    var hostMode: EngineV3Mode? { host?.mode }
+
     private func launchHost() {
-        guard let exe = EngineV3.locateHost() else {
-            phase = .failed("flashtex-host not found. Build it (cargo build --release -p flashtex-engine --bin flashtex-host) or set FLASHTEX_HOST / the \(EngineV3.hostPathKey) default.")
+        let mode = Self.mode(model, main: mainFile)
+        guard let exe = EngineV3.locateHost(mode: mode.mode) else {
+            phase = .failed(mode.mode == .unicode
+                ? "flashtex-host-unicode not found. Build it (cd crates/flashtex-xetex && cargo build --release --bin flashtex-host-unicode) or set FLASHTEX_HOST_UNICODE / the \(EngineV3.hostPathKey).unicode default."
+                : "flashtex-host not found. Build it (cargo build --release -p flashtex-engine --bin flashtex-host) or set FLASHTEX_HOST / the \(EngineV3.hostPathKey) default.")
             return
         }
         // No TeX Live and a bundle not downloaded yet: ask first (the host
@@ -429,14 +463,14 @@ final class EngineV3Session {
         phase = .starting(since: Date())
         bundleProgressNote = nil
         environmentNote = EngineChoice.texLiveInstalled() || EngineV3Bundle.configured() == nil
-            ? "Preparing the pdfLaTeX format from your TeX Live (the first use builds it; a few seconds)…"
-            : "Preparing the pdfLaTeX format from the TeX files (the first use downloads them and builds it)…"
-        log("starting \(exe.path)")
+            ? "Preparing the \(mode.mode.formatName) format from your TeX Live (the first use builds it; a few seconds)…"
+            : "Preparing the \(mode.mode.formatName) format from the TeX files (the first use downloads them and builds it)…"
+        log("starting \(exe.path) (\(mode.mode.rawValue) mode: \(mode.source))")
         let ref = EngineV3WeakRef(self)
         do {
             // A Live Share session (or a session copy) compiles in a host
             // launched confined; `compile` relaunches when that changes.
-            let h = try EngineV3HostProcess(executable: exe, confineRoots: model.flatMap(Self.confineRoots)) { event in
+            let h = try EngineV3HostProcess(executable: exe, mode: mode.mode, confineRoots: model.flatMap(Self.confineRoots)) { event in
                 EngineV3Session.onMain { ref.value?.hostEvent(event) }
             }
             host = h
@@ -890,6 +924,12 @@ final class EngineV3Session {
         guard phase == .ready, connection != nil else { return }
         let now = MonotonicClock.nowNs()
         let path = model.activePath
+        // An edit that changes the mode (a `% !TEX program` line) goes to
+        // `compile`, which relaunches the host, whatever the fast path sent.
+        if let activeText, let host, host.mode != Self.mode(model, main: mainFile, activeText: activeText).mode {
+            compile(model: model, reason: "mode", activeText: activeText)
+            return
+        }
         if let activeText, fastPending.contains(path) {
             fastPending.remove(path)
             if activeText.utf8.count == hostBytes[path], Self.fastCheckHolds(fastCheck[path], activeText) {
@@ -1103,6 +1143,7 @@ final class EngineV3Session {
         var req = DL3CompileRequest(id: nextID, root: project.root.path, main: entry)
         nextID += 1
         req.outputDir = project.output.path
+        req.format = host?.mode.format ?? EngineV3Mode.classic.format
         req.jobname = (entry as NSString).lastPathComponent.replacingOccurrences(of: ".tex", with: "")
         req.haveFonts = DL3ResourceCache.shared.heldFontKeys
         req.fontFormats = ["type3", "truetype", "opentype"] // DL3Renderer draws these (lane P3-FONTS-2)
@@ -1202,6 +1243,8 @@ final class EngineV3Session {
         // a host launched confined serves nothing else). Relaunch, not
         // counted as a crash; the fresh host compiles when it is ready.
         if relaunchIfConfinementChanged(model: model) { return }
+        // A Unicode document runs in flashtex-host-unicode (EngineV3Mode).
+        if relaunchIfModeChanged(model: model, activeText: activeText) { return }
         // After a stall the text that looped waits for an edit or ⌘B (the stall bound).
         if let held = stalledTexts {
             if reason == "open", held == Dictionary(model.documents.map { ($0.path, $0.text) }, uniquingKeysWith: { a, _ in a }) { return }

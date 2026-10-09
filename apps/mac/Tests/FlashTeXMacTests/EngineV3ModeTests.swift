@@ -1,0 +1,99 @@
+import XCTest
+@testable import FlashTeXMac
+
+/// Unicode mode in the new preview (EngineV3Mode.swift, modes PROPOSAL.md
+/// §4.1, XETEX-S3): the `% !TEX program` line, the resolution order, the
+/// host each mode starts and the format it asks for.
+@MainActor
+final class EngineV3ModeTests: XCTestCase {
+    private var env = EnvironmentOverride()
+
+    override func tearDown() { env.restore() }
+
+    func testMagicComments() {
+        XCTAssertEqual(EngineV3Mode.magicComment("% !TEX program = xelatex\n\\documentclass{article}"), .unicode)
+        XCTAssertEqual(EngineV3Mode.magicComment("%!TEX TS-program = XeLaTeX\r\n\\documentclass{article}"), .unicode)
+        XCTAssertEqual(EngineV3Mode.magicComment("% !TeX program=pdflatex\n"), .classic)
+        XCTAssertEqual(EngineV3Mode.magicComment("\n% a comment\n% !TEX program = xetex\n"), .unicode)
+        XCTAssertNil(EngineV3Mode.magicComment("\\documentclass{article}\n% !TEX program = xelatex\n"), "only the leading comments")
+        XCTAssertNil(EngineV3Mode.magicComment("% !TEX program = lualatex\n"))
+        XCTAssertNil(EngineV3Mode.magicComment("% !TEX root = main.tex\n"))
+    }
+
+    func testResolutionOrder() {
+        let doc = "% !TEX program = xelatex\n\\documentclass{article}"
+        XCTAssertEqual(EngineV3Mode.resolve(environment: nil, manifest: nil, mainText: doc).mode, .unicode)
+        XCTAssertEqual(EngineV3Mode.resolve(environment: nil, manifest: "classic", mainText: doc).mode, .classic, "the manifest outranks the line")
+        XCTAssertEqual(EngineV3Mode.resolve(environment: "unicode", manifest: "classic", mainText: nil).mode, .unicode, "the environment outranks the manifest")
+        XCTAssertEqual(EngineV3Mode.resolve(environment: "", manifest: nil, mainText: "\\documentclass{x}").source, "default")
+        let native = EngineV3Mode.resolve(environment: nil, manifest: "flashtex", mainText: doc)
+        XCTAssertEqual(native.mode, .classic)
+        XCTAssertTrue(native.source.contains("not available"), native.source)
+    }
+
+    func testEachModeHasItsHostAndFormat() throws {
+        XCTAssertEqual(EngineV3Mode.classic.format, "pdflatex")
+        XCTAssertEqual(EngineV3Mode.unicode.format, "xelatex")
+        let exe = FileManager.default.temporaryDirectory.appendingPathComponent("flashtex-host-unicode-\(getpid())")
+        try Data("#!/bin/sh\n".utf8).write(to: exe)
+        defer { try? FileManager.default.removeItem(at: exe) }
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: exe.path)
+        env.set("FLASHTEX_HOST_UNICODE", exe.path)
+        env.set("FLASHTEX_HOST", "none")
+        XCTAssertEqual(EngineV3.locateHost(mode: .unicode)?.path, exe.path)
+        XCTAssertNil(EngineV3.locateHost(mode: .classic), "each mode its own variable")
+        XCTAssertEqual(EngineV3HostProcess.hostLine("flashtex-host-unicode: listening on /tmp/x.sock"), "listening on /tmp/x.sock")
+        XCTAssertEqual(EngineV3HostProcess.hostLine("flashtex-host: {\"a\":1}"), "{\"a\":1}")
+        XCTAssertNil(EngineV3HostProcess.hostLine("stderr: flashtex-host: x"))
+    }
+
+    // MARK: with the hosts (skipped without them)
+
+    static let unicodeDoc = """
+    % !TEX program = xelatex
+    \\documentclass{article}
+    \\usepackage{fontspec}
+    \\setmainfont{texgyrepagella-regular.otf}
+    \\begin{document}
+    Unicode: naïve café — ἀρχή.
+    \\end{document}
+
+    """
+
+    private func waitUntil(_ what: String, timeout: TimeInterval = 120, _ cond: () -> Bool) async throws {
+        let start = Date()
+        while !cond() {
+            if Date().timeIntervalSince(start) > timeout { XCTFail("timeout waiting for \(what)"); return }
+            try await Task.sleep(nanoseconds: 20_000_000)
+        }
+    }
+
+    /// A `% !TEX program = xelatex` document starts flashtex-host-unicode
+    /// and asks for the xelatex format; its pages arrive like Classic's.
+    /// Taking the line out relaunches the Classic host (when one is built).
+    func testAUnicodeDocumentRunsInTheUnicodeHost() async throws {
+        guard EngineV3.locateHost(mode: .unicode) != nil else {
+            throw EngineV3TestHost.unavailable("no flashtex-host-unicode built (cd crates/flashtex-xetex && cargo build --release --bin flashtex-host-unicode)")
+        }
+        guard EngineV3TestHost.texLive != nil else { throw EngineV3TestHost.unavailable("no TeX Live") }
+        let cache = FileManager.default.temporaryDirectory.appendingPathComponent("engine-v3-mode-\(getpid())")
+        env.set("FLASHTEX_V3_CACHE", cache.path)
+        env.set("FLASHTEX_MODE", "")
+        defer { try? FileManager.default.removeItem(at: cache) }
+        let model = ShellModel()
+        model.replaceProject(entryText: Self.unicodeDoc, named: "main.tex")
+        model.engineV3Enabled = true
+        model.autoCompile = true
+        let s = model.engineV3
+        defer { s.stop() }
+        s.start(model: model)
+        try await EngineV3TestHost.awaitReady(s)
+        try await waitUntil("the Unicode compile") { s.statusNote.hasPrefix("ok") && s.pageCount == 1 && s.pages[0] != nil && !s.compiling }
+        XCTAssertEqual(s.hostMode, .unicode)
+        guard EngineV3.locateHost(mode: .classic) != nil else { return }
+        let n = s.doneCount
+        model.updateActiveText("\\documentclass{article}\n\\begin{document}\nClassic.\n\\end{document}\n")
+        try await waitUntil("the Classic relaunch") { s.hostMode == .classic && s.doneCount > n && s.statusNote.hasPrefix("ok") && !s.compiling }
+        XCTAssertEqual(s.hostMode, .classic, "\(s.phase) \(s.statusNote) done \(s.doneCount) (was \(n)) compiling \(s.compiling)")
+    }
+}

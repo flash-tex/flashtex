@@ -93,6 +93,23 @@ changing one outside the app drops them at the next open.
 With the new engine off, nothing of this runs: the old worker, the v2 pane and
 the v1 pane behave exactly as before (D13).
 
+## Unicode mode (XeLaTeX-compatible)
+
+A document runs in **Unicode mode** (`EngineV3Mode.swift`, modes
+PROPOSAL.md §4.1) when `FLASHTEX_MODE=unicode`, when `flashtex.toml` says
+`[project] mode = "unicode"` (read by the project-files helper), or when a
+`% !TEX program = xelatex` line (or `TS-program`) is among the main file's
+leading comments. Otherwise it runs in Classic mode. Unicode mode starts
+`flashtex-host-unicode` (crates/flashtex-xetex) in place of `flashtex-host`
+and compiles with the `xelatex` format. The window shows its pages exactly
+as Classic's. That host compiles cold for now: each compile is a full
+xelatex run with its passes, with no checkpoints. An edit that changes the
+mode relaunches the host. `[fonts]` applies in this mode (PROPOSAL.md
+§4.5). The host is found as below, from `FLASHTEX_HOST_UNICODE`, the
+`FlashTeX.EngineV3.hostPath.unicode` default, `Contents/Helpers/flashtex-host-unicode`
+or a repository build (`crates/flashtex-xetex/target/release` too). It is
+not yet bundled by `make-app.sh`.
+
 ## Where the host comes from
 
 The app looks for `flashtex-host` in these places, in order:

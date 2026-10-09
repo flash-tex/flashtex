@@ -19,7 +19,7 @@
 //!   "kind":"modified_externally"|"deleted_externally"|"already_exists"|
 //!   "modified_during_save","ours"?,"theirs"?,"mtime_unix_ms"?,"size"?}}`
 //! - `{"id","operation":"manifest","entry"?}` → payload `{"path"?,"exists",
-//!   "manifest_dir"?,"manifest":{"project":{"entry","texinputs","output"},
+//!   "manifest_dir"?,"manifest":{"project":{"entry","texinputs","output","mode"},
 //!   "fonts":{"text","math","mono","sans"},"packages":{"source","fetch","pin",
 //!   "path"},"library"?},"warnings":[{"key","message"}],"texinputs":[{"index",
 //!   "raw","location":"inside"|"outside"|"invalid","dir"?,"path"?,"reason"?}],
@@ -300,7 +300,8 @@ fn manifest(root: &ProjectRoot, req: &Json) -> Result<Json, Failure> {
     project
         .insert("entry", opt(&m.project.entry))
         .insert("texinputs", m.project.texinputs.iter().map(|t| Json::from(t.as_str())).collect::<Vec<_>>())
-        .insert("output", opt(&m.project.output));
+        .insert("output", opt(&m.project.output))
+        .insert("mode", m.project.mode.map_or(Json::Null, |x| Json::from(x.as_str())));
     let mut fonts = Json::object();
     fonts
         .insert("text", opt(&m.fonts.text))
