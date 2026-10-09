@@ -2060,7 +2060,14 @@ impl Globals {
                 // `taken`: the others go once they are as many as those, so
                 // that a long session does not grow it (+910 entries an edit
                 // on Infinite Descent; lane MEMORY-SAFETY, #1505).
-                let live = self.arena.checkpoint_ids().len();
+                // (pending ones count: after a restore near the start the
+                // retained set is small and the pending branch large, and
+                // a bound on the retained alone would prune at every hook)
+                let pending = self
+                    .layer_ref()
+                    .and_then(|l| l.pending.as_ref())
+                    .map_or(0, |p| p.branch.ids().len());
+                let live = self.arena.checkpoint_ids().len() + pending;
                 if self.layer().taken.len() >= 2 * live + 64 {
                     let mut keep: std::collections::HashSet<CheckpointId> =
                         self.arena.checkpoint_ids().iter().copied().collect();

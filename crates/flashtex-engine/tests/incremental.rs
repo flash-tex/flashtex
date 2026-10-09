@@ -4784,7 +4784,7 @@ fn a_long_session_keeps_its_bookkeeping_bounded() {
             .unwrap_or_else(|_| panic!("{k} in {m}"))
     };
     let words = ["gammx", "gamma", "gammxy", "gamma", "gam", "gamma"];
-    let (mut converged, mut at_20) = (0, 0);
+    let (mut converged, mut at_20, mut max_ck) = (0, 0, 0);
     for i in 0..60 {
         let w = words[i % words.len()];
         let files = if (i / 6) % 2 == 0 {
@@ -4805,12 +4805,17 @@ fn a_long_session_keeps_its_bookkeeping_bounded() {
         }
         let m = h.cmd("mem");
         let ck = num(&m, "checkpoints");
+        max_ck = max_ck.max(ck);
         assert!(
             num(&m, "reloc") <= ck,
             "{what}: corrections of dropped checkpoints: {m}"
         );
+        // `taken` is pruned once it holds twice the retained and pending
+        // checkpoints (+ 64): a run's pending branch (the old run's
+        // checkpoints after its restart point) and its new ones are each
+        // at most what was retained, so it stays under four times that
         assert!(
-            num(&m, "taken") <= 2 * ck + 65,
+            num(&m, "taken") <= 4 * max_ck + 65,
             "{what}: `taken` grows: {m}"
         );
         if i == 20 {
