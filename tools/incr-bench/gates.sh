@@ -27,7 +27,7 @@
 #   sound-c    soundness: 20 structural edits, fixtures + refs-30/120 + full-100 + book-inc (its ch03)
 #   sound-d    soundness: 12 interleaved (interrupted) edits
 #   sound-pre  the preamble kinds (edits.py's pre_*; restarts before S0, in the middle of the line after a
-#              package): 8 edits + reverts, fixtures + full-100 + refs-30; then 6 interleaved with letters
+#              package): 8 edits + reverts, fixtures + full-100 + full-100t + refs-30; then 6 interleaved
 #   sound-first soundness: 10 interleaved edits that interrupt a first compile (no .aux: the compiles'
 #              files removed first) in its first pass (lane COLD-OPEN)
 #   sound-book soundness: 8 single-character edits + 4 sentences (+ reverts) on the owner's
@@ -219,11 +219,11 @@ for g in ${@:-build parity lockstep trip etrip drift positions tests sound-a sou
       PRE=pre_title,pre_author,pre_newcommand,pre_setlength,pre_usepackage,pre_nopackage,pre_option,pre_after_package
       PYTHONHASHSEED=0 timeout 36000 python3 $S/soundness.py gates -j $J --trials $(trials 8) --kinds $PRE --allow-no-trials \
         --dir $B/sound-pre --out $R/soundness-pre.jsonl \
-        --extra $B/src-full-100:full-100 --extra $B/src-refs-30:refs-30 > $R/soundness-pre.txt 2>&1
+        --extra $B/src-full-100:full-100 --extra $B/src-full-100t:full-100t --extra $B/src-refs-30:refs-30 > $R/soundness-pre.txt 2>&1
       e1=$?
       PYTHONHASHSEED=0 timeout 36000 python3 $S/soundness.py gates -j $J --trials $(trials 6) --interleave --allow-no-trials \
         --kinds $PRE,replace,insert --dir $B/sound-pre-d --out $R/soundness-pre-d.jsonl \
-        --extra $B/src-full-100:full-100 --extra $B/src-refs-30:refs-30 >> $R/soundness-pre.txt 2>&1
+        --extra $B/src-full-100:full-100 --extra $B/src-full-100t:full-100t --extra $B/src-refs-30:refs-30 >> $R/soundness-pre.txt 2>&1
       echo "soundness pre exit $e1 $?" >> $R/soundness-pre.txt ;;
     sound-first)
       PYTHONHASHSEED=0 timeout 36000 python3 $S/soundness.py gates -j $J --trials 10 --interleave --first-open --dir $B/sound-first --out $R/soundness-first.jsonl \
