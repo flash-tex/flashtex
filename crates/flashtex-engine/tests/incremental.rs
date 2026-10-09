@@ -3019,87 +3019,6 @@ fn preamble_edits_restart_before_s0() {
     compile_and_check(&e, &mut h, &dir, &[("doc.tex", &doc)], "the revert");
 }
 
-/// `\pdffilesize` and `\pdffilemoddate` of a user file are reads of it
-/// (`system::note_size_read`, `system::note_stamp`), not only lookups: the
-/// size of the main file, taken in the preamble and printed in the body,
-/// changes with a letter in the title (a restart before S₀) and with one in
-/// the body (a restart from S₀ on, which kept the old size: 132 for 133);
-/// the modification time of a file read in the preamble and in the body
-/// changes with the file touched, its content the same, alone or with an
-/// edit. A preamble checkpoint after every line. Every compile equals
-/// scratch runs, whose copy of the file has the same time.
-#[test]
-fn file_size_and_mod_date_are_reads_of_the_file() {
-    let Some(e) = env() else {
-        common::no_texlive();
-        return;
-    };
-    let dir = e.dir.join("filesize");
-    let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(&dir).unwrap();
-    let sty = "\\ProvidesPackage{p}\n\\xdef\\fs{\\pdffilesize{\\jobname.tex}}\n\
-               \\xdef\\md{\\pdffilemoddate{stamp.tex}}\n";
-    let body: String = (0..12).map(|i| para(i, "theta")).collect();
-    let doc = format!(
-        "\\documentclass{{article}}\n\\usepackage{{p}}\n\\title{{A title}}\n\
-         \\begin{{document}}\n\\maketitle\n{body}Size \\fs, date \\md, now \
-         \\pdffilemoddate{{stamp.tex}}.\n\\end{{document}}\n"
-    );
-    let stamp = dir.join("stamp.tex");
-    let at = |t: u64| std::time::UNIX_EPOCH + std::time::Duration::from_secs(t);
-    let touch = |p: &Path, t: u64| {
-        std::fs::File::options()
-            .write(true)
-            .open(p)
-            .unwrap()
-            .set_modified(at(t))
-            .unwrap()
-    };
-    std::fs::write(&stamp, "% a file whose date is read\n").unwrap();
-    touch(&stamp, 1_600_000_000);
-    let mut h = Host::start_env(&e, &dir, &[("FLASHTEX_PREAMBLE_LINE_S", "0.000001")]);
-    // (the scratch runs' copy of `stamp.tex` gets its time too)
-    let mut step = |text: Option<&str>, t: Option<u64>, what: &str| {
-        if let Some(text) = text {
-            std::fs::write(dir.join("doc.tex"), text).unwrap();
-        }
-        if let Some(t) = t {
-            touch(&stamp, t);
-        }
-        let reference = dir.with_extension("ref");
-        copy_dir(&dir, &reference);
-        let t = std::fs::metadata(&stamp).unwrap().modified().unwrap();
-        std::fs::File::options()
-            .write(true)
-            .open(reference.join("stamp.tex"))
-            .unwrap()
-            .set_modified(t)
-            .unwrap();
-        let r = h.cmd("compile");
-        check_against(&e, &dir, &reference, &r, what);
-        r
-    };
-    std::fs::write(dir.join("p.sty"), sty).unwrap();
-    for k in 0..4 {
-        let r = step(Some(&doc), None, "settle");
-        if r.contains("\"mode\":\"unchanged\"") || k == 3 {
-            break;
-        }
-    }
-    let title = doc.replacen("A title", "A titlex", 1);
-    let body2 = doc.replacen("Paragraph 3 with", "Paragraph 3 withx", 1);
-    step(Some(&title), None, "a letter in the title");
-    step(Some(&doc), None, "the revert");
-    step(Some(&body2), None, "a letter in the body");
-    step(Some(&doc), None, "the revert");
-    step(None, Some(1_600_000_100), "the date file touched");
-    step(
-        Some(&body2),
-        Some(1_600_000_200),
-        "touched, and a letter in the body",
-    );
-    step(Some(&doc), None, "the revert");
-}
 
 /// Review of #1551 (PREAMBLE-FAST): a file `\input` twice, then text
 /// appended to it. The first read closed at the file's end, which the
@@ -4457,4 +4376,86 @@ fn rv1685_written_before_s0_refuses() {
     let mut h = rv_refused(&e, &dir, &s0, "written", "rv1685-b: written before S0");
     let r = compile_and_check(&e, &mut h, &dir, &[("doc.tex", &doc)], "rv1685-b: cold");
     assert!(r.contains("\"mode\":\"cold\""), "rv1685-b: {r}");
+}
+
+/// `\pdffilesize` and `\pdffilemoddate` of a user file are reads of it
+/// (`system::note_size_read`, `system::note_stamp`), not only lookups: the
+/// size of the main file, taken in the preamble and printed in the body,
+/// changes with a letter in the title (a restart before S₀) and with one in
+/// the body (a restart from S₀ on, which kept the old size: 132 for 133);
+/// the modification time of a file read in the preamble and in the body
+/// changes with the file touched, its content the same, alone or with an
+/// edit. A preamble checkpoint after every line. Every compile equals
+/// scratch runs, whose copy of the file has the same time.
+#[test]
+fn file_size_and_mod_date_are_reads_of_the_file() {
+    let Some(e) = env() else {
+        common::no_texlive();
+        return;
+    };
+    let dir = e.dir.join("filesize");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let sty = "\\ProvidesPackage{p}\n\\xdef\\fs{\\pdffilesize{\\jobname.tex}}\n\
+               \\xdef\\md{\\pdffilemoddate{stamp.tex}}\n";
+    let body: String = (0..12).map(|i| para(i, "theta")).collect();
+    let doc = format!(
+        "\\documentclass{{article}}\n\\usepackage{{p}}\n\\title{{A title}}\n\
+         \\begin{{document}}\n\\maketitle\n{body}Size \\fs, date \\md, now \
+         \\pdffilemoddate{{stamp.tex}}.\n\\end{{document}}\n"
+    );
+    let stamp = dir.join("stamp.tex");
+    let at = |t: u64| std::time::UNIX_EPOCH + std::time::Duration::from_secs(t);
+    let touch = |p: &Path, t: u64| {
+        std::fs::File::options()
+            .write(true)
+            .open(p)
+            .unwrap()
+            .set_modified(at(t))
+            .unwrap()
+    };
+    std::fs::write(&stamp, "% a file whose date is read\n").unwrap();
+    touch(&stamp, 1_600_000_000);
+    let mut h = Host::start_env(&e, &dir, &[("FLASHTEX_PREAMBLE_LINE_S", "0.000001")]);
+    // (the scratch runs' copy of `stamp.tex` gets its time too)
+    let mut step = |text: Option<&str>, t: Option<u64>, what: &str| {
+        if let Some(text) = text {
+            std::fs::write(dir.join("doc.tex"), text).unwrap();
+        }
+        if let Some(t) = t {
+            touch(&stamp, t);
+        }
+        let reference = dir.with_extension("ref");
+        copy_dir(&dir, &reference);
+        let t = std::fs::metadata(&stamp).unwrap().modified().unwrap();
+        std::fs::File::options()
+            .write(true)
+            .open(reference.join("stamp.tex"))
+            .unwrap()
+            .set_modified(t)
+            .unwrap();
+        let r = h.cmd("compile");
+        check_against(&e, &dir, &reference, &r, what);
+        r
+    };
+    std::fs::write(dir.join("p.sty"), sty).unwrap();
+    for k in 0..4 {
+        let r = step(Some(&doc), None, "settle");
+        if r.contains("\"mode\":\"unchanged\"") || k == 3 {
+            break;
+        }
+    }
+    let title = doc.replacen("A title", "A titlex", 1);
+    let body2 = doc.replacen("Paragraph 3 with", "Paragraph 3 withx", 1);
+    step(Some(&title), None, "a letter in the title");
+    step(Some(&doc), None, "the revert");
+    step(Some(&body2), None, "a letter in the body");
+    step(Some(&doc), None, "the revert");
+    step(None, Some(1_600_000_100), "the date file touched");
+    step(
+        Some(&body2),
+        Some(1_600_000_200),
+        "touched, and a letter in the body",
+    );
+    step(Some(&doc), None, "the revert");
 }
