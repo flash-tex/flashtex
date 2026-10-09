@@ -64,6 +64,8 @@ pub struct Probe {
     pub old_files: Vec<system::FileRead>,
     pub old_lookups: Vec<system::Lookup>,
     pub old_outputs: Vec<String>,
+    /// The files the old run opens for output after `P1`.
+    pub later_outputs: Vec<String>,
     /// The changed files as they are now.
     pub now: HashMap<String, Arc<Vec<u8>>>,
 }
@@ -176,6 +178,47 @@ pub fn same_since(
                     return Err("a file global's stream differs".into());
                 }
             }
+        }
+    }
+    // Every output file closed since `P0` (open there, or opened since,
+    // and not open now): its bytes as the old run left them. On success the
+    // abandoned run's files are put back as the old run left them
+    // (`Globals::reattach_pending`): a file written and closed in the window
+    // (`\immediate\write` of a size) must hold the same bytes in both.
+    let open_now: Vec<String> = new
+        .files
+        .iter()
+        .filter_map(|f| match &f.stream {
+            Stream::Out { path, .. } => Some(system::out_key(path)),
+            _ => None,
+        })
+        .collect();
+    let mut closed: Vec<&str> = vec![];
+    let opened_p0 = pr.p0.files.iter().filter_map(|f| match &f.stream {
+        Stream::Out { path, .. } => Some(path.as_str()),
+        _ => None,
+    });
+    for p in opened_p0.chain(pr.old_outputs.iter().map(|s| s.as_str())) {
+        let k = system::out_key(p);
+        if !open_now.contains(&k) && !closed.iter().any(|q| system::out_key(q) == k) {
+            closed.push(p);
+        }
+    }
+    for p in closed {
+        let k = system::out_key(p);
+        // (the old run's copy is of its last opening: one it opens again
+        // later is not the one closed here)
+        if pr.later_outputs.iter().any(|o| system::out_key(o) == k) {
+            return Err(format!(
+                "{p} is closed in the window and written again later"
+            ));
+        }
+        let (base, theirs) = g
+            .pending_old_tail(p)
+            .ok_or_else(|| format!("{p}: the old run's bytes are not kept"))?;
+        let mine = system::read_logical(p).map_err(|e| format!("{p}: {e}"))?;
+        if mine.get(base as usize..) != Some(&theirs[..]) {
+            return Err(format!("{p}: other bytes, closed since the restart point"));
         }
     }
     if !streams_before_edits(new, edits, |p| pr.now.get(p).cloned()) {

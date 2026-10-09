@@ -1316,6 +1316,18 @@ impl Globals {
         b.get(..to.checked_sub(from)? as usize).map(|s| s.to_vec())
     }
 
+    /// The old run's kept bytes of output file `path`, from the branch the
+    /// last `restore` detached: where they begin (its length at the
+    /// restore target, or 0) and all of them from there to the old run's
+    /// end (`None`: not kept). `crate::revalidate` compares a file closed
+    /// since the target with them.
+    pub fn pending_old_tail(&self, path: &str) -> Option<(u64, Vec<u8>)> {
+        let p = self.layer_ref()?.pending.as_ref()?;
+        let k = system::out_key(path);
+        let t = p.tails.iter().find(|t| system::out_key(&t.path) == k)?;
+        Some((t.base, t.bytes.get(t.base, 0).ok()?))
+    }
+
     /// Where the old run's kept bytes of output file `path` begin (its
     /// length at the restore target; 0 when it was not open there or the
     /// old run opened it again after it), from the branch the last

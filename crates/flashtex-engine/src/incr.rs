@@ -957,8 +957,10 @@ impl Obs {
         if !new.cstate.same_as(&o.cstate) {
             return Err("pdfTeX's C-part state differs".into());
         }
-        let last_byte_dead = self.old_last_byte_reads_after(&o);
-        let dest_dims_dead = self.old_matrix_uses_end == Some(o.matrix_uses);
+        // (the convergence test's dead `pdf_last_byte` and `\pdfdest`
+        // dimensions rest on the old run's whole future, which a restart at
+        // `P2` does not keep: compared here)
+        let (last_byte_dead, dest_dims_dead) = (false, false);
         let mut char_or = vec![];
         let mut stages = self.old_lines.get(&old).cloned().unwrap_or_default();
         stages.extend(self.shifts.iter().cloned());
@@ -4401,6 +4403,7 @@ impl Session {
             old_outputs: j.outputs
                 [r0.reads.2.min(j.outputs.len())..r1.reads.2.min(j.outputs.len())]
                 .to_vec(),
+            later_outputs: j.outputs[r1.reads.2.min(j.outputs.len())..].to_vec(),
             p0: r0,
             now,
         })

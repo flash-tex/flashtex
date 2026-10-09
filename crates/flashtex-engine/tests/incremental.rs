@@ -4524,6 +4524,24 @@ fn a_size_read_that_left_nothing_does_not_hold_the_restart_back() {
             false,
         ),
         (
+            // (review of #1736: a file written and closed in the window, read
+            // back at the end -- the state at the next page is the same)
+            "written to a file read back",
+            "",
+            "Size file: \\input{sz.txt}\n",
+            "\\newwrite\\szf\\immediate\\openout\\szf=sz.txt \
+             \\immediate\\write\\szf{\\pdffilesize{ch3.tex}}\\immediate\\closeout\\szf\n",
+            false,
+        ),
+        (
+            "written to a file, its digest typeset",
+            "",
+            "Digest \\pdfmdfivesum file {sz.txt}.\n",
+            "\\newwrite\\szf\\immediate\\openout\\szf=sz.txt \
+             \\immediate\\write\\szf{\\pdffilesize{ch3.tex}}\\immediate\\closeout\\szf\n",
+            false,
+        ),
+        (
             "kept",
             "\\edef\\chsz{\\pdffilesize{ch3.tex}}\n",
             "Stored size \\chsz.\n",
