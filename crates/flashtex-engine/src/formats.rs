@@ -560,6 +560,9 @@ pub struct EnsureStats {
     pub files_checked: usize,
     pub files_rehashed: usize,
     pub lookups_checked: usize,
+    /// Of those, the lookups their proofs held (`lookupproof`), not made
+    /// again.
+    pub lookups_held: usize,
     /// Time spent re-running the lookups (ms).
     pub lookups_ms: f64,
     pub stale_reason: Option<String>,
@@ -649,18 +652,16 @@ impl FormatCache {
         // The lookups, where this process searches as the build did.
         let t_lookups = std::time::Instant::now();
         if command_progname(command) == Some(progname) {
+            // (each checked against the directories it searched, where the
+            // process made it before: `lookupproof`, LOOKUP-SKIP)
+            let mut verify = crate::lookupproof::Verifier::new();
             for l in &m.lookups {
                 let Some(format) = Format::from_kpse_name(&l.format) else {
                     continue;
                 };
                 self.last.lookups_checked += 1;
-                let found = if l.must_exist {
-                    r.find_ex(&l.name, format, true).0
-                } else {
-                    r.find(&l.name, format)
-                };
-                let found = found
-                    .map(|p| p.to_string_lossy().into_owned())
+                let found = verify
+                    .find_direct(r, &l.name, format, l.must_exist)
                     .unwrap_or_default();
                 // A file in the working directory hides what the TeX trees
                 // hold; the build ran in an empty directory. Such a lookup
@@ -678,6 +679,7 @@ impl FormatCache {
                     );
                 }
             }
+            self.last.lookups_held += verify.held;
         }
         self.last.lookups_ms += t_lookups.elapsed().as_secs_f64() * 1e3;
         (Validity::Valid { refresh }, Some(m))
@@ -959,12 +961,13 @@ pub fn ensure_format(
     let p = c.ensure(fmt, progname, r)?;
     if std::env::var_os("FLASHTEX_DEBUG_FORMATS").is_some() {
         eprintln!(
-            "[formats] {fmt}: {} in {:.1} ms ({} files checked, {} rehashed, {} lookups{})",
+            "[formats] {fmt}: {} in {:.1} ms ({} files checked, {} rehashed, {} lookups, {} held by their proofs{})",
             if c.last.built { "built" } else { "cache hit" },
             t.elapsed().as_secs_f64() * 1e3,
             c.last.files_checked,
             c.last.files_rehashed,
             c.last.lookups_checked,
+            c.last.lookups_held,
             c.last
                 .stale_reason
                 .as_deref()
