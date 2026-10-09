@@ -114,6 +114,10 @@ ignore_dir_p (const_string dirname)
 #define PACKED_DB 1
 #endif
 
+/* The cache directory (no cache when NULL); see db.h. Defined everywhere,
+   used only where there is a packed index with a cache.  */
+char *flashtex_lsr_cache_dir = NULL;
+
 #ifdef PACKED_DB
 #if !defined (_WIN32)
 #include <sys/mman.h>
@@ -124,9 +128,6 @@ ignore_dir_p (const_string dirname)
 #include <time.h>
 #define PACKED_CACHE 1
 #endif
-
-/* The cache directory (no cache when NULL); see db.h.  */
-char *flashtex_lsr_cache_dir = NULL;
 
 #define PACKED_NONE 0xffffffffu
 #define PACKED_BUCKETS (1u << 16)
@@ -223,6 +224,7 @@ packed_attach (packed_seg *seg, void *image, size_t len, const struct stat *st)
       || h->strings_len == 0
       || packed_image_len (h->n, h->ndirs, h->strings_len) != len)
     return false;
+#ifdef PACKED_CACHE
   if (st && (h->size != (unsigned long long) st->st_size
              || h->ino != (unsigned long long) st->st_ino
              || h->dev != (unsigned long long) st->st_dev
@@ -235,6 +237,9 @@ packed_attach (packed_seg *seg, void *image, size_t len, const struct stat *st)
 #endif
              ))
     return false;
+#else
+  (void) st;
+#endif
   seg->head = (const unsigned *) (base + sizeof (packed_header));
   seg->ents = (const packed_entry *) (seg->head + PACKED_BUCKETS);
   seg->dir_off = (const unsigned *) (seg->ents + h->n);
