@@ -384,10 +384,27 @@ fn compare_with_scratch(
     main: &str,
     what: &str,
 ) {
+    compare_with_scratch_job(sock, view, proj, out, p2, o2, main, None, what)
+}
+
+/// `compare_with_scratch` for a job with `includeonly` (a chapter focus).
+#[allow(clippy::too_many_arguments)]
+fn compare_with_scratch_job(
+    sock: &Path,
+    view: &View,
+    proj: &Path,
+    out: &Path,
+    p2: &Path,
+    o2: &Path,
+    main: &str,
+    includeonly: Option<Vec<String>>,
+    what: &str,
+) {
     let mut s = Client::connect(sock).unwrap();
     let mut sv = View::default();
     let mut rs = CompileRequest::new(1, p2.to_str().unwrap(), main);
     rs.output_dir = Some(o2.to_str().unwrap().into());
+    rs.includeonly = includeonly;
     let so = compile(&mut s, &mut sv, &rs);
     assert_eq!(
         so.done.str_field("mode"),
@@ -2777,6 +2794,307 @@ fn a_kept_page_never_names_a_moved_column() {
         );
         let (p2, o2) = snapshot(&base, &proj, &out, &k.to_string());
         compare_with_scratch(&scratch.1, &view, &proj, &out, &p2, &o2, "main.tex", what);
+    }
+    let _ = c.bye();
+    let _ = std::fs::remove_dir_all(&base);
+}
+
+/// A chapter of the focus test's book: a `\chapter` with a label, a
+/// reference to the next chapter (its number and page come from the
+/// `.aux`), and text for a few pages.
+fn focus_chapter(n: usize, of: usize) -> String {
+    let words = [
+        "alpha", "beta", "gamma", "delta", "kernel", "glue", "penalty", "boxes", "rules", "marks",
+    ];
+    let mut s = format!(
+        "\\chapter{{Chapter {n}}}\\label{{ch:{n}}}\nSee Chapter~\\ref{{ch:{m}}} on page~\\pageref{{ch:{m}}}.\n\n",
+        m = n % of + 1
+    );
+    for p in 0..18 {
+        let line: Vec<&str> = (0..80)
+            .map(|w| words[(n * 7 + p * 3 + w) % words.len()])
+            .collect();
+        s.push_str(&line.join(" "));
+        s.push_str(".\n\n");
+    }
+    s
+}
+
+/// A drawn page: `\count0` and every glyph as (font key, code, x, y).
+type Drawn = (i32, Vec<([u8; 32], u16, i32, i32)>);
+
+/// The pages whose spans come from `file`, in page order, as a reader sees them.
+fn pages_of(view: &View, file: &str) -> Vec<Drawn> {
+    let suffix = format!("/{file}");
+    view.pages
+        .iter()
+        .filter(|(_, p)| {
+            p.items.iter().any(|it| {
+                matches!(it, Item::Span(s) if *s != 0
+                    && view.spans.get(s).is_some_and(|&(f, _)| view.files[&f].ends_with(&suffix)))
+            })
+        })
+        .map(|(i, p)| {
+            let fonts = &view.page_fonts[i];
+            let glyphs = p
+                .items
+                .iter()
+                .filter_map(|it| match it {
+                    Item::Glyph {
+                        font, code, x, y, ..
+                    } => Some((fonts[font], *code, *x, *y)),
+                    _ => None,
+                })
+                .collect();
+            (p.counts[0], glyphs)
+        })
+        .collect()
+}
+
+/// Chapter focus (lane FOCUS-CHAPTER): a COMPILE with `includeonly` is
+/// pdflatex's run of `\AtBeginDocument{\includeonly{chapters/ch2}}\input
+/// main.tex`, in an output folder started from the whole document's (the
+/// app's `out-focus`): only that chapter is typeset, and its pages are the
+/// whole document's own (page numbers, references and positions from the
+/// other chapters' `.aux`). An edit in the focused chapter is incremental
+/// (S₀ does not depend on the chapter: `\includeonly`'s lookup is after
+/// it) and equals a from-scratch compile of the focused job, and dropping
+/// the focus gives the whole document again, equal to a from-scratch
+/// compile.
+#[test]
+fn a_focused_compile_is_includeonly_and_keeps_the_documents_pages() {
+    if find_texlive_bin().is_none() {
+        common::no_texlive();
+        return;
+    }
+    let base = common::fresh_dir("flashtex-host-focus");
+    let _ = std::fs::remove_dir_all(&base);
+    let (proj, out, outf) = (base.join("proj"), base.join("out"), base.join("out-focus"));
+    std::fs::create_dir_all(proj.join("chapters")).unwrap();
+    // The project's folders in the output folder, as the app's copy makes
+    // them (and latexmk): pdfTeX cannot create `chapters/` for `ch1.aux`.
+    std::fs::create_dir_all(out.join("chapters")).unwrap();
+    let of = 3;
+    let mut main = String::from("\\documentclass{report}\n\\begin{document}\n\\tableofcontents\n");
+    for n in 1..=of {
+        std::fs::write(
+            proj.join(format!("chapters/ch{n}.tex")),
+            focus_chapter(n, of),
+        )
+        .unwrap();
+        main.push_str(&format!("\\include{{chapters/ch{n}}}\n"));
+    }
+    main.push_str("\\end{document}\n");
+    std::fs::write(proj.join("main.tex"), &main).unwrap();
+    let host = start_host("f");
+    let scratch = start_host("fs");
+    let mut c = Client::connect(&host.1).unwrap();
+    let mut view = View::default();
+
+    // The whole document, settled.
+    let o = compile(&mut c, &mut view, &req(1, &proj, &out, "main.tex"));
+    assert_eq!(o.done.str_field("status"), Some("ok"), "{}", o.done);
+    let full_count = view.count;
+    let full_ch2 = pages_of(&view, "chapters/ch2.tex");
+    assert!(
+        full_ch2.len() >= 2,
+        "chapter 2 spans {} pages",
+        full_ch2.len()
+    );
+    assert!(!pages_of(&view, "chapters/ch1.tex").is_empty());
+
+    // Focused on chapter 2, from a copy of the whole document's output.
+    copy_dir(&out, &outf);
+    let focus = Some(vec!["chapters/ch2".to_string()]);
+    let mut r = req(2, &proj, &outf, "main.tex");
+    r.includeonly = focus.clone();
+    let o = compile(&mut c, &mut view, &r);
+    assert_eq!(o.done.str_field("status"), Some("ok"), "{}", o.done);
+    assert_eq!(
+        o.started.get("keep").and_then(Json::as_bool),
+        Some(false),
+        "another job"
+    );
+    let argv = o.started.get("argv").and_then(Json::as_array).unwrap();
+    assert_eq!(
+        argv.last().and_then(Json::as_str),
+        Some("\\AtBeginDocument{\\includeonly{chapters/ch2}}\\input main.tex"),
+        "{}",
+        o.started
+    );
+    assert!(
+        view.count < full_count,
+        "{} pages focused, {full_count} whole",
+        view.count
+    );
+    assert!(
+        pages_of(&view, "chapters/ch1.tex").is_empty(),
+        "chapter 1 typeset"
+    );
+    assert!(
+        pages_of(&view, "chapters/ch3.tex").is_empty(),
+        "chapter 3 typeset"
+    );
+    assert!(
+        pages_of(&view, "chapters/ch2.tex") == full_ch2,
+        "the focused chapter's pages are not the whole document's"
+    );
+
+    // An edit in the focused chapter equals a from-scratch focused compile.
+    let ch2 = std::fs::read_to_string(proj.join("chapters/ch2.tex")).unwrap();
+    let at = ch2.find("kernel").unwrap();
+    let mut r = req(3, &proj, &outf, "main.tex");
+    r.includeonly = focus.clone();
+    r.edits = vec![Edit {
+        path: "chapters/ch2.tex".into(),
+        offset: at as u64,
+        delete: "kernel".len() as u64,
+        insert: "colonel".into(),
+    }];
+    let o = compile(&mut c, &mut view, &r);
+    assert_eq!(o.done.str_field("status"), Some("ok"), "{}", o.done);
+    assert_eq!(
+        o.done.str_field("mode"),
+        Some("incremental"),
+        "an edit in the focused chapter keeps S0: {}",
+        o.done
+    );
+    let (p2, o2) = snapshot(&base, &proj, &outf, "e");
+    compare_with_scratch_job(
+        &scratch.1,
+        &view,
+        &proj,
+        &outf,
+        &p2,
+        &o2,
+        "main.tex",
+        focus,
+        "an edit in the focused chapter",
+    );
+
+    // The whole document again, with the edit.
+    let o = compile(&mut c, &mut view, &req(4, &proj, &out, "main.tex"));
+    assert_eq!(o.done.str_field("status"), Some("ok"), "{}", o.done);
+    assert_eq!(
+        o.started.get("keep").and_then(Json::as_bool),
+        Some(false),
+        "another job"
+    );
+    assert_eq!(view.count, full_count);
+    let (p3, o3) = snapshot(&base, &proj, &out, "w");
+    compare_with_scratch(
+        &scratch.1,
+        &view,
+        &proj,
+        &out,
+        &p3,
+        &o3,
+        "main.tex",
+        "the whole document after a focus",
+    );
+    let _ = c.bye();
+    let _ = std::fs::remove_dir_all(&base);
+}
+
+/// A file tested with `\openin`/`\closein` on page 1 and `\input` pages
+/// later (`incr::Session::restart_point`): the checkpoints between the test
+/// and the `\input` are not restart points for an edit in the file, those in
+/// it before the edit are. Each edit restarts after the gap, not at S₀, and
+/// every page equals a from-scratch compile.
+#[test]
+fn an_edit_after_an_early_openin_test_restarts_near_it() {
+    if find_texlive_bin().is_none() {
+        common::no_texlive();
+        return;
+    }
+    let base = common::fresh_dir("flashtex-host-openin");
+    let _ = std::fs::remove_dir_all(&base);
+    let (proj, out) = (base.join("proj"), base.join("out"));
+    std::fs::create_dir_all(&proj).unwrap();
+    std::fs::create_dir_all(&out).unwrap();
+    let words = [
+        "alpha", "beta", "gamma", "delta", "kernel", "glue", "penalty", "boxes", "rules", "marks",
+    ];
+    let paras = |seed: usize, n: usize| -> String {
+        (0..n)
+            .map(|p| {
+                let l: Vec<&str> = (0..70)
+                    .map(|w| words[(seed * 7 + p * 3 + w) % words.len()])
+                    .collect();
+                l.join(" ") + "."
+            })
+            .collect::<Vec<_>>()
+            .join("\n\n")
+    };
+    std::fs::write(
+        proj.join("main.tex"),
+        format!(
+            "\\documentclass{{article}}\n\\newread\\probe\n\\begin{{document}}\n\
+             \\openin\\probe=ch2.tex \\ifeof\\probe No chapter.\\else Chapter found.\\fi \\closein\\probe\n\
+             {}\n\\input ch2.tex\n{}\n\\end{{document}}\n",
+            paras(1, 30),
+            paras(3, 6)
+        ),
+    )
+    .unwrap();
+    let ch2 = format!("\\section{{Two}}\n{}\n", paras(2, 30));
+    std::fs::write(proj.join("ch2.tex"), &ch2).unwrap();
+    let host = start_host("o");
+    let scratch = start_host("os");
+    let mut c = Client::connect(&host.1).unwrap();
+    let mut view = View::default();
+    let o = compile(&mut c, &mut view, &req(1, &proj, &out, "main.tex"));
+    assert_eq!(o.done.str_field("status"), Some("ok"), "{}", o.done);
+    // the pages before ch2.tex's first one: the gap after the \openin test
+    let before = pages_of(&view, "ch2.tex").first().map(|p| p.0).unwrap();
+    assert!(before > 3, "ch2.tex starts on page {before}");
+    let mut id = 1;
+    // Each edit and its revert, at positions across the chapter (where the
+    // search lands depends on how many checkpoints the gap and the chapter
+    // hold; near the chapter's start it landed in the gap without the
+    // second search).
+    for (k, at) in [
+        ch2.len() / 12,
+        ch2.len() / 6,
+        ch2.len() / 2,
+        ch2.len() * 5 / 6,
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let at = at + ch2[at..].find(" kernel ").unwrap() + 1;
+        for (step, (delete, insert)) in [("kernel", "colonel"), ("colonel", "kernel")]
+            .into_iter()
+            .enumerate()
+        {
+            id += 1;
+            let mut r = req(id, &proj, &out, "main.tex");
+            r.edits = vec![Edit {
+                path: "ch2.tex".into(),
+                offset: at as u64,
+                delete: delete.len() as u64,
+                insert: insert.into(),
+            }];
+            let o = compile(&mut c, &mut view, &r);
+            assert_eq!(o.done.str_field("status"), Some("ok"), "{}", o.done);
+            let restart = o.done.int_field("restart_page").unwrap_or(0);
+            assert!(
+                restart >= before as i64 - 1,
+                "edit {k}.{step}: restarted on page {restart}, ch2.tex starts on {before}: {}",
+                o.done
+            );
+            let (p2, o2) = snapshot(&base, &proj, &out, &format!("o{k}{step}"));
+            compare_with_scratch(
+                &scratch.1,
+                &view,
+                &proj,
+                &out,
+                &p2,
+                &o2,
+                "main.tex",
+                "an edit after an early \\openin test",
+            );
+        }
     }
     let _ = c.bye();
     let _ = std::fs::remove_dir_all(&base);

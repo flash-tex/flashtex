@@ -785,6 +785,13 @@ impl Engine {
             // (only when set: a normal job's stored S0 keeps its key)
             if job.halt { "\0halt" } else { "" }
         );
+        // A focused job (`includeonly`, lane FOCUS-CHAPTER) has its own
+        // stored S0 (its first line differs), so switching the focus back
+        // and forth keeps both.
+        let key = match &job.includeonly {
+            Some(list) => format!("{key}\0includeonly\0{list}"),
+            None => key,
+        };
         let h = crate::persist::hash128(key.as_bytes());
         Some(dir.join(format!("{:016x}{:016x}.s0", h[0], h[1])))
     }

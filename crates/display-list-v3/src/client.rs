@@ -122,6 +122,10 @@ pub struct CompileRequest {
     /// never; `None`: the host's default (`--external-tools`, off unless
     /// set). Spec §6.3.
     pub external_tools: Option<String>,
+    /// Host capability `includeonly`: LaTeX's `\includeonly{…}` on the first
+    /// line before the main file (a chapter focus), the names as the
+    /// document's `\include`s write them. Spec §6.3.
+    pub includeonly: Option<Vec<String>>,
 }
 
 /// A splice of a file's bytes (spec §6.3, `edits`).
@@ -150,6 +154,7 @@ impl CompileRequest {
             edits: vec![],
             export: false,
             external_tools: None,
+            includeonly: None,
         }
     }
 
@@ -181,6 +186,12 @@ impl CompileRequest {
         }
         if let Some(t) = &self.external_tools {
             kv.push(("external_tools".into(), s(t.as_str())));
+        }
+        if let Some(names) = &self.includeonly {
+            kv.push((
+                "includeonly".into(),
+                Json::Arr(names.iter().map(|n| s(n.as_str())).collect()),
+            ));
         }
         if !self.buffers.is_empty() {
             kv.push((
