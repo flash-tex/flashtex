@@ -4165,6 +4165,10 @@ pub struct FileRead {
     /// file whose time changed, its content the same, has changed for
     /// that read (`crate::incr`'s `changes`, `host::make_key`).
     pub stamp: Option<i64>,
+    /// A whole read whose result was the file's length (`\pdffilesize`:
+    /// `note_size_read`), as the run read it: the same length, the read is
+    /// the same (`crate::incr`'s check of the reads at `\document`'s start).
+    pub size: Option<u64>,
 }
 
 /// Whether `path` is one of the user's files rather than the TeX
@@ -4534,6 +4538,7 @@ fn note_file(path: &str) {
             closed_at: None,
             written_before,
             stamp: None,
+            size: None,
         });
     })
 }
@@ -4576,6 +4581,7 @@ pub fn note_whole_read(path: &str) {
         let mut e = first.clone();
         e.closed_at = Some(u64::MAX);
         e.stamp = None;
+        e.size = None;
         log.files.push(e);
     })
 }
@@ -4587,6 +4593,19 @@ pub fn note_whole_read(path: &str) {
 /// and a restart after the read kept the old size).
 pub fn note_size_read(path: &str) {
     note_whole_read(path);
+    let len = std::fs::metadata(path).ok().map(|m| m.len());
+    READS.with(|r| {
+        let mut b = r.borrow_mut();
+        let Some(log) = b.as_mut() else { return };
+        if let Some(e) = log
+            .files
+            .iter_mut()
+            .rev()
+            .find(|f| f.path == path && f.closed_at == Some(u64::MAX))
+        {
+            e.size = len;
+        }
+    })
 }
 
 /// `\pdffilemoddate` of `path` (texmfmp.c's `getfilemoddate`): a read of

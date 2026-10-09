@@ -372,6 +372,21 @@ pub struct Pending {
     rs_old: crate::readset::ReadSet,
 }
 
+/// The anchor's bookkeeping `Globals::forget_anchor` clears
+/// (`Globals::anchor_state`).
+pub struct AnchorState {
+    s0: Option<CheckpointId>,
+    s0_reads: Option<system::ReadLog>,
+    aux_point: Option<CheckpointId>,
+    aux_path: Option<String>,
+    aux_armed: bool,
+    aux_close_rs: Option<usize>,
+    aux_done: Option<CheckpointId>,
+    aux_done_pending: bool,
+    preamble_file_closed: bool,
+    preamble_line_pending: bool,
+}
+
 /// The checkpoint layer's bookkeeping, kept in `Globals::arena.extra`.
 #[derive(Default)]
 pub struct Layer {
@@ -411,6 +426,11 @@ pub struct Layer {
     /// lookup takes `\pdffilesize`) is the journal's, not S₀'s key's
     /// (`host::make_key`, `incr::Session::take_s0`).
     pub arm_reads: Option<usize>,
+    /// The checkpoint where `\document`'s body was pushed (the `.aux`
+    /// point itself in a run with no `.aux`): where a run restarts when a
+    /// whole read made between there and the anchor changed
+    /// (`incr::Session::arm_window`).
+    pub arm_ck: Option<CheckpointId>,
     /// Stop the run with `EngineExit(-1)` right after S₀ is taken.
     pub stop_at_s0: bool,
     /// Errors the hook met (a checkpoint it could not take).
@@ -1788,6 +1808,38 @@ impl Globals {
     /// Forget S₀, the `.aux` point and the `.aux` read's end, after a
     /// restore to a checkpoint before them (a preamble edit; `crate::incr`):
     /// the run takes them again where a run from the format does.
+    /// What `forget_anchor` forgets, to put back after a run restored
+    /// before the anchor was abandoned (`incr::Session::arm_window`).
+    pub fn anchor_state(&mut self) -> AnchorState {
+        let l = self.layer();
+        AnchorState {
+            s0: l.s0,
+            s0_reads: l.s0_reads.clone(),
+            aux_point: l.aux_point,
+            aux_path: l.aux_path.clone(),
+            aux_armed: l.aux_armed,
+            aux_close_rs: l.aux_close_rs,
+            aux_done: l.aux_done,
+            aux_done_pending: l.aux_done_pending,
+            preamble_file_closed: l.preamble_file_closed,
+            preamble_line_pending: l.preamble_line_pending,
+        }
+    }
+
+    pub fn set_anchor_state(&mut self, a: AnchorState) {
+        let l = self.layer();
+        l.s0 = a.s0;
+        l.s0_reads = a.s0_reads;
+        l.aux_point = a.aux_point;
+        l.aux_path = a.aux_path;
+        l.aux_armed = a.aux_armed;
+        l.aux_close_rs = a.aux_close_rs;
+        l.aux_done = a.aux_done;
+        l.aux_done_pending = a.aux_done_pending;
+        l.preamble_file_closed = a.preamble_file_closed;
+        l.preamble_line_pending = a.preamble_line_pending;
+    }
+
     pub fn forget_anchor(&mut self) {
         let l = self.layer();
         l.s0 = None;
@@ -1919,6 +1971,8 @@ impl Globals {
                 // there -- is after the anchor (DESIGN.md §5.5), not in S₀'s
                 // key. With an `.aux` the point is its open (`note_aux_open`).
                 let l = self.layer();
+                let at_start =
+                    l.s0.is_none() && l.aux_point.is_none() && l.preamble_line_s.is_some();
                 if l.want_aux_point
                     && l.aux_point.is_none()
                     && l.s0.is_none()
@@ -1928,6 +1982,16 @@ impl Globals {
                     self.hook_checkpoint(Point::Aux);
                     let l = self.layer();
                     l.arm_point = l.aux_point;
+                    l.arm_ck = l.aux_point;
+                } else if at_start {
+                    // the same point with an `.aux`: a whole read between
+                    // here and the anchor is left out of S₀'s key
+                    // (`host::whole_after_arm`), and a run restarts here when
+                    // its file changed (pinned with the preamble's points)
+                    let n = self.layer().taken.len();
+                    self.hook_checkpoint(Point::PreambleLine);
+                    let l = self.layer();
+                    l.arm_ck = l.taken.get(n).map(|t| t.0);
                 }
             }
             REQ_SEGMENT => {

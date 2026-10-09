@@ -1151,6 +1151,10 @@ impl Engine {
                         rep.revalidated.map(Json::Bool).unwrap_or(Json::Null),
                     ),
                     (
+                        "arm_revalidated".to_string(),
+                        rep.arm_revalidated.map(Json::Bool).unwrap_or(Json::Null),
+                    ),
+                    (
                         "restart_next_gap".to_string(),
                         rep.restart_next_gap.map(Json::Int).unwrap_or(Json::Null),
                     ),
