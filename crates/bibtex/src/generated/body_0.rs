@@ -93,7 +93,10 @@ impl Globals {
                 crate::system::wr_str(&mut self.log_file, "Sorry---you've exceeded BibTeX's ");
             }
             {
-                crate::system::wr_str(&mut self.standard_output, "Sorry---you've exceeded BibTeX's ");
+                crate::system::wr_str(
+                    &mut self.standard_output,
+                    "Sorry---you've exceeded BibTeX's ",
+                );
             }
         }
         self.mark_fatal();
@@ -119,7 +122,10 @@ impl Globals {
                 crate::system::wr_ln(&mut self.log_file);
             }
             {
-                crate::system::wr_str(&mut self.standard_output, "*Please notify the BibTeX maintainer*");
+                crate::system::wr_str(
+                    &mut self.standard_output,
+                    "*Please notify the BibTeX maintainer*",
+                );
                 crate::system::wr_ln(&mut self.standard_output);
             }
         }
@@ -130,18 +136,54 @@ impl Globals {
     /// @<Procedures and functions for all file I/O, error messages, and such
     // §39
     pub fn buffer_overflow(&mut self) {
-        self.log_realloc("buffer", 1i32, (self.buf_size).wrapping_add(BUF_SIZE), self.buf_size);
-        self.buffer.resize_len((((self.buf_size).wrapping_add(BUF_SIZE)) as usize) + 1);
-        self.log_realloc("sv_buffer", 1i32, (self.buf_size).wrapping_add(BUF_SIZE), self.buf_size);
-        self.sv_buffer.resize_len((((self.buf_size).wrapping_add(BUF_SIZE)) as usize) + 1);
-        self.log_realloc("ex_buf", 1i32, (self.buf_size).wrapping_add(BUF_SIZE), self.buf_size);
-        self.ex_buf.resize_len((((self.buf_size).wrapping_add(BUF_SIZE)) as usize) + 1);
-        self.log_realloc("out_buf", 1i32, (self.buf_size).wrapping_add(BUF_SIZE), self.buf_size);
-        self.out_buf.resize_len((((self.buf_size).wrapping_add(BUF_SIZE)) as usize) + 1);
-        self.log_realloc("name_tok", 4i32, (self.buf_size).wrapping_add(BUF_SIZE), self.buf_size);
-        self.name_tok.resize_len((((self.buf_size).wrapping_add(BUF_SIZE)) as usize) + 1);
-        self.log_realloc("name_sep_char", 1i32, (self.buf_size).wrapping_add(BUF_SIZE), self.buf_size);
-        self.name_sep_char.resize_len((((self.buf_size).wrapping_add(BUF_SIZE)) as usize) + 1);
+        self.log_realloc(
+            "buffer",
+            1i32,
+            (self.buf_size).wrapping_add(BUF_SIZE),
+            self.buf_size,
+        );
+        self.buffer
+            .resize_len((((self.buf_size).wrapping_add(BUF_SIZE)) as usize) + 1);
+        self.log_realloc(
+            "sv_buffer",
+            1i32,
+            (self.buf_size).wrapping_add(BUF_SIZE),
+            self.buf_size,
+        );
+        self.sv_buffer
+            .resize_len((((self.buf_size).wrapping_add(BUF_SIZE)) as usize) + 1);
+        self.log_realloc(
+            "ex_buf",
+            1i32,
+            (self.buf_size).wrapping_add(BUF_SIZE),
+            self.buf_size,
+        );
+        self.ex_buf
+            .resize_len((((self.buf_size).wrapping_add(BUF_SIZE)) as usize) + 1);
+        self.log_realloc(
+            "out_buf",
+            1i32,
+            (self.buf_size).wrapping_add(BUF_SIZE),
+            self.buf_size,
+        );
+        self.out_buf
+            .resize_len((((self.buf_size).wrapping_add(BUF_SIZE)) as usize) + 1);
+        self.log_realloc(
+            "name_tok",
+            4i32,
+            (self.buf_size).wrapping_add(BUF_SIZE),
+            self.buf_size,
+        );
+        self.name_tok
+            .resize_len((((self.buf_size).wrapping_add(BUF_SIZE)) as usize) + 1);
+        self.log_realloc(
+            "name_sep_char",
+            1i32,
+            (self.buf_size).wrapping_add(BUF_SIZE),
+            self.buf_size,
+        );
+        self.name_sep_char
+            .resize_len((((self.buf_size).wrapping_add(BUF_SIZE)) as usize) + 1);
         self.buf_size = (self.buf_size).wrapping_add(BUF_SIZE);
     }
 
@@ -174,13 +216,33 @@ impl Globals {
                             if (self.last >= self.buf_size) {
                                 self.buffer_overflow();
                             }
-                            { let __ix0 = self.last; let __v1 = { let __s2 = ({ let mut __f0 = ::core::mem::take(&mut (*f)); let __r = self.getc(&mut __f0); (*f) = __f0; __r }) as usize; self.xord[__s2] }; self.buffer[(__ix0) as usize] = __v1; }
+                            {
+                                let __ix0 = self.last;
+                                let __v1 = {
+                                    let __s2 = ({
+                                        let mut __f0 = ::core::mem::take(&mut (*f));
+                                        let __r = self.getc(&mut __f0);
+                                        (*f) = __f0;
+                                        __r
+                                    }) as usize;
+                                    self.xord[__s2]
+                                };
+                                self.buffer[(__ix0) as usize] = __v1;
+                            }
                             self.last = (self.last).wrapping_add(1i32);
                         }
                     }
-                    { let mut __f0 = ::core::mem::take(&mut (*f)); let __r = self.vgetc(&mut __f0); (*f) = __f0; __r };
+                    {
+                        let mut __f0 = ::core::mem::take(&mut (*f));
+                        let __r = self.vgetc(&mut __f0);
+                        (*f) = __f0;
+                        __r
+                    };
                     while (self.last > 0i32) {
-                        if (self.lex_class[(self.buffer[((self.last).wrapping_sub(1i32)) as usize]) as usize] == white_space) {
+                        if (self.lex_class
+                            [(self.buffer[((self.last).wrapping_sub(1i32)) as usize]) as usize]
+                            == white_space)
+                        {
                             self.last = (self.last).wrapping_sub(1i32);
                         } else {
                             break 'l_L15_f;
@@ -218,7 +280,8 @@ impl Globals {
             }
         }
         {
-            let __for_end_2 = (self.str_start[((s).wrapping_add(1i32)) as usize]).wrapping_sub(1i32);
+            let __for_end_2 =
+                (self.str_start[((s).wrapping_add(1i32)) as usize]).wrapping_sub(1i32);
             i = self.str_start[(s) as usize];
             while i <= __for_end_2 {
                 {
@@ -235,8 +298,18 @@ impl Globals {
     /// @<Procedures and functions for all file I/O, error messages, and such
     // §44
     pub fn print_a_pool_str(&mut self, mut s: str_number) {
-        { let mut __f0 = ::core::mem::take(&mut self.standard_output); let __r = self.out_pool_str(&mut __f0, s); self.standard_output = __f0; __r };
-        { let mut __f0 = ::core::mem::take(&mut self.log_file); let __r = self.out_pool_str(&mut __f0, s); self.log_file = __f0; __r };
+        {
+            let mut __f0 = ::core::mem::take(&mut self.standard_output);
+            let __r = self.out_pool_str(&mut __f0, s);
+            self.standard_output = __f0;
+            __r
+        };
+        {
+            let mut __f0 = ::core::mem::take(&mut self.log_file);
+            let __r = self.out_pool_str(&mut __f0, s);
+            self.log_file = __f0;
+            __r
+        };
     }
 
     /// Strings are created by appending character codes to `str_pool`.
@@ -248,8 +321,14 @@ impl Globals {
     /// error message if there isn't enough room.
     // §46
     pub fn pool_overflow(&mut self) {
-        self.log_realloc("str_pool", 1i32, (self.pool_size).wrapping_add(POOL_SIZE), self.pool_size);
-        self.str_pool.resize_len((((self.pool_size).wrapping_add(POOL_SIZE)) as usize) + 1);
+        self.log_realloc(
+            "str_pool",
+            1i32,
+            (self.pool_size).wrapping_add(POOL_SIZE),
+            self.pool_size,
+        );
+        self.str_pool
+            .resize_len((((self.pool_size).wrapping_add(POOL_SIZE)) as usize) + 1);
         self.pool_size = (self.pool_size).wrapping_add(POOL_SIZE);
     }
 
@@ -276,8 +355,18 @@ impl Globals {
     /// @<Procedures and functions for all file I/O, error messages, and such
     // §75
     pub fn print_a_token(&mut self) {
-        { let mut __f0 = ::core::mem::take(&mut self.standard_output); let __r = self.out_token(&mut __f0); self.standard_output = __f0; __r };
-        { let mut __f0 = ::core::mem::take(&mut self.log_file); let __r = self.out_token(&mut __f0); self.log_file = __f0; __r };
+        {
+            let mut __f0 = ::core::mem::take(&mut self.standard_output);
+            let __r = self.out_token(&mut __f0);
+            self.standard_output = __f0;
+            __r
+        };
+        {
+            let mut __f0 = ::core::mem::take(&mut self.log_file);
+            let __r = self.out_token(&mut __f0);
+            self.log_file = __f0;
+            __r
+        };
     }
 
     /// The `print_bad_input_line` procedure prints the current input line,
@@ -383,17 +472,25 @@ impl Globals {
         }
         self.print_a_newline();
         bf_ptr = 0i32;
-        while ((bf_ptr < self.buf_ptr2) && (self.lex_class[(self.buffer[(bf_ptr) as usize]) as usize] == white_space)) {
+        while ((bf_ptr < self.buf_ptr2)
+            && (self.lex_class[(self.buffer[(bf_ptr) as usize]) as usize] == white_space))
+        {
             bf_ptr = (bf_ptr).wrapping_add(1i32);
         }
         if (bf_ptr == self.buf_ptr2) {
             {
                 {
-                    crate::system::wr_str(&mut self.log_file, "(Error may have been on previous line)");
+                    crate::system::wr_str(
+                        &mut self.log_file,
+                        "(Error may have been on previous line)",
+                    );
                     crate::system::wr_ln(&mut self.log_file);
                 }
                 {
-                    crate::system::wr_str(&mut self.standard_output, "(Error may have been on previous line)");
+                    crate::system::wr_str(
+                        &mut self.standard_output,
+                        "(Error may have been on previous line)",
+                    );
                     crate::system::wr_ln(&mut self.standard_output);
                 }
             }
@@ -411,7 +508,10 @@ impl Globals {
                 crate::system::wr_str(&mut self.log_file, "I'm skipping whatever remains of this ");
             }
             {
-                crate::system::wr_str(&mut self.standard_output, "I'm skipping whatever remains of this ");
+                crate::system::wr_str(
+                    &mut self.standard_output,
+                    "I'm skipping whatever remains of this ",
+                );
             }
         }
     }
@@ -487,7 +587,12 @@ impl Globals {
     // §100
     pub fn log_pr_aux_name(&mut self) {
         {
-            { let mut __f0 = ::core::mem::take(&mut self.log_file); let __r = self.out_pool_str(&mut __f0, self.aux_list[(self.aux_ptr) as usize]); self.log_file = __f0; __r };
+            {
+                let mut __f0 = ::core::mem::take(&mut self.log_file);
+                let __r = self.out_pool_str(&mut __f0, self.aux_list[(self.aux_ptr) as usize]);
+                self.log_file = __f0;
+                __r
+            };
         }
         {
             {
@@ -547,37 +652,34 @@ impl Globals {
         match cmd_num {
             n_aux_bibdata => {
                 {
-                    {
-                        crate::system::wr_str(&mut self.log_file, "data");
-                    }
-                    {
-                        crate::system::wr_str(&mut self.standard_output, "data");
-                    }
+                    crate::system::wr_str(&mut self.log_file, "data");
+                }
+                {
+                    crate::system::wr_str(&mut self.standard_output, "data");
                 }
             }
             n_aux_bibstyle => {
                 {
-                    {
-                        crate::system::wr_str(&mut self.log_file, "style");
-                    }
-                    {
-                        crate::system::wr_str(&mut self.standard_output, "style");
-                    }
+                    crate::system::wr_str(&mut self.log_file, "style");
+                }
+                {
+                    crate::system::wr_str(&mut self.standard_output, "style");
                 }
             }
             _ => {
                 {
                     {
-                        {
-                            crate::system::wr_str(&mut self.log_file, "Illegal auxiliary-file command");
-                        }
-                        {
-                            crate::system::wr_str(&mut self.standard_output, "Illegal auxiliary-file command");
-                        }
+                        crate::system::wr_str(&mut self.log_file, "Illegal auxiliary-file command");
                     }
-                    self.print_confusion();
-                    crate::system::end_of_TEX(self);
+                    {
+                        crate::system::wr_str(
+                            &mut self.standard_output,
+                            "Illegal auxiliary-file command",
+                        );
+                    }
                 }
+                self.print_confusion();
+                crate::system::end_of_TEX(self);
             }
         }
         {
@@ -645,5 +747,4 @@ impl Globals {
             }
         }
     }
-
 }

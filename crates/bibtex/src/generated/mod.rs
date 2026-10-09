@@ -8,9 +8,6 @@
 #![allow(unused_imports, unused_labels, while_true)]
 #![allow(dead_code, unreachable_code, unused_comparisons, clippy::all)]
 
-pub mod consts;
-pub mod globals;
-pub mod types;
 mod body_0;
 mod body_1;
 mod body_2;
@@ -19,6 +16,9 @@ mod body_4;
 mod body_5;
 mod body_6;
 mod body_7;
+pub mod consts;
+pub mod globals;
 mod main_body;
+pub mod types;
 
 pub use globals::Globals;

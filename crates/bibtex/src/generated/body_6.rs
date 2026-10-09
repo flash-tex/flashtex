@@ -19,7 +19,14 @@ impl Globals {
     /// @<`execute_fn`({\.{int.to.chr\$}})
     // §413
     pub fn x_int_to_chr(&mut self) {
-        { let mut __f0 = ::core::mem::take(&mut self.pop_lit1); let mut __f1 = ::core::mem::take(&mut self.pop_typ1); let __r = self.pop_lit_stk(&mut __f0, &mut __f1); self.pop_lit1 = __f0; self.pop_typ1 = __f1; __r };
+        {
+            let mut __f0 = ::core::mem::take(&mut self.pop_lit1);
+            let mut __f1 = ::core::mem::take(&mut self.pop_typ1);
+            let __r = self.pop_lit_stk(&mut __f0, &mut __f1);
+            self.pop_lit1 = __f0;
+            self.pop_typ1 = __f1;
+            __r
+        };
         if (self.pop_typ1 != stk_int) {
             {
                 self.print_wrong_stk_lit(self.pop_lit1, self.pop_typ1, stk_int);
@@ -38,7 +45,10 @@ impl Globals {
                             {
                                 let __w0 = self.pop_lit1;
                                 crate::system::wr_int(&mut self.standard_output, __w0, 0i32);
-                                crate::system::wr_str(&mut self.standard_output, " isn't valid ASCII");
+                                crate::system::wr_str(
+                                    &mut self.standard_output,
+                                    " isn't valid ASCII",
+                                );
                             }
                         }
                         self.bst_ex_warn_print();
@@ -53,10 +63,18 @@ impl Globals {
                         }
                     }
                     {
-                        { let __ix141 = self.pool_ptr; let __v142 = self.pop_lit1; self.str_pool[(__ix141) as usize] = __v142; }
+                        {
+                            let __ix141 = self.pool_ptr;
+                            let __v142 = self.pop_lit1;
+                            self.str_pool[(__ix141) as usize] = __v142;
+                        }
                         self.pool_ptr = (self.pool_ptr).wrapping_add(1i32);
                     }
-                    { let __a143_0 = self.make_string(); let __a143_1 = stk_str; self.push_lit_stk(__a143_0, __a143_1) };
+                    {
+                        let __a143_0 = self.make_string();
+                        let __a143_1 = stk_str;
+                        self.push_lit_stk(__a143_0, __a143_1)
+                    };
                 }
             }
         }
@@ -69,7 +87,14 @@ impl Globals {
     /// @<`execute_fn`({\.{int.to.str\$}})
     // §414
     pub fn x_int_to_str(&mut self) {
-        { let mut __f0 = ::core::mem::take(&mut self.pop_lit1); let mut __f1 = ::core::mem::take(&mut self.pop_typ1); let __r = self.pop_lit_stk(&mut __f0, &mut __f1); self.pop_lit1 = __f0; self.pop_typ1 = __f1; __r };
+        {
+            let mut __f0 = ::core::mem::take(&mut self.pop_lit1);
+            let mut __f1 = ::core::mem::take(&mut self.pop_typ1);
+            let __r = self.pop_lit_stk(&mut __f0, &mut __f1);
+            self.pop_lit1 = __f0;
+            self.pop_typ1 = __f1;
+            __r
+        };
         if (self.pop_typ1 != stk_int) {
             {
                 self.print_wrong_stk_lit(self.pop_lit1, self.pop_typ1, stk_int);
@@ -77,7 +102,14 @@ impl Globals {
             }
         } else {
             {
-                { let mut __f1 = ::core::mem::take(&mut self.ex_buf); let mut __f3 = ::core::mem::take(&mut self.ex_buf_length); let __r = self.int_to_ASCII(self.pop_lit1, &mut __f1, 0i32, &mut __f3); self.ex_buf = __f1; self.ex_buf_length = __f3; __r };
+                {
+                    let mut __f1 = ::core::mem::take(&mut self.ex_buf);
+                    let mut __f3 = ::core::mem::take(&mut self.ex_buf_length);
+                    let __r = self.int_to_ASCII(self.pop_lit1, &mut __f1, 0i32, &mut __f3);
+                    self.ex_buf = __f1;
+                    self.ex_buf_length = __f3;
+                    __r
+                };
                 self.add_pool_buf_and_push();
             }
         }
@@ -91,7 +123,14 @@ impl Globals {
     /// @<`execute_fn`({\.{missing\$}})
     // §415
     pub fn x_missing(&mut self) {
-        { let mut __f0 = ::core::mem::take(&mut self.pop_lit1); let mut __f1 = ::core::mem::take(&mut self.pop_typ1); let __r = self.pop_lit_stk(&mut __f0, &mut __f1); self.pop_lit1 = __f0; self.pop_typ1 = __f1; __r };
+        {
+            let mut __f0 = ::core::mem::take(&mut self.pop_lit1);
+            let mut __f1 = ::core::mem::take(&mut self.pop_typ1);
+            let __r = self.pop_lit_stk(&mut __f0, &mut __f1);
+            self.pop_lit1 = __f0;
+            self.pop_typ1 = __f1;
+            __r
+        };
         if (!self.mess_with_entries) {
             self.bst_cant_mess_with_entries_print();
         } else {
@@ -103,10 +142,16 @@ impl Globals {
                             {
                                 {
                                     {
-                                        crate::system::wr_str(&mut self.log_file, ", not a string or missing field,");
+                                        crate::system::wr_str(
+                                            &mut self.log_file,
+                                            ", not a string or missing field,",
+                                        );
                                     }
                                     {
-                                        crate::system::wr_str(&mut self.standard_output, ", not a string or missing field,");
+                                        crate::system::wr_str(
+                                            &mut self.standard_output,
+                                            ", not a string or missing field,",
+                                        );
                                     }
                                 }
                                 self.bst_ex_warn_print();
@@ -134,7 +179,14 @@ impl Globals {
     /// @<`execute_fn`({\.{num.names\$}})
     // §417
     pub fn x_num_names(&mut self) {
-        { let mut __f0 = ::core::mem::take(&mut self.pop_lit1); let mut __f1 = ::core::mem::take(&mut self.pop_typ1); let __r = self.pop_lit_stk(&mut __f0, &mut __f1); self.pop_lit1 = __f0; self.pop_typ1 = __f1; __r };
+        {
+            let mut __f0 = ::core::mem::take(&mut self.pop_lit1);
+            let mut __f1 = ::core::mem::take(&mut self.pop_typ1);
+            let __r = self.pop_lit_stk(&mut __f0, &mut __f1);
+            self.pop_lit1 = __f0;
+            self.pop_typ1 = __f1;
+            __r
+        };
         if (self.pop_typ1 != stk_str) {
             {
                 self.print_wrong_stk_lit(self.pop_lit1, self.pop_typ1, stk_str);
@@ -188,7 +240,14 @@ impl Globals {
     /// @<`execute_fn`({\.{purify\$}})
     // §421
     pub fn x_purify(&mut self) {
-        { let mut __f0 = ::core::mem::take(&mut self.pop_lit1); let mut __f1 = ::core::mem::take(&mut self.pop_typ1); let __r = self.pop_lit_stk(&mut __f0, &mut __f1); self.pop_lit1 = __f0; self.pop_typ1 = __f1; __r };
+        {
+            let mut __f0 = ::core::mem::take(&mut self.pop_lit1);
+            let mut __f1 = ::core::mem::take(&mut self.pop_typ1);
+            let __r = self.pop_lit_stk(&mut __f0, &mut __f1);
+            self.pop_lit1 = __f0;
+            self.pop_typ1 = __f1;
+            __r
+        };
         if (self.pop_typ1 != stk_str) {
             {
                 self.print_wrong_stk_lit(self.pop_lit1, self.pop_typ1, stk_str);
@@ -205,65 +264,141 @@ impl Globals {
                     self.ex_buf_ptr = 0i32;
                     while (self.ex_buf_ptr < self.ex_buf_length) {
                         {
-                            match self.lex_class[(self.ex_buf[(self.ex_buf_ptr) as usize]) as usize] {
+                            match self.lex_class[(self.ex_buf[(self.ex_buf_ptr) as usize]) as usize]
+                            {
                                 white_space | sep_char => {
-                                    {
-                                        self.ex_buf[(self.ex_buf_xptr) as usize] = space;
-                                        self.ex_buf_xptr = (self.ex_buf_xptr).wrapping_add(1i32);
-                                    }
+                                    self.ex_buf[(self.ex_buf_xptr) as usize] = space;
+                                    self.ex_buf_xptr = (self.ex_buf_xptr).wrapping_add(1i32);
                                 }
                                 alpha | numeric => {
                                     {
-                                        { let __ix144 = self.ex_buf_xptr; let __v145 = self.ex_buf[(self.ex_buf_ptr) as usize]; self.ex_buf[(__ix144) as usize] = __v145; }
-                                        self.ex_buf_xptr = (self.ex_buf_xptr).wrapping_add(1i32);
+                                        let __ix144 = self.ex_buf_xptr;
+                                        let __v145 = self.ex_buf[(self.ex_buf_ptr) as usize];
+                                        self.ex_buf[(__ix144) as usize] = __v145;
                                     }
+                                    self.ex_buf_xptr = (self.ex_buf_xptr).wrapping_add(1i32);
                                 }
                                 _ => {
                                     if (self.ex_buf[(self.ex_buf_ptr) as usize] == left_brace) {
                                         {
-                                            self.brace_level = (self.brace_level).wrapping_add(1i32);
-                                            if ((self.brace_level == 1i32) && ((self.ex_buf_ptr).wrapping_add(1i32) < self.ex_buf_length)) {
-                                                if (self.ex_buf[((self.ex_buf_ptr).wrapping_add(1i32)) as usize] == backslash) {
+                                            self.brace_level =
+                                                (self.brace_level).wrapping_add(1i32);
+                                            if ((self.brace_level == 1i32)
+                                                && ((self.ex_buf_ptr).wrapping_add(1i32)
+                                                    < self.ex_buf_length))
+                                            {
+                                                if (self.ex_buf[((self.ex_buf_ptr)
+                                                    .wrapping_add(1i32))
+                                                    as usize]
+                                                    == backslash)
+                                                {
                                                     // §423
                                                     {
-                                                        self.ex_buf_ptr = (self.ex_buf_ptr).wrapping_add(1i32);
-                                                        while ((self.ex_buf_ptr < self.ex_buf_length) && (self.brace_level > 0i32)) {
+                                                        self.ex_buf_ptr =
+                                                            (self.ex_buf_ptr).wrapping_add(1i32);
+                                                        while ((self.ex_buf_ptr
+                                                            < self.ex_buf_length)
+                                                            && (self.brace_level > 0i32))
+                                                        {
                                                             {
-                                                                self.ex_buf_ptr = (self.ex_buf_ptr).wrapping_add(1i32);
+                                                                self.ex_buf_ptr = (self.ex_buf_ptr)
+                                                                    .wrapping_add(1i32);
                                                                 self.ex_buf_yptr = self.ex_buf_ptr;
-                                                                while ((self.ex_buf_ptr < self.ex_buf_length) && (self.lex_class[(self.ex_buf[(self.ex_buf_ptr) as usize]) as usize] == alpha)) {
-                                                                    self.ex_buf_ptr = (self.ex_buf_ptr).wrapping_add(1i32);
+                                                                while ((self.ex_buf_ptr
+                                                                    < self.ex_buf_length)
+                                                                    && (self.lex_class[(self.ex_buf
+                                                                        [(self.ex_buf_ptr)
+                                                                            as usize])
+                                                                        as usize]
+                                                                        == alpha))
+                                                                {
+                                                                    self.ex_buf_ptr = (self
+                                                                        .ex_buf_ptr)
+                                                                        .wrapping_add(1i32);
                                                                 }
-                                                                self.control_seq_loc = { let mut __f0 = ::core::mem::take(&mut self.ex_buf); let __r = self.str_lookup(&mut __f0, self.ex_buf_yptr, (self.ex_buf_ptr).wrapping_sub(self.ex_buf_yptr), control_seq_ilk, false); self.ex_buf = __f0; __r };
+                                                                self.control_seq_loc = {
+                                                                    let mut __f0 =
+                                                                        ::core::mem::take(
+                                                                            &mut self.ex_buf,
+                                                                        );
+                                                                    let __r = self.str_lookup(
+                                                                        &mut __f0,
+                                                                        self.ex_buf_yptr,
+                                                                        (self.ex_buf_ptr)
+                                                                            .wrapping_sub(
+                                                                                self.ex_buf_yptr,
+                                                                            ),
+                                                                        control_seq_ilk,
+                                                                        false,
+                                                                    );
+                                                                    self.ex_buf = __f0;
+                                                                    __r
+                                                                };
                                                                 if self.hash_found {
                                                                     // §424
                                                                     {
-                                                                        { let __ix146 = self.ex_buf_xptr; let __v147 = self.ex_buf[(self.ex_buf_yptr) as usize]; self.ex_buf[(__ix146) as usize] = __v147; }
-                                                                        self.ex_buf_xptr = (self.ex_buf_xptr).wrapping_add(1i32);
-                                                                        match self.ilk_info[(self.control_seq_loc) as usize] {
-                                                                            n_oe | n_oe_upper | n_ae | n_ae_upper | n_ss => {
+                                                                        {
+                                                                            let __ix146 =
+                                                                                self.ex_buf_xptr;
+                                                                            let __v147 = self
+                                                                                .ex_buf
+                                                                                [(self.ex_buf_yptr)
+                                                                                    as usize];
+                                                                            self.ex_buf[(__ix146)
+                                                                                as usize] = __v147;
+                                                                        }
+                                                                        self.ex_buf_xptr = (self
+                                                                            .ex_buf_xptr)
+                                                                            .wrapping_add(1i32);
+                                                                        match self.ilk_info[(self
+                                                                            .control_seq_loc)
+                                                                            as usize]
+                                                                        {
+                                                                            n_oe | n_oe_upper
+                                                                            | n_ae | n_ae_upper
+                                                                            | n_ss => {
                                                                                 {
-                                                                                    { let __ix148 = self.ex_buf_xptr; let __v149 = self.ex_buf[((self.ex_buf_yptr).wrapping_add(1i32)) as usize]; self.ex_buf[(__ix148) as usize] = __v149; }
-                                                                                    self.ex_buf_xptr = (self.ex_buf_xptr).wrapping_add(1i32);
+                                                                                    let __ix148 = self.ex_buf_xptr;
+                                                                                    let __v149 = self.ex_buf[((self.ex_buf_yptr).wrapping_add(1i32)) as usize];
+                                                                                    self.ex_buf[(__ix148) as usize] = __v149;
                                                                                 }
+                                                                                self.ex_buf_xptr = (self.ex_buf_xptr).wrapping_add(1i32);
                                                                             }
-                                                                            _ => {
-                                                                            }
+                                                                            _ => {}
                                                                         }
                                                                     }
                                                                 }
                                                                 // §423
-                                                                while (((self.ex_buf_ptr < self.ex_buf_length) && (self.brace_level > 0i32)) && (self.ex_buf[(self.ex_buf_ptr) as usize] != backslash)) {
+                                                                while (((self.ex_buf_ptr
+                                                                    < self.ex_buf_length)
+                                                                    && (self.brace_level > 0i32))
+                                                                    && (self.ex_buf[(self
+                                                                        .ex_buf_ptr)
+                                                                        as usize]
+                                                                        != backslash))
+                                                                {
                                                                     {
-                                                                        match self.lex_class[(self.ex_buf[(self.ex_buf_ptr) as usize]) as usize] {
+                                                                        match self.lex_class[(self
+                                                                            .ex_buf
+                                                                            [(self.ex_buf_ptr)
+                                                                                as usize])
+                                                                            as usize]
+                                                                        {
                                                                             alpha | numeric => {
                                                                                 {
-                                                                                    { let __ix150 = self.ex_buf_xptr; let __v151 = self.ex_buf[(self.ex_buf_ptr) as usize]; self.ex_buf[(__ix150) as usize] = __v151; }
-                                                                                    self.ex_buf_xptr = (self.ex_buf_xptr).wrapping_add(1i32);
+                                                                                    let __ix150 = self.ex_buf_xptr;
+                                                                                    let __v151 = self.ex_buf[(self.ex_buf_ptr) as usize];
+                                                                                    self.ex_buf[(__ix150) as usize] = __v151;
                                                                                 }
+                                                                                self.ex_buf_xptr = (self.ex_buf_xptr).wrapping_add(1i32);
                                                                             }
                                                                             _ => {
-                                                                                if (self.ex_buf[(self.ex_buf_ptr) as usize] == right_brace) {
+                                                                                if (self.ex_buf
+                                                                                    [(self
+                                                                                        .ex_buf_ptr)
+                                                                                        as usize]
+                                                                                    == right_brace)
+                                                                                {
                                                                                     self.brace_level = (self.brace_level).wrapping_sub(1i32);
                                                                                 } else {
                                                                                     if (self.ex_buf[(self.ex_buf_ptr) as usize] == left_brace) {
@@ -272,21 +407,26 @@ impl Globals {
                                                                                 }
                                                                             }
                                                                         }
-                                                                        self.ex_buf_ptr = (self.ex_buf_ptr).wrapping_add(1i32);
+                                                                        self.ex_buf_ptr = (self
+                                                                            .ex_buf_ptr)
+                                                                            .wrapping_add(1i32);
                                                                     }
                                                                 }
                                                             }
                                                         }
-                                                        self.ex_buf_ptr = (self.ex_buf_ptr).wrapping_sub(1i32);
+                                                        self.ex_buf_ptr =
+                                                            (self.ex_buf_ptr).wrapping_sub(1i32);
                                                     }
                                                 }
                                             }
                                         }
                                     } else {
                                         // §422
-                                        if (self.ex_buf[(self.ex_buf_ptr) as usize] == right_brace) {
+                                        if (self.ex_buf[(self.ex_buf_ptr) as usize] == right_brace)
+                                        {
                                             if (self.brace_level > 0i32) {
-                                                self.brace_level = (self.brace_level).wrapping_sub(1i32);
+                                                self.brace_level =
+                                                    (self.brace_level).wrapping_sub(1i32);
                                             }
                                         }
                                     }
@@ -317,7 +457,11 @@ impl Globals {
             self.str_pool[(self.pool_ptr) as usize] = double_quote;
             self.pool_ptr = (self.pool_ptr).wrapping_add(1i32);
         }
-        { let __a152_0 = self.make_string(); let __a152_1 = stk_str; self.push_lit_stk(__a152_0, __a152_1) };
+        {
+            let __a152_0 = self.make_string();
+            let __a152_1 = stk_str;
+            self.push_lit_stk(__a152_0, __a152_1)
+        };
     }
 
     /// The `built_in` function {\.{substring\$}} pops the top three literals
@@ -333,9 +477,30 @@ impl Globals {
     // §428
     pub fn x_substring(&mut self) {
         'l_exit_f: {
-            { let mut __f0 = ::core::mem::take(&mut self.pop_lit1); let mut __f1 = ::core::mem::take(&mut self.pop_typ1); let __r = self.pop_lit_stk(&mut __f0, &mut __f1); self.pop_lit1 = __f0; self.pop_typ1 = __f1; __r };
-            { let mut __f0 = ::core::mem::take(&mut self.pop_lit2); let mut __f1 = ::core::mem::take(&mut self.pop_typ2); let __r = self.pop_lit_stk(&mut __f0, &mut __f1); self.pop_lit2 = __f0; self.pop_typ2 = __f1; __r };
-            { let mut __f0 = ::core::mem::take(&mut self.pop_lit3); let mut __f1 = ::core::mem::take(&mut self.pop_typ3); let __r = self.pop_lit_stk(&mut __f0, &mut __f1); self.pop_lit3 = __f0; self.pop_typ3 = __f1; __r };
+            {
+                let mut __f0 = ::core::mem::take(&mut self.pop_lit1);
+                let mut __f1 = ::core::mem::take(&mut self.pop_typ1);
+                let __r = self.pop_lit_stk(&mut __f0, &mut __f1);
+                self.pop_lit1 = __f0;
+                self.pop_typ1 = __f1;
+                __r
+            };
+            {
+                let mut __f0 = ::core::mem::take(&mut self.pop_lit2);
+                let mut __f1 = ::core::mem::take(&mut self.pop_typ2);
+                let __r = self.pop_lit_stk(&mut __f0, &mut __f1);
+                self.pop_lit2 = __f0;
+                self.pop_typ2 = __f1;
+                __r
+            };
+            {
+                let mut __f0 = ::core::mem::take(&mut self.pop_lit3);
+                let mut __f1 = ::core::mem::take(&mut self.pop_typ3);
+                let __r = self.pop_lit_stk(&mut __f0, &mut __f1);
+                self.pop_lit3 = __f0;
+                self.pop_typ3 = __f1;
+                __r
+            };
             if (self.pop_typ1 != stk_int) {
                 {
                     self.print_wrong_stk_lit(self.pop_lit1, self.pop_typ1, stk_int);
@@ -355,24 +520,36 @@ impl Globals {
                         }
                     } else {
                         {
-                            self.sp_length = (self.str_start[((self.pop_lit3).wrapping_add(1i32)) as usize]).wrapping_sub(self.str_start[(self.pop_lit3) as usize]);
+                            self.sp_length = (self.str_start
+                                [((self.pop_lit3).wrapping_add(1i32)) as usize])
+                                .wrapping_sub(self.str_start[(self.pop_lit3) as usize]);
                             if (self.pop_lit1 >= self.sp_length) {
-                                if ((self.pop_lit2 == 1i32) || (self.pop_lit2 == (1i32).wrapping_neg())) {
+                                if ((self.pop_lit2 == 1i32)
+                                    || (self.pop_lit2 == (1i32).wrapping_neg()))
+                                {
                                     {
                                         {
-                                            if (self.lit_stack[(self.lit_stk_ptr) as usize] >= self.cmd_str_ptr) {
+                                            if (self.lit_stack[(self.lit_stk_ptr) as usize]
+                                                >= self.cmd_str_ptr)
+                                            {
                                                 {
-                                                    self.str_ptr = (self.str_ptr).wrapping_add(1i32);
-                                                    self.pool_ptr = self.str_start[(self.str_ptr) as usize];
+                                                    self.str_ptr =
+                                                        (self.str_ptr).wrapping_add(1i32);
+                                                    self.pool_ptr =
+                                                        self.str_start[(self.str_ptr) as usize];
                                                 }
                                             }
-                                            self.lit_stk_ptr = (self.lit_stk_ptr).wrapping_add(1i32);
+                                            self.lit_stk_ptr =
+                                                (self.lit_stk_ptr).wrapping_add(1i32);
                                         }
                                         break 'l_exit_f;
                                     }
                                 }
                             }
-                            if ((((self.pop_lit1 <= 0i32) || (self.pop_lit2 == 0i32)) || (self.pop_lit2 > self.sp_length)) || (self.pop_lit2 < (self.sp_length).wrapping_neg())) {
+                            if ((((self.pop_lit1 <= 0i32) || (self.pop_lit2 == 0i32))
+                                || (self.pop_lit2 > self.sp_length))
+                                || (self.pop_lit2 < (self.sp_length).wrapping_neg()))
+                            {
                                 {
                                     self.push_lit_stk(self.s_null, stk_str);
                                     break 'l_exit_f;
@@ -382,20 +559,37 @@ impl Globals {
                                 {
                                     if (self.pop_lit2 > 0i32) {
                                         {
-                                            if (self.pop_lit1 > (self.sp_length).wrapping_sub((self.pop_lit2).wrapping_sub(1i32))) {
-                                                self.pop_lit1 = (self.sp_length).wrapping_sub((self.pop_lit2).wrapping_sub(1i32));
+                                            if (self.pop_lit1
+                                                > (self.sp_length).wrapping_sub(
+                                                    (self.pop_lit2).wrapping_sub(1i32),
+                                                ))
+                                            {
+                                                self.pop_lit1 = (self.sp_length).wrapping_sub(
+                                                    (self.pop_lit2).wrapping_sub(1i32),
+                                                );
                                             }
-                                            self.sp_ptr = (self.str_start[(self.pop_lit3) as usize]).wrapping_add((self.pop_lit2).wrapping_sub(1i32));
+                                            self.sp_ptr = (self.str_start
+                                                [(self.pop_lit3) as usize])
+                                                .wrapping_add((self.pop_lit2).wrapping_sub(1i32));
                                             self.sp_end = (self.sp_ptr).wrapping_add(self.pop_lit1);
                                             if (self.pop_lit2 == 1i32) {
                                                 if (self.pop_lit3 >= self.cmd_str_ptr) {
                                                     {
-                                                        { let __ix153 = (self.pop_lit3).wrapping_add(1i32); let __v154 = self.sp_end; self.str_start[(__ix153) as usize] = __v154; }
                                                         {
-                                                            self.str_ptr = (self.str_ptr).wrapping_add(1i32);
-                                                            self.pool_ptr = self.str_start[(self.str_ptr) as usize];
+                                                            let __ix153 =
+                                                                (self.pop_lit3).wrapping_add(1i32);
+                                                            let __v154 = self.sp_end;
+                                                            self.str_start[(__ix153) as usize] =
+                                                                __v154;
                                                         }
-                                                        self.lit_stk_ptr = (self.lit_stk_ptr).wrapping_add(1i32);
+                                                        {
+                                                            self.str_ptr =
+                                                                (self.str_ptr).wrapping_add(1i32);
+                                                            self.pool_ptr = self.str_start
+                                                                [(self.str_ptr) as usize];
+                                                        }
+                                                        self.lit_stk_ptr =
+                                                            (self.lit_stk_ptr).wrapping_add(1i32);
                                                         break 'l_exit_f;
                                                     }
                                                 }
@@ -404,28 +598,48 @@ impl Globals {
                                     } else {
                                         {
                                             self.pop_lit2 = (self.pop_lit2).wrapping_neg();
-                                            if (self.pop_lit1 > (self.sp_length).wrapping_sub((self.pop_lit2).wrapping_sub(1i32))) {
-                                                self.pop_lit1 = (self.sp_length).wrapping_sub((self.pop_lit2).wrapping_sub(1i32));
+                                            if (self.pop_lit1
+                                                > (self.sp_length).wrapping_sub(
+                                                    (self.pop_lit2).wrapping_sub(1i32),
+                                                ))
+                                            {
+                                                self.pop_lit1 = (self.sp_length).wrapping_sub(
+                                                    (self.pop_lit2).wrapping_sub(1i32),
+                                                );
                                             }
-                                            self.sp_end = (self.str_start[((self.pop_lit3).wrapping_add(1i32)) as usize]).wrapping_sub((self.pop_lit2).wrapping_sub(1i32));
+                                            self.sp_end = (self.str_start
+                                                [((self.pop_lit3).wrapping_add(1i32)) as usize])
+                                                .wrapping_sub((self.pop_lit2).wrapping_sub(1i32));
                                             self.sp_ptr = (self.sp_end).wrapping_sub(self.pop_lit1);
                                         }
                                     }
                                     {
-                                        while (((self.pool_ptr).wrapping_add(self.sp_end)).wrapping_sub(self.sp_ptr) > self.pool_size) {
+                                        while (((self.pool_ptr).wrapping_add(self.sp_end))
+                                            .wrapping_sub(self.sp_ptr)
+                                            > self.pool_size)
+                                        {
                                             self.pool_overflow();
                                         }
                                     }
                                     while (self.sp_ptr < self.sp_end) {
                                         {
                                             {
-                                                { let __ix155 = self.pool_ptr; let __v156 = self.str_pool[(self.sp_ptr) as usize]; self.str_pool[(__ix155) as usize] = __v156; }
+                                                {
+                                                    let __ix155 = self.pool_ptr;
+                                                    let __v156 =
+                                                        self.str_pool[(self.sp_ptr) as usize];
+                                                    self.str_pool[(__ix155) as usize] = __v156;
+                                                }
                                                 self.pool_ptr = (self.pool_ptr).wrapping_add(1i32);
                                             }
                                             self.sp_ptr = (self.sp_ptr).wrapping_add(1i32);
                                         }
                                     }
-                                    { let __a157_0 = self.make_string(); let __a157_1 = stk_str; self.push_lit_stk(__a157_0, __a157_1) };
+                                    {
+                                        let __a157_0 = self.make_string();
+                                        let __a157_1 = stk_str;
+                                        self.push_lit_stk(__a157_0, __a157_1)
+                                    };
                                 }
                             }
                         }
@@ -441,8 +655,22 @@ impl Globals {
     /// @<`execute_fn`({\.{swap\$}})
     // §430
     pub fn x_swap(&mut self) {
-        { let mut __f0 = ::core::mem::take(&mut self.pop_lit1); let mut __f1 = ::core::mem::take(&mut self.pop_typ1); let __r = self.pop_lit_stk(&mut __f0, &mut __f1); self.pop_lit1 = __f0; self.pop_typ1 = __f1; __r };
-        { let mut __f0 = ::core::mem::take(&mut self.pop_lit2); let mut __f1 = ::core::mem::take(&mut self.pop_typ2); let __r = self.pop_lit_stk(&mut __f0, &mut __f1); self.pop_lit2 = __f0; self.pop_typ2 = __f1; __r };
+        {
+            let mut __f0 = ::core::mem::take(&mut self.pop_lit1);
+            let mut __f1 = ::core::mem::take(&mut self.pop_typ1);
+            let __r = self.pop_lit_stk(&mut __f0, &mut __f1);
+            self.pop_lit1 = __f0;
+            self.pop_typ1 = __f1;
+            __r
+        };
+        {
+            let mut __f0 = ::core::mem::take(&mut self.pop_lit2);
+            let mut __f1 = ::core::mem::take(&mut self.pop_typ2);
+            let __r = self.pop_lit_stk(&mut __f0, &mut __f1);
+            self.pop_lit2 = __f0;
+            self.pop_typ2 = __f1;
+            __r
+        };
         if ((self.pop_typ1 != stk_str) || (self.pop_lit1 < self.cmd_str_ptr)) {
             {
                 self.push_lit_stk(self.pop_lit1, self.pop_typ1);
@@ -474,13 +702,21 @@ impl Globals {
                     while (self.sp_ptr < self.sp_end) {
                         {
                             {
-                                { let __ix158 = self.pool_ptr; let __v159 = self.str_pool[(self.sp_ptr) as usize]; self.str_pool[(__ix158) as usize] = __v159; }
+                                {
+                                    let __ix158 = self.pool_ptr;
+                                    let __v159 = self.str_pool[(self.sp_ptr) as usize];
+                                    self.str_pool[(__ix158) as usize] = __v159;
+                                }
                                 self.pool_ptr = (self.pool_ptr).wrapping_add(1i32);
                             }
                             self.sp_ptr = (self.sp_ptr).wrapping_add(1i32);
                         }
                     }
-                    { let __a160_0 = self.make_string(); let __a160_1 = stk_str; self.push_lit_stk(__a160_0, __a160_1) };
+                    {
+                        let __a160_0 = self.make_string();
+                        let __a160_1 = stk_str;
+                        self.push_lit_stk(__a160_0, __a160_1)
+                    };
                     self.add_pool_buf_and_push();
                 }
             }
@@ -497,7 +733,14 @@ impl Globals {
     /// @<`execute_fn`({\.{text.length\$}})
     // §432
     pub fn x_text_length(&mut self) {
-        { let mut __f0 = ::core::mem::take(&mut self.pop_lit1); let mut __f1 = ::core::mem::take(&mut self.pop_typ1); let __r = self.pop_lit_stk(&mut __f0, &mut __f1); self.pop_lit1 = __f0; self.pop_typ1 = __f1; __r };
+        {
+            let mut __f0 = ::core::mem::take(&mut self.pop_lit1);
+            let mut __f1 = ::core::mem::take(&mut self.pop_typ1);
+            let __r = self.pop_lit_stk(&mut __f0, &mut __f1);
+            self.pop_lit1 = __f0;
+            self.pop_typ1 = __f1;
+            __r
+        };
         if (self.pop_typ1 != stk_str) {
             {
                 self.print_wrong_stk_lit(self.pop_lit1, self.pop_typ1, stk_str);
@@ -514,35 +757,55 @@ impl Globals {
                     while (self.sp_ptr < self.sp_end) {
                         {
                             self.sp_ptr = (self.sp_ptr).wrapping_add(1i32);
-                            if (self.str_pool[((self.sp_ptr).wrapping_sub(1i32)) as usize] == left_brace) {
+                            if (self.str_pool[((self.sp_ptr).wrapping_sub(1i32)) as usize]
+                                == left_brace)
+                            {
                                 {
                                     self.sp_brace_level = (self.sp_brace_level).wrapping_add(1i32);
-                                    if ((self.sp_brace_level == 1i32) && (self.sp_ptr < self.sp_end)) {
+                                    if ((self.sp_brace_level == 1i32)
+                                        && (self.sp_ptr < self.sp_end))
+                                    {
                                         if (self.str_pool[(self.sp_ptr) as usize] == backslash) {
                                             {
                                                 self.sp_ptr = (self.sp_ptr).wrapping_add(1i32);
-                                                while ((self.sp_ptr < self.sp_end) && (self.sp_brace_level > 0i32)) {
+                                                while ((self.sp_ptr < self.sp_end)
+                                                    && (self.sp_brace_level > 0i32))
+                                                {
                                                     {
-                                                        if (self.str_pool[(self.sp_ptr) as usize] == right_brace) {
-                                                            self.sp_brace_level = (self.sp_brace_level).wrapping_sub(1i32);
+                                                        if (self.str_pool[(self.sp_ptr) as usize]
+                                                            == right_brace)
+                                                        {
+                                                            self.sp_brace_level = (self
+                                                                .sp_brace_level)
+                                                                .wrapping_sub(1i32);
                                                         } else {
-                                                            if (self.str_pool[(self.sp_ptr) as usize] == left_brace) {
-                                                                self.sp_brace_level = (self.sp_brace_level).wrapping_add(1i32);
+                                                            if (self.str_pool
+                                                                [(self.sp_ptr) as usize]
+                                                                == left_brace)
+                                                            {
+                                                                self.sp_brace_level = (self
+                                                                    .sp_brace_level)
+                                                                    .wrapping_add(1i32);
                                                             }
                                                         }
-                                                        self.sp_ptr = (self.sp_ptr).wrapping_add(1i32);
+                                                        self.sp_ptr =
+                                                            (self.sp_ptr).wrapping_add(1i32);
                                                     }
                                                 }
-                                                self.num_text_chars = (self.num_text_chars).wrapping_add(1i32);
+                                                self.num_text_chars =
+                                                    (self.num_text_chars).wrapping_add(1i32);
                                             }
                                         }
                                     }
                                 }
                             } else {
-                                if (self.str_pool[((self.sp_ptr).wrapping_sub(1i32)) as usize] == right_brace) {
+                                if (self.str_pool[((self.sp_ptr).wrapping_sub(1i32)) as usize]
+                                    == right_brace)
+                                {
                                     {
                                         if (self.sp_brace_level > 0i32) {
-                                            self.sp_brace_level = (self.sp_brace_level).wrapping_sub(1i32);
+                                            self.sp_brace_level =
+                                                (self.sp_brace_level).wrapping_sub(1i32);
                                         }
                                     }
                                 } else {
@@ -574,8 +837,22 @@ impl Globals {
     // §434
     pub fn x_text_prefix(&mut self) {
         'l_exit_f: {
-            { let mut __f0 = ::core::mem::take(&mut self.pop_lit1); let mut __f1 = ::core::mem::take(&mut self.pop_typ1); let __r = self.pop_lit_stk(&mut __f0, &mut __f1); self.pop_lit1 = __f0; self.pop_typ1 = __f1; __r };
-            { let mut __f0 = ::core::mem::take(&mut self.pop_lit2); let mut __f1 = ::core::mem::take(&mut self.pop_typ2); let __r = self.pop_lit_stk(&mut __f0, &mut __f1); self.pop_lit2 = __f0; self.pop_typ2 = __f1; __r };
+            {
+                let mut __f0 = ::core::mem::take(&mut self.pop_lit1);
+                let mut __f1 = ::core::mem::take(&mut self.pop_typ1);
+                let __r = self.pop_lit_stk(&mut __f0, &mut __f1);
+                self.pop_lit1 = __f0;
+                self.pop_typ1 = __f1;
+                __r
+            };
+            {
+                let mut __f0 = ::core::mem::take(&mut self.pop_lit2);
+                let mut __f1 = ::core::mem::take(&mut self.pop_typ2);
+                let __r = self.pop_lit_stk(&mut __f0, &mut __f1);
+                self.pop_lit2 = __f0;
+                self.pop_typ2 = __f1;
+                __r
+            };
             if (self.pop_typ1 != stk_int) {
                 {
                     self.print_wrong_stk_lit(self.pop_lit1, self.pop_typ1, stk_int);
@@ -597,48 +874,79 @@ impl Globals {
                         // §435
                         {
                             self.sp_ptr = self.str_start[(self.pop_lit2) as usize];
-                            self.sp_end = self.str_start[((self.pop_lit2).wrapping_add(1i32)) as usize];
+                            self.sp_end =
+                                self.str_start[((self.pop_lit2).wrapping_add(1i32)) as usize];
                             // §436
                             {
                                 self.num_text_chars = 0i32;
                                 self.sp_brace_level = 0i32;
                                 self.sp_xptr1 = self.sp_ptr;
-                                while ((self.sp_xptr1 < self.sp_end) && (self.num_text_chars < self.pop_lit1)) {
+                                while ((self.sp_xptr1 < self.sp_end)
+                                    && (self.num_text_chars < self.pop_lit1))
+                                {
                                     {
                                         self.sp_xptr1 = (self.sp_xptr1).wrapping_add(1i32);
-                                        if (self.str_pool[((self.sp_xptr1).wrapping_sub(1i32)) as usize] == left_brace) {
+                                        if (self.str_pool
+                                            [((self.sp_xptr1).wrapping_sub(1i32)) as usize]
+                                            == left_brace)
+                                        {
                                             {
-                                                self.sp_brace_level = (self.sp_brace_level).wrapping_add(1i32);
-                                                if ((self.sp_brace_level == 1i32) && (self.sp_xptr1 < self.sp_end)) {
-                                                    if (self.str_pool[(self.sp_xptr1) as usize] == backslash) {
+                                                self.sp_brace_level =
+                                                    (self.sp_brace_level).wrapping_add(1i32);
+                                                if ((self.sp_brace_level == 1i32)
+                                                    && (self.sp_xptr1 < self.sp_end))
+                                                {
+                                                    if (self.str_pool[(self.sp_xptr1) as usize]
+                                                        == backslash)
+                                                    {
                                                         {
-                                                            self.sp_xptr1 = (self.sp_xptr1).wrapping_add(1i32);
-                                                            while ((self.sp_xptr1 < self.sp_end) && (self.sp_brace_level > 0i32)) {
+                                                            self.sp_xptr1 =
+                                                                (self.sp_xptr1).wrapping_add(1i32);
+                                                            while ((self.sp_xptr1 < self.sp_end)
+                                                                && (self.sp_brace_level > 0i32))
+                                                            {
                                                                 {
-                                                                    if (self.str_pool[(self.sp_xptr1) as usize] == right_brace) {
-                                                                        self.sp_brace_level = (self.sp_brace_level).wrapping_sub(1i32);
+                                                                    if (self.str_pool
+                                                                        [(self.sp_xptr1) as usize]
+                                                                        == right_brace)
+                                                                    {
+                                                                        self.sp_brace_level =
+                                                                            (self.sp_brace_level)
+                                                                                .wrapping_sub(1i32);
                                                                     } else {
-                                                                        if (self.str_pool[(self.sp_xptr1) as usize] == left_brace) {
+                                                                        if (self.str_pool[(self
+                                                                            .sp_xptr1)
+                                                                            as usize]
+                                                                            == left_brace)
+                                                                        {
                                                                             self.sp_brace_level = (self.sp_brace_level).wrapping_add(1i32);
                                                                         }
                                                                     }
-                                                                    self.sp_xptr1 = (self.sp_xptr1).wrapping_add(1i32);
+                                                                    self.sp_xptr1 = (self.sp_xptr1)
+                                                                        .wrapping_add(1i32);
                                                                 }
                                                             }
-                                                            self.num_text_chars = (self.num_text_chars).wrapping_add(1i32);
+                                                            self.num_text_chars = (self
+                                                                .num_text_chars)
+                                                                .wrapping_add(1i32);
                                                         }
                                                     }
                                                 }
                                             }
                                         } else {
-                                            if (self.str_pool[((self.sp_xptr1).wrapping_sub(1i32)) as usize] == right_brace) {
+                                            if (self.str_pool
+                                                [((self.sp_xptr1).wrapping_sub(1i32)) as usize]
+                                                == right_brace)
+                                            {
                                                 {
                                                     if (self.sp_brace_level > 0i32) {
-                                                        self.sp_brace_level = (self.sp_brace_level).wrapping_sub(1i32);
+                                                        self.sp_brace_level = (self.sp_brace_level)
+                                                            .wrapping_sub(1i32);
                                                     }
                                                 }
                                             } else {
-                                                self.num_text_chars = (self.num_text_chars).wrapping_add(1i32);
+                                                self.num_text_chars =
+                                                    (self.num_text_chars).wrapping_add(1i32);
                                             }
                                         }
                                     }
@@ -647,7 +955,11 @@ impl Globals {
                             }
                             // §435
                             {
-                                while ((((self.pool_ptr).wrapping_add(self.sp_brace_level)).wrapping_add(self.sp_end)).wrapping_sub(self.sp_ptr) > self.pool_size) {
+                                while ((((self.pool_ptr).wrapping_add(self.sp_brace_level))
+                                    .wrapping_add(self.sp_end))
+                                .wrapping_sub(self.sp_ptr)
+                                    > self.pool_size)
+                                {
                                     self.pool_overflow();
                                 }
                             }
@@ -657,7 +969,11 @@ impl Globals {
                                 while (self.sp_ptr < self.sp_end) {
                                     {
                                         {
-                                            { let __ix161 = self.pool_ptr; let __v162 = self.str_pool[(self.sp_ptr) as usize]; self.str_pool[(__ix161) as usize] = __v162; }
+                                            {
+                                                let __ix161 = self.pool_ptr;
+                                                let __v162 = self.str_pool[(self.sp_ptr) as usize];
+                                                self.str_pool[(__ix161) as usize] = __v162;
+                                            }
                                             self.pool_ptr = (self.pool_ptr).wrapping_add(1i32);
                                         }
                                         self.sp_ptr = (self.sp_ptr).wrapping_add(1i32);
@@ -673,7 +989,11 @@ impl Globals {
                                     self.sp_brace_level = (self.sp_brace_level).wrapping_sub(1i32);
                                 }
                             }
-                            { let __a163_0 = self.make_string(); let __a163_1 = stk_str; self.push_lit_stk(__a163_0, __a163_1) };
+                            {
+                                let __a163_0 = self.make_string();
+                                let __a163_1 = stk_str;
+                                self.push_lit_stk(__a163_0, __a163_1)
+                            };
                         }
                     }
                 }
@@ -691,10 +1011,15 @@ impl Globals {
         if (!self.mess_with_entries) {
             self.bst_cant_mess_with_entries_print();
         } else {
-            if ((self.type_list[(self.cite_ptr) as usize] == self.undefined) || (self.type_list[(self.cite_ptr) as usize] == empty)) {
+            if ((self.type_list[(self.cite_ptr) as usize] == self.undefined)
+                || (self.type_list[(self.cite_ptr) as usize] == empty))
+            {
                 self.push_lit_stk(self.s_null, stk_str);
             } else {
-                self.push_lit_stk(self.hash_text[(self.type_list[(self.cite_ptr) as usize]) as usize], stk_str);
+                self.push_lit_stk(
+                    self.hash_text[(self.type_list[(self.cite_ptr) as usize]) as usize],
+                    stk_str,
+                );
             }
         }
     }
@@ -706,7 +1031,14 @@ impl Globals {
     /// @<`execute_fn`({\.{warning\$}})
     // §439
     pub fn x_warning(&mut self) {
-        { let mut __f0 = ::core::mem::take(&mut self.pop_lit1); let mut __f1 = ::core::mem::take(&mut self.pop_typ1); let __r = self.pop_lit_stk(&mut __f0, &mut __f1); self.pop_lit1 = __f0; self.pop_typ1 = __f1; __r };
+        {
+            let mut __f0 = ::core::mem::take(&mut self.pop_lit1);
+            let mut __f1 = ::core::mem::take(&mut self.pop_typ1);
+            let __r = self.pop_lit_stk(&mut __f0, &mut __f1);
+            self.pop_lit1 = __f0;
+            self.pop_typ1 = __f1;
+            __r
+        };
         if (self.pop_typ1 != stk_str) {
             self.print_wrong_stk_lit(self.pop_lit1, self.pop_typ1, stk_str);
         } else {
@@ -736,7 +1068,14 @@ impl Globals {
     /// @<`execute_fn`({\.{width\$}})
     // §441
     pub fn x_width(&mut self) {
-        { let mut __f0 = ::core::mem::take(&mut self.pop_lit1); let mut __f1 = ::core::mem::take(&mut self.pop_typ1); let __r = self.pop_lit_stk(&mut __f0, &mut __f1); self.pop_lit1 = __f0; self.pop_typ1 = __f1; __r };
+        {
+            let mut __f0 = ::core::mem::take(&mut self.pop_lit1);
+            let mut __f1 = ::core::mem::take(&mut self.pop_typ1);
+            let __r = self.pop_lit_stk(&mut __f0, &mut __f1);
+            self.pop_lit1 = __f0;
+            self.pop_typ1 = __f1;
+            __r
+        };
         if (self.pop_typ1 != stk_str) {
             {
                 self.print_wrong_stk_lit(self.pop_lit1, self.pop_typ1, stk_str);
@@ -756,27 +1095,68 @@ impl Globals {
                             if (self.ex_buf[(self.ex_buf_ptr) as usize] == left_brace) {
                                 {
                                     self.brace_level = (self.brace_level).wrapping_add(1i32);
-                                    if ((self.brace_level == 1i32) && ((self.ex_buf_ptr).wrapping_add(1i32) < self.ex_buf_length)) {
-                                        if (self.ex_buf[((self.ex_buf_ptr).wrapping_add(1i32)) as usize] == backslash) {
+                                    if ((self.brace_level == 1i32)
+                                        && ((self.ex_buf_ptr).wrapping_add(1i32)
+                                            < self.ex_buf_length))
+                                    {
+                                        if (self.ex_buf
+                                            [((self.ex_buf_ptr).wrapping_add(1i32)) as usize]
+                                            == backslash)
+                                        {
                                             // §443
                                             {
-                                                self.ex_buf_ptr = (self.ex_buf_ptr).wrapping_add(1i32);
-                                                while ((self.ex_buf_ptr < self.ex_buf_length) && (self.brace_level > 0i32)) {
+                                                self.ex_buf_ptr =
+                                                    (self.ex_buf_ptr).wrapping_add(1i32);
+                                                while ((self.ex_buf_ptr < self.ex_buf_length)
+                                                    && (self.brace_level > 0i32))
+                                                {
                                                     {
-                                                        self.ex_buf_ptr = (self.ex_buf_ptr).wrapping_add(1i32);
+                                                        self.ex_buf_ptr =
+                                                            (self.ex_buf_ptr).wrapping_add(1i32);
                                                         self.ex_buf_xptr = self.ex_buf_ptr;
-                                                        while ((self.ex_buf_ptr < self.ex_buf_length) && (self.lex_class[(self.ex_buf[(self.ex_buf_ptr) as usize]) as usize] == alpha)) {
-                                                            self.ex_buf_ptr = (self.ex_buf_ptr).wrapping_add(1i32);
+                                                        while ((self.ex_buf_ptr
+                                                            < self.ex_buf_length)
+                                                            && (self.lex_class[(self.ex_buf
+                                                                [(self.ex_buf_ptr) as usize])
+                                                                as usize]
+                                                                == alpha))
+                                                        {
+                                                            self.ex_buf_ptr = (self.ex_buf_ptr)
+                                                                .wrapping_add(1i32);
                                                         }
-                                                        if ((self.ex_buf_ptr < self.ex_buf_length) && (self.ex_buf_ptr == self.ex_buf_xptr)) {
-                                                            self.ex_buf_ptr = (self.ex_buf_ptr).wrapping_add(1i32);
+                                                        if ((self.ex_buf_ptr < self.ex_buf_length)
+                                                            && (self.ex_buf_ptr
+                                                                == self.ex_buf_xptr))
+                                                        {
+                                                            self.ex_buf_ptr = (self.ex_buf_ptr)
+                                                                .wrapping_add(1i32);
                                                         } else {
                                                             {
-                                                                self.control_seq_loc = { let mut __f0 = ::core::mem::take(&mut self.ex_buf); let __r = self.str_lookup(&mut __f0, self.ex_buf_xptr, (self.ex_buf_ptr).wrapping_sub(self.ex_buf_xptr), control_seq_ilk, false); self.ex_buf = __f0; __r };
+                                                                self.control_seq_loc = {
+                                                                    let mut __f0 =
+                                                                        ::core::mem::take(
+                                                                            &mut self.ex_buf,
+                                                                        );
+                                                                    let __r = self.str_lookup(
+                                                                        &mut __f0,
+                                                                        self.ex_buf_xptr,
+                                                                        (self.ex_buf_ptr)
+                                                                            .wrapping_sub(
+                                                                                self.ex_buf_xptr,
+                                                                            ),
+                                                                        control_seq_ilk,
+                                                                        false,
+                                                                    );
+                                                                    self.ex_buf = __f0;
+                                                                    __r
+                                                                };
                                                                 if self.hash_found {
                                                                     // §444
                                                                     {
-                                                                        match self.ilk_info[(self.control_seq_loc) as usize] {
+                                                                        match self.ilk_info[(self
+                                                                            .control_seq_loc)
+                                                                            as usize]
+                                                                        {
                                                                             n_ss => {
                                                                                 self.string_width = (self.string_width).wrapping_add(500i32);
                                                                             }
@@ -801,43 +1181,76 @@ impl Globals {
                                                             }
                                                         }
                                                         // §443
-                                                        while ((self.ex_buf_ptr < self.ex_buf_length) && (self.lex_class[(self.ex_buf[(self.ex_buf_ptr) as usize]) as usize] == white_space)) {
-                                                            self.ex_buf_ptr = (self.ex_buf_ptr).wrapping_add(1i32);
+                                                        while ((self.ex_buf_ptr
+                                                            < self.ex_buf_length)
+                                                            && (self.lex_class[(self.ex_buf
+                                                                [(self.ex_buf_ptr) as usize])
+                                                                as usize]
+                                                                == white_space))
+                                                        {
+                                                            self.ex_buf_ptr = (self.ex_buf_ptr)
+                                                                .wrapping_add(1i32);
                                                         }
-                                                        while (((self.ex_buf_ptr < self.ex_buf_length) && (self.brace_level > 0i32)) && (self.ex_buf[(self.ex_buf_ptr) as usize] != backslash)) {
+                                                        while (((self.ex_buf_ptr
+                                                            < self.ex_buf_length)
+                                                            && (self.brace_level > 0i32))
+                                                            && (self.ex_buf
+                                                                [(self.ex_buf_ptr) as usize]
+                                                                != backslash))
+                                                        {
                                                             {
-                                                                if (self.ex_buf[(self.ex_buf_ptr) as usize] == right_brace) {
-                                                                    self.brace_level = (self.brace_level).wrapping_sub(1i32);
+                                                                if (self.ex_buf
+                                                                    [(self.ex_buf_ptr) as usize]
+                                                                    == right_brace)
+                                                                {
+                                                                    self.brace_level = (self
+                                                                        .brace_level)
+                                                                        .wrapping_sub(1i32);
                                                                 } else {
-                                                                    if (self.ex_buf[(self.ex_buf_ptr) as usize] == left_brace) {
-                                                                        self.brace_level = (self.brace_level).wrapping_add(1i32);
+                                                                    if (self.ex_buf[(self
+                                                                        .ex_buf_ptr)
+                                                                        as usize]
+                                                                        == left_brace)
+                                                                    {
+                                                                        self.brace_level = (self
+                                                                            .brace_level)
+                                                                            .wrapping_add(1i32);
                                                                     } else {
                                                                         self.string_width = (self.string_width).wrapping_add(self.char_width[(self.ex_buf[(self.ex_buf_ptr) as usize]) as usize]);
                                                                     }
                                                                 }
-                                                                self.ex_buf_ptr = (self.ex_buf_ptr).wrapping_add(1i32);
+                                                                self.ex_buf_ptr = (self.ex_buf_ptr)
+                                                                    .wrapping_add(1i32);
                                                             }
                                                         }
                                                     }
                                                 }
-                                                self.ex_buf_ptr = (self.ex_buf_ptr).wrapping_sub(1i32);
+                                                self.ex_buf_ptr =
+                                                    (self.ex_buf_ptr).wrapping_sub(1i32);
                                             }
                                         } else {
                                             // §442
-                                            self.string_width = (self.string_width).wrapping_add(self.char_width[(left_brace) as usize]);
+                                            self.string_width = (self.string_width).wrapping_add(
+                                                self.char_width[(left_brace) as usize],
+                                            );
                                         }
                                     } else {
-                                        self.string_width = (self.string_width).wrapping_add(self.char_width[(left_brace) as usize]);
+                                        self.string_width = (self.string_width)
+                                            .wrapping_add(self.char_width[(left_brace) as usize]);
                                     }
                                 }
                             } else {
                                 if (self.ex_buf[(self.ex_buf_ptr) as usize] == right_brace) {
                                     {
                                         self.decr_brace_level(self.pop_lit1);
-                                        self.string_width = (self.string_width).wrapping_add(self.char_width[(right_brace) as usize]);
+                                        self.string_width = (self.string_width)
+                                            .wrapping_add(self.char_width[(right_brace) as usize]);
                                     }
                                 } else {
-                                    self.string_width = (self.string_width).wrapping_add(self.char_width[(self.ex_buf[(self.ex_buf_ptr) as usize]) as usize]);
+                                    self.string_width = (self.string_width).wrapping_add(
+                                        self.char_width
+                                            [(self.ex_buf[(self.ex_buf_ptr) as usize]) as usize],
+                                    );
                                 }
                             }
                             self.ex_buf_ptr = (self.ex_buf_ptr).wrapping_add(1i32);
@@ -858,7 +1271,14 @@ impl Globals {
     /// @<`execute_fn`({\.{write\$}})
     // §445
     pub fn x_write(&mut self) {
-        { let mut __f0 = ::core::mem::take(&mut self.pop_lit1); let mut __f1 = ::core::mem::take(&mut self.pop_typ1); let __r = self.pop_lit_stk(&mut __f0, &mut __f1); self.pop_lit1 = __f0; self.pop_typ1 = __f1; __r };
+        {
+            let mut __f0 = ::core::mem::take(&mut self.pop_lit1);
+            let mut __f1 = ::core::mem::take(&mut self.pop_typ1);
+            let __r = self.pop_lit_stk(&mut __f0, &mut __f1);
+            self.pop_lit1 = __f0;
+            self.pop_typ1 = __f1;
+            __r
+        };
         if (self.pop_typ1 != stk_str) {
             self.print_wrong_stk_lit(self.pop_lit1, self.pop_typ1, stk_str);
         } else {
@@ -882,7 +1302,13 @@ impl Globals {
             built_in => {
                 // §332
                 {
-                    { let __ix164 = self.ilk_info[(ex_fn_loc) as usize]; let __v165 = (self.execution_count[(self.ilk_info[(ex_fn_loc) as usize]) as usize]).wrapping_add(1i32); self.execution_count[(__ix164) as usize] = __v165; }
+                    {
+                        let __ix164 = self.ilk_info[(ex_fn_loc) as usize];
+                        let __v165 = (self.execution_count
+                            [(self.ilk_info[(ex_fn_loc) as usize]) as usize])
+                            .wrapping_add(1i32);
+                        self.execution_count[(__ix164) as usize] = __v165;
+                    }
                     match self.ilk_info[(ex_fn_loc) as usize] {
                         n_equals => {
                             self.x_equals();
@@ -914,12 +1340,15 @@ impl Globals {
                                 if (!self.mess_with_entries) {
                                     self.bst_cant_mess_with_entries_print();
                                 } else {
-                                    if (self.type_list[(self.cite_ptr) as usize] == self.undefined) {
+                                    if (self.type_list[(self.cite_ptr) as usize] == self.undefined)
+                                    {
                                         self.execute_fn(self.b_default);
                                     } else {
                                         if (self.type_list[(self.cite_ptr) as usize] == empty) {
                                         } else {
-                                            self.execute_fn(self.type_list[(self.cite_ptr) as usize]);
+                                            self.execute_fn(
+                                                self.type_list[(self.cite_ptr) as usize],
+                                            );
                                         }
                                     }
                                 }
@@ -947,17 +1376,46 @@ impl Globals {
                         n_if => {
                             // §412
                             {
-                                { let mut __f0 = ::core::mem::take(&mut self.pop_lit1); let mut __f1 = ::core::mem::take(&mut self.pop_typ1); let __r = self.pop_lit_stk(&mut __f0, &mut __f1); self.pop_lit1 = __f0; self.pop_typ1 = __f1; __r };
-                                { let mut __f0 = ::core::mem::take(&mut self.pop_lit2); let mut __f1 = ::core::mem::take(&mut self.pop_typ2); let __r = self.pop_lit_stk(&mut __f0, &mut __f1); self.pop_lit2 = __f0; self.pop_typ2 = __f1; __r };
-                                { let mut __f0 = ::core::mem::take(&mut self.pop_lit3); let mut __f1 = ::core::mem::take(&mut self.pop_typ3); let __r = self.pop_lit_stk(&mut __f0, &mut __f1); self.pop_lit3 = __f0; self.pop_typ3 = __f1; __r };
+                                {
+                                    let mut __f0 = ::core::mem::take(&mut self.pop_lit1);
+                                    let mut __f1 = ::core::mem::take(&mut self.pop_typ1);
+                                    let __r = self.pop_lit_stk(&mut __f0, &mut __f1);
+                                    self.pop_lit1 = __f0;
+                                    self.pop_typ1 = __f1;
+                                    __r
+                                };
+                                {
+                                    let mut __f0 = ::core::mem::take(&mut self.pop_lit2);
+                                    let mut __f1 = ::core::mem::take(&mut self.pop_typ2);
+                                    let __r = self.pop_lit_stk(&mut __f0, &mut __f1);
+                                    self.pop_lit2 = __f0;
+                                    self.pop_typ2 = __f1;
+                                    __r
+                                };
+                                {
+                                    let mut __f0 = ::core::mem::take(&mut self.pop_lit3);
+                                    let mut __f1 = ::core::mem::take(&mut self.pop_typ3);
+                                    let __r = self.pop_lit_stk(&mut __f0, &mut __f1);
+                                    self.pop_lit3 = __f0;
+                                    self.pop_typ3 = __f1;
+                                    __r
+                                };
                                 if (self.pop_typ1 != stk_fn) {
                                     self.print_wrong_stk_lit(self.pop_lit1, self.pop_typ1, stk_fn);
                                 } else {
                                     if (self.pop_typ2 != stk_fn) {
-                                        self.print_wrong_stk_lit(self.pop_lit2, self.pop_typ2, stk_fn);
+                                        self.print_wrong_stk_lit(
+                                            self.pop_lit2,
+                                            self.pop_typ2,
+                                            stk_fn,
+                                        );
                                     } else {
                                         if (self.pop_typ3 != stk_int) {
-                                            self.print_wrong_stk_lit(self.pop_lit3, self.pop_typ3, stk_int);
+                                            self.print_wrong_stk_lit(
+                                                self.pop_lit3,
+                                                self.pop_typ3,
+                                                stk_int,
+                                            );
                                         } else {
                                             if (self.pop_lit3 > 0i32) {
                                                 self.execute_fn(self.pop_lit2);
@@ -992,7 +1450,14 @@ impl Globals {
                         n_pop => {
                             // §419
                             {
-                                { let mut __f0 = ::core::mem::take(&mut self.pop_lit1); let mut __f1 = ::core::mem::take(&mut self.pop_typ1); let __r = self.pop_lit_stk(&mut __f0, &mut __f1); self.pop_lit1 = __f0; self.pop_typ1 = __f1; __r };
+                                {
+                                    let mut __f0 = ::core::mem::take(&mut self.pop_lit1);
+                                    let mut __f1 = ::core::mem::take(&mut self.pop_typ1);
+                                    let __r = self.pop_lit_stk(&mut __f0, &mut __f1);
+                                    self.pop_lit1 = __f0;
+                                    self.pop_typ1 = __f1;
+                                    __r
+                                };
                             }
                         }
                         n_preamble => {
@@ -1007,8 +1472,7 @@ impl Globals {
                         }
                         n_skip => {
                             // §426
-                            {
-                            }
+                            {}
                         }
                         n_stack => {
                             // §427
@@ -1046,8 +1510,22 @@ impl Globals {
                             // §440
                             {
                                 'l_L51_f: {
-                                    { let mut __f0 = ::core::mem::take(&mut r_pop_lt1); let mut __f1 = ::core::mem::take(&mut r_pop_tp1); let __r = self.pop_lit_stk(&mut __f0, &mut __f1); r_pop_lt1 = __f0; r_pop_tp1 = __f1; __r };
-                                    { let mut __f0 = ::core::mem::take(&mut r_pop_lt2); let mut __f1 = ::core::mem::take(&mut r_pop_tp2); let __r = self.pop_lit_stk(&mut __f0, &mut __f1); r_pop_lt2 = __f0; r_pop_tp2 = __f1; __r };
+                                    {
+                                        let mut __f0 = ::core::mem::take(&mut r_pop_lt1);
+                                        let mut __f1 = ::core::mem::take(&mut r_pop_tp1);
+                                        let __r = self.pop_lit_stk(&mut __f0, &mut __f1);
+                                        r_pop_lt1 = __f0;
+                                        r_pop_tp1 = __f1;
+                                        __r
+                                    };
+                                    {
+                                        let mut __f0 = ::core::mem::take(&mut r_pop_lt2);
+                                        let mut __f1 = ::core::mem::take(&mut r_pop_tp2);
+                                        let __r = self.pop_lit_stk(&mut __f0, &mut __f1);
+                                        r_pop_lt2 = __f0;
+                                        r_pop_tp2 = __f1;
+                                        __r
+                                    };
                                     if (r_pop_tp1 != stk_fn) {
                                         self.print_wrong_stk_lit(r_pop_lt1, r_pop_tp1, stk_fn);
                                     } else {
@@ -1057,10 +1535,24 @@ impl Globals {
                                             while true {
                                                 {
                                                     self.execute_fn(r_pop_lt2);
-                                                    { let mut __f0 = ::core::mem::take(&mut self.pop_lit1); let mut __f1 = ::core::mem::take(&mut self.pop_typ1); let __r = self.pop_lit_stk(&mut __f0, &mut __f1); self.pop_lit1 = __f0; self.pop_typ1 = __f1; __r };
+                                                    {
+                                                        let mut __f0 =
+                                                            ::core::mem::take(&mut self.pop_lit1);
+                                                        let mut __f1 =
+                                                            ::core::mem::take(&mut self.pop_typ1);
+                                                        let __r =
+                                                            self.pop_lit_stk(&mut __f0, &mut __f1);
+                                                        self.pop_lit1 = __f0;
+                                                        self.pop_typ1 = __f1;
+                                                        __r
+                                                    };
                                                     if (self.pop_typ1 != stk_int) {
                                                         {
-                                                            self.print_wrong_stk_lit(self.pop_lit1, self.pop_typ1, stk_int);
+                                                            self.print_wrong_stk_lit(
+                                                                self.pop_lit1,
+                                                                self.pop_typ1,
+                                                                stk_int,
+                                                            );
                                                             break 'l_L51_f;
                                                         }
                                                     } else {
@@ -1087,16 +1579,20 @@ impl Globals {
                         _ => {
                             {
                                 {
-                                    {
-                                        crate::system::wr_str(&mut self.log_file, "Unknown built-in function");
-                                    }
-                                    {
-                                        crate::system::wr_str(&mut self.standard_output, "Unknown built-in function");
-                                    }
+                                    crate::system::wr_str(
+                                        &mut self.log_file,
+                                        "Unknown built-in function",
+                                    );
                                 }
-                                self.print_confusion();
-                                crate::system::end_of_TEX(self);
+                                {
+                                    crate::system::wr_str(
+                                        &mut self.standard_output,
+                                        "Unknown built-in function",
+                                    );
+                                }
                             }
+                            self.print_confusion();
+                            crate::system::end_of_TEX(self);
                         }
                     }
                 }
@@ -1112,7 +1608,10 @@ impl Globals {
                             } else {
                                 {
                                     wiz_ptr = (wiz_ptr).wrapping_add(1i32);
-                                    self.push_lit_stk(self.wiz_functions[(wiz_ptr) as usize], stk_fn);
+                                    self.push_lit_stk(
+                                        self.wiz_functions[(wiz_ptr) as usize],
+                                        stk_fn,
+                                    );
                                 }
                             }
                             wiz_ptr = (wiz_ptr).wrapping_add(1i32);
@@ -1134,15 +1633,22 @@ impl Globals {
                         self.bst_cant_mess_with_entries_print();
                     } else {
                         {
-                            self.field_ptr = ((self.cite_ptr).wrapping_mul(self.num_fields)).wrapping_add(self.ilk_info[(ex_fn_loc) as usize]);
+                            self.field_ptr = ((self.cite_ptr).wrapping_mul(self.num_fields))
+                                .wrapping_add(self.ilk_info[(ex_fn_loc) as usize]);
                             if (self.field_ptr >= self.max_fields) {
                                 {
                                     {
                                         {
-                                            crate::system::wr_str(&mut self.log_file, "field_info index is out of range");
+                                            crate::system::wr_str(
+                                                &mut self.log_file,
+                                                "field_info index is out of range",
+                                            );
                                         }
                                         {
-                                            crate::system::wr_str(&mut self.standard_output, "field_info index is out of range");
+                                            crate::system::wr_str(
+                                                &mut self.standard_output,
+                                                "field_info index is out of range",
+                                            );
                                         }
                                     }
                                     self.print_confusion();
@@ -1150,9 +1656,15 @@ impl Globals {
                                 }
                             }
                             if (self.field_info[(self.field_ptr) as usize] == missing) {
-                                self.push_lit_stk(self.hash_text[(ex_fn_loc) as usize], stk_field_missing);
+                                self.push_lit_stk(
+                                    self.hash_text[(ex_fn_loc) as usize],
+                                    stk_field_missing,
+                                );
                             } else {
-                                self.push_lit_stk(self.field_info[(self.field_ptr) as usize], stk_str);
+                                self.push_lit_stk(
+                                    self.field_info[(self.field_ptr) as usize],
+                                    stk_str,
+                                );
                             }
                         }
                     }
@@ -1164,7 +1676,12 @@ impl Globals {
                     if (!self.mess_with_entries) {
                         self.bst_cant_mess_with_entries_print();
                     } else {
-                        self.push_lit_stk(self.entry_ints[(((self.cite_ptr).wrapping_mul(self.num_ent_ints)).wrapping_add(self.ilk_info[(ex_fn_loc) as usize])) as usize], stk_int);
+                        self.push_lit_stk(
+                            self.entry_ints[(((self.cite_ptr).wrapping_mul(self.num_ent_ints))
+                                .wrapping_add(self.ilk_info[(ex_fn_loc) as usize]))
+                                as usize],
+                            stk_int,
+                        );
                     }
                 }
             }
@@ -1175,11 +1692,24 @@ impl Globals {
                         self.bst_cant_mess_with_entries_print();
                     } else {
                         {
-                            self.str_ent_ptr = ((self.cite_ptr).wrapping_mul(self.num_ent_strs)).wrapping_add(self.ilk_info[(ex_fn_loc) as usize]);
+                            self.str_ent_ptr = ((self.cite_ptr).wrapping_mul(self.num_ent_strs))
+                                .wrapping_add(self.ilk_info[(ex_fn_loc) as usize]);
                             self.ex_buf_ptr = 0i32;
-                            while (self.entry_strs[(((self.str_ent_ptr).wrapping_mul((self.ent_str_size).wrapping_add(1i32))).wrapping_add(self.ex_buf_ptr)) as usize] != end_of_string) {
+                            while (self.entry_strs[(((self.str_ent_ptr)
+                                .wrapping_mul((self.ent_str_size).wrapping_add(1i32)))
+                            .wrapping_add(self.ex_buf_ptr))
+                                as usize]
+                                != end_of_string)
+                            {
                                 {
-                                    { let __ix166 = self.ex_buf_ptr; let __v167 = self.entry_strs[(((self.str_ent_ptr).wrapping_mul((self.ent_str_size).wrapping_add(1i32))).wrapping_add(self.ex_buf_ptr)) as usize]; self.ex_buf[(__ix166) as usize] = __v167; }
+                                    {
+                                        let __ix166 = self.ex_buf_ptr;
+                                        let __v167 = self.entry_strs[(((self.str_ent_ptr)
+                                            .wrapping_mul((self.ent_str_size).wrapping_add(1i32)))
+                                        .wrapping_add(self.ex_buf_ptr))
+                                            as usize];
+                                        self.ex_buf[(__ix166) as usize] = __v167;
+                                    }
                                     self.ex_buf_ptr = (self.ex_buf_ptr).wrapping_add(1i32);
                                 }
                             }
@@ -1202,21 +1732,39 @@ impl Globals {
                     } else {
                         {
                             {
-                                while ((self.pool_ptr).wrapping_add(self.glb_str_end[(self.str_glb_ptr) as usize]) > self.pool_size) {
+                                while ((self.pool_ptr)
+                                    .wrapping_add(self.glb_str_end[(self.str_glb_ptr) as usize])
+                                    > self.pool_size)
+                                {
                                     self.pool_overflow();
                                 }
                             }
                             self.glob_chr_ptr = 0i32;
-                            while (self.glob_chr_ptr < self.glb_str_end[(self.str_glb_ptr) as usize]) {
+                            while (self.glob_chr_ptr
+                                < self.glb_str_end[(self.str_glb_ptr) as usize])
+                            {
                                 {
                                     {
-                                        { let __ix168 = self.pool_ptr; let __v169 = self.global_strs[(((self.str_glb_ptr).wrapping_mul((self.glob_str_size).wrapping_add(1i32))).wrapping_add(self.glob_chr_ptr)) as usize]; self.str_pool[(__ix168) as usize] = __v169; }
+                                        {
+                                            let __ix168 = self.pool_ptr;
+                                            let __v169 = self.global_strs[(((self.str_glb_ptr)
+                                                .wrapping_mul(
+                                                    (self.glob_str_size).wrapping_add(1i32),
+                                                ))
+                                            .wrapping_add(self.glob_chr_ptr))
+                                                as usize];
+                                            self.str_pool[(__ix168) as usize] = __v169;
+                                        }
                                         self.pool_ptr = (self.pool_ptr).wrapping_add(1i32);
                                     }
                                     self.glob_chr_ptr = (self.glob_chr_ptr).wrapping_add(1i32);
                                 }
                             }
-                            { let __a170_0 = self.make_string(); let __a170_1 = stk_str; self.push_lit_stk(__a170_0, __a170_1) };
+                            {
+                                let __a170_0 = self.make_string();
+                                let __a170_1 = stk_str;
+                                self.push_lit_stk(__a170_0, __a170_1)
+                            };
                         }
                     }
                 }
@@ -1238,7 +1786,19 @@ impl Globals {
                 self.set_aux_name_from_command_line();
                 // §95
                 {
-                    if ((((self.aux_name_length).wrapping_add((self.str_start[((self.s_aux_extension).wrapping_add(1i32)) as usize]).wrapping_sub(self.str_start[(self.s_aux_extension) as usize])) > file_name_size) || ((self.aux_name_length).wrapping_add((self.str_start[((self.s_log_extension).wrapping_add(1i32)) as usize]).wrapping_sub(self.str_start[(self.s_log_extension) as usize])) > file_name_size)) || ((self.aux_name_length).wrapping_add((self.str_start[((self.s_bbl_extension).wrapping_add(1i32)) as usize]).wrapping_sub(self.str_start[(self.s_bbl_extension) as usize])) > file_name_size)) {
+                    if ((((self.aux_name_length).wrapping_add(
+                        (self.str_start[((self.s_aux_extension).wrapping_add(1i32)) as usize])
+                            .wrapping_sub(self.str_start[(self.s_aux_extension) as usize]),
+                    ) > file_name_size)
+                        || ((self.aux_name_length).wrapping_add(
+                            (self.str_start[((self.s_log_extension).wrapping_add(1i32)) as usize])
+                                .wrapping_sub(self.str_start[(self.s_log_extension) as usize]),
+                        ) > file_name_size))
+                        || ((self.aux_name_length).wrapping_add(
+                            (self.str_start[((self.s_bbl_extension).wrapping_add(1i32)) as usize])
+                                .wrapping_sub(self.str_start[(self.s_bbl_extension) as usize]),
+                        ) > file_name_size))
+                    {
                         {
                             self.sam_too_long_file_name_print();
                             break 'l_L46_f;
@@ -1247,13 +1807,32 @@ impl Globals {
                     // §98
                     {
                         self.name_length = self.aux_name_length;
-                        if (((((self.name_length < 4i32) || (self.name_of_file[((self.name_length).wrapping_sub(3i32)) as usize] != b'.')) || (self.name_of_file[((self.name_length).wrapping_sub(2i32)) as usize] != b'a')) || (self.name_of_file[((self.name_length).wrapping_sub(1i32)) as usize] != b'u')) || (self.name_of_file[(self.name_length) as usize] != b'x')) {
+                        if (((((self.name_length < 4i32)
+                            || (self.name_of_file
+                                [((self.name_length).wrapping_sub(3i32)) as usize]
+                                != b'.'))
+                            || (self.name_of_file
+                                [((self.name_length).wrapping_sub(2i32)) as usize]
+                                != b'a'))
+                            || (self.name_of_file
+                                [((self.name_length).wrapping_sub(1i32)) as usize]
+                                != b'u'))
+                            || (self.name_of_file[(self.name_length) as usize] != b'x'))
+                        {
                             self.add_extension(self.s_aux_extension);
                         } else {
                             self.aux_name_length = (self.aux_name_length).wrapping_sub(4i32);
                         }
                         self.aux_ptr = 0i32;
-                        if ((!self.name_in_ok()) || (!{ let mut __f0 = ::core::mem::take(&mut self.aux_file[(self.aux_ptr) as usize]); let __r = self.a_open_in(&mut __f0, (1i32).wrapping_neg()); self.aux_file[(self.aux_ptr) as usize] = __f0; __r })) {
+                        if ((!self.name_in_ok())
+                            || (!{
+                                let mut __f0 =
+                                    ::core::mem::take(&mut self.aux_file[(self.aux_ptr) as usize]);
+                                let __r = self.a_open_in(&mut __f0, (1i32).wrapping_neg());
+                                self.aux_file[(self.aux_ptr) as usize] = __f0;
+                                __r
+                            }))
+                        {
                             {
                                 self.sam_wrong_file_name_print();
                                 break 'l_L46_f;
@@ -1261,7 +1840,14 @@ impl Globals {
                         }
                         self.name_length = self.aux_name_length;
                         self.add_extension(self.s_log_extension);
-                        if ((!self.name_out_ok()) || (!{ let mut __f0 = ::core::mem::take(&mut self.log_file); let __r = self.a_open_out(&mut __f0); self.log_file = __f0; __r })) {
+                        if ((!self.name_out_ok())
+                            || (!{
+                                let mut __f0 = ::core::mem::take(&mut self.log_file);
+                                let __r = self.a_open_out(&mut __f0);
+                                self.log_file = __f0;
+                                __r
+                            }))
+                        {
                             {
                                 self.sam_wrong_file_name_print();
                                 break 'l_L46_f;
@@ -1269,7 +1855,14 @@ impl Globals {
                         }
                         self.name_length = self.aux_name_length;
                         self.add_extension(self.s_bbl_extension);
-                        if ((!self.name_out_ok()) || (!{ let mut __f0 = ::core::mem::take(&mut self.bbl_file); let __r = self.a_open_out(&mut __f0); self.bbl_file = __f0; __r })) {
+                        if ((!self.name_out_ok())
+                            || (!{
+                                let mut __f0 = ::core::mem::take(&mut self.bbl_file);
+                                let __r = self.a_open_out(&mut __f0);
+                                self.bbl_file = __f0;
+                                __r
+                            }))
+                        {
                             {
                                 self.sam_wrong_file_name_print();
                                 break 'l_L46_f;
@@ -1283,21 +1876,64 @@ impl Globals {
                         self.name_ptr = 1i32;
                         while (self.name_ptr <= self.name_length) {
                             {
-                                { let __ix171 = self.name_ptr; let __v172 = self.xord[(self.name_of_file[(self.name_ptr) as usize]) as usize]; self.buffer[(__ix171) as usize] = __v172; }
+                                {
+                                    let __ix171 = self.name_ptr;
+                                    let __v172 = self.xord
+                                        [(self.name_of_file[(self.name_ptr) as usize]) as usize];
+                                    self.buffer[(__ix171) as usize] = __v172;
+                                }
                                 self.name_ptr = (self.name_ptr).wrapping_add(1i32);
                             }
                         }
-                        self.top_lev_str = { let __s173 = ({ let mut __f0 = ::core::mem::take(&mut self.buffer); let __r = self.str_lookup(&mut __f0, 1i32, self.aux_name_length, text_ilk, true); self.buffer = __f0; __r }) as usize; self.hash_text[__s173] };
-                        { let __ix174 = self.aux_ptr; let __v175 = { let __s176 = ({ let mut __f0 = ::core::mem::take(&mut self.buffer); let __r = self.str_lookup(&mut __f0, 1i32, self.name_length, aux_file_ilk, true); self.buffer = __f0; __r }) as usize; self.hash_text[__s176] }; self.aux_list[(__ix174) as usize] = __v175; }
+                        self.top_lev_str = {
+                            let __s173 = ({
+                                let mut __f0 = ::core::mem::take(&mut self.buffer);
+                                let __r = self.str_lookup(
+                                    &mut __f0,
+                                    1i32,
+                                    self.aux_name_length,
+                                    text_ilk,
+                                    true,
+                                );
+                                self.buffer = __f0;
+                                __r
+                            }) as usize;
+                            self.hash_text[__s173]
+                        };
+                        {
+                            let __ix174 = self.aux_ptr;
+                            let __v175 = {
+                                let __s176 = ({
+                                    let mut __f0 = ::core::mem::take(&mut self.buffer);
+                                    let __r = self.str_lookup(
+                                        &mut __f0,
+                                        1i32,
+                                        self.name_length,
+                                        aux_file_ilk,
+                                        true,
+                                    );
+                                    self.buffer = __f0;
+                                    __r
+                                }) as usize;
+                                self.hash_text[__s176]
+                            };
+                            self.aux_list[(__ix174) as usize] = __v175;
+                        }
                         if self.hash_found {
                             {
                                 {
                                     {
                                         {
-                                            crate::system::wr_str(&mut self.log_file, "Already encountered auxiliary file");
+                                            crate::system::wr_str(
+                                                &mut self.log_file,
+                                                "Already encountered auxiliary file",
+                                            );
                                         }
                                         {
-                                            crate::system::wr_str(&mut self.standard_output, "Already encountered auxiliary file");
+                                            crate::system::wr_str(
+                                                &mut self.standard_output,
+                                                "Already encountered auxiliary file",
+                                            );
                                         }
                                     }
                                     self.print_confusion();
@@ -1345,7 +1981,9 @@ impl Globals {
                             }
                         }
                     }
-                    if (self.lex_class[(self.buffer[(self.buf_ptr2) as usize]) as usize] == white_space) {
+                    if (self.lex_class[(self.buffer[(self.buf_ptr2) as usize]) as usize]
+                        == white_space)
+                    {
                         {
                             self.aux_err_white_space_in_argument_print();
                             {
@@ -1354,7 +1992,9 @@ impl Globals {
                             }
                         }
                     }
-                    if ((self.last > (self.buf_ptr2).wrapping_add(1i32)) && (self.buffer[(self.buf_ptr2) as usize] == right_brace)) {
+                    if ((self.last > (self.buf_ptr2).wrapping_add(1i32))
+                        && (self.buffer[(self.buf_ptr2) as usize] == right_brace))
+                    {
                         {
                             self.aux_err_stuff_after_right_brace_print();
                             {
@@ -1367,24 +2007,75 @@ impl Globals {
                     {
                         if (self.bib_ptr == self.max_bib_files) {
                             {
-                                self.log_realloc("bib_list", 4i32, (self.max_bib_files).wrapping_add(MAX_BIB_FILES), self.max_bib_files);
-                                self.bib_list.resize_len((((self.max_bib_files).wrapping_add(MAX_BIB_FILES)) as usize) + 1);
-                                self.log_realloc("bib_file", 8i32, (self.max_bib_files).wrapping_add(MAX_BIB_FILES), self.max_bib_files);
-                                { let __n177 = (((self.max_bib_files).wrapping_add(MAX_BIB_FILES)) as usize) + 1; self.bib_file.resize(__n177, Default::default()); }
-                                self.log_realloc("s_preamble", 4i32, (self.max_bib_files).wrapping_add(MAX_BIB_FILES), self.max_bib_files);
-                                self.s_preamble.resize_len((((self.max_bib_files).wrapping_add(MAX_BIB_FILES)) as usize) + 1);
-                                self.max_bib_files = (self.max_bib_files).wrapping_add(MAX_BIB_FILES);
+                                self.log_realloc(
+                                    "bib_list",
+                                    4i32,
+                                    (self.max_bib_files).wrapping_add(MAX_BIB_FILES),
+                                    self.max_bib_files,
+                                );
+                                self.bib_list.resize_len(
+                                    (((self.max_bib_files).wrapping_add(MAX_BIB_FILES)) as usize)
+                                        + 1,
+                                );
+                                self.log_realloc(
+                                    "bib_file",
+                                    8i32,
+                                    (self.max_bib_files).wrapping_add(MAX_BIB_FILES),
+                                    self.max_bib_files,
+                                );
+                                {
+                                    let __n177 = (((self.max_bib_files).wrapping_add(MAX_BIB_FILES))
+                                        as usize)
+                                        + 1;
+                                    self.bib_file.resize(__n177, Default::default());
+                                }
+                                self.log_realloc(
+                                    "s_preamble",
+                                    4i32,
+                                    (self.max_bib_files).wrapping_add(MAX_BIB_FILES),
+                                    self.max_bib_files,
+                                );
+                                self.s_preamble.resize_len(
+                                    (((self.max_bib_files).wrapping_add(MAX_BIB_FILES)) as usize)
+                                        + 1,
+                                );
+                                self.max_bib_files =
+                                    (self.max_bib_files).wrapping_add(MAX_BIB_FILES);
                             }
                         }
-                        { let __ix178 = self.bib_ptr; let __v179 = { let __s180 = ({ let mut __f0 = ::core::mem::take(&mut self.buffer); let __r = self.str_lookup(&mut __f0, self.buf_ptr1, (self.buf_ptr2).wrapping_sub(self.buf_ptr1), bib_file_ilk, true); self.buffer = __f0; __r }) as usize; self.hash_text[__s180] }; self.bib_list[(__ix178) as usize] = __v179; }
+                        {
+                            let __ix178 = self.bib_ptr;
+                            let __v179 = {
+                                let __s180 = ({
+                                    let mut __f0 = ::core::mem::take(&mut self.buffer);
+                                    let __r = self.str_lookup(
+                                        &mut __f0,
+                                        self.buf_ptr1,
+                                        (self.buf_ptr2).wrapping_sub(self.buf_ptr1),
+                                        bib_file_ilk,
+                                        true,
+                                    );
+                                    self.buffer = __f0;
+                                    __r
+                                }) as usize;
+                                self.hash_text[__s180]
+                            };
+                            self.bib_list[(__ix178) as usize] = __v179;
+                        }
                         if self.hash_found {
                             {
                                 {
                                     {
-                                        crate::system::wr_str(&mut self.log_file, "This database file appears more than once: ");
+                                        crate::system::wr_str(
+                                            &mut self.log_file,
+                                            "This database file appears more than once: ",
+                                        );
                                     }
                                     {
-                                        crate::system::wr_str(&mut self.standard_output, "This database file appears more than once: ");
+                                        crate::system::wr_str(
+                                            &mut self.standard_output,
+                                            "This database file appears more than once: ",
+                                        );
                                     }
                                 }
                                 self.print_bib_name();
@@ -1395,14 +2086,28 @@ impl Globals {
                             }
                         }
                         self.start_name(self.bib_list[(self.bib_ptr) as usize]);
-                        if ((!self.name_in_ok()) || (!{ let mut __f0 = ::core::mem::take(&mut self.bib_file[(self.bib_ptr) as usize]); let __r = self.a_open_in(&mut __f0, kpse_bib_format); self.bib_file[(self.bib_ptr) as usize] = __f0; __r })) {
+                        if ((!self.name_in_ok())
+                            || (!{
+                                let mut __f0 =
+                                    ::core::mem::take(&mut self.bib_file[(self.bib_ptr) as usize]);
+                                let __r = self.a_open_in(&mut __f0, kpse_bib_format);
+                                self.bib_file[(self.bib_ptr) as usize] = __f0;
+                                __r
+                            }))
+                        {
                             {
                                 {
                                     {
-                                        crate::system::wr_str(&mut self.log_file, "I couldn't open database file ");
+                                        crate::system::wr_str(
+                                            &mut self.log_file,
+                                            "I couldn't open database file ",
+                                        );
                                     }
                                     {
-                                        crate::system::wr_str(&mut self.standard_output, "I couldn't open database file ");
+                                        crate::system::wr_str(
+                                            &mut self.standard_output,
+                                            "I couldn't open database file ",
+                                        );
                                     }
                                 }
                                 self.print_bib_name();
@@ -1467,16 +2172,36 @@ impl Globals {
             }
             // §119
             {
-                self.bst_str = { let __s181 = ({ let mut __f0 = ::core::mem::take(&mut self.buffer); let __r = self.str_lookup(&mut __f0, self.buf_ptr1, (self.buf_ptr2).wrapping_sub(self.buf_ptr1), bst_file_ilk, true); self.buffer = __f0; __r }) as usize; self.hash_text[__s181] };
+                self.bst_str = {
+                    let __s181 = ({
+                        let mut __f0 = ::core::mem::take(&mut self.buffer);
+                        let __r = self.str_lookup(
+                            &mut __f0,
+                            self.buf_ptr1,
+                            (self.buf_ptr2).wrapping_sub(self.buf_ptr1),
+                            bst_file_ilk,
+                            true,
+                        );
+                        self.buffer = __f0;
+                        __r
+                    }) as usize;
+                    self.hash_text[__s181]
+                };
                 if self.hash_found {
                     {
                         {
                             {
                                 {
-                                    crate::system::wr_str(&mut self.log_file, "Already encountered style file");
+                                    crate::system::wr_str(
+                                        &mut self.log_file,
+                                        "Already encountered style file",
+                                    );
                                 }
                                 {
-                                    crate::system::wr_str(&mut self.standard_output, "Already encountered style file");
+                                    crate::system::wr_str(
+                                        &mut self.standard_output,
+                                        "Already encountered style file",
+                                    );
                                 }
                             }
                             self.print_confusion();
@@ -1485,14 +2210,27 @@ impl Globals {
                     }
                 }
                 self.start_name(self.bst_str);
-                if ((!self.name_in_ok()) || (!{ let mut __f0 = ::core::mem::take(&mut self.bst_file); let __r = self.a_open_in(&mut __f0, kpse_bst_format); self.bst_file = __f0; __r })) {
+                if ((!self.name_in_ok())
+                    || (!{
+                        let mut __f0 = ::core::mem::take(&mut self.bst_file);
+                        let __r = self.a_open_in(&mut __f0, kpse_bst_format);
+                        self.bst_file = __f0;
+                        __r
+                    }))
+                {
                     {
                         {
                             {
-                                crate::system::wr_str(&mut self.log_file, "I couldn't open style file ");
+                                crate::system::wr_str(
+                                    &mut self.log_file,
+                                    "I couldn't open style file ",
+                                );
                             }
                             {
-                                crate::system::wr_str(&mut self.standard_output, "I couldn't open style file ");
+                                crate::system::wr_str(
+                                    &mut self.standard_output,
+                                    "I couldn't open style file ",
+                                );
                             }
                         }
                         self.print_bst_name();
@@ -1510,7 +2248,10 @@ impl Globals {
                                 crate::system::wr_str(&mut self.log_file, "The style file: ");
                             }
                             {
-                                crate::system::wr_str(&mut self.standard_output, "The style file: ");
+                                crate::system::wr_str(
+                                    &mut self.standard_output,
+                                    "The style file: ",
+                                );
                             }
                         }
                         self.print_bst_name();
@@ -1559,7 +2300,9 @@ impl Globals {
                                 }
                             }
                         }
-                        if (self.lex_class[(self.buffer[(self.buf_ptr2) as usize]) as usize] == white_space) {
+                        if (self.lex_class[(self.buffer[(self.buf_ptr2) as usize]) as usize]
+                            == white_space)
+                        {
                             {
                                 self.aux_err_white_space_in_argument_print();
                                 {
@@ -1568,7 +2311,9 @@ impl Globals {
                                 }
                             }
                         }
-                        if ((self.last > (self.buf_ptr2).wrapping_add(1i32)) && (self.buffer[(self.buf_ptr2) as usize] == right_brace)) {
+                        if ((self.last > (self.buf_ptr2).wrapping_add(1i32))
+                            && (self.buffer[(self.buf_ptr2) as usize] == right_brace))
+                        {
                             {
                                 self.aux_err_stuff_after_right_brace_print();
                                 {
@@ -1589,11 +2334,15 @@ impl Globals {
                                                     {
                                                         {
                                                             crate::system::wr_str(&mut self.log_file, "Multiple inclusions of entire database");
-                                                            crate::system::wr_ln(&mut self.log_file);
+                                                            crate::system::wr_ln(
+                                                                &mut self.log_file,
+                                                            );
                                                         }
                                                         {
                                                             crate::system::wr_str(&mut self.standard_output, "Multiple inclusions of entire database");
-                                                            crate::system::wr_ln(&mut self.standard_output);
+                                                            crate::system::wr_ln(
+                                                                &mut self.standard_output,
+                                                            );
                                                         }
                                                     }
                                                     {
@@ -1616,36 +2365,88 @@ impl Globals {
                             self.tmp_ptr = self.buf_ptr1;
                             while (self.tmp_ptr < self.buf_ptr2) {
                                 {
-                                    { let __ix182 = self.tmp_ptr; let __v183 = self.buffer[(self.tmp_ptr) as usize]; self.ex_buf[(__ix182) as usize] = __v183; }
+                                    {
+                                        let __ix182 = self.tmp_ptr;
+                                        let __v183 = self.buffer[(self.tmp_ptr) as usize];
+                                        self.ex_buf[(__ix182) as usize] = __v183;
+                                    }
                                     self.tmp_ptr = (self.tmp_ptr).wrapping_add(1i32);
                                 }
                             }
-                            { let mut __f0 = ::core::mem::take(&mut self.ex_buf); let __r = self.lower_case(&mut __f0, self.buf_ptr1, (self.buf_ptr2).wrapping_sub(self.buf_ptr1)); self.ex_buf = __f0; __r };
-                            self.lc_cite_loc = { let mut __f0 = ::core::mem::take(&mut self.ex_buf); let __r = self.str_lookup(&mut __f0, self.buf_ptr1, (self.buf_ptr2).wrapping_sub(self.buf_ptr1), lc_cite_ilk, true); self.ex_buf = __f0; __r };
+                            {
+                                let mut __f0 = ::core::mem::take(&mut self.ex_buf);
+                                let __r = self.lower_case(
+                                    &mut __f0,
+                                    self.buf_ptr1,
+                                    (self.buf_ptr2).wrapping_sub(self.buf_ptr1),
+                                );
+                                self.ex_buf = __f0;
+                                __r
+                            };
+                            self.lc_cite_loc = {
+                                let mut __f0 = ::core::mem::take(&mut self.ex_buf);
+                                let __r = self.str_lookup(
+                                    &mut __f0,
+                                    self.buf_ptr1,
+                                    (self.buf_ptr2).wrapping_sub(self.buf_ptr1),
+                                    lc_cite_ilk,
+                                    true,
+                                );
+                                self.ex_buf = __f0;
+                                __r
+                            };
                             if self.hash_found {
                                 // §127
                                 {
-                                    self.dummy_loc = { let mut __f0 = ::core::mem::take(&mut self.buffer); let __r = self.str_lookup(&mut __f0, self.buf_ptr1, (self.buf_ptr2).wrapping_sub(self.buf_ptr1), cite_ilk, false); self.buffer = __f0; __r };
+                                    self.dummy_loc = {
+                                        let mut __f0 = ::core::mem::take(&mut self.buffer);
+                                        let __r = self.str_lookup(
+                                            &mut __f0,
+                                            self.buf_ptr1,
+                                            (self.buf_ptr2).wrapping_sub(self.buf_ptr1),
+                                            cite_ilk,
+                                            false,
+                                        );
+                                        self.buffer = __f0;
+                                        __r
+                                    };
                                     if (!self.hash_found) {
                                         {
                                             {
                                                 {
-                                                    crate::system::wr_str(&mut self.log_file, "Case mismatch error between cite keys ");
+                                                    crate::system::wr_str(
+                                                        &mut self.log_file,
+                                                        "Case mismatch error between cite keys ",
+                                                    );
                                                 }
                                                 {
-                                                    crate::system::wr_str(&mut self.standard_output, "Case mismatch error between cite keys ");
+                                                    crate::system::wr_str(
+                                                        &mut self.standard_output,
+                                                        "Case mismatch error between cite keys ",
+                                                    );
                                                 }
                                             }
                                             self.print_a_token();
                                             {
                                                 {
-                                                    crate::system::wr_str(&mut self.log_file, " and ");
+                                                    crate::system::wr_str(
+                                                        &mut self.log_file,
+                                                        " and ",
+                                                    );
                                                 }
                                                 {
-                                                    crate::system::wr_str(&mut self.standard_output, " and ");
+                                                    crate::system::wr_str(
+                                                        &mut self.standard_output,
+                                                        " and ",
+                                                    );
                                                 }
                                             }
-                                            self.print_a_pool_str(self.cite_list[(self.ilk_info[(self.ilk_info[(self.lc_cite_loc) as usize]) as usize]) as usize]);
+                                            self.print_a_pool_str(
+                                                self.cite_list[(self.ilk_info[(self.ilk_info
+                                                    [(self.lc_cite_loc) as usize])
+                                                    as usize])
+                                                    as usize],
+                                            );
                                             self.print_a_newline();
                                             {
                                                 self.aux_err_print();
@@ -1657,14 +2458,37 @@ impl Globals {
                             } else {
                                 // §128
                                 {
-                                    self.cite_loc = { let mut __f0 = ::core::mem::take(&mut self.buffer); let __r = self.str_lookup(&mut __f0, self.buf_ptr1, (self.buf_ptr2).wrapping_sub(self.buf_ptr1), cite_ilk, true); self.buffer = __f0; __r };
+                                    self.cite_loc = {
+                                        let mut __f0 = ::core::mem::take(&mut self.buffer);
+                                        let __r = self.str_lookup(
+                                            &mut __f0,
+                                            self.buf_ptr1,
+                                            (self.buf_ptr2).wrapping_sub(self.buf_ptr1),
+                                            cite_ilk,
+                                            true,
+                                        );
+                                        self.buffer = __f0;
+                                        __r
+                                    };
                                     if self.hash_found {
                                         self.hash_cite_confusion();
                                     }
                                     self.check_cite_overflow(self.cite_ptr);
-                                    { let __ix184 = self.cite_ptr; let __v185 = self.hash_text[(self.cite_loc) as usize]; self.cite_list[(__ix184) as usize] = __v185; }
-                                    { let __ix186 = self.cite_loc; let __v187 = self.cite_ptr; self.ilk_info[(__ix186) as usize] = __v187; }
-                                    { let __ix188 = self.lc_cite_loc; let __v189 = self.cite_loc; self.ilk_info[(__ix188) as usize] = __v189; }
+                                    {
+                                        let __ix184 = self.cite_ptr;
+                                        let __v185 = self.hash_text[(self.cite_loc) as usize];
+                                        self.cite_list[(__ix184) as usize] = __v185;
+                                    }
+                                    {
+                                        let __ix186 = self.cite_loc;
+                                        let __v187 = self.cite_ptr;
+                                        self.ilk_info[(__ix186) as usize] = __v187;
+                                    }
+                                    {
+                                        let __ix188 = self.lc_cite_loc;
+                                        let __v189 = self.cite_loc;
+                                        self.ilk_info[(__ix188) as usize] = __v189;
+                                    }
                                     self.cite_ptr = (self.cite_ptr).wrapping_add(1i32);
                                 }
                             }
@@ -1731,13 +2555,19 @@ impl Globals {
                             {
                                 {
                                     let __w1 = aux_stack_size;
-                                    crate::system::wr_str(&mut self.log_file, "auxiliary file depth ");
+                                    crate::system::wr_str(
+                                        &mut self.log_file,
+                                        "auxiliary file depth ",
+                                    );
                                     crate::system::wr_int(&mut self.log_file, __w1, 0i32);
                                     crate::system::wr_ln(&mut self.log_file);
                                 }
                                 {
                                     let __w1 = aux_stack_size;
-                                    crate::system::wr_str(&mut self.standard_output, "auxiliary file depth ");
+                                    crate::system::wr_str(
+                                        &mut self.standard_output,
+                                        "auxiliary file depth ",
+                                    );
                                     crate::system::wr_int(&mut self.standard_output, __w1, 0i32);
                                     crate::system::wr_ln(&mut self.standard_output);
                                 }
@@ -1747,10 +2577,28 @@ impl Globals {
                     }
                 }
                 aux_extension_ok = true;
-                if ((self.buf_ptr2).wrapping_sub(self.buf_ptr1) < (self.str_start[((self.s_aux_extension).wrapping_add(1i32)) as usize]).wrapping_sub(self.str_start[(self.s_aux_extension) as usize])) {
+                if ((self.buf_ptr2).wrapping_sub(self.buf_ptr1)
+                    < (self.str_start[((self.s_aux_extension).wrapping_add(1i32)) as usize])
+                        .wrapping_sub(self.str_start[(self.s_aux_extension) as usize]))
+                {
                     aux_extension_ok = false;
                 } else {
-                    if (!{ let mut __f1 = ::core::mem::take(&mut self.buffer); let __r = self.str_eq_buf(self.s_aux_extension, &mut __f1, (self.buf_ptr2).wrapping_sub((self.str_start[((self.s_aux_extension).wrapping_add(1i32)) as usize]).wrapping_sub(self.str_start[(self.s_aux_extension) as usize])), (self.str_start[((self.s_aux_extension).wrapping_add(1i32)) as usize]).wrapping_sub(self.str_start[(self.s_aux_extension) as usize])); self.buffer = __f1; __r }) {
+                    if (!{
+                        let mut __f1 = ::core::mem::take(&mut self.buffer);
+                        let __r = self.str_eq_buf(
+                            self.s_aux_extension,
+                            &mut __f1,
+                            (self.buf_ptr2).wrapping_sub(
+                                (self.str_start
+                                    [((self.s_aux_extension).wrapping_add(1i32)) as usize])
+                                    .wrapping_sub(self.str_start[(self.s_aux_extension) as usize]),
+                            ),
+                            (self.str_start[((self.s_aux_extension).wrapping_add(1i32)) as usize])
+                                .wrapping_sub(self.str_start[(self.s_aux_extension) as usize]),
+                        );
+                        self.buffer = __f1;
+                        __r
+                    }) {
                         aux_extension_ok = false;
                     }
                 }
@@ -1762,7 +2610,10 @@ impl Globals {
                                 crate::system::wr_str(&mut self.log_file, " has a wrong extension");
                             }
                             {
-                                crate::system::wr_str(&mut self.standard_output, " has a wrong extension");
+                                crate::system::wr_str(
+                                    &mut self.standard_output,
+                                    " has a wrong extension",
+                                );
                             }
                         }
                         self.aux_ptr = (self.aux_ptr).wrapping_sub(1i32);
@@ -1772,15 +2623,39 @@ impl Globals {
                         }
                     }
                 }
-                { let __ix190 = self.aux_ptr; let __v191 = { let __s192 = ({ let mut __f0 = ::core::mem::take(&mut self.buffer); let __r = self.str_lookup(&mut __f0, self.buf_ptr1, (self.buf_ptr2).wrapping_sub(self.buf_ptr1), aux_file_ilk, true); self.buffer = __f0; __r }) as usize; self.hash_text[__s192] }; self.aux_list[(__ix190) as usize] = __v191; }
+                {
+                    let __ix190 = self.aux_ptr;
+                    let __v191 = {
+                        let __s192 = ({
+                            let mut __f0 = ::core::mem::take(&mut self.buffer);
+                            let __r = self.str_lookup(
+                                &mut __f0,
+                                self.buf_ptr1,
+                                (self.buf_ptr2).wrapping_sub(self.buf_ptr1),
+                                aux_file_ilk,
+                                true,
+                            );
+                            self.buffer = __f0;
+                            __r
+                        }) as usize;
+                        self.hash_text[__s192]
+                    };
+                    self.aux_list[(__ix190) as usize] = __v191;
+                }
                 if self.hash_found {
                     {
                         {
                             {
-                                crate::system::wr_str(&mut self.log_file, "Already encountered file ");
+                                crate::system::wr_str(
+                                    &mut self.log_file,
+                                    "Already encountered file ",
+                                );
                             }
                             {
-                                crate::system::wr_str(&mut self.standard_output, "Already encountered file ");
+                                crate::system::wr_str(
+                                    &mut self.standard_output,
+                                    "Already encountered file ",
+                                );
                             }
                         }
                         self.print_aux_name();
@@ -1796,14 +2671,38 @@ impl Globals {
                     self.start_name(self.aux_list[(self.aux_ptr) as usize]);
                     self.name_ptr = (self.name_length).wrapping_add(1i32);
                     self.name_of_file[(self.name_ptr) as usize] = ((0i32) as u8);
-                    if ((!self.name_in_ok()) || ((!{ let mut __f0 = ::core::mem::take(&mut self.aux_file[(self.aux_ptr) as usize]); let __r = self.a_open_in(&mut __f0, (1i32).wrapping_neg()); self.aux_file[(self.aux_ptr) as usize] = __f0; __r }) && (!{ let mut __f0 = ::core::mem::take(&mut self.aux_file[(self.aux_ptr) as usize]); let __r = self.a_open_in_with_dirname(&mut __f0, (1i32).wrapping_neg(), self.top_lev_str); self.aux_file[(self.aux_ptr) as usize] = __f0; __r }))) {
+                    if ((!self.name_in_ok())
+                        || ((!{
+                            let mut __f0 =
+                                ::core::mem::take(&mut self.aux_file[(self.aux_ptr) as usize]);
+                            let __r = self.a_open_in(&mut __f0, (1i32).wrapping_neg());
+                            self.aux_file[(self.aux_ptr) as usize] = __f0;
+                            __r
+                        }) && (!{
+                            let mut __f0 =
+                                ::core::mem::take(&mut self.aux_file[(self.aux_ptr) as usize]);
+                            let __r = self.a_open_in_with_dirname(
+                                &mut __f0,
+                                (1i32).wrapping_neg(),
+                                self.top_lev_str,
+                            );
+                            self.aux_file[(self.aux_ptr) as usize] = __f0;
+                            __r
+                        })))
+                    {
                         {
                             {
                                 {
-                                    crate::system::wr_str(&mut self.log_file, "I couldn't open auxiliary file ");
+                                    crate::system::wr_str(
+                                        &mut self.log_file,
+                                        "I couldn't open auxiliary file ",
+                                    );
                                 }
                                 {
-                                    crate::system::wr_str(&mut self.standard_output, "I couldn't open auxiliary file ");
+                                    crate::system::wr_str(
+                                        &mut self.standard_output,
+                                        "I couldn't open auxiliary file ",
+                                    );
                                 }
                             }
                             self.print_aux_name();
@@ -1835,7 +2734,12 @@ impl Globals {
     /// @<Procedures and functions for the reading and processing of input files
     // §134
     pub fn pop_the_aux_stack(&mut self) {
-        { let mut __f0 = ::core::mem::take(&mut self.aux_file[(self.aux_ptr) as usize]); let __r = self.a_close(&mut __f0); self.aux_file[(self.aux_ptr) as usize] = __f0; __r };
+        {
+            let mut __f0 = ::core::mem::take(&mut self.aux_file[(self.aux_ptr) as usize]);
+            let __r = self.a_close(&mut __f0);
+            self.aux_file[(self.aux_ptr) as usize] = __f0;
+            __r
+        };
         if (self.aux_ptr == 0i32) {
             {
                 self.lab31 = true;
@@ -1858,7 +2762,21 @@ impl Globals {
             if (!self.scan1(left_brace)) {
                 break 'l_exit_f;
             }
-            self.command_num = { let __s193 = ({ let mut __f0 = ::core::mem::take(&mut self.buffer); let __r = self.str_lookup(&mut __f0, self.buf_ptr1, (self.buf_ptr2).wrapping_sub(self.buf_ptr1), aux_command_ilk, false); self.buffer = __f0; __r }) as usize; self.ilk_info[__s193] };
+            self.command_num = {
+                let __s193 = ({
+                    let mut __f0 = ::core::mem::take(&mut self.buffer);
+                    let __r = self.str_lookup(
+                        &mut __f0,
+                        self.buf_ptr1,
+                        (self.buf_ptr2).wrapping_sub(self.buf_ptr1),
+                        aux_command_ilk,
+                        false,
+                    );
+                    self.buffer = __f0;
+                    __r
+                }) as usize;
+                self.ilk_info[__s193]
+            };
             if self.hash_found {
                 match self.command_num {
                     n_aux_bibdata => {
@@ -1876,16 +2794,20 @@ impl Globals {
                     _ => {
                         {
                             {
-                                {
-                                    crate::system::wr_str(&mut self.log_file, "Unknown auxiliary-file command");
-                                }
-                                {
-                                    crate::system::wr_str(&mut self.standard_output, "Unknown auxiliary-file command");
-                                }
+                                crate::system::wr_str(
+                                    &mut self.log_file,
+                                    "Unknown auxiliary-file command",
+                                );
                             }
-                            self.print_confusion();
-                            crate::system::end_of_TEX(self);
+                            {
+                                crate::system::wr_str(
+                                    &mut self.standard_output,
+                                    "Unknown auxiliary-file command",
+                                );
+                            }
                         }
+                        self.print_confusion();
+                        crate::system::end_of_TEX(self);
                     }
                 }
             }
@@ -1986,5 +2908,4 @@ impl Globals {
             }
         }
     }
-
 }
