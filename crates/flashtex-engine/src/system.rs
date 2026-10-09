@@ -419,6 +419,12 @@ pub fn read_logical(path: &str) -> std::io::Result<Vec<u8>> {
     Ok(d)
 }
 
+/// `hash128(&read_logical(path)?)`, without reading the file into memory
+/// (`persist::hash128_file`).
+pub fn hash_logical(path: &str) -> std::io::Result<[u64; 2]> {
+    crate::persist::hash128_file(path, logical_len(path)).map(|(h, _)| h)
+}
+
 /// A new engine: no file's logical end is known any more. Each file still
 /// longer than its logical end is cut to it first, as the old engine's
 /// runs left it (the new run may not open it for output again), unless
@@ -523,6 +529,43 @@ impl AlphaFile {
             }
             _ => None,
         }
+    }
+
+    /// The line of an input file `input_ln` copied last, when all of it
+    /// is (`crate::midline`).
+    pub fn read_line(&self) -> Option<&[u8]> {
+        match self.input {
+            Some(TextIn::File(_)) if self.have_line && self.pos == self.line.len() => {
+                Some(&self.line)
+            }
+            _ => None,
+        }
+    }
+
+    /// `crate::midline`'s refill: this input file reopened at `at`, the
+    /// start of a line, with that line read and all of it consumed, as
+    /// `input_ln` leaves it: the line and the offset after it.
+    pub fn reread_line(&mut self, path: &str, at: u64) -> Result<(Vec<u8>, u64), String> {
+        use std::io::Seek;
+        let mut r = reopen_in(path, at)?;
+        let mut line = vec![];
+        if !read_tex_line(&mut r, &mut line) {
+            return Err(format!("{path}: no line at {at}"));
+        }
+        let end = r.stream_position().map_err(|e| format!("{path}: {e}"))?;
+        let err = self.err;
+        PasFile::close(self);
+        *self = AlphaFile {
+            line: line.clone(),
+            pos: line.len(),
+            have_line: true,
+            err,
+            input: Some(TextIn::File(r)),
+            path: Some(path.to_string()),
+            ..AlphaFile::default()
+        };
+        self.refresh();
+        Ok((line, end))
     }
 
     fn refresh(&mut self) {
@@ -1703,7 +1746,7 @@ fn confine_roots() -> &'static [std::path::PathBuf] {
 /// `input_name_confined_ok`); true when confinement is off. `searched`: the
 /// resolver found it along its search paths (only such a hit may be a TeX
 /// tree file; the output-directory shortcut never is).
-pub(crate) fn confined_found_ok(name: &str, found: &str, format: Format, searched: bool) -> bool {
+pub fn confined_found_ok(name: &str, found: &str, format: Format, searched: bool) -> bool {
     if !reads_confined() || format == Format::Fmt {
         return true;
     }
@@ -4570,14 +4613,18 @@ fn note_file(path: &str) {
             return;
         }
         let stat = StatSig::of(path).unwrap_or_default();
-        let data = read_logical(path).ok();
-        let hash = data
-            .as_deref()
-            .map(crate::persist::hash128)
-            .unwrap_or([0, 0]);
-        let content = data
-            .filter(|_| log.keep_content && is_user_file(path))
-            .map(std::sync::Arc::new);
+        // A file whose bytes are kept is read whole; any other (the format,
+        // the font map, TeX Live's files) only hashed, through a buffer.
+        let (hash, content) = if log.keep_content && is_user_file(path) {
+            let data = read_logical(path).ok();
+            let hash = data
+                .as_deref()
+                .map(crate::persist::hash128)
+                .unwrap_or([0, 0]);
+            (hash, data.map(std::sync::Arc::new))
+        } else {
+            (hash_logical(path).unwrap_or([0, 0]), None)
+        };
         let norm = |p: &str| p.strip_prefix("./").unwrap_or(p).to_string();
         let written_before = log.outputs.iter().any(|o| norm(o) == norm(path));
         log.files.push(FileRead {

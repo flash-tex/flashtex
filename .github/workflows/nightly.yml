@@ -493,8 +493,9 @@ jobs:
         run: scripts/engine-parity.sh soundness
 
   # The resident host's memory (DESIGN.md §5.2's retention budget, §7): typing
-  # through the socket on 120- and 1,000-page documents, the host's peak
-  # resident memory against a limit per size (tools/incr-bench/mem_gate.sh;
+  # through the socket on 120- and 1,000-page documents and T7's phases on
+  # them, the host's peak resident memory against a limit per size (1.0 GB
+  # at 1,000 pages; tools/incr-bench/mem_gate.sh;
   # docs/evidence/p4-memory-2026-09-30/). A host above 6 GB is killed at
   # once, so a regression cannot starve the other runners on the PC.
   # It runs on the NixOS runners, so it follows their switch,

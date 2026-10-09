@@ -61,13 +61,15 @@ pub mod iso;
 pub mod ix;
 #[cfg(not(feature = "tex82"))]
 pub mod lineshift;
-#[cfg(all(target_os = "linux", not(feature = "tex82")))]
+#[cfg(all(any(target_os = "linux", target_os = "macos"), not(feature = "tex82")))]
 pub mod logalloc;
 #[cfg(not(feature = "tex82"))]
 pub mod macroprof;
 #[cfg(all(feature = "makeindex", not(feature = "tex82")))]
 pub mod makeindex;
 pub mod memstat;
+#[cfg(not(feature = "tex82"))]
+pub mod midline;
 pub mod os;
 #[cfg(not(feature = "tex82"))]
 pub mod pdftex;

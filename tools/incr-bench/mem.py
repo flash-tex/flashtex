@@ -68,6 +68,7 @@ sock = f'{W}/h.sock'
 env = dict(os.environ, FLASHTEX_POOL=f'{E}/pdftex.pool', FLASHTEX_FORMATS=f'{BASE}/fmt-{a.engine}',
            SOURCE_DATE_EPOCH='0', FORCE_SOURCE_DATE='1', FLASHTEX_MEMSTAT='1')
 herr = open(f'{out}.host-stderr', 'w')
+open(f'{out}.keys-stderr', 'w').close()
 hout = open(f'{W}/h.out', 'w')
 host = subprocess.Popen([f'{E}/flashtex-host', '--socket', sock, '--s0-cache', f'{W}/s0']
                         + a.host_args.split() + (['--profile', a.profile] if a.profile else []),
@@ -126,6 +127,9 @@ for i, p in enumerate(int(x) for x in a.pages.split(',')):
             '--page', str(p), '--where', a.where] + (['--sentence'] if a.sentence else []) \
         + (['--edit', edits[i % len(edits)], '--repeated'] if edits else [])
     r = subprocess.run([f'{S}/to.sh', str(a.timeout)] + args, capture_output=True, text=True)
+    # dl3-keys' own account (#1612: a run that stalled left no trace of the client's side)
+    with open(f'{out}.keys-stderr', 'a') as f:
+        f.write(f'== page {p}: exit {r.returncode}\n{r.stderr}')
     for line in r.stdout.splitlines():
         try:
             d = json.loads(line)

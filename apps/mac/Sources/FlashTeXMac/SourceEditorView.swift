@@ -565,7 +565,58 @@ struct SourceEditorView: NSViewRepresentable {
         /// Definition targets routed to the owner (evidence for tests).
         private(set) var definitionRequests: [EditorIntelligence.DefinitionTarget] = []
         /// The String instance last set on, or read from, the text view.
-        var lastKnownText: String
+        /// It is the storage's text when set: the shadow starts again from it.
+        var lastKnownText: String {
+            didSet { resetShadow() }
+        }
+        /// The storage's text kept in step edit by edit (EditorTextShadow.swift):
+        /// a keystroke hands the model this instead of transcoding the buffer.
+        private(set) var shadow: EditorTextShadow?
+        /// Keystrokes whose text came from the shadow, and from a transcode (tests, evidence).
+        private(set) var shadowHits = 0
+        private(set) var shadowMisses = 0
+        /// Shadow texts that differed from the storage under `verifyShadow` (tests: always 0).
+        private(set) var shadowDrifts = 0
+        /// Compare every shadow text with a transcode (tests).
+        static var verifyShadow = false
+        private var storageObserver: NSObjectProtocol?
+
+        private func resetShadow() {
+            guard EditorTextShadow.enabled, let storage = textView?.textStorage else { shadow = nil; return }
+            shadow = EditorTextShadow(text: lastKnownText, length16: storage.length)
+        }
+
+        /// Follows the storage's character edits into the shadow (from `attach`).
+        func observeStorage(of tv: NSTextView) {
+            guard EditorTextShadow.enabled, storageObserver == nil, let storage = tv.textStorage else { return }
+            storageObserver = NotificationCenter.default.addObserver(forName: NSTextStorage.didProcessEditingNotification,
+                                                                     object: storage, queue: nil) { [weak self] note in
+                guard let storage = note.object as? NSTextStorage, storage.editedMask.contains(.editedCharacters) else { return }
+                MainActor.assumeIsolated {
+                    guard let self else { return }
+                    // A whole-text reset or a programmatic edit ends by setting
+                    // `lastKnownText` from the storage, which restarts the shadow.
+                    guard self.programmaticChanges == 0, var s = self.shadow else { self.shadow = nil; return }
+                    self.shadow = s.apply(storage: storage.mutableString, edited: storage.editedRange, delta: storage.changeInLength) ? s : nil
+                }
+            }
+            resetShadow()
+        }
+
+        /// The storage's text as a native String: the shadow's when it is in
+        /// step, else a transcode (`nativeText`).
+        func storageText(of tv: NSTextView) -> String {
+            if let s = shadow, s.length16 == tv.textStorage?.length {
+                if Self.verifyShadow {
+                    let native = SourceEditorView.nativeText(of: tv)
+                    if !native.sameBytes(as: s.text) { shadowDrifts += 1; shadow = nil; shadowMisses += 1; return native }
+                }
+                shadowHits += 1
+                return s.text
+            }
+            shadowMisses += 1
+            return SourceEditorView.nativeText(of: tv)
+        }
         /// > 0 while this coordinator itself edits the text view (string reset,
         /// pending edit, navigation selection); the delegate then neither writes
         /// the binding nor announces.
@@ -644,12 +695,14 @@ struct SourceEditorView: NSViewRepresentable {
         deinit {
             foldGutterWork?.cancel()
             if let boundsObserver { NotificationCenter.default.removeObserver(boundsObserver) }
+            if let storageObserver { NotificationCenter.default.removeObserver(storageObserver) }
             if let magnifyMonitor { NSEvent.removeMonitor(magnifyMonitor) }
             deferredTimer?.invalidate()
         }
 
         func attach(_ scroll: NSScrollView) {
             scrollView = scroll
+            if let tv = scroll.documentView as? NSTextView { observeStorage(of: tv) }
             scroll.contentView.postsBoundsChangedNotifications = true
             boundsObserver = NotificationCenter.default.addObserver(
                 forName: NSView.boundsDidChangeNotification, object: scroll.contentView, queue: nil
@@ -878,10 +931,34 @@ struct SourceEditorView: NSViewRepresentable {
             }
             func lineOf(_ loc: Int) -> Int { table.line(at: min(max(0, loc), length - 1)) }
             gutter.foldedLines = Set(tv.folds.foldedLineStarts.map(lineOf))
-            if rescan || tv.folds.cacheIsWarm {
+            if tv.folds.cacheIsWarm {
+                // Cached: no scan (and no copy of the text).
+                gutter.foldableLines = Set(tv.folds.foldableLineStarts(in: tv.textStorage?.mutableString ?? NSMutableString()).map(lineOf))
+            } else if rescan, length > Self.foldScanOffMainUTF16 {
+                // A long document's whole-buffer scan (every environment pair
+                // and the outline) runs off the main thread: it ran here when
+                // typing paused, holding the next key (APP-EDITOR-INSTANT).
+                // Installed only if no edit came meanwhile.
+                let generation = tv.folds.currentGeneration
+                let text = tv.string // an immutable copy for the other thread
+                DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+                    let regions = EditorFolding.regions(in: text as NSString)
+                    DispatchQueue.main.async {
+                        MainActor.assumeIsolated {
+                            guard let self, let tv = self.textView as? CompletingTextView,
+                                  tv.folds.currentGeneration == generation else { return }
+                            tv.folds.replaceCache(regions: regions)
+                            self.refreshFoldGutter(rescan: false)
+                        }
+                    }
+                }
+            } else if rescan {
                 gutter.foldableLines = Set(tv.folds.foldableLineStarts(in: tv.string as NSString).map(lineOf))
             }
         }
+
+        /// Above this many UTF-16 units the fold rescan runs off the main thread.
+        static let foldScanOffMainUTF16 = 100_000
 
         /// Debounced whole-buffer fold-triangle rescan. Also called from
         /// `updateNSView` on a text reset: that path posts no `textDidChange`.
@@ -1184,7 +1261,7 @@ struct SourceEditorView: NSViewRepresentable {
             }
             if commitFromComposition { commitFromComposition = false } else { autoClose(after: edit, in: tv) }
             syncLinkedEnvironmentPartner(in: tv, edit: edit)
-            let s = PerfSignposts.interval("bufferCopy") { SourceEditorView.nativeText(of: tv) }
+            let s = PerfSignposts.interval("bufferCopy") { storageText(of: tv) }
             lastKnownText = s
             parent.text = s
             (tv as? CompletingTextView)?.folds.revalidate(in: s as NSString)

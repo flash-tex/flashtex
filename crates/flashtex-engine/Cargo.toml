@@ -71,11 +71,21 @@ flashtex-makeindex = { path = "../makeindex", optional = true }
 # (crates/bibtex/LICENSE).
 flashtex-bibtex = { path = "../bibtex", optional = true }
 
+# Linux only: the host's heap other than its undo logs (feature `jemalloc`,
+# src/logalloc.rs). The crates are MIT OR Apache-2.0; the jemalloc 5.3.1 they
+# build from source (`configure`, `make`) and link statically is
+# BSD-2-Clause (its COPYING), which GPL-2.0-or-later code may link; a binary
+# distribution reproduces that notice: THIRD-PARTY-NOTICES, which
+# scripts/ci/package-cli.sh ships beside the host's LICENSE.
+[target.'cfg(target_os = "linux")'.dependencies]
+tikv-jemallocator = { version = "0.7", optional = true }
+tikv-jemalloc-sys = { version = "0.7", optional = true }
+
 [features]
 # Link TeX Live's kpathsea (vendored, LGPL-2.1-or-later) as the file resolver.
 # Without it only the working-directory resolver is available, which is what
 # the trip test uses.
-default = ["kpathsea", "regex", "distribution", "makeindex", "bibtex"]
+default = ["kpathsea", "regex", "distribution", "jemalloc", "makeindex", "bibtex"]
 # makeindex in-process (src/makeindex.rs, crates/makeindex). Off in the trip
 # tests' scratch packages, which have no dependencies.
 makeindex = ["dep:flashtex-makeindex"]
@@ -90,6 +100,13 @@ distribution = ["kpathsea", "dep:sha2", "dep:flashtex-engine-build-id"]
 # utils.c does (csrc/flashtex_regex.c). Without it \pdfmatch reports that
 # regular expressions are unavailable (the trip tests' scratch packages).
 regex = []
+# Linux: the host's heap from jemalloc instead of glibc's malloc, except the
+# undo logs, which keep mappings of their own (src/logalloc.rs). With glibc
+# the host's peak was 27-47 MB higher at 1,000 pages for the same work
+# (docs/evidence/mem-research-2026-10-06/ §2.4). No effect on other systems.
+# Leave it out (`--no-default-features --features kpathsea,regex,distribution,makeindex,bibtex`)
+# for tools that intercept malloc, such as heaptrack.
+jemalloc = ["dep:tikv-jemallocator", "dep:tikv-jemalloc-sys"]
 # Build against a translation of Knuth's tex.web instead of pdftex.web: only
 # scripts/flashtex-trip.sh's scratch package does, and it leaves out
 # src/pdftex/ (pdfTeX's C parts), which tex.web does not call.
@@ -109,8 +126,9 @@ unchecked-reads = []
 bench-count-writes = []
 # Measurement only: a counting global allocator that attributes the heap to
 # tags (src/memstat.rs; lane P4-MEMORY). Adds a header and two atomic adds to
-# every allocation; never ship it.
-mem-stats = []
+# every allocation; never ship it. With `jemalloc`, jemalloc's statistics
+# too (`memstat::malloc_in_use`).
+mem-stats = ["tikv-jemallocator?/stats"]
 
 [build-dependencies]
 # Builds TeX Live's zlib (third_party/zlib; always), kpathsea (feature
