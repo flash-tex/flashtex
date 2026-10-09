@@ -190,6 +190,8 @@ def run_case(name, src, engines, fmts, tmp, opt, timeout, keep, xdv_check=None, 
             res["xdv"] = x
             if x["over"] and gate_xdv:
                 msgs.append("%d glyphs more than %g bp from TeX's position (XDV)" % (x["over"], xdv_check))
+            if x["unpaired_pdf"] and gate_xdv:
+                msgs.append("%d glyphs without a position in the XDV" % x["unpaired_pdf"])
     res["messages"] = msgs
     res["ok"] = rep.ok() and not msgs
     if keep:
@@ -221,6 +223,70 @@ def self_test_rewrites(name, pdf, opt, tmp):
     return out
 
 
+def judge(r, base):
+    """A case under a baseline (--baseline): it passes when the run itself
+    is clean (exit statuses, PDFs, the XDV check), every structural
+    difference is a ToUnicode difference the baseline lists for the case,
+    and the differing pixels are at most the baseline's. Sets r["ok"] and
+    r["baseline"]; returns r["ok"]."""
+    b = (base.get("cases") or {}).get(r["case"], {})
+    allowed_px = b.get("px", 0)
+    allowed_tu = [json.dumps(d, sort_keys=True, ensure_ascii=False) for d in b.get("tounicode", [])]
+    out = {"px_allowed": allowed_px, "unexpected": []}
+    if "report" not in r:
+        r["ok"] = False
+        r["baseline"] = out
+        return False
+    rep = r["report"]
+    seen = set()
+    for kind, v in rep["kinds"].items():
+        if kind == "visual":
+            continue
+        if kind == "tounicode":
+            for d in rep["details"].get("tounicode", []):
+                key = json.dumps(d, sort_keys=True, ensure_ascii=False)
+                if key in allowed_tu:
+                    seen.add(key)
+                else:
+                    out["unexpected"].append("tounicode %s: %r vs %r" % (d["glyph"], d["reference"], d["candidate"]))
+            continue
+        out["unexpected"].append("%s: %d (%s)" % (kind, v["count"], "; ".join(v["examples"][:2])))
+    px = rep["visual_pixels"]
+    out["px"] = px
+    if px > allowed_px:
+        out["unexpected"].append("%d px differ at %gx, baseline %d" % (px, rep["stats"].get("visual_scale", 0), allowed_px))
+    out["stale"] = [k for k in allowed_tu if k not in seen]
+    r["baseline"] = out
+    r["ok"] = not r.get("messages") and not out["unexpected"]
+    return r["ok"]
+
+
+def write_baseline(path, results, a, opt, engine):
+    import datetime
+    cases = {}
+    for r in results:
+        if "report" not in r:
+            print("write-baseline: %s has no report (%s); left out" % (r["case"], r.get("error")))
+            continue
+        rep = r["report"]
+        entry = {"px": rep["visual_pixels"], "tounicode": rep["details"].get("tounicode", [])}
+        other = {k: v["count"] for k, v in rep["kinds"].items() if k not in ("visual", "tounicode")}
+        if other or r.get("messages"):
+            # Recorded so the file says so, but never allowed by judge().
+            entry["not_allowed"] = {"structural": other, "messages": r.get("messages", [])}
+            print("write-baseline: %s has differences a baseline does not allow: %s" % (r["case"], entry["not_allowed"]))
+        cases[r["case"]] = entry
+    data = {"comment": "tools/xetex-pdfparity/run.py --baseline: per case, the differing pixels allowed at "
+                       "`scale` and the ToUnicode differences allowed. Written by --write-baseline.",
+            "written": datetime.date.today().isoformat(), "candidate": a.label or engine,
+            "scale": opt.scale, "tol": opt.tol, "rel_tol": opt.rel_tol, "xdv_tol": a.xdv_tol,
+            "cases": cases}
+    with open(path, "w") as f:
+        json.dump(data, f, indent=1, sort_keys=True, ensure_ascii=False)
+        f.write("\n")
+    print("baseline written: %s (%d cases)" % (path, len(cases)))
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--engine", help="candidate engine binary")
@@ -239,6 +305,10 @@ def main(argv=None):
                          "in the reference's XDV, tolerance in bp (default 0.001)")
     ap.add_argument("--no-xdv-check", action="store_true", help="skip the XDV check")
     ap.add_argument("--json", help="write every case's report here")
+    ap.add_argument("--baseline", help="a baseline (JSON, --write-baseline): a case passes with its listed "
+                    "ToUnicode differences and at most its listed pixels (a CI gate)")
+    ap.add_argument("--write-baseline", help="write this run's pixels and ToUnicode differences as a baseline")
+    ap.add_argument("--label", help="what the candidate is (a commit), recorded by --write-baseline")
     C.add_options(ap)
     a = ap.parse_args(argv)
     if not a.engine and not a.self_test:
@@ -249,6 +319,13 @@ def main(argv=None):
     run_engine.max_passes = a.max_passes
     engine = a.engine or a.reference
     opt = C.options_from(a)
+    base = None
+    if a.baseline:
+        with open(a.baseline) as f:
+            base = json.load(f)
+        if base.get("scale") != opt.scale:
+            print("baseline %s is at scale %s, this run at %s" % (a.baseline, base.get("scale"), opt.scale))
+            return 2
     cases = all_cases()
     names = [n for n in cases if any(fnmatch.fnmatch(n, p) for p in a.cases)]
     tmp = tempfile.mkdtemp(prefix="xetex-pdfparity-")
@@ -287,6 +364,8 @@ def main(argv=None):
                 r["rewrites"] = self_test_rewrites(r["case"], ref_pdf, opt, os.path.join(tmp, r["case"]))
                 if not all(v.get("ok") for v in r["rewrites"].values()):
                     r["ok"] = False
+            if base is not None:
+                judge(r, base)
             results.append(r)
             ok += bool(r.get("ok"))
             if "report" in r:
@@ -300,25 +379,36 @@ def main(argv=None):
                 totals["xdv_over"] = totals.get("xdv_over", 0) + x["over"]
                 totals["xdv_max_bp"] = max(totals.get("xdv_max_bp", 0.0), x["max_bp"])
                 totals["xdv_max_em"] = max(totals.get("xdv_max_em", 0.0), x["max_em"])
-                print("    XDV check%s: %d glyphs paired (%d not: placed in transformations set by specials), "
+                print("    XDV check%s: %d glyphs paired (%d of the PDF's and %d of the XDV's not), "
                       "%d more than %g bp off, max %.6f bp (%.6f em)" % (
                           " (measures xdvipdfmx, not gating)" if a.self_test else "",
-                          x["paired"], x["unpaired_pdf"], x["over"], x["tol"], x["max_bp"], x["max_em"]))
+                          x["paired"], x["unpaired_pdf"], x["unpaired_xdv"], x["over"], x["tol"], x["max_bp"], x["max_em"]))
                 for e in x["examples"][:3 if a.self_test else len(x["examples"])]:
                     print("      " + e)
             for m in r.get("messages", []):
                 print("    " + m)
             if r.get("text"):
                 print(r["text"])
+            bl = r.get("baseline")
+            if bl is not None:
+                print("    baseline: %s px of %d allowed; %s" % (
+                    bl.get("px", "-"), bl["px_allowed"],
+                    ("not allowed: " + " | ".join(bl["unexpected"])) if bl["unexpected"] else "nothing else"))
+                if bl.get("stale"):
+                    print("    baseline lists %d ToUnicode differences that no longer occur" % len(bl["stale"]))
             for tag, v in (r.get("rewrites") or {}).items():
                 print("    vs qpdf %s rewrite: %s" % (tag, v.get("error") or "%d structural, %d px%s" % (
                     v["structural"], v["visual"], ("\n" + v["text"]) if v["text"] else "")))
-    print("%d cases, %d equal, %d differ; %d structural differences, %d differing pixels at %gx" % (
+    print("%d cases, %d pass, %d fail; %d structural differences, %d differing pixels at %gx" % (
         len(names), ok, len(names) - ok, totals["structural"], totals["visual"], opt.scale))
     if "xdv_over" in totals:
         print("XDV check: %d glyphs more than %g bp from TeX's positions, max %.6f bp (%.6f em)%s" % (
             totals["xdv_over"], a.xdv_tol, totals["xdv_max_bp"], totals["xdv_max_em"],
             " (xdvipdfmx's error: not gating in the self-test)" if a.self_test else ""))
+    if base is not None:
+        print("baseline %s: %d of %d cases pass" % (a.baseline, ok, len(names)))
+    if a.write_baseline:
+        write_baseline(a.write_baseline, results, a, opt, engine)
     if a.json:
         with open(a.json, "w") as f:
             json.dump({"engine": engine, "reference": a.reference, "self_test": a.self_test,

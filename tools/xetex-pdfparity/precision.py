@@ -124,8 +124,194 @@ def tfm_widths(name, scaled):
     return out
 
 
+class Specials:
+    """The transformations dvipdfmx's specials set up, interpreted as
+    FlashTeX's writer does (crates/flashtex-xetex/src/out/special.rs and
+    content.rs, #1712): a CTM M (page space = M applied to the point, plus
+    the page origin 72 bp, H - 72 bp), q/Q and its own save stack, and
+    `pdf:bcontent`'s coordinate stack. Points are dvipdfmx's user space: bp
+    from the DVI origin, y up.
+
+    * `pdf:code` / `pdf:direct` / `pdf:literal direct`: the operators, with
+      `cm` concatenated and `q`/`Q` saving and restoring M;
+    * `pdf:literal` (not direct): the same with the origin moved to the
+      current point, and back;
+    * `pdf:content`: the same, inside a save and restore;
+    * `pdf:bcontent` / `pdf:econtent`: a save, and a translation to the
+      current point relative to the coordinate stack's top, which the point
+      is pushed on; a pop and restore;
+    * `pdf:btrans` / `pdf:begintransform` (scale, xscale, yscale, rotate,
+      matrix), `x:scale`, `x:rotate`: about the current point;
+      `pdf:etrans`, `x:gsave`, `x:grestore`: save and restore."""
+
+    def __init__(self):
+        self.m = IDENT
+        self.stack = []
+        self.coords = []
+
+    def top(self):
+        return self.coords[-1] if self.coords else (0.0, 0.0)
+
+    def rel(self, x, y):
+        tx, ty = self.top()
+        return x - tx, y - ty
+
+    def point(self, x, y):
+        """User point (x, y) to page space without the page origin."""
+        return apply_m(self.m, *self.rel(x, y))
+
+    def save(self):
+        self.stack.append(self.m)
+
+    def restore(self):
+        if self.stack:
+            self.m = self.stack.pop()
+
+    def about(self, t, x, y):
+        x, y = self.rel(x, y)
+        self.m = mul_m(mul_m(mul_m((1, 0, 0, 1, -x, -y), t), (1, 0, 0, 1, x, y)), self.m)
+
+    def literal(self, data):
+        from content import tokens
+        for ops, op in tokens(data.encode("latin-1")):
+            if op == "q":
+                self.save()
+            elif op == "Q":
+                self.restore()
+            elif op == "cm" and len(ops) == 6:
+                try:
+                    self.m = mul_m(tuple(float(v) for v in ops), self.m)
+                except (TypeError, ValueError):
+                    pass
+
+    def special(self, text, x, y):
+        text = text.lstrip()
+        if text.startswith("pdf:"):
+            words = text[4:].split(None, 1)
+            if not words:
+                return
+            cmd, rest = words[0], (words[1] if len(words) > 1 else "")
+            if cmd in ("code", "direct"):
+                self.literal(rest)
+            elif cmd == "literal":
+                r = rest.split(None, 1)
+                if r and r[0] == "direct":
+                    self.literal(r[1] if len(r) > 1 else "")
+                    return
+                if r and r[0] == "reverse":
+                    rest = r[1] if len(r) > 1 else ""
+                ux, uy = self.rel(x, y)
+                self.m = mul_m((1, 0, 0, 1, ux, uy), self.m)
+                self.literal(rest)
+                self.m = mul_m((1, 0, 0, 1, -ux, -uy), self.m)
+            elif cmd == "content":
+                ux, uy = self.rel(x, y)
+                self.save()
+                self.m = mul_m((1, 0, 0, 1, ux, uy), self.m)
+                self.literal(rest)
+                self.restore()
+            elif cmd == "bcontent":
+                tx, ty = self.top()
+                self.save()
+                self.coords.append((x, y))
+                self.m = mul_m((1, 0, 0, 1, x - tx, y - ty), self.m)
+            elif cmd == "econtent":
+                if self.coords:
+                    self.coords.pop()
+                self.restore()
+            elif cmd in ("btrans", "begintransform"):
+                t = read_transform(rest)
+                self.save()
+                self.about(t, x, y)
+            elif cmd in ("etrans", "endtransform"):
+                self.restore()
+        elif text.startswith("x:"):
+            words = text[2:].split()
+            if not words:
+                return
+            if words[0] == "gsave":
+                self.save()
+            elif words[0] == "grestore":
+                self.restore()
+            elif words[0] == "scale" and len(words) >= 3:
+                try:
+                    self.about((float(words[1]), 0, 0, float(words[2]), 0, 0), x, y)
+                except ValueError:
+                    pass
+            elif words[0] == "rotate" and len(words) >= 2:
+                try:
+                    self.about(rotation(float(words[1])), x, y)
+                except ValueError:
+                    pass
+
+
+IDENT = (1.0, 0.0, 0.0, 1.0, 0.0, 0.0)
+
+
+def mul_m(m, n):
+    """m then n."""
+    a, b, c, d, e, f = m
+    A, B, C, D, E, F = n
+    return (a * A + b * C, a * B + b * D, c * A + d * C, c * B + d * D,
+            e * A + f * C + E, e * B + f * D + F)
+
+
+def apply_m(m, x, y):
+    return m[0] * x + m[2] * y + m[4], m[1] * x + m[3] * y + m[5]
+
+
+def rotation(deg):
+    r = math.radians(deg)
+    s, c = math.sin(r), math.cos(r)
+    snap = lambda v: 0.0 if abs(v) < 1e-12 else v  # noqa: E731
+    return (snap(c), snap(s), snap(-s), snap(c), 0.0, 0.0)
+
+
+def read_transform(rest):
+    """`pdf:btrans`'s keywords: scale, then rotate, then matrix."""
+    w = rest.split()
+    sc = xs = ys = 1.0
+    rot = None
+    mat = None
+    k = 0
+    try:
+        while k < len(w):
+            key = w[k]
+            if key in ("scale", "xscale", "yscale", "rotate"):
+                val = float(w[k + 1])
+                if key == "scale":
+                    sc = val
+                elif key == "xscale":
+                    xs = val
+                elif key == "yscale":
+                    ys = val
+                else:
+                    rot = val
+                k += 2
+            elif key == "matrix":
+                mat = tuple(float(v) for v in w[k + 1:k + 7])
+                k += 7
+            elif key in ("width", "height", "depth", "clip", "page", "pagebox"):
+                k += 2
+            elif key == "bbox":
+                k += 5
+            else:
+                k += 1
+    except (IndexError, ValueError):
+        pass
+    m = (sc * xs, 0.0, 0.0, sc * ys, 0.0, 0.0)
+    if rot is not None:
+        m = mul_m(m, rotation(rot))
+    if mat is not None and len(mat) == 6:
+        m = mul_m(m, mat)
+    return m
+
+
 def xdv_glyphs(path):
-    """Per page: [(x_dvi, y_dvi, glyph or char code, native?)] and conv (bp per DVI unit)."""
+    """Per page: [(x_dvi, y_dvi, glyph or char code, native?, size, px, py)]
+    and conv (bp per DVI unit). (px, py) is the glyph's page position less
+    the page origin (72 bp, H - 72 bp), with the transformations of the
+    specials applied (Specials)."""
     with open(path, "rb") as f:
         b = f.read()
     i = 0
@@ -135,6 +321,11 @@ def xdv_glyphs(path):
     f = None
     h = v = w = x = y = z = 0
     stack = []
+    sp = Specials()
+    conv = 1.0
+
+    def at(hh, vv):
+        return sp.point(hh * conv, -vv * conv)
 
     def s(n):
         nonlocal i
@@ -157,7 +348,7 @@ def xdv_glyphs(path):
             else:
                 c = u(op - 127 if op <= 131 else op - 132)
             fo = fonts.get(f)
-            pages[-1].append((h, v, c, False, fo["size"] if fo else 0))
+            pages[-1].append((h, v, c, False, fo["size"] if fo else 0) + at(h, v))
             if op <= 131 and fo is not None:
                 h += fo["widths"].get(c, 0)
         elif op in (132, 137):
@@ -171,6 +362,7 @@ def xdv_glyphs(path):
             pages.append([])
             h = v = w = x = y = z = 0
             stack = []
+            sp = Specials()
         elif op == 140:
             pass
         elif op == 141:
@@ -203,6 +395,8 @@ def xdv_glyphs(path):
             f = u(op - 234)
         elif 239 <= op <= 242:
             k = u(op - 238)  # not `i += u(...)`: that reads i before u moves it
+            if pages:
+                sp.special(b[i:i + k].decode("latin-1"), h * conv, -v * conv)
             i += k
         elif 243 <= op <= 246:
             k = u(op - 242)
@@ -217,6 +411,7 @@ def xdv_glyphs(path):
         elif op == 247:
             i += 1
             num, den, mag = u(4), u(4), u(4)
+            conv = num / den * mag / 1000.0 * 1e-7 / 0.0254 * 72.0
             k = b[i]
             i += 1 + k
         elif op == 248:
@@ -238,11 +433,10 @@ def xdv_glyphs(path):
             gl = [u(2) for _ in range(n)]
             fo = fonts.get(f)
             for (dx, dy), g in zip(pos, gl):
-                pages[-1].append((h + dx, v + dy, g, True, fo["size"] if fo else 0))
+                pages[-1].append((h + dx, v + dy, g, True, fo["size"] if fo else 0) + at(h + dx, v + dy))
             h += wd
         else:
             raise ValueError("XDV opcode %d at %d" % (op, i - 1))
-    conv = num / den * mag / 1000.0 * 1e-7 / 0.0254 * 72.0
     return pages, conv
 
 
@@ -259,7 +453,7 @@ def deviation(pdf, xdv):
         if len(gl) != len(xp):
             out["unpaired_pages"].append((pm.index + 1, len(gl), len(xp)))
             continue
-        for g, (h, v, c, native, size) in zip(gl, xp):
+        for g, (h, v, c, native, size, _px, _py) in zip(gl, xp):
             ex = h * conv + 72.0
             ey = H - (v * conv + 72.0)
             d = max(abs(g["x"] - ex), abs(g["y"] - ey))
@@ -287,11 +481,10 @@ def xdv_check(model, xdv, tol=0.001, radius=1.0, examples=5):
     """A PDF's glyph origins against TeX's exact positions in the XDV of the
     same document: what proves a writer that places glyphs exactly. Glyphs
     are paired by glyph id (native fonts; TFM characters by position only)
-    and nearest position within `radius` bp, not by order. Glyphs drawn
-    inside included PDFs are not in the XDV and are left out; glyphs placed
-    inside transformations set by specials (TikZ nodes, rotated boxes) are
-    not at their XDV position and stay unpaired (counted, not failed: the
-    structural comparison covers them)."""
+    and nearest position within `radius` bp, not by order. Each XDV glyph's
+    position has the transformations of the specials applied (Specials:
+    TikZ's `pdf:bcontent` and `cm`, graphicx's `x:rotate`, `pdf:btrans`).
+    Glyphs drawn inside included PDFs are not in the XDV and are left out."""
     import compare as C
     pages, conv = xdv_glyphs(xdv)
     out = {"tol": tol, "paired": 0, "unpaired_pdf": 0, "unpaired_xdv": 0, "over": 0,
@@ -308,8 +501,8 @@ def xdv_check(model, xdv, tol=0.001, radius=1.0, examples=5):
             gid = g["glyph"]
             A.append({"k": int(gid[4:]) if gid.startswith("gid:") else None, "x": g["x"], "y": g["y"],
                       "size": math.sqrt(abs(g["m"][0] * g["m"][3] - g["m"][1] * g["m"][2])), "g": g})
-        B = [{"k": c if native else None, "x": h * conv + 72.0, "y": H - (v * conv + 72.0)}
-             for h, v, c, native, size in xp]
+        B = [{"k": c if native else None, "x": px + 72.0, "y": H - 72.0 + py}
+             for h, v, c, native, size, px, py in xp]
         pairs, ra, rb = C.match(A, B, lambda e: e["k"], lambda e: e["x"],
                                 lambda a, b: max(abs(a["x"] - b["x"]), abs(a["y"] - b["y"])),
                                 lambda e: radius)

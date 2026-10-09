@@ -66,12 +66,15 @@ class Report:
         self.examples = examples
         self.stats = {}
         self.notes = []  # informational: not differences
+        self.details = defaultdict(list)  # kind -> every difference, structured (run.py --baseline)
 
-    def add(self, kind, msg):
+    def add(self, kind, msg, detail=None):
         k = self.kinds[kind]
         k["count"] += 1
         if len(k["examples"]) < self.examples:
             k["examples"].append(msg)
+        if detail is not None:
+            self.details[kind].append(detail)
 
     @property
     def structural(self):
@@ -89,6 +92,7 @@ class Report:
                 "visual_pixels": self.visual,
                 "kinds": {k: dict(v) for k, v in sorted(self.kinds.items())},
                 "notes": self.notes,
+                "details": {k: v for k, v in sorted(self.details.items())},
                 "stats": self.stats}
 
     def text(self, indent=""):
@@ -282,7 +286,8 @@ def compare_fonts(ma, mb, opt, rep):
             rep.add("glyph-width", "%s %s: width %s vs %s" % (k[0], k[1], wa, wb))
         ua, ub = {x[1] for x in a}, {x[1] for x in b}
         if ua != ub:
-            rep.add("tounicode", "%s %s: %r vs %r" % (k[0], k[1], sorted(ua, key=str), sorted(ub, key=str)))
+            rep.add("tounicode", "%s %s: %r vs %r" % (k[0], k[1], sorted(ua, key=str), sorted(ub, key=str)),
+                    {"glyph": "%s %s" % k, "reference": sorted(ua, key=str), "candidate": sorted(ub, key=str)})
         oa, ob = {x[2] for x in a} - {None}, {x[2] for x in b} - {None}
         if oa and ob and oa != ob:
             rep.add("glyph-outline", "%s %s: outline %s vs %s" % (k[0], k[1], sorted(oa), sorted(ob)))

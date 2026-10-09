@@ -10,6 +10,8 @@ only and never runs in the product path (DESIGN.md).
 ```sh
 python3 tools/xetex-pdfparity/run.py --engine <bin> [--cases 'd0*'] [--jobs N] [--keep] [--json OUT]
 python3 tools/xetex-pdfparity/run.py --self-test        # xelatex against xelatex, and against qpdf rewrites
+python3 tools/xetex-pdfparity/run.py --engine <bin> --baseline tools/xetex-pdfparity/baseline.json   # the CI gate
+python3 tools/xetex-pdfparity/run.py --engine <bin> --write-baseline FILE [--label TEXT]
 python3 tools/xetex-pdfparity/compare.py REF.pdf CAND.pdf [--json OUT] [--diff-dir DIR]
 python3 -m unittest discover -s tools/xetex-pdfparity -p 'test_*.py'
 python3 tools/xetex-pdfparity/xdvmeasure.py             # xdvipdfmx's precision (below)
@@ -59,10 +61,43 @@ with its num/den/mag, with the origin 1 in, 1 in from the top left of the
 MediaBox, as xdvipdfmx does.
 
 Glyphs placed inside transformations that specials set up (TikZ nodes,
-rotated boxes) are not at their XDV position. They stay unpaired and are
-counted, not failed; the structural comparison covers them. In the
-self-test the candidate is xdvipdfmx's own PDF, so the check measures
-xdvipdfmx (below) and does not gate.
+`\rotatebox`, `\scalebox`) are placed by interpreting those specials as the
+writer does (`precision.Specials`, following #1712's `out/special.rs` and
+`out/content.rs`):
+
+* a CTM with its own save stack;
+* `cm`, `q` and `Q` in `pdf:code`/`pdf:direct`/`pdf:literal direct`;
+* `pdf:literal`, which moves the origin to the current point and back;
+* `pdf:content`, the same inside a save and restore;
+* `pdf:bcontent`/`pdf:econtent` with their coordinate stack;
+* `pdf:btrans`/`pdf:etrans` (scale, xscale, yscale, rotate, matrix) and
+  `x:scale`/`x:rotate`, about the current point;
+* `x:gsave`/`x:grestore`.
+
+A glyph of the candidate's page with no XDV glyph within 1 bp fails the
+check, as does a pair more than 0.001 bp apart. In the self-test the
+candidate is xdvipdfmx's own PDF, so the check measures xdvipdfmx (below)
+and does not gate. That also tests this interpretation independently:
+every glyph of xdvipdfmx's PDF, including d03's 27 TikZ glyphs and d05's
+rotated and scaled ones, is paired within xdvipdfmx's own error.
+
+**Baseline (`--baseline FILE`, the CI gate).** The baseline is a JSON file
+listing, per case, the differing pixels allowed at its `scale` and the
+ToUnicode differences allowed (glyph, reference text, candidate text). With a
+baseline, a case passes when all of these hold:
+
+* the run is clean: exit statuses, PDFs, and the XDV check (every glyph
+  paired, within 0.001 bp);
+* every structural difference is one of the case's listed ToUnicode
+  differences, so every glyph matches under the `0.01 bp + 0.005 em` ruling;
+* the differing pixels are at most the baseline's.
+
+`run.py` exits 0 only when every case passes. A case missing from the
+baseline allows nothing. Listed ToUnicode differences that no longer occur
+are reported, so the baseline can be tightened. `--write-baseline FILE
+[--label TEXT]` writes a run's pixels and ToUnicode differences.
+Differences of any other kind are recorded there under `not_allowed`, and
+the gate never allows them.
 
 ## What is compared (`compare.py`)
 
@@ -174,18 +209,20 @@ concrete cases, and `--json` writes everything.
 
 ## Results (VERIFIED on mac-m1max-a, 2026-10-09, TeX Live 2026)
 
-* **Self-test** (`run.py --self-test`, formats built fresh): 14 cases
-  (l001-l010, d01-d04), 14 equal, **0 structural differences and 0
-  differing pixels at 2×**, 17,247 glyphs paired.
+* **Self-test** (`run.py --self-test`, formats built fresh): 15 cases
+  (l001-l010, d01-d05), 15 equal, **0 structural differences and 0
+  differing pixels at 2×**, 17,352 glyphs paired.
   * xelatex against xelatex is byte-identical with the pinned environment,
     so this alone is not a strong check. Each reference PDF is therefore
     also compared with two qpdf rewrites of itself: object streams with
-    renumbered, re-compressed objects, and uncompressed QDF. All 28 rewrite
+    renumbered, re-compressed objects, and uncompressed QDF. All 30 rewrite
     comparisons give 0 structural differences and 0 px.
   * The XDV check of xelatex's own PDF measures xdvipdfmx and does not gate.
-    16,846 glyphs were paired; the 27 in TikZ transformations were not.
-    12,722 of the paired glyphs are more than 0.001 bp off, max 0.0496 bp
-    (0.00498 em), the same as `xdvmeasure.py`.
+    All 16,978 glyphs that the pages draw themselves were paired, with none
+    left over on either side; that includes d03's TikZ glyphs and d05's
+    transformed text, so the specials are read as xdvipdfmx reads them.
+    12,744 of the paired glyphs are more than 0.001 bp off, max 0.0496 bp
+    (0.00498 em), xdvipdfmx's error as `xdvmeasure.py` measures it.
   * One earlier run with 4 jobs failed on a pyobjc lazy-loading race
     (`KeyError: 'CGContextSetShouldSmoothFonts'` in raster.py). The Quartz
     names are now resolved once at import, and the run above passed with
@@ -206,7 +243,7 @@ concrete cases, and `--json` writes everything.
   * a named destination's x changed: `dest`;
   * the XDV check: xdvipdfmx's PDF pairs every glyph with the XDV and is off
     by less than 0.02 bp; a text object moved by 0.05 bp shows by that much.
-* **Unit tests** (`test_content.py`, 27 tests, OK):
+* **Unit tests** (`test_content.py`, 34 tests, OK):
   * the tokenizer: numbers, literal strings with escapes and nesting, hex,
     names with `#xx`, dictionaries, inline images;
   * matrices;
@@ -218,7 +255,11 @@ concrete cases, and `--json` writes everything.
   * the matching: rule equivalence, both tolerances, content order, moved,
     swapped, missing/extra, path colour/geometry;
   * structural comparison: numbers as values, the first differing path,
-    pattern and function tokens.
+    pattern and function tokens;
+  * the XDV specials: bcontent with `cm` and q/Q, btrans rotate, x:scale,
+    x:rotate, x:gsave/x:grestore, pdf:literal about the point, btrans
+    keywords;
+  * the baseline judgement.
 * **Outline digests are stable across subsets**: 1,164 distinct
   (font, glyph) pairs in the 14 reference PDFs, 133 of them in more than one
   PDF's subset, and none with two digests. Every glyph has a digest,
@@ -255,6 +296,25 @@ Unicode-mode PDF writer of #1712 (stacked on #1710), built as
 | l005 | 20,142 | d02 | 1,050 |
 | l006 | 4,270 | d03 | 784 |
 | l007 | 502 | d04 | 44 |
+
+**The committed baseline** (`baseline.json`, VERIFIED 2026-10-09,
+mac-m1max-a). The candidate is `flashtex-xetex` built in a private target
+directory (`cargo build --release -j 4`) from
+`agent/mac-claude-a/xetex-s2b-pdf` at
+**19c456c0f6aa9b8e25337dca395747b0e8f4bd53** (#1712, on #1710).
+
+* All 15 cases (d05 added): every glyph matched.
+* The XDV check now covers glyphs under specials, including d03's 27 TikZ
+  glyphs and d05's: all 16,978 glyphs paired, 0 more than 0.001 bp off,
+  max 0.000021 bp.
+* The same 3 ToUnicode differences.
+* 31,838 px at 2×: the table above plus d05's 241.
+* `run.py --engine … --baseline baseline.json` then exits 0 with 15 of 15
+  cases passing.
+* Two runs of that binary gave identical pixel counts.
+
+When the writer changes, rerun with `--write-baseline`, review the change in
+the file, and commit it.
 
 **Belief, not measured pixel by pixel:** the floor is xdvipdfmx's own
 rounding (3-decimal `Td`, integer TJ kerns, integer `/W`; see the next
@@ -297,7 +357,8 @@ pair. That pairing also independently checks the interpreter. Results:
   Libertinus): max 0.0167 bp = 0.0011 em.
 * TFM Type1C: max 0.0057 bp = 0.0006 em.
 * The 27 glyphs of d03 sit inside transformations that TikZ's specials set
-  up, so they are not measured.
+  up. This measurement walks the XDV in page order without the specials,
+  so they are not measured (the XDV check pairs them: max 0.0092 bp).
 
 Why: in l004 xdvipdfmx writes **a whole line in one `TJ`** (not one `BT … Td
 … TJ ET` per word), with integer kerns. It also rounds a TrueType font's
@@ -352,6 +413,11 @@ cases do.
 * `d04-hyperref-colorlinks`: colorlinks, `bookmarksopen`/`bookmarksnumbered`,
   Unicode titles in bookmarks and docinfo (UTF-16 strings), `pdfstartview`,
   `pdfpagemode`, roman then arabic page labels, a citation.
+* `d05-transformed-text`: text under graphicx's `\rotatebox` (`pdf:btrans
+  rotate`, about the origin and the centre), `\scalebox`, `\reflectbox`
+  and `\resizebox` (`pdf:btrans` and `x:scale`), nested; TikZ nodes that
+  are rotated, slanted and scaled (`cm` in `pdf:code` within
+  `pdf:bcontent`). It is there for the XDV check.
 
 Images come only from TeX Live's mwe package (l010).
 `tools/xetex-lockstep/pictures` holds header-only files and cannot be
@@ -359,10 +425,11 @@ rendered.
 
 ## Known gaps (beliefs, not measured)
 
-* The XDV check does not interpret specials, so it cannot place glyphs
-  that TikZ or graphicx's rotation draw inside transformations (27 of
-  d03's 28 glyphs). Those are only compared with xelatex's PDF, within
-  `0.01 bp + 0.005 em`.
+* The XDV check follows the writer's reading of the specials, not
+  xdvipdfmx's source. The self-test pairs every one of xdvipdfmx's glyphs
+  that way, but only for the specials of this corpus. Forms (`pdf:bxobj`)
+  are not interpreted: a glyph drawn inside one is not checked against the
+  XDV.
 * The XDV comes from the reference engine. A candidate whose typesetting
   differs (its own XDV, P-T1) is caught by tools/xetex-lockstep, not here.
 

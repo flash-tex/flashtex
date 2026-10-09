@@ -318,5 +318,86 @@ class Matching(unittest.TestCase):
         self.assertEqual(list(rep.kinds), ["path-geometry"])
 
 
+class XDVSpecials(unittest.TestCase):
+    """precision.Specials: the transformations the XDV check applies."""
+
+    def sp(self):
+        import precision
+        return precision.Specials()
+
+    def near(self, a, b):
+        self.assertTrue(close(a, b, 1e-9), (a, b))
+
+    def test_plain_point(self):
+        s = self.sp()
+        self.near(s.point(10, -20), (10, -20))
+
+    def test_bcontent_and_cm(self):
+        # TikZ: bcontent at the picture's point, then cm, glyphs, econtent.
+        s = self.sp()
+        s.special("pdf:bcontent", 100, -50)
+        s.special("pdf:code q 1 0 0 1 5 6 cm", 100, -50)
+        self.near(s.point(100, -50), (105, -44))   # the picture's origin, moved by the cm
+        self.near(s.point(110, -50), (115, -44))
+        s.special("pdf:code Q", 0, 0)
+        s.special("pdf:econtent", 0, 0)
+        self.near(s.point(110, -50), (110, -50))
+
+    def test_btrans_rotates_about_the_current_point(self):
+        s = self.sp()
+        s.special("pdf:btrans rotate 90", 10, 10)
+        self.near(s.point(10, 10), (10, 10))
+        self.near(s.point(11, 10), (10, 11))
+        s.special("pdf:etrans", 0, 0)
+        self.near(s.point(11, 10), (11, 10))
+
+    def test_x_scale_rotate_gsave(self):
+        s = self.sp()
+        s.special("x:gsave", 0, 0)
+        s.special("x:scale 2 3", 5, 5)
+        self.near(s.point(6, 6), (7, 8))
+        s.special("x:grestore", 0, 0)
+        s.special("x:rotate 180", 0, 0)
+        self.near(s.point(1, 2), (-1, -2))
+
+    def test_literal_translates_to_the_point_and_back(self):
+        s = self.sp()
+        s.special("pdf:literal 2 0 0 2 0 0 cm", 10, 20)
+        # translate(10, 20), scale 2, translate back: about (10, 20)
+        self.near(s.point(11, 20), (12, 20))
+        self.near(s.point(10, 20), (10, 20))
+
+    def test_btrans_keywords(self):
+        import precision
+        self.near(precision.read_transform("xscale 2 yscale 3"), (2, 0, 0, 3, 0, 0))
+        self.near(precision.read_transform("scale 2 matrix 1 0 0 1 4 5"), (2, 0, 0, 2, 4, 5))
+
+
+class Baseline(unittest.TestCase):
+    def case(self, kinds, details, px, messages=()):
+        return {"case": "c", "messages": list(messages),
+                "report": {"kinds": kinds, "details": details, "visual_pixels": px,
+                           "stats": {"visual_scale": 2}}}
+
+    def test_judge(self):
+        import run
+        tu = {"glyph": "F gid:1", "reference": [";"], "candidate": [";"]}
+        base = {"cases": {"c": {"px": 100, "tounicode": [tu]}}}
+        kinds = {"tounicode": {"count": 1, "examples": ["x"]}, "visual": {"count": 1, "examples": []}}
+        self.assertTrue(run.judge(self.case(kinds, {"tounicode": [tu]}, 100), base))
+        self.assertFalse(run.judge(self.case(kinds, {"tounicode": [tu]}, 101), base))
+        other = dict(tu, glyph="F gid:2")
+        self.assertFalse(run.judge(self.case(kinds, {"tounicode": [other]}, 50), base))
+        k2 = dict(kinds, **{"glyph-position": {"count": 1, "examples": ["moved"]}})
+        self.assertFalse(run.judge(self.case(k2, {"tounicode": [tu]}, 50), base))
+        self.assertFalse(run.judge(self.case(kinds, {"tounicode": [tu]}, 50, ["XDV"]), base))
+        r = self.case({}, {}, 0)
+        self.assertTrue(run.judge(r, base))
+        self.assertEqual(len(r["baseline"]["stale"]), 1)
+        r = self.case({}, {}, 1)
+        r["case"] = "unlisted"
+        self.assertFalse(run.judge(r, base))
+
+
 if __name__ == "__main__":
     unittest.main()
