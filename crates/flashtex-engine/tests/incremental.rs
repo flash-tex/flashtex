@@ -5231,3 +5231,86 @@ fn a_size_read_that_left_nothing_does_not_hold_the_restart_back() {
         step(&[("ch3.tex", &chapter(3))], &format!("{case}: revert"));
     }
 }
+
+/// Review of #1724: a whole read between `\document`'s start and S₀'s
+/// anchor is left out of S₀'s key (`host::whole_after_arm`: `\document`'s
+/// `\IfFileExists{\jobname.aux}` takes the `.aux`'s size). One that keeps
+/// what it read, in a `begindocument/before` hook, must still be read again
+/// when its file changes: (A) the `.aux`'s size, with a `\label` added (the
+/// next pass reads a longer `.aux`); (B) the main file's size, with a
+/// letter typed in the body. And where only `\document`'s own lookup reads
+/// the `.aux`, an added `\label` still restarts after the anchor. Every
+/// compile equals scratch runs.
+#[test]
+fn a_size_read_at_the_document_start_is_read_again() {
+    let Some(e) = env() else {
+        common::no_texlive();
+        return;
+    };
+    let body: String = (0..12).map(|i| para(i, "zeta")).collect();
+    let doc = |hook: &str, extra: &str| {
+        format!(
+            "\\documentclass{{article}}\n{hook}\\begin{{document}}\n\\section{{One}}\\label{{one}}\n\
+             {body}{extra}Kept: \\csname x\\endcsname. See~\\ref{{one}}.\n\\end{{document}}\n"
+        )
+    };
+    let aux = "\\AddToHook{begindocument/before}{\\xdef\\x{\\pdffilesize{\\jobname.aux}}}\n";
+    let tex = "\\AddToHook{begindocument/before}{\\xdef\\x{\\pdffilesize{\\jobname.tex}}}\n";
+    // (#1727: `\\document` wrapped, the original called last; the wrapper's
+    // `\\xdef` reads before the document's-start request is served, so the
+    // read is S0's key's, and D restarts from the preamble's last checkpoint)
+    let wrap_aux = "\\let\\myolddoc\\document\\def\\document{\\xdef\\x{\\pdffilesize{\\jobname.aux}}\\myolddoc}\n";
+    let wrap_tex = "\\let\\myolddoc\\document\\def\\document{\\xdef\\x{\\pdffilesize{\\jobname.tex}}\\myolddoc}\n";
+    // (case, the hook, the edit)
+    let cases = [
+        ("A: the .aux's size", aux, "\\section{Two}\\label{two}\n"),
+        ("B: the main file's size", tex, "A letter: x.\n"),
+        ("no hook", "", "\\section{Two}\\label{two}\n"),
+        (
+            "C: a wrapped \\document reads the .aux's size",
+            wrap_aux,
+            "\\section{Two}\\label{two}\n",
+        ),
+        (
+            "D: a wrapped \\document reads the main file's size",
+            wrap_tex,
+            "A letter: x.\n",
+        ),
+    ];
+    for (i, (case, hook, extra)) in cases.iter().enumerate() {
+        let dir = e.dir.join(format!("arm-read-{i}"));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut h = Host::start(&e, &dir);
+        let first = doc(hook, "");
+        for k in 0..4 {
+            let r = compile_and_check(
+                &e,
+                &mut h,
+                &dir,
+                &[("doc.tex", &first)],
+                &format!("{case}: settle"),
+            );
+            if r.contains("\"mode\":\"unchanged\"") || k == 3 {
+                break;
+            }
+        }
+        let edited = doc(hook, extra);
+        let what = format!("{case}: the edit");
+        let r = compile_and_check(&e, &mut h, &dir, &[("doc.tex", &edited)], &what);
+        if i == 1 {
+            // (B: the main file's length changed, the hook's size with it:
+            // the comparison at the anchor fails, the run goes on from the
+            // document's start)
+            assert_eq!(field(&r, "arm_revalidated"), "false", "{what}: {r}");
+        }
+        compile_and_check(&e, &mut h, &dir, &[], &format!("{case}: settle again"));
+        compile_and_check(
+            &e,
+            &mut h,
+            &dir,
+            &[("doc.tex", &first)],
+            &format!("{case}: the revert"),
+        );
+    }
+}

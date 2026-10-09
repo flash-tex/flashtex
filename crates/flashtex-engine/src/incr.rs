@@ -244,6 +244,9 @@ pub struct Report {
     /// READ-REVALIDATE (`crate::revalidate`): a later restart point was
     /// tried; whether it held.
     pub revalidated: Option<bool>,
+    /// Review of #1724 (`Session::arm_window`): the reads at `\document`'s
+    /// start had changed and were compared at the anchor; whether that held.
+    pub arm_revalidated: Option<bool>,
     /// ... in the middle of the main file's line, which the run read again
     /// (`crate::midline`).
     pub restart_midline: bool,
@@ -333,7 +336,7 @@ pub struct Report {
 impl Report {
     pub fn json(&self) -> String {
         format!(
-            "{{\"mode\":\"{}\",\"cold_reason\":{},\"status\":{},\"paused\":{},\"restart_pages\":{},\"cursor\":{},\"restart_mid_page\":{},\"restart_preamble\":{},\"restart_midline\":{},\"revalidated\":{},\"restart_gap\":{},\"converged_at\":{},\"rerun_from\":{},\"rerun_pages\":{},\"pages\":{},\"find_s\":{:.6},\"key_s\":{:.6},\"changes_s\":{:.6},\"restore_s\":{:.6},\"page_s\":{:.6},\"total_s\":{:.6},\"tests\":{},\"test_s\":{:.6},\"log_bytes\":{},\"checkpoints\":{},\"diffs\":{:?},\"page_times\":[{}],\"edited\":{},\"passes\":{},\"pass_modes\":{:?},\"pass_s\":[{}],\"oscillation\":{},\"ck_stats\":{},\"l5\":{:?},\"rs_events\":{},\"preempted\":{},\"deferred\":{}}}",
+            "{{\"mode\":\"{}\",\"cold_reason\":{},\"status\":{},\"paused\":{},\"restart_pages\":{},\"cursor\":{},\"restart_mid_page\":{},\"restart_preamble\":{},\"restart_midline\":{},\"revalidated\":{},\"arm_revalidated\":{},\"restart_gap\":{},\"converged_at\":{},\"rerun_from\":{},\"rerun_pages\":{},\"pages\":{},\"find_s\":{:.6},\"key_s\":{:.6},\"changes_s\":{:.6},\"restore_s\":{:.6},\"page_s\":{:.6},\"total_s\":{:.6},\"tests\":{},\"test_s\":{:.6},\"log_bytes\":{},\"checkpoints\":{},\"diffs\":{:?},\"page_times\":[{}],\"edited\":{},\"passes\":{},\"pass_modes\":{:?},\"pass_s\":[{}],\"oscillation\":{},\"ck_stats\":{},\"l5\":{:?},\"rs_events\":{},\"preempted\":{},\"deferred\":{}}}",
             self.mode,
             self.cold_reason
                 .as_ref()
@@ -347,6 +350,9 @@ impl Report {
             self.restart_preamble,
             self.restart_midline,
             self.revalidated
+                .map(|b| b.to_string())
+                .unwrap_or_else(|| "null".into()),
+            self.arm_revalidated
                 .map(|b| b.to_string())
                 .unwrap_or_else(|| "null".into()),
             self.restart_gap,
@@ -2256,6 +2262,23 @@ impl Observer for Obs {
         }
         if why != Point::Shipout {
             self.taken.push((id, self.pages_so_far()));
+            // (a comparison at the anchor: `Session::arm_window`)
+            if self.probe.as_ref().is_some_and(|p| p.anchor == Some(why)) {
+                if let Some(pr) = self.probe.take() {
+                    let r = g
+                        .record_of(id)
+                        .and_then(|rec| self.probe_test(g, &rec, &pr))
+                        .map(|()| pr.p2);
+                    if self.debug {
+                        eprintln!("[incr] the reads at the document's start, at the anchor: {r:?}");
+                    }
+                    let ok = r.is_ok();
+                    self.probe_result = Some(r);
+                    if ok {
+                        return Action::Stop;
+                    }
+                }
+            }
             if why == Point::Segment && self.preempt_now(g) {
                 return Action::Stop;
             }
@@ -2541,6 +2564,16 @@ pub struct Session {
     /// restored run's differ from: the next pass restarts there at the
     /// latest, so that they are shipped again (a display holds them).
     reemit_from: Option<CheckpointId>,
+    /// `arm_window`'s run from `\document`'s start: S₀, the key's cover,
+    /// the pass's flag and the anchor's bookkeeping, put back when its
+    /// comparison at the anchor holds.
+    #[allow(clippy::type_complexity)]
+    anchor_saved: Option<(
+        Option<host::S0>,
+        (usize, Vec<String>),
+        bool,
+        Option<crate::checkpoint::AnchorState>,
+    )>,
     /// PREAMBLE-MIDLINE: the refill of the restart point `preamble_restart`
     /// chose, and the checkpoints such a refill left holding the old line
     /// (dropped after the run: `enforce_budget`).
@@ -2660,6 +2693,7 @@ impl Session {
             no_tests: false,
             before_pass: None,
             reemit_from: None,
+            anchor_saved: None,
             midline_refill: None,
             stale_midline: vec![],
             starved: false,
@@ -2773,6 +2807,7 @@ impl Session {
                 closed_at: None,
                 written_before: false,
                 stamp: None,
+                size: None,
             });
             j.mark_seen(path);
         }
@@ -2794,6 +2829,7 @@ impl Session {
                     closed_at: None,
                     written_before: false,
                     stamp: None,
+                    size: None,
                 });
                 j.mark_seen(path);
                 open.push(path.clone());
@@ -3730,18 +3766,62 @@ impl Session {
         } else {
             None
         };
-        let rep = self.incremental(
-            t0,
-            r,
-            edits,
-            changed,
-            stop_at,
-            find_s,
-            patch,
-            fixed_writes,
-            pre_r.is_some(),
-            probe,
-        );
+        // A whole read between `\document`'s start and the anchor, left out
+        // of S₀'s key (`host::whole_after_arm`), whose file changed: the run
+        // restarts where `\document` starts, and keeps the restart above
+        // only if it reaches the anchor in the old run's state
+        // (`arm_window`).
+        let arm = if pre_r.is_none() && !self.no_tests {
+            match self.arm_window(&edits, &changed, bad_lookup) {
+                Ok(a) => a,
+                Err(why) => return self.cold(t0, stop_at, Some(why)),
+            }
+        } else {
+            None
+        };
+        let rep = match arm {
+            Some((a, mut pr)) => {
+                pr.p2 = r;
+                pr.then_patch = patch;
+                pr.then_probe = probe.map(Box::new);
+                // (S₀ is taken again, as by a preamble restart, unless the
+                // comparison holds: then it is put back)
+                let s0 = self.s0.take();
+                let cover = std::mem::take(&mut self.key_cover);
+                let retaken = self.before_pass.as_ref().is_some_and(|b| b.s0_retaken);
+                if let Some(b) = self.before_pass.as_mut() {
+                    b.s0_retaken = true;
+                }
+                let state = self.g.as_mut().map(|g| g.anchor_state());
+                self.anchor_saved = Some((s0, cover, retaken, state));
+                let rep = self.incremental(
+                    t0,
+                    a,
+                    edits,
+                    changed,
+                    stop_at,
+                    find_s,
+                    None,
+                    fixed_writes,
+                    true,
+                    Some(pr),
+                );
+                self.anchor_saved = None;
+                rep
+            }
+            None => self.incremental(
+                t0,
+                r,
+                edits,
+                changed,
+                stop_at,
+                find_s,
+                patch,
+                fixed_writes,
+                pre_r.is_some(),
+                probe,
+            ),
+        };
         self.fixed_inputs.clear();
         self.fixed_created.clear();
         let mut rep = rep?;
@@ -4624,6 +4704,9 @@ impl Session {
             windows,
             bad_lookup,
             page,
+            anchor: None,
+            then_patch: None,
+            then_probe: None,
             p1,
             p2,
             old_files: j.files[r0.reads.0.min(j.files.len())..r1.reads.0.min(j.files.len())]
@@ -4638,6 +4721,106 @@ impl Session {
             p0: r0,
             now,
         })
+    }
+
+    /// Review of #1724: S₀'s key leaves out the whole reads made between
+    /// `\document`'s start (`Layer::arm_reads`) and the anchor
+    /// (`host::whole_after_arm`: `\document`'s `\IfFileExists{\jobname.aux}`
+    /// takes the `.aux`'s size). When one of their files changed -- for a
+    /// `\pdffilesize` read, its length; for a `\pdffilemoddate` one, its time
+    /// -- `Some((A, probe))`: restart at `A`, the checkpoint where
+    /// `\document` starts (`Layer::arm_ck`), and compare at the anchor with
+    /// the old run's (`revalidate`, the probe's `anchor`). Equal, what those
+    /// reads did left nothing behind and the compile restarts where it
+    /// would have (`incremental`'s continuation); not equal, the run from
+    /// `A` goes on, as a preamble restart does. `Err`: no such checkpoint
+    /// (the caller runs from the format).
+    #[allow(clippy::type_complexity)]
+    fn arm_window(
+        &mut self,
+        edits: &[Edit],
+        changed: &[String],
+        bad_lookup: Option<usize>,
+    ) -> Result<Option<(CheckpointId, crate::revalidate::Probe)>, String> {
+        let (Some(s0), Some(j), Some(g)) = (
+            self.s0.as_ref().map(|s| s.id),
+            self.journal.as_ref(),
+            self.g.as_mut(),
+        ) else {
+            return Ok(None);
+        };
+        let Some(arm) = g.layer().arm_reads else {
+            return Ok(None);
+        };
+        let ra = g.record_of(s0)?;
+        let end = ra.reads.0.min(j.files.len());
+        let dirty = j.files[arm.min(end)..end].iter().find(|f| {
+            f.closed_at == Some(u64::MAX)
+                && changed.contains(&f.path)
+                && match (f.size, f.stamp) {
+                    (Some(n), _) => std::fs::metadata(&f.path).ok().map(|m| m.len()) != Some(n),
+                    (_, Some(t)) => system::mtime_secs(&f.path) != Some(t),
+                    _ => true,
+                }
+        });
+        let Some(dirty) = dirty else {
+            return Ok(None);
+        };
+        let why = format!("{} read at the document's start changed", dirty.path);
+        let a = g
+            .layer()
+            .arm_ck
+            .ok_or_else(|| format!("{why}, no checkpoint there"))?;
+        if self.ck_pages.get(&a) != Some(&0) || !g.checkpoints().contains(&a) {
+            return Err(format!("{why}, its checkpoint is not kept"));
+        }
+        let r0 = g.record_of(a)?;
+        let first_read = first_reads(j);
+        if !consumed_nothing_changed(j, &first_read, &r0, edits, changed, bad_lookup)
+            || !g.restorable(a)
+        {
+            return Err(format!("{why}, and so did a read before it"));
+        }
+        if self.opts.debug {
+            eprintln!(
+                "[incr] {why}: from the document's start ({a}), compared at the anchor ({s0})"
+            );
+        }
+        let anchor = if g.layer().aux_point == Some(s0) {
+            Point::Aux
+        } else {
+            Point::BeginDocument
+        };
+        let now: HashMap<String, std::sync::Arc<Vec<u8>>> = edits
+            .iter()
+            .filter_map(|e| {
+                let f = j
+                    .files
+                    .iter()
+                    .find(|f| f.path == e.path && f.content.is_some())?;
+                Some((e.path.clone(), f.content.clone()?))
+            })
+            .collect();
+        let cut = |n: usize, m: usize, len: usize| n.min(len)..m.min(len);
+        Ok(Some((
+            a,
+            crate::revalidate::Probe {
+                windows: vec![],
+                bad_lookup,
+                page: 0,
+                anchor: Some(anchor),
+                then_patch: None,
+                then_probe: None,
+                p1: s0,
+                p2: s0,
+                old_files: j.files[cut(r0.reads.0, ra.reads.0, j.files.len())].to_vec(),
+                old_lookups: j.lookups[cut(r0.reads.1, ra.reads.1, j.lookups.len())].to_vec(),
+                old_outputs: j.outputs[cut(r0.reads.2, ra.reads.2, j.outputs.len())].to_vec(),
+                later_outputs: j.outputs[ra.reads.2.min(j.outputs.len())..].to_vec(),
+                p0: r0,
+                now,
+            },
+        )))
     }
 
     fn observer(&self, t0: Instant, base: usize, stop_at: Option<usize>) -> Obs {
@@ -4828,6 +5011,12 @@ impl Session {
     ) -> Result<Report, String> {
         // (what a restart at the revalidated point needs again)
         let chain = probe.as_ref().map(|p| (p.windows.clone(), p.bad_lookup));
+        // (an anchor comparison's continuation: `arm_window`)
+        let cont_was_anchor = probe.as_ref().is_some_and(|p| p.anchor.is_some());
+        let cont = probe.as_ref().and_then(|p| {
+            p.anchor
+                .map(|_| (p.then_patch.clone(), p.then_probe.clone()))
+        });
         let again = probe.as_ref().map(|_| {
             (
                 edits.clone(),
@@ -5156,6 +5345,40 @@ impl Session {
                             return self.cold(t0, stop_at, Some(format!("revalidation: {e}")));
                         }
                         self.line_shifts = shifts;
+                        if let Some((then_patch, then_probe)) = cont {
+                            // the reads at the document's start left nothing
+                            // behind: the anchor is the old run's again, and
+                            // the restart is the one decided before
+                            if let Some((s0, cover, retaken, state)) = self.anchor_saved.take() {
+                                self.s0 = s0;
+                                self.key_cover = cover;
+                                if let Some(b) = self.before_pass.as_mut() {
+                                    b.s0_retaken = retaken;
+                                }
+                                if let (Some(st), Some(g)) = (state, self.g.as_mut()) {
+                                    g.set_anchor_state(st);
+                                }
+                            }
+                            if self.opts.debug {
+                                eprintln!("[incr] the document's start left nothing behind: restart at {p2}");
+                            }
+                            let rep = self.incremental(
+                                t0,
+                                p2,
+                                edits,
+                                changed,
+                                stop_at,
+                                find_s,
+                                then_patch,
+                                fixed_writes,
+                                false,
+                                then_probe.map(|b| *b),
+                            );
+                            return rep.map(|mut rep| {
+                                rep.arm_revalidated = Some(true);
+                                rep
+                            });
+                        }
                         if self.opts.debug {
                             eprintln!("[incr] revalidated: restart at {p2} instead of {r}");
                         }
@@ -5190,8 +5413,11 @@ impl Session {
                 }
             }
         }
+        // (an anchor comparison that failed: `arm_window`'s, reported apart)
+        let anchor_probe = probing && cont_was_anchor;
         let mut rep = Report {
-            revalidated,
+            revalidated: if anchor_probe { None } else { revalidated },
+            arm_revalidated: if anchor_probe { revalidated } else { None },
             mode: "incremental".into(),
             restart_preamble: before_s0,
             restart_midline: midline,

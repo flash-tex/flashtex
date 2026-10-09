@@ -56,6 +56,12 @@ pub struct Probe {
     pub windows: Vec<(usize, usize)>,
     pub bad_lookup: Option<usize>,
     pub page: usize,
+    /// A comparison at the anchor instead of a page (`incr::Session::arm_window`):
+    /// the kind of checkpoint the anchor is, and what the compile does when
+    /// it holds -- restart at `p2` with this `.aux` patch and revalidation.
+    pub anchor: Option<crate::checkpoint::Point>,
+    pub then_patch: Option<Arc<crate::readset::Patch>>,
+    pub then_probe: Option<Box<Probe>>,
     pub p1: CheckpointId,
     pub p2: CheckpointId,
     /// The restart point's record (`P0`).
@@ -271,6 +277,7 @@ mod tests {
                 closed_at: None,
                 written_before: false,
                 stamp: None,
+                size: None,
             });
         }
         let w = window_journal(&j, &[(1, 2), (2, 3)]);
