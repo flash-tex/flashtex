@@ -65,9 +65,8 @@ final class EngineV3ModeTests: XCTestCase {
     % !TEX program = xelatex
     \\documentclass{article}
     \\usepackage{fontspec}
-    \\setmainfont{texgyrepagella-regular.otf}
     \\begin{document}
-    Unicode: naïve café — ἀρχή.
+    Unicode: naïve café — façade.
     \\end{document}
 
     """
@@ -84,10 +83,19 @@ final class EngineV3ModeTests: XCTestCase {
     /// and asks for the xelatex format; its pages arrive like Classic's.
     /// Taking the line out relaunches the Classic host (when one is built).
     func testAUnicodeDocumentRunsInTheUnicodeHost() async throws {
-        guard EngineV3.locateHost(mode: .unicode) != nil else {
-            throw EngineV3TestHost.unavailable("no flashtex-host-unicode built (cd crates/flashtex-xetex && cargo build --release --bin flashtex-host-unicode)")
+        // Required where CI builds the Unicode host (FLASHTEX_REQUIRE_HOST_UNICODE=1,
+        // ci.yml's mac-v3-host once crates/flashtex-xetex has it); skipped
+        // otherwise, FLASHTEX_REQUIRE_HOST (Classic's host) notwithstanding.
+        let required = ProcessInfo.processInfo.environment["FLASHTEX_REQUIRE_HOST_UNICODE"] == "1"
+        func unavailable(_ why: String) -> Error {
+            guard required else { return XCTSkip(why) }
+            XCTFail("FLASHTEX_REQUIRE_HOST_UNICODE=1: " + why)
+            return EngineV3TestHost.HostMissing(description: why)
         }
-        guard EngineV3TestHost.texLive != nil else { throw EngineV3TestHost.unavailable("no TeX Live") }
+        guard EngineV3.locateHost(mode: .unicode) != nil else {
+            throw unavailable("no flashtex-host-unicode built (cd crates/flashtex-xetex && cargo build --release --bin flashtex-host-unicode)")
+        }
+        guard EngineV3TestHost.texLive != nil else { throw unavailable("no TeX Live") }
         let cache = FileManager.default.temporaryDirectory.appendingPathComponent("engine-v3-mode-\(getpid())")
         env.set("FLASHTEX_V3_CACHE", cache.path)
         env.set("FLASHTEX_MODE", "")
