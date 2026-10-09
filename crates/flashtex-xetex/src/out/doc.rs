@@ -137,6 +137,9 @@ pub struct Doc {
     /// pages (dvipdfmx keeps it).
     pub paper: Option<(Fx, Fx)>,
     pub pages: Vec<Built>,
+    /// The XDV preamble's comment (` XeTeX output ...`): xdvipdfmx's
+    /// `/Creator` when the document gives none.
+    pub dvi_comment: Option<Vec<u8>>,
 }
 
 impl Doc {

@@ -437,6 +437,34 @@ writer.
   unchanged: P-T1 lockstep 1413/1413, XDV 1410/1410, xelatex cases
   10/10.
 
+**The PDF writer** (`src/out/pdf.rs`) writes the PDF from the display list
+plus that supplement, with no new dependency: native fonts as
+`Type0`/`Identity-H` with CID = glyph id (CFF: a CID-keyed subset,
+TrueType: glyph ids kept in place), TFM fonts as Type 1 subsets, by the
+MIT subsetters of `crates/pdf`; `ToUnicode` from the `cmap`, `GSUB`
+ligatures and substitutions and the `MATH` variants; PNG `IDAT` copied with
+its colour space (`iCCP`, `sRGB`, `gAMA`/`cHRM` as dvipdfmx writes them),
+JPEG passed through with its ICC profile, PDF pages as forms; links,
+destinations, outline, document information and catalog entries; streams
+compressed by TeX Live's zlib. `pdf-writer`, `krilla` and `subsetter` are
+MIT OR Apache-2.0 (checked in their `Cargo.toml`), so usable under the
+ruling, but not used: `pdf-writer` and `krilla` write numbers as `f32`,
+and `subsetter` renumbers glyphs (its CIDs are not the font's glyph ids);
+FlashTeX's own subsetters keep them. Each glyph is placed at TeX's exact
+position (10⁻⁵ bp), not with xdvipdfmx's rounding.
+
+**Verified** with `tools/xetex-pdfparity` (#1708) against `xelatex` on 14
+cases (l001–l010, hyperref, xcolor, TikZ, colorlinks): every glyph matched
+(17,247), positions within 0.001 bp of the XDV (max 0.000009 bp); 3
+structural differences, all `ToUnicode` code-point choices where two code
+points map to one glyph (l004, l007, l008); 0 unknown specials. **Measured
+visual floor at 2× (not 0 px):** 31,597 px over 14 cases (l005 20,142 over
+5 pages, the others 44–4,270), max channel delta 128. Belief, from the XDV
+check: the floor is xdvipdfmx's rounding (Td to 0.001 bp, integer TJ kerns
+over rounded widths: up to 0.005 em, measured in #1708), which moves glyph
+edges against ours; matching it to 0 px would mean writing xdvipdfmx's
+rounding instead of TeX's positions (an owner question).
+
 ## 5. Risks carried into S1–S3
 
 | risk | mitigation |
