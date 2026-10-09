@@ -1688,6 +1688,42 @@ impl Core {
         }
     }
 
+    /// `retain` for a detached branch (the old run's future): drop every
+    /// checkpoint of `b` that `keep` rejects, except its first (the restore
+    /// target, in the live chain too) and its newest, merging each dropped
+    /// log into its predecessor. What the branch is for stays exact: the
+    /// old run's state at every checkpoint kept (rewound from its end
+    /// through the logs after it, which are untouched or merged), the
+    /// chunks it wrote after the target (a merged log holds the union of
+    /// its parts'), and `reattach`, which puts back a chain with fewer
+    /// checkpoints.
+    fn retain_branch(&mut self, b: &mut Branch, keep: &dyn Fn(CheckpointId) -> bool) {
+        let _m = crate::memstat::scope(crate::memstat::tag::LOG);
+        let n = b.ids.len();
+        let ids = std::mem::take(&mut b.ids);
+        let logs = std::mem::take(&mut b.logs);
+        let mut out_ids = Vec::with_capacity(n);
+        let mut out_logs: Vec<Log> = Vec::with_capacity(n);
+        for (i, (id, log)) in ids.into_iter().zip(logs).enumerate() {
+            let sealed = |l: &Log| l.entries.is_empty();
+            let dst = out_logs.last_mut();
+            match dst {
+                Some(dst) if i + 1 < n && !keep(id) && sealed(dst) && sealed(&log) => {
+                    let merged = merge_sealed(dst, &log);
+                    self.sealed_bytes += merged.sealed_bytes();
+                    self.sealed_bytes -= dst.sealed_bytes() + log.sealed_bytes();
+                    *dst = merged;
+                }
+                _ => {
+                    out_ids.push(id);
+                    out_logs.push(log);
+                }
+            }
+        }
+        b.ids = out_ids;
+        b.logs = out_logs;
+    }
+
     /// Drop every checkpoint `keep` rejects, except the newest, merging each
     /// dropped log into its predecessor (the older value of a word wins).
     fn retain(&mut self, keep: &dyn Fn(CheckpointId) -> bool) {
@@ -2186,6 +2222,10 @@ impl Arena {
         self.core_mut().drop_branch(b)
     }
 
+    pub fn retain_branch(&mut self, b: &mut Branch, keep: &dyn Fn(CheckpointId) -> bool) {
+        self.core_mut().retain_branch(b, keep)
+    }
+
     pub fn reattach(&mut self, b: Branch) -> Result<(), String> {
         self.core_mut().reattach(b)
     }
@@ -2258,14 +2298,10 @@ impl Arena {
         cs.sort_unstable();
         let live = |c: u32| core.chunk_ptr(c as usize) as *const u64;
         let bufs = rewound(core.nchunks, &cs, &live, &core.logs[k..]);
-        let mut over: Vec<*const u64> = vec![std::ptr::null(); core.nchunks];
-        for (i, &c) in cs.iter().enumerate() {
-            over[c as usize] = bufs[i * CHUNK_WORDS..].as_ptr();
-        }
         Ok(View {
             arena: self,
-            over,
-            _bufs: bufs,
+            cs,
+            bufs,
         })
     }
 
@@ -2835,22 +2871,22 @@ impl ChunkDiff {
 /// The space at a checkpoint (`Arena::view_at`).
 pub struct View<'a> {
     arena: &'a Arena,
-    over: Vec<*const u64>,
-    /// Where `over` points.
-    _bufs: Vec<u64>,
+    /// The chunks that differ from the live space, sorted; chunk `cs[i]`'s
+    /// words are `bufs[i * CHUNK_WORDS..]`. (Not a pointer per chunk of
+    /// the space: that was a 4 MB vector, freed after each S₀ save and
+    /// then kept by the macOS allocator; lane MEM-MODES.)
+    cs: Vec<u32>,
+    bufs: Vec<u64>,
 }
 
 impl View<'_> {
     pub fn chunk(&self, c: usize) -> &[u8] {
-        let p = self.over[c];
-        if p.is_null() {
-            let w = self.arena.chunk(c);
-            // SAFETY: a chunk of CHUNK_WORDS words viewed as bytes.
-            unsafe { std::slice::from_raw_parts(w.as_ptr() as *const u8, CHUNK_BYTES) }
-        } else {
-            // SAFETY: a chunk of `_bufs`, alive and unchanged with `self`.
-            unsafe { std::slice::from_raw_parts(p as *const u8, CHUNK_BYTES) }
-        }
+        let w: &[u64] = match self.cs.binary_search(&(c as u32)) {
+            Ok(i) => &self.bufs[i * CHUNK_WORDS..(i + 1) * CHUNK_WORDS],
+            Err(_) => self.arena.chunk(c),
+        };
+        // SAFETY: a chunk of CHUNK_WORDS words viewed as bytes.
+        unsafe { std::slice::from_raw_parts(w.as_ptr() as *const u8, CHUNK_BYTES) }
     }
 }
 

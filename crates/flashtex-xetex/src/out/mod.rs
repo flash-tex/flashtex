@@ -21,19 +21,23 @@
 //! * [`content`]: PDF operators the specials write, read into paths;
 //! * [`fonts`], [`fontmap`], [`images`]: the `FONT` and `IMAGE` resources;
 //! * [`doc`]: what lasts across pages (named objects, outline, forms);
-//! * [`pdfobj`]: PDF object syntax of the specials.
+//! * [`pdfobj`]: PDF object syntax of the specials;
+//! * [`pdf`]: the PDF writer, and [`tounicode`] its glyphs' text.
 //!
 //! The display list goes to `FLASHTEX_DISPLAY_LIST` (spec §6.6) as pages
-//! complete. The PDF writer over it is the next step of S2 part 2.
+//! complete; at the end [`pdf`] writes the PDF from the display list.
 
+pub mod cffcid;
 pub mod content;
 pub mod doc;
 pub mod fontmap;
 pub mod fonts;
 pub mod images;
 pub mod page;
+pub mod pdf;
 pub mod pdfobj;
 pub mod special;
+pub mod tounicode;
 
 use crate::generated::consts::{dvi_buf_size, font_base, int_base, mag_code};
 use crate::generated::Globals;
@@ -201,6 +205,13 @@ pub fn page_done(g: &mut Globals, f: &mut ByteFile) {
                     .map(|i| g.dvi_buf[i] as u8)
             }
         };
+        // The first page: the preamble's comment, which xdvipdfmx makes
+        // the PDF's `/Creator`.
+        if out.doc.dvi_comment.is_none() && byte(0) == Some(247) {
+            if let Some(k) = byte(14) {
+                out.doc.dvi_comment = (15..15 + k as i64).map(byte).collect();
+            }
+        }
         for p in start..end {
             match byte(p) {
                 Some(b) => bytes.push(b),
@@ -251,13 +262,62 @@ pub fn finish(g: &mut Globals) -> i32 {
         eprintln!("! FlashTeX output: {e}");
         rc = 1;
     }
-    // The PDF writer over the display list is the next step of S2 part 2.
-    if out.pdf.is_some() {
-        eprintln!("FlashTeX output: the PDF writer is not built yet (display list only)");
-        rc = 1;
+    if let Some(mut file) = out.pdf.take() {
+        let opts = pdf::Options {
+            producer: format!("FlashTeX (Unicode mode, {})", crate::system::BANNER),
+            date: pdf_date(),
+            compress: true,
+        };
+        match pdf::write(&out.doc, &opts) {
+            Ok((bytes, warnings)) => {
+                for w in warnings {
+                    eprintln!("FlashTeX output: {w}");
+                }
+                if let Err(e) = file.write_all(&bytes).and_then(|_| file.flush()) {
+                    eprintln!("FlashTeX output: writing {}: {e}", out.pdf_name);
+                    rc = 1;
+                }
+            }
+            Err(e) => {
+                eprintln!("FlashTeX output: {e}");
+                rc = 1;
+            }
+        }
     }
     g.host.out = Some(out);
     rc
+}
+
+/// `D:YYYYMMDDHHmmSSZ` of `SOURCE_DATE_EPOCH` when it is set (with
+/// `FORCE_SOURCE_DATE` or not: the PDF's dates are the output's), else of
+/// now.
+fn pdf_date() -> Option<String> {
+    let secs = std::env::var("SOURCE_DATE_EPOCH")
+        .ok()
+        .and_then(|v| v.trim().parse::<i64>().ok())
+        .unwrap_or_else(|| {
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_or(0, |d| d.as_secs() as i64)
+        });
+    let days = secs.div_euclid(86_400);
+    let rem = secs.rem_euclid(86_400);
+    // civil from days (Howard Hinnant's algorithm)
+    let z = days + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = z - era * 146_097;
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 };
+    let y = yoe + era * 400 + i64::from(m <= 2);
+    Some(format!(
+        "D:{y:04}{m:02}{d:02}{:02}{:02}{:02}Z",
+        rem / 3600,
+        rem / 60 % 60,
+        rem % 60
+    ))
 }
 
 /// Send a page, and the forms and resources it needs first, to the

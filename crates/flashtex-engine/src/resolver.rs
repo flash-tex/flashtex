@@ -555,6 +555,27 @@ mod kpse {
     use std::ffi::{c_char, c_int, c_void, CStr, CString};
     use std::path::{Path, PathBuf};
 
+    /// Where kpathsea keeps ls-R's packed index (db.c, `packed_build`):
+    /// `<format cache>/lsr`, beside the font maps' cache (DESIGN.md §4.4),
+    /// or none when the format cache is off. Set once, before the first
+    /// instance reads ls-R.
+    fn set_lsr_cache() {
+        static ONCE: std::sync::Once = std::sync::Once::new();
+        ONCE.call_once(|| {
+            #[cfg(feature = "distribution")]
+            if crate::formats::cache_enabled() {
+                if let Some(d) = crate::formats::cache_dir().map(|d| d.join("lsr")) {
+                    if std::fs::create_dir_all(&d).is_ok() {
+                        if let Ok(c) = CString::new(d.to_string_lossy().as_bytes()) {
+                            // SAFETY: the C side copies the string.
+                            unsafe { flashtex_kpse_set_lsr_cache(c.as_ptr()) };
+                        }
+                    }
+                }
+            }
+        });
+    }
+
     extern "C" {
         fn flashtex_kpse_new(
             argv0: *const c_char,
@@ -571,6 +592,7 @@ mod kpse {
             made: *mut c_int,
         ) -> *mut c_char;
         fn flashtex_kpse_format(k: *mut c_void, name: *const c_char) -> c_int;
+        fn flashtex_kpse_set_lsr_cache(dir: *const c_char);
         fn flashtex_kpse_find(k: *mut c_void, name: *const c_char, format: c_int) -> *mut c_char;
         fn flashtex_kpse_var_value(k: *mut c_void, var: *const c_char) -> *mut c_char;
         fn flashtex_kpse_free(p: *mut c_void);
@@ -924,6 +946,7 @@ mod kpse {
                 .collect();
             let mut ptrs: Vec<*const c_char> = kv.iter().map(|c| c.as_ptr()).collect();
             ptrs.push(std::ptr::null());
+            set_lsr_cache();
             let k = unsafe {
                 flashtex_kpse_new(
                     a.as_ptr(),
