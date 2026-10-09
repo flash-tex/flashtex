@@ -6,12 +6,13 @@
 //! `dummy_fm_entry()`) or an arena index plus one.
 
 use super::cfmt;
+use super::fmtable::{Base, FmTable, PsKey};
 use super::fonts::Fonts;
 use super::output::set_cur_file_name;
-use super::shared::Shared;
 use crate::generated::Globals;
 use crate::resolver::Format;
 use std::collections::{BTreeMap, BTreeSet};
+use std::sync::Arc;
 
 /// `pdf_font_map[f]` of a font without a map entry.
 pub const DUMMY: i32 = -1;
@@ -140,9 +141,6 @@ crate::codec_enum!(Mode {
     Delete
 });
 
-/// `ps_tree`'s map: PostScript name, slant and extend to an entry.
-type PsTree = BTreeMap<(Vec<u8>, i32, i32), usize>;
-
 /// `mapitem`: the map file or map line still to be read.
 #[derive(Clone)]
 struct MapItem {
@@ -156,23 +154,21 @@ crate::codec_struct!(MapItem {
     line
 });
 
-/// The parsed map (entries and trees) is [`Shared`]: it is read once per
-/// run (and once per process, see [`MapCache`]) and then only read, while a
+/// The parsed map (entries, `tfm_tree` and `ps_tree`) is an [`FmTable`]: a
+/// map file read into an empty map is read once per process (see
+/// [`MapCache`]), kept compact and shared, and only read, while a
 /// checkpoint after every page copies the state (`super::shared`). What a
-/// run changes afterwards, which entries are in use, is kept apart.
+/// run changes afterwards, entries and which are in use, is kept apart.
 #[derive(Default, Clone)]
 pub struct State {
-    /// The map entries; `None` once deleted.
-    pub fms: Shared<Vec<Option<FmEntry>>>,
+    /// The map entries (`None` once deleted), `tfm_tree` (entries by TFM
+    /// name) and `ps_tree` (Type 1 entries with an included font file, by
+    /// PostScript name, slant and extend).
+    pub fms: FmTable,
     /// The entries a font has used (`fm_entry.in_use` in C).
     in_use: BTreeSet<usize>,
     /// `tfm_tree != NULL`: `create_avl_trees` has run.
     trees: bool,
-    /// `tfm_tree`: entries by TFM name.
-    tfm_tree: Shared<BTreeMap<Vec<u8>, usize>>,
-    /// `ps_tree`: Type 1 entries with an included font file, by PostScript
-    /// name, slant and extend.
-    ps_tree: Shared<PsTree>,
     /// `ff_tree`: font file name to the path found, or `None`.
     ff_tree: BTreeMap<Vec<u8>, Option<String>>,
     mitem: Option<MapItem>,
@@ -181,17 +177,35 @@ pub struct State {
 }
 
 // Checkpoint registration (crate::checkpoint): the state is cloned at a
-// checkpoint and persisted with a snapshot.
-crate::codec_struct!(State {
-    fms,
-    in_use,
-    trees,
-    tfm_tree,
-    ps_tree,
-    ff_tree,
-    mitem,
-    sfd_tree
-});
+// checkpoint and persisted with a snapshot, in the plain form (the entries'
+// vector, then the trees as maps, in the order of the fields of old).
+impl crate::persist::Codec for State {
+    fn enc(&self, w: &mut Vec<u8>) {
+        self.fms.entries().enc(w);
+        self.in_use.enc(w);
+        self.trees.enc(w);
+        self.fms.tfm_tree().enc(w);
+        self.fms.ps_tree().enc(w);
+        self.ff_tree.enc(w);
+        self.mitem.enc(w);
+        self.sfd_tree.enc(w);
+    }
+    fn dec(r: &mut crate::persist::Reader) -> Result<Self, String> {
+        let fms = Vec::<Option<FmEntry>>::dec(r)?;
+        let in_use = BTreeSet::dec(r)?;
+        let trees = bool::dec(r)?;
+        let tfm = BTreeMap::<Vec<u8>, usize>::dec(r)?;
+        let ps = BTreeMap::<PsKey, usize>::dec(r)?;
+        Ok(State {
+            fms: FmTable::from_plain(fms, tfm, ps)?,
+            in_use,
+            trees,
+            ff_tree: BTreeMap::dec(r)?,
+            mitem: Option::dec(r)?,
+            sfd_tree: BTreeMap::dec(r)?,
+        })
+    }
+}
 
 /// What reading a map file into an empty map depends on: the file (by its
 /// path and stat signature, the fast path of the read-set checks in
@@ -206,12 +220,7 @@ struct MapKey {
 }
 
 /// The entries and trees a map file parsed into.
-#[derive(Clone)]
-struct MapParse {
-    fms: Shared<Vec<Option<FmEntry>>>,
-    tfm_tree: Shared<BTreeMap<Vec<u8>, usize>>,
-    ps_tree: Shared<PsTree>,
-}
+type MapParse = Arc<Base>;
 
 /// Map files parsed in this process (DESIGN.md §4.2: the font map is read
 /// once per process, not once per run). pdfTeX reads `pdftex.map` at the
@@ -264,10 +273,9 @@ impl MapCache {
 /// a miss. `FLASHTEX_FORMAT_CACHE=off` turns it off with the format cache.
 #[cfg(feature = "distribution")]
 mod disk {
-    use super::{FmEntry, MapKey, MapParse, Mode, Shared};
+    use super::{Arc, Base, MapKey, MapParse, Mode};
     use crate::persist::{Codec, Reader};
     use sha2::{Digest, Sha256};
-    use std::collections::BTreeMap;
     use std::path::{Path, PathBuf};
 
     const MAGIC: &[u8] = b"flashtex-fontmap 1\n";
@@ -360,182 +368,21 @@ mod disk {
         if rehashed && sha256_file(&k.path)? != hash {
             return None;
         }
-        let body = r.pos;
-        let parse = decode(&r.buf[body..])?;
+        let body = want.len() + r.pos;
         // The same content under a new signature: keep the new one, so
-        // that the next process need not hash the file again.
+        // that the next process need not hash the file again. (The new
+        // file replaces this one by a rename; this mapping stays valid.)
         if rehashed && !k.stat.racy {
             let mut w = Vec::with_capacity(buf.len());
             w.extend_from_slice(&want);
             signature(k, &hash, &mut w);
-            w.extend_from_slice(&r.buf[body..]);
+            w.extend_from_slice(&buf[body..]);
             let _ = crate::formats::write_atomic_cache(&f, &w);
         }
+        // The parse stays in the mapped file (`super::fmtable`).
+        let base = Base::mapped(map, body)?;
         debug(&format!("disk hit {}", k.path));
-        Some(parse)
-    }
-
-    // The parse itself, in a compact form of its own: names are copied
-    // as slices, and the trees, written in their order, are bulk-built
-    // (`BTreeMap::from_iter` on sorted keys) rather than inserted into one
-    // key at a time. The generic `persist::Codec` (one call per byte of a
-    // name) made decoding cost half of what parsing does.
-
-    fn put_bytes(w: &mut Vec<u8>, b: &[u8]) {
-        w.extend_from_slice(&(b.len() as u32).to_le_bytes());
-        w.extend_from_slice(b);
-    }
-
-    fn put_opt(w: &mut Vec<u8>, b: &Option<Vec<u8>>) {
-        match b {
-            None => w.push(0),
-            Some(b) => {
-                w.push(1);
-                put_bytes(w, b);
-            }
-        }
-    }
-
-    fn encode(p: &MapParse, w: &mut Vec<u8>) {
-        w.extend_from_slice(&(p.fms.len() as u32).to_le_bytes());
-        for e in p.fms.iter() {
-            let Some(e) = e else {
-                w.push(0);
-                continue;
-            };
-            w.push(1);
-            put_bytes(w, &e.tfm_name);
-            put_opt(w, &e.ps_name);
-            w.extend_from_slice(&e.fd_flags.to_le_bytes());
-            w.extend_from_slice(&e.slant.to_le_bytes());
-            w.extend_from_slice(&e.extend.to_le_bytes());
-            put_opt(w, &e.encname);
-            put_opt(w, &e.ff_name);
-            w.extend_from_slice(&e.typ.to_le_bytes());
-            w.extend_from_slice(&e.pid.to_le_bytes());
-            w.extend_from_slice(&e.eid.to_le_bytes());
-            w.extend_from_slice(&e.links.to_le_bytes());
-            match &e.subfont {
-                None => w.push(0),
-                Some(v) => {
-                    w.push(1);
-                    w.extend_from_slice(&(v.len() as u32).to_le_bytes());
-                    for x in v {
-                        w.extend_from_slice(&x.to_le_bytes());
-                    }
-                }
-            }
-        }
-        w.extend_from_slice(&(p.tfm_tree.len() as u32).to_le_bytes());
-        for (k, &v) in p.tfm_tree.iter() {
-            put_bytes(w, k);
-            w.extend_from_slice(&(v as u32).to_le_bytes());
-        }
-        w.extend_from_slice(&(p.ps_tree.len() as u32).to_le_bytes());
-        for ((name, slant, extend), &v) in p.ps_tree.iter() {
-            put_bytes(w, name);
-            w.extend_from_slice(&slant.to_le_bytes());
-            w.extend_from_slice(&extend.to_le_bytes());
-            w.extend_from_slice(&(v as u32).to_le_bytes());
-        }
-    }
-
-    struct Cur<'a>(&'a [u8]);
-
-    impl<'a> Cur<'a> {
-        fn take(&mut self, n: usize) -> Option<&'a [u8]> {
-            if n > self.0.len() {
-                return None;
-            }
-            let (a, b) = self.0.split_at(n);
-            self.0 = b;
-            Some(a)
-        }
-        fn u8(&mut self) -> Option<u8> {
-            Some(self.take(1)?[0])
-        }
-        fn u16(&mut self) -> Option<u16> {
-            Some(u16::from_le_bytes(self.take(2)?.try_into().ok()?))
-        }
-        fn u32(&mut self) -> Option<u32> {
-            Some(u32::from_le_bytes(self.take(4)?.try_into().ok()?))
-        }
-        fn i32(&mut self) -> Option<i32> {
-            Some(i32::from_le_bytes(self.take(4)?.try_into().ok()?))
-        }
-        fn bytes(&mut self) -> Option<Vec<u8>> {
-            let n = self.u32()? as usize;
-            Some(self.take(n)?.to_vec())
-        }
-        fn opt(&mut self) -> Option<Option<Vec<u8>>> {
-            match self.u8()? {
-                0 => Some(None),
-                1 => Some(Some(self.bytes()?)),
-                _ => None,
-            }
-        }
-        /// A count, no larger than what is left could hold.
-        fn count(&mut self) -> Option<usize> {
-            let n = self.u32()? as usize;
-            (n <= self.0.len()).then_some(n)
-        }
-    }
-
-    fn decode(b: &[u8]) -> Option<MapParse> {
-        let mut c = Cur(b);
-        let n = c.count()?;
-        let mut fms = Vec::with_capacity(n);
-        for _ in 0..n {
-            if c.u8()? == 0 {
-                fms.push(None);
-                continue;
-            }
-            fms.push(Some(FmEntry {
-                tfm_name: c.bytes()?,
-                ps_name: c.opt()?,
-                fd_flags: c.i32()?,
-                slant: c.i32()?,
-                extend: c.i32()?,
-                encname: c.opt()?,
-                ff_name: c.opt()?,
-                typ: c.u16()?,
-                pid: c.u16()? as i16,
-                eid: c.u16()? as i16,
-                links: c.u16()?,
-                subfont: match c.u8()? {
-                    0 => None,
-                    1 => {
-                        let n = c.count()?;
-                        Some((0..n).map(|_| c.i32()).collect::<Option<Vec<i32>>>()?)
-                    }
-                    _ => return None,
-                },
-            }));
-        }
-        let ok = |v: u32| ((v as usize) < fms.len()).then_some(v as usize);
-        let n = c.count()?;
-        let mut tfm = Vec::with_capacity(n);
-        for _ in 0..n {
-            let k = c.bytes()?;
-            tfm.push((k, ok(c.u32()?)?));
-        }
-        let n = c.count()?;
-        let mut ps = Vec::with_capacity(n);
-        for _ in 0..n {
-            let k = (c.bytes()?, c.i32()?, c.i32()?);
-            ps.push((k, ok(c.u32()?)?));
-        }
-        if !c.0.is_empty()
-            || !tfm.windows(2).all(|w| w[0].0 < w[1].0)
-            || !ps.windows(2).all(|w| w[0].0 < w[1].0)
-        {
-            return None;
-        }
-        Some(MapParse {
-            fms: Shared::new(fms),
-            tfm_tree: Shared::new(tfm.into_iter().collect::<BTreeMap<_, _>>()),
-            ps_tree: Shared::new(ps.into_iter().collect::<BTreeMap<_, _>>()),
-        })
+        Some(Arc::new(base))
     }
 
     /// The content's stat signature and SHA-256.
@@ -557,17 +404,26 @@ mod disk {
     }
 
     /// Write the entry for `k`, whose file held `data` when it was parsed
-    /// into `p`. Errors are ignored: the cache is only ever a shortcut.
-    pub(super) fn put(k: &MapKey, data: &[u8], p: &MapParse) {
-        let Some(f) = file(k) else { return };
-        let mut w = Vec::with_capacity(data.len());
+    /// into `compact` (`fmtable::encode`'s form), and give its parse as a
+    /// base over the file written, or `None` if it was not written. Errors
+    /// are not reported: the cache is only ever a shortcut.
+    pub(super) fn put(k: &MapKey, data: &[u8], compact: &[u8]) -> Option<MapParse> {
+        let f = file(k)?;
+        let mut w = Vec::with_capacity(compact.len() + 256);
         header(k, &mut w);
         signature(k, &sha256(data), &mut w);
-        encode(p, &mut w);
+        let body = w.len();
+        w.extend_from_slice(compact);
         let _ = std::fs::create_dir_all(f.parent().unwrap_or(Path::new(".")));
-        if crate::formats::write_atomic_cache(&f, &w).is_ok() {
-            debug(&format!("stored {}", k.path));
+        crate::formats::write_atomic_cache(&f, &w).ok()?;
+        debug(&format!("stored {}", k.path));
+        drop(w);
+        let map = crate::os::MappedFile::open(f.to_str()?).ok()?;
+        // the file just written, unless another process replaced it since
+        if map.bytes().get(body..) != Some(compact) {
+            return None;
         }
+        Base::mapped(map, body).map(Arc::new)
     }
 }
 
@@ -577,7 +433,9 @@ mod disk {
     pub(super) fn get(_: &MapKey) -> Option<MapParse> {
         None
     }
-    pub(super) fn put(_: &MapKey, _: &[u8], _: &MapParse) {}
+    pub(super) fn put(_: &MapKey, _: &[u8], _: &[u8]) -> Option<MapParse> {
+        None
+    }
 }
 
 impl State {
@@ -589,9 +447,7 @@ impl State {
             x.enc(&mut w);
             w
         }
-        (Shared::ptr_eq(&self.fms, &o.fms) || enc(&*self.fms) == enc(&*o.fms))
-            && (Shared::ptr_eq(&self.tfm_tree, &o.tfm_tree) || *self.tfm_tree == *o.tfm_tree)
-            && (Shared::ptr_eq(&self.ps_tree, &o.ps_tree) || *self.ps_tree == *o.ps_tree)
+        self.fms.same_as(&o.fms)
             && self.in_use == o.in_use
             && self.trees == o.trees
             && self.ff_tree == o.ff_tree
@@ -999,7 +855,7 @@ impl Globals {
         'exit: {
             // handle tfm_name link
             if fm.tfm_name.as_slice() != NONTFM {
-                if let Some(&p) = st.map.tfm_tree.get(&fm.tfm_name) {
+                if let Some(p) = st.map.fms.tfm_get(&fm.tfm_name) {
                     match mode {
                         Mode::DupIgnore => {
                             if !suppress_warn {
@@ -1018,17 +874,18 @@ impl Globals {
                                 ));
                                 break 'exit;
                             }
-                            st.map.tfm_tree.remove(&fm.tfm_name);
-                            let pe = st.map.fms[p].as_mut().unwrap();
-                            pe.links &= !LINK_TFM;
-                            if pe.links & LINK_PS == 0 {
-                                st.map.fms[p] = None;
+                            st.map.fms.tfm_remove(&fm.tfm_name);
+                            let pe = st.map.fms.get_mut(p);
+                            let e = pe.as_mut().unwrap();
+                            e.links &= !LINK_TFM;
+                            if e.links & LINK_PS == 0 {
+                                *pe = None;
                             }
                         }
                     }
                 }
                 if mode != Mode::Delete {
-                    st.map.tfm_tree.insert(fm.tfm_name.clone(), id);
+                    st.map.fms.tfm_insert(fm.tfm_name.clone(), id);
                     fm.links |= LINK_TFM;
                     linked_tfm = true;
                 }
@@ -1036,24 +893,25 @@ impl Globals {
             // handle ps_name link
             if fm.ps_name.is_some() {
                 let key = fm.ps_key();
-                if let Some(&p) = st.map.ps_tree.get(&key) {
+                if let Some(p) = st.map.fms.ps_get(&key) {
                     match mode {
                         Mode::DupIgnore => break 'exit,
                         Mode::Replace | Mode::Delete => {
                             if st.map.in_use.contains(&p) {
                                 break 'exit;
                             }
-                            st.map.ps_tree.remove(&key);
-                            let pe = st.map.fms[p].as_mut().unwrap();
-                            pe.links &= !LINK_PS;
-                            if pe.links & LINK_TFM == 0 {
-                                st.map.fms[p] = None;
+                            st.map.fms.ps_remove(&key);
+                            let pe = st.map.fms.get_mut(p);
+                            let e = pe.as_mut().unwrap();
+                            e.links &= !LINK_PS;
+                            if e.links & LINK_TFM == 0 {
+                                *pe = None;
                             }
                         }
                     }
                 }
                 if mode != Mode::Delete && fm.is_t1fontfile() && fm.is_included() {
-                    st.map.ps_tree.insert(key, id);
+                    st.map.fms.ps_insert(key, id);
                     fm.links |= LINK_PS;
                 }
             }
@@ -1082,10 +940,7 @@ impl Globals {
             // A map file read before in this process into an empty map, and
             // unchanged since: its entries, without parsing it again.
             let key = found.as_ref().and_then(|path| {
-                let pristine = st.map.fms.is_empty()
-                    && st.map.tfm_tree.is_empty()
-                    && st.map.ps_tree.is_empty()
-                    && st.map.in_use.is_empty();
+                let pristine = st.map.fms.is_empty() && st.map.in_use.is_empty();
                 let stat = crate::system::StatSig::of(path)?;
                 pristine.then(|| MapKey {
                     mode,
@@ -1109,9 +964,7 @@ impl Globals {
                 let mut s = b"{".to_vec();
                 s.extend_from_slice(path.as_bytes());
                 self.tex_printf(&s);
-                st.map.fms = hit.fms;
-                st.map.tfm_tree = hit.tfm_tree;
-                st.map.ps_tree = hit.ps_tree;
+                st.map.fms = FmTable::from_base(hit);
                 self.tex_printf(b"}");
                 if let Some(item) = st.map.mitem.as_mut() {
                     item.line = None;
@@ -1177,13 +1030,16 @@ impl Globals {
                         if super::warnings_so_far() == warnings_before
                             && st.map.sfd_tree.len() == sfds_before
                         {
-                            let parse = MapParse {
-                                fms: st.map.fms.clone(),
-                                tfm_tree: st.map.tfm_tree.clone(),
-                                ps_tree: st.map.ps_tree.clone(),
-                            };
-                            disk::put(&k, &data, &parse);
-                            MapCache::put(k, parse);
+                            // kept compact: the cache file mapped, or
+                            // (without one) the compact form in memory
+                            let mut w = Vec::new();
+                            st.map.fms.encode_compact(&mut w);
+                            let base =
+                                disk::put(&k, &data, &w).or_else(|| Base::owned(w).map(Arc::new));
+                            if let Some(base) = base {
+                                st.map.fms = FmTable::from_base(base.clone());
+                                MapCache::put(k, base);
+                            }
                         }
                     }
                 }
@@ -1204,8 +1060,8 @@ impl Globals {
             self.fm_read_info(st); // only to read default map file
         }
         let tfm = self.c_string(self.font_name[f as usize]);
-        match st.map.tfm_tree.get(&tfm) {
-            Some(&id) => {
+        match st.map.fms.tfm_get(&tfm) {
+            Some(id) => {
                 st.map.in_use.insert(id);
                 id as i32 + 1
             }
@@ -1345,7 +1201,7 @@ impl Globals {
         let key = (name, slant, extend);
         // the entries equal to `key` (there is at most one: ps_tree never
         // holds duplicates), tried forward then backward as the C code does
-        let fm = *st.map.ps_tree.get(&key)?;
+        let fm = st.map.fms.ps_get(&key)?;
         let ff = st.map.fms[fm].as_ref().unwrap().ff_name.clone().unwrap();
         if self.check_ff_exist(st, &ff, false).is_some() {
             return Some(fm);
