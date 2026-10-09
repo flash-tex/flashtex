@@ -68,10 +68,11 @@ tex82 = []
 [workspace]
 EOF
 # The runtime shared with the XeTeX-derived engine (crates/flashtex-runtime:
-# persist, os, busy, memstat), as the engine crate links it, in its tex82 form.
+# persist, os, busy, memstat), as the engine crate links it, in its tex82 form;
+# libc for src/hashcache.rs (statfs).
 # (Cargo reads the path natively: under Git Bash/MSYS2 on Windows, `/d/a/...`
 # is `D:/a/...`, which `cygpath -m` gives; elsewhere there is no cygpath.)
-printf '\n[dependencies]\nflashtex-runtime = { path = "%s/crates/flashtex-runtime", features = ["tex82"] }\n' \
+printf '\n[dependencies]\nlibc = "0.2"\nflashtex-runtime = { path = "%s/crates/flashtex-runtime", features = ["tex82"] }\n' \
     "$(cygpath -m "$root" 2>/dev/null || printf '%s' "$root")" >>"$pkg/Cargo.toml"
 # The generated code's warnings are known and not ours to fix by hand.
 CARGO_TARGET_DIR=$work/target RUSTFLAGS=-Awarnings \
