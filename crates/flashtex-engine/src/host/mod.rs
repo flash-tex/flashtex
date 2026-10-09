@@ -310,6 +310,9 @@ impl Key {
         // taken, #1562): if they do, the signatures stay as they were, and
         // every check makes the lookups again.
         let mut covered = true;
+        // (LOOKUP-SKIP: each lookup checked against what it depends on,
+        // and made again only where that does not show its answer)
+        let mut verify = crate::lookupproof::Verifier::new();
         for (name, fmt, must, found) in self.lookups.iter().filter(|_| !dirs_same) {
             let l = Lookup {
                 name: name.clone(),
@@ -317,7 +320,7 @@ impl Key {
                 must_exist: *must,
                 found: found.clone(),
             };
-            let (again, deps) = system::lookup_again_deps(&l);
+            let (again, deps) = verify.lookup_again_deps(&l);
             if again != *found {
                 return Err(format!("looking up {name} finds another file now"));
             }

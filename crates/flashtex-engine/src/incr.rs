@@ -4367,6 +4367,9 @@ impl Session {
             HashMap::new();
         // what the answers made again depend on now (#1562)
         let mut deps: Vec<(String, StatSig)> = vec![];
+        // (LOOKUP-SKIP: each lookup checked against what it depends on,
+        // and made again only where that does not show its answer)
+        let mut verify = crate::lookupproof::Verifier::new();
         self.aux_appeared = false;
         for (i, l) in j
             .lookups
@@ -4378,7 +4381,7 @@ impl Session {
             let now = again
                 .entry((l.name.as_str(), l.format, l.must_exist))
                 .or_insert_with(|| {
-                    let (now, d) = system::lookup_again_deps(l);
+                    let (now, d) = verify.lookup_again_deps(l);
                     deps.extend(d);
                     now
                 });
