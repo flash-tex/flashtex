@@ -157,6 +157,36 @@ fn offline_from_env() -> bool {
     )
 }
 
+/// Why the bundle cannot serve a run that has no TeX Live, decided before
+/// TeX starts ([`crate::resolver::setup_problem`]): nothing configured, a
+/// lock file's bundle not yet agreed to (the app passes
+/// `FLASHTEX_BUNDLE_OFFLINE=1` until then), or offline with the bundle not
+/// in the cache `cache`. None when the bundle is usable or may be fetched,
+/// or when its configuration does not parse (that error is reported as is).
+pub fn setup_problem_with(
+    var: &dyn Fn(&str) -> Option<String>,
+    candidates: &[PathBuf],
+    cache: Option<&Path>,
+) -> Option<crate::resolver::SetupProblem> {
+    use crate::resolver::SetupProblem;
+    let (spec, origin) = match BundleSpec::configured_with(var, candidates) {
+        None => return Some(SetupProblem::NoTexFiles),
+        Some(Err(_)) => return None,
+        Some(Ok(c)) => c,
+    };
+    let cached = cache.is_some_and(|c| c.join(&spec.digest).join("index.gz").is_file());
+    if !spec.offline || cached {
+        return None;
+    }
+    let agreed = var("FLASHTEX_BUNDLE_ALLOW_FETCH")
+        .filter(|a| !a.is_empty())
+        .is_some_and(|a| fetch_allowed(&a, &spec.digest, &spec.url));
+    Some(match origin {
+        SpecOrigin::LockFile(_) if !agreed => SetupProblem::NoConsent,
+        _ => SetupProblem::OfflineUncached,
+    })
+}
+
 /// Where a [`BundleSpec`] came from.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum SpecOrigin {
@@ -928,5 +958,73 @@ mod tests {
             Some(PathBuf::from("A").join("FlashTeX"))
         );
         assert_eq!(user_config_dir(CacheOs::MacOs, env(&[])), None);
+    }
+
+    /// The run-cannot-start states, told apart before TeX runs: (a) nothing
+    /// configured, (b) a lock file's bundle without consent, (c) offline
+    /// with nothing cached; none once agreed to or cached.
+    #[test]
+    fn setup_problems_before_tex_runs() {
+        use crate::resolver::SetupProblem as P;
+        let base =
+            std::env::temp_dir().join(format!("flashtex-setup-problem-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let cache = base.join("cache");
+        std::fs::create_dir_all(&cache).unwrap();
+        let lock = base.join(LOCK_FILE);
+        std::fs::write(&lock, format!("url = \"b.ttb\"\ndigest = \"{D}\"\n")).unwrap();
+        let (url, _) = parse_lock(&std::fs::read_to_string(&lock).unwrap(), &base).unwrap();
+        let check = |vars: &[(&str, &str)], cands: &[PathBuf]| {
+            let vars: Vec<(String, String)> = vars
+                .iter()
+                .map(|(k, v)| (k.to_string(), v.to_string()))
+                .collect();
+            setup_problem_with(
+                &move |k| vars.iter().find(|(n, _)| n == k).map(|(_, v)| v.clone()),
+                cands,
+                Some(&cache),
+            )
+        };
+        let none = [base.join("none").join(LOCK_FILE)];
+        let lock = [lock];
+        // (a)
+        assert_eq!(check(&[], &none), Some(P::NoTexFiles));
+        // (b): the app's state before its user agreed, and a bare CLI run.
+        let app = [("FLASHTEX_BUNDLE_OFFLINE", "1")];
+        assert_eq!(check(&app, &lock), Some(P::NoConsent));
+        assert_eq!(check(&[], &lock), Some(P::NoConsent));
+        let agreed = format!("{D}@{url}");
+        let agreed = [("FLASHTEX_BUNDLE_ALLOW_FETCH", agreed.as_str())];
+        assert_eq!(check(&agreed, &lock), None);
+        assert_eq!(check(&[("FLASHTEX_BUNDLE_ALLOW_FETCH", "1")], &lock), None);
+        // (c)
+        let off = [
+            ("FLASHTEX_BUNDLE_ALLOW_FETCH", "1"),
+            ("FLASHTEX_BUNDLE_OFFLINE", "1"),
+        ];
+        assert_eq!(check(&off, &lock), Some(P::OfflineUncached));
+        let env = [
+            ("FLASHTEX_BUNDLE_DIGEST", D),
+            ("FLASHTEX_BUNDLE_OFFLINE", "1"),
+        ];
+        assert_eq!(check(&env, &none), Some(P::OfflineUncached));
+        assert_eq!(check(&[("FLASHTEX_BUNDLE_DIGEST", D)], &none), None);
+        // Cached: offline is fine.
+        std::fs::create_dir_all(cache.join(D)).unwrap();
+        std::fs::write(cache.join(D).join("index.gz"), b"").unwrap();
+        assert_eq!(check(&off, &lock), None);
+        assert_eq!(check(&[], &lock), None);
+        for p in [P::NoTexFiles, P::NoConsent, P::OfflineUncached] {
+            let m = p.message();
+            assert!(
+                m.contains("FLASHTEX_BUNDLE") && m.contains("TeX Live"),
+                "{m}"
+            );
+        }
+        assert!(P::NoConsent
+            .message()
+            .contains("FLASHTEX_BUNDLE_ALLOW_FETCH=1"));
+        assert!(P::NoConsent.message().contains("Download TeX Files"));
+        let _ = std::fs::remove_dir_all(&base);
     }
 }

@@ -54,6 +54,9 @@ pub struct ExtRecord {
     pub notes: usize,
     /// How many files the run has opened for output (`system::opens_len`).
     pub opens: usize,
+    /// The line journal's length, the line numbers of unknown file and the
+    /// marked token lists (`crate::lineshift`, DESIGN.md §5.3 rule (c)).
+    pub lines: crate::lineshift::Rec,
 }
 
 crate::codec_struct!(ExtRecord {
@@ -67,7 +70,8 @@ crate::codec_struct!(ExtRecord {
     matrix_uses,
     rs,
     notes,
-    opens
+    opens,
+    lines
 });
 
 /// Where an output position `x` of the old run goes when a convergence
@@ -105,18 +109,40 @@ fn rewritten_since(rec: &ExtRecord) -> Option<String> {
 /// it -- an `export` of the same job in the same directory rewrites them
 /// all, also while the engine has them open -- or it is gone).
 fn changed_outside(rec: &ExtRecord, also: &[String]) -> Option<String> {
-    rec.files
-        .iter()
-        .filter_map(|f| match &f.stream {
+    let open = || {
+        rec.files.iter().filter_map(|f| match &f.stream {
             Stream::Out { path, len, .. } if *len > 0 => Some(path),
             _ => None,
         })
+    };
+    // a fatal run's PDF, set aside (`system::remove_output`), is back for it
+    system::revive_removed(open());
+    open()
         .chain(also.iter())
         .find_map(|p| system::outside_change(p))
 }
 
 /// Flushes every output stream (before a checkpoint records any).
 struct FlushFiles;
+
+/// The first output stream whose buffer holds output, on a file that is
+/// `system::no_flush`: a checkpoint now would write out what a run from
+/// scratch has not (issue #1550), so none is taken.
+struct NoFlush(Option<String>);
+
+impl FileVisit for NoFlush {
+    fn alpha(&mut self, f: &mut AlphaFile) {
+        if self.0.is_none() {
+            self.0 = f.pending_output().filter(|p| system::no_flush(p));
+        }
+    }
+    fn byte(&mut self, f: &mut ByteFile) {
+        if self.0.is_none() {
+            self.0 = f.pending_output().filter(|p| system::no_flush(p));
+        }
+    }
+    fn word(&mut self, _f: &mut WordFile) {}
+}
 
 impl FileVisit for FlushFiles {
     fn alpha(&mut self, f: &mut AlphaFile) {
@@ -149,6 +175,12 @@ pub enum Point {
     /// The first `big_switch` after that `.aux` file was closed: the `.aux`
     /// read is over (L5, `crate::readset`).
     AuxDone,
+    /// In the preamble, between two lines of the main file: the input stack
+    /// holds the main file alone, its line is used up, no group is open
+    /// (`Globals::at_preamble_line_end`). A preamble edit restarts at the
+    /// newest one before the edited line instead of from the format
+    /// (PREAMBLE-FAST; `incr::Session::preamble_restart`).
+    PreambleLine,
 }
 
 /// What an [`Observer`] asks of the run after a checkpoint.
@@ -165,8 +197,18 @@ pub enum Action {
 /// `crate::incr`).
 pub trait Observer {
     fn on_checkpoint(&mut self, g: &mut Globals, id: CheckpointId, why: Point) -> Action;
+    /// A segment checkpoint is due while `Layer::segment_hold` holds them
+    /// back: whether to take it anyway, because the observer would stop the
+    /// run there (a preemption point stays one: DESIGN.md §5.2).
+    fn take_held_segment(&mut self, _g: &mut Globals) -> bool {
+        true
+    }
     /// The observer as `Any`, to take it back after a run.
     fn into_any(self: Box<Self>) -> Box<dyn std::any::Any>;
+    /// The pages the run has shipped so far (with those before its start).
+    fn shipped(&self) -> usize {
+        0
+    }
 }
 
 /// The exit status of a run an [`Observer`] stopped.
@@ -184,6 +226,10 @@ const REQ_TIMED: i32 = 5;
 const REQ_AUX: i32 = 6;
 const REQ_SEGMENT: i32 = 7;
 const REQ_AUX_DONE: i32 = 8;
+const REQ_PREAMBLE_LINE: i32 = 9;
+/// `\document`'s body was pushed (`ckpt_on_arm`): the `.aux` point of a run
+/// with no `.aux`, before `\document` looks for it.
+const REQ_AUX_ARM: i32 = 10;
 
 /// `hash_base` (tex.web §222): `active_base + 256 + 256 + 1`, the same in
 /// every configuration.
@@ -207,6 +253,9 @@ enum TailBytes {
     /// return to when dropped).
     Read(Vec<u8>, String),
     Clone(String),
+    /// Kept by the file itself past its logical end (`system::keep_tail`):
+    /// a tail from the file's length at the restore target on.
+    Kept(String),
 }
 
 impl TailBytes {
@@ -220,10 +269,16 @@ impl TailBytes {
             .join(format!("flashtex-tail-{}-{n}", std::process::id()))
             .to_string_lossy()
             .into_owned();
+        let buf = SPARE_TAILS.with(|s| s.borrow_mut().remove(path).unwrap_or_default());
+        if let Some(len) = system::logical_len(path) {
+            // (bytes past the file's logical end are stale: not a clone)
+            let mut b = read_tail_into(path, from, buf)?;
+            b.truncate(len.saturating_sub(from) as usize);
+            return Ok(TailBytes::Read(b, path.to_string()));
+        }
         if system::clone_file(path, &dst) {
             return Ok(TailBytes::Clone(dst));
         }
-        let buf = SPARE_TAILS.with(|s| s.borrow_mut().remove(path).unwrap_or_default());
         Ok(TailBytes::Read(
             read_tail_into(path, from, buf)?,
             path.to_string(),
@@ -235,6 +290,7 @@ impl TailBytes {
         match self {
             TailBytes::Read(b, _) => Ok(b.get(skip as usize..).unwrap_or(&[]).to_vec()),
             TailBytes::Clone(p) => read_tail(p, base + skip),
+            TailBytes::Kept(p) => system::kept_tail(p, base, skip),
         }
     }
 }
@@ -245,6 +301,7 @@ impl Drop for TailBytes {
             TailBytes::Clone(p) => {
                 let _ = std::fs::remove_file(p);
             }
+            TailBytes::Kept(p) => system::drop_kept_tail(p),
             // keep the buffer for the next restore's tail of the same file,
             // while the spares fit in SPARE_TAILS_MAX
             TailBytes::Read(b, path) => SPARE_TAILS.with(|s| {
@@ -280,6 +337,12 @@ thread_local! {
 /// logs' budget (DESIGN.md §5.2), so they are capped instead: a PDF larger
 /// than this reads into a fresh buffer each restore, as before.
 const SPARE_TAILS_MAX: usize = 64 << 20;
+
+/// Drop the spare tail buffers (a Low Memory mode's idle trim,
+/// `crate::profile`): the next restore reads its tails into fresh buffers.
+pub fn drop_spare_tails() {
+    SPARE_TAILS.with(|s| s.borrow_mut().clear());
+}
 
 /// Bytes the spare tail buffers hold (memory accounting).
 pub fn spare_tail_bytes() -> usize {
@@ -322,10 +385,26 @@ pub struct Layer {
     pub s0: Option<CheckpointId>,
     /// The read-set when S₀ was taken.
     pub s0_reads: Option<system::ReadLog>,
+    /// At S₀ and at the `.aux` point: the files the run had written and
+    /// closed, with their content there (`host::written_before`, S₀'s key
+    /// takes them). Read when the checkpoint is taken: the run may write
+    /// them again before it ends, when the key is made (#1348). At most
+    /// the current S₀'s and `.aux` point's; `host::make_key` takes its
+    /// entry.
+    pub written_at: Vec<(CheckpointId, crate::host::Written)>,
     /// Take a checkpoint at the `.aux` point of this run (`Point::Aux`).
     pub want_aux_point: bool,
     /// The `.aux` point, once taken.
     pub aux_point: Option<CheckpointId>,
+    /// The checkpoint `REQ_AUX_ARM` took where `\document`'s body was
+    /// pushed, before it looked for an `.aux` (there was none). A run
+    /// restored there (`aux_at_arm`) that opens an `.aux` takes the `.aux`
+    /// point at that open, as a run that had found one from the start
+    /// (`note_aux_open`), and says so (`aux_moved`): the session anchors at
+    /// it from then on (`incr::Session::after_run`).
+    pub arm_point: Option<CheckpointId>,
+    pub aux_at_arm: bool,
+    pub aux_moved: bool,
     /// Stop the run with `EngineExit(-1)` right after S₀ is taken.
     pub stop_at_s0: bool,
     /// Errors the hook met (a checkpoint it could not take).
@@ -354,6 +433,23 @@ pub struct Layer {
     /// Segment checkpoints (`Point::Segment`): the least engine time since
     /// the last checkpoint for one to be taken.
     pub segment_s: f64,
+    /// Preamble line checkpoints (`Point::PreambleLine`): the least engine
+    /// time since the last checkpoint for one to be taken; `None`: none.
+    pub preamble_line_s: Option<f64>,
+    /// An input file closed back into the main file since the last
+    /// preamble line checkpoint: the next one is taken whatever the time
+    /// (one after every line that loads a package, which retention keeps).
+    pub preamble_file_closed: bool,
+    /// A line of the main file was read (or an input file closed back into
+    /// it) in the preamble, and its `Point::PreambleLine` is still to be
+    /// taken: kept apart from `ckpt_request`, which other requests
+    /// (`build_page`'s segments, the timed ones) take over, so that the
+    /// line's checkpoint is asked for again after them.
+    preamble_line_pending: bool,
+    /// Segment checkpoints only where the observer stops the run
+    /// (`Observer::take_held_segment`; `crate::incr`: an edit's run until its
+    /// edited page has shipped).
+    pub segment_hold: bool,
     /// Lines read (`input_ln`) so far, and when the last checkpoint was
     /// taken: a segment checkpoint needs a line read since the last one
     /// (two checkpoints with the same input consumed are the same restart
@@ -391,6 +487,8 @@ pub struct Stats {
     /// requested but not taken.
     pub segments: u64,
     pub segments_skipped: u64,
+    /// Segment checkpoints due but held back (`Layer::segment_hold`).
+    pub segments_held: u64,
     /// The thread CPU time of the whole of `checkpoint` (the host state,
     /// the scalars, the seal).
     pub total_cpu_s: f64,
@@ -408,10 +506,11 @@ impl Stats {
             .map(|(k, v)| format!("{k:?}:{v}"))
             .collect();
         format!(
-            "{{\"checkpoints\":{},\"segments\":{},\"segments_skipped\":{},\"total_cpu_s\":{:.6},\"files_s\":{:.6},\"cstate_s\":{:.6},\"seal_s\":{:.6},\"seal_cpu_s\":{:.6},\"dirty_chunks\":{},\"dirty_by_region\":{{{}}}}}",
+            "{{\"checkpoints\":{},\"segments\":{},\"segments_skipped\":{},\"segments_held\":{},\"total_cpu_s\":{:.6},\"files_s\":{:.6},\"cstate_s\":{:.6},\"seal_s\":{:.6},\"seal_cpu_s\":{:.6},\"dirty_chunks\":{},\"dirty_by_region\":{{{}}}}}",
             self.count,
             self.segments,
             self.segments_skipped,
+            self.segments_held,
             self.total_cpu_s,
             self.files_s,
             self.cstate_s,
@@ -528,6 +627,28 @@ fn read_tail_into(path: &str, from: u64, mut buf: Vec<u8>) -> Result<Vec<u8>, St
     Ok(buf)
 }
 
+/// The convergence jump's comparison, made ahead (`Globals::jump_adopt`):
+/// each differing chunk's byte offset and the old run's bytes there, and
+/// the scalar region it compared.
+pub struct Adopt {
+    chunks: Vec<(usize, Vec<u8>)>,
+    scalars: Vec<u8>,
+}
+
+/// The old run's bytes of every chunk `d` found differing.
+fn adopt_of(d: &crate::arena::ChunkDiff) -> Vec<(usize, Vec<u8>)> {
+    d.differing
+        .iter()
+        .map(|&(c, old, _)| {
+            // SAFETY: `old` points at a whole chunk owned by the arena or
+            // the branch, unchanged until `d` is dropped.
+            let b =
+                unsafe { std::slice::from_raw_parts(old as *const u8, crate::arena::CHUNK_BYTES) };
+            ((c as usize) << crate::arena::CHUNK_SHIFT, b.to_vec())
+        })
+        .collect()
+}
+
 impl Globals {
     fn put_layer(&mut self, l: Layer) {
         self.arena.extra = Some(Box::new(l));
@@ -561,7 +682,9 @@ impl Globals {
     }
 
     /// [`diff_pending`](Self::diff_pending), asking `stop` while it works:
-    /// `Ok(None)` when it said to stop.
+    /// `Ok(None)` when it said to stop. (The display list's side table is
+    /// compared node by node by the structural comparison instead:
+    /// `pending_side_written`, `pending_old_chunks`.)
     pub fn diff_pending_until(
         &mut self,
         old: CheckpointId,
@@ -571,6 +694,28 @@ impl Globals {
         let l = self.layer_ref().ok_or("no checkpoint layer")?;
         let p = l.pending.as_ref().ok_or("no restore is pending")?;
         self.arena.diff_branch_until(&p.branch, old, stop)
+    }
+
+    /// The chunks of the display list's side table (`dl_side`) that either
+    /// run wrote since the pending restore's target, by chunk: elsewhere the
+    /// old run's state at `old` holds what the live one does.
+    pub fn pending_side_written(&self, old: CheckpointId) -> Result<Vec<u64>, String> {
+        let l = self.layer_ref().ok_or("no checkpoint layer")?;
+        let p = l.pending.as_ref().ok_or("no restore is pending")?;
+        self.arena.branch_written(&p.branch, old, "dl_side")
+    }
+
+    /// The old run's value at `old` of the chunks `cs` (sorted, from
+    /// `pending_side_written`): `Ok(None)` when `stop` said to stop.
+    pub fn pending_old_chunks(
+        &self,
+        old: CheckpointId,
+        cs: &[u32],
+        stop: &mut dyn FnMut() -> bool,
+    ) -> Result<Option<std::collections::HashMap<u32, Vec<u64>>>, String> {
+        let l = self.layer_ref().ok_or("no checkpoint layer")?;
+        let p = l.pending.as_ref().ok_or("no restore is pending")?;
+        self.arena.branch_old_chunks(&p.branch, old, cs, stop)
     }
 
     /// The host record of checkpoint `old` of the pending branch.
@@ -631,6 +776,10 @@ impl Globals {
         let img = self.arena.read(0, SCALAR_BYTES).to_vec();
         let mut f = Fill { src: &img, pos: 0 };
         self.visit_scalars(&mut f);
+        // The one piece of process state outside the word space that the
+        // program sets (tex.ch [49.1265]): kpathsea's mktex discard flag,
+        // as the restored state's `\batchmode` (or other mode) left it.
+        crate::system::set_mktex_discard(self.kpse_make_tex_discard_errors);
     }
 
     /// The whole engine state as bytes (scalars spilled first): what "bit
@@ -653,6 +802,13 @@ impl Globals {
         // Every stream flushed before any is recorded: streams on one file
         // (LaTeX's `\tableofcontents` twice opens the `.toc` twice) then
         // record the file's length alike, not what each had flushed.
+        let mut nf = NoFlush(None);
+        self.visit_files(&mut nf);
+        if let Some(p) = nf.0 {
+            return Err(format!(
+                "cannot checkpoint: {p} holds output not written out, and is read while open"
+            ));
+        }
         self.visit_files(&mut FlushFiles);
         let mut v = SnapFiles {
             out: vec![],
@@ -679,11 +835,14 @@ impl Globals {
             rs: self.layer().rs.len(),
             notes: crate::diag::len(),
             opens: system::opens_len(),
+            lines: crate::lineshift::record(self),
         })
     }
 
     /// Put the host state of `rec` back.
     pub fn restore_ext(&mut self, rec: &ExtRecord) -> Result<(), String> {
+        // (each stream is reopened as `rec` has it: `system::mark_ahead`)
+        system::clear_ahead();
         let mut v = RestoreFiles {
             snaps: &rec.files,
             i: 0,
@@ -700,6 +859,7 @@ impl Globals {
         crate::pdftex::set_last_byte_reads(rec.last_byte_reads);
         crate::pdftex::set_matrix_uses(rec.matrix_uses);
         self.layer().rs.truncate(rec.rs);
+        crate::lineshift::restore(self, &rec.lines);
         match err {
             Some(e) => Err(format!("cannot restore the files: {e}")),
             None => Ok(()),
@@ -777,7 +937,7 @@ impl Globals {
                 .iter()
                 .map(|t| match &t.bytes {
                     TailBytes::Read(b, _) => b.capacity(),
-                    TailBytes::Clone(_) => 0,
+                    TailBytes::Clone(_) | TailBytes::Kept(_) => 0,
                 })
                 .sum();
             v.push(("pending_tails_read", tails as i64));
@@ -875,10 +1035,18 @@ impl Globals {
                 } else {
                     *len
                 };
+                // (from the target's length on: kept by the file itself,
+                // nothing read or cut now; see `system::Logical`)
+                let bytes = if base > 0 {
+                    system::keep_tail(path, base)?;
+                    TailBytes::Kept(path.clone())
+                } else {
+                    TailBytes::take(path, base)?
+                };
                 tails.push(Tail {
                     path: path.clone(),
                     base,
-                    bytes: TailBytes::take(path, base)?,
+                    bytes,
                 });
             }
         }
@@ -971,17 +1139,53 @@ impl Globals {
     /// re-read of the `.aux` alone, `crate::incr`).
     /// Why `reattach_pending` cannot put the old run's files back (`None`:
     /// it can): a file whose first bytes its tail continues was changed by
-    /// another program.
+    /// another program; or a file the abandoned run opened for output
+    /// (truncated) that no tail holds -- the old run had it closed at the
+    /// restore target and never opened it again (a temporary file an edit
+    /// writes once more), so its old content is gone, and the record of
+    /// that open would go with the abandoned run's (#1348).
     pub fn reattach_blocked(&mut self) -> Option<String> {
+        let p = self.layer_ref()?.pending.as_ref()?;
+        if let Some(why) = p
+            .tails
+            .iter()
+            .filter(|t| t.base > 0)
+            .find_map(|t| system::outside_change(&t.path))
+        {
+            return Some(why);
+        }
+        let held: std::collections::HashSet<String> =
+            p.tails.iter().map(|t| system::out_key(&t.path)).collect();
+        system::opens_since(p.opens_tail.0)
+            .into_iter()
+            .find(|k| !k.is_empty() && !held.contains(k))
+            .map(|k| {
+                format!("{k} was opened for output by the abandoned run, and no tail holds it")
+            })
+    }
+
+    /// Why `redo_to` cannot take the old run's later bytes (`None`: it
+    /// can): a file whose tail the restore kept in the file
+    /// (`system::keep_tail`) was changed by another program since (an
+    /// `export` in the same directory), so its bytes past the new run's
+    /// are no longer the old run's. As for a restore (`changed_outside`),
+    /// the caller then runs from scratch.
+    pub fn jump_blocked(&self) -> Option<String> {
         self.layer_ref()?
             .pending
             .as_ref()?
             .tails
             .iter()
-            .filter(|t| t.base > 0)
+            .filter(|t| matches!(t.bytes, TailBytes::Kept(_)))
             .find_map(|t| system::outside_change(&t.path))
     }
 
+    /// Abandon the run since the last `restore` (see above). A tail kept
+    /// in its file (`system::keep_tail`) gets back only the old bytes the
+    /// abandoned run wrote over, then its old length (`put_back_kept`): this
+    /// replaces #1608's deferred tails, which left the old bytes unwritten
+    /// here and handed them to the next restore, because a restore no
+    /// longer reads a tail it can keep in the file.
     pub fn reattach_pending(&mut self) -> Result<(), String> {
         if let Some(why) = self.reattach_blocked() {
             return Err(format!("reattach: {why}"));
@@ -990,6 +1194,7 @@ impl Globals {
             return Err("reattach: no restore is pending".into());
         };
         system::file_trace(|| "reattach_pending".into());
+        let t0 = std::time::Instant::now();
         let Pending {
             branch,
             live,
@@ -1002,6 +1207,7 @@ impl Globals {
         } = p;
         self.spill_scalars();
         self.arena.reattach(branch)?;
+        let t_branch = t0.elapsed();
         self.fill_scalars();
         let keep: std::collections::HashSet<CheckpointId> =
             self.arena.checkpoint_ids().iter().copied().collect();
@@ -1030,6 +1236,15 @@ impl Globals {
                 }
                 _ => (t.base, vec![]),
             };
+            if from > 0
+                && matches!(t.bytes, TailBytes::Kept(_))
+                && system::disk_len(&t.path).unwrap_or(0) >= from
+                && system::put_back_kept(&t.path, t.base)?
+            {
+                continue;
+            }
+            // (read before the file is cut: a kept tail is partly on disk)
+            let old = t.bytes.get(t.base, 0)?;
             let mut h = std::fs::OpenOptions::new()
                 .write(true)
                 .create(true)
@@ -1050,15 +1265,21 @@ impl Globals {
                     t.path
                 ));
             }
-            h.set_len(from).map_err(|e| format!("{}: {e}", t.path))?;
+            // In place, then the length once (`system::Logical`: a reader
+            // never sees the file cut and written on).
             h.seek(std::io::SeekFrom::Start(from))
                 .map_err(|e| format!("{}: {e}", t.path))?;
             h.write_all(&head).map_err(|e| format!("{}: {e}", t.path))?;
-            h.write_all(&t.bytes.get(t.base, 0)?)
-                .map_err(|e| format!("{}: {e}", t.path))?;
+            h.write_all(&old).map_err(|e| format!("{}: {e}", t.path))?;
+            let end = from + (head.len() + old.len()) as u64;
+            if system::disk_len(&t.path) != Some(end) {
+                h.set_len(end).map_err(|e| format!("{}: {e}", t.path))?;
+            }
             drop(h);
+            system::logical_settled(&t.path);
             system::stamp_output(&t.path);
         }
+        let t_tails = t0.elapsed();
         system::guard_outputs(vec![]);
         system::truncate_terminal(terminal_tail.0);
         system::append_terminal(&terminal_tail.1);
@@ -1066,7 +1287,17 @@ impl Globals {
         crate::diag::append(&notes_tail.1, 0);
         system::truncate_opens(opens_tail.0);
         system::append_opens(&opens_tail.1);
-        self.restore_ext(&live)
+        let r = self.restore_ext(&live);
+        if std::env::var_os("FLASHTEX_INCR_DEBUG").is_some() {
+            let ms = |d: std::time::Duration| d.as_secs_f64() * 1e3;
+            eprintln!(
+                "[ckpt] reattach: branch {:.2}, output tails {:.2}, host state {:.2} ms",
+                ms(t_branch),
+                ms(t_tails - t_branch),
+                ms(t0.elapsed() - t_tails)
+            );
+        }
+        r
     }
 
     /// The old run's bytes `from..to` of output file `path`, from the
@@ -1077,6 +1308,20 @@ impl Globals {
         let skip = from.checked_sub(t.base)?;
         let b = t.bytes.get(t.base, skip).ok()?;
         b.get(..to.checked_sub(from)? as usize).map(|s| s.to_vec())
+    }
+
+    /// Where the old run's kept bytes of output file `path` begin (its
+    /// length at the restore target; 0 when it was not open there or the
+    /// old run opened it again after it), from the branch the last
+    /// `restore` detached (`None`: not kept). Before it, the file holds
+    /// the bytes both runs had at the target.
+    pub fn pending_old_base(&self, path: &str) -> Option<u64> {
+        let p = self.layer_ref()?.pending.as_ref()?;
+        let k = system::out_key(path);
+        p.tails
+            .iter()
+            .find(|t| system::out_key(&t.path) == k)
+            .map(|t| t.base)
     }
 
     /// The old run's whole content of output file `path`, from the branch
@@ -1127,6 +1372,45 @@ impl Globals {
         id: CheckpointId,
         in_remap: &dyn Fn(&str, u64) -> u64,
     ) -> Result<(), String> {
+        self.redo_to_remapped_with(id, in_remap, None)
+    }
+
+    /// The comparison `redo_to_remapped` adopts the old run's state with
+    /// (the chunks that differ from the old run's at `id`, and the old
+    /// values), worked out ahead and stopped by `stop` (`None`): it reads
+    /// and changes nothing else (the scalar spill writes the live scalars'
+    /// own values), so a stopped one leaves the restore pending as it was.
+    /// The jump that follows uses it only while the scalar region is still
+    /// what it compared (`Adopt::scalars`); else it compares again.
+    /// `FLASHTEX_VERIFY_JUMP=1`: the jump compares again anyway and aborts
+    /// the process if the two disagree.
+    pub fn jump_adopt(
+        &mut self,
+        id: CheckpointId,
+        stop: &mut dyn FnMut() -> bool,
+    ) -> Result<Option<Adopt>, String> {
+        self.spill_scalars();
+        let l = self.layer_ref().ok_or("no checkpoint layer")?;
+        let p = l.pending.as_ref().ok_or("no restore is pending")?;
+        let Some(d) = self.arena.diff_branch_all_until(&p.branch, id, stop)? else {
+            return Ok(None);
+        };
+        Ok(Some(Adopt {
+            chunks: adopt_of(&d),
+            scalars: self.arena.read(0, SCALAR_BYTES).to_vec(),
+        }))
+    }
+
+    /// `redo_to_remapped` with the comparison `jump_adopt` made, if any.
+    pub fn redo_to_remapped_with(
+        &mut self,
+        id: CheckpointId,
+        in_remap: &dyn Fn(&str, u64) -> u64,
+        pre: Option<Adopt>,
+    ) -> Result<(), String> {
+        if let Some(why) = self.jump_blocked() {
+            return Err(format!("redo_to: {why}"));
+        }
         let Some(p) = self.layer().pending.take() else {
             return Err("redo_to: no restore to jump back from".into());
         };
@@ -1260,23 +1544,31 @@ impl Globals {
         // every other chunk must be its own state at `id`. Take that state
         // over whole, so that the jump and every later restore of an old
         // checkpoint give exactly the old run's states.
-        let adopt: Vec<(usize, Vec<u8>)> = match self.arena.diff_branch_all(&branch, id) {
-            Ok(d) => d
-                .differing
-                .iter()
-                .map(|&(c, old, _)| {
-                    // SAFETY: `old` points at a whole chunk owned by the
-                    // arena or the branch, unchanged until `d` is dropped.
-                    let b = unsafe {
-                        std::slice::from_raw_parts(old as *const u8, crate::arena::CHUNK_BYTES)
-                    };
-                    ((c as usize) << crate::arena::CHUNK_SHIFT, b.to_vec())
-                })
-                .collect(),
-            Err(e) => {
-                self.arena.drop_branch(branch);
-                return Err(e);
-            }
+        let verify = std::env::var_os("FLASHTEX_VERIFY_JUMP").is_some();
+        let pre = pre.filter(|a| self.arena.read(0, SCALAR_BYTES) == &a.scalars[..]);
+        let adopt: Vec<(usize, Vec<u8>)> = match pre {
+            Some(a) if !verify => a.chunks,
+            pre => match self.arena.diff_branch_all(&branch, id) {
+                Ok(d) => {
+                    let now = adopt_of(&d);
+                    if let Some(a) = pre {
+                        if a.chunks != now {
+                            // (a verify mode: loud, so that a sweep fails)
+                            eprintln!(
+                                "FLASHTEX_VERIFY_JUMP: the comparison made ahead differs ({} vs {} chunks)",
+                                a.chunks.len(),
+                                now.len()
+                            );
+                            std::process::abort();
+                        }
+                    }
+                    now
+                }
+                Err(e) => {
+                    self.arena.drop_branch(branch);
+                    return Err(e);
+                }
+            },
         };
         for (off, b) in &adopt {
             self.arena.write_through(*off, b);
@@ -1291,8 +1583,21 @@ impl Globals {
             self.arena.checkpoint_ids().iter().copied().collect();
         {
             let layer = self.layer();
+            // The new run's checkpoints the jump drops (its last, which `id`
+            // replaces) hand their line journals to `id`'s record: the
+            // reads and prints of line numbers since the checkpoint before
+            // (`crate::lineshift`, as `retain_checkpoints` does).
+            let mut at_id = now.clone();
+            let mut here = vec![];
+            for (i, r) in layer.records.iter_mut() {
+                if !keep.contains(i) || *i == id {
+                    here.append(&mut r.lines.here);
+                }
+            }
+            here.append(&mut at_id.lines.here);
+            at_id.lines.here = here;
             layer.records.retain(|(i, _)| keep.contains(i) && *i != id);
-            layer.records.push((id, now.clone()));
+            layer.records.push((id, at_id));
             for (i, r) in records {
                 if keep.contains(&i) && i != id {
                     layer.records.push((i, remap(&r)));
@@ -1327,6 +1632,8 @@ impl Globals {
                 continue;
             };
             use std::io::{Seek, Write};
+            // (read before the file is cut: a kept tail is partly on disk)
+            let old = t.bytes.get(t.base, skip)?;
             let mut h = std::fs::OpenOptions::new()
                 .write(true)
                 .create(true)
@@ -1347,12 +1654,17 @@ impl Globals {
                     t.path
                 ));
             }
-            h.set_len(from).map_err(|e| format!("{}: {e}", t.path))?;
+            // In place, then the length once (`system::Logical`: a reader
+            // never sees the file cut and written on).
             h.seek(std::io::SeekFrom::Start(from))
                 .map_err(|e| format!("{}: {e}", t.path))?;
-            h.write_all(&t.bytes.get(t.base, skip)?)
-                .map_err(|e| format!("{}: {e}", t.path))?;
+            h.write_all(&old).map_err(|e| format!("{}: {e}", t.path))?;
+            let end = from + old.len() as u64;
+            if system::disk_len(&t.path) != Some(end) {
+                h.set_len(end).map_err(|e| format!("{}: {e}", t.path))?;
+            }
             drop(h);
+            system::logical_settled(&t.path);
             system::stamp_output(&t.path);
         }
         // The output opens: the new run's so far, then the old run's after
@@ -1376,13 +1688,73 @@ impl Globals {
         r
     }
 
+    /// The retained checkpoints whose host records `f` accepts (no copies
+    /// of the records).
+    pub fn checkpoints_where(
+        &mut self,
+        f: &dyn Fn(CheckpointId, &ExtRecord) -> bool,
+    ) -> Vec<CheckpointId> {
+        self.layer()
+            .records
+            .iter()
+            .filter(|(i, r)| f(*i, r))
+            .map(|(i, _)| *i)
+            .collect()
+    }
+
     /// Drop every checkpoint `keep` rejects, except the newest (their undo
     /// logs merge into their predecessors').
     pub fn retain_checkpoints(&mut self, keep: &dyn Fn(CheckpointId) -> bool) {
+        let order = self.arena.checkpoint_ids().to_vec();
         self.arena.retain(keep);
         let ids: std::collections::HashSet<CheckpointId> =
             self.arena.checkpoint_ids().iter().copied().collect();
-        self.layer().records.retain(|(i, _)| ids.contains(i));
+        // A dropped checkpoint's line journal (the reads and prints of line
+        // numbers since the checkpoint before it, `crate::lineshift`) goes
+        // to the next checkpoint kept, which then holds the whole interval.
+        let records = &mut self.layer().records;
+        let at: std::collections::HashMap<CheckpointId, usize> = records
+            .iter()
+            .enumerate()
+            .map(|(k, (i, _))| (*i, k))
+            .collect();
+        let mut carry = vec![];
+        for id in order {
+            let Some(&k) = at.get(&id) else { continue };
+            let here = &mut records[k].1.lines.here;
+            if ids.contains(&id) {
+                if !carry.is_empty() {
+                    carry.append(here);
+                    *here = std::mem::take(&mut carry);
+                }
+            } else {
+                carry.append(here);
+            }
+        }
+        records.retain(|(i, _)| ids.contains(i));
+    }
+
+    /// The line records of the pending branch's checkpoints (the old run's
+    /// future), in the order the run took them (`crate::lineshift`).
+    pub fn pending_lines(&self) -> Vec<(CheckpointId, crate::lineshift::Rec)> {
+        let Some(l) = self.layer_ref() else {
+            return vec![];
+        };
+        let Some(p) = l.pending.as_ref() else {
+            return vec![];
+        };
+        p.branch
+            .ids()
+            .iter()
+            .filter_map(|&id| {
+                let r = p
+                    .records
+                    .iter()
+                    .find(|(i, _)| *i == id)
+                    .or_else(|| l.records.iter().rev().find(|(i, _)| *i == id))?;
+                Some((id, r.1.lines.clone()))
+            })
+            .collect()
     }
 
     /// Drop every checkpoint.
@@ -1393,6 +1765,23 @@ impl Globals {
         l.records.clear();
         l.taken.clear();
         l.s0 = None;
+    }
+
+    /// Forget S₀, the `.aux` point and the `.aux` read's end, after a
+    /// restore to a checkpoint before them (a preamble edit; `crate::incr`):
+    /// the run takes them again where a run from the format does.
+    pub fn forget_anchor(&mut self) {
+        let l = self.layer();
+        l.s0 = None;
+        l.s0_reads = None;
+        l.aux_point = None;
+        l.aux_path = None;
+        l.aux_armed = false;
+        l.aux_close_rs = None;
+        l.aux_done = None;
+        l.aux_done_pending = false;
+        l.preamble_file_closed = false;
+        l.preamble_line_pending = false;
     }
 
     // ---- the hook and its requests -------------------------------------
@@ -1475,16 +1864,78 @@ impl Globals {
                 self.hook_checkpoint(Point::Aux)
             }
             REQ_AUX_DONE => self.hook_checkpoint(Point::AuxDone),
+            REQ_PREAMBLE_LINE => {
+                if !self.in_preamble() {
+                    self.layer().preamble_line_pending = false;
+                    return;
+                }
+                if self.in_open > 1 {
+                    // (closing the inner file asks again: `note_input_close`)
+                    return;
+                }
+                if !self.at_preamble_line_end() {
+                    // the line's commands are not done: ask again at the
+                    // next `big_switch`
+                    self.ckpt_request = REQ_PREAMBLE_LINE;
+                    return;
+                }
+                let l = self.layer();
+                let due = l.preamble_line_s.is_some_and(|s| {
+                    l.preamble_file_closed
+                        || l.last_checkpoint
+                            .is_none_or(|t| t.elapsed().as_secs_f64() >= s)
+                });
+                self.layer().preamble_line_pending = false;
+                if due {
+                    self.layer().preamble_file_closed = false;
+                    self.hook_checkpoint(Point::PreambleLine);
+                }
+            }
+            REQ_AUX_ARM => {
+                // A run with no `.aux` to read (a first compile): its
+                // `.aux` point is here, inside `\document` before the
+                // lookup, so that the lookup -- and what a later pass finds
+                // there -- is after the anchor (DESIGN.md §5.5), not in S₀'s
+                // key. With an `.aux` the point is its open (`note_aux_open`).
+                let l = self.layer();
+                if l.want_aux_point
+                    && l.aux_point.is_none()
+                    && l.s0.is_none()
+                    && !self.aux_file_found()
+                {
+                    self.layer().aux_at_arm = true;
+                    self.hook_checkpoint(Point::Aux);
+                    let l = self.layer();
+                    l.arm_point = l.aux_point;
+                }
+            }
             REQ_SEGMENT => {
                 let l = self.layer();
                 let due = l.lines > l.lines_at_checkpoint
                     && l.last_checkpoint
                         .is_none_or(|t| t.elapsed().as_secs_f64() >= l.segment_s);
-                if due {
+                let held = due && l.segment_hold;
+                // held back: taken only where the observer stops the run
+                let take = due
+                    && (!held
+                        || match self.layer().observer.take() {
+                            Some(mut obs) => {
+                                let t = obs.take_held_segment(self);
+                                self.layer().observer = Some(obs);
+                                t
+                            }
+                            None => true,
+                        });
+                let l = self.layer();
+                if take {
                     l.stats.segments += 1;
-                    self.hook_checkpoint(Point::Segment);
+                } else if held {
+                    l.stats.segments_held += 1;
                 } else {
                     l.stats.segments_skipped += 1;
+                }
+                if take {
+                    self.hook_checkpoint(Point::Segment);
                 }
             }
             REQ_NOTE_SHIPOUT => {
@@ -1497,6 +1948,14 @@ impl Globals {
         if self.ckpt_request == 0 && self.layer().aux_done_pending {
             self.layer().aux_done_pending = false;
             self.ckpt_request = REQ_AUX_DONE;
+        }
+        // a line checkpoint another request took the place of
+        if self.ckpt_request == 0
+            && self.in_open == 1
+            && self.layer().preamble_line_pending
+            && self.in_preamble()
+        {
+            self.ckpt_request = REQ_PREAMBLE_LINE;
         }
     }
 
@@ -1528,12 +1987,21 @@ impl Globals {
                 } else {
                     None
                 };
-                let reads = if why == Point::BeginDocument {
+                let reads = if matches!(why, Point::BeginDocument | Point::Aux) {
                     system::reads_so_far()
                 } else {
                     None
                 };
+                let written = match &reads {
+                    Some(r) => self
+                        .record_of(id)
+                        .and_then(|rec| crate::host::written_before(&rec, r)),
+                    None => Err(String::new()),
+                };
                 let l = self.layer();
+                if let Ok(w) = written {
+                    l.written_at.push((id, w));
+                }
                 l.taken.push((id, why));
                 if let Some(h) = hash {
                     l.state_hashes.push((id, h));
@@ -1549,6 +2017,10 @@ impl Globals {
                     l.s0_reads = reads;
                     l.s0_elapsed = l.run_started.map_or(0.0, |s| s.elapsed().as_secs_f64());
                 }
+                // (only the current anchors' contents are kept)
+                let (s0, aux) = (l.s0, l.aux_point);
+                l.written_at
+                    .retain(|(i, _)| Some(*i) == s0 || Some(*i) == aux);
                 l.seconds += t.elapsed().as_secs_f64();
                 l.last_checkpoint = Some(std::time::Instant::now());
                 l.lines_at_checkpoint = l.lines;
@@ -1572,31 +2044,133 @@ impl Globals {
     /// An input file named `*.aux` was opened: inside `\document` (armed
     /// for S₀), and when asked for, request the `.aux` point.
     pub fn note_aux_open(&mut self, path: &str) {
-        if self.ckpt_arm_level <= 0 || self.ckpt_request != 0 {
+        // (a preamble line request still pending gives way)
+        if self.ckpt_arm_level <= 0
+            || (self.ckpt_request != 0 && self.ckpt_request != REQ_PREAMBLE_LINE)
+        {
             return;
         }
         let l = self.layer();
         if l.want_aux_point && l.aux_point.is_none() && l.s0.is_none() {
             l.aux_path = Some(path.to_string());
             self.ckpt_request = REQ_AUX;
+        } else if l.want_aux_point && l.aux_at_arm {
+            // A run from the `.aux` point taken before the lookup
+            // (`REQ_AUX_ARM`) that finds an `.aux` now: the `.aux` point
+            // moves to this open, where a run that had the `.aux` from the
+            // start takes it (L5's re-read starts there; the read's close
+            // begins the read-set)
+            l.aux_at_arm = false;
+            l.aux_moved = true;
+            l.aux_path = Some(path.to_string());
+            self.ckpt_request = REQ_AUX;
         }
     }
 
+    /// Ask, before a run with no `.aux` reaches `\document`, for its `.aux`
+    /// point where `\document`'s body is pushed (`REQ_AUX_ARM`).
+    pub fn aux_point_at_arm(&mut self, on: bool) {
+        self.ckpt_on_arm = if on { REQ_AUX_ARM } else { 0 };
+    }
+
+    /// Whether `\document`'s `\IfFileExists{\jobname.aux}` would find a file
+    /// (the output directory, then the search path, as `\openin` looks).
+    fn aux_file_found(&self) -> bool {
+        if self.job_name <= 0 {
+            return true;
+        }
+        let mut name = self.str_bytes(self.job_name);
+        name.extend_from_slice(b".aux");
+        system::lookup_again(&system::Lookup {
+            name: String::from_utf8_lossy(&name).into_owned(),
+            format: crate::resolver::Format::Tex,
+            must_exist: None,
+            found: None,
+        })
+        .is_some()
+    }
+
     pub fn maybe_request_timed_checkpoint(&mut self) {
-        if self.ckpt_request != 0 {
+        // A line of the main file, in the preamble: a checkpoint once it is
+        // used up (`Point::PreambleLine`)
+        if self.in_open == 1 && self.in_preamble() {
+            self.layer().preamble_line_pending = true;
+        }
+        if self.ckpt_request != 0 && self.ckpt_request != REQ_PREAMBLE_LINE {
             self.layer().lines += 1;
             return;
         }
         let l = self.layer();
         l.lines += 1;
-        if l.timed_s <= 0.0 {
-            return;
-        }
-        if l.last_checkpoint
-            .is_some_and(|t| t.elapsed().as_secs_f64() >= l.timed_s)
+        if l.timed_s > 0.0
+            && l.last_checkpoint
+                .is_some_and(|t| t.elapsed().as_secs_f64() >= l.timed_s)
         {
             self.ckpt_request = REQ_TIMED;
+            return;
         }
+        if self.ckpt_request == 0 && self.layer().preamble_line_pending {
+            self.ckpt_request = REQ_PREAMBLE_LINE;
+        }
+    }
+
+    /// An input file was closed (`system`'s `a_close`): back in the main
+    /// file, its line may end a preamble command (`Point::PreambleLine`).
+    pub fn note_input_close(&mut self) {
+        if self.in_preamble() {
+            let l = self.layer();
+            l.preamble_file_closed = true;
+            l.preamble_line_pending = true;
+            if self.ckpt_request == 0 {
+                self.ckpt_request = REQ_PREAMBLE_LINE;
+            }
+        }
+    }
+
+    /// Before `\document` is expanded, in a run that takes S₀ and asks for
+    /// preamble line checkpoints.
+    fn in_preamble(&mut self) -> bool {
+        if self.ckpt_arm_level != 0 {
+            return false;
+        }
+        let l = self.layer();
+        l.preamble_line_s.is_some()
+            && l.arm_name.is_some()
+            && l.s0.is_none()
+            && l.aux_point.is_none()
+    }
+
+    /// Between two lines of the main file at its top level: the input
+    /// stack holds the terminal and the main file (no `\input` file), with
+    /// nothing above it but token lists read to their end (TeX leaves a
+    /// finished list on the stack until `get_next` next reads: a `\par`
+    /// macro's), the main file's line is used up, and no group or
+    /// conditional is open. A checkpoint is sound at any `big_switch`; this
+    /// one is where a preamble edit after the line restarts with nothing of
+    /// the edited line consumed and nothing of the lines before it to redo.
+    pub fn at_preamble_line_end(&self) -> bool {
+        use crate::generated::consts::{level_one, null, token_list};
+        if self.input_ptr < 1
+            || self.in_open != 1
+            || self.cur_level != level_one
+            || self.cond_ptr != null
+        {
+            return false;
+        }
+        let done = |r: &crate::generated::types::in_state_record| {
+            r.state_field == token_list && r.loc_field == null
+        };
+        let base = if self.input_ptr == 1 {
+            &self.cur_input
+        } else {
+            if !done(&self.cur_input)
+                || !(2..self.input_ptr as usize).all(|k| done(&self.input_stack[k]))
+            {
+                return false;
+            }
+            &self.input_stack[1]
+        };
+        base.state_field != token_list && base.name_field > 17 && base.loc_field > base.limit_field
     }
 
     // ---- running -------------------------------------------------------
@@ -1665,5 +2239,32 @@ impl Globals {
         }
         self.dvi_file.flush();
         self.pdf_file.flush();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::Globals;
+
+    /// A run restored from a checkpoint taken in `\batchmode` gets
+    /// kpathsea's mktex discard flag back (tex.ch [49.1265]), although
+    /// `system::configure` cleared it for the new compile; one taken in
+    /// another mode clears it.
+    #[test]
+    fn restoring_scalars_restores_the_mktex_discard_flag() {
+        let _lock = crate::resolver::MKTEX_DISCARD_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
+        let mut g = Globals::new();
+        for batch in [true, false] {
+            g.kpse_make_tex_discard_errors = batch;
+            g.spill_scalars();
+            g.kpse_make_tex_discard_errors = !batch;
+            crate::system::set_mktex_discard(!batch);
+            g.fill_scalars();
+            assert_eq!(g.kpse_make_tex_discard_errors, batch);
+            #[cfg(feature = "kpathsea")]
+            assert_eq!(crate::resolver::kpathsea_make_tex_discard_errors(), batch);
+        }
     }
 }

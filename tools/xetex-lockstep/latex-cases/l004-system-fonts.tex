@@ -1,0 +1,20 @@
+% l004-system-fonts: macOS system fonts named by family (font lookup by name)
+\documentclass{article}
+\usepackage{fontspec}
+\setmainfont{Times New Roman}
+\setsansfont{Arial}
+\setmonofont{Courier New}
+\newfontfamily\helvetica{Helvetica}[Renderer=OpenType]
+\newfontfamily\georgia{Georgia}
+\begin{document}
+\section{System fonts by name}
+We shall find that office workers, efficient and affluent, flatly refuse
+difficult fjords; \textbf{AVATAR}, \emph{Wo, Ta,} T. Yo! Naïve café owners in
+Zürich serve crème brûlée -- or not --- with 1234567890 ``quotes''.
+
+\textsf{Arial: \textbf{bold} and \textit{italic} office text.}
+\texttt{Courier New: monospaced office text.}
+
+{\helvetica Helvetica, shaped as OpenType: office AVATAR.}
+{\georgia Georgia: 0123456789 office.}
+\end{document}

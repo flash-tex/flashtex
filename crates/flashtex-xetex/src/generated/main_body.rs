@@ -20,7 +20,7 @@ impl Globals {
                 if (self.error_line > ssup_error_line) {
                     self.error_line = ssup_error_line;
                 }
-                // §1716
+                // §1718
                 self.interaction_option = self.web2c_interaction_option();
                 self.file_line_error_style_p = self.web2c_file_line_error_style_p();
                 self.halt_on_error_p = self.web2c_halt_on_error_p();
@@ -432,7 +432,7 @@ impl Globals {
                 if ((self.eqtb[crate::ix::U(((7892312i32) - 1) as usize)].int() < 0i32) || (self.eqtb[crate::ix::U(((7892312i32) - 1) as usize)].int() > 255i32)) {
                     self.cur_input.limit_field = (self.cur_input.limit_field).wrapping_sub(1i32);
                 } else {
-                    { let __ix1967 = self.cur_input.limit_field; let __v1968 = self.eqtb[crate::ix::U(((7892312i32) - 1) as usize)].int(); self.buffer[crate::ix::U((__ix1967) as usize)] = __v1968; }
+                    { let __ix2009 = self.cur_input.limit_field; let __v2010 = self.eqtb[crate::ix::U(((7892312i32) - 1) as usize)].int(); self.buffer[crate::ix::U((__ix2009) as usize)] = __v2010; }
                 }
                 self.fix_date_and_time();
                 self.random_seed = ((self.microseconds).wrapping_mul(1000i32)).wrapping_add((self.epochseconds % 1000000i32));

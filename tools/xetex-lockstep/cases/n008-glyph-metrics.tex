@@ -1,0 +1,8 @@
+% n008-glyph-metrics: \XeTeXuseglyphmetrics: heights and depths from the glyphs
+% XeTeX-specific (docs/design/xetex/PLAN.md, phase S1: native fonts)
+\input prelude
+\def\space{ }
+\font\x="[lmroman10-regular.otf]" \x
+\setbox0=\hbox{\XeTeXuseglyphmetrics=1 ace gpy AT \XeTeXglyph36 \XeTeXuseglyphmetrics=0 ace gpy}
+\lsshipbox0
+\end

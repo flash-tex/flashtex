@@ -44,6 +44,9 @@ const LO_MEM_STAT_MAX: i32 = 19; // fil_neg_glue + glue_spec_size - 1
 
 // node sizes with SyncTeX's two words (changes/synctex.ch)
 const SYNCTEX_FIELD_SIZE: i32 = 2;
+// changes/lineshift.ch's `ls_cond_size`: conditionals whose line's file is
+// known
+const LS_COND_SIZE: i32 = 1000;
 const BOX_NODE_SIZE: i32 = crate::generated::consts::box_node_size;
 const RULE_NODE_SIZE: i32 = crate::generated::consts::rule_node_size;
 const MEDIUM_NODE_SIZE: i32 = crate::generated::consts::medium_node_size;
@@ -268,10 +271,27 @@ struct Layout {
     pdf_link_stack: usize,
     intr_state: usize,
     intr_data: usize,
+    // the files the open levels', groups' and conditionals' lines are of
+    // (changes/lineshift.ch)
+    ls_nest_tag: usize,
+    ls_grp_tag: usize,
+    ls_cond_tag: usize,
+    /// The display list's side table (`crate::displaylist`): its offset
+    /// and element count, `usize::MAX`/0 without one.
+    dl_side: (usize, usize),
     scalars: HashMap<&'static str, (usize, usize)>,
 }
 
 impl Layout {
+    /// The space's chunk holding node `p`'s side-table entry.
+    fn side_chunk(&self, p: i32) -> Option<u32> {
+        let (off, n) = self.dl_side;
+        if off == usize::MAX || p < 0 || p as usize >= n {
+            return None;
+        }
+        Some(((off + p as usize * 8) >> CHUNK_SHIFT) as u32)
+    }
+
     fn new(g: &Globals, slots: &[ScalarSlot]) -> Layout {
         let off = |n: &str| {
             g.arena
@@ -300,6 +320,15 @@ impl Layout {
             pdf_link_stack: off("pdf_link_stack"),
             intr_state: off("intr_state"),
             intr_data: off("intr_data"),
+            ls_nest_tag: off("ls_nest_tag"),
+            ls_grp_tag: off("ls_grp_tag"),
+            ls_cond_tag: off("ls_cond_tag"),
+            dl_side: g
+                .arena
+                .regions
+                .iter()
+                .find(|r| r.name == "dl_side")
+                .map_or((usize::MAX, 0), |r| (r.off, r.bytes / r.elem.max(1))),
             scalars: slots.iter().map(|s| (s.name, (s.off, s.size))).collect(),
         }
     }
@@ -347,6 +376,14 @@ impl<S: Space> St<'_, S> {
     }
     fn eqtb(&self, p: i32) -> u64 {
         self.sp.word(self.l.eqtb + (p as usize - 1) * 8)
+    }
+    /// The display list's side-table entry of node `p` (0 without one).
+    fn side(&self, p: i32) -> u64 {
+        let (off, n) = self.l.dl_side;
+        if off == usize::MAX || p < 0 || p as usize >= n {
+            return 0;
+        }
+        self.sp.word(off + p as usize * 8)
     }
     fn save(&self, k: i32) -> u64 {
         self.sp.word(self.l.save_stack + k as usize * 8)
@@ -453,6 +490,11 @@ pub struct Iso<'a, O: Space, N: Space> {
     /// Asked every [`STOP_EVERY`] tasks: newer work stops the walk
     /// ([`STOPPED`]).
     stop: Option<&'a mut dyn FnMut() -> bool>,
+    /// The convergence test's side-table comparison (`check`): the chunks of
+    /// the table either run wrote since the restore target, and the paired
+    /// live nodes whose old entries lie there, with their live entries.
+    side_written: Option<&'a [u64]>,
+    side_later: Vec<(i32, u64)>,
     steps: usize,
     cur_task: Option<(K, i32, i32)>,
 }
@@ -533,6 +575,8 @@ impl<'a, O: Space, N: Space> Iso<'a, O, N> {
             dest_dims_dead: false,
             scratch_heads_dead: false,
             stop: None,
+            side_written: None,
+            side_later: Vec::new(),
             steps: 0,
         }
     }
@@ -571,24 +615,50 @@ impl<'a, O: Space, N: Space> Iso<'a, O, N> {
     }
 
     fn partner(&self, a: i32) -> Option<i32> {
-        bit(&self.head_o, a).then(|| self.fwd.get(&a).copied().unwrap_or(a))
+        // (a pointer outside `mem` pairs with nothing: the check fails)
+        (Self::in_mem(a) && bit(&self.head_o, a)).then(|| self.fwd.get(&a).copied().unwrap_or(a))
     }
 
     /// The SyncTeX words of a synchronized node of `size` words
     /// (changes/synctex.ch): the `int` halves of its last two words, the
-    /// file tag and the line that `get_node` or a copy wrote there.
+    /// file tag and the line that `get_node` or a copy wrote there. The
+    /// tag is compared. The line is not: only `get_node` writes it and only
+    /// `copy_node_list` reads it, into another node's line, since the
+    /// `.synctex` file is not written. So it is dead like a free cell's
+    /// words, which it becomes when the node is freed. An edit that adds a
+    /// line break moves the lines of every node made after it (DESIGN.md
+    /// §5.3 rule (c), `crate::lineshift`).
     fn sync_fields(&mut self, a: i32, b: i32, size: i32) {
-        let (t, l) = (size - SYNCTEX_FIELD_SIZE, size - SYNCTEX_FIELD_SIZE + 1);
+        let t = size - SYNCTEX_FIELD_SIZE;
         self.eq(
             "synctex tag",
             int(self.o.mem(a + t)),
             int(self.n.mem(b + t)),
         );
-        self.eq(
-            "synctex line",
-            int(self.o.mem(a + l)),
-            int(self.n.mem(b + l)),
-        );
+    }
+
+    /// A line number the state holds, of the file whose reading level had
+    /// SyncTeX tag `tag` (the new state's; the tags are compared as words):
+    /// equal, or moved by an edit of that file (DESIGN.md §5.3 rule (c),
+    /// `crate::lineshift::held_ok`).
+    fn eq_line(&mut self, what: &'static str, tag: i32, x: i32, y: i32) {
+        if x != y && !crate::lineshift::held_ok(tag, x, y) {
+            self.eq(what, x, y);
+        } else if x == y && !crate::lineshift::held_ok(tag, x, y) {
+            fail!(
+                self,
+                "{what}: {x} is a line an edit moved, the same in both states"
+            );
+        }
+    }
+
+    /// The tag of `ls_*_tag[k]` in the new state (-1 outside it).
+    fn line_tag(&self, base: usize, k: i32, max: i32) -> i32 {
+        if base == usize::MAX || k < 0 || k > max {
+            -1
+        } else {
+            self.n.i32_at(base, k as usize)
+        }
     }
 
     fn cover(&mut self, a: i32, b: i32, size: i32) {
@@ -700,6 +770,31 @@ impl<'a, O: Space, N: Space> Iso<'a, O, N> {
         let (ca, cb) = (self.o.is_char(a), self.n.is_char(b));
         if ca != cb {
             fail!(self, "a char node in one state only");
+        }
+        // The node's source position (file, line, column) in the display
+        // list's side table. Nothing TeX computes reads it, but the node is
+        // live: a later page ships it, and its glyphs name that position,
+        // which the convergence takes over from the old run. Spans are the
+        // host's and move with their lines, so equal entries are the same
+        // place.
+        if let Some(written) = self.side_written {
+            // (the live state's entry; the old run's is the live one where
+            // neither run wrote the table since the restore target, and is
+            // rewound once the walk is done otherwise: `check`)
+            let sn = self.n.side(b);
+            match self.n.l.side_chunk(a) {
+                Some(c) if bit(written, c as i32) => self.side_later.push((a, sn)),
+                Some(_) => {
+                    let so = self.n.side(a);
+                    if so != sn {
+                        fail!(
+                            self,
+                            "a node's source position differs ({so:#x} vs {sn:#x})"
+                        );
+                    }
+                }
+                None => {}
+            }
         }
         let w0o = self.o.mem(a);
         let w0n = self.n.mem(b);
@@ -1326,6 +1421,21 @@ impl<'a, O: Space, N: Space> Iso<'a, O, N> {
     /// The conditional stack (§489): `link` the enclosing one, type
     /// `if_limit`, subtype `cur_if`, then `if_line`.
     fn cond(&mut self, mut a: i32, mut b: i32) {
+        // node j from the top holds conditional depth-1-j's line; a walk
+        // that starts below the top (from `if_stack`) finds its place
+        let depth = self.n.sc("ls_cond_depth");
+        let mut k = {
+            let (mut p, mut j) = (self.n.sc("cond_ptr"), 0);
+            while p != NULL && p != b && j <= depth {
+                p = rh(self.n.mem(p));
+                j += 1;
+            }
+            if p == b {
+                depth - 1 - j
+            } else {
+                -1
+            }
+        };
         loop {
             if a == NULL && b == NULL {
                 return;
@@ -1342,7 +1452,10 @@ impl<'a, O: Space, N: Space> Iso<'a, O, N> {
             let (x, y) = (self.o.mem(a), self.n.mem(b));
             self.eq("conditional", lh(x), lh(y));
             let (x1, y1) = (self.o.mem(a + 1), self.n.mem(b + 1));
-            self.eq("if_line", int(x1), int(y1));
+            let tag = self.line_tag(self.n.l.ls_cond_tag, k.max(0), LS_COND_SIZE);
+            let tag = if k >= 1 { tag } else { -1 };
+            self.eq_line("if_line", tag, int(x1), int(y1));
+            k -= 1;
             a = rh(x);
             b = rh(y);
         }
@@ -1943,6 +2056,7 @@ impl<O: Space, N: Space> Iso<'_, O, N> {
             return;
         }
         let etex = self.o.sc("eTeX_mode") == 1;
+        let mut lvl = self.n.sc("cur_level");
         let mut top = so; // the entries of the current group are below this
         let mut bnd = bo;
         let mut grp = go;
@@ -2028,8 +2142,10 @@ impl<O: Space, N: Space> Iso<'_, O, N> {
             let base = bnd - if etex { 1 } else { 0 };
             if etex {
                 let (x, y) = (self.o.save(bnd - 1), self.n.save(bnd - 1));
-                self.eq("saved line", int(x), int(y));
+                let tag = self.line_tag(self.n.l.ls_grp_tag, lvl, 255);
+                self.eq_line("saved line", tag, int(x), int(y));
             }
+            lvl -= 1;
             for k in 1..=extras {
                 let (x, y) = (self.o.save(base - k), self.n.save(base - k));
                 if grp == MATH_GROUP {
@@ -2088,10 +2204,11 @@ impl<O: Space, N: Space> Iso<'_, O, N> {
         }
     }
 
-    fn nest_record(&mut self, x: &list_state_record, y: &list_state_record) {
+    fn nest_record(&mut self, k: i32, x: &list_state_record, y: &list_state_record) {
         self.eq("mode", x.mode_field, y.mode_field);
         self.eq("prev_graf", x.pg_field, y.pg_field);
-        self.eq("mode_line", x.ml_field, y.ml_field);
+        let tag = self.line_tag(self.n.l.ls_nest_tag, k, i32::MAX);
+        self.eq_line("mode_line", tag, x.ml_field, y.ml_field);
         self.ptr(K::List, x.head_field, y.head_field);
         self.later("tail", x.tail_field, y.tail_field);
         let m = x.mode_field.abs();
@@ -2129,11 +2246,11 @@ impl<O: Space, N: Space> Iso<'_, O, N> {
         }
         for k in 0..po {
             let (x, y) = (self.o.nest(k), self.n.nest(k));
-            self.nest_record(&x, &y);
+            self.nest_record(k, &x, &y);
         }
         let x: list_state_record = rec_from(&self.o.sc_bytes("cur_list"));
         let y: list_state_record = rec_from(&self.n.sc_bytes("cur_list"));
-        self.nest_record(&x, &y);
+        self.nest_record(po, &x, &y);
     }
 
     fn input_record(&mut self, x: &in_state_record, y: &in_state_record) {
@@ -2426,6 +2543,17 @@ impl<O: Space, N: Space> Iso<'_, O, N> {
     }
 }
 
+/// The display list's side table for [`Iso::check`]: the chunks of it either
+/// run wrote since the restore target (a bitmap by chunk), and how to get
+/// the old run's value of some of them (`Globals::pending_old_chunks`).
+pub struct SideOld<'a> {
+    pub written: &'a [u64],
+    pub fetch: &'a mut OldChunks<'a>,
+}
+
+/// The old run's chunks `cs` by chunk (`None`: stopped for newer work).
+pub type OldChunks<'a> = dyn FnMut(&[u32]) -> Result<Option<HashMap<u32, Vec<u64>>>, String> + 'a;
+
 /// The entry points (the walk's types are chosen here).
 impl<'a> Iso<'a, Old<'a>, Live<'a>> {
     /// Compare O (the old run's checkpoint, through `d`) with the live state.
@@ -2440,6 +2568,7 @@ impl<'a> Iso<'a, Old<'a>, Live<'a>> {
         free_o: Option<&[u64]>,
         free_n: Option<&[u64]>,
         bad_mem: &[usize],
+        side: Option<SideOld<'a>>,
         hyph_len: usize,
         dest_dims_dead: bool,
         stop: &'a mut dyn FnMut() -> bool,
@@ -2477,13 +2606,48 @@ impl<'a> Iso<'a, Old<'a>, Live<'a>> {
         w.dest_dims_dead = dest_dims_dead;
         w.scratch_heads_dead = true;
         w.stop = Some(stop);
+        let mut fetch = None;
+        if let Some(sd) = side {
+            w.side_written = Some(sd.written);
+            fetch = Some(sd.fetch);
+        }
         w.roots();
         w.finish();
         if let Some(e) = w.err {
             return Err(e);
         }
+        // The old run's side-table entries of the live nodes in chunks
+        // either run wrote: those chunks alone rewound.
+        if let Some(fetch) = fetch.filter(|_| !w.side_later.is_empty()) {
+            let l = w.n.l;
+            let mut cs: Vec<u32> = w
+                .side_later
+                .iter()
+                .filter_map(|&(a, _)| l.side_chunk(a))
+                .collect();
+            cs.sort_unstable();
+            cs.dedup();
+            let Some(old) = fetch(&cs)? else {
+                return Err(STOPPED.into());
+            };
+            for &(a, sn) in &w.side_later {
+                let (off, _) = l.dl_side;
+                let at = off + a as usize * 8;
+                let c = (at >> CHUNK_SHIFT) as u32;
+                let so = old[&c][(at & (CHUNK_BYTES - 1)) >> 3];
+                if so != sn {
+                    return Err(format!(
+                        "a node's source position differs ({so:#x} vs {sn:#x}, node {a})"
+                    ));
+                }
+            }
+        }
         for &p in bad_mem {
             let p = p as i32;
+            // (a word past the walk's range: nothing explains it)
+            if !Self::in_mem(p) {
+                return Err(format!("mem[{p}] differs outside the walked range"));
+            }
             let ok_o = bit(&w.cov_o, p) || free_o.is_some_and(|f| bit(f, p));
             let ok_n = bit(&w.cov_n, p) || free_n.is_some_and(|f| bit(f, p));
             if !(ok_o && ok_n) {

@@ -15,7 +15,7 @@
 # edits -- because the point of a local gate is to catch a problem before the
 # commit, not after. A change to the root Cargo.toml or Cargo.lock adds one
 # workspace-wide `cargo check` and one workspace-wide clippy run, not a test
-# run per crate: the workspace's tests are the merge queue's job.
+# run per crate: the workspace's tests run after the merge (ci.yml, push to main).
 #
 # Exit status is 1 if any step FAILED. WARN and SKIP do not fail the run; the
 # summary table at the end says which is which and why.
@@ -267,8 +267,8 @@ CHANGED_CRATES="$(printf '%s\n' "$CRATE_TABLE" | awk 'NF{print $1}' | sort -u | 
 # `quick` job (PR #1183, run 36546401263). Instead the whole workspace is
 # checked, then clippied, in one cargo invocation each (one shared build);
 # tests run only for crates whose own files changed; and the workspace's tests
-# are the merge queue's job (`rust workspace` in ci.yml, on merge_group and on
-# push to main). The standalone crates have their own lockfiles: unaffected.
+# run after the merge (`rust workspace` in ci.yml, on push to main; the merge
+# queue runs only the gate since 2026-10-05). The standalone crates have their own lockfiles: unaffected.
 ROOT_MANIFEST=0
 if printf '%s\n' "$CHANGED_FILES" | grep -qxE 'Cargo\.(toml|lock)'; then
   ROOT_MANIFEST=1
@@ -277,6 +277,13 @@ CHANGED_RS="$(printf '%s\n' "$CHANGED_FILES" | grep -E '\.rs$' || true)"
 # What web2rust's drift test covers: the translator, the WEB sources and
 # change files, and the committed translations of both engines.
 DRIFT_PATHS='^(tools/web2rust/|third_party/(pdftex|xetex)/|crates/flashtex-(engine|xetex)/(changes/|src/generated/|web2rust-default\.args$|pdftex\.pool$|xetex\.pool$))'
+# What the trip and etrip tests build: each assembles its own scratch crate
+# from crates/flashtex-engine/src (trip from a list of files, etrip from the
+# whole tree) under its own feature set, which the crate's tests and clippy
+# never compile. A module the scratch crate lacks fails there only (#1599:
+# E0583 in CI's gate job and the Windows engine job), so quick builds and
+# runs both whenever the engine's sources or the harness change.
+TRIP_PATHS='^(tools/web2rust/|third_party/(knuth|pdftex)/|crates/flashtex-engine/(src/|changes/|web2rust-[a-z]+\.args$)|scripts/flashtex-e?trip\.sh$)'
 
 # ---------------------------------------------------------------------------
 # quick: fmt, clippy on changed crates, tests of changed crates
@@ -487,6 +494,9 @@ gate_parity_selftest() {
   python3 -m unittest discover -s tools/parity -p 'test_*.py'
   # tools/lockstep's own tests (cases that need pdftex skip without it)
   python3 -m unittest discover -s tools/lockstep -p 'test_*.py'
+  # package-smoke's runner and the P5 board's T4 pick (ci.yml's gate job runs the same)
+  python3 -m unittest discover -s tools/package-smoke -p 'test_*.py'
+  scripts/tests/p5-pick-t4.test.sh
 }
 
 # ---------------------------------------------------------------------------
@@ -540,7 +550,7 @@ if (( BASE_OK )); then
   note "crates:     ${CHANGED_CRATES:-(none)}"
   if (( ROOT_MANIFEST )); then
     note "root:       Cargo.toml/Cargo.lock changed -> workspace check + clippy;"
-    note "            the workspace's tests run in the merge queue (rust workspace)"
+    note "            the workspace's tests run after the merge (rust workspace)"
   fi
 fi
 echo
@@ -573,7 +583,11 @@ fi
 
 case "$TIER" in
   quick|pr|full)
-    if have rustfmt; then step "rustfmt (changed files)" -- gate_fmt
+    # `rustfmt --version`, not `have rustfmt`: rustup's proxy is on PATH even
+    # where the component is not installed, and then every rustfmt call fails,
+    # so an existing file passed unchecked (its base "failed" too) and a new
+    # one failed as unformatted (the NixOS PC's runner toolchain, 2026-10-06).
+    if rustfmt --version >/dev/null 2>&1; then step "rustfmt (changed files)" -- gate_fmt
     else skip "rustfmt (changed files)" "rustfmt is not installed (rustup component add rustfmt)"; fi
     if (( ROOT_MANIFEST )); then
       step "workspace check (root manifest changed)" -- gate_workspace_check
@@ -592,6 +606,17 @@ case "$TIER" in
       step "web2rust drift (pdfTeX engine and XeTeX port)" -- \
         cargo_test --release --locked -p web2rust --test drift
     fi
+    # In CI the gate job runs both already (ci.yml, "trip:"/"etrip:" steps);
+    # the `quick` job does not repeat them.
+    if ! grep -qE "$TRIP_PATHS" <<< "$CHANGED_FILES"; then :
+    elif [[ -n "${GITHUB_ACTIONS:-}" ]]; then
+      skip "trip and etrip tests" "CI's gate job runs them"
+    else
+      step "trip test (scripts/flashtex-trip.sh)" -- \
+        env TRIP_WORK="$ROOT/target/gate-trip" scripts/flashtex-trip.sh
+      step "etrip test (scripts/flashtex-etrip.sh)" -- \
+        env ETRIP_WORK="$ROOT/target/gate-etrip" scripts/flashtex-etrip.sh
+    fi
     ;;
 esac
 
@@ -604,11 +629,12 @@ case "$TIER" in
     else
       skip "licence boundary (DESIGN §3)" "scripts/check-license-boundary.sh is not in this checkout"
     fi
-    # The rendering-core handoff keeps a copy of the native-assets manifest
-    # that verify_bundle_resources.py pins by sha256; the copy must not drift.
-    step "native-assets manifest handoff copy matches the pinned one" -- \
-      cmp apps/mac/scripts/native-assets-manifest.json crates/rendering-core/docs/handoffs/native-assets/manifest.json
+    step "CLI packaging self-test (flashtex-v3 and flashtex-host ship; app-parity D5)" -- scripts/tests/package-cli.test.sh
     step "parity scoreboard and lockstep self-tests" -- gate_parity_selftest
+    step "retired code is not named outside the allowlist (retirement plan §4.6)" -- \
+      python3 tools/parity/retirement_refs.py
+    step "every app-parity row names tests that exist (retirement plan §4.4)" -- \
+      python3 tools/parity/app_parity_rows.py check
     if [[ "$(uname -s)" == Darwin ]]; then
       step "parity fixtures hold their baseline" -- gate_parity_fixtures
     else
