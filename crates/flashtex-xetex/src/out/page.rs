@@ -65,6 +65,8 @@ pub struct GState {
     pub told_fill_alpha: f64,
     pub told_stroke_alpha: f64,
     pub told_tr: u8,
+    /// The line state stroked glyphs use (spec §11.4), once told.
+    pub told_line: Option<Stroke>,
 }
 
 impl GState {
@@ -88,6 +90,7 @@ impl GState {
             told_fill_alpha: 1.0,
             told_stroke_alpha: 1.0,
             told_tr: 0,
+            told_line: None,
         }
     }
 
@@ -675,10 +678,23 @@ impl<'a, M: Metrics> Builder<'a, M> {
             self.cur()
                 .unsupported("a vertical native font".into(), None);
         }
-        if embolden != 0.0 {
-            self.cur()
-                .unsupported("an emboldened native font (embolden=)".into(), None);
-        }
+        // `embolden=` (fontspec's FakeBold): xdvipdfmx fills and strokes the
+        // glyphs (`2 Tr`) with a line of `embolden` (XeTeX's, a tenth of
+        // fontspec's FakeBold) times the size in TeX points over 10
+        // (measured: FakeBold=1.5 at 10 pt is `0.149994 w`), in
+        // stream space for the display list (spec §11.4).
+        let bold = (embolden != 0.0).then(|| {
+            let w = embolden / 10.0 * n.size as f64 / 65536.0;
+            let [a, b, _, _, _, _] = self.cur_ref().gs.ctm.to_f64();
+            Stroke {
+                width: w * (a * a + b * b).sqrt(),
+                cap: 0,
+                join: 0,
+                miter: 10.0,
+                dash: vec![],
+                phase: 0.0,
+            }
+        });
         let m = self.glyph_matrix(size, extend, slant);
         let color = n.rgba.map(|c| {
             let ch = |s: u32| ((c >> s) & 0xFF) as f64 / 255.0;
@@ -697,7 +713,17 @@ impl<'a, M: Metrics> Builder<'a, M> {
                 Some((c, a)) => s.sync_fill(Some(c), Some(*a)),
                 None => s.sync_fill(None, None),
             }
-            s.sync_text_render(0);
+            match &bold {
+                Some(st) => {
+                    s.sync_stroke();
+                    if s.gs.told_line.as_ref() != Some(st) {
+                        s.push(Item::LineState(st.clone()));
+                        s.gs.told_line = Some(st.clone());
+                    }
+                    s.sync_text_render(2);
+                }
+                None => s.sync_text_render(0),
+            }
             s.sync_glyph_matrix(m);
             s.use_font(l.res);
             let (px, py) = s.to_page(x, y);
