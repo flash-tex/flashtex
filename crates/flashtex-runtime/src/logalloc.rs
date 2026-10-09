@@ -4,7 +4,7 @@
 //! allocated for a checkpoint's undo log gets a mapping of its own, which
 //! `free` unmaps.
 //!
-//! Most of the host's heap is undo logs (`crate::arena`), sealed one per
+//! Most of the host's heap is undo logs (`flashtex_engine::arena`), sealed one per
 //! checkpoint and merged, a few hundred kilobytes to megabytes at a time, by
 //! retention and when a run thins the old run behind it; a run that ends
 //! drops a whole branch of them. glibc gives a block above its mmap threshold

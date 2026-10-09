@@ -72,6 +72,7 @@ version = "0.1.0"
 dependencies = [
  "cc",
  "flashtex-display-list",
+ "flashtex-runtime",
 ]
 
 [[package]]
@@ -81,6 +82,13 @@ version = "0.1.0"
 [[package]]
 name = "flashtex-pdf"
 version = "0.1.0"
+
+[[package]]
+name = "flashtex-runtime"
+version = "0.1.0"
+dependencies = [
+ "flashtex-display-list",
+]
 
 [[package]]
 name = "flashtex-xetex"

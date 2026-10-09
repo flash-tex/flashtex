@@ -145,7 +145,9 @@ if not nodes:
     print("ERROR\t%s\tcargo metadata returned no resolve graph" % ws)
     raise SystemExit(0)
 
-engine_ids = {i for i, n in name_of.items() if n == engine}
+# The engine and the GPL runtime it shares with the XeTeX-derived engine
+# (crates/flashtex-runtime, moved out of it): reaching either is reaching GPL.
+engine_ids = {i for i, n in name_of.items() if n in (engine, "flashtex-runtime")}
 if not engine_ids:
     print("CLEAN\t%s\t%s is not in this workspace's graph at all" % (ws, engine))
     raise SystemExit(0)

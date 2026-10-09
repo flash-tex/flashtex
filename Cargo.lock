@@ -359,9 +359,8 @@ dependencies = [
  "cc",
  "flashtex-display-list",
  "flashtex-engine-build-id",
+ "flashtex-runtime",
  "sha2",
- "tikv-jemalloc-sys",
- "tikv-jemallocator",
 ]
 
 [[package]]
@@ -495,6 +494,15 @@ dependencies = [
  "flashtex-project-files",
  "flashtex-tex-text-encoding",
  "flashtex-vector-graphics",
+]
+
+[[package]]
+name = "flashtex-runtime"
+version = "0.1.0"
+dependencies = [
+ "flashtex-display-list",
+ "tikv-jemalloc-sys",
+ "tikv-jemallocator",
 ]
 
 [[package]]
