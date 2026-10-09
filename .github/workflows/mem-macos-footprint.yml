@@ -17,11 +17,6 @@ on:
       skip_memfp:
         description: "1: leave out memfp.c"
         default: "0"
-  # TEMPORARY (a workflow off the default branch cannot be dispatched): runs on pushes to the
-  # lane's branch; removed before the PR leaves draft.
-  push:
-    branches: [agent/kabir-claude/mem-logalloc-macos]
-    paths: [.github/workflows/mem-macos-footprint.yml]
 
 permissions:
   contents: read
@@ -38,10 +33,9 @@ jobs:
     timeout-minutes: 180
     env:
       CARGO_BUILD_JOBS: "4"
-      # TEMPORARY push defaults for a second sample (3 rounds, the 1,000-page documents, no memfp)
-      ROUNDS: ${{ github.event.inputs.rounds || '3' }}
-      DOCS: ${{ github.event.inputs.docs || 'full-1000 plain-1000' }}
-      SKIP_MEMFP: ${{ github.event.inputs.skip_memfp || '1' }}
+      ROUNDS: ${{ github.event.inputs.rounds || '2' }}
+      DOCS: ${{ github.event.inputs.docs || 'full-1000 plain-1000 full-100' }}
+      SKIP_MEMFP: ${{ github.event.inputs.skip_memfp || '0' }}
     steps:
       - name: never on the owner's Mac
         id: where

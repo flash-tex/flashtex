@@ -49,7 +49,8 @@ flashtex-engine-build-id = { path = "build-id", optional = true }
 # src/logalloc.rs). The crates are MIT OR Apache-2.0; the jemalloc 5.3.1 they
 # build from source (`configure`, `make`) and link statically is
 # BSD-2-Clause (its COPYING), which GPL-2.0-or-later code may link; a binary
-# distribution reproduces that notice.
+# distribution reproduces that notice: THIRD-PARTY-NOTICES, which
+# scripts/ci/package-cli.sh ships beside the host's LICENSE.
 [target.'cfg(target_os = "linux")'.dependencies]
 tikv-jemallocator = { version = "0.7", optional = true }
 tikv-jemalloc-sys = { version = "0.7", optional = true }
