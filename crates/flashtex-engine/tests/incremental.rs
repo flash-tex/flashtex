@@ -5106,14 +5106,20 @@ fn a_format_loaded_again_is_its_first_load() {
         )
     };
     let log = dir.with_extension("stderr");
-    for verify in [true, false] {
+    // (with the image verified; with it used; and Low Memory, which keeps none)
+    for (verify, lean) in [(true, false), (false, false), (true, true)] {
         let err = std::fs::File::create(&log).unwrap();
         let env: &[(&str, &str)] = if verify {
             &[("FLASHTEX_FMT_IMAGE", "verify")]
         } else {
             &[]
         };
-        let mut h = Host::start_full(&e, &dir, &[], env, Stdio::from(err));
+        let args: &[&str] = if lean {
+            &["--profile", "low-memory"]
+        } else {
+            &[]
+        };
+        let mut h = Host::start_full(&e, &dir, args, env, Stdio::from(err));
         for (k, opt) in ["11pt", "12pt", "11pt", "10pt"].iter().enumerate() {
             let r = compile_and_check(&e, &mut h, &dir, &[("doc.tex", &doc(opt))], opt);
             if k > 0 {
@@ -5122,12 +5128,17 @@ fn a_format_loaded_again_is_its_first_load() {
         }
         drop(h);
         let said = std::fs::read_to_string(&log).unwrap();
-        if verify && cfg!(unix) {
+        assert!(!said.contains("MISMATCH"), "{said}");
+        if verify && lean {
+            assert!(
+                !said.contains("fmtimage: verified"),
+                "Low Memory kept an image: {said}"
+            );
+        } else if verify && cfg!(unix) {
             assert!(
                 said.contains("fmtimage: verified"),
                 "no load was the image's: {said}"
             );
-            assert!(!said.contains("MISMATCH"), "{said}");
         }
     }
 }

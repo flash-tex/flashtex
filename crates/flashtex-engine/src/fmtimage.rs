@@ -35,7 +35,10 @@
 //! that differ, so checkpoints see it as they see a load.
 //!
 //! The image is the size of the loaded word space (17 MB for LaTeX's format)
-//! plus the state before the load (5 MB), one per engine thread.
+//! plus the state before the load (5 MB), one per engine thread. It counts
+//! against the checkpoints' budget (`incr::Session::enforce_budget`), goes
+//! at the idle trim (`trim_caches`), and a `lean` performance mode (Low
+//! Memory) keeps none (`set_allowed`).
 //! `FLASHTEX_FMT_IMAGE=0` turns it off; `FLASHTEX_FMT_IMAGE_DEBUG=1` says on
 //! stderr why a load missed (the first array that differs).
 //! `FLASHTEX_FMT_IMAGE=verify` loads the format even where the image would
@@ -122,11 +125,30 @@ enum Mode {
 
 fn mode() -> Mode {
     static M: std::sync::OnceLock<Mode> = std::sync::OnceLock::new();
-    *M.get_or_init(|| match std::env::var("FLASHTEX_FMT_IMAGE").as_deref() {
+    let m = *M.get_or_init(|| match std::env::var("FLASHTEX_FMT_IMAGE").as_deref() {
         Ok("0") => Mode::Off,
         Ok("verify") => Mode::Verify,
         _ => Mode::On,
-    })
+    });
+    if ALLOWED.with(|a| a.get()) {
+        m
+    } else {
+        Mode::Off
+    }
+}
+
+thread_local! {
+    /// The performance mode allows an image (not Low Memory's `lean`).
+    static ALLOWED: std::cell::Cell<bool> = const { std::cell::Cell::new(true) };
+}
+
+/// Whether this thread may keep an image (`incr::Options::fmt_image`, off
+/// under a `lean` performance mode); turning it off drops the one kept.
+pub fn set_allowed(on: bool) {
+    ALLOWED.with(|a| a.set(on));
+    if !on {
+        forget();
+    }
 }
 
 fn debug() -> bool {
@@ -361,11 +383,17 @@ pub fn forget() {
     SPARE.with(|s| s.take());
 }
 
-/// The bytes the image holds (both copies of the word space).
+/// The bytes the image holds (both copies of the word space), with the
+/// spare buffers kept for the next one.
 pub fn bytes() -> usize {
-    IMAGE.with(|i| {
+    let image = IMAGE.with(|i| {
         i.borrow()
             .as_ref()
-            .map_or(0, |i| i.data.len() + i.before.data.len())
-    })
+            .map_or(0, |i| i.data.capacity() + i.before.data.capacity())
+    });
+    let spare = SPARE.with(|s| {
+        let s = s.borrow();
+        s.before.1.capacity() + s.after.1.capacity()
+    });
+    image + spare
 }
