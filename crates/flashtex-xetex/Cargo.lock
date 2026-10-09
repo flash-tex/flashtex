@@ -79,11 +79,17 @@ name = "flashtex-font-discovery"
 version = "0.1.0"
 
 [[package]]
+name = "flashtex-pdf"
+version = "0.1.0"
+
+[[package]]
 name = "flashtex-xetex"
 version = "0.1.0"
 dependencies = [
+ "flashtex-display-list",
  "flashtex-engine",
  "flashtex-font-discovery",
+ "flashtex-pdf",
  "flashtex-xetex-fontlibs",
  "flashtex-xetex-teckit",
  "sha2",

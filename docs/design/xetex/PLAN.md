@@ -398,6 +398,45 @@ instrument; the product path needs:
    visual at 2× through Core Graphics), on this corpus plus hyperref, xcolor
    and TikZ documents.
 
+## 4B. Phase S2 part 2 (2026-10-09): the display list
+
+Lane XETEX-S2b. **Design (lane decision, for review):** `ship_out` already
+writes each page as XDV into its DVI buffer whatever the output; TeX Live's
+xetex, without `-no-pdf`, pipes that stream to xdvipdfmx and calls `fflush`
+after each page. FlashTeX's binary, without `-no-pdf`, gives the DVI file a
+memory sink instead of a pipe, and at that `fflush` reads the page's bytes
+into a `display-list-v3` page (`crates/flashtex-xetex/src/out`). The XDV
+stream is the engine's interface to its output, as pdfTeX's content stream
+is Classic's (DESIGN.md §6.1); no XDV file is written, `xetex.web` is not
+changed, and the PDF is written from the display list (next PR). What the
+display list cannot carry (the operators of an `UNSUPPORTED` item,
+`@resources`, whole annotation dictionaries) is kept beside it for the
+writer.
+
+- Native glyph runs: `FONT.format: "opentype"` with `glyph_ids`, face
+  index, `units_per_em` and the file's digest (spec §11.1); the size,
+  `extend` and `slant` are in each glyph's matrix. TFM fonts: Classic's
+  `type1` resource from `pdftex.map` (the map TeX Live's `dvipdfmx.cfg`
+  names).
+- dvipdfmx's `\special` language from its documentation and measured
+  behaviour (`src/out/special.rs`, not ported): `color push`/`pop`,
+  `pdf:bcolor`/`ecolor`/`scolor`, `pdf:code`/`literal`/`content`/
+  `bcontent`/`econtent`, `pdf:btrans`/`etrans`, `x:gsave`/`grestore`/
+  `scale`/`rotate`, `pdf:image`, `pdf:bxobj`/`exobj`/`uxobj`, `pdf:obj`/
+  `put`/`close`/`stream`/`fstream`, `pdf:ann`/`bann`/`eann`, `pdf:dest`,
+  `pdf:outline`, `pdf:docinfo`, `pdf:docview`, `pdf:pagesize`/`papersize`,
+  `background`, map lines. Unknown specials are counted by first word and
+  reported. Measured and matched: dvipdfmx strokes a rule whose smaller
+  side is at most 5 bp, rounds the MediaBox to 0.01 bp but puts the page
+  origin at the unrounded height, and breaks a link at the end of the box
+  it began in.
+- **Verified** (mac-m1max-a, TeX Live 2026 as oracle): link rectangles of
+  `d01-hyperref` and of links broken across lines and pages: 15/15 equal to
+  xdvipdfmx's within 0.001 bp; named destinations 9/9 within its 0.01 bp
+  `@xpos`/`@ypos`; glyph ids equal to xdvipdfmx's CIDs. `-no-pdf` is
+  unchanged: P-T1 lockstep 1413/1413, XDV 1410/1410, xelatex cases
+  10/10.
+
 ## 5. Risks carried into S1–S3
 
 | risk | mitigation |

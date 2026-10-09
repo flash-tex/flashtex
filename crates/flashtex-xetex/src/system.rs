@@ -158,6 +158,42 @@ pub struct ByteFile {
     path: Option<String>,
     /// Bytes written, for `dvi_close`'s error report.
     written: u64,
+    /// The DVI file in PDF mode: written to memory, read page by page by
+    /// the output (`crate::out`), never to a file.
+    pub mem: Option<MemSink>,
+}
+
+/// Bytes written to a [`ByteFile`] in memory: those at absolute positions
+/// `base..` that the reader has not consumed.
+#[derive(Default)]
+pub struct MemSink {
+    pub buf: Vec<u8>,
+    /// The absolute position of `buf[0]`.
+    pub base: u64,
+    /// Bytes written in all.
+    pub written: u64,
+    /// Bytes before this position were consumed: they are dropped when
+    /// they arrive.
+    pub skip_until: u64,
+}
+
+impl MemSink {
+    fn write(&mut self, v: u8) {
+        if self.written >= self.skip_until {
+            if self.buf.is_empty() {
+                self.base = self.written;
+            }
+            self.buf.push(v);
+        }
+        self.written += 1;
+    }
+
+    /// Everything before absolute position `end` has been read.
+    pub fn consumed(&mut self, end: u64) {
+        self.buf.clear();
+        self.skip_until = end;
+        self.base = self.written.max(end);
+    }
 }
 
 /// `file of memory_word`.
@@ -273,6 +309,11 @@ pub fn put_byte(f: &mut ByteFile) {
     write_byte(f, v);
 }
 pub fn write_byte(f: &mut ByteFile, v: i32) {
+    if let Some(m) = f.mem.as_mut() {
+        m.write(v as u8);
+        f.written += 1;
+        return;
+    }
     if let Some(w) = f.output.as_mut() {
         if w.write_all(&[v as u8]).is_ok() {
             f.written += 1;
@@ -1107,14 +1148,43 @@ impl Globals {
 
     // ---- the XDV file -----------------------------------------------------
 
-    /// XeTeX_ext.c's `open_dvi_output`: with `-no-pdf`, `open_output`; the
-    /// pipe to the output driver is phase 3.
+    /// XeTeX_ext.c's `open_dvi_output`: with `-no-pdf`, `open_output`;
+    /// otherwise the PDF file is opened for FlashTeX's output (where xetex
+    /// opens its pipe to xdvipdfmx) and the XDV stream goes to memory, to be
+    /// read page by page (`crate::out`).
     pub fn dvi_open_out(&mut self, f: &mut ByteFile) -> bool {
-        self.b_open_out(f)
+        if self.host.no_pdf.0 || self.host.out.is_none() {
+            return self.b_open_out(f);
+        }
+        *f = ByteFile::default();
+        match self.open_output_file() {
+            Some(h) => {
+                let name = self.raw_file_name();
+                if let Some(out) = self.host.out.as_mut() {
+                    out.pdf = Some(h);
+                    out.pdf_name = name.clone();
+                }
+                f.mem = Some(MemSink::default());
+                f.path = Some(name);
+                f.err = 0;
+                true
+            }
+            None => {
+                f.err = 1;
+                false
+            }
+        }
     }
 
-    /// `dviclose`: 0, or the error the close reported (errno).
+    /// `dviclose`: 0, or the error the close reported (errno); in PDF mode
+    /// the output's return code.
     pub fn dvi_close(&mut self, f: &mut ByteFile) -> i32 {
+        if f.mem.is_some() {
+            let rc = crate::out::finish(self);
+            f.close();
+            f.mem = None;
+            return rc;
+        }
         let r = match f.output.as_mut() {
             Some(w) => match w.flush() {
                 Ok(()) => 0,
@@ -1128,6 +1198,11 @@ impl Globals {
 
     /// C's `fflush` on the output file (the driver's pipe, phase 3).
     pub fn fflush(&mut self, f: &mut ByteFile) {
+        if f.mem.is_some() {
+            // `ship_out` has written a page (PDF mode).
+            crate::out::page_done(self, f);
+            return;
+        }
         f.flush();
     }
 
