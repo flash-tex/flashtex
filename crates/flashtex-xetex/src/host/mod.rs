@@ -29,6 +29,7 @@
 //! Invoked as `xetex` or `xelatex` (`argv[0]`), it is the engine itself.
 
 pub mod compile;
+pub mod fonts;
 pub mod format;
 pub mod proc;
 pub mod tools;
@@ -537,6 +538,26 @@ fn run_job(
         }
     };
     let _ = std::fs::create_dir_all(scratch);
+    // `[fonts]` (PROPOSAL.md §4.5), read after the client's buffers are
+    // written, so an unsaved manifest counts
+    let fonts = fonts::setup(&job.root, &job.format);
+    let mut notes = fonts.notes;
+    let with_fonts;
+    let job = if fonts.code.is_empty() {
+        job
+    } else if job.main.contains(['{', '}', '%', '\\', '#', '^', '~']) {
+        notes.push((
+            "warning",
+            format!("[fonts] not applied: the main file's name {:?} cannot follow them on TeX's first line", job.main),
+        ));
+        job
+    } else {
+        with_fonts = Job {
+            preamble: fonts.code,
+            ..job.clone()
+        };
+        &with_fonts
+    };
     let auto = job
         .external_tools
         .as_deref()
@@ -546,6 +567,18 @@ fn run_job(
     let mut ran_any = false;
     loop {
         started(out, job, &host.exe);
+        for (sev, m) in notes.drain(..) {
+            send_json(
+                out,
+                kind::DIAGNOSTIC,
+                &obj([
+                    ("id", Json::Int(job.id)),
+                    ("severity", js(sev)),
+                    ("message", js(m)),
+                    ("file", js("flashtex.toml")),
+                ]),
+            );
+        }
         let o = compile::compile(
             &host.exe,
             &fmt_dir,
