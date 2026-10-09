@@ -192,6 +192,8 @@ struct FlashTeXMacApp: App {
                 // The engine for the open document (EngineChoice.swift): saved per
                 // document; Settings > Compile for the others; FLASHTEX_ENGINE_V3 forces.
                 Menu("Engine for This Document") { EngineChoiceMenuItems(model: model) }
+                // Classic or Unicode, kept in flashtex.toml (ProjectMode.swift).
+                Menu("Mode for This Document") { ModeMenuItems(model: model) }
                 // Chapter focus (EngineV3FocusChapter.swift): \includeonly the active chapter.
                 Toggle("Focus Preview on This Chapter", isOn: Binding(get: { model.engineV3.focus.isActive },
                                                                       set: { $0 ? model.focusPreview() : model.showWholeDocument() }))

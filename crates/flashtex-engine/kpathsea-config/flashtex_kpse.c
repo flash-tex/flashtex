@@ -124,6 +124,21 @@ char *flashtex_kpse_var_value(void *k, const char *var)
   return kpathsea_var_value((kpathsea) k, var);
 }
 
+/* kpse_var_value as program PROG would see it (VAR.PROG and VAR_PROG in the
+   environment, VAR.PROG in texmf.cnf, before VAR): for the tools the engine
+   runs in-process, such as bibtex's `max_strings.bibtex`. The instance's
+   program name is PROG only for the call. */
+char *flashtex_kpse_var_value_prog(void *k, const char *var, const char *prog)
+{
+  kpathsea kpse = (kpathsea) k;
+  string saved = kpse->program_name;
+  char *r;
+  kpse->program_name = (string) prog;
+  r = kpathsea_var_value(kpse, var);
+  kpse->program_name = saved;
+  return r;
+}
+
 void flashtex_kpse_putenv(void *k, const char *var, const char *value)
 {
   kpathsea_xputenv((kpathsea) k, var, value);
@@ -165,6 +180,15 @@ int flashtex_kpse_name_ok(void *k, const char *fname, int write)
 {
   kpathsea kpse = (kpathsea) k;
   return write ? kpathsea_out_name_ok(kpse, fname) : kpathsea_in_name_ok(kpse, fname);
+}
+
+/* The same checks without the message, for a caller that reports a refusal
+   under another program's name (makeindex in-process: crates/makeindex). */
+int flashtex_kpse_name_ok_silent(void *k, const char *fname, int write)
+{
+  kpathsea kpse = (kpathsea) k;
+  return write ? kpathsea_out_name_ok_silent(kpse, fname)
+               : kpathsea_in_name_ok_silent(kpse, fname);
 }
 
 /* `kpsewhich -all NAME`: every match, in search order, as a malloc'd

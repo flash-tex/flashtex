@@ -1,7 +1,10 @@
 //! External tools for the engine host (lane P5-EXTERNAL-TOOLS, owner
-//! decision 2026-09-30 "4A"): bibtex, biber and makeindex from the user's
-//! TeX Live, run for a compile when latexmk would run them, and folded into
-//! the incremental compile (DESIGN.md §4.4, §4.5, §5.5).
+//! decision 2026-09-30 "4A"): bibtex, biber and makeindex, run for a
+//! compile when latexmk would run them, and folded into the incremental
+//! compile (DESIGN.md §4.4, §4.5, §5.5). bibtex and makeindex are the
+//! engine's own ports, run in-process (lane RUST-TOOLS: `crate::bibtex`,
+//! `crate::makeindex`), so they need no TeX Live and work from the bundle
+//! alone; biber is the user's TeX Live program.
 //!
 //! **When (latexmk's rules, `latexmk.pl` 4.87 `rdb_set_latex_deps`,
 //! `parse_aux`, `parse_bcf`, `rdb_rerun_needed`).** After a compile:
@@ -40,6 +43,11 @@
 //! runs them (`$bibtex_fudge`, `$makeindex_fudge`): bibtex and makeindex in
 //! the directory of the `.aux`/`.idx` with `BIBINPUTS`/`BSTINPUTS` starting
 //! with the project directory; biber with `--input-directory` the project.
+//! The in-process ports run the same way: in the scratch directory as their
+//! working directory, the project and output directories searched first
+//! (`crate::bibtex::EngineHost::first`), kpathsea's path through the
+//! engine's resolver. `FLASHTEX_BIBTEX=external` and
+//! `FLASHTEX_MAKEINDEX=external` run TeX Live's programs instead.
 //!
 //! **Trust (DESIGN.md §4.5).** External programs are off unless the client
 //! says `"external_tools": "auto"` in its `COMPILE` (the app does so for a
@@ -115,7 +123,8 @@ impl Tool {
 }
 
 /// The user's TeX Live programs (found as the engine finds TeX Live,
-/// without a shell environment: `crate::resolver::discover_texlive`).
+/// without a shell environment: `crate::resolver::discover_texlive`); `bin`
+/// is `None` without a TeX Live (bundle mode).
 #[derive(Clone, Debug, Default)]
 pub struct Programs {
     pub bin: Option<PathBuf>,
@@ -148,17 +157,68 @@ impl Programs {
         }
     }
 
-    /// For `HELLO.texmf.tools`.
+    /// Whether rules of `t` run in-process: makeindex (`crate::makeindex`)
+    /// and bibtex (`crate::bibtex`) unless `FLASHTEX_MAKEINDEX=external` or
+    /// `FLASHTEX_BIBTEX=external`, with or without a TeX Live.
+    fn in_process(t: Tool) -> bool {
+        match t {
+            #[cfg(feature = "makeindex")]
+            Tool::Makeindex => crate::makeindex::in_process(),
+            #[cfg(feature = "bibtex")]
+            Tool::Bibtex => crate::bibtex::in_process(),
+            _ => false,
+        }
+    }
+
+    /// How a rule of `t` runs: in-process ([`Programs::in_process`]), else
+    /// as the TeX Live program, if there is one.
+    fn runner(&self, t: Tool) -> Option<Runner> {
+        if Self::in_process(t) {
+            return Some(Runner::InProcess);
+        }
+        self.get(t).cloned().map(Runner::Program)
+    }
+
+    /// Why no rule of `t` can run (no in-process port and no program).
+    fn missing(&self, t: Tool) -> String {
+        match &self.bin {
+            Some(bin) => format!(
+                "{} is not in the TeX Live the host found ({})",
+                t.name(),
+                bin.display()
+            ),
+            None => {
+                let why = match t {
+                    Tool::Biber => {
+                        "FlashTeX runs bibtex and makeindex itself, but biber is \
+                         TeX Live's program (install TeX Live to use biblatex with biber)"
+                    }
+                    Tool::Bibtex => "FLASHTEX_BIBTEX=external asks for TeX Live's bibtex",
+                    Tool::Makeindex => "FLASHTEX_MAKEINDEX=external asks for TeX Live's makeindex",
+                };
+                format!(
+                    "{} is not available: no TeX Live is installed, and {why}",
+                    t.name()
+                )
+            }
+        }
+    }
+
+    /// For `HELLO.texmf.tools`: each program's path, `"built-in"` for the
+    /// engine's own port, or null.
     pub fn json(&self) -> Json {
-        let p = |x: &Option<PathBuf>| {
+        let p = |t: Tool, x: &Option<PathBuf>| {
+            if Self::in_process(t) {
+                return js("built-in");
+            }
             x.as_ref()
                 .map(|p| js(p.display().to_string()))
                 .unwrap_or(Json::Null)
         };
         obj([
-            ("bibtex", p(&self.bibtex)),
-            ("biber", p(&self.biber)),
-            ("makeindex", p(&self.makeindex)),
+            ("bibtex", p(Tool::Bibtex, &self.bibtex)),
+            ("biber", p(Tool::Biber, &self.biber)),
+            ("makeindex", p(Tool::Makeindex, &self.makeindex)),
         ])
     }
 }
@@ -223,8 +283,27 @@ impl Snapshot {
     }
 }
 
+/// The largest file a rule reads or hashes (an `.aux`, a `.bib`, an
+/// `.idx`): the tools' own limit (`flashtex_makeindex::MAX_INPUT`,
+/// `flashtex_bibtex::MAX_INPUT`).
+const MAX_INPUT: u64 = 64 << 20;
+
+/// A file's bytes, if it is a regular file (after following links) of at
+/// most [`MAX_INPUT`] bytes: a `refs.bib` that is a link to `/dev/zero`, a
+/// FIFO or a huge file is treated as missing, never read into memory.
 fn read(p: &Path) -> Option<Vec<u8>> {
-    std::fs::read(p).ok()
+    let m = std::fs::metadata(p).ok()?;
+    if !m.is_file() || m.len() > MAX_INPUT {
+        return None;
+    }
+    use std::io::Read;
+    let mut d = vec![];
+    std::fs::File::open(p)
+        .ok()?
+        .take(MAX_INPUT + 1)
+        .read_to_end(&mut d)
+        .ok()?;
+    (d.len() as u64 <= MAX_INPUT).then_some(d)
 }
 
 /// `path` (as the run named it) relative to `out`, if it is there.
@@ -431,7 +510,7 @@ pub struct Memory {
     /// Per rule: the state last reported as skipped (policy off, a missing
     /// `.bib`), so that each is said once.
     said: HashMap<RuleKey, [u64; 2]>,
-    /// kpsewhich results: (format, name) -> path.
+    /// kpathsea's answers: (format, name) -> path.
     found: HashMap<(String, String), Option<PathBuf>>,
 }
 
@@ -474,7 +553,8 @@ impl Job {
     /// Where a data file the document names is found, as the tool would
     /// find it: the project directory, then the output directory (latexmk
     /// runs bibtex there with `BIBINPUTS` starting with the project), then
-    /// kpathsea's path for `format`.
+    /// kpathsea's path for `format`, through the engine's resolver (the
+    /// bundle's without a TeX Live).
     fn find(&self, name: &str, ext: &str, format: &str) -> Option<PathBuf> {
         let with = if name.ends_with(&format!(".{ext}")) {
             name.to_string()
@@ -492,31 +572,30 @@ impl Job {
             }
         }
         let key = (format.to_string(), with.clone());
-        if let Some(r) = self.memory.lock().unwrap().found.get(&key) {
+        if let Some(r) = self
+            .memory
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .found
+            .get(&key)
+        {
             if r.as_ref().is_none_or(|p| p.is_file()) {
                 return r.clone();
             }
         }
-        let r = self.cfg.programs.kpsewhich.as_ref().and_then(|k| {
-            let o = Command::new(k)
-                .arg(format!("-format={format}"))
-                .arg(&with)
-                .current_dir(&self.snap.root)
-                .stdin(Stdio::null())
-                .stderr(Stdio::null())
-                .output()
-                .ok()?;
-            let s = String::from_utf8_lossy(&o.stdout).trim().to_string();
-            (!s.is_empty()).then(|| {
-                let p = PathBuf::from(&s);
-                if p.is_absolute() {
-                    p
-                } else {
-                    self.snap.root.join(p)
-                }
-            })
-        });
-        self.memory.lock().unwrap().found.insert(key, r.clone());
+        let fmt = match format {
+            "bst" => crate::resolver::Format::Bst,
+            _ => crate::resolver::Format::Bib,
+        };
+        // kpathsea's `.` is the project, searched above; an answer relative
+        // to the host process's own directory is not the tool's.
+        let r = crate::system::with_resolver(|r| r.find_ex(&with, fmt, true).0)
+            .filter(|p| p.is_absolute());
+        self.memory
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .found
+            .insert(key, r.clone());
         r
     }
 
@@ -573,7 +652,13 @@ impl Job {
         let (ext, _) = r.key.tool.outputs();
         let out_file = self.snap.out.join(format!("{}.{ext}", r.key.base));
         let have = read(&out_file).map(|d| hash128(&d));
-        let last = self.memory.lock().unwrap().last.get(&r.key).cloned();
+        let last = self
+            .memory
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .last
+            .get(&r.key)
+            .cloned();
         match last {
             None => Some("first run".to_string()),
             Some((s, _)) if s != state => Some("its sources changed".to_string()),
@@ -595,7 +680,7 @@ impl Job {
         self.snap.rules.iter().any(|r| {
             let (state, missing) = self.state(r);
             missing.is_empty()
-                && self.cfg.programs.get(r.key.tool).is_some()
+                && self.cfg.programs.runner(r.key.tool).is_some()
                 && self.reason(r, state).is_some()
         })
     }
@@ -615,7 +700,7 @@ impl Job {
             let file = js(r.key.source());
             let tool = js(r.key.tool.name());
             let skip = |why: String| {
-                let mut m = self.memory.lock().unwrap();
+                let mut m = self.memory.lock().unwrap_or_else(|e| e.into_inner());
                 if m.said.get(&r.key) == Some(&state) {
                     return;
                 }
@@ -640,15 +725,12 @@ impl Job {
                 skip(format!("not found: {}", missing.join(", ")));
                 continue;
             }
-            let Some(prog) = self.cfg.programs.get(r.key.tool).cloned() else {
-                skip(format!(
-                    "{} is not in the TeX Live the host found",
-                    r.key.tool.name()
-                ));
+            let Some(prog) = self.cfg.programs.runner(r.key.tool) else {
+                skip(self.cfg.programs.missing(r.key.tool));
                 // remembered: not retried until the sources change
                 self.memory
                     .lock()
-                    .unwrap()
+                    .unwrap_or_else(|e| e.into_inner())
                     .last
                     .insert(r.key.clone(), (state, None));
                 continue;
@@ -663,7 +745,7 @@ impl Job {
             let made = read(&out_file).map(|d| hash128(&d));
             self.memory
                 .lock()
-                .unwrap()
+                .unwrap_or_else(|e| e.into_inner())
                 .last
                 .insert(r.key.clone(), (state, made));
             outcomes.push(o);
@@ -671,7 +753,7 @@ impl Job {
         Report { outcomes }
     }
 
-    fn run_one(&self, r: &Rule, prog: &Path) -> Outcome {
+    fn run_one(&self, r: &Rule, prog: &Runner) -> Outcome {
         let t0 = Instant::now();
         let n = SCRATCH.fetch_add(1, Ordering::Relaxed);
         let scratch =
@@ -687,8 +769,30 @@ impl Job {
                 problem = Some(format!("{}: {e}", p.display()));
             }
         }
-        let (ext, log_ext) = r.key.tool.outputs();
+        let (result, terminal) = match prog {
+            Runner::Program(prog) => self.run_program(r, prog, &scratch, problem),
+            Runner::InProcess => self.run_in_process(r, &scratch, problem),
+        };
+        let (status, exit_code) = match &result {
+            Ok(Some(c)) => (if *c == 0 { "ok" } else { "error" }, Some(*c)),
+            Ok(None) => ("timeout", None),
+            Err(_) => ("failed", None),
+        };
+        self.finish_one(r, t0, &scratch, result, terminal, status, exit_code)
+    }
+
+    /// Run the TeX Live program `prog` for `r` in `scratch`, with a
+    /// timeout: its result and terminal output.
+    fn run_program(
+        &self,
+        r: &Rule,
+        prog: &Path,
+        scratch: &Path,
+        problem: Option<String>,
+    ) -> (Result<Option<i32>, String>, String) {
+        let (ext, _) = r.key.tool.outputs();
         let base = &r.key.base;
+        let scratch = scratch.to_path_buf();
         let mut cmd = Command::new(prog);
         match r.key.tool {
             Tool::Bibtex => {
@@ -735,11 +839,23 @@ impl Job {
             }
         };
         let terminal = std::fs::read_to_string(&term).unwrap_or_default();
-        let (status, exit_code) = match &result {
-            Ok(Some(c)) => (if *c == 0 { "ok" } else { "error" }, Some(*c)),
-            Ok(None) => ("timeout", None),
-            Err(_) => ("failed", None),
-        };
+        (result, terminal)
+    }
+
+    /// Install what the run of `r` made, report it, and clean up.
+    #[allow(clippy::too_many_arguments)]
+    fn finish_one(
+        &self,
+        r: &Rule,
+        t0: Instant,
+        scratch: &Path,
+        result: Result<Option<i32>, String>,
+        terminal: String,
+        status: &str,
+        exit_code: Option<i32>,
+    ) -> Outcome {
+        let (ext, log_ext) = r.key.tool.outputs();
+        let base = &r.key.base;
         // Install what it made (not after a timeout: it may be partial).
         let mut changed = false;
         let log_path = self.snap.out.join(format!("{base}.{log_ext}"));
@@ -760,7 +876,7 @@ impl Job {
                 }
             }
         }
-        let _ = std::fs::remove_dir_all(&scratch);
+        let _ = std::fs::remove_dir_all(scratch);
         let diags = match r.key.tool {
             Tool::Bibtex => bibtex_messages(&log_text),
             Tool::Biber => biber_messages(&log_text),
@@ -907,6 +1023,102 @@ fn install(dest: &Path, data: &[u8]) -> std::io::Result<()> {
     std::fs::rename(&tmp, dest).inspect_err(|_| {
         let _ = std::fs::remove_file(&tmp);
     })
+}
+
+/// How a tool runs.
+#[derive(Clone, Debug)]
+enum Runner {
+    /// The TeX Live program.
+    Program(PathBuf),
+    /// The engine's own port (makeindex, bibtex).
+    #[cfg_attr(not(any(feature = "makeindex", feature = "bibtex")), allow(dead_code))]
+    InProcess,
+}
+
+impl Job {
+    /// A rule's run in-process, as the program would run in `scratch`
+    /// (`makeindex -o X.ind X.idx` or `bibtex X`, standard input empty,
+    /// standard output and error captured together): `Ok(Some(status))`,
+    /// -1 where the C program's behaviour is undefined (it would have died
+    /// of a signal), `Ok(None)` (a timeout) where it would never have ended
+    /// or ran out of time.
+    #[allow(unused_variables)]
+    fn run_in_process(
+        &self,
+        r: &Rule,
+        scratch: &Path,
+        problem: Option<String>,
+    ) -> (Result<Option<i32>, String>, String) {
+        if let Some(p) = problem {
+            return (Err(p), String::new());
+        }
+        let base = &r.key.base;
+        match r.key.tool {
+            #[cfg(feature = "makeindex")]
+            Tool::Makeindex => {
+                let (ext, _) = r.key.tool.outputs();
+                let args: Vec<Vec<u8>> = vec![
+                    b"-o".to_vec(),
+                    format!("{base}.{ext}").into_bytes(),
+                    format!("{base}.idx").into_bytes(),
+                ];
+                // One buffer for both streams, as the program's share one file.
+                let term = std::cell::RefCell::new(Vec::new());
+                struct Shared<'a>(&'a std::cell::RefCell<Vec<u8>>);
+                impl std::io::Write for Shared<'_> {
+                    fn write(&mut self, b: &[u8]) -> std::io::Result<usize> {
+                        self.0.borrow_mut().extend_from_slice(b);
+                        Ok(b.len())
+                    }
+                    fn flush(&mut self) -> std::io::Result<()> {
+                        Ok(())
+                    }
+                }
+                let (mut o, mut e) = (Shared(&term), Shared(&term));
+                let mut host = crate::makeindex::EngineHost {
+                    cwd: Some(scratch.to_path_buf()),
+                    stdout: &mut o,
+                    stderr: &mut e,
+                    stdin: Some(vec![]),
+                };
+                let status = flashtex_makeindex::run(&args, &mut host);
+                let result = match status {
+                    flashtex_makeindex::LOOPS_FOREVER => Ok(None),
+                    s if s < 0 => Ok(Some(-1)),
+                    s => Ok(Some(s)),
+                };
+                drop(host);
+                let terminal = String::from_utf8_lossy(&term.borrow()).into_owned();
+                (result, terminal)
+            }
+            #[cfg(feature = "bibtex")]
+            Tool::Bibtex => {
+                // latexmk's $bibtex_fudge: run where the .aux is, with
+                // BIBINPUTS and BSTINPUTS starting with the project and the
+                // output directory.
+                let host = crate::bibtex::EngineHost {
+                    cwd: Some(scratch.to_path_buf()),
+                    first: vec![self.snap.root.clone(), self.snap.out.clone()],
+                    stream_stdout: false,
+                };
+                let deadline = Instant::now().checked_add(self.cfg.timeout);
+                let o = flashtex_bibtex::run_with_deadline(
+                    &[base.clone().into_bytes()],
+                    Box::new(host),
+                    deadline,
+                );
+                let result = match o.status {
+                    flashtex_bibtex::TIMED_OUT => Ok(None),
+                    s if s < 0 => Ok(Some(-1)),
+                    s => Ok(Some(s)),
+                };
+                let mut term = o.stdout;
+                term.extend_from_slice(&o.stderr);
+                (result, String::from_utf8_lossy(&term).into_owned())
+            }
+            t => (Err(format!("{} is not built in", t.name())), String::new()),
+        }
+    }
 }
 
 /// Run `cmd`; `Ok(Some(code))` when it exits (-1 when killed by a signal),
@@ -1197,5 +1409,32 @@ Scanning input file main.idx...\n\
             Some("main.idx")
         );
         assert_eq!(rel_to(root, Path::new("/o"), "main.idx"), None);
+    }
+}
+
+#[cfg(test)]
+mod read_tests {
+    use super::{read, MAX_INPUT};
+
+    /// A rule's inputs are read only when they are regular files within the
+    /// limit: a `.bib` that links to `/dev/zero` must not fill the host's
+    /// memory while the rule's state is hashed.
+    #[test]
+    fn devices_and_huge_files_read_as_missing() {
+        let d = std::env::temp_dir().join(format!("flashtex-ext-read-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).unwrap();
+        std::fs::write(d.join("ok.bib"), "@misc{a}\n").unwrap();
+        assert_eq!(read(&d.join("ok.bib")).as_deref(), Some(&b"@misc{a}\n"[..]));
+        #[cfg(unix)]
+        {
+            std::os::unix::fs::symlink("/dev/zero", d.join("zero.bib")).unwrap();
+            assert_eq!(read(&d.join("zero.bib")), None);
+        }
+        let f = std::fs::File::create(d.join("big.bib")).unwrap();
+        f.set_len(MAX_INPUT + 1).unwrap();
+        drop(f);
+        assert_eq!(read(&d.join("big.bib")), None);
+        let _ = std::fs::remove_dir_all(&d);
     }
 }

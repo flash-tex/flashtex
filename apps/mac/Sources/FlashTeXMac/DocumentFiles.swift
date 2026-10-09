@@ -394,6 +394,34 @@ final class DocumentFilesState {
         }
     }
 
+    /// The governing manifest's text with `[project] mode` set (the helper's
+    /// `set_mode`), for the caller to `save` (like `setFonts`).
+    func setMode(for root: URL, entry: String, mode: String) -> Result<ProjectFilesV1.SetFonts, ProjectManifest.Failure> {
+        switch acquire(for: root.appendingPathComponent(ProjectManifest.fileName)) {
+        case .direct(let reason):
+            note(reason)
+            return .failure(.init("flashtex.toml is written by the project-files helper, which is not available: \(reason)"))
+        case .unavailable(let reason):
+            return .failure(.init(reason))
+        case .client(let client):
+            let outcome: Outcome<ProjectFilesV1.SetFonts> = roundTrip({ done in
+                client.send({ ProjectFilesV1.SetModeRequest(id: $0, entry: entry, mode: mode) }, as: ProjectFilesV1.SetFonts.self, completion: done)
+            }, late: { [weak self] result in
+                self?.lateReplies.append("set_mode: \(Self.describe(result))")
+                self?.note("late reply to set_mode arrived after \(String(format: "%.1f", self?.helperTimeout ?? 0)) s; ignored")
+            })
+            switch outcome {
+            case .reply(let m): return .success(m)
+            case .failed(let f):
+                note("helper set_mode failed: \(f.text)")
+                return .failure(.init(f.text))
+            case .timedOut(let t):
+                note("helper did not answer set_mode within \(String(format: "%.1f", t)) s")
+                return .failure(.init("no reply from the project-files helper within \(String(format: "%.1f", t)) s"))
+            }
+        }
+    }
+
     func manifest(for root: URL, entry: String) -> Result<ProjectFilesV1.Manifest, ProjectManifest.Failure> {
         // `acquire` binds the helper to the directory of the URL it is given.
         switch acquire(for: root.appendingPathComponent(ProjectManifest.fileName)) {

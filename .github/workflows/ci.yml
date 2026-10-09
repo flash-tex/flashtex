@@ -342,7 +342,7 @@ jobs:
           # sides), the host itself, or this file. Not on every engine change:
           # engine parity covers the typesetting, and this is a ~20 minute
           # hosted macOS job. Never in the gate.
-          v3_app_paths='^(apps/mac/(Sources/FlashTeXMac/(EngineV3|EngineChoice)|Sources/FlashTeXDisplayListV3/|Tests/FlashTeXMacTests/(EngineV3|EngineChoiceTests)|Package\.swift$)|crates/(flashtex-engine/src/host/|display-list-v3/)|tools/parity/app[-_]parity[-_]rows|\.github/workflows/ci\.yml$)'
+          v3_app_paths='^(apps/mac/(Sources/FlashTeXMac/(EngineV3|EngineChoice|ProjectMode)|Sources/FlashTeXDisplayListV3/|Tests/FlashTeXMacTests/(EngineV3|EngineChoiceTests)|Package\.swift$)|crates/(flashtex-engine/src/host/|flashtex-xetex/src/host/|display-list-v3/)|tools/parity/app[-_]parity[-_]rows|\.github/workflows/ci\.yml$)'
           v3_app=false
           case "$tier" in
             all) v3_app=true ;;
@@ -586,6 +586,8 @@ jobs:
       # that need pdfTeX or qpdf skip on this runner).
       - name: "parity, P5 board and package-smoke self-tests"
         if: ${{ !cancelled() && runner.os == 'Linux' }}
+        # ~1 min when green; a hang (WorkerDeath's pool, 2026-10) must fail this step, not eat the job
+        timeout-minutes: 10
         run: |
           set -euo pipefail
           # qpdf: package-smoke's runner and P-T2 compare PDFs through it (its tests skip without it)
@@ -1180,12 +1182,36 @@ jobs:
           sudo tlmgr install lipsum pgf xcolor
           kpsewhich pdflatex.ini
           pdflatex --version | head -n 1
+          # Unicode mode's tests (EngineV3ModeTests) build xelatex.fmt and
+          # compile a fontspec document: BasicTeX's XeTeX inputs, plus these.
+          sudo tlmgr install fontspec unicode-math lm-math tex-ini-files || true
+          kpsewhich xelatex.ini fontspec.sty
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:
           key: v3-host
           # The build is ~11 min cold; keep it even when a test fails.
           cache-on-failure: true
+      - uses: Swatinem/rust-cache@v2
+        # Unicode mode's host (crates/flashtex-xetex, its own workspace and
+        # target/; HarfBuzz, FreeType and TECkit compile from source).
+        with:
+          key: v3-host-unicode
+          workspaces: crates/flashtex-xetex -> target
+          cache-on-failure: true
+      - name: Build flashtex-host-unicode (release), when this tree has it
+        # Once crates/flashtex-xetex has the host (#1732), it is built and
+        # REQUIRED: FLASHTEX_REQUIRE_HOST_UNICODE=1 makes EngineV3ModeTests
+        # fail, not skip, without it. Before that, those tests skip.
+        run: |
+          set -euo pipefail
+          if [ -f crates/flashtex-xetex/src/bin/flashtex-host-unicode.rs ]; then
+            (cd crates/flashtex-xetex && cargo build --release --locked --bin flashtex-host-unicode)
+            echo "FLASHTEX_HOST_UNICODE=$PWD/crates/flashtex-xetex/target/release/flashtex-host-unicode" >> "$GITHUB_ENV"
+            echo "FLASHTEX_REQUIRE_HOST_UNICODE=1" >> "$GITHUB_ENV"
+          else
+            echo "no crates/flashtex-xetex host in this tree: Unicode-host tests skip"
+          fi
       - name: Build flashtex-host and every bundled helper (release)
         # The host is found through FLASHTEX_HOST; the helpers' FLASHTEX_*
         # lines are what mac-app exports (flashtex-project-files for the
