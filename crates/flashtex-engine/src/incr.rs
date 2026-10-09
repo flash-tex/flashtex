@@ -786,8 +786,17 @@ impl Obs {
         if self.changed_lookup_last.is_some_and(|b| o.reads.1 <= b) {
             return Err("the old run makes a lookup later whose answer changed".into());
         }
+        // Only reads the convergence keeps: those before the old run's last
+        // page checkpoint (`old_reads_end`). From there `\end{document}`
+        // re-runs live (`end_point`, after the jump), and it re-reads the
+        // `.aux` the pages wrote; that re-read of a changed `.aux` failed
+        // every test of an `.aux` pass (PASS-REUSE, #1705).
         let from = o.reads.0.min(self.old_journal_files.len());
-        if let Some(p) = self.old_journal_files[from..]
+        let until = match self.old_reads_end {
+            0 => self.old_journal_files.len(),
+            e => e.min(self.old_journal_files.len()),
+        };
+        if let Some(p) = self.old_journal_files[from..until.max(from)]
             .iter()
             .find(|p| self.changed.contains(p))
         {
