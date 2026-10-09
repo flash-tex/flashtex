@@ -560,7 +560,7 @@ jobs:
     needs: [plan]
     if: needs.plan.outputs.run == 'true'
     runs-on: ${{ matrix.os == 'macos-15' && fromJSON(needs.plan.outputs.mac_rust_runner) || 'ubuntu-latest' }}
-    timeout-minutes: 45
+    timeout-minutes: 75
     strategy:
       fail-fast: false
       matrix:

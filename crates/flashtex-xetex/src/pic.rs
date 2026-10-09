@@ -579,6 +579,66 @@ pub fn pdf_rect(path: &str, page_num: i32, pdf_box: i32) -> Option<[f64; 4]> {
     Some([k * fmin(lx, rx), k * fmin(ly, ry), wd, ht])
 }
 
+/// A page of a PDF file as the output includes it (`pdf:image`): the page
+/// number (1-based, clamped as [`pdf_rect`] clamps it), the selected box
+/// in bp as the file has it (`[llx, lly, urx, ury]`, normalised), and the
+/// page's own `/Rotate` (0, 90, 180 or 270).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct PdfPage {
+    pub page: i32,
+    pub bbox: [f64; 4],
+    pub rotate: i32,
+}
+
+/// [`pdf_rect`]'s page and box, in bp, for the output.
+pub fn pdf_page(path: &str, page_num: i32, pdf_box: i32) -> Option<PdfPage> {
+    let doc = open_pdf(path)?;
+    let pages = doc.num_pages();
+    let mut n = page_num;
+    if n > pages {
+        n = pages;
+    }
+    if n < 0 {
+        n += pages + 1;
+    }
+    if n < 1 {
+        n = 1;
+    }
+    let (num, gen) = doc.page_ref(n)?;
+    let page = doc.fetch(num, gen);
+    if !page.is_dict() {
+        return None;
+    }
+    let first: &[u8] = match pdf_box {
+        PDFBOX_MEDIA => b"MediaBox",
+        PDFBOX_BLEED => b"BleedBox",
+        PDFBOX_TRIM => b"TrimBox",
+        PDFBOX_ART => b"ArtBox",
+        _ => b"CropBox",
+    };
+    let names: [&[u8]; 6] = [
+        first,
+        b"CropBox",
+        b"MediaBox",
+        b"BleedBox",
+        b"TrimBox",
+        b"ArtBox",
+    ];
+    let [lx, ly, rx, ry] = names
+        .iter()
+        .find_map(|name| inherited_box(&doc, &page, name))?;
+    let rot = page.dict_lookup_nf(b"Rotate");
+    let mut angle = if rot.is_int() { rot.get_int() } else { 0 } % 360;
+    if angle < 0 {
+        angle += 360;
+    }
+    Some(PdfPage {
+        page: n,
+        bbox: [lx.min(rx), ly.min(ry), lx.max(rx), ly.max(ry)],
+        rotate: angle,
+    })
+}
+
 /// `pdf_count_pages`.
 pub fn pdf_pages(path: &str) -> i32 {
     open_pdf(path).map_or(0, |d| d.num_pages())
@@ -632,6 +692,9 @@ impl Globals {
         let Some([x, y, wd, ht]) = pic_bounds(&found, pdf_box_type, page) else {
             return -1;
         };
+        if !self.host.no_pdf.0 {
+            self.host.pictures.insert(found.clone());
+        }
         *bounds = real_rect {
             x: round_f32(x),
             y: round_f32(y),
