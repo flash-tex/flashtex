@@ -207,6 +207,9 @@ pub enum Primitive {
     NewTheorem,
     Begin,
     End,
+    /// `\@checkend{name}` as `\end` runs it, after the end code:
+    /// `\@currenvir` must spell `name` (latex.ltx).
+    CheckEnd,
     NewCounter,
     SetCounter,
     AddToCounter,
