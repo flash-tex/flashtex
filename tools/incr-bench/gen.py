@@ -62,6 +62,14 @@ def doc(pages, full):
     return "".join(out)
 
 
+def titled(pages, full):
+    """`doc` with front matter (`\\title`, `\\author`, `\\date`) on the lines right after the last
+    `\\usepackage`, which that package's look for an optional date reads before it loads (a preamble
+    edit there restarts in the middle of the line: PREAMBLE-MIDLINE), and `\\maketitle`."""
+    front = "\\title{A test article about things}\n\\author{A. Author}\n\\date{\\today}\n"
+    return doc(pages, full).replace("\\begin{document}\n\n", front + "\\begin{document}\n\\maketitle\n\n", 1)
+
+
 def main():
     d = sys.argv[1]
     os.makedirs(d, exist_ok=True)

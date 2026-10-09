@@ -625,6 +625,10 @@ extension ShellModel {
     func engineBlocker() -> EngineChoice.Blocker? {
         if engineHostLacksTeXLive || !EngineChoice.texLiveAvailable() { return .noTeXLive }
         if EngineV3Bundle.currentGate() == .declined { return .bundleDeclined }
+        // In Unicode mode (ProjectMode.swift) the new engine's Unicode host
+        // applies `[fonts]` and loads OpenType fonts itself: neither rule
+        // sends the document to the compatibility engine.
+        if documentMode.mode == .unicode, unicodeModeAvailable { return nil }
         if let snapshot = manifest.currentSnapshot, let b = EngineChoice.blocker(manifest: snapshot.manifest) { return b }
         let reported = engineHostNeedsUnicode.flatMap { $0.document == documentURL ? $0.need : nil }
         if let need = unicodeFontsNeed() ?? reported { return .unicodeFonts(need) }
@@ -788,7 +792,9 @@ struct EngineFallbackBanner: View {
     @Environment(ShellModel.self) var model
 
     var body: some View {
-        if let blocker = model.engineChoice.blocker, !model.engineFallbackDismissed {
+        // (a document Unicode mode would typeset gets the one-click switch
+        // instead: UnicodeModeSuggestionBanner)
+        if let blocker = model.engineChoice.blocker, !model.engineFallbackDismissed, !Self.coveredBySuggestion(blocker, model) {
             HStack(alignment: .firstTextBaseline, spacing: DS.Space.m) {
                 Image(systemName: "exclamationmark.triangle.fill")
                     .foregroundStyle(DS.Colors.severityWarning)
@@ -818,6 +824,16 @@ struct EngineFallbackBanner: View {
 }
 
 extension EngineFallbackBanner {
+    /// Whether UnicodeModeSuggestionBanner says it instead, with the switch.
+    @MainActor static func coveredBySuggestion(_ b: EngineChoice.Blocker, _ model: ShellModel) -> Bool {
+        switch b {
+        case .unicodeFonts, .projectFonts:
+            return model.unicodeModeAvailable && model.modeSwitchRefusal == nil && UnicodeModeSuggestionBanner.message(model) != nil
+        default:
+            return false
+        }
+    }
+
     /// The banner's first line (also what is announced when the fallback starts).
     static func headline(_ b: EngineChoice.Blocker) -> String {
         if case .unicodeFonts = b { return "Using compatibility engine: \(b.short)." }

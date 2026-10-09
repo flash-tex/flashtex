@@ -417,6 +417,14 @@ public final class DL3ResourceCache: @unchecked Sendable {
         return r
     }
 
+    /// Memory pressure: forgets every cached image. A page that holds one
+    /// keeps it (what is on screen stays); the rest are freed, and an id
+    /// bound again decodes its image again.
+    public func trimImages() {
+        lock.lock(); defer { lock.unlock() }
+        images = [:]; imageOrder = []; imageBytes = 0
+    }
+
     private static func cost(_ r: Result<DL3RenderImage, DL3Error>) -> Int {
         if case .success(let i) = r { return i.cost }
         return 0

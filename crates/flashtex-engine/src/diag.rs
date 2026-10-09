@@ -450,11 +450,43 @@ pub fn reset() {
 
 /// The definition sites, for S₀.
 pub fn sites() -> Vec<(i32, Site)> {
-    with(|s| {
-        let mut v: Vec<(i32, Site)> = s.defs.iter().map(|(k, v)| (*k, s.site(v))).collect();
-        v.sort_by_key(|x| x.0);
-        v
+    sites_snapshot().sites()
+}
+
+/// The definition sites as the table holds them: each file name once, and
+/// each definition with its file's number. Taking it is cheap; making the
+/// [`Site`]s (a file name each, a beamer preamble's tens of thousands) can
+/// then be done on another thread (`host::s0write`).
+pub struct SitesSnapshot {
+    files: Vec<Vec<u8>>,
+    defs: Vec<(i32, Def)>,
+}
+
+/// [`sites`], to be made later ([`SitesSnapshot::sites`]).
+pub fn sites_snapshot() -> SitesSnapshot {
+    with(|s| SitesSnapshot {
+        files: s.files.clone(),
+        defs: s.defs.iter().map(|(k, d)| (*k, *d)).collect(),
     })
+}
+
+impl SitesSnapshot {
+    /// The sites, by token list.
+    pub fn sites(mut self) -> Vec<(i32, Site)> {
+        self.defs.sort_unstable_by_key(|x| x.0);
+        self.defs
+            .iter()
+            .map(|(k, d)| {
+                let site = Site {
+                    file: self.files[d.file as usize].clone(),
+                    line: d.line,
+                    col: d.col,
+                    print: d.print,
+                };
+                (*k, site)
+            })
+            .collect()
+    }
 }
 
 /// Put definition sites back (opening S₀).
@@ -817,6 +849,8 @@ impl Globals {
                 cap_before(&mut f.before);
                 f.after = (split..j.max(split)).map(byte).take(TEXT_CAP).collect();
                 if r.name_field > 17 {
+                    // (the line's text: `crate::midline`)
+                    self.midline_note_shown(r.index_field);
                     let name = self.full_source_filename_stack[r.index_field as usize];
                     let line = self.dg_level_line(r.index_field);
                     let from = token_start(self, start, split);

@@ -57,7 +57,9 @@ struct WorkspaceSidebar: View {
             let revision = model.chrome.editorRevision, path = model.activePath
             if outlineFor.revision >= 0 { try? await Task.sleep(for: .milliseconds(150)) }
             guard !Task.isCancelled else { return }
-            outline = model.outline
+            let scanned = await DocumentOutline.scanOffMain(model.activeText)
+            guard !Task.isCancelled else { return }
+            outline = scanned
             outlineFor = (path, revision)
         })
         .background(IsolatedTask(id: { [outline] in "\(model.caretUTF16)/\(outline.count)/\(outline.first?.utf16.location ?? -1)" }) { _ in
@@ -328,6 +330,7 @@ struct ProjectSection: View {
             if id.hasPrefix("closed:"), let path = ProjectTreeMove.path(forRowID: id) {
                 items.append(.divider)
                 items.append(.init(title: "Move to…", action: { model.scaffold.presentMove(path) }))
+                items += focusItems(path) // EngineV3FocusChapter.swift
             }
             // Tree mode's folder rows: the folder itself, when it is on disk.
             if id.hasPrefix(ProjectFileTree.folderPrefix) {
@@ -355,7 +358,18 @@ struct ProjectSection: View {
             items.append(.init(title: "Move to…", action: { model.scaffold.presentMove(path) })) // ProjectMove.swift; rows also drag
             items.append(.init(title: "Delete…", action: { model.scaffold.presentDelete(path) }))
         }
+        items += focusItems(path) // EngineV3FocusChapter.swift
         return items
+    }
+
+    /// "Focus Preview on This Chapter" for an `\include`d file; "Show Whole
+    /// Document" while the preview is focused on it.
+    private func focusItems(_ path: String) -> [SidebarTree.MenuItem] {
+        if model.engineV3.focus.chapters.contains(where: { $0.path == path }) {
+            return [.divider, .init(title: "Show Whole Document in Preview", action: { model.showWholeDocument() })]
+        }
+        guard model.focusChapter(for: path) != nil else { return [] }
+        return [.divider, .init(title: "Focus Preview on This Chapter", action: { model.focusPreview(on: path) })]
     }
 
     /// Right-click on the tree's empty space: the project as a whole. The tree

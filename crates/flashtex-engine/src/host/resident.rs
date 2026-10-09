@@ -785,6 +785,13 @@ impl Engine {
             // (only when set: a normal job's stored S0 keeps its key)
             if job.halt { "\0halt" } else { "" }
         );
+        // A focused job (`includeonly`, lane FOCUS-CHAPTER) has its own
+        // stored S0 (its first line differs), so switching the focus back
+        // and forth keeps both.
+        let key = match &job.includeonly {
+            Some(list) => format!("{key}\0includeonly\0{list}"),
+            None => key,
+        };
         let h = crate::persist::hash128(key.as_bytes());
         Some(dir.join(format!("{:016x}{:016x}.s0", h[0], h[1])))
     }
@@ -923,6 +930,15 @@ impl Engine {
         ps.peer.font_formats = Some(displaylist::parse_font_formats(
             &server::font_formats(&req).join(","),
         ));
+        // (a save of this S₀ still being written by this process: wait for it)
+        if doc.compiles == 0 {
+            if let Some(p) = &s0_path {
+                super::s0write::flush(
+                    Some(&p.to_string_lossy()),
+                    std::time::Duration::from_secs(30),
+                );
+            }
+        }
         let reopen = doc.compiles == 0 && s0_path.as_ref().is_some_and(|p| p.is_file());
         started(
             "resident",
@@ -1145,6 +1161,20 @@ impl Engine {
                         "restart_preamble".to_string(),
                         Json::Bool(rep.restart_preamble),
                     ),
+                    // READ-REVALIDATE: a later restart point tried (`crate::revalidate`)
+                    (
+                        "revalidated".to_string(),
+                        rep.revalidated.map(Json::Bool).unwrap_or(Json::Null),
+                    ),
+                    // ... in the middle of the main file's line (`crate::midline`)
+                    (
+                        "restart_midline".to_string(),
+                        Json::Bool(rep.restart_midline),
+                    ),
+                    (
+                        "arm_revalidated".to_string(),
+                        rep.arm_revalidated.map(Json::Bool).unwrap_or(Json::Null),
+                    ),
                     (
                         "restart_next_gap".to_string(),
                         rep.restart_next_gap.map(Json::Int).unwrap_or(Json::Null),
@@ -1277,15 +1307,11 @@ impl Engine {
             st.push(("send".to_string(), m(t.send_ns as f64 * 1e-6)));
             st.push(("cpu".to_string(), m((incr::thread_cpu_s() - t.cpu0) * 1e3)));
             // the convergence tests' old chunks kept and rewound
-            // (`arena::OldCache`), since the host started
+            // (`arena::OldCache`), over this document's engine space
             {
-                use std::sync::atomic::Ordering::Relaxed;
-                let c = |a: &std::sync::atomic::AtomicU64| Json::Int(a.load(Relaxed) as i64);
-                st.push(("old_kept".to_string(), c(&crate::arena::OLD_CACHE_HITS)));
-                st.push((
-                    "old_rewound".to_string(),
-                    c(&crate::arena::OLD_CACHE_MISSES),
-                ));
+                let (kept, rewound) = doc.session.old_cache_counts();
+                st.push(("old_kept".to_string(), Json::Int(kept as i64)));
+                st.push(("old_rewound".to_string(), Json::Int(rewound as i64)));
             }
             // Instructions and cycles of the engine thread, in thousands:
             // the whole compile, to the first page, and (from the session)
@@ -1467,21 +1493,43 @@ impl Engine {
         if let Some(d) = p.parent() {
             let _ = std::fs::create_dir_all(d);
         }
+        // The engine thread only takes S₀ out of the engine; the writer
+        // thread writes it (`super::s0write`), so a keystroke that comes now
+        // does not wait for the file.
         let t = Instant::now();
-        match doc.session.save_s0(&p.to_string_lossy()) {
+        let i0 = crate::os::thread_counts();
+        let image = doc.session.prepare_s0();
+        let engine_ms = (t.elapsed().as_secs_f64() * 1e4).round() / 10.0;
+        let engine_instr_k = match (i0, crate::os::thread_counts()) {
+            (Some(a), Some(b)) => Json::Int(((b.0 - a.0) / 1000) as i64),
+            _ => Json::Null,
+        };
+        let image = match image {
+            Ok(i) => i,
+            Err(e) => {
+                eprintln!("flashtex-host: saving S0: {e}");
+                return;
+            }
+        };
+        let shown = p.display().to_string();
+        let done: super::s0write::Done = Box::new(move |r, write_s| match r {
             Ok((bytes, _)) => server::say(&format!(
                 "flashtex-host: {}",
                 obj([
-                    ("saved_s0", js(p.display().to_string())),
+                    ("saved_s0", js(shown)),
                     ("bytes", Json::Int(bytes as i64)),
                     (
                         "ms",
                         Json::Num((t.elapsed().as_secs_f64() * 1e4).round() / 10.0)
                     ),
+                    ("engine_ms", Json::Num(engine_ms)),
+                    ("engine_instr_k", engine_instr_k),
+                    ("write_ms", Json::Num((write_s * 1e4).round() / 10.0)),
                 ])
             )),
             Err(e) => eprintln!("flashtex-host: saving S0: {e}"),
-        }
+        });
+        super::s0write::submit(&p.to_string_lossy(), image, done);
     }
 
     /// After a compile's `DONE`: let the tools look at what it left
@@ -1695,24 +1743,32 @@ fn settle(doc: &mut Doc, conn: &Conn, id: i64, limit: bool) {
 /// retention pass merged, a detached branch, the convergence test's
 /// buffers) mapped, so the host's resident memory stayed at its peak: on
 /// full-1000, 1.5 GB resident for a 0.47 GB heap
-/// (docs/evidence/p4-memory-2026-09-30/). macOS's allocator returns free
-/// pages itself. FLASHTEX_NO_TRIM=1 leaves it out (for A/B).
+/// (docs/evidence/p4-memory-2026-09-30/). With jemalloc as the host's heap
+/// (`crate::logalloc`, feature `jemalloc`) the Rust side's free pages go
+/// back by a purge of its arenas (`logalloc::give_back`), and glibc's trim
+/// is left with the C parts' blocks. macOS's allocator returns free pages
+/// itself. FLASHTEX_NO_TRIM=1 leaves it out (for A/B).
 fn give_back_free_memory() {
-    #[cfg(all(target_os = "linux", target_env = "gnu"))]
-    {
-        extern "C" {
-            fn malloc_trim(pad: usize) -> i32;
-        }
-        if std::env::var_os("FLASHTEX_NO_TRIM").is_none() {
-            let t = Instant::now();
+    #[cfg(target_os = "linux")]
+    if std::env::var_os("FLASHTEX_NO_TRIM").is_none() {
+        let t = Instant::now();
+        let purged = crate::logalloc::give_back();
+        let tp = t.elapsed();
+        #[cfg(target_env = "gnu")]
+        {
+            extern "C" {
+                fn malloc_trim(pad: usize) -> i32;
+            }
             // SAFETY: no preconditions; it only releases free memory.
             unsafe { malloc_trim(0) };
-            if std::env::var_os("FLASHTEX_MEMSTAT").is_some() {
-                eprintln!(
-                    "flashtex-host: malloc_trim {:.2} ms",
-                    t.elapsed().as_secs_f64() * 1e3
-                );
-            }
+        }
+        if std::env::var_os("FLASHTEX_MEMSTAT").is_some() {
+            eprintln!(
+                "flashtex-host: give back {:.2} ms (jemalloc purge {}: {:.2} ms)",
+                t.elapsed().as_secs_f64() * 1e3,
+                purged,
+                tp.as_secs_f64() * 1e3
+            );
         }
     }
     // macOS's allocator returns most free pages itself, but its magazines

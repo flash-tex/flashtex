@@ -230,6 +230,13 @@ const REQ_PREAMBLE_LINE: i32 = 9;
 /// `\document`'s body was pushed (`ckpt_on_arm`): the `.aux` point of a run
 /// with no `.aux`, before `\document` looks for it.
 const REQ_AUX_ARM: i32 = 10;
+/// `\document`'s original body runs under another name (a preamble wrapped
+/// `\document` and calls the saved original last): S₀ is taken at the
+/// first `big_switch` after `\@nodocument` becomes `\relax`. Asked again
+/// after every other request (`Layer::s0_polling`), and kept in the word
+/// space at each checkpoint taken meanwhile, so that a run restored there
+/// goes on asking. Any other request may take its place.
+const REQ_S0_WAIT: i32 = 11;
 
 /// `hash_base` (tex.web §222): `active_base + 256 + 256 + 1`, the same in
 /// every configuration.
@@ -372,6 +379,22 @@ pub struct Pending {
     rs_old: crate::readset::ReadSet,
 }
 
+/// The anchor's bookkeeping `Globals::forget_anchor` clears
+/// (`Globals::anchor_state`).
+pub struct AnchorState {
+    s0: Option<CheckpointId>,
+    s0_reads: Option<system::ReadLog>,
+    aux_point: Option<CheckpointId>,
+    aux_path: Option<String>,
+    aux_armed: bool,
+    aux_close_rs: Option<usize>,
+    aux_done: Option<CheckpointId>,
+    aux_done_pending: bool,
+    preamble_file_closed: bool,
+    preamble_line_pending: bool,
+    s0_polling: bool,
+}
+
 /// The checkpoint layer's bookkeeping, kept in `Globals::arena.extra`.
 #[derive(Default)]
 pub struct Layer {
@@ -405,6 +428,17 @@ pub struct Layer {
     pub arm_point: Option<CheckpointId>,
     pub aux_at_arm: bool,
     pub aux_moved: bool,
+    /// How many files the run had read when `\document`'s body was pushed
+    /// (`REQ_AUX_ARM`), before `\document` looks for the `.aux`: a whole
+    /// read from there to the anchor (its `\IfFileExists`, whose l3
+    /// lookup takes `\pdffilesize`) is the journal's, not S₀'s key's
+    /// (`host::make_key`, `incr::Session::take_s0`).
+    pub arm_reads: Option<usize>,
+    /// The checkpoint where `\document`'s body was pushed (the `.aux`
+    /// point itself in a run with no `.aux`): where a run restarts when a
+    /// whole read made between there and the anchor changed
+    /// (`incr::Session::arm_window`).
+    pub arm_ck: Option<CheckpointId>,
     /// Stop the run with `EngineExit(-1)` right after S₀ is taken.
     pub stop_at_s0: bool,
     /// Errors the hook met (a checkpoint it could not take).
@@ -446,6 +480,12 @@ pub struct Layer {
     /// (`build_page`'s segments, the timed ones) take over, so that the
     /// line's checkpoint is asked for again after them.
     preamble_line_pending: bool,
+    /// PREAMBLE-MIDLINE (`crate::midline`): what `input_ln` did with the
+    /// main file's current line, the mid-line checkpoints taken, and one
+    /// to take at once (after a refill).
+    pub main_read: std::cell::Cell<Option<crate::midline::MainRead>>,
+    pub midlines: Vec<(CheckpointId, crate::midline::MidLine)>,
+    pub midline_force: bool,
     /// Segment checkpoints only where the observer stops the run
     /// (`Observer::take_held_segment`; `crate::incr`: an edit's run until its
     /// edited page has shipped).
@@ -466,6 +506,10 @@ pub struct Layer {
     pub aux_close_rs: Option<usize>,
     pub aux_done: Option<CheckpointId>,
     aux_done_pending: bool,
+    /// `REQ_S0_WAIT`: S₀ is due once `\@nodocument` is `\relax`.
+    s0_polling: bool,
+    /// `\@nodocument`'s control sequence, once looked up.
+    nodoc_cs: Option<Option<i32>>,
 }
 
 /// Where the time of `checkpoint` goes, and how much of the word space each
@@ -667,7 +711,7 @@ impl Globals {
             .expect("arena.extra holds the checkpoint layer")
     }
 
-    fn layer_ref(&self) -> Option<&Layer> {
+    pub(crate) fn layer_ref(&self) -> Option<&Layer> {
         self.arena.extra.as_ref()?.downcast_ref::<Layer>()
     }
 
@@ -859,6 +903,8 @@ impl Globals {
         crate::pdftex::set_last_byte_reads(rec.last_byte_reads);
         crate::pdftex::set_matrix_uses(rec.matrix_uses);
         self.layer().rs.truncate(rec.rs);
+        // (`crate::midline`: set again from a mid-line point's record)
+        self.layer().main_read.set(None);
         crate::lineshift::restore(self, &rec.lines);
         match err {
             Some(e) => Err(format!("cannot restore the files: {e}")),
@@ -1310,6 +1356,18 @@ impl Globals {
         b.get(..to.checked_sub(from)? as usize).map(|s| s.to_vec())
     }
 
+    /// The old run's kept bytes of output file `path`, from the branch the
+    /// last `restore` detached: where they begin (its length at the
+    /// restore target, or 0) and all of them from there to the old run's
+    /// end (`None`: not kept). `crate::revalidate` compares a file closed
+    /// since the target with them.
+    pub fn pending_old_tail(&self, path: &str) -> Option<(u64, Vec<u8>)> {
+        let p = self.layer_ref()?.pending.as_ref()?;
+        let k = system::out_key(path);
+        let t = p.tails.iter().find(|t| system::out_key(&t.path) == k)?;
+        Some((t.base, t.bytes.get(t.base, 0).ok()?))
+    }
+
     /// Where the old run's kept bytes of output file `path` begin (its
     /// length at the restore target; 0 when it was not open there or the
     /// old run opened it again after it), from the branch the last
@@ -1734,6 +1792,45 @@ impl Globals {
         records.retain(|(i, _)| ids.contains(i));
     }
 
+    /// `retain_checkpoints` for the pending branch (the old run's future,
+    /// detached by the last restore): drop every checkpoint of it that
+    /// `keep` rejects, except the restore target and the old run's newest,
+    /// merging their logs (`Arena::retain_branch`) and dropping their host
+    /// records. A dropped checkpoint's line journal goes to the next one
+    /// kept, as in `retain_checkpoints`.
+    pub fn retain_pending(&mut self, keep: &dyn Fn(CheckpointId) -> bool) {
+        if self.layer_ref().is_none() {
+            return;
+        }
+        let Some(mut p) = self.layer().pending.take() else {
+            return;
+        };
+        let order = p.branch.ids().to_vec();
+        self.arena.retain_branch(&mut p.branch, keep);
+        let ids: std::collections::HashSet<CheckpointId> = p.branch.ids().iter().copied().collect();
+        let at: std::collections::HashMap<CheckpointId, usize> = p
+            .records
+            .iter()
+            .enumerate()
+            .map(|(k, (i, _))| (*i, k))
+            .collect();
+        let mut carry = vec![];
+        for id in order {
+            let Some(&k) = at.get(&id) else { continue };
+            let here = &mut p.records[k].1.lines.here;
+            if ids.contains(&id) {
+                if !carry.is_empty() {
+                    carry.append(here);
+                    *here = std::mem::take(&mut carry);
+                }
+            } else {
+                carry.append(here);
+            }
+        }
+        p.records.retain(|(i, _)| ids.contains(i));
+        self.layer().pending = Some(p);
+    }
+
     /// The line records of the pending branch's checkpoints (the old run's
     /// future), in the order the run took them (`crate::lineshift`).
     pub fn pending_lines(&self) -> Vec<(CheckpointId, crate::lineshift::Rec)> {
@@ -1764,14 +1861,51 @@ impl Globals {
         let l = self.layer();
         l.records.clear();
         l.taken.clear();
+        l.midlines.clear();
         l.s0 = None;
+        l.s0_polling = false;
     }
 
     /// Forget S₀, the `.aux` point and the `.aux` read's end, after a
     /// restore to a checkpoint before them (a preamble edit; `crate::incr`):
     /// the run takes them again where a run from the format does.
+    /// What `forget_anchor` forgets, to put back after a run restored
+    /// before the anchor was abandoned (`incr::Session::arm_window`).
+    pub fn anchor_state(&mut self) -> AnchorState {
+        let l = self.layer();
+        AnchorState {
+            s0: l.s0,
+            s0_reads: l.s0_reads.clone(),
+            aux_point: l.aux_point,
+            aux_path: l.aux_path.clone(),
+            aux_armed: l.aux_armed,
+            aux_close_rs: l.aux_close_rs,
+            aux_done: l.aux_done,
+            aux_done_pending: l.aux_done_pending,
+            preamble_file_closed: l.preamble_file_closed,
+            preamble_line_pending: l.preamble_line_pending,
+            s0_polling: l.s0_polling,
+        }
+    }
+
+    pub fn set_anchor_state(&mut self, a: AnchorState) {
+        let l = self.layer();
+        l.s0 = a.s0;
+        l.s0_reads = a.s0_reads;
+        l.aux_point = a.aux_point;
+        l.aux_path = a.aux_path;
+        l.aux_armed = a.aux_armed;
+        l.aux_close_rs = a.aux_close_rs;
+        l.aux_done = a.aux_done;
+        l.aux_done_pending = a.aux_done_pending;
+        l.preamble_file_closed = a.preamble_file_closed;
+        l.preamble_line_pending = a.preamble_line_pending;
+        l.s0_polling = a.s0_polling;
+    }
+
     pub fn forget_anchor(&mut self) {
         let l = self.layer();
+        l.s0_polling = false;
         l.s0 = None;
         l.s0_reads = None;
         l.aux_point = None;
@@ -1782,6 +1916,7 @@ impl Globals {
         l.aux_done_pending = false;
         l.preamble_file_closed = false;
         l.preamble_line_pending = false;
+        l.midline_force = false;
     }
 
     // ---- the hook and its requests -------------------------------------
@@ -1847,6 +1982,15 @@ impl Globals {
     /// (changes/checkpoint.ch).
     pub fn flashtex_checkpoint_hook(&mut self) {
         let req = std::mem::replace(&mut self.ckpt_request, 0);
+        if req == REQ_S0_WAIT {
+            // (also after a restore to a checkpoint taken while it waited)
+            self.layer().s0_polling = true;
+        }
+        if self.layer().s0_polling {
+            // kept while this request is handled: in the word space at a
+            // checkpoint it takes, and asked again after it
+            self.ckpt_request = REQ_S0_WAIT;
+        }
         match req {
             REQ_LOOKUP => {
                 let name = self.layer().arm_name.clone();
@@ -1854,7 +1998,38 @@ impl Globals {
                     self.ckpt_arm_cs = cs;
                 }
             }
-            REQ_BEGIN_DOCUMENT => self.hook_checkpoint(Point::BeginDocument),
+            REQ_BEGIN_DOCUMENT => {
+                if self.document_begun() {
+                    self.take_s0_point();
+                } else if self.in_document_environment() {
+                    // The armed level ended inside `\begin{document}`, before
+                    // `\document`'s body ran: a preamble wrapped `\document`
+                    // and calls the saved original last
+                    // (`\let\my@old\document \def\document{...\my@old}`),
+                    // whose body runs after the wrapper's level ended. S₀ is
+                    // where that body has made `\@nodocument` `\relax`.
+                    self.layer().s0_polling = true;
+                    if self.request_free() {
+                        self.ckpt_request = REQ_S0_WAIT;
+                    }
+                } else {
+                    // The armed level ended, but `\begin{document}` has not
+                    // run: a package expanded `\document` in the preamble
+                    // and took its body apart (auxhook, which zref, lastpage
+                    // and others load: `\expandafter\x\auxhook@document`,
+                    // where `\x`'s arguments swallow the body). S₀ is not
+                    // here; arm again for the real one.
+                    let name = self.layer().arm_name.clone();
+                    if let Some(cs) = name.and_then(|n| self.find_cs(&n)) {
+                        self.ckpt_arm_cs = cs;
+                    }
+                }
+            }
+            REQ_S0_WAIT => {
+                if self.document_begun() {
+                    self.take_s0_point();
+                }
+            }
             REQ_SHIPOUT => self.hook_checkpoint(Point::Shipout),
             REQ_TIMED => self.hook_checkpoint(Point::Timed),
             REQ_AUX => {
@@ -1874,12 +2049,19 @@ impl Globals {
                     return;
                 }
                 if !self.at_preamble_line_end() {
+                    // PREAMBLE-MIDLINE: the first `big_switch` back in the
+                    // main file's line from an `\input` file, or after the
+                    // line was read again (`crate::midline`)
+                    if std::mem::take(&mut self.layer().midline_force) {
+                        self.midline_checkpoint();
+                    }
                     // the line's commands are not done: ask again at the
                     // next `big_switch`
                     self.ckpt_request = REQ_PREAMBLE_LINE;
                     return;
                 }
                 let l = self.layer();
+                l.midline_force = false;
                 let due = l.preamble_line_s.is_some_and(|s| {
                     l.preamble_file_closed
                         || l.last_checkpoint
@@ -1892,13 +2074,23 @@ impl Globals {
                 }
             }
             REQ_AUX_ARM => {
+                if self.layer().s0.is_none() {
+                    self.layer().arm_reads = Some(system::reads_len().0);
+                }
                 // A run with no `.aux` to read (a first compile): its
                 // `.aux` point is here, inside `\document` before the
                 // lookup, so that the lookup -- and what a later pass finds
                 // there -- is after the anchor (DESIGN.md §5.5), not in S₀'s
                 // key. With an `.aux` the point is its open (`note_aux_open`).
+                // (inside `\document`'s body: an armed level that a
+                // preamble expansion already ended is not `\begin{document}`)
+                let inside = self.ckpt_arm_level > 0;
                 let l = self.layer();
-                if l.want_aux_point
+                // (with preamble line checkpoints off too: without it a
+                // changed read there runs from the format)
+                let at_start = l.s0.is_none() && l.aux_point.is_none();
+                if inside
+                    && l.want_aux_point
                     && l.aux_point.is_none()
                     && l.s0.is_none()
                     && !self.aux_file_found()
@@ -1907,6 +2099,18 @@ impl Globals {
                     self.hook_checkpoint(Point::Aux);
                     let l = self.layer();
                     l.arm_point = l.aux_point;
+                    l.arm_ck = l.aux_point;
+                } else if at_start {
+                    // the same point with an `.aux`: a whole read between
+                    // here and the anchor is left out of S₀'s key
+                    // (`host::whole_after_arm`), and a run restarts here when
+                    // its file changed (pinned with the preamble's points)
+                    // (by id, the entry this call adds: not by position,
+                    // which a pruned `taken` would move)
+                    let before = self.layer().taken.last().map(|t| t.0);
+                    self.hook_checkpoint(Point::PreambleLine);
+                    let l = self.layer();
+                    l.arm_ck = l.taken.last().map(|t| t.0).filter(|&id| Some(id) != before);
                 }
             }
             REQ_SEGMENT => {
@@ -1945,12 +2149,12 @@ impl Globals {
             }
             _ => {}
         }
-        if self.ckpt_request == 0 && self.layer().aux_done_pending {
+        if self.request_free() && self.layer().aux_done_pending {
             self.layer().aux_done_pending = false;
             self.ckpt_request = REQ_AUX_DONE;
         }
         // a line checkpoint another request took the place of
-        if self.ckpt_request == 0
+        if self.request_free()
             && self.in_open == 1
             && self.layer().preamble_line_pending
             && self.in_preamble()
@@ -1971,7 +2175,7 @@ impl Globals {
         l.aux_armed = false;
         l.aux_close_rs = Some(l.rs.len());
         self.rs_on = true;
-        if self.ckpt_request == 0 {
+        if self.request_free() {
             self.ckpt_request = REQ_AUX_DONE;
         } else {
             self.layer().aux_done_pending = true;
@@ -2044,9 +2248,11 @@ impl Globals {
     /// An input file named `*.aux` was opened: inside `\document` (armed
     /// for S₀), and when asked for, request the `.aux` point.
     pub fn note_aux_open(&mut self, path: &str) {
-        // (a preamble line request still pending gives way)
-        if self.ckpt_arm_level <= 0
-            || (self.ckpt_request != 0 && self.ckpt_request != REQ_PREAMBLE_LINE)
+        // (a preamble line request still pending gives way; inside a
+        // wrapped `\document`, the original body's open: `REQ_S0_WAIT`)
+        let polling = self.layer().s0_polling;
+        if (self.ckpt_arm_level <= 0 && !polling)
+            || !(self.request_free() || self.ckpt_request == REQ_PREAMBLE_LINE)
         {
             return;
         }
@@ -2073,6 +2279,93 @@ impl Globals {
         self.ckpt_on_arm = if on { REQ_AUX_ARM } else { 0 };
     }
 
+    /// No request is waiting but `REQ_S0_WAIT`, which any other one may
+    /// take the place of.
+    fn request_free(&self) -> bool {
+        self.ckpt_request == 0 || self.ckpt_request == REQ_S0_WAIT
+    }
+
+    /// S₀ here: no longer waited for.
+    fn take_s0_point(&mut self) {
+        self.layer().s0_polling = false;
+        if self.ckpt_request == REQ_S0_WAIT {
+            self.ckpt_request = 0;
+        }
+        self.hook_checkpoint(Point::BeginDocument);
+    }
+
+    /// Whether `\begin{document}` has run: LaTeX's `\document` ends with
+    /// `\global\let\@nodocument\relax` (latex.ltx), which is an error
+    /// macro until then. A format without `\@nodocument` (not LaTeX): yes.
+    fn document_begun(&mut self) -> bool {
+        let cs = match self.layer().nodoc_cs {
+            Some(cs) => cs,
+            None => {
+                let cs = self.find_cs(b"@nodocument");
+                self.layer().nodoc_cs = Some(cs);
+                cs
+            }
+        };
+        match cs {
+            Some(p) => self.eqtb[(p - 1) as usize].hh().b0() == crate::generated::consts::relax,
+            None => true,
+        }
+    }
+
+    /// Whether `\begin{document}` has started. LaTeX 2020-10 and later:
+    /// `\begin` runs `\@execute@begin@hook` before `\csname document\endcsname`,
+    /// whose first run, for `document`, closes the environment's group
+    /// (`\endgroup`) and `\gdef`s itself to `\UseHook{env/#1/begin}`
+    /// (latex.ltx, ltmiscen): its body holds `\endgroup` until then. Older
+    /// kernels keep the group, and `\begin` has defined `\@currenvir` as
+    /// `document` inside it (the kernel's own global definition is at level
+    /// one). In the preamble, where a package may expand `\document`
+    /// without running it, this is false.
+    fn in_document_environment(&self) -> bool {
+        use crate::generated::consts::{
+            call, cs_token_flag, end_match_token, letter, level_one, long_outer_call, other_char,
+        };
+        let body = |p: i32| -> Option<Vec<i32>> {
+            // (eq_type, eq_level, equiv: tex.web's `hh.b0`, `hh.b1`, `hh.rh`)
+            let w = self.eqtb[(p - 1) as usize].hh();
+            if !(call..=long_outer_call).contains(&w.b0()) {
+                return None;
+            }
+            let mut v = vec![];
+            let mut q = self.mem[w.rh() as usize].hh().rh();
+            while q != 0 {
+                v.push(self.mem[q as usize].hh().lh());
+                q = self.mem[q as usize].hh().rh();
+            }
+            Some(v)
+        };
+        if let Some(h) = self.find_cs(b"@execute@begin@hook") {
+            let Some(v) = body(h) else {
+                return false;
+            };
+            let Some(eg) = self.find_cs(b"endgroup") else {
+                return false;
+            };
+            return !v.contains(&(cs_token_flag + eg));
+        }
+        let Some(p) = self.find_cs(b"@currenvir") else {
+            return false;
+        };
+        if self.eqtb[(p - 1) as usize].hh().b1() <= level_one {
+            return false;
+        }
+        let Some(v) = body(p) else {
+            return false;
+        };
+        // the reference count's successor: `end_match`, then the name
+        v.len() == 9
+            && v[0] == end_match_token
+            && v[1..]
+                .iter()
+                .zip(b"document")
+                .all(|(&t, &c)| t == letter * 256 + c as i32 || t == other_char * 256 + c as i32)
+    }
+
     /// Whether `\document`'s `\IfFileExists{\jobname.aux}` would find a file
     /// (the output directory, then the search path, as `\openin` looks).
     fn aux_file_found(&self) -> bool {
@@ -2095,8 +2388,9 @@ impl Globals {
         // used up (`Point::PreambleLine`)
         if self.in_open == 1 && self.in_preamble() {
             self.layer().preamble_line_pending = true;
+            self.midline_note_read();
         }
-        if self.ckpt_request != 0 && self.ckpt_request != REQ_PREAMBLE_LINE {
+        if !(self.request_free() || self.ckpt_request == REQ_PREAMBLE_LINE) {
             self.layer().lines += 1;
             return;
         }
@@ -2114,13 +2408,45 @@ impl Globals {
         }
     }
 
+    /// PREAMBLE-MIDLINE (#1594): a `Point::PreambleLine` in the middle of
+    /// the main file's line, where `crate::midline::here` finds one.
+    fn midline_checkpoint(&mut self) {
+        let Some(m) = crate::midline::here(self) else {
+            return;
+        };
+        let n = self.layer().taken.len();
+        self.hook_checkpoint(Point::PreambleLine);
+        let ids: std::collections::HashSet<CheckpointId> =
+            self.arena.checkpoint_ids().iter().copied().collect();
+        let l = self.layer();
+        if let Some(&(id, _)) = l.taken.get(n) {
+            l.preamble_file_closed = false;
+            l.midlines.retain(|(i, _)| ids.contains(i));
+            l.midlines.push((id, m));
+        }
+    }
+
+    /// A mid-line checkpoint at the next `big_switch` (`crate::midline`:
+    /// the line just read again, as when an `\input` file closes).
+    pub(crate) fn request_midline_checkpoint(&mut self) {
+        let l = self.layer();
+        l.midline_force = true;
+        l.preamble_line_pending = true;
+        self.ckpt_request = REQ_PREAMBLE_LINE;
+    }
+
     /// An input file was closed (`system`'s `a_close`): back in the main
     /// file, its line may end a preamble command (`Point::PreambleLine`).
     pub fn note_input_close(&mut self) {
         if self.in_preamble() {
+            let in_input = self.in_open > 1;
             let l = self.layer();
             l.preamble_file_closed = true;
             l.preamble_line_pending = true;
+            // an `\input` file (or a stream inside one): a mid-line
+            // checkpoint where the main file is next at the top
+            // (`crate::midline`); not a `\closein` of the main file's
+            l.midline_force |= in_input;
             if self.ckpt_request == 0 {
                 self.ckpt_request = REQ_PREAMBLE_LINE;
             }
@@ -2134,7 +2460,8 @@ impl Globals {
             return false;
         }
         let l = self.layer();
-        l.preamble_line_s.is_some()
+        !l.s0_polling
+            && l.preamble_line_s.is_some()
             && l.arm_name.is_some()
             && l.s0.is_none()
             && l.aux_point.is_none()

@@ -29,6 +29,7 @@
 //! errors or keep what the line has.
 #![forbid(unsafe_code)]
 
+mod cache;
 mod charstring;
 mod cipher;
 mod encoding;
@@ -140,7 +141,7 @@ impl Globals {
             persist,
             fb_base: self.fb_offset(),
         };
-        let font = subset::embed(&font, job, self).unwrap_or_else(|e| self.pdftex_fail(&e.0));
+        let font = cache::embed(&font, job, self).unwrap_or_else(|e| self.pdftex_fail(&e.0));
         self.tex_printf(close);
         set_cur_file_name(None);
         super::with_state(|s| s.out.fb.extend_from_slice(&font.bytes));

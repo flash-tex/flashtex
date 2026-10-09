@@ -216,7 +216,15 @@ impl LookupDirs {
     /// changing).
     pub fn add(&mut self, dir: &str) -> Result<(), &'static str> {
         let p = Path::new(dir);
-        if p.is_dir() {
+        let known = p.is_absolute() && known_dir(dir);
+        if known || p.is_dir() {
+            if !known && p.is_absolute() {
+                KNOWN_DIRS
+                    .lock()
+                    .unwrap()
+                    .get_or_insert_with(Default::default)
+                    .insert(dir.to_string());
+            }
             if !self.listed.iter().any(|d| d == dir) {
                 self.listed.push(dir.to_string());
             }
@@ -243,6 +251,26 @@ impl LookupDirs {
         }
         Err("no directory on the way to one searched exists")
     }
+}
+
+/// Directories [`LookupDirs::add`] found to be directories (a stat per
+/// directory of a `//` subtree per lookup otherwise: 60 for every TFM name
+/// on a Mac with mktextfm's `TEXMFVAR`). Only "is a directory" is kept: one
+/// that has gone since is still `listed`, where it cannot be listed, and
+/// every user of `listed` takes that as a dependency not known
+/// (`system::note_lookup_dirs`, `lookupproof`); one that was not a
+/// directory is looked at again each time, since one appearing moves the
+/// dependency from its parent (`above`) to it. Absolute names only (a
+/// relative one is another directory in another working directory).
+static KNOWN_DIRS: std::sync::Mutex<Option<std::collections::HashSet<String>>> =
+    std::sync::Mutex::new(None);
+
+fn known_dir(dir: &str) -> bool {
+    KNOWN_DIRS
+        .lock()
+        .unwrap()
+        .as_ref()
+        .is_some_and(|k| k.contains(dir))
 }
 
 /// What `kpse_find_pk` found: the file, `font_ret.name` and `font_ret.dpi`
@@ -580,6 +608,27 @@ mod kpse {
     use std::ffi::{c_char, c_int, c_void, CStr, CString};
     use std::path::{Path, PathBuf};
 
+    /// Where kpathsea keeps ls-R's packed index (db.c, `packed_build`):
+    /// `<format cache>/lsr`, beside the font maps' cache (DESIGN.md §4.4),
+    /// or none when the format cache is off. Set once, before the first
+    /// instance reads ls-R.
+    fn set_lsr_cache() {
+        static ONCE: std::sync::Once = std::sync::Once::new();
+        ONCE.call_once(|| {
+            #[cfg(feature = "distribution")]
+            if crate::formats::cache_enabled() {
+                if let Some(d) = crate::formats::cache_dir().map(|d| d.join("lsr")) {
+                    if std::fs::create_dir_all(&d).is_ok() {
+                        if let Ok(c) = CString::new(d.to_string_lossy().as_bytes()) {
+                            // SAFETY: the C side copies the string.
+                            unsafe { flashtex_kpse_set_lsr_cache(c.as_ptr()) };
+                        }
+                    }
+                }
+            }
+        });
+    }
+
     extern "C" {
         fn flashtex_kpse_new(
             argv0: *const c_char,
@@ -596,6 +645,7 @@ mod kpse {
             made: *mut c_int,
         ) -> *mut c_char;
         fn flashtex_kpse_format(k: *mut c_void, name: *const c_char) -> c_int;
+        fn flashtex_kpse_set_lsr_cache(dir: *const c_char);
         fn flashtex_kpse_find(k: *mut c_void, name: *const c_char, format: c_int) -> *mut c_char;
         fn flashtex_kpse_var_value(k: *mut c_void, var: *const c_char) -> *mut c_char;
         fn flashtex_kpse_var_value_prog(
@@ -957,6 +1007,7 @@ mod kpse {
                 .collect();
             let mut ptrs: Vec<*const c_char> = kv.iter().map(|c| c.as_ptr()).collect();
             ptrs.push(std::ptr::null());
+            set_lsr_cache();
             let k = unsafe {
                 flashtex_kpse_new(
                     a.as_ptr(),
@@ -1264,8 +1315,12 @@ mod kpse {
                             .and_then(|d| d.strip_suffix('/'))
                             .ok_or("an answer not under the name's directory")?
                     };
-                    // (the shim compares the directory, with its slash)
-                    Some(c(&format!("{top}/{base}"))?)
+                    // (the shim compares the directory, with its slash, and
+                    // looks an `ls-R` element up by the answer's own last
+                    // component: `cmr12.tfm` for the TFM name `cmr12`, which
+                    // kpathsea finds only with its suffix)
+                    let file = &s[s.rfind('/').map_or(0, |i| i + 1)..];
+                    Some(c(&format!("{top}/{file}"))?)
                 }
             };
             let dirs = self

@@ -109,7 +109,11 @@ enum ProjectFilesV1 {
     /// `entry`. One parser for the CLI, the helper and this app
     /// (`crates/project-manifest`); the shell never reads TOML itself.
     struct Manifest: Decodable, Equatable, Sendable {
-        struct Project: Decodable, Equatable, Sendable { var entry: String?; var texinputs: [String]; var output: String? }
+        struct Project: Decodable, Equatable, Sendable {
+            var entry: String?; var texinputs: [String]; var output: String?
+            /// `[project] mode` (`classic`, `unicode`, `flashtex`); nil when unset or from an older helper.
+            var mode: String? = nil
+        }
         struct Fonts: Decodable, Equatable, Sendable { var text: String?; var math: String?; var mono: String?; var sans: String? }
         struct Packages: Decodable, Equatable, Sendable { var source: String; var fetch: String; var pin: [String: String]; var path: [String: String] }
         struct Library: Decodable, Equatable, Sendable { var name: String }
@@ -212,6 +216,10 @@ enum ProjectFilesV1 {
     struct ManifestRequest: Encodable { var id: String; var operation = "manifest"; var entry: String? }
     struct SetFontsRequest: Encodable {
         var id: String; var operation = "set_fonts"; var entry: String?; var fonts: [String: String]
+    }
+    /// `set_mode`: `[project] mode` set; the reply has `SetFonts`'s shape.
+    struct SetModeRequest: Encodable {
+        var id: String; var operation = "set_mode"; var entry: String?; var mode: String
     }
     struct ReadRequest: Encodable { var id: String; var operation = "read"; var path: String }
     struct StatusRequest: Encodable {

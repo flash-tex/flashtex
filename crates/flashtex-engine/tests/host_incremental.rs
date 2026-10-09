@@ -384,10 +384,27 @@ fn compare_with_scratch(
     main: &str,
     what: &str,
 ) {
+    compare_with_scratch_job(sock, view, proj, out, p2, o2, main, None, what)
+}
+
+/// `compare_with_scratch` for a job with `includeonly` (a chapter focus).
+#[allow(clippy::too_many_arguments)]
+fn compare_with_scratch_job(
+    sock: &Path,
+    view: &View,
+    proj: &Path,
+    out: &Path,
+    p2: &Path,
+    o2: &Path,
+    main: &str,
+    includeonly: Option<Vec<String>>,
+    what: &str,
+) {
     let mut s = Client::connect(sock).unwrap();
     let mut sv = View::default();
     let mut rs = CompileRequest::new(1, p2.to_str().unwrap(), main);
     rs.output_dir = Some(o2.to_str().unwrap().into());
+    rs.includeonly = includeonly;
     let so = compile(&mut s, &mut sv, &rs);
     assert_eq!(
         so.done.str_field("mode"),
@@ -1928,6 +1945,354 @@ fn a_file_appearing_at_an_absolute_name_is_seen() {
     let _ = std::fs::remove_dir_all(&base);
 }
 
+/// The directories of a LOOKUP-SKIP test (`lookup_steps`).
+struct LookDirs {
+    proj: PathBuf,
+    out: PathBuf,
+    /// Absolute names: `pre.tex` (the preamble's), `body.tex`.
+    ext: PathBuf,
+    /// `TEXMFHOME`'s `tex/latex/flashprobe`, and a deeper directory of the
+    /// same `//` subtree.
+    sub: PathBuf,
+    deep: PathBuf,
+}
+
+impl LookDirs {
+    /// Put `d`'s modification time back, well in the past and a different
+    /// one each time: a changed signature that is not racy.
+    fn set_back(&self, d: &Path) {
+        static TICK: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let k = TICK.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let t = std::time::SystemTime::now() - Duration::from_secs(5000 - k);
+        std::fs::File::open(d).unwrap().set_modified(t).unwrap();
+    }
+}
+
+/// One step of `lookup_steps`: what it is, what it changes on disk, and an
+/// edit of the document (from, to), if any.
+type LookStep<'a> = (&'a str, &'a dyn Fn(&LookDirs), Option<(&'a str, &'a str)>);
+
+/// LOOKUP-SKIP (`crate::lookupproof`): a document whose preamble and body
+/// test for files in the places a lookup searches (`TEXMFHOME`'s `//`
+/// subtree with no `ls-R`, absolute names, the project, the output
+/// directory), compiled until it settles, then each step: its change on
+/// disk, an entry more in the output and project directories (what a
+/// compile's own writes do to them, so their signatures change at every
+/// compile and the lookups are checked rather than skipped wholesale), a
+/// compile, and every page compared with a scratch compile.
+fn lookup_steps(tag: &str, steps: &[LookStep]) {
+    if find_texlive_bin().is_none() {
+        common::no_texlive();
+        return;
+    }
+    let base = common::fresh_dir(&format!("flashtex-host-look-{tag}"));
+    let _ = std::fs::remove_dir_all(&base);
+    let home = base.join("home");
+    let d = LookDirs {
+        proj: base.join("proj"),
+        out: base.join("out"),
+        ext: base.join("ext"),
+        sub: home.join("tex/latex/flashprobe"),
+        deep: home.join("tex/latex/deep/er"),
+    };
+    for x in [&d.proj, &d.out, &d.ext, &d.sub, &d.deep] {
+        std::fs::create_dir_all(x).unwrap();
+    }
+    std::fs::write(d.sub.join("flashshadow.sty"), "Shadow: home.\n").unwrap();
+    std::fs::write(d.sub.join("flashother.sty"), "% other\n").unwrap();
+    for x in [
+        &home,
+        &home.join("tex"),
+        &home.join("tex/latex"),
+        &home.join("tex/latex/deep"),
+        &d.sub,
+        &d.deep,
+    ] {
+        d.set_back(x);
+    }
+    let filler: String = article(3)
+        .split("\\section{Start}")
+        .nth(1)
+        .unwrap()
+        .replace("\\end{document}\n", "");
+    let doc = format!(
+        "\\documentclass{{article}}\n\
+         \\IfFileExists{{flashpre.sty}}{{\\def\\pre{{yes}}}}{{\\def\\pre{{no}}}}\n\
+         \\IfFileExists{{{}}}{{\\def\\abspre{{yes}}}}{{\\def\\abspre{{no}}}}\n\
+         \\begin{{document}}\nPreamble: \\pre, \\abspre.\n\n{filler}\n\
+         \\IfFileExists{{flashprobe.sty}}{{Probe: yes.}}{{Probe: no.}}\n\n\
+         \\IfFileExists{{flashdeep.sty}}{{Deep: yes.}}{{Deep: no.}}\n\n\
+         \\InputIfFileExists{{flashshadow.sty}}{{}}{{Shadow: none.}}\n\n\
+         \\IfFileExists{{{}}}{{Absolute: yes.}}{{Absolute: no.}}\n\n\
+         \\InputIfFileExists{{flashout.tex}}{{}}{{Out: none.}}\n\n\
+         \\IfFileExists{{flashcase.sty}}{{Case: yes.}}{{Case: no.}}\n\n\
+         Closing words.\n\\end{{document}}\n",
+        d.ext.join("pre.tex").display(),
+        d.ext.join("body.tex").display()
+    );
+    let main = "main.tex";
+    std::fs::write(d.proj.join(main), &doc).unwrap();
+    let home_s = home.to_string_lossy().into_owned();
+    let env = [("TEXMFHOME", home_s.as_str())];
+    let host = start_host_env(tag, &env);
+    let scratch = start_host_env(&format!("{tag}s"), &env);
+    let mut c = Client::connect(&host.1).unwrap();
+    let mut view = View::default();
+    let mut id = 0;
+    for _ in 0..4 {
+        id += 1;
+        let o = compile(&mut c, &mut view, &req(id, &d.proj, &d.out, main));
+        if o.done.str_field("mode") == Some("unchanged") {
+            break;
+        }
+    }
+    let unrelated: LookStep = ("unrelated entries", &|_| {}, None);
+    for (k, (what, change, edit)) in std::iter::once(&unrelated).chain(steps).enumerate() {
+        change(&d);
+        std::fs::write(d.out.join(format!("junk{k}.log")), "x").unwrap();
+        std::fs::write(d.proj.join(format!("junk{k}.txt")), "x").unwrap();
+        id += 1;
+        let mut r = req(id, &d.proj, &d.out, main);
+        if let Some((from, to)) = edit {
+            let text = std::fs::read_to_string(d.proj.join(main)).unwrap();
+            let at = text.find(from).unwrap();
+            r.edits = vec![Edit {
+                path: main.into(),
+                offset: at as u64,
+                delete: from.len() as u64,
+                insert: (*to).into(),
+            }];
+        }
+        let o = compile(&mut c, &mut view, &r);
+        assert_eq!(o.done.str_field("status"), Some("ok"), "{what}: {}", o.done);
+        let (p2, o2) = snapshot(&base, &d.proj, &d.out, &format!("{tag}{k}"));
+        compare_with_scratch(&scratch.1, &view, &d.proj, &d.out, &p2, &o2, main, what);
+        let _ = std::fs::remove_dir_all(&p2);
+        let _ = std::fs::remove_dir_all(&o2);
+    }
+    let _ = c.bye();
+    let _ = std::fs::remove_dir_all(&base);
+}
+
+/// LOOKUP-SKIP, #1549's review case (a): a file appearing at an absolute
+/// name, in the body (the journal's lookups) and the preamble (S₀'s key),
+/// and going again. Its own directory decides the answer, not the working
+/// or the output directory.
+#[test]
+fn lookup_skip_a_absolute_names() {
+    lookup_steps(
+        "la",
+        &[
+            (
+                "(a) a file appeared at an absolute name",
+                &|d| std::fs::write(d.ext.join("body.tex"), "% body\n").unwrap(),
+                None,
+            ),
+            (
+                "(a) one in the preamble",
+                &|d| std::fs::write(d.ext.join("pre.tex"), "% pre\n").unwrap(),
+                None,
+            ),
+            (
+                "(a) both went",
+                &|d| {
+                    std::fs::remove_file(d.ext.join("body.tex")).unwrap();
+                    std::fs::remove_file(d.ext.join("pre.tex")).unwrap();
+                },
+                None,
+            ),
+        ],
+    );
+}
+
+/// LOOKUP-SKIP, #1549's review case (b): a file appearing in a `TEXMFHOME`
+/// tree without `ls-R`, in the body and the preamble, an edit after the
+/// lookups (the run restarts after them and keeps their answers), and the
+/// files going again.
+#[test]
+fn lookup_skip_b_texmfhome() {
+    lookup_steps(
+        "lb",
+        &[
+            (
+                "(b) a file appeared in TEXMFHOME",
+                &|d| {
+                    std::fs::write(d.sub.join("flashprobe.sty"), "% probe\n").unwrap();
+                    d.set_back(&d.sub);
+                },
+                None,
+            ),
+            (
+                "(b) an edit after the lookups",
+                &|_| {},
+                Some(("Closing words.", "Closing words, edited.")),
+            ),
+            (
+                "(b) one in the preamble",
+                &|d| {
+                    std::fs::write(d.sub.join("flashpre.sty"), "% pre\n").unwrap();
+                    d.set_back(&d.sub);
+                },
+                None,
+            ),
+            (
+                "(b) both went",
+                &|d| {
+                    std::fs::remove_file(d.sub.join("flashprobe.sty")).unwrap();
+                    std::fs::remove_file(d.sub.join("flashpre.sty")).unwrap();
+                    d.set_back(&d.sub);
+                },
+                None,
+            ),
+        ],
+    );
+}
+
+/// LOOKUP-SKIP, #1549's review case (c): a `//` subtree. A file appearing
+/// in a deeper directory of it, and a file in the project (searched first)
+/// shadowing the subtree's, and both going again.
+#[test]
+fn lookup_skip_c_subtrees() {
+    lookup_steps(
+        "lc",
+        &[
+            (
+                "(c) a file appeared deep in the subtree",
+                &|d| {
+                    std::fs::write(d.deep.join("flashdeep.sty"), "% deep\n").unwrap();
+                    d.set_back(&d.deep);
+                },
+                None,
+            ),
+            (
+                "(c) the project shadows the subtree's file",
+                &|d| std::fs::write(d.proj.join("flashshadow.sty"), "Shadow: project.\n").unwrap(),
+                None,
+            ),
+            (
+                "(c) both went",
+                &|d| {
+                    std::fs::remove_file(d.deep.join("flashdeep.sty")).unwrap();
+                    d.set_back(&d.deep);
+                    std::fs::remove_file(d.proj.join("flashshadow.sty")).unwrap();
+                },
+                None,
+            ),
+        ],
+    );
+}
+
+/// LOOKUP-SKIP: the output directory, which `lookup_again` (texmfmp.c's
+/// `open_input`) tries before kpathsea, and a name kpathsea finds only by
+/// folding case; each appearing and going again.
+#[test]
+fn lookup_skip_output_directory_and_case() {
+    lookup_steps(
+        "lo",
+        &[
+            (
+                "a file appeared in the output directory",
+                &|d| std::fs::write(d.out.join("flashout.tex"), "Out: here.\n").unwrap(),
+                None,
+            ),
+            (
+                "a name differing in case appeared",
+                &|d| std::fs::write(d.proj.join("FlashCase.STY"), "% case\n").unwrap(),
+                None,
+            ),
+            (
+                "both went",
+                &|d| {
+                    std::fs::remove_file(d.out.join("flashout.tex")).unwrap();
+                    std::fs::remove_file(d.proj.join("FlashCase.STY")).unwrap();
+                },
+                None,
+            ),
+        ],
+    );
+}
+
+/// LOOKUP-SKIP, #1549's review case (d): a directory's signature taken
+/// within its modification-time tick (racy) proves nothing. A rename in the
+/// project to a name a lookup tries keeps the directory's length and
+/// identity, and the time is put back as a coarse clock would leave it
+/// (`FLASHTEX_RACY_MS`, a one-day tick, as in
+/// `a_same_size_edit_within_the_mtime_tick_is_seen`): only the racy rule
+/// makes the check list the directory again. In the body (the journal) and
+/// the preamble (S₀'s key).
+#[test]
+fn lookup_skip_d_a_rename_within_the_mtime_tick() {
+    if find_texlive_bin().is_none() {
+        common::no_texlive();
+        return;
+    }
+    let base = common::fresh_dir("flashtex-host-look-ld");
+    let _ = std::fs::remove_dir_all(&base);
+    let (proj, out) = (base.join("proj"), base.join("out"));
+    std::fs::create_dir_all(&proj).unwrap();
+    std::fs::create_dir_all(&out).unwrap();
+    std::fs::write(proj.join("flashrac0.sty"), "% body\n").unwrap();
+    std::fs::write(proj.join("flashrap0.sty"), "% preamble\n").unwrap();
+    let filler: String = article(2)
+        .split("\\section{Start}")
+        .nth(1)
+        .unwrap()
+        .replace("\\end{document}\n", "");
+    let doc = format!(
+        "\\documentclass{{article}}\n\
+         \\IfFileExists{{flashrapy.sty}}{{\\def\\pre{{yes}}}}{{\\def\\pre{{no}}}}\n\
+         \\begin{{document}}\nPreamble: \\pre.\n\n{filler}\n\
+         \\IfFileExists{{flashracy.sty}}{{Body: yes.}}{{Body: no.}}\n\n\
+         \\end{{document}}\n"
+    );
+    let main = "main.tex";
+    std::fs::write(proj.join(main), &doc).unwrap();
+    let host = start_host_env("ld", &[("FLASHTEX_RACY_MS", "86400000")]);
+    let scratch = start_host("lds");
+    let mut c = Client::connect(&host.1).unwrap();
+    let mut view = View::default();
+    let mut id = 0;
+    for _ in 0..4 {
+        id += 1;
+        let o = compile(&mut c, &mut view, &req(id, &proj, &out, main));
+        if o.done.str_field("mode") == Some("unchanged") {
+            break;
+        }
+    }
+    for (k, (from, to)) in [
+        ("flashrac0.sty", "flashracy.sty"),
+        ("flashrap0.sty", "flashrapy.sty"),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let before = std::fs::metadata(&proj).unwrap();
+        std::fs::rename(proj.join(from), proj.join(to)).unwrap();
+        std::fs::File::open(&proj)
+            .unwrap()
+            .set_modified(before.modified().unwrap())
+            .unwrap();
+        let after = std::fs::metadata(&proj).unwrap();
+        assert_eq!(
+            (before.len(), before.modified().unwrap()),
+            (after.len(), after.modified().unwrap()),
+            "the rename must keep the directory's length and time"
+        );
+        id += 1;
+        let o = compile(&mut c, &mut view, &req(id, &proj, &out, main));
+        assert_ne!(
+            o.done.str_field("mode"),
+            Some("unchanged"),
+            "{to}: not seen: {}",
+            o.done
+        );
+        let (p2, o2) = snapshot(&base, &proj, &out, &format!("ld{k}"));
+        compare_with_scratch(&scratch.1, &view, &proj, &out, &p2, &o2, main, to);
+    }
+    let _ = c.bye();
+    let _ = std::fs::remove_dir_all(&base);
+}
+
 /// #1295: pdfTeX frees an image's name once it has written the XObject; a
 /// page that draws the image again after a restore (or in a later pass)
 /// must still get an `IMAGE` naming the file.
@@ -2138,9 +2503,11 @@ fn an_export_in_the_same_directory_leaves_the_next_compile_exact() {
 /// Lane P4-TYPING-200WPM: a keystroke that undoes the one before (a letter
 /// typed and deleted, typed again) finds nothing new against the run the
 /// keystrokes stopped: that run goes on as its compile. The pages it had
-/// shipped, the edited one among them, are the compile's at once: before
-/// any page frame of it, `PAGES` says they are current (the client holds
-/// them), not when the run ships its next page. The client ends equal to a
+/// shipped, the edited one among them, are the compile's at once: `PAGES`
+/// says they are current before the run ships its next page. Pages that run
+/// shipped while the newer compile was queued (which a superseded compile
+/// does not send) may come first, as the catch-up of what the client lacks;
+/// no page typeset after it goes on may. The client ends equal to a
 /// from-scratch compile.
 #[test]
 fn a_keystroke_that_changes_nothing_has_its_page_at_once() {
@@ -2193,8 +2560,17 @@ fn a_keystroke_that_changes_nothing_has_its_page_at_once() {
         delete: para.len() as u64,
         insert: String::new(),
     };
+    // A round shows the continuation only when r1 was still running when
+    // r2 came, and r2 when r3 came (both cancelled, by their DONEs): the
+    // client sends r2 and r3 as soon as r1's edited page arrives, but under
+    // load r1 may finish first. The rounds go on, at least 3, until one has
+    // shown it (at most 12): the outcome is read from the protocol's DONEs,
+    // not from the timing of one round.
     let mut seen_current_first = 0;
-    for round in 0..3 {
+    for round in 0..12 {
+        if round >= 3 && seen_current_first > 0 {
+            break;
+        }
         let (id1, id2, id3) = (id + 1, id + 2, id + 3);
         id += 3;
         let mut r1 = req(id1, &proj, &out, main);
@@ -2234,9 +2610,11 @@ fn a_keystroke_that_changes_nothing_has_its_page_at_once() {
         r3.edits = vec![insert(offset)];
         c.compile(&r2).unwrap();
         c.compile(&r3).unwrap();
-        // r3's frames: which comes first, a page or `PAGES` with the edited page current
+        // r3's frames up to its first `PAGES`: the pages sent before it,
+        // and the ranges it says are current
         let mut started = 0;
-        let mut first_of_r3: Option<&'static str> = None;
+        let mut r3_pages_before: Vec<u32> = vec![];
+        let mut r3_current: Option<Vec<(i64, i64)>> = None;
         while dones.len() < 3 {
             match c.next_event().unwrap().expect("host closed the connection") {
                 Event::Started(j) => started = j.int_field("id").unwrap_or(0),
@@ -2252,28 +2630,23 @@ fn a_keystroke_that_changes_nothing_has_its_page_at_once() {
                     }
                 }
                 Event::Page(p) => {
-                    if started == id3 && first_of_r3.is_none() {
-                        first_of_r3 = Some(if p.index == edited {
-                            "edited page"
-                        } else {
-                            "another page"
-                        });
+                    if started == id3 && r3_current.is_none() {
+                        r3_pages_before.push(p.index);
                     }
                     view.page_fonts.insert(p.index, view.fonts.clone());
                     view.pages.insert(p.index, p);
                 }
                 Event::Pages(j) => {
-                    let current = j.get("current").and_then(Json::as_array).is_some_and(|rs| {
-                        rs.iter().any(|r| {
-                            r.as_array().is_some_and(|a| {
-                                a.len() == 2
-                                    && a[0].as_i64().is_some_and(|lo| lo <= edited as i64)
-                                    && a[1].as_i64().is_some_and(|hi| edited as i64 <= hi)
-                            })
-                        })
-                    });
-                    if j.int_field("id") == Some(id3) && current && first_of_r3.is_none() {
-                        first_of_r3 = Some("current");
+                    if j.int_field("id") == Some(id3) && r3_current.is_none() {
+                        let ranges = j.get("current").and_then(Json::as_array).map(|rs| {
+                            rs.iter()
+                                .filter_map(|r| {
+                                    let a = r.as_array()?;
+                                    Some((a.first()?.as_i64()?, a.get(1)?.as_i64()?))
+                                })
+                                .collect()
+                        });
+                        r3_current = Some(ranges.unwrap_or_default());
                     }
                 }
                 Event::Done(d) => dones.push(d),
@@ -2287,12 +2660,46 @@ fn a_keystroke_that_changes_nothing_has_its_page_at_once() {
         if dones[0].str_field("status") == Some("cancelled")
             && dones[1].str_field("status") == Some("cancelled")
         {
-            assert!(
-                matches!(first_of_r3, Some("current") | Some("edited page")),
-                "round {round}: r3's first frame: {first_of_r3:?}"
-            );
-            if first_of_r3 == Some("current") {
+            // Before r3's first `PAGES`, the host may send pages the stopped
+            // run shipped while a newer compile was queued (a superseded
+            // compile sends no pages: `Target::quiet`), which the client
+            // lacks (`Live::catch_up`): pages that run typeset, from the
+            // edited page on, `typeset_pages` of them.
+            let typeset = |d: &Json| d.int_field("typeset_pages").unwrap_or(0).max(0);
+            let shipped = typeset(&dones[0]).max(typeset(&dones[1])) as u32;
+            let current = r3_current.clone().unwrap_or_default();
+            let covers = |i: u32| {
+                current
+                    .iter()
+                    .any(|&(lo, hi)| lo <= i as i64 && i as i64 <= hi)
+            };
+            let caught_up = r3_current.is_some()
+                && covers(edited)
+                && r3_pages_before
+                    .iter()
+                    .all(|&i| i >= edited && i < edited + shipped && covers(i));
+            if dones[2].str_field("mode") == Some("continued") {
+                // The run r1 started goes on: no page it typesets after going
+                // on comes before the `PAGES` that says the edited page is
+                // current.
+                assert!(
+                    caught_up,
+                    "round {round}: r3 sent pages {r3_pages_before:?} before its first \
+                     `PAGES` {:?}; r1 had shipped {shipped} from page {edited}",
+                    r3_current
+                );
                 seen_current_first += 1;
+            } else {
+                // An ordinary compile (the stopped run settled or abandoned):
+                // its first page frame is the edited page, unless it caught up
+                // first as above.
+                assert!(
+                    caught_up || r3_pages_before.first() == Some(&edited),
+                    "round {round}: r3 ({}) sent pages {r3_pages_before:?} before its first \
+                     `PAGES` {:?}",
+                    dones[2].str_field("mode").unwrap_or("?"),
+                    r3_current
+                );
             }
         }
         let count = dones[2].int_field("pages").unwrap_or(0) as usize;
@@ -2317,7 +2724,7 @@ fn a_keystroke_that_changes_nothing_has_its_page_at_once() {
     }
     assert!(
         seen_current_first > 0,
-        "no keystroke found its page current at once"
+        "no keystroke found its page current at once (in 12 rounds)"
     );
     let _ = c.bye();
     let _ = std::fs::remove_dir_all(&base);
@@ -2390,4 +2797,433 @@ fn a_kept_page_never_names_a_moved_column() {
     }
     let _ = c.bye();
     let _ = std::fs::remove_dir_all(&base);
+}
+
+/// A chapter of the focus test's book: a `\chapter` with a label, a
+/// reference to the next chapter (its number and page come from the
+/// `.aux`), and text for a few pages.
+fn focus_chapter(n: usize, of: usize) -> String {
+    let words = [
+        "alpha", "beta", "gamma", "delta", "kernel", "glue", "penalty", "boxes", "rules", "marks",
+    ];
+    let mut s = format!(
+        "\\chapter{{Chapter {n}}}\\label{{ch:{n}}}\nSee Chapter~\\ref{{ch:{m}}} on page~\\pageref{{ch:{m}}}.\n\n",
+        m = n % of + 1
+    );
+    for p in 0..18 {
+        let line: Vec<&str> = (0..80)
+            .map(|w| words[(n * 7 + p * 3 + w) % words.len()])
+            .collect();
+        s.push_str(&line.join(" "));
+        s.push_str(".\n\n");
+    }
+    s
+}
+
+/// A drawn page: `\count0` and every glyph as (font key, code, x, y).
+type Drawn = (i32, Vec<([u8; 32], u16, i32, i32)>);
+
+/// The pages whose spans come from `file`, in page order, as a reader sees them.
+fn pages_of(view: &View, file: &str) -> Vec<Drawn> {
+    let suffix = format!("/{file}");
+    view.pages
+        .iter()
+        .filter(|(_, p)| {
+            p.items.iter().any(|it| {
+                matches!(it, Item::Span(s) if *s != 0
+                    && view.spans.get(s).is_some_and(|&(f, _)| view.files[&f].ends_with(&suffix)))
+            })
+        })
+        .map(|(i, p)| {
+            let fonts = &view.page_fonts[i];
+            let glyphs = p
+                .items
+                .iter()
+                .filter_map(|it| match it {
+                    Item::Glyph {
+                        font, code, x, y, ..
+                    } => Some((fonts[font], *code, *x, *y)),
+                    _ => None,
+                })
+                .collect();
+            (p.counts[0], glyphs)
+        })
+        .collect()
+}
+
+/// Chapter focus (lane FOCUS-CHAPTER): a COMPILE with `includeonly` is
+/// pdflatex's run of `\AtBeginDocument{\includeonly{chapters/ch2}}\input
+/// main.tex`, in an output folder started from the whole document's (the
+/// app's `out-focus`): only that chapter is typeset, and its pages are the
+/// whole document's own (page numbers, references and positions from the
+/// other chapters' `.aux`). An edit in the focused chapter is incremental
+/// (S₀ does not depend on the chapter: `\includeonly`'s lookup is after
+/// it) and equals a from-scratch compile of the focused job, and dropping
+/// the focus gives the whole document again, equal to a from-scratch
+/// compile.
+#[test]
+fn a_focused_compile_is_includeonly_and_keeps_the_documents_pages() {
+    if find_texlive_bin().is_none() {
+        common::no_texlive();
+        return;
+    }
+    let base = common::fresh_dir("flashtex-host-focus");
+    let _ = std::fs::remove_dir_all(&base);
+    let (proj, out, outf) = (base.join("proj"), base.join("out"), base.join("out-focus"));
+    std::fs::create_dir_all(proj.join("chapters")).unwrap();
+    // The project's folders in the output folder, as the app's copy makes
+    // them (and latexmk): pdfTeX cannot create `chapters/` for `ch1.aux`.
+    std::fs::create_dir_all(out.join("chapters")).unwrap();
+    let of = 3;
+    let mut main = String::from("\\documentclass{report}\n\\begin{document}\n\\tableofcontents\n");
+    for n in 1..=of {
+        std::fs::write(
+            proj.join(format!("chapters/ch{n}.tex")),
+            focus_chapter(n, of),
+        )
+        .unwrap();
+        main.push_str(&format!("\\include{{chapters/ch{n}}}\n"));
+    }
+    main.push_str("\\end{document}\n");
+    std::fs::write(proj.join("main.tex"), &main).unwrap();
+    let host = start_host("f");
+    let scratch = start_host("fs");
+    let mut c = Client::connect(&host.1).unwrap();
+    let mut view = View::default();
+
+    // The whole document, settled.
+    let o = compile(&mut c, &mut view, &req(1, &proj, &out, "main.tex"));
+    assert_eq!(o.done.str_field("status"), Some("ok"), "{}", o.done);
+    let full_count = view.count;
+    let full_ch2 = pages_of(&view, "chapters/ch2.tex");
+    assert!(
+        full_ch2.len() >= 2,
+        "chapter 2 spans {} pages",
+        full_ch2.len()
+    );
+    assert!(!pages_of(&view, "chapters/ch1.tex").is_empty());
+
+    // Focused on chapter 2, from a copy of the whole document's output.
+    copy_dir(&out, &outf);
+    let focus = Some(vec!["chapters/ch2".to_string()]);
+    let mut r = req(2, &proj, &outf, "main.tex");
+    r.includeonly = focus.clone();
+    let o = compile(&mut c, &mut view, &r);
+    assert_eq!(o.done.str_field("status"), Some("ok"), "{}", o.done);
+    assert_eq!(
+        o.started.get("keep").and_then(Json::as_bool),
+        Some(false),
+        "another job"
+    );
+    let argv = o.started.get("argv").and_then(Json::as_array).unwrap();
+    assert_eq!(
+        argv.last().and_then(Json::as_str),
+        Some("\\AtBeginDocument{\\includeonly{chapters/ch2}}\\input main.tex"),
+        "{}",
+        o.started
+    );
+    assert!(
+        view.count < full_count,
+        "{} pages focused, {full_count} whole",
+        view.count
+    );
+    assert!(
+        pages_of(&view, "chapters/ch1.tex").is_empty(),
+        "chapter 1 typeset"
+    );
+    assert!(
+        pages_of(&view, "chapters/ch3.tex").is_empty(),
+        "chapter 3 typeset"
+    );
+    assert!(
+        pages_of(&view, "chapters/ch2.tex") == full_ch2,
+        "the focused chapter's pages are not the whole document's"
+    );
+
+    // An edit in the focused chapter equals a from-scratch focused compile.
+    let ch2 = std::fs::read_to_string(proj.join("chapters/ch2.tex")).unwrap();
+    let at = ch2.find("kernel").unwrap();
+    let mut r = req(3, &proj, &outf, "main.tex");
+    r.includeonly = focus.clone();
+    r.edits = vec![Edit {
+        path: "chapters/ch2.tex".into(),
+        offset: at as u64,
+        delete: "kernel".len() as u64,
+        insert: "colonel".into(),
+    }];
+    let o = compile(&mut c, &mut view, &r);
+    assert_eq!(o.done.str_field("status"), Some("ok"), "{}", o.done);
+    assert_eq!(
+        o.done.str_field("mode"),
+        Some("incremental"),
+        "an edit in the focused chapter keeps S0: {}",
+        o.done
+    );
+    let (p2, o2) = snapshot(&base, &proj, &outf, "e");
+    compare_with_scratch_job(
+        &scratch.1,
+        &view,
+        &proj,
+        &outf,
+        &p2,
+        &o2,
+        "main.tex",
+        focus,
+        "an edit in the focused chapter",
+    );
+
+    // The whole document again, with the edit.
+    let o = compile(&mut c, &mut view, &req(4, &proj, &out, "main.tex"));
+    assert_eq!(o.done.str_field("status"), Some("ok"), "{}", o.done);
+    assert_eq!(
+        o.started.get("keep").and_then(Json::as_bool),
+        Some(false),
+        "another job"
+    );
+    assert_eq!(view.count, full_count);
+    let (p3, o3) = snapshot(&base, &proj, &out, "w");
+    compare_with_scratch(
+        &scratch.1,
+        &view,
+        &proj,
+        &out,
+        &p3,
+        &o3,
+        "main.tex",
+        "the whole document after a focus",
+    );
+    let _ = c.bye();
+    let _ = std::fs::remove_dir_all(&base);
+}
+
+/// A file tested with `\openin`/`\closein` on page 1 and `\input` pages
+/// later (`incr::Session::restart_point`): the checkpoints between the test
+/// and the `\input` are not restart points for an edit in the file, those in
+/// it before the edit are. Each edit restarts after the gap, not at S₀, and
+/// every page equals a from-scratch compile.
+#[test]
+fn an_edit_after_an_early_openin_test_restarts_near_it() {
+    if find_texlive_bin().is_none() {
+        common::no_texlive();
+        return;
+    }
+    let base = common::fresh_dir("flashtex-host-openin");
+    let _ = std::fs::remove_dir_all(&base);
+    let (proj, out) = (base.join("proj"), base.join("out"));
+    std::fs::create_dir_all(&proj).unwrap();
+    std::fs::create_dir_all(&out).unwrap();
+    let words = [
+        "alpha", "beta", "gamma", "delta", "kernel", "glue", "penalty", "boxes", "rules", "marks",
+    ];
+    let paras = |seed: usize, n: usize| -> String {
+        (0..n)
+            .map(|p| {
+                let l: Vec<&str> = (0..70)
+                    .map(|w| words[(seed * 7 + p * 3 + w) % words.len()])
+                    .collect();
+                l.join(" ") + "."
+            })
+            .collect::<Vec<_>>()
+            .join("\n\n")
+    };
+    std::fs::write(
+        proj.join("main.tex"),
+        format!(
+            "\\documentclass{{article}}\n\\newread\\probe\n\\begin{{document}}\n\
+             \\openin\\probe=ch2.tex \\ifeof\\probe No chapter.\\else Chapter found.\\fi \\closein\\probe\n\
+             {}\n\\input ch2.tex\n{}\n\\end{{document}}\n",
+            paras(1, 30),
+            paras(3, 6)
+        ),
+    )
+    .unwrap();
+    let ch2 = format!("\\section{{Two}}\n{}\n", paras(2, 30));
+    std::fs::write(proj.join("ch2.tex"), &ch2).unwrap();
+    let host = start_host("o");
+    let scratch = start_host("os");
+    let mut c = Client::connect(&host.1).unwrap();
+    let mut view = View::default();
+    let o = compile(&mut c, &mut view, &req(1, &proj, &out, "main.tex"));
+    assert_eq!(o.done.str_field("status"), Some("ok"), "{}", o.done);
+    // the pages before ch2.tex's first one: the gap after the \openin test
+    let before = pages_of(&view, "ch2.tex").first().map(|p| p.0).unwrap();
+    assert!(before > 3, "ch2.tex starts on page {before}");
+    let mut id = 1;
+    // Each edit and its revert, at positions across the chapter (where the
+    // search lands depends on how many checkpoints the gap and the chapter
+    // hold; near the chapter's start it landed in the gap without the
+    // second search).
+    for (k, at) in [
+        ch2.len() / 12,
+        ch2.len() / 6,
+        ch2.len() / 2,
+        ch2.len() * 5 / 6,
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let at = at + ch2[at..].find(" kernel ").unwrap() + 1;
+        for (step, (delete, insert)) in [("kernel", "colonel"), ("colonel", "kernel")]
+            .into_iter()
+            .enumerate()
+        {
+            id += 1;
+            let mut r = req(id, &proj, &out, "main.tex");
+            r.edits = vec![Edit {
+                path: "ch2.tex".into(),
+                offset: at as u64,
+                delete: delete.len() as u64,
+                insert: insert.into(),
+            }];
+            let o = compile(&mut c, &mut view, &r);
+            assert_eq!(o.done.str_field("status"), Some("ok"), "{}", o.done);
+            let restart = o.done.int_field("restart_page").unwrap_or(0);
+            assert!(
+                restart >= before as i64 - 1,
+                "edit {k}.{step}: restarted on page {restart}, ch2.tex starts on {before}: {}",
+                o.done
+            );
+            let (p2, o2) = snapshot(&base, &proj, &out, &format!("o{k}{step}"));
+            compare_with_scratch(
+                &scratch.1,
+                &view,
+                &proj,
+                &out,
+                &p2,
+                &o2,
+                "main.tex",
+                "an edit after an early \\openin test",
+            );
+        }
+    }
+    let _ = c.bye();
+    let _ = std::fs::remove_dir_all(&base);
+}
+
+/// Review of #1739: a host opened from a persisted S₀ (`--s0-cache`) has
+/// no checkpoint before S₀, so the whole reads between `\document`'s start
+/// and the anchor (`host::whole_after_arm`, left out of S₀'s key) are
+/// checked when it opens (`Key::check_arm`). A `begindocument/before` hook
+/// keeps (A) the `.aux`'s size, a `\label` added; (B) the main file's size,
+/// a letter typed; (D) a file's date, the file touched; (F) a file's MD5, the
+/// file edited -- each with no host running. A new host from the cache
+/// equals a scratch compile; for B, D and F it does not open the stored S₀.
+#[test]
+fn a_persisted_s0_checks_the_reads_at_the_document_start() {
+    if find_texlive_bin().is_none() {
+        common::no_texlive();
+        return;
+    }
+    let body: String = (0..14)
+        .map(|i| {
+            format!(
+                "Paragraph {i} with enough words to fill a few lines of the page, so that \
+                 the document ships more than one page; math $a^{i}+b$.\n\n"
+            )
+        })
+        .collect();
+    let doc = |hook: &str, extra: &str| {
+        format!(
+            "\\documentclass{{article}}\n\\AddToHook{{begindocument/before}}{{{hook}}}\n\
+             \\begin{{document}}\n\\section{{One}}\\label{{one}}\n{body}{extra}\
+             Kept: \\x. See~\\ref{{one}}.\n\\end{{document}}\n"
+        )
+    };
+    let t0 = std::time::UNIX_EPOCH + Duration::from_secs(1_600_000_000);
+    let t1 = std::time::UNIX_EPOCH + Duration::from_secs(1_600_000_500);
+    let touch = |p: &Path, t: std::time::SystemTime| {
+        std::fs::File::options()
+            .write(true)
+            .open(p)
+            .unwrap()
+            .set_modified(t)
+            .unwrap()
+    };
+    // (case, the hook, the body's edit, a side file and its new text, the
+    // stored S₀ refused)
+    type Case<'a> = (&'a str, &'a str, &'a str, Option<(&'a str, &'a str)>, bool);
+    let cases: [Case; 4] = [
+        (
+            "A",
+            "\\xdef\\x{\\pdffilesize{\\jobname.aux}}",
+            "\\section{Two}\\label{two}\n",
+            None,
+            false,
+        ),
+        (
+            "B",
+            "\\xdef\\x{\\pdffilesize{\\jobname.tex}}",
+            "A letter: x.\n",
+            None,
+            true,
+        ),
+        (
+            "D",
+            "\\xdef\\x{\\pdffilemoddate{stamp.tex}}",
+            "",
+            Some(("stamp.tex", "% a file whose date is read\n")),
+            true,
+        ),
+        (
+            "F",
+            "\\xdef\\x{\\pdfmdfivesum file {stamp.tex}}",
+            "",
+            Some(("stamp.tex", "% a file whose digest is read, edited\n")),
+            true,
+        ),
+    ];
+    for (case, hook, extra, side, refused) in cases {
+        let base = common::fresh_dir(&format!("flashtex-host-arm-{case}"));
+        let _ = std::fs::remove_dir_all(&base);
+        std::fs::create_dir_all(&base).unwrap();
+        let (proj, out, cache) = (base.join("proj"), base.join("out"), base.join("s0"));
+        std::fs::create_dir_all(&proj).unwrap();
+        std::fs::create_dir_all(&out).unwrap();
+        std::fs::write(proj.join("main.tex"), doc(hook, "")).unwrap();
+        std::fs::write(proj.join("stamp.tex"), "% a file whose date is read\n").unwrap();
+        touch(&proj.join("stamp.tex"), t0);
+        let cache_env = [("FLASHTEX_S0_CACHE", cache.to_str().unwrap())];
+        {
+            let host = start_host_env(&format!("a{case}"), &cache_env);
+            let mut c = Client::connect(&host.1).unwrap();
+            let mut view = View::default();
+            for id in 1..=4 {
+                let o = compile(&mut c, &mut view, &req(id, &proj, &out, "main.tex"));
+                if o.done.str_field("mode") == Some("unchanged") {
+                    break;
+                }
+            }
+            let _ = c.bye();
+        }
+        assert!(
+            std::fs::read_dir(&cache).is_ok_and(|mut d| d.next().is_some()),
+            "{case}: no S0 was stored"
+        );
+        // the edit, with no host running
+        std::fs::write(proj.join("main.tex"), doc(hook, extra)).unwrap();
+        if let Some((name, text)) = side {
+            std::fs::write(proj.join(name), text).unwrap();
+            touch(&proj.join(name), t1);
+        }
+        let host = start_host_env(&format!("b{case}"), &cache_env);
+        let scratch = start_host(&format!("s{case}"));
+        let mut c = Client::connect(&host.1).unwrap();
+        let mut view = View::default();
+        let o = compile(&mut c, &mut view, &req(1, &proj, &out, "main.tex"));
+        if refused {
+            assert_ne!(o.done.str_field("mode"), Some("open"), "{case}: {}", o.done);
+        }
+        for id in 2..=4 {
+            let o = compile(&mut c, &mut view, &req(id, &proj, &out, "main.tex"));
+            if o.done.str_field("mode") == Some("unchanged") {
+                break;
+            }
+        }
+        let (p2, o2) = snapshot(&base, &proj, &out, "x");
+        touch(&p2.join("stamp.tex"), if side.is_some() { t1 } else { t0 });
+        let what = format!("{case}: opened from the stored S0");
+        compare_with_scratch(&scratch.1, &view, &proj, &out, &p2, &o2, "main.tex", &what);
+        let _ = c.bye();
+        let _ = std::fs::remove_dir_all(&base);
+    }
 }

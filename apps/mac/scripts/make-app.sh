@@ -398,6 +398,12 @@ fi
 
 printf 'APPL????' > "$CONTENTS_DIR/PkgInfo"
 
+# App icon (CFBundleIconFile = AppIcon). Generated from the brand SVG by
+# assets/brand/generate.py and committed, so packaging needs no rasteriser.
+APP_ICON="$RESOURCES_SRC/AppIcon.icns"
+[[ -f "$APP_ICON" ]] || die "app icon not found: $APP_ICON (run python3 assets/brand/generate.py)"
+cp "$APP_ICON" "$RESOURCES_DIR/AppIcon.icns"
+
 echo "==> Copying fixtures and samples into Contents/Resources/Samples"
 FIXTURES_DIR="$REPO_ROOT/protocol/fixtures"
 for f in compile-result.json compile-request.json; do
