@@ -2193,8 +2193,17 @@ fn a_keystroke_that_changes_nothing_has_its_page_at_once() {
         delete: para.len() as u64,
         insert: String::new(),
     };
+    // A round shows the continuation only when r1 was still running when
+    // r2 came, and r2 when r3 came (both cancelled, by their DONEs): the
+    // client sends r2 and r3 as soon as r1's edited page arrives, but under
+    // load r1 may finish first. The rounds go on, at least 3, until one has
+    // shown it (at most 12): the outcome is read from the protocol's DONEs,
+    // not from the timing of one round.
     let mut seen_current_first = 0;
-    for round in 0..3 {
+    for round in 0..12 {
+        if round >= 3 && seen_current_first > 0 {
+            break;
+        }
         let (id1, id2, id3) = (id + 1, id + 2, id + 3);
         id += 3;
         let mut r1 = req(id1, &proj, &out, main);
@@ -2317,7 +2326,7 @@ fn a_keystroke_that_changes_nothing_has_its_page_at_once() {
     }
     assert!(
         seen_current_first > 0,
-        "no keystroke found its page current at once"
+        "no keystroke found its page current at once (in 12 rounds)"
     );
     let _ = c.bye();
     let _ = std::fs::remove_dir_all(&base);
