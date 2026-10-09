@@ -3019,7 +3019,6 @@ fn preamble_edits_restart_before_s0() {
     compile_and_check(&e, &mut h, &dir, &[("doc.tex", &doc)], "the revert");
 }
 
-
 /// Review of #1551 (PREAMBLE-FAST): a file `\input` twice, then text
 /// appended to it. The first read closed at the file's end, which the
 /// appended text moves: a checkpoint inside the second read had consumed
