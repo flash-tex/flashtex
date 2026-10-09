@@ -38,6 +38,8 @@ mod tests {
             "pdftex.pool",
             "web2rust-default.args",
             "Cargo.toml",
+            "../flashtex-runtime/src/persist.rs",
+            "../flashtex-runtime/Cargo.toml",
         ] {
             assert!(
                 inputs.contains(&PathBuf::from(must)),
@@ -56,8 +58,10 @@ mod tests {
 
     #[test]
     fn one_byte_of_a_hand_written_engine_file_changes_the_id() {
-        let t = std::env::temp_dir().join(format!("flashtex-build-id-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&t);
+        let base = std::env::temp_dir().join(format!("flashtex-build-id-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        // the engine's copy beside the runtime's (`../flashtex-runtime`)
+        let t = base.join("flashtex-engine");
         copy_tree(&engine_dir(), &t);
         let before = hash::engine_sources_id(&t);
         assert_eq!(before, ENGINE_BUILD_ID, "the copy hashes as the original");
@@ -66,6 +70,7 @@ mod tests {
             "src/resolver.rs",
             "src/formats.rs",
             "src/pdftex/mod.rs",
+            "../flashtex-runtime/src/persist.rs",
         ] {
             let p = t.join(file);
             let mut data = std::fs::read(&p).unwrap();
@@ -79,6 +84,6 @@ mod tests {
             std::fs::write(&p, &data).unwrap();
             assert_eq!(hash::engine_sources_id(&t), before);
         }
-        let _ = std::fs::remove_dir_all(&t);
+        let _ = std::fs::remove_dir_all(&base);
     }
 }

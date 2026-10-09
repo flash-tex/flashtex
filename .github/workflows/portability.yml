@@ -24,6 +24,7 @@ on:
   pull_request:
     paths:
       - "crates/flashtex-engine/**"
+      - "crates/flashtex-runtime/**"
       - "crates/display-list-v3/**"
       - "third_party/**"
       - "tools/web2rust/**"
