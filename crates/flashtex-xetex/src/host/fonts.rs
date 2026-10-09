@@ -55,7 +55,8 @@ fn refused(name: &str) -> Option<String> {
 /// governs nothing, and the app compiles a copy of the project under its
 /// caches, with no repository to end the search), and at a directory this
 /// user does not own or that others may write (`/tmp`, a shared folder:
-/// anyone could put a manifest there).
+/// anyone could put a manifest there). The file itself must be this
+/// user's and not writable by others.
 pub fn locate(root: &Path) -> Option<PathBuf> {
     use std::os::unix::fs::MetadataExt;
     // SAFETY: getuid(2) has no preconditions.
@@ -74,7 +75,7 @@ pub fn locate(root: &Path) -> Option<PathBuf> {
         }
         let candidate = dir.join(flashtex_project_manifest::FILE_NAME);
         if let Ok(f) = std::fs::metadata(&candidate) {
-            if f.is_file() && f.uid() == uid {
+            if f.is_file() && f.uid() == uid && f.mode() & 0o002 == 0 {
                 return Some(candidate);
             }
         }
@@ -216,6 +217,12 @@ mod tests {
         std::fs::set_permissions(&d, std::fs::Permissions::from_mode(0o777)).unwrap();
         assert!(locate(&inner).is_none(), "not in a world-writable one");
         std::fs::set_permissions(&d, std::fs::Permissions::from_mode(0o755)).unwrap();
+        // nor a manifest others may write, in an owned directory
+        let toml = d.join("flashtex.toml");
+        std::fs::set_permissions(&toml, std::fs::Permissions::from_mode(0o666)).unwrap();
+        assert!(locate(&inner).is_none(), "not a world-writable file");
+        std::fs::set_permissions(&toml, std::fs::Permissions::from_mode(0o644)).unwrap();
+        assert!(locate(&inner).is_some());
         std::fs::write(inner.join(".git"), "").unwrap();
         assert!(locate(&inner).is_none(), "nor above a repository's root");
         let _ = std::fs::remove_dir_all(&d);

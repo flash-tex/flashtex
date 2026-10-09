@@ -234,7 +234,9 @@ fn write_atomic(path: &Path, data: &[u8]) -> std::io::Result<()> {
         })
 }
 
-pub fn ensure(exe: &Path, fmt: &str) -> Result<PathBuf, String> {
+/// `children`: the INITEX run is the host's child like a compile's
+/// engine, on its lifeline (proc.rs).
+pub fn ensure(exe: &Path, fmt: &str, children: &super::proc::Children) -> Result<PathBuf, String> {
     let args = ini_args(fmt).ok_or_else(|| format!("no format {fmt} for the Unicode engine"))?;
     let root = cache_root().ok_or("no cache directory (HOME unset)")?;
     let build = engine_build(exe).map_err(|e| format!("{}: {e}", exe.display()))?;
@@ -298,6 +300,7 @@ pub fn ensure(exe: &Path, fmt: &str) -> Result<PathBuf, String> {
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null());
+    children.prepare(&mut cmd);
     let status = cmd
         .status()
         .map_err(|e| format!("{}: {e}", exe.display()))?;
