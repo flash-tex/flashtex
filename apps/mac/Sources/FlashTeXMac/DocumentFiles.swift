@@ -871,6 +871,8 @@ extension ShellModel {
         files.noteDiskState(.unchanged)
         watchOpenDocument() // DocumentWatcher.swift: live external-change detection
         manifest.refresh() // ProjectManifest.swift: the flashtex.toml governing this project, before the first compile
+        engineHostNeedsUnicode = nil // the new engine's report on the document before this open (UnicodeFonts.swift)
+        unicodeFontsScan = nil
         resolveEngineForOpenedDocument() // this document's engine, with the fallback rules (after the manifest)
         engineChoicePending = false
         // Still on the new engine: now it opens the project (stored pages,
@@ -962,6 +964,7 @@ extension ShellModel {
 
     /// Menu-driven save: on a conflict, asks the user how to resolve it.
     func saveTexInteractive() {
+        projectPackages.explicitRequest(compiling: false) // ProjectPackages.swift: ⌘S ends the typing grace period
         // A non-entry document saves to its own rooted file (never to the
         // entry URL): ProjectDocuments.saveDocument, helper export or rooted
         // compare-and-replace, conflicts reported the same way.

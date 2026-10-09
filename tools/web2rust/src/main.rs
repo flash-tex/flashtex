@@ -63,6 +63,10 @@ struct Args {
     /// string (256, TANGLE's; 65536 for xetex.web, as `otangle` numbers
     /// them).
     first_string: i64,
+    /// `--host-state TYPE`: one more field of `Globals`, `host: TYPE`,
+    /// initialised with `Default::default()`: the engine's state outside the
+    /// word space (none if not given).
+    host_state: Option<String>,
 }
 
 fn parse_args() -> Result<Args, String> {
@@ -103,6 +107,7 @@ fn parse_args() -> Result<Args, String> {
         inline: vec![],
         array_views: vec![],
         first_string: 256,
+        host_state: None,
     };
     while let Some(arg) = it.next() {
         match arg.as_str() {
@@ -165,6 +170,9 @@ fn parse_args() -> Result<Args, String> {
                 a.first_string = v
                     .parse()
                     .map_err(|_| format!("--first-string: not a number: {v}"))?;
+            }
+            "--host-state" => {
+                a.host_state = Some(it.next().ok_or("--host-state needs a type path")?)
             }
             "--stat" => a.stat = true,
             "--debug" => a.debug = true,
@@ -302,6 +310,7 @@ fn main() -> ExitCode {
         &sources,
         &args.arena_caps,
         args.index_type.as_deref(),
+        args.host_state.as_deref(),
         &args.inline,
         &args.array_views,
     ) {

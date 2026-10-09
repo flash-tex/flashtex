@@ -44,6 +44,13 @@ void ftx_init(void) {
   }
 }
 
+// `globalParams->setErrQuiet(q)`: no messages while an image is read again
+// to check a persisted S0 (images.rs `probe`), which pdfTeX never does.
+void ftx_set_err_quiet(int q) {
+  ftx_init();
+  globalParams->setErrQuiet(q ? gTrue : gFalse);
+}
+
 // ---------------------------------------------------------------------------
 // documents
 // ---------------------------------------------------------------------------

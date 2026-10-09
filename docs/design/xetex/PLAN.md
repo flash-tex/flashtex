@@ -98,7 +98,7 @@ the engine and how it shares one runtime and one engine interface with the pdfTe
   `.tec` files (`tex-text.tec` comes from the bundle or TeX Live); ICU for
   encodings, normalisation and line breaking is pinned the same way, at the
   version TeX Live 2026 builds with.
-- **Vendored (S1):** [`third_party/harfbuzz`](../../../third_party/harfbuzz/README.md) and [`third_party/freetype`](../../../third_party/freetype/README.md), built by `crates/flashtex-xetex/fontlibs` and pinned by `crates/flashtex-xetex/tests/pinned_libs.rs`.
+- **Vendored (S1):** [`third_party/harfbuzz`](../../../third_party/harfbuzz/README.md) and [`third_party/freetype`](../../../third_party/freetype/README.md), built by `crates/flashtex-xetex/fontlibs`, and [`third_party/teckit`](../../../third_party/teckit/README.md) (TECkit 2.5.13's engine, used under its LGPL-2.1-or-later option, with TeX Live's zlib), built by `crates/flashtex-xetex/teckit`; all pinned by `crates/flashtex-xetex/tests/pinned_libs.rs`. A TFM font's `:mapping=` goes through tex.ch's ML\TeX `effective_char` as in TeX Live (`changes/mltex.ch`).
 - **Font lookup, platform-free.** XeTeX asks Core Text (macOS) or fontconfig
   (elsewhere) for the installed fonts; FlashTeX does not. A name is resolved
   by XeTeX's own matching rules, rewritten, over a platform-free index of the
@@ -349,6 +349,54 @@ can show in a TFM-only document that does not name them.
   `tools/xetex-lockstep/run.py`: the file name inside each
   `define_native_font` record is replaced by its base name before the
   comparison (the record's other bytes stay compared), with a test.
+
+## 4A. Phase S2 part 1 (2026-10-06): OpenType math and pictures
+
+Verified on mac-m1max-a against TeX Live 2026's `xetex`/`xelatex -no-pdf`:
+
+- **OpenType math** (#1645): `XeTeXOTMath.cpp` ported over the vendored
+  HarfBuzz's math API (`src/native/otmath.rs`). Cases `o001`-`o010` (Latin
+  Modern, STIX Two and Libertinus Math in plain TeX) and xelatex `l007`-`l009`
+  (amsmath + unicode-math): P-T1 and XDV equal. One engine fix found by
+  them: xetex.ch [49.1222] (`x054`).
+- **Pictures** (stacked on #1645): `XeTeX_pic.c`, `pdfimage.cpp` and the PNG,
+  JPEG and BMP header scanners ported (`src/pic.rs`); PDF page boxes read
+  through the pdfTeX engine's xpdf with pplib's rules; `kpse_pict_format`
+  added to the shared resolver (`Format::Pict`, no change for Classic: the
+  format was already initialised there). Cases `p001`-`p006` and xelatex
+  `l010` (graphicx): P-T1 and XDV equal. One engine fix: `pic_page` is
+  printed as a signed 16-bit value, as in TeX Live.
+- **Graphite2**: not started. It is LGPL-2.1-or-later or MPL-2.0 (or
+  GPL-2.0-or-later), so it may be linked into this GPL crate (§2, DESIGN.md
+  §3). Next: vendor TeX Live 2026's Graphite2 1.3.14, build HarfBuzz with
+  `HAVE_GRAPHITE2`, port XeTeX's Graphite paths (`/GR`, the `graphite`
+  shaper, `XeTeXLayoutInterface`'s Graphite feature queries), and add cases
+  with a Graphite font from TeX Live (`CharisSIL-Regular.ttf` is there).
+
+**What part 2 (the output path of §3.2) needs.** XDV stays the parity
+instrument; the product path needs:
+
+1. A display-list writer for this engine's `ship_out` (the pdfTeX engine's
+   `src/displaylist/` is tied to its own `ship_out`): native word and glyph
+   nodes as glyph runs (ids and positions from the glyph-info handles),
+   `FONT.format: "opentype"` with `face_index`, variations and the font
+   file's digest; picture nodes as image records (path, page, box,
+   transform); rules, boxes and `\special`s as for Classic.
+2. A PDF writer over that display list: OpenType embedding (CFF and
+   TrueType subsets, `face_index`, variations) with `ToUnicode` from the
+   clusters; PNG (IDAT copy), JPEG (pass-through), BMP (decoded) and PDF
+   pages (the ported `pdftoepdf`) as XObjects. `pdf-writer`, `krilla` and
+   `subsetter` are to be evaluated first (MIT or dual MIT/Apache-2.0 used
+   under MIT; no Apache-2.0-only code).
+3. The dvipdfmx `\special` language the drivers emit (`xetex.def`,
+   `l3backend-xetex.def`, `hxetex.def`, `pgfsys-xetex.def`, xcolor):
+   `pdf:image`, `pdf:literal`/`content`, `color push`/`pop`,
+   `pdf:bann`/`eann`, `pdf:dest`, `pdf:outline`, `pdf:docinfo`,
+   `papersize`, `x:`; the set closed by counting the specials of the S2/S3
+   corpora, unknown ones reported as diagnostics.
+4. The PDF parity harness of §3.5 against `xelatex`'s PDF (structural, and
+   visual at 2× through Core Graphics), on this corpus plus hyperref, xcolor
+   and TikZ documents.
 
 ## 5. Risks carried into S1–S3
 

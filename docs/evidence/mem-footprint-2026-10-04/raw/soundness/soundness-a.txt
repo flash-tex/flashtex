@@ -1,0 +1,3 @@
+full-100: 60 compiles, 60 ok, 0 mismatches, 57 converged, 0 accounting-only log differences, modes {'incremental': 60}
+plain-120: 60 compiles, 60 ok, 0 mismatches, 57 converged, 0 accounting-only log differences, modes {'incremental': 60}
+{"compiles": 120, "ok": 120, "bad": 0, "conv": 114, "acct": 0, "err": 0, "interrupted": 0}

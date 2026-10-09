@@ -9,6 +9,8 @@ changing a case here and commit both. Each case starts with \\input prelude
 case that ends with an error on purpose (tools/lockstep/README.md).
 """
 import os
+import struct
+import zlib
 
 OUT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "cases")
 os.makedirs(OUT, exist_ok=True)
@@ -478,11 +480,668 @@ case("x053-mkern-nonmu", "tex.ch [26.449]: \\mkern and \\mskip with a non-mu int
 \lsshipbox0
 \end""", no_halt=True)
 
+case("x054-shorthand-reassign", "xetex.ch [49.1222]: a shorthand definition of a \\csname-made \\relax reassigns (\\tracingassigns)",
+     r"""\expandafter\let\csname a\endcsname\relax \chardef\a=1
+\csname b\endcsname \mathchardef\b="141 \csname c\endcsname \Umathchardef\c="1 "0 "41
+\csname d\endcsname \countdef\d=5 \csname e\endcsname \XeTeXmathchardef\e="1 "0 "42
+\message{[\meaning\a][\meaning\b][\meaning\c][\meaning\d][\meaning\e]}
+\setbox0=\hbox{}
+\lsshipbox0
+\end""")
+
 case("x050-catcode-default", "the INITEX category codes of Unicode letters and others",
      r"""\message{x050 \the\catcode`a \the\catcode`é \the\catcode`Ω \the\catcode`雪 \the\catcode`🍌 \the\catcode`1 \the\catcode`. \the\catcode`€}
 \setbox0=\hbox{\vrule width1pt}
 \lsshipbox0
 \end""")
+
+
+# ---------------------------------------------------------------------------
+# Phase S1: native fonts by file name (OpenType and TrueType files that
+# kpathsea finds in TeX Live, or by absolute path). The fonts are TeX Live's
+# Latin Modern and TeX Gyre and two of macOS's own; a machine without one
+# of them fails the same way in both engines.
+# ---------------------------------------------------------------------------
+
+
+def ncase(name, desc, body, no_halt=False):
+    head = "%% %s: %s\n" % (name, desc)
+    head += "% XeTeX-specific (docs/design/xetex/PLAN.md, phase S1: native fonts)\n"
+    if no_halt:
+        head += "% lockstep: no-halt\n"
+    text = head + "\\input prelude\n\\def\\space{ }\n" + body
+    if not text.endswith("\n"):
+        text += "\n"
+    cases[name] = text.encode("utf-8")
+
+
+PARA = (r"""\hsize=210pt \parindent=12pt \parfillskip=0pt plus 1fil
+\baselineskip=13pt \tolerance=10000 \pretolerance=-1
+""")
+WORDS = ("We shall find that office workers, efficient and affluent, "
+         "flatly refuse difficult fjords; AVATAR, Wo, Ta, T. Yo! "
+         "Naïve café owners in Zürich serve crème brûlée -- or not --- "
+         "with 1234567890 “quotes” and ‘single’ ones.")
+
+ncase("n001-lm-text", "Latin Modern Roman OTF by file name: ligatures, kerns, accents",
+      r"""\font\x="[lmroman10-regular.otf]" \x
+\setbox0=\hbox{office difficult flag AVAT Ta. Wo, ``quotes'' -- --- é ñ ß Ŵ}
+\lsshipbox0
+\end""")
+
+ncase("n002-lm-paragraph", "a paragraph in Latin Modern Roman broken into lines",
+      PARA + r"""\font\x="[lmroman10-regular.otf]" \x
+\setbox0=\vbox{""" + WORDS + " " + WORDS + r"""\par}
+\lsshipbox0
+\end""")
+
+ncase("n003-lm-sizes", "sizes: at, scaled, and the design size of the size feature",
+      r"""\font\a="[lmroman10-regular.otf]" at 5pt
+\font\b="[lmroman10-regular.otf]" scaled 1200
+\font\c="[lmroman12-regular.otf]"
+\font\d="[lmroman17-regular.otf]" scaled 500
+\font\e="[lmroman10-regular.otf]" at 17.28pt
+\message{[\fontname\a][\fontname\b][\fontname\c][\fontname\d][\fontname\e]}
+\message{[\the\fontdimen6\c][\the\fontdimen6\d]}
+\setbox0=\hbox{\a office \b office \c office \d office \e office}
+\lsshipbox0
+\end""")
+
+ncase("n004-gyre-features", "OpenType features of TeX Gyre Termes: smcp, onum, -liga, -kern, script and language, a bad option",
+      r"""\font\a="[texgyretermes-regular.otf]:+smcp;+onum"
+\font\b="[texgyretermes-regular.otf]:-liga;-kern"
+\font\c="[texgyretermes-regular.otf]:script=latn;language=DEU;+liga"
+\font\d="[texgyretermes-regular.otf]:+frac;+sups"
+\font\e="[texgyretermes-regular.otf]:nosuchoption;+zzzz"
+\setbox0=\hbox{\a Office 1234 \b office AVA \c office \d 1/2 3/4 \e office}
+\lsshipbox0
+\end""")
+
+ncase("n005-common-options", "letterspace, color, extend, slant and embolden options",
+      r"""\font\a="[lmroman10-regular.otf]:letterspace=10"
+\font\b="[lmroman10-regular.otf]:color=FF0000"
+\font\c="[lmroman10-regular.otf]:color=00FF0080"
+\font\d="[lmroman10-regular.otf]:extend=1.2"
+\font\e="[lmroman10-regular.otf]:slant=0.2"
+\font\f="[lmroman10-regular.otf]:embolden=2"
+\font\g="[lmroman10-regular.otf]:extend=0.85;slant=-0.167"
+\font\h="[lmroman10-regular.otf]:color=12"
+\message{[\the\fontdimen1\d][\the\fontdimen1\e][\the\fontdimen1\g][\the\fontdimen2\a]}
+\setbox0=\hbox{\a office \b office \c office \d office \e office \f office \g office \h office}
+\lsshipbox0
+\end""")
+
+ncase("n006-glyph-queries", "glyph and font queries of a native font",
+      r"""\font\x="[lmroman10-regular.otf]"
+\message{[\the\XeTeXcountglyphs\x][\the\XeTeXfirstfontchar\x][\the\XeTeXlastfontchar\x][\the\XeTeXfonttype\x]}
+\x
+\message{[\the\XeTeXcharglyph`A]}
+\count1=\XeTeXglyphindex "f_f_i" \relax
+\message{[\the\count1]}
+\message{[\XeTeXglyphname\x 12][\XeTeXglyphname\x 300]}
+\message{[\the\fontcharwd\x`A][\the\fontcharht\x`A][\the\fontchardp\x`g][\the\fontcharic\x`f][\the\fontcharic\x`A]}
+\message{[\the\XeTeXglyphbounds1 36][\the\XeTeXglyphbounds2 36][\the\XeTeXglyphbounds3 36][\the\XeTeXglyphbounds4 36]}
+\message{[\the\fontdimen1\x][\the\fontdimen2\x][\the\fontdimen3\x][\the\fontdimen4\x][\the\fontdimen5\x][\the\fontdimen6\x][\the\fontdimen7\x][\the\fontdimen8\x]}
+\setbox0=\hbox{\XeTeXglyph36 \XeTeXglyph 12 x}
+\lsshipbox0
+\end""")
+
+ncase("n007-ot-layout-queries", "\\XeTeXOT... queries: scripts, languages, features",
+      r"""\font\x="[texgyretermes-regular.otf]"
+\count1=\XeTeXOTcountscripts\x
+\message{[\the\count1]}
+\def\one#1{\count3=\XeTeXOTscripttag\x#1
+  \message{[script \the\count3: \the\XeTeXOTcountlanguages\x\count3 languages, \the\XeTeXOTcountfeatures\x\count3 0 features]}
+  \message{[\the\XeTeXOTfeaturetag\x\count3 0 0][\the\XeTeXOTfeaturetag\x\count3 0 5][\the\XeTeXOTlanguagetag\x\count3 0]}
+  \message{[\the\XeTeXOTcountfeatures\x\count3 "44455520 ][\the\XeTeXOTfeaturetag\x\count3 "44455520 1]}}
+\one0 \one1 \one2 \one7
+\setbox0=\hbox{\x x}
+\lsshipbox0
+\end""")
+
+ncase("n008-glyph-metrics", "\\XeTeXuseglyphmetrics: heights and depths from the glyphs",
+      r"""\font\x="[lmroman10-regular.otf]" \x
+\setbox0=\hbox{\XeTeXuseglyphmetrics=1 ace gpy AT \XeTeXglyph36 \XeTeXuseglyphmetrics=0 ace gpy}
+\lsshipbox0
+\end""")
+
+ncase("n009-gyre-families", "TeX Gyre Heros, Pagella italic, Cursor and Latin Modern Mono in one paragraph",
+      PARA + r"""\font\a="[texgyreheros-regular.otf]" \font\b="[texgyrepagella-italic.otf]"
+\font\c="[texgyrecursor-regular.otf]" \font\d="[lmmono10-regular.otf]"
+\font\e="[texgyreheros-bold.otf]" \font\f="[texgyrebonum-regular.otf]"
+\setbox0=\vbox{\a """ + WORDS + r""" \b """ + WORDS + r""" \c office \d office \e """ + WORDS + r""" \f """ + WORDS + r"""\par}
+\lsshipbox0
+\end""")
+
+ncase("n010-system-ttf", "a macOS TrueType font by absolute path (Times New Roman, GSUB/GPOS)",
+      PARA + r"""\font\x="[/System/Library/Fonts/Supplemental/Times New Roman.ttf]" \x
+\setbox0=\vbox{""" + WORDS + r"""\par}
+\lsshipbox0
+\end""")
+
+ncase("n011-system-ttc", "macOS Helvetica.ttc faces by absolute path and index (shaped with HarfBuzz in the file form)",
+      PARA + r"""\font\a="[/System/Library/Fonts/Helvetica.ttc]" \font\b="[/System/Library/Fonts/Helvetica.ttc:1]"
+\font\c="[/System/Library/Fonts/Times.ttc:0]"
+\message{[\fontname\a][\fontname\b][\the\fontdimen1\b]}
+\setbox0=\vbox{\a """ + WORDS + r""" \b office AVAT \c """ + WORDS + r"""\par}
+\lsshipbox0
+\end""")
+
+ncase("n012-same-font-twice", "a native font loaded twice is one font; \\fontname and \\the\\font",
+      r"""\font\a="[lmroman10-regular.otf]" \font\b="[lmroman10-regular.otf]"
+\font\c="[lmroman10-regular.otf]" at 10.0001pt
+\message{[\fontname\a][\fontname\b][\fontname\c][\meaning\a][\meaning\b]}
+\setbox0=\hbox{\a x\b x\c x}
+\lsshipbox0
+\end""")
+
+ncase("n013-tracing-fonts", "\\XeTeXtracingfonts reports the file a font came from",
+      r"""\XeTeXtracingfonts=1
+\font\a="[lmroman10-regular.otf]" \font\b="[texgyretermes-bold.otf]"
+\setbox0=\hbox{\a x\b x}
+\lsshipbox0
+\end""")
+
+ncase("n014-missing-chars", "characters a native font lacks are lost (\\tracinglostchars)",
+      r"""\font\x="[lmroman10-regular.otf]" \x \tracinglostchars=2
+\setbox0=\hbox{a雪b🍌c\char"E000 d}
+\lsshipbox0
+\end""")
+
+ncase("n015-hyphenation", "native words hyphenated from \\hyphenation exceptions",
+      r"""\hsize=60pt \parindent=0pt \parfillskip=0pt plus 1fil \tolerance=10000 \pretolerance=-1
+\hyphenpenalty=0 \lefthyphenmin=2 \righthyphenmin=2 \baselineskip=12pt
+\hyphenation{dif-fi-cult ef-fi-cient af-flu-ent of-fice work-ers}
+\font\x="[lmroman10-regular.otf]" \x \hyphenchar\x=`-
+\setbox0=\vbox{difficult efficient affluent office workers difficult efficient affluent office workers\par}
+\lsshipbox0
+\end""")
+
+ncase("n016-interword-shaping", "\\XeTeXinterwordspaceshaping 0, 1 and 2",
+      PARA + r"""\font\x="[texgyretermes-regular.otf]" \x
+\setbox0=\vbox{\XeTeXinterwordspaceshaping=0 AV AT Wo. office\par
+\XeTeXinterwordspaceshaping=1 AV AT Wo. office\par
+\XeTeXinterwordspaceshaping=2 AV AT Wo. office """ + WORDS + r"""\par}
+\lsshipbox0
+\end""")
+
+ncase("n017-justified-boxes", "native words in boxes set to a width (stretch and shrink)",
+      r"""\font\x="[lmroman10-regular.otf]" \x
+\setbox1=\hbox to 200pt{office and difficult words}
+\setbox2=\hbox to 80pt{office and difficult words}
+\setbox3=\hbox spread 20pt{AVA Ta We}
+\setbox0=\vbox{\box1 \box2 \box3}
+\lsshipbox0
+\end""")
+
+ncase("n018-pagella-math-chars", "punctuation, digits, symbols and combining marks in TeX Gyre Pagella",
+      r"""\font\x="[texgyrepagella-regular.otf]" \x
+\setbox0=\hbox{0123456789 +−×÷=≠ ¶§†‡ ©®™ ½ e\char"0301 o\char"0308 fi ffl ſt}
+\lsshipbox0
+\end""")
+
+ncase("n019-xdv-many-fonts", "many native fonts and sizes in one XDV file, several pages",
+      r"""\font\a="[lmroman10-regular.otf]" \font\b="[lmroman10-bold.otf]" at 12pt
+\font\c="[lmroman10-italic.otf]" scaled 900 \font\d="[lmsans10-regular.otf]"
+\font\e="[texgyreadventor-regular.otf]" \font\f="[texgyrechorus-mediumitalic.otf]"
+\setbox0=\hbox{\a Roman \b Bold \c Italic \d Sans}
+\lsshipbox0
+\setbox0=\hbox{\e Adventor \f Chorus \a again}
+\lsshipbox0
+\end""")
+
+ncase("n020-unknown-font", "a bracketed font file that does not exist, and one that is not a font",
+      r"""\font\a="[nosuchfont.otf]"
+\setbox0=\hbox{x}
+\lsshipbox0
+\end""", no_halt=True)
+
+
+# Fonts by name: XeTeX's font manager (src/fontmgr) over the platform-free
+# index of the installed fonts. Names of macOS's own fonts; one that is
+# AAT-only (Helvetica) is asked for with /OT, which TeX Live's xetex on macOS
+# also shapes with HarfBuzz (without it, it uses Core Text: out of scope,
+# PLAN.md §3.1). No \XeTeXtracingfonts here: for a name, TeX Live's xetex
+# on macOS prints the path from a destroyed temporary
+# (`getPlatformFontDesc(...).c_str()` in XeTeXFontMgr::findFont), so its
+# "-> path" line is garbage bytes; the port prints the path.
+ncase("n021-by-name", "system fonts by family, full and PostScript name, with /B /I /BI and features",
+      PARA + r"""\font\a="Times New Roman" \font\b="Times New Roman/B" \font\c="Times New Roman/I"
+\font\d="Times New Roman/BI" \font\e="Arial Bold" \font\f="Georgia-Italic"
+\font\g="Courier New:+liga" \font\h="Helvetica/OT" \font\i="Helvetica Neue/OT/B"
+\font\j="Arial:letterspace=5;color=0000FF" \font\k="Georgia" at 12pt
+\message{[\fontname\a][\fontname\b][\fontname\c][\fontname\d][\fontname\e][\fontname\f]}
+\message{[\fontname\g][\fontname\h][\fontname\i][\fontname\j][\fontname\k]}
+\setbox0=\vbox{\a """ + WORDS + r""" \b office \c office \d office \e office \f office
+\g office \h """ + WORDS + r""" \i office \j office \k 0123456789\par}
+\lsshipbox0
+\end""")
+
+ncase("n022-name-not-found", "a font name that the index does not have",
+      r"""\font\a="No Such Font Family Anywhere"
+\setbox0=\hbox{x}
+\lsshipbox0
+\end""", no_halt=True)
+
+# --- TECkit font mappings (phase S1): `mapping=` on native and TFM fonts ---
+
+def mcase(name, desc, body, no_halt=False):
+    ncase(name, desc, body, no_halt)
+    cases[name] = cases[name].replace(
+        b"phase S1: native fonts)", b"phase S1: TECkit font mappings)", 1)
+
+
+TEXTEXT = "``quotes'' `single' -- en --- em ?` !` ,,low'' <<guillemets>> x--y---z"
+
+mcase("m001-tex-text", "mapping=tex-text on a native font by file name: quotes, dashes, ?` !`, ,, << >>",
+      r"""\font\x="[lmroman10-regular.otf]:mapping=tex-text" \x
+\setbox0=\hbox{""" + TEXTEXT + r"""}
+\setbox1=\hbox{\font\y="[lmroman10-regular.otf]" \y """ + TEXTEXT + r"""}
+\setbox2=\vbox{\box0 \box1}
+\lsshipbox2
+\end""")
+
+mcase("m002-tex-text-paragraph", "a paragraph in a mapped font broken into lines, with hyphenation and dash breaks",
+      PARA + r"""\hyphenation{dif-fi-cult ef-fi-cient af-flu-ent}
+\font\x="[texgyretermes-regular.otf]:mapping=tex-text" \x \hyphenchar\x=`-
+\XeTeXdashbreakstate=1
+\setbox0=\vbox{""" + WORDS + " " + TEXTEXT + " " + WORDS + r"""\par}
+\lsshipbox0
+\end""")
+
+mcase("m003-mapping-single-chars", "a mapping applied to single characters: \\char, \\accent and a character in math text",
+      r"""\font\x="[lmroman10-regular.otf]:mapping=tex-text" \x
+\setbox0=\hbox{\char`\` \char`\'\char`\' -\char`\-\char`\- \accent`\` e \accent`\' o}
+\lsshipbox0
+\end""")
+
+mcase("m004-mapping-expands", "unimath-bf: a mapping into the supplementary plane (surrogate pairs), a word longer than TECkit's first output buffer",
+      r"""\font\m="[latinmodern-math.otf]:mapping=unimath-bf" \m
+\setbox0=\hbox{abc XYZ abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghij}
+\setbox1=\hbox{\font\n="[latinmodern-math.otf]:mapping=unimath-it" \n mapped italic \char`h}
+\setbox2=\vbox{\box0 \box1}
+\lsshipbox2
+\end""")
+
+mcase("m005-tfm-byte-mapping", "a TFM font with :mapping= (a byte mapping, qx-unicode): characters mapped at \\shipout",
+      r"""\font\q=cmr10:mapping=qx-unicode \q
+\setbox0=\hbox{abc \char"E9\char"FC\char"DF\char"27 xyz}
+\font\r="cmr10:mapping=  qx-unicode" \font\s="cmr10:mapping=" \font\t=cmr10
+\message{[\fontname\q][\fontname\r][\fontname\s][\fontname\t]}
+\setbox1=\hbox{\r abc \s abc \t abc}
+\setbox2=\vbox{\box0 \box1}
+\lsshipbox2
+\end""")
+
+mcase("m006-tfm-unusable-mapping", "a TFM font with a Unicode-to-Unicode mapping (tex-text): not usable",
+      r"""\font\t=cmr10:mapping=tex-text \t
+\setbox0=\hbox{``x''}
+\lsshipbox0
+\end""")
+
+mcase("m007-missing-mapping", "a mapping file that does not exist, on a native and on a TFM font",
+      r"""\font\a="[lmroman10-regular.otf]:mapping=nosuchmapping" \a
+\font\b=cmr10:mapping=nosuchmapping
+\setbox0=\hbox{\a ``a'' \b ``b''}
+\lsshipbox0
+\end""")
+
+mcase("m008-tracing-fonts-mappings", "\\XeTeXtracingfonts=2 reports each mapping loaded",
+      r"""\XeTeXtracingfonts=2
+\font\a="[lmroman10-regular.otf]:mapping=tex-text" \font\b=cmr10:mapping=qx-unicode
+\font\c="[lmroman10-regular.otf]:mapping=nosuchmapping;+smcp"
+\XeTeXtracingfonts=1 \font\d="[lmroman10-bold.otf]:mapping=tex-text"
+\setbox0=\hbox{\a ``a'' \b b \c c \d ``d''}
+\lsshipbox0
+\end""")
+
+mcase("m009-tfm-mapping-paragraph", "a paragraph in a mapped TFM font: ligatures (not mapped twice), kerns, hyphenation and discretionaries",
+      PARA + r"""\hyphenation{dif-fi-cult ef-fi-cient af-flu-ent}
+\font\q=cmr10:mapping=qx-unicode \q \hyphenchar\q=`-
+\setbox0=\vbox{We shall find that office workers, efficient and affluent, flatly refuse
+difficult fjords; AVATAR, Wo, Ta, T. Yo! -- or not --- ``quoted'' text, ff ffi ffl fi fl.
+dif\-fi\-cult of\discretionary{f-}{fi}{ffi}ce \par}
+\lsshipbox0
+\end""")
+
+mcase("m010-tfm-mapping-chars", "characters of a mapped TFM font whose mapped code is missing or another; \\accent; \\fontcharwd",
+      r"""\font\q=cmr10:mapping=qx-unicode \q
+\setbox0=\hbox{\char"19\char"1B\char"7F\char"5C\char"22\char"7B\char"7D\char"3C\char"3E\char"7C x\accent"7F e\accent18 a\accent"5E o}
+\message{[\the\fontcharwd\q"DF][\the\fontcharwd\q"19][\the\fontcharwd\q"41][\the\wd0]}
+\font\sy=cmsy10 \font\ex=cmex10 \textfont2=\sy \scriptfont2=\sy \scriptscriptfont2=\sy
+\textfont3=\ex \scriptfont3=\ex \scriptscriptfont3=\ex
+\textfont0=\q \scriptfont0=\q \scriptscriptfont0=\q
+\setbox1=\hbox{$\fam0 a^b\mathchar"7019 ff\mathchar"7022\mathaccent"7015 x$}
+\setbox2=\vbox{\box0 \box1}
+\lsshipbox2
+\end""")
+
+# --- OpenType math (phase S2): the MATH table through \Umath... ---------
+
+def ocase(name, desc, body, no_halt=False):
+    ncase(name, desc, body, no_halt)
+    cases[name] = cases[name].replace(
+        b"phase S1: native fonts)", b"phase S2: OpenType math)", 1)
+
+
+def otmath(font, sizes=(10, 7, 5)):
+    """Families 0-3 in OpenType math font `font` at text, script and
+    scriptscript sizes, with plain TeX's delimiter and script parameters,
+    and Unicode math codes for the letters, digits and the operators the
+    cases use."""
+    t, s, ss = sizes
+    return (r"""\def\loop#1\repeat{\def\body{#1}\iterate}\let\repeat=\fi
+\def\iterate{\body \let\next\iterate \else\let\next\relax\fi \next}
+\font\mt="[%s]" at %dpt \font\ms="[%s]" at %dpt \font\mss="[%s]" at %dpt
+\textfont0=\mt \scriptfont0=\ms \scriptscriptfont0=\mss
+\textfont1=\mt \scriptfont1=\ms \scriptscriptfont1=\mss
+\textfont2=\mt \scriptfont2=\ms \scriptscriptfont2=\mss
+\textfont3=\mt \scriptfont3=\ms \scriptscriptfont3=\mss
+\delimiterfactor=901 \delimitershortfall=5pt \nulldelimiterspace=1.2pt \scriptspace=0.5pt
+\thinmuskip=3mu \medmuskip=4mu plus 2mu minus 4mu \thickmuskip=5mu plus 5mu
+\hsize=300pt \parindent=0pt \parfillskip=0pt plus 1fil \baselineskip=12pt
+\count255=`a \loop \Umathcode\count255="7 "1 \numexpr"1D44E+\count255-`a\relax
+  \advance\count255 1 \ifnum\count255<`\{\repeat
+\Umathcode`h="7 "1 "210E
+\count255=`A \loop \Umathcode\count255="7 "1 \numexpr"1D434+\count255-`A\relax
+  \advance\count255 1 \ifnum\count255<`\[\repeat
+\count255=`0 \loop \Umathcode\count255="0 "0 \count255
+  \advance\count255 1 \ifnum\count255<`\:\repeat
+\Umathcode`+="2 "0 "2B \Umathcode`-="2 "0 "2212 \Umathcode`=="3 "0 "3D
+\Umathcode`,="6 "0 "2C \Umathcode`(="4 "0 "28 \Umathcode`)="5 "0 "29
+\Umathcode`[="4 "0 "5B \Umathcode`]="5 "0 "5D \Umathcode`/="0 "0 "2F
+\Udelcode`(="0 "28 \Udelcode`)="0 "29 \Udelcode`[="0 "5B \Udelcode`]="0 "5D
+\Udelcode`|="0 "7C \Udelcode`/="0 "2F \Udelcode`.="0 "0
+\Umathchardef\sum="1 "0 "2211 \Umathchardef\int="1 "0 "222B \Umathchardef\prod="1 "0 "220F
+\Umathchardef\alpha="7 "1 "1D6FC \Umathchardef\beta="7 "1 "1D6FD \Umathchardef\infty="0 "0 "221E
+\Umathchardef\partial="0 "0 "1D715 \Umathchardef\prime="0 "0 "2032
+\def\lbrace{\Udelimiter "4 "0 "7B}\def\rbrace{\Udelimiter "5 "0 "7D}
+\def\sqrt{\Uradical "0 "221A }\def\,{\mskip\thinmuskip}
+\def\hat{\Umathaccent "0 "0 "0302 }\def\widehat{\Umathaccent "0 "0 "0302 }
+\def\tilde{\Umathaccent "0 "0 "0303 }\def\vec{\Umathaccent "0 "0 "20D7 }
+\def\overbrace{\Umathaccent "0 "0 "23DE }\def\underbrace{\Umathaccent bottom "0 "0 "23DF }
+""" % (font, t, font, s, font, ss))
+
+
+MATHFONTS = [("lm", "latinmodern-math.otf", "Latin Modern Math"),
+             ("stix", "STIXTwoMath-Regular.otf", "STIX Two Math"),
+             ("libertinus", "LibertinusMath-Regular.otf", "Libertinus Math")]
+
+FORMULAS = r"""\setbox0=\vbox{
+$a+b=c$, $x^2+y_1^{n+1}=z_{i,j}^{k}$, $f'(x)^2$, $A^2_B P_1 T^2 V_j W^k Y_1 f_1 f^2$,
+$\alpha_1\beta^2 \sum_{i=1}^n x_i \prod_{k=0}^{\infty} \int_0^1 \partial x$,
+${a\over b}+{a+1\atop b-1}+{1\above 1pt 2}+{x\overwithdelims() y}$,
+$\sqrt{x}+\sqrt{x^2+y^2}+\sqrt{\displaystyle{a\over b}}$,
+$\hat a \hat A \tilde x \vec v \widehat{xyz} \hat{\hat a}$,
+$\left( a\over b\right) \left[ x\over y\right] \left| x \right| \left\lbrace x \right\rbrace$
+$$\sum_{i=1}^n x_i = \int_0^\infty f(x)\,dx = \prod_{k=1}^\infty {1\over 1-x^k}$$
+$$\left( \vrule height 20pt depth 10pt width 0pt x \right) \left[ \vrule height 40pt depth 30pt width 0pt \right] \left\lbrace \vrule height 80pt depth 70pt width 0pt \right\rbrace \left/ \vrule height 30pt width 0pt \right.$$
+$$\overbrace{a+b+c}\quad \underbrace{x+y+z+w+v+u+t+s}\quad \overbrace{\hbox to 200pt{}}$$
+$\displaystyle x^{y^z} {a^2\over b_1} \textstyle x^{y^z} \scriptstyle x^{y^z} \scriptscriptstyle x^{y^z}$
+\par}
+\lsshipbox0
+"""
+
+for i, (tag, file, fam) in enumerate(MATHFONTS):
+    ocase("o%03d-formulas-%s" % (i + 1, tag),
+          "formulas in %s: scripts and cut-in kerns, fractions, radicals, accents, \\left/\\right variants and assemblies, big operators, horizontal braces as stretchy accents" % fam,
+          otmath(file) + r"\def\quad{\hskip10pt}" + "\n" + FORMULAS + r"\end")
+
+for i, (tag, file, fam) in enumerate(MATHFONTS):
+    ocase("o%03d-fontdimens-%s" % (i + 4, tag),
+          "all 65 fontdimens of %s at 10pt and 7pt, as families 2 and 3 read them" % fam,
+          otmath(file) + r"""\count1=1 \loop \message{[\the\count1:\the\fontdimen\count1\mt:\the\fontdimen\count1\ms]}
+  \advance\count1 1 \ifnum\count1<66 \repeat
+\setbox0=\hbox{$x$}
+\lsshipbox0
+\end""")
+
+ocase("o007-radicals", "\\Uradical of growing height (variants, then the assembly), nested, in each style, and a degree placed as plain TeX's \\root does",
+      otmath("latinmodern-math.otf") + r"""\def\root#1\of#2{\setbox2=\hbox{$\scriptscriptstyle{#1}$}\mkern5mu\raise.6\ht2\copy2\mkern-10mu\sqrt{#2}}
+\setbox0=\vbox{$\root 3\of x \root n\of{x^2+1} \sqrt{\sqrt{\sqrt{x}}} \scriptstyle\sqrt{x} \scriptscriptstyle\sqrt{x}$
+$$\sqrt{\vrule height 12pt depth 4pt width 1pt} \sqrt{\vrule height 30pt depth 10pt width 1pt} \sqrt{\vrule height 80pt depth 40pt width 1pt} \sqrt{\vrule height 150pt width 1pt} \sqrt{\displaystyle{a\over b}}$$\par}
+\lsshipbox0
+\end""")
+
+ocase("o008-mixed-sizes", "an OpenType math font with a TFM text family 0 and other script sizes (\\fontdimen with scaled fonts)",
+      otmath("STIXTwoMath-Regular.otf", (12, 8, 6)) + r"""\font\tr=cmr10 \textfont0=\tr \scriptfont0=\tr \scriptscriptfont0=\tr
+\Umathcode`1="0 "0 `1 \Umathcode`2="0 "0 `2
+\setbox0=\vbox{$x_1^2 + {1\over 2} + \sqrt{12} + \left(x\over y\right)^{2}_{i}$
+$$\sum_{i=1}^{2} x_i^2 \int_1^2 \partial f$$\par}
+\lsshipbox0
+\end""")
+
+ocase("o009-limits-and-operators", "big operators with \\limits/\\nolimits/\\displaylimits, display operator size (variants), italic correction of an integral",
+      otmath("LibertinusMath-Regular.otf") + r"""\setbox0=\vbox{$\sum\limits_{i=1}^n \int\limits_0^1 \int\nolimits_0^1 \prod\displaylimits_a^b$
+$$\sum_{i=1}^n \int_0^1 \int\nolimits_0^1 f \prod\limits_{k} \int\limits_a^b$$\par}
+\lsshipbox0
+\end""")
+
+ocase("o010-mathaccents", "\\Umathaccent: top accents on letters with and without top accent attachments, fixed, bottom and stretched accents",
+      otmath("latinmodern-math.otf") + r"""\setbox0=\vbox{$\hat a \hat f \hat W \hat{ab} \Umathaccent fixed "0 "0 "0302 {xyz}
+\Umathaccent bottom "0 "0 "0332 {x} \Umathaccent "0 "0 "0305 {abcdef} \Umathaccent "0 "0 "20D7 {ABCDEF}
+\Umathaccent "0 "0 "0302 {\Umathaccent "0 "0 "0302 {x}}$\par}
+\lsshipbox0
+\end""")
+
+# --- Pictures (phase S2): \XeTeXpicfile and \XeTeXpdffile -------------------
+#
+# The picture files the p-cases read are written to `pictures/` (run.py
+# copies them next to each case): XeTeX reads only a picture's header, so
+# each is the header its scanner reads and nothing more (PNG chunks with
+# their CRCs, as libpng checks them; JPEG segments up to SOF; a BMP's two
+# headers; a small PDF with a correct cross-reference table).
+
+PICTURES = os.path.join(os.path.dirname(OUT), "pictures")
+pictures = {}
+
+
+def png_file(w, h, phys=None, phys_after_idat=False):
+    def chunk(kind, body):
+        return (struct.pack(">I", len(body)) + kind + body
+                + struct.pack(">I", zlib.crc32(kind + body) & 0xFFFFFFFF))
+    data = b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", w, h, 8, 2, 0, 0, 0))
+    ph = chunk(b"pHYs", struct.pack(">IIB", *phys)) if phys else b""
+    idat = chunk(b"IDAT", zlib.compress(b"\0" + b"\0" * (3 * w)))
+    if phys_after_idat:
+        data += idat + ph
+    else:
+        data += ph + idat
+    return data + chunk(b"IEND", b"")
+
+
+def jpeg_file(w, h, app=b""):
+    sof = b"\xff\xc0" + struct.pack(">HBHHB", 11, 8, h, w, 1) + b"\x01\x11\x00"
+    return b"\xff\xd8" + app + sof + b"\xff\xd9"
+
+
+def jfif(units, xd, yd):
+    body = b"JFIF\0" + struct.pack(">HBHHBB", 0x0102, units, xd, yd, 0, 0)
+    return b"\xff\xe0" + struct.pack(">H", len(body) + 2) + body
+
+
+def exif(xres, yres, unit, big_endian=True):
+    e = ">" if big_endian else "<"
+    tiff = (b"MM" if big_endian else b"II") + struct.pack(e + "HI", 42, 8)
+    entries = [(282, 5, 1, 8 + 2 + 3 * 12 + 4), (283, 5, 1, 8 + 2 + 3 * 12 + 4 + 8),
+               (296, 3, 1, None)]
+    tiff += struct.pack(e + "H", len(entries))
+    for tag, typ, count, off in entries:
+        if off is None:
+            tiff += struct.pack(e + "HHIHH", tag, typ, count, unit, 0)
+        else:
+            tiff += struct.pack(e + "HHII", tag, typ, count, off)
+    tiff += struct.pack(e + "I", 0)
+    tiff += struct.pack(e + "II", *xres) + struct.pack(e + "II", *yres)
+    body = b"Exif\0\0" + tiff
+    return b"\xff\xe1" + struct.pack(">H", len(body) + 2) + body
+
+
+def bmp_file(w, h, bits=24, xppm=2835, yppm=2835, core=False):
+    if core:
+        info = struct.pack("<IHHHH", 12, w, h, 1, bits)
+    else:
+        info = struct.pack("<IiiHHIIiiII", 40, w, h, 1, bits, 0, 0, xppm, yppm, 0, 0)
+    palette = b"" if bits >= 24 else b"\0" * ((3 if core else 4) * (1 << bits))
+    offset = 14 + len(info) + len(palette)
+    pixels = b"\0" * 64
+    return (b"BM" + struct.pack("<IHHI", offset + len(pixels), 0, 0, offset)
+            + info + palette + pixels)
+
+
+def pdf_file(objects):
+    """A PDF of `objects` (object 1 is the catalog), with a correct xref."""
+    out = b"%PDF-1.4\n%\xe2\xe3\xcf\xd3\n"
+    offsets = []
+    for i, body in enumerate(objects, 1):
+        offsets.append(len(out))
+        out += b"%d 0 obj\n" % i + body + b"\nendobj\n"
+    xref = len(out)
+    out += b"xref\n0 %d\n0000000000 65535 f \n" % (len(objects) + 1)
+    for off in offsets:
+        out += b"%010d 00000 n \n" % off
+    out += b"trailer\n<< /Size %d /Root 1 0 R >>\nstartxref\n%d\n%%%%EOF\n" % (len(objects) + 1, xref)
+    return out
+
+
+pictures["p-plain.png"] = png_file(40, 30)
+pictures["p-300dpi.png"] = png_file(600, 150, phys=(11811, 11811, 1))
+pictures["p-aspect.png"] = png_file(100, 100, phys=(3, 2, 0))
+pictures["p-mixed.png"] = png_file(50, 70, phys=(2835, 5670, 1))
+pictures["p-late-phys.png"] = png_file(64, 64, phys=(11811, 11811, 1), phys_after_idat=True)
+pictures["p-jfif-dpi.jpg"] = jpeg_file(320, 240, jfif(1, 150, 300))
+pictures["p-jfif-dpcm.jpg"] = jpeg_file(200, 100, jfif(2, 40, 40))
+pictures["p-jfif-aspect.jpg"] = jpeg_file(90, 60, jfif(0, 1, 1))
+pictures["p-exif.jpg"] = jpeg_file(300, 200, exif((600, 2), (240, 1), 2))
+pictures["p-exif-cm.jpg"] = jpeg_file(300, 200, exif((100, 1), (50, 1), 3, big_endian=False))
+pictures["p-nodpi.jpg"] = jpeg_file(72, 36)
+pictures["p-info.bmp"] = bmp_file(30, 20)
+pictures["p-topdown.bmp"] = bmp_file(30, -20, xppm=3780, yppm=3780)
+pictures["p-palette.bmp"] = bmp_file(16, 16, bits=8)
+pictures["p-core.bmp"] = bmp_file(25, 15, core=True)
+pictures["p-notimage.png"] = b"this is not a picture\n"
+pictures["p-pages.pdf"] = pdf_file([
+    b"<< /Type /Catalog /Pages 2 0 R >>",
+    b"<< /Type /Pages /Kids [3 0 R 4 0 R 5 0 R 6 0 R 7 0 R] /Count 5"
+    b" /MediaBox [0 0 612 792] /Rotate 90 >>",
+    # 1: the inherited MediaBox, its own CropBox
+    b"<< /Type /Page /Parent 2 0 R /CropBox [10 20 300 400] >>",
+    # 2: rotated, every box
+    b"<< /Type /Page /Parent 2 0 R /Rotate 90 /MediaBox [0 0 200 100]"
+    b" /BleedBox [5 5 195 95] /TrimBox [10 10 190 90] /ArtBox [20 15 180 85] >>",
+    # 3: reversed corners, -270 degrees, a box through a reference
+    b"<< /Type /Page /Parent 2 0 R /Rotate -270 /MediaBox [300 200 0 0.5] /CropBox 8 0 R >>",
+    # 4: a real Rotate and a box with a reference inside it
+    b"<< /Type /Page /Parent 2 0 R /Rotate 90.0 /MediaBox [0 0 144.5 72.25]"
+    b" /TrimBox [0 0 9 0 R 50] >>",
+    # 5: no box of its own but the inherited MediaBox, Rotate 180
+    b"<< /Type /Page /Parent 2 0 R /Rotate 180 >>",
+    b"[ 1 2 101 52 ]",
+    b"30",
+])
+
+PIC_FILES = ["p-plain.png", "p-300dpi.png", "p-aspect.png", "p-mixed.png", "p-late-phys.png",
+             "p-jfif-dpi.jpg", "p-jfif-dpcm.jpg", "p-jfif-aspect.jpg", "p-exif.jpg",
+             "p-exif-cm.jpg", "p-nodpi.jpg", "p-info.bmp", "p-topdown.bmp",
+             "p-palette.bmp", "p-core.bmp"]
+
+
+def pcase(name, desc, body, no_halt=False):
+    ncase(name, desc, body, no_halt)
+    cases[name] = cases[name].replace(
+        b"phase S1: native fonts)", b"phase S2: pictures)", 1)
+
+
+pcase("p001-picfile-formats", "\\XeTeXpicfile of PNG, JPEG and BMP files: sizes from pHYs, JFIF, Exif and BMP resolutions",
+      r"\setbox0=\vbox{" + "\n".join(r"\hbox{\XeTeXpicfile %s }" % f for f in PIC_FILES)
+      + "\n}\n" + r"""\lsshipbox0
+\end""")
+
+pcase("p002-picfile-keywords", "\\XeTeXpicfile's scaled, xscaled, yscaled, width, height and rotated keywords, in each order",
+      r"""\setbox0=\vbox{
+\hbox{\XeTeXpicfile p-plain.png scaled 1500 }
+\hbox{\XeTeXpicfile p-plain.png xscaled 500 yscaled 2000 }
+\hbox{\XeTeXpicfile p-300dpi.png width 2in }
+\hbox{\XeTeXpicfile p-300dpi.png height 1cm }
+\hbox{\XeTeXpicfile p-300dpi.png width 3cm height 1cm }
+\hbox{\XeTeXpicfile p-exif.jpg rotated 30 }
+\hbox{\XeTeXpicfile p-exif.jpg rotated 90 width 2cm }
+\hbox{\XeTeXpicfile p-exif.jpg width 2cm rotated 90 }
+\hbox{\XeTeXpicfile p-info.bmp rotated -45.5 scaled 2000 }
+\hbox{\XeTeXpicfile p-info.bmp scaled 2000 rotated 180 }
+\hbox{\XeTeXpicfile "p-jfif-dpi.jpg" width 100pt height 50pt rotated 12.25 }
+\hbox{\XeTeXpicfile p-core.bmp xscaled -1000 }
+}
+\lsshipbox0
+\end""")
+
+pcase("p003-pdffile-boxes", "\\XeTeXpdffile: pages (clamped, negative), crop/media/bleed/trim/art boxes, inherited boxes, Rotate, \\XeTeXpdfpagecount",
+      r"""\message{[\the\XeTeXpdfpagecount p-pages.pdf ][\the\XeTeXpdfpagecount nosuchfile.pdf ]}
+\setbox0=\vbox{
+\hbox{\XeTeXpdffile p-pages.pdf }
+\hbox{\XeTeXpdffile p-pages.pdf page 1 media }
+\hbox{\XeTeXpdffile p-pages.pdf page 2 }
+\hbox{\XeTeXpdffile p-pages.pdf page 2 crop }
+\hbox{\XeTeXpdffile p-pages.pdf page 2 media }
+\hbox{\XeTeXpdffile p-pages.pdf page 2 bleed }
+\hbox{\XeTeXpdffile p-pages.pdf page 2 trim }
+\hbox{\XeTeXpdffile p-pages.pdf page 2 art }
+\hbox{\XeTeXpdffile p-pages.pdf page 3 }
+\hbox{\XeTeXpdffile p-pages.pdf page 3 media }
+\hbox{\XeTeXpdffile p-pages.pdf page 4 }
+\hbox{\XeTeXpdffile p-pages.pdf page 4 trim }
+\hbox{\XeTeXpdffile p-pages.pdf page 5 art }
+\hbox{\XeTeXpdffile p-pages.pdf page 9 }
+\hbox{\XeTeXpdffile p-pages.pdf page -1 }
+\hbox{\XeTeXpdffile p-pages.pdf page -2 bleed scaled 500 }
+\hbox{\XeTeXpdffile p-pages.pdf page -9 }
+\hbox{\XeTeXpdffile p-pages.pdf page 0 rotated 45 width 3in }
+}
+\lsshipbox0
+\end""")
+
+pcase("p004-texlive-pictures", "pictures found through kpathsea in TeX Live (mwe's example images: PNG, JPEG, PDF)",
+      r"""\setbox0=\vbox{
+\hbox{\XeTeXpicfile example-image.png }
+\hbox{\XeTeXpicfile example-image-a.png width 1in }
+\hbox{\XeTeXpicfile example-image.jpg }
+\hbox{\XeTeXpicfile example-grid-100x100bp.jpg }
+\hbox{\XeTeXpdffile example-image.pdf }
+\hbox{\XeTeXpdffile example-image-golden.pdf scaled 500 }
+\hbox{\XeTeXpicfile example-grid-100x100pt.png rotated 30 }
+}
+\message{[\the\XeTeXpdfpagecount example-image.pdf ]}
+\lsshipbox0
+\end""")
+
+pcase("p005-picture-errors", "a missing picture, a file that is no picture, a late pHYs, and bad sizes",
+      r"""\setbox0=\vbox{
+\hbox{\XeTeXpicfile nosuchpicture.png }
+\hbox{\XeTeXpicfile p-notimage.png }
+\hbox{\XeTeXpdffile p-plain.png }
+\hbox{\XeTeXpicfile p-late-phys.png }
+\hbox{\XeTeXpicfile p-plain.png width -1pt }
+\hbox{\XeTeXpicfile p-plain.png height 0pt }
+}
+\lsshipbox0
+\end""", no_halt=True)
+
+pcase("p006-pictures-in-paragraphs", "pictures in a paragraph, in math and in a vertical list, shipped in several pages",
+      r"""\hsize=200pt \parindent=10pt \baselineskip=12pt \vsize=300pt \parfillskip=0pt plus 1fil
+\font\x="[lmroman10-regular.otf]" \x
+\setbox0=\vbox{Text \XeTeXpicfile p-plain.png \ and more text with a picture
+\XeTeXpicfile p-jfif-dpcm.jpg scaled 300 \ inline.\par
+\XeTeXpdffile p-pages.pdf page 2 scaled 400
+\par}
+\lsshipbox0
+\setbox1=\vbox{\XeTeXpicfile p-info.bmp \par}
+\lsshipbox1
+\end""")
+
+os.makedirs(PICTURES, exist_ok=True)
+for name, data in pictures.items():
+    with open(os.path.join(PICTURES, name), "wb") as fh:
+        fh.write(data)
 
 for name, data in cases.items():
     with open(os.path.join(OUT, name + ".tex"), "wb") as fh:

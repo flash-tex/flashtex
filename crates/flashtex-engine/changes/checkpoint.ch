@@ -15,9 +15,13 @@
 % expansion LaTeX's \.{\\begin\{document\}} ends in); when |macro_call| pushes
 % its body, the input level is remembered, and when |pop_input| goes below
 % that level the body -- with everything it expanded to -- has been
-% consumed, and the next |big_switch| takes $S_0$. None of this changes what
-% the program computes: the new variables are read only by these tests and
-% by the hook, and the hook itself only reads the state.
+% consumed, and the next |big_switch| takes $S_0$. When the host asks
+% (|ckpt_on_arm|), the next |big_switch| after the body is pushed calls the
+% hook as well: there, inside \.{\\document} and before it looks for the
+% \.{.aux} file, a run with no \.{.aux} takes the anchor of the runs after
+% it. None of this changes what the program computes: the new variables are
+% read only by these tests and by the hook, and the hook itself only reads
+% the state.
 %
 % Between shipouts, a checkpoint may be requested whenever |build_page| has
 % moved the contributions to the current page (section 5.2's checkpoints
@@ -47,6 +51,7 @@ begin_token_list(ref_count,macro); name:=warning_index; loc:=link(r);
 begin_token_list(ref_count,macro); name:=warning_index; loc:=link(r);
 if ckpt_arm_cs<>null then if warning_index=ckpt_arm_cs then
   begin ckpt_arm_level:=input_ptr; ckpt_arm_cs:=null;
+  if ckpt_on_arm<>0 then ckpt_request:=ckpt_on_arm;
   end;
 @z
 
@@ -105,6 +110,7 @@ so an engine that is not asked for checkpoints never calls the hook.
 @!ckpt_resuming:boolean; {enter |main_control| at |big_switch|}
 @!ckpt_on_shipout:integer; {nonzero: request a checkpoint after each shipout}
 @!ckpt_on_segment:integer; {nonzero: request one after each |build_page|}
+@!ckpt_on_arm:integer; {nonzero: request one when the armed body is pushed}
 
 @ @<Declare the routines of pdf\TeX's C parts@>=
 procedure flashtex_checkpoint_hook; external;

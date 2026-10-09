@@ -12,8 +12,20 @@
 //!   routines web2c's `tex.ch` and `xetex.ch` supply, and XeTeX's Unicode
 //!   input files (`XeTeX_ext.c`'s `u_open_in` and `input_line`).
 //! * `xetex_ext.rs` holds XeTeX's other C parts behind the interface
-//!   `changes/ext.ch` declares. In S0 the native-font, graphics and TECkit
-//!   routines are stubs: no installed font is ever found.
+//!   `changes/ext.ch` declares: since S1 TECkit font mappings
+//!   (`teckit`); native fonts are in `native`; graphics are still stubs.
+//! * `state.rs` is the engine's state outside the word space (`Globals::host`,
+//!   web2rust's `--host-state`): the handle tables of `changes/ext.ch`, saved
+//!   with the word space at a checkpoint, and what TeX Live keeps in C
+//!   globals. This crate has no process-wide mutable state; the runtime it
+//!   shares with the pdfTeX engine still has some, which moves to per-engine
+//!   state in phase S3 (docs/design/xetex/PLAN.md §3.3).
+//! * `fontmgr/` is XeTeX's font lookup (`XeTeXFontMgr`, `splitFontName`,
+//!   `findnativefont` up to loading), platform-free over
+//!   `crates/font-discovery`'s index; `native/` loads what it finds.
+//! * `native/` holds native fonts: XeTeX's font loading, shaping and
+//!   metrics over TeX Live's HarfBuzz and FreeType (`fontlibs`), native
+//!   word nodes and their XDV records.
 //! * The word space (`arena`), the checked array index (`ix`), the command
 //!   line, the run's configuration and the file resolver (kpathsea) are the
 //!   pdfTeX engine's (`crates/flashtex-engine`), used through its public
@@ -24,8 +36,14 @@ pub use flashtex_engine::ix;
 /// TeX Live's HarfBuzz and FreeType (phase S1's native fonts,
 /// docs/design/xetex/PLAN.md §3.1): `fontlibs::hb`, `fontlibs::ft`.
 pub use flashtex_xetex_fontlibs as fontlibs;
+/// TeX Live's TECkit 2.5.13 (font mappings, phase S1): `teckit::TECkit_*`.
+pub use flashtex_xetex_teckit as teckit;
 
+pub mod fontmgr;
 pub mod generated;
+pub mod native;
+pub mod pic;
+pub mod state;
 pub mod system;
 pub mod xetex_ext;
 

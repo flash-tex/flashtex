@@ -130,6 +130,30 @@ breaks, positions and glyph shapes, which P-T1 and P-T2 cover completely.
 not gated. Its floor is the window server, which presents a commit no sooner than two 120 Hz
 frames later (15.9–16.0 ms minimum, 16–24 ms typical; app-v3-5 evidence, #1332). Every report
 names the quantity it measured.
+**Speed everywhere, memory everywhere (owner, 2026-10-06, after trying the app on 1,000 pages).**
+- **Reference hardware is the slowest supported Mac (M1-class), not the newest:** key → preview
+  commit ≤ 20 ms p95 for keys 50 ms apart on 1,000-page documents and on *Infinite Descent ×2*,
+  measured there (the host ≤ 11 ms / app ≤ 4 ms split stays the engineering budget).
+- **The editor is a text editor first:** key → glyph drawn in the editor ≤ 1 frame (8 ms at
+  120 Hz) p99, independent of document size, compile state and host traffic. No preview work
+  ever blocks typing, including during the initial compile.
+- **Opening:** the visible page appears ≤ 1 s after open on a typical Mac, the rest streams in;
+  edits during the initial compile are as fast as after it; total cold-compile time and peak
+  memory are driven down continuously (P6 work that serves these targets is P4-critical).
+- **Performance modes (owner, 2026-10-06):** *Low Memory* (small retention budget, sparse
+  checkpoints, memory returned promptly; a little slower), *Balanced* (default; all gates) and
+  *High Performance* (large budget, dense checkpoints, keep-warm and prepare-ahead always,
+  everything cached, exact parallelism; fastest). Each is a named profile of the host and app
+  knobs, switchable live; correctness is identical in every mode (lane PERF-MODES).
+- **Heavy benchmark: *Infinite Descent ×2*** (owner, 2026-10-06): Clive Newstead's book
+  (diagram- and formatting-heavy; codeberg cnewstead/infdesc `48825c5`, never committed) with its
+  whole body typeset twice in one document, 1,142 pages (`tools/parity/corpus/infdesc_x2.py`).
+
+**Typing speed (owner, 2026-10-06).** The gate holds for **continuous typing with keys as
+close as 50 ms apart** (about 240 wpm; the owner's floor is 200 wpm, ~60 ms), not only isolated
+keys: every key at 50, 60, 80, 100 and 150 ms intervals meets the targets above for its *own* edited page, and every key is painted by its
+own compile (a key folded into a later compile is a miss). T7 gates these as its `typing@Nms`
+rows (#1605; 50/60/80 ms rows added by lane P4-TYPING-200WPM).
 
 **Status (review 2026-10-05; REPORTED unless marked; no reference run exists).** The one
 harness is `tools/incr-bench/t7.py` (#1391). Its only run is on main `ab9893935`. It was on an
@@ -410,6 +434,13 @@ benchmarks, an adversarial review and preview-renderer measurements, all dated
   CPU per page and 284–343 MB max RSS on 1,000-page documents with a checkpoint at every
   shipout (review track 1 §1.5); with the between-page points the Mac measured
   382 → 638 MB on full-1000 (P4-L5). Both are inside the 1 GB budget.
+- **Segment hold (#1614, 2026-10-06):** between the restart point and the edited page, the
+  between-page segment checkpoints are *held*: the preemption check still runs at every
+  segment boundary, and a held checkpoint is materialised wherever newer work stops the run,
+  but the copies are otherwise deferred until the edited page ships (6–7 % fewer typesetting
+  instructions). A later edit or preemption that would have used a skipped segment point
+  restarts from the previous checkpoint, which is always valid. Independently reviewed;
+  every soundness sweep 0 bad.
 - **Mechanism (measured 2026-09-29, `docs/evidence/snapshot-bench-2026-09-29/`):**
   software copy-on-write, specifically **(b3)**:
   - All mutable arenas live in **one flat word space** with a dirty bitmap. Reads
@@ -1208,6 +1239,10 @@ by CI or by a named reference run. Lane runs are REPORTED evidence.
 | 2026-10-05 | display-list-v3 exact geometry (`ORIGINS`, `RULE_GEOMETRY`) is gated by the `exact-geometry` capability, like `progress-v1`, and takes no minor number (§6.1) | Commander (kabir-claude), protocol owner |
 | 2026-10-05 | **Merge fast, test later (§9).** The merge queue batches up to 8 PRs and runs only the gate: build (`cargo check`), the changed crates' fmt/clippy/tests, trip/etrip/pdfTeX regression, licence/inventory/tables, and engine parity (lockstep, P-T1/P-T2, engine tests) sharded on hosted runners, only when engine paths change. Everything else (Mac app, iPad, full workspace, macOS legs, old-engine checks) runs after merge; a failure opens or updates `main-red` naming the PRs, and the PR's owner fixes forward within 2 h or the Commander reverts. App PRs still run their Swift tests at PR level. Measured: gate 4.7 min wall (was 45–130 min); first batch landed 6 PRs in under 20 min (#1586–#1589) | Owner (Kabir): "30–60 mins per merge is absolutely unacceptable"; Commander (kabir-claude) |
 | 2026-10-05 | **P3 exit gate met** (§12): P-T2 on fixtures 86/86 and preview parity at zero tolerance 669/669, verified on main `2e7203e03` and gated after every merge by `preview-parity.yml` (#1596). The 4.3 % PDF-fallback renders are identical by construction and remain a speed item | Commander (kabir-claude), from evidence |
+| 2026-10-06 | Segment hold (§5.2, #1614): segment checkpoints between the restart point and the edited page are deferred until the page ships; preemption points stay, and a held checkpoint is materialised where newer work stops the run. An implementation of §5.2's cadence, not a change to its guarantees | Commander (kabir-claude), on independent review |
+| 2026-10-06 | The latency gate covers continuous typing with keys **50 ms apart** (≈ 240 wpm; ≥ the owner's 200 wpm floor): each key at 50/60/80/100/150 ms intervals meets ≤ 16 ms p95 (host ≤ 11 ms) for its own edited page and is painted by its own compile (§1.2) | Owner (Kabir): "anything below 200wpm needs to hit our target"; "the 50ms target is good" |
+| 2026-10-06 | Speed and memory targets (§1.2): ≤ 20 ms key→commit at 50 ms typing on the slowest supported Mac (M1-class) for 1,000 pages and *Infinite Descent*; editor key→glyph ≤ 1 frame p99 regardless of preview state; visible page ≤ 1 s after open; edits during the initial compile as fast as after; memory and cold-compile time minimised; *Infinite Descent ×2* is the heavy benchmark. P6 work serving these is P4-critical under critical path first | Owner (Kabir): "make it faster … sub 20ms on all macs … memory usage needs to be decreased … the editor should literally be a text editor and be completely instant … optimize the absolute fuck out of everything" |
+| 2026-10-06 | Performance modes: Low Memory / Balanced (default, all gates) / High Performance, as named profiles of the retention budget and the speed/memory knobs, switchable live; every mode passes the soundness and parity gates (§1.2, §5.2) | Owner (Kabir) |
 
 ---
 

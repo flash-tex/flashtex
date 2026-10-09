@@ -494,6 +494,9 @@ gate_parity_selftest() {
   python3 -m unittest discover -s tools/parity -p 'test_*.py'
   # tools/lockstep's own tests (cases that need pdftex skip without it)
   python3 -m unittest discover -s tools/lockstep -p 'test_*.py'
+  # package-smoke's runner and the P5 board's T4 pick (ci.yml's gate job runs the same)
+  python3 -m unittest discover -s tools/package-smoke -p 'test_*.py'
+  scripts/tests/p5-pick-t4.test.sh
 }
 
 # ---------------------------------------------------------------------------
@@ -580,7 +583,11 @@ fi
 
 case "$TIER" in
   quick|pr|full)
-    if have rustfmt; then step "rustfmt (changed files)" -- gate_fmt
+    # `rustfmt --version`, not `have rustfmt`: rustup's proxy is on PATH even
+    # where the component is not installed, and then every rustfmt call fails,
+    # so an existing file passed unchecked (its base "failed" too) and a new
+    # one failed as unformatted (the NixOS PC's runner toolchain, 2026-10-06).
+    if rustfmt --version >/dev/null 2>&1; then step "rustfmt (changed files)" -- gate_fmt
     else skip "rustfmt (changed files)" "rustfmt is not installed (rustup component add rustfmt)"; fi
     if (( ROOT_MANIFEST )); then
       step "workspace check (root manifest changed)" -- gate_workspace_check
@@ -622,9 +629,12 @@ case "$TIER" in
     else
       skip "licence boundary (DESIGN §3)" "scripts/check-license-boundary.sh is not in this checkout"
     fi
+    step "CLI packaging self-test (flashtex-v3 and flashtex-host ship; app-parity D5)" -- scripts/tests/package-cli.test.sh
     step "parity scoreboard and lockstep self-tests" -- gate_parity_selftest
     step "retired code is not named outside the allowlist (retirement plan §4.6)" -- \
       python3 tools/parity/retirement_refs.py
+    step "every app-parity row names tests that exist (retirement plan §4.4)" -- \
+      python3 tools/parity/app_parity_rows.py check
     if [[ "$(uname -s)" == Darwin ]]; then
       step "parity fixtures hold their baseline" -- gate_parity_fixtures
     else

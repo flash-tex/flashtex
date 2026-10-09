@@ -1,0 +1,11 @@
+% n017-justified-boxes: native words in boxes set to a width (stretch and shrink)
+% XeTeX-specific (docs/design/xetex/PLAN.md, phase S1: native fonts)
+\input prelude
+\def\space{ }
+\font\x="[lmroman10-regular.otf]" \x
+\setbox1=\hbox to 200pt{office and difficult words}
+\setbox2=\hbox to 80pt{office and difficult words}
+\setbox3=\hbox spread 20pt{AVA Ta We}
+\setbox0=\vbox{\box1 \box2 \box3}
+\lsshipbox0
+\end

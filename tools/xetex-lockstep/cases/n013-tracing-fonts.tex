@@ -1,0 +1,9 @@
+% n013-tracing-fonts: \XeTeXtracingfonts reports the file a font came from
+% XeTeX-specific (docs/design/xetex/PLAN.md, phase S1: native fonts)
+\input prelude
+\def\space{ }
+\XeTeXtracingfonts=1
+\font\a="[lmroman10-regular.otf]" \font\b="[texgyretermes-bold.otf]"
+\setbox0=\hbox{\a x\b x}
+\lsshipbox0
+\end
