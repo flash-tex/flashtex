@@ -134,12 +134,13 @@ the engine and how it shares one runtime and one engine interface with the pdfTe
   XDV and not from xdvipdfmx. The writer is new: the pdfTeX engine's backend
   (DESIGN.md §6.3) writes from its own `ship_out` and keeps doing so for
   Classic mode, where P-T2 binds. The Unicode-mode writer reuses that
-  backend's pieces where they apply: TeX Live's zlib, PNG inclusion that copies
-  IDAT unchanged, PDF inclusion through the ported `pdftoepdf`. It adds
+  backend's pieces where they apply: TeX Live's zlib, and PNG inclusion that
+  copies IDAT unchanged. PDF pages are included as form XObjects by
+  `flashtex_pdf::images` (`crates/pdf`'s own PDF reader), not by the pdfTeX
+  engine's `pdftoepdf`, which writes through that engine's globals. It adds
   OpenType embedding (CFF and TrueType subsets, `face_index`, variations) and
-  `ToUnicode` maps from the glyph-to-text clusters. Candidates to evaluate
-  before building (§1's rule, a decision for S2): `pdf-writer`, `krilla` and
-  `subsetter` (dual MIT or Apache-2.0, to confirm, used under MIT).
+  `ToUnicode` maps. `pdf-writer`, `krilla` and `subsetter` were evaluated and
+  not used (§4B).
 - **Licence rule (Commander ruling, 2026-10-04): no Apache-2.0-only code.**
   It would force the binary to GPLv3 only (xpdf already limits it to GPL v2
   or v3, §3 of DESIGN.md). Reused code is MIT, BSD, or dual MIT/Apache-2.0
@@ -385,7 +386,7 @@ instrument; the product path needs:
 2. A PDF writer over that display list: OpenType embedding (CFF and
    TrueType subsets, `face_index`, variations) with `ToUnicode` from the
    clusters; PNG (IDAT copy), JPEG (pass-through), BMP (decoded) and PDF
-   pages (the ported `pdftoepdf`) as XObjects. `pdf-writer`, `krilla` and
+   pages (form XObjects, `flashtex_pdf::images`). `pdf-writer`, `krilla` and
    `subsetter` are to be evaluated first (MIT or dual MIT/Apache-2.0 used
    under MIT; no Apache-2.0-only code).
 3. The dvipdfmx `\special` language the drivers emit (`xetex.def`,
@@ -436,6 +437,52 @@ writer.
   `@xpos`/`@ypos`; glyph ids equal to xdvipdfmx's CIDs. `-no-pdf` is
   unchanged: P-T1 lockstep 1413/1413, XDV 1410/1410, xelatex cases
   10/10.
+
+**The PDF writer** (`src/out/pdf.rs`) writes the PDF from the display list
+plus that supplement, with no new dependency: native fonts as
+`Type0`/`Identity-H` with CID = glyph id (CFF: a CID-keyed subset,
+TrueType: glyph ids kept in place), TFM fonts as Type 1 subsets, by the
+MIT subsetters of `crates/pdf`; `ToUnicode` from the `cmap`, `GSUB`
+ligatures and substitutions and the `MATH` variants; PNG `IDAT` copied with
+its colour space (`iCCP`, `sRGB`, `gAMA`/`cHRM` as dvipdfmx writes them),
+JPEG passed through with its ICC profile, PDF pages as forms; links,
+destinations, outline, document information and catalog entries; streams
+compressed by TeX Live's zlib. `pdf-writer`, `krilla` and `subsetter` are
+MIT OR Apache-2.0 (checked in their `Cargo.toml`), so usable under the
+ruling, but not used: `pdf-writer` and `krilla` write numbers as `f32`,
+and `subsetter` renumbers glyphs (its CIDs are not the font's glyph ids);
+FlashTeX's own subsetters keep them. Each glyph is placed at TeX's exact
+position (10⁻⁵ bp), not with xdvipdfmx's rounding.
+
+**Verified** with `tools/xetex-pdfparity` (#1708) against `xelatex` on 14
+cases (l001–l010, hyperref, xcolor, TikZ, colorlinks): every glyph matched
+(17,247), positions within 0.001 bp of the XDV (max 0.000009 bp); 3
+structural differences, all `ToUnicode` code-point choices where two code
+points map to one glyph (l004, l007, l008); 0 unknown specials. **Measured
+visual floor at 2× (not 0 px):** 31,597 px over 14 cases (l005 20,142 over
+5 pages, the others 44–4,270), max channel delta 128. Belief, from the XDV
+check: the floor is xdvipdfmx's rounding (Td to 0.001 bp, integer TJ kerns
+over rounded widths: up to 0.005 em, measured in #1708), which moves glyph
+edges against ours; matching it to 0 px would mean writing xdvipdfmx's
+rounding instead of TeX's positions.
+
+**Ruling (Commander, mac-claude-a, 2026-10-09, on #1712):** the PDF gate
+of Unicode mode is the documented tolerance, not 0 px: against `xelatex`'s
+PDF, structural parity with glyph positions within 0.01 bp + 0.005 em;
+and FlashTeX's own glyph positions within 0.001 bp of TeX's XDV. FlashTeX
+does not copy xdvipdfmx's rounding to chase 0 px: §3.5 asks for visual and
+structural parity, not byte-level, and these positions are closer to TeX's
+than xdvipdfmx's. `tools/xetex-pdfparity/run.py --baseline` gates on it,
+with each case's pixel count and its known `ToUnicode` differences as the
+baseline (#1708).
+
+After review (#1710, #1712): files named by specials (`pdf:fstream`,
+`pdf:image`) are read only through the confined resolver
+(`FLASHTEX_CONFINE_READS`, tested); an unreadable page fails the run; the
+PDF is byte-identical across runs with `SOURCE_DATE_EPOCH` (tested); a font
+whose `OS/2` `fsType` forbids embedding is written without its program, with
+a warning; CID-keyed CFF fonts (CJK) are drawn by CID and embedded whole
+(not subset yet); `/Flags` and `/StemV` come from the face.
 
 ## 5. Risks carried into S1–S3
 

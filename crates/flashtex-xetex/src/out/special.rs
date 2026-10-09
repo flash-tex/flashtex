@@ -142,6 +142,18 @@ fn trim(s: &[u8]) -> &[u8] {
 /// A colour of a special: `rgb r g b`, `cmyk c m y k`, `gray g`,
 /// `hsb h s b`, or a PDF array `[g]`, `[r g b]`, `[c m y k]`.
 pub fn read_color(p: &mut Parser) -> Option<Col> {
+    // dvipdfmx writes colour components with 3 decimals (measured: xcolor's
+    // `rgb 0.7843 0.3921 0` is `.784 .392 0 rg`)
+    read_color_exact(p).map(|c| {
+        Col(c
+            .0
+            .into_iter()
+            .map(|v| (v * 1000.0).round() / 1000.0)
+            .collect())
+    })
+}
+
+fn read_color_exact(p: &mut Parser) -> Option<Col> {
     if p.peek() == Some(b'[') {
         let Obj::Array(a) = p.object()? else {
             return None;
@@ -195,8 +207,9 @@ fn hsb_to_rgb(h: f64, s: f64, b: f64) -> [f64; 3] {
 fn named_color(w: &[u8]) -> Option<Col> {
     let cmyk = |c: f64, m: f64, y: f64, k: f64| Some(Col(vec![c, m, y, k]));
     match w {
-        b"Black" => cmyk(0.0, 0.0, 0.0, 1.0),
-        b"White" => cmyk(0.0, 0.0, 0.0, 0.0),
+        // measured: `color push Black` is `0 g`
+        b"Black" => Some(Col(vec![0.0])),
+        b"White" => Some(Col(vec![1.0])),
         b"Red" => cmyk(0.0, 1.0, 1.0, 0.0),
         b"Green" => cmyk(1.0, 0.0, 1.0, 0.0),
         b"Blue" => cmyk(1.0, 1.0, 0.0, 0.0),

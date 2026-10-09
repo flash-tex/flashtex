@@ -84,6 +84,24 @@ fn run(job: &Path, confine: bool) -> (String, Vec<String>) {
     (String::from_utf8_lossy(&out.stderr).into_owned(), files)
 }
 
+/// The data of the stream the page's resources name `/X1` (the
+/// `pdf:fstream` of the outside file), if it is a stream.
+fn fstream_data(job: &Path) -> Option<Vec<u8>> {
+    use flashtex_pdf::reader::{Obj, PdfFile};
+    let bytes = std::fs::read(job.join("t.pdf")).unwrap();
+    let pdf = PdfFile::parse(&bytes).unwrap();
+    let page = pdf.pages().unwrap()[0];
+    let res = pdf
+        .page_attr(page, "Resources")
+        .and_then(Obj::as_dict)
+        .unwrap();
+    let x1 = pdf.resolve(res.get("X1")?);
+    match x1 {
+        Obj::Stream { .. } => pdf.decode_stream(x1).ok(),
+        _ => None,
+    }
+}
+
 #[test]
 fn confined_reads_keep_outside_files_out_of_the_output() {
     let (base, job) = setup("on");
@@ -93,6 +111,8 @@ fn confined_reads_keep_outside_files_out_of_the_output() {
     assert!(files[0].ends_with("inside.png"), "{files:?}");
     assert!(err.contains("pdf:fstream: cannot read"), "{err}");
     assert!(err.contains("pdf:image: cannot find"), "{err}");
+    // the PDF: the stream `pdf:fstream` named is not there
+    assert_eq!(fstream_data(&job), None);
     let log = std::fs::read_to_string(job.join("t.log")).unwrap();
     assert!(log.contains("Unable to load picture"), "{log}");
     let _ = std::fs::remove_dir_all(&base);
@@ -109,5 +129,6 @@ fn without_confinement_the_same_files_are_read() {
         "{files:?}\n{err}"
     );
     assert!(!err.contains("pdf:fstream: cannot read"), "{err}");
+    assert_eq!(fstream_data(&job).as_deref(), Some(SECRET.as_bytes()));
     let _ = std::fs::remove_dir_all(&base);
 }
