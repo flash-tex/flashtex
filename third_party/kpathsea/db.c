@@ -114,9 +114,11 @@ ignore_dir_p (const_string dirname)
 #define PACKED_DB 1
 #endif
 
-/* The cache directory (no cache when NULL); see db.h. Defined everywhere,
-   used only where there is a packed index with a cache.  */
+/* The cache directory (no cache when NULL) and the build salt its files
+   are keyed by; see db.h. Defined everywhere, used only where there is a
+   packed index with a cache.  */
 char *flashtex_lsr_cache_dir = NULL;
+char *flashtex_lsr_cache_salt = NULL;
 
 #ifdef PACKED_DB
 #if !defined (_WIN32)
@@ -131,7 +133,9 @@ char *flashtex_lsr_cache_dir = NULL;
 
 #define PACKED_NONE 0xffffffffu
 #define PACKED_BUCKETS (1u << 16)
-#define PACKED_MAGIC "FTXLSR1\n"
+/* The parse's version: a change to how ls-R is read changes it (and the
+   build salt, the program's build id, changes with every build).  */
+#define PACKED_MAGIC "FTXLSR2\n"
 
 typedef struct {
   unsigned key;   /* offset of the file name in the strings */
@@ -147,6 +151,7 @@ typedef struct {
   unsigned n, ndirs, strings_len, pad;
   unsigned long long size, ino, dev;
   long long mtime_s, mtime_ns;
+  unsigned long long salt;  /* packed_salt () of the program that wrote it */
 } packed_header;
 
 typedef struct {
@@ -163,6 +168,24 @@ struct flashtex_packed_db {
   packed_seg *segs;
   unsigned nsegs;
 };
+
+/* FNV-1a, 64 bits, of S continuing from H.  */
+static unsigned long long
+packed_fnv64 (unsigned long long h, const char *s)
+{
+  for (; s && *s; s++)
+    h = (h ^ (unsigned char) *s) * 1099511628211ull;
+  return h;
+}
+
+/* The program's build salt (flashtex_lsr_cache_salt) and the parse's
+   version, as one number.  */
+static unsigned long long
+packed_salt (void)
+{
+  return packed_fnv64 (packed_fnv64 (14695981039346656037ull, PACKED_MAGIC),
+                       flashtex_lsr_cache_salt);
+}
 
 static unsigned
 packed_hash (const_string key)
@@ -221,7 +244,7 @@ packed_attach (packed_seg *seg, void *image, size_t len, const struct stat *st)
   unsigned i;
   if (len < sizeof (packed_header) || memcmp (h->magic, PACKED_MAGIC, 8) != 0
       || h->order != 0x01020304u || h->buckets != PACKED_BUCKETS
-      || h->strings_len == 0
+      || h->strings_len == 0 || h->salt != packed_salt ()
       || packed_image_len (h->n, h->ndirs, h->strings_len) != len)
     return false;
 #ifdef PACKED_CACHE
@@ -269,20 +292,21 @@ packed_attach (packed_seg *seg, void *image, size_t len, const struct stat *st)
 static string
 packed_cache_file (const_string path)
 {
-  unsigned long long h = 14695981039346656037ull;  /* FNV-1a, 64 bits */
-  const char *p;
+  unsigned long long h;
   char name[40];
   if (!flashtex_lsr_cache_dir || !*flashtex_lsr_cache_dir)
     return NULL;
-  for (p = PACKED_MAGIC; *p; p++)
-    h = (h ^ (unsigned char) *p) * 1099511628211ull;
-  for (p = path; *p; p++)
-    h = (h ^ (unsigned char) *p) * 1099511628211ull;
+  h = packed_fnv64 (packed_salt (), path);
   snprintf (name, sizeof name, "/lsr-%016llx.idx", h);
   return concat (flashtex_lsr_cache_dir, name);
 }
 
-/* SEG from the cache file of the ls-R at PATH whose status is ST.  */
+/* SEG from the cache file of the ls-R at PATH whose status is ST. The
+   file's size, as fstat gives it now, must be the image's own (a file cut
+   short is a miss, not a read past its end). The writer replaces a cache
+   file by a rename, which leaves a mapping of the old one intact; only a
+   file shortened in place by another program after this check could still
+   end a lookup with SIGBUS.  */
 static boolean
 packed_load (packed_seg *seg, const_string path, const struct stat *st)
 {
@@ -320,7 +344,6 @@ packed_store (packed_seg *seg, const_string path, const struct stat *st,
               void *image, size_t len)
 {
   string file, tmp;
-  char suffix[32];
   const char *p = (const char *) image;
   size_t left = len;
   int fd;
@@ -331,10 +354,11 @@ packed_store (packed_seg *seg, const_string path, const struct stat *st,
   if (!file)
     return false;
   mkdir (flashtex_lsr_cache_dir, 0777);
-  snprintf (suffix, sizeof suffix, ".tmp%ld", (long) getpid ());
-  tmp = concat (file, suffix);
-  fd = open (tmp, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+  /* a name no other writer (process or thread) can have */
+  tmp = concat (file, ".XXXXXX");
+  fd = mkstemp (tmp);
   if (fd >= 0) {
+    fchmod (fd, 0644);
     while (left > 0) {
       ssize_t w = write (fd, p, left);
       if (w <= 0)
@@ -441,6 +465,7 @@ packed_read (kpathsea kpse, packed_seg *seg, const_string db_filename,
   h = (packed_header *) image;
   memset (h, 0, sizeof *h);
   memcpy (h->magic, PACKED_MAGIC, 8);
+  h->salt = packed_salt ();
   h->order = 0x01020304u;
   h->buckets = PACKED_BUCKETS;
   h->n = n;
@@ -565,6 +590,26 @@ packed_build (kpathsea kpse, const_string db_filename)
   return true;
 }
 #endif /* PACKED_DB */
+
+/* FlashTeX change (2026-10-09): the packed index's segments given back
+   (kpathsea_finish): mappings unmapped, buffers freed.  */
+void
+flashtex_db_free (kpathsea kpse)
+{
+#ifdef PACKED_DB
+  struct flashtex_packed_db *p = kpse->flashtex_packed_db;
+  unsigned g;
+  if (!p)
+    return;
+  for (g = 0; g < p->nsegs; g++)
+    packed_free (p->segs[g].image, p->segs[g].image_len);
+  free (p->segs);
+  free (p);
+  kpse->flashtex_packed_db = NULL;
+#else
+  (void) kpse;
+#endif
+}
 
 /* FlashTeX change (2026-10-09): `hash_lookup (kpse->db, KEY)', with ls-R's
    packed entries first (see above): the directories of every file named

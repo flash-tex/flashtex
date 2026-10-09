@@ -238,10 +238,15 @@ thread_local! {
 impl MapCache {
     fn get(k: &MapKey) -> Option<MapParse> {
         MAP_CACHE.with(|c| {
-            c.borrow()
-                .iter()
-                .find(|(key, _)| key == k)
-                .map(|(_, v)| v.clone())
+            let mut c = c.borrow_mut();
+            let i = c.iter().position(|(key, _)| key == k)?;
+            // a cache file cut short in place since it was mapped: forget
+            // it (reading it on would end in SIGBUS)
+            if !c[i].1.file_intact() {
+                c.remove(i);
+                return None;
+            }
+            Some(c[i].1.clone())
         })
     }
 
@@ -278,7 +283,7 @@ mod disk {
     use sha2::{Digest, Sha256};
     use std::path::{Path, PathBuf};
 
-    const MAGIC: &[u8] = b"flashtex-fontmap 1\n";
+    const MAGIC: &[u8] = b"flashtex-fontmap 2\n";
 
     fn mode_byte(m: Mode) -> u8 {
         match m {
@@ -368,7 +373,15 @@ mod disk {
         if rehashed && sha256_file(&k.path)? != hash {
             return None;
         }
+        // The body: its length and checksum, then itself. A file cut
+        // short or damaged is a miss.
+        let body_len = u64::dec(&mut r).ok()?;
+        let sum = <[u64; 2]>::dec(&mut r).ok()?;
         let body = want.len() + r.pos;
+        if (buf.len() - body) as u64 != body_len || crate::persist::hash128(&buf[body..]) != sum {
+            debug(&format!("damaged {}", f.display()));
+            return None;
+        }
         // The same content under a new signature: keep the new one, so
         // that the next process need not hash the file again. (The new
         // file replaces this one by a rename; this mapping stays valid.)
@@ -376,13 +389,21 @@ mod disk {
             let mut w = Vec::with_capacity(buf.len());
             w.extend_from_slice(&want);
             signature(k, &hash, &mut w);
+            body_header(&buf[body..], &mut w);
             w.extend_from_slice(&buf[body..]);
             let _ = crate::formats::write_atomic_cache(&f, &w);
         }
         // The parse stays in the mapped file (`super::fmtable`).
-        let base = Base::mapped(map, body)?;
+        let base = Base::mapped(map, body, &f)?;
         debug(&format!("disk hit {}", k.path));
         Some(Arc::new(base))
+    }
+
+    /// The body's length and checksum (`persist::hash128`: 16 bytes a
+    /// step, a few milliseconds over pdftex.map's 7 MB), checked on open.
+    fn body_header(body: &[u8], w: &mut Vec<u8>) {
+        (body.len() as u64).enc(w);
+        crate::persist::hash128(body).enc(w);
     }
 
     /// The content's stat signature and SHA-256.
@@ -412,6 +433,7 @@ mod disk {
         let mut w = Vec::with_capacity(compact.len() + 256);
         header(k, &mut w);
         signature(k, &sha256(data), &mut w);
+        body_header(compact, &mut w);
         let body = w.len();
         w.extend_from_slice(compact);
         let _ = std::fs::create_dir_all(f.parent().unwrap_or(Path::new(".")));
@@ -423,7 +445,7 @@ mod disk {
         if map.bytes().get(body..) != Some(compact) {
             return None;
         }
-        Base::mapped(map, body).map(Arc::new)
+        Base::mapped(map, body, &f).map(Arc::new)
     }
 }
 

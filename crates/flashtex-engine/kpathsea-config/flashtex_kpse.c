@@ -63,12 +63,15 @@ void *flashtex_kpse_new(const char *argv0, const char *progname, const char *eng
   return kpse;
 }
 
-/* The directory of ls-R's index cache (db.c, packed_build), copied; NULL
-   for none. Called before an instance reads ls-R. */
-void flashtex_kpse_set_lsr_cache(const char *dir)
+/* The directory of ls-R's index cache (db.c, packed_build) and the build
+   salt its files are keyed by, copied; NULL for none. Called before an
+   instance reads ls-R. */
+void flashtex_kpse_set_lsr_cache(const char *dir, const char *salt)
 {
   free(flashtex_lsr_cache_dir);
   flashtex_lsr_cache_dir = dir ? xstrdup(dir) : NULL;
+  free(flashtex_lsr_cache_salt);
+  flashtex_lsr_cache_salt = salt ? xstrdup(salt) : NULL;
 }
 
 /* The kpse_file_format_type whose name (as `kpsewhich --help-formats`
