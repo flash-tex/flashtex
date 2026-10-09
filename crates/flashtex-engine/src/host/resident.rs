@@ -1277,15 +1277,11 @@ impl Engine {
             st.push(("send".to_string(), m(t.send_ns as f64 * 1e-6)));
             st.push(("cpu".to_string(), m((incr::thread_cpu_s() - t.cpu0) * 1e3)));
             // the convergence tests' old chunks kept and rewound
-            // (`arena::OldCache`), since the host started
+            // (`arena::OldCache`), over this document's engine space
             {
-                use std::sync::atomic::Ordering::Relaxed;
-                let c = |a: &std::sync::atomic::AtomicU64| Json::Int(a.load(Relaxed) as i64);
-                st.push(("old_kept".to_string(), c(&crate::arena::OLD_CACHE_HITS)));
-                st.push((
-                    "old_rewound".to_string(),
-                    c(&crate::arena::OLD_CACHE_MISSES),
-                ));
+                let (kept, rewound) = doc.session.old_cache_counts();
+                st.push(("old_kept".to_string(), Json::Int(kept as i64)));
+                st.push(("old_rewound".to_string(), Json::Int(rewound as i64)));
             }
             // Instructions and cycles of the engine thread, in thousands:
             // the whole compile, to the first page, and (from the session)

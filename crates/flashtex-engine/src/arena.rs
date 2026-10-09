@@ -1550,6 +1550,11 @@ struct OldCache {
     /// (checkpoint, history_gen, chunk -> index into `words` / CHUNK_WORDS),
     /// most recently used last.
     at: Vec<OldAt>,
+    /// Chunks `diff_branch_inner` took from here, and rewound, over this
+    /// space's life (for DONE's stages: cumulative). Per space, not
+    /// process-wide: tests running in parallel each read their own.
+    hits: u64,
+    misses: u64,
 }
 
 /// One checkpoint's kept chunks: (checkpoint, history_gen, chunk -> index
@@ -1559,11 +1564,6 @@ type OldAt = (CheckpointId, u64, HashMap<u32, usize>, Vec<u64>);
 /// Checkpoints `OldCache` keeps, and the chunks it keeps in all (1 KB each).
 const OLD_CACHE_CHECKPOINTS: usize = 4;
 const OLD_CACHE_CHUNKS: usize = 16 * 1024;
-
-/// Chunks `diff_branch_inner` took from `OldCache` and rewound (for
-/// DONE's stages: cumulative).
-pub static OLD_CACHE_HITS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-pub static OLD_CACHE_MISSES: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
 impl OldCache {
     fn get(&self, id: CheckpointId, gen: u64, c: u32) -> Option<&[u64]> {
@@ -1934,6 +1934,13 @@ impl Arena {
         self.old_cache.borrow_mut().at = Vec::new();
     }
 
+    /// The convergence tests' old chunks taken from `OldCache` and rewound,
+    /// over this space's life: (kept, rewound).
+    pub fn old_cache_counts(&self) -> (u64, u64) {
+        let c = self.old_cache.borrow();
+        (c.hits, c.misses)
+    }
+
     /// Bytes the old checkpoints' kept chunks hold.
     pub fn old_cache_bytes(&self) -> usize {
         self.old_cache
@@ -2295,8 +2302,11 @@ impl Arena {
                 }
             }
         }
-        OLD_CACHE_HITS.fetch_add(cached.len() as u64, std::sync::atomic::Ordering::Relaxed);
-        OLD_CACHE_MISSES.fetch_add(misses.len() as u64, std::sync::atomic::Ordering::Relaxed);
+        {
+            let mut cache = self.old_cache.borrow_mut();
+            cache.hits += cached.len() as u64;
+            cache.misses += misses.len() as u64;
+        }
         // (kept: every one rewound that was not, in `rewind`'s order)
         let keep: Vec<u32> = {
             let cache = self.old_cache.borrow();
@@ -3480,9 +3490,9 @@ mod tests {
         for j in [4usize, 6] {
             a.drop_old_cache();
             drop(a.diff_branch(&br, ids[j]).unwrap());
-            let misses0 = OLD_CACHE_MISSES.load(std::sync::atomic::Ordering::Relaxed);
+            let misses0 = a.old_cache_counts().1;
             let kept = all_words(&a, &a.diff_branch_all(&br, ids[j]).unwrap());
-            let misses = OLD_CACHE_MISSES.load(std::sync::atomic::Ordering::Relaxed) - misses0;
+            let misses = a.old_cache_counts().1 - misses0;
             assert_eq!(misses, 0, "the jump's comparison at {j} rewound again");
             a.drop_old_cache();
             let fresh = all_words(&a, &a.diff_branch_all(&br, ids[j]).unwrap());
@@ -3539,7 +3549,10 @@ mod tests {
         let kept = all_words(&a, &a.diff_branch_all(&br, ids[j]).unwrap());
         a.drop_old_cache();
         let fresh_d = a.diff_branch_all(&br, ids[j]).unwrap();
-        assert!(fresh_d.compared > seen_by_test, "the new run wrote new chunks");
+        assert!(
+            fresh_d.compared > seen_by_test,
+            "the new run wrote new chunks"
+        );
         let fresh = all_words(&a, &fresh_d);
         assert!(kept == fresh, "kept values differ from a fresh rewind");
         drop(fresh_d);
@@ -3563,8 +3576,14 @@ mod tests {
         }
         a.checkpoint();
         a.converge(br, ids[j]).unwrap();
-        assert!(t[..] == t_end[..], "the jump gives the old run's latest state");
-        assert!(u[..] == u_end[..], "the jump gives the old run's latest side table");
+        assert!(
+            t[..] == t_end[..],
+            "the jump gives the old run's latest state"
+        );
+        assert!(
+            u[..] == u_end[..],
+            "the jump gives the old run's latest side table"
+        );
     }
 
     #[test]
@@ -3591,7 +3610,7 @@ mod tests {
         };
         let end = arr.to_vec();
         for round in 0..4u64 {
-            let hits0 = OLD_CACHE_HITS.load(std::sync::atomic::Ordering::Relaxed);
+            let hits0 = a.old_cache_counts().0;
             let br = a.restore_branch(ids[3]).unwrap();
             scribble(&mut arr, 900 + round, 1500);
             a.checkpoint();
@@ -3601,7 +3620,7 @@ mod tests {
             }
             if round > 0 {
                 assert!(
-                    OLD_CACHE_HITS.load(std::sync::atomic::Ordering::Relaxed) > hits0,
+                    a.old_cache_counts().0 > hits0,
                     "round {round}: nothing kept was used"
                 );
             }
