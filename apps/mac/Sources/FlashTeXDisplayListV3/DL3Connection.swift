@@ -183,6 +183,9 @@ public final class DL3Connection: @unchecked Sendable {
 
     public func compile(_ request: DL3CompileRequest) throws { try send(DL3.Kind.compile, request.json) }
     public func cancel(id: Int) throws { try send(DL3.Kind.cancel, .object(["id": .int(Int64(id))])) }
+    /// `TRIM` (`trim-v1`; send only to a host that lists it): the system is
+    /// short of memory, `level` `warning` or `critical`. No reply.
+    public func trim(level: String) throws { try send(DL3.Kind.trim, .object(["level": .string(level)])) }
     /// Switch the host's performance mode live (`PROFILE`, §6.9; only to a
     /// host whose HELLO lists `DL3.profileCapability`). The host answers
     /// with a `PROFILE` (decoded as `.other`) once it applies, between compiles.
