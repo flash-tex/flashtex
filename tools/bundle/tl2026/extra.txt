@@ -31,9 +31,9 @@ nomencl
 # tools/xetex-lockstep/latex-cases, tools/xetex-pdfparity/cases and fontspec, unicode-math,
 # polyglossia, xeCJK and beamer-with-fontspec documents (MacTeX 2026's tree).
 # xelatex.ini, and what fontspec, unicode-math and their defaults read: the OpenType
-# Latin Modern Math, TECkit's tex-text.tec (xetex), l3backend's xetex driver, unicode-data
+# Latin Modern Math, TECkit's tex-text.tec (xetex), unicode-data. (l3backend-xetex.def is
+# l3kernel's in the pinned tree, which packages.txt has; MacTeX's tree splits it out.)
 fontspec
-l3backend
 lm-math
 tex-ini-files
 unicode-data
