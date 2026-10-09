@@ -562,10 +562,16 @@ impl Globals {
         self.host.full_name_of_file = None;
         let s = self.raw_file_name();
         let mut found = None;
+        // The output-directory shortcut is confined as the pdfTeX engine's
+        // `find_input` confines it (FLASHTEX_CONFINE_READS: the name's rule,
+        // and what was found, followed through links, inside an allowed
+        // root); the resolver's lookups below confine themselves.
         if let Some(dir) = run().output_directory {
-            if !s.starts_with('/') {
+            if !s.starts_with('/') && flashtex_engine::system::input_name_confined_ok(&s) {
                 let p = format!("{dir}/{s}");
-                if Path::new(&p).is_file() {
+                if Path::new(&p).is_file()
+                    && flashtex_engine::system::confined_found_ok(&s, &p, format, false)
+                {
                     found = Some(p);
                 }
             }

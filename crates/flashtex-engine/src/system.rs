@@ -1703,7 +1703,7 @@ fn confine_roots() -> &'static [std::path::PathBuf] {
 /// `input_name_confined_ok`); true when confinement is off. `searched`: the
 /// resolver found it along its search paths (only such a hit may be a TeX
 /// tree file; the output-directory shortcut never is).
-pub(crate) fn confined_found_ok(name: &str, found: &str, format: Format, searched: bool) -> bool {
+pub fn confined_found_ok(name: &str, found: &str, format: Format, searched: bool) -> bool {
     if !reads_confined() || format == Format::Fmt {
         return true;
     }
