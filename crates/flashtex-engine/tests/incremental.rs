@@ -3223,8 +3223,14 @@ fn mid_line_restarts_keep_what_the_line_was_read_with() {
             "endlinechar inactive when the line was read",
             doc(noeol, "\\mytitle{Hello world}\\endlinechar=13\\relax"),
             vec![
-                (doc(noeol, "\\mytitle{Hello worle}\\endlinechar=13\\relax"), true),
-                (doc(noeol, "\\mytitle{Hello worle} \\endlinechar=13\\relax"), true),
+                (
+                    doc(noeol, "\\mytitle{Hello worle}\\endlinechar=13\\relax"),
+                    true,
+                ),
+                (
+                    doc(noeol, "\\mytitle{Hello worle} \\endlinechar=13\\relax"),
+                    true,
+                ),
             ],
         ),
     ];
