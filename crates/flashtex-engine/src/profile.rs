@@ -217,8 +217,67 @@ impl Profile {
                     .map_or(Json::Null, |t| Json::Int(t as i64)),
             ),
             ("lean", Json::Bool(self.lean)),
+            (
+                "allocator_returns_free_pages",
+                Json::Bool(allocator_returns_free_pages()),
+            ),
         ])
     }
+}
+
+/// The start-up mode a host's command line asks for: `--profile NAME`,
+/// else `FLASHTEX_PROFILE` (as `flashtex-host` reads them).
+pub fn startup_mode(argv: &[String]) -> Mode {
+    match argv.iter().position(|a| a == "--profile") {
+        Some(i) => argv
+            .get(i + 1)
+            .and_then(|v| Mode::parse(v))
+            .unwrap_or_else(Mode::from_env),
+        None => Mode::from_env(),
+    }
+}
+
+/// Whether the C allocator gives freed pages back to the system at once
+/// (macOS: `MallocSpaceEfficient` set when the process started; see
+/// [`space_efficient_reexec`]). Process-wide and fixed at start: a mode
+/// switched to later does not change it.
+pub fn allocator_returns_free_pages() -> bool {
+    cfg!(target_os = "macos") && std::env::var_os("MallocSpaceEfficient").is_some()
+}
+
+/// Low Memory on macOS: the system allocator (xzone malloc) keeps about
+/// half of what a process frees, and `malloc_zone_pressure_relief` gives
+/// none of it back, so the host's footprint is twice what it holds (a
+/// 4-page article: 134 MB with 28 MB in use). Its `MallocSpaceEfficient`
+/// setting returns freed pages at once (57 MB; the keystroke's host CPU
+/// time +6-10 %, the edited page within noise; lane MEM-MODES,
+/// 2026-10-09). The allocator reads it before `main`, so a host started in
+/// Low Memory (`--profile low-memory` or `FLASHTEX_PROFILE`) runs itself
+/// again with it set, once, as the same process (`exec`). Nothing else
+/// changes: output is the allocator's to place, never to compute.
+/// `FLASHTEX_NO_SPACE_EFFICIENT` keeps the allocator as it is.
+#[cfg(target_os = "macos")]
+pub fn space_efficient_reexec(argv: &[String]) {
+    use std::os::unix::process::CommandExt;
+    if std::env::var_os("MallocSpaceEfficient").is_some()
+        || std::env::var_os("FLASHTEX_NO_SPACE_EFFICIENT").is_some()
+        || startup_mode(argv) != Mode::LowMemory
+    {
+        return;
+    }
+    let Ok(exe) = std::env::current_exe() else {
+        return;
+    };
+    let mut c = std::process::Command::new(exe);
+    if let Some(a0) = argv.first() {
+        c.arg0(a0);
+    }
+    let err = c
+        .args(argv.iter().skip(1))
+        .env("MallocSpaceEfficient", "1")
+        .exec();
+    // only on failure; the host goes on as it was started
+    eprintln!("flashtex-host: Low Memory's allocator setting: {err}");
 }
 
 /// The machine's physical memory in bytes (0 if unknown).
@@ -300,6 +359,23 @@ mod tests {
         assert!(h.budget <= HIGH_BUDGET_MAX);
         assert!(l.dense < b.dense && b.dense < h.dense);
         assert_eq!(h.trim_after_ms, None);
+    }
+
+    #[test]
+    fn the_startup_mode_is_the_flags_else_the_environments() {
+        let argv = |a: &[&str]| a.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        assert_eq!(
+            startup_mode(&argv(&["h", "--socket", "s", "--profile", "low-memory"])),
+            Mode::LowMemory
+        );
+        assert_eq!(
+            startup_mode(&argv(&["h", "--profile", "high-performance"])),
+            Mode::HighPerformance
+        );
+        assert_eq!(
+            startup_mode(&argv(&["h", "--socket", "s"])),
+            Mode::from_env()
+        );
     }
 
     #[test]

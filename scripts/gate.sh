@@ -239,7 +239,11 @@ for p in changed:
     # The XeTeX port (crates/flashtex-xetex, its own workspace) links the
     # pdfTeX engine's runtime and is web2rust's output: a change to either
     # must build and test it too, or an engine API change breaks it silently.
-    if p.startswith("crates/flashtex-engine/") or p.startswith("tools/web2rust/"):
+    # So must a change to another crate it path-depends on (its host links
+    # the display list, the manifest, the font index, the PDF readers).
+    if p.startswith(("crates/flashtex-engine/", "tools/web2rust/", "crates/display-list-v3/",
+                     "crates/project-manifest/", "crates/font-discovery/", "crates/pdf/",
+                     "crates/flashtex-runtime/")):
         dirs.add("flashtex-xetex")
 
 out = []

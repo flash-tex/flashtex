@@ -518,7 +518,9 @@ final class EngineChoiceTests: XCTestCase {
         XCTAssertEqual(EngineChoiceStatusItem.spokenValue(c), "fallback, this project sets fonts in flashtex.toml")
         XCTAssertEqual(EngineFallbackBanner.headline(try XCTUnwrap(c.blocker)), "Typeset with the previous engine: this project sets fonts in flashtex.toml.")
 
-        let host = NSHostingView(rootView: VStack(spacing: 0) { EngineFallbackBanner(); EngineChoiceStatusItem() }.environment(m))
+        // (with Unicode mode's host available, the [fonts] fallback is said by
+        // UnicodeModeSuggestionBanner, with the switch: either banner counts)
+        let host = NSHostingView(rootView: VStack(spacing: 0) { EngineFallbackBanner(); UnicodeModeSuggestionBanner(); EngineChoiceStatusItem() }.environment(m))
         let window = HostedWindowSupport.window(contentRect: NSRect(x: 0, y: 0, width: 640, height: 300), styleMask: [.titled])
         window.isReleasedWhenClosed = false
         window.contentView = host

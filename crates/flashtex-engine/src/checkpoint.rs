@@ -230,6 +230,13 @@ const REQ_PREAMBLE_LINE: i32 = 9;
 /// `\document`'s body was pushed (`ckpt_on_arm`): the `.aux` point of a run
 /// with no `.aux`, before `\document` looks for it.
 const REQ_AUX_ARM: i32 = 10;
+/// `\document`'s original body runs under another name (a preamble wrapped
+/// `\document` and calls the saved original last): S₀ is taken at the
+/// first `big_switch` after `\@nodocument` becomes `\relax`. Asked again
+/// after every other request (`Layer::s0_polling`), and kept in the word
+/// space at each checkpoint taken meanwhile, so that a run restored there
+/// goes on asking. Any other request may take its place.
+const REQ_S0_WAIT: i32 = 11;
 
 /// `hash_base` (tex.web §222): `active_base + 256 + 256 + 1`, the same in
 /// every configuration.
@@ -385,6 +392,7 @@ pub struct AnchorState {
     aux_done_pending: bool,
     preamble_file_closed: bool,
     preamble_line_pending: bool,
+    s0_polling: bool,
 }
 
 /// The checkpoint layer's bookkeeping, kept in `Globals::arena.extra`.
@@ -498,6 +506,10 @@ pub struct Layer {
     pub aux_close_rs: Option<usize>,
     pub aux_done: Option<CheckpointId>,
     aux_done_pending: bool,
+    /// `REQ_S0_WAIT`: S₀ is due once `\@nodocument` is `\relax`.
+    s0_polling: bool,
+    /// `\@nodocument`'s control sequence, once looked up.
+    nodoc_cs: Option<Option<i32>>,
 }
 
 /// Where the time of `checkpoint` goes, and how much of the word space each
@@ -1851,6 +1863,7 @@ impl Globals {
         l.taken.clear();
         l.midlines.clear();
         l.s0 = None;
+        l.s0_polling = false;
     }
 
     /// Forget S₀, the `.aux` point and the `.aux` read's end, after a
@@ -1871,6 +1884,7 @@ impl Globals {
             aux_done_pending: l.aux_done_pending,
             preamble_file_closed: l.preamble_file_closed,
             preamble_line_pending: l.preamble_line_pending,
+            s0_polling: l.s0_polling,
         }
     }
 
@@ -1886,10 +1900,12 @@ impl Globals {
         l.aux_done_pending = a.aux_done_pending;
         l.preamble_file_closed = a.preamble_file_closed;
         l.preamble_line_pending = a.preamble_line_pending;
+        l.s0_polling = a.s0_polling;
     }
 
     pub fn forget_anchor(&mut self) {
         let l = self.layer();
+        l.s0_polling = false;
         l.s0 = None;
         l.s0_reads = None;
         l.aux_point = None;
@@ -1966,6 +1982,15 @@ impl Globals {
     /// (changes/checkpoint.ch).
     pub fn flashtex_checkpoint_hook(&mut self) {
         let req = std::mem::replace(&mut self.ckpt_request, 0);
+        if req == REQ_S0_WAIT {
+            // (also after a restore to a checkpoint taken while it waited)
+            self.layer().s0_polling = true;
+        }
+        if self.layer().s0_polling {
+            // kept while this request is handled: in the word space at a
+            // checkpoint it takes, and asked again after it
+            self.ckpt_request = REQ_S0_WAIT;
+        }
         match req {
             REQ_LOOKUP => {
                 let name = self.layer().arm_name.clone();
@@ -1973,7 +1998,38 @@ impl Globals {
                     self.ckpt_arm_cs = cs;
                 }
             }
-            REQ_BEGIN_DOCUMENT => self.hook_checkpoint(Point::BeginDocument),
+            REQ_BEGIN_DOCUMENT => {
+                if self.document_begun() {
+                    self.take_s0_point();
+                } else if self.in_document_environment() {
+                    // The armed level ended inside `\begin{document}`, before
+                    // `\document`'s body ran: a preamble wrapped `\document`
+                    // and calls the saved original last
+                    // (`\let\my@old\document \def\document{...\my@old}`),
+                    // whose body runs after the wrapper's level ended. S₀ is
+                    // where that body has made `\@nodocument` `\relax`.
+                    self.layer().s0_polling = true;
+                    if self.request_free() {
+                        self.ckpt_request = REQ_S0_WAIT;
+                    }
+                } else {
+                    // The armed level ended, but `\begin{document}` has not
+                    // run: a package expanded `\document` in the preamble
+                    // and took its body apart (auxhook, which zref, lastpage
+                    // and others load: `\expandafter\x\auxhook@document`,
+                    // where `\x`'s arguments swallow the body). S₀ is not
+                    // here; arm again for the real one.
+                    let name = self.layer().arm_name.clone();
+                    if let Some(cs) = name.and_then(|n| self.find_cs(&n)) {
+                        self.ckpt_arm_cs = cs;
+                    }
+                }
+            }
+            REQ_S0_WAIT => {
+                if self.document_begun() {
+                    self.take_s0_point();
+                }
+            }
             REQ_SHIPOUT => self.hook_checkpoint(Point::Shipout),
             REQ_TIMED => self.hook_checkpoint(Point::Timed),
             REQ_AUX => {
@@ -2026,10 +2082,14 @@ impl Globals {
                 // lookup, so that the lookup -- and what a later pass finds
                 // there -- is after the anchor (DESIGN.md §5.5), not in S₀'s
                 // key. With an `.aux` the point is its open (`note_aux_open`).
+                // (inside `\document`'s body: an armed level that a
+                // preamble expansion already ended is not `\begin{document}`)
+                let inside = self.ckpt_arm_level > 0;
                 let l = self.layer();
                 let at_start =
                     l.s0.is_none() && l.aux_point.is_none() && l.preamble_line_s.is_some();
-                if l.want_aux_point
+                if inside
+                    && l.want_aux_point
                     && l.aux_point.is_none()
                     && l.s0.is_none()
                     && !self.aux_file_found()
@@ -2086,12 +2146,12 @@ impl Globals {
             }
             _ => {}
         }
-        if self.ckpt_request == 0 && self.layer().aux_done_pending {
+        if self.request_free() && self.layer().aux_done_pending {
             self.layer().aux_done_pending = false;
             self.ckpt_request = REQ_AUX_DONE;
         }
         // a line checkpoint another request took the place of
-        if self.ckpt_request == 0
+        if self.request_free()
             && self.in_open == 1
             && self.layer().preamble_line_pending
             && self.in_preamble()
@@ -2112,7 +2172,7 @@ impl Globals {
         l.aux_armed = false;
         l.aux_close_rs = Some(l.rs.len());
         self.rs_on = true;
-        if self.ckpt_request == 0 {
+        if self.request_free() {
             self.ckpt_request = REQ_AUX_DONE;
         } else {
             self.layer().aux_done_pending = true;
@@ -2185,9 +2245,11 @@ impl Globals {
     /// An input file named `*.aux` was opened: inside `\document` (armed
     /// for S₀), and when asked for, request the `.aux` point.
     pub fn note_aux_open(&mut self, path: &str) {
-        // (a preamble line request still pending gives way)
-        if self.ckpt_arm_level <= 0
-            || (self.ckpt_request != 0 && self.ckpt_request != REQ_PREAMBLE_LINE)
+        // (a preamble line request still pending gives way; inside a
+        // wrapped `\document`, the original body's open: `REQ_S0_WAIT`)
+        let polling = self.layer().s0_polling;
+        if (self.ckpt_arm_level <= 0 && !polling)
+            || !(self.request_free() || self.ckpt_request == REQ_PREAMBLE_LINE)
         {
             return;
         }
@@ -2214,6 +2276,93 @@ impl Globals {
         self.ckpt_on_arm = if on { REQ_AUX_ARM } else { 0 };
     }
 
+    /// No request is waiting but `REQ_S0_WAIT`, which any other one may
+    /// take the place of.
+    fn request_free(&self) -> bool {
+        self.ckpt_request == 0 || self.ckpt_request == REQ_S0_WAIT
+    }
+
+    /// S₀ here: no longer waited for.
+    fn take_s0_point(&mut self) {
+        self.layer().s0_polling = false;
+        if self.ckpt_request == REQ_S0_WAIT {
+            self.ckpt_request = 0;
+        }
+        self.hook_checkpoint(Point::BeginDocument);
+    }
+
+    /// Whether `\begin{document}` has run: LaTeX's `\document` ends with
+    /// `\global\let\@nodocument\relax` (latex.ltx), which is an error
+    /// macro until then. A format without `\@nodocument` (not LaTeX): yes.
+    fn document_begun(&mut self) -> bool {
+        let cs = match self.layer().nodoc_cs {
+            Some(cs) => cs,
+            None => {
+                let cs = self.find_cs(b"@nodocument");
+                self.layer().nodoc_cs = Some(cs);
+                cs
+            }
+        };
+        match cs {
+            Some(p) => self.eqtb[(p - 1) as usize].hh().b0() == crate::generated::consts::relax,
+            None => true,
+        }
+    }
+
+    /// Whether `\begin{document}` has started. LaTeX 2020-10 and later:
+    /// `\begin` runs `\@execute@begin@hook` before `\csname document\endcsname`,
+    /// whose first run, for `document`, closes the environment's group
+    /// (`\endgroup`) and `\gdef`s itself to `\UseHook{env/#1/begin}`
+    /// (latex.ltx, ltmiscen): its body holds `\endgroup` until then. Older
+    /// kernels keep the group, and `\begin` has defined `\@currenvir` as
+    /// `document` inside it (the kernel's own global definition is at level
+    /// one). In the preamble, where a package may expand `\document`
+    /// without running it, this is false.
+    fn in_document_environment(&self) -> bool {
+        use crate::generated::consts::{
+            call, cs_token_flag, end_match_token, letter, level_one, long_outer_call, other_char,
+        };
+        let body = |p: i32| -> Option<Vec<i32>> {
+            // (eq_type, eq_level, equiv: tex.web's `hh.b0`, `hh.b1`, `hh.rh`)
+            let w = self.eqtb[(p - 1) as usize].hh();
+            if !(call..=long_outer_call).contains(&w.b0()) {
+                return None;
+            }
+            let mut v = vec![];
+            let mut q = self.mem[w.rh() as usize].hh().rh();
+            while q != 0 {
+                v.push(self.mem[q as usize].hh().lh());
+                q = self.mem[q as usize].hh().rh();
+            }
+            Some(v)
+        };
+        if let Some(h) = self.find_cs(b"@execute@begin@hook") {
+            let Some(v) = body(h) else {
+                return false;
+            };
+            let Some(eg) = self.find_cs(b"endgroup") else {
+                return false;
+            };
+            return !v.contains(&(cs_token_flag + eg));
+        }
+        let Some(p) = self.find_cs(b"@currenvir") else {
+            return false;
+        };
+        if self.eqtb[(p - 1) as usize].hh().b1() <= level_one {
+            return false;
+        }
+        let Some(v) = body(p) else {
+            return false;
+        };
+        // the reference count's successor: `end_match`, then the name
+        v.len() == 9
+            && v[0] == end_match_token
+            && v[1..]
+                .iter()
+                .zip(b"document")
+                .all(|(&t, &c)| t == letter * 256 + c as i32 || t == other_char * 256 + c as i32)
+    }
+
     /// Whether `\document`'s `\IfFileExists{\jobname.aux}` would find a file
     /// (the output directory, then the search path, as `\openin` looks).
     fn aux_file_found(&self) -> bool {
@@ -2238,7 +2387,7 @@ impl Globals {
             self.layer().preamble_line_pending = true;
             self.midline_note_read();
         }
-        if self.ckpt_request != 0 && self.ckpt_request != REQ_PREAMBLE_LINE {
+        if !(self.request_free() || self.ckpt_request == REQ_PREAMBLE_LINE) {
             self.layer().lines += 1;
             return;
         }
@@ -2308,7 +2457,8 @@ impl Globals {
             return false;
         }
         let l = self.layer();
-        l.preamble_line_s.is_some()
+        !l.s0_polling
+            && l.preamble_line_s.is_some()
             && l.arm_name.is_some()
             && l.s0.is_none()
             && l.aux_point.is_none()

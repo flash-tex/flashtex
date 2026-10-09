@@ -93,6 +93,40 @@ changing one outside the app drops them at the next open.
 With the new engine off, nothing of this runs: the old worker, the v2 pane and
 the v1 pane behave exactly as before (D13).
 
+## Unicode mode (XeLaTeX-compatible)
+
+A document runs in **Unicode mode** (`EngineV3Mode.swift`, modes
+PROPOSAL.md §4.1) when `FLASHTEX_MODE=unicode`, when `flashtex.toml` says
+`[project] mode = "unicode"` (read by the project-files helper), or when a
+`% !TEX program = xelatex` line (or `TS-program`) is among the main file's
+leading comments (after a byte-order mark; `!TeX`, `! TeX`, either case;
+`xetex` gives plain XeTeX's format), read from the disk when the main file
+is not open. Otherwise it runs in Classic mode. What cannot be followed is
+said in the pane's details and the log: `lualatex` (LuaTeX isn't supported;
+Classic), a manifest value this version does not know (Classic; a `% !TEX`
+line does not overrule it), `flashtex` (not available yet; Classic). Unicode mode starts
+`flashtex-host-unicode` (crates/flashtex-xetex) in place of `flashtex-host`
+and compiles with the `xelatex` format. The window shows its pages exactly
+as Classic's. That host compiles cold for now: each compile is a full
+xelatex run with its passes, with no checkpoints. An edit that changes the
+mode relaunches the host: BYE first, SIGTERM a second later should it still
+run, and a Unicode host's engine ends with the host however the host ends. `[fonts]` applies in this mode (PROPOSAL.md
+§4.5). The host is found as below, from `FLASHTEX_HOST_UNICODE`, the
+`FlashTeX.EngineV3.hostPath.unicode` default, `Contents/Helpers/flashtex-host-unicode`
+or a repository build (`crates/flashtex-xetex/target/release` too). It is
+not yet bundled by `make-app.sh`.
+
+**The mode item** (status bar, and View › Mode for This Document;
+`ProjectMode.swift`) shows Classic or Unicode and where that comes from. Choosing
+the other mode writes `[project] mode` to `flashtex.toml` through the
+project-files helper's `set_mode` (creating the file next to the entry when there
+is none). Nothing is written until the user chooses. A Classic document that needs
+Unicode mode (fontspec, unicode-math, `\setmainfont`, … in its preamble, or a run
+stopped on fontspec's error), or a Classic project whose `flashtex.toml` sets
+`[fonts]` (not applied in Classic mode), gets a banner with one button, **Switch to
+Unicode Mode**. In Unicode mode neither rule sends the document to the
+compatibility engine.
+
 ## Where the host comes from
 
 The app looks for `flashtex-host` in these places, in order:

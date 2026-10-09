@@ -264,6 +264,10 @@ name = "flashtex-bibliography"
 version = "0.1.0"
 
 [[package]]
+name = "flashtex-bibtex"
+version = "0.1.0"
+
+[[package]]
 name = "flashtex-bridge"
 version = "0.1.0"
 dependencies = [
@@ -358,8 +362,10 @@ name = "flashtex-engine"
 version = "0.1.0"
 dependencies = [
  "cc",
+ "flashtex-bibtex",
  "flashtex-display-list",
  "flashtex-engine-build-id",
+ "flashtex-makeindex",
  "sha2",
  "tikv-jemalloc-sys",
  "tikv-jemallocator",
@@ -395,6 +401,13 @@ dependencies = [
  "serde_json",
  "sha2",
  "tempfile",
+]
+
+[[package]]
+name = "flashtex-makeindex"
+version = "0.1.0"
+dependencies = [
+ "libc",
 ]
 
 [[package]]
