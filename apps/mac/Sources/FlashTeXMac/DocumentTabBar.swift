@@ -125,6 +125,12 @@ private struct DocumentTab: View {
                 Button("Save \(doc.path)") { Task { await model.saveDocumentInteractive(doc.path) } }
                     .disabled(model.documentURL == nil)
             }
+            // Chapter focus (EngineV3FocusChapter.swift): an `\include`d file only.
+            if model.engineV3.focus.chapters.contains(where: { $0.path == doc.path }) {
+                Button("Show Whole Document in Preview") { model.showWholeDocument() }
+            } else if model.focusChapter(for: doc.path) != nil {
+                Button("Focus Preview on This Chapter") { model.focusPreview(on: doc.path) }
+            }
         }
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("\(doc.path)\(doc.role == .entry ? ", entry" : "")\(doc.isDirty ? ", edited" : "")")

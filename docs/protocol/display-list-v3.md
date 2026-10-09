@@ -635,7 +635,7 @@ The host answers with its own `HELLO`, or with `ERROR` `{"code":
  "engine": "pdfTeX 3.141592653-2.6-1.40.29 (FlashTeX engine)",
  "capabilities": ["compile", "cancel", "diagnostics", "font-programs", "font-formats", "have-fonts",
                   "resident", "incremental", "buffers", "edits", "viewport",
-                  "pages-status", "export", "external-tools", "exact-geometry", "halt-on-error", "diag-v1"],
+                  "pages-status", "export", "external-tools", "exact-geometry", "halt-on-error", "includeonly", "diag-v1"],
  "texmf": {"texlive": "/Library/TeX/texbin (PATH) -> /usr/local/texlive/2026/bin/universal-darwin",
            "resolver": "kpathsea (/Library/TeX/texbin)",
            "bundle": null,
@@ -703,7 +703,8 @@ demand later) the host prints progress lines
 | `format` | no | format name, default `pdflatex` |
 | `shell_escape` | no | `\write18`: `default` (texmf.cnf's: restricted in TeX Live), `off`, `restricted`, `on` |
 | `halt_on_error` | no | (capability `halt-on-error`; an older host ignores the field) `true`: `-halt-on-error`, TeX stops at the first error (a client's strict mode); default `false`: nonstopmode, recovering as pdflatex does. Another job: the resident document is replaced |
-| `output_dir` | no | where the PDF, log and auxiliary files go (default: a per-connection temporary directory) |
+| `includeonly` | no | (capability `includeonly`; an older host ignores the field) `["chapters/03", …]`: LaTeX's own `\includeonly`, a chapter focus. The first line becomes `\AtBeginDocument{\includeonly{chapters/03,…}}\input MAIN` (MAIN quoted when it holds a space): `\includeonly` runs in the `begindocument` hook, after the `.aux` is read and before any `\include`, which gives what it gives in the preamble (the same pages, content streams and `.aux` under pdflatex) while its file-name lookup (the chapter's `\pdffilesize`) stays out of S₀'s key, so an edit in the focused chapter restarts at S₀, not from the format; `\input` without a brace is the primitive, so MAIN is read as a bare first line reads it. Only the named `\include`s are typeset; the others' page numbers and references come from their `.aux` files in `output_dir`. Each name is as the document's `\include` writes it: relative, inside `root`, without `,` `{` `}` `\` `%` `#` `"` or a control character; an empty array is refused. Another job: the resident document is replaced, with its own stored S₀. Clients give a focused job its own `output_dir`, started from the whole document's auxiliary files, so the whole document's `.aux` is not rewritten by focused runs |
+| `output_dir` | no | where the PDF, log and auxiliary files go (default: a per-connection temporary directory). A client creates the folders `\include`d files sit in (`chapters/` for `\include{chapters/03}`) here, as latexmk does: pdfTeX cannot create them |
 | `jobname` | no | default: the main file's name |
 | `have_fonts` | no | font keys (hex) the client holds (§5.1) |
 | `font_formats` | no | host capability `font-formats`: the font formats beyond `type1` and `none` whose programs the client takes: any of `truetype`, `opentype`, `type3` (§5.1); default none |
@@ -716,6 +717,7 @@ demand later) the host prints progress lines
 
 The engine runs as pdflatex would:
 `pdftex -fmt=FORMAT -interaction=nonstopmode -file-line-error -output-directory=DIR -jobname=JOB [shell flag] MAIN`
+(with `includeonly`, `'\AtBeginDocument{\includeonly{NAMES}}\input MAIN'` in place of `MAIN`)
 (without `-output-directory` when `output_dir` is `root` itself, as a
 plain `pdflatex MAIN` or latexmk runs it),
 in the resident engine: the first compile of a document is a full run; a
@@ -1167,6 +1169,14 @@ in effect for this connection's compiles:
 (High Performance never trims). The keys are informative: a client shows or
 logs them and does not depend on any one. A knob the host's command line
 fixed (`--budget`, `--timed`, `--keep-warm`) keeps its value in every mode.
+
+`allocator_returns_free_pages` (added 2026-10-09, lane MEM-MODES) says
+whether the host's allocator gives freed memory back to the system at once.
+It is fixed when the host starts: on macOS a host started in Low Memory
+(`--profile low-memory` or `FLASHTEX_PROFILE`) sets it, which halves its
+footprint for a few percent of CPU time, and a later switch neither sets nor
+clears it. A client that wants it for a host it starts passes the mode on
+the command line.
 
 **Message** (`0x07`, client → host, JSON): `{"profile": MODE}` switches the
 mode live. The host applies it between compiles, in the order requests

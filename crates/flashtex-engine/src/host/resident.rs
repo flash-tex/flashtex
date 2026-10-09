@@ -785,6 +785,13 @@ impl Engine {
             // (only when set: a normal job's stored S0 keeps its key)
             if job.halt { "\0halt" } else { "" }
         );
+        // A focused job (`includeonly`, lane FOCUS-CHAPTER) has its own
+        // stored S0 (its first line differs), so switching the focus back
+        // and forth keeps both.
+        let key = match &job.includeonly {
+            Some(list) => format!("{key}\0includeonly\0{list}"),
+            None => key,
+        };
         let h = crate::persist::hash128(key.as_bytes());
         Some(dir.join(format!("{:016x}{:016x}.s0", h[0], h[1])))
     }
@@ -923,6 +930,15 @@ impl Engine {
         ps.peer.font_formats = Some(displaylist::parse_font_formats(
             &server::font_formats(&req).join(","),
         ));
+        // (a save of this S₀ still being written by this process: wait for it)
+        if doc.compiles == 0 {
+            if let Some(p) = &s0_path {
+                super::s0write::flush(
+                    Some(&p.to_string_lossy()),
+                    std::time::Duration::from_secs(30),
+                );
+            }
+        }
         let reopen = doc.compiles == 0 && s0_path.as_ref().is_some_and(|p| p.is_file());
         started(
             "resident",
@@ -1145,10 +1161,19 @@ impl Engine {
                         "restart_preamble".to_string(),
                         Json::Bool(rep.restart_preamble),
                     ),
+                    // READ-REVALIDATE: a later restart point tried (`crate::revalidate`)
+                    (
+                        "revalidated".to_string(),
+                        rep.revalidated.map(Json::Bool).unwrap_or(Json::Null),
+                    ),
                     // ... in the middle of the main file's line (`crate::midline`)
                     (
                         "restart_midline".to_string(),
                         Json::Bool(rep.restart_midline),
+                    ),
+                    (
+                        "arm_revalidated".to_string(),
+                        rep.arm_revalidated.map(Json::Bool).unwrap_or(Json::Null),
                     ),
                     (
                         "restart_next_gap".to_string(),
@@ -1468,21 +1493,43 @@ impl Engine {
         if let Some(d) = p.parent() {
             let _ = std::fs::create_dir_all(d);
         }
+        // The engine thread only takes S₀ out of the engine; the writer
+        // thread writes it (`super::s0write`), so a keystroke that comes now
+        // does not wait for the file.
         let t = Instant::now();
-        match doc.session.save_s0(&p.to_string_lossy()) {
+        let i0 = crate::os::thread_counts();
+        let image = doc.session.prepare_s0();
+        let engine_ms = (t.elapsed().as_secs_f64() * 1e4).round() / 10.0;
+        let engine_instr_k = match (i0, crate::os::thread_counts()) {
+            (Some(a), Some(b)) => Json::Int(((b.0 - a.0) / 1000) as i64),
+            _ => Json::Null,
+        };
+        let image = match image {
+            Ok(i) => i,
+            Err(e) => {
+                eprintln!("flashtex-host: saving S0: {e}");
+                return;
+            }
+        };
+        let shown = p.display().to_string();
+        let done: super::s0write::Done = Box::new(move |r, write_s| match r {
             Ok((bytes, _)) => server::say(&format!(
                 "flashtex-host: {}",
                 obj([
-                    ("saved_s0", js(p.display().to_string())),
+                    ("saved_s0", js(shown)),
                     ("bytes", Json::Int(bytes as i64)),
                     (
                         "ms",
                         Json::Num((t.elapsed().as_secs_f64() * 1e4).round() / 10.0)
                     ),
+                    ("engine_ms", Json::Num(engine_ms)),
+                    ("engine_instr_k", engine_instr_k),
+                    ("write_ms", Json::Num((write_s * 1e4).round() / 10.0)),
                 ])
             )),
             Err(e) => eprintln!("flashtex-host: saving S0: {e}"),
-        }
+        });
+        super::s0write::submit(&p.to_string_lossy(), image, done);
     }
 
     /// After a compile's `DONE`: let the tools look at what it left

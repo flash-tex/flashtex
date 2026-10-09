@@ -39,6 +39,9 @@
 # Where the line-shift journal observes the engine (DESIGN.md 5.3 rule (c);
 # changes nothing the program computes).
 --change crates/flashtex-engine/changes/lineshift.ch
+# The loaded format kept in memory and installed for a load from the same
+# state (lane COLD-FIXED; changes nothing the program computes).
+--change crates/flashtex-engine/changes/fmtimage.ch
 # changes/throughput.ch [3]: get_next's fast path inlined into its callers,
 # the rest out of line.
 --inline get_next=always

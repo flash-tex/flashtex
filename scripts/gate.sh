@@ -239,7 +239,12 @@ for p in changed:
     # The XeTeX port (crates/flashtex-xetex, its own workspace) links the
     # pdfTeX engine's runtime and is web2rust's output: a change to either
     # must build and test it too, or an engine API change breaks it silently.
-    if p.startswith("crates/flashtex-engine/") or p.startswith("tools/web2rust/"):
+    # So must a change to another crate it path-depends on (its host links
+    # the display list, the manifest, the font index, the PDF readers, and
+    # the runtime it shares with the engine, crates/flashtex-runtime).
+    if p.startswith(("crates/flashtex-engine/", "tools/web2rust/", "crates/display-list-v3/",
+                     "crates/project-manifest/", "crates/font-discovery/", "crates/pdf/",
+                     "crates/flashtex-runtime/")):
         dirs.add("flashtex-xetex")
 
 out = []
@@ -282,8 +287,9 @@ DRIFT_PATHS='^(tools/web2rust/|third_party/(pdftex|xetex)/|crates/flashtex-(engi
 # whole tree) under its own feature set, which the crate's tests and clippy
 # never compile. A module the scratch crate lacks fails there only (#1599:
 # E0583 in CI's gate job and the Windows engine job), so quick builds and
-# runs both whenever the engine's sources or the harness change.
-TRIP_PATHS='^(tools/web2rust/|third_party/(knuth|pdftex)/|crates/flashtex-engine/(src/|changes/|web2rust-[a-z]+\.args$)|scripts/flashtex-e?trip\.sh$)'
+# runs both whenever the engine's sources (with the runtime they link,
+# crates/flashtex-runtime) or the harness change.
+TRIP_PATHS='^(tools/web2rust/|third_party/(knuth|pdftex)/|crates/flashtex-engine/(src/|changes/|web2rust-[a-z]+\.args$)|crates/flashtex-runtime/|scripts/flashtex-e?trip\.sh$)'
 
 # ---------------------------------------------------------------------------
 # quick: fmt, clippy on changed crates, tests of changed crates

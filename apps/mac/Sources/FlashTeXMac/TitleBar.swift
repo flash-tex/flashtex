@@ -29,6 +29,7 @@ struct TitleBarRow: View {
                            help: "Command Palette… (View, ⌘⇧P): every command with its shortcut",
                            identifier: "toolbar.command-palette") { $0.commandPaletteShown = true }
             Spacer(minLength: DS.Space.m)
+            if model.engineV3Enabled { FocusChapterTitleBarToggle() } // EngineV3FocusChapter.swift
             DarkPreviewTitleBarToggle()
             TitleBarButton(icon: "arrow.left.and.right.square", label: "Fit width",
                            help: "Fit Width (⌘9)") { $0.previewFitWidth() }
