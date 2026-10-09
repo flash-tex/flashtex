@@ -18,6 +18,8 @@ path = "src/main.rs"
 
 [dependencies]
 flashtex-display-list = { path = "../display-list-v3" }
+# `[project] mode` (MIT, platform-free).
+flashtex-project-manifest = { path = "../project-manifest" }
 
 # Signals (clean-up on Ctrl-C/SIGTERM) and pid checks; MIT OR Apache-2.0.
 [target.'cfg(unix)'.dependencies]

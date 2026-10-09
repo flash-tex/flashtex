@@ -26,7 +26,8 @@ extension EngineV3Session {
         func inside(_ line: Int, _ col: Int) -> Bool {
             (line > l0 || col >= c0) && (line < l1 || col < c1)
         }
-        for i in candidates.sorted() {
+        let wanted = Set(spans.keys)
+        for i in candidates.sorted() where pageMayShow(i, spans: wanted) {
             guard let ix = sourceIndex(page: i) else { continue }
             var box: CGRect?
             for g in ix.glyphs where g.col != 0xFFFF {
