@@ -163,6 +163,10 @@ pub struct Host {
     /// FreeType (XeTeXFontInst.cpp's `gFreeTypeLibrary`), made on first
     /// use; each font keeps it alive.
     pub ft_library: Option<std::sync::Arc<crate::native::font_inst::FtLibrary>>,
+    /// PDF mode's output (`crate::out`): the display list and the PDF.
+    /// Not saved at a checkpoint yet: the Unicode host's checkpoints
+    /// (phase S3) will restore it with the pages it holds.
+    pub out: Option<Box<crate::out::Output>>,
 }
 
 /// `-no-pdf`, true unless set otherwise.
