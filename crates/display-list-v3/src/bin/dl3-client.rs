@@ -5,6 +5,7 @@
 //!     dl3-client --socket /tmp/flashtex.sock --root /path/to/project --main main.tex \
 //!         [--repeat N] [--reuse-fonts] [--save out.dl3] [--output-dir DIR] [--quiet]
 //!         [--diag FILE] [--format NAME] [--shell-escape off|restricted|on] [--export]
+//!         [--includeonly NAME,...]
 //!
 //! Per compile it prints one JSON line: time to STARTED, to the first PAGE
 //! and to DONE (ms, measured here from sending COMPILE), pages, forms,
@@ -71,6 +72,8 @@ fn main() {
             req.shell_escape = v;
         }
         req.export = a.iter().any(|x| x == "--export");
+        // `--includeonly a,b`: a chapter focus (`\includeonly{a,b}`, host capability `includeonly`).
+        req.includeonly = arg("--includeonly").map(|v| v.split(',').map(str::to_string).collect());
         if reuse {
             req.have_fonts = held.clone();
         }
