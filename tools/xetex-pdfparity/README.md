@@ -234,8 +234,34 @@ glyph's anti-aliased edge pixels, so those pixels differ while the glyphs
 are the same and correctly placed. The floor is therefore the per-case
 pixel count of a run of the writer whose structural report is clean.
 
-TODO (lane lead): the measured floor per case (pixels at 2×, from a
-candidate run with 0 structural differences), with its date and binary.
+**Measured floor** (VERIFIED 2026-10-09, mac-m1max-a). The candidate is the
+Unicode-mode PDF writer of #1712 (stacked on #1710), built as
+`flashtex-xetex`, compared by this harness at 94318fdab. All 14 cases ran:
+
+* every glyph matched, and the XDV check's largest error was 0.000009 bp;
+* 3 structural differences, each only the code point chosen for a
+  ToUnicode entry:
+  * l004 glyph 30: U+037E vs `;`;
+  * l007 glyph 2705: `∣` vs `|`;
+  * l008 glyph 1397: `ˆ` vs U+0302;
+* 31,597 differing pixels at 2×:
+
+| case | px | case | px |
+|---|---|---|---|
+| l001 | 505 | l008 | 460 |
+| l002 | 590 | l009 | 590 |
+| l003 | 794 | l010 | 621 |
+| l004 | 952 | d01 | 293 |
+| l005 | 20,142 | d02 | 1,050 |
+| l006 | 4,270 | d03 | 784 |
+| l007 | 502 | d04 | 44 |
+
+**Belief, not measured pixel by pixel:** the floor is xdvipdfmx's own
+rounding (3-decimal `Td`, integer TJ kerns, integer `/W`; see the next
+section), not an error of the writer. The writer's glyphs are within
+0.00001 bp of TeX's positions, and xdvipdfmx's are up to ±0.005 em from
+them. **Owner question:** emulate xdvipdfmx's rounding to reach 0 px, or
+accept this floor as the gate.
 
 ## Measurements: xdvipdfmx's precision (VERIFIED 2026-10-09)
 
