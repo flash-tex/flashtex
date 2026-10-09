@@ -361,14 +361,24 @@ impl<M: Metrics> Builder<'_, M> {
         };
         match cmd.as_slice() {
             b"pagesize" | b"papersize" => {} // read before the page
+            // PDF 1.4 to 1.7, what the writer writes (dvipdfmx's range); a
+            // version outside it is reported and clamped
             b"majorversion" => {
                 if let Some(v) = p.number() {
-                    self.doc.version.0 = v as u32;
+                    if v != 1.0 {
+                        self.doc
+                            .diag(format!("pdf:majorversion {v}: PDF 1.x is written"));
+                    }
                 }
             }
             b"minorversion" => {
                 if let Some(v) = p.number() {
-                    self.doc.version.1 = v as u32;
+                    let m = (v as i64).clamp(4, 7) as u32;
+                    if m as f64 != v {
+                        self.doc
+                            .diag(format!("pdf:minorversion {v}: PDF 1.{m} is written"));
+                    }
+                    self.doc.version.1 = m;
                 }
             }
             b"code" | b"direct" => self.literal(p.rest()),
@@ -699,9 +709,10 @@ impl<M: Metrics> Builder<'_, M> {
         };
         let data = if cmd == b"fstream" {
             let f = String::from_utf8_lossy(&s).into_owned();
+            // only through the resolver: confinement (FLASHTEX_CONFINE_READS)
+            // and the read set apply to it as to every other file
             let path =
-                flashtex_engine::system::find_file(&f, flashtex_engine::resolver::Format::Pict)
-                    .or_else(|| std::path::Path::new(&f).is_file().then(|| f.clone()));
+                flashtex_engine::system::find_file(&f, flashtex_engine::resolver::Format::Pict);
             match path.and_then(|p| std::fs::read(p).ok()) {
                 Some(d) => d,
                 None => {
@@ -793,7 +804,11 @@ impl<M: Metrics> Builder<'_, M> {
             return;
         };
         let f = String::from_utf8_lossy(&file).into_owned();
-        let path = if std::path::Path::new(&f).is_absolute() {
+        // A path the engine's own picture lookup found (`\XeTeXpicfile`,
+        // `\XeTeXpdffile`, which `pic_out` writes as `pdf:image`) is used as
+        // it is; any other name goes through the resolver, so that
+        // confinement (FLASHTEX_CONFINE_READS) and the read set apply to it.
+        let path = if self.doc.pictures.contains(&f) {
             Some(f.clone())
         } else {
             flashtex_engine::system::find_file(&f, flashtex_engine::resolver::Format::Pict)

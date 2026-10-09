@@ -140,6 +140,12 @@ pub struct Doc {
     /// The XDV preamble's comment (` XeTeX output ...`): xdvipdfmx's
     /// `/Creator` when the document gives none.
     pub dvi_comment: Option<Vec<u8>>,
+    /// The picture files the engine's own lookup found (`find_pic_file`):
+    /// `pdf:image` takes these paths as they are.
+    pub pictures: std::collections::BTreeSet<String>,
+    /// What went wrong reading the output: the run fails (a page that
+    /// cannot be read is never dropped silently).
+    pub errors: Vec<String>,
 }
 
 impl Doc {

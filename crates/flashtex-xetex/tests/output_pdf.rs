@@ -138,3 +138,52 @@ fn pdf_mode_writes_the_pdf_from_the_display_list() {
     );
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// The same input gives the same PDF, byte for byte (with
+/// `SOURCE_DATE_EPOCH`): two fonts, a picture and a form, whose objects
+/// the writer numbers and writes in a fixed order.
+#[test]
+fn the_pdf_is_reproducible() {
+    let dir = std::env::temp_dir().join(format!("flashtex-xetex-repro-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let fonts = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../apps/mac/Fonts");
+    for f in ["lmmono10-regular.otf", "lmmono10-italic.otf"] {
+        std::fs::copy(fonts.join(f), dir.join(f)).unwrap();
+    }
+    let pictures =
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tools/xetex-lockstep/pictures");
+    std::fs::copy(pictures.join("p-plain.png"), dir.join("p.png")).unwrap();
+    std::fs::write(
+        dir.join("r.tex"),
+        r#"\catcode`\{=1 \catcode`\}=2 \catcode`\#=6
+\pdfpagewidth=300bp \pdfpageheight=300bp
+\font\x="[lmmono10-regular.otf]" at 10pt \font\y="[lmmono10-italic.otf]" at 12pt
+\shipout\hbox{\special{pdf:bxobj @f width 20bp height 20bp}\x F\special{pdf:exobj}%
+\x AB \y CD \XeTeXpicfile "p.png" width 20bp \special{pdf:uxobj @f}\special{color push rgb 0 0 1}\x E\special{color pop}}
+\shipout\hbox{\y G \x H}
+\end
+"#,
+    )
+    .unwrap();
+    let run = || {
+        let out = Command::new(env!("CARGO_BIN_EXE_flashtex-xetex"))
+            .current_dir(&dir)
+            .env("SOURCE_DATE_EPOCH", "1700000000")
+            .env("FLASHTEX_RESOLVER", "cwd")
+            .args(["-ini", "-etex", "-interaction=nonstopmode", "r.tex"])
+            .output()
+            .unwrap();
+        assert_eq!(
+            out.status.code(),
+            Some(0),
+            "{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        std::fs::read(dir.join("r.pdf")).unwrap()
+    };
+    let (a, b) = (run(), run());
+    assert!(a.len() > 1000);
+    assert!(a == b, "two runs gave different PDFs");
+    let _ = std::fs::remove_dir_all(&dir);
+}

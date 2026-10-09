@@ -1147,6 +1147,21 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn a_page_that_cannot_be_read_is_an_error_not_dropped() {
+        let mut doc = Doc::new();
+        // an opcode XDV does not have
+        let bad = page_bytes(&[250]);
+        let e = Builder::page(&mut doc, &NoTfm, 1000, 1, &bad).unwrap_err();
+        assert!(e.contains("opcode 250"), "{e}");
+        // a rule cut short
+        let mut cut = vec![139];
+        cut.extend_from_slice(&[0; 44]);
+        cut.extend_from_slice(&[137, 0, 0]);
+        let e = Builder::page(&mut doc, &NoTfm, 1000, 1, &cut).unwrap_err();
+        assert!(e.contains("truncated"), "{e}");
+    }
+
+    #[test]
     fn rules_are_placed_and_classified_as_dvipdfmx_draws_them() {
         let mut doc = Doc::new();
         // \hrule height 2bp width 100bp at v = 10bp; a 10bp-high rule.

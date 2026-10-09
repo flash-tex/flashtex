@@ -34,7 +34,7 @@ use super::fonts::{FontRes, ResKind};
 use super::images::Kind;
 use super::pdfobj::{fmt_num, write_name, Dict, Obj, Writer as ObjWriter};
 use flashtex_display_list::page::{paint, Item, Page, RuleKind, Seg};
-use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write as _;
 
 /// sp per bp.
@@ -52,10 +52,11 @@ pub struct Options {
 }
 
 /// The PDF of `doc`.
-pub fn write(doc: &Doc, opts: &Options) -> Result<Vec<u8>, String> {
+pub fn write(doc: &Doc, opts: &Options) -> Result<(Vec<u8>, Vec<String>), String> {
     let mut w = Writer::new(doc, opts);
     w.run()?;
-    Ok(w.finish())
+    let warnings = std::mem::take(&mut w.warnings);
+    Ok((w.finish(), warnings))
 }
 
 /// zlib (TeX Live's) at level 9.
@@ -94,15 +95,20 @@ struct Writer<'a> {
     pages: Vec<u32>,
     pages_root: u32,
     catalog: u32,
-    fonts: HashMap<u16, u32>,
-    images: HashMap<u32, u32>,
-    forms: HashMap<u32, u32>,
-    named: HashMap<Vec<u8>, u32>,
+    fonts: BTreeMap<u16, u32>,
+    images: BTreeMap<u32, u32>,
+    forms: BTreeMap<u32, u32>,
+    named: BTreeMap<Vec<u8>, u32>,
     named_queue: Vec<Vec<u8>>,
     names_obj: Option<u32>,
     /// The glyphs (native fonts) and codes (TFM fonts) each font draws.
-    used: HashMap<u16, BTreeSet<u16>>,
+    used: BTreeMap<u16, BTreeSet<u16>>,
     page_group: Vec<bool>,
+    /// For a native font with CID-keyed CFF outlines: each glyph id's CID
+    /// (the font's charset), which the content stream writes as the code.
+    cids: BTreeMap<u16, BTreeMap<u16, u16>>,
+    /// What the PDF does not carry as the document asks (reported).
+    pub warnings: Vec<String>,
 }
 
 /// The resources a content stream uses.
@@ -125,14 +131,16 @@ impl<'a> Writer<'a> {
             pages: Vec::new(),
             pages_root: 0,
             catalog: 0,
-            fonts: HashMap::new(),
-            images: HashMap::new(),
-            forms: HashMap::new(),
-            named: HashMap::new(),
+            fonts: BTreeMap::new(),
+            images: BTreeMap::new(),
+            forms: BTreeMap::new(),
+            named: BTreeMap::new(),
             named_queue: Vec::new(),
             names_obj: None,
-            used: HashMap::new(),
+            used: BTreeMap::new(),
             page_group: Vec::new(),
+            cids: BTreeMap::new(),
+            warnings: Vec::new(),
         }
     }
 
@@ -189,6 +197,20 @@ impl<'a> Writer<'a> {
                 if let Item::Glyph { font, code, .. } = it {
                     self.used.entry(*font).or_default().insert(*code);
                 }
+            }
+        }
+        for (&id, used) in &self.used {
+            let Some(r) = doc.fonts.resource(id) else {
+                continue;
+            };
+            let ResKind::Native {
+                index, cff: true, ..
+            } = &r.kind
+            else {
+                continue;
+            };
+            if let Some(m) = cid_map(&r.program, *index, used) {
+                self.cids.insert(id, m);
             }
         }
         for i in 0..doc.pages.len() {
@@ -597,6 +619,12 @@ impl<'a> Writer<'a> {
                         );
                     }
                     if two_byte {
+                        let code = self
+                            .cids
+                            .get(font)
+                            .and_then(|m| m.get(code))
+                            .copied()
+                            .unwrap_or(*code);
                         let _ = writeln!(Bytes(&mut c), "<{code:04X}>Tj");
                     } else {
                         let _ = writeln!(Bytes(&mut c), "<{:02X}>Tj", code & 0xFF);
@@ -966,26 +994,31 @@ impl<'a> Writer<'a> {
             if ps_name.is_empty() { "Font" } else { ps_name }
         );
         let k = 1000.0 / upm;
-        // the program
-        let (file_key, sub, program): (&str, &str, Vec<u8>) = if cff {
-            let table = font.cff_table().ok_or("no CFF table")?;
-            match flashtex_pdf::cff::CffFont::parse(table).and_then(|c| c.subset(used)) {
-                Ok(s) => ("FontFile3", "/Subtype /CIDFontType0C", s.bytes),
-                // a CID-keyed source or a `seac` glyph: the whole font, as
-                // OpenType (its CIDs are its glyph ids, PDF 32000-1 §9.7.4.2)
-                Err(_) => ("FontFile3", "/Subtype /OpenType", r.program.to_vec()),
-            }
+        let info = FaceInfo::read(&r.program, index);
+        // the codes of the content stream: glyph ids, or the CIDs of a
+        // CID-keyed CFF font (its charset)
+        let cids = self.cids.get(&r.id).cloned();
+        let code_of = |g: u16| cids.as_ref().and_then(|m| m.get(&g)).copied().unwrap_or(g);
+        // the program, unless the font's licence forbids embedding it
+        let file = if info.embedding_forbidden() {
+            self.warnings.push(format!(
+                "{ps_name}: the font's OS/2 fsType ({:#06x}) does not allow embedding; it is not embedded",
+                info.fs_type
+            ));
+            None
         } else {
-            ("FontFile2", "", font.subset_keep_gids(used)?)
+            let (file_key, sub, program) = font_program(&font, &r.program, cff, used)?;
+            let ff = self.alloc();
+            self.stream(ff, sub.as_bytes(), &program, true);
+            Some(format!(" /{file_key} {ff} 0 R"))
         };
-        let ff = self.alloc();
-        self.stream(ff, sub.as_bytes(), &program, true);
         let fd = self.alloc();
         let [bx0, by0, bx1, by1] = font.bbox;
         let mut d = String::new();
         let _ = write!(
             d,
-            "<</Type /FontDescriptor /FontName /{base} /Flags 4 /FontBBox [{} {} {} {}] /ItalicAngle {} /Ascent {} /Descent {} /CapHeight {} /StemV 80 /{file_key} {ff} 0 R>>",
+            "<</Type /FontDescriptor /FontName /{base} /Flags {} /FontBBox [{} {} {} {}] /ItalicAngle {} /Ascent {} /Descent {} /CapHeight {} /StemV {}{}>>",
+            info.flags(font.italic_angle),
             n(bx0 as f64 * k, 3),
             n(by0 as f64 * k, 3),
             n(bx1 as f64 * k, 3),
@@ -994,22 +1027,25 @@ impl<'a> Writer<'a> {
             n(font.ascender as f64 * k, 3),
             n(font.descender as f64 * k, 3),
             n(font.cap_height.unwrap_or(font.ascender) as f64 * k, 3),
+            info.stem_v(),
+            file.unwrap_or_default(),
         );
         self.object(fd, d.as_bytes());
         // widths
         let mut wa = String::from("[");
         let mut prev: Option<u16> = None;
-        for &g in used {
+        let by_code: BTreeMap<u16, u16> = used.iter().map(|&g| (code_of(g), g)).collect();
+        for (&c, &g) in &by_code {
             let w = n(font.advance(g) as f64 * k, 3);
-            if prev.is_some_and(|p| p + 1 == g) {
+            if prev.is_some_and(|p| p + 1 == c) {
                 let _ = write!(wa, " {w}");
             } else {
                 if prev.is_some() {
                     wa.push(']');
                 }
-                let _ = write!(wa, " {g} [{w}");
+                let _ = write!(wa, " {c} [{w}");
             }
-            prev = Some(g);
+            prev = Some(c);
         }
         if prev.is_some() {
             wa.push(']');
@@ -1027,7 +1063,11 @@ impl<'a> Writer<'a> {
         self.object(cid, d.as_bytes());
         // ToUnicode from the font's cmap
         let cmap_text = super::tounicode::cmap_reverse(&r.program, index);
-        let map = super::tounicode::glyph_text(&r.program, index, &cmap_text, used);
+        let map: BTreeMap<u16, Vec<char>> =
+            super::tounicode::glyph_text(&r.program, index, &cmap_text, used)
+                .into_iter()
+                .map(|(g, t)| (code_of(g), t))
+                .collect();
         let tu = self.alloc();
         let cmap = to_unicode_cmap(&base, &map, true);
         self.stream(tu, b"", cmap.as_bytes(), true);
@@ -1074,7 +1114,8 @@ impl<'a> Writer<'a> {
         let bbox = t1.font_bbox().unwrap_or([0, -250, 1000, 750]);
         let fd = self.alloc();
         let d = format!(
-            "<</Type /FontDescriptor /FontName /{base} /Flags 4 /FontBBox [{} {} {} {}] /ItalicAngle {} /Ascent {} /Descent {} /CapHeight {} /StemV {} /FontFile {ff} 0 R>>",
+            "<</Type /FontDescriptor /FontName /{base} /Flags {} /FontBBox [{} {} {} {}] /ItalicAngle {} /Ascent {} /Descent {} /CapHeight {} /StemV {} /FontFile {ff} 0 R>>",
+            type1_flags(&r.program, t1.italic_angle().unwrap_or("0")),
             bbox[0],
             bbox[1],
             bbox[2],
@@ -1373,6 +1414,128 @@ impl std::fmt::Write for Bytes<'_> {
         self.0.extend_from_slice(s.as_bytes());
         Ok(())
     }
+}
+
+/// The program of a native font for its font descriptor: the key, the
+/// stream's subtype entry and the bytes.
+fn font_program(
+    font: &flashtex_pdf::truetype::TrueTypeFont,
+    whole: &[u8],
+    cff: bool,
+    used: &BTreeSet<u16>,
+) -> Result<(&'static str, &'static str, Vec<u8>), String> {
+    if !cff {
+        return Ok(("FontFile2", "", font.subset_keep_gids(used)?));
+    }
+    let table = font.cff_table().ok_or("no CFF table")?;
+    let parsed = flashtex_pdf::cff::CffFont::parse(table).map_err(|e| format!("{e:?}"))?;
+    if parsed.is_cid_keyed() {
+        // A CID-keyed CFF (CJK fonts): embedded whole as the CIDFont
+        // program; the content stream writes its CIDs (`cid_map`). Not
+        // subset yet: FlashTeX's CFF subsetter takes name-keyed fonts.
+        return Ok(("FontFile3", "/Subtype /CIDFontType0C", table.to_vec()));
+    }
+    Ok(match parsed.subset(used) {
+        Ok(s) => ("FontFile3", "/Subtype /CIDFontType0C", s.bytes),
+        // a `seac` glyph: the whole font, as OpenType (a name-keyed CFF's
+        // CIDs are its glyph ids, PDF 32000-1 §9.7.4.2)
+        Err(_) => ("FontFile3", "/Subtype /OpenType", whole.to_vec()),
+    })
+}
+
+/// For a CID-keyed CFF face: each used glyph id's CID (the font's charset,
+/// through which a CIDFontType0 font selects glyphs). `None` for any other
+/// face.
+fn cid_map(program: &[u8], index: u32, used: &BTreeSet<u16>) -> Option<BTreeMap<u16, u16>> {
+    let font = flashtex_pdf::truetype::TrueTypeFont::parse_face(program.to_vec(), index).ok()?;
+    let cff = flashtex_pdf::cff::CffFont::parse(font.cff_table()?).ok()?;
+    if !cff.is_cid_keyed() {
+        return None;
+    }
+    Some(
+        used.iter()
+            .map(|&g| (g, cff.charset_entry(g).unwrap_or(0)))
+            .collect(),
+    )
+}
+
+/// What the font descriptor takes from a face's `OS/2`, `post` and `head`.
+#[derive(Default)]
+struct FaceInfo {
+    fs_type: u16,
+    weight: u16,
+    family_class: u16,
+    fixed_pitch: bool,
+    italic_style: bool,
+}
+
+impl FaceInfo {
+    fn read(data: &[u8], index: u32) -> FaceInfo {
+        use super::tounicode::table;
+        let rd16 = |t: &[u8], o: usize| t.get(o..o + 2).map(|s| u16::from_be_bytes([s[0], s[1]]));
+        let mut f = FaceInfo {
+            weight: 400,
+            ..FaceInfo::default()
+        };
+        if let Some(os2) = table(data, index, b"OS/2") {
+            f.weight = rd16(os2, 4).unwrap_or(400);
+            f.fs_type = rd16(os2, 8).unwrap_or(0);
+            f.family_class = rd16(os2, 30).unwrap_or(0);
+            f.italic_style = rd16(os2, 62).is_some_and(|s| s & 1 != 0);
+        }
+        if let Some(post) = table(data, index, b"post") {
+            f.fixed_pitch = post.get(12..16).is_some_and(|s| s.iter().any(|&b| b != 0));
+        }
+        if let Some(head) = table(data, index, b"head") {
+            f.italic_style |= rd16(head, 44).is_some_and(|m| m & 2 != 0);
+        }
+        f
+    }
+
+    /// `fsType` (OpenType spec, OS/2): "Restricted License embedding"
+    /// (only bit 1 of the usage bits) or "Bitmap embedding only" (bit 9).
+    fn embedding_forbidden(&self) -> bool {
+        self.fs_type & 0x000F == 0x0002 || self.fs_type & 0x0200 != 0
+    }
+
+    /// The descriptor's `/Flags` (PDF 32000-1 Table 123): FixedPitch,
+    /// Serif (an `sFamilyClass` of 1-5 or 7), Symbolic (a font drawn by
+    /// glyph id has no standard encoding), Italic.
+    fn flags(&self, italic_angle: f64) -> u32 {
+        let mut f = 4;
+        if self.fixed_pitch {
+            f |= 1;
+        }
+        if matches!(self.family_class >> 8, 1..=5 | 7) {
+            f |= 2;
+        }
+        if self.italic_style || italic_angle != 0.0 {
+            f |= 64;
+        }
+        f
+    }
+
+    /// `/StemV` from the weight class, as PDF writers estimate it when the
+    /// font gives none: 50 + (weight / 65)².
+    fn stem_v(&self) -> u32 {
+        let w = self.weight as f64 / 65.0;
+        (50.0 + w * w).round() as u32
+    }
+}
+
+/// A Type 1 font's `/Flags`: Symbolic (TeX's fonts are re-encoded), and
+/// FixedPitch and Italic from its `FontInfo`.
+fn type1_flags(program: &[u8], italic_angle: &str) -> u32 {
+    let clear_end = program.len().min(16 * 1024);
+    let clear = &program[..clear_end];
+    let mut f = 4;
+    if clear.windows(17).any(|w| w == b"/isFixedPitch tru") {
+        f |= 1;
+    }
+    if italic_angle.trim().parse::<f64>().is_ok_and(|a| a != 0.0) {
+        f |= 64;
+    }
+    f
 }
 
 fn color_op(c: &mut Vec<u8>, v: &[f64], stroke: bool) {
@@ -1862,4 +2025,129 @@ fn png_has_alpha(doc: &Doc, id: u32) -> bool {
         return false;
     };
     data.get(25).is_some_and(|&t| t == 4 || t == 6)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::super::doc::{Built, Doc, Supplement};
+    use super::super::fonts::{FontDef, NativeDef};
+    use super::*;
+    use flashtex_display_list::page::{Page, StreamKind};
+    use flashtex_pdf::reader::{Obj, PdfFile};
+
+    /// A page drawing glyph `gid` of `path` (face 0) at 10 pt, written.
+    fn one_glyph_pdf(path: &str, gid: u16) -> Vec<u8> {
+        let mut doc = Doc::new();
+        doc.fonts.define(
+            0,
+            FontDef::Native(NativeDef {
+                path: path.as_bytes().to_vec(),
+                index: 0,
+                size: 10 << 16,
+                flags: 0,
+                rgba: None,
+                extend: None,
+                slant: None,
+                embolden: None,
+            }),
+        );
+        let res = doc.fonts.get(0).unwrap().res;
+        let mut p = Page::new(StreamKind::Page, 0);
+        p.pdf_box = [0.0, 0.0, 100.0, 100.0];
+        p.matrices.push([10.0, 0.0, 0.0, 10.0, 0.0, 0.0]);
+        p.items = vec![
+            Item::Matrix(1),
+            Item::Glyph {
+                font: res,
+                code: gid,
+                x: 657_818,
+                y: 3_289_088,
+                col: flashtex_display_list::page::NO_COLUMN,
+            },
+        ];
+        doc.pages.push(Built {
+            dl: p,
+            sup: Supplement::default(),
+            fonts: vec![res],
+            images: vec![],
+            forms: vec![],
+        });
+        let opts = Options {
+            producer: "test".into(),
+            date: None,
+            compress: false,
+        };
+        write(&doc, &opts).unwrap().0
+    }
+
+    /// A CID-keyed CFF font (CJK): the content stream draws its glyphs by
+    /// their CIDs (the charset), the CIDFont program is the font's CFF, and
+    /// `/W` is keyed by CID. TeX Live's HaranoAji Mincho; skipped without it.
+    #[test]
+    fn cid_keyed_cff_fonts_are_drawn_by_cid() {
+        let Some(path) = std::process::Command::new("kpsewhich")
+            .arg("HaranoAjiMincho-Regular.otf")
+            .output()
+            .ok()
+            .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+            .filter(|p| !p.is_empty())
+        else {
+            eprintln!("skipped: no HaranoAjiMincho-Regular.otf (TeX Live)");
+            return;
+        };
+        let data = std::fs::read(&path).unwrap();
+        let font = flashtex_pdf::truetype::TrueTypeFont::parse(data).unwrap();
+        let gid = font.glyph_id('漢').unwrap();
+        let cff = flashtex_pdf::cff::CffFont::parse(font.cff_table().unwrap()).unwrap();
+        assert!(cff.is_cid_keyed());
+        let cid = cff.charset_entry(gid).unwrap();
+        let bytes = one_glyph_pdf(&path, gid);
+        let pdf = PdfFile::parse(&bytes).unwrap();
+        let page = pdf.pages().unwrap()[0];
+        let content = String::from_utf8(pdf.page_content(page).unwrap()).unwrap();
+        assert!(content.contains(&format!("<{cid:04X}>Tj")), "{content}");
+        let f = *pdf.page_fonts(page).values().next().unwrap();
+        let d = pdf
+            .resolve(&f.get("DescendantFonts").and_then(Obj::as_array).unwrap()[0])
+            .as_dict()
+            .unwrap();
+        let w = d.get("W").and_then(Obj::as_array).unwrap();
+        assert_eq!(w[0].as_number(), Some(cid.to_string().as_str()));
+        let fd = pdf
+            .resolve(d.get("FontDescriptor").unwrap())
+            .as_dict()
+            .unwrap();
+        let ff = pdf.resolve(fd.get("FontFile3").unwrap());
+        let sub = ff.as_dict().unwrap().get("Subtype").and_then(Obj::as_name);
+        assert_eq!(sub, Some("CIDFontType0C"));
+        let program = pdf.decode_stream(ff).unwrap();
+        assert!(flashtex_pdf::cff::CffFont::parse(&program)
+            .unwrap()
+            .is_cid_keyed());
+    }
+
+    /// `/Flags`, `/StemV` and the embedding permission from the face: LM
+    /// Mono is fixed pitch, regular weight, installable.
+    #[test]
+    fn font_descriptors_say_what_the_face_is() {
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../apps/mac/Fonts/lmmono10-regular.otf"
+        );
+        let info = FaceInfo::read(&std::fs::read(path).unwrap(), 0);
+        assert_eq!(info.flags(0.0) & 1, 1, "fixed pitch");
+        assert_eq!(info.flags(-9.0) & 64, 64, "italic");
+        assert_eq!(info.stem_v(), 88); // weight 400
+        assert!(!info.embedding_forbidden());
+        let restricted = FaceInfo {
+            fs_type: 0x0002,
+            ..FaceInfo::default()
+        };
+        assert!(restricted.embedding_forbidden());
+        let editable = FaceInfo {
+            fs_type: 0x0008,
+            ..FaceInfo::default()
+        };
+        assert!(!editable.embedding_forbidden());
+    }
 }
