@@ -1396,9 +1396,10 @@ SAVE/RESTORE to `saveGState`/`restoreGState` and CLIP to `addPath` + `clip`.
 - S₀ persisted with `--s0-cache` does not carry source spans: after a
   reopen, material made before `\begin{document}` (none that a page shows,
   in practice) has no span.
-- Typst (3.3, §11): the Typst host produces E1–E4 and E7 (E3, E4 for a
-  client that accepts them); images and islands (E5, E6) are flagged
-  INCOMPLETE and `RESOLVE`/`LOCATE` (E8) is not answered yet.
+- Typst (3.3, §11): the Typst host produces E1–E4, E6 (raster images)
+  and E7 (E3, E4, E6 for a client that accepts them); SVG and PDF images
+  (E5 islands) are flagged INCOMPLETE and `RESOLVE`/`LOCATE` (E8) is not
+  answered yet.
 
 ## 11. Version 3.3: the Typst host's additions
 
@@ -1419,7 +1420,8 @@ items **and** flags the page INCOMPLETE, with an UNSUPPORTED entry
 "…: pixel gate row pending (DESIGN.md §15.5)", so the client shows
 `DONE.pdf`. The host's `--draw-ungated` drops that flag, for measuring the
 rows only. Pending today: ICCBased and Separation colours
-(`FILL_COLOR_CS`, `STROKE_COLOR_CS`), alpha other than 1, stroked glyphs.
+(`FILL_COLOR_CS`, `STROKE_COLOR_CS`), alpha other than 1, stroked glyphs,
+raster images (`IMAGE` with `data`).
 
 For a Typst document **the PDF** of §4.2 and §4.4 is typst-pdf's export of
 the same compile (`DONE.pdf`; the host's per-page positions come from a
@@ -1573,7 +1575,7 @@ strokes the glyph's outline, mapped by the glyph matrix, with that pen in
 stream space. Under a CTM that is not a similarity (a non-uniform scale, a
 skew) the pen is no circle and has no one width: the page is INCOMPLETE.
 
-### 11.5 Images from bytes and PDF islands (E5, E6; specified)
+### 11.5 Images from bytes and PDF islands (E5 specified; E6 produced)
 
 Typst images come from bytes as often as from files (`image(bytes)`,
 packages), and typst-pdf re-encodes them. For a client that accepts
@@ -1584,11 +1586,37 @@ after it:
 ```
 u32 id                 the IMAGE's id
 u32 n                  parts, then n × { u32 len; u8[len] }:
-                       part 0: the image data;
-                       part 1 (when the IMAGE says "smask": true): the soft mask
+                       the image data;
+                       then, when the IMAGE says "smask": true, the soft mask
                          samples, 8 bits per pixel, rows top first;
-                       part 2 (when the IMAGE says "icc": true): the ICC profile
+                       then, when the IMAGE says "icc": true, the ICC profile
 ```
+
+The parts present follow in that order (`n` is 1, 2 or 3): an image with a
+profile and no soft mask has the profile as its second part. `raw` samples
+are rows top first, each row `width × components × bits / 8` bytes rounded
+up (16-bit samples big-endian, as the PDF has them).
+
+**The Typst host (E6).** For a raster image the host sends what typst-pdf's
+export draws: the image XObject's samples after Flate (`type` `raw`;
+typst-pdf has already converted the file to 8-bit grey or RGB, or CMYK),
+or the JPEG it passes through (`type` `jpeg`), its `/SMask` samples and
+the ICC profile of its `ICCBased` space, drawn by an IMAGE item whose
+matrix is the CTM at the PDF's `Do`. An image is sent once per connection
+(its `key` is the SHA-256 of these keys and its streams), and the walk
+finds each `Do` where the frame puts the image (the unit square's corners
+within 0.01 bp; a JPEG's EXIF orientation as typst-pdf draws it). What a
+v3.3 IMAGE cannot carry -- a `/Decode` array (an inverted CMYK JPEG), an
+image mask, a colour-key mask, a soft mask of another size, an image under
+constant alpha or any other ExtGState key (§11.3) -- flags the page
+INCOMPLETE. So does an image past the per-compile budget of IMAGE_DATA
+bytes (`--image-budget`, default 128 MiB, counted before anything is
+decoded), or one whose IMAGE_DATA would pass the frame limit (§2), so that
+no image can end the connection. Streams are inflated to at most their
+expected size (an image's samples) or 256 MiB, and an ICC profile is read
+up to 4 MiB; past that the page is INCOMPLETE. Measured on Typst's test
+suite: every raster image of the 2,622 snippets that compile (71) is the
+PDF's bit for bit, CTM and pixels (`examples/positions_suite.rs`).
 
 3.3 `IMAGE` keys:
 
@@ -1643,8 +1671,8 @@ The client says `[3, 3]` in `HELLO` and lists in `accept` (§6.2) what it
 draws: `color-spaces` (§11.3), `line-state` (§11.4), `image-data` (§11.5),
 `font-program-refs` and `font-files` (§11.1). The host lists in
 `capabilities` what it can send: the Typst host says `opentype-glyphs`,
-`origins-f64`, `page-meta`, `font-program-refs`, `color-spaces` and
-`line-state` today, and `resolve-v1` once it answers §11.6. An item opcode or message the client did not accept
+`origins-f64`, `page-meta`, `font-program-refs`, `color-spaces`,
+`line-state` and `image-data` today, and `resolve-v1` once it answers §11.6. An item opcode or message the client did not accept
 is never sent: the host flags the page INCOMPLETE instead (§4.7). A host may
 send sections 8 and 10 to any 3.x client; a reader that does not know them
 skips them.
