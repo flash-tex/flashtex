@@ -24,9 +24,16 @@ public enum DL3 {
 
     /// The `HELLO` `accept` entry for `PROGRESS` (§6.8).
     public static let progressCapability = "progress-v1"
+    /// The host capability (`HELLO.capabilities`) for `TRIM`: the client
+    /// sends TRIM only to a host that lists it.
+    public static let trimCapability = "trim-v1"
+    /// Host capability for performance modes (§6.9): `HELLO.profile` and `PROFILE`.
+    public static let profileCapability = "profile-v1"
 
     public enum Kind {
         public static let cHello: UInt8 = 0x01, compile: UInt8 = 0x02, cancel: UInt8 = 0x03, bye: UInt8 = 0x04
+        /// `trim-v1`: the system is short of memory, `{"level": "warning"|"critical"}`; no reply.
+        public static let trim: UInt8 = 0x08
         public static let hello: UInt8 = 0x41, started: UInt8 = 0x42, font: UInt8 = 0x43, image: UInt8 = 0x44
         public static let page: UInt8 = 0x45, form: UInt8 = 0x46, sources: UInt8 = 0x47, diagnostic: UInt8 = 0x48
         public static let done: UInt8 = 0x49, error: UInt8 = 0x4A, pages: UInt8 = 0x4B
@@ -34,6 +41,9 @@ public enum DL3 {
         public static let tool: UInt8 = 0x4C
         /// `progress-v1` (capability-gated, §6.8): a heartbeat while a compile typesets.
         public static let progress: UInt8 = 0x70
+        /// `profile-v1` (capability-gated, §6.9): choose a performance mode (client → host),
+        /// and the host's reply with the knobs now in effect (host → client).
+        public static let cProfile: UInt8 = 0x07, profile: UInt8 = 0x51
 
         /// The names `dl3-dump` and the Rust crate's `kind::name` use.
         public static func name(_ k: UInt8) -> String {
@@ -42,6 +52,7 @@ public enum DL3 {
             case compile: "compile"
             case cancel: "cancel"
             case bye: "bye"
+            case trim: "trim"
             case hello: "hello"
             case started: "started"
             case font: "font"
@@ -55,6 +66,8 @@ public enum DL3 {
             case pages: "pages"
             case tool: "tool"
             case progress: "progress"
+            case cProfile: "client-profile"
+            case profile: "profile"
             case DL3Diag.kind: "diag"
             default: "unknown"
             }

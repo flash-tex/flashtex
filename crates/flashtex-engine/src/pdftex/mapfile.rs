@@ -245,6 +245,341 @@ impl MapCache {
     }
 }
 
+/// Map files parsed by earlier processes, on disk (DESIGN.md §4.4: our
+/// caches live beside the format cache, `<format cache>/fontmaps/`). A
+/// fresh host spent about a sixth of its first page parsing `pdftex.map`
+/// (46,000 lines); decoding its parse is several times cheaper.
+///
+/// An entry is exactly a [`MapCache`] entry, under the same rule: only a
+/// parse that printed nothing but the braces around the file name, and
+/// read no subfont definition file (`.sfd`, whose contents are not part of
+/// the entry), is written. It is keyed by everything the parse depends on:
+/// the engine build ([`crate::formats::engine_id`], so a change to the
+/// parser makes new entries), the map item (mode and file name), the path
+/// found, `\pdfsuppresswarningdupmap`, and the file's content. The content
+/// is checked by its stat signature, and, when the signature differs or
+/// was taken within the file system's time granularity of a write
+/// ([`crate::system::StatSig`]'s `racy`), by its SHA-256 against the bytes
+/// the parse read. Anything unreadable, truncated or from another key is
+/// a miss. `FLASHTEX_FORMAT_CACHE=off` turns it off with the format cache.
+#[cfg(feature = "distribution")]
+mod disk {
+    use super::{FmEntry, MapKey, MapParse, Mode, Shared};
+    use crate::persist::{Codec, Reader};
+    use sha2::{Digest, Sha256};
+    use std::collections::BTreeMap;
+    use std::path::{Path, PathBuf};
+
+    const MAGIC: &[u8] = b"flashtex-fontmap 1\n";
+
+    fn mode_byte(m: Mode) -> u8 {
+        match m {
+            Mode::DupIgnore => 0,
+            Mode::Replace => 1,
+            Mode::Delete => 2,
+        }
+    }
+
+    /// The entry's file: a hash of the key without the content.
+    fn file(k: &MapKey) -> Option<PathBuf> {
+        if !crate::formats::cache_enabled() {
+            return None;
+        }
+        let mut h = Sha256::new();
+        h.update(crate::formats::engine_id().as_bytes());
+        h.update([0, mode_byte(k.mode), k.suppress_dup as u8, 0]);
+        h.update((k.line.len() as u64).to_le_bytes());
+        h.update(&k.line);
+        h.update(k.path.as_bytes());
+        let name = crate::formats::hex(&h.finalize());
+        Some(
+            crate::formats::cache_dir()?
+                .join("fontmaps")
+                .join(format!("{}.bin", &name[..40])),
+        )
+    }
+
+    fn sha256(data: &[u8]) -> Vec<u8> {
+        Sha256::digest(data).to_vec()
+    }
+
+    /// `sha256` of the file at `path`, read through a buffer.
+    fn sha256_file(path: &str) -> Option<Vec<u8>> {
+        use std::io::Read;
+        let mut f = std::fs::File::open(path).ok()?;
+        let mut h = Sha256::new();
+        let mut buf = [0u8; 64 << 10];
+        loop {
+            match f.read(&mut buf) {
+                Ok(0) => break,
+                Ok(n) => h.update(&buf[..n]),
+                Err(e) if e.kind() == std::io::ErrorKind::Interrupted => {}
+                Err(_) => return None,
+            }
+        }
+        Some(h.finalize().to_vec())
+    }
+
+    /// The header: the key in full, then the content's signature and hash.
+    fn header(k: &MapKey, w: &mut Vec<u8>) {
+        w.extend_from_slice(MAGIC);
+        crate::formats::engine_id().to_string().enc(w);
+        mode_byte(k.mode).enc(w);
+        k.line.enc(w);
+        k.path.enc(w);
+        k.suppress_dup.enc(w);
+    }
+
+    pub(super) fn get(k: &MapKey) -> Option<MapParse> {
+        let f = file(k)?;
+        // Mapped, not read: the decoded entries are what stays, and a
+        // read buffer this size (7 MB) would stay too, as a free block the
+        // macOS allocator keeps (lane MEM-MODES).
+        let map = crate::os::MappedFile::open(f.to_str()?).ok()?;
+        let buf = map.bytes();
+        let mut want = Vec::new();
+        header(k, &mut want);
+        if !buf.starts_with(&want) {
+            return None;
+        }
+        let mut r = Reader::new(&buf[want.len()..]);
+        let len = u64::dec(&mut r).ok()?;
+        let mtime_hi = u64::dec(&mut r).ok()?;
+        let mtime_lo = u64::dec(&mut r).ok()?;
+        let ino = u64::dec(&mut r).ok()?;
+        let racy = bool::dec(&mut r).ok()?;
+        let hash = Vec::<u8>::dec(&mut r).ok()?;
+        let stored = crate::system::StatSig {
+            len,
+            mtime_ns: ((mtime_hi as u128) << 64 | mtime_lo as u128) as i128,
+            ino,
+            racy,
+        };
+        // `==` is false when either signature is racy.
+        let rehashed = k.stat != stored;
+        if rehashed && sha256_file(&k.path)? != hash {
+            return None;
+        }
+        let body = r.pos;
+        let parse = decode(&r.buf[body..])?;
+        // The same content under a new signature: keep the new one, so
+        // that the next process need not hash the file again.
+        if rehashed && !k.stat.racy {
+            let mut w = Vec::with_capacity(buf.len());
+            w.extend_from_slice(&want);
+            signature(k, &hash, &mut w);
+            w.extend_from_slice(&r.buf[body..]);
+            let _ = crate::formats::write_atomic_cache(&f, &w);
+        }
+        debug(&format!("disk hit {}", k.path));
+        Some(parse)
+    }
+
+    // The parse itself, in a compact form of its own: names are copied
+    // as slices, and the trees, written in their order, are bulk-built
+    // (`BTreeMap::from_iter` on sorted keys) rather than inserted into one
+    // key at a time. The generic `persist::Codec` (one call per byte of a
+    // name) made decoding cost half of what parsing does.
+
+    fn put_bytes(w: &mut Vec<u8>, b: &[u8]) {
+        w.extend_from_slice(&(b.len() as u32).to_le_bytes());
+        w.extend_from_slice(b);
+    }
+
+    fn put_opt(w: &mut Vec<u8>, b: &Option<Vec<u8>>) {
+        match b {
+            None => w.push(0),
+            Some(b) => {
+                w.push(1);
+                put_bytes(w, b);
+            }
+        }
+    }
+
+    fn encode(p: &MapParse, w: &mut Vec<u8>) {
+        w.extend_from_slice(&(p.fms.len() as u32).to_le_bytes());
+        for e in p.fms.iter() {
+            let Some(e) = e else {
+                w.push(0);
+                continue;
+            };
+            w.push(1);
+            put_bytes(w, &e.tfm_name);
+            put_opt(w, &e.ps_name);
+            w.extend_from_slice(&e.fd_flags.to_le_bytes());
+            w.extend_from_slice(&e.slant.to_le_bytes());
+            w.extend_from_slice(&e.extend.to_le_bytes());
+            put_opt(w, &e.encname);
+            put_opt(w, &e.ff_name);
+            w.extend_from_slice(&e.typ.to_le_bytes());
+            w.extend_from_slice(&e.pid.to_le_bytes());
+            w.extend_from_slice(&e.eid.to_le_bytes());
+            w.extend_from_slice(&e.links.to_le_bytes());
+            match &e.subfont {
+                None => w.push(0),
+                Some(v) => {
+                    w.push(1);
+                    w.extend_from_slice(&(v.len() as u32).to_le_bytes());
+                    for x in v {
+                        w.extend_from_slice(&x.to_le_bytes());
+                    }
+                }
+            }
+        }
+        w.extend_from_slice(&(p.tfm_tree.len() as u32).to_le_bytes());
+        for (k, &v) in p.tfm_tree.iter() {
+            put_bytes(w, k);
+            w.extend_from_slice(&(v as u32).to_le_bytes());
+        }
+        w.extend_from_slice(&(p.ps_tree.len() as u32).to_le_bytes());
+        for ((name, slant, extend), &v) in p.ps_tree.iter() {
+            put_bytes(w, name);
+            w.extend_from_slice(&slant.to_le_bytes());
+            w.extend_from_slice(&extend.to_le_bytes());
+            w.extend_from_slice(&(v as u32).to_le_bytes());
+        }
+    }
+
+    struct Cur<'a>(&'a [u8]);
+
+    impl<'a> Cur<'a> {
+        fn take(&mut self, n: usize) -> Option<&'a [u8]> {
+            if n > self.0.len() {
+                return None;
+            }
+            let (a, b) = self.0.split_at(n);
+            self.0 = b;
+            Some(a)
+        }
+        fn u8(&mut self) -> Option<u8> {
+            Some(self.take(1)?[0])
+        }
+        fn u16(&mut self) -> Option<u16> {
+            Some(u16::from_le_bytes(self.take(2)?.try_into().ok()?))
+        }
+        fn u32(&mut self) -> Option<u32> {
+            Some(u32::from_le_bytes(self.take(4)?.try_into().ok()?))
+        }
+        fn i32(&mut self) -> Option<i32> {
+            Some(i32::from_le_bytes(self.take(4)?.try_into().ok()?))
+        }
+        fn bytes(&mut self) -> Option<Vec<u8>> {
+            let n = self.u32()? as usize;
+            Some(self.take(n)?.to_vec())
+        }
+        fn opt(&mut self) -> Option<Option<Vec<u8>>> {
+            match self.u8()? {
+                0 => Some(None),
+                1 => Some(Some(self.bytes()?)),
+                _ => None,
+            }
+        }
+        /// A count, no larger than what is left could hold.
+        fn count(&mut self) -> Option<usize> {
+            let n = self.u32()? as usize;
+            (n <= self.0.len()).then_some(n)
+        }
+    }
+
+    fn decode(b: &[u8]) -> Option<MapParse> {
+        let mut c = Cur(b);
+        let n = c.count()?;
+        let mut fms = Vec::with_capacity(n);
+        for _ in 0..n {
+            if c.u8()? == 0 {
+                fms.push(None);
+                continue;
+            }
+            fms.push(Some(FmEntry {
+                tfm_name: c.bytes()?,
+                ps_name: c.opt()?,
+                fd_flags: c.i32()?,
+                slant: c.i32()?,
+                extend: c.i32()?,
+                encname: c.opt()?,
+                ff_name: c.opt()?,
+                typ: c.u16()?,
+                pid: c.u16()? as i16,
+                eid: c.u16()? as i16,
+                links: c.u16()?,
+                subfont: match c.u8()? {
+                    0 => None,
+                    1 => {
+                        let n = c.count()?;
+                        Some((0..n).map(|_| c.i32()).collect::<Option<Vec<i32>>>()?)
+                    }
+                    _ => return None,
+                },
+            }));
+        }
+        let ok = |v: u32| ((v as usize) < fms.len()).then_some(v as usize);
+        let n = c.count()?;
+        let mut tfm = Vec::with_capacity(n);
+        for _ in 0..n {
+            let k = c.bytes()?;
+            tfm.push((k, ok(c.u32()?)?));
+        }
+        let n = c.count()?;
+        let mut ps = Vec::with_capacity(n);
+        for _ in 0..n {
+            let k = (c.bytes()?, c.i32()?, c.i32()?);
+            ps.push((k, ok(c.u32()?)?));
+        }
+        if !c.0.is_empty()
+            || !tfm.windows(2).all(|w| w[0].0 < w[1].0)
+            || !ps.windows(2).all(|w| w[0].0 < w[1].0)
+        {
+            return None;
+        }
+        Some(MapParse {
+            fms: Shared::new(fms),
+            tfm_tree: Shared::new(tfm.into_iter().collect::<BTreeMap<_, _>>()),
+            ps_tree: Shared::new(ps.into_iter().collect::<BTreeMap<_, _>>()),
+        })
+    }
+
+    /// The content's stat signature and SHA-256.
+    fn signature(k: &MapKey, hash: &Vec<u8>, w: &mut Vec<u8>) {
+        let m = k.stat.mtime_ns as u128;
+        k.stat.len.enc(w);
+        ((m >> 64) as u64).enc(w);
+        (m as u64).enc(w);
+        k.stat.ino.enc(w);
+        k.stat.racy.enc(w);
+        hash.enc(w);
+    }
+
+    /// `FLASHTEX_DEBUG_FONTMAP`: what the cache did, on stderr (tests).
+    fn debug(what: &str) {
+        if std::env::var_os("FLASHTEX_DEBUG_FONTMAP").is_some() {
+            eprintln!("[fontmap] {what}");
+        }
+    }
+
+    /// Write the entry for `k`, whose file held `data` when it was parsed
+    /// into `p`. Errors are ignored: the cache is only ever a shortcut.
+    pub(super) fn put(k: &MapKey, data: &[u8], p: &MapParse) {
+        let Some(f) = file(k) else { return };
+        let mut w = Vec::with_capacity(data.len());
+        header(k, &mut w);
+        signature(k, &sha256(data), &mut w);
+        encode(p, &mut w);
+        let _ = std::fs::create_dir_all(f.parent().unwrap_or(Path::new(".")));
+        if crate::formats::write_atomic_cache(&f, &w).is_ok() {
+            debug(&format!("stored {}", k.path));
+        }
+    }
+}
+
+#[cfg(not(feature = "distribution"))]
+mod disk {
+    use super::{MapKey, MapParse};
+    pub(super) fn get(_: &MapKey) -> Option<MapParse> {
+        None
+    }
+    pub(super) fn put(_: &MapKey, _: &[u8], _: &MapParse) {}
+}
+
 impl State {
     /// The same map (`CState::same_as`): the parsed parts are usually the
     /// same copy; otherwise they are compared by their encoding.
@@ -760,7 +1095,15 @@ impl Globals {
                     suppress_dup: self.get_pdf_suppress_warning_dup_map() > 0,
                 })
             });
-            if let Some(hit) = key.as_ref().and_then(MapCache::get) {
+            // Else one parsed by an earlier process (`disk`), kept here too.
+            let hit = key.as_ref().and_then(|k| {
+                MapCache::get(k).or_else(|| {
+                    let h = disk::get(k)?;
+                    MapCache::put(k.clone(), h.clone());
+                    Some(h)
+                })
+            });
+            if let Some(hit) = hit {
                 let path = found.as_deref().unwrap_or_default();
                 set_cur_file_name(Some(path.as_bytes()));
                 let mut s = b"{".to_vec();
@@ -777,6 +1120,7 @@ impl Globals {
                 return;
             }
             let warnings_before = super::warnings_so_far();
+            let sfds_before = st.map.sfd_tree.len();
             match found.and_then(|p| std::fs::read(&p).ok().map(|d| (p, d))) {
                 None => self.pdftex_warn("cannot open font map file"),
                 Some((path, data)) => {
@@ -826,17 +1170,20 @@ impl Globals {
                     }
                     self.tex_printf(b"}");
                     // Only a parse that printed nothing is replayed by
-                    // printing the braces.
+                    // printing the braces; and only one that read no
+                    // subfont definition file, which prints its name and
+                    // fills `sfd_tree`, neither of which a hit replays.
                     if let Some(k) = key {
-                        if super::warnings_so_far() == warnings_before {
-                            MapCache::put(
-                                k,
-                                MapParse {
-                                    fms: st.map.fms.clone(),
-                                    tfm_tree: st.map.tfm_tree.clone(),
-                                    ps_tree: st.map.ps_tree.clone(),
-                                },
-                            );
+                        if super::warnings_so_far() == warnings_before
+                            && st.map.sfd_tree.len() == sfds_before
+                        {
+                            let parse = MapParse {
+                                fms: st.map.fms.clone(),
+                                tfm_tree: st.map.tfm_tree.clone(),
+                                ps_tree: st.map.ps_tree.clone(),
+                            };
+                            disk::put(&k, &data, &parse);
+                            MapCache::put(k, parse);
                         }
                     }
                 }

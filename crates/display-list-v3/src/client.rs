@@ -52,6 +52,9 @@ pub enum Event {
     /// 3.3, the Typst host: a package's fetch (spec §11.8), for a client
     /// that accepted `packages-v1`.
     Package(Json),
+    /// `profile-v1` (spec §6.9): the performance mode now in effect, after
+    /// the client's `PROFILE`.
+    Profile(Json),
     /// A kind this version does not know (a later minor version's): skip.
     Other(u8, Vec<u8>),
 }
@@ -78,6 +81,7 @@ pub fn decode_event(k: u8, body: Vec<u8>) -> Result<Event, String> {
         kind::RESOLVED => Event::Resolved(json(&body)?),
         kind::LOCATED => Event::Located(json(&body)?),
         kind::PACKAGE => Event::Package(json(&body)?),
+        kind::PROFILE => Event::Profile(json(&body)?),
         _ => Event::Other(k, body),
     })
 }
@@ -222,13 +226,24 @@ pub struct Client {
     pub hello: Json,
 }
 
-/// A handle that can cancel from another thread.
+/// A handle that can cancel, or send a `COMPILE`, from another thread
+/// (a typist that keeps its own time while the client reads).
 pub struct Canceller(Stream);
 
 impl Canceller {
     pub fn cancel(&mut self, id: i64) -> io::Result<()> {
         let b = obj([("id", Json::Int(id))]).to_string();
         write_frame(&mut self.0, kind::CANCEL, b.as_bytes())?;
+        self.0.flush()
+    }
+
+    /// Send a `COMPILE` request, as [`Client::compile`].
+    pub fn compile(&mut self, req: &CompileRequest) -> io::Result<()> {
+        write_frame(
+            &mut self.0,
+            kind::COMPILE,
+            req.to_json().to_string().as_bytes(),
+        )?;
         self.0.flush()
     }
 }
@@ -259,6 +274,20 @@ impl Client {
 
     /// `over`, accepting optional message families.
     pub fn over_accepting(stream: Stream, accept: &[&str]) -> io::Result<Client> {
+        Self::over_with(stream, accept, None)
+    }
+
+    /// `connect_accepting`, naming a performance mode in `HELLO.profile`
+    /// (`low-memory`, `balanced`, `high-performance`; host capability
+    /// `profile-v1`, spec §6.9): the host's `HELLO.profile` says what it
+    /// applies.
+    pub fn connect_with(path: &Path, accept: &[&str], profile: Option<&str>) -> io::Result<Client> {
+        let stream = Stream::connect(path)?;
+        Self::over_with(stream, accept, profile)
+    }
+
+    /// The same over an already connected stream.
+    pub fn over_with(stream: Stream, accept: &[&str], profile: Option<&str>) -> io::Result<Client> {
         crate::widen_socket_buffers(&stream);
         let mut c = Client {
             r: BufReader::with_capacity(1 << 20, stream.try_clone()?),
@@ -288,6 +317,13 @@ impl Client {
                 Json::Obj(kv)
             }
             h => h,
+        };
+        let hello = match (hello, profile) {
+            (Json::Obj(mut kv), Some(p)) => {
+                kv.push(("profile".into(), s(p)));
+                Json::Obj(kv)
+            }
+            (h, _) => h,
         };
         write_frame(&mut c.w, kind::C_HELLO, hello.to_string().as_bytes())?;
         c.w.flush()?;
@@ -332,6 +368,14 @@ impl Client {
     pub fn cancel(&mut self, id: i64) -> io::Result<()> {
         let b = obj([("id", Json::Int(id))]).to_string();
         write_frame(&mut self.w, kind::CANCEL, b.as_bytes())?;
+        self.w.flush()
+    }
+
+    /// Switch the host's performance mode (`PROFILE`, spec §6.9): it
+    /// applies between compiles and answers with a `PROFILE` event.
+    pub fn set_profile(&mut self, profile: &str) -> io::Result<()> {
+        let b = obj([("profile", s(profile))]).to_string();
+        write_frame(&mut self.w, kind::C_PROFILE, b.as_bytes())?;
         self.w.flush()
     }
 

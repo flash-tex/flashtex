@@ -1,0 +1,367 @@
+{
+ "engine": "main",
+ "doc": "plain-1000",
+ "phases": {
+  "iso": {
+   "args": [
+    "--kind",
+    "letter",
+    "--gap-ms",
+    "300"
+   ],
+   "where": "dl3-keys: 1001 pages; letter on line 7374 (page 500), byte 2062400",
+   "n": 19,
+   "stages": {
+    "queue": {
+     "p50": 0.083,
+     "p95": 2.037,
+     "max": 6.137,
+     "n": 19
+    },
+    "apply": {
+     "p50": 0.532,
+     "p95": 1.014,
+     "max": 1.758,
+     "n": 19
+    },
+    "find": {
+     "p50": 1.6,
+     "p95": 2.323,
+     "max": 2.719,
+     "n": 19
+    },
+    "key": {
+     "p50": 0.753,
+     "p95": 0.94,
+     "max": 1.453,
+     "n": 19
+    },
+    "changes": {
+     "p50": 0.742,
+     "p95": 0.883,
+     "max": 1.574,
+     "n": 19
+    },
+    "restore": {
+     "p50": 2.72,
+     "p95": 4.37,
+     "max": 4.654,
+     "n": 19
+    },
+    "first_page": {
+     "p50": 9.74,
+     "p95": 17.18,
+     "max": 17.943,
+     "n": 19
+    },
+    "first_page_dl": {
+     "p50": 1.962,
+     "p95": 2.819,
+     "max": 3.368,
+     "n": 19
+    },
+    "edited_wall": {
+     "p50": 13.459,
+     "p95": 20.528,
+     "max": 23.954,
+     "n": 19
+    },
+    "edited_cpu": {
+     "p50": 11.131,
+     "p95": 14.12,
+     "max": 14.359,
+     "n": 19
+    },
+    "test": {
+     "p50": 21.662,
+     "p95": 43.886,
+     "max": 52.079,
+     "n": 19
+    },
+    "tests": {
+     "p50": 1,
+     "p95": 1,
+     "max": 1,
+     "n": 19
+    },
+    "dl": {
+     "p50": 4.587,
+     "p95": 14.696,
+     "max": 17.824,
+     "n": 19
+    },
+    "send": {
+     "p50": 0.086,
+     "p95": 0.398,
+     "max": 0.693,
+     "n": 19
+    },
+    "cpu": {
+     "p50": 97.154,
+     "p95": 102.945,
+     "max": 105.01,
+     "n": 19
+    },
+    "instr_k": {
+     "p50": 883960,
+     "p95": 888571,
+     "max": 892900,
+     "n": 19
+    },
+    "cycles_k": {
+     "p50": 234965,
+     "p95": 246684,
+     "max": 247891,
+     "n": 19
+    },
+    "restore_instr_k": {
+     "p50": 14159,
+     "p95": 14482,
+     "max": 14892,
+     "n": 19
+    },
+    "edited_instr_k": {
+     "p50": 78029,
+     "p95": 79451,
+     "max": 81424,
+     "n": 19
+    },
+    "test_instr_k": {
+     "p50": 183069,
+     "p95": 184038,
+     "max": 184413,
+     "n": 19
+    },
+    "first_page_instr_k": {
+     "p50": 51582,
+     "p95": 53232,
+     "max": 53981,
+     "n": 19
+    }
+   },
+   "edited_page_ms": {
+    "p50": 14.665541000000001,
+    "p95": 24.684542,
+    "max": 32.390167
+   },
+   "done_ms": {
+    "p50": 185.061666,
+    "p95": 304.320125,
+    "max": 313.280167
+   },
+   "converged": 19,
+   "cancelled": 0,
+   "typeset_pages": [
+    3,
+    3,
+    3,
+    3,
+    3,
+    3,
+    3,
+    3,
+    3,
+    3,
+    3,
+    3,
+    3,
+    3,
+    3,
+    3,
+    3,
+    3,
+    3
+   ],
+   "load": [
+    135.66,
+    123.87
+   ],
+   "secs": 40.83256912231445
+  },
+  "typing": {
+   "args": [
+    "--kind",
+    "letter",
+    "--overlap",
+    "--gap-ms",
+    "100"
+   ],
+   "where": "dl3-keys: 1001 pages; letter on line 7374 (page 500), byte 2062400",
+   "n": 19,
+   "stages": {
+    "queue": {
+     "p50": 3.481,
+     "p95": 4.826,
+     "max": 4.826,
+     "n": 4
+    },
+    "apply": {
+     "p50": 0.54,
+     "p95": 4.149,
+     "max": 4.149,
+     "n": 4
+    },
+    "find": {
+     "p50": 8.688,
+     "p95": 11.581,
+     "max": 11.581,
+     "n": 4
+    },
+    "key": {
+     "p50": 7.766,
+     "p95": 10.774,
+     "max": 10.774,
+     "n": 4
+    },
+    "changes": {
+     "p50": 0.794,
+     "p95": 0.845,
+     "max": 0.845,
+     "n": 4
+    },
+    "restore": {
+     "p50": 11.094,
+     "p95": 14.603,
+     "max": 14.603,
+     "n": 4
+    },
+    "first_page": {
+     "p50": 30.302,
+     "p95": 32.382,
+     "max": 32.382,
+     "n": 4
+    },
+    "first_page_dl": {
+     "p50": 2.643,
+     "p95": 2.682,
+     "max": 2.682,
+     "n": 4
+    },
+    "edited_wall": {
+     "p50": 25.577,
+     "p95": 25.577,
+     "max": 25.577,
+     "n": 1
+    },
+    "edited_cpu": {
+     "p50": 16.443,
+     "p95": 16.443,
+     "max": 16.443,
+     "n": 1
+    },
+    "test": {
+     "p50": 22.468,
+     "p95": 32.373,
+     "max": 32.373,
+     "n": 4
+    },
+    "tests": {
+     "p50": 1,
+     "p95": 1,
+     "max": 1,
+     "n": 4
+    },
+    "dl": {
+     "p50": 4.006,
+     "p95": 4.934,
+     "max": 4.934,
+     "n": 4
+    },
+    "send": {
+     "p50": 0.075,
+     "p95": 0.08,
+     "max": 0.08,
+     "n": 4
+    },
+    "cpu": {
+     "p50": 75.321,
+     "p95": 98.576,
+     "max": 98.576,
+     "n": 4
+    },
+    "instr_k": {
+     "p50": 650109,
+     "p95": 924002,
+     "max": 924002,
+     "n": 4
+    },
+    "cycles_k": {
+     "p50": 182809,
+     "p95": 238330,
+     "max": 238330,
+     "n": 4
+    },
+    "restore_instr_k": {
+     "p50": 44416,
+     "p95": 44602,
+     "max": 44602,
+     "n": 4
+    },
+    "edited_instr_k": {
+     "p50": 109302,
+     "p95": 109302,
+     "max": 109302,
+     "n": 1
+    },
+    "test_instr_k": {
+     "p50": 121107,
+     "p95": 184169,
+     "max": 184169,
+     "n": 4
+    },
+    "first_page_instr_k": {
+     "p50": 111964,
+     "p95": 116402,
+     "max": 116402,
+     "n": 4
+    }
+   },
+   "edited_page_ms": {
+    "p50": 39.705083,
+    "p95": 80.710291,
+    "max": 151.274833
+   },
+   "done_ms": null,
+   "converged": 4,
+   "cancelled": 14,
+   "typeset_pages": [
+    2,
+    2,
+    2,
+    3
+   ],
+   "load": [
+    123.87,
+    123.87
+   ],
+   "secs": 3.4156649112701416
+  }
+ },
+ "power": {
+  "source": "AC",
+  "battery_pct": 100,
+  "low_power_mode": true,
+  "thermal": "Note: No thermal warning level has been recorded; Note: No performance warning level has been recorded; Note: No CPU power status has been recorded",
+  "thermal_limited": false,
+  "load": [
+   135.66,
+   143.97,
+   103.02
+  ],
+  "ncpu": 10
+ },
+ "rss_peak": 850100224,
+ "power_end": {
+  "source": "AC",
+  "battery_pct": 100,
+  "low_power_mode": true,
+  "thermal": "Note: No thermal warning level has been recorded; Note: No performance warning level has been recorded; Note: No CPU power status has been recorded",
+  "thermal_limited": false,
+  "load": [
+   123.87,
+   139.57,
+   103.51
+  ],
+  "ncpu": 10
+ }
+}

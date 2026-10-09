@@ -1,0 +1,22 @@
+Changes applied to the TECkit-2.5.13/ tree obtained from:
+	https://github.com/silnrsi/teckit/archive/refs/tags/v2.5.13.tar.gz.
+
+Unused dirs:
+	.github
+	debian-src
+	mac-installer
+	perl_binaries
+	SFconv
+	zlib-1.2.13
+	source/teckitjni
+
+Removed:
+	.gitignore
+	.travis.yml
+	autogen.sh
+	build-linux-binaries.ah
+	build-linux-package.sh
+	build-mac-binaries.sh
+	build-windows-binaries.sh
+	build-windows-common
+	build-windows-package.sh

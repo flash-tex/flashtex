@@ -1,0 +1,11 @@
+% n015-hyphenation: native words hyphenated from \hyphenation exceptions
+% XeTeX-specific (docs/design/xetex/PLAN.md, phase S1: native fonts)
+\input prelude
+\def\space{ }
+\hsize=60pt \parindent=0pt \parfillskip=0pt plus 1fil \tolerance=10000 \pretolerance=-1
+\hyphenpenalty=0 \lefthyphenmin=2 \righthyphenmin=2 \baselineskip=12pt
+\hyphenation{dif-fi-cult ef-fi-cient af-flu-ent of-fice work-ers}
+\font\x="[lmroman10-regular.otf]" \x \hyphenchar\x=`-
+\setbox0=\vbox{difficult efficient affluent office workers difficult efficient affluent office workers\par}
+\lsshipbox0
+\end

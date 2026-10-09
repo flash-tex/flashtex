@@ -1,1 +1,0 @@
-{"protocol_version": 1, "id": "math-acceptance", "type": "compile", "payload": {"project_id": "math-acceptance", "revision": 1, "entry_path": "main.tex", "documents": [{"path": "main.tex", "text": "\\begin{document}\nInline math: $\\frac{a}{b}$, $\\alpha + \\beta$, and $\\sqrt{x}$ inside a sentence of text.\n\\end{document}\n"}]}}

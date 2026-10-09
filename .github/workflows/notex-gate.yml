@@ -10,9 +10,13 @@
 # TeX Live's own pdflatex made in the bundle's tree (oracle-refs.json, made
 # by bundle-publish.yml), unless tools/bundle/tl2026/gaps.json lists the
 # document as a known gap (METAFONT-generated fonts and EPS conversion, until
-# those lanes land).
+# those lanes land). Then scripts/notex-host-check.sh runs the app's own path,
+# flashtex-host configured as the app configures it (the lock and the user's
+# digest@url consent), over three documents (the blank template, an article
+# with amsmath, graphicx and hyperref, a beamer deck): each must compile, and
+# the host must report no TeX Live, the bundle's resolver and a ready format.
 #
-#   dispatched            the PUBLISHED bundle: the URL and digest of
+#   scheduled, dispatched the PUBLISHED bundle: the URL and digest of
 #                         tools/bundle/tl2026/flashtex-bundle.lock, fetched
 #                         over HTTPS by byte range as the app fetches it, and
 #                         the release's oracle-refs.json
@@ -20,9 +24,16 @@
 #                         artifact, read from a file, before it is published
 #
 # Not part of `CI required`: it needs a published bundle, and fetches it.
+# Weekly on a schedule (P5-CHECKS), so a change to the engine or the gate set
+# that breaks the bundle-only path is seen within a week without a dispatch.
+# The scheduled run is skipped outside flash-tex/flashtex, so a fork that
+# enables Actions does not spend its minutes or fetch our release.
 name: notex gate
 
 on:
+  schedule:
+    # Mondays 05:17 UTC (off the hour, to avoid GitHub's top-of-hour backlog).
+    - cron: "17 5 * * 1"
   workflow_dispatch:
   workflow_call:
     inputs:
@@ -40,6 +51,7 @@ jobs:
     # Apple Silicon; GitHub's macOS images have no TeX Live.
     runs-on: macos-15
     timeout-minutes: 90
+    if: github.event_name != 'schedule' || github.repository == 'flash-tex/flashtex'
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - name: no TeX Live here
@@ -53,8 +65,8 @@ jobs:
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
         with:
           key: notex-gate
-      - name: the engine
-        run: cargo build --release --locked -p flashtex-engine --bin flashtex-initex
+      - name: the engine, the app's host and a socket client
+        run: cargo build --release --locked -p flashtex-engine --bin flashtex-initex --bin flashtex-host -p flashtex-display-list --bin dl3-client
       - name: the bundle under test (a packed artifact)
         if: inputs.artifact != ''
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
@@ -82,9 +94,9 @@ jobs:
             echo "digest=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["digest"])' "$d/pack.json")" >> "$GITHUB_OUTPUT"
           else
             mkdir -p "$d"
-            gh release download "$L_tag" --repo "$L_repo" --pattern oracle-refs.json --dir "$d"
-            echo "url=$L_url" >> "$GITHUB_OUTPUT"
-            echo "digest=$L_digest" >> "$GITHUB_OUTPUT"
+            gh release download "$L_TAG" --repo "$L_REPO" --pattern oracle-refs.json --dir "$d"
+            echo "url=$L_URL" >> "$GITHUB_OUTPUT"
+            echo "digest=$L_DIGEST" >> "$GITHUB_OUTPUT"
           fi
           echo "refs=$d/oracle-refs.json" >> "$GITHUB_OUTPUT"
       - name: compile from the bundle alone and compare
@@ -96,10 +108,20 @@ jobs:
           set -euo pipefail
           python3 tools/bundle/texbundle.py gate --engine target/release/flashtex-initex \
             --url "$URL" --digest "$DIGEST" --refs "$REFS" --out "$RUNNER_TEMP/gate" -j 3
+      - name: the app's path (flashtex-host as the app configures it) from the bundle alone
+        if: always() && steps.b.outcome == 'success'
+        env:
+          URL: ${{ steps.b.outputs.url }}
+          DIGEST: ${{ steps.b.outputs.digest }}
+        run: |
+          set -euo pipefail
+          scripts/notex-host-check.sh --host target/release/flashtex-host --client target/release/dl3-client \
+            --url "$URL" --digest "$DIGEST" --out "$RUNNER_TEMP/host-check"
       - name: report
         if: always()
         run: |
           [ -f "$RUNNER_TEMP/gate/report.md" ] && cat "$RUNNER_TEMP/gate/report.md" >> "$GITHUB_STEP_SUMMARY" || true
+          [ -f "$RUNNER_TEMP/host-check/report.md" ] && cat "$RUNNER_TEMP/host-check/report.md" >> "$GITHUB_STEP_SUMMARY" || true
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         if: always()
         with:
@@ -107,5 +129,7 @@ jobs:
           path: |
             ${{ runner.temp }}/gate/report.md
             ${{ runner.temp }}/gate/results.json
+            ${{ runner.temp }}/host-check/report.md
+            ${{ runner.temp }}/host-check/host.log
           if-no-files-found: ignore
           retention-days: 14

@@ -136,10 +136,26 @@ fn a_once_host_exits_when_no_connection_comes_in_time() {
             "FLASHTEX_FORMAT_CACHE_DIR",
             common::fresh_dir("flashtex-host-lifetime-fmt2"),
         )
-        .stdout(Stdio::null())
+        .stdout(Stdio::piped())
         .stderr(Stdio::null())
         .spawn()
         .unwrap();
+    // The idle window counts from when the host listens (its "listening
+    // on" line), not from its start: preparing the format first may take
+    // minutes for a debug build on a loaded machine, which is not what this
+    // checks.
+    let mut out = BufReader::new(host.stdout.take().unwrap());
+    let mut line = String::new();
+    loop {
+        line.clear();
+        let n = out.read_line(&mut line).unwrap();
+        assert!(n > 0, "the host ended before it listened");
+        if line.contains("listening on") {
+            break;
+        }
+    }
+    // keep draining its stdout, so it never blocks on a full pipe
+    std::thread::spawn(move || std::io::copy(&mut out, &mut std::io::sink()));
     let t0 = Instant::now();
     loop {
         if let Some(st) = host.try_wait().unwrap() {
@@ -147,8 +163,8 @@ fn a_once_host_exits_when_no_connection_comes_in_time() {
             break;
         }
         assert!(
-            t0.elapsed() < Duration::from_secs(300),
-            "the host is still waiting for a connection"
+            t0.elapsed() < Duration::from_secs(60),
+            "the host is still waiting for a connection 60 s after it listened (--accept-timeout 1)"
         );
         std::thread::sleep(Duration::from_millis(100));
     }

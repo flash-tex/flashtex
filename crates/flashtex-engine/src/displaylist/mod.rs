@@ -164,14 +164,18 @@ struct State {
     file_ids: HashMap<Vec<u8>, u32>,
     /// Span id - 1 -> (file, line).
     spans: Vec<(u32, u32)>,
-    span_ids: HashMap<(u32, u32), u32>,
+    /// (file, line) -> the span of that line: the lowest live span there.
+    span_ids: SpanIndex,
     /// Spans of lines an edit replaced (`move_lines`): kept, never reused.
-    retired: HashSet<u32>,
+    /// A bit per span id.
+    retired: Vec<u64>,
     // Resources by key: descriptions that do not depend on engine state.
     fonts: HashMap<[u8; 32], FontRes>,
     images: HashMap<[u8; 32], Json>,
     programs: HashMap<String, Program>,
     encodings: HashMap<String, Option<Arc<Vec<Vec<u8>>>>>,
+    /// Type 1 programs' built-in encodings, by the program's SHA-256.
+    builtin_encodings: HashMap<[u8; 32], Arc<Vec<Vec<u8>>>>,
     // Engine state as the writer saw it: dropped at every restore.
     font_keys: HashMap<u32, [u8; 32]>,
     image_keys: HashMap<u32, [u8; 32]>,
@@ -181,6 +185,12 @@ struct State {
     font_kinds: HashMap<u32, FontKind>,
     capture: Option<Capture>,
     cwd: Option<std::path::PathBuf>,
+    /// The last page or form emitted at each index, with what it was made
+    /// from (`Memo`): a stream shipped again from the same inputs -- a
+    /// document's next `.aux` pass, the unchanged pages a restart re-runs --
+    /// is the same display list, which is then not built again. Names, like
+    /// the spans: it outlives restores (each entry checks itself).
+    memo: HashMap<(bool, u32), Memo>,
 }
 
 impl State {
@@ -190,12 +200,13 @@ impl State {
             file_paths: Vec::new(),
             file_ids: HashMap::new(),
             spans: Vec::new(),
-            span_ids: HashMap::new(),
-            retired: HashSet::new(),
+            span_ids: SpanIndex::default(),
+            retired: Vec::new(),
             fonts: HashMap::new(),
             images: HashMap::new(),
             programs: HashMap::new(),
             encodings: HashMap::new(),
+            builtin_encodings: HashMap::new(),
             font_keys: HashMap::new(),
             image_keys: HashMap::new(),
             widths: HashMap::new(),
@@ -203,6 +214,7 @@ impl State {
             font_kinds: HashMap::new(),
             capture: None,
             cwd: std::env::current_dir().ok(),
+            memo: HashMap::new(),
         }
     }
 
@@ -231,13 +243,93 @@ impl State {
         if file == 0 {
             return 0;
         }
-        if let Some(&s) = self.span_ids.get(&(file, line)) {
+        if let Some(s) = self.span_ids.get(file, line) {
             return s;
         }
         self.spans.push((file, line));
         let id = self.spans.len() as u32;
-        self.span_ids.insert((file, line), id);
+        self.span_ids.insert_new(file, line, id);
         id
+    }
+
+    fn is_retired(&self, id: u32) -> bool {
+        self.retired
+            .get(id as usize / 64)
+            .is_some_and(|w| w >> (id % 64) & 1 == 1)
+    }
+
+    fn retire(&mut self, id: u32) {
+        let i = id as usize / 64;
+        if self.retired.len() <= i {
+            self.retired.resize(i + 1, 0);
+        }
+        self.retired[i] |= 1 << (id % 64);
+    }
+}
+
+/// `State::span_ids`: for each file, a table by line (lines below
+/// [`SpanIndex::DENSE`]), and a map for the lines past it. `move_lines`
+/// re-keys every span after an edit, which a hashed (file, line) map made
+/// a hash removal and insertion per span: 0.7 ms a keystroke in the middle
+/// of a 1,000-page document (lane P4-PAGE-COST).
+#[derive(Default)]
+struct SpanIndex {
+    /// File id - 1 -> line -> span id (0: none).
+    dense: Vec<Vec<u32>>,
+    far: HashMap<(u32, u32), u32>,
+}
+
+impl SpanIndex {
+    const DENSE: u32 = 1 << 20;
+
+    fn get(&self, file: u32, line: u32) -> Option<u32> {
+        if line >= Self::DENSE {
+            return self.far.get(&(file, line)).copied();
+        }
+        let id = *self.dense.get(file as usize - 1)?.get(line as usize)?;
+        (id != 0).then_some(id)
+    }
+
+    /// Key (file, line) to `id` unless it has a span already.
+    fn insert_new(&mut self, file: u32, line: u32, id: u32) {
+        if line >= Self::DENSE {
+            self.far.entry((file, line)).or_insert(id);
+            return;
+        }
+        let f = file as usize - 1;
+        if self.dense.len() <= f {
+            self.dense.resize_with(f + 1, Vec::new);
+        }
+        let t = &mut self.dense[f];
+        if t.len() <= line as usize {
+            t.resize(line as usize + 1, 0);
+        }
+        if t[line as usize] == 0 {
+            t[line as usize] = id;
+        }
+    }
+
+    /// Drop every key of `file` on a line from `from` on.
+    fn clear_from(&mut self, file: u32, from: u32) {
+        if let Some(t) = self.dense.get_mut(file as usize - 1) {
+            t.truncate(from as usize);
+        }
+        if !self.far.is_empty() {
+            self.far.retain(|&(f, l), _| f != file || l < from);
+        }
+    }
+
+    #[cfg(test)]
+    fn to_map(&self) -> HashMap<(u32, u32), u32> {
+        let mut m = self.far.clone();
+        for (f, t) in self.dense.iter().enumerate() {
+            for (l, &id) in t.iter().enumerate() {
+                if id != 0 {
+                    m.insert((f as u32 + 1, l as u32), id);
+                }
+            }
+        }
+        m
     }
 }
 
@@ -611,26 +703,44 @@ pub fn move_lines(path: &str, from: u32, old_end: u32, new_end: u32) {
         let Some(f) = st.file_paths.iter().position(|p| p == path) else {
             return;
         };
-        let f = f as u32 + 1;
-        let delta = new_end as i64 - old_end as i64;
-        for (i, (file, line)) in st.spans.iter_mut().enumerate() {
-            if *file != f || *line < from {
-                continue;
-            }
-            if *line < old_end {
-                st.retired.insert(i as u32 + 1);
-            } else {
-                *line = (*line as i64 + delta).max(1) as u32;
-            }
-        }
-        st.span_ids.clear();
-        for (i, &at) in st.spans.iter().enumerate() {
-            if !st.retired.contains(&(i as u32 + 1)) {
-                st.span_ids.entry(at).or_insert(i as u32 + 1);
-            }
-        }
+        st.move_spans_of(f as u32 + 1, from, old_end, new_end);
     });
     forget_file_cache();
+}
+
+impl State {
+    /// `move_lines` for file `f`. Every span of the file on a line from
+    /// `from` on is retired (before `old_end`) or moved (from `old_end` on,
+    /// to a line from `new_end` on), and no other span's line is that high,
+    /// so only those spans' keys change: they are taken out of `span_ids`
+    /// and the moved ones put back, in span order (the lowest span of a
+    /// line keeps it, as when the whole table was rebuilt). A long document
+    /// rebuilt the table at every keystroke (lane P4-SPLIT-LATENCY), and
+    /// at every change of a file no span names a moved line of.
+    ///
+    /// Each key of the file from `from` on names a span on that line (keys
+    /// only ever name a span where it is), so they all go, and the moved
+    /// spans that are not retired take their new lines in span order.
+    fn move_spans_of(&mut self, f: u32, from: u32, old_end: u32, new_end: u32) {
+        let delta = new_end as i64 - old_end as i64;
+        self.span_ids.clear_from(f, from);
+        for i in 0..self.spans.len() {
+            let (file, line) = self.spans[i];
+            if file != f || line < from {
+                continue;
+            }
+            let id = i as u32 + 1;
+            if line < old_end {
+                self.retire(id);
+            } else {
+                let line = (line as i64 + delta).max(1) as u32;
+                self.spans[i].1 = line;
+                if !self.is_retired(id) {
+                    self.span_ids.insert_new(f, line, id);
+                }
+            }
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1001,14 +1111,68 @@ impl Globals {
         } else {
             Mat::IDENTITY
         };
-        let mut env = WidthEnv {
-            g: self,
-            prefix: Vec::new(),
-        };
-        env.prefix = if env.g.pdf_resname_prefix != 0 {
-            env.g.str_bytes(env.g.pdf_resname_prefix)
+        let prefix = if self.pdf_resname_prefix != 0 {
+            self.str_bytes(self.pdf_resname_prefix)
         } else {
             Vec::new()
+        };
+        // What the page carries besides its content (independent of it):
+        // the counts and the links (`dl_links` reads pdfTeX's lists).
+        let mut frame = Page::new(kind, cap.id);
+        frame.width = wsp;
+        frame.height = hsp;
+        frame.pdf_box = [0.0, 0.0, bw.to_f64(), bh.to_f64()];
+        if !cap.form {
+            for k in 0..10 {
+                frame.counts[k] = self.eqtb[COUNT_BASE + k - 1].int();
+            }
+            self.dl_links(&mut frame, mag);
+        }
+        // Everything the display list is a function of, but the engine's
+        // answers to the interpreter (`Memo::queries`) and the resource keys.
+        let digest = {
+            let mut m: Vec<u8> = Vec::with_capacity(256 + cap.markers.len() * 10);
+            m.push(cap.form as u8);
+            m.push(cap.draft as u8);
+            m.extend(cap.id.to_le_bytes());
+            for v in [bw.0, bh.0].into_iter().chain(ctm.0.iter().map(|f| f.0)) {
+                m.extend(v.to_le_bytes());
+            }
+            m.extend((prefix.len() as u64).to_le_bytes());
+            m.extend(&prefix);
+            for mk in &cap.markers {
+                m.extend(mk.offset.to_le_bytes());
+                m.extend(mk.span.to_le_bytes());
+                m.extend(mk.col.to_le_bytes());
+            }
+            m.extend(frame.encode());
+            let (a, b) = (
+                crate::persist::hash128(&m),
+                crate::persist::hash128(&cap.bytes),
+            );
+            [a[0], a[1], b[0], b[1]]
+        };
+        // (FLASHTEX_NO_DL_MEMO=1 builds every display list, for A/B)
+        static OFF: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+        let off = *OFF.get_or_init(|| std::env::var_os("FLASHTEX_NO_DL_MEMO").is_some());
+        let memo = with(|st| st.memo.get(&(cap.form, cap.id)).cloned())
+            .flatten()
+            .filter(|_| !off);
+        if let Some(m) = memo.filter(|m| m.digest == digest) {
+            let holds = self.dl_memo_holds(&m, &prefix);
+            self.scaled_out = saved_scaled_out;
+            if holds {
+                EMIT_NS.with(|c| c.set(c.get() + t_emit.elapsed().as_nanos() as u64));
+                with_sink(|s| s.emit(m.emitted));
+                return;
+            }
+        }
+        let mut env = Recording {
+            env: WidthEnv {
+                g: self,
+                prefix: prefix.clone(),
+            },
+            queries: HashMap::new(),
         };
         let mut out = if cap.draft {
             let mut p = Page::new(kind, cap.id);
@@ -1022,16 +1186,15 @@ impl Globals {
         } else {
             interp::interpret(&mut env, kind, cap.id, &cap.bytes, bh, ctm, &cap.markers)
         };
+        let mut queries: Vec<(Query, Answer)> = env.queries.into_iter().collect();
+        queries.sort_unstable_by_key(|q| q.0);
         let page = &mut out.page;
         page.width = wsp;
         page.height = hsp;
-        page.pdf_box = [0.0, 0.0, bw.to_f64(), bh.to_f64()];
-        if !cap.form {
-            for k in 0..10 {
-                page.counts[k] = self.eqtb[COUNT_BASE + k - 1].int();
-            }
-            self.dl_links(page, mag);
-        }
+        page.pdf_box = frame.pdf_box;
+        page.counts = frame.counts;
+        page.links.append(&mut frame.links);
+        page.dests.append(&mut frame.dests);
         // The keys of the fonts and images the items use, then the spans
         // the items and links name.
         let fonts: Vec<(u32, [u8; 32])> = out
@@ -1039,10 +1202,14 @@ impl Globals {
             .iter()
             .map(|&f| (f, self.dl_font_key(f)))
             .collect();
-        let images: Vec<(u32, [u8; 32])> = out
+        let image_keys: Vec<(u32, Option<[u8; 32]>)> = out
             .images
             .iter()
-            .filter_map(|&n| self.dl_image_key(n).map(|k| (n, k)))
+            .map(|&n| (n, self.dl_image_key(n)))
+            .collect();
+        let images: Vec<(u32, [u8; 32])> = image_keys
+            .iter()
+            .filter_map(|&(n, k)| k.map(|k| (n, k)))
             .collect();
         let fk = |f: u16| {
             fonts
@@ -1076,8 +1243,37 @@ impl Globals {
             forms: out.forms.clone(),
             spans,
         };
+        with(|st| {
+            st.memo.insert(
+                (e.form, e.index),
+                Memo {
+                    digest,
+                    queries: Arc::new(queries),
+                    image_keys: Arc::new(image_keys),
+                    emitted: e.clone(),
+                },
+            )
+        });
         EMIT_NS.with(|c| c.set(c.get() + t_emit.elapsed().as_nanos() as u64));
         with_sink(|s| s.emit(e));
+    }
+
+    /// Whether a memo's display list is the one the engine would build now
+    /// from the same stream (its `digest` matched): the engine still gives
+    /// the interpreter the same answers, and the fonts and images it names
+    /// still have the same keys.
+    fn dl_memo_holds(&mut self, m: &Memo, prefix: &[u8]) -> bool {
+        let mut env = WidthEnv {
+            g: self,
+            prefix: prefix.to_vec(),
+        };
+        let same = m.queries.iter().all(|(q, a)| q.ask(&mut env) == *a);
+        same && m
+            .emitted
+            .fonts
+            .iter()
+            .all(|&(f, k)| self.dl_font_key(f) == k)
+            && m.image_keys.iter().all(|&(n, k)| self.dl_image_key(n) == k)
     }
 
     /// `pdf_print_bp(s)`'s number, exactly.
@@ -1123,6 +1319,84 @@ fn format_real(m: i32, d: u32) -> String {
         s.push_str(digits.trim_end_matches('0'));
     }
     s
+}
+
+/// A display list as `dl_emit` built it (`State::memo`).
+#[derive(Clone)]
+struct Memo {
+    /// The stream's bytes and markers, its index and box, the counts and
+    /// links (`dl_emit`).
+    digest: [u64; 4],
+    /// Every question the interpreter asked the engine, with its answer.
+    queries: Arc<Vec<(Query, Answer)>>,
+    /// The images the items name, with their keys as `dl_image_key` gave them.
+    image_keys: Arc<Vec<(u32, Option<[u8; 32]>)>>,
+    emitted: Emitted,
+}
+
+/// A question the interpreter asks the engine (`interp::Env`).
+#[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+enum Query {
+    Width(u32, u8),
+    Advance(u32, u8),
+    FontProblem(u32),
+}
+
+#[derive(Clone, PartialEq)]
+enum Answer {
+    Width(Option<i64>),
+    Advance(Option<(i64, i64)>),
+    FontProblem(Option<String>),
+}
+
+impl Query {
+    fn ask(self, env: &mut WidthEnv<'_>) -> Answer {
+        use interp::Env;
+        match self {
+            Query::Width(f, c) => Answer::Width(env.width(f, c)),
+            Query::Advance(f, c) => Answer::Advance(env.advance(f, c)),
+            Query::FontProblem(f) => Answer::FontProblem(env.font_problem(f)),
+        }
+    }
+}
+
+/// The engine's answers to the interpreter, noted (`Memo::queries`).
+struct Recording<'a> {
+    env: WidthEnv<'a>,
+    queries: HashMap<Query, Answer>,
+}
+
+impl interp::Env for Recording<'_> {
+    fn width(&mut self, font: u32, code: u8) -> Option<i64> {
+        let q = Query::Width(font, code);
+        if let Some(Answer::Width(a)) = self.queries.get(&q) {
+            return *a;
+        }
+        let a = self.env.width(font, code);
+        self.queries.insert(q, Answer::Width(a));
+        a
+    }
+    fn advance(&mut self, font: u32, code: u8) -> Option<(i64, i64)> {
+        let q = Query::Advance(font, code);
+        if let Some(Answer::Advance(a)) = self.queries.get(&q) {
+            return *a;
+        }
+        let a = self.env.advance(font, code);
+        self.queries.insert(q, Answer::Advance(a));
+        a
+    }
+    fn font_problem(&mut self, font: u32) -> Option<String> {
+        let q = Query::FontProblem(font);
+        if let Some(Answer::FontProblem(a)) = self.queries.get(&q) {
+            return a.clone();
+        }
+        let a = self.env.font_problem(font);
+        self.queries.insert(q, Answer::FontProblem(a.clone()));
+        a
+    }
+    fn resname_prefix(&self) -> &[u8] {
+        self.env.resname_prefix()
+    }
 }
 
 struct WidthEnv<'a> {
@@ -1315,19 +1589,41 @@ impl Globals {
             } else {
                 id.to_string().into_bytes()
             };
-            let zoom = self.m_lh(i + 6);
+            let kind = self.m_b0(i + 5);
+            // Only the words pdfTeX writes for this kind (`pdf_print_dests`'
+            // `/XYZ left top zoom`, `/FitH top`, `/FitV left`, `/FitR` the
+            // rectangle): `do_dest` sets just those unless a matrix is in
+            // use, and `\pdfdest` sets the zoom for `xyz` alone. The others
+            // hold whatever the node's memory held before (`get_node` does
+            // not clear it; `pdf_bottom` of an `xyz` dest is never set), so
+            // a restored run and a run from scratch differ there.
+            let (left, top, right_bottom, zoom) = match kind {
+                0 => (true, true, false, true),       // xyz
+                2 | 5 => (false, true, false, false), // fith, fitbh
+                3 | 6 => (true, false, false, false), // fitv, fitbv
+                7 => (true, true, true, false),       // fitr
+                _ => (false, false, false, false),    // fit, fitb
+            };
+            let word = |on: bool, at: i32, g: &mut Globals| {
+                if on {
+                    let v = g.m_int(at);
+                    scale(v, g)
+                } else {
+                    0
+                }
+            };
             let rect = [
-                scale(self.m_int(i + 1), self),
-                scale(self.m_int(i + 2), self),
-                scale(self.m_int(i + 3), self),
-                scale(self.m_int(i + 4), self),
+                word(left, i + 1, self),
+                word(top, i + 2, self),
+                word(right_bottom, i + 3, self),
+                word(right_bottom, i + 4, self),
             ];
             page.dests.push(Dest {
                 named,
                 name,
-                kind: self.m_b0(i + 5) as u8,
+                kind: kind as u8,
                 rect,
-                zoom,
+                zoom: if zoom { self.m_lh(i + 6) } else { 0 },
             });
             k = self.m_rh(k);
         }
@@ -1491,7 +1787,7 @@ impl Globals {
             }
         }
         if names.is_none() && format == "type1" {
-            names = Some(Arc::new(builtin_encoding(&program)));
+            names = Some(builtin_encoding_of(&program, &program_sha));
         }
         let mut h = Sha256::new();
         h.update(b"display-list-v3 font\0");
@@ -1908,6 +2204,20 @@ fn parse_enc(data: &[u8]) -> Option<Vec<Vec<u8>>> {
 
 /// A Type 1 font's built-in `/Encoding` (from the clear-text part of a
 /// PFB or PFA): `StandardEncoding` or `dup <code> /<name> put` entries.
+/// [`builtin_encoding`] of a program whose SHA-256 is `sha`, worked out once
+/// per program: every restore forgets the fonts' keys (`restored`), and the
+/// next page worked them out again, decrypting each Type 1 program's
+/// cleartext for its encoding (0.2 ms of every keystroke on a 1,000-page
+/// hyperref document; lane P4-PAGE-COST).
+fn builtin_encoding_of(program: &[u8], sha: &[u8; 32]) -> Arc<Vec<Vec<u8>>> {
+    if let Some(hit) = with(|st| st.builtin_encodings.get(sha).cloned()).flatten() {
+        return hit;
+    }
+    let names = Arc::new(builtin_encoding(program));
+    with(|st| st.builtin_encodings.insert(*sha, names.clone()));
+    names
+}
+
 fn builtin_encoding(program: &[u8]) -> Vec<Vec<u8>> {
     let clear = cleartext(program);
     let mut out = vec![b".notdef".to_vec(); 256];
@@ -2145,6 +2455,9 @@ mod tests {
         for e in std::fs::read_dir(dir).unwrap() {
             all.push_str(&std::fs::read_to_string(e.unwrap().path()).unwrap());
         }
+        // A routine indexes `eqtb` through its local view (web2rust
+        // --array-view, crate::arena::ArrView): the same element.
+        let all = all.replace("__av_eqtb[", "self.eqtb[");
         // Subscripts are wrapped in `crate::ix::U(...)` (web2rust
         // --index-type, src/ix.rs). `count_base` is a named macro constant;
         // `int_base+mag_code` is folded by TANGLE into one number.
@@ -2155,6 +2468,72 @@ mod tests {
         assert!(mag_bp[..400].contains(&format!(
             "self.eqtb[crate::ix::U((({MAG_LOC}i32) - 1) as usize)].int() != 1000i32"
         )));
+    }
+
+    /// `State::move_spans_of` leaves the table as rebuilding it whole did:
+    /// random spans, retired ones and moves, against that rebuild.
+    #[test]
+    fn moving_spans_keeps_the_table_a_rebuild_makes() {
+        let mut seed = 0x9e37_79b9_7f4a_7c15u64;
+        let mut rnd = |n: u32| {
+            seed ^= seed << 13;
+            seed ^= seed >> 7;
+            seed ^= seed << 17;
+            (seed % n as u64) as u32
+        };
+        for round in 0..600 {
+            // every other round about the line the index's table ends at
+            let base = if round % 2 == 0 {
+                0
+            } else {
+                SpanIndex::DENSE - 15
+            };
+            let mut st = State::new();
+            for _ in 0..60 {
+                let (f, l) = (1 + rnd(2), base + 1 + rnd(30));
+                st.span_id(f, l);
+            }
+            for _ in 0..4 {
+                let from = base + 1 + rnd(30);
+                let old_end = from + rnd(4);
+                let new_end = (from + rnd(6)).max(1);
+                let f = 1 + rnd(2);
+                // the rebuild, on a copy
+                let mut spans = st.spans.clone();
+                let retired_of = |st: &State| -> HashSet<u32> {
+                    (1..=st.spans.len() as u32)
+                        .filter(|&id| st.is_retired(id))
+                        .collect()
+                };
+                let mut retired = retired_of(&st);
+                let delta = new_end as i64 - old_end as i64;
+                for (i, (file, line)) in spans.iter_mut().enumerate() {
+                    if *file != f || *line < from {
+                        continue;
+                    }
+                    if *line < old_end {
+                        retired.insert(i as u32 + 1);
+                    } else {
+                        *line = (*line as i64 + delta).max(1) as u32;
+                    }
+                }
+                let mut want: HashMap<(u32, u32), u32> = HashMap::new();
+                for (i, &at) in spans.iter().enumerate() {
+                    if !retired.contains(&(i as u32 + 1)) {
+                        want.entry(at).or_insert(i as u32 + 1);
+                    }
+                }
+                st.move_spans_of(f, from, old_end, new_end);
+                assert_eq!(st.spans, spans);
+                assert_eq!(retired_of(&st), retired);
+                assert_eq!(st.span_ids.to_map(), want);
+                // new spans after the move, as a compile makes them
+                for _ in 0..10 {
+                    let (f, l) = (1 + rnd(2), base + 1 + rnd(30));
+                    st.span_id(f, l);
+                }
+            }
+        }
     }
 
     /// `move_lines`: spans after an edit move with their lines, spans of
@@ -2188,6 +2567,65 @@ mod tests {
         assert!(src.files.is_empty(), "the reader has the file already");
         assert!(peer.moved_spans().is_none());
         DL.with(|d| *d.borrow_mut() = None);
+    }
+
+    /// A destination carries only the words pdfTeX writes for its kind.
+    /// `get_node` does not clear a node, and `do_dest` leaves the rest of
+    /// a dest node as the memory held it (`pdf_bottom` of an `xyz` dest
+    /// is never set): a restored run and a run from scratch hold different
+    /// values there (the fixture soundness test, conf-paper edit 0).
+    #[test]
+    fn a_dest_carries_only_the_words_its_kind_uses() {
+        let mut g = Globals::new();
+        // The dest list's one entry (node 100) names object 1, whose dest
+        // node (200) is all stale words except what the kind sets.
+        let (k, i) = (100i32, 200i32);
+        // (the arrays a format load sizes)
+        if g.mem.len() < 300 {
+            g.mem.resize_len(300);
+        }
+        if g.obj_tab.len() < 2 {
+            g.obj_tab.resize_len(2);
+        }
+        let dest = |g: &mut Globals, kind: i32| -> Dest {
+            for w in 0..7 {
+                g.mem[(i + w) as usize].set_int(0x5a5a + w);
+                g.mem[(i + w) as usize].set_hh_lh(0x3c3c + w);
+            }
+            g.mem[(i + 1) as usize].set_int(1000); // pdf_left
+            g.mem[(i + 2) as usize].set_int(2000); // pdf_top
+            g.mem[(i + 5) as usize].set_hh_b0(kind); // pdf_dest_type
+            g.mem[(i + 5) as usize].set_hh_b1(0); // pdf_dest_named_id: num
+            g.mem[(i + 5) as usize].set_hh_rh(7); // pdf_dest_id
+            g.mem[k as usize].set_hh_lh(1);
+            g.mem[k as usize].set_hh_rh(0);
+            g.obj_tab[1].int4 = i; // obj_dest_ptr
+            g.pdf_dest_list = k;
+            g.pdf_link_list = 0;
+            let mut page = Page::new(StreamKind::Page, 0);
+            g.dl_links(&mut page, 1000);
+            assert_eq!(page.dests.len(), 1);
+            page.dests.pop().unwrap()
+        };
+        let d = dest(&mut g, 0);
+        assert_eq!((d.named, &d.name[..], d.kind), (false, &b"7"[..], 0));
+        assert_eq!((d.rect, d.zoom), ([1000, 2000, 0, 0], 0x3c3c + 6), "xyz");
+        assert_eq!(
+            (dest(&mut g, 1).rect, dest(&mut g, 1).zoom),
+            ([0; 4], 0),
+            "fit"
+        );
+        assert_eq!(dest(&mut g, 2).rect, [0, 2000, 0, 0], "fith");
+        assert_eq!(dest(&mut g, 3).rect, [1000, 0, 0, 0], "fitv");
+        assert_eq!(dest(&mut g, 4).rect, [0; 4], "fitb");
+        assert_eq!(dest(&mut g, 5).rect, [0, 2000, 0, 0], "fitbh");
+        assert_eq!(dest(&mut g, 6).rect, [1000, 0, 0, 0], "fitbv");
+        let r = dest(&mut g, 7);
+        assert_eq!(
+            (r.rect, r.zoom),
+            ([1000, 2000, 0x5a5a + 3, 0x5a5a + 4], 0),
+            "fitr"
+        );
     }
 
     #[test]
@@ -2228,6 +2666,24 @@ mod tests {
             font_matrix(fm, 0, 850).as_deref(),
             Some("0.00085 0 0 0.001 0 0")
         );
+    }
+
+    /// A program's built-in encoding is worked out once and kept across
+    /// restores (`restored` forgets the fonts' keys, not this).
+    #[test]
+    fn builtin_encodings_are_kept_by_program() {
+        DL.with(|d| *d.borrow_mut() = Some(Box::new(State::new())));
+        let pfa = b"/Encoding 256 array\ndup 65 /A put\nreadonly def\n";
+        let other = b"/Encoding StandardEncoding def\n";
+        let (sa, so) = (sha256(pfa), sha256(other));
+        let a = builtin_encoding_of(pfa, &sa);
+        assert_eq!(*a, builtin_encoding(pfa));
+        forget_engine_state();
+        assert!(Arc::ptr_eq(&a, &builtin_encoding_of(pfa, &sa)));
+        let o = builtin_encoding_of(other, &so);
+        assert_eq!(*o, builtin_encoding(other));
+        assert!(!Arc::ptr_eq(&a, &o));
+        DL.with(|d| *d.borrow_mut() = None);
     }
 
     /// A real font whose encoding writes `dup 1/uni6301 put`; skipped when

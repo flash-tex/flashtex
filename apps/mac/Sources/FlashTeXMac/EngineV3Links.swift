@@ -65,10 +65,15 @@ enum EngineV3Links {
 
     /// Where a destination puts the view: its left and top for the kinds
     /// that set them (xyz, fith, fitv, fitbh, fitbv, fitr), else the page top.
+    /// A dest carries only the words pdfTeX writes for its kind, the others
+    /// 0 (display-list-v3 §4.5): `rect[0]`/`rect[1]` are its left and top,
+    /// except a fitr's, whose rectangle's corners may come either way round.
     static func target(of d: DL3Dest, page: Int) -> CaretFollow.Target {
         let usesLeft: Set<UInt8> = [0, 3, 6, 7], usesTop: Set<UInt8> = [0, 2, 5, 7]
-        let x = d.rect.count == 4 && usesLeft.contains(d.kind) ? Double(min(d.rect[0], d.rect[2])) / spPerBP : 0
-        let y = d.rect.count == 4 && usesTop.contains(d.kind) ? Double(min(d.rect[1], d.rect[3])) / spPerBP : 0
+        let r = d.rect.count == 4 ? d.rect : [0, 0, 0, 0]
+        let (left, top) = d.kind == 7 ? (min(r[0], r[2]), min(r[1], r[3])) : (r[0], r[1])
+        let x = usesLeft.contains(d.kind) ? Double(left) / spPerBP : 0
+        let y = usesTop.contains(d.kind) ? Double(top) / spPerBP : 0
         // As v2's `previewTarget`: a 1 × 12 pt mark at the destination.
         return CaretFollow.Target(page: page, rect: CGRect(x: max(0, x), y: max(0, y), width: 1, height: 12))
     }

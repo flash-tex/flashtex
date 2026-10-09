@@ -263,14 +263,6 @@ if (t>=cs_token_flag)and(t<>end_write_token) then
     end;
 @z
 
-@x xetex.web l.13017 - tex.ch's MLTeX |orig_char_info|; without MLTeX it is |char_info|
-@d char_info(#)==font_info[char_base[#]+char_info_end
-@y
-@d char_info(#)==font_info[char_base[#]+char_info_end
-@d orig_char_info_end(#)==#].qqqq
-@d orig_char_info(#)==font_info[char_base[#]+orig_char_info_end
-@z
-
 @x xetex.web l.13098 - tex.ch [30.560]: check the lengths of a TFM name
 @!file_opened:boolean; {was |tfm_file| successfully opened?}
 @y

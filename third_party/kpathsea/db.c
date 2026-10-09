@@ -82,6 +82,526 @@ ignore_dir_p (const_string dirname)
   return false;
 }
 
+/* FlashTeX change (2026-10-09): ls-R as a packed index, mapped from a
+   cache file.
+
+   Each file of ls-R used to be one hash_element (key, value and next
+   pointers: 24 bytes, 32 with the allocator's rounding, one malloc each)
+   in a table of 64,007 buckets plus their tails, with the file names in
+   the ls-R text read into memory: about 21 MB of every process's heap for
+   TeX Live 2026's 248,000 files. Here each ls-R is one index image, a
+   segment: 2^16 bucket heads, then an entry per file (three 32-bit
+   numbers: the name's offset in the image's strings, its directory, the
+   next entry of its bucket), each directory's offset, and the strings (the
+   file names and the directories as `cur_dir' was, NUL-terminated). The
+   image is written to a cache file (FLASHTEX: flashtex_lsr_cache_dir,
+   keyed by the ls-R's path, checked by its size, modification time, inode
+   and device) and mapped from there, read only: its pages are the file's,
+   not the process's, and the next process maps it without reading ls-R.
+   Without a cache the image stays in an anonymous mapping.
+
+   Lookups answer exactly what hash_lookup (kpse->db, KEY) answered: a
+   bucket's chain is in ls-R's order, as hash.c's is (an appended element
+   was last), and the segments are searched in the order the ls-R files
+   were read. Files inserted while running (kpathsea_db_insert) still go to
+   `kpse->db', now a small hash table, and come after, as they were
+   inserted after. The lines are read_line's (a line ends at LF, CR or
+   CR LF, the last need not end, null bytes are dropped), the directories
+   and the files kept are db_build's. Only where file names compare
+   exactly (no MONOCASE_FILENAMES); elsewhere db_build is used as
+   before.  */
+#if !defined (MONOCASE_FILENAMES)
+#define PACKED_DB 1
+#endif
+
+/* The cache directory (no cache when NULL); see db.h. Defined everywhere,
+   used only where there is a packed index with a cache.  */
+char *flashtex_lsr_cache_dir = NULL;
+
+#ifdef PACKED_DB
+#if !defined (_WIN32)
+#include <sys/mman.h>
+#include <sys/types.h>
+#include <sys/stat.h>
+#include <fcntl.h>
+#include <unistd.h>
+#include <time.h>
+#define PACKED_CACHE 1
+#endif
+
+#define PACKED_NONE 0xffffffffu
+#define PACKED_BUCKETS (1u << 16)
+#define PACKED_MAGIC "FTXLSR1\n"
+
+typedef struct {
+  unsigned key;   /* offset of the file name in the strings */
+  unsigned dir;   /* index of its directory */
+  unsigned next;  /* next entry of the bucket, or PACKED_NONE */
+} packed_entry;
+
+/* The image's header. The source's identity says which ls-R it indexes.  */
+typedef struct {
+  char magic[8];
+  unsigned order;       /* 0x01020304: the writer's byte order */
+  unsigned buckets;     /* PACKED_BUCKETS */
+  unsigned n, ndirs, strings_len, pad;
+  unsigned long long size, ino, dev;
+  long long mtime_s, mtime_ns;
+} packed_header;
+
+typedef struct {
+  const unsigned *head;
+  const packed_entry *ents;
+  const unsigned *dir_off;
+  const char *strings;
+  unsigned n;
+  void *image;          /* the mapping (or the allocation) */
+  size_t image_len;
+} packed_seg;
+
+struct flashtex_packed_db {
+  packed_seg *segs;
+  unsigned nsegs;
+};
+
+static unsigned
+packed_hash (const_string key)
+{
+  unsigned h = 2166136261u;  /* FNV-1a */
+  while (*key)
+    h = (h ^ (unsigned char) *key++) * 16777619u;
+  return h & (PACKED_BUCKETS - 1);
+}
+
+/* Memory that goes back to the system when freed: a mapping (a block this
+   size freed to malloc stays in a macOS process).  */
+static void *
+packed_alloc (size_t len)
+{
+#ifdef PACKED_CACHE
+  void *p = mmap (NULL, len ? len : 1, PROT_READ | PROT_WRITE,
+                  MAP_PRIVATE | MAP_ANON, -1, 0);
+  if (p == MAP_FAILED) {
+    FATAL1 ("kpathsea: cannot map %lu bytes for ls-R", (unsigned long) len);
+  }
+  return p;
+#else
+  return xmalloc (len ? len : 1);
+#endif
+}
+
+static void
+packed_free (void *p, size_t len)
+{
+#ifdef PACKED_CACHE
+  munmap (p, len ? len : 1);
+#else
+  (void) len;
+  free (p);
+#endif
+}
+
+static size_t
+packed_image_len (unsigned n, unsigned ndirs, unsigned strings_len)
+{
+  return sizeof (packed_header) + PACKED_BUCKETS * sizeof (unsigned)
+         + (size_t) n * sizeof (packed_entry)
+         + (size_t) ndirs * sizeof (unsigned) + strings_len;
+}
+
+/* Point SEG into IMAGE (LEN bytes); false unless it is a well-formed image
+   of the ls-R whose status is ST (when ST is not null).  Every offset is
+   checked, and chains only go forward, so a damaged file cannot make a
+   lookup read outside the image or loop.  */
+static boolean
+packed_attach (packed_seg *seg, void *image, size_t len, const struct stat *st)
+{
+  const packed_header *h = (const packed_header *) image;
+  const char *base = (const char *) image;
+  unsigned i;
+  if (len < sizeof (packed_header) || memcmp (h->magic, PACKED_MAGIC, 8) != 0
+      || h->order != 0x01020304u || h->buckets != PACKED_BUCKETS
+      || h->strings_len == 0
+      || packed_image_len (h->n, h->ndirs, h->strings_len) != len)
+    return false;
+#ifdef PACKED_CACHE
+  if (st && (h->size != (unsigned long long) st->st_size
+             || h->ino != (unsigned long long) st->st_ino
+             || h->dev != (unsigned long long) st->st_dev
+#if defined (__APPLE__)
+             || h->mtime_s != (long long) st->st_mtimespec.tv_sec
+             || h->mtime_ns != (long long) st->st_mtimespec.tv_nsec
+#else
+             || h->mtime_s != (long long) st->st_mtim.tv_sec
+             || h->mtime_ns != (long long) st->st_mtim.tv_nsec
+#endif
+             ))
+    return false;
+#else
+  (void) st;
+#endif
+  seg->head = (const unsigned *) (base + sizeof (packed_header));
+  seg->ents = (const packed_entry *) (seg->head + PACKED_BUCKETS);
+  seg->dir_off = (const unsigned *) (seg->ents + h->n);
+  seg->strings = (const char *) (seg->dir_off + h->ndirs);
+  seg->n = h->n;
+  if (seg->strings[h->strings_len - 1] != 0)
+    return false;
+  for (i = 0; i < PACKED_BUCKETS; i++)
+    if (seg->head[i] != PACKED_NONE && seg->head[i] >= h->n)
+      return false;
+  for (i = 0; i < h->n; i++) {
+    const packed_entry *e = &seg->ents[i];
+    if (e->key >= h->strings_len || e->dir >= h->ndirs
+        || (e->next != PACKED_NONE && (e->next <= i || e->next >= h->n)))
+      return false;
+  }
+  for (i = 0; i < h->ndirs; i++)
+    if (seg->dir_off[i] >= h->strings_len)
+      return false;
+  seg->image = image;
+  seg->image_len = len;
+  return true;
+}
+
+#ifdef PACKED_CACHE
+/* The cache file of the ls-R at PATH (malloc'd), or NULL.  */
+static string
+packed_cache_file (const_string path)
+{
+  unsigned long long h = 14695981039346656037ull;  /* FNV-1a, 64 bits */
+  const char *p;
+  char name[40];
+  if (!flashtex_lsr_cache_dir || !*flashtex_lsr_cache_dir)
+    return NULL;
+  for (p = PACKED_MAGIC; *p; p++)
+    h = (h ^ (unsigned char) *p) * 1099511628211ull;
+  for (p = path; *p; p++)
+    h = (h ^ (unsigned char) *p) * 1099511628211ull;
+  snprintf (name, sizeof name, "/lsr-%016llx.idx", h);
+  return concat (flashtex_lsr_cache_dir, name);
+}
+
+/* SEG from the cache file of the ls-R at PATH whose status is ST.  */
+static boolean
+packed_load (packed_seg *seg, const_string path, const struct stat *st)
+{
+  string file = packed_cache_file (path);
+  struct stat cs;
+  void *image;
+  int fd;
+  if (!file)
+    return false;
+  fd = open (file, O_RDONLY);
+  free (file);
+  if (fd < 0)
+    return false;
+  if (fstat (fd, &cs) != 0 || cs.st_size <= 0) {
+    close (fd);
+    return false;
+  }
+  image = mmap (NULL, (size_t) cs.st_size, PROT_READ, MAP_PRIVATE, fd, 0);
+  close (fd);
+  if (image == MAP_FAILED)
+    return false;
+  if (!packed_attach (seg, image, (size_t) cs.st_size, st)) {
+    munmap (image, (size_t) cs.st_size);
+    return false;
+  }
+  return true;
+}
+
+/* Write IMAGE (LEN bytes) as the cache file of the ls-R at PATH, and map
+   it: SEG then points into the file. False (SEG unchanged) if it could
+   not be written, or if ls-R's modification time is under two seconds
+   old (a change within its time stamp's granularity would go unseen).  */
+static boolean
+packed_store (packed_seg *seg, const_string path, const struct stat *st,
+              void *image, size_t len)
+{
+  string file, tmp;
+  char suffix[32];
+  const char *p = (const char *) image;
+  size_t left = len;
+  int fd;
+  boolean ok = false;
+  if (time (NULL) - st->st_mtime < 2)
+    return false;
+  file = packed_cache_file (path);
+  if (!file)
+    return false;
+  mkdir (flashtex_lsr_cache_dir, 0777);
+  snprintf (suffix, sizeof suffix, ".tmp%ld", (long) getpid ());
+  tmp = concat (file, suffix);
+  fd = open (tmp, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+  if (fd >= 0) {
+    while (left > 0) {
+      ssize_t w = write (fd, p, left);
+      if (w <= 0)
+        break;
+      p += w;
+      left -= (size_t) w;
+    }
+    ok = left == 0;
+    if (close (fd) != 0)
+      ok = false;
+    if (ok)
+      ok = rename (tmp, file) == 0;
+    if (!ok)
+      unlink (tmp);
+  }
+  free (tmp);
+  free (file);
+  if (!ok)
+    return false;
+  {
+    packed_seg mapped;
+    if (!packed_load (&mapped, path, st))
+      return false;
+    *seg = mapped;
+  }
+  return true;
+}
+#endif /* PACKED_CACHE */
+
+/* The ls-R at DB_FILENAME read into SEG: its lines read_line's and its
+   entries db_build's (see above).  TOP_DIR is its directory.  False if it
+   cannot be opened.  */
+static boolean
+packed_read (kpathsea kpse, packed_seg *seg, const_string db_filename,
+             const_string top_dir, struct stat *st, boolean have_st)
+{
+  FILE *db_file = fopen (db_filename, FOPEN_R_MODE);
+  size_t buf_size = 0, buf_cap = 1 << 20, got, top_len = strlen (top_dir);
+  string buf, line, q, w, end;
+  unsigned n = 0, ndirs = 0, b, i, d, s;
+  size_t strings_len = 0, len;
+  boolean in_dir;
+  char *image, *strings;
+  unsigned *head, *tail, *dir_off;
+  packed_entry *ents;
+  packed_header *h;
+
+  if (!db_file)
+    return false;
+  if (have_st && st->st_size > 0)
+    buf_cap = (size_t) st->st_size + 1;
+  buf = (string) packed_alloc (buf_cap + 1);
+  while ((got = fread (buf + buf_size, 1, buf_cap - buf_size, db_file)) > 0) {
+    buf_size += got;
+    if (buf_size == buf_cap) {  /* longer than it was: grow */
+      string more = (string) packed_alloc (2 * buf_cap + 1);
+      memcpy (more, buf, buf_size);
+      packed_free (buf, buf_cap + 1);
+      buf = more;
+      buf_cap *= 2;
+    }
+  }
+  xfclose (db_file, db_filename);
+
+  /* The lines, NUL-terminated, packed to the front of the buffer: each is
+     no longer than the text it came from.  */
+  end = buf;
+  for (q = buf; q < buf + buf_size; ) {
+    for (w = end; q < buf + buf_size && *q != '\n' && *q != '\r'; q++)
+      if (*q != 0)
+        *w++ = *q;
+    if (q < buf + buf_size && *q == '\r' && q + 1 < buf + buf_size && q[1] == '\n')
+      q += 2;
+    else if (q < buf + buf_size)
+      q++;
+    *w++ = 0;
+    end = w;
+  }
+
+  /* Count, then fill. A line like `/foo:' (or `./foo:') = new directory
+     foo; a file line counts only after a directory not ignored, and not
+     when blank, `.' or `..'.  */
+  for (in_dir = false, line = buf; line < end; line += len + 1) {
+    len = strlen (line);
+    if (len > 0 && line[len - 1] == ':' && kpathsea_absolute_p (kpse, line, true)) {
+      in_dir = !ignore_dir_p (line);
+      if (in_dir) {
+        ndirs++;
+        strings_len += (*line == '.' ? top_len + len - 2 : len) + 1;
+      }
+    } else if (*line != 0 && in_dir
+               && !(*line == '.' && (line[1] == 0 || (line[1] == '.' && line[2] == 0)))) {
+      n++;
+      strings_len += len + 1;
+    }
+  }
+  if (strings_len == 0)
+    strings_len = 1;
+  if (strings_len > 0xfffffff0u || n > 0xfffffff0u) {
+    packed_free (buf, buf_cap + 1);
+    FATAL1 ("kpathsea: %s: too large", db_filename);
+  }
+  image = (char *) packed_alloc (packed_image_len (n, ndirs, (unsigned) strings_len));
+  h = (packed_header *) image;
+  memset (h, 0, sizeof *h);
+  memcpy (h->magic, PACKED_MAGIC, 8);
+  h->order = 0x01020304u;
+  h->buckets = PACKED_BUCKETS;
+  h->n = n;
+  h->ndirs = ndirs;
+  h->strings_len = (unsigned) strings_len;
+  if (have_st) {
+    h->size = (unsigned long long) st->st_size;
+    h->ino = (unsigned long long) st->st_ino;
+    h->dev = (unsigned long long) st->st_dev;
+#if defined (__APPLE__)
+    h->mtime_s = (long long) st->st_mtimespec.tv_sec;
+    h->mtime_ns = (long long) st->st_mtimespec.tv_nsec;
+#elif !defined (_WIN32)
+    h->mtime_s = (long long) st->st_mtim.tv_sec;
+    h->mtime_ns = (long long) st->st_mtim.tv_nsec;
+#endif
+  }
+  head = (unsigned *) (image + sizeof (packed_header));
+  ents = (packed_entry *) (head + PACKED_BUCKETS);
+  dir_off = (unsigned *) (ents + n);
+  strings = (char *) (dir_off + ndirs);
+  strings[strings_len - 1] = 0;
+  tail = (unsigned *) packed_alloc (PACKED_BUCKETS * sizeof (unsigned));
+  for (b = 0; b < PACKED_BUCKETS; b++)
+    head[b] = tail[b] = PACKED_NONE;
+  for (in_dir = false, i = 0, d = 0, s = 0, line = buf; line < end; line += len + 1) {
+    len = strlen (line);
+    if (len > 0 && line[len - 1] == ':' && kpathsea_absolute_p (kpse, line, true)) {
+      in_dir = !ignore_dir_p (line);
+      if (in_dir) {
+        /* cur_dir: the name with DIR_SEP for the colon, `./' replaced by
+           TOP_DIR.  */
+        dir_off[d++] = s;
+        if (*line == '.') {
+          memcpy (strings + s, top_dir, top_len);
+          memcpy (strings + s + top_len, line + 2, len - 3);
+          s += (unsigned) (top_len + len - 3);
+        } else {
+          memcpy (strings + s, line, len - 1);
+          s += (unsigned) (len - 1);
+        }
+        strings[s++] = DIR_SEP;
+        strings[s++] = 0;
+      }
+    } else if (*line != 0 && in_dir
+               && !(*line == '.' && (line[1] == 0 || (line[1] == '.' && line[2] == 0)))) {
+      b = packed_hash (line);
+      ents[i].key = s;
+      ents[i].dir = d - 1;
+      ents[i].next = PACKED_NONE;
+      if (tail[b] == PACKED_NONE)
+        head[b] = i;
+      else
+        ents[tail[b]].next = i;
+      tail[b] = i;
+      i++;
+      memcpy (strings + s, line, len + 1);
+      s += (unsigned) (len + 1);
+    }
+  }
+  packed_free (tail, PACKED_BUCKETS * sizeof (unsigned));
+  packed_free (buf, buf_cap + 1);
+  seg->head = head;
+  seg->ents = ents;
+  seg->dir_off = dir_off;
+  seg->strings = strings;
+  seg->n = n;
+  seg->image = image;
+  seg->image_len = packed_image_len (n, ndirs, (unsigned) strings_len);
+  return true;
+}
+
+/* db_build for a packed index (see above): add the ls-R at DB_FILENAME, from
+   its cache file or read; true if it had entries.  */
+static boolean
+packed_build (kpathsea kpse, const_string db_filename)
+{
+  unsigned len = strlen (db_filename) - sizeof (DB_NAME) + 1; /* Keep the /. */
+  string top_dir = (string) xmalloc (len + 1);
+  struct flashtex_packed_db *p = kpse->flashtex_packed_db;
+  packed_seg seg;
+  struct stat st;
+  boolean have_st = stat (db_filename, &st) == 0;
+  boolean ok = false;
+
+  strncpy (top_dir, db_filename, len);
+  top_dir[len] = 0;
+  memset (&seg, 0, sizeof seg);
+#ifdef PACKED_CACHE
+  if (have_st)
+    ok = packed_load (&seg, db_filename, &st);
+#endif
+  if (!ok) {
+    if (!packed_read (kpse, &seg, db_filename, top_dir, &st, have_st)) {
+      free (top_dir);
+      return false;
+    }
+    if (seg.n == 0) {
+      packed_free (seg.image, seg.image_len);
+      WARNING1 ("kpathsea: %s: No usable entries in ls-R", db_filename);
+      WARNING ("kpathsea: See the manual for how to generate ls-R");
+      free (top_dir);
+      return false;
+    }
+#ifdef PACKED_CACHE
+    if (have_st) {
+      void *image = seg.image;
+      size_t image_len = seg.image_len;
+      if (packed_store (&seg, db_filename, &st, image, image_len))
+        packed_free (image, image_len);
+    }
+#endif
+  }
+  if (!p) {
+    p = (struct flashtex_packed_db *) xcalloc (1, sizeof (*p));
+    kpse->flashtex_packed_db = p;
+  }
+  p->segs = (packed_seg *) xrealloc (p->segs, (p->nsegs + 1) * sizeof (packed_seg));
+  p->segs[p->nsegs++] = seg;
+  str_list_add (&(kpse->db_dir_list), xstrdup (top_dir));
+  free (top_dir);
+  return true;
+}
+#endif /* PACKED_DB */
+
+/* FlashTeX change (2026-10-09): `hash_lookup (kpse->db, KEY)', with ls-R's
+   packed entries first (see above): the directories of every file named
+   KEY, in insertion order, null-terminated; NULL if none.  */
+const_string *
+flashtex_db_lookup (kpathsea kpse, const_string key)
+{
+#ifdef PACKED_DB
+  struct flashtex_packed_db *p = kpse->flashtex_packed_db;
+  cstr_list_type ret;
+  const_string *more, *r;
+  unsigned g, i, b;
+  if (!p)
+    return hash_lookup (kpse->db, key);
+  ret = cstr_list_init ();
+  b = packed_hash (key);
+  for (g = 0; g < p->nsegs; g++) {
+    const packed_seg *seg = &p->segs[g];
+    for (i = seg->head[b]; i != PACKED_NONE; i = seg->ents[i].next)
+      if (STREQ (key, seg->strings + seg->ents[i].key))
+        cstr_list_add (&ret, seg->strings + seg->dir_off[seg->ents[i].dir]);
+  }
+  more = hash_lookup (kpse->db, key);
+  if (more) {
+    for (r = more; *r; r++)
+      cstr_list_add (&ret, *r);
+    free ((void *) more);
+  }
+  if (STR_LIST (ret))
+    cstr_list_add (&ret, NULL);
+  return STR_LIST (ret);
+#else
+  return hash_lookup (kpse->db, key);
+#endif
+}
+
+#ifndef PACKED_DB
 /* If no DB_FILENAME, return false (maybe they aren't using this feature).
    Otherwise, add entries from DB_FILENAME to TABLE, and return true.  */
 
@@ -102,8 +622,37 @@ db_build (kpathsea kpse, hash_table_type *table,  const_string db_filename)
   top_dir[len] = 0;
 
   if (db_file) {
-    while ((line = read_line (db_file)) != NULL) {
-      len = strlen (line);
+    /* FlashTeX change (2026-10-06): ls-R is read whole, once, and split
+       into lines in place, instead of a `read_line' (one character at a
+       time, one allocation per line) and an `xstrdup' of each file name.
+       The file names stay in the buffer, which is never freed once an
+       entry points into it, as the duplicates were never freed. The lines
+       are exactly `read_line''s: a line ends at LF, CR or CR LF, the last
+       one need not end, and null bytes are dropped.  */
+    size_t buf_size = 0, buf_cap = 1 << 20, got;
+    string buf = (string) xmalloc (buf_cap + 1);
+    string next, buf_end;
+    while ((got = fread (buf + buf_size, 1, buf_cap - buf_size, db_file)) > 0) {
+      buf_size += got;
+      if (buf_size == buf_cap) {
+        buf_cap *= 2;
+        buf = (string) xrealloc (buf, buf_cap + 1);
+      }
+    }
+    buf[buf_size] = 0;
+    buf_end = buf + buf_size;
+    for (next = buf; next < buf_end; ) {
+      string q, w;
+      line = next;
+      for (q = w = line; q < buf_end && *q != '\n' && *q != '\r'; q++)
+        if (*q != 0)
+          *w++ = *q;
+      if (q < buf_end && *q == '\r' && q + 1 < buf_end && q[1] == '\n')
+        next = q + 2;
+      else
+        next = q < buf_end ? q + 1 : buf_end;
+      *w = 0;
+      len = w - line;
 
 #if defined(MONOCASE_FILENAMES)
       for (pp = line; *pp; pp++) {
@@ -149,15 +698,15 @@ db_build (kpathsea kpse, hash_table_type *table,  const_string db_filename)
            Note that we assume that all names in the ls-R file have already
            been case-smashed to lowercase where appropriate.
         */
-        hash_insert_normalized (table, xstrdup (line), cur_dir);
+        hash_insert_normalized (table, line, cur_dir);
         file_count++;
 
       } /* else ignore blank lines or top-level files
            or files in ignored directories*/
-
-      free (line);
     }
 
+    if (file_count == 0)
+      free (buf);
     xfclose (db_file, db_filename);
 
     if (file_count == 0) {
@@ -189,6 +738,7 @@ db_build (kpathsea kpse, hash_table_type *table,  const_string db_filename)
 
   return db_file != NULL;
 }
+#endif /* !PACKED_DB */
 
 
 /* Insert FNAME into the hash table.  This is for files that get built
@@ -456,10 +1006,20 @@ kpathsea_init_db (kpathsea kpse)
 
   /* Must do this after the path searching (which ends up calling
      kpse_db_search recursively), so kpse->db.buckets stays NULL.  */
+#ifdef PACKED_DB
+  /* FlashTeX change (2026-10-09): ls-R's entries are packed (packed_build);
+     this table holds only the files inserted while running.  */
+  kpse->db = hash_create (ALIAS_HASH_SIZE);
+#else
   kpse->db = hash_create (DB_HASH_SIZE);
+#endif
 
   while (db_files && *db_files) {
+#ifdef PACKED_DB
+    if (packed_build (kpse, *db_files))
+#else
     if (db_build (kpse, &(kpse->db), *db_files))
+#endif
       ok = true;
     free (*db_files);
     db_files++;
@@ -470,6 +1030,8 @@ kpathsea_init_db (kpathsea kpse)
        rebuild it), but clear `buckets' (so we don't look in it).  */
     free (kpse->db.buckets);
     kpse->db.buckets = NULL;
+    free (kpse->db.tails); /* FlashTeX change (2026-10-06): see hash.c.  */
+    kpse->db.tails = NULL;
   }
 
   free (orig_db_files);
@@ -493,6 +1055,8 @@ kpathsea_init_db (kpathsea kpse)
   if (!ok) {
     free (kpse->alias_db.buckets);
     kpse->alias_db.buckets = NULL;
+    free (kpse->alias_db.tails); /* FlashTeX change (2026-10-06): see hash.c.  */
+    kpse->alias_db.tails = NULL;
   }
 
   free (orig_db_files);
@@ -577,7 +1141,7 @@ kpathsea_db_search (kpathsea kpse, const_string name,
     const_string ctry = *r;
 
     /* We have an ls-R db.  Look up `try'.  */
-    orig_dirs = db_dirs = hash_lookup (kpse->db, ctry);
+    orig_dirs = db_dirs = flashtex_db_lookup (kpse, ctry);
 
     ret = XTALLOC1 (str_list_type);
     *ret = str_list_init ();
@@ -738,7 +1302,7 @@ kpathsea_db_search_list (kpathsea kpse, string* names,
           const_string ctry = *r;
 
           /* We have an ls-R db.  Look up `try'.  */
-          orig_dirs = db_dirs = hash_lookup (kpse->db, ctry);
+          orig_dirs = db_dirs = flashtex_db_lookup (kpse, ctry);
 
           /* For each filename found, see if it matches the path element.  For
              example, if we have .../cx/cmr10.300pk and .../ricoh/cmr10.300pk,

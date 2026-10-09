@@ -108,6 +108,13 @@ const EXCLUDED_REGIONS: &[&str] = &[
     // the display list's side table (changes/displaylist.ch): source
     // positions, which the two paths may give nodes differently
     "dl_side",
+    // the files of the open levels', groups' and conditionals' lines
+    // (changes/lineshift.ch): a replay pushes no conditional, so the dead
+    // part above the open ones may hold other tags
+    "ls_nest_tag",
+    "ls_grp_tag",
+    "ls_cond_tag",
+    "ls_tag_file",
 ];
 
 struct Pending {

@@ -35,7 +35,8 @@ In order:
 | `web2c-hooks.ch` | The text of tex.ch that TeX Live's feature change files match: web2c's integer parameters (before e-TeX's in XeTeX) and one undump line. |
 | *third_party/pdftex/web2c/* | `tracingstacklevels.ch`, `partoken-102.ch`, `partoken.ch`, `locnull-optimize.ch`, `unbalanced-braces.ch`, `showstream.ch`, unmodified. |
 | `synctex.ch` | SyncTeX's memory layout as `synctex-xe-def.ch0` and the other synctex files make it for XeTeX: the file tag and line in ONE word (`lh`, `rh`), so box nodes have 8 words, rule nodes 5, math/glue/kern/penalty nodes 3; the `\synctex` parameter; no `.synctex` file. |
-| `xetex-web2c.ch` | What `xetex.ch` and `tex-binpool.ch` change in xetex.web itself: the banner; Unicode terminal and input files; the pool loaded from the program; `name_of_file` ends with a 0; `history=output_failure`; `new_character` for native fonts; `hlist_out`'s labels and an upwards empty box in `vlist_out`; `dvi_close`; bigtrie by `biggest_lang` and `max_hyph_char`; the format holds the pool strings' starts only; no native fonts in a format; the code after the main program moved before it. |
+| `xetex-web2c.ch` | What `xetex.ch` and `tex-binpool.ch` change in xetex.web itself: the banner; Unicode terminal and input files; the pool loaded from the program; `name_of_file` ends with a 0; `history=output_failure`; `new_character` for native fonts; `hlist_out`'s labels and an upwards empty box in `vlist_out`; `dvi_close`; bigtrie by `biggest_lang` and `max_hyph_char`; the format holds the pool strings' starts only; no native fonts in a format; a shorthand definition starts from `\relax`'s `too_big_usv` ([49.1222]); the code after the main program moved before it. |
+| `mltex.ch` | tex.ch's ML\TeX character access, through which `xetex.ch` applies a TFM font's TECkit mapping: `char_info` reads the effective character (`effective_char`, which maps it unless it is a ligature's, `xtx_ligature_present`), `orig_char_info` where tex.ch avoids substitution (font loading, `new_character`, `hlist_out`'s output, math), and the main loop checks the effective character. ML\TeX's substitutions themselves are not re-specified (`mltex_enabled_p` is always false). |
 | *third_party/xetex/* | `char-warning-xetex.ch`, unmodified. |
 | `web2c-run.ch` | How a run is set up and reports itself (the pdfTeX engine's `web2c-run.ch`): texmf.cnf values, `-interaction`, file:line:error, `-halt-on-error`, the status lines (a TCX file is "ignored", as xetex.ch says), `%&format`, `-jobname`, `\write18` (the command made UTF-8), `openin_any`/`openout_any`, `-output-comment`, `-no-pdf`; no TCX tables in the format and no pdfTeX banner. |
 
@@ -48,8 +49,15 @@ show in a document that uses TFM fonts only and none of the features named;
 - Native (OpenType/AAT/Graphite) fonts: `find_native_font` finds none, so a
   quoted font name that TeX Live finds as an installed font is a TFM lookup
   here (phase S1); the OpenType math routines (S1-S2); `\XeTeXglyph` etc.
-- TECkit mappings: `:mapping=` after a TFM name is cut off but not applied;
-  `\XeTeXinputnormalization` (S1).
+- `\XeTeXinputnormalization` (S1; TECkit's normalizer is
+  `Globals::normalize_utf32`, not yet called from `input_line`).
+- ML\TeX's character substitutions (`mltex.ch` keeps only the effective
+  character's TFM font mapping). A mapped character outside the font's
+  range read by `char_info` without a range check (`\fontcharwd` etc.)
+  reads `font_info` beyond the character table in TeX Live's xetex, through
+  texmfmem.h's little-endian `fmemoryword` union; this port's word packing
+  differs there, so such a read gives other garbage (a checked index, so at
+  worst a panic beyond `font_info`, where C reads out of bounds).
 - ICU: `\XeTeXinputencoding` with a name other than XeTeX's built-in ones
   (`utf8`, `utf16`, `utf16be`, `utf16le`, `bytes`, `auto`) reads bytes, as
   TeX Live does for a name ICU does not know; ICU line breaking
