@@ -12,6 +12,8 @@
 #                                 (crates/flashtex-engine, GPL-2.0-or-later)
 #     bin/pdftex.pool            the engine's string pool, beside the host
 #     share/flashtex/engine/LICENSE   the host's licence (GPL-2.0)
+#     share/flashtex/engine/THIRD-PARTY-NOTICES   notices of what the host
+#                                 links (jemalloc's BSD-2-Clause, on Linux)
 #     share/flashtex/Fonts/      pinned Latin Modern OTFs + GUST licence
 #     share/flashtex/texmf/      rooted TFM metrics + licence (LM 2.004)
 #     bin/Fonts -> ../share/flashtex/Fonts    (relative symlinks: the older
@@ -108,9 +110,11 @@ if [[ "$HOST_INCLUDED" -eq 1 ]]; then
   ENGINE_CRATE="$REPO_ROOT/crates/flashtex-engine"
   [[ -f "$ENGINE_CRATE/pdftex.pool" ]] || die "flashtex-host is packaged but $ENGINE_CRATE/pdftex.pool is missing"
   [[ -f "$ENGINE_CRATE/LICENSE" ]] || die "flashtex-host is packaged but its licence $ENGINE_CRATE/LICENSE is missing"
+  [[ -f "$ENGINE_CRATE/THIRD-PARTY-NOTICES" ]] || die "flashtex-host is packaged but $ENGINE_CRATE/THIRD-PARTY-NOTICES is missing"
   cp "$ENGINE_CRATE/pdftex.pool" "$ROOT/bin/pdftex.pool"
   mkdir -p "$ROOT/share/flashtex/engine"
   cp "$ENGINE_CRATE/LICENSE" "$ROOT/share/flashtex/engine/LICENSE"
+  cp "$ENGINE_CRATE/THIRD-PARTY-NOTICES" "$ROOT/share/flashtex/engine/THIRD-PARTY-NOTICES"
 fi
 [[ " ${INCLUDED[*]} " == *" flashtex "* ]] || echo "package-cli.sh: warning: flashtex (the CLI) is not among the binaries" >&2
 [[ " ${INCLUDED[*]} " == *" flashtex-render "* ]] || echo "package-cli.sh: warning: flashtex-render is not among the binaries" >&2
@@ -140,6 +144,7 @@ ln -s ../share/flashtex/texmf "$ROOT/bin/texmf"
   if [[ "$HOST_INCLUDED" -eq 1 ]]; then
     echo "- \`bin/pdftex.pool\` — the engine's string pool, read by \`flashtex-host\`"
     echo "- \`share/flashtex/engine/LICENSE\` — \`flashtex-host\`'s licence (GNU GPL version 2 or later)"
+    echo "- \`share/flashtex/engine/THIRD-PARTY-NOTICES\` — notices of the code \`flashtex-host\` is built with (jemalloc, BSD-2-Clause, on Linux)"
   fi
   echo "- \`share/flashtex/Fonts/\` — Latin Modern and TeX Gyre (Termes, Heros, Cursor) OpenType faces (GUST Font License, see GUST-FONT-LICENSE.TXT and TEX-GYRE-GUST-FONT-LICENSE.TXT)"
   echo "- \`share/flashtex/texmf/\` — the pinned Latin Modern 2.004 TFM metrics the engine lays text out with"
