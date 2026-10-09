@@ -3177,7 +3177,13 @@ mod tests {
         for (n, i) in [2usize, 15, 9].into_iter().enumerate() {
             assert!(a.prepare_restore(ids[i], &mut || false));
             let p = a.core().prepared.as_ref().unwrap();
-            assert!(p.pre.iter().any(|d| !d.is_null()), "a redo made ahead");
+            // (Miri's 1/50 scale writes too few words for a prepared chunk to
+            // be one the barrier has not saved: the restores below are still
+            // checked there, only not this precondition)
+            assert!(
+                cfg!(miri) || p.pre.iter().any(|d| !d.is_null()),
+                "a redo made ahead"
+            );
             scribble(&mut arr, 1000 + n as u64, 2_000);
             let end = arr.to_vec();
             let br = a.restore_branch(ids[i]).unwrap();
@@ -3202,8 +3208,10 @@ mod tests {
         // chunks than one `STOP_CHUNKS`: P4-TYPING-200WPM), at each question
         // in turn: nothing prepared, every slab chunk given back, and the
         // next restore is the plain one
+        // (not at Miri's 1/50 scale, whose space has fewer chunks than one
+        // `STOP_CHUNKS`: no question is asked inside the copies there)
         let live0 = a.core().slab.live;
-        for n in 1..6 {
+        for n in (1..6).filter(|_| !cfg!(miri)) {
             let mut asked = 0;
             assert!(!a.prepare_restore(ids[0], &mut || {
                 asked += 1;
