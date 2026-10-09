@@ -167,5 +167,26 @@ class Extraction(unittest.TestCase):
             self.assertFalse(os.path.exists(os.path.join(d, "evil")), what)
 
 
+class Packages(unittest.TestCase):
+    def test_extra_joins_the_derived_list(self):
+        with tempfile.TemporaryDirectory() as d:
+            p, e = os.path.join(d, "packages.txt"), os.path.join(d, "extra.txt")
+            with open(p, "w") as f:
+                f.write("# derived\nnatbib\namsmath\n")
+            with open(e, "w") as f:
+                f.write("# hand-picked\nbibtex\nnatbib\n\nmakeindex\n")
+            self.assertEqual(texbundle.bundle_packages(p, e), ["amsmath", "bibtex", "makeindex", "natbib"])
+            self.assertEqual(texbundle.bundle_packages(p, os.path.join(d, "none.txt")), ["amsmath", "natbib"])
+
+    def test_shipped_extra_is_free(self):
+        # every hand-picked package is a plain name, listed once
+        names = texbundle.read_list(os.path.join(HERE, "tl2026", "extra.txt"))
+        self.assertEqual(len(names), len(set(names)))
+        for n in names:
+            self.assertRegex(n, r"^[A-Za-z0-9._-]+$")
+        self.assertIn("bibtex", names)
+        self.assertIn("makeindex", names)
+
+
 if __name__ == "__main__":
     unittest.main()
