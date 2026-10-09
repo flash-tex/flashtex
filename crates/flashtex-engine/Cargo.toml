@@ -34,6 +34,14 @@ name = "flashtex-makeindex"
 path = "src/bin/flashtex-makeindex.rs"
 required-features = ["makeindex", "kpathsea"]
 
+# bibtex as a command (crates/bibtex through src/bibtex.rs, .bib and .bst
+# files through the engine's kpathsea): what the host and \write18 run
+# in-process, for the oracle comparison in docs/evidence/rusttools-2026-10-09/.
+[[bin]]
+name = "flashtex-bibtex"
+path = "src/bin/flashtex-bibtex.rs"
+required-features = ["bibtex", "kpathsea"]
+
 # The distribution tool (DESIGN.md 4.4): TeX Live report, format cache,
 # bundles. See src/bin/flashtex-dist.rs.
 [[bin]]
@@ -46,6 +54,9 @@ required-features = ["distribution"]
 # side so both encode and decode one definition. The dependency points from
 # the GPL engine to the MIT crate, never the other way.
 flashtex-display-list = { path = "../display-list-v3" }
+# GPL-2.0-or-later: the runtime shared with the XeTeX-derived engine
+# (docs/design/xetex/PLAN.md §3.3), re-exported under its old module paths.
+flashtex-runtime = { path = "../flashtex-runtime" }
 # SHA-256 for the format cache's read-set keys and the bundle's pinned
 # content hashes (feature `distribution`). MIT OR Apache-2.0.
 sha2 = { version = "0.10", optional = true }
@@ -57,25 +68,23 @@ flashtex-engine-build-id = { path = "build-id", optional = true }
 # Under the MakeIndex Distribution Notice (crates/makeindex/LICENSE), not
 # MIT; only this GPL crate depends on it (DESIGN.md §3).
 flashtex-makeindex = { path = "../makeindex", optional = true }
+# BibTeX 0.99e (TeX Live 2026's bibtex.web and bibtex.ch) translated to Rust,
+# run in-process for the host's external tools and restricted \write18
+# (src/bibtex.rs). Under BibTeX's own terms, those of Knuth's TeX
+# (crates/bibtex/LICENSE).
+flashtex-bibtex = { path = "../bibtex", optional = true }
 
-# Linux only: the host's heap other than its undo logs (feature `jemalloc`,
-# src/logalloc.rs). The crates are MIT OR Apache-2.0; the jemalloc 5.3.1 they
-# build from source (`configure`, `make`) and link statically is
-# BSD-2-Clause (its COPYING), which GPL-2.0-or-later code may link; a binary
-# distribution reproduces that notice: THIRD-PARTY-NOTICES, which
-# scripts/ci/package-cli.sh ships beside the host's LICENSE.
-[target.'cfg(target_os = "linux")'.dependencies]
-tikv-jemallocator = { version = "0.7", optional = true }
-tikv-jemalloc-sys = { version = "0.7", optional = true }
 
 [features]
 # Link TeX Live's kpathsea (vendored, LGPL-2.1-or-later) as the file resolver.
 # Without it only the working-directory resolver is available, which is what
 # the trip test uses.
-default = ["kpathsea", "regex", "distribution", "jemalloc", "makeindex"]
+default = ["kpathsea", "regex", "distribution", "jemalloc", "makeindex", "bibtex"]
 # makeindex in-process (src/makeindex.rs, crates/makeindex). Off in the trip
 # tests' scratch packages, which have no dependencies.
 makeindex = ["dep:flashtex-makeindex"]
+# bibtex in-process (src/bibtex.rs, crates/bibtex), likewise.
+bibtex = ["dep:flashtex-bibtex"]
 kpathsea = []
 # DESIGN.md 4.4: the format cache (src/formats.rs) and the bundle fallback
 # (src/bundle/). Off in the trip tests' scratch packages, which copy src/*.rs
@@ -89,13 +98,13 @@ regex = []
 # undo logs, which keep mappings of their own (src/logalloc.rs). With glibc
 # the host's peak was 27-47 MB higher at 1,000 pages for the same work
 # (docs/evidence/mem-research-2026-10-06/ §2.4). No effect on other systems.
-# Leave it out (`--no-default-features --features kpathsea,regex,distribution,makeindex`)
+# Leave it out (`--no-default-features --features kpathsea,regex,distribution,makeindex,bibtex`)
 # for tools that intercept malloc, such as heaptrack.
-jemalloc = ["dep:tikv-jemallocator", "dep:tikv-jemalloc-sys"]
+jemalloc = ["flashtex-runtime/jemalloc"]
 # Build against a translation of Knuth's tex.web instead of pdftex.web: only
 # scripts/flashtex-trip.sh's scratch package does, and it leaves out
 # src/pdftex/ (pdfTeX's C parts), which tex.web does not call.
-tex82 = []
+tex82 = ["flashtex-runtime/tex82"]
 # Measurement only: the word space without its write barrier, to price the
 # barrier alone (docs/evidence/p4-l1-2026-09-29/). Checkpoints are wrong
 # with it; never ship it.
@@ -113,7 +122,7 @@ bench-count-writes = []
 # tags (src/memstat.rs; lane P4-MEMORY). Adds a header and two atomic adds to
 # every allocation; never ship it. With `jemalloc`, jemalloc's statistics
 # too (`memstat::malloc_in_use`).
-mem-stats = ["tikv-jemallocator?/stats"]
+mem-stats = ["flashtex-runtime/mem-stats"]
 
 [build-dependencies]
 # Builds TeX Live's zlib (third_party/zlib; always), kpathsea (feature

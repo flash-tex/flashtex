@@ -4985,3 +4985,332 @@ fn rv1685_written_before_s0_refuses() {
     let r = compile_and_check(&e, &mut h, &dir, &[("doc.tex", &doc)], "rv1685-b: cold");
     assert!(r.contains("\"mode\":\"cold\""), "rv1685-b: {r}");
 }
+
+/// `\pdffilesize` and `\pdffilemoddate` of a user file are reads of it
+/// (`system::note_size_read`, `system::note_stamp`), not only lookups: the
+/// size of the main file, taken in the preamble and printed in the body,
+/// changes with a letter in the title (a restart before S₀) and with one in
+/// the body (a restart from S₀ on, which kept the old size: 132 for 133);
+/// the modification time of a file read in the preamble and in the body
+/// changes with the file touched, its content the same, alone or with an
+/// edit. A preamble checkpoint after every line. Every compile equals
+/// scratch runs, whose copy of the file has the same time.
+#[test]
+fn file_size_and_mod_date_are_reads_of_the_file() {
+    let Some(e) = env() else {
+        common::no_texlive();
+        return;
+    };
+    let dir = e.dir.join("filesize");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let sty = "\\ProvidesPackage{p}\n\\xdef\\fs{\\pdffilesize{\\jobname.tex}}\n\
+               \\xdef\\md{\\pdffilemoddate{stamp.tex}}\n";
+    let body: String = (0..12).map(|i| para(i, "theta")).collect();
+    let doc = format!(
+        "\\documentclass{{article}}\n\\usepackage{{p}}\n\\title{{A title}}\n\
+         \\begin{{document}}\n\\maketitle\n{body}Size \\fs, date \\md, now \
+         \\pdffilemoddate{{stamp.tex}}.\n\\end{{document}}\n"
+    );
+    let stamp = dir.join("stamp.tex");
+    let at = |t: u64| std::time::UNIX_EPOCH + std::time::Duration::from_secs(t);
+    let touch = |p: &Path, t: u64| {
+        std::fs::File::options()
+            .write(true)
+            .open(p)
+            .unwrap()
+            .set_modified(at(t))
+            .unwrap()
+    };
+    std::fs::write(&stamp, "% a file whose date is read\n").unwrap();
+    touch(&stamp, 1_600_000_000);
+    let mut h = Host::start_env(&e, &dir, &[("FLASHTEX_PREAMBLE_LINE_S", "0.000001")]);
+    // (the scratch runs' copy of `stamp.tex` gets its time too)
+    let mut step = |text: Option<&str>, t: Option<u64>, what: &str| {
+        if let Some(text) = text {
+            std::fs::write(dir.join("doc.tex"), text).unwrap();
+        }
+        if let Some(t) = t {
+            touch(&stamp, t);
+        }
+        let reference = dir.with_extension("ref");
+        copy_dir(&dir, &reference);
+        let t = std::fs::metadata(&stamp).unwrap().modified().unwrap();
+        std::fs::File::options()
+            .write(true)
+            .open(reference.join("stamp.tex"))
+            .unwrap()
+            .set_modified(t)
+            .unwrap();
+        let r = h.cmd("compile");
+        check_against(&e, &dir, &reference, &r, what);
+        r
+    };
+    std::fs::write(dir.join("p.sty"), sty).unwrap();
+    for k in 0..4 {
+        let r = step(Some(&doc), None, "settle");
+        if r.contains("\"mode\":\"unchanged\"") || k == 3 {
+            break;
+        }
+    }
+    let title = doc.replacen("A title", "A titlex", 1);
+    let body2 = doc.replacen("Paragraph 3 with", "Paragraph 3 withx", 1);
+    step(Some(&title), None, "a letter in the title");
+    step(Some(&doc), None, "the revert");
+    step(Some(&body2), None, "a letter in the body");
+    step(Some(&doc), None, "the revert");
+    step(None, Some(1_600_000_100), "the date file touched");
+    step(
+        Some(&body2),
+        Some(1_600_000_200),
+        "touched, and a letter in the body",
+    );
+    step(Some(&doc), None, "the revert");
+}
+
+/// READ-REVALIDATE (`crate::revalidate`): `\include` takes each chapter's
+/// `\pdffilesize` (expl3's `\file_full_name:n`), a read of the chapter
+/// (#1724), so every checkpoint after it had consumed the chapter and an
+/// edit deep in it restarted at the chapter's start. The restart there now
+/// runs to the next page and compares itself with the old run; equal, it
+/// restarts near the edit instead. Where the size is only looked up by
+/// `\include` or compared with `\ifnum`, the comparison holds
+/// (`revalidated: true`); where it is typeset on a page, kept in a macro a
+/// later page prints, or the chapter's date is kept, it does not (`false`),
+/// and the run goes on from the chapter's start. Every compile equals
+/// scratch runs.
+#[test]
+fn a_size_read_that_left_nothing_does_not_hold_the_restart_back() {
+    let Some(e) = env() else {
+        common::no_texlive();
+        return;
+    };
+    let para = |c: usize, i: usize| {
+        format!(
+            "Chapter {c} paragraph {i} with the word theta, and enough text to fill a few \
+             lines of the page so that the chapter ships several pages; math $a^{i}+b$ and \
+             more words to make it long enough.\n\n"
+        )
+    };
+    // (the chapter's text after its title: `head`)
+    let chapter_with = |c: usize, head: &str| -> String {
+        format!("\\chapter{{Chapter {c}}}\n{head}")
+            + &(0..40).map(|i| para(c, i)).collect::<String>()
+    };
+    // (case, what goes before `\include{ch3}`, after the last chapter, at
+    // the start of the third, whether the comparison holds)
+    let cases = [
+        ("only \\include's lookup", "", "", "", true),
+        (
+            "compared",
+            "\\ifnum\\pdffilesize{ch3.tex}>0 \\relax\\fi\n",
+            "",
+            "",
+            true,
+        ),
+        (
+            "typeset on a page of its own",
+            "The third chapter has \\pdffilesize{ch3.tex} bytes.\\clearpage\n",
+            "",
+            "",
+            false,
+        ),
+        (
+            // (the state at the next page is the same: only the page shipped
+            // differs, which the comparison of the output finds)
+            "typeset on the chapter's first page",
+            "",
+            "",
+            "This chapter has \\pdffilesize{ch3.tex} bytes.\n\n",
+            false,
+        ),
+        (
+            // (the state is the same: only the log and the terminal differ)
+            "written to the log",
+            "",
+            "",
+            "\\typeout{The size of chapter 3: \\pdffilesize{ch3.tex}}\n",
+            false,
+        ),
+        (
+            // (review of #1736: a file written and closed in the window, read
+            // back at the end -- the state at the next page is the same)
+            "written to a file read back",
+            "",
+            "Size file: \\input{sz.txt}\n",
+            "\\newwrite\\szf\\immediate\\openout\\szf=sz.txt \
+             \\immediate\\write\\szf{\\pdffilesize{ch3.tex}}\\immediate\\closeout\\szf\n",
+            false,
+        ),
+        (
+            "written to a file, its digest typeset",
+            "",
+            "Digest \\pdfmdfivesum file {sz.txt}.\n",
+            "\\newwrite\\szf\\immediate\\openout\\szf=sz.txt \
+             \\immediate\\write\\szf{\\pdffilesize{ch3.tex}}\\immediate\\closeout\\szf\n",
+            false,
+        ),
+        (
+            "kept",
+            "\\edef\\chsz{\\pdffilesize{ch3.tex}}\n",
+            "Stored size \\chsz.\n",
+            "",
+            false,
+        ),
+        (
+            "a date kept",
+            "\\edef\\chmd{\\pdffilemoddate{ch3.tex}}\n",
+            "Stored date \\chmd.\n",
+            "",
+            false,
+        ),
+    ];
+    for (i, (case, before, after, head, held)) in cases.iter().enumerate() {
+        let chapter = |c: usize| chapter_with(c, if c == 3 { head } else { "" });
+        let dir = e.dir.join(format!("revalidate-{i}"));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let doc = format!(
+            "\\documentclass[openany]{{book}}\n\\begin{{document}}\n\\tableofcontents\n\\include{{ch1}}\n\
+             \\include{{ch2}}\n{before}\\include{{ch3}}\n\\include{{ch4}}\n{after}\\end{{document}}\n"
+        );
+        let mut files: Vec<(String, String)> = (1..=4)
+            .map(|c| (format!("ch{c}.tex"), chapter(c)))
+            .collect();
+        files.push(("doc.tex".into(), doc));
+        let refs: Vec<(&str, &str)> = files
+            .iter()
+            .map(|(a, b)| (a.as_str(), b.as_str()))
+            .collect();
+        let mut h = Host::start(&e, &dir);
+        // (each write of `ch3.tex` gets a time of its own, seconds apart,
+        // and the scratch runs' copy the same: `\pdffilemoddate` reads it)
+        let mut tick = 1_600_000_000u64;
+        let mut step = |files: &[(&str, &str)], what: &str| {
+            for (name, text) in files {
+                std::fs::write(dir.join(name), text).unwrap();
+            }
+            tick += 100;
+            let t = std::time::UNIX_EPOCH + std::time::Duration::from_secs(tick);
+            let reference = dir.with_extension("ref");
+            let set = |d: &Path| {
+                std::fs::File::options()
+                    .write(true)
+                    .open(d.join("ch3.tex"))
+                    .unwrap()
+                    .set_modified(t)
+                    .unwrap()
+            };
+            set(&dir);
+            copy_dir(&dir, &reference);
+            set(&reference);
+            let r = h.cmd("compile");
+            check_against(&e, &dir, &reference, &r, what);
+            r
+        };
+        for k in 0..4 {
+            let r = step(&refs, &format!("{case}: settle"));
+            if r.contains("\"mode\":\"unchanged\"") || k == 3 {
+                break;
+            }
+        }
+        let mut ch3 = chapter(3);
+        for k in 0..3 {
+            ch3 = ch3.replacen("paragraph 30 with", "paragraph 30 withx", 1);
+            let what = format!("{case}: edit {k}");
+            let r = step(&[("ch3.tex", &ch3)], &what);
+            assert_eq!(field(&r, "mode"), "\"incremental\"", "{what}: {r}");
+            // (where it does not hold: tried and failed, or no window)
+            eprintln!("{what}: revalidated {}", field(&r, "revalidated"));
+            if *held {
+                assert_eq!(field(&r, "revalidated"), "true", "{what}: {r}");
+            } else {
+                assert_ne!(field(&r, "revalidated"), "true", "{what}: {r}");
+            }
+        }
+        step(&[("ch3.tex", &chapter(3))], &format!("{case}: revert"));
+    }
+}
+
+/// Review of #1724: a whole read between `\document`'s start and S₀'s
+/// anchor is left out of S₀'s key (`host::whole_after_arm`: `\document`'s
+/// `\IfFileExists{\jobname.aux}` takes the `.aux`'s size). One that keeps
+/// what it read, in a `begindocument/before` hook, must still be read again
+/// when its file changes: (A) the `.aux`'s size, with a `\label` added (the
+/// next pass reads a longer `.aux`); (B) the main file's size, with a
+/// letter typed in the body. And where only `\document`'s own lookup reads
+/// the `.aux`, an added `\label` still restarts after the anchor. Every
+/// compile equals scratch runs.
+#[test]
+fn a_size_read_at_the_document_start_is_read_again() {
+    let Some(e) = env() else {
+        common::no_texlive();
+        return;
+    };
+    let body: String = (0..12).map(|i| para(i, "zeta")).collect();
+    let doc = |hook: &str, extra: &str| {
+        format!(
+            "\\documentclass{{article}}\n{hook}\\begin{{document}}\n\\section{{One}}\\label{{one}}\n\
+             {body}{extra}Kept: \\csname x\\endcsname. See~\\ref{{one}}.\n\\end{{document}}\n"
+        )
+    };
+    let aux = "\\AddToHook{begindocument/before}{\\xdef\\x{\\pdffilesize{\\jobname.aux}}}\n";
+    let tex = "\\AddToHook{begindocument/before}{\\xdef\\x{\\pdffilesize{\\jobname.tex}}}\n";
+    // (#1727: `\\document` wrapped, the original called last; the wrapper's
+    // `\\xdef` reads before the document's-start request is served, so the
+    // read is S0's key's, and D restarts from the preamble's last checkpoint)
+    let wrap_aux = "\\let\\myolddoc\\document\\def\\document{\\xdef\\x{\\pdffilesize{\\jobname.aux}}\\myolddoc}\n";
+    let wrap_tex = "\\let\\myolddoc\\document\\def\\document{\\xdef\\x{\\pdffilesize{\\jobname.tex}}\\myolddoc}\n";
+    // (case, the hook, the edit)
+    let cases = [
+        ("A: the .aux's size", aux, "\\section{Two}\\label{two}\n"),
+        ("B: the main file's size", tex, "A letter: x.\n"),
+        ("no hook", "", "\\section{Two}\\label{two}\n"),
+        (
+            "C: a wrapped \\document reads the .aux's size",
+            wrap_aux,
+            "\\section{Two}\\label{two}\n",
+        ),
+        (
+            "D: a wrapped \\document reads the main file's size",
+            wrap_tex,
+            "A letter: x.\n",
+        ),
+    ];
+    for (i, (case, hook, extra)) in cases.iter().enumerate() {
+        let dir = e.dir.join(format!("arm-read-{i}"));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut h = Host::start(&e, &dir);
+        let first = doc(hook, "");
+        for k in 0..4 {
+            let r = compile_and_check(
+                &e,
+                &mut h,
+                &dir,
+                &[("doc.tex", &first)],
+                &format!("{case}: settle"),
+            );
+            if r.contains("\"mode\":\"unchanged\"") || k == 3 {
+                break;
+            }
+        }
+        let edited = doc(hook, extra);
+        let what = format!("{case}: the edit");
+        let r = compile_and_check(&e, &mut h, &dir, &[("doc.tex", &edited)], &what);
+        if i == 1 {
+            // (B: the main file's length changed, the hook's size with it:
+            // the comparison at the anchor fails, the run goes on from the
+            // document's start)
+            assert_eq!(field(&r, "arm_revalidated"), "false", "{what}: {r}");
+        }
+        compile_and_check(&e, &mut h, &dir, &[], &format!("{case}: settle again"));
+        compile_and_check(
+            &e,
+            &mut h,
+            &dir,
+            &[("doc.tex", &first)],
+            &format!("{case}: the revert"),
+        );
+    }
+}

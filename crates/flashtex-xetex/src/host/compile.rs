@@ -247,6 +247,10 @@ pub struct Running {
     /// they waited behind another): each ends as cancelled when its turn
     /// comes.
     pub cancelled_early: HashSet<i64>,
+    /// The compiles received and not started yet: a `CANCEL` naming one of
+    /// them is kept (`cancelled_early`); one naming a finished or unknown
+    /// compile is dropped, so neither set outgrows the queue.
+    pub queued: HashSet<i64>,
 }
 
 /// The files whose change asks for another pass (latexmk's rerun rule,

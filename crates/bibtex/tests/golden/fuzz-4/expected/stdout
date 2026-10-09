@@ -1,0 +1,248 @@
+This is BibTeX, Version 0.99e (TeX Live 2026)
+The top-level auxiliary file: doc.aux
+Case mismatch error between cite keys K0 and k0
+---line 22 of file doc.aux
+ : \citation{k87,proc1,K0
+ :                       ,k40}
+I'm skipping whatever remains of this command
+Case mismatch error between cite keys K0 and k0
+---line 53 of file doc.aux
+ : \citation{k2,K0
+ :                ,k107}
+I'm skipping whatever remains of this command
+Case mismatch error between cite keys a1 and A1
+---line 64 of file doc.aux
+ : \citation{a1
+ :             }
+I'm skipping whatever remains of this command
+Case mismatch error between cite keys a1 and A1
+---line 76 of file doc.aux
+ : \citation{k62,a1
+ :                 ,k77}
+I'm skipping whatever remains of this command
+Case mismatch error between cite keys a1 and A1
+---line 146 of file doc.aux
+ : \citation{a1
+ :             ,k94,k22,k5}
+I'm skipping whatever remains of this command
+Case mismatch error between cite keys K0 and k0
+---line 166 of file doc.aux
+ : \citation{k112,k81,k115,K0
+ :                           }
+I'm skipping whatever remains of this command
+Case mismatch error between cite keys a1 and A1
+---line 201 of file doc.aux
+ : \citation{a1
+ :             ,k18}
+I'm skipping whatever remains of this command
+Case mismatch error between cite keys a1 and A1
+---line 207 of file doc.aux
+ : \citation{k0,k100,a1
+ :                     ,k11}
+I'm skipping whatever remains of this command
+Case mismatch error between cite keys a1 and A1
+---line 211 of file doc.aux
+ : \citation{a1
+ :             ,k111,k113}
+I'm skipping whatever remains of this command
+Case mismatch error between cite keys a1 and A1
+---line 224 of file doc.aux
+ : \citation{a1
+ :             ,k51,k49}
+I'm skipping whatever remains of this command
+Case mismatch error between cite keys K0 and k0
+---line 229 of file doc.aux
+ : \citation{k50,k30,K0
+ :                     }
+I'm skipping whatever remains of this command
+Case mismatch error between cite keys K0 and k0
+---line 277 of file doc.aux
+ : \citation{k13,k31,K0
+ :                     }
+I'm skipping whatever remains of this command
+Case mismatch error between cite keys K0 and k0
+---line 298 of file doc.aux
+ : \citation{k108,K0
+ :                  ,k22,k41}
+I'm skipping whatever remains of this command
+Case mismatch error between cite keys a1 and A1
+---line 305 of file doc.aux
+ : \citation{a1
+ :             ,k99,k54,a1}
+I'm skipping whatever remains of this command
+Case mismatch error between cite keys K0 and k0
+---line 310 of file doc.aux
+ : \citation{k115,k77,K0
+ :                      ,k96}
+I'm skipping whatever remains of this command
+The style file: mystyle.bst
+while is an illegal style-file command---line 211 of file mystyle.bst
+ :   while
+ :        $
+nofunc is an unknown function---line 640 of file mystyle.bst
+Database file #1: db0.bib
+Warning--entry type for "k19" isn't style-file defined
+--line 2 of file db0.bib
+I was expecting a `,' or a `}'---line 8 of file db0.bib
+ : 
+ : @proceedings{k11,
+(Error may have been on previous line)
+I'm skipping whatever remains of this entry
+Warning--I'm ignoring k11's extra "institution" field
+--line 11 of file db0.bib
+Warning--I'm ignoring k8's extra "title" field
+--line 18 of file db0.bib
+Warning--entry type for "k70" isn't style-file defined
+--line 31 of file db0.bib
+Warning--I'm ignoring k70's extra "author" field
+--line 35 of file db0.bib
+Illegal end of database file---line 404 of file db0.bib
+ : }
+ :  
+I'm skipping whatever remains of this entry
+A bad cross reference---entry "k8"
+refers to entry "missing", which doesn't exist
+Warning--I didn't find a database entry for "k27"
+Warning--I didn't find a database entry for "k15"
+Warning--I didn't find a database entry for "k24"
+Warning--I didn't find a database entry for "k23"
+Warning--I didn't find a database entry for "k45"
+Warning--I didn't find a database entry for "k57"
+Warning--I didn't find a database entry for "k66"
+Warning--I didn't find a database entry for "k0"
+Warning--I didn't find a database entry for "k59"
+Warning--I didn't find a database entry for "k49"
+Warning--I didn't find a database entry for "k20"
+Warning--I didn't find a database entry for "k114"
+Warning--I didn't find a database entry for "k76"
+Warning--I didn't find a database entry for "k35"
+Warning--I didn't find a database entry for "k53"
+Warning--I didn't find a database entry for "k75"
+Warning--I didn't find a database entry for "k67"
+Warning--I didn't find a database entry for "k86"
+Warning--I didn't find a database entry for "k82"
+Warning--I didn't find a database entry for "k89"
+Warning--I didn't find a database entry for "k12"
+Warning--I didn't find a database entry for "Knuth:84"
+Warning--I didn't find a database entry for "k34"
+Warning--I didn't find a database entry for "k65"
+Warning--I didn't find a database entry for "k69"
+Warning--I didn't find a database entry for "k25"
+Warning--I didn't find a database entry for "k93"
+Warning--I didn't find a database entry for "k18"
+Warning--I didn't find a database entry for "k16"
+Warning--I didn't find a database entry for "k54"
+Warning--I didn't find a database entry for "k119"
+Warning--I didn't find a database entry for "k6"
+Warning--I didn't find a database entry for "k95"
+Warning--I didn't find a database entry for "k61"
+Warning--I didn't find a database entry for "k77"
+Warning--I didn't find a database entry for "k32"
+Warning--I didn't find a database entry for "k113"
+Warning--I didn't find a database entry for "k9"
+Warning--I didn't find a database entry for "k87"
+Warning--I didn't find a database entry for "proc1"
+Warning--I didn't find a database entry for "k68"
+Warning--I didn't find a database entry for "k36"
+Warning--I didn't find a database entry for "k4"
+Warning--I didn't find a database entry for "k55"
+Warning--I didn't find a database entry for "k38"
+Warning--I didn't find a database entry for "k47"
+Warning--I didn't find a database entry for "k62"
+Warning--I didn't find a database entry for "k91"
+Warning--I didn't find a database entry for "k30"
+Warning--I didn't find a database entry for "k74"
+Warning--I didn't find a database entry for "k78"
+Warning--I didn't find a database entry for "k22"
+Warning--I didn't find a database entry for "k48"
+Warning--I didn't find a database entry for "k100"
+Warning--I didn't find a database entry for "k90"
+Warning--I didn't find a database entry for "k81"
+Warning--I didn't find a database entry for "k88"
+Warning--I didn't find a database entry for "k111"
+Warning--I didn't find a database entry for "k84"
+Warning--I didn't find a database entry for "k60"
+Warning--I didn't find a database entry for "book1"
+Warning--I didn't find a database entry for "k63"
+Warning--I didn't find a database entry for "k110"
+Warning--I didn't find a database entry for "k29"
+Warning--I didn't find a database entry for "k72"
+Warning--I didn't find a database entry for "k80"
+Warning--I didn't find a database entry for "k58"
+Warning--I didn't find a database entry for "A1"
+Warning--I didn't find a database entry for "k116"
+Warning--I didn't find a database entry for "k31"
+Warning--I didn't find a database entry for "k71"
+Warning--I didn't find a database entry for "k85"
+Warning--I didn't find a database entry for "k108"
+Warning--I didn't find a database entry for "k105"
+Warning--I didn't find a database entry for "k50"
+Warning--I didn't find a database entry for "k103"
+Warning--I didn't find a database entry for "k64"
+Warning--I didn't find a database entry for "k118"
+Warning--I didn't find a database entry for "k44"
+Warning--I didn't find a database entry for "k33"
+Warning--I didn't find a database entry for "k79"
+Warning--I didn't find a database entry for "k73"
+Warning--I didn't find a database entry for "k94"
+Warning--I didn't find a database entry for "k52"
+Warning--I didn't find a database entry for "k101"
+Warning--I didn't find a database entry for "k43"
+Warning--I didn't find a database entry for "k5"
+Warning--I didn't find a database entry for "k37"
+Warning--I didn't find a database entry for "k17"
+Warning--I didn't find a database entry for "k41"
+Warning--I didn't find a database entry for "k107"
+Warning--I didn't find a database entry for "k56"
+Warning--I didn't find a database entry for "k26"
+Warning--I didn't find a database entry for "k97"
+Warning--I didn't find a database entry for "k109"
+Warning--I didn't find a database entry for "k7"
+Warning--I didn't find a database entry for "k112"
+Warning--I didn't find a database entry for "k106"
+Warning--I didn't find a database entry for "k14"
+Warning--I didn't find a database entry for "k1"
+Warning--I didn't find a database entry for "k21"
+Warning--I didn't find a database entry for "k96"
+Warning--I didn't find a database entry for "nokey"
+Warning--I didn't find a database entry for "k28"
+Warning--I didn't find a database entry for "k115"
+Warning--I didn't find a database entry for "k83"
+Warning--I didn't find a database entry for "k92"
+Warning--I didn't find a database entry for "k10"
+Warning--I didn't find a database entry for "k13"
+Warning--I didn't find a database entry for "k42"
+Warning--I didn't find a database entry for "k98"
+Warning--I didn't find a database entry for "k40"
+Warning--I didn't find a database entry for "k39"
+Warning--I didn't find a database entry for "k99"
+Warning--I didn't find a database entry for "k104"
+Warning--I didn't find a database entry for "k46"
+Warning--I didn't find a database entry for "k3"
+Warning--I didn't find a database entry for "k102"
+Warning--all relevant fields are empty in k19
+Warning--empty year in k11
+Warning--empty author in k117
+Warning--empty title in k117
+Warning--empty booktitle in k117
+Warning--empty publisher in k117
+Warning--empty year in k117
+Warning--empty author in k2
+Warning--empty journal in k2
+Warning--empty year in k2
+`'16' is a function literal, not an integer, for entry k8
+while executing---line 943 of file mystyle.bst
+Warning--empty author in k8
+You can't pop an empty literal stack for entry k8
+while executing---line 943 of file mystyle.bst
+Warning--empty booktitle in k8
+Warning--empty year in k8
+Warning--empty author and editor in k51
+Warning--empty title in k51
+Warning--empty publisher in k51
+Warning--empty year in k51
+`'16' is a function literal, not an integer, for entry k70
+while executing---line 943 of file mystyle.bst
+You can't pop an empty literal stack for entry k70
+while executing---line 943 of file mystyle.bst
+(There were 24 error messages)

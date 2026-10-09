@@ -1,7 +1,10 @@
 //! External tools for the engine host (lane P5-EXTERNAL-TOOLS, owner
-//! decision 2026-09-30 "4A"): bibtex, biber and makeindex from the user's
-//! TeX Live, run for a compile when latexmk would run them, and folded into
-//! the incremental compile (DESIGN.md §4.4, §4.5, §5.5).
+//! decision 2026-09-30 "4A"): bibtex, biber and makeindex, run for a
+//! compile when latexmk would run them, and folded into the incremental
+//! compile (DESIGN.md §4.4, §4.5, §5.5). bibtex and makeindex are the
+//! engine's own ports, run in-process (lane RUST-TOOLS: `crate::bibtex`,
+//! `crate::makeindex`), so they need no TeX Live and work from the bundle
+//! alone; biber is the user's TeX Live program.
 //!
 //! **When (latexmk's rules, `latexmk.pl` 4.87 `rdb_set_latex_deps`,
 //! `parse_aux`, `parse_bcf`, `rdb_rerun_needed`).** After a compile:
@@ -40,6 +43,11 @@
 //! runs them (`$bibtex_fudge`, `$makeindex_fudge`): bibtex and makeindex in
 //! the directory of the `.aux`/`.idx` with `BIBINPUTS`/`BSTINPUTS` starting
 //! with the project directory; biber with `--input-directory` the project.
+//! The in-process ports run the same way: in the scratch directory as their
+//! working directory, the project and output directories searched first
+//! (`crate::bibtex::EngineHost::first`), kpathsea's path through the
+//! engine's resolver. `FLASHTEX_BIBTEX=external` and
+//! `FLASHTEX_MAKEINDEX=external` run TeX Live's programs instead.
 //!
 //! **Trust (DESIGN.md §4.5).** External programs are off unless the client
 //! says `"external_tools": "auto"` in its `COMPILE` (the app does so for a
@@ -115,7 +123,8 @@ impl Tool {
 }
 
 /// The user's TeX Live programs (found as the engine finds TeX Live,
-/// without a shell environment: `crate::resolver::discover_texlive`).
+/// without a shell environment: `crate::resolver::discover_texlive`); `bin`
+/// is `None` without a TeX Live (bundle mode).
 #[derive(Clone, Debug, Default)]
 pub struct Programs {
     pub bin: Option<PathBuf>,
@@ -148,28 +157,68 @@ impl Programs {
         }
     }
 
-    /// How a rule of `t` runs: makeindex in-process (crate::makeindex,
-    /// unless `FLASHTEX_MAKEINDEX=external`), with or without a TeX Live;
-    /// the others as the TeX Live program, if there is one.
+    /// Whether rules of `t` run in-process: makeindex (`crate::makeindex`)
+    /// and bibtex (`crate::bibtex`) unless `FLASHTEX_MAKEINDEX=external` or
+    /// `FLASHTEX_BIBTEX=external`, with or without a TeX Live.
+    fn in_process(t: Tool) -> bool {
+        match t {
+            #[cfg(feature = "makeindex")]
+            Tool::Makeindex => crate::makeindex::in_process(),
+            #[cfg(feature = "bibtex")]
+            Tool::Bibtex => crate::bibtex::in_process(),
+            _ => false,
+        }
+    }
+
+    /// How a rule of `t` runs: in-process ([`Programs::in_process`]), else
+    /// as the TeX Live program, if there is one.
     fn runner(&self, t: Tool) -> Option<Runner> {
-        #[cfg(feature = "makeindex")]
-        if t == Tool::Makeindex && crate::makeindex::in_process() {
+        if Self::in_process(t) {
             return Some(Runner::InProcess);
         }
         self.get(t).cloned().map(Runner::Program)
     }
 
-    /// For `HELLO.texmf.tools`.
+    /// Why no rule of `t` can run (no in-process port and no program).
+    fn missing(&self, t: Tool) -> String {
+        match &self.bin {
+            Some(bin) => format!(
+                "{} is not in the TeX Live the host found ({})",
+                t.name(),
+                bin.display()
+            ),
+            None => {
+                let why = match t {
+                    Tool::Biber => {
+                        "FlashTeX runs bibtex and makeindex itself, but biber is \
+                         TeX Live's program (install TeX Live to use biblatex with biber)"
+                    }
+                    Tool::Bibtex => "FLASHTEX_BIBTEX=external asks for TeX Live's bibtex",
+                    Tool::Makeindex => "FLASHTEX_MAKEINDEX=external asks for TeX Live's makeindex",
+                };
+                format!(
+                    "{} is not available: no TeX Live is installed, and {why}",
+                    t.name()
+                )
+            }
+        }
+    }
+
+    /// For `HELLO.texmf.tools`: each program's path, `"built-in"` for the
+    /// engine's own port, or null.
     pub fn json(&self) -> Json {
-        let p = |x: &Option<PathBuf>| {
+        let p = |t: Tool, x: &Option<PathBuf>| {
+            if Self::in_process(t) {
+                return js("built-in");
+            }
             x.as_ref()
                 .map(|p| js(p.display().to_string()))
                 .unwrap_or(Json::Null)
         };
         obj([
-            ("bibtex", p(&self.bibtex)),
-            ("biber", p(&self.biber)),
-            ("makeindex", p(&self.makeindex)),
+            ("bibtex", p(Tool::Bibtex, &self.bibtex)),
+            ("biber", p(Tool::Biber, &self.biber)),
+            ("makeindex", p(Tool::Makeindex, &self.makeindex)),
         ])
     }
 }
@@ -461,7 +510,7 @@ pub struct Memory {
     /// Per rule: the state last reported as skipped (policy off, a missing
     /// `.bib`), so that each is said once.
     said: HashMap<RuleKey, [u64; 2]>,
-    /// kpsewhich results: (format, name) -> path.
+    /// kpathsea's answers: (format, name) -> path.
     found: HashMap<(String, String), Option<PathBuf>>,
 }
 
@@ -504,7 +553,8 @@ impl Job {
     /// Where a data file the document names is found, as the tool would
     /// find it: the project directory, then the output directory (latexmk
     /// runs bibtex there with `BIBINPUTS` starting with the project), then
-    /// kpathsea's path for `format`.
+    /// kpathsea's path for `format`, through the engine's resolver (the
+    /// bundle's without a TeX Live).
     fn find(&self, name: &str, ext: &str, format: &str) -> Option<PathBuf> {
         let with = if name.ends_with(&format!(".{ext}")) {
             name.to_string()
@@ -533,25 +583,14 @@ impl Job {
                 return r.clone();
             }
         }
-        let r = self.cfg.programs.kpsewhich.as_ref().and_then(|k| {
-            let o = Command::new(k)
-                .arg(format!("-format={format}"))
-                .arg(&with)
-                .current_dir(&self.snap.root)
-                .stdin(Stdio::null())
-                .stderr(Stdio::null())
-                .output()
-                .ok()?;
-            let s = String::from_utf8_lossy(&o.stdout).trim().to_string();
-            (!s.is_empty()).then(|| {
-                let p = PathBuf::from(&s);
-                if p.is_absolute() {
-                    p
-                } else {
-                    self.snap.root.join(p)
-                }
-            })
-        });
+        let fmt = match format {
+            "bst" => crate::resolver::Format::Bst,
+            _ => crate::resolver::Format::Bib,
+        };
+        // kpathsea's `.` is the project, searched above; an answer relative
+        // to the host process's own directory is not the tool's.
+        let r = crate::system::with_resolver(|r| r.find_ex(&with, fmt, true).0)
+            .filter(|p| p.is_absolute());
         self.memory
             .lock()
             .unwrap_or_else(|e| e.into_inner())
@@ -687,10 +726,7 @@ impl Job {
                 continue;
             }
             let Some(prog) = self.cfg.programs.runner(r.key.tool) else {
-                skip(format!(
-                    "{} is not in the TeX Live the host found",
-                    r.key.tool.name()
-                ));
+                skip(self.cfg.programs.missing(r.key.tool));
                 // remembered: not retried until the sources change
                 self.memory
                     .lock()
@@ -735,7 +771,7 @@ impl Job {
         }
         let (result, terminal) = match prog {
             Runner::Program(prog) => self.run_program(r, prog, &scratch, problem),
-            Runner::InProcess => run_in_process(r, &scratch, problem),
+            Runner::InProcess => self.run_in_process(r, &scratch, problem),
         };
         let (status, exit_code) = match &result {
             Ok(Some(c)) => (if *c == 0 { "ok" } else { "error" }, Some(*c)),
@@ -994,68 +1030,95 @@ fn install(dest: &Path, data: &[u8]) -> std::io::Result<()> {
 enum Runner {
     /// The TeX Live program.
     Program(PathBuf),
-    /// The engine's own port (makeindex).
-    #[cfg_attr(not(feature = "makeindex"), allow(dead_code))]
+    /// The engine's own port (makeindex, bibtex).
+    #[cfg_attr(not(any(feature = "makeindex", feature = "bibtex")), allow(dead_code))]
     InProcess,
 }
 
-/// The makeindex rule's run in-process, as the program would run in
-/// `scratch` (`makeindex -o X.ind X.idx`, standard input empty, its terminal
-/// output captured): `Ok(Some(status))`, -1 where the C program would have
-/// died of a signal, `Ok(None)` (a timeout) where it would never have ended.
-#[cfg(feature = "makeindex")]
-fn run_in_process(
-    r: &Rule,
-    scratch: &Path,
-    problem: Option<String>,
-) -> (Result<Option<i32>, String>, String) {
-    if let Some(p) = problem {
-        return (Err(p), String::new());
-    }
-    let (ext, _) = r.key.tool.outputs();
-    let base = &r.key.base;
-    let args: Vec<Vec<u8>> = vec![
-        b"-o".to_vec(),
-        format!("{base}.{ext}").into_bytes(),
-        format!("{base}.idx").into_bytes(),
-    ];
-    // One buffer for both streams, as the program's share one file.
-    let term = std::cell::RefCell::new(Vec::new());
-    struct Shared<'a>(&'a std::cell::RefCell<Vec<u8>>);
-    impl std::io::Write for Shared<'_> {
-        fn write(&mut self, b: &[u8]) -> std::io::Result<usize> {
-            self.0.borrow_mut().extend_from_slice(b);
-            Ok(b.len())
+impl Job {
+    /// A rule's run in-process, as the program would run in `scratch`
+    /// (`makeindex -o X.ind X.idx` or `bibtex X`, standard input empty,
+    /// standard output and error captured together): `Ok(Some(status))`,
+    /// -1 where the C program's behaviour is undefined (it would have died
+    /// of a signal), `Ok(None)` (a timeout) where it would never have ended
+    /// or ran out of time.
+    #[allow(unused_variables)]
+    fn run_in_process(
+        &self,
+        r: &Rule,
+        scratch: &Path,
+        problem: Option<String>,
+    ) -> (Result<Option<i32>, String>, String) {
+        if let Some(p) = problem {
+            return (Err(p), String::new());
         }
-        fn flush(&mut self) -> std::io::Result<()> {
-            Ok(())
+        let base = &r.key.base;
+        match r.key.tool {
+            #[cfg(feature = "makeindex")]
+            Tool::Makeindex => {
+                let (ext, _) = r.key.tool.outputs();
+                let args: Vec<Vec<u8>> = vec![
+                    b"-o".to_vec(),
+                    format!("{base}.{ext}").into_bytes(),
+                    format!("{base}.idx").into_bytes(),
+                ];
+                // One buffer for both streams, as the program's share one file.
+                let term = std::cell::RefCell::new(Vec::new());
+                struct Shared<'a>(&'a std::cell::RefCell<Vec<u8>>);
+                impl std::io::Write for Shared<'_> {
+                    fn write(&mut self, b: &[u8]) -> std::io::Result<usize> {
+                        self.0.borrow_mut().extend_from_slice(b);
+                        Ok(b.len())
+                    }
+                    fn flush(&mut self) -> std::io::Result<()> {
+                        Ok(())
+                    }
+                }
+                let (mut o, mut e) = (Shared(&term), Shared(&term));
+                let mut host = crate::makeindex::EngineHost {
+                    cwd: Some(scratch.to_path_buf()),
+                    stdout: &mut o,
+                    stderr: &mut e,
+                    stdin: Some(vec![]),
+                };
+                let status = flashtex_makeindex::run(&args, &mut host);
+                let result = match status {
+                    flashtex_makeindex::LOOPS_FOREVER => Ok(None),
+                    s if s < 0 => Ok(Some(-1)),
+                    s => Ok(Some(s)),
+                };
+                drop(host);
+                let terminal = String::from_utf8_lossy(&term.borrow()).into_owned();
+                (result, terminal)
+            }
+            #[cfg(feature = "bibtex")]
+            Tool::Bibtex => {
+                // latexmk's $bibtex_fudge: run where the .aux is, with
+                // BIBINPUTS and BSTINPUTS starting with the project and the
+                // output directory.
+                let host = crate::bibtex::EngineHost {
+                    cwd: Some(scratch.to_path_buf()),
+                    first: vec![self.snap.root.clone(), self.snap.out.clone()],
+                    stream_stdout: false,
+                };
+                let deadline = Instant::now().checked_add(self.cfg.timeout);
+                let o = flashtex_bibtex::run_with_deadline(
+                    &[base.clone().into_bytes()],
+                    Box::new(host),
+                    deadline,
+                );
+                let result = match o.status {
+                    flashtex_bibtex::TIMED_OUT => Ok(None),
+                    s if s < 0 => Ok(Some(-1)),
+                    s => Ok(Some(s)),
+                };
+                let mut term = o.stdout;
+                term.extend_from_slice(&o.stderr);
+                (result, String::from_utf8_lossy(&term).into_owned())
+            }
+            t => (Err(format!("{} is not built in", t.name())), String::new()),
         }
     }
-    let (mut o, mut e) = (Shared(&term), Shared(&term));
-    let mut host = crate::makeindex::EngineHost {
-        cwd: Some(scratch.to_path_buf()),
-        stdout: &mut o,
-        stderr: &mut e,
-        stdin: Some(vec![]),
-    };
-    let status = flashtex_makeindex::run(&args, &mut host);
-    let result = match status {
-        flashtex_makeindex::LOOPS_FOREVER => Ok(None),
-        s if s < 0 => Ok(Some(-1)),
-        s => Ok(Some(s)),
-    };
-    drop(host);
-    let terminal = String::from_utf8_lossy(&term.borrow()).into_owned();
-    (result, terminal)
-}
-
-#[cfg(not(feature = "makeindex"))]
-fn run_in_process(
-    _r: &Rule,
-    _scratch: &Path,
-    _problem: Option<String>,
-) -> (Result<Option<i32>, String>, String) {
-    (Err("makeindex is not built in".into()), String::new())
 }
 
 /// Run `cmd`; `Ok(Some(code))` when it exits (-1 when killed by a signal),

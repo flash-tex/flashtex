@@ -273,6 +273,37 @@ fn alive(pid: i32) -> bool {
     unsafe { libc::kill(pid, 0) == 0 }
 }
 
+/// A CANCEL that names a compile already finished (or one never sent)
+/// is dropped: it does not cancel a later compile that reuses the id.
+#[test]
+fn a_late_cancel_does_not_cancel_a_later_compile() {
+    if !texlive() {
+        eprintln!("skipped: no TeX Live");
+        return;
+    }
+    let dir = std::env::temp_dir().join(format!("flashtex-host-latecancel-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    let (proj, out) = project(
+        &dir,
+        "\\documentclass{article}\n\\begin{document}\nx\n\\end{document}\n",
+    );
+    let h = start(&dir);
+    let alarm = deadline(h.child.id(), 600);
+    let mut c = Client::connect(&h.sock).unwrap();
+    c.compile(&request(7, &proj, &out)).unwrap();
+    let (_, done) = events(&mut c, 7);
+    assert_eq!(done.str_field("status"), Some("ok"), "{done:?}");
+    c.cancel(7).unwrap(); // after its DONE
+    c.cancel(99).unwrap(); // never sent
+    c.compile(&request(7, &proj, &out)).unwrap();
+    let (_, done) = events(&mut c, 7);
+    assert_eq!(done.str_field("status"), Some("ok"), "{done:?}");
+    drop(alarm);
+    c.bye().unwrap();
+    drop(h);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// However the host ends, its engine does not outlive it: the engine
 /// watches the host's lifeline (`host/proc.rs`) and kills its group.
 #[test]

@@ -354,6 +354,8 @@ impl Globals {
             .and_then(|m| m.duration_since(std::time::UNIX_EPOCH).ok())
             .map(|d| d.as_secs() as i64)
             .unwrap_or(0);
+        // (the incremental journal: the time read, and the file)
+        crate::system::note_stamp(&path, t);
         let s = make_pdf_time(t, force_source_date());
         if self.pool_ptr as usize + s.len() >= crate::generated::consts::pool_size as usize {
             self.pool_ptr = crate::generated::consts::pool_size;
@@ -370,6 +372,8 @@ impl Globals {
         let Ok(meta) = std::fs::metadata(&path) else {
             return;
         };
+        // (the incremental journal: the size is the content's)
+        crate::system::note_size_read(&path);
         let b = meta.len().to_string().into_bytes();
         if self.pool_ptr as usize + b.len() >= crate::generated::consts::pool_size as usize {
             self.pool_ptr = crate::generated::consts::pool_size;
