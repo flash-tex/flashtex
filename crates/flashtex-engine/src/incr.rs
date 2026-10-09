@@ -2727,10 +2727,16 @@ impl Session {
 
     /// Persist S₀ (DESIGN.md §5.1) to `path`: (bytes, bytes on disk).
     pub fn save_s0(&mut self, path: &str) -> Result<(u64, u64), String> {
+        self.prepare_s0()?.write(path, &|| false)
+    }
+
+    /// S₀ taken out of the engine, to be written by another thread
+    /// (`host::s0write`).
+    pub fn prepare_s0(&mut self) -> Result<host::S0Image, String> {
         let s0 = self.s0.as_ref().ok_or("no S0 to save")?;
         let (id, key) = (s0.id, s0.key.clone());
         let g = self.g.as_mut().ok_or("no engine")?;
-        host::write_s0(g, id, &key, path)
+        host::prepare_s0(g, id, &key)
     }
 
     /// Warm the process up before a document is opened (DESIGN.md §1.2's
