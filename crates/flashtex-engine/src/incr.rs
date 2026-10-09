@@ -241,6 +241,9 @@ pub struct Report {
     /// The restart point is before S₀ (`Session::preamble_restart`): the
     /// run took S₀ again.
     pub restart_preamble: bool,
+    /// READ-REVALIDATE (`crate::revalidate`): a later restart point was
+    /// tried; whether it held.
+    pub revalidated: Option<bool>,
     /// ... in the middle of the main file's line, which the run read again
     /// (`crate::midline`).
     pub restart_midline: bool,
@@ -330,7 +333,7 @@ pub struct Report {
 impl Report {
     pub fn json(&self) -> String {
         format!(
-            "{{\"mode\":\"{}\",\"cold_reason\":{},\"status\":{},\"paused\":{},\"restart_pages\":{},\"cursor\":{},\"restart_mid_page\":{},\"restart_preamble\":{},\"restart_midline\":{},\"restart_gap\":{},\"converged_at\":{},\"rerun_from\":{},\"rerun_pages\":{},\"pages\":{},\"find_s\":{:.6},\"key_s\":{:.6},\"changes_s\":{:.6},\"restore_s\":{:.6},\"page_s\":{:.6},\"total_s\":{:.6},\"tests\":{},\"test_s\":{:.6},\"log_bytes\":{},\"checkpoints\":{},\"diffs\":{:?},\"page_times\":[{}],\"edited\":{},\"passes\":{},\"pass_modes\":{:?},\"pass_s\":[{}],\"oscillation\":{},\"ck_stats\":{},\"l5\":{:?},\"rs_events\":{},\"preempted\":{},\"deferred\":{}}}",
+            "{{\"mode\":\"{}\",\"cold_reason\":{},\"status\":{},\"paused\":{},\"restart_pages\":{},\"cursor\":{},\"restart_mid_page\":{},\"restart_preamble\":{},\"restart_midline\":{},\"revalidated\":{},\"restart_gap\":{},\"converged_at\":{},\"rerun_from\":{},\"rerun_pages\":{},\"pages\":{},\"find_s\":{:.6},\"key_s\":{:.6},\"changes_s\":{:.6},\"restore_s\":{:.6},\"page_s\":{:.6},\"total_s\":{:.6},\"tests\":{},\"test_s\":{:.6},\"log_bytes\":{},\"checkpoints\":{},\"diffs\":{:?},\"page_times\":[{}],\"edited\":{},\"passes\":{},\"pass_modes\":{:?},\"pass_s\":[{}],\"oscillation\":{},\"ck_stats\":{},\"l5\":{:?},\"rs_events\":{},\"preempted\":{},\"deferred\":{}}}",
             self.mode,
             self.cold_reason
                 .as_ref()
@@ -343,6 +346,9 @@ impl Report {
             self.restart_mid_page,
             self.restart_preamble,
             self.restart_midline,
+            self.revalidated
+                .map(|b| b.to_string())
+                .unwrap_or_else(|| "null".into()),
             self.restart_gap,
             self.converged_at
                 .map(|p| p.to_string())
@@ -472,6 +478,10 @@ struct Obs {
     /// last page checkpoint before the old run's first later barrier or
     /// read of a file the runs write (`test`, `rerun_point`).
     rerun_from: Option<CheckpointId>,
+    /// READ-REVALIDATE (`crate::revalidate`): the comparison this run makes
+    /// at a page, and its outcome (`Ok`: the restart point it allows).
+    probe: Option<Box<crate::revalidate::Probe>>,
+    probe_result: Option<Result<CheckpointId, String>>,
     /// Retention during the run (`thin`): the budget, the cursor, the
     /// checkpoints never to drop, and the page and page-count maps of the
     /// checkpoints before the run.
@@ -1010,6 +1020,66 @@ impl Obs {
 }
 
 impl Obs {
+    /// READ-REVALIDATE (`crate::revalidate`): the new run at page
+    /// `pr.page`, just checkpointed as `new`, against the old run's
+    /// checkpoint `pr.p1` there: the same input positions (before every
+    /// change), output, terminal and journal since the restart point
+    /// (`revalidate::same_since`), and the same state, compared as the
+    /// convergence test compares it (`cstate`, `same_words`) -- with no
+    /// character the new run shipped that the old one had not (the old
+    /// run's later states are kept as they are).
+    fn probe_test(
+        &mut self,
+        g: &mut Globals,
+        new: &ExtRecord,
+        pr: &crate::revalidate::Probe,
+    ) -> Result<(), String> {
+        let old = pr.p1;
+        if self.patched.contains(&old) {
+            return Err("the old checkpoint holds meanings a later .aux changed".into());
+        }
+        let o = g
+            .pending_record(old)
+            .ok_or("the old checkpoint has no record")?;
+        crate::revalidate::same_since(g, pr, &o, new, &self.edits)?;
+        self.shifts = self
+            .shifts
+            .iter()
+            .map(|s| s.with_tags(g))
+            .collect::<Result<Vec<_>, _>>()?;
+        if !new.cstate.same_as(&o.cstate) {
+            return Err("pdfTeX's C-part state differs".into());
+        }
+        // (the convergence test's dead `pdf_last_byte` and `\pdfdest`
+        // dimensions rest on the old run's whole future, which a restart at
+        // `P2` does not keep: compared here)
+        let (last_byte_dead, dest_dims_dead) = (false, false);
+        let mut char_or = vec![];
+        let mut stages = self.old_lines.get(&old).cloned().unwrap_or_default();
+        stages.extend(self.shifts.iter().cloned());
+        let active = crate::lineshift::Active::new(&stages);
+        let t = Instant::now();
+        self.tests += 1;
+        let r = crate::lineshift::with_active(active, || {
+            same_words(
+                g,
+                old,
+                last_byte_dead,
+                dest_dims_dead,
+                self.relabel,
+                self.debug,
+                Box::new(|| false),
+                &mut char_or,
+            )
+        });
+        self.test_s += t.elapsed().as_secs_f64();
+        r?;
+        if !char_or.is_empty() {
+            return Err("the new run shipped characters the old one had not".into());
+        }
+        Ok(())
+    }
+
     /// The old run's last page checkpoint from `old` on (excluding `old`
     /// itself) before its first later external effect -- one past
     /// `effects`, the count at `old` -- and before it opens the journal
@@ -2226,6 +2296,26 @@ impl Observer for Obs {
             }
             self.edited_instr = self.instr0.zip(now).map(|(a, b)| b.0 - a);
             self.typeset_instr = self.instr_go.zip(now).map(|(a, b)| (b.0 - a.0, b.1 - a.1));
+        }
+        // READ-REVALIDATE: at its page, the comparison with the old run
+        if let Some(pr) = self.probe.take() {
+            if j < pr.page {
+                self.probe = Some(pr);
+            } else {
+                let r = if j == pr.page {
+                    self.probe_test(g, &rec, &pr).map(|()| pr.p2)
+                } else {
+                    Err("past the page".into())
+                };
+                if self.debug {
+                    eprintln!("[incr] revalidation at page {j}: {r:?}");
+                }
+                let ok = r.is_ok();
+                self.probe_result = Some(r);
+                if ok {
+                    return Action::Stop;
+                }
+            }
         }
         // newer work first: not even a convergence test
         if self.stop_at != Some(j) && self.preempt_now(g) {
@@ -3525,14 +3615,17 @@ impl Session {
             Some(_) => None,
             None => self.l5_restart(&edits, &changed, bad_lookup, &mut l5),
         };
+        let mut ordinary = None;
         let (mut r, mut patch) = match (pre_r, l5r) {
             (Some(r), _) => (r, None),
             (None, Some((r, p))) => (r, Some(p)),
-            (None, None) => (
-                self.restart_point(&edits, &changed, bad_lookup)
-                    .unwrap_or(s0_id),
-                None,
-            ),
+            (None, None) => {
+                let r = self
+                    .restart_point(&edits, &changed, bad_lookup)
+                    .unwrap_or(s0_id);
+                ordinary = Some(r);
+                (r, None)
+            }
         };
         if let Some(e) = reemit {
             let g = self.g.as_mut().unwrap();
@@ -3630,6 +3723,13 @@ impl Session {
                 b.s0_retaken = true;
             }
         }
+        // READ-REVALIDATE: a later restart point, if what holds this one
+        // back left nothing behind (`crate::revalidate`)
+        let probe = if ordinary == Some(r) && patch.is_none() && !self.no_tests {
+            self.revalidation(r, &edits, &changed, bad_lookup, &[])
+        } else {
+            None
+        };
         let rep = self.incremental(
             t0,
             r,
@@ -3640,6 +3740,7 @@ impl Session {
             patch,
             fixed_writes,
             pre_r.is_some(),
+            probe,
         );
         self.fixed_inputs.clear();
         self.fixed_created.clear();
@@ -4429,6 +4530,116 @@ impl Session {
         Some(ids[a])
     }
 
+    /// READ-REVALIDATE (`crate::revalidate`): for the restart point `p0`,
+    /// the old run's first page checkpoint `p1` after it (within
+    /// `revalidate::MAX_PAGES` pages) and the newest checkpoint `p2` that
+    /// consumed nothing changed once the reads between `p0` and `p1` are
+    /// left out, with every stream on a changed file still before its
+    /// change, at least a page past `p1`. `None`: no such window.
+    fn revalidation(
+        &mut self,
+        p0: CheckpointId,
+        edits: &[Edit],
+        changed: &[String],
+        bad_lookup: Option<usize>,
+        prior: &[(usize, usize)],
+    ) -> Option<crate::revalidate::Probe> {
+        if !crate::revalidate::enabled()
+            || edits.is_empty()
+            || prior.len() >= crate::revalidate::MAX_CHAIN
+        {
+            return None;
+        }
+        let debug = self.opts.debug;
+        let base = *self.ck_pages.get(&p0)?;
+        let (page, p1) = self
+            .pages
+            .iter()
+            .enumerate()
+            .skip(base)
+            .take(crate::revalidate::MAX_PAGES)
+            .find_map(|(i, p)| p.ckpt.map(|c| (i + 1, c)))?;
+        let j = self.journal.as_ref()?;
+        let g = self.g.as_mut()?;
+        let ids = g.checkpoints();
+        let (i0, i1) = (
+            ids.iter().position(|&i| i == p0)?,
+            ids.iter().position(|&i| i == p1)?,
+        );
+        if i1 <= i0 {
+            return None;
+        }
+        let (r0, r1) = (g.record_of(p0).ok()?, g.record_of(p1).ok()?);
+        // (a lookup in the window whose answer changed: whether another
+        // follows it is unknown)
+        if bad_lookup.is_some_and(|b| b < r1.reads.1) {
+            return None;
+        }
+        let mut windows = prior.to_vec();
+        windows.push((r0.reads.0, r1.reads.0));
+        let w = crate::revalidate::window_journal(j, &windows);
+        let first_read = first_reads(&w);
+        let now: HashMap<String, std::sync::Arc<Vec<u8>>> = edits
+            .iter()
+            .filter_map(|e| {
+                let f = j
+                    .files
+                    .iter()
+                    .find(|f| f.path == e.path && f.content.is_some())?;
+                Some((e.path.clone(), f.content.clone()?))
+            })
+            .collect();
+        let mut good = |id: CheckpointId| -> bool {
+            g.record_of(id).is_ok_and(|r| {
+                consumed_nothing_changed(&w, &first_read, &r, edits, changed, bad_lookup)
+                    && crate::revalidate::streams_before_edits(&r, edits, |p| now.get(p).cloned())
+            })
+        };
+        if !good(p1) {
+            return None;
+        }
+        let (mut a, mut b) = (i1, ids.len());
+        while b - a > 1 {
+            let m = (a + b) / 2;
+            if good(ids[m]) {
+                a = m;
+            } else {
+                b = m;
+            }
+        }
+        while a > i1 && !g.restorable(ids[a]) {
+            a -= 1;
+        }
+        let p2 = ids[a];
+        let gain = self.ck_pages.get(&p2).copied().unwrap_or(0);
+        if debug {
+            eprintln!(
+                "[incr] revalidation window: restart {p0} (page {base}), compare at {p1} (page {page}), then {p2} (page {gain})"
+            );
+        }
+        if gain <= page {
+            return None;
+        }
+        Some(crate::revalidate::Probe {
+            windows,
+            bad_lookup,
+            page,
+            p1,
+            p2,
+            old_files: j.files[r0.reads.0.min(j.files.len())..r1.reads.0.min(j.files.len())]
+                .to_vec(),
+            old_lookups: j.lookups
+                [r0.reads.1.min(j.lookups.len())..r1.reads.1.min(j.lookups.len())]
+                .to_vec(),
+            old_outputs: j.outputs
+                [r0.reads.2.min(j.outputs.len())..r1.reads.2.min(j.outputs.len())]
+                .to_vec(),
+            later_outputs: j.outputs[r1.reads.2.min(j.outputs.len())..].to_vec(),
+            p0: r0,
+            now,
+        })
+    }
+
     fn observer(&self, t0: Instant, base: usize, stop_at: Option<usize>) -> Obs {
         Obs {
             old_outputs: vec![],
@@ -4475,6 +4686,8 @@ impl Session {
             old_lines: HashMap::new(),
             changed_lookup_last: None,
             rerun_from: None,
+            probe: None,
+            probe_result: None,
             budget: self.opts.budget,
             dense: self.opts.dense,
             cursor: self.cursor,
@@ -4611,7 +4824,18 @@ impl Session {
         patch: Option<std::sync::Arc<crate::readset::Patch>>,
         fixed_writes: Vec<(String, std::sync::Arc<Vec<u8>>)>,
         before_s0: bool,
+        probe: Option<crate::revalidate::Probe>,
     ) -> Result<Report, String> {
+        // (what a restart at the revalidated point needs again)
+        let chain = probe.as_ref().map(|p| (p.windows.clone(), p.bad_lookup));
+        let again = probe.as_ref().map(|_| {
+            (
+                edits.clone(),
+                changed.clone(),
+                self.line_shifts.clone(),
+                fixed_writes.clone(),
+            )
+        });
         let base = *self
             .ck_pages
             .get(&r)
@@ -4904,11 +5128,70 @@ impl Session {
             crate::os::perf_mark(true);
             crate::macroprof::window_open(g);
         }
+        obs.probe = probe.map(Box::new);
+        let probing = obs.probe.is_some();
         g.layer().observer = Some(Box::new(obs));
         let status = g.resume_to_end().inspect_err(|_| {
             system::record_reads_into(None);
         })?;
+        let mut revalidated = None;
+        if probing {
+            let g = self.g.as_mut().unwrap();
+            if let Some(mut o) = g
+                .layer()
+                .observer
+                .take()
+                .and_then(|o| o.into_any().downcast::<Obs>().ok())
+            {
+                let outcome = o.probe_result.take();
+                // (a run stopped before its page: no revalidation later)
+                o.probe = None;
+                match (status == STOPPED, outcome) {
+                    (true, Some(Ok(p2))) => {
+                        // what the window read left nothing behind: the old
+                        // run is this one's up to `p2` (`crate::revalidate`)
+                        drop(o);
+                        let (edits, changed, shifts, fixed_writes) = again.ok_or("no edits")?;
+                        if let Err(e) = g.reattach_pending() {
+                            return self.cold(t0, stop_at, Some(format!("revalidation: {e}")));
+                        }
+                        self.line_shifts = shifts;
+                        if self.opts.debug {
+                            eprintln!("[incr] revalidated: restart at {p2} instead of {r}");
+                        }
+                        // (the next window, from `p2`: `revalidate::MAX_CHAIN`)
+                        let next = chain.and_then(|(windows, bad)| {
+                            self.revalidation(p2, &edits, &changed, bad, &windows)
+                        });
+                        let rep = self.incremental(
+                            t0,
+                            p2,
+                            edits,
+                            changed,
+                            stop_at,
+                            find_s,
+                            None,
+                            fixed_writes,
+                            before_s0,
+                            next,
+                        );
+                        return rep.map(|mut rep| {
+                            rep.revalidated = Some(true);
+                            rep
+                        });
+                    }
+                    (_, outcome) => {
+                        revalidated = outcome.map(|r| r.is_ok());
+                        if revalidated.is_none() && status != STOPPED {
+                            revalidated = Some(false);
+                        }
+                        g.layer().observer = Some(o);
+                    }
+                }
+            }
+        }
         let mut rep = Report {
+            revalidated,
             mode: "incremental".into(),
             restart_preamble: before_s0,
             restart_midline: midline,
