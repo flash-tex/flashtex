@@ -28,6 +28,12 @@
 //! **A file changed while it is hashed.** The identity is taken before and
 //! after the read; the hash is kept only when both are the same, so a kept
 //! hash is always of the bytes the identity stands for.
+//!
+//! **Unix only.** Elsewhere `os::file_stat` has no inode and no
+//! status-change time (Windows gives the creation time, which NTFS carries
+//! over to a file re-created under the same name), so a rewrite to the same
+//! size with its modification time put back would keep its identity: there
+//! every file is hashed, as before.
 
 use std::collections::HashMap;
 use std::sync::Mutex;
@@ -69,7 +75,10 @@ impl Ident {
 /// More entries than any document reads; past it the cache starts afresh.
 const MAX_ENTRIES: usize = 1 << 16;
 
-static CACHE: Mutex<Option<HashMap<String, (Ident, [u64; 2])>>> = Mutex::new(None);
+/// Path -> (identity, hash).
+type Kept = HashMap<String, (Ident, [u64; 2])>;
+
+static CACHE: Mutex<Option<Kept>> = Mutex::new(None);
 
 /// How many files were read to be hashed (the tests).
 #[cfg(test)]
@@ -83,7 +92,7 @@ pub fn hash_file(path: &str) -> std::io::Result<[u64; 2]> {
 
 fn hash_file_within(path: &str, window: i128) -> std::io::Result<[u64; 2]> {
     let before = Ident::of(path)?;
-    let keep = !before.racy(window);
+    let keep = cfg!(unix) && !before.racy(window);
     if keep {
         let c = CACHE.lock().unwrap_or_else(|e| e.into_inner());
         if let Some((id, h)) = c.as_ref().and_then(|m| m.get(path)) {
@@ -139,8 +148,24 @@ mod tests {
         crate::persist::hash128(&std::fs::read(p).unwrap())
     }
 
+    /// Without inodes and status-change times every lookup reads the file.
+    #[test]
+    #[cfg(not(unix))]
+    fn without_unix_identities_every_file_is_read() {
+        let _s = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
+        let f = dir("nounix").join("a.sty");
+        std::fs::write(&f, "\\def\\a{1}").unwrap();
+        set_mtime(&f, SystemTime::now() - Duration::from_secs(3600));
+        let p = f.to_str().unwrap();
+        let r0 = reads();
+        assert_eq!(hash_file_within(p, 0).unwrap(), hash_of(&f));
+        assert_eq!(hash_file_within(p, 0).unwrap(), hash_of(&f));
+        assert_eq!(reads() - r0, 2);
+    }
+
     /// An unchanged file is read once; its hash is the file's.
     #[test]
+    #[cfg(unix)]
     fn an_unchanged_file_is_hashed_once() {
         let _s = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
         let f = dir("once").join("a.sty");
@@ -158,6 +183,7 @@ mod tests {
     /// time is put back (`cp -p`), is hashed again: the status-change time
     /// moved.
     #[test]
+    #[cfg(unix)]
     fn a_changed_file_is_hashed_again() {
         let _s = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
         let f = dir("changed").join("b.sty");
@@ -192,6 +218,7 @@ mod tests {
     /// a second write within the same tick, to the same length and time,
     /// is seen.
     #[test]
+    #[cfg(unix)]
     fn a_racy_file_is_never_kept() {
         let _s = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
         let f = dir("racy").join("c.aux");
@@ -216,6 +243,7 @@ mod tests {
 
     /// Another file at the path (a new inode) is hashed again.
     #[test]
+    #[cfg(unix)]
     fn a_replaced_file_is_hashed_again() {
         let _s = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
         let d = dir("replaced");
