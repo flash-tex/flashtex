@@ -365,6 +365,10 @@ impl Globals {
             full.push(b':');
             full.extend_from_slice(f);
         }
+        #[cfg(unix)]
+        {
+            self.host.child_env.named_fonts = true;
+        }
         let mgr = self.host.font_mgr.get_or_insert_with(|| {
             Arc::new(crate::fontmgr::FontMgr::new(std::sync::Arc::new(
                 crate::fontmgr::FontCatalog::system_cached(None),

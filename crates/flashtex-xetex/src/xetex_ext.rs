@@ -529,6 +529,16 @@ impl Globals {
     /// `SOURCE_DATE_EPOCH` (or of now) if `FORCE_SOURCE_DATE=1`, else the
     /// local time now.
     pub fn date_and_time(&mut self, t: &mut i32, d: &mut i32, m: &mut i32, y: &mut i32) {
+        // A hot spare stops here, at the reading after the format is loaded
+        // (the first is `tex_body`'s initialization's, before it), until its
+        // compile comes (`crate::host::spare`): nothing the document decides
+        // has been read yet, and the clock is read after.
+        #[cfg(unix)]
+        if self.ready_already == 314159 {
+            if let Some(fd) = self.host.spare_go.take() {
+                crate::host::spare::wait(self, fd);
+            }
+        }
         let forced = std::env::var("FORCE_SOURCE_DATE").map(|v| v == "1") == Ok(true);
         let tm = if forced {
             flashtex_engine::os::broken_down(self.start_time(), true)

@@ -3,13 +3,15 @@
 //! host's export runs), the `.aux` passes, the external tools, and the
 //! diagnostics read from the log.
 //!
-//! Every run is a full, cold run: the engine's display list streams from
+//! Every run is a full, cold run (started ahead as a spare, `spare.rs`,
+//! when one stands for it): the engine's display list streams from
 //! the child through a socket of its own (`FLASHTEX_DISPLAY_LIST`) to the
 //! client as pages are shipped. A run whose `.aux` (or table of contents,
 //! list of figures, ...) changed is followed by another, as latexmk does,
 //! each pass's pages replacing the previous pass's (spec §6.4).
 
 use super::proc::Children;
+use super::spare::{self, Inputs, Key, Spares, Started};
 use flashtex_display_list::json::{obj, s as js, Json};
 use flashtex_display_list::page::{flags, Item, Page, StreamKind};
 use flashtex_display_list::resource::Font;
@@ -266,23 +268,20 @@ fn pass_state(dir: &Path, job: &str) -> Vec<Option<Vec<u8>>> {
         .collect()
 }
 
-/// Run the engine once for `job`, streaming its pages to `out` (unless an
-/// export). `t0` is when the compile arrived.
-#[allow(clippy::too_many_arguments)]
-pub fn run_once(
+/// A run of `job`'s command, not started: its command (as xelatex would be
+/// run), and the display-list socket it is to connect to, bound (none for
+/// an export). Each run's socket is named by `n`, the connection's count of
+/// runs (`sock_dir` is the connection's): a spare's is made before its
+/// compile's id is known.
+fn engine_command(
     exe: &Path,
     format_dir: &Path,
     job: &Job,
-    accept: &Accept,
-    out: &Out,
-    running: &Arc<Mutex<Running>>,
-    t0: Instant,
     sock_dir: &Path,
     children: &Children,
-) -> Result<RunResult, String> {
-    std::fs::create_dir_all(&job.output_dir)
-        .map_err(|e| format!("{}: {e}", job.output_dir.display()))?;
-    let sock = sock_dir.join(format!("dl-{}-{}.sock", std::process::id(), job.id));
+    n: u64,
+) -> Result<(Command, Option<UnixListener>, PathBuf), String> {
+    let sock = sock_dir.join(format!("dl-{}-{n}.sock", std::process::id()));
     let _ = std::fs::remove_file(&sock);
     let listener = (!job.export)
         .then(|| UnixListener::bind(&sock))
@@ -296,6 +295,11 @@ pub fn run_once(
         .current_dir(&job.root)
         .env("TEXFORMATS", format!("{}:", format_dir.display()))
         .env_remove("FLASHTEX_DISPLAY_LIST")
+        .env(spare::HINTS_ENV, "1")
+        // the resolver's memo of lookups is for a resident engine: a run
+        // of its own makes each lookup about once, and the memo's
+        // bookkeeping costs more than it saves (kpathsea answers alike)
+        .env("FLASHTEX_LOOKUP_MEMO", "off")
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::piped());
@@ -304,30 +308,33 @@ pub fn run_once(
             "FLASHTEX_DISPLAY_LIST",
             format!("socket:{}", sock.display()),
         );
-        // the client's font formats decide which programs travel (spec §5.1)
-        let mut f: Vec<&str> = job.font_formats.iter().map(String::as_str).collect();
-        f.sort_unstable();
-        cmd.env("FLASHTEX_DISPLAY_LIST_FONT_FORMATS", f.join(","));
+        cmd.env("FLASHTEX_DISPLAY_LIST_FONT_FORMATS", font_formats(job));
     }
     children.prepare(&mut cmd);
-    // Started under the lock a cancel takes: a cancel either comes first
-    // (and nothing starts) or finds the child's group to kill.
-    let mut child = {
-        let mut r = running.lock().unwrap();
-        if r.cancelled {
-            return Ok(RunResult {
-                cancelled: true,
-                ..RunResult::default()
-            });
-        }
-        let c = cmd.spawn().map_err(|e| format!("{}: {e}", exe.display()))?;
-        r.group = Some(c.id());
-        c
-    };
-    // the output's own reports (`flashtex_xetex::out`), read as they come so
-    // that the pipe never fills
+    Ok((cmd, listener, sock))
+}
+
+/// The client's font formats, which decide which programs travel (spec
+/// §5.1).
+fn font_formats(job: &Job) -> String {
+    let mut f: Vec<&str> = job.font_formats.iter().map(String::as_str).collect();
+    f.sort_unstable();
+    f.join(",")
+}
+
+/// Start `cmd`, reading its standard error as it comes so that the pipe
+/// never fills.
+fn spawn(
+    mut cmd: Command,
+    listener: Option<UnixListener>,
+    sock: PathBuf,
+) -> Result<Started, String> {
+    let mut child = cmd
+        .spawn()
+        .map_err(|e| format!("{}: {e}", Path::new(cmd.get_program()).display()))?;
+    // the output's own reports (`flashtex_xetex::out`)
     let err_pipe = child.stderr.take();
-    let err_reader = std::thread::spawn(move || {
+    let err = std::thread::spawn(move || {
         let mut s = String::new();
         if let Some(mut p) = err_pipe {
             use std::io::Read;
@@ -335,6 +342,142 @@ pub fn run_once(
         }
         s
     });
+    Ok(Started {
+        child,
+        listener,
+        sock,
+        err,
+    })
+}
+
+/// The command `engine_command` makes for `job`, as a spare's key: every
+/// input to it but the run's socket and descriptors (`spare::Key`).
+fn spare_key(
+    job: &Job,
+    format_dir: &Path,
+    env: Vec<(std::ffi::OsString, std::ffi::OsString)>,
+) -> Key {
+    Key {
+        argv: job.argv(),
+        root: job.root.clone(),
+        format_dir: format_dir.to_path_buf(),
+        font_formats: font_formats(job),
+        external_tools: job.external_tools.clone(),
+        env,
+    }
+}
+
+/// What a spare for `job`'s runs is started as, and what it reads before
+/// its wait (`spare.rs`); `None` when no spare can stand for its runs.
+fn spare_for(job: &Job, format_dir: &Path) -> Option<(Key, Inputs)> {
+    if job.export || job.main.contains('"') {
+        return None;
+    }
+    let key = spare_key(job, format_dir, spare::host_env());
+    // the engine resolves the main file only when it is the first argument
+    let main = job.preamble.is_empty().then_some(job.main.as_str());
+    let fmt = format_dir.join(format!("{}.fmt", job.format));
+    Some((key, Inputs::read(&fmt, &job.root, main)?))
+}
+
+/// Run the engine once for `job`, streaming its pages to `out` (unless an
+/// export). `t0` is when the compile arrived. A spare (`spare.rs`) that
+/// stands for the run is taken instead of starting one, and a new spare
+/// is started for the next run of the same command.
+#[allow(clippy::too_many_arguments)]
+pub fn run_once(
+    exe: &Path,
+    format_dir: &Path,
+    job: &Job,
+    accept: &Accept,
+    out: &Out,
+    running: &Arc<Mutex<Running>>,
+    t0: Instant,
+    sock_dir: &Path,
+    children: &Children,
+    spares: &mut Spares,
+) -> Result<RunResult, String> {
+    std::fs::create_dir_all(&job.output_dir)
+        .map_err(|e| format!("{}: {e}", job.output_dir.display()))?;
+    // an export is a run of its own: it neither takes nor ends the spare
+    let spare = (spares.enabled() && !job.export)
+        .then(|| spare_for(job, format_dir))
+        .flatten();
+    let taken = match &spare {
+        Some((key, inputs)) => spares.take(key, Some(inputs)),
+        None if job.export => None,
+        None => {
+            spares.clear();
+            None
+        }
+    };
+    let fresh = match taken {
+        Some(_) => None,
+        None => Some(engine_command(
+            exe,
+            format_dir,
+            job,
+            sock_dir,
+            children,
+            spares.next_run(),
+        )?),
+    };
+    // Started (or let go) under the lock a cancel takes: a cancel either
+    // comes first (and nothing starts) or finds the child's group to kill.
+    let run = {
+        let mut r = running.lock().unwrap();
+        if r.cancelled {
+            if let Some((run, _)) = taken {
+                run.end();
+            }
+            return Ok(RunResult {
+                cancelled: true,
+                ..RunResult::default()
+            });
+        }
+        let mut run = None;
+        if let Some((s, g)) = taken {
+            if spare::go(g) {
+                run = Some(s);
+            } else {
+                s.end();
+            }
+        }
+        let run = match run {
+            Some(s) => s,
+            None => {
+                let (cmd, l, sock) = match fresh {
+                    Some(f) => f,
+                    None => {
+                        engine_command(exe, format_dir, job, sock_dir, children, spares.next_run())?
+                    }
+                };
+                spawn(cmd, l, sock)?
+            }
+        };
+        r.group = Some(run.child.id());
+        run
+    };
+    // the next run's spare, which gets ready while this one runs
+    if let Some((key, inputs)) = spare {
+        if let Ok((mut cmd, l, sock)) =
+            engine_command(exe, format_dir, job, sock_dir, children, spares.next_run())
+        {
+            if let Ok((go, read_end)) = spare::arm(&mut cmd, spares.fonts()) {
+                let s = spawn(cmd, l, sock);
+                drop(read_end);
+                if let Ok(s) = s {
+                    spares.put(key, inputs, (job.root.clone(), job.main.clone()), s, go);
+                }
+            }
+        }
+    }
+    let Started {
+        mut child,
+        listener,
+        sock,
+        err,
+    } = run;
     let mut res = RunResult::default();
     if let Some(l) = listener {
         l.set_nonblocking(true).ok();
@@ -354,8 +497,8 @@ pub fn run_once(
             s.set_nonblocking(false).ok();
             forward(s, job, accept, out, &mut res, t0);
         }
-        let _ = std::fs::remove_file(&sock);
     }
+    let _ = std::fs::remove_file(&sock);
     let status = child.wait();
     {
         // reaped: its group is no longer one to kill
@@ -364,7 +507,10 @@ pub fn run_once(
         res.cancelled = r.cancelled;
     }
     res.exit_code = status.map_err(|e| e.to_string())?.code();
-    res.stderr = err_reader.join().unwrap_or_default();
+    res.stderr = err.join().unwrap_or_default();
+    if !job.export {
+        spares.hints(&res.stderr);
+    }
     Ok(res)
 }
 
@@ -588,6 +734,7 @@ pub fn compile(
     t0: Instant,
     sock_dir: &Path,
     children: &Children,
+    spares: &mut Spares,
 ) -> Outcome {
     let mut passes = 0;
     let mut last;
@@ -596,7 +743,7 @@ pub fn compile(
         let before = pass_state(&job.output_dir, &job.jobname);
         passes += 1;
         last = match run_once(
-            exe, format_dir, job, accept, out, running, t0, sock_dir, children,
+            exe, format_dir, job, accept, out, running, t0, sock_dir, children, spares,
         ) {
             Ok(r) => r,
             Err(e) => {
@@ -712,6 +859,68 @@ Overfull \\hbox (1.0pt too wide) in paragraph at lines 3--4
         assert!(d[3].message.contains("removing `math shift'"), "{:?}", d[3]);
         assert_eq!(d[3].line, Some(9));
         assert_eq!(d.len(), 4);
+    }
+
+    /// A spare stands only for a run started exactly as it was: another
+    /// shell-escape (trust) setting, halt-on-error, output directory,
+    /// `[fonts]` line, font formats or external-tools setting, or another
+    /// environment of the host (read confinement and its roots, Live
+    /// Share's included; `openout_any`; the TeX trees), is another key.
+    #[test]
+    fn a_spare_key_is_the_whole_command() {
+        let job = |extra: &str| {
+            let j = Json::parse(&format!(
+                r#"{{"id": 1, "root": "/p", "main": "main.tex"{extra}}}"#
+            ))
+            .unwrap();
+            Job::parse(&j, Path::new("/tmp/x")).unwrap()
+        };
+        let env = |kv: &[(&str, &str)]| -> Vec<(std::ffi::OsString, std::ffi::OsString)> {
+            kv.iter().map(|(k, v)| ((*k).into(), (*v).into())).collect()
+        };
+        let base_env = env(&[
+            ("FLASHTEX_CONFINE_READS", "1"),
+            ("FLASHTEX_CONFINE_ROOTS", "/p"),
+        ]);
+        let fmt = Path::new("/f");
+        let base = spare_key(&job(""), fmt, base_env.clone());
+        assert_eq!(base, spare_key(&job(""), fmt, base_env.clone()));
+        for other in [
+            r#", "shell_escape": "on""#,
+            r#", "shell_escape": "off""#,
+            r#", "shell_escape": "restricted""#,
+            r#", "halt_on_error": true"#,
+            r#", "output_dir": "/elsewhere""#,
+            r#", "jobname": "other""#,
+            r#", "format": "xetex""#,
+            r#", "font_formats": ["opentype"]"#,
+            r#", "external_tools": "auto""#,
+            r#", "external_tools": "off""#,
+        ] {
+            assert_ne!(
+                base,
+                spare_key(&job(other), fmt, base_env.clone()),
+                "{other}"
+            );
+        }
+        let mut fonts = job("");
+        fonts.preamble = "\\AddToHook{x}{}".into();
+        assert_ne!(base, spare_key(&fonts, fmt, base_env.clone()));
+        assert_ne!(base, spare_key(&job(""), Path::new("/g"), base_env.clone()));
+        for e in [
+            env(&[("FLASHTEX_CONFINE_ROOTS", "/p")]),
+            env(&[
+                ("FLASHTEX_CONFINE_READS", "1"),
+                ("FLASHTEX_CONFINE_ROOTS", "/p:/share"),
+            ]),
+            env(&[
+                ("FLASHTEX_CONFINE_READS", "1"),
+                ("FLASHTEX_CONFINE_ROOTS", "/p"),
+                ("openout_any", "a"),
+            ]),
+        ] {
+            assert_ne!(base, spare_key(&job(""), fmt, e.clone()), "{e:?}");
+        }
     }
 
     #[test]
