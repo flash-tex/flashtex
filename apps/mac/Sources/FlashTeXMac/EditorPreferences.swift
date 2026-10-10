@@ -990,7 +990,10 @@ struct EditorPreferencesView: View {
                     .accessibilityHint("While you edit, the preview scrolls to what you are changing — only when it is off screen, and not while you scroll the preview yourself. Command-Shift-J reveals the caret at any time.")
                 ErrorLensPreferenceRows() // inline diagnostic text at line ends (ErrorLens.swift)
             }
-            Section("Preview") { PreviewFontSmoothingRows() } // font smoothing vs exact PDF parity (PreviewFontSmoothing.swift)
+            Section("Preview") {
+                PreviewFontSmoothingRows() // font smoothing vs exact PDF parity (PreviewFontSmoothing.swift)
+                PreviewStaleDimmingRows() // delayed stale-page dimming (PreviewStaleDimming.swift)
+            }
             Section("Sidebar") { ProjectTreeSettingsRows() } // Project files as a folder tree or a flat list (ProjectFileTree.swift)
             Section("Saving") {
                 Toggle("Autosave", isOn: $prefs.autosave)
