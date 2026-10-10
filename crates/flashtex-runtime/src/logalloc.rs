@@ -356,8 +356,8 @@ fn release_spares() -> usize {
     let mut ngone = 0;
     {
         let _g = spare_lock();
-        for i in 0..SPARE_SLOTS {
-            if SPARE_AT[i].load(Ordering::Relaxed) != 0 {
+        for (i, at) in SPARE_AT.iter().enumerate() {
+            if at.load(Ordering::Relaxed) != 0 {
                 gone[ngone] = spare_out(i);
                 ngone += 1;
             }
