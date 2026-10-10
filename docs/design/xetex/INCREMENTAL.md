@@ -47,8 +47,14 @@ it is cold.
 - **Children run without the resolver's lookup memo**, which only pays off
   in a resident engine.
 
-A spare holds about 200 MB while it waits, at most one a connection, for at
-most `FLASHTEX_UNICODE_SPARE_TTL` seconds (default 120). It costs no CPU
+A spare holds about 200 MB while it waits, for at most
+`FLASHTEX_UNICODE_SPARE_TTL` seconds (default 120): at most one a document
+and two in all (`FLASHTEX_UNICODE_SPARE_CAP`), none in the Low Memory
+performance mode (a switch to it ends the spare; the host now has
+`profile-v1`). A spare is started exactly as the run it replaces: its key is
+the whole command (arguments, so shell escape and the other compile
+settings; directory; the host's environment, so read confinement, Live
+Share roots and `openout_any`) and the external-tools setting. It costs no CPU
 while it waits (DESIGN.md §5.1, decision 10, forbids spinning, not
 residency) and none before the first compile of a document (decision 8:
 nothing is kept warm in advance; the first compile is a cold one). Spares

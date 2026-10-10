@@ -350,18 +350,30 @@ fn spawn(
     })
 }
 
+/// The command `engine_command` makes for `job`, as a spare's key: every
+/// input to it but the run's socket and descriptors (`spare::Key`).
+fn spare_key(
+    job: &Job,
+    format_dir: &Path,
+    env: Vec<(std::ffi::OsString, std::ffi::OsString)>,
+) -> Key {
+    Key {
+        argv: job.argv(),
+        root: job.root.clone(),
+        format_dir: format_dir.to_path_buf(),
+        font_formats: font_formats(job),
+        external_tools: job.external_tools.clone(),
+        env,
+    }
+}
+
 /// What a spare for `job`'s runs is started as, and what it reads before
 /// its wait (`spare.rs`); `None` when no spare can stand for its runs.
 fn spare_for(job: &Job, format_dir: &Path) -> Option<(Key, Inputs)> {
     if job.export || job.main.contains('"') {
         return None;
     }
-    let key = Key {
-        argv: job.argv(),
-        root: job.root.clone(),
-        format_dir: format_dir.to_path_buf(),
-        font_formats: font_formats(job),
-    };
+    let key = spare_key(job, format_dir, spare::host_env());
     // the engine resolves the main file only when it is the first argument
     let main = job.preamble.is_empty().then_some(job.main.as_str());
     let fmt = format_dir.join(format!("{}.fmt", job.format));
@@ -455,7 +467,7 @@ pub fn run_once(
                 let s = spawn(cmd, l, sock);
                 drop(read_end);
                 if let Ok(s) = s {
-                    spares.put(key, inputs, s, go);
+                    spares.put(key, inputs, (job.root.clone(), job.main.clone()), s, go);
                 }
             }
         }
@@ -847,6 +859,68 @@ Overfull \\hbox (1.0pt too wide) in paragraph at lines 3--4
         assert!(d[3].message.contains("removing `math shift'"), "{:?}", d[3]);
         assert_eq!(d[3].line, Some(9));
         assert_eq!(d.len(), 4);
+    }
+
+    /// A spare stands only for a run started exactly as it was: another
+    /// shell-escape (trust) setting, halt-on-error, output directory,
+    /// `[fonts]` line, font formats or external-tools setting, or another
+    /// environment of the host (read confinement and its roots, Live
+    /// Share's included; `openout_any`; the TeX trees), is another key.
+    #[test]
+    fn a_spare_key_is_the_whole_command() {
+        let job = |extra: &str| {
+            let j = Json::parse(&format!(
+                r#"{{"id": 1, "root": "/p", "main": "main.tex"{extra}}}"#
+            ))
+            .unwrap();
+            Job::parse(&j, Path::new("/tmp/x")).unwrap()
+        };
+        let env = |kv: &[(&str, &str)]| -> Vec<(std::ffi::OsString, std::ffi::OsString)> {
+            kv.iter().map(|(k, v)| ((*k).into(), (*v).into())).collect()
+        };
+        let base_env = env(&[
+            ("FLASHTEX_CONFINE_READS", "1"),
+            ("FLASHTEX_CONFINE_ROOTS", "/p"),
+        ]);
+        let fmt = Path::new("/f");
+        let base = spare_key(&job(""), fmt, base_env.clone());
+        assert_eq!(base, spare_key(&job(""), fmt, base_env.clone()));
+        for other in [
+            r#", "shell_escape": "on""#,
+            r#", "shell_escape": "off""#,
+            r#", "shell_escape": "restricted""#,
+            r#", "halt_on_error": true"#,
+            r#", "output_dir": "/elsewhere""#,
+            r#", "jobname": "other""#,
+            r#", "format": "xetex""#,
+            r#", "font_formats": ["opentype"]"#,
+            r#", "external_tools": "auto""#,
+            r#", "external_tools": "off""#,
+        ] {
+            assert_ne!(
+                base,
+                spare_key(&job(other), fmt, base_env.clone()),
+                "{other}"
+            );
+        }
+        let mut fonts = job("");
+        fonts.preamble = "\\AddToHook{x}{}".into();
+        assert_ne!(base, spare_key(&fonts, fmt, base_env.clone()));
+        assert_ne!(base, spare_key(&job(""), Path::new("/g"), base_env.clone()));
+        for e in [
+            env(&[("FLASHTEX_CONFINE_ROOTS", "/p")]),
+            env(&[
+                ("FLASHTEX_CONFINE_READS", "1"),
+                ("FLASHTEX_CONFINE_ROOTS", "/p:/share"),
+            ]),
+            env(&[
+                ("FLASHTEX_CONFINE_READS", "1"),
+                ("FLASHTEX_CONFINE_ROOTS", "/p"),
+                ("openout_any", "a"),
+            ]),
+        ] {
+            assert_ne!(base, spare_key(&job(""), fmt, e.clone()), "{e:?}");
+        }
     }
 
     #[test]

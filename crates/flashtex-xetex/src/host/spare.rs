@@ -47,10 +47,24 @@
 //! map: files `tlmgr`, `mktexlsr` and `updmap` change, not the document).
 //! `FLASHTEX_UNICODE_SPARES=0` turns spares off, and
 //! `FLASHTEX_UNICODE_SPARE_DEBUG=1` reports each spare's fate on the host's
-//! standard error. A spare holds the engine's
-//! initialized tables (about 200 MB resident) while it waits; there is at
-//! most one a connection.
+//! standard error.
+//!
+//! **Memory and bounds.** A spare holds the engine's initialized tables
+//! (about 200 MB resident) while it waits, so the performance mode decides
+//! (protocol §6.9): none in Low Memory, where a switch to it ends the one
+//! there is, and kept in Balanced and High Performance. There is at most one
+//! spare a document and at most two in all (`Slots`,
+//! `FLASHTEX_UNICODE_SPARE_CAP`).
+//!
+//! **Trust and confinement.** A spare is started by the same function as the
+//! run it stands for (`compile::engine_command`), so it has the same
+//! arguments (shell escape, halt on error, output directory, job name,
+//! `[fonts]`), directory and environment; the [`Key`] compares all of them,
+//! the host's whole environment included (read confinement and its roots,
+//! Live Share's too, `openout_any`, the TeX trees), and the compile's
+//! external-tools setting. Any change ends the spare.
 
+use flashtex_display_list::json::{obj, s as js, Json};
 use std::fs::File;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::os::fd::{AsRawFd, FromRawFd, OwnedFd, RawFd};
@@ -201,7 +215,17 @@ pub fn wait(g: &mut crate::Globals, fd: RawFd) {
     }
 }
 
-/// What a spare was started as: a run it stands for is started the same way.
+/// What a spare was started as: a run it stands for is started the same
+/// way. Both are made by one function (`compile::engine_command`), so the
+/// only inputs to a run's command are these: the arguments (format, shell
+/// escape, halt on error, output directory, job name, the `[fonts]` first
+/// line, the main file), the root (the working directory), the format
+/// directory (`TEXFORMATS`), the client's font formats, and the
+/// environment the host itself runs in, which every child inherits: read
+/// confinement (`FLASHTEX_CONFINE_READS` and its roots, Live Share's
+/// included), `openout_any`/`openin_any`, `shell_escape`, the `TEXMF*` trees.
+/// The compile's external-tools setting is part of the key too, though the
+/// engine run does not read it.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Key {
     pub argv: Vec<String>,
@@ -209,6 +233,16 @@ pub struct Key {
     pub format_dir: PathBuf,
     /// `FLASHTEX_DISPLAY_LIST_FONT_FORMATS`.
     pub font_formats: String,
+    pub external_tools: Option<String>,
+    /// The host's environment when the command was made, sorted.
+    pub env: Vec<(std::ffi::OsString, std::ffi::OsString)>,
+}
+
+/// The host's environment, sorted: what a child inherits.
+pub fn host_env() -> Vec<(std::ffi::OsString, std::ffi::OsString)> {
+    let mut v: Vec<_> = std::env::vars_os().collect();
+    v.sort();
+    v
 }
 
 /// A file's identity.
@@ -326,6 +360,74 @@ pub struct Spare {
     born: Instant,
 }
 
+/// The spares of every connection of the host: at most one a document (the
+/// root and main file) and at most `cap` in all
+/// (`FLASHTEX_UNICODE_SPARE_CAP`, default 2; 0 turns spares off). A new
+/// spare ends the document's other spare and, at the cap, the oldest one;
+/// its connection finds it ended when it next looks.
+pub struct Slots {
+    cap: usize,
+    live: std::sync::Mutex<Vec<Slot>>,
+}
+
+struct Slot {
+    pid: u32,
+    doc: (PathBuf, String),
+}
+
+impl Slots {
+    pub fn from_env() -> Slots {
+        Slots::new(
+            std::env::var("FLASHTEX_UNICODE_SPARE_CAP")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(2),
+        )
+    }
+
+    pub fn new(cap: usize) -> Slots {
+        Slots {
+            cap,
+            live: std::sync::Mutex::new(vec![]),
+        }
+    }
+
+    /// Spare `pid` of `doc` is waiting: make room for it. Only a process
+    /// that is still listed is killed, and a connection takes its spare off
+    /// the list ([`Slots::release`]) before it reaps or starts it, so the
+    /// pid killed is never another process's.
+    fn admit(&self, pid: u32, doc: (PathBuf, String)) {
+        let mut live = self.live.lock().unwrap_or_else(|p| p.into_inner());
+        live.retain(|s| {
+            let same = s.doc == doc;
+            if same {
+                super::proc::kill_group(s.pid);
+            }
+            !same
+        });
+        while !live.is_empty() && live.len() >= self.cap {
+            let old = live.remove(0);
+            super::proc::kill_group(old.pid);
+        }
+        live.push(Slot { pid, doc });
+    }
+
+    /// Spare `pid` is no longer waiting (taken or ended).
+    fn release(&self, pid: u32) {
+        let mut live = self.live.lock().unwrap_or_else(|p| p.into_inner());
+        live.retain(|s| s.pid != pid);
+    }
+
+    /// The number of spares waiting.
+    pub fn len(&self) -> usize {
+        self.live.lock().unwrap_or_else(|p| p.into_inner()).len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+}
+
 /// A pipe whose two ends are closed on `exec`.
 fn pipe_cloexec() -> std::io::Result<(OwnedFd, OwnedFd)> {
     let mut fds = [0 as libc::c_int; 2];
@@ -366,6 +468,9 @@ pub fn arm(cmd: &mut Command, fonts: bool) -> std::io::Result<(File, OwnedFd)> {
 /// A connection's spare, if any, and whether it may have one.
 pub struct Spares {
     enabled: bool,
+    /// The connection's performance mode allows spares (not Low Memory).
+    profile_allows: bool,
+    slots: Arc<Slots>,
     ttl: Duration,
     spare: Option<Spare>,
     /// The last run looked a font up by name ([`FONTS_HINT`]).
@@ -374,23 +479,21 @@ pub struct Spares {
     runs: u64,
 }
 
-impl Default for Spares {
-    fn default() -> Self {
-        Spares::from_env()
-    }
-}
-
 impl Spares {
-    /// On unless `FLASHTEX_UNICODE_SPARES=0`; the time to live from
+    /// On unless `FLASHTEX_UNICODE_SPARES=0`, the host's cap is 0 or the
+    /// mode is Low Memory; the time to live from
     /// `FLASHTEX_UNICODE_SPARE_TTL` (seconds, default 120).
-    pub fn from_env() -> Spares {
-        let enabled = std::env::var("FLASHTEX_UNICODE_SPARES").map_or(true, |v| v != "0");
+    pub fn new(slots: Arc<Slots>, mode: flashtex_engine::profile::Mode) -> Spares {
+        let enabled =
+            std::env::var("FLASHTEX_UNICODE_SPARES").map_or(true, |v| v != "0") && slots.cap > 0;
         let ttl = std::env::var("FLASHTEX_UNICODE_SPARE_TTL")
             .ok()
             .and_then(|v| v.parse::<u64>().ok())
             .unwrap_or(120);
         Spares {
             enabled,
+            profile_allows: allows(mode),
+            slots,
             ttl: Duration::from_secs(ttl),
             spare: None,
             fonts: false,
@@ -415,7 +518,27 @@ impl Spares {
     }
 
     pub fn enabled(&self) -> bool {
-        self.enabled
+        self.enabled && self.profile_allows
+    }
+
+    /// The connection's performance mode changed (`PROFILE`): Low Memory
+    /// keeps no spare, and ends the one there is.
+    pub fn set_mode(&mut self, mode: flashtex_engine::profile::Mode) {
+        self.profile_allows = allows(mode);
+        if !self.profile_allows {
+            self.clear();
+        }
+    }
+
+    /// `HELLO.profile` and the `PROFILE` reply's knobs for `mode`
+    /// (protocol §6.9; informative).
+    pub fn profile_json(&self, mode: flashtex_engine::profile::Mode) -> Json {
+        obj([
+            ("mode", js(mode.name())),
+            ("spare", Json::Bool(self.enabled && allows(mode))),
+            ("spare_ttl_ms", Json::Int(self.ttl.as_millis() as i64)),
+            ("spare_cap", Json::Int(self.slots.cap as i64)),
+        ])
     }
 
     pub fn ttl(&self) -> Duration {
@@ -426,6 +549,8 @@ impl Spares {
     /// now; any other spare is ended.
     pub fn take(&mut self, key: &Key, inputs: Option<&Inputs>) -> Option<(Started, File)> {
         let mut s = self.spare.take()?;
+        // off the host's list first: from here only this connection ends it
+        self.slots.release(s.run.child.id());
         let alive = matches!(s.run.child.try_wait(), Ok(None));
         let fits = alive
             && s.key == *key
@@ -433,7 +558,7 @@ impl Spares {
             && inputs.is_some_and(|i| s.inputs.same_as(i));
         if debug() {
             let why = if !alive {
-                "it has ended"
+                "it has ended (or another spare took its place)"
             } else if s.key != *key {
                 "another command"
             } else if s.born.elapsed() >= self.ttl {
@@ -453,9 +578,18 @@ impl Spares {
         }
     }
 
-    /// Keep `run` as the spare for `key`, ending the one there was.
-    pub fn put(&mut self, key: Key, inputs: Inputs, run: Started, go: File) {
+    /// Keep `run` as the spare for `key` of document `doc` (its root and
+    /// main file), ending the one there was.
+    pub fn put(
+        &mut self,
+        key: Key,
+        inputs: Inputs,
+        doc: (PathBuf, String),
+        run: Started,
+        go: File,
+    ) {
         self.clear();
+        self.slots.admit(run.child.id(), doc);
         self.spare = Some(Spare {
             key,
             inputs,
@@ -468,6 +602,7 @@ impl Spares {
     /// End the spare, if any.
     pub fn clear(&mut self) {
         if let Some(s) = self.spare.take() {
+            self.slots.release(s.run.child.id());
             s.run.end();
         }
     }
@@ -490,6 +625,12 @@ impl Drop for Spares {
     }
 }
 
+/// Whether a performance mode keeps spares: not Low Memory (a spare holds
+/// about 200 MB while it waits).
+fn allows(mode: flashtex_engine::profile::Mode) -> bool {
+    mode != flashtex_engine::profile::Mode::LowMemory
+}
+
 /// Give a taken spare its go-ahead: the run carries on. `false` if it
 /// could not be told (it has ended).
 pub fn go(mut go: File) -> bool {
@@ -499,6 +640,58 @@ pub fn go(mut go: File) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A process in a group of its own, standing for a spare.
+    fn sleeper() -> Child {
+        Command::new("sleep")
+            .arg("60")
+            .process_group(0)
+            .spawn()
+            .unwrap()
+    }
+
+    fn ended(c: &mut Child) -> bool {
+        let t = Instant::now();
+        while t.elapsed() < Duration::from_secs(10) {
+            if matches!(c.try_wait(), Ok(Some(_))) {
+                return true;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        false
+    }
+
+    #[test]
+    fn one_spare_a_document_and_a_cap_in_all() {
+        let slots = Slots::new(2);
+        let doc = |n: &str| (PathBuf::from("/p"), n.to_string());
+        let mut a = sleeper();
+        let mut a2 = sleeper();
+        let mut b = sleeper();
+        let mut c = sleeper();
+        slots.admit(a.id(), doc("a.tex"));
+        slots.admit(a2.id(), doc("a.tex"));
+        assert!(ended(&mut a), "a document's second spare ends its first");
+        assert_eq!(slots.len(), 1);
+        slots.admit(b.id(), doc("b.tex"));
+        assert_eq!(slots.len(), 2);
+        slots.admit(c.id(), doc("c.tex"));
+        assert!(ended(&mut a2), "at the cap the oldest ends");
+        assert_eq!(slots.len(), 2);
+        // a released spare is never killed by the list
+        slots.release(b.id());
+        let mut d = sleeper();
+        slots.admit(d.id(), doc("d.tex"));
+        assert!(matches!(b.try_wait(), Ok(None)), "released: not the list's");
+        assert!(matches!(c.try_wait(), Ok(None)), "under the cap");
+        assert_eq!(slots.len(), 2);
+        for p in [&mut b, &mut c, &mut d] {
+            let _ = p.kill();
+            let _ = p.wait();
+        }
+        let none = Slots::new(0);
+        assert_eq!(none.cap, 0);
+    }
 
     #[test]
     fn first_lines_decide_only_with_a_percent_ampersand() {

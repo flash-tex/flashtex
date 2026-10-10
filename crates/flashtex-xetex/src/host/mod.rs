@@ -25,7 +25,8 @@
 //!
 //! ```text
 //! flashtex-host-unicode --socket PATH [--format NAME]... [--once [--accept-timeout SECONDS]]
-//!     [--external-tools off|auto] [--tool-timeout SECONDS] [--no-warm]
+//!     [--external-tools off|auto] [--tool-timeout SECONDS]
+//!     [--profile low-memory|balanced|high-performance] [--no-warm]
 //! ```
 //!
 //! Invoked as `xetex` or `xelatex` (`argv[0]`), it is the engine itself.
@@ -41,6 +42,7 @@ use compile::{send_json, Accept, Job, Out, Running};
 use flashtex_display_list::frame::read_frame;
 use flashtex_display_list::json::{obj, s as js, Json};
 use flashtex_display_list::{kind, PROTOCOL, VERSION_MAJOR};
+use flashtex_engine::profile::Mode;
 use std::collections::HashMap;
 use std::io::{BufReader, BufWriter};
 use std::os::unix::net::{UnixListener, UnixStream};
@@ -58,9 +60,12 @@ pub struct Opts {
     pub accept_timeout: Option<Duration>,
     pub external_tools: bool,
     pub tool_timeout: Duration,
+    /// `--profile`, else `FLASHTEX_PROFILE`, else Balanced: each
+    /// connection's mode until its `HELLO` or a `PROFILE` names another.
+    pub profile: Mode,
 }
 
-const USAGE: &str = "usage: flashtex-host-unicode --socket PATH [--format NAME]... [--once [--accept-timeout SECONDS]] [--external-tools off|auto] [--tool-timeout SECONDS] [--no-warm]";
+const USAGE: &str = "usage: flashtex-host-unicode --socket PATH [--format NAME]... [--once [--accept-timeout SECONDS]] [--external-tools off|auto] [--tool-timeout SECONDS] [--profile low-memory|balanced|high-performance] [--no-warm]";
 
 impl Opts {
     pub fn parse(args: &[String]) -> Result<Opts, String> {
@@ -71,6 +76,7 @@ impl Opts {
             accept_timeout: None,
             external_tools: false,
             tool_timeout: Duration::from_secs(120),
+            profile: Mode::from_env(),
         };
         let mut i = 0;
         while i < args.len() {
@@ -93,6 +99,10 @@ impl Opts {
                 "--tool-timeout" => {
                     let s: f64 = val()?.parse().map_err(|_| "--tool-timeout: seconds")?;
                     o.tool_timeout = Duration::from_secs_f64(s);
+                }
+                "--profile" => {
+                    o.profile = Mode::parse(&val()?)
+                        .ok_or("--profile low-memory|balanced|high-performance")?;
                 }
                 // the pdfTeX host's warm-up has nothing to warm here
                 "--no-warm" => {}
@@ -243,6 +253,8 @@ fn serve(
         external_tools: opts.external_tools,
         tool_timeout: opts.tool_timeout,
         children,
+        slots: Arc::new(spare::Slots::from_env()),
+        profile: opts.profile,
     });
     let _ = listener.set_nonblocking(opts.once);
     let mut n = 0u64;
@@ -288,6 +300,9 @@ struct Host {
     tool_timeout: Duration,
     /// Every child's process group and lifeline (`proc.rs`).
     children: proc::Children,
+    /// The connections' spares, bounded together (`spare.rs`).
+    slots: Arc<spare::Slots>,
+    profile: Mode,
 }
 
 impl Host {
@@ -307,7 +322,10 @@ impl Host {
 
 enum Msg {
     /// The job, when it came, and its sequence number (`Running::newest`).
-    Compile(Job, Instant, u64),
+    Compile(Box<Job>, Instant, u64),
+    /// `PROFILE`: the connection's mode from now on, applied between
+    /// compiles, in order (protocol §6.9).
+    Profile(Mode),
 }
 
 fn connection(host: &Arc<Host>, conn: UnixStream, n: u64) {
@@ -375,7 +393,14 @@ fn connection(host: &Arc<Host>, conn: UnixStream, n: u64) {
         "halt-on-error",
         "buffers",
         "edits",
+        flashtex_display_list::PROFILE_CAPABILITY,
     ];
+    // a mode the host does not know is ignored (protocol §6.9)
+    let mode = hello
+        .str_field("profile")
+        .and_then(Mode::parse)
+        .unwrap_or(host.profile);
+    let spares = spare::Spares::new(host.slots.clone(), mode);
     send_json(
         &out,
         kind::HELLO,
@@ -404,6 +429,7 @@ fn connection(host: &Arc<Host>, conn: UnixStream, n: u64) {
                 Json::Arr(caps.iter().map(|c| js(*c)).collect()),
             ),
             ("texmf", host.texmf.clone()),
+            ("profile", spares.profile_json(mode)),
         ]),
     );
     let scratch =
@@ -413,7 +439,9 @@ fn connection(host: &Arc<Host>, conn: UnixStream, n: u64) {
     let worker = {
         let (host, out, running, scratch) =
             (host.clone(), out.clone(), running.clone(), scratch.clone());
-        std::thread::spawn(move || compile_thread(&host, &out, &running, &scratch, &accept, rx))
+        std::thread::spawn(move || {
+            compile_thread(&host, &out, &running, &scratch, &accept, rx, spares)
+        })
     };
     let mut seq = 0u64;
     while let Ok(Some((k, body))) = read_frame(&mut reader) {
@@ -430,7 +458,7 @@ fn connection(host: &Arc<Host>, conn: UnixStream, n: u64) {
                         r.queued.insert(job.id);
                         cancel_locked(&mut r);
                     }
-                    let _ = tx.send(Msg::Compile(job, Instant::now(), seq));
+                    let _ = tx.send(Msg::Compile(Box::new(job), Instant::now(), seq));
                 }
                 Err(e) => {
                     let mut f = vec![
@@ -455,6 +483,24 @@ fn connection(host: &Arc<Host>, conn: UnixStream, n: u64) {
                     }
                 }
             }
+            kind::C_PROFILE => match j.str_field("profile").and_then(Mode::parse) {
+                Some(m) => {
+                    let _ = tx.send(Msg::Profile(m));
+                }
+                None => {
+                    send_json(
+                        &out,
+                        kind::ERROR,
+                        &obj([
+                            ("code", js("request")),
+                            (
+                                "message",
+                                js("PROFILE: profile is low-memory, balanced or high-performance"),
+                            ),
+                        ]),
+                    );
+                }
+            },
             kind::BYE => break,
             _ => {}
         }
@@ -481,14 +527,23 @@ fn compile_thread(
     scratch: &Path,
     accept: &Accept,
     rx: mpsc::Receiver<Msg>,
+    // the next run, started ahead (`spare.rs`), ended when the connection
+    // ends, after its time to live, or in Low Memory
+    mut spares: spare::Spares,
 ) {
     let mut memory = tools::Memory::default();
-    // the next run, started ahead (`spare.rs`), ended when the connection
-    // ends or after its time to live
-    let mut spares = spare::Spares::from_env();
     loop {
         let (job, t0, seq) = match rx.recv_timeout(spares.ttl()) {
-            Ok(Msg::Compile(job, t0, seq)) => (job, t0, seq),
+            Ok(Msg::Compile(job, t0, seq)) => (*job, t0, seq),
+            Ok(Msg::Profile(m)) => {
+                spares.set_mode(m);
+                send_json(
+                    out,
+                    kind::PROFILE,
+                    &obj([("profile", spares.profile_json(m))]),
+                );
+                continue;
+            }
             Err(mpsc::RecvTimeoutError::Timeout) => {
                 spares.expire();
                 continue;

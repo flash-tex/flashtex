@@ -537,3 +537,62 @@ fn spares_stand_for_runs_only_while_what_they_read_is_unchanged() {
     }
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// Spares follow the performance mode (protocol §6.9): none in Low Memory
+/// (a spare holds about 200 MB), kept in Balanced, and a switch to Low
+/// Memory ends the one there is.
+#[test]
+fn low_memory_keeps_no_spare() {
+    if !texlive() {
+        eprintln!("skipped: no TeX Live");
+        return;
+    }
+    let dir = std::env::temp_dir().join(format!("flashtex-host-lowmem-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    let (proj, out) = project(&dir, DOC);
+    let err = dir.join("host.err");
+    let h = start_with(&dir, &[("FLASHTEX_UNICODE_SPARE_DEBUG", "1")], &err);
+    let mut c = Client::connect_with(&h.sock, &[], Some("low-memory")).unwrap();
+    let knobs = c.hello.get("profile").cloned().unwrap();
+    assert_eq!(knobs.str_field("mode"), Some("low-memory"));
+    assert_eq!(knobs.get("spare").and_then(Json::as_bool), Some(false));
+    let compile = |c: &mut Client, id: i64| {
+        c.compile(&request(id, &proj, &out)).unwrap();
+        let (_, done) = events(c, id);
+        assert_eq!(done.str_field("status"), Some("ok"), "{done:?}");
+    };
+    compile(&mut c, 1);
+    compile(&mut c, 2);
+    let said = |e: &Path| std::fs::read_to_string(e).unwrap();
+    assert!(!said(&err).contains(": spare "), "{}", said(&err));
+    assert!(children_of(h.child.id()).is_empty(), "no spare waits");
+
+    let switch = |c: &mut Client, mode: &str| -> Json {
+        c.set_profile(mode).unwrap();
+        loop {
+            if let Event::Profile(j) = c.next_event().unwrap().expect("the host closed") {
+                return j.get("profile").cloned().unwrap();
+            }
+        }
+    };
+    let knobs = switch(&mut c, "balanced");
+    assert_eq!(knobs.get("spare").and_then(Json::as_bool), Some(true));
+    compile(&mut c, 3);
+    compile(&mut c, 4);
+    assert!(said(&err).contains(": taken"), "{}", said(&err));
+    assert_eq!(children_of(h.child.id()).len(), 1, "one spare waits");
+
+    let knobs = switch(&mut c, "low-memory");
+    assert_eq!(knobs.get("spare").and_then(Json::as_bool), Some(false));
+    let t = Instant::now();
+    while !children_of(h.child.id()).is_empty() {
+        assert!(
+            t.elapsed() < Duration::from_secs(10),
+            "the spare outlived the switch to Low Memory"
+        );
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    c.bye().unwrap();
+    drop(h);
+    let _ = std::fs::remove_dir_all(&dir);
+}
