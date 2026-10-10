@@ -48,10 +48,12 @@
 //! `free_cells`: 132 of the 150 MB a one-line document allocates in nine
 //! compiles, `malloc_history -allEvents`), and xzone keeps every freed one in
 //! the footprint (that document's host held 57-61 MB with 8 MB in use);
-//! `malloc_zone_pressure_relief` returns none of it (0 bytes). So on macOS
-//! every block of at least [`BIG`] bytes gets a mapping of its own, in any
-//! scope ([`set_large_blocks`]: not under Low Memory's
-//! `MallocSpaceEfficient`, which returns freed pages itself). A freed one is
+//! `malloc_zone_pressure_relief` returns none of it (0 bytes). So in the
+//! host on macOS every block of at least [`BIG`] bytes gets a mapping of its
+//! own, in any scope: the host turns it on ([`set_large_blocks`]), except
+//! under Low Memory's `MallocSpaceEfficient`, which returns freed pages
+//! itself; other programs (the `pdftex -ini` format build, an export's
+//! engine) keep the system allocator for them. A freed one is
 //! kept as a *spare* (at most [`SPARE_SLOTS`] of them and [`SPARE_MAX`]
 //! bytes, the least recently freed going first, joined to a spare right next
 //! to it) for the next large blocks: the smallest spare that is large enough
@@ -66,7 +68,9 @@
 //! by `mach_vm_copy` cost 1-1.5 % more instructions a keystroke in copy-on-
 //! write faults.) A block can get a little more than it asked for (a
 //! spare's slack under `BIG`), so the table records each block's mapped
-//! length.
+//! length. The spares are the allocator's, outside the undo logs' retention
+//! budget (DESIGN.md §5.2), and High Performance, which has no idle trim,
+//! keeps them (at most `SPARE_MAX`).
 //!
 //! The mapped blocks are recorded in a fixed table (no allocation inside the
 //! allocator); `dealloc` and `realloc` of a block of at least `BIG` bytes
@@ -90,17 +94,18 @@ pub const HEAP: std::alloc::System = std::alloc::System;
 pub const BIG: usize = 64 << 10;
 
 /// Whether every block of at least [`BIG`] bytes gets a mapping, not only
-/// the logs' (macOS, unless [`set_large_blocks`] turned it off).
-static ANY_BIG: AtomicBool = AtomicBool::new(cfg!(target_os = "macos"));
+/// the logs' (macOS, once the host turns it on with [`set_large_blocks`]).
+static ANY_BIG: AtomicBool = AtomicBool::new(false);
 
 fn any_big() -> bool {
     ANY_BIG.load(Ordering::Relaxed)
 }
 
 /// Whether every large block gets a mapping of its own (macOS only; never
-/// elsewhere). The host turns it off when the system allocator already
-/// returns freed pages (Low Memory's `MallocSpaceEfficient`): measured, the
-/// mappings then cost footprint (full-100 at 106-118 MB against 82-86 MB).
+/// elsewhere; off until called). The host turns it on, but not when the
+/// system allocator already returns freed pages (Low Memory's
+/// `MallocSpaceEfficient`): measured, the mappings then cost footprint
+/// (full-100 at 106-118 MB against 82-86 MB).
 pub fn set_large_blocks(on: bool) {
     ANY_BIG.store(on && cfg!(target_os = "macos"), Ordering::Relaxed);
 }
@@ -702,6 +707,15 @@ mod tests {
     #[test]
     fn log_blocks_are_mapped_and_given_back() {
         let _s = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
+        // off by default: a program that does not turn it on (`pdftex -ini`)
+        // keeps the system allocator for its blocks
+        set_large_blocks(false);
+        let a = HostAlloc;
+        let l = Layout::from_size_align(BIG * 3, 8).unwrap();
+        let p = unsafe { a.alloc(l) };
+        assert!(find(p as usize).is_none());
+        unsafe { a.dealloc(p, l) };
+        set_large_blocks(true);
         drop_spares();
         let a = HostAlloc;
         let l = Layout::from_size_align(BIG * 3, 8).unwrap();
@@ -778,6 +792,7 @@ mod tests {
     #[test]
     fn idle_give_back_purges_the_heap() {
         let _s = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
+        set_large_blocks(true);
         // (a test binary's own allocator is `System`: only after the host's
         // `set_enabled` does `give_back` touch HEAP)
         set_enabled(true);
@@ -804,6 +819,7 @@ mod tests {
     #[cfg(target_os = "macos")]
     fn spares_serve_the_next_large_blocks() {
         let _s = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
+        set_large_blocks(true);
         drop_spares();
         let a = HostAlloc;
         let mb = Layout::from_size_align(1 << 20, 8).unwrap();

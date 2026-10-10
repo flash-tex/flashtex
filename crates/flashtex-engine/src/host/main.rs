@@ -48,8 +48,8 @@ fn main() {
     flashtex_engine::host::crash::install();
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     flashtex_engine::logalloc::set_enabled(std::env::var_os("FLASHTEX_NO_LOG_MAPS").is_none());
-    // (Low Memory's allocator returns freed pages itself: large blocks stay
-    // with it there, `logalloc`)
+    // (the host's large blocks in mappings of their own, macOS; not under Low
+    // Memory, whose allocator returns freed pages itself: `logalloc`)
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     flashtex_engine::logalloc::set_large_blocks(
         !flashtex_engine::profile::allocator_returns_free_pages(),
