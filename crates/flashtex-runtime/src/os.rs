@@ -84,6 +84,23 @@ pub unsafe fn zero_pages(p: *mut u8, len: usize) -> bool {
     imp::zero_pages(p, len)
 }
 
+/// Put `len` bytes of file `f` from offset `off` over `[p, p + len)` of an
+/// [`alloc_zeroed`] mapping, privately: the memory reads as the file did
+/// then, its pages are the file's (clean, out of the process's footprint,
+/// read in on first touch) until written, and a write copies the page
+/// (Unix: `mmap` with `MAP_PRIVATE | MAP_FIXED`). Whether it was done (not
+/// on Windows or WASI; then the caller copies).
+///
+/// # Safety
+/// `p`, `off` and `len` are multiples of [`page_size`], `[p, p + len)` lies
+/// inside one [`alloc_zeroed`] mapping that no other thread uses meanwhile,
+/// and the file is never shortened or written in place while mapped (a
+/// write through another name of the file would show in pages not yet
+/// copied; shortening it raises SIGBUS on a later touch).
+pub unsafe fn map_file_over(f: &std::fs::File, off: u64, p: *mut u8, len: usize) -> bool {
+    imp::map_file_over(f, off, p, len)
+}
+
 // ---------------------------------------------------------------------------
 // A file mapped read-only (the persisted S0, src/host/mod.rs)
 // ---------------------------------------------------------------------------
@@ -106,11 +123,16 @@ unsafe impl Sync for MappedFile {}
 impl MappedFile {
     pub fn open(path: &str) -> Result<MappedFile, String> {
         let f = std::fs::File::open(path).map_err(|e| format!("{path}: {e}"))?;
+        MappedFile::of(&f, path)
+    }
+
+    /// The whole of the open file `f` (named `path` in errors).
+    pub fn of(f: &std::fs::File, path: &str) -> Result<MappedFile, String> {
         let len = f.metadata().map_err(|e| format!("{path}: {e}"))?.len() as usize;
         if len == 0 {
             return Err(format!("{path} is empty"));
         }
-        imp::map_file(&f, len).map_err(|()| format!("{path}: mmap failed"))
+        imp::map_file(f, len).map_err(|()| format!("{path}: mmap failed"))
     }
 
     pub fn bytes(&self) -> &[u8] {
@@ -1140,6 +1162,20 @@ mod imp {
         q as *mut u8 == p
     }
 
+    pub unsafe fn map_file_over(f: &std::fs::File, off: u64, p: *mut u8, len: usize) -> bool {
+        use std::os::unix::io::AsRawFd;
+        const MAP_FIXED: i32 = 0x10;
+        let q = mmap(
+            p as *mut c_void,
+            len,
+            PROT_READ | PROT_WRITE,
+            MAP_PRIVATE | MAP_FIXED,
+            f.as_raw_fd(),
+            off as i64,
+        );
+        q as *mut u8 == p
+    }
+
     pub fn map_file(f: &std::fs::File, len: usize) -> Result<MappedFile, ()> {
         use std::os::fd::AsRawFd;
         // SAFETY: a private read-only mapping of an open file.
@@ -1278,6 +1314,10 @@ mod imp {
     }
 
     pub unsafe fn zero_pages(_p: *mut u8, _len: usize) -> bool {
+        false
+    }
+
+    pub unsafe fn map_file_over(_f: &std::fs::File, _off: u64, _p: *mut u8, _len: usize) -> bool {
         false
     }
 
@@ -1556,6 +1596,10 @@ mod imp {
     }
 
     pub unsafe fn zero_pages(_p: *mut u8, _len: usize) -> bool {
+        false
+    }
+
+    pub unsafe fn map_file_over(_f: &std::fs::File, _off: u64, _p: *mut u8, _len: usize) -> bool {
         false
     }
 
