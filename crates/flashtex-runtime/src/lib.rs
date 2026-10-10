@@ -13,6 +13,7 @@
 //! * `busy` — where the engine thread's time and instructions go.
 //! * `memstat` — the heap and resident-memory accounting.
 //! * `logalloc` — the host's allocator (undo logs in mappings of their own).
+//! * `statsig` — a file's identity (`StatSig`) and the racy window.
 
 pub mod busy;
 #[cfg(all(any(target_os = "linux", target_os = "macos"), not(feature = "tex82")))]
@@ -20,3 +21,4 @@ pub mod logalloc;
 pub mod memstat;
 pub mod os;
 pub mod persist;
+pub mod statsig;

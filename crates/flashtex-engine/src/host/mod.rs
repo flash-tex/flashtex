@@ -92,27 +92,6 @@ pub struct Key {
     pub arm: Vec<ArmRead>,
 }
 
-impl Codec for StatSig {
-    fn enc(&self, w: &mut Vec<u8>) {
-        self.len.enc(w);
-        (self.mtime_ns as i64).enc(w);
-        ((self.mtime_ns >> 64) as i64).enc(w);
-        self.ino.enc(w);
-        (self.racy as u64).enc(w);
-    }
-    fn dec(r: &mut Reader) -> Result<Self, String> {
-        let len = u64::dec(r)?;
-        let lo = i64::dec(r)? as u64 as i128;
-        let hi = i64::dec(r)? as i128;
-        Ok(StatSig {
-            len,
-            mtime_ns: (hi << 64) | lo,
-            ino: u64::dec(r)?,
-            racy: u64::dec(r)? != 0,
-        })
-    }
-}
-
 crate::codec_struct!(Key {
     build,
     clock,
