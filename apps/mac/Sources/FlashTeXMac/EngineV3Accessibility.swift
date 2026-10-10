@@ -126,8 +126,8 @@ enum EngineV3GlyphText {
 
     /// The outline program's glyph name for `code` in `font` (nil for Type 3).
     static func name(font: DL3RenderFont, code: UInt16) -> String? {
-        guard Int(code) < 256, let cg = font.cgFont else { return nil }
-        let g = font.glyphs[Int(code)]
+        guard let cg = font.cgFont else { return nil }
+        let g = font.glyph(Int(code))
         guard g != 0 else { return nil }
         return cg.name(for: g) as String?
     }
@@ -136,7 +136,7 @@ enum EngineV3GlyphText {
     /// a Type 3 (bitmap) font has no names, so only its letters and digits,
     /// which every TeX text encoding puts at their ASCII codes.
     static func text(font: DL3RenderFont, code: UInt16) -> String? {
-        guard Int(code) < 256 else { return nil }
+        guard font.glyphIdCount > 0 || Int(code) < 256 else { return nil }
         if font.cgFont != nil { return name(font: font, code: code).flatMap { text(forName: $0) } }
         guard let u = Unicode.Scalar(UInt32(code)), u.isASCII, CharacterSet.alphanumerics.contains(u) else { return nil }
         return String(Character(u))
