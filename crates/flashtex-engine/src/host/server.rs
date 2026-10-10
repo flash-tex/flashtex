@@ -493,7 +493,13 @@ pub fn main(args: Vec<String>) -> i32 {
             let late = accept_timeout.is_some_and(|t| t0.elapsed().as_secs_f64() > t);
             if orphaned || late {
                 let _ = std::fs::remove_file(&socket);
-                eprintln!(
+                // Not `eprintln!`, which panics when the write fails: a
+                // dead parent has often taken its end of the stderr pipe
+                // with it, and the panic ended this thread before the
+                // `exit`, so the orphan waited for ever (#1491's finding;
+                // tests/host_lifetime.rs).
+                let _ = writeln!(
+                    std::io::stderr(),
                     "flashtex-host: {} before a connection (--once); exiting",
                     if orphaned {
                         "the parent process exited"

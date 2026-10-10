@@ -186,6 +186,13 @@ pub trait FileResolver: Send {
     ) -> Result<LookupDirs, &'static str> {
         Err("the resolver does not say")
     }
+    /// See what changed on disk since the last call where the resolver
+    /// caches what it read there (kpathsea's `//` expansions of the
+    /// directories no ls-R covers), and forget what is stale, so that the
+    /// next lookups search the disk as a fresh process would. Called at the
+    /// start of every compile (`system::refresh_disk_dirs`) and before the
+    /// format cache's check. By default nothing is cached.
+    fn refresh_disk_dirs(&mut self) {}
 }
 
 /// The directories a lookup's answer depends on (`FileResolver::lookup_dirs`).
@@ -665,6 +672,8 @@ mod kpse {
             format: c_int,
         ) -> *mut *mut c_char;
         fn flashtex_kpse_free_list(list: *mut *mut c_char);
+        fn flashtex_kpse_disk_dirs(k: *mut c_void, format: c_int) -> *mut *mut c_char;
+        fn flashtex_kpse_forget_disk_dirs(k: *mut c_void);
         fn flashtex_kpse_make_enabled(k: *mut c_void, format: c_int) -> c_int;
         fn flashtex_kpse_try_names(
             k: *mut c_void,
@@ -703,6 +712,13 @@ mod kpse {
         formats: HashMap<Format, c_int>,
         what: String,
         memo: Memo,
+        /// The formats looked up so far, and the signature of every
+        /// directory kpathsea has expanded their search paths to on disk
+        /// (`refresh_disk_dirs`), as of the last check.
+        disk: (
+            std::collections::BTreeSet<c_int>,
+            Vec<(String, Option<crate::system::StatSig>)>,
+        ),
     }
 
     /// The session's lookup memo: a lookup's answer, kept while everything
@@ -1030,7 +1046,28 @@ mod kpse {
                 formats,
                 what,
                 memo: Memo::default(),
+                disk: Default::default(),
             }
+        }
+
+        /// Every directory kpathsea has expanded the search paths of the
+        /// formats looked up so far to on disk, with its signature now.
+        fn disk_dirs_now(&self) -> Vec<(String, Option<crate::system::StatSig>)> {
+            let mut v: Vec<(String, Option<crate::system::StatSig>)> = vec![];
+            let mut seen = std::collections::HashSet::new();
+            for &f in &self.disk.0 {
+                // SAFETY: the live instance; the list is freed by `list`.
+                let dirs = self
+                    .list(unsafe { flashtex_kpse_disk_dirs(self.k, f) })
+                    .unwrap_or_default();
+                for d in dirs {
+                    if seen.insert(d.clone()) {
+                        let s = crate::system::StatSig::of(&d);
+                        v.push((d, s));
+                    }
+                }
+            }
+            v
         }
 
         /// Turn the lookup memo on or off for this resolver (`Memo`; the
@@ -1070,6 +1107,8 @@ mod kpse {
             kind: u8,
             run: impl FnOnce(&mut Self) -> (Option<PathBuf>, bool),
         ) -> (Option<PathBuf>, bool) {
+            // (the formats whose disk directories `refresh_disk_dirs` watches)
+            self.disk.0.insert(f);
             let off = *self.memo.off.get_or_insert_with(|| {
                 std::env::var("FLASHTEX_LOOKUP_MEMO").is_ok_and(|v| v == "off")
             });
@@ -1250,6 +1289,23 @@ mod kpse {
                 });
                 (p.map(PathBuf::from), made != 0)
             })
+        }
+        fn refresh_disk_dirs(&mut self) {
+            let now = self.disk_dirs_now();
+            // (a signature taken within its directory's time-stamp tick
+            // equals nothing: such a directory is forgotten again until
+            // the tick has passed)
+            if now != self.disk.1 {
+                if !self.disk.1.is_empty() {
+                    // SAFETY: the live instance.
+                    unsafe { flashtex_kpse_forget_disk_dirs(self.k) };
+                    // (the memo's entries depend on these directories'
+                    // signatures, so those a change touches are made again)
+                    self.disk.1 = self.disk_dirs_now();
+                } else {
+                    self.disk.1 = now;
+                }
+            }
         }
         fn lookup_dirs(
             &mut self,

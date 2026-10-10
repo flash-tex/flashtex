@@ -3363,6 +3363,8 @@ impl Session {
     pub fn compile(&mut self, stop_at: Option<usize>) -> Result<Report, String> {
         let _m = crate::memstat::scope(crate::memstat::tag::ENGINE);
         let t0 = Instant::now();
+        // the disk as it is now for this compile's lookups and checks
+        system::refresh_disk_dirs();
         let i0 = crate::os::thread_counts();
         let mut paused_how = "";
         // A run stopped for this compile (preempted, or at a viewport).

@@ -1658,6 +1658,19 @@ pub(crate) fn with_resolver<T>(f: impl FnOnce(&mut dyn FileResolver) -> T) -> T 
     f(r.as_mut())
 }
 
+/// The disk as it is now for the lookups that follow: the resolver forgets
+/// what it cached of directories that changed since the last time
+/// (`FileResolver::refresh_disk_dirs`: kpathsea's `//` expansions of the
+/// trees no ls-R covers). Every compile starts with it, so that a resident
+/// host searches a directory made since its start (a TEXMFHOME
+/// subdirectory, a TEXINPUTS `dir//` whose `dir` was missing) as a fresh
+/// pdfTeX would (#1493).
+pub fn refresh_disk_dirs() {
+    if RESOLVER.lock().unwrap().is_some() {
+        with_resolver(|r| r.refresh_disk_dirs());
+    }
+}
+
 /// `kpse_invocation_name`: what pdfTeX's C parts name the program in their
 /// warnings, `argv[0]` as the program was invoked (a path, if it was run by
 /// its path).

@@ -155,6 +155,10 @@ str_list_uniqify (str_list_type *l)
   }
 
   /* Replace the passed list with what we constructed.  */
+  /* FlashTeX change (2026-10-09): the old list's array is freed (its
+     elements are now ret's, or freed above); it was lost at every search
+     a resident process makes (macOS `leaks`, lane MEMORY-SAFETY).  */
+  free (STR_LIST (*l));
   *l = ret;
 }
 

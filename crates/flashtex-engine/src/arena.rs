@@ -147,6 +147,22 @@ pub type CheckpointId = u64;
 /// A chunk's saved contents, a slot of the slab.
 type ChunkPtr = *mut u64;
 
+/// A word pointer the restore's worker threads share. Kept a pointer, not
+/// cast to an address and back, so it keeps its provenance (Miri checks
+/// every access through it under `-Zmiri-strict-provenance`).
+#[derive(Clone, Copy)]
+struct SharedPtr(*mut u64);
+// SAFETY: each use states which thread alone writes through the pointer, and
+// that nobody writes what the others read meanwhile.
+unsafe impl Send for SharedPtr {}
+unsafe impl Sync for SharedPtr {}
+impl SharedPtr {
+    /// Chunk `c` of the word space at `self`.
+    fn chunk(self, c: u32) -> *mut u64 {
+        self.0.wrapping_add((c as usize) * CHUNK_WORDS)
+    }
+}
+
 /// Chunks are carved out of 1 MiB blocks and recycled through a free list:
 /// the snapshot benchmark measured 1.24x overhead for 16 KB `malloc`s.
 struct Slab {
@@ -362,19 +378,20 @@ impl Delta {
 #[inline(always)]
 fn prefetch_chunk(a: usize) {
     for line in (0..CHUNK_BYTES).step_by(64) {
-        #[cfg(target_arch = "aarch64")]
+        // (Miri cannot run inline assembly, and a hint changes nothing it checks.)
+        #[cfg(all(target_arch = "aarch64", not(miri)))]
         // SAFETY: a prefetch never faults and has no other effect.
         unsafe {
             std::arch::asm!("prfm pldl1keep, [{0}]", in(reg) a + line, options(nostack, readonly, preserves_flags));
         }
-        #[cfg(target_arch = "x86_64")]
+        #[cfg(all(target_arch = "x86_64", not(miri)))]
         // SAFETY: as above.
         unsafe {
             std::arch::x86_64::_mm_prefetch::<{ std::arch::x86_64::_MM_HINT_T0 }>(
                 (a + line) as *const i8,
             );
         }
-        #[cfg(not(any(target_arch = "aarch64", target_arch = "x86_64")))]
+        #[cfg(any(miri, not(any(target_arch = "aarch64", target_arch = "x86_64"))))]
         let _ = a + line;
     }
 }
@@ -931,8 +948,8 @@ impl Core {
         } else {
             Vec::new()
         };
-        let base = self.base as usize;
-        let redo_at: Vec<usize> = redo.iter().map(|&(_, p)| p as usize).collect();
+        let base = SharedPtr(self.base as *mut u64);
+        let redo_at: Vec<SharedPtr> = redo.iter().map(|&(_, p)| SharedPtr(p)).collect();
         let n = cs.len();
         // Contiguous chunk ranges, one per worker, each with its own words
         // done so far.
@@ -974,12 +991,11 @@ impl Core {
             let hi = if i1 == n { u32::MAX } else { cs[i1] };
             if capture {
                 for i in i0..i1 {
-                    let live = base + ((cs[i] as usize) << CHUNK_SHIFT);
                     // SAFETY: a live chunk and its own redo chunk.
                     unsafe {
                         std::ptr::copy_nonoverlapping(
-                            live as *const u64,
-                            redo_at[i] as *mut u64,
+                            base.chunk(cs[i]) as *const u64,
+                            redo_at[i].0,
                             CHUNK_WORDS,
                         )
                     };
@@ -991,7 +1007,7 @@ impl Core {
                         continue;
                     }
                     let dn = &mut done[slot_r[c as usize] as usize - i0];
-                    let live = (base + ((c as usize) << CHUNK_SHIFT)) as *mut u64;
+                    let live = base.chunk(c);
                     // SAFETY: this worker alone writes chunks in [lo, hi);
                     // `p` is a whole slab chunk.
                     unsafe { apply_whole_under(p, live, dn) };
@@ -1002,7 +1018,7 @@ impl Core {
                         break;
                     }
                     let dn = &mut done[slot_r[d.c as usize] as usize - i0];
-                    let live = (base + ((d.c as usize) << CHUNK_SHIFT)) as *mut u64;
+                    let live = base.chunk(d.c);
                     // SAFETY: as above.
                     unsafe { d.apply_under(&log.bytes, live, dn) };
                 }
@@ -1130,13 +1146,14 @@ impl Core {
             p.sorted = true;
         }
         // their live copies
-        let base = self.base as usize;
         while p.copied < p.cs.len() {
             if p.copied % STOP_CHUNKS == STOP_CHUNKS - 1 && stop() {
                 return false;
             }
             let (i, c) = (p.copied, p.cs[p.copied]);
-            let live = (base + ((c as usize) << CHUNK_SHIFT)) as *const u64;
+            // (from the mapping's own pointer, not an integer: strict
+            // provenance, as the restores' workers since #1493)
+            let live = self.chunk_ptr(c as usize) as *const u64;
             // SAFETY: a whole live chunk.
             let src = unsafe { std::slice::from_raw_parts(live, CHUNK_WORDS) };
             p.buf[i * CHUNK_WORDS..(i + 1) * CHUNK_WORDS].copy_from_slice(src);
@@ -1228,7 +1245,7 @@ impl Core {
     /// chunks it will change (the redo), copy in the prepared ones and, for
     /// chunks the open log `open` took since, their pre-images there.
     fn rewind_prepared(&mut self, p: &Prepared, open: Option<&Log>) -> Vec<(u32, ChunkPtr)> {
-        let base = self.base as usize;
+        let base = SharedPtr(self.base as *mut u64);
         let mut extra: Vec<(u32, ChunkPtr)> = vec![];
         if let Some(o) = open {
             for &(c, q) in &o.entries {
@@ -1257,19 +1274,19 @@ impl Core {
             redo.push((c, self.slab.take()));
             fresh.push(true);
         }
-        let work: Vec<(usize, usize, usize, bool)> = redo
+        let work: Vec<(SharedPtr, SharedPtr, SharedPtr, bool)> = redo
             .iter()
             .enumerate()
             .map(|(i, &(c, r))| {
                 let src = if i < p.cs.len() {
-                    p.buf[i * CHUNK_WORDS..].as_ptr() as usize
+                    p.buf[i * CHUNK_WORDS..].as_ptr() as *mut u64
                 } else {
-                    extra[i - p.cs.len()].1 as usize
+                    extra[i - p.cs.len()].1
                 };
                 (
-                    base + ((c as usize) << CHUNK_SHIFT),
-                    r as usize,
-                    src,
+                    SharedPtr(base.chunk(c)),
+                    SharedPtr(r),
+                    SharedPtr(src),
                     fresh[i],
                 )
             })
@@ -1281,9 +1298,9 @@ impl Core {
             // log's slab chunks).
             unsafe {
                 if fresh {
-                    std::ptr::copy_nonoverlapping(live as *const u64, r as *mut u64, CHUNK_WORDS);
+                    std::ptr::copy_nonoverlapping(live.0 as *const u64, r.0, CHUNK_WORDS);
                 }
-                std::ptr::copy_nonoverlapping(src as *const u64, live as *mut u64, CHUNK_WORDS);
+                std::ptr::copy_nonoverlapping(src.0 as *const u64, live.0, CHUNK_WORDS);
             }
         };
         run_jobs(work.len(), self.workers(), &job);
@@ -1292,18 +1309,16 @@ impl Core {
 
     /// Copy whole chunks into the live space.
     fn copy_in(&mut self, chunks: &[(u32, ChunkPtr)]) {
-        let base = self.base as usize;
-        let work: Vec<(usize, usize)> = chunks
+        let base = SharedPtr(self.base as *mut u64);
+        let work: Vec<(SharedPtr, SharedPtr)> = chunks
             .iter()
-            .map(|&(c, p)| (base + ((c as usize) << CHUNK_SHIFT), p as usize))
+            .map(|&(c, p)| (SharedPtr(base.chunk(c)), SharedPtr(p)))
             .collect();
         let job = |k: usize| {
             let (live, src) = work[k];
             // SAFETY: distinct live chunks; sources are slab chunks nobody
             // writes meanwhile.
-            unsafe {
-                std::ptr::copy_nonoverlapping(src as *const u64, live as *mut u64, CHUNK_WORDS)
-            };
+            unsafe { std::ptr::copy_nonoverlapping(src.0 as *const u64, live.0, CHUNK_WORDS) };
         };
         run_jobs(work.len(), self.workers(), &job);
     }
@@ -1790,7 +1805,13 @@ impl Drop for Core {
 const UNSTATED: &[&str] = &["dl_side"];
 
 /// Chunks below which a restore runs on one thread.
-const PARALLEL_MIN: usize = (4 << 20) / CHUNK_BYTES;
+const PARALLEL_MIN: usize = if cfg!(miri) {
+    // Miri runs the tests at a fiftieth of their size (tests::space): a lower
+    // bar keeps the parallel paths, and their `Sync` sharing, under its checks.
+    16
+} else {
+    (4 << 20) / CHUNK_BYTES
+};
 
 /// Run `job(0..n)` on up to `workers` scoped threads. A restore is bound by
 /// memory bandwidth and independent per chunk; below the threshold spawning
@@ -1937,7 +1958,10 @@ impl Arena {
         // extra chunk to get there.
         let map_len = bytes + CHUNK_BYTES;
         let map = os::alloc_zeroed(map_len);
-        let base = (map as usize).next_multiple_of(CHUNK_BYTES) as *mut u8;
+        // Derived from `map` (not cast from an integer), so the pointer keeps
+        // the mapping's provenance and Miri checks every access through it.
+        // SAFETY: at most CHUNK_BYTES - 1 into a mapping of bytes + CHUNK_BYTES.
+        let base = unsafe { map.add(map.addr().next_multiple_of(CHUNK_BYTES) - map.addr()) };
         let core = Box::new(Core {
             map,
             map_len,
@@ -2292,9 +2316,21 @@ impl Arena {
     pub fn write_through(&mut self, off: usize, src: &[u8]) {
         let core = self.core_mut();
         assert!(off + src.len() <= core.bytes);
+        // No reference into the space may be live across `save`, which reads
+        // the chunk through the core's own pointer to keep its pre-image: a
+        // `&mut` slice held over it (as this did until 2026-10-04) let the
+        // compiler move the write before that read, which Miri's Stacked
+        // Borrows check reported (scalar_spill_goes_through_the_barrier).
+        // So each comparison borrows the space only for itself, and the
+        // write goes through a raw pointer after the save.
         // SAFETY: inside the mapping.
-        let dst = unsafe { std::slice::from_raw_parts_mut(core.base.add(off), src.len()) };
-        if dst == src {
+        let dst = unsafe { core.base.add(off) };
+        // SAFETY: `lo..hi` lies inside `dst..dst + src.len()`, in the
+        // mapping; the shared borrow ends with the comparison.
+        let same = |lo: usize, hi: usize| unsafe {
+            std::slice::from_raw_parts(dst.add(lo), hi - lo) == &src[lo..hi]
+        };
+        if same(0, src.len()) {
             return;
         }
         let first = off >> CHUNK_SHIFT;
@@ -2302,11 +2338,14 @@ impl Arena {
         for c in first..=last {
             let lo = (c << CHUNK_SHIFT).max(off) - off;
             let hi = ((c + 1) << CHUNK_SHIFT).min(off + src.len()) - off;
-            if dst[lo..hi] != src[lo..hi] {
+            if !same(lo, hi) {
                 if core.saved()[c] == 0 {
                     core.save(c);
                 }
-                dst[lo..hi].copy_from_slice(&src[lo..hi]);
+                // SAFETY: as above; `src` is not in the space (the caller
+                // passes the spilled scalars), and no reference into it is
+                // live.
+                unsafe { std::ptr::copy_nonoverlapping(src[lo..].as_ptr(), dst.add(lo), hi - lo) };
             }
         }
     }
@@ -3436,7 +3475,18 @@ impl Visit for Fill<'_> {
 mod tests {
     use super::*;
 
+    /// Miri interprets every access, so under it the tests run at a
+    /// fiftieth of their size (PARALLEL_MIN is lowered to match).
+    fn miri_scaled(n: usize) -> usize {
+        if cfg!(miri) {
+            (n / 50).max(1024)
+        } else {
+            n
+        }
+    }
+
     fn space(words: usize) -> (Arena, Arr<u64>) {
+        let words = miri_scaled(words);
         let mut p = Plan::new(64);
         let r = p.reserve::<u64>("t", words);
         let a = p.build();
@@ -3445,6 +3495,7 @@ mod tests {
     }
 
     fn scribble(arr: &mut Arr<u64>, seed: u64, n: usize) {
+        let n = if cfg!(miri) { (n / 50).max(10) } else { n };
         let mut x = seed;
         for _ in 0..n {
             x ^= x << 13;
@@ -3762,7 +3813,13 @@ mod tests {
         for (n, i) in [2usize, 15, 9].into_iter().enumerate() {
             assert!(a.prepare_restore(ids[i], &mut || false));
             let p = a.core().prepared.as_ref().unwrap();
-            assert!(p.pre.iter().any(|d| !d.is_null()), "a redo made ahead");
+            // (Miri's 1/50 scale writes too few words for a prepared chunk to
+            // be one the barrier has not saved: the restores below are still
+            // checked there, only not this precondition)
+            assert!(
+                cfg!(miri) || p.pre.iter().any(|d| !d.is_null()),
+                "a redo made ahead"
+            );
             scribble(&mut arr, 1000 + n as u64, 2_000);
             let end = arr.to_vec();
             let br = a.restore_branch(ids[i]).unwrap();
@@ -3788,8 +3845,10 @@ mod tests {
         // in turn: nothing prepared, no slab chunk in use but the kept
         // part's redo made ahead (`PartPrep`), and the restore after the
         // stops, which takes the part, equals a plain one
+        // (not at Miri's 1/50 scale, whose space has fewer chunks than one
+        // `STOP_CHUNKS`: no question is asked inside the copies there)
         let live0 = a.core().slab.live;
-        for n in 1..6 {
+        for n in (1..6).filter(|_| !cfg!(miri)) {
             let mut asked = 0;
             assert!(!a.prepare_restore(ids[0], &mut || {
                 asked += 1;
@@ -3989,14 +4048,15 @@ mod tests {
         scribble(&mut arr, 3, 20_000);
         let id = a.checkpoint();
         let before = arr.to_vec();
-        // one word in each of 500 chunks
-        for k in 0..500 {
+        // one word in each of 500 chunks (fewer under Miri)
+        let chunks = (arr.len() / CHUNK_WORDS).min(500);
+        for k in 0..chunks {
             arr[k * CHUNK_WORDS + 5] = 42 + k as u64;
         }
         a.checkpoint();
-        assert!(a.log_bytes() < 500 * 64, "{} bytes", a.log_bytes());
+        assert!(a.log_bytes() < chunks * 64, "{} bytes", a.log_bytes());
         // written back to the same value: nothing to keep
-        for k in 0..500 {
+        for k in 0..chunks {
             arr[k * CHUNK_WORDS + 5] = 42 + k as u64;
         }
         a.checkpoint();
