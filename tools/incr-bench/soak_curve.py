@@ -26,7 +26,7 @@ for path in args:
                 continue
             m = r['mem']
             heap = m.get('malloc_in_use')
-            heap = None if heap is None else heap + m.get('log_mapped', 0) - m.get('sealed_bytes', 0)
+            heap = None if heap is None else heap + m.get('mapped_bytes', m.get('log_mapped', 0)) - m.get('sealed_bytes', 0)
             f.write(f"{r['i']},{m.get('rss', 0) / MB:.1f},{m.get('sealed_bytes', 0) / MB:.1f},"
                     f"{'' if heap is None else f'{heap / MB:.1f}'},{m.get('checkpoints', '')},"
                     f"{m.get('reloc', '')}\n")

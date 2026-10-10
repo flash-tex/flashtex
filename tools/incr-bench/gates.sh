@@ -9,7 +9,7 @@
 #   trip etrip drift
 #   positions  tools/displaylist/check_positions.py (83 fixtures)
 #   tests      cargo tests: incremental, host_incremental, display_list_host, intrinsics, lib
-#   sound-a    soundness: 50 single-character edits + reverts, fixtures + plain-120 + full-100
+#   sound-a    soundness: 50 single-character edits + reverts, fixtures + plain-120 + full-100 + book-inc (its ch03)
 #   sound-budget soundness: 20 edits + reverts under a 4 MB undo-log budget (retention always on)
 #   sound-budget-d the same budget with 8 interleaved (preempted) edits of every kind
 #   sound-timed soundness: 10 edits + reverts per fixture with a timed checkpoint every 0.2 ms
@@ -24,10 +24,10 @@
 #              and sentences, then letters with the line kinds
 #   readers    readers.py: a program polling main.pdf/.aux/.log during typing sees no hole, no more
 #              complete-looking but wrong PDFs than main (0.5 %), and the opening compile's files at the end
-#   sound-c    soundness: 20 structural edits, fixtures + refs-30/120 + full-100
-#   sound-d    soundness: 12 interleaved (interrupted) edits
+#   sound-c    soundness: 20 structural edits, fixtures + refs-30/120 + full-100 + book-inc (its ch03)
+#   sound-d    soundness: 12 interleaved (interrupted) edits, preparations stopped part way (FLASHTEX_SWEEP_STOP_PREPARE)
 #   sound-pre  the preamble kinds (edits.py's pre_*; restarts before S0, in the middle of the line after a
-#              package): 8 edits + reverts, fixtures + full-100 + refs-30; then 6 interleaved with letters
+#              package): 8 edits + reverts, fixtures + full-100 + full-100t + refs-30; then 6 interleaved
 #   sound-first soundness: 10 interleaved edits that interrupt a first compile (no .aux: the compiles'
 #              files removed first) in its first pass (lane COLD-OPEN)
 #   sound-book soundness: 8 single-character edits + 4 sentences (+ reverts) on the owner's
@@ -106,7 +106,8 @@ for g in ${@:-build parity lockstep trip etrip drift positions tests sound-a sou
       timeout 3600 cargo test --release -p flashtex-display-list > $R/tests-display-list.txt 2>&1; echo "display-list tests exit $?" >> $R/tests-display-list.txt ;;
     sound-a)
       PYTHONHASHSEED=0 timeout 36000 python3 $S/soundness.py gates -j $J --trials $(trials 50) --dir $B/sound-a --out $R/soundness-a.jsonl \
-        --extra $B/src-plain-120:plain-120 --extra $B/src-full-100:full-100 > $R/soundness-a.txt 2>&1
+        --extra $B/src-plain-120:plain-120 --extra $B/src-full-100:full-100 --extra $B/src-book-inc:book-inc:ch03.tex \
+        > $R/soundness-a.txt 2>&1
       echo "soundness A exit $?" >> $R/soundness-a.txt ;;
     sound-budget)
       # retention (`thin`) under a 4 MB undo-log budget, so that every run drops and merges
@@ -206,22 +207,24 @@ for g in ${@:-build parity lockstep trip etrip drift positions tests sound-a sou
     sound-c)
       PYTHONHASHSEED=0 timeout 36000 python3 $S/soundness.py gates -j $J --trials $(trials 20) --dir $B/sound-c --out $R/soundness-c.jsonl \
         --kinds sentence,section,label,ref,cite,footnote,unlabel,unsection \
-        --extra $B/src-refs-30:refs-30 --extra $B/src-refs-120:refs-120 --extra $B/src-full-100:full-100 > $R/soundness-c.txt 2>&1
+        --extra $B/src-refs-30:refs-30 --extra $B/src-refs-120:refs-120 --extra $B/src-full-100:full-100 \
+        --extra $B/src-book-inc:book-inc:ch03.tex > $R/soundness-c.txt 2>&1
       echo "soundness C exit $?" >> $R/soundness-c.txt ;;
     sound-d)
-      PYTHONHASHSEED=0 timeout 36000 python3 $S/soundness.py gates -j $J --trials $(trials 12) --interleave --dir $B/sound-d --out $R/soundness-d.jsonl \
+      PYTHONHASHSEED=0 FLASHTEX_SWEEP_STOP_PREPARE=2 timeout 36000 python3 $S/soundness.py gates -j $J --trials $(trials 12) --interleave --dir $B/sound-d --out $R/soundness-d.jsonl \
         --kinds replace,insert,sentence,section,label,ref,unlabel \
-        --extra $B/src-refs-30:refs-30 --extra $B/src-refs-120:refs-120 --extra $B/src-full-100:full-100 > $R/soundness-d.txt 2>&1
+        --extra $B/src-refs-30:refs-30 --extra $B/src-refs-120:refs-120 --extra $B/src-full-100:full-100 \
+        --extra $B/src-book-inc:book-inc:ch03.tex > $R/soundness-d.txt 2>&1
       echo "soundness D exit $?" >> $R/soundness-d.txt ;;
     sound-pre)
       PRE=pre_title,pre_author,pre_newcommand,pre_setlength,pre_usepackage,pre_nopackage,pre_option,pre_after_package
       PYTHONHASHSEED=0 timeout 36000 python3 $S/soundness.py gates -j $J --trials $(trials 8) --kinds $PRE --allow-no-trials \
         --dir $B/sound-pre --out $R/soundness-pre.jsonl \
-        --extra $B/src-full-100:full-100 --extra $B/src-refs-30:refs-30 > $R/soundness-pre.txt 2>&1
+        --extra $B/src-full-100:full-100 --extra $B/src-full-100t:full-100t --extra $B/src-refs-30:refs-30 > $R/soundness-pre.txt 2>&1
       e1=$?
       PYTHONHASHSEED=0 timeout 36000 python3 $S/soundness.py gates -j $J --trials $(trials 6) --interleave --allow-no-trials \
         --kinds $PRE,replace,insert --dir $B/sound-pre-d --out $R/soundness-pre-d.jsonl \
-        --extra $B/src-full-100:full-100 --extra $B/src-refs-30:refs-30 >> $R/soundness-pre.txt 2>&1
+        --extra $B/src-full-100:full-100 --extra $B/src-full-100t:full-100t --extra $B/src-refs-30:refs-30 >> $R/soundness-pre.txt 2>&1
       echo "soundness pre exit $e1 $?" >> $R/soundness-pre.txt ;;
     sound-first)
       PYTHONHASHSEED=0 timeout 36000 python3 $S/soundness.py gates -j $J --trials 10 --interleave --first-open --dir $B/sound-first --out $R/soundness-first.jsonl \

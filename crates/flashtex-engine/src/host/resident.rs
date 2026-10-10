@@ -785,6 +785,13 @@ impl Engine {
             // (only when set: a normal job's stored S0 keeps its key)
             if job.halt { "\0halt" } else { "" }
         );
+        // A focused job (`includeonly`, lane FOCUS-CHAPTER) has its own
+        // stored S0 (its first line differs), so switching the focus back
+        // and forth keeps both.
+        let key = match &job.includeonly {
+            Some(list) => format!("{key}\0includeonly\0{list}"),
+            None => key,
+        };
         let h = crate::persist::hash128(key.as_bytes());
         Some(dir.join(format!("{:016x}{:016x}.s0", h[0], h[1])))
     }
@@ -923,6 +930,15 @@ impl Engine {
         ps.peer.font_formats = Some(displaylist::parse_font_formats(
             &server::font_formats(&req).join(","),
         ));
+        // (a save of this S₀ still being written by this process: wait for it)
+        if doc.compiles == 0 {
+            if let Some(p) = &s0_path {
+                super::s0write::flush(
+                    Some(&p.to_string_lossy()),
+                    std::time::Duration::from_secs(30),
+                );
+            }
+        }
         let reopen = doc.compiles == 0 && s0_path.as_ref().is_some_and(|p| p.is_file());
         started(
             "resident",
@@ -1145,10 +1161,19 @@ impl Engine {
                         "restart_preamble".to_string(),
                         Json::Bool(rep.restart_preamble),
                     ),
+                    // READ-REVALIDATE: a later restart point tried (`crate::revalidate`)
+                    (
+                        "revalidated".to_string(),
+                        rep.revalidated.map(Json::Bool).unwrap_or(Json::Null),
+                    ),
                     // ... in the middle of the main file's line (`crate::midline`)
                     (
                         "restart_midline".to_string(),
                         Json::Bool(rep.restart_midline),
+                    ),
+                    (
+                        "arm_revalidated".to_string(),
+                        rep.arm_revalidated.map(Json::Bool).unwrap_or(Json::Null),
                     ),
                     (
                         "restart_next_gap".to_string(),
@@ -1468,20 +1493,49 @@ impl Engine {
         if let Some(d) = p.parent() {
             let _ = std::fs::create_dir_all(d);
         }
+        // The engine thread only takes S₀ out of the engine; the writer
+        // thread writes it (`super::s0write`), so a keystroke that comes now
+        // does not wait for the file.
         let t = Instant::now();
-        match doc.session.save_s0(&p.to_string_lossy()) {
+        let i0 = crate::os::thread_counts();
+        let image = doc.session.prepare_s0();
+        let engine_ms = (t.elapsed().as_secs_f64() * 1e4).round() / 10.0;
+        let engine_instr_k = match (i0, crate::os::thread_counts()) {
+            (Some(a), Some(b)) => Json::Int(((b.0 - a.0) / 1000) as i64),
+            _ => Json::Null,
+        };
+        let image = match image {
+            Ok(i) => i,
+            Err(e) => {
+                eprintln!("flashtex-host: saving S0: {e}");
+                return;
+            }
+        };
+        let shown = p.display().to_string();
+        let done: super::s0write::Done = Box::new(move |r, write_s| match r {
             Ok((bytes, _)) => server::say(&format!(
                 "flashtex-host: {}",
                 obj([
-                    ("saved_s0", js(p.display().to_string())),
+                    ("saved_s0", js(shown)),
                     ("bytes", Json::Int(bytes as i64)),
                     (
                         "ms",
                         Json::Num((t.elapsed().as_secs_f64() * 1e4).round() / 10.0)
                     ),
+                    ("engine_ms", Json::Num(engine_ms)),
+                    ("engine_instr_k", engine_instr_k),
+                    ("write_ms", Json::Num((write_s * 1e4).round() / 10.0)),
                 ])
             )),
             Err(e) => eprintln!("flashtex-host: saving S0: {e}"),
+        });
+        if self.profile.lean {
+            // (Low Memory: no second copy alive; written here, as before)
+            let t = Instant::now();
+            let r = image.write(&p.to_string_lossy(), &|| false);
+            done(r, t.elapsed().as_secs_f64());
+        } else {
+            super::s0write::submit(&p.to_string_lossy(), image, done);
         }
     }
 
@@ -1547,7 +1601,14 @@ impl Engine {
         let spawned = std::thread::Builder::new()
             .name("tools".into())
             .spawn(move || {
-                let report = job.run();
+                // A panic in a tool (an in-process port's bug) must not
+                // leave `doc.tools.running` set: the engine thread is told
+                // the tools are done either way.
+                let report = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| job.run()))
+                    .unwrap_or_else(|_| {
+                        eprintln!("flashtex-host: the external tools' run panicked");
+                        external::Report { outcomes: vec![] }
+                    });
                 let _ = tx.send(Req::ToolsDone {
                     gen,
                     conn,
@@ -1692,8 +1753,11 @@ fn settle(doc: &mut Doc, conn: &Conn, id: i64, limit: bool) {
 /// (docs/evidence/p4-memory-2026-09-30/). With jemalloc as the host's heap
 /// (`crate::logalloc`, feature `jemalloc`) the Rust side's free pages go
 /// back by a purge of its arenas (`logalloc::give_back`), and glibc's trim
-/// is left with the C parts' blocks. macOS's allocator returns free pages
-/// itself. FLASHTEX_NO_TRIM=1 leaves it out (for A/B).
+/// is left with the C parts' blocks. On macOS the large blocks' spares are
+/// unmapped (`logalloc::give_back`); xzone keeps the small blocks' pages,
+/// and `malloc_zone_pressure_relief` returns none of them (0 bytes,
+/// MEM-FOOTPRINT and MEM-BASELINE). FLASHTEX_NO_TRIM=1 leaves it out (for
+/// A/B).
 fn give_back_free_memory() {
     #[cfg(target_os = "linux")]
     if std::env::var_os("FLASHTEX_NO_TRIM").is_none() {
@@ -1725,6 +1789,8 @@ fn give_back_free_memory() {
             fn malloc_zone_pressure_relief(zone: *mut std::ffi::c_void, goal: usize) -> usize;
         }
         if std::env::var_os("FLASHTEX_NO_TRIM").is_none() {
+            // (the large blocks' spares unmapped: `logalloc`)
+            crate::logalloc::give_back();
             // SAFETY: a null zone means every zone; it only releases free memory.
             unsafe { malloc_zone_pressure_relief(std::ptr::null_mut(), 0) };
         }

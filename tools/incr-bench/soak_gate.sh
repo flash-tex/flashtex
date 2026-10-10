@@ -5,7 +5,7 @@
 # (soak.py: letters typed and backspaced, phrases pasted and deleted, at 16 places across the
 # document, everything taken back every 100 keystrokes and then 5 s idle), and fails if what it
 # allocates grows. The measure is malloc's bytes in use less the undo logs at each DONE (`heap`:
-# DONE.mem's malloc_in_use + log_mapped - sealed_bytes, FLASHTEX_MEMSTAT=1; the logs are bounded by the budget
+# DONE.mem's malloc_in_use + mapped_bytes - sealed_bytes, FLASHTEX_MEMSTAT=1; the logs are bounded by the budget
 # and swing with retention): Rust's and the C libraries' allocations alike, resident or not.
 #
 #   heap slope over the second half         <= SOAK_MAX_HEAP_SLOPE MB per 100 edits (default 8)

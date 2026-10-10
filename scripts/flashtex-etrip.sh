@@ -168,8 +168,11 @@ EOF
 # The display-list writer's wire format (MIT, crates/display-list-v3).
 # (Cargo reads the path natively: under Git Bash/MSYS2 on Windows, `/d/a/...`
 # is `D:/a/...`, which `cygpath -m` gives; elsewhere there is no cygpath.)
-printf '\n[dependencies]\nflashtex-display-list = { path = "%s/crates/display-list-v3" }\n' \
-    "$(cygpath -m "$root" 2>/dev/null || printf '%s' "$root")" >>"$pkg/Cargo.toml"
+# And the runtime shared with the XeTeX-derived engine (crates/flashtex-runtime),
+# and libc for src/hashcache.rs (statfs).
+r="$(cygpath -m "$root" 2>/dev/null || printf '%s' "$root")"
+printf '\n[dependencies]\nlibc = "0.2"\nflashtex-display-list = { path = "%s/crates/display-list-v3" }\nflashtex-runtime = { path = "%s/crates/flashtex-runtime" }\n' \
+    "$r" "$r" >>"$pkg/Cargo.toml"
 # The generated code's warnings are known and not ours to fix by hand.
 # FLASHTEX_SANITIZER=address (or leak) builds the scratch engine with that
 # sanitizer and a rebuilt std (a nightly toolchain and rust-src; lane

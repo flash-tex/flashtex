@@ -26,8 +26,8 @@ bytes) and a summary line (also printed). Two measures, each at every DONE:
               the undo logs (retention and convergence drop and add checkpoints: +-40 MB on
               plain-120) and, on a machine short of memory, with what the system compresses or
               swaps out, which can hide a leak
-  heap        malloc's bytes in use less the undo logs it holds (`mem.malloc_in_use + mem.log_mapped -
-              mem.sealed_bytes`: the logs' large blocks are mappings of their own, `logalloc`):
+  heap        malloc's bytes in use less the undo logs it holds (`mem.malloc_in_use + mem.mapped_bytes -
+              mem.sealed_bytes`: the logs' large blocks are mappings of their own, `logalloc`; `log_mapped` before #1755):
               everything allocated that is not the budgeted logs, Rust's and the C libraries'
               alike, resident or not. It must not grow
 For each: warm (the median over the second half of warm-up, --warmup keystrokes, default 10 %),
@@ -446,7 +446,7 @@ def summarise(a, recs, samples):
         'edit_ms_p95': sorted(r['ms'] for r in ed)[int(0.95 * (n - 1))],
     })
     def nolog(m):
-        return m['malloc_in_use'] + m.get('log_mapped', 0) - m.get('sealed_bytes', 0)
+        return m['malloc_in_use'] + m.get('mapped_bytes', m.get('log_mapped', 0)) - m.get('sealed_bytes', 0)
 
     heap = [(r['i'], nolog(r['mem']) / MB) for r in ed if r['mem'].get('malloc_in_use')]
     if len(heap) == n:

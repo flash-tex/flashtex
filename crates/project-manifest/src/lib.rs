@@ -80,6 +80,44 @@ pub struct Project {
     /// directory. `None`: each tool's own default (the CLI writes
     /// `<entry>.pdf` next to the entry).
     pub output: Option<String>,
+    /// The document's mode (docs/design/modes/PROPOSAL.md §4.3): which
+    /// engine typesets it. `None`: not set here (a `% !TEX program` line,
+    /// then Classic, decide).
+    pub mode: Option<Mode>,
+    /// `flashtex_version`: the version a `mode = "flashtex"` project is
+    /// pinned to (PROPOSAL.md §10.3); ignored in the other modes.
+    pub flashtex_version: Option<String>,
+}
+
+/// `[project] mode` (PROPOSAL.md §4.3, owner rulings Q3, Q5).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Mode {
+    /// pdfLaTeX-compatible (`flashtex-host`): the default.
+    Classic,
+    /// XeLaTeX-compatible (`flashtex-host-unicode`).
+    Unicode,
+    /// FlashTeX's own, not portable (PROPOSAL.md §10); needs
+    /// `flashtex_version`.
+    FlashTeX,
+}
+
+impl Mode {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Mode::Classic => "classic",
+            Mode::Unicode => "unicode",
+            Mode::FlashTeX => "flashtex",
+        }
+    }
+
+    pub fn parse(s: &str) -> Option<Mode> {
+        Some(match s {
+            "classic" => Mode::Classic,
+            "unicode" => Mode::Unicode,
+            "flashtex" => Mode::FlashTeX,
+            _ => return None,
+        })
+    }
 }
 
 /// `[fonts]` — a setting, not a package (proposal §2.4). Read by S4; this
@@ -357,10 +395,20 @@ impl Manifest {
         let mut m = Manifest::default();
         w.unknown_keys(&table, "", &["project", "fonts", "packages", "library"]);
         if let Some(project) = w.table(&table, "project", "project") {
-            w.unknown_keys(project, "project", &["entry", "texinputs", "output"]);
+            w.unknown_keys(project, "project", &["entry", "texinputs", "output", "mode", "flashtex_version"]);
             m.project.entry = w.string(project, "entry", "project.entry");
             m.project.texinputs = w.string_list(project, "texinputs", "project.texinputs");
             m.project.output = w.string(project, "output", "project.output");
+            if let Some(s) = w.string(project, "mode", "project.mode") {
+                m.project.mode = Mode::parse(&s);
+                if m.project.mode.is_none() {
+                    w.warn(
+                        "project.mode",
+                        format!("expected \"classic\", \"unicode\" or \"flashtex\", got {s:?}; using \"classic\""),
+                    );
+                }
+            }
+            m.project.flashtex_version = w.string(project, "flashtex_version", "project.flashtex_version");
         }
         if let Some(fonts) = w.table(&table, "fonts", "fonts") {
             w.unknown_keys(fonts, "fonts", &["text", "math", "mono", "sans"]);
@@ -443,6 +491,12 @@ impl Manifest {
         ));
         if let Some(o) = &self.project.output {
             out.push_str(&format!("output = {}\n", quote(o)));
+        }
+        if let Some(m) = self.project.mode {
+            out.push_str(&format!("mode = {}\n", quote(m.as_str())));
+        }
+        if let Some(v) = &self.project.flashtex_version {
+            out.push_str(&format!("flashtex_version = {}\n", quote(v)));
         }
         if !self.fonts.is_empty() {
             out.push_str("\n[fonts]\n");
@@ -665,6 +719,97 @@ path = {{}}         # local libraries, e.g. {{ mylib = \"../mylib\" }} — a dir
         for l in &lines[end..] {
             out.push_str(l);
         }
+        out
+    }
+
+    /// `text` with `[project] mode` set to `mode` -- the one writer the app's
+    /// mode item ("switch to Unicode mode") uses, through the helper's
+    /// `set_mode`. Every other byte is kept: a leading byte-order mark, the
+    /// file's line endings (CRLF stays CRLF), comments, order, and every other
+    /// key and table.
+    ///
+    /// - The real (uncommented) `mode = …` line of the `[project]` table is
+    ///   replaced in place, keeping a trailing `# comment`; a commented
+    ///   `# mode = …` line and a `mode` key of another table are left alone.
+    /// - Without one, `mode = …` is added after the table's last line that is
+    ///   not blank.
+    /// - Without a `[project]` table: if keys before the first table set
+    ///   `project.…` (dotted keys), `project.mode = …` is added after the last
+    ///   of them; otherwise a `[project]` table is appended at the end of the
+    ///   file, so no key before the first table changes table.
+    ///
+    /// The helper parses the result and refuses it unless it reads back as
+    /// the original with only `mode` changed (an inline `project = { … }`
+    /// table, say).
+    pub fn with_mode(text: &str, mode: Mode) -> String {
+        let (bom, body) = match text.strip_prefix('\u{feff}') {
+            Some(rest) => ("\u{feff}", rest),
+            None => ("", text),
+        };
+        let nl = if body.contains("\r\n") { "\r\n" } else { "\n" };
+        let value = quote(mode.as_str());
+        let lines: Vec<&str> = body.split_inclusive('\n').collect();
+        let header_name = |line: &str| -> Option<String> {
+            let t = line.trim_start();
+            if !t.starts_with('[') || t.starts_with("[[") {
+                return t.starts_with("[[").then(|| String::from("[["));
+            }
+            let close = t.find(']')?;
+            Some(t[1..close].trim().to_string())
+        };
+        let is_header = |line: &str| header_name(line).is_some();
+        // the key of a `key = …` line (not a comment), trimmed
+        let key_of = |line: &str| -> Option<String> {
+            let t = line.trim_start();
+            if t.starts_with('#') || t.starts_with('[') {
+                return None;
+            }
+            let (k, _) = t.split_once('=')?;
+            Some(k.trim().to_string())
+        };
+        let ensure_nl = |out: &mut String| {
+            if !out.is_empty() && !out.ends_with('\n') {
+                out.push_str(nl);
+            }
+        };
+        let mut out = String::from(bom);
+        if let Some(start) = lines.iter().position(|l| header_name(l).as_deref() == Some("project")) {
+            let end = lines[start + 1..].iter().position(|l| is_header(l)).map_or(lines.len(), |i| start + 1 + i);
+            let existing = (start + 1..end).find(|&i| key_of(lines[i]).as_deref() == Some("mode"));
+            let last_content = (start..end).rev().find(|&i| !lines[i].trim().is_empty()).unwrap_or(start);
+            for (i, l) in lines.iter().enumerate() {
+                if Some(i) == existing {
+                    let eol = if l.ends_with("\r\n") { "\r\n" } else if l.ends_with('\n') { "\n" } else { "" };
+                    let indent = &l[..l.len() - l.trim_start().len()];
+                    out.push_str(&format!("{indent}mode = {value}{}{eol}", trailing_comment(l.trim_end_matches(['\r', '\n']))));
+                    continue;
+                }
+                out.push_str(l);
+                if existing.is_none() && i == last_content {
+                    ensure_nl(&mut out);
+                    out.push_str(&format!("mode = {value}{nl}"));
+                }
+            }
+            return out;
+        }
+        let first_table = lines.iter().position(|l| is_header(l)).unwrap_or(lines.len());
+        let dotted = (0..first_table).rev().find(|&i| key_of(lines[i]).is_some_and(|k| k.starts_with("project.")));
+        if let Some(at) = dotted {
+            for (i, l) in lines.iter().enumerate() {
+                out.push_str(l);
+                if i == at {
+                    ensure_nl(&mut out);
+                    out.push_str(&format!("project.mode = {value}{nl}"));
+                }
+            }
+            return out;
+        }
+        out.push_str(body);
+        ensure_nl(&mut out);
+        if !body.trim().is_empty() && !out.ends_with(&format!("{nl}{nl}")) {
+            out.push_str(nl);
+        }
+        out.push_str(&format!("[project]{nl}mode = {value}{nl}"));
         out
     }
 
@@ -1076,5 +1221,77 @@ name = "mylib"
         assert_eq!(Manifest::parse(&t).unwrap().manifest.packages.fetch, FetchPolicy::Never);
         assert_eq!(trailing_comment("fetch = \"a # not a comment\"   # real"), "   # real");
         assert_eq!(trailing_comment("fetch = \"ask\""), "");
+    }
+
+    #[test]
+    fn project_mode_is_read_and_written() {
+        let p = Manifest::parse("[project]\nmode = \"unicode\"\n").unwrap();
+        assert_eq!(p.manifest.project.mode, Some(Mode::Unicode));
+        assert!(p.warnings.is_empty());
+        let again = Manifest::parse(&p.manifest.to_toml()).unwrap();
+        assert_eq!(again.manifest, p.manifest);
+        let p = Manifest::parse("[project]\nmode = \"lualatex\"\n").unwrap();
+        assert_eq!(p.manifest.project.mode, None);
+        assert_eq!(p.warnings[0].key, "project.mode");
+        let p = Manifest::parse("[project]\nmode = \"flashtex\"\nflashtex_version = \"1.0\"\n").unwrap();
+        assert_eq!(p.manifest.project.mode, Some(Mode::FlashTeX));
+        assert_eq!(p.manifest.project.flashtex_version.as_deref(), Some("1.0"));
+    }
+
+    /// `with_mode(t, m)` reads back as `t` with only the mode set.
+    fn check_with_mode(t: &str, m: Mode) -> String {
+        let w = Manifest::with_mode(t, m);
+        let mut want = Manifest::parse(t).unwrap().manifest;
+        want.project.mode = Some(m);
+        assert_eq!(Manifest::parse(&w).unwrap().manifest, want, "{w:?}");
+        w
+    }
+
+    #[test]
+    fn with_mode_sets_the_key_and_keeps_the_rest() {
+        // no [project]: appended at the end, the keys before the first table stay where they are
+        let t = "[fonts]\ntext = \"X\"\n";
+        assert_eq!(check_with_mode(t, Mode::Unicode), "[fonts]\ntext = \"X\"\n\n[project]\nmode = \"unicode\"\n");
+        // dotted keys at the root: project.mode beside them (a [project] header would be invalid)
+        let t = "project.entry = \"a.tex\"\n\n[fonts]\ntext = \"X\"\n";
+        assert_eq!(
+            check_with_mode(t, Mode::Unicode),
+            "project.entry = \"a.tex\"\nproject.mode = \"unicode\"\n\n[fonts]\ntext = \"X\"\n"
+        );
+        // replaced in place, comment kept; the other keys and tables untouched
+        let t = "# mine\n[project]\nentry = \"a.tex\"\nmode = \"classic\" # chosen\n\n[fonts]\nmath = \"Y\"\n";
+        assert_eq!(
+            check_with_mode(t, Mode::Unicode),
+            "# mine\n[project]\nentry = \"a.tex\"\nmode = \"unicode\" # chosen\n\n[fonts]\nmath = \"Y\"\n"
+        );
+        // added after the table's last line
+        let t = "[project]\nentry = \"a.tex\"\n\n[packages]\nfetch = \"ask\"\n";
+        assert_eq!(check_with_mode(t, Mode::Classic), "[project]\nentry = \"a.tex\"\nmode = \"classic\"\n\n[packages]\nfetch = \"ask\"\n");
+        // the template, and an empty file
+        check_with_mode(&Manifest::template("main.tex"), Mode::Unicode);
+        assert_eq!(Manifest::with_mode("", Mode::Unicode), "[project]\nmode = \"unicode\"\n");
+    }
+
+    #[test]
+    fn with_mode_keeps_a_bom_and_crlf() {
+        let t = "\u{feff}[project]\r\nentry = \"a.tex\"\r\n\r\n[fonts]\r\ntext = \"X\"\r\n";
+        let w = check_with_mode(t, Mode::Unicode);
+        assert_eq!(w, "\u{feff}[project]\r\nentry = \"a.tex\"\r\nmode = \"unicode\"\r\n\r\n[fonts]\r\ntext = \"X\"\r\n");
+        let t = "\u{feff}[fonts]\r\ntext = \"X\"\r\n";
+        assert_eq!(check_with_mode(t, Mode::Classic), "\u{feff}[fonts]\r\ntext = \"X\"\r\n\r\n[project]\r\nmode = \"classic\"\r\n");
+    }
+
+    #[test]
+    fn with_mode_leaves_comments_and_other_tables_mode_keys() {
+        // a commented `# mode = …` stays a comment; the real key is added
+        let t = "[project]\nentry = \"a.tex\"\n# mode = \"classic\"\n";
+        assert_eq!(check_with_mode(t, Mode::Unicode), "[project]\nentry = \"a.tex\"\n# mode = \"classic\"\nmode = \"unicode\"\n");
+        // a `mode` key of another table is not the project's
+        let t = "[project]\nentry = \"a.tex\"\n\n[library]\nname = \"x\"\nmode = \"z\"\n";
+        let w = Manifest::with_mode(t, Mode::Unicode);
+        assert_eq!(w, "[project]\nentry = \"a.tex\"\nmode = \"unicode\"\n\n[library]\nname = \"x\"\nmode = \"z\"\n");
+        // an indented key, and `[ project ]` with spaces
+        let t = "[ project ]\n  mode = \"classic\"\n";
+        assert_eq!(check_with_mode(t, Mode::Unicode), "[ project ]\n  mode = \"unicode\"\n");
     }
 }

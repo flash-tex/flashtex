@@ -465,9 +465,17 @@ def licence_problems(db, packages):
     return out
 
 
+def bundle_packages(packages_txt, extra_txt):
+    """The packages the bundle packs whole: packages.txt (derived from the
+    engine's reads) and extra.txt (hand-picked: what the in-process tools
+    and documents outside the corpora read), each once, in sorted order."""
+    extra = read_list(extra_txt) if extra_txt and os.path.isfile(extra_txt) else []
+    return sorted(set(read_list(packages_txt)) | set(extra))
+
+
 def cmd_pack(a):
     root = os.path.realpath(a.root)
-    packages = read_list(a.packages)
+    packages = bundle_packages(a.packages, a.extra)
     core = read_list(a.core)
     work = tempfile.mkdtemp(prefix="texbundle-pack-")
     try:
@@ -694,7 +702,10 @@ def cmd_notes(a):
       "(the format the engine builds from this bundle).")
     w(f"- Packed by `tools/bundle/texbundle.py pack` (commit {a.commit}): the package list "
       "`tools/bundle/tl2026/packages.txt` (every package whose files the parity fixtures, the arXiv "
-      "corpus, the beamer corpus and packages-2026 read) and the core range `tools/bundle/tl2026/core.txt`.")
+      "corpus, the beamer corpus and packages-2026 read), the hand-picked "
+      "`tools/bundle/tl2026/extra.txt` (bibtex's and makeindex's styles and other files the tools "
+      "FlashTeX runs read, common bibliography styles) and the core range "
+      "`tools/bundle/tl2026/core.txt`.")
     w(f"- Digest (SHA-256 of the bundle's file list): `{digest}`; file SHA-256: `{info['sha256']}`; "
       f"index {info['index_gzip']} bytes gzipped; core range {info['core_bytes']} bytes.")
     w("- Packed twice in the same job: byte-identical.")
@@ -924,6 +935,8 @@ def main():
     s.add_argument("--root", required=True)
     s.add_argument("--dist", required=True, help="flashtex-dist")
     s.add_argument("--packages", default=os.path.join(DATA, "packages.txt"))
+    s.add_argument("--extra", default=os.path.join(DATA, "extra.txt"),
+                   help="hand-picked packages packed besides --packages (tl2026/extra.txt)")
     s.add_argument("--core", default=os.path.join(DATA, "core.txt"))
     s.add_argument("--out", required=True)
     s.add_argument("--json")

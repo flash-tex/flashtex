@@ -420,9 +420,13 @@ pub fn read_logical(path: &str) -> std::io::Result<Vec<u8>> {
 }
 
 /// `hash128(&read_logical(path)?)`, without reading the file into memory
-/// (`persist::hash128_file`).
+/// (`persist::hash128_file`); a file this process does not write is hashed
+/// once while it is unchanged (`crate::hashcache`).
 pub fn hash_logical(path: &str) -> std::io::Result<[u64; 2]> {
-    crate::persist::hash128_file(path, logical_len(path)).map(|(h, _)| h)
+    match logical_len(path) {
+        None => crate::hashcache::hash_file(path),
+        len => crate::persist::hash128_file(path, len).map(|(h, _)| h),
+    }
 }
 
 /// A new engine: no file's logical end is known any more. Each file still
@@ -668,6 +672,13 @@ pub struct WordFile {
     err: i32,
     /// The file opened, for a checkpoint's host-state record.
     path: Option<String>,
+}
+
+impl WordFile {
+    /// The file opened.
+    pub fn path(&self) -> Option<&str> {
+        self.path.as_deref()
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1120,6 +1131,11 @@ static RUN: Mutex<Option<Run>> = Mutex::new(None);
 /// The run's configuration (the default one until `configure` is called).
 pub fn run() -> Run {
     RUN.lock().unwrap().get_or_insert_with(Run::default).clone()
+}
+
+/// `run().output_directory`, without copying the rest.
+pub fn output_directory() -> Option<String> {
+    with_run(|r| r.output_directory.clone())
 }
 
 fn with_run<T>(f: impl FnOnce(&mut Run) -> T) -> T {
@@ -1586,6 +1602,7 @@ fn default_format_file() -> String {
 static RESOLVER: Mutex<Option<Box<dyn FileResolver>>> = Mutex::new(None);
 
 pub fn set_resolver(r: Box<dyn FileResolver>) {
+    crate::lookupproof::resolver_changed();
     *RESOLVER.lock().unwrap() = Some(r);
 }
 
@@ -1604,6 +1621,7 @@ fn reset_resolver(prog: &str, keep_allowed: bool) {
         return;
     }
     *p = Some(prog.to_string());
+    crate::lookupproof::resolver_changed();
     *RESOLVER.lock().unwrap() = None;
 }
 
@@ -1621,14 +1639,22 @@ pub const ENGINE_NAME: &str = "flashtex";
 pub fn with_resolver_for<T>(prog: &str, f: impl FnOnce(&mut dyn FileResolver) -> T) -> T {
     reset_resolver(prog, true);
     let mut g = RESOLVER.lock().unwrap();
-    let r = g.get_or_insert_with(|| crate::resolver::default_resolver(prog, ENGINE_NAME));
+    let r = g.get_or_insert_with(|| {
+        crate::lookupproof::resolver_changed();
+        crate::resolver::default_resolver(prog, ENGINE_NAME)
+    });
+    crate::lookupproof::process_resolver(r.as_ref());
     f(r.as_mut())
 }
 
-fn with_resolver<T>(f: impl FnOnce(&mut dyn FileResolver) -> T) -> T {
+pub(crate) fn with_resolver<T>(f: impl FnOnce(&mut dyn FileResolver) -> T) -> T {
     let prog = run().program_name;
     let mut g = RESOLVER.lock().unwrap();
-    let r = g.get_or_insert_with(|| crate::resolver::default_resolver(&prog, ENGINE_NAME));
+    let r = g.get_or_insert_with(|| {
+        crate::lookupproof::resolver_changed();
+        crate::resolver::default_resolver(&prog, ENGINE_NAME)
+    });
+    crate::lookupproof::process_resolver(r.as_ref());
     f(r.as_mut())
 }
 
@@ -1776,6 +1802,40 @@ pub fn confined_found_ok(name: &str, found: &str, format: Format, searched: bool
         }
     }
     confined_path_ok(Path::new(found), &roots, searched)
+}
+
+/// The confinement rules for a file a tool the engine runs in-process
+/// (makeindex, bibtex) is about to read: `name` as the tool has it, `path`
+/// where it resolves. An absolute name is allowed only as the answer of a
+/// search (`searched`, a style or database kpathsea found), which must then
+/// be a TeX tree file or lie in a root; `tool_dir` (the scratch directory
+/// the host copied the tool's inputs into) is a root too. True when
+/// confinement is off.
+pub(crate) fn tool_read_ok(
+    name: &str,
+    path: &Path,
+    searched: bool,
+    tool_dir: Option<&Path>,
+) -> bool {
+    if !reads_confined() {
+        return true;
+    }
+    if !searched && !confined_name_ok(name) {
+        return false;
+    }
+    let mut roots: Vec<std::path::PathBuf> = confine_roots().to_vec();
+    if let Ok(cwd) = std::env::current_dir().and_then(std::fs::canonicalize) {
+        roots.push(cwd);
+    }
+    if let Some(dir) = run().output_directory {
+        if let Ok(d) = std::fs::canonicalize(&dir) {
+            roots.push(d);
+        }
+    }
+    if let Some(d) = tool_dir.and_then(|d| std::fs::canonicalize(d).ok()) {
+        roots.push(d);
+    }
+    confined_path_ok(path, &roots, searched)
 }
 
 /// The second rule on its own (tests call it directly).
@@ -2245,16 +2305,41 @@ pub fn runsystem(cmd: &[u8]) -> i32 {
     if allow == 1 || allow == 2 {
         let _ = std::io::stdout().flush();
         record_effect("write18", &safecmd);
-        let status = shell_command(&safecmd)
-            .status()
-            .map(|s| s.code().unwrap_or(-1))
-            .unwrap_or(127);
+        let status = match in_process_tool(&safecmd, allow == 2) {
+            Some(status) => status,
+            None => shell_command(&safecmd)
+                .status()
+                .map(|s| s.code().unwrap_or(-1))
+                .unwrap_or(127),
+        };
         if status != 0 {
             // system(3)'s status is the wait status: the code times 256.
             eprintln!("system returned with code {}", status * 256);
         }
     }
     allow
+}
+
+/// A `\write18` command the engine runs itself instead of through the
+/// shell: makeindex (`crate::makeindex`, unless
+/// `FLASHTEX_MAKEINDEX=external`) and bibtex (`crate::bibtex`, unless
+/// `FLASHTEX_BIBTEX=external`). Its exit status, as the shell's would be;
+/// `None` to use the shell.
+#[allow(unused_variables)]
+fn in_process_tool(cmd: &[u8], restricted: bool) -> Option<i32> {
+    #[cfg(feature = "makeindex")]
+    if crate::makeindex::in_process() {
+        if let Some(args) = crate::makeindex::command_args(cmd, restricted) {
+            return Some(crate::makeindex::run_in_process(&args));
+        }
+    }
+    #[cfg(feature = "bibtex")]
+    if crate::bibtex::in_process() {
+        if let Some(args) = crate::bibtex::command_args(cmd, restricted) {
+            return Some(crate::bibtex::run_in_process(&args));
+        }
+    }
+    None
 }
 
 /// The command `runpopen` works on. On WIN32, texmfmp.c's `runpopen` first
@@ -4149,7 +4234,7 @@ pub struct StatSig {
 /// (`FLASHTEX_RACY_MS` changes it, for the tests).
 pub const RACY_NS: i128 = 2_000_000_000;
 
-fn racy_ns() -> i128 {
+pub(crate) fn racy_ns() -> i128 {
     static R: std::sync::OnceLock<i128> = std::sync::OnceLock::new();
     *R.get_or_init(|| {
         std::env::var("FLASHTEX_RACY_MS")
@@ -4216,6 +4301,15 @@ pub struct FileRead {
     /// read, it wrote itself (beamer's `.vrb`), so it is not an input a
     /// further pass would see changed (`crate::incr`'s passes).
     pub written_before: bool,
+    /// A whole read whose result was the file's modification time
+    /// (`\pdffilemoddate`: `note_stamp`), in seconds as the run read it: a
+    /// file whose time changed, its content the same, has changed for
+    /// that read (`crate::incr`'s `changes`, `host::make_key`).
+    pub stamp: Option<i64>,
+    /// A whole read whose result was the file's length (`\pdffilesize`:
+    /// `note_size_read`), as the run read it: the same length, the read is
+    /// the same (`crate::incr`'s check of the reads at `\document`'s start).
+    pub size: Option<u64>,
 }
 
 /// Whether `path` is one of the user's files rather than the TeX
@@ -4260,25 +4354,27 @@ pub struct ReadLog {
     /// ([`dep_sig`]: [`DEP_UNKNOWN`], [`DEP_READABLE`]).
     pub dirs: Vec<(String, StatSig)>,
     /// The directories `note_lookup_dirs` listed, each once a run: their
-    /// entries' names, lower-cased and sorted (`None`: not listable).
+    /// entries' names, lower-cased (`lookupproof::folded_listing`) and
+    /// sorted (`None`: not listable).
     listings: std::collections::HashMap<String, Option<Vec<String>>>,
+    /// Where `note_dep` put each entry of `dirs` (a hint: `dirs` is public
+    /// and may have been replaced since, so a position is used only where
+    /// it still holds the entry; an entry it does not know is added again,
+    /// which only makes the check stricter).
+    dir_at: std::collections::HashMap<String, usize>,
 }
 
 impl ReadLog {
-    /// `dir`'s entries, lower-cased and sorted, listed once.
+    /// `dir`'s entries, lower-cased (case-folded: `lookupproof::fold`) and
+    /// sorted, listed once (a directory listed under the same signature
+    /// before, by this run or an earlier one, is not listed again:
+    /// `lookupproof::folded_listing`).
     fn listing(&mut self, dir: &str) -> Option<&Vec<String>> {
-        self.listings
-            .entry(dir.to_string())
-            .or_insert_with(|| {
-                let mut v: Vec<String> = std::fs::read_dir(dir)
-                    .ok()?
-                    .map(|e| e.map(|e| e.file_name().to_string_lossy().to_ascii_lowercase()))
-                    .collect::<Result<_, _>>()
-                    .ok()?;
-                v.sort();
-                Some(v)
-            })
-            .as_ref()
+        if !self.listings.contains_key(dir) {
+            let l = crate::lookupproof::folded_listing(dir);
+            self.listings.insert(dir.to_string(), l);
+        }
+        self.listings.get(dir)?.as_ref()
     }
 
     /// A log that keeps the content of the user's files it notes.
@@ -4374,6 +4470,12 @@ pub const DEP_UNKNOWN: &str = "\0lookup dependencies not known";
 /// listing (#1562). Its "signature" says whether it is readable.
 const DEP_READABLE: &str = "\0readable\0";
 
+/// The entry of [`ReadLog::dirs`] for an answer found on disk at `path`
+/// ([`DEP_READABLE`]).
+pub(crate) fn readable_dep(path: &str) -> String {
+    format!("{DEP_READABLE}{path}")
+}
+
 /// The signature of an entry of [`ReadLog::dirs`]: a directory's
 /// `StatSig`; for [`DEP_READABLE`], whether the file is readable; for
 /// [`DEP_UNKNOWN`], none.
@@ -4394,8 +4496,15 @@ pub fn dep_sig(entry: &str) -> Option<StatSig> {
 
 /// `entry` among `log.dirs`, signed now if it is new.
 fn note_dep(log: &mut ReadLog, entry: &str) {
-    if !log.dirs.iter().any(|(x, _)| x == entry) {
+    // (a TFM lookup depends on every directory of a `//` subtree, 60 with
+    // mktextfm's `TEXMFVAR`: a scan of `dirs` for each was quadratic)
+    let known = log
+        .dir_at
+        .get(entry)
+        .is_some_and(|&i| log.dirs.get(i).is_some_and(|(x, _)| x == entry));
+    if !known && !log.dirs.iter().any(|(x, _)| x == entry) {
         let sig = dep_sig(entry).unwrap_or_default();
+        log.dir_at.insert(entry.to_string(), log.dirs.len());
         log.dirs.push((entry.to_string(), sig));
     }
 }
@@ -4435,7 +4544,11 @@ fn note_lookup_dirs(
     for dir in &d.listed {
         // (signed before it is listed: a change after that is a change)
         note_dep(log, dir);
-        let here = found_dir.is_some_and(|f| Path::new(dir).components().eq(f.components()));
+        // (the last component first: a TFM lookup lists 60 directories)
+        let here = found_dir.is_some_and(|f| {
+            Path::new(dir).file_name() == f.file_name()
+                && Path::new(dir).components().eq(f.components())
+        });
         in_listed |= here;
         if passed_over {
             continue;
@@ -4588,6 +4701,8 @@ fn note_file(path: &str) {
             content,
             closed_at: None,
             written_before,
+            stamp: None,
+            size: None,
         });
     })
 }
@@ -4629,8 +4744,63 @@ pub fn note_whole_read(path: &str) {
         };
         let mut e = first.clone();
         e.closed_at = Some(u64::MAX);
+        e.stamp = None;
+        e.size = None;
         log.files.push(e);
     })
+}
+
+/// `\pdffilesize` of `path` (texmfmp.c's `getfilesize`): the result is a
+/// function of the content, so for the incremental journal it is a read of
+/// the whole file (`note_whole_read`), not only the lookup that found it
+/// (a letter added to the main file changed `\pdffilesize{\jobname.tex}`,
+/// and a restart after the read kept the old size).
+pub fn note_size_read(path: &str) {
+    note_whole_read(path);
+    let len = std::fs::metadata(path).ok().map(|m| m.len());
+    READS.with(|r| {
+        let mut b = r.borrow_mut();
+        let Some(log) = b.as_mut() else { return };
+        if let Some(e) = log
+            .files
+            .iter_mut()
+            .rev()
+            .find(|f| f.path == path && f.closed_at == Some(u64::MAX))
+        {
+            e.size = len;
+        }
+    })
+}
+
+/// `\pdffilemoddate` of `path` (texmfmp.c's `getfilemoddate`): a read of
+/// the whole file (its content changing changes nothing, but a run from the
+/// start reads the time again), and of its modification time in seconds,
+/// `mtime` (`FileRead::stamp`): the time changing alone changes the read.
+pub fn note_stamp(path: &str, mtime: i64) {
+    note_whole_read(path);
+    READS.with(|r| {
+        let mut b = r.borrow_mut();
+        let Some(log) = b.as_mut() else { return };
+        if let Some(e) = log
+            .files
+            .iter_mut()
+            .rev()
+            .find(|f| f.path == path && f.closed_at == Some(u64::MAX))
+        {
+            e.stamp = Some(mtime);
+        }
+    })
+}
+
+/// A file's modification time in whole seconds, as `\pdffilemoddate` reads
+/// it (`FileRead::stamp`).
+pub fn mtime_secs(path: &str) -> Option<i64> {
+    std::fs::metadata(path)
+        .ok()?
+        .modified()
+        .ok()
+        .and_then(|m| m.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|d| d.as_secs() as i64)
 }
 
 fn note_output(path: &str) {
@@ -4666,6 +4836,15 @@ pub fn lookup_again_deps(l: &Lookup) -> (Option<String>, Vec<(String, StatSig)>)
             found.as_deref().map(Path::new),
         )
     });
+    let od = output_directory();
+    crate::lookupproof::note(
+        &l.name,
+        l.format,
+        l.must_exist,
+        found.as_deref(),
+        &deps,
+        od.as_deref(),
+    );
     let mut log = ReadLog::default();
     note_lookup_dirs(&mut log, &l.name, deps, found.as_deref());
     (found, log.dirs)

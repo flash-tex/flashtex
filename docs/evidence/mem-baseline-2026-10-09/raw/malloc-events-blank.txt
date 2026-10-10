@@ -1,0 +1,49 @@
+Counter({'ALLOC': 285724, 'VM_ALLOC': 42})
+total allocated 150.0 MB
+  <=          1:      0.0 MB      4949 blocks
+  <=          2:      0.0 MB      2012 blocks
+  <=          4:      0.0 MB      3220 blocks
+  <=          8:      0.3 MB     37288 blocks
+  <=         16:      1.2 MB    103106 blocks
+  <=         32:      1.9 MB     88603 blocks
+  <=         64:      1.2 MB     28646 blocks
+  <=        128:      0.6 MB      6940 blocks
+  <=        256:      0.4 MB      2415 blocks
+  <=        512:      1.0 MB      3009 blocks
+  <=       1024:      2.0 MB      3028 blocks
+  <=       2048:      1.2 MB       692 blocks
+  <=       4096:      1.0 MB       328 blocks
+  <=       8192:      5.1 MB       773 blocks
+  <=      16384:      2.8 MB       222 blocks
+  <=      32768:      2.8 MB       131 blocks
+  <=      65536:     10.8 MB       209 blocks
+  <=     131072:      3.3 MB        27 blocks
+  <=     262144:      3.4 MB        15 blocks
+  <=     524288:      8.0 MB        17 blocks
+  <=    1048576:     51.9 MB        68 blocks
+  <=    2097152:     35.5 MB        22 blocks
+  <=    4194304:     15.9 MB         4 blocks
+blocks >= 65536:
+      23.5 MB     16  MSv4zjoB5_15flashtex_engine5arena13rewound_until < MSv4zjoB5_15flashtex_engine5arenaNtB5_5Arena17diff_branch_inner < _NtCsg4MSv4zjoB5_15flashtex_engine10checkpointNtNtNtB7_9generated7globals7Globals18diff_pending_until
+      15.9 MB      4  MSv4zjoB5_15flashtex_engine5arenaNtB5_9ChunkDiff5table < _NtCsg4MSv4zjoB5_15flashtex_engine3isoINtB5_3IsoNtB5_3OldNtB5_4LiveE5check < MSv4zjoB5_15flashtex_engine4incr10same_words
+      15.5 MB     40  _NtCsghppgAbphHK_5alloc7raw_vecNtB5_11RawVecInner11finish_growCsg4MSv4zjoB5_15flashtex_engine < _NtCsghppgAbphHK_5alloc7raw_vecINtB8_11RawVecInnerpE7reserve21do_reserve_and_handleNtNtBa_5alloc6GlobalECsg4MSv4zjoB5_15flashtex_engine < MSv4zjoB5_15flashtex_engine5arenaNtB5_5Arena17diff_branch_inner
+      13.4 MB     16  MSv4zjoB5_15flashtex_engine5arenaNtB5_5Arena17diff_branch_inner < _NtCsg4MSv4zjoB5_15flashtex_engine10checkpointNtNtNtB7_9generated7globals7Globals18diff_pending_until < MSv4zjoB5_15flashtex_engine4incr10same_words
+      12.5 MB     10  MSv4zjoB5_15flashtex_engine5arenaNtB5_5Arena15prepare_restore < _NtCsg4MSv4zjoB5_15flashtex_engine4incrNtB5_7Session12prepare_next < _NtNtCsg4MSv4zjoB5_15flashtex_engine4host8residentNtB5_6Engine3run
+       9.5 MB     16  _NtCsg4MSv4zjoB5_15flashtex_engine3isoINtB5_3IsoNtB5_3OldNtB5_4LiveE5check < MSv4zjoB5_15flashtex_engine4incr10same_words < MSv4zjoB5_15flashtex_engine9lineshift11with_activeINtNtCs8Eg4vKO24Lz_4core6result6ResultjNtNtCsghppgAbphHK_5alloc6string6StringENCNvMs2_NtB4_4incrNtB2k_3Obs4testsa_0EB4_
+       9.5 MB     16  MSv4zjoB5_15flashtex_engine4incr10free_cells < MSv4zjoB5_15flashtex_engine4incr10same_words < MSv4zjoB5_15flashtex_engine9lineshift11with_activeINtNtCs8Eg4vKO24Lz_4core6result6ResultjNtNtCsghppgAbphHK_5alloc6string6StringENCNvMs2_NtB4_4incrNtB2k_3Obs4testsa_0EB4_
+       5.9 MB      6  _NtCsg4MSv4zjoB5_15flashtex_engine5arenaNtB5_4Plan5build < MSv4zjoB5_15flashtex_engine9generated7globalsNtB2_7Globals3new < _NtCsg4MSv4zjoB5_15flashtex_engine4incrNtB5_7Session4cold
+       3.2 MB      2  MSv4zjoB5_15flashtex_engine5arena13rewound_until < MSv4zjoB5_15flashtex_engine5arenaNtB5_5Arena7view_at < MSv4zjoB5_15flashtex_engine4host8write_s0
+       2.8 MB     44  _NtNtCsg4MSv4zjoB5_15flashtex_engine6pdftex6outputNtNtNtB9_9generated7globals7Globals9write_zip < MSv4zjoB5_15flashtex_engine9generated6body_3NtNtB4_7globals7Globals9pdf_flush < MSv4zjoB5_15flashtex_engine9generated6body_3NtNtB4_7globals7Globals14pdf_end_stream
+       2.2 MB      8  _NtCsghppgAbphHK_5alloc7raw_vecNtB5_11RawVecInner11finish_growCsg4MSv4zjoB5_15flashtex_engine < _NtCsghppgAbphHK_5alloc7raw_vecINtB5_6RawVecNtNtCsg4MSv4zjoB5_15flashtex_engine9lineshift8LineReadE8grow_oneBQ_ < _NtCsg4MSv4zjoB5_15flashtex_engine3isoINtB5_3IsoNtB5_3OldNtB5_4LiveE3ptrB7_
+       2.0 MB      2  MSv4zjoB5_15flashtex_engine4host6server10connection < _NtNtNtCshzYTnksJQcU_3std3sys6thread4unixNtB7_6Thread3new12thread_start
+       1.0 MB      1  MSv4zjoB5_15flashtex_engine4host8write_s0 < _NtCsg4MSv4zjoB5_15flashtex_engine4incrNtB5_7Session7save_s0 < _NtNtCsg4MSv4zjoB5_15flashtex_engine4host8residentNtB5_6Engine7save_s0
+       1.0 MB      8  _NtCsghppgAbphHK_5alloc7raw_vecNtB5_11RawVecInner11finish_growCsg4MSv4zjoB5_15flashtex_engine < _NtCsghppgAbphHK_5alloc7raw_vecINtB5_6RawVecNtNtCsg4MSv4zjoB5_15flashtex_engine4incr4StepE8grow_oneBQ_ < MSv4zjoB5_15flashtex_engine9statediff5words
+       1.0 MB      8  _NtCsghppgAbphHK_5alloc7raw_vecNtB5_11RawVecInner11finish_growCsg4MSv4zjoB5_15flashtex_engine < _NtCsghppgAbphHK_5alloc7raw_vecINtB5_6RawVecNtNtCsg4MSv4zjoB5_15flashtex_engine4incr4StepE8grow_oneBQ_ < Eg4vKO24Lz_4core4iter8adapters6filter6FilterIB4_IB4_INtNtNtCsghppgAbphHK_5alloc3vec9into_iter8IntoIterNtNtCsg4MSv4zjoB5_15flashtex_engine9statediff8WordDiffENCNvNtB1X_4incr10same_wordss0_0ENCB2O_s1_0ENCB2O_s2_0ENtNtNtBa_6traits8iterator8Iterator9partitionINtB1a_3VecB1T_ENCB2O_s3_0EB1X_
+       0.9 MB      2  _NtNtCsg4MSv4zjoB5_15flashtex_engine6pdftex7fmtableNtB5_4Base3new < _NtNtCsg4MSv4zjoB5_15flashtex_engine6pdftex7fmtableNtB5_4Base6mapped < MSv4zjoB5_15flashtex_engine6pdftex7mapfile4disk3get
+       0.6 MB     10  _NtNtCshzYTnksJQcU_3std6thread5localINtB6_8LocalKeyINtNtCs8Eg4vKO24Lz_4core4cell7RefCellINtNtBZ_6option6OptionINtNtCsghppgAbphHK_5alloc5boxed3BoxNtNtCsg4MSv4zjoB5_15flashtex_engine11displaylist5StateEEEE4withNCINvB2s_4withuNCNvMs6_B2s_NtNtNtB2u_9generated7globals7Globals16dl_shipout_begin0E0IB1w_uEEB2u_ < MSv4zjoB5_15flashtex_engine6pdftex5utilsNtNtNtB6_9generated7globals7Globals15pdfshipoutbegin < MSv4zjoB5_15flashtex_engine9generated6body_5NtNtB4_7globals7Globals12pdf_ship_out
+       0.5 MB      1  _NtCsghppgAbphHK_5alloc7raw_vecNtB5_11RawVecInner11finish_growCsg4MSv4zjoB5_15flashtex_engine < _NtCsghppgAbphHK_5alloc7raw_vecINtB8_11RawVecInnerpE7reserve21do_reserve_and_handleNtNtBa_5alloc6GlobalECsg4MSv4zjoB5_15flashtex_engine < _NtCsg4MSv4zjoB5_15flashtex_engine7persistTlNtNtB7_4diag4SiteENtB5_5Codec3encB7_
+       0.2 MB      1  _NtCsghppgAbphHK_5alloc7raw_vecNtB5_11RawVecInner11finish_growCsg4MSv4zjoB5_15flashtex_engine < _NtCsghppgAbphHK_5alloc7raw_vecINtB8_11RawVecInnerpE7reserve21do_reserve_and_handleNtNtBa_5alloc6GlobalECsg4MSv4zjoB5_15flashtex_engine < _NtCsg4MSv4zjoB5_15flashtex_engine7persistINtNtNtNtCsghppgAbphHK_5alloc11collections5btree3map8BTreeMapINtNtBT_3vec3VechENtNtNtB7_6pdftex9tounicode2GuENtB5_5Codec3encB7_
+       0.2 MB      1  _NtNtCsg4MSv4zjoB5_15flashtex_engine6pdftex7fmtableNtB7_4Base3new0Bb_ < _NtNtCsg4MSv4zjoB5_15flashtex_engine6pdftex7fmtableNtB5_4Base3new < _NtNtCsg4MSv4zjoB5_15flashtex_engine6pdftex7fmtableNtB5_4Base6mapped
+       0.1 MB      1  _NtCsghppgAbphHK_5alloc7raw_vecNtB5_11RawVecInner11finish_growCseCZRQ6Rdek2_21flashtex_display_list < _NtCsghppgAbphHK_5alloc7raw_vecINtB5_6RawVecmE8grow_oneCseCZRQ6Rdek2_21flashtex_display_list < MSv4zjoB5_15flashtex_engine4host8write_s0
+       0.1 MB      1  _NtNtCshzYTnksJQcU_3std6thread5localINtB6_8LocalKeyINtNtCs8Eg4vKO24Lz_4core4cell7RefCellNtNtCsg4MSv4zjoB5_15flashtex_engine4diag2StEE4withNCINvB1x_4withINtNtCsghppgAbphHK_5alloc3vec3VecTlNtB1x_4SiteEENCNvB1x_5sites0E0B2x_EB1z_ < MSv4zjoB5_15flashtex_engine4host8write_s0 < _NtCsg4MSv4zjoB5_15flashtex_engine4incrNtB5_7Session7save_s0
+       0.1 MB      1  qwIka2_9hashbrown3rawNtB6_13RawTableInner22fallible_with_capacityNtNtCsghppgAbphHK_5alloc5alloc6GlobalECsg4MSv4zjoB5_15flashtex_engine < _NtCsiMbd7qwIka2_9hashbrown3rawINtB6_8RawTableTlNtNtCsg4MSv4zjoB5_15flashtex_engine4diag3DefEE14reserve_rehashNCINvNtB8_3map11make_hasherlBR_INtNtCs8Eg4vKO24Lz_4core4hash18BuildHasherDefaultNtNtBV_3iso10FastHasherEE0EBV_ < _NtCsiMbd7qwIka2_9hashbrown3mapINtB5_7HashMaplNtNtCsg4MSv4zjoB5_15flashtex_engine4diag3DefINtNtCs8Eg4vKO24Lz_4core4hash18BuildHasherDefaultNtNtBS_3iso10FastHasherEE6insertBS_

@@ -64,6 +64,9 @@ ap.add_argument('--kinds', default='replace,insert,delete')
 ap.add_argument('--region', default='any')
 ap.add_argument('--host-args', default='')
 ap.add_argument('--out')
+ap.add_argument('--first-line', help='the first line instead of DOC.tex, with -jobname=DOC, for the host and '
+                                      'the scratch runs alike (a chapter focus: '
+                                      r'"\\AtBeginDocument{\\includeonly{ch03}}\\input main.tex")')
 ap.add_argument('--window', type=int, default=0, help='after the first edit, pick positions within this many bytes of it')
 ap.add_argument('--keep', action='store_true')
 ap.add_argument('--quiet', action='store_true')
@@ -110,7 +113,8 @@ for n in os.listdir(a.srcdir):
 editfile = a.edit or f'{a.doc}.tex'
 # (`--first-open`: what the document's directory holds before any compile)
 source_files = set(os.listdir(work))
-cmdline = ['-fmt=pdflatex', '-interaction=batchmode', f'{a.doc}.tex']
+cmdline = ['-fmt=pdflatex', '-interaction=batchmode'] + (
+    [f'-jobname={a.doc}', a.first_line] if a.first_line else [f'{a.doc}.tex'])
 prof = os.environ.get('PROFILE_OUT')
 pre = ['samply', 'record', '-s', '--unstable-presymbolicate', '-r', '4000', '-o', prof] if prof else []
 host = subprocess.Popen(pre + [f'{E}/flashtex-host', 'iserve'] + a.host_args.split() + ['--'] + cmdline,
@@ -340,7 +344,7 @@ def one(content, tag, interrupt=None, pre=None):
                passes=r.get('passes', 1), pass_modes=r.get('pass_modes'), pass_s=r.get('pass_s'),
                oscillation=r.get('oscillation'), ref_runs=REFRUNS.get(tag),
                restart_mid_page=r.get('restart_mid_page'), restart_gap=r.get('restart_gap'),
-               restart_preamble=r.get('restart_preamble'), restart_midline=r.get('restart_midline'),
+               restart_preamble=r.get('restart_preamble'), restart_midline=r.get('restart_midline'), revalidated=r.get('revalidated'),
                l5=r.get('l5'), rs_events=r.get('rs_events'), ck_stats=r.get('ck_stats'))
     results.append(rec)
     if out:

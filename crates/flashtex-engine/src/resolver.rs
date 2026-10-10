@@ -47,6 +47,9 @@ pub enum Format {
     OpenType,
     /// `subfont definition files` (`.sfd`).
     Sfd,
+    /// `ist`: makeindex style files (`INDEXSTYLE`), for makeindex run
+    /// in-process (crates/makeindex).
+    Ist,
     /// `graphic/figure` (`kpse_pict_format`): the XeTeX-derived engine's
     /// `\\XeTeXpicfile` and `\\XeTeXpdffile` (crates/flashtex-xetex).
     Pict,
@@ -71,6 +74,7 @@ impl Format {
             Format::TrueType => "truetype fonts",
             Format::OpenType => "opentype fonts",
             Format::Sfd => "subfont definition files",
+            Format::Ist => "ist",
             Format::Pict => "graphic/figure",
         }
     }
@@ -93,6 +97,7 @@ impl Format {
             Format::TrueType,
             Format::OpenType,
             Format::Sfd,
+            Format::Ist,
             Format::Pict,
         ]
     }
@@ -131,11 +136,23 @@ pub trait FileResolver: Send {
     fn config_var(&mut self, _var: &str) -> Option<String> {
         None
     }
+    /// [`FileResolver::config_var`] as program `prog` sees it
+    /// (`VAR.prog` before `VAR`), for a tool run in-process: bibtex's
+    /// `max_strings.bibtex`. None where there is no texmf.cnf.
+    fn config_var_for(&mut self, _var: &str, _prog: &str) -> Option<String> {
+        None
+    }
     /// kpathsea's `kpse_in_name_ok` (`write` false) or `kpse_out_name_ok`
     /// (`write` true): may the file be opened, under texmf.cnf's
     /// `openin_any` and `openout_any`? Without texmf.cnf, yes.
     fn name_ok(&mut self, _name: &str, _write: bool) -> bool {
         true
+    }
+    /// [`FileResolver::name_ok`] without kpathsea's message on a refusal
+    /// (`kpse_out_name_ok_silent`), for a caller that reports it under
+    /// another program's name.
+    fn name_ok_silent(&mut self, name: &str, write: bool) -> bool {
+        self.name_ok(name, write)
     }
     /// pdftex.web's `kpse_init_prog(prefix, dpi, mode, nil)` and
     /// `kpse_set_program_enabled(kpse_pk_format, 1, kpse_src_compile)`, at
@@ -206,7 +223,15 @@ impl LookupDirs {
     /// changing).
     pub fn add(&mut self, dir: &str) -> Result<(), &'static str> {
         let p = Path::new(dir);
-        if p.is_dir() {
+        let known = p.is_absolute() && known_dir(dir);
+        if known || p.is_dir() {
+            if !known && p.is_absolute() {
+                KNOWN_DIRS
+                    .lock()
+                    .unwrap()
+                    .get_or_insert_with(Default::default)
+                    .insert(dir.to_string());
+            }
             if !self.listed.iter().any(|d| d == dir) {
                 self.listed.push(dir.to_string());
             }
@@ -233,6 +258,26 @@ impl LookupDirs {
         }
         Err("no directory on the way to one searched exists")
     }
+}
+
+/// Directories [`LookupDirs::add`] found to be directories (a stat per
+/// directory of a `//` subtree per lookup otherwise: 60 for every TFM name
+/// on a Mac with mktextfm's `TEXMFVAR`). Only "is a directory" is kept: one
+/// that has gone since is still `listed`, where it cannot be listed, and
+/// every user of `listed` takes that as a dependency not known
+/// (`system::note_lookup_dirs`, `lookupproof`); one that was not a
+/// directory is looked at again each time, since one appearing moves the
+/// dependency from its parent (`above`) to it. Absolute names only (a
+/// relative one is another directory in another working directory).
+static KNOWN_DIRS: std::sync::Mutex<Option<std::collections::HashSet<String>>> =
+    std::sync::Mutex::new(None);
+
+fn known_dir(dir: &str) -> bool {
+    KNOWN_DIRS
+        .lock()
+        .unwrap()
+        .as_ref()
+        .is_some_and(|k| k.contains(dir))
 }
 
 /// What `kpse_find_pk` found: the file, `font_ret.name` and `font_ret.dpi`
@@ -271,6 +316,14 @@ impl FileResolver for CwdResolver {
         if format == Format::Tex && !name.ends_with(".tex") {
             if let Some(p) = self.find_one(&format!("{name}.tex"), format) {
                 return Some(p);
+            }
+        }
+        // The same rule for bibtex's `.bib` and `.bst` (crate::bibtex).
+        for (f, suffix) in [(Format::Bib, ".bib"), (Format::Bst, ".bst")] {
+            if format == f && !name.ends_with(suffix) {
+                if let Some(p) = self.find_one(&format!("{name}{suffix}"), format) {
+                    return Some(p);
+                }
             }
         }
         // TFM files, which tex.ch packs without `.tfm` (tex.ch [30.563]:
@@ -602,10 +655,17 @@ mod kpse {
         fn flashtex_kpse_set_lsr_cache(dir: *const c_char);
         fn flashtex_kpse_find(k: *mut c_void, name: *const c_char, format: c_int) -> *mut c_char;
         fn flashtex_kpse_var_value(k: *mut c_void, var: *const c_char) -> *mut c_char;
+        fn flashtex_kpse_var_value_prog(
+            k: *mut c_void,
+            var: *const c_char,
+            prog: *const c_char,
+        ) -> *mut c_char;
         fn flashtex_kpse_free(p: *mut c_void);
         fn flashtex_kpse_set_make_tex_discard_errors(k: *mut c_void, discard: c_int);
         fn flashtex_kpse_get_make_tex_discard_errors(k: *mut c_void) -> c_int;
         fn flashtex_kpse_name_ok(k: *mut c_void, name: *const c_char, write: c_int) -> c_int;
+        fn flashtex_kpse_name_ok_silent(k: *mut c_void, name: *const c_char, write: c_int)
+            -> c_int;
         fn flashtex_kpse_find_all(
             k: *mut c_void,
             name: *const c_char,
@@ -919,6 +979,7 @@ mod kpse {
                 "OPENTYPEFONTS",
                 "MISCFONTS",
                 "SFDFONTS",
+                "INDEXSTYLE",
                 "TEXPOOL",
                 "MFINPUTS",
                 "TEXCONFIG",
@@ -1310,8 +1371,12 @@ mod kpse {
                             .and_then(|d| d.strip_suffix('/'))
                             .ok_or("an answer not under the name's directory")?
                     };
-                    // (the shim compares the directory, with its slash)
-                    Some(c(&format!("{top}/{base}"))?)
+                    // (the shim compares the directory, with its slash, and
+                    // looks an `ls-R` element up by the answer's own last
+                    // component: `cmr12.tfm` for the TFM name `cmr12`, which
+                    // kpathsea finds only with its suffix)
+                    let file = &s[s.rfind('/').map_or(0, |i| i + 1)..];
+                    Some(c(&format!("{top}/{file}"))?)
                 }
             };
             let dirs = self
@@ -1366,11 +1431,27 @@ mod kpse {
         fn config_var(&mut self, var: &str) -> Option<String> {
             self.var_value(var)
         }
+        fn config_var_for(&mut self, var: &str, prog: &str) -> Option<String> {
+            let v = CString::new(var).ok()?;
+            let p = CString::new(prog).ok()?;
+            // SAFETY: `self.k` is the live kpathsea instance; both strings
+            // are NUL-terminated and outlive the call, which restores the
+            // instance's program name before it returns.
+            take(unsafe { flashtex_kpse_var_value_prog(self.k, v.as_ptr(), p.as_ptr()) })
+        }
         fn name_ok(&mut self, name: &str, write: bool) -> bool {
             let Ok(n) = CString::new(name) else {
                 return false;
             };
             unsafe { flashtex_kpse_name_ok(self.k, n.as_ptr(), write as c_int) != 0 }
+        }
+        fn name_ok_silent(&mut self, name: &str, write: bool) -> bool {
+            let Ok(n) = CString::new(name) else {
+                return false;
+            };
+            // SAFETY: `self.k` is the live kpathsea instance and `n` a
+            // NUL-terminated string that outlives the call.
+            unsafe { flashtex_kpse_name_ok_silent(self.k, n.as_ptr(), write as c_int) != 0 }
         }
         fn set_make_tex_discard_errors(&mut self, discard: bool) {
             // SAFETY: `self.k` is the live kpathsea instance or null (an

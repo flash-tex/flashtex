@@ -123,8 +123,9 @@ fn eqtb_int(g: &Globals, code: i32) -> i32 {
 
 /// The buffer `input_ln` and §362 make of `line` at `start`: the bytes
 /// through `xord`, trailing blanks (after `xord`) dropped, then `eol` at
-/// `limit` when it is in 0..=255 (else `limit` is one less). The values
-/// from `start` to `limit` inclusive, and `last` (one past the last
+/// `limit = last` when it is in 0..=255; else `limit = last - 1`, the
+/// line's last character (§362's `decr(limit)`: nothing is dropped). The
+/// values from `start` to `limit` inclusive, and `last` (one past the last
 /// non-blank).
 pub fn fill(xord: impl Fn(u8) -> i32, start: i32, line: &[u8], eol: i32) -> (Vec<i32>, i32) {
     let mut v: Vec<i32> = line.iter().map(|&c| xord(c)).collect();
@@ -136,8 +137,6 @@ pub fn fill(xord: impl Fn(u8) -> i32, start: i32, line: &[u8], eol: i32) -> (Vec
     let last = start + n as i32;
     if (0..=255).contains(&eol) {
         v.push(eol);
-    } else {
-        v.pop();
     }
     (v, last)
 }
@@ -521,7 +520,9 @@ mod tests {
         let id = |c: u8| c as i32;
         assert_eq!(fill(id, 5, b"ab  ", 13), (vec![97, 98, 13], 7));
         assert_eq!(fill(id, 5, b"ab \t", 13), (vec![97, 98, 32, 9, 13], 9));
-        assert_eq!(fill(id, 5, b"ab", -1), (vec![97], 7));
+        // `\endlinechar` inactive: `limit` is the last character's place
+        assert_eq!(fill(id, 5, b"ab", -1), (vec![97, 98], 7));
+        assert_eq!(fill(id, 5, b"ab  ", 256), (vec![97, 98], 7));
         assert_eq!(fill(id, 5, b"   ", 13), (vec![13], 5));
         assert_eq!(fill(id, 5, b"", -1), (vec![], 5));
     }
