@@ -674,6 +674,13 @@ pub struct WordFile {
     path: Option<String>,
 }
 
+impl WordFile {
+    /// The file opened.
+    pub fn path(&self) -> Option<&str> {
+        self.path.as_deref()
+    }
+}
+
 // ---------------------------------------------------------------------------
 // The Pascal built-ins the generated code calls
 // ---------------------------------------------------------------------------
@@ -1636,6 +1643,7 @@ pub fn with_resolver_for<T>(prog: &str, f: impl FnOnce(&mut dyn FileResolver) ->
         crate::lookupproof::resolver_changed();
         crate::resolver::default_resolver(prog, ENGINE_NAME)
     });
+    crate::lookupproof::process_resolver(r.as_ref());
     f(r.as_mut())
 }
 
@@ -1646,6 +1654,7 @@ pub(crate) fn with_resolver<T>(f: impl FnOnce(&mut dyn FileResolver) -> T) -> T 
         crate::lookupproof::resolver_changed();
         crate::resolver::default_resolver(&prog, ENGINE_NAME)
     });
+    crate::lookupproof::process_resolver(r.as_ref());
     f(r.as_mut())
 }
 

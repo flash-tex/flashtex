@@ -50,11 +50,11 @@
 //! listed, and a racy signature equals nothing (`StatSig`), so a change
 //! after the listing is seen by the next check.
 
-use crate::resolver::{Format, LookupDirs};
+use crate::resolver::{FileResolver, Format, LookupDirs};
 use crate::system::{self, Lookup, StatSig};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
 /// What a lookup's answer depends on (see the module's documentation).
@@ -74,9 +74,27 @@ struct Proof {
     found_in: Option<(usize, String)>,
 }
 
-type Key = (String, Format, Option<bool>);
+/// A lookup: name, format, `find_ex`'s flag, and whether it is asked of
+/// the resolver directly (the format cache, [`Verifier::find_direct`]) rather
+/// than as `system::lookup_again` asks it (the output directory first).
+type Key = (String, Format, Option<bool>, bool);
 
 static GENERATION: AtomicU64 = AtomicU64::new(0);
+
+/// The process's resolver (`system::with_resolver`'s), by address, while it
+/// lives: [`Verifier::find_direct`] keeps proofs only for it, since a proof
+/// is about one kpathsea instance's search paths and `ls-R` databases.
+static PROCESS_RESOLVER: AtomicUsize = AtomicUsize::new(0);
+
+fn address(r: &dyn FileResolver) -> usize {
+    r as *const dyn FileResolver as *const () as usize
+}
+
+/// `r` is the process's resolver (`system::with_resolver`), until
+/// [`resolver_changed`].
+pub fn process_resolver(r: &dyn FileResolver) {
+    PROCESS_RESOLVER.store(address(r), Ordering::Relaxed);
+}
 static PROOFS: Mutex<Option<HashMap<Key, Arc<Proof>>>> = Mutex::new(None);
 
 /// A directory's entries, `(folded, as named)` ([`fold`]), sorted.
@@ -97,6 +115,7 @@ type Answer = (Option<String>, Vec<(String, StatSig)>);
 /// no proof made with the old one holds.
 pub fn resolver_changed() {
     GENERATION.fetch_add(1, Ordering::Relaxed);
+    PROCESS_RESOLVER.store(0, Ordering::Relaxed);
 }
 
 fn off() -> bool {
@@ -116,7 +135,27 @@ pub fn note(
     deps: &Result<LookupDirs, &'static str>,
     output_directory: Option<&str>,
 ) {
-    let key = (name.to_string(), format, must_exist);
+    note_in(
+        name,
+        format,
+        must_exist,
+        false,
+        found,
+        deps,
+        output_directory,
+    )
+}
+
+fn note_in(
+    name: &str,
+    format: Format,
+    must_exist: Option<bool>,
+    direct: bool,
+    found: Option<&str>,
+    deps: &Result<LookupDirs, &'static str>,
+    output_directory: Option<&str>,
+) {
+    let key = (name.to_string(), format, must_exist, direct);
     let d = deps.as_ref().ok().filter(|d| {
         !off()
             // (an ASCII name is compared with each entry's case-folding
@@ -224,12 +263,46 @@ impl Verifier {
     /// before the listing the answer was checked against. From the proof
     /// where it holds, else by making the lookup again.
     pub fn lookup_again_deps(&mut self, l: &Lookup) -> Answer {
-        if let Some(r) = self.holds(l) {
+        if let Some(r) = self.holds(&l.name, l.format, l.must_exist, false) {
             self.held += 1;
             return r;
         }
         self.made += 1;
         system::lookup_again_deps(l)
+    }
+
+    /// The format cache's check (`formats::FormatCache::validate`): what
+    /// `r` finds for `name` now, `find_ex(name, format, true)` with
+    /// `must_exist`, else `find`. From the proof where it holds and `r` is
+    /// the process's resolver; else from `r`, keeping a proof (unless an
+    /// mktex script made the file).
+    pub fn find_direct(
+        &mut self,
+        r: &mut dyn FileResolver,
+        name: &str,
+        format: Format,
+        must_exist: bool,
+    ) -> Option<String> {
+        let must = must_exist.then_some(true);
+        let mine = address(r) == PROCESS_RESOLVER.load(Ordering::Relaxed);
+        if mine {
+            if let Some((found, _)) = self.holds(name, format, must, true) {
+                self.held += 1;
+                return found;
+            }
+        }
+        self.made += 1;
+        let (found, made) = if must_exist {
+            r.find_ex(name, format, true)
+        } else {
+            (r.find(name, format), false)
+        };
+        let found = found.map(|p| p.to_string_lossy().into_owned());
+        if mine && !made {
+            let deps = r.lookup_dirs(name, format, must, found.as_deref().map(Path::new));
+            note_in(name, format, must, true, found.as_deref(), &deps, None);
+        }
+        found
     }
 
     /// `dir` now: its signature, and its listing (`None`: not listable),
@@ -249,20 +322,29 @@ impl Verifier {
         (sig, listing)
     }
 
-    fn holds(&mut self, l: &Lookup) -> Option<Answer> {
+    fn holds(
+        &mut self,
+        name: &str,
+        format: Format,
+        must_exist: Option<bool>,
+        direct: bool,
+    ) -> Option<Answer> {
         let p = PROOFS
             .lock()
             .unwrap()
             .as_ref()?
-            .get(&(l.name.clone(), l.format, l.must_exist))?
+            .get(&(name.to_string(), format, must_exist, direct))?
             .clone();
-        if p.generation != self.generation || p.output_directory != self.output_directory {
+        // (a direct lookup has no output directory: `note_in` gets none)
+        if p.generation != self.generation
+            || (!direct && p.output_directory != self.output_directory)
+        {
             return None;
         }
         // `lookup_again` tries the output directory first.
         if let Some(od) = &p.output_directory {
-            if !l.name.starts_with('/') {
-                let cand = format!("{od}/{}", l.name);
+            if !name.starts_with('/') {
+                let cand = format!("{od}/{name}");
                 let c = Path::new(&cand);
                 let base = fold(&c.file_name()?.to_string_lossy());
                 let parent = c.parent()?.to_string_lossy().into_owned();

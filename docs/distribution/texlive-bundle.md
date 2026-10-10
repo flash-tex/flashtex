@@ -42,6 +42,12 @@ Live's own `LICENSE.TL` and `LICENSE.CTAN`.
   parity fixtures, the arXiv corpus (`arxiv-2025-01`), the beamer corpus and `packages-2026`
   read (`texbundle.py record` + `derive`: the engine's read sets over the bundle's tree, and
   MacTeX's `pdflatex -recorder`).
+- `tools/bundle/tl2026/extra.txt` (since `texbundle-tl2026-2`): hand-picked packages no
+  recording of the engine can find, packed besides `packages.txt`: what the tools the engine
+  host runs in-process read (bibtex's standard styles and `xampl.bib`, makeindex's styles;
+  lane RUST-TOOLS) and common bibliography and index styles the corpora do not use (urlbst,
+  apacite, chicago, harvard, biblatex-ieee, biblatex-apa, biblatex-ext, nomencl). Each line
+  says why; the packer's licence check covers them.
 - `tools/bundle/tl2026/core.txt`: the core range, first in the file, what building
   `pdflatex.fmt` and a hello-world read (`texbundle.py core`), so a first compile needs one
   request for it.

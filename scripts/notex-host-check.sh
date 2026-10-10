@@ -177,14 +177,11 @@ done
 # .ist files from the bundle, then compiles again. Their outputs must be
 # byte-identical to TeX Live 2026's bibtex and makeindex on the same document
 # (fixtures/notex-tools/expected, made by TeX Live's programs as latexmk runs
-# them: `bibtex main`, `makeindex -o main.ind main.idx`). The project carries
-# TeX Live's plain.bst (unmodified): the published bundle packs the packages
-# compiled documents read, and TeX Live's `bibtex` package, which holds the
-# standard styles, is not one of them yet (fixtures/notex-tools/README).
+# them: `bibtex main`, `makeindex -o main.ind main.idx`). plain.bst comes from
+# the bundle (TeX Live's `bibtex` package, tools/bundle/tl2026/extra.txt).
 tools_doc="$work/docs/tools"
 mkdir -p "$tools_doc"
-cp "$here/fixtures/notex-tools/main.tex" "$here/fixtures/notex-tools/refs.bib" \
-   "$here/fixtures/notex-tools/plain.bst" "$tools_doc/"
+cp "$here/fixtures/notex-tools/main.tex" "$here/fixtures/notex-tools/refs.bib" "$tools_doc/"
 set +e
 "$client" --socket "$sock" --root "$tools_doc" --main main.tex --output-dir "$tools_doc/out" \
   --external-tools auto > "$out/tools.jsonl" 2> "$out/tools.err"

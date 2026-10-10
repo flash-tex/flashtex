@@ -1203,7 +1203,23 @@ final class EngineV3Session {
         // Strict mode (EngineV3ErrorPolicy): TeX stops at the first error
         // (an older host ignores the field: `strictModeIgnored`).
         req.haltOnError = errorMode == .strict
+        // Chapter focus (EngineV3FocusChapter.swift): LaTeX's own
+        // `\includeonly` on the first line, in an output folder of its own.
+        // An export or print (and the compile that syncs it) is the whole
+        // document unless the user chose a focused one.
+        if let f = focus.job(model: model, main: entry, project: project, offered: hostOffersIncludeOnly, exporting: exportStage != nil) {
+            req.includeOnly = f.names
+            req.outputDir = f.output.path
+        }
         return req
+    }
+
+    /// The chapter focus (EngineV3FocusChapter.swift).
+    let focus = EngineV3Focus()
+
+    /// The connected host honours COMPILE `includeonly` (lane FOCUS-CHAPTER).
+    var hostOffersIncludeOnly: Bool {
+        connection?.hello["capabilities"]?.array?.contains(.string(DL3CompileRequest.includeOnlyCapability)) ?? false
     }
 
     /// The texts each outstanding compile read (by id): what its diagnostics'
@@ -1968,6 +1984,7 @@ final class EngineV3Session {
         // The pages are of the texts last sent (typing during the compile
         // does not count) and of the input files as last synced.
         guard let model, let key = EngineV3Snapshot.key(for: model), let root = project?.source, root == model.project.projectRoot,
+              !focus.isActive, // a focused chapter's pages are not the document's (EngineV3FocusChapter.swift)
               let synced = inputsAtSync, fastPending.isEmpty,
               pageCount > 0, (0 ..< pageCount).allSatisfy({ pageSizes[$0] != nil }) else { return }
         let visible = visiblePage
@@ -3070,6 +3087,11 @@ final class EngineV3Mirror: @unchecked Sendable { // only `let`s; its walks touc
             let dst = root.appendingPathComponent(rel)
             if (try? url.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory == true {
                 try? fm.createDirectory(at: dst, withIntermediateDirectories: true)
+                // The output folder gets the folder too, as latexmk makes it:
+                // `\include{chapters/03}` writes `chapters/03.aux` there, and
+                // pdfTeX cannot create the folder (a fatal "I can't write on
+                // file" in nonstop mode).
+                try? fm.createDirectory(at: output.appendingPathComponent(rel), withIntermediateDirectories: true)
                 continue
             }
             if EngineV3Snapshot.isInput(rel) { inputs?[rel] = EngineV3Snapshot.fingerprint(path) ?? "unreadable" }

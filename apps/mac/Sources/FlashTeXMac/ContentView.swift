@@ -339,6 +339,8 @@ struct PreviewPane: View {
         UnicodeModeSuggestionBanner()
         // Memory pressure: a suggestion to use Low Memory, never a silent switch (PerformanceMode.swift).
         MemoryPressureBanner()
+        // Chapter focus: "Previewing chapters/03.tex only", Show All (EngineV3FocusChapter.swift).
+        FocusChapterBanner()
         ZStack(alignment: .topTrailing) {
             if model.engineV3Enabled {
                 PreviewV3Pane() // the new engine's preview (EngineV3Preview.swift), per document (EngineChoice.swift)

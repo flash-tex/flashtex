@@ -137,11 +137,15 @@ pub struct Options {
     /// is a separate full run; the engine state and the P-T1 log are those
     /// of a normal run but for the PDF's byte count).
     pub preview: bool,
-    /// Bytes the undo logs may hold (DESIGN.md §5.2: 1 GB by default).
+    /// Bytes the undo logs may hold (DESIGN.md §5.2: 1 GB by default), and
+    /// the loaded format's image with them (`crate::fmtimage`).
     pub budget: usize,
     /// Bytes of embedded Type 1 fonts kept across runs
     /// (`pdftex::writet1::set_cache_limit`), by performance mode.
     pub t1_cache: usize,
+    /// Keep the loaded format's image (`crate::fmtimage`): not under a
+    /// `lean` performance mode (Low Memory).
+    pub fmt_image: bool,
     /// Pages around the cursor whose checkpoints all stay (`thin`;
     /// `DEFAULT_DENSE`, a performance mode's `crate::profile::Profile::dense`).
     pub dense: usize,
@@ -187,6 +191,7 @@ impl Default for Options {
             preview: true,
             budget: 0,
             t1_cache: 32 << 20,
+            fmt_image: true,
             dense: 0,
             timed_s: 0.0,
             segment_s: None,
@@ -226,6 +231,7 @@ impl Options {
             crate::profile::Mode::Balanced => 32 << 20,
             crate::profile::Mode::HighPerformance => 128 << 20,
         };
+        self.fmt_image = !p.lean;
     }
 }
 
@@ -2670,6 +2676,7 @@ impl Session {
         system::capture_terminal(true);
         crate::diag::set_enabled(opts.diagnostics);
         crate::pdftex::writet1::set_cache_limit(opts.t1_cache);
+        crate::fmtimage::set_allowed(opts.fmt_image);
         crate::diag::reset();
         crate::pdftex::set_preview(opts.preview);
         // a fatal run's PDF is set aside, not lost (system::remove_output)
@@ -2987,6 +2994,7 @@ impl Session {
         let shrinks = p.budget < self.opts.budget || p.dense < self.opts.dense;
         self.opts.apply_profile(p);
         crate::pdftex::writet1::set_cache_limit(self.opts.t1_cache);
+        crate::fmtimage::set_allowed(self.opts.fmt_image);
         if shrinks && self.paused.is_none() && self.g.is_some() {
             self.enforce_budget();
         }
@@ -3000,6 +3008,8 @@ impl Session {
     }
 
     pub fn trim_caches(&mut self) {
+        // (the loaded format's image: the next run from the format loads it)
+        crate::fmtimage::forget();
         if let Some(g) = self.g.as_mut() {
             g.arena.drop_old_cache();
             // (a preparation newer work stopped: its copies of the chunks)
@@ -4606,7 +4616,9 @@ impl Session {
     /// changed: every changed file it had read is one it is still reading,
     /// at an offset at or before the change, and every lookup it made still
     /// finds the same. Checkpoints are in the order the run took them, so
-    /// their consumption only grows: a binary search finds the last good one.
+    /// their consumption only grows: a binary search finds the last good one
+    /// (and a second one, within the edited file, where a read of it closed
+    /// long before its `\input` leaves a gap of bad ones).
     fn restart_point(
         &mut self,
         edits: &[Edit],
@@ -4621,7 +4633,7 @@ impl Session {
         let ids = g.checkpoints();
         let lo = ids.iter().position(|&i| i == s0)?;
         let first_read = first_reads(j);
-        let mut good = |id: CheckpointId| -> bool {
+        let good = |g: &mut Globals, id: CheckpointId| -> bool {
             g.record_of(id).is_ok_and(|r| {
                 consumed_nothing_changed(j, &first_read, &r, edits, changed, bad_lookup)
             })
@@ -4630,7 +4642,7 @@ impl Session {
         let (mut a, mut b) = (lo, ids.len());
         while b - a > 1 {
             let m = (a + b) / 2;
-            if good(ids[m]) {
+            if good(g, ids[m]) {
                 a = m;
             } else {
                 b = m;
@@ -4639,9 +4651,67 @@ impl Session {
         // ... that can be restored: not one taken while a file the run
         // rewrites was open for output (beamer's `.vrb` inside a fragile
         // frame; `Globals::restorable`)
-        let found = a;
+        let mut found = a;
         while a > lo && !g.restorable(ids[a]) {
             a -= 1;
+        }
+        // The good checkpoints are not always a prefix: a file read long
+        // before its `\input` and closed before the edit (an `\IfFileExists`
+        // test, `\openin` and `\closein`) makes the checkpoints between that
+        // read and the `\input` bad (a changed file read before them, not
+        // open), while those in the file before the edit are good, and the
+        // search above stops before the gap. (A `\pdffilesize` read is a
+        // read of the whole file, #1724: nothing after it is good, so
+        // LaTeX's `\includeonly`, which takes the chapter's size, restarts
+        // a focused chapter's edit before it; lane FOCUS-CHAPTER, measured.)
+        // With one edited file: the last checkpoint that has not read
+        // the file past the edit (not opened yet, then open at or before
+        // the edit, then past it: that order only grows), taken when it is
+        // later, good and restorable. `good` decides soundness for each
+        // checkpoint on its own; this only finds a later one.
+        if let ([e], [p]) = (edits, changed) {
+            if e.path == *p {
+                let now = j
+                    .files
+                    .iter()
+                    .find(|f| f.path == *p && f.content.is_some())
+                    .and_then(|f| f.content.as_deref())
+                    .map(|v| v.as_slice());
+                let past = |g: &mut Globals, id: CheckpointId| -> bool {
+                    let Ok(r) = g.record_of(id) else {
+                        return true;
+                    };
+                    for f in &r.files {
+                        if let Stream::In { path, offset } = &f.stream {
+                            if path == p {
+                                return read_through(*offset, e, now) > e.prefix;
+                            }
+                        }
+                    }
+                    j.files[..r.reads.0.min(j.files.len())]
+                        .iter()
+                        .any(|f| f.path == *p && f.closed_at.is_some_and(|n| n >= e.prefix))
+                };
+                let (mut c, mut d) = (found, ids.len());
+                while d - c > 1 {
+                    let m = (c + d) / 2;
+                    if past(g, ids[m]) {
+                        d = m;
+                    } else {
+                        c = m;
+                    }
+                }
+                if c > found && good(g, ids[c]) && g.restorable(ids[c]) {
+                    if debug {
+                        eprintln!(
+                            "[incr] restart point: {} of {} checkpoints, in {p} after a lookup of it",
+                            c - lo,
+                            ids.len() - lo
+                        );
+                    }
+                    (a, found) = (c, c);
+                }
+            }
         }
         if debug {
             eprintln!(
@@ -5972,7 +6042,8 @@ impl Session {
     fn enforce_budget(&mut self) {
         let cursor = self.cursor;
         let s0 = self.s0.as_ref().map(|s| s.id);
-        let budget = self.opts.budget;
+        // (the loaded format's image is held within the same budget)
+        let budget = self.opts.budget.saturating_sub(crate::fmtimage::bytes());
         let dense = self.opts.dense;
         let Some(g) = self.g.as_mut() else { return };
         // (`crate::midline`: the checkpoints a refill left holding the old line)

@@ -776,6 +776,9 @@ pub(crate) const CAPABILITIES: &[&str] = &[
     "exact-geometry",
     // COMPILE `halt_on_error` is honoured (`Job::halt`): a client's strict mode.
     "halt-on-error",
+    // COMPILE `includeonly` is honoured (`Job::includeonly`): a client's
+    // chapter focus through LaTeX's own `\includeonly` (lane FOCUS-CHAPTER).
+    "includeonly",
     flashtex_display_list::diag::CAPABILITY,
     flashtex_display_list::PROGRESS_CAPABILITY,
     // HELLO `profile` and the PROFILE message: performance modes (spec §6.9).
@@ -973,6 +976,14 @@ pub(crate) struct Job {
     /// `-halt-on-error` (`"halt_on_error": true`): TeX stops at the first
     /// error, as `pdflatex -halt-on-error` does (the app's strict mode).
     pub halt: bool,
+    /// `"includeonly": ["chapters/03", …]` (lane FOCUS-CHAPTER): LaTeX's own
+    /// `\includeonly`, given on pdflatex's command line before the main file
+    /// (`pdflatex '\AtBeginDocument{\includeonly{chapters/03}}\input
+    /// main.tex'`, see `argv`). The names as the document's `\include`s
+    /// write them, comma-joined; the other chapters' pages and references
+    /// come from their `.aux` files. None: the whole document (the main
+    /// file alone).
+    pub includeonly: Option<String>,
 }
 
 impl Job {
@@ -1037,6 +1048,11 @@ impl Job {
             Some(Json::Bool(b)) => *b,
             Some(_) => return Err("halt_on_error is a boolean".into()),
         };
+        let includeonly = match req.get("includeonly") {
+            None | Some(Json::Null) => None,
+            Some(Json::Arr(names)) => Some(includeonly_list(names, &main)?),
+            Some(_) => return Err("includeonly is an array of \\include names".into()),
+        };
         Ok(Job {
             root,
             main,
@@ -1045,6 +1061,7 @@ impl Job {
             out_dir,
             jobname,
             halt,
+            includeonly,
         })
     }
 
@@ -1080,8 +1097,76 @@ impl Job {
         if let Some(f) = self.shell {
             argv.push(f.to_string());
         }
-        argv.push(self.main.clone());
+        argv.push(match &self.includeonly {
+            None => self.main.clone(),
+            // `\includeonly` runs in the `begindocument` hook: after
+            // `\document` has read the `.aux` and before it disables the
+            // preamble commands, and before any `\include`, so its effect
+            // is the preamble's (the same pages, streams and `.aux` as
+            // `\includeonly{…}\input main.tex` under pdflatex, measured).
+            // In the preamble its name lookup (l3's `\file_full_name:n`,
+            // `\pdffilesize`) would put the chapter's content in S₀'s key,
+            // and every keystroke in the focused chapter would be a cold
+            // run from the format; after the `.aux` point it is a read of
+            // the body (of the whole chapter: its size, #1724), and an edit
+            // in the chapter restarts at S₀.
+            // LaTeX's `\input` without a brace is the primitive (`\@@input`),
+            // so the main file is read exactly as a bare first line reads it.
+            Some(list) => format!(
+                "\\AtBeginDocument{{\\includeonly{{{list}}}}}\\input {}",
+                input_name(&self.main)
+            ),
+        });
         argv
+    }
+}
+
+/// The `includeonly` names, checked and comma-joined. Each is an
+/// `\include` argument as the document writes it: a relative path inside
+/// the root with nothing TeX would read as markup on a first line (no
+/// comma, brace, backslash, `%`, `#`, `"` or control character), so the
+/// list means exactly the names given. `main` must be a name `\input` can
+/// take (no `"`; one with a space is quoted).
+fn includeonly_list(names: &[Json], main: &str) -> Result<String, String> {
+    if names.is_empty() {
+        return Err("includeonly names no \\include".into());
+    }
+    if main.contains('"') || main.chars().any(char::is_control) {
+        return Err("includeonly needs a main file name without quotes".into());
+    }
+    let bad = |c: char| matches!(c, ',' | '{' | '}' | '\\' | '%' | '#' | '"') || c.is_control();
+    let mut list = Vec::with_capacity(names.len());
+    for n in names {
+        let Some(name) = n.as_str() else {
+            return Err("includeonly is an array of \\include names".into());
+        };
+        // Rooted on any platform, whatever `Path` says on this one: on
+        // Windows `/abs` is not `is_absolute` (no drive), and `C:x` is
+        // relative to drive C's current directory.
+        let rooted = name.starts_with(['/', '\\'])
+            || matches!(name.as_bytes(), [d, b':', ..] if d.is_ascii_alphabetic());
+        if name.is_empty()
+            || name.trim() != name
+            || name.chars().any(bad)
+            || rooted
+            || !inside(Path::new(name))
+        {
+            return Err(format!(
+                "includeonly: {name:?} is not an \\include name inside root"
+            ));
+        }
+        list.push(name);
+    }
+    Ok(list.join(","))
+}
+
+/// The main file as `\input` names it on the first line: quoted when it
+/// holds a space (web2c's quoted file names), else as given.
+fn input_name(main: &str) -> String {
+    if main.contains(' ') {
+        format!("\"{main}\"")
+    } else {
+        main.to_string()
     }
 }
 
@@ -1465,5 +1550,100 @@ mod job_tests {
             ]
         );
         assert!(Job::parse(&req(Some(js("yes"))), 1).is_err());
+    }
+
+    /// `req(None)` with `includeonly` set to `v`, and `main` replaced.
+    fn focused(v: Json, main: Option<&str>) -> Json {
+        let Json::Obj(mut kv) = req(None) else {
+            unreachable!()
+        };
+        if let Some(m) = main {
+            let dir =
+                std::env::temp_dir().join(format!("flashtex-job-test-{}", std::process::id()));
+            std::fs::write(dir.join(m), "x").unwrap();
+            kv.retain(|(k, _)| k != "main");
+            kv.push(("main".to_string(), js(m)));
+        }
+        kv.push(("includeonly".to_string(), v));
+        Json::Obj(kv)
+    }
+
+    fn names(n: &[&str]) -> Json {
+        Json::Arr(n.iter().map(|s| js(*s)).collect())
+    }
+
+    /// Chapter focus (lane FOCUS-CHAPTER): the first line is LaTeX's own
+    /// `\includeonly{…}`, run at `\begin{document}`
+    /// (`\AtBeginDocument{\includeonly{…}}\input main.tex`); LaTeX's `\input`
+    /// without a brace is the primitive, so the main file is read as a bare
+    /// first line reads it. Another job; without the field, unchanged.
+    #[test]
+    fn includeonly_is_latexs_own_first_line() {
+        let plain = Job::parse(&req(None), 1).unwrap();
+        assert_eq!(plain.includeonly, None);
+        assert_eq!(plain.argv().last().unwrap(), "main.tex");
+        let null = Job::parse(&focused(Json::Null, None), 1).unwrap();
+        assert_eq!(null, plain);
+        let one = Job::parse(&focused(names(&["chapters/03"]), None), 1).unwrap();
+        assert_ne!(one, plain, "another job: the resident document is replaced");
+        assert_eq!(
+            one.argv().last().unwrap(),
+            "\\AtBeginDocument{\\includeonly{chapters/03}}\\input main.tex"
+        );
+        // everything before the first line is the plain job's
+        let (a, b) = (plain.argv(), one.argv());
+        assert_eq!(a[..a.len() - 1], b[..b.len() - 1]);
+        let two = Job::parse(&focused(names(&["ch1", "ch 2.tex"]), None), 1).unwrap();
+        assert_eq!(
+            two.argv().last().unwrap(),
+            "\\AtBeginDocument{\\includeonly{ch1,ch 2.tex}}\\input main.tex"
+        );
+        let spaced = Job::parse(&focused(names(&["ch1"]), Some("my book.tex")), 1).unwrap();
+        assert_eq!(
+            spaced.argv().last().unwrap(),
+            "\\AtBeginDocument{\\includeonly{ch1}}\\input \"my book.tex\""
+        );
+    }
+
+    /// Only names that mean themselves on a first line, inside the root.
+    #[test]
+    fn includeonly_refuses_markup_and_escapes() {
+        for bad in [
+            names(&[]),
+            names(&["a,b"]),
+            names(&["a}\\input{x"]),
+            names(&["a%"]),
+            names(&["#1"]),
+            names(&["\"q\""]),
+            names(&["../outside"]),
+            names(&["/abs"]),
+            names(&["C:ch1"]),
+            names(&["c:/abs"]),
+            names(&[" lead"]),
+            names(&[""]),
+            names(&["line\nbreak"]),
+            Json::Arr(vec![Json::Int(3)]),
+            js("ch1"),
+        ] {
+            assert!(
+                Job::parse(&focused(bad.clone(), None), 1).is_err(),
+                "{bad:?} accepted"
+            );
+        }
+        // A main file named with a quote: refused by the list itself (no file
+        // needed), and through `Job::parse` where such a file can exist
+        // (Windows refuses `"` in a file name: os error 123).
+        assert!(includeonly_list(&[js("ch1")], "q\"uote.tex").is_err());
+        assert!(includeonly_list(&[js("ch1")], "quote.tex").is_ok());
+        if cfg!(not(windows)) {
+            assert!(Job::parse(&focused(names(&["ch1"]), Some("q\"uote.tex")), 1).is_err());
+        }
+    }
+
+    /// The host says it honours the field (an older one ignores it and
+    /// compiles the whole document, so a client asks only when offered).
+    #[test]
+    fn includeonly_is_a_capability() {
+        assert!(CAPABILITIES.contains(&"includeonly"));
     }
 }
