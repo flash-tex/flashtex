@@ -1,0 +1,56 @@
+== default
+sz=1024 n=40000 start=0.9 alloc=40.4 free=24.6 relief(0)=24.6 churn_ms=62.7 after_churn=32.0
+sz=16384 n=4000 start=0.9 alloc=63.7 free=63.7 relief(0)=63.7 churn_ms=56.3 after_churn=126.5
+sz=65536 n=1000 start=0.9 alloc=63.7 free=63.7 relief(0)=63.7 churn_ms=35.9 after_churn=65.2
+sz=262144 n=250 start=0.9 alloc=63.7 free=63.7 relief(0)=63.7 churn_ms=24.6 after_churn=65.2
+sz=1048576 n=60 start=0.9 alloc=61.1 free=61.2 relief(0)=61.2 churn_ms=20.8 after_churn=61.2
+sz=4194304 n=15 start=0.9 alloc=61.1 free=61.1 relief(0)=61.1 churn_ms=20.4 after_churn=61.2
+== MallocSpaceEfficient=1
+sz=1024 n=40000 start=0.8 alloc=40.4 free=1.3 relief(0)=1.3 churn_ms=134.8 after_churn=1.5
+sz=16384 n=4000 start=0.8 alloc=63.6 free=1.1 relief(0)=1.1 churn_ms=211.6 after_churn=1.4
+sz=65536 n=1000 start=0.8 alloc=63.6 free=1.1 relief(0)=1.1 churn_ms=136.7 after_churn=1.1
+sz=262144 n=250 start=0.8 alloc=63.6 free=1.1 relief(0)=1.1 churn_ms=118.7 after_churn=1.1
+sz=1048576 n=60 start=0.8 alloc=61.1 free=1.1 relief(0)=1.1 churn_ms=106.2 after_churn=1.1
+sz=4194304 n=15 start=0.8 alloc=61.1 free=0.8 relief(0)=0.8 churn_ms=94.4 after_churn=0.8
+== MallocDeferredReclaim=0
+sz=1024 n=40000 start=0.9 alloc=40.4 free=24.6 relief(0)=24.6 churn_ms=63.1 after_churn=32.0
+sz=16384 n=4000 start=0.9 alloc=63.7 free=63.7 relief(0)=63.7 churn_ms=56.0 after_churn=126.5
+sz=65536 n=1000 start=0.9 alloc=63.7 free=63.7 relief(0)=63.7 churn_ms=36.2 after_churn=65.2
+sz=262144 n=250 start=0.9 alloc=63.7 free=63.7 relief(0)=63.7 churn_ms=28.6 after_churn=129.5
+sz=1048576 n=60 start=0.9 alloc=61.1 free=61.2 relief(0)=61.2 churn_ms=24.8 after_churn=121.4
+sz=4194304 n=15 start=0.9 alloc=61.2 free=61.2 relief(0)=61.2 churn_ms=20.2 after_churn=61.2
+== MallocAggressiveMadvise=1
+sz=1024 n=40000 start=0.9 alloc=40.5 free=24.6 relief(0)=24.6 churn_ms=61.5 after_churn=32.0
+sz=16384 n=4000 start=0.9 alloc=63.7 free=63.7 relief(0)=63.7 churn_ms=55.1 after_churn=126.5
+sz=65536 n=1000 start=0.9 alloc=63.7 free=63.7 relief(0)=63.7 churn_ms=36.1 after_churn=65.2
+sz=262144 n=250 start=0.9 alloc=63.7 free=63.7 relief(0)=63.7 churn_ms=24.5 after_churn=65.2
+sz=1048576 n=60 start=0.9 alloc=61.1 free=61.2 relief(0)=61.2 churn_ms=20.6 after_churn=61.2
+sz=4194304 n=15 start=0.9 alloc=61.2 free=61.2 relief(0)=61.2 churn_ms=20.1 after_churn=61.2
+== MallocLargeCache=0
+sz=1024 n=40000 start=0.9 alloc=40.4 free=1.5 relief(0)=1.5 churn_ms=151.8 after_churn=1.7
+sz=16384 n=4000 start=0.9 alloc=63.7 free=2.4 relief(0)=2.4 churn_ms=135.5 after_churn=2.7
+sz=65536 n=1000 start=0.9 alloc=63.7 free=1.2 relief(0)=1.2 churn_ms=127.5 after_churn=1.2
+sz=262144 n=250 start=0.9 alloc=63.6 free=1.1 relief(0)=1.1 churn_ms=111.9 after_churn=1.1
+sz=1048576 n=60 start=0.9 alloc=61.1 free=1.1 relief(0)=1.1 churn_ms=104.5 after_churn=1.1
+sz=4194304 n=15 start=0.9 alloc=61.1 free=0.9 relief(0)=0.9 churn_ms=99.7 after_churn=0.9
+== MallocXzoneDeferSmall=0
+sz=1024 n=40000 start=0.9 alloc=40.4 free=24.6 relief(0)=24.6 churn_ms=62.5 after_churn=32.0
+sz=16384 n=4000 start=0.9 alloc=63.7 free=63.7 relief(0)=63.7 churn_ms=53.9 after_churn=126.5
+sz=65536 n=1000 start=0.9 alloc=63.7 free=63.7 relief(0)=63.7 churn_ms=36.1 after_churn=65.2
+sz=262144 n=250 start=0.9 alloc=63.7 free=63.7 relief(0)=63.7 churn_ms=24.6 after_churn=65.2
+sz=1048576 n=60 start=0.9 alloc=61.2 free=61.2 relief(0)=61.2 churn_ms=23.2 after_churn=100.3
+sz=4194304 n=15 start=0.9 alloc=61.2 free=61.2 relief(0)=61.2 churn_ms=20.3 after_churn=61.2
+== MallocXzoneDeferLarge=0
+sz=1024 n=40000 start=0.9 alloc=40.4 free=24.6 relief(0)=24.6 churn_ms=61.8 after_churn=32.0
+sz=16384 n=4000 start=0.9 alloc=63.7 free=63.7 relief(0)=63.7 churn_ms=56.3 after_churn=126.5
+sz=65536 n=1000 start=0.9 alloc=63.7 free=63.7 relief(0)=63.7 churn_ms=36.6 after_churn=65.2
+sz=262144 n=250 start=0.9 alloc=63.7 free=63.7 relief(0)=63.7 churn_ms=25.5 after_churn=65.2
+sz=1048576 n=60 start=0.9 alloc=61.1 free=61.2 relief(0)=61.2 churn_ms=20.8 after_churn=61.2
+sz=4194304 n=15 start=0.9 alloc=61.2 free=61.2 relief(0)=61.2 churn_ms=20.1 after_churn=61.2
+== MallocXzoneSegmentDeallocate=1
+sz=1024 n=40000 start=0.9 alloc=40.4 free=24.6 relief(0)=24.6 churn_ms=61.2 after_churn=32.0
+sz=16384 n=4000 start=0.9 alloc=63.7 free=63.7 relief(0)=63.7 churn_ms=55.5 after_churn=126.5
+sz=65536 n=1000 start=0.9 alloc=63.7 free=63.7 relief(0)=63.7 churn_ms=36.1 after_churn=65.2
+sz=262144 n=250 start=0.9 alloc=63.7 free=63.7 relief(0)=63.7 churn_ms=24.6 after_churn=65.2
+sz=1048576 n=60 start=0.9 alloc=61.1 free=61.2 relief(0)=61.2 churn_ms=24.5 after_churn=121.4
+sz=4194304 n=15 start=0.9 alloc=61.2 free=61.2 relief(0)=61.2 churn_ms=20.3 after_churn=61.2
