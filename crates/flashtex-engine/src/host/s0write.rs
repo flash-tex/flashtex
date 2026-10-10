@@ -12,7 +12,7 @@
 //! and the one being written (which stops between chunks and removes its
 //! temporary file); so the newest S₀ of a path is the one left on disk.
 //!
-//! **Crash safety.** A write goes to `PATH.PID.tmp` and is renamed over `PATH`
+//! **Crash safety.** A write goes to `PATH.PID.NANOS.tmp` (its own) and is renamed over `PATH`
 //! once complete and synced, so `PATH` is always a whole S₀ or the previous
 //! one. A host killed with a write pending leaves the previous S₀ (or none):
 //! S₀ is a cache, and its key is checked whenever it is opened.

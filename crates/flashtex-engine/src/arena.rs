@@ -2118,6 +2118,66 @@ impl Arena {
         given
     }
 
+    /// Put a persisted space's pages into this fresh arena (no checkpoints)
+    /// by mapping them from the file, copy on write (`os::map_file_over`):
+    /// the `i`th of `pages` (each `granule` bytes of the space, ascending)
+    /// is the file's `granule` bytes at `off + i * granule`. False, with
+    /// nothing mapped (the caller copies the chunks then), where the system
+    /// cannot map files (Windows, WASI), the page size does not divide
+    /// `granule`, or a page lies outside the space; a mapping that fails
+    /// aborts (`os::map_file_over`). The chunks it fills are still to be
+    /// marked with [`Arena::mark_loaded`].
+    pub fn map_pages(
+        &mut self,
+        f: &std::fs::File,
+        off: u64,
+        pages: &[u32],
+        granule: usize,
+    ) -> bool {
+        assert!(self.core().ids.is_empty(), "map_pages under a checkpoint");
+        let page = os::page_size();
+        let c = self.core();
+        let (base, end) = (c.base as usize, c.map as usize + c.map_len);
+        if granule == 0
+            || !granule.is_multiple_of(page)
+            || !base.is_multiple_of(page)
+            || !(off as usize).is_multiple_of(page)
+            || pages.windows(2).any(|w| w[0] >= w[1])
+            || pages
+                .last()
+                .is_some_and(|&p| base + (p as usize + 1) * granule > end)
+        {
+            return false;
+        }
+        let mut i = 0;
+        while i < pages.len() {
+            let mut j = i + 1;
+            while j < pages.len() && pages[j] == pages[j - 1] + 1 {
+                j += 1;
+            }
+            let p = (base + pages[i] as usize * granule) as *mut u8;
+            // SAFETY: whole pages inside the space's mapping (checked
+            // above); `&mut self` and no checkpoints: nothing else uses them.
+            // (false only where nothing was mapped: the first call, on a
+            // system that does not map files)
+            if !unsafe { os::map_file_over(f, off + (i * granule) as u64, p, (j - i) * granule) } {
+                return false;
+            }
+            i = j;
+        }
+        true
+    }
+
+    /// Mark chunk `c` as loaded (written, its pre-image needing no copy), as
+    /// [`Arena::load_chunk`] does, for a chunk [`Arena::map_pages`] filled.
+    pub fn mark_loaded(&mut self, c: usize) {
+        assert!(c < self.chunks());
+        assert!(self.core().ids.is_empty(), "mark_loaded under a checkpoint");
+        let core = self.core_mut();
+        core.touched[c] = 1;
+        core.saved()[c] = 1;
+    }
+
     /// Overwrite chunk `c` without the barrier: only for loading a persisted
     /// space into a fresh arena that has no checkpoints.
     pub fn load_chunk(&mut self, c: usize, data: &[u8]) {

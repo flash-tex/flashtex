@@ -990,10 +990,12 @@ impl S0Image {
         self.data.len() + self.head.len()
     }
 
-    /// Write the file to `path`, through `path.PID.tmp` and a rename, so that
-    /// `path` is always a whole S₀ or what it was: the header, the list of
-    /// the nonzero chunks, then those chunks, 16 KB-aligned, densely, in
-    /// index order. `cancelled` is asked as the chunks go out: once it says
+    /// Write the file to `path`, through a temporary file of this writer's
+    /// own and a rename, so that `path` is always a whole S₀ or what it was:
+    /// the header, the lists of the nonzero chunks and of the pages
+    /// (`S0_PAGE` bytes of the space) holding them, then those pages whole,
+    /// `S0_PAGE`-aligned, in index order (v5: a reopen maps them).
+    /// `cancelled` is asked as the pages go out: once it says
     /// yes, the write stops and the temporary file goes. Returns (bytes of
     /// the file, bytes allocated on disk).
     pub fn write(self, path: &str, cancelled: &dyn Fn() -> bool) -> Result<(u64, u64), String> {
@@ -1017,29 +1019,70 @@ impl S0Image {
             .map(|(i, &c)| (c, i))
             .unzip();
         present.enc(&mut head);
-        let data_off = (8 + head.len()).next_multiple_of(CHUNK_BYTES) as u64;
+        // The pages of the space that hold present chunks, each whole
+        // (`S0_PAGE` bytes, its absent chunks zero) at an `S0_PAGE`-aligned
+        // offset, so that a process opening S₀ maps them into its space
+        // instead of copying them (`Arena::map_pages`; lane MEM-BASELINE).
+        let per = (S0_PAGE / CHUNK_BYTES) as u32;
+        let mut pages: Vec<u32> = present.iter().map(|&c| c / per).collect();
+        pages.dedup();
+        pages.enc(&mut head);
+        let data_off = (8 + head.len()).next_multiple_of(S0_PAGE) as u64;
         use std::io::Write;
-        // (this process's own: another host writing the same S₀ has its own)
-        let tmp = format!("{path}.{}.tmp", std::process::id());
+        // (a name of this writer's own, the process's and the time's: a
+        // file being written is never one another writer writes or another
+        // process maps, `os::map_file_over`)
+        // Created new, never opened as it is: no other writer can truncate
+        // or write into it (a name already there gets another suffix).
+        let (tmp, f) = {
+            let mut k = 0u32;
+            loop {
+                let tmp = format!(
+                    "{path}.{}.{}.{k}.tmp",
+                    std::process::id(),
+                    std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .map_or(0, |d| d.as_nanos())
+                );
+                match std::fs::OpenOptions::new()
+                    .write(true)
+                    .create_new(true)
+                    .open(&tmp)
+                {
+                    Ok(f) => break (tmp, f),
+                    Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists && k < 100 => k += 1,
+                    Err(e) => return Err(format!("{tmp}: {e}")),
+                }
+            }
+        };
         let gone = |e: String| {
             let _ = std::fs::remove_file(&tmp);
             e
         };
-        let f = std::fs::File::create(&tmp).map_err(|e| format!("{tmp}: {e}"))?;
         let mut f = std::io::BufWriter::with_capacity(1 << 20, f);
         let pad = vec![0u8; data_off as usize - 8 - head.len()];
         f.write_all(&(head.len() as u64).to_le_bytes())
             .and_then(|_| f.write_all(&head))
             .and_then(|_| f.write_all(&pad))
             .map_err(|e| gone(format!("{tmp}: {e}")))?;
-        // The present chunks, densely, in index order.
-        for (k, &i) in at.iter().enumerate() {
-            if k % 1024 == 0 && cancelled() {
+        // The pages, in index order: present chunks, zeros for the rest.
+        let zero = [0u8; CHUNK_BYTES];
+        let mut next = present.iter().zip(&at).peekable();
+        for (k, &pg) in pages.iter().enumerate() {
+            if k % 64 == 0 && cancelled() {
                 drop(f);
                 return Err(gone("superseded".into()));
             }
-            f.write_all(&data[i * CHUNK_BYTES..(i + 1) * CHUNK_BYTES])
-                .map_err(|e| gone(format!("{tmp}: {e}")))?;
+            for c in pg * per..(pg + 1) * per {
+                let d = match next.peek() {
+                    Some(&(&pc, &i)) if pc == c => {
+                        next.next();
+                        &data[i * CHUNK_BYTES..(i + 1) * CHUNK_BYTES]
+                    }
+                    _ => &zero[..],
+                };
+                f.write_all(d).map_err(|e| gone(format!("{tmp}: {e}")))?;
+            }
         }
         drop(data);
         let f = f.into_inner().map_err(|e| gone(format!("{tmp}: {e}")))?;
@@ -1068,7 +1111,8 @@ pub fn read_s0(
 ) -> Result<(Box<Globals>, S0, OpenReport), String> {
     {
         let t0 = Instant::now();
-        let map = MappedFile::open(path)?;
+        let file = std::fs::File::open(path).map_err(|e| format!("{path}: {e}"))?;
+        let map = MappedFile::of(&file, path)?;
         let bytes = map.bytes();
         let hlen = u64::from_le_bytes(bytes.get(..8).ok_or("not an S0 file")?.try_into().unwrap())
             as usize;
@@ -1092,7 +1136,27 @@ pub fn read_s0(
         let arena_len = u64::dec(&mut r)? as usize;
         let scalar_bytes = u64::dec(&mut r)? as usize;
         let present = Vec::<u32>::dec(&mut r)?;
-        let data_off = (8 + hlen).next_multiple_of(CHUNK_BYTES);
+        let pages = Vec::<u32>::dec(&mut r)?;
+        let data_off = (8 + hlen).next_multiple_of(S0_PAGE);
+        let per = S0_PAGE / CHUNK_BYTES;
+        if bytes.len() < data_off + pages.len() * S0_PAGE {
+            return Err("S0 file truncated".into());
+        }
+        // Where each present chunk is in the file.
+        let mut at = Vec::with_capacity(present.len());
+        {
+            let mut k = 0;
+            for &c in &present {
+                let pg = c / per as u32;
+                while k < pages.len() && pages[k] < pg {
+                    k += 1;
+                }
+                if pages.get(k) != Some(&pg) {
+                    return Err("S0 file: a chunk outside its pages".into());
+                }
+                at.push(data_off + k * S0_PAGE + (c as usize % per) * CHUNK_BYTES);
+            }
+        }
         let t_header = t0.elapsed().as_secs_f64();
 
         let tc = Instant::now();
@@ -1106,12 +1170,22 @@ pub fn read_s0(
         if g.arena.len_bytes() != arena_len || g.arena.scalar_bytes() != scalar_bytes {
             return Err("S0 was saved with another word-space layout".into());
         }
-        for (i, &c) in present.iter().enumerate() {
-            let off = data_off + i * CHUNK_BYTES;
-            let d = bytes
-                .get(off..off + CHUNK_BYTES)
-                .ok_or("S0 file truncated")?;
-            g.arena.load_chunk(c as usize, d);
+        if present.iter().any(|&c| c as usize >= g.arena.chunks()) {
+            return Err("S0 file: a chunk outside the space".into());
+        }
+        // Mapped (copy on write: the pages stay the file's, out of the
+        // footprint, until the engine writes them), or else copied.
+        let mut mapped_pages = 0;
+        if g.arena.map_pages(&file, data_off as u64, &pages, S0_PAGE) {
+            mapped_pages = pages.len();
+            for &c in &present {
+                g.arena.mark_loaded(c as usize);
+            }
+        } else {
+            for (&c, &off) in present.iter().zip(&at) {
+                g.arena
+                    .load_chunk(c as usize, &bytes[off..off + CHUNK_BYTES]);
+            }
         }
         g.fill_scalars();
         let load_s = t2.elapsed().as_secs_f64();
@@ -1148,13 +1222,19 @@ pub fn read_s0(
             ext_s,
             total_s: t0.elapsed().as_secs_f64(),
             chunks: present.len(),
+            mapped_pages,
         };
         Ok((g, S0 { id, key }, rep))
     }
 }
 
-// (v4: the key's reads at the document's start, `Key::arm`)
-const MAGIC: &[u8] = b"flashtex S0 v4";
+// (v4: the key's reads at the document's start, `Key::arm`; v5: the pages,
+// page-aligned, `S0_PAGE`)
+const MAGIC: &[u8] = b"flashtex S0 v5";
+
+/// The granule of S₀'s pages in the file (v5): Apple silicon's page, which
+/// every supported system's page size divides (4 KB elsewhere).
+const S0_PAGE: usize = 16384;
 
 /// How opening a persisted S₀ went.
 #[derive(Clone, Debug, Default)]
@@ -1167,13 +1247,22 @@ pub struct OpenReport {
     pub ext_s: f64,
     pub total_s: f64,
     pub chunks: usize,
+    /// S₀'s pages mapped from the file (0: its chunks were copied).
+    pub mapped_pages: usize,
 }
 
 impl OpenReport {
     pub fn json(&self) -> String {
         format!(
-            "{{\"config_s\":{:.6},\"header_s\":{:.6},\"validate_s\":{:.6},\"load_s\":{:.6},\"ext_s\":{:.6},\"total_s\":{:.6},\"chunks\":{}}}",
-            self.config_s, self.header_s, self.validate_s, self.load_s, self.ext_s, self.total_s, self.chunks
+            "{{\"config_s\":{:.6},\"header_s\":{:.6},\"validate_s\":{:.6},\"load_s\":{:.6},\"ext_s\":{:.6},\"total_s\":{:.6},\"chunks\":{},\"mapped_pages\":{}}}",
+            self.config_s,
+            self.header_s,
+            self.validate_s,
+            self.load_s,
+            self.ext_s,
+            self.total_s,
+            self.chunks,
+            self.mapped_pages
         )
     }
 }
