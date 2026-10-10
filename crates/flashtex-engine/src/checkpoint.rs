@@ -2213,6 +2213,10 @@ impl Globals {
                 if why == Point::Aux {
                     l.aux_point = Some(id);
                 }
+                if why == Point::Aux || why == Point::BeginDocument {
+                    // (a persisted S₀ carries the definition sites of S₀)
+                    crate::diag::keep_sites_at(id);
+                }
                 if why == Point::AuxDone {
                     l.aux_done = Some(id);
                 }

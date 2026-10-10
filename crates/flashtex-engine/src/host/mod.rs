@@ -905,7 +905,7 @@ pub fn prepare_s0(g: &mut Globals, id: CheckpointId, key: &Key) -> Result<S0Imag
         .map(|n| (**n).clone())
         .collect::<Vec<crate::diag::Note>>()
         .enc(&mut head);
-    let sites = crate::diag::sites_snapshot();
+    let sites = crate::diag::sites_at(id);
     // The files opened for output before S₀, by name: a process that
     // opens S₀ must know them (`system::rewritten_at`: a file the
     // preamble wrote and the body writes again, #1348).
@@ -934,7 +934,7 @@ impl S0Image {
         self.data.len() + self.head.len()
     }
 
-    /// Write the file to `path`, through `path.tmp` and a rename, so that
+    /// Write the file to `path`, through `path.PID.tmp` and a rename, so that
     /// `path` is always a whole S₀ or what it was: the header, the list of
     /// the nonzero chunks, then those chunks, 16 KB-aligned, densely, in
     /// index order. `cancelled` is asked as the chunks go out: once it says
@@ -963,7 +963,8 @@ impl S0Image {
         present.enc(&mut head);
         let data_off = (8 + head.len()).next_multiple_of(CHUNK_BYTES) as u64;
         use std::io::Write;
-        let tmp = format!("{path}.tmp");
+        // (this process's own: another host writing the same S₀ has its own)
+        let tmp = format!("{path}.{}.tmp", std::process::id());
         let gone = |e: String| {
             let _ = std::fs::remove_file(&tmp);
             e
@@ -1080,6 +1081,8 @@ pub fn read_s0(
         system::truncate_opens(0);
         system::append_opens(&opens);
         let id = g.checkpoint()?;
+        // (the sites just put back are S₀'s, for a later save of it)
+        crate::diag::keep_sites_at(id);
         let ext_s = t3.elapsed().as_secs_f64();
         let rep = OpenReport {
             config_s,

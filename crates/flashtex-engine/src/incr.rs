@@ -140,6 +140,9 @@ pub struct Options {
     /// Bytes the undo logs may hold (DESIGN.md §5.2: 1 GB by default), and
     /// the loaded format's image with them (`crate::fmtimage`).
     pub budget: usize,
+    /// Bytes of embedded Type 1 fonts kept across runs
+    /// (`pdftex::writet1::set_cache_limit`), by performance mode.
+    pub t1_cache: usize,
     /// Keep the loaded format's image (`crate::fmtimage`): not under a
     /// `lean` performance mode (Low Memory).
     pub fmt_image: bool,
@@ -187,6 +190,7 @@ impl Default for Options {
         let mut o = Options {
             preview: true,
             budget: 0,
+            t1_cache: 32 << 20,
             fmt_image: true,
             dense: 0,
             timed_s: 0.0,
@@ -222,6 +226,11 @@ impl Options {
         self.dense = p.dense;
         self.timed_s = p.timed_s;
         self.segment_s = p.segment_s;
+        self.t1_cache = match p.mode {
+            crate::profile::Mode::LowMemory => 4 << 20,
+            crate::profile::Mode::Balanced => 32 << 20,
+            crate::profile::Mode::HighPerformance => 128 << 20,
+        };
         self.fmt_image = !p.lean;
     }
 }
@@ -2666,6 +2675,7 @@ impl Session {
         system::configure(o.clone());
         system::capture_terminal(true);
         crate::diag::set_enabled(opts.diagnostics);
+        crate::pdftex::writet1::set_cache_limit(opts.t1_cache);
         crate::fmtimage::set_allowed(opts.fmt_image);
         crate::diag::reset();
         crate::pdftex::set_preview(opts.preview);
@@ -2983,6 +2993,7 @@ impl Session {
     pub fn apply_profile(&mut self, p: &crate::profile::Profile) {
         let shrinks = p.budget < self.opts.budget || p.dense < self.opts.dense;
         self.opts.apply_profile(p);
+        crate::pdftex::writet1::set_cache_limit(self.opts.t1_cache);
         crate::fmtimage::set_allowed(self.opts.fmt_image);
         if shrinks && self.paused.is_none() && self.g.is_some() {
             self.enforce_budget();

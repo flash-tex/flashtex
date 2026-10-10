@@ -22,8 +22,9 @@
 //! (`pdftex_warn`: a subr that does not end in `return`) goes to the log
 //! again. So a font from the cache is the font a run from scratch writes.
 //!
-//! The cache is bounded (`LIMIT` bytes of fonts; the oldest go first) and
-//! is off with `FLASHTEX_T1_CACHE=0`.
+//! The cache is bounded by the performance mode (`set_limit`: 4 MB of fonts
+//! in Low Memory, 32 MB in Balanced, 128 MB in High Performance; the oldest
+//! go first) and is off with `FLASHTEX_T1_CACHE=0`.
 
 use super::subset::{self, Embedded, Job};
 use super::{Host, Result};
@@ -83,8 +84,29 @@ impl Entry {
     }
 }
 
-/// The bytes of fonts kept, at most.
-const LIMIT: usize = 32 << 20;
+/// The bytes of fonts kept, at most (`set_limit`: the performance mode's).
+static LIMIT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(32 << 20);
+
+fn limit() -> usize {
+    LIMIT.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+/// Keep at most `bytes` of fonts (`incr::Options::t1_cache`); the oldest go
+/// at once if more are kept.
+pub fn set_limit(bytes: usize) {
+    LIMIT.store(bytes, std::sync::atomic::Ordering::Relaxed);
+    let mut c = CACHE.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some(c) = c.as_mut() {
+        while c.bytes > bytes {
+            let Some(old) = c.order.pop_front() else {
+                break;
+            };
+            if let Some(o) = c.map.remove(&old) {
+                c.bytes -= o.size();
+            }
+        }
+    }
+}
 
 #[cfg(test)]
 thread_local! {
@@ -196,12 +218,13 @@ pub(super) fn embed(font: &[u8], job: Job, host: &mut dyn Host) -> Result<Embedd
 
 fn keep(key: Key, e: Entry) {
     let size = e.size();
-    if size > LIMIT {
+    let limit = limit();
+    if size > limit {
         return;
     }
     let mut c = CACHE.lock().unwrap_or_else(|e| e.into_inner());
     let c = c.get_or_insert_with(Cache::default);
-    while c.bytes + size > LIMIT {
+    while c.bytes + size > limit {
         let Some(old) = c.order.pop_front() else {
             break;
         };
