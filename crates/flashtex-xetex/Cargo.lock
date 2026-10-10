@@ -79,6 +79,7 @@ dependencies = [
  "cc",
  "flashtex-display-list",
  "flashtex-runtime",
+ "libc",
 ]
 
 [[package]]
