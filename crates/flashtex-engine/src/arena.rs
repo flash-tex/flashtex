@@ -2121,11 +2121,12 @@ impl Arena {
     /// Put a persisted space's pages into this fresh arena (no checkpoints)
     /// by mapping them from the file, copy on write (`os::map_file_over`):
     /// the `i`th of `pages` (each `granule` bytes of the space, ascending)
-    /// is the file's `granule` bytes at `off + i * granule`. All or nothing:
-    /// false (nothing mapped that the caller must undo; it copies the chunks
-    /// then) where the system cannot, the page size does not divide
-    /// `granule`, or a page lies outside the space. The chunks it fills are
-    /// still to be marked with [`Arena::mark_loaded`].
+    /// is the file's `granule` bytes at `off + i * granule`. False, with
+    /// nothing mapped (the caller copies the chunks then), where the system
+    /// cannot map files (Windows, WASI), the page size does not divide
+    /// `granule`, or a page lies outside the space; a mapping that fails
+    /// aborts (`os::map_file_over`). The chunks it fills are still to be
+    /// marked with [`Arena::mark_loaded`].
     pub fn map_pages(
         &mut self,
         f: &std::fs::File,
@@ -2157,8 +2158,8 @@ impl Arena {
             let p = (base + pages[i] as usize * granule) as *mut u8;
             // SAFETY: whole pages inside the space's mapping (checked
             // above); `&mut self` and no checkpoints: nothing else uses them.
-            // A failure part way leaves pages that the caller's copy then
-            // overwrites with the same bytes.
+            // (false only where nothing was mapped: the first call, on a
+            // system that does not map files)
             if !unsafe { os::map_file_over(f, off + (i * granule) as u64, p, (j - i) * granule) } {
                 return false;
             }

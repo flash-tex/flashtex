@@ -90,7 +90,8 @@ pub unsafe fn zero_pages(p: *mut u8, len: usize) -> bool {
 /// then, its pages are the file's (clean, out of the process's footprint,
 /// read in on first touch) until written, and a write copies the page
 /// (Unix: `mmap` with `MAP_PRIVATE | MAP_FIXED`). Whether it was done (not
-/// on Windows or WASI; then the caller copies).
+/// on Windows or WASI; then the caller copies). On Unix a failure aborts
+/// the process: the old pages may already be gone.
 ///
 /// # Safety
 /// `p`, `off` and `len` are multiples of [`page_size`], `[p, p + len)` lies
@@ -1191,7 +1192,11 @@ mod imp {
             f.as_raw_fd(),
             off as i64,
         );
-        q as *mut u8 == p
+        if q as *mut u8 != p {
+            // (the old pages may already be gone: see `zero_pages`)
+            fixed_mapping_failed(p, len)
+        }
+        true
     }
 
     pub fn map_file(f: &std::fs::File, len: usize) -> Result<MappedFile, ()> {

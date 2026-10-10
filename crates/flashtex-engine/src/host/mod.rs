@@ -976,18 +976,33 @@ impl S0Image {
         // (a name of this writer's own, the process's and the time's: a
         // file being written is never one another writer writes or another
         // process maps, `os::map_file_over`)
-        let tmp = format!(
-            "{path}.{}.{}.tmp",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map_or(0, |d| d.as_nanos())
-        );
+        // Created new, never opened as it is: no other writer can truncate
+        // or write into it (a name already there gets another suffix).
+        let (tmp, f) = {
+            let mut k = 0u32;
+            loop {
+                let tmp = format!(
+                    "{path}.{}.{}.{k}.tmp",
+                    std::process::id(),
+                    std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .map_or(0, |d| d.as_nanos())
+                );
+                match std::fs::OpenOptions::new()
+                    .write(true)
+                    .create_new(true)
+                    .open(&tmp)
+                {
+                    Ok(f) => break (tmp, f),
+                    Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists && k < 100 => k += 1,
+                    Err(e) => return Err(format!("{tmp}: {e}")),
+                }
+            }
+        };
         let gone = |e: String| {
             let _ = std::fs::remove_file(&tmp);
             e
         };
-        let f = std::fs::File::create(&tmp).map_err(|e| format!("{tmp}: {e}"))?;
         let mut f = std::io::BufWriter::with_capacity(1 << 20, f);
         let pad = vec![0u8; data_off as usize - 8 - head.len()];
         f.write_all(&(head.len() as u64).to_le_bytes())
