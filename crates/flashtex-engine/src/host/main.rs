@@ -48,6 +48,20 @@ fn main() {
     flashtex_engine::host::crash::install();
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     flashtex_engine::logalloc::set_enabled(std::env::var_os("FLASHTEX_NO_LOG_MAPS").is_none());
+    // (the host's large blocks in mappings of their own, macOS; not under Low
+    // Memory, whose allocator returns freed pages itself: `logalloc`)
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    flashtex_engine::logalloc::set_large_blocks(
+        !flashtex_engine::profile::allocator_returns_free_pages(),
+    );
+    // (macOS: the large blocks' spares, in MB, for A/B; `logalloc`)
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    if let Some(mb) = std::env::var("FLASHTEX_SPARE_MB")
+        .ok()
+        .and_then(|v| v.parse::<usize>().ok())
+    {
+        flashtex_engine::logalloc::set_spare_cap(mb << 20);
+    }
     let code = match argv.get(1).map(String::as_str) {
         Some("serve" | "iserve" | "bench" | "open" | "selftest" | "layout") => {
             flashtex_engine::host::tools::main(argv)

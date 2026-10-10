@@ -2961,6 +2961,17 @@ impl Session {
             v.push(("malloc_in_use".into(), used as i64));
             v.push(("malloc_held".into(), held as i64));
         }
+        // the host allocator's own mappings (`logalloc`: large blocks and
+        // their spares, which `malloc_in_use` does not count)
+        #[cfg(any(target_os = "linux", target_os = "macos"))]
+        {
+            let (mapped, spare) = crate::logalloc::mapped_stats();
+            v.push(("mapped_bytes".into(), mapped as i64));
+            v.push(("spare_bytes".into(), spare as i64));
+            for (k, n) in crate::logalloc::counters() {
+                v.push((k.into(), n as i64));
+            }
+        }
         if let Some(g) = &self.g {
             v.extend(g.mem_stats().into_iter().map(|(k, x)| (k.to_string(), x)));
             for (name, n) in g.arena.region_residency() {

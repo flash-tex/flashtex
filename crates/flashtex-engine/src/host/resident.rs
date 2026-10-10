@@ -1753,8 +1753,11 @@ fn settle(doc: &mut Doc, conn: &Conn, id: i64, limit: bool) {
 /// (docs/evidence/p4-memory-2026-09-30/). With jemalloc as the host's heap
 /// (`crate::logalloc`, feature `jemalloc`) the Rust side's free pages go
 /// back by a purge of its arenas (`logalloc::give_back`), and glibc's trim
-/// is left with the C parts' blocks. macOS's allocator returns free pages
-/// itself. FLASHTEX_NO_TRIM=1 leaves it out (for A/B).
+/// is left with the C parts' blocks. On macOS the large blocks' spares are
+/// unmapped (`logalloc::give_back`); xzone keeps the small blocks' pages,
+/// and `malloc_zone_pressure_relief` returns none of them (0 bytes,
+/// MEM-FOOTPRINT and MEM-BASELINE). FLASHTEX_NO_TRIM=1 leaves it out (for
+/// A/B).
 fn give_back_free_memory() {
     #[cfg(target_os = "linux")]
     if std::env::var_os("FLASHTEX_NO_TRIM").is_none() {
@@ -1786,6 +1789,8 @@ fn give_back_free_memory() {
             fn malloc_zone_pressure_relief(zone: *mut std::ffi::c_void, goal: usize) -> usize;
         }
         if std::env::var_os("FLASHTEX_NO_TRIM").is_none() {
+            // (the large blocks' spares unmapped: `logalloc`)
+            crate::logalloc::give_back();
             // SAFETY: a null zone means every zone; it only releases free memory.
             unsafe { malloc_zone_pressure_relief(std::ptr::null_mut(), 0) };
         }
