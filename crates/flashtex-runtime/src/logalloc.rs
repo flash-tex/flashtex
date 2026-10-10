@@ -691,6 +691,7 @@ mod tests {
         assert_eq!(SPARE_BYTES.load(Ordering::Relaxed), 0);
     }
 
+    #[cfg(target_os = "macos")]
     fn spares() -> Vec<(usize, usize)> {
         let _g = spare_lock();
         (0..SPARE_SLOTS)
