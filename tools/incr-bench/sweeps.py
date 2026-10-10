@@ -50,6 +50,9 @@ TIMED = '--timed 0.0002'
 LINES = 'newline,split,join'
 BIG = ('plain-120', 'full-100')
 REFS = ('refs-30', 'refs-120', 'full-100')
+# READ-REVALIDATE: an `\include` book (genincbook.py), edits in a chapter (soundness.py `DIR:DOC:EDIT`)
+BOOK = ('book-inc',)
+EDIT = {'book-inc': 'ch03.tex'}
 VOL = ('vol-closed', 'vol-open')
 # the preamble kinds (edits.py: PREAMBLE-FAST's restarts before S0, PREAMBLE-MIDLINE's in the middle
 # of the line after a package)
@@ -58,11 +61,11 @@ PRE = ('pre_title,pre_author,pre_newcommand,pre_setlength,pre_usepackage,pre_nop
 
 
 def S(tag, trials, extras=(), fixtures=True, kinds=None, interleave=False, host=None, toggle=False,
-      allow_no_trials=False, first_open=False):
-    """One soundness.py run (gates.sh: `soundness.py gates ...`)."""
+      allow_no_trials=False, first_open=False, env=None):
+    """One soundness.py run (gates.sh: `soundness.py gates ...`); `env`: more environment for it."""
     return dict(tool='soundness', tag=tag, trials=trials, extras=list(extras), fixtures=fixtures,
                 kinds=kinds, interleave=interleave, host=host, toggle=toggle,
-                allow_no_trials=allow_no_trials, first_open=first_open)
+                allow_no_trials=allow_no_trials, first_open=first_open, env=env or {})
 
 
 def SPAN(doc, edits, seed, frac=None, kinds=None, eol=None):
@@ -72,7 +75,7 @@ def SPAN(doc, edits, seed, frac=None, kinds=None, eol=None):
 
 
 GATES = {
-    'sound-a': [S('a', 50, BIG)],
+    'sound-a': [S('a', 50, BIG + BOOK)],
     'sound-budget': [S('budget', 20, BIG, host=BUDGET)],
     'sound-budget-d': [S('budget-d', 8, REFS, kinds=KD, interleave=True, host=BUDGET)],
     'sound-timed': [S('timed', 10, host=TIMED)],
@@ -95,12 +98,14 @@ GATES = {
              SPAN('full-100', 10, 5, 0.3, 'letter,newline,split,wedge', 'mixed')],
     # readers.py (#1613): run when the tree under test has it
     'readers': [dict(tool='readers', tag='readers')],
-    'sound-c': [S('c', 20, REFS, kinds='sentence,section,label,ref,cite,footnote,unlabel,unsection')],
-    'sound-d': [S('d', 12, REFS, kinds=KD, interleave=True)],
+    'sound-c': [S('c', 20, REFS + BOOK, kinds='sentence,section,label,ref,cite,footnote,unlabel,unsection')],
+    # FLASHTEX_SWEEP_STOP_PREPARE: the host's preparations after each compile are stopped part way
+    # (host/tools.rs), so the restores take stopped preparations (arena::PartPrep)
+    'sound-d': [S('d', 12, REFS + BOOK, kinds=KD, interleave=True, env={'FLASHTEX_SWEEP_STOP_PREPARE': '2'})],
     # lane COLD-OPEN: interleaved edits interrupting a first compile (no .aux) in its first pass
     # PREAMBLE-FAST / PREAMBLE-MIDLINE: preamble edits, then interleaved with letters
-    'sound-pre': [S('pre', 8, ('full-100', 'refs-30'), kinds=PRE, allow_no_trials=True),
-                  S('pre-d', 6, ('full-100', 'refs-30'), kinds=PRE + ',replace,insert', interleave=True,
+    'sound-pre': [S('pre', 8, ('full-100', 'full-100t', 'refs-30'), kinds=PRE, allow_no_trials=True),
+                  S('pre-d', 6, ('full-100', 'full-100t', 'refs-30'), kinds=PRE + ',replace,insert', interleave=True,
                     allow_no_trials=True)],
     'sound-first': [S('first', 10, ('refs-30', 'full-100'), kinds='replace,insert,sentence,section,label,ref',
                       interleave=True, first_open=True)],
@@ -109,7 +114,7 @@ GATES = {
 # Seconds per unit with no measurement in sweeps-costs.json (a new fixture or run): per trial (an
 # edit and its revert, each verified), by document; interleaved trials compile twice. Rough, from
 # the first hosted runs (2026-10-06: a small fixture ~0.3 s a trial, beamer ~3.5 s, full-100 ~3.5 s).
-PER_TRIAL = {'plain-120': 4, 'full-100': 4, 'refs-120': 4, 'refs-30': 2, 'lookup': 2,
+PER_TRIAL = {'plain-120': 4, 'full-100': 4, 'full-100t': 4, 'book-inc': 3, 'refs-120': 4, 'refs-30': 2, 'lookup': 2,
              'vol-closed': 1, 'vol-open': 1}
 SPAN_PER_EDIT = {'plain-10': 2, 'full-10': 3, 'plain-120': 10, 'full-100': 12}
 
@@ -252,7 +257,8 @@ def _run_unit(tree, bench, out, u, timeout):
         cmd = [sys.executable, f'{ib}/soundness.py', ENGINE, '-j', '1', '--trials', str(u['trials']), '--only', doc,
                '--dir', f'{bench}/sound-{tag}', '--out', f'{stem}.jsonl']
         if u['extra']:
-            cmd += ['--no-fixtures', '--extra', f'{bench}/src-{doc}:{doc}']
+            edit = f':{EDIT[doc]}' if doc in EDIT else ''
+            cmd += ['--no-fixtures', '--extra', f'{bench}/src-{doc}:{doc}{edit}']
         if u['kinds']:
             cmd += ['--kinds', u['kinds']]
         if u['interleave']:
@@ -284,7 +290,8 @@ def _run_unit(tree, bench, out, u, timeout):
     r['cmd'] = ' '.join(cmd)
     t0 = time.monotonic()
     try:
-        p = subprocess.run(cmd, cwd=tree, env=dict(env(), INCR_BENCH_DIR=bench), stdout=subprocess.PIPE,
+        p = subprocess.run(cmd, cwd=tree, env=dict(env(), INCR_BENCH_DIR=bench, **u.get('env', {})),
+                           stdout=subprocess.PIPE,
                            stderr=subprocess.PIPE, text=True, errors='replace', timeout=timeout)
         code, so, se = p.returncode, p.stdout, p.stderr
     except subprocess.TimeoutExpired as e:

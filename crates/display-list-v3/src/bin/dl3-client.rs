@@ -5,6 +5,8 @@
 //!     dl3-client --socket /tmp/flashtex.sock --root /path/to/project --main main.tex \
 //!         [--repeat N] [--reuse-fonts] [--save out.dl3] [--output-dir DIR] [--quiet]
 //!         [--diag FILE] [--format NAME] [--shell-escape off|restricted|on] [--export]
+//!         [--includeonly NAME,...]
+//!         [--external-tools auto|off]
 //!
 //! Per compile it prints one JSON line: time to STARTED, to the first PAGE
 //! and to DONE (ms, measured here from sending COMPILE), pages, forms,
@@ -16,6 +18,11 @@
 //! `--shell-escape` and `--export` set the request's fields of those names
 //! (spec §6.3); an export's pages arrive from the engine child through its
 //! display-list channel, as the resident engine's do.
+//!
+//! `--external-tools auto` (protocol 3.2) lets the host run bibtex, biber
+//! and makeindex for the compile; the client then also waits for the
+//! cycle's `TOOL` `settled` and reports the `TOOL` messages (`tools`) and
+//! the host's follow-up compiles (`followups`, their `DONE`s).
 
 use flashtex_display_list::client::{decode_event, Client, CompileRequest, Event};
 use flashtex_display_list::frame::{read_frame, write_frame};
@@ -71,6 +78,10 @@ fn main() {
             req.shell_escape = v;
         }
         req.export = a.iter().any(|x| x == "--export");
+        // `--includeonly a,b`: a chapter focus (`\includeonly{a,b}`, host capability `includeonly`).
+        req.includeonly = arg("--includeonly").map(|v| v.split(',').map(str::to_string).collect());
+        let tools = arg("--external-tools");
+        req.external_tools = tools.clone();
         if reuse {
             req.have_fonts = held.clone();
         }
@@ -128,6 +139,32 @@ fn main() {
             }
         };
         let total = t0.elapsed().as_secs_f64() * 1000.0;
+        // With tools allowed: the cycle goes on until TOOL `settled`.
+        let (mut tool_events, mut followups) = (vec![], vec![]);
+        if tools.as_deref() == Some("auto") && !failed {
+            loop {
+                let Some((k, body)) = read_frame(c.reader()).expect("read") else {
+                    eprintln!("dl3-client: host closed the connection");
+                    std::process::exit(1)
+                };
+                match decode_event(k, body).expect("decode") {
+                    Event::Tool(j) => {
+                        let settled = j.str_field("event") == Some("settled");
+                        tool_events.push(j);
+                        if settled {
+                            break;
+                        }
+                    }
+                    Event::Done(d) => followups.push(d),
+                    Event::Error(e) => {
+                        eprintln!("error: {}", e);
+                        failed = true;
+                        break;
+                    }
+                    _ => {}
+                }
+            }
+        }
         let r = |v: f64| Json::Num((v * 1000.0).round() / 1000.0);
         let line = Json::Obj(vec![
             ("run".into(), Json::Int(id)),
@@ -147,6 +184,8 @@ fn main() {
                 r(bytes as f64 / 1e6 / decode.max(1e-9)),
             ),
             ("host".into(), done),
+            ("tools".into(), Json::Arr(tool_events)),
+            ("followups".into(), Json::Arr(followups)),
         ]);
         println!("{}", line);
         let _ = std::io::stdout().flush();

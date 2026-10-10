@@ -336,8 +336,11 @@ struct PreviewPane: View {
         // The previous engine typesets this project because the new one
         // cannot, and why (EngineChoice.swift); never a silent fallback.
         EngineFallbackBanner()
+        UnicodeModeSuggestionBanner()
         // Memory pressure: a suggestion to use Low Memory, never a silent switch (PerformanceMode.swift).
         MemoryPressureBanner()
+        // Chapter focus: "Previewing chapters/03.tex only", Show All (EngineV3FocusChapter.swift).
+        FocusChapterBanner()
         ZStack(alignment: .topTrailing) {
             if model.engineV3Enabled {
                 PreviewV3Pane() // the new engine's preview (EngineV3Preview.swift), per document (EngineChoice.swift)
@@ -603,6 +606,8 @@ struct StatusBar: View {
             // the switch (EngineChoice.swift). The old engine's producer
             // route follows while it is the one in use.
             EngineChoiceStatusItem()
+            // Classic or Unicode, and the switch (ProjectMode.swift).
+            ModeStatusItem()
             if !model.engineV3Enabled {
                 Label(route(chrome), systemImage: routeIcon(chrome))
                     .help(chrome.routeHelp)

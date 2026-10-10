@@ -1,0 +1,4 @@
+fa: 36 files identical, 0 different
+fi: 4 files identical, 0 different
+fb1: 24 files identical, 0 different
+fb2: 60 files identical, 0 different

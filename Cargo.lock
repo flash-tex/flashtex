@@ -264,6 +264,10 @@ name = "flashtex-bibliography"
 version = "0.1.0"
 
 [[package]]
+name = "flashtex-bibtex"
+version = "0.1.0"
+
+[[package]]
 name = "flashtex-bridge"
 version = "0.1.0"
 dependencies = [
@@ -282,6 +286,7 @@ name = "flashtex-build"
 version = "0.1.0"
 dependencies = [
  "flashtex-display-list",
+ "flashtex-project-manifest",
  "libc",
 ]
 
@@ -357,11 +362,13 @@ name = "flashtex-engine"
 version = "0.1.0"
 dependencies = [
  "cc",
+ "flashtex-bibtex",
  "flashtex-display-list",
  "flashtex-engine-build-id",
+ "flashtex-makeindex",
+ "flashtex-runtime",
+ "libc",
  "sha2",
- "tikv-jemalloc-sys",
- "tikv-jemallocator",
 ]
 
 [[package]]
@@ -394,6 +401,13 @@ dependencies = [
  "serde_json",
  "sha2",
  "tempfile",
+]
+
+[[package]]
+name = "flashtex-makeindex"
+version = "0.1.0"
+dependencies = [
+ "libc",
 ]
 
 [[package]]
@@ -495,6 +509,15 @@ dependencies = [
  "flashtex-project-files",
  "flashtex-tex-text-encoding",
  "flashtex-vector-graphics",
+]
+
+[[package]]
+name = "flashtex-runtime"
+version = "0.1.0"
+dependencies = [
+ "flashtex-display-list",
+ "tikv-jemalloc-sys",
+ "tikv-jemallocator",
 ]
 
 [[package]]

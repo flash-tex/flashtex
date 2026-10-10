@@ -39,6 +39,9 @@ use std::marker::PhantomData;
 use std::ops::{Deref, Index, IndexMut};
 
 pub const CHUNK_SHIFT: usize = 10;
+
+/// Bytes `Arena::release_zero_pages` gave back in this process (`DONE.mem`).
+static ZERO_RELEASED: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 pub const CHUNK_BYTES: usize = 1 << CHUNK_SHIFT;
 pub const CHUNK_WORDS: usize = CHUNK_BYTES / 8;
 
@@ -1098,6 +1101,17 @@ impl Core {
         if p.id == id && p.ids == self.ids && p.history_gen == self.history_gen {
             return Some(p);
         }
+        if std::env::var_os("FLASHTEX_INCR_DEBUG").is_some() {
+            eprintln!(
+                "[arena] stopped preparation for {} not used for {id} (same ids {}: {} vs {}, gen {} vs {})",
+                p.id,
+                p.ids == self.ids,
+                p.ids.len(),
+                self.ids.len(),
+                p.history_gen,
+                self.history_gen
+            );
+        }
         self.give_pre(p.pre);
         None
     }
@@ -1838,6 +1852,9 @@ pub struct Arena {
     /// Old checkpoints' chunk values, as the convergence tests rewound
     /// them (`OldCache`).
     old_cache: std::cell::RefCell<OldCache>,
+    /// `FLASHTEX_VERIFY_OLDCACHE` (read when the space is made): every kept
+    /// chunk a convergence test uses is rewound again and compared.
+    verify_old_cache: bool,
 }
 
 /// The value of chunks at a few checkpoints, as `diff_branch_inner` rewound
@@ -1851,7 +1868,8 @@ pub struct Arena {
 /// place, which tests against the same old checkpoints keystroke after
 /// keystroke, rewinds the old future (O(pages after the edit)) only for
 /// chunks it has not seen there. `FLASHTEX_VERIFY_OLDCACHE=1` rewinds
-/// every chunk anyway and aborts the process on any difference.
+/// the kept chunks too and aborts the process on any difference; what it
+/// keeps is what it keeps without the mode.
 #[derive(Default)]
 struct OldCache {
     /// (checkpoint, history_gen, chunk -> index into `words` / CHUNK_WORDS),
@@ -1976,6 +1994,7 @@ impl Arena {
             extra: None,
             regions: vec![],
             old_cache: Default::default(),
+            verify_old_cache: std::env::var_os("FLASHTEX_VERIFY_OLDCACHE").is_some(),
         }
     }
 
@@ -2060,6 +2079,67 @@ impl Arena {
     /// Whether chunk `c` was ever written (else it is all zero).
     pub fn touched(&self, c: usize) -> bool {
         self.core().touched[c] != 0
+    }
+
+    /// Give back the memory of the space's pages that were written but hold
+    /// only zeros (`os::zero_pages`): they read as zero as before, and take
+    /// no memory until written again. Nothing the engine or a checkpoint
+    /// can see changes: the bytes are the same, and `touched`, the barrier's
+    /// flags and the logs are left as they are (lane MEM-BASELINE). Most
+    /// such pages are TeX's `initialize` clearing whole tables that the
+    /// format leaves empty: `hash` (its `hash_extra` part, 4.8 MB), and
+    /// `font_info` past the fonts (3.4 MB), on every format load. The host's
+    /// idle trim calls it, on the engine thread. The bytes given back.
+    pub fn release_zero_pages(&mut self) -> usize {
+        let page = os::page_size();
+        let c = self.core();
+        if page < CHUNK_BYTES || !page.is_multiple_of(CHUNK_BYTES) {
+            return 0;
+        }
+        let per = page / CHUNK_BYTES;
+        // whole pages of the space only
+        let lo = (c.base as usize).next_multiple_of(page);
+        let hi = (c.base as usize + c.bytes) / page * page;
+        if hi <= lo {
+            return 0;
+        }
+        let first_chunk = (lo - c.base as usize) / CHUNK_BYTES;
+        let npages = (hi - lo) / page;
+        // Only resident pages are read: reading one given back earlier (or
+        // never written) would bring a page in again.
+        let Some(res) = crate::memstat::resident_pages(lo as *const u8, hi - lo) else {
+            return 0;
+        };
+        let zero = |pg: usize| -> bool {
+            let c0 = first_chunk + pg * per;
+            if !res[pg] || !(c0..c0 + per).any(|k| c.touched[k] != 0) {
+                return false;
+            }
+            // SAFETY: a whole page inside the mapping.
+            let w = unsafe { std::slice::from_raw_parts((lo + pg * page) as *const u64, page / 8) };
+            w.iter().all(|&x| x == 0)
+        };
+        let mut given = 0;
+        let mut pg = 0;
+        while pg < npages {
+            if !zero(pg) {
+                pg += 1;
+                continue;
+            }
+            let start = pg;
+            while pg < npages && zero(pg) {
+                pg += 1;
+            }
+            let (p, len) = ((lo + start * page) as *mut u8, (pg - start) * page);
+            // SAFETY: whole pages of the space's own mapping, all zero; the
+            // caller holds `&mut self`, so nothing else reads or writes the
+            // space meanwhile.
+            if unsafe { os::zero_pages(p, len) } {
+                given += len;
+            }
+        }
+        ZERO_RELEASED.fetch_add(given as u64, std::sync::atomic::Ordering::Relaxed);
+        given
     }
 
     /// Overwrite chunk `c` without the barrier: only for loading a persisted
@@ -2269,6 +2349,12 @@ impl Arena {
     pub fn old_cache_counts(&self) -> (u64, u64) {
         let c = self.old_cache.borrow();
         (c.hits, c.misses)
+    }
+
+    /// Give back a stopped preparation's copies (`PartPrep`): an idle trim's
+    /// memory. The next preparation or restore starts afresh.
+    pub fn drop_stopped_preparation(&mut self) {
+        self.core_mut().drop_part();
     }
 
     /// Bytes the old checkpoints' kept chunks hold.
@@ -2569,10 +2655,10 @@ impl Arena {
         extra.retain(|c| redo_of.contains_key(c));
         let t = std::time::Instant::now();
         // The old run's values at `old`: those `OldCache` holds, the rest
-        // rewound from the old run's end (every one with
-        // FLASHTEX_VERIFY_OLDCACHE, which compares).
+        // rewound from the old run's end (the kept ones too with
+        // FLASHTEX_VERIFY_OLDCACHE, which compares them and keeps no more).
         let gen = core.history_gen;
-        let verify = std::env::var_os("FLASHTEX_VERIFY_OLDCACHE").is_some();
+        let verify = self.verify_old_cache;
         let (cached, misses): (Vec<u32>, Vec<u32>) = {
             let cache = self.old_cache.borrow();
             in_old
@@ -2588,13 +2674,19 @@ impl Arena {
                 .filter(|&c| cache.get(old, gen, c).is_none())
                 .collect()
         };
-        let mut rewind: Vec<u32> = if verify {
-            in_old.clone()
-        } else {
-            misses.clone()
-        };
-        if !misses.is_empty() || verify {
-            rewind.extend(&extra_misses);
+        // What is rewound and kept is the same with the verify mode as
+        // without it (the sweeps keep chunks on production's schedule):
+        // the misses and, with them, in the same pass, the unstated ones not
+        // kept yet. The verify mode rewinds the kept ones too, only to
+        // compare them.
+        let mut keep: Vec<u32> = misses.clone();
+        if !misses.is_empty() {
+            keep.extend(&extra_misses);
+        }
+        keep.sort_unstable();
+        let mut rewind = keep.clone();
+        if verify {
+            rewind.extend(&cached);
             rewind.sort_unstable();
         }
         // (nothing to rewind: no pass over the logs)
@@ -2633,15 +2725,8 @@ impl Arena {
             cache.hits += cached.len() as u64;
             cache.misses += misses.len() as u64;
         }
-        // (kept: every one rewound that was not, in `rewind`'s order)
-        let keep: Vec<u32> = {
-            let cache = self.old_cache.borrow();
-            rewind
-                .iter()
-                .copied()
-                .filter(|&c| cache.get(old, gen, c).is_none())
-                .collect()
-        };
+        // (kept: the misses and the unstated ones rewound with them, none
+        // kept yet)
         if !keep.is_empty() {
             let mut mb = Vec::with_capacity(keep.len() * CHUNK_WORDS);
             for &c in &keep {
@@ -2805,6 +2890,10 @@ impl Arena {
             ("branch_deltas", br_d as i64),
             ("branch_words", br_w as i64),
             ("prepared", prepared as i64),
+            (
+                "zero_released",
+                ZERO_RELEASED.load(std::sync::atomic::Ordering::Relaxed) as i64,
+            ),
             (
                 "bookkeeping",
                 (c.touched.len() + c.nchunks + c.mark.len() * 8 + c.slot.len() * 4) as i64,
@@ -3442,6 +3531,58 @@ mod tests {
         assert_eq!(dst[0] | dst[4] | dst[63], 0);
     }
 
+    /// MEM-BASELINE: pages written with zeros are given back and read as
+    /// zero; pages with a nonzero word are kept; checkpoints, restores and
+    /// later writes see the same space as without it.
+    #[test]
+    fn zero_pages_are_given_back_and_read_the_same() {
+        let words = 1 << 20; // 8 MB
+        let (mut a, mut arr) = space(words);
+        // TeX's `initialize`: every word cleared, so every page resident
+        for i in 0..words {
+            arr[i] = 0;
+        }
+        // a few nonzero words, one per 64 KB
+        for i in (0..words).step_by(8192) {
+            arr[i] = i as u64 + 1;
+        }
+        let id0 = a.checkpoint();
+        let before = arr.to_vec();
+        let page = os::page_size();
+        let r0 = crate::memstat::resident(arr.as_ptr() as *const u8, words * 8);
+        let given = a.release_zero_pages();
+        let r1 = crate::memstat::resident(arr.as_ptr() as *const u8, words * 8);
+        if cfg!(unix) {
+            // every page but the 128 with a nonzero word
+            assert!(given >= words * 8 - 128 * page - 2 * page, "given {given}");
+            if let (Some(r0), Some(r1)) = (r0, r1) {
+                assert!(
+                    r1 + given <= r0 + page,
+                    "resident {r0} -> {r1}, given {given}"
+                );
+            }
+        }
+        assert!(arr[..] == before[..], "the same bytes");
+        // written again after it: through the barrier, as any write
+        scribble(&mut arr, 3, 4000);
+        let after = arr.to_vec();
+        let id1 = a.checkpoint();
+        assert!(a.release_zero_pages() <= given);
+        // a second trim reads no page it gave back (nothing comes back in)
+        let r2 = crate::memstat::resident(arr.as_ptr() as *const u8, words * 8);
+        assert_eq!(a.release_zero_pages(), 0);
+        assert_eq!(
+            crate::memstat::resident(arr.as_ptr() as *const u8, words * 8),
+            r2
+        );
+        let br = a.restore_branch(id0).unwrap();
+        assert!(arr[..] == before[..], "restore to before");
+        a.converge(br, id0).unwrap();
+        assert!(arr[..] == after[..], "jump back");
+        a.restore_discard(id1).unwrap();
+        assert!(arr[..] == after[..]);
+    }
+
     #[test]
     fn restore_to_every_checkpoint_and_converge() {
         let (mut a, mut arr) = space(200_000);
@@ -3911,6 +4052,87 @@ mod tests {
     /// (`OldCache`) serve the next, across a jump back and a new restore
     /// (typing in one place), and give exactly the old states; an `or_from`
     /// since makes them stale.
+    /// The verify mode (`FLASHTEX_VERIFY_OLDCACHE`) keeps exactly what a
+    /// space without it keeps, test after test (the sweeps run on
+    /// production's schedule), and its comparisons pass; and an idle trim
+    /// gives a stopped preparation's copies back (`Session::trim_caches`).
+    #[test]
+    fn the_verify_mode_keeps_what_production_keeps() {
+        let run = |verify: bool| -> (Vec<(CheckpointId, Vec<u32>)>, u64, u64) {
+            let mut p = Plan::new(64);
+            let rt = p.reserve::<u64>("t", 150_000);
+            let ru = p.reserve::<u64>("dl_side", 50_000);
+            let mut a = p.build();
+            a.verify_old_cache = verify;
+            let mut t = a.arr(rt, 150_000);
+            let mut u = a.arr(ru, 50_000);
+            scribble(&mut t, 71, 5000);
+            scribble(&mut u, 72, 2000);
+            let mut ids = vec![];
+            for k in 0..12 {
+                ids.push(a.checkpoint());
+                scribble(&mut t, 800 + k, 2000);
+                scribble(&mut u, 900 + k, 800);
+            }
+            let br = a.restore_branch(ids[3]).unwrap();
+            for round in 0..4u64 {
+                // (the last round writes the unstated array only: its tests
+                // find every stated chunk kept, and new unstated ones)
+                if round < 3 {
+                    scribble(&mut t, 1990 + round, 700);
+                }
+                scribble(&mut u, 2990 + round, 300);
+                a.checkpoint();
+                for j in [4usize, 6, 5] {
+                    drop(a.diff_branch(&br, ids[j]).unwrap());
+                    if round == 1 {
+                        drop(a.diff_branch_all(&br, ids[j]).unwrap());
+                    }
+                }
+            }
+            let mut kept: Vec<(CheckpointId, Vec<u32>)> = a
+                .old_cache
+                .borrow()
+                .at
+                .iter()
+                .map(|e| {
+                    let mut cs: Vec<u32> = e.2.keys().copied().collect();
+                    cs.sort_unstable();
+                    (e.0, cs)
+                })
+                .collect();
+            kept.sort();
+            let (hits, misses) = a.old_cache_counts();
+            a.drop_branch(br);
+            (kept, hits, misses)
+        };
+        let (plain, verified) = (run(false), run(true));
+        assert!(!plain.0.is_empty());
+        assert!(plain == verified, "the verify mode kept other chunks");
+        // a stopped preparation, then the idle trim
+        let (mut a, mut arr) = space(400_000);
+        scribble(&mut arr, 3, 20_000);
+        let mut ids = vec![];
+        for k in 0..20u64 {
+            ids.push(a.checkpoint());
+            scribble(&mut arr, 300 + k, 400);
+        }
+        let live0 = a.core().slab.live;
+        let mut asked = 0;
+        assert!(!a.prepare_restore(ids[2], &mut || {
+            asked += 1;
+            asked > 2
+        }));
+        assert!(a.core().part.is_some());
+        a.drop_stopped_preparation();
+        assert!(a.core().part.is_none());
+        assert_eq!(a.core().slab.live, live0, "the part's redo is given back");
+        let end = arr.to_vec();
+        let br = a.restore_branch(ids[2]).unwrap();
+        a.converge(br, ids[2]).unwrap();
+        assert!(arr[..] == end[..]);
+    }
+
     #[test]
     fn kept_old_chunks_never_exceed_the_cap() {
         let mut c = OldCache::default();

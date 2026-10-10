@@ -1290,15 +1290,29 @@ def run_jobs(jobs, cfg, workers, report, fn=None, initargs=("-no-shell-escape",)
     unfinished future fails with it, running or not. Those documents are then
     run again on a fresh pool; if that breaks too, the rest run one per pool,
     so only a document whose own worker dies is recorded (`worker_died_record`,
-    a failure). Returns the ids of those documents."""
+    a failure). Returns the ids of those documents.
+
+    Workers are spawned, on every OS (macOS's default already): a broken pool
+    SIGTERMs its other workers and joins them with no timeout, so each must
+    die of it. A forked worker carries the parent's Python SIGTERM handler,
+    and CPython drops a signal that reaches the child before it has finished
+    starting (its pending signals are cleared after fork), so that worker
+    lived on idle and hung the run (CI's self-tests on hosted Linux, 2026-10).
+    A spawned worker has SIGTERM's default action until `set_shell_escape`."""
     fn = fn or score_safe
     died = []
+    ctx = multiprocessing.get_context("spawn")
 
     def one_pool(batch, n):
         left = []
-        with concurrent.futures.ProcessPoolExecutor(max_workers=n, initializer=set_shell_escape,
+        with concurrent.futures.ProcessPoolExecutor(max_workers=n, mp_context=ctx, initializer=set_shell_escape,
                                                     initargs=initargs) as ex:
-            futs = {ex.submit(fn, d, cfg): (t, d) for t, d in batch}
+            futs = {}
+            for t, d in batch:
+                try:
+                    futs[ex.submit(fn, d, cfg)] = (t, d)
+                except concurrent.futures.BrokenExecutor:  # a worker died before all were submitted
+                    left.append((t, d))
             for fut in concurrent.futures.as_completed(futs):
                 t, d = futs[fut]
                 try:
@@ -1326,12 +1340,50 @@ class Terminated(BaseException):
     engine, then the worker exits (`score_safe`)."""
 
 
+# How long a worker has, after SIGTERM, to unwind through `Terminated` before
+# it exits regardless (`_worker_sigterm`).
+TERM_GRACE = 10.0
+_term_deadline = []
+
+
+def _term_exit():
+    ptiers.remove_active_work()
+    os._exit(128 + signal.SIGTERM)
+
+
 def _worker_sigterm(_signum, _frame):
+    """Raise `Terminated` so the document unwinds, but never rely on it alone.
+    An exception raised from a signal handler can land anywhere: inside a
+    `__del__` (Popen's, as subprocess.run returns), where Python prints
+    "Exception ignored" and carries on; or between subprocess's own lock
+    acquire and release, after which `Popen.__exit__` waits forever on its
+    `_waitpid_lock`. The worker then lives on, and ProcessPoolExecutor, which
+    terminates the other workers when one dies and joins them with no timeout,
+    hangs the whole run (CI's self-tests hung until the job timeout on
+    hosted Linux, in WorkerDeath, 2026-10). So the first SIGTERM also arms a
+    deadline after which the worker exits anyway, and a second exits at once."""
+    if _term_deadline:
+        _term_exit()
+    import threading
+    t = threading.Timer(TERM_GRACE, _term_exit)
+    t.daemon = True
+    t.start()
+    _term_deadline.append(t)
     raise Terminated()
 
 
+_main_pid = []
+
+
 def _main_sigterm(_signum, _frame):
-    """SIGTERM in parity.py: the workers get it too, clean up and exit."""
+    """SIGTERM in parity.py: the workers get it too, clean up and exit. A
+    worker forked from this process (run_jobs spawns, but a caller may not)
+    inherits this handler until its initializer installs `_worker_sigterm`;
+    a SIGTERM in that window must exit that worker, not run the main
+    process's cleanup there (whose join raises, inside fork's own handlers,
+    where the error is ignored and the worker lives on)."""
+    if os.getpid() not in _main_pid:
+        _term_exit()
     kids = multiprocessing.active_children()
     for c in kids:
         c.terminate()
@@ -1923,6 +1975,7 @@ def main(argv=None):
     max_log = int(args.pt1_max_log_mb * (1 << 20))
     kpse = ptiers.pcapture.kpsewhich_beside(oracle_pdftex) if oracle_pdftex else None
     set_shell_escape(args.shell_escape_flag, max_log, args.pt1_timeout, kpse, worker=False)
+    _main_pid[:] = [os.getpid()]
     signal.signal(signal.SIGTERM, _main_sigterm)
     swept = ptiers.sweep_stale_work(args.cache)
     if swept:

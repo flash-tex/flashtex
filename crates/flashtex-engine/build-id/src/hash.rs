@@ -9,7 +9,17 @@ use std::path::{Path, PathBuf};
 /// sources (the translated `pdftex.web` in src/generated/ and the
 /// hand-written system layer, resolver, format cache and pdfTeX C-part
 /// ports alike), the change files, and the C shims.
-pub const DIRS: &[&str] = &["src", "changes", "csrc", "kpathsea-config"];
+///
+/// And the runtime the engine links from crates/flashtex-runtime (its
+/// snapshot codec, allocator and OS layer were this crate's `src/` until
+/// docs/design/xetex/PLAN.md §3.3 moved them), named relative to this crate.
+pub const DIRS: &[&str] = &[
+    "src",
+    "changes",
+    "csrc",
+    "kpathsea-config",
+    "../flashtex-runtime/src",
+];
 
 /// Single files of the engine crate that are hashed: the string pool, the
 /// capacities, the manifest (version, features) and the build script.
@@ -20,6 +30,7 @@ pub const FILES: &[&str] = &[
     "web2rust-etrip.args",
     "Cargo.toml",
     "build.rs",
+    "../flashtex-runtime/Cargo.toml",
 ];
 
 fn walk(d: &Path, out: &mut Vec<PathBuf>) {

@@ -32,9 +32,10 @@
 //! translation of Knuth's `tex.web` and so leaves out `pdftex/`.
 
 pub mod arena;
+#[cfg(all(feature = "bibtex", not(feature = "tex82")))]
+pub mod bibtex;
 #[cfg(all(feature = "distribution", not(feature = "tex82")))]
 pub mod bundle;
-pub mod busy;
 #[cfg(not(feature = "tex82"))]
 pub mod checkpoint;
 pub mod cli;
@@ -42,9 +43,12 @@ pub mod cli;
 pub mod diag;
 #[cfg(not(feature = "tex82"))]
 pub mod displaylist;
+#[cfg(not(feature = "tex82"))]
+pub mod fmtimage;
 #[cfg(feature = "distribution")]
 pub mod formats;
 pub mod generated;
+pub mod hashcache;
 #[cfg(not(feature = "tex82"))]
 pub mod host;
 #[cfg(not(feature = "tex82"))]
@@ -59,22 +63,22 @@ pub mod iso;
 pub mod ix;
 #[cfg(not(feature = "tex82"))]
 pub mod lineshift;
-#[cfg(all(any(target_os = "linux", target_os = "macos"), not(feature = "tex82")))]
-pub mod logalloc;
+pub mod lookupproof;
 #[cfg(not(feature = "tex82"))]
 pub mod macroprof;
-pub mod memstat;
+#[cfg(all(feature = "makeindex", not(feature = "tex82")))]
+pub mod makeindex;
 #[cfg(not(feature = "tex82"))]
 pub mod midline;
-pub mod os;
 #[cfg(not(feature = "tex82"))]
 pub mod pdftex;
-pub mod persist;
 #[cfg(not(feature = "tex82"))]
 pub mod profile;
 #[cfg(not(feature = "tex82"))]
 pub mod readset;
 pub mod resolver;
+#[cfg(not(feature = "tex82"))]
+pub mod revalidate;
 #[cfg(not(feature = "tex82"))]
 pub mod statediff;
 pub mod system;
@@ -82,6 +86,12 @@ pub mod system;
 pub mod texlines;
 
 pub use generated::Globals;
+
+// The shared runtime (crates/flashtex-runtime, PLAN.md §3.3 of
+// docs/design/xetex), under the paths these modules had here.
+#[cfg(all(any(target_os = "linux", target_os = "macos"), not(feature = "tex82")))]
+pub use flashtex_runtime::logalloc;
+pub use flashtex_runtime::{busy, codec_enum, codec_struct, memstat, os, persist};
 
 /// Measurement builds only (`mem-stats`): every heap allocation counted by
 /// tag (`memstat`).

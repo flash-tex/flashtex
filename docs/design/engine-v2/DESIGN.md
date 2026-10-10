@@ -621,8 +621,17 @@ D8 specification; what landed differs, and D8's rewording is proposed to the own
   `.bbl`/`.ind` byte-identical; a `\cite` edit takes 0.74× latexmk's wall on a 126-page
   biblatex document and 0.72× on a 348-page book (lane target ≤ 0.5×, not met yet). **A user
   with no TeX Live** (owner, 2026-09-30, decision 4): the user's TeX Live tools are
-  orchestrated now; porting `bibtex.web` (through web2rust) and makeindex for the bundle case
-  (D12) comes later.
+  orchestrated, and since lane RUST-TOOLS (2026-10-09) makeindex is FlashTeX's own: TeX Live
+  2026's makeindex 2.18 ported to Rust (`crates/makeindex`, #1706), run in-process by the host
+  and for restricted `\write18`, with `.ist` files from kpathsea (the bundle's in bundle mode),
+  byte-identical to TeX Live's on 3,000 fuzz cases and 4,608 corpus runs (VERIFIED,
+  `docs/evidence/rusttools-2026-10-09/makeindex/`). So is bibtex (#1723): `bibtex.web` with
+  TeX Live's `bibtex.ch`, both unmodified, translated by web2rust (`crates/bibtex`), run the same
+  way, with `.bib`/`.bst` files from kpathsea, byte-identical to TeX Live's bibtex on all 397
+  TeX Live styles and 79 databases (3,168 cases) and 5,000 fuzz cases (VERIFIED,
+  `docs/evidence/rusttools-2026-10-09/bibtex/`). biber stays TeX Live's program (options for the
+  owner in that README). Both ports refuse non-regular and oversized inputs (64 MiB), where
+  TeX Live's programs would read `/dev/zero` without end.
 - **tikz/pgfplots picture memoisation** comes later (P6). It needs epoch-level
   read-sets and must handle `remember picture`, global counters and shadings. The
   CTAN `memoize` package is prior art.
