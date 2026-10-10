@@ -39,6 +39,9 @@ use std::marker::PhantomData;
 use std::ops::{Deref, Index, IndexMut};
 
 pub const CHUNK_SHIFT: usize = 10;
+
+/// Bytes `Arena::release_zero_pages` gave back in this process (`DONE.mem`).
+static ZERO_RELEASED: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 pub const CHUNK_BYTES: usize = 1 << CHUNK_SHIFT;
 pub const CHUNK_WORDS: usize = CHUNK_BYTES / 8;
 
@@ -2054,6 +2057,67 @@ impl Arena {
         self.core().touched[c] != 0
     }
 
+    /// Give back the memory of the space's pages that were written but hold
+    /// only zeros (`os::zero_pages`): they read as zero as before, and take
+    /// no memory until written again. Nothing the engine or a checkpoint
+    /// can see changes: the bytes are the same, and `touched`, the barrier's
+    /// flags and the logs are left as they are (lane MEM-BASELINE). Most
+    /// such pages are TeX's `initialize` clearing whole tables that the
+    /// format leaves empty: `hash` (its `hash_extra` part, 4.8 MB), and
+    /// `font_info` past the fonts (3.4 MB), on every format load. The host's
+    /// idle trim calls it, on the engine thread. The bytes given back.
+    pub fn release_zero_pages(&mut self) -> usize {
+        let page = os::page_size();
+        let c = self.core();
+        if page < CHUNK_BYTES || !page.is_multiple_of(CHUNK_BYTES) {
+            return 0;
+        }
+        let per = page / CHUNK_BYTES;
+        // whole pages of the space only
+        let lo = (c.base as usize).next_multiple_of(page);
+        let hi = (c.base as usize + c.bytes) / page * page;
+        if hi <= lo {
+            return 0;
+        }
+        let first_chunk = (lo - c.base as usize) / CHUNK_BYTES;
+        let npages = (hi - lo) / page;
+        // Only resident pages are read: reading one given back earlier (or
+        // never written) would bring a page in again.
+        let Some(res) = crate::memstat::resident_pages(lo as *const u8, hi - lo) else {
+            return 0;
+        };
+        let zero = |pg: usize| -> bool {
+            let c0 = first_chunk + pg * per;
+            if !res[pg] || !(c0..c0 + per).any(|k| c.touched[k] != 0) {
+                return false;
+            }
+            // SAFETY: a whole page inside the mapping.
+            let w = unsafe { std::slice::from_raw_parts((lo + pg * page) as *const u64, page / 8) };
+            w.iter().all(|&x| x == 0)
+        };
+        let mut given = 0;
+        let mut pg = 0;
+        while pg < npages {
+            if !zero(pg) {
+                pg += 1;
+                continue;
+            }
+            let start = pg;
+            while pg < npages && zero(pg) {
+                pg += 1;
+            }
+            let (p, len) = ((lo + start * page) as *mut u8, (pg - start) * page);
+            // SAFETY: whole pages of the space's own mapping, all zero; the
+            // caller holds `&mut self`, so nothing else reads or writes the
+            // space meanwhile.
+            if unsafe { os::zero_pages(p, len) } {
+                given += len;
+            }
+        }
+        ZERO_RELEASED.fetch_add(given as u64, std::sync::atomic::Ordering::Relaxed);
+        given
+    }
+
     /// Overwrite chunk `c` without the barrier: only for loading a persisted
     /// space into a fresh arena that has no checkpoints.
     pub fn load_chunk(&mut self, c: usize, data: &[u8]) {
@@ -2788,6 +2852,10 @@ impl Arena {
             ("branch_words", br_w as i64),
             ("prepared", prepared as i64),
             (
+                "zero_released",
+                ZERO_RELEASED.load(std::sync::atomic::Ordering::Relaxed) as i64,
+            ),
+            (
                 "bookkeeping",
                 (c.touched.len() + c.nchunks + c.mark.len() * 8 + c.slot.len() * 4) as i64,
             ),
@@ -3410,6 +3478,58 @@ mod tests {
         unsafe { d.apply_under(&bytes, dst.as_mut_ptr(), &mut done) };
         assert_eq!([dst[64], dst[79], dst[120]], [chunk[3], chunk[4], chunk[5]]);
         assert_eq!(dst[0] | dst[4] | dst[63], 0);
+    }
+
+    /// MEM-BASELINE: pages written with zeros are given back and read as
+    /// zero; pages with a nonzero word are kept; checkpoints, restores and
+    /// later writes see the same space as without it.
+    #[test]
+    fn zero_pages_are_given_back_and_read_the_same() {
+        let words = 1 << 20; // 8 MB
+        let (mut a, mut arr) = space(words);
+        // TeX's `initialize`: every word cleared, so every page resident
+        for i in 0..words {
+            arr[i] = 0;
+        }
+        // a few nonzero words, one per 64 KB
+        for i in (0..words).step_by(8192) {
+            arr[i] = i as u64 + 1;
+        }
+        let id0 = a.checkpoint();
+        let before = arr.to_vec();
+        let page = os::page_size();
+        let r0 = crate::memstat::resident(arr.as_ptr() as *const u8, words * 8);
+        let given = a.release_zero_pages();
+        let r1 = crate::memstat::resident(arr.as_ptr() as *const u8, words * 8);
+        if cfg!(unix) {
+            // every page but the 128 with a nonzero word
+            assert!(given >= words * 8 - 128 * page - 2 * page, "given {given}");
+            if let (Some(r0), Some(r1)) = (r0, r1) {
+                assert!(
+                    r1 + given <= r0 + page,
+                    "resident {r0} -> {r1}, given {given}"
+                );
+            }
+        }
+        assert!(arr[..] == before[..], "the same bytes");
+        // written again after it: through the barrier, as any write
+        scribble(&mut arr, 3, 4000);
+        let after = arr.to_vec();
+        let id1 = a.checkpoint();
+        assert!(a.release_zero_pages() <= given);
+        // a second trim reads no page it gave back (nothing comes back in)
+        let r2 = crate::memstat::resident(arr.as_ptr() as *const u8, words * 8);
+        assert_eq!(a.release_zero_pages(), 0);
+        assert_eq!(
+            crate::memstat::resident(arr.as_ptr() as *const u8, words * 8),
+            r2
+        );
+        let br = a.restore_branch(id0).unwrap();
+        assert!(arr[..] == before[..], "restore to before");
+        a.converge(br, id0).unwrap();
+        assert!(arr[..] == after[..], "jump back");
+        a.restore_discard(id1).unwrap();
+        assert!(arr[..] == after[..]);
     }
 
     #[test]
