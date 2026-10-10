@@ -4197,8 +4197,8 @@ pub fn set_tex_input_type_flag(v: bool) {
 
 // `StatSig`, `RACY_NS` and `racy_ns` are the shared runtime's
 // (crates/flashtex-runtime/src/statsig.rs), under their paths here.
-pub use flashtex_runtime::statsig::{StatSig, RACY_NS};
 pub(crate) use flashtex_runtime::statsig::racy_ns;
+pub use flashtex_runtime::statsig::{StatSig, RACY_NS};
 
 /// A file the run read, with its content hash when it was opened.
 #[derive(Clone, Debug)]
