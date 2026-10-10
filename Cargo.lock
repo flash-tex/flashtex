@@ -367,6 +367,7 @@ dependencies = [
  "flashtex-engine-build-id",
  "flashtex-makeindex",
  "flashtex-runtime",
+ "libc",
  "sha2",
 ]
 

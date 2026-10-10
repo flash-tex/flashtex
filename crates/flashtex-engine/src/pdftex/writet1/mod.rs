@@ -30,6 +30,7 @@
 #![forbid(unsafe_code)]
 
 mod cache;
+pub use cache::set_limit as set_cache_limit;
 mod charstring;
 mod cipher;
 mod encoding;

@@ -905,7 +905,7 @@ pub fn prepare_s0(g: &mut Globals, id: CheckpointId, key: &Key) -> Result<S0Imag
         .map(|n| (**n).clone())
         .collect::<Vec<crate::diag::Note>>()
         .enc(&mut head);
-    let sites = crate::diag::sites_snapshot();
+    let sites = crate::diag::sites_at(id);
     // The files opened for output before S₀, by name: a process that
     // opens S₀ must know them (`system::rewritten_at`: a file the
     // preamble wrote and the body writes again, #1348).
@@ -938,7 +938,8 @@ impl S0Image {
     /// own and a rename, so that `path` is always a whole S₀ or what it was:
     /// the header, the lists of the nonzero chunks and of the pages
     /// (`S0_PAGE` bytes of the space) holding them, then those pages whole,
-    /// `S0_PAGE`-aligned, in index order (v5: a reopen maps them). `cancelled` is asked as the chunks go out: once it says
+    /// `S0_PAGE`-aligned, in index order (v5: a reopen maps them).
+    /// `cancelled` is asked as the pages go out: once it says
     /// yes, the write stops and the temporary file goes. Returns (bytes of
     /// the file, bytes allocated on disk).
     pub fn write(self, path: &str, cancelled: &dyn Fn() -> bool) -> Result<(u64, u64), String> {
@@ -972,8 +973,9 @@ impl S0Image {
         pages.enc(&mut head);
         let data_off = (8 + head.len()).next_multiple_of(S0_PAGE) as u64;
         use std::io::Write;
-        // (a name of this writer's own: a file being written is never one
-        // another process maps, `os::map_file_over`)
+        // (a name of this writer's own, the process's and the time's: a
+        // file being written is never one another writer writes or another
+        // process maps, `os::map_file_over`)
         let tmp = format!(
             "{path}.{}.{}.tmp",
             std::process::id(),
@@ -1138,6 +1140,8 @@ pub fn read_s0(
         system::truncate_opens(0);
         system::append_opens(&opens);
         let id = g.checkpoint()?;
+        // (the sites just put back are S₀'s, for a later save of it)
+        crate::diag::keep_sites_at(id);
         let ext_s = t3.elapsed().as_secs_f64();
         let rep = OpenReport {
             config_s,
