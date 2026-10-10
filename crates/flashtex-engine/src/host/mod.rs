@@ -833,7 +833,63 @@ pub struct S0Image {
     /// Every chunk ever written, ascending, and its bytes at S₀ (the
     /// display list's side table blanked), `CHUNK_BYTES` each in `data`.
     chunks: Vec<u32>,
-    data: Vec<u8>,
+    data: Scratch,
+}
+
+/// A buffer of its own pages (`os::alloc_zeroed`), given back to the system
+/// when dropped (`os::free`). S₀'s copy of the chunks (17–28 MB) lives in
+/// one: in the C allocator, the freed copy stayed in the footprint (macOS
+/// keeps freed blocks: a blank document's host went from 55–60 to 84–90 MB
+/// after #1749; lane MEM-BASELINE, docs/evidence/mem-baseline-2026-10-09/).
+pub(crate) struct Scratch {
+    ptr: *mut u8,
+    len: usize,
+}
+
+// SAFETY: the pages are owned by the value alone.
+unsafe impl Send for Scratch {}
+
+impl Scratch {
+    /// `len` zero bytes.
+    pub(crate) fn zeroed(len: usize) -> Scratch {
+        let ptr = if len == 0 {
+            std::ptr::NonNull::dangling().as_ptr()
+        } else {
+            crate::os::alloc_zeroed(len)
+        };
+        Scratch { ptr, len }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn from_slice(d: &[u8]) -> Scratch {
+        let mut s = Scratch::zeroed(d.len());
+        s.copy_from_slice(d);
+        s
+    }
+}
+
+impl std::ops::Deref for Scratch {
+    type Target = [u8];
+    fn deref(&self) -> &[u8] {
+        // SAFETY: `len` bytes from `alloc_zeroed` (or none), owned.
+        unsafe { std::slice::from_raw_parts(self.ptr, self.len) }
+    }
+}
+
+impl std::ops::DerefMut for Scratch {
+    fn deref_mut(&mut self) -> &mut [u8] {
+        // SAFETY: as above, and `&mut self` is the only access.
+        unsafe { std::slice::from_raw_parts_mut(self.ptr, self.len) }
+    }
+}
+
+impl Drop for Scratch {
+    fn drop(&mut self) {
+        if self.len > 0 {
+            // SAFETY: from `alloc_zeroed` with this length, unused from now on.
+            unsafe { crate::os::free(self.ptr, self.len) }
+        }
+    }
 }
 
 /// Take S₀ (checkpoint `id` of `g`, with its key) out of the engine for
@@ -874,7 +930,7 @@ pub fn prepare_s0(g: &mut Globals, id: CheckpointId, key: &Key) -> Result<S0Imag
         .filter(|&c| g.arena.touched(c))
         .map(|c| c as u32)
         .collect();
-    let mut data = vec![0u8; chunks.len() * CHUNK_BYTES];
+    let mut data = Scratch::zeroed(chunks.len() * CHUNK_BYTES);
     for (to, &c) in data
         .as_chunks_mut::<CHUNK_BYTES>()
         .0
