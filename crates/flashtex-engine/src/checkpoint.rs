@@ -402,7 +402,9 @@ pub struct Layer {
     pending: Option<Pending>,
     /// The control sequence whose expansion arms S₀ (`document`).
     arm_name: Option<Vec<u8>>,
-    /// Checkpoints taken by the hook, in order, with why.
+    /// Checkpoints taken by the hook, in order, with why. Only those still
+    /// retained (or pending) are kept: the others go once they are as many
+    /// as those (`hook_checkpoint`), so a long session does not grow it.
     pub taken: Vec<(CheckpointId, Point)>,
     /// S₀, once taken.
     pub s0: Option<CheckpointId>,
@@ -2202,6 +2204,24 @@ impl Globals {
                         .and_then(|rec| crate::host::written_before(&rec, r)),
                     None => Err(String::new()),
                 };
+                // Only the checkpoints still retained (or pending) stay in
+                // `taken`: the others go once they are as many as those, so
+                // that a long session does not grow it (+910 entries an edit
+                // on Infinite Descent; lane MEMORY-SAFETY, #1505).
+                // (pending ones count: after a restore near the start the
+                // retained set is small and the pending branch large, and
+                // a bound on the retained alone would prune at every hook)
+                let pending = self
+                    .layer_ref()
+                    .and_then(|l| l.pending.as_ref())
+                    .map_or(0, |p| p.branch.ids().len());
+                let live = self.arena.checkpoint_ids().len() + pending;
+                if self.layer().taken.len() >= 2 * live + 64 {
+                    let mut keep: std::collections::HashSet<CheckpointId> =
+                        self.arena.checkpoint_ids().iter().copied().collect();
+                    keep.extend(self.pending_ids());
+                    self.layer().taken.retain(|(i, _)| keep.contains(i));
+                }
                 let l = self.layer();
                 if let Ok(w) = written {
                     l.written_at.push((id, w));
@@ -2418,12 +2438,14 @@ impl Globals {
         let Some(m) = crate::midline::here(self) else {
             return;
         };
-        let n = self.layer().taken.len();
+        // (the checkpoint the hook takes is the new last of `taken`, which
+        // the hook may also have pruned: not found by its index)
+        let before = self.layer().taken.last().map(|t| t.0);
         self.hook_checkpoint(Point::PreambleLine);
         let ids: std::collections::HashSet<CheckpointId> =
             self.arena.checkpoint_ids().iter().copied().collect();
         let l = self.layer();
-        if let Some(&(id, _)) = l.taken.get(n) {
+        if let Some(&(id, _)) = l.taken.last().filter(|t| Some(t.0) != before) {
             l.preamble_file_closed = false;
             l.midlines.retain(|(i, _)| ids.contains(i));
             l.midlines.push((id, m));

@@ -10,7 +10,13 @@
 #                         session, LSan's reports judged with a leak-growth check (`host`);
 #                       - the release host's unreachable memory over three edit sessions, by
 #                         Apple's `leaks` (`leaks`): LSan missed the three host leaks fixed in
-#                         #1493, this did not.
+#                         #1493, this did not;
+#                       - the soak (tools/incr-bench/soak_gate.sh, #1505): 600 edits on plain-120,
+#                         malloc's bytes in use less the undo logs must plateau.
+#
+# The soak runs on macOS only for now: it reads mallinfo2 on Linux, but has not been run there
+# (the NixOS runners were switched off when it landed, FLASHTEX_SELFHOSTED_LINUX=0), so its
+# thresholds are not known to carry over.
 #
 # The nightly toolchain is pinned (the one the legs were verified with); bump it deliberately.
 # Kept out of nightly.yml so that its heavy Mac job stays within its time limit, and so that
@@ -66,7 +72,7 @@ jobs:
     concurrency:
       group: flashtex-mac-heavy
       cancel-in-progress: false
-    timeout-minutes: 120
+    timeout-minutes: 150
     env:
       FLASHTEX_REQUIRE_TEXLIVE: "1"
       CARGO_BUILD_JOBS: "3"
@@ -86,6 +92,10 @@ jobs:
         if: ${{ !cancelled() }}
         timeout-minutes: 40
         run: SAN_WORK="$RUNNER_TEMP/san" scripts/sanitizers.sh leaks
+      - name: "soak: 600 edits on plain-120, the heap must plateau"
+        if: ${{ !cancelled() }}
+        timeout-minutes: 30
+        run: INCR_BENCH_DIR="$RUNNER_TEMP/incr-bench-soak" tools/incr-bench/soak_gate.sh --build
       - name: keep the reports
         if: failure()
         uses: actions/upload-artifact@v4
@@ -94,4 +104,5 @@ jobs:
           path: |
             ${{ runner.temp }}/san/reports/
             ${{ runner.temp }}/san/leaks/
+            ${{ runner.temp }}/incr-bench-soak/soak/
           if-no-files-found: ignore
