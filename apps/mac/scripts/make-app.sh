@@ -10,6 +10,7 @@
 #          [--cli <path>] [--compiler <path>] [--pdf <path>] [--bridge <path>] [--ledger <path>]
 #          [--render <path>] [--pdf-exact <path>] [--controller <path>] [--project-files <path>]
 #          [--explain <path>] [--engine-host <path>] [--require-engine-host]
+#          [--engine-host-unicode <path>]
 #          [--source-sha <key>=<sha>]
 #          [--sign <identity>] [--entitlements <file>] [--notarize <keychain-profile>]
 #          [--open] [--install] [--install-dir <dir>] [--dmg]
@@ -36,6 +37,14 @@
 # the pinned no-TeX-Live bundle's lock, tools/bundle/tl2026/flashtex-bundle.lock,
 # as Contents/Resources/engine/flashtex-bundle.lock; it is
 # signed like the other helpers (hardened runtime with --sign) before the app.
+# Unicode mode's host (flashtex-host-unicode, crates/flashtex-xetex, GPL-2.0-or-later,
+# also a separate process; docs/design/xetex/PLAN.md §3.3-§3.4) is staged beside it
+# as Contents/Helpers/flashtex-host-unicode when built (--engine-host-unicode, else
+# the xetex crate's own release build), with its licence as
+# Contents/Resources/engine/LICENSE-unicode and the notices of the libraries it links
+# (HarfBuzz, FreeType, TECkit) as Contents/Resources/engine/THIRD-PARTY-NOTICES-unicode.txt;
+# it reads the same bundle lock. Optional: without it a Unicode document says the
+# host is not found.
 # --require-engine-host (a release, .github/workflows/release.yml): a missing
 # host, or its pool or licence, fails the packaging before the build instead of
 # being skipped (app-parity row D5); without it the host stays optional.
@@ -75,6 +84,7 @@ DO_INSTALL=0
 INSTALL_DIR="$HOME/Applications"
 DO_DMG=0
 ENGINE_HOST=""
+ENGINE_HOST_UNICODE=""
 REQUIRE_ENGINE_HOST=0
 
 # Bundled helpers, in components.json order. Fields: components.json key,
@@ -154,6 +164,10 @@ while [[ $# -gt 0 ]]; do
     --require-engine-host)
       REQUIRE_ENGINE_HOST=1
       shift
+      ;;
+    --engine-host-unicode)
+      ENGINE_HOST_UNICODE="${2:?--engine-host-unicode needs a path}"
+      shift 2
       ;;
     --sign)
       SIGN_IDENTITY="${2:?--sign needs a codesigning identity}"
@@ -294,6 +308,22 @@ ENGINE_CRATE="$HELPER_ROOT/crates/flashtex-engine"
 if [[ -z "$ENGINE_HOST" && -f "$ENGINE_CRATE/Cargo.toml" ]]; then
   engine_target="$("$REPO_ROOT/scripts/crate-target-dir.sh" "$ENGINE_CRATE" 2>/dev/null)" || engine_target="$HELPER_ROOT/target"
   [[ -f "$engine_target/release/flashtex-host" ]] && ENGINE_HOST="$engine_target/release/flashtex-host"
+fi
+# Unicode mode's host: --engine-host-unicode, else the xetex crate's release
+# build (its own workspace and target/).
+XETEX_CRATE="$HELPER_ROOT/crates/flashtex-xetex"
+if [[ -z "$ENGINE_HOST_UNICODE" && -f "$XETEX_CRATE/Cargo.toml" ]]; then
+  xetex_target="$("$REPO_ROOT/scripts/crate-target-dir.sh" "$XETEX_CRATE" 2>/dev/null)" || xetex_target="$XETEX_CRATE/target"
+  [[ -f "$xetex_target/release/flashtex-host-unicode" ]] && ENGINE_HOST_UNICODE="$xetex_target/release/flashtex-host-unicode"
+fi
+if [[ -n "$ENGINE_HOST_UNICODE" ]]; then
+  [[ -f "$ENGINE_HOST_UNICODE" ]] || die "--engine-host-unicode: no file at $ENGINE_HOST_UNICODE"
+  for f in "$XETEX_CRATE/LICENSE" "$REPO_ROOT/third_party/harfbuzz/harfbuzz-src/COPYING" \
+           "$REPO_ROOT/third_party/freetype/freetype-src/LICENSE.TXT" "$REPO_ROOT/third_party/freetype/freetype-src/docs/FTL.TXT" \
+           "$REPO_ROOT/third_party/teckit/TECkit-src/license/License_LGPLv21.txt"; do
+    [[ -f "$f" ]] || die "flashtex-host-unicode: its licence or a notice is missing: $f"
+  done
+  echo "==> Unicode engine host: $ENGINE_HOST_UNICODE"
 fi
 if [[ "$REQUIRE_ENGINE_HOST" -eq 1 ]]; then
   [[ -n "$ENGINE_HOST" && -f "$ENGINE_HOST" ]] || die "--require-engine-host: no flashtex-host${ENGINE_HOST:+ at $ENGINE_HOST} (cargo build --release -p flashtex-engine --bin flashtex-host, or --engine-host <path>); a release app without it has no engine-v3 preview"
@@ -521,6 +551,34 @@ else
   [[ "$REQUIRE_ENGINE_HOST" -eq 0 ]] || die "--require-engine-host: flashtex-host was not staged into $HELPERS_DIR"
   echo "    no flashtex-host found (cargo build --release -p flashtex-engine --bin flashtex-host, or --engine-host <path>); skipping"
 fi
+# Unicode mode's host (flashtex-host-unicode): its string pool is compiled in;
+# it reads the same bundle lock as flashtex-host.
+ENGINE_HOST_UNICODE_BUNDLED=""
+if [[ -n "$ENGINE_HOST_UNICODE" && -f "$ENGINE_HOST_UNICODE" ]]; then
+  mkdir -p "$HELPERS_DIR" "$RESOURCES_DIR/engine"
+  cp "$ENGINE_HOST_UNICODE" "$HELPERS_DIR/flashtex-host-unicode"
+  chmod +x "$HELPERS_DIR/flashtex-host-unicode"
+  cp "$XETEX_CRATE/LICENSE" "$RESOURCES_DIR/engine/LICENSE-unicode"
+  cp "$BUNDLE_LOCK" "$RESOURCES_DIR/engine/flashtex-bundle.lock"
+  {
+    echo "flashtex-host-unicode links these libraries, vendored unmodified (third_party/):"
+    echo
+    echo "== HarfBuzz (MIT-style; third_party/harfbuzz/harfbuzz-src/COPYING) =="
+    cat "$REPO_ROOT/third_party/harfbuzz/harfbuzz-src/COPYING"
+    echo
+    echo "== FreeType (used under the FreeType License, docs/FTL.TXT; portions of this software are copyright (C) The FreeType Project, www.freetype.org) =="
+    cat "$REPO_ROOT/third_party/freetype/freetype-src/LICENSE.TXT"
+    echo
+    cat "$REPO_ROOT/third_party/freetype/freetype-src/docs/FTL.TXT"
+    echo
+    echo "== TECkit (used under the GNU LGPL 2.1 or later; third_party/teckit/TECkit-src/license) =="
+    cat "$REPO_ROOT/third_party/teckit/TECkit-src/license/License_LGPLv21.txt"
+  } > "$RESOURCES_DIR/engine/THIRD-PARTY-NOTICES-unicode.txt"
+  ENGINE_HOST_UNICODE_BUNDLED="$HELPERS_DIR/flashtex-host-unicode"
+  echo "    bundled flashtex-host-unicode from $ENGINE_HOST_UNICODE (+ Resources/engine/LICENSE-unicode, THIRD-PARTY-NOTICES-unicode.txt)"
+else
+  echo "    no flashtex-host-unicode found (cd crates/flashtex-xetex && cargo build --release --bin flashtex-host-unicode, or --engine-host-unicode <path>); skipping"
+fi
 
 # --- Signing (helpers first, then the app) -----------------------------------
 # Nested code in Contents/MacOS is sealed into the app signature by its own
@@ -560,6 +618,15 @@ if command -v codesign >/dev/null 2>&1; then
       echo "    warning: ad-hoc codesign failed for flashtex-host" >&2
     fi
   fi
+  if [[ -n "$ENGINE_HOST_UNICODE_BUNDLED" ]]; then
+    if sign_helper "$ENGINE_HOST_UNICODE_BUNDLED" "$BUNDLE_ID.flashtex-host-unicode"; then
+      echo "    signed flashtex-host-unicode ($BUNDLE_ID.flashtex-host-unicode)"
+    elif [[ "$HARDENED" -eq 1 ]]; then
+      die "codesign failed for helper flashtex-host-unicode"
+    else
+      echo "    warning: ad-hoc codesign failed for flashtex-host-unicode" >&2
+    fi
+  fi
 else
   echo "    warning: codesign not available on this system; helpers left as built" >&2
 fi
@@ -574,6 +641,7 @@ for row in "${BUNDLED_HELPERS[@]}"; do
 done
 
 record_component "engine_host" "$ENGINE_HOST_BUNDLED" "$ENGINE_HOST"
+record_component "engine_host_unicode" "$ENGINE_HOST_UNICODE_BUNDLED" "$ENGINE_HOST_UNICODE"
 
 # Pinned resource hashes (fonts, rooted metrics, license) as verified above,
 # so the component report carries them before the app signature seals it.

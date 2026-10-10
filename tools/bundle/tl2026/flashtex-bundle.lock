@@ -3,5 +3,5 @@
 # Contents/Resources/engine/flashtex-bundle.lock (apps/mac/scripts/make-app.sh);
 # nothing is fetched before the user agrees. bundle-publish.yml publishes exactly
 # this digest at this URL, and refuses any other.
-url = "https://github.com/flash-tex/flashtex/releases/download/texbundle-tl2026-2/texlive2026.ttb"
-digest = "36b3c361bc12fc930e261f6ef5d4b21cd4b15157b6158cf2aaf3fdbd4667b430"
+url = "https://github.com/flash-tex/flashtex/releases/download/texbundle-tl2026-3/texlive2026.ttb"
+digest = "dc72dde1f67c44fabe55a4aebc72eb19c23b66b4d0f063d2cf54398719d7df11"

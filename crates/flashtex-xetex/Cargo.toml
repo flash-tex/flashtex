@@ -30,8 +30,9 @@ path = "src/bin/flashtex-host-unicode.rs"
 # The pdfTeX engine's runtime: the word space (`arena`), checked indexing
 # (`ix`), the command line (`cli`), the run's configuration and kpathsea
 # (`system`, `resolver`), dates and MD5. Only its public interface is used;
-# nothing of it changes for this crate.
-flashtex-engine = { path = "../flashtex-engine", default-features = false, features = ["kpathsea"] }
+# nothing of it changes for this crate. `distribution`: the no-TeX-Live bundle
+# (its resolver, when no TeX Live is found; PLAN.md §3.4, U3c).
+flashtex-engine = { path = "../flashtex-engine", default-features = false, features = ["kpathsea", "distribution"] }
 # TeX Live 2026's HarfBuzz 12.3.2 and FreeType 2.14.1, vendored unmodified
 # (third_party/harfbuzz, third_party/freetype) and built as TeX Live builds
 # them, for native fonts (docs/design/xetex/PLAN.md §3.1, phase S1).
