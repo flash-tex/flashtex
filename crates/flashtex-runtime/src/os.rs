@@ -74,7 +74,8 @@ pub fn page_size() -> usize {
 /// as before, but take no memory until written again (Unix: a fresh
 /// anonymous mapping over them, `MAP_FIXED`; it never maps a file's pages
 /// back the way `MADV_DONTNEED` would over a file mapping). Whether it
-/// was done (not on Windows or WASI).
+/// was done (not on Windows or WASI). On Unix a failure aborts the process:
+/// the old pages may already be gone.
 ///
 /// # Safety
 /// `p` and `len` are multiples of [`page_size`] inside one
@@ -1141,6 +1142,16 @@ mod imp {
         munmap(p as *mut c_void, len);
     }
 
+    /// The end of the process after a `MAP_FIXED` over our own pages failed.
+    #[cold]
+    pub(super) fn fixed_mapping_failed(p: *mut u8, len: usize) -> ! {
+        eprintln!(
+            "flashtex: a fixed mapping of {len} bytes at {p:p} failed: {}",
+            std::io::Error::last_os_error()
+        );
+        std::process::abort()
+    }
+
     pub fn page_size() -> usize {
         extern "C" {
             fn getpagesize() -> i32;
@@ -1159,7 +1170,14 @@ mod imp {
             -1,
             0,
         );
-        q as *mut u8 == p
+        if q as *mut u8 != p {
+            // A failed fixed mapping may have taken the old pages away
+            // already: the space has a hole, and going on would fault or
+            // read garbage later. (Not seen: an anonymous mapping over a
+            // range we own only fails when the system is out of memory.)
+            fixed_mapping_failed(p, len)
+        }
+        true
     }
 
     pub unsafe fn map_file_over(f: &std::fs::File, off: u64, p: *mut u8, len: usize) -> bool {
