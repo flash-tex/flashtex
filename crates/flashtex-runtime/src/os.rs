@@ -64,6 +64,45 @@ pub unsafe fn free(p: *mut u8, len: usize) {
     imp::free(p, len)
 }
 
+/// The system's page size, the granule of [`zero_pages`].
+pub fn page_size() -> usize {
+    imp::page_size()
+}
+
+/// Give back the memory of pages that hold only zeros: whole pages
+/// `[p, p + len)` of an [`alloc_zeroed`] mapping read as zero afterwards,
+/// as before, but take no memory until written again (Unix: a fresh
+/// anonymous mapping over them, `MAP_FIXED`; it never maps a file's pages
+/// back the way `MADV_DONTNEED` would over a file mapping). Whether it
+/// was done (not on Windows or WASI). On Unix a failure aborts the process:
+/// the old pages may already be gone.
+///
+/// # Safety
+/// `p` and `len` are multiples of [`page_size`] inside one
+/// [`alloc_zeroed`] mapping, every byte there is zero, and no other thread
+/// reads or writes it meanwhile.
+pub unsafe fn zero_pages(p: *mut u8, len: usize) -> bool {
+    imp::zero_pages(p, len)
+}
+
+/// Put `len` bytes of file `f` from offset `off` over `[p, p + len)` of an
+/// [`alloc_zeroed`] mapping, privately: the memory reads as the file did
+/// then, its pages are the file's (clean, out of the process's footprint,
+/// read in on first touch) until written, and a write copies the page
+/// (Unix: `mmap` with `MAP_PRIVATE | MAP_FIXED`). Whether it was done (not
+/// on Windows or WASI; then the caller copies). On Unix a failure aborts
+/// the process: the old pages may already be gone.
+///
+/// # Safety
+/// `p`, `off` and `len` are multiples of [`page_size`], `[p, p + len)` lies
+/// inside one [`alloc_zeroed`] mapping that no other thread uses meanwhile,
+/// and the file is never shortened or written in place while mapped (a
+/// write through another name of the file would show in pages not yet
+/// copied; shortening it raises SIGBUS on a later touch).
+pub unsafe fn map_file_over(f: &std::fs::File, off: u64, p: *mut u8, len: usize) -> bool {
+    imp::map_file_over(f, off, p, len)
+}
+
 // ---------------------------------------------------------------------------
 // A file mapped read-only (the persisted S0, src/host/mod.rs)
 // ---------------------------------------------------------------------------
@@ -86,11 +125,16 @@ unsafe impl Sync for MappedFile {}
 impl MappedFile {
     pub fn open(path: &str) -> Result<MappedFile, String> {
         let f = std::fs::File::open(path).map_err(|e| format!("{path}: {e}"))?;
+        MappedFile::of(&f, path)
+    }
+
+    /// The whole of the open file `f` (named `path` in errors).
+    pub fn of(f: &std::fs::File, path: &str) -> Result<MappedFile, String> {
         let len = f.metadata().map_err(|e| format!("{path}: {e}"))?.len() as usize;
         if len == 0 {
             return Err(format!("{path} is empty"));
         }
-        imp::map_file(&f, len).map_err(|()| format!("{path}: mmap failed"))
+        imp::map_file(f, len).map_err(|()| format!("{path}: mmap failed"))
     }
 
     pub fn bytes(&self) -> &[u8] {
@@ -1099,6 +1143,62 @@ mod imp {
         munmap(p as *mut c_void, len);
     }
 
+    /// The end of the process after a `MAP_FIXED` over our own pages failed.
+    #[cold]
+    pub(super) fn fixed_mapping_failed(p: *mut u8, len: usize) -> ! {
+        eprintln!(
+            "flashtex: a fixed mapping of {len} bytes at {p:p} failed: {}",
+            std::io::Error::last_os_error()
+        );
+        std::process::abort()
+    }
+
+    pub fn page_size() -> usize {
+        extern "C" {
+            fn getpagesize() -> i32;
+        }
+        // SAFETY: no preconditions.
+        unsafe { getpagesize() as usize }
+    }
+
+    pub unsafe fn zero_pages(p: *mut u8, len: usize) -> bool {
+        const MAP_FIXED: i32 = 0x10;
+        let q = mmap(
+            p as *mut c_void,
+            len,
+            PROT_READ | PROT_WRITE,
+            MAP_PRIVATE | MAP_ANON | MAP_FIXED,
+            -1,
+            0,
+        );
+        if q as *mut u8 != p {
+            // A failed fixed mapping may have taken the old pages away
+            // already: the space has a hole, and going on would fault or
+            // read garbage later. (Not seen: an anonymous mapping over a
+            // range we own only fails when the system is out of memory.)
+            fixed_mapping_failed(p, len)
+        }
+        true
+    }
+
+    pub unsafe fn map_file_over(f: &std::fs::File, off: u64, p: *mut u8, len: usize) -> bool {
+        use std::os::unix::io::AsRawFd;
+        const MAP_FIXED: i32 = 0x10;
+        let q = mmap(
+            p as *mut c_void,
+            len,
+            PROT_READ | PROT_WRITE,
+            MAP_PRIVATE | MAP_FIXED,
+            f.as_raw_fd(),
+            off as i64,
+        );
+        if q as *mut u8 != p {
+            // (the old pages may already be gone: see `zero_pages`)
+            fixed_mapping_failed(p, len)
+        }
+        true
+    }
+
     pub fn map_file(f: &std::fs::File, len: usize) -> Result<MappedFile, ()> {
         use std::os::fd::AsRawFd;
         // SAFETY: a private read-only mapping of an open file.
@@ -1230,6 +1330,18 @@ mod imp {
 
     pub unsafe fn free(p: *mut u8, _len: usize) {
         VirtualFree(p as *mut c_void, 0, MEM_RELEASE);
+    }
+
+    pub fn page_size() -> usize {
+        4096
+    }
+
+    pub unsafe fn zero_pages(_p: *mut u8, _len: usize) -> bool {
+        false
+    }
+
+    pub unsafe fn map_file_over(_f: &std::fs::File, _off: u64, _p: *mut u8, _len: usize) -> bool {
+        false
     }
 
     pub fn map_file(f: &std::fs::File, len: usize) -> Result<MappedFile, ()> {
@@ -1500,6 +1612,18 @@ mod imp {
 
     pub unsafe fn free(p: *mut u8, len: usize) {
         std::alloc::dealloc(p, Layout::from_size_align_unchecked(len, PAGE));
+    }
+
+    pub fn page_size() -> usize {
+        PAGE
+    }
+
+    pub unsafe fn zero_pages(_p: *mut u8, _len: usize) -> bool {
+        false
+    }
+
+    pub unsafe fn map_file_over(_f: &std::fs::File, _off: u64, _p: *mut u8, _len: usize) -> bool {
+        false
     }
 
     pub fn map_file(f: &std::fs::File, len: usize) -> Result<MappedFile, ()> {

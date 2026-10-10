@@ -170,6 +170,13 @@ pub struct Host {
     /// The paths `find_pic_file` found, for the output (`crate::out`), which
     /// takes them from here at each page.
     pub pictures: std::collections::BTreeSet<String>,
+    /// A hot spare's go-ahead (`crate::host::spare`): the descriptor the
+    /// run waits on after the format is loaded, taken at that wait. `None`
+    /// for every other run.
+    pub spare_go: Option<i32>,
+    /// What the host that started this run asked of it (`crate::host::spare`).
+    #[cfg(unix)]
+    pub child_env: crate::host::spare::ChildEnv,
 }
 
 /// `-no-pdf`, true unless set otherwise.

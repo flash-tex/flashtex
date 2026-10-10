@@ -39,7 +39,7 @@ cargo build --release --locked -p web2rust
 "${CARGO_TARGET_DIR:-$root/target}/release/web2rust" "$root/third_party/knuth/tex.web" \
     @"$root/crates/flashtex-engine/web2rust-trip.args" \
     --out-dir "$pkg/src/generated" --pool "$run/tex.pool"
-for f in lib.rs main.rs system.rs resolver.rs lookupproof.rs arena.rs cli.rs; do
+for f in lib.rs main.rs system.rs resolver.rs lookupproof.rs arena.rs cli.rs hashcache.rs; do
     cp "$root/crates/flashtex-engine/src/$f" "$pkg/src/"
 done
 cat >"$pkg/Cargo.toml" <<'EOF'
@@ -68,15 +68,29 @@ tex82 = []
 [workspace]
 EOF
 # The runtime shared with the XeTeX-derived engine (crates/flashtex-runtime:
-# persist, os, busy, memstat), as the engine crate links it, in its tex82 form.
+# persist, os, busy, memstat), as the engine crate links it, in its tex82 form;
+# libc for src/hashcache.rs (statfs).
 # (Cargo reads the path natively: under Git Bash/MSYS2 on Windows, `/d/a/...`
 # is `D:/a/...`, which `cygpath -m` gives; elsewhere there is no cygpath.)
-printf '\n[dependencies]\nflashtex-runtime = { path = "%s/crates/flashtex-runtime", features = ["tex82"] }\n' \
+printf '\n[dependencies]\nlibc = "0.2"\nflashtex-runtime = { path = "%s/crates/flashtex-runtime", features = ["tex82"] }\n' \
     "$(cygpath -m "$root" 2>/dev/null || printf '%s' "$root")" >>"$pkg/Cargo.toml"
 # The generated code's warnings are known and not ours to fix by hand.
-CARGO_TARGET_DIR=$work/target RUSTFLAGS=-Awarnings \
-    cargo build --release --quiet --manifest-path "$pkg/Cargo.toml"
-initex=$work/target/release/flashtex-initex
+# FLASHTEX_SANITIZER=address (or leak) builds the scratch engine with that
+# sanitizer and a rebuilt std (a nightly toolchain and rust-src; lane
+# MEMORY-SAFETY, scripts/sanitizers.sh). Its reports go to $work/san.*, and
+# any report fails the test (step 3).
+san=${FLASHTEX_SANITIZER:-}
+if [ -n "$san" ]; then
+    triple=$(rustc -vV | sed -n 's/^host: //p')
+    CARGO_TARGET_DIR=$work/target RUSTFLAGS="-Awarnings -Zsanitizer=$san" \
+        cargo build --release --quiet -Zbuild-std --target "$triple" --manifest-path "$pkg/Cargo.toml"
+    initex=$work/target/$triple/release/flashtex-initex
+    export ASAN_OPTIONS="log_path=$work/san:detect_leaks=1:${ASAN_OPTIONS:-}" LSAN_OPTIONS="log_path=$work/san:${LSAN_OPTIONS:-}"
+else
+    CARGO_TARGET_DIR=$work/target RUSTFLAGS=-Awarnings \
+        cargo build --release --quiet --manifest-path "$pkg/Cargo.toml"
+    initex=$work/target/release/flashtex-initex
+fi
 
 # 2. Run tripman.tex steps 3 and 4. TeX ends both runs with errors on
 # purpose, so their exit status is not the verdict; a timeout is (it is
@@ -95,6 +109,12 @@ printf ' &trip  trip \n' | (cd "$run" && timed "$initex" >trip.fot 2>&1) || true
 
 # 3. Compare.
 fail=0
+for f in "$work"/san.*; do
+    [ -e "$f" ] || continue
+    echo "FAIL sanitizer report $f:"
+    head -40 "$f" | sed 's/^/    /'
+    fail=1
+done
 if [ -s "$timeouts" ]; then
     echo "FAIL engine runs cut off:"
     sed 's/^/    /' "$timeouts"

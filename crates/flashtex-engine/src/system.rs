@@ -420,9 +420,13 @@ pub fn read_logical(path: &str) -> std::io::Result<Vec<u8>> {
 }
 
 /// `hash128(&read_logical(path)?)`, without reading the file into memory
-/// (`persist::hash128_file`).
+/// (`persist::hash128_file`); a file this process does not write is hashed
+/// once while it is unchanged (`crate::hashcache`).
 pub fn hash_logical(path: &str) -> std::io::Result<[u64; 2]> {
-    crate::persist::hash128_file(path, logical_len(path)).map(|(h, _)| h)
+    match logical_len(path) {
+        None => crate::hashcache::hash_file(path),
+        len => crate::persist::hash128_file(path, len).map(|(h, _)| h),
+    }
 }
 
 /// A new engine: no file's logical end is known any more. Each file still
@@ -1652,6 +1656,19 @@ pub(crate) fn with_resolver<T>(f: impl FnOnce(&mut dyn FileResolver) -> T) -> T 
     });
     crate::lookupproof::process_resolver(r.as_ref());
     f(r.as_mut())
+}
+
+/// The disk as it is now for the lookups that follow: the resolver forgets
+/// what it cached of directories that changed since the last time
+/// (`FileResolver::refresh_disk_dirs`: kpathsea's `//` expansions of the
+/// trees no ls-R covers). Every compile starts with it, so that a resident
+/// host searches a directory made since its start (a TEXMFHOME
+/// subdirectory, a TEXINPUTS `dir//` whose `dir` was missing) as a fresh
+/// pdfTeX would (#1493).
+pub fn refresh_disk_dirs() {
+    if RESOLVER.lock().unwrap().is_some() {
+        with_resolver(|r| r.refresh_disk_dirs());
+    }
 }
 
 /// `kpse_invocation_name`: what pdfTeX's C parts name the program in their

@@ -12,10 +12,16 @@
 //! and the one being written (which stops between chunks and removes its
 //! temporary file); so the newest S₀ of a path is the one left on disk.
 //!
-//! **Crash safety.** A write goes to `PATH.tmp` and is renamed over `PATH`
+//! **Crash safety.** A write goes to `PATH.PID.NANOS.tmp` (its own) and is renamed over `PATH`
 //! once complete and synced, so `PATH` is always a whole S₀ or the previous
 //! one. A host killed with a write pending leaves the previous S₀ (or none):
 //! S₀ is a cache, and its key is checked whenever it is opened.
+//!
+//! **Memory.** The image is a copy of the word space's chunks (17–28 MB on
+//! the benchmark documents). A newer save of a path drops the pending one
+//! and stops the one being written, so at most two are alive, briefly. A
+//! `lean` performance mode (Low Memory) does not use this thread: it writes
+//! each S₀ on the engine thread, as before, and frees the copy at once.
 //!
 //! **Readers.** Before the host opens a persisted S₀ it waits for that
 //! path's pending write ([`flush`]), so a reopen in this process finds what
@@ -170,8 +176,16 @@ mod tests {
             head: b"head of an S0 for the tests".to_vec(),
             tail: Box::new(|h: &mut Vec<u8>| h.extend_from_slice(b", its tail")),
             chunks,
-            data,
+            data: crate::host::Scratch::from_slice(&data),
         }
+    }
+
+    /// No temporary file is left in `d`.
+    fn no_tmp(d: &std::path::Path) -> bool {
+        std::fs::read_dir(d)
+            .unwrap()
+            .flatten()
+            .all(|e| !e.file_name().to_string_lossy().ends_with(".tmp"))
     }
 
     fn dir(name: &str) -> std::path::PathBuf {
@@ -202,7 +216,7 @@ mod tests {
         assert!(flush(Some(b.to_str().unwrap()), Duration::from_secs(60)));
         assert_eq!(n.load(Ordering::SeqCst), 1);
         assert_eq!(std::fs::read(&a).unwrap(), std::fs::read(&b).unwrap());
-        assert!(!d.join("b.s0.tmp").exists());
+        assert!(no_tmp(&d));
     }
 
     /// Saves of one path in a row: the newest is the file left, whatever
@@ -237,7 +251,7 @@ mod tests {
         );
         assert!(flush(Some(ps), Duration::from_secs(60)));
         assert_eq!(std::fs::read(&want).unwrap(), std::fs::read(&p).unwrap());
-        assert!(!d.join("doc.s0.tmp").exists());
+        assert!(no_tmp(&d));
         assert!(reported.load(Ordering::SeqCst) <= 8);
     }
 
@@ -252,6 +266,6 @@ mod tests {
         let r = image(5000, 2).write(ps, &|| true);
         assert!(r.is_err());
         assert_eq!(std::fs::read(&p).unwrap(), before);
-        assert!(!d.join("doc.s0.tmp").exists());
+        assert!(no_tmp(&d));
     }
 }

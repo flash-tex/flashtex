@@ -168,14 +168,28 @@ EOF
 # The display-list writer's wire format (MIT, crates/display-list-v3).
 # (Cargo reads the path natively: under Git Bash/MSYS2 on Windows, `/d/a/...`
 # is `D:/a/...`, which `cygpath -m` gives; elsewhere there is no cygpath.)
-# And the runtime shared with the XeTeX-derived engine (crates/flashtex-runtime).
+# And the runtime shared with the XeTeX-derived engine (crates/flashtex-runtime),
+# and libc for src/hashcache.rs (statfs).
 r="$(cygpath -m "$root" 2>/dev/null || printf '%s' "$root")"
-printf '\n[dependencies]\nflashtex-display-list = { path = "%s/crates/display-list-v3" }\nflashtex-runtime = { path = "%s/crates/flashtex-runtime" }\n' \
+printf '\n[dependencies]\nlibc = "0.2"\nflashtex-display-list = { path = "%s/crates/display-list-v3" }\nflashtex-runtime = { path = "%s/crates/flashtex-runtime" }\n' \
     "$r" "$r" >>"$pkg/Cargo.toml"
 # The generated code's warnings are known and not ours to fix by hand.
-CARGO_TARGET_DIR=$work/target RUSTFLAGS=-Awarnings \
-    cargo build --release --quiet --manifest-path "$pkg/Cargo.toml"
-initex=$work/target/release/flashtex-initex
+# FLASHTEX_SANITIZER=address (or leak) builds the scratch engine with that
+# sanitizer and a rebuilt std (a nightly toolchain and rust-src; lane
+# MEMORY-SAFETY, scripts/sanitizers.sh). Its reports go to $work/san.*, and
+# any report fails the test (step 3).
+san=${FLASHTEX_SANITIZER:-}
+if [ -n "$san" ]; then
+    triple=$(rustc -vV | sed -n 's/^host: //p')
+    CARGO_TARGET_DIR=$work/target RUSTFLAGS="-Awarnings -Zsanitizer=$san" \
+        cargo build --release --quiet -Zbuild-std --target "$triple" --manifest-path "$pkg/Cargo.toml"
+    initex=$work/target/$triple/release/flashtex-initex
+    export ASAN_OPTIONS="log_path=$work/san:detect_leaks=1:${ASAN_OPTIONS:-}" LSAN_OPTIONS="log_path=$work/san:${LSAN_OPTIONS:-}"
+else
+    CARGO_TARGET_DIR=$work/target RUSTFLAGS=-Awarnings \
+        cargo build --release --quiet --manifest-path "$pkg/Cargo.toml"
+    initex=$work/target/release/flashtex-initex
+fi
 
 # 2. The runs. `cwd-kpse`: files come from the working directory as kpathsea
 # finds them for etrip/texmf.cnf's search path `.`, i.e. as `./etrip.tex`.
@@ -191,6 +205,13 @@ timeouts=$work/timeouts.txt
 etrip_runs "$initex -ini" "$initex -fmt=pdftex" "$run"
 
 # 3. Compare.
+fail=0
+for f in "$work"/san.*; do
+    [ -e "$f" ] || continue
+    echo "FAIL sanitizer report $f:"
+    head -40 "$f" | sed 's/^/    /'
+    fail=1
+done
 norm=$work/norm.sed
 cat >"$norm" <<'EOF'
 s/ (TeX Live 20[0-9][0-9])//
@@ -202,7 +223,6 @@ s/^ [0-9]* strings out of [0-9]*$/ N strings out of M/
 s/^ [0-9]* string characters out of [0-9]*$/ N string characters out of M/
 s/^ [0-9]* hyphenation exceptions* out of [0-9]*$/ N hyphenation exceptions out of M/
 EOF
-fail=0
 if [ -s "$timeouts" ]; then
     echo "FAIL engine runs cut off:"
     sed 's/^/    /' "$timeouts"

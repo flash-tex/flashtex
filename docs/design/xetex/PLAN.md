@@ -542,6 +542,14 @@ document's `\setmainfont{Georgia}` wins over the role, and a document
 that loads `unicode-math` keeps Latin Modern Math. `tests/host.rs` covers
 the role, the info line, the refused name and the document's precedence.
 
+**Cold path (lane XETEX-FAST, 2026-10-10).** Hot spares (`src/host/spare.rs`):
+the host keeps the next run of a document's command started and stopped
+just after the format is loaded, and lets it go at the next compile if
+nothing it read has changed; the font map is indexed instead of parsed;
+children run without the resolver's memo. Output byte-identical with and
+without spares (PDF, log, display list). What remains slow, and the plan for
+the incremental Unicode host after R2: `INCREMENTAL.md`.
+
 ## 5. Risks carried into S1–S3
 
 | risk | mitigation |

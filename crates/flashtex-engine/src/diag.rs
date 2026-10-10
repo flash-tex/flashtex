@@ -445,7 +445,8 @@ pub fn move_def_lines(shifts: &[crate::lineshift::Shift]) {
 
 /// A new run from scratch (a new engine): no notes, no definition sites.
 pub fn reset() {
-    with(|s| *s = St::default())
+    with(|s| *s = St::default());
+    AT.with(|a| a.borrow_mut().clear());
 }
 
 /// The definition sites, for S₀.
@@ -457,9 +458,46 @@ pub fn sites() -> Vec<(i32, Site)> {
 /// each definition with its file's number. Taking it is cheap; making the
 /// [`Site`]s (a file name each, a beamer preamble's tens of thousands) can
 /// then be done on another thread (`host::s0write`).
+#[derive(Clone)]
 pub struct SitesSnapshot {
     files: Vec<Vec<u8>>,
     defs: Vec<(i32, Def)>,
+}
+
+thread_local! {
+    /// The definition sites as they were at the anchor checkpoints (the
+    /// begin-document snapshot S₀ and the `.aux` point), newest last.
+    static AT: RefCell<Vec<(u64, SitesSnapshot)>> = const { RefCell::new(Vec::new()) };
+}
+
+/// The checkpoints whose sites are kept, at most (a run's two anchors and
+/// the previous run's).
+const SITES_KEPT: usize = 4;
+
+/// Keep the definition sites as they are now, for checkpoint `id` (an
+/// anchor: `checkpoint.rs`, as S₀ or the `.aux` point is taken), so that a
+/// persisted S₀ carries the sites of S₀, not of whatever ran after it.
+pub fn keep_sites_at(id: u64) {
+    let snap = sites_snapshot();
+    AT.with(|a| {
+        let mut a = a.borrow_mut();
+        a.retain(|(i, _)| *i != id);
+        if a.len() >= SITES_KEPT {
+            a.remove(0);
+        }
+        a.push((id, snap));
+    });
+}
+
+/// The sites kept for checkpoint `id`, else the sites now.
+pub fn sites_at(id: u64) -> SitesSnapshot {
+    AT.with(|a| {
+        a.borrow()
+            .iter()
+            .find(|(i, _)| *i == id)
+            .map(|(_, s)| s.clone())
+    })
+    .unwrap_or_else(sites_snapshot)
 }
 
 /// [`sites`], to be made later ([`SitesSnapshot::sites`]).

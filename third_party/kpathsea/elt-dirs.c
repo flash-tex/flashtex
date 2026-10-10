@@ -296,9 +296,18 @@ do_subdir (kpathsea kpse, str_llist_type *str_list_ptr, string elt,
                  The btrfs filesystem also leaves it at 1:
                    https://tug.org/pipermail/tex-k/2025-October/004212.html
                  */
-              if (links != 2 || !kpse_cnf_p (kpathsea_var_value
-                                                (kpse, "texmf_nlink_for_leaf"))
-                 ) {
+              /* FlashTeX change (2026-10-09): the variable's value, which
+                 kpathsea_var_value allocates, is freed (it was lost at every
+                 two-link subdirectory each expansion of a `//' element
+                 visits, which a resident process repeats once it forgets
+                 the expansions: lane MEMORY-SAFETY).  */
+              boolean leaf_trick = false;
+              if (links == 2) {
+                string nlink = kpathsea_var_value (kpse, "texmf_nlink_for_leaf");
+                leaf_trick = kpse_cnf_p (nlink);
+                free (nlink);
+              }
+              if (!leaf_trick) {
 #endif /* ST_NLINK_TRICK */
                 /* All criteria are met; find subdirectories.  */
 #ifdef KPSE_DEBUG

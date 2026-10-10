@@ -459,6 +459,8 @@ pub fn final_end(g: &mut Globals) -> ! {
 
 /// C's `exit(code)`: every stdio stream is flushed first.
 pub fn exit_process(g: &mut Globals, code: i32) -> ! {
+    #[cfg(unix)]
+    crate::host::spare::hints(g);
     let _ = std::io::stdout().flush();
     g.log_file.flush();
     for f in g.write_file.iter_mut() {

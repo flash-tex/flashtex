@@ -80,6 +80,7 @@ dependencies = [
  "flashtex-display-list",
  "flashtex-engine-build-id",
  "flashtex-runtime",
+ "libc",
  "sha2",
 ]
 

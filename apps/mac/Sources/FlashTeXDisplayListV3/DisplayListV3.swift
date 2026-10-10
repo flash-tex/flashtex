@@ -489,10 +489,20 @@ public struct DL3Font: Sendable {
     public var info: DL3JSON
     public var program: [UInt8]
 
+    public init(id: UInt16, key: [UInt8], info: DL3JSON, program: [UInt8]) {
+        self.id = id; self.key = key; self.info = info; self.program = program
+    }
+
     public var keyHex: String { DL3Hex.string(key) }
     public var format: String? { info["format"]?.string }
     public var pdfName: String? { info["pdf_name"]?.string }
     public var psName: String? { info["ps_name"]?.string }
+    /// 3.3 `glyph_ids` (spec §11.1): a GLYPH's `code` is the glyph id in
+    /// the face, not a character code (the XeTeX and Typst hosts' native
+    /// OpenType/TrueType fonts).
+    public var glyphIds: Bool { info["glyph_ids"]?.bool ?? false }
+    /// The face of a collection (`.ttc`/`.otc`) the program means; 0 otherwise.
+    public var faceIndex: Int { Int(info["face_index"]?.int ?? 0) }
     /// 256 glyph names (code → name), or nil when the font sent none.
     public var encoding: [String?]? {
         guard let a = info["encoding"]?.array else { return nil }

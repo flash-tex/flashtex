@@ -140,6 +140,9 @@ pub struct Options {
     /// Bytes the undo logs may hold (DESIGN.md §5.2: 1 GB by default), and
     /// the loaded format's image with them (`crate::fmtimage`).
     pub budget: usize,
+    /// Bytes of embedded Type 1 fonts kept across runs
+    /// (`pdftex::writet1::set_cache_limit`), by performance mode.
+    pub t1_cache: usize,
     /// Keep the loaded format's image (`crate::fmtimage`): not under a
     /// `lean` performance mode (Low Memory).
     pub fmt_image: bool,
@@ -187,6 +190,7 @@ impl Default for Options {
         let mut o = Options {
             preview: true,
             budget: 0,
+            t1_cache: 32 << 20,
             fmt_image: true,
             dense: 0,
             timed_s: 0.0,
@@ -222,6 +226,11 @@ impl Options {
         self.dense = p.dense;
         self.timed_s = p.timed_s;
         self.segment_s = p.segment_s;
+        self.t1_cache = match p.mode {
+            crate::profile::Mode::LowMemory => 4 << 20,
+            crate::profile::Mode::Balanced => 32 << 20,
+            crate::profile::Mode::HighPerformance => 128 << 20,
+        };
         self.fmt_image = !p.lean;
     }
 }
@@ -2666,6 +2675,7 @@ impl Session {
         system::configure(o.clone());
         system::capture_terminal(true);
         crate::diag::set_enabled(opts.diagnostics);
+        crate::pdftex::writet1::set_cache_limit(opts.t1_cache);
         crate::fmtimage::set_allowed(opts.fmt_image);
         crate::diag::reset();
         crate::pdftex::set_preview(opts.preview);
@@ -2951,6 +2961,17 @@ impl Session {
             v.push(("malloc_in_use".into(), used as i64));
             v.push(("malloc_held".into(), held as i64));
         }
+        // the host allocator's own mappings (`logalloc`: large blocks and
+        // their spares, which `malloc_in_use` does not count)
+        #[cfg(any(target_os = "linux", target_os = "macos"))]
+        {
+            let (mapped, spare) = crate::logalloc::mapped_stats();
+            v.push(("mapped_bytes".into(), mapped as i64));
+            v.push(("spare_bytes".into(), spare as i64));
+            for (k, n) in crate::logalloc::counters() {
+                v.push((k.into(), n as i64));
+            }
+        }
         if let Some(g) = &self.g {
             v.extend(g.mem_stats().into_iter().map(|(k, x)| (k.to_string(), x)));
             for (name, n) in g.arena.region_residency() {
@@ -2966,9 +2987,16 @@ impl Session {
             BRANCH_THINNED.load(std::sync::atomic::Ordering::Relaxed) as i64,
         ));
         v.push(("defpatch".into(), self.defpatch.len() as i64));
+        // checkpoints with corrections, the steps composed into them, and
+        // the bytes they hold
+        v.push(("reloc".into(), self.reloc.len() as i64));
         v.push((
-            "reloc".into(),
+            "reloc_steps".into(),
             self.reloc.values().map(|r| r.count).sum::<usize>() as i64,
+        ));
+        v.push((
+            "reloc_bytes".into(),
+            self.reloc.values().map(|r| r.heap_bytes()).sum::<usize>() as i64,
         ));
         v
     }
@@ -2983,6 +3011,7 @@ impl Session {
     pub fn apply_profile(&mut self, p: &crate::profile::Profile) {
         let shrinks = p.budget < self.opts.budget || p.dense < self.opts.dense;
         self.opts.apply_profile(p);
+        crate::pdftex::writet1::set_cache_limit(self.opts.t1_cache);
         crate::fmtimage::set_allowed(self.opts.fmt_image);
         if shrinks && self.paused.is_none() && self.g.is_some() {
             self.enforce_budget();
@@ -3003,6 +3032,8 @@ impl Session {
             g.arena.drop_old_cache();
             // (a preparation newer work stopped: its copies of the chunks)
             g.arena.drop_stopped_preparation();
+            // (pages TeX cleared: `hash`'s and `font_info`'s unused parts)
+            g.arena.release_zero_pages();
         }
     }
 
@@ -3206,6 +3237,13 @@ impl Session {
         let ids: std::collections::HashSet<CheckpointId> = g.checkpoints().into_iter().collect();
         self.ck_pages.retain(|k, _| ids.contains(k));
         self.defpatch.retain(|k, _| ids.contains(k));
+        // and their position corrections (those of the pending branch's
+        // checkpoints too: they are reattached at a convergence). Without
+        // this every checkpoint ever corrected kept its entry (lane
+        // MEMORY-SAFETY, docs/evidence/mem-soak-2026-10-04/).
+        let pending = g.pending_ids();
+        self.reloc
+            .retain(|k, _| ids.contains(k) || pending.contains(k));
         for p in self.pages.iter_mut() {
             if p.ckpt.is_some_and(|c| !ids.contains(&c)) {
                 p.ckpt = None;
@@ -3321,6 +3359,13 @@ impl Session {
         let ids: std::collections::HashSet<CheckpointId> = g.checkpoints().into_iter().collect();
         self.ck_pages.retain(|k, _| ids.contains(k));
         self.defpatch.retain(|k, _| ids.contains(k));
+        // and their position corrections (those of the pending branch's
+        // checkpoints too: they are reattached at a convergence). Without
+        // this every checkpoint ever corrected kept its entry (lane
+        // MEMORY-SAFETY, docs/evidence/mem-soak-2026-10-04/).
+        let pending = g.pending_ids();
+        self.reloc
+            .retain(|k, _| ids.contains(k) || pending.contains(k));
         for p in self.pages.iter_mut() {
             if p.ckpt.is_some_and(|c| !ids.contains(&c)) {
                 p.ckpt = None;
@@ -3339,6 +3384,8 @@ impl Session {
     pub fn compile(&mut self, stop_at: Option<usize>) -> Result<Report, String> {
         let _m = crate::memstat::scope(crate::memstat::tag::ENGINE);
         let t0 = Instant::now();
+        // the disk as it is now for this compile's lookups and checks
+        system::refresh_disk_dirs();
         let i0 = crate::os::thread_counts();
         let mut paused_how = "";
         // A run stopped for this compile (preempted, or at a viewport).
@@ -5953,6 +6000,13 @@ impl Session {
         let ids: std::collections::HashSet<CheckpointId> = g.checkpoints().into_iter().collect();
         self.ck_pages.retain(|k, _| ids.contains(k));
         self.defpatch.retain(|k, _| ids.contains(k));
+        // and their position corrections (those of the pending branch's
+        // checkpoints too: they are reattached at a convergence). Without
+        // this every checkpoint ever corrected kept its entry (lane
+        // MEMORY-SAFETY, docs/evidence/mem-soak-2026-10-04/).
+        let pending = g.pending_ids();
+        self.reloc
+            .retain(|k, _| ids.contains(k) || pending.contains(k));
         for p in self.pages.iter_mut() {
             if p.ckpt.is_some_and(|c| !ids.contains(&c)) {
                 p.ckpt = None;
@@ -6050,6 +6104,13 @@ impl Session {
         let ids: std::collections::HashSet<CheckpointId> = g.checkpoints().into_iter().collect();
         self.ck_pages.retain(|k, _| ids.contains(k));
         self.defpatch.retain(|k, _| ids.contains(k));
+        // and their position corrections (those of the pending branch's
+        // checkpoints too: they are reattached at a convergence). Without
+        // this every checkpoint ever corrected kept its entry (lane
+        // MEMORY-SAFETY, docs/evidence/mem-soak-2026-10-04/).
+        let pending = g.pending_ids();
+        self.reloc
+            .retain(|k, _| ids.contains(k) || pending.contains(k));
         for p in self.pages.iter_mut() {
             if p.ckpt.is_some_and(|c| !ids.contains(&c)) {
                 p.ckpt = None;
@@ -6517,6 +6578,20 @@ fn verify_reloc() -> bool {
 }
 
 impl Reloc {
+    /// The heap bytes this holds (`mem_stats`), steps kept apart included.
+    fn heap_bytes(&self) -> usize {
+        let step = |s: &Step| {
+            std::mem::size_of::<Step>()
+                + s.overrides.capacity() * std::mem::size_of::<(usize, u64)>()
+                + s.lines.capacity() * std::mem::size_of::<crate::lineshift::Shift>()
+        };
+        self.pieces.capacity() * std::mem::size_of::<(i64, i64)>()
+            + self.overrides.capacity() * std::mem::size_of::<(usize, u64, u64)>()
+            + self.lines.capacity() * std::mem::size_of::<crate::lineshift::Shift>()
+            + self.rest.iter().map(step).sum::<usize>()
+            + self.steps.iter().map(step).sum::<usize>()
+    }
+
     /// Compose step `s` after the ones this holds.
     fn push(&mut self, s: &Step) {
         self.lines.extend(s.lines.iter().cloned());
@@ -6790,6 +6865,126 @@ mod tests {
     }
 
     use super::diff_edit;
+
+    /// A checkpoint's composed position corrections (`Reloc`) leave the
+    /// state that applying its steps one after another leaves: every
+    /// `obj_offset`, the three scalars, the override words, on random steps
+    /// with overrides of written, unwritten and object-stream objects. End
+    /// to end through `Reloc::apply` on a real `Globals`, beside
+    /// `composed_relocations_equal_the_steps`' arithmetic (lane
+    /// MEMORY-SAFETY, #1505; on P4-PAGE-COST's composition since).
+    #[test]
+    fn reloc_composes_exactly() {
+        use super::{Reloc, Step};
+        use crate::Globals;
+        let mut seed = 99u64;
+        let mut rnd = |n: u64| {
+            seed = seed
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
+            (seed >> 33) % n.max(1)
+        };
+        let mut a = Globals::new();
+        let mut b = Globals::new();
+        let n = 60usize;
+        a.obj_tab.alloc_len(n + 10);
+        b.obj_tab.alloc_len(n + 10);
+        let base = a
+            .arena
+            .regions
+            .iter()
+            .find(|r| r.name == "obj_tab")
+            .unwrap()
+            .off;
+        let size = std::mem::size_of::<crate::generated::types::obj_entry>();
+        let at = std::mem::offset_of!(crate::generated::types::obj_entry, int2);
+        for round in 0..40 {
+            // a checkpoint's state: objects at increasing file positions,
+            // some in object streams, some not yet written
+            for g in [&mut a, &mut b] {
+                g.obj_ptr = n as i32;
+            }
+            let mut pos = 15i64;
+            for k in 0..n + 10 {
+                pos += 1 + (rnd(400) as i64);
+                let int3 = if rnd(6) == 0 { rnd(3) as i32 } else { -1 };
+                for g in [&mut a, &mut b] {
+                    g.obj_tab[k].int2 = pos;
+                    g.obj_tab[k].int3 = int3;
+                }
+            }
+            let (gone, save, slen) = (
+                pos + 100,
+                [0, -1, pos / 2][round % 3],
+                [0, pos / 3][round % 2],
+            );
+            for g in [&mut a, &mut b] {
+                g.pdf_gone = gone;
+                g.pdf_save_offset = save;
+                g.pdf_stream_length_offset = slen;
+            }
+            let steps: Vec<Step> = (0..1 + rnd(30))
+                .map(|_| Step {
+                    threshold: rnd(pos as u64 + 200) as i64 - [0, 50][rnd(8).min(1) as usize],
+                    delta: rnd(4001) as i64 - 2000,
+                    overrides: (0..rnd(6))
+                        .map(|_| {
+                            let k = 1 + rnd(n as u64 + 8) as usize;
+                            (base + k * size + at, rnd(pos as u64 * 2) + 1)
+                        })
+                        .collect(),
+                    lines: vec![],
+                })
+                .collect();
+            let mut r = Reloc::default();
+            for s in &steps {
+                s.apply_positions(&mut a);
+                r.push(s);
+            }
+            r.apply(&mut b);
+            assert_eq!(a.pdf_gone, b.pdf_gone, "round {round}: pdf_gone");
+            assert_eq!(a.pdf_save_offset, b.pdf_save_offset, "round {round}: save");
+            assert_eq!(
+                a.pdf_stream_length_offset, b.pdf_stream_length_offset,
+                "round {round}: stream length"
+            );
+            for k in 0..n + 10 {
+                assert_eq!(
+                    a.obj_tab[k].int2, b.obj_tab[k].int2,
+                    "round {round}: object {k}"
+                );
+            }
+        }
+    }
+
+    /// Edits that come back to the same places keep a checkpoint's composed
+    /// corrections the size of those places, however many there were
+    /// (lane MEMORY-SAFETY, #1505).
+    #[test]
+    fn reloc_stays_bounded() {
+        use super::{Reloc, Step};
+        let mut r = Reloc::default();
+        let mut len = [10_000i64, 20_000, 30_000];
+        for i in 0..10_000 {
+            // typing at one of three pages: a letter in, a letter out
+            let p = i % 3;
+            let d = if (i / 3) % 2 == 0 { 7 } else { -7 };
+            let step = Step {
+                threshold: len[p],
+                delta: d,
+                overrides: vec![(64 * (p + 1), len[p] as u64 - 500)],
+                lines: vec![],
+            };
+            for l in len.iter_mut().skip(p) {
+                *l += d;
+            }
+            r.push(&step);
+        }
+        assert!(r.pieces.len() <= 4, "{:?}", r.pieces);
+        assert!(r.rest.is_empty(), "{} steps kept apart", r.rest.len());
+        assert_eq!(r.overrides.len(), 3);
+        assert!(r.heap_bytes() < 4096, "{} bytes", r.heap_bytes());
+    }
 
     /// `Reloc`'s composition against the steps applied one by one: every
     /// position, and every override word's two values (written, and shifted

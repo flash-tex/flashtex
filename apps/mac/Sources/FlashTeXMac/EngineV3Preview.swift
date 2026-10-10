@@ -327,20 +327,47 @@ final class EngineV3PageView: NSView {
     }
 
     /// The layer shows (or is about to show) a stored bitmap of an instant
-    /// reopen: dimmed whatever the session's marks, until a compile's
+    /// reopen: stale whatever the session's marks, until a compile's
     /// raster of the page is committed.
     var showsStored = false { didSet { if showsStored != oldValue { applyStale() } } }
     private var marked = false
-    /// Dimmed as stale: VoiceOver's page label says so.
+    /// Stale: VoiceOver's page label says so at once, whether or not the
+    /// page is dimmed yet (`PreviewStaleDimming`).
     var axStale: Bool { marked || showsStored }
+    /// Whether the dimmed look is on the layer now.
+    private(set) var showsStaleLook = false
+    /// Dims the page once it has stayed stale for `PreviewStaleDimming.delay`.
+    /// (nonisolated(unsafe): invalidated in deinit; a view deallocates on main.)
+    nonisolated(unsafe) private var dimTimer: Timer?
+    /// Settings > "Dim pages that are being updated" (`PagesView` passes changes on).
+    var dimsStale = PreviewStaleDimming.enabled { didSet { if dimsStale != oldValue { applyStale() } } }
+    /// Tests: the delay before a stale page is dimmed (nil: dim at once).
+    var dimDelay: TimeInterval? = PreviewStaleDimming.delay
 
     func setStale(_ stale: Bool) {
         marked = stale
         applyStale()
     }
 
+    /// Clearing is immediate; dimming waits out the delay (a page re-rastered
+    /// within it, as while typing, never flashes) and is off with the setting.
     private func applyStale() {
-        let stale = marked || showsStored
+        guard axStale, dimsStale else { dimTimer?.invalidate(); dimTimer = nil; setStaleLook(false); return }
+        guard !showsStaleLook, dimTimer == nil else { return }
+        guard let delay = dimDelay else { setStaleLook(true); return }
+        let t = Timer(timeInterval: delay, repeats: false) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                self.dimTimer = nil
+                self.setStaleLook(self.axStale && self.dimsStale)
+            }
+        }
+        RunLoop.main.add(t, forMode: .common) // fires while the preview is being scrolled too
+        dimTimer = t
+    }
+
+    private func setStaleLook(_ stale: Bool) {
+        showsStaleLook = stale
         guard (layer?.opacity ?? 1) != (stale ? 0.45 : 1) || (layer?.borderWidth ?? 0) != (stale ? 2 : 0) else { return }
         // No implicit animation: a fresh page shows at full opacity in the
         // frame that carries it, not over the default 0.25 s fade.
@@ -350,6 +377,8 @@ final class EngineV3PageView: NSView {
         layer?.borderWidth = stale ? 2 : 0
         layer?.borderColor = stale ? NSColor.systemOrange.cgColor : nil
     }
+
+    deinit { dimTimer?.invalidate() }
 }
 
 final class EngineV3PagesView: NSView {
@@ -398,15 +427,23 @@ final class EngineV3PagesView: NSView {
         super.init(frame: .zero)
         setAccessibilityRole(.group)
         setAccessibilityLabel("PDF preview")
+        staleDimmingObserver = PreviewStaleDimming.observe { [weak self] on in
+            self?.pageViews.values.forEach { $0.dimsStale = on }
+        }
     }
     required init?(coder: NSCoder) { fatalError() }
+    /// Settings > "Dim pages that are being updated", applied live.
+    nonisolated(unsafe) private var staleDimmingObserver: NSObjectProtocol?
 
     override func viewDidMoveToWindow() {
         if window == nil { link?.invalidate(); link = nil } // armVsync makes another when needed
         relayout()
     }
 
-    deinit { link?.invalidate() }
+    deinit {
+        link?.invalidate()
+        if let staleDimmingObserver { NotificationCenter.default.removeObserver(staleDimmingObserver) }
+    }
     /// Another screen's backing scale: pixels per point (and tiles) change.
     override func viewDidChangeBackingProperties() { super.viewDidChangeBackingProperties(); relayout() }
     override func viewDidEndLiveResize() { relayout() }

@@ -293,17 +293,23 @@ pub fn rss() -> Option<(u64, u64)> {
 /// How many bytes of `[p, p + len)` are resident (`mincore`); the range is
 /// widened to whole pages.
 pub fn resident(p: *const u8, len: usize) -> Option<usize> {
+    let page = crate::os::page_size();
+    let v = resident_pages(p, len)?;
+    Some(v.iter().filter(|&&b| b).count() * page)
+}
+
+/// Whether each page of `[p, p + len)` is resident (`mincore`), from the
+/// page holding `p`; `None` where the system cannot say (not Unix).
+pub fn resident_pages(p: *const u8, len: usize) -> Option<Vec<bool>> {
     #[cfg(unix)]
     {
         extern "C" {
             fn mincore(addr: *mut std::ffi::c_void, len: usize, vec: *mut u8) -> i32;
-            fn getpagesize() -> i32;
         }
         if len == 0 {
-            return Some(0);
+            return Some(vec![]);
         }
-        // SAFETY: no preconditions.
-        let page = unsafe { getpagesize() } as usize;
+        let page = crate::os::page_size();
         let lo = p as usize / page * page;
         let hi = (p as usize + len).next_multiple_of(page);
         let n = (hi - lo) / page;
@@ -314,7 +320,7 @@ pub fn resident(p: *const u8, len: usize) -> Option<usize> {
         if r != 0 {
             return None;
         }
-        Some(v.iter().filter(|&&b| b & 1 != 0).count() * page)
+        Some(v.iter().map(|&b| b & 1 != 0).collect())
     }
     #[cfg(not(unix))]
     {

@@ -607,6 +607,8 @@ impl FormatCache {
         progname: &str,
         r: &mut dyn FileResolver,
     ) -> (Validity, Option<Manifest>) {
+        // the lookups below see the disk as it is now
+        r.refresh_disk_dirs();
         let Ok(t) = fs::read_to_string(slot.join("manifest")) else {
             return (Validity::Missing, None);
         };

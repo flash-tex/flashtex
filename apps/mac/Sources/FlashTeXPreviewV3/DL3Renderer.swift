@@ -37,8 +37,12 @@ public final class DL3RenderFont: @unchecked Sendable {
     public let key: String
     /// Outline fonts; nil for Type 3.
     public let cgFont: CGFont?
-    /// code → glyph (0: none / .notdef).
+    /// code → glyph (0: none / .notdef). Empty for a `glyph_ids` font.
     public let glyphs: [CGGlyph]
+    /// `glyph_ids` (spec §11.1, the XeTeX and Typst hosts' native fonts): a
+    /// code is the glyph id itself, below this count; 0 for a font whose
+    /// codes go through `glyphs`.
+    public let glyphIdCount: Int
     /// Type 3: code → mask.
     public let type3: [Int: Type3Glyph]?
     /// Glyph space → text space beyond the program's own FontMatrix
@@ -50,8 +54,8 @@ public final class DL3RenderFont: @unchecked Sendable {
     /// font's glyphs (`DL3Renderer.rasterizeTile`).
     public let inkBox: CGRect?
 
-    init(key: String, cgFont: CGFont?, glyphs: [CGGlyph], type3: [Int: Type3Glyph]? = nil, fontTransform: CGAffineTransform) {
-        self.key = key; self.cgFont = cgFont; self.glyphs = glyphs; self.type3 = type3; self.fontTransform = fontTransform
+    init(key: String, cgFont: CGFont?, glyphs: [CGGlyph], glyphIdCount: Int = 0, type3: [Int: Type3Glyph]? = nil, fontTransform: CGAffineTransform) {
+        self.key = key; self.cgFont = cgFont; self.glyphs = glyphs; self.glyphIdCount = glyphIdCount; self.type3 = type3; self.fontTransform = fontTransform
         // Tile culling (DL3Tiles): an outline font's bounding box. A Type 3
         // font has none here, so its glyphs are never culled (and its pages
         // are cut from one whole-page raster, `tilesByTranslation`).
@@ -66,7 +70,17 @@ public final class DL3RenderFont: @unchecked Sendable {
     /// Whether `code` draws anything.
     public func draws(_ code: Int) -> Bool {
         if let type3 { return type3[code]?.mask != nil }
-        return code < glyphs.count && glyphs[code] != 0
+        return glyph(code) != 0
+    }
+
+    /// The outline glyph `code` draws (0: none / .notdef): the glyph id
+    /// itself for a `glyph_ids` font, else the code's entry in `glyphs`.
+    /// Every outline lookup goes through here: a `glyph_ids` code is not a
+    /// character code, and reading it through the cmap drew every letter of
+    /// a Unicode-mode page as another (`hello` as `?2HHQ`).
+    @inline(__always) public func glyph(_ code: Int) -> CGGlyph {
+        if glyphIdCount > 0 { return code > 0 && code < glyphIdCount ? CGGlyph(code) : 0 }
+        return code >= 0 && code < glyphs.count ? glyphs[code] : 0
     }
 
     /// Loads `font`'s program, or says why it cannot be drawn from the display list.
@@ -78,10 +92,14 @@ public final class DL3RenderFont: @unchecked Sendable {
         case "type1", "truetype", "opentype": break
         default: return .failure(DL3Error("\(label): format \(font.format ?? "?") has no program to draw"))
         }
-        guard !font.program.isEmpty,
-              let provider = CGDataProvider(data: Data(font.program) as CFData),
-              let cg = CGFont(provider) else {
+        guard !font.program.isEmpty, let cg = outlineFont(font.program, face: font.format == "type1" ? 0 : font.faceIndex) else {
             return .failure(DL3Error("\(label): the program does not load"))
+        }
+        if font.glyphIds {
+            // Codes are glyph ids in the face (XeTeX's native fonts, Typst):
+            // drawn as they are, no encoding, no cmap.
+            return .success(DL3RenderFont(key: font.keyHex, cgFont: cg, glyphs: [], glyphIdCount: max(1, cg.numberOfGlyphs),
+                                          fontTransform: fontTransform(font, cg)))
         }
         var glyphs = [CGGlyph](repeating: 0, count: 256)
         if font.format == "type1" {
@@ -136,14 +154,31 @@ public final class DL3RenderFont: @unchecked Sendable {
                 for code in 0 ..< 256 { glyphs[code] = unicodeGlyph(code) }
             }
         }
-        var t = CGAffineTransform.identity
-        if let fm = font.fontMatrix {
-            // The program's FontMatrix is 1/unitsPerEm (what a size-1 font
-            // applies); `font_matrix` replaces it.
-            let upem = Double(cg.unitsPerEm)
-            t = CGAffineTransform(a: fm[0] * upem, b: fm[1] * upem, c: fm[2] * upem, d: fm[3] * upem, tx: fm[4] * upem, ty: fm[5] * upem)
+        return .success(DL3RenderFont(key: font.keyHex, cgFont: cg, glyphs: glyphs, fontTransform: fontTransform(font, cg)))
+    }
+
+    /// Glyph space → text space beyond the program's own 1/unitsPerEm.
+    static func fontTransform(_ font: DL3Font, _ cg: CGFont) -> CGAffineTransform {
+        guard let fm = font.fontMatrix else { return .identity }
+        // The program's FontMatrix is 1/unitsPerEm (what a size-1 font
+        // applies); `font_matrix` replaces it.
+        let upem = Double(cg.unitsPerEm)
+        return CGAffineTransform(a: fm[0] * upem, b: fm[1] * upem, c: fm[2] * upem, d: fm[3] * upem, tx: fm[4] * upem, ty: fm[5] * upem)
+    }
+
+    /// The outline program as Core Graphics loads it: face `face` of a
+    /// collection (`.ttc`/`.otc`, which `CGFont(CGDataProvider)` does not
+    /// open by face), else the program itself.
+    static func outlineFont(_ program: [UInt8], face: Int) -> CGFont? {
+        let data = Data(program) as CFData
+        let isCollection = program.count >= 4 && program[0] == 0x74 && program[1] == 0x74 && program[2] == 0x63 && program[3] == 0x66 // "ttcf"
+        if isCollection || face > 0 {
+            guard let descs = CTFontManagerCreateFontDescriptorsFromData(data) as? [CTFontDescriptor],
+                  face >= 0, face < descs.count else { return nil }
+            return CTFontCopyGraphicsFont(CTFontCreateWithFontDescriptor(descs[face], 1, nil), nil)
         }
-        return .success(DL3RenderFont(key: font.keyHex, cgFont: cg, glyphs: glyphs, fontTransform: t))
+        guard let provider = CGDataProvider(data: data) else { return nil }
+        return CGFont(provider)
     }
 
     static func loadType3(_ font: DL3Font, label: String) -> Result<DL3RenderFont, DL3Error> {
@@ -602,7 +637,7 @@ public enum DL3Renderer {
                 // Stream space (bp, y up): the PDF's own origin, else its sp rounding.
                 let ox: Double, oy: Double
                 if gi < origins.count { ox = origins[gi].x; oy = origins[gi].y } else { ox = Double(x) / K; oy = snap(H - Double(y) / K) }
-                guard gs.textRender != 3, let font = prepared.fonts[f], Int(code) < 256, font.draws(Int(code)) else { continue }
+                guard gs.textRender != 3, let font = prepared.fonts[f], font.draws(Int(code)) else { continue }
                 if let t = gs.textFill, !inText { ctx.setFillColor(t); inText = true }
                 if let t3 = font.type3?[Int(code)], let mask = t3.mask {
                     // Type 3 (writet3): the glyph procedure's `w 0 0 h llx lly cm`
@@ -620,7 +655,7 @@ public enum DL3Renderer {
                     continue
                 }
                 guard let cgFont = font.cgFont else { continue }
-                let g = font.glyphs[Int(code)]
+                let g = font.glyph(Int(code))
                 var tm = font.fontTransform.concatenating(glyphMatrix)
                 tm.tx = ox
                 tm.ty = oy
