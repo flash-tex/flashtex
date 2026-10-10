@@ -233,6 +233,16 @@ full-100         instr M         26,755 ->       26,682 (-0.27 %)  rounds [26930
   (639/649/659 to 540/552/586 MB).
 - Low Memory is unchanged by design: the host turns the mappings off under `MallocSpaceEfficient`.
 
+## Outputs (VERIFIED)
+
+After the same keystrokes, every run's PDF (without its `/ID`, an MD5 of the output path and time) and
+`.aux` are byte-identical between main and the PRs: 124 files over the runs above
+(`scripts/pdfcmp.py`, `raw/outputs-identical.txt`). The logs differ only in the work directory's
+name, through the string-pool statistic and a line break. The tables for PRs B1 and B2 are in
+`raw/tables-b1-b2.md`, and the reopen check for S₀ v5 (#B2: 83 fixtures reopened and edited, each
+equal to a from-scratch run; 3 not reopened because their `.aux` changed) is in
+`raw/reopen-check-all.txt`.
+
 ## Reproducing
 
 ```
