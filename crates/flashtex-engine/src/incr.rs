@@ -3003,6 +3003,8 @@ impl Session {
             g.arena.drop_old_cache();
             // (a preparation newer work stopped: its copies of the chunks)
             g.arena.drop_stopped_preparation();
+            // (pages TeX cleared: `hash`'s and `font_info`'s unused parts)
+            g.arena.release_zero_pages();
         }
     }
 

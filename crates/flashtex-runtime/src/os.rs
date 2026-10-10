@@ -64,6 +64,26 @@ pub unsafe fn free(p: *mut u8, len: usize) {
     imp::free(p, len)
 }
 
+/// The system's page size, the granule of [`zero_pages`].
+pub fn page_size() -> usize {
+    imp::page_size()
+}
+
+/// Give back the memory of pages that hold only zeros: whole pages
+/// `[p, p + len)` of an [`alloc_zeroed`] mapping read as zero afterwards,
+/// as before, but take no memory until written again (Unix: a fresh
+/// anonymous mapping over them, `MAP_FIXED`; it never maps a file's pages
+/// back the way `MADV_DONTNEED` would over a file mapping). Whether it
+/// was done (not on Windows or WASI).
+///
+/// # Safety
+/// `p` and `len` are multiples of [`page_size`] inside one
+/// [`alloc_zeroed`] mapping, every byte there is zero, and no other thread
+/// reads or writes it meanwhile.
+pub unsafe fn zero_pages(p: *mut u8, len: usize) -> bool {
+    imp::zero_pages(p, len)
+}
+
 // ---------------------------------------------------------------------------
 // A file mapped read-only (the persisted S0, src/host/mod.rs)
 // ---------------------------------------------------------------------------
@@ -1099,6 +1119,27 @@ mod imp {
         munmap(p as *mut c_void, len);
     }
 
+    pub fn page_size() -> usize {
+        extern "C" {
+            fn getpagesize() -> i32;
+        }
+        // SAFETY: no preconditions.
+        unsafe { getpagesize() as usize }
+    }
+
+    pub unsafe fn zero_pages(p: *mut u8, len: usize) -> bool {
+        const MAP_FIXED: i32 = 0x10;
+        let q = mmap(
+            p as *mut c_void,
+            len,
+            PROT_READ | PROT_WRITE,
+            MAP_PRIVATE | MAP_ANON | MAP_FIXED,
+            -1,
+            0,
+        );
+        q as *mut u8 == p
+    }
+
     pub fn map_file(f: &std::fs::File, len: usize) -> Result<MappedFile, ()> {
         use std::os::fd::AsRawFd;
         // SAFETY: a private read-only mapping of an open file.
@@ -1230,6 +1271,14 @@ mod imp {
 
     pub unsafe fn free(p: *mut u8, _len: usize) {
         VirtualFree(p as *mut c_void, 0, MEM_RELEASE);
+    }
+
+    pub fn page_size() -> usize {
+        4096
+    }
+
+    pub unsafe fn zero_pages(_p: *mut u8, _len: usize) -> bool {
+        false
     }
 
     pub fn map_file(f: &std::fs::File, len: usize) -> Result<MappedFile, ()> {
@@ -1500,6 +1549,14 @@ mod imp {
 
     pub unsafe fn free(p: *mut u8, len: usize) {
         std::alloc::dealloc(p, Layout::from_size_align_unchecked(len, PAGE));
+    }
+
+    pub fn page_size() -> usize {
+        PAGE
+    }
+
+    pub unsafe fn zero_pages(_p: *mut u8, _len: usize) -> bool {
+        false
     }
 
     pub fn map_file(f: &std::fs::File, len: usize) -> Result<MappedFile, ()> {
