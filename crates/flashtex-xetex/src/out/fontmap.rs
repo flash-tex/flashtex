@@ -9,6 +9,7 @@
 //! or blank are comments.
 
 use std::collections::HashMap;
+use std::hash::BuildHasherDefault;
 
 /// One map entry.
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -24,20 +25,55 @@ pub struct MapEntry {
 
 /// A font map: the first entry for each TFM name wins (a later line for a
 /// name already mapped is ignored).
+///
+/// TeX Live's `pdftex.map` has 46,000 lines (5.5 MB) and a document uses
+/// a few of them, so the map is indexed by TFM name when read and a line
+/// is parsed only when its font is asked for ([`FontMap::get`]); what
+/// `x:fontmapline` changes is kept beside the file's lines.
 #[derive(Clone, Debug, Default)]
 pub struct FontMap {
-    pub entries: HashMap<Vec<u8>, MapEntry>,
+    data: Vec<u8>,
+    /// The first line of `data` for each TFM name, as a range.
+    index: HashMap<Box<[u8]>, (u32, u32), BuildHasherDefault<FxHasher>>,
+    /// The entries `x:fontmapline` added or replaced, or removed (`None`).
+    changed: HashMap<Vec<u8>, Option<MapEntry>>,
 }
 
 impl FontMap {
     pub fn parse(data: &[u8]) -> FontMap {
-        let mut m = FontMap::default();
-        for line in data.split(|&c| c == b'\n' || c == b'\r') {
-            if let Some(e) = parse_line(line) {
-                m.entries.entry(e.tfm.clone()).or_insert(e);
+        FontMap::from_vec(data.to_vec())
+    }
+
+    /// [`FontMap::parse`] of a map file's bytes, kept.
+    pub fn from_vec(data: Vec<u8>) -> FontMap {
+        let mut index: HashMap<Box<[u8]>, (u32, u32), BuildHasherDefault<FxHasher>> =
+            HashMap::with_capacity_and_hasher(data.len() / 100, Default::default());
+        let mut start = 0;
+        let n = data.len();
+        while start <= n {
+            let end = data[start..]
+                .iter()
+                .position(|&c| c == b'\n' || c == b'\r')
+                .map_or(n, |p| start + p);
+            if let Some(t) = tfm_of(&data[start..end]) {
+                if !index.contains_key(t) {
+                    index.insert(t.into(), (start as u32, end as u32));
+                }
             }
+            start = end + 1;
         }
-        m
+        FontMap {
+            data,
+            index,
+            changed: HashMap::new(),
+        }
+    }
+
+    fn contains(&self, tfm: &[u8]) -> bool {
+        match self.changed.get(tfm) {
+            Some(e) => e.is_some(),
+            None => self.index.contains_key(tfm),
+        }
     }
 
     /// `x:fontmapline` / `pdf:mapline`: `+line` adds unless present,
@@ -54,20 +90,94 @@ impl FontMap {
         };
         match mode {
             b'-' => {
-                self.entries.remove(&e.tfm);
+                self.changed.insert(e.tfm.clone(), None);
             }
             b'=' => {
-                self.entries.insert(e.tfm.clone(), e);
+                self.changed.insert(e.tfm.clone(), Some(e));
             }
             _ => {
-                self.entries.entry(e.tfm.clone()).or_insert(e);
+                if !self.contains(&e.tfm) {
+                    self.changed.insert(e.tfm.clone(), Some(e));
+                }
             }
         }
     }
 
-    pub fn get(&self, tfm: &[u8]) -> Option<&MapEntry> {
-        self.entries.get(tfm)
+    pub fn get(&self, tfm: &[u8]) -> Option<MapEntry> {
+        match self.changed.get(tfm) {
+            Some(e) => e.clone(),
+            None => {
+                let &(a, b) = self.index.get(tfm)?;
+                parse_line(&self.data[a as usize..b as usize])
+            }
+        }
     }
+}
+
+/// rustc's FxHasher: the index's keys are TFM names from a file TeX Live
+/// writes, so a fast hash without DoS resistance is enough.
+#[derive(Default)]
+struct FxHasher(u64);
+
+impl std::hash::Hasher for FxHasher {
+    fn write(&mut self, bytes: &[u8]) {
+        for &b in bytes {
+            self.0 = (self.0.rotate_left(5) ^ b as u64).wrapping_mul(0x51_7c_c1_b7_27_22_0a_95);
+        }
+    }
+    fn finish(&self) -> u64 {
+        self.0
+    }
+}
+
+/// The TFM name [`parse_line`] gives `line` (its first word that is not
+/// quoted PostScript code or a `<` file), without parsing the rest; `None`
+/// where it gives no entry.
+fn tfm_of(line: &[u8]) -> Option<&[u8]> {
+    let first = *line.iter().find(|c| !c.is_ascii_whitespace())?;
+    if matches!(first, b'%' | b'#' | b'*' | b';') {
+        return None;
+    }
+    let mut i = 0;
+    let n = line.len();
+    while i < n {
+        while i < n && line[i].is_ascii_whitespace() {
+            i += 1;
+        }
+        if i >= n {
+            break;
+        }
+        match line[i] {
+            b'"' => {
+                let st = i + 1;
+                let en = line[st..]
+                    .iter()
+                    .position(|&c| c == b'"')
+                    .map_or(n, |p| st + p);
+                i = (en + 1).min(n);
+            }
+            b'<' => {
+                i += 1;
+                while i < n && matches!(line[i], b'<' | b'[') {
+                    i += 1;
+                }
+                while i < n && line[i].is_ascii_whitespace() {
+                    i += 1;
+                }
+                while i < n && !line[i].is_ascii_whitespace() {
+                    i += 1;
+                }
+            }
+            _ => {
+                let st = i;
+                while i < n && !line[i].is_ascii_whitespace() {
+                    i += 1;
+                }
+                return Some(&line[st..i]);
+            }
+        }
+    }
+    None
 }
 
 fn parse_line(line: &[u8]) -> Option<MapEntry> {
@@ -207,6 +317,7 @@ mod tests {
               cmr10 OTHER <other.pfb\n",
         );
         let e = m.get(b"cmr10").unwrap();
+        assert_eq!(e.tfm, b"cmr10");
         assert_eq!(e.ps_name.as_deref(), Some(&b"CMR10"[..]));
         assert_eq!(e.font_file.as_deref(), Some(&b"cmr10.pfb"[..]));
         let e = m.get(b"ec-lmr10").unwrap();
@@ -223,6 +334,93 @@ mod tests {
         );
         m.apply_line(b"-cmr10");
         assert!(m.get(b"cmr10").is_none());
+    }
+
+    /// The map as it was read before the index: every line parsed, the
+    /// first entry for each name kept, the lines applied in order.
+    fn eager(data: &[u8], lines: &[&[u8]]) -> HashMap<Vec<u8>, MapEntry> {
+        let mut m: HashMap<Vec<u8>, MapEntry> = HashMap::new();
+        for line in data.split(|&c| c == b'\n' || c == b'\r') {
+            if let Some(e) = parse_line(line) {
+                m.entry(e.tfm.clone()).or_insert(e);
+            }
+        }
+        for l in lines {
+            let (mode, rest) = match l.first() {
+                Some(b'+') => (b'+', &l[1..]),
+                Some(b'=') => (b'=', &l[1..]),
+                Some(b'-') => (b'-', &l[1..]),
+                _ => (b'+', *l),
+            };
+            let Some(e) = parse_line(rest) else { continue };
+            match mode {
+                b'-' => {
+                    m.remove(&e.tfm);
+                }
+                b'=' => {
+                    m.insert(e.tfm.clone(), e);
+                }
+                _ => {
+                    m.entry(e.tfm.clone()).or_insert(e);
+                }
+            }
+        }
+        m
+    }
+
+    #[test]
+    fn the_index_answers_as_every_line_parsed() {
+        let data: &[u8] = b"% c\n  \n\"x\" cmr5 CMR5 <cmr5.pfb\n<a.enc cmr6 CMR6\r\
+            cmr7 CMR7 \"unterminated\n<< only.pfb\ncmr7 SECOND\n\tcmr8\t7 CMR8\n;x\n";
+        let lines: [&[u8]; 6] = [
+            b"+cmr5 NEW",
+            b"=cmr6 REPL <r.pfb",
+            b"-cmr7",
+            b"+cmr7 BACK",
+            b"cmr9 NINE",
+            b"-nonesuch",
+        ];
+        let want = eager(data, &lines);
+        let mut m = FontMap::parse(data);
+        for l in lines {
+            m.apply_line(l);
+        }
+        for name in [
+            &b"cmr5"[..],
+            b"cmr6",
+            b"cmr7",
+            b"cmr8",
+            b"cmr9",
+            b"nonesuch",
+            b"only.pfb",
+        ] {
+            assert_eq!(
+                m.get(name),
+                want.get(name).cloned(),
+                "{}",
+                String::from_utf8_lossy(name)
+            );
+        }
+        // TeX Live's own map, every name, where there is one
+        let Some(p) = flashtex_engine::resolver::discover_texlive()
+            .and_then(|t| {
+                std::process::Command::new(t.bin.join("kpsewhich"))
+                    .arg("pdftex.map")
+                    .output()
+                    .ok()
+            })
+            .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+            .filter(|p| !p.is_empty())
+        else {
+            return;
+        };
+        let data = std::fs::read(p).unwrap();
+        let want = eager(&data, &[]);
+        let m = FontMap::parse(&data);
+        assert_eq!(m.index.len(), want.len());
+        for (k, v) in &want {
+            assert_eq!(m.get(k).as_ref(), Some(v));
+        }
     }
 
     #[test]

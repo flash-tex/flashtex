@@ -300,11 +300,17 @@ impl Fonts {
         }
     }
 
+    /// Read the font map now rather than at the first TFM font (a hot
+    /// spare, `crate::host::spare`, does it while it waits).
+    pub fn prewarm(&mut self) {
+        self.font_map();
+    }
+
     fn font_map(&mut self) -> &FontMap {
         if self.map.is_none() {
             let mut m = flashtex_engine::system::find_file("pdftex.map", Format::Map)
                 .and_then(|p| std::fs::read(p).ok())
-                .map(|d| FontMap::parse(&d))
+                .map(FontMap::from_vec)
                 .unwrap_or_default();
             for l in std::mem::take(&mut self.pending_lines) {
                 m.apply_line(&l);
@@ -316,7 +322,7 @@ impl Fonts {
 
     fn load_tfm(&mut self, t: &TfmDef) -> Loaded {
         let tfm = String::from_utf8_lossy(&t.name).into_owned();
-        let Some(e) = self.font_map().get(&t.name).cloned() else {
+        let Some(e) = self.font_map().get(&t.name) else {
             let why = if flashtex_engine::system::find_file(&tfm, Format::Vf).is_some() {
                 "a virtual font"
             } else {

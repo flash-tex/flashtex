@@ -430,3 +430,110 @@ fn the_manifest_fonts_apply_and_the_document_wins() {
     drop(h);
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// A host with `envs` set, its standard error in `err`.
+fn start_with(dir: &Path, envs: &[(&str, &str)], err: &Path) -> Host {
+    let sock = dir.join("h.sock");
+    let child = Command::new(env!("CARGO_BIN_EXE_flashtex-host-unicode"))
+        .args([
+            "--socket",
+            sock.to_str().unwrap(),
+            "--once",
+            "--accept-timeout",
+            "600",
+        ])
+        .env("SOURCE_DATE_EPOCH", "0")
+        .env("FORCE_SOURCE_DATE", "1")
+        .envs(envs.iter().copied())
+        .stdout(Stdio::null())
+        .stderr(std::fs::File::create(err).unwrap())
+        .spawn()
+        .unwrap();
+    let t = Instant::now();
+    while !sock.exists() {
+        assert!(
+            t.elapsed() < Duration::from_secs(600),
+            "the host did not listen"
+        );
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    Host { child, sock }
+}
+
+/// Hot spares (`host/spare.rs`): each run after the first takes the run
+/// started ahead for it and writes what a run started then writes (the PDF
+/// and the log, byte for byte, against a host without spares); a main file
+/// whose first line becomes a `%&` line ends the spare instead, and a fresh
+/// run does the compile.
+#[test]
+fn spares_stand_for_runs_only_while_what_they_read_is_unchanged() {
+    if !texlive() {
+        eprintln!("skipped: no TeX Live");
+        return;
+    }
+    let dir = std::env::temp_dir().join(format!("flashtex-host-spares-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    // the PDF and the log after each of three compiles, and what the host said
+    let run = |spares: &str| -> (Vec<(Vec<u8>, String)>, String) {
+        // the same paths both times: the log names them
+        let sub = dir.join("run");
+        let _ = std::fs::remove_dir_all(&sub);
+        let (proj, out) = project(&sub, DOC);
+        let err = sub.join("host.err");
+        let h = start_with(
+            &sub,
+            &[
+                ("FLASHTEX_UNICODE_SPARES", spares),
+                ("FLASHTEX_UNICODE_SPARE_DEBUG", "1"),
+            ],
+            &err,
+        );
+        let mut c = Client::connect(&h.sock).unwrap();
+        let mut outs = vec![];
+        for (id, text) in [
+            (1, DOC.to_string()),
+            (2, DOC.replace("See section", "Look at section")),
+            (3, format!("%&xelatex\n{DOC}")),
+        ] {
+            let mut r = request(id, &proj, &out);
+            r.buffers = vec![("main.tex".into(), text)];
+            c.compile(&r).unwrap();
+            let (_, done) = events(&mut c, id);
+            assert_eq!(done.str_field("status"), Some("ok"), "{done:?}");
+            let o = Path::new(&out);
+            outs.push((
+                std::fs::read(o.join("main.pdf")).unwrap(),
+                std::fs::read_to_string(o.join("main.log")).unwrap(),
+            ));
+        }
+        c.bye().unwrap();
+        drop(h);
+        let said = std::fs::read_to_string(&err).unwrap();
+        (outs, said)
+    };
+    let (with, said) = run("1");
+    let (without, said_without) = run("0");
+    let fates: Vec<&str> = said
+        .lines()
+        .filter_map(|l| l.split_once(": spare "))
+        .filter_map(|(_, f)| f.split_once(": ").map(|(_, why)| why))
+        .collect();
+    // compile 1's second pass and compile 2 take theirs; compile 3's main
+    // file has a `%&` first line, so it runs afresh (one pass: the `.aux` is
+    // unchanged)
+    assert_eq!(
+        fates,
+        [
+            "taken",
+            "taken",
+            "the format or the main file's first line changed",
+        ],
+        "{said}"
+    );
+    assert!(!said_without.contains(": spare "), "{said_without}");
+    for (i, (a, b)) in with.iter().zip(&without).enumerate() {
+        assert!(a.0 == b.0, "compile {}: the PDFs differ", i + 1);
+        assert!(a.1 == b.1, "compile {}: the logs differ", i + 1);
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}

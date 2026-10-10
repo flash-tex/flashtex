@@ -13,7 +13,9 @@
 //! by another, up to five passes, each pass's pages replacing the
 //! previous (spec §6.4); then the external tools (`tools`) and their
 //! follow-up compiles. `DONE.pdf` is FlashTeX's own PDF, written from the
-//! display list (PLAN.md §3.2). The resident, incremental engine of
+//! display list (PLAN.md §3.2). The next run is started ahead and waits with
+//! the format loaded (`spare`), so a compile does not wait for the process
+//! start and the format's undump. The resident, incremental engine of
 //! Classic (checkpoints, convergence, S₀) is the next stage; its pieces
 //! move into the shared runtime crate then (PLAN.md §3.3). Classic's
 //! `flashtex-host` is not changed by this program.
@@ -32,6 +34,7 @@ pub mod compile;
 pub mod fonts;
 pub mod format;
 pub mod proc;
+pub mod spare;
 pub mod tools;
 
 use compile::{send_json, Accept, Job, Out, Running};
@@ -480,7 +483,18 @@ fn compile_thread(
     rx: mpsc::Receiver<Msg>,
 ) {
     let mut memory = tools::Memory::default();
-    while let Ok(Msg::Compile(job, t0, seq)) = rx.recv() {
+    // the next run, started ahead (`spare.rs`), ended when the connection
+    // ends or after its time to live
+    let mut spares = spare::Spares::from_env();
+    loop {
+        let (job, t0, seq) = match rx.recv_timeout(spares.ttl()) {
+            Ok(Msg::Compile(job, t0, seq)) => (job, t0, seq),
+            Err(mpsc::RecvTimeoutError::Timeout) => {
+                spares.expire();
+                continue;
+            }
+            Err(mpsc::RecvTimeoutError::Disconnected) => break,
+        };
         // A compile superseded before it started only applies its edits.
         // Decided under the lock a COMPILE or CANCEL takes, so neither is
         // lost between this test and the job's start.
@@ -501,7 +515,17 @@ fn compile_thread(
             done(out, &job, "cancelled", None, 0, 0, 0, None, t0, None);
             continue;
         }
-        run_job(host, out, running, scratch, accept, &job, t0, &mut memory);
+        run_job(
+            host,
+            out,
+            running,
+            scratch,
+            accept,
+            &job,
+            t0,
+            &mut memory,
+            &mut spares,
+        );
         running.lock().unwrap().job = None;
     }
 }
@@ -516,6 +540,7 @@ fn run_job(
     job: &Job,
     t0: Instant,
     memory: &mut tools::Memory,
+    spares: &mut spare::Spares,
 ) {
     if let Err(e) = job.apply_files() {
         send_json(
@@ -598,6 +623,7 @@ fn run_job(
             t0,
             scratch,
             &host.children,
+            spares,
         );
         done(
             out,

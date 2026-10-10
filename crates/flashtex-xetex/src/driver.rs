@@ -11,6 +11,10 @@ pub fn run(argv: Vec<String>) -> ! {
     // A child of `flashtex-host-unicode` ends with it (`host::proc`).
     #[cfg(unix)]
     crate::host::proc::watch_lifeline();
+    // What the host asked of this run: a hot spare waits for its go-ahead
+    // (`host::spare`).
+    #[cfg(unix)]
+    let child_env = crate::host::spare::take_env();
     // XeTeX's own options (xetexextra.c). `-no-pdf` writes XDV, as xetex
     // does; without it the PDF is FlashTeX's own (`crate::out`), never
     // xdvipdfmx's, so `-output-driver` has nothing to name.
@@ -52,6 +56,11 @@ pub fn run(argv: Vec<String>) -> ! {
     }
     flashtex_engine::system::configure(o);
     let mut g = crate::Globals::new();
+    #[cfg(unix)]
+    {
+        g.host.spare_go = child_env.go;
+        g.host.child_env = child_env;
+    }
     system::set_no_pdf(&mut g, no_pdf);
     if !no_pdf {
         g.host.out = Some(Box::new(crate::out::Output::from_env()));
