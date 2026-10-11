@@ -1,0 +1,15 @@
+% polyglossia: Hindi (Devanagari) with the system's Kohinoor Devanagari
+\documentclass{article}
+\usepackage{fontspec}
+\setmainfont{Libertinus Serif}
+\usepackage{polyglossia}
+\setmainlanguage{english}
+\setotherlanguage{hindi}
+\newfontfamily\hindifont{Kohinoor Devanagari}[Script=Devanagari]
+\begin{document}
+\section{Hindi}
+\begin{hindi}
+हिन्दी विश्व की एक प्रमुख भाषा है और भारत की राजभाषा है। क्षत्रिय, द्वार, श्रृंखला, प्रश्न।
+\end{hindi}
+Conjuncts above need the Devanagari shaper: \texthindi{क्ष त्र ज्ञ श्र}.
+\end{document}

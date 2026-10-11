@@ -1,0 +1,14 @@
+% unicode-math with Libertinus Math; siunitx
+\documentclass{article}
+\usepackage{fontspec}
+\usepackage{unicode-math}
+\usepackage{siunitx}
+\setmainfont{Libertinus Serif}
+\setmathfont{Libertinus Math}
+\begin{document}
+\section{Libertinus Math}
+The speed of light is \SI{299792458}{\metre\per\second}; $g \approx \SI{9.81}{\metre\per\second\squared}$.
+\[ E = mc^2, \qquad \nabla\times\mathbf{E} = -\frac{\partial\mathbf{B}}{\partial t}, \qquad
+   \sqrt[3]{x^3+y^3} \neq x+y. \]
+\num{12345.678}, \num{1.2e-5}, \ang{12;30;0}, \SIrange{10}{20}{\kilo\gram}.
+\end{document}

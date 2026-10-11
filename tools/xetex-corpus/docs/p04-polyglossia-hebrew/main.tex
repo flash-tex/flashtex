@@ -1,0 +1,13 @@
+% polyglossia: Hebrew (RTL) with Culmus's David CLM (TeX Live's culmus)
+\documentclass{article}
+\usepackage{fontspec}
+\setmainfont{Libertinus Serif}
+\usepackage{polyglossia}
+\setmainlanguage{hebrew}
+\setotherlanguage{english}
+\newfontfamily\hebrewfont{DavidCLM-Medium.otf}[Script=Hebrew, BoldFont=DavidCLM-Bold.otf]
+\begin{document}
+\section{עברית}
+בראשית ברא אלהים את השמים ואת הארץ. והארץ היתה תהו ובהו, וחשך על פני תהום.
+\textenglish{An English phrase inside Hebrew text.} ועוד משפט בעברית עם מספר 2026.
+\end{document}

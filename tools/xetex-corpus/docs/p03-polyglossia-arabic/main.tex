@@ -1,0 +1,17 @@
+% polyglossia: Arabic (RTL) with Amiri (TeX Live's amiri)
+\documentclass{article}
+\usepackage{fontspec}
+\setmainfont{Libertinus Serif}
+\usepackage{polyglossia}
+\setmainlanguage{english}
+\setotherlanguage{arabic}
+\newfontfamily\arabicfont{Amiri-Regular.ttf}[Script=Arabic, BoldFont=Amiri-Bold.ttf]
+\begin{document}
+\section{Arabic}
+An Arabic sentence, typeset right to left:
+\begin{Arabic}
+اللغة العربية هي أكثر اللغات السامية تحدثاً، وإحدى أكثر اللغات انتشاراً في العالم.
+يتحدثها أكثر من ٤٢٢ مليون نسمة.
+\end{Arabic}
+Inline: \textarabic{مرحبا بالعالم} means ``hello, world''.
+\end{document}

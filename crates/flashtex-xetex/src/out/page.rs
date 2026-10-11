@@ -38,6 +38,14 @@ use std::collections::HashMap;
 /// DVI units.
 pub trait Metrics {
     fn tfm_char(&self, k: i32, c: u32) -> Option<(i32, i32, i32)>;
+
+    /// The whole path of native font `k`'s file. XDV's `define_native_font`
+    /// gives the path's length in one byte, as XeTeX's `makeFontDef` writes
+    /// it, so a path of 256 bytes or more arrives cut (and xdvipdfmx then
+    /// cannot open the font). The writer takes the engine's own path then.
+    fn native_path(&self, _k: i32) -> Option<Vec<u8>> {
+        None
+    }
 }
 
 /// The graphics state of the stream being built.
@@ -535,6 +543,11 @@ impl<'a, M: Metrics> Builder<'a, M> {
                         .ok_or("XDV define_native_font truncated")?
                         .to_vec();
                     i += l;
+                    // a path the one-byte length cut (Metrics::native_path)
+                    let path = match self.metrics.native_path(k) {
+                        Some(full) if full.len() > 255 => full,
+                        _ => path,
+                    };
                     let index = rd(&mut i, 4)?;
                     let rgba = if fl & XDV_FLAG_COLORED != 0 {
                         Some(rd(&mut i, 4)?)

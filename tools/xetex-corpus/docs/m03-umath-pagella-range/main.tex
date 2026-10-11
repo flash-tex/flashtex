@@ -1,0 +1,15 @@
+% unicode-math: TeX Gyre Pagella Math, with \mathscr from another math font (range=)
+\documentclass{article}
+\usepackage{amsmath}
+\usepackage{unicode-math}
+\setmainfont{texgyrepagella}[Extension=.otf, UprightFont=*-regular, BoldFont=*-bold, ItalicFont=*-italic, BoldItalicFont=*-bolditalic]
+\setmathfont{texgyrepagella-math.otf}
+\setmathfont{STIX Two Math}[range={\mathscr,\mathbfscr}]
+\setmathfont{texgyretermes-math.otf}[range=\mathbb]
+\begin{document}
+\section{Mixed math fonts}
+Script from STIX Two: $\mathscr{A}\mathscr{B}\mathscr{C}$, $\mathbfscr{L}$;
+blackboard from Termes: $\mathbb{N}\subset\mathbb{Z}\subset\mathbb{Q}\subset\mathbb{R}$.
+\[ \Gamma(z) = \int_0^\infty t^{z-1}e^{-t}\,dt, \qquad
+   \binom{n}{k} = \frac{n!}{k!\,(n-k)!}. \]
+\end{document}

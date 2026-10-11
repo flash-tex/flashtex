@@ -1,0 +1,21 @@
+% polyglossia: several European languages, csquotes, hyphenation
+\documentclass[a5paper]{article}
+\usepackage{fontspec}
+\setmainfont{texgyretermes}[Extension=.otf, UprightFont=*-regular, BoldFont=*-bold, ItalicFont=*-italic, BoldItalicFont=*-bolditalic]
+\usepackage{polyglossia}
+\setmainlanguage{english}
+\setotherlanguages{french,german,spanish}
+\usepackage[autostyle]{csquotes}
+\begin{document}
+\section{Languages}
+\enquote{English quotation.}
+\begin{french}
+\enquote{Le cœur a ses raisons que la raison ne connaît point.} Aujourd'hui : \today ; voilà !
+\end{french}
+\begin{german}
+\enquote{Donaudampfschifffahrtsgesellschaftskapitänsmützenabzeichen} ist ein langes Wort. \today.
+\end{german}
+\begin{spanish}
+¿Dónde está la biblioteca? ¡Qué bien! \enquote{Cita en español.} \today.
+\end{spanish}
+\end{document}

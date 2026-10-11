@@ -27,6 +27,66 @@ pub const LIFELINE_ENV: &str = "FLASHTEX_LIFELINE_FD";
 /// `flashtex-host-unicode --run-tool PROGRAM ARG...`.
 pub const RUN_TOOL: &str = "--run-tool";
 
+/// A tool's name after this prefix (`--run-tool flashtex:bibtex ARG...`) is
+/// the engine's own port, run in this child process ([`builtin_tool`])
+/// rather than as TeX Live's program.
+pub const BUILTIN: &str = "flashtex:";
+
+/// Whether the host runs `tool` as the engine's port: bibtex and makeindex,
+/// unless `FLASHTEX_BIBTEX=external` or `FLASHTEX_MAKEINDEX=external` asks for
+/// TeX Live's (the pdfTeX host's rule, `host::external::Programs`).
+pub fn builtin(tool: &str) -> bool {
+    match tool {
+        "bibtex" => flashtex_engine::bibtex::in_process(),
+        "makeindex" => flashtex_engine::makeindex::in_process(),
+        _ => false,
+    }
+}
+
+/// `--run-tool flashtex:TOOL ARG...`: the engine's bibtex or makeindex in
+/// this process, with the working directory and standard streams the
+/// program would have, finding files through the engine's resolver (the
+/// bundle's when there is no TeX Live). bibtex searches the directories of
+/// `BIBINPUTS` (the host's latexmk fudge: the project, then the output
+/// directory) before the resolver's path, as the pdfTeX host's in-process
+/// rule does; the bundle's resolver does not read that variable itself.
+fn builtin_tool(tool: &str, args: &[String]) -> i32 {
+    let argv: Vec<Vec<u8>> = args.iter().map(|a| a.as_bytes().to_vec()).collect();
+    flashtex_engine::system::with_resolver_for(tool, |_| ());
+    let status = match tool {
+        "makeindex" => flashtex_engine::makeindex::run_in_process(&argv),
+        "bibtex" => {
+            let first: Vec<PathBuf> = std::env::var_os("BIBINPUTS")
+                .map(|v| {
+                    std::env::split_paths(&v)
+                        .filter(|p| !p.as_os_str().is_empty())
+                        .collect()
+                })
+                .unwrap_or_default();
+            let host = flashtex_engine::bibtex::EngineHost {
+                cwd: None,
+                first,
+                stream_stdout: false,
+            };
+            let o = flashtex_bibtex::run(&argv, Box::new(host));
+            use std::io::Write;
+            let _ = std::io::stdout().write_all(&o.stdout);
+            let _ = std::io::stderr().write_all(&o.stderr);
+            o.status
+        }
+        _ => {
+            eprintln!("flashtex-host-unicode: no built-in {tool}");
+            return 127;
+        }
+    };
+    // where the C program would have died of a signal
+    if status < 0 {
+        128 + 6
+    } else {
+        status
+    }
+}
+
 /// The lifeline and this program's path: what starting a child needs.
 pub struct Children {
     exe: PathBuf,
@@ -132,6 +192,9 @@ pub fn run_tool(args: &[String]) -> i32 {
     let Some((prog, rest)) = args.split_first() else {
         return 2;
     };
+    if let Some(tool) = prog.strip_prefix(BUILTIN) {
+        return builtin_tool(tool, rest);
+    }
     match Command::new(prog).args(rest).status() {
         Ok(s) => {
             use std::os::unix::process::ExitStatusExt;

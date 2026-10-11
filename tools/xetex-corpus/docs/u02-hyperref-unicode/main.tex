@@ -1,0 +1,17 @@
+% hyperref with Unicode bookmarks, links, colours, \url
+\documentclass{article}
+\usepackage{fontspec}
+\setmainfont{texgyretermes}[Extension=.otf, UprightFont=*-regular, BoldFont=*-bold, ItalicFont=*-italic, BoldItalicFont=*-bolditalic]
+\usepackage{xcolor}
+\usepackage[colorlinks,linkcolor=blue!60!black,urlcolor=teal]{hyperref}
+\hypersetup{pdftitle={Ünïcödé Bookmarks},pdfauthor={Zoë Ångström}}
+\begin{document}
+\tableofcontents
+\section{Café and naïveté}\label{s:cafe}
+See Section~\ref{s:cafe} and \url{https://www.ctan.org/pkg/hyperref}, or
+\href{mailto:zoe@example.org}{write to Zoë}.
+\section{Ελληνικά και Русский}
+\textcolor{red}{Red}, \textcolor{blue}{blue} and \colorbox{yellow}{boxed}.
+\subsection{日本語の見出し}
+Footnote.\footnote{A footnote with a link: \url{https://tug.org}.}
+\end{document}

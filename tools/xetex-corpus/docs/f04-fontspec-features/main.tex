@@ -1,0 +1,14 @@
+% fontspec OpenType features with EB Garamond (bundle)
+\documentclass{article}
+\usepackage{fontspec}
+\setmainfont{EBGaramond}[Extension=.otf, UprightFont=*-Regular, BoldFont=*-Bold, ItalicFont=*-Italic, BoldItalicFont=*-BoldItalic, Ligatures={Common,Rare}, Numbers=OldStyle]
+\newfontfamily\liningfont{EBGaramond-Regular.otf}[Numbers={Lining,Monospaced}]
+\begin{document}
+\section*{OpenType features}
+Typography exists to honour content. Like oratory, music, dance, calligraphy -- like anything that lends its grace to language -- typography is an art that can be deliberately misused. It is a craft by which the meanings of a text (or its absence of meaning) can be clarified, honoured and shared, or knowingly disguised. In a world rife with unsolicited messages, typography must often draw attention to itself before it will be read.
+
+Rare ligatures: ct st sp. Common: fi fl ff ffi. {\liningfont Tabular lining: 0123456789.}
+\textsc{Small Capitals} and {\addfontfeatures{Letters=UppercaseSmallCaps}ALL CAPS TO SMALL}.
+Superscript: H{\addfontfeature{VerticalPosition=Superior}2}O.
+Fractions: {\addfontfeature{Fractions=On}1/2 3/4 5/8}.
+\end{document}

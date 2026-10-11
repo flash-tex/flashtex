@@ -1,0 +1,25 @@
+% fontspec with macOS system fonts: Georgia, Helvetica Neue, Menlo
+\documentclass[11pt]{article}
+\usepackage[margin=1in]{geometry}
+\usepackage{fontspec}
+\setmainfont{Georgia}
+\setsansfont{Helvetica Neue}
+\setmonofont{Menlo}[Scale=MatchLowercase]
+\title{System Fonts in Unicode Mode}
+\author{A. Writer}
+\date{11 October 2026}
+\begin{document}
+\maketitle
+\section{Body text}
+Typography exists to honour content. Like oratory, music, dance, calligraphy -- like anything that lends its grace to language -- typography is an art that can be deliberately misused. It is a craft by which the meanings of a text (or its absence of meaning) can be clarified, honoured and shared, or knowingly disguised. In a world rife with unsolicited messages, typography must often draw attention to itself before it will be read.
+
+\textbf{Bold Georgia}, \textit{italic Georgia}, \textbf{\textit{bold italic}};
+\textsf{Helvetica Neue for sans, \textbf{bold}}; \texttt{Menlo for code: x = f(y) -> z}.
+Accents: café, naïve, Ærøskøbing, Dvořák, Łódź, São Paulo, İstanbul. Quotes “double” and ‘single’,
+an en dash -- and an em dash --- and an ellipsis….
+\subsection{Numbers}
+0123456789, 1/2, 3½, €42, £7, ¥100, ©2026, §4.4, ¶, †, ‡.
+\begin{verbatim}
+fn main() { println!("Hello, world!"); }
+\end{verbatim}
+\end{document}
