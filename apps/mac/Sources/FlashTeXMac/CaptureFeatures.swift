@@ -1,12 +1,11 @@
 import Foundation
 
-/// What our compiler ACTUALLY renders today, as the `supported_features` list
-/// the Mac sends with every `capture_convert` (transfer-v1; the bridge forwards
-/// it to the conversion provider, whose prompt says "prefer the listed
-/// supported features only when faithful; report an unsupported feature
-/// instead of changing meaning"). A model otherwise returns correct LaTeX our
-/// pipeline cannot typeset (`gather*`, `\mathbb`, `\text` …) and every symbol
-/// inside cascades into errors (issue #2, Daniel's finding).
+/// What the old compiler renders, as the `supported_features` list the Mac
+/// sends with every `capture_convert` (transfer-v1). `flashtex-bridge` does
+/// not forward it: the provider gets the bridge's own list for the engine
+/// that `capture_convert.engine` names (`crates/bridge/src/features.rs`,
+/// `supported_features_for`; retirement plan #1236 §1.5, S3r). The field is
+/// still sent for wire compatibility, and S6 retires this old-engine list.
 ///
 /// Pinned to `crates/compiler/src/math.rs` `COMMAND_GLYPHS` and
 /// `crates/compiler/src/parser.rs` `BUILT_INS` / environments at

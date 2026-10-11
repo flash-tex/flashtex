@@ -13,7 +13,7 @@
      "other_preconditions": "S1 landed; #1120 closed; every live reference fixed in the same PR; the reference check with its named allowlist; packaging-selftest.sh; revert check (plan §4.3)"},
     {"id": "S3", "name": "Per-document engine choice (#1421, #1427)", "status": "partly landed (#1421, #1427)", "scoreboard_gate": ["fixtures:P-T2"],
      "other_preconditions": "none"},
-    {"id": "S3r", "name": "S3 remainder: capture features per engine, engine labels in logs and attribution tools", "status": "not started", "scoreboard_gate": ["fixtures:P-T2"],
+    {"id": "S3r", "name": "S3 remainder: capture features per engine, engine labels in logs and attribution tools", "status": "done (#1611, e75c6be5e)", "scoreboard_gate": ["fixtures:P-T2"],
      "other_preconditions": "S3"},
     {"id": "S4", "name": "Gates P5 needs (board hosted fallback and complete run, T4 on the board, T2 green on main, no-TeX-Live gate scheduled and green, T7 reference run, parity fixtures on the engine, the app row -> test check)", "status": "partly (#1461, #1563, #1574, #1336; #1598, #1605, #1609 open)", "scoreboard_gate": null,
      "other_preconditions": "none (Q1 and Q3 decided)"},
