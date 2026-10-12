@@ -758,7 +758,16 @@ impl Engine {
         let before = (self.journal.clone(), self.opens.clone());
         let mut conv: Option<crate::conv::Old> = None;
         // the convergence measurement: the edits and what changed
-        let measure = crate::conv::on() && start.in_body() && !c.no_pdf;
+        // (no test where a jump could save fewer than two pages,
+        // `conv::Globals::conv_test`: then nothing is kept for one)
+        let (from, newest) = match start {
+            Start::Page(i) => (self.pages[i].pages, self.pages.last().map(|c| c.pages)),
+            _ => (0, self.pages.last().map(|c| c.pages)),
+        };
+        let measure = crate::conv::enabled()
+            && start.in_body()
+            && !c.no_pdf
+            && newest.is_some_and(|n| n >= from + 3);
         let mut conv_changes = None;
         if measure {
             if let Some(now) = texts_then.as_ref() {
@@ -815,22 +824,56 @@ impl Engine {
                                 .iter()
                                 .map(|c| crate::conv::OldPage {
                                     pages: c.pages,
+                                    opens: c.opens,
                                     id: c.id,
                                     rec: c.rec.clone(),
                                     reads: c.reads,
                                 })
                                 .collect();
                             let tables = g.host.dl.tables();
+                            // the old run's files as it left them, before
+                            // the restore cuts them back
+                            let mut old_files = HashMap::new();
+                            for c in later {
+                                for f in &c.rec.files {
+                                    if let crate::system::Stream::Out { path, .. } = &f.stream {
+                                        if !old_files.contains_key(path) {
+                                            if let Ok(d) = std::fs::read(path) {
+                                                old_files.insert(path.clone(), Arc::new(d));
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                            let doc_pages = self
+                                .pages
+                                .last()
+                                .and_then(|p| p.out.as_ref())
+                                .map(|o| o.doc.pages.clone())
+                                .unwrap_or_default();
                             match g.restore_branch(id) {
                                 Err(e) => Err(e),
                                 Ok(branch) => {
                                     let ptrs = self
                                         .eqtb_pointers
                                         .entry(id)
-                                        .or_insert_with(|| Arc::new(crate::iso::eqtb_pointers(g)))
+                                        .or_insert_with(|| {
+                                            if crate::conv::on()
+                                                && !crate::iso::eqtb_codes_hold_no_pointer(g)
+                                            {
+                                                eprintln!(
+                                                    "[conv] UNSOUND: a code table holds a pointer"
+                                                );
+                                            }
+                                            Arc::new(crate::iso::eqtb_pointers(g))
+                                        })
                                         .clone();
                                     conv = Some(crate::conv::Old {
-                                        branch,
+                                        branch: Some(branch),
+                                        doc_pages,
+                                        old_files,
+                                        old_terminal: Arc::new(self.terminal.clone()),
+                                        jumped: None,
                                         pages: old,
                                         edits,
                                         changed,
@@ -863,8 +906,8 @@ impl Engine {
                     break;
                 }
                 Err(e) => {
-                    if let Some(c) = conv.take() {
-                        g.arena.drop_branch(c.branch);
+                    if let Some(b) = conv.take().and_then(|c| c.branch) {
+                        g.arena.drop_branch(b);
                     }
                     s0_note = Some(format!("the kept state ({}): {e}", start.name()));
                     start = match start {
@@ -1050,7 +1093,9 @@ impl Engine {
                     );
                     eprintln!("[conv] run: {}; {}", c.summary(), t);
                 }
-                g.arena.drop_branch(c.branch);
+                if let Some(b) = c.branch {
+                    g.arena.drop_branch(b);
+                }
             }
             if rep.cancelled {
                 // the output files as the last complete run left them

@@ -1067,3 +1067,91 @@ fn the_convergence_measurement_finds_a_point_that_holds() {
     );
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// The convergence jump (`crate::conv`): an edit early in a long document
+/// with labels; the restarted run converges a few pages on and goes on from
+/// the old run's newest page checkpoint. Its PDF, `.aux` and log are a run
+/// of its own's, and the next edit (from a carried checkpoint) too.
+#[test]
+fn a_converged_run_writes_what_a_run_of_its_own_writes() {
+    if !texlive() {
+        eprintln!("skipped: no TeX Live");
+        return;
+    }
+    let dir = std::env::temp_dir().join(format!("flashtex-host-jump-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    let para = "Words and more words that fill the page, again and again, until the \
+                paragraph is long enough to break into several lines of text. ";
+    let mut body = String::new();
+    for i in 1..=30 {
+        body.push_str(&format!("\\section{{Part {i}}}\\label{{p{i}}}\n"));
+        for _ in 0..4 {
+            body.push_str(&para.repeat(3));
+            body.push_str("\n\n");
+        }
+        body.push_str(&format!("See~\\ref{{p{}}}.\n\n", 31 - i));
+    }
+    let doc = format!(
+        "\\documentclass{{article}}\n\\usepackage{{fontspec}}\n\\begin{{document}}\n{body}\\end{{document}}\n"
+    );
+    let first = doc.replacen("Words and more", "Wards and more", 1);
+    let second = first.replacen("Part 25}", "Part 25 again}", 1);
+    let sub = dir.join("run");
+    let (proj, out) = project(&sub, &doc);
+    let err = sub.join("host.err");
+    let o = Path::new(&out);
+    let outputs = || {
+        (
+            std::fs::read(o.join("main.pdf")).unwrap(),
+            std::fs::read_to_string(o.join("main.aux")).unwrap(),
+            std::fs::read_to_string(o.join("main.log")).unwrap(),
+        )
+    };
+    let compile = |c: &mut Client, id: i64, text: &str| {
+        let mut r = request(id, &proj, &out);
+        r.buffers = vec![("main.tex".into(), text.to_string())];
+        c.compile(&r).unwrap();
+        events(c, id).1
+    };
+    let h = start_with(
+        &sub,
+        &[
+            ("FLASHTEX_PIN_CLOCK", "1760000000.5"),
+            ("FLASHTEX_UNICODE_CONV_DEBUG", "1"),
+        ],
+        &err,
+    );
+    let mut c = Client::connect(&h.sock).unwrap();
+    compile(&mut c, 1, &doc);
+    compile(&mut c, 2, &doc);
+    compile(&mut c, 3, &first);
+    let got1 = outputs();
+    let done = compile(&mut c, 4, &second);
+    let got2 = outputs();
+    c.bye().unwrap();
+    drop(h);
+    let log = std::fs::read_to_string(&err).unwrap();
+    assert!(log.contains("[conv] jumped"), "no jump: {log}");
+    assert!(!log.contains("UNSOUND"), "{log}");
+    for (text, got) in [(&first, got1), (&second, got2)] {
+        let h = start_with(
+            &sub,
+            &[
+                ("FLASHTEX_PIN_CLOCK", "1760000000.5"),
+                ("FLASHTEX_UNICODE_INPROCESS", "0"),
+            ],
+            &sub.join("host2.err"),
+        );
+        let mut c = Client::connect(&h.sock).unwrap();
+        // (twice: the reference's .aux settles as the measured run's did)
+        compile(&mut c, 1, text);
+        compile(&mut c, 2, text);
+        let want = outputs();
+        c.bye().unwrap();
+        drop(h);
+        assert!(got.0 == want.0, "the PDFs differ ({done:?})");
+        assert_eq!(got.1, want.1);
+        assert_eq!(got.2, want.2);
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}

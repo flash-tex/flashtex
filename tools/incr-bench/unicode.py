@@ -232,6 +232,30 @@ def comparable(frames, fix=lambda b: b):
     return out
 
 
+ACCOUNTING_BLOCK = b"Here is how much of TeX's memory you used:"
+
+
+def pt1(b):
+    """A log with DESIGN.md §1.1's P-T1 normalisation (ruled 2026-09-29):
+    the end-of-run memory block, `\\tracingstats` memory-usage lines and the
+    output's byte count are accounting, compared apart (non-gating)."""
+    out, skip = [], False
+    for line in b.split(b'\n'):
+        if line.startswith(ACCOUNTING_BLOCK):
+            skip = True
+            out.append(line)
+            continue
+        if skip:
+            if line.startswith(b' '):
+                continue
+            skip = False
+        if line.startswith(b'Memory usage before') or b'still untouched' in line:
+            continue
+        line = re.sub(rb'(Output written on .* \(\d+ pages?), \d+ bytes\)', rb'\1)', line)
+        out.append(line)
+    return b'\n'.join(out)
+
+
 def done_fields(d):
     return {k: d.get(k) for k in ('status', 'exit_code', 'pages', 'passes')}
 
@@ -385,8 +409,14 @@ def main():
             rframes, rd, _ = refhost.compile(ref, main_tex)
             want = {n: as_work(b) for n, b in snapshot(ref).items()}
             bad = []
+            accounting = []
             for name in sorted(set(got) | set(want)):
-                if got.get(name) != want.get(name):
+                a, b = got.get(name), want.get(name)
+                if a != b and name.endswith('.log') and a is not None and b is not None \
+                        and pt1(a) == pt1(b):
+                    accounting.append(name)
+                    continue
+                if a != b:
                     bad.append(name)
                     os.makedirs(os.path.join(base, 'mm'), exist_ok=True)
                     safe = re.sub(r'[^A-Za-z0-9_.-]', '_', tag)
@@ -404,6 +434,8 @@ def main():
             if done_fields(d) != done_fields(rd):
                 bad.append('done %s vs %s' % (done_fields(d), done_fields(rd)))
             r['mismatch'] = bad
+            if accounting:
+                r['accounting'] = accounting
         results.append(r)
         line = json.dumps(r)
         print(line, flush=True)
@@ -462,7 +494,8 @@ def main():
         refhost.close()
     summary = dict(doc=a.srcdir, compiles=len(results),
                    verified=sum(1 for r in results if r.get('mismatch') == []),
-                   mismatches=sum(1 for r in results if r.get('mismatch')))
+                   mismatches=sum(1 for r in results if r.get('mismatch')),
+                   accounting=sum(1 for r in results if r.get('accounting')))
     print(json.dumps(summary), flush=True)
     if not a.keep and summary['mismatches'] == 0:
         shutil.rmtree(base)

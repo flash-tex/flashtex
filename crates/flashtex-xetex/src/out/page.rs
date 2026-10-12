@@ -286,6 +286,7 @@ impl Stream {
             forms: self.forms,
             frame: std::sync::OnceLock::new(),
             forms_at: 0,
+            replay: None,
         }
     }
 }

@@ -2210,6 +2210,7 @@ mod tests {
             forms: vec![],
             frame: std::sync::OnceLock::new(),
             forms_at: 0,
+            replay: None,
         }));
         let opts = Options {
             producer: "test".into(),

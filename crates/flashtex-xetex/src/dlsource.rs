@@ -92,9 +92,20 @@ pub type Place<'a> = Option<(&'a str, u32, u64)>;
 pub struct Tables {
     spans: Vec<(u32, u32)>,
     files: Vec<String>,
+    file_ids: HashMap<Vec<u8>, u32>,
+    span_ids: HashMap<(u32, u32), u32>,
 }
 
 impl Tables {
+    /// Whether these tables begin with `other`'s first `spans` spans and
+    /// `files` files (a converged run's numbering is the old run's so far).
+    pub fn starts_like(&self, other: &Tables, (spans, files): (usize, usize)) -> bool {
+        self.spans.len() == spans
+            && self.files.len() == files
+            && other.spans.get(..spans) == Some(&self.spans[..])
+            && other.files.get(..files) == Some(&self.files[..])
+    }
+
     pub fn place(&self, l: Loc) -> Place<'_> {
         if l == 0 {
             return None;
@@ -108,6 +119,11 @@ impl Tables {
 }
 
 impl DlSnap {
+    /// How many spans and files the source map had named.
+    pub fn lens(&self) -> (usize, usize) {
+        (self.spans, self.files)
+    }
+
     /// Node `p`'s position in this snapshot.
     pub fn at(&self, p: i32) -> Loc {
         self.side.get(p as u32 as usize)
@@ -121,7 +137,18 @@ impl DlSource {
         Tables {
             spans: self.spans.clone(),
             files: self.files.clone(),
+            file_ids: self.file_ids.clone(),
+            span_ids: self.span_ids.clone(),
         }
+    }
+
+    /// Take over `t` (the convergence jump: the old run's numbering, which
+    /// a restore of one of its checkpoints then cuts back).
+    pub fn set_tables(&mut self, t: Tables) {
+        self.spans = t.spans;
+        self.files = t.files;
+        self.file_ids = t.file_ids;
+        self.span_ids = t.span_ids;
     }
 
     /// Node `p`'s position now.

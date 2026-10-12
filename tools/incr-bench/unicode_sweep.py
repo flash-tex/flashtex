@@ -67,8 +67,9 @@ with concurrent.futures.ThreadPoolExecutor(a.j) as ex:
         ins = sorted(l['instructions_m'] for l in keys if l.get('instructions_m') is not None)
         first = [(l.get('starts') or [None])[0] for l in lines[:-1]]
         s0, page = first.count('s0'), first.count('page')
-        print('%-40s %3d compiles (%d from S0, %d from a page), %d mismatches; keystroke edited page p50 %s ms, %s M instr'
-              % (name, summary['compiles'], s0, page, summary['mismatches'], med, ins[len(ins) // 2] if ins else None),
+        print('%-40s %3d compiles (%d from S0, %d from a page), %d mismatches (%d accounting only); keystroke edited page p50 %s ms, %s M instr'
+              % (name, summary['compiles'], s0, page, summary['mismatches'], summary.get('accounting', 0), med,
+                 ins[len(ins) // 2] if ins else None),
               flush=True)
         for m in mism:
             print('    %s: %s' % (m['tag'], m['mismatch']), flush=True)

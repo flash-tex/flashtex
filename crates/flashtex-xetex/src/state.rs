@@ -122,7 +122,10 @@ impl Handles {
             return;
         }
         let (slot, free) = if h >= OTHER_BASE {
-            (self.other.get_mut((h - OTHER_BASE) as usize), &mut self.other_free)
+            (
+                self.other.get_mut((h - OTHER_BASE) as usize),
+                &mut self.other_free,
+            )
         } else {
             (self.table.get_mut((h - 1) as usize), &mut self.free)
         };
@@ -150,7 +153,11 @@ impl Handles {
 
     /// How many handles refer to an object.
     pub fn live(&self) -> usize {
-        self.table.iter().chain(&self.other).filter(|s| s.is_some()).count()
+        self.table
+            .iter()
+            .chain(&self.other)
+            .filter(|s| s.is_some())
+            .count()
     }
 
     /// The glyph-info array of handle `h`.
@@ -339,6 +346,11 @@ impl Globals {
         self.host.handles = saved.handles;
         self.host.dl.restore(&saved.dl);
         Ok(b)
+    }
+
+    /// Whether the host state of checkpoint `id` is kept.
+    pub(crate) fn has_saved(&self, id: flashtex_engine::arena::CheckpointId) -> bool {
+        self.host.checkpoints.contains_key(&id)
     }
 
     /// What checkpoint `id` saved outside the word space that the live

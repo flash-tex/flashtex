@@ -309,6 +309,13 @@ pub fn page_done(g: &mut Globals, f: &mut ByteFile) {
         }
         m.consumed(end as u64);
     }
+    // (a resident run keeps what the page is built from: `Built::replay`)
+    let resident = g.host.resident.is_some();
+    let pictures: Vec<String> = if resident {
+        g.host.pictures.iter().cloned().collect()
+    } else {
+        vec![]
+    };
     out.doc.pictures.append(&mut g.host.pictures);
     let mag = g.eqtb[(int_base + mag_code - 1) as usize].int();
     let page_no = g.total_pages as u32; // already counted
@@ -320,6 +327,12 @@ pub fn page_done(g: &mut Globals, f: &mut ByteFile) {
         .map(|m| ((m.pos as i64 - start) as u32, m.span, m.col))
         .collect();
     g.host.dl.page_done();
+    let replay = (resident && missing.is_none()).then(|| doc::Replay {
+        xdv: bytes.clone(),
+        marks: marks.clone(),
+        mag,
+        pictures,
+    });
     let built = match missing {
         Some(p) => Err(format!("byte {p} of the XDV stream is not in memory")),
         None => {
@@ -329,6 +342,7 @@ pub fn page_done(g: &mut Globals, f: &mut ByteFile) {
     match built {
         Ok(mut b) => {
             b.forms_at = out.doc.forms.len();
+            b.replay = replay.map(std::sync::Arc::new);
             send_page(&mut out, &b, |spans, sent, files| {
                 g.dl_sources(spans, sent, files)
             });
@@ -337,6 +351,38 @@ pub fn page_done(g: &mut Globals, f: &mut ByteFile) {
         Err(e) => out.doc.errors.push(format!("page {page_no}: {e}")),
     }
     g.host.out = Some(out);
+}
+
+/// The convergence jump (`crate::conv`): page `page_no` built again into
+/// this run's document from what the converged run built it from
+/// ([`doc::Built::replay`]), and sent to the display list, as `page_done`
+/// does. The engine's state is the converged run's after the page (its
+/// fonts are loaded).
+pub fn replay_page(g: &mut Globals, old: &doc::Built, page_no: u32) -> Result<(), String> {
+    let r = old.replay.clone().ok_or("the page's XDV was not kept")?;
+    let mut out = g.host.out.take().ok_or("no output")?;
+    out.doc.pictures.extend(r.pictures.iter().cloned());
+    let built = page::Builder::page_marked(
+        &mut out.doc,
+        &EngineMetrics(g),
+        r.mag,
+        page_no,
+        &r.xdv,
+        r.marks.clone(),
+    );
+    match built {
+        Ok(mut b) => {
+            b.forms_at = out.doc.forms.len();
+            b.replay = Some(r);
+            send_page(&mut out, &b, |spans, sent, files| {
+                g.dl_sources(spans, sent, files)
+            });
+            out.doc.pages.push(std::sync::Arc::new(b));
+        }
+        Err(e) => out.doc.errors.push(format!("page {page_no}: {e}")),
+    }
+    g.host.out = Some(out);
+    Ok(())
 }
 
 /// The end of the run (`dvi_close`): the PDF. 0, or a nonzero driver

@@ -2234,11 +2234,50 @@ pub struct EqtbScan<'a> {
 /// The `eqtb` entries of the live state that point into `mem`
 /// ([`EqtbScan::pointers`]).
 pub fn eqtb_pointers(g: &Globals) -> Vec<i32> {
-    let high = EQTB_SIZE + 1..=EQTB_SIZE + g.hash_high;
-    (1..INT_BASE)
-        .chain(high)
-        .filter(|&p| eqtb_pointer(g.eqtb[(p - 1) as usize].to_bits()))
-        .collect()
+    use crate::generated::consts::{cat_code_base, math_code_base};
+    // (over the space's bytes, a word an entry). The character code tables
+    // (`\catcode`, `\lccode`, `\uccode`, `\sfcode`, `\mathcode`: 4.5M of
+    // XeTeX's entries) never hold a pointer: xetex.web initialises them
+    // with `eq_type` `data` (§232, "eq_type(cat_code_base):=data") and
+    // `def_code` and `XeTeX_def_code` assign them only with
+    // `define(p,data,...)` (§1232), so they are not read.
+    let Some(r) = g.arena.regions.iter().find(|r| r.name == "eqtb") else {
+        return vec![];
+    };
+    let bytes = &g.arena.bytes()[r.off..r.off + r.bytes];
+    let char_sub_code_base = math_code_base + 0x110000;
+    let ranges = [
+        (1, cat_code_base),
+        (char_sub_code_base, INT_BASE),
+        (EQTB_SIZE + 1, EQTB_SIZE + 1 + g.hash_high),
+    ];
+    let mut out = vec![];
+    for (lo, hi) in ranges {
+        let (a, b) = (
+            (lo - 1) as usize * 8,
+            ((hi - 1) as usize * 8).min(bytes.len()),
+        );
+        if a >= b {
+            continue;
+        }
+        let (words, _) = bytes[a..b].as_chunks::<8>();
+        for (i, w) in words.iter().enumerate() {
+            let x = u64::from_le_bytes(*w);
+            // (most entries hold no pointer: their type is checked first)
+            if b0(x) >= TOKS_REGISTER && eqtb_pointer(x) {
+                out.push(lo + i as i32);
+            }
+        }
+    }
+    out
+}
+
+/// Whether the character code tables hold no pointer entry, as
+/// [`eqtb_pointers`] assumes (checked with `FLASHTEX_UNICODE_CONV_DEBUG=1`).
+pub fn eqtb_codes_hold_no_pointer(g: &Globals) -> bool {
+    use crate::generated::consts::{cat_code_base, math_code_base};
+    (cat_code_base..math_code_base + 0x110000)
+        .all(|p| !eqtb_pointer(g.eqtb[(p - 1) as usize].to_bits()))
 }
 
 /// What [`Iso::check`] reads outside the word space.

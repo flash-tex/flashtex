@@ -31,7 +31,7 @@ use crate::generated::Globals;
 use crate::iso::{EqtbScan, HostSide, Iso};
 use crate::statediff::{ScalarSlot, WordDiff};
 use crate::system::Stream;
-use flashtex_engine::arena::{Branch, CheckpointId, ChunkDiff};
+use flashtex_engine::arena::{Branch, CheckpointId, ChunkDiff, CHUNK_BYTES};
 use flashtex_engine::system::ReadLog;
 use std::collections::HashSet;
 use std::sync::Arc;
@@ -40,6 +40,8 @@ use std::time::Instant;
 /// An old page checkpoint after the restart point.
 pub struct OldPage {
     pub pages: usize,
+    /// How many output opens the old run had made (`PageCk::opens`).
+    pub opens: usize,
     pub id: CheckpointId,
     pub rec: Record,
     pub reads: (usize, usize, usize),
@@ -78,8 +80,18 @@ impl Edit {
 
 /// What the restarted run needs of the last complete one.
 pub struct Old {
-    pub branch: Branch,
+    /// (taken by the jump, which keeps the old run's checkpoints)
+    pub branch: Option<Branch>,
     pub pages: Vec<OldPage>,
+    /// The old run's pages as it built them (its newest page checkpoint's
+    /// document), for the jump to build again ([`crate::out::replay_page`]).
+    pub doc_pages: Vec<Arc<crate::out::doc::Built>>,
+    /// The old run's output files as it left them (those open at one of
+    /// its page checkpoints), and its terminal.
+    pub old_files: std::collections::HashMap<String, Arc<Vec<u8>>>,
+    pub old_terminal: Arc<Vec<u8>>,
+    /// Where the jump went: (the claim's page, the page it went on from).
+    pub jumped: Option<(usize, usize)>,
     /// The user's files' edits, and every file read since S₀ that changed
     /// (an edit's or another's).
     pub edits: Vec<Edit>,
@@ -117,9 +129,21 @@ impl Old {
     }
 }
 
-/// Whether the measurement is on.
+/// Whether the measurement's notes are printed, and its claims checked
+/// at the end of the run (`FLASHTEX_UNICODE_CONV_DEBUG=1`).
 pub fn on() -> bool {
     std::env::var_os("FLASHTEX_UNICODE_CONV_DEBUG").is_some_and(|v| v != "0")
+}
+
+/// Whether a restarted run tests for convergence and jumps
+/// (`FLASHTEX_UNICODE_CONV=0` turns it off; `=measure` tests without
+/// jumping).
+pub fn enabled() -> bool {
+    std::env::var("FLASHTEX_UNICODE_CONV").map_or(true, |v| v != "0")
+}
+
+fn jumps() -> bool {
+    std::env::var("FLASHTEX_UNICODE_CONV").map_or(true, |v| v != "0" && v != "measure")
 }
 
 impl Globals {
@@ -130,16 +154,41 @@ impl Globals {
             return;
         };
         let mut c = c;
-        if c.claim.is_none() {
+        // (a test costs a few milliseconds: none where a jump could save
+        // less than two pages, and none after eight have failed)
+        let worth = c.pages.last().is_some_and(|l| l.pages >= pages + 2) && c.tests.len() < 8;
+        if c.claim.is_none() && worth {
             if let Some(i) = c.pages.iter().position(|p| p.pages == pages) {
                 let t = Instant::now();
                 let r = self.conv_check(&c, i);
                 let ms = t.elapsed().as_secs_f64() * 1e3;
-                eprintln!("[conv] page {pages}: {r:?} ({ms:.2} ms)");
-                if r.is_ok() {
-                    c.claim = Some((pages, i));
+                if on() {
+                    eprintln!("[conv] page {pages}: {r:?} ({ms:.2} ms)");
                 }
+                let ok = r.is_ok();
                 c.tests.push((pages, r, ms));
+                if ok {
+                    c.claim = Some((pages, i));
+                    if jumps() {
+                        let t = Instant::now();
+                        match self.conv_jump(&mut c, i) {
+                            Ok(to) => {
+                                c.jumped = Some((pages, to));
+                                if on() {
+                                    eprintln!(
+                                        "[conv] jumped at page {pages} to page {to} ({:.2} ms)",
+                                        t.elapsed().as_secs_f64() * 1e3
+                                    );
+                                }
+                            }
+                            Err(e) => {
+                                if on() {
+                                    eprintln!("[conv] no jump at page {pages}: {e}");
+                                }
+                            }
+                        }
+                    }
+                }
             }
         }
         if let Some(r) = self.host.resident.as_mut() {
@@ -189,6 +238,252 @@ impl Globals {
                 }
             }
         }
+    }
+
+    /// The convergence jump (DESIGN.md §5.3): the live state is the old
+    /// run's at its page checkpoint `c.pages[i]` (the test passed). Take the
+    /// old run's state over and go on from its newest page checkpoint `L`
+    /// with the same output files open and no external effect since (its
+    /// later pages, and `\end{document}`, run live again):
+    ///
+    /// * the word space: the old run's state at `c.pages[i]` adopted whole
+    ///   (the test allowed dead words, free cells and node addresses to
+    ///   differ), the old run's checkpoints from there on kept
+    ///   (`Arena::converge`), and `L` restored;
+    /// * each output file open there: the new run's bytes so far, then the
+    ///   old run's from its length at the convergence point; the terminal
+    ///   likewise; the read journal likewise;
+    /// * the source map: the old run's span and file numbering (the test
+    ///   required this run's to be the same so far);
+    /// * the document: the old run's pages after the convergence point
+    ///   built again into this run's document from their XDV bytes
+    ///   ([`crate::out::replay_page`]), and sent;
+    /// * the old run's checkpoints after the convergence point up to `L`,
+    ///   re-based (output lengths, edited files' offsets, the terminal, the
+    ///   journal's counts, output opens; each with the document as
+    ///   rebuilt), are this run's.
+    ///
+    /// `Err` before anything changed: no jump (the run goes on). A failure
+    /// after the state began to change ends the run (a panic, which the
+    /// resident engine reports as a failure and recovers from).
+    fn conv_jump(&mut self, c: &mut Old, i: usize) -> Result<usize, String> {
+        let op = &c.pages[i];
+        // `L`: the newest old page checkpoint with the convergence point's
+        // output opens and external effects
+        let j = (i..c.pages.len())
+            .rev()
+            .find(|&j| c.pages[j].opens == op.opens && c.pages[j].rec.effects == op.rec.effects)
+            .unwrap_or(i);
+        if j == i {
+            return Err("no later page checkpoint to go on from".into());
+        }
+        let l = &c.pages[j];
+        let (k, lp) = (op.pages, l.pages);
+        let old_built = c
+            .doc_pages
+            .get(k..lp)
+            .ok_or("the old run's pages are not kept")?;
+        if old_built.iter().any(|b| b.replay.is_none()) {
+            return Err("an old page's XDV is not kept".into());
+        }
+        if !self.has_saved(l.id) {
+            return Err("no host state saved with the old checkpoint".into());
+        }
+        if !c.branch.as_ref().is_some_and(|b| b.ids().contains(&op.id)) {
+            return Err("the old checkpoint is not in the branch".into());
+        }
+        let r = self.host.resident.as_ref().ok_or("not resident")?;
+        let new_ck = r.pages.last().ok_or("no page checkpoint")?;
+        let (new_rec, new_reads, new_opens) = (new_ck.rec.clone(), new_ck.reads, new_ck.opens);
+        let out = self.host.out.as_ref().ok_or("no output")?;
+        if out.doc.pages.len() != k || new_ck.pages != k {
+            return Err("the document's pages are not the run's".into());
+        }
+        let (pdf_name, pdf_open) = (out.pdf_name.clone(), out.pdf.is_some());
+        if self.host.dl.on() {
+            let (_, old_dl) = self.host_vs(op.id)?;
+            if !self.host.dl.tables().starts_like(&c.tables, old_dl.lens()) {
+                return Err("the source map numbers spans or files otherwise".into());
+            }
+        }
+        // the output files open at the convergence point: (path, new
+        // length, old length), and their bytes after the jump
+        let mut splice: Vec<(String, u64, u64)> = vec![];
+        for (a, b) in op.rec.files.iter().zip(&new_rec.files) {
+            if let (Stream::Out { path, len: ol, .. }, Stream::Out { len: nl, .. }) =
+                (&a.stream, &b.stream)
+            {
+                if !splice.iter().any(|s| s.0 == *path) {
+                    splice.push((path.clone(), *nl, *ol));
+                }
+            }
+        }
+        let mut contents = vec![];
+        for (p, nl, ol) in &splice {
+            let now = std::fs::read(p).map_err(|e| format!("{p}: {e}"))?;
+            let old = c
+                .old_files
+                .get(p)
+                .ok_or_else(|| format!("{p}: the old run's bytes are not kept"))?;
+            if (now.len() as u64) < *nl || (old.len() as u64) < *ol {
+                return Err(format!("{p} is shorter than the runs wrote"));
+            }
+            let mut v = now[..*nl as usize].to_vec();
+            v.extend_from_slice(&old[*ol as usize..]);
+            contents.push((p.clone(), v));
+        }
+        let term_delta = new_rec.terminal_len as i64 - op.rec.terminal_len as i64;
+        let reads_delta = (
+            new_reads.0 as i64 - op.reads.0 as i64,
+            new_reads.1 as i64 - op.reads.1 as i64,
+            new_reads.2 as i64 - op.reads.2 as i64,
+        );
+        let opens_delta = new_opens as i64 - op.opens as i64;
+        let remap = |rec: &Record| -> Result<Record, String> {
+            let mut r = rec.clone();
+            for f in r.files.iter_mut() {
+                match &mut f.stream {
+                    Stream::Out { path, len, prefix } => {
+                        let Some(s) = splice.iter().find(|s| s.0 == *path) else {
+                            return Err(format!("{path} was opened after the convergence point"));
+                        };
+                        if prefix.is_some() || *len < s.2 {
+                            return Err(format!("{path}: not a page checkpoint's stream"));
+                        }
+                        *len = *len - s.2 + s.1;
+                    }
+                    Stream::In { path, offset } => {
+                        if let Some(e) = c.edits.iter().find(|e| e.path == *path) {
+                            if *offset < e.old_end {
+                                return Err(format!("{path} is read before its edit later"));
+                            }
+                            *offset = (*offset as i64 + e.delta) as u64;
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            r.terminal_len = (r.terminal_len as i64 + term_delta) as usize;
+            Ok(r)
+        };
+        let shift = |n: usize, d: i64| (n as i64 + d) as usize;
+        let mut carried = vec![];
+        for p in &c.pages[i + 1..=j] {
+            carried.push(crate::ckpt::PageCk {
+                id: p.id,
+                pages: p.pages,
+                rec: remap(&p.rec)?,
+                out: None,
+                reads: (
+                    shift(p.reads.0, reads_delta.0),
+                    shift(p.reads.1, reads_delta.1),
+                    shift(p.reads.2, reads_delta.2),
+                ),
+                opens: shift(p.opens, opens_delta),
+            });
+        }
+        let l_rec = carried
+            .last()
+            .map(|p| p.rec.clone())
+            .ok_or("nothing carried")?;
+        let mut term = self.term_out.captured_bytes().to_vec();
+        if term.len() != new_rec.terminal_len
+            || c.old_terminal.len() < op.rec.terminal_len
+            || c.old_terminal.len() < l.rec.terminal_len
+        {
+            return Err("the terminal is not as the records say".into());
+        }
+        term.extend_from_slice(&c.old_terminal[op.rec.terminal_len..]);
+        let jo = c.journal.as_ref().ok_or("no journal of the old run")?;
+        if flashtex_engine::system::reads_len() != new_reads
+            || jo.files.len() < l.reads.0
+            || jo.lookups.len() < l.reads.1
+            || jo.outputs.len() < l.reads.2
+        {
+            return Err("the read journals are not as the records say".into());
+        }
+        // The old run's state at the convergence point, whole (copied out
+        // before the space changes).
+        let branch = c.branch.as_ref().ok_or("no branch")?;
+        let d = self.arena.diff_branch_all(branch, op.id)?;
+        let adopt: Vec<(usize, Vec<u8>)> = d
+            .differing
+            .iter()
+            .map(|&(ch, old, _)| {
+                // SAFETY: `old` points at a whole chunk of the old run's,
+                // unchanged until `d` is dropped (below, before any write).
+                let b = unsafe { std::slice::from_raw_parts(old as *const u8, CHUNK_BYTES) };
+                (ch as usize * CHUNK_BYTES, b.to_vec())
+            })
+            .collect();
+        drop(d);
+        let (op_id, l_id) = (op.id, l.id);
+        let (op_reads, l_reads) = (op.reads, l.reads);
+        let branch = c.branch.take().expect("checked");
+
+        // ---- from here on the state changes: a failure ends the run ----
+        let t_jump = Instant::now();
+        let fail = |what: &str, e: String| -> ! { panic!("the convergence jump: {what}: {e}") };
+        for (off, b) in &adopt {
+            self.arena.write_through(*off, b);
+        }
+        self.arena.checkpoint();
+        if let Err(e) = self.arena.converge(branch, op_id) {
+            fail("converge", e);
+        }
+        for (p, v) in contents {
+            if let Err(e) = std::fs::write(&p, v) {
+                fail(&p, e.to_string());
+            }
+        }
+        self.host.dl.set_tables(c.tables.clone());
+        if let Err(e) = self.restore(l_id) {
+            fail("restore", e);
+        }
+        if let Err(e) = self.restore_record(&l_rec, Some(&term)) {
+            fail("restore the files", e);
+        }
+        let mut jn = flashtex_engine::system::record_reads_into(None).unwrap_or_default();
+        for f in &jo.files[op_reads.0..l_reads.0] {
+            jn.files.push(f.clone());
+            jn.mark_seen(&f.path);
+        }
+        jn.lookups
+            .extend_from_slice(&jo.lookups[op_reads.1..l_reads.1]);
+        jn.outputs
+            .extend_from_slice(&jo.outputs[op_reads.2..l_reads.2]);
+        flashtex_engine::system::record_reads_into(Some(jn));
+        // the old run's pages, built again into this run's document
+        let t_state = t_jump.elapsed();
+        let (mut t_replay, mut t_snap) = (0.0, 0.0);
+        for (n, b) in old_built.to_vec().iter().enumerate() {
+            let page_no = k + n + 1;
+            let t = Instant::now();
+            if let Err(e) = crate::out::replay_page(self, b, page_no as u32) {
+                fail("replay", e);
+            }
+            t_replay += t.elapsed().as_secs_f64() * 1e3;
+            let t = Instant::now();
+            if let Some(ck) = carried.iter_mut().find(|p| p.pages == page_no) {
+                ck.out = self.host.out.as_ref().map(|o| crate::ckpt::OutSnap {
+                    doc: o.doc.clone(),
+                    pdf_name: pdf_name.clone(),
+                    pdf_open,
+                });
+            }
+            t_snap += t.elapsed().as_secs_f64() * 1e3;
+        }
+        if on() {
+            eprintln!(
+                "[conv]   jump: state {:.2} ms, {} pages built again {t_replay:.2} ms, their documents kept {t_snap:.2} ms",
+                t_state.as_secs_f64() * 1e3,
+                old_built.len()
+            );
+        }
+        if let Some(r) = self.host.resident.as_mut() {
+            r.pages.extend(carried);
+        }
+        Ok(lp)
     }
 
     fn conv_check(&mut self, c: &Old, i: usize) -> Result<usize, String> {
@@ -294,7 +589,9 @@ impl Globals {
         // 3. outside the word space, and 4. the word space
         let (old_handles, old_dl) = self.host_vs(op.id).map(|(h, d)| (h.clone(), d.clone()))?;
         let t0 = Instant::now();
-        let d = self.arena.diff_branch(&c.branch, op.id)?;
+        let d = self
+            .arena
+            .diff_branch(c.branch.as_ref().ok_or("no branch")?, op.id)?;
         let t_diff = t0.elapsed().as_secs_f64() * 1e3;
         let words = crate::statediff::words(self, &d);
         let n_words = words.len();
@@ -368,12 +665,14 @@ impl Globals {
             &mut never,
         )
         .map_err(|e| format!("structures differ: {e}"));
-        eprintln!(
-            "[conv]   diff {t_diff:.2} ms ({} chunks, {n_words} words), words {:.2} ms, walk {:.2} ms",
-            d.differing.len(),
-            (t1 - t0).as_secs_f64() * 1e3 - t_diff,
-            t1.elapsed().as_secs_f64() * 1e3
-        );
+        if on() {
+            eprintln!(
+                "[conv]   diff {t_diff:.2} ms ({} chunks, {n_words} words), words {:.2} ms, walk {:.2} ms",
+                d.differing.len(),
+                (t1 - t0).as_secs_f64() * 1e3 - t_diff,
+                t1.elapsed().as_secs_f64() * 1e3
+            );
+        }
         r
     }
 }

@@ -93,6 +93,21 @@ pub struct Built {
     pub frame: std::sync::OnceLock<Vec<u8>>,
     /// A page: how many forms had been made when it shipped.
     pub forms_at: usize,
+    /// A resident run's page: what it was built from, so that a later run
+    /// that converges with this one builds it again into its own document
+    /// (`crate::conv`, `out::replay_page`).
+    pub replay: Option<std::sync::Arc<Replay>>,
+}
+
+/// What a page was built from ([`Built::replay`]): its XDV bytes, the
+/// source map's markers in them, `\mag`, and the pictures the engine's
+/// lookup found for it.
+#[derive(Debug)]
+pub struct Replay {
+    pub xdv: Vec<u8>,
+    pub marks: Vec<(u32, u32, u16)>,
+    pub mag: i32,
+    pub pictures: Vec<String>,
 }
 
 /// A link annotation being tracked between `pdf:bann` and `pdf:eann`.
