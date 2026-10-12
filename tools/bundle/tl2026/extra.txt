@@ -50,6 +50,25 @@ polyglossia
 xecjk
 ctex
 fandol
+# Since texbundle-tl2026-4: what the Unicode corpus (tools/xetex-corpus, 39 typical
+# xelatex documents) read and the bundle lacked, found by building it with no TeX
+# Live and by `texbundle.py derive` over xelatex's -recorder files of the same
+# documents. polyglossia's right-to-left languages (Arabic, Hebrew, Persian) load
+# bidi; ctex's classes load zhnumber; older templates load xltxtra, which loads
+# xunicode and realscripts.
+bidi
+zhnumber
+xltxtra
+xunicode
+realscripts
+# OpenType fonts xelatex documents name by file (fontspec, unicode-math) that the
+# bundle lacked: CM Unicode (Cyrillic and Greek Computer Modern), XITS and XITS
+# Math, Fira Math (Fira Sans is in fira), Amiri (Arabic), Culmus (Hebrew).
+cm-unicode
+xits
+firamath
+amiri
+culmus
 # the UTF-8 hyphenation patterns xelatex.fmt loads that pdflatex.fmt reads converted
 # (the core has those): every language TeX Live's language.dat names
 dehyph-exptl

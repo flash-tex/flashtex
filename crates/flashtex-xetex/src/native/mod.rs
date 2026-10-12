@@ -371,7 +371,8 @@ impl Globals {
         }
         let mgr = self.host.font_mgr.get_or_insert_with(|| {
             Arc::new(crate::fontmgr::FontMgr::new(std::sync::Arc::new(
-                crate::fontmgr::FontCatalog::system_cached(None),
+                crate::fontmgr::FontCatalog::system_cached(None)
+                    .with_faces(crate::fontmgr::catalog::bundle_faces()),
             )))
         });
         let located = Arc::make_mut(mgr).locate(&String::from_utf8_lossy(&full), scaled_size);
@@ -379,6 +380,12 @@ impl Globals {
             return 0;
         };
         self.host.req_engine = located.req_engine;
+        // A bundle face (`fontmgr::catalog::bundle_faces`) not fetched yet.
+        if std::fs::metadata(&located.path).map_or(true, |m| m.len() == 0) {
+            if let Some(base) = std::path::Path::new(&located.path).file_name() {
+                crate::fontmgr::catalog::fetch_bundle_font(&base.to_string_lossy());
+            }
+        }
         if self.get_tracing_fonts_state() > 0 {
             // XeTeXFontMgr::findFont's diagnostic.
             self.begin_diagnostic();

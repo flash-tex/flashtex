@@ -213,6 +213,21 @@ shared runtime library crate; neither is `xetex` or xdvipdfmx.
   dependencies, `tex-text.tec` and the other TECkit mappings, and the OpenType
   fonts the defaults name (Latin Modern and Latin Modern Math, TeX Gyre). Its
   manifest gets a Unicode-mode section checked by the S3 no-TeX-Live gate.
+- **The bundle's fonts by name, with no TeX Live (owner direction, #1783;
+  a deliberate difference from macOS xelatex).** In bundle mode,
+  `\setmainfont{TeX Gyre Pagella}` finds the bundle's OpenType and TrueType
+  fonts by family, style and full name, as xelatex finds TeX Live's fonts
+  on Linux and Windows through fontconfig; macOS xelatex's Core Text search
+  does not see TeX Live's trees, so there the same document sets nothing.
+  `texbundle.py pack --font-index-tool` has `flashtex-host-unicode
+  --bundle-font-index` write the names of every face it packs
+  (`fontmgr::catalog::write_bundle_font_index`, the names the catalog reads
+  from the files) to `texmf-var/fonts/misc/flashtex/flashtex-xetex-fonts.json`,
+  FlashTeX's own generated file in the core range. The engine appends those
+  faces after the installed ones (`bundle_faces`), so an installed font of the
+  same name wins, and fetches a face's file when a lookup selects its
+  family. With a TeX Live the bundle is not used and lookups are unchanged
+  (macOS xelatex's behaviour).
 
 ### 3.5 Parity targets
 

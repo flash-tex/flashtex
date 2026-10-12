@@ -154,6 +154,9 @@ pub struct CatalogFace {
     pub names: NameCollection,
     /// Read on first use (when the face is added to a manager's maps).
     style: OnceLock<Option<StyleData>>,
+    /// A face of the bundle's font index: its file's basename, fetched
+    /// from the bundle before the style is read ([`read_bundle_font_index`]).
+    pub fetch: Option<String>,
 }
 
 impl CatalogFace {
@@ -172,6 +175,7 @@ impl CatalogFace {
             pattern: pattern_names(&records),
             names: read_names(&records, ps),
             style: OnceLock::new(),
+            fetch: None,
         })
     }
 
@@ -184,6 +188,7 @@ impl CatalogFace {
             pattern,
             names,
             style: OnceLock::new(),
+            fetch: None,
         }
     }
 
@@ -204,15 +209,19 @@ impl CatalogFace {
             pattern,
             names,
             style: cell,
+            fetch: None,
         }
     }
 
     /// `getOpSizeRecAndStyleFlags`'s inputs (`createFont` failing gives
     /// `None`, and the face keeps the defaults).
     pub fn style(&self) -> Option<StyleData> {
-        *self
-            .style
-            .get_or_init(|| read_style(&self.path, self.index))
+        *self.style.get_or_init(|| {
+            if let Some(name) = &self.fetch {
+                fetch_bundle_font(name);
+            }
+            read_style(&self.path, self.index)
+        })
     }
 }
 
@@ -386,6 +395,13 @@ impl FontCatalog {
             }
         }
         FontCatalog::scan(&dirs)
+    }
+
+    /// This catalog with `faces` after its own (the bundle's fonts after the
+    /// installed ones).
+    pub fn with_faces(mut self, faces: Vec<CatalogFace>) -> FontCatalog {
+        self.faces.extend(faces);
+        self
     }
 
     /// A catalog of faces built by the caller.
@@ -588,6 +604,209 @@ impl NameCache {
         if std::fs::write(&tmp, out).is_ok() && std::fs::rename(&tmp, path).is_err() {
             let _ = std::fs::remove_file(&tmp);
         }
+    }
+}
+
+// ---- the bundle's fonts by name (no-TeX-Live mode) ---------------------------
+//
+// With no TeX Live, the bundle's OpenType and TrueType fonts can be named
+// (`\setmainfont{TeX Gyre Pagella}`), as xelatex finds TeX Live's fonts on
+// Linux and Windows through fontconfig. This deliberately differs from
+// xelatex on macOS, whose Core Text search does not see TeX Live's trees
+// (owner direction, #1783). With a TeX Live the bundle is not used and
+// lookups are as before. The bundle is fetched file by file, so its fonts'
+// names cannot be read lazily: `texbundle.py pack` has this program write an
+// index of every face it packs ([`write_bundle_font_index`]), stored in the
+// bundle as FlashTeX's own generated file (TeX Live's files stay as they
+// are), and a face's file is fetched only when a lookup selects its family.
+
+/// The index's basename, which the bundle's resolver finds.
+pub const BUNDLE_FONT_INDEX: &str = "flashtex-xetex-fonts.json";
+/// Where the index lives in the bundle's tree.
+/// (`fonts/misc` of `TEXMFVAR`: kpathsea's `misc fonts` path finds it.)
+pub const BUNDLE_FONT_INDEX_PATH: &str = "texmf-var/fonts/misc/flashtex/flashtex-xetex-fonts.json";
+const BUNDLE_INDEX_VERSION: &str = "flashtex-xetex bundle fonts 1";
+
+/// The index of the faces of `files` (absolute paths in the tree at
+/// `root`; other than `.otf`, `.ttf` and `.ttc` files are skipped), with the
+/// names [`CatalogFace::read`] reads, in the order given; paths are written
+/// relative to `root`. Deterministic: the same files give the same bytes.
+pub fn write_bundle_font_index(root: &Path, files: &[PathBuf]) -> String {
+    use flashtex_font_discovery::json::{write, Value};
+    use std::collections::BTreeMap;
+    let arr = |v: &[String]| Value::Arr(v.iter().cloned().map(Value::Str).collect());
+    let mut faces = vec![];
+    for f in files {
+        let ext = f
+            .extension()
+            .map(|e| e.to_string_lossy().to_ascii_lowercase())
+            .unwrap_or_default();
+        if !matches!(ext.as_str(), "otf" | "ttf" | "ttc") {
+            continue;
+        }
+        let Ok(rel) = f.strip_prefix(root) else {
+            continue;
+        };
+        let n = FileBytes::open(f)
+            .ok()
+            .and_then(|src| sfnt::face_count(&src))
+            .unwrap_or(1);
+        for index in 0..n {
+            let Some(face) = CatalogFace::read(f, index) else {
+                continue;
+            };
+            let mut m = BTreeMap::new();
+            m.insert(
+                "path".into(),
+                Value::Str(rel.to_string_lossy().replace('\\', "/")),
+            );
+            m.insert("index".into(), Value::Num(f64::from(index)));
+            m.insert("pfull".into(), arr(&face.pattern.full_names));
+            m.insert("pfam".into(), arr(&face.pattern.families));
+            m.insert("pstyle".into(), arr(&face.pattern.styles));
+            m.insert("fam".into(), arr(&face.names.family_names));
+            m.insert("style".into(), arr(&face.names.style_names));
+            m.insert("full".into(), arr(&face.names.full_names));
+            m.insert("ps".into(), Value::Str(face.names.ps_name.clone()));
+            faces.push(Value::Obj(m));
+        }
+    }
+    let mut top = BTreeMap::new();
+    top.insert("version".into(), Value::Str(BUNDLE_INDEX_VERSION.into()));
+    top.insert("faces".into(), Value::Arr(faces));
+    let mut out = String::new();
+    write(&Value::Obj(top), &mut out);
+    out
+}
+
+/// The faces of a bundle font index whose tree is at `tree`: each is
+/// fetched from the bundle when its style is first read
+/// ([`CatalogFace::style`]), which happens only for the family a lookup
+/// selects. Empty for a text of another version.
+pub fn read_bundle_font_index(tree: &Path, text: &str) -> Vec<CatalogFace> {
+    use flashtex_font_discovery::json::{parse, Value};
+    let Ok(v) = parse(text) else { return vec![] };
+    if v.get("version").and_then(Value::as_str) != Some(BUNDLE_INDEX_VERSION) {
+        return vec![];
+    }
+    let strs = |v: Option<&Value>| -> Option<Vec<String>> {
+        v?.as_arr()?
+            .iter()
+            .map(|s| s.as_str().map(str::to_string))
+            .collect()
+    };
+    let mut out = vec![];
+    for e in v.get("faces").and_then(Value::as_arr).unwrap_or(&[]) {
+        let face = (|| {
+            let rel = e.get("path")?.as_str()?;
+            // a relative path inside the tree only
+            if rel.starts_with('/') || rel.split('/').any(|c| c == ".." || c.is_empty()) {
+                return None;
+            }
+            let mut f = CatalogFace::from_cache(
+                tree.join(rel),
+                e.get("index")?.as_u64()? as u32,
+                PatternNames {
+                    full_names: strs(e.get("pfull"))?,
+                    families: strs(e.get("pfam"))?,
+                    styles: strs(e.get("pstyle"))?,
+                },
+                NameCollection {
+                    family_names: strs(e.get("fam"))?,
+                    style_names: strs(e.get("style"))?,
+                    full_names: strs(e.get("full"))?,
+                    ps_name: e.get("ps")?.as_str()?.to_string(),
+                },
+            );
+            f.fetch = Some(rel.rsplit('/').next()?.to_string());
+            Some(f)
+        })();
+        out.extend(face);
+    }
+    out
+}
+
+/// The bundle's faces, when the engine's files come from a bundle that has
+/// the index; none otherwise (with a TeX Live, or a bundle before
+/// texbundle-tl2026-4).
+pub fn bundle_faces() -> Vec<CatalogFace> {
+    use flashtex_engine::resolver::Format;
+    let Some(found) = flashtex_engine::system::find_file(BUNDLE_FONT_INDEX, Format::MiscFonts)
+    else {
+        return vec![];
+    };
+    let found = found.replace('\\', "/");
+    let Some(tree) = found.strip_suffix(BUNDLE_FONT_INDEX_PATH) else {
+        return vec![];
+    };
+    let Ok(text) = std::fs::read_to_string(&found) else {
+        return vec![];
+    };
+    read_bundle_font_index(Path::new(tree), &text)
+}
+
+/// Fetches a bundle face's file (by its basename, through the engine's
+/// resolver, which fetches from the bundle); its path, if it is there.
+pub fn fetch_bundle_font(name: &str) -> Option<PathBuf> {
+    use flashtex_engine::resolver::Format;
+    flashtex_engine::system::find_file(name, Format::OpenType)
+        .or_else(|| flashtex_engine::system::find_file(name, Format::TrueType))
+        .map(PathBuf::from)
+}
+
+#[cfg(test)]
+mod bundle_index_tests {
+    use super::*;
+
+    /// The index holds every face of the font files given, with the names
+    /// the catalog reads from the files; read back under another tree it
+    /// gives the same names at the same relative paths, other files and
+    /// paths that leave the tree are skipped.
+    #[test]
+    fn the_index_round_trips() {
+        let dir = std::env::temp_dir().join(format!("ftx-bfi-{}", std::process::id()));
+        let fonts = dir.join("texmf-dist/fonts/opentype/x");
+        std::fs::create_dir_all(&fonts).unwrap();
+        let src = [
+            "/System/Library/Fonts/Supplemental/Georgia.ttf",
+            "/System/Library/Fonts/Menlo.ttc",
+        ];
+        let mut files = vec![];
+        for s in src {
+            let s = Path::new(s);
+            if !s.is_file() {
+                eprintln!("skipped: no {}", s.display());
+                return;
+            }
+            let d = fonts.join(s.file_name().unwrap());
+            std::fs::copy(s, &d).unwrap();
+            files.push(d);
+        }
+        std::fs::write(fonts.join("README"), "x").unwrap();
+        files.push(fonts.join("README"));
+        let text = write_bundle_font_index(&dir, &files);
+        assert_eq!(text, write_bundle_font_index(&dir, &files), "deterministic");
+        let tree = Path::new("/elsewhere/tree");
+        let faces = read_bundle_font_index(tree, &text);
+        let direct = FontCatalog::from_files(files[..2].iter().flat_map(|f| {
+            let n = FileBytes::open(f)
+                .ok()
+                .and_then(|s| sfnt::face_count(&s))
+                .unwrap();
+            (0..n).map(move |i| (f.clone(), i))
+        }));
+        assert_eq!(faces.len(), direct.len());
+        assert!(faces.len() >= 3, "Georgia and Menlo's faces");
+        for (a, b) in faces.iter().zip(direct.faces()) {
+            assert_eq!(a.names, b.names);
+            assert_eq!(a.pattern, b.pattern);
+            assert_eq!(a.index, b.index);
+            assert_eq!(a.path, tree.join(b.path.strip_prefix(&dir).unwrap()));
+            assert!(a.fetch.is_some());
+        }
+        let bad = text.replace("texmf-dist/fonts", "../fonts");
+        assert!(read_bundle_font_index(tree, &bad).is_empty());
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
 

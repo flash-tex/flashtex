@@ -3,5 +3,20 @@
 # Contents/Resources/engine/flashtex-bundle.lock (apps/mac/scripts/make-app.sh);
 # nothing is fetched before the user agrees. bundle-publish.yml publishes exactly
 # this digest at this URL, and refuses any other.
-url = "https://github.com/flash-tex/flashtex/releases/download/texbundle-tl2026-3/texlive2026.ttb"
-digest = "dc72dde1f67c44fabe55a4aebc72eb19c23b66b4d0f063d2cf54398719d7df11"
+url = "https://github.com/flash-tex/flashtex/releases/download/texbundle-tl2026-4/texlive2026.ttb"
+digest = "d27b99d9b2dd301bafa934a77ce2bf67e4cf646a0c071e313f19dd1d489650b1"
+# biber with no TeX Live (#1782/#1798, crates/flashtex-engine/src/bundle/biber.rs): TeX Live
+# 2026's biber 2.22 per platform, unmodified, gzipped (tools/bundle/biber.py, tl2026/biber.txt),
+# in its own release; fetched only after the user agrees, checked against these SHA-256s.
+biber_url_aarch64_linux = "https://github.com/flash-tex/flashtex/releases/download/biber-2.22-tl2026-1/biber-aarch64-linux.gz"
+biber_sha256_aarch64_linux = "7027d103004cb3c8c0ecb1ba9db3cd2b64c610dcffd774a2a0bdaf6fb4740be1"
+biber_size_aarch64_linux = "33568101"
+biber_url_universal_darwin = "https://github.com/flash-tex/flashtex/releases/download/biber-2.22-tl2026-1/biber-universal-darwin.gz"
+biber_sha256_universal_darwin = "c85498a5a752c17897bc71c3fab25bbe7616299f96e259fba503ce8c689e3b18"
+biber_size_universal_darwin = "73487178"
+biber_url_windows = "https://github.com/flash-tex/flashtex/releases/download/biber-2.22-tl2026-1/biber-windows.gz"
+biber_sha256_windows = "f145d1ed1e209ace94dafbb756bb1829e959d30e14c0675ce8a56c4ced71bf39"
+biber_size_windows = "25626527"
+biber_url_x86_64_linux = "https://github.com/flash-tex/flashtex/releases/download/biber-2.22-tl2026-1/biber-x86_64-linux.gz"
+biber_sha256_x86_64_linux = "e22405201d05e7c9d615b4ea58a5e2f0647f2d33a70185014ccfed88ba0bf9ba"
+biber_size_x86_64_linux = "27044004"

@@ -116,6 +116,8 @@ jobs:
           key: bundle-publish
       - name: the engine and flashtex-dist
         run: cargo build --release --locked -p flashtex-engine --bin flashtex-initex --bin flashtex-dist
+      - name: flashtex-host-unicode (writes Unicode mode's font-name index, #1783)
+        run: cargo build --release --locked --manifest-path crates/flashtex-xetex/Cargo.toml --bin flashtex-host-unicode
       - name: the core list is what the engine reads over this tree
         run: |
           set -euo pipefail
@@ -130,8 +132,10 @@ jobs:
           set -euo pipefail
           mkdir -p dist "$RUNNER_TEMP/b"
           python3 tools/bundle/texbundle.py pack --root "$TL" --dist target/release/flashtex-dist \
+            --font-index-tool crates/flashtex-xetex/target/release/flashtex-host-unicode \
             --out "$RUNNER_TEMP/b/a.ttb" --json "$RUNNER_TEMP/b/a.json"
           python3 tools/bundle/texbundle.py pack --root "$TL" --dist target/release/flashtex-dist \
+            --font-index-tool crates/flashtex-xetex/target/release/flashtex-host-unicode \
             --out "$RUNNER_TEMP/b/b.ttb" --json dist/pack.json
           cmp "$RUNNER_TEMP/b/a.ttb" "$RUNNER_TEMP/b/b.ttb"
           got="$(python3 -c 'import json; print(json.load(open("dist/pack.json"))["digest"])')"

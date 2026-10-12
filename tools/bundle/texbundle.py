@@ -66,6 +66,9 @@ MANIFESTS = {
 # Reproducible runs, as tools/parity and scripts/engine-parity.sh.
 DATE_ENV = {"SOURCE_DATE_EPOCH": "0", "FORCE_SOURCE_DATE": "1"}
 PASSES = 3
+# Unicode mode's index of the bundle's fonts by name (crates/flashtex-xetex
+# fontmgr::catalog::BUNDLE_FONT_INDEX_PATH), generated at pack time.
+FONT_INDEX = "texmf-var/fonts/misc/flashtex/flashtex-xetex-fonts.json"
 PASS_TIMEOUT = 300
 HELLO = "\\documentclass{article}\n\\begin{document}\nHello, world.\n\\end{document}\n"
 
@@ -507,6 +510,25 @@ def cmd_pack(a):
         with open(core_lst, "w") as f:
             for c in core:
                 f.write(os.path.join(root, c) + "\n")
+        if a.font_index_tool:
+            # Unicode mode's font-name index of the bundle's OpenType and
+            # TrueType fonts (no-TeX-Live mode names them, #1783): FlashTeX's
+            # own generated file in the tree's texmf-var, packed in the core
+            # range, read by fontmgr::catalog::bundle_faces.
+            fonts_lst = os.path.join(work, "fonts.lst")
+            with open(fonts_lst, "w") as f:
+                for p in packages:
+                    for rel in db[p]["runfiles"]:
+                        if rel.lower().endswith((".otf", ".ttf", ".ttc")) and os.path.isfile(os.path.join(root, rel)):
+                            f.write(os.path.join(root, rel) + "\n")
+            index = os.path.join(root, FONT_INDEX)
+            r = subprocess.run([a.font_index_tool, "--bundle-font-index", root, fonts_lst, index],
+                               capture_output=True, text=True)
+            if r.returncode != 0:
+                die(f"the font index failed: {r.stderr.strip()}")
+            for lst in (reads, core_lst):
+                with open(lst, "a") as f:
+                    f.write(index + "\n")
         env = dict(os.environ, FLASHTEX_TEXLIVE_BIN=texlive_bin(root))
         r = subprocess.run([a.dist, "bundle-pack", "--out", a.out, "--read", reads, "--read", core_lst,
                             "--core-read", core_lst, "--tlpdb", tlpdb_path, "--whole-packages"],
@@ -940,6 +962,8 @@ def main():
     s.add_argument("--core", default=os.path.join(DATA, "core.txt"))
     s.add_argument("--out", required=True)
     s.add_argument("--json")
+    s.add_argument("--font-index-tool",
+                   help="flashtex-host-unicode: write and pack Unicode mode's font-name index (since -4)")
     s = sub.add_parser("lock")
     s.add_argument("--lock", default=LOCK)
     s = sub.add_parser("notes")

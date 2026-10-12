@@ -136,6 +136,9 @@ pub fn main(argv: Vec<String>) -> i32 {
     if matches!(name.as_str(), "xetex" | "xelatex") {
         crate::driver::run(argv);
     }
+    if argv.get(1).map(String::as_str) == Some("--bundle-font-index") {
+        return bundle_font_index(&argv[2..]);
+    }
     if argv.get(1).map(String::as_str) == Some(proc::RUN_TOOL) {
         return proc::run_tool(&argv[2..]);
     }
@@ -165,6 +168,37 @@ pub fn main(argv: Vec<String>) -> i32 {
     let (texmf, formats) = prepare(&exe, &opts, &children);
     println!("flashtex-host-unicode: {texmf}");
     serve(&exe, &opts, texmf, formats, children)
+}
+
+/// `--bundle-font-index ROOT LIST OUT`: the bundle's font-name index
+/// (`fontmgr::catalog::write_bundle_font_index`) of the files LIST names
+/// (absolute paths in the tree at ROOT, one a line), written to OUT.
+/// `tools/bundle/texbundle.py pack` runs it.
+fn bundle_font_index(args: &[String]) -> i32 {
+    let [root, list, out] = args else {
+        eprintln!("usage: flashtex-host-unicode --bundle-font-index ROOT LIST OUT");
+        return 2;
+    };
+    let Ok(text) = std::fs::read_to_string(list) else {
+        eprintln!("flashtex-host-unicode: cannot read {list}");
+        return 1;
+    };
+    let files: Vec<PathBuf> = text
+        .lines()
+        .filter(|l| !l.is_empty())
+        .map(PathBuf::from)
+        .collect();
+    let index = crate::fontmgr::catalog::write_bundle_font_index(Path::new(root), &files);
+    if let Some(d) = Path::new(out).parent() {
+        let _ = std::fs::create_dir_all(d);
+    }
+    match std::fs::write(out, index) {
+        Ok(()) => 0,
+        Err(e) => {
+            eprintln!("flashtex-host-unicode: {out}: {e}");
+            1
+        }
+    }
 }
 
 /// The TeX Live the engine reads and each format made ready: `HELLO.texmf`
