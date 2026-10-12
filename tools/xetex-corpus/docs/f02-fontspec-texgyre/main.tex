@@ -1,0 +1,18 @@
+% fontspec with TeX Live's TeX Gyre fonts by name, and microtype (protrusion). xelatex
+% finds them by name through fontconfig (Linux, Windows) but not through Core Text (macOS)
+\documentclass[11pt,a4paper]{article}
+\usepackage{fontspec}
+\setmainfont{TeX Gyre Pagella}
+\setsansfont{TeX Gyre Heros}[Scale=MatchLowercase]
+\setmonofont{TeX Gyre Cursor}
+\usepackage{microtype}
+\usepackage{lipsum}
+\begin{document}
+\section{Pagella, Heros and Cursor}
+Typography exists to honour content. Like oratory, music, dance, calligraphy -- like anything that lends its grace to language -- typography is an art that can be deliberately misused. It is a craft by which the meanings of a text (or its absence of meaning) can be clarified, honoured and shared, or knowingly disguised. In a world rife with unsolicited messages, typography must often draw attention to itself before it will be read.
+
+\textsc{Small Capitals}, \textit{italic}, \textbf{bold}, \textsf{sans serif}, \texttt{monospace}.
+Ligatures: office, affluent, ffi ffl. Figures: 1234567890.
+
+\lipsum[1-3]
+\end{document}

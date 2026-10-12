@@ -31,6 +31,7 @@
 //!   so a pinned default ships as data beside the program. There is no
 //!   built-in default: where bundles are hosted is the owner's decision.
 
+pub mod biber;
 pub mod build;
 pub mod fetch;
 pub mod gz;

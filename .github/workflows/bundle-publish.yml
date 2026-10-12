@@ -163,6 +163,27 @@ jobs:
           path: dist/
           retention-days: 14
           compression-level: 0
+      - name: biber for no-TeX-Live documents (#1782), its own release assets
+        run: |
+          set -euo pipefail
+          # TeX Live's biber containers, checked against tl2026/biber.txt's SHA-512
+          # pins and against this tree's biber version (it must match biblatex).
+          python3 tools/bundle/biber.py fetch --tlpdb "$TL/tlpkg/texlive.tlpdb" --out dist-biber \
+            | tee "$RUNNER_TEMP/biber-lock.txt"
+          (cd dist-biber && sha256sum -- * > SHA256SUMS)
+          { echo '### biber: the lock lines for flashtex-bundle.lock'; echo '```'
+            cat "$RUNNER_TEMP/biber-lock.txt"; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+          # A lock that pins biber must pin these very assets.
+          if grep -q '^biber_' tools/bundle/tl2026/flashtex-bundle.lock; then
+            diff <(grep '^biber_' tools/bundle/tl2026/flashtex-bundle.lock | sort) <(sort "$RUNNER_TEMP/biber-lock.txt") ||
+              { echo "::error::the lock's biber pins are not these assets; write the lines above into it"; exit 1; }
+          fi
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: biber
+          path: dist-biber/
+          retention-days: 14
+          compression-level: 0
 
   gate:
     name: no-TeX-Live gate on the packed bundle
@@ -212,6 +233,23 @@ jobs:
           assets=(); for f in *; do [[ "$f" == notes.md || "$f" == pack.json ]] || assets+=("$f"); done
           gh release create "$TAG" "${assets[@]}" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
             --title "TeX Live 2026 bundle ($TAG)" --notes-file notes.md --latest=false
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: biber
+          path: dist-biber
+      - name: create the biber release (once; an existing one is kept)
+        run: |
+          set -euo pipefail
+          cd dist-biber
+          sha256sum -c SHA256SUMS
+          tag="$(python3 -c 'import json; print(json.load(open("biber.json"))["tag"])')"
+          ver="$(python3 -c 'import json; print(json.load(open("biber.json"))["version"])')"
+          if gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "biber release $tag exists; kept" >> "$GITHUB_STEP_SUMMARY"; exit 0
+          fi
+          gh release create "$tag" biber-*.gz biber-*-source.tar.xz biber-NOTICE.txt SHA256SUMS \
+            --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
+            --title "biber $ver for FlashTeX (TeX Live 2026, unmodified)" --notes-file biber-NOTICE.txt --latest=false
       - name: the lock's URL serves byte ranges of the packed file
         env:
           URL: ${{ needs.pack.outputs.url }}

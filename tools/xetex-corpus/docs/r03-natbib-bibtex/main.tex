@@ -1,0 +1,12 @@
+% natbib with bibtex and plainnat
+\documentclass{article}
+\usepackage{fontspec}
+\setmainfont{Libertinus Serif}
+\usepackage[round]{natbib}
+\begin{document}
+\citet{knuth1984} introduced literate programming; \LaTeX{} is described by \citet{lamport1994}.
+XeTeX brought Unicode \citep{kew2005}. Typography \citep[ch.~2]{bringhurst2004}.
+Diacritics \citep{muller2020}.
+\bibliographystyle{plainnat}
+\bibliography{refs}
+\end{document}

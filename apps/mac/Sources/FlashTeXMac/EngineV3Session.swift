@@ -56,6 +56,8 @@ final class EngineV3Session {
     private(set) var bundleProgressNote: String?
     /// The first-download consent sheet is up (EngineV3BundleSheet; ContentView attaches it).
     var bundleConsentShown = false
+    /// A document needs biber and the pinned one may be downloaded: ask (ContentView's alert).
+    var biberConsentShown = false
     /// The bundle the sheet asks about.
     private(set) var bundleConsentConfig: EngineV3Bundle.Config?
     /// Last compile outcome, for the pane's status line.
@@ -520,6 +522,17 @@ final class EngineV3Session {
             environmentNote = ""
             model?.engineV3BundleDeclined()
         }
+    }
+
+    /// The biber alert's answer: download (the host restarts allowed to
+    /// fetch exactly the pinned biber, and the documents compile again), or
+    /// not now (the bibliography stays as it is; asked again next time).
+    func answerBiberConsent(_ download: Bool) {
+        biberConsentShown = false
+        log("biber download: \(download ? "allowed" : "not now")")
+        guard download, let p = EngineV3Biber.currentPin() else { return }
+        EngineV3Biber.setConsent(p)
+        restart("biber download allowed")
     }
 
     func stop() {
@@ -1656,6 +1669,9 @@ final class EngineV3Session {
             if let model { publishProblems(model: model) }
         case "skip":
             toolNote = "\(name)\(file) not run: \(j["reason"]?.string ?? "skipped")"
+            if EngineV3Biber.isConsentRequest(j["reason"]?.string ?? ""), let p = EngineV3Biber.currentPin(), !EngineV3Biber.consented(p) {
+                biberConsentShown = true
+            }
         case "settled":
             if let cycle = toolsCycleID, id >= cycle { toolsCycleID = nil }
             lastSettledID = max(lastSettledID, id)

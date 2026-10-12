@@ -107,6 +107,24 @@ Release asset downloads redirect to a CDN that answers `Range` requests with 206
 
 `apps/mac/scripts/make-app.sh` copies the lock into `Contents/Resources/engine/`.
 
+## biber, fetched on demand (#1782)
+
+biblatex's default backend, biber, is a Perl program TeX Live ships as one executable per
+platform; FlashTeX runs bibtex and makeindex itself but not biber. With no TeX Live,
+`bundle publish` mirrors TeX Live 2026's biber as a **separate release** (`tl2026/biber.txt`
+names its tag, version and the SHA-512 of each TeX Live container; `tools/bundle/biber.py`
+checks them and that the bundle's tree has the same biber version, so it agrees with
+biblatex): per platform (`universal-darwin`, `x86_64-linux`, `aarch64-linux`, `windows`) the
+executable, unmodified, gzipped; the source container; and a notice (Artistic License 2.0). The
+lock pins each asset (`biber_url_<arch>`, `biber_sha256_<arch>`, `biber_size_<arch>`, with `_` for `-` in
+`<arch>`: the lines the pack job prints). The first time a document needs biber (its run wrote a `.bcf`)
+the host skips it with "FlashTeX will download biber (~70 MB) to build this bibliography";
+the app asks, and a yes restarts the host with `FLASHTEX_BIBER_ALLOW_FETCH=<sha256>@<url>`
+for exactly the pinned asset. The host (`bundle::biber::ensure`, both hosts) then fetches it,
+checks its SHA-256, keeps it in the bundle cache under that digest, and runs it as it runs
+TeX Live's biber: a child process, with external tools on (a trusted project). Publishing the
+biber release is the owner's step, with the bundle's.
+
 ## The gate
 
 `texbundle.py gate` (in `notex-gate.yml`, GitHub-hosted macOS, no TeX Live; the engine under

@@ -152,6 +152,14 @@ fn default_paper() -> Option<(
 struct EngineMetrics<'g>(&'g Globals);
 
 impl page::Metrics for EngineMetrics<'_> {
+    fn native_path(&self, k: i32) -> Option<Vec<u8>> {
+        let f = k + font_base + 1;
+        if f < 0 || f > self.0.font_ptr {
+            return None;
+        }
+        self.0.font_engine(f).map(|e| e.font.filename.clone())
+    }
+
     fn tfm_char(&self, k: i32, c: u32) -> Option<(i32, i32, i32)> {
         let g = self.0;
         // dvi_font_def numbers font f as f - font_base - 1

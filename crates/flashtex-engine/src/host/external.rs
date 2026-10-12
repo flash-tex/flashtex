@@ -171,12 +171,23 @@ impl Programs {
     }
 
     /// How a rule of `t` runs: in-process ([`Programs::in_process`]), else
-    /// as the TeX Live program, if there is one.
+    /// as the TeX Live program, if there is one, else (biber) as the pinned
+    /// biber already fetched (`bundle::biber`; fetching is the worker's,
+    /// [`fetch_biber`]).
     fn runner(&self, t: Tool) -> Option<Runner> {
         if Self::in_process(t) {
             return Some(Runner::InProcess);
         }
-        self.get(t).cloned().map(Runner::Program)
+        self.get(t).cloned().map(Runner::Program).or_else(|| {
+            #[cfg(feature = "distribution")]
+            if t == Tool::Biber {
+                let spec = crate::bundle::biber::configured()?;
+                let cache = crate::bundle::default_cache_dir()?;
+                let exe = crate::bundle::biber::cached_path(&cache, &spec);
+                return exe.is_file().then_some(Runner::Program(exe));
+            }
+            None
+        })
     }
 
     /// Why no rule of `t` can run (no in-process port and no program).
@@ -221,6 +232,18 @@ impl Programs {
             ("makeindex", p(Tool::Makeindex, &self.makeindex)),
         ])
     }
+}
+
+/// With no TeX Live biber: the pinned biber, fetched now if the user agreed
+/// (`bundle::biber::ensure`, on the tools' worker thread), or why not. None
+/// for the other tools.
+fn fetch_biber(t: Tool) -> Option<Result<PathBuf, String>> {
+    #[cfg(feature = "distribution")]
+    if t == Tool::Biber {
+        return Some(crate::bundle::biber::ensure());
+    }
+    let _ = t;
+    None
 }
 
 /// The host's settings for external tools.
@@ -725,8 +748,17 @@ impl Job {
                 skip(format!("not found: {}", missing.join(", ")));
                 continue;
             }
-            let Some(prog) = self.cfg.programs.runner(r.key.tool) else {
-                skip(self.cfg.programs.missing(r.key.tool));
+            let prog = self.cfg.programs.runner(r.key.tool);
+            let (prog, why) = match prog {
+                Some(p) => (Some(p), None),
+                None => match fetch_biber(r.key.tool) {
+                    Some(Ok(p)) => (Some(Runner::Program(p)), None),
+                    Some(Err(e)) => (None, Some(e)),
+                    None => (None, None),
+                },
+            };
+            let Some(prog) = prog else {
+                skip(why.unwrap_or_else(|| self.cfg.programs.missing(r.key.tool)));
                 // remembered: not retried until the sources change
                 self.memory
                     .lock()

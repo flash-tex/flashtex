@@ -69,6 +69,10 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "aedcfb3409746eddb02b9e19ebda1c3394f759a152e48ee875a0844d1b955484"
 
 [[package]]
+name = "flashtex-bibtex"
+version = "0.1.0"
+
+[[package]]
 name = "flashtex-display-list"
 version = "0.1.0"
 
@@ -77,8 +81,10 @@ name = "flashtex-engine"
 version = "0.1.0"
 dependencies = [
  "cc",
+ "flashtex-bibtex",
  "flashtex-display-list",
  "flashtex-engine-build-id",
+ "flashtex-makeindex",
  "flashtex-runtime",
  "libc",
  "sha2",
@@ -94,6 +100,13 @@ dependencies = [
 [[package]]
 name = "flashtex-font-discovery"
 version = "0.1.0"
+
+[[package]]
+name = "flashtex-makeindex"
+version = "0.1.0"
+dependencies = [
+ "libc",
+]
 
 [[package]]
 name = "flashtex-pdf"
@@ -117,6 +130,7 @@ dependencies = [
 name = "flashtex-xetex"
 version = "0.1.0"
 dependencies = [
+ "flashtex-bibtex",
  "flashtex-display-list",
  "flashtex-engine",
  "flashtex-font-discovery",

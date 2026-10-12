@@ -303,6 +303,8 @@ final class EngineV3HostProcess: @unchecked Sendable {
         }
         // The bundle (no TeX Live): the lock the app found, offline until the user agreed.
         EngineV3Bundle.hostEnvironment(&env, host: executable)
+        // biber with no TeX Live: only the pinned one the user agreed to download.
+        EngineV3Biber.hostEnvironment(&env, host: executable)
         return env
     }
 

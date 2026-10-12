@@ -1,0 +1,16 @@
+% unicode-math with its default, Latin Modern Math
+\documentclass{article}
+\usepackage{amsmath}
+\usepackage{unicode-math}
+\begin{document}
+\section{Unicode math}
+Direct Unicode input: $α + β = γ$, $∀x ∈ ℝ: x² ≥ 0$, $A ⊆ B ∪ C$.
+\begin{align}
+  \int_0^\infty e^{-x^2}\,dx &= \frac{\sqrt{\pi}}{2}, \\
+  \sum_{n=1}^{\infty} \frac{1}{n^2} &= \frac{\pi^2}{6}, \\
+  \mathbf{F} &= m\mathbf{a}, \quad \symbf{\nabla}\cdot\symbf{E} = \frac{\rho}{\varepsilon_0}.
+\end{align}
+Alphabets: $\mathbb{R}, \mathcal{L}, \mathfrak{g}, \mathscr{H}, \mathsf{X}, \mathtt{y}$.
+\[ \det\begin{pmatrix} a & b\\ c & d\end{pmatrix} = ad - bc, \qquad
+   \lim_{h\to0}\frac{f(x+h)-f(x)}{h} = f'(x). \]
+\end{document}

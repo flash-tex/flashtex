@@ -230,7 +230,7 @@ impl Globals {
     }
 
     /// The layout engine of font `f`.
-    fn font_engine(&self, f: i32) -> Option<Arc<LayoutEngine>> {
+    pub(crate) fn font_engine(&self, f: i32) -> Option<Arc<LayoutEngine>> {
         if f < 0 || self.font_area[f as usize] != otgr_font_flag {
             return None;
         }

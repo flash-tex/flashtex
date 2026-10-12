@@ -1,6 +1,9 @@
 //! External tools for the Unicode host (spec §6.4, "External tools"):
-//! bibtex, biber and makeindex from the user's TeX Live, when latexmk's
-//! rules say a compile needs them, then a follow-up compile.
+//! bibtex, biber and makeindex, when latexmk's rules say a compile needs
+//! them, then a follow-up compile. bibtex and makeindex are the engine's
+//! own ports, run in a child of this program (`proc::builtin`), so they
+//! need no TeX Live, as in the pdfTeX host; biber is the user's TeX Live
+//! program.
 //!
 //! The rules (latexmk 4.87's, as the pdfTeX host applies them; the pdfTeX
 //! host's own implementation, `flashtex_engine::host::external`, is bound
@@ -71,6 +74,29 @@ fn aux_lines(aux: &str) -> (String, Vec<String>) {
     (rel, bibs)
 }
 
+/// Where bibtex finds database `name` (with its `.bib`), as the pdfTeX
+/// host's rule looks (`host::external`, latexmk's `$bibtex_fudge`): the
+/// project, the output directory (biblatex's `JOB-blx.bib` with
+/// `backend=bibtex`), then the TeX tree through the engine's resolver (the
+/// bundle's without a TeX Live: `xampl.bib`, `biblatex-examples.bib`).
+fn find_bib(job: &Job, name: &str) -> Option<PathBuf> {
+    let p = Path::new(name);
+    if p.is_absolute() {
+        return Some(p.to_path_buf()).filter(|p| p.is_file());
+    }
+    for d in [&job.root, &job.output_dir] {
+        let c = d.join(p);
+        if c.is_file() {
+            return Some(c);
+        }
+    }
+    flashtex_engine::system::with_resolver_for("xelatex", |r| {
+        r.find_ex(name, flashtex_engine::resolver::Format::Bib, true)
+            .0
+    })
+    .filter(|p| p.is_absolute() && p.is_file())
+}
+
 fn rules(job: &Job) -> Vec<Rule> {
     let out = &job.output_dir;
     let jn = &job.jobname;
@@ -102,9 +128,9 @@ fn rules(job: &Job) -> Vec<Rule> {
                 } else {
                     format!("{b}.bib")
                 };
-                match std::fs::read(job.root.join(&name)) {
-                    Ok(d) => state.extend_from_slice(&sha256(&d)),
-                    Err(_) => missing.push(name),
+                match find_bib(job, &name).and_then(|p| std::fs::read(p).ok()) {
+                    Some(d) => state.extend_from_slice(&sha256(&d)),
+                    None => missing.push(name),
                 }
             }
             v.push(Rule {
@@ -243,8 +269,29 @@ pub fn after_compile(
             skip(&format!("{} not found", r.missing.join(", ")), memory);
             continue;
         }
-        let Some(prog) = program(programs, r.tool) else {
-            skip(&format!("{} is not installed", r.tool), memory);
+        let builtin = super::proc::builtin(r.tool)
+            .then(|| PathBuf::from(format!("{}{}", super::proc::BUILTIN, r.tool)));
+        // With no TeX Live biber: the pinned one (`bundle::biber`), fetched
+        // now if the user agreed, else why not.
+        let mut missing_why = format!("{} is not installed", r.tool);
+        let fetched =
+            if builtin.is_none() && r.tool == "biber" && program(programs, r.tool).is_none() {
+                match flashtex_engine::bundle::biber::ensure() {
+                    Ok(p) => Some(p),
+                    Err(e) => {
+                        missing_why = e;
+                        None
+                    }
+                }
+            } else {
+                None
+            };
+        let Some(prog) = builtin
+            .as_ref()
+            .or_else(|| program(programs, r.tool))
+            .or(fetched.as_ref())
+        else {
+            skip(&missing_why, memory);
             continue;
         };
         send_json(

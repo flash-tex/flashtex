@@ -58,6 +58,10 @@ struct ContentView: View {
         .sheet(isPresented: $model.commandPaletteShown) { CommandPalette().environment(model) }
         .sheet(isPresented: Binding(get: { model.projectFonts.shown }, set: { model.projectFonts.shown = $0 })) { ProjectFontsSheet().environment(model) } // File > Project Fonts… (ProjectFonts.swift)
         .sheet(isPresented: Binding(get: { model.projectPackages.shown }, set: { model.projectPackages.shown = $0 })) { ProjectPackagesSheet().environment(model) } // the package consent sheet (ProjectPackages.swift)
+        .alert(EngineV3Biber.consentText + ".", isPresented: Binding(get: { model.engineV3.biberConsentShown }, set: { model.engineV3.biberConsentShown = $0 })) { // biber with no TeX Live (EngineV3Bundle.swift)
+            Button("Download") { model.engineV3.answerBiberConsent(true) }
+            Button("Not Now", role: .cancel) { model.engineV3.answerBiberConsent(false) }
+        }
         .sheet(isPresented: Binding(get: { model.engineV3.bundleConsentShown }, set: { model.engineV3.bundleConsentShown = $0 })) { EngineV3BundleSheet().environment(model) } // the TeX files download consent (EngineV3Bundle.swift)
         .sheet(isPresented: Binding(get: { model.liveShare.sheetShown }, set: { model.liveShare.sheetShown = $0 })) { LiveShareSheet().environment(model) } // Live Share: invitation, approvals, participants (LiveShareViews.swift)
         .sheet(isPresented: Binding(get: { model.liveShare.joinSheetShown }, set: { model.liveShare.joinSheetShown = $0 })) { LiveShareJoinSheet().environment(model) } // File > Join Live Share Session…

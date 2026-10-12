@@ -32,7 +32,17 @@ path = "src/bin/flashtex-host-unicode.rs"
 # (`system`, `resolver`), dates and MD5. Only its public interface is used;
 # nothing of it changes for this crate. `distribution`: the no-TeX-Live bundle
 # (its resolver, when no TeX Live is found; PLAN.md §3.4, U3c).
-flashtex-engine = { path = "../flashtex-engine", default-features = false, features = ["kpathsea", "distribution"] }
+#
+# `makeindex`, `bibtex`: the engine's in-process ports (crates/makeindex,
+# crates/bibtex), so that restricted `\write18` (imakeidx) and the host's
+# latexmk rules run them with no TeX Live, as the pdfTeX host does
+# (src/host/proc.rs, `--run-tool flashtex:bibtex`).
+flashtex-engine = { path = "../flashtex-engine", default-features = false, features = ["kpathsea", "distribution", "makeindex", "bibtex"] }
+# BibTeX 0.99e in-process (FlashTeX's code MIT, the translation under BibTeX's
+# own terms): the host's bibtex rule searches the project and the output
+# directory first (latexmk's BIBINPUTS fudge), which the engine's
+# `\write18` entry point does not take.
+flashtex-bibtex = { path = "../bibtex" }
 # TeX Live 2026's HarfBuzz 12.3.2 and FreeType 2.14.1, vendored unmodified
 # (third_party/harfbuzz, third_party/freetype) and built as TeX Live builds
 # them, for native fonts (docs/design/xetex/PLAN.md §3.1, phase S1).

@@ -596,3 +596,115 @@ fn low_memory_keeps_no_spare() {
     drop(h);
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// A font file whose path is 256 bytes or longer: XDV keeps the path's
+/// length in one byte (as XeTeX's), so the writer takes the engine's own
+/// path (`page::Metrics::native_path`); before, its glyphs were dropped
+/// without a word (a bundle cache under a long home directory).
+#[test]
+fn a_font_at_a_long_path_is_drawn() {
+    let src = Path::new("/System/Library/Fonts/Supplemental/Georgia.ttf");
+    if !texlive() || !src.is_file() {
+        eprintln!("skipped: no TeX Live or no Georgia.ttf");
+        return;
+    }
+    let dir = std::env::temp_dir().join(format!("flashtex-host-longpath-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    let mut fonts = dir.join("proj");
+    while fonts.as_os_str().len() < 270 {
+        fonts = fonts.join("a-rather-long-directory-name");
+    }
+    std::fs::create_dir_all(&fonts).unwrap();
+    std::fs::copy(src, fonts.join("Georgia.ttf")).unwrap();
+    let doc = format!(
+        "\\documentclass{{article}}\n\\usepackage{{fontspec}}\n\
+         \\setmainfont{{Georgia.ttf}}[Path={}/]\n\\begin{{document}}\nHello.\n\\end{{document}}\n",
+        fonts.display()
+    );
+    let (proj, out) = project(&dir, &doc);
+    let h = start(&dir);
+    let mut c = Client::connect(&h.sock).unwrap();
+    c.compile(&request(1, &proj, &out)).unwrap();
+    let (ev, done) = events(&mut c, 1);
+    assert_eq!(done.str_field("status"), Some("ok"), "{done:?}");
+    let fonts: Vec<_> = ev
+        .iter()
+        .filter_map(|e| match e {
+            Event::Font(f) => Some(f.info.str_field("ps_name").unwrap_or("").to_string()),
+            _ => None,
+        })
+        .collect();
+    assert!(fonts.iter().any(|p| p == "Georgia"), "{fonts:?}");
+    c.bye().unwrap();
+    drop(h);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// bibtex and makeindex are the engine's own ports (`host/proc.rs`,
+/// `--run-tool flashtex:...`), so a bibliography and an index need no TeX
+/// Live: their outputs equal TeX Live 2026's bibtex and makeindex on the
+/// same document (fixtures/notex-tools, which `scripts/notex-host-check.sh`
+/// checks for the pdfTeX host), and a follow-up compile reads them.
+#[test]
+fn bibtex_and_makeindex_are_built_in() {
+    if !texlive() {
+        eprintln!("skipped: no TeX Live");
+        return;
+    }
+    let fx = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/notex-tools");
+    let dir = std::env::temp_dir().join(format!("flashtex-host-tools-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    let proj = dir.join("proj");
+    std::fs::create_dir_all(&proj).unwrap();
+    for f in ["main.tex", "refs.bib"] {
+        std::fs::copy(fx.join(f), proj.join(f)).unwrap();
+    }
+    let out = dir.join("out").to_string_lossy().into_owned();
+    let h = start(&dir);
+    let mut c = Client::connect(&h.sock).unwrap();
+    let mut r = request(1, &proj, &out);
+    r.external_tools = Some("auto".into());
+    c.compile(&r).unwrap();
+    // a DONE per compile (the first, then the follow-up the tools' outputs
+    // ask for), and the rounds' end
+    let mut ev = vec![];
+    loop {
+        let e = c.next_event().unwrap().expect("the host closed");
+        let end = matches!(&e, Event::Tool(j) if j.str_field("event") == Some("settled"));
+        if let Event::Done(j) = &e {
+            assert_eq!(j.str_field("status"), Some("ok"), "{j:?}");
+        }
+        ev.push(e);
+        if end {
+            break;
+        }
+    }
+    assert!(
+        ev.iter().filter(|e| matches!(e, Event::Done(_))).count() >= 2,
+        "no follow-up compile"
+    );
+    let ran: Vec<(String, String)> = ev
+        .iter()
+        .filter_map(|e| match e {
+            Event::Tool(j) if j.str_field("event") == Some("done") => Some((
+                j.str_field("tool").unwrap_or("").to_string(),
+                j.str_field("status").unwrap_or("").to_string(),
+            )),
+            _ => None,
+        })
+        .collect();
+    for tool in ["bibtex", "makeindex"] {
+        assert!(
+            ran.iter().any(|(t, s)| t == tool && s == "ok"),
+            "{tool} did not run cleanly: {ran:?}"
+        );
+    }
+    for name in ["main.bbl", "main.blg", "main.ind", "main.ilg"] {
+        let got = std::fs::read(Path::new(&out).join(name)).unwrap();
+        let want = std::fs::read(fx.join("expected").join(name)).unwrap();
+        assert!(got == want, "{name} differs from TeX Live's");
+    }
+    c.bye().unwrap();
+    drop(h);
+    let _ = std::fs::remove_dir_all(&dir);
+}

@@ -245,3 +245,58 @@ struct EngineV3BundleSheet: View {
         .frame(width: DS.Layout.sheetWidth)
     }
 }
+
+/// biber with no TeX Live (#1782; the engine's `bundle::biber`). biblatex's
+/// default backend is TeX Live's biber, which FlashTeX does not port; the
+/// lock pins TeX Live's biber for this Mac (`biber_url_universal_darwin`,
+/// `biber_sha256_universal_darwin`), mirrored unmodified with its source.
+/// Nothing is downloaded until the user agrees, the first time a document
+/// needs it: the host then skips biber with a reason containing
+/// `consentText`, the window asks, and a yes restarts the host with
+/// `FLASHTEX_BIBER_ALLOW_FETCH=<sha256>@<url>` for exactly that pin.
+enum EngineV3Biber {
+    static let consentText = "FlashTeX will download biber (~70 MB) to build this bibliography"
+    static let consentKey = "FlashTeX.EngineV3.biberConsent"
+    static let allowEnv = "FLASHTEX_BIBER_ALLOW_FETCH"
+    /// TeX Live's name for this Mac's platform, as the lock pins biber.
+    static let arch = "universal_darwin"
+
+    struct Pin: Equatable { var url: String; var sha256: String }
+
+    /// The lock's biber for this Mac, if it pins one.
+    static func pin(lockText: String) -> Pin? {
+        var url: String?, sha: String?
+        for line in lockText.split(separator: "\n") {
+            let l = line.trimmingCharacters(in: .whitespaces)
+            guard let eq = l.firstIndex(of: "=") else { continue }
+            let key = l[..<eq].trimmingCharacters(in: .whitespaces)
+            let rest = l[l.index(after: eq)...].trimmingCharacters(in: .whitespaces)
+            guard rest.hasPrefix("\""), let end = rest.dropFirst().firstIndex(of: "\"") else { continue }
+            let value = String(rest[rest.index(after: rest.startIndex)..<end])
+            if key == "biber_url_\(arch)" { url = value }
+            if key == "biber_sha256_\(arch)" { sha = value.lowercased() }
+        }
+        guard let url, let sha, sha.count == 64 else { return nil }
+        return Pin(url: url, sha256: sha)
+    }
+
+    /// The pin of the lock the bundle uses (`EngineV3Bundle.configured`).
+    static func currentPin(environment env: [String: String] = ProcessInfo.processInfo.environment, host: URL? = nil) -> Pin? {
+        guard let c = EngineV3Bundle.configured(environment: env, host: host), !c.fromEnvironment,
+              let text = try? String(contentsOfFile: c.origin, encoding: .utf8) else { return nil }
+        return pin(lockText: text)
+    }
+
+    static func allowValue(_ p: Pin) -> String { "\(p.sha256)@\(p.url)" }
+    static func consented(_ p: Pin) -> Bool { EngineV3.defaults.string(forKey: consentKey) == allowValue(p) }
+    static func setConsent(_ p: Pin) { EngineV3.defaults.set(allowValue(p), forKey: consentKey) }
+
+    /// A tool skip that asks for the download.
+    static func isConsentRequest(_ reason: String) -> Bool { reason.contains(consentText) }
+
+    /// The host's environment: the consent for exactly the pinned biber, or none.
+    static func hostEnvironment(_ env: inout [String: String], host: URL) {
+        env.removeValue(forKey: allowEnv)
+        if let p = currentPin(environment: env, host: host), consented(p) { env[allowEnv] = allowValue(p) }
+    }
+}
