@@ -3,13 +3,13 @@
  "behind_tiers": [],
  "engines": {
   "new": {
-   "git_sha": "f5a0e3ebfe9578d3b5784682844bae7aabde00e6",
+   "git_sha": "c97370cb1b3a5e6e1aa8f99b5545a7ec5e8c1827",
    "runs": [
     {
      "command": "python3 tools/parity/parity.py --tier arxiv --texbin /home/runner/work/_temp/texlive/2026/bin/x86_64-linux --oracle-pdftex /home/runner/work/_temp/texlive/2026/bin/x86_64-linux/pdftex --texmf /home/runner/work/_temp/texlive/2026/texmf-dist --raster none -j 4 --engine /home/runner/work/_temp/p5/work/eng/flashtex-initex --engine-env FLASHTEX_FORMATS=/home/runner/work/_temp/p5/work/fmt --engine-env FLASHTEX_POOL=/home/runner/work/_temp/p5/work/eng/pdftex.pool --out /home/runner/work/_temp/p5/parity-new --work /home/runner/work/_temp/p5/work/parity-new",
      "date": "2026-10-12",
      "engine_kind": "tex",
-     "engine_sha256": "78a512ce39f1b67afa1bc016ccd0c85a4b3773c5568ef8faef3b780084f2ece8",
+     "engine_sha256": "7195ff769dd94d2096624cd5c4fb9c7d7496439c92af86e4e7167755bd6b818c",
      "engine_version": "pdfTeX 3.141592653-2.6-1.40.29 (FlashTeX engine)",
      "host": "runnervmmprz5",
      "identity_problem": null,
@@ -21,7 +21,7 @@
      "command": "python3 tools/parity/parity.py --tier fixtures --texbin /home/runner/work/_temp/texlive/2026/bin/x86_64-linux --oracle-pdftex /home/runner/work/_temp/texlive/2026/bin/x86_64-linux/pdftex --texmf /home/runner/work/_temp/texlive/2026/texmf-dist --raster none -j 4 --engine /home/runner/work/_temp/p5/work/eng/flashtex-initex --engine-env FLASHTEX_FORMATS=/home/runner/work/_temp/p5/work/fmt --engine-env FLASHTEX_POOL=/home/runner/work/_temp/p5/work/eng/pdftex.pool --out /home/runner/work/_temp/p5/parity-new --work /home/runner/work/_temp/p5/work/parity-new",
      "date": "2026-10-12",
      "engine_kind": "tex",
-     "engine_sha256": "78a512ce39f1b67afa1bc016ccd0c85a4b3773c5568ef8faef3b780084f2ece8",
+     "engine_sha256": "7195ff769dd94d2096624cd5c4fb9c7d7496439c92af86e4e7167755bd6b818c",
      "engine_version": "pdfTeX 3.141592653-2.6-1.40.29 (FlashTeX engine)",
      "host": "runnervmmprz5",
      "identity_problem": null,
@@ -33,7 +33,7 @@
      "command": "python3 tools/parity/parity.py --tier templates --tier packages --texbin /home/runner/work/_temp/texlive/2026/bin/x86_64-linux --oracle-pdftex /home/runner/work/_temp/texlive/2026/bin/x86_64-linux/pdftex --texmf /home/runner/work/_temp/texlive/2026/texmf-dist --raster none -j 4 --corpus-texmf /home/runner/work/_temp/corpus-texmf --engine /home/runner/work/_temp/p5/work/eng/flashtex-initex --engine-env FLASHTEX_FORMATS=/home/runner/work/_temp/p5/work/fmt --engine-env FLASHTEX_POOL=/home/runner/work/_temp/p5/work/eng/pdftex.pool --out /home/runner/work/_temp/p5/parity-new --work /home/runner/work/_temp/p5/work/parity-new",
      "date": "2026-10-12",
      "engine_kind": "tex",
-     "engine_sha256": "78a512ce39f1b67afa1bc016ccd0c85a4b3773c5568ef8faef3b780084f2ece8",
+     "engine_sha256": "7195ff769dd94d2096624cd5c4fb9c7d7496439c92af86e4e7167755bd6b818c",
      "engine_version": "pdfTeX 3.141592653-2.6-1.40.29 (FlashTeX engine)",
      "host": "runnervmmprz5",
      "identity_problem": null,
@@ -42,12 +42,12 @@
      "source": "parity"
     },
     {
-     "date": "2026-10-12T11:22:48Z",
+     "date": "2026-10-12T19:59:49Z",
      "documents_path": "/home/runner/work/_temp/t4-new/documents.json",
      "engine_kind": "tex",
-     "engine_sha256": "78a512ce39f1b67afa1bc016ccd0c85a4b3773c5568ef8faef3b780084f2ece8",
+     "engine_sha256": "7195ff769dd94d2096624cd5c4fb9c7d7496439c92af86e4e7167755bd6b818c",
      "engine_version": "pdfTeX 3.141592653-2.6-1.40.29 (FlashTeX engine)",
-     "git_sha": "f5a0e3ebfe9578d3b5784682844bae7aabde00e6",
+     "git_sha": "c97370cb1b3a5e6e1aa8f99b5545a7ec5e8c1827",
      "host": "runnervmmprz5",
      "host_label": "linux-5bf99efc12f1",
      "identity_problem": null,
@@ -80,14 +80,14 @@
    ]
   },
   "old": {
-   "git_sha": "f5a0e3ebfe9578d3b5784682844bae7aabde00e6",
+   "git_sha": "c97370cb1b3a5e6e1aa8f99b5545a7ec5e8c1827",
    "runs": [
     {
      "command": "python3 tools/parity/parity.py --tier arxiv --texbin /home/runner/work/_temp/texlive/2026/bin/x86_64-linux --oracle-pdftex /home/runner/work/_temp/texlive/2026/bin/x86_64-linux/pdftex --texmf /home/runner/work/_temp/texlive/2026/texmf-dist --raster none -j 4 --engine /home/runner/work/_temp/p5/work/eng/flashtex --out /home/runner/work/_temp/p5/parity-old --work /home/runner/work/_temp/p5/work/parity-old",
      "date": "2026-10-12",
      "engine_kind": "flashtex-cli",
-     "engine_sha256": "7175c345fae4c6066b15aba96a0542de1d34295871ce3f1aad807fc01c5952f8",
-     "engine_version": "flashtex 0.1.0 (f5a0e3ebfe95)",
+     "engine_sha256": "97eb18ba19b8ae0c044508bc7e4dc82ada371acba3ee3667e3166d32abe5e1e8",
+     "engine_version": "flashtex 0.1.0 (c97370cb1b3a)",
      "host": "runnervmmprz5",
      "identity_problem": null,
      "oracle": "pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026)",
@@ -98,8 +98,8 @@
      "command": "python3 tools/parity/parity.py --tier fixtures --texbin /home/runner/work/_temp/texlive/2026/bin/x86_64-linux --oracle-pdftex /home/runner/work/_temp/texlive/2026/bin/x86_64-linux/pdftex --texmf /home/runner/work/_temp/texlive/2026/texmf-dist --raster none -j 4 --engine /home/runner/work/_temp/p5/work/eng/flashtex --out /home/runner/work/_temp/p5/parity-old --work /home/runner/work/_temp/p5/work/parity-old",
      "date": "2026-10-12",
      "engine_kind": "flashtex-cli",
-     "engine_sha256": "7175c345fae4c6066b15aba96a0542de1d34295871ce3f1aad807fc01c5952f8",
-     "engine_version": "flashtex 0.1.0 (f5a0e3ebfe95)",
+     "engine_sha256": "97eb18ba19b8ae0c044508bc7e4dc82ada371acba3ee3667e3166d32abe5e1e8",
+     "engine_version": "flashtex 0.1.0 (c97370cb1b3a)",
      "host": "runnervmmprz5",
      "identity_problem": null,
      "oracle": "pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026)",
@@ -110,8 +110,8 @@
      "command": "python3 tools/parity/parity.py --tier templates --tier packages --texbin /home/runner/work/_temp/texlive/2026/bin/x86_64-linux --oracle-pdftex /home/runner/work/_temp/texlive/2026/bin/x86_64-linux/pdftex --texmf /home/runner/work/_temp/texlive/2026/texmf-dist --raster none -j 4 --corpus-texmf /home/runner/work/_temp/corpus-texmf --engine /home/runner/work/_temp/p5/work/eng/flashtex --out /home/runner/work/_temp/p5/parity-old --work /home/runner/work/_temp/p5/work/parity-old",
      "date": "2026-10-12",
      "engine_kind": "flashtex-cli",
-     "engine_sha256": "7175c345fae4c6066b15aba96a0542de1d34295871ce3f1aad807fc01c5952f8",
-     "engine_version": "flashtex 0.1.0 (f5a0e3ebfe95)",
+     "engine_sha256": "97eb18ba19b8ae0c044508bc7e4dc82ada371acba3ee3667e3166d32abe5e1e8",
+     "engine_version": "flashtex 0.1.0 (c97370cb1b3a)",
      "host": "runnervmmprz5",
      "identity_problem": null,
      "oracle": "pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026)",
@@ -121,7 +121,7 @@
    ]
   }
  },
- "host_label": "GitHub-hosted ubuntu24 (hosted; oracle pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026), LaTeX 2026-06-01, tlpdb 50f564d84385 (/home/runner/work/_temp/texlive/2026); tools f5a0e3ebf)",
+ "host_label": "GitHub-hosted ubuntu24 (hosted; oracle pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026), LaTeX 2026-06-01, tlpdb 50f564d84385 (/home/runner/work/_temp/texlive/2026); tools c97370cb1)",
  "oracle": {
   "latex_format": "2026-06-01",
   "pdftex_sha256": "1c5ff71156ee990c3a18402cf06d3671ecf748bd84fb3983dbd5d62b600bc40b",
@@ -129,13 +129,13 @@
   "tlpdb_sha256": "50f564d8438549d29274e29cd9cfb4cdad2caa65d32517a2390c6d6f4472ab00"
  },
  "partial": [
-  "nightly-5k L0: 1 document(s) unmeasured",
-  "nightly-5k L1: 1 document(s) unmeasured",
-  "nightly-5k L2: 1 document(s) unmeasured",
-  "nightly-5k L3: 1 document(s) unmeasured",
-  "nightly-5k P-T1: 1 document(s) unmeasured",
-  "nightly-5k P-T2: 1 document(s) unmeasured",
-  "nightly-5k crashes: 1 document(s) unmeasured"
+  "nightly-5k L0: 47 document(s) unmeasured",
+  "nightly-5k L1: 47 document(s) unmeasured",
+  "nightly-5k L2: 47 document(s) unmeasured",
+  "nightly-5k L3: 47 document(s) unmeasured",
+  "nightly-5k P-T1: 47 document(s) unmeasured",
+  "nightly-5k P-T2: 47 document(s) unmeasured",
+  "nightly-5k crashes: 47 document(s) unmeasured"
  ],
  "red": 0,
  "red_tiers": [],
@@ -1253,16 +1253,16 @@
    "metric": "P-T1",
    "new": {
     "excluded": {
-     "P-T1 outside the --pt1-sample (by rule)": 3596,
-     "fetch": 1,
-     "oracle": 1210
+     "P-T1 outside the --pt1-sample (by rule)": 3565,
+     "fetch": 47,
+     "oracle": 1195
     },
     "host": "runnervmmprz5",
     "invalid": null,
     "note": null,
     "of": 193,
     "oracle": "pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026)",
-    "partial": "1 document(s) unmeasured",
+    "partial": "47 document(s) unmeasured",
     "passed": 193,
     "skipped": 0,
     "source": "nightly",
@@ -1292,24 +1292,24 @@
    "metric": "P-T2",
    "new": {
     "excluded": {
-     "fetch": 1,
-     "oracle": 1210
+     "fetch": 47,
+     "oracle": 1195
     },
     "host": "runnervmmprz5",
     "invalid": null,
     "note": null,
-    "of": 3789,
+    "of": 3758,
     "oracle": "pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026)",
-    "partial": "1 document(s) unmeasured",
-    "passed": 3789,
+    "partial": "47 document(s) unmeasured",
+    "passed": 3758,
     "skipped": 0,
     "source": "nightly",
     "status": "measured"
    },
    "old": {
     "against": {
-     "of": 381,
-     "passed": 381,
+     "of": 371,
+     "passed": 371,
      "what": "the baseline's 440 IDs"
     },
     "excluded": {},
@@ -1336,24 +1336,24 @@
    "metric": "L0",
    "new": {
     "excluded": {
-     "fetch": 1,
-     "oracle": 1210
+     "fetch": 47,
+     "oracle": 1195
     },
     "host": "runnervmmprz5",
     "invalid": null,
     "note": null,
-    "of": 3789,
+    "of": 3758,
     "oracle": "pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026)",
-    "partial": "1 document(s) unmeasured",
-    "passed": 3789,
+    "partial": "47 document(s) unmeasured",
+    "passed": 3758,
     "skipped": 0,
     "source": "nightly",
     "status": "measured"
    },
    "old": {
     "against": {
-     "of": 381,
-     "passed": 381,
+     "of": 371,
+     "passed": 371,
      "what": "the baseline's 440 IDs"
     },
     "excluded": {},
@@ -1380,24 +1380,24 @@
    "metric": "L1",
    "new": {
     "excluded": {
-     "fetch": 1,
-     "oracle": 1210
+     "fetch": 47,
+     "oracle": 1195
     },
     "host": "runnervmmprz5",
     "invalid": null,
     "note": null,
-    "of": 3789,
+    "of": 3758,
     "oracle": "pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026)",
-    "partial": "1 document(s) unmeasured",
-    "passed": 3789,
+    "partial": "47 document(s) unmeasured",
+    "passed": 3758,
     "skipped": 0,
     "source": "nightly",
     "status": "measured"
    },
    "old": {
     "against": {
-     "of": 381,
-     "passed": 381,
+     "of": 371,
+     "passed": 371,
      "what": "the baseline's 440 IDs"
     },
     "excluded": {},
@@ -1424,24 +1424,24 @@
    "metric": "L2",
    "new": {
     "excluded": {
-     "fetch": 1,
-     "oracle": 1210
+     "fetch": 47,
+     "oracle": 1195
     },
     "host": "runnervmmprz5",
     "invalid": null,
     "note": null,
-    "of": 3789,
+    "of": 3758,
     "oracle": "pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026)",
-    "partial": "1 document(s) unmeasured",
-    "passed": 3789,
+    "partial": "47 document(s) unmeasured",
+    "passed": 3758,
     "skipped": 0,
     "source": "nightly",
     "status": "measured"
    },
    "old": {
     "against": {
-     "of": 381,
-     "passed": 381,
+     "of": 371,
+     "passed": 371,
      "what": "the baseline's 440 IDs"
     },
     "excluded": {},
@@ -1468,24 +1468,24 @@
    "metric": "L3",
    "new": {
     "excluded": {
-     "fetch": 1,
-     "oracle": 1210
+     "fetch": 47,
+     "oracle": 1195
     },
     "host": "runnervmmprz5",
     "invalid": null,
     "note": null,
-    "of": 3789,
+    "of": 3758,
     "oracle": "pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026)",
-    "partial": "1 document(s) unmeasured",
-    "passed": 3789,
+    "partial": "47 document(s) unmeasured",
+    "passed": 3758,
     "skipped": 0,
     "source": "nightly",
     "status": "measured"
    },
    "old": {
     "against": {
-     "of": 381,
-     "passed": 381,
+     "of": 371,
+     "passed": 371,
      "what": "the baseline's 440 IDs"
     },
     "excluded": {},
@@ -1512,16 +1512,16 @@
    "metric": "crashes",
    "new": {
     "excluded": {
-     "fetch": 1,
-     "oracle": 1210
+     "fetch": 47,
+     "oracle": 1195
     },
     "host": "runnervmmprz5",
     "invalid": null,
     "note": null,
-    "of": 3789,
+    "of": 3758,
     "oracle": "pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026)",
-    "partial": "1 document(s) unmeasured",
-    "passed": 3789,
+    "partial": "47 document(s) unmeasured",
+    "passed": 3758,
     "skipped": 0,
     "source": "nightly",
     "status": "measured"
