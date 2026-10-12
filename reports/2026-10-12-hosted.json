@@ -3,11 +3,11 @@
  "behind_tiers": [],
  "engines": {
   "new": {
-   "git_sha": "7792130b118c3a4f9c7618ea915df85a0bda3213",
+   "git_sha": "73d5be75ea2f6b6334ccd34b327db81228537c9c",
    "runs": [
     {
      "command": "python3 tools/parity/parity.py --tier arxiv --texbin /home/runner/work/_temp/texlive/2026/bin/x86_64-linux --oracle-pdftex /home/runner/work/_temp/texlive/2026/bin/x86_64-linux/pdftex --texmf /home/runner/work/_temp/texlive/2026/texmf-dist --raster none -j 4 --engine /home/runner/work/_temp/p5/work/eng/flashtex-initex --engine-env FLASHTEX_FORMATS=/home/runner/work/_temp/p5/work/fmt --engine-env FLASHTEX_POOL=/home/runner/work/_temp/p5/work/eng/pdftex.pool --out /home/runner/work/_temp/p5/parity-new --work /home/runner/work/_temp/p5/work/parity-new",
-     "date": "2026-10-11",
+     "date": "2026-10-12",
      "engine_kind": "tex",
      "engine_sha256": "78a512ce39f1b67afa1bc016ccd0c85a4b3773c5568ef8faef3b780084f2ece8",
      "engine_version": "pdfTeX 3.141592653-2.6-1.40.29 (FlashTeX engine)",
@@ -19,7 +19,7 @@
     },
     {
      "command": "python3 tools/parity/parity.py --tier fixtures --texbin /home/runner/work/_temp/texlive/2026/bin/x86_64-linux --oracle-pdftex /home/runner/work/_temp/texlive/2026/bin/x86_64-linux/pdftex --texmf /home/runner/work/_temp/texlive/2026/texmf-dist --raster none -j 4 --engine /home/runner/work/_temp/p5/work/eng/flashtex-initex --engine-env FLASHTEX_FORMATS=/home/runner/work/_temp/p5/work/fmt --engine-env FLASHTEX_POOL=/home/runner/work/_temp/p5/work/eng/pdftex.pool --out /home/runner/work/_temp/p5/parity-new --work /home/runner/work/_temp/p5/work/parity-new",
-     "date": "2026-10-11",
+     "date": "2026-10-12",
      "engine_kind": "tex",
      "engine_sha256": "78a512ce39f1b67afa1bc016ccd0c85a4b3773c5568ef8faef3b780084f2ece8",
      "engine_version": "pdfTeX 3.141592653-2.6-1.40.29 (FlashTeX engine)",
@@ -31,7 +31,7 @@
     },
     {
      "command": "python3 tools/parity/parity.py --tier templates --tier packages --texbin /home/runner/work/_temp/texlive/2026/bin/x86_64-linux --oracle-pdftex /home/runner/work/_temp/texlive/2026/bin/x86_64-linux/pdftex --texmf /home/runner/work/_temp/texlive/2026/texmf-dist --raster none -j 4 --corpus-texmf /home/runner/work/_temp/corpus-texmf --engine /home/runner/work/_temp/p5/work/eng/flashtex-initex --engine-env FLASHTEX_FORMATS=/home/runner/work/_temp/p5/work/fmt --engine-env FLASHTEX_POOL=/home/runner/work/_temp/p5/work/eng/pdftex.pool --out /home/runner/work/_temp/p5/parity-new --work /home/runner/work/_temp/p5/work/parity-new",
-     "date": "2026-10-11",
+     "date": "2026-10-12",
      "engine_kind": "tex",
      "engine_sha256": "78a512ce39f1b67afa1bc016ccd0c85a4b3773c5568ef8faef3b780084f2ece8",
      "engine_version": "pdfTeX 3.141592653-2.6-1.40.29 (FlashTeX engine)",
@@ -42,12 +42,12 @@
      "source": "parity"
     },
     {
-     "date": "2026-10-12T00:02:45Z",
+     "date": "2026-10-12T06:38:08Z",
      "documents_path": "/home/runner/work/_temp/t4-new/documents.json",
      "engine_kind": "tex",
      "engine_sha256": "78a512ce39f1b67afa1bc016ccd0c85a4b3773c5568ef8faef3b780084f2ece8",
      "engine_version": "pdfTeX 3.141592653-2.6-1.40.29 (FlashTeX engine)",
-     "git_sha": "7792130b118c3a4f9c7618ea915df85a0bda3213",
+     "git_sha": "73d5be75ea2f6b6334ccd34b327db81228537c9c",
      "host": "runnervmmprz5",
      "host_label": "linux-5bf99efc12f1",
      "identity_problem": null,
@@ -80,14 +80,14 @@
    ]
   },
   "old": {
-   "git_sha": "7792130b118c3a4f9c7618ea915df85a0bda3213",
+   "git_sha": "73d5be75ea2f6b6334ccd34b327db81228537c9c",
    "runs": [
     {
      "command": "python3 tools/parity/parity.py --tier arxiv --texbin /home/runner/work/_temp/texlive/2026/bin/x86_64-linux --oracle-pdftex /home/runner/work/_temp/texlive/2026/bin/x86_64-linux/pdftex --texmf /home/runner/work/_temp/texlive/2026/texmf-dist --raster none -j 4 --engine /home/runner/work/_temp/p5/work/eng/flashtex --out /home/runner/work/_temp/p5/parity-old --work /home/runner/work/_temp/p5/work/parity-old",
-     "date": "2026-10-11",
+     "date": "2026-10-12",
      "engine_kind": "flashtex-cli",
-     "engine_sha256": "ffae41aec74aa3ab6519296fe32fddfe6bda0be2d34f826a07d31dedfc2d52dc",
-     "engine_version": "flashtex 0.1.0 (7792130b118c)",
+     "engine_sha256": "44712cbd490d561d4547b6db71f2e440460cf16c370d5055b21d80fb29c72b0c",
+     "engine_version": "flashtex 0.1.0 (73d5be75ea2f)",
      "host": "runnervmmprz5",
      "identity_problem": null,
      "oracle": "pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026)",
@@ -96,10 +96,10 @@
     },
     {
      "command": "python3 tools/parity/parity.py --tier fixtures --texbin /home/runner/work/_temp/texlive/2026/bin/x86_64-linux --oracle-pdftex /home/runner/work/_temp/texlive/2026/bin/x86_64-linux/pdftex --texmf /home/runner/work/_temp/texlive/2026/texmf-dist --raster none -j 4 --engine /home/runner/work/_temp/p5/work/eng/flashtex --out /home/runner/work/_temp/p5/parity-old --work /home/runner/work/_temp/p5/work/parity-old",
-     "date": "2026-10-11",
+     "date": "2026-10-12",
      "engine_kind": "flashtex-cli",
-     "engine_sha256": "ffae41aec74aa3ab6519296fe32fddfe6bda0be2d34f826a07d31dedfc2d52dc",
-     "engine_version": "flashtex 0.1.0 (7792130b118c)",
+     "engine_sha256": "44712cbd490d561d4547b6db71f2e440460cf16c370d5055b21d80fb29c72b0c",
+     "engine_version": "flashtex 0.1.0 (73d5be75ea2f)",
      "host": "runnervmmprz5",
      "identity_problem": null,
      "oracle": "pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026)",
@@ -108,10 +108,10 @@
     },
     {
      "command": "python3 tools/parity/parity.py --tier templates --tier packages --texbin /home/runner/work/_temp/texlive/2026/bin/x86_64-linux --oracle-pdftex /home/runner/work/_temp/texlive/2026/bin/x86_64-linux/pdftex --texmf /home/runner/work/_temp/texlive/2026/texmf-dist --raster none -j 4 --corpus-texmf /home/runner/work/_temp/corpus-texmf --engine /home/runner/work/_temp/p5/work/eng/flashtex --out /home/runner/work/_temp/p5/parity-old --work /home/runner/work/_temp/p5/work/parity-old",
-     "date": "2026-10-11",
+     "date": "2026-10-12",
      "engine_kind": "flashtex-cli",
-     "engine_sha256": "ffae41aec74aa3ab6519296fe32fddfe6bda0be2d34f826a07d31dedfc2d52dc",
-     "engine_version": "flashtex 0.1.0 (7792130b118c)",
+     "engine_sha256": "44712cbd490d561d4547b6db71f2e440460cf16c370d5055b21d80fb29c72b0c",
+     "engine_version": "flashtex 0.1.0 (73d5be75ea2f)",
      "host": "runnervmmprz5",
      "identity_problem": null,
      "oracle": "pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026)",
@@ -121,7 +121,7 @@
    ]
   }
  },
- "host_label": "GitHub-hosted ubuntu24 (hosted; oracle pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026), LaTeX 2026-06-01, tlpdb 50f564d84385 (/home/runner/work/_temp/texlive/2026); tools 7792130b1)",
+ "host_label": "GitHub-hosted ubuntu24 (hosted; oracle pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026), LaTeX 2026-06-01, tlpdb 50f564d84385 (/home/runner/work/_temp/texlive/2026); tools 73d5be75e)",
  "oracle": {
   "latex_format": "2026-06-01",
   "pdftex_sha256": "1c5ff71156ee990c3a18402cf06d3671ecf748bd84fb3983dbd5d62b600bc40b",
@@ -157,7 +157,7 @@
    "name": "S1 follow-ups (check E false negatives, baseline host field, stale probes, review-workflow.json path, S1(c) after RQ5)",
    "other_preconditions": "S1; RQ5 for S1(c)",
    "scoreboard_gate": null,
-   "status": "not started"
+   "status": "partly (check E false negatives and CI self-tests, stale probes, review-workflow.json field done; RQ8 host field and S1(c) open)"
   },
   {
    "app_parity": null,
