@@ -36,7 +36,11 @@
 //! again, or unreadable refuses S₀ (the run starts from the start, and
 //! saves again). Which pages are references is decided by comparing the
 //! bytes, so a base made by another document of the same format serves
-//! too, however its state after the format load differed.
+//! too, however its state after the format load differed. A base that does
+//! not open (cut short, not a base) is made again in its place at the next
+//! save. After a save, a base no S₀ in the cache refers to (an old format
+//! file's, an old engine build's) is removed once it is a day old, unless
+//! the engine uses it ([`collect_bases`]).
 //!
 //! [`Image::write`] writes through a temporary file of its own and a
 //! rename, on a thread of its own: the engine thread only copies the
@@ -304,7 +308,7 @@ pub struct BaseSpec {
 }
 
 /// Which base file `spec` names for the engine `g`.
-fn base_path(spec: &BaseSpec, g: &Globals) -> PathBuf {
+pub fn base_path(spec: &BaseSpec, g: &Globals) -> PathBuf {
     let mut key = vec![];
     BASE_MAGIC.to_vec().enc(&mut key);
     flashtex_engine::host::engine_build().enc(&mut key);
@@ -456,11 +460,77 @@ fn split<'a>(
     (own, from_base)
 }
 
-/// The end of S₀'s header: the base it refers to (none when no page comes
-/// from one) and the chunks it takes from it.
-fn enc_base(head: &mut Vec<u8>, base: Option<(String, [u64; 2])>, from_base: &[u32]) {
-    base.filter(|_| !from_base.is_empty()).enc(head);
-    from_base.to_vec().enc(head);
+/// S₀'s header around `body` (from [`header`]): the magic and the base it
+/// refers to (none when no page comes from one) first, where
+/// [`base_of`] reads it, and the chunks it takes from the base last.
+fn finish_head(body: Vec<u8>, base: Option<(String, [u64; 2])>, from_base: &[u32]) -> Vec<u8> {
+    let mut head = vec![];
+    MAGIC.to_vec().enc(&mut head);
+    base.filter(|_| !from_base.is_empty()).enc(&mut head);
+    head.extend_from_slice(&body);
+    from_base.to_vec().enc(&mut head);
+    head
+}
+
+/// The base an S₀ file refers to (its name in the cache), read from the
+/// file's first bytes; `None` for no base, or a file of no S₀ of this
+/// version.
+pub fn base_of(xs0: &Path) -> Option<String> {
+    use std::io::Read;
+    let mut b = vec![];
+    std::fs::File::open(xs0)
+        .ok()?
+        .take(4096)
+        .read_to_end(&mut b)
+        .ok()?;
+    let hlen = u64::from_le_bytes(b.get(..8)?.try_into().ok()?) as usize;
+    let mut r = Reader::new(b.get(8..(8 + hlen).min(b.len()))?);
+    if Vec::<u8>::dec(&mut r).ok()? != MAGIC {
+        return None;
+    }
+    Option::<(String, [u64; 2])>::dec(&mut r)
+        .ok()?
+        .map(|(n, _)| n)
+}
+
+/// How long a base no S₀ refers to is kept (another host may have just
+/// written it, its S₀ not yet).
+pub const BASE_GRACE: std::time::Duration = std::time::Duration::from_secs(24 * 3600);
+
+/// Remove the bases in the S₀ cache `dir` that no S₀ there refers to,
+/// older than `grace`, but those in `keep` (the bases this process uses).
+/// A base another process has mapped stays valid after the unlink on Unix
+/// (the mapping keeps the file); on Windows the removal of a file in use
+/// fails and the base is left. Returns the bases removed.
+pub fn collect_bases(dir: &Path, keep: &[PathBuf], grace: std::time::Duration) -> Vec<PathBuf> {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return vec![];
+    };
+    let (mut bases, mut used) = (vec![], std::collections::HashSet::new());
+    for e in entries.flatten() {
+        let p = e.path();
+        match p.extension().and_then(|x| x.to_str()) {
+            Some(BASE_EXT) => bases.push(p),
+            Some("xs0") => used.extend(base_of(&p)),
+            _ => {}
+        }
+    }
+    let now = std::time::SystemTime::now();
+    let mut gone = vec![];
+    for b in bases {
+        if used.contains(&file_name(&b)) || keep.iter().any(|k| k == &b) {
+            continue;
+        }
+        let old = std::fs::metadata(&b)
+            .and_then(|m| m.modified())
+            .ok()
+            .and_then(|t| now.duration_since(t).ok())
+            .is_some_and(|age| age >= grace);
+        if old && std::fs::remove_file(&b).is_ok() {
+            gone.push(b);
+        }
+    }
+    gone
 }
 
 /// A base file's name in the cache.
@@ -512,7 +582,9 @@ pub fn prepare(
     }
     let base = base.and_then(|spec| {
         let path = base_path(spec, g);
-        if path.is_file() {
+        // (a base that does not open, truncated or not a base, is made
+        // again: written through a rename, it replaces the file)
+        if BaseFile::open(&path).is_ok() {
             return Some(ImageBase::File(path));
         }
         let pv = g.arena.view_at(spec.point?).ok()?;
@@ -549,7 +621,7 @@ pub fn write_in_place(
     path: &str,
     base: Option<&BaseSpec>,
 ) -> Result<u64, String> {
-    let mut head = header(g, id, meta)?;
+    let body = header(g, id, meta)?;
     let g: &Globals = g;
     let view = g.arena.view_at(id)?;
     let mut against: Option<(Against, String, [u64; 2])> = None;
@@ -580,14 +652,14 @@ pub fn write_in_place(
         }
         None => (chunks, vec![], None),
     };
-    enc_base(&mut head, name, &from_base);
+    let head = finish_head(body, name, &from_base);
     write_file(head, &own, &|i| view.chunk(own[i] as usize), path)
 }
 
-/// The file's header up to the chunks' lists.
+/// The file's header from its key on, up to the base's chunks
+/// ([`finish_head`] puts it together).
 fn header(g: &mut Globals, id: CheckpointId, meta: &Meta) -> Result<Vec<u8>, String> {
     let mut head = vec![];
-    MAGIC.to_vec().enc(&mut head);
     meta.enc(&mut head);
     let (mgr, full_name, protrusion, handles, dl) =
         g.saved_at(id).ok_or("no host state saved with S0")?;
@@ -628,7 +700,7 @@ impl Image {
     /// read or written leaves S₀ whole. Returns the S₀ file's bytes.
     pub fn write(self, path: &str) -> Result<u64, String> {
         let Image {
-            mut head,
+            head,
             space,
             chunks,
             data,
@@ -667,7 +739,7 @@ impl Image {
             }
             None => (chunks.clone(), vec![], None),
         };
-        enc_base(&mut head, name, &from_base);
+        let head = finish_head(head, name, &from_base);
         write_file(head, &own, &|i| mine(own[i]), path)
     }
 }
@@ -751,6 +823,8 @@ pub struct Opened {
     pub mapped_pages: usize,
     /// Of those, the pages mapped from the base.
     pub base_pages: usize,
+    /// The base it was opened against.
+    pub base: Option<PathBuf>,
 }
 
 /// Put the `chunks` of a file's `pages` into the fresh word space of `g`:
@@ -835,6 +909,7 @@ pub fn open(
     if Vec::<u8>::dec(&mut r)? != MAGIC {
         return Err("not a Unicode-mode S0 file of this version".into());
     }
+    let base_ref = Option::<(String, [u64; 2])>::dec(&mut r)?;
     let meta = Meta::dec(&mut r)?;
     if meta.key.build != flashtex_engine::host::engine_build() {
         return Err("S0 was saved by another engine build".into());
@@ -853,7 +928,6 @@ pub fn open(
     let dl = Vec::<u8>::dec(&mut r)?;
     let arena_len = u64::dec(&mut r)? as usize;
     let scalar_bytes = u64::dec(&mut r)? as usize;
-    let base_ref = Option::<(String, [u64; 2])>::dec(&mut r)?;
     let from_base = Vec::<u32>::dec(&mut r)?;
     let own = Vec::<u32>::dec(&mut r)?;
     let pages = Vec::<u32>::dec(&mut r)?;
@@ -875,7 +949,7 @@ pub fn open(
             if b.nonce != *nonce {
                 return Err("its base was made again".into());
             }
-            Some(b)
+            Some((b, bp))
         }
     };
     let mut g = Globals::new();
@@ -894,7 +968,7 @@ pub fn open(
     // copied: S₀'s own pages from its file, the others from the base.
     let mut mapped_pages = place(&mut g, &file, bytes, data_off, &pages, &own)?;
     let mut base_pages = 0;
-    if let Some(b) = &base {
+    if let Some((b, _)) = &base {
         base_pages = place(
             &mut g,
             &b.file,
@@ -932,5 +1006,58 @@ pub fn open(
         meta,
         mapped_pages,
         base_pages,
+        base: base.map(|(_, bp)| bp),
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The collector removes the bases no S₀ refers to that are older than
+    /// the grace, and nothing else: not a referenced base, not a recent
+    /// one (its S₀ may be on its way), not one the process keeps.
+    #[test]
+    fn stale_bases_are_collected() {
+        let dir = std::env::temp_dir().join(format!("flashtex-s0-gc-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let old = std::time::SystemTime::now() - std::time::Duration::from_secs(2 * 24 * 3600);
+        let base = |n: &str, aged: bool| {
+            let p = dir.join(n);
+            std::fs::write(&p, b"a base").unwrap();
+            if aged {
+                std::fs::File::options()
+                    .write(true)
+                    .open(&p)
+                    .unwrap()
+                    .set_modified(old)
+                    .unwrap();
+            }
+            p
+        };
+        let s0 = |n: &str, refers: Option<&str>| {
+            let head = finish_head(vec![], refers.map(|r| (r.to_string(), [1, 2])), &[7]);
+            let mut f = (head.len() as u64).to_le_bytes().to_vec();
+            f.extend_from_slice(&head);
+            std::fs::write(dir.join(n), f).unwrap();
+        };
+        let used = base("used.xs0base", true);
+        let stale = base("stale.xs0base", true);
+        let recent = base("recent.xs0base", false);
+        let kept = base("kept.xs0base", true);
+        s0("doc1.xs0", Some("used.xs0base"));
+        s0("doc2.xs0", None);
+        std::fs::write(dir.join("doc3.xs0"), b"not an S0").unwrap();
+        assert_eq!(
+            base_of(&dir.join("doc1.xs0")).as_deref(),
+            Some("used.xs0base")
+        );
+        assert_eq!(base_of(&dir.join("doc2.xs0")), None);
+        assert_eq!(base_of(&dir.join("doc3.xs0")), None);
+        let gone = collect_bases(&dir, std::slice::from_ref(&kept), BASE_GRACE);
+        assert_eq!(gone, vec![stale.clone()]);
+        assert!(used.is_file() && recent.is_file() && kept.is_file() && !stale.exists());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }

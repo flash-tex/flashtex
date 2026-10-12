@@ -449,6 +449,9 @@ pub struct Engine {
     opened: Option<(PointKey, Option<FormatFile>)>,
     /// The S₀ already in its file (saved or opened).
     s0_saved: Option<CheckpointId>,
+    /// The S₀ bases this engine has opened an S₀ against or saved one
+    /// against (`crate::s0file`): never collected by its saves.
+    bases_in_use: Vec<PathBuf>,
     /// The S₀ writers still running.
     writers: Vec<std::thread::JoinHandle<()>>,
     /// The last run was in Low Memory: S₀ is written on the engine thread,
@@ -553,6 +556,7 @@ impl Engine {
             cursor: 0,
             opened: None,
             s0_saved: None,
+            bases_in_use: vec![],
             writers: vec![],
             lean_save: false,
         }
@@ -635,6 +639,11 @@ impl Engine {
         self.fonts = fonts;
         let o = r?;
         let (mapped_pages, base_pages) = (o.mapped_pages, o.base_pages);
+        if let Some(b) = &o.base {
+            if !self.bases_in_use.contains(b) {
+                self.bases_in_use.push(b.clone());
+            }
+        }
         let (k, f) = found.ok_or("not checked")?;
         self.clear();
         let m = o.meta;
@@ -722,6 +731,27 @@ impl Engine {
             opens: self.opens[..s0.opens.min(self.opens.len())].to_vec(),
             texts,
         };
+        if let Some(b) = base.as_ref().map(|b| crate::s0file::base_path(b, g)) {
+            if !self.bases_in_use.contains(&b) {
+                self.bases_in_use.push(b);
+            }
+        }
+        // after the save, the bases no S₀ in the cache refers to any more
+        // (old formats and engine builds) go
+        let collect = {
+            let dir = path.parent().map(Path::to_path_buf);
+            let keep = self.bases_in_use.clone();
+            move || {
+                if let Some(d) = dir {
+                    for b in crate::s0file::collect_bases(&d, &keep, crate::s0file::BASE_GRACE) {
+                        eprintln!(
+                            "flashtex-host-unicode: {{\"collected_s0_base\":{:?}}}",
+                            b.display().to_string()
+                        );
+                    }
+                }
+            }
+        };
         if self.lean_save {
             // (Low Memory: no copy of the chunks; written here)
             if let Some(d) = path.parent() {
@@ -740,6 +770,7 @@ impl Engine {
                 path.display().to_string(),
                 t.elapsed().as_secs_f64() * 1e3
             );
+            collect();
             return Ok(None);
         }
         let image = crate::s0file::prepare(g, s0.id, &meta, base.as_ref())?;
@@ -756,11 +787,14 @@ impl Engine {
                 }
                 let t = std::time::Instant::now();
                 match image.write(&p.to_string_lossy()) {
-                    Ok(bytes) => eprintln!(
-                        "flashtex-host-unicode: {{\"saved_s0\":{:?},\"bytes\":{bytes},\"engine_ms\":{prepare_ms:.1},\"write_ms\":{:.1}}}",
-                        p.display().to_string(),
-                        t.elapsed().as_secs_f64() * 1e3
-                    ),
+                    Ok(bytes) => {
+                        eprintln!(
+                            "flashtex-host-unicode: {{\"saved_s0\":{:?},\"bytes\":{bytes},\"engine_ms\":{prepare_ms:.1},\"write_ms\":{:.1}}}",
+                            p.display().to_string(),
+                            t.elapsed().as_secs_f64() * 1e3
+                        );
+                        collect();
+                    }
                     Err(e) => eprintln!("flashtex-host-unicode: saving S0: {e}"),
                 }
             })

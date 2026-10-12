@@ -865,6 +865,45 @@ fn a_reopened_document_goes_on_from_its_persisted_s0() {
     assert_eq!(against_scratch("no base"), "fresh", "no base refuses S0");
     assert!(saved[1].is_file(), "the base is made again");
     assert_eq!(against_scratch("base again"), "s0", "the new base serves");
+    // a base cut short while closed: S₀ refused; the run's save makes the
+    // base again in its place (rather than saving S₀ whole), and collects
+    // a base of no S₀ older than a day (not a recent one)
+    let stale = cache.join("0000000000000000000000000000dead.xs0base");
+    let recent = cache.join("0000000000000000000000000000beef.xs0base");
+    for b in [&stale, &recent] {
+        std::fs::write(b, b"an old base").unwrap();
+    }
+    std::fs::File::options()
+        .write(true)
+        .open(&stale)
+        .unwrap()
+        .set_modified(std::time::SystemTime::now() - Duration::from_secs(2 * 24 * 3600))
+        .unwrap();
+    let whole = size(&saved[1]);
+    std::fs::File::options()
+        .write(true)
+        .open(&saved[1])
+        .unwrap()
+        .set_len(whole / 2)
+        .unwrap();
+    assert_eq!(
+        against_scratch("cut base"),
+        "fresh",
+        "a cut base refuses S0"
+    );
+    assert_eq!(size(&saved[1]), whole, "the base is made again");
+    assert!(
+        size(&saved[0]) * 4 < whole,
+        "S0 is saved against the new base, not whole: {} bytes",
+        size(&saved[0])
+    );
+    assert!(!stale.exists(), "the stale base is collected");
+    assert!(recent.exists(), "a recent base is kept");
+    assert_eq!(
+        against_scratch("base made again"),
+        "s0",
+        "the base made again serves"
+    );
     let _ = std::fs::remove_dir_all(&dir);
 }
 
