@@ -23,7 +23,8 @@
 use crate::generated::consts::token_list;
 use crate::generated::types::in_state_record;
 use crate::generated::Globals;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
+use std::sync::Arc;
 
 /// A node's position: the span in bits 16..48, the byte column in bits
 /// 0..16 (`NO_COLUMN`: none), bit 63 when a native word's column is its
@@ -61,6 +62,10 @@ pub struct DlSource {
     on: Option<bool>,
     /// The position of the node at each `mem` location.
     side: Side,
+    /// Bytes the side table copied from checkpoints' groups and leaves,
+    /// ever (an upper bound of what checkpoints hold of it since
+    /// [`DlSource::held_bytes`] was counted last).
+    pub copied: usize,
     /// File id - 1 → absolute path; name bytes → file id.
     files: Vec<String>,
     file_ids: HashMap<Vec<u8>, u32>,
@@ -214,7 +219,38 @@ impl DlSource {
 
     #[inline(always)]
     fn set(&mut self, p: i32, v: Loc) {
-        self.side.set(p as u32 as usize, v);
+        self.copied += self.side.set(p as u32 as usize, v);
+    }
+
+    /// The bytes of the side table that the snapshots `snaps` hold and the
+    /// live table does not share: what dropping them all would give back.
+    /// A group or leaf sits at one place of every table that has it, so it
+    /// is shared with the live table only if the live table has it there.
+    pub fn held_bytes<'a>(&self, snaps: impl Iterator<Item = &'a DlSnap>) -> usize {
+        let live = &self.side.groups;
+        let (mut seen_g, mut seen_l) = (HashSet::new(), HashSet::new());
+        let mut bytes = 0;
+        for s in snaps {
+            bytes += s.side.groups.len() * std::mem::size_of::<Option<Arc<Group>>>();
+            for (gi, g) in s.side.groups.iter().enumerate() {
+                let Some(g) = g else { continue };
+                let lg = live.get(gi).and_then(Option::as_ref);
+                if lg.is_some_and(|l| Arc::ptr_eq(l, g)) || !seen_g.insert(Arc::as_ptr(g)) {
+                    continue;
+                }
+                bytes += std::mem::size_of::<Group>();
+                for (li, l) in g.0.iter().enumerate() {
+                    let Some(l) = l else { continue };
+                    let shared = lg
+                        .and_then(|lg| lg.0[li].as_ref())
+                        .is_some_and(|x| Arc::ptr_eq(x, l));
+                    if !shared && seen_l.insert(Arc::as_ptr(l)) {
+                        bytes += std::mem::size_of::<Leaf>();
+                    }
+                }
+            }
+        }
+        bytes
     }
 
     /// A resident engine's run: the source map is made when its display
@@ -287,32 +323,34 @@ pub struct DlSnap {
     last_marked: Loc,
 }
 
-/// The side table: `mem`'s size in chunks, each either this engine's own
-/// (written in place) or shared with checkpoints (copied at its first
-/// write). Every chunk starts as one shared chunk of zeros, so an engine
-/// with no display list holds none of it.
+/// The side table, indexed like `mem`: groups of [`LEAVES`] leaves of
+/// [`LEAF`] entries, both shared with checkpoints (`Arc`) and copied at the
+/// first write after one (`Arc::make_mut`); a leaf or group never written
+/// is `None` (zeros). A page's nodes are scattered over `mem`: on a 109-page
+/// fontspec document a page writes into about 600 leaves but only 26 of the
+/// 64 KB regions the table was once split into, so a checkpoint holds about
+/// 330 KB of copies where whole 64 KB chunks held 1.7 MB (lane
+/// UNICODE-POLISH).
 #[derive(Clone, Default)]
 struct Side {
-    chunks: Vec<Chunk>,
+    groups: Vec<Option<Arc<Group>>>,
     len: usize,
 }
 
-#[derive(Clone)]
-enum Chunk {
-    Own(Box<[Loc]>),
-    Shared(std::sync::Arc<[Loc]>),
-}
+const LEAF_SHIFT: usize = 6;
+const LEAF: usize = 1 << LEAF_SHIFT;
+const GROUP_SHIFT: usize = 7;
+const LEAVES: usize = 1 << GROUP_SHIFT;
 
-const SIDE_SHIFT: usize = 13;
-const SIDE_CHUNK: usize = 1 << SIDE_SHIFT;
+type Leaf = [Loc; LEAF];
+
+#[derive(Clone)]
+struct Group([Option<Arc<Leaf>>; LEAVES]);
 
 impl Side {
     fn zeros(len: usize) -> Side {
-        let zero: std::sync::Arc<[Loc]> = vec![0; SIDE_CHUNK].into();
         Side {
-            chunks: (0..len.div_ceil(SIDE_CHUNK))
-                .map(|_| Chunk::Shared(zero.clone()))
-                .collect(),
+            groups: vec![None; len.div_ceil(LEAF * LEAVES)],
             len,
         }
     }
@@ -326,35 +364,52 @@ impl Side {
         if i >= self.len {
             return 0;
         }
-        match &self.chunks[i >> SIDE_SHIFT] {
-            Chunk::Own(c) => c[i & (SIDE_CHUNK - 1)],
-            Chunk::Shared(c) => c[i & (SIDE_CHUNK - 1)],
+        match &self.groups[i >> (LEAF_SHIFT + GROUP_SHIFT)] {
+            None => 0,
+            Some(g) => match &g.0[(i >> LEAF_SHIFT) & (LEAVES - 1)] {
+                None => 0,
+                Some(l) => l[i & (LEAF - 1)],
+            },
         }
     }
 
+    /// Set entry `i`; the bytes copied from a checkpoint's groups or
+    /// leaves (the first write to them since it).
     #[inline(always)]
-    fn set(&mut self, i: usize, v: Loc) {
+    fn set(&mut self, i: usize, v: Loc) -> usize {
         if i >= self.len {
-            return;
+            return 0;
         }
-        let c = &mut self.chunks[i >> SIDE_SHIFT];
-        if let Chunk::Shared(sh) = c {
-            *c = Chunk::Own(sh.to_vec().into_boxed_slice());
+        let mut copied = 0;
+        let g = &mut self.groups[i >> (LEAF_SHIFT + GROUP_SHIFT)];
+        if g.is_none() {
+            if v == 0 {
+                return 0;
+            }
+            *g = Some(Arc::new(Group(std::array::from_fn(|_| None))));
         }
-        if let Chunk::Own(o) = c {
-            o[i & (SIDE_CHUNK - 1)] = v;
+        let g = g.as_mut().expect("made above");
+        if Arc::strong_count(g) > 1 {
+            copied += std::mem::size_of::<Group>();
         }
+        let l = &mut Arc::make_mut(g).0[(i >> LEAF_SHIFT) & (LEAVES - 1)];
+        if l.is_none() {
+            if v == 0 {
+                return copied;
+            }
+            *l = Some(Arc::new([0; LEAF]));
+        }
+        let l = l.as_mut().expect("made above");
+        if Arc::strong_count(l) > 1 {
+            copied += std::mem::size_of::<Leaf>();
+        }
+        Arc::make_mut(l)[i & (LEAF - 1)] = v;
+        copied
     }
 
-    /// The table, every chunk now shared (this engine's chunks moved, not
-    /// copied).
+    /// The table, to keep at a checkpoint: every group shared, copied at
+    /// the next write to it.
     fn share(&mut self) -> Side {
-        for c in self.chunks.iter_mut() {
-            if let Chunk::Own(o) = c {
-                let b = std::mem::take(o);
-                *c = Chunk::Shared(b.into());
-            }
-        }
         self.clone()
     }
 }

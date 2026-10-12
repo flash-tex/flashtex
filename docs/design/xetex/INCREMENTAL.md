@@ -178,6 +178,22 @@ pdfTeX's own, each needing a XeTeX counterpart written against `xetex.web`:
    its `Built`), then the run goes on to the end: no convergence yet, so
    the pages after the edit are typeset again (`done` grows with the
    document), but the edited page comes after a page or two.
+   *Retention (lane UNICODE-POLISH):* the checkpoints are kept within the
+   performance mode's budget (`ckpt::Retention`, `ckpt::thin`, Classic's
+   `incr::thin` without segment checkpoints): the format point, S₀, the
+   newest page's and the restart point stay; within `dense` pages of the
+   last edit every page checkpoint stays; further out they are thinned
+   log-spaced until what they hold (the word space's logs and the source
+   map's side-table copies, `Globals::kept_bytes`) fits half the budget.
+   Balanced and High Performance keep Classic's budgets (1 GiB and up);
+   Low Memory keeps 32 MB (`ckpt::LOW_BUDGET`) and, like Classic's, a
+   resident engine: it used to keep no engine between compiles (55 MB
+   idle, 725 ms a keystroke on a 109-page fontspec document; now 210 MB
+   and 15 ms). The source map's side table, once shared with checkpoints
+   in 64 KB chunks (1.7 MB a page), is shared in 512-byte leaves under
+   1 KB groups (0.15 MB a page), and a fresh run gives back the word
+   space's pages that hold only zeros (77 MB, as Classic's idle trim
+   does): Balanced holds 223 MB on that document where it held 540 MB.
 5. **L3 restart and converge**: `iso.rs` for XeTeX's nodes, the dead-word
    rules from `xetex.web`, line shifting; a soundness case for every rule and
    the soundness sweep (incremental equal to cold, frame by frame).

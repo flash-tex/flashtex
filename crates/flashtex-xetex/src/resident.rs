@@ -124,6 +124,9 @@ pub struct Resident {
     /// A run from S₀ or a page: the last complete run's later state, for
     /// the convergence test (`crate::conv`).
     pub(crate) conv: Option<crate::conv::Old>,
+    /// Retention during the run (`ckpt::thin`), when it takes page
+    /// checkpoints.
+    pub(crate) thinning: Option<crate::ckpt::Thinning>,
     fonts: Box<dyn Fonts>,
 }
 
@@ -139,6 +142,11 @@ impl Resident {
             return;
         }
         self.guard.push((path.to_string(), std::fs::read(p).ok()));
+    }
+
+    /// The point after the format load this run took, if any.
+    pub(crate) fn point(&self) -> Option<CheckpointId> {
+        self.point.as_ref().map(|p| p.0)
     }
 
     /// The fonts' catalog for a lookup by name.
@@ -271,9 +279,9 @@ pub struct Spec {
     pub font_formats: Option<HashSet<String>>,
     /// The host sets it to stop the run.
     pub cancel: Arc<AtomicBool>,
-    /// Keep nothing after the run (Low Memory): the engine's memory goes
-    /// back, and the next run starts from the start.
-    pub lean: bool,
+    /// How much of the checkpoints is kept (the connection's performance
+    /// mode: Low Memory's budget is tight).
+    pub retention: crate::ckpt::Retention,
     /// A preview: the PDF's streams are stored, not compressed.
     pub preview: bool,
 }
@@ -369,6 +377,9 @@ pub struct Engine {
     /// restored.
     last_pages: Vec<Arc<crate::out::doc::Built>>,
     eqtb_pointers: HashMap<CheckpointId, Arc<Vec<i32>>>,
+    /// Where the user edits (the retention's cursor, `ckpt::thin`): the
+    /// pages before the last restart point of a run in the body.
+    cursor: usize,
 }
 
 /// Resets every file of the engine: closed, as at the start of a run.
@@ -465,6 +476,7 @@ impl Engine {
             font_cache: Arc::default(),
             last_pages: vec![],
             eqtb_pointers: HashMap::new(),
+            cursor: 0,
         }
     }
 
@@ -477,6 +489,28 @@ impl Engine {
         self.journal = None;
         self.opens.clear();
         self.g = None;
+    }
+
+    /// Retention after a run (`ckpt::thin`): the checkpoints kept are the
+    /// format point, S₀ and the page checkpoints, within `r`'s budget; any
+    /// other goes (one a convergence jump left behind), and so does the
+    /// host state of every checkpoint no longer in the word space.
+    fn retain(&mut self, r: crate::ckpt::Retention) {
+        let Some(g) = self.g.as_mut() else { return };
+        let pinned: HashSet<CheckpointId> = self
+            .point
+            .iter()
+            .map(|p| p.id)
+            .chain(self.s0.iter().map(|s| s.id))
+            .chain(self.pages.last().map(|c| c.id))
+            .collect();
+        let pages: HashMap<CheckpointId, usize> =
+            self.pages.iter().map(|c| (c.id, c.pages)).collect();
+        crate::ckpt::thin(g, r, self.cursor, &pinned, &pages);
+        g.prune_saved();
+        let ids: HashSet<CheckpointId> = g.arena.checkpoint_ids().iter().copied().collect();
+        self.pages.retain(|c| ids.contains(&c.id));
+        self.eqtb_pointers.retain(|k, _| ids.contains(k));
     }
 
     /// Where this run can start, and why not from S₀ when one is kept.
@@ -675,6 +709,7 @@ impl Engine {
 
     /// Run the engine once, as `spec` asks.
     pub fn run(&mut self, spec: Spec) -> Report {
+        let retention = spec.retention;
         if let Err(e) = std::env::set_current_dir(&spec.root) {
             return Report {
                 failure: Some(format!("{}: {e}", spec.root.display())),
@@ -739,6 +774,7 @@ impl Engine {
             opens: vec![],
             guard: vec![],
             conv: None,
+            thinning: None,
             fonts: Box::new(Unkept),
         };
         if start.in_body() {
@@ -933,8 +969,30 @@ impl Engine {
         // (a cancelled run puts back the last complete run's: its page
         // checkpoints stand, and an edit saved since is a change to them)
         let texts_before = texts_then.map(|t| std::mem::replace(&mut self.texts, t));
-        let want_s0 = self.keep_s0 && self.keep_point && !spec.lean && !start.in_body();
-        let want_pages = self.keep_pages && self.keep_s0 && self.keep_point && !spec.lean;
+        let want_s0 = self.keep_s0 && self.keep_point && !start.in_body();
+        let want_pages = self.keep_pages && self.keep_s0 && self.keep_point;
+        // the retention's cursor: where this edit is (a later pass, from
+        // the format point, does not move it)
+        match start {
+            Start::Page(i) => self.cursor = self.pages.get(i).map_or(0, |c| c.pages),
+            Start::S0 => self.cursor = 0,
+            _ => {}
+        }
+        let thinning = want_pages.then(|| crate::ckpt::Thinning {
+            knobs: retention,
+            cursor: self.cursor,
+            pinned: self
+                .point
+                .iter()
+                .map(|p| p.id)
+                .chain(self.s0.iter().map(|s| s.id))
+                .chain(match start {
+                    Start::Page(i) => self.pages.get(i).map(|c| c.id),
+                    _ => None,
+                })
+                .collect(),
+            earlier: self.pages.iter().map(|c| (c.id, c.pages)).collect(),
+        });
         // the journal and the output opens up to where the run starts
         let (journal, opens) = match start {
             Start::Page(i) => (
@@ -956,7 +1014,7 @@ impl Engine {
         let resident = Box::new(Resident {
             cancel: spec.cancel.clone(),
             format_dir: spec.format_dir.clone(),
-            keep_point: self.keep_point && start == Start::Fresh && !spec.lean,
+            keep_point: self.keep_point && start == Start::Fresh,
             point: None,
             want_s0,
             s0: None,
@@ -965,6 +1023,7 @@ impl Engine {
             opens,
             guard: guard.guard,
             conv,
+            thinning,
             fonts: self.fonts.take().unwrap_or_else(|| Box::new(Unkept)),
         });
         let mut out = (!c.no_pdf).then(|| {
@@ -1137,13 +1196,9 @@ impl Engine {
                 .collect();
             self.eqtb_pointers.retain(|k, _| ids.contains(k));
         }
-        if rep.failure.is_some() || spec.lean {
-            // a broken run's engine is not used again; Low Memory keeps none
-            // (nor the fonts' files)
+        if rep.failure.is_some() {
+            // a broken run's engine is not used again
             self.clear();
-            if spec.lean {
-                self.font_cache = Arc::default();
-            }
             return rep;
         }
         // what the run wrote is the engine's (a restore cuts it back only
@@ -1214,6 +1269,33 @@ impl Engine {
         } else {
             self.pages.clear();
             self.journal = None;
+        }
+        self.retain(retention);
+        if start == Start::Fresh {
+            // the pages `initialize` cleared and the format left empty
+            // (the pdfTeX engine's host gives them back at its idle trim;
+            // 77 MB of 277 on a fontspec book, in 14 ms)
+            if let Some(g) = self.g.as_mut() {
+                g.arena.release_zero_pages();
+            }
+        }
+        // (`FLASHTEX_UNICODE_MEMSTAT=1`: what the engine holds after each
+        // run, and each thinning pass, `ckpt::thin`, on standard error)
+        if std::env::var_os("FLASHTEX_UNICODE_MEMSTAT").is_some() {
+            if let Some(g) = self.g.as_ref() {
+                let st: Vec<String> = g
+                    .arena
+                    .mem_stats(None)
+                    .iter()
+                    .map(|(k, v)| format!("{k}={v}"))
+                    .collect();
+                eprintln!(
+                    "[memstat] pages={} saved={} {}",
+                    self.pages.len(),
+                    g.saved_len(),
+                    st.join(" ")
+                );
+            }
         }
         rep
     }

@@ -95,6 +95,16 @@ def instructions(pid):
     return r.f29  # ri_instructions
 
 
+def footprint(pid):
+    """(phys_footprint, lifetime max phys_footprint) in MB (macOS), or None."""
+    if _libproc is None:
+        return None
+    r = _RU()
+    if _libproc.proc_pid_rusage(pid, 4, ctypes.byref(r)) != 0:
+        return None
+    return round(r.f7 / 2**20, 1), round(r.f28 / 2**20, 1)
+
+
 def write_frame(s, k, body):
     b = body.encode() if isinstance(body, str) else body
     s.sendall(struct.pack('<IB', len(b) + 1, k) + b)
@@ -158,7 +168,8 @@ class Host:
         done = time.time() - t0
         i1 = instructions(self.p.pid)
         ins = (i1 - i0) if i0 is not None and i1 is not None else None
-        return frames, d, dict(first=first, done=done, page_times=page_times, instructions=ins)
+        return frames, d, dict(first=first, done=done, page_times=page_times, instructions=ins,
+                               footprint=footprint(self.p.pid))
 
     def compile_cancelled(self, root, main, ms, between):
         """A compile cancelled `ms` milliseconds after it is sent, with
@@ -402,6 +413,7 @@ def main():
                  done_ms=round(1e3 * t['done'], 1),
                  instructions_m=round(t['instructions'] / 1e6, 1) if t['instructions'] is not None else None,
                  mode=d.get('mode'), starts=d.get('starts'),
+                 footprint_mb=(t['footprint'] or (None, None))[0], peak_mb=(t['footprint'] or (None, None))[1],
                  sources=sum(1 for k, _ in frames if k == SOURCES))
         if refhost is not None:
             got = snapshot(work)

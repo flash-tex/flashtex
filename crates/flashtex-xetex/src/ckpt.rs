@@ -386,6 +386,56 @@ impl Globals {
         }
         self.conv_test(pages);
         self.check_mem(pages);
+        self.thin_in_run();
+    }
+
+    /// Retention in the middle of a run (a long run would otherwise hold
+    /// every page's checkpoint until it ends): when what the checkpoints
+    /// hold passes the budget, [`thin`] them, this run's and the earlier
+    /// runs' alike.
+    fn thin_in_run(&mut self) {
+        let Some(t) = self
+            .host
+            .resident
+            .as_ref()
+            .and_then(|r| r.thinning.as_ref())
+        else {
+            return;
+        };
+        if self.kept_estimate() <= t.knobs.budget {
+            return;
+        }
+        let r = self.host.resident.as_ref().expect("checked");
+        let t = r.thinning.as_ref().expect("checked");
+        let mut pinned: std::collections::HashSet<CheckpointId> =
+            t.pinned.iter().copied().collect();
+        if let Some(Ok(s0)) = &r.s0 {
+            pinned.insert(s0.id);
+        }
+        if let Some(p) = r.point() {
+            pinned.insert(p);
+        }
+        if let Some(p) = r.pages.last() {
+            pinned.insert(p.id);
+        }
+        let pages: std::collections::HashMap<CheckpointId, usize> = t
+            .earlier
+            .iter()
+            .copied()
+            .chain(r.pages.iter().map(|p| (p.id, p.pages)))
+            .collect();
+        let (knobs, cursor) = (t.knobs, t.cursor);
+        if !thin(self, knobs, cursor, &pinned, &pages) {
+            return;
+        }
+        let ids: std::collections::HashSet<CheckpointId> =
+            self.arena.checkpoint_ids().iter().copied().collect();
+        if let Some(r) = self.host.resident.as_mut() {
+            r.pages.retain(|p| ids.contains(&p.id));
+            if let Some(t) = r.thinning.as_mut() {
+                t.earlier.retain(|(id, _)| ids.contains(id));
+            }
+        }
     }
 
     /// Take S₀ here, if this run is to (`crate::resident`).
@@ -453,6 +503,151 @@ impl Globals {
             opens,
         })
     }
+}
+
+/// How much of its checkpoints a resident engine keeps (DESIGN.md §5.2's
+/// retention; the knobs of a performance mode, `flashtex_engine::profile`):
+/// the bytes they may hold, and the pages around the cursor whose
+/// checkpoints all stay.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Retention {
+    pub budget: usize,
+    pub dense: usize,
+}
+
+/// Low Memory's budget for the Unicode engine's checkpoints. A page
+/// checkpoint holds far less than a pdfTeX engine's (on a 109-page fontspec
+/// document 0.1 MB of logs and 0.15 MB of the source map's side table;
+/// Classic's Low Memory budget is 96 MB for its logs alone), so a tight
+/// budget is a third of Classic's. The format point and S₀ hold about
+/// 10 MB of it whatever is thinned (the preamble's changes, and every
+/// dropped page's merged into them), and a thinning pass goes down to half
+/// the budget: a page checkpoint every few pages far from the cursor.
+pub const LOW_BUDGET: usize = 32 << 20;
+
+impl Retention {
+    /// A performance mode's (`profile::Profile`'s budget and density, but
+    /// Low Memory's budget is [`LOW_BUDGET`]); `FLASHTEX_BUDGET` and
+    /// `FLASHTEX_DENSE` pin them, as for the pdfTeX engine.
+    pub fn of(mode: flashtex_engine::profile::Mode) -> Retention {
+        use flashtex_engine::profile::{Mode, Pinned, Profile};
+        let pinned = Pinned::from_env();
+        let p = Profile::new(mode, &pinned);
+        let budget = match (mode, pinned.budget) {
+            (_, Some(b)) => b,
+            (Mode::LowMemory, None) => LOW_BUDGET,
+            _ => p.budget,
+        };
+        Retention {
+            budget,
+            dense: p.dense,
+        }
+    }
+}
+
+impl Default for Retention {
+    fn default() -> Retention {
+        Retention::of(flashtex_engine::profile::Mode::Balanced)
+    }
+}
+
+/// Retention during a run (`Resident::thinning`): the knobs, the page the
+/// user edits at, the checkpoints never dropped (the format point, S₀, the
+/// restart point the run's branch hangs from), and the earlier runs' page
+/// checkpoints still kept, by id with their page.
+pub(crate) struct Thinning {
+    pub knobs: Retention,
+    pub cursor: usize,
+    pub pinned: Vec<CheckpointId>,
+    pub earlier: Vec<(CheckpointId, usize)>,
+}
+
+/// Drop checkpoints until what they hold fits `r.budget` (DESIGN.md §5.2:
+/// dense near the cursor, log-spaced elsewhere, the spacing driven by the
+/// budget; the pdfTeX engine's `incr::thin`, which this follows, without
+/// its segment checkpoints). Every checkpoint that is neither in `pinned`
+/// nor a page checkpoint in `pages` (by id, with the pages shipped before
+/// it) goes first, always: a checkpoint left behind by a convergence jump.
+/// Then, while the checkpoints hold more than the budget: every page
+/// checkpoint within `r.dense` pages of `cursor` stays, and further out
+/// every `s * 2^k`-th page at a distance in `[dense * 2^k, dense *
+/// 2^(k+1))`, with `s` = 1, 2, 4, ... doubled an octave at a time, the
+/// farthest first, until they fit half the budget (so that the next pages
+/// do not thin again soon: a pass walks the side tables). `pinned` and the newest
+/// checkpoint always stay. True when something was dropped.
+pub(crate) fn thin(
+    g: &mut Globals,
+    r: Retention,
+    cursor: usize,
+    pinned: &std::collections::HashSet<CheckpointId>,
+    pages: &std::collections::HashMap<CheckpointId, usize>,
+) -> bool {
+    let n0 = g.arena.checkpoint_ids().len();
+    let t0 = std::time::Instant::now();
+    let debug = std::env::var_os("FLASHTEX_UNICODE_MEMSTAT").is_some();
+    let known = |id: CheckpointId| pinned.contains(&id) || pages.contains_key(&id);
+    if g.arena.checkpoint_ids().iter().any(|&id| !known(id)) {
+        g.retain_checkpoints(&known);
+    }
+    if g.kept_estimate() <= r.budget || g.kept_bytes() <= r.budget {
+        return g.arena.checkpoint_ids().len() != n0;
+    }
+    let dense = r.dense.max(1);
+    let octave = |d: usize| (usize::BITS - 1 - (d / dense).leading_zeros()) as usize;
+    let far = pages
+        .values()
+        .map(|&j| j.abs_diff(cursor))
+        .filter(|&d| d > dense)
+        .map(octave)
+        .max()
+        .unwrap_or(0);
+    // each step keeps a subset of what the one before kept (`incr::thin`)
+    let mut steps: Vec<(usize, usize)> = vec![];
+    let mut s = 1usize;
+    while s <= 1 << 20 {
+        steps.extend((0..=far).rev().map(|kmin| (s, kmin)));
+        s <<= 1;
+    }
+    let target = r.budget / 2;
+    for (s, kmin) in steps {
+        let keep = |id: CheckpointId| -> bool {
+            if pinned.contains(&id) {
+                return true;
+            }
+            let Some(&j) = pages.get(&id) else {
+                return false;
+            };
+            let d = j.abs_diff(cursor);
+            if d <= dense {
+                return true;
+            }
+            let k = octave(d).min(40);
+            let every = if k >= kmin {
+                s << k
+            } else if s == 1 {
+                1
+            } else {
+                (s / 2) << k
+            };
+            j % every.max(1) == 0
+        };
+        let n = g.arena.checkpoint_ids().len();
+        g.retain_checkpoints(&keep);
+        // (a step that dropped nothing needs no new count)
+        if g.arena.checkpoint_ids().len() != n && g.kept_bytes() <= target {
+            break;
+        }
+    }
+    if debug {
+        eprintln!(
+            "[thin] {} -> {} checkpoints, {} KB kept, {:.2} ms",
+            n0,
+            g.arena.checkpoint_ids().len(),
+            g.kept_estimate() >> 10,
+            t0.elapsed().as_secs_f64() * 1e3
+        );
+    }
+    true
 }
 
 /// The index of a format in `Format::all()` (the key's lookups).

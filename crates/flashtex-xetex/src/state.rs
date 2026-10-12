@@ -252,6 +252,9 @@ pub struct Host {
     /// the host, its terminal is captured.
     /// `None` for a run that is a process of its own.
     pub resident: Option<Box<crate::resident::Resident>>,
+    /// The side table bytes only checkpoints held, and the side table's
+    /// copy count, at the last [`Globals::kept_bytes`].
+    pub kept_walk: (usize, usize),
 }
 
 /// `-no-pdf`, true unless set otherwise.
@@ -346,6 +349,56 @@ impl Globals {
         self.host.handles = saved.handles;
         self.host.dl.restore(&saved.dl);
         Ok(b)
+    }
+
+    /// How many checkpoints' host states are kept.
+    pub(crate) fn saved_len(&self) -> usize {
+        self.host.checkpoints.len()
+    }
+
+    /// What the checkpoints hold, counted exactly: the word space's undo
+    /// and redo logs, and the source map's side table copies that only
+    /// checkpoints hold (a walk of their tables, a few milliseconds).
+    pub(crate) fn kept_bytes(&mut self) -> usize {
+        let held = self
+            .host
+            .dl
+            .held_bytes(self.host.checkpoints.values().map(|s| &s.dl));
+        self.host.kept_walk = (held, self.host.dl.copied);
+        self.arena.log_bytes() + held
+    }
+
+    /// [`kept_bytes`](Self::kept_bytes) without the walk: an upper bound
+    /// (every side table copy made since the last walk counts as held).
+    pub(crate) fn kept_estimate(&self) -> usize {
+        let (held, copied) = self.host.kept_walk;
+        self.arena.log_bytes() + held + self.host.dl.copied.saturating_sub(copied)
+    }
+
+    /// Drop every checkpoint of the word space's live chain that `keep`
+    /// rejects (but the newest; their logs merge into their predecessors',
+    /// `Arena::retain`), and the host state saved with each.
+    pub(crate) fn retain_checkpoints(
+        &mut self,
+        keep: &dyn Fn(flashtex_engine::arena::CheckpointId) -> bool,
+    ) {
+        let before = self.arena.checkpoint_ids().to_vec();
+        self.arena.retain(keep);
+        let after: std::collections::HashSet<_> =
+            self.arena.checkpoint_ids().iter().copied().collect();
+        for id in before {
+            if !after.contains(&id) {
+                self.host.checkpoints.remove(&id);
+            }
+        }
+    }
+
+    /// Forget the host state of every checkpoint not in the word space's
+    /// live chain (a dropped branch's).
+    pub(crate) fn prune_saved(&mut self) {
+        let ids: std::collections::HashSet<_> =
+            self.arena.checkpoint_ids().iter().copied().collect();
+        self.host.checkpoints.retain(|k, _| ids.contains(k));
     }
 
     /// Whether the host state of checkpoint `id` is kept.

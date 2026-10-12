@@ -631,9 +631,10 @@ fn low_memory_keeps_no_spare() {
 /// the preamble from S₀) write what runs in processes of their own write,
 /// byte for byte: the PDF, the log and the `.aux`, over two passes, an edit
 /// in the body, a preamble edit, an error, a fatal error (the engine
-/// recovers from it) and an edit back; the same in Low Memory, which keeps
-/// no engine between compiles, without S₀ (`FLASHTEX_UNICODE_S0=0`) and
-/// without the kept state (`FLASHTEX_UNICODE_FORMAT_POINT=0`).
+/// recovers from it) and an edit back; the same in Low Memory, whose
+/// checkpoints are thinned to a tight budget (here to nothing but the
+/// pinned ones: `FLASHTEX_BUDGET=1`), without S₀ (`FLASHTEX_UNICODE_S0=0`)
+/// and without the kept state (`FLASHTEX_UNICODE_FORMAT_POINT=0`).
 #[test]
 fn compiles_in_the_host_process_write_what_runs_of_their_own_write() {
     if !texlive() {
@@ -694,9 +695,10 @@ fn compiles_in_the_host_process_write_what_runs_of_their_own_write() {
     assert_eq!(statuses, ["ok", "ok", "ok", "error", "error", "ok"]);
     let no_point = [("FLASHTEX_UNICODE_FORMAT_POINT", "0")];
     let no_s0 = [("FLASHTEX_UNICODE_S0", "0")];
+    let tiny = [("FLASHTEX_BUDGET", "1")];
     for (what, envs, profile) in [
         ("in process", &[][..], None),
-        ("in process, Low Memory", &[][..], Some("low-memory")),
+        ("in process, Low Memory", &tiny[..], Some("low-memory")),
         ("in process, no S0", &no_s0[..], None),
         ("in process, no kept state", &no_point[..], None),
     ] {
@@ -708,7 +710,7 @@ fn compiles_in_the_host_process_write_what_runs_of_their_own_write() {
             assert_eq!(a.3, b.3, "{what}: compile {}: the .aux differs", i + 1);
         }
         let starts: Vec<&str> = got.iter().map(|o| o.4.as_str()).collect();
-        if what == "in process" {
+        if what == "in process" || what == "in process, Low Memory" {
             // the body edits go on from S₀; the preamble edits (one, then
             // its removal) run from the format and take a new S₀; the fatal
             // error's second pass read the `.aux` its first pass left, and

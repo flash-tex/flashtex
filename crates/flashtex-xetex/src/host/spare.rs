@@ -482,6 +482,8 @@ pub struct Spares {
     enabled: bool,
     /// The connection's performance mode allows spares (not Low Memory).
     profile_allows: bool,
+    /// The connection's performance mode.
+    mode: flashtex_engine::profile::Mode,
     slots: Arc<Slots>,
     ttl: Duration,
     spare: Option<Spare>,
@@ -505,6 +507,7 @@ impl Spares {
         Spares {
             enabled,
             profile_allows: allows(mode),
+            mode,
             slots,
             ttl: Duration::from_secs(ttl),
             spare: None,
@@ -540,15 +543,16 @@ impl Spares {
         self.enabled && self.profile_allows
     }
 
-    /// The connection's mode is Low Memory: nothing is kept between
-    /// compiles (no spare, no resident engine).
-    pub fn lean(&self) -> bool {
-        !self.profile_allows
+    /// How much of its checkpoints the resident engine keeps in the
+    /// connection's mode (Low Memory: a tight budget).
+    pub fn retention(&self) -> crate::ckpt::Retention {
+        crate::ckpt::Retention::of(self.mode)
     }
 
     /// The connection's performance mode changed (`PROFILE`): Low Memory
     /// keeps no spare, and ends the one there is.
     pub fn set_mode(&mut self, mode: flashtex_engine::profile::Mode) {
+        self.mode = mode;
         self.profile_allows = allows(mode);
         if !self.profile_allows {
             self.clear();
