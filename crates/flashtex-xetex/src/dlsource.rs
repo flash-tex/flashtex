@@ -81,7 +81,59 @@ pub struct DlSource {
     last_marked: Loc,
 }
 
+/// A node's source position as a place: (file path, line, column and
+/// flag), from the tables of the run that made it (the convergence test,
+/// `crate::conv`, compares two runs' positions this way: their span and
+/// file ids are numbered as each run met them).
+pub type Place<'a> = Option<(&'a str, u32, u64)>;
+
+/// The span and file tables of a run ([`DlSource::tables`]).
+#[derive(Clone, Default)]
+pub struct Tables {
+    spans: Vec<(u32, u32)>,
+    files: Vec<String>,
+}
+
+impl Tables {
+    pub fn place(&self, l: Loc) -> Place<'_> {
+        if l == 0 {
+            return None;
+        }
+        let s = loc_span(l);
+        let rest = l & !(0xFFFF_FFFFu64 << 16);
+        let (f, line) = self.spans.get((s as usize).checked_sub(1)?).copied()?;
+        let path = self.files.get((f as usize).checked_sub(1)?)?;
+        Some((path.as_str(), line, rest))
+    }
+}
+
+impl DlSnap {
+    /// Node `p`'s position in this snapshot.
+    pub fn at(&self, p: i32) -> Loc {
+        self.side.get(p as u32 as usize)
+    }
+}
+
 impl DlSource {
+    /// The span and file tables as they are (a run's, all of whose
+    /// positions they name).
+    pub fn tables(&self) -> Tables {
+        Tables {
+            spans: self.spans.clone(),
+            files: self.files.clone(),
+        }
+    }
+
+    /// Node `p`'s position now.
+    pub fn at(&self, p: i32) -> Loc {
+        self.get(p)
+    }
+
+    /// Whether a display list is made.
+    pub fn on(&self) -> bool {
+        self.on == Some(true)
+    }
+
     fn file_id(&mut self, name: &[u8]) -> u32 {
         if let Some(&i) = self.file_ids.get(name) {
             return i;

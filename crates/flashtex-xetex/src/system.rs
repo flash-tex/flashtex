@@ -663,6 +663,40 @@ impl AlphaFile {
     }
 }
 
+impl FileSnap {
+    /// Whether this file global is as `o` is but for its stream's place
+    /// (the convergence test, `crate::conv`, compares the streams). A
+    /// closed file's name (`path`, kept from its last open) is not read.
+    pub fn alike_but_stream(&self, o: &FileSnap) -> bool {
+        // A closed file: `u_open_in` (and the byte files' opens) set `err`,
+        // `at_eof`, the encoding and the first byte again; what it leaves
+        // is compared.
+        if matches!((&self.stream, &o.stream), (Stream::None, Stream::None)) {
+            return (self.saved_char, self.skip_next_lf, self.pushback)
+                == (o.saved_char, o.skip_next_lf, o.pushback);
+        }
+        (
+            self.buf,
+            self.word,
+            self.err,
+            self.at_eof,
+            self.encoding_mode,
+            self.saved_char,
+            self.skip_next_lf,
+            self.pushback,
+        ) == (
+            o.buf,
+            o.word,
+            o.err,
+            o.at_eof,
+            o.encoding_mode,
+            o.saved_char,
+            o.skip_next_lf,
+            o.pushback,
+        ) && (!matches!(self.stream, Stream::Mem(_)) || self.path == o.path)
+    }
+}
+
 impl ByteFile {
     /// The file at a checkpoint (output flushed first; `keep`: its bytes
     /// kept).

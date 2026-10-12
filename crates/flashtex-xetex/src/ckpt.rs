@@ -69,7 +69,7 @@ pub struct PageCk {
 
 /// The run's state outside the word space that a checkpoint keeps besides
 /// what `state.rs` saves with the word space.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct RunState {
     start: Option<(i64, Vec<u8>)>,
     terminating: bool,
@@ -384,6 +384,8 @@ impl Globals {
                 opens,
             });
         }
+        self.conv_test(pages);
+        self.check_mem(pages);
     }
 
     /// Take S₀ here, if this run is to (`crate::resident`).

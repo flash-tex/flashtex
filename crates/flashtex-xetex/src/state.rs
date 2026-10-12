@@ -54,31 +54,65 @@ pub struct GlyphInfo {
 /// The handle allocator of `changes/ext.ch`: a counter and a free list, and
 /// the table behind them. Handle 0 is C's null pointer and never refers to
 /// an object.
+///
+/// Glyph-info arrays, made and freed with every native word, are numbered
+/// apart from the other objects (from [`OTHER_BASE`] on: layout engines,
+/// mappings, features, pictures' paths), so that the others' handles
+/// depend only on the order they are made in, not on how many words were
+/// set before: two runs that load the same fonts in the same order give
+/// them the same handles (the convergence test, `crate::conv`, compares
+/// the font arrays that hold them word for word). No handle's value is
+/// ever printed or written out.
 #[derive(Clone, Default)]
 pub struct Handles {
     /// Slot `h - 1` holds the object of handle `h`, `None` once freed.
     table: Vec<Option<Object>>,
     /// Freed handles, reused last freed first.
     free: Vec<i32>,
+    /// The other objects: slot `h - OTHER_BASE`.
+    other: Vec<Option<Object>>,
+    other_free: Vec<i32>,
 }
+
+/// The first handle of the objects other than glyph-info arrays.
+pub const OTHER_BASE: i32 = 1 << 30;
 
 impl Handles {
     /// A new handle for `o`: the last one freed, else the next unused one.
     pub fn alloc(&mut self, o: Object) -> i32 {
+        if !matches!(o, Object::GlyphInfo(_)) {
+            if let Some(h) = self.other_free.pop() {
+                self.other[(h - OTHER_BASE) as usize] = Some(o);
+                return h;
+            }
+            self.other.push(Some(o));
+            let n = i32::try_from(self.other.len()).expect("handle table overflow");
+            return OTHER_BASE + n - 1;
+        }
         if let Some(h) = self.free.pop() {
             self.table[(h - 1) as usize] = Some(o);
             return h;
         }
         self.table.push(Some(o));
-        i32::try_from(self.table.len()).expect("handle table overflow")
+        let h = i32::try_from(self.table.len()).expect("handle table overflow");
+        assert!(h < OTHER_BASE, "handle table overflow");
+        h
+    }
+
+    /// The slot of handle `h`.
+    fn slot(&self, h: i32) -> Option<&Option<Object>> {
+        if h >= OTHER_BASE {
+            self.other.get((h - OTHER_BASE) as usize)
+        } else if h > 0 {
+            self.table.get((h - 1) as usize)
+        } else {
+            None
+        }
     }
 
     /// The object of handle `h`, if `h` refers to one.
     pub fn get(&self, h: i32) -> Option<&Object> {
-        if h <= 0 {
-            return None;
-        }
-        self.table.get((h - 1) as usize)?.as_ref()
+        self.slot(h)?.as_ref()
     }
 
     /// Free handle `h` (C's `free`); 0 and a handle already free are
@@ -87,24 +121,36 @@ impl Handles {
         if h <= 0 {
             return;
         }
-        if let Some(slot) = self.table.get_mut((h - 1) as usize) {
+        let (slot, free) = if h >= OTHER_BASE {
+            (self.other.get_mut((h - OTHER_BASE) as usize), &mut self.other_free)
+        } else {
+            (self.table.get_mut((h - 1) as usize), &mut self.free)
+        };
+        if let Some(slot) = slot {
             if slot.take().is_some() {
-                self.free.push(h);
+                free.push(h);
             }
         }
     }
 
     /// Every handle that refers to an object, with it.
     pub fn objects(&self) -> impl Iterator<Item = (i32, &Object)> {
-        self.table
+        let glyphs = self
+            .table
             .iter()
             .enumerate()
-            .filter_map(|(i, o)| o.as_ref().map(|o| (i as i32 + 1, o)))
+            .filter_map(|(i, o)| o.as_ref().map(|o| (i as i32 + 1, o)));
+        let other = self
+            .other
+            .iter()
+            .enumerate()
+            .filter_map(|(i, o)| o.as_ref().map(|o| (OTHER_BASE + i as i32, o)));
+        glyphs.chain(other)
     }
 
     /// How many handles refer to an object.
     pub fn live(&self) -> usize {
-        self.table.iter().filter(|s| s.is_some()).count()
+        self.table.iter().chain(&self.other).filter(|s| s.is_some()).count()
     }
 
     /// The glyph-info array of handle `h`.
@@ -268,6 +314,58 @@ impl Globals {
         self.host.handles = saved.handles;
         self.host.dl.restore(&saved.dl);
         Ok(())
+    }
+
+    /// Put checkpoint `id` back as [`restore`](Self::restore) does, keeping
+    /// the run it leaves as a detached branch of the word space (its later
+    /// checkpoints and its latest state), for the convergence test and jump
+    /// (`crate::conv`). The host states saved with the branch's checkpoints
+    /// stay.
+    pub fn restore_branch(
+        &mut self,
+        id: flashtex_engine::arena::CheckpointId,
+    ) -> Result<flashtex_engine::arena::Branch, String> {
+        let saved = self
+            .host
+            .checkpoints
+            .get(&id)
+            .cloned()
+            .ok_or_else(|| format!("no host state saved with checkpoint {id:?}"))?;
+        let b = self.arena.restore_branch(id)?;
+        self.fill_scalars();
+        self.host.font_mgr = saved.font_mgr;
+        self.host.full_name_of_file = saved.full_name_of_file;
+        self.host.protrusion = saved.protrusion;
+        self.host.handles = saved.handles;
+        self.host.dl.restore(&saved.dl);
+        Ok(b)
+    }
+
+    /// What checkpoint `id` saved outside the word space that the live
+    /// state has otherwise (the convergence test, `crate::conv`): `Err`
+    /// names it. With it, the checkpoint's handles and source map.
+    pub(crate) fn host_vs(
+        &self,
+        id: flashtex_engine::arena::CheckpointId,
+    ) -> Result<(&Handles, &crate::dlsource::DlSnap), String> {
+        let s = self
+            .host
+            .checkpoints
+            .get(&id)
+            .ok_or("no host state saved with the old checkpoint")?;
+        // (the font manager is made from the font directories, which S₀'s
+        // key watches: two runs' managers made from the same ones answer
+        // alike, whichever made its own)
+        if s.font_mgr.is_some() != self.host.font_mgr.is_some() {
+            return Err("the font manager differs".into());
+        }
+        if s.full_name_of_file != self.host.full_name_of_file {
+            return Err("full_name_of_file differs".into());
+        }
+        if s.protrusion != self.host.protrusion {
+            return Err("the protrusion codes differ".into());
+        }
+        Ok((&s.handles, &s.dl))
     }
 
     /// Copy the scalar globals into the word space's scalar region, through

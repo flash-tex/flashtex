@@ -260,6 +260,15 @@ impl LayoutEngine {
         )
     }
 
+    /// What of a [`shaping_state`](Self::shaping_state) is read later: the
+    /// shaper (`using_graphite` and the like), and whether the script's
+    /// direction is right-to-left (`default_rtl`, the only reader of
+    /// `last_script`).
+    pub fn shaping_state_read(s: &(Option<String>, u32)) -> (Option<String>, bool) {
+        let rtl = unsafe { hb::hb_script_get_horizontal_direction(s.1) == hb::HB_DIRECTION_RTL };
+        (s.0.clone(), rtl)
+    }
+
     /// Put back a [`shaping_state`](Self::shaping_state).
     pub fn set_shaping_state(&self, s: &(Option<String>, u32)) {
         *self.shaper.lock().unwrap() = s.0.clone();

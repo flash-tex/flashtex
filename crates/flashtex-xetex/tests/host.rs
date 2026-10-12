@@ -1008,3 +1008,62 @@ fn an_edit_saved_while_a_cancelled_compile_runs_is_seen() {
     }
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// Convergence, measurement only (`crate::conv`, step 1): an edit early in
+/// a long document; the restarted run finds a page after which its state
+/// is the last complete run's, and every page after it is the old run's
+/// (the measurement checks its claim against the run's own pages).
+#[test]
+fn the_convergence_measurement_finds_a_point_that_holds() {
+    if !texlive() {
+        eprintln!("skipped: no TeX Live");
+        return;
+    }
+    let dir = std::env::temp_dir().join(format!("flashtex-host-conv-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    let para = "Words and more words that fill the page, again and again, until the \
+                paragraph is long enough to break into several lines of text. ";
+    let mut body = String::new();
+    for i in 1..=30 {
+        body.push_str(&format!("\\section{{Part {i}}}\n"));
+        for _ in 0..4 {
+            body.push_str(&para.repeat(3));
+            body.push_str("\n\n");
+        }
+    }
+    let doc = format!(
+        "\\documentclass{{article}}\n\\usepackage{{fontspec}}\n\\begin{{document}}\n{body}\\end{{document}}\n"
+    );
+    let edited = doc.replacen("Words and more", "Wards and more", 1);
+    let sub = dir.join("run");
+    let (proj, out) = project(&sub, &doc);
+    let err = sub.join("host.err");
+    let h = start_with(
+        &sub,
+        &[
+            ("FLASHTEX_PIN_CLOCK", "1760000000.5"),
+            ("FLASHTEX_UNICODE_CONV_DEBUG", "1"),
+        ],
+        &err,
+    );
+    let mut c = Client::connect(&h.sock).unwrap();
+    for (id, text) in [(1, &doc), (2, &doc), (3, &edited)] {
+        let mut r = request(id, &proj, &out);
+        r.buffers = vec![("main.tex".into(), text.to_string())];
+        c.compile(&r).unwrap();
+        events(&mut c, id);
+    }
+    c.bye().unwrap();
+    drop(h);
+    let log = std::fs::read_to_string(&err).unwrap();
+    let runs: Vec<&str> = log
+        .lines()
+        .filter(|l| l.starts_with("[conv] run:"))
+        .collect();
+    assert!(!log.contains("UNSOUND"), "{log}");
+    assert!(
+        runs.iter().any(|l| l.contains("holds")),
+        "no claim that holds: {runs:?}"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}

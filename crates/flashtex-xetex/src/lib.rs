@@ -43,17 +43,20 @@ pub use flashtex_xetex_fontlibs as fontlibs;
 pub use flashtex_xetex_teckit as teckit;
 
 pub mod ckpt;
+pub mod conv;
 pub mod dlsource;
 pub mod driver;
 pub mod fontmgr;
 pub mod generated;
 #[cfg(unix)]
 pub mod host;
+pub mod iso;
 pub mod native;
 pub mod out;
 pub mod pic;
 pub mod resident;
 pub mod state;
+pub mod statediff;
 pub mod system;
 pub mod xetex_ext;
 

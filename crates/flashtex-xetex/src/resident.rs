@@ -121,6 +121,9 @@ pub struct Resident {
     /// the next compile reads the `.aux` the last complete run wrote, as
     /// S₀'s key and the page checkpoints expect.
     pub(crate) guard: Vec<(String, Option<Vec<u8>>)>,
+    /// A run from S₀ or a page: the last complete run's later state, for
+    /// the convergence test (`crate::conv`).
+    pub(crate) conv: Option<crate::conv::Old>,
     fonts: Box<dyn Fonts>,
 }
 
@@ -361,6 +364,11 @@ pub struct Engine {
     pub keep_pages: bool,
     /// The output's font map index and font programs, kept across runs.
     font_cache: Arc<crate::out::fonts::FontCache>,
+    /// The convergence measurement (`crate::conv`): the last complete
+    /// run's pages, and the `eqtb` pointer entries of each checkpoint
+    /// restored.
+    last_pages: Vec<Arc<crate::out::doc::Built>>,
+    eqtb_pointers: HashMap<CheckpointId, Arc<Vec<i32>>>,
 }
 
 /// Resets every file of the engine: closed, as at the start of a run.
@@ -455,6 +463,8 @@ impl Engine {
             keep_s0: env_on("FLASHTEX_UNICODE_S0"),
             keep_pages: env_on("FLASHTEX_UNICODE_PAGES"),
             font_cache: Arc::default(),
+            last_pages: vec![],
+            eqtb_pointers: HashMap::new(),
         }
     }
 
@@ -728,6 +738,7 @@ impl Engine {
             pages: vec![],
             opens: vec![],
             guard: vec![],
+            conv: None,
             fonts: Box::new(Unkept),
         };
         if start.in_body() {
@@ -745,6 +756,25 @@ impl Engine {
             }
         }
         let before = (self.journal.clone(), self.opens.clone());
+        let mut conv: Option<crate::conv::Old> = None;
+        // the convergence measurement: the edits and what changed
+        let measure = crate::conv::on() && start.in_body() && !c.no_pdf;
+        let mut conv_changes = None;
+        if measure {
+            if let Some(now) = texts_then.as_ref() {
+                let ch = self.changes(now);
+                let edits: Vec<crate::conv::Edit> = now
+                    .iter()
+                    .filter_map(|(p, new)| {
+                        let old = self.texts.get(p)?;
+                        (old[..] != new[..]).then(|| crate::conv::Edit::between(p, old, new))
+                    })
+                    .collect();
+                if let Some(ch) = ch {
+                    conv_changes = Some((edits, ch.files.into_keys().collect(), ch.lookup));
+                }
+            }
+        }
         // Put the kept state back: from a page, else S₀, else the format
         // point, else the start (a restore that fails -- a file it reopens
         // gone -- falls back to the next).
@@ -764,21 +794,63 @@ impl Engine {
                         p.state.put(g);
                     })
                 }
-                Start::Page(i) => {
-                    let ck = &self.pages[i];
-                    g.restore(ck.id).and_then(|()| {
-                        g.term_out = AlphaFile::captured_terminal();
-                        g.restore_record(&ck.rec, Some(&self.terminal))
-                    })
-                }
-                _ => {
-                    let s0 = self.s0.as_ref().expect("checked");
-                    g.restore(s0.id).and_then(|()| {
-                        // (the record puts the terminal back: captured, as
-                        // S₀'s run had it)
-                        g.term_out = AlphaFile::captured_terminal();
-                        g.restore_record(&s0.rec, None)
-                    })
+                Start::Page(_) | Start::S0 | Start::Fresh => {
+                    // (the old run's later state kept as a branch: the
+                    // convergence test, `crate::conv`)
+                    let (id, rec, base, later) = match start {
+                        Start::Page(i) => (
+                            self.pages[i].id,
+                            &self.pages[i].rec,
+                            Some(&self.terminal[..]),
+                            &self.pages[i + 1..],
+                        ),
+                        _ => {
+                            let s0 = self.s0.as_ref().expect("checked");
+                            (s0.id, &s0.rec, None, &self.pages[..])
+                        }
+                    };
+                    match conv_changes.take() {
+                        Some((edits, changed, lookup)) => {
+                            let old: Vec<crate::conv::OldPage> = later
+                                .iter()
+                                .map(|c| crate::conv::OldPage {
+                                    pages: c.pages,
+                                    id: c.id,
+                                    rec: c.rec.clone(),
+                                    reads: c.reads,
+                                })
+                                .collect();
+                            let tables = g.host.dl.tables();
+                            match g.restore_branch(id) {
+                                Err(e) => Err(e),
+                                Ok(branch) => {
+                                    let ptrs = self
+                                        .eqtb_pointers
+                                        .entry(id)
+                                        .or_insert_with(|| Arc::new(crate::iso::eqtb_pointers(g)))
+                                        .clone();
+                                    conv = Some(crate::conv::Old {
+                                        branch,
+                                        pages: old,
+                                        edits,
+                                        changed,
+                                        lookup,
+                                        journal: self.journal.clone(),
+                                        tables,
+                                        eqtb_pointers: ptrs,
+                                        claim: None,
+                                        tests: vec![],
+                                    });
+                                    g.term_out = AlphaFile::captured_terminal();
+                                    g.restore_record(rec, base)
+                                }
+                            }
+                        }
+                        None => g.restore(id).and_then(|()| {
+                            g.term_out = AlphaFile::captured_terminal();
+                            g.restore_record(rec, base)
+                        }),
+                    }
                 }
             };
             match restored {
@@ -791,6 +863,9 @@ impl Engine {
                     break;
                 }
                 Err(e) => {
+                    if let Some(c) = conv.take() {
+                        g.arena.drop_branch(c.branch);
+                    }
                     s0_note = Some(format!("the kept state ({}): {e}", start.name()));
                     start = match start {
                         Start::Page(_) => Start::S0,
@@ -840,6 +915,7 @@ impl Engine {
             pages: vec![],
             opens,
             guard: guard.guard,
+            conv,
             fonts: self.fonts.take().unwrap_or_else(|| Box::new(Unkept)),
         });
         let mut out = (!c.no_pdf).then(|| {
@@ -944,7 +1020,9 @@ impl Engine {
             }
         }
         rep.terminal = g.term_out.take_captured();
+        let mut final_pages = None;
         if let Some(o) = g.host.out.take() {
+            final_pages = Some(o.doc.pages.clone());
             // the font files the next run is likely to read again
             self.font_cache.retain(&o.doc.fonts.programs_read());
             rep.reports = o.reports.unwrap_or_default();
@@ -963,6 +1041,17 @@ impl Engine {
             taken = r.s0;
             new_pages = r.pages;
             opens = r.opens;
+            if let Some(c) = r.conv {
+                if !rep.cancelled && rep.failure.is_none() {
+                    let t = crate::conv::truth(
+                        &c,
+                        final_pages.as_deref().unwrap_or(&[]),
+                        &self.last_pages,
+                    );
+                    eprintln!("[conv] run: {}; {}", c.summary(), t);
+                }
+                g.arena.drop_branch(c.branch);
+            }
             if rep.cancelled {
                 // the output files as the last complete run left them
                 for (p, d) in r.guard {
@@ -983,6 +1072,19 @@ impl Engine {
             if let Some(t) = texts_before {
                 self.texts = t;
             }
+        }
+        if crate::conv::on() && !rep.cancelled && rep.failure.is_none() {
+            self.last_pages = final_pages.unwrap_or_default();
+        }
+        // (the pointer entries of checkpoints no longer kept go)
+        if !self.eqtb_pointers.is_empty() {
+            let ids: HashSet<CheckpointId> = self
+                .s0
+                .iter()
+                .map(|s| s.id)
+                .chain(self.pages.iter().map(|c| c.id))
+                .collect();
+            self.eqtb_pointers.retain(|k, _| ids.contains(k));
         }
         if rep.failure.is_some() || spec.lean {
             // a broken run's engine is not used again; Low Memory keeps none
