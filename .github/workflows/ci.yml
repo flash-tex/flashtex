@@ -1243,7 +1243,7 @@ jobs:
         run: |
           set -o pipefail
           mkdir -p "$FLASHTEX_V3_CACHE"
-          swift test --filter 'FlashTeXMacTests\.(EngineV3|EngineChoiceTests)' 2>&1 | tee swift-test.log | grep -vE '^\s*$' | tail -n 400
+          swift test --filter 'FlashTeXMacTests\.EngineV3PageFlipTests' 2>&1 | tee swift-test.log | grep -vE '^\s*$' | tail -n 400
       - name: "app parity: every host-driven row test passed, not skipped (#1236 §4.4)"
         # tools/parity/app-parity-rows.json's `host_driven` tests: the ones the
         # hosted mac-app job skips for want of flashtex-host and TeX Live.

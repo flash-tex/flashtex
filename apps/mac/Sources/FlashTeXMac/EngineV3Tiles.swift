@@ -565,7 +565,7 @@ final class EngineV3PageTiles {
     private func install(_ surfaces: [IOSurface?], at indices: [EngineV3TileGrid.Index], source s: EngineV3TileSource, compile: Int?, t0: UInt64) {
         let (pw, ph) = s.pixelSize
         let ds = CGFloat(s.pixelsPerViewPoint)
-        let flipped = shownFlipped
+        let flipped = container.contentsAreFlipped() // THROWAWAY: the old flip
         let height = container.bounds.height
         let filter: CALayerContentsFilter = pinching || s.stretched ? .linear : .nearest
         CATransaction.begin(); CATransaction.setDisableActions(true)
@@ -627,7 +627,7 @@ final class EngineV3PageTiles {
     private func reframeOutgoing(_ s: EngineV3TileSource) {
         guard !outgoing.isEmpty else { return }
         let k = CGFloat(s.screenPixelsPerPoint / s.displayScale)
-        let flipped = shownFlipped, height = container.bounds.height
+        let flipped = container.contentsAreFlipped(), height = container.bounds.height
         CATransaction.begin(); CATransaction.setDisableActions(true)
         for o in outgoing {
             let r = CGRect(x: o.points.minX * k, y: o.points.minY * k, width: o.points.width * k, height: o.points.height * k)
