@@ -35,14 +35,14 @@
      "engine_kind": "tex",
      "engine_sha256": "7195ff769dd94d2096624cd5c4fb9c7d7496439c92af86e4e7167755bd6b818c",
      "engine_version": "pdfTeX 3.141592653-2.6-1.40.29 (FlashTeX engine)",
-     "host": "runnervmmprz5",
+     "host": "runnervm8k3b6",
      "identity_problem": null,
      "oracle": "pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026)",
      "platform": "Linux 6.17.0-1022-azure x86_64",
      "source": "parity"
     },
     {
-     "date": "2026-10-14T09:33:42Z",
+     "date": "2026-10-14T14:04:21Z",
      "documents_path": "/home/runner/work/_temp/t4-new/documents.json",
      "engine_kind": "tex",
      "engine_sha256": "7195ff769dd94d2096624cd5c4fb9c7d7496439c92af86e4e7167755bd6b818c",
@@ -112,7 +112,7 @@
      "engine_kind": "flashtex-cli",
      "engine_sha256": "7afdb8cde48bf74c102e1cf7f5a1b52403bfbc65a9c1c7f3781db478e5d50f4c",
      "engine_version": "flashtex 0.1.0 (a8379a52b708)",
-     "host": "runnervmmprz5",
+     "host": "runnervm8k3b6",
      "identity_problem": null,
      "oracle": "pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026)",
      "platform": "Linux 6.17.0-1022-azure x86_64",
@@ -747,7 +747,7 @@
     "excluded": {
      "oracle": 3
     },
-    "host": "runnervmmprz5",
+    "host": "runnervm8k3b6",
     "invalid": null,
     "note": null,
     "of": 17,
@@ -760,7 +760,7 @@
    },
    "old": {
     "excluded": {},
-    "host": "runnervmmprz5",
+    "host": "runnervm8k3b6",
     "invalid": null,
     "note": "n/a: the flashtex CLI is not a TeX engine and writes no box dumps or \\tracingall log; P-T1 applies to a pdfTeX-compatible --engine",
     "of": null,
@@ -787,7 +787,7 @@
     "excluded": {
      "oracle": 3
     },
-    "host": "runnervmmprz5",
+    "host": "runnervm8k3b6",
     "invalid": null,
     "note": null,
     "of": 17,
@@ -802,7 +802,7 @@
     "excluded": {
      "oracle": 3
     },
-    "host": "runnervmmprz5",
+    "host": "runnervm8k3b6",
     "invalid": null,
     "note": null,
     "of": 17,
@@ -829,7 +829,7 @@
     "excluded": {
      "oracle": 3
     },
-    "host": "runnervmmprz5",
+    "host": "runnervm8k3b6",
     "invalid": null,
     "note": null,
     "of": 17,
@@ -844,7 +844,7 @@
     "excluded": {
      "oracle": 3
     },
-    "host": "runnervmmprz5",
+    "host": "runnervm8k3b6",
     "invalid": null,
     "note": null,
     "of": 17,
@@ -871,7 +871,7 @@
     "excluded": {
      "oracle": 3
     },
-    "host": "runnervmmprz5",
+    "host": "runnervm8k3b6",
     "invalid": null,
     "note": null,
     "of": 17,
@@ -886,7 +886,7 @@
     "excluded": {
      "oracle": 3
     },
-    "host": "runnervmmprz5",
+    "host": "runnervm8k3b6",
     "invalid": null,
     "note": null,
     "of": 17,
@@ -913,7 +913,7 @@
     "excluded": {
      "oracle": 3
     },
-    "host": "runnervmmprz5",
+    "host": "runnervm8k3b6",
     "invalid": null,
     "note": null,
     "of": 17,
@@ -928,7 +928,7 @@
     "excluded": {
      "oracle": 3
     },
-    "host": "runnervmmprz5",
+    "host": "runnervm8k3b6",
     "invalid": null,
     "note": null,
     "of": 17,
@@ -955,7 +955,7 @@
     "excluded": {
      "oracle": 3
     },
-    "host": "runnervmmprz5",
+    "host": "runnervm8k3b6",
     "invalid": null,
     "note": null,
     "of": 17,
@@ -970,7 +970,7 @@
     "excluded": {
      "oracle": 3
     },
-    "host": "runnervmmprz5",
+    "host": "runnervm8k3b6",
     "invalid": null,
     "note": null,
     "of": 17,
@@ -997,7 +997,7 @@
     "excluded": {
      "oracle": 4
     },
-    "host": "runnervmmprz5",
+    "host": "runnervm8k3b6",
     "invalid": null,
     "note": null,
     "of": 88,
@@ -1010,7 +1010,7 @@
    },
    "old": {
     "excluded": {},
-    "host": "runnervmmprz5",
+    "host": "runnervm8k3b6",
     "invalid": null,
     "note": "n/a: the flashtex CLI is not a TeX engine and writes no box dumps or \\tracingall log; P-T1 applies to a pdfTeX-compatible --engine",
     "of": null,
@@ -1037,7 +1037,7 @@
     "excluded": {
      "oracle": 4
     },
-    "host": "runnervmmprz5",
+    "host": "runnervm8k3b6",
     "invalid": null,
     "note": null,
     "of": 88,
@@ -1052,7 +1052,7 @@
     "excluded": {
      "oracle": 4
     },
-    "host": "runnervmmprz5",
+    "host": "runnervm8k3b6",
     "invalid": null,
     "note": null,
     "of": 88,
@@ -1079,7 +1079,7 @@
     "excluded": {
      "oracle": 4
     },
-    "host": "runnervmmprz5",
+    "host": "runnervm8k3b6",
     "invalid": null,
     "note": null,
     "of": 88,
@@ -1094,7 +1094,7 @@
     "excluded": {
      "oracle": 4
     },
-    "host": "runnervmmprz5",
+    "host": "runnervm8k3b6",
     "invalid": null,
     "note": null,
     "of": 88,
@@ -1121,7 +1121,7 @@
     "excluded": {
      "oracle": 4
     },
-    "host": "runnervmmprz5",
+    "host": "runnervm8k3b6",
     "invalid": null,
     "note": null,
     "of": 88,
@@ -1136,7 +1136,7 @@
     "excluded": {
      "oracle": 4
     },
-    "host": "runnervmmprz5",
+    "host": "runnervm8k3b6",
     "invalid": null,
     "note": null,
     "of": 88,
@@ -1163,7 +1163,7 @@
     "excluded": {
      "oracle": 4
     },
-    "host": "runnervmmprz5",
+    "host": "runnervm8k3b6",
     "invalid": null,
     "note": null,
     "of": 88,
@@ -1178,7 +1178,7 @@
     "excluded": {
      "oracle": 4
     },
-    "host": "runnervmmprz5",
+    "host": "runnervm8k3b6",
     "invalid": null,
     "note": null,
     "of": 88,
@@ -1205,7 +1205,7 @@
     "excluded": {
      "oracle": 4
     },
-    "host": "runnervmmprz5",
+    "host": "runnervm8k3b6",
     "invalid": null,
     "note": null,
     "of": 88,
@@ -1220,7 +1220,7 @@
     "excluded": {
      "oracle": 4
     },
-    "host": "runnervmmprz5",
+    "host": "runnervm8k3b6",
     "invalid": null,
     "note": null,
     "of": 88,
