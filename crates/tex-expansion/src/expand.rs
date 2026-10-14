@@ -407,6 +407,7 @@ const PRIMITIVE_TABLE: &[(&str, Primitive)] = &[
     ("newtheorem", Primitive::NewTheorem),
     ("begin", Primitive::Begin),
     ("end", Primitive::End),
+    ("flashtex@checkend", Primitive::CheckEnd),
     ("newcounter", Primitive::NewCounter),
     ("setcounter", Primitive::SetCounter),
     ("addtocounter", Primitive::AddToCounter),
@@ -2904,6 +2905,11 @@ impl Engine {
                 self.do_end(&tok);
                 Step::Continue
             }
+            CheckEnd => {
+                let name = self.read_name_arg();
+                self.check_end(&name, tok.span);
+                Step::Continue
+            }
             Host | HostAssignment => {
                 if !self.st.font_switches.is_empty() {
                     self.font_switch(&tok);
@@ -4133,33 +4139,50 @@ impl Engine {
             // `\end{name}` to run.
             return;
         }
-        // \@checkend: the current environment must be this one. Compared
-        // part by part, so a runaway loop over a 100k-character name does
-        // not rebuild the name for every `\end`.
-        let current = match self.st.scopes.meaning_ref("@currenvir") {
-            Some(Meaning::Macro(def)) => Some(def.clone()),
-            _ => None,
-        };
-        let body: &[BodyPart] = current.as_deref().map_or(&[], |def| &def.body);
-        if !body_spells(body, &name) {
-            let current = body_display(body, SHOWN_NAME_CHARS + 1);
-            self.err(
-                format!("LaTeX Error: \\begin{{{}}} ended by \\end{{{}}}.", shown_name(&current), shown_name(&name)),
-                tok.span,
-            );
-        }
         if self.st.scopes.depth() <= 1 {
+            self.check_end(&name, tok.span);
             self.err(format!("LaTeX Error: \\end{{{}}} without matching \\begin.", shown_name(&name)), tok.span);
             self.push_tokens(vec![Token::new(TokenKind::ControlSequence(format!("end{name}")), tok.span)]);
             return;
         }
-        self.push_tokens(vec![
+        // latex.ltx's `\end`: `\csname end#1\endcsname\@checkend{#1}`,
+        // then `\endgroup`. The end code runs first, so a wrapper whose
+        // end code closes the environment its begin code opened
+        // (`\newenvironment{a}{\begin{b}}{\end{b}}`) is back in `a` by
+        // the time the name is checked (#1162). The name travels as
+        // catcode-12 characters, which `\flashtex@checkend` reads back.
+        let mut toks = vec![
             Token::new(TokenKind::ControlSequence(format!("end{name}")), tok.span),
+            Token::new(TokenKind::ControlSequence("flashtex@checkend".into()), tok.span),
+            Token::new(TokenKind::Char('{', CatCode::BeginGroup), tok.span),
+        ];
+        toks.extend(name.chars().map(|c| Token::new(TokenKind::Char(c, CatCode::Other), tok.span)));
+        toks.extend([
+            Token::new(TokenKind::Char('}', CatCode::EndGroup), tok.span),
             // The `\end` span (like `\end{name}` above), so the
             // `\endgroup` the `Endgroup` arm emits into the output
             // carries the source position of the `\end` it closes.
             Token::new(TokenKind::ControlSequence("endgroup".into()), tok.span),
         ]);
+        self.push_tokens(toks);
+    }
+
+    /// `\@checkend{name}`: the current environment must be `name`.
+    /// Compared part by part, so a runaway loop over a 100k-character name
+    /// does not rebuild the name for every `\end`.
+    fn check_end(&mut self, name: &str, span: Span) {
+        let current = match self.st.scopes.meaning_ref("@currenvir") {
+            Some(Meaning::Macro(def)) => Some(def.clone()),
+            _ => None,
+        };
+        let body: &[BodyPart] = current.as_deref().map_or(&[], |def| &def.body);
+        if !body_spells(body, name) {
+            let current = body_display(body, SHOWN_NAME_CHARS + 1);
+            self.err(
+                format!("LaTeX Error: \\begin{{{}}} ended by \\end{{{}}}.", shown_name(&current), shown_name(name)),
+                span,
+            );
+        }
     }
 
     /// `\verb<delim>...<delim>` (and `\verb*`): read raw characters from
@@ -7177,6 +7200,7 @@ fn primitive_name(p: Primitive) -> &'static str {
         NewTheorem => "newtheorem",
         Begin => "begin",
         End => "end",
+        CheckEnd => "flashtex@checkend",
         NewCounter => "newcounter",
         SetCounter => "setcounter",
         AddToCounter => "addtocounter",
