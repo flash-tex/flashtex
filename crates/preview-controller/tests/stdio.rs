@@ -22,21 +22,67 @@ fn controller() -> Command {
 }
 extern "C" {
     fn kill(pid: i32, sig: i32) -> i32;
+    fn waitid(idtype: i32, id: u32, infop: *mut u8, options: i32) -> i32;
 }
 /// SIGKILL to the process group [`controller`] made for `pid`. Harmless when
-/// the group is already empty (ESRCH).
+/// the group is already empty (ESRCH). Only call it while the leader is not
+/// reaped yet ([`exited`], [`wait_unreaped`]): until then no other process
+/// can be given its pid, so `-pid` is this group and no one else's.
 fn kill_group(pid: u32) {
     // SAFETY: kill(2) with a negative pid signals that process group only.
     unsafe {
         kill(-(pid as i32), 9);
     }
 }
+// waitid(2)'s `P_PID` and options, which differ between the platforms.
+const P_PID: i32 = 1;
+const WEXITED: i32 = 4;
+const WNOHANG: i32 = 1;
+#[cfg(target_os = "linux")]
+const WNOWAIT: i32 = 0x0100_0000;
+#[cfg(not(target_os = "linux"))]
+const WNOWAIT: i32 = 0x20;
+/// waitid(2) on `pid` with `WNOWAIT`: whether it has exited, leaving it a
+/// zombie so its pid (and so its group id) stays taken. `si_signo` (offset
+/// 0 on every platform) is `SIGCHLD` for an exited child and stays 0
+/// otherwise.
+fn waitid_nowait(pid: u32, options: i32) -> bool {
+    let mut info = [0u8; 256];
+    // SAFETY: `info` is larger than any platform's siginfo_t.
+    let rc = unsafe { waitid(P_PID, pid, info.as_mut_ptr(), WEXITED | WNOWAIT | options) };
+    assert_eq!(rc, 0, "waitid({pid}) failed: {}", std::io::Error::last_os_error());
+    i32::from_ne_bytes([info[0], info[1], info[2], info[3]]) != 0
+}
+/// Whether the child `pid` has exited, without reaping it (unlike
+/// `Child::try_wait`).
+fn exited(pid: u32) -> bool {
+    waitid_nowait(pid, WNOHANG)
+}
+/// Blocks until the child `pid` exits, without reaping it.
+fn wait_unreaped(pid: u32) {
+    assert!(waitid_nowait(pid, 0));
+}
 /// Kills a [`controller`] group when dropped, also on a failed assertion,
-/// for the tests that drive the helper without a [`Client`].
-struct GroupGuard(u32);
+/// for the tests that drive the helper without a [`Client`]. A test that
+/// waits for the helper does it through [`GroupGuard::reap`], which kills
+/// the group before the leader is reaped and disarms the guard.
+struct GroupGuard(u32, bool);
+impl GroupGuard {
+    fn new(pid: u32) -> Self {
+        GroupGuard(pid, true)
+    }
+    fn reap(&mut self, child: &mut Child) -> std::process::ExitStatus {
+        wait_unreaped(self.0);
+        kill_group(self.0);
+        self.1 = false;
+        child.wait().unwrap()
+    }
+}
 impl Drop for GroupGuard {
     fn drop(&mut self) {
-        kill_group(self.0);
+        if self.1 {
+            kill_group(self.0);
+        }
     }
 }
 /// Upper bound for one expected helper message. Generous because CI runs the
@@ -44,6 +90,9 @@ impl Drop for GroupGuard {
 const RECV_WAIT: Duration = Duration::from_secs(30);
 struct Client {
     child: Child,
+    /// Set once the helper is reaped ([`Client::wait`], [`Client::exit_status`]):
+    /// its pid may then be another process's, so `Drop` sends no group kill.
+    reaped: bool,
     input: Option<ChildStdin>,
     output: Receiver<Value>,
     reader_progress: Arc<Mutex<ReaderProgress>>,
@@ -487,6 +536,7 @@ impl Client {
         });
         let client = Self {
             child,
+            reaped: false,
             input,
             output,
             reader_progress,
@@ -512,10 +562,26 @@ impl Client {
         }
     }
 }
+impl Client {
+    /// Waits for the helper to exit, kills what is left of its group while
+    /// it is a zombie, then reaps it.
+    fn wait(&mut self) -> std::process::ExitStatus {
+        wait_unreaped(self.child.id());
+        kill_group(self.child.id());
+        self.reaped = true;
+        self.child.wait().unwrap()
+    }
+    /// `Child::try_wait` that kills the rest of the group before reaping.
+    fn exit_status(&mut self) -> Option<std::process::ExitStatus> {
+        exited(self.child.id()).then(|| self.wait())
+    }
+}
 impl Drop for Client {
     fn drop(&mut self) {
         // The whole group: the helper and every compiler it started.
-        kill_group(self.child.id());
+        if !self.reaped {
+            kill_group(self.child.id());
+        }
         let _ = self.child.kill();
         let _ = self.child.wait();
         if let Some(reader) = self.reader_thread.take() {
@@ -554,7 +620,7 @@ fn eof_drains_durable_edit_response_and_reopen_reads_source() {
     client.input.take();
     let response = client.reply("edit");
     assert_eq!(response["payload"]["document"]["text"], "β durable");
-    assert!(client.child.wait().unwrap().success());
+    assert!(client.wait().success());
     drop(client);
     let mut reopened = Client::start(dir.path());
     reopened.send("get", "document", json!({"path":"main.tex"}));
@@ -766,7 +832,7 @@ fn slow_but_progressing_reader_survives_a_reply_far_longer_than_the_watchdog() {
         .stderr(Stdio::null())
         .spawn()
         .unwrap();
-    let _group = GroupGuard(child.id());
+    let mut group = GroupGuard::new(child.id());
     let mut stdout = child.stdout.take().unwrap();
     let mut input = child.stdin.take().unwrap();
     // Drain the short `ready` frame at ordinary speed, byte-by-byte so no
@@ -816,7 +882,7 @@ fn slow_but_progressing_reader_survives_a_reply_far_longer_than_the_watchdog() {
         "test is not actually exercising a reply slower than the watchdog: {elapsed:?}"
     );
     assert!(
-        child.try_wait().unwrap().is_none(),
+        !exited(child.id()),
         "helper must still be alive: it was slow to deliver, never stuck"
     );
     let reply: Value =
@@ -824,7 +890,7 @@ fn slow_but_progressing_reader_survives_a_reply_far_longer_than_the_watchdog() {
     assert_eq!(reply["id"], "big");
     assert_eq!(reply["payload"]["document"]["text"], text);
     drop(input);
-    let status = child.wait().unwrap();
+    let status = group.reap(&mut child);
     assert!(status.success(), "helper must exit cleanly after a normal close");
 }
 
@@ -853,6 +919,7 @@ fn stalled_reader(requests: usize) {
     let (_sender, output) = mpsc::channel();
     let mut client = Client {
         child,
+        reaped: false,
         input,
         output,
         reader_progress: Arc::new(Mutex::new(ReaderProgress {
@@ -881,7 +948,7 @@ fn stalled_reader(requests: usize) {
     // watchdog still trips at the full bound.
     let deadline = std::time::Instant::now() + Duration::from_secs(13);
     loop {
-        if let Some(status) = client.child.try_wait().unwrap() {
+        if let Some(status) = client.exit_status() {
             assert!(!status.success());
             break;
         }
@@ -1773,7 +1840,7 @@ fn full_size_optional_expansion_drops_candidate_and_keeps_edit_ack_and_reopen() 
             break;
         }
         assert!(
-            client.child.try_wait().unwrap().is_none(),
+            !exited(client.child.id()),
             "helper terminated"
         );
         assert!(
@@ -1858,6 +1925,7 @@ fn stalled_optional_display_write_triggers_watchdog_with_no_source_loss() {
     let (_sender, output) = mpsc::channel();
     let mut client = Client {
         child,
+        reaped: false,
         input,
         output,
         reader_progress: Arc::new(Mutex::new(ReaderProgress {
@@ -1884,7 +1952,7 @@ fn stalled_optional_display_write_triggers_watchdog_with_no_source_loss() {
     // real compiler) beyond stalled_reader's.
     let deadline = std::time::Instant::now() + Duration::from_secs(14);
     loop {
-        if let Some(status) = client.child.try_wait().unwrap() {
+        if let Some(status) = client.exit_status() {
             assert!(!status.success());
             break;
         }
