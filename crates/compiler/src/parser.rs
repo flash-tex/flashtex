@@ -115,14 +115,6 @@ impl PageStyleName {
     }
 }
 
-/// fancyhdr's six running-head fields: even and odd pages share one slot
-/// each because this layout is always one-sided, so an even-only group
-/// (`LE` in `[LE,RO]`) never ships and the odd group alone selects. Every
-/// slot starts empty --
-/// `\pagestyle{fancy}` alone draws no text, and `\fancyhf{}` returns all
-/// six to empty -- and `\fancyhead`/`\fancyfoot` fill them. The rule widths
-/// are fancyhdr's defaults (`\headrulewidth` 0.4pt, `\footrulewidth` 0pt);
-/// `\setlength` on either updates them.
 /// What a beamer deck declares for its theme's head/foot templates (issue
 /// #944, Tier 4): `\usetheme{<name>}` and the *short* forms of
 /// `\title[short]{..}`, `\author[short]{..}`, `\institute[short]{..}`,
@@ -161,12 +153,25 @@ pub const FANCY_RIGHT_MARK: char = '\u{F8FD}';
 /// `subsection`, `subsubsection`, `page`).
 pub const FANCY_COUNTER: char = '\u{F8FC}';
 
+/// fancyhdr's twelve running-head fields: left, centre and right of the
+/// head and the foot, for odd and for even pages (fancyhdr.sty's
+/// `\f@nch@olh` ... `\f@nch@erf`). A one-sided document ships the odd
+/// ones on every page (`\@oddhead`); a `twoside` one ships the even ones
+/// on even pages (#1123). Every slot starts empty -- `\pagestyle{fancy}`
+/// alone draws no text, and `\fancyhf{}` returns all twelve to empty --
+/// and `\fancyhead`/`\fancyfoot` fill them. The rule widths are
+/// fancyhdr's defaults (`\headrulewidth` 0.4pt, `\footrulewidth` 0pt);
+/// `\setlength` on either updates them.
 #[derive(Debug, Clone, PartialEq)]
 pub struct FancyHdr {
-    /// Header fields left, centre, right.
+    /// Odd-page header fields left, centre, right.
     pub head: [Vec<Inline>; 3],
-    /// Footer fields left, centre, right.
+    /// Odd-page footer fields left, centre, right.
     pub foot: [Vec<Inline>; 3],
+    /// Even-page header fields (shipped only in a `twoside` document).
+    pub even_head: [Vec<Inline>; 3],
+    /// Even-page footer fields.
+    pub even_foot: [Vec<Inline>; 3],
     pub headrule_pt: f64,
     pub footrule_pt: f64,
 }
@@ -176,6 +181,8 @@ impl Default for FancyHdr {
         FancyHdr {
             head: [Vec::new(), Vec::new(), Vec::new()],
             foot: [Vec::new(), Vec::new(), Vec::new()],
+            even_head: [Vec::new(), Vec::new(), Vec::new()],
+            even_foot: [Vec::new(), Vec::new(), Vec::new()],
             headrule_pt: 0.4,
             footrule_pt: 0.0,
         }
@@ -218,81 +225,71 @@ struct SectionTitleFormat {
     after_pt: f64,
 }
 
+/// The slots a `\fancyhead`/`\fancyfoot`/`\fancyhf` `[pos]` list selects
+/// ([`fancy_position_slots`]): indices 0/1/2 (left, centre, right) on odd
+/// and on even pages, and the letters that are not positions.
+#[derive(Debug, Clone, PartialEq, Default)]
+struct FancySlots {
+    odd: Vec<usize>,
+    even: Vec<usize>,
+    unknown: Vec<char>,
+}
+
 /// Split a `\fancyhead`/`\fancyfoot`/`\fancyhf` `[pos]` list (`L`, `C`,
-/// `R`, combinable with `E`/`O` and commas, as in `[LE,RO]`) into slot
-/// indices 0/1/2. The bracket splits on `,` first: a group containing `E`
-/// but not `O` selects nothing, because a one-sided document's
-/// `\@outputpage` always uses `\@oddhead` and even-only fields never ship;
-/// otherwise the group's `L`/`C`/`R` letters select. A group with neither
-/// `E` nor `O` applies always, so `[LE,RO]` (the fancyhdr manual's
-/// canonical idiom) is the `R` slot alone here, and `[LO,RE]` the `L` slot
-/// alone. No `L`/`C`/`R` letter anywhere (`[]`, `[O]`, `[EO]`) is fancyhdr's
-/// default when no position is given: every slot; unknown letters come back
-/// for the caller to diagnose.
-fn fancy_position_slots(raw: Option<&str>) -> (Vec<usize>, Vec<char>) {
+/// `R`, combinable with `E`/`O` and commas, as in `[LE,RO]`) into slots,
+/// as fancyhdr.sty's `\f@nch@fancyhf` does: the bracket splits on `,`, and
+/// each group selects its `E`/`O` pages (both when it names neither) and
+/// its `L`/`C`/`R` slots (all three when it names none, `\f@nch@default`).
+/// So `[LE,RO]` (the fancyhdr manual's canonical idiom) is the even left
+/// and the odd right slot, `[E]` every even slot, and `[]`, `[O]`, `[EO]`
+/// every odd one. Letters fancyhdr does not know come back for the caller
+/// to diagnose; a group with one selects only what it names.
+fn fancy_position_slots(raw: Option<&str>) -> FancySlots {
     let Some(raw) = raw else {
-        return (vec![0, 1, 2], Vec::new());
+        return FancySlots { odd: vec![0, 1, 2], even: vec![0, 1, 2], unknown: Vec::new() };
     };
     // fancyhdr reads the letters in either case (`\f@nch@forc` lowercases
     // them: `[l]`, `[ce]`, `[LE,ro]` are all valid).
     let upper = raw.to_ascii_uppercase();
-    let raw = upper.as_str();
-    let mut slots = Vec::new();
-    let mut unknown = Vec::new();
-    let mut placed = false;
-    let mut applied = false;
-    for group in raw.split(',') {
-        if group.contains('E') && !group.contains('O') {
-            // Even-only group: never ships one-sided. Unknown letters in
-            // it still warn, exactly as elsewhere in the bracket.
-            for c in group.chars() {
-                if !matches!(c, 'L' | 'C' | 'R' | 'E' | 'O' | ' ' | '\t' | '\n')
-                    && !unknown.contains(&c)
-                {
-                    unknown.push(c);
-                }
-            }
-            continue;
-        }
-        applied = true;
+    let mut out = FancySlots::default();
+    for group in upper.split(',') {
+        let (mut odd, mut even) = (false, false);
+        let mut slots = Vec::new();
+        let mut unknown_here = false;
         for c in group.chars() {
             match c {
-                'L' => {
-                    if !slots.contains(&0) {
-                        slots.push(0);
-                    }
-                    placed = true;
-                }
-                'C' => {
-                    if !slots.contains(&1) {
-                        slots.push(1);
-                    }
-                    placed = true;
-                }
-                'R' => {
-                    if !slots.contains(&2) {
-                        slots.push(2);
-                    }
-                    placed = true;
-                }
-                'E' | 'O' => {}
+                'L' => slots.push(0),
+                'C' => slots.push(1),
+                'R' => slots.push(2),
+                'O' => odd = true,
+                'E' => even = true,
                 ' ' | '\t' | '\n' => {}
                 other => {
-                    if !unknown.contains(&other) {
-                        unknown.push(other);
+                    unknown_here = true;
+                    if !out.unknown.contains(&other) {
+                        out.unknown.push(other);
                     }
                 }
             }
         }
+        if !odd && !even {
+            (odd, even) = (true, true);
+        }
+        if slots.is_empty() && !unknown_here {
+            slots = vec![0, 1, 2];
+        }
+        for slot in slots {
+            if odd && !out.odd.contains(&slot) {
+                out.odd.push(slot);
+            }
+            if even && !out.even.contains(&slot) {
+                out.even.push(slot);
+            }
+        }
     }
-    if !placed && unknown.is_empty() && applied {
-        // `[E]` alone selects nothing (every group is even-only, so nothing
-        // applied); anything else letter-less (`[]`, `[O]`, `[EO]`) is the
-        // no-position default: every slot.
-        slots = vec![0, 1, 2];
-    }
-    slots.sort();
-    (slots, unknown)
+    out.odd.sort();
+    out.even.sort();
+    out
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -476,7 +473,7 @@ pub enum Inline {
         right: Vec<Inline>,
         span: Span,
     },
-    /// fancyhdr's six running-head fields as they read from here on: a
+    /// fancyhdr's twelve running-head fields as they read from here on: a
     /// zero-width marker, like [`Self::PageStyle`]. LaTeX expands the fields
     /// only when a page ships (`\@outputpage` runs `\@oddhead`), so a macro
     /// they name (`\fancyhead[R]{\topicshort}`) takes the definition in
@@ -5058,7 +5055,7 @@ struct P<'a> {
     /// `\fboxsep`/`\fboxrule` in TeX points (latex.ltx: 3pt, 0.4pt).
     fboxsep_pt: f64,
     fboxrule_pt: f64,
-    /// fancyhdr's six running-head fields and rule widths.
+    /// fancyhdr's twelve running-head fields and rule widths.
     fancy: FancyHdr,
     /// Inside a `\flashtexfancybegin`...`\flashtexfancyend` re-expansion:
     /// the fields as they were before it (see [`P::fancy_snapshot_end`]).
@@ -7023,7 +7020,7 @@ impl P<'_> {
             ));
             return;
         }
-        let (slots, unknown) =
+        let FancySlots { odd, even, unknown } =
             fancy_position_slots(bracket.as_ref().map(|(raw, _)| raw.as_str()));
         if !unknown.is_empty() {
             let letters: String = unknown.iter().collect();
@@ -7038,7 +7035,7 @@ impl P<'_> {
         let content = self.fancy_field_inlines(tokens, span, style);
         let head = name != "fancyfoot";
         let foot = name != "fancyhead";
-        for slot in slots {
+        for slot in odd {
             if head {
                 self.fancy.head[slot] = content.clone();
             }
@@ -7046,22 +7043,29 @@ impl P<'_> {
                 self.fancy.foot[slot] = content.clone();
             }
         }
+        for slot in even {
+            if head {
+                self.fancy.even_head[slot] = content.clone();
+            }
+            if foot {
+                self.fancy.even_foot[slot] = content.clone();
+            }
+        }
     }
 
     /// fancyhdr's single-slot field commands `\lhead` / `\chead` /
     /// `\rhead` and `\lfoot` / `\cfoot` / `\rfoot` (fancyhdr.sty): one
-    /// mandatory group filling one running-head slot -- the odd-page field
-    /// this one-sided layout always ships. The oracle also takes an
-    /// optional `[even]` group first, stored into the even-page field;
-    /// even pages never ship here (`\@outputpage` always uses
-    /// `\@oddhead`; see `fancy_position_slots`), so the bracket is
-    /// consumed and ignored, and `\lhead{X}` stores exactly what
-    /// `\fancyhead[L]{X}` stores. Silent on success: the fields are read
+    /// mandatory group filling one running-head slot on odd pages, and an
+    /// optional `[even]` group first for the even-page slot, which is the
+    /// odd one's when it is left out (`\newcommand{\lhead}[2][\f@nch@olh]`),
+    /// so `\lhead{X}` stores exactly what `\fancyhead[L]{X}` stores. Even
+    /// pages ship the even field only in a `twoside` document (#1123).
+    /// Silent on success: the fields are read
     /// back when a `fancy` page ships. Without `\usepackage{fancyhdr}`
     /// the command names what is missing, as `fancy_command` does.
     #[inline(never)]
     fn fancy_single_command(&mut self, name: &str, span: Span) {
-        let bracket = self.optional_bracket_argument();
+        let bracket = self.optional_bracket_tokens_spanned();
         let (tokens, argument_span) = self.required_group(name, span);
         let mut whole = span.merge(argument_span);
         if let Some((_, bracket_span)) = bracket.as_ref() {
@@ -7079,6 +7083,10 @@ impl P<'_> {
         self.document_global_state = true;
         let style = self.style;
         let content = self.fancy_field_inlines(tokens, span, style);
+        let even = match bracket {
+            Some((even_tokens, _)) => self.fancy_field_inlines(even_tokens, span, style),
+            None => content.clone(),
+        };
         let slot = match name {
             "lhead" | "lfoot" => 0,
             "chead" | "cfoot" => 1,
@@ -7086,8 +7094,10 @@ impl P<'_> {
         };
         if name.ends_with("head") {
             self.fancy.head[slot] = content;
+            self.fancy.even_head[slot] = even;
         } else {
             self.fancy.foot[slot] = content;
+            self.fancy.even_foot[slot] = even;
         }
     }
 
@@ -7176,13 +7186,15 @@ impl P<'_> {
     }
 
     /// `\flashtexfancybegin`: the recorded field commands follow and
-    /// rebuild the six fields from empty (the rule widths stay: they are
+    /// rebuild the twelve fields from empty (the rule widths stay: they are
     /// lengths, set outside the fields).
     fn fancy_snapshot_begin(&mut self) {
         let saved = self.fancy.clone();
         for slot in 0..3 {
             self.fancy.head[slot].clear();
             self.fancy.foot[slot].clear();
+            self.fancy.even_head[slot].clear();
+            self.fancy.even_foot[slot].clear();
         }
         self.fancy_snapshot = Some(saved);
     }
@@ -7204,7 +7216,11 @@ impl P<'_> {
         }
         let fields = std::mem::replace(&mut self.fancy, saved);
         let previous = self.fancy_emitted.as_ref().unwrap_or(&self.fancy);
-        if previous.head == fields.head && previous.foot == fields.foot {
+        if previous.head == fields.head
+            && previous.foot == fields.foot
+            && previous.even_head == fields.even_head
+            && previous.even_foot == fields.even_foot
+        {
             return;
         }
         self.document_global_state = true;
@@ -22569,6 +22585,28 @@ pub(crate) fn alph(n: u32) -> Option<String> {
 mod tests {
     use super::*;
     use crate::layout;
+
+    /// `\f@nch@fancyhf`: per comma group, its `E`/`O` pages (both when it
+    /// names neither) and its `L`/`C`/`R` slots (all when it names none).
+    #[test]
+    fn fancy_position_slots_split_odd_and_even_pages_like_fancyhdr() {
+        let slots = |raw: Option<&str>| {
+            let s = fancy_position_slots(raw);
+            (s.odd, s.even, s.unknown)
+        };
+        let all = vec![0, 1, 2];
+        assert_eq!(slots(None), (all.clone(), all.clone(), vec![]));
+        assert_eq!(slots(Some("")), (all.clone(), all.clone(), vec![]));
+        assert_eq!(slots(Some("LE,RO")), (vec![2], vec![0], vec![]));
+        assert_eq!(slots(Some("le, ro")), (vec![2], vec![0], vec![]));
+        assert_eq!(slots(Some("RE,LO")), (vec![0], vec![2], vec![]));
+        assert_eq!(slots(Some("C")), (vec![1], vec![1], vec![]));
+        assert_eq!(slots(Some("E")), (vec![], all.clone(), vec![]));
+        assert_eq!(slots(Some("O")), (all.clone(), vec![], vec![]));
+        assert_eq!(slots(Some("EO")), (all.clone(), all.clone(), vec![]));
+        assert_eq!(slots(Some("L,O")), (all.clone(), vec![0], vec![]));
+        assert_eq!(slots(Some("LX,R")), (vec![0, 2], vec![0, 2], vec!['X']));
+    }
 
     fn items(source: &str) -> (Parsed, Vec<crate::layout::TextItem>) {
         let parsed = parse(source);
