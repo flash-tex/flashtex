@@ -109,7 +109,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard: [cold-small, cold-1000, cold-infdesc, cold-x2, unicode, open, modes]
+        shard: [cold-small, cold-1000, cold-infdesc, cold-x2, unicode, open, modes, cli-profile]
     env:
       SHARD: ${{ matrix.shard }}
     steps:
@@ -212,6 +212,8 @@ jobs:
                 python3 $B/coldopen.py "$INCR_BENCH_DIR/ref" "$d" "$m" "$OUT/reopen-$n.jsonl" --reps "$((REPS + 1))" \
                   --keep-aux --keep-s0 --tag reopen 2>&1 | tail -2
               done ;;
+            cli-profile)
+              python3 $B/cli_profile.py "$OUT/cli-profile" --sample plain-1000,full-1000 ;;
             modes)
               MODES_INFDESC=$INCR_BENCH_DIR/docs/infdesc-x2 MODES_LIMIT_GB=6 $B/modes.sh ref 2>&1 | tee "$OUT/modes.txt"
               cp "$INCR_BENCH_DIR"/mem/*-mode-ref-*.jsonl "$OUT/" 2>/dev/null || true ;;
