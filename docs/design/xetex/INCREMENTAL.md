@@ -176,7 +176,15 @@ pdfTeX's own, each needing a XeTeX counterpart written against `xetex.web`:
    format file are the same, S₀'s key holds (Classic's checks, the
    arm-window reads included), the font directories are unchanged, and
    every font and mapping file its objects are made from has the same
-   content. `tools/incr-bench/unicode_reopen.py` checks a reopen after an
+   content. *A delta against a base (lane UNICODE-FINISH):* a page of S₀
+   equal, byte for byte, to the state after the format load is recorded as
+   a reference to a base (`DIR/<hash of the format file, engine build and
+   layout>.xs0base`, written once from the format point and shared by
+   every document of the format), not stored; the S₀ file holds the pages
+   that differ (3–16 MB where it held 90–102 MB), a reopen maps the rest
+   from the base, and a base that is missing or made again (its nonce)
+   refuses S₀. The writer thread compares, off the engine thread.
+   `tools/incr-bench/unicode_reopen.py` checks a reopen after an
    edit in the body (from S₀), in the preamble and of a font file
    (refused) against a from-scratch compile, and times a cold open against
    a reopen.

@@ -21,6 +21,23 @@
 //! parts. Every file an object is made from is kept by its content's hash:
 //! a font or mapping file changed while the document was closed refuses S₀.
 //!
+//! **A delta against a base.** Most of S₀'s word space is the state after
+//! the format load, unchanged: XeTeX's `eqtb` over 0x110000 code points
+//! (catcodes, case, space-factor, math and delimiter codes) is about 90 MB
+//! of nonzero chunks, which every document of a format shares. So a page
+//! of S₀ that is byte for byte a page of the *base* -- the word space after
+//! the format load, written once per format file, engine build and layout
+//! beside the S₀s (`<hash>.xs0base`) -- is recorded as a reference, not
+//! stored: the S₀ file holds the pages that differ. The base is made from
+//! the engine's format point when there is none yet; S₀ records the base's
+//! identity (a nonce of the file written, which is never rewritten in
+//! place), and a reopen maps the referenced pages copy-on-write from the
+//! base and the rest from S₀'s own file. A base that is missing, made
+//! again, or unreadable refuses S₀ (the run starts from the start, and
+//! saves again). Which pages are references is decided by comparing the
+//! bytes, so a base made by another document of the same format serves
+//! too, however its state after the format load differed.
+//!
 //! [`Image::write`] writes through a temporary file of its own and a
 //! rename, on a thread of its own: the engine thread only copies the
 //! chunks out ([`prepare`]).
@@ -34,9 +51,14 @@ use flashtex_engine::arena::{CheckpointId, CHUNK_BYTES};
 use flashtex_engine::host::Key;
 use flashtex_engine::persist::{Codec, Reader};
 use std::ffi::CString;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-const MAGIC: &[u8] = b"flashtex xetex S0 v1";
+const MAGIC: &[u8] = b"flashtex xetex S0 v2";
+
+/// A base file (see the module documentation).
+const BASE_MAGIC: &[u8] = b"flashtex xetex S0 base v1";
+const BASE_EXT: &str = "xs0base";
 
 /// The granule of S₀'s pages in the file: Apple silicon's page, which every
 /// supported system's page size divides (as the pdfTeX engine's v5).
@@ -84,11 +106,15 @@ impl Meta {
 }
 
 /// S₀ taken out of the engine for writing: the header and a copy of the
-/// nonzero chunks, `CHUNK_BYTES` each in `data`.
+/// nonzero chunks, `CHUNK_BYTES` each in `data`, and the base it is to be
+/// written against.
 pub struct Image {
     head: Vec<u8>,
+    /// The chunks of the space.
+    space: usize,
     chunks: Vec<u32>,
     data: Vec<u8>,
+    base: Option<ImageBase>,
 }
 
 /// A file an object of the handle table is made from, with its content's
@@ -265,45 +291,300 @@ fn dec_object(
     })
 }
 
-/// Take S₀ (checkpoint `id` of `g`, `meta` its key and record) out of the
-/// engine: the header, and a copy of the space's nonzero chunks at S₀.
-pub fn prepare(g: &mut Globals, id: CheckpointId, meta: &Meta) -> Result<Image, String> {
-    let head = header(g, id, meta)?;
-    let view = g.arena.view_at(id)?;
-    let mut chunks = vec![];
-    let mut data = vec![];
-    for c in 0..g.arena.chunks() {
-        if !g.arena.touched(c) {
-            continue;
+/// Where a document's S₀ finds its base, and what the base stands for.
+pub struct BaseSpec {
+    /// The S₀ cache's directory, where the bases live beside the S₀s.
+    pub dir: PathBuf,
+    /// The format file and its identity, as `crate::resident` encodes them:
+    /// with the engine build and the word space's layout, which base file.
+    pub format: Vec<u8>,
+    /// The engine's checkpoint after the format load, if it has one: a base
+    /// is made from it when there is none yet.
+    pub point: Option<CheckpointId>,
+}
+
+/// Which base file `spec` names for the engine `g`.
+fn base_path(spec: &BaseSpec, g: &Globals) -> PathBuf {
+    let mut key = vec![];
+    BASE_MAGIC.to_vec().enc(&mut key);
+    flashtex_engine::host::engine_build().enc(&mut key);
+    spec.format.enc(&mut key);
+    (g.arena.len_bytes() as u64).enc(&mut key);
+    (g.arena.scalar_bytes() as u64).enc(&mut key);
+    let h = flashtex_engine::persist::hash128(&key);
+    spec.dir
+        .join(format!("{:016x}{:016x}.{BASE_EXT}", h[0], h[1]))
+}
+
+/// A new base's identity: unique to the file written (a base is never
+/// rewritten in place; a new one is a new identity).
+fn new_nonce(path: &Path) -> [u64; 2] {
+    let t = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_nanos());
+    // (the process, the thread and the time: two writers of one base are
+    // two processes, or two threads of one)
+    let seed = format!(
+        "{}\0{}\0{:?}\0{t}",
+        path.display(),
+        std::process::id(),
+        std::thread::current().id(),
+    );
+    flashtex_engine::persist::hash128(seed.as_bytes())
+}
+
+/// A base file, opened: its identity and its pages, mapped.
+struct BaseFile {
+    file: std::fs::File,
+    map: flashtex_engine::os::MappedFile,
+    nonce: [u64; 2],
+    pages: Vec<u32>,
+    data_off: usize,
+}
+
+impl BaseFile {
+    fn open(path: &Path) -> Result<BaseFile, String> {
+        let name = path.display().to_string();
+        let file = std::fs::File::open(path).map_err(|e| format!("{name}: {e}"))?;
+        let map = flashtex_engine::os::MappedFile::of(&file, &name)?;
+        let bytes = map.bytes();
+        let hlen = u64::from_le_bytes(
+            bytes
+                .get(..8)
+                .ok_or("not an S0 base")?
+                .try_into()
+                .expect("8 bytes"),
+        ) as usize;
+        let mut r = Reader::new(bytes.get(8..8 + hlen).ok_or("S0 base truncated")?);
+        if Vec::<u8>::dec(&mut r)? != BASE_MAGIC {
+            return Err("not an S0 base".into());
         }
-        let d = view.chunk(c);
-        if d.iter().any(|&b| b != 0) {
-            chunks.push(c as u32);
-            data.extend_from_slice(d);
+        let nonce = <[u64; 2]>::dec(&mut r)?;
+        let _chunks = Vec::<u32>::dec(&mut r)?;
+        let pages = Vec::<u32>::dec(&mut r)?;
+        let data_off = (8 + hlen).next_multiple_of(S0_PAGE);
+        if bytes.len() < data_off + pages.len() * S0_PAGE {
+            return Err("S0 base truncated".into());
+        }
+        Ok(BaseFile {
+            file,
+            map,
+            nonce,
+            pages,
+            data_off,
+        })
+    }
+
+    /// Page `p` of the space as the base holds it (`None`: all zero).
+    fn page(&self, p: u32) -> Option<&[u8]> {
+        let k = self.pages.binary_search(&p).ok()?;
+        let at = self.data_off + k * S0_PAGE;
+        Some(&self.map.bytes()[at..at + S0_PAGE])
+    }
+}
+
+/// A chunk of zeros.
+const ZERO: [u8; CHUNK_BYTES] = [0; CHUNK_BYTES];
+
+/// What S₀ is compared with: a base file, the engine's format point (a
+/// base being made from it), or a copy of the point (a base made now, for
+/// the writer thread).
+enum Against<'a> {
+    File(BaseFile),
+    Point(flashtex_engine::arena::View<'a>),
+    Copy(Vec<u32>, Vec<u8>),
+}
+
+impl Against<'_> {
+    /// Chunk `c` of the space as the base holds it.
+    fn chunk(&self, c: u32) -> &[u8] {
+        let per = (S0_PAGE / CHUNK_BYTES) as u32;
+        match self {
+            Against::File(b) => match b.page(c / per) {
+                Some(pg) => {
+                    let i = (c % per) as usize;
+                    &pg[i * CHUNK_BYTES..(i + 1) * CHUNK_BYTES]
+                }
+                None => &ZERO,
+            },
+            // (a chunk the arena never wrote is zero)
+            Against::Point(v) => v.chunk(c as usize),
+            Against::Copy(cs, d) => match cs.binary_search(&c) {
+                Ok(i) => &d[i * CHUNK_BYTES..(i + 1) * CHUNK_BYTES],
+                Err(_) => &ZERO,
+            },
         }
     }
-    Ok(Image { head, chunks, data })
+}
+
+/// The nonzero chunks of the space at checkpoint `view` (`touched`: the
+/// arena's, now: a chunk never written is zero then too).
+fn nonzero(arena: &flashtex_engine::arena::Arena, view: &flashtex_engine::arena::View) -> Vec<u32> {
+    (0..arena.chunks())
+        .filter(|&c| arena.touched(c) && view.chunk(c).iter().any(|&b| b != 0))
+        .map(|c| c as u32)
+        .collect()
+}
+
+/// Split S₀'s nonzero `chunks` (`mine`: S₀'s chunk, of a space of
+/// `space` chunks) into the chunks of the pages it holds itself and of
+/// those equal, byte for byte, to the base's, which it refers to.
+fn split<'a>(
+    space: usize,
+    chunks: &[u32],
+    mine: &dyn Fn(u32) -> &'a [u8],
+    against: &Against,
+) -> (Vec<u32>, Vec<u32>) {
+    let per = (S0_PAGE / CHUNK_BYTES) as u32;
+    let equal =
+        |p: u32| (p * per..((p + 1) * per).min(space as u32)).all(|c| mine(c) == against.chunk(c));
+    let (mut own, mut from_base) = (vec![], vec![]);
+    let mut k = 0;
+    while k < chunks.len() {
+        let p = chunks[k] / per;
+        let mut j = k;
+        while j < chunks.len() && chunks[j] / per == p {
+            j += 1;
+        }
+        if equal(p) {
+            from_base.extend_from_slice(&chunks[k..j]);
+        } else {
+            own.extend_from_slice(&chunks[k..j]);
+        }
+        k = j;
+    }
+    (own, from_base)
+}
+
+/// The end of S₀'s header: the base it refers to (none when no page comes
+/// from one) and the chunks it takes from it.
+fn enc_base(head: &mut Vec<u8>, base: Option<(String, [u64; 2])>, from_base: &[u32]) {
+    base.filter(|_| !from_base.is_empty()).enc(head);
+    from_base.to_vec().enc(head);
+}
+
+/// A base file's name in the cache.
+fn file_name(p: &Path) -> String {
+    p.file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_default()
+}
+
+/// A new base's header up to its chunks' list.
+fn base_header(nonce: [u64; 2]) -> Vec<u8> {
+    let mut head = vec![];
+    BASE_MAGIC.to_vec().enc(&mut head);
+    nonce.enc(&mut head);
+    head
+}
+
+/// The base S₀ is taken out against, for the writer.
+enum ImageBase {
+    /// A base file there is: the writer compares S₀ with it.
+    File(PathBuf),
+    /// A base made now from the format point: the writer writes it, then
+    /// compares S₀ with it.
+    New {
+        path: PathBuf,
+        nonce: [u64; 2],
+        chunks: Vec<u32>,
+        data: Vec<u8>,
+    },
+}
+
+/// Take S₀ (checkpoint `id` of `g`, `meta` its key and record) out of the
+/// engine: the header and a copy of the space's nonzero chunks at S₀, and
+/// the base to write it against (`base`: where the bases are; `None`:
+/// none): the base file there is, else a copy of the format point to make
+/// one from. The writer ([`Image::write`]) compares, off the engine thread.
+pub fn prepare(
+    g: &mut Globals,
+    id: CheckpointId,
+    meta: &Meta,
+    base: Option<&BaseSpec>,
+) -> Result<Image, String> {
+    let head = header(g, id, meta)?;
+    let view = g.arena.view_at(id)?;
+    let chunks = nonzero(&g.arena, &view);
+    let mut data = Vec::with_capacity(chunks.len() * CHUNK_BYTES);
+    for &c in &chunks {
+        data.extend_from_slice(view.chunk(c as usize));
+    }
+    let base = base.and_then(|spec| {
+        let path = base_path(spec, g);
+        if path.is_file() {
+            return Some(ImageBase::File(path));
+        }
+        let pv = g.arena.view_at(spec.point?).ok()?;
+        let chunks = nonzero(&g.arena, &pv);
+        let mut data = Vec::with_capacity(chunks.len() * CHUNK_BYTES);
+        for &c in &chunks {
+            data.extend_from_slice(pv.chunk(c as usize));
+        }
+        let nonce = new_nonce(&path);
+        Some(ImageBase::New {
+            path,
+            nonce,
+            chunks,
+            data,
+        })
+    });
+    Ok(Image {
+        head,
+        space: g.arena.chunks(),
+        chunks,
+        data,
+        base,
+    })
 }
 
 /// Write S₀ to `path` from the engine itself, with no copy of its chunks
-/// (Low Memory: the copy is the size of the file). Returns the file's
+/// (Low Memory: the copy is the size of the file), against the base there
+/// is or, made first from the format point, a new one. Returns the file's
 /// bytes.
 pub fn write_in_place(
     g: &mut Globals,
     id: CheckpointId,
     meta: &Meta,
     path: &str,
+    base: Option<&BaseSpec>,
 ) -> Result<u64, String> {
-    let head = header(g, id, meta)?;
+    let mut head = header(g, id, meta)?;
+    let g: &Globals = g;
     let view = g.arena.view_at(id)?;
-    let chunks: Vec<u32> = (0..g.arena.chunks())
-        .filter(|&c| g.arena.touched(c) && view.chunk(c).iter().any(|&b| b != 0))
-        .map(|c| c as u32)
-        .collect();
-    write_file(head, &chunks, &|i| view.chunk(chunks[i] as usize), path)
+    let mut against: Option<(Against, String, [u64; 2])> = None;
+    if let Some(spec) = base {
+        let bp = base_path(spec, g);
+        if let Ok(b) = BaseFile::open(&bp) {
+            let nonce = b.nonce;
+            against = Some((Against::File(b), file_name(&bp), nonce));
+        } else if let Some(Ok(pv)) = spec.point.map(|p| g.arena.view_at(p)) {
+            let nonce = new_nonce(&bp);
+            let chunks = nonzero(&g.arena, &pv);
+            let made = write_file(
+                base_header(nonce),
+                &chunks,
+                &|i| pv.chunk(chunks[i] as usize),
+                &bp.to_string_lossy(),
+            );
+            if made.is_ok() {
+                against = Some((Against::Point(pv), file_name(&bp), nonce));
+            }
+        }
+    }
+    let chunks = nonzero(&g.arena, &view);
+    let (own, from_base, name) = match &against {
+        Some((a, name, nonce)) => {
+            let (own, from_base) = split(g.arena.chunks(), &chunks, &|c| view.chunk(c as usize), a);
+            (own, from_base, Some((name.clone(), *nonce)))
+        }
+        None => (chunks, vec![], None),
+    };
+    enc_base(&mut head, name, &from_base);
+    write_file(head, &own, &|i| view.chunk(own[i] as usize), path)
 }
 
-/// The file's header up to the chunks' list.
+/// The file's header up to the chunks' lists.
 fn header(g: &mut Globals, id: CheckpointId, meta: &Meta) -> Result<Vec<u8>, String> {
     let mut head = vec![];
     MAGIC.to_vec().enc(&mut head);
@@ -331,21 +612,63 @@ fn header(g: &mut Globals, id: CheckpointId, meta: &Meta) -> Result<Vec<u8>, Str
 impl Image {
     /// The bytes it holds in memory.
     pub fn bytes(&self) -> usize {
-        self.head.len() + self.data.len()
+        self.head.len()
+            + self.data.len()
+            + match &self.base {
+                Some(ImageBase::New { data, .. }) => data.len(),
+                _ => 0,
+            }
     }
 
     /// Write the file to `path` through a temporary file of this writer's
     /// own and a rename (`path` is always a whole S₀ or what it was): the
-    /// header, the nonzero chunks' list and their pages' list, then those
-    /// pages whole, `S0_PAGE`-aligned. Returns the file's bytes.
+    /// header, the chunks' list and their pages' list, then those pages
+    /// whole, `S0_PAGE`-aligned, but the pages equal to the base's. A base
+    /// made with it is written first, the same way; a base that cannot be
+    /// read or written leaves S₀ whole. Returns the S₀ file's bytes.
     pub fn write(self, path: &str) -> Result<u64, String> {
-        let Image { head, chunks, data } = self;
-        write_file(
-            head,
-            &chunks,
-            &|i| &data[i * CHUNK_BYTES..(i + 1) * CHUNK_BYTES],
-            path,
-        )
+        let Image {
+            mut head,
+            space,
+            chunks,
+            data,
+            base,
+        } = self;
+        let against = match base {
+            None => None,
+            Some(ImageBase::File(bp)) => BaseFile::open(&bp).ok().map(|b| {
+                let nonce = b.nonce;
+                (Against::File(b), file_name(&bp), nonce)
+            }),
+            Some(ImageBase::New {
+                path: bp,
+                nonce,
+                chunks: bc,
+                data: bd,
+            }) => write_file(
+                base_header(nonce),
+                &bc,
+                &|i| &bd[i * CHUNK_BYTES..(i + 1) * CHUNK_BYTES],
+                &bp.to_string_lossy(),
+            )
+            .ok()
+            .map(|_| (Against::Copy(bc, bd), file_name(&bp), nonce)),
+        };
+        let mine = |c: u32| -> &[u8] {
+            match chunks.binary_search(&c) {
+                Ok(i) => &data[i * CHUNK_BYTES..(i + 1) * CHUNK_BYTES],
+                Err(_) => &ZERO,
+            }
+        };
+        let (own, from_base, name) = match &against {
+            Some((a, name, nonce)) => {
+                let (own, from_base) = split(space, &chunks, &mine, a);
+                (own, from_base, Some((name.clone(), *nonce)))
+            }
+            None => (chunks.clone(), vec![], None),
+        };
+        enc_base(&mut head, name, &from_base);
+        write_file(head, &own, &|i| mine(own[i]), path)
     }
 }
 
@@ -426,12 +749,73 @@ pub struct Opened {
     pub meta: Meta,
     /// The file's pages mapped into the word space (0: its chunks copied).
     pub mapped_pages: usize,
+    /// Of those, the pages mapped from the base.
+    pub base_pages: usize,
+}
+
+/// Put the `chunks` of a file's `pages` into the fresh word space of `g`:
+/// the file is `file` (`bytes` mapped), its pages' data at `data_off` in
+/// the order of `pages`. Each run of pages that follow one another both
+/// in the space and in the file is mapped copy-on-write
+/// (`Arena::map_pages`), a page past the space's end or on a system that
+/// does not map files is copied. Returns the pages mapped.
+fn place(
+    g: &mut Globals,
+    file: &std::fs::File,
+    bytes: &[u8],
+    data_off: usize,
+    pages: &[u32],
+    chunks: &[u32],
+) -> Result<usize, String> {
+    let per = (S0_PAGE / CHUNK_BYTES) as u32;
+    let index = |p: u32| pages.binary_search(&p).ok();
+    let mut want: Vec<u32> = chunks.iter().map(|&c| c / per).collect();
+    want.dedup();
+    let mut mapped: std::collections::HashSet<u32> = Default::default();
+    let mut i = 0;
+    while i < want.len() {
+        let k0 = index(want[i]).ok_or("S0 file: a chunk outside its pages")?;
+        let mut j = i + 1;
+        while j < want.len() && want[j] == want[j - 1] + 1 && index(want[j]) == Some(k0 + (j - i)) {
+            j += 1;
+        }
+        let run: Vec<u32> = want[i..j]
+            .iter()
+            .copied()
+            .take_while(|&p| (p as usize + 1) * S0_PAGE <= g.arena.len_bytes())
+            .collect();
+        if !run.is_empty()
+            && g.arena
+                .map_pages(file, (data_off + k0 * S0_PAGE) as u64, &run, S0_PAGE)
+        {
+            mapped.extend(run);
+        }
+        i = j;
+    }
+    for &c in chunks {
+        let p = c / per;
+        if mapped.contains(&p) {
+            g.arena.mark_loaded(c as usize);
+        } else {
+            let k = index(p).ok_or("S0 file: a chunk outside its pages")?;
+            let off = data_off + k * S0_PAGE + (c % per) as usize * CHUNK_BYTES;
+            g.arena.load_chunk(
+                c as usize,
+                bytes
+                    .get(off..off + CHUNK_BYTES)
+                    .ok_or("S0 file truncated")?,
+            );
+        }
+    }
+    Ok(mapped.len())
 }
 
 /// Open the S₀ file at `path` into a new engine. `check` runs once the
 /// header is read (the resident engine's checks of S₀'s key, command line,
 /// format and font directories); `catalog` is the fonts' catalog for the
-/// font manager's lookups, asked only when S₀ had a font manager.
+/// font manager's lookups, asked only when S₀ had a font manager. The base
+/// an S₀ refers to is looked for beside it, and must be the very file S₀
+/// was written against (its identity).
 pub fn open(
     path: &str,
     check: &mut dyn FnMut(&Meta) -> Result<(), String>,
@@ -449,7 +833,7 @@ pub fn open(
     ) as usize;
     let mut r = Reader::new(bytes.get(8..8 + hlen).ok_or("S0 file truncated")?);
     if Vec::<u8>::dec(&mut r)? != MAGIC {
-        return Err("not a Unicode-mode S0 file".into());
+        return Err("not a Unicode-mode S0 file of this version".into());
     }
     let meta = Meta::dec(&mut r)?;
     if meta.key.build != flashtex_engine::host::engine_build() {
@@ -469,61 +853,59 @@ pub fn open(
     let dl = Vec::<u8>::dec(&mut r)?;
     let arena_len = u64::dec(&mut r)? as usize;
     let scalar_bytes = u64::dec(&mut r)? as usize;
-    let present = Vec::<u32>::dec(&mut r)?;
+    let base_ref = Option::<(String, [u64; 2])>::dec(&mut r)?;
+    let from_base = Vec::<u32>::dec(&mut r)?;
+    let own = Vec::<u32>::dec(&mut r)?;
     let pages = Vec::<u32>::dec(&mut r)?;
     let data_off = (8 + hlen).next_multiple_of(S0_PAGE);
-    let per = S0_PAGE / CHUNK_BYTES;
     if bytes.len() < data_off + pages.len() * S0_PAGE {
         return Err("S0 file truncated".into());
     }
-    let mut at = Vec::with_capacity(present.len());
-    {
-        let mut k = 0;
-        for &c in &present {
-            let pg = c / per as u32;
-            while k < pages.len() && pages[k] < pg {
-                k += 1;
+    let base = match &base_ref {
+        None => None,
+        Some((name, nonce)) => {
+            if name.contains(['/', '\\']) {
+                return Err("S0 file: a bad base name".into());
             }
-            if pages.get(k) != Some(&pg) {
-                return Err("S0 file: a chunk outside its pages".into());
+            let bp = Path::new(path)
+                .parent()
+                .unwrap_or(Path::new("."))
+                .join(name);
+            let b = BaseFile::open(&bp).map_err(|e| format!("its base: {e}"))?;
+            if b.nonce != *nonce {
+                return Err("its base was made again".into());
             }
-            at.push(data_off + k * S0_PAGE + (c as usize % per) * CHUNK_BYTES);
+            Some(b)
         }
-    }
+    };
     let mut g = Globals::new();
     if g.arena.len_bytes() != arena_len || g.arena.scalar_bytes() != scalar_bytes {
         return Err("S0 was saved with another word-space layout".into());
     }
-    if present.iter().any(|&c| c as usize >= g.arena.chunks()) {
+    if own
+        .iter()
+        .chain(&from_base)
+        .any(|&c| c as usize >= g.arena.chunks())
+    {
         return Err("S0 file: a chunk outside the space".into());
     }
-    // Mapped (copy on write: the pages stay the file's, out of the
-    // footprint, until the engine writes them), but a last page that runs
-    // past the space's end (which `map_pages` refuses whole); the rest
-    // copied.
-    let whole = pages
-        .iter()
-        .take_while(|&&p| (p as usize + 1) * S0_PAGE <= g.arena.len_bytes())
-        .count();
-    let mapped_pages = if whole > 0
-        && g.arena
-            .map_pages(&file, data_off as u64, &pages[..whole], S0_PAGE)
-    {
-        whole
-    } else {
-        0
-    };
-    let mapped_end = pages
-        .get(mapped_pages.wrapping_sub(1))
-        .filter(|_| mapped_pages > 0)
-        .map_or(0, |&p| (p + 1) as usize * per);
-    for (&c, &off) in present.iter().zip(&at) {
-        if (c as usize) < mapped_end {
-            g.arena.mark_loaded(c as usize);
-        } else {
-            g.arena
-                .load_chunk(c as usize, &bytes[off..off + CHUNK_BYTES]);
-        }
+    // Mapped (copy on write: the pages stay the files', out of the
+    // footprint, until the engine writes them) where they can be, the rest
+    // copied: S₀'s own pages from its file, the others from the base.
+    let mut mapped_pages = place(&mut g, &file, bytes, data_off, &pages, &own)?;
+    let mut base_pages = 0;
+    if let Some(b) = &base {
+        base_pages = place(
+            &mut g,
+            &b.file,
+            b.map.bytes(),
+            b.data_off,
+            &b.pages,
+            &from_base,
+        )?;
+        mapped_pages += base_pages;
+    } else if !from_base.is_empty() {
+        return Err("S0 file: chunks of a base it has not".into());
     }
     g.fill_scalars();
     // the state outside the word space
@@ -549,5 +931,6 @@ pub fn open(
         id,
         meta,
         mapped_pages,
+        base_pages,
     })
 }

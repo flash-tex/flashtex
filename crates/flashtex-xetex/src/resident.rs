@@ -634,6 +634,7 @@ impl Engine {
         );
         self.fonts = fonts;
         let o = r?;
+        let (mapped_pages, base_pages) = (o.mapped_pages, o.base_pages);
         let (k, f) = found.ok_or("not checked")?;
         self.clear();
         let m = o.meta;
@@ -653,10 +654,11 @@ impl Engine {
         self.opened = Some((k, f));
         self.g = Some(o.g);
         Ok(format!(
-            "S0 opened from {} in {:.1} ms ({} pages mapped)",
+            "S0 opened from {} in {:.1} ms ({} pages mapped, {} of them from its base)",
             path.display(),
             t.elapsed().as_secs_f64() * 1e3,
-            o.mapped_pages
+            mapped_pages,
+            base_pages
         ))
     }
 
@@ -674,6 +676,21 @@ impl Engine {
             (Some(p), _) => (p.key.clone(), p.format.clone()),
             (None, Some(o)) => o.clone(),
             _ => return Ok(None),
+        };
+        // the base S₀ is a delta against: the state after this format's
+        // load (`crate::s0file`), made from the point if there is none yet
+        let base = match (&f, path.parent()) {
+            (Some(ff), Some(dir)) => {
+                use flashtex_engine::persist::Codec;
+                let mut format = vec![];
+                ff.enc(&mut format);
+                Some(crate::s0file::BaseSpec {
+                    dir: dir.to_path_buf(),
+                    format,
+                    point: self.point.as_ref().map(|p| p.id),
+                })
+            }
+            _ => None,
         };
         // (the engine's document is still this one: another document's
         // run may have come between its compile and this save; the paths
@@ -710,7 +727,13 @@ impl Engine {
             if let Some(d) = path.parent() {
                 let _ = std::fs::create_dir_all(d);
             }
-            let bytes = crate::s0file::write_in_place(g, s0.id, &meta, &path.to_string_lossy())?;
+            let bytes = crate::s0file::write_in_place(
+                g,
+                s0.id,
+                &meta,
+                &path.to_string_lossy(),
+                base.as_ref(),
+            )?;
             self.s0_saved = Some(s0.id);
             eprintln!(
                 "flashtex-host-unicode: {{\"saved_s0\":{:?},\"bytes\":{bytes},\"engine_ms\":{:.1},\"in_place\":true}}",
@@ -719,7 +742,7 @@ impl Engine {
             );
             return Ok(None);
         }
-        let image = crate::s0file::prepare(g, s0.id, &meta)?;
+        let image = crate::s0file::prepare(g, s0.id, &meta, base.as_ref())?;
         self.s0_saved = Some(s0.id);
         let prepare_ms = t.elapsed().as_secs_f64() * 1e3;
         let held = image.bytes();

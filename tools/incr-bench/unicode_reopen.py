@@ -2,7 +2,7 @@
 """Unicode mode's persisted S0 (lane UNICODE-POLISH; `--s0-cache`,
 crates/flashtex-xetex/src/s0file.rs): reopen gates and timings.
 
-usage: unicode_reopen.py HOST SRC [SRC...] [--out JSONL]
+usage: unicode_reopen.py HOST SRC [SRC...] [--out JSONL] [--cache DIR]
 
 For each SRC (a .tex file, copied to DIR/src/main.tex; the output goes to
 DIR/out, as the app lays a project out):
@@ -53,6 +53,8 @@ ap.add_argument('--out')
 ap.add_argument('--trials', type=int, default=3, help='timed opens of each kind')
 ap.add_argument('--clock', default='1760000000.5')
 ap.add_argument('--profile', help='the measured hosts\' performance mode (FLASHTEX_PROFILE)')
+ap.add_argument('--cache', help='one S0 cache for every document, as the app has (default: one per document); '
+                'the first document of a format makes the base the others are deltas against')
 a = ap.parse_args()
 
 PAGE, DIAG, DONE, STARTED, TOOL = 0x45, 0x48, 0x49, 0x42, 0x4C
@@ -103,8 +105,19 @@ class Host:
             if self.p.poll() is not None:
                 sys.exit('%s: the host ended' % tag)
             time.sleep(0.002)
-        self.s = socket.socket(socket.AF_UNIX)
-        self.s.connect(self.sock)
+        # (the socket file exists from bind(), before listen(): a connect
+        # in between is refused)
+        t0 = time.time()
+        while True:
+            self.s = socket.socket(socket.AF_UNIX)
+            try:
+                self.s.connect(self.sock)
+                break
+            except ConnectionRefusedError:
+                self.s.close()
+                if self.p.poll() is not None or time.time() - t0 > 10:
+                    raise
+                time.sleep(0.005)
         self.f = self.s.makefile('rb')
         write_frame(self.s, 0x01, json.dumps({'protocol': 'display-list-v3', 'version': [3, 3],
                                               'client': 'incr-bench-unicode-reopen'}))
@@ -276,7 +289,9 @@ def main():
         name = os.path.basename(src)
         base = tempfile.mkdtemp(prefix='fxr-', dir='/tmp')
         work = os.path.join(base, 'w')
-        cache = os.path.join(base, 'cache')
+        cache = a.cache or os.path.join(base, 'cache')
+        os.makedirs(cache, exist_ok=True)
+        before = set(os.listdir(cache))
         os.makedirs(os.path.join(work, 'src'))
         os.makedirs(os.path.join(work, 'out'))
         shutil.copy(src, os.path.join(work, 'src', 'main.tex'))
@@ -298,8 +313,22 @@ def main():
             print('   no S0 saved:', [l for l in h.stderr().splitlines() if 'S0' in l][-3:], flush=True)
             bad[0] += 1
             continue
-        size = sum(os.path.getsize(os.path.join(cache, f)) for f in os.listdir(cache))
-        print(json.dumps(dict(tag='s0_file', bytes=size)), flush=True)
+        # S0's own file (this document's), and the bases (S0's pages equal
+        # to the state after the format load are references to a base,
+        # one per format, which every document of the format shares)
+        own = [f for f in os.listdir(cache) if f.endswith('.xs0') and f not in before]
+        size = sum(os.path.getsize(os.path.join(cache, f)) for f in own)
+        bases = [f for f in os.listdir(cache) if f.endswith('.xs0base')]
+        # the writer's report: the engine thread's time taking S0 out (and
+        # comparing it with the base), the writer's
+        saved_line = [l for l in h.stderr().splitlines() if '"saved_s0"' in l]
+        try:
+            w = json.loads(saved_line[-1].split(': ', 1)[1])
+        except (IndexError, ValueError):
+            w = {}
+        print(json.dumps(dict(tag='s0_file', bytes=size, base_bytes=sum(os.path.getsize(os.path.join(cache, f)) for f in bases),
+                              base_made=sorted(set(bases) - before), engine_ms=w.get('engine_ms'),
+                              write_ms=w.get('write_ms'))), flush=True)
         # 2. timings: cold open against reopen, each a new host
         for _ in range(a.trials):
             for kind, e in (('cold_open', env()), ('reopen', env(cache))):

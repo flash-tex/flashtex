@@ -825,13 +825,25 @@ fn a_reopened_document_goes_on_from_its_persisted_s0() {
     };
     let (status, _, _) = compile(&with_cache, "first");
     assert_eq!(status, "ok");
-    let saved: Vec<_> = std::fs::read_dir(&cache)
+    let mut saved: Vec<_> = std::fs::read_dir(&cache)
         .expect("the S0 cache")
-        .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+        .map(|e| e.unwrap().path())
         .collect();
+    saved.sort_by_key(|p| p.extension().map(|e| e.to_os_string()));
+    let size = |p: &Path| std::fs::metadata(p).unwrap().len();
+    // S₀, and the base it is a delta against (the state after the format
+    // load, made from the format point)
     assert!(
-        saved.len() == 1 && saved[0].ends_with(".xs0"),
-        "one S0 saved: {saved:?}"
+        saved.len() == 2
+            && saved[0].extension().is_some_and(|e| e == "xs0")
+            && saved[1].extension().is_some_and(|e| e == "xs0base"),
+        "one S0 and its base saved: {saved:?}"
+    );
+    assert!(
+        size(&saved[0]) * 4 < size(&saved[1]),
+        "S0 holds what differs from its base: {} and {} bytes",
+        size(&saved[0]),
+        size(&saved[1])
     );
     // edited in its body while closed: from S₀
     std::fs::write(
@@ -847,6 +859,12 @@ fn a_reopened_document_goes_on_from_its_persisted_s0() {
         "fresh",
         "a changed font file refuses S0"
     );
+    // its base gone while closed: S₀ refused; that run makes the base and
+    // S₀ again, and the next goes on from them
+    std::fs::remove_file(&saved[1]).unwrap();
+    assert_eq!(against_scratch("no base"), "fresh", "no base refuses S0");
+    assert!(saved[1].is_file(), "the base is made again");
+    assert_eq!(against_scratch("base again"), "s0", "the new base serves");
     let _ = std::fs::remove_dir_all(&dir);
 }
 
