@@ -200,8 +200,11 @@ jobs:
           done
       - uses: dtolnay/rust-toolchain@stable
         if: steps.need.outputs.sides != ''
+      # The ref's dependencies only (rust-cache drops the workspace's own
+      # crates before saving). The base builds cold into a target directory
+      # of its own (below), at most once per base SHA (its engine is cached).
       - uses: Swatinem/rust-cache@v2
-        if: steps.need.outputs.sides != ''
+        if: contains(steps.need.outputs.sides, 'ref')
         with:
           key: sweeps
           workspaces: ref -> ../target  # relative to ref/: $GITHUB_WORKSPACE/target
@@ -211,10 +214,19 @@ jobs:
           SIDES: ${{ steps.need.outputs.sides }}
         run: |
           set -euo pipefail
-          # One target directory for both sides: the second build is incremental.
-          export CARGO_TARGET_DIR="$GITHUB_WORKSPACE/target"
-          T="$CARGO_TARGET_DIR/release"
           for side in $SIDES; do
+            # A target directory per side. Cargo hashes a path package by its
+            # path relative to the workspace, so in one shared directory the
+            # base's crates have the ref's fingerprints, and a build script
+            # the ref changed was taken as fresh for the base whenever the
+            # base's build.rs was older than the ref's build (run 38179358056,
+            # PR #1775: the base engine ran the ref's build.rs and failed).
+            if [[ $side == ref ]]; then
+              export CARGO_TARGET_DIR="$GITHUB_WORKSPACE/target"
+            else
+              export CARGO_TARGET_DIR="$GITHUB_WORKSPACE/target-$side"
+            fi
+            T="$CARGO_TARGET_DIR/release"
             (cd "$side" && cargo build --release --locked -p flashtex-engine -p flashtex-display-list)
             IB="$RUNNER_TEMP/ib-$side"; D="$IB/gates"; F="$IB/fmt-gates"
             mkdir -p "$D" "$F"
