@@ -119,6 +119,10 @@ pub struct Stream {
     pub height: Fx,
     /// The glyph matrix the reader has (`u32::MAX`: none yet, spec §4.3).
     told_matrix: u32,
+    /// The last glyph matrix given to `sync_glyph_matrix` (its bits) and
+    /// the matrix number it gave: the same input gives the same number,
+    /// as [`Stream::matrix`] never forgets one.
+    glyph_matrix_memo: Option<([u64; 4], u32)>,
     /// The span the reader has (spec §4.3 `SPAN`; 0: none yet).
     told_span: u32,
     pub fonts: Vec<u16>,
@@ -143,6 +147,7 @@ impl Stream {
             coords: Vec::new(),
             height,
             told_matrix: u32::MAX,
+            glyph_matrix_memo: None,
             told_span: 0,
             fonts: Vec::new(),
             images: Vec::new(),
@@ -246,8 +251,16 @@ impl Stream {
         // size or `Tm`, src/out/pdf.rs), so that the preview draws each glyph
         // at the PDF's very size: 14.346195662749 against the PDF's
         // 14.346196 changed single pixels of section headings.
-        let m = m.map(|v| super::pdfobj::fmt_num(v, 6).parse::<f64>().unwrap_or(v));
-        let n = self.matrix([m[0], m[1], m[2], m[3], 0.0, 0.0]);
+        let bits = m.map(f64::to_bits);
+        let n = match self.glyph_matrix_memo {
+            Some((b, n)) if b == bits => n,
+            _ => {
+                let m = m.map(|v| super::num::round_num(v, 6));
+                let n = self.matrix([m[0], m[1], m[2], m[3], 0.0, 0.0]);
+                self.glyph_matrix_memo = Some((bits, n));
+                n
+            }
+        };
         if n != self.told_matrix {
             self.push(Item::Matrix(n));
             self.told_matrix = n;

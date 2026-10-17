@@ -35,6 +35,7 @@ pub mod doc;
 pub mod fontmap;
 pub mod fonts;
 pub mod images;
+pub mod num;
 pub mod page;
 pub mod pdf;
 pub mod pdfobj;

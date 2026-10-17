@@ -9,6 +9,8 @@
 
 use std::fmt::Write as _;
 
+pub use super::num::{fmt_num, push_num};
+
 /// A PDF object, or a reference to a named object (`@name`).
 #[derive(Clone, Debug, PartialEq)]
 pub enum Obj {
@@ -99,128 +101,10 @@ impl Obj {
     /// A number written with at most `digits` fraction digits, trailing
     /// zeros dropped (`-0` written `0`).
     pub fn num(v: f64, digits: usize) -> Obj {
-        Obj::Num(fmt_num(v, digits).into_bytes())
+        let mut out = Vec::new();
+        push_num(&mut out, v, digits);
+        Obj::Num(out)
     }
-}
-
-/// `v` with at most `digits` fraction digits, trailing zeros and a
-/// trailing point dropped; `-0` is `0`.
-///
-/// The same text as [`fmt_num_reference`] (`format!("{v:.digits$}")`,
-/// trimmed), which the PDF writer called for every number of every content
-/// stream: 275 M of the 441 M instructions a 19-page preview PDF took
-/// (callgrind, run 38277731634). Most values are rounded here exactly in
-/// integers ([`fmt_num_fast`]); a value whose rounding is an exact tie, or
-/// that is too large or not finite, goes to the reference, so the tie rule
-/// and the rare cases are `format!`'s own.
-pub fn fmt_num(v: f64, digits: usize) -> String {
-    match fmt_num_fast(v, digits) {
-        Some(s) => s,
-        None => fmt_num_reference(v, digits),
-    }
-}
-
-/// `v · 10^digits` rounded to the nearest integer, exactly, from `v`'s
-/// binary value (`m · 2^e`), then written as `fmt_num` writes it; `None`
-/// for an exact tie, a value with an integer part over 2^93, `digits` over
-/// 9, or a value that is not finite.
-fn fmt_num_fast(v: f64, digits: usize) -> Option<String> {
-    if digits > 9 || !v.is_finite() {
-        return None;
-    }
-    let bits = v.to_bits();
-    let neg = bits >> 63 == 1;
-    let biased = ((bits >> 52) & 0x7ff) as i32;
-    let frac = bits & ((1u64 << 52) - 1);
-    if biased == 0 {
-        // zero, or a subnormal: |v · 10^9| < 2^-1022 · 2^30, rounded to 0
-        return Some("0".to_string());
-    }
-    let m = (frac | (1u64 << 52)) as u128;
-    let e = biased - 1075; // v = ±m · 2^e
-    let p10 = 10u128.pow(digits as u32);
-    let num = m * p10; // < 2^53 · 2^30
-    let q = if e >= 0 {
-        if e > 40 {
-            return None;
-        }
-        num << e
-    } else {
-        let sh = -e;
-        if sh > 120 {
-            // |v · 10^digits| < 2^83 / 2^121 < 1/2: rounds to 0 (no tie)
-            return Some("0".to_string());
-        }
-        let q = num >> sh;
-        let r = num & ((1u128 << sh) - 1);
-        let half = 1u128 << (sh - 1);
-        if r == half {
-            return None;
-        }
-        q + u128::from(r > half)
-    };
-    if q == 0 {
-        // `0.000`, `-0.000` and `-0` are all written `0`
-        return Some("0".to_string());
-    }
-    let int = q / p10;
-    let mut fr = q % p10;
-    let mut out = String::with_capacity(24);
-    if neg {
-        out.push('-');
-    }
-    push_u128(&mut out, int);
-    if fr != 0 {
-        // the fraction's digits, trailing zeros dropped
-        let mut width = digits;
-        while fr.is_multiple_of(10) {
-            fr /= 10;
-            width -= 1;
-        }
-        out.push('.');
-        let mut buf = [b'0'; 9];
-        let mut i = width;
-        while fr > 0 {
-            i -= 1;
-            buf[i] = b'0' + (fr % 10) as u8;
-            fr /= 10;
-        }
-        out.push_str(std::str::from_utf8(&buf[..width]).expect("digits"));
-    }
-    Some(out)
-}
-
-/// The decimal digits of `n`.
-fn push_u128(out: &mut String, mut n: u128) {
-    let mut buf = [0u8; 40];
-    let mut i = buf.len();
-    loop {
-        i -= 1;
-        buf[i] = b'0' + (n % 10) as u8;
-        n /= 10;
-        if n == 0 {
-            break;
-        }
-    }
-    out.push_str(std::str::from_utf8(&buf[i..]).expect("digits"));
-}
-
-/// `fmt_num` as `format!` writes it: the definition [`fmt_num_fast`] is
-/// tested against, and the path for what it leaves.
-pub(crate) fn fmt_num_reference(v: f64, digits: usize) -> String {
-    let mut s = format!("{v:.digits$}");
-    if s.contains('.') {
-        while s.ends_with('0') {
-            s.pop();
-        }
-        if s.ends_with('.') {
-            s.pop();
-        }
-    }
-    if s == "-0" {
-        s = "0".into();
-    }
-    s
 }
 
 pub fn is_white(c: u8) -> bool {
@@ -682,6 +566,7 @@ pub fn write_name(n: &[u8], out: &mut Vec<u8>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::out::num::fmt_num_std as fmt_num_reference;
 
     fn p(s: &str) -> Obj {
         Parser::new(s.as_bytes()).object().unwrap()
