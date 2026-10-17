@@ -35,6 +35,7 @@ use super::fonts::{FontRes, ResKind};
 use super::images::Kind;
 use super::pdfobj::{fmt_num, write_name, Dict, Obj, Writer as ObjWriter};
 use flashtex_display_list::page::{paint, Item, Page, RuleKind, Seg};
+use flashtex_display_list::sha256::{sha256, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write as _;
 
@@ -90,7 +91,10 @@ fn n(v: f64, d: usize) -> String {
 struct Writer<'a> {
     doc: &'a Doc,
     opts: &'a Options,
+    /// The file so far, from its header on.
     out: Vec<u8>,
+    /// The hash of `out` for the trailer's `/ID`, as it is written.
+    id: IdHash,
     /// Byte offset of object n at index n - 1 (`None`: not written yet).
     offsets: Vec<Option<usize>>,
     pages: Vec<u32>,
@@ -130,7 +134,8 @@ impl<'a> Writer<'a> {
         Writer {
             doc,
             opts,
-            out: Vec::new(),
+            out: header(doc.version),
+            id: IdHash::new(),
             offsets: Vec::new(),
             pages: Vec::new(),
             pages_root: 0,
@@ -159,6 +164,7 @@ impl<'a> Writer<'a> {
     }
 
     fn begin(&mut self, num: u32) {
+        self.id.feed(&self.out, IdHash::CHUNK);
         self.offsets[num as usize - 1] = Some(self.out.len());
         let _ = writeln!(Bytes(&mut self.out), "{num} 0 obj");
     }
@@ -1464,10 +1470,8 @@ impl<'a> Writer<'a> {
                 self.object(i as u32 + 1, b"null");
             }
         }
-        let (maj, min) = self.doc.version;
-        let mut out = format!("%PDF-{maj}.{min}\n%\u{00d0}\u{00d4}\u{00c5}\u{00d8}\n").into_bytes();
-        let shift = out.len();
-        out.extend_from_slice(&self.out);
+        let shift = header(self.doc.version).len();
+        let mut out = std::mem::take(&mut self.out);
         let xref = out.len();
         let _ = write!(
             Bytes(&mut out),
@@ -1475,9 +1479,9 @@ impl<'a> Writer<'a> {
             self.offsets.len() + 1
         );
         for o in &self.offsets {
-            let _ = writeln!(Bytes(&mut out), "{:010} 00000 n ", o.unwrap_or(0) + shift);
+            let _ = writeln!(Bytes(&mut out), "{:010} 00000 n ", o.unwrap_or(shift));
         }
-        let id = flashtex_display_list::sha256::sha256(&out);
+        let id = self.id.finish(&out);
         let idh: String = id[..16].iter().map(|b| format!("{b:02x}")).collect();
         let _ = write!(
             Bytes(&mut out),
@@ -1486,6 +1490,91 @@ impl<'a> Writer<'a> {
             self.catalog
         );
         out
+    }
+}
+
+/// The file's first two lines: the version, and a comment of non-ASCII
+/// characters (in UTF-8).
+fn header((maj, min): (u32, u32)) -> Vec<u8> {
+    format!("%PDF-{maj}.{min}\n%\u{00d0}\u{00d4}\u{00c5}\u{00d8}\n").into_bytes()
+}
+
+/// The SHA-256 of the file up to its trailer, which the trailer's `/ID`
+/// is made of. It is taken on a thread of its own while the objects are
+/// written, so that the end of the run has only the xref table left to
+/// hash, not the whole file (12 MB, 9 ms, for a 109-page preview, whose
+/// streams are stored); where no thread can be started, in line as the
+/// objects are written. Either way it hashes the same bytes in the same
+/// order, so the `/ID` is the same.
+struct IdHash {
+    /// How much of the file has been hashed or sent to be.
+    done: usize,
+    how: IdHow,
+}
+
+enum IdHow {
+    Thread(
+        std::sync::mpsc::Sender<Vec<u8>>,
+        std::thread::JoinHandle<[u8; 32]>,
+    ),
+    Inline(Sha256),
+    /// The thread is gone (it cannot be, short of a panic): hash the whole
+    /// file at the end.
+    Lost,
+}
+
+impl IdHash {
+    /// The new bytes sent at a time.
+    const CHUNK: usize = 1 << 18;
+
+    fn new() -> Self {
+        let (tx, rx) = std::sync::mpsc::channel::<Vec<u8>>();
+        let thread = std::thread::Builder::new()
+            .name("pdf-id".into())
+            .spawn(move || {
+                let mut h = Sha256::new();
+                for chunk in rx {
+                    h.update(&chunk);
+                }
+                h.finish()
+            });
+        let how = match thread {
+            Ok(j) => IdHow::Thread(tx, j),
+            Err(_) => IdHow::Inline(Sha256::new()),
+        };
+        IdHash { done: 0, how }
+    }
+
+    /// Hash `out[done..]`, `out` being the file so far, once that is at
+    /// least `min` bytes.
+    fn feed(&mut self, out: &[u8], min: usize) {
+        let new = &out[self.done..];
+        if new.is_empty() || new.len() < min {
+            return;
+        }
+        match &mut self.how {
+            IdHow::Thread(tx, _) => {
+                if tx.send(new.to_vec()).is_err() {
+                    self.how = IdHow::Lost;
+                }
+            }
+            IdHow::Inline(h) => h.update(new),
+            IdHow::Lost => {}
+        }
+        self.done = out.len();
+    }
+
+    /// The hash of `out`, the whole file up to its trailer.
+    fn finish(&mut self, out: &[u8]) -> [u8; 32] {
+        self.feed(out, 0);
+        match std::mem::replace(&mut self.how, IdHow::Lost) {
+            IdHow::Thread(tx, j) => {
+                drop(tx);
+                j.join().unwrap_or_else(|_| sha256(out))
+            }
+            IdHow::Inline(h) => h.finish(),
+            IdHow::Lost => sha256(out),
+        }
     }
 }
 
@@ -1688,7 +1777,7 @@ fn write_segs(c: &mut Vec<u8>, segs: &[Seg], m: Option<&[f64; 6]>) {
 
 /// Six capital letters naming a subset, from the font and its glyphs.
 fn subset_tag(name: &str, used: &BTreeSet<u16>) -> String {
-    let mut h = flashtex_display_list::sha256::Sha256::new();
+    let mut h = Sha256::new();
     h.update(name.as_bytes());
     for g in used {
         h.update(&g.to_le_bytes());
@@ -2120,6 +2209,36 @@ mod tests {
             compress: false,
         };
         write(&doc, &opts).unwrap().0
+    }
+
+    /// The `/ID` hash, on its thread or in line, is the SHA-256 of the
+    /// whole file however it was fed.
+    #[test]
+    fn id_hash_is_the_whole_file_hash() {
+        let data: Vec<u8> = (0..3_000_000u32)
+            .map(|i| (i.wrapping_mul(2654435761) >> 11) as u8)
+            .collect();
+        for inline in [false, true] {
+            for steps in [
+                &[0usize][..],
+                &[10, 70_000, 300_000, 300_001, 2_999_999],
+                &[1 << 18, 1 << 19],
+            ] {
+                let mut id = IdHash::new();
+                if inline {
+                    id.how = IdHow::Inline(Sha256::new());
+                }
+                for &n in steps {
+                    id.feed(&data[..n], IdHash::CHUNK);
+                    id.feed(&data[..n], 0);
+                }
+                assert_eq!(
+                    id.finish(&data),
+                    sha256(&data),
+                    "inline {inline}, steps {steps:?}"
+                );
+            }
+        }
     }
 
     /// A CID-keyed CFF font (CJK): the content stream draws its glyphs by
