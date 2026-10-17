@@ -364,7 +364,6 @@ dependencies = [
  "cc",
  "flashtex-bibtex",
  "flashtex-display-list",
- "flashtex-engine-build-id",
  "flashtex-makeindex",
  "flashtex-runtime",
  "libc",
@@ -515,7 +514,10 @@ dependencies = [
 name = "flashtex-runtime"
 version = "0.1.0"
 dependencies = [
+ "cc",
  "flashtex-display-list",
+ "flashtex-engine-build-id",
+ "sha2",
  "tikv-jemalloc-sys",
  "tikv-jemallocator",
 ]

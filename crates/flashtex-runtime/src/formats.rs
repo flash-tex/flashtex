@@ -656,7 +656,9 @@ impl FormatCache {
         if command_progname(command) == Some(progname) {
             // (each checked against the directories it searched, where the
             // process made it before: `lookupproof`, LOOKUP-SKIP)
-            let mut verify = crate::lookupproof::Verifier::new();
+            // (direct lookups: no output directory is tried first, and none
+            // is compared)
+            let mut verify = crate::lookupproof::Verifier::new(None);
             for l in &m.lookups {
                 let Some(format) = Format::from_kpse_name(&l.format) else {
                     continue;

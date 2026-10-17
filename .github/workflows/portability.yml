@@ -108,6 +108,10 @@ jobs:
         run: cargo test --locked -p flashtex-display-list
       - name: engine unit tests (x86_64-pc-windows-gnu)
         run: cargo test --release --locked -p flashtex-engine --lib --target x86_64-pc-windows-gnu
+      # The runtime moved out of the engine (docs/design/xetex/PLAN.md §3.3:
+      # os, persist, zlib, ...) keeps its unit tests on Windows too.
+      - name: runtime unit tests (x86_64-pc-windows-gnu)
+        run: cargo test --release --locked -p flashtex-runtime --features zlib --lib --target x86_64-pc-windows-gnu
       - name: scripts/flashtex-trip.sh
         run: TRIP_WORK="$RUNNER_TEMP/trip" scripts/flashtex-trip.sh
       - name: scripts/flashtex-etrip.sh

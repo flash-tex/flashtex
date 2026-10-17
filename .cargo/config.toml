@@ -8,7 +8,7 @@
 # (~/Library/Caches/FlashTeX, ~/.cache/flashtex, %LOCALAPPDATA%\FlashTeX) and
 # package cache. Here they live under target/, shared by every test binary of
 # this checkout: the format cache locks each slot and writes atomically
-# (crates/flashtex-engine/src/formats.rs), so parallel tests are safe, and a
+# (crates/flashtex-runtime/src/formats.rs), so parallel tests are safe, and a
 # format is built once per checkout rather than once per test.
 #
 # Not `force`: a variable already set in the environment, or by a test on its

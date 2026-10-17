@@ -56,16 +56,16 @@ required-features = ["distribution"]
 flashtex-display-list = { path = "../display-list-v3" }
 # GPL-2.0-or-later: the runtime shared with the XeTeX-derived engine
 # (docs/design/xetex/PLAN.md §3.3), re-exported under its old module paths.
-flashtex-runtime = { path = "../flashtex-runtime" }
+# `zlib`: TeX Live's zlib, which it builds (`pdftex::zlib`, the bundle's gzip;
+# its headers reach build.rs's libpng as DEP_FLASHTEX_ZLIB_*).
+flashtex-runtime = { path = "../flashtex-runtime", features = ["zlib"] }
 # MIT OR Apache-2.0: `statfs`, whether a file is on a local volume
 # (src/hashcache.rs).
 libc = "0.2"
-# SHA-256 for the format cache's read-set keys and the bundle's pinned
-# content hashes (feature `distribution`). MIT OR Apache-2.0.
+# SHA-256 for the embedded pool's file name and the font map's cache keys
+# (feature `distribution`; the format cache's and the bundle's moved to
+# flashtex-runtime with them). MIT OR Apache-2.0.
 sha2 = { version = "0.10", optional = true }
-# The engine build id the format cache keys formats by (build-id/: a SHA-256
-# of every source of this crate, computed without rerunning build.rs).
-flashtex-engine-build-id = { path = "build-id", optional = true }
 # makeindex 2.18 (TeX Live 2026) ported to Rust, run in-process for
 # restricted \write18 and the host's external tools (src/makeindex.rs).
 # Under the MakeIndex Distribution Notice (crates/makeindex/LICENSE), not
@@ -81,18 +81,19 @@ flashtex-bibtex = { path = "../bibtex", optional = true }
 [features]
 # Link TeX Live's kpathsea (vendored, LGPL-2.1-or-later) as the file resolver.
 # Without it only the working-directory resolver is available, which is what
-# the trip test uses.
+# the trip test uses. The resolver and kpathsea's C build are flashtex-runtime's
+# (docs/design/xetex/PLAN.md §3.3).
 default = ["kpathsea", "regex", "distribution", "jemalloc", "makeindex", "bibtex"]
 # makeindex in-process (src/makeindex.rs, crates/makeindex). Off in the trip
 # tests' scratch packages, which have no dependencies.
 makeindex = ["dep:flashtex-makeindex"]
 # bibtex in-process (src/bibtex.rs, crates/bibtex), likewise.
 bibtex = ["dep:flashtex-bibtex"]
-kpathsea = []
-# DESIGN.md 4.4: the format cache (src/formats.rs) and the bundle fallback
-# (src/bundle/). Off in the trip tests' scratch packages, which copy src/*.rs
-# without dependencies.
-distribution = ["kpathsea", "dep:sha2", "dep:flashtex-engine-build-id"]
+kpathsea = ["flashtex-runtime/kpathsea"]
+# DESIGN.md 4.4: the format cache and the bundle fallback (flashtex-runtime's
+# src/formats.rs and src/bundle/, re-exported as `formats` and `bundle`). Off
+# in the trip tests' scratch packages.
+distribution = ["kpathsea", "dep:sha2", "flashtex-runtime/distribution"]
 # \pdfmatch through the C library's POSIX regcomp/regexec, as pdfTeX's
 # utils.c does (csrc/flashtex_regex.c). Without it \pdfmatch reports that
 # regular expressions are unavailable (the trip tests' scratch packages).
@@ -128,6 +129,6 @@ bench-count-writes = []
 mem-stats = ["flashtex-runtime/mem-stats"]
 
 [build-dependencies]
-# Builds TeX Live's zlib (third_party/zlib; always), kpathsea (feature
-# `kpathsea`) and the regular-expression shim (feature `regex`).
+# Builds kpathsea (feature `kpathsea`), the regular-expression shim (feature
+# `regex`) and the image libraries (TeX Live's zlib is flashtex-runtime's).
 cc = "1"

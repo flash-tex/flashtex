@@ -39,7 +39,7 @@ cargo build --release --locked -p web2rust
 "${CARGO_TARGET_DIR:-$root/target}/release/web2rust" "$root/third_party/knuth/tex.web" \
     @"$root/crates/flashtex-engine/web2rust-trip.args" \
     --out-dir "$pkg/src/generated" --pool "$run/tex.pool"
-for f in lib.rs main.rs system.rs resolver.rs lookupproof.rs arena.rs cli.rs hashcache.rs; do
+for f in lib.rs main.rs system.rs lookupproof.rs arena.rs cli.rs hashcache.rs; do
     cp "$root/crates/flashtex-engine/src/$f" "$pkg/src/"
 done
 cat >"$pkg/Cargo.toml" <<'EOF'
@@ -68,7 +68,8 @@ tex82 = []
 [workspace]
 EOF
 # The runtime shared with the XeTeX-derived engine (crates/flashtex-runtime:
-# persist, os, busy, memstat), as the engine crate links it, in its tex82 form;
+# persist, os, busy, memstat, the resolver without kpathsea, the lookup
+# proofs), as the engine crate links it, in its tex82 form;
 # libc for src/hashcache.rs (statfs).
 # (Cargo reads the path natively: under Git Bash/MSYS2 on Windows, `/d/a/...`
 # is `D:/a/...`, which `cygpath -m` gives; elsewhere there is no cygpath.)

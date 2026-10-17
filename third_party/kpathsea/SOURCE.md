@@ -10,7 +10,7 @@ file resolver (DESIGN.md §4.4; decision record
 | Upstream | <https://github.com/TeX-Live/texlive-source>, `texk/kpathsea/` |
 | Revision | branch `branch2026`, commit `fb6158926661cb7a7246b3a94a0cb170a9624d5a` |
 | Fetched | 2026-09-29 |
-| Licence | LGPL-2.1-or-later (`COPYING.LESSERv2`). Linked statically into the GPL-2.0-or-later engine, which LGPL-2.1 §3 permits. It is on the engine side of the §3 boundary; nothing MIT links it. |
+| Licence | LGPL-2.1-or-later (`COPYING.LESSERv2`). Linked statically into the GPL-2.0-or-later runtime crate (`crates/flashtex-runtime`, which builds it) and so into the engines, which LGPL-2.1 §3 permits. It is on the engine side of the §3 boundary; nothing MIT links it. |
 
 All 124 files here are byte-identical to that revision (`SHA256SUMS`; check with
 `shasum -a 256 -c SHA256SUMS` in this directory). Omitted, because they are only
@@ -19,7 +19,7 @@ autotools machinery or history: `ChangeLog`, `Makefile.in`, `PROJECTS`,
 kept because it is the authority for the source list and preprocessor flags.
 
 What configure would generate lives outside this directory, in
-`crates/flashtex-engine/kpathsea-config/kpathsea/`:
+`crates/flashtex-runtime/kpathsea-config/kpathsea/`:
 
 - `c-auto.h` — hand-written answers for macOS and 64-bit glibc Linux; every
   macro is one from `c-auto.in`. `MAKE_TEX_*_BY_DEFAULT` are left undefined:

@@ -6,13 +6,23 @@ edition = "2021"
 # §3.3), whose licence it keeps. See LICENSE in this directory and
 # docs/design/engine-v2/DESIGN.md §3: nothing MIT may link this crate.
 license = "GPL-2.0-or-later"
-description = "The runtime FlashTeX's engines share: the snapshot codec, OS and clock calls, the busy-time and memory accounting, the host's allocator."
+description = "The runtime FlashTeX's engines share: the snapshot codec, OS and clock calls, the busy-time and memory accounting, the host's allocator, TeX Live's zlib, the file resolver and kpathsea, the format cache and the bundle."
 publish = false
+# TeX Live's zlib (feature `zlib`, build.rs): its include directories reach
+# the dependents' build scripts as DEP_FLASHTEX_ZLIB_* (the engine's libpng).
+links = "flashtex_zlib"
 
 [dependencies]
 # MIT: the socket transport (`os::bind_owner_only`, `os::ExportChannel`). The
 # dependency points from GPL code to the MIT crate, never the other way.
 flashtex-display-list = { path = "../display-list-v3" }
+# SHA-256 for the format cache's read-set keys and the bundle's pinned
+# content hashes (feature `distribution`). MIT OR Apache-2.0.
+sha2 = { version = "0.10", optional = true }
+# The engine build id the format cache keys formats by
+# (crates/flashtex-engine/build-id: a SHA-256 of every source of the engine
+# and of this crate, computed without rerunning build.rs).
+flashtex-engine-build-id = { path = "../flashtex-engine/build-id", optional = true }
 
 # Linux only: the host's heap other than its undo logs (feature `jemalloc`,
 # src/logalloc.rs). The crates are MIT OR Apache-2.0; the jemalloc 5.3.1 they
@@ -24,8 +34,27 @@ flashtex-display-list = { path = "../display-list-v3" }
 tikv-jemallocator = { version = "0.7", optional = true }
 tikv-jemalloc-sys = { version = "0.7", optional = true }
 
+# Builds TeX Live's zlib (third_party/zlib, zlib licence, which
+# GPL-2.0-or-later code may link; its notice: third_party/zlib/zlib-src/LICENSE)
+# and kpathsea (third_party/kpathsea, LGPL-2.1-or-later, which LGPL-2.1 §3
+# lets GPL-2.0-or-later code link statically; its notice:
+# third_party/kpathsea/COPYING.LESSERv2 and SOURCE.md).
+[build-dependencies]
+cc = "1"
+
 [features]
 default = []
+# TeX Live's zlib, built and linked (src/zlib.rs, build.rs): set by
+# flashtex-engine, whose PDF writer and bundle compress with it. Off in the
+# trip tests' scratch packages, which are pure Rust.
+zlib = []
+# Link TeX Live's kpathsea (vendored, LGPL-2.1-or-later) as the file
+# resolver (src/resolver.rs, build.rs). Without it only the
+# working-directory resolver is available, which is what the trip tests use.
+kpathsea = []
+# DESIGN.md 4.4: the format cache (src/formats.rs) and the bundle fallback
+# (src/bundle/, gzip through zlib). Off in the trip tests' scratch packages.
+distribution = ["kpathsea", "zlib", "dep:sha2", "dep:flashtex-engine-build-id"]
 # Set by flashtex-engine's features of the same names (see its Cargo.toml).
 jemalloc = ["dep:tikv-jemallocator", "dep:tikv-jemalloc-sys"]
 mem-stats = ["tikv-jemallocator?/stats"]

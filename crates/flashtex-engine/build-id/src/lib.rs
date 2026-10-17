@@ -3,7 +3,7 @@
 //! [`hash::FILES`]: all of its Rust sources, the change files, the C shims,
 //! the string pool, the capacities, its manifest and build script).
 //!
-//! The format cache (crates/flashtex-engine/src/formats.rs) keys formats by
+//! The format cache (crates/flashtex-runtime/src/formats.rs) keys formats by
 //! it, so every binary built from one engine shares formats, and any change
 //! to the engine's sources -- generated or hand-written -- makes new ones.
 //! It is computed by this crate's build script, which reruns on every such

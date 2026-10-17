@@ -11,14 +11,15 @@ use std::path::{Path, PathBuf};
 /// ports alike), the change files, and the C shims.
 ///
 /// And the runtime the engine links from crates/flashtex-runtime (its
-/// snapshot codec, allocator and OS layer were this crate's `src/` until
+/// snapshot codec, allocator, OS layer, resolver, kpathsea headers and
+/// shims, format cache and bundle were this crate's until
 /// docs/design/xetex/PLAN.md §3.3 moved them), named relative to this crate.
 pub const DIRS: &[&str] = &[
     "src",
     "changes",
     "csrc",
-    "kpathsea-config",
     "../flashtex-runtime/src",
+    "../flashtex-runtime/kpathsea-config",
 ];
 
 /// Single files of the engine crate that are hashed: the string pool, the
@@ -31,6 +32,7 @@ pub const FILES: &[&str] = &[
     "Cargo.toml",
     "build.rs",
     "../flashtex-runtime/Cargo.toml",
+    "../flashtex-runtime/build.rs",
 ];
 
 fn walk(d: &Path, out: &mut Vec<PathBuf>) {

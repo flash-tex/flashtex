@@ -1,8 +1,11 @@
 //! TeX Live's zlib 1.3.2 (third_party/zlib), linked unmodified: the few
 //! calls pdfTeX's `writezip.c` makes.
 //!
-//! build.rs compiles zlib with `Z_PREFIX`, so its symbols are `z_*`, and
-//! sets `cfg(flashtex_zlib)` when it has.
+//! build.rs compiles zlib with `Z_PREFIX` (feature `zlib`), so its symbols
+//! are `z_*`, and sets `cfg(flashtex_zlib)` when it has. It was
+//! `crates/flashtex-engine/src/pdftex/zlib.rs`, which re-exports it as
+//! `flashtex_engine::pdftex::zlib`; the XeTeX-derived engine's PDF writer and
+//! the bundle's gzip use it too.
 
 use std::ffi::{c_char, c_int, c_uint, c_ulong, c_void};
 
@@ -45,9 +48,9 @@ extern "C" {
     fn z_zlibVersion() -> *const c_char;
 }
 
-/// Without build.rs (scripts/flashtex-etrip.sh builds the engine as a scratch
-/// package in DVI mode, where nothing is compressed) zlib is not linked, and
-/// these stand in for it.
+/// Without the `zlib` feature (scripts/flashtex-etrip.sh builds the engine as
+/// a scratch package in DVI mode, where nothing is compressed, over this
+/// crate's default features) zlib is not linked, and these stand in for it.
 #[cfg(not(flashtex_zlib))]
 #[allow(non_snake_case)]
 mod unlinked {
@@ -141,7 +144,8 @@ pub fn version() -> String {
         .into_owned()
 }
 
-#[cfg(test)]
+// (the tests need zlib linked: `--features zlib`, which flashtex-engine sets)
+#[cfg(all(test, flashtex_zlib))]
 mod tests {
     use super::*;
 

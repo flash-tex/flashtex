@@ -89,7 +89,6 @@ version = "0.1.0"
 dependencies = [
  "cc",
  "flashtex-display-list",
- "flashtex-engine-build-id",
  "flashtex-runtime",
  "libc",
  "sha2",
@@ -121,7 +120,10 @@ dependencies = [
 name = "flashtex-runtime"
 version = "0.1.0"
 dependencies = [
+ "cc",
  "flashtex-display-list",
+ "flashtex-engine-build-id",
+ "sha2",
 ]
 
 [[package]]

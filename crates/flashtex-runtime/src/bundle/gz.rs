@@ -1,9 +1,9 @@
 //! gzip through TeX Live's zlib, which the engine already links for the PDF
-//! writer (third_party/zlib, `Z_PREFIX`; src/pdftex/zlib.rs): the bundle's
+//! writer (third_party/zlib, `Z_PREFIX`; src/zlib.rs): the bundle's
 //! members are gzip streams (Tectonic's TTBv1 format), and a second
 //! compression library would add nothing.
 
-use crate::pdftex::zlib::{ZStream, Z_FINISH, Z_NO_FLUSH, Z_OK, Z_STREAM_END};
+use crate::zlib::{ZStream, Z_FINISH, Z_NO_FLUSH, Z_OK, Z_STREAM_END};
 use std::ffi::{c_char, c_int, c_uint};
 
 const ZLIB_VERSION: &std::ffi::CStr = c"1.3.2";
