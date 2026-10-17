@@ -9,14 +9,15 @@
 //! list is `libkpathsea_la_SOURCES` from third_party/kpathsea/Makefile.am for
 //! a non-Windows host.
 //!
-//! It also builds TeX Live's zlib (third_party/zlib), libpng
-//! (third_party/libpng) and xpdf (third_party/xpdf), all unmodified, for the
-//! PDF writer and image inclusion, with the two small C/C++ interfaces of
-//! csrc/, except for the `tex82` scratch build, which has no PDF writer.
+//! It also builds TeX Live's libpng (third_party/libpng) and xpdf
+//! (third_party/xpdf), both unmodified, for the PDF writer and image
+//! inclusion, with the two small C/C++ interfaces of csrc/, except for the
+//! `tex82` scratch build, which has no PDF writer. TeX Live's zlib, which
+//! they and the PDF writer use, is built by crates/flashtex-runtime
+//! (feature `zlib`; docs/design/xetex/PLAN.md §3.3).
 
 fn main() {
     println!("cargo:rerun-if-changed=build.rs");
-    println!("cargo::rustc-check-cfg=cfg(flashtex_zlib)");
     println!("cargo::rustc-check-cfg=cfg(flashtex_images)");
     println!("cargo::rustc-check-cfg=cfg(flashtex_regex)");
     #[cfg(feature = "kpathsea")]
@@ -54,7 +55,6 @@ fn main() {
         println!("cargo:rustc-cfg=flashtex_regex");
     }
     if std::env::var_os("CARGO_FEATURE_TEX82").is_none() {
-        zlib::build();
         libpng::build();
         xpdf::build();
         println!("cargo:rustc-cfg=flashtex_images");
@@ -73,8 +73,10 @@ fn main() {
 /// (`nodist_libpng_a_SOURCES` in libs/libpng/Makefile.am, with the ARM NEON
 /// files where its `PNG_ARM_NEON` conditional adds them: `arm*`/`aarch64*`
 /// hosts), plus csrc/png_shim.c. libpng includes `zlib.h`, which is TeX
-/// Live's zlib built above, with the same `Z_PREFIX` so that its calls
-/// reach that zlib. `pnglibconf.h` is TeX Live's copy of
+/// Live's zlib built by crates/flashtex-runtime (its include directories
+/// through `links`: DEP_FLASHTEX_ZLIB_INCLUDE, the generated `zconf.h`, and
+/// DEP_FLASHTEX_ZLIB_SRC, `zlib.h`), with the same `Z_PREFIX` so that its
+/// calls reach that zlib. `pnglibconf.h` is TeX Live's copy of
 /// `scripts/pnglibconf.h.prebuilt` (third_party/libpng/README.md).
 mod libpng {
     use std::path::PathBuf;
@@ -105,8 +107,13 @@ mod libpng {
     pub fn build() {
         let manifest = PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").unwrap());
         let src = manifest.join("../../third_party/libpng/libpng-src");
-        let zlib_src = manifest.join("../../third_party/zlib/zlib-src");
-        let zlib_out = PathBuf::from(std::env::var("OUT_DIR").unwrap()).join("zlib");
+        let zlib_dir = |k: &str| {
+            PathBuf::from(std::env::var(k).unwrap_or_else(|_| {
+                panic!("{k}: flashtex-runtime's `zlib` feature builds TeX Live's zlib")
+            }))
+        };
+        let zlib_out = zlib_dir("DEP_FLASHTEX_ZLIB_INCLUDE");
+        let zlib_src = zlib_dir("DEP_FLASHTEX_ZLIB_SRC");
         println!("cargo:rerun-if-changed={}", src.display());
         println!("cargo:rerun-if-changed=csrc/png_shim.c");
         let mut b = cc::Build::new();
@@ -286,51 +293,6 @@ mod xpdf {
         if let Some(dir) = lib.parent() {
             println!("cargo:rustc-link-arg=-Wl,-rpath,{}", dir.display());
         }
-    }
-}
-
-/// TeX Live's `libs/zlib`: the sources of its `libz.a`
-/// (`nodist_libz_a_SOURCES` in libs/zlib/Makefile.am) except the `gz*.c`
-/// file-I/O layer, which the engine never calls, with `zconf.h` made
-/// from `zconf.h.in` as its `configure` makes it (a copy, for zlib 1.3.2;
-/// see third_party/zlib/README.md). `Z_PREFIX`, zconf.h's own switch,
-/// renames the exported symbols to `z_*` so that they can never be confused
-/// with a system libz in the same process; it changes no code.
-mod zlib {
-    use std::path::PathBuf;
-
-    const SOURCES: &[&str] = &[
-        "adler32.c",
-        "compress.c",
-        "crc32.c",
-        "deflate.c",
-        "infback.c",
-        "inffast.c",
-        "inflate.c",
-        "inftrees.c",
-        "trees.c",
-        "uncompr.c",
-        "zutil.c",
-    ];
-
-    pub fn build() {
-        let manifest = PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").unwrap());
-        let src = manifest.join("../../third_party/zlib/zlib-src");
-        let out = PathBuf::from(std::env::var("OUT_DIR").unwrap()).join("zlib");
-        std::fs::create_dir_all(&out).unwrap();
-        println!("cargo:rerun-if-changed={}", src.display());
-        std::fs::copy(src.join("zconf.h.in"), out.join("zconf.h")).unwrap();
-        let mut b = cc::Build::new();
-        b.include(&out)
-            .include(&src)
-            .define("Z_PREFIX", None)
-            .warnings(false)
-            .flag_if_supported("-w");
-        for s in SOURCES {
-            b.file(src.join(s));
-        }
-        b.compile("flashtex_zlib");
-        println!("cargo:rustc-cfg=flashtex_zlib");
     }
 }
 

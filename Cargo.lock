@@ -515,6 +515,7 @@ dependencies = [
 name = "flashtex-runtime"
 version = "0.1.0"
 dependencies = [
+ "cc",
  "flashtex-display-list",
  "tikv-jemalloc-sys",
  "tikv-jemallocator",

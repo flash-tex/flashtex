@@ -31,6 +31,7 @@ pub const FILES: &[&str] = &[
     "Cargo.toml",
     "build.rs",
     "../flashtex-runtime/Cargo.toml",
+    "../flashtex-runtime/build.rs",
 ];
 
 fn walk(d: &Path, out: &mut Vec<PathBuf>) {

@@ -8,6 +8,9 @@ edition = "2021"
 license = "GPL-2.0-or-later"
 description = "The runtime FlashTeX's engines share: the snapshot codec, OS and clock calls, the busy-time and memory accounting, the host's allocator."
 publish = false
+# TeX Live's zlib (feature `zlib`, build.rs): its include directories reach
+# the dependents' build scripts as DEP_FLASHTEX_ZLIB_* (the engine's libpng).
+links = "flashtex_zlib"
 
 [dependencies]
 # MIT: the socket transport (`os::bind_owner_only`, `os::ExportChannel`). The
@@ -24,8 +27,17 @@ flashtex-display-list = { path = "../display-list-v3" }
 tikv-jemallocator = { version = "0.7", optional = true }
 tikv-jemalloc-sys = { version = "0.7", optional = true }
 
+# Builds TeX Live's zlib (third_party/zlib, zlib licence, which
+# GPL-2.0-or-later code may link; its notice: third_party/zlib/zlib-src/LICENSE).
+[build-dependencies]
+cc = "1"
+
 [features]
 default = []
+# TeX Live's zlib, built and linked (src/zlib.rs, build.rs): set by
+# flashtex-engine, whose PDF writer and bundle compress with it. Off in the
+# trip tests' scratch packages, which are pure Rust.
+zlib = []
 # Set by flashtex-engine's features of the same names (see its Cargo.toml).
 jemalloc = ["dep:tikv-jemallocator", "dep:tikv-jemalloc-sys"]
 mem-stats = ["tikv-jemallocator?/stats"]

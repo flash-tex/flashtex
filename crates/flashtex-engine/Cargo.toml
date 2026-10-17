@@ -56,7 +56,9 @@ required-features = ["distribution"]
 flashtex-display-list = { path = "../display-list-v3" }
 # GPL-2.0-or-later: the runtime shared with the XeTeX-derived engine
 # (docs/design/xetex/PLAN.md §3.3), re-exported under its old module paths.
-flashtex-runtime = { path = "../flashtex-runtime" }
+# `zlib`: TeX Live's zlib, which it builds (`pdftex::zlib`, the bundle's gzip;
+# its headers reach build.rs's libpng as DEP_FLASHTEX_ZLIB_*).
+flashtex-runtime = { path = "../flashtex-runtime", features = ["zlib"] }
 # MIT OR Apache-2.0: `statfs`, whether a file is on a local volume
 # (src/hashcache.rs).
 libc = "0.2"
@@ -128,6 +130,6 @@ bench-count-writes = []
 mem-stats = ["flashtex-runtime/mem-stats"]
 
 [build-dependencies]
-# Builds TeX Live's zlib (third_party/zlib; always), kpathsea (feature
-# `kpathsea`) and the regular-expression shim (feature `regex`).
+# Builds kpathsea (feature `kpathsea`), the regular-expression shim (feature
+# `regex`) and the image libraries (TeX Live's zlib is flashtex-runtime's).
 cc = "1"
