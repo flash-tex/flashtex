@@ -91,6 +91,9 @@ ap.add_argument('--callgrind', metavar='DIR', help='count the measured host\'s i
 ap.add_argument('--callgrind-keep', action='store_true',
                 help='keep each compile\'s callgrind dumps (their paths in `cg_dumps`) for callgrind_annotate')
 ap.add_argument('--reopen', action='store_true', help='then a new host compiles the document once more')
+ap.add_argument('--no-s0-wait', action='store_true',
+                help='with an S0 cache: the next compile does not wait for the S0 save a compile asked for '
+                     '(the first keystroke right after a cold compile, as a user types it)')
 a = ap.parse_args()
 
 PAGE, FONT, IMAGE, FORM, DIAG, DONE, STARTED, TOOL, SOURCES = 0x45, 0x43, 0x44, 0x46, 0x48, 0x49, 0x42, 0x4C, 0x47
@@ -153,7 +156,11 @@ class Callgrind:
 
     def argv(self):
         return ['valgrind', '--tool=callgrind', '--callgrind-out-file=' + self.base,
-                '--dump-instr=no', '--compress-strings=no', '--dump-after=flashtex_page_sent']
+                '--dump-instr=no', '--compress-strings=no', '--dump-after=flashtex_page_sent',
+                # (valgrind runs one thread at a time; without a fair lock a
+                # busy thread -- the engine's S0 save -- keeps it, and the
+                # connection's thread cannot even pass on the next request)
+                '--fair-sched=yes']
 
     def ctl(self, *args):
         subprocess.run(['callgrind_control'] + list(args) + [str(self.pid)], check=True,
@@ -288,7 +295,7 @@ class Host:
             k = edited_idx if edited_idx is not None else n_page - 1
             edited_ins = sum(counts[:k + 1]) if 0 <= k < len(counts) else ins
             first_ins = counts[0] if n_page and counts else ins
-        if self.s0_cache and (d.get('starts') or [None])[0] in ('fresh', 'format'):
+        if self.s0_cache and not a.no_s0_wait and (d.get('starts') or [None])[0] in ('fresh', 'format'):
             self.wait_s0_saved()
         return frames, d, dict(first=first, done=done, page_times=page_times, instructions=ins,
                                edited_instructions=edited_ins, first_instructions=first_ins,

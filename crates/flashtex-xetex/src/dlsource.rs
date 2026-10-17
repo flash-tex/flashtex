@@ -275,20 +275,23 @@ impl DlSource {
         }
         entries.enc(w);
         self.files[..s.files.min(self.files.len())].to_vec().enc(w);
-        let ids: Vec<(Vec<u8>, u32)> = self
+        // (the maps in key order: the same S₀ makes the same file)
+        let mut ids: Vec<(Vec<u8>, u32)> = self
             .file_ids
             .iter()
             .filter(|(_, &id)| id as usize <= s.files)
             .map(|(k, &id)| (k.clone(), id))
             .collect();
+        ids.sort_unstable();
         ids.enc(w);
         self.spans[..s.spans.min(self.spans.len())].to_vec().enc(w);
-        let ids: Vec<((u32, u32), u32)> = self
+        let mut ids: Vec<((u32, u32), u32)> = self
             .span_ids
             .iter()
             .filter(|(_, &id)| id as usize <= s.spans)
             .map(|(k, &id)| (*k, id))
             .collect();
+        ids.sort_unstable();
         ids.enc(w);
         s.last.enc(w);
         s.file_level.enc(w);

@@ -261,6 +261,30 @@ jobs:
                 || { echo "::warning::$name ($at): unicode.py failed"; tail -5 "$RUNNER_TEMP/lat/$name-$at.err"; }
             done
           done
+          # the first keystroke right after a cold compile, as a user types
+          # it: no wait for the S0 save the cold compile asked for
+          mkdir -p "$RUNNER_TEMP/lat/after-cold"
+          for doc in tools/unicode-m3/bench/*.tex; do
+            name=$(basename "$doc" .tex)
+            rm -f /tmp/fxu-*.err
+            python3 tools/incr-bench/unicode.py "$RUNNER_TEMP/bin/flashtex-host-unicode" "$doc" --doc "$name" \
+              --keys 1 --at EDITPOINT --callgrind "$RUNNER_TEMP/cg" --no-s0-wait \
+              --host-env "FLASHTEX_S0_CACHE=$RUNNER_TEMP/s0-after-cold-$name" \
+              --out "$RUNNER_TEMP/lat/after-cold/$name.jsonl" > /dev/null 2> "$RUNNER_TEMP/lat/after-cold/$name.err" \
+              || { echo "::warning::$name (after cold): unicode.py failed"; tail -5 "$RUNNER_TEMP/lat/after-cold/$name.err"; }
+            # (the host's own notes: the S0 save's parts and when it was made)
+            cat /tmp/fxu-*-m.err > "$RUNNER_TEMP/lat/after-cold/$name.host.txt" 2>/dev/null || true
+          done
+          python3 - "$RUNNER_TEMP/lat/after-cold" <<'EOF' | tee -a "$GITHUB_STEP_SUMMARY"
+          import glob, json, os, sys
+          print('### The first keystroke right after a cold compile (no wait for the S0 save; callgrind, M)\n')
+          print('| document | to the edited page | to DONE | starts |')
+          print('|---|---:|---:|---|')
+          for f in sorted(glob.glob(os.path.join(sys.argv[1], '*.jsonl'))):
+              rows = [json.loads(l) for l in open(f)]
+              k = next((r for r in rows if r['tag'] == 'key1'), {})
+              print(f"| {os.path.basename(f)[:-6]} | {k.get('edited_instructions_m')} | {k.get('instructions_m')} | {(k.get('starts') or ['?'])[0]} |")
+          EOF
           python3 - "$RUNNER_TEMP/lat" <<'EOF' | tee -a "$GITHUB_STEP_SUMMARY"
           import glob, json, os, statistics, sys
           print('### Unicode edit and reopen, instructions (callgrind, M)\n')

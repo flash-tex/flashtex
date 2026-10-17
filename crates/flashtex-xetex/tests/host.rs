@@ -911,6 +911,105 @@ fn a_reopened_document_goes_on_from_its_persisted_s0() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// A persisted S₀ is saved when the engine is idle (`host::inproc`,
+/// `Engine::save_pending`): a keystroke right after a cold compile runs
+/// first. The file then written is the one a save made at once writes,
+/// byte for byte (what it holds besides S₀'s words is taken when the save
+/// is asked for; S₀'s words are a checkpoint's).
+#[test]
+fn an_s0_saved_after_a_keystroke_is_the_one_saved_at_once() {
+    if !texlive() {
+        eprintln!("skipped: no TeX Live");
+        return;
+    }
+    let dir = std::env::temp_dir().join(format!("flashtex-host-s0later-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    let doc = "\\documentclass{article}\n\\usepackage{fontspec}\n\\begin{document}\n\\section{One}\\label{one}\nSome words, ffi. See section~\\ref{one}.\n\n\\end{document}\n";
+    let (proj, out) = project(&dir, doc);
+    // the S₀ file in `cache` after one host's compiles of `texts` (each in
+    // the editor's buffer, one right after the other)
+    let saved = |cache: &Path, texts: &[&str], tag: &str| -> Vec<u8> {
+        let _ = std::fs::remove_dir_all(&out);
+        let cache_s = cache.to_string_lossy().into_owned();
+        let h = start_with(
+            &dir,
+            &[
+                ("FLASHTEX_PIN_CLOCK", "1760000000.5"),
+                ("FLASHTEX_S0_CACHE", cache_s.as_str()),
+                // (no save before the second compile: it comes at once)
+                ("FLASHTEX_UNICODE_SAVE_IDLE_MS", "3000"),
+            ],
+            &dir.join(format!("{tag}.err")),
+        );
+        let mut c = Client::connect(&h.sock).unwrap();
+        for (i, t) in texts.iter().enumerate() {
+            let id = i as i64 + 1;
+            let mut r = request(id, &proj, &out);
+            r.buffers = vec![("main.tex".into(), t.to_string())];
+            c.compile(&r).unwrap();
+            let (_, done) = events(&mut c, id);
+            assert_eq!(done.str_field("status"), Some("ok"), "{tag}: compile {id}");
+        }
+        c.bye().unwrap();
+        let mut h = h;
+        let t = Instant::now();
+        while h.child.try_wait().unwrap().is_none() {
+            assert!(
+                t.elapsed() < Duration::from_secs(120),
+                "the host did not end"
+            );
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        let files: Vec<PathBuf> = std::fs::read_dir(cache)
+            .expect("the S0 cache")
+            .map(|e| e.unwrap().path())
+            .collect();
+        assert!(
+            files.len() == 1 && files[0].extension().is_some_and(|e| e == "xs0"),
+            "{tag}: one S0 saved: {files:?}"
+        );
+        std::fs::read(&files[0]).unwrap()
+    };
+    // where two files differ: the header's length, the first differing
+    // byte, and the differing 16 KiB blocks after the header
+    let diff = |a: &[u8], b: &[u8]| -> String {
+        let head = u64::from_le_bytes(a[..8].try_into().unwrap()) as usize + 8;
+        let first = a.iter().zip(b).position(|(x, y)| x != y);
+        let blocks: Vec<usize> = (0..a.len().min(b.len()).div_ceil(16384))
+            .filter(|&k| {
+                let r = k * 16384..((k + 1) * 16384).min(a.len()).min(b.len());
+                a[r.clone()] != b[r]
+            })
+            .collect();
+        format!(
+            "{} and {} bytes, header {head} bytes, first difference at {first:?}, {} blocks differ: {:?}",
+            a.len(),
+            b.len(),
+            blocks.len(),
+            &blocks[..blocks.len().min(20)]
+        )
+    };
+    let at_once = saved(&dir.join("cache-a"), &[doc], "at-once");
+    // (two hosts that save at once write the same file: the comparison
+    // below is the deferral's)
+    let again = saved(&dir.join("cache-c"), &[doc], "at-once-again");
+    assert!(
+        at_once == again,
+        "two hosts' S0 files differ: {}",
+        diff(&at_once, &again)
+    );
+    let edited = doc.replace("Some words", "Some more words");
+    let later = saved(&dir.join("cache-b"), &[doc, &edited], "later");
+    assert!(
+        at_once == later,
+        "the S0 saved after a keystroke differs from the one saved at once: {}",
+        diff(&at_once, &later)
+    );
+    let log = std::fs::read_to_string(dir.join("later.err")).unwrap_or_default();
+    assert!(log.contains("\"saved_s0\""), "the save was made: {log}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// Page checkpoints (`crate::ckpt::PageCk`): an edit on a document's last
 /// page restarts after the pages before it, which are sent again from the
 /// checkpoint (`DONE.starts` `page`); an edit on its first page goes on

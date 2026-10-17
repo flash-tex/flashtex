@@ -18,7 +18,7 @@
 use crate::fontmgr::FontCatalog;
 use crate::resident::{Engine, Fonts, Report, Spec};
 use std::path::PathBuf;
-use std::sync::atomic::AtomicBool;
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
 
@@ -44,6 +44,9 @@ pub struct Shared {
     tx: Mutex<Option<mpsc::Sender<Req>>>,
     /// Held for a whole run: one run at a time.
     turn: Mutex<()>,
+    /// Requests sent and not yet taken by the engine thread: a save of S₀
+    /// in progress stops for them (`Engine::save_pending`).
+    queued: Arc<AtomicUsize>,
 }
 
 impl Default for Shared {
@@ -51,8 +54,21 @@ impl Default for Shared {
         Shared {
             tx: Mutex::new(None),
             turn: Mutex::new(()),
+            queued: Arc::new(AtomicUsize::new(0)),
         }
     }
+}
+
+/// How long the engine thread waits for another request before it makes
+/// an asked-for save of S₀ (a keystroke typed right after a compile comes
+/// first; the save itself stops for a request that comes while it runs).
+/// `FLASHTEX_UNICODE_SAVE_IDLE_MS` sets it (tests).
+fn save_when_idle() -> std::time::Duration {
+    let ms = std::env::var("FLASHTEX_UNICODE_SAVE_IDLE_MS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(50);
+    std::time::Duration::from_millis(ms)
 }
 
 type Dirs = Vec<(PathBuf, Option<super::spare::Ident>)>;
@@ -135,6 +151,7 @@ impl Shared {
             return Ok(t.clone());
         }
         let (t, rx) = mpsc::channel::<Req>();
+        let queued = self.queued.clone();
         std::thread::Builder::new()
             .name("unicode-engine".into())
             // the recursion TeX may need (the pdfTeX host's engine thread's)
@@ -143,7 +160,37 @@ impl Shared {
                 interactive_qos();
                 let clock = flashtex_engine::host::pin_clock_from_env();
                 let mut engine = Engine::new(clock, Some(Box::new(KeptFonts::default())));
-                for req in rx {
+                let waiting = || queued.load(Ordering::Acquire) > 0;
+                let idle = save_when_idle();
+                let save = |engine: &mut Engine, stop: &dyn Fn() -> bool| match engine
+                    .save_pending(stop)
+                {
+                    Ok(Some(n)) if debug() => eprintln!("flashtex-host-unicode: {n}"),
+                    Ok(_) => {}
+                    Err(e) => eprintln!("flashtex-host-unicode: saving S0: {e}"),
+                };
+                loop {
+                    // an asked-for save of S₀ is made when no request comes
+                    // for a while, and stops for one that comes meanwhile
+                    let req = if engine.has_pending_save() {
+                        match rx.recv_timeout(idle) {
+                            Ok(r) => r,
+                            Err(mpsc::RecvTimeoutError::Timeout) => {
+                                save(&mut engine, &waiting);
+                                continue;
+                            }
+                            Err(mpsc::RecvTimeoutError::Disconnected) => {
+                                save(&mut engine, &|| false);
+                                break;
+                            }
+                        }
+                    } else {
+                        match rx.recv() {
+                            Ok(r) => r,
+                            Err(_) => break,
+                        }
+                    };
+                    queued.fetch_sub(1, Ordering::AcqRel);
                     match req {
                         Req::Run { spec, reply } => {
                             let rep = engine.run(spec);
@@ -155,6 +202,9 @@ impl Shared {
                             Err(e) => eprintln!("flashtex-host-unicode: saving S0: {e}"),
                         },
                         Req::Flush(done) => {
+                            // (the host ends: the asked-for save is made
+                            // now, whole)
+                            save(&mut engine, &|| false);
                             engine.flush_writes();
                             let _ = done.send(());
                         }
@@ -172,7 +222,7 @@ impl Shared {
         let _turn = self.turn.lock().unwrap_or_else(|p| p.into_inner());
         let tx = self.sender()?;
         let (reply, rx) = mpsc::channel();
-        tx.send(Req::Run { spec, reply })
+        self.send(&tx, Req::Run { spec, reply })
             .map_err(|_| "the engine thread has ended".to_string())?;
         let t = during();
         let rep = rx
@@ -187,7 +237,7 @@ impl Shared {
 impl Shared {
     pub fn save_s0(&self, path: PathBuf, root: PathBuf) {
         if let Ok(tx) = self.sender() {
-            let _ = tx.send(Req::SaveS0(path, root));
+            let _ = self.send(&tx, Req::SaveS0(path, root));
         }
     }
 
@@ -198,9 +248,17 @@ impl Shared {
             return;
         };
         let (done, rx) = mpsc::channel();
-        if tx.send(Req::Flush(done)).is_ok() {
+        if self.send(&tx, Req::Flush(done)).is_ok() {
             let _ = rx.recv();
         }
+    }
+
+    /// Send `req` to the engine thread, counted as waiting until it takes it.
+    fn send(&self, tx: &mpsc::Sender<Req>, req: Req) -> Result<(), ()> {
+        self.queued.fetch_add(1, Ordering::AcqRel);
+        tx.send(req).map_err(|_| {
+            self.queued.fetch_sub(1, Ordering::AcqRel);
+        })
     }
 }
 

@@ -89,6 +89,8 @@ pub struct Image {
     head: Vec<u8>,
     chunks: Vec<u32>,
     data: Vec<u8>,
+    /// Milliseconds taken by the header, S₀'s view and the copy.
+    pub ms: [f64; 3],
 }
 
 /// A file an object of the handle table is made from, with its content's
@@ -265,15 +267,60 @@ fn dec_object(
     })
 }
 
+/// The chunks of the space written so far (`Arena::touched`), one bit
+/// each: taken when a save is asked for, so that a save made later
+/// (`crate::resident::Engine::save_pending`, after other runs touched more
+/// chunks) writes the chunks it would have written then.
+pub fn touched(g: &Globals) -> Vec<u64> {
+    let mut t = vec![0u64; g.arena.chunks().div_ceil(64)];
+    for c in 0..g.arena.chunks() {
+        if g.arena.touched(c) {
+            t[c >> 6] |= 1 << (c & 63);
+        }
+    }
+    t
+}
+
+fn bit(t: &[u64], c: usize) -> bool {
+    t.get(c >> 6).is_some_and(|w| w >> (c & 63) & 1 == 1)
+}
+
+/// How many chunks are copied or written between two reads of `stop`.
+const STOP_EVERY: usize = 64;
+
 /// Take S₀ (checkpoint `id` of `g`, `meta` its key and record) out of the
-/// engine: the header, and a copy of the space's nonzero chunks at S₀.
-pub fn prepare(g: &mut Globals, id: CheckpointId, meta: &Meta) -> Result<Image, String> {
+/// engine: the header, and a copy of S₀'s nonzero chunks among `touched`
+/// (`touched`, taken when the save was asked for). S₀ is a checkpoint: its
+/// words are the same whatever runs came after it. `None` when `stop` said
+/// so before the copy was done (a run is waiting: the copy is made again
+/// later).
+pub fn prepare(
+    g: &mut Globals,
+    id: CheckpointId,
+    meta: &Meta,
+    touched: &[u64],
+    stop: &dyn Fn() -> bool,
+) -> Result<Option<Image>, String> {
+    if stop() {
+        return Ok(None);
+    }
+    let t = std::time::Instant::now();
     let head = header(g, id, meta)?;
+    let t_head = t.elapsed().as_secs_f64() * 1e3;
+    if stop() {
+        return Ok(None);
+    }
+    let t = std::time::Instant::now();
     let view = g.arena.view_at(id)?;
+    let t_view = t.elapsed().as_secs_f64() * 1e3;
+    let t = std::time::Instant::now();
     let mut chunks = vec![];
     let mut data = vec![];
     for c in 0..g.arena.chunks() {
-        if !g.arena.touched(c) {
+        if c % STOP_EVERY == 0 && stop() {
+            return Ok(None);
+        }
+        if !bit(touched, c) {
             continue;
         }
         let d = view.chunk(c);
@@ -282,25 +329,45 @@ pub fn prepare(g: &mut Globals, id: CheckpointId, meta: &Meta) -> Result<Image, 
             data.extend_from_slice(d);
         }
     }
-    Ok(Image { head, chunks, data })
+    let ms = [t_head, t_view, t.elapsed().as_secs_f64() * 1e3];
+    Ok(Some(Image {
+        head,
+        chunks,
+        data,
+        ms,
+    }))
 }
 
 /// Write S₀ to `path` from the engine itself, with no copy of its chunks
-/// (Low Memory: the copy is the size of the file). Returns the file's
-/// bytes.
+/// (Low Memory: the copy is the size of the file), the chunks as
+/// [`prepare`] takes them. Returns the file's bytes, or `None` when `stop`
+/// said so first (nothing is left at `path`'s temporary name).
 pub fn write_in_place(
     g: &mut Globals,
     id: CheckpointId,
     meta: &Meta,
     path: &str,
-) -> Result<u64, String> {
+    touched: &[u64],
+    stop: &dyn Fn() -> bool,
+) -> Result<Option<u64>, String> {
     let head = header(g, id, meta)?;
     let view = g.arena.view_at(id)?;
-    let chunks: Vec<u32> = (0..g.arena.chunks())
-        .filter(|&c| g.arena.touched(c) && view.chunk(c).iter().any(|&b| b != 0))
-        .map(|c| c as u32)
-        .collect();
-    write_file(head, &chunks, &|i| view.chunk(chunks[i] as usize), path)
+    let mut chunks: Vec<u32> = vec![];
+    for c in 0..g.arena.chunks() {
+        if c % STOP_EVERY == 0 && stop() {
+            return Ok(None);
+        }
+        if bit(touched, c) && view.chunk(c).iter().any(|&b| b != 0) {
+            chunks.push(c as u32);
+        }
+    }
+    write_file(
+        head,
+        &chunks,
+        &|i| view.chunk(chunks[i] as usize),
+        path,
+        stop,
+    )
 }
 
 /// The file's header up to the chunks' list.
@@ -312,7 +379,16 @@ fn header(g: &mut Globals, id: CheckpointId, meta: &Meta) -> Result<Vec<u8>, Str
         g.saved_at(id).ok_or("no host state saved with S0")?;
     mgr.map(|m| m.lookups.clone()).enc(&mut head);
     full_name.enc(&mut head);
-    protrusion.enc(&mut head);
+    // (in key order, which the HashMap's own encoding is not: the same S₀
+    // makes the same file, whichever process writes it; read back as the
+    // map it was)
+    let mut codes: Vec<(&(i32, u32, i32), &i32)> = protrusion.iter().collect();
+    codes.sort_unstable();
+    codes.len().enc(&mut head);
+    for (k, v) in codes {
+        k.enc(&mut head);
+        v.enc(&mut head);
+    }
     let mut made: Vec<Made> = vec![];
     let mut objects = vec![];
     handles.enc_with(&mut objects, &mut |o, w| enc_object(o, w, &mut made))?;
@@ -339,24 +415,30 @@ impl Image {
     /// header, the nonzero chunks' list and their pages' list, then those
     /// pages whole, `S0_PAGE`-aligned. Returns the file's bytes.
     pub fn write(self, path: &str) -> Result<u64, String> {
-        let Image { head, chunks, data } = self;
+        let Image {
+            head, chunks, data, ..
+        } = self;
         write_file(
             head,
             &chunks,
             &|i| &data[i * CHUNK_BYTES..(i + 1) * CHUNK_BYTES],
             path,
+            &|| false,
         )
+        .map(|n| n.expect("a write nothing stops"))
     }
 }
 
 /// Write the file: `head`, the list of the nonzero `chunks` and of their
 /// pages, then those pages whole (`chunk(i)` is the `i`th chunk's bytes).
+/// `None` when `stop` said so before the end (the temporary file removed).
 fn write_file<'a>(
     mut head: Vec<u8>,
     chunks: &[u32],
     chunk: &dyn Fn(usize) -> &'a [u8],
     path: &str,
-) -> Result<u64, String> {
+    stop: &dyn Fn() -> bool,
+) -> Result<Option<u64>, String> {
     use std::io::Write;
     chunks.to_vec().enc(&mut head);
     let per = (S0_PAGE / CHUNK_BYTES) as u32;
@@ -397,7 +479,12 @@ fn write_file<'a>(
         .map_err(|e| gone(format!("{tmp}: {e}")))?;
     let zero = [0u8; CHUNK_BYTES];
     let mut next = chunks.iter().enumerate().peekable();
-    for &pg in &pages {
+    for (n, &pg) in pages.iter().enumerate() {
+        if n % STOP_EVERY == 0 && n > 0 && stop() {
+            drop(f);
+            let _ = std::fs::remove_file(&tmp);
+            return Ok(None);
+        }
         for c in pg * per..(pg + 1) * per {
             let d = match next.peek() {
                 Some(&(i, &pc)) if pc == c => {
@@ -414,7 +501,7 @@ fn write_file<'a>(
     drop(f);
     std::fs::rename(&tmp, path).map_err(|e| gone(format!("{path}: {e}")))?;
     std::fs::metadata(path)
-        .map(|m| m.len())
+        .map(|m| Some(m.len()))
         .map_err(|e| format!("{path}: {e}"))
 }
 
