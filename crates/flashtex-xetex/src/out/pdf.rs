@@ -31,12 +31,13 @@
 
 use super::agl::Agl;
 use super::doc::{Doc, Named, Supplement};
-use super::fonts::{FontRes, ResKind};
+use super::fonts::{FaceData, FontRes, ResKind};
 use super::images::Kind;
 use super::pdfobj::{fmt_num, write_name, Dict, Obj, Writer as ObjWriter};
 use flashtex_display_list::page::{paint, Item, Page, RuleKind, Seg};
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fmt::Write as _;
+use std::sync::Arc;
 
 /// sp per bp.
 const K: f64 = 65781.76;
@@ -109,8 +110,11 @@ struct Writer<'a> {
     /// (the font's charset), which the content stream writes as the code.
     cids: BTreeMap<u16, BTreeMap<u16, u16>>,
     /// The Adobe Glyph List, as xdvipdfmx loads it (`agl_init_map`), read
-    /// when a font first needs a glyph name's text.
-    agl: Option<Agl>,
+    /// when a font first needs a glyph name's text (a resident engine's
+    /// runs share it: `FontCache::agl`).
+    agl: Option<Arc<Agl>>,
+    /// Without a resident engine's cache, the faces this PDF parsed.
+    faces: HashMap<[u8; 32], Arc<FaceData>>,
     /// What the PDF does not carry as the document asks (reported).
     pub warnings: Vec<String>,
 }
@@ -145,12 +149,37 @@ impl<'a> Writer<'a> {
             page_group: Vec::new(),
             cids: BTreeMap::new(),
             agl: None,
+            faces: HashMap::new(),
             warnings: Vec::new(),
         }
     }
 
-    fn agl(&mut self) -> &Agl {
-        self.agl.get_or_insert_with(Agl::load)
+    fn agl(&mut self) -> Arc<Agl> {
+        let cache = &self.doc.fonts.cache;
+        self.agl
+            .get_or_insert_with(|| match cache {
+                Some(c) => c.agl(),
+                None => Arc::new(Agl::load()),
+            })
+            .clone()
+    }
+
+    /// Face `index` of the program whose SHA-256 is `sha`, parsed once (by
+    /// the resident engine's cache, else once per PDF).
+    fn face(&mut self, sha: &[u8; 32], program: &Arc<Vec<u8>>, index: u32) -> Arc<FaceData> {
+        let fonts = &self.doc.fonts;
+        match &fonts.cache {
+            Some(c) => c.face(sha, program, index),
+            None => self
+                .faces
+                .entry(super::fonts::face_key(sha, index))
+                .or_insert_with(|| {
+                    fonts
+                        .parsed_face(sha, index)
+                        .unwrap_or_else(|| Arc::new(FaceData::new(program, index)))
+                })
+                .clone(),
+        }
     }
 
     fn alloc(&mut self) -> u32 {
@@ -208,20 +237,36 @@ impl<'a> Writer<'a> {
                 }
             }
         }
-        for (&id, used) in &self.used {
+        let all_used = std::mem::take(&mut self.used);
+        for (&id, used) in &all_used {
             let Some(r) = doc.fonts.resource(id) else {
                 continue;
             };
             let ResKind::Native {
-                index, cff: true, ..
+                index,
+                cff: true,
+                sha,
+                ..
             } = &r.kind
             else {
                 continue;
             };
-            if let Some(m) = cid_map(&r.program, *index, used) {
+            let data = self.face(sha, &r.program, *index);
+            let mut memo = data.memo.lock().unwrap_or_else(|e| e.into_inner());
+            let m = match &memo.cids {
+                Some((u, m)) if u == used => m.clone(),
+                _ => {
+                    let m = data.font.as_ref().ok().and_then(|f| cid_map(f, used));
+                    memo.cids = Some((used.clone(), m.clone()));
+                    m
+                }
+            };
+            drop(memo);
+            if let Some(m) = m {
                 self.cids.insert(id, m);
             }
         }
+        self.used = all_used;
         for i in 0..doc.pages.len() {
             self.page(i)?;
         }
@@ -1005,8 +1050,12 @@ impl<'a> Writer<'a> {
                 index,
                 cff,
                 ps_name,
+                sha,
                 ..
-            } => self.native_font(num, &r, *index, *cff, ps_name, &used),
+            } => {
+                let data = self.face(sha, &r.program, *index);
+                self.native_font(num, &r, &data, *index, *cff, ps_name, &used)
+            }
             ResKind::Type1 {
                 ps_name, encoding, ..
             } => self.type1_font(num, &r, ps_name, encoding, &used),
@@ -1018,16 +1067,18 @@ impl<'a> Writer<'a> {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn native_font(
         &mut self,
         num: u32,
         r: &FontRes,
+        data: &FaceData,
         index: u32,
         cff: bool,
         ps_name: &str,
         used: &BTreeSet<u16>,
     ) -> Result<(), String> {
-        let font = flashtex_pdf::truetype::TrueTypeFont::parse_face(r.program.to_vec(), index)?;
+        let font = data.font.as_ref().map_err(String::clone)?;
         let upm = font.units_per_em as f64;
         let k = 1000.0 / upm;
         let info = FaceInfo::read(&r.program, index);
@@ -1043,10 +1094,22 @@ impl<'a> Writer<'a> {
             ));
             None
         } else {
-            let (file_key, sub, program, subset) = font_program(&font, &r.program, cff, used)?;
+            // (the last run's, when it drew the same glyphs)
+            let made = {
+                let mut memo = data.memo.lock().unwrap_or_else(|e| e.into_inner());
+                match &memo.program {
+                    Some((c, u, p)) if *c == cff && u == used => p.clone(),
+                    _ => {
+                        let p = Arc::new(font_program(font, &r.program, cff, used));
+                        memo.program = Some((cff, used.clone(), p.clone()));
+                        p
+                    }
+                }
+            };
+            let (file_key, sub, program, subset) = made.as_ref().as_ref().map_err(String::clone)?;
             let ff = self.alloc();
-            self.stream(ff, sub.as_bytes(), &program, true);
-            Some((format!(" /{file_key} {ff} 0 R"), subset))
+            self.stream(ff, sub.as_bytes(), program, true);
+            Some((format!(" /{file_key} {ff} 0 R"), *subset))
         };
         // a subset's name has its tag (PDF 32000-1 §9.6.4); a whole font's not
         let name = if ps_name.is_empty() { "Font" } else { ps_name };
@@ -1133,7 +1196,18 @@ impl<'a> Writer<'a> {
             None
         } else {
             let codes: BTreeSet<u16> = used.iter().map(|&g| code_of(g)).collect();
-            super::tounicode::otf_to_unicode(&r.program, index, &codes, self.agl())
+            let agl = self.agl();
+            // (the last run's, for the same codes and glyph list)
+            let mut memo = data.memo.lock().unwrap_or_else(|e| e.into_inner());
+            match &memo.to_unicode {
+                Some((c, a, m)) if *c == codes && Arc::ptr_eq(a, &agl) => m.clone(),
+                _ => {
+                    let m = super::tounicode::otf_to_unicode(&r.program, index, &codes, &agl)
+                        .map(Arc::new);
+                    memo.to_unicode = Some((codes, agl.clone(), m.clone()));
+                    m
+                }
+            }
         };
         let tu = match map {
             Some(map) => {
@@ -1237,7 +1311,7 @@ impl<'a> Writer<'a> {
                     .map(|n| (c, n.clone()))
             })
             .collect();
-        let tu = match super::tounicode::encoding_to_unicode(&names, self.agl()) {
+        let tu = match super::tounicode::encoding_to_unicode(&names, &self.agl()) {
             Some(map) => {
                 let tu = self.alloc();
                 let cmap = to_unicode_cmap(&base, &map, false);
@@ -1505,7 +1579,7 @@ fn font_program(
     whole: &[u8],
     cff: bool,
     used: &BTreeSet<u16>,
-) -> Result<(&'static str, &'static str, Vec<u8>, bool), String> {
+) -> Result<Program, String> {
     if !cff {
         return Ok(("FontFile2", "", font.subset_keep_gids(used)?, true));
     }
@@ -1532,11 +1606,43 @@ fn font_program(
     })
 }
 
+/// What the PDF writer last made for one face (`super::fonts::FaceData`),
+/// with the input it made it from: each a function of the face and that
+/// input, used again when a later run asks with the same input (a
+/// keystroke seldom changes which glyphs a font draws).
+#[derive(Default)]
+pub struct FaceMemo {
+    /// [`cid_map`]'s, for these glyphs.
+    cids: Option<(BTreeSet<u16>, Option<CidMap>)>,
+    /// [`font_program`]'s, for this outline kind and these glyphs.
+    program: Option<ProgramMemo>,
+    /// `otf_to_unicode`'s, for these codes and this glyph list.
+    to_unicode: Option<TextMemo>,
+}
+
+/// A glyph id's CID.
+type CidMap = BTreeMap<u16, u16>;
+
+/// [`FaceMemo::program`]: the outline kind and glyphs, and the program.
+type ProgramMemo = (bool, BTreeSet<u16>, Arc<Result<Program, String>>);
+
+/// [`FaceMemo::to_unicode`]: the codes and glyph list, and the text.
+type TextMemo = (BTreeSet<u16>, Arc<Agl>, Option<Arc<TextMap>>);
+
+/// A code's text.
+type TextMap = BTreeMap<u16, Vec<char>>;
+
+/// What [`font_program`] makes: the descriptor's key and stream entries,
+/// the program, and whether it is a subset.
+type Program = (&'static str, &'static str, Vec<u8>, bool);
+
 /// For a CID-keyed CFF face: each used glyph id's CID (the font's charset,
 /// through which a CIDFontType0 font selects glyphs). `None` for any other
 /// face.
-fn cid_map(program: &[u8], index: u32, used: &BTreeSet<u16>) -> Option<BTreeMap<u16, u16>> {
-    let font = flashtex_pdf::truetype::TrueTypeFont::parse_face(program.to_vec(), index).ok()?;
+fn cid_map(
+    font: &flashtex_pdf::truetype::TrueTypeFont,
+    used: &BTreeSet<u16>,
+) -> Option<BTreeMap<u16, u16>> {
     let cff = flashtex_pdf::cff::CffFont::parse(font.cff_table()?).ok()?;
     if !cff.is_cid_keyed() {
         return None;
@@ -2076,7 +2182,18 @@ mod tests {
 
     /// A page drawing glyph `gid` of `path` (face 0) at 10 pt, written.
     fn one_glyph_pdf(path: &str, gid: u16) -> Vec<u8> {
+        glyphs_pdf(path, &[gid], None)
+    }
+
+    /// A page drawing glyphs `gids` of `path` (face 0) at 10 pt, written
+    /// with the resident engine's font cache `cache` (or none).
+    fn glyphs_pdf(
+        path: &str,
+        gids: &[u16],
+        cache: Option<std::sync::Arc<super::super::fonts::FontCache>>,
+    ) -> Vec<u8> {
         let mut doc = Doc::new();
+        doc.fonts.cache = cache;
         doc.fonts.define(
             0,
             FontDef::Native(NativeDef {
@@ -2094,16 +2211,16 @@ mod tests {
         let mut p = Page::new(StreamKind::Page, 0);
         p.pdf_box = [0.0, 0.0, 100.0, 100.0];
         p.matrices.push([10.0, 0.0, 0.0, 10.0, 0.0, 0.0]);
-        p.items = vec![
-            Item::Matrix(1),
-            Item::Glyph {
+        p.items = vec![Item::Matrix(1)];
+        for (k, &gid) in gids.iter().enumerate() {
+            p.items.push(Item::Glyph {
                 font: res,
                 code: gid,
-                x: 657_818,
+                x: 657_818 + 400_000 * k as i32,
                 y: 3_289_088,
                 col: flashtex_display_list::page::NO_COLUMN,
-            },
-        ];
+            });
+        }
         doc.pages.push(std::sync::Arc::new(Built {
             dl: p,
             sup: Supplement::default(),
@@ -2176,6 +2293,45 @@ mod tests {
         // its character collection, as xdvipdfmx writes it
         let csi = d.get("CIDSystemInfo").and_then(Obj::as_dict).unwrap();
         assert_eq!(csi.get("Ordering"), Some(&Obj::String(b"Japan1".to_vec())));
+    }
+
+    /// A resident engine's runs write the fonts' PDF objects from what the
+    /// cache kept (the parsed face, the glyph list, the last subset,
+    /// ToUnicode and CID map): byte for byte what a write without the
+    /// cache makes, for the same glyphs again, for other glyphs, and for
+    /// the first ones once more. A CFF and a TrueType face, and a
+    /// CID-keyed CFF one when TeX Live has HaranoAji Mincho.
+    #[test]
+    fn the_font_cache_writes_what_a_write_without_it_does() {
+        let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/../..");
+        let mut fonts = vec![
+            format!("{dir}/apps/mac/Fonts/lmmono10-regular.otf"),
+            format!("{dir}/apps/mac/Sources/FlashTeXMac/Resources/Fonts/JetBrainsMono-Regular.ttf"),
+        ];
+        if let Some(p) = std::process::Command::new("kpsewhich")
+            .arg("HaranoAjiMincho-Regular.otf")
+            .output()
+            .ok()
+            .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+            .filter(|p| !p.is_empty())
+        {
+            fonts.push(p);
+        }
+        let runs: [&[u16]; 5] = [
+            &[36, 37, 38],
+            &[36, 37, 38],
+            &[36, 37, 38, 70],
+            &[36, 37, 38],
+            &[5],
+        ];
+        for path in &fonts {
+            let cache = std::sync::Arc::new(super::super::fonts::FontCache::default());
+            for gids in runs {
+                let with = glyphs_pdf(path, gids, Some(cache.clone()));
+                let without = glyphs_pdf(path, gids, None);
+                assert!(with == without, "{path}: glyphs {gids:?}");
+            }
+        }
     }
 
     /// 日 and 文 share their glyphs with the Kangxi radicals U+2F47 and

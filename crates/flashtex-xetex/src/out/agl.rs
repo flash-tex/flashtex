@@ -69,11 +69,22 @@ impl Agl {
     /// bundle's); a list it does not find is left out, as xdvipdfmx warns
     /// and goes on.
     pub fn load() -> Agl {
+        Agl::load_files(&Agl::find_files())
+    }
+
+    /// The paths of [`LIST_FILES`] as `load` finds them (`None`: not found).
+    pub fn find_files() -> Vec<Option<String>> {
+        LIST_FILES
+            .iter()
+            .map(|name| flashtex_engine::system::find_file(name, Format::Map))
+            .collect()
+    }
+
+    /// The list of the files found (`find_files`), in order.
+    pub fn load_files(paths: &[Option<String>]) -> Agl {
         let mut agl = Agl::default();
-        for name in LIST_FILES {
-            if let Some(data) = flashtex_engine::system::find_file(name, Format::Map)
-                .and_then(|p| std::fs::read(p).ok())
-            {
+        for p in paths.iter().flatten() {
+            if let Ok(data) = std::fs::read(p) {
                 agl.load_list(&data);
             }
         }

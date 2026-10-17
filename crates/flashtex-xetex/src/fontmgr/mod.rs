@@ -315,7 +315,7 @@ impl FontMgr {
         let face = self.face(found.face);
         let (path, face_index) = (face.path.to_string_lossy().into_owned(), face.index);
         let full_name = self.full_name(found.face).map(str::to_string);
-        let design_size = design_size_of_file(Path::new(&path), face_index);
+        let design_size = face.design_size();
         let mut name_of_file = full_name.clone().unwrap_or_default();
         if let Some(v) = found.variant.as_deref().filter(|v| !v.is_empty()) {
             name_of_file.push('/');

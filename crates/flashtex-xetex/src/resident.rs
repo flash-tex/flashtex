@@ -40,6 +40,12 @@
 //! * **The fonts' catalog** (the installed fonts' names, which a lookup by
 //!   name reads) is kept across runs by the host ([`Fonts`]) while the font
 //!   directories are unchanged.
+//! * **Fonts loaded again are not opened again.** A run from S₀ loads every
+//!   font its body selects anew; the FreeType faces with their HarfBuzz
+//!   fonts and the TECkit mappings (`crate::native::cache`), and what the
+//!   output parses of each font program (`crate::out::fonts::FontCache`),
+//!   are kept across runs while their files are unchanged. Each layout
+//!   engine is still made anew, so no shaping state is shared.
 //!
 //! The engine's runtime (`flashtex_engine::system`: the run's
 //! configuration, the resolver, the read journal) is still per process (the
@@ -128,6 +134,9 @@ pub struct Resident {
     /// checkpoints.
     pub(crate) thinning: Option<crate::ckpt::Thinning>,
     fonts: Box<dyn Fonts>,
+    /// The native fonts' faces and mappings the engine's runs share
+    /// (`crate::native::cache`); none for a run that is not the engine's.
+    pub(crate) loads: Option<Arc<std::sync::Mutex<crate::native::cache::LoadCache>>>,
 }
 
 impl Resident {
@@ -436,6 +445,9 @@ pub struct Engine {
     pub keep_pages: bool,
     /// The output's font map index and font programs, kept across runs.
     font_cache: Arc<crate::out::fonts::FontCache>,
+    /// The native fonts' faces and mappings, kept across runs
+    /// (`crate::native::cache`).
+    loads: Arc<std::sync::Mutex<crate::native::cache::LoadCache>>,
     /// The convergence measurement (`crate::conv`): the last complete
     /// run's pages, and the `eqtb` pointer entries of each checkpoint
     /// restored.
@@ -548,6 +560,7 @@ impl Engine {
             keep_s0: env_on("FLASHTEX_UNICODE_S0"),
             keep_pages: env_on("FLASHTEX_UNICODE_PAGES"),
             font_cache: Arc::default(),
+            loads: Arc::default(),
             last_pages: vec![],
             eqtb_pointers: HashMap::new(),
             cursor: 0,
@@ -1068,6 +1081,7 @@ impl Engine {
             conv: None,
             thinning: None,
             fonts: Box::new(Unkept),
+            loads: None,
         };
         if start.in_body() {
             let recs = self
@@ -1317,6 +1331,7 @@ impl Engine {
             conv,
             thinning,
             fonts: self.fonts.take().unwrap_or_else(|| Box::new(Unkept)),
+            loads: Some(self.loads.clone()),
         });
         let mut out = (!c.no_pdf).then(|| {
             let mut o = crate::out::Output::to_writer(
@@ -1440,6 +1455,10 @@ impl Engine {
         let mut restored_files = vec![];
         if let Some(r) = g.host.resident.take() {
             self.fonts = Some(r.fonts);
+            self.loads
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .end_run();
             kept = r.point;
             taken = r.s0;
             new_pages = r.pages;

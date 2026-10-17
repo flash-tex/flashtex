@@ -5,8 +5,9 @@
 //! (`sfnt.rs`), as `XeTeXFontMgr_FC::readNames` reads them.
 
 use super::sfnt::{self, Face, FileBytes, NameRecord, SizeParams};
+use flashtex_engine::system::StatSig;
 use std::path::{Path, PathBuf};
-use std::sync::OnceLock;
+use std::sync::{Mutex, OnceLock};
 
 /// The catalog kept between runs (`system_cached`).
 #[cfg(unix)]
@@ -158,6 +159,9 @@ pub struct CatalogFace {
     pub names: NameCollection,
     /// Read on first use (when the face is added to a manager's maps).
     style: OnceLock<Option<StyleData>>,
+    /// [`CatalogFace::design_size`]'s, with the file's signature it was
+    /// read under.
+    design: Mutex<Option<(StatSig, f64)>>,
     /// A face of the bundle's font index: its file's basename, fetched
     /// from the bundle before the style is read ([`read_bundle_font_index`]).
     pub fetch: Option<String>,
@@ -179,6 +183,7 @@ impl CatalogFace {
             pattern: pattern_names(&records),
             names: read_names(&records, ps),
             style: OnceLock::new(),
+            design: Mutex::new(None),
             fetch: None,
         })
     }
@@ -192,6 +197,7 @@ impl CatalogFace {
             pattern,
             names,
             style: OnceLock::new(),
+            design: Mutex::new(None),
             fetch: None,
         }
     }
@@ -213,6 +219,7 @@ impl CatalogFace {
             pattern,
             names,
             style: cell,
+            design: Mutex::new(None),
             fetch: None,
         }
     }
@@ -226,6 +233,31 @@ impl CatalogFace {
             }
             read_style(&self.path, self.index)
         })
+    }
+}
+
+impl CatalogFace {
+    /// [`design_size_of_file`] of this face's file and index, read again
+    /// only when the file changed: the value read is kept with the file's
+    /// [`StatSig`] taken before and after the read (a racy one keeps
+    /// nothing), and used while the file has that signature. A lookup by
+    /// name asks it at every `\font` (`FontMgr::locate_with`), and a
+    /// resident engine's catalog outlives its runs.
+    pub fn design_size(&self) -> f64 {
+        let path = self.path.to_string_lossy();
+        let before = StatSig::of(&path);
+        let mut kept = self.design.lock().unwrap_or_else(|e| e.into_inner());
+        if let (Some((sig, d)), Some(now)) = (kept.as_ref(), before.as_ref()) {
+            if sig == now {
+                return *d;
+            }
+        }
+        let d = design_size_of_file(&self.path, self.index);
+        *kept = match before {
+            Some(sig) if Some(sig) == StatSig::of(&path) => Some((sig, d)),
+            _ => None,
+        };
+        d
     }
 }
 

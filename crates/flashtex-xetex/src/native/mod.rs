@@ -16,6 +16,7 @@
 //! ruling (PLAN.md §3.1): a font XeTeX on macOS would shape with AAT is
 //! shaped with HarfBuzz; Graphite (S2); OpenType math (S2).
 
+pub mod cache;
 pub mod font_inst;
 pub mod layout;
 pub mod linebreak;
@@ -229,9 +230,19 @@ impl Globals {
         // A Type 1 font's AFM file is not attached: the pdfTeX engine's
         // resolver has no `afm` format, and S1's corpus has no Type 1
         // native fonts (their kerns come from the AFM in XeTeX).
-        FontInst::new(&lib, path, index, fix2d(point_size) as f32, &mut |_afm| {
-            None
-        })
+        let size = fix2d(point_size) as f32;
+        // a resident engine's runs share the faces (`cache`)
+        let loads = self.host.resident.as_ref().and_then(|r| r.loads.clone());
+        match loads {
+            Some(c) => {
+                let face = c
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .face(&lib, path, index)?;
+                Some(FontInst::at_size(face, path, index, size))
+            }
+            None => FontInst::new(&lib, path, index, size, &mut |_afm| None),
+        }
     }
 
     /// `XeTeXFontMgr::getDesignSize`: the `size` feature's design size in
@@ -661,14 +672,22 @@ impl Globals {
         {
             Some(path) => {
                 // (the file it was made from: a persisted S₀ makes it
-                // again, `crate::s0file`)
-                let mapping = std::fs::read(&path)
-                    .ok()
-                    .and_then(|tec| crate::xetex_ext::Mapping::new(tec, byte_mapping))
-                    .map(|mut m| {
-                        m.1 = Some((path.clone(), byte_mapping));
-                        m
-                    });
+                // again, `crate::s0file`); a resident engine's runs share
+                // it (`cache`)
+                let loads = self.host.resident.as_ref().and_then(|r| r.loads.clone());
+                let mapping = match loads {
+                    Some(c) => c
+                        .lock()
+                        .unwrap_or_else(|e| e.into_inner())
+                        .mapping(&path, byte_mapping),
+                    None => std::fs::read(&path)
+                        .ok()
+                        .and_then(|tec| crate::xetex_ext::Mapping::new(tec, byte_mapping))
+                        .map(|mut m| {
+                            m.1 = Some((path.clone(), byte_mapping));
+                            Arc::new(m)
+                        }),
+                };
                 let warning = if mapping.is_none() {
                     Some(2)
                 } else if self.get_tracing_fonts_state() > 1 {
@@ -689,7 +708,7 @@ impl Globals {
             self.host.handles.free(h);
         }
         match mapping {
-            Some(m) => self.host.handles.alloc(Object::Other(Arc::new(m))),
+            Some(m) => self.host.handles.alloc(Object::Other(m)),
             None => 0,
         }
     }

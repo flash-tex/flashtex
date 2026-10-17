@@ -17,6 +17,7 @@
 //! resource with a `problem` (spec §5.1), and the pages using it are
 //! flagged INCOMPLETE.
 
+use super::agl::Agl;
 use super::fontmap::{parse_enc, FontMap, MapIndex};
 use flashtex_display_list::json::Json;
 use flashtex_display_list::sha256::{hex, sha256, Sha256};
@@ -30,11 +31,57 @@ use std::sync::{Arc, Mutex};
 /// third of a one-page article's keystroke when each run indexed it again)
 /// and the font programs read, each kept while its file is unchanged (a
 /// stat signature taken before it was read and still the same after; a
-/// racy one, within the file system's time tick, keeps nothing).
+/// racy one, within the file system's time tick, keeps nothing); what the
+/// output parses of each face of a program ([`FaceData`], by the program's
+/// SHA-256 and the face index, so a function of the bytes alone); and the
+/// Adobe Glyph List, kept while its files are the same and unchanged.
 #[derive(Default)]
 pub struct FontCache {
     map: Mutex<Option<(String, StatSig, Arc<MapIndex>)>>,
     programs: Mutex<HashMap<String, Program>>,
+    /// By [`face_key`], with the program's SHA-256.
+    faces: Mutex<HashMap<[u8; 32], KeptFace>>,
+    agl: Mutex<Option<(AglFiles, Arc<Agl>)>>,
+}
+
+type KeptFace = ([u8; 32], Arc<FaceData>);
+
+/// The glyph list files found (`agl::LIST_FILES`, in order), each with its
+/// signature when read.
+type AglFiles = Vec<Option<(String, Option<StatSig>)>>;
+
+/// What the output reads of one face of a font program: the parsed face
+/// (`flashtex_pdf::truetype`), what a font's definition takes from it, and
+/// the PDF writer's last answers for it (`super::pdf::FaceMemo`). All of it
+/// is a function of the program's bytes and the face index.
+pub struct FaceData {
+    pub font: Result<flashtex_pdf::truetype::TrueTypeFont, String>,
+    /// Each glyph's advance (font units); empty when `font` is an error.
+    pub advances: Arc<Vec<u16>>,
+    /// The `name` table's family (empty if none).
+    pub family: String,
+    pub memo: Mutex<super::pdf::FaceMemo>,
+}
+
+impl FaceData {
+    pub fn new(program: &Arc<Vec<u8>>, index: u32) -> FaceData {
+        let font = flashtex_pdf::truetype::TrueTypeFont::parse_face_shared(program.clone(), index);
+        let advances = match &font {
+            Ok(f) => (0..f.num_glyphs()).map(|g| f.advance(g)).collect(),
+            Err(_) => Vec::new(),
+        };
+        FaceData {
+            font,
+            advances: Arc::new(advances),
+            family: family_name(program, index).unwrap_or_default(),
+            memo: Mutex::default(),
+        }
+    }
+}
+
+/// A face's key in [`FontCache`]: its program's SHA-256 and its index.
+pub fn face_key(sha: &[u8; 32], index: u32) -> [u8; 32] {
+    flashtex_display_list::resource::opentype_font_key(sha, index, &[])
 }
 
 /// A font file's signature when read, its bytes and their SHA-256.
@@ -80,12 +127,59 @@ impl FontCache {
         Some((data, sha))
     }
 
-    /// Keep only the programs of `used` (the last run's fonts).
+    /// Face `index` of `program` (whose SHA-256 is `sha`), parsed once.
+    pub fn face(&self, sha: &[u8; 32], program: &Arc<Vec<u8>>, index: u32) -> Arc<FaceData> {
+        let key = face_key(sha, index);
+        let mut faces = self.faces.lock().unwrap_or_else(|e| e.into_inner());
+        faces
+            .entry(key)
+            .or_insert_with(|| (*sha, Arc::new(FaceData::new(program, index))))
+            .1
+            .clone()
+    }
+
+    /// The Adobe Glyph List as `Agl::load` reads it now: the files it
+    /// finds, read again when another file is found or one changed.
+    pub fn agl(&self) -> Arc<Agl> {
+        let found = Agl::find_files();
+        let files: AglFiles = found
+            .iter()
+            .map(|f| f.as_ref().map(|p| (p.clone(), StatSig::of(p))))
+            .collect();
+        let mut kept = self.agl.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some((k, agl)) = kept.as_ref() {
+            // the same files, each with a signature that holds (a missing
+            // or racy one equals none)
+            let same = k.len() == files.len()
+                && k.iter().zip(&files).all(|(a, b)| match (a, b) {
+                    (None, None) => true,
+                    (Some((p, Some(s))), Some((q, Some(t)))) => p == q && s == t,
+                    _ => false,
+                });
+            if same {
+                return agl.clone();
+            }
+        }
+        let agl = Arc::new(Agl::load_files(&found));
+        let after: AglFiles = found
+            .iter()
+            .map(|f| f.as_ref().map(|p| (p.clone(), StatSig::of(p))))
+            .collect();
+        *kept = (after == files).then(|| (files, agl.clone()));
+        agl
+    }
+
+    /// Keep only the programs of `used` (the last run's fonts), and the
+    /// faces of the programs kept.
     pub fn retain(&self, used: &HashSet<String>) {
-        self.programs
+        let mut programs = self.programs.lock().unwrap_or_else(|e| e.into_inner());
+        programs.retain(|p, _| used.contains(p));
+        let shas: HashSet<[u8; 32]> = programs.values().map(|(_, _, h)| *h).collect();
+        drop(programs);
+        self.faces
             .lock()
             .unwrap_or_else(|e| e.into_inner())
-            .retain(|p, _| used.contains(p));
+            .retain(|_, (sha, _)| shas.contains(sha));
     }
 }
 
@@ -190,6 +284,8 @@ pub enum ResKind {
         index: u32,
         cff: bool,
         ps_name: String,
+        /// The program's SHA-256 (its [`FaceData`]'s key with `index`).
+        sha: [u8; 32],
     },
     /// A Type 1 program for a TFM font, with its encoding.
     Type1 {
@@ -222,6 +318,8 @@ pub struct Fonts {
     pub widths: HashMap<u16, std::collections::BTreeMap<u16, f64>>,
     /// A resident engine's runs' shared cache.
     pub cache: Option<Arc<FontCache>>,
+    /// Without one, the faces this run parsed ([`Fonts::face_data`]).
+    faces: HashMap<[u8; 32], Arc<FaceData>>,
 }
 
 impl Fonts {
@@ -316,21 +414,39 @@ impl Fonts {
         Some((data, sha))
     }
 
+    /// Face `index` of the program whose SHA-256 is `sha`, parsed once (by
+    /// the resident engine's cache, else once per run).
+    pub fn face_data(
+        &mut self,
+        sha: &[u8; 32],
+        program: &Arc<Vec<u8>>,
+        index: u32,
+    ) -> Arc<FaceData> {
+        match &self.cache {
+            Some(c) => c.face(sha, program, index),
+            None => self
+                .faces
+                .entry(face_key(sha, index))
+                .or_insert_with(|| Arc::new(FaceData::new(program, index)))
+                .clone(),
+        }
+    }
+
     fn load_native(&mut self, n: &NativeDef) -> Loaded {
         let path = String::from_utf8_lossy(&n.path).into_owned();
         let Some((program, sha)) = self.read_program(&path) else {
             return self.missing(&path, format!("cannot read the font file {path}"));
         };
-        let font = match flashtex_pdf::truetype::TrueTypeFont::parse_face(program.to_vec(), n.index)
-        {
+        let data = self.face_data(&sha, &program, n.index);
+        let font = match &data.font {
             Ok(f) => f,
             Err(e) => return self.missing(&path, format!("{path}: {e}")),
         };
         let cff = font.outlines == flashtex_pdf::truetype::Outlines::Cff;
         let upm = font.units_per_em;
-        let advances: Vec<u16> = (0..font.num_glyphs()).map(|g| font.advance(g)).collect();
+        let advances = data.advances.clone();
         let key = flashtex_display_list::resource::opentype_font_key(&sha, n.index, &[]);
-        let family = family_name(&program, n.index).unwrap_or_default();
+        let family = data.family.clone();
         let info = Json::Obj(vec![
             ("format".into(), Json::Str("opentype".into())),
             ("glyph_ids".into(), Json::Bool(true)),
@@ -360,6 +476,7 @@ impl Fonts {
                 index: n.index,
                 cff,
                 ps_name: font.postscript_name.clone(),
+                sha,
             },
         );
         Loaded {
@@ -369,7 +486,7 @@ impl Fonts {
             upm,
             ascent: font.ascender,
             descent: font.descender,
-            advances: Arc::new(advances),
+            advances,
         }
     }
 
@@ -394,6 +511,12 @@ impl Fonts {
             self.map = Some(m);
         }
         self.map.as_ref().expect("just set")
+    }
+
+    /// Face `index` of the program whose SHA-256 is `sha`, if this run
+    /// parsed it without a cache ([`Fonts::face_data`]).
+    pub fn parsed_face(&self, sha: &[u8; 32], index: u32) -> Option<Arc<FaceData>> {
+        self.faces.get(&face_key(sha, index)).cloned()
     }
 
     /// The font files this run read.

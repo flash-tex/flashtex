@@ -648,6 +648,51 @@ fn optical_size_selects_within_the_subfamily() {
     assert_eq!(l.design_size, decipoints_to_tex(240));
 }
 
+/// A catalog face's design size (what `locate_with` reports for a lookup by
+/// name) is the file's, read again once the file changed: a file written
+/// again with another `size` feature (its modification time set back out of
+/// the racy window, or not) gives the new one.
+#[test]
+fn a_faces_design_size_follows_its_file() {
+    let face = |size: [u16; 5]| Spec {
+        family: "Sized",
+        style: "Regular",
+        full: "Sized Regular",
+        ps: "Sized-Regular",
+        weight: 400,
+        width: 5,
+        sel: REG,
+        angle: 0.0,
+        size: Some(size),
+    };
+    let fonts = TempFonts::new("dsize", &[face([110, 1, 257, 95, 140])]);
+    let path = fonts.0.join("Sized-Regular.otf");
+    let put = |size: [u16; 5], secs_ago: u64| {
+        std::fs::write(&path, face_bytes(&face(size))).unwrap();
+        let t = std::time::SystemTime::now() - std::time::Duration::from_secs(secs_ago);
+        std::fs::File::options()
+            .write(true)
+            .open(&path)
+            .unwrap()
+            .set_modified(t)
+            .unwrap();
+    };
+    put([110, 1, 257, 95, 140], 3600);
+    let catalog = FontCatalog::scan(std::slice::from_ref(&fonts.0));
+    let f = &catalog.faces()[0];
+    for _ in 0..2 {
+        assert_eq!(f.design_size(), decipoints_to_tex(110));
+    }
+    put([240, 1, 258, 140, 720], 7200);
+    assert_eq!(f.design_size(), decipoints_to_tex(240));
+    assert_eq!(f.design_size(), design_size_of_file(&path, 0));
+    put([80, 1, 256, 60, 95], 0);
+    assert_eq!(f.design_size(), decipoints_to_tex(80));
+    let mut m = FontMgr::new(Arc::new(catalog));
+    let l = m.locate_with("Sized", 10 << 16, &mut |_, _| None).unwrap();
+    assert_eq!(l.design_size, decipoints_to_tex(80));
+}
+
 #[test]
 fn the_platform_search_is_lazy_and_falls_back_to_every_font() {
     let mut specs = testa();
