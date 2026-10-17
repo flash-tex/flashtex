@@ -22,6 +22,10 @@ fn an_ls_r_entry_not_on_disk_is_never_remembered() {
         common::no_texlive();
         return;
     };
+    // The memo, not the racy rule, is what is tested: no racy window
+    // (setting a directory's time back moves its change time to now,
+    // which the window would count as racy).
+    std::env::set_var("FLASHTEX_RACY_MS", "0");
     let base = common::fresh_dir("flashtex-lookup-memo-db");
     let _ = std::fs::remove_dir_all(&base);
     let (tree, home, cwd) = (base.join("tree"), base.join("home"), base.join("cwd"));

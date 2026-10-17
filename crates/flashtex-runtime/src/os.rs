@@ -410,6 +410,90 @@ pub fn file_id(m: &std::fs::Metadata) -> u64 {
     }
 }
 
+/// `path`'s metadata (following links, as `std::fs::metadata`) and its
+/// status-change time in ns since the Unix epoch, for [`crate::statsig`].
+/// The change time moves with every write and every metadata change, and
+/// no call can set it, so a file rewritten in place with its modification
+/// time put back (`cp -p` onto it, `rsync -t --inplace`, `touch -r`) still
+/// shows a new one. Unix: `st_ctime`. Windows: `FILE_BASIC_INFO`'s
+/// `ChangeTime` (`GetFileInformationByHandleEx`) through a handle opened
+/// for attributes only, from which the metadata comes too; if the file
+/// cannot be opened so, or the call fails, the metadata comes from
+/// `std::fs::metadata` and the time is 0. WASI: 0 (std's stable API has no
+/// change time there).
+pub fn metadata_and_change_time(path: &str) -> Option<(std::fs::Metadata, i128)> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        let m = std::fs::metadata(path).ok()?;
+        let c = m.ctime() as i128 * 1_000_000_000 + m.ctime_nsec() as i128;
+        Some((m, c))
+    }
+    #[cfg(windows)]
+    {
+        use std::ffi::c_void;
+        use std::os::windows::fs::OpenOptionsExt;
+        use std::os::windows::io::AsRawHandle;
+        // FILE_BASIC_INFO: four LARGE_INTEGER times (100 ns since 1601),
+        // then the attributes.
+        #[repr(C)]
+        #[derive(Default)]
+        struct FileBasicInfo {
+            creation: i64,
+            last_access: i64,
+            last_write: i64,
+            change: i64,
+            attributes: u32,
+        }
+        #[link(name = "kernel32")]
+        extern "system" {
+            fn GetFileInformationByHandleEx(
+                file: *mut c_void,
+                class: i32,
+                info: *mut c_void,
+                size: u32,
+            ) -> i32;
+        }
+        const FILE_READ_ATTRIBUTES: u32 = 0x80;
+        // (a directory opens only with this flag)
+        const FILE_FLAG_BACKUP_SEMANTICS: u32 = 0x0200_0000;
+        const FILE_BASIC_INFO_CLASS: i32 = 0;
+        // 1601-01-01 to 1970-01-01, in 100 ns.
+        const EPOCH_DIFF: i128 = 116_444_736_000_000_000;
+        let opened = std::fs::OpenOptions::new()
+            .access_mode(FILE_READ_ATTRIBUTES)
+            .custom_flags(FILE_FLAG_BACKUP_SEMANTICS)
+            .open(path);
+        let Ok(f) = opened else {
+            return std::fs::metadata(path).ok().map(|m| (m, 0));
+        };
+        let Ok(m) = f.metadata() else {
+            return std::fs::metadata(path).ok().map(|m| (m, 0));
+        };
+        let mut info = FileBasicInfo::default();
+        // SAFETY: `f` is an open handle and `info` a FILE_BASIC_INFO of the
+        // size given, which the call fills.
+        let ok = unsafe {
+            GetFileInformationByHandleEx(
+                f.as_raw_handle(),
+                FILE_BASIC_INFO_CLASS,
+                &mut info as *mut FileBasicInfo as *mut c_void,
+                std::mem::size_of::<FileBasicInfo>() as u32,
+            )
+        } != 0;
+        let c = if ok && info.change > 0 {
+            (info.change as i128 - EPOCH_DIFF) * 100
+        } else {
+            0
+        };
+        Some((m, c))
+    }
+    #[cfg(not(any(unix, windows)))]
+    {
+        std::fs::metadata(path).ok().map(|m| (m, 0))
+    }
+}
+
 /// A file's stat fields, for the format cache's signatures: size,
 /// modification and status-change times (ns), inode and device. Windows has
 /// no status-change time, inode or device in std: there `ctime_ns` is the

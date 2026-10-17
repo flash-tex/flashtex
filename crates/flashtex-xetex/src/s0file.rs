@@ -36,7 +36,8 @@ use flashtex_engine::persist::{Codec, Reader};
 use std::ffi::CString;
 use std::sync::Arc;
 
-const MAGIC: &[u8] = b"flashtex xetex S0 v1";
+// (v2: the key's stat signatures hold the change time, `StatSig::ctime_ns`)
+const MAGIC: &[u8] = b"flashtex xetex S0 v2";
 
 /// The granule of S₀'s pages in the file: Apple silicon's page, which every
 /// supported system's page size divides (as the pdfTeX engine's v5).

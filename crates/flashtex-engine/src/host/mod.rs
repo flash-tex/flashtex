@@ -1208,8 +1208,9 @@ pub fn read_s0(
 }
 
 // (v4: the key's reads at the document's start, `Key::arm`; v5: the pages,
-// page-aligned, `S0_PAGE`)
-const MAGIC: &[u8] = b"flashtex S0 v5";
+// page-aligned, `S0_PAGE`; v6: the key's stat signatures hold the change
+// time, `StatSig::ctime_ns`)
+const MAGIC: &[u8] = b"flashtex S0 v6";
 
 /// The granule of S₀'s pages in the file (v5): Apple silicon's page, which
 /// every supported system's page size divides (4 KB elsewhere).
@@ -1316,6 +1317,10 @@ mod key_tests {
             .set_modified(old)
             .unwrap();
         open_dir_for_times(&d).set_modified(old).unwrap();
+        // (putting the times back moved the change times: their tick too)
+        std::thread::sleep(std::time::Duration::from_millis(
+            (crate::system::RACY_NS / 1_000_000) as u64 + 100,
+        ));
         key.check_refresh((0, 0), b"main").unwrap();
         assert!(!key.files[0].2.racy, "the file's signature is still racy");
         assert!(

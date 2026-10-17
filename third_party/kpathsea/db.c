@@ -95,9 +95,11 @@ ignore_dir_p (const_string dirname)
    next entry of its bucket), each directory's offset, and the strings (the
    file names and the directories as `cur_dir' was, NUL-terminated). The
    image is written to a cache file (FLASHTEX: flashtex_lsr_cache_dir,
-   keyed by the ls-R's path, checked by its size, modification time, inode
-   and device) and mapped from there, read only: its pages are the file's,
-   not the process's, and the next process maps it without reading ls-R.
+   keyed by the ls-R's path, checked by its size, modification and
+   status-change times, inode and device: the change time catches an ls-R
+   rewritten in place with its modification time put back) and mapped
+   from there, read only: its pages are the file's, not the process's,
+   and the next process maps it without reading ls-R.
    Without a cache the image stays in an anonymous mapping.
 
    Lookups answer exactly what hash_lookup (kpse->db, KEY) answered: a
@@ -131,7 +133,7 @@ char *flashtex_lsr_cache_dir = NULL;
 
 #define PACKED_NONE 0xffffffffu
 #define PACKED_BUCKETS (1u << 16)
-#define PACKED_MAGIC "FTXLSR1\n"
+#define PACKED_MAGIC "FTXLSR2\n"  /* 2: the change time */
 
 typedef struct {
   unsigned key;   /* offset of the file name in the strings */
@@ -147,6 +149,7 @@ typedef struct {
   unsigned n, ndirs, strings_len, pad;
   unsigned long long size, ino, dev;
   long long mtime_s, mtime_ns;
+  long long ctime_s, ctime_ns;
 } packed_header;
 
 typedef struct {
@@ -231,9 +234,13 @@ packed_attach (packed_seg *seg, void *image, size_t len, const struct stat *st)
 #if defined (__APPLE__)
              || h->mtime_s != (long long) st->st_mtimespec.tv_sec
              || h->mtime_ns != (long long) st->st_mtimespec.tv_nsec
+             || h->ctime_s != (long long) st->st_ctimespec.tv_sec
+             || h->ctime_ns != (long long) st->st_ctimespec.tv_nsec
 #else
              || h->mtime_s != (long long) st->st_mtim.tv_sec
              || h->mtime_ns != (long long) st->st_mtim.tv_nsec
+             || h->ctime_s != (long long) st->st_ctim.tv_sec
+             || h->ctime_ns != (long long) st->st_ctim.tv_nsec
 #endif
              ))
     return false;
@@ -313,8 +320,9 @@ packed_load (packed_seg *seg, const_string path, const struct stat *st)
 
 /* Write IMAGE (LEN bytes) as the cache file of the ls-R at PATH, and map
    it: SEG then points into the file. False (SEG unchanged) if it could
-   not be written, or if ls-R's modification time is under two seconds
-   old (a change within its time stamp's granularity would go unseen).  */
+   not be written, or if ls-R's modification or change time is under two
+   seconds old (a change within its time stamp's granularity would go
+   unseen).  */
 static boolean
 packed_store (packed_seg *seg, const_string path, const struct stat *st,
               void *image, size_t len)
@@ -325,7 +333,7 @@ packed_store (packed_seg *seg, const_string path, const struct stat *st,
   size_t left = len;
   int fd;
   boolean ok = false;
-  if (time (NULL) - st->st_mtime < 2)
+  if (time (NULL) - st->st_mtime < 2 || time (NULL) - st->st_ctime < 2)
     return false;
   file = packed_cache_file (path);
   if (!file)
@@ -453,9 +461,13 @@ packed_read (kpathsea kpse, packed_seg *seg, const_string db_filename,
 #if defined (__APPLE__)
     h->mtime_s = (long long) st->st_mtimespec.tv_sec;
     h->mtime_ns = (long long) st->st_mtimespec.tv_nsec;
+    h->ctime_s = (long long) st->st_ctimespec.tv_sec;
+    h->ctime_ns = (long long) st->st_ctimespec.tv_nsec;
 #elif !defined (_WIN32)
     h->mtime_s = (long long) st->st_mtim.tv_sec;
     h->mtime_ns = (long long) st->st_mtim.tv_nsec;
+    h->ctime_s = (long long) st->st_ctim.tv_sec;
+    h->ctime_ns = (long long) st->st_ctim.tv_nsec;
 #endif
   }
   head = (unsigned *) (image + sizeof (packed_header));

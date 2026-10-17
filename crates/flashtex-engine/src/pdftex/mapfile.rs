@@ -278,7 +278,8 @@ mod disk {
     use sha2::{Digest, Sha256};
     use std::path::{Path, PathBuf};
 
-    const MAGIC: &[u8] = b"flashtex-fontmap 1\n";
+    // (2: the signature holds the change time, `StatSig::ctime_ns`)
+    const MAGIC: &[u8] = b"flashtex-fontmap 2\n";
 
     fn mode_byte(m: Mode) -> u8 {
         match m {
@@ -354,12 +355,15 @@ mod disk {
         let len = u64::dec(&mut r).ok()?;
         let mtime_hi = u64::dec(&mut r).ok()?;
         let mtime_lo = u64::dec(&mut r).ok()?;
+        let ctime_hi = u64::dec(&mut r).ok()?;
+        let ctime_lo = u64::dec(&mut r).ok()?;
         let ino = u64::dec(&mut r).ok()?;
         let racy = bool::dec(&mut r).ok()?;
         let hash = Vec::<u8>::dec(&mut r).ok()?;
         let stored = crate::system::StatSig {
             len,
             mtime_ns: ((mtime_hi as u128) << 64 | mtime_lo as u128) as i128,
+            ctime_ns: ((ctime_hi as u128) << 64 | ctime_lo as u128) as i128,
             ino,
             racy,
         };
@@ -388,9 +392,12 @@ mod disk {
     /// The content's stat signature and SHA-256.
     fn signature(k: &MapKey, hash: &Vec<u8>, w: &mut Vec<u8>) {
         let m = k.stat.mtime_ns as u128;
+        let c = k.stat.ctime_ns as u128;
         k.stat.len.enc(w);
         ((m >> 64) as u64).enc(w);
         (m as u64).enc(w);
+        ((c >> 64) as u64).enc(w);
+        (c as u64).enc(w);
         k.stat.ino.enc(w);
         k.stat.racy.enc(w);
         hash.enc(w);
