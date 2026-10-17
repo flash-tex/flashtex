@@ -126,12 +126,18 @@ fn read_range(path: &str, from: u64, to: u64) -> Option<Vec<u8>> {
 /// since `P0`; the same diagnostics count, external effects and read
 /// journal since `P0` (the journal the restart at `P2` keeps is the old
 /// run's). The state is the caller's (`cstate`, `same_words`).
+///
+/// `past` (PREAMBLE-PATCH, `incr::Obs::pre_patch_test`): a stream on an
+/// edited file must instead have read the whole change, the old run's
+/// offset past the changed bytes and the new run's the same offset in the
+/// new text (`Edit::remap`): both read the same bytes from there on.
 pub fn same_since(
     g: &Globals,
     pr: &Probe,
     old: &ExtRecord,
     new: &ExtRecord,
     edits: &[Edit],
+    past: bool,
 ) -> Result<(), String> {
     if old.files.len() != new.files.len() {
         return Err("file globals differ".into());
@@ -144,7 +150,16 @@ pub fn same_since(
         }
         match (&a.stream, &b.stream) {
             (Stream::In { path, offset: x }, Stream::In { path: p, offset: y }) => {
-                if path != p || x != y {
+                let mut want = *x;
+                if past {
+                    for e in edits.iter().filter(|e| e.path == *path) {
+                        if *x < e.old_end() {
+                            return Err(format!("{p}: at {x}, before the end of the change"));
+                        }
+                        want = e.remap(*x);
+                    }
+                }
+                if path != p || want != *y {
                     return Err(format!("{p}: at {y}, the old run {path} at {x}"));
                 }
             }
@@ -227,7 +242,7 @@ pub fn same_since(
             return Err(format!("{p}: other bytes, closed since the restart point"));
         }
     }
-    if !streams_before_edits(new, edits, |p| pr.now.get(p).cloned()) {
+    if !past && !streams_before_edits(new, edits, |p| pr.now.get(p).cloned()) {
         return Err("a stream has read a change".into());
     }
     if old.effects_len != new.effects_len || old.tex_input_type != new.tex_input_type {

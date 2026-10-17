@@ -3409,6 +3409,296 @@ fn a_title_keystroke_restarts_mid_line_after_hyperref() {
     compile_and_check(&e, &mut h, &dir, &[("doc.tex", &doc)], "the revert");
 }
 
+/// PREAMBLE-PATCH: an article whose `\title` the edits type in: its own
+/// line, `\author` and `\date` after it, hyperref, a title page and labels
+/// (`one` on page 1, `two` later), so that a `\clearpage` before section two
+/// changes the `.aux` (L5). `pre` goes after `\date`, `hook` into
+/// `\AtBeginDocument`, `body0` at the body's start.
+fn patch_doc(title: &str, pre: &str, hook: &str, body0: &str, clear: bool) -> String {
+    let body: String = (0..24).map(|i| para(i, "sigma")).collect();
+    format!(
+        r"\documentclass{{article}}
+\usepackage{{amsmath}}
+\usepackage{{hyperref}}
+\title{{{title}}}
+\author{{Jane Doe}}
+\date{{1 October 2026}}
+{pre}
+\AtBeginDocument{{{hook}}}
+\begin{{document}}
+\maketitle
+{body0}
+\section{{One}}\label{{one}}
+{body}{}\section{{Two}}\label{{two}}
+See pages~\pageref{{one}} and~\pageref{{two}}, Section~\ref{{two}}.
+\end{{document}}
+",
+        if clear { "\\clearpage\n" } else { "" }
+    )
+}
+
+/// PREAMBLE-PATCH (`incr::PrePatch`): keystrokes in `\title` go on from the
+/// old run's checkpoint before `\maketitle` reads the title, with its new
+/// meaning put in; every compile equals scratch runs, and so do the compiles
+/// after it that restore one of the patched checkpoints:
+/// * an edit on the title page (a body restart at a patched checkpoint);
+/// * a `\clearpage` that moves a label: the `.aux` pass re-reads the `.aux`
+///   from the anchor, which holds the old title (L5's `aux_patch` puts the
+///   new one in first), and the reads the preamble restart logged before
+///   the `.aux` close are forgotten there (else the pass would miss the
+///   body's read of a label);
+/// * an edit of the next line, `\author`;
+/// * S₀ is not persisted while it holds a patched meaning (were it, a new
+///   process would open it with the old title).
+#[test]
+fn preamble_patch_title_keystrokes_equal_scratch_runs() {
+    let Some(e) = env() else {
+        common::no_texlive();
+        return;
+    };
+    let dir = e.dir.join("prepatch-title");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let doc = |t: &str| patch_doc(t, "", "", "", false);
+    let base = doc("a title about latency");
+    let mut h = Host::start(&e, &dir);
+    settle(&e, &mut h, &dir, &base);
+    // (the text, what, whether the compile went on from the old run)
+    let keys = [
+        (doc("a titlex about latency"), "a letter", "null"),
+        (doc("a titlexy about latency"), "the next letter", "true"),
+        (doc("a titlexyz about latency"), "and the next", "true"),
+        (base.clone(), "the revert", "true"),
+    ];
+    for (text, what, patched) in &keys {
+        let r = compile_and_check(&e, &mut h, &dir, &[("doc.tex", text)], what);
+        assert_eq!(field(&r, "restart_preamble"), "true", "{what}: {r}");
+        assert_eq!(field(&r, "preamble_patched"), *patched, "{what}: {r}");
+    }
+    let t = doc("a title about latencyz");
+    let r = compile_and_check(&e, &mut h, &dir, &[("doc.tex", &t)], "a letter again");
+    assert_eq!(field(&r, "preamble_patched"), "true", "{r}");
+    // S₀ holds the old title: not persisted
+    let s0 = dir.with_extension("s0");
+    let _ = std::fs::remove_file(&s0);
+    writeln!(h.stdin, "save {}", s0.display()).unwrap();
+    h.stdin.flush().unwrap();
+    let mut saved = String::new();
+    h.stdout.read_line(&mut saved).unwrap();
+    if saved.contains("\"saved\"") {
+        let dir2 = e.dir.join("prepatch-title-open");
+        let _ = std::fs::remove_dir_all(&dir2);
+        copy_dir(&dir, &dir2);
+        let mut h2 = Host::start(&e, &dir2);
+        let reference = dir2.with_extension("ref");
+        copy_dir(&dir2, &reference);
+        let r = h2.cmd(&format!("open {}", s0.display()));
+        check_against(
+            &e,
+            &dir2,
+            &reference,
+            &r,
+            "a persisted S0 after a patched compile",
+        );
+    }
+    let edits = [
+        (
+            patch_doc("a title about latencyz", "", "", "A first line.", false),
+            "the title page",
+        ),
+        (t.clone(), "its revert"),
+        (doc("a title about latencyzz"), "a letter (patched)"),
+        (
+            patch_doc("a title about latencyzz", "", "", "", true),
+            "a label moved: the .aux pass",
+        ),
+        (doc("a title about latencyzz"), "its revert"),
+        (doc("a title about latencyzzy"), "a letter (patched)"),
+        (
+            doc("a title about latencyzzy").replacen("Jane Doe", "Jane Dot", 1),
+            "the next line",
+        ),
+        (base.clone(), "the revert"),
+    ];
+    for (text, what) in &edits {
+        compile_and_check(&e, &mut h, &dir, &[("doc.tex", text)], what);
+    }
+}
+
+/// PREAMBLE-PATCH: title keystrokes after an edit of the line before the
+/// title, which defines `\@title` literally (that edit's run read `\@title`
+/// before the keystrokes' restart point): they go on from the old run
+/// (`true`), and every compile equals scratch runs.
+#[test]
+fn preamble_patch_after_an_edit_of_the_line_before() {
+    let Some(e) = env() else {
+        common::no_texlive();
+        return;
+    };
+    let doc = |lit: &str, t: &str| {
+        patch_doc(t, "", "", "", false).replacen(
+            &format!("\\title{{{t}}}"),
+            &format!("\\makeatletter\\gdef\\@title{{{lit}}}\\makeatother\n\\title{{{t}}}"),
+            1,
+        )
+    };
+    let dir = e.dir.join("prepatch-before");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let mut h = Host::start(&e, &dir);
+    settle(&e, &mut h, &dir, &doc("L", "t"));
+    let keys = [
+        (doc("LM", "t"), "the line before", None),
+        (doc("LM", "t1"), "a title letter", None),
+        (doc("LM", "t12"), "the next", Some("true")),
+        (doc("LM", "t123"), "and the next", Some("true")),
+    ];
+    for (text, what, patched) in &keys {
+        let r = compile_and_check(&e, &mut h, &dir, &[("doc.tex", text)], what);
+        if let Some(p) = patched {
+            assert_eq!(field(&r, "preamble_patched"), *p, "{what}: {r}");
+        }
+    }
+}
+
+/// PREAMBLE-PATCH: what holds a title keystroke back from the old run, a
+/// case each; every compile equals scratch runs. `true`: it went on from
+/// the old run (from the second keystroke on); `false`: it compared and
+/// did not, and the next keystroke on the line does not compare (`null`,
+/// `incr::PRE_PATCH_RETRY`).
+/// * the title read in `\AtBeginDocument` (written to the log): the restart
+///   is before the hook, which reads the new title (`true`);
+/// * the title read in the preamble after the comparison point: not before
+///   the anchor (`false`);
+/// * a register set on the title's line, edited with it: not a meaning
+///   (`false`);
+/// * a title of 30,000 characters: more words differ than the comparison
+///   takes (`incr::PRE_PATCH_MAX_WORDS`; `false`);
+/// * a token register set on the title's line, its list where the old
+///   run's was: cells of `mem` that no changed meaning holds (`false`);
+/// * a persisted S₀ after a preamble restart, which read from its restart:
+///   a new process from it reads from the `.aux` close on, as before
+///   (the `.aux` pass after a moved label).
+#[test]
+fn preamble_patch_stops_where_the_old_run_differs() {
+    let Some(e) = env() else {
+        common::no_texlive();
+        return;
+    };
+    let hook = r"\typeout{TITLE: \csname @title\endcsname}";
+    let pre = r"\makeatletter\edef\savedtitle{\@title}\makeatother";
+    // (before the title, the same value: what the scanner left behind is
+    // the same in both runs)
+    let reg = |n: &str| match n.len() {
+        2 => "\\parindent=5pt\\relax".to_string(),
+        _ => "\\mathsurround=5pt\\relax".to_string(),
+    };
+    type Case<'a> = (
+        &'a str,
+        Box<dyn Fn(&str) -> String>,
+        Vec<(&'a str, &'a str)>,
+    );
+    let cases: Vec<Case> = vec![
+        (
+            "hook",
+            Box::new(|t: &str| patch_doc(t, "", hook, "", false)),
+            vec![("t1", "null"), ("t12", "true"), ("t1", "true")],
+        ),
+        (
+            "preamble",
+            Box::new(|t: &str| patch_doc(t, pre, "", "Saved: \\savedtitle.", false)),
+            vec![("t1", "null"), ("t12", "false"), ("t1", "null")],
+        ),
+        (
+            "register",
+            Box::new(move |t: &str| {
+                patch_doc(t, "", "", "", false).replacen(
+                    &format!("\\title{{{t}}}"),
+                    &format!("{}\\title{{{t}}}", reg(t)),
+                    1,
+                )
+            }),
+            vec![("t1", "null"), ("t12", "false"), ("t1", "null")],
+        ),
+        (
+            "a title too long to compare",
+            Box::new(|t: &str| {
+                let words: String = (0..6000).map(|i| format!("w{} ", i % 97)).collect();
+                patch_doc(&format!("{t} {words}"), "", "", "", false)
+            }),
+            vec![("t1", "null"), ("t12", "false"), ("t1", "null")],
+        ),
+        (
+            "toks",
+            Box::new(|t: &str| {
+                patch_doc(t, "", "", "Kept: \\the\\ttok.", false).replacen(
+                    &format!("\\title{{{t}}}"),
+                    &format!("\\newtoks\\ttok\\ttok={{{t}}}\\title{{{t}}}"),
+                    1,
+                )
+            }),
+            vec![("t1", "null"), ("t12", "false"), ("t1", "null")],
+        ),
+    ];
+    for (name, doc, keys) in cases {
+        let dir = e.dir.join(format!("prepatch-{name}"));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut h = Host::start(&e, &dir);
+        settle(&e, &mut h, &dir, &doc("t"));
+        for (t, patched) in keys {
+            let what = format!("{name}: {t}");
+            let r = compile_and_check(&e, &mut h, &dir, &[("doc.tex", &doc(t))], &what);
+            assert_eq!(field(&r, "preamble_patched"), patched, "{what}: {r}");
+        }
+    }
+    // S₀ after a preamble restart (no patch: the first keystroke), persisted
+    // and opened by a new process; then a label moves (the `.aux` pass). The
+    // preamble looks at the label's entry after the comparison point: the
+    // restart read it there, but the new process's run must log the body's
+    // reads of it.
+    let persist = |t: &str, clear: bool| {
+        patch_doc(
+            t,
+            r"\expandafter\ifx\csname r@two\endcsname\relax\fi",
+            "",
+            "",
+            clear,
+        )
+    };
+    let dir = e.dir.join("prepatch-persist");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let s0 = dir.with_extension("s0");
+    let _ = std::fs::remove_file(&s0);
+    {
+        let mut h = Host::start(&e, &dir);
+        settle(&e, &mut h, &dir, &persist("t", false));
+        let r = compile_and_check(
+            &e,
+            &mut h,
+            &dir,
+            &[("doc.tex", &persist("t1", false))],
+            "a title letter",
+        );
+        assert_eq!(field(&r, "restart_preamble"), "true", "{r}");
+        let r = h.cmd(&format!("save {}", s0.display()));
+        assert!(r.contains("\"saved\""), "{r}");
+    }
+    let mut h = Host::start(&e, &dir);
+    let reference = dir.with_extension("ref");
+    copy_dir(&dir, &reference);
+    let r = h.cmd(&format!("open {}", s0.display()));
+    assert!(r.contains("\"mode\":\"open\""), "not opened from S0: {r}");
+    check_against(&e, &dir, &reference, &r, "the open");
+    for (doc, what) in [
+        (persist("t1", true), "a label moved: the .aux pass"),
+        (persist("t1", false), "its revert"),
+    ] {
+        compile_and_check(&e, &mut h, &dir, &[("doc.tex", &doc)], what);
+    }
+}
+
 /// PREAMBLE-MIDLINE (#1594): what a mid-line restart point depends on, a
 /// case each (packages of the test's own, a checkpoint after each). Every
 /// compile equals scratch runs; `true`: the restart is in the middle of the

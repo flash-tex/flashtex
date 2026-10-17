@@ -395,6 +395,21 @@ pub struct AnchorState {
     s0_polling: bool,
 }
 
+impl AnchorState {
+    /// The anchor it keeps: the `.aux` point, else S₀ (`incr::Session::take_s0`).
+    pub fn anchor(&self) -> Option<CheckpointId> {
+        self.aux_point.or(self.s0)
+    }
+
+    /// The read-set count it keeps, moved by `d` (a read-set spliced before
+    /// it: `incr::Session::pre_patch_jump`).
+    pub fn shift_rs(&mut self, d: i64) {
+        if let Some(n) = self.aux_close_rs.as_mut() {
+            *n = (*n as i64 + d) as usize;
+        }
+    }
+}
+
 /// The checkpoint layer's bookkeeping, kept in `Globals::arena.extra`.
 #[derive(Default)]
 pub struct Layer {
@@ -488,6 +503,15 @@ pub struct Layer {
     pub main_read: std::cell::Cell<Option<crate::midline::MainRead>>,
     pub midlines: Vec<(CheckpointId, crate::midline::MidLine)>,
     pub midline_force: bool,
+    /// PREAMBLE-PATCH (`incr::PrePatch`): a run restarted in the preamble
+    /// takes a checkpoint at the end of this line of the main file, the
+    /// first after the edited ones, where the read-set begins a segment;
+    /// the checkpoints so taken, with their lines; and the line of the one
+    /// being taken, while it is (for the observer, which may stop the run
+    /// there).
+    pub pre_force_line: Option<i32>,
+    pub pre_qs: Vec<(CheckpointId, i32)>,
+    pub pre_q_taking: Option<i32>,
     /// Segment checkpoints only where the observer stops the run
     /// (`Observer::take_held_segment`; `crate::incr`: an edit's run until its
     /// edited page has shipped).
@@ -780,6 +804,12 @@ impl Globals {
             .iter()
             .find(|(i, _)| *i == old)
             .map(|(_, r)| r.clone())
+    }
+
+    /// The old run's read-set (at its latest state), while a restore is
+    /// pending (PREAMBLE-PATCH: where the old run first read a name).
+    pub fn pending_rs(&self) -> Option<&crate::readset::ReadSet> {
+        Some(&self.layer_ref()?.pending.as_ref()?.rs_old)
     }
 
     /// Set checkpoint `id`'s journal counts (a persisted S₀ opened with a
@@ -1592,9 +1622,25 @@ impl Globals {
         // only conservative).
         {
             let layer = self.layer();
-            let mut ev = layer.rs.events[..now.rs.min(layer.rs.len())].to_vec();
+            let cut = now.rs.min(layer.rs.len());
+            let mut ev = layer.rs.events[..cut].to_vec();
             ev.extend_from_slice(rs_old.events.get(at_id.rs..).unwrap_or(&[]));
-            layer.rs = crate::readset::ReadSet::from_events(ev);
+            // (and where each part's segments begin)
+            let mut segs: Vec<usize> = layer
+                .rs
+                .segments()
+                .iter()
+                .copied()
+                .filter(|&b| b <= cut)
+                .collect();
+            segs.extend(
+                rs_old
+                    .segments()
+                    .iter()
+                    .filter(|&&b| b > at_id.rs)
+                    .map(|&b| (b as i64 + rs_delta) as usize),
+            );
+            layer.rs = crate::readset::ReadSet::from_parts(ev, segs);
         }
         self.spill_scalars();
         // The convergence test lets the live state differ from the old
@@ -2062,15 +2108,20 @@ impl Globals {
                     self.ckpt_request = REQ_PREAMBLE_LINE;
                     return;
                 }
+                let line = self.line;
                 let l = self.layer();
                 l.midline_force = false;
-                let due = l.preamble_line_s.is_some_and(|s| {
-                    l.preamble_file_closed
-                        || l.last_checkpoint
-                            .is_none_or(|t| t.elapsed().as_secs_f64() >= s)
-                });
+                let force = l.pre_force_line == Some(line);
+                let due = force
+                    || l.preamble_line_s.is_some_and(|s| {
+                        l.preamble_file_closed
+                            || l.last_checkpoint
+                                .is_none_or(|t| t.elapsed().as_secs_f64() >= s)
+                    });
                 self.layer().preamble_line_pending = false;
-                if due {
+                if force {
+                    self.pre_patch_checkpoint(line);
+                } else if due {
                     self.layer().preamble_file_closed = false;
                     self.hook_checkpoint(Point::PreambleLine);
                 }
@@ -2175,6 +2226,11 @@ impl Globals {
             return;
         }
         l.aux_armed = false;
+        // (a run that read from its preamble restart on, `incr::PrePatch`:
+        // the names read before are forgotten, as a run that begins to
+        // read here has not read them)
+        crate::readset::begin_rs_segment(self);
+        let l = self.layer();
         l.aux_close_rs = Some(l.rs.len());
         self.rs_on = true;
         if self.request_free() {
@@ -2227,6 +2283,9 @@ impl Globals {
                     l.written_at.push((id, w));
                 }
                 l.taken.push((id, why));
+                if let Some(line) = l.pre_q_taking {
+                    l.pre_qs.push((id, line));
+                }
                 if let Some(h) = hash {
                     l.state_hashes.push((id, h));
                 }
@@ -2430,6 +2489,29 @@ impl Globals {
         if self.ckpt_request == 0 && self.layer().preamble_line_pending {
             self.ckpt_request = REQ_PREAMBLE_LINE;
         }
+    }
+
+    /// PREAMBLE-PATCH (`incr::PrePatch`): the checkpoint at the end of
+    /// `Layer::pre_force_line`. A run that reads the control sequences it
+    /// meets (`rs_on`) begins a segment of its read-set first, so that the
+    /// first read of each name from here on is logged.
+    fn pre_patch_checkpoint(&mut self, line: i32) {
+        let l = self.layer();
+        l.pre_force_line = None;
+        l.preamble_file_closed = false;
+        let reading = self.rs_on;
+        if reading {
+            crate::readset::begin_rs_segment(self);
+        }
+        let mut keep: std::collections::HashSet<CheckpointId> =
+            self.arena.checkpoint_ids().iter().copied().collect();
+        keep.extend(self.pending_ids());
+        let l = self.layer();
+        l.pre_qs.retain(|(i, _)| keep.contains(i));
+        // (`hook_checkpoint` notes it, before the observer may stop the run)
+        l.pre_q_taking = reading.then_some(line);
+        self.hook_checkpoint(Point::PreambleLine);
+        self.layer().pre_q_taking = None;
     }
 
     /// PREAMBLE-MIDLINE (#1594): a `Point::PreambleLine` in the middle of

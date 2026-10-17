@@ -345,6 +345,7 @@ def one(content, tag, interrupt=None, pre=None):
                oscillation=r.get('oscillation'), ref_runs=REFRUNS.get(tag),
                restart_mid_page=r.get('restart_mid_page'), restart_gap=r.get('restart_gap'),
                restart_preamble=r.get('restart_preamble'), restart_midline=r.get('restart_midline'), revalidated=r.get('revalidated'),
+               preamble_patched=r.get('preamble_patched'),
                l5=r.get('l5'), rs_events=r.get('rs_events'), ck_stats=r.get('ck_stats'))
     results.append(rec)
     if out:
