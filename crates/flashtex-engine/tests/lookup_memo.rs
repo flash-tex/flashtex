@@ -155,15 +155,23 @@ fn the_memo_answers_as_kpathsea_does() {
     look(&mut r, "flashother.sty", "twice");
     look(&mut r, "flashother.sty", "twice again");
 
-    // a racy directory (changed within the file system's time granularity)
-    // proves nothing: no answer from the memo until it is old enough
+    // a racy directory (changed within the file system's time granularity):
+    // its signature proves nothing, so the memo lists it again, and answers
+    // while the listing holds nothing new under the names tried
+    // (tests/lookup_racy.rs: a change the signature cannot show)
     std::fs::write(sub.join("flashfresh.sty"), "% fresh\n").unwrap();
     let (p, _) = look(&mut r, "flashfresh.sty", "fresh");
     assert!(found_in(&p, &sub), "{p:?}");
     assert!(
-        !look(&mut r, "flashfresh.sty", "fresh again").1,
-        "a racy directory answered"
+        look(&mut r, "flashfresh.sty", "fresh again").1,
+        "a racy directory, listed again, did not answer"
     );
+    std::fs::write(sub.join("flashfresh.sty.bak"), "% a name tried\n").unwrap();
+    assert!(
+        !look(&mut r, "flashfresh.sty", "a name tried appeared").1,
+        "a racy directory answered past a new entry under a name tried"
+    );
+    std::fs::remove_file(sub.join("flashfresh.sty.bak")).unwrap();
     set_back(&sub);
     look(&mut r, "flashfresh.sty", "no longer racy");
     assert!(

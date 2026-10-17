@@ -456,7 +456,7 @@ fn list(dir: &str) -> Option<Listing> {
 /// characters whose Unicode case folding gives ASCII letters folded too
 /// (a case-insensitive file system, APFS's, finds `\u{212A}` for `k`).
 /// Folding more than a file system does only makes a check fail.
-fn fold(name: &str) -> String {
+pub(crate) fn fold(name: &str) -> String {
     let mut out = String::with_capacity(name.len());
     for c in name.chars() {
         match c {
