@@ -75,7 +75,7 @@ extension ShellModel {
         let reply: ProjectFilesV1.SetFonts
         switch files.setMode(for: root, entry: project.entryPath, mode: mode.rawValue) {
         case .success(let r): reply = r
-        case .failure(let f): return refuseMode("cannot write \(ProjectManifest.fileName): \(f.why)")
+        case .failure(let f): return refuseMode(Self.setModeFailure(f.why))
         }
         if reply.changed, let text = reply.text {
             let url = URL(fileURLWithPath: reply.path)
@@ -99,8 +99,18 @@ extension ShellModel {
         return nil
     }
 
+    /// What a failed `set_mode` says. A helper from before `set_mode`
+    /// (a bundle that copied an old build) answers "unknown operation".
+    static func setModeFailure(_ why: String) -> String {
+        if why.contains("unknown operation") {
+            return "The project-files helper in this build is out of date: it cannot write [project] mode to \(ProjectManifest.fileName). Rebuild crates/project-files and the app, or add mode = \"classic\" or \"unicode\" under [project] in \(ProjectManifest.fileName) yourself. (\(why))"
+        }
+        return "Cannot write \(ProjectManifest.fileName): \(why)"
+    }
+
     private func refuseMode(_ why: String) -> String {
         navigationNote = "Mode not changed: \(why)"
+        modeSwitchFailure = why
         FlashTeXLog.write("mode: not changed: \(why)")
         return why
     }
@@ -161,9 +171,31 @@ struct ModeStatusItem: View {
     }
 }
 
+extension EngineV3Mode.Resolution {
+    /// The menu's explanation: where the mode comes from and, when it is
+    /// the `% !TEX program` line, that a choice here takes precedence.
+    func menuExplanation(main: String) -> String {
+        let file = main.isEmpty ? "the main file" : (main as NSString).lastPathComponent
+        switch source {
+        case "% !TEX program":
+            return "Set by % !TEX program in \(file). Choosing a mode here saves it in \(ProjectManifest.fileName), which takes precedence."
+        case "default":
+            return "Default (no mode set). Choosing a mode here saves it in \(ProjectManifest.fileName)."
+        default:
+            return sourceLine
+        }
+    }
+}
+
 /// The mode menu's items (the status bar item and View > Mode for This Document).
 struct ModeMenuItems: View {
     let model: ShellModel
+
+    /// An item is off when the mode cannot be switched here, when it is
+    /// already the mode flashtex.toml sets, or Unicode without its engine.
+    static func isDisabled(_ m: EngineV3Mode, mode: EngineV3Mode.Resolution, refusal: String?, unicodeAvailable: Bool) -> Bool {
+        refusal != nil || mode.mode == m && mode.source == "flashtex.toml" || m == .unicode && !unicodeAvailable
+    }
 
     var body: some View {
         let mode = model.documentMode
@@ -175,10 +207,10 @@ struct ModeMenuItems: View {
             } label: {
                 if mode.mode == m { Label(m.menuTitle, systemImage: "checkmark") } else { Text(m.menuTitle) }
             }
-            .disabled(refusal != nil || mode.mode == m && mode.source == "flashtex.toml" || m == .unicode && !unicode)
+            .disabled(Self.isDisabled(m, mode: mode, refusal: refusal, unicodeAvailable: unicode))
         }
         Divider()
-        Text(mode.sourceLine)
+        Text(mode.menuExplanation(main: model.project.entryPath))
         if let w = mode.warning { Text(w) }
         if let refusal { Text(refusal) }
         if !unicode { Text("Unicode mode's engine is not installed with this build.") }

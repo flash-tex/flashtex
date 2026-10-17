@@ -119,6 +119,52 @@ final class ProjectModeTests: XCTestCase {
         XCTAssertEqual(try String(contentsOf: tmp.appendingPathComponent("flashtex.toml"), encoding: .utf8), again)
     }
 
+    /// The owner's report: a document whose main file says `% !TEX program =
+    /// xelatex` (Unicode from the magic comment); choosing Classic in the
+    /// mode menu must write `mode = "classic"` to the user's own folder's
+    /// flashtex.toml, which then wins over the comment.
+    func testChoosingClassicOverridesTheMagicCommentInTheUsersFolder() async throws {
+        guard let helper = DocumentFilesTests.realHelper else {
+            throw XCTSkip("build crates/project-files (cargo build --release) or set FLASHTEX_PROJECT_FILES")
+        }
+        try fakeUnicodeHost()
+        let root = tmp.resolvingSymlinksInPath()
+        _ = try write("main.tex", "% !TEX program = xelatex\n\n\\documentclass{article}\n\\begin{document}\nHello.\n\\end{document}\n")
+        let model = ShellModel()
+        model.detachWorker()
+        model.files.policy = .executable(helper, arguments: [])
+        XCTAssertEqual(model.openTex(at: root.appendingPathComponent("main.tex")), .opened)
+        for _ in 0 ..< 100 where model.manifest.refreshes == 0 { try await Task.sleep(nanoseconds: 20_000_000) }
+        XCTAssertEqual(model.documentMode.mode, .unicode)
+        XCTAssertEqual(model.documentMode.source, "% !TEX program")
+        XCTAssertNil(model.modeSwitchRefusal)
+        XCTAssertFalse(ModeMenuItems.isDisabled(.classic, mode: model.documentMode, refusal: nil, unicodeAvailable: true))
+        XCTAssertNil(model.setProjectMode(.classic))
+        let toml = root.appendingPathComponent("flashtex.toml")
+        let written = try String(contentsOf: toml, encoding: .utf8)
+        XCTAssertTrue(written.contains("mode = \"classic\""), written)
+        for _ in 0 ..< 100 where model.documentMode.mode != .classic { try await Task.sleep(nanoseconds: 20_000_000) }
+        XCTAssertEqual(model.documentMode.mode, .classic)
+        XCTAssertEqual(model.documentMode.source, "flashtex.toml")
+        XCTAssertNil(model.modeSwitchFailure)
+        XCTAssertTrue(EngineV3Mode.Resolution(mode: .unicode, format: "xelatex", source: "% !TEX program", warning: nil)
+            .menuExplanation(main: "main.tex").contains("% !TEX program in main.tex"))
+    }
+
+    /// A helper from before `set_mode` (a bundle that copied a stale build,
+    /// the owner's case) refuses with "unknown operation": the refusal says
+    /// so, and is shown (an alert), not only noted.
+    func testARefusedSwitchIsShownAndAStaleHelperIsNamed() throws {
+        let why = ShellModel.setModeFailure("unknown operation \"set_mode\"")
+        XCTAssertTrue(why.contains("out of date"), why)
+        env.set("FLASHTEX_MODE", "unicode")
+        let model = ShellModel()
+        model.detachWorker()
+        model.replaceProject(entryText: "x\n", named: "main.tex")
+        XCTAssertNotNil(model.setProjectMode(.classic))
+        XCTAssertNotNil(model.modeSwitchFailure)
+    }
+
     func testFlashtexModeInTheEnvironmentRefusesTheSwitch() throws {
         env.set("FLASHTEX_MODE", "unicode")
         let model = ShellModel()

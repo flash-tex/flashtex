@@ -517,6 +517,16 @@ for row in "${HELPER_TABLE[@]}"; do
         echo "    warning: cargo build --release failed for crates/$crate" >&2
       fi
     fi
+    # A binary older than its crate's sources is rebuilt rather than bundled
+    # as is: a stale flashtex-project-files without `set_mode` made the mode
+    # menu do nothing in an owner build.
+    if [[ -f "$default" && -f "$HELPER_ROOT/crates/$crate/Cargo.toml" ]] \
+      && [[ -n "$(find "$HELPER_ROOT/crates/$crate" -path '*/target' -prune -o \( -name '*.rs' -o -name Cargo.toml \) -newer "$default" -print -quit 2>/dev/null)" ]]; then
+      echo "    $name is older than crates/$crate; rebuilding it (cargo build --release)…"
+      if [[ "$key" == "cli" ]]; then build_args=(--bin flashtex); else build_args=(--bin "$name"); fi
+      (cd "$HELPER_ROOT/crates/$crate" && cargo build --release "${build_args[@]}") \
+        || echo "    warning: rebuilding $name failed; bundling the stale build" >&2
+    fi
     [[ -f "$default" ]] && src="$default"
   fi
   if [[ -n "$src" && -f "$src" ]]; then

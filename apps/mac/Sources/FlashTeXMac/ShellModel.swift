@@ -82,6 +82,9 @@ final class ShellModel {
     var loadError: String?
     var selection: Selection?
     var navigationNote: String?
+    /// Why the last mode switch (ProjectMode.swift) was not made: shown as an
+    /// alert, so a refusal is never silent.
+    var modeSwitchFailure: String?
     var darkPreview = EditorPreferences.shared.darkPreviewDefault // EditorPreferences.swift: appearance preference
     /// Openers the editor auto-closes (`{`, `[`, `$`, and `(` for `\(`/`\[`); SourceEditorView.
     var autoClosePairs: Set<Character> = ["{", "[", "$", "("]
