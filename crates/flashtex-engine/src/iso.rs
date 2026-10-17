@@ -497,6 +497,9 @@ pub struct Iso<'a, O: Space, N: Space> {
     side_later: Vec<(i32, u64)>,
     steps: usize,
     cur_task: Option<(K, i32, i32)>,
+    /// The convergence test walks token lists last (`check`): while this
+    /// is `Some`, `run` sets their tasks aside here.
+    toks_later: Option<Vec<(K, i32, i32)>>,
 }
 
 /// The hasher of the relocation map (`Iso::fwd`, keyed by `mem` address,
@@ -578,6 +581,7 @@ impl<'a, O: Space, N: Space> Iso<'a, O, N> {
             side_written: None,
             side_later: Vec::new(),
             steps: 0,
+            toks_later: None,
         }
     }
 
@@ -710,6 +714,10 @@ impl<'a, O: Space, N: Space> Iso<'a, O, N> {
                         return;
                     }
                 }
+            }
+            if let (K::Tok | K::Chain, Some(later)) = (k, self.toks_later.as_mut()) {
+                later.push((k, a, b));
+                continue;
             }
             self.cur_task = Some((k, a, b));
             match k {
@@ -2611,8 +2619,20 @@ impl<'a> Iso<'a, Old<'a>, Live<'a>> {
             w.side_written = Some(sd.written);
             fetch = Some(sd.fetch);
         }
+        // Token lists (macro bodies, token registers: most of what the walk
+        // reads, and seldom where a run that has not converged differs)
+        // last: first every other structure, then the side table's entries
+        // of the nodes, which a token list never adds to. A failing test
+        // then usually stops before the macro bodies (full-100: a reflowed
+        // page's glue, a node of the edited line). As for the page builder's
+        // lists first (`roots`), the outcome does not depend on the order:
+        // the pairs are those both states reach from the same places, and a
+        // token list's walk reads and pairs only its own tokens.
+        w.toks_later = Some(Vec::new());
         w.roots();
-        w.finish();
+        if w.err.is_none() {
+            w.run();
+        }
         if let Some(e) = w.err {
             return Err(e);
         }
@@ -2641,6 +2661,12 @@ impl<'a> Iso<'a, Old<'a>, Live<'a>> {
                     ));
                 }
             }
+        }
+        let toks = w.toks_later.take().unwrap_or_default();
+        w.todo.extend(toks);
+        w.finish();
+        if let Some(e) = w.err {
+            return Err(e);
         }
         for &p in bad_mem {
             let p = p as i32;
