@@ -150,6 +150,34 @@ families both named `SF Mono` (`SFMono-Regular` is found by the port
 only). They print as `KNOWN`; the run fails on a difference not listed or
 a listed one that no longer differs.
 
+**Fonts that are not installed** (`--font-dirs DIR...`): the port sees the
+directories through `FLASHTEX_FONT_DIRS`; macOS's xetex finds fonts by name
+through Core Text only, so `ctregister.c` (built by the script with
+`clang`) registers each directory's fonts with Core Text at process scope
+inside a re-signed copy of xetex (the copy's code is TeX Live's; its
+hardened runtime would ignore `DYLD_INSERT_LIBRARIES`). Nothing is
+installed and nothing outside the run changes. The family matrix
+`fontnames-texlive.txt` (Erewhon, TeX Gyre, Fira, EB Garamond from TeX Live;
+Libertinus, New Computer Modern, IBM Plex, Input, Geist and Dank Mono from
+`~/Library/Fonts`: family, `/B` `/I` `/BI`, full, PostScript and
+Family-Style names, the case of family names, typographic against legacy
+names) runs as
+
+```sh
+T=/usr/local/texlive/2026/texmf-dist/fonts/opentype/public
+python3 tools/xetex-lockstep/fontmatch.py --names tools/xetex-lockstep/fontnames-texlive.txt \
+  --known tools/xetex-lockstep/fontmatch-texlive-known.txt \
+  --font-dirs $T/erewhon $T/tex-gyre $T/fira $T/ebgaramond
+```
+
+Measured 2026-10-12 (mac-m1max-a): 411 of 417 faces equal, 413
+`name_of_file`s; the 6 + 4 differences are Core Text's enumeration
+(`fontmatch-texlive-known.txt`: localized family names, two faces sharing
+one full name, a PostScript name whose prefix is a legacy family). A family
+is found only as the font spells it: Erewhon's family is `erewhon`, so
+`\setmainfont{Erewhon}` fails in `xelatex` as in the port, and
+`\setmainfont{erewhon}` gives the same XDV, byte for byte.
+
 The port's catalog keeps each face's names in a cache
 (`$FLASHTEX_CACHE_DIR`, else the user's cache directory,
 `xetex-font-names.json`), keyed by path, face index, size and modification

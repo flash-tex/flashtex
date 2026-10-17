@@ -1,0 +1,38 @@
+# Known differences of `fontmatch.py --names fontnames-texlive.txt` (TeX
+# Live's OpenType fonts made visible to both sides with --font-dirs, and
+# families installed in ~/Library/Fonts), measured on mac-m1max-a (Darwin
+# 25.3, TeX Live 2026 xetex), 2026-10-12. Each is Core Text's enumeration,
+# which the platform-free model (XeTeXFontMgr_FC's rules, PLAN.md §3.1)
+# does not have: reported, not fixed. Same format as fontmatch-known.txt.
+#
+# Not a difference: a family is found by its name exactly as the font spells
+# it. Erewhon's family name (ids 1, Mac and Windows) is "erewhon", so
+# "Erewhon", "Erewhon/B" ... are not found by xetex either (fontspec's
+# \setmainfont{Erewhon} fails with xelatex; \setmainfont{erewhon} works, and
+# its XDV is byte-identical to xelatex's).
+
+# Localized family names: the fontconfig build reads every Microsoft name
+# record (the Russian family name of Erewhon, language 0x0419); Core Text
+# gives XeTeX the default and the user's language only.
+face	Эвристика
+name	Эвристика
+
+# Two faces with one full name ("Fira Mono" for FiraMono-Regular and
+# FiraMono-Oblique): Core Text's display-name match returns Regular and
+# XeTeX adds it first; the port adds the family in file order, so the
+# Oblique face holds the full name. The variants start from that face.
+face	Fira Mono
+face	Fira Mono/B
+name	Fira Mono/B
+face	Fira Mono/I
+face	Fira Mono/BI
+name	Fira Mono/BI
+
+# A PostScript name whose prefix is a legacy (id 1) family: for
+# "InputMono-Black" XeTeX's macOS search finds the NSFontManager family
+# "InputMono" (the regular, bold and italic faces' Windows family name),
+# adds only its members and stops, so InputMono-Black never reaches the
+# maps; the fontconfig build, and the port, fall back to every face and
+# find it by PostScript name.
+face	InputMono-Black
+name	InputMono-Black

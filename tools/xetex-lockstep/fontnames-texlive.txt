@@ -1,0 +1,440 @@
+# Font lookups by name over TeX Live's OpenType fonts (tex-gyre, erewhon,
+# fira, ebgaramond; fontmatch.py --font-dirs) and families installed in
+# ~/Library/Fonts (Libertinus, New Computer Modern): family, /B /I /BI,
+# full, PostScript and Family-Style names, the case of a family name,
+# typographic (ids 16/17) against legacy (ids 1/2) family names.
+
+Erewhon
+Erewhon/B
+Erewhon/I
+Erewhon/BI
+erewhon
+EREWHON
+Erewhon Bold
+Erewhon Italic
+Erewhon Bold Italic
+Erewhon-Regular
+Erewhon-Bold
+Erewhon-Italic
+Erewhon-BoldItalic
+Erewhon-Bold
+Erewhon-Italic
+Erewhon-BoldItalic
+Erewhon-Bold Italic
+erewhon/B
+erewhon/I
+erewhon/BI
+Erewhon Regular
+Erewhon Regular/B
+Erewhon Regular/I
+Erewhon Regular/BI
+Erewhon Regular Slanted
+Erewhon Bold Slanted
+erewhon-Bold
+erewhon-Bold Italic
+erewhon-Slanted
+erewhon Regular
+Эвристика
+Erewhon:+smcp
+erewhon/B:+onum
+
+TeX Gyre Termes
+TeX Gyre Termes/B
+TeX Gyre Termes/I
+TeX Gyre Termes/BI
+tex gyre termes
+TEX GYRE TERMES
+TeX Gyre Termes Bold
+TeX Gyre Termes Italic
+TeX Gyre Termes Bold Italic
+TeXGyreTermes-Regular
+TeXGyreTermes-Bold
+TeXGyreTermes-Italic
+TeXGyreTermes-BoldItalic
+TeX Gyre Termes-Bold
+TeX Gyre Termes-Italic
+TeX Gyre Termes-BoldItalic
+TeX Gyre Termes-Bold Italic
+TeXGyreTermes
+TeXGyreTermes/B
+TeX Gyre Termes Regular
+TeX Gyre Termes-Regular
+TeXGyreTermes-Bold Italic
+
+TeX Gyre Pagella
+TeX Gyre Pagella/B
+TeX Gyre Pagella/I
+TeX Gyre Pagella/BI
+tex gyre pagella
+TEX GYRE PAGELLA
+TeX Gyre Pagella Bold
+TeX Gyre Pagella Italic
+TeX Gyre Pagella Bold Italic
+TeXGyrePagella-Regular
+TeXGyrePagella-Bold
+TeXGyrePagella-Italic
+TeXGyrePagella-BoldItalic
+TeX Gyre Pagella-Bold
+TeX Gyre Pagella-Italic
+TeX Gyre Pagella-BoldItalic
+TeX Gyre Pagella-Bold Italic
+TeXGyrePagella
+TeXGyrePagella/B
+TeX Gyre Pagella Regular
+TeX Gyre Pagella-Regular
+TeXGyrePagella-Bold Italic
+
+TeX Gyre Heros
+TeX Gyre Heros/B
+TeX Gyre Heros/I
+TeX Gyre Heros/BI
+tex gyre heros
+TEX GYRE HEROS
+TeX Gyre Heros Bold
+TeX Gyre Heros Italic
+TeX Gyre Heros Bold Italic
+TeXGyreHeros-Regular
+TeXGyreHeros-Bold
+TeXGyreHeros-Italic
+TeXGyreHeros-BoldItalic
+TeX Gyre Heros-Bold
+TeX Gyre Heros-Italic
+TeX Gyre Heros-BoldItalic
+TeX Gyre Heros-Bold Italic
+TeXGyreHeros
+TeXGyreHeros/B
+TeX Gyre Heros Regular
+TeX Gyre Heros-Regular
+TeXGyreHeros-Bold Italic
+
+TeX Gyre Cursor
+TeX Gyre Cursor/B
+TeX Gyre Cursor/I
+TeX Gyre Cursor/BI
+tex gyre cursor
+TEX GYRE CURSOR
+TeX Gyre Cursor Bold
+TeX Gyre Cursor Italic
+TeX Gyre Cursor Bold Italic
+TeXGyreCursor-Regular
+TeXGyreCursor-Bold
+TeXGyreCursor-Italic
+TeXGyreCursor-BoldItalic
+TeX Gyre Cursor-Bold
+TeX Gyre Cursor-Italic
+TeX Gyre Cursor-BoldItalic
+TeX Gyre Cursor-Bold Italic
+TeXGyreCursor
+TeXGyreCursor/B
+TeX Gyre Cursor Regular
+TeX Gyre Cursor-Regular
+TeXGyreCursor-Bold Italic
+
+TeX Gyre Bonum
+TeX Gyre Bonum/B
+TeX Gyre Bonum/I
+TeX Gyre Bonum/BI
+tex gyre bonum
+TEX GYRE BONUM
+TeX Gyre Bonum Bold
+TeX Gyre Bonum Italic
+TeX Gyre Bonum Bold Italic
+TeXGyreBonum-Regular
+TeXGyreBonum-Bold
+TeXGyreBonum-Italic
+TeXGyreBonum-BoldItalic
+TeX Gyre Bonum-Bold
+TeX Gyre Bonum-Italic
+TeX Gyre Bonum-BoldItalic
+TeX Gyre Bonum-Bold Italic
+TeXGyreBonum
+TeXGyreBonum/B
+TeX Gyre Bonum Regular
+TeX Gyre Bonum-Regular
+TeXGyreBonum-Bold Italic
+
+TeX Gyre Schola
+TeX Gyre Schola/B
+TeX Gyre Schola/I
+TeX Gyre Schola/BI
+tex gyre schola
+TEX GYRE SCHOLA
+TeX Gyre Schola Bold
+TeX Gyre Schola Italic
+TeX Gyre Schola Bold Italic
+TeXGyreSchola-Regular
+TeXGyreSchola-Bold
+TeXGyreSchola-Italic
+TeXGyreSchola-BoldItalic
+TeX Gyre Schola-Bold
+TeX Gyre Schola-Italic
+TeX Gyre Schola-BoldItalic
+TeX Gyre Schola-Bold Italic
+TeXGyreSchola
+TeXGyreSchola/B
+TeX Gyre Schola Regular
+TeX Gyre Schola-Regular
+TeXGyreSchola-Bold Italic
+
+TeX Gyre Adventor
+TeX Gyre Adventor/B
+TeX Gyre Adventor/I
+TeX Gyre Adventor/BI
+tex gyre adventor
+TEX GYRE ADVENTOR
+TeX Gyre Adventor Bold
+TeX Gyre Adventor Italic
+TeX Gyre Adventor Bold Italic
+TeXGyreAdventor-Regular
+TeXGyreAdventor-Bold
+TeXGyreAdventor-Italic
+TeXGyreAdventor-BoldItalic
+TeX Gyre Adventor-Bold
+TeX Gyre Adventor-Italic
+TeX Gyre Adventor-BoldItalic
+TeX Gyre Adventor-Bold Italic
+TeXGyreAdventor
+TeXGyreAdventor/B
+TeX Gyre Adventor Regular
+TeX Gyre Adventor-Regular
+TeXGyreAdventor-Bold Italic
+
+TeX Gyre Heros Cn
+TeX Gyre Heros Cn/B
+TeX Gyre Heros Cn/I
+TeX Gyre Heros Cn/BI
+tex gyre heros cn
+TEX GYRE HEROS CN
+TeX Gyre Heros Cn Bold
+TeX Gyre Heros Cn Italic
+TeX Gyre Heros Cn Bold Italic
+TeXGyreHerosCondensed-Regular
+TeXGyreHerosCondensed-Bold
+TeXGyreHerosCondensed-Italic
+TeXGyreHerosCondensed-BoldItalic
+TeX Gyre Heros Cn-Bold
+TeX Gyre Heros Cn-Italic
+TeX Gyre Heros Cn-BoldItalic
+TeX Gyre Heros Cn-Bold Italic
+TeXGyreHerosCn
+TeXGyreHerosCn/B
+TeX Gyre Heros Cn Regular
+
+TeX Gyre Chorus
+TeX Gyre Chorus/B
+TeX Gyre Chorus/I
+TeXGyreChorus
+TeXGyreChorus-MediumItalic
+TeX Gyre Chorus-Regular
+TeX Gyre Chorus Regular
+
+Fira Sans
+Fira Sans/B
+Fira Sans/I
+Fira Sans/BI
+fira sans
+FIRA SANS
+Fira Sans Bold
+Fira Sans Italic
+Fira Sans Bold Italic
+FiraSans-Regular
+FiraSans-Bold
+FiraSans-Italic
+FiraSans-BoldItalic
+Fira Sans-Bold
+Fira Sans-Italic
+Fira Sans-BoldItalic
+Fira Sans-Bold Italic
+Fira Sans Light
+Fira Sans Light/B
+Fira Sans Light/I
+Fira Sans Light/BI
+Fira Sans-Light
+Fira Sans-Light Italic
+FiraSans-Light
+Fira Sans Book
+Fira Sans Book/I
+Fira Sans Book Italic
+Fira Sans-Book
+Fira Sans Medium
+Fira Sans SemiBold
+Fira Sans SemiBold/I
+Fira Sans ExtraBold
+Fira Sans Thin/BI
+Fira Sans Regular
+Fira Sans-Regular
+Fira Sans Heavy Italic
+Fira Sans UltraLight
+
+Fira Mono
+Fira Mono/B
+Fira Mono/I
+Fira Mono/BI
+fira mono
+FIRA MONO
+Fira Mono Bold
+Fira Mono Oblique
+Fira Mono Bold Oblique
+Fira Mono Medium
+FiraMono-Regular
+FiraMono-Bold
+FiraMono-Oblique
+FiraMono-BoldOblique
+FiraMono-Medium
+Fira Mono-Bold
+Fira Mono-Oblique
+Fira Mono-BoldOblique
+Fira Mono-Medium
+Fira Mono-Bold Oblique
+Fira Mono Regular
+Fira Mono-Regular
+
+EB Garamond
+EB Garamond/B
+EB Garamond/I
+EB Garamond/BI
+eb garamond
+EB GARAMOND
+EB Garamond Bold
+EB Garamond Italic
+EB Garamond Bold Italic
+EBGaramond-Regular
+EBGaramond-Bold
+EBGaramond-Italic
+EBGaramond-BoldItalic
+EB Garamond-Bold
+EB Garamond-Italic
+EB Garamond-BoldItalic
+EB Garamond-Bold Italic
+EB Garamond Medium
+EB Garamond Medium/I
+EB Garamond Medium/B
+EB Garamond SemiBold
+EB Garamond SemiBold Italic
+EB Garamond-SemiBold
+EB Garamond-SemiBold Italic
+EBGaramond-SemiBold
+EB Garamond ExtraBold
+EB Garamond Regular
+EB Garamond-Regular
+EB Garamond Initials
+EBGaramond-Initials
+EB Garamond 12
+
+Libertinus Serif
+Libertinus Serif/B
+Libertinus Serif/I
+Libertinus Serif/BI
+libertinus serif
+LIBERTINUS SERIF
+Libertinus Serif Bold
+Libertinus Serif Italic
+Libertinus Serif Bold Italic
+LibertinusSerif-Regular
+LibertinusSerif-Bold
+LibertinusSerif-Italic
+LibertinusSerif-BoldItalic
+Libertinus Serif-Bold
+Libertinus Serif-Italic
+Libertinus Serif-BoldItalic
+Libertinus Serif-Bold Italic
+Libertinus Serif Semibold
+Libertinus Serif Semibold/I
+Libertinus Serif Semibold/B
+Libertinus Serif Semibold Italic
+Libertinus Serif-Semibold
+Libertinus Serif-Semibold Italic
+LibertinusSerif-Semibold
+Libertinus Serif Regular
+Libertinus Serif-Regular
+Libertinus Serif Display
+Libertinus Serif Display/B
+Libertinus Serif Display Regular
+Libertinus Serif Initials
+Libertinus Sans
+Libertinus Sans/B
+Libertinus Sans/I
+Libertinus Sans/BI
+Libertinus Sans Bold
+Libertinus Mono
+Libertinus Mono/B
+Libertinus Math
+Libertinus Keyboard
+libertinus serif
+
+NewComputerModern10
+NewComputerModern10/B
+NewComputerModern10/I
+NewComputerModern10/BI
+newcomputermodern10
+NEWCOMPUTERMODERN10
+NewComputerModern10 Bold
+NewComputerModern10 Italic
+NewComputerModern10 BoldItalic
+NewComputerModern10 Book
+NewComputerModern10 BookItalic
+NewCM10-Regular
+NewCM10-Bold
+NewCM10-Book
+NewCM10-BookItalic
+NewComputerModern10-Bold
+NewComputerModern10-Italic
+NewComputerModern10-BoldItalic
+NewComputerModern10-Book
+NewComputerModern10-BookItalic
+NewComputerModern10 Regular
+NewComputerModern10-Regular
+NewComputerModern10 Book
+NewComputerModern10-Book/I
+NewComputerModern10-Book/B
+NewComputerModern08
+NewComputerModern08/I
+NewComputerModernMono10
+NewComputerModernMono10/B
+NewComputerModernMono10/I
+NewComputerModernMono10/BI
+NewComputerModernMono10-BoldOblique
+NewComputerModernSans10
+NewComputerModernSans10/BI
+NewComputerModern Math
+NewComputerModernMath
+NewCMMath-Regular
+NewComputerModern10/S=8
+NewComputerModern10	8
+
+# Families installed in ~/Library/Fonts with typographic names (ids 16/17)
+# that differ from the legacy ones, a Mac-only id 16, and mixed records.
+IBM Plex Serif
+IBM Plex Serif/B
+IBM Plex Serif/I
+IBM Plex Serif/BI
+IBM Plex Serif Text
+IBM Plex Serif Text/I
+IBM Plex Serif-Text
+IBM Plex Serif-Thin Italic
+IBM Plex Serif Light
+IBM Plex Serif Light/B
+IBMPlexSerif-SemiBold
+IBM Plex Serif SemiBold/I
+Input Mono
+Input Mono/B
+Input Mono/I
+Input Mono/BI
+Input Mono Light
+InputMono Light
+InputMono LightIta
+Input Mono-Light Italic
+InputMono-Black
+Geist Mono
+Geist Mono/B
+Geist Mono/I
+Geist Mono UltraBlack
+Geist Mono-UltraBlack
+Geist Mono Thin/B
+Dank Mono
+Dank Mono/B
+Dank Mono/I
+Dank Mono/BI
+Dank Mono Italic
+DankMono-Italic
+Dank Mono-Bold

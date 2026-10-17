@@ -67,6 +67,15 @@
 //!   when `SF-Mono-*.otf` and `SFMonoLigaturized-*.ttf`, both family `SF
 //!   Mono`, are installed). Here, as in XeTeX's fontconfig build, they are.
 //!
+//! Over fonts that are not installed (TeX Live's Erewhon, TeX Gyre, Fira and
+//! EB Garamond, given to both sides; `fontmatch.py --font-dirs`,
+//! `fontnames-texlive.txt`, 2026-10-12): 411 of 417 lookups select the same
+//! face; the rest are Core Text's localized family names, two faces sharing
+//! one full name (`Fira Mono`), and a PostScript name whose prefix is a
+//! legacy family (`InputMono-Black`). Family names are matched as the font
+//! spells them, in `xetex` as here: Erewhon's family is `erewhon`, and
+//! `Erewhon` is found by neither.
+//!
 //! The catalog also reads what Core Text sees and `font-discovery`'s
 //! `default_dirs` leaves out: the fonts macOS downloads on demand
 //! ([`catalog::os_extra_dirs`]: PingFang, Hannotate, Osaka ...) and a

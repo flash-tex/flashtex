@@ -813,3 +813,42 @@ fn system_fonts_resolve() {
         );
     }
 }
+
+/// TeX Live's Erewhon (`fonts/opentype/public/erewhon`), whose family name
+/// is spelled "erewhon": the answers TeX Live 2026's `xetex` gives with the
+/// same files visible (`tools/xetex-lockstep/fontmatch.py --font-dirs`,
+/// 2026-10-12). A family is found only as the font spells it, so
+/// `\setmainfont{Erewhon}` fails in `xelatex` too. Skips without TeX Live.
+#[test]
+fn erewhon_family_is_found_as_spelled() {
+    use flashtex_engine::resolver::Format;
+    let Some(regular) = super::kpse_find_file("Erewhon-Regular.otf", Format::OpenType) else {
+        eprintln!("skipped: Erewhon-Regular.otf not found through kpathsea");
+        return;
+    };
+    let dir = std::path::Path::new(&regular)
+        .parent()
+        .unwrap()
+        .to_path_buf();
+    let catalog = Arc::new(FontCatalog::scan(&[dir]));
+    let cases: [(&str, Option<&str>); 10] = [
+        ("Erewhon", None),
+        ("Erewhon/B", None),
+        ("erewhon", Some("Erewhon-Regular")),
+        ("erewhon/B", Some("Erewhon-Bold")),
+        ("erewhon/I", Some("Erewhon-Italic")),
+        ("erewhon/BI", Some("Erewhon-BoldItalic")),
+        ("Erewhon Regular/BI", Some("Erewhon-BoldItalic")),
+        ("Erewhon-Bold", Some("Erewhon-Bold")),
+        ("erewhon-Slanted", Some("Erewhon-RegularSlanted")),
+        // Every Microsoft record's family name, as XeTeX's fontconfig build
+        // reads them (Core Text gives macOS's xetex only the default and
+        // the user's language: fontmatch-texlive-known.txt).
+        ("Эвристика", Some("Erewhon-Regular")),
+    ];
+    for (name, want) in cases {
+        // A fresh manager per name, as each xetex run has.
+        let mut m = FontMgr::new(Arc::clone(&catalog));
+        assert_eq!(find(&mut m, name).as_deref(), want, "{name}");
+    }
+}
