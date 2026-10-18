@@ -1,5 +1,5 @@
 {
- "all_green": true,
+ "all_green": false,
  "behind_tiers": [],
  "engines": {
   "new": {
@@ -42,7 +42,7 @@
      "source": "parity"
     },
     {
-     "date": "2026-10-18T08:59:22Z",
+     "date": "2026-10-18T16:09:25Z",
      "documents_path": "/home/runner/work/_temp/t4-new/documents.json",
      "engine_kind": "tex",
      "engine_sha256": "7195ff769dd94d2096624cd5c4fb9c7d7496439c92af86e4e7167755bd6b818c",
@@ -128,7 +128,15 @@
   "texlive_root": "/home/runner/work/_temp/texlive/2026",
   "tlpdb_sha256": "50f564d8438549d29274e29cd9cfb4cdad2caa65d32517a2390c6d6f4472ab00"
  },
- "partial": [],
+ "partial": [
+  "nightly-5k L0: 28 document(s) unmeasured",
+  "nightly-5k L1: 28 document(s) unmeasured",
+  "nightly-5k L2: 28 document(s) unmeasured",
+  "nightly-5k L3: 28 document(s) unmeasured",
+  "nightly-5k P-T1: 28 document(s) unmeasured",
+  "nightly-5k P-T2: 28 document(s) unmeasured",
+  "nightly-5k crashes: 28 document(s) unmeasured"
+ ],
  "red": 0,
  "red_tiers": [],
  "retirement": [
@@ -204,7 +212,7 @@
     "state": "met",
     "why": []
    },
-   "gate_state": "met",
+   "gate_state": "not met",
    "id": "S5",
    "name": "Flip: new documents default to the new engine (existing documents never switch silently)",
    "other_preconditions": "decision 3 gate as confirmed (Q3): P-T2 >= 99% and P-T1 >= 98% on arXiv and T4, zero crashes on T4, new >= old on every tier; T2 clean; no-TeX-Live gate green; the S5 app-parity rows of docs/evidence/app-parity-2026-10-05 (plan \u00a74.4; app_parity_gate: tools/parity/app-parity-rows.json, its tests passing, not skipped, on mac-app and the host leg); T1 (lockstep) has 0 new differences, which this board does not measure; \u00a71.2 latency targets met on a T7 reference run; one shipped release carries #1421/#1427 records; the modes lane's fontspec fallback; S3, S3r and S4 landed",
@@ -228,7 +236,7 @@
      "old-route rows open: E2, E3, E5"
     ]
    },
-   "gate_state": "met",
+   "gate_state": "not met",
    "id": "S6",
    "name": "App old route out",
    "other_preconditions": "S5 and S6a landed (no soak); the S6 app-parity rows (plan \u00a74.4), each test passing and not skipped on S6's tip with the old helpers absent; the Unicode mode's M3 gate (modes Q1); source offer and \u00a73 legal review (RQ19); RQ6, RQ7 and RQ20 ruled; revert check",
@@ -237,7 +245,7 @@
   },
   {
    "app_parity": null,
-   "gate_state": "met",
+   "gate_state": "not met",
    "id": "S7",
    "name": "Old engine deleted at once (compiler, render-pipeline, the old flashtex-cli, perf-bench, orphans)",
    "other_preconditions": "S6 landed, queued immediately; T7 gating for >= 10 runs; RQ5 ruled; 0 open old-path PRs; revert check",
@@ -246,7 +254,7 @@
   },
   {
    "app_parity": null,
-   "gate_state": "met",
+   "gate_state": "not met",
    "id": "S8",
    "name": "Oracles to tests/, final sweep",
    "other_preconditions": "S7 landed; revert check",
@@ -1245,16 +1253,17 @@
    "metric": "P-T1",
    "new": {
     "excluded": {
-     "P-T1 outside the --pt1-sample (by rule)": 3597,
-     "oracle": 1210
+     "P-T1 outside the --pt1-sample (by rule)": 3574,
+     "fetch": 28,
+     "oracle": 1207
     },
     "host": "runnervm8k3b6",
     "invalid": null,
     "note": null,
-    "of": 193,
+    "of": 191,
     "oracle": "pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026)",
-    "partial": null,
-    "passed": 193,
+    "partial": "28 document(s) unmeasured",
+    "passed": 191,
     "skipped": 0,
     "source": "nightly",
     "status": "measured"
@@ -1283,15 +1292,16 @@
    "metric": "P-T2",
    "new": {
     "excluded": {
-     "oracle": 1210
+     "fetch": 28,
+     "oracle": 1207
     },
     "host": "runnervm8k3b6",
     "invalid": null,
     "note": null,
-    "of": 3790,
+    "of": 3765,
     "oracle": "pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026)",
-    "partial": null,
-    "passed": 3790,
+    "partial": "28 document(s) unmeasured",
+    "passed": 3765,
     "skipped": 0,
     "source": "nightly",
     "status": "measured"
@@ -1326,15 +1336,16 @@
    "metric": "L0",
    "new": {
     "excluded": {
-     "oracle": 1210
+     "fetch": 28,
+     "oracle": 1207
     },
     "host": "runnervm8k3b6",
     "invalid": null,
     "note": null,
-    "of": 3790,
+    "of": 3765,
     "oracle": "pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026)",
-    "partial": null,
-    "passed": 3790,
+    "partial": "28 document(s) unmeasured",
+    "passed": 3765,
     "skipped": 0,
     "source": "nightly",
     "status": "measured"
@@ -1369,15 +1380,16 @@
    "metric": "L1",
    "new": {
     "excluded": {
-     "oracle": 1210
+     "fetch": 28,
+     "oracle": 1207
     },
     "host": "runnervm8k3b6",
     "invalid": null,
     "note": null,
-    "of": 3790,
+    "of": 3765,
     "oracle": "pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026)",
-    "partial": null,
-    "passed": 3790,
+    "partial": "28 document(s) unmeasured",
+    "passed": 3765,
     "skipped": 0,
     "source": "nightly",
     "status": "measured"
@@ -1412,15 +1424,16 @@
    "metric": "L2",
    "new": {
     "excluded": {
-     "oracle": 1210
+     "fetch": 28,
+     "oracle": 1207
     },
     "host": "runnervm8k3b6",
     "invalid": null,
     "note": null,
-    "of": 3790,
+    "of": 3765,
     "oracle": "pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026)",
-    "partial": null,
-    "passed": 3790,
+    "partial": "28 document(s) unmeasured",
+    "passed": 3765,
     "skipped": 0,
     "source": "nightly",
     "status": "measured"
@@ -1455,15 +1468,16 @@
    "metric": "L3",
    "new": {
     "excluded": {
-     "oracle": 1210
+     "fetch": 28,
+     "oracle": 1207
     },
     "host": "runnervm8k3b6",
     "invalid": null,
     "note": null,
-    "of": 3790,
+    "of": 3765,
     "oracle": "pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026)",
-    "partial": null,
-    "passed": 3790,
+    "partial": "28 document(s) unmeasured",
+    "passed": 3765,
     "skipped": 0,
     "source": "nightly",
     "status": "measured"
@@ -1498,15 +1512,16 @@
    "metric": "crashes",
    "new": {
     "excluded": {
-     "oracle": 1210
+     "fetch": 28,
+     "oracle": 1207
     },
     "host": "runnervm8k3b6",
     "invalid": null,
     "note": null,
-    "of": 3790,
+    "of": 3765,
     "oracle": "pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026)",
-    "partial": null,
-    "passed": 3790,
+    "partial": "28 document(s) unmeasured",
+    "passed": 3765,
     "skipped": 0,
     "source": "nightly",
     "status": "measured"
@@ -1636,7 +1651,7 @@
    "verdict": "ahead (old n/a)"
   }
  ],
- "s5_scoreboard_gate_met": true,
+ "s5_scoreboard_gate_met": false,
  "sample_note": null,
  "samples": [],
  "schema": "flashtex-p5-scoreboard/1",
