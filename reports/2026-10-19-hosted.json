@@ -42,7 +42,7 @@
      "source": "parity"
     },
     {
-     "date": "2026-10-19T10:29:34Z",
+     "date": "2026-10-19T16:33:35Z",
      "documents_path": "/home/runner/work/_temp/t4-new/documents.json",
      "engine_kind": "tex",
      "engine_sha256": "7195ff769dd94d2096624cd5c4fb9c7d7496439c92af86e4e7167755bd6b818c",
@@ -129,13 +129,13 @@
   "tlpdb_sha256": "50f564d8438549d29274e29cd9cfb4cdad2caa65d32517a2390c6d6f4472ab00"
  },
  "partial": [
-  "nightly-5k L0: 20 document(s) unmeasured",
-  "nightly-5k L1: 20 document(s) unmeasured",
-  "nightly-5k L2: 20 document(s) unmeasured",
-  "nightly-5k L3: 20 document(s) unmeasured",
-  "nightly-5k P-T1: 20 document(s) unmeasured",
-  "nightly-5k P-T2: 20 document(s) unmeasured",
-  "nightly-5k crashes: 20 document(s) unmeasured"
+  "nightly-5k L0: 26 document(s) unmeasured",
+  "nightly-5k L1: 26 document(s) unmeasured",
+  "nightly-5k L2: 26 document(s) unmeasured",
+  "nightly-5k L3: 26 document(s) unmeasured",
+  "nightly-5k P-T1: 26 document(s) unmeasured",
+  "nightly-5k P-T2: 26 document(s) unmeasured",
+  "nightly-5k crashes: 26 document(s) unmeasured"
  ],
  "red": 0,
  "red_tiers": [],
@@ -1254,16 +1254,16 @@
    "new": {
     "excluded": {
      "P-T1 outside the --pt1-sample (by rule)": 3580,
-     "fetch": 20,
-     "oracle": 1208
+     "fetch": 26,
+     "oracle": 1204
     },
     "host": "runnervm8k3b6",
     "invalid": null,
     "note": null,
-    "of": 192,
+    "of": 190,
     "oracle": "pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026)",
-    "partial": "20 document(s) unmeasured",
-    "passed": 192,
+    "partial": "26 document(s) unmeasured",
+    "passed": 190,
     "skipped": 0,
     "source": "nightly",
     "status": "measured"
@@ -1292,24 +1292,24 @@
    "metric": "P-T2",
    "new": {
     "excluded": {
-     "fetch": 20,
-     "oracle": 1208
+     "fetch": 26,
+     "oracle": 1204
     },
     "host": "runnervm8k3b6",
     "invalid": null,
     "note": null,
-    "of": 3772,
+    "of": 3770,
     "oracle": "pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026)",
-    "partial": "20 document(s) unmeasured",
-    "passed": 3772,
+    "partial": "26 document(s) unmeasured",
+    "passed": 3770,
     "skipped": 0,
     "source": "nightly",
     "status": "measured"
    },
    "old": {
     "against": {
-     "of": 372,
-     "passed": 372,
+     "of": 373,
+     "passed": 373,
      "what": "the baseline's 440 IDs"
     },
     "excluded": {},
@@ -1336,24 +1336,24 @@
    "metric": "L0",
    "new": {
     "excluded": {
-     "fetch": 20,
-     "oracle": 1208
+     "fetch": 26,
+     "oracle": 1204
     },
     "host": "runnervm8k3b6",
     "invalid": null,
     "note": null,
-    "of": 3772,
+    "of": 3770,
     "oracle": "pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026)",
-    "partial": "20 document(s) unmeasured",
-    "passed": 3772,
+    "partial": "26 document(s) unmeasured",
+    "passed": 3770,
     "skipped": 0,
     "source": "nightly",
     "status": "measured"
    },
    "old": {
     "against": {
-     "of": 372,
-     "passed": 372,
+     "of": 373,
+     "passed": 373,
      "what": "the baseline's 440 IDs"
     },
     "excluded": {},
@@ -1380,24 +1380,24 @@
    "metric": "L1",
    "new": {
     "excluded": {
-     "fetch": 20,
-     "oracle": 1208
+     "fetch": 26,
+     "oracle": 1204
     },
     "host": "runnervm8k3b6",
     "invalid": null,
     "note": null,
-    "of": 3772,
+    "of": 3770,
     "oracle": "pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026)",
-    "partial": "20 document(s) unmeasured",
-    "passed": 3772,
+    "partial": "26 document(s) unmeasured",
+    "passed": 3770,
     "skipped": 0,
     "source": "nightly",
     "status": "measured"
    },
    "old": {
     "against": {
-     "of": 372,
-     "passed": 372,
+     "of": 373,
+     "passed": 373,
      "what": "the baseline's 440 IDs"
     },
     "excluded": {},
@@ -1424,24 +1424,24 @@
    "metric": "L2",
    "new": {
     "excluded": {
-     "fetch": 20,
-     "oracle": 1208
+     "fetch": 26,
+     "oracle": 1204
     },
     "host": "runnervm8k3b6",
     "invalid": null,
     "note": null,
-    "of": 3772,
+    "of": 3770,
     "oracle": "pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026)",
-    "partial": "20 document(s) unmeasured",
-    "passed": 3772,
+    "partial": "26 document(s) unmeasured",
+    "passed": 3770,
     "skipped": 0,
     "source": "nightly",
     "status": "measured"
    },
    "old": {
     "against": {
-     "of": 372,
-     "passed": 372,
+     "of": 373,
+     "passed": 373,
      "what": "the baseline's 440 IDs"
     },
     "excluded": {},
@@ -1468,24 +1468,24 @@
    "metric": "L3",
    "new": {
     "excluded": {
-     "fetch": 20,
-     "oracle": 1208
+     "fetch": 26,
+     "oracle": 1204
     },
     "host": "runnervm8k3b6",
     "invalid": null,
     "note": null,
-    "of": 3772,
+    "of": 3770,
     "oracle": "pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026)",
-    "partial": "20 document(s) unmeasured",
-    "passed": 3772,
+    "partial": "26 document(s) unmeasured",
+    "passed": 3770,
     "skipped": 0,
     "source": "nightly",
     "status": "measured"
    },
    "old": {
     "against": {
-     "of": 372,
-     "passed": 372,
+     "of": 373,
+     "passed": 373,
      "what": "the baseline's 440 IDs"
     },
     "excluded": {},
@@ -1512,16 +1512,16 @@
    "metric": "crashes",
    "new": {
     "excluded": {
-     "fetch": 20,
-     "oracle": 1208
+     "fetch": 26,
+     "oracle": 1204
     },
     "host": "runnervm8k3b6",
     "invalid": null,
     "note": null,
-    "of": 3772,
+    "of": 3770,
     "oracle": "pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026)",
-    "partial": "20 document(s) unmeasured",
-    "passed": 3772,
+    "partial": "26 document(s) unmeasured",
+    "passed": 3770,
     "skipped": 0,
     "source": "nightly",
     "status": "measured"
