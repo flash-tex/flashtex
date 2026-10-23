@@ -1,9 +1,9 @@
 # P5 scoreboard summary
 
-Host: nixos-7800x3d (flashtex-linux; oracle pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026), LaTeX 2026-06-01, tlpdb 909745461c89 (/home/kubar/texlive/2026); tools b5e9f5b90).
-Engines: new a3e7149f3a1dc56ad839ab42d1bca4d1122fb0ea, old a3e7149f3a1dc56ad839ab42d1bca4d1122fb0ea.
+Host: nixos-7800x3d-2 (flashtex-linux; oracle pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026), LaTeX 2026-06-01, tlpdb 909745461c89 (/home/kubar/texlive/2026); tools b5e9f5b90).
+Engines: new b5e9f5b9036445a8f56a25d11eb420d508f2fff5, old b5e9f5b9036445a8f56a25d11eb420d508f2fff5.
 
-Full table and notes: https://github.com/flash-tex/flashtex/actions/runs/39778597571
+Full table and notes: https://github.com/flash-tex/flashtex/actions/runs/39951049756
 
 **All green**: new >= old on every tier, targets and bars met, every run complete. That is only the scoreboard part of S5's precondition; S5 also needs: decision 3 gate as confirmed (Q3): P-T2 >= 99% and P-T1 >= 98% on arXiv and T4, zero crashes on T4, new >= old on every tier; T2 clean; no-TeX-Live gate green; the S5 app-parity rows of docs/evidence/app-parity-2026-10-05 (plan §4.4; app_parity_gate: tools/parity/app-parity-rows.json, its tests passing, not skipped, on mac-app and the host leg); T1 (lockstep) has 0 new differences, which this board does not measure; §1.2 latency targets met on a T7 reference run; one shipped release carries #1421/#1427 records (met: v0.2.0, 2026-10-20, tag commit 6316bc14d); the modes lane's fontspec fallback; S3, S3r and S4 landed.
 
