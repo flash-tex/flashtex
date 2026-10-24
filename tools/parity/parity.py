@@ -4,19 +4,16 @@ pdfLaTeX, and what stops the rest?
 
 Oracle tooling only (Python 3 standard library, plus qpdf run as an external
 program for P-T2). pdflatex (MacTeX) is the oracle and never runs in the
-product path. The engine under test is `--engine <bin>`: by default (since
-S5) the new engine, flashtex-initex, or any pdfTeX-compatible command line
-(pdfTeX itself for the self-test), run as `<bin> -fmt=pdflatex` on a copy of
-the tree; or, with `--old-engine`, the frozen command line `flashtex build`
-(the old exact-route PDF), run on the untouched source tree. `--engine-kind` overrides the
-detection, which reads the first line of `<bin> --version`.
+product path. The engine under test is `--engine <bin>`: by default the new
+engine, flashtex-initex, or any pdfTeX-compatible command line (pdfTeX itself
+for the self-test), run as `<bin> -fmt=pdflatex` on a copy of the tree. (Until
+retirement stage S7 it could also be the old engine's command line.)
 
 Headline: the DESIGN §1.1 gating tiers (tools/parity/tiers.py), per document
 against the pinned pdfTeX 1.40.29 (`--oracle-pdftex`), run to convergence:
 
   P-T1  identical box dumps at every `\\shipout` and identical `\\tracingall`
-        logs, in PDF mode. Only a TeX engine writes them, so P-T1 is n/a for
-        the flashtex CLI, and the report says so.
+        logs, in PDF mode.
   P-T2  identical embedded font subsets and identical page content streams
         after qpdf normalisation, with object numbers resolved away.
 
@@ -24,13 +21,11 @@ Parity levels L0-L4, per document, strictest last. Each is a **cumulative** gate
 a document is "at L3" only when it also passes L0, L1 and L2.
 
   L0  compiles: pdflatex compiles it with `-halt-on-error` (the document is in
-      the denominator only then) and FlashTeX renders it with **zero
-      error-severity diagnostics** (`flashtex build --json`: exit 0,
-      `summary.errors == 0`, a PDF and a display list written).
+      the denominator only then) and the engine exits 0 with a PDF.
   L1  same page count.
   L2  same glyphs on every page: the multiset of glyph characters per page is
-      equal (identity via `glyphkeys`: reference glyph names and candidate
-      cluster text both reduced to NFKD Unicode). Order and position are L3's.
+      equal (identity via `glyphkeys`: glyph names reduced to NFKD Unicode).
+      Order and position are L3's.
   L3  every glyph origin within 0.5 bp: a one-to-one matching of same-
       character glyphs with |dx| <= 0.5 and |dy| <= 0.5 bp covers every glyph
       of every page.
@@ -38,13 +33,12 @@ a document is "at L3" only when it also passes L0, L1 and L2.
       (8-bit grey); a pixel differs when |delta| > RASTER_DELTA grey levels;
       every page must have at most RASTER_FRACTION of its pixels differing.
 
-For a TeX engine, L0 is "exit 0 with a PDF" and the candidate's glyphs are
-read from its PDF exactly as the reference's are.
+The candidate's glyphs are read from its PDF exactly as the reference's are.
 
 After P-T1/P-T2, the share of documents at L3 is reported. Also reported per tier: the
 share at each level, each check's independent pass rate, the glyph-position
 error distribution (p50/p95/max of max(|dx|,|dy|) over glyphs the word
-alignment of `tools/visual-oracle/rank.py` pairs), the first diverging page,
+alignment of `tools/parity/wordalign.py` pairs), the first diverging page,
 and the causes that block each document's next level, ranked by how many
 documents they block (see `causes_for`).
 
@@ -70,7 +64,6 @@ import collections
 import concurrent.futures
 import datetime as _dt
 import hashlib
-import itertools
 import json
 import math
 import multiprocessing
@@ -85,18 +78,16 @@ import time
 HERE = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.abspath(os.path.join(HERE, "..", ".."))
 sys.path.insert(0, HERE)
-sys.path.insert(0, os.path.join(REPO, "tools", "visual-oracle"))
-sys.path.insert(0, os.path.join(REPO, "tools", "real-world-corpus"))
 
 import corpus as pcorpus  # noqa: E402  (tools/parity/corpus.py)
 import definers  # noqa: E402
 import glyphkeys  # noqa: E402
-import fontenv  # noqa: E402
+import harness  # noqa: E402
 import pdftext  # noqa: E402
-import rank  # noqa: E402
-import run as rwc  # noqa: E402  (tools/real-world-corpus/run.py)
 import tiers as ptiers  # noqa: E402  (tools/parity/tiers.py: P-T1, P-T2)
-from cumulative import ENV_RE  # noqa: E402
+import wordalign  # noqa: E402
+
+ENV_RE = re.compile(r"\\(begin|end)\s*\{([^}]{1,40})\}")
 
 LEVELS = ("L0", "L1", "L2", "L3", "L4")
 POS_TOL = 0.5          # bp, per axis (L3)
@@ -106,17 +97,11 @@ ORACLE_PASSES = 6
 ORACLE_TIMEOUT = 300
 CANDIDATE_TIMEOUT = 180
 FIXTURE_ROOTS = ("fixtures/real-world", "fixtures/divergence-probes")
-# flashtex-cli is a member of the root Cargo workspace (Cargo.toml), so its
-# binary is the repository's target/release/flashtex -- not
-# crates/flashtex-cli/target/, which is where it lived while the crate was
-# standalone against crates/render-pipeline/vendor/.
-DEFAULT_FLASHTEX = os.path.join(REPO, "target", "release", "flashtex")
-# Since S5 (retirement plan §1.8) the engine under test defaults to the new
-# engine, flashtex-initex (FLASHTEX_ENGINE overrides). It needs its formats:
-# --engine-env FLASHTEX_FORMATS=<dir with pdflatex.fmt>, or FLASHTEX_FORMATS in
-# the environment (scripts/engine-parity.sh build makes them). The pool
-# defaults to crates/flashtex-engine/pdftex.pool. `--old-engine` picks the
-# frozen flashtex CLI (FLASHTEX_CLI, else DEFAULT_FLASHTEX) until S7.
+# The engine under test defaults to the new engine, flashtex-initex
+# (FLASHTEX_ENGINE overrides). It needs its formats: --engine-env
+# FLASHTEX_FORMATS=<dir with pdflatex.fmt>, or FLASHTEX_FORMATS in the
+# environment (scripts/engine-parity.sh build makes them). The pool defaults
+# to crates/flashtex-engine/pdftex.pool.
 DEFAULT_ENGINE = os.path.join(REPO, "target", "release", "flashtex-initex")
 DEFAULT_POOL = os.path.join(REPO, "crates", "flashtex-engine", "pdftex.pool")
 # Diagnostic codes that describe fonts/outline provenance, not typesetting:
@@ -165,7 +150,7 @@ def tree_hash(root):
                 continue
             p = os.path.join(dirpath, f)
             h.update(os.path.relpath(p, root).encode("utf-8") + b"\0")
-            h.update(rwc.sha256_file(p).encode("ascii") + b"\n")
+            h.update(harness.sha256_file(p).encode("ascii") + b"\n")
     return h.hexdigest()
 
 
@@ -195,21 +180,6 @@ def reference_atoms(glyphs):
             out.append((ch, g["x"], g["y_top"], gi, ext))
             if piece:
                 run = len(out) - 1
-    return out
-
-
-def candidate_atoms(glyphs):
-    """Same for the candidate; a cluster several glyphs share contributes
-    its text once, at its first glyph."""
-    out, seen = [], set()
-    for gi, g in enumerate(glyphs):
-        cl = g.get("cluster")
-        if cl is not None:
-            if cl in seen:
-                continue
-            seen.add(cl)
-        for ch in glyphkeys.chars(glyphkeys.candidate_key(g)):
-            out.append((ch, g["x"], g["y_top"], gi, 0.0))
     return out
 
 
@@ -264,7 +234,7 @@ def word_view(glyphs):
 
 
 def aligned_errors(ref_glyphs, ref_atoms, cand_glyphs, cand_atoms):
-    """Glyph-position errors over the word pairs `rank.aligned_pairs` finds.
+    """Glyph-position errors over the word pairs `wordalign.aligned_pairs` finds.
 
     Within an aligned word pair whose character sequences are equal, the k-th
     character of one is paired with the k-th of the other; the error is
@@ -272,7 +242,7 @@ def aligned_errors(ref_glyphs, ref_atoms, cand_glyphs, cand_atoms):
     (errors, pairs, ref_words, cand_words)."""
     ref_words = pdftext.words_from_glyphs(word_view(ref_glyphs))
     cand_words = pdftext.words_from_glyphs(word_view(cand_glyphs))
-    pairs, _, _ = rank.aligned_pairs(ref_words, cand_words)
+    pairs, _, _ = wordalign.aligned_pairs(ref_words, cand_words)
     r_by_glyph = collections.defaultdict(list)
     for a in ref_atoms:
         r_by_glyph[a[3]].append(a)
@@ -326,7 +296,7 @@ def fixture_documents(roots=FIXTURE_ROOTS, only=()):
     docs = []
     for root in roots:
         base = os.path.join(REPO, root)
-        for fx in rwc.discover_fixtures(base):
+        for fx in harness.discover_fixtures(base):
             did = f"{os.path.basename(root)}/{fx['id']}"
             if only and fx["id"] not in only and did not in only:
                 continue
@@ -344,7 +314,7 @@ def oracle_reference(doc, texbin, cache, log):
     and the log asks for no rerun (at most ORACLE_PASSES). A failure is cached
     too: the document is then outside the denominator (pdflatex does not
     compile it) and reported as such."""
-    exe, version = rwc.pdflatex_version(texbin)
+    exe, version = harness.pdflatex_version(texbin)
     if exe is None:
         return None, {"ok": False, "why": f"no pdflatex in {texbin}"}
     stem = os.path.splitext(doc["entry"])[0]
@@ -372,16 +342,16 @@ def oracle_reference(doc, texbin, cache, log):
     previous = None
     t0 = time.time()
     for _ in range(ORACLE_PASSES):
-        code, _, _, _, timed_out = rwc.run(argv, env=env, timeout=ORACLE_TIMEOUT, cwd=work)
+        code, _, _, _, timed_out = harness.run(argv, env=env, timeout=ORACLE_TIMEOUT, cwd=work)
         meta["passes"] += 1
         if timed_out or code != 0 or not os.path.isfile(produced):
-            txt = rwc.read_text(logpath) if os.path.isfile(logpath) else ""
+            txt = harness.read_text(logpath) if os.path.isfile(logpath) else ""
             m = re.search(r"^(! .*)$", txt, re.M)
             meta["why"] = (f"pdflatex exit {code}" + (" (timeout)" if timed_out else "")
                            + (f": {m.group(1)[:160]}" if m else ""))
             break
-        cur = rwc.sha256_file(produced)
-        if cur == previous and "Rerun to get" not in rwc.read_text(logpath):
+        cur = harness.sha256_file(produced)
+        if cur == previous and "Rerun to get" not in harness.read_text(logpath):
             meta["ok"] = True
             break
         previous = cur
@@ -392,46 +362,14 @@ def oracle_reference(doc, texbin, cache, log):
     pdf = os.path.join(odir, "reference.pdf")
     if meta["ok"]:
         shutil.copyfile(produced, pdf)
-        meta["sha256"] = rwc.sha256_file(pdf)
-        m = re.search(r"Output written on .*?\((\d+) pages?", rwc.read_text(logpath))
+        meta["sha256"] = harness.sha256_file(pdf)
+        m = re.search(r"Output written on .*?\((\d+) pages?", harness.read_text(logpath))
         meta["pages"] = int(m.group(1)) if m else None
     shutil.rmtree(work, ignore_errors=True)
     with open(meta_path, "w", encoding="utf-8") as f:
         json.dump(meta, f, indent=1)
     meta["cached"] = False
     return (pdf if meta["ok"] else None), meta
-
-
-def run_candidate(doc, flashtex, font_dirs, env, out_dir):
-    """`flashtex build` on the untouched source tree; outputs go to out_dir."""
-    os.makedirs(out_dir, exist_ok=True)
-    pdf = os.path.join(out_dir, "candidate.pdf")
-    v2 = os.path.join(out_dir, "candidate.v2.json")
-    for p in (pdf, v2):
-        if os.path.exists(p):
-            os.remove(p)
-    argv = [flashtex, "build", os.path.join(doc["dir"], doc["entry"]), "-o", pdf, "--v2", v2, "--json",
-            "--diagnostics", "short", "--color", "never"]
-    for d in fontenv.split(font_dirs):
-        argv += ["--font-dir", d]
-    code, out, err, secs, timed_out = rwc.run(argv, env=env, timeout=CANDIDATE_TIMEOUT, cwd=doc["dir"])
-    rec = {"exit": code, "timed_out": timed_out, "seconds": round(secs, 3), "status": None, "errors": None,
-           "warnings": None, "pages": None, "diagnostics": [], "pdf": None, "v2": None,
-           "stderr_tail": err.decode("utf-8", "replace")[-800:]}
-    try:
-        rep = json.loads(out.decode("utf-8", "replace"))
-    except ValueError:
-        rep = None
-    if isinstance(rep, dict):
-        rec.update({"status": rep.get("status"), "pages": rep.get("pages"),
-                    "errors": (rep.get("summary") or {}).get("errors"),
-                    "warnings": (rep.get("summary") or {}).get("warnings"),
-                    "diagnostics": rep.get("diagnostics") or [], "version": rep.get("version")})
-    if os.path.isfile(pdf):
-        rec["pdf"] = pdf
-    if os.path.isfile(v2):
-        rec["v2"] = v2
-    return rec
 
 
 def run_tex_candidate(doc, engine, out_dir, trace, extra_env=None, seed=None, stream=False, timeout=None):
@@ -445,7 +383,7 @@ def run_tex_candidate(doc, engine, out_dir, trace, extra_env=None, seed=None, st
     errors = 0 if meta.get("exit") == 0 else 1
     rec = {"exit": meta.get("exit"), "timed_out": "(timeout)" in (meta.get("why") or ""),
            "seconds": meta.get("seconds"), "status": "ok" if meta["ok"] else meta.get("why"), "errors": errors,
-           "warnings": None, "pages": None, "diagnostics": [], "pdf": pdf, "v2": None,
+           "warnings": None, "pages": None, "diagnostics": [], "pdf": pdf,
            "stderr_tail": meta.get("why") or meta.get("trace_incomplete") or "", "passes": meta.get("passes"),
            "capture": cap, "trace_seconds": meta.get("trace_seconds")}
     if meta.get("trace_timed_out") or meta.get("trace_harness_error"):
@@ -465,188 +403,11 @@ def tex_pdf_pages(pdf):
     return out
 
 
-class JsonStream:
-    """A JSON text read in pieces, so one value at a time is in memory. Each
-    value is decoded by the json module's own scanner (`raw_decode`); this
-    class only walks the object and array punctuation between them."""
-
-    WS = re.compile(r"[ \t\n\r]*")
-    CHUNK = 1 << 20  # characters per read
-
-    def __init__(self, f):
-        self.f, self.chunk = f, self.CHUNK
-        self.buf, self.pos, self.eof = "", 0, False
-        self.dec = json.JSONDecoder()
-
-    def _more(self):
-        # at least as much again as is buffered, so a value that spans many
-        # pieces is rescanned a bounded number of times (linear overall)
-        self.buf = self.buf[self.pos:]
-        self.pos = 0
-        data = self.f.read(max(self.chunk, len(self.buf)))
-        self.eof = not data
-        self.buf += data
-
-    def _skip_ws(self):
-        while True:
-            self.pos = self.WS.match(self.buf, self.pos).end()
-            if self.pos < len(self.buf):
-                return
-            if self.eof:
-                raise ValueError("unexpected end of the JSON text")
-            self._more()
-
-    def char(self):
-        """The next non-blank character, consumed."""
-        self._skip_ws()
-        self.pos += 1
-        return self.buf[self.pos - 1]
-
-    def value(self):
-        """The next whole value, decoded."""
-        while True:
-            self._skip_ws()
-            try:
-                v, end = self.dec.raw_decode(self.buf, self.pos)
-            except json.JSONDecodeError:
-                if self.eof:
-                    raise
-                # cut short by the end of the buffer; a value that is itself
-                # malformed is only found at the end of the file, holding the
-                # rest of it, as json.load would have
-                self._more()
-                continue
-            if not self.eof:
-                if end == len(self.buf):
-                    self._more()  # a number or literal may go on in the next piece
-                    continue
-                nxt = self.buf[end]
-                if nxt in ".eE" or (nxt in "+-" and self.buf[end - 1] in "eE"):
-                    # A number cut by the piece boundary decodes as its
-                    # leading integer (`1.` and `1e` both decode as 1);
-                    # read on so the whole number is decoded at once.
-                    self._more()
-                    continue
-            self.pos = end
-            return v
-
-    def end(self):
-        """Only blanks may follow the top-level value, as for `json.load`."""
-        try:
-            self._skip_ws()
-        except ValueError:
-            return
-        raise ValueError("extra data after the JSON text")
-
-    def _items(self, close, key):
-        c = self.char()
-        if c == close:
-            return
-        self.pos -= 1
-        while True:
-            if key:
-                if self.buf[self.pos] != '"':
-                    raise ValueError("a JSON object key is not a string")
-                k = self.value()
-                if self.char() != ":":
-                    raise ValueError("expected ':' after a JSON object key")
-                yield k
-            else:
-                yield None
-            c = self.char()
-            if c == close:
-                return
-            if c != ",":
-                raise ValueError(f"expected ',' or {close!r} in JSON")
-            self._skip_ws()
-
-    def members(self):
-        """An object's keys; the caller reads each value (`value`, or deeper)."""
-        if self.char() != "{":
-            raise ValueError("expected a JSON object")
-        return self._items("}", True)
-
-    def elements(self):
-        """Once per array element; the caller reads each one."""
-        if self.char() != "[":
-            raise ValueError("expected a JSON array")
-        return self._items("]", False)
-
-
-class V2Pages:
-    """The flashtex CLI's display list (`--v2`), read for `score_run` as a
-    stream: `len()` is its page count, and `pages()` yields the glyphs
-    (`rank.v2_page_glyphs`) of its first `keep` pages one at a time. The
-    scores read the candidate's glyphs only on pages the reference also has
-    (`keep` is the reference's page count); the rest are only counted (L1,
-    `missing_page`).
-
-    This replaces a `json.load` of the whole file: the old engine wrote
-    145,386 pages (2.33 GB) for arXiv 2501.07559v2 against a 23-page
-    reference, and loading it held about 17 GB, so the worker was killed
-    under the 12 GB guard and the old engine's arXiv column read INVALID.
-    Here one page is in memory at a time.
-
-    The constructor reads the whole file once, which parses all of it as
-    `json.load` did (a file that does not parse raises ValueError here, as
-    it did) and counts the pages; `pages()` reads it again up to page
-    `keep`, converting each page as it goes, so a page that does not convert
-    raises from `pages()`, while `score_run` is already scoring (it starts
-    again without the candidate, as if it had raised here). A page after
-    `keep` is parsed but never converted."""
-
-    def __init__(self, path, keep):
-        self.path, self.keep = path, keep
-        self.payload, self.count = {}, 0
-        for _ in self._raw_pages():
-            self.count += 1
-        rank.v2_page_glyphs({"payload": dict(self.payload, pages=[])})  # its coordinate unit, before any page
-
-    def __len__(self):
-        return self.count
-
-    def _raw_pages(self):
-        """Every page, in order, as parsed; `payload`'s other members are
-        kept in self.payload on the way. The top level's other members are
-        parsed and dropped (no score reads them)."""
-        seen = set()
-        with open(self.path, encoding="utf-8") as f:
-            s = JsonStream(f)
-            for key in s.members():
-                if key != "payload":
-                    s.value()
-                    continue
-                seen.add(key)
-                for k in s.members():
-                    if k != "pages":
-                        self.payload[k] = s.value()
-                        continue
-                    seen.add(k)
-                    for _ in s.elements():
-                        yield s.value()
-            s.end()
-        for k in ("payload", "pages"):
-            if k not in seen:
-                raise KeyError(k)
-
-    def pages(self):
-        raw = self._raw_pages()
-        try:
-            for page in itertools.islice(raw, self.keep):
-                yield rank.v2_page_glyphs({"payload": dict(self.payload, pages=[page])})[0]["glyphs"]
-        except (ValueError, KeyError) as e:
-            raise UnreadablePage() from e
-        finally:
-            raw.close()
-
-
-class UnreadablePage(Exception):
-    """A page `V2Pages.pages` could not convert; `__cause__` says why. Not a
-    ValueError, so it is never taken for an error of the scoring itself."""
-
-
 PT_TIERS = ("P-T1", "P-T2")
 PT_MARK = {True: "pass", False: "fail", None: "n/a"}
+# What the old engine's command line recorded for P-T1 (it was not a TeX
+# engine). Runs from before retirement stage S7 hold it; engines.py and the
+# scoreboard still read those records.
 NOT_TEX = ("n/a: the flashtex CLI is not a TeX engine and writes no box dumps or \\tracingall log; "
            "P-T1 applies to a pdfTeX-compatible --engine")
 
@@ -753,9 +514,8 @@ def score_pt(doc, cfg, cand, out_dir):
     if not cfg["oracle_pdftex"]:
         pt["excluded"] = "oracle: no pdfTeX for P-T1/P-T2"
         return pt
-    tex = cfg["engine_kind"] == "tex"
     skip = cand.get("pt1_skipped")
-    trace = tex and pt_oracle_trace(cfg, skip)
+    trace = pt_oracle_trace(cfg, skip)
     cand_cap = cand.get("capture")
     # the oracle's log is loaded only for the in-memory compare: both logs under the budget
     in_memory = bool(trace and not skip and cand_cap is not None and cand_cap.log is not None)
@@ -775,9 +535,7 @@ def score_pt(doc, cfg, cand, out_dir):
         else:
             pt2 = {"ok": False, "why": "the candidate wrote no PDF"}
         pt["P-T2"], pt["pt2"] = pt2["ok"], pt2
-    if not tex:
-        pt["why"]["P-T1"] = NOT_TEX
-    elif cfg["pt"] != "on":
+    if cfg["pt"] != "on":
         pt["why"]["P-T1"] = "not run (--pt pt2)"
     elif skip:
         pt["why"]["P-T1"] = skip["why"]
@@ -809,8 +567,8 @@ def score_pt(doc, cfg, cand, out_dir):
 
 
 def raster_page_diff(ref_pgm, cand_pgm):
-    rw, rh, rp = rwc.read_pgm(ref_pgm)
-    cw, ch, cp = rwc.read_pgm(cand_pgm)
+    rw, rh, rp = harness.read_pgm(ref_pgm)
+    cw, ch, cp = harness.read_pgm(cand_pgm)
     if (rw, rh) != (cw, ch):
         return {"size_mismatch": [[rw, rh], [cw, ch]], "ok": False}
     if rp == cp:
@@ -822,18 +580,18 @@ def raster_page_diff(ref_pgm, cand_pgm):
 
 
 def raster_compare(ref_pdf, cand_pdf, work):
-    rast = rwc.find_rasterizer()
+    rast = harness.find_rasterizer()
     if not rast[0] or rast[0] == "sips":
         return {"available": False, "why": "no pdftoppm/gs"}
-    rf, _, n1 = rwc.rasterize(rast, ref_pdf, os.path.join(work, "ref"))
-    cf, _, n2 = rwc.rasterize(rast, cand_pdf, os.path.join(work, "cand"))
+    rf, _, n1 = harness.rasterize(rast, ref_pdf, os.path.join(work, "ref"))
+    cf, _, n2 = harness.rasterize(rast, cand_pdf, os.path.join(work, "cand"))
     if n1 or n2 or len(rf) != len(cf):
         return {"available": False, "why": (n1 or n2 or f"page files {len(rf)} vs {len(cf)}")[:200]}
     pages = [raster_page_diff(a, b) for a, b in zip(rf, cf)]
     for p in rf + cf:
         os.remove(p)
     worst = max((p.get("fraction", 1.0) for p in pages), default=0.0)
-    return {"available": True, "rasterizer": rast[0], "dpi": rwc.DPI, "pages": pages,
+    return {"available": True, "rasterizer": rast[0], "dpi": harness.DPI, "pages": pages,
             "ok": all(p["ok"] for p in pages), "worst_fraction": worst}
 
 
@@ -863,7 +621,7 @@ def diag_causes(d):
     `<code>: cs \\name (<context>) <- <file>`: the construct is the message's
     leading control sequence when it starts with one (so `\\setlength requires
     a recognised dimension, got '2\\p@'` names `\\setlength`, not `\\p`), else
-    every construct `rwc.named_constructs` finds after the `[help: ...]`
+    every construct `harness.named_constructs` finds after the `[help: ...]`
     tails are dropped (`\\usepackage` and friends only when nothing more
     specific is named). `<context>` is the reason family (in math mode, in the
     preamble, inside \\textit, dimension argument, ...) and `<- file` the
@@ -877,7 +635,7 @@ def diag_causes(d):
     if m:
         return [f"{code}: base-14 font {m.group(1)} has no program to embed (exact PDF route refuses it)"]
     via = LOADED_HERE.search(raw)
-    via = f" <- {rwc.diag_key(via.group(1))}" if via else ""
+    via = f" <- {harness.diag_key(via.group(1))}" if via else ""
     msg = re.sub(r"\s*\[(help|note|hint)[^\]]*\]", "", raw)
     ctx = ""
     for rx, label in CONTEXTS:
@@ -887,7 +645,7 @@ def diag_causes(d):
             break
     if code == "missing_glyph":
         m = re.match(r"(U\+[0-9A-F]+)", msg)
-        return [f"{code}: {m.group(1) if m else rwc.diag_key(msg)[:60]}"]
+        return [f"{code}: {m.group(1) if m else harness.diag_key(msg)[:60]}"]
     lead = LEADING_CS.match(msg)
     m_env = re.match(r"^\s*(?:LaTeX Error: )?Environment ([A-Za-z@*]+) undefined", msg)
     if m_env:
@@ -895,7 +653,7 @@ def diag_causes(d):
     elif lead:
         names = {("cs", "\\" + lead.group(1))}
     else:
-        names = set(rwc.named_constructs(msg))
+        names = set(harness.named_constructs(msg))
         m = re.search(r"\bdocument class\s+[`'\"]?([A-Za-z0-9@_.\-]+)", msg)
         if m:
             names.add(("class", m.group(1)))
@@ -907,7 +665,7 @@ def diag_causes(d):
             names = specific
     if names:
         return sorted(f"{code}: {kind} {name}{ctx if kind in ('cs', 'env') else ''}{via}" for kind, name in names)
-    return [f"{code}: {rwc.diag_key(msg)[:90]}{via}"]
+    return [f"{code}: {harness.diag_key(msg)[:90]}{via}"]
 
 
 def source_texts(doc):
@@ -973,7 +731,7 @@ def localise(texts, span):
 
 
 def word_source(glyphs, word):
-    """Source span covering a candidate word's glyphs (as `rank.v2_words`)."""
+    """Source span covering a candidate word's glyphs, when they carry sources."""
     srcs = [g["sources"][0] for g in glyphs[word["glyph_index"]:word["glyph_index"] + word["glyphs"]] if g.get("sources")]
     if not srcs:
         return None
@@ -1047,7 +805,7 @@ def causes_for(result, texts):
     if lvl < 0:
         if cand.get("timed_out"):
             return ["engine: timeout"]
-        if not cand.get("pdf") or not cand.get("v2"):
+        if not cand.get("pdf"):
             if cand.get("errors"):
                 keys = set()
                 for d in diags:
@@ -1111,7 +869,7 @@ def score(doc, cfg):
     if doc["tier"] == "fixtures":
         ref = doc.get("reference")
         res["oracle"] = {"ok": bool(ref), "reference": os.path.relpath(ref, REPO) if ref else None,
-                         "engine": doc.get("reference_engine"), "sha256": rwc.sha256_file(ref) if ref else None}
+                         "engine": doc.get("reference_engine"), "sha256": harness.sha256_file(ref) if ref else None}
         if cfg["regenerate"] and cfg["texbin"]:
             ref, meta = oracle_reference(doc, cfg["texbin"], cfg["cache"], None)
             res["oracle"] = meta
@@ -1136,7 +894,7 @@ def compare_pages(ref_pages, cand_pages, n_cand, cand_atoms_of):
     """L2 and L3 page by page: (page records, glyph errors, missing chars,
     extra chars, unmapped reference glyphs, {page index: candidate glyphs}).
     `cand_pages` yields the candidate's first min(n_cand, len(ref_pages))
-    pages in order and is read once, so a stream (`V2Pages.pages`) never
+    pages in order and is read once, so a stream never
     holds more than one page. Only the first page below L3 keeps its glyphs
     and its PAGE_PRIVATE fields: `first_divergence` returns at that page and
     reads nothing else."""
@@ -1179,27 +937,19 @@ def compare_pages(ref_pages, cand_pages, n_cand, cand_atoms_of):
 
 
 def score_run(doc, cfg, res, ref, out_dir, t0):
-    tex = cfg["engine_kind"] == "tex"
-    if tex:
-        skip = pt1_skip_reason(doc, cfg)
-        stream, timeout = pt1_plan(doc, cfg, skip)
-        seed = oracle_seed(doc, cfg, skip)
-        cand = run_tex_candidate(doc, cfg["flashtex"], out_dir, trace=cfg["pt"] == "on" and not skip,
-                                 extra_env=cfg["engine_env"], seed=seed, stream=stream, timeout=timeout)
-        cand["pt1_skipped"] = skip
-        cand["seeded_conversions"] = seeded_conversions(seed)
-    else:
-        cand = run_candidate(doc, cfg["flashtex"], cfg["font_dirs"], cfg["env"], out_dir)
-    res["candidate"] = {k: v for k, v in cand.items() if k not in ("pdf", "v2", "capture")}
+    skip = pt1_skip_reason(doc, cfg)
+    stream, timeout = pt1_plan(doc, cfg, skip)
+    seed = oracle_seed(doc, cfg, skip)
+    cand = run_tex_candidate(doc, cfg["flashtex"], out_dir, trace=cfg["pt"] == "on" and not skip,
+                             extra_env=cfg["engine_env"], seed=seed, stream=stream, timeout=timeout)
+    cand["pt1_skipped"] = skip
+    cand["seeded_conversions"] = seeded_conversions(seed)
+    res["candidate"] = {k: v for k, v in cand.items() if k not in ("pdf", "capture")}
     res["candidate"]["pdf"] = bool(cand["pdf"])
-    res["candidate"]["v2"] = bool(cand["v2"])
     res["pt"] = score_pt(doc, cfg, cand, out_dir)
     cand.pop("capture", None)
-    font_bad = fontenv.font_diagnostics(cand["diagnostics"])
-    if font_bad:
-        res["font_env_failure"] = sorted({d.get("code") for d in font_bad})
     checks = res["checks"]
-    layout = cand["pdf"] if tex else cand["v2"]  # what L1-L3 read the candidate's glyphs from
+    layout = cand["pdf"]  # what L1-L3 read the candidate's glyphs from
     checks["L0"] = (cand["exit"] == 0 and not cand["timed_out"] and cand["errors"] == 0
                     and bool(cand["pdf"]) and bool(layout))
     ref_doc = pdftext.PdfDocument.load(ref)
@@ -1216,27 +966,15 @@ def score_run(doc, cfg, res, ref, out_dir, t0):
     res["reference_pages"] = len(ref_pages)
     res["reference_notes"] = sorted(notes)[:8]
     cand_pages, n_cand = [], 0
-    if tex and layout:
+    if layout:
         try:
             cand_pages = tex_pdf_pages(layout)
         except (pdftext.PdfError, OSError, ValueError) as e:
             res["candidate"]["pdf_error"] = str(e)[:200]
             cand_pages = []
         n_cand = len(cand_pages)
-    elif layout:
-        try:
-            v2 = V2Pages(cand["v2"], len(ref_pages))
-            cand_pages, n_cand = v2.pages(), len(v2)
-        except (ValueError, KeyError) as e:
-            res["candidate"]["v2_error"] = str(e)[:200]
-    cand_atoms_of = reference_atoms if tex else candidate_atoms
-    try:
-        compared = compare_pages(ref_pages, cand_pages, n_cand, cand_atoms_of)
-    except UnreadablePage as e:  # as if V2Pages had raised it
-        res["candidate"]["v2_error"] = str(e.__cause__)[:200]
-        n_cand = 0
-        compared = compare_pages(ref_pages, [], 0, cand_atoms_of)
-    page_recs, errors, missing_all, extra_all, unmapped, kept = compared
+    page_recs, errors, missing_all, extra_all, unmapped, kept = compare_pages(ref_pages, cand_pages, n_cand,
+                                                                              reference_atoms)
     res["candidate_pages"] = n_cand if layout else None
     checks["L1"] = bool(layout) and n_cand == len(ref_pages)
     checks["L2"] = checks["L1"] and all(p["l2"] for p in page_recs)
@@ -1281,11 +1019,10 @@ WORKER_DIED = "the worker process scoring this document died (killed for memory?
 def worker_died_record(doc, tier, cfg):
     """A document whose own worker died: failed at every level and tier, never
     excluded, so a candidate that kills its worker can't shrink a denominator."""
-    tex = cfg["engine_kind"] == "tex"
     pt = None
     if cfg["pt"] != "off":
-        pt = {"P-T1": False if tex and cfg["pt"] == "on" else None, "P-T2": False,
-              "why": {} if tex else {"P-T1": NOT_TEX}, "pt1": {"ok": False, "why": WORKER_DIED},
+        pt = {"P-T1": False if cfg["pt"] == "on" else None, "P-T2": False,
+              "why": {}, "pt1": {"ok": False, "why": WORKER_DIED},
               "pt2": {"ok": False, "why": WORKER_DIED}}
     return {"id": doc["id"], "tier": tier, "entry": doc.get("entry"), "level": -1, "checks": {"L0": False},
             "worker_died": True, "pt": pt, "blockers": [], "_errors": [],
@@ -1425,7 +1162,7 @@ def slim_record(r, keep=25):
     r.pop("_errors", None)
     cand = r.get("candidate")
     if cand and isinstance(cand.get("diagnostics"), list):
-        c = collections.Counter((d.get("severity"), d.get("code"), rwc.diag_key(d.get("message") or "")[:200])
+        c = collections.Counter((d.get("severity"), d.get("code"), harness.diag_key(d.get("message") or "")[:200])
                                 for d in cand["diagnostics"])
         cand["diagnostic_count"] = len(cand["diagnostics"])
         cand["diagnostics"] = [{"severity": s, "code": k, "message": m, "count": n}
@@ -1542,14 +1279,16 @@ def summarize(results):
 
 
 def owner_hint(key):
+    """Where a cause is fixed: the engine (tex.web and pdftex.web, translated)
+    owns every one since the old pipeline was deleted (S7)."""
     code = key.split(":", 1)[0]
     if code in ("pagination", "content", "placement"):
-        return "crates/render-pipeline (page/paragraph layout)"
+        return "crates/flashtex-engine (typesetting)"
     if code.startswith("raster") or code.startswith("fonts"):
-        return "crates/render-pipeline + crates/pdf (font resources / outlines)"
+        return "crates/flashtex-engine (PDF backend, fonts)"
     if code.startswith("engine"):
-        return "crates/render-pipeline (worker robustness)"
-    return rwc.owner_for({"code": code, "message": key})
+        return "crates/flashtex-engine (robustness)"
+    return "crates/flashtex-engine"
 
 
 def rank_causes(results, top=20, field="blockers"):
@@ -1680,7 +1419,7 @@ def write_report(out_dir, meta, tiers, causes, constructs, per_tier):
     w("Levels are cumulative (a document at L2 also passes L0 and L1). L0 = pdflatex compiles it with "
       "`-halt-on-error` and the engine renders it (the CLI: zero error diagnostics; a TeX engine: exit 0 with a PDF); L1 = same page count; L2 = same "
       "glyph characters on every page; L3 = every glyph origin within 0.5 bp on both axes; L4 = rasters at "
-      f"{rwc.DPI} dpi differ (|Δ| > {RASTER_DELTA} grey levels) on at most {RASTER_FRACTION * 100:.2f}% of each page. "
+      f"{harness.DPI} dpi differ (|Δ| > {RASTER_DELTA} grey levels) on at most {RASTER_FRACTION * 100:.2f}% of each page. "
       "Documents pdflatex itself cannot compile are excluded from the denominator and counted below.")
     w("")
     for name, t in tiers.items():
@@ -1707,7 +1446,7 @@ def write_report(out_dir, meta, tiers, causes, constructs, per_tier):
         w("| documents | construct |")
         w("|---:|---|")
         for k, v in t["missing"]:
-            w(f"| {v} | `{rwc.md_escape(k)}` |")
+            w(f"| {v} | `{harness.md_escape(k)}` |")
         w("")
         w("<details><summary>Per-document results</summary>")
         w("")
@@ -1716,16 +1455,16 @@ def write_report(out_dir, meta, tiers, causes, constructs, per_tier):
         w("|---|---|---|---|---|---|---:|---:|---|---|")
         for r in sorted(t["results"], key=lambda r: r["id"]):
             if r.get("excluded"):
-                w(f"| {r['id']} | — | — | — | excluded | — | — | — | — | {rwc.md_escape(r['excluded'][:90])} |")
+                w(f"| {r['id']} | — | — | — | excluded | — | — | — | — | {harness.md_escape(r['excluded'][:90])} |")
                 continue
             lvl = "below L0" if r["level"] == -1 else LEVELS[r["level"]]
             c = r.get("candidate") or {}
             bl = "; ".join(r.get("blockers") or [])
             pt = r.get("pt") or {}
-            w(f"| {r['id']} | {PT_MARK[pt.get('P-T1')]} | {PT_MARK[pt.get('P-T2')]} | {rwc.md_escape(pt_where(pt)[:120])} | "
+            w(f"| {r['id']} | {PT_MARK[pt.get('P-T1')]} | {PT_MARK[pt.get('P-T2')]} | {harness.md_escape(pt_where(pt)[:120])} | "
               f"{lvl} | {r.get('reference_pages')}/{r.get('candidate_pages')} | {c.get('errors')} | "
-              f"{r.get('first_diverging_page') or '—'} | {rwc.md_escape(r.get('divergence') or '—')} | "
-              f"{rwc.md_escape(bl[:160])} |")
+              f"{r.get('first_diverging_page') or '—'} | {harness.md_escape(r.get('divergence') or '—')} | "
+              f"{harness.md_escape(bl[:160])} |")
         w("")
         w("</details>")
         w("")
@@ -1733,10 +1472,10 @@ def write_report(out_dir, meta, tiers, causes, constructs, per_tier):
         w("| # | root cause | documents | sole | share | next level held | tiers | constructs / owner | examples |")
         w("|---:|---|---:|---:|---:|---|---|---|---|")
         for c in rows:
-            extra = ", ".join(f"`{rwc.md_escape(k.split(': ', 1)[-1])}`" for k in c.get("constructs", [])[:6]) if members else ""
-            w(f"| {c['rank']} | `{rwc.md_escape(c['cause'])}` | {c['documents']} | {c['sole']} | {c['share']} | "
+            extra = ", ".join(f"`{harness.md_escape(k.split(': ', 1)[-1])}`" for k in c.get("constructs", [])[:6]) if members else ""
+            w(f"| {c['rank']} | `{harness.md_escape(c['cause'])}` | {c['documents']} | {c['sole']} | {c['share']} | "
               + ", ".join(f"{k}: {v}" for k, v in sorted(c["next_level"].items())) + " | "
-              + ", ".join(f"{k} {v}" for k, v in sorted(c["tiers"].items())) + f" | {extra or rwc.md_escape(c['owner'])} | "
+              + ", ".join(f"{k} {v}" for k, v in sorted(c["tiers"].items())) + f" | {extra or harness.md_escape(c['owner'])} | "
               + ", ".join(c["examples"][:3]) + " |")
         w("")
 
@@ -1764,7 +1503,7 @@ def write_report(out_dir, meta, tiers, causes, constructs, per_tier):
     w("## Provenance")
     w("")
     for k in ("flashtex", "flashtex_version", "engine_kind", "flashtex_sha256", "oracle_pdftex", "oracle_pdftex_version",
-              "capture", "qpdf", "shell_escape", "argv0", "engine_env", "pdflatex", "rasterizer", "font_dirs", "tfm_dirs",
+              "capture", "qpdf", "shell_escape", "argv0", "engine_env", "pdflatex", "rasterizer",
               "host", "platform", "started_utc", "wall_seconds", "jobs", "command"):
         w(f"- {k}: `{meta.get(k)}`")
     w("")
@@ -1928,12 +1667,7 @@ def main(argv=None):
                          "in_pt1_sample); P-T2 and L0-L4 still run on every document; repeatable")
     ap.add_argument("--engine", "--flashtex", dest="engine", default=None,
                     help="engine under test: a pdfTeX-compatible binary (default: the new engine, "
-                         "$FLASHTEX_ENGINE or target/release/flashtex-initex) or the flashtex CLI")
-    ap.add_argument("--old-engine", action="store_true",
-                    help="measure the frozen flashtex CLI ($FLASHTEX_CLI or target/release/flashtex) "
-                         "instead of the new engine (until S7)")
-    ap.add_argument("--engine-kind", choices=["auto", "flashtex-cli", "tex"], default="auto",
-                    help="how to run --engine (auto: from the first line of `<engine> --version`)")
+                         "$FLASHTEX_ENGINE or target/release/flashtex-initex)")
     ap.add_argument("--oracle-pdftex", default=ptiers.DEFAULT_ORACLE,
                     help=f"pinned pdfTeX ({ptiers.PINNED_PDFTEX}) that makes the P-T1/P-T2 expected data")
     ap.add_argument("--engine-env", action="append", default=[], metavar="KEY=VALUE",
@@ -1955,15 +1689,13 @@ def main(argv=None):
                          "pass, up to the oracle's limit. A pass it stops is a harness error, never a pass")
     ap.add_argument("--pt1-skip", action="append", default=[], metavar="ID",
                     help="document ([tier/]id) whose P-T1 is not evaluated (its oracle is never traced); repeatable")
-    ap.add_argument("--texbin", default=rwc.DEFAULT_TEXBIN)
+    ap.add_argument("--texbin", default=harness.DEFAULT_TEXBIN)
     ap.add_argument("--cache", default=pcorpus.default_cache())
     ap.add_argument("--texmf", default=pcorpus.DEFAULT_TEXMF)
     ap.add_argument("--corpus-texmf", default=None, metavar="DIR",
                     help="where the TeX Live tiers' documents (templates, packages) are copied from, when not "
                          "--texmf: a tree holding the manifests' pinned files, e.g. on a host whose TeX Live has "
                          "no doc files; the oracle and the definitions index stay on --texmf")
-    ap.add_argument("--font-dirs", default=None)
-    ap.add_argument("--tfm-dirs", default=None)
     ap.add_argument("--regenerate", action="store_true",
                     help="fixtures tier: make the reference now with the local pdflatex instead of the committed PDF")
     ap.add_argument("--raster", choices=["none", "l3", "l1"], default="l1",
@@ -1983,25 +1715,18 @@ def main(argv=None):
     except argparse.ArgumentTypeError as e:
         ap.error(str(e))
     tiers = args.tier or ["fixtures"]
-    if args.old_engine and args.engine:
-        ap.error("--old-engine and --engine name two engines; pass one")
-    if args.old_engine:
-        args.engine = os.environ.get("FLASHTEX_CLI") or DEFAULT_FLASHTEX
-    elif not args.engine:
+    if not args.engine:
         args.engine = os.environ.get("FLASHTEX_ENGINE") or DEFAULT_ENGINE
     if not os.path.isfile(args.engine):
-        how = ("cargo build --release -p flashtex-cli --bin flashtex" if args.old_engine else
-               "scripts/engine-parity.sh --work W build   (then --engine W/eng/flashtex-initex "
+        how = ("scripts/engine-parity.sh --work W build   (then --engine W/eng/flashtex-initex "
                "--engine-env FLASHTEX_FORMATS=W/fmt)")
         print(f"engine not found at {args.engine}; build it with\n  {how}", file=sys.stderr)
         return 2
-    kind = args.engine_kind if args.engine_kind != "auto" else ptiers.engine_kind(args.engine)
+    kind = "tex"  # the only kind since S7; records keep the field (engines.py, the scoreboard)
     oracle_pdftex = args.oracle_pdftex if args.pt != "off" and os.path.isfile(args.oracle_pdftex) else None
     oracle_ver = ptiers.engine_version(oracle_pdftex) if oracle_pdftex else None
     if oracle_ver and ptiers.PINNED_PDFTEX not in oracle_ver:
         print(f"warning: P-T oracle is {oracle_ver!r}, not the pinned pdfTeX {ptiers.PINNED_PDFTEX}", file=sys.stderr)
-    font_dirs, tfm_dirs = fontenv.resolve_dirs(args.font_dirs, args.tfm_dirs, os.path.join(REPO, "apps", "mac", "Fonts"))
-    env = dict(fontenv.render_env(font_dirs, tfm_dirs), SOURCE_DATE_EPOCH="0", FORCE_SOURCE_DATE="1")
     started = time.time()
     stamp = _dt.datetime.now(_dt.timezone.utc)
     out_dir = args.out or os.path.join(REPO, "docs", "evidence", f"parity-{stamp.strftime('%Y-%m-%d')}")
@@ -2019,7 +1744,7 @@ def main(argv=None):
             engine_env["FLASHTEX_FORMATS"] = os.environ["FLASHTEX_FORMATS"]
         if "FLASHTEX_FORMATS" not in engine_env:
             print("the new engine needs its formats: --engine-env FLASHTEX_FORMATS=<dir with pdflatex.fmt> "
-                  "(scripts/engine-parity.sh build makes them), or --old-engine", file=sys.stderr)
+                  "(scripts/engine-parity.sh build makes them)", file=sys.stderr)
             return 2
     max_log = int(args.pt1_max_log_mb * (1 << 20))
     kpse = ptiers.pcapture.kpsewhich_beside(oracle_pdftex) if oracle_pdftex else None
@@ -2034,7 +1759,7 @@ def main(argv=None):
            "engine_env": engine_env,
            "qpdf": bool(shutil.which("qpdf")),
            "oracle_pdftex": oracle_pdftex, "texbin": args.texbin, "cache": args.cache,
-           "font_dirs": font_dirs, "env": env, "work": os.path.abspath(args.work), "keep_work": args.keep_work,
+           "work": os.path.abspath(args.work), "keep_work": args.keep_work,
            "raster": args.raster, "regenerate": args.regenerate,
            "pt1_sample": pt1_sample}
     only = set(args.only)
@@ -2072,7 +1797,7 @@ def main(argv=None):
     died = run_jobs(jobs, cfg, args.jobs, report, initargs=(args.shell_escape_flag, max_log, args.pt1_timeout, kpse),
                     log=log)
     all_results = [r for t in tiers for r in results[t]]
-    exe_ver = rwc.run([cfg["flashtex"], "--version"], timeout=30)[1].decode("utf-8", "replace").strip()
+    exe_ver = harness.run([cfg["flashtex"], "--version"], timeout=30)[1].decode("utf-8", "replace").strip()
     meta = {"date": stamp.strftime("%Y-%m-%d"), "started_utc": stamp.strftime("%Y-%m-%dT%H:%M:%SZ"),
             "flashtex": (os.path.relpath(cfg["flashtex"], REPO) if cfg["flashtex"].startswith(REPO + os.sep)
                          else cfg["flashtex"]), "flashtex_version": exe_ver,
@@ -2083,16 +1808,16 @@ def main(argv=None):
             "capture": ptiers.pcapture.SOURCE, "qpdf": ptiers.qpdf_version(),
             "shell_escape": args.shell_escape_flag, "argv0": ptiers.pcapture.PROGRAM,
             "engine_env": sorted(engine_env),
-            "flashtex_sha256": rwc.sha256_file(cfg["flashtex"]),
-            "pdflatex": rwc.pdflatex_version(args.texbin)[1], "rasterizer": rwc.find_rasterizer()[0],
-            "font_dirs": font_dirs, "tfm_dirs": tfm_dirs, "host": platform.node(),
+            "flashtex_sha256": harness.sha256_file(cfg["flashtex"]),
+            "pdflatex": harness.pdflatex_version(args.texbin)[1], "rasterizer": harness.find_rasterizer()[0],
+            "host": platform.node(),
             "platform": f"{platform.system()} {platform.release()} {platform.machine()}",
             "wall_seconds": round(time.time() - started, 1), "jobs": args.jobs,
             "shard": list(args.shard) if args.shard else None, "limit": args.limit or None,
             "spread": args.spread or None, "pt1_sample": pt1_sample, "pt1_sample_seed": PT1_SAMPLE_SEED,
             "command": "python3 tools/parity/parity.py " + " ".join(argv if argv is not None else sys.argv[1:]),
             "levels": {"pos_tol_bp": POS_TOL, "raster_delta": RASTER_DELTA, "raster_fraction": RASTER_FRACTION,
-                       "dpi": rwc.DPI}}
+                       "dpi": harness.DPI}}
     tiers_out = {}
     for t in tiers:
         rs = results[t]

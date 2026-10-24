@@ -1,7 +1,9 @@
 # Real-world document corpus
 
-Owner: lane `mac-realworld-corpus` (parent `mac-claude-a`). Driven by
-`tools/real-world-corpus/run.py`; the latest report is under
+Owner: lane `mac-realworld-corpus` (parent `mac-claude-a`). Measured by the
+parity scoreboard's fixtures tier (`tools/parity/parity.py --tier fixtures`,
+baseline `tools/parity/baseline-fixtures.json`). The old corpus harness's
+reports, from before retirement stage S7, are under
 `docs/evidence/real-world-corpus-<UTC>/`.
 
 | fixture | what it exercises | source |
@@ -13,7 +15,7 @@ Owner: lane `mac-realworld-corpus` (parent `mac-claude-a`). Driven by
 | `letter` | `letter` class: `\signature`, `\address`, `\opening`, `\closing`, `\encl`, `\cc`, `\ps` | written for this corpus |
 | `input-bibliography` | `\input{sections/…}` (two files), `\appendix`, `equation` with `\frac`/`\sum`/`\left(\right)`, `thebibliography` + `\cite` | written for this corpus |
 | `math-sheet` | `align`, `align*`, `gather`, `equation`, `cases`, `pmatrix`/`bmatrix`, `\frac`/`\dfrac`, `\sum`/`\int` with limits, `\left…\right`, `\bigl…\bigr`, `\binom`, `\operatorname`, Greek letters and relation symbols | written for this corpus |
-| `inline-math` | the user's Chain Rule theorem/proof paragraph (inline math running off the margin) plus five paragraphs of dense inline math: line breaks inside `$…$` after Bin/Rel atoms, `\lim_{h\to 0}`, `\|L_f\|_{\mathrm{op}}`, `\left…\right`, `\bigl…\bigr`, `\sum`/`\prod` with limits, `\mathbb` | written for this corpus (lane `mac-inline-math-breaks`); `crates/render-pipeline/tests/inline_math_breaks.rs` gates the line breaks against `reference.pdf` |
+| `inline-math` | the user's Chain Rule theorem/proof paragraph (inline math running off the margin) plus five paragraphs of dense inline math: line breaks inside `$…$` after Bin/Rel atoms, `\lim_{h\to 0}`, `\|L_f\|_{\mathrm{op}}`, `\left…\right`, `\bigl…\bigr`, `\sum`/`\prod` with limits, `\mathbb` | written for this corpus (lane `mac-inline-math-breaks`) |
 | `unicode-accents` | UTF-8 accented Latin, the same via accent commands, ligatures/dashes/quotes, `CJKutf8` Japanese and Chinese | written for this corpus |
 
 ## 2026-09-14 additions — documents that look like what people submit
@@ -87,8 +89,6 @@ display with `\lim_{n\to\infty}`, `\sin^2 x + \cos^2 x` and
 `\mathrm{d}x \wedge \mathrm{d}y`. A `block` rather than beamer's `theorem`,
 which the current renderer does not define, so the scoreboard measures the
 math (all three at L3 in `tools/parity/baseline-fixtures.json`).
-`crates/render-pipeline/tests/beamer_sans_operators.rs` gates the glyph
-faces and the operator bodies' italic correction.
 
 | fixture | what it exercises |
 |---|---|
@@ -119,8 +119,9 @@ the NixOS PC, to convergence (oracle only); the engine's PDF is byte-identical t
 ## Adding a fixture
 
 Create `fixtures/real-world/<id>/main.tex` (plus any `\input` files below it),
-run `tools/real-world-corpus/run.sh --only <id>` — the reference and sidecar
-are generated on the first run — and commit the `.tex`, `reference.pdf` and
-`reference.json`. Only write documents yourself: no downloads, no third-party
+run `python3 tools/parity/harness.py reference fixtures/real-world/<id>` — it
+writes the reference and its sidecar with the local pdflatex — and commit the
+`.tex`, `reference.pdf` and `reference.json`. Then re-record the fixtures
+baseline on its host (`parity.py --write-baseline`, tools/parity/README.md). Only write documents yourself: no downloads, no third-party
 copyrighted text. Keep a user-provided reference byte-immutable; the harness
 never overwrites one.

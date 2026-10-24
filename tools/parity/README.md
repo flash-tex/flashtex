@@ -6,17 +6,12 @@ Python 3 standard library, plus `qpdf` (Apache-2.0) run as an external
 program for P-T2. **pdflatex (MacTeX) is the oracle and never runs in the
 product path.**
 
-The engine under test is `--engine <bin>` (`--flashtex` still works):
-
-- **the shipped command line** (default), `flashtex build`, which makes the
-  same exact-route PDF the Mac app exports. It runs on the untouched source
-  tree;
-- **any pdfTeX-compatible command line**: pdfTeX itself for the self-test,
-  later the new engine. It runs as `<bin> -fmt=pdflatex` on a copy of the
-  tree, to convergence, like the oracle.
-
-The kind is detected from the first line of `<bin> --version`;
-`--engine-kind` overrides it.
+The engine under test is `--engine <bin>` (`--flashtex` still works): the
+new engine, flashtex-initex (the default), or any pdfTeX-compatible command
+line, pdfTeX itself for the self-test. It runs as `<bin> -fmt=pdflatex` on a
+copy of the tree, to convergence, like the oracle. (Until retirement stage S7
+it could also be the old engine's command line, `--old-engine`; its records
+in older reports carry `engine_kind` `flashtex-cli`.)
 
 The question this answers: "can we measurably know that we have full parity
 with pdflatex?" The headline per corpus tier is the two **DESIGN §1.1 gating
@@ -28,7 +23,7 @@ documents at L3 among them), plus the breakdown that says what stops the rest.
 | tier | passes when | how it is measured |
 |---|---|---|
 | **P-T1** | every `\shipout` box dump and the whole `\tracingall` log are identical to the pinned pdfTeX 1.40.29's, in PDF mode | `capture.py` runs one traced pass after convergence. The pass sets `\tracingall` (which includes `\tracingoutput`), `\tracingonline=1`, `\showboxdepth=\showboxbreadth=2147483647` and `\nonstopmode`, with `max_print_line=10000`, `error_line=254` and `SOURCE_DATE_EPOCH=0 FORCE_SOURCE_DATE=1`. Normalised: the banner (lines before the `**` echo) and the work-directory path. Then, per the DESIGN §1.1 ruling, only end-of-run accounting is removed: `\\tracingstats` `Memory usage before: …` lines (whole-line match), the `Here is how much of TeX's memory you used:` and `PDF statistics:` blocks, and the byte count in `Output written on … (N pages, B bytes)`. The page count stays compared. Each removed line must have one of the exact shapes pdfTeX 1.40.29 prints, in pdfTeX's order, each at most once (`capture.ACCOUNTING_BLOCKS`, taken from the fixture logs). The headers and `Output written` count only once, in the trailer after the last shipout. A `Memory usage` line counts only when a shipout still owes it. Anything else is compared, including ` junk`, ` Overfull …` and a header in the middle of the log. The removed lines form a separate **non-gating accounting check** in the report. Box dumps are split at `Completed box being shipped out` |
-| **P-T2** | identical embedded font subsets and identical page content streams | Both PDFs go through `qpdf --qdf --normalize-content=y --object-streams=disable` and are parsed with `tools/visual-oracle/pdftext.py`. Fonts: the multiset of (name without subset tag, subtype, hash of the decoded font program with subset tags normalised). Pages: content-stream bytes, resources and media box. Every indirect object is compared by a hash of its content with references resolved, so object numbers never matter |
+| **P-T2** | identical embedded font subsets and identical page content streams | Both PDFs go through `qpdf --qdf --normalize-content=y --object-streams=disable` and are parsed with `tools/parity/pdftext.py`. Fonts: the multiset of (name without subset tag, subtype, hash of the decoded font program with subset tags normalised). Pages: content-stream bytes, resources and media box. Every indirect object is compared by a hash of its content with references resolved, so object numbers never matter |
 
 **P-T1 is n/a for the flashtex CLI.** It isn't a TeX engine and writes no box
 dumps or `\tracingall` log, and the report says so instead of printing 0.
@@ -243,8 +238,8 @@ PDF exactly as the reference's are.
 
 A document "at L3" also passed L0–L2. The report also gives each check's
 independent pass rate, the glyph-position error distribution (p50/p95/max of
-max(\|dx\|,\|dy\|) over glyphs that `rank.aligned_pairs`, the word alignment
-of `tools/visual-oracle/rank.py`, pairs), the first diverging page, and
+max(\|dx\|,\|dy\|) over glyphs that `wordalign.aligned_pairs`, the word
+alignment of `tools/parity/wordalign.py`, pairs), the first diverging page, and
 **blockers**: what stands between each document and its next level.
 
 ## Tiers
@@ -347,8 +342,7 @@ job `corpus-t4`). `nightly.py` drives `parity.py`; it is not a second harness.
   (default `~/.cache/flashtex-nightly`). A finished shard's `scoreboard.json`
   and `documents.json` are kept under a run key. The key is the SHA-256 of:
   - the engine binary;
-  - every module the scoring imports (`tools/parity`, `tools/real-world-corpus`,
-    `tools/visual-oracle`);
+  - every module the scoring imports (all in `tools/parity` since S7);
   - the contents of what `--engine-env` names (the formats directory, the pool);
   - the oracle's identity: the pdfTeX binary, the TeX Live root and its
     `tlpkg/texlive.tlpdb`;
@@ -432,8 +426,6 @@ python3 tools/parity/nightly.py ratchet --results "$OUT" --record --local-proof 
 scripts/engine-parity.sh --work W build                # -> W/eng/flashtex-initex, W/fmt/pdflatex.fmt
 export FLASHTEX_ENGINE=W/eng/flashtex-initex FLASHTEX_FORMATS=W/fmt   # the default engine since S5
 python3 tools/parity/parity.py --tier fixtures                      # P-T1 + P-T2 + L0-L4 for the new engine
-cargo build --release -p flashtex-cli --bin flashtex   # the frozen CLI, until S7
-python3 tools/parity/parity.py --tier fixtures --old-engine         # P-T2 + L0-L4 for the CLI
 python3 tools/parity/parity.py --tier fixtures --engine /Library/TeX/texbin/pdftex --raster none   # self-test
 python3 tools/parity/corpus.py fetch                                # once; ~450 MB of e-prints
 python3 tools/parity/parity.py --tier fixtures --tier arxiv --tier templates -j 10
@@ -484,7 +476,10 @@ python3 tools/parity/engines.py --run new=<out> --run v1=<out> --run pdflatex=<o
 DESIGN §12 P5's gate is "new engine ≥ old on every tier; arXiv L1 ≥ 90%;
 retirement complete". `scoreboard.py` puts every tier in one table, new
 engine against v1, from what the existing harnesses already wrote. It
-measures nothing itself, so there is no second harness:
+measures nothing itself, so there is no second harness. **Since S7** v1 (the old
+engine) is deleted and nothing measures it: the parity tiers' old cells read
+"missing", the rows v1 could not run stay "old n/a", and T4's old column stays
+the committed one-off baseline (below):
 
 | tier | harness | metric per engine |
 |---|---|---|
@@ -773,7 +768,7 @@ board's build (`5b96720eae04`) and T4's (`4d42a00d944d`), both at
 `ac58ecfc7`, differed, and every T4 row read INVALID. Two scratch targets
 gave two more hashes. Without such a run, or with `--build-engine`, the
 engine is built alone, in its own `cargo build -p flashtex-engine`. Built
-together with `flashtex-cli`, shared dependencies unify features and the
+together with another package, shared dependencies unify features and the
 binary differs again.
 
 Disk. The first board on a Mac (run 37113092020) died after 5 h with "No

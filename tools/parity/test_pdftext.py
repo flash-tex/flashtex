@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Tests for tools/visual-oracle/pdftext.py font reader robustness."""
+"""Tests for tools/parity/pdftext.py font reader robustness."""
 
 import os
 import sys

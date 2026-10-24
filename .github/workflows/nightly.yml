@@ -194,8 +194,8 @@ jobs:
             else echo "PARITY_CORPUS_TEXMF=$(kpsewhich -var-value TEXMFDIST)"; fi
           } | tee -a "$GITHUB_ENV"
       - name: build the new engine and its formats (release)
-        # S5 (retirement plan §1.7): the tier measures the new engine by
-        # default; the old flashtex-cli build goes at S7.
+        # The tier measures the new engine, the only one since S7
+        # (retirement plan §1.7).
         if: env.WANT == 'true'
         run: scripts/engine-parity.sh --work "$RUNNER_TEMP/engine-parity" build
       - name: fetch and verify the pinned corpus
@@ -662,13 +662,13 @@ jobs:
     runs-on: ${{ matrix.os == 'ubuntu-latest' && (vars.FLASHTEX_SELFHOSTED_LINUX || vars.FLASHTEX_SELFHOSTED_MAC) == '1' && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && fromJSON('["self-hosted","Linux","X64","flashtex-linux"]') || matrix.os }}
     timeout-minutes: 120
     env:
-      # Full DWARF for the workspace plus ~220 render-pipeline test binaries
-      # fills a hosted runner's disk (ld bus error 10-01, ENOSPC 10-02). Line
-      # tables keep backtraces; debug-assertions and overflow-checks unchanged.
+      # Full DWARF for the workspace's test binaries filled a hosted runner's
+      # disk (ld bus error 10-01, ENOSPC 10-02). Line tables keep backtraces;
+      # debug-assertions and overflow-checks unchanged. The fonts are the
+      # Latin Modern faces the pdf crate's tests read.
       CARGO_PROFILE_DEV_DEBUG: line-tables-only
       CARGO_PROFILE_TEST_DEBUG: line-tables-only
       FLASHTEX_FONT_DIRS: ${{ github.workspace }}/apps/mac/Fonts
-      FLASHTEX_TFM_DIRS: ${{ github.workspace }}/apps/mac/Fonts/texmf/fonts/tfm/public/lm:${{ github.workspace }}/apps/mac/Fonts/texmf/fonts/tfm/jknappen/ec:${{ github.workspace }}/apps/mac/Fonts/texmf/fonts/tfm/public/amsfonts/symbols
       FLASHTEX_LM_DIR: ${{ github.workspace }}/apps/mac/Fonts
     strategy:
       fail-fast: false
@@ -698,12 +698,6 @@ jobs:
           excludes=()
           for p in $RUST_TEST_EXCLUDE; do excludes+=(--exclude "$p"); done
           cargo test --workspace --locked --no-fail-fast ${excludes[@]+"${excludes[@]}"}
-      - name: the two standalone crates (debug)
-        run: |
-          set -euo pipefail
-          for c in render-pipeline flashtex-cli; do
-            ( cd "crates/$c" && cargo build --locked && cargo test --locked --no-fail-fast )
-          done
 
   # The crates whose tests are temporarily not gating. ci.yml runs these too,
   # but only inside the full tier; here they get a run of their own every night,
@@ -714,7 +708,6 @@ jobs:
     timeout-minutes: 90
     env:
       FLASHTEX_FONT_DIRS: ${{ github.workspace }}/apps/mac/Fonts
-      FLASHTEX_TFM_DIRS: ${{ github.workspace }}/apps/mac/Fonts/texmf/fonts/tfm/public/lm:${{ github.workspace }}/apps/mac/Fonts/texmf/fonts/tfm/jknappen/ec:${{ github.workspace }}/apps/mac/Fonts/texmf/fonts/tfm/public/amsfonts/symbols
       FLASHTEX_LM_DIR: ${{ github.workspace }}/apps/mac/Fonts
     steps:
       - uses: actions/checkout@v4
@@ -761,17 +754,7 @@ jobs:
             echo "|---|---|"
           } >> "$GITHUB_STEP_SUMMARY"
           for p in $list; do
-            case "$p" in
-              flashtex-render-pipeline) dir=crates/render-pipeline ;;
-              flashtex-cli) dir=crates/flashtex-cli ;;
-              flashtex-perf-bench) dir=crates/perf-bench ;;
-              *) dir="" ;;
-            esac
-            if [ -n "$dir" ]; then
-              ( cd "$dir" && cargo clippy --all-targets --no-deps --locked -- -D warnings ) >/dev/null 2>&1 && r=pass || r=fail
-            else
-              cargo clippy -p "$p" --all-targets --no-deps --locked -- -D warnings >/dev/null 2>&1 && r=pass || r=fail
-            fi
+            cargo clippy -p "$p" --all-targets --no-deps --locked -- -D warnings >/dev/null 2>&1 && r=pass || r=fail
             if [ "$r" = pass ]; then
               echo "::warning::clippy now passes for $p; delete its line from scripts/clippy-debt.txt"
               echo "| \`$p\` | **passes -- delete its line** |" >> "$GITHUB_STEP_SUMMARY"
@@ -781,16 +764,14 @@ jobs:
           done
 
   # The macOS legs that left the merge queue (ci.yml header, docs/ci-cd.md
-  # "Post-merge macOS legs"): the release workspace, the two standalone crates,
-  # trip and etrip on macOS. They also run on every push to main; here they run
+  # "Post-merge macOS legs"): the release workspace, trip and etrip on macOS. They also run on every push to main; here they run
   # against the night's main even when nothing merged, on a GitHub-hosted Mac.
   macos-legs:
-    name: macOS legs (release workspace, standalone crates, trip, etrip)
+    name: macOS legs (release workspace, trip, etrip)
     runs-on: macos-15
     timeout-minutes: 180
     env:
       FLASHTEX_FONT_DIRS: ${{ github.workspace }}/apps/mac/Fonts
-      FLASHTEX_TFM_DIRS: ${{ github.workspace }}/apps/mac/Fonts/texmf/fonts/tfm/public/lm:${{ github.workspace }}/apps/mac/Fonts/texmf/fonts/tfm/jknappen/ec:${{ github.workspace }}/apps/mac/Fonts/texmf/fonts/tfm/public/amsfonts/symbols
       FLASHTEX_LM_DIR: ${{ github.workspace }}/apps/mac/Fonts
     steps:
       - uses: actions/checkout@v4
@@ -806,13 +787,6 @@ jobs:
           for p in $list; do excludes+=(--exclude "$p"); done
           cargo build --workspace --all-targets --release --locked
           cargo test --workspace --release --locked --no-fail-fast ${excludes[@]+"${excludes[@]}"}
-      - name: render-pipeline and flashtex-cli on their own
-        if: always()
-        run: |
-          set -euo pipefail
-          for c in render-pipeline flashtex-cli; do
-            ( cd "crates/$c" && cargo build --release --locked && cargo test --release --locked --no-fail-fast )
-          done
       - name: trip
         if: always()
         run: TRIP_WORK="$RUNNER_TEMP/trip" scripts/flashtex-trip.sh
