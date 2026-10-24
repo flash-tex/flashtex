@@ -20,6 +20,14 @@ licenses/third_party.py generates from Cargo.lock for every distributed build
 and which ship with it (DESIGN.md §15.8). That script fails the build on an
 unknown licence, a missing licence text or a missing NOTICE.
 
+One function is adapted from Typst's source, under the Apache License,
+Version 2.0 (Apache-2.0 §4(b), §4(c)): `exif_transform` in src/convert.rs is
+adapted from `exif_transform` in typst-pdf 0.15.1, src/image.rs (Copyright
+the Typst project authors, https://github.com/typst/typst), so that the host
+places a JPEG's EXIF orientation exactly as typst-pdf draws it. The
+modifications are the import paths and the comments; the logic is
+unchanged. The source file carries this notice too.
+
 No font is compiled into this program (it is built without typst-kit's
 `embedded-fonts`); fonts are separate files that carry their own licences.
 

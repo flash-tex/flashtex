@@ -26,7 +26,9 @@ mod checker;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
+use flashtex_display_list::json::Json;
 use flashtex_display_list::page::{Item, Page, StreamKind};
+use flashtex_display_list::resource::ImageData;
 use flashtex_typst_host::convert::{self, ClientCaps, Positions, Tables};
 use flashtex_typst_host::pdfpos;
 use flashtex_typst_host::world::{FontOptions, Fonts, HostWorld};
@@ -117,6 +119,15 @@ struct Tally {
     mismatched_boxes: usize,
     paths: usize,
     mismatched_paths: usize,
+    /// Raster image `Do`s in the PDFs (not refused), images the host drew,
+    /// drawn images not the PDF's, and images the host could not place or
+    /// decode ("image: ..." UNSUPPORTED entries).
+    pdf_images: usize,
+    images: usize,
+    mismatched_images: usize,
+    image_failures: usize,
+    /// Pages per UNSUPPORTED entry that names an image.
+    image_reasons: std::collections::BTreeMap<String, usize>,
     positions_failed_pages: usize,
     mismatched_snippets: Vec<String>,
     export_failed_snippets: Vec<String>,
@@ -126,7 +137,7 @@ fn main() {
     let mut args = std::env::args().skip(1);
     let (mut typst, mut assets, mut fonts_dir, mut work) = (None, None, None, None);
     let (mut json, mut only) = (None, None);
-    let (mut accept_e3, mut ungated) = (false, false);
+    let (mut accept_e3, mut accept_images, mut ungated) = (false, false, false);
     while let Some(a) = args.next() {
         let v = args.next().expect("a value");
         match a.as_str() {
@@ -138,11 +149,12 @@ fn main() {
             "--only" => only = Some(v),
             // `--accept colour`: the client accepts `color-spaces` and
             // `line-state` (spec §11.3, §11.4).
-            // `--accept colour[,ungated]`: `ungated` draws what has no
-            // pixel gate row yet as complete (`--draw-ungated`), so that
-            // every number is compared, not left out of an INCOMPLETE page.
+            // `--accept colour[,images][,ungated]`: `images` is `image-data`
+            // (§11.5); `ungated` draws what has no pixel gate row yet as
+            // complete (`--draw-ungated`), so that every number is compared.
             "--accept" => {
                 accept_e3 = v.split(',').any(|t| t == "colour");
+                accept_images = v.split(',').any(|t| t == "images");
                 ungated = v.split(',').any(|t| t == "ungated");
             }
             _ => panic!("unknown argument {a}"),
@@ -179,6 +191,8 @@ fn main() {
         program_budget: None,
         color_spaces: accept_e3,
         line_state: accept_e3,
+        image_data: accept_images,
+        image_budget: None,
         ungated,
     };
     let t0 = std::time::Instant::now();
@@ -265,6 +279,8 @@ fn main() {
                 pdfpos::derive(&doc, &all)
             };
             let mut tables = Tables::new();
+            // IMAGE and IMAGE_DATA by id, as a client receives them.
+            let mut image_info = std::collections::HashMap::new();
             let mut bad = 0usize;
             let mut why = String::new();
             for (i, rp) in reference.iter().enumerate() {
@@ -274,7 +290,14 @@ fn main() {
                     Err(e) => Positions::Failed(e),
                 };
                 let page = match convert::page(&world, &doc, i, &mut tables, caps, &[], positions) {
-                    Ok(o) => Page::decode(StreamKind::Page, &o.body).unwrap(),
+                    Ok(o) => {
+                        for (info, data) in &o.images {
+                            let j = Json::parse(std::str::from_utf8(info).unwrap()).unwrap();
+                            let d = ImageData::decode(data).unwrap();
+                            image_info.insert(d.id, (j, d.parts));
+                        }
+                        Page::decode(StreamKind::Page, &o.body).unwrap()
+                    }
                     Err(e) => {
                         why = format!("convert: {e}");
                         bad += 1;
@@ -309,6 +332,28 @@ fn main() {
                             hp.first().map(|p| &p.fill),
                             hp.first().map(|p| &p.fill_space)
                         );
+                    }
+                    bad += 1;
+                }
+                // Images: the PDF's samples and CTM, bit for bit (§11.5).
+                let hi = checker::host_images(&page);
+                t.images += hi.len();
+                t.pdf_images += rp.images.iter().filter(|r| !r.form && !r.refused).count();
+                let missing = checker::unmatched_images(&hi, &image_info, &rp.images);
+                if missing > 0 {
+                    t.mismatched_images += missing;
+                    if why.is_empty() {
+                        why = format!("{missing} of {} images are not the PDF's", hi.len());
+                    }
+                    bad += 1;
+                }
+                for u in page.unsupported.iter().filter(|u| u.contains("image")) {
+                    *t.image_reasons.entry(u.clone()).or_default() += 1;
+                }
+                if let Some(u) = page.unsupported.iter().find(|u| u.starts_with("image: ")) {
+                    t.image_failures += 1;
+                    if why.is_empty() {
+                        why = u.clone();
                     }
                     bad += 1;
                 }
@@ -419,7 +464,7 @@ fn main() {
         }
     }
     println!(
-        "{{\"snippets\":{},\"compiled\":{},\"not_compiled\":{},\"export_failed\":{},\"pages\":{},\"pdf_glyphs\":{},\"drawn_glyphs\":{},\"mismatched_glyphs\":{},\"mismatched_boxes\":{},\"paths\":{},\"mismatched_paths\":{},\"positions_failed_pages\":{},\"mismatched_snippets\":{},\"seconds\":{:.1}}}",
+        "{{\"snippets\":{},\"compiled\":{},\"not_compiled\":{},\"export_failed\":{},\"pages\":{},\"pdf_glyphs\":{},\"drawn_glyphs\":{},\"mismatched_glyphs\":{},\"mismatched_boxes\":{},\"paths\":{},\"mismatched_paths\":{},\"pdf_images\":{},\"images\":{},\"mismatched_images\":{},\"image_failures\":{},\"positions_failed_pages\":{},\"mismatched_snippets\":{},\"seconds\":{:.1}}}",
         t.snippets,
         t.compiled,
         t.not_compiled,
@@ -431,10 +476,17 @@ fn main() {
         t.mismatched_boxes,
         t.paths,
         t.mismatched_paths,
+        t.pdf_images,
+        t.images,
+        t.mismatched_images,
+        t.image_failures,
         t.positions_failed_pages,
         t.mismatched_snippets.len(),
         t0.elapsed().as_secs_f64()
     );
+    for (r, n) in &t.image_reasons {
+        eprintln!("IMAGE UNSUPPORTED on {n} pages: {r}");
+    }
     for s in &t.export_failed_snippets {
         eprintln!("SKIPPED (typst-pdf cannot export it, nothing to compare) {s}");
     }
