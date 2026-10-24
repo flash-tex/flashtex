@@ -1,4 +1,4 @@
-# flashtex-page-builder: contract and adoption proposal (KC-106)
+# flashtex-page-builder: contract (KC-106)
 
 This crate implements TeX's vertical-mode machinery from *TeX: The Program*
 (tex.web), with section numbers cited in the code, plus a model of LaTeX's
@@ -93,58 +93,11 @@ Custom output routines, such as floats, implement `OutputRoutine`. They receive
 a `FiredPage` (`box255`, `output_penalty`, `best_size`, `page_so_far`, held
 insert count, marks) and return the vertical list to push back.
 
-## Adoption proposal for crates/render-pipeline
+## Adoption
 
-This is a proposal only; no edits have been made outside this crate.
-
-1. **Replace `src/pagebuild.rs`.** It hand-rolls a subset of §§980–1028. Known
-   differences from TeX, each exercised by the oracle:
-   - It fires as soon as a box overfills the page. TeX waits for the next legal
-     breakpoint with `c = awful_bad` (§1005).
-   - `\topskip` is not glue with stretch/shrink on the page.
-   - Stretch orders collapse into a single `fil` flag.
-   - There are no insertions: no footnote goal reduction and no
-     `\enlargethispage`.
-   - A whatsit at the page top does not make the following glue a legal
-     breakpoint.
-   - `\flushbottom` glue setting is missing.
-   - LaTeX's `\@makecol` details are missing: removing and reinserting the
-     final fil skip, `\vskip-\@outputbox@depth`, and `\@textbottom`'s
-     `0pt plus .0001fil`.
-2. **Map `VBlock` onto `VListBuilder`.** Convert `f64` points with `scaled::pt`.
-   - `penalty_before` becomes `addpenalty` for sections, or `penalty` for
-     ejects.
-   - `space_before` becomes `addvspace`, and `parskip` becomes
-     `param_glue(.., ParSkip)`.
-   - `lines` go through `paragraph` with `Line { hbox: BoxNode { id: payload }, disc_break, adjust }`.
-     `vskip_after` turns into `adjust` glue.
-   - `penalty_after` becomes `penalty`, `space_after` becomes `vskip` or
-     `addvspace`, as the macro does.
-   - `no_interline_*` becomes `no_interline_skip`, and rules use `hrule`.
-3. **Paginate.** Use `PageBuilder` + `LatexOutput`, then map `Column.lines`
-   (`BoxNode.id` → `(block, line)`) to `pl::PlacedLine` with
-   `baseline_y = text_y + baseline`.
-4. **Page parameters from class-geometry (KC-103).**
-   - `vsize = colht = \textheight`, and `max_depth = \maxdepth`
-     (article: `.5\topskip`).
-   - `top_skip`: `\topskip` including stretch.
-   - `raggedbottom`: article.cls sets `\raggedbottom` for oneside (line 633)
-     and `\flushbottom` for twoside (line 638).
-5. **Floats (graphics-floats `typeset/floatpage.rs`).** Keep float placement
-   there, but drive it as an `OutputRoutine`. LaTeX floats reach the output
-   routine through `\penalty-10004` / `\@specialoutput`, and between pages the
-   routine sets `pb.params.vsize` (`\@colroom`). `LatexOutput` stays the
-   non-float path.
-6. **Footnotes (footnote-layout owner).**
-   - Build each footnote with `page::insert_node(\footins, list, \footnotesep glue, \dp\strutbox, 20000)`.
-   - Register `InsertClass` for `\footins` (count 1000, dimen 8in, skip
-     `\skip\footins`).
-   - Set `LatexOutput.footnotes` to `FootnoteSpec { class, rule: \footnoterule nodes }`.
-   - Placement follows the kernel's `footnotes-floats-legacy` plug. It is
-     verified by the footnotes-* fixtures.
-7. **Paragraph layout.** Supply for each line box: height/depth, whether it ends
-   at a discretionary (`\brokenpenalty`), and migrated `\vadjust`, `\insert`
-   and `\mark` material.
+The adoption proposal targeted the old engine's typesetting pipeline,
+which was deleted in old-engine retirement S7 (`git show f16430793:crates/page-builder/CONTRACT.md`
+has it). The crate is kept as an oracle (retirement plan §2).
 
 ## Regenerating the oracle
 

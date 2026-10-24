@@ -1,7 +1,7 @@
 //! The smallest JSON reader and writer the index cache needs: objects,
 //! arrays, strings, integers and booleans. Written here rather than pulled
-//! in, because this crate has no dependencies (render-pipeline depends on
-//! it by path, like class-geometry) and the cache file is our own shape.
+//! in, because this crate has no dependencies (flashtex-xetex depends on
+//! it by path) and the cache file is our own shape.
 
 use std::collections::BTreeMap;
 

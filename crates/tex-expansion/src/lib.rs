@@ -10,8 +10,8 @@
 //! layer (`\newcommand`, `\newenvironment`, counters). It does **not**
 //! typeset anything -- its output is a flat, fully expanded/executed
 //! token stream with per-token source-span provenance, meant for
-//! `crates/compiler`'s layout stage to consume. See `CONTRACT.md` for the
-//! proposed adoption path.
+//! a layout stage to consume (the retired old compiler's was the first). See
+//! `CONTRACT.md`.
 //!
 //! A handful of items (span/lexer accessors, `Meaning::Let`,
 //! `ConditionalFrame::shape`, ...) are forward-looking public API surface

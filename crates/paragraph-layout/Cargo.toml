@@ -15,5 +15,5 @@ flashtex-document-style = { path = "../document-style" }
 flashtex-microtype = { path = "../microtype" }
 
 # No old-engine dev-dependencies (retirement S1, #1236). The FT-030 rev 3 tests
-# that consumed font-engine's `FaceMetrics` and the compiler's greedy layout now
-# live in crates/compiler/tests/paragraph_layout_*.rs and retire with it.
+# that consumed the old engine's font metrics and greedy layout moved into the
+# old compiler's tests in S1 and were deleted with it in old-engine retirement S7.

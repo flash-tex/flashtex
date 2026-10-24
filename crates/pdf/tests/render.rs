@@ -6,7 +6,7 @@ use flashtex_pdf::verify::{check_structure, placements, rules, stream_data};
 use flashtex_pdf::{CompileResult, Item, Page, PdfError, TextItem, render_envelope, render_pdf};
 
 const FIXTURE: &str = include_str!("../../../protocol/fixtures/compile-result.json");
-/// Exact output of `flashtex-compiler` at de1020c for
+/// Exact output of the retired old compiler at de1020c for
 /// `tests/fixtures/math-compile-request.json` (`$\\frac{a}{b}+\\alpha+\\sqrt{x}$`),
 /// the reproduction from GitHub issue #9.
 const MATH_RESULT: &str = include_str!("fixtures/math-compile-result.json");

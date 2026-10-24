@@ -576,7 +576,7 @@ pub struct ShapedGlyph {
 }
 
 impl GlyphRun {
-    /// Builds a box from font-engine output without re-measuring anything:
+    /// Builds a box from a shaper's output without re-measuring anything:
     /// `advance_units` are taken as the pen movement (kerning is already in
     /// them, so [`Glyph::kern`] is 0), glyph ids and clusters pass through
     /// unchanged, and the run's height/depth come from the engine's vertical

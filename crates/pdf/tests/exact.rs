@@ -148,7 +148,7 @@ fn sample_document() -> ExactDocument {
     };
     let mut ops = run.to_ops().unwrap();
     ops.extend(Op::rule(d("72"), d("690.25"), d("28.500"), d("0.398")));
-    // A rendering-core style clipped filled path with exact colour.
+    // A clipped filled path with exact colour, as rendering-v2 drew one.
     ops.extend([
         Op::Save,
         Op::Rect([d("0"), d("0"), d("612"), d("792")]),
@@ -655,7 +655,7 @@ fn latin_modern_cff_subset_preserves_gids_and_renders_in_coregraphics() {
         eprintln!("skipped raster check: not macOS");
         return;
     }
-    let dir = std::env::temp_dir().join(format!("flashtex-pdf-exact-lm-{}", std::process::id()));
+    let dir = std::env::temp_dir().join(format!("flashtex-exact-route-lm-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
     let pdf = dir.join("lm.pdf");
     std::fs::write(&pdf, &out.bytes).unwrap();
@@ -717,7 +717,7 @@ fn pdflatex_reference_reemits_with_identical_content_and_font_programs() {
         return;
     };
     let dir =
-        std::env::temp_dir().join(format!("flashtex-pdf-exact-oracle-{}", std::process::id()));
+        std::env::temp_dir().join(format!("flashtex-exact-route-oracle-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(
         dir.join("main.tex"),
@@ -800,7 +800,7 @@ fn xelatex_reference_with_cid_keyed_cff_reemits_identically() {
         return;
     };
     let lm_dir = lm.parent().unwrap().to_string_lossy().into_owned();
-    let dir = std::env::temp_dir().join(format!("flashtex-pdf-exact-xe-{}", std::process::id()));
+    let dir = std::env::temp_dir().join(format!("flashtex-exact-route-xe-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(
         dir.join("main.tex"),
