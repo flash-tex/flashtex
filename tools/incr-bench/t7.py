@@ -49,8 +49,8 @@ runs two phases at each site and nothing else:
 Their target is DESIGN.md §1.2's for the slowest supported Mac (owner, 2026-10-06): key -> preview
 commit <= 20 ms p95 for keys 50 ms apart on 1,000-page documents and on Infinite Descent x2
 (realdocs.json `target_ms`), here to the edited page's PAGE frame. A row passes only when the
-edited page arrives within it for every key and, typing@, every key is painted by its own compile;
-and when the host's page count is the oracle's (realdocs.json `pages`). `--sites A,B` keeps those
+edited page arrives within it for every key and, typing@, every key is painted by its own compile.
+A host page count other than the oracle's (realdocs.json `pages`) is a warning: T4's question. `--sites A,B` keeps those
 sites only (the PR CI's quick row: --docs infdesc-x2 --sites x2-late --phases typing@50ms@site).
 `--phases` names a real document's phases by kind: letter@site, typing@50ms@site.
 
@@ -666,7 +666,8 @@ def verdict(rows, baseline):
         if r.get('incomplete'):
             why.append(f"{r['incomplete']} compiles ended without all pages current")
         if r.get('real') and r.get('oracle_pages') and r.get('pages') != r['oracle_pages']:
-            why.append(f"{r.get('pages')} pages, the oracle {r['oracle_pages']}")
+            # reported, not gated: a parity question (T4's), not a latency one
+            r['warning'] = f"{r.get('pages')} pages, the oracle {r['oracle_pages']}"
         if r.get('modes') and r['edit'].startswith('reopen') and r['modes'] != ['open']:
             why.append(f"reopen modes {r['modes']} (expected open: from S0)")
         if baseline is not None and 'converged' in r and r['n'] and not r.get('real'):

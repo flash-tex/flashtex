@@ -261,11 +261,26 @@ fn main() {
         None => (held.count as f64 * at) as u32,
     }
     .min(held.count.saturating_sub(1) as u32);
-    let main_file = |f: u32| {
-        held.files
-            .get(&f)
-            .is_some_and(|p| p.ends_with(&format!("/{efile}")))
-    };
+    // The edited file is the one whose path, resolved against the root, is
+    // `root/efile` (canonical paths). A name suffix is not enough: in a
+    // project with the same tree twice (infdesc-x2's `x2/book/...` copy),
+    // `book/a.tex` is a suffix of `x2/book/a.tex`, every line then seems to
+    // be on two pages, and no line qualifies.
+    let target = std::fs::canonicalize(&path).unwrap_or_else(|_| path.clone());
+    let edited: HashMap<u32, bool> = held
+        .files
+        .iter()
+        .map(|(&i, p)| {
+            let p = std::path::Path::new(p.strip_prefix("./").unwrap_or(p));
+            let full = if p.is_absolute() {
+                p.to_path_buf()
+            } else {
+                std::path::Path::new(&root).join(p)
+            };
+            (i, std::fs::canonicalize(&full).unwrap_or(full) == target)
+        })
+        .collect();
+    let main_file = |f: u32| edited.get(&f).copied().unwrap_or(false);
     let on_pages = |line: u32| -> Vec<u32> {
         let mut v: Vec<u32> = held
             .lines

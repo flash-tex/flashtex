@@ -294,9 +294,9 @@ class RealDocTests(unittest.TestCase):
         self.assertIn('not painted by their own compile', '; '.join(t7.verdict([r], None)))
 
     def test_oracle_pages(self):
-        rows = t7.summarise([self.real(5.0, pages=1142)])
-        self.assertTrue(all('1142 pages, the oracle 1152' in '; '.join(r['why']) for r in rows if t7.verdict([r], None)))
-        self.assertEqual(len(t7.verdict(rows, None)), 2)
+        rows = t7.summarise([self.real(5.0, pages=1140)])
+        self.assertEqual(t7.verdict(rows, None), [])  # reported, not gated (a parity question)
+        self.assertEqual({r['warning'] for r in rows}, {'1140 pages, the oracle 1152'})
 
 
 if __name__ == '__main__':
