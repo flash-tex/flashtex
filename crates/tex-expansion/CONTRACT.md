@@ -151,7 +151,7 @@ Unicode, matching what pdfLaTeX's text-mode symbols extract to (oracle
 
 All 44 `.tex` files under `fixtures/` and `tests/` on origin/main
 (dbf6ec78): **42 clean, 2 with errors**, both legitimate:
-`tests/tex-corpus/cases/extra-closing-group` ("Too many }'s", the case's
+`tests/tex-corpus/cases/extra-closing-group` (deleted in S7; see `f16430793`) ("Too many }'s", the case's
 point) and `include-scope/local.tex` (a fragment that `\renewcommand`s a
 macro its includer defines). Each expands in < 1 ms. Unmodelled primitives
 passed through, by documents: `\parindent` 12, `\parskip` 11, `\hfill` 4,
