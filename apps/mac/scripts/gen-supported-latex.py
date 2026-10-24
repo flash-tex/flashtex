@@ -31,9 +31,8 @@ apps/mac/supported-latex/:
 produces now, 1 when it is stale, 2 when it cannot check here (`probe` without
 pdflatex). `render --install` also writes the two bundled copies the editors
 decode (apps/mac/Sources/FlashTeXMac/Resources/ and
-apps/ios/FlashTeXPad/Resources/); until S7 those are still the old compiler's
-inventory, kept by sync-supported-latex.sh, so `--install` and
-`check --installed` are S7's switch.
+apps/ios/FlashTeXPad/Resources/), and `check --installed` compares them too
+(CI, gate.sh and make-app.sh run it).
 
 How a definition becomes a vocabulary row (`classify`): a \\mathchardef is a
 math symbol (math only); a macro whose body starts with a math-only primitive
@@ -73,6 +72,9 @@ GENERATOR = "apps/mac/scripts/gen-supported-latex.py"
 VOCABULARY_MIN_DOCUMENTS = 20
 # The oracle pdfTeX every input must name (tools/lockstep pins the same).
 ORACLE_VERSION = "pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026)"
+# Kernel files latex.ltx inputs when the format is built (never at run time),
+# read for candidate names alongside latex.ltx itself.
+KERNEL_FORMAT_FILES = ("fonttext.ltx", "fontmath.ltx", "preload.ltx")
 MEANING_CHARS = 160  # a meaning is kept to this many characters (classification reads its start)
 
 # TeX primitives that are errors outside math mode (tex.web §1046 insert_dollar_sign
@@ -444,7 +446,12 @@ def make_probe(oracle):
         latex_ltx = oracle.find("latex.ltx")
         if not latex_ltx:
             raise CannotCheck("kpsewhich finds no latex.ltx")
-        kernel, base = probe_one(oracle, work, None, (), kernel_extra=[latex_ltx])
+        # The format reads these at dump time, so they are in no run's .fls:
+        # without them the kernel's math symbols, accents and delimiters
+        # (\alpha, \int, \vec, \neq: fontmath.ltx) and its text font setup
+        # (fonttext.ltx) would be missing from the vocabulary.
+        extra = [latex_ltx] + [f for f in map(oracle.find, KERNEL_FORMAT_FILES) if f]
+        kernel, base = probe_one(oracle, work, None, (), kernel_extra=extra)
         if "error" in kernel:
             raise CannotCheck("the kernel probe failed: %s" % kernel["error"])
         out["kernel"] = kernel

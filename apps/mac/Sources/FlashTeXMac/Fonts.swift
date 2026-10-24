@@ -27,10 +27,10 @@ enum PreviewFonts {
     /// against. It moves whenever an input of name resolution or of what a
     /// PostScript name denotes changes: Latin Modern registration
     /// (`FLASHTEX_LM_DIR`, bundle, repository copy, TeX Live), a producer face
-    /// switch (`flashtex-compiler` Times ↔ `flashtex-render` Latin Modern), the
+    /// switch (Times ↔ Latin Modern), the
     /// `FLASHTEX_PREVIEW_FACE` override, or an explicit `invalidateResources()`.
     /// Consumers stamp what they build with the generation it was built at and
-    /// never serve an entry from another generation (`PreviewTextCache`), so
+    /// never serve an entry from another generation, so
     /// invalidation is keyed rather than a scattered `clear()`. Main-thread
     /// state, like the cache: the draw closure, the shell's worker attach and
     /// the CoreGraphics export all run there.

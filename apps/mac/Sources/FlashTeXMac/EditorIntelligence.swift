@@ -394,19 +394,19 @@ enum EditorIntelligence {
         static let kernelByName: [String: KernelCommand] = Dictionary(kernel.map { ($0.name, $0) }, uniquingKeysWith: { a, _ in a })
 
         /// Standard LaTeX commands and environments the hover documents
-        /// although the compiler does not render them (it diagnoses them, so
-        /// the editor still explains what the user typed). Every other `table`
-        /// / `environments` key names a command or environment of the
-        /// compiler's inventory (`Completion.Vocabulary.inventory`;
-        /// `CompletionTests.testCommandDocsNameOnlyKnownCommands`), and a
-        /// name listed here must leave the list once the compiler renders it.
+        /// whether or not the bundled vocabulary lists them: control symbols
+        /// (`\\`, `\%`, which the generated vocabulary never names), commands
+        /// of classes other than article (`\chapter`), and the kernel's math
+        /// symbols and environments of packages the vocabulary may not
+        /// measure. Every other `table` / `environments` key names a command
+        /// or environment of the vocabulary (`Completion.Vocabulary.inventory`;
+        /// `CompletionTests.testCommandDocsNameOnlyKnownCommands`).
         static let beyondCompiler: Set<String> = [
-            "chapter", "autoref",
-            "def", "newline", "%", "$", "&", "#", "_", "{", "}",
-            "geometry", "onehalfspacing", "doublespacing",
+            "chapter", "\\", "%", "$", "&", "#", "_", "{", "}",
+            "Rightarrow", "alpha", "cdot", "hat", "in", "infty", "int", "mu", "prod", "sum",
         ]
         static let environmentsBeyondCompiler: Set<String> = [
-            "abstract", "minted", "theorem", "tikzpicture",
+            "minted", "theorem", "frame", "lstlisting",
         ]
 
         static func environmentDocumentation(for name: String) -> String? {

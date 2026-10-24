@@ -16,6 +16,8 @@ The editors' completion vocabulary (`supported-latex.json`, schema `flashtex-sup
 - The `supported-latex` workflow runs `probe --check` on the pinned TeX Live image whenever the generator or its inputs change. It uploads the probe it measured as the artifact `supported-latex-probe`. To update, commit that artifact's `probe.json` and run `render`.
 - To re-measure package support, take a newer P5 board's `smoke-new.txt` and `oracle.json`, then run `record`, `probe` (or the workflow) and `render`.
 
-## Until S7
+## The bundled copies
 
-The app still bundles the old compiler's inventory, kept byte-identical by `apps/mac/scripts/sync-supported-latex.sh`. S7 deletes that source, and `render --install` then writes this file to `apps/mac/Sources/FlashTeXMac/Resources/` and `apps/ios/FlashTeXPad/Resources/`. `check --installed` replaces `sync-supported-latex.sh --check` in CI, `gate.sh` and `make-app.sh`.
+Both editors bundle this file: `render --install` writes it to `apps/mac/Sources/FlashTeXMac/Resources/` and `apps/ios/FlashTeXPad/Resources/`, and `check --installed` (CI's `checks` and `mac-app` jobs, `gate.sh`, `make-app.sh`) refuses a stale copy. S7 retired the old compiler's inventory and `sync-supported-latex.sh`.
+
+The vocabulary is what completion offers, not a list of what the engine runs. A command, class or package with no row is unknown to completion and is never marked unsupported: the editors show a document's other commands as "used in this document", and a package package-smoke measured equal to pdfLaTeX as "typeset as pdfLaTeX does".

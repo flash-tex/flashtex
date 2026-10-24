@@ -1,7 +1,7 @@
 {
   "about": "SHA-256 of each generated table and its generator; verified by scripts/check-generated.py, re-recorded by --update.",
   "sha256": {
-    "apps/mac/scripts/gen-supported-latex.py": "07ffcaaec95e2f21c0770a1922f1269986132dc9e018b9de892ed74622eb5ace",
+    "apps/mac/scripts/gen-supported-latex.py": "8d00010805d60a9f290e25f636ae196ca1a14ca3af9540356f1162db126e556a",
     "apps/mac/supported-latex/supported-latex.json": "70db1bd159d8a1d65c1dbc141687b40f6e400df8aa2aa57e7e2edf011cfa5c47",
     "crates/compiler/scripts/canonical_latex.py": "99db12cdc7f5d16107bb58b7226e49f48fd692820084d0036ccf1388bfcf7a7b",
     "crates/compiler/scripts/color_names.py": "b3b6a07f4c6a37e860acf921b4f1cf4a6496d5d4ee07e692a1733bb8256f57c3",
