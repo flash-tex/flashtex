@@ -617,7 +617,15 @@ const STOP_LOGS: usize = 64;
 /// Chunks copied between two questions to a `stop` (256 KB, tens of µs;
 /// lane P4-TYPING-200WPM: `prepare_restore` held a keystroke 42 M cycles in
 /// its copies, which asked nothing).
-const STOP_CHUNKS: usize = 256;
+const STOP_CHUNKS: usize = if cfg!(miri) {
+    // Miri runs the tests at a fiftieth of their size (tests::space), with
+    // fewer chunks than 256: as with PARALLEL_MIN, a lower bar keeps the
+    // questions inside the copies, and the stopped preparations they leave,
+    // under its checks.
+    2
+} else {
+    256
+};
 
 /// `older` then `newer`, two adjacent sealed logs, as one: the state at
 /// `older`'s checkpoint from the state after `newer`'s. Where both hold a
@@ -3936,8 +3944,8 @@ mod tests {
     /// later writes see the same space as without it.
     #[test]
     fn zero_pages_are_given_back_and_read_the_same() {
-        let words = 1 << 20; // 8 MB
-        let (mut a, mut arr) = space(words);
+        let (mut a, mut arr) = space(1 << 20); // 8 MB (Miri: a fiftieth)
+        let words = arr.len();
         // TeX's `initialize`: every word cleared, so every page resident
         for i in 0..words {
             arr[i] = 0;
@@ -3952,9 +3960,12 @@ mod tests {
         let r0 = crate::memstat::resident(arr.as_ptr() as *const u8, words * 8);
         let given = a.release_zero_pages();
         let r1 = crate::memstat::resident(arr.as_ptr() as *const u8, words * 8);
-        if cfg!(unix) {
+        // (Miri cannot say which pages are resident, `mincore`: nothing is
+        // given back there, and the rest is checked all the same)
+        if cfg!(unix) && !cfg!(miri) {
             // every page but the 128 with a nonzero word
-            assert!(given >= words * 8 - 128 * page - 2 * page, "given {given}");
+            let kept = words.div_ceil(8192);
+            assert!(given >= words * 8 - kept * page - 2 * page, "given {given}");
             if let (Some(r0), Some(r1)) = (r0, r1) {
                 assert!(
                     r1 + given <= r0 + page,
@@ -4184,11 +4195,10 @@ mod tests {
         // chunks than one `STOP_CHUNKS`: P4-TYPING-200WPM), at each question
         // in turn: nothing prepared, no slab chunk in use but the kept
         // part's redo made ahead (`PartPrep`), and the restore after the
-        // stops, which takes the part, equals a plain one
-        // (not at Miri's 1/50 scale, whose space has fewer chunks than one
-        // `STOP_CHUNKS`: no question is asked inside the copies there)
+        // stops, which takes the part, equals a plain one (at Miri's 1/50
+        // scale too: its `STOP_CHUNKS` is lowered to match)
         let live0 = a.core().slab.live;
-        for n in (1..6).filter(|_| !cfg!(miri)) {
+        for n in 1..6 {
             let mut asked = 0;
             assert!(!a.prepare_restore(ids[0], &mut || {
                 asked += 1;
