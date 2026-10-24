@@ -716,8 +716,10 @@ fn pdflatex_reference_reemits_with_identical_content_and_font_programs() {
         eprintln!("skipped: pdflatex oracle not installed");
         return;
     };
-    let dir =
-        std::env::temp_dir().join(format!("flashtex-exact-route-oracle-{}", std::process::id()));
+    let dir = std::env::temp_dir().join(format!(
+        "flashtex-exact-route-oracle-{}",
+        std::process::id()
+    ));
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(
         dir.join("main.tex"),
