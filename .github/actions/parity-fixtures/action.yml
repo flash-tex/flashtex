@@ -6,10 +6,9 @@
 # fork guard from docs/design/engine-v2/DESIGN.md §9.3 on the JOB, where a
 # reviewer can see it, and an `if:` cannot change a job's runner.
 #
-# Since S5 (retirement plan §0, §1.7) the engine under test is the new one by
-# default: flashtex-initex and its formats, built by scripts/engine-parity.sh
-# from TeX Live 2026 (MacTeX 2026 on a Mac). `engine: old` keeps the frozen
-# flashtex-cli route until S7 drops it.
+# The engine under test is the new one, the only one since S7 (retirement
+# plan §1.7): flashtex-initex and its formats, built by
+# scripts/engine-parity.sh from TeX Live 2026 (MacTeX 2026 on a Mac).
 name: parity fixtures
 description: Build the engine under test and check the fixtures tier against its committed baseline.
 
@@ -18,10 +17,6 @@ inputs:
     description: parity.py -j (parallel documents)
     required: false
     default: "3"
-  engine:
-    description: "`new` (flashtex-initex, the default since S5) or `old` (the frozen flashtex-cli)"
-    required: false
-    default: "new"
 
 runs:
   using: composite
@@ -29,17 +24,15 @@ runs:
     - uses: dtolnay/rust-toolchain@stable
     - uses: Swatinem/rust-cache@v2
       with:
-        # flashtex-cli is outside the root workspace and has its own target/.
-        workspaces: ${{ inputs.engine == 'old' && 'crates/flashtex-cli' || '. -> target' }}
-        key: parity-${{ inputs.engine == 'old' && 'cli' || 'engine' }}
+        workspaces: ". -> target"
+        key: parity-engine
     - name: parity scoreboard self-tests
       shell: bash
       run: python3 -m unittest discover -s tools/parity -p 'test_*.py'
-    - name: TeX Live 2026 first on PATH, and qpdf (new engine)
+    - name: TeX Live 2026 first on PATH, and qpdf
       # The engine builds its formats from TeX Live's .ini files and reads
       # TeX Live's tree through kpsewhich. A self-hosted Mac has MacTeX 2026;
       # a GitHub-hosted one installs it, as bench-readme.yml does.
-      if: inputs.engine != 'old'
       shell: bash
       run: |
         set -euo pipefail
@@ -53,40 +46,19 @@ runs:
         command -v qpdf >/dev/null || brew install qpdf >/dev/null
         pdftex --version | head -1
     - name: build the new engine and its formats (release)
-      if: inputs.engine != 'old'
       shell: bash
       run: scripts/engine-parity.sh --work "$RUNNER_TEMP/engine-parity" build
-    - name: build the flashtex CLI (release)
-      if: inputs.engine == 'old'
-      shell: bash
-      run: |
-        set -o pipefail
-        cargo build --release --locked \
-          --manifest-path crates/flashtex-cli/Cargo.toml --bin flashtex
-    - name: ci.yml's old_engine filter names every crate the CLI builds
-      # plan runs this job in the merge queue only when a change touches the
-      # CLI's crates; this keeps that hand-written list honest. After the
-      # build, so cargo metadata finds every dependency already fetched.
-      if: inputs.engine == 'old'
-      shell: bash
-      run: scripts/ci/check-old-engine-paths.sh
     - name: parity scoreboard (fixtures) holds its baseline
       # The committed fixtures against their committed pdflatex references.
       # --raster none because L4 needs pdftoppm/Ghostscript and the baseline
       # is recorded without it.
       shell: bash
-      env:
-        ENGINE: ${{ inputs.engine }}
       run: |
         set -o pipefail
-        eng=()
-        if [ "$ENGINE" != old ]; then
-          ew="$RUNNER_TEMP/engine-parity"
-          eng=(--engine "$ew/eng/flashtex-initex" --engine-env "FLASHTEX_FORMATS=$ew/fmt"
-               --engine-env "FLASHTEX_POOL=$ew/eng/pdftex.pool")
-        fi
+        ew="$RUNNER_TEMP/engine-parity"
         python3 tools/parity/parity.py --tier fixtures --raster none -j '${{ inputs.jobs }}' \
-          ${eng[@]+"${eng[@]}"} \
+          --engine "$ew/eng/flashtex-initex" --engine-env "FLASHTEX_FORMATS=$ew/fmt" \
+          --engine-env "FLASHTEX_POOL=$ew/eng/pdftex.pool" \
           --out "$RUNNER_TEMP/parity" --work "$RUNNER_TEMP/parity-work" \
           --check-baseline tools/parity/baseline-fixtures.json
     - name: parity report
@@ -95,13 +67,13 @@ runs:
       run: |
         set -o pipefail
         [ -f "$RUNNER_TEMP/parity/report.md" ] || exit 0
-        { echo "### Parity scoreboard (fixtures, ${{ inputs.engine }} engine)"; cat "$RUNNER_TEMP/parity/report.md"; } \
+        { echo "### Parity scoreboard (fixtures)"; cat "$RUNNER_TEMP/parity/report.md"; } \
           >> "$GITHUB_STEP_SUMMARY"
     - uses: actions/upload-artifact@v4
       # the levels, for the baseline re-record on its host (S5)
       if: always()
       with:
-        name: parity-fixtures-${{ inputs.engine }}-${{ runner.os }}
+        name: parity-fixtures-new-${{ runner.os }}
         path: ${{ runner.temp }}/parity
         if-no-files-found: ignore
         retention-days: 30

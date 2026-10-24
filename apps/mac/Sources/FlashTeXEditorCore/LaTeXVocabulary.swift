@@ -1,10 +1,11 @@
 import Foundation
 
-/// The compiler's command inventory (`crates/compiler/supported/
-/// supported-latex.json`, schema `flashtex-supported-latex/1`) as a
-/// completion vocabulary. Both apps bundle a byte-identical copy of that
-/// file (`apps/mac/scripts/sync-supported-latex.sh` writes both and CI
-/// checks them); this decoder is both apps' (the Mac's
+/// The generated completion vocabulary (`apps/mac/supported-latex/
+/// supported-latex.json`, schema `flashtex-supported-latex/1`, from the new
+/// engine's measured package support with pdflatex as the oracle). Both apps
+/// bundle a byte-identical copy of that file
+/// (`apps/mac/scripts/gen-supported-latex.py render --install` writes both
+/// and `check --installed` checks them); this decoder is both apps' (the Mac's
 /// `Completion.Vocabulary.entries` are built from it): every rendered
 /// command once, in offer order — text commands in file order, then math
 /// structures, operators and symbols — and the environments in file order.

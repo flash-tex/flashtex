@@ -1,5 +1,8 @@
 # Proposal: `display-list-v2-images` — image items for `display-list-v2`
 
+> **Historical.** The old engine that produced this was deleted in S7 (retirement plan, row 11).
+> This file stays only because surviving code still names it in comments; it describes no live producer.
+
 Status: **PROPOSAL ONLY** (FT-063, agent `kabir-claude`, branch
 `agent/kabir-claude/graphics-floats`). Additive and opt-in. It changes no
 frozen contract: `protocol/rendering-v2.schema.json`,

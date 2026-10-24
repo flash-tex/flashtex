@@ -63,164 +63,843 @@
           "why": "lane names in the staffing history (\"rendering-core\", \"conversion-jobs\" engineers), not the crates; the Commander's file"
         },
         {
-          "path": "crates/class-geometry/CONTRACT.md",
-          "until": "S7 (the crate is deleted)",
-          "why": "a lane name (\"title-layout\"), not the crate; class-geometry is a §1.3 orphan"
-        },
-        {
-          "path": "crates/class-geometry/README.md",
-          "until": "S7 (the crate is deleted)",
-          "why": "a lane name (\"title-layout\"), not the crate"
-        },
-        {
-          "path": "crates/compiler/src/layout.rs",
-          "until": "S7 (the crate is deleted)",
-          "why": "comments on the title layout it was ported from"
-        },
-        {
-          "path": "crates/compiler/src/parser.rs",
-          "until": "S7 (the crate is deleted)",
-          "why": "a comment naming flashtex_title_layout::DateField"
-        },
-        {
-          "path": "crates/compiler/tests/maketitle.rs",
-          "until": "S7 (the crate is deleted)",
-          "why": "a header comment"
-        },
-        {
-          "path": "crates/font-resources/README.md",
-          "until": "S7 (the crate is deleted)",
-          "why": "consumer notes"
-        },
-        {
-          "path": "crates/font-resources/src/lib.rs",
-          "until": "S7 (the crate is deleted)",
-          "why": "a comment"
-        },
-        {
-          "path": "crates/pdf/README.md",
-          "until": "S7 (the crate is deleted)",
-          "why": "consumer notes"
-        },
-        {
-          "path": "crates/pdf/docs/exact-export-classification.md",
-          "until": "S7 (the crate is deleted)",
-          "why": "design notes"
-        },
-        {
-          "path": "crates/pdf/docs/v2-adapter-gap.md",
-          "until": "S7 (the crate is deleted)",
-          "why": "design notes"
-        },
-        {
-          "path": "crates/pdf/src/v2.rs",
-          "until": "S7 (the crate is deleted)",
-          "why": "comments and one diagnostic string"
-        },
-        {
-          "path": "crates/pdf/tests/exact.rs",
-          "until": "S7 (the crate is deleted)",
-          "why": "a comment"
-        },
-        {
-          "path": "crates/pdf/tests/v2.rs",
-          "until": "S7 (the crate is deleted)",
-          "why": "a comment"
-        },
-        {
-          "path": "crates/preview-controller/docs/proposals/page-delta-helper-review.md",
-          "until": "S8 (final sweep)",
-          "why": "a historical proposal review; preview-controller waits on RQ7"
-        },
-        {
-          "path": "crates/render-pipeline/README.md",
-          "until": "S7 (the crate is deleted)",
-          "why": "consumer notes"
-        },
-        {
-          "path": "crates/render-pipeline/docs/evidence/hw1-text/README.md",
-          "until": "S7 (the crate is deleted)",
-          "why": "old evidence"
-        },
-        {
-          "path": "crates/render-pipeline/docs/evidence/hw1-text/replay.py",
-          "until": "S7 (the crate is deleted)",
-          "why": "an old evidence replay script (its path was already dead)"
-        },
-        {
-          "path": "crates/render-pipeline/docs/oracle-evidence.md",
-          "until": "S7 (the crate is deleted)",
-          "why": "old evidence"
-        },
-        {
-          "path": "crates/render-pipeline/docs/proposals/display-list-paths.md",
-          "until": "S7 (the crate is deleted)",
-          "why": "a proposal"
-        },
-        {
-          "path": "crates/render-pipeline/src/display.rs",
-          "until": "S7 (the crate is deleted)",
-          "why": "comments"
-        },
-        {
-          "path": "crates/render-pipeline/src/fonts.rs",
-          "until": "S7 (the crate is deleted)",
-          "why": "a comment"
-        },
-        {
-          "path": "crates/render-pipeline/src/typeset.rs",
-          "until": "S7 (the crate is deleted)",
-          "why": "a comment"
-        },
-        {
-          "path": "crates/render-pipeline/tests/v2_and_math.rs",
-          "until": "S7 (the crate is deleted)",
-          "why": "a comment"
-        },
-        {
-          "path": "crates/vector-graphics/docs/rendering-v2-integration.md",
-          "until": "S7 (the crate is deleted)",
-          "why": "design notes; vector-graphics is a §1.3 orphan"
-        },
-        {
-          "path": "docs/contracts/runtime-v1-display-list-v2.md",
-          "until": "S6 (the v2 pane, its protocol and its docs retire)",
-          "why": "the v2 contract, retired with the v2 pane (plan §1.9)"
-        },
-        {
-          "path": "docs/proposals/contract-draft-review-ad922ea.md",
-          "until": "S6 (the v2 pane, its protocol and its docs retire)",
-          "why": "retires with the code it describes (plan §1.9)"
-        },
-        {
-          "path": "docs/proposals/display-list-v2-delta.md",
-          "until": "S6 (the v2 pane, its protocol and its docs retire)",
-          "why": "retires with the code it describes (plan §1.9)"
-        },
-        {
-          "path": "docs/proposals/pdf-searchable-text.md",
-          "until": "S6 (the v2 pane, its protocol and its docs retire)",
-          "why": "retires with the code it describes (plan §1.9)"
-        },
-        {
-          "path": "docs/proposals/rendering-abi.md",
-          "until": "S6 (the v2 pane, its protocol and its docs retire)",
-          "why": "retires with the code it describes (plan §1.9)"
-        },
-        {
           "path": "docs/proposals/generated-data-and-maintainability.md",
           "until": "S8 (final sweep)",
           "why": "a historical proposal listing the workspace as it was"
         },
         {
-          "path": "protocol/proposals/display-list-v2-diagnostics.md",
-          "until": "S6 (the v2 pane, its protocol and its docs retire)",
-          "why": "a v2 protocol proposal"
-        },
-        {
           "path": "protocol/proposals/display-list-v2-window.md",
           "until": "S6 (the v2 pane, its protocol and its docs retire)",
           "why": "a v2 protocol proposal"
+        }
+      ]
+    },
+    "S7": {
+      "landed": true,
+      "pr": 1888,
+      "names": [
+        "check-old-engine-paths",
+        "class-geometry",
+        "crates/bibliography",
+        "crates/class-geometry",
+        "crates/compiler",
+        "crates/flashtex-cli",
+        "crates/font-engine",
+        "crates/font-resources",
+        "crates/perf-bench",
+        "crates/preview-controller",
+        "crates/render-pipeline",
+        "crates/tex-text-encoding",
+        "crates/vector-graphics",
+        "fetch-glyphlist",
+        "flashtex-bibliography",
+        "flashtex-class-geometry",
+        "flashtex-compiler",
+        "flashtex-font-engine",
+        "flashtex-font-resources",
+        "flashtex-pdf-exact",
+        "flashtex-perf-bench",
+        "flashtex-preview-controller",
+        "flashtex-render",
+        "flashtex-render-pipeline",
+        "flashtex-tex-text-encoding",
+        "flashtex-vector-graphics",
+        "flashtex_bibliography",
+        "flashtex_class_geometry",
+        "flashtex_cli",
+        "flashtex_compiler",
+        "flashtex_font_engine",
+        "flashtex_font_resources",
+        "flashtex_perf_bench",
+        "flashtex_preview_controller",
+        "flashtex_render_pipeline",
+        "flashtex_tex_text_encoding",
+        "flashtex_vector_graphics",
+        "perf-bench",
+        "render-corpus-v2",
+        "render-pipeline",
+        "sync-supported-latex",
+        "tests/tex-corpus",
+        "tools/font-metric-sweep",
+        "tools/kernel-math-gap",
+        "tools/real-world-corpus",
+        "tools/visual-oracle"
+      ],
+      "allow": [
+        {
+          "path": "apps/mac/Fonts/README.md",
+          "until": "S8 (final sweep)",
+          "why": "provenance of a pinned face or metric: which old renderer it was first pinned for"
+        },
+        {
+          "path": "apps/mac/Fonts/SUPPLEMENTARY-FACES.json",
+          "until": "S8 (final sweep)",
+          "why": "provenance of a pinned face or metric: which old renderer it was first pinned for"
+        },
+        {
+          "path": "apps/mac/Fonts/texmf/SUPPLEMENTARY-METRICS.json",
+          "until": "S8 (final sweep)",
+          "why": "provenance of a pinned face or metric: which old renderer it was first pinned for"
+        },
+        {
+          "path": "apps/mac/README.md",
+          "until": "S8 (final sweep)",
+          "why": "a history comment or dated record naming what S7 deleted"
+        },
+        {
+          "path": "apps/mac/Samples/make-demo-request.py",
+          "until": "S8 (final sweep)",
+          "why": "a history comment or dated record naming what S7 deleted"
+        },
+        {
+          "path": "apps/mac/Sources/FlashTeXMac/Completion.swift",
+          "until": "S8 (final sweep)",
+          "why": "a history comment or dated record naming what S7 deleted"
+        },
+        {
+          "path": "apps/mac/Sources/FlashTeXMac/EditorDiagnostics.swift",
+          "until": "S8 (final sweep)",
+          "why": "a history comment or dated record naming what S7 deleted"
+        },
+        {
+          "path": "apps/mac/Sources/FlashTeXMac/EngineV3Fixes.swift",
+          "until": "S8 (final sweep)",
+          "why": "a history comment or dated record naming what S7 deleted"
+        },
+        {
+          "path": "apps/mac/Sources/FlashTeXMac/Fonts.swift",
+          "until": "S8 (final sweep)",
+          "why": "a history comment or dated record naming what S7 deleted"
+        },
+        {
+          "path": "apps/mac/Sources/FlashTeXMac/ProjectScaffold.swift",
+          "until": "S8 (final sweep)",
+          "why": "a history comment or dated record naming what S7 deleted"
+        },
+        {
+          "path": "apps/mac/Tests/FlashTeXMacTests/CompletionTests.swift",
+          "until": "S8 (final sweep)",
+          "why": "a history comment or dated record naming what S7 deleted"
+        },
+        {
+          "path": "apps/mac/Tests/FlashTeXMacTests/EditorCaretFixTests.swift",
+          "until": "S8 (final sweep)",
+          "why": "a history comment or dated record naming what S7 deleted"
+        },
+        {
+          "path": "apps/mac/Tests/FlashTeXMacTests/EditorDiagnosticsExplanationsTests.swift",
+          "until": "S8 (final sweep)",
+          "why": "a history comment or dated record naming what S7 deleted"
+        },
+        {
+          "path": "apps/mac/Tests/FlashTeXMacTests/EditorDiagnosticsPartialOutputTests.swift",
+          "until": "S8 (final sweep)",
+          "why": "a history comment or dated record naming what S7 deleted"
+        },
+        {
+          "path": "apps/mac/Tests/FlashTeXMacTests/EngineV3FixesTests.swift",
+          "until": "S8 (final sweep)",
+          "why": "a history comment or dated record naming what S7 deleted"
+        },
+        {
+          "path": "apps/mac/Tests/FlashTeXMacTests/EngineV3OneEngineTests.swift",
+          "until": "n/a",
+          "why": "names the retired helpers to assert or ensure they are absent"
+        },
+        {
+          "path": "apps/mac/Tests/FlashTeXMacTests/EngineV3ProjectFontsTests.swift",
+          "until": "S8 (final sweep)",
+          "why": "a history comment or dated record naming what S7 deleted"
+        },
+        {
+          "path": "apps/mac/Tests/FlashTeXMacTests/NavigationTests.swift",
+          "until": "S8 (final sweep)",
+          "why": "a history comment or dated record naming what S7 deleted"
+        },
+        {
+          "path": "apps/mac/Tests/FlashTeXProtocolTests/ProtocolTests.swift",
+          "until": "S8 (final sweep)",
+          "why": "a history comment or dated record naming what S7 deleted"
+        },
+        {
+          "path": "apps/mac/docs/package-editing.md",
+          "until": "S8 (final sweep)",
+          "why": "a history comment or dated record naming what S7 deleted"
+        },
+        {
+          "path": "apps/mac/scripts/bundle-texmf.py",
+          "until": "S8 (final sweep)",
+          "why": "a history comment or dated record naming what S7 deleted"
+        },
+        {
+          "path": "apps/mac/scripts/make-app.sh",
+          "until": "S8 (final sweep)",
+          "why": "a history comment or dated record naming what S7 deleted"
+        },
+        {
+          "path": "apps/mac/scripts/packaging-selftest.sh",
+          "until": "n/a",
+          "why": "names the retired helpers to assert or ensure they are absent"
+        },
+        {
+          "path": "apps/mac/supported-latex/README.md",
+          "until": "S8 (final sweep)",
+          "why": "a history comment or dated record naming what S7 deleted"
+        },
+        {
+          "path": "crates/document-runtime/benchmarks/display-exact-size-6e69661/evidence.json",
+          "until": "S8 (final sweep)",
+          "why": "the retired producer route's recorded evidence (benchmarks, dated reviews and the audit scripts they cite), kept as recorded"
+        },
+        {
+          "path": "crates/document-runtime/benchmarks/display-incremental-6e69661/incremental-requested.fresh.jsonl",
+          "until": "S8 (final sweep)",
+          "why": "the retired producer route's recorded evidence (benchmarks, dated reviews and the audit scripts they cite), kept as recorded"
+        },
+        {
+          "path": "crates/document-runtime/benchmarks/display-incremental-6e69661/incremental-requested.persistent.jsonl",
+          "until": "S8 (final sweep)",
+          "why": "the retired producer route's recorded evidence (benchmarks, dated reviews and the audit scripts they cite), kept as recorded"
+        },
+        {
+          "path": "crates/document-runtime/benchmarks/display-incremental-6e69661/incremental.json",
+          "until": "S8 (final sweep)",
+          "why": "the retired producer route's recorded evidence (benchmarks, dated reviews and the audit scripts they cite), kept as recorded"
+        },
+        {
+          "path": "crates/document-runtime/benchmarks/display-incremental-6e69661/provenance.json",
+          "until": "S8 (final sweep)",
+          "why": "the retired producer route's recorded evidence (benchmarks, dated reviews and the audit scripts they cite), kept as recorded"
+        },
+        {
+          "path": "crates/document-runtime/benchmarks/display-lifecycle-65dbe7d/provenance.json",
+          "until": "S8 (final sweep)",
+          "why": "the retired producer route's recorded evidence (benchmarks, dated reviews and the audit scripts they cite), kept as recorded"
+        },
+        {
+          "path": "crates/document-runtime/benchmarks/display-producer-65dbe7d/provenance.json",
+          "until": "S8 (final sweep)",
+          "why": "the retired producer route's recorded evidence (benchmarks, dated reviews and the audit scripts they cite), kept as recorded"
+        },
+        {
+          "path": "crates/document-runtime/benchmarks/helper-source-capture-corrected/audit.json",
+          "until": "S8 (final sweep)",
+          "why": "the retired producer route's recorded evidence (benchmarks, dated reviews and the audit scripts they cite), kept as recorded"
+        },
+        {
+          "path": "crates/document-runtime/benchmarks/helper-source-capture/provenance.json",
+          "until": "S8 (final sweep)",
+          "why": "the retired producer route's recorded evidence (benchmarks, dated reviews and the audit scripts they cite), kept as recorded"
+        },
+        {
+          "path": "crates/document-runtime/benchmarks/instrumented-prefix-review/audit.json",
+          "until": "S8 (final sweep)",
+          "why": "the retired producer route's recorded evidence (benchmarks, dated reviews and the audit scripts they cite), kept as recorded"
+        },
+        {
+          "path": "crates/document-runtime/benchmarks/positional-correctness-review/audit.json",
+          "until": "S8 (final sweep)",
+          "why": "the retired producer route's recorded evidence (benchmarks, dated reviews and the audit scripts they cite), kept as recorded"
+        },
+        {
+          "path": "crates/document-runtime/benchmarks/producer-release-65dbe7d/build.log",
+          "until": "S8 (final sweep)",
+          "why": "the retired producer route's recorded evidence (benchmarks, dated reviews and the audit scripts they cite), kept as recorded"
+        },
+        {
+          "path": "crates/document-runtime/benchmarks/producer-release-65dbe7d/provenance.json",
+          "until": "S8 (final sweep)",
+          "why": "the retired producer route's recorded evidence (benchmarks, dated reviews and the audit scripts they cite), kept as recorded"
+        },
+        {
+          "path": "crates/document-runtime/benchmarks/producer-release-65dbe7d/release-manifest.json",
+          "until": "S8 (final sweep)",
+          "why": "the retired producer route's recorded evidence (benchmarks, dated reviews and the audit scripts they cite), kept as recorded"
+        },
+        {
+          "path": "crates/document-runtime/benchmarks/profile-baseline/README.md",
+          "until": "S8 (final sweep)",
+          "why": "the retired producer route's recorded evidence (benchmarks, dated reviews and the audit scripts they cite), kept as recorded"
+        },
+        {
+          "path": "crates/document-runtime/benchmarks/raw-bounded-producer/provenance.json",
+          "until": "S8 (final sweep)",
+          "why": "the retired producer route's recorded evidence (benchmarks, dated reviews and the audit scripts they cite), kept as recorded"
+        },
+        {
+          "path": "crates/document-runtime/benchmarks/raw-display-prototype/provenance.json",
+          "until": "S8 (final sweep)",
+          "why": "the retired producer route's recorded evidence (benchmarks, dated reviews and the audit scripts they cite), kept as recorded"
+        },
+        {
+          "path": "crates/document-runtime/benchmarks/raw-display-two-pass/provenance.json",
+          "until": "S8 (final sweep)",
+          "why": "the retired producer route's recorded evidence (benchmarks, dated reviews and the audit scripts they cite), kept as recorded"
+        },
+        {
+          "path": "crates/document-runtime/benchmarks/raw-v1-overhead/provenance.json",
+          "until": "S8 (final sweep)",
+          "why": "the retired producer route's recorded evidence (benchmarks, dated reviews and the audit scripts they cite), kept as recorded"
+        },
+        {
+          "path": "crates/document-runtime/benchmarks/typing-burst-historical-review/audit.json",
+          "until": "S8 (final sweep)",
+          "why": "the retired producer route's recorded evidence (benchmarks, dated reviews and the audit scripts they cite), kept as recorded"
+        },
+        {
+          "path": "crates/document-runtime/benchmarks/typing-burst-process-review/current/audit.json",
+          "until": "S8 (final sweep)",
+          "why": "the retired producer route's recorded evidence (benchmarks, dated reviews and the audit scripts they cite), kept as recorded"
+        },
+        {
+          "path": "crates/document-runtime/benchmarks/typing-burst-process-review/historical/audit.json",
+          "until": "S8 (final sweep)",
+          "why": "the retired producer route's recorded evidence (benchmarks, dated reviews and the audit scripts they cite), kept as recorded"
+        },
+        {
+          "path": "crates/document-runtime/benchmarks/typing-burst-review/audit.json",
+          "until": "S8 (final sweep)",
+          "why": "the retired producer route's recorded evidence (benchmarks, dated reviews and the audit scripts they cite), kept as recorded"
+        },
+        {
+          "path": "crates/document-runtime/docs/full-output-9aaec57a.md",
+          "until": "S8 (final sweep)",
+          "why": "the retired producer route's recorded evidence (benchmarks, dated reviews and the audit scripts they cite), kept as recorded"
+        },
+        {
+          "path": "crates/document-runtime/docs/helper-source-contract-review.md",
+          "until": "S8 (final sweep)",
+          "why": "the retired producer route's recorded evidence (benchmarks, dated reviews and the audit scripts they cite), kept as recorded"
+        },
+        {
+          "path": "crates/document-runtime/docs/positional-correctness-review.md",
+          "until": "S8 (final sweep)",
+          "why": "the retired producer route's recorded evidence (benchmarks, dated reviews and the audit scripts they cite), kept as recorded"
+        },
+        {
+          "path": "crates/document-runtime/docs/producer-release-acceptance.md",
+          "until": "S8 (final sweep)",
+          "why": "the retired producer route's recorded evidence (benchmarks, dated reviews and the audit scripts they cite), kept as recorded"
+        },
+        {
+          "path": "crates/document-runtime/docs/producer-size-contract.md",
+          "until": "S8 (final sweep)",
+          "why": "the retired producer route's recorded evidence (benchmarks, dated reviews and the audit scripts they cite), kept as recorded"
+        },
+        {
+          "path": "crates/document-runtime/docs/raw-metadata-bounds.md",
+          "until": "S8 (final sweep)",
+          "why": "the retired producer route's recorded evidence (benchmarks, dated reviews and the audit scripts they cite), kept as recorded"
+        },
+        {
+          "path": "crates/document-runtime/docs/typing-burst-review.md",
+          "until": "S8 (final sweep)",
+          "why": "the retired producer route's recorded evidence (benchmarks, dated reviews and the audit scripts they cite), kept as recorded"
+        },
+        {
+          "path": "crates/document-runtime/tools/audit_helper_9aa.py",
+          "until": "S8 (final sweep)",
+          "why": "the retired producer route's recorded evidence (benchmarks, dated reviews and the audit scripts they cite), kept as recorded"
+        },
+        {
+          "path": "crates/document-runtime/tools/audit_hw1_combined.py",
+          "until": "S8 (final sweep)",
+          "why": "the retired producer route's recorded evidence (benchmarks, dated reviews and the audit scripts they cite), kept as recorded"
+        },
+        {
+          "path": "crates/document-runtime/tools/audit_hw1_complete.py",
+          "until": "S8 (final sweep)",
+          "why": "the retired producer route's recorded evidence (benchmarks, dated reviews and the audit scripts they cite), kept as recorded"
+        },
+        {
+          "path": "crates/document-runtime/tools/audit_hw1_four_combined.py",
+          "until": "S8 (final sweep)",
+          "why": "the retired producer route's recorded evidence (benchmarks, dated reviews and the audit scripts they cite), kept as recorded"
+        },
+        {
+          "path": "crates/document-runtime/tools/audit_hw1_logical.py",
+          "until": "S8 (final sweep)",
+          "why": "the retired producer route's recorded evidence (benchmarks, dated reviews and the audit scripts they cite), kept as recorded"
+        },
+        {
+          "path": "crates/document-runtime/tools/audit_hw1_membership.py",
+          "until": "S8 (final sweep)",
+          "why": "the retired producer route's recorded evidence (benchmarks, dated reviews and the audit scripts they cite), kept as recorded"
+        },
+        {
+          "path": "crates/document-runtime/tools/audit_hw1_quantifiers.py",
+          "until": "S8 (final sweep)",
+          "why": "the retired producer route's recorded evidence (benchmarks, dated reviews and the audit scripts they cite), kept as recorded"
+        },
+        {
+          "path": "crates/document-runtime/tools/audit_hw1_text_handoff.py",
+          "until": "S8 (final sweep)",
+          "why": "the retired producer route's recorded evidence (benchmarks, dated reviews and the audit scripts they cite), kept as recorded"
+        },
+        {
+          "path": "crates/document-runtime/tools/audit_instrumented_prefix.py",
+          "until": "S8 (final sweep)",
+          "why": "the retired producer route's recorded evidence (benchmarks, dated reviews and the audit scripts they cite), kept as recorded"
+        },
+        {
+          "path": "crates/document-runtime/tools/audit_reply_cap_capture.py",
+          "until": "S8 (final sweep)",
+          "why": "the retired producer route's recorded evidence (benchmarks, dated reviews and the audit scripts they cite), kept as recorded"
+        },
+        {
+          "path": "crates/document-runtime/tools/audit_typing_burst.py",
+          "until": "S8 (final sweep)",
+          "why": "the retired producer route's recorded evidence (benchmarks, dated reviews and the audit scripts they cite), kept as recorded"
+        },
+        {
+          "path": "crates/document-runtime/tools/replay_display_producer.py",
+          "until": "S8 (final sweep)",
+          "why": "the retired producer route's recorded evidence (benchmarks, dated reviews and the audit scripts they cite), kept as recorded"
+        },
+        {
+          "path": "crates/flashtex-build/Cargo.toml",
+          "until": "n/a",
+          "why": "says what the flashtex CLI replaced in S7, or that a package must not ship the retired helpers"
+        },
+        {
+          "path": "crates/flashtex-build/build.rs",
+          "until": "n/a",
+          "why": "says what the flashtex CLI replaced in S7, or that a package must not ship the retired helpers"
+        },
+        {
+          "path": "crates/flashtex-build/src/main.rs",
+          "until": "n/a",
+          "why": "says what the flashtex CLI replaced in S7, or that a package must not ship the retired helpers"
+        },
+        {
+          "path": "crates/pdf/docs/visual-checks.md",
+          "until": "S8 (final sweep)",
+          "why": "a history comment or dated record naming what S7 deleted"
+        },
+        {
+          "path": "crates/tex-expansion/CONTRACT.md",
+          "until": "S8 (final sweep)",
+          "why": "a history comment or dated record naming what S7 deleted"
+        },
+        {
+          "path": "docs/design/engine-v2/DESIGN.md",
+          "until": "n/a",
+          "why": "the governing design; the Commander amends it, this stage does not"
+        },
+        {
+          "path": "docs/proposals/generated-data-and-maintainability.md",
+          "until": "S8 (final sweep)",
+          "why": "historical proposal, marked so; live code still cites it"
+        },
+        {
+          "path": "docs/proposals/packages-fonts-manifest.md",
+          "until": "S8 (final sweep)",
+          "why": "historical proposal, marked so; live code still cites it"
+        },
+        {
+          "path": "docs/user/compiler.md",
+          "until": "n/a",
+          "why": "says what the flashtex CLI replaced in S7, or that a package must not ship the retired helpers"
+        },
+        {
+          "path": "fixtures/divergence-probes/min-abstract/reference.json",
+          "until": "S8 (final sweep)",
+          "why": "recorded provenance of a fixture reference: which build of the old engine it was first compared with"
+        },
+        {
+          "path": "fixtures/divergence-probes/min-bigdelim-12pt/reference.json",
+          "until": "S8 (final sweep)",
+          "why": "recorded provenance of a fixture reference: which build of the old engine it was first compared with"
+        },
+        {
+          "path": "fixtures/divergence-probes/min-chapter/reference.json",
+          "until": "S8 (final sweep)",
+          "why": "recorded provenance of a fixture reference: which build of the old engine it was first compared with"
+        },
+        {
+          "path": "fixtures/divergence-probes/min-curly-quote/reference.json",
+          "until": "S8 (final sweep)",
+          "why": "recorded provenance of a fixture reference: which build of the old engine it was first compared with"
+        },
+        {
+          "path": "fixtures/divergence-probes/min-description/reference.json",
+          "until": "S8 (final sweep)",
+          "why": "recorded provenance of a fixture reference: which build of the old engine it was first compared with"
+        },
+        {
+          "path": "fixtures/divergence-probes/min-float-table/reference.json",
+          "until": "S8 (final sweep)",
+          "why": "recorded provenance of a fixture reference: which build of the old engine it was first compared with"
+        },
+        {
+          "path": "fixtures/divergence-probes/min-footnote-float/reference.json",
+          "until": "S8 (final sweep)",
+          "why": "recorded provenance of a fixture reference: which build of the old engine it was first compared with"
+        },
+        {
+          "path": "fixtures/divergence-probes/min-footnote/reference.json",
+          "until": "S8 (final sweep)",
+          "why": "recorded provenance of a fixture reference: which build of the old engine it was first compared with"
+        },
+        {
+          "path": "fixtures/divergence-probes/min-hrulefill/reference.json",
+          "until": "S8 (final sweep)",
+          "why": "recorded provenance of a fixture reference: which build of the old engine it was first compared with"
+        },
+        {
+          "path": "fixtures/divergence-probes/min-huge-fences/reference.json",
+          "until": "S8 (final sweep)",
+          "why": "recorded provenance of a fixture reference: which build of the old engine it was first compared with"
+        },
+        {
+          "path": "fixtures/divergence-probes/min-langle/reference.json",
+          "until": "S8 (final sweep)",
+          "why": "recorded provenance of a fixture reference: which build of the old engine it was first compared with"
+        },
+        {
+          "path": "fixtures/divergence-probes/min-maketitle/reference.json",
+          "until": "S8 (final sweep)",
+          "why": "recorded provenance of a fixture reference: which build of the old engine it was first compared with"
+        },
+        {
+          "path": "fixtures/divergence-probes/min-natbib/reference.json",
+          "until": "S8 (final sweep)",
+          "why": "recorded provenance of a fixture reference: which build of the old engine it was first compared with"
+        },
+        {
+          "path": "fixtures/divergence-probes/min-newblock/reference.json",
+          "until": "S8 (final sweep)",
+          "why": "recorded provenance of a fixture reference: which build of the old engine it was first compared with"
+        },
+        {
+          "path": "fixtures/divergence-probes/min-norms/reference.json",
+          "until": "S8 (final sweep)",
+          "why": "recorded provenance of a fixture reference: which build of the old engine it was first compared with"
+        },
+        {
+          "path": "fixtures/divergence-probes/min-paragraph/reference.json",
+          "until": "S8 (final sweep)",
+          "why": "recorded provenance of a fixture reference: which build of the old engine it was first compared with"
+        },
+        {
+          "path": "fixtures/divergence-probes/min-quote/reference.json",
+          "until": "S8 (final sweep)",
+          "why": "recorded provenance of a fixture reference: which build of the old engine it was first compared with"
+        },
+        {
+          "path": "fixtures/divergence-probes/min-sqrt-tall/reference.json",
+          "until": "S8 (final sweep)",
+          "why": "recorded provenance of a fixture reference: which build of the old engine it was first compared with"
+        },
+        {
+          "path": "fixtures/divergence-probes/min-tabular/reference.json",
+          "until": "S8 (final sweep)",
+          "why": "recorded provenance of a fixture reference: which build of the old engine it was first compared with"
+        },
+        {
+          "path": "fixtures/divergence-probes/min-tall-parens/reference.json",
+          "until": "S8 (final sweep)",
+          "why": "recorded provenance of a fixture reference: which build of the old engine it was first compared with"
+        },
+        {
+          "path": "fixtures/divergence-probes/min-toc/reference.json",
+          "until": "S8 (final sweep)",
+          "why": "recorded provenance of a fixture reference: which build of the old engine it was first compared with"
+        },
+        {
+          "path": "fixtures/divergence-probes/min-twocolumn/reference.json",
+          "until": "S8 (final sweep)",
+          "why": "recorded provenance of a fixture reference: which build of the old engine it was first compared with"
+        },
+        {
+          "path": "fixtures/divergence-probes/min2-bigsum/reference.json",
+          "until": "S8 (final sweep)",
+          "why": "recorded provenance of a fixture reference: which build of the old engine it was first compared with"
+        },
+        {
+          "path": "fixtures/divergence-probes/min2-cases/reference.json",
+          "until": "S8 (final sweep)",
+          "why": "recorded provenance of a fixture reference: which build of the old engine it was first compared with"
+        },
+        {
+          "path": "fixtures/divergence-probes/min2-fence-nested/reference.json",
+          "until": "S8 (final sweep)",
+          "why": "recorded provenance of a fixture reference: which build of the old engine it was first compared with"
+        },
+        {
+          "path": "fixtures/divergence-probes/min2-fence-onefrac/reference.json",
+          "until": "S8 (final sweep)",
+          "why": "recorded provenance of a fixture reference: which build of the old engine it was first compared with"
+        },
+        {
+          "path": "fixtures/divergence-probes/min2-fence-plain/reference.json",
+          "until": "S8 (final sweep)",
+          "why": "recorded provenance of a fixture reference: which build of the old engine it was first compared with"
+        },
+        {
+          "path": "fixtures/divergence-probes/min2-headings/reference.json",
+          "until": "S8 (final sweep)",
+          "why": "recorded provenance of a fixture reference: which build of the old engine it was first compared with"
+        },
+        {
+          "path": "fixtures/divergence-probes/min2-itemize/reference.json",
+          "until": "S8 (final sweep)",
+          "why": "recorded provenance of a fixture reference: which build of the old engine it was first compared with"
+        },
+        {
+          "path": "fixtures/divergence-probes/min2-nested-dfrac-bare/reference.json",
+          "until": "S8 (final sweep)",
+          "why": "recorded provenance of a fixture reference: which build of the old engine it was first compared with"
+        },
+        {
+          "path": "fixtures/divergence-probes/min2-nested-lists/reference.json",
+          "until": "S8 (final sweep)",
+          "why": "recorded provenance of a fixture reference: which build of the old engine it was first compared with"
+        },
+        {
+          "path": "fixtures/divergence-probes/min2-pagestyle/reference.json",
+          "until": "S8 (final sweep)",
+          "why": "recorded provenance of a fixture reference: which build of the old engine it was first compared with"
+        },
+        {
+          "path": "fixtures/divergence-probes/min2-pmatrix-3row/reference.json",
+          "until": "S8 (final sweep)",
+          "why": "recorded provenance of a fixture reference: which build of the old engine it was first compared with"
+        },
+        {
+          "path": "fixtures/divergence-probes/min2-preamble-switches/reference.json",
+          "until": "S8 (final sweep)",
+          "why": "recorded provenance of a fixture reference: which build of the old engine it was first compared with"
+        },
+        {
+          "path": "fixtures/divergence-probes/min3-baselinestretch/reference.json",
+          "until": "S8 (final sweep)",
+          "why": "recorded provenance of a fixture reference: which build of the old engine it was first compared with"
+        },
+        {
+          "path": "fixtures/divergence-probes/min3-centering/reference.json",
+          "until": "S8 (final sweep)",
+          "why": "recorded provenance of a fixture reference: which build of the old engine it was first compared with"
+        },
+        {
+          "path": "fixtures/divergence-probes/min3-enumerate-only/reference.json",
+          "until": "S8 (final sweep)",
+          "why": "recorded provenance of a fixture reference: which build of the old engine it was first compared with"
+        },
+        {
+          "path": "fixtures/divergence-probes/min3-itemize-multipar/reference.json",
+          "until": "S8 (final sweep)",
+          "why": "recorded provenance of a fixture reference: which build of the old engine it was first compared with"
+        },
+        {
+          "path": "fixtures/divergence-probes/min3-itemize-only/reference.json",
+          "until": "S8 (final sweep)",
+          "why": "recorded provenance of a fixture reference: which build of the old engine it was first compared with"
+        },
+        {
+          "path": "fixtures/divergence-probes/min3-setlength/reference.json",
+          "until": "S8 (final sweep)",
+          "why": "recorded provenance of a fixture reference: which build of the old engine it was first compared with"
+        },
+        {
+          "path": "fixtures/divergence-probes/min3-subsubsection/reference.json",
+          "until": "S8 (final sweep)",
+          "why": "recorded provenance of a fixture reference: which build of the old engine it was first compared with"
+        },
+        {
+          "path": "fixtures/divergence-probes/min3-verse-flushright/reference.json",
+          "until": "S8 (final sweep)",
+          "why": "recorded provenance of a fixture reference: which build of the old engine it was first compared with"
+        },
+        {
+          "path": "fixtures/divergence-probes/min4-itemize-wrap/reference.json",
+          "until": "S8 (final sweep)",
+          "why": "recorded provenance of a fixture reference: which build of the old engine it was first compared with"
+        },
+        {
+          "path": "fixtures/real-world/beamer-blocks-columns/reference.json",
+          "until": "S8 (final sweep)",
+          "why": "recorded provenance of a fixture reference: which build of the old engine it was first compared with"
+        },
+        {
+          "path": "fixtures/real-world/beamer-default/reference.json",
+          "until": "S8 (final sweep)",
+          "why": "recorded provenance of a fixture reference: which build of the old engine it was first compared with"
+        },
+        {
+          "path": "fixtures/real-world/beamer-fragile/reference.json",
+          "until": "S8 (final sweep)",
+          "why": "recorded provenance of a fixture reference: which build of the old engine it was first compared with"
+        },
+        {
+          "path": "fixtures/real-world/beamer-madrid/reference.json",
+          "until": "S8 (final sweep)",
+          "why": "recorded provenance of a fixture reference: which build of the old engine it was first compared with"
+        },
+        {
+          "path": "fixtures/real-world/beamer-overlays/reference.json",
+          "until": "S8 (final sweep)",
+          "why": "recorded provenance of a fixture reference: which build of the old engine it was first compared with"
+        },
+        {
+          "path": "fixtures/real-world/beamer-polish/reference.json",
+          "until": "S8 (final sweep)",
+          "why": "recorded provenance of a fixture reference: which build of the old engine it was first compared with"
+        },
+        {
+          "path": "fixtures/real-world/beamer-sans-operators-professional/reference.json",
+          "until": "S8 (final sweep)",
+          "why": "recorded provenance of a fixture reference: which build of the old engine it was first compared with"
+        },
+        {
+          "path": "fixtures/real-world/beamer-sans-operators-serif/reference.json",
+          "until": "S8 (final sweep)",
+          "why": "recorded provenance of a fixture reference: which build of the old engine it was first compared with"
+        },
+        {
+          "path": "fixtures/real-world/beamer-sans-operators/reference.json",
+          "until": "S8 (final sweep)",
+          "why": "recorded provenance of a fixture reference: which build of the old engine it was first compared with"
+        },
+        {
+          "path": "fixtures/real-world/beamer-visuals/reference.json",
+          "until": "S8 (final sweep)",
+          "why": "recorded provenance of a fixture reference: which build of the old engine it was first compared with"
+        },
+        {
+          "path": "fixtures/real-world/conf-paper/reference.json",
+          "until": "S8 (final sweep)",
+          "why": "recorded provenance of a fixture reference: which build of the old engine it was first compared with"
+        },
+        {
+          "path": "fixtures/real-world/enumitem-worksheet/reference.json",
+          "until": "S8 (final sweep)",
+          "why": "recorded provenance of a fixture reference: which build of the old engine it was first compared with"
+        },
+        {
+          "path": "fixtures/real-world/framed-tikz-theorems/reference.json",
+          "until": "S8 (final sweep)",
+          "why": "recorded provenance of a fixture reference: which build of the old engine it was first compared with"
+        },
+        {
+          "path": "fixtures/real-world/hw1/gap-report-2026-09-12.md",
+          "until": "S8 (final sweep)",
+          "why": "recorded provenance of a fixture reference: which build of the old engine it was first compared with"
+        },
+        {
+          "path": "fixtures/real-world/hyperref-toc/reference.json",
+          "until": "S8 (final sweep)",
+          "why": "recorded provenance of a fixture reference: which build of the old engine it was first compared with"
+        },
+        {
+          "path": "fixtures/real-world/inline-math/import-provenance.json",
+          "until": "S8 (final sweep)",
+          "why": "recorded provenance of a fixture reference: which build of the old engine it was first compared with"
+        },
+        {
+          "path": "fixtures/real-world/lab-report/reference.json",
+          "until": "S8 (final sweep)",
+          "why": "recorded provenance of a fixture reference: which build of the old engine it was first compared with"
+        },
+        {
+          "path": "fixtures/real-world/listings-manual/reference.json",
+          "until": "S8 (final sweep)",
+          "why": "recorded provenance of a fixture reference: which build of the old engine it was first compared with"
+        },
+        {
+          "path": "fixtures/real-world/lmodern-report/reference.json",
+          "until": "S8 (final sweep)",
+          "why": "recorded provenance of a fixture reference: which build of the old engine it was first compared with"
+        },
+        {
+          "path": "fixtures/real-world/natbib-review/reference.json",
+          "until": "S8 (final sweep)",
+          "why": "recorded provenance of a fixture reference: which build of the old engine it was first compared with"
+        },
+        {
+          "path": "fixtures/real-world/proof-practice-21242/reference.json",
+          "until": "S8 (final sweep)",
+          "why": "recorded provenance of a fixture reference: which build of the old engine it was first compared with"
+        },
+        {
+          "path": "fixtures/real-world/ps-calculus/reference.json",
+          "until": "S8 (final sweep)",
+          "why": "recorded provenance of a fixture reference: which build of the old engine it was first compared with"
+        },
+        {
+          "path": "fixtures/real-world/siunitx-tables/reference.json",
+          "until": "S8 (final sweep)",
+          "why": "recorded provenance of a fixture reference: which build of the old engine it was first compared with"
+        },
+        {
+          "path": "fixtures/real-world/thesis-chapter/reference.json",
+          "until": "S8 (final sweep)",
+          "why": "recorded provenance of a fixture reference: which build of the old engine it was first compared with"
+        },
+        {
+          "path": "fixtures/real-world/tikzcd-shaded-notes/reference.json",
+          "until": "S8 (final sweep)",
+          "why": "recorded provenance of a fixture reference: which build of the old engine it was first compared with"
+        },
+        {
+          "path": "protocol/proposals/display-list-v2-device-color.md",
+          "until": "S8 (final sweep)",
+          "why": "historical proposal, marked so; live code still cites it"
+        },
+        {
+          "path": "protocol/proposals/display-list-v2-image.md",
+          "until": "S8 (final sweep)",
+          "why": "historical proposal, marked so; live code still cites it"
+        },
+        {
+          "path": "protocol/proposals/display-list-v2-window.md",
+          "until": "S8 (final sweep)",
+          "why": "historical proposal, marked so; live code still cites it"
+        },
+        {
+          "path": "protocol/proposals/runtime-v1-request-date.md",
+          "until": "S8 (final sweep)",
+          "why": "historical proposal, marked so; live code still cites it"
+        },
+        {
+          "path": "scripts/ci/package-cli.sh",
+          "until": "n/a",
+          "why": "says what the flashtex CLI replaced in S7, or that a package must not ship the retired helpers"
+        },
+        {
+          "path": "scripts/tests/package-cli.test.sh",
+          "until": "n/a",
+          "why": "says what the flashtex CLI replaced in S7, or that a package must not ship the retired helpers"
+        },
+        {
+          "path": "site/download/index.html",
+          "until": "n/a",
+          "why": "says what the flashtex CLI replaced in S7, or that a package must not ship the retired helpers"
+        },
+        {
+          "path": "site/install-cli.sh",
+          "until": "n/a",
+          "why": "names the retired helpers to assert or ensure they are absent"
+        },
+        {
+          "path": "tools/parity/harness.py",
+          "until": "S8 (final sweep)",
+          "why": "a history comment or dated record naming what S7 deleted"
+        },
+        {
+          "path": "tools/parity/reports/p5-scoreboard-2026-09-30.md",
+          "until": "n/a",
+          "why": "a recorded report or baseline; it names the engine that produced it"
+        },
+        {
+          "path": "tools/parity/test_wordalign.py",
+          "until": "S8 (final sweep)",
+          "why": "a history comment or dated record naming what S7 deleted"
+        },
+        {
+          "path": "tools/parity/wordalign.py",
+          "until": "S8 (final sweep)",
+          "why": "a history comment or dated record naming what S7 deleted"
         }
       ]
     }

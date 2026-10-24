@@ -82,10 +82,8 @@ let runs = positioned_runs(&root, (72.0, 700.0));         // glyphs + rules in p
 | `accent_sizes(ch, size)` | accent variants, narrowest first (Rule 12) |
 | `font_name(id)` | human-readable identity for reports and renderers |
 
-`FontId` is opaque and provider-defined; once the FT-018 font engine
-(`crates/font-engine` on `agent/mac-font-engine/tex-fonts`, which parses the
-OpenType `MATH` table) is the
-provider, it maps to a content-addressed font handle and `gid` to the font's
+`FontId` is opaque and provider-defined; with an OpenType `MATH`
+provider (the retired FT-018 font engine was the planned one), it maps to a content-addressed font handle and `gid` to the font's
 own glyph id; `MathParams::from_opentype` maps its `MathConstants` to the
 TeX parameters with the LuaTeX correspondence. Until then two adapters ship:
 

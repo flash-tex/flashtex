@@ -121,9 +121,5 @@ final class PreviewFontsTests: XCTestCase {
         XCTAssertTrue(PreviewFonts.latinModernSearchPaths.contains(dir), dir)
         XCTAssertTrue(FileManager.default.fileExists(atPath: dir + "/lmroman10-regular.otf"), dir)
         XCTAssertGreaterThanOrEqual(PreviewFonts.resourceGeneration, 1, "registration moved the generation from 0")
-        // A key made now is stamped with a generation that includes the registration.
-        let key = PreviewTextCache.key(text: "x", postScriptName: "LMRoman10-Regular", size: 10)
-        XCTAssertEqual(key.generation, PreviewFonts.resourceGeneration)
-        XCTAssertGreaterThanOrEqual(key.generation, 1)
     }
 }

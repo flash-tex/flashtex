@@ -36,33 +36,8 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 MANIFEST = os.path.join(ROOT, "scripts", "generated-manifest.json")
 
 
-def glyphlist():
-    env = os.environ.get("FLASHTEX_GLYPHLIST")
-    if env:
-        return env
-    try:
-        return subprocess.run(["kpsewhich", "glyphlist.txt"], capture_output=True,
-                              text=True).stdout.strip() or "glyphlist.txt"
-    except OSError:
-        return "glyphlist.txt"
-
-
 # name -> (generator, outputs, --check command). Commands run from ROOT.
 GENERATORS = {
-    "tex-text-encoding": (
-        "crates/tex-text-encoding/tools/extract_tables.py",
-        ["crates/tex-text-encoding/src/generated.rs"],
-        lambda: ["crates/tex-text-encoding/tools/extract_tables.py", "--check"]),
-    "font-engine core14": (
-        "crates/font-engine/tools/gen_tables.py",
-        ["crates/font-engine/src/generated.rs"],
-        # Inputs are not committed (see crates/font-engine/README.md,
-        # "Reproducibility"); CI fetches them and the generator verifies their
-        # SHA-256 against the committed header before comparing.
-        lambda: ["crates/font-engine/tools/gen_tables.py", "--check",
-                 "--afm-dir", os.environ.get("FLASHTEX_CORE14_AFM_DIR", "/nonexistent-afm-dir"),
-                 "--glyphlist", glyphlist(),
-                 "--out", "crates/font-engine/src/generated.rs"]),
     "math-layout cm": (
         "crates/math-layout/tools/gen_cm_tfm.py",
         ["crates/math-layout/src/cm_tfm.rs"],
@@ -71,31 +46,12 @@ GENERATORS = {
         "crates/math-layout/tools/gen_cm_tfm.py",
         ["crates/math-layout/src/ams_tfm.rs"],
         lambda: ["crates/math-layout/tools/gen_cm_tfm.py", "--ams", "--check"]),
-    "compiler text fontdimens": (
-        "crates/compiler/scripts/gen_text_fontdimens.py",
-        ["crates/compiler/src/text_fontdimens.rs"],
-        lambda: ["crates/compiler/scripts/gen_text_fontdimens.py", "--check"]
-        + (["--texbin", os.environ["FLASHTEX_TEXBIN"]] if "FLASHTEX_TEXBIN" in os.environ else [])),
-    "compiler color names": (
-        "crates/compiler/scripts/color_names.py",
-        ["crates/compiler/src/color_names.rs"],
-        lambda: ["crates/compiler/scripts/color_names.py", "--check"]
-        + (["--texbin", os.environ["FLASHTEX_TEXBIN"]] if "FLASHTEX_TEXBIN" in os.environ else [])),
-    "compiler kernel lengths": (
-        "crates/compiler/scripts/gen_kernel_lengths.py",
-        ["crates/compiler/src/kernel_lengths.rs"],
-        lambda: ["crates/compiler/scripts/gen_kernel_lengths.py", "--check"]
-        + (["--texbin", os.environ["FLASHTEX_TEXBIN"]] if "FLASHTEX_TEXBIN" in os.environ else [])),
     # RQ5: the editors' completion vocabulary; its oracle half (probe.json) is
     # checked by the supported-latex workflow, this is the TeX-free render.
     "app supported latex": (
         "apps/mac/scripts/gen-supported-latex.py",
         ["apps/mac/supported-latex/supported-latex.json"],
         lambda: ["apps/mac/scripts/gen-supported-latex.py", "check"]),
-    "compiler canonical latex": (
-        "crates/compiler/scripts/canonical_latex.py",
-        ["crates/compiler/supported/canonical-latex.tsv"],
-        lambda: ["crates/compiler/scripts/canonical_latex.py", "--check"]),
 }
 
 

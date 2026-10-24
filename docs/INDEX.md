@@ -34,7 +34,7 @@ your task; do not load the entire repository history into every prompt.
 | Reproduction evidence / large outputs | Paths linked from the relevant handoff | Producing agent |
 | Unicode mode from XeTeX (custom fonts, OpenType, math; FlashTeX binaries over a shared runtime, no separate TeX): plan, phases S0–S3, S0 results; the crate, its change files and its lockstep gate | [docs/design/xetex/PLAN.md](design/xetex/PLAN.md), [crates/flashtex-xetex/changes/README.md](../crates/flashtex-xetex/changes/README.md), [tools/xetex-lockstep](../tools/xetex-lockstep/README.md), PDF parity [tools/xetex-pdfparity](../tools/xetex-pdfparity/README.md) | mac-claude-a (XETEX-S0) |
 | The engine on Windows: `cmd.exe` shell escape caveats, owner-only sockets, `\pdfmatch`, what CI runs there | [docs/dev/engine-windows.md](dev/engine-windows.md) | mac-claude-a (ENGINE-PORTABILITY, WIN-HARDENING) |
-| Engine performance: how it is measured, and the committed baseline | [crates/perf-bench/README.md](../crates/perf-bench/README.md) | FT-070 perf lane |
+| Engine performance: T7, the reference run on the Q1 Mac and its baselines | [scripts/t7-reference.sh](../scripts/t7-reference.sh), [tools/incr-bench](../tools/incr-bench/) | Commander |
 | CI, releases, website publication | [CI/CD](ci-cd.md) | Release lane (mac-ci-release) |
 | Release v0.2.0: the checklist (the three P5 boards it waits for) and the release notes | [checklist](release/v0.2.0.md), [notes](release/v0.2.0-notes.md) | kabir-claude (RELEASE-PREP) |
 | The no-TeX-Live bundle: licensing notice, contents, publishing as GitHub Release assets, the no-TeX-Live gate | [docs/distribution/texlive-bundle.md](distribution/texlive-bundle.md) | mac-claude-a (BUNDLE-PUBLISH) |
@@ -76,18 +76,14 @@ Read the exact task-branch SHA in the worker report before using unpublished API
 Main integration does not certify full LaTeX compatibility, PDF identity or native
 latency. Every consumer must retain source/project/revision and resource identity.
 
-- `crates/preview-controller/README.md`: durable editing, explicit reviewed insertions,
-  recovery and compiler/index integration; `STDIO.md` is the native IPC contract when integrated.
 - `crates/edit-ledger/README.md`: authoritative durable source, receipts, history,
   background service and restart handling. Do not build a second independent undo ledger.
 - `crates/document-runtime/README.md`: persistent original compiler transport, stale
   response suppression and replay metrics; native paint is excluded from its timings.
 - `crates/project-index/README.md`: exact-revision source navigation and lexical
   bibliography/rename facilities; lexical results do not establish TeX expansion semantics.
-- `crates/font-resources/README.md`: immutable font bytes, original GIDs, exact paths,
-  TFM metrics and explicit encoding bindings. TFM8bit codes are not Unicode or GIDs.
-- `crates/pdf/README.md`: original runtime-v1 PDF export; its font fallback and rule
-  conventions remain explicit fidelity blockers.
+- `crates/pdf/README.md`: FlashTeX's own font-file readers and PDF writer; Unicode
+  mode (`crates/flashtex-xetex`) uses its OpenType and Type 1 readers.
 - `crates/project-manifest` (`src/lib.rs` docs): the optional `flashtex.toml`, typed with
   defaults, unknown keys as warnings, `texinputs` classified lexically and never read
   there; `crates/project-files` (`README.md`, "Package inputs") lists and reads them
@@ -99,8 +95,8 @@ latency. Every consumer must retain source/project/revision and resource identit
   packages after a fetch (what of the batch language is interpreted, the stripping
   rules with docstrip.dtx line citations, the TeX Live byte-identity oracle).
 - `docs/contracts/runtime-v1.md` and `docs/contracts/transfer-v1.md`: production
-  message contracts. `docs/contracts/rendering-v2-proposal.md` is a proposal, not permission
-  to change existing clients without negotiation and migration tests.
+  message contracts. [`docs/protocol/display-list-v3.md`](protocol/display-list-v3.md) is the
+  engine host's page protocol.
 
 The sole orchestrator owns global integration and task queues. Engineers own their
 assigned product paths plus their own reports. Only an explicit user stop ends
@@ -112,6 +108,3 @@ improvement cycles; completed checkpoints trigger useful next work.
   (proposal, kabir-claude ARCH-AUDIT, 2026-09-21): ranked plan for generating
   LaTeX-declared data, running real `.sty` code, removing `vendor/`, and the
   two structural rewrites (node-stream contract, generic page model).
-- [Node-stream inventory](proposals/node-stream-inventory.md) (PLAN1 slice 1,
-  2026-09-21): the 46 pipeline sites that re-derive layout facts from source
-  bytes, each with an ignored falsifier test, ranked for slice 2.

@@ -14,16 +14,17 @@ script records:
 
 and writes `oracle/NN-name.v2.json`, a `display_list` envelope whose single
 image item carries the unit-square transform implied by pdfTeX's CTM (rounded
-to 1/1000 pt like `flashtex-render`) and the resource fields of proposal §3.
+to 1/1000 pt like the old engine's renderer) and the resource fields of proposal §3.
 `tests/images.rs` exports each envelope through `flashtex_pdf::v2` and checks
 the CTM (0.01 bp), the XObject summary and the sample hashes against
 `oracle/expected.json`; cargo never runs TeX.
 
-With `--exact BIN` it also exports every envelope with that
-`flashtex-pdf-exact`, rasterises reference and export with Ghostscript at
+With `--exact BIN` it also exports every envelope with that exact-export
+binary (deleted in old-engine retirement S7; build it from
+`git show f16430793:crates/pdf/src/bin/`), rasterises reference and export with Ghostscript at
 150 dpi, and records per-case pixel statistics in `oracle/raster.json`.
 
-Usage: python3 make_oracle.py [--exact path/to/flashtex-pdf-exact]
+Usage: python3 make_oracle.py [--exact path/to/exact-export-binary]
 """
 import hashlib, json, os, re, shutil, subprocess, sys, tempfile, zlib
 

@@ -106,18 +106,20 @@ final class CompletionMathModeTests: XCTestCase {
     }
 
     func testTheRealVocabularyIsFilteredByMode() throws {
-        // Inside `$…$`: \frac is offered, \section is not; in text the reverse.
+        // Inside `$…$` every row is one the vocabulary allows in math; in text
+        // every row is one it allows in text (the generated vocabulary gives
+        // most commands a text row and a math twin, RQ5, so both lists may
+        // hold them). `\frac` is offered in math.
         let mathFra = Completion.suggestions(in: "$\\fra", caretUTF16: 5, metadata: nil, mathMode: true)
-        XCTAssertEqual(mathFra.first?.label, "\\frac{num}{den}")
-        XCTAssertTrue(mathFra.allSatisfy { $0.detail.hasPrefix("math · ") }, "\(labels(mathFra))")
-        let mathSec = labels(Completion.suggestions(in: "$\\sec", caretUTF16: 5, metadata: nil, mathMode: true))
-        XCTAssertTrue(mathSec.contains("\\sec"), "\(mathSec)")
-        XCTAssertFalse(mathSec.contains("\\section"), "\(mathSec)")
-        let textSec = labels(Completion.suggestions(in: "x \\sec", caretUTF16: 6, metadata: nil, mathMode: false))
-        XCTAssertTrue(textSec.contains("\\section"), "\(textSec)")
-        XCTAssertFalse(textSec.contains("\\sec"), "\(textSec)")
-        // Text mode, `\frac` spelled out: only the math command matches, so the fallback still shows it.
-        XCTAssertEqual(labels(Completion.suggestions(in: "x \\frac", caretUTF16: 7, metadata: nil, mathMode: false)), ["\\frac"])
+        XCTAssertTrue(mathFra.contains { $0.insertText == "\\frac" }, "\(labels(mathFra))")
+        // A math-only entry is never offered in text unless the fallback fired.
+        if let mathOnly = Completion.Vocabulary.entries.first(where: { $0.mode == .math && !$0.name.isEmpty }) {
+            let rows = Completion.suggestions(in: "x \\" + mathOnly.name, caretUTF16: 3 + (mathOnly.name as NSString).length,
+                                              metadata: nil, mathMode: false)
+            let textRows = rows.compactMap { Completion.Vocabulary.byName[String($0.insertText.dropFirst())] }
+            XCTAssertTrue(textRows.allSatisfy { Completion.allows($0, mathMode: false) } || rows.allSatisfy { $0.insertText.hasPrefix("\\" + mathOnly.name) },
+                          "\(rows.map(\.label))")
+        }
         // Every row the real vocabulary offers in a known mode passes the filter, unless the fallback fired.
         for prefix in ["a", "b", "s", "t", "m"] {
             for mode in [true, false] {
@@ -164,10 +166,10 @@ final class CompletionMathModeTests: XCTestCase {
         let math = Completion.suggestions(in: text, caretUTF16: caret, metadata: nil, mathMode: true)
         XCTAssertFalse(plain.isEmpty)
         XCTAssertFalse(try XCTUnwrap(plain.first?.detail).hasPrefix("math · "), "text mode leads with a text command")
-        XCTAssertTrue(try XCTUnwrap(math.first?.detail).hasPrefix("math · "), "math mode leads with a math command")
-        // `\setminus` and `\sec` are the math `se` commands; in text mode they
-        // are at the very back of the table.
-        XCTAssertTrue(math.prefix(2).allSatisfy { $0.detail.hasPrefix("math · ") })
+        // Math mode offers only what the vocabulary allows in math.
+        XCTAssertFalse(math.isEmpty)
+        let entries = math.compactMap { Completion.Vocabulary.byName[String($0.insertText.dropFirst())] }
+        XCTAssertTrue(entries.allSatisfy { Completion.allows($0, mathMode: true) }, "\(math.map(\.label))")
     }
 
     func testWordAndArgumentCompletionsAreUnaffected() {

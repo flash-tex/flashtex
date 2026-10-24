@@ -305,7 +305,6 @@ final class ShellModel {
     /// Project-index completion vocabulary (labels/citations/commands) bound to
     /// the editor revision it was fetched for (Completion.swift).
     var completionMetadata: Completion.Metadata?
-    @ObservationIgnored let completionFetcher = ProjectIndexCompletionFetcher()
     /// Text each document had when the engine's last completed compile read
     /// it (EngineV3Session, at DONE), so diagnostics' byte offsets can be
     /// rebased (or refused) after edits.

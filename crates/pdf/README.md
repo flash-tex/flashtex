@@ -4,6 +4,15 @@
 > conventions remain fidelity blockers; rendering-v2 negotiation is separate.
 > The separate exact route (`flashtex_pdf::exact`, below) takes glyph ids,
 > verbatim decimals and typed operators from a producer that has them.
+>
+> **After old-engine retirement S7** the crate's only consumer is `crates/flashtex-xetex`
+> (Unicode mode), which uses its font-program readers and embedders (`cff`,
+> `truetype`, `type1`), `images`, `reader` and `exact`. The old engine that
+> produced runtime-v1 pages and rendering-v2 display lists, and the
+> exact-export binary, were deleted then; the runtime-v1
+> writer, the `flashtex-pdf` binary and the rendering-v2 adapter (`crate::v2`)
+> stay, with their tests, until the final sweep (S8). The measurement docs
+> of that route are in git history (`git show f16430793:crates/pdf/docs/`).
 
 # flashtex-pdf
 
@@ -11,8 +20,8 @@ Original Rust PDF writer for FlashTeX (task FT-009). Takes runtime-v1
 `compile_result` pages (`docs/contracts/runtime-v1.md`) and writes a PDF 1.4
 document by hand: catalog, page tree, page objects with `MediaBox`, content
 streams, cross-reference table, trailer. No TeX engine is involved anywhere,
-and the crate has zero external dependencies (the JSON reader is in-tree, like
-`crates/compiler`), so it builds offline and deterministically.
+and the crate has zero external dependencies (the JSON reader is in-tree), so
+it builds offline and deterministically.
 
 ```sh
 cd crates/pdf
@@ -158,8 +167,8 @@ container writer, not a second PDF implementation:
   `ExactDocument` gives the same bytes twice (tested), and re-emitting the
   writer's own output through the reader is a fixed point.
 - **White pages.** No background is painted; PDF user space is bottom-left,
-  y up, and the caller does any flip (rendering-core's adapter already
-  does), so no arithmetic happens in this crate.
+  y up, and the caller does any flip, so no arithmetic happens in this
+  crate.
 
 ```rust
 use flashtex_pdf::exact::*;
@@ -200,47 +209,32 @@ verbatim numbers; `crate::compare::reemit` rebuilds it as an
 between two files as `PageGeometry`, `ContentFormatting`,
 `ContentOperands`, `ContentOperators`, `ContentUnsupported`,
 `FontProgram`, `FontMetadata`, `FontResources`, `ObjectLayout`,
-`Compression`, or `DocumentIdentity`. The `flashtex-pdf-exact` binary
-exposes `reemit`, `classify` (exit 0 only when content operators and font
-programs are identical on every page) and `dump`. Against MacTeX 2026
+`Compression`, or `DocumentIdentity`. `classify` reports a match only when
+content operators and font programs are identical on every page. Against MacTeX 2026
 pdflatex and xelatex output for all 18 visual-corpus fixtures under the
 harness's four preambles, the re-emitted files have byte-identical content
 streams and font programs and pixel-identical CoreGraphics rasters; the
 remaining differences are exactly object layout, stream compression and
-document identity (`/ID`, dates, producer). Details, the reference profile
-and the per-fixture table: `docs/exact-export-classification.md`. This
-establishes what the container preserves, not what FlashTeX's compiler
-emits.
+document identity (`/ID`, dates, producer); the measurement, made with the
+export binary deleted in old-engine retirement S7, is in git history. This establishes what
+the container preserves, not what any producer emits.
 
-**Feeding it from rendering-v2.** `flashtex-pdf-exact from-v2 LIST.json --out
-OUT.pdf [--font-dir DIR]` (`crate::v2`) consumes the `display_list` envelope
-of `flashtex-render --v2`: ticks (`bp_2pow20`) become exact decimals after an
-integer y flip, every glyph is placed by original GID at its absolute origin
-(continuing the previous `TJ` segment when the gap from the natural advance
-is an exactly representable thousandth of the size — zero joins the string,
-non-zero is a `TJ` kern — and starting its own `Tm` otherwise; the written
-operators replay to the envelope origins exactly, `exact::glyph_positions`),
-rules become `re f`, fonts
-are resolved by content hash from `--font-dir`/`FLASHTEX_FONT_DIRS`/
-`FLASHTEX_LM_DIR`/the TeX Live Latin Modern directories and embedded as
-GID-preserving subsets, cluster text becomes ToUnicode. An optional
-`"actual_text":"⟹"` field on consecutive `glyph_run` items coalesces runs
-with the same value into one `/ActualText` marked-content span, including
-across font switches and `BT … ET` blocks; absent fields keep the old
-serialization and ToUnicode behavior. `opentype-cff` and
-`static-truetype` are accepted; `core14-afm`, alpha, non-integer
-ticks and non-terminating colours are errors. Both SHA-256(bytes) and
-font-engine's SHA-256(bytes ‖ face index) are accepted as `sha256` (the
-latter is reported as a deviation). The measured gap between
-`flashtex-render --v2 → from-v2` and pdflatex-lmodern on the 18 corpus
-fixtures is in `docs/v2-adapter-gap.md`: text-only fixtures differ at the
-anti-aliasing level only (0 ink-only pixels on 01/04/05/17), math and lists
-differ where the pipeline's own diagnostics say they do. This glyph-run route
-(embedded fonts, searchable text) is complementary to rendering-core's
-outline route (`pdf_export.rs`, paths only).
+**Feeding it from rendering-v2.** `crate::v2` (`from_v2`, `from_v2_file`)
+consumes the rendering-v2 `display_list` envelope that the retired old
+engine wrote: ticks (`bp_2pow20`) become exact decimals after an integer y
+flip, every glyph is placed by original GID at its absolute origin, rules
+become `re f`, fonts are resolved by content hash from the font
+directories and embedded as GID-preserving subsets, and cluster text
+becomes ToUnicode (an optional `"actual_text"` field coalesces runs into
+one `/ActualText` span). `opentype-cff` and `static-truetype` are
+accepted; `core14-afm`, alpha, non-integer ticks and non-terminating
+colours are errors. Both SHA-256(bytes) and SHA-256(bytes ‖ face index)
+are accepted as `sha256` (the latter is reported as a deviation). No
+producer of these envelopes is left after S7; the adapter stays, with its
+tests and checked-in fixtures, until S8.
 
 **Images (`display-list-v2-images`, `protocol/proposals/display-list-v2-image.md`
-§5.4).** `from-v2 … --project-root DIR` (`v2::from_v2_rooted`) exports
+§5.4).** `v2::from_v2_rooted` with a project root exports
 `image` items; without a root they are refused. Each file is read under the
 root with every component checked to be a real directory/file (no symbolic
 links, no `.`/`..`/absolute paths, device+inode re-checked after open), and
@@ -298,7 +292,7 @@ codes, CFF subset identity, bounded glyph sets, validation errors, Type 1
 round trip through the reader, PFB parsing, classifier categories, and,
 skipped when the tool is absent, Latin Modern rendering in CoreGraphics and
 the pdflatex/xelatex oracle round trips); `tests/v2.rs` (the checked-in
-`flashtex-render` envelope for fixture 01 resolved against the installed
+old-engine envelope for fixture 01 resolved against the installed
 Latin Modern, a hand-built envelope with hmtx joining, rules and colour, and
 the refusals).
 
@@ -481,7 +475,7 @@ extracts the text. Legacy fixtures render byte-identically to before.
   self-check. On macOS an additional test writes the fixture PDF and asserts
   `/usr/bin/sips -g pixelWidth -g pixelHeight` reports `612` × `792`.
 - Issue #9 reproduction: `tests/fixtures/math-compile-result.json` is the exact
-  `flashtex-compiler` (de1020c) output for `$\frac{a}{b}+\alpha+\sqrt{x}$`
+  output of the retired old compiler (de1020c) for `$\frac{a}{b}+\alpha+\sqrt{x}$`
   (`tests/fixtures/math-compile-request.json`). The test asserts zero warnings,
   one `re f` rule of width 8.4pt and thickness 0.72pt at x=72 with its bottom
   edge on baseline 84.72, `α` emitted via `/F2` as byte `0x61`, `√` via `/F2` as
@@ -530,20 +524,6 @@ extracts the text. Legacy fixtures render byte-identically to before.
 
 ## Integration with the Mac app
 
-The Rust worker (`crates/compiler`) still reports `pdf_path: null`, as the
-contract permits. To attach export:
-
-1. In the worker, after producing a `compile_result`, call
-   `flashtex_pdf::render_envelope` (or `render_pdf` on the already-built pages),
-   write the bytes to a per-project temporary file, and set `pdf_path` to that
-   path. Forward `warnings` as `warning` diagnostics with `source: null` so the
-   UI shows them; do not drop them.
-2. Alternatively, until the worker is wired, `apps/mac` can shell out to the
-   `flashtex-pdf` binary next to `flashtex-compiler`, feeding it the
-   `compile_result` line it already holds and reading `--out`.
-3. The Mac "Export PDF" action then copies `pdf_path` to the user's chosen
-   location. The export never depends on the preview theme.
-
-Neither step changes the runtime-v1 contract; `pdf_path` already exists for
-this purpose. Adding a `pdf_warnings` field would be a contract change and
-belongs to Commander.
+None any more. The app exports and prints through the engine host
+(retirement plan §6); the runtime-v1 worker this section described was
+deleted in old-engine retirement S7.
