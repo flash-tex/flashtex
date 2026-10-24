@@ -633,6 +633,10 @@ struct Obs {
     /// here on held segment checkpoints are taken near the cursor only
     /// (`take_held_segment`).
     edit_out: bool,
+    /// `take_held_segment` took a held segment checkpoint because newer
+    /// work stops the run there (`preempt_now`, which consumes the news):
+    /// `on_checkpoint` stops at it.
+    held_stop: bool,
 }
 
 /// The most pages an incremental compile ships, none changed, before newer
@@ -2949,6 +2953,7 @@ impl Observer for Obs {
     /// and before the run has read the edited line (`before_the_edit`).
     fn take_held_segment(&mut self, g: &mut Globals) -> bool {
         if self.preempt_now(g) {
+            self.held_stop = true;
             return true;
         }
         if self.first_incremental && !self.edit_out {
@@ -3038,7 +3043,9 @@ impl Observer for Obs {
                     }
                 }
             }
-            if why == Point::Segment && self.preempt_now(g) {
+            if why == Point::Segment
+                && (std::mem::take(&mut self.held_stop) || self.preempt_now(g))
+            {
                 return Action::Stop;
             }
             return Action::Continue;
@@ -5890,6 +5897,7 @@ impl Session {
             protect_edit: false,
             first_incremental: false,
             edit_out: false,
+            held_stop: false,
         }
     }
 
