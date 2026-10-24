@@ -185,8 +185,8 @@ without leaving the app, or open an existing `.tex` file.
   Tab/⇧Tab choose, Return inserts over the typed token as one undo step, Esc
   closes. Sources, in rank order: `\end{X}` for still-open environments;
   commands the engine supports (with snippets; the list is generated from the
-  compiler's own inventory, `crates/compiler/supported/supported-latex.json`,
-  so it always matches what renders); commands used elsewhere in
+  engine's measured package support, oracle-checked against pdflatex, by
+  `apps/mac/scripts/gen-supported-latex.py`); commands used elsewhere in
   the document, marked "not supported by this compiler version"; environment
   names after `\begin{`; labels after `\ref{`/`\eqref{`/`\autoref{`; citation
   keys after `\cite{` (from `\bibitem` and from the project index when a
