@@ -654,6 +654,7 @@ case "$TIER" in
       skip "parity fixtures hold their baseline" "baseline-fixtures.json was recorded on macOS (tools/parity/README.md); it is not comparable here"
     fi
     step "bundled inventory matches the compiler" -- apps/mac/scripts/sync-supported-latex.sh --check
+    step "generated vocabulary matches its inputs (RQ5)" -- python3 apps/mac/scripts/gen-supported-latex.py check
     ;;
 esac
 

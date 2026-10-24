@@ -607,6 +607,14 @@ jobs:
       - name: "inventory: completion vocabulary is the compiler's inventory"
         if: ${{ !cancelled() && runner.os == 'Linux' }}
         run: apps/mac/scripts/sync-supported-latex.sh --check
+      # RQ5: the vocabulary generated from measured package support (pdflatex is the
+      # oracle; the probe itself is the supported-latex workflow's). S7 bundles it.
+      - name: "supported-latex: the generated vocabulary matches its inputs"
+        if: ${{ !cancelled() && runner.os == 'Linux' }}
+        run: |
+          set -euo pipefail
+          python3 -m unittest discover -s apps/mac/scripts -p 'test_gen_supported_latex.py'
+          python3 apps/mac/scripts/gen-supported-latex.py check
       - name: "generated tables match the manifest"
         if: ${{ !cancelled() && runner.os == 'Linux' }}
         run: python3 scripts/check-generated.py

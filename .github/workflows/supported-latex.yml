@@ -1,0 +1,81 @@
+# The oracle step of the editors' completion vocabulary (retirement plan RQ5):
+# apps/mac/scripts/gen-supported-latex.py probe runs pdflatex (TeX Live 2026,
+# pinned by digest) and must reproduce the committed
+# apps/mac/supported-latex/probe.json byte for byte. The TeX-free half (render:
+# supported-latex.json from the committed inputs) is ci.yml's `checks` job.
+#
+# A changed probe is never committed from a guess: this job uploads the probe it
+# measured (and the vocabulary rendered from it) as the artifact
+# `supported-latex-probe`; download it, read the diff, commit it, and the next
+# run is green.
+name: supported-latex
+
+on:
+  pull_request:
+    paths:
+      - apps/mac/scripts/gen-supported-latex.py
+      - apps/mac/supported-latex/**
+      - tools/package-smoke/*-manifest.json
+      - tools/package-smoke/sample-400.json
+      - .github/workflows/supported-latex.yml
+      - .github/actions/texlive-2026/**
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: supported-latex-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # scheme-full, TeX Live 2026, pdfTeX 1.40.29: the same pin as nightly.yml's
+  # NIGHTLY_TEXLIVE_IMAGE and p5-scoreboard.yml's hosted route.
+  PROBE_TEXLIVE_IMAGE: texlive/texlive@sha256:a7ae4dfa9d521b5db14446872fa488b839021d1f604d0a3c74461784895f2a67
+
+jobs:
+  probe:
+    name: supported-latex probe (pdflatex is the oracle)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: free disk (the TeX Live image and its copy take ~12 GB)
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/local/.ghcup /opt/hostedtoolcache/CodeQL
+          sudo docker image prune --all --force || true
+          df -h /
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/texlive-2026
+        id: tl
+        with:
+          image: ${{ env.PROBE_TEXLIVE_IMAGE }}
+          cache: "false"
+      - name: the generator's self-tests
+        run: python3 -m unittest discover -s apps/mac/scripts -p 'test_gen_supported_latex.py' -v
+      - name: probe, then compare with the committed probe.json
+        id: probe
+        run: |
+          set -euo pipefail
+          out="$RUNNER_TEMP/supported-latex"
+          mkdir -p "$out"
+          python3 apps/mac/scripts/gen-supported-latex.py probe \
+            --texbin "${{ steps.tl.outputs.bin }}" --out "$out/probe.json" --check
+      - name: render from the measured probe (for the artifact)
+        if: always()
+        run: |
+          set -euo pipefail
+          out="$RUNNER_TEMP/supported-latex"
+          [ -f "$out/probe.json" ] || exit 0
+          cp "$out/probe.json" apps/mac/supported-latex/probe.json
+          python3 apps/mac/scripts/gen-supported-latex.py render
+          cp apps/mac/supported-latex/supported-latex.json "$out/"
+          ls -l "$out"
+          git diff --stat || true
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: supported-latex-probe
+          path: ${{ runner.temp }}/supported-latex/
+          if-no-files-found: ignore

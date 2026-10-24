@@ -86,6 +86,12 @@ GENERATORS = {
         ["crates/compiler/src/kernel_lengths.rs"],
         lambda: ["crates/compiler/scripts/gen_kernel_lengths.py", "--check"]
         + (["--texbin", os.environ["FLASHTEX_TEXBIN"]] if "FLASHTEX_TEXBIN" in os.environ else [])),
+    # RQ5: the editors' completion vocabulary; its oracle half (probe.json) is
+    # checked by the supported-latex workflow, this is the TeX-free render.
+    "app supported latex": (
+        "apps/mac/scripts/gen-supported-latex.py",
+        ["apps/mac/supported-latex/supported-latex.json"],
+        lambda: ["apps/mac/scripts/gen-supported-latex.py", "check"]),
     "compiler canonical latex": (
         "crates/compiler/scripts/canonical_latex.py",
         ["crates/compiler/supported/canonical-latex.tsv"],
