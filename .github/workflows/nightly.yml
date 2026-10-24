@@ -820,13 +820,63 @@ jobs:
         if: always()
         run: ETRIP_WORK="$RUNNER_TEMP/etrip" scripts/flashtex-etrip.sh
 
+  # T7's real documents, the full set (lane REAL-DOC-GATE; DESIGN §1.2, §9: the
+  # PR CI runs one row of them, ci.yml's real-doc-gate): Infinite Descent x2
+  # (1,152 pages) at five sites, early, middle and late in its first copy and
+  # late and at the end of its second (page ~887, the owner's page 883); a long
+  # arXiv paper, a real beamer deck and a book-class thesis at their start,
+  # middle and end (tools/incr-bench/realdocs.json). At each site a letter@
+  # row (each key after DONE) and a typing@50ms row (keys 50 ms apart), target
+  # <= 20 ms to the edited page, every key painted by its own compile, the
+  # host's page count the oracle's. A miss fails the job (and files main-red).
+  # GitHub-hosted macos-15 with MacTeX (the beamer deck is a TeX Live
+  # document): a non-reference run; the reference one is t7-reference.yml's.
+  t7-real-documents:
+    name: "T7 real documents (infdesc-x2, arXiv, beamer, thesis)"
+    runs-on: macos-15
+    timeout-minutes: 330
+    env:
+      INCR_BENCH_DIR: /tmp/ib
+      HOMEBREW_NO_AUTO_UPDATE: "1"
+      HOMEBREW_NO_INSTALL_CLEANUP: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: TeX Live 2026 (MacTeX 2026, mactex-no-gui)
+        run: |
+          set -euo pipefail
+          brew install --cask mactex-no-gui >/dev/null
+          echo /Library/TeX/texbin >> "$GITHUB_PATH"
+          /Library/TeX/texbin/kpsewhich pdflatex.ini
+      - uses: actions/cache@v4
+        with:
+          path: /tmp/ib/cache
+          key: t7-real-${{ hashFiles('tools/parity/corpus/books.json', 'tools/incr-bench/realdocs.json') }}
+      - name: t7.py, every real document
+        run: |
+          set +e -o pipefail
+          docs="$(python3 -c 'import json; print(",".join(json.load(open("tools/incr-bench/realdocs.json"))["docs"]))')"
+          python3 tools/incr-bench/t7.py --build --engine real --docs "$docs" --out "$RUNNER_TEMP/t7-real" 2>&1 | tee "$RUNNER_TEMP/t7-real.log"
+          code=${PIPESTATUS[0]}
+          { echo "### T7 real documents (hosted, non-reference; exit $code)"; echo
+            cat "$RUNNER_TEMP/t7-real/table.md" 2>/dev/null || echo "(no table)"; } >> "$GITHUB_STEP_SUMMARY"
+          # 0 and 3 (non-reference, nothing missed) pass; 1 (a miss) and 2 (a harness error) fail.
+          case $code in 0|3) exit 0 ;; *) exit 1 ;; esac
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: t7-real-documents
+          path: ${{ runner.temp }}/t7-real
+          if-no-files-found: ignore
+          retention-days: 30
+
   # A failed macOS leg or debug-profile workspace job tonight opens or
   # updates `main-red` (scripts/ci/main-red.sh, the issue ci.yml's post-merge
   # jobs file). A green night does not close it: these legs are a few of the
   # post-merge jobs, and only a green ci.yml run on main's tip covers them all.
   main-red:
     name: main-red issue
-    needs: [macos-legs, workspace-debug]
+    needs: [macos-legs, workspace-debug, t7-real-documents]
     if: always() && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -839,4 +889,4 @@ jobs:
       - name: open, update or close the issue
         env:
           GH_TOKEN: ${{ github.token }}
-        run: scripts/ci/main-red.sh "${{ github.run_id }}" --only 'macos|debug profile' --no-close
+        run: scripts/ci/main-red.sh "${{ github.run_id }}" --only 'macos|debug profile|T7 real' --no-close
