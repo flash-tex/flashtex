@@ -46,7 +46,7 @@
 | Swift retiring in S6, sources (§1.4) | 7,027 in 16 files, of which S6a first moves about 213 lines to v3 files (VERIFIED) |
 | Workspace packages | 43: the 41 `crates/*` members, `tools/web2rust` and the implicit `flashtex-engine-build-id`. 34 after S2 (VERIFIED by reading the manifests; `cargo metadata` not run). |
 | Open PRs touching old-engine crates | **0** (#1120 closed 2026-10-06; VERIFIED) |
-| Stages | 12: S0 ✔, S1 ✔, S1b, S2 ✔ (#1610), S3 (partly), S3r ✔ (#1611), S4 ✔, S5 ✔ (#1849), S6a ✔ (#1877), S6 ✔ (#1881), S7, S8 |
+| Stages | 12: S0 ✔, S1 ✔, S1b, S2 ✔ (#1610), S3 (partly), S3r ✔ (#1611), S4 ✔, S5 ✔ (#1849), S6a ✔ (#1877), S6 ✔ (#1881), S7 ✔ (#1888), S8 |
 
 ### Stage table
 
@@ -64,7 +64,7 @@
 | 8 | **S5** Flip: new documents default to the new engine | `EngineChoice.defaultForNewDocuments = .new` (EngineChoice.swift L130, one line); nightly `parity-corpus` and parity fixtures default to the engine; `baseline-fixtures.json` re-recorded on its host. **Existing documents do not change** (§5.3). | **Decision 3's gate as confirmed** (§4.2); the S5 rows (§4.4); one shipped release carries #1421/#1427's records (§5.3; app v0.2.0, which the Commander may publish after 3 consecutive complete green P5 boards, DESIGN §13 2026-10-11); T1 with 0 new differences; T7 meeting §1.2 | Commander (one-line flip) | — (flip back) | S3, S3r, S4; the modes lane's interim fontspec fallback (§4.4) | ✔ done (#1849) |
 | 9 | **S6a** Shared types to v3 files | Move `V2PageText`'s line builder, `DisplayListLinks`'s URI policy and `MathHoverPreview`'s `padding` / `MathPreviewView` into v3-owned files (§1.4), as a rename with no behaviour change. Rewrite the v2-parity assertions in `EngineV3LinksTests`. | `swift build`; `EngineV3LinksTests`, `EngineV3AccessibilityTests`, `EngineV3SearchTests` and `EngineV3MathHoverTests` pass, not skipped | Commander assigns | — (a move) | S5 | ✔ done (#1877) |
 | 10 | **S6** App old route out | Delete the §1.4 Swift, the helper rows, menus, attach commands, user docs and the §5.5 defaults; retarget the tools (§1.8); remove the `.previous` engine, its blockers and banner from `EngineChoice` and rewrite their tests; `packaging-selftest.sh` must fail on a missing helper | **The S6 rows** (§4.4); the §6 licence preconditions (RQ19 closed 2026-10-11: the About and release-notes link, #1806); RQ6 ruled ✔; **the Unicode mode's M3 gate passed** (modes Q1) | Commander assigns | **yes** | S5, S6a, M3 | ✔ done (#1881): the §1.4 Swift, the controller route (RQ7), the helper rows, menus, attach commands, the engine choice and its fallback go; Unicode routing (A9), the RQ20 message and the one-time previous-engine notice (§5.3); `packaging-selftest.sh` fails on a missing helper |
-| 11 | **S7** Old engine deleted at once | One PR deletes the compiler, render-pipeline, the old `flashtex-cli`, perf-bench and every §1.3 orphan, with their CI, scripts, generated entries and env (§1.7, §1.8) | Full tier; `check-generated.py`; a release.yml dry-run; the §4.6 check; T7 has gated for ≥ 10 runs; RQ5 ruled ✔ (the generator script replaces `sync-supported-latex.sh` in this PR); RQ6 ✔ (`flashtex-v3` renamed to `flashtex` and packaged in this PR); 0 open old-path PRs | Commander assigns | **yes** | S6, queued as soon as it lands | — |
+| 11 | **S7** Old engine deleted at once | One PR deletes the compiler, render-pipeline, the old `flashtex-cli`, perf-bench and every §1.3 orphan, with their CI, scripts, generated entries and env (§1.7, §1.8) | Full tier; `check-generated.py`; a release.yml dry-run; the §4.6 check; T7 has gated for ≥ 10 runs; RQ5 ruled ✔ (the generator script replaces `sync-supported-latex.sh` in this PR); RQ6 ✔ (`flashtex-v3` renamed to `flashtex` and packaged in this PR); 0 open old-path PRs | Commander assigns | **yes** | S6, queued as soon as it lands | ✔ done (#1888): the compiler, render-pipeline, the old `flashtex-cli`, perf-bench, class-geometry, vector-graphics, bibliography, font-engine, font-resources, tex-text-encoding and preview-controller (RQ7) go, with `tools/{real-world-corpus,visual-oracle,font-metric-sweep,kernel-math-gap}`, perf.yml, the old CI legs and scripts; **`pdf` and `font-discovery` stay**, because `crates/flashtex-xetex` (Unicode mode) links both (§1.3); `flashtex-v3` is `flashtex` and ships with its GPL source offer (RQ6); `supported-latex.json` comes from `gen-supported-latex.py` (RQ5) |
 | 12 | **S8** Oracles to `tests/`, final sweep | Move the §2 crates to `tests/oracles/` (RQ4); `license` fields (R5); the `gate.sh` mapping; docs | Full tier; the §4.6 check | Commander assigns | **yes** | S7 | — |
 
 ### Owner decisions
@@ -75,7 +75,7 @@
 | RQ18 | T7 reference host (Q1) | **Decided** 2026-10-05 (L1200): a manual T7 run on an idle, plugged-in Apple-Silicon Mac, plus a nightly non-blocking trend. `scripts/t7-reference.sh` is #1609. |
 | RQ15 | Drop the `[fonts]` roles? | **Superseded** by Q-new-1 / 3A (L1202): the Unicode mode carries project and system fonts in P5. A9 is a P5 row (§4.4). |
 | RQ19 | The §3 legal review and the source offer | **Decided** 2026-10-11 (DESIGN §13): publish source. The GPL source stays public in this repository, linked from the About box and the release notes (#1806). No longer blocks S6. |
-| RQ5 | Where `supported-latex.json` comes from | **Ruled** 2026-10-11 (DESIGN §13, Commander under the owner's delegation): generated after S7 from the new engine's measured package support (package-smoke tier, oracle-verified), an MIT app-owned data file regenerated by a script, replacing `sync-supported-latex.sh`'s old-compiler source. |
+| RQ5 | Where `supported-latex.json` comes from | **Done** in S7 (#1888): `apps/mac/scripts/gen-supported-latex.py` (#1886) writes both bundled copies and `sync-supported-latex.sh` is deleted. **Ruled** 2026-10-11 (DESIGN §13, Commander under the owner's delegation): generated after S7 from the new engine's measured package support (package-smoke tier, oracle-verified), an MIT app-owned data file regenerated by a script, replacing `sync-supported-latex.sh`'s old-compiler source. |
 
 ### For the Commander: please confirm
 
@@ -153,6 +153,13 @@ S2 also deletes `tests/test_rendering_v2.py` and the script it imports, `scripts
 
 The Commander ruled that these retire (RQ2). Their only reverse dependencies are crates
 that are themselves retiring.
+
+*S7 (#1888): two rows were stale by then. `crates/flashtex-xetex`, the Unicode mode's
+engine (GPL; built on its own), links `flashtex-pdf` (its OpenType and Type 1 readers)
+and `flashtex-font-discovery` (the installed-font index), so both **stay**. S7 deletes
+only pdf's old export binary `flashtex-pdf-exact` and its route's docs; the
+`flashtex-pdf` binary and `crate::v2` stay for pdf's own tests until S8. S7 also deletes
+`crates/preview-controller` (RQ7).*
 
 | Path | src | tests | Other | Reverse dependencies today | Note |
 |---|---:|---:|---:|---|---|
@@ -321,7 +328,7 @@ The iPad companion has no engine code (D14), and no iPad Swift retires.
 | `scripts/ci/fetch-glyphlist.sh`, `scripts/render-corpus-v2.sh`, `tools/font-metric-sweep`, `tools/kernel-math-gap` | S7 |
 | `scripts/caret_context_oracle.py` (`--flashtex` default is flashtex-render) | S6: retarget to the host |
 | Old-path attribution: `tools/native-validation/mac-live/lib/typing_attribution.py` (L9–15, L328–348), `launch_summary.py` L58, `capture_cycle.py` (L122, L317–318), `tools/typing-bench/evidence.py` (L49–54, L143), and the `FlashTeXLog` prefixes `preview-v2:`, `compile:`, `display-candidate:`, `worker:` and `paint:` | S3 adds an engine label; S6 drops the old routes (§5.6) |
-| `Cargo.toml` L11–14 (the comment on live siblings) and L23–29 (the `[profile.release]` pin "because perf-bench's committed baselines state the build profile") | S7 rewrites the L23–29 reason for the T7 bench's baselines and deletes L11–14 |
+| `Cargo.toml` L11–14 (the comment on live siblings) and L23–29 (the `[profile.release]` pin "because perf-bench's committed baselines state the build profile") | ✔ S7 (#1888): the reason now cites the T7 reference runs; L11–14 deleted |
 | `scripts/generated-manifest.json` (15 entries) | S7: compiler 8, font-engine 2, tex-text-encoding 2. math-layout's 3 stay. |
 | `scripts/clippy-debt.txt` (empty since #1401) and `rust-test-exclude.txt` (rendering-core only) | S2 removes rendering-core's line; nothing else to do |
 | `tools/real-world-corpus`, `tools/visual-oracle`, `tools/typing-bench`, `tools/native-validation` | S6: retarget to the host. `native-validation/mac-live/reports/` is evidence and stays. |
@@ -760,7 +767,7 @@ executable: this is aggregation, and check E refuses any link. Before S6 lands:
 | RQ3 | §10's "three math layout copies" means copies #1 and #2; math-layout stays | Commander | Open (§10 wording) |
 | RQ4 | Move the oracles under `tests/` | Commander | **Ruled:** move (S8) |
 | **RQ5** | Where `supported-latex.json` comes from | Commander (owner-delegated) | **Ruled** 2026-10-11: generated from the new engine's measured package support (package-smoke tier, oracle-verified); an MIT data file owned by the app, regenerated by a script; replaces `sync-supported-latex.sh`'s old-compiler source after S7. No longer blocks S1(c) or S7. |
-| RQ6 | Release artifacts, and the CLI's name and packaging. #1436's `flashtex-v3` is the successor (D5 partial); what remains is the rename to `flashtex`, release.yml packaging and the source offer. | Commander, then owner | **Ruled** 2026-10-11: `flashtex-v3` is renamed to `flashtex` and becomes the packaged CLI at S7; the source offer is RQ19's. No longer blocks S7. |
+| RQ6 | Release artifacts, and the CLI's name and packaging. #1436's `flashtex-v3` is the successor (D5 partial); what remains is the rename to `flashtex`, release.yml packaging and the source offer. | Commander, then owner | **Done** in S7 (#1888): the binary is `flashtex`; release.yml packages it with `flashtex-host` and a written source offer (`SOURCE.md`, `flashtex licenses`) and publishes the tag's source archive. **Ruled** 2026-10-11: `flashtex-v3` is renamed to `flashtex` and becomes the packaged CLI at S7; the source offer is RQ19's. No longer blocks S7. |
 | RQ7 | preview-controller after S6: retire it, or keep it for ledger and history (row E5) | Commander | **Ruled** 2026-10-21: the controller route is retired from the app in S6 (Durable History, `PreviewControllerClient`, `ShellModel+Controller`, `HistoricalPreview`, Citation Rename's helper path). Ledgers stay on disk (§5.5). The `preview-controller` crate goes in S7 (Commander under delegated app rulings, 2026-10-21 (DESIGN §13)) |
 | RQ8 | Host field in the parity baseline | — | **Done** (S1b): `baseline-fixtures.json` schema /2 has `host`; the 2026-09-22 recording keeps only `system: Darwin`, the rest `null` until S5 re-records it |
 | RQ10 | Open old-path PRs before S7 | Commander | **0 open** (#1120 closed 2026-10-06); must stay 0 at S7 |
