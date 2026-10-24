@@ -5,7 +5,7 @@ against pdflatex and latexmk (Classic) or xelatex and latexmk -xelatex (Unicode)
 usage: bench_readme.py OUT.jsonl --set classic|unicode [--docs a,b,...] [--reps N]
 
 Engines, Classic:
-  v3          flashtex-v3 build (crates/flashtex-build): the CLI on the new engine. It starts
+  v3          flashtex build (crates/flashtex-build): the CLI on the new engine. It starts
               flashtex-host, runs a resident compile with the external tools, then an export compile
               whose PDF is pdflatex's (P-T2). What a user runs.
   pdflatex    pdflatex, one pass.
@@ -32,7 +32,7 @@ positions, fonts, rules, paths, images, links, outline). A speed figure is valid
 document whose output matches.
 
 Environment: INCR_BENCH_DIR (mkeng.sh's engine `ref` and fmt-ref, mkdocs.py's and mkbook.py's
-documents), FLASHTEX_V3 (default target/release/flashtex-v3), FLASHTEX_HOST_UNICODE, TEXBIN (default
+documents), FLASHTEX_V3 (default target/release/flashtex), FLASHTEX_HOST_UNICODE, TEXBIN (default
 /Library/TeX/texbin), BENCH_WORK (default $INCR_BENCH_DIR/bench-readme). SOURCE_DATE_EPOCH=0 and
 FORCE_SOURCE_DATE=1 for every engine. BENCH_RSS_LIMIT_GB: a warm-up whose process tree passes it is
 killed and recorded as such (a hosted runner's 7 GB), and its engine is then left out of that
@@ -51,12 +51,12 @@ import time
 
 S = os.path.dirname(os.path.abspath(__file__))
 W = os.path.dirname(os.path.dirname(S))
-sys.path[:0] = [f'{W}/tools/parity', f'{W}/tools/visual-oracle', f'{W}/tools/real-world-corpus']
+sys.path[:0] = [f'{W}/tools/parity']
 
 IB = os.environ.get('INCR_BENCH_DIR', '/tmp/incr-bench').rstrip('/')
 TEXBIN = os.environ.get('TEXBIN', '/Library/TeX/texbin')
 WORK = os.environ.get('BENCH_WORK', f'{IB}/bench-readme')
-V3 = os.environ.get('FLASHTEX_V3', f'{W}/target/release/flashtex-v3')
+V3 = os.environ.get('FLASHTEX_V3', f'{W}/target/release/flashtex')
 HOST_U = os.environ.get('FLASHTEX_HOST_UNICODE', f'{W}/crates/flashtex-xetex/target/release/flashtex-host-unicode')
 
 BASE = {k: v for k, v in os.environ.items() if not k.startswith('FLASHTEX_')}

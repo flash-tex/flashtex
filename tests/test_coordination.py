@@ -91,7 +91,7 @@ class CoordinationTests(unittest.TestCase):
         self.register()
         self.cmd(self.b, 'switch', '-c', 'agent/commander/dispatch')
         args = SimpleNamespace(task='FT-TEST', agent='worker', branch='agent/worker/register',
-                               objective='fixture', acceptance=['test'], path=['crates/compiler'],
+                               objective='fixture', acceptance=['test'], path=['crates/flashtex-engine'],
                                depends=[], minutes=10, allocation='fixture')
         coord.dispatch(self.b, args)
         self.commit(self.b)
@@ -157,12 +157,12 @@ class CoordinationTests(unittest.TestCase):
     def test_dispatch_rejects_overlap_but_not_similar_prefix(self):
         self.cmd(self.b, 'switch', '-c', 'agent/commander/dispatch')
         args = SimpleNamespace(task='ONE', agent='worker', branch='agent/worker/register',
-                               objective='fixture', acceptance=['test'], path=['crates/compiler'],
+                               objective='fixture', acceptance=['test'], path=['crates/flashtex-engine'],
                                depends=[], minutes=10, allocation='fixture')
         coord.dispatch(self.b, args)
-        args.task = 'TWO'; args.path = ['crates/compiler/src']
+        args.task = 'TWO'; args.path = ['crates/flashtex-engine/src']
         with self.assertRaises(ValueError): coord.dispatch(self.b, args)
-        args.path = ['crates/compiler2']
+        args.path = ['crates/flashtex-engine2']
         coord.dispatch(self.b, args)
 
     def test_legacy_registration_is_discoverable_without_fake_ack(self):

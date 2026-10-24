@@ -44,7 +44,7 @@ def cold(files):
             if r['rep'] == 'warm':
                 warm[(d, e)] = r
                 continue
-            # flashtex-v3 exits 1 when TeX or a tool reported an error but the PDF was written (as
+            # flashtex exits 1 when TeX or a tool reported an error but the PDF was written (as
             # pdflatex in nonstop mode does); such a run counts when the warm-up's PDF matched, and the
             # table says so
             if r['code'] == 1 and e == 'v3' and r['wall'] is not None:
@@ -76,7 +76,7 @@ def cold(files):
 
     uni = all(sets[d] == 'unicode' for d in order)
     one, mk = ('xelatex', 'latexmk') if uni else ('pdflatex', 'latexmk')
-    print(f'| document | n | flashtex-v3 build p50 / p95 | {one} one pass p50 / p95 | latexmk{" -xelatex" if uni else ""} '
+    print(f'| document | n | flashtex build p50 / p95 | {one} one pass p50 / p95 | latexmk{" -xelatex" if uni else ""} '
           f'p50 / p95 (passes) | v3 vs one pass | v3 vs latexmk | v3 output vs latexmk |'
           + ('' if uni else ' engine one pass p50 / p95 | engine latexmk p50 / p95 | engine-mk output |'))
     print('|---|---:|---:|---:|---:|---:|---:|---|' + ('' if uni else '---:|---:|---|'))
@@ -98,7 +98,7 @@ def cold(files):
         print(f'| {d} | ' + ' | '.join(mb(warm.get((d, e), {}).get('peak_tree_rss_kb')) for e in es)
               + f' | {(prog[-1] if prog else "-")[:90]} |')
     if exit1:
-        print('\n† flashtex-v3 exited 1 (an error reported, the PDF written) in', dict(exit1),
+        print('\n† flashtex exited 1 (an error reported, the PDF written) in', dict(exit1),
               'timed runs; the warm-up\'s PDF of the same build matched latexmk\'s, so the times count.')
     if bad:
         print('\nFailed timed runs:', dict(bad))
