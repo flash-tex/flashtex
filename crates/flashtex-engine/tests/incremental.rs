@@ -1879,6 +1879,41 @@ fn a_cold_run_stops_no_earlier_than_s0() {
     check_against(&e, &dir, &reference, &r2, "stopped at S₀");
 }
 
+/// COLD-OPEN (#1891): segment checkpoints far from the cursor are held, and
+/// newer work that arrives in the middle of such a page still stops the run
+/// at the next segment point, not at the page's end. The preemption is
+/// one-shot (asked once, as the host's news is consumed): taken by the held
+/// segment's own question, it must stop the run there. Then the compile
+/// goes on to a from-scratch run's output.
+#[test]
+fn newer_work_far_from_the_cursor_stops_at_a_held_segment() {
+    let Some(e) = env() else {
+        common::no_texlive();
+        return;
+    };
+    let mut doc = String::from("\\documentclass{article}\n\\begin{document}\n");
+    for i in 0..700 {
+        doc.push_str(&para(i, "delta"));
+    }
+    doc.push_str("\\end{document}\n");
+    let dir = e.dir.join("held-far-stop");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("doc.tex"), &doc).unwrap();
+    let reference = dir.with_extension("ref");
+    copy_dir(&dir, &reference);
+    // (a segment point at every `build_page` that read a line)
+    let mut h = Host::start_env(&e, &dir, &[("FLASHTEX_SEGMENT_S", "0.000001")]);
+    // page 25 is far from the cursor (0) of a run from scratch; the first
+    // question there is page 25's own checkpoint, the second a held segment
+    // point of page 26
+    let r = h.cmd("compile-interrupt 1 25 2");
+    assert!(r.contains("\"preempted\":true"), "not stopped: {r}");
+    assert_eq!(field(&r, "pages"), "25", "stopped at a later page: {r}");
+    let r2 = h.cmd("compile");
+    check_against(&e, &dir, &reference, &r2, "after a stop at a held segment");
+}
+
 /// `k` in lower-case roman numerals (control sequence names of letters).
 fn roman(mut k: usize) -> String {
     let mut s = String::new();

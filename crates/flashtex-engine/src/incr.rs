@@ -637,6 +637,12 @@ struct Obs {
     /// work stops the run there (`preempt_now`, which consumes the news):
     /// `on_checkpoint` stops at it.
     held_stop: bool,
+    /// Checkpoints taken plus segment checkpoints held back, and the count
+    /// at which `on_checkpoint` thins next: retention keeps the pace it had
+    /// when every segment checkpoint was taken (review of #1891: thinning
+    /// only every 32 pages let the logs overshoot the budget for longer).
+    ticks: usize,
+    thin_at: usize,
 }
 
 /// The most pages an incremental compile ships, none changed, before newer
@@ -2956,21 +2962,32 @@ impl Observer for Obs {
             self.held_stop = true;
             return true;
         }
-        if self.first_incremental && !self.edit_out {
-            return self.before_the_edit(g);
+        let take = if self.first_incremental && !self.edit_out {
+            self.before_the_edit(g)
+        } else {
+            // Elsewhere (a run from scratch, a later pass, the background
+            // after the edited page): only where retention keeps it (`thin`:
+            // segment checkpoints more than `dense` pages from the cursor
+            // go). Taking, sealing and packing the others, then merging them
+            // away, was most of the 10.8 % a cold open of Infinite Descent x2
+            // spent on checkpoints (lane COLD-OPEN, 2026-10-24). Which
+            // checkpoints exist changes nothing a run computes.
+            self.pages_so_far().abs_diff(self.cursor) <= self.dense
+        };
+        if !take {
+            self.ticks += 1;
         }
-        // Elsewhere (a run from scratch, a later pass, the background after
-        // the edited page): only where retention keeps it (`thin`: segment
-        // checkpoints more than `dense` pages from the cursor go). Taking,
-        // sealing and packing the others, then merging them away, was most
-        // of the 10.8 % a cold open of Infinite Descent x2 spent on
-        // checkpoints (lane COLD-OPEN, 2026-10-24). Which checkpoints exist
-        // changes nothing a run computes.
-        self.pages_so_far().abs_diff(self.cursor) <= self.dense
+        take
     }
 
+    /// (`REQ_PREEMPT`: the checkpoint it takes stops the run, as a held
+    /// segment taken for newer work does; `preempt_now` consumed the news)
     fn stops_now(&mut self, g: &mut Globals) -> bool {
-        self.preempt_now(g)
+        let stop = self.preempt_now(g);
+        if stop {
+            self.held_stop = true;
+        }
+        stop
     }
 
     fn on_checkpoint(&mut self, g: &mut Globals, id: CheckpointId, why: Point) -> Action {
@@ -2984,16 +3001,17 @@ impl Observer for Obs {
         // run stops at this checkpoint or the next anyway. The next
         // checkpoint without newer work thins instead (lane T7-MARGIN).
         let due = std::mem::take(&mut self.thin_due);
-        if due || self.taken.len() % 32 == 31 {
+        self.ticks += 1;
+        let pace = self.ticks >= self.thin_at;
+        if pace {
+            self.thin_at = self.ticks + 32;
+        }
+        if due || pace {
             if self.newer_waiting(g) {
                 self.thin_due = true;
             } else {
-                if due || self.taken.len() % 32 == 31 {
-                    self.thin(g);
-                }
-                if due || self.taken.len() % 32 == 31 {
-                    self.thin_pending(g);
-                }
+                self.thin(g);
+                self.thin_pending(g);
             }
         }
         if why != Point::Shipout {
@@ -5897,6 +5915,8 @@ impl Session {
             first_incremental: false,
             edit_out: false,
             held_stop: false,
+            ticks: 0,
+            thin_at: 31,
         }
     }
 
@@ -6725,6 +6745,8 @@ impl Session {
         {
             o.preempt = self.preempt.clone();
             o.cancel = self.cancel.clone();
+            // (a stop the stopped run took the news for is not this one's)
+            o.held_stop = false;
             match &again {
                 Ok((_, changed, _)) => {
                     o.changed_lookup_last = o.changed_lookup_last.max(self.changed_lookup_last);
