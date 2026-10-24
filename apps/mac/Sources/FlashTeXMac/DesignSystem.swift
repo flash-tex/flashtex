@@ -41,6 +41,14 @@ enum DS {
 
     // MARK: row heights — IntelliJ's density relaxed by one step
 
+    /// Sized around Fonts.base/secondary/header's resting 11-13pt. Now that
+    /// those follow the system Text Size setting, a row using a fixed
+    /// `.frame(height:)` (not `.frame(minHeight:)`) can clip ascenders or
+    /// descenders at a non-default Larger Text size instead of growing --
+    /// not provable by a hermetic test (macOS per-view Dynamic Type
+    /// overrides don't drive rendering, see DesignSystemFontsTests), and
+    /// not audited here call-site by call-site; flagged as a known
+    /// follow-up, not fixed in this change.
     enum Row {
         static let tree: CGFloat = 24
         static let outline: CGFloat = 24
@@ -65,31 +73,41 @@ enum DS {
     // MARK: typography — base 13, secondary 11, headers 11 semibold; ≤3 sizes per surface
 
     enum Fonts {
-        /// UI base: SF Pro Text 13.
-        static let base = Font.system(size: 13)
-        /// Secondary / dimmed detail: 11.
-        static let secondary = Font.system(size: 11)
-        /// Section headers: 11 semibold.
-        static let header = Font.system(size: 11, weight: .semibold)
-        /// Monospace UI detail (revisions, counters, shortcuts) at the
-        /// secondary size. Editor text itself sizes from EditorPreferences.
+        /// UI base: SF Pro Text 13, following the system Text Size setting
+        /// (`.body`'s resting size is 13pt on macOS, an exact match — this
+        /// changes nothing today, but a fixed `Font.system(size:)` never
+        /// responds to Settings > Accessibility > Display > Larger Text,
+        /// while a style-based font does).
+        static let base = Font.system(.body)
+        /// Secondary / dimmed detail: 11, same Text-Size-following
+        /// treatment as `base` (`.subheadline`'s resting size is 11pt, an
+        /// exact match — NOT `.footnote`, which rests at 10pt).
+        static let secondary = Font.system(.subheadline)
+        /// Section headers: 11 semibold, same treatment as `secondary`.
+        static let header = Font.system(.subheadline).weight(.semibold)
+        // not scaled: monospace UI detail at a fixed size keeps counters/
+        // revisions/shortcuts aligned in a grid; Editor text itself sizes
+        // from EditorPreferences, not this token.
         static let monoSecondary = Font.system(size: 11, design: .monospaced)
-        /// Monospace content outside the editor (log excerpts, LaTeX snippets).
+        // not scaled: monospace content outside the editor (log excerpts,
+        // LaTeX snippets) is verbatim source text, not UI chrome.
         static let mono = Font.system(size: 13, design: .monospaced)
-        /// The palette / search field: one size up from base so the type-here
-        /// surface reads as the primary element of its panel.
+        // not scaled: the palette / search field is one size up from base
+        // so the type-here surface reads as the primary element of its
+        // panel; a fixed offset from a variable base would drift.
         static let field = Font.system(size: 15)
-        /// Icon-rail glyphs: between VS Code's 24px-in-48 and SF's UI sizes —
-        /// 16 with the 48pt rail reads as an activity bar, 13 as a toolbar.
+        // not scaled: icon-rail glyphs are SF Symbols sized to their rail
+        // (16 with the 48pt rail reads as an activity bar), not text.
         static let railIcon = Font.system(size: 16)
-        /// Title-bar toolbar glyphs (IDEToolbar.swift): one step under the
-        /// rail so the title bar reads lighter than the tool stripe, in the
-        /// same outline SF style as the rail icons (owner: unify on the
-        /// rail's icon look).
+        // not scaled: title-bar toolbar glyphs (IDEToolbar.swift), same
+        // icon-not-text reasoning as railIcon.
         static let toolbarIcon = Font.system(size: 15)
-        /// The split button's chevron (its own click region, JetBrains-style).
+        // not scaled: the split button's chevron is a small fixed glyph in
+        // its own click region, not text a reader scales for legibility.
         static let toolbarChevron = Font.system(size: 9, weight: .semibold)
         /// The pairing code: read across the room, typed on another device.
+        // not scaled: already large and monospaced for room-distance
+        // legibility; a reader who needs it bigger still zooms the display.
         static let pairingCode = Font.system(size: 34, weight: .semibold, design: .monospaced)
     }
 
@@ -250,6 +268,15 @@ enum DS {
 
     /// AppKit type for panels the SwiftUI `Fonts` cannot reach (the
     /// completion popup is an NSPanel + NSTableView on purpose).
+    ///
+    /// Deliberate divergence, not an oversight: `Fonts.base`/`secondary`/
+    /// `header` now follow the system Text Size setting (`Font.system(.body)`
+    /// etc.); these AppKit mirrors stay fixed points. The completion popup
+    /// (`Completion.swift`'s `docTitle`/`docBody`/`docHint`) therefore does
+    /// not grow with Larger Text while SwiftUI diagnostics/chrome using the
+    /// same semantic names do. Scaling this mirror too (e.g. via
+    /// `NSFontMetrics.default.scaledFont(for:)`) is a reasonable follow-up,
+    /// scoped out here to keep this change to the SwiftUI tokens only.
     enum NSFonts {
         static let base = NSFont.systemFont(ofSize: 13)
         static let baseSemibold = NSFont.systemFont(ofSize: 13, weight: .semibold)
