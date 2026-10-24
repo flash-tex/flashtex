@@ -590,17 +590,15 @@ jobs:
           python3 -m unittest discover -s tools/parity -p 'test_*.py'
           python3 -m unittest discover -s tools/package-smoke -p 'test_*.py'
           scripts/tests/p5-pick-t4.test.sh
-      - name: "inventory: completion vocabulary is the compiler's inventory"
-        if: ${{ !cancelled() && runner.os == 'Linux' }}
-        run: apps/mac/scripts/sync-supported-latex.sh --check
       # RQ5: the vocabulary generated from measured package support (pdflatex is the
-      # oracle; the probe itself is the supported-latex workflow's). S7 bundles it.
-      - name: "supported-latex: the generated vocabulary matches its inputs"
+      # oracle; the probe itself is the supported-latex workflow's), and the two
+      # copies the editors bundle.
+      - name: "supported-latex: the generated vocabulary matches its inputs and the bundled copies"
         if: ${{ !cancelled() && runner.os == 'Linux' }}
         run: |
           set -euo pipefail
           python3 -m unittest discover -s apps/mac/scripts -p 'test_gen_supported_latex.py'
-          python3 apps/mac/scripts/gen-supported-latex.py check
+          python3 apps/mac/scripts/gen-supported-latex.py check --installed
       - name: "generated tables match the manifest"
         if: ${{ !cancelled() && runner.os == 'Linux' }}
         run: python3 scripts/check-generated.py
@@ -1058,10 +1056,10 @@ jobs:
         run: |
           set -o pipefail
           scripts/ci/build-helpers.sh | tee -a "$GITHUB_ENV"
-      - name: Completion vocabulary is the compiler's inventory
-        # apps/mac/Sources/FlashTeXMac/Resources/supported-latex.json must be
-        # byte-identical to crates/compiler/supported/supported-latex.json.
-        run: apps/mac/scripts/sync-supported-latex.sh --check
+      - name: Completion vocabulary is the generated one
+        # apps/mac/Sources/FlashTeXMac/Resources/supported-latex.json (and the
+        # iPad's copy) must be what gen-supported-latex.py renders (RQ5).
+        run: python3 apps/mac/scripts/gen-supported-latex.py check --installed
       - name: swift build
         working-directory: apps/mac
         run: swift build

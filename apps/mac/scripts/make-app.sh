@@ -266,14 +266,14 @@ if [[ -n "$NOTARY_PROFILE" ]]; then
   echo "==> notarytool keychain profile found: \"$NOTARY_PROFILE\"${NOTARY_KEYCHAIN:+ (keychain $NOTARY_KEYCHAIN)}"
 fi
 
-# --- Pre-flight: the completion vocabulary is the compiler's inventory --------
+# --- Pre-flight: the completion vocabulary is the generated one -------------
 # Completion.Vocabulary decodes Sources/FlashTeXMac/Resources/supported-latex.json,
-# a byte-identical copy of crates/compiler/supported/supported-latex.json kept
-# by scripts/sync-supported-latex.sh; a stale copy refuses the build.
-SUPPORTED_LATEX_SYNC="$SCRIPT_DIR/sync-supported-latex.sh"
+# which scripts/gen-supported-latex.py renders from measured package support
+# (apps/mac/supported-latex/, RQ5); a stale copy refuses the build.
+SUPPORTED_LATEX_GEN="$SCRIPT_DIR/gen-supported-latex.py"
 SUPPORTED_LATEX_JSON="$MAC_DIR/Sources/FlashTeXMac/Resources/supported-latex.json"
-[[ -f "$SUPPORTED_LATEX_SYNC" ]] || die "missing $SUPPORTED_LATEX_SYNC"
-"$SUPPORTED_LATEX_SYNC" --check --root "$REPO_ROOT" || die "bundled supported-latex.json is stale; run apps/mac/scripts/sync-supported-latex.sh and commit"
+[[ -f "$SUPPORTED_LATEX_GEN" ]] || die "missing $SUPPORTED_LATEX_GEN"
+python3 "$SUPPORTED_LATEX_GEN" check --installed || die "bundled supported-latex.json is stale; run python3 apps/mac/scripts/gen-supported-latex.py render --install and commit"
 
 # --- Pre-flight: pinned rooted TFM metrics must verify before the build -------
 # GH36: the bundle's rooted texmf tree of Latin Modern metrics (staged for the
