@@ -1,16 +1,23 @@
-//! `flashtex-v3`: the command line on the new engine (DESIGN.md §10, row D5).
+//! `flashtex`: the command line on the new engine (DESIGN.md §10, row D5).
 //!
 //! ```text
-//! flashtex-v3 build [<main.tex>|<dir>] [-o out.pdf] [--no-tools] [--host PATH] [--mode classic|unicode]
-//! flashtex-v3 check [<main.tex>|<dir>] [--json] [--no-tools] [--host PATH]
-//! flashtex-v3 watch [<main.tex>|<dir>] [-o out.pdf] [--interval MS] [--no-tools] [--host PATH]
+//! flashtex build [<main.tex>|<dir>] [-o out.pdf] [--no-tools] [--host PATH] [--mode classic|unicode]
+//! flashtex check [<main.tex>|<dir>] [--json] [--no-tools] [--host PATH]
+//! flashtex watch [<main.tex>|<dir>] [-o out.pdf] [--interval MS] [--no-tools] [--host PATH]
+//! flashtex licenses
+//! flashtex --version
 //! ```
 //!
-//! It is the successor of `flashtex build/check/watch` (crates/flashtex-cli,
-//! which links the old engine and is deleted with it, retirement plan S7,
-//! RQ6). It never links the engine: it starts `flashtex-host` as a separate
-//! process and speaks display-list-v3 over its socket, as the Mac app does
-//! (DESIGN.md §3).
+//! It replaced the old engine's `flashtex` CLI (crates/flashtex-cli, deleted
+//! with that engine in retirement stage S7) and was called `flashtex-v3`
+//! until then (RQ6). It never links the engine: it starts `flashtex-host` as
+//! a separate process and speaks display-list-v3 over its socket, as the
+//! Mac app does (DESIGN.md §3).
+//!
+//! - `licenses` prints the licences and the GPL source offer (`licenses.rs`):
+//!   this program is MIT; the engine hosts it runs are GPL-2.0-or-later, and
+//!   their source is public in the repository, as the app's About panel says.
+//! - `--version` prints `flashtex <version> (<revision>)` (`build.rs`).
 //!
 //! - `build` compiles as latexmk would: a resident compile that runs
 //!   bibtex, biber and makeindex when the document needs them (`--no-tools`:
@@ -45,6 +52,7 @@
 //! host notices its parent is gone, removes its socket and exits; once
 //! connected, the connection's end ends it.
 
+mod licenses;
 mod mode;
 mod progress;
 
@@ -65,6 +73,14 @@ fn main() -> ExitCode {
         println!("{USAGE}");
         return ExitCode::SUCCESS;
     }
+    if matches!(cmd.as_str(), "-V" | "--version" | "version") {
+        println!("{}", licenses::version_line());
+        return ExitCode::SUCCESS;
+    }
+    if matches!(cmd.as_str(), "licenses" | "--licenses" | "--source-offer") {
+        print!("{}", licenses::text());
+        return ExitCode::SUCCESS;
+    }
     let opts = match Opts::parse(&args[1..]) {
         Ok(o) => o,
         Err(e) => return usage(&e),
@@ -78,7 +94,7 @@ fn main() -> ExitCode {
         "watch" => watch(&opts, &p),
         other => {
             return usage(&format!(
-                "unknown command {other:?} (use build, check or watch)"
+                "unknown command {other:?} (use build, check, watch or licenses)"
             ))
         }
     };
@@ -86,16 +102,16 @@ fn main() -> ExitCode {
         Ok(code) => code,
         Err(e) => {
             p.end();
-            eprintln!("flashtex-v3: {e}");
+            eprintln!("flashtex: {e}");
             ExitCode::from(1)
         }
     }
 }
 
-const USAGE: &str = "usage: flashtex-v3 build|check|watch [<main.tex>|<dir>] [-o out.pdf] [--json] [--no-tools] [--interval MS] [--host PATH] [--mode classic|unicode] [--progress|--no-progress] [-q|--quiet]";
+const USAGE: &str = "usage: flashtex build|check|watch [<main.tex>|<dir>] [-o out.pdf] [--json] [--no-tools] [--interval MS] [--host PATH] [--mode classic|unicode] [--progress|--no-progress] [-q|--quiet]\n       flashtex licenses   (the licences and the GPL source offer)\n       flashtex --version";
 
 fn usage(why: &str) -> ExitCode {
-    eprintln!("flashtex-v3: {why}\n{USAGE}");
+    eprintln!("flashtex: {why}\n{USAGE}");
     ExitCode::from(2)
 }
 
@@ -282,7 +298,7 @@ impl WorkDir {
         let tmp = simplified(std::env::temp_dir());
         for n in 0..100u32 {
             let d = tmp.join(format!(
-                "flashtex-v3-{}-{}-{n}",
+                "flashtex-build-{}-{}-{n}",
                 std::process::id(),
                 nanos()
             ));
@@ -345,7 +361,7 @@ impl Host {
             }
         }
         Err(format!(
-            "{} not found (--host PATH, ${}, beside flashtex-v3, or on PATH)",
+            "{} not found (--host PATH, ${}, beside flashtex, or on PATH)",
             m.host(),
             m.host_env()
         ))
@@ -593,15 +609,21 @@ mod leftovers {
     #[cfg(not(any(unix, windows)))]
     pub fn unblock_signals_in_child(_cmd: &mut std::process::Command) {}
 
-    /// The pid in a leftover's name: `flashtex-v3-<pid>-…` (a work
-    /// directory) or `ftx-v3-<pid>-….sock` (a host socket).
+    /// The pid in a leftover's name: `flashtex-build-<pid>-…` (a work
+    /// directory), `flashtex-v3-<pid>-…` (a work directory of this program
+    /// before it was renamed `flashtex`, retirement plan S7, RQ6) or
+    /// `ftx-v3-<pid>-….sock` (a host socket).
     #[cfg_attr(not(unix), allow(dead_code))]
     pub fn owner(name: &str) -> Option<u32> {
         let rest = name
-            .strip_prefix("flashtex-v3-")
+            .strip_prefix("flashtex-build-")
+            .or_else(|| name.strip_prefix("flashtex-v3-"))
             .or_else(|| name.strip_prefix("ftx-v3-"))?;
         let (pid, more) = rest.split_once('-')?;
-        if more.is_empty() || name.starts_with("flashtex-v3-test-") {
+        if more.is_empty()
+            || name.starts_with("flashtex-build-test-")
+            || name.starts_with("flashtex-v3-test-")
+        {
             return None;
         }
         pid.parse().ok()
@@ -823,10 +845,10 @@ impl Session {
         // A mode other than the default is said, with what chose it; what
         // could not be followed always is.
         if mode.source != "default" && !o.quiet && !o.json {
-            eprintln!("flashtex-v3: {} mode ({})", mode.mode.name(), mode.source);
+            eprintln!("flashtex: {} mode ({})", mode.mode.name(), mode.source);
         }
         for w in &mode.warnings {
-            eprintln!("flashtex-v3: warning: {w}");
+            eprintln!("flashtex: warning: {w}");
         }
         p.begin(&project.main, &project.root, project.expected_pages(p));
         let started = (|| {
@@ -882,10 +904,10 @@ impl Session {
         let req = self.request(o.tools, false);
         let first = compile(&mut self.client, &req, p)?;
         for n in &first.tool_failures {
-            p.eprintln(&format!("flashtex-v3: {n}"));
+            p.eprintln(&format!("flashtex: {n}"));
         }
         for n in &first.tool_notes {
-            p.eprintln(&format!("flashtex-v3: warning: {n}"));
+            p.eprintln(&format!("flashtex: warning: {n}"));
         }
         let errors: Vec<&Diag> = first.diags.iter().filter(|d| is_error(d)).collect();
         for d in &errors {
@@ -908,7 +930,7 @@ impl Session {
             Some(pdf) => {
                 std::fs::copy(&pdf, &target).map_err(|e| format!("{}: {e}", target.display()))?;
                 if self.rerun_warned() {
-                    eprintln!("flashtex-v3: warning: LaTeX asks for another run (\"Rerun\" in the log); cross-references may be off");
+                    eprintln!("flashtex: warning: LaTeX asks for another run (\"Rerun\" in the log); cross-references may be off");
                 }
                 if let (true, Some(n)) = (p.on(), export.pages.filter(|&n| n > 0)) {
                     if let Some(f) = self.project.cache_file() {
@@ -929,11 +951,11 @@ impl Session {
                         elapsed,
                         warnings,
                         errors.len(),
-                        &format!("flashtex-v3 check {}", self.project.main),
+                        &format!("flashtex check {}", self.project.main),
                     ));
                 } else if !o.quiet || p.on() {
                     eprintln!(
-                        "flashtex-v3: wrote {} ({} ms){}",
+                        "flashtex: wrote {} ({} ms){}",
                         target.display(),
                         t0.elapsed().as_millis(),
                         if errors.is_empty() {
@@ -951,7 +973,7 @@ impl Session {
             }
             None => {
                 eprintln!(
-                    "flashtex-v3: no PDF ({}){}",
+                    "flashtex: no PDF ({}){}",
                     export.status,
                     if errors.is_empty() {
                         ""
@@ -1026,7 +1048,7 @@ impl Session {
             }
         }
         if !o.json && !o.quiet {
-            eprintln!("flashtex-v3: {} · {errors} error(s)", out.status);
+            eprintln!("flashtex: {} · {errors} error(s)", out.status);
         }
         Ok(if errors > 0 || out.status == "failed" {
             ExitCode::from(1)
@@ -1075,7 +1097,7 @@ fn build_restarting<S>(
             match open() {
                 Ok(s) => *slot = Some(s),
                 Err(e) => {
-                    eprintln!("flashtex-v3: {e}");
+                    eprintln!("flashtex: {e}");
                     return;
                 }
             }
@@ -1084,14 +1106,14 @@ fn build_restarting<S>(
         match build(s) {
             Ok(()) => return,
             Err(e) if e.starts_with(HOST_LOST) => {
-                eprintln!("flashtex-v3: {e}");
+                eprintln!("flashtex: {e}");
                 *slot = None; // its host and work directory go
                 if attempt == 0 {
-                    eprintln!("flashtex-v3: starting the host again");
+                    eprintln!("flashtex: starting the host again");
                 }
             }
             Err(e) => {
-                eprintln!("flashtex-v3: {e}");
+                eprintln!("flashtex: {e}");
                 return;
             }
         }
@@ -1211,7 +1233,7 @@ mod tests {
 
     fn scratch(name: &str) -> PathBuf {
         let dir = std::env::temp_dir().join(format!(
-            "flashtex-v3-test-{name}-{}-{}",
+            "flashtex-build-test-{name}-{}-{}",
             std::process::id(),
             nanos()
         ));
@@ -1484,19 +1506,25 @@ mod tests {
     #[test]
     fn leftovers_are_named_by_their_pid() {
         assert_eq!(
-            leftovers::owner("flashtex-v3-4242-1791035688712577000-0"),
+            leftovers::owner("flashtex-build-4242-1791035688712577000-0"),
             Some(4242)
+        );
+        assert_eq!(
+            leftovers::owner("flashtex-v3-4242-1791035688712577000-0"),
+            Some(4242),
+            "a work directory from before the rename"
         );
         assert_eq!(
             leftovers::owner("ftx-v3-4242-1791035688712577000.sock"),
             Some(4242)
         );
         assert_eq!(
-            leftovers::owner("flashtex-v3-test-watch-1-2"),
+            leftovers::owner("flashtex-build-test-watch-1-2"),
             None,
             "the tests' scratch directories"
         );
-        assert_eq!(leftovers::owner("flashtex-v3-"), None);
+        assert_eq!(leftovers::owner("flashtex-v3-test-watch-1-2"), None);
+        assert_eq!(leftovers::owner("flashtex-build-"), None);
         assert_eq!(leftovers::owner("flashtex-host-lifetime-fmt"), None);
     }
 }
