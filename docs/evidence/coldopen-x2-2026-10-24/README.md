@@ -92,7 +92,26 @@ Which checkpoints exist changes nothing a run computes. This is a re-port of the
 | PC: engine instructions, per pass | 598.4 / 639.0 / 636.3 G | 549.9 / 593.0 / 587.2 G | −7.7 % |
 
 (`raw/ab1-*.jsonl` on the Mac, two reps each, interleaved within one lock; `raw/pc-*.jsonl` on
-the PC.) Pass 1 is now 1.07× pdflatex's wall time on this Mac (27.9 s against 26 s). On the Mac
+the PC.)
+
+**After the independent review (head `91e924cdd`).** The review found that in-run retention
+(`thin`, every 32 checkpoints taken) ran only every 32 pages once far segments were held, which
+explains the +6 % peak RSS above. Retention now counts held segment points too, `REQ_PREEMPT` records
+the stop it takes, and a continued run starts with no held stop. VERIFIED:
+
+| at `91e924cdd` | main `94f52aa26` | this branch |
+|---|---:|---:|
+| PC: engine instructions | 1,873.7 G | 1,692.9 G (−9.6 %) |
+| PC: per pass | 598.4 / 639.0 / 636.3 G | 547.9 / 552.4 / 592.6 G |
+| PC: peak RSS | 1,024 MB | 993 MB |
+| Mac (load 7.0–9.3, busier than the run above): `DONE` | 157.9–159.6 s | 136.3–143.5 s (−12 %) |
+| Mac: all pages seen | 103.7–104.8 s | 88.9–93.8 s |
+| Mac: engine instructions | 1,766.2–1,766.4 G | 1,638.1–1,640.8 G (−7.2 %) |
+| Mac: peak RSS | 1,089 MB | 1,070–1,075 MB |
+
+(`raw/ab2-*.jsonl`, `raw/pc-far2.jsonl`.) PC tests at this head: incremental 81/81, including the
+new `newer_work_far_from_the_cursor_stops_at_a_held_segment`; host_incremental 27/27; checkpoint
+3/3. Pass 1 is now 1.07× pdflatex's wall time on this Mac (27.9 s against 26 s). On the Mac
 the wall time falls by more than the instruction count, because fewer checkpoints means fewer
 chunks copied and sealed, and so fewer cache misses.
 
@@ -104,6 +123,11 @@ What is left outside TeX after this change (PC `perf`, instructions, `raw/pc-per
   `dg_def_begin` 1.4);
 - `lineshift`'s thread-local, 1.5 %.
 These are the next items.
+
+**A reopen with the previous session's `.aux` and S₀ takes one pass, as pdflatex would**
+(VERIFIED, PC, far build, `raw/pc-reopen-far.jsonl`, `coldopen.py --keep-aux --keep-s0 --reps 2`).
+The first open runs 3 passes: 1,670 G instructions, `DONE` at 142.1 s on the loaded PC. The reopen
+runs from the persisted S₀ in one pass: 536 G, page 1 at 650 ms, `DONE` at 51.8 s.
 
 ## 3. Reproduce
 
