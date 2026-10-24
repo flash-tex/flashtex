@@ -1,8 +1,9 @@
 # flashtex-microtype — integration contract (KC-102)
 
 Status: proposal. This crate edits nothing outside `crates/microtype/`; the
-hooks below are for the owners of `crates/paragraph-layout` (Knuth–Plass) and
-`crates/render-pipeline` to adopt.
+hooks below are for the owners of `crates/paragraph-layout` (Knuth–Plass) to
+adopt. The old engine's typesetting pipeline, the other planned adopter, was
+deleted in old-engine retirement S7; the crate is kept as an oracle (retirement plan §2).
 
 ## What pdfTeX does (verified)
 
@@ -75,7 +76,7 @@ let e = fp.char_expansion(slot, ratio); expanded_width(base_w, e);
 ```
 
 `metrics` implements `FontMetrics { char_width(slot), quad() }` from the TFM
-(render-pipeline `tfm.rs`). Everything is integer sp: the rounding is part of
+(a TFM reader). Everything is integer sp: the rounding is part of
 the contract, so integrate in sp, not f64 points.
 
 ## Proposed hooks — `crates/paragraph-layout`
@@ -112,21 +113,6 @@ parity needs sp integers for these sums. Proposed, in order of need:
 `tests/common/mod.rs` in this crate is a complete reference (TeX's
 active-list order, tie rules, three passes, discretionary break widths,
 pruning) that the owner can diff against.
-
-## Proposed hooks — `crates/render-pipeline`
-
-1. `typeset.rs` `line_params` (l. 1038) → set `adjust_spacing = 2`,
-   `protrude_chars = 2` when the preamble loads `microtype` (and its options
-   `protrusion=`, `expansion=`, `stretch=`, `shrink=`, `step=`, `factor=`,
-   `selected=` map to `Options`).
-2. `fonts.rs` font loading (`layout_id`, l. 328): resolve `FontParams` once per
-   (NFSS name, size) with `MicrotypeConfig::resolve`; the NFSS name is the one
-   LaTeX would select (e.g. `T1/cmr/bx/n/12`). Math fonts (OML/OMS/U) are
-   outside both sets: `FontParams::plain(quad)`.
-3. `layout_paragraph` calls (l. 1114, l. 1281): pass the font-params lookup.
-4. PDF emission (`pdf.rs`): for a glyph with `e ≠ 0` emit it with horizontal
-   scale `(1000+e)/1000` (`Tz` or a text-matrix `a` of `(1000+e)/1000`) at the
-   position from layout; advance with the expanded width.
 
 ## HW1 / HW2 delta (pdflatex, MacTeX 2026)
 

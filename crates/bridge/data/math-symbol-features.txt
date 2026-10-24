@@ -5,8 +5,9 @@
 #
 # Snapshot of the command names in the original compiler's
 # `math::COMMAND_GLYPHS` at main 50e911fae (old-engine retirement S1, #1236),
-# taken so that the bridge no longer links crates/compiler. While that crate
-# exists, crates/compiler/tests/bridge_math_features.rs fails if the two drift.
+# taken so that the bridge no longer links the old compiler. That compiler,
+# and the drift test that re-derived this file from it, were deleted in
+# old-engine retirement S7; the table is now frozen.
 \Box
 \Delta
 \Diamond

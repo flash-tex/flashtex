@@ -6,12 +6,6 @@
 # Binaries of member crates are therefore built into ./target/<profile>/, NOT
 # crates/<name>/target/<profile>/ -- scripts that need a helper binary resolve
 # the directory with scripts/crate-target-dir.sh instead of hard-coding it.
-#
-# `crates/render-pipeline/vendor/` is gone (engine-v2 DESIGN.md §9.4, §12 P0):
-# render-pipeline, flashtex-cli and perf-bench depend on the live sibling
-# crates by `../<name>` like every other member, so nothing is ever re-pinned
-# again and a compiler change reaches the pipeline, the CLI and the perf
-# harness the moment it merges.
 [workspace]
 # Resolver 2 is what every 2021-edition member used on its own; the 2024-edition
 # members' implicit resolver 3 differs only in MSRV-aware version selection,
@@ -24,13 +18,16 @@ members = ["crates/*", "tools/web2rust"]
 # generated lines do not slow every workspace build and gate.
 exclude = ["crates/flashtex-xetex"]
 
-# perf-bench's committed baselines (crates/perf-bench/baselines/) state the
-# build profile, and two runs are only comparable when it matches, so the
-# `release` values it relies on are pinned here rather than left implicit --
-# they are cargo's stock ones. Changing anything here invalidates every
-# committed baseline. These lived in crates/perf-bench/Cargo.toml while that
-# crate was a standalone package; cargo ignores `[profile]` in a non-root
-# member, so they moved here when it joined the workspace.
+# The T7 interactive-performance gate (tools/incr-bench/t7.py, run on the
+# reference Mac by scripts/t7-reference.sh, DESIGN.md §8 T7) builds the
+# engine with `cargo build --release` in this workspace, and its committed
+# reference runs (docs/evidence/t7-reference-*) record the commit they were
+# built from. Two runs' timings are only comparable when they were built with
+# the same profile, so the `release` values are pinned here rather than left
+# implicit -- they are cargo's stock ones. Changing anything here makes every
+# committed T7 reference run incomparable with the next, so it needs a new
+# reference run (retirement plan §4.5). cargo ignores `[profile]` in a
+# non-root member, so this is the only place they can live.
 [profile.release]
 opt-level = 3
 lto = false
@@ -39,8 +36,8 @@ panic = "unwind"
 debug = false
 
 # `--profile perf` for flamegraphs: identical codegen, line tables kept so
-# symbols resolve. Never produce a committed baseline with it (the report
-# records the profile, and the gate refuses a cross-profile comparison).
+# symbols resolve. Never record a committed T7 reference run with it: T7
+# builds `--release`, and a run from another profile is not comparable.
 [profile.perf]
 inherits = "release"
 debug = 1
