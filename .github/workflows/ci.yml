@@ -151,6 +151,11 @@ jobs:
       # it touches the app's engine-v3 code or tests, the display-list-v3
       # protocol, or the host (`v3_app_paths` in the script).
       v3_app: ${{ steps.p.outputs.v3_app }}
+      # 'true' when the real-document gate runs (real-doc-gate): after the
+      # merge, and on a pull request or branch push that touches the engine
+      # or its host, the display-list protocol, the Mac app's sources, or the
+      # gate itself (`realdoc_paths` in the script). Never in the merge queue.
+      realdoc: ${{ steps.p.outputs.realdoc }}
       # JSON `os` lists for the Rust workspace/standalone jobs and for
       # trip/etrip/pdftex-regression: the gate and pull requests run trip and
       # co. on Linux only and the Rust jobs not at all; after the merge, both
@@ -349,6 +354,20 @@ jobs:
             pr) [ "$run" = "true" ] && touches "$v3_app_paths" && v3_app=true ;;
           esac
 
+          # The real-document gate (real-doc-gate; lane REAL-DOC-GATE, DESIGN
+          # §1.2, §9): T7's late-page typing row on Infinite Descent x2 and the
+          # app's one-frame stall test on the same book. The owner found typing
+          # on its page 883 taking 32 s and freezing the editor (2026-10-24),
+          # which no generated document showed. After the merge, and before it
+          # whenever the engine or its host, the protocol, the Mac app's sources
+          # or the gate's own files change. Never in the gate (merge queue).
+          realdoc_paths='^(crates/(flashtex-engine|flashtex-runtime|display-list-v3)/|Cargo\.lock$|apps/mac/(Sources/|Package\.swift$|Tests/FlashTeXMacTests/(EngineV3RealDocTypingTests|MainThreadStall)\.swift$)|tools/incr-bench/(t7|docspec|mkbook|mkreal|mkeng)\.(py|sh)$|tools/incr-bench/realdocs\.json$|tools/parity/corpus/(infdesc_x2\.py|books\.json)$|scripts/realdoc-gate\.sh$|\.github/workflows/ci\.yml$)'
+          realdoc=false
+          case "$tier" in
+            all) realdoc=true ;;
+            pr) [ "$run" = "true" ] && touches "$realdoc_paths" && realdoc=true ;;
+          esac
+
           # The OLD engine's parity fixtures (parity-fixtures and its hosted
           # twin). That engine is frozen (D13, fixes only), and the job needs a
           # Mac. It runs after the merge (every push to main, where a failure
@@ -414,6 +433,7 @@ jobs:
             echo "old_engine=$old_engine"
             echo "apple=$apple"
             echo "v3_app=$v3_app"
+            echo "realdoc=$realdoc"
             echo "rust_os=$rust_os"
             echo "trip_os=$trip_os"
           } >> "$GITHUB_OUTPUT"
@@ -433,6 +453,7 @@ jobs:
             echo "| new engine parity | $engine (NixOS shards: $engine_nixos, hosted: $engine_hosted) |"
             echo "| Mac app / iPad | $apple |"
             echo "| engine-v3 host tests (Mac app) | $v3_app |"
+            echo "| real-document gate (T7 infdesc-x2 late page, app stalls) | $realdoc |"
             echo "| old engine parity fixtures | $old_engine |"
             echo "| Rust workspace / standalone | \`$rust_os\` |"
           } >> "$GITHUB_STEP_SUMMARY"
@@ -1281,6 +1302,80 @@ jobs:
           if-no-files-found: ignore
           retention-days: 14
 
+  # The real-document gate (plan's `realdoc`; DESIGN §1.2, §9's fast cycle).
+  # scripts/realdoc-gate.sh: (1) T7's typing@50ms row at site x2-late of
+  # Infinite Descent x2 (1,152 pages; keys 50 ms apart on its page ~887, the
+  # owner's page 883), target <= 20 ms to the edited page and every key
+  # painted by its own compile (tools/incr-bench/realdocs.json); (2)
+  # EngineV3RealDocTypingTests: the whole app on that host types into the same
+  # page during and after the first compile and fails on any main run-loop
+  # turn, or any key's way into the text storage, longer than one frame (16
+  # ms). The book is fetched at its pinned commit (cached). GitHub-hosted
+  # macos-26 (an M1-class VM; windows, so never a team laptop). BasicTeX plus
+  # the packages infdesc loads that it lacks.
+  real-doc-gate:
+    name: "real-doc gate (infdesc-x2 late page: T7 row, app stalls)"
+    needs: [plan]
+    if: needs.plan.outputs.run == 'true' && needs.plan.outputs.realdoc == 'true'
+    runs-on: macos-26
+    timeout-minutes: 75
+    env:
+      CI: "1"
+      FLASHTEX_NO_ACTIVATE: "1"
+      FLASHTEX_KEYCHAIN_OFF: "1"
+      FLASHTEX_REVIEW_HISTORY_DIR: "off"
+      HOMEBREW_NO_AUTO_UPDATE: "1"
+      HOMEBREW_NO_INSTALL_CLEANUP: "1"
+      INCR_BENCH_DIR: /tmp/fth-realdoc
+    steps:
+      - uses: actions/checkout@v4
+      - name: Select the newest stable Xcode
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: latest-stable
+      - name: Install BasicTeX and the packages Infinite Descent loads
+        run: |
+          set -euo pipefail
+          brew install --cask basictex
+          echo /Library/TeX/texbin >> "$GITHUB_PATH"
+          export PATH="/Library/TeX/texbin:$PATH"
+          pkgs=()
+          while read -r p; do [[ -n "$p" && "$p" != \#* ]] && pkgs+=("$p"); done < scripts/ci/realdoc-texlive-packages.txt
+          for attempt in 1 2 3 4; do
+            sudo tlmgr update --self && sudo tlmgr install "${pkgs[@]}" && break
+            [ "$attempt" = 4 ] && exit 1
+            echo "tlmgr attempt $attempt failed (mirror skew?): again"; sleep 5
+          done
+          kpsewhich pdflatex.ini
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: realdoc
+          cache-on-failure: true
+      - uses: actions/cache@v4
+        with:
+          path: /tmp/fth-realdoc/cache
+          key: realdoc-books-${{ hashFiles('tools/parity/corpus/books.json') }}
+      - name: scripts/realdoc-gate.sh
+        run: |
+          set -o pipefail
+          scripts/realdoc-gate.sh 2>&1 | tee realdoc-gate.log
+      - name: The T7 row as the run summary
+        if: always()
+        run: |
+          { echo "### real-doc gate"; echo; grep -E '^T7: |^  infdesc|RealDocTyping|realdoc-gate:' realdoc-gate.log || true; echo
+            cat /tmp/fth-realdoc/t7-out/table.md 2>/dev/null || true; } >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: real-doc-gate
+          path: |
+            realdoc-gate.log
+            /tmp/fth-realdoc/t7-out
+            /tmp/fth-realdoc/app-test.log
+          if-no-files-found: ignore
+          retention-days: 14
+
   ipad:
     name: iPad companion (simulator build + tests)
     needs: [plan]
@@ -1395,6 +1490,7 @@ jobs:
       - rust-standalone
       - mac-app
       - ipad
+      - real-doc-gate
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
