@@ -369,6 +369,22 @@ final class CompletionTests: XCTestCase {
         XCTAssertEqual(tv.string, "x \\section")
     }
 
+    @MainActor
+    func testSymbolPaletteInsertsCommandsAtTheCaret() throws {
+        let scroll = CompletingTextView.scrollable()
+        let tv = try XCTUnwrap(scroll.documentView as? CompletingTextView)
+        tv.string = "a b"
+        tv.setSelectedRange(NSRange(location: 2, length: 0))
+
+        for command in ["\\subseteq", "\\int", "\\sqrt"] {
+            XCTAssertTrue(SymbolPalette.items.contains { $0.command == command })
+            tv.insertSymbol(command)
+        }
+
+        XCTAssertEqual(tv.string, "a \\subseteq\\int\\sqrtb")
+        XCTAssertEqual(tv.selectedRange(), NSRange(location: ("a \\subseteq\\int\\sqrt" as NSString).length, length: 0))
+    }
+
     // MARK: fault tolerance
 
     func testNeverThrowsOnMalformedInput() {
