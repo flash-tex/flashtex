@@ -1,5 +1,8 @@
 # Proposal: `display-list-v2-device-color`
 
+> **Historical.** The old engine that produced this was deleted in S7 (retirement plan, row 11).
+> This file stays only because surviving code still names it in comments; it describes no live producer.
+
 Status: proposal (kabir-claude, xcolor support). Producer: `crates/render-pipeline`.
 Consumers: `crates/pdf` exact route (implemented), Mac preview painter (requested).
 
