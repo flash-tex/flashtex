@@ -361,7 +361,7 @@ jobs:
           # which no generated document showed. After the merge, and before it
           # whenever the engine or its host, the protocol, the Mac app's sources
           # or the gate's own files change. Never in the gate (merge queue).
-          realdoc_paths='^(crates/(flashtex-engine|flashtex-runtime|display-list-v3)/|Cargo\.lock$|apps/mac/(Sources/|Package\.swift$|Tests/FlashTeXMacTests/(EngineV3RealDocTypingTests|MainThreadStall)\.swift$)|tools/incr-bench/(t7|docspec|mkbook|mkreal|mkeng)\.(py|sh)$|tools/incr-bench/realdocs\.json$|tools/parity/corpus/(infdesc_x2\.py|books\.json)$|scripts/realdoc-gate\.sh$|\.github/workflows/ci\.yml$)'
+          realdoc_paths='^(crates/(flashtex-engine|flashtex-runtime|display-list-v3)/|Cargo\.lock$|apps/mac/(Sources/|Package\.swift$|Tests/FlashTeXMacTests/(EngineV3RealDocTypingTests|MainThreadStall|MainThreadStallMonitor)\.swift$)|tools/incr-bench/(t7|docspec|mkbook|mkreal|mkeng)\.(py|sh)$|tools/incr-bench/realdocs\.json$|tools/parity/corpus/(infdesc_x2\.py|books\.json)$|scripts/realdoc-gate\.sh$|\.github/workflows/ci\.yml$)'
           realdoc=false
           case "$tier" in
             all) realdoc=true ;;

@@ -22,6 +22,10 @@ import XCTest
 /// The gate's budget is one frame, `MainThreadStall.frameMs` (16 ms: 60 Hz, the bound the
 /// owner set for a stall; the editor's drawn-glyph target is 8 ms at 120 Hz, measured by
 /// EditorInstantTests).
+///
+/// Lane EDITOR-FREEZE's `RunLoopLatencyProbe` (its MainThreadStall.swift) is the ping half of
+/// `MainThreadStallMonitor` on its own; this file keeps a different name so the two branches
+/// land in either order. Once both are on main, one ping should serve both (a follow-up).
 enum MainThreadStall {
     static let frameMs = 16.0
 
