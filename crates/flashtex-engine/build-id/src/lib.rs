@@ -30,8 +30,8 @@ mod tests {
         let inputs = hash::inputs(&engine_dir());
         for must in [
             "src/system.rs",
-            "src/resolver.rs",
-            "src/formats.rs",
+            "../flashtex-runtime/src/resolver.rs",
+            "../flashtex-runtime/src/formats.rs",
             "src/generated/mod.rs",
             "src/pdftex/mod.rs",
             "changes/web2c-run.ch",
@@ -67,8 +67,8 @@ mod tests {
         assert_eq!(before, ENGINE_BUILD_ID, "the copy hashes as the original");
         for file in [
             "src/system.rs",
-            "src/resolver.rs",
-            "src/formats.rs",
+            "../flashtex-runtime/src/resolver.rs",
+            "../flashtex-runtime/src/formats.rs",
             "src/pdftex/mod.rs",
             "../flashtex-runtime/src/persist.rs",
         ] {
