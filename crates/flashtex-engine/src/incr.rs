@@ -3043,8 +3043,7 @@ impl Observer for Obs {
                     }
                 }
             }
-            if why == Point::Segment
-                && (std::mem::take(&mut self.held_stop) || self.preempt_now(g))
+            if why == Point::Segment && (std::mem::take(&mut self.held_stop) || self.preempt_now(g))
             {
                 return Action::Stop;
             }
