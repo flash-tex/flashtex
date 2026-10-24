@@ -2,7 +2,7 @@
 //! (docs/design/xetex/PLAN.md §3.3, phase S3; modes PROPOSAL.md §5.1). It
 //! speaks `display-list-v3` over a Unix socket (docs/protocol/
 //! display-list-v3.md §6) as `flashtex-host` does for Classic, so the app
-//! and `flashtex-v3` start whichever host the document's mode names, and
+//! and the `flashtex` CLI start whichever host the document's mode names, and
 //! a mode switch starts the other program (owner, Q10).
 //!
 //! **The engine is resident** (`inproc`, `crate::resident`): each run of a
