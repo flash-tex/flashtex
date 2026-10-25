@@ -156,7 +156,8 @@ TYPING_PHASES = [
 TYPING_NAMES = {p for p, _ in TYPING_PHASES}
 PREAMBLE = ('preamble', ['--kind', 'preamble', '--at', '0.5'])
 # a real document's phases, by kind (realdocs.json; `--phases` names these): at each of its sites
-REAL_KINDS = [('letter@site', ['--kind', 'letter']), ('typing@50ms@site', ['--kind', 'letter', '--interval-ms', '50'])]
+REAL_KINDS = [('letter@site', ['--kind', 'letter']), ('typing@50ms@site', ['--kind', 'letter', '--interval-ms', '50']),
+              ('typing@150ms@site', ['--kind', 'letter', '--interval-ms', '150'])]
 PHASE_NAMES = [p for p, _ in BODY_PHASES] + [p for p, _ in TYPING_PHASES] + [PREAMBLE[0], 'reopen'] + [k for k, _ in REAL_KINDS]
 REAL_SPEC = os.path.join(S, 'realdocs.json')
 REAL = json.load(open(REAL_SPEC)) if os.path.exists(REAL_SPEC) else dict(target_ms=20.0, docs={})
@@ -448,6 +449,9 @@ def real_phases(doc, sites=None):
         where = (['--line', str(s['line']), '--page', str(s['page'])] if 'line' in s else
                  ['--page', str(s['page'])] if 'page' in s else ['--at', str(s.get('at', 0.5))])
         where += ['--edit', s['edit']] if s.get('edit') else []
+        # as the app compiles a trusted project: makeindex, bibtex, biber run, and each compile lasts
+        # until their follow-ups settle (without them infdesc-x2 has no index: 1,140 pages, not 1,152)
+        where += ['--external-tools', 'auto']
         for kind, args in REAL_KINDS:
             out.append((kind.replace('@site', '@' + site), args + where, kind))
     return out
@@ -491,7 +495,8 @@ def run_phases(a, eng, doc, out, i, res):
     real = doc in REAL['docs']
     if real:
         phases = real_phases(doc, getattr(a, 'sites', None))
-        res['real'] = dict(target_ms=REAL['target_ms'], oracle_pages=REAL['docs'][doc].get('pages'))
+        res['real'] = dict(target_ms=REAL['target_ms'], oracle_pages=REAL['docs'][doc].get('pages'),
+                           gate=getattr(a, 'gate', 'wall'), pr_gate=REAL.get('pr_gate', {}))
     else:
         phases = [(n, x, n) for n, x in phase_order(a.order, i, a.seed)]
     h = Host(eng, sock, s0, log, hostargs)
@@ -591,11 +596,21 @@ def typing_row(d, name, ph):
                 load=ph['load'], pages=d.get('pages'), rss=d.get('rss_peak'))
 
 
-def real_fields(d):
-    """A real document's row fields: its host and oracle page counts (both must agree)."""
+def real_fields(d, hosts=()):
+    """A real document's row fields: the oracle's page count, the gate profile (`wall`: the target;
+    `hosted`: realdocs.json's `pr_gate`), and per keystroke the pages re-typeset and the engine
+    thread's instructions to the edited page (DONE's `rerun_pages`, `stages.edited_instr_k`)."""
     if not d.get('real'):
         return {}
-    return dict(real=True, oracle_pages=d['real'].get('oracle_pages'))
+    instr = [x['stages']['edited_instr_k'] / 1e3 for x in hosts
+             if isinstance((x.get('stages') or {}).get('edited_instr_k'), (int, float))]
+    out = dict(real=True, oracle_pages=d['real'].get('oracle_pages'), gate=d['real'].get('gate', 'wall'),
+               pr_gate=REAL.get('pr_gate') or d['real'].get('pr_gate', {}))  # (the budgets in force now)
+    if hosts:  # (a letter@ row: one DONE per keystroke; a typing@ row's compiles are superseded)
+        out.update(rerun_pages=stats([x['rerun_pages'] if x.get('rerun_pages') is not None else x.get('typeset_pages') or 0
+                                      for x in hosts]),
+                   edited_instr_m=stats(instr))
+    return out
 
 
 def gated_stat(m):
@@ -619,7 +634,7 @@ def summarise(raw):
             hosts = [k.get('host', {}) for k in ks]
             rows.append(dict(
                 doc=d['doc'], edit=name, metric='first visible page' if pre else 'edited page (host share)',
-                target=target_of(d, pre), gated=True, n=len(ks), missing=len(v) - len(got), **real_fields(d),
+                target=target_of(d, pre), gated=True, n=len(ks), missing=len(v) - len(got), **real_fields(d, hosts),
                 ms=stats(got),
                 first_page=stats([k['first_page_ms'] for k in ks if k.get('first_page_ms') is not None]),
                 done=stats([k['done_ms'] for k in ks if 'done_ms' in k]),
@@ -657,7 +672,20 @@ def verdict(rows, baseline):
             why.append('no samples')
         name, val = gated_stat(r['ms'])
         r['stat'] = name
-        if val is not None and val > r['target']:
+        hosted = r.get('real') and r.get('gate') == 'hosted'
+        if hosted:
+            # the PR CI's profile (realdocs.json pr_gate): no wall clock, which a shared 3-vCPU VM makes
+            # noise; what the host did instead, the same on any machine
+            g = r.get('pr_gate', {})
+            rp, ins = (r.get('rerun_pages') or {}).get('max'), (r.get('edited_instr_m') or {}).get('max')
+            if 'rerun_pages' in r and rp is not None and rp > g.get('rerun_pages_max', 3):
+                why.append(f"re-typeset up to {rp} pages > {g.get('rerun_pages_max', 3)} (no convergence near the edit)")
+            if 'edited_instr_m' in r and g.get('edited_instr_m_max') and r['n']:
+                if ins is None:
+                    why.append('no instruction count (stages.edited_instr_k)')
+                elif ins > g['edited_instr_m_max']:
+                    why.append(f"up to {ins:.0f} M instructions to the edited page > {g['edited_instr_m_max']} M")
+        elif val is not None and val > r['target']:
             why.append(f"{name} {val:.1f} ms > {r['target']:.0f} ms")
         if r.get('not_own'):
             why.append(f"{r['not_own']} of {r['n']} keystrokes not painted by their own compile")
@@ -770,6 +798,9 @@ def main():
     ap.add_argument('--timeout', type=int, default=3600, help='per dl3-keys connection, s')
     ap.add_argument('--host-args', default='')
     ap.add_argument('--sites', help="a real document's sites to type at (realdocs.json), comma list; default all")
+    ap.add_argument('--gate', choices=['wall', 'hosted'], default='wall',
+                    help="real documents' gate: wall (the ms target) or hosted (realdocs.json pr_gate: "
+                         "re-typeset pages, instructions to the edited page, every key its own compile)")
     ap.add_argument('--limit-gb', type=float, default=0.0,
                     help="kill a host whose resident memory passes this (mem_gate.sh); 0: no limit")
     ap.add_argument('--out')

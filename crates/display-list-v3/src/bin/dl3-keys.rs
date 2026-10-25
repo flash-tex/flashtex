@@ -42,6 +42,15 @@
 //! edited page show as waiting keystrokes; `unpainted` counts those never
 //! shown.
 //!
+//! `--external-tools auto` (a trusted project, as the app sends it: spec
+//! §6.4) lets the host run makeindex, bibtex and biber; every compile then
+//! lasts until the host's `TOOL` `settled` for it, so the follow-up compiles
+//! the tools cause (same id) belong to it and its last `DONE` is its result.
+//! Without it the host's default holds (tools off): a document whose index or
+//! bibliography a tool makes has fewer pages than pdflatex's (infdesc-x2:
+//! 1,140 without its four indexes, 1,152 with them, the oracle's count).
+//! Not with `--overlap`.
+//!
 //! `--edit FILE` (relative to `--root`) types in another file of the project
 //! than `--main`, e.g. a book chapter the main file `\input`s; the line search
 //! and `--line` then look at that file.
@@ -101,6 +110,10 @@ struct Result {
 fn compile(c: &mut Client, held: &mut Held, req: &CompileRequest, target: Option<u32>) -> Result {
     let t0 = Instant::now();
     c.compile(req).expect("send COMPILE");
+    // With the external tools on, the compile lasts until `TOOL` `settled`
+    // for it; its follow-up compiles (same id) are part of it.
+    let tools = req.external_tools.as_deref() == Some("auto");
+    let (mut last_done, mut settled): (Option<Json>, bool) = (None, false);
     let (mut first_page, mut target_page, mut first_index) = (None, None, None);
     let (mut later_pages, mut stale_seen, mut stale_marked) = (0u32, false, true);
     let mut last_pages: Option<Json> = None;
@@ -158,7 +171,28 @@ fn compile(c: &mut Client, held: &mut Held, req: &CompileRequest, target: Option
                 }
                 last_pages = Some(j);
             }
-            Event::Done(d) => break d,
+            Event::Done(d) => {
+                let mine = d.int_field("id") == Some(req.id);
+                if !tools {
+                    break d;
+                }
+                if mine {
+                    last_done = Some(d);
+                }
+                if settled && last_done.is_some() {
+                    break last_done.take().unwrap();
+                }
+            }
+            Event::Tool(j)
+                if tools
+                    && j.int_field("id") == Some(req.id)
+                    && j.str_field("event") == Some("settled") =>
+            {
+                settled = true;
+                if let Some(d) = last_done.take() {
+                    break d;
+                }
+            }
             _ => {}
         }
     };
@@ -199,7 +233,7 @@ fn main() {
     };
     let (Some(socket), Some(root), Some(main)) = (arg("--socket"), arg("--root"), arg("--main"))
     else {
-        eprintln!("usage: dl3-keys --socket PATH --root DIR --main FILE [--output-dir DIR] [--keys N] [--at FRACTION] [--gap-ms MS] [--edit FILE] [--page INDEX [--line N]] [--where start|middle|end] [--kind letter|sentence|newline|split|preamble | --sentence] [--overlap | --interval-ms MS] [--no-viewport] [--includeonly NAME,...]");
+        eprintln!("usage: dl3-keys --socket PATH --root DIR --main FILE [--output-dir DIR] [--keys N] [--at FRACTION] [--gap-ms MS] [--edit FILE] [--page INDEX [--line N]] [--where start|middle|end] [--kind letter|sentence|newline|split|preamble | --sentence] [--overlap | --interval-ms MS] [--no-viewport] [--includeonly NAME,...] [--external-tools auto|off]");
         std::process::exit(2);
     };
     let keys: usize = arg("--keys").and_then(|v| v.parse().ok()).unwrap_or(40);
@@ -220,6 +254,7 @@ fn main() {
         let mut r = CompileRequest::new(id, &root, &main);
         r.output_dir = arg("--output-dir");
         r.incremental = true;
+        r.external_tools = arg("--external-tools");
         // `--includeonly a,b`: a chapter focus (`\includeonly{a,b}`).
         r.includeonly = arg("--includeonly").map(|v| v.split(',').map(str::to_string).collect());
         r
@@ -458,6 +493,10 @@ fn main() {
     );
     let (mut firsts, mut targets, mut dones) = (vec![], vec![], vec![]);
     let overlap = a.iter().any(|x| x == "--overlap");
+    if overlap && arg("--external-tools").as_deref() == Some("auto") {
+        eprintln!("dl3-keys: --overlap with --external-tools auto is not supported");
+        std::process::exit(2)
+    }
     // `--no-viewport`: no `viewport` in the COMPILE (as the app sends it
     // while page 1 is on screen).
     let viewport = !a.iter().any(|x| x == "--no-viewport");
@@ -497,7 +536,9 @@ fn main() {
         });
         let (mut started, mut covered, mut lat) = (0i64, 0usize, vec![]);
         let (mut cancelled, mut done_last) = (0, false);
-        while !done_last {
+        let tools = arg("--external-tools").as_deref() == Some("auto");
+        let mut settled_last = !tools;
+        while !(done_last && settled_last) {
             let ev = c
                 .next_event()
                 .expect("read")
@@ -563,7 +604,13 @@ fn main() {
                     if d.str_field("status") == Some("cancelled") {
                         cancelled += 1;
                     }
-                    done_last = d.int_field("id") == Some(last_id);
+                    done_last |= d.int_field("id") == Some(last_id);
+                }
+                Event::Tool(j)
+                    if j.int_field("id") == Some(last_id)
+                        && j.str_field("event") == Some("settled") =>
+                {
+                    settled_last = true;
                 }
                 Event::Error(e) => {
                     eprintln!("dl3-keys: host error: {e}");

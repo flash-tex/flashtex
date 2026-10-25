@@ -1302,17 +1302,21 @@ jobs:
           if-no-files-found: ignore
           retention-days: 14
 
-  # The real-document gate (plan's `realdoc`; DESIGN §1.2, §9's fast cycle).
-  # scripts/realdoc-gate.sh: (1) T7's typing@50ms row at site x2-late of
-  # Infinite Descent x2 (1,152 pages; keys 50 ms apart on its page ~887, the
-  # owner's page 883), target <= 20 ms to the edited page and every key
-  # painted by its own compile (tools/incr-bench/realdocs.json); (2)
-  # EngineV3RealDocTypingTests: the whole app on that host types into the same
-  # page during and after the first compile and fails on any main run-loop
-  # turn, or any key's way into the text storage, longer than one frame (16
-  # ms). The book is fetched at its pinned commit (cached). GitHub-hosted
-  # macos-26 (an M1-class VM; windows, so never a team laptop). BasicTeX plus
-  # the packages infdesc loads that it lacks.
+  # The real-document gate (plan's `realdoc`; DESIGN §1.2, §9's fast cycle):
+  # scripts/realdoc-gate.sh at Infinite Descent x2's page ~887 (site x2-late,
+  # the owner's page 883), on signals a shared 3-vCPU VM cannot blur
+  # (tools/incr-bench/realdocs.json pr_gate): (1) T7 letter@x2-late, each key
+  # re-typesets at most 3 pages (converges near the edit) and spends at most
+  # pr_gate.edited_instr_m_max M engine instructions to the edited page;
+  # typing@150ms@x2-late, every key painted by its own compile; (2)
+  # EngineV3RealDocTypingTests: the whole app on that host types into the
+  # page during and after the first compile, no main run-loop turn and no
+  # key's way into the text storage over 100 ms (main: 1.9 s). The 20 ms /
+  # 16 ms wall targets are the nightly's (t7-real-documents) and the
+  # reference run's. ADVISORY (not in `CI required`) until #1894 and the
+  # EDITOR-FREEZE PR land (Commander, 2026-10-24); then add it there. The book
+  # is fetched at its pinned commit (cached). GitHub-hosted macos-26 (windows,
+  # so never a team laptop). BasicTeX plus the packages infdesc loads.
   real-doc-gate:
     name: "real-doc gate (infdesc-x2 late page: T7 row, app stalls)"
     needs: [plan]
@@ -1490,7 +1494,7 @@ jobs:
       - rust-standalone
       - mac-app
       - ipad
-      - real-doc-gate
+      # real-doc-gate: advisory until #1894 and EDITOR-FREEZE land (see the job)
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:

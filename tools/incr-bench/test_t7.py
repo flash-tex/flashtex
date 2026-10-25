@@ -262,7 +262,8 @@ class RealDocTests(unittest.TestCase):
     def test_phases(self):
         ph = t7.real_phases('infdesc-x2', ['x2-late'])
         self.assertEqual([(n, k) for n, _, k in ph], [('letter@x2-late', 'letter@site'),
-                                                      ('typing@50ms@x2-late', 'typing@50ms@site')])
+                                                      ('typing@50ms@x2-late', 'typing@50ms@site'),
+                                                      ('typing@150ms@x2-late', 'typing@150ms@site')])
         args = ph[1][1]
         self.assertEqual(args[args.index('--interval-ms') + 1], '50')
         self.assertEqual(args[args.index('--edit') + 1], 'x2/book/real-numbers/inequalities.tex')
@@ -297,6 +298,35 @@ class RealDocTests(unittest.TestCase):
         rows = t7.summarise([self.real(5.0, pages=1140)])
         self.assertEqual(t7.verdict(rows, None), [])  # reported, not gated (a parity question)
         self.assertEqual({r['warning'] for r in rows}, {'1140 pages, the oracle 1152'})
+
+
+class HostedGateTests(unittest.TestCase):
+    """--gate hosted (the PR CI): no wall clock; re-typeset pages, instructions, own compiles."""
+
+    def doc(self, ms, rerun, instr_m, by_own=True):
+        g = dict(rerun_pages_max=3, edited_instr_m_max=200)
+        host = dict(converged_at=1, typeset_pages=rerun, rerun_pages=rerun, stages=dict(edited_instr_k=instr_m * 1000))
+        keys = [dict(key=k, edited_page_ms=ms, first_page_ms=ms, done_ms=ms, complete=True,
+                     by=10 + k if by_own else 30, host=host) for k in range(14)]
+        return dict(doc='infdesc-x2', pages=1152, rss_peak=1,
+                    real=dict(target_ms=20.0, oracle_pages=1152, gate='hosted', pr_gate=g),
+                    phases={'letter@x2-late': dict(keys=keys, load=[1, 1]),
+                            'typing@150ms@x2-late': dict(keys=keys, dones=[dict(id=10 + k) for k in range(14)],
+                                                          summary={}, load=[1, 1])})
+
+    def test_wall_clock_not_gated(self):
+        rows = t7.summarise([self.doc(ms=900.0, rerun=2, instr_m=60)])  # slow VM, little work: a pass
+        self.assertEqual(t7.verdict(rows, None), [])
+
+    def test_no_convergence_and_instructions_miss(self):
+        why = '; '.join(t7.verdict(t7.summarise([self.doc(ms=5.0, rerun=254, instr_m=2900)]), None))
+        self.assertIn('re-typeset up to 254 pages > 3', why)
+        self.assertIn(f"up to 2900 M instructions to the edited page > {t7.REAL['pr_gate']['edited_instr_m_max']} M", why)
+
+    def test_own_compile_still_gated(self):
+        fails = t7.verdict(t7.summarise([self.doc(ms=5.0, rerun=2, instr_m=50, by_own=False)]), None)
+        self.assertEqual(len(fails), 1)
+        self.assertIn('not painted by their own compile', fails[0])
 
 
 if __name__ == '__main__':

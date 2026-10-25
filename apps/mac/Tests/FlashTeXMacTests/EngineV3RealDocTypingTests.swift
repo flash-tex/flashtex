@@ -15,8 +15,8 @@ import XCTest
 ///     timing goes on until that compile has settled again (or 120 s), since a freeze may come
 ///     when its results arrive.
 /// It fails when, in either phase, any main run-loop turn is longer than one frame
-/// (`MainThreadStall.frameMs`, 16 ms), or any key is not in the editor's text storage within
-/// one frame of being posted, or a key is never handled.
+/// (`MainThreadStall.frameMs`, 16 ms; `FLASHTEX_REALDOC_STALL_MS` overrides it, 100 in the PR CI),
+/// or any key is not in the editor's text storage within that of being posted, or a key is never handled.
 ///
 /// The document: `FLASHTEX_REALDOC_DIR` (an unpacked infdesc-x2 tree: `tools/incr-bench/mkbook.py
 /// infdesc-x2`), entry `FLASHTEX_REALDOC_MAIN` (default `infdesc-x2.tex`), the edited chapter
@@ -82,16 +82,24 @@ final class EngineV3RealDocTypingTests: XCTestCase {
         return phase
     }
 
+    /// The budget: one frame (`MainThreadStall.frameMs`), or `FLASHTEX_REALDOC_STALL_MS` (the PR
+    /// CI's hosted job uses 100 ms: a shared 3-vCPU VM has frame-sized hiccups of its own, and 100 ms
+    /// still catches the owner's freeze, 1.9 s on main; the one-frame bound stays the nightly's and
+    /// the reference's).
+    private var budgetMs: Double {
+        ProcessInfo.processInfo.environment["FLASHTEX_REALDOC_STALL_MS"].flatMap(Double.init) ?? MainThreadStall.frameMs
+    }
+
     private func gate(_ p: Phase) {
-        let frame = MainThreadStall.frameMs
+        let frame = budgetMs
         XCTAssertEqual(p.keys.count, p.wanted, "\(p.name): \(p.wanted - p.keys.count) of \(p.wanted) keys never handled")
         let late = p.keys.enumerated().filter { $0.element.ms > frame }
-        XCTAssertTrue(late.isEmpty, "\(p.name): \(late.count) of \(p.keys.count) keys reached the text storage later than one frame "
+        XCTAssertTrue(late.isEmpty, "\(p.name): \(late.count) of \(p.keys.count) keys reached the text storage later than the budget "
                       + "(\(frame) ms): " + late.prefix(8).map { "key \($0.offset) \(String(format: "%.1f", $0.element.ms)) ms" }.joined(separator: ", "))
         let missing = p.keys.filter { !$0.inStorage }.count
         XCTAssertEqual(missing, 0, "\(p.name): \(missing) keys not in the editor's text storage")
         let stalls = p.report.over(frame)
-        XCTAssertTrue(stalls.isEmpty, "\(p.name): \(stalls.count) main run-loop turns over one frame (\(frame) ms), longest "
+        XCTAssertTrue(stalls.isEmpty, "\(p.name): \(stalls.count) main run-loop turns over the budget (\(frame) ms), longest "
                       + stalls.prefix(8).map { String(format: "%.1f ms at +%.0f ms", $0.ms, Double($0.startNs &- p.report.startNs) / 1e6) }
                           .joined(separator: ", "))
     }

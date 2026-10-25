@@ -826,9 +826,10 @@ jobs:
   # late and at the end of its second (page ~887, the owner's page 883); a long
   # arXiv paper, a real beamer deck and a book-class thesis at their start,
   # middle and end (tools/incr-bench/realdocs.json). At each site a letter@
-  # row (each key after DONE) and a typing@50ms row (keys 50 ms apart), target
-  # <= 20 ms to the edited page, every key painted by its own compile, the
-  # host's page count the oracle's. A miss fails the job (and files main-red).
+  # row (each key after DONE) and typing@50ms and typing@150ms rows, target
+  # <= 20 ms to the edited page, every key painted by its own compile; the
+  # external tools on, as the app compiles (the host's page count is then the
+  # oracle's: 1,152 for infdesc-x2). A miss fails the job (and files main-red).
   # GitHub-hosted macos-15 with MacTeX (the beamer deck is a TeX Live
   # document): a non-reference run; the reference one is t7-reference.yml's.
   t7-real-documents:
