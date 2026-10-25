@@ -776,31 +776,33 @@ impl Globals {
 
     /// The number (in `St::files`) of file-name string `s`'s bytes.
     fn dg_name_id(&self, s: i32) -> u32 {
+        with(|st| self.dg_name_id_in(st, s))
+    }
+
+    /// [`Self::dg_name_id`] with the state at hand.
+    fn dg_name_id_in(&self, st: &mut St, s: i32) -> u32 {
         if s <= 0 {
-            return with(|st| st.file_id(b""));
+            return st.file_id(b"");
         }
-        let hit = with(|st| match st.name_cache {
-            Some((k, id)) if k == s => {
+        if let Some((k, id)) = st.name_cache {
+            if k == s {
                 // the string may have been freed and remade since
                 let b = &st.files[id as usize];
                 let (a, e) = (self.str_start[s as usize], self.str_start[s as usize + 1]);
-                ((e - a) as usize == b.len()
-                    && (a..e)
+                if (e - a) as usize == b.len()
+                    && self.str_pool[a as usize..e as usize]
+                        .iter()
                         .zip(b.iter())
-                        .all(|(i, &c)| self.str_pool[i as usize] as u8 == c))
-                .then_some(id)
+                        .all(|(&c, &d)| c as u8 == d)
+                {
+                    return id;
+                }
             }
-            _ => None,
-        });
-        if let Some(id) = hit {
-            return id;
         }
         let b = str_bytes(self, s);
-        with(|st| {
-            let id = st.file_id(&b);
-            st.name_cache = Some((s, id));
-            id
-        })
+        let id = st.file_id(&b);
+        st.name_cache = Some((s, id));
+        id
     }
 
     /// The line a file level (`index` = its `in_open` level) is at.
@@ -815,8 +817,9 @@ impl Globals {
     /// Where TeX is reading: the innermost file level (the level TeX's
     /// context display ends with), cheaply (no text): the file, the line,
     /// and, when TeX is reading the file itself (not a macro called from
-    /// it), the column of the token it read last; else -1.
-    fn dg_here(&self) -> Option<(u32, i32, i32)> {
+    /// it), the column of the token it read last; else -1. The file is its
+    /// name's string number (`dg_name_id_in` gives its number in `files`).
+    fn dg_here(&self) -> Option<(i32, i32, i32)> {
         let is_file =
             |r: &crate::generated::types::in_state_record| r.state_field != 0 && r.name_field > 19;
         let (rec, col) = if is_file(&self.cur_input) {
@@ -829,7 +832,7 @@ impl Globals {
         };
         let index = rec.index_field;
         let name = self.full_source_filename_stack[index as usize];
-        Some((self.dg_name_id(name), self.dg_level_line(index), col))
+        Some((name, self.dg_level_line(index), col))
     }
 
     /// The input stack, innermost level first, as `show_context` walks it
@@ -1209,17 +1212,20 @@ impl Globals {
     /// `\def` has its control sequence: the definition starts here.
     pub fn dg_def_begin(&mut self) {
         if enabled() {
+            // (one borrow of the state for both: `\def`s come by the million)
             let here = self.dg_here();
-            with(|s| s.def_at = here);
+            with(|s| {
+                s.def_at = here.map(|(name, line, col)| (self.dg_name_id_in(s, name), line, col))
+            });
         }
     }
 
     /// `\def` made token list `p` the macro's meaning.
     pub fn dg_def(&mut self, p: i32) {
         if enabled() {
-            if let Some((file, line, col)) = with(|s| s.def_at.take()) {
-                let print = fingerprint(self, p);
-                with(|s| {
+            with(|s| {
+                if let Some((file, line, col)) = s.def_at.take() {
+                    let print = fingerprint(self, p);
                     let gen = s.gen;
                     s.defs.insert(
                         p,
@@ -1231,8 +1237,8 @@ impl Globals {
                             gen,
                         },
                     );
-                });
-            }
+                }
+            });
         }
     }
 
