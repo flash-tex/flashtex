@@ -53,6 +53,7 @@
 
 use crate::generated::Globals;
 use std::cell::RefCell;
+use std::sync::atomic::{AtomicU32, Ordering};
 
 /// A line number read or printed: the SyncTeX tag of the file it counts
 /// lines of (the opening of the file: changes/synctex.ch) when `known`, and
@@ -101,7 +102,7 @@ struct St {
     confine: bool,
     /// The confined reads of the definition being scanned.
     def_reads: Vec<LineRead>,
-    taints: Vec<Taint>,
+    taints: Taints,
     /// The journal's entries since the last checkpoint.
     events: Vec<LineRead>,
     /// The entries `record` has taken from `events` so far (BOX-MEMO's
@@ -111,6 +112,91 @@ struct St {
 
 thread_local! {
     static ST: RefCell<St> = RefCell::new(St::default());
+}
+
+/// For each of [`HEAD_SLOTS`] slots, how many live taints of every thread
+/// have a head in it ([`head_slot`]): the hooks' second fast test. A list
+/// whose slot is empty is no live taint's head in this thread (whose own
+/// taints are counted in it as long as they live: [`Taints`]), so its use
+/// or its freeing needs no look at the thread-local list. While a taint
+/// lives (LaTeX's `\@currenvline` after the first `\begin`), nearly every
+/// macro expanded is a use, and nearly none is of a tainted list (936 of
+/// 401 M on a cold *Infinite Descent* x2).
+static HEADS: [AtomicU32; HEAD_SLOTS] = [const { AtomicU32::new(0) }; HEAD_SLOTS];
+const HEAD_SLOTS: usize = 256;
+
+#[inline(always)]
+fn head_slot(p: i32) -> usize {
+    ((p as u32).wrapping_mul(0x9E37_79B9) >> 24) as usize
+}
+
+/// Whether `p` may be a live taint's head in this thread.
+#[inline(always)]
+fn may_be_head(p: i32) -> bool {
+    HEADS[head_slot(p)].load(Ordering::Relaxed) != 0
+}
+
+type Bank = [AtomicU32; HEAD_SLOTS];
+
+/// A thread's live taints, counted in a bank ([`HEADS`]; a test's own in
+/// its tests) from when they are added until they are removed or dropped.
+struct Taints {
+    v: Vec<Taint>,
+    bank: &'static Bank,
+}
+
+impl Default for Taints {
+    fn default() -> Taints {
+        Taints {
+            v: Vec::new(),
+            bank: &HEADS,
+        }
+    }
+}
+
+impl Taints {
+    fn count(&self, add: bool) {
+        for t in &self.v {
+            let h = &self.bank[head_slot(t.head)];
+            if add {
+                h.fetch_add(1, Ordering::Relaxed);
+            } else {
+                h.fetch_sub(1, Ordering::Relaxed);
+            }
+        }
+    }
+
+    fn push(&mut self, t: Taint) {
+        self.bank[head_slot(t.head)].fetch_add(1, Ordering::Relaxed);
+        self.v.push(t);
+    }
+
+    /// Remove the taints of head `p`.
+    fn remove_head(&mut self, p: i32) {
+        let before = self.v.len();
+        self.v.retain(|t| t.head != p);
+        let gone = (before - self.v.len()) as u32;
+        self.bank[head_slot(p)].fetch_sub(gone, Ordering::Relaxed);
+    }
+
+    fn set(&mut self, v: &[Taint]) {
+        self.count(false);
+        self.v = v.to_vec();
+        self.count(true);
+    }
+}
+
+impl Drop for Taints {
+    fn drop(&mut self) {
+        self.count(false);
+    }
+}
+
+impl std::ops::Deref for Taints {
+    type Target = Vec<Taint>;
+    fn deref(&self) -> &Vec<Taint> {
+        &self.v
+    }
 }
 
 fn with<R>(f: impl FnOnce(&mut St) -> R) -> R {
@@ -133,7 +219,7 @@ pub fn record(g: &Globals) -> Rec {
             std::mem::take(&mut s.events)
         },
         marks,
-        taints: s.taints.clone(),
+        taints: s.taints.to_vec(),
     })
 }
 
@@ -155,7 +241,7 @@ pub fn journal_mark() -> (u64, Vec<(i32, i32)>, bool) {
 pub fn restore(g: &mut Globals, r: &Rec) {
     with(|s| {
         s.events.clear();
-        s.taints = r.taints.clone();
+        s.taints.set(&r.taints);
         s.confine = false;
         s.def_reads.clear();
     });
@@ -861,7 +947,7 @@ impl Globals {
     /// Token list `p` (its reference count) is expanded or compared.
     #[inline(always)]
     pub fn ls_use(&mut self, p: i32) {
-        if self.ls_taints != 0 {
+        if self.ls_taints != 0 && may_be_head(p) {
             self.ls_use_slow(p, false);
         }
     }
@@ -890,7 +976,7 @@ impl Globals {
         }
         let used = with(|s| {
             let mut used = false;
-            for t in &s.taints {
+            for t in s.taints.iter() {
                 if t.head == p || (first_too && t.first == p) {
                     s.events.extend(t.reads.iter().cloned());
                     used = true;
@@ -907,9 +993,9 @@ impl Globals {
     /// Token list `p` (its reference count) is freed.
     #[inline(always)]
     pub fn ls_free(&mut self, p: i32) {
-        if self.ls_taints != 0 {
+        if self.ls_taints != 0 && may_be_head(p) {
             let n = with(|s| {
-                s.taints.retain(|t| t.head != p);
+                s.taints.remove_head(p);
                 s.taints.len()
             });
             self.ls_taints = n as i32;
@@ -1084,5 +1170,43 @@ mod tests {
         assert!(!same_path("/x/ya.tex", "a.tex"));
         assert!(!same_path("b.tex", "a.tex"));
         assert!(!same_path("chap/a.tex", "a.tex"));
+    }
+
+    /// A live taint's head is always counted (its uses take the slow
+    /// test), through every way the list of taints changes, and its count
+    /// goes when the taint does.
+    #[test]
+    fn live_taint_heads_are_counted() {
+        static BANK: Bank = [const { AtomicU32::new(0) }; HEAD_SLOTS];
+        let n = |p: i32| BANK[head_slot(p)].load(Ordering::Relaxed);
+        let t = |head| Taint {
+            head,
+            first: head + 1,
+            reads: vec![],
+        };
+        let (a, b, c) = (0x3_0000, 0x3_0001, 0x3_0002);
+        assert!(head_slot(a) != head_slot(b) && head_slot(b) != head_slot(c));
+        assert!(head_slot(a) != head_slot(c));
+        {
+            let mut ts = Taints {
+                v: vec![],
+                bank: &BANK,
+            };
+            ts.push(t(a));
+            ts.push(t(b));
+            ts.push(t(b));
+            assert_eq!((n(a), n(b), n(c)), (1, 2, 0));
+            ts.remove_head(b);
+            assert_eq!((n(a), n(b), n(c)), (1, 0, 0));
+            ts.remove_head(c);
+            ts.set(&[t(c), t(a)]);
+            assert_eq!((n(a), n(b), n(c)), (1, 0, 1));
+            assert_eq!(ts.len(), 2);
+        }
+        assert!(BANK.iter().all(|h| h.load(Ordering::Relaxed) == 0));
+        // the engine's own bank: a live head is always there
+        let mut ts = Taints::default();
+        ts.push(t(a));
+        assert!(may_be_head(a));
     }
 }
