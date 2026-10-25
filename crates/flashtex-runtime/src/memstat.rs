@@ -299,9 +299,10 @@ pub fn resident(p: *const u8, len: usize) -> Option<usize> {
 }
 
 /// Whether each page of `[p, p + len)` is resident (`mincore`), from the
-/// page holding `p`; `None` where the system cannot say (not Unix).
+/// page holding `p`; `None` where the system cannot say (not Unix; nor
+/// Miri, which has no `mincore`: calling it would end the interpreter).
 pub fn resident_pages(p: *const u8, len: usize) -> Option<Vec<bool>> {
-    #[cfg(unix)]
+    #[cfg(all(unix, not(miri)))]
     {
         extern "C" {
             fn mincore(addr: *mut std::ffi::c_void, len: usize, vec: *mut u8) -> i32;
@@ -322,7 +323,7 @@ pub fn resident_pages(p: *const u8, len: usize) -> Option<Vec<bool>> {
         }
         Some(v.iter().map(|&b| b & 1 != 0).collect())
     }
-    #[cfg(not(unix))]
+    #[cfg(any(not(unix), miri))]
     {
         let _ = (p, len);
         None

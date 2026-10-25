@@ -881,6 +881,15 @@ final class EngineV3PagesView: NSView {
                 scroll.reflectScrolledClipView(clip)
             }
         }
+        // A reopen's stored page (EngineV3Snapshot.visiblePage): once, at
+        // the first layout with a width (frames at their real scale)
+        if let p = session.restoreScrollPage, p < frames.count, Self.hadWidth(avail, widest: widest, margin: margin),
+           let scroll = enclosingScrollView {
+            session.restoreScrollPage = nil
+            let clip = scroll.contentView
+            clip.scroll(to: CGPoint(x: clip.bounds.minX, y: min(max(0, frames[p].minY - gap / 2), max(0, height - clip.bounds.height))))
+            scroll.reflectScrolledClipView(clip)
+        }
         updateVisible()
         if caretMark != nil { drawCaretMark() } // EngineV3CaretMark.swift: page points to the new layout
     }

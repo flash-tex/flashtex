@@ -2,6 +2,7 @@ import Foundation
 import XCTest
 import FlashTeXDisplayListV3
 import FlashTeXPreviewV3
+import FlashTeXProtocol
 @testable import FlashTeXMac
 
 /// Instant reopen's stored pages: saved per project, used only while every
@@ -90,6 +91,79 @@ final class EngineV3SnapshotTests: XCTestCase {
                               pages: [1: pages[1]], forms: doc.forms, pixelsPerPoint: 1.5, dark: false)
         let names = try FileManager.default.contentsOfDirectory(atPath: dir.path).sorted()
         XCTAssertEqual(names, ["manifest.json", "page-1.png"])
+    }
+
+    /// Where the user was (lane COLD-OPEN): the visible page and the caret are
+    /// saved, kept only when they fit (a page index within the pages, a caret
+    /// in an editor document), and absent from an older manifest.
+    func testSavesTheVisiblePageAndTheCaret() throws {
+        let doc = try fixture()
+        let pages = doc.orderedPages
+        let root = try projectFolder()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let inputs = try save("p1", root: root, doc: doc)
+        let sizes = pages.map { CGSize(width: $0.widthPt, height: $0.heightPt) }
+        let hashes = EngineV3Snapshot.hashes(docs)
+        // not given: none
+        var (s, dir) = try XCTUnwrap(EngineV3Snapshot.load(projectKey: "p1", root: root, documents: docs))
+        XCTAssertNil(s.visiblePage)
+        XCTAssertNil(s.caretPath)
+        EngineV3Snapshot.save(projectKey: "p1", main: "main.tex", documents: hashes, inputs: inputs, sizes: sizes,
+                              pages: [1: pages[1]], forms: doc.forms, pixelsPerPoint: 1.5, dark: false,
+                              visiblePage: 1, caret: (path: "main.tex", utf16: 7))
+        (s, dir) = try XCTUnwrap(EngineV3Snapshot.load(projectKey: "p1", root: root, documents: docs))
+        XCTAssertEqual(s.visiblePage, 1)
+        XCTAssertEqual(s.caretPath, "main.tex")
+        XCTAssertEqual(s.caretUTF16, 7)
+        // out of range, or a caret in a file that is not an editor document: dropped
+        EngineV3Snapshot.save(projectKey: "p1", main: "main.tex", documents: hashes, inputs: inputs, sizes: sizes,
+                              pages: [1: pages[1]], forms: doc.forms, pixelsPerPoint: 1.5, dark: false,
+                              visiblePage: pages.count, caret: (path: "chapter1.tex", utf16: 3))
+        (s, dir) = try XCTUnwrap(EngineV3Snapshot.load(projectKey: "p1", root: root, documents: docs))
+        XCTAssertNil(s.visiblePage)
+        XCTAssertNil(s.caretPath)
+        XCTAssertNil(s.caretUTF16)
+        // a manifest written before these fields existed still loads
+        let url = dir.appendingPathComponent("manifest.json")
+        var json = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: url)) as? [String: Any])
+        json["visiblePage"] = nil
+        json["caretPath"] = nil
+        json["caretUTF16"] = nil
+        try JSONSerialization.data(withJSONObject: json).write(to: url)
+        XCTAssertNotNil(EngineV3Snapshot.load(projectKey: "p1", root: root, documents: docs))
+    }
+
+    /// A reopen's stored page is sent as the open's viewport until the view
+    /// has scrolled there, and the stored caret goes back into the editor.
+    @MainActor
+    func testReopenGoesBackToTheStoredPageAndCaret() throws {
+        let doc = try fixture()
+        let pages = doc.orderedPages
+        XCTAssertGreaterThanOrEqual(pages.count, 3)
+        let root = try projectFolder()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let inputs = try save("p1", root: root, doc: doc)
+        EngineV3Snapshot.save(projectKey: "p1", main: "main.tex", documents: EngineV3Snapshot.hashes(docs), inputs: inputs,
+                              sizes: pages.map { CGSize(width: $0.widthPt, height: $0.heightPt) },
+                              pages: [2: pages[2]], forms: doc.forms, pixelsPerPoint: 1.5, dark: false,
+                              visiblePage: 2, caret: (path: "main.tex", utf16: 5))
+        let found = try XCTUnwrap(EngineV3Snapshot.load(projectKey: "p1", root: root, documents: docs))
+        let s = EngineV3Session()
+        s.showStored(found)
+        XCTAssertEqual(s.restoreScrollPage, 2, "scrolled to at the view's first layout with a width")
+        let m = ShellModel()
+        m.documents = [.init(path: "main.tex", text: docs[0].text)]
+        m.activePath = "main.tex"
+        s.restoreCaret(found.0, model: m)
+        XCTAssertEqual(m.caretUTF16, 5)
+        XCTAssertEqual(m.selection?.path, "main.tex")
+        XCTAssertEqual(m.selection?.nsRange, NSRange(location: 5, length: 0))
+        // a caret past the document's end (it is shorter now): left alone
+        var far = found.0
+        far.caretUTF16 = docs[0].text.utf16.count + 1
+        m.caretUTF16 = 0
+        s.restoreCaret(far, model: m)
+        XCTAssertEqual(m.caretUTF16, 0)
     }
 
     /// A chapter the editor has not opened, changed outside the app: the snapshot is not used.

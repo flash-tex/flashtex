@@ -296,6 +296,11 @@ final class EngineV3Session {
     @ObservationIgnored private var project: EngineV3Mirror?
     /// The page the view shows (sent as `viewport`).
     @ObservationIgnored var visiblePage = 0
+    /// A reopen's stored page to scroll to (`EngineV3Snapshot.visiblePage`),
+    /// until the view has laid out with a width and scrolled there
+    /// (`EngineV3PagesView.relayout`). Until then the compile sends it as
+    /// its `viewport`.
+    @ObservationIgnored var restoreScrollPage: Int?
     @ObservationIgnored let latency = EngineV3Latency()
     /// What the reader thread may rasterise immediately (pages on screen, at which scale).
     @ObservationIgnored let rasterPlan = EngineV3RasterPlan()
@@ -1236,10 +1241,12 @@ final class EngineV3Session {
         // first page it costs the edited page ~6 ms (plain-10: host first
         // page p50 14.5 -> 20.3 ms, measured) and gains nothing: send it only
         // when the view is further down. FLASHTEX_V3_VIEWPORT=1/0 forces it (A/B).
+        // (a reopen's stored page while the view has not scrolled there yet)
+        let viewed = restoreScrollPage ?? visiblePage
         switch ProcessInfo.processInfo.environment["FLASHTEX_V3_VIEWPORT"] {
-        case "1": req.viewport = visiblePage
+        case "1": req.viewport = viewed
         case "0": break
-        default: if visiblePage > 0 { req.viewport = visiblePage }
+        default: if viewed > 0 { req.viewport = viewed }
         }
         // Owner decision 9A: a project from elsewhere runs no shell commands until trusted.
         // Live Share: a session copy, or any project while a session runs,
@@ -2052,7 +2059,22 @@ final class EngineV3Session {
         guard pages.isEmpty, let key, let root = model.project.projectRoot,
               let found = EngineV3Snapshot.loadDocuments(projectKey: key, documents: model.documents.map { ($0.path, $0.text) }) else { snapshot = nil; return }
         showStored(found)
+        restoreCaret(found.0, model: model)
         validateStored(found, root: root)
+    }
+
+    /// Puts the editor's caret back where the snapshot's session left it:
+    /// its documents hash as they did, so the offset is still the same
+    /// place (no line table is built). Not when the document is not open
+    /// or cannot be switched to.
+    func restoreCaret(_ s: EngineV3Snapshot, model: ShellModel) {
+        guard let path = s.caretPath, let at = s.caretUTF16,
+              let doc = model.documents.first(where: { $0.path == path }), at <= doc.text.utf16.count else { return }
+        if path != model.activePath, case .refused = model.project.switchDocument(to: path) { return }
+        let ns = NSRange(location: at, length: 0)
+        model.selection = .init(path: path, nsRange: ns, token: (model.selection?.token ?? 0) + 1)
+        model.caretUTF16 = at
+        model.caretLengthUTF16 = 0
     }
 
     /// Checks a shown snapshot's other input files on the snapshot queue;
@@ -2084,6 +2106,9 @@ final class EngineV3Session {
         snapshot = found
         log("snapshot: \(found.0.pages.count) pages from \(found.1.lastPathComponent) (view \(view != nil)) at +\(Double(MonotonicClock.nowNs() &- (openStartNs ?? 0)) / 1e6) ms")
         pageCount = found.0.pages.count
+        // where the user was: scrolled to at the first layout with a width,
+        // and the open's compile typesets it first (`viewport`)
+        if let v = found.0.visiblePage, v > 0, v < pageCount { restoreScrollPage = v }
         markStale([])
         layoutRevision &+= 1
         view?.relayout()
@@ -2119,6 +2144,9 @@ final class EngineV3Session {
         let formsCopy = forms, main = mainFile
         let ppp = view?.currentPixelsPerPoint ?? 2
         let dark = model.darkPreview
+        // (a reopen uses it only when the documents hash as `docs` does, and
+        // only within the text: `restoreCaret`)
+        let caret = (path: model.activePath, utf16: model.caretUTF16)
         let item = DispatchWorkItem {
             let docs = EngineV3Snapshot.hashes(texts)
             // An input changed since the sync (outside the app): the pages
@@ -2127,7 +2155,8 @@ final class EngineV3Session {
             let others = EngineV3Snapshot.others(synced, documents: docs.keys)
             guard let now = EngineV3Snapshot.inputs(root: root), EngineV3Snapshot.others(now, documents: docs.keys) == others else { return }
             EngineV3Snapshot.save(projectKey: key, main: main, documents: docs, inputs: others, sizes: sizes, pages: chosen,
-                                  forms: formsCopy, pixelsPerPoint: ppp > 0 ? ppp : 2, dark: dark)
+                                  forms: formsCopy, pixelsPerPoint: ppp > 0 ? ppp : 2, dark: dark,
+                                  visiblePage: visible, caret: caret)
         }
         snapshotSave = item
         Self.snapshotQueue.asyncAfter(deadline: .now() + 1.5, execute: item)

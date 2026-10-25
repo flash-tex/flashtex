@@ -38,6 +38,14 @@ struct EngineV3Snapshot: Codable {
     var pixelsPerPoint: Double
     var dark: Bool
     var savedAt: Date
+    /// Where the user was (lane COLD-OPEN): the page at the top of the
+    /// preview, and the editor's caret (a UTF-16 offset into `caretPath`'s
+    /// text, which `documents` vouches for). A reopen scrolls there, puts
+    /// the caret back and sends the page as the compile's `viewport`, so
+    /// the host typesets that page first. Absent in older manifests (nil).
+    var visiblePage: Int?
+    var caretPath: String?
+    var caretUTF16: Int?
 
     static var root: URL { EngineV3.cacheDirectory.appendingPathComponent("snapshots", isDirectory: true) }
 
@@ -146,7 +154,8 @@ struct EngineV3Snapshot: Codable {
     /// prepared page) at `pixelsPerPoint`, then the manifest, then trims
     /// the store to the budget.
     static func save(projectKey: String, main: String, documents: [String: String], inputs: [String: String], sizes: [CGSize],
-                     pages: [Int: DL3PreparedPage], forms: [UInt32: DL3PreparedPage], pixelsPerPoint: Double, dark: Bool) {
+                     pages: [Int: DL3PreparedPage], forms: [UInt32: DL3PreparedPage], pixelsPerPoint: Double, dark: Bool,
+                     visiblePage: Int? = nil, caret: (path: String, utf16: Int)? = nil) {
         let dir = directory(projectKey: projectKey)
         let fm = FileManager.default
         try? fm.createDirectory(at: dir, withIntermediateDirectories: true)
@@ -164,7 +173,10 @@ struct EngineV3Snapshot: Codable {
         for name in (try? fm.contentsOfDirectory(atPath: dir.path)) ?? [] where !keep.contains(name) {
             try? fm.removeItem(at: dir.appendingPathComponent(name))
         }
-        let s = EngineV3Snapshot(main: main, documents: documents, inputs: inputs, pages: entries, pixelsPerPoint: pixelsPerPoint, dark: dark, savedAt: Date())
+        let s = EngineV3Snapshot(main: main, documents: documents, inputs: inputs, pages: entries, pixelsPerPoint: pixelsPerPoint, dark: dark, savedAt: Date(),
+                                 visiblePage: visiblePage.flatMap { $0 >= 0 && $0 < entries.count ? $0 : nil },
+                                 caretPath: caret.flatMap { documents[$0.path] != nil && $0.utf16 >= 0 ? $0.path : nil },
+                                 caretUTF16: caret.flatMap { documents[$0.path] != nil && $0.utf16 >= 0 ? $0.utf16 : nil })
         if let data = try? JSONEncoder().encode(s) { try? data.write(to: dir.appendingPathComponent("manifest.json"), options: .atomic) }
         trim()
     }
