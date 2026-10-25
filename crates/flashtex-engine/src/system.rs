@@ -4429,6 +4429,16 @@ pub struct FileRead {
     /// read, it wrote itself (beamer's `.vrb`), so it is not an input a
     /// further pass would see changed (`crate::incr`'s passes).
     pub written_before: bool,
+    /// A read (the first or a later one) of a file the run had opened for
+    /// output before it: the hash of what the file held when this read
+    /// opened it (`content_hash`). The other fields of a later read are the
+    /// first read's; this one is its own. The convergence test compares it
+    /// with the file now: a file both runs wrote and closed, read again by
+    /// the old run's future (*Infinite Descent* ×2 reads the hints the
+    /// first copy wrote at the end of each copy), reads the same bytes when
+    /// the hashes agree (`crate::incr`'s `reread_same`). `None` otherwise,
+    /// and for a close.
+    pub seen: Option<[u64; 2]>,
     /// A whole read whose result was the file's modification time
     /// (`\pdffilemoddate`: `note_stamp`), in seconds as the run read it: a
     /// file whose time changed, its content the same, has changed for
@@ -4795,8 +4805,10 @@ fn note_file_timed(path: &str) {
             // that converges keeps the old run's later reads (`crate::incr`
             // must know that the old future reads a file that changed).
             if log.keep_content {
-                if let Some(first) = log.files.iter().find(|f| f.path == path).cloned() {
-                    log.files_mut().push(first);
+                if let Some(mut again) = log.files.iter().find(|f| f.path == path).cloned() {
+                    // (what it holds now, for a file the run wrote)
+                    again.seen = written_by(log, path).then(|| content_hash(path)).flatten();
+                    log.files_mut().push(again);
                 }
             }
             return;
@@ -4825,8 +4837,7 @@ fn note_file_timed(path: &str) {
         if let Some((m, _)) = meta {
             LAST_STAT.with(|l| *l.borrow_mut() = Some((path.to_string(), m)));
         }
-        let norm = |p: &str| p.strip_prefix("./").unwrap_or(p).to_string();
-        let written_before = log.outputs.iter().any(|o| norm(o) == norm(path));
+        let written_before = written_by(log, path);
         log.files_mut().push(FileRead {
             path: path.to_string(),
             hash,
@@ -4834,10 +4845,24 @@ fn note_file_timed(path: &str) {
             content,
             closed_at: None,
             written_before,
+            seen: written_before.then(|| content_hash(path)).flatten(),
             stamp: None,
             size: None,
         });
     })
+}
+
+/// The hash of `path`'s logical content now (`FileRead::seen`): read
+/// whole, never from `crate::hashcache` (a file the run writes, rewritten
+/// within one stat signature).
+pub fn content_hash(path: &str) -> Option<[u64; 2]> {
+    read_logical(path).ok().map(|d| crate::persist::hash128(&d))
+}
+
+/// Whether the run `log` records had opened `path` for output.
+fn written_by(log: &ReadLog, path: &str) -> bool {
+    let norm = |p: &str| p.strip_prefix("./").unwrap_or(p).to_string();
+    log.outputs.iter().any(|o| norm(o) == norm(path))
 }
 
 /// A user's input file closed after its first `consumed` bytes were read
@@ -4854,6 +4879,7 @@ fn note_close(path: &str, consumed: u64) {
         };
         let mut e = first.clone();
         e.closed_at = Some(consumed);
+        e.seen = None;
         log.files_mut().push(e);
     })
 }
@@ -4877,6 +4903,7 @@ pub fn note_whole_read(path: &str) {
         };
         let mut e = first.clone();
         e.closed_at = Some(u64::MAX);
+        e.seen = None;
         e.stamp = None;
         e.size = None;
         log.files_mut().push(e);
