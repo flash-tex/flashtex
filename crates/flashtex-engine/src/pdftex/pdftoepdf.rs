@@ -141,6 +141,13 @@ pub struct State {
 
 crate::codec_struct!(State { docs, is_init });
 
+impl State {
+    /// An included PDF document is open (not deleted yet).
+    pub fn any_open(&self) -> bool {
+        self.docs.iter().any(Option::is_some)
+    }
+}
+
 /// What `read_pdf_info` leaves in pdfTeX's `epdf_*` globals.
 pub struct PdfInfo {
     pub page_num: i32,
