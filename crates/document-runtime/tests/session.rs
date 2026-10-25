@@ -131,37 +131,6 @@ fn stderr_backpressure_does_not_block_real_reply() {
     assert!(matches!(&events[0],Event::Preview{total_ms,..} if *total_ms>=0.0));
 }
 #[test]
-#[ignore = "requires explicitly configured original compiler"]
-fn original_persistent_outputs_equal_clean_processes() {
-    let binary = std::env::var_os("FLASHTEX_TEST_COMPILER").expect("set original compiler binary");
-    let mut warm = Session::spawn(&binary, Limits::default()).unwrap();
-    for revision in 1..=3 {
-        let r = request(revision);
-        warm.submit(r.clone()).unwrap();
-        let w = collect_until(&mut warm, |es| {
-            es.iter().any(|e| matches!(e, Event::Preview { .. }))
-        });
-        let mut fresh = Session::spawn(&binary, Limits::default()).unwrap();
-        fresh.submit(r).unwrap();
-        let f = collect_until(&mut fresh, |es| {
-            es.iter().any(|e| matches!(e, Event::Preview { .. }))
-        });
-        let result = |es: Vec<Event>| {
-            es.into_iter()
-                .find_map(|e| {
-                    if let Event::Preview { result, .. } = e {
-                        Some(result)
-                    } else {
-                        None
-                    }
-                })
-                .unwrap()
-        };
-        assert_eq!(result(w), result(f));
-    }
-}
-
-#[test]
 #[cfg(unix)]
 fn submission_backpressure_bounds_unconsumed_supersession_events() {
     let (_d, path) = executable("import time\ntime.sleep(10)");

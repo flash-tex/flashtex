@@ -141,7 +141,7 @@ section "Engine host and the new CLI ship (app-parity row D5; no build)"
 # flashtex-host before the build; the CLI tarball's checks are portable.
 expect_preflight_failure "--require-engine-host: no flashtex-host" --debug --require-engine-host --engine-host "$WORK/missing/flashtex-host"
 if "$MAC_DIR/../../scripts/tests/package-cli.test.sh" >"$WORK/package-cli-test.log" 2>&1; then
-  ok "scripts/tests/package-cli.test.sh: $(grep -c '^  ok' "$WORK/package-cli-test.log") checks (flashtex-v3, flashtex-host, its pool and licence in the CLI tarball; release.yml builds and requires them)"
+  ok "scripts/tests/package-cli.test.sh: $(grep -c '^  ok' "$WORK/package-cli-test.log") checks (flashtex, flashtex-host, its pool and licence in the CLI tarball; release.yml builds and requires them)"
 else
   bad "scripts/tests/package-cli.test.sh: $(grep 'FAIL' "$WORK/package-cli-test.log" | head -3 | tr '\n' ' ')"
 fi

@@ -96,7 +96,7 @@ a real pdflatex error into a clean compile. At the time of writing, 13 of the 22
 cases do.
 
 **Note for implementers:** the FlashTeX engine is currently *more permissive*
-than pdflatex on all of these — `flashtex-render` reports no diagnostic for
+than pdflatex on all of these — the old engine reported no diagnostic for
 `Let $a + $x^2$ + b$ hold.`, for `\[…\]` inside `tabular`, or for `\text`
 without amsmath. The engine therefore cannot be used to detect this class of
 bug, and the oracle uses pdflatex. That divergence is worth a separate

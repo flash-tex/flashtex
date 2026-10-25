@@ -1,5 +1,8 @@
 # Proposal: `display-list-v2-window` — a bounded resident page window
 
+> **Historical.** The old engine that produced this was deleted in S7 (retirement plan, row 11).
+> This file stays only because surviving code still names it in comments; it describes no live producer.
+
 Revision **r2, 2026-09-14** (lane linux-primary, FT-070 structural half).
 Status: **PROPOSAL + producer, negotiated and opt-in.** `v1.rs` accepts the
 name next to `display-list-v2`, exactly as `-only` and `-delta` — themselves

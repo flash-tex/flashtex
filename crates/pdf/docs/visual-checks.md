@@ -16,7 +16,7 @@ Regenerate any of them with:
 
 ## 1. `math-inline-display` corpus case, compiler `de1020c`, default fonts
 
-Input: `tests/tex-corpus/cases/math-inline-display/main.tex`
+Input: `tests/tex-corpus/cases/math-inline-display/main.tex` (deleted in S7; see `f16430793`)
 (`Inline $x_1^2 + y$ ends.` and a display `\[ \frac{a+b}{c} = d \]`),
 compiled by the compiler-foundation branch at `de1020c`, rendered with base-14
 fonts only. Compiler diagnostics: `\documentclass` unsupported (its argument

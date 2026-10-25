@@ -129,7 +129,15 @@ public enum LocalCompletion {
                 add(.command, c, entry?.documentation ?? "typed elsewhere in this document", snippet: entry.flatMap(snippet(for:)))
             }
             let pool = context.vocabulary.commands.filter { LaTeXVocabulary.allows($0, mathMode: context.mathMode) && offered($0.requiresClass) }
-            for entry in ranked(pool, prefix: name, name: \.name) {
+            // The measured package commands the vocabulary's annotations do not
+            // present (babel's `\frq`, xy's `\frm`) are offered only when no
+            // annotated command the mode allows matches, so `\fr` still means
+            // `\frac`; the exact spelling always is. (The Mac's
+            // `commandSuggestions` also counts the annotated commands its mode
+            // filter hides, because it falls back to them; this list does not.)
+            var matches = ranked(pool, prefix: name, name: \.name)
+            if matches.contains(where: \.annotated) { matches.removeAll { !$0.annotated && $0.name != name } }
+            for entry in matches {
                 add(.command, "\\" + entry.name, entry.documentation, snippet: snippet(for: entry))
             }
             return Array(out.prefix(limit))

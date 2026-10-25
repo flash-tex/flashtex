@@ -1,6 +1,6 @@
 #!/bin/sh
-# FlashTeX installer for macOS — the native GUI app (SwiftUI), which bundles
-# the CLI at Contents/MacOS/flashtex-cli.
+# FlashTeX installer for macOS — the native GUI app (SwiftUI). The
+# `flashtex` command line is a separate download (install-cli.sh).
 #
 #   curl -fsSL https://flash-tex.github.io/flashtex/install.sh | sh
 #

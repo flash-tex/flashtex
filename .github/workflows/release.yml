@@ -1,14 +1,25 @@
 # FlashTeX release: on a v* tag (or a manual run with a version) build the
 # helpers, package FlashTeX.app into a DMG (Developer ID-signed and
-# notarized when the secrets exist, ad-hoc otherwise), tar the CLI tools
-# for macOS arm64 and Linux x86_64, publish a GitHub release with
-# SHA256SUMS, then point the website (gh-pages) at it. See docs/ci-cd.md.
-# The engine host (flashtex-host, GPL-2.0-or-later, a separate program) and
-# the new CLI (flashtex-v3) ship in the app and the macOS CLI tarball, and a
-# release without them fails (app-parity row D5). There is no dry run: a
-# manual run publishes; scripts/tests/package-cli.test.sh and
-# packaging-full.yml check the packaging without one. Release notes written
-# ahead of the tag live in docs/release/<tag>-notes.md (checklist:
+# notarized when the secrets exist, ad-hoc otherwise), tar the command line
+# (`flashtex`, crates/flashtex-build, with its engine hosts) for macOS arm64
+# and Linux x86_64, archive the source of the release's commit, publish a
+# GitHub release with SHA256SUMS, then point the website (gh-pages) at it.
+# See docs/ci-cd.md. The engine host (flashtex-host, GPL-2.0-or-later, a
+# separate program) and `flashtex` ship in the app and the macOS CLI tarball,
+# and a release without them fails (app-parity row D5). The old engine's CLI
+# and helpers are gone (retirement plan S7, RQ6).
+#
+# GPL source (retirement plan §6, RQ19): the notes carry the line the app's
+# About panel shows, the CLI tarball carries it in SOURCE.md and `flashtex
+# licenses`, and the release attaches flashtex-<version>-source.tar.gz, the
+# source of the commit it was built from.
+#
+# Dry run: a manual run with dry_run=true builds, packages and smoke-tests
+# everything, archives the source and writes the notes, but creates no
+# release or tag and does not touch the website; the assets and notes are
+# the run's artifacts. scripts/tests/package-cli.test.sh and
+# packaging-full.yml check the packaging without a run. Release notes
+# written ahead of the tag live in docs/release/<tag>-notes.md (checklist:
 # docs/release/<tag>.md) and head the published notes.
 name: Release
 
@@ -21,6 +32,11 @@ on:
         description: "Version to release, e.g. v0.2.0 (the tag is created on the run's commit if it does not exist)"
         required: true
         type: string
+      dry_run:
+        description: "Build, package and smoke-test only: publish no release, tag or website"
+        required: false
+        type: boolean
+        default: false
 
 permissions:
   contents: write
@@ -64,9 +80,10 @@ jobs:
     env:
       TAG: ${{ needs.version.outputs.tag }}
       VERSION: ${{ needs.version.outputs.version }}
-      # Read by crates/flashtex-cli/build.rs: the crate version is 0.1.0 and
-      # is not bumped per release, so without this `flashtex --version`
-      # reports 0.1.0 out of a v0.1.4 tarball.
+      # Read by crates/flashtex-build/build.rs: the crate version is 0.1.0
+      # and is not bumped per release, so without this `flashtex --version`
+      # reports 0.1.0 out of a v0.1.4 tarball, and `flashtex licenses` would
+      # not name the release's tag.
       FLASHTEX_VERSION: ${{ needs.version.outputs.version }}
     outputs:
       signing: ${{ steps.sign.outputs.signing }}
@@ -93,7 +110,7 @@ jobs:
         run: |
           set -o pipefail
           scripts/ci/build-helpers.sh | tee -a "$GITHUB_ENV"
-      - name: Build the engine host and the new CLI (release)
+      - name: Build the engine host and the CLI (release)
         # Not in build-helpers.sh, which ci.yml's mac-app job also runs: the
         # app finds a built host by itself (target/release), and that job's
         # tests must not start finding one. make-app.sh bundles the host
@@ -101,16 +118,8 @@ jobs:
         run: |
           set -euo pipefail
           cargo build --release --locked -p flashtex-engine --bin flashtex-host
-          cargo build --release --locked -p flashtex-build --bin flashtex-v3
-          ls -l target/release/flashtex-host target/release/flashtex-v3
-      - name: Build the old CLI the CLI tarball still ships (release; until S7)
-        # The app no longer bundles the old engine's helpers (retirement
-        # stage S6, #1236), so build-helpers.sh does not build them; the CLI
-        # tarball keeps the old `flashtex` and its helpers until S7 renames
-        # flashtex-v3 to flashtex (RQ6). package-cli.sh finds them in target/.
-        run: |
-          set -euo pipefail
-          cargo build --release --locked -p flashtex-cli -p flashtex-render-pipeline -p flashtex-compiler -p flashtex-pdf
+          cargo build --release --locked -p flashtex-build --bin flashtex
+          ls -l target/release/flashtex-host target/release/flashtex
       - name: Build Unicode mode's host (release), when the tree has it
         # crates/flashtex-xetex is its own workspace (own Cargo.lock and
         # target/). Once it has flashtex-host-unicode (#1732) the app ships
@@ -192,44 +201,52 @@ jobs:
           mkdir -p dist
           cp apps/mac/build/FlashTeX.dmg dist/FlashTeX.dmg
           cp apps/mac/build/FlashTeX.dmg "dist/FlashTeX-$VERSION-macos-arm64.dmg"
-          scripts/ci/package-cli.sh "$VERSION" macos-arm64 dist \
-            --require flashtex-v3,flashtex-host \
-            --fonts-dir apps/mac/build/FlashTeX.app/Contents/Resources/Fonts \
-            --texmf-root apps/mac/build/FlashTeX.app/Contents/Resources/texmf
+          # Unicode mode's host ships too when this tree builds it.
+          bins=(--bin target/release/flashtex --bin target/release/flashtex-host)
+          if [ -n "${ENGINE_HOST_UNICODE:-}" ]; then bins+=(--bin "$ENGINE_HOST_UNICODE"); fi
+          scripts/ci/package-cli.sh "$VERSION" macos-arm64 dist "${bins[@]}" \
+            --require flashtex,flashtex-host${ENGINE_HOST_UNICODE:+,flashtex-host-unicode}
           (cd dist && shasum -a 256 -- * | tee SHA256SUMS.macos)
       - name: Smoke-test the packaged CLI
+        # This runner has no TeX Live, so `flashtex build` typesets from the
+        # pinned bundle (bin/flashtex-bundle.lock, fetched with the consent
+        # FLASHTEX_BUNDLE_ALLOW_FETCH=1 gives), the way a user without TeX
+        # Live runs the tarball; crates/flashtex-build/tests/cli.rs compares
+        # its PDFs with pdflatex's on the self-hosted Mac leg of ci.yml.
+        timeout-minutes: 30
         run: |
           set -euo pipefail
           mkdir -p "$RUNNER_TEMP/cli" && tar -C "$RUNNER_TEMP/cli" -xzf "dist/flashtex-cli-$VERSION-macos-arm64.tar.gz"
-          printf '\\begin{document}\nHello $\\frac{1}{2}$ world.\n\\end{document}\n' > "$RUNNER_TEMP/smoke.tex"
-          env -u FLASHTEX_FONT_DIRS -u FLASHTEX_TFM_DIRS -u FLASHTEX_LM_DIR \
-            "$RUNNER_TEMP/cli/flashtex-cli-$VERSION-macos-arm64/bin/flashtex" build "$RUNNER_TEMP/smoke.tex" -o "$RUNNER_TEMP/smoke.pdf" --timing
-          head -c 8 "$RUNNER_TEMP/smoke.pdf" | grep -q '%PDF-1.'
-          env -u FLASHTEX_FONT_DIRS -u FLASHTEX_TFM_DIRS -u FLASHTEX_LM_DIR \
-            "$RUNNER_TEMP/cli/flashtex-cli-$VERSION-macos-arm64/bin/flashtex" build fixtures/real-world/hw1/HW1.tex -o "$RUNNER_TEMP/hw1.pdf"
-          # Not just run --version: assert it reports the release. This step
-          # printed "flashtex 0.1.0" through v0.1.4 and nothing checked it.
-          reported="$("$RUNNER_TEMP/cli/flashtex-cli-$VERSION-macos-arm64/bin/flashtex" --version)"
+          cli="$RUNNER_TEMP/cli/flashtex-cli-$VERSION-macos-arm64"
+          # Output captured first: `| grep -q` may close the pipe before the
+          # program has written everything, and under pipefail its EPIPE
+          # (Rust's println! panics on it) failed the step at random.
+          # Not just run --version: assert it reports the release. The old
+          # CLI printed "flashtex 0.1.0" through v0.1.4 and nothing checked it.
+          reported="$("$cli/bin/flashtex" --version)"
           echo "$reported"
           case "$reported" in
             "flashtex $VERSION ("*) ;;
             *) echo "--version reports '$reported', expected 'flashtex $VERSION (<sha>)'"; exit 1 ;;
           esac
-          env -u FLASHTEX_FONT_DIRS -u FLASHTEX_TFM_DIRS -u FLASHTEX_LM_DIR \
-            "$RUNNER_TEMP/cli/flashtex-cli-$VERSION-macos-arm64/bin/flashtex-render" --tex "$RUNNER_TEMP/smoke.tex" --pdf "$RUNNER_TEMP/smoke-render.pdf"
-          head -c 8 "$RUNNER_TEMP/smoke-render.pdf" | grep -q '%PDF-1.'
-          # The new CLI and its host start (this runner has no TeX Live, so
-          # neither compiles here; crates/flashtex-build/tests/cli.rs does
-          # on the self-hosted Mac leg of ci.yml).
-          cli="$RUNNER_TEMP/cli/flashtex-cli-$VERSION-macos-arm64"
-          # Output captured first: `| grep -q` may close the pipe before the
-          # program has written everything, and under pipefail its EPIPE
-          # (Rust's println! panics on it) failed the step at random.
-          v3_help="$("$cli/bin/flashtex-v3" --help)"
+          help="$("$cli/bin/flashtex" --help)"
           host_help="$("$cli/bin/flashtex-host" --help)"
-          grep -q 'flashtex-v3 build' <<< "$v3_help"
+          licenses="$("$cli/bin/flashtex" licenses)"
+          grep -q 'usage: flashtex build' <<< "$help"
           grep -q 'usage: flashtex-host' <<< "$host_help"
-          test -f "$cli/bin/pdftex.pool" && test -f "$cli/share/flashtex/engine/LICENSE"
+          # The GPL source offer, in the About panel's words, at this tag.
+          grep -qF 'Source code for the FlashTeX engine (GPL-2.0-or-later): https://github.com/flash-tex/flashtex' <<< "$licenses"
+          grep -qF "https://github.com/flash-tex/flashtex/tree/$TAG" <<< "$licenses"
+          test -f "$cli/bin/pdftex.pool" && test -f "$cli/bin/flashtex-bundle.lock"
+          test -f "$cli/share/flashtex/engine/LICENSE" && test -f "$cli/share/flashtex/LICENSE" && test -f "$cli/SOURCE.md"
+          if [ -n "${ENGINE_HOST_UNICODE:-}" ]; then
+            test -x "$cli/bin/flashtex-host-unicode" && test -f "$cli/share/flashtex/engine/LICENSE-unicode"
+          fi
+          # A tiny document, typeset: the CLI starts the host beside it, which
+          # finds its pool and the bundle lock beside itself.
+          printf '\\documentclass{article}\n\\begin{document}\nHello $\\frac{1}{2}$ world.\n\\end{document}\n' > "$RUNNER_TEMP/smoke.tex"
+          FLASHTEX_BUNDLE_ALLOW_FETCH=1 "$cli/bin/flashtex" build "$RUNNER_TEMP/smoke.tex" -o "$RUNNER_TEMP/smoke.pdf" --no-progress
+          head -c 8 "$RUNNER_TEMP/smoke.pdf" | grep -q '%PDF-1.'
       - uses: actions/upload-artifact@v4
         with:
           name: release-macos
@@ -249,6 +266,7 @@ jobs:
       VERSION: ${{ needs.version.outputs.version }}
       # See the macOS job: gives `flashtex --version` the release version.
       FLASHTEX_VERSION: ${{ needs.version.outputs.version }}
+      TAG: ${{ needs.version.outputs.tag }}
     outputs:
       built: ${{ steps.build.outputs.built }}
       skipped: ${{ steps.build.outputs.skipped }}
@@ -257,18 +275,17 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:
-          # One workspace: the CLI crates are ordinary members since vendor/
-          # was retired.
+          # One workspace: the CLI and the engine are ordinary members.
           key: cli
-      - name: Build the CLI crates (each may fail independently)
+      - name: Build the CLI and the engine host (each may fail independently)
         id: build
         run: |
           set -uo pipefail
           built=(); skipped=()
-          # flashtex-build is the new CLI (flashtex-v3); flashtex-engine builds
+          # flashtex-build is the CLI (bin flashtex); flashtex-engine builds
           # only its host here (package-cli.sh ships both when they built).
-          for c in flashtex-cli render-pipeline compiler pdf flashtex-build flashtex-engine; do
-            only=(); [ "$c" = flashtex-engine ] && only=(--bin flashtex-host)
+          for c in flashtex-build flashtex-engine; do
+            only=(--bin flashtex); [ "$c" = flashtex-engine ] && only=(--bin flashtex-host)
             if (cd "crates/$c" && cargo build --release --locked "${only[@]}"); then built+=("$c"); else skipped+=("$c"); fi
           done
           echo "built=${built[*]:-}" >> "$GITHUB_OUTPUT"
@@ -281,29 +298,30 @@ jobs:
           mkdir -p dist
           scripts/ci/package-cli.sh "$VERSION" linux-x86_64 dist
           (cd dist && sha256sum -- * | tee SHA256SUMS.linux)
-      - name: Smoke-test the packaged CLI
-        if: contains(steps.build.outputs.built, 'flashtex-cli')
-        run: |
-          set -euo pipefail
-          mkdir -p "$RUNNER_TEMP/cli" && tar -C "$RUNNER_TEMP/cli" -xzf "dist/flashtex-cli-$VERSION-linux-x86_64.tar.gz"
-          printf '\\begin{document}\nHello $\\frac{1}{2}$ world.\n\\end{document}\n' > "$RUNNER_TEMP/smoke.tex"
-          "$RUNNER_TEMP/cli/flashtex-cli-$VERSION-linux-x86_64/bin/flashtex" build "$RUNNER_TEMP/smoke.tex" -o "$RUNNER_TEMP/smoke.pdf" --timing
-          head -c 8 "$RUNNER_TEMP/smoke.pdf" | grep -q '%PDF-1.'
-          "$RUNNER_TEMP/cli/flashtex-cli-$VERSION-linux-x86_64/bin/flashtex" build fixtures/real-world/hw1/HW1.tex -o "$RUNNER_TEMP/hw1.pdf"
-      - name: Smoke-test the new CLI and its host
+      - name: Smoke-test the CLI and its host
+        # They start, report the release and carry the source offer; the
+        # macOS job also typesets with them.
         if: contains(steps.build.outputs.built, 'flashtex-build') && contains(steps.build.outputs.built, 'flashtex-engine')
         run: |
           set -euo pipefail
-          mkdir -p "$RUNNER_TEMP/cli3" && tar -C "$RUNNER_TEMP/cli3" -xzf "dist/flashtex-cli-$VERSION-linux-x86_64.tar.gz"
-          cli="$RUNNER_TEMP/cli3/flashtex-cli-$VERSION-linux-x86_64"
+          mkdir -p "$RUNNER_TEMP/cli" && tar -C "$RUNNER_TEMP/cli" -xzf "dist/flashtex-cli-$VERSION-linux-x86_64.tar.gz"
+          cli="$RUNNER_TEMP/cli/flashtex-cli-$VERSION-linux-x86_64"
           # Output captured first: `| grep -q` may close the pipe before the
           # program has written everything, and under pipefail its EPIPE
           # (Rust's println! panics on it) failed the step at random.
-          v3_help="$("$cli/bin/flashtex-v3" --help)"
+          reported="$("$cli/bin/flashtex" --version)"
+          echo "$reported"
+          case "$reported" in
+            "flashtex $VERSION ("*) ;;
+            *) echo "--version reports '$reported', expected 'flashtex $VERSION (<sha>)'"; exit 1 ;;
+          esac
+          help="$("$cli/bin/flashtex" --help)"
           host_help="$("$cli/bin/flashtex-host" --help)"
-          grep -q 'flashtex-v3 build' <<< "$v3_help"
+          licenses="$("$cli/bin/flashtex" licenses)"
+          grep -q 'usage: flashtex build' <<< "$help"
           grep -q 'usage: flashtex-host' <<< "$host_help"
-          test -f "$cli/bin/pdftex.pool" && test -f "$cli/share/flashtex/engine/LICENSE"
+          grep -qF "https://github.com/flash-tex/flashtex/tree/$TAG" <<< "$licenses"
+          test -f "$cli/bin/pdftex.pool" && test -f "$cli/share/flashtex/engine/LICENSE" && test -f "$cli/SOURCE.md"
       - uses: actions/upload-artifact@v4
         with:
           name: release-linux
@@ -311,14 +329,42 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
+  source:
+    name: source archive
+    needs: version
+    # The complete source of the commit the release is built from (the tag
+    # points at it): the GPL hosts' corresponding source, with everything
+    # else, as a release asset (retirement plan §6 item 3).
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Archive the release's commit
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          git archive --format=tar.gz --prefix="flashtex-$VERSION/" -o "dist/flashtex-$VERSION-source.tar.gz" HEAD
+          tar -tzf "dist/flashtex-$VERSION-source.tar.gz" "flashtex-$VERSION/crates/flashtex-engine/LICENSE" "flashtex-$VERSION/third_party/xpdf/README.md" >/dev/null
+          ls -l dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-source
+          path: dist/
+          if-no-files-found: error
+          retention-days: 7
+
   publish:
     name: GitHub release + website
-    needs: [version, macos, linux]
+    needs: [version, macos, linux, source]
     # `if: always()` means a failed `linux` job never blocks this: the release and
     # site publish as long as `macos` (the app + its own CLI tarball) succeeded.
     # The assets step below only includes the Linux CLI tarball when that job
     # actually produced one (see "Write release notes header").
-    if: always() && needs.macos.result == 'success'
+    # The source archive is the GPL offer's asset: no release without it.
+    # A dry run gets here too, writes the notes and stops before publishing.
+    if: always() && needs.macos.result == 'success' && needs.source.result == 'success'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     env:
@@ -356,12 +402,13 @@ jobs:
             echo "| Asset | What |"
             echo "|---|---|"
             echo "| \`FlashTeX.dmg\` / \`FlashTeX-$VERSION-macos-arm64.dmg\` | The Mac app (macOS 14+, Apple Silicon). Same file under both names; \`install.sh\` on the website fetches \`FlashTeX.dmg\`. |"
-            echo "| \`flashtex-cli-$VERSION-macos-arm64.tar.gz\` | The \`flashtex\` CLI (\`flashtex build main.tex\`, check, watch, supported, worker, fonts) plus flashtex-render/compiler/pdf helpers, with the bundled fonts/metrics; and \`flashtex-v3\` (build, check, watch on the pdfLaTeX-compatible engine; needs TeX Live) with its engine host \`flashtex-host\` (GPL-2.0-or-later). |"
+            echo "| \`flashtex-cli-$VERSION-macos-arm64.tar.gz\` | The \`flashtex\` command line (MIT): \`flashtex build main.tex\`, check and watch on the pdfLaTeX-compatible engine (\`--mode unicode\`: XeLaTeX-compatible), with its engine hosts \`flashtex-host\` and \`flashtex-host-unicode\` (GPL-2.0-or-later). Needs TeX Live, or downloads the pinned TeX bundle with \`FLASHTEX_BUNDLE_ALLOW_FETCH=1\`. \`flashtex licenses\` prints the licences and the source offer. |"
             if [ "$LINUX_RESULT" = "success" ]; then
               echo "| \`flashtex-cli-$VERSION-linux-x86_64.tar.gz\` | Command-line tools for Linux x86_64 (built: ${LINUX_BUILT:-none}${LINUX_SKIPPED:+; not built on Linux: $LINUX_SKIPPED}). |"
             else
               echo "| _(no Linux CLI)_ | The Linux build job did not succeed for this release (result: $LINUX_RESULT). |"
             fi
+            echo "| \`flashtex-$VERSION-source.tar.gz\` | The complete source of this release's commit, including the GPL engine hosts and the libraries they link (\`third_party/\`). |"
             echo "| \`SHA256SUMS\` | \`sha256sum -c SHA256SUMS\` after downloading. |"
             echo
             echo "## Signing"
@@ -389,7 +436,27 @@ jobs:
             mv notes.full.md notes.md
           fi
           cat notes.md
+      - name: Dry run (nothing is published)
+        if: ${{ inputs.dry_run }}
+        run: |
+          set -euo pipefail
+          cp notes.md dist/notes.md
+          echo "dry run: release $TAG would carry:"; ls -l dist
+          {
+            echo "### Release dry run: $TAG (nothing published)"
+            echo
+            echo '```'
+            (cd dist && ls -l)
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        if: ${{ inputs.dry_run }}
+        with:
+          name: dry-run-release
+          path: dist/
+          retention-days: 7
       - name: Create or update the GitHub release
+        if: ${{ !inputs.dry_run }}
         run: |
           set -euo pipefail
           if gh release view "$TAG" >/dev/null 2>&1; then
@@ -400,6 +467,7 @@ jobs:
           fi
           gh release view "$TAG" --json url --jq .url
       - name: Point the website (gh-pages) at this release
+        if: ${{ !inputs.dry_run }}
         run: |
           set -euo pipefail
           # A fresh clone in a temp dir does not inherit actions/checkout's

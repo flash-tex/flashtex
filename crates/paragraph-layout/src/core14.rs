@@ -3,7 +3,7 @@
 //! Provenance (all values are public Adobe AFM data, unmodified):
 //!
 //! * Advance widths (`*_ASCII`, `*_LATIN1`): copied verbatim from
-//!   `crates/compiler/src/metrics.rs` at `de1020cd0be7cede11be2691e00e7f5b15cb2224`
+//!   the old compiler's `src/metrics.rs` at `de1020cd0be7cede11be2691e00e7f5b15cb2224`
 //!   (branch `agent/claude/compiler-foundation`), which transcribed the Adobe
 //!   Core 14 AFM character widths in 1/1000 em. That file also covers Helvetica
 //!   and Courier; only the three Times faces are needed here.

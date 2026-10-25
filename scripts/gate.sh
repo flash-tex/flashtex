@@ -125,12 +125,12 @@ have() { command -v "$1" >/dev/null 2>&1; }
 
 # ---------------------------------------------------------------------------
 # Shared environment: the same variables ci.yml gives the Rust jobs, so a test
-# that needs the vendored Latin Modern / EC / AMS metrics runs here exactly as
-# it runs in CI instead of XCTSkip-style self-skipping.
+# that needs the vendored Latin Modern faces (the pdf crate's) runs here exactly
+# as it runs in CI instead of self-skipping. FLASHTEX_TFM_DIRS went with the old
+# engine's crates in S7.
 # ---------------------------------------------------------------------------
 export CARGO_TERM_COLOR="${CARGO_TERM_COLOR:-always}"
 export FLASHTEX_FONT_DIRS="${FLASHTEX_FONT_DIRS:-$ROOT/apps/mac/Fonts}"
-export FLASHTEX_TFM_DIRS="${FLASHTEX_TFM_DIRS:-$ROOT/apps/mac/Fonts/texmf/fonts/tfm/public/lm:$ROOT/apps/mac/Fonts/texmf/fonts/tfm/jknappen/ec:$ROOT/apps/mac/Fonts/texmf/fonts/tfm/public/amsfonts/symbols}"
 export FLASHTEX_LM_DIR="${FLASHTEX_LM_DIR:-$ROOT/apps/mac/Fonts}"
 
 # Tests never touch the user's real caches. .cargo/config.toml already points
@@ -199,8 +199,8 @@ fi
 #   crates/<dir>/...        -> that crate's [package] name
 #   Cargo.toml / Cargo.lock -> ROOT_MANIFEST=1 below, NOT a per-crate fan-out
 # A crate is standalone (its own workspace) iff it has its own Cargo.lock. Since
-# lane P0-RETIRE-VENDOR deleted crates/render-pipeline/vendor/ and folded the
-# three standalone lockfiles into the root one, NO crate is standalone any more;
+# lane P0-RETIRE-VENDOR deleted the old pipeline's vendor/ and folded the three
+# standalone lockfiles into the root one, NO member crate is standalone any more;
 # the rule stays because it keeps this correct without a list to maintain.
 # Output: one "<package>\t<workspace dir>\t<edition>" line per crate.
 # Takes the changed-path list as its first argument (a file). NOT on stdin:
@@ -309,8 +309,8 @@ TRIP_PATHS='^(tools/web2rust/|third_party/(knuth|pdftex)/|crates/flashtex-engine
 # The check is `rustfmt --edition <crate edition> --emit stdout` over stdin,
 # compared with the file. Verified against `cargo fmt --all --check` on a
 # 60-file sample: identical verdicts for every root-workspace file (the only
-# divergences were render-pipeline files, which `cargo fmt --all` never visits
-# because that crate is outside the root workspace).
+# divergences were files of a crate then outside the root workspace, which
+# `cargo fmt --all` never visits).
 gate_fmt() {
   local dirty_new=() dirty_old=() f ed crate rc=0
   local list
@@ -525,17 +525,14 @@ workspace_profile() { # workspace_profile <debug|release>
   cargo_test --workspace --locked --no-fail-fast "${flag[@]}" ${excludes[@]+"${excludes[@]}"}
 }
 
-# render-pipeline and flashtex-cli, built and tested one package at a time in
-# their own directories. They are ordinary workspace members since vendor/ was
-# retired -- so this uses the root Cargo.lock and target/, and workspace_profile
-# already covers them -- but a per-crate failure reads far more clearly than one
-# inside the 38-crate run, and ci.yml's `rust-standalone` does exactly this.
-# flashtex-xetex is a real standalone crate (its own Cargo.lock and target/,
-# excluded from the root workspace), so this is the only place `full` builds it.
+# The standalone crates, built and tested in their own directories, as ci.yml's
+# `rust-standalone` does. flashtex-xetex is the one left (its own Cargo.lock and
+# target/, excluded from the root workspace), so this is the only place `full`
+# builds it. (Until S7 this also ran the old pipeline and its CLI.)
 standalone_profile() { # standalone_profile <debug|release>
   local profile="$1" flag=() c rc=0
   [[ "$profile" == release ]] && flag=(--release)
-  for c in render-pipeline flashtex-cli flashtex-xetex; do
+  for c in flashtex-xetex; do
     [[ -f "crates/$c/Cargo.toml" ]] || continue
     ( cd "crates/$c" && cargo build --locked "${flag[@]}" && cargo_test --locked --no-fail-fast "${flag[@]}" ) || rc=1
   done
@@ -642,7 +639,7 @@ case "$TIER" in
     else
       skip "licence boundary (DESIGN §3)" "scripts/check-license-boundary.sh is not in this checkout"
     fi
-    step "CLI packaging self-test (flashtex-v3 and flashtex-host ship; app-parity D5)" -- scripts/tests/package-cli.test.sh
+    step "CLI packaging self-test (flashtex and flashtex-host ship; app-parity D5)" -- scripts/tests/package-cli.test.sh
     step "parity scoreboard and lockstep self-tests" -- gate_parity_selftest
     step "retired code is not named outside the allowlist (retirement plan §4.6)" -- \
       python3 tools/parity/retirement_refs.py
@@ -653,8 +650,7 @@ case "$TIER" in
     else
       skip "parity fixtures hold their baseline" "baseline-fixtures.json was recorded on macOS (tools/parity/README.md); it is not comparable here"
     fi
-    step "bundled inventory matches the compiler" -- apps/mac/scripts/sync-supported-latex.sh --check
-    step "generated vocabulary matches its inputs (RQ5)" -- python3 apps/mac/scripts/gen-supported-latex.py check
+    step "generated vocabulary matches its inputs and the bundled copies (RQ5)" -- python3 apps/mac/scripts/gen-supported-latex.py check --installed
     ;;
 esac
 

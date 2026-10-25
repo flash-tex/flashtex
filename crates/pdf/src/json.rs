@@ -1,5 +1,5 @@
 //! A small, strict JSON reader. Enough for runtime-v1 envelopes; written here so
-//! the crate builds offline with no dependencies, matching `crates/compiler`.
+//! the crate builds offline with no dependencies.
 //!
 //! An object is a `Vec` of pairs in source order, not a map. A rendering-v2
 //! display list is mostly tens of thousands of six-key glyph objects, and a

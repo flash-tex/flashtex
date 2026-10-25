@@ -5,16 +5,16 @@
 //! `math::COMMAND_GLYPHS` (old-engine retirement S1, #1236), so the bridge no
 //! longer links that crate. A few structural constructs (fractions, radicals,
 //! super/subscripts) were handled by the compiler's math parser directly rather
-//! than through that glyph table, so they are a small constant here. While the
-//! compiler exists, `crates/compiler/tests/bridge_math_features.rs` re-derives
-//! both from the compiler's real tables, lexer and math parser and fails the
-//! day either drifts (see issues #51/#23).
+//! than through that glyph table, so they are a small constant here. Until the
+//! old compiler was deleted (old-engine retirement S7), a test of its own re-derived
+//! both from its real tables, lexer and math parser (see issues #51/#23); both
+//! lists are now frozen.
 
 /// The named-symbol table, one `\command` per line (see the file's header).
 const MATH_SYMBOL_FEATURES: &str = include_str!("../data/math-symbol-features.txt");
 
 /// Constructs the compiler's math parser special-cased ahead of the named
-/// glyph table (`crates/compiler/src/math.rs`, `command_atom`).
+/// glyph table (the retired old compiler's `math.rs`, `command_atom`).
 pub const STRUCTURAL_MATH_FEATURES: &[&str] = &["\\frac{}{}", "\\sqrt{}", "^{}", "_{}"];
 
 /// The named-symbol commands of `data/math-symbol-features.txt`, in file order.

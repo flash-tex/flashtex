@@ -8,7 +8,7 @@ executes the shipped scripts.
 
 Retirement stage S6 (#1236) removed the old engine's routes from the app, and
 with them this runner's typing bench (`tools/typing-bench`, which drove only
-the old engine's routes), the packaged render-pipeline attach, the exact
+the old engine's routes), the packaged old-pipeline attach, the exact
 export, the worker relaunch and multi-file helper-route cycles, and the
 per-stage typing attribution (`lib/typing_attribution.py`, `quiet-window.sh`).
 Their evidence stays under `reports/`. The engine's own keystroke-to-page bench is

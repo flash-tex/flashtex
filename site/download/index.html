@@ -116,7 +116,7 @@
   </div>
 
   <section id="panel-stable" role="tabpanel" aria-labelledby="tab-stable">
-    <p class="path-lede">Two ways to install: <strong>A</strong> gets you just the LaTeX engine and the <code>flashtex</code> command line, for macOS or Linux, any editor; <strong>B</strong> gets the native Mac app — a SwiftUI IDE with a live preview, built on that same engine — and bundles the CLI inside it too.</p>
+    <p class="path-lede">Two ways to install: <strong>A</strong> gets you just the LaTeX engine and the <code>flashtex</code> command line, for macOS or Linux, any editor; <strong>B</strong> gets the native Mac app — a SwiftUI IDE with a live preview, built on that same engine.</p>
 
     <h2 class="group-head" id="gui-install">A — Engine + native GUI <span class="group-sub">macOS only, for now</span></h2>
     <ul class="rows">
@@ -136,7 +136,7 @@
             </a>
             <span class="btn is-disabled">Intel <span class="btn-meta">not yet available</span></span>
           </div>
-          <p>A disk image containing <code>FlashTeX.app</code> — the Rust engine, PDF writer and capture bridge bundled inside, plus the CLI at <code>Contents/MacOS/flashtex-cli</code> (run its <code>install-cli</code> subcommand to also link it into <code>/usr/local/bin</code>). No TeX distribution required.</p>
+          <p>A disk image containing <code>FlashTeX.app</code> — the engine and the capture bridge bundled inside. It uses your TeX Live if you have one, and otherwise offers to download the pinned TeX files it needs. For the <code>flashtex</code> command line, use <a href="#cli-install">path B</a>.</p>
           <p class="row-warn">macOS blocks this on first launch, because FlashTeX isn't notarized by Apple yet. You'll need to approve it once — <a href="#first-launch">how to do that</a>, or <a href="#app-cli-install">install from the command line</a> and skip it entirely.</p>
         </div>
       </li>
@@ -187,7 +187,7 @@
         <li><span>Native GUI — macOS (SwiftUI)</span><span>Available today</span></li>
         <li><span>Native GUI — other platforms</span><span>Not yet</span></li>
       </ul>
-      <p>No GUI on your platform yet? The CLI works with any editor or CI, and the JSON&nbsp;Lines <code>worker</code> protocol it speaks is documented for integrations: <a href="https://github.com/flash-tex/flashtex/blob/main/docs/user/compiler.md#worker">The <code>flashtex</code> command line</a> and <a href="https://github.com/flash-tex/flashtex/blob/main/docs/extensibility.md">Extending FlashTeX</a>.</p>
+      <p>No GUI on your platform yet? The CLI works with any editor or CI: <a href="https://github.com/flash-tex/flashtex/blob/main/docs/user/compiler.md">The <code>flashtex</code> command line</a> and <a href="https://github.com/flash-tex/flashtex/blob/main/docs/extensibility.md">Extending FlashTeX</a>.</p>
     </div>
 
     <div class="note" id="first-launch">
@@ -219,7 +219,7 @@
             <code><span class="p">$ </span>curl -fsSL https://flash-tex.github.io/flashtex/install-cli.sh | sh</code>
             <button class="copy" type="button" data-copy="curl -fsSL https://flash-tex.github.io/flashtex/install-cli.sh | sh">Copy</button>
           </div>
-          <p>Detects your OS and CPU, downloads the matching <code>flashtex-cli-{{TAG}}-&lt;platform&gt;.tar.gz</code>, verifies it against the release's <a href="https://github.com/flash-tex/flashtex/releases/download/{{TAG}}/SHA256SUMS">SHA256SUMS</a> and refuses on a mismatch, then installs <code>flashtex</code> into <code>~/.local/bin</code> and its fonts/metrics into <code>~/.local/share/flashtex</code>. Pass <code>--prefix /usr/local</code> for a system install, <code>--version vX.Y.Z</code> for another release, or <code>--uninstall</code> to remove it. <a href="../install-cli.sh">Read the script</a>.</p>
+          <p>Detects your OS and CPU, downloads the matching <code>flashtex-cli-{{TAG}}-&lt;platform&gt;.tar.gz</code>, verifies it against the release's <a href="https://github.com/flash-tex/flashtex/releases/download/{{TAG}}/SHA256SUMS">SHA256SUMS</a> and refuses on a mismatch, then installs <code>flashtex</code> and its engine hosts into <code>~/.local/bin</code> and their licences and source offer into <code>~/.local/share/flashtex</code>. Pass <code>--prefix /usr/local</code> for a system install, <code>--version vX.Y.Z</code> for another release, or <code>--uninstall</code> to remove it. <a href="../install-cli.sh">Read the script</a>.</p>
         </div>
       </li>
 
@@ -241,7 +241,7 @@
             </a>{{/if}}
             {{#if NO_LINUX_CLI}}<span class="btn is-disabled">Linux x86_64 <span class="btn-meta">not built for {{TAG}}</span></span>{{/if}}
           </div>
-          <p>Extract anywhere and run <code>bin/flashtex build main.tex</code> — no TeX installation, no environment variables. <code>bin/flashtex install-cli</code> symlinks it into <code>/usr/local/bin</code> without breaking the fonts it finds next to itself.</p>
+          <p>Extract anywhere and run <code>bin/flashtex build main.tex</code>: the PDF pdflatex writes. It uses your TeX Live; without one, set <code>FLASHTEX_BUNDLE_ALLOW_FETCH=1</code> to let it download the pinned TeX files. Keep <code>bin/</code> together: <code>flashtex</code> runs the engine hosts beside it. <code>bin/flashtex licenses</code> prints the licences and where the engine's GPL source is.</p>
         </div>
       </li>
 

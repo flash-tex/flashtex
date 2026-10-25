@@ -10,7 +10,8 @@ import Foundation
 ///
 /// `names(forPrefix:in:)` mirrors only the two table-order rules documented
 /// on `Completion.suggestions` — the name spelled exactly as typed first (if
-/// it exists in `supported`), then vocabulary table order — plus the class
+/// it exists in `supported`), then vocabulary table order, the unannotated
+/// package commands only when no annotated command matches — plus the class
 /// gate for the fixtures' project class (an article unless a test says
 /// otherwise: beamer's `\setbeamertemplate` and `\subtitle` are not offered
 /// there, `Entry.offered(inClass:)`), and not the rest of
@@ -31,12 +32,19 @@ enum CompletionTestVocabulary {
                       projectClass: String? = "article") -> [String] {
         var offered = Set<String>()
         var out: [String] = []
+        // The unannotated package commands are held back while an annotated
+        // command matches (the exact spelling never is).
+        var held: [String] = []
+        var annotatedMatched = false
         let exact = supported.contains(prefix) ? [prefix] : []
         for name in exact + supported where name.hasPrefix(prefix) && offered.insert(name).inserted {
             guard name == prefix || Completion.Vocabulary.byName[name]?.offered(inClass: projectClass) ?? true else { continue }
+            let annotated = Completion.Vocabulary.byName[name]?.annotated ?? true
+            if !annotated && name != prefix { held.append(name); continue }
+            annotatedMatched = annotatedMatched || annotated
             out.append(name)
         }
-        return out
+        return annotatedMatched ? out : out + held
     }
 
     /// `names(forPrefix:in:)` rendered as popup labels (`\section{...}`); a
