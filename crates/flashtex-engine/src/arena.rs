@@ -863,9 +863,10 @@ struct Keyframe {
     id: CheckpointId,
     tail: Vec<CheckpointId>,
     history_gen: u64,
-    /// Sorted.
+    /// The chunks, in the order of their copies in `buf`, and where each is.
     cs: Vec<u32>,
     buf: Vec<u64>,
+    at: ChunkMap<u32>,
 }
 
 impl Keyframe {
@@ -878,16 +879,72 @@ impl Keyframe {
 
     /// Chunk `c`'s value at `id`, if kept here.
     fn get(&self, c: u32) -> Option<*const u64> {
-        let i = self.cs.binary_search(&c).ok()?;
+        let i = *self.at.get(&c)? as usize;
         Some(self.buf[i * CHUNK_WORDS..].as_ptr())
+    }
+
+    /// The same, to change it.
+    fn get_mut(&mut self, c: u32) -> Option<&mut [u64]> {
+        let i = *self.at.get(&c)? as usize;
+        Some(&mut self.buf[i * CHUNK_WORDS..(i + 1) * CHUNK_WORDS])
+    }
+
+    /// Keep `words` (CHUNK_WORDS) as chunk `c`'s value at `id`.
+    fn add(&mut self, c: u32, words: &[u64]) {
+        self.at.insert(c, self.cs.len() as u32);
+        self.cs.push(c);
+        self.buf.extend_from_slice(words);
+    }
+
+    /// A checkpoint taken after the newest of the tail, `id`, sealing the
+    /// open log `open` (whose pre-images are the chunks' values at the
+    /// tail's newest checkpoint): the chunks it holds that the keyframe
+    /// does not had no history from the keyframe's checkpoint on, so those
+    /// values are theirs there, and are kept; the tail grows by `id`.
+    fn absorb(&mut self, open: &Log, id: CheckpointId) {
+        for &(c, p) in &open.entries {
+            if self.get(c).is_none() {
+                // SAFETY: an open log's entry is a whole slab chunk.
+                self.add(c, unsafe { std::slice::from_raw_parts(p as *const u64, CHUNK_WORDS) });
+            }
+        }
+        self.tail.push(id);
     }
 
     fn bytes(&self) -> usize {
         self.buf.capacity() * 8 + self.cs.capacity() * 4 + self.tail.capacity() * 8
     }
+
+    /// The keyframe after a `retain` left the checkpoints `ids`: still
+    /// valid when its own checkpoint and the newest are kept and every
+    /// checkpoint kept after it was in `tail` (each dropped log merged into
+    /// its predecessor: the state at every kept checkpoint, and the chunks
+    /// the logs from it on hold, are as before), with the kept ones as its
+    /// tail; else none.
+    fn retained(mut self, ids: &[CheckpointId]) -> Option<Keyframe> {
+        let k = ids.iter().rposition(|&x| x == self.id)?;
+        let mut t = self.tail.iter();
+        let ok = ids[k..].iter().all(|i| t.any(|x| x == i))
+            && ids.last() == self.tail.last();
+        if !ok {
+            return None;
+        }
+        self.tail = ids[k..].to_vec();
+        Some(self)
+    }
 }
 
 /// `FLASHTEX_VERIFY_PREPARED` checks the keyframe's uses too.
+/// The most chunks a keyframe takes in by `Keyframe::absorb` (32 MB): a
+/// run that goes on long after the jump without restoring drops it.
+const KEYFRAME_MAX_CHUNKS: usize = 32 * 1024;
+
+fn key_dropped(why: &str) {
+    if std::env::var_os("FLASHTEX_INCR_DEBUG").is_some() {
+        eprintln!("[arena] keyframe dropped: {why}");
+    }
+}
+
 fn verify_keyframes() -> bool {
     static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     *ON.get_or_init(|| std::env::var_os("FLASHTEX_VERIFY_PREPARED").is_some())
@@ -1005,10 +1062,27 @@ impl Core {
     }
 
     fn checkpoint(&mut self) -> CheckpointId {
+        let id = self.next_id;
+        // (the keyframe, if valid, takes the chunks the open log alone
+        // holds: `Keyframe::absorb`)
+        if let Some(kf) = self.key.take() {
+            let ok = kf.history_gen == self.history_gen && kf.index_in(&self.ids).is_some();
+            match self.logs.last() {
+                Some(open) if ok => {
+                    let mut kf = kf;
+                    kf.absorb(open, id);
+                    if kf.cs.len() <= KEYFRAME_MAX_CHUNKS {
+                        self.key = Some(kf);
+                    } else {
+                        key_dropped("too large");
+                    }
+                }
+                _ => key_dropped("a checkpoint after it"),
+            }
+        }
         if let Some(i) = self.logs.len().checked_sub(1) {
             self.seal(i);
         }
-        let id = self.next_id;
         self.next_id += 1;
         self.ids.push(id);
         self.logs.push(Log::default());
@@ -1557,7 +1631,11 @@ impl Core {
         self.clear_saved();
         match (kt, self.key.as_mut()) {
             (Some(kt), Some(kf)) => kf.tail = self.ids[kt..].to_vec(),
-            _ => self.key = None,
+            _ => {
+                if self.key.take().is_some() {
+                    key_dropped("a discarding restore before it");
+                }
+            }
         }
         Ok(())
     }
@@ -1741,7 +1819,7 @@ impl Core {
             .unwrap_or_default();
         let mut mark = std::mem::take(&mut self.mark);
         mark.fill(0);
-        let mut cs: Vec<u32> = Vec::with_capacity(kf.cs.len());
+        let mut cs: Vec<u32> = Vec::with_capacity(kf.cs.len() + 64);
         let mut add = |c: u32, cs: &mut Vec<u32>| {
             if !bit(&mark, c as usize) {
                 set_bit(&mut mark, c as usize);
@@ -1913,12 +1991,14 @@ impl Core {
             if std::env::var_os("FLASHTEX_INCR_DEBUG").is_some() {
                 eprintln!("[arena] keyframe at {old}: {} chunks", cs.len());
             }
+            let at = cs.iter().enumerate().map(|(i, &c)| (c, i as u32)).collect();
             self.key = Some(Keyframe {
                 id: old,
                 tail: keep_ids.clone(),
                 history_gen: self.history_gen,
                 cs,
                 buf,
+                at,
             });
         }
         self.copy_in(&jobs);
@@ -1985,6 +2065,9 @@ impl Core {
         // (the keyframe comes back with the logs it is for, unless a log
         // was changed in place meanwhile)
         self.key = key.filter(|kf| kf.history_gen == self.history_gen);
+        if self.key.is_none() {
+            key_dropped("reattach");
+        }
         // (every flag clear: the barrier's first write to any chunk
         // materializes, `save`)
         self.clear_saved();
@@ -2206,9 +2289,7 @@ impl Core {
         }
         b.ids = out_ids;
         b.logs = out_logs;
-        if b.key.as_ref().is_some_and(|kf| kf.index_in(&b.ids).is_none()) {
-            b.key = None;
-        }
+        b.key = b.key.take().and_then(|kf| kf.retained(&b.ids));
     }
 
     /// Drop every checkpoint `keep` rejects, except the newest, merging each
@@ -2243,8 +2324,11 @@ impl Core {
         }
         self.ids = out_ids;
         self.logs = out_logs;
-        if self.key.as_ref().is_some_and(|kf| kf.index_in(&self.ids).is_none()) {
-            self.key = None;
+        if let Some(kf) = self.key.take() {
+            self.key = kf.retained(&self.ids);
+            if self.key.is_none() {
+                key_dropped("retain");
+            }
         }
     }
 }
@@ -2815,15 +2899,17 @@ impl Arena {
             .and_then(|kf| kf.index_in(&core.ids))
             .filter(|&kt| kt >= k);
         if key_at.is_none() {
-            core.key = None;
+            if core.key.take().is_some() {
+                key_dropped("a change in place before it");
+            }
         }
         core.history_gen += 1;
         if let Some(kf) = core.key.as_mut() {
             kf.history_gen = core.history_gen;
             for (i, &off) in offs.iter().enumerate() {
                 let c = (off >> CHUNK_SHIFT) as u32;
-                if let Ok(ci) = kf.cs.binary_search(&c) {
-                    let w = &mut kf.buf[ci * CHUNK_WORDS + (off & (CHUNK_BYTES - 1)) / 8];
+                if let Some(ws) = kf.get_mut(c) {
+                    let w = &mut ws[(off & (CHUNK_BYTES - 1)) / 8];
                     *w = f(i, *w);
                 }
             }
