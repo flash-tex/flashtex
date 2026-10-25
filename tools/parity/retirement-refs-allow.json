@@ -127,6 +127,11 @@
       ],
       "allow": [
         {
+          "path": "apps/ios/FlashTeXPad/Resources/supported-latex.json",
+          "until": "n/a",
+          "why": "provenance: the completion annotations were extracted from the retired compiler's inventory (f16430793); the vocabulary and the generator's test name that source"
+        },
+        {
           "path": "apps/mac/Fonts/README.md",
           "until": "S8 (final sweep)",
           "why": "provenance of a pinned face or metric: which old renderer it was first pinned for"
@@ -175,6 +180,11 @@
           "path": "apps/mac/Sources/FlashTeXMac/ProjectScaffold.swift",
           "until": "S8 (final sweep)",
           "why": "a history comment or dated record naming what S7 deleted"
+        },
+        {
+          "path": "apps/mac/Sources/FlashTeXMac/Resources/supported-latex.json",
+          "until": "n/a",
+          "why": "provenance: the completion annotations were extracted from the retired compiler's inventory (f16430793); the vocabulary and the generator's test name that source"
         },
         {
           "path": "apps/mac/Tests/FlashTeXMacTests/CompletionTests.swift",
@@ -242,9 +252,24 @@
           "why": "names the retired helpers to assert or ensure they are absent"
         },
         {
+          "path": "apps/mac/scripts/test_gen_supported_latex.py",
+          "until": "n/a",
+          "why": "provenance: the completion annotations were extracted from the retired compiler's inventory (f16430793); the vocabulary and the generator's test name that source"
+        },
+        {
           "path": "apps/mac/supported-latex/README.md",
           "until": "S8 (final sweep)",
           "why": "a history comment or dated record naming what S7 deleted"
+        },
+        {
+          "path": "apps/mac/supported-latex/annotations.json",
+          "until": "n/a",
+          "why": "provenance: the completion annotations were extracted from the retired compiler's inventory (f16430793); the vocabulary and the generator's test name that source"
+        },
+        {
+          "path": "apps/mac/supported-latex/supported-latex.json",
+          "until": "n/a",
+          "why": "provenance: the completion annotations were extracted from the retired compiler's inventory (f16430793); the vocabulary and the generator's test name that source"
         },
         {
           "path": "crates/document-runtime/benchmarks/display-exact-size-6e69661/evidence.json",
