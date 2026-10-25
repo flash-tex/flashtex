@@ -53,6 +53,13 @@ pub type Read = (
     (Option<u64>, bool, Option<i64>, Option<u64>),
 );
 
+/// An output file open at S₁: path, length there, the bytes (`None`: the
+/// PDF, by its hash), the hash.
+pub type Output = (String, u64, Option<Vec<u8>>, [u64; 2]);
+
+/// The position corrections S₁ owes: `incr::Reloc`'s pieces and overrides.
+pub type RelocParts = (Vec<(i64, i64)>, Vec<(u64, u64, u64)>);
+
 /// S₁'s header.
 pub struct Head {
     /// The S₀ it extends ([`key_tag`]).
@@ -66,7 +73,7 @@ pub struct Head {
     pub frames: Vec<([u64; 2], u64)>,
     /// The output files open at S₁: path, length there, the bytes (`None`:
     /// the PDF, by its hash).
-    pub outputs: Vec<(String, u64, Option<Vec<u8>>, [u64; 2])>,
+    pub outputs: Vec<Output>,
     pub terminal: Vec<u8>,
     pub notes: Vec<crate::diag::Note>,
     pub opens: Vec<String>,
@@ -80,7 +87,7 @@ pub struct Head {
     pub side: Vec<(u64, u32)>,
     /// The position corrections S₁ owes (`incr::Reloc`'s pieces and
     /// overrides), applied after it is loaded.
-    pub reloc: (Vec<(i64, i64)>, Vec<(u64, u64, u64)>),
+    pub reloc: RelocParts,
     pub sizes: (u64, u64),
 }
 
@@ -218,7 +225,7 @@ pub struct Input<'a> {
     pub total: usize,
     pub frames: Vec<([u64; 2], u64)>,
     pub journal: &'a ReadLog,
-    pub reloc: (Vec<(i64, i64)>, Vec<(u64, u64, u64)>),
+    pub reloc: RelocParts,
     pub clock: (i64, i32),
     pub first_line: &'a [u8],
 }
