@@ -161,9 +161,16 @@ export FLASHTEX_LM_DIR="${FLASHTEX_LM_DIR:-$ROOT/apps/mac/Fonts}"
 # cargo and rustup keep their real homes.
 REAL_CARGO_HOME="${CARGO_HOME:-$HOME/.cargo}"
 REAL_RUSTUP_HOME="${RUSTUP_HOME:-$HOME/.rustup}"
+# The gate's temporary directory, without a trailing slash. macOS's TMPDIR ends in
+# one, so "$TMPDIR/x" has a `//`, and in a path kpathsea reads `//` as "every
+# subdirectory": with HOME=$TMPDIR/flashtex-gate-home-*, TEXMFHOME's lookup walked
+# all of $TMPDIR for over an hour. flashtex-xetex's hosts then never listened, and
+# 19 of its host tests failed after 600 s each (REAL-DOC-GATE, 2026-10-24).
+GATE_TMP="${TMPDIR:-/tmp}"
+GATE_TMP="${GATE_TMP%/}"
 cargo_test() { # cargo_test <cargo test args...>
   local home rc=0 leaked
-  home="$(mktemp -d "${TMPDIR:-/tmp}/flashtex-gate-home-XXXXXX")"
+  home="$(mktemp -d "$GATE_TMP/flashtex-gate-home-XXXXXX")"
   HOME="$home" XDG_CACHE_HOME="$home/.cache" \
     CARGO_HOME="$REAL_CARGO_HOME" RUSTUP_HOME="$REAL_RUSTUP_HOME" \
     cargo test "$@" || rc=$?
@@ -280,7 +287,7 @@ PY
 
 CRATE_TABLE=""
 if (( BASE_OK )); then
-  CHANGED_LIST="$(mktemp "${TMPDIR:-/tmp}/flashtex-gate-changed-XXXXXX")"
+  CHANGED_LIST="$(mktemp "$GATE_TMP/flashtex-gate-changed-XXXXXX")"
   trap 'rm -f "$CHANGED_LIST"' EXIT
   printf '%s\n' "$CHANGED_FILES" > "$CHANGED_LIST"
   CRATE_TABLE="$(crate_table "$CHANGED_LIST")"
@@ -506,9 +513,9 @@ gate_tests_touched() {
 # formats, scripts/engine-parity.sh build; needs TeX Live 2026 first on PATH).
 gate_parity_fixtures() {
   local work out ew
-  work="${TMPDIR:-/tmp}/flashtex-gate-parity-work"
-  out="${TMPDIR:-/tmp}/flashtex-gate-parity"
-  ew="${TMPDIR:-/tmp}/flashtex-gate-engine"
+  work="$GATE_TMP/flashtex-gate-parity-work"
+  out="$GATE_TMP/flashtex-gate-parity"
+  ew="$GATE_TMP/flashtex-gate-engine"
   scripts/engine-parity.sh --work "$ew" build
   rm -rf "$work" "$out"
   # ${a[@]+"${a[@]}"}: expanding an EMPTY array under `set -u` is an error on
@@ -563,7 +570,7 @@ standalone_profile() { # standalone_profile <debug|release>
 
 gate_mac_app() {
   local helpers
-  helpers="${TMPDIR:-/tmp}/flashtex-gate-helpers.env"
+  helpers="$GATE_TMP/flashtex-gate-helpers.env"
   scripts/ci/build-helpers.sh > "$helpers"
   set -a; # shellcheck disable=SC1090
   source "$helpers"; set +a

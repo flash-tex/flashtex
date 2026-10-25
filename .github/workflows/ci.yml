@@ -1343,10 +1343,19 @@ jobs:
           brew install --cask basictex
           echo /Library/TeX/texbin >> "$GITHUB_PATH"
           export PATH="/Library/TeX/texbin:$PATH"
-          pkgs=()
-          while read -r p; do [[ -n "$p" && "$p" != \#* ]] && pkgs+=("$p"); done < scripts/ci/realdoc-texlive-packages.txt
+          want=()
+          while read -r p; do [[ -n "$p" && "$p" != \#* ]] && want+=("$p"); done < scripts/ci/realdoc-texlive-packages.txt
           for attempt in 1 2 3 4; do
-            sudo tlmgr update --self && sudo tlmgr install "${pkgs[@]}" && break
+            sudo tlmgr update --self || { sleep 5; continue; }
+            # Only the listed packages the repository has: CTAN renames and merges
+            # packages (l3backend went into l3kernel), and one unknown name
+            # makes `tlmgr install` refuse the whole list.
+            avail="$(tlmgr info --data name 2>/dev/null)"
+            pkgs=()
+            for p in "${want[@]}"; do
+              if grep -qx "$p" <<<"$avail"; then pkgs+=("$p"); else echo "not in the repository (skipped): $p"; fi
+            done
+            sudo tlmgr install "${pkgs[@]}" && break
             [ "$attempt" = 4 ] && exit 1
             echo "tlmgr attempt $attempt failed (mirror skew?): again"; sleep 5
           done
