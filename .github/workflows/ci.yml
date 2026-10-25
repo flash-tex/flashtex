@@ -1347,14 +1347,14 @@ jobs:
           while read -r p; do [[ -n "$p" && "$p" != \#* ]] && want+=("$p"); done < scripts/ci/realdoc-texlive-packages.txt
           for attempt in 1 2 3 4; do
             sudo tlmgr update --self || { sleep 5; continue; }
-            # Only the listed packages the repository has: CTAN renames and merges
-            # packages (l3backend went into l3kernel), and one unknown name
-            # makes `tlmgr install` refuse the whole list.
-            avail="$(tlmgr info --data name 2>/dev/null)"
+            # Only the listed packages BasicTeX lacks: the list comes from a full
+            # TeX Live's tlpdb, and a name the repository no longer has
+            # (l3backend, which BasicTeX already carries) fails the whole install.
+            have="$(tlmgr info --only-installed --data name 2>/dev/null)"
             pkgs=()
-            for p in "${want[@]}"; do
-              if grep -qx "$p" <<<"$avail"; then pkgs+=("$p"); else echo "not in the repository (skipped): $p"; fi
-            done
+            for p in "${want[@]}"; do grep -qx "$p" <<<"$have" || pkgs+=("$p"); done
+            echo "installing ${#pkgs[@]} of ${#want[@]} packages: ${pkgs[*]}"
+            [ ${#pkgs[@]} = 0 ] && break
             sudo tlmgr install "${pkgs[@]}" && break
             [ "$attempt" = 4 ] && exit 1
             echo "tlmgr attempt $attempt failed (mirror skew?): again"; sleep 5
