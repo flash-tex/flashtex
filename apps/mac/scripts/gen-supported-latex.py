@@ -2,9 +2,9 @@
 """Generate supported-latex.json from measured package support. MIT.
 
 The completion vocabulary both editors bundle (schema flashtex-supported-latex/1)
-comes from the new engine's measured package support and from pdfTeX, never
-from hand-written tables or from the old compiler (retirement plan RQ5, ruled
-2026-10-11). Three steps, each with its own committed file under
+takes which commands exist from the new engine's measured package support and
+from pdfTeX, never from hand-written tables (retirement plan RQ5, ruled
+2026-10-11). Four steps, each with its own committed file under
 apps/mac/supported-latex/:
 
   record   package-smoke.json  which package-smoke documents the new engine
@@ -17,31 +17,56 @@ apps/mac/supported-latex/:
                                VOCABULARY_MIN_DOCUMENTS of the 400 papers of
                                tools/package-smoke/sample-400.json. Needs TeX
                                Live 2026 (pdflatex, kpsewhich).
-  render   supported-latex.json  the vocabulary, from the two files above and
+  annotate annotations.json    how completion presents a command: the rows of
+                               the retired compiler's inventory (generated,
+                               MIT; S7 deleted the compiler), in its order, each
+                               with its mode, origin, argument shape and glyph
+                               and nothing about the deleted compiler's
+                               behaviour. A one-off; --from is that inventory
+                               as of f16430793 (apps/mac/Sources/FlashTeXMac/
+                               Resources/supported-latex.json there).
+  render   supported-latex.json  the vocabulary, from the three files above and
                                the package-smoke manifests. Standard library
                                only, no TeX: CI re-renders it and compares.
 
     gen-supported-latex.py record --smoke-log smoke-new.txt --oracle oracle.json \\
         --engine-commit SHA --source URL
     gen-supported-latex.py probe [--texbin DIR] [--out FILE] [--check]
+    gen-supported-latex.py annotate --from OLD-INVENTORY.json [--check]
     gen-supported-latex.py render [--install]
     gen-supported-latex.py check [--installed]
 
-`check` (and `probe --check`) exit 0 when the committed file is what the step
-produces now, 1 when it is stale, 2 when it cannot check here (`probe` without
-pdflatex). `render --install` also writes the two bundled copies the editors
-decode (apps/mac/Sources/FlashTeXMac/Resources/ and
+`check` (and `probe --check`, `annotate --check`) exit 0 when the committed
+file is what the step produces now, 1 when it is stale, 2 when it cannot check
+here (`probe` without pdflatex). `render --install` also writes the two bundled
+copies the editors decode (apps/mac/Sources/FlashTeXMac/Resources/ and
 apps/ios/FlashTeXPad/Resources/), and `check --installed` compares them too
 (CI, gate.sh and make-app.sh run it).
 
-How a definition becomes a vocabulary row (`classify`): a \\mathchardef is a
-math symbol (math only); a macro whose body starts with a math-only primitive
-(\\mathaccent, \\mathop, \\radical, ...) or a math-only primitive itself is a
-math structure (math only); every other command is offered in text and in math
-(a text row plus a math twin), because pdfTeX accepts a macro in either mode
-and the oracle does not say otherwise. Argument shapes come from the macro's
-parameter text, LaTeX's optional-argument inner macro, or for a document
-command its argument specification (\\GetDocumentCommandArgSpec).
+Which rows render writes (`render_data`): presence is measured, presentation is
+annotated. First every annotation row, in the annotations' order, kept only
+when the probe measured its name (the kernel or a vocabulary package defines
+it; either mode). The row takes the annotation's mode, origin, arguments and
+glyph, and the first measuring source's `source` and description ("LaTeX
+kernel", "\\usepackage{amsmath}"; "accepted" for the math twin of a text row).
+Then each vocabulary package's measured commands that no annotation names,
+classified from their definitions (below) and marked `"annotated": false`:
+both editors offer such a command only when no annotated one matches what was
+typed (babel's \\frq never buries \\frac). A package's \\X and \\endX for its
+own environment X are that environment's begin and end, not commands, and are
+left out.
+The kernel's unannotated names are not added: they are mostly internals
+(\\secdef, \\sectionmark, \\setbox). Environments follow the same rule.
+
+How an unannotated definition becomes a vocabulary row (`classify`): a
+\\mathchardef is a math symbol (math only); a macro whose body starts with a
+math-only primitive (\\mathaccent, \\mathop, \\radical, ...) or a math-only
+primitive itself is a math structure (math only); every other command is
+offered in text and in math (a text row plus a math twin), because pdfTeX
+accepts a macro in either mode and the oracle does not say otherwise. Argument
+shapes come from the macro's parameter text, LaTeX's optional-argument inner
+macro, or for a document command its argument specification
+(\\GetDocumentCommandArgSpec).
 """
 import argparse
 import glob
@@ -60,6 +85,7 @@ DATA_DIR = os.path.join(MAC_DIR, "supported-latex")
 SMOKE_DIR = os.path.join(ROOT, "tools", "package-smoke")
 MEASURED = os.path.join(DATA_DIR, "package-smoke.json")
 PROBE = os.path.join(DATA_DIR, "probe.json")
+ANNOTATIONS = os.path.join(DATA_DIR, "annotations.json")
 OUTPUT = os.path.join(DATA_DIR, "supported-latex.json")
 INSTALLED = [
     os.path.join(MAC_DIR, "Sources", "FlashTeXMac", "Resources", "supported-latex.json"),
@@ -602,26 +628,73 @@ def rows(source, description, commands):
     return out
 
 
-def render_data(measured, probe_data, docs, frequency, sample_documents):
+def render_data(measured, probe_data, docs, frequency, sample_documents, annotations):
+    """The vocabulary: presence from the probe, presentation from the annotations
+    (the module docstring states the rule)."""
     verified = verified_packages(measured, docs)
-    commands, environments, seen, seen_env = [], [], set(), set()
-
-    def add(source, description, part):
-        for r in rows(source, description, part.get("commands", {})):
-            key = (r["name"], r["mode"])
-            if key not in seen:
-                seen.add(key)
-                commands.append(r)
-        for e in part.get("environments", []):
-            if e not in seen_env:
-                seen_env.add(e)
-                environments.append({"name": e, "mode": "text", "description": description, "source": source})
-    add("latex", "LaTeX kernel", probe_data["kernel"])
+    sources = [("latex", "LaTeX kernel", probe_data["kernel"])]
     for p in vocabulary_packages(measured, docs, frequency):
         part = probe_data["packages"].get(p)
         if part is None:
             raise Usage("probe.json lacks %s; re-run the probe step" % p)
-        add(p, "\\usepackage{%s}" % p, part)
+        sources.append((p, "\\usepackage{%s}" % p, part))
+
+    def command_source(name):
+        for source, description, part in sources:
+            d = part.get("commands", {}).get(name)
+            if d is not None and classify(name, d)[0] is not None:
+                return source, description
+        return None
+
+    def environment_source(name):
+        for source, description, part in sources:
+            if name in part.get("environments", []):
+                return source, description
+        return None
+
+    commands, environments, seen, seen_env = [], [], set(), set()
+    annotated = {a["name"] for a in annotations["commands"]}
+    text_rows = {a["name"] for a in annotations["commands"] if a["mode"] == "text"}
+    for a in annotations["commands"]:
+        hit = command_source(a["name"])
+        if hit is None or (a["name"], a["mode"]) in seen:
+            continue
+        source, description = hit
+        if a["mode"] == "math" and a["name"] in text_rows:
+            description = "accepted"  # the math twin of a text row, as rows() writes it
+        row = {"name": a["name"], "mode": a["mode"], "origin": a["origin"], "arguments": a["arguments"],
+               "description": description}
+        if "glyph" in a:
+            row["glyph"] = a["glyph"]
+        row["renders"] = True
+        row["source"] = source
+        seen.add((a["name"], a["mode"]))
+        commands.append(row)
+    annotated_env = {e["name"] for e in annotations["environments"]}
+    for e in annotations["environments"]:
+        hit = environment_source(e["name"])
+        if hit is None or e["name"] in seen_env:
+            continue
+        seen_env.add(e["name"])
+        environments.append({"name": e["name"], "mode": e["mode"], "description": hit[1], "source": hit[0]})
+    # The vocabulary packages' unannotated names, marked "annotated": false (the
+    # editors offer them when no annotated command matches); not the kernel's (mostly
+    # internals), and not \X or \endX of an environment X (the environment's
+    # begin and end, not commands).
+    for source, description, part in sources[1:]:
+        own_envs = set(part.get("environments", []))
+        env_macros = own_envs | {"end" + e for e in own_envs}
+        extra = {n: d for n, d in part.get("commands", {}).items() if n not in annotated and n not in env_macros}
+        for r in rows(source, description, extra):
+            key = (r["name"], r["mode"])
+            if key not in seen:
+                seen.add(key)
+                r["annotated"] = False
+                commands.append(r)
+        for e in part.get("environments", []):
+            if e not in annotated_env and e not in seen_env:
+                seen_env.add(e)
+                environments.append({"name": e, "mode": "text", "description": description, "source": source})
     vocab = set(vocabulary_packages(measured, docs, frequency))
     packages = []
     for stem, doc in sorted(docs.items(), key=lambda kv: kv[1]["package"]):
@@ -651,6 +724,8 @@ def render_data(measured, probe_data, docs, frequency, sample_documents):
                           "%d of the %d papers of tools/package-smoke/sample-400.json"
                           % (VOCABULARY_MIN_DOCUMENTS, sample_documents),
         },
+        "presentation": "apps/mac/supported-latex/annotations.json: the order, modes, origins, argument shapes "
+                        "and glyphs of the measured names it annotates (%s)" % annotations["from"],
         "commands": commands,
         "environments": environments,
         "packages": packages,
@@ -677,8 +752,76 @@ def dumps_supported(data):
 def render_text():
     with open(PROBE, encoding="utf-8") as fh:
         probe_data = json.load(fh)
+    with open(ANNOTATIONS, encoding="utf-8") as fh:
+        annotations = json.load(fh)
     documents, frequency = sample_frequency()
-    return dumps_supported(render_data(load_measured(), probe_data, smoke_manifests(), frequency, documents))
+    return dumps_supported(render_data(load_measured(), probe_data, smoke_manifests(), frequency, documents,
+                                       annotations))
+
+
+# ---- annotate (a one-off, from the retired compiler's inventory) -----------------
+
+ANNOTATION_KEYS = ("name", "mode", "origin", "arguments", "glyph")
+ANNOTATION_ORIGINS = frozenset(["text_dispatch", "text_style", "text_size", "math_structure", "math_symbol",
+                                "math_operator", "control_symbol", "expansion"])
+
+
+def annotations_from_inventory(old, source):
+    """The retired compiler's inventory (flashtex-supported-latex/1) -> annotations:
+    its rendered command rows and its environments, in its order, with only how
+    completion presents them (no description: those described the deleted
+    compiler's behaviour). A class-scoped row (requires_class: beamer's \\frame,
+    letter's \\address) is left out: it presents another class's command, and
+    the probe measures the article class, whose same-named command (the
+    kernel's \\frame) it would misdescribe."""
+    if old.get("schema") != SCHEMA:
+        raise Usage("--from is not a %s inventory" % SCHEMA)
+    commands, seen = [], set()
+    for c in old["commands"]:
+        if not c.get("renders", False) or "requires_class" in c or (c["name"], c["mode"]) in seen:
+            continue
+        if c["mode"] not in ("text", "math") or c["origin"] not in ANNOTATION_ORIGINS:
+            raise Usage("unexpected row %r" % (c,))
+        seen.add((c["name"], c["mode"]))
+        commands.append({k: c[k] for k in ANNOTATION_KEYS if k in c})
+    environments, seen_env = [], set()
+    for e in old["environments"]:
+        if "requires_class" not in e and e["name"] not in seen_env:
+            seen_env.add(e["name"])
+            environments.append({"name": e["name"], "mode": e["mode"]})
+    return {
+        "about": "How completion presents a command or environment the probe measures: the rows of the "
+                 "retired compiler's inventory (generated, MIT), in its order, with mode, origin, argument "
+                 "shape and glyph only, its class-scoped rows left out. Written once by %s annotate; MIT."
+                 % GENERATOR,
+        "from": source,
+        "commands": commands,
+        "environments": environments,
+    }
+
+
+def dumps_annotations(data):
+    text = "{\n"
+    for k in ("about", "from"):
+        text += '  %s: %s,\n' % (json.dumps(k), json.dumps(data[k], ensure_ascii=False))
+    text += dumps_rows("commands", data["commands"])
+    text += dumps_rows("environments", data["environments"], last=True)
+    return text + "}\n"
+
+
+def annotate(args):
+    with open(args.from_, encoding="utf-8") as fh:
+        raw = fh.read()
+    source = "%s (%s %s, sha256 %s)" % (args.source, json.loads(raw).get("generator"),
+                                        json.loads(raw).get("compiler_version"),
+                                        hashlib.sha256(raw.encode()).hexdigest()[:12])
+    text = dumps_annotations(annotations_from_inventory(json.loads(raw), source))
+    if args.check:
+        return compare_file(ANNOTATIONS, text)
+    with open(ANNOTATIONS, "w", encoding="utf-8") as fh:
+        fh.write(text)
+    print("annotate: wrote %s" % os.path.relpath(ANNOTATIONS, ROOT))
+    return 0
 
 
 def render(args):
@@ -744,13 +887,19 @@ def main(argv=None):
     p.add_argument("--texbin")
     p.add_argument("--out", help="write the probe here (default: the committed probe.json)")
     p.add_argument("--check", action="store_true", help="exit 1 when the committed probe.json differs")
+    a = sub.add_parser("annotate", help="annotations.json from the retired compiler's inventory (a one-off)")
+    a.add_argument("--from", dest="from_", required=True, metavar="OLD-INVENTORY.json")
+    a.add_argument("--source", default="f16430793:apps/mac/Sources/FlashTeXMac/Resources/supported-latex.json",
+                   help="where --from came from (recorded in the file)")
+    a.add_argument("--check", action="store_true", help="exit 1 when the committed annotations.json differs")
     g = sub.add_parser("render", help="supported-latex.json from the committed inputs")
     g.add_argument("--install", action="store_true", help="also write the two bundled copies (S7)")
     c = sub.add_parser("check", help="exit 1 when supported-latex.json is stale")
     c.add_argument("--installed", action="store_true", help="also compare the two bundled copies (S7)")
     args = ap.parse_args(argv)
     try:
-        return {"record": record, "probe": probe, "render": render, "check": check}[args.step](args)
+        return {"record": record, "probe": probe, "annotate": annotate, "render": render,
+                "check": check}[args.step](args)
     except CannotCheck as exc:
         print("cannot check here: %s" % exc, file=sys.stderr)
         return 2

@@ -48,9 +48,12 @@ GENERATORS = {
         lambda: ["crates/math-layout/tools/gen_cm_tfm.py", "--ams", "--check"]),
     # RQ5: the editors' completion vocabulary; its oracle half (probe.json) is
     # checked by the supported-latex workflow, this is the TeX-free render.
+    # annotations.json is the one-off `annotate` step's (its input, the retired
+    # compiler's inventory, is no longer in the tree); recording it here catches
+    # a hand edit.
     "app supported latex": (
         "apps/mac/scripts/gen-supported-latex.py",
-        ["apps/mac/supported-latex/supported-latex.json"],
+        ["apps/mac/supported-latex/annotations.json", "apps/mac/supported-latex/supported-latex.json"],
         lambda: ["apps/mac/scripts/gen-supported-latex.py", "check"]),
 }
 

@@ -1,8 +1,9 @@
 {
   "about": "SHA-256 of each generated table and its generator; verified by scripts/check-generated.py, re-recorded by --update.",
   "sha256": {
-    "apps/mac/scripts/gen-supported-latex.py": "8d00010805d60a9f290e25f636ae196ca1a14ca3af9540356f1162db126e556a",
-    "apps/mac/supported-latex/supported-latex.json": "7c4180c90a1ebaccf64c35bf72e9a97706f4e998a42616b2c6237137d38fa2ab",
+    "apps/mac/scripts/gen-supported-latex.py": "a9871bff212df860a6181db0af385856e95a66706914be4d59e74d8e87b38597",
+    "apps/mac/supported-latex/annotations.json": "d4411da7665e46ab0a94d463ec0ceb058ac59c968ec84c33a6ae3b1750a1f61e",
+    "apps/mac/supported-latex/supported-latex.json": "cb0e9c1f73c211d0b3d0f11d472c111fa97503c275342283d81ef5e0ee4cf4e7",
     "crates/math-layout/src/ams_tfm.rs": "f0fedbcb0c665f2c4c5f711818b204b09b764ba4d623ea75e60947e1d4bc766a",
     "crates/math-layout/src/cm_tfm.rs": "ba10e259453db6dd0e469e6dc5c262b384e509d9cb0de226d378a1ae6890115f",
     "crates/math-layout/tools/gen_cm_tfm.py": "5d70476961898647c44270d6dadf1d14835ba57230859fe471c2ebf5e034ab54"
