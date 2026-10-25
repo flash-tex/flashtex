@@ -505,9 +505,10 @@ struct Obs {
     /// The old run's journal (files) and where each old checkpoint was in
     /// it.
     old_journal_files: Vec<String>,
-    /// The same, with the files the old run closed again too (the barrier
-    /// test (b') needs every later read).
-    old_journal_all: Vec<String>,
+    /// The old run's whole journal, the files it closed again too (the
+    /// barrier test (b') needs every later read, and what each read of a
+    /// file the run wrote found there: `FileRead::seen`).
+    old_journal_all: std::sync::Arc<Vec<system::FileRead>>,
     converge: bool,
     stop_at: Option<usize>,
     converged: Option<(usize, CheckpointId)>,
@@ -1094,6 +1095,11 @@ impl Obs {
         // the one it read (a book's hints, written through its body and read
         // at its end, when the edit wrote no other hint). Only then: any
         // other file one of the runs writes is (`written_same`).
+        // Nor is a file both runs wrote and closed, open in neither here,
+        // that holds now what the old run's read found in it
+        // (`reread_same`): *Infinite Descent* ×2's second copy reads again
+        // the hints and solutions the first copy wrote and closed, and every
+        // keystroke in the second copy re-typeset its last ~48 pages.
         let end = self.old_reads_end.min(self.old_journal_all.len());
         let mut written_read: Option<(usize, String)> = None;
         if from < end {
@@ -1104,17 +1110,21 @@ impl Obs {
                 self.old_outputs.contains(&p) || live.iter().any(|o| norm(o) == p)
             };
             let mut same: HashMap<String, bool> = HashMap::new();
-            written_read = self.old_journal_all[from..end]
+            let mut now: HashMap<String, Option<[u64; 2]>> = HashMap::new();
+            let later = &self.old_journal_all[from..end];
+            written_read = later
                 .iter()
                 .enumerate()
-                .find(|(_, p)| {
+                .find(|&(i, f)| {
+                    let p = f.path.as_str();
                     !p.is_empty()
                         && written(p)
                         && !*same
                             .entry(system::out_key(p))
                             .or_insert_with(|| written_same(g, &o, new, p))
+                        && !reread_same(&o, new, &later[..i], f, &mut now)
                 })
-                .map(|(i, p)| (from + i, p.clone()));
+                .map(|(i, f)| (from + i, f.path.clone()));
         }
         let mut rerun_from =
             if barrier_later || written_read.is_some() || line_barrier.is_some() || end_dirty {
@@ -1147,6 +1157,14 @@ impl Obs {
             } else {
                 None
             };
+        if self.debug && rerun_from.is_some() {
+            eprintln!(
+                "[incr] page {}: the old run's pages kept up to {rerun_from:?}: effect later {barrier_later}, \
+                 read of a written file {written_read:?}, line {:?}, end dirty {end_dirty}",
+                self.pages_so_far(),
+                line_barrier.as_ref().map(|b| b.0)
+            );
+        }
         // the C parts
         if !new.cstate.same_as(&o.cstate) {
             return Err("pdfTeX's C-part state differs".into());
@@ -2231,6 +2249,48 @@ fn written_same(g: &Globals, o: &ExtRecord, new: &ExtRecord, p: &str) -> bool {
         return false;
     };
     now.get(base as usize..ln as usize) == Some(old.as_slice())
+}
+
+/// Whether the old run's later read `f` of a file the runs write (test
+/// (b'), `Obs::test`) reads what the run that converges here would: the
+/// file is open in neither run at the convergence point (no stream on it
+/// in the old run's record `o` or the new one's), and it holds now what
+/// the old run found there when its read opened it (`FileRead::seen`).
+/// The two runs go on alike from here, so whatever the old run writes to
+/// it before that read, the new run would write too (a closed file is
+/// written again only from its start, `\openout`), and what it does not
+/// write is on disk now. A close (`FileRead::closed_at`) reads nothing
+/// more, once the read it ends is one of `before` (the old run's reads
+/// from the convergence point up to `f`), which this test checked:
+/// the file was not open here. `now` caches each file's hash now.
+fn reread_same(
+    o: &ExtRecord,
+    new: &ExtRecord,
+    before: &[system::FileRead],
+    f: &system::FileRead,
+    now: &mut HashMap<String, Option<[u64; 2]>>,
+) -> bool {
+    let k = system::out_key(&f.path);
+    let open = |r: &ExtRecord| {
+        r.files.iter().any(|s| match &s.stream {
+            Stream::In { path, .. } | Stream::Out { path, .. } => system::out_key(path) == k,
+            _ => false,
+        })
+    };
+    if open(o) || open(new) {
+        return false;
+    }
+    if f.closed_at.is_some() {
+        return before
+            .iter()
+            .any(|r| r.closed_at.is_none() && system::out_key(&r.path) == k);
+    }
+    let Some(seen) = f.seen else {
+        return false;
+    };
+    *now.entry(k)
+        .or_insert_with(|| system::content_hash(&f.path))
+        == Some(seen)
 }
 
 /// Write each baseline's content back (`Session::baseline`), as the
@@ -3708,6 +3768,7 @@ impl Session {
                 content: None,
                 closed_at: None,
                 written_before: false,
+                seen: None,
                 stamp: None,
                 size: None,
             });
@@ -3730,6 +3791,7 @@ impl Session {
                     content,
                     closed_at: None,
                     written_before: false,
+                    seen: None,
                     stamp: None,
                     size: None,
                 });
@@ -3749,6 +3811,7 @@ impl Session {
                 content: None,
                 closed_at: Some(u64::MAX),
                 written_before: false,
+                seen: None,
                 stamp: *stamp,
                 size: *size,
             });
@@ -6137,7 +6200,7 @@ impl Session {
             edits: vec![],
             changed: vec![],
             old_journal_files: vec![],
-            old_journal_all: vec![],
+            old_journal_all: Default::default(),
             converge: false,
             stop_at,
             converged: None,
@@ -6602,7 +6665,7 @@ impl Session {
         obs.edits = edits;
         obs.changed = changed;
         obs.old_journal_files = old_files;
-        obs.old_journal_all = jr.files.iter().map(|f| f.path.clone()).collect();
+        obs.old_journal_all = jr.files.clone();
         obs.old_outputs = jr
             .outputs
             .iter()
