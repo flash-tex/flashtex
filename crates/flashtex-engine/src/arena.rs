@@ -840,33 +840,34 @@ struct Lazy {
 /// The largest buffer `Core::spare` keeps.
 const SPARE_MAX: usize = 64 << 20;
 
-/// The state at checkpoint `id` of every chunk the logs from `id` on held
-/// when it was made (lane EDITED-PAGE-20): the convergence jump's own state
-/// there, kept as the jump copies the old run's latest state over it
-/// (`Core::converge`). Typing in one place restores, keystroke after
-/// keystroke, to checkpoints just before `id` (the restart point, then the
-/// revalidation's `p2`) and compares with the old run at checkpoints just
-/// before it (`diff_branch_inner`): each was a pass over every log from
-/// there to the old run's end (on page 887 of Infinite Descent x2, 900 logs
-/// and a million entries, ~36 M instructions a restore); from here, only
-/// the logs from there to `id` are rewound.
+/// The state at checkpoint `id` of exactly the chunks the logs from `id` on
+/// hold (lane EDITED-PAGE-20): the convergence jump's own state there, kept
+/// as the jump copies the old run's latest state over it (`Core::converge`).
+/// Typing in one place restores, keystroke after keystroke, to checkpoints
+/// just before `id` (the restart point, then the revalidation's `p2`) and
+/// compares with the old run at checkpoints just before it
+/// (`diff_branch_inner`): each was a pass over every log from there to the
+/// old run's end (on page 887 of Infinite Descent x2, 900 logs and a
+/// million entries, ~36 M instructions a restore); from here, only the
+/// logs from there to `id` are rewound.
 ///
 /// Valid where the checkpoints from `id` on are `tail` and no log was
-/// changed in place since (`history_gen`; `or_from` keeps it up to date):
-/// the logs from `id` on are then those it was made from but the open one,
-/// which may have taken more chunks since, whose pre-images there are
-/// their values at `id` (they had no history after it). So a chunk's value
-/// at `id` is its copy here, else the open log's pre-image, else the
-/// latest one. It moves with the logs from `id` on: into the branch a
+/// changed in place since (`history_gen`; `or_from` keeps it up to date).
+/// The open log may have taken more chunks since: those had no history
+/// from `id` on, so their pre-images there are their values at `id`. So a
+/// chunk's value at `id` is its copy here, else the open log's pre-image,
+/// else the latest one. What changes the logs from `id` on keeps it exact:
+/// a checkpoint (`absorb`, `sealed`), a merge (`merged`), a discarding
+/// restore (`discarded`). It moves with those logs: into the branch a
 /// restore detaches, back with a reattach.
 struct Keyframe {
     id: CheckpointId,
     tail: Vec<CheckpointId>,
     history_gen: u64,
-    /// The chunks, in the order of their copies in `buf`, and where each is.
-    cs: Vec<u32>,
+    /// Each kept chunk: where its copy is in `buf`, and the checkpoint of
+    /// the oldest log from `id` on that holds it.
+    at: ChunkMap<(u32, CheckpointId)>,
     buf: Vec<u64>,
-    at: ChunkMap<u32>,
 }
 
 impl Keyframe {
@@ -877,50 +878,93 @@ impl Keyframe {
         (ids[k..] == self.tail[..]).then_some(k)
     }
 
+    fn len(&self) -> usize {
+        self.at.len()
+    }
+
+    /// The kept chunks, in no order.
+    fn chunks(&self) -> impl Iterator<Item = u32> + '_ {
+        self.at.keys().copied()
+    }
+
     /// Chunk `c`'s value at `id`, if kept here.
     fn get(&self, c: u32) -> Option<*const u64> {
-        let i = *self.at.get(&c)? as usize;
+        let i = self.at.get(&c)?.0 as usize;
         Some(self.buf[i * CHUNK_WORDS..].as_ptr())
     }
 
     /// The same, to change it.
     fn get_mut(&mut self, c: u32) -> Option<&mut [u64]> {
-        let i = *self.at.get(&c)? as usize;
+        let i = self.at.get(&c)?.0 as usize;
         Some(&mut self.buf[i * CHUNK_WORDS..(i + 1) * CHUNK_WORDS])
     }
 
-    /// Keep `words` (CHUNK_WORDS) as chunk `c`'s value at `id`.
-    fn add(&mut self, c: u32, words: &[u64]) {
-        self.at.insert(c, self.cs.len() as u32);
-        self.cs.push(c);
+    /// Keep `words` (CHUNK_WORDS) as chunk `c`'s value at `id`, first held
+    /// by the log of checkpoint `first`.
+    fn add(&mut self, c: u32, first: CheckpointId, words: &[u64]) {
+        let i = (self.buf.len() / CHUNK_WORDS) as u32;
+        self.at.insert(c, (i, first));
         self.buf.extend_from_slice(words);
     }
 
-    /// A checkpoint taken after the newest of the tail, `id`, sealing the
-    /// open log `open` (whose pre-images are the chunks' values at the
-    /// tail's newest checkpoint): the chunks it holds that the keyframe
-    /// does not had no history from the keyframe's checkpoint on, so those
-    /// values are theirs there, and are kept; the tail grows by `id`.
+    /// A checkpoint `id` about to be taken after the tail's newest, whose
+    /// open log `open` is then sealed: the chunks it holds that the
+    /// keyframe does not had no history from the keyframe's checkpoint on,
+    /// so their pre-images are their values there, and are kept; the tail
+    /// grows by `id`. (`sealed` then drops those the seal found unchanged.)
     fn absorb(&mut self, open: &Log, id: CheckpointId) {
+        let last = *self.tail.last().expect("a keyframe's own checkpoint");
         for &(c, p) in &open.entries {
             if self.get(c).is_none() {
                 // SAFETY: an open log's entry is a whole slab chunk.
-                self.add(c, unsafe { std::slice::from_raw_parts(p as *const u64, CHUNK_WORDS) });
+                let w = unsafe { std::slice::from_raw_parts(p as *const u64, CHUNK_WORDS) };
+                self.add(c, last, w);
             }
         }
         self.tail.push(id);
     }
 
-    fn bytes(&self) -> usize {
-        self.buf.capacity() * 8 + self.cs.capacity() * 4 + self.tail.capacity() * 8
+    /// The log of checkpoint `of`, sealed as `log`, held `chunks` while it
+    /// was open: those the seal found unchanged, which no older log from the
+    /// keyframe's checkpoint on holds, are no longer the logs' (their copy
+    /// is their latest value).
+    fn sealed(&mut self, of: CheckpointId, chunks: &[u32], log: &Log) {
+        for &c in chunks {
+            if self.at.get(&c).is_some_and(|e| e.1 == of)
+                && log.deltas.binary_search_by_key(&c, |d| d.c).is_err()
+            {
+                self.at.remove(&c);
+            }
+        }
     }
 
-    /// The keyframe after a `retain` left the checkpoints `ids`: still
-    /// valid when its own checkpoint and the newest are kept and every
-    /// checkpoint kept after it was in `tail` (each dropped log merged into
-    /// its predecessor: the state at every kept checkpoint, and the chunks
-    /// the logs from it on hold, are as before), with the kept ones as its
-    /// tail; else none.
+    /// The log of checkpoint `gone` (`log`) merged into that of `into`:
+    /// a chunk it held first is now first held there.
+    fn merged(&mut self, gone: CheckpointId, into: CheckpointId, log: &Log) {
+        for c in log.chunk_ids() {
+            if let Some(e) = self.at.get_mut(&c) {
+                if e.1 == gone {
+                    e.1 = into;
+                }
+            }
+        }
+    }
+
+    /// The logs of checkpoints `gone` dropped (a discarding restore): the
+    /// chunks only they held are no longer the logs'.
+    fn discarded(&mut self, gone: &[CheckpointId]) {
+        let gone: std::collections::HashSet<CheckpointId> = gone.iter().copied().collect();
+        self.at.retain(|_, e| !gone.contains(&e.1));
+    }
+
+    fn bytes(&self) -> usize {
+        self.buf.capacity() * 8 + self.at.capacity() * 16 + self.tail.capacity() * 8
+    }
+
+    /// The keyframe after a `retain` left the checkpoints `ids` (which
+    /// `merged` was told of): still valid when its own checkpoint and the
+    /// newest are kept and every checkpoint kept after it was in `tail`,
+    /// with the kept ones as its tail; else none.
     fn retained(mut self, ids: &[CheckpointId]) -> Option<Keyframe> {
         let k = ids.iter().rposition(|&x| x == self.id)?;
         let mut t = self.tail.iter();
@@ -934,7 +978,6 @@ impl Keyframe {
     }
 }
 
-/// `FLASHTEX_VERIFY_PREPARED` checks the keyframe's uses too.
 /// The most chunks a keyframe takes in by `Keyframe::absorb` (32 MB): a
 /// run that goes on long after the jump without restoring drops it.
 const KEYFRAME_MAX_CHUNKS: usize = 32 * 1024;
@@ -945,6 +988,7 @@ fn key_dropped(why: &str) {
     }
 }
 
+/// `FLASHTEX_VERIFY_PREPARED` checks the keyframe's uses too.
 fn verify_keyframes() -> bool {
     static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     *ON.get_or_init(|| std::env::var_os("FLASHTEX_VERIFY_PREPARED").is_some())
@@ -1064,14 +1108,17 @@ impl Core {
     fn checkpoint(&mut self) -> CheckpointId {
         let id = self.next_id;
         // (the keyframe, if valid, takes the chunks the open log alone
-        // holds: `Keyframe::absorb`)
+        // holds, and lets go of those the seal finds unchanged:
+        // `Keyframe::absorb`, `Keyframe::sealed`)
+        let mut open_chunks: Vec<u32> = Vec::new();
         if let Some(kf) = self.key.take() {
             let ok = kf.history_gen == self.history_gen && kf.index_in(&self.ids).is_some();
             match self.logs.last() {
                 Some(open) if ok => {
                     let mut kf = kf;
                     kf.absorb(open, id);
-                    if kf.cs.len() <= KEYFRAME_MAX_CHUNKS {
+                    open_chunks = open.entries.iter().map(|e| e.0).collect();
+                    if kf.len() <= KEYFRAME_MAX_CHUNKS {
                         self.key = Some(kf);
                     } else {
                         key_dropped("too large");
@@ -1082,6 +1129,9 @@ impl Core {
         }
         if let Some(i) = self.logs.len().checked_sub(1) {
             self.seal(i);
+            if let (Some(kf), Some(&of)) = (self.key.as_mut(), self.ids.last()) {
+                kf.sealed(of, &open_chunks, &self.logs[i]);
+            }
         }
         self.next_id += 1;
         self.ids.push(id);
@@ -1611,10 +1661,8 @@ impl Core {
             .ok_or_else(|| format!("checkpoint {id} is not retained"))?;
         // A keyframe at or before `id` stays (the re-run of the document's
         // end from its last page, after a convergence jump): the logs from
-        // it to `id` are kept as they are, and every chunk the dropped ones
-        // held is at its value at `id` again, which for a chunk they alone
-        // held is its value at the keyframe's checkpoint. It may then hold
-        // chunks no log holds any more, whose copies are their live values.
+        // it to `id` are kept as they are, and the chunks only the dropped
+        // ones held are no longer its (`Keyframe::discarded`).
         let kt = self
             .key
             .as_ref()
@@ -1622,6 +1670,8 @@ impl Core {
             .and_then(|kf| kf.index_in(&self.ids))
             .filter(|&kt| kt <= k);
         let later = self.logs.split_off(k);
+        // (the logs dropped: those of `id` and every later checkpoint)
+        let gone: Vec<CheckpointId> = self.ids[k..].to_vec();
         self.ids.truncate(k + 1);
         self.rewind(&later, false);
         for log in later {
@@ -1630,7 +1680,10 @@ impl Core {
         self.logs.push(Log::default());
         self.clear_saved();
         match (kt, self.key.as_mut()) {
-            (Some(kt), Some(kf)) => kf.tail = self.ids[kt..].to_vec(),
+            (Some(kt), Some(kf)) => {
+                kf.discarded(&gone);
+                kf.tail = self.ids[kt..].to_vec();
+            }
             _ => {
                 if self.key.take().is_some() {
                     key_dropped("a discarding restore before it");
@@ -1767,7 +1820,7 @@ impl Core {
                     (None, Some(kt)) => format!(
                         "from the keyframe at {} ({} chunks), {} of {} logs",
                         old_ids[kt - k],
-                        key.as_ref().map_or(0, |kf| kf.cs.len()),
+                        key.as_ref().map_or(0, |kf| kf.len()),
                         kt - k,
                         old_logs.len()
                     ),
@@ -1802,9 +1855,7 @@ impl Core {
     /// at `logs[kt]`'s checkpoint: each chunk starts from its value there
     /// (`Keyframe`'s rule) and is rewound through the logs before it only.
     /// The chunks are the keyframe's, those logs' and the open log's: those
-    /// of `logs`, and, after a discarding restore past the keyframe
-    /// (`restore_discard`), possibly a few no log holds, which keep their
-    /// live values.
+    /// of `logs`, as a whole rewind's.
     fn rewind_keyed(&mut self, logs: &[Log], kt: usize, kf: &Keyframe) -> Vec<(u32, ChunkPtr)> {
         let window = &logs[..kt];
         let open: ChunkMap<*const u64> = logs
@@ -1819,14 +1870,14 @@ impl Core {
             .unwrap_or_default();
         let mut mark = std::mem::take(&mut self.mark);
         mark.fill(0);
-        let mut cs: Vec<u32> = Vec::with_capacity(kf.cs.len() + 64);
+        let mut cs: Vec<u32> = Vec::with_capacity(kf.len() + 64);
         let mut add = |c: u32, cs: &mut Vec<u32>| {
             if !bit(&mark, c as usize) {
                 set_bit(&mut mark, c as usize);
                 cs.push(c);
             }
         };
-        for &c in &kf.cs {
+        for c in kf.chunks() {
             add(c, &mut cs);
         }
         for log in window {
@@ -1851,8 +1902,12 @@ impl Core {
             let mut full: Vec<u32> = logs.iter().flat_map(|l| l.chunk_ids()).collect();
             full.sort_unstable();
             full.dedup();
-            if let Some(c) = full.iter().find(|c| cs.binary_search(c).is_err()) {
-                eprintln!("FLASHTEX_VERIFY_PREPARED: chunk {c} of the logs is not in the keyed restore");
+            if full != cs {
+                eprintln!(
+                    "FLASHTEX_VERIFY_PREPARED: the keyed restore takes {} chunks, the logs hold {}",
+                    cs.len(),
+                    full.len()
+                );
                 std::process::abort();
             }
             let want = rewound(self.nchunks, &cs, &live, logs);
@@ -1961,9 +2016,14 @@ impl Core {
         // and the old latest state.
         let mut mark = std::mem::take(&mut self.mark);
         mark.fill(0);
-        for log in &keep_logs {
+        // (and, for the keyframe, the oldest log holding each)
+        let mut first: ChunkMap<CheckpointId> = ChunkMap::default();
+        for (log, &id) in keep_logs.iter().zip(&keep_ids) {
             for c in log.chunk_ids() {
-                set_bit(&mut mark, c as usize);
+                if !bit(&mark, c as usize) {
+                    set_bit(&mut mark, c as usize);
+                    first.insert(c, id);
+                }
             }
         }
         let mut jobs = Vec::new();
@@ -1979,27 +2039,22 @@ impl Core {
         // The live state is the old run's at `old`: kept, for the chunks
         // the jump changes, as the keyframe there (`Keyframe`).
         if keyframes_on() {
-            let mut cs: Vec<u32> = jobs.iter().map(|&(c, _)| c).collect();
-            cs.sort_unstable();
-            let mut buf = Vec::with_capacity(cs.len() * CHUNK_WORDS);
-            for &c in &cs {
-                // SAFETY: a whole live chunk.
-                buf.extend_from_slice(unsafe {
-                    std::slice::from_raw_parts(self.chunk_ptr(c as usize), CHUNK_WORDS)
-                });
-            }
             if std::env::var_os("FLASHTEX_INCR_DEBUG").is_some() {
-                eprintln!("[arena] keyframe at {old}: {} chunks", cs.len());
+                eprintln!("[arena] keyframe at {old}: {} chunks", jobs.len());
             }
-            let at = cs.iter().enumerate().map(|(i, &c)| (c, i as u32)).collect();
-            self.key = Some(Keyframe {
+            let mut kf = Keyframe {
                 id: old,
                 tail: keep_ids.clone(),
                 history_gen: self.history_gen,
-                cs,
-                buf,
-                at,
-            });
+                at: ChunkMap::with_capacity_and_hasher(jobs.len(), Default::default()),
+                buf: Vec::with_capacity(jobs.len() * CHUNK_WORDS),
+            };
+            for &(c, _) in &jobs {
+                // SAFETY: a whole live chunk.
+                let w = unsafe { std::slice::from_raw_parts(self.chunk_ptr(c as usize), CHUNK_WORDS) };
+                kf.add(c, first[&c], w);
+            }
+            self.key = Some(kf);
         }
         self.copy_in(&jobs);
         for (_, p) in jobs {
@@ -2276,6 +2331,9 @@ impl Core {
             let dst = out_logs.last_mut();
             match dst {
                 Some(dst) if i + 1 < n && !keep(id) && sealed(dst) && sealed(&log) => {
+                    if let (Some(kf), Some(&into)) = (b.key.as_mut(), out_ids.last()) {
+                        kf.merged(id, into, &log);
+                    }
                     let merged = merge_sealed(dst, &log);
                     self.sealed_bytes += merged.sealed_bytes();
                     self.sealed_bytes -= dst.sealed_bytes() + log.sealed_bytes();
@@ -2312,6 +2370,9 @@ impl Core {
                     out_ids.push(id);
                     out_logs.push(log);
                     continue;
+                }
+                if let (Some(kf), Some(&into)) = (self.key.as_mut(), out_ids.last()) {
+                    kf.merged(id, into, &log);
                 }
                 let merged = merge_sealed(dst, &log);
                 self.sealed_bytes += merged.sealed_bytes();
@@ -4273,6 +4334,51 @@ impl Visit for Fill<'_> {
 }
 
 #[cfg(test)]
+impl Arena {
+    /// The live chain's keyframe, if valid: its checkpoint, and whether it
+    /// holds exactly the chunks the sealed logs from there on hold (and
+    /// perhaps some the open log holds), each at its value there.
+    fn keyframe_check(&self) -> Option<(CheckpointId, Result<(), String>)> {
+        let c = self.live();
+        let kf = c.key.as_ref()?;
+        if kf.history_gen != c.history_gen {
+            return None;
+        }
+        let kt = kf.index_in(&c.ids)?;
+        let logs = &c.logs[kt..];
+        let (sealed, open) = logs.split_at(logs.len() - 1);
+        let mut must: Vec<u32> = sealed.iter().flat_map(|l| l.chunk_ids()).collect();
+        must.sort_unstable();
+        must.dedup();
+        let open: Vec<u32> = open[0].chunk_ids().collect();
+        let mut have: Vec<u32> = kf.chunks().collect();
+        have.sort_unstable();
+        let r = (|| {
+            if let Some(x) = must.iter().find(|x| kf.get(**x).is_none()) {
+                return Err(format!("chunk {x} of a sealed log is not kept"));
+            }
+            if let Some(x) = have
+                .iter()
+                .find(|x| must.binary_search(x).is_err() && !open.contains(x))
+            {
+                return Err(format!("chunk {x} is kept, no log holds it"));
+            }
+            let live = |x: u32| c.chunk_ptr(x as usize) as *const u64;
+            let want = rewound(c.nchunks, &have, &live, logs);
+            for (i, &x) in have.iter().enumerate() {
+                // SAFETY: a kept chunk's copy, CHUNK_WORDS words.
+                let got = unsafe { std::slice::from_raw_parts(kf.get(x).unwrap(), CHUNK_WORDS) };
+                if got != &want[i * CHUNK_WORDS..(i + 1) * CHUNK_WORDS] {
+                    return Err(format!("chunk {x}'s copy is not its value there"));
+                }
+            }
+            Ok(())
+        })();
+        Some((kf.id, r))
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
 
@@ -4465,6 +4571,79 @@ mod tests {
         a.restore_discard(ids[5]).unwrap();
         assert!(arr[..] == copies[5][..]);
         assert_eq!(a.checkpoint_ids(), &ids[..=5]);
+    }
+
+    /// EDITED-PAGE-20: typing in one place. A convergence jump leaves a
+    /// keyframe at its checkpoint; restores to checkpoints before it, the
+    /// old run's states there while a branch is detached, reattaches,
+    /// later checkpoints, thinning and a discarding restore past it keep
+    /// it exact, and every restore equals the state it restores.
+    #[test]
+    fn a_keyframe_stays_exact_while_typing_in_one_place() {
+        let (mut a, mut arr) = space(200_000);
+        scribble(&mut arr, 1, 5000);
+        let mut ids = vec![];
+        let mut copies = vec![];
+        for k in 0..40 {
+            ids.push(a.checkpoint());
+            copies.push(arr.to_vec());
+            scribble(&mut arr, 100 + k, 2000);
+        }
+        let end = arr.to_vec();
+        let check = |a: &Arena, at: CheckpointId, what: &str| match a.keyframe_check() {
+            Some((id, r)) => {
+                assert_eq!(id, at, "{what}: the keyframe's checkpoint");
+                r.unwrap_or_else(|e| panic!("{what}: {e}"));
+            }
+            None => panic!("{what}: no valid keyframe"),
+        };
+        // the jump at checkpoint 30 leaves the keyframe there
+        let br = a.restore_branch(ids[30]).unwrap();
+        a.converge(br, ids[30]).unwrap();
+        assert!(arr[..] == end[..]);
+        check(&a, ids[30], "after the jump");
+        for round in 0..4u64 {
+            // the restart point, the old run's state compared, a reattach
+            let br = a.restore_branch(ids[20]).unwrap();
+            assert!(arr[..] == copies[20][..], "round {round}: restore to 20");
+            scribble(&mut arr, 5000 + round, 300);
+            {
+                let d = a.diff_branch(&br, ids[25]).unwrap();
+                let base = arr.as_ptr() as usize - a.bytes().as_ptr() as usize;
+                let ok = (0..arr.len()).all(|i| d.old_word(&a, base + 8 * i) == copies[25][i]);
+                assert!(ok, "round {round}: the old run's state at 25");
+            }
+            a.reattach(br).unwrap();
+            assert!(arr[..] == end[..], "round {round}: reattach");
+            check(&a, ids[30], "after the reattach");
+            // the second restore, and a jump at the keyframe's checkpoint
+            let br = a.restore_branch(ids[24]).unwrap();
+            assert!(arr[..] == copies[24][..], "round {round}: restore to 24");
+            a.converge(br, ids[24]).unwrap();
+            assert!(arr[..] == end[..], "round {round}: jump back");
+            check(&a, ids[24], "after the second jump");
+            let br = a.restore_branch(ids[30]).unwrap();
+            a.converge(br, ids[30]).unwrap();
+            check(&a, ids[30], "after the third jump");
+        }
+        // later checkpoints, a discarding restore past the keyframe, thinning
+        let mut more = vec![];
+        for k in 0..6u64 {
+            more.push(a.checkpoint());
+            check(&a, ids[30], "a later checkpoint");
+            scribble(&mut arr, 7000 + k, 1500);
+        }
+        a.restore_discard(more[2]).unwrap();
+        check(&a, ids[30], "a discarding restore past it");
+        scribble(&mut arr, 8000, 1500);
+        a.checkpoint();
+        check(&a, ids[30], "a checkpoint after the discard");
+        let keep: Vec<CheckpointId> = ids.iter().copied().step_by(3).chain([ids[30]]).collect();
+        a.retain(&|i| keep.contains(&i) || i > ids[39]);
+        check(&a, ids[30], "thinning");
+        let br = a.restore_branch(ids[21]).unwrap();
+        assert!(arr[..] == copies[21][..], "restore to 21 after thinning");
+        a.drop_branch(br);
     }
 
     /// P4-TYPING-200WPM (a): a preparation stopped part way (at every kind
