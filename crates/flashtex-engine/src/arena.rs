@@ -1644,6 +1644,20 @@ impl Core {
         // (the keyframe, if valid here, goes with the logs from its
         // checkpoint on; it shortens this rewind when it is at or after
         // the target)
+        if std::env::var_os("FLASHTEX_INCR_DEBUG").is_some() {
+            match &self.key {
+                Some(kf) => eprintln!(
+                    "[arena] keyframe at {}: gen {} vs {}, index {:?} of {}, tail {} (restore to {id}, index {k})",
+                    kf.id,
+                    kf.history_gen,
+                    self.history_gen,
+                    kf.index_in(&self.ids),
+                    self.ids.len(),
+                    kf.tail.len()
+                ),
+                None => eprintln!("[arena] no keyframe (restore to {id})"),
+            }
+        }
         let key = self.key.take().filter(|kf| {
             kf.history_gen == self.history_gen && kf.index_in(&self.ids).is_some()
         });
@@ -1881,6 +1895,9 @@ impl Core {
                 buf.extend_from_slice(unsafe {
                     std::slice::from_raw_parts(self.chunk_ptr(c as usize), CHUNK_WORDS)
                 });
+            }
+            if std::env::var_os("FLASHTEX_INCR_DEBUG").is_some() {
+                eprintln!("[arena] keyframe at {old}: {} chunks", cs.len());
             }
             self.key = Some(Keyframe {
                 id: old,
