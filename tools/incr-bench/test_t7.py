@@ -245,5 +245,89 @@ class HarnessErrorTests(unittest.TestCase):
             self.assertEqual(t7.report(dict(raw=[res], error=res['error']), None, None, False)[0], 2)
 
 
+class RealDocTests(unittest.TestCase):
+    """Real documents (realdocs.json): site phases, the 20 ms target, the oracle's page count."""
+
+    def test_spec_sites(self):
+        self.assertEqual(t7.REAL['target_ms'], 20.0)
+        docs = t7.REAL['docs']
+        self.assertIn('infdesc-x2', docs)
+        self.assertGreaterEqual(len(docs), 4)
+        for doc, s in docs.items():
+            self.assertTrue(s['sites'], doc)
+            self.assertIsInstance(s['pages'], int, doc)
+        late = docs['infdesc-x2']['sites']['x2-late']
+        self.assertTrue(late['edit'].startswith('x2/') and late['page'] >= 880)  # the owner's page 883
+
+    def test_phases(self):
+        ph = t7.real_phases('infdesc-x2', ['x2-late'])
+        self.assertEqual([(n, k) for n, _, k in ph], [('letter@x2-late', 'letter@site'),
+                                                      ('typing@50ms@x2-late', 'typing@50ms@site'),
+                                                      ('typing@150ms@x2-late', 'typing@150ms@site')])
+        args = ph[1][1]
+        self.assertEqual(args[args.index('--interval-ms') + 1], '50')
+        self.assertEqual(args[args.index('--edit') + 1], 'x2/book/real-numbers/inequalities.tex')
+        self.assertTrue(t7.is_typing('typing@50ms@x2-late') and not t7.is_typing('letter@x2-late'))
+        beamer = dict((n, a) for n, a, _ in t7.real_phases('beamer-metropolis'))['letter@middle']
+        self.assertEqual(beamer[beamer.index('--line') + 1:beamer.index('--line') + 4], ['201', '--page', '20'])
+        self.assertIn('--at', dict((n, a) for n, a, _ in t7.real_phases('arxiv-eth-primer'))['letter@end'])
+
+    def real(self, ms, by=None, pages=1152):
+        keys = [dict(key=k, edited_page_ms=ms, first_page_ms=ms, done_ms=ms, complete=True, by=(by or 10) + k,
+                     host=dict(converged_at=1, typeset_pages=2)) for k in range(14)]
+        return dict(doc='infdesc-x2', pages=pages, real=dict(target_ms=20.0, oracle_pages=1152), rss_peak=1,
+                    phases={'letter@x2-late': dict(keys=keys, load=[1, 1]),
+                            'typing@50ms@x2-late': dict(keys=keys, dones=[dict(id=10 + k) for k in range(14)],
+                                                         summary={}, load=[1, 1])})
+
+    def test_target_and_verdict(self):
+        rows = t7.summarise([self.real(19.0)])
+        self.assertEqual([r['target'] for r in rows], [20.0, 20.0])
+        self.assertEqual(t7.verdict(rows, {}), [])  # no baseline needed: a latency gate
+        rows = t7.summarise([self.real(32000.0)])  # the owner's 32 s keystroke
+        self.assertEqual(len(t7.verdict(rows, None)), 2)
+
+    def test_painted_by_a_later_compile_misses(self):
+        d = self.real(5.0)
+        for k in d['phases']['typing@50ms@x2-late']['keys']:
+            k['by'] = 23  # every key shown only by the last compile
+        r = [r for r in t7.summarise([d]) if r['edit'].startswith('typing')][0]
+        self.assertIn('not painted by their own compile', '; '.join(t7.verdict([r], None)))
+
+    def test_oracle_pages(self):
+        rows = t7.summarise([self.real(5.0, pages=1140)])
+        self.assertEqual(t7.verdict(rows, None), [])  # reported, not gated (a parity question)
+        self.assertEqual({r['warning'] for r in rows}, {'1140 pages, the oracle 1152'})
+
+
+class HostedGateTests(unittest.TestCase):
+    """--gate hosted (the PR CI): no wall clock; re-typeset pages, instructions, own compiles."""
+
+    def doc(self, ms, rerun, instr_m, by_own=True):
+        g = dict(rerun_pages_max=3, edited_instr_m_max=200)
+        host = dict(converged_at=1, typeset_pages=rerun, rerun_pages=rerun, stages=dict(edited_instr_k=instr_m * 1000))
+        keys = [dict(key=k, edited_page_ms=ms, first_page_ms=ms, done_ms=ms, complete=True,
+                     by=10 + k if by_own else 30, host=host) for k in range(14)]
+        return dict(doc='infdesc-x2', pages=1152, rss_peak=1,
+                    real=dict(target_ms=20.0, oracle_pages=1152, gate='hosted', pr_gate=g),
+                    phases={'letter@x2-late': dict(keys=keys, load=[1, 1]),
+                            'typing@150ms@x2-late': dict(keys=keys, dones=[dict(id=10 + k) for k in range(14)],
+                                                          summary={}, load=[1, 1])})
+
+    def test_wall_clock_not_gated(self):
+        rows = t7.summarise([self.doc(ms=900.0, rerun=2, instr_m=60)])  # slow VM, little work: a pass
+        self.assertEqual(t7.verdict(rows, None), [])
+
+    def test_no_convergence_and_instructions_miss(self):
+        why = '; '.join(t7.verdict(t7.summarise([self.doc(ms=5.0, rerun=254, instr_m=2900)]), None))
+        self.assertIn('re-typeset up to 254 pages > 3', why)
+        self.assertIn(f"up to 2900 M instructions to the edited page > {t7.REAL['pr_gate']['edited_instr_m_max']} M", why)
+
+    def test_own_compile_still_gated(self):
+        fails = t7.verdict(t7.summarise([self.doc(ms=5.0, rerun=2, instr_m=50, by_own=False)]), None)
+        self.assertEqual(len(fails), 1)
+        self.assertIn('not painted by their own compile', fails[0])
+
+
 if __name__ == '__main__':
     unittest.main()

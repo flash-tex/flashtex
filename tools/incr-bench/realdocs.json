@@ -1,0 +1,45 @@
+{
+ "about": "T7's real documents (t7.py, mkreal.py; lane REAL-DOC-GATE 2026-10-24). target_ms: DESIGN.md 1.2, slowest supported Mac, key -> preview commit <= 20 ms p95 for keys 50 ms apart on 1,000-page documents and Infinite Descent x2. pages: the oracle's (pdflatex, TeX Live 2026, passes until the count is stable). A site's page is 0-based and only steers dl3-keys' search for a prose line of its edit file (the nearest one is taken); line + page (beamer) are exact, from the oracle's SyncTeX for the frame's \\end{frame} line.",
+ "target_ms": 20.0,
+ "pr_gate": {
+  "about": "t7.py --gate hosted, the PR CI's real-doc-gate (Commander 2026-10-24: wall-clock ms on a shared 3-vCPU VM is noise). A letter@ key passes when the host re-typesets at most rerun_pages_max pages (DONE rerun_pages: it converged next to the edit) and spends at most edited_instr_m_max million engine-thread instructions to the edited page (DONE stages.edited_instr_k: load and clock speed do not move it); a typing@ key when it is painted by its own compile. The budget (derived, not measured on an M1): DESIGN 1.2's 20 ms on the slowest supported Mac at about 5 G instructions/s; this engine's x2-late edit path retires 9.2 G/s on an M5 Pro (median of 6 keys, 2026-10-24), and an M1 core is about 1.75x slower (Geekbench 6 single-core), so 20 ms is about 100 M. Main spends 207 M per key there and re-typesets 266 pages.",
+  "rerun_pages_max": 3,
+  "edited_instr_m_max": 100
+ },
+ "docs": {
+  "infdesc-x2": {
+   "source": {"book": "infdesc-x2"},
+   "pages": 1152,
+   "sites": {
+    "x1-early": {"edit": "book/logical-structure/propositional-logic.tex", "page": 60},
+    "x1-middle": {"edit": "book/number-theory/modular-arithmetic.tex", "page": 275},
+    "x1-late": {"edit": "book/additional-topics/order-relations.tex", "page": 458},
+    "x2-late": {"edit": "x2/book/real-numbers/inequalities.tex", "page": 887},
+    "x2-end": {"edit": "x2/book/additional-topics/structural-induction.tex", "page": 1030}
+   }
+  },
+  "arxiv-eth-primer": {
+   "source": {"manifest": "arxiv-2025-01.json", "id": "2501.07243v3"},
+   "pages": 51,
+   "sites": {"start": {"at": 0.02}, "middle": {"at": 0.5}, "end": {"at": 0.98}}
+  },
+  "beamer-metropolis": {
+   "source": {"manifest": "beamer.json", "id": "tl-metropolis-demo"},
+   "pages": 32,
+   "sites": {
+    "start": {"line": 35, "page": 3},
+    "middle": {"line": 201, "page": 20},
+    "end": {"line": 319, "page": 30}
+   }
+  },
+  "thesis-book": {
+   "source": {"manifest": "nightly-5k.json", "id": "2110.01121v1"},
+   "pages": 182,
+   "sites": {
+    "start": {"edit": "Chapters/Ch3/Chapter3-Comb-velocities-master-version.tex", "page": 23},
+    "middle": {"edit": "Chapters/Ch6/Chapter6-Mink-core-RBH-master-version.tex", "page": 88},
+    "end": {"edit": "Chapters/Ch9/Chapter9-conclusions-master-version.tex", "page": 155}
+   }
+  }
+ }
+}
