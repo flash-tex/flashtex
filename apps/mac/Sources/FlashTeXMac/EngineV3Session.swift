@@ -87,8 +87,19 @@ final class EngineV3Session {
     /// STARTED resets, and shown with them.
     @ObservationIgnored private var toolDiagnostics: [DL3JSON] = []
     @ObservationIgnored private var toolCycleID = -1
-    /// The TeX run's rows of the last DONE (Problems panel), before the tools'.
-    @ObservationIgnored private var texProblems: [RuntimeV1.Diagnostic] = []
+    /// Makes the Problems rows (TeX's of the last DONE, then the tools'), off
+    /// the main thread for a long document (EngineV3Problems.swift).
+    @ObservationIgnored let problemsPipeline = EngineV3ProblemsPipeline()
+    /// Bumped when the session stops: a job issued before is not published.
+    @ObservationIgnored private var problemsGeneration = 0
+    /// The job on the pipeline's queue (0 or 1), not yet applied on main.
+    @ObservationIgnored private(set) var problemsInFlight = 0
+    /// The job issued while one ran (the later ones merged into it).
+    @ObservationIgnored private var problemsWaiting: EngineV3ProblemsPipeline.Job?
+    /// Whether a job runs or waits (tests: wait for the rows to be published).
+    var problemsPending: Bool { problemsInFlight > 0 || problemsWaiting != nil }
+    /// The next job drops the last DONE's rows (another project, the session stopped).
+    @ObservationIgnored private var problemsClearTeX = false
     /// The last compile sent with `external_tools: auto`, the last cycle the
     /// host said was settled, and the last compile that finished.
     @ObservationIgnored private var lastToolsAutoID = 0
@@ -564,6 +575,8 @@ final class EngineV3Session {
         projectWatcher = nil
         if editsWaiting { editsWaiting = false } // the next start sends every document again
         view?.dropAllTiles() // queued tile jobs skip undrawn; kept page rasters are freed
+        // No rows of this session publish after it (a job in flight is dropped).
+        problemsGeneration &+= 1; problemsClearTeX = true; problemsWaiting = nil
         if let model, !model.engineV3Diagnostics.isEmpty { model.engineV3Diagnostics = [] }
         connection?.bye()
         connection = nil
@@ -1365,7 +1378,7 @@ final class EngineV3Session {
             if let p = project { let keep = made && p.takenOver; Self.walkQueue.async { p.clear(keepingOutput: keep) } }
             generation = model.projectGeneration
             sentTexts = [:]; hostBytes = [:]; fastPending = []; fastAnchors = [:]; fastCheck = [:]; compiledTexts = [:]; fastSentID = [:]; caretWindows = [:]; caretWindow = nil; inputsAtSync = nil
-            toolDiagnostics = []; texProblems = []; toolNote = nil; toolCycleID = -1
+            toolDiagnostics = []; problemsClearTeX = true; toolNote = nil; toolCycleID = -1
             if model.engineV3ResultStatus != nil { model.engineV3ResultStatus = nil } // another project: no "failed" of the last one's
             dropPages(); layoutRevision &+= 1
             staleChangedNow()
@@ -1669,11 +1682,66 @@ final class EngineV3Session {
         NSWorkspace.shared.open(url)
     }
 
-    /// TeX's rows of the last compile, then the tools' (Problems panel).
-    private func publishProblems(model: ShellModel) {
+    /// TeX's rows of the last compile, then the tools' (Problems panel):
+    /// `tex` is a DONE's (nil keeps the last DONE's rows). The rows, groups
+    /// and counts are made on the pipeline's queue unless the job is small
+    /// and none is in flight (EngineV3Problems.swift); the finished model is
+    /// published on main as one assignment. `announce`: VoiceOver says the
+    /// counts once published; `scanPackages`: the package scan follows.
+    private func publishProblems(model: ShellModel, tex: EngineV3ProblemsPipeline.TeXInput? = nil,
+                                 announce: Bool = false, scanPackages: Bool = false) {
         problemsOwed = false
-        let rows = texProblems + Self.problems(toolDiagnostics, model: model, projectRoot: project?.root)
-        if model.engineV3Diagnostics != rows { model.engineV3Diagnostics = rows }
+        let job = EngineV3ProblemsPipeline.Job(
+            tex: tex, clearTeX: problemsClearTeX, tools: toolDiagnostics,
+            documents: tex?.documents ?? model.documentTexts, roots: tex?.roots ?? Self.copyRoots(project?.root),
+            texts: tex?.texts ?? model.compiledDocuments, documentOrder: model.chrome.listing.map(\.path),
+            announce: announce, scanPackages: scanPackages)
+        problemsClearTeX = false
+        if problemsInFlight == 0, job.isSmall {
+            applyProblems(problemsPipeline.run(job), of: job, generation: problemsGeneration, model: model)
+            return
+        }
+        // One job runs at a time; a job issued meanwhile waits, merged into
+        // the one already waiting (the rows of a DONE it does not replace
+        // are kept). Typing in a long book answers every key with a DONE,
+        // faster than its rows are made: each finished job is published, so
+        // the list and the underlines follow the typing instead of waiting
+        // for it to stop.
+        if problemsInFlight > 0 {
+            problemsWaiting = problemsWaiting.map { $0.merged(with: job) } ?? job
+            return
+        }
+        runProblems(job)
+    }
+
+    /// Runs `job` on the pipeline's queue, publishes its model on main, then the waiting job.
+    private func runProblems(_ job: EngineV3ProblemsPipeline.Job) {
+        problemsInFlight += 1
+        let pipeline = problemsPipeline, ref = EngineV3WeakRef(self), generation = problemsGeneration
+        EngineV3ProblemsPipeline.queue.async {
+            let made = pipeline.run(job)
+            EngineV3Session.onMain {
+                guard let s = ref.value else { return }
+                s.problemsInFlight -= 1
+                if let model = s.model { s.applyProblems(made, of: job, generation: generation, model: model) }
+                if let next = s.problemsWaiting {
+                    s.problemsWaiting = nil
+                    s.runProblems(next)
+                }
+            }
+        }
+    }
+
+    /// Publishes a job's model unless the session was stopped since it was issued, then what waited for it.
+    private func applyProblems(_ made: ProblemsModel, of job: EngineV3ProblemsPipeline.Job, generation: Int, model: ShellModel) {
+        guard generation == problemsGeneration else { return } // the session stopped since
+        if logDone { log("PROBLEMS \(made.diagnostics.count) rows, \(made.groups.count) groups\(made === model.engineV3Problems ? " (unchanged)" : "")") }
+        MainThreadProbe.time("v3.problems.publish") { model.publishEngineV3Problems(made) }
+        // VoiceOver: "2 errors, 1 warning" when the counts changed (the v2 path's announcement).
+        if job.announce, model.engineV3Enabled { model.noteCompileCompletedForVoiceOver() }
+        // A package or class TeX could not find: resolved from a
+        // library or the cache, or offered for fetching (ProjectPackages.swift).
+        if job.scanPackages { model.projectPackages.noteCompileResult(unresolved: model.engineV3Problems.unresolvedPackages) }
     }
 
     /// `TOOL`: run, done, skip, settled (spec §6.4).
@@ -1903,15 +1971,13 @@ final class EngineV3Session {
                     caretWindow = caretWindows[compileID] // the caret's edits since this compile was sent
                     compiledStamp &+= 1
                     prepareCaretLines(path: model.activePath, text: model.compiledDocuments[model.activePath])
-                    let engine = engineName
-                    texProblems = diags.isEmpty ? Self.problems(diagnostics, model: model, projectRoot: project?.root, texts: texts, mode: errorMode, engine: engine)
-                                                : Self.problems(diags: diags, model: model, projectRoot: project?.root, texts: texts, mode: errorMode, engine: engine)
-                    publishProblems(model: model)
-                    // VoiceOver: "2 errors, 1 warning" when the counts changed (the v2 path's announcement).
-                    if model.engineV3Enabled { model.noteCompileCompletedForVoiceOver() }
-                    // A package or class TeX could not find: resolved from a
-                    // library or the cache, or offered for fetching (ProjectPackages.swift).
-                    if compileID >= lastSentID { model.projectPackages.noteCompileResult(diagnostics: model.engineV3Diagnostics) }
+                    // The rows are made from the compile's own inputs, off
+                    // main for a long document (`publishProblems`); VoiceOver
+                    // and the package scan follow their publication.
+                    let tex = EngineV3ProblemsPipeline.TeXInput(
+                        diags: diags, diagnostics: diags.isEmpty ? diagnostics : [], texts: texts, documents: model.documentTexts,
+                        roots: Self.copyRoots(project?.root), mode: errorMode, engine: engineName)
+                    publishProblems(model: model, tex: tex, announce: true, scanPackages: compileID >= lastSentID)
                 }
                 loadFallbacks(pdf: j["pdf"]?.string)
             }
@@ -2086,7 +2152,13 @@ final class EngineV3Session {
     /// package file) keeps its place in the message.
     static func problems(_ diags: [DL3JSON], model: ShellModel, projectRoot: URL?, texts: [String: String]? = nil,
                          mode: EngineV3ErrorPolicy.Mode = .bestEffort, engine: String = "pdfLaTeX") -> [RuntimeV1.Diagnostic] {
-        let roots = Self.copyRoots(projectRoot)
+        problems(diags, documents: model.documentTexts, roots: copyRoots(projectRoot), texts: texts, mode: mode, engine: engine)
+    }
+
+    /// `problems(_:model:…)` from the editor's texts by path (`documents`)
+    /// and the copy's roots (`copyRoots`): on any thread (EngineV3Problems.swift).
+    nonisolated static func problems(_ diags: [DL3JSON], documents: [String: String], roots: [String], texts: [String: String]? = nil,
+                                     mode: EngineV3ErrorPolicy.Mode = .bestEffort, engine: String = "pdfLaTeX") -> [RuntimeV1.Diagnostic] {
         let kept = EngineV3ErrorPolicy.keptErrors(diags.map(Self.policyItem), mode: mode)
         var lines = EngineV3LineIndexes()
         return diags.enumerated().map { i, d in
@@ -2098,7 +2170,7 @@ final class EngineV3Session {
             if let reported = d["file"]?.string {
                 let file = Self.relativeToCopy(reported, roots: roots)
                 let line = Int(d["line"]?.int ?? 0)
-                if let text = texts?[file] ?? model.documents.first(where: { $0.path == file })?.text, line > 0,
+                if let text = texts?[file] ?? documents[file], line > 0,
                    let range = lines.range(file, text, line: line) {
                     source = RuntimeV1.SourceRange(path: file, startByte: range.lowerBound, endByte: range.upperBound)
                 } else {
@@ -2114,7 +2186,7 @@ final class EngineV3Session {
     /// /private/var/folders/..., what the host's getcwd() returns and so what
     /// the display list's side table names a box's place by), and
     /// Foundation's resolution of its links. Empty without a root.
-    static func copyRoots(_ root: URL?) -> [String] {
+    nonisolated static func copyRoots(_ root: URL?) -> [String] {
         guard let root else { return [] }
         let standardized: String = root.standardizedFileURL.path
         var spellings: [String] = [standardized]
@@ -2135,7 +2207,7 @@ final class EngineV3Session {
     /// inside it under any of `roots` (`copyRoots`), else as given; a
     /// leading "./" dropped. An absolute name under none of them is matched
     /// once more by its own real path (a link anywhere above the copy).
-    static func relativeToCopy(_ file: String, roots: [String]) -> String {
+    nonisolated static func relativeToCopy(_ file: String, roots: [String]) -> String {
         var f: String = file
         while f.hasPrefix("./") { f.removeFirst(2) }
         if let r = roots.first(where: { f.hasPrefix($0) }) {
@@ -2155,7 +2227,13 @@ final class EngineV3Session {
     /// TeX's help text become the row's notes and help.
     static func problems(diags: [DL3Diag], model: ShellModel, projectRoot: URL?, texts: [String: String]? = nil,
                          mode: EngineV3ErrorPolicy.Mode = .bestEffort, engine: String = "pdfLaTeX") -> [RuntimeV1.Diagnostic] {
-        let roots = Self.copyRoots(projectRoot)
+        problems(diags: diags, documents: model.documentTexts, roots: copyRoots(projectRoot), texts: texts, mode: mode, engine: engine)
+    }
+
+    /// `problems(diags:model:…)` from the editor's texts by path and the
+    /// copy's roots: on any thread (EngineV3Problems.swift).
+    nonisolated static func problems(diags: [DL3Diag], documents: [String: String], roots: [String], texts: [String: String]? = nil,
+                                     mode: EngineV3ErrorPolicy.Mode = .bestEffort, engine: String = "pdfLaTeX") -> [RuntimeV1.Diagnostic] {
         // TeX's errors it recovered from (EngineV3ErrorPolicy): warnings under best effort.
         let kept = EngineV3ErrorPolicy.keptErrors(diags.map(Self.policyItem), mode: mode)
         let recovered = Set(diags.indices.filter { diags[$0].severity == "error" && !kept.contains($0) })
@@ -2170,8 +2248,8 @@ final class EngineV3Session {
         // Rows that say the same thing as another fold into it (EngineV3DiagPresent.folds).
         let folds = EngineV3DiagPresent.folds(diags, kept: kept)
         let stopped = Set(folds.filter { EngineV3DiagPresent.isStop(diags[$0.key].code) && !EngineV3DiagPresent.isStop(diags[$0.value].code) }.map(\.value))
-        let projectTexts: [String: String] = texts ?? Dictionary(model.documents.map { ($0.path, $0.text) }, uniquingKeysWith: { a, _ in a })
-        func text(_ file: String) -> String? { texts?[file] ?? model.documents.first(where: { $0.path == file })?.text }
+        let projectTexts: [String: String] = texts ?? documents
+        func text(_ file: String) -> String? { texts?[file] ?? documents[file] }
         var lines = EngineV3LineIndexes()
         // Made once for all the rows (EDITOR-FREEZE: a long book's thousands
         // of rows each searched every text at each DONE, seconds on main): a
@@ -2269,11 +2347,11 @@ final class EngineV3Session {
         }
     }
 
-    static func policyItem(_ d: DL3Diag) -> EngineV3ErrorPolicy.Item {
+    nonisolated static func policyItem(_ d: DL3Diag) -> EngineV3ErrorPolicy.Item {
         .init(error: d.severity == "error", fatal: EngineV3ErrorPolicy.isFatal(d), line: d.line)
     }
 
-    static func policyItem(_ j: DL3JSON) -> EngineV3ErrorPolicy.Item {
+    nonisolated static func policyItem(_ j: DL3JSON) -> EngineV3ErrorPolicy.Item {
         let error = j["severity"]?.string == "error"
         return .init(error: error, fatal: error && EngineV3ErrorPolicy.isFatal(message: j["message"]?.string ?? ""), line: j["line"]?.int.map(Int.init))
     }
@@ -2407,6 +2485,19 @@ struct EngineV3LineStarts {
             return b.count
         }
         starts = found
+    }
+
+    /// The one-based line holding byte `offset` (`EditorDiagnostics.lineNumber(ofByte:in:)`,
+    /// without counting); nil out of range.
+    func line(ofByte offset: Int) -> Int? {
+        guard offset >= 0, offset <= byteCount else { return nil }
+        // The number of lines starting at or before `offset`.
+        var lo = 0, hi = starts.count
+        while lo < hi {
+            let mid = (lo + hi) / 2
+            if starts[mid] <= offset { lo = mid + 1 } else { hi = mid }
+        }
+        return lo
     }
 
     /// `EngineV3Session.lineByteRange(text, line:)`, from the index.

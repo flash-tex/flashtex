@@ -533,9 +533,13 @@ extension EditorDiagnostics {
 
     static func occurrenceLabel(_ k: Int, of group: Group, in diagnostics: [RuntimeV1.Diagnostic],
                                 texts: [String: String] = [:]) -> String {
+        occurrenceLabel(k, of: group, in: diagnostics, lines: Lines(texts: texts))
+    }
+
+    static func occurrenceLabel(_ k: Int, of group: Group, in diagnostics: [RuntimeV1.Diagnostic], lines: Lines) -> String {
         let prefix = "\(k + 1) of \(group.count): "
         guard let s = occurrence(k, of: group, in: diagnostics) else { return prefix + "no source" }
-        if let text = texts[s.path], let line = lineNumber(ofByte: s.startByte, in: text) {
+        if let line = lines.line(ofByte: s.startByte, in: s.path) {
             return prefix + "\(s.path) line \(line)"
         }
         return prefix + "\(s.path) bytes \(s.startByte)..<\(s.endByte)"

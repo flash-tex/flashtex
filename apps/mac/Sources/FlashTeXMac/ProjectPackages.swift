@@ -254,9 +254,14 @@ final class ProjectPackagesState {
     /// delivered, unavailable, declined or in flight. A new project root
     /// resets everything.
     func noteCompileResult(diagnostics: [RuntimeV1.Diagnostic]) {
+        noteCompileResult(unresolved: Self.unresolvedNames(in: diagnostics))
+    }
+
+    /// The same with the names already found (`ProblemsModel.unresolvedPackages`,
+    /// made with the rows off the main thread).
+    func noteCompileResult(unresolved found: [String]) {
         guard let projectRoot = model.project.projectRoot else { return }
         if root != projectRoot { reset(for: projectRoot) }
-        let found = Self.unresolvedNames(in: diagnostics)
         if holdWhileTyping(found, engineV3: true) { return }
         let pending = Set(offers.map(\.name))
         let names = found.filter { name in
@@ -374,7 +379,7 @@ final class ProjectPackagesState {
     /// The held compile again, from the latest rows (never a stale name).
     private func recheckHeld() {
         guard !heldNames.isEmpty else { return }
-        noteCompileResult(diagnostics: model.engineV3Diagnostics)
+        noteCompileResult(unresolved: model.engineV3Problems.unresolvedPackages)
     }
 
     /// The caret moved or the document switched (ShellModel): leaving the
@@ -422,8 +427,7 @@ final class ProjectPackagesState {
         declined = []
         unavailable = [:]
         if !offers.isEmpty { shown = true; return }
-        let last = model.engineV3Diagnostics
-        let names = Self.unresolvedNames(in: last).filter { delivered[$0] == nil && !inFlight.contains($0) }
+        let names = model.engineV3Problems.unresolvedPackages.filter { delivered[$0] == nil && !inFlight.contains($0) }
         guard !names.isEmpty else {
             model.navigationNote = delivered.isEmpty ? "Every package the last compile asked for was found." : "Every package the last compile asked for is resolved: \(delivered.keys.sorted().joined(separator: ", "))."
             return

@@ -129,7 +129,7 @@ final class ShellChrome {
             if self[keyPath: keyPath] != value { self[keyPath: keyPath] = value }
         }
         set(\.editorRevision, model.editorRevision)
-        let (errors, warnings, gaps) = MainThreadProbe.time("chrome.problems") { EditorDiagnostics.counts(model.displayedDiagnostics) }
+        let (errors, warnings, gaps) = MainThreadProbe.time("chrome.problems") { model.engineV3Problems.counts } // made with the rows (ProblemsModel)
         set(\.problems, ProblemCounts(errors: errors, warnings: warnings, gaps: gaps))
         set(\.note, MainThreadProbe.time("chrome.marks") { model.navigationNote ?? model.editorMarkReport.staleNote })
         set(\.captureNote, model.captureNote)
