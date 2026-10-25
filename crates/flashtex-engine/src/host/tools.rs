@@ -17,7 +17,7 @@
 //!   one JSON line: `compile` (from S₀ when it still holds, else in full),
 //!   `save PATH` (persist S₀), `quit`.
 //! * `iserve` likewise for the incremental engine (`crate::incr`), with
-//!   `compile [PAGE]`, `compile-interrupt PASS PAGES`,
+//!   `compile [PAGE]`, `compile-interrupt PASS PAGES [NTH]`,
 //!   `compile-interrupt-at SECONDS`, `finish`, `save`,
 //!   `open`, `warm`, `pages`, `terminal` and `diagnostics` (the last
 //!   compile's `diag-v1` messages, `src/host/diag.rs`).
@@ -281,22 +281,26 @@ fn iserve_on_this_thread(o: crate::system::RunOptions, ho: &HostOpts) -> i32 {
                 .split_whitespace()
                 .filter_map(|x| x.parse().ok())
                 .collect();
+            // (`compile-interrupt PASS PAGES NTH`: on the NTH time the run
+            // asks once it is there, e.g. 2 for the first stop point after
+            // page PAGES's own checkpoint)
             match v[..] {
-                [pass, n] => {
-                    let armed = std::rc::Rc::new(std::cell::Cell::new(true));
-                    let a2 = armed.clone();
+                [pass, n] | [pass, n, _] => {
+                    let nth = v.get(2).copied().unwrap_or(1).max(1);
+                    let asked = std::rc::Rc::new(std::cell::Cell::new(0usize));
+                    let a2 = asked.clone();
                     s.set_preempt(Some(std::rc::Rc::new(move |p: usize, pages: usize| {
-                        let hit = a2.get() && p == pass && pages >= n;
-                        if hit {
-                            a2.set(false);
+                        if p != pass || pages < n || a2.get() >= nth {
+                            return false;
                         }
-                        hit
+                        a2.set(a2.get() + 1);
+                        a2.get() == nth
                     })));
                     let r = s.compile(None).map(|r| r.json());
                     s.set_preempt(None);
                     r
                 }
-                _ => Err(format!("compile-interrupt PASS PAGES, not {a}")),
+                _ => Err(format!("compile-interrupt PASS PAGES [NTH], not {a}")),
             }
         } else if let Some(a) = line.strip_prefix("compile-interrupt-at ") {
             // A newer edit arrives SECONDS after the compile started (typing

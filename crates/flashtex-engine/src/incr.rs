@@ -187,8 +187,11 @@ pub struct Options {
     /// least this far apart in engine time; `None`: none (a preamble edit
     /// then runs from the format).
     pub preamble_line_s: Option<f64>,
-    /// None of them in an edit's first pass before its edited page has
-    /// shipped (`Obs::segment_hold`; FLASHTEX_SEGMENT_HOLD=0 takes them).
+    /// Hold them (`Layer::segment_hold`): taken only where newer work stops
+    /// the run, before the edited line in an edit's first pass, and
+    /// elsewhere within `dense` pages of the cursor, the ones retention
+    /// keeps (`Obs::take_held_segment`; FLASHTEX_SEGMENT_HOLD=0 takes them
+    /// all).
     pub segment_hold: bool,
     /// Test convergence after each page of an incremental run.
     pub converge: bool,
@@ -656,6 +659,20 @@ struct Obs {
     /// The first pass of an incremental compile: its end says whether the
     /// next one is protected (`Session::starved`).
     first_incremental: bool,
+    /// The hold before the edited page is over (`on_checkpoint`): from
+    /// here on held segment checkpoints are taken near the cursor only
+    /// (`take_held_segment`).
+    edit_out: bool,
+    /// `take_held_segment` took a held segment checkpoint because newer
+    /// work stops the run there (`preempt_now`, which consumes the news):
+    /// `on_checkpoint` stops at it.
+    held_stop: bool,
+    /// Checkpoints taken plus segment checkpoints held back, and the count
+    /// at which `on_checkpoint` thins next: retention keeps the pace it had
+    /// when every segment checkpoint was taken (review of #1891: thinning
+    /// only every 32 pages let the logs overshoot the budget for longer).
+    ticks: usize,
+    thin_at: usize,
 }
 
 /// The most pages an incremental compile ships, none changed, before newer
@@ -3018,11 +3035,36 @@ impl Observer for Obs {
     /// run (`on_checkpoint` stops it there, as at any segment checkpoint),
     /// and before the run has read the edited line (`before_the_edit`).
     fn take_held_segment(&mut self, g: &mut Globals) -> bool {
-        self.preempt_now(g) || self.before_the_edit(g)
+        if self.preempt_now(g) {
+            self.held_stop = true;
+            return true;
+        }
+        let take = if self.first_incremental && !self.edit_out {
+            self.before_the_edit(g)
+        } else {
+            // Elsewhere (a run from scratch, a later pass, the background
+            // after the edited page): only where retention keeps it (`thin`:
+            // segment checkpoints more than `dense` pages from the cursor
+            // go). Taking, sealing and packing the others, then merging them
+            // away, was most of the 10.8 % a cold open of Infinite Descent x2
+            // spent on checkpoints (lane COLD-OPEN, 2026-10-24). Which
+            // checkpoints exist changes nothing a run computes.
+            self.pages_so_far().abs_diff(self.cursor) <= self.dense
+        };
+        if !take {
+            self.ticks += 1;
+        }
+        take
     }
 
+    /// (`REQ_PREEMPT`: the checkpoint it takes stops the run, as a held
+    /// segment taken for newer work does; `preempt_now` consumed the news)
     fn stops_now(&mut self, g: &mut Globals) -> bool {
-        self.preempt_now(g)
+        let stop = self.preempt_now(g);
+        if stop {
+            self.held_stop = true;
+        }
+        stop
     }
 
     fn on_checkpoint(&mut self, g: &mut Globals, id: CheckpointId, why: Point) -> Action {
@@ -3036,16 +3078,17 @@ impl Observer for Obs {
         // run stops at this checkpoint or the next anyway. The next
         // checkpoint without newer work thins instead (lane T7-MARGIN).
         let due = std::mem::take(&mut self.thin_due);
-        if due || self.taken.len() % 32 == 31 {
+        self.ticks += 1;
+        let pace = self.ticks >= self.thin_at;
+        if pace {
+            self.thin_at = self.ticks + 32;
+        }
+        if due || pace {
             if self.newer_waiting(g) {
                 self.thin_due = true;
             } else {
-                if due || self.taken.len() % 32 == 31 {
-                    self.thin(g);
-                }
-                if due || self.taken.len() % 32 == 31 {
-                    self.thin_pending(g);
-                }
+                self.thin(g);
+                self.thin_pending(g);
             }
         }
         if why != Point::Shipout {
@@ -3118,7 +3161,8 @@ impl Observer for Obs {
                     }
                 }
             }
-            if why == Point::Segment && self.preempt_now(g) {
+            if why == Point::Segment && (std::mem::take(&mut self.held_stop) || self.preempt_now(g))
+            {
                 return Action::Stop;
             }
             return Action::Continue;
@@ -3151,12 +3195,13 @@ impl Observer for Obs {
                 ));
             }
         }
-        if g.layer().segment_hold
+        if !self.edit_out
             && (self.edited.is_some() || !unchanged || self.new_pages.len() >= PROTECT_PAGES)
         {
             // the edited page is out (or none changed in the pages it could
-            // be): restart points between pages again
-            g.layer().segment_hold = false;
+            // be): restart points between pages again, where retention
+            // keeps them (`take_held_segment`)
+            self.edit_out = true;
         }
         if self.edited.is_none() && !unchanged {
             self.edited = Some((j, self.page_s, cpu));
@@ -3798,7 +3843,7 @@ impl Session {
         g.layer().timed_s = self.opts.timed_s;
         g.checkpoint_segments(self.opts.segment_s);
         g.layer().preamble_line_s = self.opts.preamble_line_s;
-        g.layer().segment_hold = false;
+        g.layer().segment_hold = self.opts.segment_hold;
         g.layer().observer = Some(Box::new(obs));
         let status = g.resume_to_end().inspect_err(|_| {
             system::record_reads_into(None);
@@ -6211,6 +6256,10 @@ impl Session {
             preempt_after_s0: false,
             protect_edit: false,
             first_incremental: false,
+            edit_out: false,
+            held_stop: false,
+            ticks: 0,
+            thin_at: 31,
         }
     }
 
@@ -6286,7 +6335,7 @@ impl Session {
         g.layer().timed_s = self.opts.timed_s;
         g.checkpoint_segments(self.opts.segment_s);
         g.layer().preamble_line_s = self.opts.preamble_line_s;
-        g.layer().segment_hold = false;
+        g.layer().segment_hold = self.opts.segment_hold;
         let mut obs = self.observer(t0, 0, stop_at);
         // Newer work stops it once S₀ is taken (P4, Commander ruling): the
         // run is then kept like a stopped incremental one (`settle_paused`),
@@ -6630,8 +6679,9 @@ impl Session {
         // the run would take after the edit consumed the edited line, which
         // the next keystroke there edits again, and each one seals every
         // chunk the page wrote since the last (lane P4-PAGE-COST).
-        // `Obs::on_checkpoint` lifts the hold at the edited page.
-        g.layer().segment_hold = self.opts.segment_hold && obs.first_incremental;
+        // `Obs::on_checkpoint` ends that at the edited page; after it, as in
+        // every other run, they are taken only near the cursor.
+        g.layer().segment_hold = self.opts.segment_hold;
         // The pages before `r` stay; the rest are the old run's until
         // redone.
         let gap = obs
@@ -7054,6 +7104,8 @@ impl Session {
         {
             o.preempt = self.preempt.clone();
             o.cancel = self.cancel.clone();
+            // (a stop the stopped run took the news for is not this one's)
+            o.held_stop = false;
             match &again {
                 Ok((_, changed, _)) => {
                     o.changed_lookup_last = o.changed_lookup_last.max(self.changed_lookup_last);

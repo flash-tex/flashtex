@@ -1,0 +1,9 @@
+engine-thread samples 94951 (1 ms each)
+   73372  77.3%  TeX interpreter (generated body, arena reads)
+   10241  10.8%  checkpoint (Arena::checkpoint, seal, merge, Core::save, pack)
+    3724   3.9%  display list (note_node, interp, encode, send)
+    3289   3.5%  diag / boxmemo / intrinsics
+    2478   2.6%  malloc / memmove
+     756   0.8%  kpathsea / file lookups / fs
+     746   0.8%  incr session (tests, find, journal)
+     345   0.4%  PDF writer + zlib
