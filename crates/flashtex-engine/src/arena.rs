@@ -2940,16 +2940,61 @@ impl Arena {
         }
         let (in_old, at_r): (Vec<u32>, Vec<u32>) = cs.iter().partition(|c| redo_of.contains_key(c));
         let n = core.nchunks;
-        let Some(o) = rewound_until(n, &in_old, &|c| redo_of[&c], &b.logs[jj..], stop) else {
+        let mut out = HashMap::with_capacity(cs.len());
+        // The old run's values `OldCache` keeps at `old` (the convergence
+        // test's rewind keeps the side table's chunks it rewinds with its
+        // own, `diff_branch_inner`): only the others rewound (EDITED-PAGE-20:
+        // a pass over the old future, 1 M entries on Infinite Descent x2,
+        // for the side table's few chunks). With FLASHTEX_VERIFY_OLDCACHE
+        // the kept ones are rewound too and compared.
+        let gen = core.history_gen;
+        let verify = self.verify_old_cache;
+        let mut rewind: Vec<u32> = Vec::with_capacity(in_old.len());
+        {
+            let cache = self.old_cache.borrow();
+            for &c in &in_old {
+                match cache.get(old, gen, c) {
+                    Some(v) => {
+                        out.insert(c, v.to_vec());
+                        if verify {
+                            rewind.push(c);
+                        }
+                    }
+                    None => rewind.push(c),
+                }
+            }
+        }
+        let Some(o) = rewound_until(n, &rewind, &|c| redo_of[&c], &b.logs[jj..], stop) else {
             return Ok(None);
         };
         let live = |c: u32| core.chunk_ptr(c as usize) as *const u64;
         let Some(a) = rewound_until(n, &at_r, &live, &core.logs[kr..], stop) else {
             return Ok(None);
         };
-        let mut out = HashMap::with_capacity(cs.len());
-        for (i, &c) in in_old.iter().enumerate() {
-            out.insert(c, o[i * CHUNK_WORDS..(i + 1) * CHUNK_WORDS].to_vec());
+        let mut fresh: Vec<u32> = Vec::with_capacity(rewind.len());
+        for (i, &c) in rewind.iter().enumerate() {
+            let v = &o[i * CHUNK_WORDS..(i + 1) * CHUNK_WORDS];
+            match out.get(&c) {
+                Some(k) if k[..] != v[..] => {
+                    // (a verify mode: loud, so that a sweep fails)
+                    eprintln!(
+                        "FLASHTEX_VERIFY_OLDCACHE: chunk {c} at checkpoint {old} differs from its rewind"
+                    );
+                    std::process::abort();
+                }
+                Some(_) => {}
+                None => {
+                    out.insert(c, v.to_vec());
+                    fresh.push(c);
+                }
+            }
+        }
+        if !fresh.is_empty() {
+            let mut buf = Vec::with_capacity(fresh.len() * CHUNK_WORDS);
+            for c in &fresh {
+                buf.extend_from_slice(&out[c]);
+            }
+            self.old_cache.borrow_mut().put(old, gen, &fresh, &buf);
         }
         for (i, &c) in at_r.iter().enumerate() {
             out.insert(c, a[i * CHUNK_WORDS..(i + 1) * CHUNK_WORDS].to_vec());

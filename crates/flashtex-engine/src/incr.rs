@@ -1708,10 +1708,32 @@ fn same_words(
             return Err(format!("a dormant line, and a meaning differs: {w}"));
         }
     }
+    let (left, (free_o, free_n)) = drop_free_mem(g, &d, &layout, left);
+    // EDITED-PAGE-20: nothing else differs, and the side table's chunks
+    // either run wrote hold the same words in both states: every node's
+    // entry is the same at the same address, as when neither run wrote the
+    // table, and the nodes are where they were (nothing left to relabel).
+    // So no structural walk (on Infinite Descent x2 the walk of the whole
+    // state, ~120 M instructions, is most of a keystroke's comparison at a
+    // whole read).
+    if side_any && left.is_empty() {
+        if stop() {
+            return Err(PREEMPTED.into());
+        }
+        match side_words_equal(g, old, &side_written)? {
+            None => return Err(PREEMPTED.into()),
+            Some(true) => {
+                if debug {
+                    eprintln!("[incr] side table: the written chunks are equal, no walk");
+                }
+                return Ok(0);
+            }
+            Some(false) => {}
+        }
+    }
     if side_any && !relabel {
         return Err("the display list's side table changed (no structural comparison)".into());
     }
-    let (left, (free_o, free_n)) = drop_free_mem(g, &d, &layout, left);
     if (!left.is_empty() || side_any) && relabel {
         // Nodes allocated in other places: compare the structures.
         if let Some(w) = left.iter().find(|w| w.region != "mem" && !iso_covers(g, w)) {
@@ -1824,6 +1846,36 @@ fn same_words(
         }
     }
     Err(s)
+}
+
+/// Whether every chunk of the display list's side table that either run
+/// wrote since the pending restore's target (`written`, a bitmap by chunk:
+/// `Globals::pending_side_written`) holds the same words in the live state
+/// as in the old run's at `old` (whole chunks: a chunk the table shares
+/// with another array is compared whole too). `None`: stopped (never: the
+/// old values are fetched without asking).
+fn side_words_equal(
+    g: &Globals,
+    old: CheckpointId,
+    written: &[u64],
+) -> Result<Option<bool>, String> {
+    let cs: Vec<u32> = written
+        .iter()
+        .enumerate()
+        .flat_map(|(i, &w)| {
+            (0..64)
+                .filter(move |b| w >> b & 1 == 1)
+                .map(move |b| (i * 64 + b) as u32)
+        })
+        .collect();
+    let mut never = || false;
+    let Some(o) = g.pending_old_chunks(old, &cs, &mut never)? else {
+        return Ok(None);
+    };
+    Ok(Some(cs.iter().all(|c| {
+        o.get(c)
+            .is_some_and(|v| v[..] == g.arena.chunk(*c as usize)[..])
+    })))
 }
 
 /// BOX-MEMO's full verifier (`crate::boxmemo`, docs/design/engine-v2/
