@@ -2808,6 +2808,63 @@ fn a_stale_temp_head_does_not_block_convergence() {
     }
 }
 
+/// Lane COLD-OPEN: `info(end_span)` is left pointing at the preamble of
+/// the last alignment with a spanned entry (`fin_align`), freed since, and
+/// nothing reads it before writing it again, so the convergence test does
+/// not compare it (`crate::iso`). It did: after an edit before such tables
+/// the runs had their preambles at different places, and the test failed
+/// until a later table happened to put one where the old run had. Every
+/// page here has a `\multicolumn`; a few-word edit converges within a few
+/// pages. Every compile equals scratch runs.
+#[test]
+fn a_stale_end_span_does_not_block_convergence() {
+    let Some(e) = env() else {
+        common::no_texlive();
+        return;
+    };
+    let dir = e.dir.join("end-span");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let doc = |edit: &str| -> String {
+        let mut s = String::from("\\documentclass{article}\n\\begin{document}\n");
+        for i in 0..80 {
+            s.push_str(&para(i, if i == 10 { edit } else { "lorem" }));
+            if i % 3 == 0 {
+                s.push_str(&format!(
+                    "\\begin{{tabular}}{{lcr}}\na & b{i} & c\\\\\n\
+                     \\multicolumn{{2}}{{c}}{{a wide spanned entry {i}}} & d\\\\\n\
+                     e & \\multicolumn{{2}}{{l}}{{another span}}\\\\\n\\end{{tabular}}\n\n"
+                ));
+            }
+        }
+        s.push_str("\\end{document}\n");
+        s
+    };
+    let mut h = Host::start(&e, &dir);
+    for k in 0..4 {
+        let r = compile_and_check(&e, &mut h, &dir, &[("doc.tex", &doc("lorem"))], "settle");
+        if r.contains("\"mode\":\"unchanged\"") || k == 3 {
+            break;
+        }
+    }
+    for (edit, what) in [
+        ("lorem ipsum dolor", "three words"),
+        ("lorem", "the revert"),
+        ("lorem lorem", "a word"),
+    ] {
+        let r = compile_and_check(&e, &mut h, &dir, &[("doc.tex", &doc(edit))], what);
+        assert!(r.contains("\"mode\":\"incremental\""), "{what}: {r}");
+        let restart: usize = field(&r, "restart_pages").parse().unwrap();
+        let conv: usize = field(&r, "converged_at")
+            .parse()
+            .unwrap_or_else(|_| panic!("{what}: no convergence: {r}"));
+        assert!(
+            conv <= restart + 4,
+            "{what}: converged after page {conv}, restarted after {restart}: {r}"
+        );
+    }
+}
+
 /// #1502: a lookup the old run makes after the convergence point and whose
 /// answer is different now (`\IfFileExists` of a file that appeared with
 /// the edit) must not be skipped. The restart point is the edit (before

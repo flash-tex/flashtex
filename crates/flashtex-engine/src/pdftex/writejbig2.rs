@@ -117,6 +117,13 @@ pub struct State {
     files: BTreeMap<Vec<u8>, FileInfo>,
 }
 
+impl State {
+    /// No JBIG2 file is known (none read, or all done).
+    pub fn is_empty(&self) -> bool {
+        self.files.is_empty()
+    }
+}
+
 impl Globals {
     /// `ygetc`: the next byte; the end of the file stops the run.
     fn ygetc(&mut self, f: &mut CFile) -> u32 {

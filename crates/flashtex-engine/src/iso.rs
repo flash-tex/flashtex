@@ -2218,6 +2218,21 @@ impl<O: Space, N: Space> Iso<'_, O, N> {
         // the static words themselves compare equal apart from those links
         for p in HI_MEM_STAT_MIN..=MEM_TOP {
             let (x, y) = (self.o.mem(p), self.n.mem(p));
+            // `info(end_span)` is scratch, dead between two commands like
+            // the scratch heads' links (the convergence test): only
+            // `fin_align` reads it, after setting it to the preamble's next
+            // record ("Update width entry for spanned columns": `s:=end_span;
+            // info(s):=p`), and leaves it pointing there once the preamble is
+            // freed. After an edit the runs had their preambles at different
+            // places, and every test failed until a spanned alignment put
+            // them at the same one (lane COLD-OPEN: a persisted S₁ and its
+            // fill from S₀). Its link, `max_quarterword+1` since
+            // initialization, still compares.
+            let (x, y) = if p == END_SPAN && self.scratch_heads_dead {
+                (rh(x) as u64, rh(y) as u64)
+            } else {
+                (x, y)
+            };
             if (p == OMIT_TEMPLATE || p == END_SPAN || p == NULL_LIST) && x != y {
                 fail!(self, "static word {p} differs");
             }
