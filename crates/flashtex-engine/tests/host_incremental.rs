@@ -3504,3 +3504,447 @@ fn an_edited_line_converges_with_a_box_set_on_it() {
     let _ = c.bye();
     let _ = std::fs::remove_dir_all(&base);
 }
+
+// ---------------------------------------------------------------------------
+// S₁: a persisted body checkpoint at the last viewed page (lane COLD-OPEN,
+// `host::s1`)
+
+/// The viewport of the S₁ tests (0-based): S₁ is taken a page or two before.
+const S1_VIEW: u32 = 12;
+
+/// A document for the S₁ tests: a table of contents, a forward reference,
+/// and a file read (and closed) on the first page.
+fn s1_doc() -> (String, String) {
+    let main = article(18)
+        .replacen(
+            "\\begin{document}\n",
+            "\\begin{document}\n\\tableofcontents\nSee page~\\pageref{last}.\n\\input{side}\n",
+            1,
+        )
+        .replacen(
+            "\\end{document}\n",
+            "\\section{Last}\\label{last}\nThe end.\n\\end{document}\n",
+            1,
+        );
+    let side = "\\section{Side}\nA side file, read and closed on the first page; see \
+                Section~\\ref{last}.\n\n"
+        .to_string();
+    (main, side)
+}
+
+/// The cache holds a whole stored file with extension `ext` (not a
+/// writer's `.tmp`).
+fn stored(cache: &Path, ext: &str) -> bool {
+    std::fs::read_dir(cache).is_ok_and(|d| {
+        d.flatten()
+            .any(|e| e.path().extension().is_some_and(|x| x == ext))
+    })
+}
+
+/// Compile until a compile finds nothing changed, at the viewport; the
+/// first compile's outcome.
+fn s1_compile_until_unchanged(
+    c: &mut Client,
+    view: &mut View,
+    proj: &Path,
+    out: &Path,
+    id: &mut i64,
+) -> Outcome {
+    let mut first = None;
+    for _ in 0..6 {
+        *id += 1;
+        let mut r = req(*id, proj, out, "main.tex");
+        r.viewport = Some(S1_VIEW);
+        let o = compile(c, view, &r);
+        assert_eq!(o.done.str_field("status"), Some("ok"), "{}", o.done);
+        let unchanged = o.done.str_field("mode") == Some("unchanged");
+        if first.is_none() {
+            first = Some(o);
+        }
+        if unchanged {
+            break;
+        }
+    }
+    first.unwrap()
+}
+
+/// Store S₀ and S₁: a host with the cache opens the document at the
+/// viewport, compiles until nothing changes, and is left idle until both
+/// are written.
+fn s1_store(proj: &Path, out: &Path, cache: &Path, name: &str) {
+    let cache_env = [("FLASHTEX_S0_CACHE", cache.to_str().unwrap())];
+    let host = start_host_env(name, &cache_env);
+    let mut c = Client::connect(&host.1).unwrap();
+    let mut view = View::default();
+    let mut id = 0;
+    s1_compile_until_unchanged(&mut c, &mut view, proj, out, &mut id);
+    // S₀ after the first (cold) compile, S₁ once the host is idle (2 s)
+    let deadline = Instant::now() + Duration::from_secs(120);
+    while !(stored(cache, "s0") && stored(cache, "s1")) && Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    let _ = c.bye();
+    assert!(stored(cache, "s1"), "no S1 was stored");
+}
+
+/// The PDF and log a from-scratch compile gives in the same directories
+/// (so that the PDF's /ID, made from its name, is the same): a host without
+/// a cache, the output directory emptied first.
+fn s1_scratch_pdf_log(proj: &Path, out: &Path) -> (Vec<u8>, Vec<u8>) {
+    let _ = std::fs::remove_dir_all(out);
+    std::fs::create_dir_all(out).unwrap();
+    let host = start_host("s1p");
+    let mut c = Client::connect(&host.1).unwrap();
+    let mut view = View::default();
+    let mut id = 0;
+    for _ in 0..6 {
+        id += 1;
+        let o = compile(&mut c, &mut view, &req(id, proj, out, "main.tex"));
+        if o.done.str_field("mode") == Some("unchanged") {
+            break;
+        }
+    }
+    let _ = c.bye();
+    (
+        std::fs::read(out.join("main.pdf")).unwrap(),
+        std::fs::read(out.join("main.log")).unwrap(),
+    )
+}
+
+/// `compare_with_scratch`, for the pages from `from` on only (a reopen
+/// from S₁ with the fill off has not typeset the ones before).
+#[allow(clippy::too_many_arguments)]
+fn s1_compare_from(
+    sock: &Path,
+    view: &View,
+    proj: &Path,
+    out: &Path,
+    p2: &Path,
+    o2: &Path,
+    from: u32,
+    what: &str,
+) {
+    let mut s = Client::connect(sock).unwrap();
+    let mut sv = View::default();
+    let mut rs = CompileRequest::new(1, p2.to_str().unwrap(), "main.tex");
+    rs.output_dir = Some(o2.to_str().unwrap().into());
+    let so = compile(&mut s, &mut sv, &rs);
+    assert_eq!(
+        so.done.str_field("mode"),
+        Some("cold"),
+        "{what}: {}",
+        so.done
+    );
+    assert_eq!(sv.count, view.count, "{what}: page count");
+    for i in from..view.count as u32 {
+        let a = resolve(view, i, proj, out);
+        let b = resolve(&sv, i, p2, o2);
+        if a != b {
+            panic!(
+                "{what}: page {i} differs from the scratch compile: {}",
+                describe_difference(&a, &b)
+            );
+        }
+    }
+    let _ = s.bye();
+}
+
+/// What a case does to the stored state before the reopen.
+#[derive(Clone, Copy, Debug)]
+enum S1Change {
+    Nothing,
+    /// A file read and closed before S₁.
+    Side,
+    /// The main file before S₁'s position in it, and after.
+    MainEarly,
+    MainLate,
+    /// The `.aux` and the `.toc` the run read before S₁.
+    Aux,
+    Toc,
+    /// The PDF on disk: a byte of its first page changed, or cut there.
+    PdfByte,
+    PdfShort,
+    /// S₁ saved by another engine build (its key's build).
+    Build,
+}
+
+/// Lane COLD-OPEN: a reopen from a persisted S₁ (`host::s1`). A host with
+/// an S₀ cache opens the document at a viewport, compiles it until nothing
+/// changes and, idle, stores S₀ and S₁ (the page checkpoint before the
+/// viewport). Then, with no host running, each case changes something (or
+/// nothing) and a new host reopens the document at the viewport: from S₁
+/// where S₁ is still what a full run reaches (nothing changed, or the main
+/// file after S₁'s position), else from S₀ (`s1_error` says why). Every page
+/// the client holds equals a from-scratch compile's, and so do the PDF and
+/// the log, byte for byte; an unchanged reopen ships the viewport page
+/// first, and its fill of the pages before S₁ converges with S₁'s run.
+#[test]
+fn a_reopen_from_a_stored_s1_equals_a_scratch_compile() {
+    if find_texlive_bin().is_none() {
+        common::no_texlive();
+        return;
+    }
+    let base = common::fresh_dir("flashtex-host-s1");
+    let _ = std::fs::remove_dir_all(&base);
+    let (proj, out, cache) = (base.join("proj"), base.join("out"), base.join("s0"));
+    std::fs::create_dir_all(&proj).unwrap();
+    std::fs::create_dir_all(&out).unwrap();
+    let (main, side) = s1_doc();
+    std::fs::write(proj.join("main.tex"), &main).unwrap();
+    std::fs::write(proj.join("side.tex"), &side).unwrap();
+    s1_store(&proj, &out, &cache, "s1a");
+    let cache_env = [("FLASHTEX_S0_CACHE", cache.to_str().unwrap())];
+    // the stored state, put back before each case (the same directories:
+    // the cache's names and the PDF's /ID depend on them)
+    let bak = base.join("bak");
+    for d in ["proj", "out", "s0"] {
+        copy_dir(&base.join(d), &bak.join(d));
+    }
+    let scratch = start_host("s1s");
+    let early = main.find("Start}\n\n").unwrap() + "Start}\n\n".len();
+    let late = main.find("\\section{Last}").unwrap();
+    let cases: [(S1Change, bool, Option<&str>); 9] = [
+        (S1Change::Nothing, true, None),
+        (S1Change::MainLate, true, None),
+        (S1Change::Side, false, Some("side.tex changed")),
+        (S1Change::MainEarly, false, Some("main.tex changed")),
+        (S1Change::Aux, false, Some("main.aux changed")),
+        (S1Change::Toc, false, Some("main.toc changed")),
+        (
+            S1Change::PdfByte,
+            false,
+            Some("is not the one S1 was taken with"),
+        ),
+        (
+            S1Change::PdfShort,
+            false,
+            Some("is not the one S1 was taken with"),
+        ),
+        (S1Change::Build, false, Some("another engine build")),
+    ];
+    for (k, (change, from_s1, why)) in cases.into_iter().enumerate() {
+        let what = format!("{change:?}");
+        for d in ["proj", "out", "s0"] {
+            let _ = std::fs::remove_dir_all(base.join(d));
+            copy_dir(&bak.join(d), &base.join(d));
+        }
+        let s1_file = std::fs::read_dir(&cache)
+            .unwrap()
+            .flatten()
+            .map(|e| e.path())
+            .find(|p| p.extension().is_some_and(|x| x == "s1"))
+            .unwrap();
+        let edit = |at: usize, text: &str| {
+            let mut m = main.clone();
+            m.insert_str(at, text);
+            std::fs::write(proj.join("main.tex"), m).unwrap();
+        };
+        let append = |p: &Path, text: &str| {
+            let mut d = std::fs::read(p).unwrap();
+            d.extend_from_slice(text.as_bytes());
+            std::fs::write(p, d).unwrap();
+        };
+        match change {
+            S1Change::Nothing => {}
+            S1Change::Side => std::fs::write(
+                proj.join("side.tex"),
+                side.replace("A side file", "A side file, edited"),
+            )
+            .unwrap(),
+            S1Change::MainEarly => edit(early, "An early sentence, typed with no host. "),
+            S1Change::MainLate => edit(late, "A late paragraph, typed with no host.\n\n"),
+            // (the same length: S₀'s check of the `.aux`'s size at the
+            // document's start holds, S₁'s of its content does not)
+            S1Change::Aux => {
+                let p = out.join("main.aux");
+                let mut d = std::fs::read(&p).unwrap();
+                let tag = b"\\newlabel{last}{{";
+                let i = d.windows(tag.len()).position(|w| w == tag).unwrap() + tag.len();
+                d[i] = if d[i] == b'9' { b'1' } else { b'9' };
+                std::fs::write(&p, d).unwrap();
+            }
+            S1Change::Toc => append(
+                &out.join("main.toc"),
+                "\\contentsline {section}{\\numberline {99}Fake}{1}%\n",
+            ),
+            S1Change::PdfByte => {
+                let p = out.join("main.pdf");
+                let mut d = std::fs::read(&p).unwrap();
+                let i = 1500;
+                d[i] = if d[i] == b' ' { b'\n' } else { b' ' };
+                std::fs::write(&p, d).unwrap();
+            }
+            S1Change::PdfShort => {
+                let p = out.join("main.pdf");
+                let d = std::fs::read(&p).unwrap();
+                std::fs::write(&p, &d[..2000]).unwrap();
+            }
+            S1Change::Build => {
+                // the key's build, after the header length, the magic and
+                // the S₀ tag (`host::s1::Head`)
+                let mut d = std::fs::read(&s1_file).unwrap();
+                let at = 8 + 8 + b"flashtex S1 v1".len() + 16;
+                d[at] ^= 1;
+                std::fs::write(&s1_file, d).unwrap();
+            }
+        }
+        let host = start_host_env(&format!("s1b{k}"), &cache_env);
+        let mut c = Client::connect(&host.1).unwrap();
+        let mut view = View::default();
+        let mut id = 0;
+        let o = s1_compile_until_unchanged(&mut c, &mut view, &proj, &out, &mut id);
+        let s1_pages = o.done.int_field("s1_pages");
+        assert_eq!(o.done.str_field("mode"), Some("open"), "{what}: {}", o.done);
+        if from_s1 {
+            let n = s1_pages.unwrap_or_else(|| panic!("{what}: S1 not used: {}", o.done));
+            assert!(
+                (4..=S1_VIEW as i64).contains(&n),
+                "{what}: S1 at {n}: {}",
+                o.done
+            );
+            // S₁'s pages first, up to the viewport page, the rest after
+            let at = o.order.iter().position(|&p| p == S1_VIEW);
+            assert!(
+                o.order.first() == Some(&(n as u32)) && at == Some((S1_VIEW as i64 - n) as usize),
+                "{what}: order {:?}",
+                o.order
+            );
+            if matches!(change, S1Change::Nothing) {
+                assert!(
+                    o.done.int_field("s1_fill_converged").is_some(),
+                    "{what}: the fill did not converge: {}",
+                    o.done
+                );
+            }
+        } else {
+            assert_eq!(s1_pages, None, "{what}: S1 used: {}", o.done);
+            let e = o.done.str_field("s1_error").unwrap_or_default();
+            assert!(
+                why.is_some_and(|w| e.contains(w)),
+                "{what}: refused for another reason: {e:?}"
+            );
+        }
+        let (p2, o2) = snapshot(&base, &proj, &out, &format!("s1x{k}"));
+        compare_with_scratch(&scratch.1, &view, &proj, &out, &p2, &o2, "main.tex", &what);
+        let (pdf, log) = (
+            std::fs::read(out.join("main.pdf")).unwrap(),
+            std::fs::read(out.join("main.log")).unwrap(),
+        );
+        let _ = c.bye();
+        drop(host);
+        let (pdf0, log0) = s1_scratch_pdf_log(&proj, &out);
+        assert!(
+            pdf == pdf0,
+            "{what}: the PDF differs from a scratch compile's"
+        );
+        assert!(
+            log == log0,
+            "{what}: the log differs from a scratch compile's"
+        );
+        let _ = std::fs::remove_dir_all(&p2);
+        let _ = std::fs::remove_dir_all(&o2);
+    }
+    let _ = std::fs::remove_dir_all(&base);
+}
+
+/// Lane COLD-OPEN: while a session reopened from S₁ has not filled the
+/// pages before it (`FLASHTEX_S1_FILL=off` here: never), its history before
+/// S₁ is not the process's. An edit after S₁ runs incrementally from a
+/// checkpoint at or after it; one in a file read before S₁ runs from S₀
+/// with nothing kept. Each equals a from-scratch compile (the pages from S₁
+/// on, then all of them, the PDF and the log).
+#[test]
+fn edits_after_a_reopen_from_s1_equal_scratch_compiles() {
+    if find_texlive_bin().is_none() {
+        common::no_texlive();
+        return;
+    }
+    let base = common::fresh_dir("flashtex-host-s1e");
+    let _ = std::fs::remove_dir_all(&base);
+    let (proj, out, cache) = (base.join("proj"), base.join("out"), base.join("s0"));
+    std::fs::create_dir_all(&proj).unwrap();
+    std::fs::create_dir_all(&out).unwrap();
+    let (main, side) = s1_doc();
+    std::fs::write(proj.join("main.tex"), &main).unwrap();
+    std::fs::write(proj.join("side.tex"), &side).unwrap();
+    s1_store(&proj, &out, &cache, "s1ea");
+    let env = [
+        ("FLASHTEX_S0_CACHE", cache.to_str().unwrap()),
+        ("FLASHTEX_S1_FILL", "off"),
+    ];
+    let host = start_host_env("s1eb", &env);
+    let scratch = start_host("s1es");
+    let mut c = Client::connect(&host.1).unwrap();
+    let mut view = View::default();
+    let mut id = 1;
+    let mut r = req(id, &proj, &out, "main.tex");
+    r.viewport = Some(S1_VIEW);
+    let o = compile(&mut c, &mut view, &r);
+    let n = o
+        .done
+        .int_field("s1_pages")
+        .unwrap_or_else(|| panic!("S1 not used: {}", o.done)) as u32;
+    // an edit after S₁: from a checkpoint at or after it
+    let late = main.find("\\section{Last}").unwrap();
+    id += 1;
+    let mut r = req(id, &proj, &out, "main.tex");
+    r.viewport = Some(S1_VIEW);
+    r.edits = vec![Edit {
+        path: "main.tex".into(),
+        offset: late as u64,
+        delete: 0,
+        insert: "A late paragraph, typed after the reopen.\n\n".into(),
+    }];
+    let o = compile(&mut c, &mut view, &r);
+    assert_eq!(o.done.str_field("mode"), Some("incremental"), "{}", o.done);
+    let rp = o.done.int_field("restart_page").unwrap_or(-1);
+    assert!(rp >= n as i64, "restart before S1 ({n}): {}", o.done);
+    let (p2, o2) = snapshot(&base, &proj, &out, "e1");
+    s1_compare_from(
+        &scratch.1,
+        &view,
+        &proj,
+        &out,
+        &p2,
+        &o2,
+        n,
+        "an edit after S1",
+    );
+    // a file read before S₁: from S₀, every page again
+    std::fs::write(
+        proj.join("side.tex"),
+        side.replace("A side file", "A side file, edited after the reopen"),
+    )
+    .unwrap();
+    for _ in 0..5 {
+        id += 1;
+        let mut r = req(id, &proj, &out, "main.tex");
+        r.viewport = Some(S1_VIEW);
+        let o = compile(&mut c, &mut view, &r);
+        if o.done.str_field("mode") == Some("unchanged") {
+            break;
+        }
+        assert_eq!(o.done.int_field("restart_page"), Some(0), "{}", o.done);
+    }
+    let (p2, o2) = snapshot(&base, &proj, &out, "e2");
+    compare_with_scratch(
+        &scratch.1,
+        &view,
+        &proj,
+        &out,
+        &p2,
+        &o2,
+        "main.tex",
+        "an edit before S1",
+    );
+    let (pdf, log) = (
+        std::fs::read(out.join("main.pdf")).unwrap(),
+        std::fs::read(out.join("main.log")).unwrap(),
+    );
+    let _ = c.bye();
+    drop(host);
+    let (pdf0, log0) = s1_scratch_pdf_log(&proj, &out);
+    assert!(pdf == pdf0, "the PDF differs from a scratch compile's");
+    assert!(log == log0, "the log differs from a scratch compile's");
+    let _ = std::fs::remove_dir_all(&base);
+}

@@ -216,6 +216,11 @@ struct Target {
     first_marks: Vec<crate::os::PhaseMark>,
     first_restore_us: [u64; 5],
     first_io: [(u32, u64); 8],
+    /// Pages below `next` the cache did not hold when they were due, so
+    /// that the client was not sent them (a reopen from S₁, `incr::Session::
+    /// open_s1`, ships from S₁'s page on; the pages before it come with the
+    /// fill): stale until sent.
+    missing: std::collections::BTreeSet<u32>,
 }
 
 impl Target {
@@ -261,21 +266,26 @@ impl Target {
             return;
         }
         let range = |a: usize, b: usize| Json::Arr(vec![Json::Int(a as i64), Json::Int(b as i64)]);
-        let cur = self.next as usize;
+        let cur = if complete { count } else { self.next as usize };
         let mut current = vec![];
         let mut stale = vec![];
-        if complete {
-            if count > 0 {
-                current.push(range(0, count - 1));
+        // (pages below `cur` the client was not sent are stale: `missing`)
+        let mut from = 0;
+        for &m in self.missing.range(..cur.min(count) as u32) {
+            let m = m as usize;
+            if m > from {
+                current.push(range(from, m - 1));
             }
-        } else {
-            if cur > 0 {
-                current.push(range(0, cur - 1));
-            }
-            if count > cur {
-                stale.push(range(cur, count - 1));
-            }
+            stale.push(range(m, m));
+            from = m + 1;
         }
+        if cur.min(count) > from {
+            current.push(range(from, cur.min(count) - 1));
+        }
+        if count > cur {
+            stale.push(range(cur, count - 1));
+        }
+        let complete = complete && self.missing.range(..count as u32).next().is_none();
         let j = obj([
             ("id", Json::Int(self.id)),
             ("count", Json::Int(count as i64)),
@@ -358,6 +368,7 @@ impl Live {
     /// forms the engine writes next).
     fn deliver(&self, t: &mut Target, j: u32, forms: bool) {
         let Some(Some(c)) = self.pages.get(j as usize) else {
+            t.missing.insert(j);
             return;
         };
         if t.ps.held.get(&j) != Some(&c.version) {
@@ -366,6 +377,7 @@ impl Live {
             }
             t.ps.held.insert(j, c.version);
         }
+        t.missing.remove(&j);
         if forms {
             for n in &c.e.forms {
                 if let Some(f) = self.forms.get(n) {
@@ -522,6 +534,10 @@ struct Doc {
     /// persisted once the host is idle (`TRIM_AFTER`), not after every
     /// keystroke in the preamble (20 MB each).
     s0_when_idle: bool,
+    /// The last `COMPILE`'s `viewport`, and S₁ (`incr::Session::prepare_s1`)
+    /// is to be persisted for it once the host is idle.
+    viewport: Option<usize>,
+    s1_when_idle: bool,
 }
 
 /// The external tools of the resident document (`super::external`).
@@ -600,7 +616,7 @@ impl Engine {
             let idle_wait = trim_after.or_else(|| {
                 self.doc
                     .as_ref()
-                    .is_some_and(|d| d.s0_when_idle)
+                    .is_some_and(|d| d.s0_when_idle || d.s1_when_idle)
                     .then_some(std::time::Duration::from_secs(2))
             });
             let req = match hot_until {
@@ -644,6 +660,14 @@ impl Engine {
                                 .is_some_and(|d| d.s0_when_idle && !d.session.is_paused())
                             {
                                 self.save_s0();
+                            }
+                            // (S₁ at the last viewport, lane COLD-OPEN)
+                            if self
+                                .doc
+                                .as_ref()
+                                .is_some_and(|d| d.s1_when_idle && !d.session.is_paused())
+                            {
+                                self.save_s1();
                             }
                             continue;
                         }
@@ -844,6 +868,8 @@ impl Engine {
             tools: DocTools::default(),
             s0_unsaved: false,
             s0_when_idle: false,
+            viewport: None,
+            s1_when_idle: false,
         });
         Ok(())
     }
@@ -971,8 +997,9 @@ impl Engine {
             &server::font_formats(&req).join(","),
         ));
         // (a save of this S₀ still being written by this process: wait for it)
+        let s1_path = s0_path.as_ref().map(|p| p.with_extension("s1"));
         if doc.compiles == 0 {
-            if let Some(p) = &s0_path {
+            for p in s0_path.iter().chain(&s1_path) {
                 super::s0write::flush(
                     Some(&p.to_string_lossy()),
                     std::time::Duration::from_secs(30),
@@ -980,6 +1007,13 @@ impl Engine {
             }
         }
         let reopen = doc.compiles == 0 && s0_path.as_ref().is_some_and(|p| p.is_file());
+        // A stored S₁ (lane COLD-OPEN): the pages a reopen from it ships
+        // first are from S₁'s on, and the document had its run's count.
+        let s1_head = s1_path
+            .as_ref()
+            .filter(|p| reopen && p.is_file())
+            .and_then(|p| super::s1::File::read(&p.to_string_lossy()).ok())
+            .map(|f| f.head.total as usize);
         started(
             "resident",
             keep,
@@ -990,7 +1024,7 @@ impl Engine {
                 server::send(&out, kind::SOURCES, &src);
             }
         }
-        let old_count = self.live.borrow().pages.len();
+        let old_count = self.live.borrow().pages.len().max(s1_head.unwrap_or(0));
         self.live.borrow_mut().target = Some(Target {
             ps,
             conn: conn.clone(),
@@ -1020,12 +1054,14 @@ impl Engine {
             first_marks: vec![],
             first_restore_us: [0; 5],
             first_io: [(0, 0); 8],
+            missing: Default::default(),
         });
         let stop_at = req
             .int_field("viewport")
             .filter(|v| *v >= 0)
             .map(|v| v as usize + 1);
         let doc = self.doc.as_mut().unwrap();
+        doc.viewport = stop_at.map(|s| s - 1);
         // Preemption: a newer COMPILE from this client (typing) or its
         // CANCEL stops the run at its next page or segment checkpoint; the
         // next compile keeps what it typeset, or goes back to the run it was
@@ -1130,10 +1166,15 @@ impl Engine {
         let busy_run = crate::busy::enter(crate::busy::Part::Typeset);
         let mut open_error = None;
         let first = if reopen {
-            match doc
-                .session
-                .open_s0(&s0_path.as_ref().unwrap().to_string_lossy(), stop_at)
-            {
+            let s1 = s1_path
+                .as_ref()
+                .filter(|p| p.is_file())
+                .map(|p| p.to_string_lossy().into_owned());
+            match doc.session.open_s1(
+                &s0_path.as_ref().unwrap().to_string_lossy(),
+                s1.as_deref(),
+                stop_at,
+            ) {
                 Ok(r) => Ok(r),
                 Err(e) => {
                     open_error = Some(e);
@@ -1166,6 +1207,7 @@ impl Engine {
                         // the rest's passes may have stopped for the tools
                         rep.passes = r2.passes;
                         rep.deferred = r2.deferred;
+                        rep.s1_fill_converged = r2.s1_fill_converged;
                         Ok(rep)
                     }
                     Err(e) => Err(e),
@@ -1270,6 +1312,17 @@ impl Engine {
                 }
                 if let Some(e) = &open_error {
                     extra.push(("s0_error".to_string(), js(e.as_str())));
+                }
+                // lane COLD-OPEN: a reopen from S₁ (the pages before it), or
+                // why the stored one was not used; the fill's convergence
+                if let Some(n) = rep.s1_pages {
+                    extra.push(("s1_pages".to_string(), Json::Int(n as i64)));
+                }
+                if let Some(e) = &rep.s1_error {
+                    extra.push(("s1_error".to_string(), js(e.as_str())));
+                }
+                if let Some(n) = rep.s1_fill_converged {
+                    extra.push(("s1_fill_converged".to_string(), Json::Int(n as i64)));
                 }
                 let st = if rep.status == 0 { "ok" } else { "error" };
                 (st, Some(rep.status), count, rep.mode.clone(), extra)
@@ -1618,6 +1671,9 @@ impl Engine {
         let save = (cold || doc.s0_unsaved) && !stopped;
         doc.s0_unsaved = (cold || doc.s0_unsaved) && stopped;
         doc.s0_when_idle = !save && (preamble || doc.s0_when_idle);
+        // S₁ at the viewport once the host is idle (a stopped run is not
+        // saved: `prepare_s1` says so, and the next compile asks again)
+        doc.s1_when_idle = self.cfg.s0_cache.is_some() && doc.viewport.is_some();
         if save {
             self.save_s0();
         }
@@ -1683,6 +1739,62 @@ impl Engine {
             done(r, t.elapsed().as_secs_f64());
         } else {
             super::s0write::submit(&p.to_string_lossy(), image, done);
+        }
+    }
+
+    /// Persist S₁ at the resident document's last viewport (`--s0-cache`,
+    /// lane COLD-OPEN; `incr::Session::prepare_s1`), after its S₀: on the
+    /// writer thread, as S₀ is.
+    fn save_s1(&mut self) {
+        let path = self.doc.as_ref().and_then(|d| self.s0_path(&d.job));
+        let Some(doc) = self.doc.as_mut() else {
+            return;
+        };
+        doc.s1_when_idle = false;
+        let (Some(p0), Some(v)) = (path, doc.viewport) else {
+            return;
+        };
+        let p1 = p0.with_extension("s1");
+        // (S₁ is taken over the stored S₀: the one this process writes, first)
+        super::s0write::flush(
+            Some(&p0.to_string_lossy()),
+            std::time::Duration::from_secs(30),
+        );
+        let t = Instant::now();
+        let r = doc.session.prepare_s1(v, &p0.to_string_lossy());
+        let engine_ms = (t.elapsed().as_secs_f64() * 1e4).round() / 10.0;
+        let (page, image) = match r {
+            Ok(x) => x,
+            Err(e) => {
+                // (a stored S₁ for another state is refused when opened)
+                eprintln!("flashtex-host: no S1: {e}");
+                server::say(&format!(
+                    "flashtex-host: {}",
+                    obj([("no_s1", js(e.as_str())), ("viewport", Json::Int(v as i64))])
+                ));
+                return;
+            }
+        };
+        let shown = p1.display().to_string();
+        let done: super::s0write::Done = Box::new(move |r, write_s| match r {
+            Ok((bytes, _)) => server::say(&format!(
+                "flashtex-host: {}",
+                obj([
+                    ("saved_s1", js(shown)),
+                    ("page", Json::Int(page as i64)),
+                    ("bytes", Json::Int(bytes as i64)),
+                    ("engine_ms", Json::Num(engine_ms)),
+                    ("write_ms", Json::Num((write_s * 1e4).round() / 10.0)),
+                ])
+            )),
+            Err(e) => eprintln!("flashtex-host: saving S1: {e}"),
+        });
+        if self.profile.lean {
+            let t = Instant::now();
+            let r = image.write(&p1.to_string_lossy(), &|| false);
+            done(r, t.elapsed().as_secs_f64());
+        } else {
+            super::s0write::submit(&p1.to_string_lossy(), image, done);
         }
     }
 

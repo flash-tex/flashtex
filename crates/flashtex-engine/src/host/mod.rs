@@ -35,6 +35,7 @@ pub mod diag;
 pub mod external;
 mod resident;
 pub mod s0write;
+pub mod s1;
 pub mod server;
 pub mod tools;
 
@@ -636,6 +637,21 @@ pub fn make_key(
     clock: (i64, i32),
     first_line: &[u8],
 ) -> Result<Key, String> {
+    make_key_from(g, id, rec, reads, (0, 0), clock, first_line)
+}
+
+/// [`make_key`] over the reads from `from` (files, lookups of `reads`) up
+/// to `rec`'s: S₁'s key (`s1`), which S₀'s key covers the reads before.
+/// Its `written` is every file written and closed before `rec`.
+pub fn make_key_from(
+    g: &mut Globals,
+    id: CheckpointId,
+    rec: &ExtRecord,
+    reads: &system::ReadLog,
+    from: (usize, usize),
+    clock: (i64, i32),
+    first_line: &[u8],
+) -> Result<Key, String> {
     {
         let mut prefixes = vec![];
         let mut open_paths = vec![];
@@ -672,10 +688,13 @@ pub fn make_key(
         // (a whole read after `\document`'s body was pushed, before the
         // anchor -- its `\IfFileExists{\jobname.aux}` -- is the journal's:
         // `whole_after_arm`)
-        let arm = g.layer().arm_reads;
+        // (S₁'s key, from S₀'s counts on: its whole reads are the body's,
+        // keyed by content like any other)
+        let arm = g.layer().arm_reads.filter(|_| from == (0, 0));
         let files = reads.files[..nf.min(reads.files.len())]
             .iter()
             .enumerate()
+            .skip(from.0)
             .filter(|(i, f)| !whole_after_arm(arm, *i, f))
             .map(|(_, f)| f)
             .filter(|f| !open_paths.contains(&f.path) || f.closed_at == Some(u64::MAX))
@@ -696,8 +715,9 @@ pub fn make_key(
             .collect();
         // (the journal lists a repeated lookup each time; the key once)
         let mut lookup_seen = std::collections::HashSet::new();
+        let hi = nl.min(reads.lookups.len());
         let lookups: Vec<(String, u8, Option<bool>, Option<String>)> = reads.lookups
-            [..nl.min(reads.lookups.len())]
+            [from.1.min(hi)..hi]
             .iter()
             .filter(|l| {
                 lookup_seen.insert((
@@ -725,7 +745,8 @@ pub fn make_key(
         let arm = reads.files[..nf.min(reads.files.len())]
             .iter()
             .enumerate()
-            .filter(|(i, f)| whole_after_arm(g.layer().arm_reads, *i, f))
+            .skip(from.0)
+            .filter(|(i, f)| whole_after_arm(arm, *i, f))
             .map(|(_, f)| {
                 let hash = match (&f.content, f.hash) {
                     (Some(c), [0, 0]) => crate::persist::hash128(c),
@@ -826,6 +847,9 @@ pub struct S0Image {
     /// display list's side table blanked), `CHUNK_BYTES` each in `data`.
     chunks: Vec<u32>,
     data: Scratch,
+    /// Keep the chunks that are all zero too (S₁'s, which are written over
+    /// S₀'s: `s1`); S₀'s space starts zero, and leaves them out.
+    all: bool,
 }
 
 /// A buffer of its own pages (`os::alloc_zeroed`), given back to the system
@@ -990,6 +1014,7 @@ pub fn prepare_s0(g: &mut Globals, id: CheckpointId, key: &Key) -> Result<S0Imag
         tail,
         chunks,
         data,
+        all: false,
     })
 }
 
@@ -1013,6 +1038,7 @@ impl S0Image {
             tail,
             chunks,
             data,
+            all,
         } = self;
         tail(&mut head);
         let nonzero = |d: &[u8]| {
@@ -1024,7 +1050,7 @@ impl S0Image {
         let (present, at): (Vec<u32>, Vec<usize>) = chunks
             .iter()
             .enumerate()
-            .filter(|&(i, _)| nonzero(&data[i * CHUNK_BYTES..(i + 1) * CHUNK_BYTES]))
+            .filter(|&(i, _)| all || nonzero(&data[i * CHUNK_BYTES..(i + 1) * CHUNK_BYTES]))
             .map(|(i, &c)| (c, i))
             .unzip();
         present.enc(&mut head);

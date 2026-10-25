@@ -303,6 +303,7 @@ class Host:
         self.sock = sock
         self.lines = queue.Queue()
         self.saved = 0
+        self.s1 = []
         self.startup = None
         t0 = time.perf_counter()
         self.p = subprocess.Popen([f'{eng}/flashtex-host', '--socket', sock, '--s0-cache', s0] + extra,
@@ -342,6 +343,9 @@ class Host:
             l = l.rstrip('\n')
             if '"saved_s0"' in l:
                 self.saved += 1
+            # (S1, lane COLD-OPEN: saved, or why not)
+            if '"saved_s1"' in l or '"no_s1"' in l:
+                self.s1.append(l[len('flashtex-host: '):])
             self.lines.put(l)
         self.lines.put(None)
 

@@ -712,6 +712,32 @@ pub fn same_place(a: u64, b: u64) -> bool {
     .unwrap_or(false)
 }
 
+/// The place a side-table entry names, by name: (the file's name as TeX
+/// read it, line, column), so that another process can name it again
+/// ([`entry_at`]; a persisted body checkpoint, `host::s1`). `None`: no
+/// span, or one this writer does not know.
+pub fn entry_place(l: u64) -> Option<(Vec<u8>, u32, u16)> {
+    let s = loc_span(l);
+    if s == 0 {
+        return None;
+    }
+    with(|st| {
+        let &(f, line) = st.spans.get(s as usize - 1)?;
+        let name = st.files.get((f as usize).checked_sub(1)?)?.clone();
+        Some((name, line, loc_col(l)))
+    })
+    .flatten()
+}
+
+/// The side-table entry of this process for a place [`entry_place`] gave
+/// (`None`: no writer here).
+pub fn entry_at(name: &[u8], line: u32, col: u16) -> Option<u64> {
+    with(|st| {
+        let f = st.file_id(name);
+        loc_pack(st.span_id(f, line), col)
+    })
+}
+
 /// The absolute path of file id `f`.
 pub fn file_path(f: u32) -> Option<String> {
     with(|st| st.file_paths.get((f as usize).checked_sub(1)?).cloned()).flatten()

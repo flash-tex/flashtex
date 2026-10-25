@@ -177,6 +177,7 @@ mod tests {
             tail: Box::new(|h: &mut Vec<u8>| h.extend_from_slice(b", its tail")),
             chunks,
             data: crate::host::Scratch::from_slice(&data),
+            all: false,
         }
     }
 
