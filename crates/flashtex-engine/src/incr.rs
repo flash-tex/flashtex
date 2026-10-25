@@ -43,6 +43,10 @@ use crate::system::{self, FileRead, ReadLog, RunOptions, StatSig, Stream};
 use std::collections::HashMap;
 use std::time::Instant;
 
+// PROBE (lane COLD-OPEN, scratch branch, never merged)
+#[path = "incr_modpatch.rs"]
+mod modpatch;
+
 /// One shipped page.
 #[derive(Clone, Debug)]
 pub struct Page {
@@ -468,6 +472,8 @@ impl Report {
 
 /// What the observer of a run knows and collects.
 struct Obs {
+    /// PROBE: `FLASHTEX_MODPATCH_PROBE` (`modpatch`).
+    mp: Option<modpatch::Probe>,
     /// Files either run opened for output (the old run's journal, and the
     /// live one), without a leading `./`.
     old_outputs: Vec<String>,
@@ -3061,6 +3067,15 @@ impl Observer for Obs {
         });
         let j = self.pages_so_far();
         self.taken.push((id, j));
+        if modpatch::on() {
+            if self.mp.is_some() {
+                self.modpatch_page(g, &rec, j);
+            }
+            // (each page's first reads logged again: the old run's reads by page)
+            if g.rs_on {
+                crate::readset::begin_rs_segment(g);
+            }
+        }
         if self.checkmem {
             check_mem(g, j);
         }
@@ -5816,6 +5831,7 @@ impl Session {
 
     fn observer(&self, t0: Instant, base: usize, stop_at: Option<usize>) -> Obs {
         Obs {
+            mp: None,
             old_outputs: vec![],
             old_reads_end: 0,
             t0,
@@ -6009,6 +6025,10 @@ impl Session {
         before_s0: bool,
         probe: Option<crate::revalidate::Probe>,
     ) -> Result<Report, String> {
+        // PROBE: the old run's future is kept in every pass
+        if modpatch::on() {
+            self.no_tests = false;
+        }
         // (what a restart at the revalidated point needs again)
         let chain = probe.as_ref().map(|p| (p.windows.clone(), p.bad_lookup));
         // (an anchor comparison's continuation: `arm_window`)
@@ -6282,6 +6302,14 @@ impl Session {
             .collect();
         obs.old_reads_end = old_reads_end;
         obs.converge = self.opts.converge && !std::mem::take(&mut self.no_tests);
+        if modpatch::on() {
+            obs.converge = false;
+            obs.branch_window = None;
+            let p = patches
+                .iter()
+                .fold(crate::readset::Patch::default(), |a, p| a.then(p));
+            obs.mp = Some(modpatch::Probe::new(Some(p)));
+        }
         obs.pdf = rec.files.iter().find_map(|f| match &f.stream {
             Stream::Out { path, len, .. } if path.ends_with(".pdf") => Some((path.clone(), *len)),
             _ => None,

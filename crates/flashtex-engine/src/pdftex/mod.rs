@@ -206,6 +206,46 @@ impl CState {
     }
 }
 
+impl CState {
+    /// PROBE (scratch branch, `incr::modpatch`): which parts differ, the
+    /// image table also by its persisted encoding (`img~`: equal so).
+    pub fn probe_parts(&self, o: &CState) -> Vec<&'static str> {
+        let (f, g) = (&self.fonts, &o.fonts);
+        let mut v = vec![];
+        if !same_enc(&self.utils, &o.utils) {
+            v.push("utils");
+        }
+        if !(shared::Shared::ptr_eq(&self.vf, &o.vf) || self.vf.same_as(&o.vf)) {
+            v.push("vf");
+        }
+        if !self.avl.same_as(&o.avl) {
+            v.push("avl");
+        }
+        if self.fonts_busy != o.fonts_busy {
+            v.push("fonts_busy");
+        }
+        if !same_enc(&self.out, &o.out) {
+            v.push("out");
+        }
+        if !f.map.same_as(&g.map) {
+            v.push("map");
+        }
+        if !same_shared(&f.enc, &g.enc) {
+            v.push("enc");
+        }
+        if !same_shared(&f.wf, &g.wf) {
+            v.push("wf");
+        }
+        if !same_shared(&f.tu, &g.tu) {
+            v.push("tu");
+        }
+        if !(shared::Shared::ptr_eq(&self.img, &o.img) || self.img.same_as(&o.img)) {
+            v.push(if same_enc(&*self.img, &*o.img) { "img~" } else { "img" });
+        }
+        v
+    }
+}
+
 /// A copy of this thread's C state, for a checkpoint (`crate::checkpoint`).
 /// Checkpoints are taken between commands, when the font backend is never
 /// out (`with_fonts` runs inside one primitive). `Err` when a part holds

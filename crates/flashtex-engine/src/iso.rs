@@ -57,6 +57,42 @@ thread_local! {
     static ALIGN_BY_WORDS: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
     /// `with_dormant`: the dormant input level (-1: none).
     static DORMANT: std::cell::Cell<i32> = const { std::cell::Cell::new(-1) };
+    /// PROBE (lane COLD-OPEN, `FLASHTEX_MODPATCH_PROBE`, never merged):
+    /// `eqtb` positions the walk leaves out (the L5 patch's names, whose
+    /// meanings the probe checks itself), their token lists covered in each
+    /// state alone.
+    static MP_SKIP: std::cell::RefCell<Option<std::collections::HashSet<i32>>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+thread_local! {
+    /// PROBE: old string number -> new (a pure insertion of the patch's new
+    /// names' strings), for the input levels' file names.
+    static MP_STR: std::cell::RefCell<Option<std::sync::Arc<Vec<i32>>>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+/// PROBE: run `f` with string numbers compared through `map` (old -> new).
+pub(crate) fn with_str_map<R>(map: Option<std::sync::Arc<Vec<i32>>>, f: impl FnOnce() -> R) -> R {
+    MP_STR.with(|c| *c.borrow_mut() = map);
+    let r = f();
+    MP_STR.with(|c| *c.borrow_mut() = None);
+    r
+}
+
+fn mp_str(s: i32) -> i32 {
+    MP_STR.with(|c| match &*c.borrow() {
+        Some(m) if s >= 0 && (s as usize) < m.len() => m[s as usize],
+        _ => s,
+    })
+}
+
+/// PROBE: run `f` with `eqtb` positions `skip` left out of the walk.
+pub(crate) fn with_skip<R>(skip: std::collections::HashSet<i32>, f: impl FnOnce() -> R) -> R {
+    MP_SKIP.with(|c| *c.borrow_mut() = Some(skip));
+    let r = f();
+    MP_SKIP.with(|c| *c.borrow_mut() = None);
+    r
 }
 
 /// Run `f` with input level `j`'s `limit`, and the stale `limit`s of the
@@ -2113,8 +2149,14 @@ impl<O: Space, N: Space> Iso<'_, O, N> {
         let (ho, hn) = (self.o.sc("hash_high"), self.n.sc("hash_high"));
         self.eq("hash_high", ho, hn);
         let high = EQTB_SIZE + 1..=EQTB_SIZE + ho.max(hn);
+        let skip = MP_SKIP.with(|c| c.borrow().clone());
         for p in (1..INT_BASE).chain(high) {
             let (x, y) = (self.o.eqtb(p), self.n.eqtb(p));
+            if skip.as_ref().is_some_and(|s| s.contains(&p)) {
+                self.mp_cover_list(x, true);
+                self.mp_cover_list(y, false);
+                continue;
+            }
             if x == y {
                 let t = b0(x);
                 let pointer = matches!(t, CALL..=LONG_OUTER_CALL | GLUE_REF | SHAPE_REF | BOX_REF)
@@ -2130,6 +2172,26 @@ impl<O: Space, N: Space> Iso<'_, O, N> {
             }
         }
         let _ = (GLUE_BASE, LOCAL_BASE);
+    }
+
+    /// PROBE: cover the token list a skipped `eqtb` word points at, in one
+    /// state (`old`: O).
+    fn mp_cover_list(&mut self, w: u64, old: bool) {
+        if !(CALL..=LONG_OUTER_CALL).contains(&b0(w)) {
+            return;
+        }
+        let mut q = rh(w);
+        let mut n = 0;
+        while q != NULL && Self::in_mem(q) && n < (1 << 20) {
+            if old {
+                set(&mut self.cov_o, q);
+                q = rh(self.o.mem(q));
+            } else {
+                set(&mut self.cov_n, q);
+                q = rh(self.n.mem(q));
+            }
+            n += 1;
+        }
     }
 
     /// The save stack, group by group as `show_save_groups` reads it:
@@ -2350,7 +2412,11 @@ impl<O: Space, N: Space> Iso<'_, O, N> {
         let skip_limit = dormant >= 0 && k >= dormant;
         self.eq("input state", x.state_field, y.state_field);
         self.eq("input index", x.index_field, y.index_field);
-        self.eq("input name", x.name_field, y.name_field);
+        if x.state_field != TOKEN_LIST && x.name_field > 17 {
+            self.eq("input name", mp_str(x.name_field), y.name_field);
+        } else {
+            self.eq("input name", x.name_field, y.name_field);
+        }
         self.eq(
             "input synctex tag",
             x.synctex_tag_field,

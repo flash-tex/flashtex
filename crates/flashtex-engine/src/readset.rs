@@ -36,7 +36,7 @@ use std::collections::{HashMap, HashSet};
 /// `single_base`, `null_cs` (pdftex.web §222 with this build's sizes),
 /// `eqtb_size`, and tex.ch's `eqtb_top`: `hash_extra` control sequences
 /// live above `eqtb_size` (changes/web2c.ch).
-const HASH_BASE: i32 = 514;
+pub(crate) const HASH_BASE: i32 = 514;
 const SINGLE_BASE: i32 = 257;
 const NULL_CS: i32 = 513;
 use crate::generated::consts as layout;
@@ -335,6 +335,11 @@ impl<'a> View<'a> {
         self.scalar_i32("str_ptr").unwrap_or(0)
     }
 
+    /// PROBE (scratch branch): `str_start[s]`.
+    pub fn str_start(&self, s: i32) -> i32 {
+        self.int4(self.off.str_start + s as usize * 4)
+    }
+
     pub fn string_bytes(&self, s: i32) -> Vec<u8> {
         self.string(s)
     }
@@ -352,6 +357,10 @@ impl<'a> View<'a> {
 
     /// The name of the control sequence at `p` (`None`: an empty hash slot).
     pub fn name(&self, p: i32) -> Option<Name> {
+        // (PROBE, scratch branch: a slot outside eqtb names nothing)
+        if p <= 0 || p > EQTB_TOP {
+            return None;
+        }
         if p < SINGLE_BASE {
             Some(Name::Active((p - 1) as u8))
         } else if p < NULL_CS {
@@ -411,8 +420,16 @@ impl<'a> View<'a> {
         }
         if (CALL..=LONG_OUTER_CALL).contains(&ty) {
             let mut toks = vec![];
+            // (PROBE, scratch branch: a pointer outside `mem` is an error)
+            let in_mem = |q: i32| (0..=crate::generated::consts::mem_max).contains(&q);
+            if !in_mem(equiv) {
+                return Err(format!("{}: a list outside mem", self.describe(p)));
+            }
             let (_, mut q) = self.mem(equiv); // the reference count
             while q != 0 {
+                if !in_mem(q) {
+                    return Err(format!("{}: a list outside mem", self.describe(p)));
+                }
                 if toks.len() > MAX_TOKENS {
                     return Err(format!("{}: token list too long", self.describe(p)));
                 }
