@@ -73,6 +73,25 @@ if [[ -z "$TIER" ]]; then
   exit 2
 fi
 
+# The engines' tests expect TeX Live 2026, the oracle's release (DESIGN §8; CI's
+# images and MacTeX 2026). A PATH whose kpsewhich belongs to another release (the
+# NixOS PC's Nix profile has TeX Live 2025) fails 17 of flashtex-xetex's host
+# tests on main (A9; REAL-DOC-GATE, 2026-10-24: they pass with TeX Live 2026
+# first on PATH). So when the TeX Live on PATH is not 2026 and a TeX Live 2026
+# is installed in one of the usual places, it goes first for this run.
+tl_release() { # the release year of the TeX Live whose kpsewhich is first on PATH
+  kpsewhich -var-value TEXMFDIST 2>/dev/null | grep -oE 'texlive[-/]20[0-9]{2}' | grep -oE '20[0-9]{2}' | head -1
+}
+if command -v kpsewhich >/dev/null 2>&1 && [[ "$(tl_release)" != 2026 ]]; then
+  for tl_bin in "$HOME"/texlive/2026/bin/* /usr/local/texlive/2026/bin/* /opt/texlive/2026/bin/*; do
+    if [[ -x "$tl_bin/kpsewhich" ]]; then
+      echo "gate.sh: TeX Live $(tl_release || true) is first on PATH; using TeX Live 2026 ($tl_bin)"
+      export PATH="$tl_bin:$PATH"
+      break
+    fi
+  done
+fi
+
 # ---------------------------------------------------------------------------
 # Step bookkeeping
 # ---------------------------------------------------------------------------
