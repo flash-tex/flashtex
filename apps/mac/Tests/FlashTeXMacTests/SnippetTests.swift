@@ -48,7 +48,7 @@ final class SnippetTests: XCTestCase {
         XCTAssertNil(Completion.matchRank("section", prefix: "tc"), "order matters")
         // Commands: prefix matches keep their order; subsequence matches follow.
         let s = Completion.suggestions(in: "\\sbs", caretUTF16: 4, result: nil)
-        XCTAssertFalse(s.isEmpty, "a subsequence match (`\\subsection`) is found")
+        XCTAssertEqual(labels(s).first, "\\subsection{...}")
         XCTAssertTrue(s.allSatisfy { Completion.matchRank($0.insertText.dropFirst().description, prefix: "sbs") == 2 })
         let se = Completion.suggestions(in: "x \\se", caretUTF16: 5, result: nil, projectClass: "article")
         // Computed from the live vocabulary (not a hand-copied snapshot) so this

@@ -114,6 +114,10 @@ enum Completion {
             /// letter exactly as pdflatex's "Undefined control sequence" does;
             /// see `offered(inClass:)` for what completion makes of that.
             var requiresClass: String? = nil
+            /// False for a measured package command the vocabulary's
+            /// annotations do not present (`LaTeXVocabulary.Command.annotated`):
+            /// offered only when no annotated command matches (`commandSuggestions`).
+            var annotated: Bool = true
 
             /// Whether completion offers this command in a document whose
             /// class is `documentClass` — the class the document itself
@@ -180,9 +184,12 @@ enum Completion {
                 /// compiler defines under that `\documentclass` alone
                 /// (`crates/compiler/src/supported.rs`, `requires_class`).
                 var requiresClass: String? = nil
+                /// False for a measured package command the generator appends
+                /// without an annotation (`LaTeXVocabulary.Command.annotated`).
+                var annotated: Bool? = nil
 
                 enum CodingKeys: String, CodingKey {
-                    case name, mode, origin, arguments, description, glyph, renders
+                    case name, mode, origin, arguments, description, glyph, renders, annotated
                     case requiresClass = "requires_class"
                 }
             }
@@ -302,7 +309,7 @@ enum Completion {
         static let entries: [Entry] = shared.commands.map { c in
             Entry(name: c.name, arguments: argumentOverrides[c.name] ?? c.arguments, description: c.description,
                   mode: c.mode, origin: Origin(rawValue: c.origin) ?? .textDispatch, glyph: c.glyph,
-                  mathDescription: c.mathDescription, requiresClass: c.requiresClass)
+                  mathDescription: c.mathDescription, requiresClass: c.requiresClass, annotated: c.annotated)
         }
 
         /// `math_symbol` commands with the glyph the compiler renders, in file order.
@@ -893,6 +900,14 @@ enum Completion {
         /// 3 everything else. Only consulted when `mathMode` is on.
         var vocabulary: [(suggestion: Suggestion, rank: Int)] = []
         var hidden: [(suggestion: Suggestion, rank: Int)] = []
+        // The measured package commands the vocabulary's annotations do not
+        // present (`Entry.annotated` false: babel's `\frq`, xy's `\frm`) are
+        // held back: they are offered only when no annotated command matches,
+        // allowed or hidden by the mode, so `\fr` still means `\frac`. The
+        // exact spelling is never held back.
+        var annotatedMatched = false
+        var unannotated: [(suggestion: Suggestion, rank: Int)] = []
+        var unannotatedHidden: [(suggestion: Suggestion, rank: Int)] = []
         for name in exact + supported where name.hasPrefix(prefix) && inThisClass(name) && offered.insert(name).inserted {
             if let item = declared[name], let metadata {
                 vocabulary.append((Suggestion(label: "\\" + name, insertText: "\\" + name, kind: .command,
@@ -903,8 +918,18 @@ enum Completion {
                 let row = (Suggestion(label: entry.label, insertText: "\\" + name, kind: .command, detail: entry.detail,
                                       snippet: entry.snippet),
                            name == prefix ? 0 : entry.mode == .math ? 2 : 3)
-                if allows(entry, mathMode: mathMode) { vocabulary.append(row) } else { hidden.append(row) }
+                let allowed = allows(entry, mathMode: mathMode)
+                if !entry.annotated && name != prefix {
+                    if allowed { unannotated.append(row) } else { unannotatedHidden.append(row) }
+                    continue
+                }
+                annotatedMatched = annotatedMatched || entry.annotated
+                if allowed { vocabulary.append(row) } else { hidden.append(row) }
             }
+        }
+        if !annotatedMatched {
+            vocabulary += unannotated
+            hidden += unannotatedHidden
         }
         // The buffer's own declarations (then the other open documents') sit
         // right under the exact spelling and above the rest of the vocabulary:
@@ -974,17 +999,21 @@ enum Completion {
         // 4. Fuzzy fallback: when nothing starts with the prefix, vocabulary
         //    commands whose name contains the typed characters in order
         //    (`\sbs` → `\subsection`), under the same mode filter with the
-        //    same escape hatch.
+        //    same escape hatch, and the unannotated package commands only when
+        //    no annotated one matches.
         if out.isEmpty, prefix.utf8.count >= 2 {
-            var fuzzyHidden: [Suggestion] = []
-            for name in supported where out.count < maxSuggestions && !offered.contains(name)
-                && inThisClass(name) && matchRank(name, prefix: prefix) == 2 {
-                offered.insert(name)
-                let entry = Vocabulary.byName[name] ?? Vocabulary.generic(name)
-                let row = Suggestion(label: entry.label, insertText: "\\" + name, kind: .command, detail: entry.detail, snippet: entry.snippet)
-                if allows(entry, mathMode: mathMode) { out.append(row) } else if fuzzyHidden.count < maxSuggestions { fuzzyHidden.append(row) }
+            for annotated in [true, false] where out.isEmpty {
+                var fuzzyHidden: [Suggestion] = []
+                for name in supported where out.count < maxSuggestions && !offered.contains(name)
+                    && (Vocabulary.byName[name]?.annotated ?? true) == annotated
+                    && inThisClass(name) && matchRank(name, prefix: prefix) == 2 {
+                    offered.insert(name)
+                    let entry = Vocabulary.byName[name] ?? Vocabulary.generic(name)
+                    let row = Suggestion(label: entry.label, insertText: "\\" + name, kind: .command, detail: entry.detail, snippet: entry.snippet)
+                    if allows(entry, mathMode: mathMode) { out.append(row) } else if fuzzyHidden.count < maxSuggestions { fuzzyHidden.append(row) }
+                }
+                if out.isEmpty { out = fuzzyHidden }
             }
-            if out.isEmpty { out = fuzzyHidden }
         }
         return Array(out.prefix(maxSuggestions))
     }

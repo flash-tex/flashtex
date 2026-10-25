@@ -10,36 +10,28 @@ final class SignatureHelpTests: XCTestCase {
     func testInfoFindsTheCommandAndTheActiveArgument() {
         let frac = "$\\frac{a}{b"
         let i = SignatureHelp.info(in: frac, caretUTF16: (frac as NSString).length)
-        // The pattern is the vocabulary's shape for `\frac` (generated from
-        // the macro's parameter text, RQ5); the line is CommandDocs'.
-        let fracShape = Completion.Vocabulary.byName["frac"]?.arguments ?? ""
-        let fracGroups = SignatureHelp.groups(of: fracShape)
-        XCTAssertEqual(fracGroups.count, 2, fracShape)
         XCTAssertEqual(i?.command, "frac")
-        XCTAssertEqual(i?.arguments, fracShape)
+        XCTAssertEqual(i?.arguments, "{num}{den}")
         XCTAssertEqual(i?.activeArgument, 1)
-        XCTAssertEqual(i?.display.text, "\\frac" + fracShape)
-        XCTAssertEqual(i?.display.active, NSRange(location: 5 + (fracGroups[0] as NSString).length, length: (fracGroups[1] as NSString).length))
+        XCTAssertEqual(i?.display.text, "\\frac{num}{den}")
+        XCTAssertEqual(i?.display.active, NSRange(location: 10, length: 5))
         XCTAssertEqual(i?.description, "\\frac{num}{den}: a fraction.")
         XCTAssertEqual(i?.openerUTF16, 9)
 
         // First argument, caret between auto-closed braces; nested braces are balanced.
         let first = SignatureHelp.info(in: "\\frac{}{}", caretUTF16: 6)
         XCTAssertEqual(first?.activeArgument, 0)
-        XCTAssertEqual(first?.display.active, NSRange(location: 5, length: (fracGroups[0] as NSString).length))
+        XCTAssertEqual(first?.display.active, NSRange(location: 5, length: 5))
         let nested = SignatureHelp.info(in: "\\section{The \\emph{best} id", caretUTF16: 27)
         XCTAssertEqual(nested?.command, "section")
         XCTAssertEqual(nested?.activeArgument, 0)
-        // An optional argument counts as a group: in `[index]{x}`, `\sqrt[3]{`
-        // is argument 1 (the rule, on a pattern of its own).
-        XCTAssertEqual(SignatureHelp.groups(of: "[index]{x}"), ["[index]", "{x}"])
-        XCTAssertEqual(SignatureHelp.activeIndex(groups: ["[index]", "{x}"], written: ["[", "{"]), 1)
-        XCTAssertEqual(SignatureHelp.activeIndex(groups: ["[index]", "{x}"], written: ["{"]), 1, "an optional not written is skipped")
+        // An optional argument counts as a group: `\sqrt[3]{` is argument 1 of `[index]{x}`.
+        let opt = SignatureHelp.info(in: "\\sqrt[3]{", caretUTF16: 9)
+        XCTAssertEqual(opt?.activeArgument, 1)
+        XCTAssertEqual(opt?.groups, ["[index]", "{x}"])
         // Past the pattern: no active group, the help still names the command.
         let extra = SignatureHelp.info(in: "\\section{a}{", caretUTF16: 12)
-        let sectionGroups = SignatureHelp.groups(of: Completion.Vocabulary.byName["section"]?.arguments ?? "")
-        XCTAssertLessThanOrEqual(sectionGroups.count, 1, "\\section's pattern has at most its title")
-        XCTAssertEqual(extra?.activeArgument, sectionGroups.count)
+        XCTAssertEqual(extra?.activeArgument, 1)
         XCTAssertNil(extra?.display.active)
         // Only CommandDocs knows it (the article vocabulary has no \chapter):
         // the pattern is empty, the doc line shows.
@@ -49,7 +41,7 @@ final class SignatureHelpTests: XCTestCase {
         XCTAssertEqual(doc?.description, "\\chapter{title}: a chapter heading (report and book classes).")
         // In the vocabulary and CommandDocs: the vocabulary's shape, CommandDocs' line.
         let foot = SignatureHelp.info(in: "\\footnote{", caretUTF16: 10)
-        XCTAssertEqual(foot?.arguments, Completion.Vocabulary.byName["footnote"]?.arguments ?? "")
+        XCTAssertEqual(foot?.arguments, "[n]{...}")
         XCTAssertEqual(foot?.description, "\\footnote{text}: a numbered footnote.")
 
         // Nothing: outside braces, after the closing brace, escaped braces,
@@ -94,13 +86,13 @@ final class SignatureHelpTests: XCTestCase {
         let panel = tv.signatureHelpPanel
         XCTAssertEqual(panel.info?.command, "frac")
         XCTAssertEqual(panel.info?.activeArgument, 0)
-        XCTAssertEqual(panel.patternText, "\\frac" + (Completion.Vocabulary.byName["frac"]?.arguments ?? ""))
+        XCTAssertEqual(panel.patternText, "\\frac{num}{den}")
         XCTAssertEqual(panel.docText, "the numerator, above the rule", "the doc line is the active argument's own help")
         XCTAssertTrue(panel.isVisible)
         XCTAssertTrue(panel.parent === window)
         for ch in "a}{" { key(tv, String(ch), code: 0) }
         XCTAssertEqual(panel.info?.activeArgument, 1, "the second brace moves the highlight")
-        XCTAssertEqual(SignatureHelpPanel.attributed(try XCTUnwrap(panel.info)).string, "\\frac" + (Completion.Vocabulary.byName["frac"]?.arguments ?? ""))
+        XCTAssertEqual(SignatureHelpPanel.attributed(try XCTUnwrap(panel.info)).string, "\\frac{num}{den}")
         key(tv, "b", code: 0)
         XCTAssertTrue(tv.isSignatureHelpVisible)
         key(tv, "}", code: 0)
@@ -136,22 +128,20 @@ final class SignatureHelpTests: XCTestCase {
     // MARK: optional-argument awareness
 
     func testTheActiveGroupIsMatchedByBracketKindNotByCount() {
-        // On `\includegraphics`'s documented shape `*[keys]{file}`, writing no
-        // optional must still land on `{file}` — counting groups would say
-        // `[keys]`. (The rule, on the pattern itself: the generated vocabulary
-        // carries the shape its probe measured, RQ5.)
-        let pattern = SignatureHelp.groups(of: "*[keys]{file}")
-        XCTAssertEqual(pattern, ["[keys]", "{file}"])
-        XCTAssertEqual(SignatureHelp.activeIndex(groups: pattern, written: ["{"]), 1)
-        // Writing it lands on the same group; the caret inside the optional is argument 0.
-        XCTAssertEqual(SignatureHelp.activeIndex(groups: pattern, written: ["[", "{"]), 1)
-        XCTAssertEqual(SignatureHelp.activeIndex(groups: pattern, written: ["["]), 0)
-        // The help's hint follows the same group whenever the vocabulary's pattern is that one.
+        // `\includegraphics`'s shape is `*[keys]{file}`. Writing no optional
+        // must still land on `{file}` — counting groups would say `[keys]`.
         let plain = SignatureHelp.info(in: "\\includegraphics{", caretUTF16: 17)
-        if plain?.groups == pattern {
-            XCTAssertEqual(plain?.activeArgument, 1)
-            XCTAssertTrue(plain?.argumentHint?.hasPrefix("the image, without an extension") == true)
-        }
+        XCTAssertEqual(plain?.groups, ["[keys]", "{file}"])
+        XCTAssertEqual(plain?.activeArgument, 1)
+        XCTAssertEqual(plain?.display.active, NSRange(location: 22, length: 6))
+        XCTAssertTrue(plain?.argumentHint?.hasPrefix("the image, without an extension") == true)
+        // Writing it lands on the same group.
+        let withOption = SignatureHelp.info(in: "\\includegraphics[width=2cm]{", caretUTF16: 28)
+        XCTAssertEqual(withOption?.activeArgument, 1)
+        // The caret inside the optional is argument 0.
+        let inOption = SignatureHelp.info(in: "\\includegraphics[", caretUTF16: 17)
+        XCTAssertEqual(inOption?.activeArgument, 0)
+        XCTAssertTrue(inOption?.argumentHint?.contains("keepaspectratio") == true)
         // The starred form is the same command, not an extra group.
         XCTAssertEqual(SignatureHelp.info(in: "\\DeclareMathOperator*{", caretUTF16: 22)?.command, "DeclareMathOperator")
     }
@@ -168,23 +158,21 @@ final class SignatureHelpTests: XCTestCase {
 
     func testMiddleOptionalOfNewcommandIsSkippedWhenNotWritten() {
         // `{\name}[n]{body}`: `\newcommand{\x}{` is the body, not the arity.
-        let pattern = SignatureHelp.groups(of: "{\\name}[n]{body}")
-        XCTAssertEqual(pattern, ["{\\name}", "[n]", "{body}"])
-        XCTAssertEqual(SignatureHelp.activeIndex(groups: pattern, written: ["{", "{"]), 2)
-        XCTAssertEqual(SignatureHelp.activeIndex(groups: pattern, written: ["{", "["]), 1)
         let body = SignatureHelp.info(in: "\\newcommand{\\x}{", caretUTF16: 16)
-        if body?.groups == pattern {
-            XCTAssertEqual(body?.argumentHint, "the body; #1 … #n are the arguments")
-        }
+        XCTAssertEqual(body?.groups, ["{\\name}", "[n]", "{body}"])
+        XCTAssertEqual(body?.activeArgument, 2)
+        XCTAssertEqual(body?.argumentHint, "the body; #1 … #n are the arguments")
+        let arity = SignatureHelp.info(in: "\\newcommand{\\x}[", caretUTF16: 16)
+        XCTAssertEqual(arity?.activeArgument, 1)
+        XCTAssertEqual(arity?.argumentHint, "how many arguments it takes, 0 to 9")
     }
+
     // MARK: per-argument hints
 
     func testHintsNameTheArgumentAndFallBackToTheDescription() {
         XCTAssertEqual(SignatureHelp.info(in: "\\frac{", caretUTF16: 6)?.detail, "the numerator, above the rule")
         XCTAssertEqual(SignatureHelp.info(in: "\\frac{a}{", caretUTF16: 9)?.detail, "the denominator, below the rule")
-        // `\rule`'s hints apply only while the vocabulary's pattern has its two groups.
-        let ruleGroups = SignatureHelp.groups(of: Completion.Vocabulary.byName["rule"]?.arguments ?? "")
-        XCTAssertEqual(SignatureHelp.info(in: "\\rule{1pt}{", caretUTF16: 11)?.argumentHint, ruleGroups.count == 2 ? "the height" : nil)
+        XCTAssertEqual(SignatureHelp.info(in: "\\rule{1pt}{", caretUTF16: 11)?.argumentHint, "the height")
         // No hints for this command: the doc line is its documentation.
         let section = SignatureHelp.info(in: "\\section{", caretUTF16: 9)
         XCTAssertNil(section?.argumentHint)
@@ -193,24 +181,17 @@ final class SignatureHelpTests: XCTestCase {
         XCTAssertNil(SignatureHelp.info(in: "\\frac{a}{b}{", caretUTF16: 12)?.argumentHint)
     }
 
-    /// Drift gate: a hint list labels the groups of the vocabulary's own
-    /// pattern for that command. The generated vocabulary (RQ5) may carry a
-    /// different pattern or none; then the hints are not shown at all, so a
-    /// shape that changes upstream never mislabels an argument in the panel.
+    /// Drift gate: every hint list must have exactly one entry per group of the
+    /// vocabulary's own pattern for that command. A shape that changes
+    /// upstream fails here instead of mislabelling an argument in the panel.
     func testArgumentHintsMatchTheInventoryPatterns() {
-        var used = 0
         for (name, hints) in SignatureHelp.argumentHints {
+            let entry = Completion.Vocabulary.byName[name]
+            XCTAssertNotNil(entry, "\\\(name) is not in the vocabulary")
+            let groups = SignatureHelp.groups(of: entry?.arguments ?? "")
+            XCTAssertEqual(hints.count, groups.count, "\\\(name): \(hints.count) hints for \(groups.count) groups \(groups)")
             XCTAssertFalse(hints.contains(where: \.isEmpty), "\\\(name) has an empty hint")
-            let groups = SignatureHelp.groups(of: Completion.Vocabulary.byName[name]?.arguments ?? "")
-            let text = "\\" + name + "{"
-            let info = SignatureHelp.info(in: text, caretUTF16: (text as NSString).length)
-            if hints.count == groups.count {
-                used += 1
-            } else {
-                XCTAssertNil(info?.argumentHint, "\\\(name): \(hints.count) hints for \(groups.count) groups \(groups) must not be shown")
-            }
         }
-        XCTAssertGreaterThan(used, 0, "\\frac's two hints match its two groups")
     }
 
     func testEnvironmentSignatureHintsMatchTheirOwnPatterns() {

@@ -81,7 +81,7 @@ final class EditorCompletionTests: XCTestCase {
         XCTAssertGreaterThan(v.commands.count, 200)
         XCTAssertGreaterThan(v.environments.count, 20)
         XCTAssertNotNil(v.command(named: "frac"))
-        XCTAssertEqual(v.command(named: "frac")?.arguments.filter { $0 == "{" }.count, 2, "two braced arguments")
+        XCTAssertEqual(v.command(named: "frac")?.arguments, "{num}{den}")
         XCTAssertTrue(v.environments.contains { $0.name == "itemize" })
         // Byte-identical to the Mac's copy and the generated one (gen-supported-latex.py check --installed).
         let url = Bundle.main.url(forResource: "supported-latex", withExtension: "json")!
@@ -128,6 +128,12 @@ final class EditorCompletionTests: XCTestCase {
     func testShorterNamesRankFirstAndClassScopedCommandsAreGated() {
         let bundled = LocalCompletion.Context(vocabulary: PadModel.bundledVocabulary)
         XCTAssertEqual(LocalCompletion.suggestions(in: "\\frac", caretByte: 5, context: bundled).first?.text, "\\frac")
+        // babel's `\frq` (a measured package command with no annotation) is
+        // shorter, but held back while an annotated command matches.
+        let bundledFr = LocalCompletion.suggestions(in: "\\fr", caretByte: 3, context: bundled).map(\.text)
+        XCTAssertEqual(bundledFr.first, "\\frac")
+        XCTAssertFalse(bundledFr.contains("\\frq"), "\(bundledFr)")
+        XCTAssertEqual(LocalCompletion.suggestions(in: "\\frq", caretByte: 4, context: bundled).first?.text, "\\frq")
         let ctx = LocalCompletion.Context(vocabulary: Self.scoped)
         let fr = LocalCompletion.suggestions(in: "\\fr", caretByte: 3, context: ctx)
         XCTAssertEqual(fr.first?.text, "\\frac")
