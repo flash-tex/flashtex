@@ -1532,11 +1532,21 @@ impl Core {
     /// Restore to `id` and discard every later checkpoint (the plain restart).
     fn restore_discard(&mut self, id: CheckpointId) -> Result<(), String> {
         self.drop_part();
-        // (the open log starts again: the keyframe cannot tell what it held)
-        self.key = None;
         let k = self
             .index_of(id)
             .ok_or_else(|| format!("checkpoint {id} is not retained"))?;
+        // A keyframe at or before `id` stays (the re-run of the document's
+        // end from its last page, after a convergence jump): the logs from
+        // it to `id` are kept as they are, and every chunk the dropped ones
+        // held is at its value at `id` again, which for a chunk they alone
+        // held is its value at the keyframe's checkpoint. It may then hold
+        // chunks no log holds any more, whose copies are their live values.
+        let kt = self
+            .key
+            .as_ref()
+            .filter(|kf| kf.history_gen == self.history_gen)
+            .and_then(|kf| kf.index_in(&self.ids))
+            .filter(|&kt| kt <= k);
         let later = self.logs.split_off(k);
         self.ids.truncate(k + 1);
         self.rewind(&later, false);
@@ -1545,6 +1555,10 @@ impl Core {
         }
         self.logs.push(Log::default());
         self.clear_saved();
+        match (kt, self.key.as_mut()) {
+            (Some(kt), Some(kf)) => kf.tail = self.ids[kt..].to_vec(),
+            _ => self.key = None,
+        }
         Ok(())
     }
 
@@ -1710,9 +1724,9 @@ impl Core {
     /// at `logs[kt]`'s checkpoint: each chunk starts from its value there
     /// (`Keyframe`'s rule) and is rewound through the logs before it only.
     /// The chunks are the keyframe's, those logs' and the open log's: those
-    /// of `logs` (and, after a discarding restore to the newest
-    /// checkpoint, possibly a few more, which this restores to their live
-    /// values).
+    /// of `logs`, and, after a discarding restore past the keyframe
+    /// (`restore_discard`), possibly a few no log holds, which keep their
+    /// live values.
     fn rewind_keyed(&mut self, logs: &[Log], kt: usize, kf: &Keyframe) -> Vec<(u32, ChunkPtr)> {
         let window = &logs[..kt];
         let open: ChunkMap<*const u64> = logs
