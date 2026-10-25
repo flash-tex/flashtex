@@ -452,9 +452,9 @@ final class EditorInstantTests: XCTestCase {
     /// group, 40 keys are typed 50 ms apart, and a compile answers every other
     /// key with 3,000 warnings whose lines all moved (every group changes).
     /// The main thread must be free (not running: `MainThreadFreeProbe`)
-    /// for at least `FLASHTEX_EDITOR_FREE_MIN` of the
-    /// time (default 0.75, for a debug build on a shared CI runner; see the
-    /// PR for this Mac's release numbers), and key → glyph must stay within
+    /// for at least `FLASHTEX_EDITOR_FREE_MIN` of the time (default 0.6, for
+    /// a debug build on a shared CI runner; a debug build on this Mac read
+    /// 0.75, see the PR for its release numbers), and key → glyph must stay within
     /// `FLASHTEX_EDITOR_KEY_BUDGET_MS`.
     func testTheMainThreadStaysFreeWhileCompilesReportThousandsOfProblems() async throws {
         env.set("FLASHTEX_HOST", "none") // the feed is the host
@@ -514,7 +514,7 @@ final class EditorInstantTests: XCTestCase {
         XCTAssertGreaterThan(s.doneCount - doneBefore, compiles / 2, "the compiles were answered while typing")
         // Every group is listed (no cap), from the last compile.
         XCTAssertEqual(model.engineV3Problems.groups.count, problems)
-        let minFree = ProcessInfo.processInfo.environment["FLASHTEX_EDITOR_FREE_MIN"].flatMap(Double.init) ?? 0.75
+        let minFree = ProcessInfo.processInfo.environment["FLASHTEX_EDITOR_FREE_MIN"].flatMap(Double.init) ?? 0.6
         XCTAssertGreaterThanOrEqual(fraction, minFree, "main thread free \(fraction) of \(ms) ms while typing during compiles")
         let budget = ProcessInfo.processInfo.environment["FLASHTEX_EDITOR_KEY_BUDGET_MS"].flatMap(Double.init) ?? 100
         let glyph = phase.stats(phase.keyToGlyphMs)
