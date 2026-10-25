@@ -57,6 +57,334 @@ thread_local! {
     static ALIGN_BY_WORDS: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
     /// `with_dormant`: the dormant input level (-1: none).
     static DORMANT: std::cell::Cell<i32> = const { std::cell::Cell::new(-1) };
+    /// The differing mem words the last `Iso::check` found only in dead
+    /// cells (`garbage`).
+    static DEAD_CELLS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// The differing mem words the last successful `Iso::check` accepted only
+/// because they lie in dead cells (0: none; `garbage`).
+pub fn last_dead_cells() -> usize {
+    DEAD_CELLS.with(|c| c.get())
+}
+
+/// The dead-cell rule (`garbage`) is on unless `FLASHTEX_NO_DEAD_CELLS` is
+/// set (an A/B switch for the convergence tests).
+pub fn dead_cells_enabled() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var_os("FLASHTEX_NO_DEAD_CELLS").is_none())
+}
+
+/// The dead cells of one state (INFDESC-883): the allocated cells (neither
+/// free nor reached by the walk, `cov`) that nothing can read again.
+///
+/// TeX leaks memory: pdfTeX discards some node lists without freeing them
+/// (on *Infinite Descent* about 7,000 cells over a run with its `.aux`,
+/// end-of-line `\rightskip` glue among them), and such a cell is never
+/// read again: TeX reaches `mem` only through pointers from its roots, and
+/// a leaked cell is on no free list. After an edit the restarted run
+/// allocates at other addresses than the old run, so a cell it leaks later
+/// differs from the old run's word there, which the walk cannot explain:
+/// without this rule every later convergence test failed and the run
+/// typeset the document to its end.
+///
+/// The walk's root model is complete (`Iso::roots`); this guards against a
+/// root it lacks anyway. A cell is dead only if no word outside what the
+/// walk interprets points into it, directly or through other unreached
+/// cells: every unreached cell such a word points at is live, as are the
+/// unreached cells after it up to the largest node's size (`NODE_SPAN`: a
+/// node's later words hold pointers too), and so is everything a live
+/// unreached cell's words point at, to a fixed point. The words scanned are
+/// every array the walk does not interpret (`walked_region`)
+/// that may hold a pointer by pdftex.web's types and uses (`plain_data`
+/// lists those that cannot: strings, font, hyphenation and line-breaking
+/// tables, buffers, `eqtb`'s integers and dimensions, object numbers, the
+/// intrinsics' bookkeeping, stacks used within one command); a
+/// stray integer equal to such an address makes the cells live, so the
+/// rule errs only on the side of failing a test. The remaining trust is
+/// the walk's own node model: a reached node's pointer fields are followed.
+/// `FLASHTEX_DEAD_CELLS_VERIFY` checks the rule against live runs.
+fn garbage<S: Space>(
+    regions: &[crate::arena::RegionInfo],
+    s: &St<'_, S>,
+    cov: &[u64],
+    free: &[u64],
+    slots: &[ScalarSlot],
+    why_p: Option<i32>,
+) -> Vec<u64> {
+    let words = (MEM_TOP as usize + 64) / 64 + 1;
+    let mut unr = vec![0u64; words];
+    let (lo_max, hi_min, end) = (s.sc("lo_mem_max"), s.sc("hi_mem_min"), s.sc("mem_end"));
+    let in_range = |p: i32| (MEM_BOT..=lo_max).contains(&p) || (hi_min..=end).contains(&p);
+    let mut any = false;
+    for p in (MEM_BOT..=lo_max.min(MEM_TOP)).chain(hi_min.max(0)..=end.min(MEM_TOP)) {
+        if !bit(cov, p) && !bit(free, p) {
+            set(&mut unr, p);
+            any = true;
+        }
+    }
+    if !any {
+        return unr;
+    }
+    let is_unr = |p: i32| in_range(p) && (MEM_BOT..=MEM_TOP).contains(&p) && bit(&unr, p);
+    // the unreached cells words outside the walk point at
+    let mut live = vec![0u64; words];
+    // (cell, how many cells after it are still the node's)
+    let mut todo: Vec<(i32, i32)> = vec![];
+    // (`why_p`: say why that cell is live)
+    let mut parent: HashMap<i32, (i32, String)> = HashMap::new();
+    let mark = |p: i32,
+                span: i32,
+                from: i32,
+                what: &dyn Fn() -> String,
+                live: &mut Vec<u64>,
+                todo: &mut Vec<(i32, i32)>,
+                parent: &mut HashMap<i32, (i32, String)>| {
+        if !bit(live, p) {
+            set(live, p);
+            todo.push((p, span));
+            if why_p.is_some() {
+                parent.insert(p, (from, what()));
+            }
+        }
+    };
+    for r in regions {
+        // (the scalars: the walk's roots are pdftex.web's pointer globals,
+        // `ROOT_SCALARS`, and those it holds dead, `DEAD_SCALARS`; the
+        // others hold integers, and a counter equal to a cell's address,
+        // `max_param_stack` = 79, made every cell after it live)
+        if r.name == "mem" || r.name == "(scalars)" || walked_region(r.name) || plain_data(r.name) {
+            continue;
+        }
+        let mut k = 0;
+        while k + 4 <= r.bytes {
+            let off = r.off + k;
+            let rel = k;
+            k += 4;
+            let w = s.sp.word(off & !7);
+            let v = (w >> ((off & 7) * 8)) as u32 as i32;
+            if is_unr(v) {
+                let what = || {
+                    if r.name == "(scalars)" {
+                        slots
+                            .iter()
+                            .rev()
+                            .find(|x| x.off <= rel)
+                            .map_or(String::new(), |x| x.name.to_string())
+                    } else {
+                        format!(
+                            "{}[{}]+{}",
+                            r.name,
+                            rel / r.elem.max(1),
+                            rel % r.elem.max(1)
+                        )
+                    }
+                };
+                mark(v, NODE_SPAN, -1, &what, &mut live, &mut todo, &mut parent);
+            }
+        }
+    }
+    // to a fixed point: the rest of a live cell's node, and what its words
+    // point at (both halves; a one-word node's info half is a token or a
+    // character, not a pointer)
+    while let Some((p, span)) = todo.pop() {
+        if span > 1 && p < hi_min && p < MEM_TOP && is_unr(p + 1) {
+            mark(
+                p + 1,
+                span - 1,
+                p,
+                &|| "next".into(),
+                &mut live,
+                &mut todo,
+                &mut parent,
+            );
+        }
+        let w = s.mem(p);
+        let (rh, lh) = (w as u32 as i32, (w >> 32) as u32 as i32);
+        if is_unr(rh) {
+            mark(
+                rh,
+                NODE_SPAN,
+                p,
+                &|| "rh".into(),
+                &mut live,
+                &mut todo,
+                &mut parent,
+            );
+        }
+        if p < hi_min && is_unr(lh) {
+            mark(
+                lh,
+                NODE_SPAN,
+                p,
+                &|| "lh".into(),
+                &mut live,
+                &mut todo,
+                &mut parent,
+            );
+        }
+    }
+    if let Some(q) = why_p {
+        if bit(&unr, q) {
+            let mut chain = vec![];
+            let mut c = q;
+            let mut steps = 0;
+            while let Some((from, what)) = parent.get(&c) {
+                chain.push(format!("{c}<-{what}"));
+                steps += 1;
+                if *from < 0 || steps > 100_000 {
+                    break;
+                }
+                c = *from;
+            }
+            let n = chain.len();
+            let short: Vec<&String> = chain
+                .iter()
+                .take(4)
+                .chain(chain.iter().skip(n.saturating_sub(6)))
+                .collect();
+            eprintln!(
+                "cell {q}: {} ({n} steps): {short:?}",
+                if bit(&live, q) { "live" } else { "dead" }
+            );
+        } else {
+            eprintln!("cell {q}: not unreached in this state");
+        }
+    }
+    for (u, l) in unr.iter_mut().zip(&live) {
+        *u &= !l;
+    }
+    unr
+}
+
+/// The most words a node takes (pdfTeX's largest, a `\pdfstartlink` or
+/// `\pdfannot` whatsit, with SyncTeX's two): a pointer into an unreached
+/// node makes that many cells from it live.
+const NODE_SPAN: i32 = 16;
+
+/// The regions `Iso` interprets (`incr::iso_covers`): a pointer there is
+/// followed by the walk.
+fn walked_region(name: &str) -> bool {
+    matches!(
+        name,
+        "save_stack"
+            | "nest"
+            | "input_stack"
+            | "param_stack"
+            | "cur_mark"
+            | "font_glue"
+            | "hyph_list"
+            | "disc_ptr"
+            | "sa_root"
+            | "if_stack"
+            | "pdf_link_stack"
+            | "intr_data"
+            | "dl_side"
+    )
+}
+
+/// Regions that hold no pointer into `mem` (pdftex.web's types and uses):
+/// characters and strings, font, hyphenation and line-breaking tables,
+/// buffers, file and line bookkeeping, object numbers and offsets (the one
+/// `obj_tab` word that holds a pointer, `obj_aux`, is walked), and `eqtb`
+/// (regions 1 to 4 and the `hash_extra` control sequences are walked by
+/// eq_type; regions 5 and 6 hold integers and dimensions).
+fn plain_data(name: &str) -> bool {
+    name.starts_with("pdf_font_")
+        || name.starts_with("trie")
+        || name.starts_with("font_")
+        || name.starts_with("vf_")
+        || name.starts_with("ls_")
+        || matches!(
+            name,
+            "eqtb"
+            | "xeq_level"
+            | "obj_tab"
+            | "head_tab"
+            | "dest_names"
+            | "pdf_char_used"
+            | "pdf_os_objnum"
+            | "pdf_os_objoff"
+            | "char_base"
+            | "width_base"
+            | "height_base"
+            | "depth_base"
+            | "italic_base"
+            | "lig_kern_base"
+            | "kern_base"
+            | "exten_base"
+            | "param_base"
+            | "bchar_label"
+            | "hyphen_char"
+            | "skew_char"
+            | "hyph_word"
+            | "hc"
+            | "hu"
+            | "hyf"
+            | "dig"
+            | "ten_pow"
+            | "two_to_the"
+            | "randoms"
+            | "spec_log"
+            | "read_open"
+            | "write_open"
+            | "eof_seen"
+            | "line_stack"
+            | "grp_stack"
+            | "help_line"
+            | "full_source_filename_stack"
+            | "op_start"
+            | "active_width"
+            | "cur_active_width"
+            | "background"
+            | "break_width"
+            | "prev_active_width"
+            | "minimal_demerits"
+            | "best_place"
+            | "best_pl_line"
+            | "best_pl_glue"
+            | "best_pl_short"
+            | "disc_width"
+            | "fill_width"
+            | "page_so_far"
+            | "total_stretch"
+            | "total_shrink"
+            | "pstack"
+            | "rs_seen"
+            | "bm_cand"
+            // the intrinsics' bookkeeping (`Iso::intrinsics`: no pointers
+            // there but the recording's `tail`, scratch that `cur_list`
+            // holds too)
+            | "intr_state"
+            | "intr_watch"
+            | "intr_cand"
+            | "intr_seen"
+            // pointers only within one command: `find_protchar_left` and
+            // `_right` fill `hlist_stack` from level 0, a virtual font's
+            // character `vf_stack`
+            | "hlist_stack"
+            | "vf_stack"
+            | "xord"
+            | "xchr"
+            | "xprn"
+            | "str_pool"
+            | "str_start"
+            | "font_info"
+            | "trie_trl"
+            | "trie_tro"
+            | "trie_trc"
+            | "trie"
+            | "hyf_next"
+            | "hyf_num"
+            | "hyf_distance"
+            | "buffer"
+            | "pdf_op_buf"
+            | "pdf_os_buf"
+            | "trick_buf"
+            | "dvi_buf"
+            | "hash"
+            | "prim"
+        )
 }
 
 /// Run `f` with input level `j`'s `limit`, and the stale `limit`s of the
@@ -2677,6 +3005,7 @@ impl<'a> Iso<'a, Old<'a>, Live<'a>> {
         dest_dims_dead: bool,
         stop: &'a mut dyn FnMut() -> bool,
     ) -> Result<usize, String> {
+        DEAD_CELLS.with(|c| c.set(0));
         let l = Layout::new(g, slots);
         let live = Live {
             bytes: g.arena.bytes(),
@@ -2765,21 +3094,57 @@ impl<'a> Iso<'a, Old<'a>, Live<'a>> {
         if let Some(e) = w.err {
             return Err(e);
         }
+        // Dead cells (INFDESC-883): allocated cells no root reaches and
+        // nothing outside the walk points at (`garbage`), computed once per
+        // side when a differing word needs it.
+        let dead_rule = dead_cells_enabled() && !ALIGN_BY_WORDS.with(|c| c.get());
+        // (outer: computed yet; inner: the free lists could be read)
+        type Dead = Option<Option<Vec<u64>>>;
+        let (mut dead_o, mut dead_n): (Dead, Dead) = (None, None);
+        let mut n_dead = 0usize;
         for &p in bad_mem {
             let p = p as i32;
             // (a word past the walk's range: nothing explains it)
             if !Self::in_mem(p) {
                 return Err(format!("mem[{p}] differs outside the walked range"));
             }
-            let ok_o = bit(&w.cov_o, p) || free_o.is_some_and(|f| bit(f, p));
-            let ok_n = bit(&w.cov_n, p) || free_n.is_some_and(|f| bit(f, p));
+            let mut ok_o = bit(&w.cov_o, p) || free_o.is_some_and(|f| bit(f, p));
+            let mut ok_n = bit(&w.cov_n, p) || free_n.is_some_and(|f| bit(f, p));
+            if !(ok_o && ok_n) && dead_rule {
+                if !ok_o {
+                    let d = dead_o.get_or_insert_with(|| {
+                        free_o.map(|f| garbage(&g.arena.regions, &w.o, &w.cov_o, f, slots, None))
+                    });
+                    ok_o = d.as_ref().is_some_and(|d| bit(d, p));
+                }
+                if !ok_n {
+                    let d = dead_n.get_or_insert_with(|| {
+                        free_n.map(|f| garbage(&g.arena.regions, &w.n, &w.cov_n, f, slots, None))
+                    });
+                    ok_n = d.as_ref().is_some_and(|d| bit(d, p));
+                }
+                if ok_o && ok_n {
+                    n_dead += 1;
+                }
+            }
             if !(ok_o && ok_n) {
+                if dead_rule && std::env::var_os("FLASHTEX_DEAD_CELLS_WHY").is_some() {
+                    if let (false, Some(f)) = (ok_o, free_o) {
+                        eprint!("[dead-cells] old: ");
+                        garbage(&g.arena.regions, &w.o, &w.cov_o, f, slots, Some(p));
+                    }
+                    if let (false, Some(f)) = (ok_n, free_n) {
+                        eprint!("[dead-cells] new: ");
+                        garbage(&g.arena.regions, &w.n, &w.cov_n, f, slots, Some(p));
+                    }
+                }
                 return Err(format!(
                     "mem[{p}] differs outside what the walk compared ({})",
                     if ok_o { "new" } else { "old" }
                 ));
             }
         }
+        DEAD_CELLS.with(|c| c.set(n_dead));
         Ok(w.nodes)
     }
 
@@ -2834,6 +3199,8 @@ impl<'a> Iso<'a, Old<'a>, Live<'a>> {
         }
         let bytes = g.arena.bytes();
         let mut pointed_from_outside = vec![0u64; target.len()];
+        let refs_dbg = std::env::var_os("FLASHTEX_CHECKMEM_REFS").is_some();
+        let mut first_ref: HashMap<i32, String> = HashMap::new();
         let data_region = |name: &str| {
             matches!(
                 name,
@@ -2894,6 +3261,44 @@ impl<'a> Iso<'a, Old<'a>, Live<'a>> {
                     continue;
                 }
                 set(&mut pointed_from_outside, v);
+                if refs_dbg && first_ref.len() < 1 << 16 {
+                    let what = if r.name == "(scalars)" {
+                        slots
+                            .iter()
+                            .rev()
+                            .find(|s| s.off <= rel)
+                            .map_or(String::new(), |s| s.name.to_string())
+                    } else {
+                        format!(
+                            "{}[{}]+{}",
+                            r.name,
+                            rel / r.elem.max(1),
+                            rel % r.elem.max(1)
+                        )
+                    };
+                    first_ref.entry(v).or_insert(what);
+                }
+            }
+        }
+        if refs_dbg {
+            let mut shown = 0;
+            let mut prev = MEM_BOT - 2;
+            for &p in &cells {
+                let start = !(p > MEM_BOT && p - 1 == prev);
+                prev = p;
+                if let Some(w) = first_ref.get(&p) {
+                    if shown < 40 {
+                        shown += 1;
+                        let ws: Vec<String> = (p..p + 4)
+                            .map(|q| format!("{:#018x}", g.mem[q as usize].to_bits()))
+                            .collect();
+                        eprintln!(
+                            "[checkmem]   missed {p}{} <- {w}: {}",
+                            if start { " (run start)" } else { "" },
+                            ws.join(" ")
+                        );
+                    }
+                }
             }
         }
         // A node is referenced at its first cell; an unreached cell counts as
@@ -3163,5 +3568,108 @@ mod tests {
         // (and an `inserting` record with null fields, as always)
         let o = page_ins_list(1000, INSERTING, NULL, NULL);
         assert_eq!(compare(&o, &o), Ok(()));
+    }
+
+    // INFDESC-883's dead cells (`garbage`). The space: `mem` cells 0..=LO_MAX
+    // and HI_MIN..=MEM_END, the scalars that bound them after mem, and a
+    // `pdf_mem` region (words the walk does not interpret here) after
+    // those.
+    const LO_MAX: i32 = 5000;
+    const HI_MIN: i32 = 9000;
+    const MEM_END: i32 = 9999;
+    const SCALARS: usize = (MEM_TOP as usize + 1) * 8;
+    const STACK: usize = SCALARS + 64;
+
+    fn dead_space() -> (Words, Layout, Vec<crate::arena::RegionInfo>) {
+        let mut l = layout();
+        let mut w = Words::default();
+        for (k, (name, v)) in [
+            ("lo_mem_max", LO_MAX),
+            ("hi_mem_min", HI_MIN),
+            ("mem_end", MEM_END),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            l.scalars.insert(name, (SCALARS + k * 8, 4));
+            w.0.insert(SCALARS + k * 8, v as u32 as u64);
+        }
+        let regions = vec![
+            crate::arena::RegionInfo {
+                name: "mem",
+                off: 0,
+                bytes: SCALARS,
+                elem: 8,
+            },
+            crate::arena::RegionInfo {
+                name: "pdf_mem",
+                off: STACK,
+                bytes: 64,
+                elem: 4,
+            },
+        ];
+        (w, l, regions)
+    }
+
+    /// What `garbage` finds dead in `w`, where the walk reached `reached`
+    /// and every other cell but `alloc` is free.
+    fn dead_of(
+        w: &Words,
+        l: &Layout,
+        regions: &[crate::arena::RegionInfo],
+        alloc: &[i32],
+    ) -> Vec<u64> {
+        let words = (MEM_TOP as usize + 64) / 64 + 1;
+        let (cov, mut free) = (vec![0u64; words], vec![0u64; words]);
+        for p in (MEM_BOT..=LO_MAX).chain(HI_MIN..=MEM_END) {
+            if !alloc.contains(&p) {
+                set(&mut free, p);
+            }
+        }
+        let s = St {
+            sp: w,
+            l,
+            hi_mem_min: HI_MIN,
+        };
+        garbage(regions, &s, &cov, &free, &[], None)
+    }
+
+    /// A line's end TeX leaked (pdfTeX does, for a link broken across lines:
+    /// pdflatex's `\tracingstats=2` shows the words never given back): a
+    /// `\rightskip` glue node and the character before it, which nothing
+    /// points at. Its cells are dead, so a convergence test may ignore
+    /// their words (before INFDESC-883 every later test failed on them).
+    #[test]
+    fn a_leaked_line_end_is_dead() {
+        let (mut w, l, regions) = dead_space();
+        // a character node (hi mem) linked to the glue node at 3000
+        w.put(9500, halves(0x0001_0041, 3000));
+        // glue node, subtype right_skip_code + 1, link null; glue_ptr zero_glue
+        w.put(3000, hh(10, 9, NULL));
+        w.put(3001, halves(NULL, 0));
+        let dead = dead_of(&w, &l, &regions, &[9500, 3000, 3001]);
+        for p in [9500, 3000, 3001] {
+            assert!(bit(&dead, p), "cell {p} is dead");
+        }
+    }
+
+    /// A cell that a word the walk does not interpret points at (a root the
+    /// walk would lack) is live, as is what it points at in turn: its
+    /// difference must still fail the convergence test.
+    #[test]
+    fn a_cell_a_word_outside_the_walk_points_at_is_live() {
+        let (mut w, l, regions) = dead_space();
+        w.put(9500, halves(0x0001_0041, 3000));
+        w.put(3000, hh(10, 9, NULL));
+        w.put(3001, halves(NULL, 0));
+        // an unrelated leaked node
+        w.put(4000, hh(10, 9, NULL));
+        // the hidden root: pdf_mem[1] = 9500
+        w.0.insert(STACK, (9500u64) << 32);
+        let dead = dead_of(&w, &l, &regions, &[9500, 3000, 3001, 4000]);
+        for p in [9500, 3000, 3001] {
+            assert!(!bit(&dead, p), "cell {p} is live (pdf_mem -> 9500 -> 3000)");
+        }
+        assert!(bit(&dead, 4000), "the unrelated node is still dead");
     }
 }

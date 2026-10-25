@@ -241,8 +241,43 @@ final class ShellModel {
     private(set) var menuEntryPath = "main.tex"
     /// `displayedDiagnostics` assigned only when the list changes, for the
     /// Problems panel, so a compile that changes nothing it lists does not
-    /// re-evaluate the panel's List (an AppKit table) while typing.
+    /// re-evaluate the panel's List (an AppKit table) while typing, and at
+    /// most every `problemsListInterval` (the last change always follows):
+    /// typing in a long book answers each key with a compile whose thousands
+    /// of rows all moved, and the List's update at each took most of the
+    /// main thread (EDITOR-FREEZE). The panel's actions find their rows in
+    /// `displayedDiagnostics` again by identity (`goToOccurrence`, `DiagnosticHelpFixSlot`).
     private(set) var problemsList: [RuntimeV1.Diagnostic] = []
+    /// `compiledDocuments` as of `problemsList` (the rows' line labels):
+    /// read by every row, so it changes only with the list, not at every reply.
+    private(set) var problemsTexts: [String: String] = [:]
+    @ObservationIgnored private var problemsListAt: UInt64 = 0
+    @ObservationIgnored private var problemsListPending = false
+    static let problemsListInterval: Double = 0.5
+
+    private func publishProblemsList() {
+        let now = MonotonicClock.nowNs(), interval = UInt64(Self.problemsListInterval * 1e9)
+        let diagnostics = displayedDiagnostics
+        guard problemsList != diagnostics else { return }
+        // At once after a quiet spell, and when the list empties or fills.
+        if now &- problemsListAt >= interval || problemsList.isEmpty || diagnostics.isEmpty {
+            problemsListAt = now
+            problemsTexts = compiledDocuments
+            problemsList = diagnostics
+            return
+        }
+        guard !problemsListPending else { return }
+        problemsListPending = true
+        let timer = Timer(timeInterval: Double(problemsListAt &+ interval &- now) / 1e9, repeats: false) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                self.problemsListPending = false
+                self.problemsListAt = 0
+                self.publishProblemsList()
+            }
+        }
+        RunLoop.main.add(timer, forMode: .common)
+    }
     /// The last compile's status (`engineV3ResultStatus`), change-only, for the Problems panel header.
     private(set) var resultStatus: RuntimeV1.Status?
     /// Throttled mirror the status bar / preview header / tab bar read (ShellChrome.swift).
@@ -292,7 +327,7 @@ final class ShellModel {
     private func refreshToolbarMirrors() {
         let diagnostics = displayedDiagnostics
         if toolbarProblemCount != diagnostics.count { toolbarProblemCount = diagnostics.count }
-        if problemsList != diagnostics { problemsList = diagnostics }
+        publishProblemsList()
         // A compile that failed (no pages) keeps the last pages (the Problems line, gap B8).
         if resultStatus != engineV3ResultStatus { resultStatus = engineV3ResultStatus }
         refreshDocumentMirror()
@@ -308,7 +343,12 @@ final class ShellModel {
     /// Text each document had when the engine's last completed compile read
     /// it (EngineV3Session, at DONE), so diagnostics' byte offsets can be
     /// rebased (or refused) after edits.
-    private(set) var compiledDocuments: [String: String] = [:]
+    private(set) var compiledDocuments: [String: String] = [:] {
+        // The Problems rows take the texts with the list (`publishProblemsList`),
+        // and here when the set of documents changes (texts set after the rows,
+        // a document opened): not at each reply while typing.
+        didSet { if Set(problemsTexts.keys) != Set(compiledDocuments.keys) { problemsTexts = compiledDocuments } }
+    }
 
     /// The engine's diagnostics of its last completed compile.
     var displayedDiagnostics: [RuntimeV1.Diagnostic] { engineV3Diagnostics }

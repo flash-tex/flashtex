@@ -1498,12 +1498,29 @@ mod imp {
         std::process::abort()
     }
 
+    #[cfg(not(miri))]
     pub fn page_size() -> usize {
         extern "C" {
             fn getpagesize() -> i32;
         }
         // SAFETY: no preconditions.
         unsafe { getpagesize() as usize }
+    }
+
+    /// Miri has no `getpagesize` (an unsupported foreign call ends the
+    /// interpreter) but answers `sysconf(_SC_PAGESIZE)` with its own page
+    /// size (`-Zmiri-force-page-size`).
+    #[cfg(miri)]
+    pub fn page_size() -> usize {
+        extern "C" {
+            fn sysconf(name: i32) -> std::ffi::c_long;
+        }
+        #[cfg(target_os = "linux")]
+        const SC_PAGESIZE: i32 = 30;
+        #[cfg(not(target_os = "linux"))]
+        const SC_PAGESIZE: i32 = 29;
+        // SAFETY: no preconditions.
+        unsafe { sysconf(SC_PAGESIZE) as usize }
     }
 
     pub unsafe fn zero_pages(p: *mut u8, len: usize) -> bool {

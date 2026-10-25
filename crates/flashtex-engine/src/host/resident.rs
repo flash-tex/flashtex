@@ -1160,6 +1160,7 @@ impl Engine {
                         rep.status = r2.status;
                         rep.pages = r2.pages;
                         rep.converged_at = r2.converged_at;
+                        rep.dead_cells = r2.dead_cells;
                         rep.rerun_pages = r2.rerun_pages;
                         rep.paused = r2.paused;
                         rep.preempted = r2.preempted;
@@ -1243,6 +1244,9 @@ impl Engine {
                             .map(|c| Json::Int(c as i64))
                             .unwrap_or(Json::Null),
                     ),
+                    // the differing words the convergence found only in
+                    // cells TeX leaked (`crate::iso::garbage`)
+                    ("dead_cells".to_string(), Json::Int(rep.dead_cells as i64)),
                     ("rerun_pages".to_string(), Json::Int(rep.rerun_pages as i64)),
                     // DESIGN.md §5.5: the passes this compile ran, and
                     // whether they stopped for the external tools
