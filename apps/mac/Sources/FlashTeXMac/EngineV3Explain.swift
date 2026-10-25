@@ -17,8 +17,10 @@ import FlashTeXProtocol
 enum EngineV3Explain {
     /// The row with its explanation and, where safe, its fix. `message` is
     /// TeX's message (not the row's, which may carry the recovered mark).
+    /// `labelSites`: every `\label` of `texts` by key (`EngineV3DiagPresent.labelSites`),
+    /// made once for a compile's rows; nil searches the texts for this row's key.
     static func apply(_ row: RuntimeV1.Diagnostic, code: String, message: String, texts: [String: String]?,
-                      undefinedName: String? = nil) -> RuntimeV1.Diagnostic {
+                      undefinedName: String? = nil, labelSites: [String: [EngineV3DiagPresent.Site]]? = nil) -> RuntimeV1.Diagnostic {
         var d = row
         // What a known package defines: that is the explanation, loading it the fix.
         if let hint = packageHint(code: code, message: message, name: undefinedName) {
@@ -33,7 +35,7 @@ enum EngineV3Explain {
         guard let text = explanation(code: code, message: message) else { return row }
         if code == "latex/file-not-found", let at = missingFileSource(row, message: message, texts: texts) { d.source = at }
         if code == "latex/no-file", d.source == nil, let at = includeSource(message, texts: texts) { d.source = at }
-        if code == "latex/multiply-defined-label", let texts { relocateDuplicateLabel(&d, message: message, texts: texts) }
+        if code == "latex/multiply-defined-label", let texts { relocateDuplicateLabel(&d, message: message, texts: texts, sites: labelSites) }
         d.notes = [text] + (d.notes ?? [])
         if let fix = fix(d, code: code, message: message, texts: texts) {
             if let tex = d.help?.message, !tex.isEmpty { d.notes = (d.notes ?? []) + [tex] }
@@ -91,9 +93,15 @@ enum EngineV3Explain {
     /// "Label `a' multiply defined." is reported where LaTeX reads the
     /// `.aux`; the row goes to the second `\label{a}` of the texts, and the
     /// first one becomes a secondary label and a note.
-    static func relocateDuplicateLabel(_ d: inout RuntimeV1.Diagnostic, message: String, texts: [String: String]) {
+    ///
+    /// `index`: the texts' labels by key, made once for all of a compile's
+    /// rows. A book copied twice has a duplicate of every label: thousands of
+    /// rows, each searching every text, held the main thread for seconds at
+    /// each DONE (EDITOR-FREEZE).
+    static func relocateDuplicateLabel(_ d: inout RuntimeV1.Diagnostic, message: String, texts: [String: String],
+                                       sites index: [String: [EngineV3DiagPresent.Site]]? = nil) {
         guard let key = quoted(message, after: "Label `") else { return }
-        let sites = EngineV3DiagPresent.matches(#"\\label\s*\{"# + NSRegularExpression.escapedPattern(for: key) + #"\}"#, in: texts)
+        let sites = index.map { $0[key] ?? [] } ?? EngineV3DiagPresent.matches(#"\\label\s*\{"# + NSRegularExpression.escapedPattern(for: key) + #"\}"#, in: texts)
         guard sites.count >= 2 else { return }
         d.source = sites[1].source
         d.labels = [.init(source: sites[1].source, text: "", primary: true),

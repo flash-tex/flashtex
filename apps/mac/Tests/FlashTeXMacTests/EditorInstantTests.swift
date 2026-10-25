@@ -138,7 +138,6 @@ final class EditorInstantTests: XCTestCase {
         var posts: [UInt64] = []
         var starts: [UInt64] = []
         var ends: [UInt64] = []
-        var pings: [Double] = []
         var commits: [UInt64] = []
         var stopped: Bool { lock.lock(); defer { lock.unlock() }; return stop }
     }
@@ -246,17 +245,7 @@ final class EditorInstantTests: XCTestCase {
         CFRunLoopAddObserver(CFRunLoopGetMain(), observer, .commonModes)
         defer { CFRunLoopRemoveObserver(CFRunLoopGetMain(), observer, .commonModes) }
         MainThreadProbe.start()
-        let ping = Thread {
-            while !box.stopped {
-                let t0 = MonotonicClock.nowNs()
-                EditorInstantTests.onMain {
-                    let d = Double(MonotonicClock.nowNs() &- t0) / 1e6
-                    box.lock.lock(); box.pings.append(d); box.lock.unlock()
-                }
-                usleep(2000)
-            }
-        }
-        ping.qualityOfService = .userInteractive
+        let ping = RunLoopLatencyProbe() // MainThreadStall.swift
         ping.start()
         during?()
         let tvRef = Unmanaged.passUnretained(tv)
@@ -286,6 +275,7 @@ final class EditorInstantTests: XCTestCase {
         })
         try await Task.sleep(nanoseconds: 300_000_000) // the last key's draw
         box.lock.lock(); box.stop = true; box.lock.unlock()
+        let pings = ping.stop()
         MainThreadProbe.stop()
         box.lock.lock(); defer { box.lock.unlock() }
         let draws = MainThreadProbe.editorDraws
@@ -301,7 +291,7 @@ final class EditorInstantTests: XCTestCase {
             }
             if let c = box.commits.first(where: { $0 >= end }) { phase.keyToCommitMs.append(Double(c &- post) / 1e6) }
         }
-        phase.pingMs = box.pings
+        phase.pingMs = pings
         for (k, b) in MainThreadProbe.buckets {
             phase.sections[k] = [Double(b.totalNs) / 1e6, Double(b.count), Double(b.maxNs) / 1e6]
         }
@@ -398,6 +388,56 @@ final class EditorInstantTests: XCTestCase {
                                                   "burst_bodies": ViewBodyProbe.counts, "burst_main_sections_ms": burstSections])
         XCTAssertEqual(s.pageCount, n)
         for p in [idle, coldPhase, steady, bursts] { XCTAssertGreaterThan(p.keys, 0, "\(p.name): no key was handled") }
+    }
+
+    // MARK: thousands of problems on screen (EDITOR-FREEZE)
+
+    /// The owner typed into Infinite Descent ×2 (1,152 pages) while a long
+    /// compile ran, and the editor did not even show the typed text: the
+    /// Problems panel listed thousands of distinct overfull/underfull groups,
+    /// and every row read the editor's text (for its Fix… link), so each key
+    /// re-diffed the whole list on the main thread (seconds per key). Here:
+    /// the panel shows 3,000 groups, a compile is running (STARTED, no DONE),
+    /// and 40 keys are typed. Key → glyph and the run loop's wait must stay
+    /// within a frame budget (`FLASHTEX_EDITOR_KEY_BUDGET_MS`, default 100 ms
+    /// for a loaded CI runner; the freeze was well over a second).
+    func testTypingStaysInstantWithThousandsOfProblemsShown() async throws {
+        env.set("FLASHTEX_HOST", "none") // the feed is the host
+        let n = 1142
+        let text = Self.book(sections: 1080)
+        let lines = text.utf8.reduce(0) { $1 == 0x0A ? $0 + 1 : $0 }
+        let model = ShellModel()
+        model.replaceProject(entryText: text)
+        model.engineV3Enabled = true
+        model.problemsVisible = true
+        let tv = try await host(model)
+        defer { model.engineV3.stop() }
+        let s = model.engineV3
+        try await waitUntil("the pages view", timeout: 30) { s.view != nil }
+        let caret = (tv.string as NSString).range(of: "Section 1}\n\n").location
+        XCTAssertNotEqual(caret, NSNotFound)
+        tv.setSelectedRange(NSRange(location: caret + 13, length: 0))
+        tv.window?.makeFirstResponder(tv)
+        let path = model.activePath
+        let delivery: EngineV3Delivery = s.delivery
+        let problems = 3000
+        let page = try XCTUnwrap(Self.pages(1).first)
+        for out in ManyProblemsFixture.compile(id: 1, page: page, pages: n, warnings: ManyProblemsFixture.warnings(problems, path: path, lines: lines)) {
+            delivery.post(out, connection: nil)
+        }
+        try await waitUntil("the problems listed", timeout: 60) { model.problemsList.count >= problems }
+        try await Task.sleep(nanoseconds: 500_000_000) // the list laid out
+        // A long compile is running: the host has started and not answered.
+        delivery.post(.started(.object(["id": .int(2), "keep": .bool(true), "mode": .string("incremental")])), connection: nil)
+        let phase = try await typePhase("problems", keys: 40, into: tv, session: s)
+        report([phase], extra: ["pages": n, "problems": model.problemsList.count,
+                                "groups": EditorDiagnostics.groups(of: model.problemsList).count])
+        let budget = ProcessInfo.processInfo.environment["FLASHTEX_EDITOR_KEY_BUDGET_MS"].flatMap(Double.init) ?? 100
+        XCTAssertFalse(phase.timedOut, "the main thread did not take the keys")
+        XCTAssertEqual(phase.keys, 40)
+        let glyph = phase.stats(phase.keyToGlyphMs), wait = RunLoopLatencyProbe.stats(phase.pingMs)
+        XCTAssertLessThanOrEqual(glyph["p95"] ?? .infinity, budget, "key → glyph p95 with \(problems) problems shown: \(glyph)")
+        XCTAssertLessThanOrEqual(wait["p99"] ?? .infinity, budget, "run-loop wait p99 with \(problems) problems shown: \(wait)")
     }
 
     // MARK: a real cold compile (evidence; FLASHTEX_EDITOR_INSTANT_DOC)

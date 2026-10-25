@@ -6008,3 +6008,173 @@ fn a_dormant_line_is_kept_until_it_is_read() {
         }
     }
 }
+
+/// INFDESC-883: pdfTeX leaks memory, and the convergence test must not
+/// fail on it. A link broken across lines leaves about 64 words of `mem`
+/// allocated that nothing points at again (pdflatex's `\tracingstats=2`:
+/// the words in use after each page grow by that much per such link). An
+/// edit makes the restarted run allocate at other addresses than the old
+/// run, so a later page's leak lands in another cell than the old run's
+/// there; before the dead-cell rule (`crate::iso::garbage`) every test
+/// after the next such link failed ("mem[...] differs outside what the
+/// walk compared") and the compile typeset the document to its end (on
+/// *Infinite Descent* ×2, 254 pages: the owner's 32-second keystroke).
+/// Both ways are checked against scratch runs; with the rule the edit
+/// converges a few pages after the edited one.
+#[test]
+fn a_link_broken_across_lines_does_not_stop_convergence() {
+    let Some(e) = env() else {
+        common::no_texlive();
+        return;
+    };
+    let para = |i: usize, word: &str| {
+        format!(
+            "Paragraph {i} says {word} and links to \\href{{https://example.com/{i}}}{{a \
+             link whose text is long enough to break across two lines of this \
+             paragraph, as a cross-reference in a book often does}} before going \
+             on with a few more words of ordinary text.\n\n"
+        )
+    };
+    let doc = |word: &str| {
+        let body: String = (0..200)
+            .map(|i| para(i, if i == 3 { word } else { "nothing" }))
+            .collect();
+        format!(
+            "\\documentclass{{article}}\n\\usepackage{{hyperref}}\n\
+             \\begin{{document}}\n{body}\\end{{document}}\n"
+        )
+    };
+    let mut runs = vec![];
+    for (name, env) in [
+        ("leak-rule", vec![]),
+        ("leak-norule", vec![("FLASHTEX_NO_DEAD_CELLS", "1")]),
+    ] {
+        let dir = e.dir.join(name);
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut h = Host::start_env(&e, &dir, &env);
+        for _ in 0..3 {
+            let r = compile_and_check(&e, &mut h, &dir, &[("doc.tex", &doc("alpha"))], "settle");
+            if r.contains("\"mode\":\"unchanged\"") {
+                break;
+            }
+        }
+        let mut reports = vec![];
+        for (k, word) in ["alphb", "alphc", "alpha"].into_iter().enumerate() {
+            let what = format!("{name} edit {k}");
+            reports.push(compile_and_check(
+                &e,
+                &mut h,
+                &dir,
+                &[("doc.tex", &doc(word))],
+                &what,
+            ));
+        }
+        runs.push(reports);
+    }
+    let pages: usize = field(&runs[0][0], "pages").parse().unwrap();
+    assert!(pages >= 12, "the document is {pages} pages");
+    for r in &runs[0] {
+        let rerun: usize = field(r, "rerun_pages").parse().unwrap();
+        assert!(
+            field(r, "converged_at") != "null",
+            "the edit did not converge: {r}"
+        );
+        assert!(
+            rerun * 2 < pages,
+            "the edit re-typeset {rerun} of {pages} pages: {r}"
+        );
+    }
+    assert!(
+        runs[0].iter().any(|r| field(r, "dead_cells") != "0"),
+        "no convergence needed the dead-cell rule: the document no longer tests it"
+    );
+    // without the rule the edits typeset to the end (the test's premise:
+    // the leak is what stopped them; the revert may converge, its run
+    // allocating as the settled one did)
+    assert!(
+        runs[1][..2]
+            .iter()
+            .all(|r| field(r, "converged_at") == "null"),
+        "{:#?}",
+        runs[1]
+    );
+}
+
+/// INFDESC-883 part 3: LaTeX's `\input` takes the size of the file it
+/// inputs (expl3's `\file_full_name:n`, `\pdffilesize`), a read of the whole
+/// file (#1724), so every checkpoint in the file has "consumed" an edit
+/// anywhere in it. READ-REVALIDATE compares the restarted run with the old
+/// run just after that read (`Point::WholeRead`) instead of at the next
+/// page, and restarts near the edit when they are the same. Each case is
+/// checked against scratch runs: (a) nothing keeps the size, and the
+/// compile restarts at the edit; (b) the file typesets its own size where
+/// it reads it; (c) it keeps the size in a macro and typesets it after the
+/// edit. In (b) and (c) the comparison must fail (the states differ), and
+/// the output is the scratch run's.
+#[test]
+fn a_whole_read_of_the_edited_file_revalidates_at_the_read() {
+    let Some(e) = env() else {
+        common::no_texlive();
+        return;
+    };
+    let main = (0..60).map(|i| para(i, "before")).collect::<String>();
+    let main = format!(
+        "\\documentclass{{article}}\n\\begin{{document}}\n{main}\\input{{chap}}\n\\end{{document}}\n"
+    );
+    let chap = |head: &str, tail: &str, word: &str| {
+        let body: String = (0..80)
+            .map(|i| para(i, if i == 60 { word } else { "inside" }))
+            .collect();
+        format!("{head}\n{body}{tail}\n")
+    };
+    let cases = [
+        ("whole-a", "", ""),
+        ("whole-b", "Size \\pdffilesize{chap.tex}.", ""),
+        (
+            "whole-c",
+            "\\edef\\chapsize{\\pdffilesize{chap.tex}}",
+            "Size \\chapsize.",
+        ),
+    ];
+    for (name, head, tail) in cases {
+        let dir = e.dir.join(name);
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut h = Host::start(&e, &dir);
+        for _ in 0..3 {
+            let r = compile_and_check(
+                &e,
+                &mut h,
+                &dir,
+                &[("doc.tex", &main), ("chap.tex", &chap(head, tail, "alpha"))],
+                &format!("{name} settle"),
+            );
+            if r.contains("\"mode\":\"unchanged\"") {
+                break;
+            }
+        }
+        let mut revalidated = vec![];
+        for (k, word) in ["alphab", "alphabe", "alpha"].into_iter().enumerate() {
+            let r = compile_and_check(
+                &e,
+                &mut h,
+                &dir,
+                &[("chap.tex", &chap(head, tail, word))],
+                &format!("{name} edit {k}"),
+            );
+            revalidated.push(field(&r, "revalidated_at").to_string());
+        }
+        if name == "whole-a" {
+            assert!(
+                revalidated.iter().any(|r| r == "\"whole-read\""),
+                "{name}: no compile restarted after the size read: {revalidated:?}"
+            );
+        } else {
+            assert!(
+                revalidated.iter().all(|r| r == "null"),
+                "{name}: a compile restarted after a size read the output depends on: {revalidated:?}"
+            );
+        }
+    }
+}
