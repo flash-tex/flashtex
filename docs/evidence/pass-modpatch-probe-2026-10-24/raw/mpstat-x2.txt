@@ -1,0 +1,74 @@
+== run 1: base 0, old pages 1130 (kept 1130), L5 patch 0 names (False); extended by 2912: ['\\r@thmFunctionsAsGraphs=macro(32 toks)', '\\r@exExamplesOfPropositions=macro(46 toks)', '\\r@lemCardinalityOfUnionOfDisjointSets=macro(32 toks)', '\\@multiplelabels=macro(38 toks)', '\\@abspage@last=macro(5 toks)', '\\PreviousTotalPages=macro(5 toks)', '\\lastpage@lastpage=macro(5 toks)', '\\lastpage@lastpageHy=macro(5 toks)']
+  tested 116, aligned by input position 81; offsets [(-8, 38), (-6, 25), (-10, 9), (-7, 3)]
+  [strict] equal modulo the patch: 0 of 116 (0.0 %)
+  [strict] longest equal runs (count, first page, last page): []
+  [strict] first blocker per page:
+       41  C-part state: vf+avl+img
+       39  C-part state: vf+avl
+       35  no old page at this input position
+        1  words outside the structures
+  [strict] C-part parts differing (pages): [('vf', 80), ('avl', 80), ('img', 41)]
+  [strict] meanings outside the patch (pages, by class): [('eqtb[17748]', 17), ('eqtb[17749]', 17), ('eqtb[17750]', 17), ('eqtb[17751]', 17), ('eqtb[17752]', 16), ('eqtb[17753]', 16), ('eqtb[17755]', 16), ('eqtb[17756]', 16), ('eqtb[17758]', 16), ('eqtb[17761]', 16)]
+  [strict] uncovered word regions (pages): [('str_pool', 81), ('hash', 81), ('str_start', 81), ('font_name', 81), ('ls_tag_file', 81), ('dest_names', 81), ('full_source_filename_stack', 81), ('obj_tab', 81), ('cs_count', 81), ('hash_high', 81), ('output_file_name', 81), ('pool_ptr', 81), ('rs_on', 81), ('str_ptr', 81)]
+  [strict] structure differences (pages):
+       46  char node differs (N vs N)
+       34  synctex tag differs (N vs N)
+        1  a node's source position differs (X vs X)
+  [relaxed] equal modulo the patch: 0 of 116 (0.0 %)
+  [relaxed] longest equal runs (count, first page, last page): []
+  [relaxed] first blocker per page:
+       41  C-part state: vf+avl+img
+       39  C-part state: vf+avl
+       35  no old page at this input position
+        1  words outside the structures
+  [relaxed] C-part parts differing (pages): [('vf', 80), ('avl', 80), ('img', 41)]
+  [relaxed] meanings outside the patch (pages, by class): [('eqtb[17748]', 17), ('eqtb[17749]', 17), ('eqtb[17750]', 17), ('eqtb[17751]', 17), ('eqtb[17752]', 16), ('eqtb[17753]', 16), ('eqtb[17755]', 16), ('eqtb[17756]', 16), ('eqtb[17758]', 16), ('eqtb[17761]', 16)]
+  [relaxed] uncovered word regions (pages): [('str_pool', 81), ('hash', 81), ('str_start', 81), ('font_name', 81), ('ls_tag_file', 81), ('dest_names', 81), ('full_source_filename_stack', 81), ('obj_tab', 81), ('cs_count', 81), ('hash_high', 81), ('output_file_name', 81), ('pool_ptr', 81), ('rs_on', 81), ('str_ptr', 81)]
+  [relaxed] structure differences (pages):
+       46  char node differs (N vs N)
+       34  synctex tag differs (N vs N)
+        1  a node's source position differs (X vs X)
+  [relaxed] string numbering: [('err: old string N "infdesc-xN.aux" vs new N "__file_seen_inf', 81)]
+  test cost (both comparisons): median 1860.4 ms, p90 4688.0 ms, max 7084.9 ms, total 203.4 s; median 22357 M instructions
+== run 3: base 0, old pages 1152 (kept 1152), L5 patch 2880 names (True); extended by 1: ['\\PreviousTotalPages=macro(5 toks)']
+  tested 1152, aligned by input position 1140; offsets [(0, 1140)]
+  [strict] equal modulo the patch: 0 of 1152 (0.0 %)
+  [strict] longest equal runs (count, first page, last page): []
+  [strict] first blocker per page:
+      575  C-part state: avl+img
+      559  C-part state: avl
+       12  no old page at this input position
+        6  a meaning outside the patch
+  [strict] C-part parts differing (pages): [('avl', 1134), ('img', 575)]
+  [strict] meanings outside the patch (pages, by class): [('\\PreviousTotalPages', 1140), ('\\<file> image', 575)]
+  [strict] uncovered word regions (pages): [('str_pool', 1134), ('obj_tab', 1134), ('dest_names', 1134), ('str_start', 1134), ('head_tab', 1134), ('pdf_os_objnum', 1133), ('font_name', 1132), ('hash', 1132), ('pdf_font_num', 1132), ('pdf_last_link', 1132), ('pdf_os_buf', 1130), ('full_source_filename_stack', 1129), ('ls_tag_file', 1129), ('obj_ptr', 1128)]
+  [strict] structure differences (pages):
+      895  input name differs (N vs N)
+      142  whatsit N word N differs (X at N vs X at N; walking Some((List, N, N)))
+       86  char node differs (N vs N)
+        8  obj_ptr differs (N vs N)
+        5  a node's source position differs (X vs X)
+        2  xform/ximage objnum differs (N vs N)
+        1  token differs (N vs N)
+        1  object lists of type N differ
+  [relaxed] equal modulo the patch: 1 of 1152 (0.1 %)
+  [relaxed] longest equal runs (count, first page, last page): [(1, 3, 3)]
+  [relaxed] first blocker per page:
+      575  C-part state: avl+img
+      559  C-part state: avl
+       12  no old page at this input position
+        5  structures: a node's source position differs (X vs X)
+  [relaxed] C-part parts differing (pages): [('avl', 1134), ('img', 575)]
+  [relaxed] meanings outside the patch (pages, by class): [('\\<file> image', 575)]
+  [relaxed] uncovered word regions (pages): [('str_pool', 1134), ('obj_tab', 1134), ('dest_names', 1134), ('str_start', 1134), ('head_tab', 1134), ('pdf_os_objnum', 1133), ('font_name', 1132), ('hash', 1132), ('pdf_font_num', 1132), ('pdf_last_link', 1132), ('pdf_os_buf', 1130), ('full_source_filename_stack', 1129), ('ls_tag_file', 1129), ('obj_ptr', 1128)]
+  [relaxed] structure differences (pages):
+      895  input name differs (N vs N)
+      142  whatsit N word N differs (X at N vs X at N; walking Some((List, N, N)))
+       86  char node differs (N vs N)
+        8  obj_ptr differs (N vs N)
+        5  a node's source position differs (X vs X)
+        2  xform/ximage objnum differs (N vs N)
+        1  object lists of type N differ
+  [relaxed] string numbering: [('err: old string N "page.xiv" vs new N "appendix*.N"', 1133), ('identity', 6), ('err: new string N "appendix*.N" past the old ones', 1)]
+  old run's next page interval reads an (extended) patched name: 1140 of 1140 pages; names (pages) [('\\r@*', 4521), ('\\@abspage@last', 843), ('\\lastpage@lastpage', 1), ('\\lastpage@lastpageHy', 1)]
+  test cost (both comparisons): median 707.1 ms, p90 1054.8 ms, max 2942.8 ms, total 822.3 s; median 8458 M instructions

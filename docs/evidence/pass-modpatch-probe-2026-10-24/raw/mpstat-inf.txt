@@ -1,0 +1,72 @@
+== run 1: base 0, old pages 576 (kept 576), L5 patch 0 names (False); extended by 2896: ['\\r@thmFunctionsAsGraphs=macro(32 toks)', '\\r@exExamplesOfPropositions=macro(41 toks)', '\\r@lemCardinalityOfUnionOfDisjointSets=macro(34 toks)', '\\@abspage@last=macro(4 toks)', '\\PreviousTotalPages=macro(4 toks)', '\\lastpage@lastpage=macro(4 toks)', '\\lastpage@lastpageHy=macro(4 toks)', '\\r@chGettingStarted=macro(37 toks)']
+  tested 60, aligned by input position 40; offsets [(-2, 26), (-4, 9), (-3, 3), (0, 1)]
+  [strict] equal modulo the patch: 0 of 60 (0.0 %)
+  [strict] longest equal runs (count, first page, last page): []
+  [strict] first blocker per page:
+       37  C-part state: vf+avl
+       20  no old page at this input position
+        2  C-part state: vf+avl+img
+        1  words outside the structures
+  [strict] C-part parts differing (pages): [('vf', 39), ('avl', 39), ('img', 2)]
+  [strict] meanings outside the patch (pages, by class): [('eqtb[17748]', 15), ('eqtb[17749]', 15), ('eqtb[17750]', 15), ('eqtb[17751]', 15), ('eqtb[17752]', 14), ('eqtb[17753]', 14), ('eqtb[17755]', 14), ('eqtb[17758]', 13), ('eqtb[17840]', 12), ('eqtb[17843]', 12)]
+  [strict] uncovered word regions (pages): [('str_pool', 40), ('hash', 40), ('str_start', 40), ('font_name', 40), ('ls_tag_file', 40), ('dest_names', 40), ('full_source_filename_stack', 40), ('ls_cond_tag', 40), ('obj_tab', 40), ('cs_count', 40), ('hash_high', 40), ('ls_grp_tag', 40), ('ls_nest_tag', 40), ('output_file_name', 40)]
+  [strict] structure differences (pages):
+       21  synctex tag differs (N vs N)
+       18  char node differs (N vs N)
+        1  a node's source position differs (X vs X)
+  [relaxed] equal modulo the patch: 0 of 60 (0.0 %)
+  [relaxed] longest equal runs (count, first page, last page): []
+  [relaxed] first blocker per page:
+       37  C-part state: vf+avl
+       20  no old page at this input position
+        2  C-part state: vf+avl+img
+        1  words outside the structures
+  [relaxed] C-part parts differing (pages): [('vf', 39), ('avl', 39), ('img', 2)]
+  [relaxed] meanings outside the patch (pages, by class): [('eqtb[17748]', 15), ('eqtb[17749]', 15), ('eqtb[17750]', 15), ('eqtb[17751]', 15), ('eqtb[17752]', 14), ('eqtb[17753]', 14), ('eqtb[17755]', 14), ('eqtb[17758]', 13), ('eqtb[17840]', 12), ('eqtb[17843]', 12)]
+  [relaxed] uncovered word regions (pages): [('str_pool', 40), ('hash', 40), ('str_start', 40), ('font_name', 40), ('ls_tag_file', 40), ('dest_names', 40), ('full_source_filename_stack', 40), ('ls_cond_tag', 40), ('obj_tab', 40), ('cs_count', 40), ('hash_high', 40), ('ls_grp_tag', 40), ('ls_nest_tag', 40), ('output_file_name', 40)]
+  [relaxed] structure differences (pages):
+       21  synctex tag differs (N vs N)
+       18  char node differs (N vs N)
+        1  a node's source position differs (X vs X)
+  [relaxed] string numbering: [('err: old string N "infdesc.aux" vs new N "__file_seen_infdes', 40)]
+  test cost (both comparisons): median 1182.0 ms, p90 1477.7 ms, max 1653.0 ms, total 48.9 s; median 16036 M instructions
+== run 3: base 0, old pages 592 (kept 592), L5 patch 1104 names (True); extended by 1: ['\\PreviousTotalPages=macro(4 toks)']
+  tested 592, aligned by input position 589; offsets [(0, 589)]
+  [strict] equal modulo the patch: 0 of 592 (0.0 %)
+  [strict] longest equal runs (count, first page, last page): []
+  [strict] first blocker per page:
+      558  C-part state: avl
+       25  C-part state: avl+img
+        6  a meaning outside the patch
+        3  no old page at this input position
+  [strict] C-part parts differing (pages): [('avl', 583), ('img', 25)]
+  [strict] meanings outside the patch (pages, by class): [('\\PreviousTotalPages', 589), ('\\<file> image', 25)]
+  [strict] uncovered word regions (pages): [('pdf_os_buf', 583), ('str_pool', 583), ('obj_tab', 583), ('dest_names', 583), ('str_start', 583), ('head_tab', 583), ('obj_ptr', 583), ('sys_obj_ptr', 583), ('pdf_os_objnum', 582), ('hash', 582), ('font_name', 582), ('pdf_font_num', 582), ('pdf_last_link', 582), ('pdf_last_page', 582)]
+  [strict] structure differences (pages):
+      449  input name differs (N vs N)
+       80  whatsit N word N differs (X at N vs X at N; walking Some((List, N, N)))
+       45  char node differs (N vs N)
+        8  obj_ptr differs (N vs N)
+        5  a node's source position differs (X vs X)
+        1  token differs (N vs N)
+        1  xform/ximage objnum differs (N vs N)
+  [relaxed] equal modulo the patch: 1 of 592 (0.2 %)
+  [relaxed] longest equal runs (count, first page, last page): [(1, 3, 3)]
+  [relaxed] first blocker per page:
+      558  C-part state: avl
+       25  C-part state: avl+img
+        5  structures: a node's source position differs (X vs X)
+        3  no old page at this input position
+  [relaxed] C-part parts differing (pages): [('avl', 583), ('img', 25)]
+  [relaxed] meanings outside the patch (pages, by class): [('\\<file> image', 25)]
+  [relaxed] uncovered word regions (pages): [('pdf_os_buf', 583), ('str_pool', 583), ('obj_tab', 583), ('dest_names', 583), ('str_start', 583), ('head_tab', 583), ('obj_ptr', 583), ('sys_obj_ptr', 583), ('pdf_os_objnum', 582), ('hash', 582), ('font_name', 582), ('pdf_font_num', 582), ('pdf_last_link', 582), ('pdf_last_page', 582)]
+  [relaxed] structure differences (pages):
+      449  input name differs (N vs N)
+       80  whatsit N word N differs (X at N vs X at N; walking Some((List, N, N)))
+       45  char node differs (N vs N)
+        8  obj_ptr differs (N vs N)
+        5  a node's source position differs (X vs X)
+        1  xform/ximage objnum differs (N vs N)
+  [relaxed] string numbering: [('err: old string N "BKM@N" vs new N "appendix*.N"', 582), ('identity', 6), ('err: new string N "appendix*.N" past the old ones', 1)]
+  old run's next page interval reads an (extended) patched name: 589 of 589 pages; names (pages) [('\\r@*', 623), ('\\@abspage@last', 570), ('\\lastpage@lastpage', 1), ('\\lastpage@lastpageHy', 1)]
+  test cost (both comparisons): median 178.8 ms, p90 208.8 ms, max 308.6 ms, total 107.3 s; median 2114 M instructions
