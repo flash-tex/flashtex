@@ -2167,7 +2167,9 @@ impl Globals {
                     if_cs_code => {
                         // §1767
                         {
+                            self.dl_chars_begin();
                             n = self.get_avail();
+                            self.dl_chars_end();
                             p = n;
                             e = self.is_in_csname;
                             self.is_in_csname = true;
@@ -2175,10 +2177,14 @@ impl Globals {
                                 self.get_x_token();
                                 if (self.cur_cs == 0i32) {
                                     {
-                                        q = self.get_avail();
-                                        __av_mem[crate::ix::U((p) as usize)].set_hh_rh(q);
-                                        { let __v412 = self.cur_tok; __av_mem[crate::ix::U((q) as usize)].set_hh_lh(__v412); }
-                                        p = q;
+                                        self.dl_chars_begin();
+                                        {
+                                            q = self.get_avail();
+                                            __av_mem[crate::ix::U((p) as usize)].set_hh_rh(q);
+                                            { let __v412 = self.cur_tok; __av_mem[crate::ix::U((q) as usize)].set_hh_lh(__v412); }
+                                            p = q;
+                                        }
+                                        self.dl_chars_end();
                                     }
                                 }
                                 if (self.cur_cs != 0i32) { break; }

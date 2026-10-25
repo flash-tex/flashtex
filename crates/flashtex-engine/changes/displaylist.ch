@@ -30,6 +30,12 @@
 %   in macro-heavy documents (docs/evidence/cold-speed-2026-10-04/). The side
 %   table's entry of such a location is set again when it is next allocated
 %   as a node.
+% * |dl_chars_begin| and |dl_chars_end| around the allocations of the
+%   character list that \.{\\csname} and \.{\\ifcsname} collect (and free
+%   at once): two thirds of the allocations noted in a cold
+%   \textit{Infinite Descent}. They are not noted either; the only thing
+%   done for them is what noting them did that is seen elsewhere: the file
+%   line TeX reads gets its span then, so spans are numbered as before.
 % * |dl_node(p)| as |pdf_hlist_out| and |pdf_vlist_out| output node |p|: the
 %   writer notes where the page stream is at that moment, so that what is
 %   drawn from there on is attributed to |p|.
@@ -78,6 +84,21 @@ dl_token_begin; p:=get_avail; dl_token_end; info(p):=cur_tok;
 if cur_tok<right_brace_limit then
 @z
 
+@x pdftex.web l.9108 - \.{\\csname}'s characters are not nodes to note
+begin r:=get_avail; p:=r; {head of the list of characters}
+b := is_in_csname; is_in_csname := true;
+repeat get_x_token;
+if cur_cs=0 then store_new_token(cur_tok);
+@y
+begin dl_chars_begin; r:=get_avail; dl_chars_end;
+p:=r; {head of the list of characters}
+b := is_in_csname; is_in_csname := true;
+repeat get_x_token;
+if cur_cs=0 then
+  begin dl_chars_begin; store_new_token(cur_tok); dl_chars_end;
+  end;
+@z
+
 @x pdftex.web l.11836 - the condition stack's node is not a node to note
 begin p:=get_node(if_node_size); link(p):=cond_ptr; type(p):=if_limit;
 @y
@@ -119,6 +140,21 @@ begin dl_node(p); case type(p) of
   dl_hyph_begin(ha); hyphenate; dl_hyph_end;
 @z
 
+@x pdftex.web l.38687 - \.{\\ifcsname}'s characters are not nodes to note
+if_cs_code:begin n:=get_avail; p:=n; {head of the list of characters}
+ e := is_in_csname; is_in_csname := true;
+  repeat get_x_token;
+  if cur_cs=0 then store_new_token(cur_tok);
+@y
+if_cs_code:begin dl_chars_begin; n:=get_avail; dl_chars_end;
+  p:=n; {head of the list of characters}
+ e := is_in_csname; is_in_csname := true;
+  repeat get_x_token;
+  if cur_cs=0 then
+    begin dl_chars_begin; store_new_token(cur_tok); dl_chars_end;
+    end;
+@z
+
 @x pdftex.web l.40320 - new sections at the end of part 54
 @* \[55] Index.
 @y
@@ -134,6 +170,8 @@ procedure dl_hyph_begin(@!p:pointer); external;
 procedure dl_hyph_end; external;
 procedure dl_token_begin; external;
 procedure dl_token_end; external;
+procedure dl_chars_begin; external;
+procedure dl_chars_end; external;
 
 @ The side table: the source position of the node at each |mem| location,
 which only the display-list writer reads and writes. It is an array of the

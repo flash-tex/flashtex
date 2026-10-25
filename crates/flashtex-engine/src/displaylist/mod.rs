@@ -840,6 +840,9 @@ static FILE_LEVEL: AtomicUsize = AtomicUsize::new(usize::MAX);
 /// Between `dl_token_begin` and `dl_token_end`: an allocation that is not a
 /// node of a list TeX ships.
 static NOT_A_NODE: AtomicBool = AtomicBool::new(false);
+/// Between `dl_chars_begin` and `dl_chars_end`: a token of the characters
+/// `\csname` or `\ifcsname` collects (and frees once it has looked them up).
+static CS_CHARS: AtomicBool = AtomicBool::new(false);
 /// While `hyphenate` rebuilds a word: HYPH_ON, and the word's place.
 static HYPH_ON: AtomicBool = AtomicBool::new(false);
 static HYPH_LOC: AtomicU64 = AtomicU64::new(0);
@@ -894,11 +897,30 @@ impl Globals {
         NOT_A_NODE.store(false, Ordering::Relaxed);
     }
 
+    /// `\csname` and `\ifcsname` allocate a token for each character they
+    /// collect, which never becomes a node either (changes/displaylist.ch).
+    /// Unlike `dl_token_begin`'s, these are noted in one respect: the file
+    /// line TeX reads is given its span then, as noting the token did, so
+    /// that spans are made, and numbered, as before.
+    #[inline(always)]
+    pub fn dl_chars_begin(&mut self) {
+        CS_CHARS.store(true, Ordering::Relaxed);
+    }
+
+    #[inline(always)]
+    pub fn dl_chars_end(&mut self) {
+        CS_CHARS.store(false, Ordering::Relaxed);
+    }
+
     #[inline(never)]
     fn dl_note_node(&mut self, p: i32) {
         // (newer work for the host: `Globals::flashtex_preempt_poll`, here
         // because nodes are allocated everywhere, the output routine too)
         self.flashtex_preempt_poll();
+        if CS_CHARS.load(Ordering::Relaxed) {
+            self.dl_meet_line();
+            return;
+        }
         let v = if HYPH_ON.load(Ordering::Relaxed) {
             HYPH_LOC.load(Ordering::Relaxed)
         } else if self.output_active {
@@ -909,6 +931,27 @@ impl Globals {
             self.dl_here()
         };
         self.side_set(p, v);
+    }
+
+    /// What `dl_note_node` would have done for a token of `\csname`'s
+    /// characters apart from its side entry: `dl_here`'s span lookup, which
+    /// gives the line read its span the first time.
+    fn dl_meet_line(&mut self) {
+        if HYPH_ON.load(Ordering::Relaxed) || self.output_active {
+            return;
+        }
+        let level = self.in_open;
+        if level <= 0 {
+            return;
+        }
+        let name = self.full_source_filename_stack[level as usize];
+        if name == 0 {
+            return;
+        }
+        let line = self.line.max(0) as u32;
+        if LAST_NAME.load(Ordering::Relaxed) != name || LAST_LINE.load(Ordering::Relaxed) != line {
+            self.dl_span(name, line);
+        }
     }
 
     /// The source position TeX is reading at: the span of the innermost open
@@ -943,18 +986,27 @@ impl Globals {
         {
             LAST_SPAN.load(Ordering::Relaxed)
         } else {
-            let bytes = self.str_bytes(name);
-            let s = with(|st| {
-                let f = st.file_id(&bytes);
-                st.span_id(f, line)
-            })
-            .unwrap_or(0);
-            LAST_NAME.store(name, Ordering::Relaxed);
-            LAST_LINE.store(line, Ordering::Relaxed);
-            LAST_SPAN.store(s, Ordering::Relaxed);
-            s
+            self.dl_span(name, line)
         };
         loc_pack(span, col)
+    }
+
+    /// The span of line `line` of the file named by string `name`, made
+    /// the cache's entry (`LAST_NAME`): what `dl_here` looks up once a line,
+    /// and `dl_meet_line` too.
+    #[cold]
+    #[inline(never)]
+    fn dl_span(&self, name: i32, line: u32) -> u32 {
+        let bytes = self.str_bytes(name);
+        let s = with(|st| {
+            let f = st.file_id(&bytes);
+            st.span_id(f, line)
+        })
+        .unwrap_or(0);
+        LAST_NAME.store(name, Ordering::Relaxed);
+        LAST_LINE.store(line, Ordering::Relaxed);
+        LAST_SPAN.store(s, Ordering::Relaxed);
+        s
     }
 
     /// The innermost level of `input_stack` (below `cur_input`) for which
