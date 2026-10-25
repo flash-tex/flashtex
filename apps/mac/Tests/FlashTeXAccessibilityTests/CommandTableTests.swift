@@ -285,7 +285,7 @@ final class CommandTableTests: XCTestCase {
         }
         XCTAssertFalse(sidebarBody.contains("ProblemsSection"), "Problems has left the tool column")
         let problemsSource = try String(contentsOf: Self.shellSources.appendingPathComponent("ProblemsPanel.swift"), encoding: .utf8)
-        XCTAssertTrue(problemsSource.contains("DiagnosticsListView(diagnostics: diags, panel: model.problemsPanel"), "the Problems panel hosts the diagnostics list")
+        XCTAssertTrue(problemsSource.contains("DiagnosticsListView(problems: problems, panel: model.problemsPanel"), "the Problems panel hosts the diagnostics list")
     }
 
     func testFocusOrderHelpText() {

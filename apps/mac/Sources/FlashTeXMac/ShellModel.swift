@@ -239,31 +239,35 @@ final class ShellModel {
     /// `entryPath` reads `documents`, so the App scene (every menu) was
     /// re-evaluated on every keystroke (P5-KEYSTROKE-MAIN).
     private(set) var menuEntryPath = "main.tex"
-    /// `displayedDiagnostics` assigned only when the list changes, for the
-    /// Problems panel, so a compile that changes nothing it lists does not
+    /// `engineV3Problems` for the Problems panel, assigned only when it is
+    /// another model, so a compile that changes nothing it lists does not
     /// re-evaluate the panel's List (an AppKit table) while typing, and at
     /// most every `problemsListInterval` (the last change always follows):
     /// typing in a long book answers each key with a compile whose thousands
-    /// of rows all moved, and the List's update at each took most of the
-    /// main thread (EDITOR-FREEZE). The panel's actions find their rows in
-    /// `displayedDiagnostics` again by identity (`goToOccurrence`, `DiagnosticHelpFixSlot`).
-    private(set) var problemsList: [RuntimeV1.Diagnostic] = []
-    /// `compiledDocuments` as of `problemsList` (the rows' line labels):
-    /// read by every row, so it changes only with the list, not at every reply.
-    private(set) var problemsTexts: [String: String] = [:]
+    /// of rows all moved (EDITOR-FREEZE). The panel's actions find their rows
+    /// in `displayedDiagnostics` again by identity (`goToOccurrence`, `DiagnosticHelpFixSlot`).
+    private(set) var problems: ProblemsModel = .empty
+    /// The panel's rows (`problems.diagnostics`).
+    var problemsList: [RuntimeV1.Diagnostic] { problems.diagnostics }
+    /// The rows' line labels, over `compiledDocuments` as of `problems`
+    /// (`ProblemsModel.lines(over:)`): read by every row, so it changes only
+    /// with the list, not at every reply.
+    private(set) var problemsLines = EditorDiagnostics.Lines.none { didSet { problemsRevision &+= 1 } }
+    /// Bumped with `problemsLines` (and so with `problems`): the panel's table reloads its visible rows.
+    private(set) var problemsRevision = 0
     @ObservationIgnored private var problemsListAt: UInt64 = 0
     @ObservationIgnored private var problemsListPending = false
     static let problemsListInterval: Double = 0.5
 
     private func publishProblemsList() {
         let now = MonotonicClock.nowNs(), interval = UInt64(Self.problemsListInterval * 1e9)
-        let diagnostics = displayedDiagnostics
-        guard problemsList != diagnostics else { return }
+        let latest = engineV3Problems
+        guard problems !== latest else { return }
         // At once after a quiet spell, and when the list empties or fills.
-        if now &- problemsListAt >= interval || problemsList.isEmpty || diagnostics.isEmpty {
+        if now &- problemsListAt >= interval || problems.diagnostics.isEmpty || latest.diagnostics.isEmpty {
             problemsListAt = now
-            problemsTexts = compiledDocuments
-            problemsList = diagnostics
+            problemsLines = latest.lines(over: compiledDocuments)
+            problems = latest
             return
         }
         guard !problemsListPending else { return }
@@ -348,7 +352,9 @@ final class ShellModel {
         // The Problems rows take the texts with the list (`publishProblemsList`),
         // and here when the set of documents changes (texts set after the rows,
         // a document opened): not at each reply while typing.
-        didSet { if Set(problemsTexts.keys) != Set(compiledDocuments.keys) { problemsTexts = compiledDocuments } }
+        didSet {
+            if Set(problemsLines.texts.keys) != Set(compiledDocuments.keys) { problemsLines = problems.lines(over: compiledDocuments) }
+        }
     }
 
     /// The engine's diagnostics of its last completed compile.
@@ -361,8 +367,31 @@ final class ShellModel {
     var engineV3ResultStatus: RuntimeV1.Status? {
         didSet { if engineV3ResultStatus != oldValue { refreshToolbarMirrors() } }
     }
-    var engineV3Diagnostics: [RuntimeV1.Diagnostic] = [] {
-        didSet { if engineV3Diagnostics != oldValue { engineV3MarksRevision &+= 1; refreshToolbarMirrors() } }
+    /// The rows with their groups and counts, made where the rows are made
+    /// (off the main thread for a long document: EngineV3Problems.swift)
+    /// and published here as one assignment (`publishEngineV3Problems`).
+    private(set) var engineV3Problems: ProblemsModel = .empty
+    var engineV3Diagnostics: [RuntimeV1.Diagnostic] {
+        get { engineV3Problems.diagnostics }
+        // (tests, and the session's reset: a model made here)
+        set {
+            guard newValue != engineV3Problems.diagnostics else { return }
+            publishEngineV3Problems(ProblemsModel(diagnostics: newValue, texts: compiledDocuments, documentOrder: chrome.listing.map(\.path)))
+        }
+    }
+
+    /// Shows `made` (EngineV3Session's DONE and tools): nothing when it is
+    /// the model already shown, which the pipeline returns for the same rows.
+    func publishEngineV3Problems(_ made: ProblemsModel) {
+        guard made !== engineV3Problems else { return }
+        engineV3Problems = made
+        engineV3MarksRevision &+= 1
+        refreshToolbarMirrors()
+    }
+
+    /// The editor's texts by path (the first document of a path).
+    var documentTexts: [String: String] {
+        Dictionary(documents.map { ($0.path, $0.text) }, uniquingKeysWith: { a, _ in a })
     }
     /// Bumped when the v3 rows or their compiled texts change: the editor
     /// marks' memo key under engine v3 (there is no old-engine result id).
@@ -380,9 +409,9 @@ final class ShellModel {
     /// from: the host's rows of the last completed compile as one result, with
     /// `compiledDocuments` (set at its DONE) as the texts they rebase from.
     var markSource: (result: RuntimeV1.CompileResult, id: String?)? {
-        let failed = engineV3Diagnostics.contains { $0.severity == .error }
-        return (RuntimeV1.CompileResult(projectId: "engine-v3", revision: engineV3MarksRevision, status: failed ? .recovered : .ok,
-                                        pages: [], diagnostics: engineV3Diagnostics, pdfPath: nil), nil)
+        let problems = engineV3Problems
+        return (RuntimeV1.CompileResult(projectId: "engine-v3", revision: engineV3MarksRevision, status: problems.hasErrors ? .recovered : .ok,
+                                        pages: [], diagnostics: problems.diagnostics, pdfPath: nil), nil)
     }
 
     /// Settings > Compile > Auto-compile after edits: whether edits go to
@@ -554,9 +583,7 @@ final class ShellModel {
         // Cheap bail-out before `caretByte`, whose UTF-16 → UTF-8 conversion is
         // linear in the document: this is read on every keystroke, and most
         // documents carry no mechanical fix at all.
-        guard fixCompiledRevision == editorRevision,
-              diagnostics.contains(where: { $0.help?.replacement != nil || $0.suggestion != nil })
-        else { return nil }
+        guard fixCompiledRevision == editorRevision, engineV3Problems.hasFixes else { return nil }
         guard let caretByte, let fix = EditorDiagnostics.fixOffered(
             at: caretByte, in: diagnostics, path: activePath,
             currentText: activeText, compiledRevision: fixCompiledRevision,

@@ -229,10 +229,10 @@ final class EditorInstantTests: XCTestCase {
 
     /// Types `keys` keys 50 ms apart (a letter typed, then deleted), each posted
     /// to main from another thread, while a ping measures main's latency; runs
-    /// `during` (on main) as typing starts.
+    /// `during` (on main) as typing starts and `keysDone` once the last key is handled.
     private func typePhase(_ name: String, keys: Int, into tv: NSTextView, session: EngineV3Session,
                            stamp: Bool = false, pauseEvery: Int = 0, pauseMs: UInt32 = 0,
-                           during: (() -> Void)? = nil) async throws -> Phase {
+                           during: (() -> Void)? = nil, keysDone: (() -> Void)? = nil) async throws -> Phase {
         let box = Box()
         var phase = Phase(name: name)
         phase.pagesAtStart = session.pageCount
@@ -273,6 +273,7 @@ final class EditorInstantTests: XCTestCase {
         phase.timedOut = !(try await waitUntil("\(keys) keys handled", timeout: Double(keys) * (0.05 + Double(pauseMs) / 1000) + 240, failing: false) {
             box.lock.lock(); defer { box.lock.unlock() }; return box.ends.count >= keys
         })
+        keysDone?()
         try await Task.sleep(nanoseconds: 300_000_000) // the last key's draw
         box.lock.lock(); box.stop = true; box.lock.unlock()
         let pings = ping.stop()
@@ -438,6 +439,86 @@ final class EditorInstantTests: XCTestCase {
         let glyph = phase.stats(phase.keyToGlyphMs), wait = RunLoopLatencyProbe.stats(phase.pingMs)
         XCTAssertLessThanOrEqual(glyph["p95"] ?? .infinity, budget, "key → glyph p95 with \(problems) problems shown: \(glyph)")
         XCTAssertLessThanOrEqual(wait["p99"] ?? .infinity, budget, "run-loop wait p99 with \(problems) problems shown: \(wait)")
+    }
+
+    // MARK: the main thread stays free while compiles report thousands of problems (APP-MAIN-THREAD)
+
+    /// After #1890 the owner's sample of typing into Infinite Descent ×2
+    /// found the main thread busy at each compile's reply: it made the
+    /// reply's thousands of Problems rows (~25 ms), and the panel's List made
+    /// every row twice a second. Here, as there, the author types in one
+    /// chapter (a 250 KB text) of a book whose compiles report 3,000 warnings,
+    /// one in 30 of them in that chapter: the Problems panel shows every
+    /// group, 40 keys are typed 50 ms apart, and a compile answers every other
+    /// key with 3,000 warnings whose lines all moved (every group changes).
+    /// The main thread must be free (not running: `MainThreadFreeProbe`)
+    /// for at least `FLASHTEX_EDITOR_FREE_MIN` of the time (default 0.6, for
+    /// a debug build on a shared CI runner; a debug build on this Mac read
+    /// 0.75, see the PR for its release numbers), and key → glyph must stay within
+    /// `FLASHTEX_EDITOR_KEY_BUDGET_MS`.
+    func testTheMainThreadStaysFreeWhileCompilesReportThousandsOfProblems() async throws {
+        env.set("FLASHTEX_HOST", "none") // the feed is the host
+        let n = 1142
+        let text = Self.book(sections: 60)
+        let lines = text.utf8.reduce(0) { $1 == 0x0A ? $0 + 1 : $0 }
+        let model = ShellModel()
+        model.replaceProject(entryText: text)
+        model.engineV3Enabled = true
+        model.problemsVisible = true
+        let tv = try await host(model)
+        defer { model.engineV3.stop() }
+        let s = model.engineV3
+        try await waitUntil("the pages view", timeout: 30) { s.view != nil }
+        let caret = (tv.string as NSString).range(of: "Section 1}\n\n").location
+        XCTAssertNotEqual(caret, NSNotFound)
+        tv.setSelectedRange(NSRange(location: caret + 13, length: 0))
+        tv.window?.makeFirstResponder(tv)
+        let path = model.activePath
+        let delivery: EngineV3Delivery = s.delivery
+        let problems = 3000
+        let page = try XCTUnwrap(Self.pages(1).first)
+        for out in ManyProblemsFixture.compile(id: 1, page: page, pages: n,
+                                                warnings: ManyProblemsFixture.warnings(problems, path: path, lines: lines, chapters: 30)) {
+            delivery.post(out, connection: nil)
+        }
+        try await waitUntil("the problems listed", timeout: 60) { model.problems.groups.count >= problems }
+        try await Task.sleep(nanoseconds: 500_000_000) // the list laid out
+        // Every compile's frames, made before typing starts (the reader thread's work, not main's).
+        let compiles = 20
+        let feeds = (0 ..< compiles).map { k in
+            Feed(ManyProblemsFixture.compile(id: 10 + k, page: page, pages: n,
+                                             warnings: ManyProblemsFixture.warnings(problems, path: path, lines: lines, shift: k + 1, chapters: 30)))
+        }
+        let free = MainThreadFreeProbe()
+        let feedBox = Box()
+        let doneBefore = s.doneCount
+        let phase = try await typePhase("problems_compiles", keys: 2 * compiles, into: tv, session: s, during: {
+            free.start()
+            let t = Thread {
+                for f in feeds {
+                    usleep(100_000) // a compile per two keys
+                    if feedBox.stopped { return }
+                    for out in f.outs { delivery.post(out, connection: nil) }
+                }
+            }
+            t.qualityOfService = .userInteractive
+            t.start()
+        }, keysDone: { free.stop() })
+        feedBox.lock.lock(); feedBox.stop = true; feedBox.lock.unlock()
+        try await waitUntil("the compiles' rows published", timeout: 60) { s.doneCount > doneBefore && !s.problemsPending }
+        let (fraction, ms) = free.result
+        report([phase], extra: ["pages": n, "problems": problems, "compiles_done": s.doneCount - doneBefore,
+                                "main_free": fraction, "measured_ms": ms])
+        XCTAssertFalse(phase.timedOut, "the main thread did not take the keys")
+        XCTAssertEqual(phase.keys, 2 * compiles)
+        XCTAssertGreaterThan(s.doneCount - doneBefore, compiles / 2, "the compiles were answered while typing")
+        // Every group is listed (no cap), from the last compile.
+        XCTAssertEqual(model.engineV3Problems.groups.count, problems)
+        let minFree = ProcessInfo.processInfo.environment["FLASHTEX_EDITOR_FREE_MIN"].flatMap(Double.init) ?? 0.6
+        XCTAssertGreaterThanOrEqual(fraction, minFree, "main thread free \(fraction) of \(ms) ms while typing during compiles")
+        let budget = ProcessInfo.processInfo.environment["FLASHTEX_EDITOR_KEY_BUDGET_MS"].flatMap(Double.init) ?? 100
+        let glyph = phase.stats(phase.keyToGlyphMs)
+        XCTAssertLessThanOrEqual(glyph["p95"] ?? .infinity, budget, "key → glyph p95 during compiles with \(problems) problems: \(glyph)")
     }
 
     // MARK: a real cold compile (evidence; FLASHTEX_EDITOR_INSTANT_DOC)

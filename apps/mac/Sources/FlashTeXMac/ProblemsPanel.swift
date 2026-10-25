@@ -18,11 +18,11 @@ struct ProblemsPanel: View {
 
     var body: some View {
         @Bindable var model = model
-        // `problemsList` / `resultStatus` are assigned only when they change
+        // `problems` / `resultStatus` are assigned only when they change
         // (ShellModel); `displayedDiagnostics` reads `result`, which every
         // reply replaces, and this panel's List re-laid out with each one.
-        let diags = model.problemsList
-        let (errors, warnings, gaps) = EditorDiagnostics.counts(diags)
+        let problems = model.problems, diags = problems.diagnostics
+        let (errors, warnings, gaps) = problems.counts // made with the rows (ProblemsModel)
         VStack(spacing: 0) {
             HStack(spacing: DS.Space.m) {
                 Text("Problems").font(DS.Fonts.base.weight(.semibold)).foregroundStyle(DS.Colors.textPrimary)
@@ -70,7 +70,7 @@ struct ProblemsPanel: View {
                 }
                 .frame(maxWidth: .infinity, minHeight: DS.Layout.diagnosticsListMinHeight, maxHeight: .infinity)
             } else {
-                problemsList(diags)
+                problemsList(problems)
             }
         }
         .background(DS.Colors.surfacePrimary)
@@ -79,10 +79,10 @@ struct ProblemsPanel: View {
         .accessibilityIdentifier(Self.identifier)
     }
 
-    private func problemsList(_ diags: [RuntimeV1.Diagnostic]) -> some View {
+    private func problemsList(_ problems: ProblemsModel) -> some View {
         // Grouped rows with a selection, Return / Esc / ⌘C, "N places" and the
         // spoken group count/occurrence (DiagnosticsPanel.swift, mac-diagnostics-3).
-        DiagnosticsListView(diagnostics: diags, panel: model.problemsPanel,
+        DiagnosticsListView(problems: problems, panel: model.problemsPanel,
                             severityFilter: model.problemsSeverityFilter, showsHeader: false, maxHeight: .infinity)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
