@@ -611,6 +611,56 @@ fn rewound_until(
     Some(buf)
 }
 
+/// The old run's values at checkpoint `b.ids[jj]` of its branch `b` of the
+/// chunks `cs` (sorted, each the old run wrote: `redo_of` gives its latest
+/// value): [`rewound_until`] from the old run's end through the logs from
+/// `jj` on, or, from the branch's keyframe when it is valid there and at or
+/// after `jj` (`Keyframe`), through the logs between the two only.
+fn rewound_old(
+    nchunks: usize,
+    b: &Branch,
+    jj: usize,
+    cs: &[u32],
+    redo_of: &ChunkMap<*const u64>,
+    stop: &mut dyn FnMut() -> bool,
+) -> Option<Vec<u64>> {
+    let latest = |c: u32| redo_of[&c];
+    let keyed = b
+        .key
+        .as_ref()
+        .and_then(|kf| Some((kf.index_in(&b.ids)?, kf)))
+        .filter(|&(jt, _)| jt >= jj);
+    let Some((jt, kf)) = keyed else {
+        return rewound_until(nchunks, cs, &latest, &b.logs[jj..], stop);
+    };
+    let open: ChunkMap<*const u64> = b
+        .logs
+        .last()
+        .map(|l| {
+            l.entries
+                .iter()
+                .filter(|&&(c, _)| kf.get(c).is_none())
+                .map(|&(c, q)| (c, q as *const u64))
+                .collect()
+        })
+        .unwrap_or_default();
+    let start = |c: u32| {
+        kf.get(c)
+            .or_else(|| open.get(&c).copied())
+            .unwrap_or_else(|| latest(c))
+    };
+    let r = rewound_until(nchunks, cs, &start, &b.logs[jj..jt], stop)?;
+    if verify_keyframes() && rewound(nchunks, cs, &latest, &b.logs[jj..]) != r {
+        // (a verify mode: loud, so that a sweep fails)
+        eprintln!(
+            "FLASHTEX_VERIFY_PREPARED: the old run's state at {} from the keyframe differs from the rewind",
+            b.ids[jj]
+        );
+        std::process::abort();
+    }
+    Some(r)
+}
+
 /// Logs between two questions to `rewound_until`'s `stop` (about 0.3 ms).
 const STOP_LOGS: usize = 64;
 
@@ -703,6 +753,8 @@ pub struct Branch {
     /// The live contents, at the moment of the restore, of every chunk the
     /// restore overwrote: the old run's latest state.
     redo: Vec<(u32, ChunkPtr)>,
+    /// The chain's keyframe, if any (`Keyframe`), relative to `redo`.
+    key: Option<Keyframe>,
 }
 
 // SAFETY: a branch owns its slab chunks; nothing else points at them.
@@ -763,6 +815,8 @@ pub(crate) struct Core {
     spare: Vec<u64>,
     /// A `reattach_lazy` whose redo is not copied in yet (`Lazy`).
     lazy: Option<Lazy>,
+    /// The last convergence jump's state at its checkpoint (`Keyframe`).
+    key: Option<Keyframe>,
 }
 
 /// A reattach whose last step waits (`Core::reattach_lazy`, lane T7-MARGIN):
@@ -785,6 +839,65 @@ struct Lazy {
 
 /// The largest buffer `Core::spare` keeps.
 const SPARE_MAX: usize = 64 << 20;
+
+/// The state at checkpoint `id` of every chunk the logs from `id` on held
+/// when it was made (lane EDITED-PAGE-20): the convergence jump's own state
+/// there, kept as the jump copies the old run's latest state over it
+/// (`Core::converge`). Typing in one place restores, keystroke after
+/// keystroke, to checkpoints just before `id` (the restart point, then the
+/// revalidation's `p2`) and compares with the old run at checkpoints just
+/// before it (`diff_branch_inner`): each was a pass over every log from
+/// there to the old run's end (on page 887 of Infinite Descent x2, 900 logs
+/// and a million entries, ~36 M instructions a restore); from here, only
+/// the logs from there to `id` are rewound.
+///
+/// Valid where the checkpoints from `id` on are `tail` and no log was
+/// changed in place since (`history_gen`; `or_from` keeps it up to date):
+/// the logs from `id` on are then those it was made from but the open one,
+/// which may have taken more chunks since, whose pre-images there are
+/// their values at `id` (they had no history after it). So a chunk's value
+/// at `id` is its copy here, else the open log's pre-image, else the
+/// latest one. It moves with the logs from `id` on: into the branch a
+/// restore detaches, back with a reattach.
+struct Keyframe {
+    id: CheckpointId,
+    tail: Vec<CheckpointId>,
+    history_gen: u64,
+    /// Sorted.
+    cs: Vec<u32>,
+    buf: Vec<u64>,
+}
+
+impl Keyframe {
+    /// Index of `id` in `ids` if the keyframe is valid for that chain
+    /// (`history_gen` aside).
+    fn index_in(&self, ids: &[CheckpointId]) -> Option<usize> {
+        let k = ids.iter().rposition(|&x| x == self.id)?;
+        (ids[k..] == self.tail[..]).then_some(k)
+    }
+
+    /// Chunk `c`'s value at `id`, if kept here.
+    fn get(&self, c: u32) -> Option<*const u64> {
+        let i = self.cs.binary_search(&c).ok()?;
+        Some(self.buf[i * CHUNK_WORDS..].as_ptr())
+    }
+
+    fn bytes(&self) -> usize {
+        self.buf.capacity() * 8 + self.cs.capacity() * 4 + self.tail.capacity() * 8
+    }
+}
+
+/// `FLASHTEX_VERIFY_PREPARED` checks the keyframe's uses too.
+fn verify_keyframes() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var_os("FLASHTEX_VERIFY_PREPARED").is_some())
+}
+
+/// `FLASHTEX_KEYFRAME=off` turns keyframes off (A/B).
+fn keyframes_on() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var("FLASHTEX_KEYFRAME").as_deref() != Ok("off"))
+}
 
 /// The state at checkpoint `id` of the chunks the logs from `id` on hold,
 /// worked out while the engine was idle: a later `restore_branch(id)` of
@@ -1419,6 +1532,8 @@ impl Core {
     /// Restore to `id` and discard every later checkpoint (the plain restart).
     fn restore_discard(&mut self, id: CheckpointId) -> Result<(), String> {
         self.drop_part();
+        // (the open log starts again: the keyframe cannot tell what it held)
+        self.key = None;
         let k = self
             .index_of(id)
             .ok_or_else(|| format!("checkpoint {id} is not retained"))?;
@@ -1526,27 +1641,45 @@ impl Core {
                 }
             }
         }
+        // (the keyframe, if valid here, goes with the logs from its
+        // checkpoint on; it shortens this rewind when it is at or after
+        // the target)
+        let key = self.key.take().filter(|kf| {
+            kf.history_gen == self.history_gen && kf.index_in(&self.ids).is_some()
+        });
+        let kt = key
+            .as_ref()
+            .and_then(|kf| kf.index_in(&self.ids))
+            .filter(|&kt| kt >= k);
         let old_logs = self.logs.split_off(k);
         let old_ids = self.ids.split_off(k);
         if std::env::var_os("FLASHTEX_INCR_DEBUG").is_some() {
             eprintln!(
                 "[arena] restore to {id}: {} ({} logs)",
-                match &prepared {
-                    Some(p) => format!("prepared, {} chunks", p.cs.len()),
-                    None => "rewound".into(),
+                match (&prepared, kt) {
+                    (Some(p), _) => format!("prepared, {} chunks", p.cs.len()),
+                    (None, Some(kt)) => format!(
+                        "from the keyframe at {} ({} chunks), {} of {} logs",
+                        old_ids[kt - k],
+                        key.as_ref().map_or(0, |kf| kf.cs.len()),
+                        kt - k,
+                        old_logs.len()
+                    ),
+                    (None, None) => "rewound".into(),
                 },
                 self.logs.len() - k
             );
         }
-        let redo = match prepared {
-            Some(p) => {
+        let redo = match (prepared, kt, key.as_ref()) {
+            (Some(p), _, _) => {
                 let redo = self.rewind_prepared(&p, old_logs.last());
                 if p.buf.capacity() * 8 <= SPARE_MAX && p.buf.capacity() > self.spare.capacity() {
                     self.spare = p.buf;
                 }
                 redo
             }
-            None => self.rewind(&old_logs, true),
+            (None, Some(kt), Some(kf)) => self.rewind_keyed(&old_logs, kt - k, kf),
+            _ => self.rewind(&old_logs, true),
         };
         self.ids.push(old_ids[0]);
         self.logs.push(Log::default());
@@ -1555,7 +1688,97 @@ impl Core {
             ids: old_ids,
             logs: old_logs,
             redo,
+            key,
         })
+    }
+
+    /// `rewind(logs, true)` from a keyframe (`Keyframe`) valid for `logs`,
+    /// at `logs[kt]`'s checkpoint: each chunk starts from its value there
+    /// (`Keyframe`'s rule) and is rewound through the logs before it only.
+    /// The chunks are the keyframe's, those logs' and the open log's: those
+    /// of `logs` (and, after a discarding restore to the newest
+    /// checkpoint, possibly a few more, which this restores to their live
+    /// values).
+    fn rewind_keyed(&mut self, logs: &[Log], kt: usize, kf: &Keyframe) -> Vec<(u32, ChunkPtr)> {
+        let window = &logs[..kt];
+        let open: ChunkMap<*const u64> = logs
+            .last()
+            .map(|l| {
+                l.entries
+                    .iter()
+                    .filter(|&&(c, _)| kf.get(c).is_none())
+                    .map(|&(c, q)| (c, q as *const u64))
+                    .collect()
+            })
+            .unwrap_or_default();
+        let mut mark = std::mem::take(&mut self.mark);
+        mark.fill(0);
+        let mut cs: Vec<u32> = Vec::with_capacity(kf.cs.len());
+        let mut add = |c: u32, cs: &mut Vec<u32>| {
+            if !bit(&mark, c as usize) {
+                set_bit(&mut mark, c as usize);
+                cs.push(c);
+            }
+        };
+        for &c in &kf.cs {
+            add(c, &mut cs);
+        }
+        for log in window {
+            for c in log.chunk_ids() {
+                add(c, &mut cs);
+            }
+        }
+        for &c in open.keys() {
+            add(c, &mut cs);
+        }
+        self.mark = mark;
+        cs.sort_unstable();
+        let live = |c: u32| self.chunk_ptr(c as usize) as *const u64;
+        let start = |c: u32| {
+            kf.get(c)
+                .or_else(|| open.get(&c).copied())
+                .unwrap_or_else(|| live(c))
+        };
+        let buf = rewound(self.nchunks, &cs, &start, window);
+        if verify_keyframes() {
+            // (a verify mode: loud, so that a sweep fails)
+            let mut full: Vec<u32> = logs.iter().flat_map(|l| l.chunk_ids()).collect();
+            full.sort_unstable();
+            full.dedup();
+            if let Some(c) = full.iter().find(|c| cs.binary_search(c).is_err()) {
+                eprintln!("FLASHTEX_VERIFY_PREPARED: chunk {c} of the logs is not in the keyed restore");
+                std::process::abort();
+            }
+            let want = rewound(self.nchunks, &cs, &live, logs);
+            if want != buf {
+                eprintln!("FLASHTEX_VERIFY_PREPARED: the keyed restore differs from the rewind");
+                std::process::abort();
+            }
+        }
+        let redo: Vec<(u32, ChunkPtr)> = cs.iter().map(|&c| (c, self.slab.take())).collect();
+        let base = SharedPtr(self.base as *mut u64);
+        let work: Vec<(SharedPtr, SharedPtr, SharedPtr)> = redo
+            .iter()
+            .enumerate()
+            .map(|(i, &(c, r))| {
+                (
+                    SharedPtr(base.chunk(c)),
+                    SharedPtr(r),
+                    SharedPtr(buf[i * CHUNK_WORDS..].as_ptr() as *mut u64),
+                )
+            })
+            .collect();
+        let job = |k: usize| {
+            let (live, r, src) = work[k];
+            // SAFETY: distinct live chunks, their own redo chunks, and the
+            // rewound buffer, which nobody writes meanwhile.
+            unsafe {
+                std::ptr::copy_nonoverlapping(live.0 as *const u64, r.0, CHUNK_WORDS);
+                std::ptr::copy_nonoverlapping(src.0 as *const u64, live.0, CHUNK_WORDS);
+            }
+        };
+        run_jobs(work.len(), self.workers(), &job);
+        redo
     }
 
     /// `restore_branch` to a lazy reattach's target (`Lazy`): the live
@@ -1585,10 +1808,12 @@ impl Core {
         self.ids.push(old_ids[0]);
         self.logs.push(Log::default());
         self.clear_saved();
+        let key = self.key.take();
         Ok(Branch {
             ids: old_ids,
             logs: old_logs,
             redo,
+            key,
         })
     }
 
@@ -1618,7 +1843,9 @@ impl Core {
             mut ids,
             mut logs,
             redo,
+            key: _,
         } = branch;
+        self.key = None;
         let keep_ids = ids.split_off(j);
         let keep_logs = logs.split_off(j);
         for log in logs {
@@ -1643,6 +1870,26 @@ impl Core {
             }
         }
         self.mark = mark;
+        // The live state is the old run's at `old`: kept, for the chunks
+        // the jump changes, as the keyframe there (`Keyframe`).
+        if keyframes_on() {
+            let mut cs: Vec<u32> = jobs.iter().map(|&(c, _)| c).collect();
+            cs.sort_unstable();
+            let mut buf = Vec::with_capacity(cs.len() * CHUNK_WORDS);
+            for &c in &cs {
+                // SAFETY: a whole live chunk.
+                buf.extend_from_slice(unsafe {
+                    std::slice::from_raw_parts(self.chunk_ptr(c as usize), CHUNK_WORDS)
+                });
+            }
+            self.key = Some(Keyframe {
+                id: old,
+                tail: keep_ids.clone(),
+                history_gen: self.history_gen,
+                cs,
+                buf,
+            });
+        }
         self.copy_in(&jobs);
         for (_, p) in jobs {
             self.slab.give(p);
@@ -1695,10 +1942,18 @@ impl Core {
             self.free_log(log);
         }
         let t_rewind = t0.elapsed();
-        let Branch { ids, logs, redo } = branch;
+        let Branch {
+            ids,
+            logs,
+            redo,
+            key,
+        } = branch;
         self.set_prepared(None);
         self.ids.extend(ids);
         self.logs.extend(logs);
+        // (the keyframe comes back with the logs it is for, unless a log
+        // was changed in place meanwhile)
+        self.key = key.filter(|kf| kf.history_gen == self.history_gen);
         // (every flag clear: the barrier's first write to any chunk
         // materializes, `save`)
         self.clear_saved();
@@ -1877,6 +2132,7 @@ impl Core {
     }
 
     fn drop_branch(&mut self, b: Branch) {
+        drop(b.key);
         for log in b.logs {
             self.free_log(log);
         }
@@ -1919,6 +2175,9 @@ impl Core {
         }
         b.ids = out_ids;
         b.logs = out_logs;
+        if b.key.as_ref().is_some_and(|kf| kf.index_in(&b.ids).is_none()) {
+            b.key = None;
+        }
     }
 
     /// Drop every checkpoint `keep` rejects, except the newest, merging each
@@ -1953,6 +2212,9 @@ impl Core {
         }
         self.ids = out_ids;
         self.logs = out_logs;
+        if self.key.as_ref().is_some_and(|kf| kf.index_in(&self.ids).is_none()) {
+            self.key = None;
+        }
     }
 }
 
@@ -2168,6 +2430,7 @@ impl Arena {
             prepare_on_reattach: std::env::var_os("FLASHTEX_NO_PREPARE").is_none(),
             spare: Vec::new(),
             lazy: None,
+            key: None,
         });
         Arena {
             core: Box::into_raw(core),
@@ -2511,7 +2774,29 @@ impl Arena {
         let k = core
             .index_of(from)
             .ok_or_else(|| format!("{what}: checkpoint {from} is not in the live chain"))?;
+        // (a keyframe at or after `from` keeps up: its copies of the words
+        // become what every state from `from` on holds; one before `from`,
+        // whose later logs this may give new chunks, is dropped)
+        let key_at = core
+            .key
+            .as_ref()
+            .filter(|kf| kf.history_gen == core.history_gen)
+            .and_then(|kf| kf.index_in(&core.ids))
+            .filter(|&kt| kt >= k);
+        if key_at.is_none() {
+            core.key = None;
+        }
         core.history_gen += 1;
+        if let Some(kf) = core.key.as_mut() {
+            kf.history_gen = core.history_gen;
+            for (i, &off) in offs.iter().enumerate() {
+                let c = (off >> CHUNK_SHIFT) as u32;
+                if let Ok(ci) = kf.cs.binary_search(&c) {
+                    let w = &mut kf.buf[ci * CHUNK_WORDS + (off & (CHUNK_BYTES - 1)) / 8];
+                    *w = f(i, *w);
+                }
+            }
+        }
         // each word's chunk and place in it
         let pos: Vec<(u32, usize)> = offs
             .iter()
@@ -2742,6 +3027,7 @@ impl Arena {
             core.free_log(log);
         }
         core.ids.clear();
+        core.key = None;
         let Core { touched, .. } = core;
         let t = touched.clone();
         core.saved().copy_from_slice(&t);
@@ -2964,7 +3250,7 @@ impl Arena {
                 }
             }
         }
-        let Some(o) = rewound_until(n, &rewind, &|c| redo_of[&c], &b.logs[jj..], stop) else {
+        let Some(o) = rewound_old(n, b, jj, &rewind, &redo_of, stop) else {
             return Ok(None);
         };
         let live = |c: u32| core.chunk_ptr(c as usize) as *const u64;
@@ -3105,7 +3391,7 @@ impl Arena {
         let rew = if rewind.is_empty() {
             Some(Vec::new())
         } else {
-            rewound_until(n, &rewind, &|c| redo_of[&c], &b.logs[jj..], stop)
+            rewound_old(n, b, jj, &rewind, &redo_of, stop)
         };
         let Some(rew) = rew else {
             return Ok(None);
@@ -3151,7 +3437,14 @@ impl Arena {
         let live = |c: u32| core.chunk_ptr(c as usize) as *const u64;
         let r_buf = rewound(n, &at_r, &live, &core.logs[kr..]);
         if std::env::var_os("FLASHTEX_INCR_DEBUG").is_some() {
-            let entries: usize = b.logs[jj..]
+            // (from the keyframe: only the logs before it)
+            let upto = b
+                .key
+                .as_ref()
+                .and_then(|kf| kf.index_in(&b.ids))
+                .filter(|&jt| jt >= jj)
+                .unwrap_or(b.logs.len());
+            let entries: usize = b.logs[jj..upto]
                 .iter()
                 .map(|l| l.entries.len() + l.deltas.len())
                 .sum();
@@ -3160,7 +3453,7 @@ impl Arena {
                 cand.len(),
                 in_old.len(),
                 cached.len(),
-                b.logs.len() - jj,
+                upto - jj,
                 entries,
                 t_old.as_secs_f64() * 1e3,
                 at_r.len(),
@@ -3303,6 +3596,12 @@ impl Arena {
             ("branch_deltas", br_d as i64),
             ("branch_words", br_w as i64),
             ("prepared", prepared as i64),
+            (
+                "keyframe",
+                (c.key.as_ref().map_or(0, |k| k.bytes())
+                    + branch.and_then(|b| b.key.as_ref()).map_or(0, |k| k.bytes()))
+                    as i64,
+            ),
             (
                 "zero_released",
                 ZERO_RELEASED.load(std::sync::atomic::Ordering::Relaxed) as i64,
