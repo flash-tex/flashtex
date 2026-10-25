@@ -745,7 +745,8 @@ def verdict(rows, baseline):
                 why.append(f"re-typeset up to {rp} pages > {g.get('rerun_pages_max', 3)} (no convergence near the edit)")
             if 'edited_instr_m' in r and g.get('edited_instr_m_max') and r['n']:
                 if ins is None:
-                    why.append('no instruction count (stages.edited_instr_k)')
+                    # a machine without thread PMU counters (a hosted VM): reported, not gated
+                    r['warning'] = 'no instruction count on this machine (stages.edited_instr_k): not gated'
                 elif ins > g['edited_instr_m_max']:
                     why.append(f"up to {ins:.0f} M instructions to the edited page > {g['edited_instr_m_max']} M")
         elif val is not None and r['target'] is not None and val > r['target']:
