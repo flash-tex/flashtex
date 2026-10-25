@@ -23,14 +23,31 @@ enum EngineV3DiagPresent {
             break
         }
         // "Package hyperref Warning: x" / "Class beamer Error: x" -> "hyperref: x"
-        if let r = s.range(of: #"^(Package|Class) [^ ]+ (Warning|Error): "#, options: .regularExpression) {
+        // (Each regular expression only where its text can match: a long
+        // book's thousands of rows made these most of a compile's reply, EDITOR-FREEZE.)
+        if s.hasPrefix("Package ") || s.hasPrefix("Class "),
+           let r = s.range(of: #"^(Package|Class) [^ ]+ (Warning|Error): "#, options: .regularExpression) {
             let name = s[r].split(separator: " ")[1]
             s = "\(name): " + s[r.upperBound...]
         }
-        s = s.replacingOccurrences(of: #"\s*on input line \d+"#, with: "", options: .regularExpression)
-        s = s.replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
+        if s.contains("on input line") {
+            s = s.replacingOccurrences(of: #"\s*on input line \d+"#, with: "", options: .regularExpression)
+        }
+        if Self.mayCollapseSpace(s) { s = s.replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression) }
         while let last = s.last, last == "." || last == " ", !s.hasSuffix("..."), !s.hasSuffix("\\right.") { s.removeLast() }
         return s.isEmpty ? message : s
+    }
+
+    /// Whether `\s+` → " " could change `s`: a white space other than a lone
+    /// " " (Unicode's White_Space, a superset of the expression's `\s`).
+    static func mayCollapseSpace(_ s: String) -> Bool {
+        var previous = false
+        for u in s.unicodeScalars {
+            let space = u.properties.isWhitespace
+            if space, u != " " || previous { return true }
+            previous = space
+        }
+        return false
     }
 
     /// "Overfull \hbox" for `tex/overfull-hbox` (and the other three), else nil.
@@ -155,6 +172,19 @@ enum EngineV3DiagPresent {
     /// The keys of every `\label{…}` in the texts.
     static func labels(in texts: [String: String]) -> [String] {
         Array(Set(matches(#"\\label\s*\{([^{}\s]+)\}"#, in: texts, group: 1).compactMap { text(of: $0, in: texts) })).sorted()
+    }
+
+    /// Every `\label{key}` of the texts by key, each site the whole command,
+    /// in the order `matches` gives: for a key without `}`, the sites
+    /// `matches(#"\\label\s*\{"# + key + #"\}"#, in: texts)` finds, from one
+    /// search of the texts for all keys.
+    static func labelSites(in texts: [String: String]) -> [String: [Site]] {
+        var out: [String: [Site]] = [:]
+        for s in matches(#"\\label\s*\{[^}]*\}"#, in: texts) {
+            guard let whole = text(of: s, in: texts), let open = whole.firstIndex(of: "{") else { continue }
+            out[String(whole[whole.index(after: open) ..< whole.index(before: whole.endIndex)]), default: []].append(s)
+        }
+        return out
     }
 
     /// The citation keys of the texts: `\bibitem{…}` and `.bib` entries.
