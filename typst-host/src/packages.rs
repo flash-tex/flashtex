@@ -1000,29 +1000,45 @@ pub fn system_curl() -> PathBuf {
         .unwrap_or_else(|| PathBuf::from(name))
 }
 
-/// The pids of the `curl` processes fetching packages right now, so a
-/// supervisor that ends the host (the watchdog) can end them too.
-pub fn running_children() -> Vec<u32> {
-    // Never panics (the watchdog calls it while stopping the host).
-    CHILDREN.lock().map(|c| c.clone()).unwrap_or_default()
-}
-
-static CHILDREN: Mutex<Vec<u32>> = Mutex::new(Vec::new());
-
-/// Registers a running child in [`running_children`] until dropped.
-struct ChildGuard(u32);
-
-impl ChildGuard {
-    fn new(pid: u32) -> ChildGuard {
-        CHILDREN.lock().unwrap().push(pid);
-        ChildGuard(pid)
+/// Remove the partial downloads (`*.tmp-<pid>`) that hosts which no longer
+/// run left in the package cache (this user's files only). Called at start.
+pub fn sweep_stale_downloads(cache: &Path) -> usize {
+    use std::os::unix::fs::MetadataExt;
+    fn walk(dir: &Path, depth: u32, removed: &mut usize) {
+        if depth > 6 {
+            return;
+        }
+        let Ok(entries) = std::fs::read_dir(dir) else {
+            return;
+        };
+        for e in entries.flatten() {
+            let Ok(md) = std::fs::symlink_metadata(e.path()) else {
+                continue;
+            };
+            if md.is_dir() {
+                walk(&e.path(), depth + 1, removed);
+                continue;
+            }
+            let name = e.file_name();
+            let Some(pid) = name
+                .to_str()
+                .and_then(|n| n.rsplit_once(".tmp-"))
+                .and_then(|(_, p)| p.parse::<i32>().ok())
+            else {
+                continue;
+            };
+            if md.is_file()
+                && md.uid() == crate::watchdog::uid()
+                && !crate::watchdog::pid_alive(pid)
+                && std::fs::remove_file(e.path()).is_ok()
+            {
+                *removed += 1;
+            }
+        }
     }
-}
-
-impl Drop for ChildGuard {
-    fn drop(&mut self) {
-        CHILDREN.lock().unwrap().retain(|&p| p != self.0);
-    }
+    let mut removed = 0;
+    walk(cache, 0, &mut removed);
+    removed
 }
 
 /// Whether `mirror` is a URL the host fetches from: `https://` (and its
@@ -1086,15 +1102,16 @@ pub fn curl_args(mirror: &str, url: &str) -> io::Result<Vec<String>> {
 /// A 404 (or a missing `file://` file) is `NotFound`.
 fn curl_get(curl: &Path, mirror: &str, url: &str) -> io::Result<Vec<u8>> {
     let args = curl_args(mirror, url)?;
-    let mut child = Command::new(curl)
-        .args(&args)
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .map_err(|e| io::Error::other(format!("cannot run {}: {e}", curl.display())))?;
-    // Listed while it runs (and after a kill, until reaped).
-    let _listed = ChildGuard::new(child.id());
+    // Spawned and registered under the watchdog's lock (it kills it when it
+    // stops the host); listed until reaped.
+    let (mut child, _listed) = crate::watchdog::spawn_tracked(
+        Command::new(curl)
+            .args(&args)
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped()),
+    )
+    .map_err(|e| io::Error::other(format!("cannot run {}: {e}", curl.display())))?;
     let mut data = Vec::new();
     let read = child
         .stdout
@@ -1168,7 +1185,10 @@ mod tests {
         assert_eq!(e.kind(), io::ErrorKind::NotFound);
         assert!(curl_get(&curl, &mirror, "https://example.invalid/x").is_err());
         std::fs::remove_dir_all(&dir).unwrap();
-        assert!(running_children().is_empty(), "every curl was reaped");
+        assert!(
+            crate::watchdog::tracked_children().is_empty(),
+            "every curl was reaped"
+        );
     }
 
     /// The argv pins the mirror's scheme for the request and its redirects
@@ -1348,5 +1368,23 @@ mod tests {
             .collect();
         assert_eq!(left.len(), 1, "{left:?}");
         std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    /// Partial downloads of dead hosts are swept from the cache at start.
+    #[test]
+    fn stale_partial_downloads_are_swept() {
+        let dir = std::env::temp_dir().join(format!("ftth-dlsweep-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let sub = dir.join("preview/hello");
+        std::fs::create_dir_all(&sub).unwrap();
+        let dead = sub.join(format!("0.1.0.tar.tmp-{}", (1 << 22) + 7));
+        let live = sub.join(format!("0.1.0.tar.tmp-{}", std::process::id()));
+        let keep = sub.join("0.1.0.tar.gz");
+        for f in [&dead, &live, &keep] {
+            std::fs::write(f, "x").unwrap();
+        }
+        assert_eq!(sweep_stale_downloads(&dir), 1);
+        assert!(!dead.exists() && live.exists() && keep.exists());
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 }

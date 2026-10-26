@@ -210,21 +210,59 @@ impl Lock {
 /// The lock's text, `None` when there is none; a symlink, or a path that
 /// leaves the root, is refused.
 fn read_text(root: &Path) -> Result<Option<String>, String> {
+    use std::io::Read;
+    use std::os::unix::fs::OpenOptionsExt;
+    // One open that never follows a symlink (no check-then-read race); the
+    // root is canonical.
+    let mut f = match std::fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NOFOLLOW)
+        .open(root.join(FILE))
     {
-        let path = root.join(FILE);
-        match std::fs::symlink_metadata(&path) {
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-            Err(e) => return Err(format!("{FILE}: {e}")),
-            Ok(m) if !m.file_type().is_file() => {
-                return Err(format!(
-                    "{FILE} is refused: it is a symlink or not a regular file"
-                ))
-            }
-            Ok(_) => {}
+        Ok(f) => f,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(e) if e.raw_os_error() == Some(libc::ELOOP) => {
+            return Err(format!("{FILE} is refused: it is a symlink"))
         }
-        let path = crate::world::confine(root, Path::new(FILE))?;
-        let text = std::fs::read_to_string(&path).map_err(|e| format!("{FILE}: {e}"))?;
-        Ok(Some(text))
+        Err(e) => return Err(format!("{FILE}: {e}")),
+    };
+    if !f.metadata().map_err(|e| format!("{FILE}: {e}"))?.is_file() {
+        return Err(format!("{FILE} is refused: it is not a regular file"));
+    }
+    let mut text = String::new();
+    f.read_to_string(&mut text)
+        .map_err(|e| format!("{FILE}: {e}"))?;
+    Ok(Some(text))
+}
+
+/// Remove the lock's temporary files that hosts which no longer run left in
+/// the project root (`.flashtex-typst.lock.<pid>.<n>.tmp`, this user's
+/// only); called before this host writes the lock.
+fn sweep_stale_temps(root: &Path) {
+    use std::os::unix::fs::MetadataExt;
+    let Ok(entries) = std::fs::read_dir(root) else {
+        return;
+    };
+    let prefix = format!(".{FILE}.");
+    for e in entries.flatten() {
+        let name = e.file_name();
+        let Some(pid) = name
+            .to_str()
+            .and_then(|n| n.strip_prefix(prefix.as_str()))
+            .and_then(|r| r.strip_suffix(".tmp"))
+            .and_then(|r| r.split('.').next())
+            .and_then(|p| p.parse::<i32>().ok())
+        else {
+            continue;
+        };
+        if let Ok(md) = std::fs::symlink_metadata(e.path()) {
+            if md.is_file()
+                && md.uid() == crate::watchdog::uid()
+                && !crate::watchdog::pid_alive(pid)
+            {
+                let _ = std::fs::remove_file(e.path());
+            }
+        }
     }
 }
 
@@ -343,6 +381,7 @@ pub fn update(
             not_written: Some("the project is read-only".into()),
         });
     }
+    sweep_stale_temps(root);
     static SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
     let tmp = format!(
         ".{FILE}.{}.{}.tmp",
@@ -536,5 +575,25 @@ mod tests {
         assert!(!root.join(FILE).exists());
         drop(holder);
         std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    /// Temporary lock files of dead hosts are swept before a write; a live
+    /// host's, and anything not named like ours, is left.
+    #[test]
+    fn stale_temporary_lock_files_are_swept() {
+        let dir = std::env::temp_dir().join(format!("ftth-locksweep-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let root = dir.canonicalize().unwrap();
+        // pid 2^22 + 7 is beyond every OS's default pid range.
+        let dead = root.join(format!(".{FILE}.{}.0.tmp", (1 << 22) + 7));
+        let live = root.join(format!(".{FILE}.{}.0.tmp", std::process::id()));
+        let other = root.join("notes.tmp");
+        for f in [&dead, &live, &other] {
+            std::fs::write(f, "x").unwrap();
+        }
+        sweep_stale_temps(&root);
+        assert!(!dead.exists() && live.exists() && other.exists());
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 }
