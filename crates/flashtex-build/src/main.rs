@@ -1383,11 +1383,14 @@ mod tests {
                 }
             }
         });
+        // The debounce is far above the writes' 5 ms gaps: at 60 ms a loaded
+        // CI runner held the editing thread past it, so the save settled
+        // twice and built three times (#1888's `quick` run).
         let n = watch_loop(
             || stamp(&root, std::slice::from_ref(&pdf)),
             || std::fs::write(&pdf, "%PDF").unwrap(),
             Duration::from_millis(20),
-            Duration::from_millis(60),
+            Duration::from_millis(300),
             Some(40),
         );
         edit.join().unwrap();
