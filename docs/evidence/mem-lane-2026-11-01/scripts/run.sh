@@ -19,13 +19,21 @@ ENG=${ENG:-prof}
 if [ "${SKIP_BUILD:-0}" != 1 ]; then
   cargo build --release --locked -p flashtex-engine -p flashtex-display-list --features flashtex-engine/mem-stats
   bash tools/incr-bench/mkeng.sh "$ENG"
+  if [ -n "${BASE_REF:-}" ]; then
+    # the A/B's base: BASE_REF built the same way, as engine "base"
+    rm -rf "$OUT/base"; git fetch -q --depth=1 origin "$BASE_REF" && git worktree add --detach "$OUT/base" FETCH_HEAD
+    (cd "$OUT/base" && CARGO_TARGET_DIR=${BASE_TARGET:-$CARGO_TARGET_DIR-base} cargo build --release --locked \
+       -p flashtex-engine -p flashtex-display-list --features flashtex-engine/mem-stats &&
+     CARGO_TARGET_DIR=${BASE_TARGET:-$CARGO_TARGET_DIR-base} bash tools/incr-bench/mkeng.sh base)
+  fi
 fi
+ENGINES=${ENGINES:-$ENG}; [ -n "${BASE_REF:-}" ] && ENGINES="base $ENG"
 python3 tools/incr-bench/mkdocs.py >/dev/null
 python3 tools/incr-bench/mkbook.py infdesc-x2 >/dev/null || echo "mkbook infdesc-x2 failed" >&2
 J=$OUT/prof.jsonl
 P=$S/prof.py
 DOCS=${DOCS:-"plain-1000 full-1000 infdesc-x2 metropolis arxiv"}; DOCS=${DOCS//,/ }
-for d in $DOCS; do
+for ROUND in $(seq "${ROUNDS:-1}"); do for d in $DOCS; do for ENG in $ENGINES; do
   case $d in
     plain-1000|full-1000)
       python3 "$P" "$ENG" "$d" "$J" --pages 0,300,600,999 --keys "${KEYS:-8}" || echo "$d failed" ;;
@@ -49,7 +57,8 @@ for d in $DOCS; do
           --timeout 900 || echo "arxiv-$id failed"
       done < "$OUT/arxiv13.tsv" ;;
   esac
-done
+done; done; done
+ENG=${ENGINES##* }
 if [ "${MULTI:-1}" = 1 ]; then
   # four projects open: each host its own copy of full-1000, all alive together at the end
   python3 "$S/hosts.py" "$OUT/hosts4.json" 3600 > "$OUT/hosts4.txt" &
