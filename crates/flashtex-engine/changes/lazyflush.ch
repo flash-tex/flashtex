@@ -39,17 +39,39 @@
 % node (null, not the next segment), which nothing reads: a free node is
 % read only by the allocation that takes it, which gives it |link:=null|.
 %
-% (2) |dyn_used| is worked out where it is printed. pdftex.web changes it
-% by one at every allocation and every node freed, so it always equals
-% |mem_end+1-hi_mem_min| less the length of the free list (it starts as
-% |hi_mem_stat_usage|, all of hi memory then, and the format's dump
-% recomputes it that way, section 1311, "so that INITEX dumps valid
-% information even when it has not been gathering statistics"). A
-% |flush_list| that does not walk cannot count, so no routine keeps the
-% running count any more: the memory-usage lines of |\tracingstats>1|
-% print |flashtex_dyn_used|, that difference (src/lazyflush.rs), and the
-% dump recomputes it as before. |dyn_used| itself keeps the value the
-% initialisation or the format gave it; nothing else reads it.
+% (2) |dyn_used| is worked out where it is printed. It is printed in two
+% places: the memory-usage lines of |\tracingstats>1| at every shipout
+% (section 639; |ship_out|'s and |pdf_ship_out|'s copies) and the format's
+% dump (section 1311). The end-of-job block (section 1334) prints
+% |lo_mem_max-mem_min+mem_end-hi_mem_min+2|, which (1) leaves alone.
+% pdfTeX's |dyn_used| always equals D = |mem_end+1-hi_mem_min| less the
+% length of the free list:
+%   - at the start: the initialisation sets |dyn_used:=hi_mem_stat_usage|
+%     (15), |hi_mem_min:=hi_mem_stat_min| (|mem_top-14|), |mem_end:=mem_top|
+%     and |avail:=null|, so D=15; undump sets it to what the dump
+%     recomputed as D (section 1311, "so that INITEX dumps valid
+%     information even when it has not been gathering statistics") from
+%     the hi memory and |avail| it also restores;
+%   - after it: |avail|, |hi_mem_min| and |mem_end| are assigned only by
+%     |get_avail| (a pop, or |hi_mem_min| or |mem_end| one further: D goes
+%     up by one, and so does |dyn_used|), |fast_get_avail| (a pop: +1),
+%     |free_avail| (a push: -1) and |flush_list| (n nodes pushed: -n), the
+%     initialisation and undump -- in pdftex.web, in every change file and
+%     in the hand-written code, which only calls |get_avail| (the hosts'
+%     restore puts back a whole state, and |flashtex_merge_free| relinks
+%     segments without changing the sequence). A free node's |link| is
+%     written only by those routines: a write through a pointer to a node
+%     already freed would corrupt pdfTeX's own free list too.
+% A |flush_list| that does not walk cannot count, so no routine keeps the
+% running count any more: both places print D, |flashtex_dyn_used|
+% (src/lazyflush.rs) at the shipouts and the dump's own recomputation, on
+% a state whose free list, |hi_mem_min| and |mem_end| are pdfTeX's (1).
+% |dyn_used| itself keeps the value the initialisation or the format gave
+% it; nothing else reads it. (etrip compares those lines only normalised:
+% TeX Live's pdfTeX gives several kinds of node SyncTeX's two extra words,
+% which moves |var_used| and |lo_mem_max|. PR #2016 compared the lines of
+% every shipout of an arXiv paper and a beamer deck run with
+% |\tracingstats=2| with pdfTeX's and with the running count's.)
 %
 % (3) The hosts see pdftex.web's free list. Every reading of the word
 % space (a checkpoint, a restore, a hash, the convergence test, the
