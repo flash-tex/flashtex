@@ -1,0 +1,15 @@
+{
+  "comment": "lane CONTIG-TOKENS: what contig-bench.yml builds and measures. builds: name -> git ref; engines: name -> build + extra environment; parts: the bench matrix",
+  "builds": {
+    "main": "3f835f488514786f1a46c4a5a62563cb05a0ddae"
+  },
+  "engines": {
+    "main": {"build": "main", "env": {}}
+  },
+  "parts": [
+    {"id": "x2", "docs": "infdesc-x2", "reps": 3, "cg": "nosim"},
+    {"id": "infdesc-sim", "docs": "infdesc", "reps": 0, "cg": "sim"},
+    {"id": "arxiv-0", "docs": "arxiv:0/2", "reps": 3, "cg": "sim"},
+    {"id": "arxiv-1", "docs": "arxiv:1/2", "reps": 3, "cg": "sim"}
+  ]
+}
