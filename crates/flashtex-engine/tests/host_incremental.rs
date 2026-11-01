@@ -1979,6 +1979,104 @@ fn a_package_outside_the_document_that_changes_is_seen() {
     let _ = std::fs::remove_dir_all(&base);
 }
 
+/// The display list keeps a mapped font's key across restores and compiles
+/// (`displaylist::compile_scope`), each compile vouching for the font file
+/// it was made from. A font program outside the document (named by a map
+/// line) that changes -- rewritten in place to the same length with its
+/// time put back, then replaced by a new file -- gives the edited page the
+/// key a scratch compile gives it.
+#[test]
+fn a_font_program_that_changes_gives_its_pages_their_new_key() {
+    if find_texlive_bin().is_none() {
+        common::no_texlive();
+        return;
+    }
+    let Some(cmr10) = Command::new("kpsewhich")
+        .arg("cmr10.pfb")
+        .output()
+        .ok()
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+        .filter(|p| !p.is_empty())
+    else {
+        common::no_texlive();
+        return;
+    };
+    let base = common::fresh_dir("flashtex-host-fontfile");
+    let _ = std::fs::remove_dir_all(&base);
+    std::fs::create_dir_all(&base).unwrap();
+    let (proj, out, ext) = (base.join("proj"), base.join("out"), base.join("ext"));
+    for d in [&proj, &out, &ext] {
+        std::fs::create_dir_all(d).unwrap();
+    }
+    let main = "main.tex";
+    let pfb = ext.join("fontx.pfb");
+    std::fs::copy(&cmr10, &pfb).unwrap();
+    let doc = |word: &str| {
+        format!(
+            "\\pdfmapline{{=cmr10 CMR10 <{}}}\n\\documentclass{{article}}\n\\begin{{document}}\nHello {word}.\n\\end{{document}}\n",
+            pfb.display()
+        )
+    };
+    std::fs::write(proj.join(main), doc("AAAA")).unwrap();
+    let host = start_host("ff");
+    let scratch = start_host("ffs");
+    let mut c = Client::connect(&host.1).unwrap();
+    let mut view = View::default();
+    let mut id = 0;
+    let settle = |c: &mut Client, view: &mut View, id: &mut i64| {
+        for _ in 0..4 {
+            *id += 1;
+            let o = compile(c, view, &req(*id, &proj, &out, main));
+            if o.done.str_field("mode") == Some("unchanged") {
+                return;
+            }
+        }
+    };
+    settle(&mut c, &mut view, &mut id);
+    // (a same-length change of the program's clear-text comments)
+    let changed = |from: &str, to: &str| {
+        let mut b = std::fs::read(&cmr10).unwrap();
+        let at = b
+            .windows(from.len())
+            .position(|w| w == from.as_bytes())
+            .unwrap();
+        b[at..at + to.len()].copy_from_slice(to.as_bytes());
+        b
+    };
+    let steps: [(&str, &str, &dyn Fn()); 2] = [
+        ("the font file rewritten in place", "BBBB", &|| {
+            let mtime = std::fs::metadata(&pfb).unwrap().modified().unwrap();
+            use std::io::Write;
+            let mut h = std::fs::File::options().write(true).open(&pfb).unwrap();
+            h.write_all(&changed("%%Title: CMR10", "%%Title: CMRX0"))
+                .unwrap();
+            h.set_modified(mtime).unwrap();
+        }),
+        ("the font file replaced", "CCCC", &|| {
+            std::fs::rename(&pfb, ext.join("old.pfb")).unwrap();
+            std::fs::write(&pfb, changed("%%Title: CMR10", "%%Title: CMRY0")).unwrap();
+        }),
+    ];
+    for (k, (what, word, change)) in steps.iter().enumerate() {
+        let before = view.page_fonts.get(&0).cloned();
+        change();
+        std::fs::write(proj.join(main), doc(word)).unwrap();
+        id += 1;
+        let o = compile(&mut c, &mut view, &req(id, &proj, &out, main));
+        assert_ne!(o.done.str_field("mode"), Some("unchanged"), "{what}");
+        assert_ne!(
+            view.page_fonts.get(&0),
+            before.as_ref(),
+            "{what}: the page kept its font keys"
+        );
+        let (p2, o2) = snapshot(&base, &proj, &out, &format!("f{k}"));
+        compare_with_scratch(&scratch.1, &view, &proj, &out, &p2, &o2, main, what);
+        settle(&mut c, &mut view, &mut id);
+    }
+    let _ = c.bye();
+    let _ = std::fs::remove_dir_all(&base);
+}
+
 /// BOX-MEMO revision 3 (BOX-MEMO.md §12.3): a call that enters control
 /// sequences (`\csname` of names never made before) is recorded in an edit's
 /// window and replayed at the next keystroke, which restored to before the
