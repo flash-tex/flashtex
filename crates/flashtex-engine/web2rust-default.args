@@ -36,6 +36,9 @@
 # Faster routines that compute exactly what pdftex.web's do (lane
 # P6-THROUGHPUT; each change carries its proof of identity).
 --change crates/flashtex-engine/changes/throughput.ch
+# changes/throughput.ch [9]: id_lookup's index of names lives outside the
+# word space, in Globals' `host` field (src/csindex.rs).
+--host-state crate::csindex::Host
 # Where the line-shift journal observes the engine (DESIGN.md 5.3 rule (c);
 # changes nothing the program computes).
 --change crates/flashtex-engine/changes/lineshift.ch
