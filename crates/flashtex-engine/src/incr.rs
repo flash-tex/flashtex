@@ -399,6 +399,10 @@ pub struct Report {
     /// The background fill of the pages before S₁ converged with S₁'s run
     /// after this page (`None`: it did not, or none ran).
     pub s1_fill_converged: Option<usize>,
+    /// Where a reopen from S₁ spent its time (ms): its read and check, the
+    /// journal's reads, putting it on S₀, and the fill's restore, search,
+    /// test and whole pass (the host's DONE, `s1_ms`).
+    pub s1_ms: Vec<(&'static str, f64)>,
 }
 
 impl Report {
@@ -3813,15 +3817,21 @@ impl Session {
         self.s1_fill_due = false;
         self.s1_info = None;
         let mut s1_error = None;
+        let mut s1_ms: Vec<(&'static str, f64)> = vec![];
+        let ms = |t: Instant| (t.elapsed().as_secs_f64() * 1e4).round() / 10.0;
         let mut g = g;
         let s1 = match s1 {
             Some(p) => {
                 // (its reads as the run read them: before anything is
                 // written, `host::s1::File::journal_reads`)
                 let f = g.record_of(s0.id).and_then(|r0| {
+                    let t = Instant::now();
                     let f = host::s1::File::read(p)?;
                     f.check(&s0.key, &r0, clock, &first_line, stop_at)?;
+                    s1_ms.push(("read", ms(t)));
+                    let t = Instant::now();
                     let reads = f.journal_reads()?;
+                    s1_ms.push(("reads", ms(t)));
                     Ok((f, reads))
                 });
                 f.map_err(|e| s1_error = Some(e)).ok()
@@ -3951,7 +3961,9 @@ impl Session {
         let mut base = 0;
         let mut s1 = s1;
         if let Some((f, reads)) = s1.as_mut() {
+            let t = Instant::now();
             base = self.load_s1(f, std::mem::take(reads))?;
+            s1_ms.push(("load", ms(t)));
         }
         let mut obs = self.observer(t0, base, stop_at);
         obs.preempt = self.preempt.clone();
@@ -3972,6 +3984,7 @@ impl Session {
             find_s: orep.config_s,
             s1_pages: s1.as_ref().map(|_| base),
             s1_error,
+            s1_ms,
             ..Report::default()
         };
         self.after_run(t0, status, &mut rep)?;
@@ -4819,6 +4832,13 @@ impl Session {
         rep.passes += 1;
         rep.pass_modes.push(format!("fill-{}", p.mode));
         rep.s1_fill_converged = p.converged_at;
+        let ms = |s: f64| (s * 1e4).round() / 10.0;
+        rep.s1_ms.extend([
+            ("fill_find", ms(p.find_s)),
+            ("fill_restore", ms(p.restore_s)),
+            ("fill_test", ms(p.test_s)),
+            ("fill", ms(p.total_s)),
+        ]);
         if p.paused {
             rep.paused = true;
             rep.preempted = p.preempted;

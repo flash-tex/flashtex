@@ -1214,6 +1214,8 @@ impl Engine {
                         rep.passes = r2.passes;
                         rep.deferred = r2.deferred;
                         rep.s1_fill_converged = r2.s1_fill_converged;
+                        let n = rep.s1_ms.len();
+                        rep.s1_ms.extend(r2.s1_ms.iter().skip(n).copied());
                         Ok(rep)
                     }
                     Err(e) => Err(e),
@@ -1332,6 +1334,17 @@ impl Engine {
                 }
                 if let Some(n) = rep.s1_fill_converged {
                     extra.push(("s1_fill_converged".to_string(), Json::Int(n as i64)));
+                }
+                if !rep.s1_ms.is_empty() {
+                    extra.push((
+                        "s1_ms".to_string(),
+                        Json::Obj(
+                            rep.s1_ms
+                                .iter()
+                                .map(|(k, v)| (k.to_string(), Json::Num(*v)))
+                                .collect(),
+                        ),
+                    ));
                 }
                 let st = if rep.status == 0 { "ok" } else { "error" };
                 (st, Some(rep.status), count, rep.mode.clone(), extra)
