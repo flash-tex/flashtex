@@ -19,7 +19,7 @@ from the oracle's tree at run time (`TEXLIVE_DOCS` in `run.py`):
 ## Running
 
 ```sh
-python3 tools/xetex-corpus/run.py --v3 target/release/flashtex-v3 \
+python3 tools/xetex-corpus/run.py --v3 target/release/flashtex \
     --host-unicode crates/flashtex-xetex/target/release/flashtex-host-unicode \
     --out /tmp/xc --with-texlive [--only 'p0*'] [--jobs 3] [--json OUT] [--visual]
 ```
@@ -30,13 +30,13 @@ Per document:
   and makeindex as it decides). `TEXMFCONFIG` and `TEXMFSYSCONFIG` point at
   an empty directory, so the paper is TeX Live's own default (A4), which the
   bundle carries; MacTeX's installer sets `letter` there (`tlmgr paper`).
-* **notex**: `flashtex-v3 build --mode unicode`, which starts
+* **notex**: `flashtex build --mode unicode`, which starts
   `flashtex-host-unicode` and talks display-list-v3 to it, with TeX Live
   hidden as `scripts/notex-host-check.sh` hides it (empty environment, own
   HOME and TMPDIR, system PATH, `sandbox-exec` denying every TeX Live path),
   the bundle from `flashtex-bundle.lock` with the user's consent, and the
   user's `~/Library/Fonts` (`FLASHTEX_FONT_DIRS`; the app sees it with the
-  real HOME). Then `flashtex-v3 check --json` for the diagnostics.
+  real HOME). Then `flashtex check --json` for the diagnostics.
 * **tl** (`--with-texlive`): the same build with TeX Live visible. A
   document that works here and not in notex has a bundle gap; one that
   differs here too has an engine or host difference.

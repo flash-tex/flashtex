@@ -448,9 +448,9 @@ under DESIGN.md's guard-rails (Classic first, path-filtered CI for the others).
   Typst by extension can ship earlier.
 - M6 needs M3's gate (Native is the Unicode core) and M5's mode item. It starts no earlier than
   M3 passes, and never takes staff from M1 or M3.
-- **Q1 links M1 and M3:** the old engine emulates fontspec today
-  (`crates/render-pipeline/README.md`), so deleting it at P5 before M3 drops working
-  fontspec documents.
+- **Q1 links M1 and M3:** the old engine emulated fontspec, so deleting it at P5 before M3
+  would have dropped working fontspec documents. (M3 passed; the old engine was deleted in
+  S7.)
 
 ---
 

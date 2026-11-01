@@ -375,7 +375,9 @@ struct FontFamilyPicker: View {
                 Text(family ?? Self.classDefault).lineLimit(1).truncationMode(.middle)
                     .foregroundStyle(family == nil ? DS.Colors.textSecondary : DS.Colors.textPrimary)
                 Spacer(minLength: DS.Space.s)
-                Image(systemName: "chevron.up.chevron.down").font(DS.Fonts.secondary).foregroundStyle(DS.Colors.textSecondary)
+                // Not DS.Fonts.secondary: a bare disclosure-chevron glyph,
+                // same "icon, not text" rule as railIcon/toolbarIcon.
+                Image(systemName: "chevron.up.chevron.down").font(.system(size: 11)).foregroundStyle(DS.Colors.textSecondary)
             }
             .padding(.horizontal, DS.Space.m).padding(.vertical, DS.Space.xs)
             .background(DS.Colors.surfaceRaised, in: RoundedRectangle(cornerRadius: DS.Radius.control))

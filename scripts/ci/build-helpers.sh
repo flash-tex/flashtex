@@ -20,9 +20,8 @@
 #            (exit 1 if a required one is missing)
 #
 # Every crate in the table must build or this script fails. The old engine's
-# helpers (flashtex-cli, compiler, pdf, render-pipeline) and the preview
-# controller left in retirement stage S6 (#1236): the app no longer runs
-# them. The engine host is built separately (release.yml, ci.yml mac-v3-host).
+# helpers and the preview controller left in retirement stage S6 (#1236), and
+# their crates in S7: the app no longer runs them. The engine host is built separately (release.yml, ci.yml mac-v3-host).
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

@@ -34,8 +34,8 @@
 # of a night on its own. (The hosted route splits it over hosted jobs: HOSTED.)
 # ONE ORACLE PER BOARD (DESIGN §8): its rows come from a T4 run measured on the
 # board's own host, against the same TeX Live:
-#   route pc   the artifacts `corpus-t4` (new engine) and `corpus-t4-v1` (v1)
-#              of nightly.yml's corpus-t4 job (#1276), uploaded in the last 36 h;
+#   route pc   the artifact `corpus-t4` (new engine) of nightly.yml's corpus-t4
+#              job (#1276), uploaded in the last 36 h;
 #   route mac  the artifact `corpus-t4-mac` of corpus-t4-mac.yml (P5-T4-MAC),
 #              uploaded in the last 7 days. That workflow uploads it under this
 #              name only once all 50 shards are done (a cycle takes more than
@@ -98,10 +98,12 @@
 # (tools/parity/oracle_provenance.py: in the host label, the run summary and
 # ORACLE.md), and a Mac board's reports carry a `-mac` suffix on the summary
 # branch. Compare boards only across the same oracle (DESIGN §8).
-# T4 runs the new engine only. Its old column is the committed one-off v1
-# measurement, tools/parity/baselines/t4-v1-oneoff.json (decision 1, ruled
-# 2026-10-02: v1 is frozen by D13), which scoreboard.py reads by default; a
-# `corpus-t4-v1` artifact, if a nightly ever uploads one, takes precedence.
+# Every run measures the new engine only: v1 was deleted in retirement stage
+# S7 (#1888), and nothing here builds, runs or downloads it. The old column is
+# the committed one-off v1 measurements, which scoreboard.py reads by default:
+# T3 from tools/parity/baselines/t3-v1-oneoff.json (v1's last board run,
+# p5-scoreboard 41203982275 at 5a42ab270; lane SCOREBOARD-POST) and T4 from
+# t4-v1-oneoff.json (decision 1, ruled 2026-10-02: v1 was frozen by D13).
 name: p5-scoreboard
 
 on:
@@ -308,14 +310,10 @@ jobs:
           id: ${{ needs.pick.outputs.id }}
         run: |
           set -uo pipefail
-          if [ "$ROUTE" = mac ]; then new=corpus-t4-mac old=""; else new=corpus-t4 old=corpus-t4-v1; fi
+          if [ "$ROUTE" = mac ]; then new=corpus-t4-mac; else new=corpus-t4; fi
           gh run download "$id" --repo "$GITHUB_REPOSITORY" -n "$new" -D "$RUNNER_TEMP/t4-new" ||
             echo "::notice::run $id has no $new artifact: T4 (new) reads missing"
-          if [ -n "$old" ]; then
-            gh run download "$id" --repo "$GITHUB_REPOSITORY" -n "$old" -D "$RUNNER_TEMP/t4-old" ||
-              echo "::notice::run $id has no $old artifact: T4 (old) is the v1 one-off baseline (decision 1)"
-          fi
-      - name: every tier, both engines, then the board (no token in this step)
+      - name: every tier, then the board (no token in this step)
         # scoreboard-run.sh passes the oracle.json written above to scoreboard.py
         # --oracle: a T4 run measured against any other oracle reads INVALID
         run: |
@@ -337,7 +335,7 @@ jobs:
             else echo "::error::systemd-run --user is unavailable: the official board runs only in its own scope (see WHERE)"; exit 1; fi
           fi
           ${wrap[@]+"${wrap[@]}"} tools/parity/scoreboard-run.sh --out "$RUNNER_TEMP/p5" --jobs 2 \
-            --t4-new "$RUNNER_TEMP/t4-new" --t4-old "$RUNNER_TEMP/t4-old" ${extra[@]+"${extra[@]}"} -- \
+            --t4-new "$RUNNER_TEMP/t4-new" ${extra[@]+"${extra[@]}"} -- \
             --host-label "$RUNNER_NAME ($ROUTE; $ORACLE_ID; tools ${GITHUB_SHA::9})" \
             --run-url "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" \
             --summary "$RUNNER_TEMP/p5/SUMMARY.md" --issues off
@@ -361,7 +359,7 @@ jobs:
       # has already removed its work directory).
       - name: free this runner's disk
         if: always()
-        run: rm -rf "$RUNNER_TEMP/p5" "$RUNNER_TEMP/t4-new" "$RUNNER_TEMP/t4-old"
+        run: rm -rf "$RUNNER_TEMP/p5" "$RUNNER_TEMP/t4-new"
 
   # ---- HOSTED: the board on GitHub-hosted Ubuntu (S4(a), lane S4A-HOSTED-BOARD) ----------
   # Every tier and T4, at this run's commit, against one oracle: TeX Live 2026 from the
@@ -372,7 +370,7 @@ jobs:
   # caches, so the board is split like sweeps.yml's sweeps (one job each).
   #   hosted-build  one build per commit (kept in the Actions cache by SHA and image): the
   #                 new engine alone (as scoreboard-run.sh builds it), its formats
-  #                 (nightly.py make-formats, as T4's) and v1; every other job unpacks it
+  #                 (nightly.py make-formats, as T4's); every other job unpacks it
   #                 at the same path and checks its sha256;
   #   hosted-t4     T4 (nightly-5k), its 50 shards packed into `t4_jobs` jobs
   #                 (scripts/ci/p5-hosted-t4.sh score);
@@ -417,20 +415,17 @@ jobs:
         if: steps.cache.outputs.cache-hit != 'true'
         with:
           toolchain: "1.99.0"
-      - name: the new engine alone, its formats, then v1
+      - name: the new engine and its formats
+        # v1 (the old engine) was deleted in retirement stage S7: nothing builds it
         if: steps.cache.outputs.cache-hit != 'true'
         run: |
           set -euo pipefail
-          # alone, then copied out before the v1 build (scoreboard-run.sh: built with
-          # flashtex-cli, shared dependencies unify features and the binary differs)
           cargo build --release --locked -p flashtex-engine --bin flashtex-initex
-          e="$RUNNER_TEMP/p5-engine" v="$RUNNER_TEMP/p5-v1"
-          mkdir -p "$e" "$v"
+          e="$RUNNER_TEMP/p5-engine"
+          mkdir -p "$e"
           cp target/release/flashtex-initex crates/flashtex-engine/pdftex.pool "$e/"
           python3 tools/parity/nightly.py make-formats --engine "$e/flashtex-initex" --pool "$e/pdftex.pool" --out "$e"
-          cargo build --release --locked -p flashtex-cli --bin flashtex
-          cp target/release/flashtex "$v/"
-          tar -C "$RUNNER_TEMP" -cf "$RUNNER_TEMP/p5-engines.tar" p5-engine p5-v1
+          tar -C "$RUNNER_TEMP" -cf "$RUNNER_TEMP/p5-engines.tar" p5-engine
       - name: the build's sha256, the hosted host id, the T4 jobs
         id: pack
         env:
@@ -585,12 +580,12 @@ jobs:
           eval "part=($ARGS)"
           rc=0
           tools/parity/scoreboard-run.sh --out "$RUNNER_TEMP/p5" --jobs "$(nproc)" --no-board \
-            --engine-dir "$RUNNER_TEMP/p5-engine" --v1 "$RUNNER_TEMP/p5-v1/flashtex" \
+            --engine-dir "$RUNNER_TEMP/p5-engine" \
             "${part[@]}" ${extra[@]+"${extra[@]}"} || rc=$?
           # one name per part, so the board job can put every part in one directory
           cd "$RUNNER_TEMP/p5"
           rm -rf work oracle.json
-          for f in parity-new parity-old parity-new.log parity-old.log corpus-fetch.log t2-fetch.log; do
+          for f in parity-new parity-new.log corpus-fetch.log t2-fetch.log; do
             [ -e "$f" ] || continue
             case "$f" in *.log) mv "$f" "${f%.log}-$ID.log" ;; *) mv "$f" "$f-$ID" ;; esac
           done
@@ -682,7 +677,7 @@ jobs:
           [ -z "$T4_RANGE" ] || note="${note:+$note; }T4 shards $T4_RANGE only"
           [ -z "$note" ] || extra+=(--sample-note "$note")
           tools/parity/scoreboard-run.sh --out "$RUNNER_TEMP/p5" --collect --skip "parity t2 smoke fonts" \
-            --engine-dir "$RUNNER_TEMP/p5-engine" --v1 "$RUNNER_TEMP/p5-v1/flashtex" \
+            --engine-dir "$RUNNER_TEMP/p5-engine" \
             --t4-new "$RUNNER_TEMP/t4-new" ${extra[@]+"${extra[@]}"} -- \
             --host-label "GitHub-hosted $ImageOS (hosted; $ORACLE_ID; tools ${GITHUB_SHA::9})" \
             --run-url "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" \

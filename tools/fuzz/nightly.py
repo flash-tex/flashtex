@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # MIT License. Nightly driver: run every T6 fuzzer inside a wall-clock
 # budget, then summarise findings. Python 3 standard library only.
-"""Run all T6 fuzzers (run, docgen, and the five parser fuzzers) one after
+"""Run all T6 fuzzers (run, docgen, and the six parser fuzzers) one after
 another as subprocesses, sizing iteration counts so the total stays inside
 --budget-minutes. Writes OUT/summary.json and OUT/summary.md.
 
@@ -46,6 +46,8 @@ FUZZERS = (
      "seeds": False, "timeout": 15.0, "base": 300, "offset": 500000},
     {"name": "pdfinc", "script": "parsers/pdfinc.py", "oracle": False,
      "seeds": False, "timeout": 10.0, "base": 300, "offset": 600000},
+    {"name": "ttf", "script": "parsers/ttf.py", "oracle": False,
+     "seeds": False, "timeout": 10.0, "base": 300, "offset": 700000},
 )
 
 DONE_RE = re.compile(r"^done: (\d+) iterations:(.*)$")
@@ -366,7 +368,7 @@ def collect_findings(fuzzer_out):
             base = os.path.splitext(path)[0]
             artifact = base + ".json"
             for ext in (".tex", ".tfm", ".pfb", ".png", ".jpg",
-                        ".jpeg", ".pdf"):
+                        ".jpeg", ".pdf", ".ttf", ".otf"):
                 if os.path.isfile(base + ext):
                     artifact = base + ext
                     break

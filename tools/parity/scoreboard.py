@@ -112,6 +112,14 @@ NO_V1_CRASHES = ("n/a: the v1 one-off baseline counts no crashes; the bar is 0 c
 # committed one-off v1 measurement, not a nightly v1 leg (v1 is frozen by D13).
 T4_V1_BASELINE = os.path.join(HERE, "baselines", "t4-v1-oneoff.json")
 T4_V1_SCHEMA = "flashtex-t4-v1-oneoff/1"
+# SCOREBOARD-POST (Commander kabir-claude, 2026-11-01): v1 was deleted in retirement stage S7
+# (#1888), so nothing measures it any more. T3's old column is then, as T4's, a committed
+# one-off v1 measurement: v1's last complete run on the board, built verbatim from that run's
+# parity-old artifact by make_t3_v1_baseline.py.
+T3_V1_BASELINE = os.path.join(HERE, "baselines", "t3-v1-oneoff.json")
+T3_V1_SCHEMA = "flashtex-t3-v1-oneoff/1"
+T3_TIERS = ("fixtures", "arxiv", "templates", "packages")
+T3_V1_METRICS = ("P-T2", "L0", "L1", "L2", "L3")
 NA_TEX_ONLY = ("the harness drives a pdfTeX-compatible binary; the v1 "
                "flashtex CLI is not one, so it cannot be measured here")
 
@@ -305,7 +313,7 @@ def load_parity(path, sizes=None):
              "engine_kind": meta.get("engine_kind"),
              "engine_version": meta.get("engine_version"),
              "engine_sha256": meta.get("flashtex_sha256"),
-             "date": meta.get("date"), "command": meta.get("command")}
+             "date": meta.get("date"), "command": meta.get("command"), "documents_path": docs_where}
     return tiers, ident
 
 
@@ -1031,6 +1039,150 @@ def t4_v1_cells(t4_v1, tier, new_row, documents_path=None, board_oracle=None):
     return out
 
 
+def load_t3_v1_baseline(path):
+    """The committed one-off v1 measurement of the T3 parity tiers (SCOREBOARD-POST), checked;
+    or a string saying why it cannot be used, which the board shows in those tiers' old column.
+
+    Every tier lists the documents v1 was measured on (`records`: id, level, P-T2), so the
+    counts in `v1` are re-derived here and must agree, and the new run is compared on exactly
+    those IDs. Only FINAL is accepted: v1 can never be measured again to finish a draft."""
+    if not path:
+        return None
+    try:
+        b = _read_json(path)
+    except (OSError, ValueError) as e:
+        return "v1 one-off baseline unreadable: %s" % e
+    try:
+        if not isinstance(b, dict) or b.get("schema") != T3_V1_SCHEMA:
+            raise FormatError("schema is %r, not %r" % (b.get("schema") if isinstance(b, dict) else b,
+                                                         T3_V1_SCHEMA))
+        if b.get("status") != "FINAL":
+            raise FormatError("status %r: only FINAL (v1 is deleted; nothing can finish it)" % b.get("status"))
+        d = req(b, "decision", path, dict)
+        for k in ("date", "url", "remeasure_when"):
+            if not d.get(k):
+                raise FormatError("decision.%s is missing" % k)
+        if not b.get("measured_date") or not b.get("source"):
+            raise FormatError("measured_date and source are required")
+        run = req(b, "run", path, dict)
+        for k in ("id", "commit", "artifact"):
+            if not run.get(k):
+                raise FormatError("run.%s is missing (the measurement's provenance)" % k)
+        if not oracle_key(b.get("oracle")):
+            raise FormatError("the baseline names its oracle (texlive.tlpdb, pdftex sha256)")
+        tiers = req(b, "tiers", path, dict)
+        if not tiers:
+            raise FormatError("tiers is empty")
+        for tier, t in tiers.items():
+            w = "tiers.%s" % tier
+            if tier not in T3_TIERS:
+                raise FormatError("%s is not a T3 parity tier" % w)
+            recs = req(t, "records", w, list)
+            ids = [r.get("id") if isinstance(r, dict) else None for r in recs]
+            if not recs or not all(isinstance(i, str) and i for i in ids) or len(set(ids)) != len(ids):
+                raise FormatError("%s.records lists each measured document once, by id" % w)
+            if req_count(t, "measured", w) != len(recs):
+                raise FormatError("%s.measured is %r, records has %d" % (w, t["measured"], len(recs)))
+            if t.get("id_list_sha256") != id_list_sha256(ids):
+                raise FormatError("%s.id_list_sha256 is not the SHA-256 of the sorted ids (one per line)" % w)
+            for r in recs:
+                lv = r.get("level")
+                if not (isinstance(lv, int) and not isinstance(lv, bool) and -1 <= lv <= 3) \
+                        or not isinstance(r.get("P-T2"), bool):
+                    raise FormatError("%s record %s: level %r (-1..3) and P-T2 %r (true/false)"
+                                      % (w, r["id"], lv, r.get("P-T2")))
+            v1 = req(t, "v1", w, dict)
+            if sorted(v1) != sorted(T3_V1_METRICS):
+                raise FormatError("%s.v1 has %s, not %s" % (w, sorted(v1), list(T3_V1_METRICS)))
+            derived = parity_record_counts(recs)
+            for m in T3_V1_METRICS:
+                if v1[m] != derived[m]:
+                    raise FormatError("%s.v1.%s is %r, its records give %r" % (w, m, v1[m], derived[m]))
+    except FormatError as e:
+        return "v1 one-off baseline malformed (%s): %s" % (os.path.basename(path), e)
+    return b
+
+
+def parity_record_counts(recs):
+    """{metric: [passed, of]} of measured parity documents, as parity.py's summarize counts
+    them: P-T2 over the documents it evaluated, L0-L3 as "at least" over every one. A record
+    is {id, level (-1 below L0, None not scored), P-T2 (None not evaluated)}."""
+    out = {}
+    ev = [r for r in recs if r.get("P-T2") is not None]
+    out["P-T2"] = [sum(1 for r in ev if r["P-T2"]), len(ev)]
+    for k, m in enumerate(("L0", "L1", "L2", "L3")):
+        out[m] = [sum(1 for r in recs if (r.get("level") if r.get("level") is not None else -1) >= k),
+                  len(recs)]
+    return out
+
+
+def parity_records(documents_path, tier):
+    """[{id, level, P-T2}] of the measured documents in parity.py's documents.json for `tier`,
+    and the excluded ones {id: reason}; (None, None) when the file cannot be read."""
+    try:
+        data = _read_json(documents_path)
+    except (OSError, ValueError, TypeError):
+        return None, None
+    rows = data.get(tier) if isinstance(data, dict) else None
+    if not isinstance(rows, list):
+        return None, None
+    recs, excluded = [], {}
+    for r in rows:
+        if not isinstance(r, dict) or not r.get("id"):
+            continue
+        if r.get("excluded"):
+            excluded[r["id"]] = r["excluded"]
+            continue
+        recs.append({"id": r["id"], "level": r.get("level"), "P-T2": (r.get("pt") or {}).get("P-T2")})
+    return recs, excluded
+
+
+def t3_v1_cells(t3_v1, tier, new_row, documents_path=None, board_oracle=None):
+    """A T3 tier's old column from the one-off v1 baseline: the rate on the baseline's own
+    documents, against the new parity run restricted to them (documents_path: that run's
+    documents.json; without it the column is missing). IDs of the baseline the new run lacks
+    make the cells partial; P-T1 is n/a (v1 wrote no trace), anything else v1 was not measured
+    on is missing."""
+    if not isinstance(t3_v1, dict):
+        why = t3_v1 if isinstance(t3_v1, str) else "no v1 one-off baseline"
+        return {m: cell("missing", note=why) for m in new_row}
+    t = t3_v1["tiers"].get(tier)
+    if t is None:
+        return {m: cell("missing", note="tier %s is not in the v1 one-off baseline" % tier) for m in new_row}
+    label = "v1 one-off (last v1 run, p5-scoreboard %s, %s)" % (t3_v1["run"]["id"], t3_v1["measured_date"])
+    want, got = oracle_key(board_oracle), oracle_key(t3_v1.get("oracle"))
+    if want and got:
+        why = oracle_mismatch(got, want)
+        if why:
+            label += "; CROSS-ORACLE, " + why.replace("another oracle: ", "v1 measured against ")
+    ids = [r["id"] for r in t["records"]]
+    recs, excluded = parity_records(documents_path, tier) if documents_path else (None, None)
+    if recs is None:
+        why = ("v1 one-off baseline: the new run's documents.json is needed to compare on the "
+               "baseline's %d IDs" % len(ids))
+        return {m: cell("missing", note=why) for m in new_row}
+    want_ids = set(ids)
+    sel = [r for r in recs if r["id"] in want_ids]
+    present = len({r["id"] for r in sel} | (want_ids & set(excluded)))
+    restricted = parity_record_counts(sel)
+    partial = None
+    if present < len(ids):
+        partial = "the new run has %d of the v1 one-off baseline's %d IDs" % (present, len(ids))
+    out = {}
+    for m in new_row:
+        v = t["v1"].get(m)
+        if v is not None:
+            c = cell("baseline", v[0], v[1], note=label, partial=partial, source=t3_v1["source"][0])
+            c["against"] = {"passed": restricted[m][0], "of": restricted[m][1],
+                            "what": "the baseline's %d IDs" % len(ids)}
+            out[m] = c
+        elif m == "P-T1":
+            out[m] = cell("n/a", note=t.get("P-T1_not_evaluated") or NA_TEX_ONLY)
+        else:
+            out[m] = cell("missing", note="not in the v1 one-off baseline")
+    return out
+
+
 def _pair(v):
     return (isinstance(v, list) and len(v) == 2 and all(isinstance(x, int) and not isinstance(x, bool)
                                                         and x >= 0 for x in v) and v[0] <= v[1])
@@ -1097,11 +1249,12 @@ def identity_problems(sources, shas, oracle=None):
 
 
 def build(sources, shas=None, sample_note=None, stages=None, host_label=None, na_baseline=None,
-          oracle=None, t4_v1=None):
+          oracle=None, t4_v1=None, t3_v1=None):
     """sources: {label: [(kind, tiers, ident)]} -> the board dict. `oracle`: the board's own
     oracle record (oracle_provenance.py --json); a run measured against another is invalid.
     `t4_v1`: load_t4_v1_baseline()'s result (a baseline, or an error string), the old column
-    of T4 when no v1 run gives one."""
+    of T4 when no v1 run gives one; `t3_v1`: load_t3_v1_baseline()'s, the same for the T3
+    parity tiers (None: no baseline is used, and a tier without a v1 run reads missing)."""
     stages = load_stages() if stages is None else stages
     shas = shas or {}
     bad = identity_problems(sources, shas, oracle)
@@ -1121,12 +1274,13 @@ def build(sources, shas=None, sample_note=None, stages=None, host_label=None, na
                     if prev is not None and prev["status"] == "measured" and c["status"] == "measured":
                         c = dict(c, invalid="two %s results for %s %s" % (lab, tier, metric))
                     cells[lab][tier][metric] = c
-    # the v1 CLI cannot run harnesses that need a TeX binary.
+    # the v1 CLI cannot run harnesses that need a TeX binary. Since S7 it is deleted and
+    # nothing measures it (no old run at all): those rows stay n/a.
     old_kinds = {i.get("engine_kind") for i in idents["old"] if i.get("engine_kind")}
     for tier, metric in (("latex-suites", "tests"), ("package-smoke", "documents"),
                          ("fonts", "fonts")):
         if tier in cells["new"] and metric not in cells["old"].get(tier, {}) \
-                and old_kinds == {"flashtex-cli"}:
+                and old_kinds <= {"flashtex-cli"}:
             cells["old"].setdefault(tier, {})[metric] = cell("n/a", note=NA_TEX_ONLY)
     # T4 runs the new engine only; its old column is the decision-1 one-off v1 baseline.
     for tier in T4_TIERS:
@@ -1134,6 +1288,14 @@ def build(sources, shas=None, sample_note=None, stages=None, host_label=None, na
             docs = next((i.get("documents_path") for k, t, i in sources.get("new", ())
                          if k == "nightly" and tier in t), None)
             cells["old"][tier] = t4_v1_cells(t4_v1, tier, cells["new"][tier], docs, oracle)
+    # Since S7 no v1 parity run exists: the T3 tiers' old column is the one-off v1 baseline.
+    if t3_v1 is not None:
+        for tier in sorted(cells["new"]):
+            docs = [i.get("documents_path") for k, t, i in sources.get("new", ())
+                    if k == "parity" and tier in t]
+            if tier in T4_TIERS or tier in cells["old"] or not docs:
+                continue
+            cells["old"][tier] = t3_v1_cells(t3_v1, tier, cells["new"][tier], docs[0], oracle)
     all_tiers = set(cells["new"]) | set(cells["old"])
     for t in TIER_ORDER:
         all_tiers.add(t)  # a tier nobody ran is still a row: "missing"
@@ -1193,6 +1355,9 @@ def build(sources, shas=None, sample_note=None, stages=None, host_label=None, na
                                                            "documents", "id_list_sha256", "oracle",
                                                            "decision")}
                                if isinstance(t4_v1, dict) else t4_v1),
+            "t3_v1_baseline": ({k: t3_v1.get(k) for k in ("status", "measured_date", "source", "run",
+                                                           "engine", "oracle", "decision")}
+                               if isinstance(t3_v1, dict) else t3_v1),
             "engines": {lab: {"git_sha": shas.get(lab), "runs": idents[lab]} for lab in LABELS},
             "rows": rows, "all_green": all_green, "red": len(red),
             "behind_tiers": behind_tiers, "red_tiers": red_tiers, "partial": partial, "samples": samples,
@@ -1268,8 +1433,11 @@ def render_md(board, title="P5 scoreboard: new engine vs v1, pdflatex as the ora
                                                (o.get("pdftex_sha256") or "?")[:12],
                                                o.get("texlive_root") or "?"), ""]
     out += ["| engine | version | git SHA | host | sources |", "|---|---|---|---|---|",
-            _engine_line(board, "new"), _engine_line(board, "old"), "",
-            render_status(board), "", render_table(board), ""]
+            _engine_line(board, "new"), _engine_line(board, "old"), ""]
+    line = old_column_line(board)
+    if line:
+        out += [line, ""]
+    out += [render_status(board), "", render_table(board), ""]
     # one line per (tier, engine, note), listing the metrics it applies to
     grouped = {}
     for r in board["rows"]:
@@ -1303,13 +1471,38 @@ def render_md(board, title="P5 scoreboard: new engine vs v1, pdflatex as the ora
     return "\n".join(out) + "\n"
 
 
+def old_column_line(board):
+    """Where the old (v1) column comes from when no v1 run is on the board (since S7)."""
+    if board["engines"]["old"]["runs"]:
+        return None
+    bits = []
+    t3 = board.get("t3_v1_baseline")
+    if isinstance(t3, dict):
+        run = t3.get("run") or {}
+        bits.append("T3 from v1's last run, p5-scoreboard %s at %s (%s; `baselines/t3-v1-oneoff.json`)"
+                    % (run.get("id"), (run.get("commit") or "?")[:9], t3.get("measured_date")))
+    elif isinstance(t3, str):
+        bits.append("T3: %s" % t3)
+    t4 = board.get("t4_v1_baseline")
+    if isinstance(t4, dict):
+        bits.append("T4 from the decision-1 one-off (%s; `baselines/t4-v1-oneoff.json`)" % t4.get("measured_date"))
+    elif isinstance(t4, str):
+        bits.append("T4: %s" % t4)
+    return ("Old column: v1 was deleted in retirement stage S7 (#1888) and is not run; its cells are "
+            "committed one-off v1 measurements: %s." % "; ".join(bits or ["none given"]))
+
+
 def render_summary(board, run_url=None):
     """The short committed summary: status, the table, a link to the artifact."""
     out = ["# P5 scoreboard summary", ""]
     if board.get("host_label"):
         out.append("Host: %s." % board["host_label"])
-    shas = ", ".join("%s %s" % (lab, board["engines"][lab].get("git_sha") or "?") for lab in LABELS)
+    shas = ", ".join("%s %s" % (lab, board["engines"][lab].get("git_sha") or "?") for lab in LABELS
+                     if lab == "new" or board["engines"][lab]["runs"] or board["engines"][lab].get("git_sha"))
     out += ["Engines: %s." % shas, ""]
+    line = old_column_line(board)
+    if line:
+        out += [line, ""]
     if run_url:
         out += ["Full table and notes: %s" % run_url, ""]
     out += [render_status(board), "", render_table(board), ""]
@@ -1488,6 +1681,10 @@ def main(argv=None):
     ap.add_argument("--t4-v1-baseline", metavar="FILE", default=T4_V1_BASELINE,
                     help="the one-off v1 T4 measurement (decision 1) for T4's old column; 'none' for "
                          "none (default %(default)s)")
+    ap.add_argument("--t3-v1-baseline", metavar="FILE", default=T3_V1_BASELINE,
+                    help="the one-off v1 measurement of the T3 parity tiers (v1's last run before S7) "
+                         "for their old column when no v1 parity run is given; 'none' for none "
+                         "(default %(default)s)")
     ap.add_argument("--oracle", metavar="FILE",
                     help="this board's oracle (oracle_provenance.py --json): a T4 run measured against "
                          "another texlive.tlpdb or pdftex binary, or one that records neither, is invalid")
@@ -1528,7 +1725,8 @@ def main(argv=None):
     board = build(sources, shas=shas, sample_note=args.sample_note,
                   stages=load_stages(args.stages), host_label=args.host_label, na_baseline=na_baseline,
                   oracle=_read_json(args.oracle) if args.oracle else None,
-                  t4_v1=load_t4_v1_baseline(None if args.t4_v1_baseline == "none" else args.t4_v1_baseline))
+                  t4_v1=load_t4_v1_baseline(None if args.t4_v1_baseline == "none" else args.t4_v1_baseline),
+                  t3_v1=load_t3_v1_baseline(None if args.t3_v1_baseline == "none" else args.t3_v1_baseline))
     os.makedirs(args.out, exist_ok=True)
     with open(os.path.join(args.out, "scoreboard.json"), "w", encoding="utf-8") as f:
         json.dump(board, f, indent=1, sort_keys=True)

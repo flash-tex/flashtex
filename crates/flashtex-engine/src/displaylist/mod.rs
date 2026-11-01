@@ -55,7 +55,9 @@ use interp::Marker;
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 use std::io::Write;
-use std::sync::atomic::{AtomicBool, AtomicI32, AtomicU32, AtomicU64, AtomicUsize, Ordering};
+use std::sync::atomic::{
+    AtomicBool, AtomicI32, AtomicU32, AtomicU64, AtomicU8, AtomicUsize, Ordering,
+};
 use std::sync::Arc;
 
 static ENABLED: AtomicBool = AtomicBool::new(false);
@@ -712,6 +714,32 @@ pub fn same_place(a: u64, b: u64) -> bool {
     .unwrap_or(false)
 }
 
+/// The place a side-table entry names, by name: (the file's name as TeX
+/// read it, line, column), so that another process can name it again
+/// ([`entry_at`]; a persisted body checkpoint, `host::s1`). `None`: no
+/// span, or one this writer does not know.
+pub fn entry_place(l: u64) -> Option<(Vec<u8>, u32, u16)> {
+    let s = loc_span(l);
+    if s == 0 {
+        return None;
+    }
+    with(|st| {
+        let &(f, line) = st.spans.get(s as usize - 1)?;
+        let name = st.files.get((f as usize).checked_sub(1)?)?.clone();
+        Some((name, line, loc_col(l)))
+    })
+    .flatten()
+}
+
+/// The side-table entry of this process for a place [`entry_place`] gave
+/// (`None`: no writer here).
+pub fn entry_at(name: &[u8], line: u32, col: u16) -> Option<u64> {
+    with(|st| {
+        let f = st.file_id(name);
+        loc_pack(st.span_id(f, line), col)
+    })
+}
+
 /// The absolute path of file id `f`.
 pub fn file_path(f: u32) -> Option<String> {
     with(|st| st.file_paths.get((f as usize).checked_sub(1)?).cloned()).flatten()
@@ -820,6 +848,7 @@ fn forget_engine_state() {
     });
     forget_file_cache();
     HYPH_ON.store(false, Ordering::Relaxed);
+    ALLOC.store(NODE, Ordering::Relaxed);
 }
 
 fn forget_file_cache() {
@@ -837,9 +866,19 @@ static LAST_SPAN: AtomicU32 = AtomicU32::new(0);
 /// line, as an index of `input_stack` (a hint: `Globals::file_level`
 /// checks it against the state before it uses it).
 static FILE_LEVEL: AtomicUsize = AtomicUsize::new(usize::MAX);
-/// Between `dl_token_begin` and `dl_token_end`: an allocation that is not a
+/// What the allocation being made is: [`NODE`] (noted), or, between
+/// `dl_token_begin` and `dl_token_end`, [`NOT_A_NODE`], or, between
+/// `dl_list_token_begin` and `dl_token_end`, [`LIST_TOKEN`]: neither is a
 /// node of a list TeX ships.
-static NOT_A_NODE: AtomicBool = AtomicBool::new(false);
+static ALLOC: AtomicU8 = AtomicU8::new(NODE);
+const NODE: u8 = 0;
+/// Not noted at all (`back_input`'s token, the condition stack's node).
+const NOT_A_NODE: u8 = 1;
+/// A token of a token list (`store_new_token`, `fast_store_new_token`): not
+/// noted, but it looks for newer work as a node's allocation does (in a
+/// stretch of expansion, \csname's characters and `\the`'s tokens may be the
+/// only allocations).
+const LIST_TOKEN: u8 = 2;
 /// While `hyphenate` rebuilds a word: HYPH_ON, and the word's place.
 static HYPH_ON: AtomicBool = AtomicBool::new(false);
 static HYPH_LOC: AtomicU64 = AtomicU64::new(0);
@@ -874,8 +913,12 @@ impl Globals {
         // become nodes; they are most of the allocations, so they are
         // skipped before anything else is looked at. So are the
         // allocations between `dl_token_begin` and `dl_token_end`.
-        if self.scanner_status == 0 && enabled() && !NOT_A_NODE.load(Ordering::Relaxed) {
-            self.dl_note_node(p);
+        if self.scanner_status == 0 && enabled() {
+            match ALLOC.load(Ordering::Relaxed) {
+                NODE => self.dl_note_node(p),
+                LIST_TOKEN => self.flashtex_preempt_poll(),
+                _ => {}
+            }
         }
     }
 
@@ -886,12 +929,21 @@ impl Globals {
     /// when it is next allocated as a node, before anything reads it.
     #[inline(always)]
     pub fn dl_token_begin(&mut self) {
-        NOT_A_NODE.store(true, Ordering::Relaxed);
+        ALLOC.store(NOT_A_NODE, Ordering::Relaxed);
+    }
+
+    /// `store_new_token` and `fast_store_new_token` allocate a token of a
+    /// token list (changes/displaylist.ch): never a node of a list TeX
+    /// ships (tokens and character nodes share `get_avail`'s one-word
+    /// nodes, and a character node is noted when it is allocated).
+    #[inline(always)]
+    pub fn dl_list_token_begin(&mut self) {
+        ALLOC.store(LIST_TOKEN, Ordering::Relaxed);
     }
 
     #[inline(always)]
     pub fn dl_token_end(&mut self) {
-        NOT_A_NODE.store(false, Ordering::Relaxed);
+        ALLOC.store(NODE, Ordering::Relaxed);
     }
 
     #[inline(never)]

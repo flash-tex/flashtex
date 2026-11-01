@@ -34,7 +34,6 @@ import corpus  # noqa: E402
 import definers  # noqa: E402
 import glyphkeys  # noqa: E402
 import parity  # noqa: E402
-import rank  # noqa: E402  (tools/visual-oracle, on the path parity.py sets)
 
 
 def meta_path_of(root, meta):
@@ -46,12 +45,6 @@ def rg(name, x, y, font="CMR10", size=10.0, text=None):
     """A reference glyph record as pdftext.page_glyphs makes it."""
     return {"name": name, "x": x, "y_top": y, "font": font, "size": size, "text": text or "?", "advance": 5.0,
             "bt": 1, "code": 0}
-
-
-def cg(text, x, y, cluster=None, font="LMRoman10-Regular", size=10.0, sources=None):
-    """A candidate glyph record as rank.v2_page_glyphs makes it."""
-    return {"text": text, "x": x, "y_top": y, "font": font, "size": size, "advance": 5.0, "bt": 0,
-            "math": False, "sources": sources or [], "gid": 1, "cluster": cluster}
 
 
 class GlyphKeys(unittest.TestCase):
@@ -102,38 +95,32 @@ class Atoms(unittest.TestCase):
         self.assertGreaterEqual(a[0][4], 20.0)   # stack height + allowance
         self.assertEqual(a[1][4], 0.0)
 
-    def test_candidate_cluster_counted_once(self):
-        a = parity.candidate_atoms([cg("(", 50, 10, cluster=(0, 0)), cg("(", 50, 20, cluster=(0, 0)),
-                                    cg("x", 60, 25, cluster=(0, 1))])
-        self.assertEqual([x[0] for x in a], ["(", "x"])
-
-
 class Matching(unittest.TestCase):
     def test_exact_and_within_tolerance(self):
         ra = parity.reference_atoms([rg("a", 10, 10), rg("b", 20, 10)])
-        ca = parity.candidate_atoms([cg("a", 10.3, 10.2), cg("b", 20, 10)])
+        ca = parity.reference_atoms([rg("a", 10.3, 10.2), rg("b", 20, 10)])
         self.assertEqual(parity.match_within(ra, ca), ([], []))
 
     def test_beyond_tolerance_is_unmatched(self):
         ra = parity.reference_atoms([rg("a", 10, 10)])
-        ca = parity.candidate_atoms([cg("a", 10.6, 10)])
+        ca = parity.reference_atoms([rg("a", 10.6, 10)])
         self.assertEqual(parity.match_within(ra, ca), ([0], [0]))
 
     def test_same_char_nearest_wins(self):
         ra = parity.reference_atoms([rg("e", 10, 10), rg("e", 10.8, 10)])
-        ca = parity.candidate_atoms([cg("e", 10.75, 10), cg("e", 10.1, 10)])
+        ca = parity.reference_atoms([rg("e", 10.75, 10), rg("e", 10.1, 10)])
         self.assertEqual(parity.match_within(ra, ca), ([], []))
 
     def test_extension_glyph_is_held_on_x_only(self):
         ra = parity.reference_atoms([rg("summationdisplay", 100, 80, font="CMEX10")])
-        ok = parity.candidate_atoms([cg("∑", 100.2, 95, font="LatinModernMath-Regular")])
-        off = parity.candidate_atoms([cg("∑", 101, 80, font="LatinModernMath-Regular")])
+        ok = parity.reference_atoms([rg("summationdisplay", 100.2, 95, font="CMEX10")])
+        off = parity.reference_atoms([rg("summationdisplay", 101, 80, font="CMEX10")])
         self.assertEqual(parity.match_within(ra, ok), ([], []))
         self.assertEqual(parity.match_within(ra, off), ([0], [0]))
 
     def test_multiset(self):
         ra = parity.reference_atoms([rg("a", 0, 0), rg("b", 5, 0)])
-        ca = parity.candidate_atoms([cg("a", 0, 0), cg("c", 5, 0)])
+        ca = parity.reference_atoms([rg("a", 0, 0), rg("c", 5, 0)])
         missing, extra = parity.multiset_diff(ra, ca)
         self.assertEqual(dict(missing), {"b": 1})
         self.assertEqual(dict(extra), {"c": 1})
@@ -187,7 +174,7 @@ class Levels(unittest.TestCase):
         warn = {"severity": "warning", "code": "unsupported_feature",
                 "message": "packages tikz are recognised but not implemented [help: remove that \\usepackage]"}
         font = {"severity": "warning", "code": "math_resource_profile", "message": "lmmi10: glyphs drawn from ..."}
-        r0 = {"level": -1, "candidate": {"pdf": True, "v2": True, "errors": 1, "diagnostics": [diag_err, warn]}}
+        r0 = {"level": -1, "candidate": {"pdf": True, "errors": 1, "diagnostics": [diag_err, warn]}}
         self.assertEqual(parity.causes_for(r0, {}), ["unknown_command: cs \\foo"])
         r2 = {"level": 2, "divergence": "environment align (math glyph)",
               "candidate": {"diagnostics": [warn, font]}}
@@ -195,7 +182,7 @@ class Levels(unittest.TestCase):
                                                      "unsupported_feature: package tikz"])
         r3 = {"level": 3, "candidate": {"diagnostics": [font]}}
         self.assertEqual(parity.causes_for(r3, {}), ["fonts: math_resource_profile"])
-        crash = {"level": -1, "candidate": {"pdf": False, "v2": False, "errors": None, "exit": 101,
+        crash = {"level": -1, "candidate": {"pdf": False, "errors": None, "exit": 101,
                                             "stderr_tail": "thread 'main' panicked at src/x.rs:1:2:\nboom"}}
         self.assertTrue(parity.causes_for(crash, {})[0].startswith("engine: crash"))
 
@@ -225,26 +212,25 @@ class Levels(unittest.TestCase):
                 self.assertEqual(parity.check_baseline([self._r("a", 3)], p), [])
 
     def test_the_default_engine_is_the_new_one(self):
-        # S5 (plan §1.8): with no --engine the new engine is measured, and it
-        # wants its formats; --old-engine picks the CLI
+        # with no --engine the new engine is measured, and it wants its formats;
+        # the old engine's command line is gone (S7), so its flag is refused
         from unittest import mock
         with tempfile.TemporaryDirectory() as d, mock.patch.dict(os.environ, {}, clear=False):
-            for k in ("FLASHTEX_ENGINE", "FLASHTEX_CLI", "FLASHTEX_FORMATS"):
+            for k in ("FLASHTEX_ENGINE", "FLASHTEX_FORMATS"):
                 os.environ.pop(k, None)
             eng = os.path.join(d, "flashtex-initex")
             with open(eng, "w") as f:
                 f.write("#!/bin/sh\necho 'pdfTeX 3.141592653-2.6-1.40.29 (flashtex-initex)'\n")
             os.chmod(eng, 0o755)
-            missing = os.path.join(d, "none", "flashtex")
+            missing = os.path.join(d, "none", "flashtex-initex")
             err = io.StringIO()
-            with mock.patch.object(parity, "DEFAULT_ENGINE", eng), mock.patch.object(parity, "DEFAULT_FLASHTEX", missing), \
-                    contextlib.redirect_stderr(err):
+            with mock.patch.object(parity, "DEFAULT_ENGINE", eng), contextlib.redirect_stderr(err):
                 self.assertEqual(parity.main(["--tier", "fixtures", "--out", d, "--work", d]), 2)
                 self.assertIn("needs its formats", err.getvalue())
-                self.assertEqual(parity.main(["--tier", "fixtures", "--old-engine", "--out", d, "--work", d]), 2)
+                self.assertEqual(parity.main(["--tier", "fixtures", "--engine", missing, "--out", d, "--work", d]), 2)
                 self.assertIn(f"engine not found at {missing}", err.getvalue())
                 with self.assertRaises(SystemExit):
-                    parity.main(["--old-engine", "--engine", eng])
+                    parity.main(["--old-engine"])
 
     def test_committed_fixtures_baseline_names_its_host(self):
         with open(os.path.join(parity.REPO, "tools", "parity", "baseline-fixtures.json")) as f:
@@ -308,143 +294,6 @@ class Localise(unittest.TestCase):
                          "project .sty/.cls (read, incompletely)")
         self.assertEqual(g("unknown_command: cs \\x <- lipics-v2021.cls"), "class lipics-v2021")
         self.assertEqual(g("unknown_command: cs \\hspace (in math mode)"), "LaTeX kernel: \\hspace (in math mode)")
-
-
-Q20 = 1 << 20  # bp_2pow20
-
-
-def v2_page(number, words, y0=700.0):
-    """A display-list-v2 page: one glyph run per word, a glyph per character."""
-    items = [{"kind": "rule", "x": 0, "y": 0}]
-    for wi, word in enumerate(words):
-        text = word.encode("utf-8")
-        clusters, glyphs, x, start = [], [], 72.0, 0
-        for ci, ch in enumerate(word):
-            n = len(ch.encode("utf-8"))
-            clusters.append({"text_start_byte": start, "text_end_byte": start + n,
-                             "sources": [{"path": "main.tex", "start_byte": wi, "end_byte": wi + 1}]})
-            glyphs.append({"origin_x": int(x * Q20), "baseline_y": int((y0 - 12 * wi) * Q20),
-                           "advance_x": 5 * Q20, "advance_y": 0, "gid": 40 + ci, "cluster": ci})
-            start, x = start + n, x + 5.0
-        items.append({"kind": "glyph_run", "font_id": "f1", "font_size": 10 * Q20, "text": text.decode(),
-                      "clusters": clusters, "glyphs": glyphs, "paint": {"r": 0, "g": 0, "b": 0, "a": 1}})
-    return {"number": number, "width": 612 * Q20, "height": 792 * Q20, "items": items}
-
-
-def v2_doc(pages, pages_first=False):
-    rest = {"color_space": "srgb", "coordinate_unit": "bp_2pow20",
-            "fonts": [{"font_id": "f1", "postscript_name": "LMRoman10-Regular"}], "project_id": "p"}
-    payload = {"pages": pages, **rest} if pages_first else {**rest, "pages": pages}
-    return {"id": "main.tex", "payload": payload, "protocol_version": 2, "type": "display_list"}
-
-
-class V2Stream(unittest.TestCase):
-    """parity.V2Pages: the old engine's display list read one page at a time
-    (arXiv 2501.07559v2: 145,386 pages, 2.33 GB, about 17 GB to json.load)."""
-
-    def setUp(self):
-        self.d = tempfile.mkdtemp()
-        self.addCleanup(shutil.rmtree, self.d, True)
-
-    def write(self, obj, name="candidate.v2.json", indent=None):
-        p = os.path.join(self.d, name)
-        with open(p, "w", encoding="utf-8") as f:
-            json.dump(obj, f, indent=indent, ensure_ascii=False)
-        return p
-
-    def loaded(self, p):
-        with open(p, encoding="utf-8") as f:
-            return [pg["glyphs"] for pg in rank.v2_page_glyphs(json.load(f))]
-
-    def test_pages_are_json_loads_pages(self):
-        pages = [v2_page(i + 1, ["Hello", "x∈y", "−12.5"][: 1 + i % 3]) for i in range(7)]
-        saved = parity.JsonStream.CHUNK
-        try:
-            for chunk in (1, 7, 64, saved):  # values and keys cut at every kind of place
-                parity.JsonStream.CHUNK = chunk
-                for indent, first in ((None, False), (1, False), (None, True)):
-                    p = self.write(v2_doc(pages, pages_first=first), indent=indent)
-                    want = self.loaded(p)
-                    for keep in (0, 1, 3, 7, 12):
-                        v2 = parity.V2Pages(p, keep)
-                        self.assertEqual(len(v2), 7)
-                        self.assertEqual(list(v2.pages()), want[:keep], (chunk, indent, first, keep))
-        finally:
-            parity.JsonStream.CHUNK = saved
-
-    def test_unreadable_files_raise_as_json_load_did(self):
-        good = json.dumps(v2_doc([v2_page(1, ["a"])]))
-        for text, exc in ((good + " x", ValueError), (good[:-40], ValueError), ("", ValueError),
-                          (json.dumps({"payload": {"coordinate_unit": "bp_2pow20"}}), KeyError),
-                          (json.dumps({"type": "display_list"}), KeyError),
-                          (good.replace("bp_2pow20", "pt"), ValueError)):
-            p = os.path.join(self.d, "bad.json")
-            with open(p, "w", encoding="utf-8") as f:
-                f.write(text)
-            with self.assertRaises(exc, msg=text[-60:]):
-                parity.V2Pages(p, 1)
-        # a page that does not convert: raised while scoring, with its cause
-        bad = v2_doc([v2_page(1, ["a"]), v2_page(2, ["b"])])
-        del bad["payload"]["pages"][1]["items"][1]["glyphs"][0]["origin_x"]
-        v2 = parity.V2Pages(self.write(bad), 2)
-        with self.assertRaises(parity.UnreadablePage) as cm:
-            list(v2.pages())
-        self.assertIsInstance(cm.exception.__cause__, KeyError)
-        self.assertEqual(len(list(parity.V2Pages(self.write(bad), 1).pages())), 1)  # past `keep`: counted only
-
-    def test_memory_is_one_page_not_the_file(self):
-        import tracemalloc
-        words = ["word%d" % k for k in range(60)]
-        p = self.write(v2_doc([v2_page(i + 1, words) for i in range(800)]))
-        size = os.path.getsize(p)
-        self.assertGreater(size, 32 << 20)
-        tracemalloc.start()
-        try:
-            v2 = parity.V2Pages(p, 2)
-            got = list(v2.pages())
-            peak = tracemalloc.get_traced_memory()[1]
-        finally:
-            tracemalloc.stop()
-        self.assertEqual((len(v2), len(got), len(got[0])), (800, 2, sum(map(len, words))))
-        # json.load holds several times the file; this holds a read buffer and a page
-        self.assertLess(peak, 8 << 20, (peak, size))
-
-    def test_streamed_compare_scores_as_the_whole_list(self):
-        # reference: pages 1-4; candidate: page 2 moved, page 3 a different word, and 3 extra pages
-        ref = [[rg(c, 72 + 5 * k, 700.0, text=c) for k, c in enumerate(w)] for w in ("abc", "def", "ghi", "jkl")]
-        texts = ["abc", "def", "gxi", "jkl", "m", "n", "o"]
-        pages = [v2_page(i + 1, [w], y0=700.0 + (3.0 if i == 1 else 0.0)) for i, w in enumerate(texts)]
-        p = self.write(v2_doc(pages))
-        whole = self.loaded(p)
-        for n_ref in (4, 2, 7):
-            refs = (ref * 2)[:n_ref]
-            a = parity.compare_pages(refs, whole, len(whole), parity.candidate_atoms)
-            v2 = parity.V2Pages(p, len(refs))
-            b = parity.compare_pages(refs, v2.pages(), len(v2), parity.candidate_atoms)
-            self.assertEqual(a[1:5], b[1:5])  # errors, missing, extra, unmapped
-            self.assertEqual(a[0], b[0])
-            self.assertEqual(parity.first_divergence(a[0], refs, whole, {}),
-                             parity.first_divergence(b[0], refs, b[5], {}))
-            self.assertEqual(len(b[5]), 1)  # one candidate page kept: the first below L3
-            self.assertEqual([r.get("missing_page") for r in b[0]][n_ref:], ["reference"] * (7 - n_ref))
-
-
-class JsonStreamNumbers(unittest.TestCase):
-    """parity.JsonStream: a chunk boundary inside a number must not change it."""
-
-    def test_number_split_by_chunk_boundary(self):
-        docs = ['{"a": 1.5}', '{"a": 1e5}', '{"a": -2.5E-3}']
-        saved = parity.JsonStream.CHUNK
-        parity.JsonStream.CHUNK = 4  # every number above is cut mid-token
-        try:
-            for text in docs:
-                with io.StringIO(text) as f:
-                    s = parity.JsonStream(f)
-                    got = {k: s.value() for k in s.members()}
-                    s.end()
-                self.assertEqual(got, json.loads(text), text)
-        finally:
-            parity.JsonStream.CHUNK = saved
 
 
 class Definers(unittest.TestCase):
@@ -1090,17 +939,6 @@ class PTOne(unittest.TestCase):
         self.assertEqual((r["ok"], r["boxes_equal"], r["log_line"]["line"]), (False, True, 8))
         d = capture.Capture(a.log, [BOX, BOX], "d.pdf")  # an extra shipout
         self.assertEqual(tiers.compare_pt1(a, d)["first_shipout"], 2)
-
-    def test_engine_kind_from_version_line(self):
-        with tempfile.TemporaryDirectory() as d:
-            for name, first, kind in (("f", "flashtex 0.1.0 (abc)", "flashtex-cli"),
-                                      ("p", "pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026)", "tex")):
-                p = os.path.join(d, name)
-                with open(p, "w") as f:
-                    f.write(f"#!/bin/sh\necho '{first}'\n")
-                os.chmod(p, 0o755)
-                self.assertEqual(tiers.engine_kind(p), kind)
-
 
 ACC_TAIL = ("{vertical mode: \\end}\n ) \nHere is how much of TeX's memory you used:\n 492 strings out of 467525\n"
             " 39i,8n,41p,191b,208s stack positions out of 10000i,1000n,20000p,200000b,200000s\n"
@@ -2137,8 +1975,7 @@ class NightlyRunKey(unittest.TestCase):
     def test_the_harness_includes_every_imported_module(self):
         names = {os.path.relpath(p, parity.REPO) for p in self.saved()}
         for m in ("tools/parity/parity.py", "tools/parity/tiers.py", "tools/parity/capture.py",
-                  "tools/real-world-corpus/run.py", "tools/visual-oracle/pdftext.py", "tools/visual-oracle/fontenv.py",
-                  "tools/visual-oracle/rank.py", "tools/visual-oracle/cumulative.py"):
+                  "tools/parity/harness.py", "tools/parity/pdftext.py", "tools/parity/wordalign.py"):
             self.assertIn(m, names)
 
     def test_each_input_changes_the_key(self):

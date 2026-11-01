@@ -2682,17 +2682,20 @@ impl Globals {
             }
         }
         file_trace(|| format!("openout {fname} disk {:?}", disk_len(&fname)));
+        keep_instance(&fname, &out_key(&fname));
         before_truncate(&fname);
         let mut f = File::create(&fname).ok();
         if f.is_none() && !absolute {
             if let Some(out) = texmf_var("TEXMFOUTPUT").filter(|v| !v.is_empty()) {
                 fname = format!("{out}/{name}");
+                keep_instance(&fname, &out_key(&fname));
                 before_truncate(&fname);
                 f = File::create(&fname).ok();
             }
         }
         if f.is_some() {
             OPENS.with(|o| o.borrow_mut().push(out_key(&fname)));
+            INSTANCES.with(|v| v.borrow_mut().push(None));
             opens_changed();
             stamp_output(&fname);
             if fname != s {
@@ -3772,17 +3775,36 @@ thread_local! {
     static OPENS: std::cell::RefCell<Vec<String>> = const { std::cell::RefCell::new(Vec::new()) };
     /// Bumped by every change to `OPENS`: `REWRITTEN` is for one value.
     static OPENS_GEN: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+    /// Beside each entry of `OPENS`: what that instance of the file held
+    /// when it was done with, taken when the run opened the file for output
+    /// again (`keep_instance`), for a file rewritten again and again (lane
+    /// BEAMER: beamer's `.vrb`, one instance per fragile frame). A
+    /// checkpoint between two instances is restorable with it put back
+    /// (`rewritten_unkept`, `instances_at`); `None`: not kept.
+    static INSTANCES: std::cell::RefCell<Vec<Option<std::sync::Arc<Vec<u8>>>>> =
+        const { std::cell::RefCell::new(Vec::new()) };
     /// `rewritten_at`'s index of `OPENS` at generation `.0`: the open
     /// positions where some file has an output open before and after,
     /// as sorted disjoint ranges `lo..=hi`, each with an open of such a
     /// file.
     static REWRITTEN: std::cell::RefCell<(u64, Vec<RewrittenRange>)> =
         const { std::cell::RefCell::new((u64::MAX, Vec::new())) };
+    /// `instances_at`'s index of `OPENS` at generation `.0` (`reopened_files`).
+    static REOPENED: std::cell::RefCell<Reopened> =
+        const { std::cell::RefCell::new((u64::MAX, Vec::new())) };
     /// Output files whose content, when an `\openout` is about to truncate
     /// one, is kept first (`guard_outputs`): the checkpoint layer holds
     /// only the part beyond a checkpoint's length of each.
     static GUARD: std::cell::RefCell<Vec<(String, Option<Vec<u8>>)>> = const { std::cell::RefCell::new(Vec::new()) };
 }
+
+/// What one instance of a rewritten output file held (`INSTANCES`).
+pub type Instance = std::sync::Arc<Vec<u8>>;
+/// The instances a restore puts back, by file (`instances_at`).
+pub type PutBack = Vec<(String, Instance)>;
+/// `instances_at`'s index: each file opened more than once, with its open
+/// positions, at a generation of `OPENS`.
+type Reopened = (u64, Vec<(String, Vec<usize>)>);
 
 /// How many files have been opened for output so far (`OPENS`).
 pub fn opens_len() -> usize {
@@ -3863,13 +3885,167 @@ pub fn truncate_opens(n: usize) {
         o.truncate(n);
         o.resize(n, String::new());
     });
+    INSTANCES.with(|v| {
+        let mut v = v.borrow_mut();
+        v.truncate(n);
+        v.resize(n, None);
+    });
     opens_changed();
 }
 
 /// Append output opens (the old run's, after a convergence jump).
 pub fn append_opens(v: &[String]) {
+    append_opens_kept(v, &[]);
+}
+
+/// [`append_opens`] with the instances kept beside them
+/// ([`instances_since`]; a shorter list: the rest are not kept).
+pub fn append_opens_kept(v: &[String], kept: &[Option<std::sync::Arc<Vec<u8>>>]) {
     OPENS.with(|o| o.borrow_mut().extend_from_slice(v));
+    INSTANCES.with(|i| {
+        let mut i = i.borrow_mut();
+        let n = OPENS.with(|o| o.borrow().len());
+        let base = i.len();
+        i.resize(n, None);
+        for (k, x) in kept.iter().take(v.len()).enumerate() {
+            if let Some(slot) = i.get_mut(base + k) {
+                *slot = x.clone();
+            }
+        }
+    });
     opens_changed();
+}
+
+/// The instances kept beside the output opens after the first `n`
+/// ([`INSTANCES`]).
+pub fn instances_since(n: usize) -> Vec<Option<std::sync::Arc<Vec<u8>>>> {
+    INSTANCES.with(|i| i.borrow().get(n..).unwrap_or(&[]).to_vec())
+}
+
+/// Instances kept: at most this many bytes each and in all (a file
+/// rewritten again and again is a small temporary file; past these the
+/// checkpoints between its instances stay unrestorable, as before).
+const INSTANCE_MAX: usize = 1 << 20;
+const INSTANCES_MAX: usize = 64 << 20;
+
+/// `\openout` is about to truncate `path` (key `k`), which the run opened
+/// for output before: keep what that instance holds, the engine's own
+/// bytes ([`INSTANCES`]).
+fn keep_instance(path: &str, k: &str) {
+    let Some(i) = OPENS.with(|o| o.borrow().iter().rposition(|p| p == k)) else {
+        return;
+    };
+    if INSTANCES.with(|v| v.borrow().get(i).is_none_or(|x| x.is_some())) {
+        return;
+    }
+    if why_changed(path, true).is_some() {
+        return;
+    }
+    let Ok(data) = read_logical(path) else {
+        return;
+    };
+    let total: usize = INSTANCES.with(|v| v.borrow().iter().flatten().map(|d| d.len()).sum());
+    if data.len() > INSTANCE_MAX || total + data.len() > INSTANCES_MAX {
+        return;
+    }
+    INSTANCES.with(|v| {
+        if let Some(slot) = v.borrow_mut().get_mut(i) {
+            *slot = Some(std::sync::Arc::new(data));
+        }
+    });
+}
+
+/// A restore put back the files open for output at its target
+/// (`open_out`, by `out_key`): the kept instance of each one's last open
+/// is not done with there, so it is forgotten.
+pub fn forget_open_instances(open_out: &[String]) {
+    if open_out.is_empty() {
+        return;
+    }
+    OPENS.with(|o| {
+        let o = o.borrow();
+        INSTANCES.with(|v| {
+            let mut v = v.borrow_mut();
+            for k in open_out {
+                if let Some(i) = o.iter().rposition(|p| p == k) {
+                    if let Some(slot) = v.get_mut(i) {
+                        *slot = None;
+                    }
+                }
+            }
+        })
+    });
+}
+
+/// The files opened for output before the `n`-th output open and again at
+/// or after it (`rewritten_at`), each with the instance it held at `n`,
+/// that a restore to a checkpoint taken after `n` opens puts back on disk
+/// (lane BEAMER: beamer's `.vrb` between two fragile frames). `Err(name)`:
+/// one such file cannot be put back: open for output there (`open_out`, by
+/// `out_key`) or its instance not kept.
+pub fn instances_at(n: usize, open_out: &[String]) -> Result<PutBack, String> {
+    if rewritten_at(n).is_none() {
+        return Ok(vec![]);
+    }
+    let gen = OPENS_GEN.with(|g| g.get());
+    REOPENED.with(|r| {
+        let mut r = r.borrow_mut();
+        if r.0 != gen {
+            *r = (gen, reopened_files());
+        }
+        INSTANCES.with(|v| {
+            let v = v.borrow();
+            let mut out: PutBack = vec![];
+            for (k, at) in &r.1 {
+                // (its last open before `n`, and one from `n` on)
+                let j = at.partition_point(|&p| p < n);
+                if j == 0 || j == at.len() {
+                    continue;
+                }
+                if open_out.iter().any(|p| p == k) {
+                    return Err(k.clone());
+                }
+                match v.get(at[j - 1]).and_then(|x| x.clone()) {
+                    Some(d) => out.push((k.clone(), d)),
+                    None => return Err(k.clone()),
+                }
+            }
+            Ok(out)
+        })
+    })
+}
+
+/// Each file `OPENS` has more than once, with its open positions in order
+/// (`instances_at`'s index, rebuilt once per change to the opens).
+fn reopened_files() -> Vec<(String, Vec<usize>)> {
+    OPENS.with(|o| {
+        let o = o.borrow();
+        let mut at: std::collections::HashMap<&str, Vec<usize>> = Default::default();
+        for (i, k) in o.iter().enumerate() {
+            if !k.is_empty() {
+                at.entry(k.as_str()).or_default().push(i);
+            }
+        }
+        let mut v: Vec<(String, Vec<usize>)> = at
+            .into_iter()
+            .filter(|(_, p)| p.len() > 1)
+            .map(|(k, p)| (k.to_string(), p))
+            .collect();
+        v.sort();
+        v
+    })
+}
+
+/// Put back the instances `instances_at` gave (a restore): each file then
+/// holds what it held at the restore target, the engine's own bytes.
+pub fn put_back_instances(v: &[(String, Instance)]) -> Result<(), String> {
+    for (path, data) in v {
+        file_trace(|| format!("put back instance {path} ({} bytes)", data.len()));
+        std::fs::write(path, data.as_slice()).map_err(|e| format!("{path}: {e}"))?;
+        logical_settled(path);
+        stamp_output(path);
+    }
+    Ok(())
 }
 
 /// From now on, keep the content of each of `paths` that an output open
@@ -4448,6 +4624,11 @@ pub struct FileRead {
     /// `note_size_read`), as the run read it: the same length, the read is
     /// the same (`crate::incr`'s check of the reads at `\document`'s start).
     pub size: Option<u64>,
+    /// How many files the run had opened for output (`opens_len`) when
+    /// this read opened the file: a later read of a file the old run opened
+    /// for output again after a convergence point reads what the old run
+    /// wrote from the state there (`crate::incr`'s `written_read`).
+    pub opens: usize,
 }
 
 /// Whether `path` is one of the user's files rather than the TeX
@@ -4808,6 +4989,7 @@ fn note_file_timed(path: &str) {
                 if let Some(mut again) = log.files.iter().find(|f| f.path == path).cloned() {
                     // (what it holds now, for a file the run wrote)
                     again.seen = written_by(log, path).then(|| content_hash(path)).flatten();
+                    again.opens = opens_len();
                     log.files_mut().push(again);
                 }
             }
@@ -4848,6 +5030,7 @@ fn note_file_timed(path: &str) {
             seen: written_before.then(|| content_hash(path)).flatten(),
             stamp: None,
             size: None,
+            opens: opens_len(),
         });
     })
 }
@@ -4929,6 +5112,33 @@ pub fn note_size_read(path: &str) {
         {
             e.size = len;
         }
+    })
+}
+
+/// Whether `path` is one of the engine's own outputs: written by a compile
+/// of this process (`STAMPS`), or opened for output by this run so far
+/// (its `.aux`, `.toc`): what the run reads of one changes with every pass.
+pub fn is_own_output(path: &str) -> bool {
+    let k = out_key(path);
+    STAMPS.with(|m| m.borrow().contains_key(&k))
+        || READS.with(|r| {
+            r.borrow()
+                .as_ref()
+                .is_some_and(|l| l.outputs.iter().any(|o| out_key(o) == k))
+        })
+}
+
+/// Whole reads of `path` the run's journal holds (`note_whole_read`'s
+/// entries; 0 when it keeps none). The journal is cut back with every
+/// restore, so the count is the run's own at this point.
+pub fn whole_reads_of(path: &str) -> usize {
+    READS.with(|r| {
+        r.borrow().as_ref().map_or(0, |log| {
+            log.files
+                .iter()
+                .filter(|f| f.path == path && f.closed_at == Some(u64::MAX))
+                .count()
+        })
     })
 }
 

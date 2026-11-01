@@ -123,7 +123,7 @@ impl TrueTypeFont {
 
     /// Parses face `face_index` of an in-memory program. A single-face
     /// font has only face 0; a collection's faces are numbered by the TTC
-    /// header (`fc-scan`/font-engine's `load_from_path_index` count the
+    /// header (`fc-scan` and the retired old font engine's `load_from_path_index` count the
     /// same way).
     pub fn parse_face(data: Vec<u8>, face_index: u32) -> Result<Self, String> {
         Self::parse_face_shared(std::sync::Arc::new(data), face_index)
