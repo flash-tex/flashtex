@@ -787,7 +787,9 @@ glue it holds, a kept group that assigns it, a control sequence entered there, a
 body's only tokens left are control sequences meaning `\fi` (`\else\color{#1}\fi`), the hook
 expands them first, as `\ignorespaces`' own `get_x_token` would (each a `get_next` and an `expand`,
 in the same order, with the recording's observers on), and then ends the recording; `main_control`
-goes on with the `\ignorespaces`. Anything else left is the normal path, as before.
+goes on with the `\ignorespaces`. The same holds at `big_switch`, whose `get_x_token` would expand
+a body's last `\fi`s and read past it (`\usebeamercolor` without its optional argument): they are
+expanded there and the recording ends. Anything else left is the normal path, as before.
 
 ### 15.3 `\aftergroup` at the call's level
 
