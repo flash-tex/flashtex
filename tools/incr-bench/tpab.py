@@ -231,6 +231,21 @@ if a.perf_record and PERF:
                 f.write(f'{100 * k / n:7.2f}% {k:9d} {dso:24s} {sym}\n')
 
 
+# TPAB_STDERR=DOC,DOC (TPAB_STDERR_ENV='K=V ...'): one more compile per engine, its stderr kept
+for doc in [x for x in os.environ.get('TPAB_STDERR', '').split(',') if x]:
+    seed, main = seeds[doc]
+    extra = dict(kv.split('=', 1) for kv in os.environ.get('TPAB_STDERR_ENV', '').split() if '=' in kv)
+    stem = os.path.splitext(main)[0]
+    for eng in engines:
+        d = f'{WORK}/stderr'
+        copy_tree(seed, d)
+        env = env_for(eng)
+        env.update(extra)
+        p = subprocess.run([f'{IB}/{eng}/flashtex-initex', '-fmt=pdflatex', '-interaction=batchmode',
+                            f'-jobname={os.path.basename(stem)}', SEED + r'\input{' + main + '}'],
+                           cwd=d, env=env, stdin=subprocess.DEVNULL, capture_output=True)
+        open(os.path.join(a.out, f'stderr-{eng}-{doc.replace(":", "_")}.txt'), 'wb').write(p.stderr[-200000:])
+
 if a.annotate and PERF:
     doc, _, syms = a.annotate.rpartition(':')
     seed, main = seeds[doc]

@@ -2,3 +2,5 @@ REFS='agent/kabir-claude-throughput/png-rows agent/kabir-claude-throughput/image
 TPAB_DOCS='arxiv13'
 TPAB_REPS='5'
 TPAB_PERF='0'
+TPAB_STDERR='ax:2501.07020v1,ax:2501.07044v1'
+TPAB_STDERR_ENV='FLASHTEX_PNG_AHEAD_DEBUG=1'
