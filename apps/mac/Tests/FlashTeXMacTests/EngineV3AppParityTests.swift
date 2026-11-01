@@ -120,6 +120,73 @@ final class EngineV3AppParityTests: XCTestCase {
         XCTAssertEqual(s.staleCount, 2)
     }
 
+    // MARK: a connection that finishes after its host was stopped
+
+    /// A stand-in `flashtex-host`: binds `--socket`, says it is listening,
+    /// touches `<FAKE_DL3_MARK>` when the app connects, answers the client's
+    /// HELLO only after `FAKE_DL3_DELAY` seconds, then reads until EOF.
+    static let slowHelloHost = #"""
+    #!/usr/bin/python3
+    import json, os, socket, struct, sys, time
+    path = sys.argv[sys.argv.index("--socket") + 1]
+    try: os.unlink(path)
+    except OSError: pass
+    srv = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    srv.bind(path); srv.listen(1)
+    print("flashtex-host: listening on " + path, flush=True)
+    c, _ = srv.accept()
+    open(os.environ["FAKE_DL3_MARK"], "w").close()
+    def read(n):
+        b = b""
+        while len(b) < n:
+            d = c.recv(n - len(b))
+            if not d: sys.exit(0)
+            b += d
+        return b
+    n = struct.unpack("<I", read(4))[0]; read(n)
+    time.sleep(float(os.environ.get("FAKE_DL3_DELAY", "1")))
+    body = json.dumps({"protocol": "display-list-v3", "version": [3, 0], "server": "fake"}).encode()
+    c.sendall(struct.pack("<I", len(body) + 1) + bytes([0x41]) + body)
+    while c.recv(65536): pass
+    """#
+
+    /// The host is stopped (the engine turned off, a window going away)
+    /// while its HELLO is still being exchanged off the main thread. The
+    /// late connection is dropped, not adopted: the session stays idle and
+    /// the next start launches a host. Adopting it left the session `.ready`
+    /// with no host, and every later start or Cmd-B only "compiled" into a nil
+    /// connection, so the preview never came back until relaunch.
+    func testAConnectionFinishingAfterStopIsDroppedAndTheNextStartLaunchesAHost() async throws {
+        try XCTSkipUnless(FileManager.default.isExecutableFile(atPath: "/usr/bin/python3"), "no python3")
+        let script = dir.appendingPathComponent("fake-dl3-host")
+        try Self.slowHelloHost.write(to: script, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: script.path)
+        let mark = dir.appendingPathComponent("accepted")
+        env.set("FLASHTEX_HOST", script.path)
+        env.set("FAKE_DL3_MARK", mark.path)
+        env.set("FAKE_DL3_DELAY", "1")
+
+        let model = v3Model()
+        defer { model.engineV3Enabled = false }
+        let s = model.engineV3
+        XCTAssertEqual(s.hostStarts, 1)
+        let accepted = try await waitUntil(20) { FileManager.default.fileExists(atPath: mark.path) }
+        XCTAssertTrue(accepted, "the app connected to the stand-in host (phase \(s.phase))")
+        XCTAssertNotEqual(s.phase, .ready, "HELLO is still pending")
+
+        model.engineV3Enabled = false // stop() while HELLO is in flight
+        XCTAssertEqual(s.phase, .idle)
+        try await Task.sleep(nanoseconds: 2_500_000_000) // HELLO answered (1 s), the stopped host terminated (1 s grace)
+        XCTAssertEqual(s.phase, .idle, "the late connection was not adopted")
+
+        try? FileManager.default.removeItem(at: mark)
+        model.engineV3Enabled = true
+        XCTAssertEqual(s.hostStarts, 2, "the next start launches a host")
+        XCTAssertNotNil(s.hostPID)
+        let reconnected = try await waitUntil(20) { s.phase == .ready }
+        XCTAssertTrue(reconnected, "the new host's connection is adopted (phase \(s.phase))")
+    }
+
     // MARK: D2 export overwrite conflict
 
     private struct Snapshot: Equatable {

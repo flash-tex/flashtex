@@ -321,6 +321,10 @@ final class EngineV3Session {
     @ObservationIgnored var nextKeystrokeNs: UInt64?
     @ObservationIgnored private var restarts: [Date] = []
     @ObservationIgnored private var stopping = false
+    /// Bumped by every host launch and by `stop()`: an event or a HELLO
+    /// exchange started for an earlier host (replaced, or stopped) carries
+    /// an older number and is dropped (`hostEvent`, `connect`).
+    @ObservationIgnored private var hostGeneration = 0
     /// `FLASHTEX_V3_FAST_EDITS=0` turns the text-storage fast path off (A/B).
     @ObservationIgnored let fastEdits = ProcessInfo.processInfo.environment["FLASHTEX_V3_FAST_EDITS"] != "0"
     @ObservationIgnored let logDone = ProcessInfo.processInfo.environment["FLASHTEX_V3_LOG_DONE"] == "1"
@@ -528,11 +532,13 @@ final class EngineV3Session {
             : "Preparing the \(mode.mode.formatName) format from the TeX files (the first use downloads them and builds it)…"
         log("starting \(exe.path) (\(mode.mode.rawValue) mode: \(mode.source))")
         let ref = EngineV3WeakRef(self)
+        hostGeneration &+= 1
+        let generation = hostGeneration
         do {
             // A Live Share session (or a session copy) compiles in a host
             // launched confined; `compile` relaunches when that changes.
             let h = try EngineV3HostProcess(executable: exe, mode: mode.mode, format: mode.format, confineRoots: model.flatMap(Self.confineRoots)) { event in
-                EngineV3Session.onMain { ref.value?.hostEvent(event) }
+                EngineV3Session.onMain { ref.value?.hostEvent(event, generation: generation) }
             }
             host = h
             hostStarts += 1
@@ -591,6 +597,7 @@ final class EngineV3Session {
         connection = nil
         host?.terminate()
         host = nil
+        hostGeneration &+= 1 // a HELLO still in flight is not adopted
         phase = .idle
         EngineV3MemoryPressure.shared.unregister(self)
         sentTexts = [:]; hostBytes = [:]; fastPending = []; fastAnchors = [:]; fastCheck = [:]; compiledTexts = [:]; fastSentID = [:]; caretWindows = [:]; caretWindow = nil
@@ -725,7 +732,13 @@ final class EngineV3Session {
         launchHost()
     }
 
-    private func hostEvent(_ e: EngineV3HostProcess.Event) {
+    private func hostEvent(_ e: EngineV3HostProcess.Event, generation: Int) {
+        // A replaced or stopped host's events: its log lines still show,
+        // nothing else applies (its `.listening` would connect to it).
+        guard generation == hostGeneration, host != nil else {
+            if case .line(let l) = e { log(l) }
+            return
+        }
         switch e {
         case .line(let l):
             log(l)
@@ -752,7 +765,7 @@ final class EngineV3Session {
                 model?.engineV3HostLacksTeXLive()
             }
         case .listening(let socket):
-            connect(socket: socket)
+            connect(socket: socket, generation: generation)
         case .exited(let pid, let status):
             log("host \(pid) exited with status \(status)")
             guard pid == host?.pid else { return } // an earlier host, already replaced
@@ -761,7 +774,11 @@ final class EngineV3Session {
         }
     }
 
-    private func connect(socket: String) {
+    /// HELLO off the main thread, adopted on main only while the host that
+    /// said it was listening is still this session's (`generation`): a
+    /// connection that finishes after `stop()` or a restart is closed, and
+    /// its failure restarts nothing (the restart already happened).
+    private func connect(socket: String, generation: Int) {
         let ref = EngineV3WeakRef(self)
         let plan = rasterPlan
         let profile = PerformanceMode.current.hostProfile // Settings > Performance (spec §6.9)
@@ -777,7 +794,7 @@ final class EngineV3Session {
                     EngineV3Session.onMain { ref.value?.closed(err, connection: c) }
                 })
                 EngineV3Session.onMain {
-                    guard let self = ref.value else { c.bye(); return }
+                    guard let self = ref.value, generation == self.hostGeneration, self.host != nil else { c.bye(); return }
                     self.adopt(c)
                     if case .failed = self.phase {} else { self.phase = .ready }
                     self.log("connected: \(c.hello["server"]?.string ?? "?"), \(c.hello["engine"]?.string ?? "?")")
@@ -788,7 +805,10 @@ final class EngineV3Session {
                     }
                 }
             } catch {
-                EngineV3Session.onMain { ref.value?.restart("could not connect: \(error)") }
+                EngineV3Session.onMain {
+                    guard let self = ref.value, generation == self.hostGeneration else { return }
+                    self.restart("could not connect: \(error)")
+                }
             }
         }
     }
