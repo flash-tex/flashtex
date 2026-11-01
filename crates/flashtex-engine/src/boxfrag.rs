@@ -613,6 +613,26 @@ impl Ser<'_> {
                 }
                 _ => Err("WhatsitKind"),
             },
+            // A noad of `noad_size` words whose three fields are a
+            // nucleus, a superscript and a subscript (tex.web §681-§687:
+            // the ordinary to inner noads, under, over, vcenter), as a span
+            // in math mode leaves one: `box_end` makes the picture's box the
+            // nucleus of an ordinary noad (§1076). A field's `math_type` is
+            // its link half; a sub-box or sub-list is its `info`, by value.
+            t if (k::ord_noad..=k::inner_noad).contains(&t)
+                || t == k::under_noad
+                || t == k::over_noad
+                || t == k::vcenter_noad =>
+            {
+                let mut fields = vec![];
+                for w in 1..=3 {
+                    let f = self.hh(p + w);
+                    if f.rh() == k::sub_box || f.rh() == k::sub_mlist {
+                        fields.push((w, true, self.sub(f.lh())?));
+                    }
+                }
+                Ok(self.big(p, k::noad_size, false, fields))
+            }
             _ => Err("NodeKind"),
         }
     }

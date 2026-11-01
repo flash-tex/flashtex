@@ -602,6 +602,10 @@ struct SpanEnd {
     last: Option<i32>,
     max_buf: Option<i32>,
     line: i32,
+    /// The line-shift journal's entries the span made (`\inputlineno`
+    /// reads of its file level's lines, tikz-cd's `\tikzcd@lineno`), each
+    /// as its line's distance from the span's first.
+    journal: Vec<i32>,
 }
 
 /// A span begun in vertical mode inside a box (§15.3): it started a
@@ -666,6 +670,11 @@ struct SpanRec {
     at: u64,
     max_buf: i32,
     graf: Option<GrafNote>,
+    /// The current list's `eTeX_aux` at the call.
+    etex_aux: i32,
+    /// `line` at the call, and the line-shift journal's count of entries.
+    line0: i32,
+    journal: u64,
 }
 
 struct Rec {
@@ -1025,6 +1034,13 @@ struct Scratch {
     // call, which reads it on entry and nowhere else (pdftex.web; found by
     // a span's full verification, BOX-MEMO.md §15)
     mlist_penalties: bool,
+    // `cur_style`, `cur_size`, `cur_mu`: likewise every caller of
+    // `mlist_to_hlist` sets `cur_style` before the call, which sets the
+    // other two from it; only it and its helpers read them (pdftex.web,
+    // `clean_box` to `make_scripts`; a span in display math, §15)
+    cur_style: i32,
+    cur_size: i32,
+    cur_mu: i32,
     // The current list's head's `info`: `push_nest`'s `get_avail` leaves
     // what the cell held, and nothing reads it (pdftex.web reads a list's
     // head only by `link` and as `tail=head`; `\lastpenalty` & co. test it
@@ -1063,6 +1079,9 @@ impl Scratch {
             intr_at_switch: g.intr_at_switch,
             bm_at_switch: g.bm_at_switch,
             mlist_penalties: g.mlist_penalties,
+            cur_style: g.cur_style,
+            cur_size: g.cur_size,
+            cur_mu: g.cur_mu,
             head_info: g.mem[g.cur_list.head_field as usize].hh().lh(),
         }
     }
@@ -1110,6 +1129,9 @@ impl Scratch {
         g.intr_at_switch = self.intr_at_switch;
         g.bm_at_switch = self.bm_at_switch;
         g.mlist_penalties = self.mlist_penalties;
+        g.cur_style = self.cur_style;
+        g.cur_size = self.cur_size;
+        g.cur_mu = self.cur_mu;
         let h = g.cur_list.head_field;
         if h >= g.hi_mem_min && g.mem[h as usize].hh().lh() != self.head_info {
             g.mem[h as usize].set_hh_lh(self.head_info);
@@ -2851,6 +2873,9 @@ impl Globals {
                 at,
                 max_buf: self.max_buf_stack,
                 graf: None,
+                etex_aux: self.cur_list.eTeX_aux_field,
+                line0: self.line,
+                journal: crate::lineshift::journal_mark().0,
             })
         } else {
             None
@@ -3014,6 +3039,7 @@ impl Globals {
                                 last: None,
                                 max_buf: None,
                                 line: 0,
+                                journal: vec![],
                             },
                             graf: None,
                             pos: vec![],
@@ -3752,9 +3778,16 @@ impl Globals {
         let (start, scanner) = self.bm_with_rec(|r| (r.start.clone(), r.scanner)).unwrap();
         // A span (§15): its file level must still be there; begun in
         // vertical mode inside a box, it may leave a paragraph begun (§15.3)
-        let (span_f, start_aux) = self
-            .bm_with_rec(|r| (r.span.as_ref().map(|s| (s.f, s.index)), r.ctx.aux))
+        let (span_f, start_aux, start_etex) = self
+            .bm_with_rec(|r| {
+                (
+                    r.span.as_ref().map(|s| (s.f, s.index, s.etex_aux)),
+                    r.ctx.aux,
+                    r.span.as_ref().map_or(0, |s| s.etex_aux),
+                )
+            })
             .unwrap();
+        let span_f = span_f.map(|(f, i, _)| (f, i));
         let span_lost = span_f.is_some_and(|(f, index)| {
             let l = if self.input_ptr == f {
                 self.cur_input
@@ -3804,11 +3837,20 @@ impl Globals {
             Some("OuterList")
         } else if end.tail != start.tail
             && start.mode != -k::hmode
-            && !(span_f.is_some() && (start.mode.abs() == k::hmode || graf))
+            && !(span_f.is_some()
+                && (start.mode.abs() == k::hmode || start.mode.abs() == k::mmode || graf))
         {
             // only in restricted horizontal mode may a call append: no
-            // paragraph, no page builder (a span also in a paragraph, and
-            // one that begins a paragraph inside a box, §15.3)
+            // paragraph, no page builder (a span also in a paragraph or in
+            // math, and one that begins a paragraph, §15.3)
+            Some("OuterList")
+        } else if span_f.is_some()
+            && start.mode.abs() == k::mmode
+            && (self.cur_list.aux_field.0 != start_aux || self.cur_list.eTeX_aux_field != start_etex)
+        {
+            // (in math the list's `aux` is `incompleat_noad` and its
+            // `eTeX_aux` the display's box or `delim_ptr`: pointers, which a
+            // replay cannot make again; the call must leave them alone)
             Some("OuterList")
         } else if self
             .bm_with_rec(|r| r.pending_box.is_some())
@@ -3843,7 +3885,18 @@ impl Globals {
             Some("State")
         } else if end.outputs != start.outputs {
             Some("Output")
-        } else if end.lines != start.lines {
+        } else if end.lines != start.lines
+            && (span_f.is_none()
+                || end.lines.1 != start.lines.1
+                || end.lines.2 != start.lines.2
+                || self
+                    .bm_with_rec(|r| r.span.as_ref().map(|s| (s.f, s.line0, s.journal)))
+                    .flatten()
+                    .and_then(|(f, l, m)| self.bm_span_journal(f, l, m))
+                    .is_none())
+        {
+            // (a span's `\inputlineno` reads of its own lines are made
+            // again by its replay, §15.4)
             Some("LineShift")
         } else {
             None
@@ -4718,7 +4771,24 @@ impl Globals {
             last: read.then_some(self.last - st),
             max_buf: (self.max_buf_stack > s.max_buf).then_some(self.max_buf_stack - st),
             line: self.line,
+            journal: self.bm_span_journal(s.f, s.line0, s.journal).unwrap_or_default(),
         }
+    }
+
+    /// The line-shift journal's entries since `mark`, each a read of the
+    /// span's file level's line (its SyncTeX tag, the file), as its line's
+    /// distance from the span's first line; `None` when one is not, or a
+    /// checkpoint took some (§15.4).
+    fn bm_span_journal(&self, f: i32, line0: i32, mark: u64) -> Option<Vec<i32>> {
+        let l = if self.input_ptr == f {
+            self.cur_input
+        } else {
+            self.input_stack[f as usize]
+        };
+        crate::lineshift::journal_since(mark)?
+            .iter()
+            .map(|r| (r.known && r.tag == l.synctex_tag_field).then_some(r.line - line0))
+            .collect()
     }
 
     /// The nodes of list `p` in pre-order, character nodes included,
@@ -4739,6 +4809,18 @@ impl Globals {
                     } else if t == k::disc_node {
                         self.bm_nodes(w1.lh(), holes, out);
                         self.bm_nodes(w1.rh(), holes, out);
+                    } else if (k::ord_noad..=k::inner_noad).contains(&t)
+                        || t == k::under_noad
+                        || t == k::over_noad
+                        || t == k::vcenter_noad
+                    {
+                        // (`boxfrag`'s noads: a field's sub-box or sub-list)
+                        for w in 1..=3 {
+                            let f = self.mem[(p + w) as usize].hh();
+                            if f.rh() == k::sub_box || f.rh() == k::sub_mlist {
+                                self.bm_nodes(f.lh(), holes, out);
+                            }
+                        }
                     }
                 }
             }
@@ -5045,6 +5127,17 @@ impl Globals {
             }
         }
         if let Some((n, end, _, _)) = &span {
+            // (the line-shift journal's entries, as the normal path made
+            // them: reads of the file level's lines, whose first is `line`
+            // now, the key's)
+            let tag = self.cur_input.synctex_tag_field;
+            for &d in &end.journal {
+                crate::lineshift::journal_push(crate::lineshift::LineRead {
+                    tag,
+                    known: true,
+                    line: self.line + d,
+                });
+            }
             self.bm_span_forward(*n, end);
         }
         let n = ops.len() as u64;
