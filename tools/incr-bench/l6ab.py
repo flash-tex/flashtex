@@ -188,9 +188,10 @@ if a.perf_record and PERF:
         data = f'{WORK}/perf.data'
         compile_once(engines[0], variants[0][1], d, main,
                      pre=('perf', 'record', '-q', '-e', 'instructions:u', '-c', '200000', '-o', data, '--'))
+        # (sorted by overhead: `-F overhead,sym` would sort by the symbol's name)
         rep = subprocess.run(['perf', 'report', '-i', data, '--no-children', '--sort', 'symbol', '--stdio',
-                              '-F', 'overhead,sym'], capture_output=True, text=True).stdout
-        lines = [x for x in rep.splitlines() if x.strip() and not x.startswith('#')][:80]
+                              '--percent-limit', '0.1'], capture_output=True, text=True).stdout
+        lines = [re.sub(r'\s+$', '', x) for x in rep.splitlines() if '%' in x and not x.startswith('#')][:120]
         open(os.path.join(a.out, f'perf-{doc.replace(":", "_")}.txt'), 'w').write('\n'.join(lines) + '\n')
         os.unlink(data)
 
