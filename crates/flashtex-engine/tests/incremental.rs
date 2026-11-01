@@ -6484,3 +6484,114 @@ fn a_link_broken_across_lines_does_not_stop_convergence() {
         runs[1]
     );
 }
+
+/// Lane REVIEW-INCR: a persisted S₀'s key (`host::make_key_from`, S₁'s
+/// too) keyed a file open at S₀ by the bytes its stream had consumed only,
+/// and left out every earlier read of that file closed again. A preamble
+/// that reads its own source to the end (`\openin`, `\read` to the end,
+/// `\closein`) and keeps the line count: after a line added to the body
+/// with no host running, a new host opened S₀ (the stream's prefix the
+/// same) and typeset the old count. Either the open is refused, or it
+/// equals scratch runs.
+#[test]
+fn a_stored_s0_keys_a_closed_read_of_a_file_open_there() {
+    let Some(e) = env() else {
+        common::no_texlive();
+        return;
+    };
+    let dir = e.dir.join("s0-closed-read");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let doc = |extra: &str| {
+        format!(
+            "\\documentclass{{article}}\n\
+             \\newread\\src \\newcount\\nlines\n\
+             \\openin\\src=\\jobname.tex\n\
+             \\def\\nextline{{\\ifeof\\src\\else\\read\\src to\\x\
+             \\global\\advance\\nlines 1 \\expandafter\\nextline\\fi}}\n\
+             \\nextline\\closein\\src\n\
+             \\edef\\srclines{{\\the\\nlines}}\n\
+             \\begin{{document}}\n\
+             The source has \\srclines\\ lines.\n\n{}{extra}\\end{{document}}\n",
+            paras(0, 6, "alpha")
+        )
+    };
+    let s0 = dir.with_extension("s0");
+    drop(reopen_from_stored_s0(
+        &e,
+        &dir,
+        &doc(""),
+        &s0,
+        "s0-closed-read: the open",
+    ));
+    // a line added to the body, after S₀'s position, with no host running
+    std::fs::write(dir.join("doc.tex"), doc("One more line.\n\n")).unwrap();
+    open_changed_s0(&e, &dir, &s0, "doc.tex", "s0-closed-read: a line added");
+}
+
+/// A new host opens the stored S₀ `s0` after a change made with no host
+/// running: refused (naming `needle`), then a compile; or opened. Either
+/// way equal to scratch runs.
+fn open_changed_s0(e: &Env, dir: &Path, s0: &Path, needle: &str, what: &str) {
+    let mut h = Host::start(e, dir);
+    let reference = dir.with_extension("ref");
+    copy_dir(dir, &reference);
+    writeln!(h.stdin, "open {}", s0.display()).unwrap();
+    h.stdin.flush().unwrap();
+    let mut line = String::new();
+    h.stdout.read_line(&mut line).unwrap();
+    if line.contains("\"error\"") {
+        assert!(
+            line.contains(needle),
+            "{what}: S0 refused for another reason: {line}"
+        );
+        let what = format!("{what}: after the refused open");
+        compile_and_check(e, &mut h, dir, &[], &what);
+    } else {
+        check_against(e, dir, &reference, &line, &format!("{what}: the open"));
+    }
+}
+
+/// Lane REVIEW-INCR: the same key takes a stream open at S₀ by the bytes
+/// it consumed, but a reader at the end of a file whose last byte is not a
+/// newline, or just after a CR, has looked one byte further
+/// (`incr::read_through`): text appended there extends its last line, or
+/// adds one. `\begin{document}` on the last line of a file input with the
+/// primitive (no `\pdffilesize` of it keys it whole), the line without a
+/// final newline or ending in a CR: after text is appended with no host
+/// running, the open is refused, or equals scratch runs.
+#[test]
+fn a_stored_s0_keys_the_byte_its_last_line_looked_at() {
+    let Some(e) = env() else {
+        common::no_texlive();
+        return;
+    };
+    // (what is appended changes the last line: "Tail texts more" from
+    // scratch, "Tail text s more" from an S₀ that read it as a line of its
+    // own; one paragraph, or two)
+    let cases: [(&str, &str, &str); 2] = [
+        ("no final newline", "\\begin{document}Tail text", "s more"),
+        ("a final CR", "\\begin{document}Tail text\r", "\nmore text"),
+    ];
+    for (i, (what, part, more)) in cases.into_iter().enumerate() {
+        let dir = e.dir.join(format!("s0-eol-{i}"));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("pre.tex"), part).unwrap();
+        let doc = format!(
+            "\\documentclass{{article}}\n\\input pre \n{}\\end{{document}}\n",
+            paras(0, 6, "alpha")
+        );
+        let s0 = dir.with_extension("s0");
+        let what = format!("s0-eol, {what}");
+        drop(reopen_from_stored_s0(
+            &e,
+            &dir,
+            &doc,
+            &s0,
+            &format!("{what}: the open"),
+        ));
+        std::fs::write(dir.join("pre.tex"), format!("{part}{more}")).unwrap();
+        open_changed_s0(&e, &dir, &s0, "pre.tex", &format!("{what}: appended"));
+    }
+}
