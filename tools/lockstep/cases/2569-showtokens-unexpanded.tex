@@ -1,0 +1,9 @@
+% 2569-showtokens-unexpanded: \showtokens prints the `> ...` line from its general text without expanding it, plus the `l.NN` context, with no `! OK.` line (pdftex.web §§1682, 1684)
+% new versus 1070-showtokens-display-form: 1070 observes the token-show display form through \detokenize and \message; here the real \showtokens error path runs
+% lockstep: no-halt
+\input prelude
+\count0=7
+\showtokens{a\the\count0}
+\setbox0=\hbox{\vrule width5pt height5pt depth0pt}
+\lsshipbox0
+\end

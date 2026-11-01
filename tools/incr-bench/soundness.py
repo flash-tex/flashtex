@@ -12,6 +12,7 @@ import json
 import os
 import subprocess
 import sys
+import zlib
 BASE = os.environ.get('INCR_BENCH_DIR', '/tmp/incr-bench')
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), '../..'))
@@ -26,7 +27,20 @@ ap.add_argument('--no-fixtures', action='store_true')
 ap.add_argument('--dir', default=BASE + '/sound')
 ap.add_argument('--kinds', default='replace,insert,delete')
 ap.add_argument('--interleave', action='store_true', help='interrupt each compile with a second edit (incr_bench.py --interleave)')
+ap.add_argument('--host-args', default='', help='iserve options, e.g. "--budget 4194304" (incr_bench.py --host-args)')
+ap.add_argument('--cold', action='store_true', help='with --interleave: interrupt compiles from the format (incr_bench.py --cold)')
+ap.add_argument('--first-open', action='store_true', help='with --interleave: interrupt first compiles, with no .aux (incr_bench.py --first-open)')
+ap.add_argument('--toggle-files', default='', help='files created and deleted around half the edits (incr_bench.py --toggle-files; genlookup.py)')
+ap.add_argument('--allow-no-trials', action='store_true',
+                help='a fixture where no edit of --kinds applies (edits.py: the line kinds need plain prose) is '
+                     'reported as skipped, not as an error; an --extra document never is')
 a = ap.parse_args()
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import edits  # noqa: E402
+try:
+    edits.parse_kinds(a.kinds)
+except ValueError as e:
+    ap.error(str(e))
 
 
 def fixtures():
@@ -54,10 +68,14 @@ if a.only:
 
 def run(job):
     name, d, doc = job[:3]
+    # a fresh record (incr_bench.py appends to its --out)
+    for stale in (f"{a.dir}/{name}.jsonl", f"{a.dir}/{name}.jsonl.host-stderr"):
+        if os.path.exists(stale):
+            os.unlink(stale)
     edit = ['--edit', job[3]] if len(job) > 3 else []
     p = subprocess.run([sys.executable, os.path.join(os.path.dirname(os.path.abspath(__file__)), 'incr_bench.py'), a.engine, d, doc, '--trials', str(a.trials)] + edit + [
-                        '--verify', '--quiet', '--seed', str(abs(hash(name)) % 1000 + 1), '--any-letter', '--kinds', a.kinds,
-                        ] + (['--interleave'] if a.interleave else []) + [
+                        '--verify', '--quiet', '--seed', str(zlib.crc32(name.encode()) % 1000 + 1), '--any-letter', '--kinds', a.kinds,
+                        ] + (['--interleave'] if a.interleave else []) + (['--cold'] if a.cold else []) + (['--first-open'] if a.first_open else []) + (['--toggle-files', a.toggle_files] if a.toggle_files else []) + (['--host-args=' + a.host_args] if a.host_args else []) + [
                         '--out', f'{a.dir}/{name}.jsonl'],
                        stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=6000)
     last = [l for l in p.stdout.splitlines() if l.startswith('{')]
@@ -69,7 +87,8 @@ def run(job):
 
 
 os.makedirs(a.dir, exist_ok=True)
-tot = dict(compiles=0, ok=0, bad=0, conv=0, acct=0, err=0, interrupted=0)
+tot = dict(compiles=0, ok=0, bad=0, conv=0, acct=0, err=0, interrupted=0, skipped=0)
+extra_names = {e.split(':')[1] for e in a.extra}
 with open(a.out, 'w') as out, concurrent.futures.ThreadPoolExecutor(a.j) as ex:
     for r in ex.map(run, jobs):
         out.write(json.dumps(r) + '\n')
@@ -77,6 +96,15 @@ with open(a.out, 'w') as out, concurrent.futures.ThreadPoolExecutor(a.j) as ex:
         if 'error' in r:
             tot['err'] += 1
             print(f"{r['name']}: ERROR {r['error'][-300:]}", flush=True)
+            continue
+        zero = edits.zero_trials_error(r['compiles'], a.kinds)
+        if zero and a.allow_no_trials and r['name'] not in extra_names:
+            tot['skipped'] += 1
+            print(f"{r['name']}: skipped, no position for {a.kinds}", flush=True)
+            continue
+        if zero:
+            tot['err'] += 1
+            print(f"{r['name']}: ERROR {zero}", flush=True)
             continue
         tot['compiles'] += r['compiles']
         tot['ok'] += r['verified_ok']
@@ -87,3 +115,5 @@ with open(a.out, 'w') as out, concurrent.futures.ThreadPoolExecutor(a.j) as ex:
         print(f"{r['name']}: {r['compiles']} compiles, {r['verified_ok']} ok, {r['mismatches']} mismatches, "
               f"{r['converged']} converged, {r.get('accounting_only', 0)} accounting-only log differences, modes {r['modes']}", flush=True)
 print(json.dumps(tot))
+# a nonzero exit when any compile mismatched or failed (gates.sh records it)
+sys.exit(1 if tot['bad'] or tot['err'] else 0)

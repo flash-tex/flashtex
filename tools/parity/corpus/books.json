@@ -1,0 +1,21 @@
+{
+  "schema": "flashtex-parity-corpus/1",
+  "tier": "books",
+  "on_demand": true,
+  "licence_note": "Whole books fetched from their authors' public repositories at a pinned commit and verified by SHA-256; the sources are never committed here. An Infinite Descent into Pure Mathematics by Clive Newstead (https://infinitedescent.org): source under LPPL 1.3c, compiled book under CC BY-SA 4.0 (its LICENCES.md). Owner priority 2026-10-03: FlashTeX must compile the whole book (lane INFDESC-ENGINE, docs/evidence/infdesc-2026-10-03).",
+  "entries": [
+    {
+      "id": "infdesc-48825c5",
+      "title": "An Infinite Descent into Pure Mathematics (Clive Newstead)",
+      "url": "https://codeberg.org/cnewstead/infdesc/archive/48825c5e50bf311b818d666cece6e731d8a0191d.tar.gz",
+      "commit": "48825c5e50bf311b818d666cece6e731d8a0191d",
+      "sha256": "40570a5cde51807c60bdb322bfc17d9dc96993dae1125ce13b6361333e4b929e",
+      "bytes": 3070297,
+      "format": "tar.gz",
+      "root": "infdesc",
+      "entry": "infdesc.tex",
+      "licence": "LPPL-1.3c (source); CC-BY-SA-4.0 (compiled book)",
+      "pages": 592
+    }
+  ]
+}

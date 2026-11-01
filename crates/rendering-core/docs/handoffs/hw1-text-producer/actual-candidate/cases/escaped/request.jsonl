@@ -1,1 +1,0 @@
-{"protocol_version": 1, "id": "escaped", "type": "compile", "payload": {"project_id": "escaped", "revision": 1, "entry_path": "main.tex", "documents": [{"path": "main.tex", "text": "\\documentclass[12pt]{article}\n\\begin{document}\n$\\text{\\{x\\}}$\n\\end{document}\n"}]}}

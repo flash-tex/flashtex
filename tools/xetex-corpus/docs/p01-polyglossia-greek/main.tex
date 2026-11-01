@@ -1,0 +1,17 @@
+% polyglossia: Greek with Libertinus (bundle)
+\documentclass{article}
+\usepackage{fontspec}
+\setmainfont{Libertinus Serif}
+\usepackage{polyglossia}
+\setmainlanguage{english}
+\setotherlanguage[variant=monotonic]{greek}
+\begin{document}
+\section{English and Greek}
+Homer begins the \emph{Odyssey}:
+\begin{greek}
+Ἄνδρα μοι ἔννεπε, Μοῦσα, πολύτροπον, ὃς μάλα πολλὰ πλάγχθη, ἐπεὶ Τροίης ἱερὸν
+πτολίεθρον ἔπερσε.
+\end{greek}
+In modern Greek: \textgreek{Η γλώσσα μου η ελληνική. Καλημέρα, κόσμε!}
+Today is \today.
+\end{document}

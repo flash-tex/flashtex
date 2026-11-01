@@ -632,6 +632,8 @@ impl Ttf<'_> {
                     }
                     buf.push(0);
                 }
+                // Indexed as in writettf.c's `for (i = 0; i < nnames; i++)`.
+                #[allow(clippy::needless_range_loop)]
                 for i in 0..nnames.min(count) {
                     let ni = self.glyph_tab[i].name_index as usize;
                     self.glyph_tab[i].name = if ni < NMACGLYPHS {
@@ -663,6 +665,8 @@ impl Ttf<'_> {
 
     fn post_format_3(&mut self) {
         let count = self.glyph_tab.len();
+        // Indexed as in writettf.c's `ttf_post_format_3` loop.
+        #[allow(clippy::needless_range_loop)]
         for i in 0..NMACGLYPHS.min(count) {
             self.glyph_tab[i].name_index = i as u16;
         }
@@ -1049,6 +1053,8 @@ impl Ttf<'_> {
                     continue;
                 };
                 let t = self.dir_tab[tab];
+                // Indexed as in writettf.c's `for (k = 0; k < 4; k++) put_char(tab->tag[k])`.
+                #[allow(clippy::needless_range_loop)]
                 for k in 0..4 {
                     self.put_char(t.tag[k] as i8 as i64);
                 }
@@ -1059,6 +1065,8 @@ impl Ttf<'_> {
         } else {
             for tab in 0..self.dir_tab.len() {
                 let t = self.dir_tab[tab];
+                // Indexed as in writettf.c's `for (k = 0; k < 4; k++) put_char(tab->tag[k])`.
+                #[allow(clippy::needless_range_loop)]
                 for k in 0..4 {
                     self.put_char(t.tag[k] as i8 as i64);
                 }
@@ -1102,7 +1110,23 @@ impl Ttf<'_> {
         self.reset_chksm(tab);
         let mut idn = 0usize;
         while idn < self.new_glyphs_count as usize {
-            let id = self.glyph_index[idn] as usize;
+            // C reads `glyph_tab[id + 1]` below, so a glyph id at or past
+            // `maxp.numGlyphs` reads past the table. That happens when
+            // `maxp` declares fewer glyphs than the subset uses: fewer than
+            // the two, `.notdef` and `.null`, every subset starts with
+            // (numGlyphs 0 or 1), or a composite naming the glyph at
+            // numGlyphs (its own check below lets that one through, as C's
+            // `glyph_tab` has numGlyphs + 1 entries). pdfTeX 1.40.29 ends in
+            // "unexpected EOF" (undefined behaviour; TeX Live 2023's pdfTeX
+            // crashes); here it is a pdfTeX error.
+            let id = match self.glyph_index.get(idn) {
+                Some(&id) if id >= 0 && (id as usize) < self.glyphs_count as usize => id as usize,
+                got => self.g.pdftex_fail(&format!(
+                    "glyph index {} out of range [0..{})",
+                    got.map_or(idn as i64, |&id| id),
+                    self.glyphs_count
+                )),
+            };
             self.glyph_tab[id].newoffset = (self.offset() as i64 - new_glyf_offset) as i32;
             let (o, o1) = (
                 self.glyph_tab[id].offset,

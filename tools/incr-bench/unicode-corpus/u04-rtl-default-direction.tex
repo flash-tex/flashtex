@@ -1,0 +1,17 @@
+% u04-rtl-default-direction: a font shared by the pages before and after a
+% restart point, shaping neutral text on page 2 and Hebrew on page 3 (the
+% layout engine's default direction is the last shaping's script: a
+% restore must put back the one its point had, not the old run's later
+% Hebrew)
+\documentclass{article}
+\font\h="Arial" at 12pt
+\begin{document}
+First page, in the document's own font.
+\newpage
+Second page: {\h ?! (1, 2) -- 3.} and more neutral marks {\h [] ...}.
+\newpage
+Third page: {\h שלום עולם, זה טקסט בעברית.} And back to Latin.
+\newpage
+Fourth page, in the document's font again: the font's last shaping was
+the Hebrew.
+\end{document}

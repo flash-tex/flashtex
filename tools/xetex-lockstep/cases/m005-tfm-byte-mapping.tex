@@ -1,0 +1,12 @@
+% m005-tfm-byte-mapping: a TFM font with :mapping= (a byte mapping, qx-unicode): characters mapped at \shipout
+% XeTeX-specific (docs/design/xetex/PLAN.md, phase S1: TECkit font mappings)
+\input prelude
+\def\space{ }
+\font\q=cmr10:mapping=qx-unicode \q
+\setbox0=\hbox{abc \char"E9\char"FC\char"DF\char"27 xyz}
+\font\r="cmr10:mapping=  qx-unicode" \font\s="cmr10:mapping=" \font\t=cmr10
+\message{[\fontname\q][\fontname\r][\fontname\s][\fontname\t]}
+\setbox1=\hbox{\r abc \s abc \t abc}
+\setbox2=\vbox{\box0 \box1}
+\lsshipbox2
+\end

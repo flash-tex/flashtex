@@ -7,10 +7,15 @@ final class ShellModelTests: XCTestCase {
     func testLoadsFixturesAndNavigatesToUTF16Selection() throws {
         let model = ShellModel()
         XCTAssertNil(model.loadError, model.loadError ?? "")
-        let result = try XCTUnwrap(model.result)
-        XCTAssertEqual(result.status, .ok)
+        XCTAssertNotNil(model.fixtureURL)
         XCTAssertEqual(model.activeText, "Hello FlashTeX.\n")
-        XCTAssertFalse(model.previewIsStale)
+        // The model shows nothing of the fixture's result; its item is the
+        // source range navigation is asked for, and the fixture's text is
+        // what that compile read (the engine's baseline at DONE).
+        let fixtures = try XCTUnwrap(ShellModel.locateFixturesDirectory())
+        let result = try RuntimeV1.decodeCompileResult(Data(contentsOf: fixtures.appendingPathComponent("compile-result.json"))).payload
+        XCTAssertEqual(result.status, .ok)
+        model.setCompiledDocuments(["main.tex": model.activeText])
 
         guard case .text(let item) = result.pages[0].items[0] else { return XCTFail() }
         model.navigate(to: item.source)
@@ -22,7 +27,6 @@ final class ShellModelTests: XCTestCase {
         // Editing bumps the revision. An edit inside the item's span refuses navigation
         // (stale offsets are never applied); an edit after it is rebased.
         model.updateActiveText("Héllo FlashTeX.\n")
-        XCTAssertTrue(model.previewIsStale)
         let selBefore = model.selection
         model.navigate(to: item.source!, expectedText: item.text)
         XCTAssertEqual(model.selection, selBefore)
@@ -52,156 +56,6 @@ final class ShellModelTests: XCTestCase {
 }
 
 @MainActor
-final class ShellModelWorkerTests: XCTestCase {
-    func testCompileThroughWorkerReplacesFixtureAndIgnoresOlderRevisions() async throws {
-        let model = ShellModel()
-        XCTAssertTrue(model.isFixture)
-        model.attachWorker(at: WorkerClientTests.python, arguments: [WorkerClientTests.fakeWorker.path])
-        XCTAssertTrue(model.workerAttached)
-
-        model.autoCompile = false
-        model.updateActiveText("Second draft\n") // editorRevision 2
-        model.compile()
-        XCTAssertEqual(model.inFlightRevision, 2)
-        try await waitUntil { model.inFlightRevision == nil }
-        XCTAssertNotNil(model.lastLatencyMs)
-        XCTAssertEqual(model.compiledDocuments["main.tex"], "Second draft\n")
-        XCTAssertFalse(model.isFixture)
-        XCTAssertEqual(model.result?.revision, 2)
-        XCTAssertFalse(model.previewIsStale)
-        guard let result = model.result, let firstPage = result.pages.first, let firstItem = firstPage.items.first else {
-            return XCTFail("expected a result with at least one page with at least one item")
-        }
-        guard case .text(let item) = firstItem else { return XCTFail() }
-        XCTAssertEqual(item.text, "Second draft")
-        model.navigate(to: item.source)
-        XCTAssertEqual(model.selection?.nsRange, NSRange(location: 0, length: 12))
-
-        // Simulate an out-of-order older result: it must not replace revision 2.
-        let stale = RuntimeV1.Envelope(protocolVersion: 1, id: "old", type: "compile_result",
-            payload: RuntimeV1.CompileResult(projectId: "demo", revision: 1, status: .failed, pages: [], diagnostics: [], pdfPath: nil))
-        model.handleForTesting(.result(stale))
-        XCTAssertEqual(model.result?.revision, 2)
-        XCTAssertEqual(model.result?.status, .ok)
-        model.detachWorker()
-        XCTAssertFalse(model.workerAttached)
-    }
-
-    func testUnsolicitedAndMismatchedResultsAreNeverApplied() async throws {
-        let model = ShellModel()
-        model.attachWorker(at: WorkerClientTests.python, arguments: [WorkerClientTests.fakeWorker.path])
-        model.autoCompile = false
-        let fixtureResult = model.result
-
-        // 1. A result whose id was never sent: ignored, fixture stays.
-        let unsolicited = RuntimeV1.Envelope(protocolVersion: 1, id: "never-sent", type: "compile_result",
-            payload: RuntimeV1.CompileResult(projectId: "demo", revision: 99, status: .ok, pages: [], diagnostics: [], pdfPath: nil))
-        model.handleForTesting(.result(unsolicited))
-        XCTAssertEqual(model.result, fixtureResult)
-        XCTAssertTrue(model.isFixture)
-        XCTAssertTrue(model.workerLog.last?.contains("unknown id") == true)
-
-        // 2. Worker answers with the wrong id for a real request: not applied, request stays pending until timeout logic (here: still in flight).
-        model.updateActiveText("%wrongid first\n")
-        model.compile()
-        try await Task.sleep(nanoseconds: 400_000_000)
-        XCTAssertTrue(model.isFixture, "result with unknown id must not be applied")
-        XCTAssertNotNil(model.inFlightRevision)
-        model.detachWorker()
-
-        // 3. Right id but wrong revision/project: rejected as a protocol violation.
-        model.attachWorker(at: WorkerClientTests.python, arguments: [WorkerClientTests.fakeWorker.path])
-        model.updateActiveText("%wrongrev second\n")
-        model.compile()
-        try await waitUntil { model.inFlightRevision == nil }
-        XCTAssertTrue(model.isFixture, "mismatched revision must not be applied")
-        XCTAssertTrue(model.workerStatus.contains("protocol violation"), model.workerStatus)
-        XCTAssertTrue(model.inFlightRequests.isEmpty)
-
-        // 4. Same id, matching project and revision: applied.
-        model.updateActiveText("third\n")
-        model.compile()
-        try await waitUntil { model.inFlightRevision == nil }
-        XCTAssertFalse(model.isFixture)
-        XCTAssertEqual(model.result?.revision, model.editorRevision)
-        model.detachWorker()
-    }
-
-    func testAutoCompileDebouncesAndCoalescesEdits() async throws {
-        let model = ShellModel()
-        model.attachWorker(at: WorkerClientTests.python, arguments: [WorkerClientTests.fakeWorker.path])
-        model.autoCompile = true
-        // Burst of edits: only the last buffer should end up compiled, and never out of order.
-        for i in 1...5 { model.updateActiveText("draft \(i)\n") }
-        let finalRevision = model.editorRevision
-        try await waitUntil(timeout: 10) { model.result?.revision == finalRevision && model.inFlightRevision == nil }
-        guard case .text(let item) = model.result!.pages[0].items[0] else { return XCTFail() }
-        XCTAssertEqual(item.text, "draft 5")
-        XCTAssertLessThanOrEqual(model.latenciesMs.count, 2, "burst coalesced into at most two requests, got \(model.latenciesMs.count)")
-        XCTAssertFalse(model.previewIsStale)
-        model.detachWorker()
-    }
-
-    /// A worker that dies mid-request is relaunched (bounded) and the next
-    /// edit compiles again; the last preview stays; a clean exit or an explicit
-    /// detach never relaunches; the per-minute limit leaves the exit visible.
-    func testCrashedWorkerIsRelaunchedWithBoundedBackoff() async throws {
-        let model = ShellModel()
-        model.attachWorker(at: WorkerClientTests.python, arguments: [WorkerClientTests.fakeWorker.path])
-        model.autoCompile = true
-        model.updateActiveText("first\n")
-        try await waitUntil { model.result?.revision == model.editorRevision && model.inFlightRevision == nil }
-        let before = model.result
-        model.updateActiveText("%crash\n")   // the fake worker exits with status 3 without replying
-        try await waitUntil { model.workerRelaunchCount == 1 && model.workerAttached }
-        XCTAssertEqual(model.result, before, "the last preview survives the crash")
-        XCTAssertTrue(model.workerStatus.contains("revision") || model.workerStatus.contains("compiling") || model.workerStatus.contains("attached"), model.workerStatus)
-        // The relaunched worker compiles the current buffer (still %crash → crashes again, relaunch 2),
-        // then a harmless edit compiles normally on the third worker.
-        try await waitUntil { model.workerRelaunchCount >= 2 && model.workerAttached }
-        model.updateActiveText("after relaunch\n")
-        try await waitUntil { model.result?.revision == model.editorRevision && model.inFlightRevision == nil }
-        guard case .text(let item) = model.result!.pages[0].items[0] else { return XCTFail() }
-        XCTAssertEqual(item.text, "after relaunch")
-        // Three more crashes within the minute exhaust the budget: no fourth relaunch.
-        for _ in 0..<2 { model.updateActiveText("%crash \(UUID())\n"); try await waitUntil { !model.workerAttached || model.workerRelaunchCount >= 3 } ; try await Task.sleep(nanoseconds: 300_000_000) }
-        model.updateActiveText("%crash final\n")
-        try await waitUntil(timeout: 5) { model.workerStatus.contains("not relaunched") }
-        XCTAssertFalse(model.workerAttached)
-        XCTAssertEqual(model.workerRelaunchCount, ShellModel.maxWorkerRelaunches)
-        // Explicit detach after a manual re-attach cancels any pending relaunch.
-        model.attachWorker(at: WorkerClientTests.python, arguments: [WorkerClientTests.fakeWorker.path])
-        model.detachWorker()
-        XCTAssertFalse(model.workerAttached)
-    }
-
-    /// A bridge/ledger restart can raise the editor revision past the compiled
-    /// one without changing the buffer; the preview must not stay "stale" until
-    /// the next keystroke — the shell recompiles at the advanced revision.
-    func testAdvancedEditorRevisionRecompilesSoPreviewIsNotStaleForever() async throws {
-        let model = ShellModel()
-        model.attachWorker(at: WorkerClientTests.python, arguments: [WorkerClientTests.fakeWorker.path])
-        model.autoCompile = true
-        model.updateActiveText("hello\n")
-        try await waitUntil(timeout: 10) { model.result?.revision == model.editorRevision && model.inFlightRevision == nil }
-        XCTAssertFalse(model.previewIsStale)
-        model.advanceEditorRevision(atLeast: model.editorRevision + 7)
-        XCTAssertTrue(model.previewIsStale, "the advanced revision makes the old result stale")
-        try await waitUntil(timeout: 10) { model.result?.revision == model.editorRevision && model.inFlightRevision == nil }
-        XCTAssertFalse(model.previewIsStale)
-        model.detachWorker()
-    }
-
-    private func waitUntil(timeout: TimeInterval = 10, _ cond: () -> Bool) async throws {
-        let start = Date()
-        while !cond() {
-            if Date().timeIntervalSince(start) > timeout { throw XCTSkip("timeout") }
-            try await Task.sleep(nanoseconds: 50_000_000)
-        }
-    }
-}
-
-@MainActor
 final class DocumentFileTests: XCTestCase {
     func testOpenAndSaveRoundTripWithDirtyTracking() throws {
         let dir = FileManager.default.temporaryDirectory.appendingPathComponent("flashtex-doc-\(UUID().uuidString)")
@@ -211,11 +65,11 @@ final class DocumentFileTests: XCTestCase {
         try "Café naïve\n".write(to: url, atomically: true, encoding: .utf8)
 
         let model = ShellModel()
-        XCTAssertNotNil(model.result, "fixture loaded first")
+        XCTAssertNotNil(model.fixtureURL, "fixture loaded first")
         model.openTex(at: url)
         XCTAssertEqual(model.activeText, "Café naïve\n")
         XCTAssertEqual(model.documentURL, url)
-        XCTAssertNil(model.result, "opening a file clears the fixture preview")
+        XCTAssertNil(model.fixtureURL, "opening a file replaces the fixture project")
         XCTAssertFalse(model.isDirty)
 
         model.updateActiveText("Café naïve — edited\n")

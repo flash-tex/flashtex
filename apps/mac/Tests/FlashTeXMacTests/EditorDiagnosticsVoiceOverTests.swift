@@ -30,15 +30,12 @@ final class EditorDiagnosticsVoiceOverTests: XCTestCase {
         ]
     }
 
-    /// A model whose result produced marks for `text` (the compiled text is the current text).
+    /// A model whose engine rows produced marks for `text` (the compiled text is the current text).
     static func model() -> ShellModel {
         let m = ShellModel()
         m.replaceProject(entryText: text)
-        m.result = RuntimeV1.CompileResult(projectId: "p", revision: m.editorRevision, status: .recovered, pages: [],
-                                           diagnostics: diagnostics(), pdfPath: nil)
-        m.resultID = "r1"
-        m.setCompiledDocuments(["main.tex": text])
-        m.retainMarksAfterResultBound()
+        m.engineV3Diagnostics = diagnostics()
+        m.setEngineV3CompiledDocuments(["main.tex": text])
         return m
     }
 
@@ -86,11 +83,8 @@ final class EditorDiagnosticsVoiceOverTests: XCTestCase {
         ]
         let m = ShellModel()
         m.replaceProject(entryText: text)
-        m.result = RuntimeV1.CompileResult(projectId: "p", revision: m.editorRevision, status: .recovered, pages: [],
-                                           diagnostics: diags, pdfPath: nil)
-        m.resultID = "r1"
-        m.setCompiledDocuments(["main.tex": text])
-        m.retainMarksAfterResultBound()
+        m.engineV3Diagnostics = diags
+        m.setEngineV3CompiledDocuments(["main.tex": text])
         let marks = m.editorMarks.sorted { $0.nsRange.location < $1.nsRange.location }
         XCTAssertEqual(marks.map(\.code), ["unsupported_feature", "unknown_command", nil])
         XCTAssertEqual(marks.map(\.isGap), [true, false, true])
@@ -118,7 +112,7 @@ final class EditorDiagnosticsVoiceOverTests: XCTestCase {
         var body: some View {
             SourceEditorView(
                 text: Binding(get: { model.activeText }, set: { model.updateActiveText($0) }),
-                selection: model.selection, pendingEdit: model.pendingEdit, marks: model.editorMarks, result: model.result,
+                selection: model.selection, pendingEdit: model.pendingEdit, marks: model.editorMarks,
                 onCaretChange: { model.caretUTF16 = $0 },
                 onSelectionChange: { model.caretLengthUTF16 = $0.length },
                 onEditApplied: { edit, text in model.editApplied(edit, newText: text) },

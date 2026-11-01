@@ -1,0 +1,889 @@
+//! The display list's source map (spec §5.3, `SOURCES`, `SPAN` and each
+//! GLYPH's column): which source line and column made what a page draws,
+//! for the preview's reverse and forward search. The engine side of the
+//! pdfTeX engine's (`crates/flashtex-engine/src/displaylist/mod.rs`:
+//! `dl_new_node`, `dl_here`, the spans), for XeTeX: the hooks of
+//! `changes/displaylist.ch` call the routines here; they do nothing unless
+//! a display list was asked for (`FLASHTEX_DISPLAY_LIST`) and never change
+//! a variable of TeX's.
+//!
+//! * As a node is allocated, its source position goes into a side table
+//!   indexed like `mem`: the span (file, line) of the innermost open file's
+//!   line and the byte column of the last character read from it (XeTeX's
+//!   `buffer` holds Unicode scalars; columns are UTF-8 bytes, as the
+//!   editor counts them).
+//! * A native word's node is made once the whole word has been read, so
+//!   its column would be the word's end; [`Globals::dl_native_word`] (from
+//!   `set_native_metrics`) moves it to the word's first character, found in
+//!   the line before that point.
+//! * As `hlist_out` and `vlist_out` output a node, its position is noted
+//!   with the XDV stream's offset at that moment (a marker); the page reader
+//!   (`out::page`) gives what it draws from there on that span and column.
+
+use crate::generated::consts::token_list;
+use crate::generated::types::in_state_record;
+use crate::generated::Globals;
+use std::collections::{HashMap, HashSet};
+use std::sync::Arc;
+
+/// A node's position: the span in bits 16..48, the byte column in bits
+/// 0..16 (`NO_COLUMN`: none), bit 63 when a native word's column is its
+/// first character's.
+pub type Loc = u64;
+
+pub const NO_COLUMN: u16 = 0xFFFF;
+const START_FOUND: u64 = 1 << 63;
+
+fn pack(span: u32, col: u16) -> Loc {
+    (span as u64) << 16 | col as u64
+}
+
+pub fn loc_span(l: Loc) -> u32 {
+    (l >> 16) as u32
+}
+
+pub fn loc_col(l: Loc) -> u16 {
+    l as u16
+}
+
+/// One marker: from XDV stream offset `pos` on, what is drawn is at `span`
+/// and `col`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Marker {
+    pub pos: u64,
+    pub span: u32,
+    pub col: u16,
+}
+
+/// The source map's state (a field of the engine's `Host`).
+#[derive(Default)]
+pub struct DlSource {
+    /// Whether a display list is written (decided at the first node).
+    on: Option<bool>,
+    /// The position of the node at each `mem` location.
+    side: Side,
+    /// Bytes the side table copied from checkpoints' groups and leaves,
+    /// ever (an upper bound of what checkpoints hold of it since
+    /// [`DlSource::held_bytes`] was counted last).
+    pub copied: usize,
+    /// File id - 1 → absolute path; name bytes → file id.
+    files: Vec<String>,
+    file_ids: HashMap<Vec<u8>, u32>,
+    /// Span id - 1 → (file id, line); (file id, line) → span id.
+    spans: Vec<(u32, u32)>,
+    span_ids: HashMap<(u32, u32), u32>,
+    /// The last (file name string, line) looked up, and its span.
+    last: (i32, u32, u32),
+    /// The input stack level found last as the innermost file line.
+    file_level: usize,
+    not_a_node: bool,
+    /// The last column worked out: (file name, line, line start, character
+    /// index, its byte column), carried forward as TeX reads on.
+    col_cache: (i32, i32, i32, usize, usize),
+    hyph: Option<Loc>,
+    /// Markers not yet taken by a page, in stream order.
+    pub markers: Vec<Marker>,
+    last_marked: Loc,
+}
+
+/// A node's source position as a place: (file path, line, column and
+/// flag), from the tables of the run that made it (the convergence test,
+/// `crate::conv`, compares two runs' positions this way: their span and
+/// file ids are numbered as each run met them).
+pub type Place<'a> = Option<(&'a str, u32, u64)>;
+
+/// The span and file tables of a run ([`DlSource::tables`]).
+#[derive(Clone, Default)]
+pub struct Tables {
+    spans: Vec<(u32, u32)>,
+    files: Vec<String>,
+    file_ids: HashMap<Vec<u8>, u32>,
+    span_ids: HashMap<(u32, u32), u32>,
+}
+
+impl Tables {
+    pub fn place(&self, l: Loc) -> Place<'_> {
+        place_in(&self.spans, &self.files, l)
+    }
+}
+
+fn place_in<'a>(spans: &[(u32, u32)], files: &'a [String], l: Loc) -> Place<'a> {
+    if l == 0 {
+        return None;
+    }
+    let s = loc_span(l);
+    let rest = l & !(0xFFFF_FFFFu64 << 16);
+    let (f, line) = spans.get((s as usize).checked_sub(1)?).copied()?;
+    let path = files.get((f as usize).checked_sub(1)?)?;
+    Some((path.as_str(), line, rest))
+}
+
+impl DlSnap {
+    /// How many spans and files the source map had named.
+    pub fn lens(&self) -> (usize, usize) {
+        (self.spans, self.files)
+    }
+
+    /// Node `p`'s position in this snapshot.
+    pub fn at(&self, p: i32) -> Loc {
+        self.side.get(p as u32 as usize)
+    }
+
+    /// The entries of the side table that may name another place here than
+    /// in `live` (at most `cap` of them, `None` past that), where `live`
+    /// numbers its spans and files as this snapshot's run did
+    /// ([`DlSource::numbered_like`] with [`lens`](Self::lens)): an entry
+    /// that differs, or an equal one of a span this snapshot had not named.
+    /// Every other entry is the same place in both (`crate::conv`, the
+    /// convergence test of an equal state). A leaf or group both tables
+    /// share holds the same entries, written while the run that made them
+    /// had named no more spans than it then kept (a restore cuts both back
+    /// together, `DlSource::restore`).
+    pub fn side_diffs(&self, live: &DlSource, cap: usize) -> Option<Vec<usize>> {
+        let spans = self.spans as u64;
+        let (a, b) = (&self.side, &live.side);
+        let mut out = vec![];
+        let span_ok = |x: Loc| x == 0 || u64::from(loc_span(x)) <= spans;
+        let groups = a.groups.len().max(b.groups.len());
+        for gi in 0..groups {
+            let (ga, gb) = (
+                a.groups.get(gi).and_then(Option::as_ref),
+                b.groups.get(gi).and_then(Option::as_ref),
+            );
+            if let (Some(x), Some(y)) = (ga, gb) {
+                if Arc::ptr_eq(x, y) {
+                    continue;
+                }
+            }
+            for li in 0..LEAVES {
+                let la = ga.and_then(|g| g.0[li].as_ref());
+                let lb = gb.and_then(|g| g.0[li].as_ref());
+                let (x, y): (&Leaf, &Leaf) = match (la, lb) {
+                    (None, None) => continue,
+                    (Some(x), Some(y)) if Arc::ptr_eq(x, y) => continue,
+                    (x, y) => (
+                        x.map_or(&[0; LEAF], |l| &**l),
+                        y.map_or(&[0; LEAF], |l| &**l),
+                    ),
+                };
+                for k in 0..LEAF {
+                    if x[k] != y[k] || !span_ok(x[k]) {
+                        let p = (((gi << GROUP_SHIFT) | li) << LEAF_SHIFT) | k;
+                        if p >= a.len.max(b.len) {
+                            break;
+                        }
+                        if out.len() == cap {
+                            return None;
+                        }
+                        out.push(p);
+                    }
+                }
+            }
+        }
+        Some(out)
+    }
+}
+
+impl DlSource {
+    /// The span and file tables as they are (a run's, all of whose
+    /// positions they name).
+    pub fn tables(&self) -> Tables {
+        Tables {
+            spans: self.spans.clone(),
+            files: self.files.clone(),
+            file_ids: self.file_ids.clone(),
+            span_ids: self.span_ids.clone(),
+        }
+    }
+
+    /// Take over `t` (the convergence jump: the old run's numbering, which
+    /// a restore of one of its checkpoints then cuts back).
+    pub fn set_tables(&mut self, t: Tables) {
+        self.spans = t.spans;
+        self.files = t.files;
+        self.file_ids = t.file_ids;
+        self.span_ids = t.span_ids;
+    }
+
+    /// Node `p`'s position now.
+    pub fn at(&self, p: i32) -> Loc {
+        self.get(p)
+    }
+
+    /// [`Tables::place`] in these tables (without copying them).
+    pub fn place(&self, l: Loc) -> Place<'_> {
+        place_in(&self.spans, &self.files, l)
+    }
+
+    /// Whether these tables are `t`'s first `spans` spans and `files` files
+    /// (a converged run's numbering is the old run's so far).
+    pub fn numbered_like(&self, t: &Tables, (spans, files): (usize, usize)) -> bool {
+        self.spans.len() == spans
+            && self.files.len() == files
+            && t.spans.get(..spans) == Some(&self.spans[..])
+            && t.files.get(..files) == Some(&self.files[..])
+    }
+
+    /// Whether a display list is made.
+    pub fn on(&self) -> bool {
+        self.on == Some(true)
+    }
+
+    fn file_id(&mut self, name: &[u8]) -> u32 {
+        if let Some(&i) = self.file_ids.get(name) {
+            return i;
+        }
+        let mut path = String::from_utf8_lossy(name).into_owned();
+        if !path.starts_with('/') {
+            if let Ok(cwd) = std::env::current_dir() {
+                path = cwd
+                    .join(path.trim_start_matches("./"))
+                    .to_string_lossy()
+                    .into_owned();
+            }
+        }
+        self.files.push(path);
+        let id = self.files.len() as u32;
+        self.file_ids.insert(name.to_vec(), id);
+        id
+    }
+
+    fn span_id(&mut self, file: u32, line: u32) -> u32 {
+        if let Some(&s) = self.span_ids.get(&(file, line)) {
+            return s;
+        }
+        self.spans.push((file, line));
+        let id = self.spans.len() as u32;
+        self.span_ids.insert((file, line), id);
+        id
+    }
+
+    /// A page was shipped: the next page's first node is marked again.
+    pub fn page_done(&mut self) {
+        self.last_marked = 0;
+    }
+
+    /// Where span `s` is: (file id, line).
+    pub fn span(&self, s: u32) -> Option<(u32, u32)> {
+        self.spans.get((s as usize).checked_sub(1)?).copied()
+    }
+
+    /// The absolute path of file id `f`.
+    pub fn file(&self, f: u32) -> Option<&str> {
+        self.files
+            .get((f as usize).checked_sub(1)?)
+            .map(String::as_str)
+    }
+
+    #[inline(always)]
+    fn get(&self, p: i32) -> Loc {
+        self.side.get(p as u32 as usize)
+    }
+
+    #[inline(always)]
+    fn set(&mut self, p: i32, v: Loc) {
+        self.copied += self.side.set(p as u32 as usize, v);
+    }
+
+    /// The bytes of the side table that the snapshots `snaps` hold and the
+    /// live table does not share: what dropping them all would give back.
+    /// A group or leaf sits at one place of every table that has it, so it
+    /// is shared with the live table only if the live table has it there.
+    pub fn held_bytes<'a>(&self, snaps: impl Iterator<Item = &'a DlSnap>) -> usize {
+        let live = &self.side.groups;
+        let (mut seen_g, mut seen_l) = (HashSet::new(), HashSet::new());
+        let mut bytes = 0;
+        for s in snaps {
+            bytes += s.side.groups.len() * std::mem::size_of::<Option<Arc<Group>>>();
+            for (gi, g) in s.side.groups.iter().enumerate() {
+                let Some(g) = g else { continue };
+                let lg = live.get(gi).and_then(Option::as_ref);
+                if lg.is_some_and(|l| Arc::ptr_eq(l, g)) || !seen_g.insert(Arc::as_ptr(g)) {
+                    continue;
+                }
+                bytes += std::mem::size_of::<Group>();
+                for (li, l) in g.0.iter().enumerate() {
+                    let Some(l) = l else { continue };
+                    let shared = lg
+                        .and_then(|lg| lg.0[li].as_ref())
+                        .is_some_and(|x| Arc::ptr_eq(x, l));
+                    if !shared && seen_l.insert(Arc::as_ptr(l)) {
+                        bytes += std::mem::size_of::<Leaf>();
+                    }
+                }
+            }
+        }
+        bytes
+    }
+
+    /// The source map as it was at snapshot `s`, for a persisted S₀
+    /// (`crate::s0file`): the side table's entries, the files and spans
+    /// named by then (the tables only grow), the rest as `s` has it.
+    pub(crate) fn enc_at(&self, s: &DlSnap, w: &mut Vec<u8>) {
+        use flashtex_engine::persist::Codec;
+        s.on.enc(w);
+        s.side.len.enc(w);
+        let mut entries: Vec<(u32, u64)> = vec![];
+        for (gi, g) in s.side.groups.iter().enumerate() {
+            let Some(g) = g else { continue };
+            for (li, l) in g.0.iter().enumerate() {
+                let Some(l) = l else { continue };
+                let base = (gi << (LEAF_SHIFT + GROUP_SHIFT)) | (li << LEAF_SHIFT);
+                for (k, &v) in l.iter().enumerate() {
+                    if v != 0 {
+                        entries.push(((base + k) as u32, v));
+                    }
+                }
+            }
+        }
+        entries.enc(w);
+        self.files[..s.files.min(self.files.len())].to_vec().enc(w);
+        // (the maps in key order: the same S₀ makes the same file)
+        let mut ids: Vec<(Vec<u8>, u32)> = self
+            .file_ids
+            .iter()
+            .filter(|(_, &id)| id as usize <= s.files)
+            .map(|(k, &id)| (k.clone(), id))
+            .collect();
+        ids.sort_unstable();
+        ids.enc(w);
+        self.spans[..s.spans.min(self.spans.len())].to_vec().enc(w);
+        let mut ids: Vec<((u32, u32), u32)> = self
+            .span_ids
+            .iter()
+            .filter(|(_, &id)| id as usize <= s.spans)
+            .map(|(k, &id)| (*k, id))
+            .collect();
+        ids.sort_unstable();
+        ids.enc(w);
+        s.last.enc(w);
+        s.file_level.enc(w);
+        s.not_a_node.enc(w);
+        s.col_cache.0.enc(w);
+        s.col_cache.1.enc(w);
+        s.col_cache.2.enc(w);
+        s.col_cache.3.enc(w);
+        s.col_cache.4.enc(w);
+        s.hyph.enc(w);
+        let markers: Vec<(u64, u32, u16)> =
+            s.markers.iter().map(|m| (m.pos, m.span, m.col)).collect();
+        markers.enc(w);
+        s.last_marked.enc(w);
+    }
+
+    /// A source map as [`enc_at`](Self::enc_at) wrote it.
+    pub(crate) fn dec(r: &mut flashtex_engine::persist::Reader) -> Result<DlSource, String> {
+        use flashtex_engine::persist::Codec;
+        let on = Option::<bool>::dec(r)?;
+        let len = usize::dec(r)?;
+        let mut side = Side::zeros(len);
+        for (i, v) in Vec::<(u32, u64)>::dec(r)? {
+            if i as usize >= len {
+                return Err("the source map's entry is outside mem".into());
+            }
+            side.set(i as usize, v);
+        }
+        let files = Vec::<String>::dec(r)?;
+        let file_ids: HashMap<Vec<u8>, u32> = Vec::<(Vec<u8>, u32)>::dec(r)?.into_iter().collect();
+        let spans = Vec::<(u32, u32)>::dec(r)?;
+        let span_ids: HashMap<(u32, u32), u32> =
+            Vec::<((u32, u32), u32)>::dec(r)?.into_iter().collect();
+        let last = <(i32, u32, u32)>::dec(r)?;
+        let file_level = usize::dec(r)?;
+        let not_a_node = bool::dec(r)?;
+        let col_cache = (
+            i32::dec(r)?,
+            i32::dec(r)?,
+            i32::dec(r)?,
+            usize::dec(r)?,
+            usize::dec(r)?,
+        );
+        let hyph = Option::<Loc>::dec(r)?;
+        let markers = Vec::<(u64, u32, u16)>::dec(r)?
+            .into_iter()
+            .map(|(pos, span, col)| Marker { pos, span, col })
+            .collect();
+        let last_marked = Loc::dec(r)?;
+        Ok(DlSource {
+            on,
+            side,
+            copied: 0,
+            files,
+            file_ids,
+            spans,
+            span_ids,
+            last,
+            file_level,
+            not_a_node,
+            col_cache,
+            hyph,
+            markers,
+            last_marked,
+        })
+    }
+
+    /// A resident engine's run: the source map is made when its display
+    /// list is (its host says so; a run of its own reads
+    /// `FLASHTEX_DISPLAY_LIST`), over a `mem` of `mem_len` words.
+    pub fn set_on(&mut self, on: bool, mem_len: usize) {
+        if on && self.side.len() != mem_len {
+            self.side = Side::zeros(mem_len);
+        }
+        self.on = Some(on);
+    }
+
+    /// Whether the source map is made.
+    pub fn is_on(&self) -> bool {
+        self.on == Some(true)
+    }
+
+    /// The state at a checkpoint (`state.rs`'s `Globals::checkpoint`): the
+    /// side table shared chunk by chunk (copied on the next write to each),
+    /// the files and spans by their number (they only grow, in the order
+    /// a run meets them, so a restore cuts them back), the rest copied.
+    pub fn snapshot(&mut self) -> DlSnap {
+        DlSnap {
+            on: self.on,
+            side: self.side.share(),
+            files: self.files.len(),
+            spans: self.spans.len(),
+            last: self.last,
+            file_level: self.file_level,
+            not_a_node: self.not_a_node,
+            col_cache: self.col_cache,
+            hyph: self.hyph,
+            markers: self.markers.clone(),
+            last_marked: self.last_marked,
+        }
+    }
+
+    /// Put a [`snapshot`](Self::snapshot) back (the files and spans made
+    /// since, by the run it was taken in or a later one, dropped).
+    pub fn restore(&mut self, s: &DlSnap) {
+        self.on = s.on;
+        self.side = s.side.clone();
+        self.files.truncate(s.files);
+        self.file_ids.retain(|_, id| *id as usize <= s.files);
+        self.spans.truncate(s.spans);
+        self.span_ids.retain(|_, id| *id as usize <= s.spans);
+        self.last = s.last;
+        self.file_level = s.file_level;
+        self.not_a_node = s.not_a_node;
+        self.col_cache = s.col_cache;
+        self.hyph = s.hyph;
+        self.markers = s.markers.clone();
+        self.last_marked = s.last_marked;
+    }
+}
+
+/// [`DlSource`] at a checkpoint.
+#[derive(Clone)]
+pub struct DlSnap {
+    on: Option<bool>,
+    side: Side,
+    files: usize,
+    spans: usize,
+    last: (i32, u32, u32),
+    file_level: usize,
+    not_a_node: bool,
+    col_cache: (i32, i32, i32, usize, usize),
+    hyph: Option<Loc>,
+    markers: Vec<Marker>,
+    last_marked: Loc,
+}
+
+/// The side table, indexed like `mem`: groups of [`LEAVES`] leaves of
+/// [`LEAF`] entries, both shared with checkpoints (`Arc`) and copied at the
+/// first write after one (`Arc::make_mut`); a leaf or group never written
+/// is `None` (zeros). A page's nodes are scattered over `mem`: on a 109-page
+/// fontspec document a page writes into about 600 leaves but only 26 of the
+/// 64 KB regions the table was once split into, so a checkpoint holds about
+/// 330 KB of copies where whole 64 KB chunks held 1.7 MB (lane
+/// UNICODE-POLISH).
+#[derive(Clone, Default)]
+struct Side {
+    groups: Vec<Option<Arc<Group>>>,
+    len: usize,
+}
+
+const LEAF_SHIFT: usize = 6;
+const LEAF: usize = 1 << LEAF_SHIFT;
+const GROUP_SHIFT: usize = 7;
+const LEAVES: usize = 1 << GROUP_SHIFT;
+
+type Leaf = [Loc; LEAF];
+
+#[derive(Clone)]
+struct Group([Option<Arc<Leaf>>; LEAVES]);
+
+impl Side {
+    fn zeros(len: usize) -> Side {
+        Side {
+            groups: vec![None; len.div_ceil(LEAF * LEAVES)],
+            len,
+        }
+    }
+
+    fn len(&self) -> usize {
+        self.len
+    }
+
+    #[inline(always)]
+    fn get(&self, i: usize) -> Loc {
+        if i >= self.len {
+            return 0;
+        }
+        match &self.groups[i >> (LEAF_SHIFT + GROUP_SHIFT)] {
+            None => 0,
+            Some(g) => match &g.0[(i >> LEAF_SHIFT) & (LEAVES - 1)] {
+                None => 0,
+                Some(l) => l[i & (LEAF - 1)],
+            },
+        }
+    }
+
+    /// Set entry `i`; the bytes copied from a checkpoint's groups or
+    /// leaves (the first write to them since it).
+    #[inline(always)]
+    fn set(&mut self, i: usize, v: Loc) -> usize {
+        if i >= self.len {
+            return 0;
+        }
+        let mut copied = 0;
+        let g = &mut self.groups[i >> (LEAF_SHIFT + GROUP_SHIFT)];
+        if g.is_none() {
+            if v == 0 {
+                return 0;
+            }
+            *g = Some(Arc::new(Group(std::array::from_fn(|_| None))));
+        }
+        let g = g.as_mut().expect("made above");
+        if Arc::strong_count(g) > 1 {
+            copied += std::mem::size_of::<Group>();
+        }
+        let l = &mut Arc::make_mut(g).0[(i >> LEAF_SHIFT) & (LEAVES - 1)];
+        if l.is_none() {
+            if v == 0 {
+                return copied;
+            }
+            *l = Some(Arc::new([0; LEAF]));
+        }
+        let l = l.as_mut().expect("made above");
+        if Arc::strong_count(l) > 1 {
+            copied += std::mem::size_of::<Leaf>();
+        }
+        Arc::make_mut(l)[i & (LEAF - 1)] = v;
+        copied
+    }
+
+    /// The table, to keep at a checkpoint: every group shared, copied at
+    /// the next write to it.
+    fn share(&mut self) -> Side {
+        self.clone()
+    }
+}
+
+/// UTF-8 length of a Unicode scalar as XeTeX's `buffer` holds it.
+#[inline(always)]
+fn utf8_len(c: i32) -> usize {
+    match c {
+        ..=0x7F => 1,
+        0x80..=0x7FF => 2,
+        0x800..=0xFFFF => 3,
+        _ => 4,
+    }
+}
+
+impl Globals {
+    #[inline(always)]
+    fn dl_on(&mut self) -> bool {
+        match self.host.dl.on {
+            Some(on) => on,
+            None => {
+                // `FLASHTEX_SOURCE_MAP=0` turns it off (measurements).
+                let on = std::env::var_os(flashtex_display_list::endpoint::ENV)
+                    .is_some_and(|v| !v.is_empty())
+                    && std::env::var_os("FLASHTEX_SOURCE_MAP").is_none_or(|v| v != "0");
+                if on {
+                    self.host.dl.side = Side::zeros(self.mem.len());
+                }
+                self.host.dl.on = Some(on);
+                on
+            }
+        }
+    }
+
+    /// `dl_new_node(p)`: node (or token) `p` was just allocated.
+    #[inline(always)]
+    pub fn dl_new_node(&mut self, p: i32) {
+        // Tokens stored while a definition or a macro's arguments are
+        // scanned never become nodes: skipped first.
+        if self.scanner_status == 0 && !self.host.dl.not_a_node && self.dl_on() {
+            let v = if let Some(h) = self.host.dl.hyph {
+                h
+            } else if self.output_active {
+                // Material the output routine makes has no place in the source.
+                0
+            } else {
+                self.dl_here()
+            };
+            self.host.dl.set(p, v);
+        }
+    }
+
+    /// The position TeX reads at: the span of the innermost open file's
+    /// line and the byte column of the last character read from it.
+    fn dl_here(&mut self) -> Loc {
+        let level = self.in_open;
+        if level <= 0 {
+            return 0;
+        }
+        let name = self.full_source_filename_stack[level as usize];
+        if name == 0 {
+            return 0;
+        }
+        let line = self.line.max(0) as u32;
+        let rec = if is_file(&self.cur_input) {
+            Some(self.cur_input)
+        } else {
+            self.dl_file_level()
+        };
+        let col = match rec {
+            Some(r) if r.loc_field > r.start_field => {
+                let (a, b) = (
+                    r.start_field as usize,
+                    ((r.loc_field - 1) as usize).min(self.buffer.len()),
+                );
+                // the bytes of buffer[a..b], from the last ones on the same line
+                let c = self.host.dl.col_cache;
+                let (mut k, mut n) =
+                    if c.0 == name && c.1 == self.line && c.2 == r.start_field && c.3 <= b {
+                        (c.3, c.4)
+                    } else {
+                        (a, 0)
+                    };
+                while k < b {
+                    n += utf8_len(self.buffer[k]);
+                    k += 1;
+                }
+                self.host.dl.col_cache = (name, self.line, r.start_field, b, n);
+                n.min(NO_COLUMN as usize - 1) as u16
+            }
+            Some(_) => 0,
+            None => NO_COLUMN,
+        };
+        let d = &mut self.host.dl;
+        let span = if d.last.0 == name && d.last.1 == line {
+            d.last.2
+        } else {
+            let bytes = crate::system::tex_string_utf8(self, name);
+            let d = &mut self.host.dl;
+            let f = d.file_id(&bytes);
+            let s = d.span_id(f, line);
+            d.last = (name, line, s);
+            s
+        };
+        pack(span, col)
+    }
+
+    /// The innermost level of `input_stack` below `cur_input` reading a
+    /// file line (the pdfTeX engine's `file_level`, with its hint).
+    fn dl_file_level(&mut self) -> Option<in_state_record> {
+        let top = self.input_ptr.max(0) as usize;
+        let k = self.host.dl.file_level;
+        if k < top {
+            let r = self.input_stack[k];
+            if r.state_field != token_list && r.index_field == self.in_open && is_file(&r) {
+                return Some(r);
+            }
+        }
+        let k = (0..top).rev().find(|&k| is_file(&self.input_stack[k]))?;
+        self.host.dl.file_level = k;
+        Some(self.input_stack[k])
+    }
+
+    /// `dl_copy(r, p)`: node `r` is a copy of node `p`, or a native word
+    /// made from it.
+    #[inline(always)]
+    pub fn dl_copy(&mut self, r: i32, p: i32) {
+        if self.host.dl.on == Some(true) {
+            let v = self.host.dl.get(p);
+            self.host.dl.set(r, v);
+        }
+    }
+
+    /// `dl_hyph_begin(ha)`: the word at node `ha` is about to be rebuilt.
+    pub fn dl_hyph_begin(&mut self, ha: i32) {
+        if self.host.dl.on == Some(true) {
+            self.host.dl.hyph = Some(self.host.dl.get(ha));
+        }
+    }
+
+    pub fn dl_hyph_end(&mut self) {
+        self.host.dl.hyph = None;
+    }
+
+    #[inline(always)]
+    pub fn dl_token_begin(&mut self) {
+        self.host.dl.not_a_node = true;
+    }
+
+    #[inline(always)]
+    pub fn dl_token_end(&mut self) {
+        self.host.dl.not_a_node = false;
+    }
+
+    /// `dl_node(p)`: `hlist_out` or `vlist_out` is about to output node `p`.
+    #[inline(always)]
+    pub fn dl_node(&mut self, p: i32) {
+        if self.host.dl.on != Some(true) {
+            return;
+        }
+        let loc = self.host.dl.get(p) & !START_FOUND;
+        if loc == 0 || loc == self.host.dl.last_marked {
+            return;
+        }
+        let pos = (self.dvi_offset as i64 + self.dvi_ptr as i64).max(0) as u64;
+        let d = &mut self.host.dl;
+        d.last_marked = loc;
+        d.markers.push(Marker {
+            pos,
+            span: loc_span(loc),
+            col: loc_col(loc),
+        });
+    }
+
+    /// A native word node `p` is measured: if it was made on the line TeX
+    /// reads now and its column is still where the word ended, the column
+    /// becomes that of its first character, found by matching its text
+    /// backwards in the line from there. Once only.
+    pub fn dl_native_word(&mut self, p: i32, text: &[u16]) {
+        if self.host.dl.on != Some(true) || text.is_empty() {
+            return;
+        }
+        let loc = self.host.dl.get(p);
+        if loc == 0 || loc & START_FOUND != 0 || loc_col(loc) == NO_COLUMN {
+            return;
+        }
+        let here = self.dl_here();
+        if loc_span(here) != loc_span(loc) {
+            return;
+        }
+        let Some(r) = (if is_file(&self.cur_input) {
+            Some(self.cur_input)
+        } else {
+            self.dl_file_level()
+        }) else {
+            return;
+        };
+        // the word's scalars
+        let word: Vec<i32> = char::decode_utf16(text.iter().copied())
+            .map(|c| c.map_or(0xFFFD, |c| c as i32))
+            .collect();
+        let (a, end) = (
+            r.start_field as usize,
+            (r.loc_field.max(r.start_field)) as usize,
+        );
+        let end = end.min(self.buffer.len());
+        // the last occurrence ending at or before `end`
+        let n = word.len();
+        let mut found = None;
+        let mut k = end;
+        while k >= a + n {
+            if self.buffer[k - n..k] == word[..] {
+                found = Some(k - n);
+                break;
+            }
+            k -= 1;
+        }
+        let v = match found {
+            Some(s) => {
+                let col: usize = (a..s).map(|k| utf8_len(self.buffer[k])).sum();
+                pack(loc_span(loc), col.min(NO_COLUMN as usize - 1) as u16) | START_FOUND
+            }
+            None => loc | START_FOUND,
+        };
+        self.host.dl.set(p, v);
+    }
+
+    /// The `SOURCES` the reader needs for `spans` that it was not sent yet
+    /// (`sent` records them), as the frame's JSON body.
+    pub fn dl_sources(
+        &self,
+        spans: &[u32],
+        sent: &mut std::collections::HashSet<u32>,
+        files_sent: &mut std::collections::HashSet<u32>,
+    ) -> Option<Vec<u8>> {
+        let d = &self.host.dl;
+        let mut src = flashtex_display_list::resource::Sources::default();
+        for &s in spans {
+            if s == 0 || !sent.insert(s) {
+                continue;
+            }
+            let Some((file, line)) = d.span(s) else {
+                continue;
+            };
+            if files_sent.insert(file) {
+                if let Some(p) = d.file(file) {
+                    src.files.push((file, p.to_string()));
+                }
+            }
+            src.spans.push((s, file, line));
+        }
+        (!src.files.is_empty() || !src.spans.is_empty())
+            .then(|| src.to_json().to_string().into_bytes())
+    }
+}
+
+/// An input level reading a file line (not a token list, not the terminal
+/// or a pseudo file).
+fn is_file(r: &in_state_record) -> bool {
+    r.state_field != token_list && r.name_field > 17
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// `DlSnap::side_diffs` (READ-TRACK-2, the convergence test of an equal
+    /// state): the entries written since the snapshot that differ, those of
+    /// a leaf or group one table has and the other not, and an equal entry
+    /// of a span the snapshot had not named; nothing in what both share.
+    #[test]
+    fn side_diffs_finds_the_entries_that_may_differ() {
+        let n = 3 * LEAF * LEAVES + 17;
+        let mut d = DlSource::default();
+        d.set_on(true, n);
+        let f = d.file_id(b"a.tex");
+        let (s1, s2) = (d.span_id(f, 1), d.span_id(f, 2));
+        d.set(5, pack(s1, 3));
+        d.set((LEAF * LEAVES + 9) as i32, pack(s2, 0));
+        let snap = d.snapshot();
+        assert_eq!(snap.side_diffs(&d, 8), Some(vec![]));
+        assert!(d.numbered_like(&d.tables(), snap.lens()));
+        // (a write of the same value copies the leaf: still the same)
+        d.set(5, pack(s1, 3));
+        assert_eq!(snap.side_diffs(&d, 8), Some(vec![]));
+        // (a write into a group neither had, and one into a copied leaf)
+        let far = 2 * LEAF * LEAVES + 3;
+        d.set(far as i32, pack(s1, 1));
+        d.set(6, pack(s2, 4));
+        assert_eq!(snap.side_diffs(&d, 8), Some(vec![6, far]));
+        assert_eq!(snap.side_diffs(&d, 1), None);
+        // (an equal entry of a span the snapshot had not named, in a leaf
+        // the tables no longer share)
+        d.restore(&snap);
+        d.set(7, pack(9, 0));
+        let odd = d.snapshot();
+        assert_eq!(odd.side_diffs(&d, 8), Some(vec![]));
+        d.set(8, pack(s1, 0));
+        assert_eq!(odd.side_diffs(&d, 8), Some(vec![7, 8]));
+        // (a span named since: numbered otherwise)
+        let t = d.tables();
+        d.span_id(f, 3);
+        assert!(!d.numbered_like(&t, odd.lens()));
+        assert!(d
+            .place(pack(s2, 4))
+            .is_some_and(|(_, line, col)| line == 2 && col == 4));
+    }
+}

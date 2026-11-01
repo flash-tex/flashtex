@@ -15,8 +15,11 @@
 #
 # The tree is copied out of the image and kept in the Actions cache, keyed by
 # the digest and the extra packages' pins, so only the first run after a pin
-# changes pays for the pull. It is put FIRST on PATH: this TeX Live's
-# kpsewhich must win over anything else.
+# changes pays for the pull. A caller of a large image (scheme-full, ~2.6 GB
+# compressed: nightly.yml's engine jobs) passes `cache: "false"` and pulls it
+# every run instead, so it never evicts the rest of the repository's cache.
+# It is put FIRST on PATH: this TeX Live's kpsewhich must win over anything
+# else.
 name: TeX Live 2026 (pinned)
 description: Install the texlive/texlive image's TeX Live 2026 tree, pinned by digest, first on PATH.
 
@@ -29,6 +32,12 @@ inputs:
       extra tlnet packages, one "<name> <sha256 of name.tar.xz>" per line
     required: false
     default: ""
+  cache:
+    description: >-
+      "true": keep the tree in the Actions cache; "false": pull the image
+      every run (for an image too large to cache)
+    required: false
+    default: "true"
 
 outputs:
   bin:
@@ -55,6 +64,7 @@ runs:
         echo "dir=$RUNNER_TEMP/texlive" >> "$GITHUB_OUTPUT"
     - uses: actions/cache@v4
       id: cache
+      if: inputs.cache != 'false'
       with:
         path: ${{ steps.key.outputs.dir }}
         key: ${{ steps.key.outputs.key }}

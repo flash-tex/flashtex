@@ -78,6 +78,46 @@ impl Clone for PdfDocument {
     }
 }
 
+crate::codec_enum!(InObjType {
+    Font,
+    FontDesc,
+    Other
+});
+crate::codec_struct!(InObj {
+    r,
+    ty,
+    num,
+    fd,
+    enc_objnum,
+    written
+});
+
+/// A persisted S₀ (`images::State`'s codec) carries what a copy carries:
+/// the file name, the objects list and `occurences`; the decoded document
+/// opens the file again when it is used, as a copy does.
+impl crate::persist::Codec for PdfDocument {
+    fn enc(&self, w: &mut Vec<u8>) {
+        self.file_name.enc(w);
+        self.occurences.enc(w);
+        self.in_objs.list.enc(w);
+    }
+    fn dec(r: &mut crate::persist::Reader) -> Result<Self, String> {
+        let file_name = Vec::<u8>::dec(r)?;
+        let occurences = i32::dec(r)?;
+        let list = Vec::<InObj>::dec(r)?;
+        let mut index = HashMap::new();
+        for (i, o) in list.iter().enumerate() {
+            index.entry(o.r).or_insert(i);
+        }
+        Ok(PdfDocument {
+            file_name,
+            doc: std::cell::OnceCell::new(),
+            in_objs: InObjList { list, index },
+            occurences,
+        })
+    }
+}
+
 impl PdfDocument {
     /// xpdf's document, opened again if this is a copy.
     fn doc(&self) -> &Doc {
@@ -97,6 +137,15 @@ pub struct State {
     docs: Vec<Option<PdfDocument>>,
     /// `isInit`.
     is_init: bool,
+}
+
+crate::codec_struct!(State { docs, is_init });
+
+impl State {
+    /// An included PDF document is open (not deleted yet).
+    pub fn any_open(&self) -> bool {
+        self.docs.iter().any(Option::is_some)
+    }
 }
 
 /// What `read_pdf_info` leaves in pdfTeX's `epdf_*` globals.

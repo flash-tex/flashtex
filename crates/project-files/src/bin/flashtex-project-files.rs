@@ -19,7 +19,7 @@
 //!   "kind":"modified_externally"|"deleted_externally"|"already_exists"|
 //!   "modified_during_save","ours"?,"theirs"?,"mtime_unix_ms"?,"size"?}}`
 //! - `{"id","operation":"manifest","entry"?}` → payload `{"path"?,"exists",
-//!   "manifest_dir"?,"manifest":{"project":{"entry","texinputs","output"},
+//!   "manifest_dir"?,"manifest":{"project":{"entry","texinputs","output","mode"},
 //!   "fonts":{"text","math","mono","sans"},"packages":{"source","fetch","pin",
 //!   "path"},"library"?},"warnings":[{"key","message"}],"texinputs":[{"index",
 //!   "raw","location":"inside"|"outside"|"invalid","dir"?,"path"?,"reason"?}],
@@ -35,6 +35,9 @@
 //!   `template` is the commented manifest the consumer may save as
 //!   `flashtex.toml` for `entry` (default `main.tex`); a `save` with
 //!   `"expected":"new"` writes it under the same rules as any file.
+//! - `{"id","operation":"set_mode","mode":"classic"|"unicode","entry"?}` →
+//!   payload `{"path","exists","changed","text"}`: like `set_fonts`, with
+//!   `[project] mode` set (`Manifest::with_mode`); the shell saves it.
 //! - `{"id","operation":"set_fonts","fonts":{"text"?,"math"?,"mono"?,"sans"?},
 //!   "entry"?}` → payload `{"path","exists","changed","text"?}`: the text of the
 //!   governing manifest (or of the template for `entry` when there is none)
@@ -61,6 +64,12 @@
 //!   and `source = "none"` stop at the cache. Files carry the document-set
 //!   path `packages/<name>/<file>`. `diagnostics` are `packages.path.<key>`
 //!   problems. A name that is not a package name is `invalid_request`.
+//!   `"offline":true` never contacts the source, whatever the policy and
+//!   `consent` say: a library or the cache, else `not_available` (the Mac
+//!   app's new engine resolves the pins this way before it compiles).
+//!   `"libraries":true` adds `"libraries":[{"name","version","files"}]`:
+//!   every loaded `[packages] path` library with all its files (the same
+//!   file objects), which the new engine puts ahead of TeX Live.
 //! - `{"id","operation":"set_packages","fetch"?:"ask"|"always"|"never",
 //!   "pin"?:{name:version},"entry"?}` → payload `{"path","exists","changed",
 //!   "text"?}`: like `set_fonts`, the governing manifest's text (or the
@@ -294,7 +303,8 @@ fn manifest(root: &ProjectRoot, req: &Json) -> Result<Json, Failure> {
     project
         .insert("entry", opt(&m.project.entry))
         .insert("texinputs", m.project.texinputs.iter().map(|t| Json::from(t.as_str())).collect::<Vec<_>>())
-        .insert("output", opt(&m.project.output));
+        .insert("output", opt(&m.project.output))
+        .insert("mode", m.project.mode.map_or(Json::Null, |x| Json::from(x.as_str())));
     let mut fonts = Json::object();
     fonts
         .insert("text", opt(&m.fonts.text))
@@ -395,6 +405,55 @@ fn manifest(root: &ProjectRoot, req: &Json) -> Result<Json, Failure> {
     Ok(payload)
 }
 
+/// `set_mode`: like `set_fonts`, the governing manifest's text (or the
+/// template's, for `entry`, when there is none) with `[project] mode` set
+/// (`Manifest::with_mode`), for the shell to save. The helper writes nothing.
+fn set_mode(root: &ProjectRoot, req: &Json) -> Result<Json, Failure> {
+    let entry = match req.get("entry") {
+        None | Some(Json::Null) => "main.tex".to_string(),
+        Some(v) => v
+            .as_str()
+            .ok_or_else(|| fail("invalid_request", "entry must be a string"))?
+            .to_string(),
+    };
+    let mode = req
+        .get("mode")
+        .and_then(|v| v.as_str())
+        .and_then(flashtex_project_manifest::Mode::parse)
+        .filter(|m| *m != flashtex_project_manifest::Mode::FlashTeX)
+        .ok_or_else(|| fail("invalid_request", "mode must be \"classic\" or \"unicode\""))?;
+    let found = Manifest::locate(root.path());
+    let (path, exists, current) = match &found {
+        Some(path) => {
+            let text = std::fs::read_to_string(path).map_err(|e| fail("io", format!("{}: {e}", path.display())))?;
+            (path.clone(), true, text)
+        }
+        None => (root.path().join(flashtex_project_manifest::FILE_NAME), false, Manifest::template(&entry)),
+    };
+    // The rewrite must read back as the original with only the mode set,
+    // or the file stays as it is.
+    let mut want = Manifest::parse(&current).map_err(|e| fail("manifest_syntax", format!("{}: {e}", path.display())))?.manifest;
+    want.project.mode = Some(mode);
+    let text = Manifest::with_mode(&current, mode);
+    match Manifest::parse(&text) {
+        Ok(parsed) if parsed.manifest == want => {}
+        Ok(_) => {
+            return Err(fail(
+                "manifest_rewrite",
+                format!("setting mode = {:?} in {} would change other settings (an inline `project = {{ … }}` table?); not written", mode.as_str(), path.display()),
+            ))
+        }
+        Err(e) => return Err(fail("manifest_rewrite", format!("the rewritten {} does not parse: {e}; not written", path.display()))),
+    }
+    let mut payload = Json::object();
+    payload
+        .insert("path", path.to_string_lossy().into_owned())
+        .insert("exists", exists)
+        .insert("changed", text != current || !exists)
+        .insert("text", text);
+    Ok(payload)
+}
+
 /// `set_fonts`: see the module documentation. Reads the governing manifest
 /// (or takes the template) and answers with the rewritten text; the
 /// consumer saves it through `save`, so the rooted rules apply to the write.
@@ -489,6 +548,13 @@ fn resolve_packages(root: &ProjectRoot, req: &Json) -> Result<Json, Failure> {
         Some(Json::Bool(b)) => *b,
         Some(_) => return Err(fail("invalid_request", "consent must be a boolean")),
     };
+    let flag = |key: &str| match req.get(key) {
+        None | Some(Json::Null) => Ok(false),
+        Some(Json::Bool(b)) => Ok(*b),
+        Some(_) => Err(fail("invalid_request", format!("{key} must be a boolean"))),
+    };
+    let offline = flag("offline")?;
+    let with_libraries = flag("libraries")?;
     let (_, loaded, manifest_dir) = governing_manifest(root)?;
     let packages = &loaded.manifest.packages;
     let mut payload = Json::object();
@@ -509,7 +575,29 @@ fn resolve_packages(root: &ProjectRoot, req: &Json) -> Result<Json, Failure> {
     let cache_root = flashtex_package_resolver::default_cache_root();
     payload.insert("cache", cache_root.as_ref().map_or(Json::Null, |p| Json::from(p.to_string_lossy().into_owned())));
     let fetcher = flashtex_package_resolver::http::HttpFetcher::new().map_err(|e| fail("io", e))?;
+    // `libraries`: every loaded library, with all its files (kept before the
+    // resolver takes them; a library with no cache root is still a library).
+    let library_entries: Option<Vec<(String, String, Vec<flashtex_package_resolver::ResolvedFile>)>> =
+        with_libraries.then(|| libraries.iter().map(|l| (l.name.clone(), l.version(), l.files.clone())).collect());
     let resolver = cache_root.map(|c| Resolver::new(c, &fetcher).with_libraries(libraries));
+    let files_json = |mount: &str, files: &[flashtex_package_resolver::ResolvedFile]| {
+        files
+            .iter()
+            .map(|f| {
+                let mut j = Json::object();
+                j.insert("path", virtual_path(mount, &f.name))
+                    .insert("text", f.text.as_str())
+                    .insert("sha256", flashtex_project_files::sha256_hex(f.text.as_bytes()))
+                    .insert("bytes", f.text.len() as u64);
+                if let Some(g) = &f.generated_from {
+                    let mut from = Json::object();
+                    from.insert("batch", g.batch.as_str()).insert("sources", g.sources.iter().map(|s| Json::from(s.as_str())).collect::<Vec<_>>());
+                    j.insert("generated_from", from);
+                }
+                j
+            })
+            .collect::<Vec<_>>()
+    };
     let entries: Vec<Json> = names
         .iter()
         .map(|name| {
@@ -519,26 +607,12 @@ fn resolve_packages(root: &ProjectRoot, req: &Json) -> Result<Json, Failure> {
                 o.insert("status", "not_available").insert("reason", format!("no package cache: set {} (no home directory is known)", flashtex_package_resolver::CACHE_ENV));
                 return o;
             };
-            let policy = Policy::for_package(packages, name);
-            let resolution = if consent { resolver.resolve_with_consent(name, &policy) } else { resolver.resolve(name, &policy) };
-            let files_json = |mount: &str, files: &[flashtex_package_resolver::ResolvedFile]| {
-                files
-                    .iter()
-                    .map(|f| {
-                        let mut j = Json::object();
-                        j.insert("path", virtual_path(mount, &f.name))
-                            .insert("text", f.text.as_str())
-                            .insert("sha256", flashtex_project_files::sha256_hex(f.text.as_bytes()))
-                            .insert("bytes", f.text.len() as u64);
-                        if let Some(g) = &f.generated_from {
-                            let mut from = Json::object();
-                            from.insert("batch", g.batch.as_str()).insert("sources", g.sources.iter().map(|s| Json::from(s.as_str())).collect::<Vec<_>>());
-                            j.insert("generated_from", from);
-                        }
-                        j
-                    })
-                    .collect::<Vec<_>>()
-            };
+            let mut policy = Policy::for_package(packages, name);
+            if offline {
+                // Never the network: the library and the cache only.
+                policy = policy.with_fetch(flashtex_project_manifest::FetchPolicy::Never);
+            }
+            let resolution = if consent && !offline { resolver.resolve_with_consent(name, &policy) } else { resolver.resolve(name, &policy) };
             match resolution {
                 Resolution::Cached { version, files, from, .. } => {
                     let (label, mount) = match &from {
@@ -567,6 +641,17 @@ fn resolve_packages(root: &ProjectRoot, req: &Json) -> Result<Json, Failure> {
         })
         .collect();
     payload.insert("packages", entries);
+    if let Some(libs) = library_entries {
+        let libs: Vec<Json> = libs
+            .iter()
+            .map(|(name, version, files)| {
+                let mut o = Json::object();
+                o.insert("name", name.as_str()).insert("version", version.as_str()).insert("files", files_json(name, files));
+                o
+            })
+            .collect();
+        payload.insert("libraries", libs);
+    }
     Ok(payload)
 }
 
@@ -646,6 +731,7 @@ fn handle(root: &ProjectRoot, req: &Json) -> Result<Json, Failure> {
         "save" => save(root, req),
         "manifest" => manifest(root, req),
         "set_fonts" => set_fonts(root, req),
+        "set_mode" => set_mode(root, req),
         "resolve_packages" => resolve_packages(root, req),
         "set_packages" => set_packages(root, req),
         other => Err(fail(

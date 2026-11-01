@@ -7,6 +7,9 @@
 //! `tests/incremental.rs` failed its comparison with a scratch run. These
 //! tests plant exactly such a stale directory and check that it is not used.
 
+// Plants a symbolic link to /usr/bin/false: Unix only.
+#![cfg(unix)]
+
 mod common;
 
 use std::path::{Path, PathBuf};

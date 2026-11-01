@@ -1,0 +1,11 @@
+% 2520-batchmode-message-ship: verifies that a \message issued under \batchmode still reaches the log, and that \nonstopmode switches back (\interactionmode reads 1, 0, 1) before a box ships (tex.web §§75, 1262, 1265; pdftex.web §1692)
+% new versus 335-interactionmode: 335 only reads \interactionmode and assigns scrollmode through the register; this case drives the \batchmode and \nonstopmode primitives and checks a \message issued while in batchmode lands in the log
+\input prelude
+\message{2520 mode=\the\interactionmode}
+\batchmode
+\message{2520 batch=\the\interactionmode}
+\nonstopmode
+\message{2520 back=\the\interactionmode}
+\setbox0=\hbox{\vrule width5pt height8pt depth2pt\hskip10pt}
+\lsshipbox0
+\end

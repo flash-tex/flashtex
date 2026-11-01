@@ -180,9 +180,13 @@ public enum TransferV1 {
     public struct CaptureConvert: Codable, Equatable {
         public var captureId: String
         public var supportedFeatures: [String]
-        enum CodingKeys: String, CodingKey { case captureId = "capture_id", supportedFeatures = "supported_features" }
-        public init(captureId: String, supportedFeatures: [String]) {
-            self.captureId = captureId; self.supportedFeatures = supportedFeatures
+        /// Additive: the engine that typesets the destination document
+        /// (`new` or `previous`; omitted means `previous`). The bridge sends
+        /// the provider its own feature list for it.
+        public var engine: String?
+        enum CodingKeys: String, CodingKey { case captureId = "capture_id", supportedFeatures = "supported_features", engine }
+        public init(captureId: String, supportedFeatures: [String], engine: String? = nil) {
+            self.captureId = captureId; self.supportedFeatures = supportedFeatures; self.engine = engine
         }
     }
 

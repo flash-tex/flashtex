@@ -1,0 +1,6 @@
+t3-madrid16-300 attempt 1 discarded: pane {{0, 0}, {380, 725}}
+t3-madrid16-300 ok after 2
+t3-madrid16-2000 ok after 1
+t3-madrid16-2000-nodebounce ok after 1
+t3-madrid16-2000-wholepage ok after 1
+t3-glyph16-300 ok after 1

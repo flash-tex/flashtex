@@ -1,0 +1,16 @@
+% u02-xecjk: xeCJK with TeX Live's Harano Aji fonts: Japanese and Chinese
+% text, CJK and Latin mixed, line breaking between ideographs
+\documentclass{article}
+\usepackage{xeCJK}
+\setCJKmainfont{HaranoAjiMincho-Regular.otf}[BoldFont=HaranoAjiGothic-Bold.otf]
+\begin{document}
+\section{日本語と中文}
+これは日本語の段落です。漢字、ひらがな、カタカナが混ざった文章で、行分割は
+文字の間で行われます。English words such as typesetting and
+hyphenation sit between CJK characters with the right spacing.
+
+这是一个中文段落。中文的排版不使用空格分词，换行可以发生在任何两个汉字之间，
+标点符号有禁则处理，例如句号和逗号不出现在行首。
+
+\textbf{太字の見出し}と本文、そして数字 2026 年 10 月 11 日。
+\end{document}

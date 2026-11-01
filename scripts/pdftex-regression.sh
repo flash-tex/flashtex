@@ -33,6 +33,10 @@ set -eu
 
 root=$(cd "$(dirname "$0")/.." && pwd)
 srcdir=$root/third_party/pdftex/regression/texk/web2c
+# Git Bash/MSYS2 on Windows: the tests put srcdir into TEXINPUTS as
+# `DIR;.`, which MSYS's path conversion cannot translate from `/d/a/...`;
+# `cygpath -m` gives the engine `D:/a/...` directly. No cygpath elsewhere.
+srcdir=$(cygpath -m "$srcdir" 2>/dev/null || printf '%s' "$srcdir")
 
 die() { echo "pdftex-regression: $*" >&2; exit 2; }
 

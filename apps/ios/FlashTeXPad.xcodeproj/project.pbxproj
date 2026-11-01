@@ -59,6 +59,10 @@
 			isa = PBXBuildFile;
 			fileRef = 08C275D119DF1F41894FD9F9;
 		};
+		A9B9670BEF21B102964AAA03 /* Assets.xcassets in Resources */ = {
+			isa = PBXBuildFile;
+			fileRef = 9AFEC47A57ED5D746955D7F0;
+		};
 		A87D4C8E0CAD968374E177C5 /* compile-result.json in Resources */ = {
 			isa = PBXBuildFile;
 			fileRef = B814BF36B6E3FFF2A9D456D9;
@@ -138,6 +142,10 @@
 		993E22C146E6587BA4B1EF02 /* FluidCaptureTests.swift in Sources */ = {
 			isa = PBXBuildFile;
 			fileRef = B73028366B5779619C60CA89;
+		};
+		EC49B0E8F32690C335AADEF1 /* FolderAccessTests.swift in Sources */ = {
+			isa = PBXBuildFile;
+			fileRef = 7A5CC62C5CEA7327E496A2BD;
 		};
 		94AE773125DDADB004681119 /* LinkedEnvironmentRenameTests.swift in Sources */ = {
 			isa = PBXBuildFile;
@@ -281,6 +289,12 @@
 			path = "PairingScanner.swift";
 			sourceTree = "<group>";
 		};
+		9AFEC47A57ED5D746955D7F0 /* Assets.xcassets */ = {
+			isa = PBXFileReference;
+			lastKnownFileType = folder.assetcatalog;
+			path = "Assets.xcassets";
+			sourceTree = "<group>";
+		};
 		B814BF36B6E3FFF2A9D456D9 /* Resources/compile-result.json */ = {
 			isa = PBXFileReference;
 			lastKnownFileType = text.json;
@@ -388,6 +402,12 @@
 			isa = PBXFileReference;
 			lastKnownFileType = sourcecode.swift;
 			path = "FluidCaptureTests.swift";
+			sourceTree = "<group>";
+		};
+		7A5CC62C5CEA7327E496A2BD /* FolderAccessTests.swift */ = {
+			isa = PBXFileReference;
+			lastKnownFileType = sourcecode.swift;
+			path = "FolderAccessTests.swift";
 			sourceTree = "<group>";
 		};
 		AEC84AFDB673D6890915B950 /* LinkedEnvironmentRenameTests.swift */ = {
@@ -498,6 +518,7 @@
 				8154323B8EA2D5445564B276,
 				3CCE5357B9F6A9468F70115A,
 				08C275D119DF1F41894FD9F9,
+				9AFEC47A57ED5D746955D7F0,
 				B814BF36B6E3FFF2A9D456D9,
 				696D572EB552F1B485EC7FD4,
 				DF516A2769098DAFFC545638,
@@ -522,6 +543,7 @@
 				8EA2299F037B17191402BB8E,
 				03C01BAAABAAA9818C6D82F5,
 				B73028366B5779619C60CA89,
+				7A5CC62C5CEA7327E496A2BD,
 				AEC84AFDB673D6890915B950,
 			);
 			path = "FlashTeXPadTests";
@@ -676,6 +698,7 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				A9B9670BEF21B102964AAA03,
 				A87D4C8E0CAD968374E177C5,
 				BC0A22AF45038EEAE34C7CD7,
 				BD32D5321034B632D5392E0B,
@@ -736,6 +759,7 @@
 				72B8562FE1F50D30C56A9348,
 				914F0A91E37F25D4F61A6EE2,
 				993E22C146E6587BA4B1EF02,
+				EC49B0E8F32690C335AADEF1,
 				94AE773125DDADB004681119,
 			);
 			runOnlyForDeploymentPostprocessing = 0;

@@ -243,16 +243,27 @@ printf '%s\n' "$JOB_PATH" > "$BASE/.path"
 # the PC together (the runners plus agents' `systemd-run --user --scope
 # --slice=flashtex.slice` runs) at 20 GB, so the owner always keeps >= 8 GB of
 # the PC's 30 GB for their own work (owner, 2026-10-01, after two OOM freezes).
+#
+# CPUQuota caps the same combined work at FLASHTEX_RUNNER_CPU_PERCENT (default
+# 50) of ALL the PC's CPUs: a hard limit, even when the PC is otherwise idle
+# (owner request, 2026-10-04). systemd counts 100% per CPU, so 50% of 16
+# threads is CPUQuota=800%. Change it live without reinstalling:
+#   systemctl --user set-property flashtex.slice CPUQuota=<N>%
+CPU_PERCENT="${FLASHTEX_RUNNER_CPU_PERCENT:-50}"
+[[ "$CPU_PERCENT" =~ ^[0-9]+$ ]] && (( CPU_PERCENT >= 1 && CPU_PERCENT <= 100 )) \
+  || die "FLASHTEX_RUNNER_CPU_PERCENT must be 1-100 (got '$CPU_PERCENT')"
+CPU_QUOTA="$(( $(nproc) * CPU_PERCENT ))%"
 SLICE="$(dirname "$UNIT")/flashtex.slice"
-say "Writing $SLICE"
-cat > "$SLICE" <<'SLICEUNIT'
+say "Writing $SLICE (CPUQuota=$CPU_QUOTA, ${CPU_PERCENT}% of $(nproc) CPUs)"
+cat > "$SLICE" <<SLICEUNIT
 [Unit]
-Description=FlashTeX project work (CI runners and agent runs): combined cap, leaves >=10 GB for the owner
+Description=FlashTeX project work (CI runners and agent runs): combined cap, leaves >=10 GB and >=$(( 100 - CPU_PERCENT ))% CPU for the owner
 [Slice]
 MemoryHigh=18G
 MemoryMax=20G
 MemorySwapMax=0
 CPUWeight=50
+CPUQuota=$CPU_QUOTA
 SLICEUNIT
 say "Writing $UNIT"
 cat > "$UNIT" <<UNIT
@@ -287,4 +298,8 @@ cat <<EOF
 Verify:
   systemctl --user status $SERVICE
   gh api repos/$REPO/actions/runners --jq '.runners[] | {name, status, busy}'
+
+Once all three instances are online, tell the workflows to use them (the Macs
+have their own switch, FLASHTEX_SELFHOSTED_MAC):
+  gh variable set FLASHTEX_SELFHOSTED_LINUX --repo $REPO --body 1
 EOF

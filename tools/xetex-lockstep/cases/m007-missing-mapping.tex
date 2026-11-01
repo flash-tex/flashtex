@@ -1,0 +1,9 @@
+% m007-missing-mapping: a mapping file that does not exist, on a native and on a TFM font
+% XeTeX-specific (docs/design/xetex/PLAN.md, phase S1: TECkit font mappings)
+\input prelude
+\def\space{ }
+\font\a="[lmroman10-regular.otf]:mapping=nosuchmapping" \a
+\font\b=cmr10:mapping=nosuchmapping
+\setbox0=\hbox{\a ``a'' \b ``b''}
+\lsshipbox0
+\end

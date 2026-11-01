@@ -43,6 +43,7 @@ pub const LINKED: bool = cfg!(flashtex_images);
 
 linked_or_unlinked! {
     fn ftx_init();
+    fn ftx_set_err_quiet(q: c_int);
     fn ftx_doc_open(file_name: *const c_char) -> *mut c_void;
     fn ftx_doc_ok(d: *mut c_void) -> c_int;
     fn ftx_doc_free(d: *mut c_void);
@@ -126,6 +127,15 @@ fn bytes_of(p: *const c_char) -> Vec<u8> {
 pub fn init() {
     // SAFETY: no arguments; idempotent.
     unsafe { ftx_init() }
+}
+
+/// xpdf's messages off (`true`) or on again, as `init` leaves them (not
+/// pdfTeX's: `images::probe` reads images again silently).
+pub fn set_quiet(q: bool) {
+    if LINKED {
+        // SAFETY: no pointers; initialises xpdf first if needed.
+        unsafe { ftx_set_err_quiet(q as c_int) }
+    }
 }
 
 /// An xpdf `Object`.

@@ -12,17 +12,26 @@
 //! * a normal end ([`exit`]): the reason (end of input, `quit`, the socket
 //!   closed) and how many requests were served.
 //!
+//! On Windows only the panic and normal-end lines exist (there are no
+//! POSIX signals to catch; console control events are not handled yet).
+//!
 //! A `SIGSEGV` or `SIGBUS` other than a stack overflow still ends the
 //! process silently: Rust's own handler for those restores the default
 //! action. `SIGKILL` (the kernel's out-of-memory killer, a supervisor) cannot
 //! be caught at all.
 
+#[cfg(unix)]
 use std::ffi::{c_char, c_int, c_uint, c_void};
-use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicU64, AtomicU8, AtomicUsize, Ordering};
 use std::sync::Once;
 
 const CAP: usize = 480;
-static mut LAST: [u8; CAP] = [0; CAP];
+/// The request being served. Atomics, not a `static mut`: connection
+/// threads write it while a panic hook (any thread) or a signal handler reads
+/// it. A read that overlaps a write shows a mixed request, never touches
+/// other memory, and is not a data race. Relaxed byte loads and stores are
+/// plain loads and stores, so the signal handler stays async-signal-safe.
+static LAST: [AtomicU8; CAP] = [const { AtomicU8::new(0) }; CAP];
 static LAST_LEN: AtomicUsize = AtomicUsize::new(0);
 static REQUESTS: AtomicU64 = AtomicU64::new(0);
 static mut LOG_PATH: [u8; 512] = [0; 512];
@@ -32,6 +41,7 @@ static INSTALL: Once = Once::new();
 // The libc signatures exactly: since Rust 1.99 a declaration of a symbol the
 // standard library also uses (`write`, `open`) must match it, and `open` is
 // variadic (`mode` travels as a promoted `unsigned int`).
+#[cfg(unix)]
 extern "C" {
     fn signal(sig: c_int, handler: usize) -> usize;
     fn raise(sig: c_int) -> c_int;
@@ -40,14 +50,19 @@ extern "C" {
     fn close(fd: c_int) -> c_int;
 }
 
+#[cfg(unix)]
 const SIGHUP: i32 = 1;
+#[cfg(unix)]
 const SIGINT: i32 = 2;
+#[cfg(unix)]
 const SIGABRT: i32 = 6;
+#[cfg(unix)]
 const SIGTERM: i32 = 15;
+#[cfg(unix)]
 const SIG_DFL: usize = 0;
 #[cfg(target_os = "macos")]
 const O_WRONLY_CREAT_APPEND: i32 = 0x0001 | 0x0200 | 0x0008;
-#[cfg(not(target_os = "macos"))]
+#[cfg(target_os = "linux")]
 const O_WRONLY_CREAT_APPEND: i32 = 0o1 | 0o100 | 0o2000;
 
 /// Note the request now being served (shortened), for the lines above.
@@ -55,15 +70,39 @@ pub fn serving(what: &str) {
     REQUESTS.fetch_add(1, Ordering::Relaxed);
     let b = what.as_bytes();
     let n = b.len().min(CAP);
-    // SAFETY: the buffer is only read (best effort) by the lines above; a
-    // torn read there shows a mixed request, never touches other memory.
-    unsafe {
-        let p = std::ptr::addr_of_mut!(LAST) as *mut u8;
-        std::ptr::copy_nonoverlapping(b.as_ptr(), p, n);
+    for (slot, &c) in LAST.iter().zip(&b[..n]) {
+        slot.store(c, Ordering::Relaxed);
     }
     LAST_LEN.store(n, Ordering::Release);
 }
 
+/// The request being served, as `serving` last noted it, into `out`.
+fn last_request(out: &mut [u8; CAP]) -> &[u8] {
+    let n = LAST_LEN.load(Ordering::Acquire).min(CAP);
+    for (o, slot) in out.iter_mut().zip(&LAST[..n]) {
+        *o = slot.load(Ordering::Relaxed);
+    }
+    &out[..n]
+}
+
+#[cfg(not(unix))]
+fn emit(line: &[u8]) {
+    use std::io::Write;
+    let _ = std::io::stderr().write_all(line);
+    if LOG_LEN.load(Ordering::Acquire) > 0 {
+        if let Ok(p) = std::env::var("FLASHTEX_HOST_CRASH_LOG") {
+            if let Ok(mut f) = std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(p)
+            {
+                let _ = f.write_all(line);
+            }
+        }
+    }
+}
+
+#[cfg(unix)]
 fn emit(line: &[u8]) {
     // SAFETY: write(2) of a valid buffer; open(2)/close(2) of a
     // NUL-terminated path kept in a static buffer.
@@ -84,6 +123,7 @@ fn emit(line: &[u8]) {
     }
 }
 
+#[cfg(unix)]
 extern "C" fn on_signal(sig: i32) {
     // Only async-signal-safe calls from here: fixed buffers and write(2).
     let mut buf = [0u8; 700];
@@ -113,10 +153,8 @@ extern "C" fn on_signal(sig: i32) {
         put(&d[nd..nd + 1], &mut k);
     }
     put(b" while serving: ", &mut k);
-    let n = LAST_LEN.load(Ordering::Acquire).min(CAP);
-    // SAFETY: see `serving`.
-    let last = unsafe { std::slice::from_raw_parts(std::ptr::addr_of!(LAST) as *const u8, n) };
-    put(last, &mut k);
+    let mut copy = [0u8; CAP];
+    put(last_request(&mut copy), &mut k);
     put(b"\n", &mut k);
     emit(&buf[..k]);
     // SAFETY: back to the default action, then the signal again.
@@ -144,10 +182,13 @@ pub fn install() {
         }
         let prev = std::panic::take_hook();
         std::panic::set_hook(Box::new(move |info| {
-            let n = LAST_LEN.load(Ordering::Acquire).min(CAP);
-            // SAFETY: see `serving`.
-            let last =
-                unsafe { std::slice::from_raw_parts(std::ptr::addr_of!(LAST) as *const u8, n) };
+            // A reader that panics while an image is read again to check a
+            // persisted S₀ makes the open refuse (`images::probe`): not a crash.
+            if crate::pdftex::images::probing() {
+                return;
+            }
+            let mut copy = [0u8; CAP];
+            let last = last_request(&mut copy);
             let line = format!(
                 "flashtex-host: panic in thread {:?}: {info}; while serving: {}\n{}\n",
                 std::thread::current().name().unwrap_or("?"),
@@ -158,6 +199,7 @@ pub fn install() {
             prev(info);
         }));
         // SAFETY: installs a handler that only uses async-signal-safe calls.
+        #[cfg(unix)]
         unsafe {
             for s in [SIGABRT, SIGTERM, SIGINT, SIGHUP] {
                 signal(s, on_signal as *const () as usize);
@@ -175,4 +217,31 @@ pub fn exit(reason: &str) {
         )
         .as_bytes(),
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Connection threads note requests while another thread reads the note
+    /// (the panic hook). With the old `static mut` buffer this was a data
+    /// race, which Miri's race detector reports (scripts/sanitizers.sh miri
+    /// runs this test); the note also stays within its capacity.
+    #[test]
+    fn the_request_note_is_race_free_and_bounded() {
+        let long = "x".repeat(CAP + 100);
+        std::thread::scope(|s| {
+            s.spawn(|| {
+                for i in 0..20 {
+                    serving(if i % 2 == 0 { "compile 1" } else { &long });
+                }
+            });
+            s.spawn(|| {
+                for _ in 0..20 {
+                    let mut copy = [0u8; CAP];
+                    assert!(last_request(&mut copy).len() <= CAP);
+                }
+            });
+        });
+    }
 }

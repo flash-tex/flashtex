@@ -1,0 +1,20 @@
+% Unicode corpus (M3): unicode-math with TeX Gyre Pagella Math and a second
+% math version in Fira Math; amsmath environments.
+\documentclass{article}
+\usepackage{amsmath}
+\usepackage{unicode-math}
+\setmainfont{texgyrepagella-regular.otf}[BoldFont=texgyrepagella-bold.otf,
+  ItalicFont=texgyrepagella-italic.otf, BoldItalicFont=texgyrepagella-bolditalic.otf]
+\setmathfont{texgyrepagella-math.otf}
+\setmathfont{FiraMath-Regular.otf}[version=fira]
+\begin{document}
+\[ \int_{-\infty}^{\infty} e^{-x^2}\,dx=\sqrt{\pi},\quad \symbf{A}\symbf{x}=\symbf{b},
+   \quad \mathbb{N}\subset\mathbb{Z}\subset\mathbb{Q} \]
+\begin{align}
+  f(x) &= \sum_{k=0}^{\infty}\frac{f^{(k)}(0)}{k!}x^k \\
+  \nabla\times\vec{E} &= -\frac{\partial\vec{B}}{\partial t}
+\end{align}
+\mathversion{fira}
+\[ \left( \frac{a}{b} \right)^{\!2} \leq \sqrt[3]{\frac{1}{1+x}},\quad
+   \mathcal{L}\{f\}(s)=\int_0^\infty f(t)e^{-st}\,dt \]
+\end{document}

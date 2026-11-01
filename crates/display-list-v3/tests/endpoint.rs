@@ -2,14 +2,14 @@
 //! Unix-domain socket, the writer opens the parsed endpoint and sends
 //! frames, and the reader gets them back byte for byte (spec §6.6).
 
-#![cfg(unix)]
+#![cfg(any(unix, windows))]
 
 use flashtex_display_list::endpoint::Endpoint;
 use flashtex_display_list::frame::{read_frame, write_frame};
 use flashtex_display_list::kind;
+use flashtex_display_list::transport::Listener as UnixListener;
 use std::ffi::OsString;
 use std::io::Write;
-use std::os::unix::net::UnixListener;
 
 #[test]
 fn socket_endpoint_round_trips_frames() {

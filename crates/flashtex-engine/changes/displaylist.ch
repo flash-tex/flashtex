@@ -24,6 +24,19 @@
 % * |dl_hyph_begin(ha)| and |dl_hyph_end| around |hyphenate|, which rebuilds
 %   a word's nodes while the paragraph is broken: the new nodes get the
 %   position of the word's first letter, not that of the paragraph's end.
+% * |dl_token_begin| and |dl_token_end| around the allocations that never
+%   become part of a list TeX ships: the token |back_input| backs up, and the
+%   condition stack's node, most of the allocations made outside the scanner
+%   in macro-heavy documents (docs/evidence/cold-speed-2026-10-04/). The side
+%   table's entry of such a location is set again when it is next allocated
+%   as a node.
+% * |dl_list_token_begin| and |dl_token_end| around the allocation of
+%   |store_new_token| and |fast_store_new_token|, which make a token of a
+%   token list (the characters of \.{\\csname} and \.{\\ifcsname}, the
+%   result of \.{\\the}, \.{\\number} and their kin, |scan_keyword|'s
+%   backup list): never a node either. They were 85\% of the allocations
+%   noted in a cold open of a 1,152-page book (lane COLD-FIRST). Such an
+%   allocation still looks for newer work for the host, as a node's does.
 % * |dl_node(p)| as |pdf_hlist_out| and |pdf_vlist_out| output node |p|: the
 %   writer notes where the page stream is at that moment, so that what is
 %   drawn from there on is attributed to |p|.
@@ -62,6 +75,39 @@ dl_new_node(r);
   begin @<Make a copy of node |p| in node |r|@>;
   dl_copy(r,p);
   link(q):=r; q:=r; p:=link(p);
+@z
+
+@x pdftex.web l.8278 - back_input: a backed-up token is not a node to note
+p:=get_avail; info(p):=cur_tok;
+if cur_tok<right_brace_limit then
+@y
+dl_token_begin; p:=get_avail; dl_token_end; info(p):=cur_tok;
+if cur_tok<right_brace_limit then
+@z
+
+@x pdftex.web l.9100 - a token stored in a token list is not a node to note
+@d store_new_token(#)==begin q:=get_avail; link(p):=q; info(q):=#;
+  p:=q; {|link(p)| is |null|}
+  end
+@d fast_store_new_token(#)==begin fast_get_avail(q); link(p):=q; info(q):=#;
+  p:=q; {|link(p)| is |null|}
+  end
+@y
+@d store_new_token(#)==begin dl_list_token_begin; q:=get_avail; dl_token_end;
+  link(p):=q; info(q):=#;
+  p:=q; {|link(p)| is |null|}
+  end
+@d fast_store_new_token(#)==begin dl_list_token_begin; fast_get_avail(q);
+  dl_token_end; link(p):=q; info(q):=#;
+  p:=q; {|link(p)| is |null|}
+  end
+@z
+
+@x pdftex.web l.11836 - the condition stack's node is not a node to note
+begin p:=get_node(if_node_size); link(p):=cond_ptr; type(p):=if_limit;
+@y
+begin dl_token_begin; p:=get_node(if_node_size); dl_token_end;
+link(p):=cond_ptr; type(p):=if_limit;
 @z
 
 @x pdftex.web l.18798 - pdf_hlist_out: the display list notes each character
@@ -111,6 +157,20 @@ procedure dl_copy(@!r,@!p:pointer); external;
 procedure dl_node(@!p:pointer); external;
 procedure dl_hyph_begin(@!p:pointer); external;
 procedure dl_hyph_end; external;
+procedure dl_token_begin; external;
+procedure dl_list_token_begin; external;
+procedure dl_token_end; external;
+
+@ The side table: the source position of the node at each |mem| location,
+which only the display-list writer reads and writes. It is an array of the
+word space like |mem| itself, so that a checkpoint keeps it as it keeps
+|mem| (as the words that changed since the last checkpoint) and the undo
+logs' memory budget covers it (DESIGN.md section 5.2). The writer packs a
+position into the 64 bits of a |memory_word|.
+
+@<Glob...@>=
+@!dl_side:array[mem_bot..mem_max] of memory_word;
+  {source positions of the nodes in |mem|}
 
 @* \[55] Index.
 @z

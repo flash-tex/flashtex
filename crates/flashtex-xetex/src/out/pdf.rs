@@ -1,0 +1,2639 @@
+//! FlashTeX's PDF writer for Unicode mode (PLAN.md §3.2): the PDF is
+//! written **from the display list** — every glyph, rule, path, clip,
+//! colour, alpha, image and form of a page is the page's display-list item
+//! — plus what the display list cannot carry, kept beside it
+//! ([`super::doc::Supplement`]: the operators of `UNSUPPORTED` items, the
+//! `@resources` and `@thispage` additions, the whole annotation
+//! dictionaries) and the document's own parts ([`Doc`]: outline, document
+//! information, named destinations and objects, catalog entries).
+//!
+//! * Native fonts are embedded as `Type0`/`Identity-H` fonts whose CIDs are
+//!   the font's own glyph ids, as xdvipdfmx writes them: CFF outlines as a
+//!   CID-keyed CFF subset with CID = glyph id (`CIDFontType0C`), TrueType
+//!   outlines as a subset that keeps glyph ids in place (`CIDFontType2`,
+//!   `/CIDToGIDMap /Identity`), both by FlashTeX's own subsetters
+//!   (`flashtex_pdf::cff`, `flashtex_pdf::truetype`), with `/W` from the
+//!   font's advances and, as xdvipdfmx writes one, a `ToUnicode` CMap (`tounicode`).
+//! * TFM fonts are `Type1` fonts with a subset of the map file's program
+//!   (`flashtex_pdf::type1`), the encoding as `/Differences`, `/Widths` from
+//!   the TFM.
+//! * PNG images are copied unchanged (their `IDAT` data with the PNG
+//!   predictor, as pdfTeX and dvipdfmx do) when they can be; JPEG passes
+//!   through; a PDF page becomes a form XObject (`flashtex_pdf::images`).
+//! * Streams are compressed with TeX Live's zlib, linked by the pdfTeX
+//!   engine (`flashtex_engine::pdftex::zlib`).
+//!
+//! Positions: a glyph is placed with its own text matrix at the display
+//! list's position (sp, written to 10⁻⁵ bp, which reads back to the same
+//! sp), so the PDF draws every glyph where TeX put it; xdvipdfmx's PDF puts
+//! them within its own rounding of TeX's positions (PLAN.md §3.5's parity
+//! is structural and visual, not byte-level).
+
+use super::agl::Agl;
+use super::doc::{Doc, Named, Supplement};
+use super::fonts::{FaceData, FontRes, ResKind};
+use super::images::Kind;
+use super::num::{fmt_num, push_num, push_uint};
+use super::pdfobj::{write_name, Dict, Obj, Writer as ObjWriter};
+use flashtex_display_list::page::{paint, Item, Page, RuleKind, Seg, Stroke};
+use flashtex_display_list::sha256::{sha256, Sha256};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::fmt::Write as _;
+use std::sync::Arc;
+
+/// sp per bp.
+const K: f64 = 65781.76;
+
+/// What the writer needs beyond the document.
+pub struct Options {
+    /// `/Producer`.
+    pub producer: String,
+    /// `/CreationDate` and `/ModDate` (`D:...`), unless the document gives
+    /// them.
+    pub date: Option<String>,
+    /// Compress streams (zlib level 9).
+    pub compress: bool,
+}
+
+/// The PDF of `doc`.
+pub fn write(doc: &Doc, opts: &Options) -> Result<(Vec<u8>, Vec<String>), String> {
+    let mut w = Writer::new(doc, opts);
+    w.run()?;
+    let warnings = std::mem::take(&mut w.warnings);
+    Ok((w.finish(), warnings))
+}
+
+/// zlib (TeX Live's) at level 9.
+pub fn compress(data: &[u8]) -> Vec<u8> {
+    use flashtex_engine::pdftex::zlib::{ZStream, Z_FINISH, Z_OK, Z_STREAM_END};
+    let mut out = vec![0u8; data.len() + data.len() / 1000 + 64];
+    let mut z = ZStream::new();
+    if z.deflate_init(9) != Z_OK {
+        return Vec::new();
+    }
+    z.next_in = data.as_ptr();
+    z.avail_in = data.len() as u32;
+    z.next_out = out.as_mut_ptr();
+    z.avail_out = out.len() as u32;
+    let r = z.deflate(Z_FINISH);
+    let n = z.total_out as usize;
+    z.deflate_end();
+    if r != Z_STREAM_END {
+        return Vec::new();
+    }
+    out.truncate(n);
+    out
+}
+
+/// A number with at most `d` fraction digits.
+fn n(v: f64, d: usize) -> String {
+    fmt_num(v, d)
+}
+
+struct Writer<'a> {
+    doc: &'a Doc,
+    opts: &'a Options,
+    /// The file so far, from its header on.
+    out: Vec<u8>,
+    /// The hash of `out` for the trailer's `/ID`, as it is written.
+    id: IdHash,
+    /// Byte offset of object n at index n - 1 (`None`: not written yet).
+    offsets: Vec<Option<usize>>,
+    pages: Vec<u32>,
+    pages_root: u32,
+    catalog: u32,
+    fonts: BTreeMap<u16, u32>,
+    images: BTreeMap<u32, u32>,
+    forms: BTreeMap<u32, u32>,
+    named: BTreeMap<Vec<u8>, u32>,
+    named_queue: Vec<Vec<u8>>,
+    names_obj: Option<u32>,
+    /// The glyphs (native fonts) and codes (TFM fonts) each font draws.
+    used: BTreeMap<u16, BTreeSet<u16>>,
+    page_group: Vec<bool>,
+    /// For a native font with CID-keyed CFF outlines: each glyph id's CID
+    /// (the font's charset), which the content stream writes as the code.
+    cids: BTreeMap<u16, BTreeMap<u16, u16>>,
+    /// The Adobe Glyph List, as xdvipdfmx loads it (`agl_init_map`), read
+    /// when a font first needs a glyph name's text (a resident engine's
+    /// runs share it: `FontCache::agl`).
+    agl: Option<Arc<Agl>>,
+    /// Without a resident engine's cache, the faces this PDF parsed.
+    faces: HashMap<[u8; 32], Arc<FaceData>>,
+    /// What the PDF does not carry as the document asks (reported).
+    pub warnings: Vec<String>,
+}
+
+/// The resources a content stream uses.
+#[derive(Default)]
+struct Res {
+    fonts: BTreeSet<u16>,
+    images: BTreeSet<u32>,
+    forms: BTreeSet<u32>,
+    gs: BTreeMap<String, String>,
+    group: bool,
+}
+
+impl<'a> Writer<'a> {
+    fn new(doc: &'a Doc, opts: &'a Options) -> Self {
+        Writer {
+            doc,
+            opts,
+            out: header(doc.version),
+            id: IdHash::new(),
+            offsets: Vec::new(),
+            pages: Vec::new(),
+            pages_root: 0,
+            catalog: 0,
+            fonts: BTreeMap::new(),
+            images: BTreeMap::new(),
+            forms: BTreeMap::new(),
+            named: BTreeMap::new(),
+            named_queue: Vec::new(),
+            names_obj: None,
+            used: BTreeMap::new(),
+            page_group: Vec::new(),
+            cids: BTreeMap::new(),
+            agl: None,
+            faces: HashMap::new(),
+            warnings: Vec::new(),
+        }
+    }
+
+    fn agl(&mut self) -> Arc<Agl> {
+        let cache = &self.doc.fonts.cache;
+        self.agl
+            .get_or_insert_with(|| match cache {
+                Some(c) => c.agl(),
+                None => Arc::new(Agl::load()),
+            })
+            .clone()
+    }
+
+    /// Face `index` of the program whose SHA-256 is `sha`, parsed once (by
+    /// the resident engine's cache, else once per PDF).
+    fn face(&mut self, sha: &[u8; 32], program: &Arc<Vec<u8>>, index: u32) -> Arc<FaceData> {
+        let fonts = &self.doc.fonts;
+        match &fonts.cache {
+            Some(c) => c.face(sha, program, index),
+            None => self
+                .faces
+                .entry(super::fonts::face_key(sha, index))
+                .or_insert_with(|| {
+                    fonts
+                        .parsed_face(sha, index)
+                        .unwrap_or_else(|| Arc::new(FaceData::new(program, index)))
+                })
+                .clone(),
+        }
+    }
+
+    fn alloc(&mut self) -> u32 {
+        self.offsets.push(None);
+        self.offsets.len() as u32
+    }
+
+    fn begin(&mut self, num: u32) {
+        self.id.feed(&self.out, IdHash::CHUNK);
+        self.offsets[num as usize - 1] = Some(self.out.len());
+        let _ = writeln!(Bytes(&mut self.out), "{num} 0 obj");
+    }
+
+    fn object(&mut self, num: u32, body: &[u8]) {
+        self.begin(num);
+        self.out.extend_from_slice(body);
+        self.out.extend_from_slice(b"\nendobj\n");
+    }
+
+    /// A stream object: `dict` is its entries without `/Length` (and
+    /// without `/Filter` when `compress`).
+    fn stream(&mut self, num: u32, dict: &[u8], data: &[u8], compress: bool) {
+        let z;
+        let (data, filter): (&[u8], &[u8]) = if compress && self.opts.compress {
+            z = self::compress(data);
+            if z.is_empty() && !data.is_empty() {
+                (data, b"")
+            } else {
+                (&z, b" /Filter /FlateDecode")
+            }
+        } else {
+            (data, b"")
+        };
+        self.begin(num);
+        self.out.extend_from_slice(b"<<");
+        self.out.extend_from_slice(dict);
+        self.out.extend_from_slice(filter);
+        let _ = writeln!(Bytes(&mut self.out), " /Length {}>>\nstream", data.len());
+        self.out.extend_from_slice(data);
+        self.out.extend_from_slice(b"\nendstream\nendobj\n");
+    }
+
+    fn run(&mut self) -> Result<(), String> {
+        let doc = self.doc;
+        self.catalog = self.alloc();
+        self.pages_root = self.alloc();
+        for _ in &doc.pages {
+            let p = self.alloc();
+            self.pages.push(p);
+        }
+        // What every font draws, from every page and form.
+        for b in doc.pages.iter().chain(doc.forms.iter()) {
+            for it in &b.dl.items {
+                if let Item::Glyph { font, code, .. } = it {
+                    self.used.entry(*font).or_default().insert(*code);
+                }
+            }
+        }
+        let all_used = std::mem::take(&mut self.used);
+        for (&id, used) in &all_used {
+            let Some(r) = doc.fonts.resource(id) else {
+                continue;
+            };
+            let ResKind::Native {
+                index,
+                cff: true,
+                sha,
+                ..
+            } = &r.kind
+            else {
+                continue;
+            };
+            let data = self.face(sha, &r.program, *index);
+            let mut memo = data.memo.lock().unwrap_or_else(|e| e.into_inner());
+            let m = match &memo.cids {
+                Some((u, m)) if u == used => m.clone(),
+                _ => {
+                    let m = data.font.as_ref().ok().and_then(|f| cid_map(f, used));
+                    memo.cids = Some((used.clone(), m.clone()));
+                    m
+                }
+            };
+            drop(memo);
+            if let Some(m) = m {
+                self.cids.insert(id, m);
+            }
+        }
+        self.used = all_used;
+        for i in 0..doc.pages.len() {
+            self.page(i)?;
+        }
+        // Forms, images and fonts the pages used (forms may use forms), then
+        // the catalog, then named objects (anything above may have
+        // referenced them). A named object may itself refer to a form or an
+        // image no page draws: pgf's soft mask, `/SMask <</G @pgfsmask5>>`
+        // in `@pgfextgs`. So the round repeats until nothing new was
+        // referenced; a form only a named object names is written too.
+        let mut done_forms = BTreeSet::new();
+        let mut done_images = BTreeSet::new();
+        let mut done_fonts = BTreeSet::new();
+        let mut catalog = false;
+        loop {
+            let mut wrote = false;
+            loop {
+                let todo: Vec<u32> = self
+                    .forms
+                    .keys()
+                    .copied()
+                    .filter(|f| !done_forms.contains(f))
+                    .collect();
+                if todo.is_empty() {
+                    break;
+                }
+                for f in todo {
+                    done_forms.insert(f);
+                    self.form(f)?;
+                }
+                wrote = true;
+            }
+            let imgs: Vec<(u32, u32)> = self
+                .images
+                .iter()
+                .filter(|(k, _)| !done_images.contains(*k))
+                .map(|(&k, &v)| (k, v))
+                .collect();
+            for (id, num) in imgs {
+                done_images.insert(id);
+                self.image(id, num)?;
+                wrote = true;
+            }
+            let fonts: Vec<(u16, u32)> = self
+                .fonts
+                .iter()
+                .filter(|(k, _)| !done_fonts.contains(*k))
+                .map(|(&k, &v)| (k, v))
+                .collect();
+            for (id, num) in fonts {
+                done_fonts.insert(id);
+                self.font(id, num)?;
+                wrote = true;
+            }
+            if !catalog {
+                catalog = true;
+                self.catalog_and_tree()?;
+            }
+            while let Some(name) = self.named_queue.pop() {
+                self.named_object(&name);
+                wrote = true;
+            }
+            if !wrote {
+                break;
+            }
+        }
+        Ok(())
+    }
+
+    // ---- references -----------------------------------------------------------
+
+    /// The text of a reference to named object `n` (`@n` in a special).
+    fn resolve(&mut self, n: &[u8]) -> Option<String> {
+        if let Some(p) = n.strip_prefix(b"page") {
+            if let Ok(k) = std::str::from_utf8(p).unwrap_or("").parse::<usize>() {
+                return self
+                    .pages
+                    .get(k.wrapping_sub(1))
+                    .map(|o| format!("{o} 0 R"));
+            }
+        }
+        match n {
+            b"catalog" => return Some(format!("{} 0 R", self.catalog)),
+            b"pages" => return Some(format!("{} 0 R", self.pages_root)),
+            b"names" => {
+                let o = match self.names_obj {
+                    Some(o) => o,
+                    None => {
+                        let o = self.alloc();
+                        self.names_obj = Some(o);
+                        o
+                    }
+                };
+                return Some(format!("{o} 0 R"));
+            }
+            _ => {}
+        }
+        match self.doc.named.get(n)? {
+            Named::Form(id) => {
+                let o = self.form_obj(*id);
+                Some(format!("{o} 0 R"))
+            }
+            Named::Image(id) => {
+                let o = self.image_obj(*id);
+                Some(format!("{o} 0 R"))
+            }
+            _ => {
+                if let Some(&o) = self.named.get(n) {
+                    return Some(format!("{o} 0 R"));
+                }
+                let o = self.alloc();
+                self.named.insert(n.to_vec(), o);
+                self.named_queue.push(n.to_vec());
+                Some(format!("{o} 0 R"))
+            }
+        }
+    }
+
+    fn ser(&mut self, o: &Obj) -> Vec<u8> {
+        let mut out = Vec::new();
+        let mut resolve = |n: &[u8]| self.resolve(n);
+        ObjWriter {
+            named: &mut resolve,
+        }
+        .write(o, &mut out);
+        out
+    }
+
+    fn ser_dict_entries(&mut self, d: &Dict) -> Vec<u8> {
+        let mut out = Vec::new();
+        for (k, v) in &d.0 {
+            write_name(k, &mut out);
+            out.push(b' ');
+            let s = self.ser(v);
+            out.extend_from_slice(&s);
+        }
+        out
+    }
+
+    fn named_object(&mut self, name: &[u8]) {
+        let num = self.named[name];
+        match self.doc.named.get(name).cloned() {
+            Some(Named::Obj(o)) => {
+                let body = self.ser(&o);
+                self.object(num, &body);
+            }
+            Some(Named::Stream(d, data)) => {
+                let mut d = d.clone();
+                d.remove(b"Length");
+                let has_filter = d.get(b"Filter").is_some();
+                let entries = self.ser_dict_entries(&d);
+                self.stream(num, &entries, &data, !has_filter);
+            }
+            _ => self.object(num, b"null"),
+        }
+    }
+
+    fn font_obj(&mut self, id: u16) -> u32 {
+        if let Some(&o) = self.fonts.get(&id) {
+            return o;
+        }
+        let o = self.alloc();
+        self.fonts.insert(id, o);
+        o
+    }
+
+    fn image_obj(&mut self, id: u32) -> u32 {
+        if let Some(&o) = self.images.get(&id) {
+            return o;
+        }
+        let o = self.alloc();
+        self.images.insert(id, o);
+        o
+    }
+
+    fn form_obj(&mut self, id: u32) -> u32 {
+        if let Some(&o) = self.forms.get(&id) {
+            return o;
+        }
+        let o = self.alloc();
+        self.forms.insert(id, o);
+        o
+    }
+
+    // ---- pages and forms -------------------------------------------------------
+
+    fn page(&mut self, i: usize) -> Result<(), String> {
+        let doc = self.doc;
+        let b = &doc.pages[i];
+        let num = self.pages[i];
+        let mut res = Res::default();
+        let content = self.content(&b.dl, &b.sup, &mut res);
+        let contents = self.alloc();
+        self.stream(contents, b"", &content, true);
+        let resources = self.resources(&res, &b.sup)?;
+        // annotations
+        let mut annots = Vec::new();
+        for a in &b.sup.annots {
+            let mut d = a.dict.clone();
+            if d.get(b"Type").is_none() {
+                d.0.insert(0, (b"Type".to_vec(), Obj::Name(b"Annot".to_vec())));
+            }
+            d.set(
+                b"Rect",
+                Obj::Array(a.rect.iter().map(|v| Obj::num(*v, 3)).collect()),
+            );
+            let o = self.alloc();
+            let body = self.ser(&Obj::Dict(d));
+            self.object(o, &body);
+            annots.push(o);
+        }
+        let mut d = Vec::new();
+        let [x0, y0, x1, y1] = b.dl.pdf_box;
+        let _ = write!(
+            Bytes(&mut d),
+            "<</Type /Page /Parent {} 0 R /MediaBox [{} {} {} {}] /Contents {contents} 0 R /Resources ",
+            self.pages_root,
+            n(x0, 3),
+            n(y0, 3),
+            n(x1, 3),
+            n(y1, 3)
+        );
+        d.extend_from_slice(&resources);
+        if !annots.is_empty() {
+            d.extend_from_slice(b" /Annots [");
+            for (k, o) in annots.iter().enumerate() {
+                if k > 0 {
+                    d.push(b' ');
+                }
+                let _ = write!(Bytes(&mut d), "{o} 0 R");
+            }
+            d.push(b']');
+        }
+        if res.group && b.sup.page_dict.get(b"Group").is_none() {
+            d.extend_from_slice(
+                b" /Group <</Type /Group /S /Transparency /CS /DeviceRGB /I true>>",
+            );
+        }
+        let mut extra = b.sup.page_dict.clone();
+        for k in [
+            &b"Type"[..],
+            b"Parent",
+            b"MediaBox",
+            b"Contents",
+            b"Resources",
+            b"Annots",
+        ] {
+            extra.remove(k);
+        }
+        if !extra.0.is_empty() {
+            d.push(b' ');
+            let e = self.ser_dict_entries(&extra);
+            d.extend_from_slice(&e);
+        }
+        d.extend_from_slice(b">>");
+        self.object(num, &d);
+        self.page_group.push(res.group);
+        Ok(())
+    }
+
+    fn form(&mut self, id: u32) -> Result<(), String> {
+        let doc = self.doc;
+        let num = self.forms[&id];
+        let Some(b) = doc.forms.get(id as usize - 1) else {
+            self.object(num, b"null");
+            return Ok(());
+        };
+        let mut res = Res::default();
+        let content = self.content(&b.dl, &b.sup, &mut res);
+        let resources = self.resources(&res, &b.sup)?;
+        let [x0, y0, x1, y1] = b.dl.pdf_box;
+        let mut d = Vec::new();
+        let _ = write!(
+            Bytes(&mut d),
+            "/Type /XObject /Subtype /Form /FormType 1 /BBox [{} {} {} {}] /Resources ",
+            n(x0, 5),
+            n(y0, 5),
+            n(x1, 5),
+            n(y1, 5)
+        );
+        d.extend_from_slice(&resources);
+        let mut extra = b.sup.form_dict.clone();
+        for k in [
+            &b"Type"[..],
+            b"Subtype",
+            b"BBox",
+            b"Resources",
+            b"Length",
+            b"Filter",
+        ] {
+            extra.remove(k);
+        }
+        if !extra.0.is_empty() {
+            d.push(b' ');
+            let e = self.ser_dict_entries(&extra);
+            d.extend_from_slice(&e);
+        }
+        self.stream(num, &d, &content, true);
+        Ok(())
+    }
+
+    /// The `/Resources` dictionary of a content stream: what its items use,
+    /// and what `pdf:put @resources` added.
+    fn resources(&mut self, res: &Res, sup: &Supplement) -> Result<Vec<u8>, String> {
+        let mut cats: BTreeMap<Vec<u8>, Vec<u8>> = BTreeMap::new();
+        let mut font = Vec::new();
+        for &f in &res.fonts {
+            let o = self.font_obj(f);
+            let _ = write!(Bytes(&mut font), "/F{f} {o} 0 R");
+        }
+        let mut xo = Vec::new();
+        for &i in &res.images {
+            let o = self.image_obj(i);
+            let _ = write!(Bytes(&mut xo), "/Im{i} {o} 0 R");
+        }
+        for &f in &res.forms {
+            let o = self.form_obj(f);
+            let _ = write!(Bytes(&mut xo), "/Fm{f} {o} 0 R");
+        }
+        let mut gs = Vec::new();
+        for (k, v) in &res.gs {
+            let _ = write!(Bytes(&mut gs), "/{k} {v}");
+        }
+        cats.insert(b"Font".to_vec(), font);
+        cats.insert(b"XObject".to_vec(), xo);
+        cats.insert(b"ExtGState".to_vec(), gs);
+        let mut out = b"<<".to_vec();
+        let mut done = BTreeSet::new();
+        for (k, v) in sup.resources.0.clone() {
+            let ours = cats.get(&k).cloned().unwrap_or_default();
+            write_name(&k, &mut out);
+            out.push(b' ');
+            done.insert(k.clone());
+            // a dictionary the special gave, directly or by name
+            let as_dict = match &v {
+                Obj::Dict(d) => Some(d.clone()),
+                Obj::Named(nm) => self.doc.named_dict(nm).cloned(),
+                _ => None,
+            };
+            match as_dict {
+                Some(d) if !ours.is_empty() || matches!(v, Obj::Dict(_)) => {
+                    out.extend_from_slice(b"<<");
+                    let e = self.ser_dict_entries(&d);
+                    out.extend_from_slice(&e);
+                    out.extend_from_slice(&ours);
+                    out.extend_from_slice(b">>");
+                }
+                _ => {
+                    let s = self.ser(&v);
+                    out.extend_from_slice(&s);
+                }
+            }
+        }
+        for (k, v) in cats {
+            if done.contains(&k) || v.is_empty() {
+                continue;
+            }
+            write_name(&k, &mut out);
+            out.extend_from_slice(b" <<");
+            out.extend_from_slice(&v);
+            out.extend_from_slice(b">>");
+        }
+        out.extend_from_slice(b" /ProcSet [/PDF /Text /ImageB /ImageC /ImageI]>>");
+        Ok(out)
+    }
+
+    /// A page's or form's content stream, from its display list.
+    fn content(&mut self, p: &Page, sup: &Supplement, res: &mut Res) -> Vec<u8> {
+        let doc = self.doc;
+        let h = p.pdf_box[3];
+        let x_of = |sp: i32| sp as f64 / K;
+        let y_of = |sp: i32| h - sp as f64 / K;
+        let mut c = Vec::new();
+        let mut in_text = false;
+        let mut matrix = [1.0, 0.0, 0.0, 1.0];
+        // in a text object: the font and size set
+        let mut cur_font: Option<(u16, Vec<u8>)> = None;
+        // the size this glyph's `Tf` gives (reused)
+        let mut size = Vec::with_capacity(16);
+        let end_text = |c: &mut Vec<u8>, in_text: &mut bool| {
+            if *in_text {
+                c.extend_from_slice(b"ET\n");
+                *in_text = false;
+            }
+        };
+        for it in &p.items {
+            match it {
+                Item::Glyph {
+                    font, code, x, y, ..
+                } => {
+                    if !in_text {
+                        c.extend_from_slice(b"BT\n");
+                        in_text = true;
+                        cur_font = None;
+                    }
+                    res.fonts.insert(*font);
+                    let fr = doc.fonts.resource(*font);
+                    let (two_byte, adjust) = match fr.map(|r| &r.kind) {
+                        Some(ResKind::Native { .. }) => (true, None),
+                        Some(ResKind::Type1 { slant, extend, .. })
+                            if *slant != 0 || *extend != 0 =>
+                        {
+                            let e = if *extend != 0 {
+                                *extend as f64 / 1000.0
+                            } else {
+                                1.0
+                            };
+                            (false, Some((e, *slant as f64 / 1000.0)))
+                        }
+                        _ => (false, None),
+                    };
+                    let [mut a, mut b, mut cc, mut d] = matrix;
+                    if let Some((e, s)) = adjust {
+                        // [e 0 s 1] x M
+                        let (na, nb) = (e * a, e * b);
+                        let (nc, nd) = (s * a + cc, s * b + d);
+                        a = na;
+                        b = nb;
+                        cc = nc;
+                        d = nd;
+                    }
+                    let upright = b == 0.0 && cc == 0.0 && a == d && a > 0.0;
+                    size.clear();
+                    if upright {
+                        push_num(&mut size, a, 6);
+                    } else {
+                        size.push(b'1');
+                    }
+                    if !matches!(&cur_font, Some((f, s)) if f == font && *s == size) {
+                        // `/F{font} {size} Tf`
+                        c.extend_from_slice(b"/F");
+                        push_uint(&mut c, *font as u64);
+                        c.push(b' ');
+                        c.extend_from_slice(&size);
+                        c.extend_from_slice(b" Tf\n");
+                        cur_font = Some((*font, size.clone()));
+                    }
+                    // `a b c d x y Tm`
+                    if upright {
+                        c.extend_from_slice(b"1 0 0 1 ");
+                    } else {
+                        for v in [a, b, cc, d] {
+                            push_num(&mut c, v, 6);
+                            c.push(b' ');
+                        }
+                    }
+                    push_num(&mut c, x_of(*x), 5);
+                    c.push(b' ');
+                    push_num(&mut c, y_of(*y), 5);
+                    c.extend_from_slice(b" Tm");
+                    // `<code>Tj`, four hex digits (Identity-H) or two
+                    if two_byte {
+                        let code = self
+                            .cids
+                            .get(font)
+                            .and_then(|m| m.get(code))
+                            .copied()
+                            .unwrap_or(*code);
+                        push_hex_tj(&mut c, code as u32, 4);
+                    } else {
+                        push_hex_tj(&mut c, (code & 0xFF) as u32, 2);
+                    }
+                }
+                Item::Matrix(k) => {
+                    let m = p.matrix(*k);
+                    matrix = [m[0], m[1], m[2], m[3]];
+                }
+                Item::FillColor(col) => color_op(&mut c, &col.0, false),
+                Item::StrokeColor(col) => color_op(&mut c, &col.0, true),
+                Item::TextRender(m) => {
+                    let _ = writeln!(Bytes(&mut c), "{m} Tr");
+                }
+                Item::FillAlpha(a) | Item::StrokeAlpha(a) => {
+                    let fill = matches!(it, Item::FillAlpha(_));
+                    let key = if fill { "ca" } else { "CA" };
+                    let name = format!(
+                        "Gs{}{}",
+                        if fill { "f" } else { "s" },
+                        n(*a, 5).replace('.', "_")
+                    );
+                    res.gs
+                        .insert(name.clone(), format!("<</{key} {}>>", n(*a, 5)));
+                    let _ = writeln!(Bytes(&mut c), "/{name} gs");
+                }
+                Item::LineState(st) => {
+                    write_stroke(&mut c, st);
+                    c.push(b'\n');
+                }
+                Item::Span(_) => {}
+                Item::Save => {
+                    end_text(&mut c, &mut in_text);
+                    c.extend_from_slice(b"q\n");
+                }
+                Item::Restore => {
+                    end_text(&mut c, &mut in_text);
+                    c.extend_from_slice(b"Q\n");
+                }
+                Item::Rule {
+                    kind,
+                    x,
+                    y,
+                    w,
+                    h: rh,
+                } => {
+                    end_text(&mut c, &mut in_text);
+                    let (l, t) = (x_of(*x), y_of(*y));
+                    let (wb, hb) = (*w as f64 / K, *rh as f64 / K);
+                    let b = t - hb;
+                    match kind {
+                        RuleKind::Fill => {
+                            // `l b w h re f`
+                            push_nums(&mut c, &[l, b, wb, hb], 5);
+                            c.extend_from_slice(b" re f\n");
+                        }
+                        RuleKind::StrokeH => {
+                            let ym = b + hb / 2.0;
+                            // `q 0 J [] 0 d h w l y m r y l S Q`
+                            c.extend_from_slice(b"q 0 J [] 0 d ");
+                            push_num(&mut c, hb, 5);
+                            c.extend_from_slice(b" w ");
+                            push_nums(&mut c, &[l, ym], 5);
+                            c.extend_from_slice(b" m ");
+                            push_nums(&mut c, &[l + wb, ym], 5);
+                            c.extend_from_slice(b" l S Q\n");
+                        }
+                        RuleKind::StrokeV => {
+                            let xm = l + wb / 2.0;
+                            c.extend_from_slice(b"q 0 J [] 0 d ");
+                            push_num(&mut c, wb, 5);
+                            c.extend_from_slice(b" w ");
+                            push_nums(&mut c, &[xm, b], 5);
+                            c.extend_from_slice(b" m ");
+                            push_nums(&mut c, &[xm, t], 5);
+                            c.extend_from_slice(b" l S Q\n");
+                        }
+                    }
+                }
+                Item::Path(k) => {
+                    end_text(&mut c, &mut in_text);
+                    let Some(path) = p.paths.get(*k as usize) else {
+                        continue;
+                    };
+                    c.extend_from_slice(b"q ");
+                    let m = p.matrix(path.matrix);
+                    if m != [1.0, 0.0, 0.0, 1.0, 0.0, 0.0] {
+                        write_matrix(&mut c, &m);
+                        c.extend_from_slice(b" cm ");
+                    }
+                    if let Some(s) = &path.stroke {
+                        write_stroke(&mut c, s);
+                        c.push(b' ');
+                    }
+                    write_segs(&mut c, &path.segs, None);
+                    let fill = path.paint & paint::FILL != 0;
+                    let eo = path.paint & paint::FILL_EVEN_ODD != 0;
+                    let stroke = path.paint & paint::STROKE != 0;
+                    let op = match (fill, eo, stroke) {
+                        (_, true, true) => "B*",
+                        (true, _, true) => "B",
+                        (_, true, false) => "f*",
+                        (true, _, false) => "f",
+                        (false, false, true) => "S",
+                        _ => "n",
+                    };
+                    c.extend_from_slice(op.as_bytes());
+                    c.extend_from_slice(b" Q\n");
+                }
+                Item::Clip(k) => {
+                    end_text(&mut c, &mut in_text);
+                    let Some(path) = p.paths.get(*k as usize) else {
+                        continue;
+                    };
+                    let m = p.matrix(path.matrix);
+                    // in stream space, so that the clip outlives no `cm`
+                    write_segs(&mut c, &path.segs, Some(&m));
+                    let op = if path.paint & paint::CLIP_EVEN_ODD != 0 {
+                        "W* n"
+                    } else {
+                        "W n"
+                    };
+                    c.extend_from_slice(op.as_bytes());
+                    c.push(b'\n');
+                }
+                Item::Image { id, matrix: mk } => {
+                    end_text(&mut c, &mut in_text);
+                    res.images.insert(*id);
+                    if doc.images.get(*id).is_some_and(|i| i.kind == Kind::Png) {
+                        // a PNG with alpha needs the page's transparency group
+                        res.group |= png_has_alpha(doc, *id);
+                    }
+                    c.extend_from_slice(b"q ");
+                    write_matrix(&mut c, &p.matrix(*mk));
+                    c.extend_from_slice(b" cm /Im");
+                    push_uint(&mut c, *id as u64);
+                    c.extend_from_slice(b" Do Q\n");
+                }
+                Item::Form { id, matrix: mk } => {
+                    end_text(&mut c, &mut in_text);
+                    res.forms.insert(*id);
+                    c.extend_from_slice(b"q ");
+                    write_matrix(&mut c, &p.matrix(*mk));
+                    c.extend_from_slice(b" cm /Fm");
+                    push_uint(&mut c, *id as u64);
+                    c.extend_from_slice(b" Do Q\n");
+                }
+                Item::Unsupported(k) => {
+                    let Some(Some(raw)) = sup.raw.get(*k as usize) else {
+                        continue;
+                    };
+                    end_text(&mut c, &mut in_text);
+                    if raw.paints {
+                        c.extend_from_slice(b"q ");
+                        write_matrix(&mut c, &raw.ctm);
+                        c.extend_from_slice(b" cm\n");
+                        c.extend_from_slice(&raw.ops);
+                        c.extend_from_slice(b"\nQ\n");
+                    } else {
+                        c.extend_from_slice(&raw.ops);
+                        c.push(b'\n');
+                    }
+                }
+                _ => {}
+            }
+        }
+        end_text(&mut c, &mut in_text);
+        c
+    }
+
+    // ---- images ---------------------------------------------------------------
+
+    fn image(&mut self, id: u32, num: u32) -> Result<(), String> {
+        let Some(img) = self.doc.images.get(id).cloned() else {
+            self.object(num, b"null");
+            return Ok(());
+        };
+        let data = std::fs::read(&img.path).map_err(|e| format!("{}: {e}", img.path))?;
+        if img.kind == Kind::Png {
+            if let Some(PngPass {
+                dict,
+                color: col,
+                n_base,
+                palette,
+                idat,
+            }) = png_passthrough(&data)
+            {
+                let base = if let Some(icc) = &col.icc {
+                    let o = self.alloc();
+                    let d = format!(" /N {n_base} /Filter /FlateDecode");
+                    self.stream(o, d.as_bytes(), icc, false);
+                    format!("[/ICCBased {o} 0 R]")
+                } else {
+                    cal_space(&col, n_base).unwrap_or_else(|| {
+                        if n_base == 1 {
+                            "/DeviceGray"
+                        } else {
+                            "/DeviceRGB"
+                        }
+                        .to_string()
+                    })
+                };
+                let space = match &palette {
+                    Some(p) => {
+                        let hex: String = p.iter().map(|b| format!("{b:02x}")).collect();
+                        format!("[/Indexed {base} {} <{hex}>]", p.len() / 3 - 1)
+                    }
+                    None => base,
+                };
+                let mut dict = dict.replace("@CS@", &space);
+                if let Some(intent) = col.srgb_intent.filter(|_| col.icc.is_none()) {
+                    let name = [
+                        "Perceptual",
+                        "RelativeColorimetric",
+                        "Saturation",
+                        "AbsoluteColorimetric",
+                    ]
+                    .get(intent as usize)
+                    .copied()
+                    .unwrap_or("Perceptual");
+                    dict.push_str(&format!(" /Intent /{name}"));
+                }
+                self.stream(num, dict.as_bytes(), &idat, false);
+                return Ok(());
+            }
+        }
+        let jpeg_profile = if img.kind == Kind::Jpeg {
+            jpeg_icc(&data)
+        } else {
+            None
+        };
+
+        let x = match img.kind {
+            Kind::Png => flashtex_pdf::images::from_png(&data),
+            Kind::Jpeg => flashtex_pdf::images::from_jpeg(&data),
+            Kind::Pdf => flashtex_pdf::images::from_pdf_page(&data, img.page.max(1) as u32),
+            Kind::Bmp => Err("BMP images are not written yet".into()),
+        };
+        let x = match x {
+            Ok(x) => x,
+            Err(e) => {
+                self.object(num, b"null");
+                return Err(format!("{}: {e}", img.path));
+            }
+        };
+        // a JPEG's ICC profile: an ICCBased space in place of the Device one
+        let icc_space = jpeg_profile.map(|p| {
+            let o = self.alloc();
+            let comps = if p.len() > 20 && &p[16..20] == b"GRAY" {
+                1
+            } else if p.len() > 20 && &p[16..20] == b"CMYK" {
+                4
+            } else {
+                3
+            };
+            let d = format!(" /N {comps}");
+            self.stream(o, d.as_bytes(), &p, true);
+            format!("[/ICCBased {o} 0 R]")
+        });
+        // objects[0] is `num`; the others follow it
+        let mut nums = vec![num];
+        for _ in 1..x.objects.len() {
+            nums.push(self.alloc());
+        }
+        for (i, o) in x.objects.iter().enumerate() {
+            let mut body = String::new();
+            for piece in &o.dict {
+                match piece {
+                    flashtex_pdf::images::Piece::Text(t) => match (&icc_space, i) {
+                        (Some(cs), 0) => body.push_str(
+                            &t.replace("/ColorSpace /DeviceRGB", &format!("/ColorSpace {cs}"))
+                                .replace("/ColorSpace /DeviceGray", &format!("/ColorSpace {cs}"))
+                                .replace("/ColorSpace /DeviceCMYK", &format!("/ColorSpace {cs}")),
+                        ),
+                        _ => body.push_str(t),
+                    },
+                    flashtex_pdf::images::Piece::Ref(r) => {
+                        let _ = write!(body, "{} 0 R", nums[*r]);
+                    }
+                }
+            }
+            match &o.stream {
+                Some(s) => {
+                    let mut d = String::from(" ");
+                    d.push_str(&body);
+                    if i == 0 && icc_space.is_some() {
+                        let s = jpeg_without_icc(s);
+                        self.stream(nums[i], d.as_bytes(), &s, false);
+                    } else {
+                        self.stream(nums[i], d.as_bytes(), s, false);
+                    }
+                }
+                None => self.object(nums[i], body.as_bytes()),
+            }
+        }
+        Ok(())
+    }
+
+    // ---- fonts ----------------------------------------------------------------
+
+    fn font(&mut self, id: u16, num: u32) -> Result<(), String> {
+        let Some(r) = self.doc.fonts.resource(id).cloned() else {
+            self.object(num, b"null");
+            return Ok(());
+        };
+        let used = self.used.get(&id).cloned().unwrap_or_default();
+        match &r.kind {
+            ResKind::Native {
+                index,
+                cff,
+                ps_name,
+                sha,
+                ..
+            } => {
+                let data = self.face(sha, &r.program, *index);
+                self.native_font(num, &r, &data, *index, *cff, ps_name, &used)
+            }
+            ResKind::Type1 {
+                ps_name, encoding, ..
+            } => self.type1_font(num, &r, ps_name, encoding, &used),
+            ResKind::Missing => {
+                // nothing can draw it; Helvetica stands in so the PDF is valid
+                self.object(num, b"<</Type /Font /Subtype /Type1 /BaseFont /Helvetica>>");
+                Ok(())
+            }
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn native_font(
+        &mut self,
+        num: u32,
+        r: &FontRes,
+        data: &FaceData,
+        index: u32,
+        cff: bool,
+        ps_name: &str,
+        used: &BTreeSet<u16>,
+    ) -> Result<(), String> {
+        let font = data.font.as_ref().map_err(String::clone)?;
+        let upm = font.units_per_em as f64;
+        let k = 1000.0 / upm;
+        let info = FaceInfo::read(&r.program, index);
+        // the codes of the content stream: glyph ids, or the CIDs of a
+        // CID-keyed CFF font (its charset)
+        let cids = self.cids.get(&r.id).cloned();
+        let code_of = |g: u16| cids.as_ref().and_then(|m| m.get(&g)).copied().unwrap_or(g);
+        // the program, unless the font's licence forbids embedding it
+        let file = if info.embedding_forbidden() {
+            self.warnings.push(format!(
+                "{ps_name}: the font's OS/2 fsType ({:#06x}) does not allow embedding; it is not embedded",
+                info.fs_type
+            ));
+            None
+        } else {
+            // (the last run's, when it drew the same glyphs)
+            let made = {
+                let mut memo = data.memo.lock().unwrap_or_else(|e| e.into_inner());
+                match &memo.program {
+                    Some((c, u, p)) if *c == cff && u == used => p.clone(),
+                    _ => {
+                        let p = Arc::new(font_program(font, &r.program, cff, used));
+                        memo.program = Some((cff, used.clone(), p.clone()));
+                        p
+                    }
+                }
+            };
+            let (file_key, sub, program, subset) = made.as_ref().as_ref().map_err(String::clone)?;
+            let ff = self.alloc();
+            self.stream(ff, sub.as_bytes(), program, true);
+            Some((format!(" /{file_key} {ff} 0 R"), *subset))
+        };
+        // a subset's name has its tag (PDF 32000-1 §9.6.4); a whole font's not
+        let name = if ps_name.is_empty() { "Font" } else { ps_name };
+        let base = match &file {
+            Some((_, true)) => format!("{}+{name}", subset_tag(ps_name, used)),
+            _ => name.to_string(),
+        };
+        let file = file.map(|f| f.0);
+        let fd = self.alloc();
+        let [bx0, by0, bx1, by1] = font.bbox;
+        let mut d = String::new();
+        let _ = write!(
+            d,
+            "<</Type /FontDescriptor /FontName /{base} /Flags {} /FontBBox [{} {} {} {}] /ItalicAngle {} /Ascent {} /Descent {} /CapHeight {} /StemV {}{}>>",
+            info.flags(font.italic_angle),
+            n(bx0 as f64 * k, 3),
+            n(by0 as f64 * k, 3),
+            n(bx1 as f64 * k, 3),
+            n(by1 as f64 * k, 3),
+            n(font.italic_angle, 3),
+            n(font.ascender as f64 * k, 3),
+            n(font.descender as f64 * k, 3),
+            n(font.cap_height.unwrap_or(font.ascender) as f64 * k, 3),
+            info.stem_v(),
+            file.unwrap_or_default(),
+        );
+        self.object(fd, d.as_bytes());
+        // widths
+        let mut wa = String::from("[");
+        let mut prev: Option<u16> = None;
+        let by_code: BTreeMap<u16, u16> = used.iter().map(|&g| (code_of(g), g)).collect();
+        for (&c, &g) in &by_code {
+            let w = n(font.advance(g) as f64 * k, 3);
+            if prev.is_some_and(|p| p + 1 == c) {
+                let _ = write!(wa, " {w}");
+            } else {
+                if prev.is_some() {
+                    wa.push(']');
+                }
+                let _ = write!(wa, " {c} [{w}");
+            }
+            prev = Some(c);
+        }
+        if prev.is_some() {
+            wa.push(']');
+        }
+        wa.push_str(" ]");
+        // a CID-keyed font's own character collection, else Identity
+        let ros = if cids.is_some() {
+            font.cff_table().and_then(super::cffcid::ros)
+        } else {
+            None
+        };
+        // xdvipdfmx writes no ToUnicode for a standard Adobe character
+        // collection (Type0Font_attach_ToUnicode_stream)
+        let acc = ros
+            .as_ref()
+            .is_some_and(|(reg, ord, _)| super::tounicode::is_acc_font(reg, ord));
+        let csi = match ros {
+            Some((r, o, sup)) => {
+                let (mut rs, mut os) = (Vec::new(), Vec::new());
+                super::pdfobj::write_string(&r, &mut rs);
+                super::pdfobj::write_string(&o, &mut os);
+                format!(
+                    "<</Registry {} /Ordering {} /Supplement {sup}>>",
+                    String::from_utf8_lossy(&rs),
+                    String::from_utf8_lossy(&os)
+                )
+            }
+            None => "<</Registry (Adobe) /Ordering (Identity) /Supplement 0>>".to_string(),
+        };
+        let cid = self.alloc();
+        let mut d = String::new();
+        let _ = write!(
+            d,
+            "<</Type /Font /Subtype /{} /BaseFont /{base} /CIDSystemInfo {csi} /FontDescriptor {fd} 0 R /DW {} /W {wa}{}>>",
+            if cff { "CIDFontType0" } else { "CIDFontType2" },
+            n(font.advance(0) as f64 * k, 3),
+            if cff { "" } else { " /CIDToGIDMap /Identity" }
+        );
+        self.object(cid, d.as_bytes());
+        // ToUnicode as xdvipdfmx derives it (super::tounicode), by code
+        let map = if acc {
+            None
+        } else {
+            let codes: BTreeSet<u16> = used.iter().map(|&g| code_of(g)).collect();
+            let agl = self.agl();
+            // (the last run's, for the same codes and glyph list)
+            let mut memo = data.memo.lock().unwrap_or_else(|e| e.into_inner());
+            match &memo.to_unicode {
+                Some((c, a, m)) if *c == codes && Arc::ptr_eq(a, &agl) => m.clone(),
+                _ => {
+                    let m = super::tounicode::otf_to_unicode(&r.program, index, &codes, &agl)
+                        .map(Arc::new);
+                    memo.to_unicode = Some((codes, agl.clone(), m.clone()));
+                    m
+                }
+            }
+        };
+        let tu = match map {
+            Some(map) => {
+                let tu = self.alloc();
+                let cmap = to_unicode_cmap(&base, &map, true);
+                self.stream(tu, b"", cmap.as_bytes(), true);
+                format!(" /ToUnicode {tu} 0 R")
+            }
+            None => String::new(),
+        };
+        let mut d = String::new();
+        let _ = write!(
+            d,
+            "<</Type /Font /Subtype /Type0 /BaseFont /{base} /Encoding /Identity-H /DescendantFonts [{cid} 0 R]{tu}>>"
+        );
+        self.object(num, d.as_bytes());
+        Ok(())
+    }
+
+    fn type1_font(
+        &mut self,
+        num: u32,
+        r: &FontRes,
+        ps_name: &str,
+        encoding: &[Vec<u8>],
+        used: &BTreeSet<u16>,
+    ) -> Result<(), String> {
+        let t1 = flashtex_pdf::type1::Type1Font::parse_pfb(&r.program)
+            .map_err(|e| format!("{ps_name}: {e}"))?;
+        let names: BTreeSet<String> = used
+            .iter()
+            .filter_map(|&c| encoding.get(c as usize))
+            .map(|n| String::from_utf8_lossy(n).into_owned())
+            .filter(|n| n != ".notdef")
+            .collect();
+        let sub = t1.subset(&names).map_err(|e| format!("{ps_name}: {e}"))?;
+        let flashtex_pdf::exact::FontProgram::Type1 {
+            bytes,
+            length1,
+            length2,
+            length3,
+        } = &sub.program
+        else {
+            return Err(format!("{ps_name}: not a Type 1 program"));
+        };
+        let tag = subset_tag(ps_name, used);
+        let base = format!("{tag}+{ps_name}");
+        let ff = self.alloc();
+        let d = format!(" /Length1 {length1} /Length2 {length2} /Length3 {length3}");
+        self.stream(ff, d.as_bytes(), bytes, true);
+        let bbox = t1.font_bbox().unwrap_or([0, -250, 1000, 750]);
+        let fd = self.alloc();
+        let d = format!(
+            "<</Type /FontDescriptor /FontName /{base} /Flags {} /FontBBox [{} {} {} {}] /ItalicAngle {} /Ascent {} /Descent {} /CapHeight {} /StemV {} /FontFile {ff} 0 R>>",
+            type1_flags(&r.program, t1.italic_angle().unwrap_or("0")),
+            bbox[0],
+            bbox[1],
+            bbox[2],
+            bbox[3],
+            t1.italic_angle().unwrap_or("0"),
+            bbox[3],
+            bbox[1],
+            bbox[3],
+            t1.std_vw().unwrap_or(80)
+        );
+        self.object(fd, d.as_bytes());
+        let first = used.iter().next().copied().unwrap_or(0).min(255);
+        let last = used.iter().next_back().copied().unwrap_or(0).min(255);
+        let widths = self.doc.fonts.widths.get(&r.id);
+        let mut wa = String::from("[");
+        for c in first..=last {
+            let w = widths.and_then(|m| m.get(&c)).copied().unwrap_or(0.0);
+            let _ = write!(wa, " {}", n(w, 3));
+        }
+        wa.push_str(" ]");
+        let mut diffs = String::from("[");
+        let mut prev: Option<u16> = None;
+        for &c in used {
+            let name = encoding
+                .get(c as usize)
+                .map(|n| String::from_utf8_lossy(n).into_owned())
+                .unwrap_or_else(|| ".notdef".into());
+            if prev.is_none_or(|p| p + 1 != c) {
+                let _ = write!(diffs, " {c}");
+            }
+            let mut nb = Vec::new();
+            write_name(name.as_bytes(), &mut nb);
+            diffs.push(' ');
+            diffs.push_str(&String::from_utf8_lossy(&nb));
+            prev = Some(c);
+        }
+        diffs.push_str(" ]");
+        // ToUnicode by the encoding's glyph names, as xdvipdfmx writes it
+        // (pdf_create_ToUnicode_CMap): none if a used name has no text
+        let names: BTreeMap<u16, Vec<u8>> = used
+            .iter()
+            .filter_map(|&c| {
+                encoding
+                    .get(c as usize)
+                    .filter(|n| !n.is_empty())
+                    .map(|n| (c, n.clone()))
+            })
+            .collect();
+        let tu = match super::tounicode::encoding_to_unicode(&names, &self.agl()) {
+            Some(map) => {
+                let tu = self.alloc();
+                let cmap = to_unicode_cmap(&base, &map, false);
+                self.stream(tu, b"", cmap.as_bytes(), true);
+                format!(" /ToUnicode {tu} 0 R")
+            }
+            None => String::new(),
+        };
+        let d = format!(
+            "<</Type /Font /Subtype /Type1 /BaseFont /{base} /FirstChar {first} /LastChar {last} /Widths {wa} /Encoding <</Type /Encoding /Differences {diffs}>> /FontDescriptor {fd} 0 R{tu}>>"
+        );
+        self.object(num, d.as_bytes());
+        Ok(())
+    }
+
+    // ---- the document --------------------------------------------------------
+
+    fn catalog_and_tree(&mut self) -> Result<(), String> {
+        let doc = self.doc;
+        // the page tree
+        let mut d = format!("<</Type /Pages /Count {} /Kids [", self.pages.len());
+        for (i, p) in self.pages.iter().enumerate() {
+            if i > 0 {
+                d.push(' ');
+            }
+            let _ = write!(d, "{p} 0 R");
+        }
+        d.push_str("]>>");
+        let root = self.pages_root;
+        self.object(root, d.as_bytes());
+        // the outline
+        let outlines = if doc.outlines.is_empty() {
+            None
+        } else {
+            Some(self.outlines())
+        };
+        // named destinations
+        let mut names = doc.names.clone();
+        if !doc.dests.is_empty() {
+            let mut sorted: BTreeMap<Vec<u8>, Obj> = BTreeMap::new();
+            for (k, v) in &doc.dests {
+                sorted.entry(k.clone()).or_insert_with(|| v.clone());
+            }
+            let mut arr = Vec::new();
+            for (k, v) in sorted {
+                arr.push(Obj::Str(k));
+                arr.push(v);
+            }
+            let tree = self.alloc();
+            let body = self.ser(&Obj::Dict(Dict(vec![(b"Names".to_vec(), Obj::Array(arr))])));
+            self.object(tree, &body);
+            names.set(b"Dests", Obj::Ref(tree, 0));
+        }
+        let names_ref = if !names.0.is_empty() || self.names_obj.is_some() {
+            let o = match self.names_obj {
+                Some(o) => o,
+                _ => {
+                    let o = self.alloc();
+                    self.names_obj = Some(o);
+                    o
+                }
+            };
+            let body = self.ser(&Obj::Dict(names));
+            self.object(o, &body);
+            Some(o)
+        } else {
+            None
+        };
+        // the catalog
+        let mut cat = doc.catalog.clone();
+        for k in [&b"Type"[..], b"Pages", b"Outlines", b"Names"] {
+            cat.remove(k);
+        }
+        let mut d = format!("<</Type /Catalog /Pages {root} 0 R");
+        if let Some(o) = outlines {
+            let _ = write!(d, " /Outlines {o} 0 R");
+        }
+        if let Some(o) = names_ref {
+            let _ = write!(d, " /Names {o} 0 R");
+        }
+        let mut body = d.into_bytes();
+        if !cat.0.is_empty() {
+            body.push(b' ');
+            let e = self.ser_dict_entries(&cat);
+            body.extend_from_slice(&e);
+        }
+        body.extend_from_slice(b">>");
+        let c = self.catalog;
+        self.object(c, &body);
+        Ok(())
+    }
+
+    /// The outline tree from the flat list of `pdf:outline` entries.
+    fn outlines(&mut self) -> u32 {
+        let doc = self.doc;
+        let n_items = doc.outlines.len();
+        let root = self.alloc();
+        let nums: Vec<u32> = (0..n_items).map(|_| self.alloc()).collect();
+        // parent of each item (None: the root), by levels
+        let mut parent: Vec<Option<usize>> = vec![None; n_items];
+        let mut stack: Vec<usize> = Vec::new();
+        for (i, o) in doc.outlines.iter().enumerate() {
+            while let Some(&top) = stack.last() {
+                if doc.outlines[top].level >= o.level {
+                    stack.pop();
+                } else {
+                    break;
+                }
+            }
+            parent[i] = stack.last().copied();
+            stack.push(i);
+        }
+        let children =
+            |p: Option<usize>| -> Vec<usize> { (0..n_items).filter(|&i| parent[i] == p).collect() };
+        // visible descendants (counting through open items)
+        fn visible(
+            i: usize,
+            kids: &dyn Fn(Option<usize>) -> Vec<usize>,
+            open: &dyn Fn(usize) -> bool,
+        ) -> i64 {
+            let c = kids(Some(i));
+            c.iter()
+                .map(|&k| 1 + if open(k) { visible(k, kids, open) } else { 0 })
+                .sum()
+        }
+        let open = |i: usize| doc.outlines[i].open;
+        for i in 0..n_items {
+            let o = &doc.outlines[i];
+            let mut d = o.dict.clone();
+            for k in [
+                &b"Parent"[..],
+                b"Prev",
+                b"Next",
+                b"First",
+                b"Last",
+                b"Count",
+            ] {
+                d.remove(k);
+            }
+            let mut body = b"<<".to_vec();
+            let e = self.ser_dict_entries(&d);
+            body.extend_from_slice(&e);
+            let par = parent[i].map_or(root, |p| nums[p]);
+            let sibs = children(parent[i]);
+            let pos = sibs.iter().position(|&s| s == i).unwrap_or(0);
+            let _ = write!(Bytes(&mut body), " /Parent {par} 0 R");
+            if pos > 0 {
+                let _ = write!(Bytes(&mut body), " /Prev {} 0 R", nums[sibs[pos - 1]]);
+            }
+            if pos + 1 < sibs.len() {
+                let _ = write!(Bytes(&mut body), " /Next {} 0 R", nums[sibs[pos + 1]]);
+            }
+            let kids = children(Some(i));
+            if let (Some(f), Some(l)) = (kids.first(), kids.last()) {
+                let cnt = visible(i, &children, &open);
+                let cnt = if o.open { cnt } else { -(kids.len() as i64) };
+                let _ = write!(
+                    Bytes(&mut body),
+                    " /First {} 0 R /Last {} 0 R /Count {cnt}",
+                    nums[*f],
+                    nums[*l]
+                );
+            }
+            body.extend_from_slice(b">>");
+            self.object(nums[i], &body);
+        }
+        let top = children(None);
+        let total: i64 = top
+            .iter()
+            .map(|&k| {
+                1 + if open(k) {
+                    visible(k, &children, &open)
+                } else {
+                    0
+                }
+            })
+            .sum();
+        let mut body = b"<</Type /Outlines".to_vec();
+        if let (Some(f), Some(l)) = (top.first(), top.last()) {
+            let _ = write!(
+                Bytes(&mut body),
+                " /First {} 0 R /Last {} 0 R /Count {total}",
+                nums[*f],
+                nums[*l]
+            );
+        }
+        body.extend_from_slice(b">>");
+        self.object(root, &body);
+        root
+    }
+
+    fn finish(mut self) -> Vec<u8> {
+        // the document information
+        let info = self.alloc();
+        let mut di = self.doc.docinfo.clone();
+        di.0.retain(|(_, v)| !matches!(v, Obj::Str(s) if s.is_empty()));
+        if di.get(b"Creator").is_none() {
+            if let Some(c) = &self.doc.dvi_comment {
+                di.set(b"Creator", Obj::Str(c.clone()));
+            }
+        }
+        if di.get(b"Producer").is_none() {
+            di.set(
+                b"Producer",
+                Obj::Str(self.opts.producer.clone().into_bytes()),
+            );
+        }
+        if let Some(date) = &self.opts.date {
+            if di.get(b"CreationDate").is_none() {
+                di.set(b"CreationDate", Obj::Str(date.clone().into_bytes()));
+            }
+            if di.get(b"ModDate").is_none() {
+                di.set(b"ModDate", Obj::Str(date.clone().into_bytes()));
+            }
+        }
+        let body = self.ser(&Obj::Dict(di));
+        self.object(info, &body);
+        while let Some(name) = self.named_queue.pop() {
+            self.named_object(&name);
+        }
+        // unwritten objects (a reference nothing filled in) are null
+        for i in 0..self.offsets.len() {
+            if self.offsets[i].is_none() {
+                self.object(i as u32 + 1, b"null");
+            }
+        }
+        let shift = header(self.doc.version).len();
+        let mut out = std::mem::take(&mut self.out);
+        let xref = out.len();
+        let _ = write!(
+            Bytes(&mut out),
+            "xref\n0 {}\n0000000000 65535 f \n",
+            self.offsets.len() + 1
+        );
+        for o in &self.offsets {
+            let _ = writeln!(Bytes(&mut out), "{:010} 00000 n ", o.unwrap_or(shift));
+        }
+        let id = self.id.finish(&out);
+        let idh: String = id[..16].iter().map(|b| format!("{b:02x}")).collect();
+        let _ = write!(
+            Bytes(&mut out),
+            "trailer\n<</Size {} /Root {} 0 R /Info {info} 0 R /ID [<{idh}> <{idh}>]>>\nstartxref\n{xref}\n%%EOF\n",
+            self.offsets.len() + 1,
+            self.catalog
+        );
+        out
+    }
+}
+
+/// The file's first two lines: the version, and a comment of non-ASCII
+/// characters (in UTF-8).
+fn header((maj, min): (u32, u32)) -> Vec<u8> {
+    format!("%PDF-{maj}.{min}\n%\u{00d0}\u{00d4}\u{00c5}\u{00d8}\n").into_bytes()
+}
+
+/// The SHA-256 of the file up to its trailer, which the trailer's `/ID`
+/// is made of. It is taken on a thread of its own while the objects are
+/// written, so that the end of the run has only the xref table left to
+/// hash, not the whole file (12 MB, 9 ms, for a 109-page preview, whose
+/// streams are stored); where no thread can be started, in line as the
+/// objects are written. Either way it hashes the same bytes in the same
+/// order, so the `/ID` is the same.
+struct IdHash {
+    /// How much of the file has been hashed or sent to be.
+    done: usize,
+    how: IdHow,
+}
+
+enum IdHow {
+    Thread(
+        std::sync::mpsc::Sender<Vec<u8>>,
+        std::thread::JoinHandle<[u8; 32]>,
+    ),
+    Inline(Sha256),
+    /// The thread is gone (it cannot be, short of a panic): hash the whole
+    /// file at the end.
+    Lost,
+}
+
+impl IdHash {
+    /// The new bytes sent at a time.
+    const CHUNK: usize = 1 << 18;
+
+    fn new() -> Self {
+        let (tx, rx) = std::sync::mpsc::channel::<Vec<u8>>();
+        let thread = std::thread::Builder::new()
+            .name("pdf-id".into())
+            .spawn(move || {
+                let mut h = Sha256::new();
+                for chunk in rx {
+                    h.update(&chunk);
+                }
+                h.finish()
+            });
+        let how = match thread {
+            Ok(j) => IdHow::Thread(tx, j),
+            Err(_) => IdHow::Inline(Sha256::new()),
+        };
+        IdHash { done: 0, how }
+    }
+
+    /// Hash `out[done..]`, `out` being the file so far, once that is at
+    /// least `min` bytes.
+    fn feed(&mut self, out: &[u8], min: usize) {
+        let new = &out[self.done..];
+        if new.is_empty() || new.len() < min {
+            return;
+        }
+        match &mut self.how {
+            IdHow::Thread(tx, _) => {
+                if tx.send(new.to_vec()).is_err() {
+                    self.how = IdHow::Lost;
+                }
+            }
+            IdHow::Inline(h) => h.update(new),
+            IdHow::Lost => {}
+        }
+        self.done = out.len();
+    }
+
+    /// The hash of `out`, the whole file up to its trailer.
+    fn finish(&mut self, out: &[u8]) -> [u8; 32] {
+        self.feed(out, 0);
+        match std::mem::replace(&mut self.how, IdHow::Lost) {
+            IdHow::Thread(tx, j) => {
+                drop(tx);
+                j.join().unwrap_or_else(|_| sha256(out))
+            }
+            IdHow::Inline(h) => h.finish(),
+            IdHow::Lost => sha256(out),
+        }
+    }
+}
+
+struct Bytes<'a>(&'a mut Vec<u8>);
+impl std::fmt::Write for Bytes<'_> {
+    fn write_str(&mut self, s: &str) -> std::fmt::Result {
+        self.0.extend_from_slice(s.as_bytes());
+        Ok(())
+    }
+}
+
+/// The program of a native font for its font descriptor: the key, the
+/// stream's subtype entry, the bytes, and whether they are a subset (which
+/// the font's name then says with its tag).
+fn font_program(
+    font: &flashtex_pdf::truetype::TrueTypeFont,
+    whole: &[u8],
+    cff: bool,
+    used: &BTreeSet<u16>,
+) -> Result<Program, String> {
+    if !cff {
+        return Ok(("FontFile2", "", font.subset_keep_gids(used)?, true));
+    }
+    let table = font.cff_table().ok_or("no CFF table")?;
+    let parsed = flashtex_pdf::cff::CffFont::parse(table).map_err(|e| format!("{e:?}"))?;
+    if parsed.is_cid_keyed() {
+        // A CID-keyed CFF (CJK fonts): its subset keeps the CIDs, which the
+        // content stream writes (`cid_map`); whole if it cannot be subset.
+        return Ok(match super::cffcid::subset(table, used) {
+            Ok(b) => ("FontFile3", "/Subtype /CIDFontType0C", b, true),
+            Err(_) => (
+                "FontFile3",
+                "/Subtype /CIDFontType0C",
+                table.to_vec(),
+                false,
+            ),
+        });
+    }
+    Ok(match parsed.subset(used) {
+        Ok(s) => ("FontFile3", "/Subtype /CIDFontType0C", s.bytes, true),
+        // a `seac` glyph: the whole font, as OpenType (a name-keyed CFF's
+        // CIDs are its glyph ids, PDF 32000-1 §9.7.4.2)
+        Err(_) => ("FontFile3", "/Subtype /OpenType", whole.to_vec(), false),
+    })
+}
+
+/// What the PDF writer last made for one face (`super::fonts::FaceData`),
+/// with the input it made it from: each a function of the face and that
+/// input, used again when a later run asks with the same input (a
+/// keystroke seldom changes which glyphs a font draws).
+#[derive(Default)]
+pub struct FaceMemo {
+    /// [`cid_map`]'s, for these glyphs.
+    cids: Option<(BTreeSet<u16>, Option<CidMap>)>,
+    /// [`font_program`]'s, for this outline kind and these glyphs.
+    program: Option<ProgramMemo>,
+    /// `otf_to_unicode`'s, for these codes and this glyph list.
+    to_unicode: Option<TextMemo>,
+}
+
+/// A glyph id's CID.
+type CidMap = BTreeMap<u16, u16>;
+
+/// [`FaceMemo::program`]: the outline kind and glyphs, and the program.
+type ProgramMemo = (bool, BTreeSet<u16>, Arc<Result<Program, String>>);
+
+/// [`FaceMemo::to_unicode`]: the codes and glyph list, and the text.
+type TextMemo = (BTreeSet<u16>, Arc<Agl>, Option<Arc<TextMap>>);
+
+/// A code's text.
+type TextMap = BTreeMap<u16, Vec<char>>;
+
+/// What [`font_program`] makes: the descriptor's key and stream entries,
+/// the program, and whether it is a subset.
+type Program = (&'static str, &'static str, Vec<u8>, bool);
+
+/// For a CID-keyed CFF face: each used glyph id's CID (the font's charset,
+/// through which a CIDFontType0 font selects glyphs). `None` for any other
+/// face.
+fn cid_map(
+    font: &flashtex_pdf::truetype::TrueTypeFont,
+    used: &BTreeSet<u16>,
+) -> Option<BTreeMap<u16, u16>> {
+    let cff = flashtex_pdf::cff::CffFont::parse(font.cff_table()?).ok()?;
+    if !cff.is_cid_keyed() {
+        return None;
+    }
+    Some(
+        used.iter()
+            .map(|&g| (g, cff.charset_entry(g).unwrap_or(0)))
+            .collect(),
+    )
+}
+
+/// What the font descriptor takes from a face's `OS/2`, `post` and `head`.
+#[derive(Default)]
+struct FaceInfo {
+    fs_type: u16,
+    weight: u16,
+    family_class: u16,
+    fixed_pitch: bool,
+    italic_style: bool,
+}
+
+impl FaceInfo {
+    fn read(data: &[u8], index: u32) -> FaceInfo {
+        use super::tounicode::table;
+        let rd16 = |t: &[u8], o: usize| t.get(o..o + 2).map(|s| u16::from_be_bytes([s[0], s[1]]));
+        let mut f = FaceInfo {
+            weight: 400,
+            ..FaceInfo::default()
+        };
+        if let Some(os2) = table(data, index, b"OS/2") {
+            f.weight = rd16(os2, 4).unwrap_or(400);
+            f.fs_type = rd16(os2, 8).unwrap_or(0);
+            f.family_class = rd16(os2, 30).unwrap_or(0);
+            f.italic_style = rd16(os2, 62).is_some_and(|s| s & 1 != 0);
+        }
+        if let Some(post) = table(data, index, b"post") {
+            f.fixed_pitch = post.get(12..16).is_some_and(|s| s.iter().any(|&b| b != 0));
+        }
+        if let Some(head) = table(data, index, b"head") {
+            f.italic_style |= rd16(head, 44).is_some_and(|m| m & 2 != 0);
+        }
+        f
+    }
+
+    /// `fsType` (OpenType spec, OS/2): "Restricted License embedding"
+    /// (only bit 1 of the usage bits) or "Bitmap embedding only" (bit 9).
+    fn embedding_forbidden(&self) -> bool {
+        self.fs_type & 0x000F == 0x0002 || self.fs_type & 0x0200 != 0
+    }
+
+    /// The descriptor's `/Flags` (PDF 32000-1 Table 123): FixedPitch,
+    /// Serif (an `sFamilyClass` of 1-5 or 7), Symbolic (a font drawn by
+    /// glyph id has no standard encoding), Italic.
+    fn flags(&self, italic_angle: f64) -> u32 {
+        let mut f = 4;
+        if self.fixed_pitch {
+            f |= 1;
+        }
+        if matches!(self.family_class >> 8, 1..=5 | 7) {
+            f |= 2;
+        }
+        if self.italic_style || italic_angle != 0.0 {
+            f |= 64;
+        }
+        f
+    }
+
+    /// `/StemV` from the weight class, as PDF writers estimate it when the
+    /// font gives none: 50 + (weight / 65)².
+    fn stem_v(&self) -> u32 {
+        let w = self.weight as f64 / 65.0;
+        (50.0 + w * w).round() as u32
+    }
+}
+
+/// A Type 1 font's `/Flags`: Symbolic (TeX's fonts are re-encoded), and
+/// FixedPitch and Italic from its `FontInfo`.
+fn type1_flags(program: &[u8], italic_angle: &str) -> u32 {
+    let clear_end = program.len().min(16 * 1024);
+    let clear = &program[..clear_end];
+    let mut f = 4;
+    if clear.windows(17).any(|w| w == b"/isFixedPitch tru") {
+        f |= 1;
+    }
+    if italic_angle.trim().parse::<f64>().is_ok_and(|a| a != 0.0) {
+        f |= 64;
+    }
+    f
+}
+
+fn color_op(c: &mut Vec<u8>, v: &[f64], stroke: bool) {
+    let op = match (v.len(), stroke) {
+        (1, false) => "g",
+        (1, true) => "G",
+        (3, false) => "rg",
+        (3, true) => "RG",
+        (4, false) => "k",
+        (4, true) => "K",
+        _ => return,
+    };
+    for x in v {
+        push_num(c, *x, 5);
+        c.push(b' ');
+    }
+    c.extend_from_slice(op.as_bytes());
+    c.push(b'\n');
+}
+
+fn write_matrix(c: &mut Vec<u8>, m: &[f64; 6]) {
+    for (i, v) in m.iter().enumerate() {
+        if i > 0 {
+            c.push(b' ');
+        }
+        push_num(c, *v, if i < 4 { 8 } else { 6 });
+    }
+}
+
+/// Path segments, mapped by `m` when given.
+fn write_segs(c: &mut Vec<u8>, segs: &[Seg], m: Option<&[f64; 6]>) {
+    // `x y ` (six decimals), mapped
+    let pt = |c: &mut Vec<u8>, x: f64, y: f64| {
+        let (x, y) = match m {
+            Some(m) => (x * m[0] + y * m[2] + m[4], x * m[1] + y * m[3] + m[5]),
+            None => (x, y),
+        };
+        push_num(c, x, 6);
+        c.push(b' ');
+        push_num(c, y, 6);
+        c.push(b' ');
+    };
+    for s in segs {
+        match *s {
+            Seg::Move(x, y) => {
+                pt(c, x, y);
+                c.extend_from_slice(b"m ");
+            }
+            Seg::Line(x, y) => {
+                pt(c, x, y);
+                c.extend_from_slice(b"l ");
+            }
+            Seg::Curve(x1, y1, x2, y2, x3, y3) => {
+                pt(c, x1, y1);
+                pt(c, x2, y2);
+                pt(c, x3, y3);
+                c.extend_from_slice(b"c ");
+            }
+            Seg::Close => c.extend_from_slice(b"h "),
+        }
+    }
+}
+
+/// `v1 v2 ...`, each with at most `d` decimals.
+fn push_nums(c: &mut Vec<u8>, v: &[f64], d: usize) {
+    for (i, x) in v.iter().enumerate() {
+        if i > 0 {
+            c.push(b' ');
+        }
+        push_num(c, *x, d);
+    }
+}
+
+/// `w w c J j j m M [dash] phase d` (six decimals), no separator after.
+fn write_stroke(c: &mut Vec<u8>, s: &Stroke) {
+    push_num(c, s.width, 6);
+    c.extend_from_slice(b" w ");
+    push_uint(c, s.cap as u64);
+    c.extend_from_slice(b" J ");
+    push_uint(c, s.join as u64);
+    c.extend_from_slice(b" j ");
+    push_num(c, s.miter, 6);
+    c.extend_from_slice(b" M [");
+    push_nums(c, &s.dash, 6);
+    c.extend_from_slice(b"] ");
+    push_num(c, s.phase, 6);
+    c.extend_from_slice(b" d");
+}
+
+/// `<XXXX>Tj` and a newline: `code` in `width` upper-case hex digits
+/// (`format!("<{code:0width$X}>Tj")` for a code that fits).
+fn push_hex_tj(c: &mut Vec<u8>, code: u32, width: usize) {
+    const HEX: &[u8; 16] = b"0123456789ABCDEF";
+    c.push(b'<');
+    let digits = width.max((32 - code.leading_zeros() as usize).div_ceil(4));
+    for i in (0..digits).rev() {
+        c.push(HEX[((code >> (4 * i)) & 0xF) as usize]);
+    }
+    c.extend_from_slice(b">Tj\n");
+}
+
+/// Six capital letters naming a subset, from the font and its glyphs.
+fn subset_tag(name: &str, used: &BTreeSet<u16>) -> String {
+    let mut h = Sha256::new();
+    h.update(name.as_bytes());
+    for g in used {
+        h.update(&g.to_le_bytes());
+    }
+    let d = h.finish();
+    d[..6].iter().map(|b| (b'A' + b % 26) as char).collect()
+}
+
+/// A `ToUnicode` CMap: codes (2 bytes for `Identity-H`, else 1) to UTF-16.
+fn to_unicode_cmap(name: &str, map: &BTreeMap<u16, Vec<char>>, two_byte: bool) -> String {
+    let mut s = String::new();
+    let _ = write!(
+        s,
+        "/CIDInit /ProcSet findresource begin\n12 dict begin\nbegincmap\n/CIDSystemInfo <</Registry (Adobe) /Ordering (UCS) /Supplement 0>> def\n/CMapName /{name}-UTF16 def\n/CMapType 2 def\n1 begincodespacerange\n{}\nendcodespacerange\n",
+        if two_byte { "<0000> <FFFF>" } else { "<00> <FF>" }
+    );
+    let entries: Vec<_> = map.iter().collect();
+    for chunk in entries.chunks(100) {
+        let _ = writeln!(s, "{} beginbfchar", chunk.len());
+        for (code, chars) in chunk {
+            let mut u = String::new();
+            for ch in chars.iter() {
+                let mut buf = [0u16; 2];
+                for unit in ch.encode_utf16(&mut buf) {
+                    let _ = write!(u, "{unit:04X}");
+                }
+            }
+            if two_byte {
+                let _ = writeln!(s, "<{code:04X}> <{u}>");
+            } else {
+                let _ = writeln!(s, "<{:02X}> <{u}>", *code & 0xFF);
+            }
+        }
+        s.push_str("endbfchar\n");
+    }
+    s.push_str("endcmap\nCMapName currentdict /CMap defineresource pop\nend\nend\n");
+    s
+}
+
+/// What a PNG says about its colours (dvipdfmx's order: `iCCP`, then
+/// `sRGB`, then `cHRM`/`gAMA`).
+#[derive(Default)]
+struct PngColor {
+    /// The `iCCP` profile, zlib-compressed as the chunk holds it.
+    icc: Option<Vec<u8>>,
+    srgb_intent: Option<u8>,
+    gamma: Option<f64>,
+    chrm: Option<[f64; 8]>,
+}
+
+/// A PNG whose `IDAT` data a PDF can take as it is.
+struct PngPass {
+    /// The image dictionary's entries, `@CS@` where the colour space goes.
+    dict: String,
+    color: PngColor,
+    /// Components of the base colour space (1 or 3).
+    n_base: u8,
+    palette: Option<Vec<u8>>,
+    idat: Vec<u8>,
+}
+
+/// A PNG whose `IDAT` data a PDF can take as it is (8 bits or fewer per
+/// sample, no alpha, no transparency key, not interlaced), as pdfTeX and
+/// dvipdfmx copy it.
+fn png_passthrough(data: &[u8]) -> Option<PngPass> {
+    if data.len() < 8 || data[..8] != [0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A] {
+        return None;
+    }
+    let mut pos = 8;
+    let (mut w, mut h, mut bits, mut ctype, mut interlace) = (0u32, 0u32, 0u8, 0u8, 0u8);
+    let mut plte: Option<&[u8]> = None;
+    let mut idat = Vec::new();
+    let mut col = PngColor::default();
+    let be32 = |p: usize| -> Option<u32> {
+        Some(u32::from_be_bytes(data.get(p..p + 4)?.try_into().ok()?))
+    };
+    loop {
+        let len = be32(pos)? as usize;
+        let kind = data.get(pos + 4..pos + 8)?;
+        let body = data.get(pos + 8..pos + 8 + len)?;
+        match kind {
+            b"IHDR" => {
+                w = be32(pos + 8)?;
+                h = be32(pos + 12)?;
+                bits = body[8];
+                ctype = body[9];
+                interlace = body[12];
+            }
+            b"PLTE" => plte = Some(body),
+            b"tRNS" => return None,
+            b"IDAT" => idat.extend_from_slice(body),
+            b"iCCP" => {
+                let z = body.iter().position(|&c| c == 0)?;
+                col.icc = body.get(z + 2..).map(<[u8]>::to_vec);
+            }
+            b"sRGB" => col.srgb_intent = body.first().copied(),
+            b"gAMA" if len == 4 => col.gamma = Some(be32(pos + 8)? as f64 / 100_000.0),
+            b"cHRM" if len == 32 => {
+                let mut v = [0.0; 8];
+                for (i, x) in v.iter_mut().enumerate() {
+                    *x = be32(pos + 8 + 4 * i)? as f64 / 100_000.0;
+                }
+                col.chrm = Some(v);
+            }
+            b"IEND" => break,
+            _ => {}
+        }
+        pos += 12 + len;
+    }
+    if interlace != 0 || bits > 8 || !matches!(ctype, 0 | 2 | 3) {
+        return None;
+    }
+    let colors = if ctype == 2 { 3 } else { 1 };
+    let dict = format!(
+        " /Type /XObject /Subtype /Image /Width {w} /Height {h} /ColorSpace @CS@ /BitsPerComponent {bits} /Filter /FlateDecode /DecodeParms <</Predictor 15 /Colors {colors} /BitsPerComponent {bits} /Columns {w}>>"
+    );
+    let palette = if ctype == 3 {
+        Some(plte?.to_vec())
+    } else {
+        None
+    };
+    Some(PngPass {
+        dict,
+        color: col,
+        n_base: if ctype == 0 { 1 } else { 3 },
+        palette,
+        idat,
+    })
+}
+
+/// A CIE-based space from a PNG's `sRGB` chunk, or its `gAMA` and `cHRM`
+/// (measured: dvipdfmx writes an `sRGB` grey PNG as `[/CalGray <</Gamma
+/// 2.2 /WhitePoint [.95046 1 1.08906]>>]`).
+fn cal_space(col: &PngColor, n: u8) -> Option<String> {
+    let srgb = [0.3127, 0.329, 0.64, 0.33, 0.3, 0.6, 0.15, 0.06];
+    let (gamma, chrm) = if col.srgb_intent.is_some() {
+        (2.2, srgb)
+    } else if col.gamma.is_some() || col.chrm.is_some() {
+        let g = col
+            .gamma
+            .map_or(2.2, |g| if g > 0.0 { 1.0 / g } else { 2.2 });
+        (g, col.chrm.unwrap_or(srgb))
+    } else {
+        return None;
+    };
+    let [xw, yw, xr, yr, xg, yg, xb, yb] = chrm;
+    let wp = [xw / yw, 1.0, (1.0 - xw - yw) / yw];
+    let f = n_dot;
+    let wps = format!("[{} {} {}]", f(wp[0]), f(wp[1]), f(wp[2]));
+    if n == 1 {
+        return Some(format!(
+            "[/CalGray <</Gamma {} /WhitePoint {wps}>>]",
+            f(gamma)
+        ));
+    }
+    // the primaries' XYZ, scaled so that they sum to the white point
+    let z = |x: f64, y: f64| [x / y, 1.0, (1.0 - x - y) / y];
+    let (r, g, b) = (z(xr, yr), z(xg, yg), z(xb, yb));
+    let m = [[r[0], g[0], b[0]], [r[1], g[1], b[1]], [r[2], g[2], b[2]]];
+    let det3 = |m: &[[f64; 3]; 3]| {
+        m[0][0] * (m[1][1] * m[2][2] - m[1][2] * m[2][1])
+            - m[0][1] * (m[1][0] * m[2][2] - m[1][2] * m[2][0])
+            + m[0][2] * (m[1][0] * m[2][1] - m[1][1] * m[2][0])
+    };
+    let det = det3(&m);
+    if det.abs() < 1e-12 {
+        return None;
+    }
+    let solve = |c: usize| {
+        let mut mm = m;
+        for (row, w) in mm.iter_mut().zip(wp) {
+            row[c] = w;
+        }
+        det3(&mm) / det
+    };
+    let (sr, sg, sb) = (solve(0), solve(1), solve(2));
+    let mx = [
+        r[0] * sr,
+        r[1] * sr,
+        r[2] * sr,
+        g[0] * sg,
+        g[1] * sg,
+        g[2] * sg,
+        b[0] * sb,
+        b[1] * sb,
+        b[2] * sb,
+    ];
+    let ms: Vec<String> = mx.iter().map(|v| f(*v)).collect();
+    Some(format!(
+        "[/CalRGB <</Gamma [{0} {0} {0}] /Matrix [{1}] /WhitePoint {wps}>>]",
+        f(gamma),
+        ms.join(" ")
+    ))
+}
+
+/// What this writer draws each RULE of `p` with (spec §4.4
+/// `RULE_GEOMETRY`), in item order: the numbers [`Writer::content`] writes
+/// (five decimals), read back, with no CTM translation. The preview then
+/// strokes a fraction bar on the PDF's own coordinates (from sp, a 0.68 bp
+/// rule's end column differed by one coverage level at 4 px/pt).
+pub fn rule_geometry(p: &Page) -> Vec<[f64; 7]> {
+    let h = p.pdf_box[3];
+    let r = |v: f64| super::num::round_num(v, 5);
+    p.items
+        .iter()
+        .filter_map(|it| {
+            let Item::Rule {
+                kind,
+                x,
+                y,
+                w,
+                h: rh,
+            } = it
+            else {
+                return None;
+            };
+            let (l, t) = (*x as f64 / K, h - *y as f64 / K);
+            let (wb, hb) = (*w as f64 / K, *rh as f64 / K);
+            let b = t - hb;
+            Some(match kind {
+                RuleKind::Fill => [0.0, 0.0, r(l), r(b), r(wb), r(hb), 0.0],
+                RuleKind::StrokeH => {
+                    let ym = b + hb / 2.0;
+                    [0.0, 0.0, r(l), r(ym), r(l + wb), r(ym), r(hb)]
+                }
+                RuleKind::StrokeV => {
+                    let xm = l + wb / 2.0;
+                    [0.0, 0.0, r(xm), r(b), r(xm), r(t), r(wb)]
+                }
+            })
+        })
+        .collect()
+}
+
+/// The colour space this writer gives a raster image's samples, for the
+/// `IMAGE` resource's `color_space` (spec §5.2), so that the preview draws
+/// the samples as the PDF does: `{"type": "icc"}` (the profile the file
+/// embeds: a PNG's `iCCP`, a JPEG's `ICC_PROFILE`), or `{"type": "calgray"
+/// | "calrgb", "gamma", "white_point", "matrix"}` (a PNG's `sRGB`, or its
+/// `gAMA`/`cHRM`), read from the very array [`cal_space`] writes, with
+/// `intent` when the PDF names one. None: the Device space of the samples
+/// (pdfTeX's rule, and this writer's for every other image).
+pub fn image_color_space(kind: Kind, data: &[u8]) -> Option<flashtex_display_list::json::Json> {
+    use flashtex_display_list::json::Json;
+    let icc = || Some(Json::Obj(vec![("type".into(), Json::Str("icc".into()))]));
+    match kind {
+        Kind::Png => {
+            let p = png_passthrough(data)?;
+            if p.color.icc.is_some() {
+                return icc();
+            }
+            let space = cal_space(&p.color, p.n_base)?;
+            // `[/CalGray <</Gamma g /WhitePoint [x y z]>>]` or `[/CalRGB
+            // <</Gamma [g g g] /Matrix [9] /WhitePoint [x y z]>>]`
+            let mut key = "";
+            let mut nums: Vec<(&str, f64)> = vec![];
+            for tok in space.split(|c: char| c.is_whitespace() || "[]<>".contains(c)) {
+                if let Some(k) = tok.strip_prefix('/') {
+                    key = k;
+                } else if let Ok(v) = tok.parse::<f64>() {
+                    nums.push((key, v));
+                }
+            }
+            let of = |k: &str| -> Vec<Json> {
+                nums.iter()
+                    .filter(|e| e.0 == k)
+                    .map(|e| Json::Num(e.1))
+                    .collect()
+            };
+            let rgb = space.starts_with("[/CalRGB");
+            let mut kv = vec![
+                (
+                    "type".into(),
+                    Json::Str(if rgb { "calrgb" } else { "calgray" }.into()),
+                ),
+                ("gamma".into(), of("Gamma").into_iter().next()?),
+                ("white_point".into(), Json::Arr(of("WhitePoint"))),
+            ];
+            if rgb {
+                kv.push(("matrix".into(), Json::Arr(of("Matrix"))));
+            }
+            if let Some(i) = p.color.srgb_intent {
+                let name = [
+                    "Perceptual",
+                    "RelativeColorimetric",
+                    "Saturation",
+                    "AbsoluteColorimetric",
+                ]
+                .get(i as usize)
+                .copied()
+                .unwrap_or("Perceptual");
+                kv.push(("intent".into(), Json::Str(name.into())));
+            }
+            Some(Json::Obj(kv))
+        }
+        Kind::Jpeg => {
+            jpeg_icc(data)?;
+            icc()
+        }
+        _ => None,
+    }
+}
+
+/// dvipdfmx's numbers: 5 decimals, no leading zero (`.95046`).
+fn n_dot(v: f64) -> String {
+    let s = n(v, 5);
+    if let Some(r) = s.strip_prefix("0.") {
+        format!(".{r}")
+    } else if let Some(r) = s.strip_prefix("-0.") {
+        format!("-.{r}")
+    } else {
+        s
+    }
+}
+
+/// A JPEG's bytes without its `APP2` `ICC_PROFILE` segments.
+fn jpeg_without_icc(data: &[u8]) -> Vec<u8> {
+    let mut out = data[..2.min(data.len())].to_vec();
+    let mut i = 2;
+    while i + 4 <= data.len() && data[i] == 0xFF {
+        let m = data[i + 1];
+        if m == 0xDA {
+            break;
+        }
+        let len = u16::from_be_bytes([data[i + 2], data[i + 3]]) as usize;
+        let end = (i + 2 + len).min(data.len());
+        let icc = m == 0xE2 && data.get(i + 4..i + 16) == Some(&b"ICC_PROFILE\0"[..]);
+        if !icc {
+            out.extend_from_slice(&data[i..end]);
+        }
+        i = end;
+    }
+    out.extend_from_slice(&data[i.min(data.len())..]);
+    out
+}
+
+/// The ICC profile of a JPEG file (its `APP2` `ICC_PROFILE` segments, in
+/// order), if it has one.
+fn jpeg_icc(data: &[u8]) -> Option<Vec<u8>> {
+    let mut parts: Vec<(u8, Vec<u8>)> = Vec::new();
+    let mut i = 2;
+    while i + 4 <= data.len() {
+        if data[i] != 0xFF {
+            break;
+        }
+        let m = data[i + 1];
+        if m == 0xD8 || (0xD0..=0xD7).contains(&m) || m == 0x01 {
+            i += 2;
+            continue;
+        }
+        if m == 0xDA || m == 0xD9 {
+            break;
+        }
+        let len = u16::from_be_bytes([data[i + 2], data[i + 3]]) as usize;
+        let seg = data.get(i + 4..i + 2 + len)?;
+        if m == 0xE2 && seg.starts_with(b"ICC_PROFILE\0") && seg.len() > 14 {
+            parts.push((seg[12], seg[14..].to_vec()));
+        }
+        i += 2 + len;
+    }
+    if parts.is_empty() {
+        return None;
+    }
+    parts.sort_by_key(|p| p.0);
+    Some(parts.into_iter().flat_map(|p| p.1).collect())
+}
+
+fn png_has_alpha(doc: &Doc, id: u32) -> bool {
+    let Some(img) = doc.images.get(id) else {
+        return false;
+    };
+    let Ok(data) = std::fs::read(&img.path) else {
+        return false;
+    };
+    data.get(25).is_some_and(|&t| t == 4 || t == 6)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::super::doc::{Built, Doc, Supplement};
+    use super::super::fonts::{FontDef, NativeDef};
+    use super::*;
+    use flashtex_display_list::page::{Page, StreamKind};
+    use flashtex_pdf::reader::{Obj, PdfFile};
+
+    /// A page drawing glyph `gid` of `path` (face 0) at 10 pt, written.
+    fn one_glyph_pdf(path: &str, gid: u16) -> Vec<u8> {
+        glyphs_pdf(path, &[gid], None)
+    }
+
+    /// A page drawing glyphs `gids` of `path` (face 0) at 10 pt, written
+    /// with the resident engine's font cache `cache` (or none).
+    fn glyphs_pdf(
+        path: &str,
+        gids: &[u16],
+        cache: Option<std::sync::Arc<super::super::fonts::FontCache>>,
+    ) -> Vec<u8> {
+        let mut doc = Doc::new();
+        doc.fonts.cache = cache;
+        doc.fonts.define(
+            0,
+            FontDef::Native(NativeDef {
+                path: path.as_bytes().to_vec(),
+                index: 0,
+                size: 10 << 16,
+                flags: 0,
+                rgba: None,
+                extend: None,
+                slant: None,
+                embolden: None,
+            }),
+        );
+        let res = doc.fonts.get(0).unwrap().res;
+        let mut p = Page::new(StreamKind::Page, 0);
+        p.pdf_box = [0.0, 0.0, 100.0, 100.0];
+        p.matrices.push([10.0, 0.0, 0.0, 10.0, 0.0, 0.0]);
+        p.items = vec![Item::Matrix(1)];
+        for (k, &gid) in gids.iter().enumerate() {
+            p.items.push(Item::Glyph {
+                font: res,
+                code: gid,
+                x: 657_818 + 400_000 * k as i32,
+                y: 3_289_088,
+                col: flashtex_display_list::page::NO_COLUMN,
+            });
+        }
+        doc.pages.push(std::sync::Arc::new(Built {
+            dl: p,
+            sup: Supplement::default(),
+            fonts: vec![res],
+            images: vec![],
+            forms: vec![],
+            frame: std::sync::OnceLock::new(),
+            forms_at: 0,
+            replay: None,
+        }));
+        let opts = Options {
+            producer: "test".into(),
+            date: None,
+            compress: false,
+        };
+        write(&doc, &opts).unwrap().0
+    }
+
+    /// The `/ID` hash, on its thread or in line, is the SHA-256 of the
+    /// whole file however it was fed.
+    #[test]
+    fn id_hash_is_the_whole_file_hash() {
+        let data: Vec<u8> = (0..3_000_000u32)
+            .map(|i| (i.wrapping_mul(2654435761) >> 11) as u8)
+            .collect();
+        for inline in [false, true] {
+            for steps in [
+                &[0usize][..],
+                &[10, 70_000, 300_000, 300_001, 2_999_999],
+                &[1 << 18, 1 << 19],
+            ] {
+                let mut id = IdHash::new();
+                if inline {
+                    id.how = IdHow::Inline(Sha256::new());
+                }
+                for &n in steps {
+                    id.feed(&data[..n], IdHash::CHUNK);
+                    id.feed(&data[..n], 0);
+                }
+                assert_eq!(
+                    id.finish(&data),
+                    sha256(&data),
+                    "inline {inline}, steps {steps:?}"
+                );
+            }
+        }
+    }
+
+    /// A CID-keyed CFF font (CJK): the content stream draws its glyphs by
+    /// their CIDs (the charset), the CIDFont program is the font's CFF, and
+    /// `/W` is keyed by CID. TeX Live's HaranoAji Mincho; skipped without it.
+    #[test]
+    fn cid_keyed_cff_fonts_are_drawn_by_cid() {
+        let Some(path) = std::process::Command::new("kpsewhich")
+            .arg("HaranoAjiMincho-Regular.otf")
+            .output()
+            .ok()
+            .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+            .filter(|p| !p.is_empty())
+        else {
+            eprintln!("skipped: no HaranoAjiMincho-Regular.otf (TeX Live)");
+            return;
+        };
+        let data = std::fs::read(&path).unwrap();
+        let font = flashtex_pdf::truetype::TrueTypeFont::parse(data).unwrap();
+        let gid = font.glyph_id('漢').unwrap();
+        let cff = flashtex_pdf::cff::CffFont::parse(font.cff_table().unwrap()).unwrap();
+        assert!(cff.is_cid_keyed());
+        let cid = cff.charset_entry(gid).unwrap();
+        let bytes = one_glyph_pdf(&path, gid);
+        let pdf = PdfFile::parse(&bytes).unwrap();
+        let page = pdf.pages().unwrap()[0];
+        let content = String::from_utf8(pdf.page_content(page).unwrap()).unwrap();
+        assert!(content.contains(&format!("<{cid:04X}>Tj")), "{content}");
+        let f = *pdf.page_fonts(page).values().next().unwrap();
+        let d = pdf
+            .resolve(&f.get("DescendantFonts").and_then(Obj::as_array).unwrap()[0])
+            .as_dict()
+            .unwrap();
+        let w = d.get("W").and_then(Obj::as_array).unwrap();
+        assert_eq!(w[0].as_number(), Some(cid.to_string().as_str()));
+        let fd = pdf
+            .resolve(d.get("FontDescriptor").unwrap())
+            .as_dict()
+            .unwrap();
+        let ff = pdf.resolve(fd.get("FontFile3").unwrap());
+        let sub = ff.as_dict().unwrap().get("Subtype").and_then(Obj::as_name);
+        assert_eq!(sub, Some("CIDFontType0C"));
+        let program = pdf.decode_stream(ff).unwrap();
+        let sub = flashtex_pdf::cff::CffFont::parse(&program).unwrap();
+        assert!(sub.is_cid_keyed());
+        // a subset (xelatex's is 6.8 kB), so its name has a tag
+        assert_eq!(sub.glyph_count(), 2);
+        assert!(program.len() < 30_000, "{} bytes", program.len());
+        let base = f.get("BaseFont").and_then(Obj::as_name).unwrap();
+        assert_eq!(base.as_bytes()[6], b'+', "{base}");
+        // no ToUnicode: Adobe-Japan1 is a collection viewers know, and
+        // xdvipdfmx writes none for it (CIDFont_is_ACCFont)
+        assert!(f.get("ToUnicode").is_none());
+        // its character collection, as xdvipdfmx writes it
+        let csi = d.get("CIDSystemInfo").and_then(Obj::as_dict).unwrap();
+        assert_eq!(csi.get("Ordering"), Some(&Obj::String(b"Japan1".to_vec())));
+    }
+
+    /// A resident engine's runs write the fonts' PDF objects from what the
+    /// cache kept (the parsed face, the glyph list, the last subset,
+    /// ToUnicode and CID map): byte for byte what a write without the
+    /// cache makes, for the same glyphs again, for other glyphs, and for
+    /// the first ones once more. A CFF and a TrueType face, and a
+    /// CID-keyed CFF one when TeX Live has HaranoAji Mincho.
+    #[test]
+    fn the_font_cache_writes_what_a_write_without_it_does() {
+        let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/../..");
+        let mut fonts = vec![
+            format!("{dir}/apps/mac/Fonts/lmmono10-regular.otf"),
+            format!("{dir}/apps/mac/Sources/FlashTeXMac/Resources/Fonts/JetBrainsMono-Regular.ttf"),
+        ];
+        if let Some(p) = std::process::Command::new("kpsewhich")
+            .arg("HaranoAjiMincho-Regular.otf")
+            .output()
+            .ok()
+            .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+            .filter(|p| !p.is_empty())
+        {
+            fonts.push(p);
+        }
+        let runs: [&[u16]; 5] = [
+            &[36, 37, 38],
+            &[36, 37, 38],
+            &[36, 37, 38, 70],
+            &[36, 37, 38],
+            &[5],
+        ];
+        for path in &fonts {
+            let cache = std::sync::Arc::new(super::super::fonts::FontCache::default());
+            for gids in runs {
+                let with = glyphs_pdf(path, gids, Some(cache.clone()));
+                let without = glyphs_pdf(path, gids, None);
+                assert!(with == without, "{path}: glyphs {gids:?}");
+            }
+        }
+    }
+
+    /// 日 and 文 share their glyphs with the Kangxi radicals U+2F47 and
+    /// U+2F42: the text is the unified ideograph.
+    #[test]
+    fn cjk_glyphs_read_as_unified_ideographs() {
+        let Some(path) = std::process::Command::new("kpsewhich")
+            .arg("HaranoAjiMincho-Regular.otf")
+            .output()
+            .ok()
+            .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+            .filter(|p| !p.is_empty())
+        else {
+            eprintln!("skipped: no HaranoAjiMincho-Regular.otf (TeX Live)");
+            return;
+        };
+        let data = std::fs::read(&path).unwrap();
+        let rev = super::super::tounicode::cmap_inverse(&data, 0);
+        let font = flashtex_pdf::truetype::TrueTypeFont::parse(data).unwrap();
+        for c in ['日', '文'] {
+            let g = font.glyph_id(c).unwrap();
+            assert_eq!(rev.get(&g), Some(&c));
+        }
+    }
+
+    /// `/Flags`, `/StemV` and the embedding permission from the face: LM
+    /// Mono is fixed pitch, regular weight, installable.
+    #[test]
+    fn font_descriptors_say_what_the_face_is() {
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../apps/mac/Fonts/lmmono10-regular.otf"
+        );
+        let info = FaceInfo::read(&std::fs::read(path).unwrap(), 0);
+        assert_eq!(info.flags(0.0) & 1, 1, "fixed pitch");
+        assert_eq!(info.flags(-9.0) & 64, 64, "italic");
+        assert_eq!(info.stem_v(), 88); // weight 400
+        assert!(!info.embedding_forbidden());
+        let restricted = FaceInfo {
+            fs_type: 0x0002,
+            ..FaceInfo::default()
+        };
+        assert!(restricted.embedding_forbidden());
+        let editable = FaceInfo {
+            fs_type: 0x0008,
+            ..FaceInfo::default()
+        };
+        assert!(!editable.embedding_forbidden());
+    }
+
+    /// A grey PNG with an `sRGB` chunk: the IMAGE's `color_space` is the
+    /// `CalGray` the PDF writes, number for number, with its `/Intent`.
+    #[test]
+    fn image_color_space_is_the_pdfs() {
+        let chunk = |kind: &[u8], body: &[u8]| {
+            let mut c = (body.len() as u32).to_be_bytes().to_vec();
+            c.extend_from_slice(kind);
+            c.extend_from_slice(body);
+            c.extend_from_slice(&[0; 4]);
+            c
+        };
+        let mut png = vec![0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A];
+        png.extend(chunk(b"IHDR", &[0, 0, 0, 2, 0, 0, 0, 2, 8, 0, 0, 0, 0]));
+        png.extend(chunk(b"sRGB", &[0]));
+        png.extend(chunk(b"IDAT", &[0x78, 0x9C]));
+        png.extend(chunk(b"IEND", &[]));
+        let p = png_passthrough(&png).unwrap();
+        assert_eq!(
+            cal_space(&p.color, p.n_base).unwrap(),
+            "[/CalGray <</Gamma 2.2 /WhitePoint [.95046 1 1.08906]>>]"
+        );
+        let cs = image_color_space(Kind::Png, &png).unwrap();
+        assert_eq!(
+            cs.to_string(),
+            r#"{"type":"calgray","gamma":2.2,"white_point":[0.95046,1,1.08906],"intent":"Perceptual"}"#
+        );
+        // a PNG without colour chunks, and a JPEG without a profile: Device
+        let mut plain = png.clone();
+        let s = plain.windows(4).position(|w| w == b"sRGB").unwrap() - 4;
+        plain.drain(s..s + 13);
+        assert!(image_color_space(Kind::Png, &plain).is_none());
+        assert!(image_color_space(Kind::Jpeg, &[0xFF, 0xD8, 0xFF, 0xD9]).is_none());
+    }
+
+    /// RULE_GEOMETRY is the numbers the content stream draws each rule with.
+    #[test]
+    fn rule_geometry_is_what_the_content_stream_draws() {
+        let mut p = Page::new(StreamKind::Page, 0);
+        p.pdf_box = [0.0, 0.0, 612.0, 792.0];
+        let (x, y, w, h) = (21851747, 22122140, 2095109, 44560);
+        for kind in [RuleKind::Fill, RuleKind::StrokeH, RuleKind::StrokeV] {
+            p.items.push(Item::Rule { kind, x, y, w, h });
+        }
+        let g = rule_geometry(&p);
+        assert_eq!(g.len(), 3);
+        let (l, t) = (x as f64 / K, 792.0 - y as f64 / K);
+        let (wb, hb) = (w as f64 / K, h as f64 / K);
+        let r = |v: f64| n(v, 5).parse::<f64>().unwrap();
+        assert_eq!(g[0], [0.0, 0.0, r(l), r(t - hb), r(wb), r(hb), 0.0]);
+        let ym = t - hb + hb / 2.0;
+        assert_eq!(g[1], [0.0, 0.0, r(l), r(ym), r(l + wb), r(ym), r(hb)]);
+        assert_eq!(g[1][2], 332.1855);
+        let xm = l + wb / 2.0;
+        assert_eq!(g[2], [0.0, 0.0, r(xm), r(t - hb), r(xm), r(t), r(wb)]);
+    }
+
+    /// A form that only a named object refers to is written: pgf's soft
+    /// mask is a `pdf:bxobj @pgfsmask5` form that no page draws, named
+    /// only by `pdf:put @pgfextgs << /pgfsmask5 << /SMask << /G @pgfsmask5
+    /// >> >> >>` (beamer's shadowed title block, u11-beamer-fontspec in
+    /// the M3 export gate). It was referenced but written as `null`.
+    #[test]
+    fn a_form_only_a_named_object_names_is_written() {
+        use super::super::page::tests::{page_bytes, special, NoTfm};
+        use super::super::page::Builder;
+        let mut doc = Doc::new();
+        let mut body = special("pdf:obj @pgfextgs <<>>");
+        body.extend(special("pdf:put @resources << /ExtGState @pgfextgs >>"));
+        body.extend(special(
+            "pdf:bxobj @pgfsmask5 width 20pt height 10pt depth 0pt",
+        ));
+        body.push(137); // put_rule inside the form
+        body.extend_from_slice(&(5i32 << 16).to_be_bytes());
+        body.extend_from_slice(&(10i32 << 16).to_be_bytes());
+        body.extend(special(
+            "pdf:exobj <</Group <</S/Transparency /CS/DeviceGray>> >>",
+        ));
+        body.extend(special(
+            "pdf:put @pgfextgs << /pgfsmask5 << /SMask << /S /Luminosity /G @pgfsmask5>> >> >>",
+        ));
+        body.extend(special("pdf:code /pgfsmask5 gs"));
+        let built = Builder::page(&mut doc, &NoTfm, 1000, 1, &page_bytes(&body)).unwrap();
+        doc.pages.push(std::sync::Arc::new(built));
+        let opts = Options {
+            producer: "test".into(),
+            date: None,
+            compress: false,
+        };
+        let bytes = write(&doc, &opts).unwrap().0;
+        let text = String::from_utf8_lossy(&bytes);
+        let at = text.find("/G ").expect("the soft mask's /G");
+        let num: String = text[at + 3..]
+            .chars()
+            .take_while(char::is_ascii_digit)
+            .collect();
+        assert!(text[at + 3 + num.len()..].starts_with(" 0 R"), "{text}");
+        let obj = text
+            .find(&format!("\n{num} 0 obj\n"))
+            .map(|i| &text[i..])
+            .expect("the form's object");
+        let body = &obj[..obj.find("endobj").unwrap()];
+        assert!(
+            body.contains("/Subtype /Form") || body.contains("/Subtype/Form"),
+            "{body}"
+        );
+        assert!(body.contains("/Transparency"), "{body}");
+        let pdf = PdfFile::parse(&bytes).unwrap();
+        assert_eq!(pdf.pages().unwrap().len(), 1);
+    }
+}

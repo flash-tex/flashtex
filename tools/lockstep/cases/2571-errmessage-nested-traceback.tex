@@ -1,0 +1,10 @@
+% 2571-errmessage-nested-traceback: \errmessage two macros deep prints one `\cs ->` line per live macro level over the `l.NN` line, then the default help (tex.web §§311, 1277, 1279)
+% new versus none: no existing case ends in an error; this lane's no-halt option makes the macro traceback coverable
+% lockstep: no-halt
+\input prelude
+\def\inner{\errmessage{boom-deep}}
+\def\outer{\inner\relax}
+\outer
+\setbox0=\hbox{\vrule width5pt height5pt depth0pt}
+\lsshipbox0
+\end

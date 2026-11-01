@@ -109,7 +109,11 @@ enum ProjectFilesV1 {
     /// `entry`. One parser for the CLI, the helper and this app
     /// (`crates/project-manifest`); the shell never reads TOML itself.
     struct Manifest: Decodable, Equatable, Sendable {
-        struct Project: Decodable, Equatable, Sendable { var entry: String?; var texinputs: [String]; var output: String? }
+        struct Project: Decodable, Equatable, Sendable {
+            var entry: String?; var texinputs: [String]; var output: String?
+            /// `[project] mode` (`classic`, `unicode`, `flashtex`); nil when unset or from an older helper.
+            var mode: String? = nil
+        }
         struct Fonts: Decodable, Equatable, Sendable { var text: String?; var math: String?; var mono: String?; var sans: String? }
         struct Packages: Decodable, Equatable, Sendable { var source: String; var fetch: String; var pin: [String: String]; var path: [String: String] }
         struct Library: Decodable, Equatable, Sendable { var name: String }
@@ -180,10 +184,13 @@ enum ProjectFilesV1 {
             var files: [File]?
             enum CodingKeys: String, CodingKey { case name, status, version, sourceUrl = "source_url", from, wouldFetch = "would_fetch", reason, files }
         }
+        /// One `[packages] path` library with all its files (`"libraries":true`).
+        struct Library: Decodable, Equatable, Sendable { var name: String; var version: String; var files: [File] }
         var cache: String?
         var policy: Policy
         var diagnostics: [Note]
         var packages: [Package]
+        var libraries: [Library]?
     }
 
     /// The `set_packages` reply: like `SetFonts`, the manifest's text with
@@ -198,6 +205,10 @@ enum ProjectFilesV1 {
     struct PingRequest: Encodable { var id: String; var operation = "ping" }
     struct ResolvePackagesRequest: Encodable {
         var id: String; var operation = "resolve_packages"; var names: [String]; var consent: Bool; var entry: String?
+        /// Libraries and the cache only, never the source (nil: omitted).
+        var offline: Bool?
+        /// Also list every `[packages] path` library with its files (nil: omitted).
+        var libraries: Bool?
     }
     struct SetPackagesRequest: Encodable {
         var id: String; var operation = "set_packages"; var entry: String?; var fetch: String?; var pin: [String: String]?
@@ -205,6 +216,10 @@ enum ProjectFilesV1 {
     struct ManifestRequest: Encodable { var id: String; var operation = "manifest"; var entry: String? }
     struct SetFontsRequest: Encodable {
         var id: String; var operation = "set_fonts"; var entry: String?; var fonts: [String: String]
+    }
+    /// `set_mode`: `[project] mode` set; the reply has `SetFonts`'s shape.
+    struct SetModeRequest: Encodable {
+        var id: String; var operation = "set_mode"; var entry: String?; var mode: String
     }
     struct ReadRequest: Encodable { var id: String; var operation = "read"; var path: String }
     struct StatusRequest: Encodable {
@@ -317,8 +332,10 @@ final class ProjectFilesClient {
     func setFonts(entry: String?, fonts: [String: String], timeout: TimeInterval? = nil) async throws -> ProjectFilesV1.SetFonts {
         try await request({ ProjectFilesV1.SetFontsRequest(id: $0, entry: entry, fonts: fonts) }, timeout: timeout)
     }
-    func resolvePackages(names: [String], consent: Bool, entry: String?, timeout: TimeInterval? = nil) async throws -> ProjectFilesV1.ResolvePackages {
-        try await request({ ProjectFilesV1.ResolvePackagesRequest(id: $0, names: names, consent: consent, entry: entry) }, timeout: timeout)
+    func resolvePackages(names: [String], consent: Bool, entry: String?, offline: Bool = false, libraries: Bool = false,
+                         timeout: TimeInterval? = nil) async throws -> ProjectFilesV1.ResolvePackages {
+        try await request({ ProjectFilesV1.ResolvePackagesRequest(id: $0, names: names, consent: consent, entry: entry,
+                                                                  offline: offline ? true : nil, libraries: libraries ? true : nil) }, timeout: timeout)
     }
     func setPackages(entry: String?, fetch: String?, pin: [String: String]?, timeout: TimeInterval? = nil) async throws -> ProjectFilesV1.SetPackages {
         try await request({ ProjectFilesV1.SetPackagesRequest(id: $0, entry: entry, fetch: fetch, pin: pin) }, timeout: timeout)

@@ -1,0 +1,38 @@
+{
+ "about": "The no-TeX-Live gate documents (tools/bundle/texbundle.py refs/gate): every parity fixture (null = the whole tier) and the arXiv corpus sample of the first two e-prints by id of each primary category (arxiv-2025-01.json). The oracle references come from TeX Live pdflatex in the bundle tree (bundle-publish.yml, oracle-refs.json).",
+ "tiers": {
+  "fixtures": null,
+  "arxiv": [
+   "2501.06980v1",
+   "2501.06986v2",
+   "2501.06992v1",
+   "2501.06993v2",
+   "2501.06999v1",
+   "2501.07001v1",
+   "2501.07002v1",
+   "2501.07003v1",
+   "2501.07004v1",
+   "2501.07009v1",
+   "2501.07015v3",
+   "2501.07020v1",
+   "2501.07023v2",
+   "2501.07029v2",
+   "2501.07037v2",
+   "2501.07068v1",
+   "2501.07075v1",
+   "2501.07086v1",
+   "2501.07091v2",
+   "2501.07105v1",
+   "2501.07116v2",
+   "2501.07184v1",
+   "2501.07190v1",
+   "2501.07228v1",
+   "2501.07457v1",
+   "2501.07497v1",
+   "2501.07512v3",
+   "2501.07558v1",
+   "2501.07745v1",
+   "2501.08663v2"
+  ]
+ }
+}
