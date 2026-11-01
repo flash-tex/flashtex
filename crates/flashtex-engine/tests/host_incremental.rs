@@ -1709,6 +1709,175 @@ fn a_superseded_compile_still_sends_its_edited_page() {
     let _ = std::fs::remove_dir_all(&base);
 }
 
+/// What a connection was sent of forms, and which forms its pages draw.
+#[derive(Default)]
+struct Forms {
+    /// Form id -> its content hash, as last sent.
+    sent: HashMap<u32, [u8; 32]>,
+    /// Page index -> the forms its items draw (the last version sent).
+    drawn: BTreeMap<u32, Vec<u32>>,
+}
+
+impl Forms {
+    fn note(&mut self, ev: &Event) {
+        let ids = |p: &Page| -> Vec<u32> {
+            p.items
+                .iter()
+                .filter_map(|it| match it {
+                    Item::Form { id, .. } => Some(*id),
+                    _ => None,
+                })
+                .collect()
+        };
+        match ev {
+            // (ids are valid until a STARTED says "keep": false, spec §5)
+            Event::Started(j) if j.get("keep").and_then(Json::as_bool) != Some(true) => {
+                *self = Forms::default()
+            }
+            Event::Form(f) => {
+                self.sent.insert(f.index, f.hash);
+            }
+            Event::Page(p) => {
+                self.drawn.insert(p.index, ids(p));
+            }
+            _ => {}
+        }
+    }
+
+    /// Every form the pages below `count` draw was sent, and is the one a
+    /// from-scratch compile sends under that id (`scratch`).
+    fn check(&self, count: usize, scratch: &Forms, what: &str) {
+        let mut drawn = 0;
+        for (&page, ids) in self.drawn.range(..count as u32) {
+            for id in ids {
+                drawn += 1;
+                let got = self.sent.get(id).unwrap_or_else(|| {
+                    panic!("{what}: page {page} draws form {id}, which the host never sent")
+                });
+                assert_eq!(
+                    Some(got),
+                    scratch.sent.get(id),
+                    "{what}: page {page}'s form {id} is not the scratch compile's"
+                );
+            }
+        }
+        assert!(drawn > 0, "{what}: no page draws a form");
+    }
+}
+
+/// One compile's events, noted in `forms`, up to its DONE.
+fn compile_forms(c: &mut Client, forms: &mut Forms, req: &CompileRequest) -> Json {
+    c.compile(req).unwrap();
+    loop {
+        let ev = c.next_event().unwrap().expect("host closed the connection");
+        forms.note(&ev);
+        match ev {
+            Event::Done(d) => break d,
+            Event::Error(e) => panic!("host error: {e}"),
+            _ => {}
+        }
+    }
+}
+
+/// Spec §5: a `FORM` a page uses comes before that page or after it, but
+/// before the next `PAGE` or `DONE`. A form the engine writes while no output
+/// is wanted (its compile superseded) is cached, not sent; a page shipped
+/// later that draws it must still get it. Here a run from the format is
+/// superseded in its preamble, which writes a form at once
+/// (`\immediate\pdfxform`, as pgf's shadings and fadings do); it stops past
+/// S₀, and the next compile (nothing new) goes on with it and ships the
+/// last page live: it draws the form, which no compile sent.
+#[test]
+fn a_page_shipped_after_a_superseded_preamble_gets_its_forms() {
+    if find_texlive_bin().is_none() {
+        common::no_texlive();
+        return;
+    }
+    let mut doc = String::from(
+        "\\documentclass{article}\n\
+         % a while in the preamble before the form, so that the second\n\
+         % COMPILE (sent at the first one's STARTED) supersedes the run first\n\
+         \\newcount\\spin \\loop\\advance\\spin by 1 \\ifnum\\spin<400000 \\repeat\n\
+         \\setbox0=\\hbox{\\vrule width 40pt height 12pt depth 3pt}\n\
+         \\immediate\\pdfxform0\n\
+         \\edef\\logo{\\noexpand\\pdfrefxform\\the\\pdflastxform\\relax}\n\
+         \\begin{document}\n",
+    );
+    // (only the last page draws the form: a page the next compile delivers
+    // from the cache, which the stopped run shipped, comes with its forms)
+    for i in 0..3 {
+        doc.push_str(&format!(
+            "Page {i}: {}\\par\n{}\n\\newpage\n",
+            if i == 2 { "\\logo" } else { "" },
+            "Some words of the page, enough for a line or two. ".repeat(8)
+        ));
+    }
+    doc.push_str("\\end{document}\n");
+    let scratch = start_host("fs");
+    let mut exercised = 0;
+    for attempt in 0..3 {
+        let base = common::fresh_dir(&format!("flashtex-host-forms-{attempt}"));
+        let (proj, out) = (base.join("proj"), base.join("out"));
+        std::fs::create_dir_all(&proj).unwrap();
+        std::fs::create_dir_all(&out).unwrap();
+        std::fs::write(proj.join("main.tex"), &doc).unwrap();
+        let host = start_host(&format!("f{attempt}"));
+        let mut c = Client::connect(&host.1).unwrap();
+        let mut forms = Forms::default();
+        let (r1, r2) = (
+            req(1, &proj, &out, "main.tex"),
+            req(2, &proj, &out, "main.tex"),
+        );
+        c.compile(&r1).unwrap();
+        let mut dones = vec![];
+        while dones.len() < 2 {
+            let ev = c.next_event().unwrap().expect("host closed the connection");
+            forms.note(&ev);
+            match ev {
+                // the second as soon as the first has started (typing)
+                Event::Started(j) if j.int_field("id") == Some(1) => c.compile(&r2).unwrap(),
+                Event::Done(d) => dones.push(d),
+                Event::Error(e) => panic!("host error: {e}"),
+                _ => {}
+            }
+        }
+        assert_eq!(dones[1].str_field("status"), Some("ok"), "{}", dones[1]);
+        // The first ran (it has `stages`) and stopped before the last page:
+        // the second shipped that page itself.
+        if dones[0].str_field("status") == Some("cancelled")
+            && dones[0].get("stages").is_some()
+            && dones[0].int_field("typeset_pages").is_some_and(|n| n < 3)
+        {
+            exercised += 1;
+        }
+        let count = dones[1].int_field("pages").unwrap_or(0) as usize;
+        assert_eq!(count, 3, "{}", dones[1]);
+        let (p2, o2) = snapshot(&base, &proj, &out, "x");
+        let mut s = Client::connect(&scratch.1).unwrap();
+        let mut sf = Forms::default();
+        let mut rs = CompileRequest::new(1, p2.to_str().unwrap(), "main.tex");
+        rs.output_dir = Some(o2.to_str().unwrap().into());
+        let sd = compile_forms(&mut s, &mut sf, &rs);
+        assert_eq!(sd.str_field("mode"), Some("cold"), "{sd}");
+        sf.check(count, &sf, "the scratch compile");
+        forms.check(
+            count,
+            &sf,
+            &format!("attempt {attempt} ({} then {})", dones[0], dones[1]),
+        );
+        let _ = s.bye();
+        let _ = c.bye();
+        let _ = std::fs::remove_dir_all(&base);
+        if exercised > 0 {
+            break;
+        }
+    }
+    assert!(
+        exercised > 0,
+        "no attempt superseded the first compile before its last page: the case was not exercised"
+    );
+}
+
 /// Racy signatures (git's racy-clean rule; review of #1549): a source
 /// changed to the same length within the modification-time tick in which
 /// the run took its signature keeps the same signature. Simulated here on
