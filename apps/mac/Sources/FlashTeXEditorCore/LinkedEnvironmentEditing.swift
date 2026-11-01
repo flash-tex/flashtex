@@ -83,6 +83,34 @@ public enum LinkedEnvironmentEditing {
         public func covers(_ edit: NSRange) -> Bool {
             edit.location >= active.location && NSMaxRange(edit) <= NSMaxRange(active)
         }
+
+        /// The session once its partner was rewritten to `newName` (`partnerEdit`
+        /// applied to a buffer of `now` units, before the rewrite): both spans
+        /// read `newName`, in the coordinates after the rewrite. The editor
+        /// carries it to the next keystroke instead of scanning the buffer
+        /// again (`continuesRename(in:)` checks it still describes the text).
+        public func renamed(to newName: String, in now: Int) -> LinkedSession {
+            let s = advanced(to: now)
+            let newLength = (newName as NSString).length
+            let delta = newLength - s.partner.length
+            var out = LinkedSession(active: s.active, partner: NSRange(location: s.partner.location, length: newLength),
+                                    name: newName, length: now + delta)
+            if s.partner.location < s.active.location { out.active.location += delta }
+            return out
+        }
+
+        /// Whether `text` still shows this session: its length, and both name
+        /// spans braced and reading `name`. A renamed-to verbatim-like name
+        /// changes how the text after it lexes, so it never carries.
+        public func continuesRename(in text: NSString) -> Bool {
+            guard text.length == length, !SyntaxHighlighter.verbatimEnvironments.contains(name), name != "comment" else { return false }
+            for r in [active, partner] {
+                guard r.location >= 1, NSMaxRange(r) < text.length,
+                      text.character(at: r.location - 1) == 0x7B, text.character(at: NSMaxRange(r)) == 0x7D,
+                      text.substring(with: r) == name else { return false }
+            }
+            return true
+        }
     }
 
     /// Starts (or, during an IME composition, continues) a linked session for

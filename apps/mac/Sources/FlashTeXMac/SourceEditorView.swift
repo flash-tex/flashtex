@@ -679,6 +679,11 @@ struct SourceEditorView: NSViewRepresentable {
         /// The `\begin{…}` / `\end{…}` names the current user edit is renaming,
         /// captured before the edit (EditorChangeEnvironment.swift).
         var linkedSession: EditorChangeEnvironment.LinkedSession?
+        /// Whole-buffer pair scans for linked rename (tests: one per rename, not per keystroke).
+        var linkedPairScans = 0
+        /// The session after the last rename keystroke rewrote the partner,
+        /// for the next keystroke; dropped by any other edit.
+        var carriedLinkedSession: EditorChangeEnvironment.LinkedSession?
         /// True while the coordinator inserts a closer or deletes a pair itself.
         private var pairing = false
         /// Marked text was seen since the last committed text change: that
@@ -1172,10 +1177,12 @@ struct SourceEditorView: NSViewRepresentable {
                     }
                 } else {
                     linkedSession = nil
+                    carriedLinkedSession = nil
                 }
                 noteTypingStep() // the selection change AppKit posts before textDidChange is a typing step: no highlight refresh, no announcement
             } else if !pairing {
                 linkedSession = nil // a programmatic change: the captured spans no longer describe the buffer
+                carriedLinkedSession = nil
             }
             return true
         }
@@ -1360,6 +1367,7 @@ struct SourceEditorView: NSViewRepresentable {
         func textWasReset() {
             braceHighlight = nil // the reset dropped every temporary attribute
             linkedSession = nil
+            carriedLinkedSession = nil
             pendingClosers = []
             syntax.reset()
             hover.dismiss()
