@@ -1144,7 +1144,10 @@ fn compress_groups(ops: &[Op]) -> Vec<Op> {
 /// so `eq_define` never finds it already there (e-TeX's "reassigning"
 /// compares `equiv` with it), and its word does not depend on the state.
 fn fresh(v: &Val) -> bool {
-    matches!(v, Val::FreshList(_) | Val::FreshGlue(_) | Val::FreshShape(_))
+    matches!(
+        v,
+        Val::FreshList(_) | Val::FreshGlue(_) | Val::FreshShape(_)
+    )
 }
 
 /// [`compress_groups`]' operations with each run of local assignments of
@@ -1336,7 +1339,11 @@ impl Seen {
     #[inline]
     fn is(&mut self, p: i32, t: i32, e: i32, toks: &std::rc::Rc<[i32]>) -> bool {
         let ok = self.at.get(p as usize).is_some_and(|s| {
-            s.e == e && s.t == t && s.body.as_ref().is_some_and(|b| std::rc::Rc::ptr_eq(b, toks))
+            s.e == e
+                && s.t == t
+                && s.body
+                    .as_ref()
+                    .is_some_and(|b| std::rc::Rc::ptr_eq(b, toks))
         });
         if ok {
             self.hits += 1;
@@ -1894,7 +1901,11 @@ impl Globals {
                 let e = self.bm_sa_find(t, n);
                 match t {
                     INT_VAL | DIMEN_VAL => {
-                        want == [if e == 0 { 0 } else { self.mem[(e + 2) as usize].int() }]
+                        want == [if e == 0 {
+                            0
+                        } else {
+                            self.mem[(e + 2) as usize].int()
+                        }]
                     }
                     GLUE_VAL | MU_VAL => self.bm_glue_is(
                         if e == 0 {
@@ -2038,7 +2049,9 @@ impl Globals {
 
     /// K3: every kept meaning holds now (one borrow of the entries for all).
     fn bm_k3_holds(&self, k3: &[(i32, Meaning)]) -> bool {
-        with_seen(self, |s| k3.iter().all(|(p, m)| self.bm_meaning_is_in(s, *p, m)))
+        with_seen(self, |s| {
+            k3.iter().all(|(p, m)| self.bm_meaning_is_in(s, *p, m))
+        })
     }
 
     /// [`bm_meaning_is`](Self::bm_meaning_is) with the entries borrowed.
@@ -3530,20 +3543,8 @@ impl Globals {
             // a conditional, `\\else\\color{#1}\\fi`. They are expanded here, as
             // its `get_x_token` would, and then the recording ends: §15.2)
             if base != i32::MAX && !self.bm_exhausted(base) && self.bm_only_fis_left(base) {
-                let now = (self.cur_tok, self.cur_cmd, self.cur_chr, self.cur_cs);
-                while self.bm_rec_on && !self.bm_exhausted(base) {
-                    self.get_next();
-                    if self.cur_cmd != k::fi_or_else {
-                        // (not reached: `bm_only_fis_left`) the token goes
-                        // back, for `\\ignorespaces` to read
-                        self.back_input();
-                        self.bm_abort("Trailer");
-                        break;
-                    }
-                    self.expand();
-                }
-                // `main_control` goes on with `\\ignorespaces`
-                (self.cur_tok, self.cur_cmd, self.cur_chr, self.cur_cs) = now;
+                // (`main_control` then goes on with the `\\ignorespaces`)
+                self.bm_expand_fis(base);
                 if !self.bm_rec_on {
                     return;
                 }
@@ -3623,9 +3624,7 @@ impl Globals {
             match w.b0() {
                 t if t == k::restore_old_value => k -= 2,
                 // (and `\\aftergroup` tokens, `Op::AfterGroup`)
-                t if t == k::restore_zero || t == k::restore_sa || t == k::insert_token => {
-                    k -= 1
-                }
+                t if t == k::restore_zero || t == k::restore_sa || t == k::insert_token => k -= 1,
                 _ => return false,
             }
         }
@@ -3687,10 +3686,40 @@ impl Globals {
             self.bm_rec_on = false;
             return;
         };
+        // (the body's last tokens may be `\\fi`s, which `big_switch`'s
+        // `get_x_token` expands and then reads past the body: beamer's
+        // `\\usebeamercolor` without its optional argument ends in its own
+        // `\\fi`. They are expanded here, as that `get_x_token` would, and
+        // the recording ends: §15.2)
+        if !self.bm_exhausted(base) && self.bm_only_fis_left(base) {
+            self.bm_expand_fis(base);
+            if !self.bm_rec_on {
+                return;
+            }
+        }
         if !self.bm_exhausted(base) {
             return;
         }
         self.bm_finish(None);
+    }
+
+    /// Expand the `\\fi`s left in the input levels from the body's on
+    /// ([`bm_only_fis_left`](Self::bm_only_fis_left)), each a `get_next`
+    /// and an `expand` as `get_x_token` makes them, with the recording's
+    /// observers on; `cur_tok` & co. are left as they were.
+    fn bm_expand_fis(&mut self, base: i32) {
+        let now = (self.cur_tok, self.cur_cmd, self.cur_chr, self.cur_cs);
+        while self.bm_rec_on && !self.bm_exhausted(base) {
+            self.get_next();
+            if self.cur_cmd != k::fi_or_else {
+                // (not reached: `bm_only_fis_left`) the token goes back
+                self.back_input();
+                self.bm_abort("Trailer");
+                break;
+            }
+            self.expand();
+        }
+        (self.cur_tok, self.cur_cmd, self.cur_chr, self.cur_cs) = now;
     }
 
     /// The recording is done: its body is used up, and `trailer` is the
@@ -4503,7 +4532,13 @@ mod tests {
             v: Val::LetCs(1),
             kind: 0,
         };
-        let ops = vec![list(1, 1), list(1, 2), let_a.clone(), list(1, 3), list(1, 4)];
+        let ops = vec![
+            list(1, 1),
+            list(1, 2),
+            let_a.clone(),
+            list(1, 3),
+            list(1, 4),
+        ];
         assert_eq!(
             compress_call_level(ops),
             vec![list(1, 2), let_a.clone(), list(1, 4)]
@@ -4528,7 +4563,10 @@ mod tests {
             Op::End,
             list(1, 5),
             list(1, 6),
-            Op::NewCs { p: 1, name: vec![1, 2] },
+            Op::NewCs {
+                p: 1,
+                name: vec![1, 2],
+            },
             list(1, 7),
         ];
         assert_eq!(
@@ -4541,7 +4579,10 @@ mod tests {
                 list(1, 4),
                 Op::End,
                 list(1, 6),
-                Op::NewCs { p: 1, name: vec![1, 2] },
+                Op::NewCs {
+                    p: 1,
+                    name: vec![1, 2]
+                },
                 list(1, 7),
             ]
         );

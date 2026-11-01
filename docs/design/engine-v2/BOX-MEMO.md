@@ -817,3 +817,28 @@ argument) join `DEFAULT_NAMES`. Tried on the Blocks frame and left out (no gain,
 Recording after the edited page as well (the pages re-typeset until convergence) was tried and
 left out: the next keystroke's window cost more (49 → 65 M at the start site) and its recordings
 did not settle.
+
+### 15.6 Measured
+
+M5 Pro, T7 `beamer-metropolis` (PR #1889's harness on a measure-only checkout), the engine thread's
+instructions, p50 of 19 measured keys. Instruction counts do not move with load; the machine ran at
+load 50-170 throughout, so every wall time here is non-reference.
+
+| site | main `df75c3a20` typeset / to the edited page | this revision | thread CPU to the edited page |
+|---|---:|---:|---:|
+| letter@middle (the Blocks frame) | 274.6 M / 287.3 M | **109.7 M / 122.4 M** (−57 %) | 27.5 ms (load 50) → 16.3 ms (load 105) |
+| letter@start (the first fragile frame) | 68.0 M / 81.3 M | **48.3 M / 61.8 M** (−24 %) | 10.7 → 10.3 ms |
+
+The steps, letter@middle, typesetting p50 of 5 keys: main 274.4 M; `XKV@setkeys` offered 147.9 M;
+§15.1 128.1 M; KR in place 124.3 M; §15.2, §15.3 and `\beamer@usebeamercolor` 113.8 M; §15.4's
+slots 110.0 M. Re-typeset pages and convergence are unchanged (2 and 5 pages; 19/19).
+
+**Correctness.** `cargo test` `--lib boxmemo` and `tests/boxmemo.rs` (debug and release, which runs
+off, on and verify and compares the logs and PDFs), `tests/incremental.rs` (87),
+`tests/host_incremental.rs`, `tests/intrinsics.rs`, `tests/checkpoint.rs`. The command line in
+verify mode (the whole engine state compared after every replay) on the metropolis deck: 4,390
+replays, 0 differences, the PDF and log byte-identical with BOX-MEMO off, on and verify; on 41
+copies of its Blocks frame: 15,310 replays, 0 differences. `soundness.py`, 20 trials (40 compiles)
+each, every compile byte-identical to a run from scratch: beamer-fragile, -overlays, -default,
+-visuals, -blocks-columns, -madrid and metropolis 0 bad (converged 19, 25, 20, 15, 1, 34, 21, as on
+main), metropolis interleaved 43 compiles, 32 checked, 11 interrupted, 0 bad.
