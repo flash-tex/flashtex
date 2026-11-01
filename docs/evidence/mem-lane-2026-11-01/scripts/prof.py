@@ -41,6 +41,7 @@ ap.add_argument('--profile', default='')
 ap.add_argument('--host-args', default='')
 ap.add_argument('--limit-gb', type=float, default=8)
 ap.add_argument('--timeout', type=int, default=5400)
+ap.add_argument('--jump-ms', type=int, default=-1, help='before each page but the first: VIEWPORT, then wait this long (dl3-keys --jump-viewport); -1: none')
 ap.add_argument('--wrap', default='', help='a command the host runs under (e.g. heaptrack -o F)')
 a = ap.parse_args()
 signal.alarm(a.timeout)
@@ -154,7 +155,8 @@ def keys(page, n):
     client = f'{IB}/prof/dl3-keys' if os.path.exists(f'{IB}/prof/dl3-keys') else f'{E}/dl3-keys'
     args = [client, '--socket', sock, '--root', W, '--main', a.main, '--output-dir', f'{W}/out',
             '--keys', str(n), '--gap-ms', str(a.gap_ms), '--no-viewport', '--page', str(page)] \
-        + (['--edit', EDITS[page_i[0] % len(EDITS)], '--repeated', '--min-words', '8'] if EDITS and n else [])
+        + (['--edit', EDITS[page_i[0] % len(EDITS)], '--repeated', '--min-words', '8'] if EDITS and n else []) \
+        + (['--jump-viewport', str(a.jump_ms)] if a.jump_ms >= 0 and n and page_i[0] > 0 else [])
     r = subprocess.run(args, capture_output=True, text=True, env=env)
     last, ms = None, []
     for line in r.stdout.splitlines():
@@ -186,7 +188,8 @@ def du(p):
     return n
 
 
-rec = {'name': a.name, 'engine': a.engine, 'profile': a.profile or 'balanced'}
+rec = {'name': a.name, 'engine': a.engine, 'profile': a.profile or 'balanced', 'jump_ms': a.jump_ms,
+       'far': os.environ.get('FLASHTEX_FAR')}
 t0 = time.time()
 rec['open'], _ = keys(0, 0)
 rec['open_s'] = round(time.time() - t0, 2)

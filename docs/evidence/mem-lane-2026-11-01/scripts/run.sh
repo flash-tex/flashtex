@@ -16,6 +16,7 @@ IB=$INCR_BENCH_DIR
 cd "$W"
 git rev-parse HEAD > "$OUT/HEAD"
 ENG=${ENG:-prof}
+JUMPS=${JUMPS:-4:-1}  # FAR:JUMP_MS,... (prof.py --jump-ms; FLASHTEX_FAR per run)
 if [ "${SKIP_BUILD:-0}" != 1 ]; then
   cargo build --release --locked -p flashtex-engine -p flashtex-display-list --features flashtex-engine/mem-stats
   bash tools/incr-bench/mkeng.sh "$ENG"
@@ -36,12 +37,17 @@ DOCS=${DOCS:-"plain-1000 full-1000 infdesc-x2 metropolis arxiv"}; DOCS=${DOCS//,
 for ROUND in $(seq "${ROUNDS:-1}"); do for d in $DOCS; do for ENG in $ENGINES; do
   case $d in
     plain-1000|full-1000)
-      python3 "$P" "$ENG" "$d" "$J" --pages 0,300,600,999 --keys "${KEYS:-8}" || echo "$d failed" ;;
+      # JUMPS (the branch's engine only): VIEWPORT before each jump, then a wait (ms), or none (-1)
+      for v in $( [ "$ENG" = base ] && echo 1:-1 || echo "${JUMPS//,/ }" ); do fr=${v%%:*}; jm=${v#*:}
+        FLASHTEX_FAR=$fr python3 "$P" "$ENG" "$d" "$J" --pages 0,300,600,999 --keys "${KEYS:-8}" --jump-ms "$jm" || echo "$d failed"
+      done ;;
     infdesc-x2)
       ed=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("edit",""))' "$IB/docs/infdesc-x2/doc.json")
       # a chapter of the first copy, then its copy in the second (~570 pages on), and back
-      python3 "$P" "$ENG" infdesc-x2 "$J" --src "$IB/docs/infdesc-x2" --edit "$ed,x2/$ed,$ed,x2/$ed" \
-        --pages 0,0,0,0 --keys "${KEYS:-8}" || echo "infdesc-x2 failed" ;;
+      for v in $( [ "$ENG" = base ] && echo 1:-1 || echo "${JUMPS//,/ }" ); do fr=${v%%:*}; jm=${v#*:}
+        FLASHTEX_FAR=$fr python3 "$P" "$ENG" infdesc-x2 "$J" --src "$IB/docs/infdesc-x2" --edit "$ed,x2/$ed,$ed,x2/$ed" \
+          --pages 0,0,0,0 --keys "${KEYS:-8}" --jump-ms "$jm" || echo "infdesc-x2 failed"
+      done ;;
     lowmem)
       python3 "$P" "$ENG" full-1000 "$J" --pages 0,300,600,999 --keys "${KEYS:-8}" --profile low-memory || true
       ed=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("edit",""))' "$IB/docs/infdesc-x2/doc.json")
