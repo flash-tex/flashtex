@@ -16,7 +16,7 @@ passes). Then:
     lines); the raw file is kept for cgsum.py.
 Every run records the PDF's and the log's SHA-256 and the log's memory-usage lines, so the engines'
 outputs can be compared byte for byte. One JSON line per run goes to OUT_DIR/runs.jsonl."""
-import argparse, hashlib, json, os, re, resource, shutil, subprocess, sys, time
+import argparse, gzip, hashlib, json, os, re, resource, shutil, subprocess, sys, time
 
 ap = argparse.ArgumentParser()
 ap.add_argument('out')
@@ -147,6 +147,15 @@ for spec in a.docs:
                     m = re.search(r'^(\d+),[^,]*,' + ev + r':u', txt, re.M)
                     r[ev] = int(m.group(1)) if m else None
             record(r, eng, name, 'native', rep, dirs[eng], stem)
+    # a log that is not the first engine's is kept (gzipped), with the first engine's, to be diffed
+    logs = {eng: f"{dirs[eng]}/{cmd(eng, entry)[2]}.log" for eng in engines}
+    first = h(logs[engines[0]])
+    for eng in engines[1:]:
+        if h(logs[eng]) != first:
+            os.makedirs(os.path.join(a.out, 'logs'), exist_ok=True)
+            for e in (engines[0], eng):
+                with open(logs[e], 'rb') as src, gzip.open(os.path.join(a.out, 'logs', f'{name}-{e}.log.gz'), 'wb') as dst:
+                    shutil.copyfileobj(src, dst)
     if a.cg != 'none':
         for eng in engines:
             stem = cmd(eng, entry)[2]
