@@ -92,7 +92,6 @@ final class ProjectManifestTests: XCTestCase {
         let main = try write("main.tex", "\\documentclass{article}\n\\usepackage{mystyle}\n\\begin{document}x\\end{document}\n")
         _ = try write("mystyle.sty", "\\def\\x{1}\n")
         let model = ShellModel()
-        model.detachWorker()
         model.files.policy = .disabled(reason: "test: hermetic")
         var reads: [(URL, String)] = []
         model.manifest.reader = { root, entry in
@@ -138,7 +137,6 @@ final class ProjectManifestTests: XCTestCase {
         let main = try write("paper/main.tex", "\\documentclass{article}\\begin{document}x\\end{document}")
         _ = try write("decoy.tex", "not the entry")
         let model = ShellModel()
-        model.detachWorker()
         model.files.policy = .disabled(reason: "test: hermetic")
         model.manifest.reader = { root, _ in
             .success(self.payload(exists: true, entry: "paper/main.tex", manifestDir: root.standardizedFileURL.path, files: []))
@@ -151,7 +149,6 @@ final class ProjectManifestTests: XCTestCase {
         let lone = tmp.appendingPathComponent("lone")
         _ = try write("lone/only.tex", "x")
         let bare = ShellModel()
-        bare.detachWorker()
         bare.files.policy = .disabled(reason: "test: no helper")
         XCTAssertEqual(bare.openTex(at: lone), .opened)
         XCTAssertEqual(bare.documentURL?.lastPathComponent, "only.tex")
@@ -195,7 +192,6 @@ final class ProjectManifestTests: XCTestCase {
         _ = try write("proj/styles/README.md", "no")
         _ = try write("proj/flashtex.toml", "[project]\nentry = \"paper/main.tex\"\ntexinputs = [\"styles\", \"/abs\"]\n[fonts]\nserif = \"x\"\n")
         let model = ShellModel()
-        model.detachWorker()
         model.files.policy = .executable(helper, arguments: [])
         // The folder opens as the manifest's entry.
         XCTAssertEqual(model.openTex(at: tmp.appendingPathComponent("proj")), .opened)

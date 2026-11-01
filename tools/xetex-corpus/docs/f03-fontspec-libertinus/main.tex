@@ -1,0 +1,23 @@
+% fontspec: Libertinus Serif, Sans and Mono (bundle), number styles, small caps
+\documentclass{article}
+\usepackage{fontspec}
+\setmainfont{Libertinus Serif}[Numbers=OldStyle]
+\setsansfont{Libertinus Sans}
+\setmonofont{Libertinus Mono}
+\usepackage{booktabs}
+\begin{document}
+\section{Libertinus}
+Typography exists to honour content. Like oratory, music, dance, calligraphy -- like anything that lends its grace to language -- typography is an art that can be deliberately misused. It is a craft by which the meanings of a text (or its absence of meaning) can be clarified, honoured and shared, or knowingly disguised. In a world rife with unsolicited messages, typography must often draw attention to itself before it will be read.
+
+Old-style figures in text: 1984, 2026, 31415. {\addfontfeatures{Numbers=Lining}Lining: 1984, 2026.}
+\textsc{Small caps}, \textit{Italic with fi and fl}, \textbf{Bold}, \textsf{Sans}, \texttt{Mono}.
+
+\begin{table}[h]\centering
+\begin{tabular}{lrr}\toprule
+Item & Count & Price\\\midrule
+Apples & 12 & 3.40\\
+Pears & 7 & 2.10\\\bottomrule
+\end{tabular}
+\caption{A booktabs table in Libertinus.}
+\end{table}
+\end{document}

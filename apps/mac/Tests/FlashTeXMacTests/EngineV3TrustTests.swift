@@ -297,7 +297,7 @@ final class EngineV3TrustTests: XCTestCase {
     /// off and 2 when restricted; the document has a second page only when 2.
     @MainActor
     func testQuarantinedProjectCompilesWithShellEscapeOffUntilTrusted() async throws {
-        guard EngineV3.locateHost() != nil else { throw XCTSkip("no flashtex-host built") }
+        guard EngineV3.locateHost() != nil else { throw EngineV3TestHost.unavailable("no flashtex-host built") }
         let (dir, file) = try project("\\documentclass{article}\n\\begin{document}\nOne.\n\\ifnum\\pdfshellescape=2 \\newpage Two.\\fi\n\\end{document}\n")
         quarantine(file)
         // The folder stands in for ~/Downloads, with another download in it

@@ -27,11 +27,17 @@ final class DocumentWatcher {
     var onChange: (@MainActor () -> Void)?
     private(set) var status = "not watching"
 
-    private var source: DispatchSourceFileSystemObject?
+    /// The vnode source; cancelled by `stop` and by deinit (an uncancelled
+    /// source keeps running, and keeps its file descriptor open, after its
+    /// watcher is gone). nonisolated(unsafe): deinit is nonisolated; the
+    /// watcher is released on main with its model.
+    nonisolated(unsafe) private(set) var source: DispatchSourceFileSystemObject?
     private var fd: Int32 = -1
     private var pending: DispatchWorkItem?
 
     var isWatching: Bool { source != nil }
+
+    deinit { source?.cancel() } // the cancel handler closes the fd
 
     /// Watches `url` (replacing any previous watch). False when the file
     /// cannot be opened (missing, unreadable); the watcher then waits for the
@@ -61,7 +67,10 @@ final class DocumentWatcher {
         }
         self.fd = fd
         let source = DispatchSource.makeFileSystemObjectSource(fileDescriptor: fd, eventMask: [.write, .extend, .attrib, .delete, .rename, .revoke], queue: .main)
-        source.setEventHandler { [weak self] in
+        // The handler holds the source weakly: a source retains its handler
+        // until it is cancelled, so a strong capture made a cycle.
+        source.setEventHandler { [weak self, weak source] in
+            guard let source else { return }
             MainActor.assumeIsolated { self?.handle(source.data) }
         }
         source.setCancelHandler { close(fd) }

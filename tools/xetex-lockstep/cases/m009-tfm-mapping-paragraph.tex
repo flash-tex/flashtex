@@ -1,0 +1,13 @@
+% m009-tfm-mapping-paragraph: a paragraph in a mapped TFM font: ligatures (not mapped twice), kerns, hyphenation and discretionaries
+% XeTeX-specific (docs/design/xetex/PLAN.md, phase S1: TECkit font mappings)
+\input prelude
+\def\space{ }
+\hsize=210pt \parindent=12pt \parfillskip=0pt plus 1fil
+\baselineskip=13pt \tolerance=10000 \pretolerance=-1
+\hyphenation{dif-fi-cult ef-fi-cient af-flu-ent}
+\font\q=cmr10:mapping=qx-unicode \q \hyphenchar\q=`-
+\setbox0=\vbox{We shall find that office workers, efficient and affluent, flatly refuse
+difficult fjords; AVATAR, Wo, Ta, T. Yo! -- or not --- ``quoted'' text, ff ffi ffl fi fl.
+dif\-fi\-cult of\discretionary{f-}{fi}{ffi}ce \par}
+\lsshipbox0
+\end

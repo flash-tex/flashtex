@@ -1,5 +1,8 @@
 # App parity, current gap list (2026-10-03)
 
+> **Superseded** by [app-parity-2026-10-05](../app-parity-2026-10-05/README.md), a re-audit
+> against `origin/main` `0752115a1` with the same row ids. This file is kept as the record at `442ca71bb`.
+
 Lane **P5-APP-PARITY-2** (mac-claude-a). DESIGN §12 P5 decision 3 gates the switch-over
 on the §10 app-parity checklist: the app loses nothing when the old engine is deleted.
 This file is the current state of that checklist.

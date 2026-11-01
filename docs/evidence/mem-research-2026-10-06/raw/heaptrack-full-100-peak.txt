@@ -1,0 +1,31 @@
+total at peak 95.3 MB
+    19.5 MB  font map other
+    13.5 MB  convergence diff (diff_branch)
+    11.3 MB  incr other
+    10.3 MB  display list encode (dl_shipout_end)
+     9.6 MB  kpathsea db, via host main thread (server::main)
+     9.6 MB  kpathsea db, via engine thread (system::configure)
+     5.1 MB  undo logs: retain/merge
+     3.0 MB  other: <>::new;<>::build;
+     2.4 MB  engine main_control
+     2.2 MB  checkpoint other
+     1.5 MB  zlib deflate
+     1.2 MB  free_cells
+     1.0 MB  server/connection
+     0.8 MB  other: <>::clone;<>::clone;
+     0.8 MB  other: <>::run;<>::compile;
+     0.6 MB  format load / undump
+     0.6 MB  display list other
+     0.4 MB  checkpoint records (capture_ext)
+     0.3 MB  other: <>::reserve_rehash::<>;<>::fallible_with_capacity::<>;
+     0.3 MB  other: <>::reserve::do_reserve_and_handle::<>;<>::finish_grow;
+     0.3 MB  kpathsea other
+     0.2 MB  other: <>::grow_one;<>::finish_grow;
+     0.1 MB  other: <>::restore;<>::clone;
+     0.1 MB  other: call_init;_GLOBAL__sub_I_eh_alloc.cc;
+     0.1 MB  other: flashtex_engine::pdftex::fonts::notdef_names;<>::from_elem::<>;
+     0.0 MB  other: <>::restore;<>::restore_branch;
+     0.0 MB  other: <>::from_iter;<>::clone;
+     0.0 MB  other: <>::alpha;<>::restore;
+     0.0 MB  page cache (resident put)
+     0.0 MB  other: <>::cold;<>::new;

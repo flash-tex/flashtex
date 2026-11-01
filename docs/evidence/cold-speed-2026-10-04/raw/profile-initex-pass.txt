@@ -1,0 +1,124 @@
+samples 73445, cycles 66118.6 M
+ self%  incl%  function
+ 32.09  37.96  body_2::get_next
+ 12.15  26.86  body_2::macro_call
+  7.61   7.96  body_2::end_token_list
+  6.45  44.15  body_2::expand
+  6.43   6.44  body_1::id_lookup
+  4.22  16.86  body_3::conditional
+  3.66   3.66  body_0::get_avail
+  3.31  98.51  body_7::main_control
+  3.14   3.14  body_1::delete_token_ref
+  2.69  15.94  body_3::scan_toks
+  1.71   1.71  body_2::begin_token_list
+  1.68   1.68  body_0::get_node
+  1.63  25.93  body_7::prefixed_command
+  1.27   2.53  body_2::back_input
+  1.05   2.68  body_2::eq_define
+  0.79   1.34  body_1::copy_node_list
+  0.77   0.77  _tlv_get_addr
+  0.60   0.60  body_0::free_node
+  0.49   0.49  longest_match
+  0.47   0.47  body_3::str_toks
+  0.44   1.79  body_3::the_toks
+  0.42   0.68  body_1::flush_node_list
+  0.40   4.75  body_2::scan_int
+  0.38   1.98  body_2::unsave
+  0.35   0.35  body_2::eq_save
+  0.33   1.97  body_2::scan_dimen
+  0.30   0.30  body_0::print_char
+  0.29   0.89  body_2::scan_keyword
+  0.27   0.92  body_7::get_r_token
+  0.24   0.24  body_2::eq_destroy
+  0.24   0.25  hash_insert_normalized
+  0.23   0.74  body_2::scan_something_internal
+  0.17   0.20  body_0::search_string
+  0.17   0.33  body_0::show_token_list
+  0.14   0.77  deflate_slow
+  0.14   0.42  body_2::get_next_file
+  0.13   0.19  body_0::print
+  0.12   2.01  body_7::do_register_command
+  0.10   0.14  system::input_ln
+  0.10   0.13  body_5::hpack
+  0.09   0.71  body_2::get_token
+  0.08   0.98  body_5::pdf_hlist_out
+  0.08   0.90  body_2::scan_general_text
+  0.07   5.16  body_3::conv_toks
+  0.06   0.06  body_2::new_save_level
+  0.06   0.10  read_line
+  0.06   0.06  compress_block
+  0.06   0.07  body_6::try_break
+  0.05   0.05  _platform_memmove
+  0.05   0.37  body_4::do_vf_packet
+  0.05   0.15  body_0::slow_print
+  0.05   0.15  body_2::sa_w_def
+  0.05   0.05  body_2::delete_sa_ref
+  0.05   0.06  _xzm_free
+  0.05   0.24  mapfile::fm_read_info
+  0.05   0.08  body_2::sa_save
+  0.05   0.08  body_1::pdf_print
+  0.05   0.09  body_1::pdf_print_int
+  0.05   0.05  diag::dg_def
+  0.04   0.19  body_6::line_break
+
+-- inclusive --
+100.00  start
+100.00  rt::lang_start_internal
+100.00  JH2bnQ_1::flash
+100.00  main
+100.00  flash::main
+ 99.59  main_body::tex_body
+ 98.51  body_7::main_control
+ 44.15  body_2::expand
+ 37.96  body_2::get_next
+ 26.86  body_2::macro_call
+ 25.93  body_7::prefixed_command
+ 16.86  body_3::conditional
+ 15.94  body_3::scan_toks
+  7.96  body_2::end_token_list
+  6.44  body_1::id_lookup
+  5.16  body_3::conv_toks
+  4.75  body_2::scan_int
+  3.66  body_0::get_avail
+  3.14  body_1::delete_token_ref
+  2.68  body_2::eq_define
+  2.53  body_2::back_input
+  2.01  body_7::do_register_command
+  1.98  body_2::unsave
+  1.97  body_2::scan_dimen
+  1.79  body_3::the_toks
+  1.74  body_5::ship_out
+  1.74  body_5::pdf_ship_out
+  1.71  body_2::begin_token_list
+  1.68  body_0::get_node
+  1.34  body_1::copy_node_list
+  1.01  body_5::pdf_vlist_out
+  0.98  body_5::pdf_hlist_out
+  0.95  body_3::ins_the_toks
+  0.92  body_7::get_r_token
+  0.92  body_6::begin_box
+  0.90  body_2::scan_general_text
+  0.89  body_2::scan_keyword
+  0.79  body_3::pdf_flush
+  0.78  output::write_zip
+  0.77  _tlv_get_addr
+  0.77  z_deflate
+  0.77  deflate_slow
+  0.75  body_2::scan_left_brace
+  0.74  body_2::scan_something_internal
+  0.71  body_2::get_token
+  0.68  body_1::flush_node_list
+  0.62  body_3::pdf_end_stream
+  0.60  body_0::free_node
+  0.56  body_6::unpackage
+  0.49  longest_match
+  0.47  body_3::str_toks
+  0.44  body_4::pdf_begin_string
+  0.42  body_2::get_next_file
+  0.40  kpathsea_cnf_get
+  0.40  KpathseaResolver::for_texlive
+  0.40  system::configure
+  0.40  KpathseaResolver::new
+  0.40  kpathsea_init_format
+  0.40  resolver::default_resolver
+  0.40  flashtex_kpse_format

@@ -1,0 +1,3 @@
+full-100: 22 compiles, 22 ok, 0 mismatches, 0 converged, 0 accounting-only log differences, modes {'incremental': 22}
+refs-120: 24 compiles, 24 ok, 0 mismatches, 2 converged, 0 accounting-only log differences, modes {'incremental': 24}
+{"compiles": 46, "ok": 46, "bad": 0, "conv": 2, "acct": 0, "err": 0, "interrupted": 0}

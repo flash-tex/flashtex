@@ -1,0 +1,1996 @@
+{
+ "unclosed-brace": {
+  "what": "an unclosed { in an argument (mid-typing)",
+  "pdflatex": {
+   "exit": 1,
+   "pages": 0,
+   "errors": [
+    {
+     "line": null,
+     "message": "File ended while scanning use of \\textbf ."
+    },
+    {
+     "line": null,
+     "message": "Emergency stop."
+    },
+    {
+     "line": null,
+     "message": " ==> Fatal error occurred, no output PDF file produced!"
+    }
+   ],
+   "nerrors": 3,
+   "fatal": "Emergency stop",
+   "seconds": 1.175
+  },
+  "v3": {
+   "exit": 1,
+   "pages": 0,
+   "errors": [
+    {
+     "line": null,
+     "message": "File ended while scanning use of \\textbf ."
+    },
+    {
+     "line": null,
+     "message": "Emergency stop."
+    },
+    {
+     "line": null,
+     "message": " ==> Fatal error occurred, no output PDF file produced!"
+    }
+   ],
+   "nerrors": 3,
+   "fatal": "Emergency stop",
+   "seconds": 1.321
+  },
+  "old": {
+   "status": "recovered",
+   "pages": 5,
+   "errors": [
+    {
+     "severity": "warning",
+     "message": "packages graphicx are recognised but not implemented",
+     "source": {
+      "end_byte": 66,
+      "path": "main.tex",
+      "start_byte": 45
+     },
+     "fix": false
+    },
+    {
+     "severity": "error",
+     "message": "argument to \\textbf is missing its closing brace",
+     "source": {
+      "end_byte": 1381,
+      "path": "main.tex",
+      "start_byte": 1380
+     },
+     "fix": false
+    },
+    {
+     "severity": "warning",
+     "message": "'\u2500' (U+2500) will not survive PDF export: fraction rules are drawn with a box-drawing character as a stand-in; runtime-v1 has no rule item type yet, so they cannot be exported faithfully",
+     "source": {
+      "end_byte": 428,
+      "path": "main.tex",
+      "start_byte": 423
+     },
+     "fix": false
+    }
+   ],
+   "nerrors": 1,
+   "ndiags": 3,
+   "seconds": 0.093
+  }
+ },
+ "unclosed-group": {
+  "what": "an unclosed { group",
+  "pdflatex": {
+   "exit": 0,
+   "pages": 6,
+   "errors": [],
+   "nerrors": 0,
+   "fatal": null,
+   "seconds": 2.544
+  },
+  "v3": {
+   "exit": 0,
+   "pages": 6,
+   "errors": [],
+   "nerrors": 0,
+   "fatal": null,
+   "seconds": 1.894
+  },
+  "old": {
+   "status": "recovered",
+   "pages": 6,
+   "errors": [
+    {
+     "severity": "warning",
+     "message": "packages graphicx are recognised but not implemented",
+     "source": {
+      "end_byte": 66,
+      "path": "main.tex",
+      "start_byte": 45
+     },
+     "fix": false
+    },
+    {
+     "severity": "error",
+     "message": "unmatched '{' \u2014 group never closed",
+     "source": {
+      "end_byte": 1374,
+      "path": "main.tex",
+      "start_byte": 1373
+     },
+     "fix": false
+    },
+    {
+     "severity": "warning",
+     "message": "'\u2500' (U+2500) will not survive PDF export: fraction rules are drawn with a box-drawing character as a stand-in; runtime-v1 has no rule item type yet, so they cannot be exported faithfully",
+     "source": {
+      "end_byte": 428,
+      "path": "main.tex",
+      "start_byte": 423
+     },
+     "fix": false
+    }
+   ],
+   "nerrors": 1,
+   "ndiags": 3,
+   "seconds": 0.032
+  }
+ },
+ "stray-close-brace": {
+  "what": "a stray }",
+  "pdflatex": {
+   "exit": 1,
+   "pages": 5,
+   "errors": [
+    {
+     "line": 13,
+     "message": "Too many }'s."
+    }
+   ],
+   "nerrors": 1,
+   "fatal": null,
+   "seconds": 2.906
+  },
+  "v3": {
+   "exit": 1,
+   "pages": 5,
+   "errors": [
+    {
+     "line": 13,
+     "message": "Too many }'s."
+    }
+   ],
+   "nerrors": 1,
+   "fatal": null,
+   "seconds": 1.291
+  },
+  "old": {
+   "status": "recovered",
+   "pages": 5,
+   "errors": [
+    {
+     "severity": "warning",
+     "message": "packages graphicx are recognised but not implemented",
+     "source": {
+      "end_byte": 66,
+      "path": "main.tex",
+      "start_byte": 45
+     },
+     "fix": false
+    },
+    {
+     "severity": "error",
+     "message": "unmatched '}' \u2014 no group is open here",
+     "source": {
+      "end_byte": 1379,
+      "path": "main.tex",
+      "start_byte": 1378
+     },
+     "fix": false
+    },
+    {
+     "severity": "warning",
+     "message": "'\u2500' (U+2500) will not survive PDF export: fraction rules are drawn with a box-drawing character as a stand-in; runtime-v1 has no rule item type yet, so they cannot be exported faithfully",
+     "source": {
+      "end_byte": 428,
+      "path": "main.tex",
+      "start_byte": 423
+     },
+     "fix": false
+    }
+   ],
+   "nerrors": 1,
+   "ndiags": 3,
+   "seconds": 0.043
+  }
+ },
+ "missing-dollar": {
+  "what": "an unclosed $ (inline math)",
+  "pdflatex": {
+   "exit": 1,
+   "pages": 5,
+   "errors": [
+    {
+     "line": 14,
+     "message": "Missing $ inserted."
+    }
+   ],
+   "nerrors": 1,
+   "fatal": null,
+   "seconds": 1.765
+  },
+  "v3": {
+   "exit": 1,
+   "pages": 5,
+   "errors": [
+    {
+     "line": 14,
+     "message": "Missing $ inserted."
+    }
+   ],
+   "nerrors": 1,
+   "fatal": null,
+   "seconds": 1.346
+  },
+  "old": {
+   "status": "recovered",
+   "pages": 5,
+   "errors": [
+    {
+     "severity": "warning",
+     "message": "packages graphicx are recognised but not implemented",
+     "source": {
+      "end_byte": 66,
+      "path": "main.tex",
+      "start_byte": 45
+     },
+     "fix": false
+    },
+    {
+     "severity": "error",
+     "message": "inline math is missing its closing '$'",
+     "source": {
+      "end_byte": 1379,
+      "path": "main.tex",
+      "start_byte": 1378
+     },
+     "fix": false
+    },
+    {
+     "severity": "warning",
+     "message": "'\u2500' (U+2500) will not survive PDF export: fraction rules are drawn with a box-drawing character as a stand-in; runtime-v1 has no rule item type yet, so they cannot be exported faithfully",
+     "source": {
+      "end_byte": 428,
+      "path": "main.tex",
+      "start_byte": 423
+     },
+     "fix": false
+    }
+   ],
+   "nerrors": 1,
+   "ndiags": 3,
+   "seconds": 0.023
+  }
+ },
+ "math-outside-math": {
+  "what": "math syntax outside math (Missing $ inserted)",
+  "pdflatex": {
+   "exit": 1,
+   "pages": 5,
+   "errors": [
+    {
+     "line": 13,
+     "message": "Missing $ inserted."
+    },
+    {
+     "line": 14,
+     "message": "Missing $ inserted."
+    }
+   ],
+   "nerrors": 2,
+   "fatal": null,
+   "seconds": 1.472
+  },
+  "v3": {
+   "exit": 1,
+   "pages": 5,
+   "errors": [
+    {
+     "line": 13,
+     "message": "Missing $ inserted."
+    },
+    {
+     "line": 14,
+     "message": "Missing $ inserted."
+    }
+   ],
+   "nerrors": 2,
+   "fatal": null,
+   "seconds": 1.221
+  },
+  "old": {
+   "status": "recovered",
+   "pages": 5,
+   "errors": [
+    {
+     "severity": "warning",
+     "message": "packages graphicx are recognised but not implemented",
+     "source": {
+      "end_byte": 66,
+      "path": "main.tex",
+      "start_byte": 45
+     },
+     "fix": false
+    },
+    {
+     "severity": "error",
+     "message": "math script marker used outside math mode",
+     "source": {
+      "end_byte": 1380,
+      "path": "main.tex",
+      "start_byte": 1379
+     },
+     "fix": false
+    },
+    {
+     "severity": "warning",
+     "message": "'\u2500' (U+2500) will not survive PDF export: fraction rules are drawn with a box-drawing character as a stand-in; runtime-v1 has no rule item type yet, so they cannot be exported faithfully",
+     "source": {
+      "end_byte": 428,
+      "path": "main.tex",
+      "start_byte": 423
+     },
+     "fix": false
+    }
+   ],
+   "nerrors": 1,
+   "ndiags": 3,
+   "seconds": 0.028
+  }
+ },
+ "unclosed-display": {
+  "what": "an unclosed \\[ display",
+  "pdflatex": {
+   "exit": 1,
+   "pages": 5,
+   "errors": [
+    {
+     "line": 14,
+     "message": "Missing $ inserted."
+    },
+    {
+     "line": 14,
+     "message": "Display math should end with $$."
+    },
+    {
+     "line": 65,
+     "message": "LaTeX Error: \\begin{equation*} on input line 13 ended by \\end{do"
+    }
+   ],
+   "nerrors": 3,
+   "fatal": null,
+   "seconds": 1.824
+  },
+  "v3": {
+   "exit": 1,
+   "pages": 5,
+   "errors": [
+    {
+     "line": 14,
+     "message": "Missing $ inserted."
+    },
+    {
+     "line": 14,
+     "message": "Display math should end with $$."
+    },
+    {
+     "line": 65,
+     "message": "LaTeX Error: \\begin{equation*} on input line 13 ended by \\end{do"
+    }
+   ],
+   "nerrors": 3,
+   "fatal": null,
+   "seconds": 1.357
+  },
+  "old": {
+   "status": "recovered",
+   "pages": 5,
+   "errors": [
+    {
+     "severity": "warning",
+     "message": "packages graphicx are recognised but not implemented",
+     "source": {
+      "end_byte": 66,
+      "path": "main.tex",
+      "start_byte": 45
+     },
+     "fix": false
+    },
+    {
+     "severity": "error",
+     "message": "display math is missing its closing delimiter",
+     "source": {
+      "end_byte": 1370,
+      "path": "main.tex",
+      "start_byte": 1368
+     },
+     "fix": false
+    },
+    {
+     "severity": "warning",
+     "message": "'\u2500' (U+2500) will not survive PDF export: fraction rules are drawn with a box-drawing character as a stand-in; runtime-v1 has no rule item type yet, so they cannot be exported faithfully",
+     "source": {
+      "end_byte": 428,
+      "path": "main.tex",
+      "start_byte": 423
+     },
+     "fix": false
+    }
+   ],
+   "nerrors": 1,
+   "ndiags": 3,
+   "seconds": 0.024
+  }
+ },
+ "undefined-cs": {
+  "what": "an undefined control sequence",
+  "pdflatex": {
+   "exit": 1,
+   "pages": 5,
+   "errors": [
+    {
+     "line": 13,
+     "message": "Undefined control sequence."
+    }
+   ],
+   "nerrors": 1,
+   "fatal": null,
+   "seconds": 1.982
+  },
+  "v3": {
+   "exit": 1,
+   "pages": 5,
+   "errors": [
+    {
+     "line": 13,
+     "message": "Undefined control sequence."
+    }
+   ],
+   "nerrors": 1,
+   "fatal": null,
+   "seconds": 1.609
+  },
+  "old": {
+   "status": "recovered",
+   "pages": 5,
+   "errors": [
+    {
+     "severity": "warning",
+     "message": "packages graphicx are recognised but not implemented",
+     "source": {
+      "end_byte": 66,
+      "path": "main.tex",
+      "start_byte": 45
+     },
+     "fix": false
+    },
+    {
+     "severity": "error",
+     "message": "\\foo is not supported by this compiler version",
+     "source": {
+      "end_byte": 1374,
+      "path": "main.tex",
+      "start_byte": 1370
+     },
+     "fix": false
+    },
+    {
+     "severity": "warning",
+     "message": "'\u2500' (U+2500) will not survive PDF export: fraction rules are drawn with a box-drawing character as a stand-in; runtime-v1 has no rule item type yet, so they cannot be exported faithfully",
+     "source": {
+      "end_byte": 428,
+      "path": "main.tex",
+      "start_byte": 423
+     },
+     "fix": false
+    }
+   ],
+   "nerrors": 1,
+   "ndiags": 3,
+   "seconds": 0.12
+  }
+ },
+ "undefined-env": {
+  "what": "an undefined environment",
+  "pdflatex": {
+   "exit": 1,
+   "pages": 5,
+   "errors": [
+    {
+     "line": 13,
+     "message": "LaTeX Error: Environment foo undefined."
+    },
+    {
+     "line": 13,
+     "message": "LaTeX Error: \\begin{document} ended by \\end{foo}."
+    }
+   ],
+   "nerrors": 2,
+   "fatal": null,
+   "seconds": 1.992
+  },
+  "v3": {
+   "exit": 1,
+   "pages": 5,
+   "errors": [
+    {
+     "line": 13,
+     "message": "LaTeX Error: Environment foo undefined."
+    },
+    {
+     "line": 13,
+     "message": "LaTeX Error: \\begin{document} ended by \\end{foo}."
+    }
+   ],
+   "nerrors": 2,
+   "fatal": null,
+   "seconds": 1.665
+  },
+  "old": {
+   "status": "recovered",
+   "pages": 5,
+   "errors": [
+    {
+     "severity": "warning",
+     "message": "packages graphicx are recognised but not implemented",
+     "source": {
+      "end_byte": 66,
+      "path": "main.tex",
+      "start_byte": 45
+     },
+     "fix": false
+    },
+    {
+     "severity": "warning",
+     "message": "environment 'foo' is not implemented; its body is typeset as plain text",
+     "source": {
+      "end_byte": 1374,
+      "path": "main.tex",
+      "start_byte": 1368
+     },
+     "fix": false
+    },
+    {
+     "severity": "warning",
+     "message": "'\u2500' (U+2500) will not survive PDF export: fraction rules are drawn with a box-drawing character as a stand-in; runtime-v1 has no rule item type yet, so they cannot be exported faithfully",
+     "source": {
+      "end_byte": 428,
+      "path": "main.tex",
+      "start_byte": 423
+     },
+     "fix": false
+    }
+   ],
+   "nerrors": 0,
+   "ndiags": 3,
+   "seconds": 0.02
+  }
+ },
+ "itemize-no-end": {
+  "what": "\\begin{itemize} with no \\end",
+  "pdflatex": {
+   "exit": 1,
+   "pages": 6,
+   "errors": [
+    {
+     "line": 64,
+     "message": "LaTeX Error: \\begin{itemize} on input line 13 ended by \\end{docu"
+    }
+   ],
+   "nerrors": 1,
+   "fatal": null,
+   "seconds": 2.03
+  },
+  "v3": {
+   "exit": 1,
+   "pages": 6,
+   "errors": [
+    {
+     "line": 64,
+     "message": "LaTeX Error: \\begin{itemize} on input line 13 ended by \\end{docu"
+    }
+   ],
+   "nerrors": 1,
+   "fatal": null,
+   "seconds": 1.762
+  },
+  "old": {
+   "status": "recovered",
+   "pages": 6,
+   "errors": [
+    {
+     "severity": "warning",
+     "message": "packages graphicx are recognised but not implemented",
+     "source": {
+      "end_byte": 66,
+      "path": "main.tex",
+      "start_byte": 45
+     },
+     "fix": false
+    },
+    {
+     "severity": "error",
+     "message": "\\end{document} does not match \\begin{itemize}",
+     "source": {
+      "end_byte": 15540,
+      "path": "main.tex",
+      "start_byte": 15536
+     },
+     "fix": false
+    },
+    {
+     "severity": "warning",
+     "message": "'\u2500' (U+2500) will not survive PDF export: fraction rules are drawn with a box-drawing character as a stand-in; runtime-v1 has no rule item type yet, so they cannot be exported faithfully",
+     "source": {
+      "end_byte": 428,
+      "path": "main.tex",
+      "start_byte": 423
+     },
+     "fix": false
+    }
+   ],
+   "nerrors": 1,
+   "ndiags": 3,
+   "seconds": 0.02
+  }
+ },
+ "mismatched-end": {
+  "what": "a mismatched \\end",
+  "pdflatex": {
+   "exit": 1,
+   "pages": 5,
+   "errors": [
+    {
+     "line": 15,
+     "message": "LaTeX Error: \\begin{itemize} on input line 13 ended by \\end{enum"
+    }
+   ],
+   "nerrors": 1,
+   "fatal": null,
+   "seconds": 3.79
+  },
+  "v3": {
+   "exit": 1,
+   "pages": 5,
+   "errors": [
+    {
+     "line": 15,
+     "message": "LaTeX Error: \\begin{itemize} on input line 13 ended by \\end{enum"
+    }
+   ],
+   "nerrors": 1,
+   "fatal": null,
+   "seconds": 2.309
+  },
+  "old": {
+   "status": "recovered",
+   "pages": 5,
+   "errors": [
+    {
+     "severity": "warning",
+     "message": "packages graphicx are recognised but not implemented",
+     "source": {
+      "end_byte": 66,
+      "path": "main.tex",
+      "start_byte": 45
+     },
+     "fix": false
+    },
+    {
+     "severity": "error",
+     "message": "\\end{enumerate} does not match \\begin{itemize}",
+     "source": {
+      "end_byte": 1398,
+      "path": "main.tex",
+      "start_byte": 1394
+     },
+     "fix": false
+    },
+    {
+     "severity": "warning",
+     "message": "'\u2500' (U+2500) will not survive PDF export: fraction rules are drawn with a box-drawing character as a stand-in; runtime-v1 has no rule item type yet, so they cannot be exported faithfully",
+     "source": {
+      "end_byte": 428,
+      "path": "main.tex",
+      "start_byte": 423
+     },
+     "fix": false
+    }
+   ],
+   "nerrors": 1,
+   "ndiags": 3,
+   "seconds": 0.076
+  }
+ },
+ "frac-incomplete": {
+  "what": "\\frac{a}{ incomplete (mid-typing)",
+  "pdflatex": {
+   "exit": 1,
+   "pages": 0,
+   "errors": [
+    {
+     "line": null,
+     "message": "File ended while scanning use of \\frac ."
+    },
+    {
+     "line": null,
+     "message": "Emergency stop."
+    },
+    {
+     "line": null,
+     "message": " ==> Fatal error occurred, no output PDF file produced!"
+    }
+   ],
+   "nerrors": 3,
+   "fatal": "Emergency stop",
+   "seconds": 1.331
+  },
+  "v3": {
+   "exit": 1,
+   "pages": 0,
+   "errors": [
+    {
+     "line": null,
+     "message": "File ended while scanning use of \\frac ."
+    },
+    {
+     "line": null,
+     "message": "Emergency stop."
+    },
+    {
+     "line": null,
+     "message": " ==> Fatal error occurred, no output PDF file produced!"
+    }
+   ],
+   "nerrors": 3,
+   "fatal": "Emergency stop",
+   "seconds": 2.339
+  },
+  "old": {
+   "status": "recovered",
+   "pages": 5,
+   "errors": [
+    {
+     "severity": "warning",
+     "message": "packages graphicx are recognised but not implemented",
+     "source": {
+      "end_byte": 66,
+      "path": "main.tex",
+      "start_byte": 45
+     },
+     "fix": false
+    },
+    {
+     "severity": "error",
+     "message": "math group is missing its closing brace",
+     "source": {
+      "end_byte": 1389,
+      "path": "main.tex",
+      "start_byte": 1388
+     },
+     "fix": false
+    },
+    {
+     "severity": "warning",
+     "message": "'\u2500' (U+2500) will not survive PDF export: fraction rules are drawn with a box-drawing character as a stand-in; runtime-v1 has no rule item type yet, so they cannot be exported faithfully",
+     "source": {
+      "end_byte": 428,
+      "path": "main.tex",
+      "start_byte": 423
+     },
+     "fix": false
+    }
+   ],
+   "nerrors": 1,
+   "ndiags": 3,
+   "seconds": 0.044
+  }
+ },
+ "section-incomplete": {
+  "what": "\\section{ incomplete (mid-typing)",
+  "pdflatex": {
+   "exit": 1,
+   "pages": 0,
+   "errors": [
+    {
+     "line": null,
+     "message": "File ended while scanning use of \\@xdblarg."
+    },
+    {
+     "line": null,
+     "message": "Emergency stop."
+    },
+    {
+     "line": null,
+     "message": " ==> Fatal error occurred, no output PDF file produced!"
+    }
+   ],
+   "nerrors": 3,
+   "fatal": "Emergency stop",
+   "seconds": 1.146
+  },
+  "v3": {
+   "exit": 1,
+   "pages": 0,
+   "errors": [
+    {
+     "line": null,
+     "message": "File ended while scanning use of \\@xdblarg."
+    },
+    {
+     "line": null,
+     "message": "Emergency stop."
+    },
+    {
+     "line": null,
+     "message": " ==> Fatal error occurred, no output PDF file produced!"
+    }
+   ],
+   "nerrors": 3,
+   "fatal": "Emergency stop",
+   "seconds": 1.398
+  },
+  "old": {
+   "status": "recovered",
+   "pages": 5,
+   "errors": [
+    {
+     "severity": "warning",
+     "message": "packages graphicx are recognised but not implemented",
+     "source": {
+      "end_byte": 66,
+      "path": "main.tex",
+      "start_byte": 45
+     },
+     "fix": false
+    },
+    {
+     "severity": "error",
+     "message": "argument to \\section is missing its closing brace",
+     "source": {
+      "end_byte": 1377,
+      "path": "main.tex",
+      "start_byte": 1376
+     },
+     "fix": false
+    },
+    {
+     "severity": "warning",
+     "message": "'\u2500' (U+2500) will not survive PDF export: fraction rules are drawn with a box-drawing character as a stand-in; runtime-v1 has no rule item type yet, so they cannot be exported faithfully",
+     "source": {
+      "end_byte": 428,
+      "path": "main.tex",
+      "start_byte": 423
+     },
+     "fix": false
+    }
+   ],
+   "nerrors": 1,
+   "ndiags": 3,
+   "seconds": 0.024
+  }
+ },
+ "begin-incomplete": {
+  "what": "\\begin{ite (mid-typing)",
+  "pdflatex": {
+   "exit": 1,
+   "pages": 5,
+   "errors": [
+    {
+     "line": 14,
+     "message": "Paragraph ended before \\begin was complete."
+    }
+   ],
+   "nerrors": 1,
+   "fatal": null,
+   "seconds": 2.441
+  },
+  "v3": {
+   "exit": 1,
+   "pages": 5,
+   "errors": [
+    {
+     "line": 14,
+     "message": "Paragraph ended before \\begin was complete."
+    }
+   ],
+   "nerrors": 1,
+   "fatal": null,
+   "seconds": 2.375
+  },
+  "old": {
+   "status": "recovered",
+   "pages": 1,
+   "errors": [
+    {
+     "severity": "warning",
+     "message": "packages graphicx are recognised but not implemented",
+     "source": {
+      "end_byte": 66,
+      "path": "main.tex",
+      "start_byte": 45
+     },
+     "fix": false
+    },
+    {
+     "severity": "warning",
+     "message": "environment 'ite parAmet amet enim enim eiusmod ullamco dolore sed lorem dolor ut aliquip eiusmod commodo dolor nostrud incididunt veniam adipiscing ut laboris incididunt ea adipiscing nostrud aliqua commodo ea ipsum ad exercitation aliqua ipsum eiusmod incididunt ad sed minim laboris ut magna adipiscing nostrud with $x_{2}^2+frac{a}{b}$ veniam ea et amet dolor consectetur sed eiusmod eiusmod ut magna minim commodo dolore quis minim minim elit aliqua et ea sed adipiscing ad dolor ullamco amet nostrud do sed minim elit nostrud amet labore consectetur magna quis aliqua elit aliquip magna adipiscing dolor aliqua lorem. parLorem consectetur ullamco elit dolor incididunt et ullamco eiusmod elit nisi eiusmod et eiusmod adipiscing laboris nostrud aliqua dolore ex ad adipiscing ut ad dolor ipsum lorem aliqua ad nisi exercitation ad exercitation amet amet ad aliquip elit dolore ut ex veniam dolore tempor ut enim incididunt et quis consectetur with $x_{3}^2+frac{a}{b}$ magna consectetur nisi consectetur minim labore nostrud enim dolor ad tempor ad enim et minim adipiscing consectetur et labore ipsum et exercitation amet magna amet amet ipsum lorem aliqua veniam ea ex do adipiscing commodo ad amet commodo tempor tempor do do ad enim adipiscing commodo aliqua sed ut. parDolor ad ut tempor enim laboris eiusmod sit et dolore amet nisi laboris dolore nisi aliquip lorem exercitation minim eiusmod dolore ea ipsum ullamco ipsum sit veniam sed sed sed dolore magna exercitation exercitation tempor consectetur labore ea lorem tempor consequat with $x_{4}^2+frac{a}{b}$ ad commodo nisi labore et ad ea ex labore ullamco minim magna labore sit amet commodo quis eiusmod commodo ut enim enim enim quis eiusmod aliquip consectetur elit commodo nostrud tempor do dolore laboris ut sit ea exercitation veniam nostrud commodo eiusmod dolor. parConsectetur dolore adipiscing magna consectetur sed consectetur nisi et nostrud laboris exercitation eiusmod ad nisi sed ea ut elit laboris ullamco elit aliqua magna et nostrud lorem incididunt consequat nisi ipsum ipsum et dolore ut tempor aliqua do incididunt magna enim dolore nisi eiusmod veniam ea ullamco elit ut nostrud with $x_{5}^2+frac{a}{b}$ ut aliqua adipiscing ipsum elit lorem aliqua sed amet commodo quis enim laboris commodo veniam consequat ad lorem elit nisi nisi veniam enim exercitation minim ea elit nostrud nostrud ut lorem magna commodo incididunt aliquip consequat ullamco enim eiusmod nisi consequat incididunt quis consequat lorem nostrud. parsection{Part 2} Laboris exercitation minim amet ea et aliqua ipsum ullamco do exercitation magna tempor amet lorem veniam dolore ullamco enim do aliquip dolore ea eiusmod aliquip commodo dolor magna commodo adipiscing laboris amet veniam amet nisi ipsum eiusmod commodo eiusmod consectetur exercitation magna enim ut consequat ut et minim magna with $x_{6}^2+frac{a}{b}$ amet amet consequat quis aliquip commodo sit eiusmod enim magna veniam labore exercitation exercitation tempor ex dolore minim labore dolore et ipsum exercitation ad laboris et magna incididunt amet eiusmod nisi do dolore aliquip consequat eiusmod sed sed nisi quis enim exercitation et elit ut enim amet adipiscing labore. parAd ea adipiscing tempor dolor sit ipsum ut dolor ea consequat nisi minim magna elit tempor adipiscing labore exercitation labore ea nisi nostrud eiusmod labore et aliqua aliquip nostrud ut nisi dolore minim ea elit ut consectetur dolor lorem lorem ex ad nostrud aliqua incididunt exercitation eiusmod with $x_{7}^2+frac{a}{b}$ do ipsum lorem nostrud do sit nostrud dolore sed consectetur aliquip enim lorem dolor sit consequat sed dolor magna elit laboris consectetur incididunt ipsum ea sed magna incididunt nisi nostrud minim magna dolore et et sit tempor veniam laboris consequat sit veniam ullamco incididunt laboris. parAmet magna amet dolore tempor adipiscing do sit ut laboris dolor sit consectetur commodo ex commodo quis adipiscing ad dolor sed dolor nisi sed exercitation nisi ipsum consequat magna consectetur dolore ad consectetur enim dolor nostrud sit dolore ad sed dolore nostrud elit enim adipiscing laboris et commodo ut minim minim commodo exercitation ex with $x_{8}^2+frac{a}{b}$ adipiscing sed nisi consequat consequat ipsum aliqua eiusmod incididunt quis nostrud consequat ad adipiscing ullamco veniam sed amet dolor enim ad ullamco enim ad veniam magna ad consequat commodo lorem consequat elit do ad ad ad amet nisi magna ex aliquip quis nostrud consectetur sit sed sit consequat ea dolore et minim quis quis exercitation. parAliquip minim commodo eiusmod ipsum do dolore labore sed elit tempor ullamco sit adipiscing magna adipiscing ut dolore amet consequat consectetur amet ut tempor commodo laboris ipsum quis ea aliqua labore incididunt ea et laboris nisi quis incididunt ex amet dolore ullamco incididunt lorem nostrud commodo with $x_{9}^2+frac{a}{b}$ ea amet exercitation commodo laboris dolor veniam aliquip lorem incididunt enim lorem elit enim commodo ad aliqua consequat ullamco consequat ullamco enim nisi enim sed commodo nisi sed eiusmod dolore lorem laboris dolor quis ullamco exercitation aliqua ipsum consectetur consectetur lorem nostrud magna. parMagna quis ex minim nostrud aliquip elit ex veniam do ullamco do ipsum tempor dolore quis sed aliqua ullamco dolore commodo aliqua ullamco magna laboris minim ea ut ea exercitation laboris consectetur amet sed ut do labore ipsum adipiscing dolore do ex adipiscing exercitation tempor lorem consectetur laboris with $x_{10}^2+frac{a}{b}$ sit ut laboris veniam sit adipiscing ullamco elit dolore magna tempor ex sit ut consectetur nostrud elit nisi aliqua commodo ea exercitation elit ex adipiscing do nostrud incididunt eiusmod consequat dolore ullamco aliqua ea ut minim ea adipiscing lorem veniam magna sit nisi enim adipiscing labore. parMagna magna et ullamco do sed dolore incididunt ullamco sit commodo do ullamco magna magna ex enim magna ea ut ea quis ex et minim tempor tempor nisi do sit commodo ad consequat sed ut ad ea ex minim elit sed sed dolore labore consectetur sit tempor elit labore incididunt commodo enim laboris with $x_{11}^2+frac{a}{b}$ ad lorem ipsum enim labore consectetur labore magna minim magna consequat nostrud ipsum elit minim veniam sed elit dolore do dolor veniam amet consectetur adipiscing enim ad et magna consequat sit quis ipsum consectetur sed exercitation quis et adipiscing minim magna lorem commodo. parsection{Part 3} Ad elit veniam sed magna exercitation consectetur consequat ex ullamco exercitation enim labore enim sed sit commodo elit tempor et ut laboris magna ipsum dolore magna consequat dolore ex sed exercitation adipiscing quis amet quis commodo ipsum enim nisi sed do amet do ut ex minim quis aliqua eiusmod do nostrud nisi exercitation elit do magna with $x_{12}^2+frac{a}{b}$ aliqua lorem lorem sed nostrud adipiscing aliquip ipsum laboris laboris magna quis ullamco exercitation aliquip sit adipiscing ex dolor lorem dolor elit sed consequat commodo veniam magna veniam ex et et adipiscing veniam eiusmod elit dolor ad laboris veniam dolore sit laboris ullamco nostrud veniam aliqua minim nisi et consequat do sit. parElit commodo tempor ea minim elit ipsum ex ut nostrud tempor exercitation labore adipiscing et minim minim et aliquip ex quis ea incididunt laboris nisi exercitation elit ea magna sed do lorem nostrud ullamco adipiscing ipsum amet tempor aliquip nostrud commodo aliqua do do consequat adipiscing dolore with $x_{13}^2+frac{a}{b}$ ipsum aliquip exercitation labore exercitation lorem et laboris eiusmod tempor minim et amet eiusmod tempor nostrud ipsum commodo ut laboris et dolor consequat incididunt commodo amet et exercitation aliquip elit sit nostrud consectetur adipiscing ex dolor consequat et lorem ipsum enim aliquip magna. parUllamco eiusmod sed ad nisi commodo ullamco eiusmod exercitation nostrud incididunt ea magna quis do dolore magna tempor consectetur quis minim do dolore dolore dolore veniam nostrud magna aliquip lorem do sed dolore labore incididunt amet incididunt laboris et sed aliquip exercitation incididunt consectetur amet do sit ipsum exercitation nostrud with $x_{14}^2+frac{a}{b}$ ullamco sed sed amet et nostrud sed aliqua incididunt exercitation veniam tempor labore enim do veniam ea aliqua consectetur commodo enim ut aliquip ipsum aliqua adipiscing quis nisi dolore sit sit ad eiusmod sed adipiscing elit laboris et ut commodo commodo exercitation elit ut nostrud consequat sed dolore lorem elit incididunt nostrud ex. parLabore magna dolor eiusmod commodo labore ullamco magna ullamco exercitation magna ea adipiscing sed tempor ipsum aliquip dolor ea ut exercitation minim et adipiscing amet dolor laboris nisi incididunt tempor commodo incididunt commodo nostrud consequat quis incididunt labore quis amet minim sit aliquip dolor tempor do aliqua with $x_{15}^2+frac{a}{b}$ ex dolor commodo amet exercitation consectetur exercitation commodo enim exercitation magna veniam ex sit ex ipsum laboris enim ad do magna amet quis ullamco exercitation consequat ipsum elit dolor consequat lorem adipiscing minim minim quis dolor quis amet ea consectetur nisi minim commodo lorem eiusmod ad quis ut do do. parAdipiscing exercitation ad commodo ullamco quis minim dolore quis dolor amet et dolore exercitation aliqua consectetur amet eiusmod magna ullamco consectetur sed aliqua dolore et ut adipiscing magna ex sit commodo enim ut amet ad minim aliqua consequat sed dolor nisi quis dolor ipsum ad ullamco eiusmod dolor consequat laboris with $x_{16}^2+frac{a}{b}$ tempor incididunt labore elit sed commodo elit magna aliquip incididunt sit quis aliquip minim veniam labore lorem lorem ea dolor eiusmod dolore dolor lorem labore consectetur consequat tempor dolor consequat incididunt ut nisi aliqua et ea commodo quis ad exercitation amet incididunt tempor incididunt enim laboris ex quis. parEa ipsum adipiscing laboris minim minim amet ullamco incididunt commodo ea commodo ex nisi ex eiusmod magna consequat enim exercitation dolore dolore enim lorem dolor aliquip aliquip veniam labore commodo nisi ut ex minim do nostrud laboris sit elit veniam lorem with $x_{0}^2+frac{a}{b}$ dolore sit enim nostrud lorem ad minim enim sit ut consectetur minim elit amet sed aliqua ullamco minim labore ipsum tempor commodo quis enim aliqua nostrud ullamco consequat aliquip amet incididunt ullamco labore dolor et labore et exercitation nostrud. parsection{Part 4} Do enim quis lorem enim nisi ea eiusmod do ipsum quis laboris minim commodo ea ad elit aliqua magna laboris lorem enim consectetur ea elit commodo labore dolore laboris quis labore sit adipiscing commodo commodo commodo eiusmod sed aliqua sit amet ut lorem sit with $x_{1}^2+frac{a}{b}$ laboris ipsum amet sit lorem dolor minim minim ipsum lorem ut ex incididunt magna aliqua consequat dolore labore tempor ut exercitation sit et nisi dolor minim ad ullamco elit ipsum tempor commodo consectetur tempor ut labore tempor enim adipiscing sit ad do. parNisi do labore dolor aliqua veniam sit consectetur nisi incididunt labore tempor elit sit incididunt sit elit consectetur labore aliqua dolore consequat laboris et dolor dolore incididunt ad veniam veniam aliquip nostrud nostrud consectetur laboris et ea minim with $x_{2}^2+frac{a}{b}$ tempor elit et amet laboris magna enim minim quis ullamco aliquip quis veniam ad exercitation ex commodo ipsum quis sed enim eiusmod enim sed do eiusmod aliquip do sed eiusmod consectetur dolore et veniam ad eiusmod magna ex enim amet laboris do veniam nisi. parAdipiscing do ad amet tempor ex dolor dolor incididunt veniam quis commodo veniam commodo quis minim elit tempor nostrud dolor magna ut sit et enim ad exercitation et quis sit labore aliqua lorem incididunt adipiscing sed labore quis commodo magna do eiusmod labore amet enim commodo commodo laboris nisi commodo ex tempor with $x_{3}^2+frac{a}{b}$ commodo veniam incididunt laboris amet magna ut labore do sed ut ipsum eiusmod ea quis tempor sit quis consectetur et ut consectetur nisi incididunt minim eiusmod ipsum ut ad ex dolor sit quis ea veniam sed ea amet commodo ad enim ad consectetur ex minim ullamco amet dolore amet ad ipsum tempor ad labore ad dolore dolore. parEnim ea ullamco lorem aliqua eiusmod aliqua sit elit laboris laboris ut magna veniam ea aliqua dolore tempor ad do veniam adipiscing exercitation veniam consequat incididunt exercitation nisi do ex et dolor et consectetur amet dolor consequat commodo ex ex ad consequat eiusmod ea exercitation lorem nostrud nisi eiusmod quis sit quis veniam nisi with $x_{4}^2+frac{a}{b}$ et enim consectetur nisi veniam incididunt eiusmod sed nisi dolor quis minim tempor ea ex lorem labore sit nisi eiusmod commodo ut exercitation aliquip elit ad dolore sed eiusmod minim sed tempor consequat enim labore laboris aliquip aliquip commodo enim eiusmod consequat commodo enim ut aliqua do lorem minim elit laboris nostrud commodo. parTempor nisi nisi nisi quis ut sit consectetur adipiscing adipiscing nostrud sed nisi exercitation tempor ex nisi consequat dolor incididunt nisi ea nostrud aliqua veniam tempor magna tempor ipsum sit amet labore nisi ad nisi minim adipiscing nostrud sit aliquip magna ullamco aliquip minim commodo adipiscing eiusmod exercitation with $x_{5}^2+frac{a}{b}$ laboris ex commodo do ad do veniam sed incididunt labore ut aliquip do adipiscing adipiscing laboris sit aliquip do quis ad magna exercitation lorem nostrud ea nisi enim enim nostrud ad aliqua tempor adipiscing ea tempor nisi do aliquip adipiscing elit ad ad ea minim ad aliquip ad ea exercitation ut eiusmod et incididunt et. parAd sit minim ullamco ipsum veniam quis quis ullamco ut aliqua labore ad exercitation nostrud tempor lorem nostrud veniam labore labore amet ad nostrud ut aliqua adipiscing laboris lorem veniam consectetur ullamco do elit tempor minim do nostrud laboris with $x_{6}^2+frac{a}{b}$ ad consequat magna ut incididunt eiusmod eiusmod eiusmod do elit nisi consequat sed laboris sed minim ad sed ipsum veniam tempor labore et ea ea dolor consectetur sed ex do ut quis sed magna veniam amet nostrud ex ipsum consequat aliquip incididunt. parend{document}' is not implemented; its body is typeset as plain text",
+     "source": {
+      "end_byte": 1374,
+      "path": "main.tex",
+      "start_byte": 1368
+     },
+     "fix": false
+    },
+    {
+     "severity": "error",
+     "message": "unterminated environment 'ite parAmet amet enim enim eiusmod ullamco dolore sed lorem dolor ut aliquip eiusmod commodo dolor nostrud incididunt veniam adipiscing ut laboris incididunt ea adipiscing nostrud aliqua commodo ea ipsum ad exercitation aliqua ipsum eiusmod incididunt ad sed minim laboris ut magna adipiscing nostrud with $x_{2}^2+frac{a}{b}$ veniam ea et amet dolor consectetur sed eiusmod eiusmod ut magna minim commodo dolore quis minim minim elit aliqua et ea sed adipiscing ad dolor ullamco amet nostrud do sed minim elit nostrud amet labore consectetur magna quis aliqua elit aliquip magna adipiscing dolor aliqua lorem. parLorem consectetur ullamco elit dolor incididunt et ullamco eiusmod elit nisi eiusmod et eiusmod adipiscing laboris nostrud aliqua dolore ex ad adipiscing ut ad dolor ipsum lorem aliqua ad nisi exercitation ad exercitation amet amet ad aliquip elit dolore ut ex veniam dolore tempor ut enim incididunt et quis consectetur with $x_{3}^2+frac{a}{b}$ magna consectetur nisi consectetur minim labore nostrud enim dolor ad tempor ad enim et minim adipiscing consectetur et labore ipsum et exercitation amet magna amet amet ipsum lorem aliqua veniam ea ex do adipiscing commodo ad amet commodo tempor tempor do do ad enim adipiscing commodo aliqua sed ut. parDolor ad ut tempor enim laboris eiusmod sit et dolore amet nisi laboris dolore nisi aliquip lorem exercitation minim eiusmod dolore ea ipsum ullamco ipsum sit veniam sed sed sed dolore magna exercitation exercitation tempor consectetur labore ea lorem tempor consequat with $x_{4}^2+frac{a}{b}$ ad commodo nisi labore et ad ea ex labore ullamco minim magna labore sit amet commodo quis eiusmod commodo ut enim enim enim quis eiusmod aliquip consectetur elit commodo nostrud tempor do dolore laboris ut sit ea exercitation veniam nostrud commodo eiusmod dolor. parConsectetur dolore adipiscing magna consectetur sed consectetur nisi et nostrud laboris exercitation eiusmod ad nisi sed ea ut elit laboris ullamco elit aliqua magna et nostrud lorem incididunt consequat nisi ipsum ipsum et dolore ut tempor aliqua do incididunt magna enim dolore nisi eiusmod veniam ea ullamco elit ut nostrud with $x_{5}^2+frac{a}{b}$ ut aliqua adipiscing ipsum elit lorem aliqua sed amet commodo quis enim laboris commodo veniam consequat ad lorem elit nisi nisi veniam enim exercitation minim ea elit nostrud nostrud ut lorem magna commodo incididunt aliquip consequat ullamco enim eiusmod nisi consequat incididunt quis consequat lorem nostrud. parsection{Part 2} Laboris exercitation minim amet ea et aliqua ipsum ullamco do exercitation magna tempor amet lorem veniam dolore ullamco enim do aliquip dolore ea eiusmod aliquip commodo dolor magna commodo adipiscing laboris amet veniam amet nisi ipsum eiusmod commodo eiusmod consectetur exercitation magna enim ut consequat ut et minim magna with $x_{6}^2+frac{a}{b}$ amet amet consequat quis aliquip commodo sit eiusmod enim magna veniam labore exercitation exercitation tempor ex dolore minim labore dolore et ipsum exercitation ad laboris et magna incididunt amet eiusmod nisi do dolore aliquip consequat eiusmod sed sed nisi quis enim exercitation et elit ut enim amet adipiscing labore. parAd ea adipiscing tempor dolor sit ipsum ut dolor ea consequat nisi minim magna elit tempor adipiscing labore exercitation labore ea nisi nostrud eiusmod labore et aliqua aliquip nostrud ut nisi dolore minim ea elit ut consectetur dolor lorem lorem ex ad nostrud aliqua incididunt exercitation eiusmod with $x_{7}^2+frac{a}{b}$ do ipsum lorem nostrud do sit nostrud dolore sed consectetur aliquip enim lorem dolor sit consequat sed dolor magna elit laboris consectetur incididunt ipsum ea sed magna incididunt nisi nostrud minim magna dolore et et sit tempor veniam laboris consequat sit veniam ullamco incididunt laboris. parAmet magna amet dolore tempor adipiscing do sit ut laboris dolor sit consectetur commodo ex commodo quis adipiscing ad dolor sed dolor nisi sed exercitation nisi ipsum consequat magna consectetur dolore ad consectetur enim dolor nostrud sit dolore ad sed dolore nostrud elit enim adipiscing laboris et commodo ut minim minim commodo exercitation ex with $x_{8}^2+frac{a}{b}$ adipiscing sed nisi consequat consequat ipsum aliqua eiusmod incididunt quis nostrud consequat ad adipiscing ullamco veniam sed amet dolor enim ad ullamco enim ad veniam magna ad consequat commodo lorem consequat elit do ad ad ad amet nisi magna ex aliquip quis nostrud consectetur sit sed sit consequat ea dolore et minim quis quis exercitation. parAliquip minim commodo eiusmod ipsum do dolore labore sed elit tempor ullamco sit adipiscing magna adipiscing ut dolore amet consequat consectetur amet ut tempor commodo laboris ipsum quis ea aliqua labore incididunt ea et laboris nisi quis incididunt ex amet dolore ullamco incididunt lorem nostrud commodo with $x_{9}^2+frac{a}{b}$ ea amet exercitation commodo laboris dolor veniam aliquip lorem incididunt enim lorem elit enim commodo ad aliqua consequat ullamco consequat ullamco enim nisi enim sed commodo nisi sed eiusmod dolore lorem laboris dolor quis ullamco exercitation aliqua ipsum consectetur consectetur lorem nostrud magna. parMagna quis ex minim nostrud aliquip elit ex veniam do ullamco do ipsum tempor dolore quis sed aliqua ullamco dolore commodo aliqua ullamco magna laboris minim ea ut ea exercitation laboris consectetur amet sed ut do labore ipsum adipiscing dolore do ex adipiscing exercitation tempor lorem consectetur laboris with $x_{10}^2+frac{a}{b}$ sit ut laboris veniam sit adipiscing ullamco elit dolore magna tempor ex sit ut consectetur nostrud elit nisi aliqua commodo ea exercitation elit ex adipiscing do nostrud incididunt eiusmod consequat dolore ullamco aliqua ea ut minim ea adipiscing lorem veniam magna sit nisi enim adipiscing labore. parMagna magna et ullamco do sed dolore incididunt ullamco sit commodo do ullamco magna magna ex enim magna ea ut ea quis ex et minim tempor tempor nisi do sit commodo ad consequat sed ut ad ea ex minim elit sed sed dolore labore consectetur sit tempor elit labore incididunt commodo enim laboris with $x_{11}^2+frac{a}{b}$ ad lorem ipsum enim labore consectetur labore magna minim magna consequat nostrud ipsum elit minim veniam sed elit dolore do dolor veniam amet consectetur adipiscing enim ad et magna consequat sit quis ipsum consectetur sed exercitation quis et adipiscing minim magna lorem commodo. parsection{Part 3} Ad elit veniam sed magna exercitation consectetur consequat ex ullamco exercitation enim labore enim sed sit commodo elit tempor et ut laboris magna ipsum dolore magna consequat dolore ex sed exercitation adipiscing quis amet quis commodo ipsum enim nisi sed do amet do ut ex minim quis aliqua eiusmod do nostrud nisi exercitation elit do magna with $x_{12}^2+frac{a}{b}$ aliqua lorem lorem sed nostrud adipiscing aliquip ipsum laboris laboris magna quis ullamco exercitation aliquip sit adipiscing ex dolor lorem dolor elit sed consequat commodo veniam magna veniam ex et et adipiscing veniam eiusmod elit dolor ad laboris veniam dolore sit laboris ullamco nostrud veniam aliqua minim nisi et consequat do sit. parElit commodo tempor ea minim elit ipsum ex ut nostrud tempor exercitation labore adipiscing et minim minim et aliquip ex quis ea incididunt laboris nisi exercitation elit ea magna sed do lorem nostrud ullamco adipiscing ipsum amet tempor aliquip nostrud commodo aliqua do do consequat adipiscing dolore with $x_{13}^2+frac{a}{b}$ ipsum aliquip exercitation labore exercitation lorem et laboris eiusmod tempor minim et amet eiusmod tempor nostrud ipsum commodo ut laboris et dolor consequat incididunt commodo amet et exercitation aliquip elit sit nostrud consectetur adipiscing ex dolor consequat et lorem ipsum enim aliquip magna. parUllamco eiusmod sed ad nisi commodo ullamco eiusmod exercitation nostrud incididunt ea magna quis do dolore magna tempor consectetur quis minim do dolore dolore dolore veniam nostrud magna aliquip lorem do sed dolore labore incididunt amet incididunt laboris et sed aliquip exercitation incididunt consectetur amet do sit ipsum exercitation nostrud with $x_{14}^2+frac{a}{b}$ ullamco sed sed amet et nostrud sed aliqua incididunt exercitation veniam tempor labore enim do veniam ea aliqua consectetur commodo enim ut aliquip ipsum aliqua adipiscing quis nisi dolore sit sit ad eiusmod sed adipiscing elit laboris et ut commodo commodo exercitation elit ut nostrud consequat sed dolore lorem elit incididunt nostrud ex. parLabore magna dolor eiusmod commodo labore ullamco magna ullamco exercitation magna ea adipiscing sed tempor ipsum aliquip dolor ea ut exercitation minim et adipiscing amet dolor laboris nisi incididunt tempor commodo incididunt commodo nostrud consequat quis incididunt labore quis amet minim sit aliquip dolor tempor do aliqua with $x_{15}^2+frac{a}{b}$ ex dolor commodo amet exercitation consectetur exercitation commodo enim exercitation magna veniam ex sit ex ipsum laboris enim ad do magna amet quis ullamco exercitation consequat ipsum elit dolor consequat lorem adipiscing minim minim quis dolor quis amet ea consectetur nisi minim commodo lorem eiusmod ad quis ut do do. parAdipiscing exercitation ad commodo ullamco quis minim dolore quis dolor amet et dolore exercitation aliqua consectetur amet eiusmod magna ullamco consectetur sed aliqua dolore et ut adipiscing magna ex sit commodo enim ut amet ad minim aliqua consequat sed dolor nisi quis dolor ipsum ad ullamco eiusmod dolor consequat laboris with $x_{16}^2+frac{a}{b}$ tempor incididunt labore elit sed commodo elit magna aliquip incididunt sit quis aliquip minim veniam labore lorem lorem ea dolor eiusmod dolore dolor lorem labore consectetur consequat tempor dolor consequat incididunt ut nisi aliqua et ea commodo quis ad exercitation amet incididunt tempor incididunt enim laboris ex quis. parEa ipsum adipiscing laboris minim minim amet ullamco incididunt commodo ea commodo ex nisi ex eiusmod magna consequat enim exercitation dolore dolore enim lorem dolor aliquip aliquip veniam labore commodo nisi ut ex minim do nostrud laboris sit elit veniam lorem with $x_{0}^2+frac{a}{b}$ dolore sit enim nostrud lorem ad minim enim sit ut consectetur minim elit amet sed aliqua ullamco minim labore ipsum tempor commodo quis enim aliqua nostrud ullamco consequat aliquip amet incididunt ullamco labore dolor et labore et exercitation nostrud. parsection{Part 4} Do enim quis lorem enim nisi ea eiusmod do ipsum quis laboris minim commodo ea ad elit aliqua magna laboris lorem enim consectetur ea elit commodo labore dolore laboris quis labore sit adipiscing commodo commodo commodo eiusmod sed aliqua sit amet ut lorem sit with $x_{1}^2+frac{a}{b}$ laboris ipsum amet sit lorem dolor minim minim ipsum lorem ut ex incididunt magna aliqua consequat dolore labore tempor ut exercitation sit et nisi dolor minim ad ullamco elit ipsum tempor commodo consectetur tempor ut labore tempor enim adipiscing sit ad do. parNisi do labore dolor aliqua veniam sit consectetur nisi incididunt labore tempor elit sit incididunt sit elit consectetur labore aliqua dolore consequat laboris et dolor dolore incididunt ad veniam veniam aliquip nostrud nostrud consectetur laboris et ea minim with $x_{2}^2+frac{a}{b}$ tempor elit et amet laboris magna enim minim quis ullamco aliquip quis veniam ad exercitation ex commodo ipsum quis sed enim eiusmod enim sed do eiusmod aliquip do sed eiusmod consectetur dolore et veniam ad eiusmod magna ex enim amet laboris do veniam nisi. parAdipiscing do ad amet tempor ex dolor dolor incididunt veniam quis commodo veniam commodo quis minim elit tempor nostrud dolor magna ut sit et enim ad exercitation et quis sit labore aliqua lorem incididunt adipiscing sed labore quis commodo magna do eiusmod labore amet enim commodo commodo laboris nisi commodo ex tempor with $x_{3}^2+frac{a}{b}$ commodo veniam incididunt laboris amet magna ut labore do sed ut ipsum eiusmod ea quis tempor sit quis consectetur et ut consectetur nisi incididunt minim eiusmod ipsum ut ad ex dolor sit quis ea veniam sed ea amet commodo ad enim ad consectetur ex minim ullamco amet dolore amet ad ipsum tempor ad labore ad dolore dolore. parEnim ea ullamco lorem aliqua eiusmod aliqua sit elit laboris laboris ut magna veniam ea aliqua dolore tempor ad do veniam adipiscing exercitation veniam consequat incididunt exercitation nisi do ex et dolor et consectetur amet dolor consequat commodo ex ex ad consequat eiusmod ea exercitation lorem nostrud nisi eiusmod quis sit quis veniam nisi with $x_{4}^2+frac{a}{b}$ et enim consectetur nisi veniam incididunt eiusmod sed nisi dolor quis minim tempor ea ex lorem labore sit nisi eiusmod commodo ut exercitation aliquip elit ad dolore sed eiusmod minim sed tempor consequat enim labore laboris aliquip aliquip commodo enim eiusmod consequat commodo enim ut aliqua do lorem minim elit laboris nostrud commodo. parTempor nisi nisi nisi quis ut sit consectetur adipiscing adipiscing nostrud sed nisi exercitation tempor ex nisi consequat dolor incididunt nisi ea nostrud aliqua veniam tempor magna tempor ipsum sit amet labore nisi ad nisi minim adipiscing nostrud sit aliquip magna ullamco aliquip minim commodo adipiscing eiusmod exercitation with $x_{5}^2+frac{a}{b}$ laboris ex commodo do ad do veniam sed incididunt labore ut aliquip do adipiscing adipiscing laboris sit aliquip do quis ad magna exercitation lorem nostrud ea nisi enim enim nostrud ad aliqua tempor adipiscing ea tempor nisi do aliquip adipiscing elit ad ad ea minim ad aliquip ad ea exercitation ut eiusmod et incididunt et. parAd sit minim ullamco ipsum veniam quis quis ullamco ut aliqua labore ad exercitation nostrud tempor lorem nostrud veniam labore labore amet ad nostrud ut aliqua adipiscing laboris lorem veniam consectetur ullamco do elit tempor minim do nostrud laboris with $x_{6}^2+frac{a}{b}$ ad consequat magna ut incididunt eiusmod eiusmod eiusmod do elit nisi consequat sed laboris sed minim ad sed ipsum veniam tempor labore et ea ea dolor consectetur sed ex do ut quis sed magna veniam amet nostrud ex ipsum consequat aliquip incididunt. parend{document}' \u2014 no matching \\end",
+     "source": {
+      "end_byte": 1374,
+      "path": "main.tex",
+      "start_byte": 1368
+     },
+     "fix": false
+    },
+    {
+     "severity": "error",
+     "message": "unterminated environment 'document' \u2014 no matching \\end",
+     "source": {
+      "end_byte": 94,
+      "path": "main.tex",
+      "start_byte": 78
+     },
+     "fix": false
+    },
+    {
+     "severity": "warning",
+     "message": "'\u2500' (U+2500) will not survive PDF export: fraction rules are drawn with a box-drawing character as a stand-in; runtime-v1 has no rule item type yet, so they cannot be exported faithfully",
+     "source": {
+      "end_byte": 428,
+      "path": "main.tex",
+      "start_byte": 423
+     },
+     "fix": false
+    }
+   ],
+   "nerrors": 2,
+   "ndiags": 5,
+   "seconds": 0.019
+  }
+ },
+ "usepackage-typo": {
+  "what": "a typo in \\usepackage{amsmth}",
+  "pdflatex": {
+   "exit": 1,
+   "pages": 0,
+   "errors": [
+    {
+     "line": null,
+     "message": "LaTeX Error: File `amsmth.sty' not found."
+    },
+    {
+     "line": 3,
+     "message": "Emergency stop."
+    },
+    {
+     "line": 3,
+     "message": " ==> Fatal error occurred, no output PDF file produced!"
+    }
+   ],
+   "nerrors": 3,
+   "fatal": "Emergency stop",
+   "seconds": 0.768
+  },
+  "v3": {
+   "exit": 1,
+   "pages": 0,
+   "errors": [
+    {
+     "line": null,
+     "message": "LaTeX Error: File `amsmth.sty' not found."
+    },
+    {
+     "line": 3,
+     "message": "Emergency stop."
+    },
+    {
+     "line": 3,
+     "message": " ==> Fatal error occurred, no output PDF file produced!"
+    }
+   ],
+   "nerrors": 3,
+   "fatal": "Emergency stop",
+   "seconds": 0.82
+  },
+  "old": {
+   "status": "recovered",
+   "pages": 5,
+   "errors": [
+    {
+     "severity": "warning",
+     "message": "packages amsmth are recognised but not implemented",
+     "source": {
+      "end_byte": 43,
+      "path": "main.tex",
+      "start_byte": 24
+     },
+     "fix": false
+    },
+    {
+     "severity": "warning",
+     "message": "packages graphicx are recognised but not implemented",
+     "source": {
+      "end_byte": 65,
+      "path": "main.tex",
+      "start_byte": 44
+     },
+     "fix": false
+    },
+    {
+     "severity": "warning",
+     "message": "'\u2500' (U+2500) will not survive PDF export: fraction rules are drawn with a box-drawing character as a stand-in; runtime-v1 has no rule item type yet, so they cannot be exported faithfully",
+     "source": {
+      "end_byte": 427,
+      "path": "main.tex",
+      "start_byte": 422
+     },
+     "fix": false
+    }
+   ],
+   "nerrors": 0,
+   "ndiags": 3,
+   "seconds": 0.021
+  }
+ },
+ "input-missing": {
+  "what": "a missing \\input file",
+  "pdflatex": {
+   "exit": 1,
+   "pages": 0,
+   "errors": [
+    {
+     "line": null,
+     "message": "LaTeX Error: File `chapter-missing.tex' not found."
+    },
+    {
+     "line": 13,
+     "message": "Emergency stop."
+    },
+    {
+     "line": 13,
+     "message": " ==> Fatal error occurred, no output PDF file produced!"
+    }
+   ],
+   "nerrors": 3,
+   "fatal": "Emergency stop",
+   "seconds": 0.929
+  },
+  "v3": {
+   "exit": 1,
+   "pages": 0,
+   "errors": [
+    {
+     "line": null,
+     "message": "LaTeX Error: File `chapter-missing.tex' not found."
+    },
+    {
+     "line": 13,
+     "message": "Emergency stop."
+    },
+    {
+     "line": 13,
+     "message": " ==> Fatal error occurred, no output PDF file produced!"
+    }
+   ],
+   "nerrors": 3,
+   "fatal": "Emergency stop",
+   "seconds": 1.005
+  },
+  "old": {
+   "status": "recovered",
+   "pages": 5,
+   "errors": [
+    {
+     "severity": "error",
+     "message": "included file not found: looked for 'chapter-missing' and 'chapter-missing.tex'",
+     "source": {
+      "end_byte": 1374,
+      "path": "main.tex",
+      "start_byte": 1368
+     },
+     "fix": false
+    },
+    {
+     "severity": "warning",
+     "message": "packages graphicx are recognised but not implemented",
+     "source": {
+      "end_byte": 66,
+      "path": "main.tex",
+      "start_byte": 45
+     },
+     "fix": false
+    },
+    {
+     "severity": "warning",
+     "message": "'\u2500' (U+2500) will not survive PDF export: fraction rules are drawn with a box-drawing character as a stand-in; runtime-v1 has no rule item type yet, so they cannot be exported faithfully",
+     "source": {
+      "end_byte": 428,
+      "path": "main.tex",
+      "start_byte": 423
+     },
+     "fix": false
+    }
+   ],
+   "nerrors": 1,
+   "ndiags": 3,
+   "seconds": 0.027
+  }
+ },
+ "graphic-missing": {
+  "what": "a missing \\includegraphics file",
+  "pdflatex": {
+   "exit": 1,
+   "pages": 5,
+   "errors": [
+    {
+     "line": 13,
+     "message": "LaTeX Error: File `figure-missing' not found."
+    }
+   ],
+   "nerrors": 1,
+   "fatal": null,
+   "seconds": 2.081
+  },
+  "v3": {
+   "exit": 1,
+   "pages": 5,
+   "errors": [
+    {
+     "line": 13,
+     "message": "LaTeX Error: File `figure-missing' not found."
+    }
+   ],
+   "nerrors": 1,
+   "fatal": null,
+   "seconds": 1.517
+  },
+  "old": {
+   "status": "recovered",
+   "pages": 5,
+   "errors": [
+    {
+     "severity": "warning",
+     "message": "packages graphicx are recognised but not implemented",
+     "source": {
+      "end_byte": 66,
+      "path": "main.tex",
+      "start_byte": 45
+     },
+     "fix": false
+    },
+    {
+     "severity": "warning",
+     "message": "\\includegraphics: this layout does not load or draw images",
+     "source": {
+      "end_byte": 1400,
+      "path": "main.tex",
+      "start_byte": 1368
+     },
+     "fix": false
+    },
+    {
+     "severity": "warning",
+     "message": "'\u2500' (U+2500) will not survive PDF export: fraction rules are drawn with a box-drawing character as a stand-in; runtime-v1 has no rule item type yet, so they cannot be exported faithfully",
+     "source": {
+      "end_byte": 428,
+      "path": "main.tex",
+      "start_byte": 423
+     },
+     "fix": false
+    }
+   ],
+   "nerrors": 0,
+   "ndiags": 3,
+   "seconds": 0.039
+  }
+ },
+ "ampersand": {
+  "what": "an & outside a table",
+  "pdflatex": {
+   "exit": 1,
+   "pages": 5,
+   "errors": [
+    {
+     "line": 13,
+     "message": "Misplaced alignment tab character &."
+    }
+   ],
+   "nerrors": 1,
+   "fatal": null,
+   "seconds": 2.194
+  },
+  "v3": {
+   "exit": 1,
+   "pages": 5,
+   "errors": [
+    {
+     "line": 13,
+     "message": "Misplaced alignment tab character &."
+    }
+   ],
+   "nerrors": 1,
+   "fatal": null,
+   "seconds": 1.604
+  },
+  "old": {
+   "status": "recovered",
+   "pages": 5,
+   "errors": [
+    {
+     "severity": "warning",
+     "message": "packages graphicx are recognised but not implemented",
+     "source": {
+      "end_byte": 66,
+      "path": "main.tex",
+      "start_byte": 45
+     },
+     "fix": false
+    },
+    {
+     "severity": "warning",
+     "message": "'\u2500' (U+2500) will not survive PDF export: fraction rules are drawn with a box-drawing character as a stand-in; runtime-v1 has no rule item type yet, so they cannot be exported faithfully",
+     "source": {
+      "end_byte": 428,
+      "path": "main.tex",
+      "start_byte": 423
+     },
+     "fix": false
+    }
+   ],
+   "nerrors": 0,
+   "ndiags": 2,
+   "seconds": 0.028
+  }
+ },
+ "newline-bad": {
+  "what": "\\\\ where there is no line to end",
+  "pdflatex": {
+   "exit": 1,
+   "pages": 5,
+   "errors": [
+    {
+     "line": 15,
+     "message": "LaTeX Error: There's no line here to end."
+    }
+   ],
+   "nerrors": 1,
+   "fatal": null,
+   "seconds": 1.86
+  },
+  "v3": {
+   "exit": 1,
+   "pages": 5,
+   "errors": [
+    {
+     "line": 15,
+     "message": "LaTeX Error: There's no line here to end."
+    }
+   ],
+   "nerrors": 1,
+   "fatal": null,
+   "seconds": 2.034
+  },
+  "old": {
+   "status": "recovered",
+   "pages": 5,
+   "errors": [
+    {
+     "severity": "warning",
+     "message": "packages graphicx are recognised but not implemented",
+     "source": {
+      "end_byte": 66,
+      "path": "main.tex",
+      "start_byte": 45
+     },
+     "fix": false
+    },
+    {
+     "severity": "warning",
+     "message": "'\u2500' (U+2500) will not survive PDF export: fraction rules are drawn with a box-drawing character as a stand-in; runtime-v1 has no rule item type yet, so they cannot be exported faithfully",
+     "source": {
+      "end_byte": 428,
+      "path": "main.tex",
+      "start_byte": 423
+     },
+     "fix": false
+    }
+   ],
+   "nerrors": 0,
+   "ndiags": 2,
+   "seconds": 0.013
+  }
+ },
+ "item-outside-list": {
+  "what": "\\item outside a list",
+  "pdflatex": {
+   "exit": 1,
+   "pages": 5,
+   "errors": [
+    {
+     "line": 13,
+     "message": "LaTeX Error: Lonely \\item--perhaps a missing list environment."
+    }
+   ],
+   "nerrors": 1,
+   "fatal": null,
+   "seconds": 1.927
+  },
+  "v3": {
+   "exit": 1,
+   "pages": 5,
+   "errors": [
+    {
+     "line": 13,
+     "message": "LaTeX Error: Lonely \\item--perhaps a missing list environment."
+    }
+   ],
+   "nerrors": 1,
+   "fatal": null,
+   "seconds": 1.435
+  },
+  "old": {
+   "status": "recovered",
+   "pages": 5,
+   "errors": [
+    {
+     "severity": "warning",
+     "message": "packages graphicx are recognised but not implemented",
+     "source": {
+      "end_byte": 66,
+      "path": "main.tex",
+      "start_byte": 45
+     },
+     "fix": false
+    },
+    {
+     "severity": "error",
+     "message": "\\item is only supported inside a list",
+     "source": {
+      "end_byte": 1373,
+      "path": "main.tex",
+      "start_byte": 1368
+     },
+     "fix": false
+    },
+    {
+     "severity": "warning",
+     "message": "'\u2500' (U+2500) will not survive PDF export: fraction rules are drawn with a box-drawing character as a stand-in; runtime-v1 has no rule item type yet, so they cannot be exported faithfully",
+     "source": {
+      "end_byte": 428,
+      "path": "main.tex",
+      "start_byte": 423
+     },
+     "fix": false
+    }
+   ],
+   "nerrors": 1,
+   "ndiags": 3,
+   "seconds": 0.021
+  }
+ },
+ "runaway-argument": {
+  "what": "a paragraph end inside an argument",
+  "pdflatex": {
+   "exit": 1,
+   "pages": 5,
+   "errors": [
+    {
+     "line": 15,
+     "message": "Paragraph ended before \\text@command was complete."
+    },
+    {
+     "line": 15,
+     "message": "Too many }'s."
+    }
+   ],
+   "nerrors": 2,
+   "fatal": null,
+   "seconds": 2.056
+  },
+  "v3": {
+   "exit": 1,
+   "pages": 5,
+   "errors": [
+    {
+     "line": 15,
+     "message": "Paragraph ended before \\text@command was complete."
+    },
+    {
+     "line": 15,
+     "message": "Too many }'s."
+    }
+   ],
+   "nerrors": 2,
+   "fatal": null,
+   "seconds": 1.868
+  },
+  "old": {
+   "status": "recovered",
+   "pages": 5,
+   "errors": [
+    {
+     "severity": "warning",
+     "message": "packages graphicx are recognised but not implemented",
+     "source": {
+      "end_byte": 66,
+      "path": "main.tex",
+      "start_byte": 45
+     },
+     "fix": false
+    },
+    {
+     "severity": "error",
+     "message": "Paragraph ended before \\text@command was complete.",
+     "source": {
+      "end_byte": 1379,
+      "path": "main.tex",
+      "start_byte": 1378
+     },
+     "fix": false
+    },
+    {
+     "severity": "warning",
+     "message": "'\u2500' (U+2500) will not survive PDF export: fraction rules are drawn with a box-drawing character as a stand-in; runtime-v1 has no rule item type yet, so they cannot be exported faithfully",
+     "source": {
+      "end_byte": 428,
+      "path": "main.tex",
+      "start_byte": 423
+     },
+     "fix": false
+    }
+   ],
+   "nerrors": 1,
+   "ndiags": 3,
+   "seconds": 0.023
+  }
+ },
+ "end-document-deleted": {
+  "what": "\\end{document} deleted",
+  "pdflatex": {
+   "exit": 1,
+   "pages": 0,
+   "errors": [
+    {
+     "line": null,
+     "message": "Emergency stop."
+    },
+    {
+     "line": null,
+     "message": " ==> Fatal error occurred, no output PDF file produced!"
+    }
+   ],
+   "nerrors": 2,
+   "fatal": "Emergency stop",
+   "seconds": 1.77
+  },
+  "v3": {
+   "exit": 1,
+   "pages": 0,
+   "errors": [
+    {
+     "line": null,
+     "message": "Emergency stop."
+    },
+    {
+     "line": null,
+     "message": " ==> Fatal error occurred, no output PDF file produced!"
+    }
+   ],
+   "nerrors": 2,
+   "fatal": "Emergency stop",
+   "seconds": 1.692
+  },
+  "old": {
+   "status": "recovered",
+   "pages": 5,
+   "errors": [
+    {
+     "severity": "warning",
+     "message": "packages graphicx are recognised but not implemented",
+     "source": {
+      "end_byte": 66,
+      "path": "main.tex",
+      "start_byte": 45
+     },
+     "fix": false
+    },
+    {
+     "severity": "error",
+     "message": "unterminated environment 'document' \u2014 no matching \\end",
+     "source": {
+      "end_byte": 94,
+      "path": "main.tex",
+      "start_byte": 78
+     },
+     "fix": false
+    },
+    {
+     "severity": "warning",
+     "message": "'\u2500' (U+2500) will not survive PDF export: fraction rules are drawn with a box-drawing character as a stand-in; runtime-v1 has no rule item type yet, so they cannot be exported faithfully",
+     "source": {
+      "end_byte": 428,
+      "path": "main.tex",
+      "start_byte": 423
+     },
+     "fix": false
+    }
+   ],
+   "nerrors": 1,
+   "ndiags": 3,
+   "seconds": 0.035
+  }
+ },
+ "file-ended-in-argument": {
+  "what": "file ended while scanning an argument",
+  "pdflatex": {
+   "exit": 1,
+   "pages": 0,
+   "errors": [
+    {
+     "line": null,
+     "message": "File ended while scanning use of \\textbf ."
+    },
+    {
+     "line": null,
+     "message": "Emergency stop."
+    },
+    {
+     "line": null,
+     "message": " ==> Fatal error occurred, no output PDF file produced!"
+    }
+   ],
+   "nerrors": 3,
+   "fatal": "Emergency stop",
+   "seconds": 2.085
+  },
+  "v3": {
+   "exit": 1,
+   "pages": 0,
+   "errors": [
+    {
+     "line": null,
+     "message": "File ended while scanning use of \\textbf ."
+    },
+    {
+     "line": null,
+     "message": "Emergency stop."
+    },
+    {
+     "line": null,
+     "message": " ==> Fatal error occurred, no output PDF file produced!"
+    }
+   ],
+   "nerrors": 3,
+   "fatal": "Emergency stop",
+   "seconds": 2.789
+  },
+  "old": {
+   "status": "recovered",
+   "pages": 5,
+   "errors": [
+    {
+     "severity": "warning",
+     "message": "packages graphicx are recognised but not implemented",
+     "source": {
+      "end_byte": 66,
+      "path": "main.tex",
+      "start_byte": 45
+     },
+     "fix": false
+    },
+    {
+     "severity": "error",
+     "message": "argument to \\textbf is missing its closing brace",
+     "source": {
+      "end_byte": 15517,
+      "path": "main.tex",
+      "start_byte": 15516
+     },
+     "fix": false
+    },
+    {
+     "severity": "warning",
+     "message": "'\u2500' (U+2500) will not survive PDF export: fraction rules are drawn with a box-drawing character as a stand-in; runtime-v1 has no rule item type yet, so they cannot be exported faithfully",
+     "source": {
+      "end_byte": 428,
+      "path": "main.tex",
+      "start_byte": 423
+     },
+     "fix": false
+    }
+   ],
+   "nerrors": 1,
+   "ndiags": 3,
+   "seconds": 0.018
+  }
+ },
+ "preamble-error": {
+  "what": "an error in the preamble",
+  "pdflatex": {
+   "exit": 1,
+   "pages": 5,
+   "errors": [
+    {
+     "line": 5,
+     "message": "Undefined control sequence."
+    }
+   ],
+   "nerrors": 1,
+   "fatal": null,
+   "seconds": 1.758
+  },
+  "v3": {
+   "exit": 1,
+   "pages": 5,
+   "errors": [
+    {
+     "line": 5,
+     "message": "Undefined control sequence."
+    }
+   ],
+   "nerrors": 1,
+   "fatal": null,
+   "seconds": 1.927
+  },
+  "old": {
+   "status": "recovered",
+   "pages": 5,
+   "errors": [
+    {
+     "severity": "warning",
+     "message": "packages graphicx are recognised but not implemented",
+     "source": {
+      "end_byte": 66,
+      "path": "main.tex",
+      "start_byte": 45
+     },
+     "fix": false
+    },
+    {
+     "severity": "error",
+     "message": "\\foo is not supported in the document preamble",
+     "source": {
+      "end_byte": 82,
+      "path": "main.tex",
+      "start_byte": 78
+     },
+     "fix": false
+    },
+    {
+     "severity": "warning",
+     "message": "'\u2500' (U+2500) will not survive PDF export: fraction rules are drawn with a box-drawing character as a stand-in; runtime-v1 has no rule item type yet, so they cannot be exported faithfully",
+     "source": {
+      "end_byte": 433,
+      "path": "main.tex",
+      "start_byte": 428
+     },
+     "fix": false
+    }
+   ],
+   "nerrors": 1,
+   "ndiags": 3,
+   "seconds": 0.089
+  }
+ },
+ "capacity-exceeded": {
+  "what": "a fatal error: TeX capacity exceeded",
+  "pdflatex": {
+   "exit": 1,
+   "pages": 0,
+   "errors": [
+    {
+     "line": 13,
+     "message": "TeX capacity exceeded, sorry [input stack size=10000]."
+    },
+    {
+     "line": 13,
+     "message": " ==> Fatal error occurred, no output PDF file produced!"
+    }
+   ],
+   "nerrors": 2,
+   "fatal": "TeX capacity exceeded",
+   "seconds": 1.661
+  },
+  "v3": {
+   "exit": 1,
+   "pages": 0,
+   "errors": [
+    {
+     "line": 13,
+     "message": "TeX capacity exceeded, sorry [input stack size=10000]."
+    },
+    {
+     "line": 13,
+     "message": " ==> Fatal error occurred, no output PDF file produced!"
+    }
+   ],
+   "nerrors": 2,
+   "fatal": "TeX capacity exceeded",
+   "seconds": 1.445
+  },
+  "old": {
+   "status": "recovered",
+   "pages": 5,
+   "errors": [
+    {
+     "severity": "error",
+     "message": "TeX capacity exceeded, sorry [input stack size=10000].",
+     "source": {
+      "end_byte": 1394,
+      "path": "main.tex",
+      "start_byte": 1388
+     },
+     "fix": false
+    },
+    {
+     "severity": "warning",
+     "message": "packages graphicx are recognised but not implemented",
+     "source": {
+      "end_byte": 66,
+      "path": "main.tex",
+      "start_byte": 45
+     },
+     "fix": false
+    },
+    {
+     "severity": "warning",
+     "message": "'\u2500' (U+2500) will not survive PDF export: fraction rules are drawn with a box-drawing character as a stand-in; runtime-v1 has no rule item type yet, so they cannot be exported faithfully",
+     "source": {
+      "end_byte": 428,
+      "path": "main.tex",
+      "start_byte": 423
+     },
+     "fix": false
+    }
+   ],
+   "nerrors": 1,
+   "ndiags": 3,
+   "seconds": 0.032
+  }
+ },
+ "long-error-page1": {
+  "what": "an error on page 1 of 60",
+  "pdflatex": {
+   "exit": 1,
+   "pages": 75,
+   "errors": [
+    {
+     "line": 13,
+     "message": "Undefined control sequence."
+    }
+   ],
+   "nerrors": 1,
+   "fatal": null,
+   "seconds": 4.851
+  },
+  "v3": {
+   "exit": 1,
+   "pages": 75,
+   "errors": [
+    {
+     "line": 13,
+     "message": "Undefined control sequence."
+    }
+   ],
+   "nerrors": 1,
+   "fatal": null,
+   "seconds": 2.677
+  },
+  "old": {
+   "status": "recovered",
+   "pages": 74,
+   "errors": [
+    {
+     "severity": "warning",
+     "message": "packages graphicx are recognised but not implemented",
+     "source": {
+      "end_byte": 66,
+      "path": "main.tex",
+      "start_byte": 45
+     },
+     "fix": false
+    },
+    {
+     "severity": "error",
+     "message": "\\foo is not supported by this compiler version",
+     "source": {
+      "end_byte": 1458,
+      "path": "main.tex",
+      "start_byte": 1454
+     },
+     "fix": false
+    },
+    {
+     "severity": "warning",
+     "message": "'\u2500' (U+2500) will not survive PDF export: fraction rules are drawn with a box-drawing character as a stand-in; runtime-v1 has no rule item type yet, so they cannot be exported faithfully",
+     "source": {
+      "end_byte": 493,
+      "path": "main.tex",
+      "start_byte": 488
+     },
+     "fix": false
+    }
+   ],
+   "nerrors": 1,
+   "ndiags": 3,
+   "seconds": 0.441
+  }
+ },
+ "long-error-page50": {
+  "what": "an error on page 50 of 60",
+  "pdflatex": {
+   "exit": 1,
+   "pages": 75,
+   "errors": [
+    {
+     "line": 672,
+     "message": "Undefined control sequence."
+    }
+   ],
+   "nerrors": 1,
+   "fatal": null,
+   "seconds": 3.793
+  },
+  "v3": {
+   "exit": 1,
+   "pages": 75,
+   "errors": [
+    {
+     "line": 672,
+     "message": "Undefined control sequence."
+    }
+   ],
+   "nerrors": 1,
+   "fatal": null,
+   "seconds": 2.594
+  },
+  "old": {
+   "status": "recovered",
+   "pages": 74,
+   "errors": [
+    {
+     "severity": "warning",
+     "message": "packages graphicx are recognised but not implemented",
+     "source": {
+      "end_byte": 66,
+      "path": "main.tex",
+      "start_byte": 45
+     },
+     "fix": false
+    },
+    {
+     "severity": "error",
+     "message": "\\foo is not supported by this compiler version",
+     "source": {
+      "end_byte": 198464,
+      "path": "main.tex",
+      "start_byte": 198460
+     },
+     "fix": false
+    },
+    {
+     "severity": "warning",
+     "message": "'\u2500' (U+2500) will not survive PDF export: fraction rules are drawn with a box-drawing character as a stand-in; runtime-v1 has no rule item type yet, so they cannot be exported faithfully",
+     "source": {
+      "end_byte": 493,
+      "path": "main.tex",
+      "start_byte": 488
+     },
+     "fix": false
+    }
+   ],
+   "nerrors": 1,
+   "ndiags": 3,
+   "seconds": 0.665
+  }
+ },
+ "long-fatal-page50": {
+  "what": "a fatal error on page 50 of 60",
+  "pdflatex": {
+   "exit": 1,
+   "pages": 0,
+   "errors": [
+    {
+     "line": null,
+     "message": "LaTeX Error: File `chapter-missing.tex' not found."
+    },
+    {
+     "line": 672,
+     "message": "Emergency stop."
+    },
+    {
+     "line": 672,
+     "message": " ==> Fatal error occurred, no output PDF file produced!"
+    }
+   ],
+   "nerrors": 3,
+   "fatal": "Emergency stop",
+   "seconds": 5.868
+  },
+  "v3": {
+   "exit": 1,
+   "pages": 0,
+   "errors": [
+    {
+     "line": null,
+     "message": "LaTeX Error: File `chapter-missing.tex' not found."
+    },
+    {
+     "line": 672,
+     "message": "Emergency stop."
+    },
+    {
+     "line": 672,
+     "message": " ==> Fatal error occurred, no output PDF file produced!"
+    }
+   ],
+   "nerrors": 3,
+   "fatal": "Emergency stop",
+   "seconds": 3.004
+  },
+  "old": {
+   "status": "recovered",
+   "pages": 74,
+   "errors": [
+    {
+     "severity": "error",
+     "message": "included file not found: looked for 'chapter-missing' and 'chapter-missing.tex'",
+     "source": {
+      "end_byte": 198464,
+      "path": "main.tex",
+      "start_byte": 198458
+     },
+     "fix": false
+    },
+    {
+     "severity": "warning",
+     "message": "packages graphicx are recognised but not implemented",
+     "source": {
+      "end_byte": 66,
+      "path": "main.tex",
+      "start_byte": 45
+     },
+     "fix": false
+    },
+    {
+     "severity": "warning",
+     "message": "'\u2500' (U+2500) will not survive PDF export: fraction rules are drawn with a box-drawing character as a stand-in; runtime-v1 has no rule item type yet, so they cannot be exported faithfully",
+     "source": {
+      "end_byte": 493,
+      "path": "main.tex",
+      "start_byte": 488
+     },
+     "fix": false
+    }
+   ],
+   "nerrors": 1,
+   "ndiags": 3,
+   "seconds": 0.088
+  }
+ }
+}

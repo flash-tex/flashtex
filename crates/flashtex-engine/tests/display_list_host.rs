@@ -170,6 +170,11 @@ fn host_compiles_a_fixture_and_streams_every_page() {
         assert_eq!(done.int_field("pages"), Some(pages.len() as i64));
         // As many pages as the PDF has.
         let log = std::fs::read_to_string(out_dir.join("main.log")).unwrap();
+        // TeX breaks log lines at max_print_line (79), and the temporary
+        // output path is long enough that "Output written on <path> (N pages"
+        // can break inside the page count -- where it breaks depends on the
+        // PID's digit count. Rejoin the broken lines before parsing.
+        let log = log.replace('\n', "");
         let n: usize = log
             .split("Output written on ")
             .nth(1)

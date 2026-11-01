@@ -1,0 +1,9 @@
+% unicode-math with XITS Math (TeX Live's xits package)
+\documentclass{article}
+\usepackage{unicode-math}
+\setmainfont{XITS-Regular.otf}[BoldFont=XITS-Bold.otf, ItalicFont=XITS-Italic.otf]
+\setmathfont{XITSMath-Regular.otf}
+\begin{document}
+XITS: $\int_a^b f(x)\,dx = F(b) - F(a)$, $\mathbb{C}$, $\mathcal{O}(n\log n)$.
+\[ \sum_{k=0}^n \binom{n}{k} x^k y^{n-k} = (x+y)^n \]
+\end{document}

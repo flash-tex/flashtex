@@ -1,5 +1,6 @@
 import CoreGraphics
 import Foundation
+import ImageIO
 import XCTest
 import FlashTeXDisplayListV3
 @testable import FlashTeXPreviewV3
@@ -81,6 +82,54 @@ final class RasterImageEdgeTests: XCTestCase {
         try assertSame(CGAffineTransform(a: 0, b: 90.25, c: -120.5, d: 0, tx: 200.3, ty: 40.7), "90°")
         try assertSame(CGAffineTransform(a: -120.5, b: 0, c: 0, d: -90.25, tx: 300.6, ty: 200.2), "180°")
         try assertSame(CGAffineTransform(a: 0, b: -90.25, c: 120.5, d: 0, tx: 60.1, ty: 150.9), "270°")
+    }
+
+    /// A JPEG (`IMAGE` type `jpeg`, a DCTDecode stream in the PDF) drawn
+    /// well below its resolution: Core Graphics decodes the PDF's stream at
+    /// a reduced size, so the renderer must read the file the same way
+    /// (lane UNICODE-PREVIEW-QA: mwe's example-image.jpg at 1 px/pt had a
+    /// black frame in the preview and a grey one in the PDF, 2,536 px).
+    func testJPEGDrawnSmallMatchesThePDFsDCTDecode() throws {
+        let w = 400, h = 300
+        var px = [UInt8](repeating: 200, count: w * h * 4)
+        for y in 0 ..< h { for x in 0 ..< w where x < 2 || y < 2 || x >= w - 2 || y >= h - 2 || x == y {
+            px[(y * w + x) * 4] = 0; px[(y * w + x) * 4 + 1] = 0; px[(y * w + x) * 4 + 2] = 0
+        } }
+        let src = CGImage(width: w, height: h, bitsPerComponent: 8, bitsPerPixel: 32, bytesPerRow: w * 4,
+                          space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGBitmapInfo(rawValue: CGImageAlphaInfo.noneSkipLast.rawValue),
+                          provider: CGDataProvider(data: Data(px) as CFData)!, decode: nil, shouldInterpolate: false, intent: .defaultIntent)!
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("dl3-jpeg-\(ProcessInfo.processInfo.processIdentifier).jpg")
+        defer { try? FileManager.default.removeItem(at: url) }
+        let dest = try XCTUnwrap(CGImageDestinationCreateWithURL(url as CFURL, "public.jpeg" as CFString, 1, nil))
+        CGImageDestinationAddImage(dest, src, [kCGImageDestinationLossyCompressionQuality: 0.9] as CFDictionary)
+        XCTAssertTrue(CGImageDestinationFinalize(dest))
+        // The PDF: the JPEG's own bytes as the image (Core Graphics keeps them as DCTDecode).
+        let jpeg = try XCTUnwrap(CGImage(jpegDataProviderSource: CGDataProvider(url: url as CFURL)!, decode: nil,
+                                         shouldInterpolate: false, intent: .defaultIntent))
+        let m = CGAffineTransform(a: 113.81, b: 0, c: 0, d: 85.36, tx: 72.4, ty: 120.3)
+        let data = NSMutableData()
+        var box = CGRect(origin: .zero, size: Self.pageSize)
+        let ctx = CGContext(consumer: CGDataConsumer(data: data as CFMutableData)!, mediaBox: &box, nil)!
+        ctx.beginPDFPage(nil)
+        ctx.concatenate(m)
+        ctx.draw(jpeg, in: CGRect(x: 0, y: 0, width: 1, height: 1))
+        ctx.endPDFPage()
+        ctx.closePDF()
+        XCTAssertNotNil((data as Data).range(of: Data("DCTDecode".utf8)), "the reference PDF holds the JPEG as DCTDecode")
+        let pdfPage = try XCTUnwrap(CGPDFDocument(CGDataProvider(data: data as CFData)!)?.page(at: 1))
+        let info = try DL3JSON.parse(Array(#"{"id":1,"key":"j","type":"jpeg","file":"\#(url.path)","width":400,"height":300}"#.utf8))
+        let image = try DL3RenderImage.load(info).get()
+        var page = DL3Page(kind: .page, index: 0)
+        page.box = [0, 0, Self.pageSize.width, Self.pageSize.height]
+        page.matrices = [DL3Matrix(a: m.a, b: m.b, c: m.c, d: m.d, e: m.tx, f: m.ty)]
+        page.items = [.image(id: 1, matrix: 1)]
+        let mine = DL3PreparedPage(page: page, fonts: [:], images: [1: image])
+        for s in [1.0, 2.0, 3.25] {
+            let a = try XCTUnwrap(DL3Renderer.rasterize(mine, scale: s))
+            let b = try XCTUnwrap(DL3Renderer.rasterize(pdfPage: pdfPage, scale: s))
+            let d = DL3Parity.diff(DL3Parity.rgba(a), DL3Parity.rgba(b))
+            XCTAssertEqual(d.pixels, 0, "JPEG at \(s) px/pt: \(d.pixels) px differ (max delta \(d.maxDelta))")
+        }
     }
 
     func testAxisAlignedTransforms() {

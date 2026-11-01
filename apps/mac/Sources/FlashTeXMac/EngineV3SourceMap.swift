@@ -37,12 +37,21 @@ extension EngineV3Session {
         return f
     }
 
+    /// Page `i`'s glyph index (built on first use, bounded:
+    /// EngineV3GlyphIndexes.swift); nil when the page is not held.
     func sourceIndex(page i: Int) -> DL3SourceIndex? {
-        if let hit = sourceIndexes[i] { return hit }
+        guard pages.index(forKey: i) != nil else { return nil }
+        if let hit = glyphIndexes.cached(i) { return hit }
         guard let p = pages[i] else { return nil }
-        let ix = DL3SourceIndex(p)
-        sourceIndexes[i] = ix
-        return ix
+        return glyphIndexes.index(i, of: p)
+    }
+
+    /// Whether page `i` can show any of `spans` (its glyphs' spans, kept
+    /// per page): a page that cannot is skipped without building its index.
+    func pageMayShow(_ i: Int, spans: Set<UInt32>) -> Bool {
+        if let known = glyphIndexes.mayShow(i, spans) { return known }
+        guard let p = pages[i] else { return false }
+        return glyphIndexes.summarize(i, of: p, spans)
     }
 
     /// Forward search: where `path` (project-relative) line `line` (1-based),
@@ -50,9 +59,15 @@ extension EngineV3Session {
     /// that column on the first page that shows the line; without a column
     /// (or when the engine knew none), the line's box there.
     func place(path: String, line: Int, col: Int?) -> EngineV3Place? {
-        let spans = sourceMap.spans(line: line) { self.projectPath(ofEngineFile: $0) == path }
+        place(spans: sourceMap.spans(line: line) { self.projectPath(ofEngineFile: $0) == path }, col: col)
+    }
+
+    /// Forward search for a line's spans: the first page with a glyph of
+    /// them. Only pages whose glyphs carry one of the spans are indexed
+    /// (caret follow runs this after every recompile).
+    func place(spans: Set<UInt32>, col: Int?) -> EngineV3Place? {
         guard !spans.isEmpty else { return nil }
-        for i in 0 ..< pageCount {
+        for i in 0 ..< pageCount where pageMayShow(i, spans: spans) {
             guard let ix = sourceIndex(page: i) else { continue }
             let gs = ix.glyphs(of: spans, col: col)
             if let box = DL3SourceIndex.box(gs) { return EngineV3Place(page: i, rect: box) }

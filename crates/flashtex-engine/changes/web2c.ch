@@ -246,6 +246,27 @@ cur_order:=co_backup; link(backup_head):=backup_backup;
 decr(expand_depth_count);
 @z
 
+% TeX bug entry: https://tug.org/texmfbug/newbug.html#B155endwrite
+@x pdftex.web l.9013 - tex.ch [25.369]: disallow \.{\\noexpand\\endwrite}
+if t>=cs_token_flag then
+@y
+if (t>=cs_token_flag)and(t<>end_write_token) then
+@z
+
+% TeX bug entry: https://tug.org/texmfbug/newbug.html#B182muerror
+@x pdftex.web l.10433 - tex.ch [26.449]: recover better from \.{\\mkern} <non-mu-dimen-or-skip>
+  @<Coerce glue to a dimension@>;
+  if cur_val_level=mu_val then goto attach_sign;
+  if cur_val_level<>int_val then mu_error;
+@y
+  if cur_val_level<>int_val then
+    begin
+    @<Coerce glue to a dimension@>;
+    if cur_val_level<>mu_val then mu_error;
+    goto attach_sign;
+    end;
+@z
+
 @x pdftex.web l.13015 - tex.ch's MLTeX |orig_char_info|; without MLTeX it is |char_info|
 @d char_info(#)==font_info[char_base[#]+char_info_end
 @y
@@ -347,6 +368,12 @@ else  begin dvi_out(post); {beginning of the postamble}
 @y
 else if cur_s<>-2 then
   begin dvi_out(post); {beginning of the postamble}
+@z
+
+@x pdftex.web l.15109 - tex.ch [32.642]: the \.{DVI} file's name quoted if need be
+  print_nl("Output written on "); slow_print(output_file_name);
+@y
+  print_nl("Output written on "); print_file_name(0,output_file_name,0);
 @z
 
 @x pdftex.web l.17221 - texmfmem.h: |character| is a C |short|
@@ -494,13 +521,13 @@ if hash_high>0 then for p:=eqtb_size+1 to eqtb_size+hash_high do
   undump(min_quarterword)(max_trie_op)(hyf_next[k]);
 @z
 
-@x pdftex.web l.33470 - tex.ch [51.1333]: a new line before termination; switch to the editor
+@x pdftex.web l.33470 - tex.ch [51.1333]: the log's name quoted if need be; a new line before termination; switch to the editor
     slow_print(log_name); print_char(".");
     end;
   end;
 end;
 @y
-    slow_print(log_name); print_char(".");
+    print_file_name(0,log_name,0); print_char(".");
     end;
   end;
 print_ln;

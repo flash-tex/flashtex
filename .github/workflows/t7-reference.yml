@@ -1,0 +1,161 @@
+# T7, the P4 gate's latency measurement (DESIGN.md §8 T7, §12), on the
+# owner's reference class: Jaysen's M1 Max, the heavy self-hosted runner
+# (mac-m1max-a-2, label flashtex-heavy). It runs scripts/t7-reference.sh with
+# all of its refusals (an Apple-Silicon Mac on mains power, Low Power Mode off,
+# no CPU speed limit, a clean checkout, TeX Live on PATH; then it waits for an
+# idle machine and holds the load through the run). Its table is the official
+# P4 latency number.
+#
+#   gh workflow run t7-reference.yml -f ref=<branch|sha>            # the full run
+#   gh workflow run t7-reference.yml -f ref=<branch> -f quick=true  # a smoke run
+#   gh workflow run t7-reference.yml -f ref=<branch> -f docs=plain-1000 \
+#     -f t7_args='--host-args "--profile high-performance" --phases letter@middle,typing@50ms,typing@100ms'
+#
+# `t7_args` goes after the script's `--` to tools/incr-bench/t7.py, split as a
+# shell would (quotes group), never evaluated. Nightly at 04:23 UTC on main.
+#
+# Outcome: exit 0 (every gated row meets its target on a reference run) and 1
+# (a target missed) are the measurement: 1 is red. 4 (a check refused to start:
+# battery, Low Power Mode, a speed limit...) and 3 (a non-reference run: the
+# load did not settle or rose during the run) are REFUSED, not red: the job
+# passes with a warning and the summary says why; nothing was measured. 2 (a
+# harness error) is red. The evidence directory (README.md, table.md,
+# summary.json.gz, raw.tgz, environment.txt, t7-output.txt) is the artifact,
+# and table.md is the run summary.
+#
+# Resources. Workflow concurrency `t7-reference`: never two at once. The job
+# also joins `flashtex-mac-heavy`, the heavy runner's cross-workflow group
+# (p5-scoreboard's Mac board 06:47 UTC, nightly's Mac legs 08:17 UTC,
+# corpus-t4-mac), so it never overlaps them. It runs on the heavy instance
+# only; mac-m1max-a-1 keeps serving CI. A run is about an hour (the build, then
+# t7.py), and the load wait is capped at 30 min (the script's --wait 1800), so
+# the job's 120-minute limit bounds how long it can hold the machine: the
+# nightly slot (04:23) ends before the 06:47 board in every case. While it runs,
+# the other instance's CI jobs share the machine (and push the load up, which
+# T7 then reports as non-reference rather than measuring under load).
+#
+# Fork safety: workflow_dispatch and schedule only (a dispatch needs write
+# access), `contents: read`, no secrets, a checkout without persisted
+# credentials.
+name: t7-reference
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "branch, tag or SHA to measure"
+        required: true
+        default: main
+      docs:
+        description: "t7.py --docs (empty: all eight documents)"
+        required: false
+        default: ""
+      quick:
+        description: "t7.py --quick: a smoke run (plain-10, full-100, fewer keys), not the gate"
+        type: boolean
+        required: false
+        default: false
+      t7_args:
+        description: "more t7.py arguments, after the script's -- (shell-quoted, never evaluated)"
+        required: false
+        default: ""
+  schedule:
+    - cron: '23 4 * * *'
+
+concurrency:
+  group: t7-reference
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  t7:
+    name: T7 reference (M1 Max)
+    if: vars.FLASHTEX_SELFHOSTED_MAC == '1' && (github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/main')
+    runs-on: [self-hosted, macOS, ARM64, flashtex, flashtex-heavy]
+    concurrency:
+      group: flashtex-mac-heavy
+      cancel-in-progress: false
+    timeout-minutes: 120
+    env:
+      REF: ${{ github.event_name == 'workflow_dispatch' && inputs.ref || github.sha }}
+      DOCS: ${{ inputs.docs }}
+      QUICK: ${{ inputs.quick == true }}
+      T7_ARGS: ${{ inputs.t7_args }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.REF }}
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@stable
+      - name: this Mac's build directory (shared by the heavy jobs, size-capped)
+        run: scripts/ci/mac-heavy-target.sh >> "$GITHUB_ENV"
+      - name: scripts/t7-reference.sh
+        id: t7
+        run: |
+          # (+e: the default shell is `bash -e`, and the script's exit code
+          # is the result, read below)
+          set +e -uo pipefail
+          out="$RUNNER_TEMP/t7-evidence"
+          rm -rf "$out"
+          echo "out=$out" >> "$GITHUB_OUTPUT"
+          # The script's options, then `--` and t7_args, split by shlex (quotes
+          # group words; nothing is evaluated), and exec'd without a shell.
+          log="$RUNNER_TEMP/t7-reference.log"
+          echo "log=$log" >> "$GITHUB_OUTPUT"
+          python3 - "$out" <<'EOF' 2>&1 | tee "$log"
+          import os, shlex, sys
+          out = sys.argv[1]
+          argv = ['scripts/t7-reference.sh', '--out', out]
+          if os.environ.get('DOCS'):
+              argv += ['--docs', os.environ['DOCS']]
+          if os.environ.get('QUICK') == 'true':
+              argv += ['--quick']
+          extra = shlex.split(os.environ.get('T7_ARGS', ''))
+          if extra:
+              argv += ['--'] + extra
+          print('+ ' + shlex.join(argv), flush=True)
+          os.execv(argv[0], argv)
+          EOF
+          code=${PIPESTATUS[0]}
+          echo "code=$code" >> "$GITHUB_OUTPUT"
+          case $code in
+            0) echo "T7: every gated row meets its target on a reference run" ;;
+            1) echo "::error::T7: a gated target missed (the table's MISS rows)" ;;
+            3) echo "::warning::T7 REFUSED: a non-reference run (the load did not settle or rose); nothing was measured as the gate" ;;
+            4) echo "::warning::T7 REFUSED: a machine check failed (mains power, Low Power Mode, a speed limit, ...); see the log" ;;
+            *) echo "::error::T7: harness error (exit $code)" ;;
+          esac
+          case $code in 0|3|4) exit 0 ;; *) exit 1 ;; esac
+      - name: the table as the run summary
+        if: always() && steps.t7.outputs.out != ''
+        env:
+          OUT: ${{ steps.t7.outputs.out }}
+          LOG: ${{ steps.t7.outputs.log }}
+          CODE: ${{ steps.t7.outputs.code }}
+        run: |
+          set -euo pipefail
+          {
+            echo "ref \`$REF\` = \`$(git rev-parse HEAD)\`; runner $RUNNER_NAME"
+            echo
+            case "$CODE" in
+              3|4) echo "### T7 reference: REFUSED (exit $CODE)"; echo
+                   echo '```'
+                   grep -E 't7-reference: (check failed|not started)|non-reference|load' "$LOG" 2>/dev/null | head -12 || true
+                   echo '```'
+                   echo ;;
+              *) echo "### T7 reference (exit ${CODE:-?})"; echo ;;
+            esac
+            if [[ -f "$OUT/README.md" ]]; then
+              sed -n '1,/^Files:/p' "$OUT/README.md" | grep -v '^Files:'
+            fi
+            if [[ -f "$OUT/table.md" ]]; then cat "$OUT/table.md"; else echo "(no table: the script did not reach t7.py)"; fi
+          } >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        if: always() && steps.t7.outputs.out != ''
+        with:
+          name: t7-reference-${{ github.run_id }}
+          path: ${{ steps.t7.outputs.out }}
+          if-no-files-found: ignore
+          retention-days: 90

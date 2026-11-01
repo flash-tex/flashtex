@@ -33,13 +33,13 @@ final class SignatureHelpTests: XCTestCase {
         let extra = SignatureHelp.info(in: "\\section{a}{", caretUTF16: 12)
         XCTAssertEqual(extra?.activeArgument, 1)
         XCTAssertNil(extra?.display.active)
-        // Only CommandDocs knows it (the compiler does not render \chapter):
+        // Only CommandDocs knows it (the article vocabulary has no \chapter):
         // the pattern is empty, the doc line shows.
         let doc = SignatureHelp.info(in: "\\chapter{", caretUTF16: 9)
         XCTAssertNil(Completion.Vocabulary.byName["chapter"])
         XCTAssertEqual(doc?.arguments, "")
         XCTAssertEqual(doc?.description, "\\chapter{title}: a chapter heading (report and book classes).")
-        // In the vocabulary and CommandDocs: the compiler's shape, CommandDocs' line.
+        // In the vocabulary and CommandDocs: the vocabulary's shape, CommandDocs' line.
         let foot = SignatureHelp.info(in: "\\footnote{", caretUTF16: 10)
         XCTAssertEqual(foot?.arguments, "[n]{...}")
         XCTAssertEqual(foot?.description, "\\footnote{text}: a numbered footnote.")
@@ -182,12 +182,12 @@ final class SignatureHelpTests: XCTestCase {
     }
 
     /// Drift gate: every hint list must have exactly one entry per group of the
-    /// compiler inventory's own pattern for that command. A shape that changes
+    /// vocabulary's own pattern for that command. A shape that changes
     /// upstream fails here instead of mislabelling an argument in the panel.
     func testArgumentHintsMatchTheInventoryPatterns() {
         for (name, hints) in SignatureHelp.argumentHints {
             let entry = Completion.Vocabulary.byName[name]
-            XCTAssertNotNil(entry, "\\\(name) is not in the compiler inventory")
+            XCTAssertNotNil(entry, "\\\(name) is not in the vocabulary")
             let groups = SignatureHelp.groups(of: entry?.arguments ?? "")
             XCTAssertEqual(hints.count, groups.count, "\\\(name): \(hints.count) hints for \(groups.count) groups \(groups)")
             XCTAssertFalse(hints.contains(where: \.isEmpty), "\\\(name) has an empty hint")

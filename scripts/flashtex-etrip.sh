@@ -72,23 +72,26 @@ etrip_runs() {
     cp "$knuth/trip.tex" "$knuth/trip.tfm" "$fix/etrip.tex" "$fix/etrip.tfm" "$d/"
     (
         cd "$d"
+        # A run cut off (or failing) may leave a file out: each `mv` is
+        # `|| true` so `set -eu` does not end the runs before the report
+        # says which were cut off, as in flashtex-trip.sh.
         # Part 1: tripman.tex steps 3 and 4, compatibility mode.
         printf '\n\\input trip\n' | timed $ini >ctripin.fot 2>&1 || true
-        mv trip.log ctripin.log
+        mv trip.log ctripin.log || true
         printf ' &trip  trip \n' | timed $vir >ctrip.fot 2>&1 || true
-        mv trip.log ctrip.log
-        mv tripos.tex ctripos.tex
-        mv trip.dvi ctrip.dvi
+        mv trip.log ctrip.log || true
+        mv tripos.tex ctripos.tex || true
+        mv trip.dvi ctrip.dvi || true
         # Part 2: extended mode.
         timed $ini <"$fix/etrip1.in" >xtripin.fot 2>&1 || true
-        mv trip.log xtripin.log
+        mv trip.log xtripin.log || true
         timed $vir <"$fix/trip2.in" >xtrip.fot 2>&1 || true
-        mv trip.log xtrip.log
-        mv tripos.tex xtripos.tex
-        mv trip.dvi xtrip.dvi
+        mv trip.log xtrip.log || true
+        mv tripos.tex xtripos.tex || true
+        mv trip.dvi xtrip.dvi || true
         # Part 3: the e-TeX specific test.
         timed $ini <"$fix/etrip2.in" >etripin.fot 2>&1 || true
-        mv etrip.log etripin.log
+        mv etrip.log etripin.log || true
         timed $vir <"$fix/etrip3.in" >etrip.fot 2>&1 || true
     )
 }
@@ -168,12 +171,28 @@ EOF
 # The display-list writer's wire format (MIT, crates/display-list-v3).
 # (Cargo reads the path natively: under Git Bash/MSYS2 on Windows, `/d/a/...`
 # is `D:/a/...`, which `cygpath -m` gives; elsewhere there is no cygpath.)
-printf '\n[dependencies]\nflashtex-display-list = { path = "%s/crates/display-list-v3" }\n' \
-    "$(cygpath -m "$root" 2>/dev/null || printf '%s' "$root")" >>"$pkg/Cargo.toml"
+# And the runtime shared with the XeTeX-derived engine (crates/flashtex-runtime),
+# and libc for src/hashcache.rs (statfs).
+r="$(cygpath -m "$root" 2>/dev/null || printf '%s' "$root")"
+printf '\n[dependencies]\nlibc = "0.2"\nflashtex-display-list = { path = "%s/crates/display-list-v3" }\nflashtex-runtime = { path = "%s/crates/flashtex-runtime" }\n' \
+    "$r" "$r" >>"$pkg/Cargo.toml"
 # The generated code's warnings are known and not ours to fix by hand.
-CARGO_TARGET_DIR=$work/target RUSTFLAGS=-Awarnings \
-    cargo build --release --quiet --manifest-path "$pkg/Cargo.toml"
-initex=$work/target/release/flashtex-initex
+# FLASHTEX_SANITIZER=address (or leak) builds the scratch engine with that
+# sanitizer and a rebuilt std (a nightly toolchain and rust-src; lane
+# MEMORY-SAFETY, scripts/sanitizers.sh). Its reports go to $work/san.*, and
+# any report fails the test (step 3).
+san=${FLASHTEX_SANITIZER:-}
+if [ -n "$san" ]; then
+    triple=$(rustc -vV | sed -n 's/^host: //p')
+    CARGO_TARGET_DIR=$work/target RUSTFLAGS="-Awarnings -Zsanitizer=$san" \
+        cargo build --release --quiet -Zbuild-std --target "$triple" --manifest-path "$pkg/Cargo.toml"
+    initex=$work/target/$triple/release/flashtex-initex
+    export ASAN_OPTIONS="log_path=$work/san:detect_leaks=1:${ASAN_OPTIONS:-}" LSAN_OPTIONS="log_path=$work/san:${LSAN_OPTIONS:-}"
+else
+    CARGO_TARGET_DIR=$work/target RUSTFLAGS=-Awarnings \
+        cargo build --release --quiet --manifest-path "$pkg/Cargo.toml"
+    initex=$work/target/release/flashtex-initex
+fi
 
 # 2. The runs. `cwd-kpse`: files come from the working directory as kpathsea
 # finds them for etrip/texmf.cnf's search path `.`, i.e. as `./etrip.tex`.
@@ -189,6 +208,13 @@ timeouts=$work/timeouts.txt
 etrip_runs "$initex -ini" "$initex -fmt=pdftex" "$run"
 
 # 3. Compare.
+fail=0
+for f in "$work"/san.*; do
+    [ -e "$f" ] || continue
+    echo "FAIL sanitizer report $f:"
+    head -40 "$f" | sed 's/^/    /'
+    fail=1
+done
 norm=$work/norm.sed
 cat >"$norm" <<'EOF'
 s/ (TeX Live 20[0-9][0-9])//
@@ -200,7 +226,6 @@ s/^ [0-9]* strings out of [0-9]*$/ N strings out of M/
 s/^ [0-9]* string characters out of [0-9]*$/ N string characters out of M/
 s/^ [0-9]* hyphenation exceptions* out of [0-9]*$/ N hyphenation exceptions out of M/
 EOF
-fail=0
 if [ -s "$timeouts" ]; then
     echo "FAIL engine runs cut off:"
     sed 's/^/    /' "$timeouts"
@@ -273,6 +298,10 @@ for pair in "$knuth/tripin.log ctripin.log" "$knuth/trip.log ctrip.log" \
     "$fix/etrip.log etrip.log" "$fix/etrip.out etrip.out" \
     "$knuth/trip.fot ctrip.fot" "$fix/etrip.fot etrip.fot"; do
     set -- $pair
+    if [ ! -f "$run/$2" ]; then
+        echo "info $2: not written (see the FAILs above)"
+        continue
+    fi
     sed -f "$tlf" "$1" >"$work/a"
     sed -f "$tlf" "$run/$2" >"$work/b"
     n=$(diff "$work/a" "$work/b" | grep -c '^[<>]' || true)

@@ -1,0 +1,11 @@
+% An older template: xltxtra and xunicode (still common in theses from the 2010s)
+\documentclass{article}
+\usepackage{fontspec}
+\usepackage{xunicode}
+\usepackage{xltxtra}
+\setmainfont[Mapping=tex-text, Extension=.otf, UprightFont=*-regular, BoldFont=*-bold, ItalicFont=*-italic, BoldItalicFont=*-bolditalic]{texgyrebonum}
+\begin{document}
+\section{Legacy}
+Typeset with \XeLaTeX. Old-style input still works: ``quotes'' -- dashes --- and \'{e}, \"{o}, \v{c}.
+Superscripts via realscripts: 1\textsuperscript{st}, 2\textsuperscript{nd}.
+\end{document}

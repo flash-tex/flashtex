@@ -1,0 +1,8 @@
+{
+ "expect_fonts": [
+  "texgyrepagella-math.otf"
+ ],
+ "forbid_fonts": [
+  "texgyretermes-math.otf"
+ ]
+}

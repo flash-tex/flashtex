@@ -1,0 +1,12 @@
+% n019-xdv-many-fonts: many native fonts and sizes in one XDV file, several pages
+% XeTeX-specific (docs/design/xetex/PLAN.md, phase S1: native fonts)
+\input prelude
+\def\space{ }
+\font\a="[lmroman10-regular.otf]" \font\b="[lmroman10-bold.otf]" at 12pt
+\font\c="[lmroman10-italic.otf]" scaled 900 \font\d="[lmsans10-regular.otf]"
+\font\e="[texgyreadventor-regular.otf]" \font\f="[texgyrechorus-mediumitalic.otf]"
+\setbox0=\hbox{\a Roman \b Bold \c Italic \d Sans}
+\lsshipbox0
+\setbox0=\hbox{\e Adventor \f Chorus \a again}
+\lsshipbox0
+\end

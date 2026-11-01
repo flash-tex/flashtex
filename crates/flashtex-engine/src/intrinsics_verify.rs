@@ -96,6 +96,10 @@ const EXCLUDED_SCALARS: &[&str] = &[
     // only while skipping ("Incomplete \if...; all text was ignored after
     // line ...")
     "skip_line",
+    // BOX-MEMO's flag for `big_switch`'s `get_x_token`, as `intr_at_switch`
+    // is D9's: set before each one, and read only by `macro_call` to offer
+    // a call to BOX-MEMO, which runs or replays it alike (changes/boxmemo.ch)
+    "bm_at_switch",
 ];
 
 const EXCLUDED_REGIONS: &[&str] = &[
@@ -108,6 +112,13 @@ const EXCLUDED_REGIONS: &[&str] = &[
     // the display list's side table (changes/displaylist.ch): source
     // positions, which the two paths may give nodes differently
     "dl_side",
+    // the files of the open levels', groups' and conditionals' lines
+    // (changes/lineshift.ch): a replay pushes no conditional, so the dead
+    // part above the open ones may hold other tags
+    "ls_nest_tag",
+    "ls_grp_tag",
+    "ls_cond_tag",
+    "ls_tag_file",
 ];
 
 struct Pending {

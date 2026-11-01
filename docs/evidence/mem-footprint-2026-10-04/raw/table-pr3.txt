@@ -1,0 +1,6 @@
+C-segpr    full-100   fp  260.4M peak  260.5M malloc   138.4 held   231.7 logs   48.8 ckpts 123 edited p50/p95 15.4/20.1 ms, 102.4/140.0 Minstr n=24
+C-segpr    infdesc    fp  257.0M peak    1.1G malloc   531.5 held  1172.5 logs  381.7 ckpts 611 edited p50/p95 53.8/96.1 ms, 383.4/715.8 Minstr n=18
+C-segpr    long-deck  fp  247.8M peak  247.8M malloc   125.7 held   215.9 logs   42.8 ckpts 131 edited p50/p95 38.7/42.2 ms, 382.0/383.0 Minstr n=16
+C-codec    full-100   fp  237.6M peak  237.7M malloc   120.2 held   202.4 logs   30.3 ckpts 123 edited p50/p95 15.7/21.6 ms, 104.0/147.4 Minstr n=24
+C-codec    infdesc    fp  241.7M peak  776.1M malloc   373.3 held   783.6 logs  223.0 ckpts 611 edited p50/p95 55.1/92.5 ms, 390.2/724.8 Minstr n=18
+C-codec    long-deck  fp  224.1M peak  224.1M malloc   108.5 held   182.4 logs   25.7 ckpts 131 edited p50/p95 38.7/41.9 ms, 384.4/385.4 Minstr n=16
