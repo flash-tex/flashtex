@@ -1,5 +1,5 @@
 REFS='main'
-TPAB_DOCS='ax:2501.08928v2,ax:2501.07497v1,ax:2501.08775v2'
+TPAB_DOCS='ax:2501.08928v2'
 TPAB_REPS='1'
-TPAB_PERF='1'
+TPAB_PERF='0'
 TPAB_ANNOTATE='ax:2501.08928v2:macro_call,get_next_slow,expand,scan_toks,pass_text,conditional,scan_int'

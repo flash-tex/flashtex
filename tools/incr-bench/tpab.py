@@ -222,7 +222,7 @@ if a.perf_record and PERF:
 
 
 if a.annotate and PERF:
-    doc, _, syms = a.annotate.partition(':')
+    doc, _, syms = a.annotate.rpartition(':')
     seed, main = seeds[doc]
     d = f'{WORK}/perf'
     copy_tree(seed, d)
