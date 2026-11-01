@@ -1407,7 +1407,7 @@ impl Globals {
                         {
                             'l_found1_f: {
                                 'l_done3_f: {
-                                    if (!(self.intr_rec_on || self.bm_rec_on)) {
+                                    if (!self.intr_rec_on) {
                                         while true {
                                             {
                                                 if (self.cur_input.state_field != token_list) {
@@ -1437,6 +1437,9 @@ impl Globals {
                                                                         self.flashtex_cs_read(self.cur_cs);
                                                                     }
                                                                 }
+                                                                if self.bm_rec_on {
+                                                                    self.flashtex_bm_token(self.cur_cs);
+                                                                }
                                                                 self.cur_tok = tt;
                                                                 break 'l_found1_f;
                                                             }
@@ -1446,6 +1449,9 @@ impl Globals {
                                                             if (!self.rs_seen[crate::ix::U(((tt).wrapping_sub(4095i32)) as usize)]) {
                                                                 self.flashtex_cs_read((tt).wrapping_sub(4095i32));
                                                             }
+                                                        }
+                                                        if self.bm_rec_on {
+                                                            self.flashtex_bm_token((tt).wrapping_sub(4095i32));
                                                         }
                                                     }
                                                 } else {
@@ -1799,7 +1805,7 @@ impl Globals {
                     'l_continue_b: loop {
                         if (self.cur_input.state_field == token_list) {
                             if (self.cur_input.loc_field != null) {
-                                if (!(self.intr_rec_on || self.bm_rec_on)) {
+                                if (!self.intr_rec_on) {
                                     {
                                         t = __av_mem[crate::ix::U((self.cur_input.loc_field) as usize)].hh().lh();
                                         if (t >= cs_token_flag) {
@@ -1815,6 +1821,9 @@ impl Globals {
                                                                     if (!self.rs_seen[crate::ix::U((q) as usize)]) {
                                                                         self.flashtex_cs_read(q);
                                                                     }
+                                                                }
+                                                                if self.bm_rec_on {
+                                                                    self.flashtex_bm_token(q);
                                                                 }
                                                                 continue 'l_continue_b;
                                                             }

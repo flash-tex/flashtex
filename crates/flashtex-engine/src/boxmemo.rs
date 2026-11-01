@@ -2885,6 +2885,17 @@ impl Globals {
         }
     }
 
+    /// changes/throughput.ch's token loops [4]-[7] read control sequence
+    /// `p` in place, without `get_next`, as a token only: a conditional's
+    /// skipped text, a macro's argument, a body that is not expanded. They
+    /// read in place only from the current token list, so never below the
+    /// body's level, which only `get_next` leaves (BOX-MEMO.md §15).
+    #[cold]
+    #[inline(never)]
+    pub fn flashtex_bm_token(&mut self, p: i32) {
+        self.bm_note_cs(p, true);
+    }
+
     /// `\csname` and `\ifcsname` looked `p` up.
     #[cold]
     #[inline(never)]

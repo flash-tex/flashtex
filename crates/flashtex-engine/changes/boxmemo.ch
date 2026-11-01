@@ -24,12 +24,12 @@
 %   |sa_def| family, |new_save_level|, |unsave|), the box registers fetched,
 %   the commands, expansions and internal quantities, conditionals popped,
 %   and |prepare_mag|; src/boxmemo.rs abandons the recording at anything
-%   outside its model. While a recording is in progress the token loops
-%   of changes/throughput.ch [4]-[7] read through |get_next|, as they do
-%   for D9's, so that it sees every control sequence: one read only as a
-%   token (|intr_weak|, |matching|, |skipping|) is keyed by whether it is
-%   \.{\\outer}, a \.\# or an alignment tab, or an \.{\\if} or \.{\\fi}
-%   (BOX-MEMO.md \S15).
+%   outside its model. The token loops of changes/throughput.ch [4]-[7],
+%   which read without |get_next|, tell it of each control sequence they
+%   read (|flashtex_bm_token|), so that it sees every one: one read only as
+%   a token (there, and where |intr_weak|, |matching| or |skipping| holds)
+%   is keyed by whether it is \.{\\outer}, a \.\# or an alignment tab, or
+%   an \.{\\if} or \.{\\fi} (BOX-MEMO.md \S15).
 %
 % * |bm_font_version|, |bm_hyph_version|: a fresh number whenever a loaded
 %   font's parameters or the hyphenation exceptions change, so that a key
@@ -157,20 +157,33 @@ if bm_on then if bm_at_switch then if expand_depth_count=0 then
 exit:scanner_status:=save_scanner_status; warning_index:=save_warning_index;
 @z
 
-@x changes/throughput.ch [5] - a recording reads an argument's tokens through get_next, as D9's
-  begin if not intr_rec_on then
-    begin d:=info(r);
+@x changes/throughput.ch [5] - a recording sees the control sequences of an argument read in place
+          cur_chr:=equiv(cur_cs);
+          if rs_on then if not rs_seen[cur_cs] then flashtex_cs_read(cur_cs);
+          cur_tok:=tt; goto found1;
 @y
-  begin if not(intr_rec_on or bm_rec_on) then
-    begin d:=info(r);
+          cur_chr:=equiv(cur_cs);
+          if rs_on then if not rs_seen[cur_cs] then flashtex_cs_read(cur_cs);
+          if bm_rec_on then flashtex_bm_token(cur_cs);
+          cur_tok:=tt; goto found1;
 @z
 
-@x changes/throughput.ch [6] - ... and a group's
-  if state=token_list then if loc<>null then if not intr_rec_on then
-    begin ft:=info(loc);
+@x changes/throughput.ch [5]
+        if rs_on then if not rs_seen[tt-cs_token_flag] then
+          flashtex_cs_read(tt-cs_token_flag);
+        end
 @y
-  if state=token_list then if loc<>null then if not(intr_rec_on or bm_rec_on) then
-    begin ft:=info(loc);
+        if rs_on then if not rs_seen[tt-cs_token_flag] then
+          flashtex_cs_read(tt-cs_token_flag);
+        if bm_rec_on then flashtex_bm_token(tt-cs_token_flag);
+        end
+@z
+
+@x changes/throughput.ch [6] - ... and of a group
+          if rs_on then if not rs_seen[fq] then flashtex_cs_read(fq);
+@y
+          if rs_on then if not rs_seen[fq] then flashtex_cs_read(fq);
+          if bm_rec_on then flashtex_bm_token(fq);
 @z
 
 @x pdftex.web l.9740 (after changes/intrinsics.ch) - a recording fetches an internal quantity
@@ -228,20 +241,33 @@ else  begin scan_register_num; cur_val_level:=m-mem_bot;
   if bm_rec_on then flashtex_bm_reg_read(cur_val_level,cur_val);
 @z
 
-@x changes/throughput.ch [7] - ... and a body's that it does not expand
-  else begin if not intr_rec_on then
-      loop@+  begin if state<>token_list then goto done3;
+@x changes/throughput.ch [7] - ... of a body that is not expanded
+            if rs_on then if not rs_seen[cur_cs] then flashtex_cs_read(cur_cs);
+            cur_tok:=tt; goto found1;
 @y
-  else begin if not(intr_rec_on or bm_rec_on) then
-      loop@+  begin if state<>token_list then goto done3;
+            if rs_on then if not rs_seen[cur_cs] then flashtex_cs_read(cur_cs);
+            if bm_rec_on then flashtex_bm_token(cur_cs);
+            cur_tok:=tt; goto found1;
 @z
 
-@x changes/throughput.ch [4] - ... and a conditional's skipped text
-  if state=token_list then if loc<>null then if not intr_rec_on then
-    begin t:=info(loc);
+@x changes/throughput.ch [7]
+          if rs_on then if not rs_seen[tt-cs_token_flag] then
+            flashtex_cs_read(tt-cs_token_flag);
+          end
 @y
-  if state=token_list then if loc<>null then if not(intr_rec_on or bm_rec_on) then
-    begin t:=info(loc);
+          if rs_on then if not rs_seen[tt-cs_token_flag] then
+            flashtex_cs_read(tt-cs_token_flag);
+          if bm_rec_on then flashtex_bm_token(tt-cs_token_flag);
+          end
+@z
+
+@x changes/throughput.ch [4] - ... and of a conditional's skipped text
+          if rs_on then if not rs_seen[q] then flashtex_cs_read(q);
+          goto continue;
+@y
+          if rs_on then if not rs_seen[q] then flashtex_cs_read(q);
+          if bm_rec_on then flashtex_bm_token(q);
+          goto continue;
 @z
 
 @x pdftex.web l.11842 (after changes/intrinsics.ch) - a recording never ends a conditional it did not begin

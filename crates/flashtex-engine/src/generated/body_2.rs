@@ -3084,7 +3084,7 @@ impl Globals {
                                                         in_place = false;
                                                         if (self.cur_input.state_field == token_list) {
                                                             if (self.cur_input.loc_field != null) {
-                                                                if (!(self.intr_rec_on || self.bm_rec_on)) {
+                                                                if (!self.intr_rec_on) {
                                                                     {
                                                                         ft = __av_mem[crate::ix::U((self.cur_input.loc_field) as usize)].hh().lh();
                                                                         if (ft >= cs_token_flag) {
@@ -3101,6 +3101,9 @@ impl Globals {
                                                                                                     if (!self.rs_seen[crate::ix::U((fq) as usize)]) {
                                                                                                         self.flashtex_cs_read(fq);
                                                                                                     }
+                                                                                                }
+                                                                                                if self.bm_rec_on {
+                                                                                                    self.flashtex_bm_token(fq);
                                                                                                 }
                                                                                             }
                                                                                         }
@@ -3272,7 +3275,7 @@ impl Globals {
                                 m = (m).wrapping_add(1i32);
                                 if ((__av_mem[crate::ix::U((r) as usize)].hh().lh() > end_match_token) || (__av_mem[crate::ix::U((r) as usize)].hh().lh() < match_token)) {
                                     {
-                                        if (!(self.intr_rec_on || self.bm_rec_on)) {
+                                        if (!self.intr_rec_on) {
                                             {
                                                 d = __av_mem[crate::ix::U((r) as usize)].hh().lh();
                                                 while true {
@@ -3304,6 +3307,9 @@ impl Globals {
                                                                                 self.flashtex_cs_read(self.cur_cs);
                                                                             }
                                                                         }
+                                                                        if self.bm_rec_on {
+                                                                            self.flashtex_bm_token(self.cur_cs);
+                                                                        }
                                                                         self.cur_tok = tt;
                                                                         { __goto_1 = 2; continue 'l_dispatch_1; }
                                                                     }
@@ -3313,6 +3319,9 @@ impl Globals {
                                                                     if (!self.rs_seen[crate::ix::U(((tt).wrapping_sub(4095i32)) as usize)]) {
                                                                         self.flashtex_cs_read((tt).wrapping_sub(4095i32));
                                                                     }
+                                                                }
+                                                                if self.bm_rec_on {
+                                                                    self.flashtex_bm_token((tt).wrapping_sub(4095i32));
                                                                 }
                                                             }
                                                         } else {
