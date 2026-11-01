@@ -2103,3 +2103,5 @@ pub const ssup_error_line: i32 = 255i32;
 pub const ls_cond_size: i32 = 1000i32;
 // §1920
 pub const ls_tag_size: i32 = 65535i32;
+// §1927
+pub const seg_size: i32 = 16383i32;
