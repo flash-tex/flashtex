@@ -36,6 +36,11 @@ public struct DL3CompileRequest: Sendable {
     /// Honoured by a host that lists `haltOnErrorCapability`.
     public var haltOnError = false
     public static let haltOnErrorCapability = "halt-on-error"
+    /// `includeonly`: LaTeX's `\includeonly{…}` on the first line, before the
+    /// main file (a chapter focus); the names as the document's `\include`s
+    /// write them. Honoured by a host that lists `includeOnlyCapability`.
+    public var includeOnly: [String]?
+    public static let includeOnlyCapability = "includeonly"
 
     public init(id: Int, root: String, main: String) { self.id = id; self.root = root; self.main = main }
 
@@ -56,6 +61,7 @@ public struct DL3CompileRequest: Sendable {
         if export { o["export"] = .bool(true) }
         if let externalTools { o["external_tools"] = .string(externalTools) }
         if haltOnError { o["halt_on_error"] = .bool(true) }
+        if let includeOnly { o["includeonly"] = .array(includeOnly.map(DL3JSON.string)) }
         return .object(o)
     }
 }

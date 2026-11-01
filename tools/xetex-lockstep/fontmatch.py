@@ -26,7 +26,7 @@ separately. Every difference is printed with both faces
 
 Usage:
   fontmatch.py [--names FILE] [--known FILE] [--finder BIN] [--xetex BIN]
-               [--jobs N] [--json OUT]
+               [--jobs N] [--json OUT] [--font-dirs DIR...]
 
 `--names` defaults to fontnames.txt here: one lookup per line, `NAME` or
 `NAME<TAB>SIZE` (`12` for `at 12pt`, `scaled 1200`); `#` comments.
@@ -35,7 +35,10 @@ Usage:
 fails on any other difference and on a listed one that no longer differs.
 `--finder` defaults to crates/flashtex-xetex/target/release/examples/
 find_font (build it with `cargo build --release --example find_font` in
-crates/flashtex-xetex). Stdlib only; MIT, like the rest of tools/.
+crates/flashtex-xetex). `--font-dirs` adds font directories neither side
+has installed: the port reads them through FLASHTEX_FONT_DIRS, xetex
+through ctregister.c (prepare_font_dirs). Stdlib only; MIT, like the rest
+of tools/.
 """
 import argparse
 import concurrent.futures
@@ -144,7 +147,34 @@ def unhat(s):
     return raw.decode("utf-8", "replace")
 
 
-def run_xetex(xetex, name, size):
+def prepare_font_dirs(xetex, font_dirs, workdir):
+    """`--font-dirs` on macOS: TeX Live's xetex finds fonts by name through
+    Core Text only, so the directories' fonts are made visible to it for the
+    run, not installed. ctregister.c is built into a dylib that registers
+    them at process scope, and xetex is copied and re-signed ad hoc (its
+    hardened runtime ignores DYLD_INSERT_LIBRARIES; the code is the same).
+    Returns the executable and the environment it needs (kpathsea's tree is
+    found from the copy's location otherwise)."""
+    dylib = os.path.join(workdir, "ctregister.dylib")
+    subprocess.run(["clang", "-dynamiclib", "-o", dylib, os.path.join(HERE, "ctregister.c"),
+                    "-framework", "CoreText", "-framework", "CoreFoundation"], check=True)
+    exe = os.path.join(workdir, "xetex")
+    with open(xetex, "rb") as src, open(exe, "wb") as dst:
+        dst.write(src.read())
+    os.chmod(exe, 0o755)
+    subprocess.run(["codesign", "--remove-signature", exe], check=True)
+    subprocess.run(["codesign", "-s", "-", "--force", exe], check=True, stderr=subprocess.DEVNULL)
+    root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.realpath(xetex))))
+    env = {
+        "TEXMFROOT": root,
+        "TEXMFCNF": os.path.join(root, "texmf-dist", "web2c"),
+        "DYLD_INSERT_LIBRARIES": dylib,
+        "XETEX_EXTRA_FONT_DIRS": ":".join(font_dirs),
+    }
+    return exe, env
+
+
+def run_xetex(xetex, name, size, extra_env=None):
     with tempfile.TemporaryDirectory(prefix="fm") as d:
         tex = os.path.join(d, "t.tex")
         with open(tex, "w", encoding="utf-8") as f:
@@ -152,7 +182,7 @@ def run_xetex(xetex, name, size):
             f.write('\\font\\x="%s"%s\\relax\n' % (name, tex_size(size)))
             f.write("\\message{[[FONTNAME:\\fontname\\x]]}\n")
             f.write("\\shipout\\hbox{\\x A}\n\\end\n")
-        env = dict(os.environ, SOURCE_DATE_EPOCH="0", FORCE_SOURCE_DATE="1", TZ="UTC")
+        env = dict(os.environ, SOURCE_DATE_EPOCH="0", FORCE_SOURCE_DATE="1", TZ="UTC", **(extra_env or {}))
         subprocess.run(
             [xetex, "-ini", "-etex", "-no-pdf", "-interaction=nonstopmode", "-cnf-line=max_print_line=100000", "t.tex"],
             cwd=d, env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=300,
@@ -185,9 +215,9 @@ def run_xetex(xetex, name, size):
         return {"face": "%s#%d" % (path, index), "fontname": fontname, "traced": traced, "size": size}
 
 
-def run_finder(finder, entries):
+def run_finder(finder, entries, env=None):
     text = "".join("%s\t%s\n" % (n, s) if s else "%s\n" % n for n, s in entries)
-    out = subprocess.run([finder], input=text, capture_output=True, text=True, check=True).stdout
+    out = subprocess.run([finder], input=text, capture_output=True, text=True, check=True, env=env).stdout
     rows = {}
     for (name, size), line in zip(entries, out.splitlines()):
         parts = line.split("\t")
@@ -197,8 +227,8 @@ def run_finder(finder, entries):
     return rows
 
 
-def catalog(finder):
-    out = subprocess.run([finder, "--list"], capture_output=True, text=True, check=True).stdout
+def catalog(finder, env=None):
+    out = subprocess.run([finder, "--list"], capture_output=True, text=True, check=True, env=env).stdout
     faces = {}
     for line in out.splitlines():
         face, ps, full, fam, style = (line.split("\t") + [""] * 5)[:5]
@@ -214,6 +244,9 @@ def main():
     ap.add_argument("--xetex", default=XETEX)
     ap.add_argument("--jobs", type=int, default=4)
     ap.add_argument("--json")
+    ap.add_argument("--font-dirs", nargs="*", default=[],
+                    help="font directories both sides see besides the installed fonts: the port through "
+                         "FLASHTEX_FONT_DIRS, xetex through process-scope Core Text registration")
     a = ap.parse_args()
     for exe in (a.xetex, a.finder):
         if not os.access(exe, os.X_OK):
@@ -223,10 +256,18 @@ def main():
     known = read_known(a.known)
     seen_known = set()
     unexpected = []
-    ours = run_finder(a.finder, entries)
-    faces = catalog(a.finder)
+    finder_env = None
+    xetex, xetex_env = a.xetex, None
+    workdir = tempfile.TemporaryDirectory(prefix="fmdirs")
+    if a.font_dirs:
+        dirs = [os.path.abspath(d) for d in a.font_dirs]
+        prev = os.environ.get("FLASHTEX_FONT_DIRS")
+        finder_env = dict(os.environ, FLASHTEX_FONT_DIRS=":".join(dirs + ([prev] if prev else [])))
+        xetex, xetex_env = prepare_font_dirs(a.xetex, dirs, workdir.name)
+    ours = run_finder(a.finder, entries, finder_env)
+    faces = catalog(a.finder, finder_env)
     with concurrent.futures.ThreadPoolExecutor(a.jobs) as ex:
-        theirs = dict(zip(entries, ex.map(lambda e: run_xetex(a.xetex, *e), entries)))
+        theirs = dict(zip(entries, ex.map(lambda e: run_xetex(xetex, *e, extra_env=xetex_env), entries)))
     same = 0
     name_same = 0
     results = []

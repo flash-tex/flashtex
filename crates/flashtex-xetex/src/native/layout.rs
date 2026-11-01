@@ -26,6 +26,9 @@ pub struct LayoutEngine {
     pub extend: f32,
     pub slant: f32,
     pub embolden: f32,
+    /// The language as `new` was given it (a persisted S₀ makes the
+    /// engine again from its fields, `crate::s0file`).
+    pub language_src: Option<Vec<u8>>,
     buffer: *mut hb::hb_buffer_t,
     /// XeTeXLayoutInterface.cpp's `sGlyphBoxes` for this font: glyph
     /// bounding boxes in points, for `\XeTeXuseglyphmetrics`. XeTeX keys
@@ -73,6 +76,7 @@ impl LayoutEngine {
         embolden: f32,
         req_engine: u8,
     ) -> LayoutEngine {
+        let language_src = language.map(<[u8]>::to_vec);
         let lang_c = language.map(|l| CString::new(l.to_vec()).unwrap_or_default());
         let lang_ptr = lang_c.as_ref().map_or(std::ptr::null(), |c| c.as_ptr());
         // SAFETY: HarfBuzz reads the NUL-terminated string (or NULL).
@@ -94,6 +98,7 @@ impl LayoutEngine {
             extend,
             slant,
             embolden,
+            language_src,
             // SAFETY: a new buffer, destroyed in Drop.
             buffer: unsafe { hb::hb_buffer_create() },
             bbox_cache: Mutex::new(HashMap::new()),
@@ -249,12 +254,42 @@ impl LayoutEngine {
         out
     }
 
+    /// What the last shaping left that later answers read: the shaper it
+    /// used (`usingOpenType`, `usingGraphite`) and its script. A checkpoint
+    /// keeps it (`crate::ckpt`): the engine is shared with the checkpoints,
+    /// so a restore puts back what it was there.
+    pub fn shaping_state(&self) -> (Option<String>, u32) {
+        (
+            self.shaper.lock().unwrap().clone(),
+            self.last_script.load(Ordering::Relaxed),
+        )
+    }
+
+    /// What of a [`shaping_state`](Self::shaping_state) is read later: the
+    /// shaper (`using_graphite` and the like), and whether the script's
+    /// direction is right-to-left (`default_rtl`, the only reader of
+    /// `last_script`).
+    pub fn shaping_state_read(s: &(Option<String>, u32)) -> (Option<String>, bool) {
+        let rtl = unsafe { hb::hb_script_get_horizontal_direction(s.1) == hb::HB_DIRECTION_RTL };
+        (s.0.clone(), rtl)
+    }
+
+    /// Put back a [`shaping_state`](Self::shaping_state).
+    pub fn set_shaping_state(&self, s: &(Option<String>, u32)) {
+        *self.shaper.lock().unwrap() = s.0.clone();
+        self.last_script.store(s.1, Ordering::Relaxed);
+    }
+
     /// `getDefaultDirection`: whether the script of the buffer (of the
-    /// last shaping) is written right to left.
+    /// last shaping) is written right to left. The script is the one
+    /// `layout_chars` kept (`last_script`), not the live buffer's: the
+    /// engine is shared with its checkpoints, and a restore puts the kept
+    /// one back (`shaping_state`), where the buffer would still hold the
+    /// old run's later shaping.
     pub fn default_rtl(&self) -> bool {
         // SAFETY: a pure function of the script.
         unsafe {
-            hb::hb_script_get_horizontal_direction(hb::hb_buffer_get_script(self.buffer))
+            hb::hb_script_get_horizontal_direction(self.last_script.load(Ordering::Relaxed))
                 == hb::HB_DIRECTION_RTL
         }
     }

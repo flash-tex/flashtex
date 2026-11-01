@@ -56,6 +56,8 @@ final class EngineV3Session {
     private(set) var bundleProgressNote: String?
     /// The first-download consent sheet is up (EngineV3BundleSheet; ContentView attaches it).
     var bundleConsentShown = false
+    /// A document needs biber and the pinned one may be downloaded: ask (ContentView's alert).
+    var biberConsentShown = false
     /// The bundle the sheet asks about.
     private(set) var bundleConsentConfig: EngineV3Bundle.Config?
     /// Last compile outcome, for the pane's status line.
@@ -85,8 +87,19 @@ final class EngineV3Session {
     /// STARTED resets, and shown with them.
     @ObservationIgnored private var toolDiagnostics: [DL3JSON] = []
     @ObservationIgnored private var toolCycleID = -1
-    /// The TeX run's rows of the last DONE (Problems panel), before the tools'.
-    @ObservationIgnored private var texProblems: [RuntimeV1.Diagnostic] = []
+    /// Makes the Problems rows (TeX's of the last DONE, then the tools'), off
+    /// the main thread for a long document (EngineV3Problems.swift).
+    @ObservationIgnored let problemsPipeline = EngineV3ProblemsPipeline()
+    /// Bumped when the session stops: a job issued before is not published.
+    @ObservationIgnored private var problemsGeneration = 0
+    /// The job on the pipeline's queue (0 or 1), not yet applied on main.
+    @ObservationIgnored private(set) var problemsInFlight = 0
+    /// The job issued while one ran (the later ones merged into it).
+    @ObservationIgnored private var problemsWaiting: EngineV3ProblemsPipeline.Job?
+    /// Whether a job runs or waits (tests: wait for the rows to be published).
+    var problemsPending: Bool { problemsInFlight > 0 || problemsWaiting != nil }
+    /// The next job drops the last DONE's rows (another project, the session stopped).
+    @ObservationIgnored private var problemsClearTeX = false
     /// The last compile sent with `external_tools: auto`, the last cycle the
     /// host said was settled, and the last compile that finished.
     @ObservationIgnored private var lastToolsAutoID = 0
@@ -187,6 +200,10 @@ final class EngineV3Session {
     private(set) var mainFile = ""
 
     @ObservationIgnored private(set) var pages: [Int: DL3PreparedPage] = [:]
+    /// Pages that may need the PDF fallback: inexact themselves, or drawing
+    /// a form (which may be). `loadFallbacks` checks only these at each DONE
+    /// instead of every page (1,152 of them: 13 ms of main per DONE).
+    @ObservationIgnored private var fallbackCandidates = Set<Int>()
     /// Each page's size (bp), kept with `pages`: the layout reads every page's
     /// size, and a `DL3PreparedPage` copy out of `pages` retains a dozen arrays.
     @ObservationIgnored private var pageSizes: [Int: CGSize] = [:]
@@ -263,6 +280,7 @@ final class EngineV3Session {
             parts.append(String(format: "keystroke to screen median %.0f ms over %d", ms.sorted()[ms.count / 2], ms.count))
         }
         if !environmentNote.isEmpty { parts.append(environmentNote) }
+        if let modeWarning { parts.append(modeWarning) }
         return parts.joined(separator: " · ")
     }
     @ObservationIgnored private var connection: DL3Connection?
@@ -282,6 +300,11 @@ final class EngineV3Session {
     @ObservationIgnored private var project: EngineV3Mirror?
     /// The page the view shows (sent as `viewport`).
     @ObservationIgnored var visiblePage = 0
+    /// A reopen's stored page to scroll to (`EngineV3Snapshot.visiblePage`),
+    /// until the view has laid out with a width and scrolled there
+    /// (`EngineV3PagesView.relayout`). Until then the compile sends it as
+    /// its `viewport`.
+    @ObservationIgnored var restoreScrollPage: Int?
     @ObservationIgnored let latency = EngineV3Latency()
     /// What the reader thread may rasterise immediately (pages on screen, at which scale).
     @ObservationIgnored let rasterPlan = EngineV3RasterPlan()
@@ -410,17 +433,89 @@ final class EngineV3Session {
         launchHost()
     }
 
+    /// The document's mode (EngineV3Mode.swift): the environment, the
+    /// manifest's `[project] mode`, the main file's `% !TEX program` line.
+    /// `activeText`: the active document's newest text (an edit the model
+    /// has not stored yet).
+    static func mode(_ model: ShellModel?, main: String, activeText: String? = nil) -> EngineV3Mode.Resolution {
+        let text = model.flatMap { m -> String? in
+            // the main file: the editor's newest text when it is open (and
+            // active), else its own as the model has it, else from the disk
+            // (a main file not open, say while a chapter is edited)
+            let path = main.isEmpty ? m.activePath : main
+            if let activeText, path == m.activePath { return activeText }
+            if let d = m.documents.first(where: { $0.path == path }) { return d.text }
+            return m.project.projectRoot.flatMap { Self.head(of: $0.appendingPathComponent(path)) }
+        }
+        let snapshot = model?.manifest.snapshot
+        let warning = snapshot?.warnings.first { $0.key == "project.mode" }.map { "\($0.key): \($0.message)" }
+        let r = EngineV3Mode.resolve(environment: ProcessInfo.processInfo.environment["FLASHTEX_MODE"],
+                                     manifest: snapshot?.manifest.project.mode, manifestWarning: warning, mainText: text)
+        // Nothing set the mode, and the document needs Unicode fonts (or the
+        // project sets [fonts]): Unicode mode, decided in memory
+        // (UnicodeFonts.swift; the retirement plan's S6, no previous engine).
+        if r.source == "default", r.warning == nil, model?.unicodeRouting != nil {
+            return EngineV3Mode.Resolution(mode: .unicode, format: EngineV3Mode.unicode.format, source: EngineV3Mode.detectedSource, warning: nil)
+        }
+        return r
+    }
+
+    /// The first 4 KB of a file, as text (the `% !TEX` lines are there).
+    nonisolated static func head(of url: URL) -> String? {
+        guard let h = try? FileHandle(forReadingFrom: url) else { return nil }
+        defer { try? h.close() }
+        return (try? h.read(upToCount: 4096)).flatMap { String(decoding: $0, as: UTF8.self) }
+    }
+
+    /// The mode a relaunch was decided for (`relaunchIfModeChanged`), which
+    /// the host it starts uses: the editor's text it was decided from may
+    /// not be the model's yet.
+    @ObservationIgnored private var pendingMode: EngineV3Mode.Resolution?
+
+    /// What could not be followed in choosing the mode (a `% !TEX program =
+    /// lualatex` line, a manifest value this version does not know).
+    private(set) var modeWarning: String?
+
+    /// Relaunches the host when the document's mode no longer matches the
+    /// running host's (a `% !TEX program` line or `[project] mode` changed,
+    /// another project opened). Not counted as a crash.
+    @discardableResult
+    func relaunchIfModeChanged(model: ShellModel, activeText: String? = nil) -> Bool {
+        guard let host else { return false }
+        let want = Self.mode(model, main: mainFile, activeText: activeText)
+        guard host.mode != want.mode || host.format != want.format else { return false }
+        log("relaunching the host in \(want.mode.rawValue) mode (\(want.source))")
+        pendingMode = want
+        stopRunningCompile(statusNote: "restarting the engine in \(want.mode == .unicode ? "Unicode" : "Classic") mode", firstError: nil)
+        stalledTexts = nil
+        return true
+    }
+
+    /// The running host's mode (tests and evidence).
+    var hostMode: EngineV3Mode? { host?.mode }
+
+    /// What the user's messages call the engine: "XeLaTeX" in Unicode
+    /// mode, "pdfLaTeX" otherwise (the mode being started, else the host's).
+    var engineName: String { (pendingMode?.mode ?? hostMode ?? .classic).formatName }
+
     private func launchHost() {
-        guard let exe = EngineV3.locateHost() else {
-            phase = .failed("flashtex-host not found. Build it (cargo build --release -p flashtex-engine --bin flashtex-host) or set FLASHTEX_HOST / the \(EngineV3.hostPathKey) default.")
+        let mode = pendingMode ?? Self.mode(model, main: mainFile)
+        pendingMode = nil
+        if modeWarning != mode.warning { modeWarning = mode.warning }
+        if let w = mode.warning { log("mode: \(w)") }
+        guard let exe = EngineV3.locateHost(mode: mode.mode) else {
+            phase = .failed(mode.mode == .unicode
+                ? "flashtex-host-unicode not found. Build it (cd crates/flashtex-xetex && cargo build --release --bin flashtex-host-unicode) or set FLASHTEX_HOST_UNICODE / the \(EngineV3.hostPathKey).unicode default."
+                : "flashtex-host not found. Build it (cargo build --release -p flashtex-engine --bin flashtex-host) or set FLASHTEX_HOST / the \(EngineV3.hostPathKey) default.")
             return
         }
         // No TeX Live and a bundle not downloaded yet: ask first (the host
         // would download it as it starts). The answer starts the host, or
-        // falls back to the previous engine.
+        // the window says that compiling needs the TeX files (TeXMissingBanner).
         if case .ask(let config) = EngineV3Bundle.currentGate() {
             bundleConsentConfig = config
             environmentNote = "Waiting for your answer: download the TeX files?"
+            log("waiting for the TeX files' download consent (no TeX Live)") // launch-check.sh reads it
             if !bundleConsentShown { bundleConsentShown = true }
             return
         }
@@ -429,14 +524,14 @@ final class EngineV3Session {
         phase = .starting(since: Date())
         bundleProgressNote = nil
         environmentNote = EngineChoice.texLiveInstalled() || EngineV3Bundle.configured() == nil
-            ? "Preparing the pdfLaTeX format from your TeX Live (the first use builds it; a few seconds)…"
-            : "Preparing the pdfLaTeX format from the TeX files (the first use downloads them and builds it)…"
-        log("starting \(exe.path)")
+            ? "Preparing the \(mode.mode.formatName) format from your TeX Live (the first use builds it; a few seconds)…"
+            : "Preparing the \(mode.mode.formatName) format from the TeX files (the first use downloads them and builds it)…"
+        log("starting \(exe.path) (\(mode.mode.rawValue) mode: \(mode.source))")
         let ref = EngineV3WeakRef(self)
         do {
             // A Live Share session (or a session copy) compiles in a host
             // launched confined; `compile` relaunches when that changes.
-            let h = try EngineV3HostProcess(executable: exe, confineRoots: model.flatMap(Self.confineRoots)) { event in
+            let h = try EngineV3HostProcess(executable: exe, mode: mode.mode, format: mode.format, confineRoots: model.flatMap(Self.confineRoots)) { event in
                 EngineV3Session.onMain { ref.value?.hostEvent(event) }
             }
             host = h
@@ -447,7 +542,8 @@ final class EngineV3Session {
     }
 
     /// The consent sheet's answer: download (and start the host), or not
-    /// now (the previous engine typesets, and the window says why).
+    /// now (nothing compiles, and the window says so, with a Download
+    /// button: owner ruling RQ20, EngineChoice.swift).
     func answerBundleConsent(_ download: Bool) {
         // The answer is for the bundle the sheet showed (its digest and source).
         if let config = bundleConsentConfig ?? EngineV3Bundle.configured() { EngineV3Bundle.setConsent(download, for: config) }
@@ -459,6 +555,17 @@ final class EngineV3Session {
             environmentNote = ""
             model?.engineV3BundleDeclined()
         }
+    }
+
+    /// The biber alert's answer: download (the host restarts allowed to
+    /// fetch exactly the pinned biber, and the documents compile again), or
+    /// not now (the bibliography stays as it is; asked again next time).
+    func answerBiberConsent(_ download: Bool) {
+        biberConsentShown = false
+        log("biber download: \(download ? "allowed" : "not now")")
+        guard download, let p = EngineV3Biber.currentPin() else { return }
+        EngineV3Biber.setConsent(p)
+        restart("biber download allowed")
     }
 
     func stop() {
@@ -477,6 +584,8 @@ final class EngineV3Session {
         projectWatcher = nil
         if editsWaiting { editsWaiting = false } // the next start sends every document again
         view?.dropAllTiles() // queued tile jobs skip undrawn; kept page rasters are freed
+        // No rows of this session publish after it (a job in flight is dropped).
+        problemsGeneration &+= 1; problemsClearTeX = true; problemsWaiting = nil
         if let model, !model.engineV3Diagnostics.isEmpty { model.engineV3Diagnostics = [] }
         connection?.bye()
         connection = nil
@@ -635,10 +744,10 @@ final class EngineV3Session {
             environmentNote = "TeX Live: \(texlive) — format \(formats)"
             let failed = (j["formats"]?.array ?? []).contains(where: { $0["status"]?.string == "failed" })
             if failed {
-                phase = .failed("The pdfLaTeX format could not be prepared: \(formats)")
+                phase = .failed("The \(engineName) format could not be prepared: \(formats)")
             }
-            // No TeX Live and no format: the document falls back to the
-            // previous engine, and the window says why (EngineChoice.swift).
+            // No TeX Live and no format: the window says that compiling
+            // needs the TeX files or TeX Live (RQ20, EngineChoice.swift).
             if EngineChoice.hostLacksTeXLive(DL3JSONView(texlive: j["texlive"]?.string, formatFailed: failed)) {
                 model?.engineV3HostLacksTeXLive()
             }
@@ -890,6 +999,17 @@ final class EngineV3Session {
         guard phase == .ready, connection != nil else { return }
         let now = MonotonicClock.nowNs()
         let path = model.activePath
+        // An edit that changes the mode (a `% !TEX program` line) goes to
+        // `compile`, which relaunches the host, whatever the fast path sent.
+        // (Only an edit of the main file can change it here: no file is
+        // read on this path.)
+        if let activeText, let host, mainFile.isEmpty || path == mainFile {
+            let want = Self.mode(model, main: mainFile, activeText: activeText)
+            if host.mode != want.mode || host.format != want.format {
+                compile(model: model, reason: "mode", activeText: activeText)
+                return
+            }
+        }
         if let activeText, fastPending.contains(path) {
             fastPending.remove(path)
             if activeText.utf8.count == hostBytes[path], Self.fastCheckHolds(fastCheck[path], activeText) {
@@ -969,7 +1089,7 @@ final class EngineV3Session {
         if phase == .ready { compile(model: model, reason: "open") } // otherwise the connection's first compile opens it
     }
 
-    /// Opens handled (tests: an open the previous engine typesets reaches none).
+    /// Opens handled (tests count them).
     @ObservationIgnored private(set) var projectChanges = 0
 
     /// The `[project] texinputs` links the last walk made (EngineV3Mirror.linkTexInputs).
@@ -981,13 +1101,26 @@ final class EngineV3Session {
     /// compile follows that, `packagesChanged`).
     func manifestChanged(model: ShellModel) {
         guard model.engineV3Enabled, let project, project.source == model.project.projectRoot else { return }
+        // `[project] mode` changed (the mode item, an outside edit): the host
+        // restarts in the mode, and its first compile follows.
+        if relaunchIfModeChanged(model: model) { return }
         if model.projectPackages.prepareForEngineV3() { return }
         let held = heldForManifest
         heldForManifest = false
-        guard held || model.manifest.texInputLinks != texInputLinksApplied
+        // `[fonts]` (the Fonts sheet, an outside edit): Unicode mode's host
+        // reads them from the copy's flashtex.toml at each compile
+        // (crates/flashtex-xetex host/fonts.rs), so a change compiles
+        // (app-parity row A9).
+        // Classic does not apply them (modes PROPOSAL §4.5).
+        let fontsChanged = hostMode == .unicode && model.manifest.fontsByRole != fontsApplied
+        guard held || fontsChanged || model.manifest.texInputLinks != texInputLinksApplied
                 || model.projectPackages.engineV3Documents().map(\.path) != packagePathsApplied else { return }
-        compileNow(model: model, reason: "manifest")
+        compileNow(model: model, reason: fontsChanged ? "fonts" : "manifest")
     }
+
+    /// The manifest's `[fonts]` when the last walk ran (what the compile
+    /// after it read from the copy's flashtex.toml).
+    @ObservationIgnored private(set) var fontsApplied: [String: String] = [:]
 
     /// A compile waited for the project's manifest to be read (its pins and
     /// libraries decide what the first compile reads): the read compiles.
@@ -1088,6 +1221,7 @@ final class EngineV3Session {
                 let packageLinks = project.materializePackages(packages.engineV3Documents()).filter { !named.contains($0.name) }
                 project.linkTexInputs(links + packageLinks, except: editorPaths)
                 self.texInputLinksApplied = links
+                self.fontsApplied = model.manifest.fontsByRole
                 self.packagePathsApplied = packages.engineV3Documents().map(\.path)
                 // Those outside the root are inputs too: an outside change
                 // to one invalidates the stored pages (inside ones are walked).
@@ -1103,6 +1237,7 @@ final class EngineV3Session {
         var req = DL3CompileRequest(id: nextID, root: project.root.path, main: entry)
         nextID += 1
         req.outputDir = project.output.path
+        req.format = host?.format ?? EngineV3Mode.classic.format
         req.jobname = (entry as NSString).lastPathComponent.replacingOccurrences(of: ".tex", with: "")
         req.haveFonts = DL3ResourceCache.shared.heldFontKeys
         req.fontFormats = ["type3", "truetype", "opentype"] // DL3Renderer draws these (lane P3-FONTS-2)
@@ -1110,10 +1245,12 @@ final class EngineV3Session {
         // first page it costs the edited page ~6 ms (plain-10: host first
         // page p50 14.5 -> 20.3 ms, measured) and gains nothing: send it only
         // when the view is further down. FLASHTEX_V3_VIEWPORT=1/0 forces it (A/B).
+        // (a reopen's stored page while the view has not scrolled there yet)
+        let viewed = restoreScrollPage ?? visiblePage
         switch ProcessInfo.processInfo.environment["FLASHTEX_V3_VIEWPORT"] {
-        case "1": req.viewport = visiblePage
+        case "1": req.viewport = viewed
         case "0": break
-        default: if visiblePage > 0 { req.viewport = visiblePage }
+        default: if viewed > 0 { req.viewport = viewed }
         }
         // Owner decision 9A: a project from elsewhere runs no shell commands until trusted.
         // Live Share: a session copy, or any project while a session runs,
@@ -1127,7 +1264,23 @@ final class EngineV3Session {
         // Strict mode (EngineV3ErrorPolicy): TeX stops at the first error
         // (an older host ignores the field: `strictModeIgnored`).
         req.haltOnError = errorMode == .strict
+        // Chapter focus (EngineV3FocusChapter.swift): LaTeX's own
+        // `\includeonly` on the first line, in an output folder of its own.
+        // An export or print (and the compile that syncs it) is the whole
+        // document unless the user chose a focused one.
+        if let f = focus.job(model: model, main: entry, project: project, offered: hostOffersIncludeOnly, exporting: exportStage != nil) {
+            req.includeOnly = f.names
+            req.outputDir = f.output.path
+        }
         return req
+    }
+
+    /// The chapter focus (EngineV3FocusChapter.swift).
+    let focus = EngineV3Focus()
+
+    /// The connected host honours COMPILE `includeonly` (lane FOCUS-CHAPTER).
+    var hostOffersIncludeOnly: Bool {
+        connection?.hello["capabilities"]?.array?.contains(.string(DL3CompileRequest.includeOnlyCapability)) ?? false
     }
 
     /// The texts each outstanding compile read (by id): what its diagnostics'
@@ -1152,11 +1305,16 @@ final class EngineV3Session {
     /// milliseconds of main thread (APP-EDITOR-INSTANT).
     static let sendQueue = DispatchQueue(label: "flashtex.engine-v3.send", qos: .userInteractive)
 
+    /// The threads the COMPILE writes and first-sight file writes ran on
+    /// (EngineV3SendOffMainTests: none on main).
+    nonisolated static let sendThreads = EngineV3SendThreads()
+
     /// Writes `req` to `c` on the send queue; a failed write restarts the
     /// host if `c` is still the connection.
     private func write(_ req: DL3CompileRequest, to c: DL3Connection, failed: @escaping @MainActor (EngineV3Session, Error) -> Void) {
         let ref = EngineV3WeakRef(self)
         Self.sendQueue.async {
+            EngineV3Session.sendThreads.note(.compile)
             do { try c.compile(req) } catch {
                 EngineV3Session.onMain {
                     guard let s = ref.value, s.connection === c else { return }
@@ -1202,6 +1360,8 @@ final class EngineV3Session {
         // a host launched confined serves nothing else). Relaunch, not
         // counted as a crash; the fresh host compiles when it is ready.
         if relaunchIfConfinementChanged(model: model) { return }
+        // A Unicode document runs in flashtex-host-unicode (EngineV3Mode).
+        if relaunchIfModeChanged(model: model, activeText: activeText) { return }
         // After a stall the text that looped waits for an edit or ⌘B (the stall bound).
         if let held = stalledTexts {
             if reason == "open", held == Dictionary(model.documents.map { ($0.path, $0.text) }, uniquingKeysWith: { a, _ in a }) { return }
@@ -1229,7 +1389,7 @@ final class EngineV3Session {
             if let p = project { let keep = made && p.takenOver; Self.walkQueue.async { p.clear(keepingOutput: keep) } }
             generation = model.projectGeneration
             sentTexts = [:]; hostBytes = [:]; fastPending = []; fastAnchors = [:]; fastCheck = [:]; compiledTexts = [:]; fastSentID = [:]; caretWindows = [:]; caretWindow = nil; inputsAtSync = nil
-            toolDiagnostics = []; texProblems = []; toolNote = nil; toolCycleID = -1
+            toolDiagnostics = []; problemsClearTeX = true; toolNote = nil; toolCycleID = -1
             if model.engineV3ResultStatus != nil { model.engineV3ResultStatus = nil } // another project: no "failed" of the last one's
             dropPages(); layoutRevision &+= 1
             staleChangedNow()
@@ -1311,6 +1471,7 @@ final class EngineV3Session {
                 // milliseconds of main thread).
                 let dst = project.root.appendingPathComponent(doc.path), text = doc.text
                 Self.sendQueue.async {
+                    EngineV3Session.sendThreads.note(.file)
                     try? FileManager.default.createDirectory(at: dst.deletingLastPathComponent(), withIntermediateDirectories: true)
                     if (try? FileManager.default.destinationOfSymbolicLink(atPath: dst.path)) != nil { try? FileManager.default.removeItem(at: dst) }
                     try? Data(text.utf8).write(to: dst)
@@ -1532,10 +1693,66 @@ final class EngineV3Session {
         NSWorkspace.shared.open(url)
     }
 
-    /// TeX's rows of the last compile, then the tools' (Problems panel).
-    private func publishProblems(model: ShellModel) {
-        let rows = texProblems + Self.problems(toolDiagnostics, model: model, projectRoot: project?.root)
-        if model.engineV3Diagnostics != rows { model.engineV3Diagnostics = rows }
+    /// TeX's rows of the last compile, then the tools' (Problems panel):
+    /// `tex` is a DONE's (nil keeps the last DONE's rows). The rows, groups
+    /// and counts are made on the pipeline's queue unless the job is small
+    /// and none is in flight (EngineV3Problems.swift); the finished model is
+    /// published on main as one assignment. `announce`: VoiceOver says the
+    /// counts once published; `scanPackages`: the package scan follows.
+    private func publishProblems(model: ShellModel, tex: EngineV3ProblemsPipeline.TeXInput? = nil,
+                                 announce: Bool = false, scanPackages: Bool = false) {
+        problemsOwed = false
+        let job = EngineV3ProblemsPipeline.Job(
+            tex: tex, clearTeX: problemsClearTeX, tools: toolDiagnostics,
+            documents: tex?.documents ?? model.documentTexts, roots: tex?.roots ?? Self.copyRoots(project?.root),
+            texts: tex?.texts ?? model.compiledDocuments, documentOrder: model.chrome.listing.map(\.path),
+            announce: announce, scanPackages: scanPackages)
+        problemsClearTeX = false
+        if problemsInFlight == 0, job.isSmall {
+            applyProblems(problemsPipeline.run(job), of: job, generation: problemsGeneration, model: model)
+            return
+        }
+        // One job runs at a time; a job issued meanwhile waits, merged into
+        // the one already waiting (the rows of a DONE it does not replace
+        // are kept). Typing in a long book answers every key with a DONE,
+        // faster than its rows are made: each finished job is published, so
+        // the list and the underlines follow the typing instead of waiting
+        // for it to stop.
+        if problemsInFlight > 0 {
+            problemsWaiting = problemsWaiting.map { $0.merged(with: job) } ?? job
+            return
+        }
+        runProblems(job)
+    }
+
+    /// Runs `job` on the pipeline's queue, publishes its model on main, then the waiting job.
+    private func runProblems(_ job: EngineV3ProblemsPipeline.Job) {
+        problemsInFlight += 1
+        let pipeline = problemsPipeline, ref = EngineV3WeakRef(self), generation = problemsGeneration
+        EngineV3ProblemsPipeline.queue.async {
+            let made = pipeline.run(job)
+            EngineV3Session.onMain {
+                guard let s = ref.value else { return }
+                s.problemsInFlight -= 1
+                if let model = s.model { s.applyProblems(made, of: job, generation: generation, model: model) }
+                if let next = s.problemsWaiting {
+                    s.problemsWaiting = nil
+                    s.runProblems(next)
+                }
+            }
+        }
+    }
+
+    /// Publishes a job's model unless the session was stopped since it was issued, then what waited for it.
+    private func applyProblems(_ made: ProblemsModel, of job: EngineV3ProblemsPipeline.Job, generation: Int, model: ShellModel) {
+        guard generation == problemsGeneration else { return } // the session stopped since
+        if logDone { log("PROBLEMS \(made.diagnostics.count) rows, \(made.groups.count) groups\(made === model.engineV3Problems ? " (unchanged)" : "")") }
+        MainThreadProbe.time("v3.problems.publish") { model.publishEngineV3Problems(made) }
+        // VoiceOver: "2 errors, 1 warning" when the counts changed (the v2 path's announcement).
+        if job.announce, model.engineV3Enabled { model.noteCompileCompletedForVoiceOver() }
+        // A package or class TeX could not find: resolved from a
+        // library or the cache, or offered for fetching (ProjectPackages.swift).
+        if job.scanPackages { model.projectPackages.noteCompileResult(unresolved: model.engineV3Problems.unresolvedPackages) }
     }
 
     /// `TOOL`: run, done, skip, settled (spec §6.4).
@@ -1559,15 +1776,18 @@ final class EngineV3Session {
             case "ok", "warnings": toolNote = nil
             default: toolNote = "\(name)\(file): \(status)\(j["message"]?.string.map { " (" + $0 + ")" } ?? "")"
             }
-            if let model { publishProblems(model: model) }
+            problemsOwed = true // published once per drain (`flushEvents`)
         case "skip":
             toolNote = "\(name)\(file) not run: \(j["reason"]?.string ?? "skipped")"
+            if EngineV3Biber.isConsentRequest(j["reason"]?.string ?? ""), let p = EngineV3Biber.currentPin(), !EngineV3Biber.consented(p) {
+                biberConsentShown = true
+            }
         case "settled":
             if let cycle = toolsCycleID, id >= cycle { toolsCycleID = nil }
             lastSettledID = max(lastSettledID, id)
             if toolNote?.hasPrefix("Running ") == true { toolNote = nil }
             if j["limit"]?.bool == true { toolNote = "Bibliography and index: stopped after \(j["rounds"]?.int ?? 5) rounds." }
-            if let model { publishProblems(model: model) }
+            problemsOwed = true // published once per drain (`flushEvents`)
             maybeSendExport()
         default: break
         }
@@ -1588,8 +1808,14 @@ final class EngineV3Session {
     /// page that arrived in it (a page past the laid-out ones used to lay out
     /// all of them: O(pages²) over a cold compile).
     func flushEvents() {
+        // The tools' rows changed in this drain: the Problems list (thousands
+        // of rows in a long book) follows once, not once per TOOL frame.
+        if problemsOwed, let model { publishProblems(model: model) }
         view?.flushLayout()
     }
+
+    /// A tool's rows changed since the Problems list was last published.
+    @ObservationIgnored private var problemsOwed = false
 
     /// Hands host events to the main thread as the reader thread does (tests:
     /// `EditorInstantTests` feeds a synthetic compile through it).
@@ -1633,6 +1859,7 @@ final class EngineV3Session {
             let changed = pages[index]?.page.hash != p.page.hash
             let sizeChanged = pages[index].map { $0.widthPt != p.widthPt || $0.heightPt != p.heightPt } ?? true
             pages[index] = p
+            if p.needsPDFFallback || !p.formIDs.isEmpty { fallbackCandidates.insert(index) } else { fallbackCandidates.remove(index) }
             pageSizes[index] = CGSize(width: p.widthPt, height: p.heightPt)
             glyphIndexes.invalidate(index)
             pageInstalls &+= 1
@@ -1708,14 +1935,14 @@ final class EngineV3Session {
             }
             if status != "cancelled" {
                 let made = j["pages"]?.int.map(Int.init)
-                recount()
+                MainThreadProbe.time("v3.done.recount") { recount() }
                 if compileFatal, let n = made, n < pageCount {
                     // TeX stopped (EngineV3ErrorPolicy): the pages it made
                     // before the stop are current, the last good ones after
                     // them stay on screen, stale, until a compile sends them.
                     let kept = pageCount - n
                     markStale(Set(n ..< pageCount))
-                    statusNote = "stopped: pdfLaTeX gives up here · \(n) new page\(n == 1 ? "" : "s"), \(kept) kept from the last compile · \(String(format: "%.0f", j["elapsed_ms"]?.double ?? 0)) ms"
+                    statusNote = "stopped: \(engineName) gives up here · \(n) new page\(n == 1 ? "" : "s"), \(kept) kept from the last compile · \(String(format: "%.0f", j["elapsed_ms"]?.double ?? 0)) ms"
                 } else {
                     // A DONE without `pages` says nothing about them: the
                     // marks stay as they are (never "all current").
@@ -1734,11 +1961,11 @@ final class EngineV3Session {
                 let failed = status == "failed" || compileFatal || (status == "error" && (j["pages"]?.int ?? 1) == 0)
                 if let model, model.engineV3ResultStatus != (failed ? .failed : nil) { model.engineV3ResultStatus = failed ? .failed : nil }
                 // A package that needs XeTeX or LuaTeX stopped it (fontspec, unicode-math,
-                // xeCJK, \RequireXeTeX): the compatibility engine takes the document,
-                // visibly (UnicodeFonts.swift; the preamble scan missed it).
+                // xeCJK, \RequireXeTeX): unless its mode is set, the document moves to
+                // Unicode mode, visibly (UnicodeFonts.swift; the preamble scan missed it).
                 if status != "ok", let model,
-                   let need = diags.lazy.compactMap(UnicodeFonts.need(in:)).first
-                       ?? diagnostics.lazy.compactMap({ UnicodeFonts.need(message: $0["message"]?.string ?? "", detail: $0["detail"]?.string) }).first {
+                   let need = MainThreadProbe.time("v3.done.unicode", { diags.lazy.compactMap(UnicodeFonts.need(in:)).first
+                       ?? diagnostics.lazy.compactMap({ UnicodeFonts.need(message: $0["message"]?.string ?? "", detail: $0["detail"]?.string) }).first }) {
                     model.engineV3NeedsUnicodeFonts(need)
                 }
                 if stale.isEmpty { snapshot = nil } // the compile's pages replaced the stored ones
@@ -1756,16 +1983,15 @@ final class EngineV3Session {
                     caretWindow = caretWindows[compileID] // the caret's edits since this compile was sent
                     compiledStamp &+= 1
                     prepareCaretLines(path: model.activePath, text: model.compiledDocuments[model.activePath])
-                    texProblems = diags.isEmpty ? Self.problems(diagnostics, model: model, projectRoot: project?.root, texts: texts, mode: errorMode)
-                                                : Self.problems(diags: diags, model: model, projectRoot: project?.root, texts: texts, mode: errorMode)
-                    publishProblems(model: model)
-                    // VoiceOver: "2 errors, 1 warning" when the counts changed (the v2 path's announcement).
-                    if model.engineV3Enabled { model.noteCompileCompletedForVoiceOver() }
-                    // A package or class TeX could not find: resolved from a
-                    // library or the cache, or offered for fetching (ProjectPackages.swift).
-                    if compileID >= lastSentID { model.projectPackages.noteCompileResult(diagnostics: model.engineV3Diagnostics) }
+                    // The rows are made from the compile's own inputs, off
+                    // main for a long document (`publishProblems`); VoiceOver
+                    // and the package scan follow their publication.
+                    let tex = EngineV3ProblemsPipeline.TeXInput(
+                        diags: diags, diagnostics: diags.isEmpty ? diagnostics : [], texts: texts, documents: model.documentTexts,
+                        roots: Self.copyRoots(project?.root), mode: errorMode, engine: engineName)
+                    MainThreadProbe.time("v3.done.problems") { publishProblems(model: model, tex: tex, announce: true, scanPackages: compileID >= lastSentID) }
                 }
-                loadFallbacks(pdf: j["pdf"]?.string)
+                MainThreadProbe.time("v3.done.fallbacks") { loadFallbacks(pdf: j["pdf"]?.string) }
             }
             for k in compiledTexts.keys where k <= compileID { compiledTexts[k] = nil }
             for k in caretWindows.keys where k <= compileID { caretWindows[k] = nil }
@@ -1838,7 +2064,22 @@ final class EngineV3Session {
         guard pages.isEmpty, let key, let root = model.project.projectRoot,
               let found = EngineV3Snapshot.loadDocuments(projectKey: key, documents: model.documents.map { ($0.path, $0.text) }) else { snapshot = nil; return }
         showStored(found)
+        restoreCaret(found.0, model: model)
         validateStored(found, root: root)
+    }
+
+    /// Puts the editor's caret back where the snapshot's session left it:
+    /// its documents hash as they did, so the offset is still the same
+    /// place (no line table is built). Not when the document is not open
+    /// or cannot be switched to.
+    func restoreCaret(_ s: EngineV3Snapshot, model: ShellModel) {
+        guard let path = s.caretPath, let at = s.caretUTF16,
+              let doc = model.documents.first(where: { $0.path == path }), at <= doc.text.utf16.count else { return }
+        if path != model.activePath, case .refused = model.project.switchDocument(to: path) { return }
+        let ns = NSRange(location: at, length: 0)
+        model.selection = .init(path: path, nsRange: ns, token: (model.selection?.token ?? 0) + 1)
+        model.caretUTF16 = at
+        model.caretLengthUTF16 = 0
     }
 
     /// Checks a shown snapshot's other input files on the snapshot queue;
@@ -1870,6 +2111,9 @@ final class EngineV3Session {
         snapshot = found
         log("snapshot: \(found.0.pages.count) pages from \(found.1.lastPathComponent) (view \(view != nil)) at +\(Double(MonotonicClock.nowNs() &- (openStartNs ?? 0)) / 1e6) ms")
         pageCount = found.0.pages.count
+        // where the user was: scrolled to at the first layout with a width,
+        // and the open's compile typesets it first (`viewport`)
+        if let v = found.0.visiblePage, v > 0, v < pageCount { restoreScrollPage = v }
         markStale([])
         layoutRevision &+= 1
         view?.relayout()
@@ -1890,6 +2134,7 @@ final class EngineV3Session {
         // The pages are of the texts last sent (typing during the compile
         // does not count) and of the input files as last synced.
         guard let model, let key = EngineV3Snapshot.key(for: model), let root = project?.source, root == model.project.projectRoot,
+              !focus.isActive, // a focused chapter's pages are not the document's (EngineV3FocusChapter.swift)
               let synced = inputsAtSync, fastPending.isEmpty,
               pageCount > 0, (0 ..< pageCount).allSatisfy({ pageSizes[$0] != nil }) else { return }
         let visible = visiblePage
@@ -1904,6 +2149,9 @@ final class EngineV3Session {
         let formsCopy = forms, main = mainFile
         let ppp = view?.currentPixelsPerPoint ?? 2
         let dark = model.darkPreview
+        // (a reopen uses it only when the documents hash as `docs` does, and
+        // only within the text: `restoreCaret`)
+        let caret = (path: model.activePath, utf16: model.caretUTF16)
         let item = DispatchWorkItem {
             let docs = EngineV3Snapshot.hashes(texts)
             // An input changed since the sync (outside the app): the pages
@@ -1912,7 +2160,8 @@ final class EngineV3Session {
             let others = EngineV3Snapshot.others(synced, documents: docs.keys)
             guard let now = EngineV3Snapshot.inputs(root: root), EngineV3Snapshot.others(now, documents: docs.keys) == others else { return }
             EngineV3Snapshot.save(projectKey: key, main: main, documents: docs, inputs: others, sizes: sizes, pages: chosen,
-                                  forms: formsCopy, pixelsPerPoint: ppp > 0 ? ppp : 2, dark: dark)
+                                  forms: formsCopy, pixelsPerPoint: ppp > 0 ? ppp : 2, dark: dark,
+                                  visiblePage: visible, caret: caret)
         }
         snapshotSave = item
         Self.snapshotQueue.asyncAfter(deadline: .now() + 1.5, execute: item)
@@ -1936,20 +2185,26 @@ final class EngineV3Session {
     /// document and the reported line's byte range; anything else (a
     /// package file) keeps its place in the message.
     static func problems(_ diags: [DL3JSON], model: ShellModel, projectRoot: URL?, texts: [String: String]? = nil,
-                         mode: EngineV3ErrorPolicy.Mode = .bestEffort) -> [RuntimeV1.Diagnostic] {
-        let roots = Self.copyRoots(projectRoot)
+                         mode: EngineV3ErrorPolicy.Mode = .bestEffort, engine: String = "pdfLaTeX") -> [RuntimeV1.Diagnostic] {
+        problems(diags, documents: model.documentTexts, roots: copyRoots(projectRoot), texts: texts, mode: mode, engine: engine)
+    }
+
+    /// `problems(_:model:…)` from the editor's texts by path (`documents`)
+    /// and the copy's roots (`copyRoots`): on any thread (EngineV3Problems.swift).
+    nonisolated static func problems(_ diags: [DL3JSON], documents: [String: String], roots: [String], texts: [String: String]? = nil,
+                                     mode: EngineV3ErrorPolicy.Mode = .bestEffort, engine: String = "pdfLaTeX") -> [RuntimeV1.Diagnostic] {
         let kept = EngineV3ErrorPolicy.keptErrors(diags.map(Self.policyItem), mode: mode)
         var lines = EngineV3LineIndexes()
         return diags.enumerated().map { i, d in
             let error = d["severity"]?.string == "error"
             let severity: RuntimeV1.Severity = error && kept.contains(i) ? .error : .warning
             var message = d["message"]?.string ?? "(no message)"
-            if error, !kept.contains(i) { message = EngineV3ErrorPolicy.marked(message) }
+            if error, !kept.contains(i) { message = EngineV3ErrorPolicy.marked(message, engine: engine) }
             var source: RuntimeV1.SourceRange?
             if let reported = d["file"]?.string {
                 let file = Self.relativeToCopy(reported, roots: roots)
                 let line = Int(d["line"]?.int ?? 0)
-                if let text = texts?[file] ?? model.documents.first(where: { $0.path == file })?.text, line > 0,
+                if let text = texts?[file] ?? documents[file], line > 0,
                    let range = lines.range(file, text, line: line) {
                     source = RuntimeV1.SourceRange(path: file, startByte: range.lowerBound, endByte: range.upperBound)
                 } else {
@@ -1965,7 +2220,7 @@ final class EngineV3Session {
     /// /private/var/folders/..., what the host's getcwd() returns and so what
     /// the display list's side table names a box's place by), and
     /// Foundation's resolution of its links. Empty without a root.
-    static func copyRoots(_ root: URL?) -> [String] {
+    nonisolated static func copyRoots(_ root: URL?) -> [String] {
         guard let root else { return [] }
         let standardized: String = root.standardizedFileURL.path
         var spellings: [String] = [standardized]
@@ -1986,7 +2241,7 @@ final class EngineV3Session {
     /// inside it under any of `roots` (`copyRoots`), else as given; a
     /// leading "./" dropped. An absolute name under none of them is matched
     /// once more by its own real path (a link anywhere above the copy).
-    static func relativeToCopy(_ file: String, roots: [String]) -> String {
+    nonisolated static func relativeToCopy(_ file: String, roots: [String]) -> String {
         var f: String = file
         while f.hasPrefix("./") { f.removeFirst(2) }
         if let r = roots.first(where: { f.hasPrefix($0) }) {
@@ -2005,23 +2260,48 @@ final class EngineV3Session {
     /// (`col`), so a click lands on the exact column; the macro chain and
     /// TeX's help text become the row's notes and help.
     static func problems(diags: [DL3Diag], model: ShellModel, projectRoot: URL?, texts: [String: String]? = nil,
-                         mode: EngineV3ErrorPolicy.Mode = .bestEffort) -> [RuntimeV1.Diagnostic] {
-        let roots = Self.copyRoots(projectRoot)
+                         mode: EngineV3ErrorPolicy.Mode = .bestEffort, engine: String = "pdfLaTeX") -> [RuntimeV1.Diagnostic] {
+        problems(diags: diags, documents: model.documentTexts, roots: copyRoots(projectRoot), texts: texts, mode: mode, engine: engine)
+    }
+
+    /// `problems(diags:model:…)` from the editor's texts by path and the
+    /// copy's roots: on any thread (EngineV3Problems.swift).
+    nonisolated static func problems(diags: [DL3Diag], documents: [String: String], roots: [String], texts: [String: String]? = nil,
+                                     mode: EngineV3ErrorPolicy.Mode = .bestEffort, engine: String = "pdfLaTeX") -> [RuntimeV1.Diagnostic] {
         // TeX's errors it recovered from (EngineV3ErrorPolicy): warnings under best effort.
         let kept = EngineV3ErrorPolicy.keptErrors(diags.map(Self.policyItem), mode: mode)
         let recovered = Set(diags.indices.filter { diags[$0].severity == "error" && !kept.contains($0) })
-        func rel(_ file: String) -> String { Self.relativeToCopy(file, roots: roots) }
+        // Each file once (a `realpath` per row and trace frame was a fifth of a long book's DONE).
+        var relative: [String: String] = [:]
+        func rel(_ file: String) -> String {
+            if let r = relative[file] { return r }
+            let r = Self.relativeToCopy(file, roots: roots)
+            relative[file] = r
+            return r
+        }
         // Rows that say the same thing as another fold into it (EngineV3DiagPresent.folds).
         let folds = EngineV3DiagPresent.folds(diags, kept: kept)
         let stopped = Set(folds.filter { EngineV3DiagPresent.isStop(diags[$0.key].code) && !EngineV3DiagPresent.isStop(diags[$0.value].code) }.map(\.value))
-        let projectTexts: [String: String] = texts ?? Dictionary(model.documents.map { ($0.path, $0.text) }, uniquingKeysWith: { a, _ in a })
-        func text(_ file: String) -> String? { texts?[file] ?? model.documents.first(where: { $0.path == file })?.text }
+        let projectTexts: [String: String] = texts ?? documents
+        func text(_ file: String) -> String? { texts?[file] ?? documents[file] }
         var lines = EngineV3LineIndexes()
+        // Made once for all the rows (EDITOR-FREEZE: a long book's thousands
+        // of rows each searched every text at each DONE, seconds on main): a
+        // macro's project definition, by name and place, and the labels by key.
+        var definitions: [String: (site: EngineV3DiagPresent.Site, body: Range<Int>?)?] = [:]
+        func definition(_ name: String, near: (path: String, line: Int)?) -> (site: EngineV3DiagPresent.Site, body: Range<Int>?)? {
+            let key = near.map { "\(name)\u{0}\($0.path)\u{0}\($0.line)" } ?? name
+            if let hit = definitions[key] { return hit }
+            let found = EngineV3DiagPresent.definition(of: name, in: projectTexts, near: near)
+            definitions[key] = .some(found)
+            return found
+        }
+        var labelSites: [String: [EngineV3DiagPresent.Site]]?
         return diags.enumerated().compactMap { i, d in
             guard d.severity != "info" else { return nil } // \show, tight/loose boxes: not problems
             guard folds[i] == nil else { return nil }
             let headline = EngineV3DiagPresent.headline(code: d.code, message: d.message)
-            var message = recovered.contains(i) ? EngineV3ErrorPolicy.marked(headline) : headline
+            var message = recovered.contains(i) ? EngineV3ErrorPolicy.marked(headline, engine: engine) : headline
             var source: RuntimeV1.SourceRange?
             if let file = d.file.map(rel) {
                 if let line = d.line, let text = text(file), let lineRange = lines.range(file, text, line: line) {
@@ -2057,8 +2337,7 @@ final class EngineV3Session {
                 // The definition in the project's text: where the engine says it was made (#1593),
                 // else (the engine names no site) the project's one definition of it.
                 let near = f.def.flatMap { l in l.file.map { (path: rel($0), line: l.line ?? Int.max) } }
-                let found = near.flatMap { EngineV3DiagPresent.definition(of: name, in: projectTexts, near: $0) }
-                    ?? (def == nil ? EngineV3DiagPresent.definition(of: name, in: projectTexts) : nil)
+                let found = near.flatMap { definition(name, near: $0) } ?? (def == nil ? definition(name, near: nil) : nil)
                 if let found {
                     def = found.site.label
                     labels.append(.init(source: found.site.source, text: "\(name) is defined at \(found.site.label)", primary: false))
@@ -2085,9 +2364,12 @@ final class EngineV3Session {
             if stopped.contains(i), let stop = EngineV3Explain.explanation(code: "tex/emergency-stop", message: "") {
                 row.notes = (row.notes ?? []) + [stop]
             }
-            let named = EngineV3Fixes.undefinedName(trace: d.trace.map { ($0.kind, $0.before) })
+            // (read only for TeX's undefined control sequence: `packageHint` and `fix` below)
+            let named = d.code == EngineV3Fixes.undefinedCode ? EngineV3Fixes.undefinedName(trace: d.trace.map { ($0.kind, $0.before) }) : nil
             // A plain-language explanation and, where mechanical, a fix (EngineV3Explain.swift).
-            var explained = EngineV3Explain.apply(row, code: d.code, message: d.message, texts: texts, undefinedName: named)
+            if d.code == "latex/multiply-defined-label", labelSites == nil, let texts { labelSites = EngineV3DiagPresent.labelSites(in: texts) }
+            var explained = EngineV3Explain.apply(row, code: d.code, message: d.message, texts: texts, undefinedName: named,
+                                                  labelSites: labelSites)
             if let defFix, explained.help?.replacement == nil {
                 if let tex = explained.help?.message, !tex.isEmpty { explained.notes = (explained.notes ?? []) + [tex] }
                 explained.help = defFix
@@ -2099,11 +2381,11 @@ final class EngineV3Session {
         }
     }
 
-    static func policyItem(_ d: DL3Diag) -> EngineV3ErrorPolicy.Item {
+    nonisolated static func policyItem(_ d: DL3Diag) -> EngineV3ErrorPolicy.Item {
         .init(error: d.severity == "error", fatal: EngineV3ErrorPolicy.isFatal(d), line: d.line)
     }
 
-    static func policyItem(_ j: DL3JSON) -> EngineV3ErrorPolicy.Item {
+    nonisolated static func policyItem(_ j: DL3JSON) -> EngineV3ErrorPolicy.Item {
         let error = j["severity"]?.string == "error"
         return .init(error: error, fatal: error && EngineV3ErrorPolicy.isFatal(message: j["message"]?.string ?? ""), line: j["line"]?.int.map(Int.init))
     }
@@ -2161,7 +2443,7 @@ final class EngineV3Session {
     /// No pages (a stop, another project): none of them, nor their glyph
     /// indexes, may answer a lookup.
     private func dropPages() {
-        pages = [:]; pageSizes = [:]; stale = []; forms = [:]; pdfFallback = [:]; pageCount = 0
+        pages = [:]; pageSizes = [:]; stale = []; forms = [:]; pdfFallback = [:]; pageCount = 0; fallbackCandidates = []
         glyphIndexes.removeAll()
     }
 
@@ -2191,7 +2473,7 @@ final class EngineV3Session {
         guard n != pageCount || complete else { return }
         guard complete || n > pageCount else { return }
         if complete, n < pageCount {
-            for i in n ..< pageCount { pages[i] = nil; pageSizes[i] = nil; stale.remove(i); pdfFallback[i] = nil }
+            for i in n ..< pageCount { pages[i] = nil; pageSizes[i] = nil; stale.remove(i); pdfFallback[i] = nil; fallbackCandidates.remove(i) }
             glyphIndexes.removePages(from: n)
         }
         if n != pageCount { pageCount = n; layoutRevision &+= 1 }
@@ -2201,7 +2483,7 @@ final class EngineV3Session {
     private func loadFallbacks(pdf: String?) {
         let start = DispatchTime.now().uptimeNanoseconds
         defer { lastFallbackLoadMs = Double(DispatchTime.now().uptimeNanoseconds - start) / 1e6 }
-        let need = pages.filter { $0.value.needsPDFFallback(forms: forms) }.map(\.key)
+        let need = fallbackCandidates.filter { pages[$0]?.needsPDFFallback(forms: forms) == true }.sorted()
         guard !need.isEmpty, let pdf, let doc = DL3Renderer.openPDF(URL(fileURLWithPath: pdf)) else { return }
         pdfFallbackDocument = doc // (a CGPDFPage does not keep its document)
         for i in need { if let p = DL3Renderer.page(of: doc, at: i + 1) { pdfFallback[i] = p } } // (with its bytes: drawPDFPage)
@@ -2239,6 +2521,19 @@ struct EngineV3LineStarts {
         starts = found
     }
 
+    /// The one-based line holding byte `offset` (`EditorDiagnostics.lineNumber(ofByte:in:)`,
+    /// without counting); nil out of range.
+    func line(ofByte offset: Int) -> Int? {
+        guard offset >= 0, offset <= byteCount else { return nil }
+        // The number of lines starting at or before `offset`.
+        var lo = 0, hi = starts.count
+        while lo < hi {
+            let mid = (lo + hi) / 2
+            if starts[mid] <= offset { lo = mid + 1 } else { hi = mid }
+        }
+        return lo
+    }
+
     /// `EngineV3Session.lineByteRange(text, line:)`, from the index.
     func range(line: Int) -> Range<Int>? {
         guard line >= 1, line <= starts.count else { return nil }
@@ -2256,6 +2551,27 @@ struct EngineV3LineIndexes {
         byFile[file] = ix
         return ix.range(line: line)
     }
+}
+
+/// Counts, by thread, the send queue's COMPILE writes and project-copy file
+/// writes: the test that they stay off main reads it (a counter bump per send).
+final class EngineV3SendThreads: @unchecked Sendable {
+    enum Kind { case compile, file }
+    struct Counts: Equatable { var compileOnMain = 0, compileOffMain = 0, fileOnMain = 0, fileOffMain = 0 }
+    private let lock = NSLock()
+    private var counts = Counts()
+    func note(_ kind: Kind) {
+        let main = Thread.isMainThread
+        lock.lock(); defer { lock.unlock() }
+        switch (kind, main) {
+        case (.compile, true): counts.compileOnMain += 1
+        case (.compile, false): counts.compileOffMain += 1
+        case (.file, true): counts.fileOnMain += 1
+        case (.file, false): counts.fileOffMain += 1
+        }
+    }
+    var current: Counts { lock.lock(); defer { lock.unlock() }; return counts }
+    func reset() { lock.lock(); counts = Counts(); lock.unlock() }
 }
 
 /// A weak reference that may cross threads (it is only dereferenced on main).
@@ -2992,6 +3308,11 @@ final class EngineV3Mirror: @unchecked Sendable { // only `let`s; its walks touc
             let dst = root.appendingPathComponent(rel)
             if (try? url.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory == true {
                 try? fm.createDirectory(at: dst, withIntermediateDirectories: true)
+                // The output folder gets the folder too, as latexmk makes it:
+                // `\include{chapters/03}` writes `chapters/03.aux` there, and
+                // pdfTeX cannot create the folder (a fatal "I can't write on
+                // file" in nonstop mode).
+                try? fm.createDirectory(at: output.appendingPathComponent(rel), withIntermediateDirectories: true)
                 continue
             }
             if EngineV3Snapshot.isInput(rel) { inputs?[rel] = EngineV3Snapshot.fingerprint(path) ?? "unreadable" }

@@ -21,7 +21,7 @@ named space resolved through the resources to a canonical description, or
 import math
 import re
 
-from pdfdoc import Stream, canon_digest, digest, name, struct
+from pdfdoc import Stream, Struct, canon_digest, digest, name, struct
 
 WS = b"\x00\t\n\x0c\r "
 _TOKEN = re.compile(rb"""
@@ -286,6 +286,17 @@ def _r(v, nd=4):
     return round(float(v), nd) + 0.0
 
 
+def _plain(v):
+    """v with Structs as their values and tuples as lists (for a Struct)."""
+    if isinstance(v, Struct):
+        return v.v
+    if isinstance(v, (list, tuple)):
+        return [_plain(x) for x in v]
+    if isinstance(v, dict):
+        return {k: _plain(x) for k, x in v.items()}
+    return v
+
+
 class Page:
     """What a page draws."""
 
@@ -306,6 +317,7 @@ class Interp:
         self.doc = doc
         self.fonts = fonts
         self._cs_cache = {}
+        self._smask_cache = {}
 
     def run_page(self, index):
         ref, page = self.doc.pages[index]
@@ -565,7 +577,56 @@ class Interp:
             elif k == "/BM":
                 g.blend = name(v) if name(v) else str(v)
             elif k == "/SMask":
-                g.smask = None if name(v) == "None" else struct(doc, d.get(k))
+                g.smask = None if name(v) == "None" else self._smask_desc(d.get(k))
+
+    # Entries of what a soft mask's group draws, with the keys that say what
+    # is drawn (not where in the content stream it was).
+    _MASK_KEYS = {
+        "paths": ("op", "clip", "segs", "fill", "fill_alpha", "stroke", "stroke_alpha", "lw",
+                  "dash", "cap", "join", "miter", "blend", "smask"),
+        "glyphs": ("font", "glyph", "x", "y", "m", "mode", "fill", "fill_alpha", "stroke",
+                   "stroke_alpha", "lw"),
+        "images": ("ctm", "w", "h", "cs", "bpc", "mask", "decode", "smask", "data", "fill", "alpha"),
+        "shadings": ("ctm", "shading", "alpha"),
+    }
+
+    def _smask_desc(self, ref):
+        """A soft mask (ISO 32000-1 §11.6.5.2): its /S, /BC and /TR as
+        structure, and its group /G by what the group draws, interpreted
+        as a page's forms are (form /Matrix, /BBox, /Group, then its paths,
+        glyphs, images and shadings in the group's space). Not by the bytes
+        of the group's content stream: two writers draw the same mask with
+        different operators, as they draw the same page. A path that paints
+        nothing and clips nothing is left out (`q Q`, `n`)."""
+        doc = self.doc
+        sm = doc.get(ref)
+        x = doc.get(sm.get("/G")) if isinstance(sm, dict) else None
+        if not isinstance(x, Stream):
+            return struct(doc, ref)
+        key = ref if isinstance(ref, str) else id(sm)
+        cache = self._smask_cache
+        if key in cache:
+            return cache[key]
+        cache[key] = "<cycle>"
+        matrix = doc.get(x.get("/Matrix"))
+        matrix = tuple(float(doc.get(v)) for v in matrix) if isinstance(matrix, list) else IDENTITY
+        g = GState()
+        g.ctm = matrix
+        out = Page()
+        fres = doc.get(x.get("/Resources"))
+        self.run(x.data, fres if isinstance(fres, dict) else {}, g, out, 1, "smask")
+        draws = {}
+        for kind, keys in self._MASK_KEYS.items():
+            draws[kind] = [{k: _plain(e.get(k)) for k in keys if k in e}
+                           for e in getattr(out, kind)
+                           if not (kind == "paths" and e.get("op") == "n" and not e.get("clip"))]
+        rest = {k: v for k, v in sm.items() if k != "/G"}
+        desc = Struct({"mask": doc.canon(rest, text_streams=True),
+                       "group": doc.canon(x.get("/Group")),
+                       "bbox": [float(doc.get(v)) for v in (doc.get(x.get("/BBox")) or [])],
+                       "matrix": list(matrix), "draws": draws})
+        cache[key] = desc
+        return desc
 
     def _shading_desc(self, ref):
         doc = self.doc

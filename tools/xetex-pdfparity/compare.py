@@ -46,6 +46,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 
 from content import scale_of  # noqa: E402
+from fonts import same_outline  # noqa: E402
 from model import extract  # noqa: E402
 from pdfdoc import Struct, close  # noqa: E402
 
@@ -289,7 +290,9 @@ def compare_fonts(ma, mb, opt, rep):
             rep.add("tounicode", "%s %s: %r vs %r" % (k[0], k[1], sorted(ua, key=str), sorted(ub, key=str)),
                     {"glyph": "%s %s" % k, "reference": sorted(ua, key=str), "candidate": sorted(ub, key=str)})
         oa, ob = {x[2] for x in a} - {None}, {x[2] for x in b} - {None}
-        if oa and ob and oa != ob:
+        if oa and ob and oa != ob and not (
+                all(any(same_outline(x, y) for y in ob) for x in oa)
+                and all(any(same_outline(x, y) for x in oa) for y in ob)):
             rep.add("glyph-outline", "%s %s: outline %s vs %s" % (k[0], k[1], sorted(oa), sorted(ob)))
 
 

@@ -2,8 +2,8 @@
 """Shared pdflatex-oracle helper: run, version stamp, overfull-box count.
 
 pdflatex is the ORACLE ONLY (never in the product path, never in cargo
-tests). The render-pipeline `*-oracle` generators each grew their own copy
-of this logic; this module is the single copy. Import it with the repo root
+tests). The old pipeline's `*-oracle` generators each grew their own copy
+of this logic (they were deleted with it in S7); this module is the single copy. Import it with the repo root
 on `sys.path`:
 
     REPO = <path to the repo root>

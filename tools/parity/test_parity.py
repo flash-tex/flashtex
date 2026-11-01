@@ -3,6 +3,8 @@
     python3 -m unittest discover -s tools/parity -p 'test_*.py' -v
 """
 
+import contextlib
+import faulthandler
 import gzip
 import io
 import json
@@ -15,11 +17,23 @@ import unittest
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 
+
+@contextlib.contextmanager
+def watchdog(seconds=180):
+    """A test that runs parity.main's process pool in this process: if it
+    has not finished in `seconds`, print every thread's stack and exit, so
+    a hang fails the CI step at once with where it hung, instead of eating
+    the job's timeout."""
+    faulthandler.dump_traceback_later(seconds, exit=True)
+    try:
+        yield
+    finally:
+        faulthandler.cancel_dump_traceback_later()
+
 import corpus  # noqa: E402
 import definers  # noqa: E402
 import glyphkeys  # noqa: E402
 import parity  # noqa: E402
-import rank  # noqa: E402  (tools/visual-oracle, on the path parity.py sets)
 
 
 def meta_path_of(root, meta):
@@ -31,12 +45,6 @@ def rg(name, x, y, font="CMR10", size=10.0, text=None):
     """A reference glyph record as pdftext.page_glyphs makes it."""
     return {"name": name, "x": x, "y_top": y, "font": font, "size": size, "text": text or "?", "advance": 5.0,
             "bt": 1, "code": 0}
-
-
-def cg(text, x, y, cluster=None, font="LMRoman10-Regular", size=10.0, sources=None):
-    """A candidate glyph record as rank.v2_page_glyphs makes it."""
-    return {"text": text, "x": x, "y_top": y, "font": font, "size": size, "advance": 5.0, "bt": 0,
-            "math": False, "sources": sources or [], "gid": 1, "cluster": cluster}
 
 
 class GlyphKeys(unittest.TestCase):
@@ -87,38 +95,32 @@ class Atoms(unittest.TestCase):
         self.assertGreaterEqual(a[0][4], 20.0)   # stack height + allowance
         self.assertEqual(a[1][4], 0.0)
 
-    def test_candidate_cluster_counted_once(self):
-        a = parity.candidate_atoms([cg("(", 50, 10, cluster=(0, 0)), cg("(", 50, 20, cluster=(0, 0)),
-                                    cg("x", 60, 25, cluster=(0, 1))])
-        self.assertEqual([x[0] for x in a], ["(", "x"])
-
-
 class Matching(unittest.TestCase):
     def test_exact_and_within_tolerance(self):
         ra = parity.reference_atoms([rg("a", 10, 10), rg("b", 20, 10)])
-        ca = parity.candidate_atoms([cg("a", 10.3, 10.2), cg("b", 20, 10)])
+        ca = parity.reference_atoms([rg("a", 10.3, 10.2), rg("b", 20, 10)])
         self.assertEqual(parity.match_within(ra, ca), ([], []))
 
     def test_beyond_tolerance_is_unmatched(self):
         ra = parity.reference_atoms([rg("a", 10, 10)])
-        ca = parity.candidate_atoms([cg("a", 10.6, 10)])
+        ca = parity.reference_atoms([rg("a", 10.6, 10)])
         self.assertEqual(parity.match_within(ra, ca), ([0], [0]))
 
     def test_same_char_nearest_wins(self):
         ra = parity.reference_atoms([rg("e", 10, 10), rg("e", 10.8, 10)])
-        ca = parity.candidate_atoms([cg("e", 10.75, 10), cg("e", 10.1, 10)])
+        ca = parity.reference_atoms([rg("e", 10.75, 10), rg("e", 10.1, 10)])
         self.assertEqual(parity.match_within(ra, ca), ([], []))
 
     def test_extension_glyph_is_held_on_x_only(self):
         ra = parity.reference_atoms([rg("summationdisplay", 100, 80, font="CMEX10")])
-        ok = parity.candidate_atoms([cg("∑", 100.2, 95, font="LatinModernMath-Regular")])
-        off = parity.candidate_atoms([cg("∑", 101, 80, font="LatinModernMath-Regular")])
+        ok = parity.reference_atoms([rg("summationdisplay", 100.2, 95, font="CMEX10")])
+        off = parity.reference_atoms([rg("summationdisplay", 101, 80, font="CMEX10")])
         self.assertEqual(parity.match_within(ra, ok), ([], []))
         self.assertEqual(parity.match_within(ra, off), ([0], [0]))
 
     def test_multiset(self):
         ra = parity.reference_atoms([rg("a", 0, 0), rg("b", 5, 0)])
-        ca = parity.candidate_atoms([cg("a", 0, 0), cg("c", 5, 0)])
+        ca = parity.reference_atoms([rg("a", 0, 0), rg("c", 5, 0)])
         missing, extra = parity.multiset_diff(ra, ca)
         self.assertEqual(dict(missing), {"b": 1})
         self.assertEqual(dict(extra), {"c": 1})
@@ -172,7 +174,7 @@ class Levels(unittest.TestCase):
         warn = {"severity": "warning", "code": "unsupported_feature",
                 "message": "packages tikz are recognised but not implemented [help: remove that \\usepackage]"}
         font = {"severity": "warning", "code": "math_resource_profile", "message": "lmmi10: glyphs drawn from ..."}
-        r0 = {"level": -1, "candidate": {"pdf": True, "v2": True, "errors": 1, "diagnostics": [diag_err, warn]}}
+        r0 = {"level": -1, "candidate": {"pdf": True, "errors": 1, "diagnostics": [diag_err, warn]}}
         self.assertEqual(parity.causes_for(r0, {}), ["unknown_command: cs \\foo"])
         r2 = {"level": 2, "divergence": "environment align (math glyph)",
               "candidate": {"diagnostics": [warn, font]}}
@@ -180,7 +182,7 @@ class Levels(unittest.TestCase):
                                                      "unsupported_feature: package tikz"])
         r3 = {"level": 3, "candidate": {"diagnostics": [font]}}
         self.assertEqual(parity.causes_for(r3, {}), ["fonts: math_resource_profile"])
-        crash = {"level": -1, "candidate": {"pdf": False, "v2": False, "errors": None, "exit": 101,
+        crash = {"level": -1, "candidate": {"pdf": False, "errors": None, "exit": 101,
                                             "stderr_tail": "thread 'main' panicked at src/x.rs:1:2:\nboom"}}
         self.assertTrue(parity.causes_for(crash, {})[0].startswith("engine: crash"))
 
@@ -191,6 +193,50 @@ class Levels(unittest.TestCase):
                 json.dump({"levels": {"a": 3, "b": 1, "gone": 0, "excl": None}}, f)
             rs = [self._r("a", 2), self._r("b", 4)]
             self.assertEqual(parity.check_baseline(rs, p), [("a", 3, 2), ("gone", 0, None)])
+
+    def test_baseline_host(self):
+        # RQ8: a baseline names its host; one recorded on another OS is refused,
+        # one on this OS (or a /1 baseline with no host) is checked as before
+        here = parity.baseline_host()
+        self.assertEqual(here["system"], parity.platform.system())
+        with tempfile.TemporaryDirectory() as d:
+            p = os.path.join(d, "b.json")
+            other = "Plan9" if here["system"] != "Plan9" else "Darwin"
+            with open(p, "w") as f:
+                json.dump({"host": {"system": other}, "levels": {"a": 1}}, f)
+            with self.assertRaises(parity.BaselineHostMismatch):
+                parity.check_baseline([self._r("a", 3)], p)
+            for host in (here, None):
+                with open(p, "w") as f:
+                    json.dump({"host": host, "levels": {"a": 1}}, f)
+                self.assertEqual(parity.check_baseline([self._r("a", 3)], p), [])
+
+    def test_the_default_engine_is_the_new_one(self):
+        # with no --engine the new engine is measured, and it wants its formats;
+        # the old engine's command line is gone (S7), so its flag is refused
+        from unittest import mock
+        with tempfile.TemporaryDirectory() as d, mock.patch.dict(os.environ, {}, clear=False):
+            for k in ("FLASHTEX_ENGINE", "FLASHTEX_FORMATS"):
+                os.environ.pop(k, None)
+            eng = os.path.join(d, "flashtex-initex")
+            with open(eng, "w") as f:
+                f.write("#!/bin/sh\necho 'pdfTeX 3.141592653-2.6-1.40.29 (flashtex-initex)'\n")
+            os.chmod(eng, 0o755)
+            missing = os.path.join(d, "none", "flashtex-initex")
+            err = io.StringIO()
+            with mock.patch.object(parity, "DEFAULT_ENGINE", eng), contextlib.redirect_stderr(err):
+                self.assertEqual(parity.main(["--tier", "fixtures", "--out", d, "--work", d]), 2)
+                self.assertIn("needs its formats", err.getvalue())
+                self.assertEqual(parity.main(["--tier", "fixtures", "--engine", missing, "--out", d, "--work", d]), 2)
+                self.assertIn(f"engine not found at {missing}", err.getvalue())
+                with self.assertRaises(SystemExit):
+                    parity.main(["--old-engine"])
+
+    def test_committed_fixtures_baseline_names_its_host(self):
+        with open(os.path.join(parity.REPO, "tools", "parity", "baseline-fixtures.json")) as f:
+            b = json.load(f)
+        self.assertEqual(b["schema"], "flashtex-parity-baseline/2")
+        self.assertIn("system", b["host"])
 
     def test_pt_gate(self):
         ok = {"id": "ok", "pt": {"P-T1": True, "P-T2": True, "why": {}}}
@@ -248,143 +294,6 @@ class Localise(unittest.TestCase):
                          "project .sty/.cls (read, incompletely)")
         self.assertEqual(g("unknown_command: cs \\x <- lipics-v2021.cls"), "class lipics-v2021")
         self.assertEqual(g("unknown_command: cs \\hspace (in math mode)"), "LaTeX kernel: \\hspace (in math mode)")
-
-
-Q20 = 1 << 20  # bp_2pow20
-
-
-def v2_page(number, words, y0=700.0):
-    """A display-list-v2 page: one glyph run per word, a glyph per character."""
-    items = [{"kind": "rule", "x": 0, "y": 0}]
-    for wi, word in enumerate(words):
-        text = word.encode("utf-8")
-        clusters, glyphs, x, start = [], [], 72.0, 0
-        for ci, ch in enumerate(word):
-            n = len(ch.encode("utf-8"))
-            clusters.append({"text_start_byte": start, "text_end_byte": start + n,
-                             "sources": [{"path": "main.tex", "start_byte": wi, "end_byte": wi + 1}]})
-            glyphs.append({"origin_x": int(x * Q20), "baseline_y": int((y0 - 12 * wi) * Q20),
-                           "advance_x": 5 * Q20, "advance_y": 0, "gid": 40 + ci, "cluster": ci})
-            start, x = start + n, x + 5.0
-        items.append({"kind": "glyph_run", "font_id": "f1", "font_size": 10 * Q20, "text": text.decode(),
-                      "clusters": clusters, "glyphs": glyphs, "paint": {"r": 0, "g": 0, "b": 0, "a": 1}})
-    return {"number": number, "width": 612 * Q20, "height": 792 * Q20, "items": items}
-
-
-def v2_doc(pages, pages_first=False):
-    rest = {"color_space": "srgb", "coordinate_unit": "bp_2pow20",
-            "fonts": [{"font_id": "f1", "postscript_name": "LMRoman10-Regular"}], "project_id": "p"}
-    payload = {"pages": pages, **rest} if pages_first else {**rest, "pages": pages}
-    return {"id": "main.tex", "payload": payload, "protocol_version": 2, "type": "display_list"}
-
-
-class V2Stream(unittest.TestCase):
-    """parity.V2Pages: the old engine's display list read one page at a time
-    (arXiv 2501.07559v2: 145,386 pages, 2.33 GB, about 17 GB to json.load)."""
-
-    def setUp(self):
-        self.d = tempfile.mkdtemp()
-        self.addCleanup(shutil.rmtree, self.d, True)
-
-    def write(self, obj, name="candidate.v2.json", indent=None):
-        p = os.path.join(self.d, name)
-        with open(p, "w", encoding="utf-8") as f:
-            json.dump(obj, f, indent=indent, ensure_ascii=False)
-        return p
-
-    def loaded(self, p):
-        with open(p, encoding="utf-8") as f:
-            return [pg["glyphs"] for pg in rank.v2_page_glyphs(json.load(f))]
-
-    def test_pages_are_json_loads_pages(self):
-        pages = [v2_page(i + 1, ["Hello", "x∈y", "−12.5"][: 1 + i % 3]) for i in range(7)]
-        saved = parity.JsonStream.CHUNK
-        try:
-            for chunk in (1, 7, 64, saved):  # values and keys cut at every kind of place
-                parity.JsonStream.CHUNK = chunk
-                for indent, first in ((None, False), (1, False), (None, True)):
-                    p = self.write(v2_doc(pages, pages_first=first), indent=indent)
-                    want = self.loaded(p)
-                    for keep in (0, 1, 3, 7, 12):
-                        v2 = parity.V2Pages(p, keep)
-                        self.assertEqual(len(v2), 7)
-                        self.assertEqual(list(v2.pages()), want[:keep], (chunk, indent, first, keep))
-        finally:
-            parity.JsonStream.CHUNK = saved
-
-    def test_unreadable_files_raise_as_json_load_did(self):
-        good = json.dumps(v2_doc([v2_page(1, ["a"])]))
-        for text, exc in ((good + " x", ValueError), (good[:-40], ValueError), ("", ValueError),
-                          (json.dumps({"payload": {"coordinate_unit": "bp_2pow20"}}), KeyError),
-                          (json.dumps({"type": "display_list"}), KeyError),
-                          (good.replace("bp_2pow20", "pt"), ValueError)):
-            p = os.path.join(self.d, "bad.json")
-            with open(p, "w", encoding="utf-8") as f:
-                f.write(text)
-            with self.assertRaises(exc, msg=text[-60:]):
-                parity.V2Pages(p, 1)
-        # a page that does not convert: raised while scoring, with its cause
-        bad = v2_doc([v2_page(1, ["a"]), v2_page(2, ["b"])])
-        del bad["payload"]["pages"][1]["items"][1]["glyphs"][0]["origin_x"]
-        v2 = parity.V2Pages(self.write(bad), 2)
-        with self.assertRaises(parity.UnreadablePage) as cm:
-            list(v2.pages())
-        self.assertIsInstance(cm.exception.__cause__, KeyError)
-        self.assertEqual(len(list(parity.V2Pages(self.write(bad), 1).pages())), 1)  # past `keep`: counted only
-
-    def test_memory_is_one_page_not_the_file(self):
-        import tracemalloc
-        words = ["word%d" % k for k in range(60)]
-        p = self.write(v2_doc([v2_page(i + 1, words) for i in range(800)]))
-        size = os.path.getsize(p)
-        self.assertGreater(size, 32 << 20)
-        tracemalloc.start()
-        try:
-            v2 = parity.V2Pages(p, 2)
-            got = list(v2.pages())
-            peak = tracemalloc.get_traced_memory()[1]
-        finally:
-            tracemalloc.stop()
-        self.assertEqual((len(v2), len(got), len(got[0])), (800, 2, sum(map(len, words))))
-        # json.load holds several times the file; this holds a read buffer and a page
-        self.assertLess(peak, 8 << 20, (peak, size))
-
-    def test_streamed_compare_scores_as_the_whole_list(self):
-        # reference: pages 1-4; candidate: page 2 moved, page 3 a different word, and 3 extra pages
-        ref = [[rg(c, 72 + 5 * k, 700.0, text=c) for k, c in enumerate(w)] for w in ("abc", "def", "ghi", "jkl")]
-        texts = ["abc", "def", "gxi", "jkl", "m", "n", "o"]
-        pages = [v2_page(i + 1, [w], y0=700.0 + (3.0 if i == 1 else 0.0)) for i, w in enumerate(texts)]
-        p = self.write(v2_doc(pages))
-        whole = self.loaded(p)
-        for n_ref in (4, 2, 7):
-            refs = (ref * 2)[:n_ref]
-            a = parity.compare_pages(refs, whole, len(whole), parity.candidate_atoms)
-            v2 = parity.V2Pages(p, len(refs))
-            b = parity.compare_pages(refs, v2.pages(), len(v2), parity.candidate_atoms)
-            self.assertEqual(a[1:5], b[1:5])  # errors, missing, extra, unmapped
-            self.assertEqual(a[0], b[0])
-            self.assertEqual(parity.first_divergence(a[0], refs, whole, {}),
-                             parity.first_divergence(b[0], refs, b[5], {}))
-            self.assertEqual(len(b[5]), 1)  # one candidate page kept: the first below L3
-            self.assertEqual([r.get("missing_page") for r in b[0]][n_ref:], ["reference"] * (7 - n_ref))
-
-
-class JsonStreamNumbers(unittest.TestCase):
-    """parity.JsonStream: a chunk boundary inside a number must not change it."""
-
-    def test_number_split_by_chunk_boundary(self):
-        docs = ['{"a": 1.5}', '{"a": 1e5}', '{"a": -2.5E-3}']
-        saved = parity.JsonStream.CHUNK
-        parity.JsonStream.CHUNK = 4  # every number above is cut mid-token
-        try:
-            for text in docs:
-                with io.StringIO(text) as f:
-                    s = parity.JsonStream(f)
-                    got = {k: s.value() for k in s.members()}
-                    s.end()
-                self.assertEqual(got, json.loads(text), text)
-        finally:
-            parity.JsonStream.CHUNK = saved
 
 
 class Definers(unittest.TestCase):
@@ -509,6 +418,54 @@ class Corpus(unittest.TestCase):
             self.assertEqual(ok["dir"], os.path.join(d, "cache", "src", "packages", "p-single"))
             self.assertEqual(sorted(os.listdir(ok["dir"])), [".parity-copied", "fig.png", "p.tex"])
             self.assertIn("sha256 mismatch", bad["problem"])
+
+    def test_arxiv_fetch_retries_verifies_and_never_caches_short_bytes(self):
+        import http.client
+        from unittest import mock
+        good = b"pinned e-print bytes"
+        answers = [http.client.IncompleteRead(b"pinned"), b"pinned", good]  # a cut read, a short body, the bytes
+        calls = []
+
+        def get(url, timeout=120):
+            calls.append(url)
+            a = answers.pop(0)
+            if isinstance(a, Exception):
+                raise a
+            return a
+        with tempfile.TemporaryDirectory() as d, mock.patch.object(corpus, "http_get", get), \
+                mock.patch.object(corpus.time, "sleep", lambda s: None):
+            man = os.path.join(d, "m.json")
+            with open(man, "w") as f:
+                json.dump({"tier": "nightly-5k", "entries": [
+                    {"id": "1603.06059v3", "url": "https://x/e-print/1603.06059v3", "sha256": corpus.sha256_bytes(good)},
+                    {"id": "1612.03571v1", "url": "https://x/e-print/1612.03571v1", "sha256": "0" * 64}]}, f)
+            cache = os.path.join(d, "cache")
+            with mock.patch.object(corpus, "unpack", lambda data, dest: os.makedirs(dest, exist_ok=True)):
+                rec = corpus.fetch_manifest(man, cache, log=lambda *_: None, delay=0, only={"1603.06059v3"})[0]
+                self.assertIsNone(rec["problem"])
+                self.assertEqual(len(calls), 3)
+                with open(os.path.join(cache, "eprints", "1603.06059v3"), "rb") as f:
+                    self.assertEqual(f.read(), good)
+                # changed bytes: fetched once more, then a sha256 mismatch, and nothing cached
+                answers[:] = [b"other", b"other"]
+                (bad,) = corpus.fetch_manifest(man, cache, log=lambda *_: None, delay=0, only={"1612.03571v1"})
+                self.assertIn("sha256 mismatch", bad["problem"])
+                self.assertFalse(os.path.exists(os.path.join(cache, "eprints", "1612.03571v1")))
+                # a network error on every try fails after FETCH_TRIES, and `fetch` exits non-zero
+                answers[:] = [OSError("reset")] * corpus.FETCH_TRIES
+                with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()) as err:
+                    rc = corpus.main(["--cache", cache, "--delay", "0", "fetch", "--manifest", man, "--shard", "1/2"])
+                self.assertEqual(rc, 1)
+                self.assertIn(f"fetch failed after {corpus.FETCH_TRIES} tries", err.getvalue())
+                self.assertEqual(answers, [])
+                # a cached file that is not the pinned bytes is fetched again
+                with open(os.path.join(cache, "eprints", "1603.06059v3"), "wb") as f:
+                    f.write(b"pin")
+                answers[:] = [good]
+                with contextlib.redirect_stdout(io.StringIO()):
+                    self.assertEqual(corpus.main(["--cache", cache, "--delay", "0", "fetch", "--manifest", man,
+                                                  "--shard", "0/2"]), 0)
+                self.assertEqual(answers, [])
 
     def test_packages_manifest_is_well_formed(self):
         with open(os.path.join(corpus.MANIFEST_DIR, "packages-texlive-2026.json"), encoding="utf-8") as f:
@@ -982,17 +939,6 @@ class PTOne(unittest.TestCase):
         self.assertEqual((r["ok"], r["boxes_equal"], r["log_line"]["line"]), (False, True, 8))
         d = capture.Capture(a.log, [BOX, BOX], "d.pdf")  # an extra shipout
         self.assertEqual(tiers.compare_pt1(a, d)["first_shipout"], 2)
-
-    def test_engine_kind_from_version_line(self):
-        with tempfile.TemporaryDirectory() as d:
-            for name, first, kind in (("f", "flashtex 0.1.0 (abc)", "flashtex-cli"),
-                                      ("p", "pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026)", "tex")):
-                p = os.path.join(d, name)
-                with open(p, "w") as f:
-                    f.write(f"#!/bin/sh\necho '{first}'\n")
-                os.chmod(p, 0o755)
-                self.assertEqual(tiers.engine_kind(p), kind)
-
 
 ACC_TAIL = ("{vertical mode: \\end}\n ) \nHere is how much of TeX's memory you used:\n 492 strings out of 467525\n"
             " 39i,8n,41p,191b,208s stack positions out of 10000i,1000n,20000p,200000b,200000s\n"
@@ -1525,7 +1471,7 @@ class PTWithOracle(unittest.TestCase):
         src = os.path.join(self.d, "warn")
         os.makedirs(src)
         _, _, pdf = self.build("fig", "Figure.")
-        subprocess.run(["qpdf", "--force-version=2.0", pdf, os.path.join(src, "fig.pdf")], check=True)
+        subprocess.run(["qpdf", "--force-version=2.0", pdf, os.path.join(src, "fig.pdf")], check=True, timeout=60)
         with open(os.path.join(src, "main.tex"), "w") as f:
             f.write("\\documentclass{article}\\usepackage{graphicx}\\begin{document}"
                     "\\includegraphics{fig.pdf}\\end{document}\n")
@@ -1608,9 +1554,10 @@ class PTWithOracle(unittest.TestCase):
                 if n:
                     time.sleep(2.1)  # a conversion of the candidate's own would carry another time
                 out, work = os.path.join(self.d, f"out{n}"), os.path.join(self.d, f"work{n}")
-                code = parity.main(["--tier", "packages", "--engine", engine, "--oracle-pdftex", PDFTEX,
-                                    "--shell-escape-flag=-shell-restricted", "--texmf", texmf, "--cache", cache,
-                                    "--raster", "none", "-j", "1", "--out", out, "--work", work, "--keep-work"])
+                with watchdog(600):
+                    code = parity.main(["--tier", "packages", "--engine", engine, "--oracle-pdftex", PDFTEX,
+                                        "--shell-escape-flag=-shell-restricted", "--texmf", texmf, "--cache", cache,
+                                        "--raster", "none", "-j", "1", "--out", out, "--work", work, "--keep-work"])
                 with open(os.path.join(out, "documents.json")) as f:
                     rec = json.load(f)["packages"][0]
                 entries = {p: os.stat(p).st_mtime_ns for p in glob.glob(os.path.join(cache, "pt-oracle", "*", "*",
@@ -1651,7 +1598,7 @@ class PTWithOracle(unittest.TestCase):
     def test_object_renumbering_is_invisible(self):
         _, _, p1 = self.build("a", "Hello world.")
         lin = os.path.join(self.d, "renumbered.pdf")
-        subprocess.run(["qpdf", "--linearize", "--object-streams=generate", p1, lin], check=True)
+        subprocess.run(["qpdf", "--linearize", "--object-streams=generate", p1, lin], check=True, timeout=60)
         self.assertTrue(tiers.compare_pt2(p1, lin, self.d)["ok"])
 
 
@@ -1774,7 +1721,7 @@ class NightlyDiskAndCommit(unittest.TestCase):
             else:
                 os.environ["GITHUB_SHA"] = saved
         head = subprocess.run(["git", "-C", nightly.REPO, "rev-parse", "HEAD"], capture_output=True,
-                              text=True).stdout.strip()
+                              text=True, timeout=60).stdout.strip()
         self.assertEqual(sha, head if len(head) == 40 else "f" * 40)
 
 
@@ -2028,8 +1975,7 @@ class NightlyRunKey(unittest.TestCase):
     def test_the_harness_includes_every_imported_module(self):
         names = {os.path.relpath(p, parity.REPO) for p in self.saved()}
         for m in ("tools/parity/parity.py", "tools/parity/tiers.py", "tools/parity/capture.py",
-                  "tools/real-world-corpus/run.py", "tools/visual-oracle/pdftext.py", "tools/visual-oracle/fontenv.py",
-                  "tools/visual-oracle/rank.py", "tools/visual-oracle/cumulative.py"):
+                  "tools/parity/harness.py", "tools/parity/pdftext.py", "tools/parity/wordalign.py"):
             self.assertIn(m, names)
 
     def test_each_input_changes_the_key(self):
@@ -2059,9 +2005,10 @@ class WorkerDeath(unittest.TestCase):
                         "case \"$(pwd)\" in *article-twocolumn*) kill -9 $PPID; sleep 5;; esac\nexit 1\n")
             os.chmod(probe, 0o755)
             out = os.path.join(d, "out")
-            code = parity.main(["--tier", "fixtures", "--only", a, "--only", b, "--engine", probe,
-                                "--pt", "off", "--raster", "none", "-j", "2", "--out", out,
-                                "--work", os.path.join(d, "work"), "--cache", os.path.join(d, "cache")])
+            with watchdog():
+                code = parity.main(["--tier", "fixtures", "--only", a, "--only", b, "--engine", probe,
+                                    "--pt", "off", "--raster", "none", "-j", "2", "--out", out,
+                                    "--work", os.path.join(d, "work"), "--cache", os.path.join(d, "cache")])
             self.assertEqual(code, parity.DIED_EXIT)
             with open(os.path.join(out, "documents.json")) as f:
                 recs = {r["id"]: r for r in json.load(f)["fixtures"]}
@@ -2422,7 +2369,8 @@ class PTStream(unittest.TestCase):
         while a LogPipe at `p` reads."""
         p = os.path.join(d, "main.log")
         with pt1stream.LogPipe(p, d, budget) as pipe:
-            subprocess.run([sys.executable, "-c", "import os, sys\np = sys.argv[1]\n" + body, p], check=True)
+            subprocess.run([sys.executable, "-c", "import os, sys\np = sys.argv[1]\n" + body, p], check=True,
+                           timeout=120)
         return pipe, p
 
     def test_log_pipe_reads_what_the_engine_writes(self):
@@ -2769,9 +2717,46 @@ sys.exit(0)
                     p.kill()
             self.assertEqual(self.work_dirs(cache), [])
 
+    def test_sigterm_exits_even_when_terminated_is_swallowed(self):
+        """A `Terminated` raised in a `__del__` is printed and dropped, and one
+        raised inside subprocess's lock handling can leave the worker blocked
+        on that lock; either way the worker must still exit, or the pool's
+        join of it hangs the run (CI, 2026-10). A second SIGTERM exits at once.
+        (With two signals the grace is long, 60 s, so "at once" is told apart
+        from "after the grace" with no tight bound on a loaded runner.)"""
+        for signals, grace in ((1, 0.5), (2, 60.0)):
+            child = f"""
+import sys, time
+sys.path.insert(0, {HERE!r})
+import parity
+parity.TERM_GRACE = {grace!r}
+parity.set_shell_escape("-no-shell-escape")  # installs the worker's SIGTERM handler
+print("ready", flush=True)
+while True:
+    try:
+        time.sleep(0.05)
+    except BaseException:  # what a __del__ does to an exception
+        pass
+"""
+            p = subprocess.Popen([sys.executable, "-c", child], stdout=subprocess.PIPE)
+            try:
+                self.assertEqual(p.stdout.readline().strip(), b"ready")
+                t0 = time.monotonic()
+                for _ in range(signals):
+                    p.send_signal(signal.SIGTERM)
+                    time.sleep(0.05)
+                self.assertEqual(p.wait(30), 128 + signal.SIGTERM)
+                if signals == 2:
+                    self.assertLess(time.monotonic() - t0, grace / 2)  # before the grace ran out
+            finally:
+                if p.poll() is None:
+                    p.kill()
+                p.wait(30)
+                p.stdout.close()
+
     def test_stale_work_dirs_are_swept_at_startup(self):
         dead = subprocess.Popen([sys.executable, "-c", "pass"])
-        dead.wait()
+        dead.wait(60)
         live = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"])
         try:
             with tempfile.TemporaryDirectory() as d:
@@ -2785,9 +2770,10 @@ sys.exit(0)
                 with open(probe, "w") as f:
                     f.write("#!/bin/sh\ncase \"$1\" in --version) echo 'pdfTeX probe'; exit 0;; esac\nexit 1\n")
                 os.chmod(probe, 0o755)
-                parity.main(["--tier", "fixtures", "--only", "real-world/article-twocolumn", "--engine", probe,
-                             "--pt", "off", "--raster", "none", "-j", "1", "--out", os.path.join(d, "out"),
-                             "--work", os.path.join(d, "work"), "--cache", cache])
+                with watchdog():
+                    parity.main(["--tier", "fixtures", "--only", "real-world/article-twocolumn", "--engine", probe,
+                                 "--pt", "off", "--raster", "none", "-j", "1", "--out", os.path.join(d, "out"),
+                                 "--work", os.path.join(d, "work"), "--cache", cache])
                 left = sorted(os.path.basename(x) for x in self.work_dirs(cache))
                 self.assertEqual(left, sorted([f"work-{live.pid}", "work-notapid"]))
                 for pid in (dead.pid, live.pid):  # a half-written cache file of each

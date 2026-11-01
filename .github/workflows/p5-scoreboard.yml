@@ -30,11 +30,12 @@
 #               takes the artifact, files the issues and pushes the summary,
 #               with the token scoped to those two steps.
 #
-# T4 (the 5k corpus) is not re-run here: it takes most of a night on its own.
+# T4 (the 5k corpus) is not re-run here on the self-hosted routes: it takes most
+# of a night on its own. (The hosted route splits it over hosted jobs: HOSTED.)
 # ONE ORACLE PER BOARD (DESIGN §8): its rows come from a T4 run measured on the
 # board's own host, against the same TeX Live:
-#   route pc   the artifacts `corpus-t4` (new engine) and `corpus-t4-v1` (v1)
-#              of nightly.yml's corpus-t4 job (#1276), uploaded in the last 36 h;
+#   route pc   the artifact `corpus-t4` (new engine) of nightly.yml's corpus-t4
+#              job (#1276), uploaded in the last 36 h;
 #   route mac  the artifact `corpus-t4-mac` of corpus-t4-mac.yml (P5-T4-MAC),
 #              uploaded in the last 7 days. That workflow uploads it under this
 #              name only once all 50 shards are done (a cycle takes more than
@@ -57,8 +58,8 @@
 # WHERE (the `route`, chosen by the pick job and read by every other job).
 # The official board is the NixOS PC's (P5-BOARD-T4, 2026-10-05: one host, one
 # oracle, so boards compare night to night; a heavy hosted Mac carried it for
-# three days and ran out of disk). `auto` (every scheduled run) is the PC when
-# its switch is on, and nothing otherwise: never a silent Mac stand-in.
+# three days and ran out of disk). `auto` (the 06:47 run) is the PC when its
+# switch is on, and the hosted route otherwise: never a silent Mac stand-in.
 #   pc: FLASHTEX_SELFHOSTED_LINUX = 1 (unset: FLASHTEX_SELFHOSTED_MAC stands in)
 #     the NixOS PC, [self-hosted, Linux, X64, flashtex-linux]. Its runners are
 #     user services in `flashtex.slice` (MemoryMax 20G, no swap, CPUQuota 800 %,
@@ -81,7 +82,14 @@
 #     time): one heavy job at a time on the heavy runner. A manual run entering
 #     that group while one is pending cancels the pending one (GitHub keeps
 #     one);
-#   else the `unavailable` job below, which fails: not measured is not green.
+#   hosted: every night at 02:23 (its own cron, whatever the switches say), and a
+#     manual run naming it, on any branch: GitHub-hosted ubuntu-latest jobs, with
+#     TeX Live 2026 from the pinned image HOSTED_TEXLIVE_IMAGE as the oracle, and
+#     T4 measured IN THE SAME RUN against that oracle (the hosted-* jobs below,
+#     HOSTED). It gates like the PC's board, files no issue (the PC's board owns
+#     them), and writes reports/<date>-hosted.* but not SUMMARY.md. It takes the
+#     concurrency group p5-scoreboard-hosted, so a PC board waiting for an
+#     offline PC never holds it.
 # The publish job names its reports from the route the board ran on, not from
 # the switches when it starts (a switch flipped during a 5 h board would have
 # filed a Mac board under the PC's names).
@@ -90,10 +98,12 @@
 # (tools/parity/oracle_provenance.py: in the host label, the run summary and
 # ORACLE.md), and a Mac board's reports carry a `-mac` suffix on the summary
 # branch. Compare boards only across the same oracle (DESIGN §8).
-# T4 runs the new engine only. Its old column is the committed one-off v1
-# measurement, tools/parity/baselines/t4-v1-oneoff.json (decision 1, ruled
-# 2026-10-02: v1 is frozen by D13), which scoreboard.py reads by default; a
-# `corpus-t4-v1` artifact, if a nightly ever uploads one, takes precedence.
+# Every run measures the new engine only: v1 was deleted in retirement stage
+# S7 (#1888), and nothing here builds, runs or downloads it. The old column is
+# the committed one-off v1 measurements, which scoreboard.py reads by default:
+# T3 from tools/parity/baselines/t3-v1-oneoff.json (v1's last board run,
+# p5-scoreboard 41203982275 at 5a42ab270; lane SCOREBOARD-POST) and T4 from
+# t4-v1-oneoff.json (decision 1, ruled 2026-10-02: v1 was frozen by D13).
 name: p5-scoreboard
 
 on:
@@ -101,6 +111,9 @@ on:
     # After nightly.yml's corpus-t4 deadline (it starts 08:17 UTC and starts
     # no shard after 22 h), so the T4 artifacts are the newest ones.
     - cron: '47 6 * * *'
+    # The hosted route (HOSTED below), every night, whatever the PC's switch says:
+    # it needs no self-hosted runner, so it completes while the PC is off.
+    - cron: '23 2 * * *'
   workflow_dispatch:
     inputs:
       issues:
@@ -112,14 +125,24 @@ on:
         required: false
         default: '0'
       route:
-        description: 'where the board runs: auto (the PC if its switch is on), pc (the NixOS PC, official) or mac (the heavy Mac, main only, unofficial)'
+        description: 'where the board runs: auto (the PC if its switch is on, else hosted), pc (the NixOS PC, official), mac (the heavy Mac, main only, unofficial) or hosted (GitHub-hosted, its own pinned oracle)'
         type: choice
-        options: [auto, pc, mac]
+        options: [auto, pc, mac, hosted]
         required: false
         default: auto
+      t4_jobs:
+        description: 'hosted route: GitHub-hosted jobs T4 is split over (its 50 shards packed evenly)'
+        required: false
+        default: '10'
+      t4_range:
+        description: 'hosted route: only T4 shards A-B (empty: all 50; any other is partial, never green)'
+        required: false
+        default: ''
 
 concurrency:
-  group: p5-scoreboard
+  # The hosted route has a group of its own: a self-hosted board waiting in the queue for
+  # an offline PC must not hold it.
+  group: ${{ (inputs.route == 'hosted' || github.event.schedule == '23 2 * * *') && 'p5-scoreboard-hosted' || 'p5-scoreboard' }}
   cancel-in-progress: false
 
 permissions:
@@ -130,6 +153,19 @@ env:
   # the same build settings as nightly.yml's corpus-t4 job, so the engine
   # binary (and its sha256, which scoreboard.py compares) can be the same
   CARGO_INCREMENTAL: "0"
+  # The hosted route's oracle: the official texlive/texlive:latest image (scheme-full, TeX
+  # Live 2026, pdfTeX 1.40.29) of 2026-10-04 pinned by digest, the same pin as
+  # nightly.yml's NIGHTLY_TEXLIVE_IMAGE, so every hosted board names one oracle night to
+  # night. A new pin is a reviewed change of this line (and starts a new series of boards).
+  HOSTED_TEXLIVE_IMAGE: texlive/texlive@sha256:a7ae4dfa9d521b5db14446872fa488b839021d1f604d0a3c74461784895f2a67
+  # The templates and packages tiers' pinned documents: the image has no doc files, so
+  # they come from this release asset, the same selection the PC keeps in
+  # ~/.cache/flashtex-corpus-texmf/texlive-2026 (scripts/ci/corpus-texmf-bundle.py, from
+  # MacTeX 2026's texmf-dist, texlive.tlpdb ca39e6791582), pinned by its sha256; parity.py
+  # checks every document against its manifest's sha256 as well.
+  CORPUS_TEXMF_RELEASE: corpus-texmf-tl2026-ca39e6791582
+  CORPUS_TEXMF_SHA256: 3d3723c3010b4ada6dc29ef998e7b4b468ac8c65d7c3fbcac4feed844b1f428b
+  T4_SHARDS: "50"
 
 jobs:
   pick:
@@ -155,7 +191,7 @@ jobs:
         id: pick
         env:
           GH_TOKEN: ${{ github.token }}
-          WANT: ${{ inputs.route || 'auto' }}
+          WANT: ${{ inputs.route || (github.event.schedule == '23 2 * * *' && 'hosted') || 'auto' }}
           # the NixOS switch (ci.yml `plan`, selfhosted_linux; unset: the Mac switch stands in)
           LINUX_ON: ${{ (vars.FLASHTEX_SELFHOSTED_LINUX || vars.FLASHTEX_SELFHOSTED_MAC) == '1' }}
           MAC_ON: ${{ vars.FLASHTEX_SELFHOSTED_MAC == '1' && github.ref == 'refs/heads/main' }}
@@ -166,13 +202,19 @@ jobs:
             mac)
               [ "$MAC_ON" = true ] || { echo "::error::route mac needs FLASHTEX_SELFHOSTED_MAC=1 and a run of main"; exit 1; }
               route=mac ;;
+            hosted) route=hosted ;;
             auto)
-              # the official host only (see WHERE): a Mac board is asked for by name
-              if [ "$LINUX_ON" = true ]; then route=pc; else route=""; fi ;;
-            *) echo "::error::route $WANT: expected auto, pc or mac"; exit 1 ;;
+              # the official host when its switch is on (see WHERE), else the hosted
+              # route; a Mac board is asked for by name
+              if [ "$LINUX_ON" = true ]; then route=pc; else route=hosted; fi ;;
+            *) echo "::error::route $WANT: expected auto, pc, mac or hosted"; exit 1 ;;
           esac
           echo "route=$route" >> "$GITHUB_OUTPUT"
-          [ -n "$route" ] || exit 0  # scoreboard-unavailable says why
+          if [ "$route" = hosted ]; then
+            # T4 is measured in this run, at this run's commit (HOSTED)
+            echo "sha=$GITHUB_SHA" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
           # The board checks out and builds the commit this picks, on a self-hosted
           # runner: only this repository's own schedule/dispatch run of the route's
           # workflow on main qualifies, at a commit of main (always checked), never a
@@ -183,7 +225,7 @@ jobs:
   scoreboard:
     name: P5 scoreboard (new vs v1, every tier)
     needs: pick
-    if: needs.pick.outputs.route != ''
+    if: needs.pick.outputs.route == 'pc' || needs.pick.outputs.route == 'mac'
     # the route pick chose (see WHERE)
     runs-on: ${{ needs.pick.outputs.route == 'pc' && fromJSON('["self-hosted","Linux","X64","flashtex-linux"]') || fromJSON('["self-hosted","macOS","ARM64","flashtex","flashtex-heavy"]') }}
     # One heavy job at a time per host: on the PC the board and nightly.yml's T4
@@ -268,14 +310,10 @@ jobs:
           id: ${{ needs.pick.outputs.id }}
         run: |
           set -uo pipefail
-          if [ "$ROUTE" = mac ]; then new=corpus-t4-mac old=""; else new=corpus-t4 old=corpus-t4-v1; fi
+          if [ "$ROUTE" = mac ]; then new=corpus-t4-mac; else new=corpus-t4; fi
           gh run download "$id" --repo "$GITHUB_REPOSITORY" -n "$new" -D "$RUNNER_TEMP/t4-new" ||
             echo "::notice::run $id has no $new artifact: T4 (new) reads missing"
-          if [ -n "$old" ]; then
-            gh run download "$id" --repo "$GITHUB_REPOSITORY" -n "$old" -D "$RUNNER_TEMP/t4-old" ||
-              echo "::notice::run $id has no $old artifact: T4 (old) is the v1 one-off baseline (decision 1)"
-          fi
-      - name: every tier, both engines, then the board (no token in this step)
+      - name: every tier, then the board (no token in this step)
         # scoreboard-run.sh passes the oracle.json written above to scoreboard.py
         # --oracle: a T4 run measured against any other oracle reads INVALID
         run: |
@@ -297,7 +335,7 @@ jobs:
             else echo "::error::systemd-run --user is unavailable: the official board runs only in its own scope (see WHERE)"; exit 1; fi
           fi
           ${wrap[@]+"${wrap[@]}"} tools/parity/scoreboard-run.sh --out "$RUNNER_TEMP/p5" --jobs 2 \
-            --t4-new "$RUNNER_TEMP/t4-new" --t4-old "$RUNNER_TEMP/t4-old" ${extra[@]+"${extra[@]}"} -- \
+            --t4-new "$RUNNER_TEMP/t4-new" ${extra[@]+"${extra[@]}"} -- \
             --host-label "$RUNNER_NAME ($ROUTE; $ORACLE_ID; tools ${GITHUB_SHA::9})" \
             --run-url "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" \
             --summary "$RUNNER_TEMP/p5/SUMMARY.md" --issues off
@@ -321,13 +359,360 @@ jobs:
       # has already removed its work directory).
       - name: free this runner's disk
         if: always()
-        run: rm -rf "$RUNNER_TEMP/p5" "$RUNNER_TEMP/t4-new" "$RUNNER_TEMP/t4-old"
+        run: rm -rf "$RUNNER_TEMP/p5" "$RUNNER_TEMP/t4-new"
+
+  # ---- HOSTED: the board on GitHub-hosted Ubuntu (S4(a), lane S4A-HOSTED-BOARD) ----------
+  # Every tier and T4, at this run's commit, against one oracle: TeX Live 2026 from the
+  # pinned image HOSTED_TEXLIVE_IMAGE, the same in every job and at the same path. Its
+  # reports carry `-hosted` (another oracle than the PC's), it files no issue (the PC's
+  # board owns the p5-red issues) and it gates: the run fails unless the board is all
+  # green. A hosted job has at most 6 h, and the PC's board alone took 2 h with warm
+  # caches, so the board is split like sweeps.yml's sweeps (one job each).
+  #   hosted-build  one build per commit (kept in the Actions cache by SHA and image): the
+  #                 new engine alone (as scoreboard-run.sh builds it), its formats
+  #                 (nightly.py make-formats, as T4's); every other job unpacks it
+  #                 at the same path and checks its sha256;
+  #   hosted-t4     T4 (nightly-5k), its 50 shards packed into `t4_jobs` jobs
+  #                 (scripts/ci/p5-hosted-t4.sh score);
+  #   hosted-part   the board's own stages, one per job: parity per tier group (both
+  #                 engines), T2 per side, package-smoke + fonts (scoreboard-run.sh
+  #                 --skip ... --no-board);
+  #   hosted-board  merges T4's shards (p5-hosted-t4.sh merge) and collects the parts into
+  #                 one board (scoreboard-run.sh --collect), measured with the T4 run's own
+  #                 binary: scoreboard.py checks every run's engine sha256 and oracle.
+  # No secrets and read-only tokens: these jobs need no fork guard (DESIGN §9.3).
+  hosted-build:
+    name: "hosted: build the engines"
+    needs: pick
+    if: needs.pick.outputs.route == 'hosted'
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    outputs:
+      initex_sha256: ${{ steps.pack.outputs.initex_sha256 }}
+      host_id: ${{ steps.pack.outputs.host_id }}
+      t4_ranges: ${{ steps.pack.outputs.t4_ranges }}
+    steps:
+      - name: free disk (the TeX Live image and its copy take ~12 GB)
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/local/.ghcup /opt/hostedtoolcache/CodeQL
+          sudo docker image prune --all --force || true
+          df -h /
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/cache@v4
+        id: cache
+        with:
+          path: ${{ runner.temp }}/p5-engines.tar
+          key: p5-hosted-engines-${{ github.sha }}-${{ env.HOSTED_TEXLIVE_IMAGE }}
+      - uses: ./.github/actions/texlive-2026
+        if: steps.cache.outputs.cache-hit != 'true'
+        with:
+          image: ${{ env.HOSTED_TEXLIVE_IMAGE }}
+          cache: "false"
+      # Pinned, as the board's other routes and both T4 jobs (see the scoreboard job).
+      - uses: dtolnay/rust-toolchain@master
+        if: steps.cache.outputs.cache-hit != 'true'
+        with:
+          toolchain: "1.99.0"
+      - name: the new engine and its formats
+        # v1 (the old engine) was deleted in retirement stage S7: nothing builds it
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: |
+          set -euo pipefail
+          cargo build --release --locked -p flashtex-engine --bin flashtex-initex
+          e="$RUNNER_TEMP/p5-engine"
+          mkdir -p "$e"
+          cp target/release/flashtex-initex crates/flashtex-engine/pdftex.pool "$e/"
+          python3 tools/parity/nightly.py make-formats --engine "$e/flashtex-initex" --pool "$e/pdftex.pool" --out "$e"
+          tar -C "$RUNNER_TEMP" -cf "$RUNNER_TEMP/p5-engines.tar" p5-engine
+      - name: the build's sha256, the hosted host id, the T4 jobs
+        id: pack
+        env:
+          T4_JOBS: ${{ inputs.t4_jobs || '10' }}
+          T4_RANGE: ${{ inputs.t4_range || '' }}
+        run: |
+          set -euo pipefail
+          tar -C "$RUNNER_TEMP" -xf "$RUNNER_TEMP/p5-engines.tar" p5-engine/flashtex-initex
+          sha=$(sha256sum "$RUNNER_TEMP/p5-engine/flashtex-initex" | cut -c1-64)
+          echo "flashtex-initex sha256 $sha"
+          echo "initex_sha256=$sha" >> "$GITHUB_OUTPUT"
+          # one machine identity for the hosted pool with this image (p5-hosted-t4.sh)
+          echo "host_id=$(printf 'github-hosted|%s|%s' "$ImageOS" "$HOSTED_TEXLIVE_IMAGE" | sha256sum | cut -c1-32)" >> "$GITHUB_OUTPUT"
+          case "$T4_JOBS" in ''|*[!0-9]*|0) echo "::error::t4_jobs $T4_JOBS is not a positive number"; exit 1 ;; esac
+          lo=0 hi=$((T4_SHARDS - 1))
+          if [ -n "$T4_RANGE" ]; then lo=${T4_RANGE%-*} hi=${T4_RANGE#*-}; fi
+          ranges=$(python3 -c '
+          import json, sys
+          lo, hi, n = map(int, sys.argv[1:])
+          ks = list(range(lo, hi + 1)); n = max(1, min(n, len(ks)))
+          parts = [ks[i * len(ks) // n:(i + 1) * len(ks) // n] for i in range(n)]
+          print(json.dumps([{"range": f"{p[0]}-{p[-1]}"} for p in parts if p]))' "$lo" "$hi" "$T4_JOBS")
+          echo "T4 jobs: $ranges"
+          echo "t4_ranges=$ranges" >> "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: p5-hosted-engines
+          path: ${{ runner.temp }}/p5-engines.tar
+          retention-days: 3
+
+  hosted-t4:
+    name: "hosted: T4 shards ${{ matrix.range }}"
+    needs: [pick, hosted-build]
+    runs-on: ubuntu-latest
+    timeout-minutes: 330
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.hosted-build.outputs.t4_ranges) }}
+    env:
+      FLASHTEX_REQUIRE_TEXLIVE: "1"
+      P5_HOST_ID: ${{ needs.hosted-build.outputs.host_id }}
+    steps:
+      - name: free disk (the TeX Live image and its copy take ~12 GB)
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/local/.ghcup /opt/hostedtoolcache/CodeQL
+          sudo docker image prune --all --force || true
+          df -h /
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/texlive-2026
+        with:
+          image: ${{ env.HOSTED_TEXLIVE_IMAGE }}
+          cache: "false"
+      - name: qpdf (P-T2)
+        run: command -v qpdf || { sudo apt-get update -qq && sudo apt-get install -y -qq qpdf; }
+      - uses: actions/download-artifact@v4
+        with:
+          name: p5-hosted-engines
+          path: ${{ runner.temp }}
+      - name: the build (sha256 checked)
+        env:
+          WANT: ${{ needs.hosted-build.outputs.initex_sha256 }}
+        run: |
+          set -euo pipefail
+          tar -C "$RUNNER_TEMP" -xf "$RUNNER_TEMP/p5-engines.tar"
+          echo "$WANT  $RUNNER_TEMP/p5-engine/flashtex-initex" | sha256sum -c -
+          {
+            echo "ENGINE_DIR=$RUNNER_TEMP/p5-engine"
+            echo "FLASHTEX_NIGHTLY_HOME=$RUNNER_TEMP/nightly"
+          } >> "$GITHUB_ENV"
+      - name: T4 shards ${{ matrix.range }}
+        env:
+          RANGE: ${{ matrix.range }}
+        run: scripts/ci/p5-hosted-t4.sh score "$RANGE"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: t4-shards-${{ matrix.range }}
+          # run.json and each finished shard's scoreboard.json, documents.json, done.json
+          path: ${{ runner.temp }}/nightly/runs
+          if-no-files-found: ignore
+          retention-days: 3
+
+  hosted-part:
+    name: "hosted: ${{ matrix.name }}"
+    needs: [pick, hosted-build]
+    runs-on: ubuntu-latest
+    timeout-minutes: 330
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { id: fixtures, name: "parity fixtures", args: "--tiers fixtures --skip 't2 smoke fonts'" }
+          - { id: arxiv, name: "parity arxiv", args: "--tiers arxiv --skip 't2 smoke fonts'" }
+          - { id: texlive, name: "parity templates + packages", args: "--tiers 'templates packages' --skip 't2 smoke fonts'" }
+          - { id: t2-ref, name: "T2 (pdfTeX reference)", args: "--skip 'parity t2-new smoke fonts'" }
+          - { id: t2-new, name: "T2 (new engine)", args: "--skip 'parity t2-ref smoke fonts'" }
+          - { id: smoke-fonts, name: "package-smoke + fonts", args: "--skip 'parity t2'" }
+    env:
+      FLASHTEX_REQUIRE_TEXLIVE: "1"
+      LIMIT: ${{ github.event.inputs.limit || '0' }}
+    steps:
+      - name: free disk (the TeX Live image and its copy take ~12 GB)
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/local/.ghcup /opt/hostedtoolcache/CodeQL
+          sudo docker image prune --all --force || true
+          df -h /
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/texlive-2026
+        with:
+          image: ${{ env.HOSTED_TEXLIVE_IMAGE }}
+          cache: "false"
+      - name: qpdf (P-T2)
+        run: command -v qpdf || { sudo apt-get update -qq && sudo apt-get install -y -qq qpdf; }
+      - uses: actions/download-artifact@v4
+        with:
+          name: p5-hosted-engines
+          path: ${{ runner.temp }}
+      - name: the build (sha256 checked)
+        env:
+          WANT: ${{ needs.hosted-build.outputs.initex_sha256 }}
+        run: |
+          set -euo pipefail
+          tar -C "$RUNNER_TEMP" -xf "$RUNNER_TEMP/p5-engines.tar"
+          echo "$WANT  $RUNNER_TEMP/p5-engine/flashtex-initex" | sha256sum -c -
+      - name: the TeX Live tiers' pinned documents (the image has no doc files)
+        if: matrix.id == 'texlive'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          d="$RUNNER_TEMP/corpus-dl"
+          mkdir -p "$d" "$RUNNER_TEMP/corpus-texmf"
+          gh release download "$CORPUS_TEXMF_RELEASE" --repo "$GITHUB_REPOSITORY" -p '*.tar.xz' -D "$d"
+          echo "$CORPUS_TEXMF_SHA256  $d/$CORPUS_TEXMF_RELEASE.tar.xz" | sha256sum -c -
+          # times kept: parity.py copies with times (tiers.GENERATED)
+          tar -C "$RUNNER_TEMP/corpus-texmf" -xJf "$d/$CORPUS_TEXMF_RELEASE.tar.xz"
+          rm -rf "$d"
+      - name: ${{ matrix.name }} (no token in this step)
+        env:
+          ARGS: ${{ matrix.args }}
+          ID: ${{ matrix.id }}
+        run: |
+          set -euo pipefail
+          extra=()
+          if [ "$LIMIT" != "0" ]; then extra+=(--limit "$LIMIT"); fi
+          if [ "$ID" = texlive ]; then extra+=(--corpus-texmf "$RUNNER_TEMP/corpus-texmf"); fi
+          eval "part=($ARGS)"
+          rc=0
+          tools/parity/scoreboard-run.sh --out "$RUNNER_TEMP/p5" --jobs "$(nproc)" --no-board \
+            --engine-dir "$RUNNER_TEMP/p5-engine" \
+            "${part[@]}" ${extra[@]+"${extra[@]}"} || rc=$?
+          # one name per part, so the board job can put every part in one directory
+          cd "$RUNNER_TEMP/p5"
+          rm -rf work oracle.json
+          for f in parity-new parity-new.log corpus-fetch.log t2-fetch.log; do
+            [ -e "$f" ] || continue
+            case "$f" in *.log) mv "$f" "${f%.log}-$ID.log" ;; *) mv "$f" "$f-$ID" ;; esac
+          done
+          ls -la
+          # a stage that did not complete still leaves its rows (missing or invalid)
+          if [ "$rc" -ne 0 ]; then echo "::warning::scoreboard-run.sh exit $rc: see the part's logs"; fi
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: board-part-${{ matrix.id }}
+          path: ${{ runner.temp }}/p5
+          if-no-files-found: ignore
+          retention-days: 7
+
+  hosted-board:
+    name: P5 scoreboard (new vs v1, every tier; GitHub-hosted)
+    needs: [pick, hosted-build, hosted-t4, hosted-part]
+    # the parts that ran still make a board (what is missing reads missing)
+    if: always() && needs.pick.outputs.route == 'hosted' && needs.hosted-build.result == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      FLASHTEX_REQUIRE_TEXLIVE: "1"
+      P5_HOST_ID: ${{ needs.hosted-build.outputs.host_id }}
+      LIMIT: ${{ github.event.inputs.limit || '0' }}
+      T4_RANGE: ${{ inputs.t4_range || '' }}
+    steps:
+      - name: free disk (the TeX Live image and its copy take ~12 GB)
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/local/.ghcup /opt/hostedtoolcache/CodeQL
+          sudo docker image prune --all --force || true
+          df -h /
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/texlive-2026
+        with:
+          image: ${{ env.HOSTED_TEXLIVE_IMAGE }}
+          cache: "false"
+      - uses: actions/download-artifact@v4
+        with:
+          name: p5-hosted-engines
+          path: ${{ runner.temp }}
+      - name: the build (sha256 checked)
+        env:
+          WANT: ${{ needs.hosted-build.outputs.initex_sha256 }}
+        run: |
+          set -euo pipefail
+          tar -C "$RUNNER_TEMP" -xf "$RUNNER_TEMP/p5-engines.tar"
+          echo "$WANT  $RUNNER_TEMP/p5-engine/flashtex-initex" | sha256sum -c -
+          {
+            echo "ENGINE_DIR=$RUNNER_TEMP/p5-engine"
+            echo "FLASHTEX_NIGHTLY_HOME=$RUNNER_TEMP/nightly"
+          } >> "$GITHUB_ENV"
+      - name: which oracle (DESIGN §8 provenance)
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/p5"
+          id=$(python3 tools/parity/oracle_provenance.py \
+                 --markdown "$RUNNER_TEMP/p5/ORACLE.md" --json "$RUNNER_TEMP/p5/oracle.json")
+          echo "$id"
+          echo "ORACLE_ID=$id" >> "$GITHUB_ENV"
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: t4-shards-*
+          path: ${{ runner.temp }}/nightly/runs
+          merge-multiple: true
+      - name: T4, every job's shards in one summary
+        env:
+          T4_OUT: ${{ runner.temp }}/t4-new
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/nightly/runs"
+          if [ -z "$(ls -A "$RUNNER_TEMP/nightly/runs")" ]; then
+            echo "::warning::no T4 shard came back: the T4 rows read missing"; exit 0
+          fi
+          scripts/ci/p5-hosted-t4.sh merge
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: board-part-*
+          path: ${{ runner.temp }}/p5
+          merge-multiple: true
+      - name: every part, and T4, on one board (no token in this step)
+        run: |
+          set -euo pipefail
+          extra=()
+          note=""
+          [ "$LIMIT" = "0" ] || note="workflow_dispatch limit=$LIMIT"
+          [ -z "$T4_RANGE" ] || note="${note:+$note; }T4 shards $T4_RANGE only"
+          [ -z "$note" ] || extra+=(--sample-note "$note")
+          tools/parity/scoreboard-run.sh --out "$RUNNER_TEMP/p5" --collect --skip "parity t2 smoke fonts" \
+            --engine-dir "$RUNNER_TEMP/p5-engine" \
+            --t4-new "$RUNNER_TEMP/t4-new" ${extra[@]+"${extra[@]}"} -- \
+            --host-label "GitHub-hosted $ImageOS (hosted; $ORACLE_ID; tools ${GITHUB_SHA::9})" \
+            --run-url "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" \
+            --summary "$RUNNER_TEMP/p5/SUMMARY.md" --issues off
+      - name: report
+        if: always()
+        run: |
+          [ -f "$RUNNER_TEMP/p5/ORACLE.md" ] && cat "$RUNNER_TEMP/p5/ORACLE.md" >> "$GITHUB_STEP_SUMMARY"
+          [ -f "$RUNNER_TEMP/p5/board/scoreboard.md" ] || exit 0
+          cat "$RUNNER_TEMP/p5/board/scoreboard.md" >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: p5-scoreboard
+          path: |
+            ${{ runner.temp }}/p5
+            !${{ runner.temp }}/p5/work
+          if-no-files-found: ignore
+          retention-days: 30
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: corpus-t4-hosted
+          # summary.md/json and documents.json (one small record per document); never logs
+          path: ${{ runner.temp }}/t4-new
+          if-no-files-found: ignore
+          retention-days: 30
 
   publish:
     name: P5 scoreboard issues and summary
-    needs: [pick, scoreboard]
+    needs: [pick, scoreboard, hosted-board]
     # a harness that failed still leaves a board (its rows read invalid or missing)
-    if: always() && (needs.scoreboard.result == 'success' || needs.scoreboard.result == 'failure')
+    if: >-
+      always() && (needs.scoreboard.result == 'success' || needs.scoreboard.result == 'failure' ||
+      needs.hosted-board.result == 'success' || needs.hosted-board.result == 'failure')
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
@@ -337,10 +722,13 @@ jobs:
       # only the official board (the PC) files issues and gates; from the route the board
       # ran on, not the switches now
       OFFICIAL: ${{ needs.pick.outputs.route == 'pc' }}
+      # the PC's board and the hosted one gate (the run fails unless all green); a Mac's does not
+      GATE: ${{ needs.pick.outputs.route == 'pc' || needs.pick.outputs.route == 'hosted' }}
       ISSUES: ${{ needs.pick.outputs.route == 'pc' && (github.event.inputs.issues || 'apply') || 'off' }}
       LIMIT: ${{ github.event.inputs.limit || '0' }}
       # the PC's reports keep their names; a Mac's carry -mac (another oracle)
-      SUFFIX: ${{ needs.pick.outputs.route == 'pc' && '' || '-mac' }}
+      # (and a hosted board's -hosted: its own oracle, the pinned image)
+      SUFFIX: ${{ needs.pick.outputs.route == 'pc' && '' || (needs.pick.outputs.route == 'hosted' && '-hosted' || '-mac') }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -372,7 +760,7 @@ jobs:
           if git fetch --depth 1 "$url" "$b"; then git worktree add -B "$b" "$d" FETCH_HEAD
           else git worktree add --detach "$d" && git -C "$d" checkout --orphan "$b" && git -C "$d" rm -rfq .; fi
           mkdir -p "$d/reports"
-          # SUMMARY.md is the official board's (the PC); an unofficial Mac board adds its report only
+          # SUMMARY.md is the official board's (the PC); a Mac or hosted board adds its report only
           if [ "$OFFICIAL" = true ]; then
             cp "$RUNNER_TEMP/p5/SUMMARY.md" "$d/SUMMARY.md"
             if [ -f "$RUNNER_TEMP/p5/ORACLE.md" ]; then { echo; cat "$RUNNER_TEMP/p5/ORACLE.md"; } >> "$d/SUMMARY.md"; fi
@@ -389,23 +777,10 @@ jobs:
           git -C "$d" push "$url" "$b"
       # The gate, last, so the issues and the summary are written first: the run fails
       # unless the official board is all green (every row green, every run complete).
-      - name: the gate (the official board is all green)
-        if: env.OFFICIAL == 'true'
+      - name: the gate (the official or hosted board is all green)
+        if: env.GATE == 'true'
         run: |
           set -euo pipefail
           [ -f "$RUNNER_TEMP/p5/board/scoreboard.json" ] || { echo "::error::P5 scoreboard gate: no board was written"; exit 1; }
           python3 tools/parity/scoreboard.py --from-board "$RUNNER_TEMP/p5/board/scoreboard.json" \
             --issues off --require-green
-
-  scoreboard-unavailable:
-    name: P5 scoreboard (new vs v1, every tier)
-    needs: pick
-    if: needs.pick.outputs.route == ''
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    steps:
-      # Not measured is not green: the gate fails while its host is off.
-      - run: |
-          echo "::error::not measured: the official P5 scoreboard runs on the NixOS PC (TeX Live 2026), whose switch FLASHTEX_SELFHOSTED_LINUX is off. A Mac board (unofficial) is a manual run with route mac."
-          echo "Set \`gh variable set FLASHTEX_SELFHOSTED_LINUX --body 1\` once the PC's runners are registered." >> "$GITHUB_STEP_SUMMARY"
-          exit 1

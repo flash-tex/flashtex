@@ -307,6 +307,31 @@ def read_transform(rest):
     return m
 
 
+_UNIT_BP = {"pt": 72 / 72.27, "bp": 1.0, "mm": 72 / 25.4, "cm": 72 / 2.54, "in": 72.0,
+            "pc": 12 * 72 / 72.27, "dd": 1238 / 1157 * 72 / 72.27, "cc": 12 * 1238 / 1157 * 72 / 72.27,
+            "sp": 72 / 72.27 / 65536}
+
+
+def paper_height(text):
+    """The page height (bp) a `papersize=W,H` or `pdf:pagesize ... height H`
+    special sets, or None (crates/flashtex-xetex/src/out/special.rs
+    `paper_of`). dvipdfmx puts the page origin at this height, unrounded,
+    while it rounds the MediaBox to 0.01 bp (PLAN.md §4B)."""
+    t = text.strip()
+    dim = r"(-?[\d.]+)\s*(?:true)?\s*(pt|bp|mm|cm|in|pc|dd|cc|sp)"
+    if t.startswith("papersize="):
+        m = re.match(r"papersize=\s*" + dim + r"\s*,\s*" + dim, t)
+        return float(m.group(3)) * _UNIT_BP[m.group(4)] if m else None
+    if re.match(r"pdf:\s*(pagesize|papersize)\b", t):
+        if re.search(r"\bletter\b", t):
+            return 792.0
+        if re.search(r"\ba4\b", t):
+            return 841.88976
+        m = re.search(r"height\s+" + dim, t)
+        return float(m.group(1)) * _UNIT_BP[m.group(2)] if m else None
+    return None
+
+
 def xdv_glyphs(path):
     """Per page: [(x_dvi, y_dvi, glyph or char code, native?, size, px, py)]
     and conv (bp per DVI unit). (px, py) is the glyph's page position less
@@ -323,6 +348,8 @@ def xdv_glyphs(path):
     stack = []
     sp = Specials()
     conv = 1.0
+    heights = []  # per page, a paper-size special's height (bp) or None
+    paper = None
 
     def at(hh, vv):
         return sp.point(hh * conv, -vv * conv)
@@ -360,6 +387,7 @@ def xdv_glyphs(path):
         elif op == 139:
             i += 44
             pages.append([])
+            heights.append(paper)
             h = v = w = x = y = z = 0
             stack = []
             sp = Specials()
@@ -396,7 +424,11 @@ def xdv_glyphs(path):
         elif 239 <= op <= 242:
             k = u(op - 238)  # not `i += u(...)`: that reads i before u moves it
             if pages:
-                sp.special(b[i:i + k].decode("latin-1"), h * conv, -v * conv)
+                text = b[i:i + k].decode("latin-1")
+                ph = paper_height(text)
+                if ph is not None:
+                    paper = heights[-1] = ph
+                sp.special(text, h * conv, -v * conv)
             i += k
         elif 243 <= op <= 246:
             k = u(op - 242)
@@ -437,6 +469,7 @@ def xdv_glyphs(path):
             h += wd
         else:
             raise ValueError("XDV opcode %d at %d" % (op, i - 1))
+    xdv_glyphs.paper_heights = heights
     return pages, conv
 
 
@@ -492,8 +525,11 @@ def xdv_check(model, xdv, tol=0.001, radius=1.0, examples=5):
     if len(pages) != len(model.pages):
         out["examples"].append("pages: XDV %d, PDF %d" % (len(pages), len(model.pages)))
         out["over"] += 1
-    for pm, xp in zip(model.pages, pages):
-        H = pm.box["MediaBox"][3]
+    heights = getattr(xdv_glyphs, "paper_heights", [])
+    for k, (pm, xp) in enumerate(zip(model.pages, pages)):
+        # the origin is at the paper size's unrounded height where a special
+        # set one, as dvipdfmx and FlashTeX's writer put it
+        H = heights[k] if k < len(heights) and heights[k] is not None else pm.box["MediaBox"][3]
         A = []
         for g in pm.content.glyphs:
             if g["where"] != "page":

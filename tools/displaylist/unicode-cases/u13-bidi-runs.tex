@@ -1,0 +1,29 @@
+% u13-bidi-runs: ICU's bidi runs inside one native word: Latin and Hebrew in one node, numbers, brackets, explicit embeddings and isolates, inter-word space shaping (Latin in Geeza Pro: .notdef boxes, as in xelatex's PDF)
+% preview: tolerance 2 px (Geeza Pro, as u06-rtl)
+\documentclass{article}
+\usepackage{polyglossia}
+\setdefaultlanguage{english}
+\setotherlanguage{arabic}
+\setotherlanguage{hebrew}
+\setmainfont{Times New Roman}
+\newfontfamily\arabicfont{Geeza Pro}[Script=Arabic]
+\newfontfamily\hebrewfont{Times New Roman}[Script=Hebrew]
+\begin{document}
+abcשלוםdef 123שלום שלום(abc)שלום ש[1]ל 12.5\%שלום -3שלום
+
+\XeTeXinterwordspaceshaping=2
+שלום עולם 2026 abc def (שלום) [עולם] abc שלום, def!
+
+\XeTeXinterwordspaceshaping=0
+X‫abc def‬Y X‎שלום‎Y X⁧abc⁩Y X⁦שלום⁩Y X⁨123⁩Y X‮abc‬Y
+
+\begin{hebrew}
+\XeTeXinterwordspaceshaping=2
+שלום (עולם) [abc] 3.14 ו-2026, "ציטוט" ו-ABC 12%: סוף.
+\end{hebrew}
+
+\begin{Arabic}
+\XeTeXinterwordspaceshaping=2
+النص (العربي) مع English words و 3.14 و ١٢٣ في [القوسين]، نهاية.
+\end{Arabic}
+\end{document}

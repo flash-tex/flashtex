@@ -53,8 +53,10 @@ fn pdf_mode_writes_the_display_list_of_a_page() {
     let mut r = std::io::BufReader::new(std::fs::File::open(&dl).unwrap());
     let mut fonts = Vec::new();
     let mut pages = Vec::new();
+    let mut sources = Vec::new();
     while let Some((k, body)) = read_frame(&mut r).unwrap() {
         match k {
+            kind::SOURCES => sources.push(String::from_utf8(body).unwrap()),
             kind::FONT => fonts.push(Font::decode(&body).unwrap()),
             kind::PAGE => pages.push(Page::decode(StreamKind::Page, &body).unwrap()),
             _ => {}
@@ -117,5 +119,27 @@ fn pdf_mode_writes_the_display_list_of_a_page() {
     // the path of `pdf:code`, under the page's CTM
     assert_eq!(p.paths.len(), 1);
     assert_eq!(p.paths[0].stroke.as_ref().unwrap().width, 0.5);
+    // The source map (spec §5.3): `AB` is line 7 of t.tex, from byte 3
+    // (`\x AB`), the column of the native word's first character; the
+    // rule is line 8.
+    assert_eq!(sources.len(), 1, "one SOURCES, before the page");
+    let src = flashtex_display_list::json::Json::parse(&sources[0]).unwrap();
+    let src = flashtex_display_list::resource::Sources::from_json(&src).unwrap();
+    assert_eq!(src.files.len(), 1);
+    assert!(src.files[0].1.ends_with("/t.tex"), "{:?}", src.files);
+    let line_of = |s: u32| src.spans.iter().find(|x| x.0 == s).map(|x| x.2);
+    let mut span = 0;
+    let mut glyph_at = vec![];
+    let mut rule_line = None;
+    for it in &p.items {
+        match it {
+            Item::Span(s) => span = *s,
+            Item::Glyph { col, .. } => glyph_at.push((line_of(span), *col)),
+            Item::Rule { .. } => rule_line = line_of(span),
+            _ => {}
+        }
+    }
+    assert_eq!(glyph_at, vec![(Some(7), 3), (Some(7), 3)]);
+    assert_eq!(rule_line, Some(8));
     let _ = std::fs::remove_dir_all(&dir);
 }

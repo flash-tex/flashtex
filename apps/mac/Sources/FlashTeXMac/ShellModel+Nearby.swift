@@ -137,11 +137,9 @@ extension ShellModel: CaptureSink, DestinationProvider {
     /// Pins the caret (or the selection) as the automatic destination `id`:
     /// locally, and on the bridge in caret mode when one is attached. A pin
     /// already at the caret at this revision is not sent again. Returns false
-    /// when the caret cannot be pinned (historical preview, bad caret, bridge
-    /// refusal), with `captureNote` saying why.
+    /// when the caret cannot be pinned (bad caret, bridge refusal), with `captureNote` saying why.
     @discardableResult
     func pinCaretForCompanion(id: String) async -> Bool {
-        if let why = historicalRefusal(of: "pinning an insertion point") { captureNote = why; return false }
         guard let anchor = Insertion.makeAnchor(id: id, path: activePath, text: activeText, caretUTF16: caretUTF16, revision: editorRevision)
         else { captureNote = "Caret position is not valid."; return false }
         if Self.isAutomaticDestinationId(id), captureInbox.autoPinnedDestinationId != id {

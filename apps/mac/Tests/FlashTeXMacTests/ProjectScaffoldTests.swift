@@ -18,7 +18,7 @@ final class ProjectScaffoldTests: XCTestCase {
 
     override func tearDown() { try? FileManager.default.removeItem(at: tmp) }
 
-    private func model() -> ShellModel { let m = ShellModel(); m.detachWorker(); return m }
+    private func model() -> ShellModel { ShellModel() }
 
     /// `XCTAssertEqual` for an async outcome (autoclosures cannot await).
     private func expect<T: Equatable>(_ actual: T, _ expected: T, file: StaticString = #filePath, line: UInt = #line) {
@@ -52,30 +52,6 @@ final class ProjectScaffoldTests: XCTestCase {
         for needle in ["geometry", "amsmath,amssymb", "enumitem", "\\newcommand{\\problem}[2]", "\\problem{1}{10}"] { XCTAssertTrue(hw.contains(needle), needle) }
         XCTAssertEqual(ProjectTemplate.escapeTitle("A & B_1 100%"), "A \\& B\\_1 100\\%")
         XCTAssertTrue(ProjectTemplate.blankArticle.files(projectName: "A & B")[0].text.contains("\\title{A \\& B}"))
-    }
-
-    func testNewTemplatesCompileWithZeroDiagnostics() async throws {
-        guard let binary = RealCompilerTests.binary, FileManager.default.isExecutableFile(atPath: binary.path) else {
-            throw XCTSkip("set FLASHTEX_COMPILER to the built flashtex-compiler binary")
-        }
-        for template in [ProjectTemplate.thesis, .lectureNotes, .beamerPresentation] {
-            let model = ShellModel()
-            model.autoCompile = false
-            model.documents = template.files(projectName: template.title).map { .init(path: $0.path, text: $0.text) }
-            model.attachWorker(at: binary)
-            model.compile()
-            let start = Date()
-            while model.inFlightRevision != nil {
-                if Date().timeIntervalSince(start) > 60 { // the real compiler; generous for a loaded runner
-                    XCTFail("\(template.rawValue): compiler did not answer in 60 s")
-                    break
-                }
-                try await Task.sleep(nanoseconds: 50_000_000)
-            }
-            let result = try XCTUnwrap(model.result, "\(template.rawValue): no compile result")
-            XCTAssertTrue(result.diagnostics.isEmpty, "\(template.rawValue): \(result.diagnostics.map(\.message))")
-            model.detachWorker()
-        }
     }
 
     func testCreateRefusesBadNamesAndExistingFilesUnlessConfirmed() throws {

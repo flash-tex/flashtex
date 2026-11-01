@@ -852,6 +852,24 @@ pub struct Globals {
     pub eight_bit_p: bool,
     // §1717
     pub translate_filename_p: bool,
+    // §1727
+    pub ckpt_request: i32,
+    // §1727
+    pub ckpt_arm_cs: halfword,
+    // §1727
+    pub ckpt_arm_level: i32,
+    // §1727
+    pub dorm_level: i32,
+    // §1727
+    pub pop_watch: i32,
+    // §1727
+    pub dorm_fired: i32,
+    // §1727
+    pub ckpt_arm_again: halfword,
+    // §1727
+    pub ckpt_resuming: bool,
+    // §1727
+    pub ckpt_on_shipout: i32,
     /// The word space every `Arr` above lives in (crates/flashtex-engine/src/arena.rs).
     pub arena: crate::arena::Arena,
     /// The engine's state outside the word space (`--host-state`).
@@ -1175,7 +1193,16 @@ pub const SCALAR_BYTES: usize = 0
     + crate::arena::slot::<bool>()
     + crate::arena::slot::<bool>()
     + crate::arena::slot::<bool>()
-    + crate::arena::slot::<bool>();
+    + crate::arena::slot::<bool>()
+    + crate::arena::slot::<i32>()
+    + crate::arena::slot::<halfword>()
+    + crate::arena::slot::<i32>()
+    + crate::arena::slot::<i32>()
+    + crate::arena::slot::<i32>()
+    + crate::arena::slot::<i32>()
+    + crate::arena::slot::<halfword>()
+    + crate::arena::slot::<bool>()
+    + crate::arena::slot::<i32>();
 
 impl Globals {
     pub fn new() -> Box<Globals> {
@@ -1704,6 +1731,15 @@ impl Globals {
             dump_line: false,
             eight_bit_p: false,
             translate_filename_p: false,
+            ckpt_request: 0,
+            ckpt_arm_cs: 0,
+            ckpt_arm_level: 0,
+            dorm_level: 0,
+            pop_watch: 0,
+            dorm_fired: 0,
+            ckpt_arm_again: 0,
+            ckpt_resuming: false,
+            ckpt_on_shipout: 0,
             arena: __arena,
             host: Default::default(),
         })
@@ -2028,6 +2064,15 @@ impl Globals {
         v.pod(&mut self.dump_line);
         v.pod(&mut self.eight_bit_p);
         v.pod(&mut self.translate_filename_p);
+        v.pod(&mut self.ckpt_request);
+        v.pod(&mut self.ckpt_arm_cs);
+        v.pod(&mut self.ckpt_arm_level);
+        v.pod(&mut self.dorm_level);
+        v.pod(&mut self.pop_watch);
+        v.pod(&mut self.dorm_fired);
+        v.pod(&mut self.ckpt_arm_again);
+        v.pod(&mut self.ckpt_resuming);
+        v.pod(&mut self.ckpt_on_shipout);
     }
 
     /// Every file global, in declaration order (the checkpoint's host-state record).

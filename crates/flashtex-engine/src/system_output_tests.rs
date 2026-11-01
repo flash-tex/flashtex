@@ -390,6 +390,75 @@ fn a_kept_tail_stays_in_the_file_until_it_is_settled() {
     assert_eq!(read(&p), "headshort");
 }
 
+/// A file open but still empty at the restore target (a page-0 restart's
+/// PDF, before its first shipout) keeps the old run's bytes in the file as
+/// a tail from 0 (lane T7-LETTERSTART): nothing is read (or cloned) at the
+/// restore, and the abandon, the jump and the run's end leave what they
+/// leave for a tail from a later length.
+#[test]
+fn a_tail_from_an_empty_file_stays_in_the_file() {
+    let d = dir("kept0");
+    let p = d.join("doc.pdf").to_string_lossy().into_owned();
+    let tail = "0123456789".repeat(200);
+    let pending_read = |g: &Globals| {
+        g.mem_stats()
+            .iter()
+            .find(|(k, _)| *k == "pending_tails_read")
+            .map(|x| x.1)
+    };
+    // the abandon, after the new run wrote over part of the old bytes, past
+    // their end, or nothing
+    for (new, more) in [
+        ("XY", ""),
+        ("edited", "and on past the old end".repeat(120).as_str()),
+        ("", ""),
+    ] {
+        let mut g = Globals::new();
+        openout(&mut g, 0, &p);
+        let k = g.checkpoint().unwrap();
+        write(&mut g, 0, &tail);
+        g.checkpoint().unwrap();
+        g.restore(k).unwrap();
+        assert_eq!(pending_read(&g), Some(0), "the tail was read");
+        // nothing cut: the old bytes, the end blanked
+        let n = tail.len() - BLANK_END as usize;
+        assert_eq!(
+            read(&p),
+            format!("{}{}", &tail[..n], " ".repeat(BLANK_END as usize))
+        );
+        write(&mut g, 0, new);
+        write(&mut g, 0, more);
+        g.checkpoint().unwrap();
+        g.reattach_pending().unwrap();
+        close(&mut g, 0);
+        assert_eq!(read(&p), tail, "abandon after {new:?}");
+    }
+    // the jump: the new run's bytes, then the old run's later ones
+    let mut g = Globals::new();
+    openout(&mut g, 0, &p);
+    let k = g.checkpoint().unwrap();
+    write(&mut g, 0, "page");
+    let j = g.checkpoint().unwrap();
+    write(&mut g, 0, &tail);
+    g.checkpoint().unwrap();
+    g.restore(k).unwrap();
+    write(&mut g, 0, "PAGE!");
+    g.redo_to(j).unwrap();
+    close(&mut g, 0);
+    assert_eq!(read(&p), format!("PAGE!{tail}"));
+    // no jump and no abandon: the run's end cuts the file to what it wrote
+    let mut g = Globals::new();
+    openout(&mut g, 0, &p);
+    let k = g.checkpoint().unwrap();
+    write(&mut g, 0, &tail);
+    g.checkpoint().unwrap();
+    g.restore(k).unwrap();
+    write(&mut g, 0, "short");
+    g.checkpoint().unwrap();
+    close(&mut g, 0);
+    assert_eq!(read(&p), "short");
+}
+
 /// What another program reading a file sees while a restore keeps its
 /// tail (the #1613 review's polling reader): never a zero byte, never the
 /// file cut and then written on, and never the old run's end after the

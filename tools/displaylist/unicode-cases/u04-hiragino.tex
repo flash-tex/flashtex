@@ -1,0 +1,16 @@
+% u04-hiragino: Hiragino Sans (one .ttc per weight W0..W9) by family name and by face, Japanese text
+\documentclass{article}
+\usepackage{fontspec}
+\newfontfamily\hira{Hiragino Sans}
+\newfontfamily\hiraW{Hiragino Sans}[UprightFont=* W3, BoldFont=* W6]
+\newfontfamily\hiraNine{Hiragino Sans W9}
+\newfontfamily\mincho{Hiragino Mincho ProN}
+\begin{document}
+{\hira Hiragino Sans: 日本語の文章です。ひらがな、カタカナ、漢字。}
+
+{\hiraW W3: 日本語の文章です。 \textbf{W6: 太字の日本語。}}
+
+{\hiraNine W9: 極太の日本語。}
+
+{\mincho 明朝体：吾輩は猫である。名前はまだ無い。}
+\end{document}

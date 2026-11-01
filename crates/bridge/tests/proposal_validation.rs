@@ -149,26 +149,6 @@ fn compiler_output_overflow_and_bad_status_are_rejected() {
     }
 }
 
-#[test]
-#[ignore = "requires explicit original FlashTeX compiler binary"]
-fn actual_original_compiler_returns_review_evidence() {
-    let _forks = forks();
-    let path =
-        std::env::var_os("FLASHTEX_TEST_COMPILER").expect("set exact original compiler executable");
-    let (docs, edit) = fixtures();
-    let request = ProposedCompilation::new("test", "main.tex", &docs, &edit).unwrap();
-    let evidence = CompilerValidator {
-        executable: path.into(),
-        timeout: Duration::from_secs(5),
-    }
-    .validate(&request)
-    .unwrap();
-    assert_eq!(evidence.project_id, "p");
-    assert_eq!(evidence.revision, 3);
-    assert!(!evidence.pages.is_empty());
-    assert_eq!(docs[0].text, "α source");
-}
-
 struct CaptureFixtureConverter;
 impl flashtex_bridge::Converter for CaptureFixtureConverter {
     fn convert(

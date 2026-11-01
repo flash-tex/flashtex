@@ -355,15 +355,23 @@ impl Globals {
                             if (!self.open_fmt_file()) {
                                 break 'l_final_end_f;
                             }
-                            if (!self.load_fmt_file()) {
+                            if (!self.flashtex_fmt_restore()) {
                                 {
-                                    { let mut __f0 = ::core::mem::take(&mut self.fmt_file); let __r = self.w_close(&mut __f0); self.fmt_file = __f0; __r };
-                                    break 'l_final_end_f;
+                                    if (!self.load_fmt_file()) {
+                                        {
+                                            { let mut __f0 = ::core::mem::take(&mut self.fmt_file); let __r = self.w_close(&mut __f0); self.fmt_file = __f0; __r };
+                                            break 'l_final_end_f;
+                                        }
+                                    }
+                                    self.flashtex_fmt_loaded();
                                 }
                             }
                             { let mut __f0 = ::core::mem::take(&mut self.fmt_file); let __r = self.w_close(&mut __f0); self.fmt_file = __f0; __r };
                             if self.intr_on {
                                 self.flashtex_intr_loaded();
+                            }
+                            if self.bm_on {
+                                self.flashtex_bm_loaded();
                             }
                             while ((self.cur_input.loc_field < self.cur_input.limit_field) && (self.buffer[crate::ix::U((self.cur_input.loc_field) as usize)] == 32i32)) {
                                 self.cur_input.loc_field = (self.cur_input.loc_field).wrapping_add(1i32);

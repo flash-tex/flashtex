@@ -48,8 +48,7 @@ final class BridgeRecoveryTests: XCTestCase {
             .split(separator: "\n").map { try JSONSerialization.jsonObject(with: Data($0.utf8)) as? [String: Any] }
         let last = try XCTUnwrap(lines.last ?? nil)
         XCTAssertEqual(last["capture_id"] as? String, "fixture-capture-1")
-        XCTAssertEqual(last["engine"] as? String, model.typesettingEngine.rawValue)
-        XCTAssertEqual(last["engine"] as? String, "previous", "a test window typesets with the previous engine")
+        XCTAssertEqual(last["engine"] as? String, "new", "the one engine (S6)")
     }
 
     // MARK: 1. receipt only after the durable commit (helper) and the .tex export

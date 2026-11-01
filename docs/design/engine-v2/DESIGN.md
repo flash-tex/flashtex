@@ -621,8 +621,17 @@ D8 specification; what landed differs, and D8's rewording is proposed to the own
   `.bbl`/`.ind` byte-identical; a `\cite` edit takes 0.74× latexmk's wall on a 126-page
   biblatex document and 0.72× on a 348-page book (lane target ≤ 0.5×, not met yet). **A user
   with no TeX Live** (owner, 2026-09-30, decision 4): the user's TeX Live tools are
-  orchestrated now; porting `bibtex.web` (through web2rust) and makeindex for the bundle case
-  (D12) comes later.
+  orchestrated, and since lane RUST-TOOLS (2026-10-09) makeindex is FlashTeX's own: TeX Live
+  2026's makeindex 2.18 ported to Rust (`crates/makeindex`, #1706), run in-process by the host
+  and for restricted `\write18`, with `.ist` files from kpathsea (the bundle's in bundle mode),
+  byte-identical to TeX Live's on 3,000 fuzz cases and 4,608 corpus runs (VERIFIED,
+  `docs/evidence/rusttools-2026-10-09/makeindex/`). So is bibtex (#1723): `bibtex.web` with
+  TeX Live's `bibtex.ch`, both unmodified, translated by web2rust (`crates/bibtex`), run the same
+  way, with `.bib`/`.bst` files from kpathsea, byte-identical to TeX Live's bibtex on all 397
+  TeX Live styles and 79 databases (3,168 cases) and 5,000 fuzz cases (VERIFIED,
+  `docs/evidence/rusttools-2026-10-09/bibtex/`). biber stays TeX Live's program (options for the
+  owner in that README). Both ports refuse non-regular and oversized inputs (64 MiB), where
+  TeX Live's programs would read `/dev/zero` without end.
 - **tikz/pgfplots picture memoisation** comes later (P6). It needs epoch-level
   read-sets and must handle `remember picture`, global counters and shadings. The
   CTAN `memoize` package is prior art.
@@ -653,6 +662,11 @@ D8 specification; what landed differs, and D8's rewording is proposed to the own
    rules of [MACRO-REPLAY.md](MACRO-REPLAY.md). This goes beyond "pure, non-erroring leaf
    functions" only as that document allows: every input is captured or excluded, every call is
    verified on both paths in CI, and a broken invariant drops the cache without releasing it.
+   *Box memo (adopted 2026-10-20, #1692, #1852):* guarded replay of measure and draw calls
+   ([BOX-MEMO.md](BOX-MEMO.md) §11) is **on by default in the hosts that serve edits** (socket,
+   `serve`, `iserve`) and off on the command line and in selftest/bench. Evidence: sweeps
+   39415839755 and 39415836376 found 0 bad in about 26k compiles each; P-T1/P-T2 88/88 with it
+   on and off; lockstep 1468/1468; −72 to −82 % instructions per beamer keystroke.
 5. NEON input scanning only if the profile shows scanning matters.
 6. **First named intrinsics target: the per-page output routine.** Measured 2026-09-29:
    - hyperref's two per-page PDF-string calls (page label and page anchor) cost
@@ -1015,12 +1029,13 @@ Rules:
     - the per-document engine choice with visible fallbacks (#1421, #1427);
     - packages under v3 (#1444).
   - #1337 is closed.
-  - **Still open:**
-    - a re-audit of the gap list against main (lane APP-PARITY-CLOSE);
-    - **A9 project fonts** (`[fonts]`): these fall back to the old engine. Deleting it removes
-      them unless the Unicode mode carries them or the owner retires them (owner question,
-      reviews/2026-10-05.md §6);
-    - the app latency rows (§1.2).
+  - *Status 2026-11-01:* the checklist is closed.
+    - The S5 rows closed with #1849 and the S6 rows with #1881: `app_parity_rows.py gate S6`
+      reads met, and its `check` finds all 124 named tests.
+    - **A9 project fonts** (`[fonts]`) are done (#1880): the Unicode mode typesets them, and
+      the old engine is no longer their fallback.
+    - The app latency rows (§1.2) are T7's ten gating runs (§12 P4).
+    - The S6 app rulings (E2, E3, E5/RQ7, RQ20) are in §13 (2026-10-21).
 - **Multi-window and multi-project (owner, 2026-09-30, decision 7):** after switch-over, in P6.
 - **New:** `tools/web2rust`, `crates/flashtex-engine`, the incremental system,
   `display-list-v3`, the socket protocol, `scripts/gate.sh`, and the CI tiers and
@@ -1085,50 +1100,35 @@ by CI or by a named reference run. Lane runs are REPORTED evidence.
     - P3-VERIFY: the sweep re-run on current main;
     - P3-PARITY-CI: the sweep running in CI, not skipping (§13 R12).
   - The PDF backend's font scope is complete on main.
-- **P4: not met.**
-  - T7 exists (#1391). It has no reference run, and no reference host (Q1).
-  - Non-reference runs: 8 of 56 rows on `ab9893935` (M1 Max, Low Power Mode); **30 of 56 on
-    `9f29302fe`** (NixOS PC, 2026-10-05, §1.2).
-    - All preamble rows pass, and all plain-10/100/300 in-body rows.
-    - The full-* and plain-1000 in-body rows miss, at 11.2–21.6 ms p95.
-  - Remaining:
-    - the edited-page host share ≤ 11 ms p95 on full-* and plain-1000 (LIVE-30MS, #1541–#1549);
-    - preamble ≤ 400 ms (PREAMBLE-FAST, #1551);
-    - newline, split and sentence convergence (§5.3: line shift and object relocation,
-      unstaffed);
-    - RSS within budget on T7 (#1493, #1505);
-    - app key → commit and the in-app preamble row (unstaffed);
-    - cold reopen at launch ≤ 100 ms (101–365 ms; the host side is #1537);
-    - error recovery (#1553, #1554).
-- **P5: not met.**
-  - The current gate's metric is exceeded on the rows the board has. The latest board
-    (37203562594, 10-04, `e450d72e`, CI on mac-m1max-a-2) has every T3 row at 100 % and new ≥
-    old: fixtures 86/86, arXiv 140/140 (L1 140/140 against v1's 0.7 %), templates 18/18,
-    packages 92/92, package-smoke 484/484, fonts 439/439.
-  - **Not met:**
-    - **T2 is 1,576/1,590 with 14 unexpected** (1,590/1,590 on 10-03; lane T2-TRIAGE);
-    - **T4 is missing** from the board. Its nightly (#1276) is PC-only and the PC's runners are
-      off. `corpus-t4-mac.yml` has never run. The lane evidence is 4,335/4,335 on one build
-      (`82752c2fb`, REPORTED, #1319 5961734949), and a recheck on `17f025ece` stopped at 19 of
-      40 shards;
-    - the board is not gated, and the nightly has failed 4 of 4 nights;
-    - retirement: S0 is done and S1 landed (#1400). S3's per-document engine choice landed
-      (#1421, #1427) without the flip. S2 and S4–S8 have not started. The plan #1236
-      (revision `4b0eb7db2`) has awaited the Commander's review since 10-03.
-  - Decision 3's proposal (thresholds still pending, Q3):
-    - P-T1 and P-T2 rates: met on arXiv and on lane-run T4;
-    - zero T4 panics: lane-run;
-    - T2 clean: **not met**;
-    - **the no-TeX-Live gate exists and passed**: `notex-gate.yml`, 116/116 byte-identical from
-      the bundle with TeX Live hidden (37225170319, 10-04). It is not scheduled;
-    - the app checklist: nearly closed (§10), with A9 an owner question.
-  - **T4 decision 1** (ruled 2026-10-02, §13):
-    - The board's T4 old column reads `tools/parity/baselines/t4-v1-oneoff.json`, now
-      **FINAL** (#1461: 440 IDs, hash and oracle recorded; v1 L0 7, L1 5, L2 0, L3 0, P-T2 0
-      of 440).
-    - Rates are compared against the new run restricted to those 440 IDs.
-    - The new engine's T4 is always measured against the board's own oracle, and each board
-      takes T4 from its own host (#1457).
+- **P4: met (2026-10-21), under the owner's ruling recorded at S4 (retirement plan row 7).**
+  - The gating run is #1876: `scripts/t7-reference.sh` on main `58d6d773f`, Apple M5 Pro.
+    120 of 120 gated rows pass, on battery
+    ([`t7-reference-2026-10-21e-…`](../../evidence/t7-reference-2026-10-21e-Kabirs-MacBook-Pro/README.md)).
+  - T7 has gated for ten runs, the ones under `docs/evidence/t7-reference-2026-10-20*` and
+    `-10-21*`. Runs f–i are on `389821f53` (#1882). Two of the ten pass 120 of 120 (e and i,
+    both on battery). The other eight miss 1 to 12 rows: 10-20 misses 12, b 5, g 4, 10-21 2,
+    and c, d, f and h 1 each. The best run on mains power is 119 of 120 (c, d and f).
+  - Since then the cold-open and keystroke work (#1891, #1897, #1898 and others) has landed.
+    No reference run has been recorded after it.
+- **P5: not met (status 2026-11-01).** The flip is done, and P5 is met when S7 and S8 land.
+  Decision 3's gate, item by item:
+  - **Board all green on a complete nightly: met.** S4 asks for 3 consecutive complete green
+    boards. They are 39350717288, 39365978113 and 39388695484, on main, ruled on #1319.
+  - **P-T2 ≥ 99 %, P-T1 ≥ 98 % on arXiv and T4; zero T4 panics; T2 with 0 unexpected
+    failures: met** on those boards.
+  - **No-TeX-Live gate: met.** It is green on main `0995a0676` (run 39537366166).
+  - **App checklist: met.** The S5 rows are closed by #1849, and the S6 rows by #1881
+    (`app_parity_rows.py gate S6` reads met). A9 is done (#1880), and the S6 app rulings
+    are in §13 (2026-10-21).
+  - **Unicode M3: met** (verdict 2026-10-21, `docs/evidence/unicode-m3-2026-10-11/README.md`,
+    #1878).
+  - **Retirement:** S0–S6 are done: S1b, S2 (#1610), S3 (#1421, #1427) with S3r (#1611), S4,
+    S5 (#1849; app v0.2.0, 2026-10-20, carries the #1421/#1427 records), S6a (#1877) and
+    S6 (#1881).
+    - S7 is #1888. It deletes the old engine at once. RQ5 and RQ6 are ruled, T7 has
+      gated for ten runs, and 0 open PRs touch old-engine paths.
+    - S8 (oracles to `tests/`) follows S7.
+    - `tools/parity/retirement-stages.json` holds the stage statuses.
 - **P6: in progress ahead of its phase, by measured wins. Under the owner's 2026-10-05 rule, P6
   extras are parked** while any P3–P5 lane is unstaffed.
   - Landed: #1309 and #1499 (−16 % instructions on *Infinite Descent*), #1302, the
@@ -1243,6 +1243,13 @@ by CI or by a named reference run. Lane runs are REPORTED evidence.
 | 2026-10-06 | The latency gate covers continuous typing with keys **50 ms apart** (≈ 240 wpm; ≥ the owner's 200 wpm floor): each key at 50/60/80/100/150 ms intervals meets ≤ 16 ms p95 (host ≤ 11 ms) for its own edited page and is painted by its own compile (§1.2) | Owner (Kabir): "anything below 200wpm needs to hit our target"; "the 50ms target is good" |
 | 2026-10-06 | Speed and memory targets (§1.2): ≤ 20 ms key→commit at 50 ms typing on the slowest supported Mac (M1-class) for 1,000 pages and *Infinite Descent*; editor key→glyph ≤ 1 frame p99 regardless of preview state; visible page ≤ 1 s after open; edits during the initial compile as fast as after; memory and cold-compile time minimised; *Infinite Descent ×2* is the heavy benchmark. P6 work serving these is P4-critical under critical path first | Owner (Kabir): "make it faster … sub 20ms on all macs … memory usage needs to be decreased … the editor should literally be a text editor and be completely instant … optimize the absolute fuck out of everything" |
 | 2026-10-06 | Performance modes: Low Memory / Balanced (default, all gates) / High Performance, as named profiles of the retention budget and the speed/memory knobs, switchable live; every mode passes the soundness and parity gates (§1.2, §5.2) | Owner (Kabir) |
+| 2026-10-11 | **RQ19 closed: publish source.** The engine's GPL source stays public in this GitHub repository and is linked from the app's About box and the release notes (#1806). That satisfies the §3 source offer; S6 is no longer blocked on RQ19 | Owner (Kabir) |
+| 2026-10-11 | **Next release:** the Commander may tag and publish app v0.2.0 through `release.yml` after 3 consecutive complete green P5 boards. Old documents keep their engine. This release satisfies S5's "one shipped release carries #1421/#1427" | Owner (Kabir) |
+| 2026-10-11 | **RQ5:** after S7, `supported-latex.json` is generated from the new engine's measured package support (the package-smoke tier results, oracle-verified). It is an MIT data file owned by the app, regenerated by a script, and replaces `sync-supported-latex.sh`'s old-compiler source | Commander (kabir-claude), under the owner's delegation for technical rows |
+| 2026-10-11 | **RQ6:** `flashtex-v3` (`crates/flashtex-build`) is renamed to `flashtex` and becomes the packaged CLI at S7 | Commander (kabir-claude) |
+| 2026-10-11 | **P5 board:** the hosted board route (#1774) is accepted. Hosted reports are tagged `-hosted` and count toward S4's 3 consecutive complete boards | Commander (kabir-claude) |
+| 2026-10-20 | **BOX-MEMO on where edits are served** (§5.6 item 4, BOX-MEMO.md §11): on by default in the socket, `serve` and `iserve` hosts; off on the command line and in selftest/bench. Evidence: #1692, #1852; sweeps 39415839755 and 39415836376 (0 bad in about 26k compiles each); P-T1/P-T2 88/88 with it on and off; lockstep 1468/1468; −72 to −82 % instructions per beamer keystroke | Commander (kabir-claude), under the owner's speed-and-maintainability delegation |
+| 2026-10-21 | **S6 app rulings** (retirement plan §4.4, §7), decided on speed and maintainability. **E2:** accepted. The capture `projectId` is `"demo"` on both routes, so the row is reclassified as the same on both, and `projectId` stays the constant `"demo"` once the runtime-v1 `result` goes; a per-project id is out of scope. **E3:** the old route's shadow-compile proposal preview is retired. Approve inserts one edit that ⌘Z undoes, and the live v3 compile shows the real diagnostics. **E5 / RQ7:** the preview-controller route is retired from the app (Durable History, `PreviewControllerClient`, `ShellModel+Controller`, `HistoricalPreview`, Citation Rename's helper path). Ledgers stay on disk untouched (§5.5), and the `preview-controller` crate goes in S7. **RQ20 / A17:** a declined bundle download never falls back to another engine. The app shows a plain, non-blocking message that compiling needs the TeX bundle or a TeX Live install, with a Download button that retries. **Ruling 4 at S6 (§5.3):** a document recorded as `previous` opens on the new engine, with a one-time, dismissable banner saying so and why (a banner, not a sheet). **Licence (§6 item 2):** the GPL v2 text is enough for the GPL-2.0-or-later host; no v3 text is needed | Commander (kabir-claude), under delegated app rulings |
 
 ---
 

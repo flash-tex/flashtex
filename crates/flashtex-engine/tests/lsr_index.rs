@@ -88,6 +88,9 @@ fn the_packed_index_answers_as_kpathseas_table() {
         .unwrap()
         .set_modified(old)
         .unwrap();
+    // and its change time too, which writing it and putting its time back
+    // moved
+    std::thread::sleep(Duration::from_millis(2100));
     // the tree first, then TeX Live's own (an empty element is the default)
     std::env::set_var("TEXINPUTS", format!("!!{}//:", tree.display()));
     std::env::set_var("TEXMFDBS", format!("{}:", tree.display()));

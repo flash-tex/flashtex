@@ -198,6 +198,26 @@ class Paths(unittest.TestCase):
         p = run(b"/G1 gs 0 0 1 1 re B", res=res)
         self.assertEqual((p.paths[0]["fill_alpha"], p.paths[0]["stroke_alpha"]), (0.5, 0.25))
 
+    def test_soft_mask_groups_compare_by_what_they_draw(self):
+        """A soft mask's group is compared by what it draws: xdvipdfmx and
+        FlashTeX write pgf's mask (beamer's shadowed block) with different
+        operators, q/Q noise and BBox precision; the same rectangle in the
+        same grey is the same mask, another grey is not."""
+        def mask(data, bbox):
+            objs = {"9 0 R": Stream({"/Subtype": "/Form", "/BBox": bbox,
+                                     "/Group": {"/S": "/Transparency", "/CS": "/DeviceGray"}},
+                                    data, "9 0 R")}
+            res = {"/ExtGState": {"/M": {"/SMask": {"/S": "/Luminosity", "/G": "9 0 R"}}}}
+            return run(b"/M gs 0 0 10 10 re f", objs, res).paths[0]["smask"]
+        a = mask(b"0 G 0 g q 1 0 0 1 0 0 cm q Q 1 G 1 g q 0 g 4.0 8.1 341.01656 28.6871 re f Q n",
+                 [0, 0, 353.017, 36.787])
+        b = mask(b"q 0 g 4 8.1 m 345.01656 8.1 l 345.01656 36.7871 l 4 36.7871 l h f Q",
+                 [0, 0, 353.01655, 36.7871])
+        c = mask(b"q 0.5 g 4 8.1 341.01656 28.6871 re f Q", [0, 0, 353.017, 36.787])
+        self.assertEqual(a, b)
+        self.assertEqual(hash(a), hash(b))
+        self.assertNotEqual(a, c)
+
 
 class XObjects(unittest.TestCase):
     def test_image_and_form(self):

@@ -86,6 +86,10 @@ pub struct FontMgr {
     req_engine: u8,
     /// `XeTeXFontMgr_FC::cachedAll`.
     cached_all: bool,
+    /// Every [`FontMgr::locate`] made of it, in order (name, size): a
+    /// manager made anew over the same catalog that makes them again holds
+    /// the same maps (a persisted S₀, `crate::s0file`).
+    pub(crate) lookups: Vec<(String, i32)>,
 }
 
 /// C's `my_fmax`.
@@ -110,6 +114,7 @@ impl FontMgr {
             ps_name_to_font: HashMap::new(),
             req_engine: 0,
             cached_all: false,
+            lookups: Vec::new(),
         }
     }
 

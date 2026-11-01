@@ -46,8 +46,6 @@ from fractions import Fraction as Fr
 HERE = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.abspath(os.path.join(HERE, "..", ".."))
 sys.path.insert(0, os.path.join(REPO, "tools", "parity"))
-sys.path.insert(0, os.path.join(REPO, "tools", "visual-oracle"))
-sys.path.insert(0, os.path.join(REPO, "tools", "real-world-corpus"))
 
 import parity  # noqa: E402  (fixture discovery, tree hashes)
 import pdftext  # noqa: E402

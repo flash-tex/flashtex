@@ -4,10 +4,11 @@ import FlashTeXProtocol
 @testable import FlashTeXMac
 
 /// Editor diagnostics under the engine-v3 preview (DESIGN §10 app parity,
-/// gaps B4, B5 and B12): the host's rows draw the same underlines, gutter
-/// marks and Error Lens lines as an old-engine result with the same
-/// diagnostics, rebase across typing the same way, ⌘⇧]/[ steps through
-/// them, and a finished compile announces its counts to VoiceOver. The
+/// gaps B4, B5 and B12): the host's rows draw underlines, gutter marks and
+/// Error Lens lines on their sources, as the old engine's results did (the
+/// old path is gone since S6, so the expected marks are stated here), rebase
+/// across typing, ⌘⇧]/[ steps through them, and a finished compile
+/// announces its counts to VoiceOver. The
 /// first tests run with no host (`FLASHTEX_HOST=none`); the last compiles
 /// with a built `flashtex-host` and TeX Live (skipped otherwise).
 @MainActor
@@ -26,17 +27,6 @@ final class EngineV3EditorMarksTests: XCTestCase {
         ]
     }
 
-    /// The old path: a result with these diagnostics, compiled from `text`.
-    func v2Model() -> ShellModel {
-        let m = ShellModel()
-        m.engineV3Enabled = false
-        m.replaceProject(entryText: Self.text, named: "main.tex")
-        m.result = RuntimeV1.CompileResult(projectId: "p", revision: 1, status: .recovered, pages: [], diagnostics: Self.diagnostics(), pdfPath: nil)
-        m.resultID = "r1"
-        m.setCompiledDocuments(["main.tex": Self.text])
-        return m
-    }
-
     /// The v3 path: the same rows as the host's, with `text` as the DONE baseline.
     func v3Model() -> ShellModel {
         env.set("FLASHTEX_HOST", "none")
@@ -52,34 +42,34 @@ final class EngineV3EditorMarksTests: XCTestCase {
     func seen(_ m: ShellModel) -> [Seen] { m.editorMarks.map { Seen(range: $0.nsRange, severity: $0.severity, message: $0.message) } }
 
     func testV3RowsDrawTheSameEditorMarksAsTheOldPath() {
-        let v2 = v2Model(), v3 = v3Model()
+        let v3 = v3Model()
         defer { v3.engineV3.stop() }
         XCTAssertEqual(seen(v3).count, 2, "the two sourced rows are marks")
-        XCTAssertEqual(seen(v3), seen(v2))
-        // Typing before the marks moves them the same way on both paths.
+        XCTAssertEqual(seen(v3).map(\.severity), [.error, .warning])
+        XCTAssertEqual(v3.editorMarks.first?.nsRange, NSRange(location: 9, length: 4), "\\foo")
+        // Typing before the marks moves them.
         let typed = "new\n" + Self.text
-        v2.updateActiveText(typed)
         v3.updateActiveText(typed)
-        XCTAssertEqual(seen(v3), seen(v2))
+        XCTAssertEqual(seen(v3).count, 2)
         XCTAssertEqual(v3.editorMarks.first?.nsRange.location, 13)
-        // Typing inside a mark withholds it on both paths (stale), with the same note.
+        // Typing inside a mark withholds it (stale), with a note; the other stays.
         let inside = typed.replacingOccurrences(of: "\\foo", with: "\\fo")
-        v2.updateActiveText(inside)
         v3.updateActiveText(inside)
-        XCTAssertEqual(seen(v3), seen(v2))
-        XCTAssertEqual(v3.editorMarkReport.staleNote, v2.editorMarkReport.staleNote)
-        XCTAssertNotNil(v3.editorMarkReport.staleNote)
+        XCTAssertEqual(seen(v3).map(\.severity), [.warning])
+        XCTAssertEqual(v3.editorMarkReport.staleCount, 1)
+        XCTAssertEqual(v3.editorMarkReport.staleNote, "1 error under edited text not underlined until the next compile")
     }
 
     func testNextAndPreviousDiagnosticStepThroughV3MarksAsOnTheOldPath() {
-        let v2 = v2Model(), v3 = v3Model()
+        let v3 = v3Model()
         defer { v3.engineV3.stop() }
-        for m in [v2, v3] { m.caretUTF16 = 0 }
-        for forward in [true, true, false] {
-            v2.goToDiagnostic(forward: forward)
+        v3.caretUTF16 = 0
+        let marks = v3.editorMarks.map(\.nsRange)
+        XCTAssertEqual(marks.count, 2)
+        for (forward, expected) in [(true, 0), (true, 1), (false, 0)] {
             v3.goToDiagnostic(forward: forward)
-            XCTAssertEqual(v3.selection?.nsRange, v2.selection?.nsRange, "forward: \(forward)")
-            XCTAssertEqual(v3.navigationNote, v2.navigationNote)
+            XCTAssertEqual(v3.selection?.nsRange, marks[expected], "forward: \(forward)")
+            XCTAssertNotNil(v3.navigationNote)
         }
         XCTAssertNotNil(v3.selection)
         // No rows: a note, no selection change.

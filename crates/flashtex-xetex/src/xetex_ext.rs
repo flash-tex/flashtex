@@ -22,7 +22,7 @@ use std::sync::{Arc, Mutex};
 /// checkpoints can share it. The mutex makes it Send + Sync (an engine may
 /// move between threads, `Globals` is `Send`); a mapping is used by one
 /// engine at a time, so it is never contended.
-pub struct Mapping(Mutex<Converter>);
+pub struct Mapping(Mutex<Converter>, pub Option<(String, bool)>);
 
 /// TECkit's converter pointer. TECkit keeps no thread-local or global state
 /// per converter, so it may be used from any one thread at a time.
@@ -55,7 +55,7 @@ impl Mapping {
                 &mut cnv,
             );
         }
-        (!cnv.is_null()).then(|| Mapping(Mutex::new(Converter(cnv))))
+        (!cnv.is_null()).then(|| Mapping(Mutex::new(Converter(cnv)), None))
     }
 
     /// XeTeX_ext.c's normalizer for `apply_normalization`: no mapping,
@@ -82,7 +82,7 @@ impl Mapping {
         if status != teckit::kStatus_NoError || cnv.is_null() {
             return Err(status);
         }
-        Ok(Mapping(Mutex::new(Converter(cnv))))
+        Ok(Mapping(Mutex::new(Converter(cnv)), None))
     }
 }
 
@@ -186,11 +186,40 @@ impl Globals {
         0
     }
     pub fn gr_print_font_name(&mut self, _what: i32, _engine: i32, _p1: i32, _p2: i32) {}
-    /// `linebreak_start`/`linebreak_next` (ICU's line breaker): reached only
-    /// with a native font.
-    pub fn linebreak_start(&mut self, _f: i32, _locale: i32, _s: i32, _len: i32) {}
+    /// XeTeX_ext.c's `linebreakstart`: ICU's line break iterator for the
+    /// locale of pool string `locale` (`\XeTeXlinebreaklocale`), given
+    /// `native_text[s..s+len]` (`crate::native::linebreak`). Reached only
+    /// with a native font. The Graphite branch (locale `G` and a Graphite
+    /// font) is never taken: no font here is Graphite.
+    ///
+    /// As in the C, the iterator is kept between calls and opened again only
+    /// when the locale's string number differs from the one it was opened
+    /// for (`brkLocaleStrNum`), so the string's text is read once per
+    /// number.
+    pub fn linebreak_start(&mut self, _f: i32, locale: i32, s: i32, len: i32) {
+        if locale != self.host.brk_locale_str_num || self.host.brk_iter.is_none() {
+            let name = crate::system::tex_string_utf8(self, locale);
+            self.host.brk_iter = Some(crate::native::linebreak::rules_for_locale(&name));
+            self.host.brk_locale_str_num = locale;
+        }
+        let rules = self.host.brk_iter.expect("opened above");
+        let text: Vec<u16> = (0..len.max(0))
+            .map(|i| self.native_text[crate::ix::U((s + i) as usize)] as u16)
+            .collect();
+        self.host.brk_boundaries = crate::native::linebreak::boundaries(rules, &text);
+        self.host.brk_next = 0;
+    }
+
+    /// XeTeX_ext.c's `linebreaknext`: `ubrk_next`, the next boundary of the
+    /// text `linebreak_start` set, or `UBRK_DONE` (-1) after the last.
     pub fn linebreak_next(&mut self) -> i32 {
-        -1
+        match self.host.brk_boundaries.get(self.host.brk_next) {
+            Some(&b) => {
+                self.host.brk_next += 1;
+                b
+            }
+            None => -1,
+        }
     }
 
     // ---- TECkit mappings (XeTeX_ext.c) -------------------------------------
@@ -297,7 +326,7 @@ impl Globals {
     /// `mapped_text` array, which grows to fit up to the
     /// `mapped_text_size + 1` units reserved for it (`changes/ext.ch`, the
     /// bound `native_text` has too).
-    fn apply_mapping(&mut self, m: i32, txt: &[u16]) -> i32 {
+    pub(crate) fn apply_mapping(&mut self, m: i32, txt: &[u16]) -> i32 {
         let Some(map) = self.mapping(m) else {
             return 0;
         };
@@ -516,8 +545,18 @@ impl Globals {
         let _ = self.start_time();
     }
 
-    /// `get_seconds_and_micros` (texmfmp.c).
+    /// `get_seconds_and_micros` (texmfmp.c). A run with a pinned clock
+    /// (`Host::clock`) reads it the first time (its start time, which seeds
+    /// the random numbers), and the system's clock after that
+    /// (`\pdfelapsedtime`), as the pdfTeX engine's resident runs do.
     pub fn seconds_and_micros(&mut self, s: &mut i32, m: &mut i32) {
+        if std::mem::take(&mut self.host.seed_pending) {
+            if let Some((cs, cm)) = self.host.clock {
+                *s = cs as i32;
+                *m = cm;
+                return;
+            }
+        }
         let d = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default();
@@ -529,11 +568,21 @@ impl Globals {
     /// `SOURCE_DATE_EPOCH` (or of now) if `FORCE_SOURCE_DATE=1`, else the
     /// local time now.
     pub fn date_and_time(&mut self, t: &mut i32, d: &mut i32, m: &mut i32, y: &mut i32) {
+        // A hot spare stops here, at the reading after the format is loaded
+        // (the first is `tex_body`'s initialization's, before it), until its
+        // compile comes (`crate::host::spare`): nothing the document decides
+        // has been read yet, and the clock is read after.
+        #[cfg(unix)]
+        if self.ready_already == 314159 {
+            if let Some(fd) = self.host.spare_go.take() {
+                crate::host::spare::wait(self, fd);
+            }
+        }
         let forced = std::env::var("FORCE_SOURCE_DATE").map(|v| v == "1") == Ok(true);
         let tm = if forced {
             flashtex_engine::os::broken_down(self.start_time(), true)
         } else {
-            flashtex_engine::os::broken_down(now_secs(), false)
+            flashtex_engine::os::broken_down(self.clock_secs(), false)
         };
         *t = tm.tm_hour * 60 + tm.tm_min;
         *d = tm.tm_mday;
@@ -581,6 +630,9 @@ impl Globals {
             .and_then(|m| m.duration_since(std::time::UNIX_EPOCH).ok())
             .map(|d| d.as_secs() as i64)
             .unwrap_or(0);
+        // the read journal: the time read (S₀'s key, as the pdfTeX
+        // engine's `getfilemoddate` notes it)
+        flashtex_engine::system::note_stamp(&path, t);
         let s = flashtex_engine::pdftex::utils::make_pdf_time(t, force_source_date());
         if self.pool_ptr as usize + s.len() >= crate::generated::consts::pool_size as usize {
             self.pool_ptr = crate::generated::consts::pool_size;
@@ -597,6 +649,8 @@ impl Globals {
         let Ok(meta) = std::fs::metadata(&path) else {
             return;
         };
+        // the read journal: the length read
+        flashtex_engine::system::note_size_read(&path);
         let b = meta.len().to_string().into_bytes();
         if self.pool_ptr as usize + b.len() >= crate::generated::consts::pool_size as usize {
             self.pool_ptr = crate::generated::consts::pool_size;
@@ -621,6 +675,8 @@ impl Globals {
         let Ok(data) = std::fs::read(&path) else {
             return;
         };
+        // the read journal: all of the file, read at once
+        flashtex_engine::system::note_whole_read(&path);
         if offset < 0 {
             return;
         }
@@ -642,6 +698,7 @@ impl Globals {
             let Ok(data) = std::fs::read(&path) else {
                 return;
             };
+            flashtex_engine::system::note_whole_read(&path);
             flashtex_engine::pdftex::md5::digest(&data)
         } else {
             let bytes = crate::system::tex_string_utf8(self, s);
@@ -674,11 +731,20 @@ impl Globals {
         }
         let (t, sde) = match std::env::var("SOURCE_DATE_EPOCH") {
             Ok(v) => (v.trim().parse::<i64>().unwrap_or(0), true),
-            Err(_) => (now_secs(), false),
+            Err(_) => (self.clock_secs(), false),
         };
         let s = flashtex_engine::pdftex::utils::make_pdf_time(t, sde);
         self.host.start = Some((t, s));
         t
+    }
+
+    /// The time now: the pinned clock (`Host::clock`: a resident engine's
+    /// session clock, DESIGN.md §4.5), else the system's.
+    fn clock_secs(&self) -> i64 {
+        match self.host.clock {
+            Some((s, _)) => s,
+            None => now_secs(),
+        }
     }
 
     /// texmfmp.c's `start_time_str`: the start time as a PDF date.

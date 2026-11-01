@@ -3153,6 +3153,7 @@ impl Globals {
                                                             }
                                                         }
                                                         q = self.new_native_word_node(self.mem[crate::ix::U(((r).wrapping_add(4i32)) as usize)].qqqq().b1(), (self.pool_ptr).wrapping_sub(self.str_start[crate::ix::U(((self.str_ptr).wrapping_sub(65536i32)) as usize)]));
+                                                        self.dl_copy(q, r);
                                                         { let __v545 = self.mem[crate::ix::U((r) as usize)].hh().b1(); self.mem[crate::ix::U((q) as usize)].set_hh_b1(__v545); }
                                                         {
                                                             let __for_end_14 = ((self.pool_ptr).wrapping_sub(self.str_start[crate::ix::U(((self.str_ptr).wrapping_sub(65536i32)) as usize)])).wrapping_sub(1i32);
@@ -3277,6 +3278,7 @@ impl Globals {
                             }
                         }
                         loop {
+                            self.dl_node(p);
                             self.f = self.mem[crate::ix::U((p) as usize)].hh().b0();
                             self.c = self.mem[crate::ix::U((p) as usize)].hh().b1();
                             if ((p != lig_trick) && (self.font_mapping[crate::ix::U((self.f) as usize)] != nil)) {
@@ -3384,6 +3386,7 @@ impl Globals {
                         'l_L15_f: {
                             'l_L13_f: {
                                 'l_L14_f: {
+                                    self.dl_node(p);
                                     match self.mem[crate::ix::U((p) as usize)].hh().b0() {
                                         hlist_node | vlist_node => {
                                             // §661
@@ -4040,6 +4043,7 @@ impl Globals {
                         {
                             'l_L13_f: {
                                 'l_L14_f: {
+                                    self.dl_node(p);
                                     match self.mem[crate::ix::U((p) as usize)].hh().b0() {
                                         hlist_node | vlist_node => {
                                             // §670
@@ -4779,6 +4783,10 @@ impl Globals {
                 self.print_ln();
             }
         }
+        // §676
+        if (self.ckpt_on_shipout != 0i32) {
+            self.ckpt_request = self.ckpt_on_shipout;
+        }
     }
 
     /// The parameters to `hpack` and `vpack` correspond to \TeX's primitives
@@ -5104,6 +5112,7 @@ impl Globals {
                                                                         }
                                                                         p = self.mem[crate::ix::U((q) as usize)].hh().rh();
                                                                         pp = self.new_native_word_node(self.mem[crate::ix::U(((p).wrapping_add(4i32)) as usize)].qqqq().b1(), total_chars);
+                                                                        self.dl_copy(pp, p);
                                                                         { let __v642 = self.mem[crate::ix::U((p) as usize)].hh().b1(); self.mem[crate::ix::U((pp) as usize)].set_hh_b1(__v642); }
                                                                         self.mem[crate::ix::U((q) as usize)].set_hh_rh(pp);
                                                                         { let __v643 = self.mem[crate::ix::U((ppp) as usize)].hh().rh(); self.mem[crate::ix::U((pp) as usize)].set_hh_rh(__v643); }

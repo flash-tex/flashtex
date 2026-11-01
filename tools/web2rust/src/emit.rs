@@ -348,6 +348,9 @@ impl<'a> E<'a> {
             Ty::Bool => "bool".into(),
             Ty::Char => "u8".into(),
             Ty::Sub(..) => "i32".into(),
+            // web2c's C string constant (`const_cstring`, a string literal
+            // passed to C): a Rust string literal.
+            Ty::Named(n) if n == "const_cstring" => "&'static str".into(),
             Ty::Named(n) => {
                 if self.lay.packed.contains_key(n) || self.lay.plain.contains_key(n) {
                     rid(n)
@@ -1896,6 +1899,7 @@ pub fn emit(
     host_state: Option<&str>,
     inline: &[(String, String)],
     array_views: &[String],
+    translate: &[String],
 ) -> Result<(), String> {
     for (n, _) in inline {
         if !p.routines.iter().any(|r| r.name == *n) {
@@ -2200,7 +2204,9 @@ pub fn emit(
     let todo: Vec<&Routine> = p
         .routines
         .iter()
-        .filter(|r| !OVERRIDES.contains(&r.name.as_str()) && !r.external)
+        .filter(|r| {
+            (!OVERRIDES.contains(&r.name.as_str()) || translate.contains(&r.name)) && !r.external
+        })
         .collect();
     let per_file = todo.len().div_ceil(8);
     let mut files = vec![];

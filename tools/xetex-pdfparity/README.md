@@ -33,7 +33,7 @@ objects.
 
 ## Runner
 
-For each case `.tex` (all of `tools/xetex-lockstep/latex-cases/`, l001-l010,
+For each case `.tex` (all of `tools/xetex-lockstep/latex-cases/`, l001-l011,
 referenced in place, plus `cases/`), each engine builds its own `xelatex.fmt`.
 It then runs the case in its own directory. Both steps import
 `tools/xetex-lockstep/latex.py` (`build_format`, `link`, `env_for`,
@@ -45,9 +45,21 @@ through xdvipdfmx. The FlashTeX binary, invoked the same way, is to write
 
 The reference runs until its auxiliary files (`.aux .toc .out .lof .lot .nav
 .snm .bbl`) stop changing, at most `--max-passes` (4). The candidate then
-runs the same number of passes. A case fails when the reference does not
-exit 0, when the exit statuses differ, when a PDF is missing, when the
-comparison finds a difference, or when the XDV check fails.
+runs the same number of passes. A case fails when the exit statuses
+differ, when a PDF is missing, when the comparison finds a difference, or
+when the XDV check fails.
+
+**R1 (the Commander's ruling, 2026-10-12): xelatex's own error.** A case
+whose reference exits non-zero (a font or file the environment lacks, an
+error in the document) is judged like any other when the candidate exits
+with the same status and its log's first TeX error (`! ...`) is the same:
+both PDFs compared, 0 structural differences, the XDV check where the
+reference wrote an XDV. It is reported as counted under R1, with the
+reference's exit status and error as notes. Otherwise, as before, the
+reference's error fails the case. This is P-T1's own rule for such cases
+(`tools/xetex-lockstep/latex.py`). A case whose reference writes no PDF
+cannot be compared: it is listed, and left out of the count (`N cases`
+is then the cases with a reference PDF).
 
 **The XDV check** is what shows the writer is right. FlashTeX's writer places
 glyphs at TeX's exact positions (lane decision, 2026-10-09). After its PDF

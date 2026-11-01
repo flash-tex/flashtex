@@ -8,8 +8,7 @@ import FlashTeXProtocol
 /// into the package cache, and the delivered files reach the engine through
 /// the session's copy; flashtex.toml's `[packages] pin` versions and
 /// `[packages] path` libraries are resolved (no network) before the first
-/// compile and come before TeX Live's copies, so those projects no longer
-/// fall back to the previous engine. No test here touches the network: the
+/// compile and come before TeX Live's copies. No test here touches the network: the
 /// package source is a `file://` archive in a temporary directory.
 @MainActor
 final class EngineV3PackagesTests: XCTestCase {
@@ -20,14 +19,11 @@ final class EngineV3PackagesTests: XCTestCase {
     override func setUp() {
         OwnerStateGuard.install()
         env.set("FLASHTEX_V3_CACHE", FileManager.default.temporaryDirectory.appendingPathComponent("engine-v3-packages-tests-\(getpid())").path)
-        env.set("FLASHTEX_ENGINE_V3", "") // the per-document choice decides
-        EngineChoiceStore.appSetting = nil
-        EngineChoice.builtInDefaultForTests = nil
+        env.set("FLASHTEX_ENGINE_V3", "") // off until a test turns the engine on
     }
 
     override func tearDown() {
         for f in files { EngineChoiceStore.set(nil, for: f) }
-        EngineChoiceStore.appSetting = nil
         for d in dirs {
             // The fixture cache's files are read-only (the resolver's store).
             if let e = FileManager.default.enumerator(atPath: d.path) {
@@ -149,7 +145,7 @@ final class EngineV3PackagesTests: XCTestCase {
     // MARK: A8: pins and libraries under the new engine (real host)
 
     /// A project that pins a package TeX Live also has, and uses a local
-    /// library, opens with the new engine (no fallback). Its first compile
+    /// library, opens with the new engine. Its first compile
     /// is held until the pins and libraries are resolved offline, and
     /// typesets with the cached pinned copy and the library, not TeX
     /// Live's. When the pin goes, TeX Live's copy is used again.
@@ -161,7 +157,6 @@ final class EngineV3PackagesTests: XCTestCase {
         files.append(main)
         var current = try Self.manifest(pin: ["lipsum": "1.0-test"], libraries: ["mylib": "../mylib"])
         let m = ShellModel()
-        m.detachWorker()
         m.files.policy = .disabled(reason: "test: the resolver hooks answer")
         m.manifest.reader = { _, _ in .success(current) }
         var asked: [[String]] = []
@@ -178,11 +173,9 @@ final class EngineV3PackagesTests: XCTestCase {
             return .success(try! Self.decode(["cache": "/nonexistent", "policy": ["source": "ctan", "fetch": "ask"], "diagnostics": [],
                                               "packages": packages, "libraries": libraries] as [String: Any], as: ProjectFilesV1.ResolvePackages.self))
         }
-        EngineChoiceStore.appSetting = .new
         defer { m.engineV3.stop() }
         XCTAssertEqual(m.openTex(at: main, dirty: .discard), .opened)
-        XCTAssertTrue(m.engineV3Enabled, m.engineChoice.explanation)
-        XCTAssertNil(m.engineChoice.blocker, "pins and libraries no longer fall back")
+        m.engineV3Enabled = true
         let s = m.engineV3
         s.errorMode = .strict // the unpinned lipsum's undefined command is the error waited for
         try await EngineV3TestHost.awaitReady(s)
@@ -232,11 +225,9 @@ final class EngineV3PackagesTests: XCTestCase {
         try write("\\documentclass{article}\n\\usepackage{fxpkgtest}\n\\begin{document}\n\\fxmarker\n\\end{document}\n", to: main)
         files.append(main)
         let m = ShellModel()
-        m.detachWorker()
-        EngineChoiceStore.appSetting = .new
         defer { m.engineV3.stop() }
         XCTAssertEqual(m.openTex(at: main, dirty: .discard), .opened)
-        XCTAssertTrue(m.engineV3Enabled, m.engineChoice.explanation)
+        m.engineV3Enabled = true
         let s = m.engineV3
         let state = m.projectPackages
         try await EngineV3TestHost.awaitReady(s)
@@ -297,11 +288,9 @@ final class EngineV3PackagesTests: XCTestCase {
         try write("\\documentclass{article}\n\\usepackage{lipsum}\n\\usepackage{mylib}\n\\begin{document}\n\\librarymarker\n\\end{document}\n", to: main)
         files.append(main)
         let m = ShellModel()
-        m.detachWorker()
-        EngineChoiceStore.appSetting = .new
         defer { m.engineV3.stop() }
         XCTAssertEqual(m.openTex(at: main, dirty: .discard), .opened)
-        XCTAssertTrue(m.engineV3Enabled, m.engineChoice.explanation)
+        m.engineV3Enabled = true
         XCTAssertNotNil(m.manifest.currentSnapshot, m.manifest.status)
         let s = m.engineV3
         let state = m.projectPackages
@@ -322,8 +311,7 @@ final class EngineV3PackagesTests: XCTestCase {
 
     // MARK: hermetic (hooks or a fake helper; no host)
 
-    /// A model whose window is on the new engine (no host runs: FLASHTEX_HOST
-    /// is "none"), with `main.tex` saved in a project folder and the
+    /// A model whose engine session runs (no host: FLASHTEX_HOST is "none"), with `main.tex` saved in a project folder and the
     /// manifest read through `manifest`.
     private func v3Model(_ manifest: @escaping () -> ProjectFilesV1.Manifest) throws -> (ShellModel, URL) {
         let bin = try dir("texbin")
@@ -335,12 +323,10 @@ final class EngineV3PackagesTests: XCTestCase {
         try write("\\documentclass{article}\n\\begin{document}\nHi.\n\\end{document}\n", to: main)
         files.append(main)
         let m = ShellModel()
-        m.detachWorker()
         m.files.policy = .disabled(reason: "test: hooks answer")
         m.manifest.reader = { _, _ in .success(manifest()) }
-        EngineChoiceStore.appSetting = .new
         XCTAssertEqual(m.openTex(at: main, dirty: .discard), .opened)
-        XCTAssertTrue(m.engineV3Enabled, m.engineChoice.explanation)
+        m.engineV3Enabled = true
         return (m, root)
     }
 
@@ -481,43 +467,6 @@ final class EngineV3PackagesTests: XCTestCase {
         XCTAssertTrue(state.engineV3HoldsCompile)
         try await waitUntil("the held resolution", timeout: 5) { !state.engineV3Preparing }
         XCTAssertFalse(state.engineV3HoldsCompile)
-    }
-
-    /// Engine switch: an unpinned cached copy the previous engine asked for
-    /// is not given to the new engine (TeX Live's wins) and is not dropped
-    /// either; a package the new engine's TeX reports missing is. Switching
-    /// back gives the previous engine everything again.
-    func testAnEngineSwitchKeepsDeliveriesButTheNewEngineGetsOnlyItsOwn() async throws {
-        let (m, root) = try v3Model { try! Self.manifest() }
-        defer { m.engineV3.stop() }
-        let state = m.projectPackages
-        var online: [[String]] = []
-        state.resolver = { _, names, _ in online.append(names); return .success(Self.reply(packages: names.map { Self.cached($0, "% \($0) from the cache") })) }
-        state.offlineResolver = { _, names, _ in .success(Self.reply(packages: names.map { Self.cached($0, "% \($0) from the cache") })) }
-        // The previous engine: its compiler asks for siunitx, the cache has it.
-        m.engineV3Enabled = false
-        XCTAssertFalse(m.engineV3Enabled)
-        state.noteCompileResult(diagnostics: [RuntimeV1.Diagnostic(severity: .warning, message: "packages siunitx are recognised but not implemented", source: nil, recovery: nil, code: "unsupported_feature")])
-        try await waitUntil("the old engine's delivery", timeout: 5) { !state.documents().isEmpty }
-        XCTAssertEqual(state.documents().map(\.path), ["packages/siunitx/siunitx.sty"])
-
-        // The new engine: siunitx stays delivered but is not given to it.
-        m.engineV3Enabled = true
-        XCTAssertEqual(state.documents().map(\.path), ["packages/siunitx/siunitx.sty"], "nothing is reset by the switch")
-        XCTAssertEqual(state.engineV3Documents(), [], "an unpinned cached copy never shadows TeX Live")
-        XCTAssertEqual(state.rows, [], "the sidebar shows what the new engine reads")
-        let mirror = EngineV3Mirror(source: root, session: 9_000 + Int.random(in: 0 ..< 1000))
-        defer { try? FileManager.default.removeItem(at: mirror.base) }
-        XCTAssertEqual(mirror.materializePackages(state.engineV3Documents()), [])
-        // Its TeX reports mynotes missing: the cache has it, so it is given.
-        state.noteCompileResult(diagnostics: [Self.texMissing("mynotes.sty")])
-        try await waitUntil("the new engine's delivery", timeout: 5) { !state.engineV3Documents().isEmpty }
-        XCTAssertEqual(state.engineV3Documents().map(\.path), ["packages/mynotes/mynotes.sty"])
-        XCTAssertEqual(online, [["siunitx"]], "the new engine asked offline only")
-
-        // Back to the previous engine: both.
-        m.engineV3Enabled = false
-        XCTAssertEqual(state.documents().map(\.path), ["packages/mynotes/mynotes.sty", "packages/siunitx/siunitx.sty"])
     }
 
     /// Privacy (Commander ruling): under the new engine a missing package

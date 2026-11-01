@@ -182,12 +182,14 @@ if intr_at_switch then if (intr_cand[cur_cs]<>0)or intr_all then
 begin_token_list(ref_count,macro); name:=warning_index; loc:=link(r);
 if ckpt_arm_cs<>null then if warning_index=ckpt_arm_cs then
   begin ckpt_arm_level:=input_ptr; ckpt_arm_cs:=null;
+  if pop_watch<ckpt_arm_level then pop_watch:=ckpt_arm_level;
   if ckpt_on_arm<>0 then ckpt_request:=ckpt_on_arm;
   end;
 @y
 begin_token_list(ref_count,macro); name:=warning_index; loc:=link(r);
 if ckpt_arm_cs<>null then if warning_index=ckpt_arm_cs then
   begin ckpt_arm_level:=input_ptr; ckpt_arm_cs:=null;
+  if pop_watch<ckpt_arm_level then pop_watch:=ckpt_arm_level;
   if ckpt_on_arm<>0 then ckpt_request:=ckpt_on_arm;
   end;
 if macro_prof_on then flashtex_prof_enter(warning_index);

@@ -74,7 +74,7 @@ final class UntitledDocumentTests: XCTestCase {
         XCTAssertEqual(model.caretUTF16, UntitledDocument.caretUTF16)
         XCTAssertEqual(model.untitledDocumentCaret, UntitledDocument.caretUTF16)
         XCTAssertNil(model.documentURL)
-        XCTAssertFalse(model.isFixture, "no fixture preview over a real document")
+        XCTAssertNil(model.fixtureURL, "no fixture under a real document")
         XCTAssertFalse(model.isDirty, "untouched: quitting or opening a file asks nothing")
         XCTAssertFalse(model.hasUnsavedDocuments)
 
@@ -84,7 +84,7 @@ final class UntitledDocumentTests: XCTestCase {
 
         let fixture = ShellModel()
         XCTAssertEqual(fixture.activeText, "Hello FlashTeX.\n", "the default stays the contract fixture")
-        XCTAssertTrue(fixture.isFixture)
+        XCTAssertNotNil(fixture.fixtureURL)
         XCTAssertNil(fixture.untitledDocumentCaret)
     }
 
@@ -107,25 +107,6 @@ final class UntitledDocumentTests: XCTestCase {
         try await Task.sleep(nanoseconds: 100_000_000)
         XCTAssertEqual(tv.selectedRange(), NSRange(location: UntitledDocument.caretUTF16, length: 0))
         XCTAssertEqual(model.caretUTF16, UntitledDocument.caretUTF16)
-    }
-
-    /// The old engine (the producer the app attaches) compiles the template:
-    /// one page, no diagnostics.
-    func testTheOldEngineCompilesIt() async throws {
-        guard let producer = ShellModel.locateDefaultProducer() else {
-            throw XCTSkip("no built flashtex-render or flashtex-compiler (FLASHTEX_COMPILER)")
-        }
-        let model = ShellModel(startup: .untitledDocument)
-        model.attachWorker(at: producer)
-        defer { model.detachWorker() }
-        let started = Date()
-        model.compile()
-        try await waitUntil("the compile", timeout: 60) { model.result?.revision == model.editorRevision }
-        let result = try XCTUnwrap(model.result)
-        XCTAssertEqual(result.status, .ok, "\(result.diagnostics)")
-        XCTAssertEqual(result.pages.count, 1)
-        XCTAssertEqual(result.diagnostics.filter { $0.severity == .error }, [])
-        print("untitled document, old engine (\(producer.lastPathComponent)): \(Int(Date().timeIntervalSince(started) * 1000)) ms including worker start")
     }
 
     /// Engine v3 (the pdfTeX port) compiles the template: one page, no error.

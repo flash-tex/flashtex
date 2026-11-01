@@ -15,13 +15,17 @@ fn scan(dir: &Path, hits: &mut Vec<String>) {
             scan(&p, hits);
         } else if p.extension().is_some_and(|x| x == "rs") {
             let text = std::fs::read_to_string(&p).unwrap();
+            let mut prev = "";
             for (i, line) in text.lines().enumerate() {
                 let code = line.split("//").next().unwrap_or("").trim_start();
                 let item = code
                     .strip_prefix("pub(crate) ")
                     .or_else(|| code.strip_prefix("pub "))
                     .unwrap_or(code);
-                if item.starts_with("static ") || code.contains("thread_local!") {
+                // (a program's global allocator holds no engine state)
+                let allocator = prev.trim() == "#[global_allocator]";
+                prev = line;
+                if (item.starts_with("static ") && !allocator) || code.contains("thread_local!") {
                     hits.push(format!("{}:{}: {}", p.display(), i + 1, line.trim()));
                 }
             }

@@ -13,7 +13,7 @@ cached outside the repository by the SHA-256 of the source tree, the pdfTeX
 version and the capture settings, and never edited.
 
 qpdf runs as an external program (Apache-2.0). The PDF object parser is
-tools/visual-oracle/pdftext.py, which the scoreboard already uses.
+tools/parity/pdftext.py, which the scoreboard already uses.
 """
 
 import collections
@@ -30,9 +30,9 @@ import time
 import zlib
 
 import capture as pcapture
+import harness as pharness  # noqa: I100  (run_tex has a local named harness)
 import pdftext
 import pt1stream
-import run as rwc  # tools/real-world-corpus/run.py
 
 PINNED_PDFTEX = "1.40.29"
 DEFAULT_ORACLE = "/Library/TeX/texbin/pdftex"
@@ -118,15 +118,9 @@ def sha(b):
 
 
 def engine_version(exe):
-    code, out, _, _, _ = rwc.run([exe, "--version"], timeout=30)
+    code, out, _, _, _ = pharness.run([exe, "--version"], timeout=30)
     lines = out.decode("utf-8", "replace").splitlines() if out else []
     return lines[0].strip() if lines else ""
-
-
-def engine_kind(exe):
-    """`flashtex-cli` for the shipped `flashtex` command line, else `tex` (a
-    pdfTeX-compatible command line: pdfTeX itself, later the new engine)."""
-    return "flashtex-cli" if engine_version(exe).lower().startswith("flashtex") else "tex"
 
 
 def qpdf_version():
@@ -165,14 +159,14 @@ def run_tex(doc, engine, workdir, trace=True, extra_env=None, seed=None, stream=
         code, timed_out = pcapture.run_engine(engine, FMT, args, workdir, extra_env, timeout=PASS_TIMEOUT)
         meta["passes"] += 1
         if timed_out or code != 0 or not os.path.isfile(pdf):
-            txt = rwc.read_text(logp) if os.path.isfile(logp) else ""
+            txt = pharness.read_text(logp) if os.path.isfile(logp) else ""
             m = re.search(r"^(! .*)$", txt, re.M)
             meta["exit"] = code
             meta["why"] = (f"exit {code}" + (" (timeout)" if timed_out else "") + (f": {m.group(1)[:160]}" if m else ""))
             meta["seconds"] = round(time.time() - t0, 2)
             return meta, None, None
-        cur = rwc.sha256_file(pdf)
-        if cur == previous and "Rerun to get" not in rwc.read_text(logp):
+        cur = pharness.sha256_file(pdf)
+        if cur == previous and "Rerun to get" not in pharness.read_text(logp):
             meta["ok"] = True
             break
         previous = cur

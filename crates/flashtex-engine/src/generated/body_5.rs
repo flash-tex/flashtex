@@ -4734,6 +4734,9 @@ impl Globals {
         'l_dispatch_1: loop {
             if __goto_1 <= 0 {
                 self.last_badness = 0i32;
+                if self.bm_rec_on {
+                    self.flashtex_bm_packed();
+                }
                 r = self.get_node(box_node_size);
                 __av_mem[crate::ix::U((r) as usize)].set_hh_b0(hlist_node);
                 __av_mem[crate::ix::U((r) as usize)].set_hh_b1(min_quarterword);
@@ -5343,6 +5346,9 @@ impl Globals {
         'l_exit_f: {
             'l_common_ending_f: {
                 self.last_badness = 0i32;
+                if self.bm_rec_on {
+                    self.flashtex_bm_packed();
+                }
                 r = self.get_node(box_node_size);
                 __av_mem[crate::ix::U((r) as usize)].set_hh_b0(vlist_node);
                 __av_mem[crate::ix::U((r) as usize)].set_hh_b1(min_quarterword);

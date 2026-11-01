@@ -46,7 +46,7 @@ pub struct Image {
     pub info: Json,
 }
 
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub struct Images {
     /// By id - 1.
     pub res: Vec<Image>,
@@ -152,7 +152,7 @@ impl Images {
         } else {
             let s = size.ok_or_else(|| format!("{path}: cannot read the image's size"))?;
             let (w, h) = (s.width * 72.0 / s.xdpi, s.height * 72.0 / s.ydpi);
-            let info = Json::Obj(vec![
+            let mut kv = vec![
                 ("id".into(), Json::Int(id as i64)),
                 ("key".into(), Json::Str(hex(&key))),
                 ("type".into(), Json::Str(kind.name().into())),
@@ -162,7 +162,14 @@ impl Images {
                 ("rotate".into(), Json::Int(0)),
                 ("x_res".into(), Json::Num(s.xdpi)),
                 ("y_res".into(), Json::Num(s.ydpi)),
-            ]);
+            ];
+            // The space the PDF writer gives the samples (dvipdfmx's
+            // CalGray/CalRGB/ICCBased, not pdfTeX's Device spaces): the
+            // preview draws them in it (spec §5.2 `color_space`).
+            if let Some(cs) = super::pdf::image_color_space(kind, &data) {
+                kv.push(("color_space".into(), cs));
+            }
+            let info = Json::Obj(kv);
             Image {
                 id,
                 key,

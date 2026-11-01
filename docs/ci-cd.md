@@ -6,17 +6,18 @@ gate a branch must pass is proportional to what it changed.
 
 | Piece | What it does |
 |---|---|
-| `ci.yml` | Tiered. **`merge_group` runs only the gate** (target ≤ 12 min with engine parity, ≤ 5 without): workspace build, the touched crates' fmt/clippy/tests, the licence boundary, the bundled inventory, the generated-table gates, trip, etrip and pdfTeX's regression tests on Linux, and the **new engine's parity gates** (lockstep, P-T1/P-T2 on the fixtures, the engine's tests; three shards on the NixOS PC) when the group touches engine-affecting paths. **After the merge** (push to `main`, and nightly): the Mac app, the iPad simulator, the Rust workspace on Linux and macOS, `render-pipeline`, `flashtex-cli`, `flashtex-xetex`, every macOS leg and the old engine's parity fixtures, fixed forward through the `main-red` issue (the PR's owner fixes within 2 h or the Commander reverts). **Pull requests** run the gate's set (engine parity on GitHub-hosted Ubuntu), plus the Mac app, the iPad and the old engine's fixtures only when they touch `apps/`. |
+| `ci.yml` | Tiered. **`merge_group` runs only the gate** (target ≤ 12 min with engine parity, ≤ 5 without): workspace build, the touched crates' fmt/clippy/tests, the licence boundary, the bundled inventory, the generated-table gates, trip, etrip and pdfTeX's regression tests on Linux, and the **new engine's parity gates** (lockstep, P-T1/P-T2 on the fixtures, the engine's tests; three shards on the NixOS PC) when the group touches engine-affecting paths. **After the merge** (push to `main`, and nightly): the Mac app, the iPad simulator, the Rust workspace on Linux and macOS, `flashtex-xetex`, every macOS leg, fixed forward through the `main-red` issue (the PR's owner fixes within 2 h or the Commander reverts). **Pull requests** run the gate's set (engine parity on GitHub-hosted Ubuntu), plus the Mac app, the iPad and the old engine's fixtures only when they touch `apps/`. |
 | `nightly.yml` | On a schedule (08:17 UTC) and on demand: the heavy suites. The parity scoreboard's `arxiv` (149 pinned e-prints) and `templates` tiers on a self-hosted Mac with TeX Live; the new engine's **T2** (LaTeX suites) and fixture-wide **incremental soundness** test on the NixOS PC; the macOS legs that left the merge queue; the whole workspace in the **debug** profile on both OSes, which nothing else covers; the tests of every crate in `scripts/rust-test-exclude.txt` and the clippy of every crate in `scripts/clippy-debt.txt`, without gating, so a list that can shrink is noticed within a day. |
 | `sweeps.yml` | On demand (`gh workflow run sweeps.yml -f ref=<branch>`) or the `run-sweeps` label: the incremental engine's **soundness sweeps** (gates.sh's sound-a … sound-d, span, readers), sharded across GitHub-hosted Ubuntu jobs, one summary table. Lanes run their sweeps here; timing runs on the M1 Max (`t7-reference.yml`). See [`sweeps.yml`](#sweepsyml-the-soundness-sweeps-on-hosted-runners). |
 | `t7-reference.yml` | Nightly (04:23 UTC, main) and on demand (`gh workflow run t7-reference.yml -f ref=<branch> [-f docs=…] [-f quick=true] [-f t7_args='…']`): **T7, the P4 gate's latency number** (DESIGN §8, §12), `scripts/t7-reference.sh` on the heavy self-hosted M1 Max (mac-m1max-a-2, the owner's reference class) with all its refusals. A refused run (battery, Low Power Mode, a speed limit, a load that does not settle: exit 4 or 3) passes with a warning and says why; a missed target (1) or a harness error (2) is red. The evidence directory is the artifact and `table.md` the run summary. Never overlaps itself or the heavy runner's other jobs (`flashtex-mac-heavy`); 120-minute limit. |
+| `t7-hosted.yml` | On demand (`gh workflow run t7-hosted.yml -f ref=<branch> [-f docs=…] [-f quick=true]`) or a push to `t7-hosted/**`: **a T7 smoke run on a GitHub-hosted Apple-Silicon Mac** (macos-15, M1 VM, 3 vCPU), `scripts/t7-reference.sh --force`: always NON-REFERENCE, never the P4 number. It proves the harness runs every document (the ten T7 documents and infdesc by default) and phase: a harness error (exit 2) is red; missed rows (1) pass with a warning and are listed in the run summary. |
 | `notex-gate.yml` | Weekly (Mondays 05:17 UTC, `flash-tex/flashtex` only), on demand, and from `bundle-publish.yml` on the packed bundle: the **no-TeX-Live gate** (DESIGN §4.4, D12). On a hosted Mac with no TeX Live, the engine builds its format from the published bundle and compiles `tools/bundle/tl2026/gate.json` (parity fixtures and a 30-paper arXiv sample); each PDF must equal TeX Live's pdflatex byte for byte, apart from `gaps.json`. Not part of `CI required`. |
 | `release.yml` | On a `v*` tag or a manual run with a version: builds the helpers, packages `FlashTeX.app` into `FlashTeX.dmg` (signed + notarized when the secrets exist), tars the CLI tools for macOS arm64 and Linux x86_64, publishes the GitHub release with `SHA256SUMS`, then points the website at it. |
 | `site.yml` | On every published (non-prerelease) release, on a push to `main` touching `site/**`, and on demand: re-renders the whole site from `site/` (`site/render.py`) and pushes it to `gh-pages`. This is what makes the download page and both installers reflect a release; see [How the website is updated](#how-the-website-is-updated). |
 | `scripts/gate.sh` | The local half of the tiered gates: `scripts/gate.sh {quick|pr|full}` runs exactly the steps CI runs for that tier, scoped to the crates your branch touches. Run `pr` before you push. See [Tiers](#tiers-and-scriptsgatesh). |
 | `scripts/check-license-boundary.sh` | The GPL/MIT boundary of `DESIGN.md` §3: nothing but `crates/flashtex-engine` may have it in its `cargo metadata` dependency graph, and nothing under `apps/ios` may reference a GPL crate or link Rust artifacts. Run by CI and by `gate.sh pr`. See [The licence boundary](#the-licence-boundary). |
-| `scripts/ci/build-helpers.sh` | Builds the `flashtex` CLI and every helper `apps/mac/scripts/make-app.sh` bundles in release mode and prints `FLASHTEX_<NAME>=<path>` lines (the variables the app and its tests read; `FLASHTEX_CLI` is the CLI). |
-| `scripts/ci/package-cli.sh` | Stages `flashtex` (the CLI), `flashtex-render`, `flashtex-compiler`, `flashtex-pdf`, `flashtex-pdf-exact` plus the pinned Latin Modern faces and TFM metrics into `flashtex-cli-<version>-<platform>.tar.gz` with a README (layout below). |
+| `scripts/ci/build-helpers.sh` | Builds every helper `apps/mac/scripts/make-app.sh` bundles in release mode and prints `FLASHTEX_<NAME>=<path>` lines (the variables the app and its tests read). |
+| `scripts/ci/package-cli.sh` | Stages `flashtex` (the CLI, `crates/flashtex-build`), the engine host `flashtex-host`, its string pool and its licence into `flashtex-cli-<version>-<platform>.tar.gz` with a README (layout below). |
 | `scripts/ci/update-site.sh` | A narrower, older path: rewrites just the version/checksum/date in `install.sh`, `download/index.html` and `index.html` on `gh-pages` in place and pushes; called directly by `release.yml`'s `publish` job. `site.yml`'s full re-render (above) also runs on the same `release: published` event and fully overwrites `gh-pages` from `site/` right after, so it is what actually determines the final published page; see the note in [How the website is updated](#how-the-website-is-updated). |
 
 ## Tiers and `scripts/gate.sh`
@@ -38,7 +39,7 @@ scripts/gate.sh pr --list # print the steps without running them
 | Tier | Steps | Where it runs in CI |
 |---|---|---|
 | `quick` | `rustfmt` over the `.rs` files the branch changed; `cargo clippy -p <crate> --all-targets --no-deps -- -D warnings` for each crate it touches; `cargo test -p <crate>` for each crate it touches. If the root `Cargo.toml`/`Cargo.lock` changed, also one `cargo check --workspace --all-targets` and one workspace-wide clippy — but no workspace tests ([why](#what-scoped-to-what-you-changed-means)). If the engine's sources, change files or WEB, or the trip harness changed, also `scripts/flashtex-trip.sh` and `scripts/flashtex-etrip.sh`: each builds its own scratch crate from `crates/flashtex-engine/src`, which nothing else compiles locally (#1599). In CI the gate job runs those two, so the `quick` job skips them | the `quick` job, `ubuntu-latest` |
-| `pr` | `quick`, plus the licence boundary (`scripts/check-license-boundary.sh`), the parity scoreboard self-tests, the parity **fixtures** tier against `tools/parity/baseline-fixtures.json`, and the bundled-inventory sha256 | the pull-request set: `quick`, `boundary`, `inventory`, `gates` (`parity-fixtures` only when a pull request touches `apps/`) |
+| `pr` | `quick`, plus the licence boundary (`scripts/check-license-boundary.sh`), the parity scoreboard self-tests, the parity **fixtures** tier against `tools/parity/baseline-fixtures.json`, and the bundled-inventory check (`apps/mac/scripts/gen-supported-latex.py check --installed`) | the pull-request set: `quick`, `boundary`, `inventory`, `gates` (`parity-fixtures` only when a pull request touches `apps/`) |
 | `full` | `pr`, plus `cargo build --workspace --all-targets` and `cargo test --workspace` in **both** the debug and the release profile, the same for the two standalone crates, the generated-table manifest, and `swift build && swift test` for the Mac app | after the merge (push to `main`, nightly): the post-merge set. The merge queue runs only the gate (`quick`, `build`, trip/etrip/regression, engine parity) |
 
 Every step prints its own result and the run ends with a table of
@@ -59,7 +60,8 @@ uncommitted edits, because the point of a local gate is to catch the problem
 before the commit. `--committed-only` drops the uncommitted half; `--base <ref>`
 compares against something other than `origin/main`.
 
-A path under `crates/<dir>/` maps to that directory's cargo package. A crate
+A path under `crates/<dir>/` or `tests/oracles/<dir>/` (the oracle crates,
+moved there by retirement stage S8) maps to that directory's cargo package. A crate
 that has its own `Cargo.lock` is one of the three the root workspace excludes
 (`Cargo.toml`), and `gate.sh` runs cargo inside it rather than with `-p`.
 
@@ -103,7 +105,7 @@ root workspace.
 
 `--no-deps` is the load-bearing flag. Without it, `cargo clippy -p X` lints every
 path dependency of `X` too, so one crate's findings fail every crate downstream
-of it — `crates/compiler` has a deny-by-default `never_loop`, which by itself
+of it — the old engine's compiler crate had a deny-by-default `never_loop`, which by itself
 made clippy unusable for most of the workspace. With `--no-deps`, a crate is
 answerable only for itself.
 
@@ -136,11 +138,12 @@ If it passes, the required CI set will pass, with two exceptions worth knowing:
 * `--locked` is used everywhere, so a `Cargo.lock` that your change did not
   update is a failure in CI even if a plain `cargo build` succeeds locally.
 
-If `gate.sh` refuses to start with "these directories are inside the root
+If `gate.sh` refuses to start with "these directories are inside a root
 workspace glob but have no `Cargo.toml`", delete them: they are stale `target/`
-output for a crate that was removed from the repository, and because the root
-workspace globs `crates/*`, they make *every* cargo command in the checkout fail
-with `failed to load manifest for workspace member`.
+output for a crate that was removed or moved (retirement stage S8 moved the
+oracle crates from `crates/` to `tests/oracles/`), and because the root
+workspace globs `crates/*` and `tests/oracles/*`, they make *every* cargo
+command in the checkout fail with `failed to load manifest for workspace member`.
 
 
 ## The licence boundary
@@ -161,9 +164,8 @@ runs on every pull request (the `licence boundary` job) and inside
 reach it is a violation, reported with the dependency path that gets there.
 
 It does this in **every** cargo workspace in the repository, not just the root
-one: `Cargo.toml` excludes `crates/render-pipeline`, `crates/flashtex-cli` and
-`crates/perf-bench`, and those are where the shipped CLI lives, so checking only
-the root workspace would leave the blind spot exactly where it matters.
+one: `Cargo.toml` excludes `crates/flashtex-xetex`, which has a workspace of its
+own, so checking only the root workspace would leave a blind spot.
 
 All dependency kinds count. A `dev-dependency` still links GPL code into a test
 binary and a `build-dependency` still links it into a build script.
@@ -191,6 +193,15 @@ linked into any MIT product target — a GPL host-process binary, if the engine
 lane ever splits the host out of the library. It is empty today. Adding a line
 is a licensing decision, not a way to make a red gate green.
 
+The script also runs C (no MIT crate reaches poppler or MuPDF), D (the Typst
+host), E (the Mac app) and F (the makeindex port); `--list` describes each.
+**G — every package declares its licence.** Every package of the root
+workspace, of each excluded crate with its own `Cargo.lock` and of
+`typst-host/` must have a `license` SPDX expression or a `license-file`, so
+`cargo metadata` shows none as `None` (retirement plan R5, stage S8). This
+includes the oracle crates under `tests/oracles/`, which are MIT and which A
+keeps off the engine like every other crate.
+
 The owner arranges the legal review of §3 before public release; development
 proceeds meanwhile.
 
@@ -217,7 +228,7 @@ competed for GitHub-hosted macOS runners. Tiering fixed pull requests. It did
 not fix the merge queue: on 2026-10-04 a `merge_group` run still took **45–130
 minutes** wall clock, because every group ran the Mac app (19–24 min on hosted
 `macos-26`), the Rust workspace (16–22 min, on the PC), engine parity (13–19
-min, on the PC), `render-pipeline` (7–8), the iPad simulator (6–8) and the
+min, on the PC), the old engine's standalone crate (7–8), the iPad simulator (6–8) and the
 workspace build (on the PC) — and up to 8 groups at a time queued for the PC's
 three runners (`build` waited 30 minutes for one in run
 [37169695929](https://github.com/flash-tex/flashtex/actions/runs/37169695929),
@@ -258,7 +269,7 @@ touches the engine, ≤ 5 minutes otherwise**.
 | Job | Runner | What |
 |---|---|---|
 | `plan` | ubuntu | tier, deduplication, runner choice, path filters |
-| `gate checks and engine T0 (ubuntu-latest)` | ubuntu | **one job, six gates**, each a step that runs even if an earlier one failed: the licence boundary (`scripts/check-license-boundary.sh`), the bundled inventory (a sha256 comparison of two files), the generated tables (`scripts/check-generated.py` plus `gen_tables.py --check`), and the engine's T0 tests — trip, etrip and pdfTeX's regression tests, self-contained. One job since 2026-10-05: as six jobs of under two minutes each they took six of the Free plan's 20 concurrent hosted slots per gate run |
+| `gate checks and engine T0 (ubuntu-latest)` | ubuntu | **one job, six gates**, each a step that runs even if an earlier one failed: the licence boundary (`scripts/check-license-boundary.sh`), the bundled inventory (`gen-supported-latex.py check --installed`: the app's two copies of `supported-latex.json` match the generator), the generated tables (`scripts/check-generated.py` plus `gen_tables.py --check`), and the engine's T0 tests — trip, etrip and pdfTeX's regression tests, self-contained. One job since 2026-10-05: as six jobs of under two minutes each they took six of the Free plan's 20 concurrent hosted slots per gate run |
 | `build (workspace, all targets)` | ubuntu | in the gate **`cargo check --workspace --all-targets --locked`** (pull requests: `cargo build`). Kept in the gate because `quick` builds only the crates a change touches, and this is what catches a change that breaks a crate it did not touch; `check` because `cargo build` took 5.0–6.6 min here, over the gate's 5, while code generation and linking are covered by the post-merge `rust workspace` jobs. The push to `main` runs `check` too, so the gate restores a warm check cache (`workspace-debug-check`) |
 | `quick (touched crates)` | ubuntu | `scripts/gate.sh quick --committed-only` on the group's diff: fmt, clippy and tests of the crates it changed (and `flashtex-xetex` when the engine or `tools/web2rust` changed) |
 | `engine parity (GitHub-hosted, …)` | ubuntu, five shards | only when the group touches engine-affecting paths; see [below](#the-new-engines-parity-gates) |
@@ -266,8 +277,7 @@ touches the engine, ≤ 5 minutes otherwise**.
 The engine-affecting paths (`engine_paths` in `plan`): `crates/flashtex-engine/`
 and its path dependency `crates/display-list-v3/`; the root `Cargo.toml` and
 `Cargo.lock` (it builds `--locked` in the root workspace); `tools/web2rust/`,
-`tools/lockstep/`, `tools/parity/` and the two directories `parity.py` imports
-(`tools/visual-oracle/`, `tools/real-world-corpus/`); `third_party/`;
+`tools/lockstep/`, `tools/parity/`; `third_party/`;
 `fixtures/`; `scripts/engine-parity.sh`, `.github/actions/texlive-2026/` and
 `ci.yml` itself. A merge group's diff is cumulative (main to the group's head),
 so once an engine change is in the queue every group behind it runs parity too —
@@ -365,45 +375,16 @@ for a runner (run
 That queue is why no hosted macOS job runs on a pull request that does not touch
 `apps/`.
 
-### The old engine's parity fixtures
+### The old engine's parity fixtures (retired)
 
-The old engine (`flashtex-cli`) is frozen (D13, fixes only), so almost no change
-can move its fixtures tier, and the job needs a Mac
-(`tools/parity/baseline-fixtures.json` was recorded on macOS, and
-`unicode-accents` paints CJK from system fonts, so a Linux run would compare
-against another host's numbers — the mistake `DESIGN.md` §8 forbids). `plan`
-therefore computes `old_engine`:
-
-* **`true` after the merge** — every push to `main`, and manual runs. On `main`
-  a failure opens or updates the `main-red` issue like every
-  [post-merge job](#after-the-merge-and-main-red).
-* **Never in the merge queue.**
-* **On a pull request or branch push, `true` only when the change touches
-  `apps/` (the hosted-macOS rule) and a path the tier depends on.** A pull
-  request's file list comes from the API; a failed call, or a list at the API's
-  cap, counts as touching everything. The paths:
-  * `crates/<name>/` for `flashtex-cli` and every path crate in its
-    `cargo metadata` dependency graph, dev-dependencies included (21 crates,
-    listed as `old_engine_crates` in `plan`);
-  * the root `Cargo.toml` and `Cargo.lock` (the CLI builds in the root
-    workspace, `--locked`);
-  * `tools/parity/` and the two directories it imports from,
-    `tools/visual-oracle/` and `tools/real-world-corpus/`;
-  * `fixtures/` (the documents and their pdflatex references) and
-    `apps/mac/Fonts/` (the font directory `parity.py` hands the CLI);
-  * `.github/actions/parity-fixtures/` and `.github/workflows/ci.yml`.
-
-`plan` runs before any checkout, so the crate list is written out by hand.
-`scripts/ci/check-old-engine-paths.sh` compares it with `cargo metadata` and
-fails if a crate is missing; the action runs it. A new path dependency can only
-be added in a `Cargo.toml` already on the list, so the check runs exactly when
-the list can go stale. `CI required` fails a run where `old_engine` is `true`
-and neither of the two jobs passed; both skipped is a pass when it is `false`.
+The old engine's fixtures tier (its CLI on `fixtures/`, `old_engine` in `plan`
+and the `old_engine_crates` list) was deleted with the old engine in S7
+(retirement plan, row 11). The fixtures are gated on the new engine below.
 
 ### The new engine's parity gates
 
 Until 2026-09-30 no CI job checked the new engine's parity: the "parity
-fixtures" job builds the *old* `flashtex-cli`, lockstep (T1), P-T1/P-T2, T2 and
+fixtures" job built the *old* engine's CLI, lockstep (T1), P-T1/P-T2, T2 and
 the incremental soundness sweep were one-off lane runs, and the engine's TeX
 Live tests printed "no TeX Live found; skipping" and passed (review 2026-09-30,
 tracks 1 and 5). `scripts/engine-parity.sh` is now the gate, and CI runs it:
@@ -498,9 +479,8 @@ in the merge queue:
 | `mac app (swift build + test)`, `iPad companion (…)` | hosted `macos-26` |
 | `rust workspace (ubuntu-latest)` | ubuntu (GitHub-hosted since 2026-10-05: nobody waits on it, and on the PC it held a runner the gate needed) |
 | `rust workspace (macos-15)` | self-hosted Mac, else hosted `macos-15` |
-| `rust render-pipeline`, `rust flashtex-cli`, `rust flashtex-xetex` (both systems) | ubuntu; self-hosted Mac, else hosted `macos-15` |
+| `rust flashtex-xetex` (both systems) | ubuntu; self-hosted Mac, else hosted `macos-15` |
 | `gate checks and engine T0 (macos-15)` (trip, etrip, pdfTeX regression) | self-hosted Mac, else hosted `macos-15` |
-| `old engine: parity fixtures (…)` | self-hosted Mac, else hosted `macos-15` |
 | `engine parity (GitHub-hosted, …)` | ubuntu, three shards |
 
 plus the gate's cheap jobs again. `nightly.yml` repeats the macOS legs and the
@@ -551,9 +531,7 @@ them failed or was cancelled. A **skipped** job is fine: that is how a tier says
 Two gates are stricter, because a filter must not be able to skip them by
 accident: in the merge queue, whenever `plan` set `engine` (the group touches
 engine-affecting paths — or `plan`'s outputs are missing), one of the new
-engine's two parity jobs must have passed with every shard; and whenever `plan`
-set `old_engine` one of the old engine's two parity fixtures jobs must have
-passed.
+engine's two parity jobs must have passed with every shard.
 
 In the merge queue `CI required` therefore reflects the gate alone: every
 post-merge job is `skipped` there, so it reports as soon as the slowest gate job
@@ -653,7 +631,7 @@ What the installer sets up, and why:
   `RUSTUP_HOME` in the runner's `.env`. That is where the time goes: the
   crates.io registry, the git checkouts, the toolchains.
 * **No `CARGO_TARGET_DIR`.** It is no longer needed to keep two package sets
-  apart -- `crates/render-pipeline/vendor/` is retired, so there is exactly one
+  apart -- the old engine's vendored copies are retired, so there is exactly one
   set of package names and one workspace target directory. Setting it would still
   be wrong here, because two concurrent jobs on the same machine would then share
   and lock one directory. Build caching comes from `Swatinem/rust-cache`.
@@ -979,16 +957,15 @@ The full list, so nobody has to re-derive it:
 The cost of the fix is real: runs on main no longer supersede each other, so a
 burst of merges means a burst of concurrent macOS jobs on a pool that has
 already been starved once (76 queued runs stalled a release for an hour). If
-the pool becomes the binding constraint, the lever to reach for is the nine
-`rust-workspace (macos-15)` and `rust-standalone (macos-15)` jobs — they
-duplicate the `ubuntu-latest` ones — not restoring the cancellation, which buys
+the pool becomes the binding constraint, the lever to reach for is the macOS
+Rust jobs — they duplicate the `ubuntu-latest` ones — not restoring the cancellation, which buys
 runner time by discarding the signal. (Before the workspace, each run
 asked for 12 per-crate macOS Rust jobs. Now it asks for 3.)
 
 ### Generated tables
 
-Seven committed tables come from TeX Live (or, for the Core 14 AFMs,
-matplotlib's copy of Adobe's files). Each generator has a `--check` mode that
+The committed generated tables (`scripts/generated-manifest.json` lists
+them) come from TeX Live or from measured runs. Each generator has a `--check` mode that
 re-derives its output and compares it with the committed file. Exit 0 means up
 to date, 1 means stale (a diff excerpt is printed), and 2 means it cannot be
 checked here (a TeX tool or input is missing). `scripts/check-generated.py --run` runs
@@ -1009,15 +986,12 @@ refuses to record a stale output.
    `apps/mac/scripts/make-app.sh --version <x.y.z> --dmg [--sign … --notarize flashtex-ci]`,
    then produces `FlashTeX.dmg`, `FlashTeX-<ver>-macos-arm64.dmg` (the same
    file under a versioned name) and `flashtex-cli-<ver>-macos-arm64.tar.gz`
-   (using the hash-verified fonts/metrics staged inside the app bundle), and
-   smoke-tests the extracted CLI with `bin/flashtex build` (no `FLASHTEX_*`
-   in the environment, so the fonts must come from `share/flashtex`) and
-   `flashtex-render --tex`. The temporary keychain is deleted afterwards.
-3. **`linux`** (`ubuntu-latest`) builds `flashtex-cli`, `render-pipeline`,
-   `compiler` and `pdf` individually; whatever builds is packaged as
-   `flashtex-cli-<ver>-linux-x86_64.tar.gz` and the README inside lists any
-   crate that did not build on Linux. A Linux failure does not block the
-   release.
+   (the CLI and the engine host, both required), and smoke-tests the
+   extracted CLI. The temporary keychain is deleted afterwards.
+3. **`linux`** (`ubuntu-latest`) builds the CLI and the engine host;
+   whatever builds is packaged as `flashtex-cli-<ver>-linux-x86_64.tar.gz`
+   and the README inside lists any binary that did not build on Linux. A
+   Linux failure does not block the release.
 4. **`publish`** downloads both artifact sets, writes `SHA256SUMS`, creates
    the GitHub release (`gh release create … --generate-notes`, with a header
    describing the assets and the signing status; re-runs upload with
@@ -1029,23 +1003,17 @@ refuses to record a stale output.
 ```
 flashtex-cli-<version>-<platform>/
   README.md
-  bin/flashtex                the CLI: build / check / watch / supported / worker / fonts
-  bin/flashtex-render         runtime-v1 worker (+ flashtex-compiler, flashtex-pdf,
-                              flashtex-pdf-exact when built for the platform)
-  share/flashtex/Fonts/       pinned Latin Modern OpenType faces + GUST licence
-  share/flashtex/texmf/       rooted Latin Modern 2.004 TFM metrics + licence
-  bin/Fonts -> ../share/flashtex/Fonts     relative links for the helpers'
-  bin/texmf -> ../share/flashtex/texmf     older `<exe>/Fonts` discovery
+  bin/flashtex                the CLI (crates/flashtex-build, MIT): build / check / watch
+  bin/flashtex-host           the engine host it starts (crates/flashtex-engine, GPL-2.0-or-later)
+  bin/pdftex.pool             the engine's string pool, beside the host
+  share/flashtex/engine/      the host's licence and third-party notices
 ```
 
-`bin/flashtex` finds `share/flashtex/{Fonts,texmf}` relative to its own
-location (`crates/render-pipeline/src/fonts.rs`, `Discovery`: after the
-app-bundle `../Resources` and sibling `<exe>/Fonts` layouts, before the host
-TeX Live directories), so the extracted directory works anywhere with no
-environment and no TeX installation; `flashtex install-cli` symlinks the
-binary into `/usr/local/bin` without breaking that. The Mac app also ships
-the same binary as `Contents/MacOS/flashtex-cli` (it resolves
-`Contents/Resources/{Fonts,texmf}`).
+`bin/flashtex` starts the `flashtex-host` beside it (else `--host`,
+`$FLASHTEX_HOST`, or `PATH`) and needs a TeX Live installation. The host is a
+separate GPL program, never linked into the MIT CLI (DESIGN.md §3); its source
+is this repository at the release tag. See `scripts/ci/package-cli.sh` for the
+exact contents.
 
 ### Secrets (all optional)
 

@@ -70,7 +70,6 @@ final class EngineV3MemoryBoundTests: XCTestCase {
         try EngineV3TestHost.require()
         let model = ShellModel()
         model.replaceProject(entryText: Self.document, named: "main.tex")
-        let stored = UserDefaults.standard.object(forKey: EngineV3.enabledKey)
         model.autoCompile = false // the test sends each compile itself
         model.engineV3Enabled = true
         let s = model.engineV3
@@ -81,7 +80,6 @@ final class EngineV3MemoryBoundTests: XCTestCase {
         defer {
             model.engineV3.stop()
             window.contentView = nil
-            if let stored { UserDefaults.standard.set(stored, forKey: EngineV3.enabledKey) } else { UserDefaults.standard.removeObject(forKey: EngineV3.enabledKey) }
         }
         try await EngineV3TestHost.awaitReady(s)
         if !s.compiling, s.pageCount < Self.pageCount { s.compile(model: model, reason: "explicit") }

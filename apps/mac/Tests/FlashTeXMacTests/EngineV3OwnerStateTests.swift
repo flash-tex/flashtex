@@ -41,31 +41,29 @@ final class EngineV3OwnerStateTests: XCTestCase {
         XCTAssertTrue(formats.hasPrefix(EngineV3.testCacheDirectory.path), formats)
     }
 
-    /// Setting the window's engine directly (benches, tests) persists
-    /// nothing (it is that window's override, EngineChoice.swift); a
-    /// per-document choice is kept in the test process's own suite, never
-    /// in the runner's standard domain.
+    /// Turning the window's engine session on and off (benches, tests)
+    /// persists nothing; a document's record (EngineChoice.swift) is kept in
+    /// the test process's own suite, never in the runner's standard domain.
     func testTheFlagIsKeptInTheTestProcessesOwnDefaults() throws {
         env.set("FLASHTEX_HOST", "none")
         XCTAssertFalse(EngineV3.defaults === UserDefaults.standard)
         let before = UserDefaults.standard.dictionaryRepresentation().filter { $0.key.hasPrefix("FlashTeX.EngineV3") }.mapValues { String(describing: $0) }
-        let suiteBefore = EngineV3.defaults.object(forKey: EngineV3.enabledKey).map { String(describing: $0) }
+        let suiteBefore = EngineV3.defaults.dictionaryRepresentation().filter { $0.key.hasPrefix("FlashTeX.EngineV3") }.mapValues { String(describing: $0) }
         let model = ShellModel()
         defer { model.engineV3.stop() }
         model.engineV3Enabled = true
         model.engineV3Enabled = false
         model.engineV3Enabled = true
-        XCTAssertEqual(EngineV3.defaults.object(forKey: EngineV3.enabledKey).map { String(describing: $0) }, suiteBefore,
-                       "a direct set is the window's override, not the app setting")
+        XCTAssertEqual(EngineV3.defaults.dictionaryRepresentation().filter { $0.key.hasPrefix("FlashTeX.EngineV3") }.mapValues { String(describing: $0) },
+                       suiteBefore, "the session's switch is not stored")
         let dir = FileManager.default.temporaryDirectory.appendingPathComponent("engine-v3-owner-flag-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: dir) }
         let file = dir.appendingPathComponent("main.tex")
         try "\\documentclass{article}\n\\begin{document}\nx\n\\end{document}\n".write(to: file, atomically: true, encoding: .utf8)
         XCTAssertEqual(model.openTex(at: file, dirty: .discard), .opened)
-        model.chooseEngine(.previous)
         defer { EngineChoiceStore.set(nil, for: file) }
-        XCTAssertEqual(EngineChoiceStore.entry(for: file)?.source, .user)
+        XCTAssertEqual(EngineChoiceStore.entry(for: file), .init(engine: EngineChoiceStore.currentEngine, source: .record))
         XCTAssertNotNil(EngineV3.defaults.dictionary(forKey: EngineChoiceStore.documentsKey))
         XCTAssertEqual(UserDefaults.standard.dictionaryRepresentation().filter { $0.key.hasPrefix("FlashTeX.EngineV3") }.mapValues { String(describing: $0) }, before,
                        "the runner's standard domain is untouched")
@@ -113,7 +111,7 @@ final class EngineV3OwnerStateTests: XCTestCase {
         after.ownProjectCopies = ["630c-\(getpid())-2"]
         after.ownHostFiles = ["4242"]
         after.snapshotDirectories = ["abc123"]
-        after.runnerEngineV3Keys = [EngineV3.enabledKey: "1"]
+        after.runnerEngineV3Keys = ["FlashTeX.EngineV3.enabled": "1"]
         XCTAssertEqual(after.written(since: before).count, 4, after.written(since: before).joined(separator: "; "))
     }
 

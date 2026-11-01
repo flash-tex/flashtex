@@ -17,7 +17,7 @@ use std::sync::Arc;
 
 /// `GlyphAssembly`: the parts of a glyph's assembly in one direction.
 pub struct Assembly {
-    parts: Vec<hb::hb_ot_math_glyph_part_t>,
+    pub(crate) parts: Vec<hb::hb_ot_math_glyph_part_t>,
 }
 
 /// `hb_ot_math_constant_t`'s `-1`: no OpenType constant for a fontdimen.

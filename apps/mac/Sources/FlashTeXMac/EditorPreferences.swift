@@ -869,7 +869,7 @@ struct SettingsRootView: View {
                 .formStyle(.grouped)
                 .frame(width: DS.Layout.settingsWidth)
                 .tabItem { Label("Typing", systemImage: "keyboard") }
-            Form { CompilePreferencesSection(); EngineChoiceSettingsSection(); PerformanceSettingsSection() } // auto-compile (#653 review); engine choice (EngineChoice.swift); Low Memory / Balanced / High Performance (PerformanceMode.swift)
+            Form { CompilePreferencesSection(); PerformanceSettingsSection() } // auto-compile (#653 review); Low Memory / Balanced / High Performance (PerformanceMode.swift)
                 .formStyle(.grouped)
                 .frame(width: DS.Layout.settingsWidth)
                 .tabItem { Label("Compile", systemImage: "play.circle") }
@@ -885,10 +885,9 @@ struct SettingsRootView: View {
     }
 }
 
-/// Settings > Compile. The one user-facing switch the old toolbar producer
-/// menu carried (the rest — attaching compiler executables, reloading
-/// fixtures — is a developer harness that stays in the File menu and the
-/// command palette). Session state on `ShellModel`, unchanged semantics.
+/// Settings > Compile: auto-compile, the one user-facing switch the old
+/// toolbar producer menu carried, and the first-error policy. Session state
+/// on `ShellModel`, unchanged semantics.
 struct CompilePreferencesSection: View {
     @Environment(ShellModel.self) var model
 
@@ -899,7 +898,7 @@ struct CompilePreferencesSection: View {
                 .disabled(!model.canCompile)
                 .accessibilityHint("While on, every edit compiles and the preview follows; while off, compile with Command-B.")
             Text(model.canCompile ? "Edits compile as you type; ⌘B compiles at any time."
-                                      : "No producer attached — File > Attach Built Compiler (⌘⇧K) first.")
+                                      : "The preview engine is not running.")
                 .font(DS.Fonts.secondary).foregroundStyle(DS.Colors.textSecondary)
             Toggle("Stop at the first error", isOn: $model.strictTeXErrors)
                 .accessibilityHint("While off, errors TeX recovers from are shown as warnings and the preview shows every page. While on, the new engine stops at the first error, like pdflatex -halt-on-error.")
@@ -990,7 +989,10 @@ struct EditorPreferencesView: View {
                     .accessibilityHint("While you edit, the preview scrolls to what you are changing — only when it is off screen, and not while you scroll the preview yourself. Command-Shift-J reveals the caret at any time.")
                 ErrorLensPreferenceRows() // inline diagnostic text at line ends (ErrorLens.swift)
             }
-            Section("Preview") { PreviewFontSmoothingRows() } // font smoothing vs exact PDF parity (PreviewFontSmoothing.swift)
+            Section("Preview") {
+                PreviewFontSmoothingRows() // font smoothing vs exact PDF parity (PreviewFontSmoothing.swift)
+                PreviewStaleDimmingRows() // delayed stale-page dimming (PreviewStaleDimming.swift)
+            }
             Section("Sidebar") { ProjectTreeSettingsRows() } // Project files as a folder tree or a flat list (ProjectFileTree.swift)
             Section("Saving") {
                 Toggle("Autosave", isOn: $prefs.autosave)

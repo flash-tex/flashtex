@@ -65,11 +65,23 @@ enum EditorDiagnostics {
         var hasFix: Bool = false
         /// The diagnostic's `code` (`unsupported_feature`, `unknown_command`, …),
         /// carried so the editor classifies a gap exactly as the panel does.
-        var code: String? = nil
+        let code: String?
+        /// A FlashTeX gap by the panel's rule (`EditorDiagnostics.isGap(code:message:)`).
+        /// Classified once, here: the underlines, the gutter and the error lens
+        /// each ask for every mark at every key, and the rule searches the
+        /// message's text (3,000 marks: most of a key's main-thread time).
+        let isGap: Bool
+
+        init(identity: Identity, nsRange: NSRange, severity: RuntimeV1.Severity, message: String, recovery: String?,
+             resultStatus: RuntimeV1.Status, explanation: String? = nil, carried: Carried? = nil, hasFix: Bool = false,
+             code: String? = nil) {
+            self.identity = identity; self.nsRange = nsRange; self.severity = severity; self.message = message
+            self.recovery = recovery; self.resultStatus = resultStatus; self.explanation = explanation
+            self.carried = carried; self.hasFix = hasFix; self.code = code
+            isGap = EditorDiagnostics.isGap(code: code, message: message)
+        }
 
         var id: String { identity.key }
-        /// A FlashTeX gap by the panel's rule (`EditorDiagnostics.isGap(code:message:)`).
-        var isGap: Bool { EditorDiagnostics.isGap(code: code, message: message) }
         var diagnosticIndex: Int { identity.index }
         /// The original byte span (for the list row's "bytes a..<b" text).
         var originalSource: RuntimeV1.SourceRange { identity.source }
@@ -169,7 +181,25 @@ enum EditorDiagnostics {
     /// a gap and the other issue-#76 codes are not; unknown codes and a missing
     /// `code` fall back to the message phrases (the compiler's own wording).
     static func isGap(_ message: String) -> Bool {
-        gapPhrases.contains { message.contains($0) }
+        // A byte search (the phrases are ASCII): Foundation's `contains` here
+        // was most of counting a long book's thousands of rows, which the
+        // panel, the status bar and VoiceOver each do at every reply.
+        var m = message
+        return m.withUTF8 { b in gapPhraseBytes.contains { Self.contains(b, $0) } }
+    }
+    private static let gapPhraseBytes: [[UInt8]] = gapPhrases.map { Array($0.utf8) }
+    /// Whether `s` holds the bytes of `needle` (a byte search; for ASCII phrases).
+    static func bytesContain(_ s: String, _ needle: String) -> Bool {
+        var m = s
+        let n = Array(needle.utf8)
+        return m.withUTF8 { contains($0, n) }
+    }
+    /// libc's `memmem`: the same answer as a byte loop, and as fast in a
+    /// debug build as in a release one (3,000 rows × 5 phrases per reply).
+    private static func contains(_ b: UnsafeBufferPointer<UInt8>, _ needle: [UInt8]) -> Bool {
+        let n = needle.count
+        guard n > 0, b.count >= n, let base = b.baseAddress else { return n == 0 }
+        return needle.withUnsafeBufferPointer { memmem(base, b.count, $0.baseAddress, n) != nil }
     }
     static func isGap(_ diagnostic: RuntimeV1.Diagnostic) -> Bool {
         isGap(code: diagnostic.code, message: diagnostic.message)
@@ -420,13 +450,18 @@ extension EditorDiagnostics {
         let recovery: String?
         let occurrences: [Int]
 
+        /// Made once: the panel's List asks for every row's id at each update.
+        let id: String
+
+        init(severity: RuntimeV1.Severity, message: String, code: String?, recovery: String?, occurrences: [Int]) {
+            self.severity = severity; self.message = message; self.code = code
+            self.recovery = recovery; self.occurrences = occurrences
+            if let code, !code.isEmpty { id = "\(severity.rawValue):\(code):\(message)" } else { id = "\(severity.rawValue):\(message)" }
+        }
+
         var count: Int { occurrences.count }
         /// Index of the first occurrence (document order); the row's explanation and quick fix use it.
         var first: Int { occurrences[0] }
-        var id: String {
-            if let code, !code.isEmpty { return "\(severity.rawValue):\(code):\(message)" }
-            return "\(severity.rawValue):\(message)"
-        }
         /// "12× \in is not supported in math mode", or just the message for one.
         var title: String { count > 1 ? "\(count)× " + message : message }
     }
@@ -441,7 +476,11 @@ extension EditorDiagnostics {
     /// `groups(of:)` over any diagnostics list (the panel shows the result's
     /// diagnostics followed by the shell's own layout diagnostics).
     static func groups(of diagnostics: [RuntimeV1.Diagnostic], documentOrder: [String] = []) -> [Group] {
-        func rank(_ path: String) -> Int { documentOrder.firstIndex(of: path) ?? documentOrder.count }
+        // A path's place in the listing, looked up (the sort asks for it
+        // n log n times; a scan of a big project's listing each time was most
+        // of a 1,152-page book's Problems update, EDITOR-FREEZE).
+        let ranks = Dictionary(documentOrder.enumerated().map { ($1, $0) }, uniquingKeysWith: { first, _ in first })
+        func rank(_ path: String) -> Int { ranks[path] ?? documentOrder.count }
         var order: [String] = []
         var members: [String: [Int]] = [:]
         for (i, d) in diagnostics.enumerated() {
@@ -467,11 +506,13 @@ extension EditorDiagnostics {
                          code: (codes.count == 1 && !codes.contains("")) ? diagnostics[sorted[0]].code : nil,
                          recovery: recoveries.count == 1 ? diagnostics[sorted[0]].recovery : nil, occurrences: sorted)
         }
-        groups.sort {
-            let ba = listBucket(diagnostics[$0.first]), bb = listBucket(diagnostics[$1.first])
-            if ba != bb { return ba < bb }
-            return before($0.first, $1.first)
+        // Each group's bucket once, not at every comparison (it reads the message).
+        let buckets = groups.map { listBucket(diagnostics[$0.first]) }
+        let sorted = groups.indices.sorted { a, b in
+            if buckets[a] != buckets[b] { return buckets[a] < buckets[b] }
+            return before(groups[a].first, groups[b].first)
         }
+        groups = sorted.map { groups[$0] }
         return groups
     }
 
@@ -496,9 +537,13 @@ extension EditorDiagnostics {
 
     static func occurrenceLabel(_ k: Int, of group: Group, in diagnostics: [RuntimeV1.Diagnostic],
                                 texts: [String: String] = [:]) -> String {
+        occurrenceLabel(k, of: group, in: diagnostics, lines: Lines(texts: texts))
+    }
+
+    static func occurrenceLabel(_ k: Int, of group: Group, in diagnostics: [RuntimeV1.Diagnostic], lines: Lines) -> String {
         let prefix = "\(k + 1) of \(group.count): "
         guard let s = occurrence(k, of: group, in: diagnostics) else { return prefix + "no source" }
-        if let text = texts[s.path], let line = lineNumber(ofByte: s.startByte, in: text) {
+        if let line = lines.line(ofByte: s.startByte, in: s.path) {
             return prefix + "\(s.path) line \(line)"
         }
         return prefix + "\(s.path) bytes \(s.startByte)..<\(s.endByte)"
@@ -793,120 +838,6 @@ extension EditorDiagnostics {
     }
 }
 
-/// The `flashtex-explain` helper: one request line
-/// `{"id","type":"explain","compile_result":<payload>,"documents":[{path,text}],"supported":[…]}`,
-/// one reply line `{"id","type":"explanations","explanations":[…]}` or
-/// `{"id","type":"error","error":{code,message}}`. Runs on private pipes via
-/// `LineProcessClient`; completions are delivered on `queue` (main by default).
-final class ExplanationClient {
-    typealias Explanation = EditorDiagnostics.Explanation
-    typealias Failure = EditorDiagnostics.ExplanationFailure
-
-    static let label = "explain"
-    /// Default deadline for one reply; the crate answers in milliseconds.
-    static let defaultTimeout: TimeInterval = 10
-
-    let executable: URL
-    let maxReplyBytes: Int
-    private let client: LineProcessClient
-    private let queue: DispatchQueue
-
-    /// `FLASHTEX_EXPLAIN`, then `flashtex-explain` beside the app executable,
-    /// then the repository's `crates/diagnostic-explanations/target/{release,debug}`.
-    @MainActor static func locate() -> URL? {
-        let fm = FileManager.default
-        if let env = ProcessInfo.processInfo.environment["FLASHTEX_EXPLAIN"], fm.isExecutableFile(atPath: env) {
-            return URL(fileURLWithPath: env)
-        }
-        if let bundled = Bundle.main.executableURL?.deletingLastPathComponent().appendingPathComponent("flashtex-explain"),
-           fm.isExecutableFile(atPath: bundled.path) {
-            return bundled
-        }
-        guard let root = ShellModel.locateRepoRoot() else { return nil }
-        for profile in ["release", "debug"] {
-            let url = root.appendingPathComponent("crates/diagnostic-explanations/target/\(profile)/flashtex-explain")
-            if fm.isExecutableFile(atPath: url.path) { return url }
-        }
-        return nil
-    }
-
-    init(executable: URL, arguments: [String] = [], queue: DispatchQueue = .main,
-         maxReplyBytes: Int = EditorDiagnostics.ExplanationLimits.maxReplyBytes,
-         events: @escaping (String) -> Void = { _ in }) throws {
-        self.executable = executable
-        self.queue = queue
-        self.maxReplyBytes = maxReplyBytes
-        struct Header: Decodable { var id: String?; var type: String; var error: TransferV1.ErrorPayload? }
-        client = try LineProcessClient(
-            executable: executable, arguments: arguments, label: Self.label, queue: queue,
-            classify: { line in
-                guard let h = try? JSONDecoder().decode(Header.self, from: line) else { return nil }
-                return .init(id: h.id, type: h.type, error: h.error)
-            },
-            events: { event in
-                let text: String
-                switch event {
-                case .stderr(let s): text = "stderr: " + s.trimmingCharacters(in: .whitespacesAndNewlines)
-                case .protocolViolation(let s): text = s
-                case .unsolicited(let id, let type, _): text = "unsolicited \(type) reply for \(id ?? "?")"
-                case .exited(let code): text = "exited (\(code))"
-                }
-                events(text)
-            })
-    }
-
-    var isRunning: Bool { client.isRunning }
-    func terminate() { client.terminate() }
-
-    private struct Request: Encodable {
-        var id: String
-        var type = "explain"
-        var compileResult: RuntimeV1.CompileResult
-        var documents: [RuntimeV1.Document]
-        var supported: [String]
-        enum CodingKeys: String, CodingKey { case id, type, compileResult = "compile_result", documents, supported }
-    }
-
-    /// Asks for explanations of every diagnostic of `result` (compiled from
-    /// `documents`). The reply is decoded and bounded, then delivered on
-    /// `queue`; the caller stores it in an `ExplanationCache` under the
-    /// result's id. Nothing here blocks the caller beyond encoding the request.
-    func explain(result: RuntimeV1.CompileResult, documents: [RuntimeV1.Document], supported: [String],
-                 timeout: TimeInterval? = ExplanationClient.defaultTimeout,
-                 completion: @escaping (Result<[Explanation], Failure>) -> Void) {
-        let id = client.makeID()
-        let line: Data
-        do {
-            let enc = JSONEncoder()
-            enc.outputFormatting = [.withoutEscapingSlashes]
-            var data = try enc.encode(Request(id: id, compileResult: result, documents: documents, supported: supported))
-            data.append(0x0A)
-            line = data
-        } catch {
-            queue.async { completion(.failure(.transport("request encoding failed: \(error)"))) }
-            return
-        }
-        let expected = result.diagnostics.count
-        let maxBytes = maxReplyBytes
-        client.enqueue(id: id, line: line, expected: "explanations", timeout: timeout) { outcome in
-            switch outcome {
-            case .failure(.bridge(let e)):
-                completion(.failure(.helper(code: e.code, message: e.message)))
-            case .failure(let f):
-                completion(.failure(.transport(f.text)))
-            case .success(let reply):
-                do {
-                    completion(.success(try EditorDiagnostics.decodeExplanations(reply, expectedCount: expected, maxBytes: maxBytes)))
-                } catch let f as Failure {
-                    completion(.failure(f))
-                } catch {
-                    completion(.failure(.malformed(String(describing: error))))
-                }
-            }
-        }
-    }
-}
-
 // MARK: - Reviewed quick fixes from explanation suggestions
 
 extension EditorDiagnostics {
@@ -1122,10 +1053,9 @@ extension EditorDiagnostics {
     /// The edit comes from `mechanicalEdit`, so this accepts both forms: a
     /// `help.replacement`, and the flat `suggestion` over the diagnostic's own
     /// `source`. Gating on `help.replacement` alone made the affordance
-    /// unreachable in the shipping configuration — `ShellModel`
-    /// `locateDefaultProducer` attaches `flashtex-render`, whose
-    /// `display::Diagnostic` carries no `help` field at all, so the wire has
-    /// only `suggestion`. The compiler sets `suggestion` at exactly one site
+    /// unreachable for producers whose diagnostics carry no `help` field
+    /// (the old engine's `flashtex-render`), so the wire had only
+    /// `suggestion`. The compiler sets `suggestion` at exactly one site
     /// (`Diagnostic::command_error`), where the span is the command token, so
     /// replacing `source` with it is the same edit `help.replacement` would
     /// have carried.

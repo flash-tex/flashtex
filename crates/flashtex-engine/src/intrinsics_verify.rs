@@ -96,6 +96,10 @@ const EXCLUDED_SCALARS: &[&str] = &[
     // only while skipping ("Incomplete \if...; all text was ignored after
     // line ...")
     "skip_line",
+    // BOX-MEMO's flag for `big_switch`'s `get_x_token`, as `intr_at_switch`
+    // is D9's: set before each one, and read only by `macro_call` to offer
+    // a call to BOX-MEMO, which runs or replays it alike (changes/boxmemo.ch)
+    "bm_at_switch",
 ];
 
 const EXCLUDED_REGIONS: &[&str] = &[

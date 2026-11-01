@@ -5,8 +5,9 @@
 //! metrics in points, `double` where C promotes).
 
 use crate::fontlibs::{ft, hb};
+use std::collections::HashMap;
 use std::ffi::{c_char, c_uint, c_void, CString};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 /// The FreeType library (XeTeXFontInst.cpp's `gFreeTypeLibrary`), one per
 /// engine (`Host`), shared by the fonts loaded through it.
@@ -51,7 +52,55 @@ pub struct GlyphBBox {
     pub y_max: f32,
 }
 
-/// `XeTeXFontInst`.
+/// What `XeTeXFontInst`'s constructor opens of a font file: the FreeType
+/// face with the HarfBuzz font over it, and the face's metrics in font
+/// units. Nothing in it depends on the size: XeTeX scales HarfBuzz's font
+/// to the units per em, reads FreeType unscaled and converts to points
+/// itself (`unitsToPoints`). So every instance of a face can share one
+/// (`crate::native::cache`): what FreeType and HarfBuzz keep inside it (the
+/// glyph slot, which every call loads again before reading it; the tables,
+/// shaper data and shape plans HarfBuzz makes on first use) is a function
+/// of the file alone.
+pub struct Face {
+    pub ft_face: ft::FT_Face,
+    pub hb_font: *mut hb::hb_font_t,
+    pub units_per_em: u16,
+    ascender: f32,
+    descender: f32,
+    /// `post.italicAngle` as C's `Fix2D` gives it to a `float`, if the
+    /// face has a `post` table.
+    italic_angle: Option<f32>,
+    /// `OS/2`'s `sCapHeight` and `sxHeight` (font units), if the face has
+    /// an `OS/2` table.
+    os2: Option<(f32, f32)>,
+    /// Each glyph's control box as `getGlyphBounds` reads it (font units:
+    /// `xMin`, `yMin`, `xMax`, `yMax`; `None` where FreeType gives none),
+    /// read once per face (`FontInst::glyph_bounds`).
+    cbox: Mutex<HashMap<u32, Option<[ft::FT_Pos; 4]>>>,
+    _lib: Arc<FtLibrary>,
+}
+
+// SAFETY: as `FtLibrary`: a face is used by one engine at a time, from the
+// thread that runs it.
+unsafe impl Send for Face {}
+unsafe impl Sync for Face {}
+
+impl Drop for Face {
+    fn drop(&mut self) {
+        // SAFETY: the face and font were created by `open` and are dropped
+        // once; the HarfBuzz font's callbacks use the face, so it goes first.
+        unsafe {
+            if !self.hb_font.is_null() {
+                hb::hb_font_destroy(self.hb_font);
+            }
+            if !self.ft_face.is_null() {
+                ft::FT_Done_Face(self.ft_face);
+            }
+        }
+    }
+}
+
+/// `XeTeXFontInst`: a [`Face`] at a size.
 pub struct FontInst {
     pub units_per_em: u16,
     pub point_size: f32,
@@ -64,27 +113,15 @@ pub struct FontInst {
     /// The font file's path as opened (`m_filename`), and the face index.
     pub filename: Vec<u8>,
     pub index: u32,
+    /// `face`'s, copied out.
     pub ft_face: ft::FT_Face,
     pub hb_font: *mut hb::hb_font_t,
-    _lib: Arc<FtLibrary>,
+    face: Arc<Face>,
 }
 
 // SAFETY: as `FtLibrary`: a font is used by one engine at a time.
 unsafe impl Send for FontInst {}
 unsafe impl Sync for FontInst {}
-
-impl Drop for FontInst {
-    fn drop(&mut self) {
-        // SAFETY: the face and font were created by `new` and are dropped
-        // once; the HarfBuzz font's callbacks use the face, so it goes first.
-        unsafe {
-            hb::hb_font_destroy(self.hb_font);
-            if !self.ft_face.is_null() {
-                ft::FT_Done_Face(self.ft_face);
-            }
-        }
-    }
-}
 
 // ---- HarfBuzz font functions (XeTeXFontInst.cpp) ------------------------
 
@@ -301,17 +338,16 @@ unsafe extern "C" fn get_table(
     )
 }
 
-impl FontInst {
-    /// `XeTeXFontInst(pathname, index, pointSize, status)` and
-    /// `initialize`: `None` where XeTeX sets `status` to 1. `afm` finds the
-    /// AFM file of a Type 1 font (kpathsea's `afm` format).
-    pub fn new(
+impl Face {
+    /// The face part of `XeTeXFontInst(pathname, index, pointSize, status)`
+    /// and `initialize`: `None` where XeTeX sets `status` to 1. `afm` finds
+    /// the AFM file of a Type 1 font (kpathsea's `afm` format).
+    pub fn open(
         lib: &Arc<FtLibrary>,
         pathname: &[u8],
         index: u32,
-        point_size: f32,
         afm: &mut dyn FnMut(&str) -> Option<String>,
-    ) -> Option<FontInst> {
+    ) -> Option<Face> {
         let cpath = CString::new(pathname.to_vec()).ok()?;
         let mut face: ft::FT_Face = std::ptr::null_mut();
         // SAFETY: a live library and a NUL-terminated path.
@@ -319,20 +355,16 @@ impl FontInst {
         if error != 0 {
             return None;
         }
-        // From here the face is owned by `inst`.
-        let mut inst = FontInst {
-            units_per_em: 0,
-            point_size,
-            ascent: 0.0,
-            descent: 0.0,
-            cap_height: 0.0,
-            x_height: 0.0,
-            italic_angle: 0.0,
-            vertical: false,
-            filename: pathname.to_vec(),
-            index,
+        // From here the face is owned by `f`.
+        let mut f = Face {
             ft_face: face,
             hb_font: std::ptr::null_mut(),
+            units_per_em: 0,
+            ascender: 0.0,
+            descender: 0.0,
+            italic_angle: None,
+            os2: None,
+            cbox: Mutex::new(HashMap::new()),
             _lib: lib.clone(),
         };
         // SAFETY: `face` is live.
@@ -361,38 +393,90 @@ impl FontInst {
                     }
                 }
             }
-            inst.units_per_em = (*face).units_per_EM;
-            inst.ascent = inst.units_to_points((*face).ascender as f32);
-            inst.descent = inst.units_to_points((*face).descender as f32);
+            f.units_per_em = (*face).units_per_EM;
+            f.ascender = (*face).ascender as f32;
+            f.descender = (*face).descender as f32;
 
             let post = ft::FT_Get_Sfnt_Table(face, ft::ft_sfnt_post) as *const ft::TT_Postscript;
             if !post.is_null() {
-                inst.italic_angle = fix2d((*post).italicAngle as i32) as f32;
+                f.italic_angle = Some(fix2d((*post).italicAngle as i32) as f32);
             }
             let os2 = ft::FT_Get_Sfnt_Table(face, ft::ft_sfnt_os2) as *const ft::TT_OS2;
             if !os2.is_null() {
-                inst.cap_height = inst.units_to_points((*os2).sCapHeight as f32);
-                inst.x_height = inst.units_to_points((*os2).sxHeight as f32);
+                f.os2 = Some(((*os2).sCapHeight as f32, (*os2).sxHeight as f32));
             }
 
             // Set up the HarfBuzz font.
             let hb_face = hb::hb_face_create_for_tables(Some(get_table), face as *mut c_void, None);
             hb::hb_face_set_index(hb_face, index);
-            hb::hb_face_set_upem(hb_face, inst.units_per_em as c_uint);
-            inst.hb_font = hb::hb_font_create(hb_face);
+            hb::hb_face_set_upem(hb_face, f.units_per_em as c_uint);
+            f.hb_font = hb::hb_font_create(hb_face);
             hb::hb_face_destroy(hb_face);
             let funcs = font_funcs();
-            hb::hb_font_set_funcs(inst.hb_font, funcs, face as *mut c_void, None);
+            hb::hb_font_set_funcs(f.hb_font, funcs, face as *mut c_void, None);
             hb::hb_font_funcs_destroy(funcs);
-            hb::hb_font_set_scale(
-                inst.hb_font,
-                inst.units_per_em as i32,
-                inst.units_per_em as i32,
-            );
+            hb::hb_font_set_scale(f.hb_font, f.units_per_em as i32, f.units_per_em as i32);
             // We don't want device tables adjustments.
-            hb::hb_font_set_ppem(inst.hb_font, 0, 0);
+            hb::hb_font_set_ppem(f.hb_font, 0, 0);
         }
-        Some(inst)
+        Some(f)
+    }
+}
+
+impl FontInst {
+    /// `XeTeXFontInst(pathname, index, pointSize, status)` and
+    /// `initialize`: `None` where XeTeX sets `status` to 1. `afm` finds the
+    /// AFM file of a Type 1 font (kpathsea's `afm` format).
+    pub fn new(
+        lib: &Arc<FtLibrary>,
+        pathname: &[u8],
+        index: u32,
+        point_size: f32,
+        afm: &mut dyn FnMut(&str) -> Option<String>,
+    ) -> Option<FontInst> {
+        let face = Face::open(lib, pathname, index, afm)?;
+        Some(FontInst::at_size(
+            Arc::new(face),
+            pathname,
+            index,
+            point_size,
+        ))
+    }
+
+    /// The instance of `face` (face `index` of the file `pathname`) at
+    /// `point_size`: what `initialize` computes from the face, in C's
+    /// `float`s, as a new face would give it.
+    pub fn at_size(face: Arc<Face>, pathname: &[u8], index: u32, point_size: f32) -> FontInst {
+        let mut inst = FontInst {
+            units_per_em: face.units_per_em,
+            point_size,
+            ascent: 0.0,
+            descent: 0.0,
+            cap_height: 0.0,
+            x_height: 0.0,
+            italic_angle: 0.0,
+            vertical: false,
+            filename: pathname.to_vec(),
+            index,
+            ft_face: face.ft_face,
+            hb_font: face.hb_font,
+            face: face.clone(),
+        };
+        inst.ascent = inst.units_to_points(face.ascender);
+        inst.descent = inst.units_to_points(face.descender);
+        if let Some(a) = face.italic_angle {
+            inst.italic_angle = a;
+        }
+        if let Some((cap, x)) = face.os2 {
+            inst.cap_height = inst.units_to_points(cap);
+            inst.x_height = inst.units_to_points(x);
+        }
+        inst
+    }
+
+    /// The face this is an instance of.
+    pub fn face(&self) -> &Arc<Face> {
+        &self.face
     }
 
     /// `unitsToPoints`, in C's `float`.
@@ -426,26 +510,21 @@ impl FontInst {
     /// `getGlyphBounds`.
     pub fn glyph_bounds(&self, gid: u32) -> GlyphBBox {
         let mut bbox = GlyphBBox::default();
-        // SAFETY: a live face; the glyph is copied and freed.
-        unsafe {
-            if ft::FT_Load_Glyph(self.ft_face, gid, ft::FT_LOAD_NO_SCALE) != 0 {
-                return bbox;
-            }
-            let mut glyph: ft::FT_Glyph = std::ptr::null_mut();
-            if ft::FT_Get_Glyph((*self.ft_face).glyph, &mut glyph) == 0 {
-                let mut b = ft::FT_BBox {
-                    xMin: 0,
-                    yMin: 0,
-                    xMax: 0,
-                    yMax: 0,
-                };
-                ft::FT_Glyph_Get_CBox(glyph, ft::FT_GLYPH_BBOX_UNSCALED, &mut b);
-                bbox.x_min = self.units_to_points(b.xMin as f32);
-                bbox.y_min = self.units_to_points(b.yMin as f32);
-                bbox.x_max = self.units_to_points(b.xMax as f32);
-                bbox.y_max = self.units_to_points(b.yMax as f32);
-                ft::FT_Done_Glyph(glyph);
-            }
+        // (read once per face: a function of the file; every other reader
+        // of the glyph slot loads it first)
+        // SAFETY: a live face, used by this engine's thread alone.
+        let cbox = *self
+            .face
+            .cbox
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .entry(gid)
+            .or_insert_with(|| unsafe { control_box(self.ft_face, gid) });
+        if let Some([x_min, y_min, x_max, y_max]) = cbox {
+            bbox.x_min = self.units_to_points(x_min as f32);
+            bbox.y_min = self.units_to_points(y_min as f32);
+            bbox.x_max = self.units_to_points(x_max as f32);
+            bbox.y_max = self.units_to_points(y_max as f32);
         }
         bbox
     }
@@ -535,6 +614,31 @@ impl FontInst {
             prev
         }
     }
+}
+
+/// `getGlyphBounds`'s reading of glyph `gid`: its unscaled control box,
+/// or `None` where the glyph does not load or copy.
+///
+/// # Safety
+///
+/// `face` is a live face, used by no other thread.
+unsafe fn control_box(face: ft::FT_Face, gid: u32) -> Option<[ft::FT_Pos; 4]> {
+    if ft::FT_Load_Glyph(face, gid, ft::FT_LOAD_NO_SCALE) != 0 {
+        return None;
+    }
+    let mut glyph: ft::FT_Glyph = std::ptr::null_mut();
+    if ft::FT_Get_Glyph((*face).glyph, &mut glyph) != 0 {
+        return None;
+    }
+    let mut b = ft::FT_BBox {
+        xMin: 0,
+        yMin: 0,
+        xMax: 0,
+        yMax: 0,
+    };
+    ft::FT_Glyph_Get_CBox(glyph, ft::FT_GLYPH_BBOX_UNSCALED, &mut b);
+    ft::FT_Done_Glyph(glyph);
+    Some([b.xMin, b.yMin, b.xMax, b.yMax])
 }
 
 /// XeTeX_ext.c's `D2Fix`: C's `(int)(d * 65536.0 + 0.5)`, truncating.

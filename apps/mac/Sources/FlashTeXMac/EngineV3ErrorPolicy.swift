@@ -29,8 +29,10 @@ enum EngineV3ErrorPolicy {
     static let strictKey = "FlashTeX.EngineV3.strictErrors"
     static var storedMode: Mode { EngineV3.defaults.bool(forKey: strictKey) ? .strict : .bestEffort }
 
-    /// The mark on a recovered error's row.
-    static let recoveredNote = "pdfLaTeX would report an error here"
+    /// The mark on a recovered error's row (Classic mode's; Unicode mode
+    /// names XeLaTeX: `recoveredNote(engine:)`).
+    static let recoveredNote = recoveredNote(engine: "pdfLaTeX")
+    static func recoveredNote(engine: String) -> String { "\(engine) would report an error here" }
 
     /// The messages TeX stops with (the host's `fatal` rule,
     /// crates/flashtex-engine/src/host/diag.rs), for hosts that send DIAGNOSTICs.
@@ -73,5 +75,5 @@ enum EngineV3ErrorPolicy {
     }
 
     /// `message` with the recovered mark.
-    static func marked(_ message: String) -> String { "\(message) (\(recoveredNote))" }
+    static func marked(_ message: String, engine: String = "pdfLaTeX") -> String { "\(message) (\(recoveredNote(engine: engine)))" }
 }

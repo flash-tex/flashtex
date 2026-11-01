@@ -2,11 +2,12 @@ import AppKit
 import CoreGraphics
 import FlashTeXPreviewV3
 import FlashTeXProtocol
+import SwiftUI
 
 /// The inline math hover preview under the engine-v3 preview (DESIGN §10
-/// app parity, gap C24). As on the v2 pane (MathHoverPreview.swift): hovering
+/// app parity, gap C24): hovering
 /// `$…$`/`\(…\)` crops the formula out of the page bitmap already on screen,
-/// padded by `MathHoverPreview.padding` points; nothing is rendered on the
+/// padded by `MathPreviewView.cropPadding` points; nothing is rendered on the
 /// hover path, and nothing is shown while the preview is older than the
 /// editor text. The formula's glyphs are those whose source position (the
 /// span's line, the glyph's byte column) falls inside the formula's bytes.
@@ -49,7 +50,7 @@ extension EngineV3Session {
     func mathPreviewImage(span: NSRange) -> CGImage? {
         guard let model, let view, model.engineV3Enabled else { return nil }
         let path = model.activePath, text = model.activeText
-        // Stale: the pages were compiled from other text (MathHoverPreview's rule).
+        // Stale: the pages were compiled from other text: no preview.
         guard let compiled = model.compiledDocuments[path], compiled.sameBytes(as: text),
               let bytes = text.utf8ByteRange(of: span),
               let (page, box) = formulaBox(path: path, start: bytes.start, end: bytes.end, in: text, pages: Array(view.heldPageViews.keys)),
@@ -57,12 +58,43 @@ extension EngineV3Session {
               // (not a stored page, not one drawn for content since replaced).
               view.pageShowsCurrent(page),
               let size = pageSize(page), let image = view.installedImage(page), size.width > 0 else { return nil }
-        let pad = MathHoverPreview.padding
+        let pad = MathPreviewView.cropPadding
         let rect = box.insetBy(dx: -pad, dy: -pad).intersection(CGRect(origin: .zero, size: size))
         let ppp = Double(image.width) / Double(size.width)
         let pixel = CGRect(x: rect.minX * ppp, y: rect.minY * ppp, width: rect.width * ppp, height: rect.height * ppp).integral
             .intersection(CGRect(x: 0, y: 0, width: image.width, height: image.height))
         guard !pixel.isEmpty else { return nil }
         return image.cropping(to: pixel)
+    }
+}
+
+// MARK: - popover
+
+// The popover, its crop padding and the hover controller's entry point
+// (moved here from the v2 pane's MathHoverPreview.swift in retirement stage
+// S6a, retirement-plan.md §1.4).
+
+/// Small NSPopover content for the cropped formula bitmap: the image at its
+/// natural pixel size (already at the pane's backing scale), no chrome.
+struct MathPreviewView: View {
+    /// Points of padding added around the formula's box before cropping.
+    static let cropPadding: Double = 4
+
+    let image: CGImage
+
+    var body: some View {
+        Image(decorative: image, scale: 1, orientation: .up)
+            .padding(DS.Space.s)
+    }
+}
+
+extension HoverController {
+    /// Shows `image` (a formula crop) anchored to `range`, replacing whatever
+    /// popover is open — the same slot `present(_:in:)` uses, so only one
+    /// hover popover is ever on screen. Call in place of `present(_:in:)`
+    /// when the position is inside an inline formula.
+    func presentMathPreview(_ image: CGImage, range: NSRange, in tv: NSTextView) {
+        presentContent(NSHostingController(rootView: MathPreviewView(image: image)), range: range, in: tv)
+        recordMathPreview(range)
     }
 }

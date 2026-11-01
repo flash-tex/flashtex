@@ -137,7 +137,9 @@ final class EngineV3ExportTests: XCTestCase {
         // Typed while the export run is out: the third page must arrive after
         // it. (An edit typed before the run starts, while the host's copy is
         // brought up to date, is in the export: it is the text at that time.)
-        try await waitUntil("the export run to start") { s.exportRunning }
+        // (A two-page export can start and end between two 20 ms polls: its
+        // report then ends the wait too, and the edit below comes after it.)
+        try await waitUntil("the export run to start") { s.exportRunning || report != nil }
         if !s.exportRunning, report == nil { XCTFail("the export never started: \(s.exportDebugState)") }
         model.updateActiveText(Self.source.replacingOccurrences(of: "Second page.", with: "Second page.\n\\newpage\nThird page."))
         await fulfillment(of: [done], timeout: 90)

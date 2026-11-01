@@ -957,6 +957,61 @@ fn enc_stroke(o: &mut Vec<u8>, s: &Stroke) {
     o.put_f64(s.phase);
 }
 
+/// The item opcodes a PAGE or FORM body uses, as a bit set (bit `op`), read
+/// without decoding it: the items are stepped over by their sizes, as
+/// [`Page::decode`] reads them, and the other sections by their lengths.
+/// A forwarder that leaves out the items a client did not accept (spec
+/// §11.7) needs only this where none of those are used. `Err` where the
+/// body is not read so (the caller decodes it).
+pub fn item_ops(body: &[u8]) -> Result<u64, String> {
+    let mut c = Cursor::new(body);
+    // index, flags, width, height, \count0..9, the PDF box, the hash
+    c.take(4 * 4 + 10 * 4 + 4 * 8 + 32)?;
+    let n = c.count(8)?;
+    let mut ops = 0u64;
+    for _ in 0..n {
+        let tag = c.u32()?;
+        let len = c.u32()? as usize;
+        let data = c.take(len)?;
+        if tag != section::ITEMS {
+            continue;
+        }
+        let mut d = Cursor::new(data);
+        while d.left() > 0 {
+            let o = d.u8()?;
+            ops |= 1u64 << (o & 63);
+            let skip = match o {
+                op::GLYPH => 14,
+                op::RULE => 17,
+                op::PATH | op::CLIP | op::MATRIX | op::SPAN | op::UNSUPPORTED => 4,
+                op::IMAGE | op::FORM => 8,
+                op::SAVE | op::RESTORE => 0,
+                op::TEXT_RENDER => 1,
+                op::FILL_ALPHA | op::STROKE_ALPHA => 8,
+                op::FILL_COLOR | op::STROKE_COLOR | op::FILL_COLOR_CS | op::STROKE_COLOR_CS => {
+                    if matches!(o, op::FILL_COLOR_CS | op::STROKE_COLOR_CS) {
+                        d.u32()?;
+                    }
+                    let k = d.u8()?;
+                    if !matches!(k, 1 | 3 | 4) {
+                        return Err(format!("colour with {k} components"));
+                    }
+                    8 * k as usize
+                }
+                op::LINE_STATE => {
+                    // width, cap, join, miter, the dashes, the phase
+                    d.take(8 + 1 + 1 + 8)?;
+                    let nd = d.u16()? as usize;
+                    8 * nd + 8
+                }
+                _ => return Err(format!("unknown item opcode {o:#04x} at byte {}", d.i - 1)),
+            };
+            d.take(skip)?;
+        }
+    }
+    Ok(ops)
+}
+
 fn dec_stroke(d: &mut Cursor) -> Result<Stroke, String> {
     let width = d.f64()?;
     let cap = d.u8()?;
@@ -1145,6 +1200,34 @@ fn dec_items(d: &mut Cursor) -> Result<Vec<Item>, String> {
 mod tests {
     use super::*;
 
+    /// The opcodes of `items`, as `item_ops` gives them.
+    fn ops_of(items: &[Item]) -> u64 {
+        items.iter().fold(0, |m, it| {
+            m | 1u64
+                << match it {
+                    Item::Glyph { .. } => op::GLYPH,
+                    Item::Rule { .. } => op::RULE,
+                    Item::Path(_) => op::PATH,
+                    Item::Clip(_) => op::CLIP,
+                    Item::Image { .. } => op::IMAGE,
+                    Item::Form { .. } => op::FORM,
+                    Item::Save => op::SAVE,
+                    Item::Restore => op::RESTORE,
+                    Item::FillColor(_) => op::FILL_COLOR,
+                    Item::StrokeColor(_) => op::STROKE_COLOR,
+                    Item::Matrix(_) => op::MATRIX,
+                    Item::Span(_) => op::SPAN,
+                    Item::TextRender(_) => op::TEXT_RENDER,
+                    Item::Unsupported(_) => op::UNSUPPORTED,
+                    Item::FillColorCs { .. } => op::FILL_COLOR_CS,
+                    Item::StrokeColorCs { .. } => op::STROKE_COLOR_CS,
+                    Item::FillAlpha(_) => op::FILL_ALPHA,
+                    Item::StrokeAlpha(_) => op::STROKE_ALPHA,
+                    Item::LineState(_) => op::LINE_STATE,
+                }
+        })
+    }
+
     #[test]
     fn page_round_trip() {
         let mut p = Page::new(StreamKind::Page, 3);
@@ -1217,6 +1300,7 @@ mod tests {
         p.hash = p.content_hash(&k, &ik);
         let q = Page::decode(StreamKind::Page, &p.encode()).unwrap();
         assert_eq!(p, q);
+        assert_eq!(item_ops(&p.encode()), Ok(ops_of(&p.items)));
         // Spans and columns do not change the hash; positions do.
         let mut r = q.clone();
         r.items[0] = Item::Span(9);
@@ -1355,6 +1439,10 @@ mod tests {
         assert_ne!(p.hash, with_meta);
         let q = Page::decode(StreamKind::Page, &p.encode()).unwrap();
         assert_eq!(q, p);
+        assert_eq!(item_ops(&p.encode()), Ok(ops_of(&p.items)));
+        let mut bad = p.encode();
+        bad.truncate(bad.len() - 3);
+        assert!(item_ops(&bad).is_err());
 
         // A 3.2 writer's page (no meta, no colour spaces) hashes as before.
         let mut r = q.clone();

@@ -55,7 +55,9 @@ use interp::Marker;
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 use std::io::Write;
-use std::sync::atomic::{AtomicBool, AtomicI32, AtomicU32, AtomicU64, AtomicUsize, Ordering};
+use std::sync::atomic::{
+    AtomicBool, AtomicI32, AtomicU32, AtomicU64, AtomicU8, AtomicUsize, Ordering,
+};
 use std::sync::Arc;
 
 static ENABLED: AtomicBool = AtomicBool::new(false);
@@ -590,23 +592,35 @@ impl Peer {
                 self.spans.insert(s, (file, line));
             }
         });
-        (!src.files.is_empty() || !src.spans.is_empty())
-            .then(|| src.to_json().to_string().into_bytes())
+        (!src.files.is_empty() || !src.spans.is_empty()).then(|| src.to_json_string().into_bytes())
     }
 
     /// A `SOURCES` body re-declaring the spans the reader knows that have
     /// moved since ([`move_lines`]), if any.
     pub fn moved_spans(&mut self) -> Option<Vec<u8>> {
-        let mut moved: Vec<u32> = with(|st| {
-            self.spans
-                .iter()
-                .filter(|(s, at)| st.spans.get(**s as usize - 1) != Some(*at))
-                .map(|(s, _)| *s)
-                .collect()
-        })
-        .unwrap_or_default();
-        moved.sort_unstable();
-        self.sources_for(&moved)
+        // (`sources_for` of the moved spans, sorted, in one pass over the
+        // reader's spans: a split near the middle of a 1,000-page source
+        // moves every later span; lane T7-HEADROOM)
+        let mut src = Sources::default();
+        with(|st| {
+            for (s, at) in self.spans.iter_mut() {
+                if let Some(&now) = st.spans.get(*s as usize - 1) {
+                    if now != *at {
+                        *at = now;
+                        src.spans.push((*s, now.0, now.1));
+                    }
+                }
+            }
+            src.spans.sort_unstable_by_key(|x| x.0);
+            for &(_, file, _) in &src.spans {
+                if self.files.insert(file) {
+                    if let Some(p) = st.file_paths.get(file as usize - 1) {
+                        src.files.push((file, p.clone()));
+                    }
+                }
+            }
+        });
+        (!src.files.is_empty() || !src.spans.is_empty()).then(|| src.to_json_string().into_bytes())
     }
 }
 
@@ -673,6 +687,57 @@ pub fn span_for(name: &[u8], line: u32) -> Option<u32> {
 /// Where span `s` is now: (file id, line).
 pub fn span_location(s: u32) -> Option<(u32, u32)> {
     with(|st| st.spans.get((s as usize).checked_sub(1)?).copied()).flatten()
+}
+
+/// Whether side-table entries `a` and `b` (of an old run's node and the
+/// live run's) name the same place: the same column of the same (file,
+/// line). Span ids are names, and a line can have more than one: an edit
+/// retires the spans of the lines it replaced (`move_lines`) and the new
+/// run gives that material a new span, so the convergence test meets the
+/// old run's position under the retired span and the new run's under the
+/// new one. Spans on one line stay on one line (`State::move_spans_of`
+/// moves or keeps every span of a line alike), so a page that ships
+/// either entry, now or after later edits, names the same place. Without
+/// the writer (or a span it does not know) only equal entries are.
+pub fn same_place(a: u64, b: u64) -> bool {
+    if a == b {
+        return true;
+    }
+    let (sa, sb) = (loc_span(a), loc_span(b));
+    if loc_col(a) != loc_col(b) || sa == 0 || sb == 0 {
+        return false;
+    }
+    with(|st| {
+        let at = |s: u32| st.spans.get(s as usize - 1);
+        at(sa).is_some() && at(sa) == at(sb)
+    })
+    .unwrap_or(false)
+}
+
+/// The place a side-table entry names, by name: (the file's name as TeX
+/// read it, line, column), so that another process can name it again
+/// ([`entry_at`]; a persisted body checkpoint, `host::s1`). `None`: no
+/// span, or one this writer does not know.
+pub fn entry_place(l: u64) -> Option<(Vec<u8>, u32, u16)> {
+    let s = loc_span(l);
+    if s == 0 {
+        return None;
+    }
+    with(|st| {
+        let &(f, line) = st.spans.get(s as usize - 1)?;
+        let name = st.files.get((f as usize).checked_sub(1)?)?.clone();
+        Some((name, line, loc_col(l)))
+    })
+    .flatten()
+}
+
+/// The side-table entry of this process for a place [`entry_place`] gave
+/// (`None`: no writer here).
+pub fn entry_at(name: &[u8], line: u32, col: u16) -> Option<u64> {
+    with(|st| {
+        let f = st.file_id(name);
+        loc_pack(st.span_id(f, line), col)
+    })
 }
 
 /// The absolute path of file id `f`.
@@ -783,6 +848,7 @@ fn forget_engine_state() {
     });
     forget_file_cache();
     HYPH_ON.store(false, Ordering::Relaxed);
+    ALLOC.store(NODE, Ordering::Relaxed);
 }
 
 fn forget_file_cache() {
@@ -800,9 +866,19 @@ static LAST_SPAN: AtomicU32 = AtomicU32::new(0);
 /// line, as an index of `input_stack` (a hint: `Globals::file_level`
 /// checks it against the state before it uses it).
 static FILE_LEVEL: AtomicUsize = AtomicUsize::new(usize::MAX);
-/// Between `dl_token_begin` and `dl_token_end`: an allocation that is not a
+/// What the allocation being made is: [`NODE`] (noted), or, between
+/// `dl_token_begin` and `dl_token_end`, [`NOT_A_NODE`], or, between
+/// `dl_list_token_begin` and `dl_token_end`, [`LIST_TOKEN`]: neither is a
 /// node of a list TeX ships.
-static NOT_A_NODE: AtomicBool = AtomicBool::new(false);
+static ALLOC: AtomicU8 = AtomicU8::new(NODE);
+const NODE: u8 = 0;
+/// Not noted at all (`back_input`'s token, the condition stack's node).
+const NOT_A_NODE: u8 = 1;
+/// A token of a token list (`store_new_token`, `fast_store_new_token`): not
+/// noted, but it looks for newer work as a node's allocation does (in a
+/// stretch of expansion, \csname's characters and `\the`'s tokens may be the
+/// only allocations).
+const LIST_TOKEN: u8 = 2;
 /// While `hyphenate` rebuilds a word: HYPH_ON, and the word's place.
 static HYPH_ON: AtomicBool = AtomicBool::new(false);
 static HYPH_LOC: AtomicU64 = AtomicU64::new(0);
@@ -837,8 +913,12 @@ impl Globals {
         // become nodes; they are most of the allocations, so they are
         // skipped before anything else is looked at. So are the
         // allocations between `dl_token_begin` and `dl_token_end`.
-        if self.scanner_status == 0 && enabled() && !NOT_A_NODE.load(Ordering::Relaxed) {
-            self.dl_note_node(p);
+        if self.scanner_status == 0 && enabled() {
+            match ALLOC.load(Ordering::Relaxed) {
+                NODE => self.dl_note_node(p),
+                LIST_TOKEN => self.flashtex_preempt_poll(),
+                _ => {}
+            }
         }
     }
 
@@ -849,16 +929,28 @@ impl Globals {
     /// when it is next allocated as a node, before anything reads it.
     #[inline(always)]
     pub fn dl_token_begin(&mut self) {
-        NOT_A_NODE.store(true, Ordering::Relaxed);
+        ALLOC.store(NOT_A_NODE, Ordering::Relaxed);
+    }
+
+    /// `store_new_token` and `fast_store_new_token` allocate a token of a
+    /// token list (changes/displaylist.ch): never a node of a list TeX
+    /// ships (tokens and character nodes share `get_avail`'s one-word
+    /// nodes, and a character node is noted when it is allocated).
+    #[inline(always)]
+    pub fn dl_list_token_begin(&mut self) {
+        ALLOC.store(LIST_TOKEN, Ordering::Relaxed);
     }
 
     #[inline(always)]
     pub fn dl_token_end(&mut self) {
-        NOT_A_NODE.store(false, Ordering::Relaxed);
+        ALLOC.store(NODE, Ordering::Relaxed);
     }
 
     #[inline(never)]
     fn dl_note_node(&mut self, p: i32) {
+        // (newer work for the host: `Globals::flashtex_preempt_poll`, here
+        // because nodes are allocated everywhere, the output routine too)
+        self.flashtex_preempt_poll();
         let v = if HYPH_ON.load(Ordering::Relaxed) {
             HYPH_LOC.load(Ordering::Relaxed)
         } else if self.output_active {
@@ -2567,6 +2659,37 @@ mod tests {
         assert!(src.files.is_empty(), "the reader has the file already");
         assert!(peer.moved_spans().is_none());
         DL.with(|d| *d.borrow_mut() = None);
+    }
+
+    /// `same_place`: an edited line's retired span and its new one are the
+    /// same place at the same column, now and after the line moves; other
+    /// lines, columns and "no span" are not.
+    #[test]
+    fn a_retired_span_is_the_place_of_its_line() {
+        DL.with(|d| *d.borrow_mut() = Some(Box::new(State::new())));
+        let (old, other) = with(|st| {
+            let f = st.file_id(b"/p/main.tex");
+            (st.span_id(f, 8), st.span_id(f, 9))
+        })
+        .unwrap();
+        // A letter typed on line 8: its span retires, new text has another.
+        move_lines("/p/main.tex", 8, 9, 9);
+        let new = with(|st| st.span_id(1, 8)).unwrap();
+        assert_ne!(new, old);
+        let at = |s: u32, col: u16| loc_pack(s, col);
+        assert!(same_place(at(old, 332), at(new, 332)));
+        assert!(!same_place(at(old, 332), at(new, 333)));
+        assert!(!same_place(at(old, 332), at(other, 332)));
+        assert!(!same_place(at(old, 332), 0));
+        assert!(!same_place(at(old, 332), at(9999, 332)));
+        // Two lines inserted above: both spans move to line 10 together.
+        move_lines("/p/main.tex", 2, 2, 4);
+        assert_eq!(span_location(old), Some((1, 10)));
+        assert!(same_place(at(old, 332), at(new, 332)));
+        DL.with(|d| *d.borrow_mut() = None);
+        // without the writer, only equal entries
+        assert!(!same_place(at(old, 332), at(new, 332)));
+        assert!(same_place(at(old, 332), at(old, 332)));
     }
 
     /// A destination carries only the words pdfTeX writes for its kind.

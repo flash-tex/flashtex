@@ -42,6 +42,31 @@ Live's own `LICENSE.TL` and `LICENSE.CTAN`.
   parity fixtures, the arXiv corpus (`arxiv-2025-01`), the beamer corpus and `packages-2026`
   read (`texbundle.py record` + `derive`: the engine's read sets over the bundle's tree, and
   MacTeX's `pdflatex -recorder`).
+- `tools/bundle/tl2026/extra.txt` (since `texbundle-tl2026-2`): hand-picked packages no
+  recording of the engine can find, packed besides `packages.txt`: what the tools the engine
+  host runs in-process read (bibtex's standard styles and `xampl.bib`, makeindex's styles;
+  lane RUST-TOOLS) and common bibliography and index styles the corpora do not use (urlbst,
+  apacite, chicago, harvard, biblatex-ieee, biblatex-apa, biblatex-ext, nomencl). Each line
+  says why; the packer's licence check covers them. Since `texbundle-tl2026-3`, also what
+  Unicode mode (`flashtex-host-unicode`) reads, derived from that engine's read sets over the
+  XeTeX cases and fontspec, unicode-math, polyglossia and xeCJK documents: xelatex.ini
+  (tex-ini-files), the UTF-8 hyphenation patterns of every language (the hyphen-* packages),
+  fontspec, unicode-math, l3backend's xetex driver, unicode-data, TECkit's tex-text.tec
+  (xetex), Latin Modern Math (lm-math), STIX Two, Libertinus, TeX Gyre Math, polyglossia,
+  xeCJK with ctex's hook and the Fandol fonts. `scripts/notex-host-check.sh --host-unicode`
+  checks that the Unicode host builds xelatex.fmt and compiles from the bundle alone.
+  Since `texbundle-tl2026-4`, what the Unicode corpus (`tools/xetex-corpus`, 39 typical
+  xelatex documents built with no TeX Live) read and the bundle lacked: bidi (polyglossia's
+  right-to-left languages), zhnumber (ctex), xltxtra with xunicode and realscripts, and the
+  OpenType fonts documents name by file: CM Unicode, XITS, Fira Math, Amiri and Culmus.
+  Also what the M3 Unicode corpus (`tools/unicode-m3/corpus.json`) read beyond those, found
+  by `tools/unicode-m3/bundle_gaps.py` (unicode-m3-bundle.yml): thuthesis with bibunits and
+  notoccite, l3experimental (l3draw), showexpl, typogrid, Harano Aji, UnBatang
+  (unfonts-core), New Computer Modern, DejaVu and GFS Complutum.
+- Since `texbundle-tl2026-4`, one file of FlashTeX's own besides TeX Live's:
+  `texmf-var/fonts/misc/flashtex/flashtex-xetex-fonts.json`, the names of the bundle's
+  OpenType and TrueType faces, written at pack time (`--font-index-tool`) so that Unicode
+  mode finds them by name with no TeX Live (`docs/design/xetex/PLAN.md` §3.4, #1783).
 - `tools/bundle/tl2026/core.txt`: the core range, first in the file, what building
   `pdflatex.fmt` and a hello-world read (`texbundle.py core`), so a first compile needs one
   request for it.
@@ -93,6 +118,24 @@ Release asset downloads redirect to a CDN that answers `Range` requests with 206
    published bundle over HTTPS, against the release's `oracle-refs.json`.
 
 `apps/mac/scripts/make-app.sh` copies the lock into `Contents/Resources/engine/`.
+
+## biber, fetched on demand (#1782)
+
+biblatex's default backend, biber, is a Perl program TeX Live ships as one executable per
+platform; FlashTeX runs bibtex and makeindex itself but not biber. With no TeX Live,
+`bundle publish` mirrors TeX Live 2026's biber as a **separate release** (`tl2026/biber.txt`
+names its tag, version and the SHA-512 of each TeX Live container; `tools/bundle/biber.py`
+checks them and that the bundle's tree has the same biber version, so it agrees with
+biblatex): per platform (`universal-darwin`, `x86_64-linux`, `aarch64-linux`, `windows`) the
+executable, unmodified, gzipped; the source container; and a notice (Artistic License 2.0). The
+lock pins each asset (`biber_url_<arch>`, `biber_sha256_<arch>`, `biber_size_<arch>`, with `_` for `-` in
+`<arch>`: the lines the pack job prints). The first time a document needs biber (its run wrote a `.bcf`)
+the host skips it with "FlashTeX will download biber (~70 MB) to build this bibliography";
+the app asks, and a yes restarts the host with `FLASHTEX_BIBER_ALLOW_FETCH=<sha256>@<url>`
+for exactly the pinned asset. The host (`bundle::biber::ensure`, both hosts) then fetches it,
+checks its SHA-256, keeps it in the bundle cache under that digest, and runs it as it runs
+TeX Live's biber: a child process, with external tools on (a trusted project). Publishing the
+biber release is the owner's step, with the bundle's.
 
 ## The gate
 

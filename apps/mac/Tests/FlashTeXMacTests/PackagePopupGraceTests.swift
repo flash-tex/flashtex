@@ -32,10 +32,11 @@ final class PackagePopupGraceTests: XCTestCase {
         return try! JSONDecoder().decode(ProjectFilesV1.Manifest.self, from: Data(json.utf8))
     }
 
-    private func result(missing: [String]) -> RuntimeV1.CompileResult {
-        let rows = missing.isEmpty ? "" : "{\"severity\":\"warning\",\"message\":\"packages \(missing.joined(separator: ", ")) are recognised but not implemented\",\"code\":\"unsupported_feature\"}"
-        let json = "{\"project_id\":\"p\",\"revision\":1,\"status\":\"ok\",\"pages\":[],\"diagnostics\":[\(rows)]}"
-        return try! JSONDecoder().decode(RuntimeV1.CompileResult.self, from: Data(json.utf8))
+    /// The engine's rows for a compile that could not find `missing` (TeX's wording).
+    private func diagnostics(missing: [String]) -> [RuntimeV1.Diagnostic] {
+        missing.map {
+            RuntimeV1.Diagnostic(severity: .error, message: "LaTeX Error: File `\($0).sty' not found.", source: nil, recovery: nil, code: "latex/file-not-found")
+        }
     }
 
     private func project() throws -> ShellModel {
@@ -43,29 +44,33 @@ final class PackagePopupGraceTests: XCTestCase {
             .write(to: tmp.appendingPathComponent("main.tex"), atomically: true, encoding: .utf8)
         try "[packages]\nfetch = \"ask\"\n".write(to: tmp.appendingPathComponent("flashtex.toml"), atomically: true, encoding: .utf8)
         let model = ShellModel()
-        model.detachWorker()
         model.files.policy = .disabled(reason: "test: hermetic (direct writes)")
         model.manifest.reader = { root, _ in .success(self.manifest(root: root)) }
         XCTAssertEqual(model.openTex(at: tmp.appendingPathComponent("main.tex")), .opened)
         let state = model.projectPackages
         state.engineV3Now = { [unowned self] in now }
         state.engineV3Schedule = { [unowned self] delay, work in scheduled.append((now.addingTimeInterval(delay), work)) }
-        state.resolver = { [unowned self] _, names, _ in
+        // The new engine asks the libraries and the cache first (offline);
+        // what neither has is offered by name.
+        state.offlineResolver = { [unowned self] _, names, _ in
             resolved.append(names)
-            let rows = names.map { "{\"name\":\"\($0)\",\"status\":\"needs_consent\",\"version\":\"1\",\"source_url\":\"https://mirrors.ctan.org/x/\",\"would_fetch\":[\"\($0).sty\"]}" }
+            let rows = names.map { "{\"name\":\"\($0)\",\"status\":\"not_available\",\"reason\":\"\($0) is not cached\"}" }
             let json = "{\"cache\":\"/tmp/c\",\"policy\":{\"source\":\"ctan\",\"fetch\":\"ask\"},\"diagnostics\":[],\"packages\":[\(rows.joined(separator: ","))]}"
             return .success(try! JSONDecoder().decode(ProjectFilesV1.ResolvePackages.self, from: Data(json.utf8)))
         }
         return model
     }
 
-    /// Types `name` into `\usepackage{}` (caret right after it) and delivers that keystroke's compile.
+    /// Types `name` into `\usepackage{}` (caret right after it) and delivers that keystroke's compile:
+    /// the engine's rows, as its DONE hands them over.
     private func type(_ name: String, missing: [String], in model: ShellModel) {
         let text = "\\documentclass{article}\n\\usepackage{\(name)}\n\\begin{document}\nHi.\n\\end{document}\n"
         let i = model.documents.firstIndex { $0.path == model.activePath }!
         model.documents[i].text = text
         model.caretUTF16 = ("\\documentclass{article}\n\\usepackage{" + name as NSString).length
-        model.result = result(missing: missing)
+        let rows = diagnostics(missing: missing)
+        model.engineV3Diagnostics = rows
+        model.projectPackages.noteCompileResult(diagnostics: rows)
     }
 
     /// Runs the timers due by `now`.

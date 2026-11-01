@@ -39,6 +39,7 @@ In order:
 | `mltex.ch` | tex.ch's ML\TeX character access, through which `xetex.ch` applies a TFM font's TECkit mapping: `char_info` reads the effective character (`effective_char`, which maps it unless it is a ligature's, `xtx_ligature_present`), `orig_char_info` where tex.ch avoids substitution (font loading, `new_character`, `hlist_out`'s output, math), and the main loop checks the effective character. ML\TeX's substitutions themselves are not re-specified (`mltex_enabled_p` is always false). |
 | *third_party/xetex/* | `char-warning-xetex.ch`, unmodified. |
 | `web2c-run.ch` | How a run is set up and reports itself (the pdfTeX engine's `web2c-run.ch`): texmf.cnf values, `-interaction`, file:line:error, `-halt-on-error`, the status lines (a TCX file is "ignored", as xetex.ch says), `%&format`, `-jobname`, `\write18` (the command made UTF-8), `openin_any`/`openout_any`, `-output-comment`, `-no-pdf`; no TCX tables in the format and no pdfTeX banner. |
+| `displaylist.ch` | The display list's source map (the pdfTeX engine's `displaylist.ch`): `dl_new_node` at every node allocation, `dl_copy` for copies and merged native words, `dl_hyph_begin`/`dl_hyph_end` around a hyphenation attempt (native-word preparation included), `dl_token_begin`/`dl_token_end` around allocations that are never shipped, `dl_node` as `hlist_out`/`vlist_out` output each node; bodies in `src/dlsource.rs`. |
 
 ## Not re-specified (phase S0)
 

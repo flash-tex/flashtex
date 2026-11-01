@@ -35,6 +35,11 @@ into a chapter (docspec.py) and whose preamble edits into the main file. The pha
                                             is a miss (every keystroke gets its own page)
   preamble                                  a \\newcommand line after the \\documentclass line, added
                                             and removed: S0 changes, a full run from the format
+  open                                      first, before the others, on a host of its own: the
+                                            document's first open as the app opens it (dl3-coldopen:
+                                            no output files, a fresh S0 cache, the external tools on)
+                                            to page 1, to every page seen and to DONE once the tools
+                                            settle. The books only, unless `open` is named in --phases
 
 Documents: plain-N and full-N (gen.py) and two beamer decks (genbeamer.py, lane BEAMER-LATENCY):
 beamer-5, the owner's five-frame deck, and beamer-30, thirty frames with a theme, sections and
@@ -69,6 +74,8 @@ Gate (§1.2):
                   where also every keystroke must be painted by its own compile
   preamble        <= 400 ms to the first visible page (page 1, the viewport): host side; §1.2 gives
                   no host/app split for it
+  open            report-only (one sample each): page 1 against §1.2's "visible page <= 1 s after open",
+                  every page seen and DONE without a target. Gating real documents is lane REAL-DOC-GATE's.
   reopen          report-only. Decision 8: a pre-warmed host does not count, and reopen is met by
                   the app's stored pages, which a host-socket harness cannot see. Reported: the
                   host's share of a cold reopen (spawn -> listening -> page 1 from the persisted
@@ -90,7 +97,8 @@ otherwise passes exit 3.
 
 Exit: 0 all gated targets met; 1 a target missed (or a page never arrived, or pages were not kept
 current, or a held rate fell); 2 the harness failed (an unknown --docs or --phases value, a host
-or dl3-keys failure: the summary of what ran is still written); 3 see --require-reference.
+or dl3-keys failure, which ends that document only: its phases that ran are summarised and the
+other documents still run); 3 see --require-reference.
 Output: OUT/raw/*.jsonl (dl3-keys' lines), OUT/summary.json, OUT/table.md, OUT/environment.txt.
 """
 import argparse
@@ -136,7 +144,7 @@ TYPING_PHASES = [
 ]
 TYPING_NAMES = {p for p, _ in TYPING_PHASES}
 PREAMBLE = ('preamble', ['--kind', 'preamble', '--at', '0.5'])
-PHASE_NAMES = [p for p, _ in BODY_PHASES] + [p for p, _ in TYPING_PHASES] + [PREAMBLE[0], 'reopen']
+PHASE_NAMES = ['open'] + [p for p, _ in BODY_PHASES] + [p for p, _ in TYPING_PHASES] + [PREAMBLE[0], 'reopen']
 # §1.2: the host's share of the edit gate (decision 1), the preamble row
 TARGET = {'edit': 11.0, 'preamble': 400.0}
 REOPEN_APP_TARGET = 100.0  # the app's row (stored pages), for reference only
@@ -144,6 +152,13 @@ SMALL_N = 12
 CONV_TOL, BG_TOL = 0.15, (1.25, 2)
 REOPEN_COLD = "reopen: host's share, cold (spawn -> page 1)"
 REOPEN_WARM = 'reopen: host already listening (not counted, decision 8)'
+# The first open (lane COLD-OPEN; DESIGN.md §1.2 "Opening": the visible page <= 1 s after open, the
+# rest streaming in): report-only rows from one cold open of each book (of every document when
+# `open` is named in --phases)
+OPEN_TARGET = 1000.0
+OPEN_ROWS = (('open: first visible page', 'first_page_ms', OPEN_TARGET),
+             ('open: all pages seen', 'all_seen_ms', None),
+             ('open: DONE, all pages final', 'done_ms', None))
 
 
 def pct(v, p):
@@ -302,6 +317,7 @@ class Host:
         self.sock = sock
         self.lines = queue.Queue()
         self.saved = 0
+        self.s1 = []
         self.startup = None
         t0 = time.perf_counter()
         self.p = subprocess.Popen([f'{eng}/flashtex-host', '--socket', sock, '--s0-cache', s0] + extra,
@@ -341,6 +357,9 @@ class Host:
             l = l.rstrip('\n')
             if '"saved_s0"' in l:
                 self.saved += 1
+            # (S1, lane COLD-OPEN: saved, or why not)
+            if '"saved_s1"' in l or '"no_s1"' in l:
+                self.s1.append(l[len('flashtex-host: '):])
             self.lines.put(l)
         self.lines.put(None)
 
@@ -422,6 +441,17 @@ def phase_order(order, i, seed):
 
 
 def run_doc(a, eng, doc, out, i):
+    """One document's phases and reopens. A harness failure (the host, dl3-keys) ends the
+    document there: its result keeps the phases that ran, with the failure as `error`."""
+    res = dict(doc=doc, phases={}, reopen=[], order=[])
+    try:
+        return run_phases(a, eng, doc, out, i, res)
+    except RuntimeError as e:
+        res['error'] = str(e)
+        return res
+
+
+def run_phases(a, eng, doc, out, i, res):
     src = f'{IB}/docs/{doc}/{docspec.edit_file(IB, doc)}'
     work = f'{IB}/t7-work/{doc}'
     s0 = f'{IB}/t7-work/s0-{doc}'
@@ -434,7 +464,8 @@ def run_doc(a, eng, doc, out, i):
     log = f'{out}/raw/{doc}.host-stderr'
     hostargs = a.host_args.split()
     lines = edit_lines(f'{IB}/docs/{doc}')
-    res = dict(doc=doc, phases={}, reopen=[], order=[])
+    if 'open' in a.phases and (doc in BOOKS or a.open_named):
+        res['open'] = cold_open(a, eng, doc, out, hostargs)
     h = Host(eng, sock, s0, log, hostargs)
     res['host_startup'], res['host_ready_ms'] = h.startup, round(h.ready_ms, 1)
     rss = []
@@ -467,6 +498,7 @@ def run_doc(a, eng, doc, out, i):
     finally:
         rss.append(h.stop())
         res['killed_at_limit'] = h.killed_at_limit
+        res['rss_peak'] = max((r for r in rss if r), default=None)
     # reopen: edit on disk, a new host from the persisted S0, page 1
     if a.reopen and 'reopen' in a.phases:
         at = body_line(open(src).read(), 0.5, int(located(['--at', '0.5'], lines)[1]) if lines else None)
@@ -492,6 +524,44 @@ def run_doc(a, eng, doc, out, i):
     return res
 
 
+def cold_open(a, eng, doc, out, hostargs):
+    """The document's first open as the app opens it (`dl3-coldopen`, coldopen.py's client): a
+    fresh copy with no output files, a fresh host and S0 cache, one COMPILE with the external tools
+    on (a trusted project), until the tools settle. A harness failure is the row's, not the run's."""
+    work = f'{IB}/t7-work/open-{doc}'
+    s0 = f'{IB}/t7-work/s0-open-{doc}'
+    sock = f'{IB}/t7-work/open-{doc}.sock'
+    shutil.rmtree(work, ignore_errors=True)
+    shutil.rmtree(s0, ignore_errors=True)
+    os.makedirs(f'{work}/out')
+    os.makedirs(s0)
+    docspec.copy(IB, doc, work)
+    l0 = load1()
+    h = Host(eng, sock, s0, f'{out}/raw/{doc}-open.host-stderr', hostargs)
+    try:
+        p = subprocess.run([f'{S}/to.sh', str(a.timeout), f'{eng}/dl3-coldopen', '--socket', sock, '--root', work,
+                            '--main', 'main.tex', '--output-dir', f'{work}/out', '--external-tools', 'auto'],
+                           capture_output=True, text=True)
+    finally:
+        rss = h.stop()
+    lines = [l for l in p.stdout.splitlines() if l.startswith('{')]
+    with open(f'{out}/raw/{doc}-open.jsonl', 'a') as fh:
+        fh.write(p.stdout)
+    shutil.rmtree(work, ignore_errors=True)
+    shutil.rmtree(s0, ignore_errors=True)
+    if p.returncode or not lines:
+        print(f'  {doc} open: dl3-coldopen exit {p.returncode}', flush=True)
+        return dict(error=f'dl3-coldopen exit {p.returncode}: {p.stderr.strip()[-300:]}', load=[l0, load1()])
+    r = json.loads(lines[-1])
+    mine = [d for d in r.get('dones', []) if d[0] == 1]
+    o = dict(first_page_ms=r.get('first_page_ms'), all_seen_ms=r.get('all_seen_ms'), done_ms=r.get('done_ms'),
+             pages=r.get('pages'), ready_ms=round(h.ready_ms, 1), rss=rss, load=[l0, load1()],
+             modes=[m for d in mine for m in (d[4] or [])])
+    print(f"  {doc} open: page 1 {f(o['first_page_ms'], 0)} ms, all seen {f(o['all_seen_ms'], 0)} ms, "
+          f"DONE {f(o['done_ms'], 0)} ms, passes {o['modes']}", flush=True)
+    return o
+
+
 def off_cpu(host):
     """A compile's time to its first PAGE that its engine thread spent neither waiting for the engine
     (`queue`) nor running (`first_page_cpu`): descheduled, by load or a CPU quota. None if unknown."""
@@ -500,6 +570,12 @@ def off_cpu(host):
     if fp is None or q is None or cpu is None:
         return None
     return max(0.0, fp - q - cpu)
+
+
+# A keystroke the typist (dl3-keys --interval-ms) sent more than this late after its due time:
+# the client's clock slipped (lane BEAMER, 2026-11-01: on the hosted M1 the typist woke 100 ms and
+# more late and sent keys in bursts, until it left macOS's background band).
+LATE_MS = 5
 
 
 def typing_row(d, name, ph):
@@ -514,11 +590,14 @@ def typing_row(d, name, ph):
     n = len(ks) + unpainted - (1 if unpainted and not any(k.get('key') == 0 for k in ph['keys']) else 0)
     lat = [k['edited_page_ms'] for k in ks if k.get('edited_page_ms') is not None]
     own = sum(1 for k in ks if k.get('by') == first + k['key'])
+    # keystrokes the client sent late (dl3-keys' `sent_late_ms`): a burst of keys sent together
+    # supersedes all but its last, whatever the host does
+    late = sum(1 for k in ks if (k.get('sent_late_ms') or 0) > LATE_MS)
     painters = [by_id[k['by']] for k in ks if k.get('by') in by_id]
     queue = [x['stages']['queue'] for x in painters
              if isinstance((x.get('stages') or {}).get('queue'), (int, float))]
     return dict(doc=d['doc'], edit=name, metric='edited page (host share), typing', target=TARGET['edit'],
-                gated=True, n=n, missing=n - len(lat), ms=stats(lat), not_own=len(ks) - own,
+                gated=True, n=n, missing=n - len(lat), ms=stats(lat), not_own=len(ks) - own, sent_late=late,
                 queue=stats(queue), off_cpu=stats([x for x in map(off_cpu, painters) if x is not None]),
                 cancelled=sum(1 for x in dones if x.get('status') == 'cancelled'),
                 load=ph['load'], pages=d.get('pages'), rss=d.get('rss_peak'))
@@ -558,6 +637,14 @@ def summarise(raw):
                 status=sorted({x.get('status') for x in hosts if x.get('status')}),
                 off_cpu=stats([x for x in map(off_cpu, hosts) if x is not None]),
                 load=ph['load'], pages=d.get('pages'), rss=d.get('rss_peak')))
+        op = d.get('open')
+        if op is not None:
+            for kind, key, target in OPEN_ROWS:
+                v = [op[key]] if op.get(key) is not None else []
+                rows.append(dict(doc=d['doc'], edit=kind, metric='open (COMPILE written -> PAGE read)',
+                                 target=target, gated=False, n=1,
+                                 missing=1 - len(v), ms=stats(v), modes=sorted(set(op.get('modes', []))),
+                                 load=op['load'], pages=op.get('pages'), rss=op.get('rss')))
         ro = d.get('reopen', [])[1:]
         if ro:
             for kind, key in ((REOPEN_COLD, 'cold_ms'), (REOPEN_WARM, 'first_page_ms')):
@@ -583,10 +670,13 @@ def verdict(rows, baseline):
             why.append('no samples')
         name, val = gated_stat(r['ms'])
         r['stat'] = name
-        if val is not None and val > r['target']:
+        if val is not None and r['target'] is not None and val > r['target']:
             why.append(f"{name} {val:.1f} ms > {r['target']:.0f} ms")
         if r.get('not_own'):
             why.append(f"{r['not_own']} of {r['n']} keystrokes not painted by their own compile")
+        if r.get('sent_late'):
+            why.append(f"{r['sent_late']} of {r['n']} keystrokes sent over {LATE_MS} ms late by the client "
+                       "(its clock, not the host: a harness fault)")
         if r.get('stale_unmarked'):
             why.append(f"{r['stale_unmarked']} compiles refreshed later pages without marking them stale")
         if r.get('incomplete'):
@@ -634,12 +724,13 @@ def table(rows, issues):
             tgt = f"{r['target']:.0f}"
         else:
             v = 'report-only' + ('' if r['pass'] else ': ' + '; '.join(r['why']))
-            tgt = f"({r['target']:.0f}, app)"
+            tgt = '-' if r['target'] is None else f"({r['target']:.0f}{', app' if r['edit'].startswith('reopen') else ''})"
         if r.get('warning'):
             v += f" ({r['warning']})"
         out.append(f"| {r['doc']} | {f(r.get('pages'))} | {r['edit']} | {r['n']} | {f(m['p50'])} / {f(m['p95'])} / {f(m['max'])} "
                    f"| {r.get('stat', '-')} | {tgt} | {fp} | {dn} | {off} | {conv} | {tp} | {rss} | {r['load'][0]}-{r['load'][1]} | {v} |")
-    out.append("\nms: COMPILE written to the watched page's PAGE frame read on the socket (preamble, reopen: page 1); "
+    out.append("\nms: COMPILE written to the watched page's PAGE frame read on the socket (preamble, reopen: page 1; "
+               "open: page 1, every page of the final count, DONE with the tools settled); "
                'typing@: the keystroke sent to the watched page from its own compile or a later one. '
                "off-CPU: of the host's time to that page, what its engine thread spent descheduled (wall minus "
                'queue minus thread CPU): load or a CPU quota, not the engine. '
@@ -722,6 +813,7 @@ def main():
     out = a.out or f'{IB}/t7/{time.strftime("%Y%m%dT%H%M%S")}'
     os.makedirs(f'{out}/raw', exist_ok=True)
     error = None
+    a.open_named = a.phases is not None and 'open' in [p.strip() for p in a.phases.split(',')]
     a.phases = PHASE_NAMES if a.phases is None else [p.strip() for p in a.phases.split(',') if p.strip()]
     bad = [p for p in a.phases if p not in PHASE_NAMES]
     if bad or not a.phases:
@@ -766,13 +858,17 @@ def main():
         if power['before'].get('low_power_mode'):
             print('t7: WARNING: macOS Low Power Mode is on: a non-reference run', file=sys.stderr)
         os.makedirs(f'{IB}/t7-work', exist_ok=True)
-        try:
-            for i, doc in enumerate(docs):
-                print(f'{doc}:', flush=True)
-                raw.append(run_doc(a, eng, doc, out, i))
-        except RuntimeError as e:
-            error = str(e)
-            print(f't7: {e} (the documents before it are summarised)', file=sys.stderr)
+        # A harness failure in one document ends that document only: the phases it ran are
+        # summarised, the other documents (each its own host) still run, and the run exits 2.
+        errors = []
+        for i, doc in enumerate(docs):
+            print(f'{doc}:', flush=True)
+            res = run_doc(a, eng, doc, out, i)
+            raw.append(res)
+            if res.get('error'):
+                errors.append(f"{doc}: {res['error']}")
+                print(f"t7: {doc}: {res['error']} (the phases it ran are summarised)", file=sys.stderr)
+        error = '; '.join(errors) or None
         power['after'] = power_state()
     env_lines.append(f'end {time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())} {uptime()}')
     open(f'{out}/environment.txt', 'w').write('\n'.join(env_lines) + '\n')

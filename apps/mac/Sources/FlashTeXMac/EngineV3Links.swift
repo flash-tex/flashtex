@@ -1,15 +1,32 @@
+import AppKit
 import Foundation
 import FlashTeXDisplayListV3
 
 /// Hyperref links in the engine-v3 preview (display-list-v3 §4.5): the
 /// page's `LINKS` and `DESTS`, which are pdfTeX's own link annotations and
-/// destinations with their final rectangles. The v2 pane's rules
-/// (`DisplayListLinks`) carry over: the last link under the point wins,
+/// destinations with their final rectangles. The last link under the point wins,
 /// only http, https and mailto URIs open, and an internal destination
-/// scrolls the preview. Pure apart from `DisplayListLinks.openURL`.
+/// scrolls the preview. Pure apart from `openURL`.
 enum EngineV3Links {
     /// Scaled points per big point (page space is sp, y down from the top).
     static let spPerBP = 65781.76
+
+    // The URI policy (moved here from the v2 pane's DisplayListLinks.swift
+    // in retirement stage S6a, retirement-plan.md §1.4).
+
+    /// Schemes `NSWorkspace` may open. `file:` and `javascript:` are rejected
+    /// (the writer does not filter schemes; the preview does).
+    static let allowedURISchemes: Set<String> = ["http", "https", "mailto"]
+
+    /// Allowlisted `http`/`https`/`mailto` only. Scheme comparison is
+    /// case-insensitive; a missing scheme is rejected.
+    static func allowedURL(from uri: String) -> URL? {
+        guard let url = URL(string: uri), let scheme = url.scheme?.lowercased(), allowedURISchemes.contains(scheme) else { return nil }
+        return url
+    }
+
+    /// Replaceable so tests never call `NSWorkspace`.
+    static var openURL: (URL) -> Bool = { NSWorkspace.shared.open($0) }
 
     /// A link's rectangle in page points, y down (it includes the link margin).
     static func rect(_ link: DL3Link) -> CGRect {
@@ -42,7 +59,7 @@ enum EngineV3Links {
         }
         switch link.kind {
         case 4:
-            if let url = DisplayListLinks.allowedURL(from: data) { return .openURI(url) }
+            if let url = allowedURL(from: data) { return .openURI(url) }
             return .rejectedScheme(URL(string: data)?.scheme ?? "")
         case 1, 2:
             let named = link.kind == 1
@@ -88,15 +105,14 @@ enum EngineV3Links {
 }
 
 extension ShellModel {
-    /// A click on an engine-v3 link: the v2 pane's `activatePreviewLink`
-    /// policy and notes. Allowlisted URIs open through `NSWorkspace`; the
+    /// A click on an engine-v3 link. Allowlisted URIs open through `NSWorkspace`; the
     /// pane scrolls to a `.reveal` itself.
     @discardableResult
     func activateEngineV3Link(_ link: DL3Link, pages: [Int: DL3Page]) -> EngineV3Links.Action {
         let action = EngineV3Links.action(for: link, pages: pages)
         switch action {
         case .openURI(let url):
-            navigationNote = DisplayListLinks.openURL(url) ? "Opened \(url.absoluteString)" : "Could not open \(url.absoluteString)"
+            navigationNote = EngineV3Links.openURL(url) ? "Opened \(url.absoluteString)" : "Could not open \(url.absoluteString)"
         case .reveal(let target):
             navigationNote = "Scrolled to page \(target.page + 1)"
         case .rejectedScheme(let scheme):

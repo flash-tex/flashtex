@@ -105,6 +105,13 @@ python3 tools/xetex-lockstep/latex.py --engine <bin> [--cases 'l00*'] [--keep]
   picture's header, so each file is the header and nothing more.
 * **`latex-cases/l010-graphicx.tex`**: graphicx with the xetex driver
   (scaled, rotated, trimmed, clipped, by page), against `xelatex -no-pdf`.
+* **`latex-cases/l011-bidi-rtl.tex`**: ICU's bidi runs in
+  `measure_native_node` (`src/native/bidi.rs`): Latin, Hebrew and numbers
+  in one native word, brackets, explicit embeddings, overrides and
+  isolates, and polyglossia Hebrew and Arabic (Geeza Pro, a `.ttc`)
+  paragraphs with `\XeTeXinterwordspaceshaping=2`. P-T1 and XDV equal
+  (2026-10-11); before the port of the bidi pass every RTL word was shaped
+  left to right (#1777).
 
 ## Font lookup by name (`fontmatch.py`)
 
@@ -142,6 +149,34 @@ Text's instance names for `STIX Two Text` and `Inter`), and two installed
 families both named `SF Mono` (`SFMono-Regular` is found by the port
 only). They print as `KNOWN`; the run fails on a difference not listed or
 a listed one that no longer differs.
+
+**Fonts that are not installed** (`--font-dirs DIR...`): the port sees the
+directories through `FLASHTEX_FONT_DIRS`; macOS's xetex finds fonts by name
+through Core Text only, so `ctregister.c` (built by the script with
+`clang`) registers each directory's fonts with Core Text at process scope
+inside a re-signed copy of xetex (the copy's code is TeX Live's; its
+hardened runtime would ignore `DYLD_INSERT_LIBRARIES`). Nothing is
+installed and nothing outside the run changes. The family matrix
+`fontnames-texlive.txt` (Erewhon, TeX Gyre, Fira, EB Garamond from TeX Live;
+Libertinus, New Computer Modern, IBM Plex, Input, Geist and Dank Mono from
+`~/Library/Fonts`: family, `/B` `/I` `/BI`, full, PostScript and
+Family-Style names, the case of family names, typographic against legacy
+names) runs as
+
+```sh
+T=/usr/local/texlive/2026/texmf-dist/fonts/opentype/public
+python3 tools/xetex-lockstep/fontmatch.py --names tools/xetex-lockstep/fontnames-texlive.txt \
+  --known tools/xetex-lockstep/fontmatch-texlive-known.txt \
+  --font-dirs $T/erewhon $T/tex-gyre $T/fira $T/ebgaramond
+```
+
+Measured 2026-10-12 (mac-m1max-a): 411 of 417 faces equal, 413
+`name_of_file`s; the 6 + 4 differences are Core Text's enumeration
+(`fontmatch-texlive-known.txt`: localized family names, two faces sharing
+one full name, a PostScript name whose prefix is a legacy family). A family
+is found only as the font spells it: Erewhon's family is `erewhon`, so
+`\setmainfont{Erewhon}` fails in `xelatex` as in the port, and
+`\setmainfont{erewhon}` gives the same XDV, byte for byte.
 
 The port's catalog keeps each face's names in a cache
 (`$FLASHTEX_CACHE_DIR`, else the user's cache directory,

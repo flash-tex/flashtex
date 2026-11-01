@@ -263,6 +263,55 @@ impl Sources {
         ])
     }
 
+    /// `to_json().to_string()`, written directly: a split near the middle
+    /// of a 1,000-page source moves every later span, and the `SOURCES`
+    /// that re-declares them was built as a tree of values and then
+    /// written: 0.9 ms before the first page on the NixOS PC (lane
+    /// T7-HEADROOM).
+    pub fn to_json_string(&self) -> String {
+        fn int(out: &mut String, mut v: u32) {
+            let mut b = [0u8; 10];
+            let mut i = b.len();
+            loop {
+                i -= 1;
+                b[i] = b'0' + (v % 10) as u8;
+                v /= 10;
+                if v == 0 {
+                    break;
+                }
+            }
+            // (ASCII digits)
+            out.push_str(std::str::from_utf8(&b[i..]).unwrap_or_default());
+        }
+        let mut out = String::with_capacity(24 + self.files.len() * 48 + self.spans.len() * 20);
+        out.push_str("{\"files\":[");
+        for (k, (i, p)) in self.files.iter().enumerate() {
+            if k > 0 {
+                out.push(',');
+            }
+            out.push('[');
+            int(&mut out, *i);
+            out.push(',');
+            crate::json::write_str(&mut out, p);
+            out.push(']');
+        }
+        out.push_str("],\"spans\":[");
+        for (k, (i, f, l)) in self.spans.iter().enumerate() {
+            if k > 0 {
+                out.push(',');
+            }
+            out.push('[');
+            int(&mut out, *i);
+            out.push(',');
+            int(&mut out, *f);
+            out.push(',');
+            int(&mut out, *l);
+            out.push(']');
+        }
+        out.push_str("]}");
+        out
+    }
+
     pub fn from_json(j: &Json) -> Result<Sources, String> {
         let mut s = Sources::default();
         let int = |v: &Json| {
@@ -330,6 +379,27 @@ mod tests {
         assert!(a.ink(0, 0) && a.ink(8, 0) && a.ink(1, 1) && !a.ink(0, 1));
         assert!(Type3Bitmaps::decode(&p[..p.len() - 1]).is_err());
         assert!(Type3Bitmaps::decode(b"T3B1\xff\xff\xff\xff").is_err());
+    }
+
+    #[test]
+    fn sources_written_directly_as_the_tree_writes_them() {
+        let mut s = Sources::default();
+        assert_eq!(s.to_json_string(), s.to_json().to_string());
+        s.files = vec![
+            (1, "main.tex".into()),
+            (7, "d\"ir\\a\nb\u{1}\u{e9}.tex".into()),
+        ];
+        s.spans = vec![
+            (1, 1, 1),
+            (10, 7, 0),
+            (u32::MAX, 4_294_967_295, 1_000_000),
+            (99, 0, 9),
+        ];
+        assert_eq!(s.to_json_string(), s.to_json().to_string());
+        assert_eq!(
+            Sources::from_json(&Json::parse(&s.to_json_string()).unwrap()).unwrap(),
+            s
+        );
     }
 
     /// 3.3 (spec §11.1, §11.5).

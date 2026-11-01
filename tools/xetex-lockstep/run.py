@@ -207,6 +207,91 @@ def _self_test_normalise_xdv():
     assert normalise_xdv(other + bytes(rec2) + post) == got
 
 
+def native_font_files(data):
+    """The font file of each `define_native_font` record, as written, in
+    stream order (the postamble's copies included); [] for a stream that
+    cannot be walked."""
+    b = bytes(data)
+    if not (len(b) >= 15 and b[0] == XDV_PRE):
+        return []
+    i = 15 + b[14]
+    out = []
+    try:
+        while i < len(b):
+            op = b[i]
+            if op == 249:
+                break
+            if op == 252:
+                n = _native_font_def_len(b, i + 1)
+                l = b[i + 11]
+                out.append(b[i + 12:i + 12 + l])
+                i += 1 + n
+                continue
+            n = _dvi_param_len(op, b, i + 1)
+            if n is None:
+                return out
+            i += 1 + n
+    except IndexError:
+        pass
+    return out
+
+
+def different_font_files(a, b):
+    """Fonts the two XDVs load from different files of one base name:
+    [(base, reference path, candidate path)], each once. The normalisation
+    compares base names only, but a path's length still moves every later
+    byte, so `bop`'s pointer to the previous page (and the postamble's) can
+    differ where every record is equal: the engines found the font in
+    different directories, which is their font search order, not their
+    typesetting."""
+    out = []
+    for x, y in zip(native_font_files(a), native_font_files(b)):
+        if x != y and x.rsplit(b"/", 1)[-1] == y.rsplit(b"/", 1)[-1]:
+            t = (x.rsplit(b"/", 1)[-1].decode("latin1"), x.decode("latin1"), y.decode("latin1"))
+            if t not in out:
+                out.append(t)
+    return out
+
+
+def compare_xdv_bytes(a, b):
+    """None when equal after normalisation, else a description."""
+    na, nb = normalise_xdv(a), normalise_xdv(b)
+    if na == nb:
+        return None
+    i = next((k for k in range(min(len(na), len(nb))) if na[k] != nb[k]),
+             min(len(na), len(nb)))
+    msg = "XDV differs at byte %d (sizes %d vs %d)" % (i, len(a), len(b))
+    files = different_font_files(a, b)
+    if files:
+        msg += "; the engines loaded different files for %s" % ", ".join(
+            "%s (reference %s, candidate %s)" % f for f in files)
+    return msg
+
+
+def _self_test_font_files():
+    """A font found in another directory is named, with both paths."""
+    pre = bytes([247, 7]) + bytes(12) + bytes([0])
+
+    def rec(path):
+        return (bytes([252]) + (1).to_bytes(4, "big") + (655360).to_bytes(4, "big")
+                + (0).to_bytes(2, "big") + bytes([len(path)]) + path + (0).to_bytes(4, "big"))
+
+    def bop(prev):
+        return bytes([139]) + bytes(40) + prev.to_bytes(4, "big", signed=True)
+
+    post = bytes([249]) + bytes(5) + bytes([223] * 4)
+    def xdv(path):  # two pages; the second bop points at the first
+        head = pre + rec(path)
+        return head + bop(-1) + bytes([140]) + bop(len(head)) + bytes([140]) + post
+
+    a, b = xdv(b"/usr/f/X.ttf"), xdv(b"/tl/texmf/f/X.ttf")
+    assert normalise_xdv(a) != normalise_xdv(b)  # the second bop's pointer moved
+    msg = compare_xdv_bytes(a, b)
+    assert "different files for X.ttf (reference /usr/f/X.ttf, candidate /tl/texmf/f/X.ttf)" in msg, msg
+    assert compare_xdv_bytes(a, a) is None
+    assert different_font_files(a, a) == []
+
+
 def compare_xdv(ref_path, cand_path):
     """None when equal after normalisation, else a description."""
     try:
@@ -221,12 +306,7 @@ def compare_xdv(ref_path, cand_path):
         return None
     if a is None or b is None:
         return "XDV only from %s" % ("candidate" if a is None else "reference")
-    na, nb = normalise_xdv(a), normalise_xdv(b)
-    if na == nb:
-        return None
-    i = next((k for k in range(min(len(na), len(nb))) if na[k] != nb[k]),
-             min(len(na), len(nb)))
-    return "XDV differs at byte %d (sizes %d vs %d)" % (i, len(a), len(b))
+    return compare_xdv_bytes(a, b)
 
 
 # ---------------------------------------------------------------------------
@@ -518,6 +598,7 @@ def main(argv=None):
     a = ap.parse_args(argv)
     # The normalisation is checked on every run, before it is relied on.
     _self_test_normalise_xdv()
+    _self_test_font_files()
     if a.test_normalise:
         print("XDV normalisation: ok")
         return 0

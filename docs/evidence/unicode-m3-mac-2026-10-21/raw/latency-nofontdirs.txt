@@ -1,0 +1,30 @@
+instruction counter: time
+format (reference): exit 0, 4.1 s
+format (candidate): exit 0, 5.3 s
+engine b1-article         candidate-pdf     {'exit': [0, 0, 0, 0, 0], 'ms_best': 68.0, 'ms_median': 68.3, 'instructions_best': 1279807846, 'instructions_median': 1280725373}
+engine b1-article         candidate-no-pdf  {'exit': [0, 0, 0, 0, 0], 'ms_best': 59.8, 'ms_median': 60.3, 'instructions_best': 1156442250, 'instructions_median': 1157817197}
+engine b1-article         xelatex-no-pdf    {'exit': [0, 0, 0, 0, 0], 'ms_best': 123.2, 'ms_median': 123.4, 'instructions_best': 1725609999, 'instructions_median': 1726330078}
+engine b1-article         xelatex-pdf       {'exit': [0, 0, 0, 0, 0], 'ms_best': 282.9, 'ms_median': 291.3, 'instructions_best': 1725707184, 'instructions_median': 1726146132}
+engine b2-fontspec-named  candidate-pdf     {'exit': [1, 1, 1, 1, 1], 'ms_best': 132.9, 'ms_median': 133.3, 'instructions_best': 3029957373, 'instructions_median': 3030521347}
+engine b2-fontspec-named  candidate-no-pdf  {'exit': [1, 1, 1, 1, 1], 'ms_best': 132.2, 'ms_median': 133.5, 'instructions_best': 3024871312, 'instructions_median': 3029083905}
+engine b2-fontspec-named  xelatex-no-pdf    {'exit': [1, 1, 1, 1, 1], 'ms_best': 194.4, 'ms_median': 194.7, 'instructions_best': 3417249658, 'instructions_median': 3420038420}
+engine b2-fontspec-named  xelatex-pdf       {'exit': [1, 1, 1, 1, 1], 'ms_best': 343.3, 'ms_median': 353.7, 'instructions_best': 3419449897, 'instructions_median': 3426708817}
+engine b3-unicode-math    candidate-pdf     {'exit': [0, 0, 0, 0, 0], 'ms_best': 306.2, 'ms_median': 307.7, 'instructions_best': 7848145581, 'instructions_median': 7849921926}
+engine b3-unicode-math    candidate-no-pdf  {'exit': [0, 0, 0, 0, 0], 'ms_best': 303.1, 'ms_median': 305.5, 'instructions_best': 7811817125, 'instructions_median': 7813938774}
+engine b3-unicode-math    xelatex-no-pdf    {'exit': [0, 0, 0, 0, 0], 'ms_best': 363.9, 'ms_median': 368.0, 'instructions_best': 7804239582, 'instructions_median': 7807146731}
+engine b3-unicode-math    xelatex-pdf       {'exit': [0, 0, 0, 0, 0], 'ms_best': 508.7, 'ms_median': 512.6, 'instructions_best': 7799645781, 'instructions_median': 7801721809}
+engine b4-fontspec-pages  candidate-pdf     {'exit': [0, 0, 0, 0, 0], 'ms_best': 218.1, 'ms_median': 218.5, 'instructions_best': 4514971858, 'instructions_median': 4516411186}
+engine b4-fontspec-pages  candidate-no-pdf  {'exit': [0, 0, 0, 0, 0], 'ms_best': 162.4, 'ms_median': 164.3, 'instructions_best': 3875670759, 'instructions_median': 3880992920}
+engine b4-fontspec-pages  xelatex-no-pdf    {'exit': [0, 0, 0, 0, 0], 'ms_best': 217.9, 'ms_median': 221.1, 'instructions_best': 4118318610, 'instructions_median': 4119340142}
+engine b4-fontspec-pages  xelatex-pdf       {'exit': [0, 0, 0, 0, 0], 'ms_best': 361.7, 'ms_median': 370.6, 'instructions_best': 4119160349, 'instructions_median': 4121177215}
+engine b5-long            candidate-pdf     {'exit': [0, 0, 0, 0, 0], 'ms_best': 1878.8, 'ms_median': 1906.1, 'instructions_best': 27970046641, 'instructions_median': 27979394621}
+engine b5-long            candidate-no-pdf  {'exit': [0, 0, 0, 0, 0], 'ms_best': 673.1, 'ms_median': 709.2, 'instructions_best': 17294502740, 'instructions_median': 17297226453}
+engine b5-long            xelatex-no-pdf    {'exit': [0, 0, 0, 0, 0], 'ms_best': 614.2, 'ms_median': 622.9, 'instructions_best': 13924950668, 'instructions_median': 13933675024}
+engine b5-long            xelatex-pdf       {'exit': [0, 0, 0, 0, 0], 'ms_best': 787.0, 'ms_median': 799.1, 'instructions_best': 13901166710, 'instructions_median': 13914821907}
+engine startup candidate  {'exit': [0, 0, 0, 0, 0], 'ms_best': 32.9, 'ms_median': 33.7, 'instructions_best': 565939155, 'instructions_median': 566826143}
+engine startup xelatex    {'exit': [0, 0, 0, 0, 0], 'ms_best': 101.5, 'ms_median': 108.2, 'instructions_best': 1217209601, 'instructions_median': 1217744269}
+host b1-article         open 67.186 reopen 65.874 edits [92.38, 87.316, 89.404, 86.654, 88.81] preamble 51.606
+host b2-fontspec-named  open 167.341 reopen 152.225 edits [141.102, 153.296, 154.032, 155.791, 146.955] preamble 115.525
+host b3-unicode-math    open 307.96 reopen 311.569 edits [337.552, 337.956, 335.453, 348.828, 343.913] preamble 347.865
+host b4-fontspec-pages  open 136.221 reopen 142.89 edits [162.206, 159.88, 167.168, 163.043, 164.113] preamble 130.933
+host b5-long            open 136.279 reopen 136.613 edits [205.711, 150.204, 195.377, 185.905, 193.617] preamble 165.254

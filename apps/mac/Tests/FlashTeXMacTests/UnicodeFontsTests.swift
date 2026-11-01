@@ -3,9 +3,10 @@ import FlashTeXDisplayListV3
 @testable import FlashTeXMac
 
 /// The preamble scan and the engine's report that route a document needing
-/// Unicode/OpenType fonts to the compatibility engine (UnicodeFonts.swift;
-/// lane P5-FONTSPEC-FALLBACK, the retirement plan's §4.4 and R10). The
-/// window's side is in EngineChoiceTests.
+/// Unicode/OpenType fonts, whose mode nothing sets, to Unicode mode
+/// (UnicodeFonts.swift; lane P5-FONTSPEC-FALLBACK, then the retirement
+/// plan's S6). The window's side is in ProjectModeTests and
+/// EngineV3ProjectFontsTests.
 @MainActor
 final class UnicodeFontsTests: XCTestCase {
     private func scan(_ text: String, files: [String: String] = [:]) -> UnicodeFontsNeed? {
@@ -149,22 +150,11 @@ final class UnicodeFontsTests: XCTestCase {
         } else { XCTFail("an engine report") }
     }
 
-    func testTheBlockerSaysWhatAndYieldsToTheUser() {
-        let b = EngineChoice.Blocker.unicodeFonts(UnicodeFontsNeed(kind: .package("fontspec"), file: "main.tex"))
-        XCTAssertEqual(b.short, "this document needs Unicode fonts")
-        XCTAssertTrue(b.detail.contains("the fontspec package (in main.tex)"), b.detail)
-        XCTAssertTrue(b.yieldsToUserChoice)
-        XCTAssertFalse(EngineChoice.Blocker.noTeXLive.yieldsToUserChoice)
-        XCTAssertFalse(EngineChoice.Blocker.projectFonts(["text"]).yieldsToUserChoice)
-        XCTAssertEqual(EngineFallbackBanner.headline(b), "Using compatibility engine: this document needs Unicode fonts.")
-        // the rule applies to every unforced new-engine choice but the user's own
-        for (source, blocked) in [(EngineChoice.Source.appSetting, true), (.record, true), (.builtInDefault, true), (.legacySwitch, true), (.user, false)] {
-            var c = EngineChoice(preferred: .new, source: source)
-            c.applyRule(b)
-            XCTAssertEqual(c.effective, blocked ? .previous : .new, "\(source)")
-        }
-        var u = EngineChoice(preferred: .new, source: .user)
-        u.applyRule(.noTeXLive)
-        XCTAssertEqual(u.effective, .previous, "no TeX Live still blocks the user's choice")
+    /// What the mode item and the announcement say a need is.
+    func testTheNeedSaysWhatItIs() {
+        XCTAssertEqual(UnicodeFontsNeed(kind: .package("fontspec"), file: "main.tex").what, "the fontspec package")
+        XCTAssertEqual(UnicodeFontsNeed(kind: .command("setmainfont"), file: "style.sty").what, "\\setmainfont")
+        XCTAssertEqual(UnicodeFontsNeed(kind: .program("xelatex"), file: "main.tex").what, "% !TEX program = xelatex")
+        XCTAssertTrue(UnicodeFontsNeed(kind: .engineReport("Package unicode-math Error"), file: nil).what.contains("unicode-math"))
     }
 }

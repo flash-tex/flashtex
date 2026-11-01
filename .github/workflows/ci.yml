@@ -31,9 +31,8 @@
 #
 #   post (push to main; manual without gate_only; and nightly.yml)
 #     the Mac app, the iPad companion, the Rust workspace on Linux and macOS,
-#     render-pipeline, flashtex-cli, flashtex-xetex, the macOS legs of trip,
-#     etrip and pdfTeX's regression tests, the old engine's parity fixtures,
-#     and the new engine's parity (GitHub-hosted, which also keeps the caches
+#     flashtex-xetex, the macOS legs of trip, etrip and pdfTeX's regression
+#     tests, the parity fixtures on macOS, and the new engine's parity (GitHub-hosted, which also keeps the caches
 #     warm for pull requests). Fixed forward: a failure opens or updates the
 #     `main-red` issue, naming the pull requests the push merged
 #     (scripts/ci/main-red.sh). Policy: the PR's owner fixes forward within
@@ -138,11 +137,11 @@ jobs:
       # that run asks (input engine_parity_hosted).
       engine_nixos: ${{ steps.p.outputs.engine_nixos }}
       engine_hosted: ${{ steps.p.outputs.engine_hosted }}
-      # 'true' when this run must run the OLD engine's parity fixtures (a
-      # macOS job): after the merge always; on a pull request or branch push
-      # only when the change touches both their paths (`old_engine` in the
+      # 'true' when this run must run the parity fixtures on macOS (a macOS
+      # job): after the merge always; on a pull request or branch push only
+      # when the change touches both their paths (`parity_fixtures` in the
       # script) and apps/ (`apple`); never in the gate.
-      old_engine: ${{ steps.p.outputs.old_engine }}
+      parity_fixtures: ${{ steps.p.outputs.parity_fixtures }}
       # 'true' when the Xcode jobs (Mac app, iPad) run: after the merge, and
       # on a pull request or branch push that touches apps/.
       apple: ${{ steps.p.outputs.apple }}
@@ -300,7 +299,7 @@ jobs:
           # A merge group's diff is cumulative (main to the group's head), so
           # once an engine change is in the queue, every group behind it runs
           # parity too -- which is what testing that exact tree requires.
-          engine_paths='^(crates/(flashtex-engine|display-list-v3)/|Cargo\.(toml|lock)$|tools/(web2rust|lockstep|parity|visual-oracle|real-world-corpus)/|third_party/|fixtures/|scripts/engine-parity\.sh$|\.github/actions/texlive-2026/|\.github/workflows/ci\.yml$)'
+          engine_paths='^(crates/(flashtex-engine|flashtex-runtime|display-list-v3)/|Cargo\.(toml|lock)$|tools/(web2rust|lockstep|parity)/|third_party/|fixtures/|scripts/engine-parity\.sh$|\.github/actions/texlive-2026/|\.github/workflows/ci\.yml$)'
           engine=false
           [ "$tier" = "all" ] && engine=true
           [ "$EVENT" = "workflow_dispatch" ] && engine=true
@@ -342,39 +341,28 @@ jobs:
           # sides), the host itself, or this file. Not on every engine change:
           # engine parity covers the typesetting, and this is a ~20 minute
           # hosted macOS job. Never in the gate.
-          v3_app_paths='^(apps/mac/(Sources/FlashTeXMac/(EngineV3|EngineChoice)|Sources/FlashTeXDisplayListV3/|Tests/FlashTeXMacTests/(EngineV3|EngineChoiceTests)|Package\.swift$)|crates/(flashtex-engine/src/host/|display-list-v3/)|tools/parity/app[-_]parity[-_]rows|\.github/workflows/ci\.yml$)'
+          v3_app_paths='^(apps/mac/(Sources/FlashTeXMac/(EngineV3|EngineChoice|ProjectMode)|Sources/FlashTeXDisplayListV3/|Tests/FlashTeXMacTests/(EngineV3|EngineChoiceTests)|Package\.swift$)|crates/(flashtex-engine/src/host/|flashtex-xetex/src/host/|display-list-v3/)|tools/parity/app[-_]parity[-_]rows|\.github/workflows/ci\.yml$)'
           v3_app=false
           case "$tier" in
             all) v3_app=true ;;
             pr) [ "$run" = "true" ] && touches "$v3_app_paths" && v3_app=true ;;
           esac
 
-          # The OLD engine's parity fixtures (parity-fixtures and its hosted
-          # twin). That engine is frozen (D13, fixes only), and the job needs a
-          # Mac. It runs after the merge (every push to main, where a failure
-          # files `main-red`), never in the gate, and on a pull request or a
-          # branch push only when the change touches apps/ (`apple`, the
-          # hosted-macOS rule) AND something the fixtures tier depends on:
-          #   - flashtex-cli and every path crate it links, transitively, with
-          #     dev-dependencies (`cargo metadata` of crates/flashtex-cli). The
-          #     parity-fixtures action checks this list against cargo metadata
-          #     (scripts/ci/check-old-engine-paths.sh); a new path dependency
-          #     can only arrive through a Cargo.toml already on the list, so
-          #     the check runs exactly when the list can go stale;
-          #   - the root Cargo.toml and Cargo.lock (it builds in the root
-          #     workspace, --locked);
-          #   - tools/parity and the two tool directories it imports
-          #     (tools/visual-oracle, tools/real-world-corpus);
-          #   - fixtures/ (the documents and their pdflatex references) and
-          #     apps/mac/Fonts (the font directory parity.py hands the CLI);
-          #   - the action itself and this workflow.
-          old_engine_crates='bibliography|class-geometry|compiler|docstrip|document-style|flashtex-cli|font-discovery|font-engine|font-resources|math-layout|microtype|package-resolver|paragraph-layout|pdf|project-files|project-manifest|render-pipeline|tex-boxes|tex-expansion|tex-text-encoding|vector-graphics'
-          old_engine=false
+          # The parity fixtures on macOS (parity-fixtures and its hosted twin):
+          # the new engine against baseline-fixtures.json, which was recorded
+          # on a Mac. It runs after the merge (every push to main, where a
+          # failure files `main-red`), never in the gate, and on a pull request
+          # or a branch push only when the change touches apps/ (`apple`, the
+          # hosted-macOS rule) AND something the fixtures tier depends on: the
+          # engine's crates, the root Cargo.toml and Cargo.lock, tools/parity,
+          # fixtures/, scripts/engine-parity.sh, the action and this workflow.
+          # (Until S7 this was `old_engine`, the frozen old CLI's crates.)
+          parity_fixtures=false
           case "$tier" in
-            all) old_engine=true ;;
+            all) parity_fixtures=true ;;
             pr)
-              if [ "$apple" = "true" ] && touches "^(crates/($old_engine_crates)/|Cargo\.(toml|lock)$|tools/(parity|visual-oracle|real-world-corpus)/|fixtures/|apps/mac/Fonts/|\.github/actions/parity-fixtures/|\.github/workflows/ci\.yml$)"; then
-                old_engine=true
+              if [ "$apple" = "true" ] && touches '^(crates/(flashtex-engine|flashtex-runtime|display-list-v3)/|Cargo\.(toml|lock)$|tools/parity/|fixtures/|scripts/engine-parity\.sh$|\.github/actions/parity-fixtures/|\.github/workflows/ci\.yml$)'; then
+                parity_fixtures=true
               fi ;;
           esac
 
@@ -411,7 +399,7 @@ jobs:
             echo "engine=$engine"
             echo "engine_nixos=$engine_nixos"
             echo "engine_hosted=$engine_hosted"
-            echo "old_engine=$old_engine"
+            echo "parity_fixtures=$parity_fixtures"
             echo "apple=$apple"
             echo "v3_app=$v3_app"
             echo "rust_os=$rust_os"
@@ -433,8 +421,8 @@ jobs:
             echo "| new engine parity | $engine (NixOS shards: $engine_nixos, hosted: $engine_hosted) |"
             echo "| Mac app / iPad | $apple |"
             echo "| engine-v3 host tests (Mac app) | $v3_app |"
-            echo "| old engine parity fixtures | $old_engine |"
-            echo "| Rust workspace / standalone | \`$rust_os\` |"
+            echo "| parity fixtures (macOS) | $parity_fixtures |"
+            echo "| Rust workspace / flashtex-xetex | \`$rust_os\` |"
           } >> "$GITHUB_STEP_SUMMARY"
 
           if [ "$run" != "true" ]; then
@@ -533,9 +521,7 @@ jobs:
   #                      byte-identical to the compiler's (a sha256 comparison;
   #                      it does not need a Mac)
   #   generated tables   no generated table or generator changed without the
-  #                      other (scripts/check-generated.py); the Core 14 AFM
-  #                      tables, the one generator whose inputs CI can fetch,
-  #                      fully re-derived
+  #                      other (scripts/check-generated.py)
   #
   # and the engine's T0 tests (DESIGN §8, §12), each self-contained (no TeX
   # installed), each generating its configuration into a scratch package,
@@ -574,6 +560,15 @@ jobs:
       - name: "licence boundary: no MIT crate or iPad target may reach the GPL engine"
         if: ${{ !cancelled() && runner.os == 'Linux' }}
         run: scripts/check-license-boundary.sh
+      # The check's own self-tests, as gate.sh's licence step runs them: each
+      # copies a fixture tree with planted violations and requires every one
+      # to fire, so a weakened rule fails here (#1236 S1b; #1400 review).
+      - name: "licence boundary self-test: the poppler/MuPDF rules fire"
+        if: ${{ !cancelled() && runner.os == 'Linux' }}
+        run: scripts/tests/check-license-boundary.test.sh
+      - name: "licence boundary self-test: check E (apps/mac links no GPL) fires"
+        if: ${{ !cancelled() && runner.os == 'Linux' }}
+        run: scripts/tests/check-license-boundary-mac.test.sh
       - name: "retirement: retired code is not named outside the allowlist (#1236 §4.6)"
         if: ${{ !cancelled() && runner.os == 'Linux' }}
         run: python3 tools/parity/retirement_refs.py
@@ -586,6 +581,8 @@ jobs:
       # that need pdfTeX or qpdf skip on this runner).
       - name: "parity, P5 board and package-smoke self-tests"
         if: ${{ !cancelled() && runner.os == 'Linux' }}
+        # ~1 min when green; a hang (WorkerDeath's pool, 2026-10) must fail this step, not eat the job
+        timeout-minutes: 10
         run: |
           set -euo pipefail
           # qpdf: package-smoke's runner and P-T2 compare PDFs through it (its tests skip without it)
@@ -593,36 +590,18 @@ jobs:
           python3 -m unittest discover -s tools/parity -p 'test_*.py'
           python3 -m unittest discover -s tools/package-smoke -p 'test_*.py'
           scripts/tests/p5-pick-t4.test.sh
-      - name: "inventory: completion vocabulary is the compiler's inventory"
+      # RQ5: the vocabulary generated from measured package support (pdflatex is the
+      # oracle; the probe itself is the supported-latex workflow's), and the two
+      # copies the editors bundle.
+      - name: "supported-latex: the generated vocabulary matches its inputs and the bundled copies"
         if: ${{ !cancelled() && runner.os == 'Linux' }}
-        run: apps/mac/scripts/sync-supported-latex.sh --check
+        run: |
+          set -euo pipefail
+          python3 -m unittest discover -s apps/mac/scripts -p 'test_gen_supported_latex.py'
+          python3 apps/mac/scripts/gen-supported-latex.py check --installed
       - name: "generated tables match the manifest"
         if: ${{ !cancelled() && runner.os == 'Linux' }}
         run: python3 scripts/check-generated.py
-      - uses: actions/setup-python@v5
-        if: ${{ !cancelled() && runner.os == 'Linux' }}
-        with:
-          # crates/font-engine/src/generated.rs records Python unicodedata
-          # 15.0.0, which is Python 3.12's. Another version is "cannot check".
-          python-version: "3.12"
-      - name: "generated tables: Core 14 AFM tables re-derive byte-identically (gen_tables.py --check)"
-        if: ${{ !cancelled() && runner.os == 'Linux' }}
-        # Inputs are never committed (crates/font-engine/README.md,
-        # "Reproducibility"): matplotlib ships Adobe's AFMs unmodified and
-        # TeX Live ships glyphlist.txt (fetch-glyphlist.sh: Adobe's pinned
-        # commit first, CTAN mirrors as fallback, digest-checked; #1101).
-        # gen_tables.py --check refuses (exit 2) unless every input's SHA-256
-        # matches the committed header, and --strict makes that refusal fail
-        # the job.
-        run: |
-          set -euo pipefail
-          work="$RUNNER_TEMP/core14"; mkdir -p "$work"
-          python -m pip download --quiet --no-deps --only-binary=:all: matplotlib==3.9.2 -d "$work"
-          python -m zipfile -e "$work"/matplotlib-*.whl "$work/mpl"
-          export FLASHTEX_CORE14_AFM_DIR="$work/mpl/matplotlib/mpl-data/fonts/pdfcorefonts"
-          FLASHTEX_GLYPHLIST="$(scripts/ci/fetch-glyphlist.sh "$work/glyphlist")"
-          export FLASHTEX_GLYPHLIST
-          python scripts/check-generated.py --run --strict --only "font-engine core14"
       # The lockstep harness by its own unit tests (capture, coverage, dupcheck,
       # no-halt, shard), as `gate.sh pr`'s gate_parity_selftest runs them, so a
       # pull request cannot break it unseen. It runs before the trip steps
@@ -670,9 +649,9 @@ jobs:
         if: ${{ !cancelled() }}
         run: REGRESSION_WORK="$RUNNER_TEMP/pdftex-regression" scripts/pdftex-regression.sh
 
-  # THE OLD ENGINE's parity fixtures tier (the frozen flashtex-cli path, D13).
-  # It stays until P5 retires that path; the new engine's gates are
-  # `engine-parity` below. It needs a Mac: baseline-fixtures.json was recorded on
+  # The parity fixtures tier against baseline-fixtures.json, with the new
+  # engine (the only one since S7). The new engine's P-T gates are `engine-parity`
+  # below. It needs a Mac: baseline-fixtures.json was recorded on
   # macOS, because unicode-accents paints CJK from system fonts
   # (tools/parity/README.md). Two jobs, one body (.github/actions/parity-fixtures):
   #
@@ -688,19 +667,18 @@ jobs:
   # failure opens or updates the `main-red` issue (the `main-red` job below).
   # On a pull request or branch push they run only when the change touches
   # apps/ (the hosted-macOS rule) and something the fixtures depend on
-  # (`old_engine` in plan: the CLI's crates, the workspace manifests,
-  # tools/parity and what it imports, fixtures/, apps/mac/Fonts, the action,
-  # this file). `CI required` fails a run where old_engine is 'true' and
-  # neither passed.
+  # (`parity_fixtures` in plan: the engine's crates, the workspace manifests,
+  # tools/parity, fixtures/, the action, this file). `CI required` fails a
+  # run where parity_fixtures is 'true' and neither passed.
   parity-fixtures:
-    name: "old engine: parity fixtures (self-hosted macOS)"
+    name: "parity fixtures (self-hosted macOS)"
     needs: [plan]
     # DESIGN §9.3: a job on `runs-on: [self-hosted, ...]` must never run for a
     # pull_request from a fork. A fork PR runs arbitrary code, and a self-hosted
     # runner is a machine on the team's network with the team's caches on it.
     if: >-
       needs.plan.outputs.run == 'true' && needs.plan.outputs.selfhosted_mac == 'true' &&
-      needs.plan.outputs.old_engine == 'true' &&
+      needs.plan.outputs.parity_fixtures == 'true' &&
       (github.event_name != 'pull_request' ||
        github.event.pull_request.head.repo.full_name == github.repository)
     runs-on: [self-hosted, macOS, ARM64, flashtex]
@@ -712,11 +690,11 @@ jobs:
           jobs: "6"
 
   parity-fixtures-hosted:
-    name: "old engine: parity fixtures (GitHub-hosted macOS)"
+    name: "parity fixtures (GitHub-hosted macOS)"
     needs: [plan]
     if: >-
       needs.plan.outputs.run == 'true' && needs.plan.outputs.selfhosted_mac != 'true' &&
-      needs.plan.outputs.old_engine == 'true'
+      needs.plan.outputs.parity_fixtures == 'true'
     # macos-14 and later GitHub runners are Apple Silicon (arm64).
     runs-on: macos-15
     timeout-minutes: 30
@@ -846,10 +824,16 @@ jobs:
           image: ${{ env.TEXLIVE_IMAGE }}
           # What the fixtures read (pdflatex -recorder on every fixture,
           # mapped through texlive.tlpdb) that scheme-medium lacks: beamer
-          # loads both. TeX Live 2026 revision 77682 of each.
+          # loads the first two (TeX Live 2026 revision 77682 of each); the
+          # BOX-MEMO fixtures framed-tikz-theorems and tikzcd-shaded-notes
+          # load framed r77682, ntheorem r79618 and tikz-cd r77682, pinned as
+          # in sweeps.yml (without them both fixtures stay below L0).
           extra: |
             sansmathaccent 62cf97334eb2c1d4056cb7f72ef2e59d99edaef151c3f4870116cc23056394b9
             translations a7766687fd777e7077a68d6d908cb43da0673616e58ebc31741b22108d4af591
+            framed 55e43198fa63236b7f97cfa6b70d141dc0be1976dc385cac3d6cad3f1610ff25
+            ntheorem 030413280971d17decff54f02ac44749010eb127fa684033e811417e391eb84d
+            tikz-cd e225b02dcc2a334508529e27a7d7b3f283939b57507019ab6bcf99ff453ac2cb
       - name: qpdf (P-T2 normalises with it; engine-parity.sh checks for it)
         run: command -v qpdf || { sudo apt-get update -qq && sudo apt-get install -y -qq qpdf; }
       - uses: dtolnay/rust-toolchain@stable
@@ -914,12 +898,11 @@ jobs:
     runs-on: ${{ matrix.os == 'macos-15' && fromJSON(needs.plan.outputs.mac_rust_runner) || 'ubuntu-latest' }}
     timeout-minutes: 60
     env:
-      # The pinned Latin Modern faces and rooted TFM metrics vendored for the
-      # app bundle, so the render-pipeline/pdf tests that need them run
-      # instead of skipping (no TeX installation on the runners).
+      # The pinned Latin Modern faces vendored for the app bundle, so the pdf
+      # crate's tests that need them run instead of skipping (no TeX
+      # installation on the runners). The TFM trees (FLASHTEX_TFM_DIRS) went
+      # with the old engine's crates in S7.
       FLASHTEX_FONT_DIRS: ${{ github.workspace }}/apps/mac/Fonts
-      # Latin Modern, EC (T1 without lmodern) and AMS symbol metrics — the same three trees the app bundles.
-      FLASHTEX_TFM_DIRS: ${{ github.workspace }}/apps/mac/Fonts/texmf/fonts/tfm/public/lm:${{ github.workspace }}/apps/mac/Fonts/texmf/fonts/tfm/jknappen/ec:${{ github.workspace }}/apps/mac/Fonts/texmf/fonts/tfm/public/amsfonts/symbols
       FLASHTEX_LM_DIR: ${{ github.workspace }}/apps/mac/Fonts
     strategy:
       fail-fast: false
@@ -948,7 +931,7 @@ jobs:
       - name: cargo test --workspace --release
         # --no-fail-fast: without it cargo aborts at the first failing test
         # binary, so the rest of the workspace's targets never execute and the
-        # job reports only the first casualty. render-pipeline was once
+        # job reports only the first casualty. One crate was once
         # reporting "92 passed" while a local --no-fail-fast run at the same
         # commit executed 177.
         run: |
@@ -960,7 +943,7 @@ jobs:
             echo "Temporarily excluded (built, not gated): \`${RUST_TEST_EXCLUDE:-none}\`"
           } >> "$GITHUB_STEP_SUMMARY"
           cargo test --workspace --release --locked --no-fail-fast ${excludes[@]+"${excludes[@]}"}
-      - name: flashtex-v3 end to end ran, not skipped (self-hosted Mac; app-parity D5)
+      - name: flashtex (the CLI) end to end ran, not skipped (self-hosted Mac; app-parity D5)
         # crates/flashtex-build/tests/cli.rs skips without the release
         # flashtex-host (built above) or a pdflatex; under
         # FLASHTEX_REQUIRE_TEXLIVE=1 a skip fails instead. The self-hosted
@@ -984,12 +967,9 @@ jobs:
             fi
           done
 
-  # render-pipeline and flashtex-cli built and tested on their own. They are
-  # ordinary workspace members since vendor/ was retired, so `rust-workspace`
-  # already covers them; this job stays because the parity scoreboard below
-  # needs a CLI of its own, and because a per-crate failure is easier to read
-  # than one inside the 38-crate run. perf-bench is tested by perf.yml on
-  # every pull request that touches crates/.
+  # The standalone crates, built and tested on their own. Until S7 this also
+  # ran the old pipeline and its CLI (retirement plan §1.7); the job id
+  # stays so that `CI required` and main-red keep their names.
   #
   # flashtex-xetex (the XeTeX port, docs/design/xetex/PLAN.md) is a real
   # standalone crate: its own Cargo.lock and target/, excluded from the root
@@ -1007,27 +987,20 @@ jobs:
     # runner comes from plan.
     runs-on: ${{ matrix.os == 'macos-15' && fromJSON(needs.plan.outputs.mac_rust_runner) || 'ubuntu-latest' }}
     timeout-minutes: 40
-    env:
-      FLASHTEX_FONT_DIRS: ${{ github.workspace }}/apps/mac/Fonts
-      FLASHTEX_TFM_DIRS: ${{ github.workspace }}/apps/mac/Fonts/texmf/fonts/tfm/public/lm:${{ github.workspace }}/apps/mac/Fonts/texmf/fonts/tfm/jknappen/ec:${{ github.workspace }}/apps/mac/Fonts/texmf/fonts/tfm/public/amsfonts/symbols
-      FLASHTEX_LM_DIR: ${{ github.workspace }}/apps/mac/Fonts
     strategy:
       fail-fast: false
       matrix:
         os: ${{ fromJSON(needs.plan.outputs.rust_os) }}
         crate:
-          - render-pipeline
-          - flashtex-cli
           - flashtex-xetex
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:
-          # The root workspace for render-pipeline and flashtex-cli, which have
-          # no lockfile or target/ of their own any more; flashtex-xetex has.
+          # flashtex-xetex has its own lockfile and target/.
           key: ${{ matrix.crate }}
-          workspaces: ${{ matrix.crate == 'flashtex-xetex' && 'crates/flashtex-xetex -> target' || '. -> target' }}
+          workspaces: crates/${{ matrix.crate }} -> target
       - name: cargo build --release
         working-directory: crates/${{ matrix.crate }}
         run: cargo build --release --locked
@@ -1083,10 +1056,10 @@ jobs:
         run: |
           set -o pipefail
           scripts/ci/build-helpers.sh | tee -a "$GITHUB_ENV"
-      - name: Completion vocabulary is the compiler's inventory
-        # apps/mac/Sources/FlashTeXMac/Resources/supported-latex.json must be
-        # byte-identical to crates/compiler/supported/supported-latex.json.
-        run: apps/mac/scripts/sync-supported-latex.sh --check
+      - name: Completion vocabulary is the generated one
+        # apps/mac/Sources/FlashTeXMac/Resources/supported-latex.json (and the
+        # iPad's copy) must be what gen-supported-latex.py renders (RQ5).
+        run: python3 apps/mac/scripts/gen-supported-latex.py check --installed
       - name: swift build
         working-directory: apps/mac
         run: swift build
@@ -1176,16 +1149,46 @@ jobs:
           brew install --cask basictex
           echo /Library/TeX/texbin >> "$GITHUB_PATH"
           export PATH="/Library/TeX/texbin:$PATH"
-          sudo tlmgr update --self
-          sudo tlmgr install lipsum pgf xcolor
+          # Each tlmgr call picks a CTAN mirror: one newer than the last call's
+          # stops the install with "tlmgr itself needs to be updated" (exit
+          # 255, 2026-10-12). Update tlmgr again and retry, up to 4 times.
+          for attempt in 1 2 3 4; do
+            sudo tlmgr update --self && sudo tlmgr install lipsum pgf xcolor && break
+            [ "$attempt" = 4 ] && exit 1
+            echo "tlmgr attempt $attempt failed (mirror skew?): again"; sleep 5
+          done
           kpsewhich pdflatex.ini
           pdflatex --version | head -n 1
+          # Unicode mode's tests (EngineV3ModeTests) build xelatex.fmt and
+          # compile a fontspec document: BasicTeX's XeTeX inputs, plus these.
+          sudo tlmgr install fontspec unicode-math lm-math tex-ini-files || true
+          kpsewhich xelatex.ini fontspec.sty
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:
           key: v3-host
           # The build is ~11 min cold; keep it even when a test fails.
           cache-on-failure: true
+      - uses: Swatinem/rust-cache@v2
+        # Unicode mode's host (crates/flashtex-xetex, its own workspace and
+        # target/; HarfBuzz, FreeType and TECkit compile from source).
+        with:
+          key: v3-host-unicode
+          workspaces: crates/flashtex-xetex -> target
+          cache-on-failure: true
+      - name: Build flashtex-host-unicode (release), when this tree has it
+        # Once crates/flashtex-xetex has the host (#1732), it is built and
+        # REQUIRED: FLASHTEX_REQUIRE_HOST_UNICODE=1 makes EngineV3ModeTests
+        # fail, not skip, without it. Before that, those tests skip.
+        run: |
+          set -euo pipefail
+          if [ -f crates/flashtex-xetex/src/bin/flashtex-host-unicode.rs ]; then
+            (cd crates/flashtex-xetex && cargo build --release --locked --bin flashtex-host-unicode)
+            echo "FLASHTEX_HOST_UNICODE=$PWD/crates/flashtex-xetex/target/release/flashtex-host-unicode" >> "$GITHUB_ENV"
+            echo "FLASHTEX_REQUIRE_HOST_UNICODE=1" >> "$GITHUB_ENV"
+          else
+            echo "no crates/flashtex-xetex host in this tree: Unicode-host tests skip"
+          fi
       - name: Build flashtex-host and every bundled helper (release)
         # The host is found through FLASHTEX_HOST; the helpers' FLASHTEX_*
         # lines are what mac-app exports (flashtex-project-files for the
@@ -1364,10 +1367,10 @@ jobs:
                   and "success" not in (needs["engine-parity"]["result"],
                                         needs["engine-parity-hosted"]["result"])):
               bad["engine-parity (either runner, every shard)"] = "did not run"
-          # The old engine's parity fixtures: when plan says this run needs
-          # them (old_engine), one of their two jobs must have run and passed.
+          # The parity fixtures on macOS: when plan says this run needs them
+          # (parity_fixtures), one of their two jobs must have run and passed.
           # Both skipped is a pass only when plan said they were not needed.
-          if (plan_out.get("run") != "false" and plan_out.get("old_engine") == "true"
+          if (plan_out.get("run") != "false" and plan_out.get("parity_fixtures") == "true"
                   and "success" not in (needs["parity-fixtures"]["result"],
                                         needs["parity-fixtures-hosted"]["result"])):
               bad["parity-fixtures (either runner)"] = "did not run"

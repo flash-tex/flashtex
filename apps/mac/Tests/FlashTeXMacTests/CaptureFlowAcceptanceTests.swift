@@ -200,7 +200,6 @@ final class CaptureFlowAcceptanceTests: XCTestCase {
         model.autoCompile = false
         model.engineV3Enabled = true // before the bridge attaches
         defer { model.engineV3Enabled = false }
-        XCTAssertEqual(model.typesettingEngine, .new)
         XCTAssertEqual(model.activeText, Self.demoText)
         try await attach(model, store: store, stub: stub)
         model.caretUTF16 = 5 // "Hello| FlashTeX."

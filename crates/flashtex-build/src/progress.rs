@@ -513,7 +513,7 @@ impl Progress {
             st.pass_t0 = now;
             st.file = None;
             if plain && mode == "export" {
-                plain_line(st, "flashtex-v3: writing the PDF".into());
+                plain_line(st, "flashtex: writing the PDF".into());
             }
         });
     }
@@ -561,13 +561,10 @@ impl Progress {
                     .unwrap_or_default();
                 if new_pass {
                     let pass = st.passes_before + pass;
-                    plain_line(st, format!("flashtex-v3: pass {pass}"));
+                    plain_line(st, format!("flashtex: pass {pass}"));
                 } else if st.plain_at.elapsed() >= Duration::from_secs(5) {
                     let pass = st.passes_before + pass;
-                    plain_line(
-                        st,
-                        format!("flashtex-v3: pass {pass}, page {page}{total}{at}"),
-                    );
+                    plain_line(st, format!("flashtex: pass {pass}, page {page}{total}{at}"));
                 }
             }
         });
@@ -596,7 +593,7 @@ impl Progress {
         match self.mode {
             Mode::Off => {}
             Mode::Live => self.eprintln(&status("Running", &format!("{tool} {file}"), self.color)),
-            Mode::Plain => self.eprintln(&format!("flashtex-v3: running {tool} {file}")),
+            Mode::Plain => self.eprintln(&format!("flashtex: running {tool} {file}")),
         }
     }
 
@@ -856,13 +853,13 @@ mod tests {
                 d,
                 0,
                 0,
-                "flashtex-v3 check thesis.tex"
+                "flashtex check thesis.tex"
             ),
             "thesis.pdf — 482 pages, 3 passes, 19.8s"
         );
         assert_eq!(
-            summary("a.pdf", Some(1), 1, d, 2, 0, "flashtex-v3 check a.tex"),
-            "a.pdf — 1 page, 1 pass, 19.8s; 2 warnings (`flashtex-v3 check a.tex` lists them)"
+            summary("a.pdf", Some(1), 1, d, 2, 0, "flashtex check a.tex"),
+            "a.pdf — 1 page, 1 pass, 19.8s; 2 warnings (`flashtex check a.tex` lists them)"
         );
         assert_eq!(
             summary("a.pdf", None, 0, d, 1, 1, "c"),

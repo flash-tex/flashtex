@@ -75,32 +75,10 @@ final class CaptureConversionLiveTests: XCTestCase {
         return Array(Set(found)).sorted()
     }
 
-    /// Demo gate: the returned LaTeX inserted at the pin and compiled by OUR
-    /// compiler (the review sheet's shadow compile, `ProposalPreview`).
-    private func compileGate(latex: String, document: String, anchorByte: Int) async throws -> [String: Any] {
-        guard let compiler = ShellModel.locateCompiler() else { return ["compiled": false, "reason": "no flashtex-compiler (build crates/compiler or set FLASHTEX_COMPILER)"] }
-        let preview = ProposalPreview(executable: compiler)
-        let ctx = String(decoding: Array(document.utf8.dropFirst(anchorByte).prefix(Insertion.contextLength)), as: UTF8.self)
-        let input = ProposalPreview.Input(documents: [.init(path: "main.tex", text: document)], entryPath: "main.tex",
-                                          anchor: InsertionAnchor(id: "gate", path: "main.tex", byteOffset: anchorByte, revision: 1, contextAfter: ctx),
-                                          editorRevision: 1, projectId: "conversion-gate")
-        preview.update(input: input, latex: latex)
-        try await waitUntil("gate compile", timeout: 30) { if case .ready = preview.state { return true }; if case .failed = preview.state { return true }; return false }
-        defer { preview.close() }
-        switch preview.state {
-        case .ready(let r):
-            return ["compiled": true, "compiler": compiler.path, "status": r.status.rawValue, "pages": r.pageCount,
-                    "new_diagnostics": r.new.count, "new_errors": r.newErrorCount, "nearby_diagnostics": r.nearby.count,
-                    "new_messages": r.new.prefix(8).map { $0.diagnostic.message },
-                    "zero_errors": r.newErrorCount == 0 && (r.status == .ok || r.status == .recovered)]
-        case .failed(let why): return ["compiled": false, "reason": why]
-        default: return ["compiled": false, "reason": "\(preview.state)"]
-        }
-    }
-
     /// submit (real bridge) → capture_convert (live provider, with the
-    /// compiler-derived `supported_features`) → proposal queued for the review
-    /// sheet, nothing inserted → the proposal compiled by our compiler.
+    /// engine's `supported_features` policy) → proposal queued for the review
+    /// sheet, nothing inserted. (The old engine's shadow compile of the
+    /// proposal retired with that engine, #1236 S6.)
     func testLiveCaptureConversionThroughTheBridge() async throws {
         let (provider, credential) = try requireLive()
         guard let bridge = BridgeClient.locateBridge() else { throw XCTSkip("no flashtex-bridge (build crates/bridge or set FLASHTEX_BRIDGE)") }
@@ -134,7 +112,7 @@ final class CaptureConversionLiveTests: XCTestCase {
             "model": launch.environment[ConversionCredential.bridgeModelVariable] ?? "?", "key_source": credential.source.rawValue,
             "capture_id": captureId, "seconds": seconds, "bridge_flag": provider.bridgeFlag ?? "",
             "image_bytes": Data(base64Encoded: image.dataBase64)?.count ?? 0,
-            "supported_features_count": features.count, "supported_features_sha": CaptureFeatures.compilerSHA,
+            "supported_features_count": features.count,
             "bridge_env_has_key": launch.environment[keyVariable] != nil,
             "bridge_env_sensitive_names_other_than_key": launch.environment.keys.filter { $0 != keyVariable && ConversionCredential.isSensitiveVariable($0) },
         ]
@@ -146,7 +124,6 @@ final class CaptureConversionLiveTests: XCTestCase {
             evidence["context_revision"] = proposal.contextRevision ?? -1
             evidence["latex_commands"] = Self.matches(#"\\[A-Za-z]+"#, in: proposal.latex)
             evidence["latex_environments"] = Self.matches(#"\\begin\{([A-Za-z*]+)\}"#, in: proposal.latex, group: 1)
-            evidence["compile_gate"] = try await compileGate(latex: proposal.latex, document: document, anchorByte: 53)
         } else {
             evidence["outcome"] = "failed"
             evidence["failure"] = model.captureNote ?? model.bridgeStatus
@@ -156,8 +133,5 @@ final class CaptureConversionLiveTests: XCTestCase {
         XCTAssertNotNil(proposal, model.captureNote ?? "")
         XCTAssertEqual(model.proposals.count, proposal == nil ? 0 : 1, "queued for review; never inserted")
         XCTAssertEqual(model.activeText, document)
-        if let gate = evidence["compile_gate"] as? [String: Any] {
-            XCTAssertEqual(gate["zero_errors"] as? Bool, true, "\(gate)")
-        }
     }
 }

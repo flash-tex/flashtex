@@ -345,11 +345,12 @@ extension ShellModel {
     }
 
     /// The `capture_convert` request for this window's document: it names the
-    /// engine that typesets it, and the bridge sends the provider its own
-    /// feature list for that engine (retirement plan #1236, S3r).
+    /// engine that typesets it (always "new": the one engine), and the bridge
+    /// sends the provider its own feature list for that engine (retirement
+    /// plan #1236, S3r).
     func captureConvertRequest(captureId: String, supportedFeatures: [String]? = nil) -> TransferV1.CaptureConvert {
         TransferV1.CaptureConvert(captureId: captureId, supportedFeatures: supportedFeatures ?? CaptureFeatures.supportedFeatures(),
-                                  engine: typesettingEngine.rawValue)
+                                  engine: "new")
     }
 
     @discardableResult

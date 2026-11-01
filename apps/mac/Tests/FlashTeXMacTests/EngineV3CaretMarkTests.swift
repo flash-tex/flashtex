@@ -626,21 +626,31 @@ final class EngineV3CaretMarkTests: XCTestCase {
     }
 
     /// Each page says "page N" at its bottom right, in the label colour of
-    /// its appearance (as the v2 pane's).
+    /// its appearance (as the v2 pane's). Several fresh panes: AppKit
+    /// attaches a page's layer to the tree on a later pass, and a label
+    /// placed from the detached layer's flip sat at the top in about one
+    /// pane in four on a hosted runner (2026-10-12).
     func testEachPageIsLabelled() async throws {
-        let (model, pages, window) = try await pane()
-        defer { model.engineV3.stop(); window.contentView = nil }
-        let v = try XCTUnwrap(pages.heldPageView(1))
-        XCTAssertEqual(v.label.string as? String, "page 2")
-        // Bottom right of the page in the view's own (flipped) coordinates.
-        let frame = v.labelFrameInView
-        XCTAssertGreaterThan(frame.minY, v.bounds.height / 2, "at the bottom: \(frame) in \(v.bounds)")
-        XCTAssertEqual(frame.maxX, v.bounds.width - 4, accuracy: 0.5)
-        XCTAssertEqual(v.label.alignmentMode, .right)
-        // Where the layer tree really puts it, in the view's coordinates.
-        let shown = v.convertFromLayer(v.label.frame)
-        XCTAssertEqual(shown.minY, frame.minY, accuracy: 0.5, "the label layer is at the bottom on screen: \(shown) in \(v.bounds)")
-        pages.setAppearance(.dark)
-        XCTAssertEqual(v.label.foregroundColor, NSColor(white: 0.7, alpha: 1).cgColor, "the dark page's label colour")
+        for round in 0 ..< 8 {
+            let (model, pages, window) = try await pane()
+            defer { model.engineV3.stop(); window.contentView = nil }
+            let v = try XCTUnwrap(pages.heldPageView(1))
+            XCTAssertEqual(v.label.string as? String, "page 2")
+            // Bottom right of the page in the view's own (flipped) coordinates.
+            let frame = v.labelFrameInView
+            XCTAssertGreaterThan(frame.minY, v.bounds.height / 2, "at the bottom: \(frame) in \(v.bounds)")
+            XCTAssertEqual(frame.maxX, v.bounds.width - 4, accuracy: 0.5)
+            XCTAssertEqual(v.label.alignmentMode, .right)
+            // Where the layer tree really puts it, once the page's layer is in
+            // it (the tree's flip is known only then; `convertFromLayer` does
+            // not apply it). Nothing places the label again when it arrives.
+            let l = try XCTUnwrap(v.layer)
+            try await waitUntil("the page's layer in the layer tree", timeout: 10) { l.superlayer != nil }
+            let shownY = l.contentsAreFlipped() ? v.label.frame.minY : v.bounds.height - v.label.frame.maxY
+            XCTAssertEqual(shownY, frame.minY, accuracy: 0.5, "round \(round): the label layer is at the bottom on screen: \(v.label.frame) in \(v.bounds), tree flipped \(l.contentsAreFlipped())")
+            XCTAssertEqual(v.layerShownFlipped, l.contentsAreFlipped(), "round \(round): the flip the label was placed for is the tree's")
+            pages.setAppearance(.dark)
+            XCTAssertEqual(v.label.foregroundColor, NSColor(white: 0.7, alpha: 1).cgColor, "the dark page's label colour")
+        }
     }
 }

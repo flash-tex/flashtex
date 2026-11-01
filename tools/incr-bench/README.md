@@ -44,6 +44,8 @@ kept next to its output (`*.host-stderr`): the host says there why it ended
 | `test_t7.py`, `test_edits.py` | unit tests (`python3 -m unittest discover -s tools/incr-bench -p 'test_*.py'`); `testdata/t7-summary-trim.json` is a trimmed real summary |
 | `gates.sh [GATE...]` | the engine gates a lane runs before landing (parity, lockstep, trip, etrip, drift, display-list positions, cargo tests, soundness A/C/D, `gate.sh pr`), for a Linux runner with TeX Live 2026. Its sweeps now run on GitHub-hosted runners: see [Sweeps on hosted runners](#sweeps-on-hosted-runners) |
 | `sweeps.py {gates,plan,run,summary,costs}` | gates.sh's sweeps cut into shards for `.github/workflows/sweeps.yml`; `sweeps-costs.json` is each unit's measured seconds |
+| `unicode.py HOST SRC [--keys N] [--trials N] [--verify]` | **Unicode mode** (`flashtex-host-unicode`, lane XETEX-INCR): a cold compile, then keystrokes (`--keys`, at `--at end|mid|FRAC`) or random edits and reverts (`--trials`, edits.py's kinds); each compile's first page, edited page, `DONE` and the host's instructions; `--verify` compares every compile (output files byte for byte, every frame) with a from-scratch compile by a second host whose runs are processes of their own |
+| `unicode_sweep.py HOST [-j 2]` | `unicode.py --verify` over `unicode-corpus/` (the four keystroke benchmarks, polyglossia, xeCJK, beamer with fontspec), the PDF parity cases (`tools/xetex-pdfparity/cases`) and the lockstep's LaTeX cases; exit 1 on any mismatch |
 
 ## Sweeps on hosted runners
 
@@ -187,8 +189,10 @@ codes are in `t7.py`'s docstring. Choices that a reader of the table needs:
 - **Held rates**: `t7-baseline.json` is the convergence rate and median re-typeset pages per row
   (`--write-baseline`); a row fails when its rate falls by more than 0.15 or its median pages
   grow by more than 25 % + 2, and a row it lacks is a warning. Regenerate it only from a run of
-  `t7.py`, and say so. The current one is run 2 of `docs/evidence/t7-latency-2026-10-02/`
-  (warm-ups left out); convergence did not depend on load there.
+  `t7.py`, and say so. The current one is the full run of `docs/evidence/t7-conv-2026-10-20/`
+  (`--write-baseline`, NixOS PC, all ten documents; warm-ups left out). It replaced run 2 of
+  `docs/evidence/t7-latency-2026-10-02/`, which predated the side table's convergence test and
+  the convergence work since; convergence did not depend on load in either.
 - **Reference conditions**: the summary's `power` records, at start and end, the power source,
   battery, macOS Low Power Mode, `pmset -g therm` and the load. The run is **non-reference** (in
   the table, the verdict and `--check`) on battery, in Low Power Mode, under a thermal or CPU

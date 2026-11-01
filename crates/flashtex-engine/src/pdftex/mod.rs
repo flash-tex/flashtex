@@ -60,7 +60,9 @@ pub mod writet1;
 pub mod writet3;
 pub mod writettf;
 pub mod xpdf;
-pub mod zlib;
+/// TeX Live's zlib, built and bound by the runtime (crates/flashtex-runtime,
+/// docs/design/xetex/PLAN.md §3.3), under its old path.
+pub use flashtex_runtime::zlib;
 
 use crate::generated::Globals;
 use std::cell::RefCell;

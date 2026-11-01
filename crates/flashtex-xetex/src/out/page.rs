@@ -20,7 +20,7 @@
 //! it. Positions are exact decimals ([`Fx`], 10⁻¹² bp), rounded once to
 //! scaled points for the display list (spec §4.2).
 
-use super::doc::{Annot, Built, Col, Doc, Raw, Supplement};
+use super::doc::{Annot, Built, Col, Doc, Phantom, Raw, Supplement};
 use super::fonts::{
     FontDef, NativeDef, TfmDef, XDV_FLAG_COLORED, XDV_FLAG_EMBOLDEN, XDV_FLAG_EXTEND,
     XDV_FLAG_SLANT, XDV_FLAG_VERTICAL,
@@ -38,6 +38,14 @@ use std::collections::HashMap;
 /// DVI units.
 pub trait Metrics {
     fn tfm_char(&self, k: i32, c: u32) -> Option<(i32, i32, i32)>;
+
+    /// The whole path of native font `k`'s file. XDV's `define_native_font`
+    /// gives the path's length in one byte, as XeTeX's `makeFontDef` writes
+    /// it, so a path of 256 bytes or more arrives cut (and xdvipdfmx then
+    /// cannot open the font). The writer takes the engine's own path then.
+    fn native_path(&self, _k: i32) -> Option<Vec<u8>> {
+        None
+    }
 }
 
 /// The graphics state of the stream being built.
@@ -119,6 +127,12 @@ pub struct Stream {
     pub height: Fx,
     /// The glyph matrix the reader has (`u32::MAX`: none yet, spec §4.3).
     told_matrix: u32,
+    /// The last glyph matrix given to `sync_glyph_matrix` (its bits) and
+    /// the matrix number it gave: the same input gives the same number,
+    /// as [`Stream::matrix`] never forgets one.
+    glyph_matrix_memo: Option<([u64; 4], u32)>,
+    /// The span the reader has (spec §4.3 `SPAN`; 0: none yet).
+    told_span: u32,
     pub fonts: Vec<u16>,
     pub images: Vec<u32>,
     pub forms: Vec<u32>,
@@ -141,6 +155,8 @@ impl Stream {
             coords: Vec::new(),
             height,
             told_matrix: u32::MAX,
+            glyph_matrix_memo: None,
+            told_span: 0,
             fonts: Vec::new(),
             images: Vec::new(),
             forms: Vec::new(),
@@ -230,8 +246,29 @@ impl Stream {
         }
     }
 
+    /// The source map: what follows is at `span` (spec §4.3 `SPAN`).
+    fn sync_span(&mut self, span: u32) {
+        if span != 0 && span != self.told_span {
+            self.push(Item::Span(span));
+            self.told_span = span;
+        }
+    }
+
     fn sync_glyph_matrix(&mut self, m: [f64; 4]) {
-        let n = self.matrix([m[0], m[1], m[2], m[3], 0.0, 0.0]);
+        // The text matrix as the PDF writer writes it (six decimals, `Tf`
+        // size or `Tm`, src/out/pdf.rs), so that the preview draws each glyph
+        // at the PDF's very size: 14.346195662749 against the PDF's
+        // 14.346196 changed single pixels of section headings.
+        let bits = m.map(f64::to_bits);
+        let n = match self.glyph_matrix_memo {
+            Some((b, n)) if b == bits => n,
+            _ => {
+                let m = m.map(|v| super::num::round_num(v, 6));
+                let n = self.matrix([m[0], m[1], m[2], m[3], 0.0, 0.0]);
+                self.glyph_matrix_memo = Some((bits, n));
+                n
+            }
+        };
         if n != self.told_matrix {
             self.push(Item::Matrix(n));
             self.told_matrix = n;
@@ -268,6 +305,9 @@ impl Stream {
             fonts: self.fonts,
             images: self.images,
             forms: self.forms,
+            frame: std::sync::OnceLock::new(),
+            forms_at: 0,
+            replay: None,
         }
     }
 }
@@ -303,6 +343,12 @@ pub struct Builder<'a, M: Metrics> {
     pub page_no: u32,
     pub page_width: Fx,
     pub page_height: Fx,
+    /// The source map's markers of this page (`crate::dlsource`): from
+    /// byte offset `.0` of the page on, what is drawn is at span `.1`,
+    /// column `.2`; the next one to take, and the position now.
+    marks: Vec<(u32, u32, u16)>,
+    mark_next: usize,
+    here: (u32, u16),
 }
 
 /// dvipdfmx's default page origin: one inch from the left and from the
@@ -318,6 +364,18 @@ impl<'a, M: Metrics> Builder<'a, M> {
         page_no: u32,
         bytes: &[u8],
     ) -> Result<Built, String> {
+        Self::page_marked(doc, metrics, mag, page_no, bytes, Vec::new())
+    }
+
+    /// [`Builder::page`] with the source map's markers of the page.
+    pub fn page_marked(
+        doc: &'a mut Doc,
+        metrics: &'a M,
+        mag: i32,
+        page_no: u32,
+        bytes: &[u8],
+        marks: Vec<(u32, u32, u16)>,
+    ) -> Result<Built, String> {
         let (w, h) = page_size(doc, bytes);
         let mut b = Builder {
             doc,
@@ -330,6 +388,9 @@ impl<'a, M: Metrics> Builder<'a, M> {
             page_no,
             page_width: w,
             page_height: h,
+            marks,
+            mark_next: 0,
+            here: (0, NO_COLUMN),
         };
         // dvipdfmx's MediaBox is the size to 0.01 bp; its content starts
         // with `q 1 0 0 1 72 H-72 cm`, H the size itself (measured).
@@ -429,6 +490,11 @@ impl<'a, M: Metrics> Builder<'a, M> {
             Ok(v)
         };
         while i < b.len() {
+            while self.mark_next < self.marks.len() && self.marks[self.mark_next].0 as usize <= i {
+                let m = self.marks[self.mark_next];
+                self.here = (m.1, m.2);
+                self.mark_next += 1;
+            }
             let op = b[i];
             i += 1;
             match op {
@@ -466,17 +532,17 @@ impl<'a, M: Metrics> Builder<'a, M> {
                 }
                 143..=146 => {
                     let d = rds(&mut i, (op - 142) as usize)?;
-                    self.r.h = self.r.h.wrapping_add(d);
+                    self.right(d);
                 }
-                147 => self.r.h = self.r.h.wrapping_add(self.r.w),
+                147 => self.right(self.r.w),
                 148..=151 => {
                     self.r.w = rds(&mut i, (op - 147) as usize)?;
-                    self.r.h = self.r.h.wrapping_add(self.r.w);
+                    self.right(self.r.w);
                 }
-                152 => self.r.h = self.r.h.wrapping_add(self.r.x),
+                152 => self.right(self.r.x),
                 153..=156 => {
                     self.r.x = rds(&mut i, (op - 152) as usize)?;
-                    self.r.h = self.r.h.wrapping_add(self.r.x);
+                    self.right(self.r.x);
                 }
                 157..=160 => {
                     let d = rds(&mut i, (op - 156) as usize)?;
@@ -535,6 +601,11 @@ impl<'a, M: Metrics> Builder<'a, M> {
                         .ok_or("XDV define_native_font truncated")?
                         .to_vec();
                     i += l;
+                    // a path the one-byte length cut (Metrics::native_path)
+                    let path = match self.metrics.native_path(k) {
+                        Some(full) if full.len() > 255 => full,
+                        _ => path,
+                    };
                     let index = rd(&mut i, 4)?;
                     let rgba = if fl & XDV_FLAG_COLORED != 0 {
                         Some(rd(&mut i, 4)?)
@@ -637,18 +708,20 @@ impl<'a, M: Metrics> Builder<'a, M> {
             let size = self.dvi_to_bp(t.size);
             let m = self.glyph_matrix(size, 1.0, 0.0);
             let (x, y) = self.stream_point();
+            let here = self.here;
             let s = self.cur();
             s.sync_fill(None, None);
             s.sync_text_render(0);
             s.sync_glyph_matrix(m);
             s.use_font(l.res);
+            s.sync_span(here.0);
             let (px, py) = s.to_page(x, y);
             s.push(Item::Glyph {
                 font: l.res,
                 code: c.min(0xFFFF) as u16,
                 x: px,
                 y: py,
-                col: NO_COLUMN,
+                col: here.1,
             });
         }
         self.track(0, wd, ht, dp);
@@ -696,9 +769,13 @@ impl<'a, M: Metrics> Builder<'a, M> {
             }
         });
         let m = self.glyph_matrix(size, extend, slant);
+        // A coloured font's RGB with 3 decimals, as dvipdfmx writes colour
+        // components (measured, xeCJK's `mathblock` example: 36/255 is
+        // `.141`, as for a `color` special's, `read_color`); the alpha as is.
         let color = n.rgba.map(|c| {
             let ch = |s: u32| ((c >> s) & 0xFF) as f64 / 255.0;
-            (Col(vec![ch(24), ch(16), ch(8)]), ch(0))
+            let rgb = |s: u32| (ch(s) * 1000.0).round() / 1000.0;
+            (Col(vec![rgb(24), rgb(16), rgb(8)]), ch(0))
         });
         let upm = l.upm.max(1) as f64;
         for (&(dx, dy), &g) in xy.iter().zip(gids) {
@@ -708,6 +785,7 @@ impl<'a, M: Metrics> Builder<'a, M> {
             );
             let (rx, ry) = self.rel(ux, uy);
             let (x, y) = self.cur_ref().gs.ctm.apply(rx, ry);
+            let here = self.here;
             let s = self.cur();
             match &color {
                 Some((c, a)) => s.sync_fill(Some(c), Some(*a)),
@@ -726,13 +804,14 @@ impl<'a, M: Metrics> Builder<'a, M> {
             }
             s.sync_glyph_matrix(m);
             s.use_font(l.res);
+            s.sync_span(here.0);
             let (px, py) = s.to_page(x, y);
             s.push(Item::Glyph {
                 font: l.res,
                 code: g,
                 x: px,
                 y: py,
-                col: NO_COLUMN,
+                col: here.1,
             });
             if self.doc.tracking.is_some() {
                 // dvipdfmx's box for a native glyph: its advance, and the
@@ -757,7 +836,9 @@ impl<'a, M: Metrics> Builder<'a, M> {
         let (x0, y0) = self.rel(ux, uy);
         let (wb, hb) = (self.dvi_to_bp(w), self.dvi_to_bp(a));
         let ctm = self.cur_ref().gs.ctm;
-        self.track(0, w, a, 0);
+        // A rule does not widen a link: dvipdfmx's `dvi_rule` draws it and
+        // never calls `pdf_doc_expand_box` (measured, TeX Live 2026: a link
+        // around a rule alone has no annotation).
         // dvipdfmx strokes a rule whose smaller side is at most 5 bp along
         // its longer side, and fills the others (measured, TeX Live 2026).
         let five = Fx(5 * ONE);
@@ -768,7 +849,9 @@ impl<'a, M: Metrics> Builder<'a, M> {
         } else {
             (RuleKind::Fill, false)
         };
+        let here = self.here;
         let s = self.cur();
+        s.sync_span(here.0);
         if stroke {
             s.sync_stroke();
         } else {
@@ -831,7 +914,9 @@ impl<'a, M: Metrics> Builder<'a, M> {
     // ---- link annotations (pdf:bann ... pdf:eann) ---------------------------
 
     /// What is drawn at the current point, `wd` wide, `ht` high and `dp`
-    /// deep (DVI units), widens the link being tracked.
+    /// deep (DVI units), widens the link being tracked. A negative size
+    /// gives the box with its corners the other way round
+    /// (`pdf_dev_set_rect` takes the least and greatest of each).
     fn track(&mut self, dx: i32, wd: i32, ht: i32, dp: i32) {
         if self.doc.tracking.is_none() {
             return;
@@ -841,11 +926,47 @@ impl<'a, M: Metrics> Builder<'a, M> {
         let w = self.dvi_to_bp(wd).to_f64();
         let h = self.dvi_to_bp(ht).to_f64();
         let d = self.dvi_to_bp(dp).to_f64();
-        self.expand_annot([x, y - d, x + w, y + h]);
+        let (x0, x1) = (x.min(x + w), x.max(x + w));
+        let (y0, y1) = ((y - d).min(y + h), (y - d).max(y + h));
+        self.expand_annot([x0, y0, x1, y1]);
+    }
+
+    /// A move to the right by `d` (DVI's `right`, `w` and `x`): dvipdfmx's
+    /// `dvi_right`. With `dvipdfmx:catch_phantom` on, the box the move
+    /// crosses widens the link being tracked.
+    fn right(&mut self, d: i32) {
+        if self.doc.tracking.is_some() {
+            let box_ = match self.doc.phantom {
+                Phantom::Off => None,
+                // `loaded_fonts[current_font].size`, 0 with no font
+                Phantom::FontSize => Some((self.font_size(), 0)),
+                Phantom::Box { height, depth } => Some((height, depth)),
+            };
+            if let Some((ht, dp)) = box_ {
+                self.track(0, d, ht, dp);
+            }
+        }
+        self.r.h = self.r.h.wrapping_add(d);
+    }
+
+    /// The current font's size (DVI units), 0 when none is selected.
+    fn font_size(&self) -> i32 {
+        let Some(l) = self.font.and_then(|k| self.doc.fonts.get(k)) else {
+            return 0;
+        };
+        match &l.def {
+            FontDef::Tfm(t) => t.size,
+            FontDef::Native(n) => n.size,
+        }
     }
 
     pub fn expand_annot(&mut self, r: [f64; 4]) {
         let depth = self.stack.len();
+        // dvipdfmx's `dvi_is_tracking_boxes`: a link is open, `pdf:nolink`
+        // is not in effect, and this is the depth of `pdf:bann` or deeper.
+        if self.doc.nolink {
+            return;
+        }
         let Some(t) = self.doc.tracking.as_mut() else {
             return;
         };
@@ -868,11 +989,12 @@ impl<'a, M: Metrics> Builder<'a, M> {
     /// it began in).
     fn after_pop(&mut self) {
         let depth = self.stack.len();
-        if self
-            .doc
-            .tracking
-            .as_ref()
-            .is_some_and(|t| depth < t.depth && t.rect.is_some())
+        if !self.doc.nolink
+            && self
+                .doc
+                .tracking
+                .as_ref()
+                .is_some_and(|t| depth < t.depth && t.rect.is_some())
         {
             self.break_annot();
         }
@@ -1020,10 +1142,10 @@ impl<'a, M: Metrics> Builder<'a, M> {
             f.sup.form_dict.merge(&d);
         }
         let name = f.form_name.clone().unwrap_or_default();
-        let built = f.finish();
-        self.doc.forms.push(built);
-        let id = self.doc.forms.len() as u32;
-        self.doc.forms[id as usize - 1].dl.index = id;
+        let mut built = f.finish();
+        let id = self.doc.forms.len() as u32 + 1;
+        built.dl.index = id;
+        self.doc.forms.push(std::sync::Arc::new(built));
         self.doc.named.insert(name, super::doc::Named::Form(id));
     }
 
@@ -1196,5 +1318,159 @@ pub(crate) mod tests {
             (4736286.72 + bp(10.0) as f64).round() as i32
         );
         assert!((built.dl.pdf_box[2] - 612.0).abs() < 1e-3);
+    }
+
+    fn right4(v: i32) -> Vec<u8> {
+        let mut b = vec![146];
+        b.extend_from_slice(&v.to_be_bytes());
+        b
+    }
+
+    fn link(uri: &str) -> Vec<u8> {
+        special(&format!(
+            "pdf:bann <</Type/Annot/Subtype/Link/Border[0 0 0]/A<</S/URI/URI({uri})>>>>"
+        ))
+    }
+
+    /// The links of a page: (URI, rect in stream space, bp).
+    fn links(built: &Built) -> Vec<(String, [f64; 4])> {
+        built
+            .sup
+            .annots
+            .iter()
+            .map(|a| {
+                let uri = match a.dict.get(b"A") {
+                    Some(Obj::Dict(d)) => match d.get(b"URI") {
+                        Some(Obj::Str(s)) => String::from_utf8_lossy(s).into_owned(),
+                        _ => String::new(),
+                    },
+                    _ => String::new(),
+                };
+                (uri, a.rect)
+            })
+            .collect()
+    }
+
+    /// `dvipdfmx:catch_phantom`, rules and `pdf:nolink` inside
+    /// `pdf:bann`/`pdf:eann`, as TeX Live 2026's xdvipdfmx treats them
+    /// (measured on plain XeTeX: a link around a rule alone has no
+    /// annotation; `catch_phantom true height 8pt depth 1.5pt` over a
+    /// `\kern20pt` gives a 19.925 by 9.465 bp rectangle; the mode lasts
+    /// across links and pages; `true` alone is the font's size high, and a
+    /// depth alone is 0 high; a move under `pdf:nolink` does not count and
+    /// one after `pdf:link` does; `pdf:xann width 50pt height 8pt depth 1pt`
+    /// is a 50 by 9 pt rectangle). beamer's navigation symbols are such links
+    /// (the export gate's u11-beamer-fontspec).
+    #[test]
+    fn links_widen_by_phantom_moves_and_not_by_rules() {
+        let mut doc = Doc::new();
+        let pt = |x: f64| (x * 65536.0).round() as i32;
+        let mut body = special("pdf:pagesize width 614.295pt height 794.96999pt");
+        // a rule alone: no annotation
+        body.extend(link("rule"));
+        body.push(137);
+        body.extend_from_slice(&pt(10.0).to_be_bytes());
+        body.extend_from_slice(&pt(20.0).to_be_bytes());
+        body.extend(special("pdf:eann"));
+        // a move without catch_phantom: none either
+        body.extend(link("kern0"));
+        body.extend(right4(pt(20.0)));
+        body.extend(special("pdf:eann"));
+        body.extend(special(
+            "dvipdfmx:catch_phantom true height 8pt depth 1.5pt",
+        ));
+        body.extend(link("kern2"));
+        body.extend(right4(pt(20.0)));
+        body.extend(special("pdf:eann"));
+        // a move left: the same box, corners swapped
+        body.extend(link("left"));
+        body.extend(right4(pt(-5.0)));
+        body.extend(special("pdf:eann"));
+        // pdf:nolink suspends the widening, pdf:link resumes it
+        body.extend(link("nolink"));
+        body.extend(special("pdf:nolink"));
+        body.extend(right4(pt(30.0)));
+        body.extend(special("pdf:link"));
+        body.extend(right4(pt(10.0)));
+        body.extend(special("pdf:eann"));
+        // pdf:xann widens the link by its box at the current point
+        body.extend(link("xann"));
+        body.extend(special("pdf:xann width 50pt height 8pt depth 1pt"));
+        body.extend(special("pdf:eann"));
+        body.extend(special("dvipdfmx:catch_phantom true depth 3pt"));
+        body.extend(link("kern3"));
+        body.extend(right4(pt(20.0)));
+        body.extend(special("pdf:eann"));
+        let built = Builder::page(&mut doc, &NoTfm, 1000, 1, &page_bytes(&body)).unwrap();
+        let got = links(&built);
+        let names: Vec<&str> = got.iter().map(|(n, _)| n.as_str()).collect();
+        assert_eq!(names, ["kern2", "left", "nolink", "xann", "kern3"]);
+        let bp = 72.0 / 72.27;
+        let close = |a: f64, b: f64| (a - b).abs() < 2e-5;
+        let size = |r: [f64; 4]| (r[2] - r[0], r[3] - r[1]);
+        // from 20 pt along the line (after kern0's move) to 40 pt
+        let r = got[0].1;
+        assert!(close(r[0], 72.0 + 20.0 * bp), "{r:?}");
+        let (w, h) = size(r);
+        assert!(close(w, 20.0 * bp) && close(h, 9.5 * bp), "{w} {h}");
+        let r = got[1].1;
+        assert!(
+            close(r[0], 72.0 + 35.0 * bp) && close(size(r).0, 5.0 * bp),
+            "{r:?}"
+        );
+        // the 30 pt under pdf:nolink do not count, the 10 pt after do
+        let r = got[2].1;
+        assert!(
+            close(r[0], 72.0 + 65.0 * bp) && close(size(r).0, 10.0 * bp),
+            "{r:?}"
+        );
+        let r = got[3].1;
+        let (w, h) = size(r);
+        assert!(close(w, 50.0 * bp) && close(h, 9.0 * bp), "{w} {h}");
+        // a depth alone: 0 high
+        let r = got[4].1;
+        let (w, h) = size(r);
+        assert!(close(w, 20.0 * bp) && close(h, 3.0 * bp), "{w} {h}");
+
+        // the mode lasts to the next page; `true` alone is the font's size
+        // (0 with no font), `false` turns it off
+        let mut body = link("page2");
+        body.extend(right4(pt(20.0)));
+        body.extend(special("pdf:eann"));
+        body.extend(special("dvipdfmx:catch_phantom false"));
+        body.extend(link("off"));
+        body.extend(right4(pt(20.0)));
+        body.extend(special("pdf:eann"));
+        let built = Builder::page(&mut doc, &NoTfm, 1000, 2, &page_bytes(&body)).unwrap();
+        let got = links(&built);
+        assert_eq!(got.len(), 1, "{got:?}");
+        assert_eq!(got[0].0, "page2");
+        assert!(close(size(got[0].1).1, 3.0 * bp));
+        assert_eq!(doc.phantom, Phantom::Off);
+    }
+
+    /// A move inside a box nested in the link widens it; leaving the
+    /// link's own level ends the part of the link drawn so far (dvipdfmx's
+    /// `dvi_mark_depth`), and a move after that does not widen it.
+    #[test]
+    fn phantom_moves_follow_the_link_depth() {
+        let mut doc = Doc::new();
+        let pt = |x: f64| (x * 65536.0).round() as i32;
+        let mut body = special("dvipdfmx:catch_phantom true height 8pt");
+        body.push(141); // push
+        body.extend(link("nest"));
+        body.push(141);
+        body.extend(right4(pt(15.0)));
+        body.push(142);
+        body.push(142); // leaves the link's level: the part ends
+        body.extend(right4(pt(40.0)));
+        body.extend(special("pdf:eann"));
+        let built = Builder::page(&mut doc, &NoTfm, 1000, 1, &page_bytes(&body)).unwrap();
+        let got = links(&built);
+        assert_eq!(got.len(), 1, "{got:?}");
+        let r = got[0].1;
+        let bp = 72.0 / 72.27;
+        assert!((r[2] - r[0] - 15.0 * bp).abs() < 2e-5, "{r:?}");
+        assert!((r[3] - r[1] - 8.0 * bp).abs() < 2e-5, "{r:?}");
     }
 }

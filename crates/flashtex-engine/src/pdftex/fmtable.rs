@@ -725,12 +725,20 @@ mod tests {
         std::fs::write(&f, &w).unwrap();
         let map = crate::os::MappedFile::open(f.to_str().unwrap()).unwrap();
         let base = Base::mapped(map, 0, &f).unwrap();
-        std::fs::OpenOptions::new()
+        let cut = std::fs::OpenOptions::new()
             .write(true)
             .open(&f)
             .unwrap()
-            .set_len(w.len() as u64 / 2)
-            .unwrap();
+            .set_len(w.len() as u64 / 2);
+        if cfg!(windows) {
+            // Windows refuses to shorten a file with a mapped view open
+            // (ERROR_USER_MAPPED_FILE), so the case cannot arise there.
+            assert!(cut.is_err());
+            drop(base);
+            let _ = std::fs::remove_dir_all(&dir);
+            return;
+        }
+        cut.unwrap();
         assert!(!base.file_intact());
         // a file shorter than its mapping when it is mapped: no base
         let map = crate::os::MappedFile::open(f.to_str().unwrap()).unwrap();

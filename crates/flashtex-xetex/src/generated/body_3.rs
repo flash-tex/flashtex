@@ -3748,6 +3748,7 @@ impl Globals {
                                 self.avail = self.mem[crate::ix::U((q) as usize)].hh().rh();
                                 self.mem[crate::ix::U((q) as usize)].set_hh_rh((268435455i32).wrapping_neg());
                                 self.dyn_used = (self.dyn_used).wrapping_add(1i32);
+                                self.dl_new_node(q);
                             }
                         }
                     }
@@ -3851,6 +3852,7 @@ impl Globals {
                                                         self.avail = self.mem[crate::ix::U((q) as usize)].hh().rh();
                                                         self.mem[crate::ix::U((q) as usize)].set_hh_rh((268435455i32).wrapping_neg());
                                                         self.dyn_used = (self.dyn_used).wrapping_add(1i32);
+                                                        self.dl_new_node(q);
                                                     }
                                                 }
                                             }
@@ -5045,7 +5047,9 @@ impl Globals {
                 }
                 // §530
                 {
+                    self.dl_token_begin();
                     p = self.get_node(if_node_size);
+                    self.dl_token_end();
                     { let __v372 = self.cond_ptr; self.mem[crate::ix::U((p) as usize)].set_hh_rh(__v372); }
                     { let __v373 = self.if_limit; self.mem[crate::ix::U((p) as usize)].set_hh_b0(__v373); }
                     { let __v374 = self.cur_if; self.mem[crate::ix::U((p) as usize)].set_hh_b1(__v374); }

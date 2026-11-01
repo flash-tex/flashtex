@@ -90,6 +90,47 @@
   "l010-graphicx": {
    "px": 621,
    "tounicode": []
+  },
+  "l011-bidi-rtl": {
+   "px": 436,
+   "tounicode": [
+    {
+     "candidate": [
+      "ين"
+     ],
+     "glyph": "GeezaPro gid:207",
+     "reference": [
+      "�ن"
+     ]
+    },
+    {
+     "candidate": [
+      "ي"
+     ],
+     "glyph": "GeezaPro gid:363",
+     "reference": [
+      "�"
+     ]
+    },
+    {
+     "candidate": [
+      "ي"
+     ],
+     "glyph": "GeezaPro gid:904",
+     "reference": [
+      "�"
+     ]
+    },
+    {
+     "candidate": [
+      "­"
+     ],
+     "glyph": "TimesNewRomanPSMT gid:16",
+     "reference": [
+      "-"
+     ]
+    }
+   ]
   }
  },
  "comment": "tools/xetex-pdfparity/run.py --baseline: per case, the differing pixels allowed at `scale` and the ToUnicode differences allowed. Written by --write-baseline.",

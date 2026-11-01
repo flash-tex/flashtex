@@ -1621,6 +1621,7 @@ impl Globals {
                                                                     if ((self.l_hyf).wrapping_add(self.r_hyf) > self.max_hyphenatable_length()) {
                                                                         break 'l_done1_f;
                                                                     }
+                                                                    self.dl_hyph_begin(self.ha);
                                                                     if ((((self.ha != (268435455i32).wrapping_neg()) && (!(self.ha >= self.hi_mem_min))) && (self.mem[crate::ix::U((self.ha) as usize)].hh().b0() == whatsit_node)) && ((self.mem[crate::ix::U((self.ha) as usize)].hh().b1() >= native_word_node) && (self.mem[crate::ix::U((self.ha) as usize)].hh().b1() <= native_word_node_AT))) {
                                                                         {
                                                                             // goto labels: done6, restart, L37
@@ -1899,6 +1900,7 @@ impl Globals {
                                                             }
                                                         }
                                                     }
+                                                    self.dl_hyph_end();
                                                 }
                                             }
                                         }

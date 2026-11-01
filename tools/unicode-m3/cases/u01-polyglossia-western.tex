@@ -1,0 +1,24 @@
+% Unicode corpus (M3): polyglossia with Latin-script languages, default
+% Latin Modern OpenType; hyphenation patterns, French spacing, \today.
+\documentclass{article}
+\usepackage{polyglossia}
+\setdefaultlanguage{english}
+\setotherlanguages{french,german,spanish,italian}
+\begin{document}
+\section{Languages}
+English text with hyphenation: incomprehensibilities, internationalization,
+counterrevolutionaries and electroencephalographically, \today.
+
+\begin{french}
+Voici un texte en français : les espaces fines avant « les guillemets » ;
+et les points d'exclamation ! Aujourd'hui, c'est le \today. Œuvre, cœur,
+déjà, où, garçon.
+\end{french}
+
+\begin{german}
+Ein deutscher Text mit Silbentrennung: Donaudampfschifffahrtsgesellschaftskapitän,
+Straße, Größe, \today.
+\end{german}
+
+\textspanish{¿Dónde está la biblioteca? ¡Olé!} and \textitalian{perché così, \today}.
+\end{document}

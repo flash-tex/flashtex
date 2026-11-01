@@ -1,224 +1,26 @@
 import AppKit
 import SwiftUI
 
-// Which engine typesets a document (lane P5-ENGINE-CHOICE; DESIGN.md §10,
-// §12 P5 "a per-document switch the scoreboard flips", decision 3; the
-// retirement plan's §5, #1236). The app has two engines while the old one is
-// still a fallback: the new pdfLaTeX-compatible engine (`flashtex-host`,
-// EngineV3Host.swift) and the previous engine (the worker / preview
-// controller). One engine at a time (#1340): `ShellModel.engineV3Enabled`
-// is the window's effective engine, and this file decides it.
+// One engine (the old-engine retirement plan's stage S6, #1236; DESIGN.md §12
+// P5): every document is typeset by the pdfLaTeX-compatible engine
+// (`flashtex-host`, EngineV3Host.swift), or by its Unicode mode
+// (`flashtex-host-unicode`, EngineV3Mode.swift). The previous engine and its
+// fallback rules are gone. What is left here:
+//   - the facts about the TeX distribution the engine prepares its format
+//     from (`EngineChoice.texLiveAvailable`, the host's `prepared` report);
+//   - when there is none, a plain, non-blocking message with a Download
+//     button that retries the TeX bundle's download (`TeXMissingBanner`;
+//     owner ruling RQ20, DESIGN.md §13 2026-10-21: no other engine);
+//   - documents recorded as typeset by the previous engine before S6: they
+//     open on the new engine with a one-time, dismissable banner that says
+//     so and why (`PreviousEngineNoticeBanner`; ruling 4, plan §5.3: never
+//     silently). The record then says `new`.
 //
-// The engine of the open document, highest first:
-//   1. `FLASHTEX_ENGINE_V3=1|0`: forces every document (CI, tests,
-//      developers); no fallback rule applies.
-//   2. The window's own override: `engineV3Enabled` set directly (benches,
-//      tests); no fallback rule applies.
-//   3. The user's choice for this document (the status bar's engine menu,
-//      View > Engine for This Document).
-//   4. The app setting (Settings > Compile > "Engine for other documents",
-//      `FlashTeX.EngineV3.defaultEngine`): "New engine" or "Previous
-//      engine"; absent means the built-in default.
-//   5. The engine this document was last typeset with (a record written
-//      when it opens, and not while a fallback rule blocks the new engine),
-//      so a change of the built-in default never switches a document
-//      someone has already seen typeset (ruling 4, #1236 §5.3).
-//   6. The old global switch, `FlashTeX.EngineV3.enabled` = true (the View
-//      toggle before this lane), read only for a document with no entry
-//      yet, which it turns into that document's own choice (#1236 §5.2).
-//      A stored false is no choice: it is removed once (`migrateLegacyFlag`).
-//   7. The built-in default, `EngineChoice.defaultForNewDocuments`.
-// Then the fallback rules: when the result is the new engine but it cannot
-// typeset this project as the previous one would, the previous engine is
-// used and the window says why (a banner over the preview, the status bar's
-// engine item, a VoiceOver announcement). Never silently.
-//
-// Choices and records are app-local (one UserDefaults dictionary keyed by
-// the entry document's path), never written into the project, so nothing
-// reaches collaborators through git.
+// Records are app-local (one UserDefaults dictionary keyed by the entry
+// document's path), never written into the project.
 
-struct EngineChoice: Equatable, Sendable {
-    enum Engine: String, Sendable, CaseIterable {
-        /// The pdfLaTeX-compatible engine (`flashtex-host`).
-        case new
-        /// The old engine (worker, preview controller), until it retires.
-        case previous
-
-        var title: String { self == .new ? "New engine" : "Previous engine" }
-        var menuTitle: String { self == .new ? "New Engine (pdfLaTeX-compatible)" : "Previous Engine" }
-    }
-
-    enum Source: String, Sendable {
-        case environment, window, user, appSetting, record, legacySwitch, builtInDefault
-
-        var explanation: String {
-            switch self {
-            case .environment: "set by FLASHTEX_ENGINE_V3 in the environment"
-            case .window: "set for this window"
-            case .user: "your choice for this document"
-            case .appSetting: "Settings > Compile"
-            case .record: "the engine this document was last typeset with"
-            case .legacySwitch: "the earlier View > Engine v3 Preview switch, now this document's choice"
-            case .builtInDefault: "the default for documents without a choice"
-            }
-        }
-    }
-
-    /// Why the new engine cannot typeset this project (yet).
-    enum Blocker: Equatable, Sendable {
-        /// No TeX Live: the new engine builds its format from the user's
-        /// TeX Live (D12) and, without one, has nothing to load. The host's
-        /// own report (`prepared` with no `texlive`) counts too.
-        case noTeXLive
-        /// `[fonts]` roles in flashtex.toml: pdfLaTeX typesets with TeX
-        /// fonts, so it would ignore them.
-        /// (`[packages] pin` and `path` no longer block it: the new engine
-        /// takes the pinned versions and the libraries ahead of TeX Live,
-        /// ProjectPackagesState.prepareForEngineV3.)
-        case projectFonts([String])
-        /// No TeX Live, a bundle is configured, and the user chose not to
-        /// download it (EngineV3Bundle.swift's consent sheet).
-        case bundleDeclined
-        /// The document needs Unicode/OpenType fonts (fontspec, unicode-math,
-        /// `% !TEX program = xelatex`, …; UnicodeFonts.swift): the new
-        /// engine is pdfLaTeX-compatible, and the previous engine stays these
-        /// documents' explicit fallback until the Unicode mode is ready
-        /// (modes Q1; the retirement plan's §4.4, R10).
-        case unicodeFonts(UnicodeFontsNeed)
-
-        /// The banner's and the status item's short reason.
-        var short: String {
-            switch self {
-            case .noTeXLive: "no TeX Live is installed"
-            case .projectFonts: "this project sets fonts in flashtex.toml"
-            case .bundleDeclined: "the TeX files were not downloaded"
-            case .unicodeFonts: "this document needs Unicode fonts"
-            }
-        }
-
-        /// A rule the user's own choice for the document outranks: detection
-        /// suggests, it never decides (modes §4.2). The others say the new
-        /// engine cannot run at all (no TeX Live) or would ignore a project
-        /// setting (`[fonts]`).
-        var yieldsToUserChoice: Bool {
-            if case .unicodeFonts = self { return true }
-            return false
-        }
-
-        /// The full reason (tooltips, the menu, the announcement).
-        var detail: String {
-            switch self {
-            case .noTeXLive:
-                "No TeX Live installation was found. The new engine prepares its pdfLaTeX format from your TeX Live; install MacTeX or TeX Live to use it."
-            case .projectFonts(let roles):
-                "This project's flashtex.toml sets [fonts] (\(roles.joined(separator: ", "))). The new engine is pdfLaTeX-compatible and typesets with TeX's fonts, so it would ignore them."
-            case .bundleDeclined:
-                "No TeX Live is installed, and the TeX files the new engine would download instead were not downloaded. Choose the new engine again to be asked again, or install MacTeX."
-            case .unicodeFonts(let need):
-                "This document uses \(need.what)\(need.file.map { " (in \($0))" } ?? ""), which needs XeTeX or LuaTeX. The new engine is pdfLaTeX-compatible, so the compatibility engine typesets this document until FlashTeX's Unicode mode is ready. Choose the new engine for this document to use it anyway."
-            }
-        }
-    }
-
-    var preferred: Engine
-    var source: Source
-    var blocker: Blocker?
-
-    /// The engine that typesets: the preferred one unless a fallback rule applies.
-    var effective: Engine { blocker == nil ? preferred : .previous }
-    /// Forced choices (environment, window override) bypass the fallback rules.
-    var isForced: Bool { source == .environment || source == .window }
-
-    /// The status item's text.
-    var title: String { effective.title }
-
-    /// The `engine:` log line: the engine that typesets, why (the
-    /// resolution step), and the fallback when one applies, e.g.
-    /// `engine: previous (user; fallback from new: no TeX Live is installed) main.tex`.
-    func logLine(document: String?) -> String {
-        var s = "engine: \(effective.rawValue) (\(source.rawValue)"
-        if let blocker { s += "; fallback from \(preferred.rawValue): \(blocker.short)" }
-        s += ")"
-        if let document, !document.isEmpty { s += " " + document }
-        return s
-    }
-
-    /// What the status item's tooltip and the menu say about the choice.
-    var explanation: String {
-        if let blocker { return "Previous engine: \(blocker.detail)" }
-        return "\(effective.title) (\(source.explanation))."
-    }
-
-    // MARK: the built-in default
-
-    /// The default for documents with no choice, no app setting and no
-    /// record. **The P5 switch-over (S5) is this one line**: `.new` makes
-    /// every document nobody has typeset yet open with the new engine;
-    /// documents already typeset keep their engine (`Source.record`) and the
-    /// fallback rules still apply. Not to be flipped outside the P5 gate.
-    static let defaultForNewDocuments: Engine = .previous
-
-    /// Tests only: stands in for `defaultForNewDocuments`.
-    @MainActor static var builtInDefaultForTests: Engine?
-
-    /// The built-in default in effect. Under XCTest it stays `.previous`
-    /// whatever the shipping default is, so the old engine's tests do not
-    /// switch engines when the default flips; a test that wants the new
-    /// engine turns it on itself.
-    @MainActor static var builtInDefault: Engine {
-        if let builtInDefaultForTests { return builtInDefaultForTests }
-        return EngineV3.underTest ? .previous : defaultForNewDocuments
-    }
-
-    // MARK: resolving
-
-    /// The choice from its inputs (pure). `blocker` is asked only when the
-    /// preferred engine is the new one and the choice is not forced.
-    static func resolve(environment: String?, window: Engine?, entry: EngineChoiceStore.Entry?,
-                        appSetting: Engine?, legacyAllNew: Bool = false, builtInDefault: Engine,
-                        blocker: () -> Blocker?) -> EngineChoice {
-        var c: EngineChoice
-        switch environment {
-        case "1": c = EngineChoice(preferred: .new, source: .environment)
-        case "0": c = EngineChoice(preferred: .previous, source: .environment)
-        default:
-            if let window {
-                c = EngineChoice(preferred: window, source: .window)
-            } else if let entry, entry.source == .user {
-                c = EngineChoice(preferred: entry.engine, source: .user)
-            } else if let appSetting {
-                c = EngineChoice(preferred: appSetting, source: .appSetting)
-            } else if let entry {
-                c = EngineChoice(preferred: entry.engine, source: .record)
-            } else if legacyAllNew {
-                c = EngineChoice(preferred: .new, source: .legacySwitch)
-            } else {
-                c = EngineChoice(preferred: builtInDefault, source: .builtInDefault)
-            }
-        }
-        if c.preferred == .new, !c.isForced { c.applyRule(blocker()) }
-        return c
-    }
-
-    /// Sets the fallback rule found for this choice, except one the user's
-    /// own choice for the document outranks (`Blocker.yieldsToUserChoice`).
-    mutating func applyRule(_ b: Blocker?) {
-        blocker = (b?.yieldsToUserChoice == true && source == .user) ? nil : b
-    }
-
-    /// A window's choice before any document opens (no record, no manifest):
-    /// what `engineV3Enabled` starts as. Under XCTest the app setting is not
-    /// read (a test that wants v3 turns it on itself).
-    @MainActor static var atLaunch: EngineChoice {
-        if !EngineV3.underTest { EngineChoiceStore.migrateLegacyFlag(in: EngineV3.defaults) }
-        return resolve(environment: ProcessInfo.processInfo.environment["FLASHTEX_ENGINE_V3"], window: nil, entry: nil,
-                       appSetting: EngineV3.underTest ? nil : EngineChoiceStore.appSetting,
-                       legacyAllNew: !EngineV3.underTest && EngineChoiceStore.legacyAllNew, builtInDefault: builtInDefault,
-                       blocker: { !texLiveAvailable() ? .noTeXLive : EngineV3Bundle.currentGate() == .declined ? .bundleDeclined : nil })
-    }
-
-    // MARK: fallback facts
-
+/// The TeX distribution the engine needs, and what the host reports about it.
+enum EngineChoice {
     /// Whether the new engine has a TeX distribution to prepare its format
     /// from: a configured bundle (`FLASHTEX_RESOLVER=bundle`,
     /// `FLASHTEX_BUNDLE`, `FLASHTEX_BUNDLE_DIGEST` or a
@@ -279,52 +81,90 @@ struct EngineChoice: Equatable, Sendable {
         prepared.texlive == nil && prepared.formatFailed
     }
 
-    /// The manifest's fallback facts (pure): `[fonts]` roles. Pins and
-    /// libraries are the new engine's too (ProjectPackages.swift).
-    static func blocker(manifest m: ProjectFilesV1.Manifest.Body) -> Blocker? {
+    /// The manifest's `[fonts]` roles that name a family (`text`, `math`,
+    /// `mono`, `sans`, in that order). Unicode mode applies them; Classic
+    /// mode, like pdfLaTeX, does not (EngineV3Mode.swift).
+    static func fontRoles(manifest m: ProjectFilesV1.Manifest.Body) -> [String] {
         let f = m.fonts
-        let roles = [("text", f.text), ("math", f.math), ("mono", f.mono), ("sans", f.sans)]
+        return [("text", f.text), ("math", f.math), ("mono", f.mono), ("sans", f.sans)]
             .compactMap { role, name in (name ?? "").trimmingCharacters(in: .whitespaces).isEmpty ? nil : role }
-        if !roles.isEmpty { return .projectFonts(roles) }
-        return nil
     }
 }
 
-/// The parts of the host's `prepared` summary the fallback reads (kept
-/// apart from `DL3JSON` so the rule is testable with plain values).
+/// The parts of the host's `prepared` summary the rule reads (kept apart
+/// from `DL3JSON` so it is testable with plain values).
 struct DL3JSONView: Equatable, Sendable {
     var texlive: String?
     var formatFailed: Bool
 }
 
+/// Why the engine has nothing to compile with (owner ruling RQ20): it is
+/// said, never replaced by another engine.
+enum TeXMissing: Equatable, Sendable {
+    /// No TeX Live was found and no TeX bundle is configured, or the host
+    /// reported that it found neither.
+    case noTeX
+    /// No TeX Live, and the user chose not to download the TeX bundle
+    /// (EngineV3BundleSheet).
+    case declined
+
+    /// The message's first line.
+    static let headline = "Compiling needs the TeX bundle or a TeX Live installation."
+
+    /// The rest of the message.
+    var detail: String {
+        switch self {
+        case .noTeX:
+            "No TeX Live installation was found. Install MacTeX or TeX Live, or download the TeX files FlashTeX can use instead."
+        case .declined:
+            "No TeX Live is installed, and the TeX files were not downloaded. Download them to compile, or install MacTeX or TeX Live."
+        }
+    }
+}
+
 // MARK: - storage
 
-/// Per-document choices and records: one UserDefaults dictionary,
+/// Per-document records: one UserDefaults dictionary,
 /// `FlashTeX.EngineV3.documents`, in `EngineV3.defaults` (a test process's
 /// own suite under XCTest), keyed by the project root plus the entry
 /// (`<root>::<entry>`, #1236 §5.2):
 /// `{engine: new|previous, source: user|record, origin?, set_at, used_at, app_version, dir_id?, entry}`.
+/// `previous` is a record written before the previous engine retired (S6):
+/// such a document gets the one-time notice once, then its record is `new`.
 /// `dir_id` (`<volume UUID>:<inode>` of the root folder, only on a volume
 /// with persistent file IDs) finds an entry again after the project folder
 /// was moved or renamed on that volume. At most `maxEntries`: automatic
 /// records go before deliberate choices, the least recently used first.
-/// The app setting is `FlashTeX.EngineV3.defaultEngine`; the old global
-/// switch `FlashTeX.EngineV3.enabled` is read only as a fallback.
 @MainActor
 enum EngineChoiceStore {
     static let documentsKey = "FlashTeX.EngineV3.documents"
-    static let appSettingKey = "FlashTeX.EngineV3.defaultEngine"
-    static let legacyMigratedKey = "FlashTeX.EngineV3.legacyMigrated.v1"
     static let maxEntries = 500
-    /// `origin` of a choice the old global switch made (Settings lists them).
-    static let legacyOrigin = "legacy-switch"
+    /// The stored `engine` of the retired previous engine.
+    static let retiredEngine = "previous"
+    /// The stored `engine` of the one engine.
+    static let currentEngine = "new"
+
+    /// Defaults the app no longer reads (the retirement plan's §5.5): the
+    /// old global switch and its migration flag, the app setting for
+    /// documents without a choice, and the v1 preview's debug status. The
+    /// first launch of this build removes them (`removeRetiredDefaults`).
+    static let retiredDefaultsKeys = [
+        "FlashTeX.EngineV3.enabled",
+        "FlashTeX.EngineV3.legacyMigrated.v1",
+        "FlashTeX.EngineV3.defaultEngine",
+        "FlashTeX.Preview.v1.debugStatus",
+    ]
+    static let retiredDefaultsRemovedKey = "FlashTeX.EngineV3.retiredDefaultsRemoved.v1"
 
     struct Entry: Equatable, Sendable {
         enum Source: String, Sendable { case user, record }
-        var engine: EngineChoice.Engine
+        /// `new`, or `previous` for a record written before S6.
+        var engine: String
         var source: Source
         var setAt = Date()
         var appVersion = EngineChoiceStore.appVersion
+
+        var isRetiredEngine: Bool { engine == EngineChoiceStore.retiredEngine }
 
         static func == (a: Entry, b: Entry) -> Bool { a.engine == b.engine && a.source == b.source }
     }
@@ -397,8 +237,8 @@ enum EngineChoiceStore {
     }
 
     private static func decode(_ v: Any?) -> Entry? {
-        guard let d = v as? [String: Any],
-              let engine = (d["engine"] as? String).flatMap(EngineChoice.Engine.init(rawValue:)),
+        guard let d = v as? [String: Any], let engine = d["engine"] as? String,
+              engine == currentEngine || engine == retiredEngine,
               let source = (d["source"] as? String).flatMap(Entry.Source.init(rawValue:)) else { return nil }
         return Entry(engine: engine, source: source, setAt: d["set_at"] as? Date ?? .distantPast,
                      appVersion: d["app_version"] as? String ?? "")
@@ -435,15 +275,14 @@ enum EngineChoiceStore {
         return decode(d)
     }
 
-    static func set(_ entry: Entry?, for url: URL, origin: String? = nil) {
+    static func set(_ entry: Entry?, for url: URL) {
         var dict = all
         let k = key(url)
         if let entry {
             let (root, name) = parts(url)
-            var d: [String: Any] = ["engine": entry.engine.rawValue, "source": entry.source.rawValue,
+            var d: [String: Any] = ["engine": entry.engine, "source": entry.source.rawValue,
                                     "set_at": entry.setAt, "used_at": Date(), "app_version": entry.appVersion, "entry": name]
             if let id = identityProvider(root.path)?.id { d["dir_id"] = id }
-            if let origin { d["origin"] = origin }
             dict[k] = d
         } else {
             dict.removeValue(forKey: k)
@@ -481,227 +320,158 @@ enum EngineChoiceStore {
         return out
     }
 
-    // MARK: Settings
-
-    /// Documents with their own choice, and how many of them the old global switch made.
-    static var choiceCounts: (user: Int, fromLegacySwitch: Int) {
-        let users = all.values.compactMap { $0 as? [String: Any] }.filter { $0["source"] as? String == Entry.Source.user.rawValue }
-        return (users.count, users.filter { $0["origin"] as? String == legacyOrigin }.count)
-    }
-
-    /// Settings > Compile > Reset Per-Document Choices: every document's own
-    /// choice goes (records stay), and so does the old global switch, which
-    /// would otherwise make them again.
-    static func resetChoices() {
-        all = all.filter { ($0.value as? [String: Any])?["source"] as? String != Entry.Source.user.rawValue }
-        EngineV3.defaults.removeObject(forKey: EngineV3.enabledKey)
-    }
-
-    /// Settings > Compile > "Engine for other documents": nil is the built-in default.
-    static var appSetting: EngineChoice.Engine? {
-        get { EngineV3.defaults.string(forKey: appSettingKey).flatMap(EngineChoice.Engine.init(rawValue:)) }
-        set {
-            if let newValue { EngineV3.defaults.set(newValue.rawValue, forKey: appSettingKey) }
-            else { EngineV3.defaults.removeObject(forKey: appSettingKey) }
-        }
-    }
-
-    /// The old global switch was on (`FlashTeX.EngineV3.enabled` = true).
-    static var legacyAllNew: Bool { EngineV3.defaults.object(forKey: EngineV3.enabledKey) as? Bool == true }
-
-    /// Once per defaults domain: the old View toggle wrote
-    /// `FlashTeX.EngineV3.enabled` on every change, so a stored false only
-    /// says someone once turned v3 off. That is no choice and is removed,
-    /// so that user gets the default (and its later flip). A stored true is
-    /// kept and read only for documents with no entry yet, each of which
-    /// it turns into that document's own choice when it opens.
-    static func migrateLegacyFlag(in d: UserDefaults) {
-        guard !d.bool(forKey: legacyMigratedKey) else { return }
-        if d.object(forKey: EngineV3.enabledKey) as? Bool == false { d.removeObject(forKey: EngineV3.enabledKey) }
-        d.set(true, forKey: legacyMigratedKey)
+    /// Once per defaults domain: removes `retiredDefaultsKeys`, which this
+    /// build never reads (the retirement plan's §5.5).
+    static func removeRetiredDefaults(in d: UserDefaults) {
+        guard !d.bool(forKey: retiredDefaultsRemovedKey) else { return }
+        for k in retiredDefaultsKeys { d.removeObject(forKey: k) }
+        d.set(true, forKey: retiredDefaultsRemovedKey)
     }
 }
 
-// MARK: - the window's engine
+// MARK: - the window
 
 extension ShellModel {
-    /// Resolves the engine for the document that just opened (File > Open,
-    /// a folder, a reload) and applies it, after its manifest was read.
-    /// Records the engine it is typeset with, unless the choice is forced.
-    /// A change of the default or of the app setting applies here, at the
-    /// next open; an open window keeps its engine (#1236 §5.4).
+    /// The document that just opened (File > Open, a folder, a reload), after
+    /// its manifest was read: a record of the previous engine (a document last
+    /// typeset before S6) shows the one-time notice and becomes `new`; any
+    /// other document gets a record of the engine, once. Logs the `engine:`
+    /// line the attribution tools read.
     func resolveEngineForOpenedDocument() {
         engineChoiceDocument = documentURL
-        engineFallbackDismissed = false
-        let url = documentURL
-        let entry = url.map(EngineChoiceStore.entry(for:)) ?? nil
-        let c = EngineChoice.resolve(environment: ProcessInfo.processInfo.environment["FLASHTEX_ENGINE_V3"],
-                                     window: engineWindowOverride, entry: entry, appSetting: EngineChoiceStore.appSetting,
-                                     legacyAllNew: EngineChoiceStore.legacyAllNew,
-                                     builtInDefault: EngineChoice.builtInDefault, blocker: { self.engineBlocker() })
-        if let url { noteEngineTypeset(c, url: url, entry: entry) }
-        applyEngineChoice(c)
-    }
-
-    /// Keeps what a document is typeset with: the old global switch becomes
-    /// its own choice; otherwise a record of the engine, but never while a
-    /// fallback rule blocks the new engine (a temporary block must not pin
-    /// the document to the previous engine past the default's flip) and
-    /// never for a forced choice.
-    func noteEngineTypeset(_ c: EngineChoice, url: URL, entry: EngineChoiceStore.Entry?) {
-        if c.source == .legacySwitch {
-            EngineChoiceStore.set(.init(engine: .new, source: .user), for: url, origin: EngineChoiceStore.legacyOrigin)
-        } else if !c.isForced, c.blocker == nil, entry?.source != .user, entry?.engine != c.preferred {
-            EngineChoiceStore.set(.init(engine: c.preferred, source: .record), for: url)
-        } else if entry != nil {
-            EngineChoiceStore.touch(url)
+        previousEngineNotice = false
+        if let url = documentURL {
+            let entry = EngineChoiceStore.entry(for: url)
+            if entry?.isRetiredEngine == true {
+                previousEngineNotice = true
+                EngineChoiceStore.set(.init(engine: EngineChoiceStore.currentEngine, source: .record), for: url)
+                announceEngine(PreviousEngineNoticeBanner.headline)
+            } else if entry == nil {
+                EngineChoiceStore.set(.init(engine: EngineChoiceStore.currentEngine, source: .record), for: url)
+            } else {
+                EngineChoiceStore.touch(url)
+            }
         }
+        engineLog("engine: new (\(documentMode.mode.rawValue))" + (documentURL.map { " " + $0.lastPathComponent } ?? ""))
     }
 
     /// The open document was saved under a new name (Save As) or for the
-    /// first time: a choice made for the unsaved buffer (or the old file)
-    /// is kept for this file, and the fallback rules are checked again for
-    /// its project (its manifest is read again).
+    /// first time: the new file's manifest is read and it gets its record.
     /// The caller set `engineChoicePending` before `documentURL` changed
-    /// (no v3 open of the new path before its engine is known); cleared here.
-    ///
-    /// Order: the new project's manifest first, so the rules are its own;
-    /// then a file with no entry yet takes the window's choice (a `user`
-    /// choice as is; otherwise a record, never while blocked), while a file
-    /// that has one keeps it; then the engine is resolved for the file.
+    /// (no open of the new path before its manifest is read); cleared here.
     func engineDocumentSaved(from old: URL?) {
         defer { engineChoicePending = false }
         guard let url = documentURL, old?.standardizedFileURL != url.standardizedFileURL else { return }
         manifest.refresh() // engineChoicePending: manifestDidRefresh waits for the resolution below
-        if EngineChoiceStore.entry(for: url) == nil {
-            var carried = engineChoice
-            if carried.source == .user {
-                EngineChoiceStore.set(.init(engine: carried.preferred, source: .user), for: url)
-            } else {
-                if carried.preferred == .new, !carried.isForced { carried.applyRule(engineBlocker()) }
-                noteEngineTypeset(carried, url: url, entry: nil)
-            }
-        }
-        let (wasFallback, wasDismissed) = (engineChoice.blocker, engineFallbackDismissed)
+        let wasNoticed = previousEngineNotice
         resolveEngineForOpenedDocument()
-        // The same fallback, dismissed before the save: it stays dismissed.
-        if wasDismissed, engineChoice.blocker != nil, engineChoice.blocker == wasFallback { engineFallbackDismissed = true }
+        if wasNoticed { previousEngineNotice = true } // the notice a Save As found up stays up until dismissed
     }
 
-    /// The user picks an engine for the open document (the status bar's
-    /// engine menu, View > Engine for This Document). Saved per document; an
-    /// unsaved buffer keeps it, and its first save stores it for the file. The new engine
-    /// still falls back when a rule says it cannot typeset the project.
-    func chooseEngine(_ engine: EngineChoice.Engine) {
-        engineWindowOverride = nil
-        engineHostLacksTeXLive = false // asked again: the host's report is checked again when it starts
-        engineHostNeedsUnicode = nil
-        engineFallbackDismissed = false
-        // Choosing the new engine again asks again about downloading TeX files.
-        if engine == .new, EngineV3Bundle.declinedSomeBundle { EngineV3Bundle.forgetConsent() }
-        if let url = documentURL { EngineChoiceStore.set(.init(engine: engine, source: .user), for: url) }
-        var c = EngineChoice(preferred: engine, source: .user)
-        if let forced = ProcessInfo.processInfo.environment["FLASHTEX_ENGINE_V3"], forced == "1" || forced == "0" {
-            c = EngineChoice(preferred: forced == "1" ? .new : .previous, source: .environment)
-        }
-        if c.preferred == .new, !c.isForced { c.applyRule(engineBlocker()) }
-        applyEngineChoice(c)
-        navigationNote = c.blocker.map { "The new engine cannot typeset this project: \($0.detail)" }
-            ?? "This document is typeset with the \(c.effective.title.lowercased())."
-    }
-
-    /// Forgets the user's choice for the open document: the app setting,
-    /// the record and the default decide again.
-    func clearEngineChoice() {
-        if let url = documentURL { EngineChoiceStore.set(nil, for: url) }
-        engineWindowOverride = nil
-        resolveEngineForOpenedDocument()
-    }
-
-    /// Whether the new engine would be blocked for the open project right
-    /// now, and why: no TeX Live (probed, or reported by the host), then the
-    /// manifest's `[fonts]`, then a document that needs Unicode fonts (its
-    /// preamble, or the new engine's own report; UnicodeFonts.swift).
-    func engineBlocker() -> EngineChoice.Blocker? {
-        if engineHostLacksTeXLive || !EngineChoice.texLiveAvailable() { return .noTeXLive }
-        if EngineV3Bundle.currentGate() == .declined { return .bundleDeclined }
-        if let snapshot = manifest.currentSnapshot, let b = EngineChoice.blocker(manifest: snapshot.manifest) { return b }
-        let reported = engineHostNeedsUnicode.flatMap { $0.document == documentURL ? $0.need : nil }
-        if let need = unicodeFontsNeed() ?? reported { return .unicodeFonts(need) }
-        return nil
-    }
-
-    /// The manifest was read again (an outside edit, the Fonts sheet): a
-    /// fallback rule may now apply, or no longer apply, to the open
-    /// document; the new engine's `texinputs` links follow. The preferred
-    /// engine is not re-resolved (that happens when a document opens).
+    /// The manifest was read again (an outside edit, the Fonts sheet): the
+    /// mode may now differ (`[fonts]` routes a document to Unicode mode,
+    /// UnicodeFonts.swift), and the engine's `texinputs` links follow.
     func manifestDidRefresh() {
         // The open path resolves after its own read.
         guard !engineChoicePending, engineChoiceDocument == documentURL else { return }
-        var c = engineChoice
-        if c.preferred == .new, !c.isForced { c.applyRule(engineBlocker()) }
-        if c != engineChoice {
-            engineFallbackDismissed = false
-            applyEngineChoice(c)
-        }
         if engineV3Enabled { engineV3.manifestChanged(model: self) }
     }
 
-    /// The host reported no TeX Live (and no format): the new engine falls
-    /// back for this window, with the reason, unless it was forced.
+    /// The host reported no TeX Live (and no format): the window says so
+    /// (RQ20), with no other engine.
     func engineV3HostLacksTeXLive() {
-        guard !engineChoice.isForced, engineChoice.preferred == .new else { return }
-        engineHostLacksTeXLive = true
-        var c = engineChoice
-        c.blocker = .noTeXLive
-        engineFallbackDismissed = false
-        applyEngineChoice(c)
+        texMissing = EngineV3Bundle.declinedSomeBundle ? .declined : .noTeX
+        texMissingDismissed = false
     }
 
     /// The user chose not to download the TeX files (EngineV3BundleSheet):
-    /// the new engine falls back for this window, with the reason, unless
-    /// it was forced.
+    /// the window says that compiling needs them, with a Download button.
     func engineV3BundleDeclined() {
-        guard !engineChoice.isForced, engineChoice.preferred == .new else { return }
-        var c = engineChoice
-        c.blocker = .bundleDeclined
-        engineFallbackDismissed = false
-        applyEngineChoice(c)
+        texMissing = .declined
+        texMissingDismissed = false
     }
 
-    /// Shows the choice and switches the window's engine to it (#1340's
-    /// path: the other engine's work is dropped, this one compiles the
-    /// current buffers). A new fallback is announced.
-    func applyEngineChoice(_ c: EngineChoice) {
-        let announce = c.blocker != nil && c.blocker != engineChoice.blocker
-        engineChoice = c
-        applyingEngineChoice = true
-        engineV3Enabled = c.effective == .new
-        applyingEngineChoice = false
-        engineLog(c.logLine(document: documentURL?.lastPathComponent))
-        if announce, let b = c.blocker {
-            let message = EngineFallbackBanner.headline(b)
-            FlashTeXLog.write("engine choice: \(message) \(b.detail)")
-            engineAnnouncements.append(message)
-            NSAccessibility.post(element: NSApplication.shared, notification: .announcementRequested,
-                                 userInfo: [.announcement: message, .priority: NSAccessibilityPriorityLevel.high.rawValue])
+    /// The message's Download button: the TeX bundle's download is allowed
+    /// and the engine starts again (it downloads as it starts).
+    func retryTeXDownload() {
+        texMissing = nil
+        texMissingDismissed = false
+        engineV3.answerBundleConsent(true)
+    }
+
+    /// Whether the message can offer a download: a TeX bundle is configured.
+    var texDownloadAvailable: Bool { EngineV3Bundle.configured() != nil }
+}
+
+// MARK: - views
+
+/// Over the preview when there is no TeX to compile with (RQ20): a plain,
+/// non-blocking message. Download retries the TeX bundle's download.
+struct TeXMissingBanner: View {
+    @Environment(ShellModel.self) var model
+
+    var body: some View {
+        if let missing = model.texMissing, !model.texMissingDismissed {
+            HStack(alignment: .firstTextBaseline, spacing: DS.Space.m) {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .foregroundStyle(DS.Colors.severityWarning)
+                    .accessibilityHidden(true)
+                VStack(alignment: .leading, spacing: DS.Space.xs) {
+                    Text(TeXMissing.headline).font(DS.Fonts.secondary.weight(.semibold))
+                    Text(missing.detail).font(DS.Fonts.secondary).foregroundStyle(DS.Colors.textSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                Spacer(minLength: 0)
+                if model.texDownloadAvailable {
+                    Button("Download") { model.retryTeXDownload() }
+                        .ideDefault()
+                        .accessibilityHint("Downloads the TeX files the engine needs, then compiles.")
+                        .accessibilityIdentifier("tex.missing.download")
+                }
+                Button("Dismiss") { model.texMissingDismissed = true }
+                    .ideSecondary()
+            }
+            .padding(DS.Space.m)
+            .background(DS.Colors.surfaceSecondary)
+            .accessibilityElement(children: .contain)
+            .accessibilityLabel(TeXMissing.headline + " " + missing.detail)
+            .accessibilityIdentifier("tex.missing")
         }
     }
+}
 
-    /// `engineV3Enabled` was set directly (a bench, a test): that is the
-    /// window's override, kept for every document it opens.
-    func engineV3EnabledSetDirectly() {
-        guard !applyingEngineChoice else { return }
-        let engine: EngineChoice.Engine = engineV3Enabled ? .new : .previous
-        engineWindowOverride = engine
-        engineChoice = EngineChoice(preferred: engine, source: .window)
-        engineLog(engineChoice.logLine(document: documentURL?.lastPathComponent))
+/// Over the preview, once, for a document last typeset by the previous
+/// engine (ruling 4, the retirement plan's §5.3): the new engine typesets it
+/// now, and why. Dismissed for good: its record now says `new`.
+struct PreviousEngineNoticeBanner: View {
+    @Environment(ShellModel.self) var model
+
+    static let headline = "This document is now typeset with the new engine."
+    static let detail = "It was last typeset with FlashTeX's previous engine, which has been retired. The new engine is compatible with pdfLaTeX, so the pages may differ slightly from before."
+
+    var body: some View {
+        if model.previousEngineNotice {
+            HStack(alignment: .firstTextBaseline, spacing: DS.Space.m) {
+                Image(systemName: "info.circle.fill")
+                    .foregroundStyle(DS.Colors.textSecondary)
+                    .accessibilityHidden(true)
+                VStack(alignment: .leading, spacing: DS.Space.xs) {
+                    Text(Self.headline).font(DS.Fonts.secondary.weight(.semibold))
+                    Text(Self.detail).font(DS.Fonts.secondary).foregroundStyle(DS.Colors.textSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                Spacer(minLength: 0)
+                Button("Dismiss") { model.previousEngineNotice = false }
+                    .ideSecondary()
+                    .accessibilityIdentifier("engine.previous.dismiss")
+            }
+            .padding(DS.Space.m)
+            .background(DS.Colors.surfaceSecondary)
+            .accessibilityElement(children: .contain)
+            .accessibilityLabel(Self.headline + " " + Self.detail)
+            .accessibilityIdentifier("engine.previous")
+        }
     }
-
-    /// The engine that typesets this window's document now (what compiles
-    /// it, whatever the choice's source): the captures' feature list and the
-    /// typing bench's `engine` follow it.
-    var typesettingEngine: EngineChoice.Engine { engineV3Enabled ? .new : .previous }
 }
 
 extension ProjectManifest {
@@ -721,146 +491,5 @@ extension ProjectManifest {
             out.append(.init(name: name, inCopy: f.origin == nil ? f.path : nil, external: f.origin))
         }
         return out
-    }
-}
-
-// MARK: - views
-
-/// The status bar's engine item: which engine typesets this document, a
-/// warning mark when a fallback rule applies, and the switch.
-struct EngineChoiceStatusItem: View {
-    @Environment(ShellModel.self) var model
-
-    var body: some View {
-        let c = model.engineChoice
-        Menu {
-            EngineChoiceMenuItems(model: model)
-        } label: {
-            Label(c.title, systemImage: c.blocker == nil ? "bolt.horizontal.circle.fill" : "exclamationmark.triangle.fill")
-                .font(DS.Fonts.secondary)
-                .foregroundStyle(c.blocker == nil ? AnyShapeStyle(.secondary) : AnyShapeStyle(DS.Colors.severityWarning))
-        }
-        .font(DS.Fonts.secondary)
-        .controlSize(.small)
-        .menuStyle(.borderlessButton)
-        .menuIndicator(.hidden)
-        .fixedSize()
-        .help(c.explanation)
-        .accessibilityLabel(Self.spokenLabel(c))
-        .accessibilityValue(Self.spokenValue(c))
-        .accessibilityHint("Choose which engine typesets this document.")
-        .accessibilityIdentifier("engine.choice")
-    }
-}
-
-extension EngineChoiceStatusItem {
-    /// What VoiceOver calls the item, and its value.
-    static func spokenLabel(_ c: EngineChoice) -> String { "Engine: \(c.title)" }
-    static func spokenValue(_ c: EngineChoice) -> String { c.blocker.map { "fallback, \($0.short)" } ?? c.source.explanation }
-}
-
-/// The engine menu's items (the status bar item and View > Engine for This Document).
-struct EngineChoiceMenuItems: View {
-    let model: ShellModel
-
-    var body: some View {
-        let c = model.engineChoice
-        ForEach(EngineChoice.Engine.allCases, id: \.self) { engine in
-            Button {
-                model.chooseEngine(engine)
-            } label: {
-                if c.effective == engine { Label(engine.menuTitle, systemImage: "checkmark") } else { Text(engine.menuTitle) }
-            }
-            // (a rule the user's choice outranks leaves the new engine choosable)
-            .disabled(engine == .new && c.preferred == .new && c.blocker.map { !$0.yieldsToUserChoice } ?? false)
-        }
-        Divider()
-        Text(c.explanation)
-        if c.source == .user {
-            Button("Use the Default for This Document") { model.clearEngineChoice() }
-        }
-    }
-}
-
-/// Over the preview while a fallback rule applies: the previous engine
-/// typesets this project, and why. Dismissed until the next open or change.
-struct EngineFallbackBanner: View {
-    @Environment(ShellModel.self) var model
-
-    var body: some View {
-        if let blocker = model.engineChoice.blocker, !model.engineFallbackDismissed {
-            HStack(alignment: .firstTextBaseline, spacing: DS.Space.m) {
-                Image(systemName: "exclamationmark.triangle.fill")
-                    .foregroundStyle(DS.Colors.severityWarning)
-                    .accessibilityHidden(true)
-                VStack(alignment: .leading, spacing: DS.Space.xs) {
-                    Text(Self.headline(blocker)).font(DS.Fonts.secondary.weight(.semibold))
-                    Text(blocker.detail).font(DS.Fonts.secondary).foregroundStyle(DS.Colors.textSecondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-                Spacer(minLength: 0)
-                if blocker == .bundleDeclined {
-                    Button("Download TeX Files…") { model.chooseEngine(.new) }
-                        .ideSecondary()
-                        .accessibilityHint("Asks again whether to download the TeX files the new engine needs.")
-                        .accessibilityIdentifier("engine.fallback.download")
-                }
-                Button("Dismiss") { model.engineFallbackDismissed = true }
-                    .ideSecondary()
-            }
-            .padding(DS.Space.m)
-            .background(DS.Colors.surfaceSecondary)
-            .accessibilityElement(children: .combine)
-            .accessibilityLabel(Self.headline(blocker) + " " + blocker.detail)
-            .accessibilityIdentifier("engine.fallback")
-        }
-    }
-}
-
-extension EngineFallbackBanner {
-    /// The banner's first line (also what is announced when the fallback starts).
-    static func headline(_ b: EngineChoice.Blocker) -> String {
-        if case .unicodeFonts = b { return "Using compatibility engine: \(b.short)." }
-        return "Typeset with the previous engine: \(b.short)."
-    }
-}
-
-/// Settings > Compile: the engine for documents without their own choice,
-/// and the documents that carry their own (with a reset).
-struct EngineChoiceSettingsSection: View {
-    @State private var setting: EngineChoice.Engine? = EngineChoiceStore.appSetting
-    @State private var counts = EngineChoiceStore.choiceCounts
-    @State private var legacyOn = EngineChoiceStore.legacyAllNew
-
-    /// The line under the reset button (nil: nothing to reset).
-    static func choicesNote(user: Int, fromLegacySwitch: Int, legacyOn: Bool) -> String? {
-        guard user > 0 || legacyOn else { return nil }
-        var parts = [user == 1 ? "1 document has its own engine choice" : "\(user) documents have their own engine choice"]
-        if fromLegacySwitch > 0 {
-            parts.append("\(fromLegacySwitch) of them set to the new engine by the earlier Engine v3 Preview switch")
-        }
-        var text = parts.joined(separator: ", ") + "."
-        if legacyOn { text += " That switch is still on: documents opened for the first time get the new engine as their own choice." }
-        return text
-    }
-
-    var body: some View {
-        Section("Engine") {
-            Picker("Engine for other documents", selection: Binding(get: { setting }, set: { setting = $0; EngineChoiceStore.appSetting = $0 })) {
-                Text("Default (\(EngineChoice.defaultForNewDocuments.title))").tag(EngineChoice.Engine?.none)
-                ForEach(EngineChoice.Engine.allCases, id: \.self) { Text($0.menuTitle).tag(EngineChoice.Engine?.some($0)) }
-            }
-            if let note = Self.choicesNote(user: counts.user, fromLegacySwitch: counts.fromLegacySwitch, legacyOn: legacyOn) {
-                Text(note).font(DS.Fonts.secondary).foregroundStyle(DS.Colors.textSecondary)
-                Button("Reset Per-Document Choices") {
-                    EngineChoiceStore.resetChoices()
-                    counts = EngineChoiceStore.choiceCounts
-                    legacyOn = EngineChoiceStore.legacyAllNew
-                }
-                .help("Forget every document's own engine choice (and the earlier switch); documents then follow the setting above when they open.")
-            }
-            Text("Applies to documents you have not chosen an engine for, when they open. Choose for the open document from the engine item in the status bar. When the new engine cannot typeset a project (no TeX Live, or fonts in flashtex.toml), the previous engine does, and the window says why.")
-                .font(DS.Fonts.secondary).foregroundStyle(DS.Colors.textSecondary)
-        }
     }
 }

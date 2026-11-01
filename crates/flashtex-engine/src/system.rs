@@ -104,6 +104,15 @@ impl Tracked {
 
 impl Write for Tracked {
     fn write(&mut self, b: &[u8]) -> std::io::Result<usize> {
+        crate::os::io_time(crate::os::io::WRITE, || self.write_timed(b))
+    }
+    fn flush(&mut self) -> std::io::Result<()> {
+        self.f.flush()
+    }
+}
+
+impl Tracked {
+    fn write_timed(&mut self, b: &[u8]) -> std::io::Result<usize> {
         note_foreign(&self.path);
         let at = if self.logical {
             use std::io::Seek;
@@ -121,9 +130,6 @@ impl Write for Tracked {
             set_stamp(&self.path, stamp_of(&m));
         }
         Ok(n)
-    }
-    fn flush(&mut self) -> std::io::Result<()> {
-        self.f.flush()
     }
 }
 
@@ -186,6 +192,11 @@ struct Keep {
     old_len: u64,
     saved: Vec<u8>,
     end: Vec<u8>,
+    /// The file, open for reading (`keep_tail`'s descriptor): each write
+    /// over the kept tail reads the old bytes it covers first, which opened
+    /// the file again every time (open, seek, read, close; lane
+    /// T7-HEADROOM).
+    file: Option<File>,
 }
 
 impl Keep {
@@ -215,13 +226,16 @@ impl Keep {
         if to <= from {
             return Ok(());
         }
-        use std::io::Seek;
-        let mut f = File::open(path)?;
-        f.seek(std::io::SeekFrom::Start(from))?;
+        if self.file.is_none() {
+            self.file = Some(File::open(path)?);
+        }
         let n = self.saved.len();
         let mut saved = std::mem::take(&mut self.saved);
         saved.resize(n + (to - from) as usize, 0);
-        let r = f.read_exact(&mut saved[n..]);
+        let r = match &self.file {
+            Some(f) => crate::os::read_exact_at(f, &mut saved[n..], from),
+            None => Ok(()),
+        };
         if r.is_ok() {
             self.unblank(from, &mut saved[n..]);
         } else {
@@ -263,23 +277,35 @@ pub fn logical_len(path: &str) -> Option<u64> {
 /// logical end becomes `base`, and nothing is read or cut. The tail's old
 /// bytes come from [`kept_tail`] while the restore is pending.
 pub fn keep_tail(path: &str, base: u64) -> Result<(), String> {
-    let old_len = match logical_len(path) {
-        Some(n) => n,
-        None => std::fs::metadata(path)
-            .map(|m| m.len())
-            .map_err(|e| format!("{path}: {e}"))?,
-    };
+    let e = |x: std::io::Error| format!("{path}: {x}");
+    // One open, and the descriptor's `stat` before and after the blank: a
+    // call by path for each step took ten a file, and on the M5 Pro the
+    // restore's output files 0.4-0.8 ms of a beamer keystroke (lane
+    // T7-HEADROOM).
+    let f = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(path)
+        .map_err(e)?;
+    let m = f.metadata().map_err(e)?;
+    let old_len = logical_len(path).unwrap_or(m.len());
     if old_len < base {
         return Err(format!("{path} holds {old_len} bytes, fewer than {base}"));
     }
     // (blanked: the old run's end; the restore checked that the file is
     // the engine's, `checkpoint::changed_outside`)
-    if let Some(why) = outside_change(path) {
+    if let Some(why) = why_changed_as(path, true, Some(stamp_of(&m))) {
         return Err(why);
     }
     let end_at = old_len.saturating_sub(BLANK_END).max(base);
-    let end = blank(path, end_at, old_len).map_err(|e| format!("{path}: {e}"))?;
-    stamp_output(path);
+    let mut end = vec![0u8; (old_len - end_at) as usize];
+    crate::os::read_exact_at(&f, &mut end, end_at).map_err(e)?;
+    crate::os::write_all_at(&f, &vec![b' '; end.len()], end_at).map_err(e)?;
+    // (`stamp_output`, from the descriptor)
+    if let Ok(m) = f.metadata() {
+        set_stamp(path, stamp_of(&m));
+    }
+    FOREIGN.with(|f| f.borrow_mut().remove(&out_key(path)));
     file_trace(|| format!("keep_tail {path} base {base} old_len {old_len} blank {end_at}"));
     LOGICAL.with(|m| {
         m.borrow_mut().insert(
@@ -291,6 +317,7 @@ pub fn keep_tail(path: &str, base: u64) -> Result<(), String> {
                     old_len,
                     saved: Vec::new(),
                     end,
+                    file: Some(f),
                 }),
             },
         )
@@ -315,12 +342,14 @@ pub fn kept_tail(path: &str, base: u64, skip: u64) -> Result<Vec<u8>, String> {
             .unwrap_or_default();
         let from = k.saved_to().max(base + skip);
         if from < k.old_len {
-            use std::io::Seek;
-            let mut f = File::open(path).map_err(e)?;
-            f.seek(std::io::SeekFrom::Start(from)).map_err(e)?;
+            if k.file.is_none() {
+                k.file = Some(File::open(path).map_err(e)?);
+            }
             let n = out.len();
             out.resize(n + (k.old_len - from) as usize, 0);
-            f.read_exact(&mut out[n..]).map_err(e)?;
+            if let Some(f) = &k.file {
+                crate::os::read_exact_at(f, &mut out[n..], from).map_err(e)?;
+            }
             k.unblank(from, &mut out[n..]);
         }
         Ok(out)
@@ -420,9 +449,75 @@ pub fn read_logical(path: &str) -> std::io::Result<Vec<u8>> {
 }
 
 /// `hash128(&read_logical(path)?)`, without reading the file into memory
-/// (`persist::hash128_file`).
+/// (`persist::hash128_file`); a file this process does not write is hashed
+/// once while it is unchanged (`crate::hashcache`).
 pub fn hash_logical(path: &str) -> std::io::Result<[u64; 2]> {
-    crate::persist::hash128_file(path, logical_len(path)).map(|(h, _)| h)
+    hash_logical_from(path, None)
+}
+
+/// [`hash_logical`], with `m` a `stat` of `path` just made, if there is one.
+fn hash_logical_from(path: &str, m: Option<&std::fs::Metadata>) -> std::io::Result<[u64; 2]> {
+    match (logical_len(path), m) {
+        (None, Some(m)) => crate::hashcache::hash_file_from(path, m),
+        (None, None) => crate::hashcache::hash_file(path),
+        (len, _) => crate::persist::hash128_file(path, len).map(|(h, _)| h),
+    }
+}
+
+thread_local! {
+    /// The `stat` `note_file` made of the file it noted last, for the open
+    /// that follows it (`take_last_stat`).
+    static LAST_STAT: std::cell::RefCell<Option<(String, std::fs::Metadata)>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+/// The `stat` `note_file` just made of `path`, if it was the last file it
+/// noted (once).
+fn take_last_stat(path: &str) -> Option<std::fs::Metadata> {
+    LAST_STAT.with(|l| {
+        let mut l = l.borrow_mut();
+        match l.take() {
+            Some((p, m)) if p == path => Some(m),
+            _ => None,
+        }
+    })
+}
+
+/// A binary input file's bytes: on disk, or the ones `hashcache` keeps of
+/// a font metric file (`hashcache::kept_bytes`), which are what reading it
+/// gives while its identity is unchanged.
+enum InFile {
+    Disk(File),
+    Kept(std::io::Cursor<std::sync::Arc<[u8]>>),
+}
+
+impl Read for InFile {
+    fn read(&mut self, b: &mut [u8]) -> std::io::Result<usize> {
+        match self {
+            InFile::Disk(f) => f.read(b),
+            InFile::Kept(c) => c.read(b),
+        }
+    }
+}
+
+impl std::io::Seek for InFile {
+    fn seek(&mut self, to: std::io::SeekFrom) -> std::io::Result<u64> {
+        match self {
+            InFile::Disk(f) => f.seek(to),
+            InFile::Kept(c) => c.seek(to),
+        }
+    }
+}
+
+/// Open `path` to read its bytes: from `hashcache`'s copy when it keeps
+/// one under the file's identity now (taken from the `stat` `note_file`
+/// just made, else here), else from disk.
+fn open_bytes(path: &str) -> std::io::Result<InFile> {
+    let m = take_last_stat(path);
+    if let Some(b) = crate::hashcache::kept_bytes(path, m.as_ref()) {
+        return Ok(InFile::Kept(std::io::Cursor::new(b)));
+    }
+    File::open(path).map(InFile::Disk)
 }
 
 /// A new engine: no file's logical end is known any more. Each file still
@@ -650,7 +745,7 @@ pub(crate) fn read_tex_line(r: &mut impl BufRead, line: &mut Vec<u8>) -> bool {
 #[derive(Default)]
 pub struct ByteFile {
     pub buf: i32,
-    input: Option<BufReader<File>>,
+    input: Option<BufReader<InFile>>,
     output: Option<BufWriter<Tracked>>,
     at_eof: bool,
     err: i32,
@@ -668,6 +763,13 @@ pub struct WordFile {
     err: i32,
     /// The file opened, for a checkpoint's host-state record.
     path: Option<String>,
+}
+
+impl WordFile {
+    /// The file opened.
+    pub fn path(&self) -> Option<&str> {
+        self.path.as_deref()
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -844,14 +946,43 @@ impl ByteFile {
     }
 }
 
+// The word straight from the reader's buffer when it holds one, which is
+// every word of a format but those at a buffer's end: the same bytes
+// `read_exact` copies, without depending on how the compiler inlines it into
+// the 3,000 calls of `load_fmt_file`, which a change elsewhere in the crate
+// moved (READ-TRACK measured 16-52 M more instructions of a cold compile,
+// up to 5.5 %, with the same code).
+#[inline]
 pub fn get_word(f: &mut WordFile) {
-    let mut b = [0u8; 8];
-    match f.input.as_mut().map(|r| r.read_exact(&mut b)) {
-        Some(Ok(())) => f.buf = memory_word::from_bits(u64::from_le_bytes(b)),
-        _ => {
-            f.at_eof = true;
-            f.buf = memory_word::default();
+    if let Some(r) = f.input.as_mut() {
+        if let Some(w) = r.buffer().get(..8) {
+            let w = u64::from_le_bytes(w.try_into().expect("8 bytes"));
+            r.consume(8);
+            f.buf = memory_word::from_bits(w);
+            return;
         }
+    }
+    get_word_slow(f);
+}
+
+#[inline(never)]
+fn get_word_slow(f: &mut WordFile) {
+    let mut b = [0u8; 8];
+    let ok = match f.input.as_mut() {
+        Some(r) => match r.read_exact(&mut b) {
+            Ok(()) => true,
+            Err(e) => {
+                drop(e);
+                false
+            }
+        },
+        None => false,
+    };
+    if ok {
+        f.buf = memory_word::from_bits(u64::from_le_bytes(b));
+    } else {
+        f.at_eof = true;
+        f.buf = memory_word::default();
     }
 }
 pub fn put_word(f: &mut WordFile) {
@@ -1120,6 +1251,11 @@ static RUN: Mutex<Option<Run>> = Mutex::new(None);
 /// The run's configuration (the default one until `configure` is called).
 pub fn run() -> Run {
     RUN.lock().unwrap().get_or_insert_with(Run::default).clone()
+}
+
+/// `run().output_directory`, without copying the rest.
+pub fn output_directory() -> Option<String> {
+    with_run(|r| r.output_directory.clone())
 }
 
 fn with_run<T>(f: impl FnOnce(&mut Run) -> T) -> T {
@@ -1586,6 +1722,7 @@ fn default_format_file() -> String {
 static RESOLVER: Mutex<Option<Box<dyn FileResolver>>> = Mutex::new(None);
 
 pub fn set_resolver(r: Box<dyn FileResolver>) {
+    crate::lookupproof::resolver_changed();
     *RESOLVER.lock().unwrap() = Some(r);
 }
 
@@ -1604,6 +1741,7 @@ fn reset_resolver(prog: &str, keep_allowed: bool) {
         return;
     }
     *p = Some(prog.to_string());
+    crate::lookupproof::resolver_changed();
     *RESOLVER.lock().unwrap() = None;
 }
 
@@ -1621,15 +1759,36 @@ pub const ENGINE_NAME: &str = "flashtex";
 pub fn with_resolver_for<T>(prog: &str, f: impl FnOnce(&mut dyn FileResolver) -> T) -> T {
     reset_resolver(prog, true);
     let mut g = RESOLVER.lock().unwrap();
-    let r = g.get_or_insert_with(|| crate::resolver::default_resolver(prog, ENGINE_NAME));
+    let r = g.get_or_insert_with(|| {
+        crate::lookupproof::resolver_changed();
+        crate::resolver::default_resolver(prog, ENGINE_NAME)
+    });
+    crate::lookupproof::process_resolver(r.as_ref());
     f(r.as_mut())
 }
 
-fn with_resolver<T>(f: impl FnOnce(&mut dyn FileResolver) -> T) -> T {
+pub(crate) fn with_resolver<T>(f: impl FnOnce(&mut dyn FileResolver) -> T) -> T {
     let prog = run().program_name;
     let mut g = RESOLVER.lock().unwrap();
-    let r = g.get_or_insert_with(|| crate::resolver::default_resolver(&prog, ENGINE_NAME));
+    let r = g.get_or_insert_with(|| {
+        crate::lookupproof::resolver_changed();
+        crate::resolver::default_resolver(&prog, ENGINE_NAME)
+    });
+    crate::lookupproof::process_resolver(r.as_ref());
     f(r.as_mut())
+}
+
+/// The disk as it is now for the lookups that follow: the resolver forgets
+/// what it cached of directories that changed since the last time
+/// (`FileResolver::refresh_disk_dirs`: kpathsea's `//` expansions of the
+/// trees no ls-R covers). Every compile starts with it, so that a resident
+/// host searches a directory made since its start (a TEXMFHOME
+/// subdirectory, a TEXINPUTS `dir//` whose `dir` was missing) as a fresh
+/// pdfTeX would (#1493).
+pub fn refresh_disk_dirs() {
+    if RESOLVER.lock().unwrap().is_some() {
+        with_resolver(|r| r.refresh_disk_dirs());
+    }
 }
 
 /// `kpse_invocation_name`: what pdfTeX's C parts name the program in their
@@ -1763,6 +1922,40 @@ pub fn confined_found_ok(name: &str, found: &str, format: Format, searched: bool
         }
     }
     confined_path_ok(Path::new(found), &roots, searched)
+}
+
+/// The confinement rules for a file a tool the engine runs in-process
+/// (makeindex, bibtex) is about to read: `name` as the tool has it, `path`
+/// where it resolves. An absolute name is allowed only as the answer of a
+/// search (`searched`, a style or database kpathsea found), which must then
+/// be a TeX tree file or lie in a root; `tool_dir` (the scratch directory
+/// the host copied the tool's inputs into) is a root too. True when
+/// confinement is off.
+pub(crate) fn tool_read_ok(
+    name: &str,
+    path: &Path,
+    searched: bool,
+    tool_dir: Option<&Path>,
+) -> bool {
+    if !reads_confined() {
+        return true;
+    }
+    if !searched && !confined_name_ok(name) {
+        return false;
+    }
+    let mut roots: Vec<std::path::PathBuf> = confine_roots().to_vec();
+    if let Ok(cwd) = std::env::current_dir().and_then(std::fs::canonicalize) {
+        roots.push(cwd);
+    }
+    if let Some(dir) = run().output_directory {
+        if let Ok(d) = std::fs::canonicalize(&dir) {
+            roots.push(d);
+        }
+    }
+    if let Some(d) = tool_dir.and_then(|d| std::fs::canonicalize(d).ok()) {
+        roots.push(d);
+    }
+    confined_path_ok(path, &roots, searched)
 }
 
 /// The second rule on its own (tests call it directly).
@@ -2232,16 +2425,41 @@ pub fn runsystem(cmd: &[u8]) -> i32 {
     if allow == 1 || allow == 2 {
         let _ = std::io::stdout().flush();
         record_effect("write18", &safecmd);
-        let status = shell_command(&safecmd)
-            .status()
-            .map(|s| s.code().unwrap_or(-1))
-            .unwrap_or(127);
+        let status = match in_process_tool(&safecmd, allow == 2) {
+            Some(status) => status,
+            None => shell_command(&safecmd)
+                .status()
+                .map(|s| s.code().unwrap_or(-1))
+                .unwrap_or(127),
+        };
         if status != 0 {
             // system(3)'s status is the wait status: the code times 256.
             eprintln!("system returned with code {}", status * 256);
         }
     }
     allow
+}
+
+/// A `\write18` command the engine runs itself instead of through the
+/// shell: makeindex (`crate::makeindex`, unless
+/// `FLASHTEX_MAKEINDEX=external`) and bibtex (`crate::bibtex`, unless
+/// `FLASHTEX_BIBTEX=external`). Its exit status, as the shell's would be;
+/// `None` to use the shell.
+#[allow(unused_variables)]
+fn in_process_tool(cmd: &[u8], restricted: bool) -> Option<i32> {
+    #[cfg(feature = "makeindex")]
+    if crate::makeindex::in_process() {
+        if let Some(args) = crate::makeindex::command_args(cmd, restricted) {
+            return Some(crate::makeindex::run_in_process(&args));
+        }
+    }
+    #[cfg(feature = "bibtex")]
+    if crate::bibtex::in_process() {
+        if let Some(args) = crate::bibtex::command_args(cmd, restricted) {
+            return Some(crate::bibtex::run_in_process(&args));
+        }
+    }
+    None
 }
 
 /// The command `runpopen` works on. On WIN32, texmfmp.c's `runpopen` first
@@ -2336,7 +2554,16 @@ impl Globals {
     /// `a_make_name_string` -- and therefore the `(` line in the log --
     /// shows `./story.tex` exactly as pdfTeX's does.
     fn input_path(&mut self, default: Format, must_exist: bool) -> Option<String> {
+        crate::os::io_time(crate::os::io::LOOKUP, || {
+            self.input_path_timed(default, must_exist)
+        })
+    }
+
+    fn input_path_timed(&mut self, default: Format, must_exist: bool) -> Option<String> {
         FULL_NAME_OF_FILE.with(|f| *f.borrow_mut() = None);
+        // (only a `stat` made by this lookup may stand for the file when
+        // it is opened next: `open_bytes`)
+        LAST_STAT.with(|l| *l.borrow_mut() = None);
         let s = self.raw_file_name();
         // tex.web's device names (§§514, 520: `TeXinputs:`, `TeXfonts:`,
         // `TeXformats:`). Pure tex.web (`tex82`: Knuth's trip test) parses
@@ -2455,17 +2682,20 @@ impl Globals {
             }
         }
         file_trace(|| format!("openout {fname} disk {:?}", disk_len(&fname)));
+        keep_instance(&fname, &out_key(&fname));
         before_truncate(&fname);
         let mut f = File::create(&fname).ok();
         if f.is_none() && !absolute {
             if let Some(out) = texmf_var("TEXMFOUTPUT").filter(|v| !v.is_empty()) {
                 fname = format!("{out}/{name}");
+                keep_instance(&fname, &out_key(&fname));
                 before_truncate(&fname);
                 f = File::create(&fname).ok();
             }
         }
         if f.is_some() {
             OPENS.with(|o| o.borrow_mut().push(out_key(&fname)));
+            INSTANCES.with(|v| v.borrow_mut().push(None));
             opens_changed();
             stamp_output(&fname);
             if fname != s {
@@ -2495,6 +2725,10 @@ impl Globals {
     }
 
     pub fn a_open_in(&mut self, f: &mut AlphaFile) -> bool {
+        crate::os::io_time(crate::os::io::TEXT, || self.a_open_in_timed(f))
+    }
+
+    fn a_open_in_timed(&mut self, f: &mut AlphaFile) -> bool {
         *f = AlphaFile::default();
         f.err = 1;
         if let Some(ok) = self.open_in_pipe(f) {
@@ -2569,12 +2803,16 @@ impl Globals {
     }
 
     pub fn b_open_in(&mut self, f: &mut ByteFile) -> bool {
+        crate::os::io_time(crate::os::io::TFM, || self.b_open_in_timed(f))
+    }
+
+    fn b_open_in_timed(&mut self, f: &mut ByteFile) -> bool {
         *f = ByteFile::default();
         f.err = 1;
         let Some(name) = self.input_path(Format::Tfm, true) else {
             return false;
         };
-        match File::open(&name) {
+        match open_bytes(&name) {
             Ok(h) => {
                 f.input = Some(BufReader::new(h));
                 f.path = Some(name);
@@ -2666,7 +2904,7 @@ impl Globals {
         };
         match File::open(&name) {
             Ok(h) => {
-                f.input = Some(BufReader::new(h));
+                f.input = Some(BufReader::new(InFile::Disk(h)));
                 f.path = Some(name);
                 f.err = 0;
                 get_byte(f);
@@ -3344,7 +3582,16 @@ pub fn exit_process(g: &mut Globals, code: i32) -> ! {
     {
         g.flashtex_prof_finish();
         g.flashtex_intr_finish();
+        g.flashtex_bm_finish();
     }
+    // FLASHTEX_BOXMEMO_VERIFY_FAIL: a BOX-MEMO verification difference
+    // makes the run fail (exit status 3), for the gates
+    #[cfg(not(feature = "tex82"))]
+    let code = if crate::boxmemo::fail_on_difference() {
+        3
+    } else {
+        code
+    };
     let _ = std::io::stdout().flush();
     g.log_file.flush();
     for f in g.write_file.iter_mut() {
@@ -3528,17 +3775,36 @@ thread_local! {
     static OPENS: std::cell::RefCell<Vec<String>> = const { std::cell::RefCell::new(Vec::new()) };
     /// Bumped by every change to `OPENS`: `REWRITTEN` is for one value.
     static OPENS_GEN: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+    /// Beside each entry of `OPENS`: what that instance of the file held
+    /// when it was done with, taken when the run opened the file for output
+    /// again (`keep_instance`), for a file rewritten again and again (lane
+    /// BEAMER: beamer's `.vrb`, one instance per fragile frame). A
+    /// checkpoint between two instances is restorable with it put back
+    /// (`rewritten_unkept`, `instances_at`); `None`: not kept.
+    static INSTANCES: std::cell::RefCell<Vec<Option<std::sync::Arc<Vec<u8>>>>> =
+        const { std::cell::RefCell::new(Vec::new()) };
     /// `rewritten_at`'s index of `OPENS` at generation `.0`: the open
     /// positions where some file has an output open before and after,
     /// as sorted disjoint ranges `lo..=hi`, each with an open of such a
     /// file.
     static REWRITTEN: std::cell::RefCell<(u64, Vec<RewrittenRange>)> =
         const { std::cell::RefCell::new((u64::MAX, Vec::new())) };
+    /// `instances_at`'s index of `OPENS` at generation `.0` (`reopened_files`).
+    static REOPENED: std::cell::RefCell<Reopened> =
+        const { std::cell::RefCell::new((u64::MAX, Vec::new())) };
     /// Output files whose content, when an `\openout` is about to truncate
     /// one, is kept first (`guard_outputs`): the checkpoint layer holds
     /// only the part beyond a checkpoint's length of each.
     static GUARD: std::cell::RefCell<Vec<(String, Option<Vec<u8>>)>> = const { std::cell::RefCell::new(Vec::new()) };
 }
+
+/// What one instance of a rewritten output file held (`INSTANCES`).
+pub type Instance = std::sync::Arc<Vec<u8>>;
+/// The instances a restore puts back, by file (`instances_at`).
+pub type PutBack = Vec<(String, Instance)>;
+/// `instances_at`'s index: each file opened more than once, with its open
+/// positions, at a generation of `OPENS`.
+type Reopened = (u64, Vec<(String, Vec<usize>)>);
 
 /// How many files have been opened for output so far (`OPENS`).
 pub fn opens_len() -> usize {
@@ -3619,13 +3885,167 @@ pub fn truncate_opens(n: usize) {
         o.truncate(n);
         o.resize(n, String::new());
     });
+    INSTANCES.with(|v| {
+        let mut v = v.borrow_mut();
+        v.truncate(n);
+        v.resize(n, None);
+    });
     opens_changed();
 }
 
 /// Append output opens (the old run's, after a convergence jump).
 pub fn append_opens(v: &[String]) {
+    append_opens_kept(v, &[]);
+}
+
+/// [`append_opens`] with the instances kept beside them
+/// ([`instances_since`]; a shorter list: the rest are not kept).
+pub fn append_opens_kept(v: &[String], kept: &[Option<std::sync::Arc<Vec<u8>>>]) {
     OPENS.with(|o| o.borrow_mut().extend_from_slice(v));
+    INSTANCES.with(|i| {
+        let mut i = i.borrow_mut();
+        let n = OPENS.with(|o| o.borrow().len());
+        let base = i.len();
+        i.resize(n, None);
+        for (k, x) in kept.iter().take(v.len()).enumerate() {
+            if let Some(slot) = i.get_mut(base + k) {
+                *slot = x.clone();
+            }
+        }
+    });
     opens_changed();
+}
+
+/// The instances kept beside the output opens after the first `n`
+/// ([`INSTANCES`]).
+pub fn instances_since(n: usize) -> Vec<Option<std::sync::Arc<Vec<u8>>>> {
+    INSTANCES.with(|i| i.borrow().get(n..).unwrap_or(&[]).to_vec())
+}
+
+/// Instances kept: at most this many bytes each and in all (a file
+/// rewritten again and again is a small temporary file; past these the
+/// checkpoints between its instances stay unrestorable, as before).
+const INSTANCE_MAX: usize = 1 << 20;
+const INSTANCES_MAX: usize = 64 << 20;
+
+/// `\openout` is about to truncate `path` (key `k`), which the run opened
+/// for output before: keep what that instance holds, the engine's own
+/// bytes ([`INSTANCES`]).
+fn keep_instance(path: &str, k: &str) {
+    let Some(i) = OPENS.with(|o| o.borrow().iter().rposition(|p| p == k)) else {
+        return;
+    };
+    if INSTANCES.with(|v| v.borrow().get(i).is_none_or(|x| x.is_some())) {
+        return;
+    }
+    if why_changed(path, true).is_some() {
+        return;
+    }
+    let Ok(data) = read_logical(path) else {
+        return;
+    };
+    let total: usize = INSTANCES.with(|v| v.borrow().iter().flatten().map(|d| d.len()).sum());
+    if data.len() > INSTANCE_MAX || total + data.len() > INSTANCES_MAX {
+        return;
+    }
+    INSTANCES.with(|v| {
+        if let Some(slot) = v.borrow_mut().get_mut(i) {
+            *slot = Some(std::sync::Arc::new(data));
+        }
+    });
+}
+
+/// A restore put back the files open for output at its target
+/// (`open_out`, by `out_key`): the kept instance of each one's last open
+/// is not done with there, so it is forgotten.
+pub fn forget_open_instances(open_out: &[String]) {
+    if open_out.is_empty() {
+        return;
+    }
+    OPENS.with(|o| {
+        let o = o.borrow();
+        INSTANCES.with(|v| {
+            let mut v = v.borrow_mut();
+            for k in open_out {
+                if let Some(i) = o.iter().rposition(|p| p == k) {
+                    if let Some(slot) = v.get_mut(i) {
+                        *slot = None;
+                    }
+                }
+            }
+        })
+    });
+}
+
+/// The files opened for output before the `n`-th output open and again at
+/// or after it (`rewritten_at`), each with the instance it held at `n`,
+/// that a restore to a checkpoint taken after `n` opens puts back on disk
+/// (lane BEAMER: beamer's `.vrb` between two fragile frames). `Err(name)`:
+/// one such file cannot be put back: open for output there (`open_out`, by
+/// `out_key`) or its instance not kept.
+pub fn instances_at(n: usize, open_out: &[String]) -> Result<PutBack, String> {
+    if rewritten_at(n).is_none() {
+        return Ok(vec![]);
+    }
+    let gen = OPENS_GEN.with(|g| g.get());
+    REOPENED.with(|r| {
+        let mut r = r.borrow_mut();
+        if r.0 != gen {
+            *r = (gen, reopened_files());
+        }
+        INSTANCES.with(|v| {
+            let v = v.borrow();
+            let mut out: PutBack = vec![];
+            for (k, at) in &r.1 {
+                // (its last open before `n`, and one from `n` on)
+                let j = at.partition_point(|&p| p < n);
+                if j == 0 || j == at.len() {
+                    continue;
+                }
+                if open_out.iter().any(|p| p == k) {
+                    return Err(k.clone());
+                }
+                match v.get(at[j - 1]).and_then(|x| x.clone()) {
+                    Some(d) => out.push((k.clone(), d)),
+                    None => return Err(k.clone()),
+                }
+            }
+            Ok(out)
+        })
+    })
+}
+
+/// Each file `OPENS` has more than once, with its open positions in order
+/// (`instances_at`'s index, rebuilt once per change to the opens).
+fn reopened_files() -> Vec<(String, Vec<usize>)> {
+    OPENS.with(|o| {
+        let o = o.borrow();
+        let mut at: std::collections::HashMap<&str, Vec<usize>> = Default::default();
+        for (i, k) in o.iter().enumerate() {
+            if !k.is_empty() {
+                at.entry(k.as_str()).or_default().push(i);
+            }
+        }
+        let mut v: Vec<(String, Vec<usize>)> = at
+            .into_iter()
+            .filter(|(_, p)| p.len() > 1)
+            .map(|(k, p)| (k.to_string(), p))
+            .collect();
+        v.sort();
+        v
+    })
+}
+
+/// Put back the instances `instances_at` gave (a restore): each file then
+/// holds what it held at the restore target, the engine's own bytes.
+pub fn put_back_instances(v: &[(String, Instance)]) -> Result<(), String> {
+    for (path, data) in v {
+        file_trace(|| format!("put back instance {path} ({} bytes)", data.len()));
+        std::fs::write(path, data.as_slice()).map_err(|e| format!("{path}: {e}"))?;
+        logical_settled(path);
+        stamp_output(path);
+    }
+    Ok(())
 }
 
 /// From now on, keep the content of each of `paths` that an output open
@@ -3868,6 +4288,9 @@ struct Known {
     path: std::path::PathBuf,
     sig: StatSig,
     data: std::sync::Arc<Vec<u8>>,
+    /// The edit that made `data`: bytes `at..at + del` of the copy `pre`
+    /// replaced by `ins` bytes ([`note_known_edit`]).
+    edit: Option<(std::sync::Arc<Vec<u8>>, usize, usize, usize)>,
 }
 
 /// The copies [`known_content`] may stand for the files with. Only within
@@ -3890,8 +4313,50 @@ pub fn note_known_content(path: &Path, held: Option<(StatSig, std::sync::Arc<Vec
     let mut k = KNOWN.lock().unwrap_or_else(|e| e.into_inner());
     k.retain(|e| e.path != path);
     if let Some((sig, data)) = held {
-        k.push(Known { path, sig, data });
+        k.push(Known {
+            path,
+            sig,
+            data,
+            edit: None,
+        });
     }
+}
+
+/// The host's copy of `path` ([`note_known_content`], just noted) is the
+/// copy `pre` with bytes `at..at + del` replaced by `ins` bytes.
+pub fn note_known_edit(
+    path: &Path,
+    pre: std::sync::Arc<Vec<u8>>,
+    at: usize,
+    del: usize,
+    ins: usize,
+) {
+    let Ok(path) = std::fs::canonicalize(path) else {
+        return;
+    };
+    let mut k = KNOWN.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some(e) = k.iter_mut().find(|e| e.path == path) {
+        e.edit = Some((pre, at, del, ins));
+    }
+}
+
+/// The edit (`at`, `del`, `ins`) by which the host made its copy `new` of `path`
+/// out of `old` itself (the same allocation: `Arc::ptr_eq`), if it did.
+pub fn known_edit(
+    path: &str,
+    old: &std::sync::Arc<Vec<u8>>,
+    new: &std::sync::Arc<Vec<u8>>,
+) -> Option<(usize, usize, usize)> {
+    let k = KNOWN.lock().unwrap_or_else(|e| e.into_inner());
+    if !k.iter().any(|e| e.edit.is_some()) {
+        return None;
+    }
+    let path = std::fs::canonicalize(path).ok()?;
+    k.iter().find(|e| e.path == path).and_then(|e| {
+        let (pre, at, del, ins) = e.edit.as_ref()?;
+        (std::sync::Arc::ptr_eq(pre, old) && std::sync::Arc::ptr_eq(&e.data, new))
+            .then_some((*at, *del, *ins))
+    })
 }
 
 /// Forget every copy: a compile starts or has ended.
@@ -3959,12 +4424,17 @@ pub fn outside_change(path: &str) -> Option<String> {
 }
 
 fn why_changed(path: &str, foreign_too: bool) -> Option<String> {
+    why_changed_as(path, foreign_too, None)
+}
+
+/// [`why_changed`] with the file's stamp now, when the caller has it.
+fn why_changed_as(path: &str, foreign_too: bool, now: Option<Stamp>) -> Option<String> {
     let k = out_key(path);
     if foreign_too && FOREIGN.with(|f| f.borrow().contains(&k)) {
         return Some(format!("{path} was changed by another program"));
     }
     let st = STAMPS.with(|m| m.borrow().get(&k).copied())?;
-    let now = disk_stamp(path);
+    let now = now.or_else(|| disk_stamp(path));
     if now == Some(st) {
         return None;
     }
@@ -4110,78 +4580,10 @@ pub fn set_tex_input_type_flag(v: bool) {
 
 // ---- the read-set ----------------------------------------------------------
 
-/// A file's identity as the file system reports it: a cheap test for
-/// "unchanged" before its content is hashed again.
-///
-/// **Racy signatures** (git's "racy clean" rule). A file system keeps
-/// modification times at some granularity: 1 s on HFS+, 2 s on FAT, a
-/// kernel tick on ext4 before Linux 6.13. A file changed again within the
-/// tick in which its signature was taken, to the same length, keeps the
-/// same signature. So a signature taken within [`RACY_NS`] of the file's
-/// modification time (`racy`) proves nothing: it equals no signature, not
-/// even itself, and every "unchanged?" test that meets one compares the
-/// content instead (and may then keep the fresh signature, which is not
-/// racy once the tick has passed).
-#[derive(Clone, Copy, Debug, Default)]
-pub struct StatSig {
-    pub len: u64,
-    pub mtime_ns: i128,
-    pub ino: u64,
-    /// Taken within [`RACY_NS`] of `mtime_ns`, either side.
-    pub racy: bool,
-}
-
-/// The widest modification-time granularity of a supported file system
-/// (FAT's 2 s; HFS+ 1 s, ext4 a kernel tick), for [`StatSig::racy`]
-/// (`FLASHTEX_RACY_MS` changes it, for the tests).
-pub const RACY_NS: i128 = 2_000_000_000;
-
-fn racy_ns() -> i128 {
-    static R: std::sync::OnceLock<i128> = std::sync::OnceLock::new();
-    *R.get_or_init(|| {
-        std::env::var("FLASHTEX_RACY_MS")
-            .ok()
-            .and_then(|v| v.parse::<i128>().ok())
-            .map_or(RACY_NS, |ms| ms * 1_000_000)
-    })
-}
-
-impl PartialEq for StatSig {
-    fn eq(&self, o: &StatSig) -> bool {
-        !self.racy && !o.racy && self.same_fields(o)
-    }
-}
-
-impl StatSig {
-    pub fn of(path: &str) -> Option<StatSig> {
-        let m = std::fs::metadata(path).ok()?;
-        let mtime_ns = m
-            .modified()
-            .ok()
-            .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-            .map_or(0, |d| d.as_nanos() as i128);
-        let ino = crate::os::file_id(&m);
-        let now_ns = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map_or(0, |d| d.as_nanos() as i128);
-        Some(StatSig {
-            len: m.len(),
-            mtime_ns,
-            ino,
-            // Within the tick on either side: a write after now lands in
-            // the same tick only then. (A modification time far in the
-            // future -- a file from a clock ahead -- is not racy: any write
-            // from now on gets an earlier time.)
-            racy: (now_ns - mtime_ns).abs() < racy_ns(),
-        })
-    }
-
-    /// The same length, time and identity, racy or not (only where a racy
-    /// equality is harmless: see the callers).
-    pub fn same_fields(&self, o: &StatSig) -> bool {
-        (self.len, self.mtime_ns, self.ino) == (o.len, o.mtime_ns, o.ino)
-    }
-}
+// `StatSig`, `RACY_NS` and `racy_ns` are the shared runtime's
+// (crates/flashtex-runtime/src/statsig.rs), under their paths here.
+pub(crate) use flashtex_runtime::statsig::racy_ns;
+pub use flashtex_runtime::statsig::{StatSig, RACY_NS};
 
 /// A file the run read, with its content hash when it was opened.
 #[derive(Clone, Debug)]
@@ -4203,6 +4605,30 @@ pub struct FileRead {
     /// read, it wrote itself (beamer's `.vrb`), so it is not an input a
     /// further pass would see changed (`crate::incr`'s passes).
     pub written_before: bool,
+    /// A read (the first or a later one) of a file the run had opened for
+    /// output before it: the hash of what the file held when this read
+    /// opened it (`content_hash`). The other fields of a later read are the
+    /// first read's; this one is its own. The convergence test compares it
+    /// with the file now: a file both runs wrote and closed, read again by
+    /// the old run's future (*Infinite Descent* ×2 reads the hints the
+    /// first copy wrote at the end of each copy), reads the same bytes when
+    /// the hashes agree (`crate::incr`'s `reread_same`). `None` otherwise,
+    /// and for a close.
+    pub seen: Option<[u64; 2]>,
+    /// A whole read whose result was the file's modification time
+    /// (`\pdffilemoddate`: `note_stamp`), in seconds as the run read it: a
+    /// file whose time changed, its content the same, has changed for
+    /// that read (`crate::incr`'s `changes`, `host::make_key`).
+    pub stamp: Option<i64>,
+    /// A whole read whose result was the file's length (`\pdffilesize`:
+    /// `note_size_read`), as the run read it: the same length, the read is
+    /// the same (`crate::incr`'s check of the reads at `\document`'s start).
+    pub size: Option<u64>,
+    /// How many files the run had opened for output (`opens_len`) when
+    /// this read opened the file: a later read of a file the old run opened
+    /// for output again after a convergence point reads what the old run
+    /// wrote from the state there (`crate::incr`'s `written_read`).
+    pub opens: usize,
 }
 
 /// Whether `path` is one of the user's files rather than the TeX
@@ -4211,7 +4637,7 @@ pub fn is_user_file(path: &str) -> bool {
     if !path.starts_with('/') {
         return true;
     }
-    std::env::current_dir()
+    crate::os::cwd()
         .ok()
         .is_some_and(|d| std::path::Path::new(path).starts_with(d))
 }
@@ -4233,13 +4659,21 @@ pub struct Lookup {
 /// capture (a shell command, a pipe, a font made by mktex).
 #[derive(Clone, Debug, Default)]
 pub struct ReadLog {
-    pub files: Vec<FileRead>,
-    pub lookups: Vec<Lookup>,
+    /// (The files and lookups are shared between a log and its clones
+    /// until one changes them, as `seen` is below: a journal is cloned at
+    /// every pass and restore, and a clone of thousands of entries was a
+    /// quarter of the host's work before a beamer keystroke's restore, lane
+    /// T7-MARGIN. `files_mut`, `lookups_mut` change them.)
+    pub files: std::sync::Arc<Vec<FileRead>>,
+    pub lookups: std::sync::Arc<Vec<Lookup>>,
     pub barriers: Vec<String>,
     /// Files opened for output, in order (a file the preamble writes and
     /// closes is part of what S₀ stands for).
     pub outputs: Vec<String>,
-    seen: std::collections::HashSet<String>,
+    /// (This and the two maps below are shared between a log and its
+    /// clones until one changes them: a journal is cloned several times a
+    /// compile, and a beamer preamble's listings hold thousands of names.)
+    seen: std::sync::Arc<std::collections::HashSet<String>>,
     /// Keep the content of the user's files read (`FileRead::content`).
     pub keep_content: bool,
     /// The directories lookups depended on, each with its stat signature
@@ -4247,25 +4681,37 @@ pub struct ReadLog {
     /// ([`dep_sig`]: [`DEP_UNKNOWN`], [`DEP_READABLE`]).
     pub dirs: Vec<(String, StatSig)>,
     /// The directories `note_lookup_dirs` listed, each once a run: their
-    /// entries' names, lower-cased and sorted (`None`: not listable).
-    listings: std::collections::HashMap<String, Option<Vec<String>>>,
+    /// entries' names, lower-cased (`lookupproof::folded_listing`) and
+    /// sorted (`None`: not listable).
+    listings: std::sync::Arc<std::collections::HashMap<String, Option<Vec<String>>>>,
+    /// Where `note_dep` put each entry of `dirs` (a hint: `dirs` is public
+    /// and may have been replaced since, so a position is used only where
+    /// it still holds the entry; an entry it does not know is added again,
+    /// which only makes the check stricter).
+    dir_at: std::sync::Arc<std::collections::HashMap<String, usize>>,
 }
 
 impl ReadLog {
-    /// `dir`'s entries, lower-cased and sorted, listed once.
+    /// `dir`'s entries, lower-cased (case-folded: `lookupproof::fold`) and
+    /// sorted, listed once (a directory listed under the same signature
+    /// before, by this run or an earlier one, is not listed again:
+    /// `lookupproof::folded_listing`).
     fn listing(&mut self, dir: &str) -> Option<&Vec<String>> {
-        self.listings
-            .entry(dir.to_string())
-            .or_insert_with(|| {
-                let mut v: Vec<String> = std::fs::read_dir(dir)
-                    .ok()?
-                    .map(|e| e.map(|e| e.file_name().to_string_lossy().to_ascii_lowercase()))
-                    .collect::<Result<_, _>>()
-                    .ok()?;
-                v.sort();
-                Some(v)
-            })
-            .as_ref()
+        if !self.listings.contains_key(dir) {
+            let l = crate::lookupproof::folded_listing(dir);
+            std::sync::Arc::make_mut(&mut self.listings).insert(dir.to_string(), l);
+        }
+        self.listings.get(dir)?.as_ref()
+    }
+
+    /// The files, to change (copied first if a clone shares them).
+    pub fn files_mut(&mut self) -> &mut Vec<FileRead> {
+        std::sync::Arc::make_mut(&mut self.files)
+    }
+
+    /// The lookups, to change (copied first if a clone shares them).
+    pub fn lookups_mut(&mut self) -> &mut Vec<Lookup> {
+        std::sync::Arc::make_mut(&mut self.lookups)
     }
 
     /// A log that keeps the content of the user's files it notes.
@@ -4290,7 +4736,7 @@ impl ReadLog {
     /// Mark `path` as already noted (a journal carried over from an earlier
     /// run segment, `crate::incr`).
     pub fn mark_seen(&mut self, path: &str) {
-        self.seen.insert(path.to_string());
+        std::sync::Arc::make_mut(&mut self.seen).insert(path.to_string());
     }
 }
 
@@ -4349,40 +4795,21 @@ fn recording_reads() -> bool {
     READS.with(|r| r.borrow().is_some())
 }
 
-/// An entry of [`ReadLog::dirs`] (`host::Key::dirs`) for a lookup whose
-/// dependencies are not known (`FileResolver::lookup_dirs`, #1562): it has
-/// no signature, so it never equals the one recorded, and the lookups are
-/// made again at every check.
-pub const DEP_UNKNOWN: &str = "\0lookup dependencies not known";
-
-/// The prefix of an entry of [`ReadLog::dirs`] for a lookup's answer found
-/// on disk, which must stay a readable file (kpathsea's
-/// `kpathsea_readable_file`): a file made unreadable keeps its directory's
-/// listing (#1562). Its "signature" says whether it is readable.
-const DEP_READABLE: &str = "\0readable\0";
-
-/// The signature of an entry of [`ReadLog::dirs`]: a directory's
-/// `StatSig`; for [`DEP_READABLE`], whether the file is readable; for
-/// [`DEP_UNKNOWN`], none.
-pub fn dep_sig(entry: &str) -> Option<StatSig> {
-    if let Some(p) = entry.strip_prefix(DEP_READABLE) {
-        // (kpathsea's READABLE: `access(R_OK)`, and not a directory)
-        let ok = std::fs::metadata(p).is_ok_and(|m| !m.is_dir()) && File::open(p).is_ok();
-        return Some(StatSig {
-            len: ok as u64,
-            ..StatSig::default()
-        });
-    }
-    if entry.starts_with('\0') {
-        return None;
-    }
-    StatSig::of(entry)
-}
+use flashtex_runtime::lookupproof::DEP_READABLE;
+pub use flashtex_runtime::lookupproof::{dep_sig, DEP_UNKNOWN};
 
 /// `entry` among `log.dirs`, signed now if it is new.
 fn note_dep(log: &mut ReadLog, entry: &str) {
-    if !log.dirs.iter().any(|(x, _)| x == entry) {
+    // (a TFM lookup depends on every directory of a `//` subtree, 60 with
+    // mktextfm's `TEXMFVAR`: a scan of `dirs` for each was quadratic)
+    let known = log
+        .dir_at
+        .get(entry)
+        .is_some_and(|&i| log.dirs.get(i).is_some_and(|(x, _)| x == entry));
+    if !known && !log.dirs.iter().any(|(x, _)| x == entry) {
         let sig = dep_sig(entry).unwrap_or_default();
+        let at = log.dirs.len();
+        std::sync::Arc::make_mut(&mut log.dir_at).insert(entry.to_string(), at);
         log.dirs.push((entry.to_string(), sig));
     }
 }
@@ -4422,7 +4849,11 @@ fn note_lookup_dirs(
     for dir in &d.listed {
         // (signed before it is listed: a change after that is a change)
         note_dep(log, dir);
-        let here = found_dir.is_some_and(|f| Path::new(dir).components().eq(f.components()));
+        // (the last component first: a TFM lookup lists 60 directories)
+        let here = found_dir.is_some_and(|f| {
+            Path::new(dir).file_name() == f.file_name()
+                && Path::new(dir).components().eq(f.components())
+        });
         in_listed |= here;
         if passed_over {
             continue;
@@ -4475,7 +4906,7 @@ fn note_lookup(
             // its first occurrence (#1502: `\pdffilesize` early, the same
             // file tested pages later). Other read-sets keep the first.
             if log.keep_content || !log.lookups.contains(&l) {
-                log.lookups.push(l);
+                log.lookups_mut().push(l);
             }
             // The directory whose listing decides this lookup, as it was
             // the first time one depended on it (`host::Key::dirs`): the
@@ -4536,24 +4967,42 @@ fn note_lookup(
     }
 }
 
-fn note_file(path: &str) {
+/// The run opened `path` for reading: the read journal's entry (its
+/// content's hash and stat signature when it was opened). The engines' own
+/// file opens call it (the Unicode engine's, `crates/flashtex-xetex`, for
+/// what it finds without the resolver); a lookup that finds a file notes it.
+pub fn note_file(path: &str) {
+    crate::os::io_time(crate::os::io::NOTE, || note_file_timed(path))
+}
+
+fn note_file_timed(path: &str) {
     note_ahead_read(path);
     READS.with(|r| {
         let mut b = r.borrow_mut();
         let Some(log) = b.as_mut() else { return };
-        if !log.seen.insert(path.to_string()) {
+        if log.seen.contains(path) {
             // Read again (a `.toc` at every \tableofcontents, a file \input
             // twice): an incremental journal lists every read, since a run
             // that converges keeps the old run's later reads (`crate::incr`
             // must know that the old future reads a file that changed).
             if log.keep_content {
-                if let Some(first) = log.files.iter().find(|f| f.path == path).cloned() {
-                    log.files.push(first);
+                if let Some(mut again) = log.files.iter().find(|f| f.path == path).cloned() {
+                    // (what it holds now, for a file the run wrote)
+                    again.seen = written_by(log, path).then(|| content_hash(path)).flatten();
+                    again.opens = opens_len();
+                    log.files_mut().push(again);
                 }
             }
             return;
         }
-        let stat = StatSig::of(path).unwrap_or_default();
+        std::sync::Arc::make_mut(&mut log.seen).insert(path.to_string());
+        // (one `stat` for the signature, the hash's identity and the open
+        // that follows: `LAST_STAT`)
+        let meta = crate::os::metadata_and_change_time(path);
+        let stat = meta
+            .as_ref()
+            .map(|(m, c)| StatSig::of_metadata(m, *c, racy_ns()))
+            .unwrap_or_default();
         // A file whose bytes are kept is read whole; any other (the format,
         // the font map, TeX Live's files) only hashed, through a buffer.
         let (hash, content) = if log.keep_content && is_user_file(path) {
@@ -4564,19 +5013,39 @@ fn note_file(path: &str) {
                 .unwrap_or([0, 0]);
             (hash, data.map(std::sync::Arc::new))
         } else {
-            (hash_logical(path).unwrap_or([0, 0]), None)
+            let m = meta.as_ref().map(|(m, _)| m);
+            (hash_logical_from(path, m).unwrap_or([0, 0]), None)
         };
-        let norm = |p: &str| p.strip_prefix("./").unwrap_or(p).to_string();
-        let written_before = log.outputs.iter().any(|o| norm(o) == norm(path));
-        log.files.push(FileRead {
+        if let Some((m, _)) = meta {
+            LAST_STAT.with(|l| *l.borrow_mut() = Some((path.to_string(), m)));
+        }
+        let written_before = written_by(log, path);
+        log.files_mut().push(FileRead {
             path: path.to_string(),
             hash,
             stat,
             content,
             closed_at: None,
             written_before,
+            seen: written_before.then(|| content_hash(path)).flatten(),
+            stamp: None,
+            size: None,
+            opens: opens_len(),
         });
     })
+}
+
+/// The hash of `path`'s logical content now (`FileRead::seen`): read
+/// whole, never from `crate::hashcache` (a file the run writes, rewritten
+/// within one stat signature).
+pub fn content_hash(path: &str) -> Option<[u64; 2]> {
+    read_logical(path).ok().map(|d| crate::persist::hash128(&d))
+}
+
+/// Whether the run `log` records had opened `path` for output.
+fn written_by(log: &ReadLog, path: &str) -> bool {
+    let norm = |p: &str| p.strip_prefix("./").unwrap_or(p).to_string();
+    log.outputs.iter().any(|o| norm(o) == norm(path))
 }
 
 /// A user's input file closed after its first `consumed` bytes were read
@@ -4593,7 +5062,8 @@ fn note_close(path: &str, consumed: u64) {
         };
         let mut e = first.clone();
         e.closed_at = Some(consumed);
-        log.files.push(e);
+        e.seen = None;
+        log.files_mut().push(e);
     })
 }
 
@@ -4616,11 +5086,95 @@ pub fn note_whole_read(path: &str) {
         };
         let mut e = first.clone();
         e.closed_at = Some(u64::MAX);
-        log.files.push(e);
+        e.seen = None;
+        e.stamp = None;
+        e.size = None;
+        log.files_mut().push(e);
     })
 }
 
-fn note_output(path: &str) {
+/// `\pdffilesize` of `path` (texmfmp.c's `getfilesize`): the result is a
+/// function of the content, so for the incremental journal it is a read of
+/// the whole file (`note_whole_read`), not only the lookup that found it
+/// (a letter added to the main file changed `\pdffilesize{\jobname.tex}`,
+/// and a restart after the read kept the old size).
+pub fn note_size_read(path: &str) {
+    note_whole_read(path);
+    let len = std::fs::metadata(path).ok().map(|m| m.len());
+    READS.with(|r| {
+        let mut b = r.borrow_mut();
+        let Some(log) = b.as_mut() else { return };
+        if let Some(e) = log
+            .files_mut()
+            .iter_mut()
+            .rev()
+            .find(|f| f.path == path && f.closed_at == Some(u64::MAX))
+        {
+            e.size = len;
+        }
+    })
+}
+
+/// Whether `path` is one of the engine's own outputs: written by a compile
+/// of this process (`STAMPS`), or opened for output by this run so far
+/// (its `.aux`, `.toc`): what the run reads of one changes with every pass.
+pub fn is_own_output(path: &str) -> bool {
+    let k = out_key(path);
+    STAMPS.with(|m| m.borrow().contains_key(&k))
+        || READS.with(|r| {
+            r.borrow()
+                .as_ref()
+                .is_some_and(|l| l.outputs.iter().any(|o| out_key(o) == k))
+        })
+}
+
+/// Whole reads of `path` the run's journal holds (`note_whole_read`'s
+/// entries; 0 when it keeps none). The journal is cut back with every
+/// restore, so the count is the run's own at this point.
+pub fn whole_reads_of(path: &str) -> usize {
+    READS.with(|r| {
+        r.borrow().as_ref().map_or(0, |log| {
+            log.files
+                .iter()
+                .filter(|f| f.path == path && f.closed_at == Some(u64::MAX))
+                .count()
+        })
+    })
+}
+
+/// `\pdffilemoddate` of `path` (texmfmp.c's `getfilemoddate`): a read of
+/// the whole file (its content changing changes nothing, but a run from the
+/// start reads the time again), and of its modification time in seconds,
+/// `mtime` (`FileRead::stamp`): the time changing alone changes the read.
+pub fn note_stamp(path: &str, mtime: i64) {
+    note_whole_read(path);
+    READS.with(|r| {
+        let mut b = r.borrow_mut();
+        let Some(log) = b.as_mut() else { return };
+        if let Some(e) = log
+            .files_mut()
+            .iter_mut()
+            .rev()
+            .find(|f| f.path == path && f.closed_at == Some(u64::MAX))
+        {
+            e.stamp = Some(mtime);
+        }
+    })
+}
+
+/// A file's modification time in whole seconds, as `\pdffilemoddate` reads
+/// it (`FileRead::stamp`).
+pub fn mtime_secs(path: &str) -> Option<i64> {
+    std::fs::metadata(path)
+        .ok()?
+        .modified()
+        .ok()
+        .and_then(|m| m.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|d| d.as_secs() as i64)
+}
+
+/// The run opened `path` for output (the read journal's `outputs`).
+pub fn note_output(path: &str) {
     READS.with(|r| {
         if let Some(log) = r.borrow_mut().as_mut() {
             if !log.outputs.iter().any(|p| p == path) {
@@ -4653,6 +5207,15 @@ pub fn lookup_again_deps(l: &Lookup) -> (Option<String>, Vec<(String, StatSig)>)
             found.as_deref().map(Path::new),
         )
     });
+    let od = output_directory();
+    crate::lookupproof::note(
+        &l.name,
+        l.format,
+        l.must_exist,
+        found.as_deref(),
+        &deps,
+        od.as_deref(),
+    );
     let mut log = ReadLog::default();
     note_lookup_dirs(&mut log, &l.name, deps, found.as_deref());
     (found, log.dirs)
@@ -4750,20 +5313,7 @@ fn in_offset<R: std::io::Seek>(r: &mut R, path: &Option<String>) -> Result<(Stri
     Ok((p, off))
 }
 
-/// Debugging (`FLASHTEX_FILE_TRACE=FILE`): append one line per change the
-/// checkpoint layer makes to an output file.
-pub fn file_trace(msg: impl FnOnce() -> String) {
-    static T: std::sync::OnceLock<Option<String>> = std::sync::OnceLock::new();
-    if let Some(p) = T.get_or_init(|| std::env::var("FLASHTEX_FILE_TRACE").ok()) {
-        if let Ok(mut f) = std::fs::OpenOptions::new()
-            .append(true)
-            .create(true)
-            .open(p)
-        {
-            let _ = writeln!(f, "{}", msg());
-        }
-    }
-}
+pub use flashtex_runtime::trace::file_trace;
 
 /// The length of `path` on disk now (`None`: no such file).
 pub fn disk_len(path: &str) -> Option<u64> {
@@ -5000,7 +5550,9 @@ impl ByteFile {
         match &s.stream {
             Stream::None => {}
             Stream::In { path, offset } => {
-                f.input = Some(reopen_in(path, *offset)?);
+                f.input = Some(BufReader::new(InFile::Disk(
+                    reopen_in(path, *offset)?.into_inner(),
+                )));
                 f.path = Some(path.clone());
             }
             Stream::Out { path, len, at } => {
@@ -5280,9 +5832,12 @@ mod confined_read_tests {
 mod statsig_tests {
     use super::*;
 
-    /// A signature taken within the modification-time granularity of the
-    /// file's time equals none, not even itself; an older one equals its
-    /// twin and not a file changed since.
+    /// A signature taken within the time granularity of the file's
+    /// modification or change time equals none, not even itself; an older
+    /// one equals its twin. (Putting the modification time back moves the
+    /// change time, so that signature is racy until the change time is old
+    /// too; flashtex-runtime's `statsig` tests cover the window on each
+    /// time, a time far ahead, and a rewrite with the time put back.)
     #[test]
     fn racy_signatures_equal_nothing() {
         let d = std::env::temp_dir().join(format!("flashtex-statsig-{}", std::process::id()));
@@ -5302,25 +5857,10 @@ mod statsig_tests {
             .set_modified(old)
             .unwrap();
         let a = StatSig::of(p).unwrap();
-        let b = StatSig::of(p).unwrap();
+        assert!(a.racy || a.ctime_ns == 0, "the change time has just moved");
+        let a = StatSig::of_within(p, 0).unwrap();
+        let b = StatSig::of_within(p, 0).unwrap();
         assert!(!a.racy && a == b);
-        // a time within the tick ahead is racy too; one far ahead is not
-        let soon = std::time::SystemTime::now() + std::time::Duration::from_millis(500);
-        std::fs::File::options()
-            .write(true)
-            .open(&f)
-            .unwrap()
-            .set_modified(soon)
-            .unwrap();
-        assert!(StatSig::of(p).unwrap().racy);
-        let far = std::time::SystemTime::now() + std::time::Duration::from_secs(3600);
-        std::fs::File::options()
-            .write(true)
-            .open(&f)
-            .unwrap()
-            .set_modified(far)
-            .unwrap();
-        assert!(!StatSig::of(p).unwrap().racy);
         let _ = std::fs::remove_dir_all(&d);
     }
 }

@@ -98,7 +98,7 @@ the engine and how it shares one runtime and one engine interface with the pdfTe
   `.tec` files (`tex-text.tec` comes from the bundle or TeX Live); ICU for
   encodings, normalisation and line breaking is pinned the same way, at the
   version TeX Live 2026 builds with.
-- **Vendored (S1):** [`third_party/harfbuzz`](../../../third_party/harfbuzz/README.md) and [`third_party/freetype`](../../../third_party/freetype/README.md), built by `crates/flashtex-xetex/fontlibs`, and [`third_party/teckit`](../../../third_party/teckit/README.md) (TECkit 2.5.13's engine, used under its LGPL-2.1-or-later option, with TeX Live's zlib), built by `crates/flashtex-xetex/teckit`; all pinned by `crates/flashtex-xetex/tests/pinned_libs.rs`. A TFM font's `:mapping=` goes through tex.ch's ML\TeX `effective_char` as in TeX Live (`changes/mltex.ch`).
+- **Vendored (S1):** [`third_party/harfbuzz`](../../../third_party/harfbuzz/README.md) and [`third_party/freetype`](../../../third_party/freetype/README.md), built by `crates/flashtex-xetex/fontlibs`, and [`third_party/teckit`](../../../third_party/teckit/README.md) (TECkit 2.5.13's engine, used under its LGPL-2.1-or-later option, with TeX Live's zlib), built by `crates/flashtex-xetex/teckit`; and [`third_party/icu`](../../../third_party/icu/README.md) (ICU 78.2's bidi sources, not built: `crates/flashtex-xetex/src/native/ubidi` ports them, for the direction runs of `measure_native_node`); all pinned by `crates/flashtex-xetex/tests/pinned_libs.rs`. A TFM font's `:mapping=` goes through tex.ch's ML\TeX `effective_char` as in TeX Live (`changes/mltex.ch`).
 - **Font lookup, platform-free.** XeTeX asks Core Text (macOS) or fontconfig
   (elsewhere) for the installed fonts; FlashTeX does not. A name is resolved
   by XeTeX's own matching rules, rewritten, over a platform-free index of the
@@ -213,6 +213,21 @@ shared runtime library crate; neither is `xetex` or xdvipdfmx.
   dependencies, `tex-text.tec` and the other TECkit mappings, and the OpenType
   fonts the defaults name (Latin Modern and Latin Modern Math, TeX Gyre). Its
   manifest gets a Unicode-mode section checked by the S3 no-TeX-Live gate.
+- **The bundle's fonts by name, with no TeX Live (owner direction, #1783;
+  a deliberate difference from macOS xelatex).** In bundle mode,
+  `\setmainfont{TeX Gyre Pagella}` finds the bundle's OpenType and TrueType
+  fonts by family, style and full name, as xelatex finds TeX Live's fonts
+  on Linux and Windows through fontconfig; macOS xelatex's Core Text search
+  does not see TeX Live's trees, so there the same document sets nothing.
+  `texbundle.py pack --font-index-tool` has `flashtex-host-unicode
+  --bundle-font-index` write the names of every face it packs
+  (`fontmgr::catalog::write_bundle_font_index`, the names the catalog reads
+  from the files) to `texmf-var/fonts/misc/flashtex/flashtex-xetex-fonts.json`,
+  FlashTeX's own generated file in the core range. The engine appends those
+  faces after the installed ones (`bundle_faces`), so an installed font of the
+  same name wins, and fetches a face's file when a lookup selects its
+  family. With a TeX Live the bundle is not used and lookups are unchanged
+  (macOS xelatex's behaviour).
 
 ### 3.5 Parity targets
 
@@ -442,8 +457,8 @@ writer.
 plus that supplement, with no new dependency: native fonts as
 `Type0`/`Identity-H` with CID = glyph id (CFF: a CID-keyed subset,
 TrueType: glyph ids kept in place), TFM fonts as Type 1 subsets, by the
-MIT subsetters of `crates/pdf`; `ToUnicode` from the `cmap`, `GSUB`
-ligatures and substitutions and the `MATH` variants; PNG `IDAT` copied with
+MIT subsetters of `crates/pdf`; `ToUnicode` as xdvipdfmx writes it (see
+below); PNG `IDAT` copied with
 its colour space (`iCCP`, `sRGB`, `gAMA`/`cHRM` as dvipdfmx writes them),
 JPEG passed through with its ICC profile, PDF pages as forms; links,
 destinations, outline, document information and catalog entries; streams
@@ -485,19 +500,99 @@ a warning; CID-keyed CFF fonts (CJK) are drawn by CID, subset by FlashTeX's
 own CID-keyed subsetter (`src/out/cffcid.rs`: glyphs renumbered with their
 CIDs, unreached subroutines emptied in place) with the font's `ROS` as
 `CIDSystemInfo`, as xdvipdfmx writes them (a whole font, if one cannot be
-subset, has no subset tag); `/Flags` and `/StemV` come from the face. A glyph
-several code points reach reads as the highest, as xdvipdfmx's inverted
-`cmap` does (measured): 日 is U+65E5, not the Kangxi radical U+2F47.
+subset, has no subset tag); `/Flags` and `/StemV` come from the face.
 Verified: plain-XeTeX HaranoAji Mincho and Gothic against `xetex`: 46/46
-glyphs matched, 322 px at 2×; xdvipdfmx writes no `ToUnicode` for these
-fonts (viewers read the Adobe-Japan1 ordering), FlashTeX writes one.
+glyphs matched, 322 px at 2×.
+
+**`ToUnicode` (lane M3-EXPORT, 2026-10-12)** is a port of xdvipdfmx's
+(`src/out/tounicode.rs`, `src/out/agl.rs`; `type0.c`, `tt_cmap.c`,
+`tt_gsub.c`, `agl.c`, `pdfencoding.c` of TeX Live 2026). A font of a standard
+Adobe collection (Adobe-GB1, -CNS1, -Japan1, -Korea1: Fandol, HaranoAji) has
+none, as xdvipdfmx writes none (viewers read the collection); until this
+lane FlashTeX wrote one. Any other native font's text comes from, in turn:
+its `cmap` read backwards (the highest code point; private-use,
+presentation-form, CJK-compatibility and Kangxi-radical code points only as
+a fallback, so 日 is U+65E5, not U+2F47); the single, alternate and ligature
+substitutions of the `GSUB` lookups some feature lists (not those only a
+contextual lookup reaches: Amiri's positional forms have no text in
+xdvipdfmx's PDF either); the glyph's name (`post`, or a name-keyed CFF
+charset) through the Adobe Glyph List, which xdvipdfmx loads from
+`texglyphlist.txt`, `pdfglyphlist.txt` and `glyphlist.txt` (so `parenleft.v1`
+reads `(`; the `MATH` variants are no longer used); then the fallback code
+points. A Type 1 (TFM) font's text is its encoding's names through the same
+list (`visiblespace` is U+2423), and it has no `ToUnicode` when a used name
+has none. Measured before the port, by a prototype of the same algorithm
+against xelatex's PDFs of the 49-case corpus: 243 of 248 native fonts and
+33 of 33 Type 1 fonts equal; the other 5 were math fonts whose local copies
+were another version than the CI image's. The no-TeX-Live bundle does not
+ship TeX Live's `glyphlist` package, so there the name step finds nothing,
+as xdvipdfmx without those files.
+
+## 4C. Phase S3, stage 1 (2026-10-09): `flashtex-host-unicode`, cold
+
+Lane XETEX-S3. **Ordering (lane decision, for review):** §3.3 moves the
+shared runtime out of `crates/flashtex-engine` first. The Commander's
+instruction for this stage is that Classic stays untouched, so stage 1
+builds the Unicode host **beside** Classic's, in this crate, over the
+pdfTeX engine's public interface only (`flashtex-engine` gains nothing,
+changes nothing). The runtime extraction, the engine trait and the
+resident, incremental engine for Unicode (§5 of DESIGN.md) are the next
+stages; they change Classic's code under its gates and need that go-ahead.
+
+- `flashtex-host-unicode --socket PATH` (`src/host`) speaks
+  `display-list-v3` (§6 of the protocol) as `flashtex-host` does: `HELLO`
+  (capabilities `compile`, `cancel`, `diagnostics`, `font-programs`,
+  `font-formats`, `have-fonts`, `export`, `external-tools`,
+  `halt-on-error`, `buffers`, `edits`), `COMPILE` (buffers and edits applied
+  first; a newer one supersedes the running one), `CANCEL`, `BYE`. Each
+  compile runs the engine in full as a child of the host invoked as
+  `xelatex`, its pages streamed through a socket of its own; `.aux`-type
+  changes give further passes (latexmk's rule, up to 5), each pass's
+  pages replacing the previous; bibtex, biber and makeindex then run as
+  latexmk would (`external_tools: auto`), with follow-up compiles; 3.3
+  items a client did not accept are left out and the page flagged
+  INCOMPLETE. `DONE` says `mode: cold`.
+- Formats are FlashTeX's own: `xelatex.fmt` built by the engine as
+  fmtutil does (`-ini -etex xelatex.ini`), cached under the engine build
+  and validated against everything the INITEX run read and looked up.
+- **Verified** (mac-m1max-a, TeX Live 2026): `flashtex-v3 build` with
+  `FLASHTEX_HOST=flashtex-host-unicode` builds all 15 cases of
+  `tools/xetex-pdfparity` (l001–l010, d01–d05) in 1.0–2.3 s each, and the
+  PDFs equal `xelatex`'s structurally as the #1708 gate's baseline does
+  (every glyph matched; the known `ToUnicode` differences). Format cache:
+  12 s to build, 87 ms to validate on a hit. `tests/host.rs` (two passes,
+  OpenType fonts on the wire, an edit and its diagnostic, export, cancel).
+  Release binary 6.3 MB (Classic's `flashtex-host` unchanged, not linked).
+
+**`[fonts]` (stage 1b, modes PROPOSAL.md §4.5).** `src/host/fonts.rs`
+turns the manifest's roles into hook code on the engine's first line
+(`\AddToHook{class/after}` loads `fontspec` and sets text/sans/mono;
+`\AddToHook{begindocument/before}` loads `unicode-math` and sets the math
+font only when the document has not loaded `unicode-math`), each role an
+`info` diagnostic and a log line; a name with a TeX special character is
+refused with a warning. The oracle is `xelatex` on that same first line.
+**Verified** (mac-m1max-a): three documents with `[fonts]` = Times New
+Roman / Arial / Courier New / STIX Two Math against `xelatex` on the same
+line: 0 structural differences, 65/65 glyphs, max 0.023 bp; the
+document's `\setmainfont{Georgia}` wins over the role, and a document
+that loads `unicode-math` keeps Latin Modern Math. `tests/host.rs` covers
+the role, the info line, the refused name and the document's precedence.
+
+**Cold path (lane XETEX-FAST, 2026-10-10).** Hot spares (`src/host/spare.rs`):
+the host keeps the next run of a document's command started and stopped
+just after the format is loaded, and lets it go at the next compile if
+nothing it read has changed; the font map is indexed instead of parsed;
+children run without the resolver's memo. Output byte-identical with and
+without spares (PDF, log, display list). What remains slow, and the plan for
+the incremental Unicode host after R2: `INCREMENTAL.md`.
 
 ## 5. Risks carried into S1–S3
 
 | risk | mitigation |
 |---|---|
 | Glyph metrics through FreeType (heights, depths, italic corrections, bounding boxes) | Rewrite `XeTeXFontInst.cpp`/`XeTeXLayoutInterface.cpp`'s metrics against the vendored FreeType; compare every `\XeTeXglyphbounds`, `\fontcharht` etc. with xetex in lockstep cases |
-| Shaping version lock: shaped output depends on HarfBuzz's exact version (and line breaking on ICU's) | Vendor HarfBuzz 12.3.2, FreeType 2.14.1 and TeX Live 2026's ICU as TeX Live builds them (sha256 in `third_party/<lib>/README.md`); a test pins the versions; an upgrade is a lane of its own with a lockstep run against the matching TeX Live |
+| Shaping version lock: shaped output depends on HarfBuzz's exact version (and line breaking on ICU's) | Vendor HarfBuzz 12.3.2, FreeType 2.14.1 and TeX Live 2026's ICU as TeX Live builds them (sha256 in `third_party/<lib>/README.md`); a test pins the versions; an upgrade is a lane of its own with a lockstep run against the matching TeX Live | (ICU: see the next row)
+| ICU deviation (lane M3-PANIC, #1816, accepted by the Commander 2026-10-12): ICU's code is **not** vendored, only TeX Live 2026's compiled line-break tables (`third_party/icu`: `line*.brk` from `libs/icu`'s ICU 78.2 data, sha256-pinned by `tests/pinned_libs.rs`), run by a Rust port of ICU's `RuleBasedBreakIterator` (`handleNext`, the forward break and dictionary caches, `UCPTrie`) in `src/native/linebreak.rs`. ICU's dictionary engines (dictbe.cpp) are **not ported**: Thai, Lao, Khmer and Myanmar runs are cut by ICU4X's dictionary segmenter (`icu_segmenter` =2.1.2, dictionaries exported from ICU 78, no LSTM, like TeX Live's data), with ICU's minimum run lengths and the Thai engine's MAI YAMOK rule; other SA scripts get no breaks (ICU's `UnhandledEngine`). Bidi (`ubidi`) is the RTL lane's, not this one's | **Evidence** (run 38208911857): 287 of 287 words cut as TeX Live's xetex cuts them (`linebreak_xetex.tsv`, written by `tools/xetex-linebreak/probe.py`: 47 chosen over root, zh, zh_TW, ja, ko, `lb=`, Thai, Lao, Khmer, Myanmar, Tibetan, Hebrew, Arabic, Devanagari, emoji and format characters, plus 240 random words over ten locales); lockstep case `n023-linebreak-locale` equal (P-T1 + XDV). ICU4X's own line rules were rejected: they differed on 4 of 37 words. **Known risk:** Thai, Lao, Khmer and Myanmar break by ICU4X's dictionary algorithm, not ICU's (only 13 such words are measured; one difference, MAI YAMOK, was found and patched), so text in those scripts under `\XeTeXlinebreaklocale` may break differently from xelatex. Closing it is a port of dictbe.cpp's four engines over ICU's own `.dict` files, in a lane of its own |
 | C pointers in `mem` | Handles (S0's model): the runtime owns the glyph arrays; `copy_native_glyph_info`/`free_native_glyph_info` map to copy/free of a handle; checkpoints (DESIGN.md §5.2) snapshot the handle tables with the word space (§4.7) |
 | XDV for native fonts (`define_native_font`, glyph arrays, `set_text_and_glyphs`) | `make_font_def` and `make_xdv_glyph_array_data` rewritten from XeTeX_ext.c, compared byte for byte with the path normalised |
 | Font lookup by name without Core Text or fontconfig picks another face than `xelatex` | XeTeX's matching rules rewritten over the platform-free index (§3.1); P-T1 cases use fonts by file name first; name lookups are measured against `xelatex` on a named set of macOS and TeX Live fonts, and every difference is reported with the two candidate faces |

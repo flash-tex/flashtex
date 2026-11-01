@@ -7,7 +7,7 @@ import HostedWindows
 /// The inline math hover preview under the engine-v3 preview (DESIGN §10
 /// app parity, gap C24): as on the v2 pane, hovering a formula shows its
 /// crop from the page bitmap on screen (padded by
-/// `MathHoverPreview.padding`), and nothing while the preview is older than
+/// `MathPreviewView.cropPadding`), and nothing while the preview is older than
 /// the editor text. Needs a built `flashtex-host` and TeX Live (skipped
 /// otherwise).
 @MainActor
@@ -69,11 +69,24 @@ final class EngineV3MathHoverTests: XCTestCase {
         XCTAssertGreaterThan(box.width, 40, "a^2+b^2=c^2 is about 50 pt wide: \(box)")
 
         // The hover image: the padded box at the bitmap's scale, with ink in it.
-        let image = try XCTUnwrap(s.mathPreviewImage(span: formula))
-        let page0 = try XCTUnwrap(pages.installedImage(0))
-        let ppp = Double(page0.width) / Double(try XCTUnwrap(s.pageSize(0)).width)
-        XCTAssertEqual(Double(image.width), (box.width + 2 * MathHoverPreview.padding) * ppp, accuracy: 2)
-        XCTAssertEqual(Double(image.height), (box.height + 2 * MathHoverPreview.padding) * ppp, accuracy: 2)
+        // The raster queue and the socket's reader install page bitmaps from
+        // their own threads (EngineV3LayerTarget), so a redraw at another
+        // scale (the window reaching its backing scale) can land between the
+        // crop and a later read of the page bitmap: CI run 39645358253 saw a
+        // 2x crop against a 1x read. The scale to compare with is the one the
+        // crop used: a bitmap of the same width read just before and just after it.
+        let pageWidth = Double(try XCTUnwrap(s.pageSize(0)).width)
+        var crop: CGImage?, ppp = 0.0
+        try await waitUntil("a crop between two reads of one bitmap scale") {
+            guard let before = pages.installedImage(0), let c = s.mathPreviewImage(span: formula),
+                  let after = pages.installedImage(0), before.width == after.width else { return false }
+            crop = c
+            ppp = Double(after.width) / pageWidth
+            return true
+        }
+        let image = try XCTUnwrap(crop)
+        XCTAssertEqual(Double(image.width), (box.width + 2 * MathPreviewView.cropPadding) * ppp, accuracy: 2)
+        XCTAssertEqual(Double(image.height), (box.height + 2 * MathPreviewView.cropPadding) * ppp, accuracy: 2)
         XCTAssertTrue(Self.hasInk(image), "the crop shows the formula")
 
         // A bitmap that is not of the page's current content gives no crop:

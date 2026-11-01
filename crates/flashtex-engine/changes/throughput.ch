@@ -176,6 +176,22 @@
 % in either), and so is scaled_out. A dd outside 0..9 stops at ten_pow[dd]
 % in both: the original's loop has no effect before it gets there. The
 % errors (m = 0, m too big) are tested first in both.
+%
+% [8] search_string (tex.ch's string recycling, changes/filenames.ch): the
+% scan of the pool by a routine written by hand, src/strsearch.rs.
+%
+% end_name calls search_string for the area, name and extension of every
+% file name it scans, and its loop tests the length of every string below
+% the one searched for, tens of thousands in a LaTeX format: 13.6 M
+% instructions per keystroke on full-10 letter@start (T7-CONV,
+% docs/evidence/t7-conv-2026-10-20/). flashtex_search_pool(search,len)
+% returns what the loop leaves in result: it tests s = search-1 down to
+% 256 in the same order and returns the first s with length(s)=len and
+% str_eq_str(s,search), else 0. It compares the lengths of 16 strings at
+% a time, with no early exit, and looks string by string only inside a
+% block where one has length len, newest first, so the strings compared
+% with str_eq_str are the loop's, in its order. Neither writes anything.
+% len=0 is still answered here (""); s, the loop's variable, goes.
 
 @x [24] m.363 l.8501 - get_next: the external-file part out of line.
 @p procedure get_next; {sets |cur_cmd|, |cur_chr|, |cur_cs| to next token}
@@ -513,4 +529,39 @@ var q, r, t: longinteger;
     t := t * ten_pow[dd];
     q := t div m;
     r := t mod m;
+@z
+
+@x [54] tex.ch's search_string: the scan by flashtex_search_pool [8]
+function search_string(@!search:str_number):str_number;
+label found;
+var result: str_number;
+@!s: str_number; {running index}
+@!len: integer; {length of searched string}
+begin result:=0; len:=length(search);
+if len=0 then  {trivial case}
+  begin result:=""; goto found;
+  end
+else  begin s:=search-1;  {start search with newest string below |s|; |search>1|!}
+  while s>255 do  {first 256 strings depend on implementation!!}
+    begin if length(s)=len then
+      if str_eq_str(s,search) then
+        begin result:=s; goto found;
+        end;
+    decr(s);
+    end;
+  end;
+found:search_string:=result;
+@y
+function flashtex_search_pool(@!search:str_number;@!len:integer):str_number;
+  external;
+function search_string(@!search:str_number):str_number;
+label found;
+var result: str_number;
+@!len: integer; {length of searched string}
+begin result:=0; len:=length(search);
+if len=0 then  {trivial case}
+  begin result:=""; goto found;
+  end
+else result:=flashtex_search_pool(search,len);
+found:search_string:=result;
 @z

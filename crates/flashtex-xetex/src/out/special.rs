@@ -11,7 +11,7 @@
 //! A special that is not understood is counted by its first word
 //! ([`Doc::unknown`]) and reported, never silently dropped.
 
-use super::doc::{Col, Named, Outline, Tracking};
+use super::doc::{Col, Named, Outline, Phantom, Tracking};
 use super::page::{fx, Builder, Metrics};
 use super::pdfobj::{Dict, Obj, Parser};
 use flashtex_display_list::page::{paint, Item, Path};
@@ -236,7 +236,9 @@ impl<M: Metrics> Builder<'_, M> {
                 Some(c) => self.background(c),
                 None => self.doc.diag(format!("bad colour in `{}'", lossy(t))),
             }
-        } else if t.starts_with(b"papersize=") || t.starts_with(b"dvipdfmx:config") {
+        } else if let Some(r) = t.strip_prefix(b"dvipdfmx:") {
+            self.dvipdfmx_special(r);
+        } else if t.starts_with(b"papersize=") {
             // read before the page (papersize) or configuration flags
         } else if t.starts_with(b"src:") {
             // source specials: no output
@@ -500,8 +502,11 @@ impl<M: Metrics> Builder<'_, M> {
                 }
             }
             b"stream" | b"fstream" => self.stream_special(&cmd, &mut p),
-            b"ann" | b"annotation" => self.ann(&mut p),
-            b"bann" | b"beginann" => {
+            b"ann" | b"annot" | b"annotate" | b"annotation" => self.ann(&mut p),
+            b"xann" => self.xann(&mut p),
+            b"link" => self.doc.nolink = false,
+            b"nolink" => self.doc.nolink = true,
+            b"bann" | b"bannot" | b"beginann" => {
                 let Some(Obj::Dict(d)) = p.object() else {
                     self.doc
                         .diag(format!("pdf:bann without a dictionary: `{}'", lossy(r)));
@@ -518,7 +523,7 @@ impl<M: Metrics> Builder<'_, M> {
                     rect: None,
                 });
             }
-            b"eann" | b"endann" => {
+            b"eann" | b"eannot" | b"endann" => {
                 self.break_annot();
                 self.doc.tracking = None;
             }
@@ -580,7 +585,7 @@ impl<M: Metrics> Builder<'_, M> {
                 let line = trim(p.rest()).to_vec();
                 self.doc.fonts.map_line(&line);
             }
-            b"tounicode" | b"mapfile" | b"encrypt" | b"nolink" | b"link" => {
+            b"tounicode" | b"mapfile" | b"encrypt" => {
                 self.doc.ignored_special(&format!("pdf:{}", lossy(&cmd)));
             }
             _ => self.doc.unknown_special(&format!("pdf:{}", lossy(&cmd))),
@@ -752,6 +757,82 @@ impl<M: Metrics> Builder<'_, M> {
             ],
         };
         self.add_link(d, r);
+    }
+
+    /// `pdf:xann width … height … depth …` (or `bbox …`): the box at the
+    /// current point widens the link being tracked, as for a `\phantom`
+    /// inside it (dvipdfmx's `spc_handler_pdfm_xann`). Outside a link it
+    /// is ignored silently, as dvipdfmx ignores it.
+    fn xann(&mut self, p: &mut Parser) {
+        if self.doc.tracking.is_none() || self.doc.nolink {
+            return;
+        }
+        let t = read_dims(p);
+        if t.bbox.is_some() && (t.width.is_some() || t.height.is_some() || t.depth.is_some()) {
+            self.doc
+                .diag("pdf:xann: You can't specify both bbox and width/height.".into());
+            return;
+        }
+        let (x, y) = self.stream_point_device();
+        let (x, y) = (x.to_f64(), y.to_f64());
+        let r = match t.bbox {
+            Some(b) => [x + b[0], y + b[1], x + b[2], y + b[3]],
+            None => [
+                x,
+                y - t.depth.unwrap_or(0.0),
+                x + t.width.unwrap_or(0.0),
+                y + t.height.unwrap_or(0.0),
+            ],
+        };
+        let r = [
+            r[0].min(r[2]),
+            r[1].min(r[3]),
+            r[0].max(r[2]),
+            r[1].max(r[3]),
+        ];
+        self.expand_annot(r);
+    }
+
+    /// `dvipdfmx:` specials (dvipdfmx's spc_dvipdfmx.c): `config`, read
+    /// before the run, and `catch_phantom`.
+    fn dvipdfmx_special(&mut self, r: &[u8]) {
+        let mut p = Parser::new(r);
+        match p.word() {
+            Some(b"config") => {}
+            Some(b"catch_phantom") => self.catch_phantom(&mut p),
+            _ => self.doc.unknown_special("dvipdfmx:"),
+        }
+    }
+
+    /// `dvipdfmx:catch_phantom true|false [height h] [depth d]`: whether a
+    /// move to the right inside a link widens it ([`Phantom`]). `true`
+    /// alone uses the current font's size; with a height or a depth, that
+    /// box (a depth alone has height 0). It stays in effect after the link.
+    fn catch_phantom(&mut self, p: &mut Parser) {
+        let on = if p.keyword(b"true") {
+            true
+        } else if p.keyword(b"false") {
+            false
+        } else {
+            self.doc
+                .diag("dvipdfmx:catch_phantom: a boolean value expected but not found".into());
+            return;
+        };
+        self.doc.phantom = if on { Phantom::FontSize } else { Phantom::Off };
+        if !on {
+            return;
+        }
+        let t = read_dims(p);
+        if t.height.is_some() || t.depth.is_some() {
+            // `phantom_height / dvi2pts` assigned to an `spt_t`: truncated
+            // to DVI units (dvi2pts from XeTeX's num/den, without mag).
+            let dvi2pts = 25_400_000.0 / 473_628_672.0 * (72.0 / 254_000.0);
+            let spt = |v: Option<f64>| (v.unwrap_or(0.0) / dvi2pts) as i32;
+            self.doc.phantom = Phantom::Box {
+                height: spt(t.height),
+                depth: spt(t.depth),
+            };
+        }
     }
 
     fn bxobj(&mut self, p: &mut Parser) {

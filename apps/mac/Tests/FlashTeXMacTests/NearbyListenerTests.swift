@@ -694,7 +694,7 @@ final class ShellModelNearbyTests: XCTestCase {
         let d = model.nearbyDestination
         XCTAssertEqual(d?.destinationId, model.anchor?.id)
         XCTAssertEqual(d?.path, "main.tex")
-        XCTAssertEqual(d?.projectId, model.result?.projectId)
+        XCTAssertEqual(d?.projectId, model.projectId)
         XCTAssertEqual(d?.baseRevision, model.anchor?.revision)
         let exp = expectation(description: "dest")
         var got: NearbyV1.Destination?

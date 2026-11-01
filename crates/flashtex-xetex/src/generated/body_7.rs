@@ -5909,11 +5909,19 @@ impl Globals {
         let mut __goto_1: i32 = 0;
         'l_dispatch_1: loop {
             if __goto_1 <= 0 {
-                if (self.eqtb[crate::ix::U(((every_job_loc) - 1) as usize)].hh().rh() != (268435455i32).wrapping_neg()) {
-                    self.begin_token_list(self.eqtb[crate::ix::U(((every_job_loc) - 1) as usize)].hh().rh(), every_job_text);
+                if self.ckpt_resuming {
+                    self.ckpt_resuming = false;
+                } else {
+                    if (self.eqtb[crate::ix::U(((every_job_loc) - 1) as usize)].hh().rh() != (268435455i32).wrapping_neg()) {
+                        self.begin_token_list(self.eqtb[crate::ix::U(((every_job_loc) - 1) as usize)].hh().rh(), every_job_text);
+                    }
                 }
             }
             if __goto_1 <= 1 { // L60
+                self.flashtex_poll();
+                if (self.ckpt_request != 0i32) {
+                    self.flashtex_checkpoint_hook();
+                }
                 self.get_x_token();
             }
             if __goto_1 <= 2 { // reswitch
@@ -7001,6 +7009,7 @@ impl Globals {
                             self.avail = self.mem[crate::ix::U((self.lig_stack) as usize)].hh().rh();
                             { let __ix1901 = self.lig_stack; self.mem[crate::ix::U((__ix1901) as usize)].set_hh_rh((268435455i32).wrapping_neg()); }
                             self.dyn_used = (self.dyn_used).wrapping_add(1i32);
+                            self.dl_new_node(self.lig_stack);
                         }
                     }
                 }
@@ -7219,6 +7228,7 @@ impl Globals {
                             self.avail = self.mem[crate::ix::U((self.lig_stack) as usize)].hh().rh();
                             { let __ix1921 = self.lig_stack; self.mem[crate::ix::U((__ix1921) as usize)].set_hh_rh((268435455i32).wrapping_neg()); }
                             self.dyn_used = (self.dyn_used).wrapping_add(1i32);
+                            self.dl_new_node(self.lig_stack);
                         }
                     }
                 }
@@ -9460,6 +9470,66 @@ impl Globals {
         self.primitive(66962i32, assign_int, 7892351i32);
         // §1390
         self.no_new_control_sequence = true;
+    }
+
+    /// The rest of the section that gets the first line of input and prepares
+    /// to start, after the format is loaded (see changes/resident.ch): the code
+    /// that followed the load, moved here so that a resident engine restarting
+    /// from the state after the load can run it.
+    /// @<Last-minute...
+    // §1724
+    pub fn start_after_format(&mut self) {
+        if (self.eTeX_mode == 1i32) {
+            {
+                crate::system::wr_str(&mut self.term_out, "entering extended mode");
+                crate::system::wr_ln(&mut self.term_out);
+            }
+        }
+        if ((self.eqtb[crate::ix::U(((7892312i32) - 1) as usize)].int() < 0i32) || (self.eqtb[crate::ix::U(((7892312i32) - 1) as usize)].int() > 255i32)) {
+            self.cur_input.limit_field = (self.cur_input.limit_field).wrapping_sub(1i32);
+        } else {
+            { let __ix2009 = self.cur_input.limit_field; let __v2010 = self.eqtb[crate::ix::U(((7892312i32) - 1) as usize)].int(); self.buffer[crate::ix::U((__ix2009) as usize)] = __v2010; }
+        }
+        self.fix_date_and_time();
+        self.random_seed = ((self.microseconds).wrapping_mul(1000i32)).wrapping_add((self.epochseconds % 1000000i32));
+        self.init_randoms(self.random_seed);
+        // §813
+        self.magic_offset = (self.str_start[crate::ix::U(((math_spacing).wrapping_sub(65536i32)) as usize)]).wrapping_sub((9i32).wrapping_mul(ord_noad));
+        // §79
+        if (self.interaction == batch_mode) {
+            self.selector = no_print;
+        } else {
+            self.selector = term_only;
+        }
+        // §1724
+        if ((self.cur_input.loc_field < self.cur_input.limit_field) && (self.eqtb[crate::ix::U((((cat_code_base).wrapping_add(self.buffer[crate::ix::U((self.cur_input.loc_field) as usize)])) - 1) as usize)].hh().rh() != escape)) {
+            self.start_input();
+        }
+    }
+
+    /// A resident engine's run from the state after the format is loaded: the
+    /// main program from that point on.
+    /// @<Last-minute...
+    // §1725
+    pub fn run_after_format(&mut self) {
+        self.start_after_format();
+        self.history = spotless;
+        self.main_control();
+        self.final_cleanup();
+        self.close_files_and_terminate();
+        self.ready_already = 0i32;
+    }
+
+    /// A run restored from a checkpoint taken at `big_switch` goes on from there
+    /// to the end, as the main program does after `main_control`.
+    /// @<Last-minute...
+    // §1728
+    pub fn resume_main_control(&mut self) {
+        self.ckpt_resuming = true;
+        self.main_control();
+        self.final_cleanup();
+        self.close_files_and_terminate();
+        self.ready_already = 0i32;
     }
 
 }

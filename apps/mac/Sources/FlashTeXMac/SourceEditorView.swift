@@ -35,7 +35,6 @@ struct SourceEditorView: NSViewRepresentable {
     var selection: ShellModel.Selection?
     var pendingEdit: ShellModel.PendingEdit?
     var marks: [EditorDiagnostics.Mark] = []
-    var result: RuntimeV1.CompileResult? // for completion (Completion.swift)
     /// Editor revision the buffer is at; completion metadata binds to it.
     var editorRevision: Int?
     var projectIndexMetadata: Completion.Metadata?
@@ -125,11 +124,8 @@ struct SourceEditorView: NSViewRepresentable {
     /// What the buffer is coloured as (`SyntaxHighlighter.Language`): BibTeX
     /// for a declared bibliography, LaTeX otherwise.
     var language: SyntaxHighlighter.Language = .latex
-    /// The current v2 preview, for the inline math hover preview
-    /// (MathHoverPreview.swift); nil when there is no v2 frame to crop from.
-    var mathPreviewContext: () -> MathHoverPreview.Context? = { nil }
-    /// The engine-v3 preview's crop for a formula (its UTF-16 range in the
-    /// buffer; EngineV3MathHover.swift); nil when v3 has none.
+    /// The preview's crop for a formula (its UTF-16 range in the buffer;
+    /// EngineV3MathHover.swift); nil when it has none.
     var mathPreviewV3: (NSRange) -> CGImage? = { _ in nil }
     /// Vim `:` commands that need the app (`:w`, `:q`, `:e`, `:set nu`;
     /// VimMode.swift); returns a status message or nil. Nothing is wired by
@@ -190,6 +186,14 @@ struct SourceEditorView: NSViewRepresentable {
         return scroll
     }
 
+    /// The editor takes what it is offered, as the pages view and the
+    /// Problems list do: SwiftUI measured the scroll view by Auto Layout,
+    /// which solved the window's constraint engine again on its layout
+    /// passes (at every key and compile reply).
+    func sizeThatFits(_ proposal: ProposedViewSize, nsView: NSScrollView, context: Context) -> CGSize? {
+        CGSize(width: proposal.width ?? 400, height: proposal.height ?? 400)
+    }
+
     func updateNSView(_ scroll: NSScrollView, context: Context) {
         let tv = scroll.documentView as! NSTextView
         let co = context.coordinator
@@ -201,9 +205,6 @@ struct SourceEditorView: NSViewRepresentable {
         co.setLineNumbers(showLineNumbers, on: scroll)
         co.syntax.language = language // no-op unless the document's kind changed (a .bib tab)
         if let completing = tv as? CompletingTextView {
-            // Change-only: the setter rebuilds the completion metadata, and this
-            // update runs on every keystroke, not only when a result arrives.
-            if completing.compileResult?.revision != result?.revision || completing.compileResult != result { completing.compileResult = result }
             if completing.editorRevision != editorRevision { completing.editorRevision = editorRevision }
         }
         if let completing = tv as? CompletingTextView, completing.projectFiles != projectFiles { completing.projectFiles = projectFiles }
@@ -212,7 +213,7 @@ struct SourceEditorView: NSViewRepresentable {
         (tv as? CompletingTextView)?.packageDocuments = packageDocuments // their macros complete as "declared in mystyle.sty"
         if tv.isEditable != editable { tv.isEditable = editable }
         // `\setmainfont{` lists the families the engine's own index finds (Completion.swift `InstalledFonts`).
-        (tv as? CompletingTextView)?.renderPipeline = { ShellModel.locateRenderPipeline() }
+        (tv as? CompletingTextView)?.fontLister = { InstalledFonts.lister() }
         // The other open documents' macros complete as declared (Completion.declaredCommands); read when the list is requested.
         // An open .sty/.cls member is a package document instead, so its
         // macros read "declared in mystyle.sty" rather than "in an open document".
@@ -509,13 +510,18 @@ struct SourceEditorView: NSViewRepresentable {
             // error or warning wins over their grey underline.
             let gapAttrs: [NSAttributedString.Key: Any] = [.underlineStyle: NSUnderlineStyle.single.rawValue | NSUnderlineStyle.patternDot.rawValue,
                                                             .underlineColor: NSColor.tertiaryLabelColor]
+            // Only the marks in the window are painted, found by a range test
+            // before any other work: a long book's thousands of marks are
+            // mostly far from the visible text.
+            let inWindow = marks.filter { m in
+                let r = m.nsRange
+                return r.location >= 0 && r.length > 0 && NSMaxRange(r) <= length && NSIntersectionRange(r, window).length > 0
+            }
+            guard !inWindow.isEmpty else { return }
             for severity in [RuntimeV1.Severity?.none, .warning, .error] {
                 let base = severity == .error ? errorAttrs : severity == .warning ? warningAttrs : gapAttrs
-                for mark in marks where (severity == nil) == mark.isGap && (severity == nil || mark.severity == severity) {
-                    let r = mark.nsRange
-                    guard r.location >= 0, r.length > 0, NSMaxRange(r) <= length else { continue }
-                    let clipped = NSIntersectionRange(r, window)
-                    guard clipped.length > 0 else { continue }
+                for mark in inWindow where (severity == nil) == mark.isGap && (severity == nil || mark.severity == severity) {
+                    let clipped = NSIntersectionRange(mark.nsRange, window)
                     var attrs = base
                     attrs[.toolTip] = mark.toolTip
                     lm.addTemporaryAttributes(attrs, forCharacterRange: clipped)
@@ -583,6 +589,11 @@ struct SourceEditorView: NSViewRepresentable {
 
         private func resetShadow() {
             guard EditorTextShadow.enabled, let storage = textView?.textStorage else { shadow = nil; return }
+            // A keystroke sets `lastKnownText` to the shadow's own text: keep
+            // the shadow, and with it the anchors near the last edit. Started
+            // again, the next delete counts the bytes from the caret to the
+            // end of the text (a long book: milliseconds per key).
+            if let s = shadow, s.length16 == storage.length, s.holds(lastKnownText) { return }
             shadow = EditorTextShadow(text: lastKnownText, length16: storage.length)
         }
 
@@ -848,25 +859,16 @@ struct SourceEditorView: NSViewRepresentable {
                                                 userDefinition: parent.userDefinition, context: parent.hoverContext())
         }
 
-        /// Inline math hover preview (MathHoverPreview.swift): the formula's
-        /// cropped bitmap at `index`, cropped from whichever page bitmap is
-        /// already rasterized — nothing is rendered here. Nil whenever
-        /// `MathHoverPreview.crop` is (not inside one, stale, or the current
-        /// frame's items don't cover it) or that page's bitmap isn't ready yet.
+        /// Inline math hover preview (EngineV3MathHover.swift): the formula's
+        /// bitmap at `index`, cropped from the page bitmap the preview already
+        /// drew — nothing is rendered here. Nil when the caret is not in a
+        /// formula, the pages are stale, or that page's bitmap isn't ready yet.
         func mathPreview(at index: Int) -> (image: CGImage, range: NSRange)? {
             guard let tv = textView else { return nil }
             let text = tv.textStorage?.string as NSString? ?? ""
             let h = syntax.inSync(with: text) ? syntax.highlighter : nil
             guard let span = EditorIntelligence.inlineMathSpan(in: text, at: index, highlighter: h) else { return nil }
-            // The engine-v3 preview crops from its own page bitmap.
-            if let image = parent.mathPreviewV3(span) { return (image, span) }
-            guard let context = parent.mathPreviewContext() else { return nil }
-            guard let crop = MathHoverPreview.crop(in: text, at: index, path: context.path, pages: context.frame.list.pages,
-                                                   previewIsStale: context.previewIsStale, highlighter: h) else { return nil }
-            guard let last = V2PageRasterizer.shared.lastRequest,
-                  let image = MathHoverPreview.image(for: crop, frame: context.frame, pixelsPerPoint: last.pixelsPerPoint, dark: context.dark,
-                                                     rasterizer: .shared)
-            else { return nil }
+            guard let image = parent.mathPreviewV3(span) else { return nil }
             return (image, span)
         }
 

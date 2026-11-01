@@ -723,6 +723,30 @@ ncase("n022-name-not-found", "a font name that the index does not have",
 \lsshipbox0
 \end""", no_halt=True)
 
+# \XeTeXlinebreaklocale: ICU's line breaker (src/native/linebreak.rs) cuts
+# native words; a word merged with the one before it (the path that read
+# mem[null] on polyglossia's manual while the breaker was a stub); root,
+# zh, ja, ko and the lb keyword; Thai and Khmer by ICU's dictionaries;
+# \XeTeXlinebreakpenalty and \XeTeXlinebreakskip; a restricted hbox (no
+# breaking), and the locale switched off again.
+ncase("n023-linebreak-locale", "ICU line breaking under \\XeTeXlinebreaklocale, and merged words",
+      PARA + r"""\font\x="[lmroman10-regular.otf]" \x
+\font\z="[FandolSong-Regular.otf]"
+\font\t="[Garuda.otf]"
+\setbox0=\vbox{\noindent\hbox{}ab\XeTeXlinebreaklocale "zh" cd ef-gh/ij http://x.org/a?b
+12.5\char`\%(kl)[x] a—b–c‐d don’t-stop(1)2 \z 七百五十三“中文”。（括号）、ab
+他说：“你好！”——然后…走了。2026年10月12日，100\char`\%完成\par
+\XeTeXlinebreaklocale "ja" \XeTeXlinebreakpenalty=7
+日本語のテキストァィ“中文”。ちょっと、キャッシュ〜ゝヽ！？「カギ括弧」です。ーー\par
+\XeTeXlinebreaklocale "ja@lb=loose" \XeTeXlinebreakskip=0pt plus 1pt
+ちょっと、キャッシュ〜ゝ・！？100\char`\% \XeTeXlinebreaklocale "zh_TW"
+臺灣「繁體」『中文』，測試。\hbox{中文中文}中文\par
+\XeTeXlinebreaklocale "th" \XeTeXlinebreakskip=0pt \XeTeXlinebreakpenalty=50
+\t ภาษาไทยเป็นภาษาที่ไม่มีการเว้นวรรคระหว่างคำ สวัสดีครับผมชื่อสมชาย\par
+\XeTeXlinebreaklocale "" \x ef-gh/ij \z 中文中文\par}
+\lsshipbox0
+\end""")
+
 # --- TECkit font mappings (phase S1): `mapping=` on native and TFM fonts ---
 
 def mcase(name, desc, body, no_halt=False):

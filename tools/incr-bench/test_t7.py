@@ -118,6 +118,16 @@ class TypingTests(unittest.TestCase):
         self.assertIn('1 of 4 without the watched page', why)
         self.assertIn('2 of 4 keystrokes not painted by their own compile', why)
 
+    def test_keystrokes_the_client_sent_late(self):
+        # keystrokes 1 and 2 sent together with 3 (the typist's clock slipped): a harness fault
+        ph = self.phase([10, 13, 13, 13])
+        for k, late in zip(ph['keys'], [0.0, 100.2, 50.1, 0.1]):
+            k['sent_late_ms'] = late
+        r = t7.typing_row(dict(doc='d', pages=5), 'typing@100ms', ph)
+        self.assertEqual((r['not_own'], r['sent_late']), (2, 2))
+        why = '; '.join(t7.verdict([r], None))
+        self.assertIn('2 of 3 keystrokes sent over 5 ms late by the client', why)
+
 
 class ReferenceTests(unittest.TestCase):
     def state(self, **kw):
@@ -192,6 +202,57 @@ class EditLocationTests(unittest.TestCase):
                 at = t7.body_line(text, 0.5, lines[0.5][0])
                 self.assertTrue(text[at - 1].isalpha() and text[at].isalpha())  # inside the line's second word
             self.assertEqual(text.count('\\begin{frame}'), 30)
+
+
+class HarnessErrorTests(unittest.TestCase):
+    """A dl3-keys failure ends its document only (the M5 Pro run of 2026-10-14 lost infdesc's eleven
+    measured phases to its preamble phase's failure): the phases that ran are kept and summarised."""
+
+    class FakeHost:
+        startup, ready_ms, killed_at_limit = None, 1.0, False
+
+        def __init__(self, *args):
+            pass
+
+        def settle_saves(self, **kw):
+            pass
+
+        def stop(self):
+            return 100 << 20
+
+    def test_failure_keeps_earlier_phases(self):
+        import tempfile
+        import types
+        key = dict(edited_page_ms=5.0, first_page_ms=5.0, done_ms=9.0, complete=True,
+                   host=dict(converged_at=3, typeset_pages=2, mode='incremental'))
+        calls = []
+
+        def keys(eng, sock, work, args, out, timeout):
+            calls.append(args)
+            if len(calls) > 1:
+                raise RuntimeError('dl3-keys --kind letter: exit 1: dl3-keys: no prose line on one page')
+            return [dict(key=k, **key) for k in range(4)], 'dl3-keys: 10 pages'
+
+        saved = (t7.Host, t7.keys, t7.IB)
+        with tempfile.TemporaryDirectory() as d:
+            os.makedirs(f'{d}/docs/doc-a')
+            open(f'{d}/docs/doc-a/main.tex', 'w').write('x\n')
+            os.makedirs(f'{d}/out/raw')
+            t7.Host, t7.keys, t7.IB = self.FakeHost, keys, d
+            try:
+                a = types.SimpleNamespace(order='fixed', seed=7, phases=t7.PHASE_NAMES, preamble=2,
+                                          typing_keys=4, keys=4, gap_ms=0, timeout=10, host_args='', reopen=3)
+                res = t7.run_doc(a, f'{d}/eng', 'doc-a', f'{d}/out', 0)
+            finally:
+                t7.Host, t7.keys, t7.IB = saved
+        self.assertIn('no prose line', res['error'])
+        self.assertEqual(list(res['phases']), ['letter@start'])
+        self.assertEqual(res['reopen'], [])
+        self.assertEqual(res['rss_peak'], 100 << 20)
+        rows = t7.summarise([res])
+        self.assertEqual([(r['doc'], r['edit'], r['n']) for r in rows], [('doc-a', 'letter@start', 3)])
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(t7.report(dict(raw=[res], error=res['error']), None, None, False)[0], 2)
 
 
 if __name__ == '__main__':

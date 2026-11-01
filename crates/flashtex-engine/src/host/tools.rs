@@ -17,7 +17,7 @@
 //!   one JSON line: `compile` (from S₀ when it still holds, else in full),
 //!   `save PATH` (persist S₀), `quit`.
 //! * `iserve` likewise for the incremental engine (`crate::incr`), with
-//!   `compile [PAGE]`, `compile-interrupt PASS PAGES`,
+//!   `compile [PAGE]`, `compile-interrupt PASS PAGES [NTH]`,
 //!   `compile-interrupt-at SECONDS`, `finish`, `save`,
 //!   `open`, `warm`, `pages`, `terminal` and `diagnostics` (the last
 //!   compile's `diag-v1` messages, `src/host/diag.rs`).
@@ -245,6 +245,12 @@ fn iserve_on_this_thread(o: crate::system::RunOptions, ho: &HostOpts) -> i32 {
     opts.converge = !ho.no_converge;
     let mut s = Session::new(o, None, opts);
     let mut reason = "end of input";
+    // (a sweep's stopped preparations: below)
+    let stop_prepare: Option<usize> = std::env::var("FLASHTEX_SWEEP_STOP_PREPARE")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .filter(|&n| n > 0);
+    let mut prepared = 0usize;
     // FLASHTEX_DISPLAY_LIST (`/dev/null` will do): the display list's side
     // table, which gives box reports their first and last character.
     crate::displaylist::init_from_env();
@@ -275,22 +281,26 @@ fn iserve_on_this_thread(o: crate::system::RunOptions, ho: &HostOpts) -> i32 {
                 .split_whitespace()
                 .filter_map(|x| x.parse().ok())
                 .collect();
+            // (`compile-interrupt PASS PAGES NTH`: on the NTH time the run
+            // asks once it is there, e.g. 2 for the first stop point after
+            // page PAGES's own checkpoint)
             match v[..] {
-                [pass, n] => {
-                    let armed = std::rc::Rc::new(std::cell::Cell::new(true));
-                    let a2 = armed.clone();
+                [pass, n] | [pass, n, _] => {
+                    let nth = v.get(2).copied().unwrap_or(1).max(1);
+                    let asked = std::rc::Rc::new(std::cell::Cell::new(0usize));
+                    let a2 = asked.clone();
                     s.set_preempt(Some(std::rc::Rc::new(move |p: usize, pages: usize| {
-                        let hit = a2.get() && p == pass && pages >= n;
-                        if hit {
-                            a2.set(false);
+                        if p != pass || pages < n || a2.get() >= nth {
+                            return false;
                         }
-                        hit
+                        a2.set(a2.get() + 1);
+                        a2.get() == nth
                     })));
                     let r = s.compile(None).map(|r| r.json());
                     s.set_preempt(None);
                     r
                 }
-                _ => Err(format!("compile-interrupt PASS PAGES, not {a}")),
+                _ => Err(format!("compile-interrupt PASS PAGES [NTH], not {a}")),
             }
         } else if let Some(a) = line.strip_prefix("compile-interrupt-at ") {
             // A newer edit arrives SECONDS after the compile started (typing
@@ -403,7 +413,42 @@ fn iserve_on_this_thread(o: crate::system::RunOptions, ho: &HostOpts) -> i32 {
         // the soundness sweeps run through prepared restores);
         // FLASHTEX_NO_PREPARE=1 leaves it out
         if line.starts_with("compile") && profile.prepare {
-            s.prepare_next(&mut || false);
+            match stop_prepare {
+                None => {
+                    s.prepare_next(&mut || false);
+                }
+                Some(n) => {
+                    // FLASHTEX_SWEEP_STOP_PREPARE=N (sweep D): newer work
+                    // stops the preparation as a keystroke would, after N
+                    // of its questions, in turn: not stopped; stopped once
+                    // (the restore takes the part); stopped, then gone on
+                    // from there and stopped again after 2N; stopped, then
+                    // gone on to the end; stopped after 3N. The restores
+                    // take parts stopped at every stage (`arena::PartPrep`).
+                    prepared += 1;
+                    let ask = |s: &mut Session, budget: Option<usize>| {
+                        let mut asked = 0usize;
+                        s.prepare_next(&mut || {
+                            asked += 1;
+                            budget.is_some_and(|b| asked > b)
+                        })
+                    };
+                    // (a cycle of five, odd: the edit and the revert of an
+                    // edit-revert pair, compiles in a row, take every regime)
+                    let budgets: &[Option<usize>] = match prepared % 5 {
+                        0 => &[None],
+                        1 => &[Some(n)],
+                        2 => &[Some(n), Some(2 * n)],
+                        3 => &[Some(n), None],
+                        _ => &[Some(3 * n)],
+                    };
+                    for &b in budgets {
+                        if ask(&mut s, b) {
+                            break;
+                        }
+                    }
+                }
+            }
         }
         // and, where the profile trims soon after a compile (Low Memory),
         // as its idle trim does: the old run's cached chunks go

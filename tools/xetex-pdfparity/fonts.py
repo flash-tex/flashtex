@@ -150,6 +150,24 @@ def parse_cmap_cids(data):
 # ---------------------------------------------------------------------------
 # Embedded programs
 # ---------------------------------------------------------------------------
+# The outline resolution: two outlines are the same where every coordinate
+# agrees to within half of 1/100 font unit.
+OUTLINE_TOL = 0.005
+
+
+class Outline(str):
+    """An outline digest (the drawn outline, coordinates rounded to 1/100
+    font unit). It keeps the outline itself as `path`, so that two outlines
+    whose coordinates round to different hundredths (one on each side of a
+    rounding boundary) can still be found the same within `OUTLINE_TOL`: a
+    rounded digest alone is not a tolerance. Measured: xdvipdfmx writes an
+    operand within 3.0e-5 of an integer as that integer (cs_type2.c's
+    clear_stack), FlashTeX the font's own value; the 2^-16 differences moved
+    5 glyphs' digests (u03, polyglossia, 2026-10-12)."""
+
+    path = None
+
+
 def _outline_digest(draw):
     from fontTools.pens.recordingPen import RecordingPen
     pen = RecordingPen()
@@ -158,10 +176,28 @@ def _outline_digest(draw):
     except Exception as e:  # a broken program: say so rather than guess
         return "error:" + type(e).__name__
     parts = []
+    path = []
     for op, args in pen.value:
         parts.append(op + ":" + ",".join("%.2f,%.2f" % tuple(p) if isinstance(p, tuple)
                                          else str(p) for p in args))
-    return hashlib.sha256(";".join(parts).encode()).hexdigest()[:12]
+        path.append((op, tuple(float(v) for p in args if isinstance(p, tuple) for v in p)))
+    d = Outline(hashlib.sha256(";".join(parts).encode()).hexdigest()[:12])
+    d.path = tuple(path)
+    return d
+
+
+def same_outline(x, y, tol=OUTLINE_TOL):
+    """Whether two outline digests are one outline: equal, or the same
+    operations with every coordinate within `tol` font units."""
+    if x == y:
+        return True
+    px, py = getattr(x, "path", None), getattr(y, "path", None)
+    if px is None or py is None or len(px) != len(py):
+        return False
+    for (oa, ca), (ob, cb) in zip(px, py):
+        if oa != ob or len(ca) != len(cb) or any(abs(u - v) > tol for u, v in zip(ca, cb)):
+            return False
+    return True
 
 
 class Program:

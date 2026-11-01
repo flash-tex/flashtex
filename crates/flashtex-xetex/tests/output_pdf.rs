@@ -140,8 +140,15 @@ fn pdf_mode_writes_the_pdf_from_the_display_list() {
 }
 
 /// The same input gives the same PDF, byte for byte (with
-/// `SOURCE_DATE_EPOCH`): two fonts, a picture and a form, whose objects
-/// the writer numbers and writes in a fixed order.
+/// `SOURCE_DATE_EPOCH` and `FORCE_SOURCE_DATE=1`): two fonts, a picture and
+/// a form, whose objects the writer numbers and writes in a fixed order.
+///
+/// `FORCE_SOURCE_DATE=1` too, as TeX Live's xetex needs it: `/Creator` is
+/// the XDV preamble's comment, ` XeTeX output YYYY.MM.DD:HHMM`, from TeX's
+/// `\time`, which `SOURCE_DATE_EPOCH` alone does not fix (texmfmp.c; xetex
+/// with xdvipdfmx writes the minute it ran there too, while `/CreationDate`
+/// follows `SOURCE_DATE_EPOCH`). Without it two runs a minute apart
+/// differed (CI, 2026-10-09). `FLASHTEX_REPRO_RUNS` runs it more times.
 #[test]
 fn the_pdf_is_reproducible() {
     let dir = std::env::temp_dir().join(format!("flashtex-xetex-repro-{}", std::process::id()));
@@ -170,6 +177,7 @@ fn the_pdf_is_reproducible() {
         let out = Command::new(env!("CARGO_BIN_EXE_flashtex-xetex"))
             .current_dir(&dir)
             .env("SOURCE_DATE_EPOCH", "1700000000")
+            .env("FORCE_SOURCE_DATE", "1")
             .env("FLASHTEX_RESOLVER", "cwd")
             .args(["-ini", "-etex", "-interaction=nonstopmode", "r.tex"])
             .output()
@@ -182,8 +190,59 @@ fn the_pdf_is_reproducible() {
         );
         std::fs::read(dir.join("r.pdf")).unwrap()
     };
-    let (a, b) = (run(), run());
+    let runs: usize = std::env::var("FLASHTEX_REPRO_RUNS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(2);
+    let a = run();
     assert!(a.len() > 1000);
-    assert!(a == b, "two runs gave different PDFs");
+    for i in 1..runs {
+        let b = run();
+        if a != b {
+            std::fs::write(dir.join("r-first.pdf"), &a).unwrap();
+            std::fs::write(dir.join("r-differs.pdf"), &b).unwrap();
+            panic!(
+                "run {} gave a different PDF than run 1: {} (both kept in {})",
+                i + 1,
+                first_difference(&a, &b),
+                dir.display()
+            );
+        }
+    }
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Where two PDFs first differ: the byte offset, the object it is in
+/// (the last `N 0 obj` before it) and the bytes around it in each.
+fn first_difference(a: &[u8], b: &[u8]) -> String {
+    let at = a
+        .iter()
+        .zip(b)
+        .position(|(x, y)| x != y)
+        .unwrap_or(a.len().min(b.len()));
+    let object = |d: &[u8]| -> String {
+        let head = &d[..at.min(d.len())];
+        let text = String::from_utf8_lossy(head);
+        text.rfind(" 0 obj")
+            .map(|e| {
+                let s = text[..e]
+                    .rfind(|c: char| !c.is_ascii_digit())
+                    .map_or(0, |i| i + 1);
+                format!("object {}", &text[s..e])
+            })
+            .unwrap_or_else(|| "the header".into())
+    };
+    let around = |d: &[u8]| -> String {
+        let lo = at.saturating_sub(48);
+        let hi = (at + 48).min(d.len());
+        format!("{:?}", String::from_utf8_lossy(&d[lo..hi]))
+    };
+    format!(
+        "lengths {} and {}, first difference at byte {at} in {}: {} vs {}",
+        a.len(),
+        b.len(),
+        object(a),
+        around(a),
+        around(b)
+    )
 }

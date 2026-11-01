@@ -34,9 +34,8 @@ The host keeps one **resident, incremental engine** per document (DESIGN.md
 re-typesets from the last page before the edit, so the edited page arrives
 first, and stops once the document is the same as before from there on.
 
-`display-list-v3` extends `display-list-v2`
-([rendering-v2 proposal](../contracts/rendering-v2-proposal.md),
-`apps/mac/Sources/FlashTeXProtocol/RenderingV2.swift`): v2's glyph runs with
+`display-list-v3` succeeds `display-list-v2`, the old engine's display list
+(retired with it; its proposal is in the history before the S7 retirement): v2's glyph runs with
 absolute origins, rules, paths with clips, images and links remain, now
 produced by the pdfTeX-compatible engine and exact to the PDF. What changes:
 
@@ -345,6 +344,11 @@ the PDF does: translate by (e, f), then fill that rectangle or stroke that
 line with butt caps. (Drawn from the sp rectangle instead, a 0.249 bp
 stroked rule's edge row differs from the PDF's by one coverage level at
 5.25, 6.5 and 6.75 px/pt: measured on proof-practice-21242.)
+`flashtex-host-unicode` sends `RULE_GEOMETRY` (not `ORIGINS`, so it does
+not claim `exact-geometry`) on every page and form with a rule: the numbers
+its own PDF writer draws the rule with (five decimals, e = f = 0); and its
+glyph MATRIX entries are the text matrix that writer writes (six decimals),
+so its glyphs and rules draw as its PDF does (lane UNICODE-PREVIEW-QA).
 
 **Paths** (`\pdfliteral` graphics: TikZ/pgf, `\pdfsetmatrix`, colour
 boxes, …):
@@ -525,6 +529,22 @@ JSON, before the first `PAGE` that draws it:
 | `width`, `height` | pixels (PDF: the box, in bp) |
 | `rotate`, `x_res`, `y_res` | as pdfTeX read them |
 | `page`, `page_box`, `orig_x`, `orig_y` | PDF only: the page included, the box (`media`, `crop`, `bleed`, `trim`, `art`) and its origin |
+| `color_space` | optional, PNG and JPEG: the colour space the host's PDF gives the samples when it is not their Device space (below) |
+
+`color_space` (optional; absent: DeviceGray, DeviceRGB or DeviceCMYK by the
+samples, as pdfTeX writes PNG and JPEG data, so older clients are unaffected)
+is an object: `{"type": "icc"}`, the ICC profile the file itself embeds (a
+PNG's `iCCP`, a JPEG's `ICC_PROFILE` segments; the PDF's `ICCBased` stream is
+that profile); or `{"type": "calgray", "gamma", "white_point"}` /
+`{"type": "calrgb", "gamma", "white_point", "matrix"}`, the PDF's `CalGray` /
+`CalRGB` with exactly the numbers it writes (`gamma` applies to each
+component; `white_point` is `[X Y Z]`, `matrix` the nine `/Matrix` entries;
+the black point is zero). `intent`, when present, is the image's `/Intent`
+(`Perceptual`, `RelativeColorimetric`, `Saturation`, `AbsoluteColorimetric`).
+`flashtex-host-unicode` sends it: its PDF writes images as xdvipdfmx does
+(a PNG's `sRGB` or `gAMA`/`cHRM` as `CalGray`/`CalRGB`, embedded profiles as
+`ICCBased`), and a client that drew those samples as Device colours showed
+every such image lighter or darker than the PDF.
 
 The IMAGE item's matrix is exactly the PDF's `cm` before `/Im Do`. For a
 PNG, JPEG or JBIG2 image (an Image XObject) it maps the unit square to stream
@@ -570,6 +590,13 @@ for every node it allocates, where it was reading at that moment:
 - material the output routine makes (running heads, page numbers, the
   page's own boxes): **no span** (0), rather than a wrong one;
 - `col = 0xFFFF`: no column is known.
+
+`flashtex-host-unicode` (XeTeX) records the same, with two differences: a
+native (OpenType) word is one node made once the word is read, so every
+glyph of it carries the column of the word's first character (found in the
+line; the word's end when it is not there, as for text a macro made); and
+columns are UTF-8 bytes of the line TeX read as Unicode scalars. Each
+engine run of a compile starts its span ids afresh and declares them again.
 
 **Forward search** (source → page): find the glyphs whose span is
 (file, line) and whose `col` is nearest the caret. **Inverse search**
@@ -635,13 +662,13 @@ The host answers with its own `HELLO`, or with `ERROR` `{"code":
  "engine": "pdfTeX 3.141592653-2.6-1.40.29 (FlashTeX engine)",
  "capabilities": ["compile", "cancel", "diagnostics", "font-programs", "font-formats", "have-fonts",
                   "resident", "incremental", "buffers", "edits", "viewport",
-                  "pages-status", "export", "external-tools", "exact-geometry", "halt-on-error", "diag-v1"],
+                  "pages-status", "export", "external-tools", "exact-geometry", "halt-on-error", "includeonly", "diag-v1"],
  "texmf": {"texlive": "/Library/TeX/texbin (PATH) -> /usr/local/texlive/2026/bin/universal-darwin",
            "resolver": "kpathsea (/Library/TeX/texbin)",
            "bundle": null,
            "formats": [{"name": "pdflatex", "status": "ready", "ms": 93.8}],
-           "tools": {"bibtex": "/Library/TeX/texbin/bibtex", "biber": "/Library/TeX/texbin/biber",
-                     "makeindex": "/Library/TeX/texbin/makeindex"},
+           "tools": {"bibtex": "built-in", "biber": "/Library/TeX/texbin/biber",
+                     "makeindex": "built-in"},
            "external_tools": "off"}}
 ```
 
@@ -654,6 +681,12 @@ it does not know.
 the bundle, if one is configured); a format whose `status` is `failed`
 carries `error`, and compiles with it will fail: the app says so before
 the user compiles.
+
+`texmf.tools` says how the host runs each external tool (§6.4, "External
+tools"): `"built-in"` for its own port, run in-process with or without a TeX
+Live (bibtex and makeindex, lane RUST-TOOLS; `FLASHTEX_BIBTEX=external` or
+`FLASHTEX_MAKEINDEX=external` makes it TeX Live's program instead), else the
+path of TeX Live's program, else null (biber without a TeX Live).
 
 `texmf.bundle` is the configured bundle (DESIGN.md §4.4), null when none
 is: `FLASHTEX_BUNDLE_URL` and `FLASHTEX_BUNDLE_DIGEST`, else the first
@@ -697,7 +730,8 @@ demand later) the host prints progress lines
 | `format` | no | format name, default `pdflatex` |
 | `shell_escape` | no | `\write18`: `default` (texmf.cnf's: restricted in TeX Live), `off`, `restricted`, `on` |
 | `halt_on_error` | no | (capability `halt-on-error`; an older host ignores the field) `true`: `-halt-on-error`, TeX stops at the first error (a client's strict mode); default `false`: nonstopmode, recovering as pdflatex does. Another job: the resident document is replaced |
-| `output_dir` | no | where the PDF, log and auxiliary files go (default: a per-connection temporary directory) |
+| `includeonly` | no | (capability `includeonly`; an older host ignores the field) `["chapters/03", …]`: LaTeX's own `\includeonly`, a chapter focus. The first line becomes `\AtBeginDocument{\includeonly{chapters/03,…}}\input MAIN` (MAIN quoted when it holds a space): `\includeonly` runs in the `begindocument` hook, after the `.aux` is read and before any `\include`, which gives what it gives in the preamble (the same pages, content streams and `.aux` under pdflatex) while its file-name lookup (the chapter's `\pdffilesize`) stays out of S₀'s key, so an edit in the focused chapter restarts at S₀, not from the format; `\input` without a brace is the primitive, so MAIN is read as a bare first line reads it. Only the named `\include`s are typeset; the others' page numbers and references come from their `.aux` files in `output_dir`. Each name is as the document's `\include` writes it: relative, inside `root`, without `,` `{` `}` `\` `%` `#` `"` or a control character; an empty array is refused. Another job: the resident document is replaced, with its own stored S₀. Clients give a focused job its own `output_dir`, started from the whole document's auxiliary files, so the whole document's `.aux` is not rewritten by focused runs |
+| `output_dir` | no | where the PDF, log and auxiliary files go (default: a per-connection temporary directory). A client creates the folders `\include`d files sit in (`chapters/` for `\include{chapters/03}`) here, as latexmk does: pdfTeX cannot create them |
 | `jobname` | no | default: the main file's name |
 | `have_fonts` | no | font keys (hex) the client holds (§5.1) |
 | `font_formats` | no | host capability `font-formats`: the font formats beyond `type1` and `none` whose programs the client takes: any of `truetype`, `opentype`, `type3` (§5.1); default none |
@@ -706,10 +740,11 @@ demand later) the host prints progress lines
 | `buffers` | no | 3.1: `[{"path", "text"}]`: files as the editor has them (path relative to `root`, `/`-separated, §1); the host writes each to its file, as saving would, before compiling |
 | `edits` | no | 3.1: `[{"path", "offset", "delete", "insert"}]`: byte splices of files under `root` (path relative to `root`, `/`-separated, §1), applied in order, before compiling |
 | `export` | no | `true`: a one-shot run of the engine as a child process instead of the resident engine: `DONE.pdf` is the compressed PDF pdflatex would write (P-T2), not the preview's |
-| `external_tools` | no | 3.2: `auto`: after the compile, run bibtex, biber and makeindex from the user's TeX Live when latexmk would, then compile again (§6.4, "External tools"); `off`: never. Default: the host's `--external-tools` (`off` unless the host was started with `auto`). The app sends `auto` only for a **trusted** project (DESIGN.md §4.5): an untrusted project runs no external program |
+| `external_tools` | no | 3.2: `auto`: after the compile, run bibtex, biber and makeindex when latexmk would (`HELLO.texmf.tools`), then compile again (§6.4, "External tools"); `off`: never. Default: the host's `--external-tools` (`off` unless the host was started with `auto`). The app sends `auto` only for a **trusted** project (DESIGN.md §4.5): an untrusted project runs no external program |
 
 The engine runs as pdflatex would:
 `pdftex -fmt=FORMAT -interaction=nonstopmode -file-line-error -output-directory=DIR -jobname=JOB [shell flag] MAIN`
+(with `includeonly`, `'\AtBeginDocument{\includeonly{NAMES}}\input MAIN'` in place of `MAIN`)
 (without `-output-directory` when `output_dir` is `root` itself, as a
 plain `pdflatex MAIN` or latexmk runs it),
 in the resident engine: the first compile of a document is a full run; a
@@ -829,7 +864,10 @@ painted it less the first of its own (`dl3-keys --interval-ms`,
 "auto"`, once its `DONE` is out (never before: the edited page is not
 delayed), the host decides as latexmk 4.87 does
 (`rdb_set_latex_deps`, `parse_aux`, `parse_bcf`) which programs the
-document needs, and runs them from the user's TeX Live (`HELLO.texmf.tools`)
+document needs, and runs them as `HELLO.texmf.tools` says: bibtex and
+makeindex are the host's own ports (in-process, so they need no TeX Live: in
+bundle mode their `.bst`, `.bib` and `.ist` files come from the bundle), biber
+is the user's TeX Live program;
 on a worker thread, one at a time, each with a timeout (`--tool-timeout`,
 default 120 s):
 
@@ -871,7 +909,8 @@ tools made, and asks again when it is done).
 - `"event": "skip"`: `{"tool", "file", "reason"}` — a program that would run
   does not: the compile has `external_tools` `off` ("…external tools are
   off for this project": the app can offer to trust it), a `.bib` file is
-  missing, or TeX Live has no such program. Said once per state of its
+  missing, or the program is not available (biber with no TeX Live:
+  "biber is not available: no TeX Live is installed, …"). Said once per state of its
   sources.
 - `"event": "settled"`: `{"ran", "rounds", "limit"?}` — the client's
   compile and its follow-ups are done as far as tools go (sent once per
@@ -1112,7 +1151,7 @@ client adds `"progress-v1"` to its `HELLO.accept`.
 **Message** (`0x70`, JSON): `{"id", "pass", "page", "file"?}`. `id` is the compile;
 `pass` is the run's pass (1, then 2, ... for further `.aux` passes); `page`
 is the number of pages that run has shipped; `file` (added 2026-10-06, for
-`flashtex-v3`'s progress line; absent at the terminal level) is the
+`flashtex`'s progress line; absent at the terminal level) is the
 innermost file TeX is reading, as TeX opened it (`./chapters/a.tex`, a
 TeX Live path), the name `-file-line-error` gives. A client that does not
 know a key ignores it. The host sends one at the

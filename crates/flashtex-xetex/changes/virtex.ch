@@ -16,11 +16,30 @@
 %     try second (tex.ch [29.524]).
 %
 %   * tex.ch's terminal messages when a format cannot be found name the
-%     format files (tex.ch [29.524]).
+%     format files (tex.ch [29.524]);
+%   * "init...tini is dynamic" (tex.ch [1.8], its |Init|...|Tini|): the
+%     table entries that INITEX sets up (|mem|'s static part, all of
+%     |eqtb|, the hash's frozen entries, the trie's) are set only when
+%     |ini_version|, and so are the main program's string pool and
+%     primitives (tex.ch [51.1332]), which need them. A production run gets
+%     every one of them from the format it loads (|load_fmt_file|), as
+%     web2c's does, and reads the clock after the load ([51.1337]); for
+%     XeTeX's Unicode-sized |eqtb| this is most of a run's start-up.
+%     |initex_tables| is |ini_version|, or true when
+%     FLASHTEX_INITEX_TABLES=1 asks for the tables anyway (system.rs), which
+%     is how the state after the format load is shown to be the same.
 %
 % web2c's version string after the banner is in web2c-run.ch.
 %
 % GPL-2.0-or-later, like the rest of crates/flashtex-engine.
+
+@x xetex.web l.497 - tex.ch [1.8]: init...tini is dynamic
+@!init @<Initialize table entries (done by \.{INITEX} only)@>@;@+tini
+@y
+@!init if initex_tables then
+  begin @<Initialize table entries (done by \.{INITEX} only)@>@;
+  end;@+tini
+@z
 
 @x xetex.web l.1809 - tex.ch [5.61]: a production run names its default format
 if format_ident=0 then wterm_ln(' (no format preloaded)')
@@ -71,6 +90,20 @@ format_ident:=" (INITEX)";
 if ini_version then format_ident:=" (INITEX)";
 @z
 
+@x xetex.web l.29312 - tex.ch [51.1332]: init...tini is dynamic
+@!init if not get_strings_started then goto final_end;
+init_prim; {call |primitive| for each primitive}
+init_str_ptr:=str_ptr; init_pool_ptr:=pool_ptr; fix_date_and_time;
+tini@/
+@y
+@!init if initex_tables then
+  begin if not get_strings_started then goto final_end;
+  init_prim; {call |primitive| for each primitive}
+  init_str_ptr:=str_ptr; init_pool_ptr:=pool_ptr; fix_date_and_time;
+  end;
+tini@/
+@z
+
 @x xetex.web l.30797 - pdftex.ch: `-etex' enters extended mode without `*'
 @!init if (buffer[loc]="*")and(format_ident=" (INITEX)") then
   begin no_new_control_sequence:=false;
@@ -91,6 +124,8 @@ if ini_version then format_ident:=" (INITEX)";
 
 @<Declare web2c's file-name procedures@>=
 function ini_version:boolean; external; {is this INITEX?}
+function initex_tables:boolean; external;
+  {set up INITEX's table entries? (|ini_version|)}
 function etex_p:boolean; external; {was \.{-etex} given?}
 procedure wterm_dump_name; external; {write the default format's name}
 procedure pack_default_format_name; external;

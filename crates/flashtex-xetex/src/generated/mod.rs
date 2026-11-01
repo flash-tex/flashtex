@@ -17,7 +17,10 @@
 // with the change file crates/flashtex-xetex/changes/xetex-web2c.ch
 // with the change file crates/flashtex-xetex/changes/mltex.ch
 // with the change file third_party/xetex/char-warning-xetex.ch
-// with the change file crates/flashtex-xetex/changes/web2c-run.ch.
+// with the change file crates/flashtex-xetex/changes/web2c-run.ch
+// with the change file crates/flashtex-xetex/changes/displaylist.ch
+// with the change file crates/flashtex-xetex/changes/resident.ch
+// with the change file crates/flashtex-xetex/changes/checkpoint.ch.
 // Regenerate with the command in tools/web2rust/README.md.
 #![allow(non_snake_case, non_camel_case_types, non_upper_case_globals)]
 #![allow(unused_parens, unused_mut, unused_variables, unused_assignments)]

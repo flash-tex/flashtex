@@ -1,0 +1,19 @@
+% Unicode corpus (M3): fontspec with fonts named by family (the font index,
+% not kpathsea), features, \addfontfeatures, a local \fontspec, colour.
+\documentclass{article}
+\usepackage{fontspec}
+\setmainfont{TeX Gyre Termes}
+\setsansfont{TeX Gyre Heros}[Scale=MatchLowercase]
+\setmonofont{TeX Gyre Cursor}
+\newfontfamily\pagella{TeX Gyre Pagella}[Numbers=OldStyle]
+\begin{document}
+Ligatures: fi fl ffi -- --- ``quotes''. \textsc{Small Caps}. Numbers 0123456789.
+
+{\pagella Old-style figures 0123456789 in Pagella.}
+
+{\addfontfeatures{LetterSpace=10}letter-spaced text}
+
+{\fontspec{TeX Gyre Bonum}[Color=FF0000]coloured Bonum}
+
+\textsf{Sans}, \texttt{Mono}, \textbf{\textit{bold italic}}, \emph{emphasis}.
+\end{document}

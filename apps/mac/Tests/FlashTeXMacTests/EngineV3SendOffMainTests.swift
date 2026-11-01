@@ -30,6 +30,7 @@ final class EngineV3SendOffMainTests: XCTestCase {
         model.autoCompile = true
         let s = model.engineV3
         defer { s.stop() }
+        EngineV3Session.sendThreads.reset()
         MainThreadProbe.start()
         s.start(model: model)
         try await EngineV3TestHost.awaitReady(s)
@@ -56,7 +57,18 @@ final class EngineV3SendOffMainTests: XCTestCase {
         if let d = try? JSONSerialization.data(withJSONObject: o, options: [.sortedKeys]) { print("EditorInstantSend: " + String(decoding: d, as: UTF8.self)) }
         let worst = Double(compile?.maxNs ?? 0) / 1e6
         XCTAssertGreaterThan(compile?.count ?? 0, 0, "a compile was sent")
-        XCTAssertLessThan(worst, 8, "the first compile's main-thread time (the 4.5 MB buffer is encoded and written off main)")
+        // Off main, strictly: the COMPILE was written and the copy's file
+        // written on the send queue, never on the main thread.
+        let threads = EngineV3Session.sendThreads.current
+        XCTAssertGreaterThan(threads.compileOffMain, 0, "the COMPILE is written on the send queue: \(threads)")
+        XCTAssertGreaterThan(threads.fileOffMain, 0, "the copy's file is written on the send queue: \(threads)")
+        XCTAssertEqual(threads.compileOnMain, 0, "no COMPILE is written on main: \(threads)")
+        XCTAssertEqual(threads.fileOnMain, 0, "no copy file is written on main: \(threads)")
+        // And a coarse wall-clock guard on what stays on main. It is not
+        // what proves the move (the thread counts above do): a loaded
+        // hosted runner took 9.3 ms here (2026-10-12) with the work off
+        // main, where 0.6 to 2.7 ms is usual, so the old 8 ms bound flaked.
+        XCTAssertLessThan(worst, 25, "the first compile's main-thread time (the 4.5 MB buffer is encoded and written off main)")
     }
 
 }

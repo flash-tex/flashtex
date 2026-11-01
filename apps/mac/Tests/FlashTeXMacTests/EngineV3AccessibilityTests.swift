@@ -112,11 +112,11 @@ final class EngineV3AccessibilityTests: XCTestCase {
         XCTAssertEqual(page.accessibilityRoleDescription(), PreviewAccessibility.pageRoleDescription)
         let lines = page.axLines.map(\.text)
         XCTAssertEqual(lines, ["Hello world, this is a test.", "Second paragraph: fine office.", "1"])
-        XCTAssertEqual(page.accessibilityLabel(), V2PageText.pageLabel(number: 1, totalPages: 2, lineCount: 3))
+        XCTAssertEqual(page.accessibilityLabel(), PreviewPageText.pageLabel(number: 1, totalPages: 2, lineCount: 3))
         XCTAssertEqual(page.accessibilityValue() as? String, lines.joined(separator: "\n"))
         let children = try XCTUnwrap(page.accessibilityChildren() as? [PreviewAXElement])
         XCTAssertEqual(children.count, 3)
-        XCTAssertEqual(children[1].accessibilityLabel(), V2PageText.lineLabel(page: 1, line: page.axLines[1]))
+        XCTAssertEqual(children[1].accessibilityLabel(), PreviewPageText.lineLabel(page: 1, line: page.axLines[1]))
         XCTAssertEqual(children[1].accessibilityRoleDescription(), PreviewAccessibility.lineRoleDescription)
         // The line's frame lies on the page, where the text is drawn.
         XCTAssertTrue(page.bounds.contains(children[1].viewFrame), "\(children[1].viewFrame) in \(page.bounds)")

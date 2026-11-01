@@ -1,0 +1,68 @@
+This is BibTeX, Version 0.99e (TeX Live 2026)
+Capacity: max_strings=200000, hash_size=200000, hash_prime=170003
+The top-level auxiliary file: doc.aux
+The style file: mystyle.bst
+x$ is an unknown function---line 684 of file mystyle.bst
+Database file #1: db0.bib
+I was expecting a `,' or a `}'---line 14 of file db0.bib
+ : 
+ : @weird(k0,
+(Error may have been on previous line)
+I'm skipping whatever remains of this entry
+Warning--entry type for "k0" isn't style-file defined
+--line 14 of file db0.bib
+Database file #2: db1.bib
+Repeated entry---line 5 of file db1.bib
+ : @techreport{k0
+ :               ,
+I'm skipping whatever remains of this entry
+Illegal end of database file---line 67 of file db1.bib
+ : }
+ :  
+I'm skipping whatever remains of this entry
+"" is a string literal, not an integer, for entry K0
+while executing---line 1345 of file mystyle.bst
+You can't pop an empty literal stack for entry K0
+while executing---line 1345 of file mystyle.bst
+You've used 1 entry,
+            2908 wiz_defined-function locations,
+            655 strings with 5115 characters,
+and the built_in function-call counts, 406 in all, are:
+= -- 62
+> -- 0
+< -- 0
++ -- 0
+- -- 0
+* -- 9
+:= -- 86
+add.period$ -- 1
+call.type$ -- 1
+change.case$ -- 8
+chr.to.int$ -- 1
+cite$ -- 1
+duplicate$ -- 13
+empty$ -- 25
+format.name$ -- 0
+if$ -- 92
+int.to.chr$ -- 5
+int.to.str$ -- 0
+missing$ -- 0
+newline$ -- 10
+num.names$ -- 0
+pop$ -- 17
+preamble$ -- 3
+purify$ -- 10
+quote$ -- 0
+skip$ -- 11
+stack$ -- 0
+substring$ -- 21
+swap$ -- 0
+text.length$ -- 4
+text.prefix$ -- 0
+top$ -- 0
+type$ -- 4
+warning$ -- 0
+while$ -- 4
+width$ -- 0
+write$ -- 18
+(There were 6 error messages)
