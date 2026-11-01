@@ -805,16 +805,22 @@ in the misses.
 - [6] a braced argument;
 - [7] a body that is not expanded.
 
-They did so whenever D9 was not recording, so a BOX-MEMO recording never saw those control
-sequences. A body's `\x` that became a `#` between calls was therefore replayed past:
-`tests/boxmemo.rs`'s `a_token_that_turns_into_a_parameter_is_a_miss` gives a different log with
-BOX-MEMO on when the loops are left as they were. While a recording is in progress they now read
-through `get_next` (`not(intr_rec_on or bm_rec_on)`), as they do for D9, and those tokens join K3
-as token reads.
+They do so whenever D9 is not recording, so a BOX-MEMO recording never sees those control
+sequences. A body's `\x` that became a `#` between calls is therefore replayed past. This is a
+hole that predates this revision, and this revision neither makes it wider nor closes it.
+
+A control sequence this revision leaves out of the key is always assigned in the call, so it was
+first delivered as the assignment's target (`get_r_token`) or looked up. That delivery keeps a
+token read for it, which covers what an in-place read of it could depend on.
+
+The fix and its cost are in the next PR (lane L6, `agent/kabir-claude-l6/bm-inplace`). In that
+PR, `a_token_that_turns_into_a_parameter_is_a_miss` gives a different log with BOX-MEMO on while
+the loops stay as they are.
 
 **Tests** (`tests/boxmemo.rs`, each off, on and verify identical):
 - a `\def` of `\reserved@a` first, which hits whatever the document left there;
 - a target passed as an argument (`\tl_set:Nn`'s shape), which hits;
 - `\ifx\reserved@a` before the `\def`, and an `\edef` that reads its own target, which are keyed;
 - a `\def` in a group of the call's own and a read after its `\endgroup`, which is keyed;
-- the token that turns into a `#`, which is a miss.
+- an argument (`get_next`, `matching`) that becomes `\outer`, which is a miss; while it only
+  changes meaning, it hits.

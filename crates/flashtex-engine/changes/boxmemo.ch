@@ -24,12 +24,10 @@
 %   |sa_def| family, |new_save_level|, |unsave|), the box registers fetched,
 %   the commands, expansions and internal quantities, conditionals popped,
 %   and |prepare_mag|; src/boxmemo.rs abandons the recording at anything
-%   outside its model. While a recording is in progress the token loops
-%   of changes/throughput.ch [4]-[7] read through |get_next|, as they do
-%   for D9's, so that it sees every control sequence: one read only as a
-%   token (|intr_weak|, |matching|, |skipping|) is keyed by whether it is
-%   \.{\\outer}, a \.\# or an alignment tab, or an \.{\\if} or \.{\\fi}
-%   (BOX-MEMO.md \S15).
+%   outside its model. A control sequence |get_next| delivers to a caller
+%   that looks only at the token (|intr_weak|, |matching|, |skipping|) is
+%   keyed by whether it is \.{\\outer}, a \.\# or an alignment tab, or an
+%   \.{\\if} or \.{\\fi} (BOX-MEMO.md \S15).
 %
 % * |bm_font_version|, |bm_hyph_version|: a fresh number whenever a loaded
 %   font's parameters or the hyphenation exceptions change, so that a key
@@ -157,22 +155,6 @@ if bm_on then if bm_at_switch then if expand_depth_count=0 then
 exit:scanner_status:=save_scanner_status; warning_index:=save_warning_index;
 @z
 
-@x changes/throughput.ch [5] - a recording reads an argument's tokens through get_next, as D9's
-  begin if not intr_rec_on then
-    begin d:=info(r);
-@y
-  begin if not(intr_rec_on or bm_rec_on) then
-    begin d:=info(r);
-@z
-
-@x changes/throughput.ch [6] - ... and a group's
-  if state=token_list then if loc<>null then if not intr_rec_on then
-    begin ft:=info(loc);
-@y
-  if state=token_list then if loc<>null then if not(intr_rec_on or bm_rec_on) then
-    begin ft:=info(loc);
-@z
-
 @x pdftex.web l.9740 (after changes/intrinsics.ch) - a recording fetches an internal quantity
 if intr_rec_on then flashtex_intr_internal;
 @y
@@ -226,22 +208,6 @@ else  begin scan_register_num; cur_val_level:=m-mem_bot;
 @y
 else  begin scan_register_num; cur_val_level:=m-mem_bot;
   if bm_rec_on then flashtex_bm_reg_read(cur_val_level,cur_val);
-@z
-
-@x changes/throughput.ch [7] - ... and a body's that it does not expand
-  else begin if not intr_rec_on then
-      loop@+  begin if state<>token_list then goto done3;
-@y
-  else begin if not(intr_rec_on or bm_rec_on) then
-      loop@+  begin if state<>token_list then goto done3;
-@z
-
-@x changes/throughput.ch [4] - ... and a conditional's skipped text
-  if state=token_list then if loc<>null then if not intr_rec_on then
-    begin t:=info(loc);
-@y
-  if state=token_list then if loc<>null then if not(intr_rec_on or bm_rec_on) then
-    begin t:=info(loc);
 @z
 
 @x pdftex.web l.11842 (after changes/intrinsics.ch) - a recording never ends a conditional it did not begin

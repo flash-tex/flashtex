@@ -408,20 +408,20 @@ fn a_meaning_an_endgroup_brings_back_is_keyed() {
 }
 
 #[test]
-fn a_token_that_turns_into_a_parameter_is_a_miss() {
-    // `\x` in a body that is not expanded is read only as a token: the key
-    // holds that it is not a `#` (nor `\outer`, `&`, `\if`, `\fi`). Once it
-    // is one, `\def` takes it as a parameter (an error here), so that call
-    // must not be replayed. (The body's tokens used to be read in place,
-    // unseen by the recording: changes/throughput.ch [7].)
+fn an_argument_that_turns_outer_is_a_miss() {
+    // `\x`, an argument of `\set` inside the call, is read only as a token:
+    // the key holds that it is not `\outer` (nor `#`, `&`, `\if`, `\fi`).
+    // Once it is, matching `\set`'s argument is an error, so that call must
+    // not be replayed
     let s = check(
-        "token",
+        "token-outer",
         &[
             RESERVED,
-            "\\def\\measure#1{\\def\\tmp{\\x #1}\\begingroup\\setbox0\\hbox{\\vrule width 1pt}\
+            "\\def\\set#1{\\def\\tmp{#1}}\n\
+             \\def\\measure#1{\\set\\x\\begingroup\\setbox0\\hbox{\\vrule width #1}\
              \\global\\dimen1=\\wd0 \\endgroup}\n\
-             \\let\\x\\relax\\measure{1}\\show\\measure{1}\\show\\let\\x=#\\measure{1}\\show\
-             \\let\\x\\relax\\measure{1}\\show\\end\n",
+             \\let\\x\\relax\\measure{1pt}\\show\\measure{1pt}\\show\\def\\x{}\\measure{1pt}\\show\
+             \\outer\\def\\x{}\\measure{1pt}\\show\\end\n",
         ]
         .concat(),
     );
