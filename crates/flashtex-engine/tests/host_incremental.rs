@@ -3428,6 +3428,108 @@ fn a_persisted_s0_checks_the_reads_at_the_document_start() {
     }
 }
 
+/// A package installed with no host running, which the preamble's
+/// `\IfFileExists` did not find before, is found by a full run; a host
+/// opened from the stored S₀ (whose key's lookups are made again only
+/// where something they depend on changed) must find it too. Into
+/// `TEXMFHOME` (searched on disk) and into `TEXMFLOCAL` (an `!!` tree, found
+/// through its `ls-R`, which the installer updates).
+#[test]
+fn a_persisted_s0_finds_a_package_installed_since() {
+    if find_texlive_bin().is_none() {
+        common::no_texlive();
+        return;
+    }
+    let ls_r = |files: &[&str]| {
+        format!(
+            "% ls-R -- filename database for kpathsea; do not change this line.\n\
+             ./:\ntex\n\n./tex:\nlatex\n\n./tex/latex:\n{}",
+            files.iter().map(|f| format!("{f}\n")).collect::<String>()
+        )
+    };
+    for (case, var, db) in [("home", "TEXMFHOME", false), ("local", "TEXMFLOCAL", true)] {
+        let base = common::fresh_dir(&format!("flashtex-host-s0-lookup-{case}"));
+        let _ = std::fs::remove_dir_all(&base);
+        let (proj, out, cache, tree) = (
+            base.join("proj"),
+            base.join("out"),
+            base.join("s0"),
+            base.join("texmf"),
+        );
+        for d in [&proj, &out, &tree.join("tex/latex")] {
+            std::fs::create_dir_all(d).unwrap();
+        }
+        std::fs::write(tree.join("tex/latex/flashtexother.sty"), "\\endinput\n").unwrap();
+        if db {
+            std::fs::write(tree.join("ls-R"), ls_r(&["flashtexother.sty"])).unwrap();
+        }
+        std::fs::write(
+            proj.join("main.tex"),
+            "\\documentclass{article}\n\
+             \\IfFileExists{flashtexprobe.sty}{\\def\\probe{found}}{\\def\\probe{missing}}\n\
+             \\begin{document}\nThe probe package is \\probe.\n\\end{document}\n",
+        )
+        .unwrap();
+        let env = [
+            ("FLASHTEX_S0_CACHE", cache.to_str().unwrap()),
+            (var, tree.to_str().unwrap()),
+        ];
+        {
+            let host = start_host_env(&format!("a{case}"), &env);
+            let mut c = Client::connect(&host.1).unwrap();
+            let mut view = View::default();
+            for id in 1..=4 {
+                let o = compile(&mut c, &mut view, &req(id, &proj, &out, "main.tex"));
+                if o.done.str_field("mode") == Some("unchanged") {
+                    break;
+                }
+            }
+            let deadline = Instant::now() + Duration::from_secs(120);
+            while !stored(&cache, "s0") && Instant::now() < deadline {
+                std::thread::sleep(Duration::from_millis(20));
+            }
+            let _ = c.bye();
+        }
+        assert!(stored(&cache, "s0"), "{case}: no S0 was stored");
+        // installed with no host running
+        std::fs::write(
+            tree.join("tex/latex/flashtexprobe.sty"),
+            "\\ProvidesPackage{flashtexprobe}\n",
+        )
+        .unwrap();
+        if db {
+            std::fs::write(
+                tree.join("ls-R"),
+                ls_r(&["flashtexother.sty", "flashtexprobe.sty"]),
+            )
+            .unwrap();
+        }
+        let host = start_host_env(&format!("b{case}"), &env);
+        let scratch = start_host_env(&format!("s{case}"), &env[1..]);
+        let mut c = Client::connect(&host.1).unwrap();
+        let mut view = View::default();
+        for id in 1..=4 {
+            let o = compile(&mut c, &mut view, &req(id, &proj, &out, "main.tex"));
+            if o.done.str_field("mode") == Some("unchanged") {
+                break;
+            }
+        }
+        let (p2, o2) = snapshot(&base, &proj, &out, "x");
+        compare_with_scratch(
+            &scratch.1,
+            &view,
+            &proj,
+            &out,
+            &p2,
+            &o2,
+            "main.tex",
+            &format!("{case}: a package installed since S0 was stored"),
+        );
+        let _ = c.bye();
+        let _ = std::fs::remove_dir_all(&base);
+    }
+}
+
 /// T7-CONV (T7's plain-10 letter@start, #1850): a letter typed on the line
 /// of the document's first inline math, after the math. amsmath's
 /// `\every@math@size` sets `\strutbox@` globally there, so the box lives
