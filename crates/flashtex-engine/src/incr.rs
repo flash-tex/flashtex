@@ -3219,6 +3219,22 @@ impl Observer for Obs {
         take
     }
 
+    /// Elsewhere than in an edit's first pass until the edited page has
+    /// shipped (all taken there, as before), only within `dense` pages of
+    /// the cursor: `thin` merges the others away at once (only page
+    /// checkpoints stay farther out). In a cold open of Infinite Descent x2
+    /// a heavy page took one every page, and their logs' merges were half
+    /// of `thin` (lane COLD-FIRST-2). A held one counts as one taken for
+    /// retention's pace, as a held segment does.
+    fn take_held_timed(&mut self, _g: &mut Globals) -> bool {
+        let take = (self.first_incremental && !self.edit_out)
+            || self.pages_so_far().abs_diff(self.cursor) <= self.dense;
+        if !take {
+            self.ticks += 1;
+        }
+        take
+    }
+
     /// (`REQ_PREEMPT`: the checkpoint it takes stops the run, as a held
     /// segment taken for newer work does; `preempt_now` consumed the news)
     fn stops_now(&mut self, g: &mut Globals) -> bool {
