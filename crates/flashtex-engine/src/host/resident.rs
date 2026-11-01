@@ -538,7 +538,15 @@ struct Doc {
     /// is to be persisted for it once the host is idle.
     viewport: Option<usize>,
     s1_when_idle: bool,
+    /// How the last save of S₁ went (`save_s1`: the page it was taken at,
+    /// or why there is none), which every later DONE says (`s1_save`): a
+    /// refusal is otherwise only in the host's stderr. Shared with the
+    /// writer thread, whose write may fail.
+    s1_saved: S1Saved,
 }
+
+/// [`Doc::s1_saved`].
+type S1Saved = std::sync::Arc<std::sync::Mutex<Option<Result<usize, String>>>>;
 
 /// The external tools of the resident document (`super::external`).
 #[derive(Default)]
@@ -870,6 +878,7 @@ impl Engine {
             s0_when_idle: false,
             viewport: None,
             s1_when_idle: false,
+            s1_saved: Default::default(),
         });
         Ok(())
     }
@@ -1071,6 +1080,8 @@ impl Engine {
             .map(|v| v as usize + 1);
         let doc = self.doc.as_mut().unwrap();
         doc.viewport = stop_at.map(|s| s - 1);
+        // (the last save of S₁, for this DONE: `Doc::s1_saved`)
+        let s1_saved = doc.s1_saved.lock().unwrap().clone();
         // Preemption: a newer COMPILE from this client (typing) or its
         // CANCEL stops the run at its next page or segment checkpoint; the
         // next compile keeps what it typeset, or goes back to the run it was
@@ -1334,6 +1345,18 @@ impl Engine {
                 }
                 if let Some(n) = rep.s1_fill_converged {
                     extra.push(("s1_fill_converged".to_string(), Json::Int(n as i64)));
+                }
+                // how the document's last save of S₁ went, before this
+                // compile: the page it was taken at, or why there is none
+                // (`save_s1`; a refusal is otherwise only in stderr)
+                if let Some(s) = &s1_saved {
+                    extra.push((
+                        "s1_save".to_string(),
+                        match s {
+                            Ok(p) => obj([("page", Json::Int(*p as i64))]),
+                            Err(e) => obj([("error", js(e.as_str()))]),
+                        },
+                    ));
                 }
                 if !rep.s1_ms.is_empty() {
                     extra.push((
@@ -1790,6 +1813,8 @@ impl Engine {
         let t = Instant::now();
         let r = doc.session.prepare_s1(v, &p0.to_string_lossy());
         let engine_ms = (t.elapsed().as_secs_f64() * 1e4).round() / 10.0;
+        let saved = doc.s1_saved.clone();
+        *saved.lock().unwrap() = Some(r.as_ref().map(|x| x.0).map_err(|e| e.clone()));
         let (page, image) = match r {
             Ok(x) => x,
             Err(e) => {
@@ -1814,7 +1839,10 @@ impl Engine {
                     ("write_ms", Json::Num((write_s * 1e4).round() / 10.0)),
                 ])
             )),
-            Err(e) => eprintln!("flashtex-host: saving S1: {e}"),
+            Err(e) => {
+                eprintln!("flashtex-host: saving S1: {e}");
+                *saved.lock().unwrap() = Some(Err(format!("writing it: {e}")));
+            }
         });
         if self.profile.lean {
             let t = Instant::now();
