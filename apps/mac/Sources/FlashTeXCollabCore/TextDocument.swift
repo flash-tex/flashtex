@@ -940,6 +940,7 @@ public final class TextDocument {
     public func replace(utf16Range range: Range<Int>, with text: String) throws -> [TextOp] {
         let a = scalarOffset(ofUTF16: range.lowerBound)
         let b = scalarOffset(ofUTF16RoundingUp: range.upperBound)
+        if !text.isEmpty { try checkRoom(text.utf8.count) }
         var ops = delete(at: a, length: b - a)
         if let ins = try insert(text, at: a) { ops.append(ins) }
         return ops

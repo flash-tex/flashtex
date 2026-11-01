@@ -70,6 +70,22 @@ final class ProjectCapsTests: XCTestCase {
         XCTAssertNil(guest.text(fid(0))!.validate())
     }
 
+    func testRefusedReplaceLeavesTextAndDigestUnchanged() throws {
+        let project = CollabProject(replica: 1, caps: .init(maxFiles: 2, maxTextBytes: 10))
+        _ = try project.fileOp { try $0.create(fid(0), kind: .text, path: "a.tex") }
+        _ = try project.fileOp { try $0.create(fid(1), kind: .text, path: "b.tex") }
+        _ = try project.insert("abc", at: 0, in: fid(0))
+        _ = try project.insert("1234567", at: 0, in: fid(1))
+        let document = try XCTUnwrap(project.text(fid(0)))
+        let digest = project.digest
+
+        XCTAssertThrowsError(try document.replace(utf16Range: 1..<2, with: "x")) {
+            XCTAssertEqual($0 as? CollabError, .projectFull)
+        }
+        XCTAssertEqual(document.text, "abc")
+        XCTAssertEqual(project.digest, digest)
+    }
+
     func testAnUncappedProjectKeepsThePerDocumentLimit() throws {
         let hostile = uncapped(2)
         let create = try hostile.fileOp { try $0.create(fid(0), kind: .text, path: "a.tex") }
