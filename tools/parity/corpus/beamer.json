@@ -160,6 +160,24 @@
       "repo": "fixtures/beamer-v3/widescreen-169/main.tex",
       "class": "beamer",
       "copy_dir": true
+    },
+    {
+      "id": "rw-beamer-madrid",
+      "repo": "fixtures/real-world/beamer-madrid/main.tex",
+      "class": "beamer",
+      "copy_dir": true
+    },
+    {
+      "id": "rw-beamer-visuals",
+      "repo": "fixtures/real-world/beamer-visuals/main.tex",
+      "class": "beamer",
+      "copy_dir": true
+    },
+    {
+      "id": "rw-beamer-blocks-columns",
+      "repo": "fixtures/real-world/beamer-blocks-columns/main.tex",
+      "class": "beamer",
+      "copy_dir": true
     }
   ]
 }
