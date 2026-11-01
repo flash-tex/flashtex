@@ -221,6 +221,14 @@ struct Target {
     /// open_s1`, ships from S₁'s page on; the pages before it come with the
     /// fill): stale until sent.
     missing: std::collections::BTreeSet<u32>,
+    /// Forms the pages shipped this compile draw (`Live::deliver` without
+    /// their forms): the engine writes a form after the first page that
+    /// uses it, and sends it then, unless that compile's output was not
+    /// wanted (superseded: a run from the format stopped in its preamble
+    /// still writes the preamble's `\immediate\pdfxform`s, pgf's shadings,
+    /// unsent). Those the client still lacks go from the cache before the
+    /// next page and before DONE (`Live::pay_forms`; spec §5).
+    owed: Vec<u32>,
 }
 
 impl Target {
@@ -379,17 +387,39 @@ impl Live {
         }
         t.missing.remove(&j);
         if forms {
-            for n in &c.e.forms {
-                if let Some(f) = self.forms.get(n) {
-                    if t.ps.forms.get(n) != Some(&f.e.hash) {
-                        if !t.send(&f.e) {
-                            return;
-                        }
-                        t.ps.forms.insert(*n, f.e.hash);
+            self.send_forms(t, &c.e.forms);
+        } else {
+            t.owed.extend(&c.e.forms);
+        }
+    }
+
+    /// Send the cached forms of `ids` that the client lacks.
+    fn send_forms(&self, t: &mut Target, ids: &[u32]) {
+        for n in ids {
+            if let Some(f) = self.forms.get(n) {
+                if t.ps.forms.get(n) != Some(&f.e.hash) {
+                    if !t.send(&f.e) {
+                        return;
                     }
+                    t.ps.forms.insert(*n, f.e.hash);
                 }
             }
         }
+    }
+
+    /// The forms owed to pages shipped this compile (`Target::owed`) that
+    /// the engine has not sent since: from the cache, which holds what the
+    /// engine wrote last under each id. Called before the next page and
+    /// before DONE, when the engine has written the forms of the pages
+    /// before (a page's new forms are written within its ship-out); also
+    /// when the compile's output is no longer wanted, since the client holds
+    /// the pages that draw them.
+    fn pay_forms(&self, t: &mut Target) {
+        if t.owed.is_empty() || t.broken {
+            return;
+        }
+        let owed = std::mem::take(&mut t.owed);
+        self.send_forms(t, &owed);
     }
 
     /// Deliver the cached pages from `t.next` up to (not including) `end`.
@@ -453,6 +483,8 @@ impl Live {
         let Some(mut t) = self.target.take() else {
             return;
         };
+        // (the forms of the pages shipped before this one are written by now)
+        self.pay_forms(&mut t);
         t.emitted += 1;
         t.forms_after = false;
         self.catch_up(&mut t, i as u32);
@@ -1073,6 +1105,7 @@ impl Engine {
             first_restore_us: [0; 5],
             first_io: [(0, 0); 8],
             missing: Default::default(),
+            owed: Vec::new(),
         });
         let stop_at = req
             .int_field("viewport")
@@ -1246,6 +1279,8 @@ impl Engine {
         let stopped = matches!(&result, Ok(r) if r.paused);
         let mut live = self.live.borrow_mut();
         let mut t = live.target.take().unwrap();
+        // (the forms the shipped pages draw, before DONE: spec §5)
+        live.pay_forms(&mut t);
         let (status, exit_code, count, mode, mut extra) = match &result {
             Ok(rep) => {
                 let count = rep.pages;
