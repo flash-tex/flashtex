@@ -1,8 +1,11 @@
 # FlashTeX Cargo workspace (docs/proposals/generated-data-and-maintainability.md
 # §3.2, slice 2 complete).
 #
-# Every crate under crates/ is a member, except crates/flashtex-xetex (exclude below): one Cargo.lock (this directory's), one target
-# directory (./target), and `cargo test --workspace` tests them all.
+# Every crate under crates/ is a member, except crates/flashtex-xetex (exclude below), and so is every
+# oracle crate under tests/oracles/ (retirement plan §2, RQ4: the crates DESIGN.md §10 keeps as oracles
+# and tests, moved there in S8 so the product/oracle split is visible; MIT, and they never depend on
+# flashtex-engine: check A of scripts/check-license-boundary.sh): one Cargo.lock (this
+# directory's), one target directory (./target), and `cargo test --workspace` tests them all.
 # Binaries of member crates are therefore built into ./target/<profile>/, NOT
 # crates/<name>/target/<profile>/ -- scripts that need a helper binary resolve
 # the directory with scripts/crate-target-dir.sh instead of hard-coding it.
@@ -12,7 +15,7 @@
 # and the lockfile was seeded from the members' former lockfiles, so no member
 # resolves a crates.io version it did not already lock.
 resolver = "2"
-members = ["crates/*", "tools/web2rust"]
+members = ["crates/*", "tests/oracles/*", "tools/web2rust"]
 # The XeTeX port (docs/design/xetex/PLAN.md) is built on its own, with its own
 # lockfile and target directory (scripts/xetex-lockstep.sh), so that its 70k
 # generated lines do not slow every workspace build and gate.

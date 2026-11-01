@@ -94,6 +94,10 @@ latency. Every consumer must retain source/project/revision and resource identit
   `crates/docstrip/README.md`: the docstrip interpreter that unpacks `.ins`/`.dtx`
   packages after a fetch (what of the batch language is interpreted, the stripping
   rules with docstrip.dtx line citations, the TeX Live byte-identity oracle).
+- [`tests/oracles/`](../tests/oracles/README.md): the MIT crates DESIGN.md §10 keeps as
+  test oracles (tex-expansion, tex-boxes, paragraph-layout with document-style and
+  microtype, math-layout, page-builder), moved out of `crates/` by retirement stage S8.
+  No product crate depends on them; each one's expected data comes only from pdflatex.
 - `docs/contracts/runtime-v1.md` and `docs/contracts/transfer-v1.md`: production
   message contracts. [`docs/protocol/display-list-v3.md`](protocol/display-list-v3.md) is the
   engine host's page protocol.
