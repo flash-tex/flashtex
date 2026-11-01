@@ -409,6 +409,31 @@ impl Delta {
     }
 }
 
+/// Words of one region (TeX's `mem`) that a sealed log may leave out:
+/// those dead at every checkpoint since they were last changed (lane MEMORY).
+///
+/// A log restores a word to its value at the log's checkpoint `m`; a restore
+/// to an earlier checkpoint `i` takes the word from the first log at or after
+/// `i` that holds it, so leaving it out of log `m` is exact for every target
+/// where the word is live only if it is dead at every checkpoint from its
+/// last change before `m` to `m`. `drop` is that set at checkpoint `id`
+/// (`S(m) = dead(m) & (changed in the interval before m | S(m-1))`), kept as
+/// the checkpoints are taken in order, and reset by anything else (a
+/// restore, a jump): then the next interval leaves nothing out.
+#[derive(Default)]
+struct DeadWords {
+    /// Byte offset and words of the region (none: off).
+    region: Option<(usize, usize)>,
+    /// `S` at checkpoint `id`: the words its log may leave out.
+    drop: Option<(CheckpointId, Vec<u64>)>,
+    /// The region's words the last seal found changed (before leaving any
+    /// out), and the checkpoint of that log.
+    written: Vec<u64>,
+    written_id: Option<CheckpointId>,
+    /// Words left out, over the space's life (`mem_stats`).
+    dropped: u64,
+}
+
 /// A hint to bring the chunk at address `a` into the cache (a no-op where
 /// there is no prefetch instruction to hand).
 #[inline(always)]
@@ -734,6 +759,9 @@ impl Branch {
 }
 
 pub(crate) struct Core {
+    /// Dead words left out of the logs (`Arena::set_dead_region`,
+    /// `Arena::dead_step`; lane MEMORY).
+    dead: DeadWords,
     /// The mapping as `mmap` returned it, and its length.
     map: *mut u8,
     map_len: usize,
@@ -954,6 +982,19 @@ impl Core {
         };
         prefetch(0);
         prefetch(1);
+        // (lane MEMORY: the dead words this log may leave out, and the
+        // region's changed words, `DeadWords`)
+        let region = self.dead.region;
+        // (taken out for the loop and put back: `dead_step` reads it next)
+        let drop = match (&self.dead.drop, self.ids.get(i)) {
+            (Some((id, _)), Some(me)) if id == me => self.dead.drop.take(),
+            _ => None,
+        };
+        if let Some((_, words)) = region {
+            self.dead.written.clear();
+            self.dead.written.resize(words.div_ceil(64), 0);
+        }
+        let mut dropped = 0u64;
         for (k, &(c, p)) in entries.iter().enumerate() {
             prefetch(k + 2);
             // SAFETY: a slab chunk and a live chunk, CHUNK_WORDS words each.
@@ -983,6 +1024,31 @@ impl Core {
                     mask[blk / 8] |= bits << ((blk % 8) * 8);
                 }
             }
+            if let Some((off, words)) = region {
+                let first = (c as usize) << CHUNK_SHIFT;
+                if first + CHUNK_BYTES > off && first < off + words * 8 {
+                    for (mw, m) in mask.iter_mut().enumerate() {
+                        let mut x = *m;
+                        while x != 0 {
+                            let b = x.trailing_zeros() as usize;
+                            x &= x - 1;
+                            let at = first + (mw * 64 + b) * 8;
+                            if at < off || at >= off + words * 8 {
+                                continue;
+                            }
+                            let q = (at - off) / 8;
+                            self.dead.written[q >> 6] |= 1 << (q & 63);
+                            if drop
+                                .as_ref()
+                                .is_some_and(|(_, d)| d[q >> 6] >> (q & 63) & 1 == 1)
+                            {
+                                *m &= !(1u64 << b);
+                                dropped += 1;
+                            }
+                        }
+                    }
+                }
+            }
             if mask.iter().any(|&m| m != 0) {
                 let at = bytes.len();
                 vals.clear();
@@ -1004,6 +1070,13 @@ impl Core {
         }
         deltas.shrink_to_fit();
         bytes.shrink_to_fit();
+        if region.is_some() {
+            self.dead.written_id = self.ids.get(i).copied();
+            self.dead.dropped += dropped;
+        }
+        if drop.is_some() {
+            self.dead.drop = drop;
+        }
         let log = &mut self.logs[i];
         log.deltas = deltas;
         log.bytes = bytes;
@@ -2231,6 +2304,7 @@ impl Arena {
             touched: vec![0; nchunks],
             ids: Vec::new(),
             logs: Vec::new(),
+            dead: DeadWords::default(),
             next_id: 0,
             mark: vec![0; nwords],
             slot: vec![0; nchunks],
@@ -2378,6 +2452,85 @@ impl Arena {
 
     /// A hash of the whole space: every chunk that is not all zero, with its
     /// index. Equal spaces hash equal whatever their write histories.
+    /// Leave dead words of the `words` words at byte `off` (TeX's `mem`)
+    /// out of the logs (`DeadWords`); `None`: off.
+    pub fn set_dead_region(&mut self, region: Option<(usize, usize)>) {
+        let d = &mut self.core_mut().dead;
+        d.region = region;
+        d.drop = None;
+        d.written_id = None;
+    }
+
+    /// After checkpoint `id` (just taken, the space's state): `dead`, the
+    /// region's words dead now (`dead(id)`), gives the words its log may
+    /// leave out, if the log before was sealed in order (else none).
+    pub fn dead_step(&mut self, id: CheckpointId, mut dead: Vec<u64>) {
+        let d = &mut self.core_mut().dead;
+        if d.region.is_none() {
+            return;
+        }
+        // (the log sealed just now was the one `drop` was for: in order)
+        let prev = match (&d.drop, d.written_id) {
+            (Some((pid, s)), Some(w)) if *pid == w => Some(s),
+            _ => None,
+        };
+        match prev {
+            Some(s) => {
+                for (k, x) in dead.iter_mut().enumerate() {
+                    *x &= d.written.get(k).copied().unwrap_or(0) | s.get(k).copied().unwrap_or(0);
+                }
+            }
+            None => dead.iter_mut().for_each(|x| *x = 0),
+        }
+        d.drop = Some((id, dead));
+    }
+
+    /// Whether `set_dead_region(Some(r))` is in force.
+    pub fn dead_region_is(&self, r: (usize, usize)) -> bool {
+        self.core().dead.region == Some(r)
+    }
+
+    /// Dead words left out of the logs so far.
+    pub fn dead_dropped(&self) -> u64 {
+        self.core().dead.dropped
+    }
+
+    /// [`hash_nonzero`] with the words of `dead` (of the `words` words at
+    /// byte `off`) taken as zero: a restored state's dead words may hold
+    /// other values than when it was recorded (`DeadWords`).
+    pub fn hash_nonzero_except(&self, off: usize, words: usize, dead: &[u64]) -> [u64; 2] {
+        let mut acc: Vec<u8> = Vec::with_capacity(4096);
+        let mut buf = [0u64; CHUNK_WORDS];
+        for c in 0..self.chunks() {
+            if !self.touched(c) {
+                continue;
+            }
+            let first = c << CHUNK_SHIFT;
+            buf.copy_from_slice(self.chunk(c));
+            if first + CHUNK_BYTES > off && first < off + words * 8 {
+                for (k, w) in buf.iter_mut().enumerate() {
+                    let at = first + k * 8;
+                    if at >= off && at < off + words * 8 {
+                        let q = (at - off) / 8;
+                        if dead.get(q >> 6).is_some_and(|x| x >> (q & 63) & 1 == 1) {
+                            *w = 0;
+                        }
+                    }
+                }
+            }
+            if buf.iter().all(|&x| x == 0) {
+                continue;
+            }
+            // SAFETY: a chunk viewed as bytes.
+            let b = unsafe { std::slice::from_raw_parts(buf.as_ptr() as *const u8, CHUNK_BYTES) };
+            let h = crate::persist::hash128(b);
+            acc.extend_from_slice(&(c as u64).to_le_bytes());
+            acc.extend_from_slice(&h[0].to_le_bytes());
+            acc.extend_from_slice(&h[1].to_le_bytes());
+        }
+        crate::persist::hash128(&acc)
+    }
+
     pub fn hash_nonzero(&self) -> [u64; 2] {
         let mut acc: Vec<u8> = Vec::with_capacity(4096);
         for c in 0..self.chunks() {
@@ -4767,6 +4920,80 @@ mod tests {
                 assert!(arr[..] == copies[i][..], "kept {id}");
                 a.converge(br, id).unwrap();
             }
+        }
+    }
+
+    /// Dead words left out of the logs (`DeadWords`): a restore to every
+    /// checkpoint, after merges too, gives back every word that was live
+    /// there; the dead ones may differ. Words die and come back to life
+    /// without being written (a freed node's insides, a block taken from the
+    /// free ring), as in TeX's `mem`.
+    #[test]
+    fn dead_words_left_out_restore_every_live_word() {
+        let (mut a, mut arr) = space(64 * CHUNK_WORDS);
+        let n = arr.len();
+        let off = arr.as_ptr() as usize - a.bytes().as_ptr() as usize;
+        a.set_dead_region(Some((off, n)));
+        let mut x = 5u64;
+        let mut next = move || {
+            x ^= x << 13;
+            x ^= x >> 7;
+            x ^= x << 17;
+            x
+        };
+        let mut dead = vec![false; n];
+        let mut ids = vec![];
+        let mut states: Vec<(Vec<u64>, Vec<bool>)> = vec![];
+        for _ in 0..40 {
+            let id = a.checkpoint();
+            let mut bits = vec![0u64; n.div_ceil(64)];
+            for (q, &d) in dead.iter().enumerate() {
+                if d {
+                    bits[q >> 6] |= 1 << (q & 63);
+                }
+            }
+            a.dead_step(id, bits);
+            ids.push(id);
+            states.push((arr.to_vec(), dead.clone()));
+            // writes (to live and dead words alike: a dead word written is
+            // live again, as a node being filled), then deaths and births
+            // without writes, in runs as TeX's blocks are
+            for _ in 0..300 {
+                let q = next() as usize % n;
+                arr[q] = next();
+                dead[q] = false;
+            }
+            for _ in 0..20 {
+                let q = next() as usize % n;
+                let len = 1 + next() as usize % 40;
+                let die = next() % 2 == 0;
+                for d in dead.iter_mut().skip(q).take(len) {
+                    *d = die;
+                }
+            }
+        }
+        assert!(a.dead_dropped() > 0, "nothing left out");
+        let check = |a: &mut Arena, arr: &Arr<u64>, k: usize| {
+            let (want, dead) = &states[k];
+            for q in 0..n {
+                if !dead[q] {
+                    assert_eq!(arr[q], want[q], "checkpoint {k}, live word {q}");
+                }
+            }
+            let _ = a;
+        };
+        // every other checkpoint merged away, then restores from the newest back
+        let keep: std::collections::HashSet<CheckpointId> =
+            ids.iter().step_by(2).copied().collect();
+        a.retain(&|id| keep.contains(&id));
+        // first far back in one restore (through every later log), then on back
+        let kept: Vec<usize> = (0..ids.len()).filter(|&k| keep.contains(&ids[k])).collect();
+        let mid = kept[kept.len() / 2];
+        a.restore_discard(ids[mid]).unwrap();
+        check(&mut a, &arr, mid);
+        for &k in kept.iter().rev().filter(|&&k| k < mid) {
+            a.restore_discard(ids[k]).unwrap();
+            check(&mut a, &arr, k);
         }
     }
 

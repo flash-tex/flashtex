@@ -956,7 +956,103 @@ impl Globals {
     /// A hash of `state_bytes` (every nonzero chunk of the word space).
     pub fn state_hash(&mut self) -> [u64; 2] {
         self.spill_scalars();
-        self.arena.hash_nonzero()
+        // (the logs leave dead `mem` words out, `Arena::dead_step`: a
+        // restored state's are not the recorded ones, and nothing reads them)
+        match self.dead_region() {
+            Some((off, words)) => {
+                let dead = self.mem_dead_bits();
+                self.arena.hash_nonzero_except(off, words, &dead)
+            }
+            None => self.arena.hash_nonzero(),
+        }
+    }
+
+    /// TeX's `mem` in the word space, whose dead words the logs leave out
+    /// (lane MEMORY; FLASHTEX_DEAD_LOG=0 keeps them): set on the arena the
+    /// first time.
+    fn dead_region(&mut self) -> Option<(usize, usize)> {
+        static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+        if !*ON.get_or_init(|| std::env::var("FLASHTEX_DEAD_LOG").map_or(true, |v| v != "0")) {
+            return None;
+        }
+        let r = self
+            .arena
+            .regions
+            .iter()
+            .find(|r| r.name == "mem")
+            .map(|r| (r.off, r.bytes / 8))?;
+        if !self.arena.dead_region_is(r) {
+            self.arena.set_dead_region(Some(r));
+        }
+        Some(r)
+    }
+
+    /// The `mem` words dead in this state (tex.web §115-§125): the insides of
+    /// the variable-size free blocks of the ring from `rover` (not their
+    /// first two words, which the ring reads), the cells between
+    /// `lo_mem_max` and `hi_mem_min`, and those above `mem_end`. Nothing
+    /// reads them before it writes them: a node handed out is filled by its
+    /// maker, and a block joined to the ring or the free zones gets its
+    /// header words written. The one-word `avail` stack's cells are not
+    /// counted (their `link` is the stack). A ring that cannot be read
+    /// counts none of its blocks.
+    fn mem_dead_bits(&self) -> Vec<u64> {
+        let n = crate::generated::consts::mem_max as usize + 1;
+        let mut bits = vec![0u64; n.div_ceil(64)];
+        let set = |bits: &mut Vec<u64>, lo: usize, hi: usize| {
+            let hi = hi.min(n);
+            let mut q = lo;
+            while q < hi {
+                if q & 63 == 0 && q + 64 <= hi {
+                    bits[q >> 6] = u64::MAX;
+                    q += 64;
+                } else {
+                    bits[q >> 6] |= 1 << (q & 63);
+                    q += 1;
+                }
+            }
+        };
+        let rh = |w: u64| (w & 0xFFFF_FFFF) as u32 as i32;
+        let lh = |w: u64| (w >> 32) as u32 as i32;
+        let (rover, lo_max, hi_min, mem_end) =
+            (self.rover, self.lo_mem_max, self.hi_mem_min, self.mem_end);
+        let mut blocks: Vec<(usize, usize)> = vec![];
+        let mut ok = true;
+        if rover > 0 {
+            let mut p = rover;
+            let mut steps = 0;
+            loop {
+                if p <= 0 || p >= lo_max || steps > n {
+                    ok = false;
+                    break;
+                }
+                let w = self.mem[p as usize].to_bits();
+                let size = lh(w);
+                // `empty_flag` (tex.web §124) in the link
+                if rh(w) as u32 != 268_435_455 || size < 2 || p + size > lo_max {
+                    ok = false;
+                    break;
+                }
+                blocks.push((p as usize + 2, (p + size) as usize));
+                p = rh(self.mem[p as usize + 1].to_bits());
+                steps += 1;
+                if p == rover {
+                    break;
+                }
+            }
+        }
+        if ok {
+            for (lo, hi) in blocks {
+                set(&mut bits, lo, hi);
+            }
+        }
+        set(
+            &mut bits,
+            (lo_max + 1).max(0) as usize,
+            hi_min.max(0) as usize,
+        );
+        set(&mut bits, (mem_end + 1).max(0) as usize, n);
+        bits
     }
 
     /// The host state now.
@@ -1073,7 +1169,12 @@ impl Globals {
         } else {
             self.arena.open_log_by_region()
         };
+        let dead_region = self.dead_region();
         let id = self.arena.checkpoint();
+        if dead_region.is_some() {
+            let dead = self.mem_dead_bits();
+            self.arena.dead_step(id, dead);
+        }
         let l = self.layer();
         l.stats.seal_s += t.elapsed().as_secs_f64();
         let cpu1 = crate::incr::thread_cpu_s();

@@ -4331,6 +4331,7 @@ impl Session {
                 }
             }
             v.push(("old_cache".into(), g.arena.old_cache_bytes() as i64));
+            v.push(("dead_dropped".into(), g.arena.dead_dropped() as i64));
         }
         v.push(("pages".into(), self.pages.len() as i64));
         v.push((
