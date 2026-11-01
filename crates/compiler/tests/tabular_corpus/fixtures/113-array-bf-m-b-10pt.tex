@@ -1,0 +1,14 @@
+\documentclass{article}
+\usepackage[T1]{fontenc}
+\usepackage{lmodern}
+\usepackage[margin=1in]{geometry}
+\usepackage{array}
+\setlength{\parindent}{0pt}
+\pagestyle{empty}
+\begin{document}
+Text before the table.
+
+\begin{tabular}{|>{\bfseries}l|m{2.5cm}|b{2.5cm}|}\hline Key & A middle aligned entry that wraps & A bottom aligned entry that wraps\\\hline Other & mid & bot\\\hline\end{tabular}
+
+Text after the table.
+\end{document}

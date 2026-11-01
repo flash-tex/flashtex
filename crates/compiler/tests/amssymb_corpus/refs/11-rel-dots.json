@@ -1,0 +1,111 @@
+{
+ "fixture": "11-rel-dots.tex",
+ "reference_engine": "pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026)",
+ "invocation": "pdflatex -interaction=batchmode, two passes, SOURCE_DATE_EPOCH=0 FORCE_SOURCE_DATE=1",
+ "unit": "bp, y from page top",
+ "pages": [
+  [
+   {
+    "text": "Dots",
+    "x": 72.0,
+    "y_top": 83.955
+   },
+   {
+    "text": "a",
+    "x": 99.8604,
+    "y_top": 83.955
+   },
+   {
+    "text": "≑",
+    "x": 109.3289,
+    "y_top": 83.955
+   },
+   {
+    "text": "b",
+    "x": 121.9512,
+    "y_top": 83.955
+   },
+   {
+    "text": "≓",
+    "x": 130.2517,
+    "y_top": 83.955
+   },
+   {
+    "text": "c",
+    "x": 142.8621,
+    "y_top": 83.955
+   },
+   {
+    "text": "≒",
+    "x": 151.2235,
+    "y_top": 83.955
+   },
+   {
+    "text": "d",
+    "x": 163.8458,
+    "y_top": 83.955
+   },
+   {
+    "text": "≗",
+    "x": 173.2522,
+    "y_top": 83.955
+   },
+   {
+    "text": "e",
+    "x": 185.8625,
+    "y_top": 83.955
+   },
+   {
+    "text": "≖",
+    "x": 194.6113,
+    "y_top": 83.955
+   },
+   {
+    "text": "f",
+    "x": 207.2336,
+    "y_top": 83.955
+   },
+   {
+    "text": "≏",
+    "x": 217.606,
+    "y_top": 83.955
+   },
+   {
+    "text": "g",
+    "x": 230.2163,
+    "y_top": 83.955
+   },
+   {
+    "text": "≎",
+    "x": 239.576,
+    "y_top": 83.955
+   },
+   {
+    "text": "h",
+    "x": 252.1983,
+    "y_top": 83.955
+   },
+   {
+    "text": "≜",
+    "x": 262.2491,
+    "y_top": 83.955
+   },
+   {
+    "text": "i",
+    "x": 274.8714,
+    "y_top": 83.955
+   },
+   {
+    "text": "end.",
+    "x": 282.7738,
+    "y_top": 83.955
+   }
+  ]
+ ],
+ "extension_columns": [
+  []
+ ],
+ "brace_extents": [
+  []
+ ]
+}

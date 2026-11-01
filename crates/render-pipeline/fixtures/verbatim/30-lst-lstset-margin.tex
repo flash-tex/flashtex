@@ -1,0 +1,13 @@
+\documentclass{article}
+\usepackage{listings}
+\begin{document}
+\lstset{basicstyle=\ttfamily\footnotesize,xleftmargin=2em,language=C}
+Some ordinary body text that runs for a little while so that the paragraph fills a line of the page.
+\begin{lstlisting}
+int main(void) {
+    int x = 42; /* comment */
+    return x;
+}
+\end{lstlisting}
+Text right after the environment continues the paragraph without an indent.
+\end{document}

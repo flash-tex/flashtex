@@ -1,0 +1,288 @@
+{
+ "fixture": "14-t1-rm-it.tex",
+ "engine": "pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026)",
+ "pages": 1,
+ "segments": [
+  {
+   "page": 1,
+   "text": "Lead",
+   "font": "SFRM1000",
+   "size": 9.9626,
+   "x": 148.712,
+   "baseline": 134.765
+  },
+  {
+   "page": 1,
+   "text": "words",
+   "font": "SFRM1000",
+   "size": 9.9626,
+   "x": 172.297,
+   "baseline": 134.765
+  },
+  {
+   "page": 1,
+   "text": "in",
+   "font": "SFRM1000",
+   "size": 9.9626,
+   "x": 199.986,
+   "baseline": 134.765
+  },
+  {
+   "page": 1,
+   "text": "roman,",
+   "font": "SFRM1000",
+   "size": 9.9626,
+   "x": 210.706,
+   "baseline": 134.765
+  },
+  {
+   "page": 1,
+   "text": "then",
+   "font": "SFRM1000",
+   "size": 9.9626,
+   "x": 243.768,
+   "baseline": 134.765
+  },
+  {
+   "page": 1,
+   "text": "Several",
+   "font": "SFTI1000",
+   "size": 9.9626,
+   "x": 265.565,
+   "baseline": 134.765
+  },
+  {
+   "page": 1,
+   "text": "words",
+   "font": "SFTI1000",
+   "size": 9.9626,
+   "x": 298.969,
+   "baseline": 134.765
+  },
+  {
+   "page": 1,
+   "text": "set",
+   "font": "SFTI1000",
+   "size": 9.9626,
+   "x": 326.273,
+   "baseline": 134.765
+  },
+  {
+   "page": 1,
+   "text": "in",
+   "font": "SFTI1000",
+   "size": 9.9626,
+   "x": 340.976,
+   "baseline": 134.765
+  },
+  {
+   "page": 1,
+   "text": "this",
+   "font": "SFTI1000",
+   "size": 9.9626,
+   "x": 352.37,
+   "baseline": 134.765
+  },
+  {
+   "page": 1,
+   "text": "shape",
+   "font": "SFTI1000",
+   "size": 9.9626,
+   "x": 370.627,
+   "baseline": 134.765
+  },
+  {
+   "page": 1,
+   "text": "measure",
+   "font": "SFTI1000",
+   "size": 9.9626,
+   "x": 396.786,
+   "baseline": 134.765
+  },
+  {
+   "page": 1,
+   "text": "the",
+   "font": "SFTI1000",
+   "size": 9.9626,
+   "x": 434.527,
+   "baseline": 134.765
+  },
+  {
+   "page": 1,
+   "text": "widths",
+   "font": "SFTI1000",
+   "size": 9.9626,
+   "x": 450.248,
+   "baseline": 134.765
+  },
+  {
+   "page": 1,
+   "text": "of",
+   "font": "SFTI1000",
+   "size": 9.9626,
+   "x": 133.768,
+   "baseline": 146.72
+  },
+  {
+   "page": 1,
+   "text": "a",
+   "font": "SFTI1000",
+   "size": 9.9626,
+   "x": 145.311,
+   "baseline": 146.72
+  },
+  {
+   "page": 1,
+   "text": "whole",
+   "font": "SFTI1000",
+   "size": 9.9626,
+   "x": 153.799,
+   "baseline": 146.72
+  },
+  {
+   "page": 1,
+   "text": "line",
+   "font": "SFTI1000",
+   "size": 9.9626,
+   "x": 181.123,
+   "baseline": 146.72
+  },
+  {
+   "page": 1,
+   "text": "and",
+   "font": "SFTI1000",
+   "size": 9.9626,
+   "x": 200.302,
+   "baseline": 146.72
+  },
+  {
+   "page": 1,
+   "text": "then",
+   "font": "SFTI1000",
+   "size": 9.9626,
+   "x": 219.481,
+   "baseline": 146.72
+  },
+  {
+   "page": 1,
+   "text": "continue",
+   "font": "SFTI1000",
+   "size": 9.9626,
+   "x": 241.46,
+   "baseline": 146.72
+  },
+  {
+   "page": 1,
+   "text": "with",
+   "font": "SFTI1000",
+   "size": 9.9626,
+   "x": 281.511,
+   "baseline": 146.72
+  },
+  {
+   "page": 1,
+   "text": "more",
+   "font": "SFTI1000",
+   "size": 9.9626,
+   "x": 302.971,
+   "baseline": 146.72
+  },
+  {
+   "page": 1,
+   "text": "words",
+   "font": "SFTI1000",
+   "size": 9.9626,
+   "x": 327.878,
+   "baseline": 146.72
+  },
+  {
+   "page": 1,
+   "text": "that",
+   "font": "SFTI1000",
+   "size": 9.9626,
+   "x": 355.84,
+   "baseline": 146.72
+  },
+  {
+   "page": 1,
+   "text": "wrap",
+   "font": "SFTI1000",
+   "size": 9.9626,
+   "x": 376.037,
+   "baseline": 146.72
+  },
+  {
+   "page": 1,
+   "text": "onto",
+   "font": "SFTI1000",
+   "size": 9.9626,
+   "x": 399.926,
+   "baseline": 146.72
+  },
+  {
+   "page": 1,
+   "text": "the",
+   "font": "SFTI1000",
+   "size": 9.9626,
+   "x": 422.413,
+   "baseline": 146.72
+  },
+  {
+   "page": 1,
+   "text": "following",
+   "font": "SFTI1000",
+   "size": 9.9626,
+   "x": 438.792,
+   "baseline": 146.72
+  },
+  {
+   "page": 1,
+   "text": "line",
+   "font": "SFTI1000",
+   "size": 9.9626,
+   "x": 133.768,
+   "baseline": 158.675
+  },
+  {
+   "page": 1,
+   "text": "of",
+   "font": "SFTI1000",
+   "size": 9.9626,
+   "x": 153.116,
+   "baseline": 158.675
+  },
+  {
+   "page": 1,
+   "text": "text",
+   "font": "SFTI1000",
+   "size": 9.9626,
+   "x": 164.818,
+   "baseline": 158.675
+  },
+  {
+   "page": 1,
+   "text": "and",
+   "font": "SFRM1000",
+   "size": 9.9626,
+   "x": 184.912,
+   "baseline": 158.675
+  },
+  {
+   "page": 1,
+   "text": "roman",
+   "font": "SFRM1000",
+   "size": 9.9626,
+   "x": 204.276,
+   "baseline": 158.675
+  },
+  {
+   "page": 1,
+   "text": "again.",
+   "font": "SFRM1000",
+   "size": 9.9626,
+   "x": 235.289,
+   "baseline": 158.675
+  }
+ ],
+ "warnings": []
+}

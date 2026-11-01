@@ -1,0 +1,36 @@
+{
+ "fixture": "02-top.tex",
+ "engine": "pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026)",
+ "pages": 1,
+ "images": [
+  {
+   "page": 1,
+   "x": 231.0,
+   "top": 72.0,
+   "width": 150.0,
+   "height": 100.0
+  }
+ ],
+ "captions": [
+  {
+   "page": 1,
+   "label": "Figure 1",
+   "x": 238.447,
+   "baseline": 196.408
+  }
+ ],
+ "paragraphs": [
+  {
+   "page": 1,
+   "x": 72.0,
+   "baseline": 230.613,
+   "source_byte": 196
+  },
+  {
+   "page": 1,
+   "x": 72.0,
+   "baseline": 331.734,
+   "source_byte": 872
+  }
+ ]
+}

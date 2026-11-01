@@ -1,0 +1,453 @@
+From fa7eef8b2589071a30acf5f9ae8f277e92d05f81 Mon Sep 17 00:00:00 2001
+From: jay3332 <me@jay3332.tech>
+Date: Sat, 12 Sep 2026 12:36:11 -0400
+Subject: [PATCH 1/2] paragraph-layout: failing tests for forced breaks
+ followed only by discardables
+
+Implementation-Agent: Claude Code subagent mac-paragraph-layout-2 (parent mac-claude-a)
+Commit-Executor: git via Claude Code
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01Y1nAv4pEnmMYXgteBoadHn
+---
+ crates/paragraph-layout/tests/forced_break.rs | 429 ++++++++++++++++++
+ 1 file changed, 429 insertions(+)
+ create mode 100644 crates/paragraph-layout/tests/forced_break.rs
+
+diff --git a/crates/paragraph-layout/tests/forced_break.rs b/crates/paragraph-layout/tests/forced_break.rs
+new file mode 100644
+index 0000000..b1605e0
+--- /dev/null
++++ b/crates/paragraph-layout/tests/forced_break.rs
+@@ -0,0 +1,429 @@
++//! Forced breaks at the end of the item list and inside discardable runs.
++//!
++//! Background (real-world corpus, 2026-09-12): a paragraph ending in `\\`
++//! followed by a blank line (`Hello \\` + empty line) panicked in
++//! `set_line` with `slice index starts at N but ends at N-1`.
++//! `ParagraphBuilder::finish` appends `\penalty10000 \parfillskip
++//! \penalty-10000` after the `\\`'s own forced penalty, so the line that
++//! starts after the `\\` has nothing but discardables ahead of it and the
++//! next legal break (the final forced penalty) lies *inside* the run of
++//! discardables that `line_start` skips. TeX (§837 `break_width`, §879
++//! prune) handles this by setting an empty line: the discardables after the
++//! break contribute no width, and the break at the final penalty is still
++//! taken, which is exactly the "Underfull \hbox (badness 10000)" empty line
++//! pdflatex prints for a trailing `\\`.
++//!
++//! Every expected number is derived by hand in the comments; `TestFont` is
++//! the monospace test face from `golden.rs` (500 units per glyph, space 250,
++//! ascender 700, descender -300).
++
++use flashtex_paragraph_layout::*;
++
++struct TestFont;
++
++impl FontMetricsSource for TestFont {
++    fn font_id(&self) -> FontId {
++        FontId::from_label("test:mono")
++    }
++    fn units_per_em(&self) -> f64 {
++        1000.0
++    }
++    fn advance(&self, _ch: char) -> f64 {
++        500.0
++    }
++    fn kern(&self, _l: char, _r: char) -> f64 {
++        0.0
++    }
++    fn glyph_id(&self, ch: char) -> u32 {
++        ch as u32
++    }
++    fn ascender(&self) -> f64 {
++        700.0
++    }
++    fn descender(&self) -> f64 {
++        -300.0
++    }
++    fn line_gap(&self) -> f64 {
++        0.0
++    }
++    fn space(&self) -> f64 {
++        250.0
++    }
++    fn space_stretch(&self) -> f64 {
++        150.0
++    }
++    fn space_shrink(&self) -> f64 {
++        60.0
++    }
++}
++
++fn params(width: f64) -> LineBreakParams {
++    LineBreakParams::article_12pt_letter_1in().with_width(width)
++}
++
++fn close(a: f64, b: f64) -> bool {
++    (a - b).abs() < 1e-9
++}
++
++/// Structural invariants every layout must satisfy, whatever the input:
++/// breaks strictly increase and end at the final forced penalty, every line's
++/// item range ends at its break and starts after the previous break, no two
++/// lines overlap, and every box is placed on exactly one line.
++fn check_invariants(items: &[Item], out: &Lines) {
++    let last = items.len() - 1;
++    assert_eq!(out.lines.len(), out.breaks.len(), "one line per break");
++    assert_eq!(out.stats.lines, out.lines.len());
++    let mut prev_break: Option<usize> = None;
++    let mut boxes_seen = 0usize;
++    for (i, (line, bp)) in out.lines.iter().zip(&out.breaks).enumerate() {
++        assert_eq!(line.index, i);
++        assert_eq!(line.items.end, bp.item, "line {i} ends at its break");
++        assert!(
++            line.items.start <= line.items.end,
++            "line {i}: {:?}",
++            line.items
++        );
++        let lower = prev_break.map_or(0, |b| b + 1);
++        assert!(
++            line.items.start >= lower,
++            "line {i} starts at {} before previous break {prev_break:?}",
++            line.items.start
++        );
++        if let Some(pb) = prev_break {
++            assert!(bp.item > pb, "breaks must increase: {pb} then {}", bp.item);
++            // Everything skipped between the previous break and this line's
++            // start must be discardable.
++            for it in &items[pb + 1..line.items.start] {
++                assert!(it.is_discardable(), "line {i} skipped a box");
++            }
++        }
++        // No box before the first line's start either.
++        if i == 0 {
++            for it in &items[..line.items.start] {
++                assert!(it.is_discardable(), "line 0 skipped a box");
++            }
++        }
++        let boxes_here = items[line.items.clone()]
++            .iter()
++            .filter(|it| matches!(it, Item::Box(_)))
++            .count();
++        assert_eq!(
++            line.runs.iter().filter(|r| !r.is_hyphen).count(),
++            boxes_here
++        );
++        boxes_seen += boxes_here;
++        prev_break = Some(bp.item);
++    }
++    assert_eq!(prev_break, Some(last), "the final forced break is taken");
++    let total_boxes = items.iter().filter(|it| matches!(it, Item::Box(_))).count();
++    assert_eq!(boxes_seen, total_boxes, "every box is placed exactly once");
++}
++
++/// `Hello \\` then end of paragraph. Items:
++/// `[Box(Hello) Glue(sp) Glue(fil) Pen(-10000) Pen(10000) Glue(parfill) Pen(-10000)]`
++/// (indices 0..=6). Breaks at 3 (forced) and 6 (forced). After the break at 3
++/// every remaining item is discardable, so the second line is empty:
++/// `items = 6..6`, no runs, natural width 0, badness 10000 (no stretch on the
++/// line because the `\parfillskip` after the break is discarded, exactly
++/// like TeX's "Underfull \hbox (badness 10000)"). Line 1 is `Hello` + space +
++/// fil: natural 25 + 2.5 = 27.5, set to the measure by the fil (badness 0).
++#[test]
++fn trailing_line_break_yields_an_empty_last_line() {
++    let h = NoHyphenation;
++    let mut b = ParagraphBuilder::new(&h);
++    b.text(&TestFont, 10.0, "Hello ", 0);
++    b.line_break();
++    let it = b.finish(Glue::fil());
++    assert_eq!(it.len(), 7);
++    for p in [params(100.0), params(100.0).first_fit()] {
++        let out = layout_paragraph(&it, &p);
++        check_invariants(&it, &out);
++        assert_eq!(out.lines.len(), 2, "{:?}", p.algorithm);
++        assert_eq!(out.breaks[0].item, 3);
++        assert_eq!(out.breaks[1].item, 6);
++        assert_eq!(out.lines[0].items, 0..3);
++        assert_eq!(out.lines[0].runs.len(), 1);
++        assert!(close(out.lines[0].natural_width, 27.5));
++        assert!(close(out.lines[0].set_width, 100.0));
++        assert!(close(out.lines[0].badness, 0.0));
++        let empty = &out.lines[1];
++        assert_eq!(empty.items, 6..6);
++        assert!(empty.runs.is_empty());
++        assert!(close(empty.natural_width, 0.0));
++        assert!(close(empty.badness, 10_000.0));
++        // TestFont lines: height 7, depth 3; the empty line has no runs, so
++        // height/depth 0 and the interline glue is baselineskip - 3 - 0.
++        assert!(close(out.lines[0].baseline_y, 7.0));
++        assert!(close(out.lines[1].baseline_y, 7.0 + 3.0 + (14.5 - 3.0)));
++        assert!(close(out.height, 7.0 + 14.5));
++    }
++    // Total-fit reports the empty line as underfull; the pass is 2 because
++    // the empty line (badness 10000) is infeasible under both tolerances and
++    // only the final pass accepts it with artificial demerits.
++    let out = layout_paragraph(&it, &params(100.0));
++    assert_eq!(out.stats.pass, 2);
++    assert_eq!(out.stats.underfull, vec![(1, 10_000.0)]);
++    assert!(out.stats.overfull.is_empty());
++}
++
++/// The corpus reproduction with a mid-paragraph `\\` for contrast: `Hello \\
++/// world` is two lines and `world` starts the second line at x = 0 with the
++/// `\\`'s glue and penalties discarded.
++#[test]
++fn mid_paragraph_line_break_is_unchanged() {
++    let h = NoHyphenation;
++    let mut b = ParagraphBuilder::new(&h);
++    b.text(&TestFont, 10.0, "Hello ", 0);
++    b.line_break();
++    b.text(&TestFont, 10.0, "world", 8);
++    let it = b.finish(Glue::fil());
++    // [Box Glue Glue Pen | Box Pen Glue Pen]
++    assert_eq!(it.len(), 8);
++    for p in [params(100.0), params(100.0).first_fit()] {
++        let out = layout_paragraph(&it, &p);
++        check_invariants(&it, &out);
++        assert_eq!(out.lines.len(), 2);
++        assert_eq!(out.lines[0].items, 0..3);
++        assert_eq!(out.lines[1].items, 4..7);
++        assert_eq!(out.lines[1].runs.len(), 1);
++        assert!(close(out.lines[1].runs[0].x, 0.0));
++        assert!(close(out.lines[1].natural_width, 25.0));
++    }
++}
++
++/// A paragraph consisting of nothing but `\\`. Items:
++/// `[Glue(fil) Pen(-10000) Pen(10000) Glue(parfill) Pen(-10000)]`. Two empty
++/// lines: the first is the `\\` itself (fil, badness 0), the second is the
++/// paragraph end with everything discarded (badness 10000).
++#[test]
++fn paragraph_of_only_a_forced_break() {
++    let h = NoHyphenation;
++    let mut b = ParagraphBuilder::new(&h);
++    b.line_break();
++    let it = b.finish(Glue::fil());
++    assert_eq!(it.len(), 5);
++    for p in [
++        params(100.0),
++        params(100.0).first_fit(),
++        params(100.0).ragged(),
++    ] {
++        let out = layout_paragraph(&it, &p);
++        check_invariants(&it, &out);
++        assert_eq!(out.lines.len(), 2);
++        assert_eq!(out.breaks[0].item, 1);
++        assert_eq!(out.breaks[1].item, 4);
++        assert_eq!(out.lines[0].items, 0..1);
++        assert_eq!(out.lines[1].items, 4..4);
++        assert!(out.lines.iter().all(|l| l.runs.is_empty()));
++        assert!(close(out.lines[0].badness, 0.0));
++    }
++    // A bare forced penalty is one empty line; a bare list gets the
++    // `\parfillskip` + forced break appended and is also one empty line.
++    let bare = vec![Item::penalty(FORCED_BREAK)];
++    let out = layout_paragraph(&bare, &params(100.0));
++    check_invariants(&bare, &out);
++    assert_eq!(out.lines.len(), 1);
++    assert_eq!(out.lines[0].items, 0..0);
++    let empty: Vec<Item> = Vec::new();
++    let out = layout_paragraph(&empty, &params(100.0));
++    assert_eq!(out.lines.len(), 1);
++    assert!(out.lines[0].runs.is_empty());
++}
++
++/// Two consecutive `\\` produce two empty lines (TeX: `Hello\\\\` sets
++/// `Hello`, an empty line, then the empty paragraph-end line). Items:
++/// `[Box Glue(fil) Pen Glue(fil) Pen Pen(inf) Glue(parfill) Pen]`, breaks at
++/// 2, 4, 7; line ranges 0..2, 4..4 (the second fil is discarded), 7..7.
++#[test]
++fn consecutive_forced_breaks_yield_consecutive_empty_lines() {
++    let h = NoHyphenation;
++    let mut b = ParagraphBuilder::new(&h);
++    b.text(&TestFont, 10.0, "Hello", 0);
++    b.line_break();
++    b.line_break();
++    let it = b.finish(Glue::fil());
++    assert_eq!(it.len(), 8);
++    for p in [params(100.0), params(100.0).first_fit()] {
++        let out = layout_paragraph(&it, &p);
++        check_invariants(&it, &out);
++        assert_eq!(out.lines.len(), 3, "{:?}", p.algorithm);
++        assert_eq!(out.lines[0].items, 0..2);
++        assert_eq!(out.lines[1].items, 4..4);
++        assert_eq!(out.lines[2].items, 7..7);
++    }
++}
++
++/// A forced break followed by discardable glue (and a kern) before the next
++/// box: the glue and kern are discarded, the next line starts at the box with
++/// x = 0. Built by hand so the glue is a plain interword space rather than
++/// the builder's fil.
++#[test]
++fn forced_break_followed_by_discardable_glue() {
++    let h = NoHyphenation;
++    let mut b = ParagraphBuilder::new(&h);
++    b.word(&TestFont, 10.0, "aaaa", 0);
++    b.penalty(FORCED_BREAK);
++    b.space(&TestFont, 10.0, 4..5);
++    b.kern(4.0);
++    b.space(&TestFont, 10.0, 5..6);
++    b.word(&TestFont, 10.0, "bbbb", 6);
++    let it = b.finish(Glue::fil());
++    // [Box Pen Glue Kern Glue Box Pen(inf) Glue(parfill) Pen]
++    assert_eq!(it.len(), 9);
++    for p in [params(100.0), params(100.0).first_fit()] {
++        let out = layout_paragraph(&it, &p);
++        check_invariants(&it, &out);
++        assert_eq!(out.lines.len(), 2);
++        assert_eq!(out.breaks[0].item, 1);
++        assert_eq!(out.lines[0].items, 0..1);
++        assert!(close(out.lines[0].natural_width, 20.0));
++        assert_eq!(out.lines[1].items, 5..8);
++        assert_eq!(out.lines[1].runs.len(), 1);
++        assert!(close(out.lines[1].runs[0].x, 0.0));
++        assert!(close(out.lines[1].natural_width, 20.0));
++    }
++    // Forced break, plain glue, forced break: the glue is discarded and the
++    // second line is empty with natural width 0.
++    let it = vec![
++        Item::penalty(FORCED_BREAK),
++        Item::Glue(Glue {
++            width: 2.5,
++            stretch: 1.5,
++            stretch_order: GlueOrder::Finite,
++            shrink: 0.6,
++            shrink_order: GlueOrder::Finite,
++            source: None,
++        }),
++        Item::penalty(FORCED_BREAK),
++    ];
++    for p in [params(100.0), params(100.0).first_fit()] {
++        let out = layout_paragraph(&it, &p);
++        check_invariants(&it, &out);
++        assert_eq!(out.lines.len(), 2);
++        assert_eq!(out.lines[1].items, 2..2);
++        assert!(close(out.lines[1].natural_width, 0.0));
++    }
++}
++
++/// Deterministic fuzz over item sequences (no external crates: a 64-bit LCG
++/// with a fixed seed). Every sequence mixes boxes, interword glue, kerns and
++/// penalties of every kind (forced, infinite, hyphen-like, positive,
++/// negative), and ends in a forced break or a penalty/glue tail that
++/// `layout_paragraph` completes itself. Each is laid out with total-fit and
++/// first-fit, justified and ragged, at several measures, and must satisfy
++/// `check_invariants` (in particular: no panic, no dropped box, final break
++/// taken). The cases from the tests above (forced breaks followed only by
++/// discardables) are hit thousands of times.
++#[test]
++fn random_item_sequences_ending_in_forced_breaks_never_panic_or_drop_boxes() {
++    struct Lcg(u64);
++    impl Lcg {
++        fn next(&mut self) -> u64 {
++            self.0 = self
++                .0
++                .wrapping_mul(6_364_136_223_846_793_005)
++                .wrapping_add(1_442_695_040_888_963_407);
++            self.0 >> 33
++        }
++        fn below(&mut self, n: u64) -> u64 {
++            self.next() % n
++        }
++    }
++    let h = NoHyphenation;
++    let mut rng = Lcg(0x5eed_f1a5_47e5_0001);
++    let mut cases = 0usize;
++    let mut empty_lines = 0usize;
++    let mut breaks_inside_discardables = 0usize;
++    for _ in 0..3000 {
++        let mut b = ParagraphBuilder::new(&h);
++        let len = rng.below(14) as usize;
++        let mut src = 0usize;
++        for _ in 0..len {
++            match rng.below(10) {
++                0..=3 => {
++                    let n = 1 + rng.below(6) as usize;
++                    let word: String = "abcdefgh".chars().take(n).collect();
++                    b.word(&TestFont, 10.0, &word, src);
++                    src += n;
++                }
++                4..=5 => {
++                    b.space(&TestFont, 10.0, src..src + 1);
++                    src += 1;
++                }
++                6 => b.kern(rng.below(7) as f64 - 3.0),
++                7 => b.line_break(),
++                _ => {
++                    let v = match rng.below(6) {
++                        0 => FORCED_BREAK,
++                        1 => INFINITE_PENALTY,
++                        2 => 50,
++                        3 => -50,
++                        4 => 0,
++                        _ => rng.below(20_001) as i32 - 10_000,
++                    };
++                    b.penalty(v);
++                }
++            }
++        }
++        // Tail: builder's TeX-style finish, a bare forced break, a forced
++        // break then glue (the corpus case in raw-item form), or nothing.
++        let items: Vec<Item> = match rng.below(4) {
++            0 => b.finish(Glue::fil()),
++            1 => {
++                b.penalty(FORCED_BREAK);
++                b.items().to_vec()
++            }
++            2 => {
++                b.penalty(FORCED_BREAK);
++                b.glue(Glue::fil());
++                b.penalty(FORCED_BREAK);
++                b.items().to_vec()
++            }
++            _ => b.items().to_vec(),
++        };
++        // `layout_paragraph` appends `\parfillskip` + forced break when the
++        // list does not already end in one; mirror that for the invariants.
++        let items = if matches!(items.last(), Some(Item::Penalty(p)) if p.value <= FORCED_BREAK) {
++            items
++        } else {
++            let mut v = items;
++            v.push(Item::Glue(Glue::fil()));
++            v.push(Item::penalty(FORCED_BREAK));
++            v
++        };
++        for width in [1.0, 12.0, 47.5, 100.0] {
++            for p in [
++                params(width),
++                params(width).ragged(),
++                params(width).first_fit(),
++                params(width).ragged().first_fit(),
++            ] {
++                let out = layout_paragraph(&items, &p);
++                check_invariants(&items, &out);
++                cases += 1;
++                for (i, line) in out.lines.iter().enumerate() {
++                    if line.runs.is_empty() {
++                        empty_lines += 1;
++                    }
++                    if i > 0 {
++                        let prev = out.breaks[i - 1].item;
++                        // The break lies inside the discardable run after
++                        // the previous break: the case that used to panic.
++                        if items[prev + 1..line.items.end]
++                            .iter()
++                            .all(|it| it.is_discardable())
++                        {
++                            breaks_inside_discardables += 1;
++                        }
++                    }
++                }
++            }
++        }
++    }
++    assert_eq!(cases, 3000 * 16);
++    assert!(empty_lines > 1000, "empty lines seen: {empty_lines}");
++    assert!(
++        breaks_inside_discardables > 1000,
++        "breaks inside discardable runs seen: {breaks_inside_discardables}"
++    );
++}
+-- 
+2.55.0
+

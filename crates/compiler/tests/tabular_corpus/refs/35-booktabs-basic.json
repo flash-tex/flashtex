@@ -1,0 +1,120 @@
+{
+ "fixture": "35-booktabs-basic.tex",
+ "reference_engine": "pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026)",
+ "invocation": "pdflatex -interaction=batchmode, two passes, SOURCE_DATE_EPOCH=0 FORCE_SOURCE_DATE=1",
+ "unit": "bp, y from page top; rules [x, top, width, height]",
+ "pages": [
+  [
+   {
+    "text": "Text",
+    "x": 72.0,
+    "y_top": 83.955
+   },
+   {
+    "text": "before",
+    "x": 99.3176,
+    "y_top": 83.955
+   },
+   {
+    "text": "the",
+    "x": 134.4301,
+    "y_top": 83.955
+   },
+   {
+    "text": "table.",
+    "x": 154.5865,
+    "y_top": 83.955
+   },
+   {
+    "text": "Item",
+    "x": 77.978,
+    "y_top": 99.345
+   },
+   {
+    "text": "Qty",
+    "x": 120.1703,
+    "y_top": 99.345
+   },
+   {
+    "text": "Price",
+    "x": 151.6388,
+    "y_top": 99.345
+   },
+   {
+    "text": "Apple",
+    "x": 77.978,
+    "y_top": 119.779
+   },
+   {
+    "text": "3",
+    "x": 133.8231,
+    "y_top": 119.779
+   },
+   {
+    "text": "1.20",
+    "x": 156.9995,
+    "y_top": 119.779
+   },
+   {
+    "text": "Pear",
+    "x": 77.978,
+    "y_top": 134.225
+   },
+   {
+    "text": "10",
+    "x": 127.9723,
+    "y_top": 134.225
+   },
+   {
+    "text": "0.50",
+    "x": 157.0019,
+    "y_top": 134.225
+   },
+   {
+    "text": "Text",
+    "x": 72.0,
+    "y_top": 150.785
+   },
+   {
+    "text": "after",
+    "x": 99.3176,
+    "y_top": 150.785
+   },
+   {
+    "text": "the",
+    "x": 126.9533,
+    "y_top": 150.785
+   },
+   {
+    "text": "table.",
+    "x": 147.1097,
+    "y_top": 150.785
+   }
+  ]
+ ],
+ "extension_columns": [
+  []
+ ],
+ "rules": [
+  [
+   [
+    72.0,
+    84.952,
+    111.786,
+    0.936
+   ],
+   [
+    72.0,
+    105.7365,
+    111.786,
+    0.585
+   ],
+   [
+    72.0,
+    140.617,
+    111.786,
+    0.936
+   ]
+  ]
+ ]
+}

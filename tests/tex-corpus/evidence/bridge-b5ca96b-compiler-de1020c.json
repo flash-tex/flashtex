@@ -1,0 +1,346 @@
+{
+  "schema_version": 1,
+  "bridge_sha": "b5ca96bdaca634166a01023cd3321955f2bc5f70",
+  "compiler_sha": "de1020cd0be7cede11be2691e00e7f5b15cb2224",
+  "harness_build_command": "/home/natkarri/.cargo/bin/cargo build --offline --locked --manifest-path /tmp/flashtex-bridge-corpus-b5ca96b/harness/Cargo.toml",
+  "harness_source_sha256": "a36b59b62ff3daae5fd443a801ef017ce06785986600301ae70d2953046501d3",
+  "harness_raw_stdout": "{\"converter\":\"deterministic fake; no provider request\",\"results\":[{\"compile_request\":{\"id\":\"included-context\",\"payload\":{\"documents\":[{\"path\":\"main.tex\",\"text\":\"\\\\newcommand{\\\\energy}{E=mc^2}\\n\\\\input{parts/section}\"},{\"path\":\"parts/section.tex\",\"text\":\"Selected source\"}],\"entry_path\":\"main.tex\",\"project_id\":\"corpus\",\"revision\":1},\"protocol_version\":1,\"type\":\"compile\"},\"context\":{\"definitions\":[],\"path\":\"parts/section.tex\",\"project_id\":\"corpus\",\"revision\":1,\"selected_source\":\"Selected\",\"source_after\":\" source\",\"source_before\":\"\",\"supported_features\":[]},\"expected_root_definition\":\"\\\\newcommand{\\\\energy}{E=mc^2}\",\"scenario\":\"included-file-context\",\"scope\":\"required complete project context remains absent; contract currently promises only local excerpts\",\"status\":\"fail\"},{\"compile_request\":{\"id\":\"macro-candidate\",\"payload\":{\"documents\":[{\"path\":\"main.tex\",\"text\":\"\\\\newcommand{\\\\symbol}{b}\\nTarget$x$\"}],\"entry_path\":\"main.tex\",\"project_id\":\"corpus\",\"revision\":3},\"protocol_version\":1,\"type\":\"compile\"},\"context_revision\":1,\"current_source\":{\"path\":\"main.tex\",\"project_id\":\"corpus\",\"revision\":2,\"text\":\"\\\\newcommand{\\\\symbol}{b}\\nTarget\"},\"prepared\":{\"capture_id\":\"capture\",\"document_before_sha256\":\"123243b758b51002400eb58081ba4a3ccf0e2ed075e0a97ae59f02b08ba2afb8\",\"edit_id\":\"capture-capture\",\"end_byte\":30,\"expected_revision\":2,\"path\":\"main.tex\",\"project_id\":\"corpus\",\"removed_text\":\"\",\"replacement\":\"$x$\",\"start_byte\":30},\"required_native_gate\":\"Show stale conversion context and compile candidate against current source before approval; bridge allows newer reviewed revision.\",\"scenario\":\"macro-context-changed\",\"status\":\"unverified\"},{\"compile_request\":{\"id\":\"rebase\",\"payload\":{\"documents\":[{\"path\":\"main.tex\",\"text\":\"東京αβ $x$world\"}],\"entry_path\":\"main.tex\",\"project_id\":\"corpus\",\"revision\":3},\"protocol_version\":1,\"type\":\"compile\"},\"prepared\":{\"capture_id\":\"capture\",\"document_before_sha256\":\"f3c6cb8f439f65148ee43ccd08a1856e8b9c989b4d18c31b2d0248d47f0d94a1\",\"edit_id\":\"capture-capture\",\"end_byte\":11,\"expected_revision\":2,\"path\":\"main.tex\",\"project_id\":\"corpus\",\"removed_text\":\"\",\"replacement\":\"$x$\",\"start_byte\":11},\"scenario\":\"multibyte-rebase\",\"source\":\"東京αβ $x$world\",\"status\":\"pass\"},{\"bridge_receipt_retry\":\"pass\",\"compile_request\":{\"id\":\"receipt\",\"payload\":{\"documents\":[{\"path\":\"main.tex\",\"text\":\"αβ $x$world\"}],\"entry_path\":\"main.tex\",\"project_id\":\"corpus\",\"revision\":2},\"protocol_version\":1,\"type\":\"compile\"},\"native_ledger\":\"unverified: this simulates restored durable source; no native transaction/crash injection executed\",\"prepared\":{\"capture_id\":\"capture\",\"document_before_sha256\":\"63fde9ce3615cbebe0b138e6ca602b5930cd2e320052b1c1665a11ca72adbb6e\",\"edit_id\":\"capture-capture\",\"end_byte\":5,\"expected_revision\":1,\"path\":\"main.tex\",\"project_id\":\"corpus\",\"removed_text\":\"\",\"replacement\":\"$x$\",\"start_byte\":5},\"receipt\":{\"edit_id\":\"capture-capture\",\"new_revision\":2},\"scenario\":\"confirm-restart-idempotency\",\"status\":\"unverified\"}],\"schema_version\":1}\n",
+  "harness_stderr": "",
+  "created_utc": "2026-09-12T04:59:50.517532+00:00",
+  "limitations": "Real bridge library and compiler; converter and restored source are test doubles. No network/Grok/native app/OS crash test.",
+  "results": [
+    {
+      "compile_request": {
+        "id": "included-context",
+        "payload": {
+          "documents": [
+            {
+              "path": "main.tex",
+              "text": "\\newcommand{\\energy}{E=mc^2}\n\\input{parts/section}"
+            },
+            {
+              "path": "parts/section.tex",
+              "text": "Selected source"
+            }
+          ],
+          "entry_path": "main.tex",
+          "project_id": "corpus",
+          "revision": 1
+        },
+        "protocol_version": 1,
+        "type": "compile"
+      },
+      "context": {
+        "definitions": [],
+        "path": "parts/section.tex",
+        "project_id": "corpus",
+        "revision": 1,
+        "selected_source": "Selected",
+        "source_after": " source",
+        "source_before": "",
+        "supported_features": []
+      },
+      "expected_root_definition": "\\newcommand{\\energy}{E=mc^2}",
+      "scenario": "included-file-context",
+      "scope": "required complete project context remains absent; contract currently promises only local excerpts",
+      "status": "fail",
+      "compiler_evidence": {
+        "request": {
+          "id": "included-context",
+          "payload": {
+            "documents": [
+              {
+                "path": "main.tex",
+                "text": "\\newcommand{\\energy}{E=mc^2}\n\\input{parts/section}"
+              },
+              {
+                "path": "parts/section.tex",
+                "text": "Selected source"
+              }
+            ],
+            "entry_path": "main.tex",
+            "project_id": "corpus",
+            "revision": 1
+          },
+          "protocol_version": 1,
+          "type": "compile"
+        },
+        "stdout": "{\"id\":\"included-context\",\"payload\":{\"diagnostics\":[{\"message\":\"\\\\newcommand is not supported by this compiler version; unrestricted TeX math mode is not implemented\",\"recovery\":\"skipped the command; any braced argument was typeset as plain text\",\"severity\":\"error\",\"source\":{\"end_byte\":11,\"path\":\"main.tex\",\"start_byte\":0}},{\"message\":\"\\\\energy is not supported by this compiler version; unrestricted TeX math mode is not implemented\",\"recovery\":\"skipped the command; any braced argument was typeset as plain text\",\"severity\":\"error\",\"source\":{\"end_byte\":19,\"path\":\"main.tex\",\"start_byte\":12}},{\"message\":\"math script marker used outside math mode\",\"recovery\":\"ignored the script marker and continued\",\"severity\":\"error\",\"source\":{\"end_byte\":26,\"path\":\"main.tex\",\"start_byte\":25}},{\"message\":\"\\\\input is not supported by this compiler version; unrestricted TeX math mode is not implemented\",\"recovery\":\"skipped the command; any braced argument was typeset as plain text\",\"severity\":\"error\",\"source\":{\"end_byte\":35,\"path\":\"main.tex\",\"start_byte\":29}},{\"message\":\"2 documents were supplied; this version compiles only the entry document\",\"recovery\":\"compiled the entry document alone\",\"severity\":\"warning\",\"source\":null}],\"pages\":[{\"height_pt\":792,\"items\":[{\"baseline_y_pt\":84,\"font_size_pt\":12,\"kind\":\"text\",\"source\":{\"end_byte\":25,\"path\":\"main.tex\",\"start_byte\":21},\"text\":\"E=mc\",\"x_pt\":72},{\"baseline_y_pt\":84,\"font_size_pt\":12,\"kind\":\"text\",\"source\":{\"end_byte\":27,\"path\":\"main.tex\",\"start_byte\":26},\"text\":\"2\",\"x_pt\":103.76},{\"baseline_y_pt\":84,\"font_size_pt\":12,\"kind\":\"text\",\"source\":{\"end_byte\":49,\"path\":\"main.tex\",\"start_byte\":36},\"text\":\"parts/section\",\"x_pt\":112.76}],\"number\":1,\"width_pt\":612}],\"pdf_path\":null,\"project_id\":\"corpus\",\"revision\":1,\"status\":\"recovered\"},\"protocol_version\":1,\"type\":\"compile_result\"}\n",
+        "stderr": "",
+        "returncode": 0,
+        "source_ranges_valid": true,
+        "compiler_status": "recovered",
+        "compiler_diagnostics": [
+          {
+            "message": "\\newcommand is not supported by this compiler version; unrestricted TeX math mode is not implemented",
+            "recovery": "skipped the command; any braced argument was typeset as plain text",
+            "severity": "error",
+            "source": {
+              "end_byte": 11,
+              "path": "main.tex",
+              "start_byte": 0
+            }
+          },
+          {
+            "message": "\\energy is not supported by this compiler version; unrestricted TeX math mode is not implemented",
+            "recovery": "skipped the command; any braced argument was typeset as plain text",
+            "severity": "error",
+            "source": {
+              "end_byte": 19,
+              "path": "main.tex",
+              "start_byte": 12
+            }
+          },
+          {
+            "message": "math script marker used outside math mode",
+            "recovery": "ignored the script marker and continued",
+            "severity": "error",
+            "source": {
+              "end_byte": 26,
+              "path": "main.tex",
+              "start_byte": 25
+            }
+          },
+          {
+            "message": "\\input is not supported by this compiler version; unrestricted TeX math mode is not implemented",
+            "recovery": "skipped the command; any braced argument was typeset as plain text",
+            "severity": "error",
+            "source": {
+              "end_byte": 35,
+              "path": "main.tex",
+              "start_byte": 29
+            }
+          },
+          {
+            "message": "2 documents were supplied; this version compiles only the entry document",
+            "recovery": "compiled the entry document alone",
+            "severity": "warning",
+            "source": null
+          }
+        ],
+        "transport_status": "pass",
+        "stale_response_rejected_by_harness": true,
+        "native_stale_preview_gate": "unverified: no native asynchronous preview exercised"
+      }
+    },
+    {
+      "compile_request": {
+        "id": "macro-candidate",
+        "payload": {
+          "documents": [
+            {
+              "path": "main.tex",
+              "text": "\\newcommand{\\symbol}{b}\nTarget$x$"
+            }
+          ],
+          "entry_path": "main.tex",
+          "project_id": "corpus",
+          "revision": 3
+        },
+        "protocol_version": 1,
+        "type": "compile"
+      },
+      "context_revision": 1,
+      "current_source": {
+        "path": "main.tex",
+        "project_id": "corpus",
+        "revision": 2,
+        "text": "\\newcommand{\\symbol}{b}\nTarget"
+      },
+      "prepared": {
+        "capture_id": "capture",
+        "document_before_sha256": "123243b758b51002400eb58081ba4a3ccf0e2ed075e0a97ae59f02b08ba2afb8",
+        "edit_id": "capture-capture",
+        "end_byte": 30,
+        "expected_revision": 2,
+        "path": "main.tex",
+        "project_id": "corpus",
+        "removed_text": "",
+        "replacement": "$x$",
+        "start_byte": 30
+      },
+      "required_native_gate": "Show stale conversion context and compile candidate against current source before approval; bridge allows newer reviewed revision.",
+      "scenario": "macro-context-changed",
+      "status": "unverified",
+      "compiler_evidence": {
+        "request": {
+          "id": "macro-candidate",
+          "payload": {
+            "documents": [
+              {
+                "path": "main.tex",
+                "text": "\\newcommand{\\symbol}{b}\nTarget$x$"
+              }
+            ],
+            "entry_path": "main.tex",
+            "project_id": "corpus",
+            "revision": 3
+          },
+          "protocol_version": 1,
+          "type": "compile"
+        },
+        "stdout": "{\"id\":\"macro-candidate\",\"payload\":{\"diagnostics\":[{\"message\":\"\\\\newcommand is not supported by this compiler version; unrestricted TeX math mode is not implemented\",\"recovery\":\"skipped the command; any braced argument was typeset as plain text\",\"severity\":\"error\",\"source\":{\"end_byte\":11,\"path\":\"main.tex\",\"start_byte\":0}},{\"message\":\"\\\\symbol is not supported by this compiler version; unrestricted TeX math mode is not implemented\",\"recovery\":\"skipped the command; any braced argument was typeset as plain text\",\"severity\":\"error\",\"source\":{\"end_byte\":19,\"path\":\"main.tex\",\"start_byte\":12}}],\"pages\":[{\"height_pt\":792,\"items\":[{\"baseline_y_pt\":84,\"font_size_pt\":12,\"kind\":\"text\",\"source\":{\"end_byte\":22,\"path\":\"main.tex\",\"start_byte\":21},\"text\":\"b\",\"x_pt\":72},{\"baseline_y_pt\":84,\"font_size_pt\":12,\"kind\":\"text\",\"source\":{\"end_byte\":30,\"path\":\"main.tex\",\"start_byte\":24},\"text\":\"Target\",\"x_pt\":81},{\"baseline_y_pt\":84,\"font_size_pt\":12,\"kind\":\"text\",\"source\":{\"end_byte\":32,\"path\":\"main.tex\",\"start_byte\":31},\"text\":\"x\",\"x_pt\":115.32}],\"number\":1,\"width_pt\":612}],\"pdf_path\":null,\"project_id\":\"corpus\",\"revision\":3,\"status\":\"recovered\"},\"protocol_version\":1,\"type\":\"compile_result\"}\n",
+        "stderr": "",
+        "returncode": 0,
+        "source_ranges_valid": true,
+        "compiler_status": "recovered",
+        "compiler_diagnostics": [
+          {
+            "message": "\\newcommand is not supported by this compiler version; unrestricted TeX math mode is not implemented",
+            "recovery": "skipped the command; any braced argument was typeset as plain text",
+            "severity": "error",
+            "source": {
+              "end_byte": 11,
+              "path": "main.tex",
+              "start_byte": 0
+            }
+          },
+          {
+            "message": "\\symbol is not supported by this compiler version; unrestricted TeX math mode is not implemented",
+            "recovery": "skipped the command; any braced argument was typeset as plain text",
+            "severity": "error",
+            "source": {
+              "end_byte": 19,
+              "path": "main.tex",
+              "start_byte": 12
+            }
+          }
+        ],
+        "transport_status": "pass",
+        "stale_response_rejected_by_harness": true,
+        "native_stale_preview_gate": "unverified: no native asynchronous preview exercised"
+      }
+    },
+    {
+      "compile_request": {
+        "id": "rebase",
+        "payload": {
+          "documents": [
+            {
+              "path": "main.tex",
+              "text": "東京αβ $x$world"
+            }
+          ],
+          "entry_path": "main.tex",
+          "project_id": "corpus",
+          "revision": 3
+        },
+        "protocol_version": 1,
+        "type": "compile"
+      },
+      "prepared": {
+        "capture_id": "capture",
+        "document_before_sha256": "f3c6cb8f439f65148ee43ccd08a1856e8b9c989b4d18c31b2d0248d47f0d94a1",
+        "edit_id": "capture-capture",
+        "end_byte": 11,
+        "expected_revision": 2,
+        "path": "main.tex",
+        "project_id": "corpus",
+        "removed_text": "",
+        "replacement": "$x$",
+        "start_byte": 11
+      },
+      "scenario": "multibyte-rebase",
+      "source": "東京αβ $x$world",
+      "status": "pass",
+      "compiler_evidence": {
+        "request": {
+          "id": "rebase",
+          "payload": {
+            "documents": [
+              {
+                "path": "main.tex",
+                "text": "東京αβ $x$world"
+              }
+            ],
+            "entry_path": "main.tex",
+            "project_id": "corpus",
+            "revision": 3
+          },
+          "protocol_version": 1,
+          "type": "compile"
+        },
+        "stdout": "{\"id\":\"rebase\",\"payload\":{\"diagnostics\":[],\"pages\":[{\"height_pt\":792,\"items\":[{\"baseline_y_pt\":84,\"font_size_pt\":12,\"kind\":\"text\",\"source\":{\"end_byte\":10,\"path\":\"main.tex\",\"start_byte\":0},\"text\":\"東京αβ\",\"x_pt\":72},{\"baseline_y_pt\":84,\"font_size_pt\":12,\"kind\":\"text\",\"source\":{\"end_byte\":13,\"path\":\"main.tex\",\"start_byte\":12},\"text\":\"x\",\"x_pt\":99},{\"baseline_y_pt\":84,\"font_size_pt\":12,\"kind\":\"text\",\"source\":{\"end_byte\":19,\"path\":\"main.tex\",\"start_byte\":14},\"text\":\"world\",\"x_pt\":108}],\"number\":1,\"width_pt\":612}],\"pdf_path\":null,\"project_id\":\"corpus\",\"revision\":3,\"status\":\"ok\"},\"protocol_version\":1,\"type\":\"compile_result\"}\n",
+        "stderr": "",
+        "returncode": 0,
+        "source_ranges_valid": true,
+        "compiler_status": "ok",
+        "compiler_diagnostics": [],
+        "transport_status": "pass",
+        "stale_response_rejected_by_harness": true,
+        "native_stale_preview_gate": "unverified: no native asynchronous preview exercised"
+      }
+    },
+    {
+      "bridge_receipt_retry": "pass",
+      "compile_request": {
+        "id": "receipt",
+        "payload": {
+          "documents": [
+            {
+              "path": "main.tex",
+              "text": "αβ $x$world"
+            }
+          ],
+          "entry_path": "main.tex",
+          "project_id": "corpus",
+          "revision": 2
+        },
+        "protocol_version": 1,
+        "type": "compile"
+      },
+      "native_ledger": "unverified: this simulates restored durable source; no native transaction/crash injection executed",
+      "prepared": {
+        "capture_id": "capture",
+        "document_before_sha256": "63fde9ce3615cbebe0b138e6ca602b5930cd2e320052b1c1665a11ca72adbb6e",
+        "edit_id": "capture-capture",
+        "end_byte": 5,
+        "expected_revision": 1,
+        "path": "main.tex",
+        "project_id": "corpus",
+        "removed_text": "",
+        "replacement": "$x$",
+        "start_byte": 5
+      },
+      "receipt": {
+        "edit_id": "capture-capture",
+        "new_revision": 2
+      },
+      "scenario": "confirm-restart-idempotency",
+      "status": "unverified",
+      "compiler_evidence": {
+        "request": {
+          "id": "receipt",
+          "payload": {
+            "documents": [
+              {
+                "path": "main.tex",
+                "text": "αβ $x$world"
+              }
+            ],
+            "entry_path": "main.tex",
+            "project_id": "corpus",
+            "revision": 2
+          },
+          "protocol_version": 1,
+          "type": "compile"
+        },
+        "stdout": "{\"id\":\"receipt\",\"payload\":{\"diagnostics\":[],\"pages\":[{\"height_pt\":792,\"items\":[{\"baseline_y_pt\":84,\"font_size_pt\":12,\"kind\":\"text\",\"source\":{\"end_byte\":4,\"path\":\"main.tex\",\"start_byte\":0},\"text\":\"αβ\",\"x_pt\":72},{\"baseline_y_pt\":84,\"font_size_pt\":12,\"kind\":\"text\",\"source\":{\"end_byte\":7,\"path\":\"main.tex\",\"start_byte\":6},\"text\":\"x\",\"x_pt\":87},{\"baseline_y_pt\":84,\"font_size_pt\":12,\"kind\":\"text\",\"source\":{\"end_byte\":13,\"path\":\"main.tex\",\"start_byte\":8},\"text\":\"world\",\"x_pt\":96}],\"number\":1,\"width_pt\":612}],\"pdf_path\":null,\"project_id\":\"corpus\",\"revision\":2,\"status\":\"ok\"},\"protocol_version\":1,\"type\":\"compile_result\"}\n",
+        "stderr": "",
+        "returncode": 0,
+        "source_ranges_valid": true,
+        "compiler_status": "ok",
+        "compiler_diagnostics": [],
+        "transport_status": "pass",
+        "stale_response_rejected_by_harness": true,
+        "native_stale_preview_gate": "unverified: no native asynchronous preview exercised"
+      }
+    },
+    {
+      "scenario": "stale-preview-response",
+      "status": "unverified",
+      "harness_revision_rejection": true,
+      "required_native_gate": "Deliver revision N after N+1 to real app; retain newer preview/source mappings."
+    }
+  ]
+}

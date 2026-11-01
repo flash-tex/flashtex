@@ -1,0 +1,152 @@
+{
+  "schema_version": 1,
+  "resources": [
+    {
+      "font": {
+        "font_id": "lm.roman10.regular",
+        "sha256": "1aa18cfefa58132c52ce5de70db1fd1154201c19cd2b2cdaffba4906a33e6852",
+        "byte_length": 111536,
+        "format": "opentype-cff",
+        "face_index": 0,
+        "units_per_em": 1000,
+        "glyph_count": 821,
+        "postscript_name": "LMRoman10-Regular"
+      },
+      "path": "lm/lmroman10-regular.otf",
+      "license": {
+        "identifier": "LicenseRef-GUST-Font-License-1.0",
+        "copyright": "Copyright 2003, 2009 B. Jackowski and J. M. Nowacki (on behalf of TeX users groups). This work is released under the GUST Font License -- see http://tug.org/fonts/licenses/GUST-FONT-LICENSE.txt for details.",
+        "source": "TeX Live 2026 (BasicTeX) texmf-dist/fonts/opentype/public; licence text from http://tug.org/fonts/licenses/GUST-FONT-LICENSE.txt",
+        "text_path": "GUST-FONT-LICENSE.txt",
+        "text_sha256": "49ea6cb9257bbee0a3979c48a774cd221550ac1c20c95549efe45fc99cc18050",
+        "embedding_permission": "allowed"
+      }
+    },
+    {
+      "font": {
+        "font_id": "lm.roman10.bold",
+        "sha256": "102fe06c430a8b681b2bf6876b7cd967ae4d47b4b6b41d915eb7913b726d9fb1",
+        "byte_length": 111240,
+        "format": "opentype-cff",
+        "face_index": 0,
+        "units_per_em": 1000,
+        "glyph_count": 821,
+        "postscript_name": "LMRoman10-Bold"
+      },
+      "path": "lm/lmroman10-bold.otf",
+      "license": {
+        "identifier": "LicenseRef-GUST-Font-License-1.0",
+        "copyright": "Copyright 2003, 2009 B. Jackowski and J. M. Nowacki (on behalf of TeX users groups). This work is released under the GUST Font License -- see http://tug.org/fonts/licenses/GUST-FONT-LICENSE.txt for details.",
+        "source": "TeX Live 2026 (BasicTeX) texmf-dist/fonts/opentype/public; licence text from http://tug.org/fonts/licenses/GUST-FONT-LICENSE.txt",
+        "text_path": "GUST-FONT-LICENSE.txt",
+        "text_sha256": "49ea6cb9257bbee0a3979c48a774cd221550ac1c20c95549efe45fc99cc18050",
+        "embedding_permission": "allowed"
+      }
+    },
+    {
+      "font": {
+        "font_id": "lm.roman10.italic",
+        "sha256": "c1fce25075567bb8dbf2151658c3b442690041db17a2d49fc9e55905ea5b7169",
+        "byte_length": 118828,
+        "format": "opentype-cff",
+        "face_index": 0,
+        "units_per_em": 1000,
+        "glyph_count": 821,
+        "postscript_name": "LMRoman10-Italic"
+      },
+      "path": "lm/lmroman10-italic.otf",
+      "license": {
+        "identifier": "LicenseRef-GUST-Font-License-1.0",
+        "copyright": "Copyright 2003, 2009 B. Jackowski and J. M. Nowacki (on behalf of TeX users groups). This work is released under the GUST Font License -- see http://tug.org/fonts/licenses/GUST-FONT-LICENSE.txt for details.",
+        "source": "TeX Live 2026 (BasicTeX) texmf-dist/fonts/opentype/public; licence text from http://tug.org/fonts/licenses/GUST-FONT-LICENSE.txt",
+        "text_path": "GUST-FONT-LICENSE.txt",
+        "text_sha256": "49ea6cb9257bbee0a3979c48a774cd221550ac1c20c95549efe45fc99cc18050",
+        "embedding_permission": "allowed"
+      }
+    },
+    {
+      "font": {
+        "font_id": "lm.roman10.bolditalic",
+        "sha256": "c37a28eed7a6e03f792b98b5e5f637b2fcda378bb4855f99284f1a88fe35f124",
+        "byte_length": 118204,
+        "format": "opentype-cff",
+        "face_index": 0,
+        "units_per_em": 1000,
+        "glyph_count": 821,
+        "postscript_name": "LMRoman10-BoldItalic"
+      },
+      "path": "lm/lmroman10-bolditalic.otf",
+      "license": {
+        "identifier": "LicenseRef-GUST-Font-License-1.0",
+        "copyright": "Copyright 2003, 2009 B. Jackowski and J. M. Nowacki (on behalf of TeX users groups). This work is released under the GUST Font License -- see http://tug.org/fonts/licenses/GUST-FONT-LICENSE.txt for details.",
+        "source": "TeX Live 2026 (BasicTeX) texmf-dist/fonts/opentype/public; licence text from http://tug.org/fonts/licenses/GUST-FONT-LICENSE.txt",
+        "text_path": "GUST-FONT-LICENSE.txt",
+        "text_sha256": "49ea6cb9257bbee0a3979c48a774cd221550ac1c20c95549efe45fc99cc18050",
+        "embedding_permission": "allowed"
+      }
+    },
+    {
+      "font": {
+        "font_id": "lm.sans10.regular",
+        "sha256": "d431b786b9b603662718e79cfe9b441f47a8b0b3e854dde89d5acb3ed7cfd682",
+        "byte_length": 95128,
+        "format": "opentype-cff",
+        "face_index": 0,
+        "units_per_em": 1000,
+        "glyph_count": 821,
+        "postscript_name": "LMSans10-Regular"
+      },
+      "path": "lm/lmsans10-regular.otf",
+      "license": {
+        "identifier": "LicenseRef-GUST-Font-License-1.0",
+        "copyright": "Copyright 2003, 2009 B. Jackowski and J. M. Nowacki (on behalf of TeX users groups). This work is released under the GUST Font License -- see http://tug.org/fonts/licenses/GUST-FONT-LICENSE.txt for details.",
+        "source": "TeX Live 2026 (BasicTeX) texmf-dist/fonts/opentype/public; licence text from http://tug.org/fonts/licenses/GUST-FONT-LICENSE.txt",
+        "text_path": "GUST-FONT-LICENSE.txt",
+        "text_sha256": "49ea6cb9257bbee0a3979c48a774cd221550ac1c20c95549efe45fc99cc18050",
+        "embedding_permission": "allowed"
+      }
+    },
+    {
+      "font": {
+        "font_id": "lm.mono10.regular",
+        "sha256": "22deb6d3be3ffcb40b33f0e010afb256c677d97c2a2bdee1f5740cdc97751558",
+        "byte_length": 64684,
+        "format": "opentype-cff",
+        "face_index": 0,
+        "units_per_em": 1000,
+        "glyph_count": 786,
+        "postscript_name": "LMMono10-Regular"
+      },
+      "path": "lm/lmmono10-regular.otf",
+      "license": {
+        "identifier": "LicenseRef-GUST-Font-License-1.0",
+        "copyright": "Copyright 2003, 2009 B. Jackowski and J. M. Nowacki (on behalf of TeX users groups). This work is released under the GUST Font License -- see http://tug.org/fonts/licenses/GUST-FONT-LICENSE.txt for details.",
+        "source": "TeX Live 2026 (BasicTeX) texmf-dist/fonts/opentype/public; licence text from http://tug.org/fonts/licenses/GUST-FONT-LICENSE.txt",
+        "text_path": "GUST-FONT-LICENSE.txt",
+        "text_sha256": "49ea6cb9257bbee0a3979c48a774cd221550ac1c20c95549efe45fc99cc18050",
+        "embedding_permission": "allowed"
+      }
+    },
+    {
+      "font": {
+        "font_id": "lm.math",
+        "sha256": "6075562b771f8b82f0c179e363389684f2dd09de30038269e2628e504bd7be0f",
+        "byte_length": 733736,
+        "format": "opentype-cff",
+        "face_index": 0,
+        "units_per_em": 1000,
+        "glyph_count": 4802,
+        "postscript_name": "LatinModernMath-Regular"
+      },
+      "path": "lm-math/latinmodern-math.otf",
+      "license": {
+        "identifier": "LicenseRef-GUST-Font-License-1.0",
+        "copyright": "Copyright 2012--2014 for Latin Modern Math OTF by B. Jackowski, P. Strzelczyk and P. Pianowski (on behalf of TeX users groups). This work is released under the GUST Font License -- see http://tug.org/fonts/licenses/GUST-FONT-LICENSE.txt for details.",
+        "source": "TeX Live 2026 (BasicTeX) texmf-dist/fonts/opentype/public; licence text from http://tug.org/fonts/licenses/GUST-FONT-LICENSE.txt",
+        "text_path": "GUST-FONT-LICENSE.txt",
+        "text_sha256": "49ea6cb9257bbee0a3979c48a774cd221550ac1c20c95549efe45fc99cc18050",
+        "embedding_permission": "allowed"
+      }
+    }
+  ]
+}

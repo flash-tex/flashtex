@@ -1,0 +1,27 @@
+{
+  "base_chain": [
+    "f464c6d6 cumulative Text patch",
+    "61bd63f7 comment delta",
+    "this preserve-text-runs.patch"
+  ],
+  "clean_apply_final_source_match": true,
+  "before_math_sha256": "244bc1481282d55db66554451a85a8bfb14fdc8483f09f40fb771f8264330589",
+  "after_math_sha256": "72bfaaf441d38275b5ff10d85e8976bb557610d195847efe5a13fe7fb5f9f427",
+  "tests_passed": 53,
+  "randomized_whole_reply_comparisons": 207,
+  "files": {
+    "preserve-text-runs.patch": "5f530938de729ea210593ff8b2907e514b083ce904e97418cd138827483a565e",
+    "equivalence.json": "0bea53dc0861b5b52d1d5e5d05f4674fb53a82f31cd42a72f011842e031e2a7e",
+    "alternating-summary.json": "bfb8c3b4ec9a594c87304b68ea715a5505b567e60dfeebdf6354260292b07351",
+    "text-runs-tests.log": "0f5756c5fc66d519f4e03b20a19bff858bbdc1ca8817c76dc21d1f500cf3fa0d",
+    "text-runs-clippy.log": "c2c9ef0b6aa567b6f9d16e2c7a34f2343c2a3dc44cd3dd7477157eb6778b2638",
+    "text-runs-release.log": "b95fba2d8c2eaae5a5975076c1652d31429f04a0b713894de8cd30c970e4e40a",
+    "request.jsonl.gz": "c296b99d14efb09ea4f7641d9abe5f23a7ded87d156fa5ca5297df0ce641ddcd",
+    "before-response.jsonl.gz": "be32c0b0c6702219842fe5f5ff6785f32a6932c43e484a54c4723c59b69dfcbb",
+    "after-response.jsonl.gz": "be32c0b0c6702219842fe5f5ff6785f32a6932c43e484a54c4723c59b69dfcbb",
+    "alternating-0-before.json": "0d48fbc89d3bf9c08607e16687ae4daed7d129864070b9e6bfcd49f4f779dbcc",
+    "alternating-1-after.json": "065ff3fb9ebc113fe414d1c2351067c6e31024da248e8fe92f6504d0c32ce617",
+    "alternating-2-before.json": "119d0b77873cf78303b0b4cb629f345ab128f389cdd461e6bd7bffe8aa0b7e8e",
+    "alternating-3-after.json": "1d4ff32de95a733dd9b60767c165871430d25fe91ba3e11a60d6ab4ae06fc6f3"
+  }
+}

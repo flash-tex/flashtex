@@ -1,0 +1,124 @@
+{
+  "schema_version": 1,
+  "lane": "mac-paragraph-layout-2 (Claude Code subagent, parent mac-claude-a, mac-m1max-a)",
+  "generated_utc": "2026-09-12T16:40:14Z",
+  "scope": "Reviewable handoff only; no commits to crates/paragraph-layout or agent/mac-paragraph-layout/* (Commander authority correction, issue #2 comment 5647125681)",
+  "inputs": {
+    "origin_main_observed": [
+      "0294d2ca48cbfd497c6b549deb7575fbcec4a4b8",
+      "d550d6b1f4840a45036b177f4737196e9b2a20dd"
+    ],
+    "crate_tree_on_main": "d20d55ce23a1181f6823dc331acc718a00a8a28e",
+    "last_crate_commit_on_main": "e69165a80fce1ef3632cb7038f2500a7c3220f2e",
+    "main_linebreak_rs_sha256": "f7010e0db6c02d4923948b36b9c1ca29921f96e226082dd3c8981f35aaa1d0d7",
+    "vendored_copy": {
+      "branch": "origin/agent/mac-render-pipeline/unified",
+      "path": "crates/render-pipeline/vendor/paragraph-layout",
+      "PIN": "70209e2c1b38f873e29d06bdf6e6bb01e3eaf42d",
+      "linebreak_rs_sha256": "79786f905e83aab89e487c1b931dc741d7fd1277a50743110f07809eff008249",
+      "identical_to_lane_tip": "0a1ba87d (agent/mac-paragraph-layout/linebreak) src/linebreak.rs"
+    },
+    "toolchain": "cargo 1.99.0-nightly (3efb1f477 2026-07-17), macOS Darwin 25.3.0, mac-m1max-a",
+    "load_1min_range": "26-61"
+  },
+  "outputs": {
+    "tests.patch": {
+      "sha256": "3c660c56514ce80a8199b111010cda6441575e0866fa2d95a05165dce1153fc4",
+      "scratch_commit": "fa7eef8",
+      "files": [
+        "crates/paragraph-layout/tests/forced_break.rs"
+      ],
+      "test_names": [
+        "trailing_line_break_yields_an_empty_last_line",
+        "mid_paragraph_line_break_is_unchanged",
+        "paragraph_of_only_a_forced_break",
+        "consecutive_forced_breaks_yield_consecutive_empty_lines",
+        "forced_break_followed_by_discardable_glue",
+        "random_item_sequences_ending_in_forced_breaks_never_panic_or_drop_boxes"
+      ]
+    },
+    "fix.patch": {
+      "sha256": "9fec77d8574b1dbd000176051ce8c6eae2fb967d1a03b6af440f34a7d60e5c55",
+      "scratch_commit": "43d3a4a",
+      "files": [
+        "crates/paragraph-layout/src/linebreak.rs"
+      ],
+      "stat": "+28/-2",
+      "patched_linebreak_rs_sha256": "6b0a0e370138c075bb93f95cbc0f4670fa3a4b1ced96d7f818c6e29dd071a211"
+    },
+    "forced_break_rs_sha256": "3eb17c44309ba5e34ef53d4bb9a0f9d9d6fe967b793310411bbf6c2e95c08879",
+    "applies_to": {
+      "origin_main_crate": "git apply/patch -p1 dry-run clean on git archive origin/main crates/paragraph-layout (d550d6b1)",
+      "vendored_copy": "patch -p3 clean; clamps at vendored lines 427 and 963, resume_after_cut at 746"
+    }
+  },
+  "test_runs": {
+    "baseline_main_crate": {
+      "command": "cargo test --release",
+      "result": "27 passed (9 unit, 16 golden, 2 oracle_wrap_sample)",
+      "log_sha256": "e31dfe599bd74792ab94b29666bb087e7ae673120c44f313d919e681805f0537",
+      "log": "test core14::tests::identities_are_distinct_and_labelled ... ok\ntest core14::tests::kerns_match_afm_pairs ... ok\ntest core14::tests::widths_match_afm_units ... ok\ntest hyphenate::tests::explicit_marker_positions ... ok\ntest items::tests::explicit_discretionary_builds_flagged_penalty_with_hyphen ... ok\ntest items::tests::builder_spaces_follow_space_factor ... ok\ntest items::tests::shape_run_height_depth_default_to_ascender_descender ... ok\ntest items::tests::shape_run_height_depth_track_the_tallest_deepest_glyph ... ok\ntest items::tests::shaping_applies_kerns_and_ligatures ... ok\ntest result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\ntest explicit_discretionary_produces_hyphen_run_with_marker_cluster ... ok\ntest baseline_grid_snaps_every_baseline ... ok\ntest explicit_kern_is_discarded_at_a_break ... ok\ntest first_fit_and_total_fit_differ_on_a_loose_line ... ok\ntest glyph_height_and_depth_change_baseline_placement ... ok\ntest justified_stretch_uses_total_fit_numbers ... ok\ntest justified_shrink_uses_total_fit_numbers ... ok\ntest kerning_changes_the_break ... ok\ntest keep_with_next_moves_heading_with_its_body ... ok\ntest long_paragraph_breaks_deterministically_without_loss ... ok\ntest orphan_line_moves_to_next_page ... ok\ntest overfull_line_is_reported_not_dropped ... ok\ntest page_overflow_is_reported_and_content_kept ... ok\ntest layout_is_deterministic ... ok\ntest ragged_right_keeps_natural_spaces ... ok\ntest widow_line_pulls_a_line_or_the_paragraph ... ok\ntest result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\ntest first_fit_ragged_matches_total_fit_on_this_sample ... ok\ntest total_fit_ragged_matches_pdflatex_line_starts ... ok\ntest result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\ntest result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n"
+    },
+    "before_fix_new_tests": {
+      "command": "cargo test --release --test forced_break (main crate + tests.patch)",
+      "result": "1 passed, 5 failed: panic at src/linebreak.rs:882:21",
+      "log_sha256": "548911b902919c7ccb55e05863faab8cd255b59b2027621d9abf56a97a3d23a8",
+      "log": "\nrunning 6 tests\ntest mid_paragraph_line_break_is_unchanged ... ok\ntest paragraph_of_only_a_forced_break ... FAILED\ntest consecutive_forced_breaks_yield_consecutive_empty_lines ... FAILED\ntest forced_break_followed_by_discardable_glue ... FAILED\ntest trailing_line_break_yields_an_empty_last_line ... FAILED\ntest random_item_sequences_ending_in_forced_breaks_never_panic_or_drop_boxes ... FAILED\n\nfailures:\n\n---- paragraph_of_only_a_forced_break stdout ----\n\nthread 'paragraph_of_only_a_forced_break' (12144171) panicked at src/linebreak.rs:882:21:\nslice index starts at 5 but ends at 4\n\n---- consecutive_forced_breaks_yield_consecutive_empty_lines stdout ----\n\nthread 'consecutive_forced_breaks_yield_consecutive_empty_lines' (12144168) panicked at src/linebreak.rs:882:21:\nslice index starts at 8 but ends at 4\nnote: run with `RUST_BACKTRACE=1` environment variable to display a backtrace\n\n---- forced_break_followed_by_discardable_glue stdout ----\n\nthread 'forced_break_followed_by_discardable_glue' (12144169) panicked at src/linebreak.rs:882:21:\nslice index starts at 3 but ends at 2\n\n---- trailing_line_break_yields_an_empty_last_line stdout ----\n\nthread 'trailing_line_break_yields_an_empty_last_line' (12144173) panicked at src/linebreak.rs:882:21:\nslice index starts at 7 but ends at 6\n\n---- random_item_sequences_ending_in_forced_breaks_never_panic_or_drop_boxes stdout ----\n\nthread 'random_item_sequences_ending_in_forced_breaks_never_panic_or_drop_boxes' (12144172) panicked at src/linebreak.rs:882:21:\nslice index starts at 16 but ends at 11\n\n\nfailures:\n    consecutive_forced_breaks_yield_consecutive_empty_lines\n    forced_break_followed_by_discardable_glue\n    paragraph_of_only_a_forced_break\n    random_item_sequences_ending_in_forced_breaks_never_panic_or_drop_boxes\n    trailing_line_break_yields_an_empty_last_line\n\ntest result: FAILED. 1 passed; 5 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n\nerror: test failed, to rerun pass `--test forced_break`\n"
+    },
+    "after_fix_main_crate": {
+      "command": "cargo test --release (main crate + tests.patch + fix.patch)",
+      "result": "33 passed (9 unit, 6 forced_break, 16 golden, 2 oracle_wrap_sample)",
+      "log_sha256": "469a779b2cf6484c9682a54baf010ee0f700f5af92de5b5d25d507f5c288fc42",
+      "log": "\nrunning 9 tests\ntest core14::tests::identities_are_distinct_and_labelled ... ok\ntest core14::tests::kerns_match_afm_pairs ... ok\ntest core14::tests::widths_match_afm_units ... ok\ntest hyphenate::tests::explicit_marker_positions ... ok\ntest items::tests::builder_spaces_follow_space_factor ... ok\ntest items::tests::explicit_discretionary_builds_flagged_penalty_with_hyphen ... ok\ntest items::tests::shape_run_height_depth_default_to_ascender_descender ... ok\ntest items::tests::shape_run_height_depth_track_the_tallest_deepest_glyph ... ok\ntest items::tests::shaping_applies_kerns_and_ligatures ... ok\n\ntest result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n\n\nrunning 6 tests\ntest mid_paragraph_line_break_is_unchanged ... ok\ntest consecutive_forced_breaks_yield_consecutive_empty_lines ... ok\ntest forced_break_followed_by_discardable_glue ... ok\ntest paragraph_of_only_a_forced_break ... ok\ntest trailing_line_break_yields_an_empty_last_line ... ok\ntest random_item_sequences_ending_in_forced_breaks_never_panic_or_drop_boxes ... ok\n\ntest result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.06s\n\n\nrunning 16 tests\ntest explicit_kern_is_discarded_at_a_break ... ok\ntest explicit_discretionary_produces_hyphen_run_with_marker_cluster ... ok\ntest glyph_height_and_depth_change_baseline_placement ... ok\ntest baseline_grid_snaps_every_baseline ... ok\ntest first_fit_and_total_fit_differ_on_a_loose_line ... ok\ntest justified_stretch_uses_total_fit_numbers ... ok\ntest justified_shrink_uses_total_fit_numbers ... ok\ntest kerning_changes_the_break ... ok\ntest overfull_line_is_reported_not_dropped ... ok\ntest keep_with_next_moves_heading_with_its_body ... ok\ntest orphan_line_moves_to_next_page ... ok\ntest long_paragraph_breaks_deterministically_without_loss ... ok\ntest page_overflow_is_reported_and_content_kept ... ok\ntest ragged_right_keeps_natural_spaces ... ok\ntest widow_line_pulls_a_line_or_the_paragraph ... ok\ntest layout_is_deterministic ... ok\n\ntest result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n\n\nrunning 2 tests\ntest total_fit_ragged_matches_pdflatex_line_starts ... ok\ntest first_fit_ragged_matches_total_fit_on_this_sample ... ok\n\ntest result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n\n\nrunning 0 tests\n\ntest result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n\n"
+    },
+    "after_fix_clippy": {
+      "command": "cargo clippy --release --all-targets -- -D warnings",
+      "result": "clean",
+      "log": "    Checking flashtex-paragraph-layout v0.1.0 (/Users/jay3332/Projects/flashtex/.claude/worktrees/agent-acf30ae8c28a9b4f1/.scratch/scratchrepo/crates/paragraph-layout)\n    Finished `release` profile [optimized] target(s) in 0.39s\n"
+    },
+    "after_fix_fmt": {
+      "command": "cargo fmt --check",
+      "result": "clean"
+    },
+    "vendored_copy_after_both_patches": {
+      "command": "cargo test --release (vendored copy + both patches)",
+      "result": "46 passed (10 unit, 6 forced_break, 19 golden, 2 incremental, 1 oracle_hyphen_sample, 2 oracle_pages, 2 oracle_wrap_sample, 4 page_metrics); clippy -D warnings clean",
+      "log_sha256": "3109e68377571a4f07dca969cd3b82e912eefab332a8e25a185c65a6186d9e50",
+      "log": "     Running unittests src/lib.rs (target/release/deps/flashtex_paragraph_layout-451c0b272d651771)\n\nrunning 10 tests\ntest core14::tests::identities_are_distinct_and_labelled ... ok\ntest core14::tests::kerns_match_afm_pairs ... ok\ntest core14::tests::widths_match_afm_units ... ok\ntest document::tests::paragraphs_split_on_blank_lines ... ok\ntest hyphenate::tests::explicit_marker_positions ... ok\ntest items::tests::builder_spaces_follow_space_factor ... ok\ntest items::tests::explicit_discretionary_builds_flagged_penalty_with_hyphen ... ok\ntest items::tests::shaping_applies_kerns_and_ligatures ... ok\ntest liang::tests::tex_word_rules ... ok\ntest liang::tests::matches_tex_showhyphens_for_every_sample_word ... ok\n\ntest result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n\n     Running tests/forced_break.rs (target/release/deps/forced_break-8c1c1b3f9c81d45b)\n\nrunning 6 tests\ntest consecutive_forced_breaks_yield_consecutive_empty_lines ... ok\ntest mid_paragraph_line_break_is_unchanged ... ok\ntest trailing_line_break_yields_an_empty_last_line ... ok\ntest paragraph_of_only_a_forced_break ... ok\ntest forced_break_followed_by_discardable_glue ... ok\ntest random_item_sequences_ending_in_forced_breaks_never_panic_or_drop_boxes ... ok\n\ntest result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.11s\n\n     Running tests/golden.rs (target/release/deps/golden-09aa14653ae2eed3)\n\nrunning 19 tests\ntest baseline_grid_snaps_every_baseline ... ok\ntest emergency_stretch_enables_a_third_pass_and_reports_underfull ... ok\ntest explicit_discretionary_produces_hyphen_run_with_marker_cluster ... ok\ntest explicit_kern_is_discarded_at_a_break ... ok\ntest first_fit_and_total_fit_differ_on_a_loose_line ... ok\ntest justified_shrink_uses_total_fit_numbers ... ok\ntest justified_stretch_uses_total_fit_numbers ... ok\ntest keep_with_next_moves_heading_with_its_body ... ok\ntest kerning_changes_the_break ... ok\ntest long_paragraph_breaks_deterministically_without_loss ... ok\ntest hyphen_penalty_and_first_word_rule ... ok\ntest orphan_line_moves_to_next_page ... ok\ntest overfull_diagnostic_cites_the_offending_box_and_respects_hfuzz ... ok\ntest page_overflow_is_reported_and_content_kept ... ok\ntest layout_is_deterministic ... ok\ntest overfull_line_is_reported_not_dropped ... ok\ntest ragged_right_keeps_natural_spaces ... ok\ntest underfull_diagnostic_respects_hbadness ... ok\ntest widow_line_pulls_a_line_or_the_paragraph ... ok\n\ntest result: ok. 19 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n\n     Running tests/incremental.rs (target/release/deps/incremental-617facdcc52e6c60)\n\nrunning 2 tests\ntest single_paragraph_edit_relays_one_paragraph ... ok\ntest relayout_equals_clean_layout_over_random_edits ... ok\n\ntest result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.06s\n\n     Running tests/oracle_hyphen_sample.rs (target/release/deps/oracle_hyphen_sample-ec7b8146964bde9f)\n\nrunning 1 test\ntest justified_hyphenation_matches_pdflatex ... ok\n\ntest result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n\n     Running tests/oracle_pages.rs (target/release/deps/oracle_pages-d88cabbfc090a014)\n\nrunning 2 tests\ntest page_geometry_1in_matches_pdflatex ... ok\ntest page_geometry_default_margins_matches_pdflatex ... ok\n\ntest result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s\n\n     Running tests/oracle_wrap_sample.rs (target/release/deps/oracle_wrap_sample-40613168e8897039)\n\nrunning 2 tests\ntest total_fit_ragged_matches_pdflatex_line_starts ... ok\ntest first_fit_ragged_matches_total_fit_on_this_sample ... ok\n\ntest result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n\n     Running tests/page_metrics.rs (target/release/deps/page_metrics-d6c3563fcd058e64)\n\nrunning 4 tests\ntest article_12pt_letter_page_params_come_from_document_style ... ok\ntest section_heading_block_uses_class_spacing ... ok\ntest runtime_v1_items_are_words_with_exact_spans ... ok\ntest two_page_document_baselines_and_break_line ... ok\n\ntest result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n\n\nrunning 0 tests\n\ntest result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n\n"
+    }
+  },
+  "byte_identity_dump": {
+    "method": "scratch tests/zz_dump.rs (not shipped): {:?} of layout_paragraph for 576 oracle-sample cases (4 wrap-sample paragraphs x Times Roman/Bold/Italic x NoHyphenation/ExplicitDiscretionary x 4 measures x 6 parameter sets) + 2000 LCG item sequences (seed 0x0badf00d_cafe_0002) x 16 parameter sets, catch_unwind per case",
+    "cases": 48576,
+    "pre_fix_panics": 20969,
+    "post_fix_panics": 0,
+    "oracle_cases": 576,
+    "oracle_pre_fix_panics": 0,
+    "oracle_changed": 0,
+    "non_panicking_before": 27607,
+    "non_panicking_changed": 9832,
+    "changed_first_fit_exact_empty_line_insertions": 9828,
+    "empty_lines_inserted": 16273,
+    "changed_total_fit_mismeasured_candidates": [
+      "fuzz c317 w12 p4",
+      "fuzz c1141 w1 p1",
+      "fuzz c1141 w1 p4",
+      "fuzz c1193 w12 p4"
+    ],
+    "non_panicking_identical": 17775,
+    "dump_before_sha256": "64c4a5f130cba08037bb56a616a9d9410c24c0631f38b662a6f8535d005a5913",
+    "dump_after_sha256": "e3c68f359497d260c95cbc830214812eece47fb4f6d41b3e74196e71b7168737"
+  },
+  "end_to_end_flashtex_render": {
+    "binary": "flashtex-render built from git archive origin/agent/mac-render-pipeline/unified (9aaec57a019c6a0073419eeb3ec90f922f5b367c) crates/render-pipeline, cargo build --release --offline; render-pipeline itself unchanged",
+    "request": "one JSON compile request on stdin (protocol_version 1, documents [main.tex]), FLASHTEX_NO_ACTIVATE=1",
+    "unpatched": {
+      "source": "Hello \\\\ + blank line",
+      "exit": 101,
+      "stderr": "thread 'main' (12292802) panicked at vendor/paragraph-layout/src/linebreak.rs:988:21:"
+    },
+    "patched_vendored_copy": "control Hello -> (0, 'ok', [('Hello', 148.712, 134.765)], [])\nHello \\\\ + blank line -> (0, 'ok', [('Hello', 148.712, 134.765)], [])\nHello \\\\ world -> (0, 'ok', [('Hello', 148.712, 134.765), ('world', 133.768, 146.72)], [])\nHello \\\\ + blank + Next para -> (0, 'ok', [('Hello', 148.712, 134.765), ('Next', 148.712, 158.675)], [])\ncontrol Hello + Next para -> (0, 'ok', [('Hello', 148.712, 134.765), ('Next', 148.712, 146.72)], [])\nHello \\\\\\\\ + blank -> (0, 'ok', [('Hello', 148.712, 134.765)], [])\n",
+    "vendored_diagnostics_probe": "layout_paragraph on `Hello ` + line_break + finish with article_12pt_letter_1in: 2 lines; diagnostics = [Underfull \\hbox (badness 10000) in paragraph, line 2 (kind Underfull { badness: 10000 }, line 1)]",
+    "e2e_log_sha256": "388c4b64a00f50be13aee37feedcd70325928c2ed2c180768bbaed84f25d472f"
+  }
+}

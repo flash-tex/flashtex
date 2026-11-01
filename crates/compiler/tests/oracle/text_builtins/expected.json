@@ -1,0 +1,9556 @@
+{
+ "fixtures": [
+  {
+   "box": {
+    "children": [
+     {
+      "code": 84,
+      "font_id": "T1/lmr/m/n/10",
+      "kind": "char"
+     },
+     {
+      "accent": false,
+      "explicit": true,
+      "kind": "kern",
+      "width_sp": -109250
+     },
+     {
+      "children": [
+       {
+        "code": 69,
+        "font_id": "T1/lmr/m/n/10",
+        "kind": "char"
+       }
+      ],
+      "depth_sp": 0,
+      "glue_set": false,
+      "height_sp": 451461,
+      "kind": "hbox",
+      "shift_sp": 141082,
+      "width_sp": 446005
+     },
+     {
+      "accent": false,
+      "explicit": true,
+      "kind": "kern",
+      "width_sp": -81920
+     },
+     {
+      "code": 88,
+      "font_id": "T1/lmr/m/n/10",
+      "kind": "char"
+     }
+    ],
+    "depth_sp": 141082,
+    "glue_set": false,
+    "height_sp": 451461,
+    "kind": "hbox",
+    "shift_sp": 0,
+    "width_sp": 1219656
+   },
+   "errors": [],
+   "fonts": {
+    "T1/lmr/m/n/10": {
+     "at_sp": null,
+     "tfm": "ec-lmr10"
+    }
+   },
+   "id": "tex-10",
+   "input": "\\TeX",
+   "kind": "logo",
+   "linewidth_sp": 22609920,
+   "logo": "TeX",
+   "math_fonts": {
+    "scriptfont2": {
+     "at_sp": null,
+     "tfm": "lmsy7"
+    },
+    "textfont1": {
+     "at_sp": null,
+     "tfm": "lmmi10"
+    },
+    "textfont2": {
+     "at_sp": null,
+     "tfm": "lmsy10"
+    }
+   },
+   "math_prefix": "",
+   "size": "10pt",
+   "text_font": {
+    "at_sp": null,
+    "tfm": "ec-lmr10"
+   },
+   "textwidth_sp": 22609920,
+   "variant": "t1-lm"
+  },
+  {
+   "box": {
+    "children": [
+     {
+      "code": 76,
+      "font_id": "T1/lmr/m/n/10",
+      "kind": "char"
+     },
+     {
+      "accent": false,
+      "explicit": true,
+      "kind": "kern",
+      "width_sp": -235930
+     },
+     {
+      "children": [
+       {
+        "children": [
+         {
+          "code": 65,
+          "font_id": "T1/lmr/m/n/7",
+          "kind": "char"
+         }
+        ],
+        "depth_sp": 0,
+        "glue_set": false,
+        "height_sp": 316025,
+        "kind": "hbox",
+        "shift_sp": 0,
+        "width_sp": 386858
+       },
+       {
+        "kind": "glue",
+        "spec": "\\glue 0.0 plus 1.0fil minus 1.0fil",
+        "width_sp": 0
+       }
+      ],
+      "depth_sp": 0,
+      "glue_set": true,
+      "height_sp": 451461,
+      "kind": "vbox",
+      "shift_sp": 0,
+      "width_sp": 386858
+     },
+     {
+      "accent": false,
+      "explicit": true,
+      "kind": "kern",
+      "width_sp": -98300
+     },
+     {
+      "code": 84,
+      "font_id": "T1/lmr/m/n/10",
+      "kind": "char"
+     },
+     {
+      "accent": false,
+      "explicit": true,
+      "kind": "kern",
+      "width_sp": -109250
+     },
+     {
+      "children": [
+       {
+        "code": 69,
+        "font_id": "T1/lmr/m/n/10",
+        "kind": "char"
+       }
+      ],
+      "depth_sp": 0,
+      "glue_set": false,
+      "height_sp": 451461,
+      "kind": "hbox",
+      "shift_sp": 141082,
+      "width_sp": 446005
+     },
+     {
+      "accent": false,
+      "explicit": true,
+      "kind": "kern",
+      "width_sp": -81920
+     },
+     {
+      "code": 88,
+      "font_id": "T1/lmr/m/n/10",
+      "kind": "char"
+     }
+    ],
+    "depth_sp": 141082,
+    "glue_set": false,
+    "height_sp": 451461,
+    "kind": "hbox",
+    "shift_sp": 0,
+    "width_sp": 1681884
+   },
+   "errors": [],
+   "fonts": {
+    "T1/lmr/m/n/10": {
+     "at_sp": null,
+     "tfm": "ec-lmr10"
+    },
+    "T1/lmr/m/n/7": {
+     "at_sp": null,
+     "tfm": "ec-lmr7"
+    }
+   },
+   "id": "latex-10",
+   "input": "\\LaTeX",
+   "kind": "logo",
+   "linewidth_sp": 22609920,
+   "logo": "LaTeX",
+   "math_fonts": {
+    "scriptfont2": {
+     "at_sp": null,
+     "tfm": "lmsy7"
+    },
+    "textfont1": {
+     "at_sp": null,
+     "tfm": "lmmi10"
+    },
+    "textfont2": {
+     "at_sp": null,
+     "tfm": "lmsy10"
+    }
+   },
+   "math_prefix": "",
+   "size": "10pt",
+   "text_font": {
+    "at_sp": null,
+    "tfm": "ec-lmr10"
+   },
+   "textwidth_sp": 22609920,
+   "variant": "t1-lm"
+  },
+  {
+   "box": {
+    "children": [
+     {
+      "children": [
+       {
+        "code": 76,
+        "font_id": "T1/lmr/m/n/10",
+        "kind": "char"
+       },
+       {
+        "accent": false,
+        "explicit": true,
+        "kind": "kern",
+        "width_sp": -235930
+       },
+       {
+        "children": [
+         {
+          "children": [
+           {
+            "code": 65,
+            "font_id": "T1/lmr/m/n/7",
+            "kind": "char"
+           }
+          ],
+          "depth_sp": 0,
+          "glue_set": false,
+          "height_sp": 316025,
+          "kind": "hbox",
+          "shift_sp": 0,
+          "width_sp": 386858
+         },
+         {
+          "kind": "glue",
+          "spec": "\\glue 0.0 plus 1.0fil minus 1.0fil",
+          "width_sp": 0
+         }
+        ],
+        "depth_sp": 0,
+        "glue_set": true,
+        "height_sp": 451461,
+        "kind": "vbox",
+        "shift_sp": 0,
+        "width_sp": 386858
+       },
+       {
+        "accent": false,
+        "explicit": true,
+        "kind": "kern",
+        "width_sp": -98300
+       },
+       {
+        "code": 84,
+        "font_id": "T1/lmr/m/n/10",
+        "kind": "char"
+       },
+       {
+        "accent": false,
+        "explicit": true,
+        "kind": "kern",
+        "width_sp": -109250
+       },
+       {
+        "children": [
+         {
+          "code": 69,
+          "font_id": "T1/lmr/m/n/10",
+          "kind": "char"
+         }
+        ],
+        "depth_sp": 0,
+        "glue_set": false,
+        "height_sp": 451461,
+        "kind": "hbox",
+        "shift_sp": 141082,
+        "width_sp": 446005
+       },
+       {
+        "accent": false,
+        "explicit": true,
+        "kind": "kern",
+        "width_sp": -81920
+       },
+       {
+        "code": 88,
+        "font_id": "T1/lmr/m/n/10",
+        "kind": "char"
+       },
+       {
+        "accent": false,
+        "explicit": true,
+        "kind": "kern",
+        "width_sp": 98300
+       },
+       {
+        "code": 50,
+        "font_id": "T1/lmr/m/n/10",
+        "kind": "char"
+       },
+       {
+        "kind": "mathon"
+       },
+       {
+        "children": [
+         {
+          "code": 34,
+          "font_id": "OML/lmm/m/it/10",
+          "kind": "char"
+         }
+        ],
+        "depth_sp": 0,
+        "glue_set": false,
+        "height_sp": 282168,
+        "kind": "hbox",
+        "shift_sp": 98303,
+        "width_sp": 338374
+       },
+       {
+        "kind": "mathoff"
+       }
+      ],
+      "depth_sp": 141082,
+      "glue_set": false,
+      "height_sp": 451461,
+      "kind": "hbox",
+      "shift_sp": 0,
+      "width_sp": 2446238
+     }
+    ],
+    "depth_sp": 141082,
+    "glue_set": false,
+    "height_sp": 451461,
+    "kind": "hbox",
+    "shift_sp": 0,
+    "width_sp": 2446238
+   },
+   "errors": [],
+   "fonts": {
+    "OML/lmm/m/it/10": {
+     "at_sp": null,
+     "tfm": "lmmi10"
+    },
+    "T1/lmr/m/n/10": {
+     "at_sp": null,
+     "tfm": "ec-lmr10"
+    },
+    "T1/lmr/m/n/7": {
+     "at_sp": null,
+     "tfm": "ec-lmr7"
+    }
+   },
+   "id": "latexe-10",
+   "input": "\\LaTeXe",
+   "kind": "logo",
+   "linewidth_sp": 22609920,
+   "logo": "LaTeXe",
+   "math_fonts": {
+    "scriptfont2": {
+     "at_sp": null,
+     "tfm": "lmsy7"
+    },
+    "textfont1": {
+     "at_sp": null,
+     "tfm": "lmmi10"
+    },
+    "textfont2": {
+     "at_sp": null,
+     "tfm": "lmsy10"
+    }
+   },
+   "math_prefix": "",
+   "size": "10pt",
+   "text_font": {
+    "at_sp": null,
+    "tfm": "ec-lmr10"
+   },
+   "textwidth_sp": 22609920,
+   "variant": "t1-lm"
+  },
+  {
+   "box": {
+    "children": [
+     {
+      "code": 84,
+      "font_id": "T1/lmr/m/n/10.95",
+      "kind": "char"
+     },
+     {
+      "accent": false,
+      "explicit": true,
+      "kind": "kern",
+      "width_sp": -119628
+     },
+     {
+      "children": [
+       {
+        "code": 69,
+        "font_id": "T1/lmr/m/n/10.95",
+        "kind": "char"
+       }
+      ],
+      "depth_sp": 0,
+      "glue_set": false,
+      "height_sp": 494349,
+      "kind": "hbox",
+      "shift_sp": 154485,
+      "width_sp": 488375
+     },
+     {
+      "accent": false,
+      "explicit": true,
+      "kind": "kern",
+      "width_sp": -89702
+     },
+     {
+      "code": 88,
+      "font_id": "T1/lmr/m/n/10.95",
+      "kind": "char"
+     }
+    ],
+    "depth_sp": 154485,
+    "glue_set": false,
+    "height_sp": 494349,
+    "kind": "hbox",
+    "shift_sp": 0,
+    "width_sp": 1335523
+   },
+   "errors": [],
+   "fonts": {
+    "T1/lmr/m/n/10.95": {
+     "at_sp": 717619,
+     "tfm": "ec-lmr10"
+    }
+   },
+   "id": "tex-11",
+   "input": "\\TeX",
+   "kind": "logo",
+   "linewidth_sp": 23592960,
+   "logo": "TeX",
+   "math_fonts": {
+    "scriptfont2": {
+     "at_sp": null,
+     "tfm": "lmsy8"
+    },
+    "textfont1": {
+     "at_sp": 717619,
+     "tfm": "lmmi10"
+    },
+    "textfont2": {
+     "at_sp": 717619,
+     "tfm": "lmsy10"
+    }
+   },
+   "math_prefix": "",
+   "size": "11pt",
+   "text_font": {
+    "at_sp": 717619,
+    "tfm": "ec-lmr10"
+   },
+   "textwidth_sp": 23592960,
+   "variant": "t1-lm"
+  },
+  {
+   "box": {
+    "children": [
+     {
+      "code": 76,
+      "font_id": "T1/lmr/m/n/10.95",
+      "kind": "char"
+     },
+     {
+      "accent": false,
+      "explicit": true,
+      "kind": "kern",
+      "width_sp": -258343
+     },
+     {
+      "children": [
+       {
+        "children": [
+         {
+          "code": 65,
+          "font_id": "T1/lmr/m/n/8",
+          "kind": "char"
+         }
+        ],
+        "depth_sp": 0,
+        "glue_set": false,
+        "height_sp": 361169,
+        "kind": "hbox",
+        "shift_sp": 0,
+        "width_sp": 417268
+       },
+       {
+        "kind": "glue",
+        "spec": "\\glue 0.0 plus 1.0fil minus 1.0fil",
+        "width_sp": 0
+       }
+      ],
+      "depth_sp": 0,
+      "glue_set": true,
+      "height_sp": 494349,
+      "kind": "vbox",
+      "shift_sp": 0,
+      "width_sp": 417268
+     },
+     {
+      "accent": false,
+      "explicit": true,
+      "kind": "kern",
+      "width_sp": -107638
+     },
+     {
+      "code": 84,
+      "font_id": "T1/lmr/m/n/10.95",
+      "kind": "char"
+     },
+     {
+      "accent": false,
+      "explicit": true,
+      "kind": "kern",
+      "width_sp": -119628
+     },
+     {
+      "children": [
+       {
+        "code": 69,
+        "font_id": "T1/lmr/m/n/10.95",
+        "kind": "char"
+       }
+      ],
+      "depth_sp": 0,
+      "glue_set": false,
+      "height_sp": 494349,
+      "kind": "hbox",
+      "shift_sp": 154485,
+      "width_sp": 488375
+     },
+     {
+      "accent": false,
+      "explicit": true,
+      "kind": "kern",
+      "width_sp": -89702
+     },
+     {
+      "code": 88,
+      "font_id": "T1/lmr/m/n/10.95",
+      "kind": "char"
+     }
+    ],
+    "depth_sp": 154485,
+    "glue_set": false,
+    "height_sp": 494349,
+    "kind": "hbox",
+    "shift_sp": 0,
+    "width_sp": 1835321
+   },
+   "errors": [],
+   "fonts": {
+    "T1/lmr/m/n/10.95": {
+     "at_sp": 717619,
+     "tfm": "ec-lmr10"
+    },
+    "T1/lmr/m/n/8": {
+     "at_sp": null,
+     "tfm": "ec-lmr8"
+    }
+   },
+   "id": "latex-11",
+   "input": "\\LaTeX",
+   "kind": "logo",
+   "linewidth_sp": 23592960,
+   "logo": "LaTeX",
+   "math_fonts": {
+    "scriptfont2": {
+     "at_sp": null,
+     "tfm": "lmsy8"
+    },
+    "textfont1": {
+     "at_sp": 717619,
+     "tfm": "lmmi10"
+    },
+    "textfont2": {
+     "at_sp": 717619,
+     "tfm": "lmsy10"
+    }
+   },
+   "math_prefix": "",
+   "size": "11pt",
+   "text_font": {
+    "at_sp": 717619,
+    "tfm": "ec-lmr10"
+   },
+   "textwidth_sp": 23592960,
+   "variant": "t1-lm"
+  },
+  {
+   "box": {
+    "children": [
+     {
+      "code": 84,
+      "font_id": "T1/lmr/m/n/12",
+      "kind": "char"
+     },
+     {
+      "accent": false,
+      "explicit": true,
+      "kind": "kern",
+      "width_sp": -128366
+     },
+     {
+      "children": [
+       {
+        "code": 69,
+        "font_id": "T1/lmr/m/n/12",
+        "kind": "char"
+       }
+      ],
+      "depth_sp": 0,
+      "glue_set": false,
+      "height_sp": 541752,
+      "kind": "hbox",
+      "shift_sp": 169301,
+      "width_sp": 523928
+     },
+     {
+      "accent": false,
+      "explicit": true,
+      "kind": "kern",
+      "width_sp": -96254
+     },
+     {
+      "code": 88,
+      "font_id": "T1/lmr/m/n/12",
+      "kind": "char"
+     }
+    ],
+    "depth_sp": 169301,
+    "glue_set": false,
+    "height_sp": 541752,
+    "kind": "hbox",
+    "shift_sp": 0,
+    "width_sp": 1432686
+   },
+   "errors": [],
+   "fonts": {
+    "T1/lmr/m/n/12": {
+     "at_sp": null,
+     "tfm": "ec-lmr12"
+    }
+   },
+   "id": "tex-12",
+   "input": "\\TeX",
+   "kind": "logo",
+   "linewidth_sp": 25559040,
+   "logo": "TeX",
+   "math_fonts": {
+    "scriptfont2": {
+     "at_sp": null,
+     "tfm": "lmsy8"
+    },
+    "textfont1": {
+     "at_sp": null,
+     "tfm": "lmmi12"
+    },
+    "textfont2": {
+     "at_sp": 786432,
+     "tfm": "lmsy10"
+    }
+   },
+   "math_prefix": "",
+   "size": "12pt",
+   "text_font": {
+    "at_sp": null,
+    "tfm": "ec-lmr12"
+   },
+   "textwidth_sp": 25559040,
+   "variant": "t1-lm"
+  },
+  {
+   "box": {
+    "children": [
+     {
+      "code": 76,
+      "font_id": "T1/lmr/m/n/12",
+      "kind": "char"
+     },
+     {
+      "accent": false,
+      "explicit": true,
+      "kind": "kern",
+      "width_sp": -277213
+     },
+     {
+      "children": [
+       {
+        "children": [
+         {
+          "code": 65,
+          "font_id": "T1/lmr/m/n/8",
+          "kind": "char"
+         }
+        ],
+        "depth_sp": 0,
+        "glue_set": false,
+        "height_sp": 361169,
+        "kind": "hbox",
+        "shift_sp": 0,
+        "width_sp": 417268
+       },
+       {
+        "kind": "glue",
+        "spec": "\\glue 0.0 plus 1.0fil minus 1.0fil",
+        "width_sp": 0
+       }
+      ],
+      "depth_sp": 0,
+      "glue_set": true,
+      "height_sp": 541752,
+      "kind": "vbox",
+      "shift_sp": 0,
+      "width_sp": 417268
+     },
+     {
+      "accent": false,
+      "explicit": true,
+      "kind": "kern",
+      "width_sp": -115500
+     },
+     {
+      "code": 84,
+      "font_id": "T1/lmr/m/n/12",
+      "kind": "char"
+     },
+     {
+      "accent": false,
+      "explicit": true,
+      "kind": "kern",
+      "width_sp": -128366
+     },
+     {
+      "children": [
+       {
+        "code": 69,
+        "font_id": "T1/lmr/m/n/12",
+        "kind": "char"
+       }
+      ],
+      "depth_sp": 0,
+      "glue_set": false,
+      "height_sp": 541752,
+      "kind": "hbox",
+      "shift_sp": 169301,
+      "width_sp": 523928
+     },
+     {
+      "accent": false,
+      "explicit": true,
+      "kind": "kern",
+      "width_sp": -96254
+     },
+     {
+      "code": 88,
+      "font_id": "T1/lmr/m/n/12",
+      "kind": "char"
+     }
+    ],
+    "depth_sp": 169301,
+    "glue_set": false,
+    "height_sp": 541752,
+    "kind": "hbox",
+    "shift_sp": 0,
+    "width_sp": 1938374
+   },
+   "errors": [],
+   "fonts": {
+    "T1/lmr/m/n/12": {
+     "at_sp": null,
+     "tfm": "ec-lmr12"
+    },
+    "T1/lmr/m/n/8": {
+     "at_sp": null,
+     "tfm": "ec-lmr8"
+    }
+   },
+   "id": "latex-12",
+   "input": "\\LaTeX",
+   "kind": "logo",
+   "linewidth_sp": 25559040,
+   "logo": "LaTeX",
+   "math_fonts": {
+    "scriptfont2": {
+     "at_sp": null,
+     "tfm": "lmsy8"
+    },
+    "textfont1": {
+     "at_sp": null,
+     "tfm": "lmmi12"
+    },
+    "textfont2": {
+     "at_sp": 786432,
+     "tfm": "lmsy10"
+    }
+   },
+   "math_prefix": "",
+   "size": "12pt",
+   "text_font": {
+    "at_sp": null,
+    "tfm": "ec-lmr12"
+   },
+   "textwidth_sp": 25559040,
+   "variant": "t1-lm"
+  },
+  {
+   "box": {
+    "children": [
+     {
+      "children": [
+       {
+        "code": 76,
+        "font_id": "T1/lmr/m/n/12",
+        "kind": "char"
+       },
+       {
+        "accent": false,
+        "explicit": true,
+        "kind": "kern",
+        "width_sp": -277213
+       },
+       {
+        "children": [
+         {
+          "children": [
+           {
+            "code": 65,
+            "font_id": "T1/lmr/m/n/8",
+            "kind": "char"
+           }
+          ],
+          "depth_sp": 0,
+          "glue_set": false,
+          "height_sp": 361169,
+          "kind": "hbox",
+          "shift_sp": 0,
+          "width_sp": 417268
+         },
+         {
+          "kind": "glue",
+          "spec": "\\glue 0.0 plus 1.0fil minus 1.0fil",
+          "width_sp": 0
+         }
+        ],
+        "depth_sp": 0,
+        "glue_set": true,
+        "height_sp": 541752,
+        "kind": "vbox",
+        "shift_sp": 0,
+        "width_sp": 417268
+       },
+       {
+        "accent": false,
+        "explicit": true,
+        "kind": "kern",
+        "width_sp": -115500
+       },
+       {
+        "code": 84,
+        "font_id": "T1/lmr/m/n/12",
+        "kind": "char"
+       },
+       {
+        "accent": false,
+        "explicit": true,
+        "kind": "kern",
+        "width_sp": -128366
+       },
+       {
+        "children": [
+         {
+          "code": 69,
+          "font_id": "T1/lmr/m/n/12",
+          "kind": "char"
+         }
+        ],
+        "depth_sp": 0,
+        "glue_set": false,
+        "height_sp": 541752,
+        "kind": "hbox",
+        "shift_sp": 169301,
+        "width_sp": 523928
+       },
+       {
+        "accent": false,
+        "explicit": true,
+        "kind": "kern",
+        "width_sp": -96254
+       },
+       {
+        "code": 88,
+        "font_id": "T1/lmr/m/n/12",
+        "kind": "char"
+       },
+       {
+        "accent": false,
+        "explicit": true,
+        "kind": "kern",
+        "width_sp": 115500
+       },
+       {
+        "code": 50,
+        "font_id": "T1/lmr/m/n/12",
+        "kind": "char"
+       },
+       {
+        "kind": "mathon"
+       },
+       {
+        "children": [
+         {
+          "code": 34,
+          "font_id": "OML/lmm/m/it/12",
+          "kind": "char"
+         }
+        ],
+        "depth_sp": 0,
+        "glue_set": false,
+        "height_sp": 338603,
+        "kind": "hbox",
+        "shift_sp": 117964,
+        "width_sp": 393122
+       },
+       {
+        "kind": "mathoff"
+       }
+      ],
+      "depth_sp": 169301,
+      "glue_set": false,
+      "height_sp": 541752,
+      "kind": "hbox",
+      "shift_sp": 0,
+      "width_sp": 2832019
+     }
+    ],
+    "depth_sp": 169301,
+    "glue_set": false,
+    "height_sp": 541752,
+    "kind": "hbox",
+    "shift_sp": 0,
+    "width_sp": 2832019
+   },
+   "errors": [],
+   "fonts": {
+    "OML/lmm/m/it/12": {
+     "at_sp": null,
+     "tfm": "lmmi12"
+    },
+    "T1/lmr/m/n/12": {
+     "at_sp": null,
+     "tfm": "ec-lmr12"
+    },
+    "T1/lmr/m/n/8": {
+     "at_sp": null,
+     "tfm": "ec-lmr8"
+    }
+   },
+   "id": "latexe-12",
+   "input": "\\LaTeXe",
+   "kind": "logo",
+   "linewidth_sp": 25559040,
+   "logo": "LaTeXe",
+   "math_fonts": {
+    "scriptfont2": {
+     "at_sp": null,
+     "tfm": "lmsy8"
+    },
+    "textfont1": {
+     "at_sp": null,
+     "tfm": "lmmi12"
+    },
+    "textfont2": {
+     "at_sp": 786432,
+     "tfm": "lmsy10"
+    }
+   },
+   "math_prefix": "",
+   "size": "12pt",
+   "text_font": {
+    "at_sp": null,
+    "tfm": "ec-lmr12"
+   },
+   "textwidth_sp": 25559040,
+   "variant": "t1-lm"
+  },
+  {
+   "box": {
+    "children": [
+     {
+      "code": 76,
+      "font_id": "T1/lmr/bx/n/10",
+      "kind": "char"
+     },
+     {
+      "accent": false,
+      "explicit": true,
+      "kind": "kern",
+      "width_sp": -271319
+     },
+     {
+      "children": [
+       {
+        "children": [
+         {
+          "code": 65,
+          "font_id": "T1/lmr/bx/n/7",
+          "kind": "char"
+         }
+        ],
+        "depth_sp": 0,
+        "glue_set": false,
+        "height_sp": 320700,
+        "kind": "hbox",
+        "shift_sp": 0,
+        "width_sp": 444006
+       },
+       {
+        "kind": "glue",
+        "spec": "\\glue 0.0 plus 1.0fil minus 1.0fil",
+        "width_sp": 0
+       }
+      ],
+      "depth_sp": 0,
+      "glue_set": true,
+      "height_sp": 458128,
+      "kind": "vbox",
+      "shift_sp": 0,
+      "width_sp": 444006
+     },
+     {
+      "accent": false,
+      "explicit": true,
+      "kind": "kern",
+      "width_sp": -113044
+     },
+     {
+      "code": 84,
+      "font_id": "T1/lmr/bx/n/10",
+      "kind": "char"
+     },
+     {
+      "accent": false,
+      "explicit": true,
+      "kind": "kern",
+      "width_sp": -125637
+     },
+     {
+      "children": [
+       {
+        "code": 69,
+        "font_id": "T1/lmr/bx/n/10",
+        "kind": "char"
+       }
+      ],
+      "depth_sp": 0,
+      "glue_set": false,
+      "height_sp": 458128,
+      "kind": "hbox",
+      "shift_sp": 145637,
+      "width_sp": 495156
+     },
+     {
+      "accent": false,
+      "explicit": true,
+      "kind": "kern",
+      "width_sp": -94207
+     },
+     {
+      "code": 88,
+      "font_id": "T1/lmr/bx/n/10",
+      "kind": "char"
+     },
+     {
+      "accent": false,
+      "explicit": true,
+      "kind": "kern",
+      "width_sp": 0
+     }
+    ],
+    "depth_sp": 145637,
+    "glue_set": false,
+    "height_sp": 458128,
+    "kind": "hbox",
+    "shift_sp": 0,
+    "width_sp": 1882326
+   },
+   "errors": [],
+   "fonts": {
+    "T1/lmr/bx/n/10": {
+     "at_sp": null,
+     "tfm": "ec-lmbx10"
+    },
+    "T1/lmr/bx/n/7": {
+     "at_sp": null,
+     "tfm": "ec-lmbx7"
+    }
+   },
+   "id": "latex-bf-10",
+   "input": "\\textbf{\\LaTeX}",
+   "kind": "logo",
+   "linewidth_sp": 22609920,
+   "logo": "LaTeX",
+   "math_fonts": {
+    "scriptfont2": {
+     "at_sp": null,
+     "tfm": "lmsy7"
+    },
+    "textfont1": {
+     "at_sp": null,
+     "tfm": "lmmi10"
+    },
+    "textfont2": {
+     "at_sp": null,
+     "tfm": "lmsy10"
+    }
+   },
+   "math_prefix": "",
+   "size": "10pt",
+   "text_font": {
+    "at_sp": null,
+    "tfm": "ec-lmr10"
+   },
+   "textwidth_sp": 22609920,
+   "variant": "t1-lm"
+  },
+  {
+   "box": {
+    "children": [
+     {
+      "children": [
+       {
+        "code": 76,
+        "font_id": "T1/lmr/bx/n/10",
+        "kind": "char"
+       },
+       {
+        "accent": false,
+        "explicit": true,
+        "kind": "kern",
+        "width_sp": -271319
+       },
+       {
+        "children": [
+         {
+          "children": [
+           {
+            "code": 65,
+            "font_id": "T1/lmr/bx/n/7",
+            "kind": "char"
+           }
+          ],
+          "depth_sp": 0,
+          "glue_set": false,
+          "height_sp": 320700,
+          "kind": "hbox",
+          "shift_sp": 0,
+          "width_sp": 444006
+         },
+         {
+          "kind": "glue",
+          "spec": "\\glue 0.0 plus 1.0fil minus 1.0fil",
+          "width_sp": 0
+         }
+        ],
+        "depth_sp": 0,
+        "glue_set": true,
+        "height_sp": 458128,
+        "kind": "vbox",
+        "shift_sp": 0,
+        "width_sp": 444006
+       },
+       {
+        "accent": false,
+        "explicit": true,
+        "kind": "kern",
+        "width_sp": -113044
+       },
+       {
+        "code": 84,
+        "font_id": "T1/lmr/bx/n/10",
+        "kind": "char"
+       },
+       {
+        "accent": false,
+        "explicit": true,
+        "kind": "kern",
+        "width_sp": -125637
+       },
+       {
+        "children": [
+         {
+          "code": 69,
+          "font_id": "T1/lmr/bx/n/10",
+          "kind": "char"
+         }
+        ],
+        "depth_sp": 0,
+        "glue_set": false,
+        "height_sp": 458128,
+        "kind": "hbox",
+        "shift_sp": 145637,
+        "width_sp": 495156
+       },
+       {
+        "accent": false,
+        "explicit": true,
+        "kind": "kern",
+        "width_sp": -94207
+       },
+       {
+        "code": 88,
+        "font_id": "T1/lmr/bx/n/10",
+        "kind": "char"
+       },
+       {
+        "accent": false,
+        "explicit": true,
+        "kind": "kern",
+        "width_sp": 113044
+       },
+       {
+        "code": 50,
+        "font_id": "T1/lmr/bx/n/10",
+        "kind": "char"
+       },
+       {
+        "kind": "mathon"
+       },
+       {
+        "children": [
+         {
+          "code": 34,
+          "font_id": "OML/lmm/b/it/10",
+          "kind": "char"
+         }
+        ],
+        "depth_sp": 0,
+        "glue_set": false,
+        "height_sp": 291271,
+        "kind": "hbox",
+        "shift_sp": 98303,
+        "width_sp": 379334
+       },
+       {
+        "kind": "mathoff"
+       }
+      ],
+      "depth_sp": 145637,
+      "glue_set": false,
+      "height_sp": 458128,
+      "kind": "hbox",
+      "shift_sp": 0,
+      "width_sp": 2751535
+     }
+    ],
+    "depth_sp": 145637,
+    "glue_set": false,
+    "height_sp": 458128,
+    "kind": "hbox",
+    "shift_sp": 0,
+    "width_sp": 2751535
+   },
+   "errors": [],
+   "fonts": {
+    "OML/lmm/b/it/10": {
+     "at_sp": null,
+     "tfm": "lmmib10"
+    },
+    "T1/lmr/bx/n/10": {
+     "at_sp": null,
+     "tfm": "ec-lmbx10"
+    },
+    "T1/lmr/bx/n/7": {
+     "at_sp": null,
+     "tfm": "ec-lmbx7"
+    }
+   },
+   "id": "latexe-bf-10",
+   "input": "\\textbf{\\LaTeXe}",
+   "kind": "logo",
+   "linewidth_sp": 22609920,
+   "logo": "LaTeXe",
+   "math_fonts": {
+    "scriptfont2": {
+     "at_sp": null,
+     "tfm": "lmbsy7"
+    },
+    "textfont1": {
+     "at_sp": null,
+     "tfm": "lmmib10"
+    },
+    "textfont2": {
+     "at_sp": null,
+     "tfm": "lmbsy10"
+    }
+   },
+   "math_prefix": "\\bfseries\\boldmath",
+   "size": "10pt",
+   "text_font": {
+    "at_sp": null,
+    "tfm": "ec-lmr10"
+   },
+   "textwidth_sp": 22609920,
+   "variant": "t1-lm"
+  },
+  {
+   "box": {
+    "children": [
+     {
+      "code": 76,
+      "font_id": "T1/lmss/m/n/10",
+      "kind": "char"
+     },
+     {
+      "accent": false,
+      "explicit": true,
+      "kind": "kern",
+      "width_sp": -235930
+     },
+     {
+      "children": [
+       {
+        "children": [
+         {
+          "code": 65,
+          "font_id": "T1/lmss/m/n/7",
+          "kind": "char"
+         }
+        ],
+        "depth_sp": 0,
+        "glue_set": false,
+        "height_sp": 318574,
+        "kind": "hbox",
+        "shift_sp": 0,
+        "width_sp": 324968
+       },
+       {
+        "kind": "glue",
+        "spec": "\\glue 0.0 plus 1.0fil minus 1.0fil",
+        "width_sp": 0
+       }
+      ],
+      "depth_sp": 0,
+      "glue_set": true,
+      "height_sp": 455115,
+      "kind": "vbox",
+      "shift_sp": 0,
+      "width_sp": 324968
+     },
+     {
+      "accent": false,
+      "explicit": true,
+      "kind": "kern",
+      "width_sp": -98300
+     },
+     {
+      "code": 84,
+      "font_id": "T1/lmss/m/n/10",
+      "kind": "char"
+     },
+     {
+      "accent": false,
+      "explicit": true,
+      "kind": "kern",
+      "width_sp": -109250
+     },
+     {
+      "children": [
+       {
+        "code": 69,
+        "font_id": "T1/lmss/m/n/10",
+        "kind": "char"
+       }
+      ],
+      "depth_sp": 0,
+      "glue_set": false,
+      "height_sp": 455115,
+      "kind": "hbox",
+      "shift_sp": 145637,
+      "width_sp": 391381
+     },
+     {
+      "accent": false,
+      "explicit": true,
+      "kind": "kern",
+      "width_sp": -81920
+     },
+     {
+      "code": 88,
+      "font_id": "T1/lmss/m/n/10",
+      "kind": "char"
+     },
+     {
+      "accent": false,
+      "explicit": true,
+      "kind": "kern",
+      "width_sp": 8593
+     }
+    ],
+    "depth_sp": 145637,
+    "glue_set": false,
+    "height_sp": 455115,
+    "kind": "hbox",
+    "shift_sp": 0,
+    "width_sp": 1437461
+   },
+   "errors": [],
+   "fonts": {
+    "T1/lmss/m/n/10": {
+     "at_sp": null,
+     "tfm": "ec-lmss10"
+    },
+    "T1/lmss/m/n/7": {
+     "at_sp": 458752,
+     "tfm": "ec-lmss8"
+    }
+   },
+   "id": "latex-sf-10",
+   "input": "\\textsf{\\LaTeX}",
+   "kind": "logo",
+   "linewidth_sp": 22609920,
+   "logo": "LaTeX",
+   "math_fonts": {
+    "scriptfont2": {
+     "at_sp": null,
+     "tfm": "lmsy7"
+    },
+    "textfont1": {
+     "at_sp": null,
+     "tfm": "lmmi10"
+    },
+    "textfont2": {
+     "at_sp": null,
+     "tfm": "lmsy10"
+    }
+   },
+   "math_prefix": "",
+   "size": "10pt",
+   "text_font": {
+    "at_sp": null,
+    "tfm": "ec-lmr10"
+   },
+   "textwidth_sp": 22609920,
+   "variant": "t1-lm"
+  },
+  {
+   "box": {
+    "children": [
+     {
+      "code": 84,
+      "font_id": "T1/lmr/m/it/10",
+      "kind": "char"
+     },
+     {
+      "accent": false,
+      "explicit": true,
+      "kind": "kern",
+      "width_sp": -111676
+     },
+     {
+      "children": [
+       {
+        "code": 69,
+        "font_id": "T1/lmr/m/it/10",
+        "kind": "char"
+       }
+      ],
+      "depth_sp": 0,
+      "glue_set": false,
+      "height_sp": 451461,
+      "kind": "hbox",
+      "shift_sp": 141082,
+      "width_sp": 444563
+     },
+     {
+      "accent": false,
+      "explicit": true,
+      "kind": "kern",
+      "width_sp": -83739
+     },
+     {
+      "code": 88,
+      "font_id": "T1/lmr/m/it/10",
+      "kind": "char"
+     },
+     {
+      "accent": false,
+      "explicit": true,
+      "kind": "kern",
+      "width_sp": 71708
+     }
+    ],
+    "depth_sp": 141082,
+    "glue_set": false,
+    "height_sp": 451461,
+    "kind": "hbox",
+    "shift_sp": 0,
+    "width_sp": 1276960
+   },
+   "errors": [],
+   "fonts": {
+    "T1/lmr/m/it/10": {
+     "at_sp": null,
+     "tfm": "ec-lmri10"
+    }
+   },
+   "id": "tex-it-10",
+   "input": "\\textit{\\TeX}",
+   "kind": "logo",
+   "linewidth_sp": 22609920,
+   "logo": "TeX",
+   "math_fonts": {
+    "scriptfont2": {
+     "at_sp": null,
+     "tfm": "lmsy7"
+    },
+    "textfont1": {
+     "at_sp": null,
+     "tfm": "lmmi10"
+    },
+    "textfont2": {
+     "at_sp": null,
+     "tfm": "lmsy10"
+    }
+   },
+   "math_prefix": "",
+   "size": "10pt",
+   "text_font": {
+    "at_sp": null,
+    "tfm": "ec-lmr10"
+   },
+   "textwidth_sp": 22609920,
+   "variant": "t1-lm"
+  },
+  {
+   "box": {
+    "children": [
+     {
+      "code": 76,
+      "font_id": "T1/lmr/m/n/14.4",
+      "kind": "char"
+     },
+     {
+      "accent": false,
+      "explicit": true,
+      "kind": "kern",
+      "width_sp": -332656
+     },
+     {
+      "children": [
+       {
+        "children": [
+         {
+          "code": 65,
+          "font_id": "T1/lmr/m/n/10",
+          "kind": "char"
+         }
+        ],
+        "depth_sp": 0,
+        "glue_set": false,
+        "height_sp": 451461,
+        "kind": "hbox",
+        "shift_sp": 0,
+        "width_sp": 491520
+       },
+       {
+        "kind": "glue",
+        "spec": "\\glue 0.0 plus 1.0fil minus 1.0fil",
+        "width_sp": 0
+       }
+      ],
+      "depth_sp": 0,
+      "glue_set": true,
+      "height_sp": 650103,
+      "kind": "vbox",
+      "shift_sp": 0,
+      "width_sp": 491520
+     },
+     {
+      "accent": false,
+      "explicit": true,
+      "kind": "kern",
+      "width_sp": -138600
+     },
+     {
+      "code": 84,
+      "font_id": "T1/lmr/m/n/14.4",
+      "kind": "char"
+     },
+     {
+      "accent": false,
+      "explicit": true,
+      "kind": "kern",
+      "width_sp": -154040
+     },
+     {
+      "children": [
+       {
+        "code": 69,
+        "font_id": "T1/lmr/m/n/14.4",
+        "kind": "char"
+       }
+      ],
+      "depth_sp": 0,
+      "glue_set": false,
+      "height_sp": 650103,
+      "kind": "hbox",
+      "shift_sp": 203161,
+      "width_sp": 628713
+     },
+     {
+      "accent": false,
+      "explicit": true,
+      "kind": "kern",
+      "width_sp": -115505
+     },
+     {
+      "code": 88,
+      "font_id": "T1/lmr/m/n/14.4",
+      "kind": "char"
+     }
+    ],
+    "depth_sp": 203161,
+    "glue_set": false,
+    "height_sp": 650103,
+    "kind": "hbox",
+    "shift_sp": 0,
+    "width_sp": 2316845
+   },
+   "errors": [],
+   "fonts": {
+    "T1/lmr/m/n/10": {
+     "at_sp": null,
+     "tfm": "ec-lmr10"
+    },
+    "T1/lmr/m/n/14.4": {
+     "at_sp": 943718,
+     "tfm": "ec-lmr12"
+    }
+   },
+   "id": "latex-large-10",
+   "input": "\\Large\\LaTeX",
+   "kind": "logo",
+   "linewidth_sp": 22609920,
+   "logo": "LaTeX",
+   "math_fonts": {
+    "scriptfont2": {
+     "at_sp": null,
+     "tfm": "lmsy10"
+    },
+    "textfont1": {
+     "at_sp": 943718,
+     "tfm": "lmmi12"
+    },
+    "textfont2": {
+     "at_sp": 943718,
+     "tfm": "lmsy10"
+    }
+   },
+   "math_prefix": "\\Large",
+   "size": "10pt",
+   "text_font": {
+    "at_sp": null,
+    "tfm": "ec-lmr10"
+   },
+   "textwidth_sp": 22609920,
+   "variant": "t1-lm"
+  },
+  {
+   "box": {
+    "children": [
+     {
+      "code": 76,
+      "font_id": "T1/lmr/m/n/10.95",
+      "kind": "char"
+     },
+     {
+      "accent": false,
+      "explicit": true,
+      "kind": "kern",
+      "width_sp": -258343
+     },
+     {
+      "children": [
+       {
+        "children": [
+         {
+          "code": 65,
+          "font_id": "T1/lmr/m/n/8",
+          "kind": "char"
+         }
+        ],
+        "depth_sp": 0,
+        "glue_set": false,
+        "height_sp": 361169,
+        "kind": "hbox",
+        "shift_sp": 0,
+        "width_sp": 417268
+       },
+       {
+        "kind": "glue",
+        "spec": "\\glue 0.0 plus 1.0fil minus 1.0fil",
+        "width_sp": 0
+       }
+      ],
+      "depth_sp": 0,
+      "glue_set": true,
+      "height_sp": 494349,
+      "kind": "vbox",
+      "shift_sp": 0,
+      "width_sp": 417268
+     },
+     {
+      "accent": false,
+      "explicit": true,
+      "kind": "kern",
+      "width_sp": -107638
+     },
+     {
+      "code": 84,
+      "font_id": "T1/lmr/m/n/10.95",
+      "kind": "char"
+     },
+     {
+      "accent": false,
+      "explicit": true,
+      "kind": "kern",
+      "width_sp": -119628
+     },
+     {
+      "children": [
+       {
+        "code": 69,
+        "font_id": "T1/lmr/m/n/10.95",
+        "kind": "char"
+       }
+      ],
+      "depth_sp": 0,
+      "glue_set": false,
+      "height_sp": 494349,
+      "kind": "hbox",
+      "shift_sp": 154485,
+      "width_sp": 488375
+     },
+     {
+      "accent": false,
+      "explicit": true,
+      "kind": "kern",
+      "width_sp": -89702
+     },
+     {
+      "code": 88,
+      "font_id": "T1/lmr/m/n/10.95",
+      "kind": "char"
+     }
+    ],
+    "depth_sp": 154485,
+    "glue_set": false,
+    "height_sp": 494349,
+    "kind": "hbox",
+    "shift_sp": 0,
+    "width_sp": 1835321
+   },
+   "errors": [],
+   "fonts": {
+    "T1/lmr/m/n/10.95": {
+     "at_sp": 717619,
+     "tfm": "ec-lmr10"
+    },
+    "T1/lmr/m/n/8": {
+     "at_sp": null,
+     "tfm": "ec-lmr8"
+    }
+   },
+   "id": "latex-small-12",
+   "input": "\\small\\LaTeX",
+   "kind": "logo",
+   "linewidth_sp": 25559040,
+   "logo": "LaTeX",
+   "math_fonts": {
+    "scriptfont2": {
+     "at_sp": null,
+     "tfm": "lmsy8"
+    },
+    "textfont1": {
+     "at_sp": 717619,
+     "tfm": "lmmi10"
+    },
+    "textfont2": {
+     "at_sp": 717619,
+     "tfm": "lmsy10"
+    }
+   },
+   "math_prefix": "\\small",
+   "size": "12pt",
+   "text_font": {
+    "at_sp": null,
+    "tfm": "ec-lmr12"
+   },
+   "textwidth_sp": 25559040,
+   "variant": "t1-lm"
+  },
+  {
+   "box": {
+    "children": [
+     {
+      "code": 84,
+      "font_id": "OT1/cmr/m/n/10",
+      "kind": "char"
+     },
+     {
+      "accent": false,
+      "explicit": true,
+      "kind": "kern",
+      "width_sp": -109250
+     },
+     {
+      "children": [
+       {
+        "code": 69,
+        "font_id": "OT1/cmr/m/n/10",
+        "kind": "char"
+       }
+      ],
+      "depth_sp": 0,
+      "glue_set": false,
+      "height_sp": 447828,
+      "kind": "hbox",
+      "shift_sp": 141084,
+      "width_sp": 446010
+     },
+     {
+      "accent": false,
+      "explicit": true,
+      "kind": "kern",
+      "width_sp": -81920
+     },
+     {
+      "code": 88,
+      "font_id": "OT1/cmr/m/n/10",
+      "kind": "char"
+     }
+    ],
+    "depth_sp": 141084,
+    "glue_set": false,
+    "height_sp": 447828,
+    "kind": "hbox",
+    "shift_sp": 0,
+    "width_sp": 1219677
+   },
+   "errors": [],
+   "fonts": {
+    "OT1/cmr/m/n/10": {
+     "at_sp": null,
+     "tfm": "cmr10"
+    }
+   },
+   "id": "tex-ot1-10",
+   "input": "\\TeX",
+   "kind": "logo",
+   "linewidth_sp": 22609920,
+   "logo": "TeX",
+   "math_fonts": {
+    "scriptfont2": {
+     "at_sp": null,
+     "tfm": "cmsy7"
+    },
+    "textfont1": {
+     "at_sp": null,
+     "tfm": "cmmi10"
+    },
+    "textfont2": {
+     "at_sp": null,
+     "tfm": "cmsy10"
+    }
+   },
+   "math_prefix": "",
+   "size": "10pt",
+   "text_font": {
+    "at_sp": null,
+    "tfm": "cmr10"
+   },
+   "textwidth_sp": 22609920,
+   "variant": "ot1-cm"
+  },
+  {
+   "box": {
+    "children": [
+     {
+      "code": 76,
+      "font_id": "OT1/cmr/m/n/10",
+      "kind": "char"
+     },
+     {
+      "accent": false,
+      "explicit": true,
+      "kind": "kern",
+      "width_sp": -235930
+     },
+     {
+      "children": [
+       {
+        "children": [
+         {
+          "code": 65,
+          "font_id": "OT1/cmr/m/n/7",
+          "kind": "char"
+         }
+        ],
+        "depth_sp": 0,
+        "glue_set": false,
+        "height_sp": 313481,
+        "kind": "hbox",
+        "shift_sp": 0,
+        "width_sp": 386847
+       },
+       {
+        "kind": "glue",
+        "spec": "\\glue 0.0 plus 1.0fil minus 1.0fil",
+        "width_sp": 0
+       }
+      ],
+      "depth_sp": 0,
+      "glue_set": true,
+      "height_sp": 447828,
+      "kind": "vbox",
+      "shift_sp": 0,
+      "width_sp": 386847
+     },
+     {
+      "accent": false,
+      "explicit": true,
+      "kind": "kern",
+      "width_sp": -98300
+     },
+     {
+      "code": 84,
+      "font_id": "OT1/cmr/m/n/10",
+      "kind": "char"
+     },
+     {
+      "accent": false,
+      "explicit": true,
+      "kind": "kern",
+      "width_sp": -109250
+     },
+     {
+      "children": [
+       {
+        "code": 69,
+        "font_id": "OT1/cmr/m/n/10",
+        "kind": "char"
+       }
+      ],
+      "depth_sp": 0,
+      "glue_set": false,
+      "height_sp": 447828,
+      "kind": "hbox",
+      "shift_sp": 141084,
+      "width_sp": 446010
+     },
+     {
+      "accent": false,
+      "explicit": true,
+      "kind": "kern",
+      "width_sp": -81920
+     },
+     {
+      "code": 88,
+      "font_id": "OT1/cmr/m/n/10",
+      "kind": "char"
+     }
+    ],
+    "depth_sp": 141084,
+    "glue_set": false,
+    "height_sp": 447828,
+    "kind": "hbox",
+    "shift_sp": 0,
+    "width_sp": 1681895
+   },
+   "errors": [],
+   "fonts": {
+    "OT1/cmr/m/n/10": {
+     "at_sp": null,
+     "tfm": "cmr10"
+    },
+    "OT1/cmr/m/n/7": {
+     "at_sp": null,
+     "tfm": "cmr7"
+    }
+   },
+   "id": "latex-ot1-10",
+   "input": "\\LaTeX",
+   "kind": "logo",
+   "linewidth_sp": 22609920,
+   "logo": "LaTeX",
+   "math_fonts": {
+    "scriptfont2": {
+     "at_sp": null,
+     "tfm": "cmsy7"
+    },
+    "textfont1": {
+     "at_sp": null,
+     "tfm": "cmmi10"
+    },
+    "textfont2": {
+     "at_sp": null,
+     "tfm": "cmsy10"
+    }
+   },
+   "math_prefix": "",
+   "size": "10pt",
+   "text_font": {
+    "at_sp": null,
+    "tfm": "cmr10"
+   },
+   "textwidth_sp": 22609920,
+   "variant": "ot1-cm"
+  },
+  {
+   "box": {
+    "children": [
+     {
+      "children": [
+       {
+        "code": 76,
+        "font_id": "OT1/cmr/m/n/10",
+        "kind": "char"
+       },
+       {
+        "accent": false,
+        "explicit": true,
+        "kind": "kern",
+        "width_sp": -235930
+       },
+       {
+        "children": [
+         {
+          "children": [
+           {
+            "code": 65,
+            "font_id": "OT1/cmr/m/n/7",
+            "kind": "char"
+           }
+          ],
+          "depth_sp": 0,
+          "glue_set": false,
+          "height_sp": 313481,
+          "kind": "hbox",
+          "shift_sp": 0,
+          "width_sp": 386847
+         },
+         {
+          "kind": "glue",
+          "spec": "\\glue 0.0 plus 1.0fil minus 1.0fil",
+          "width_sp": 0
+         }
+        ],
+        "depth_sp": 0,
+        "glue_set": true,
+        "height_sp": 447828,
+        "kind": "vbox",
+        "shift_sp": 0,
+        "width_sp": 386847
+       },
+       {
+        "accent": false,
+        "explicit": true,
+        "kind": "kern",
+        "width_sp": -98300
+       },
+       {
+        "code": 84,
+        "font_id": "OT1/cmr/m/n/10",
+        "kind": "char"
+       },
+       {
+        "accent": false,
+        "explicit": true,
+        "kind": "kern",
+        "width_sp": -109250
+       },
+       {
+        "children": [
+         {
+          "code": 69,
+          "font_id": "OT1/cmr/m/n/10",
+          "kind": "char"
+         }
+        ],
+        "depth_sp": 0,
+        "glue_set": false,
+        "height_sp": 447828,
+        "kind": "hbox",
+        "shift_sp": 141084,
+        "width_sp": 446010
+       },
+       {
+        "accent": false,
+        "explicit": true,
+        "kind": "kern",
+        "width_sp": -81920
+       },
+       {
+        "code": 88,
+        "font_id": "OT1/cmr/m/n/10",
+        "kind": "char"
+       },
+       {
+        "accent": false,
+        "explicit": true,
+        "kind": "kern",
+        "width_sp": 98300
+       },
+       {
+        "code": 50,
+        "font_id": "OT1/cmr/m/n/10",
+        "kind": "char"
+       },
+       {
+        "kind": "mathon"
+       },
+       {
+        "children": [
+         {
+          "code": 34,
+          "font_id": "OML/cmm/m/it/10",
+          "kind": "char"
+         }
+        ],
+        "depth_sp": 0,
+        "glue_set": false,
+        "height_sp": 282168,
+        "kind": "hbox",
+        "shift_sp": 98303,
+        "width_sp": 338374
+       },
+       {
+        "kind": "mathoff"
+       }
+      ],
+      "depth_sp": 141084,
+      "glue_set": false,
+      "height_sp": 447828,
+      "kind": "hbox",
+      "shift_sp": 0,
+      "width_sp": 2446250
+     }
+    ],
+    "depth_sp": 141084,
+    "glue_set": false,
+    "height_sp": 447828,
+    "kind": "hbox",
+    "shift_sp": 0,
+    "width_sp": 2446250
+   },
+   "errors": [],
+   "fonts": {
+    "OML/cmm/m/it/10": {
+     "at_sp": null,
+     "tfm": "cmmi10"
+    },
+    "OT1/cmr/m/n/10": {
+     "at_sp": null,
+     "tfm": "cmr10"
+    },
+    "OT1/cmr/m/n/7": {
+     "at_sp": null,
+     "tfm": "cmr7"
+    }
+   },
+   "id": "latexe-ot1-10",
+   "input": "\\LaTeXe",
+   "kind": "logo",
+   "linewidth_sp": 22609920,
+   "logo": "LaTeXe",
+   "math_fonts": {
+    "scriptfont2": {
+     "at_sp": null,
+     "tfm": "cmsy7"
+    },
+    "textfont1": {
+     "at_sp": null,
+     "tfm": "cmmi10"
+    },
+    "textfont2": {
+     "at_sp": null,
+     "tfm": "cmsy10"
+    }
+   },
+   "math_prefix": "",
+   "size": "10pt",
+   "text_font": {
+    "at_sp": null,
+    "tfm": "cmr10"
+   },
+   "textwidth_sp": 22609920,
+   "variant": "ot1-cm"
+  },
+  {
+   "box": {
+    "children": [
+     {
+      "code": 76,
+      "font_id": "OT1/cmr/m/n/12",
+      "kind": "char"
+     },
+     {
+      "accent": false,
+      "explicit": true,
+      "kind": "kern",
+      "width_sp": -277214
+     },
+     {
+      "children": [
+       {
+        "children": [
+         {
+          "code": 65,
+          "font_id": "OT1/cmr/m/n/8",
+          "kind": "char"
+         }
+        ],
+        "depth_sp": 0,
+        "glue_set": false,
+        "height_sp": 358263,
+        "kind": "hbox",
+        "shift_sp": 0,
+        "width_sp": 417252
+       },
+       {
+        "kind": "glue",
+        "spec": "\\glue 0.0 plus 1.0fil minus 1.0fil",
+        "width_sp": 0
+       }
+      ],
+      "depth_sp": 0,
+      "glue_set": true,
+      "height_sp": 537395,
+      "kind": "vbox",
+      "shift_sp": 0,
+      "width_sp": 417252
+     },
+     {
+      "accent": false,
+      "explicit": true,
+      "kind": "kern",
+      "width_sp": -115501
+     },
+     {
+      "code": 84,
+      "font_id": "OT1/cmr/m/n/12",
+      "kind": "char"
+     },
+     {
+      "accent": false,
+      "explicit": true,
+      "kind": "kern",
+      "width_sp": -128367
+     },
+     {
+      "children": [
+       {
+        "code": 69,
+        "font_id": "OT1/cmr/m/n/12",
+        "kind": "char"
+       }
+      ],
+      "depth_sp": 0,
+      "glue_set": false,
+      "height_sp": 537395,
+      "kind": "hbox",
+      "shift_sp": 169301,
+      "width_sp": 523919
+     },
+     {
+      "accent": false,
+      "explicit": true,
+      "kind": "kern",
+      "width_sp": -96255
+     },
+     {
+      "code": 88,
+      "font_id": "OT1/cmr/m/n/12",
+      "kind": "char"
+     }
+    ],
+    "depth_sp": 169301,
+    "glue_set": false,
+    "height_sp": 537395,
+    "kind": "hbox",
+    "shift_sp": 0,
+    "width_sp": 1938370
+   },
+   "errors": [],
+   "fonts": {
+    "OT1/cmr/m/n/12": {
+     "at_sp": null,
+     "tfm": "cmr12"
+    },
+    "OT1/cmr/m/n/8": {
+     "at_sp": null,
+     "tfm": "cmr8"
+    }
+   },
+   "id": "latex-ot1-12",
+   "input": "\\LaTeX",
+   "kind": "logo",
+   "linewidth_sp": 25559040,
+   "logo": "LaTeX",
+   "math_fonts": {
+    "scriptfont2": {
+     "at_sp": null,
+     "tfm": "cmsy8"
+    },
+    "textfont1": {
+     "at_sp": null,
+     "tfm": "cmmi12"
+    },
+    "textfont2": {
+     "at_sp": 786432,
+     "tfm": "cmsy10"
+    }
+   },
+   "math_prefix": "",
+   "size": "12pt",
+   "text_font": {
+    "at_sp": null,
+    "tfm": "cmr12"
+   },
+   "textwidth_sp": 25559040,
+   "variant": "ot1-cm"
+  },
+  {
+   "box": {
+    "children": [
+     {
+      "children": [
+       {
+        "depth_sp": 0,
+        "height_sp": 196608,
+        "kind": "rule",
+        "width_sp": 131072
+       }
+      ],
+      "depth_sp": 0,
+      "glue_set": false,
+      "height_sp": 196608,
+      "kind": "hbox",
+      "shift_sp": 0,
+      "width_sp": 131072
+     }
+    ],
+    "depth_sp": 0,
+    "glue_set": false,
+    "height_sp": 196608,
+    "kind": "hbox",
+    "shift_sp": 0,
+    "width_sp": 131072
+   },
+   "errors": [],
+   "fonts": {},
+   "id": "rule-basic",
+   "input": "\\rule{2pt}{3pt}",
+   "kind": "rule",
+   "linewidth_sp": 22609920,
+   "rule": {
+    "height": "3pt",
+    "math": false,
+    "raise": "0pt",
+    "width": "2pt"
+   },
+   "size": "10pt",
+   "text_font": {
+    "at_sp": null,
+    "tfm": "ec-lmr10"
+   },
+   "textwidth_sp": 22609920,
+   "variant": "t1-lm"
+  },
+  {
+   "box": {
+    "children": [
+     {
+      "children": [
+       {
+        "depth_sp": 65536,
+        "height_sp": 131072,
+        "kind": "rule",
+        "width_sp": 131072
+       }
+      ],
+      "depth_sp": 65536,
+      "glue_set": false,
+      "height_sp": 131072,
+      "kind": "hbox",
+      "shift_sp": 0,
+      "width_sp": 131072
+     }
+    ],
+    "depth_sp": 65536,
+    "glue_set": false,
+    "height_sp": 131072,
+    "kind": "hbox",
+    "shift_sp": 0,
+    "width_sp": 131072
+   },
+   "errors": [],
+   "fonts": {},
+   "id": "rule-lowered",
+   "input": "\\rule[-1pt]{2pt}{3pt}",
+   "kind": "rule",
+   "linewidth_sp": 22609920,
+   "rule": {
+    "height": "3pt",
+    "math": false,
+    "raise": "-1pt",
+    "width": "2pt"
+   },
+   "size": "10pt",
+   "text_font": {
+    "at_sp": null,
+    "tfm": "ec-lmr10"
+   },
+   "textwidth_sp": 22609920,
+   "variant": "t1-lm"
+  },
+  {
+   "box": {
+    "children": [
+     {
+      "children": [
+       {
+        "depth_sp": -98304,
+        "height_sp": 124518,
+        "kind": "rule",
+        "width_sp": 655360
+       }
+      ],
+      "depth_sp": 0,
+      "glue_set": false,
+      "height_sp": 124518,
+      "kind": "hbox",
+      "shift_sp": 0,
+      "width_sp": 655360
+     }
+    ],
+    "depth_sp": 0,
+    "glue_set": false,
+    "height_sp": 124518,
+    "kind": "hbox",
+    "shift_sp": 0,
+    "width_sp": 655360
+   },
+   "errors": [],
+   "fonts": {},
+   "id": "rule-raised",
+   "input": "\\rule[1.5pt]{10pt}{0.4pt}",
+   "kind": "rule",
+   "linewidth_sp": 22609920,
+   "rule": {
+    "height": "0.4pt",
+    "math": false,
+    "raise": "1.5pt",
+    "width": "10pt"
+   },
+   "size": "10pt",
+   "text_font": {
+    "at_sp": null,
+    "tfm": "ec-lmr10"
+   },
+   "textwidth_sp": 22609920,
+   "variant": "t1-lm"
+  },
+  {
+   "box": {
+    "children": [
+     {
+      "children": [
+       {
+        "depth_sp": 0,
+        "height_sp": 564330,
+        "kind": "rule",
+        "width_sp": 0
+       }
+      ],
+      "depth_sp": 0,
+      "glue_set": false,
+      "height_sp": 564330,
+      "kind": "hbox",
+      "shift_sp": 0,
+      "width_sp": 0
+     }
+    ],
+    "depth_sp": 0,
+    "glue_set": false,
+    "height_sp": 564330,
+    "kind": "hbox",
+    "shift_sp": 0,
+    "width_sp": 0
+   },
+   "errors": [],
+   "fonts": {},
+   "id": "rule-strut",
+   "input": "\\rule{0pt}{2ex}",
+   "kind": "rule",
+   "linewidth_sp": 22609920,
+   "rule": {
+    "height": "2ex",
+    "math": false,
+    "raise": "0pt",
+    "width": "0pt"
+   },
+   "size": "10pt",
+   "text_font": {
+    "at_sp": null,
+    "tfm": "ec-lmr10"
+   },
+   "textwidth_sp": 22609920,
+   "variant": "t1-lm"
+  },
+  {
+   "box": {
+    "children": [
+     {
+      "children": [
+       {
+        "depth_sp": 0,
+        "height_sp": 141082,
+        "kind": "rule",
+        "width_sp": 655360
+       }
+      ],
+      "depth_sp": 0,
+      "glue_set": false,
+      "height_sp": 141082,
+      "kind": "hbox",
+      "shift_sp": 0,
+      "width_sp": 655360
+     }
+    ],
+    "depth_sp": 0,
+    "glue_set": false,
+    "height_sp": 141082,
+    "kind": "hbox",
+    "shift_sp": 0,
+    "width_sp": 655360
+   },
+   "errors": [],
+   "fonts": {},
+   "id": "rule-em",
+   "input": "\\rule{1em}{.5ex}",
+   "kind": "rule",
+   "linewidth_sp": 22609920,
+   "rule": {
+    "height": ".5ex",
+    "math": false,
+    "raise": "0pt",
+    "width": "1em"
+   },
+   "size": "10pt",
+   "text_font": {
+    "at_sp": null,
+    "tfm": "ec-lmr10"
+   },
+   "textwidth_sp": 22609920,
+   "variant": "t1-lm"
+  },
+  {
+   "box": {
+    "children": [
+     {
+      "children": [
+       {
+        "depth_sp": 0,
+        "height_sp": 39322,
+        "kind": "rule",
+        "width_sp": 23592960
+       }
+      ],
+      "depth_sp": 0,
+      "glue_set": false,
+      "height_sp": 39322,
+      "kind": "hbox",
+      "shift_sp": 0,
+      "width_sp": 23592960
+     }
+    ],
+    "depth_sp": 0,
+    "glue_set": false,
+    "height_sp": 39322,
+    "kind": "hbox",
+    "shift_sp": 0,
+    "width_sp": 23592960
+   },
+   "errors": [],
+   "fonts": {},
+   "id": "rule-textwidth-cv",
+   "input": "\\rule{\\textwidth}{0.6pt}",
+   "kind": "rule",
+   "linewidth_sp": 23592960,
+   "rule": {
+    "height": "0.6pt",
+    "math": false,
+    "raise": "0pt",
+    "width": "\\textwidth"
+   },
+   "size": "11pt",
+   "text_font": {
+    "at_sp": 717619,
+    "tfm": "ec-lmr10"
+   },
+   "textwidth_sp": 23592960,
+   "variant": "t1-lm"
+  },
+  {
+   "box": {
+    "children": [
+     {
+      "children": [
+       {
+        "depth_sp": 0,
+        "height_sp": 65536,
+        "kind": "rule",
+        "width_sp": 12779520
+       }
+      ],
+      "depth_sp": 0,
+      "glue_set": false,
+      "height_sp": 65536,
+      "kind": "hbox",
+      "shift_sp": 0,
+      "width_sp": 12779520
+     }
+    ],
+    "depth_sp": 0,
+    "glue_set": false,
+    "height_sp": 65536,
+    "kind": "hbox",
+    "shift_sp": 0,
+    "width_sp": 12779520
+   },
+   "errors": [],
+   "fonts": {},
+   "id": "rule-half-linewidth",
+   "input": "\\rule{.5\\linewidth}{1pt}",
+   "kind": "rule",
+   "linewidth_sp": 25559040,
+   "rule": {
+    "height": "1pt",
+    "math": false,
+    "raise": "0pt",
+    "width": ".5\\linewidth"
+   },
+   "size": "12pt",
+   "text_font": {
+    "at_sp": null,
+    "tfm": "ec-lmr12"
+   },
+   "textwidth_sp": 25559040,
+   "variant": "t1-lm"
+  },
+  {
+   "box": {
+    "children": [
+     {
+      "children": [
+       {
+        "depth_sp": 0,
+        "height_sp": 65536,
+        "kind": "rule",
+        "width_sp": -65536
+       }
+      ],
+      "depth_sp": 0,
+      "glue_set": false,
+      "height_sp": 65536,
+      "kind": "hbox",
+      "shift_sp": 0,
+      "width_sp": -65536
+     }
+    ],
+    "depth_sp": 0,
+    "glue_set": false,
+    "height_sp": 65536,
+    "kind": "hbox",
+    "shift_sp": 0,
+    "width_sp": -65536
+   },
+   "errors": [],
+   "fonts": {},
+   "id": "rule-negative-width",
+   "input": "\\rule{-1pt}{1pt}",
+   "kind": "rule",
+   "linewidth_sp": 22609920,
+   "rule": {
+    "height": "1pt",
+    "math": false,
+    "raise": "0pt",
+    "width": "-1pt"
+   },
+   "size": "10pt",
+   "text_font": {
+    "at_sp": null,
+    "tfm": "ec-lmr10"
+   },
+   "textwidth_sp": 22609920,
+   "variant": "t1-lm"
+  },
+  {
+   "box": {
+    "children": [
+     {
+      "children": [
+       {
+        "depth_sp": 473657,
+        "height_sp": -100722,
+        "kind": "rule",
+        "width_sp": 1864679
+       }
+      ],
+      "depth_sp": 473657,
+      "glue_set": false,
+      "height_sp": 0,
+      "kind": "hbox",
+      "shift_sp": 0,
+      "width_sp": 1864679
+     }
+    ],
+    "depth_sp": 473657,
+    "glue_set": false,
+    "height_sp": 0,
+    "kind": "hbox",
+    "shift_sp": 0,
+    "width_sp": 1864679
+   },
+   "errors": [],
+   "fonts": {},
+   "id": "rule-units",
+   "input": "\\rule[-.1in]{1cm}{2mm}",
+   "kind": "rule",
+   "linewidth_sp": 22609920,
+   "rule": {
+    "height": "2mm",
+    "math": false,
+    "raise": "-.1in",
+    "width": "1cm"
+   },
+   "size": "10pt",
+   "text_font": {
+    "at_sp": null,
+    "tfm": "ec-lmr10"
+   },
+   "textwidth_sp": 22609920,
+   "variant": "t1-lm"
+  },
+  {
+   "box": {
+    "children": [
+     {
+      "kind": "mathon"
+     },
+     {
+      "children": [
+       {
+        "depth_sp": 0,
+        "height_sp": 131072,
+        "kind": "rule",
+        "width_sp": 65536
+       }
+      ],
+      "depth_sp": 0,
+      "glue_set": false,
+      "height_sp": 131072,
+      "kind": "hbox",
+      "shift_sp": 0,
+      "width_sp": 65536
+     },
+     {
+      "kind": "mathoff"
+     }
+    ],
+    "depth_sp": 0,
+    "glue_set": false,
+    "height_sp": 131072,
+    "kind": "hbox",
+    "shift_sp": 0,
+    "width_sp": 65536
+   },
+   "errors": [],
+   "fonts": {},
+   "id": "rule-math",
+   "input": "$\\rule{1pt}{2pt}$",
+   "kind": "rule",
+   "linewidth_sp": 22609920,
+   "rule": {
+    "height": "2pt",
+    "math": true,
+    "raise": "0pt",
+    "width": "1pt"
+   },
+   "size": "10pt",
+   "text_font": {
+    "at_sp": null,
+    "tfm": "ec-lmr10"
+   },
+   "textwidth_sp": 22609920,
+   "variant": "t1-lm"
+  },
+  {
+   "box": {
+    "children": [
+     {
+      "children": [
+       {
+        "depth_sp": 169301,
+        "height_sp": 169302,
+        "kind": "rule",
+        "width_sp": 1540080
+       }
+      ],
+      "depth_sp": 169301,
+      "glue_set": false,
+      "height_sp": 169302,
+      "kind": "hbox",
+      "shift_sp": 0,
+      "width_sp": 1540080
+     }
+    ],
+    "depth_sp": 169301,
+    "glue_set": false,
+    "height_sp": 169302,
+    "kind": "hbox",
+    "shift_sp": 0,
+    "width_sp": 1540080
+   },
+   "errors": [],
+   "fonts": {},
+   "id": "rule-ot1-em",
+   "input": "\\rule[-.5ex]{2em}{1ex}",
+   "kind": "rule",
+   "linewidth_sp": 25559040,
+   "rule": {
+    "height": "1ex",
+    "math": false,
+    "raise": "-.5ex",
+    "width": "2em"
+   },
+   "size": "12pt",
+   "text_font": {
+    "at_sp": null,
+    "tfm": "cmr12"
+   },
+   "textwidth_sp": 25559040,
+   "variant": "ot1-cm"
+  },
+  {
+   "box": {
+    "children": [
+     {
+      "code": 97,
+      "font_id": "T1/lmr/m/n/10",
+      "kind": "char"
+     },
+     {
+      "accent": false,
+      "explicit": true,
+      "kind": "kern",
+      "width_sp": 109230
+     },
+     {
+      "code": 98,
+      "font_id": "T1/lmr/m/n/10",
+      "kind": "char"
+     }
+    ],
+    "depth_sp": 0,
+    "glue_set": false,
+    "height_sp": 451461,
+    "kind": "hbox",
+    "shift_sp": 0,
+    "width_sp": 800995
+   },
+   "command": ",",
+   "errors": [],
+   "fonts": {
+    "T1/lmr/m/n/10": {
+     "at_sp": null,
+     "tfm": "ec-lmr10"
+    }
+   },
+   "id": "kern-thin",
+   "input": "a\\,b",
+   "kind": "kern",
+   "linewidth_sp": 22609920,
+   "size": "10pt",
+   "text_font": {
+    "at_sp": null,
+    "tfm": "ec-lmr10"
+   },
+   "textwidth_sp": 22609920,
+   "variant": "t1-lm"
+  },
+  {
+   "box": {
+    "children": [
+     {
+      "code": 97,
+      "font_id": "T1/lmr/m/n/10",
+      "kind": "char"
+     },
+     {
+      "accent": false,
+      "explicit": true,
+      "kind": "kern",
+      "width_sp": -109230
+     },
+     {
+      "code": 98,
+      "font_id": "T1/lmr/m/n/10",
+      "kind": "char"
+     }
+    ],
+    "depth_sp": 0,
+    "glue_set": false,
+    "height_sp": 451461,
+    "kind": "hbox",
+    "shift_sp": 0,
+    "width_sp": 582535
+   },
+   "command": "!",
+   "errors": [],
+   "fonts": {
+    "T1/lmr/m/n/10": {
+     "at_sp": null,
+     "tfm": "ec-lmr10"
+    }
+   },
+   "id": "kern-negthin",
+   "input": "a\\!b",
+   "kind": "kern",
+   "linewidth_sp": 22609920,
+   "size": "10pt",
+   "text_font": {
+    "at_sp": null,
+    "tfm": "ec-lmr10"
+   },
+   "textwidth_sp": 22609920,
+   "variant": "t1-lm"
+  },
+  {
+   "box": {
+    "children": [
+     {
+      "code": 97,
+      "font_id": "T1/lmr/m/n/10",
+      "kind": "char"
+     },
+     {
+      "accent": false,
+      "explicit": true,
+      "kind": "kern",
+      "width_sp": 145620
+     },
+     {
+      "code": 98,
+      "font_id": "T1/lmr/m/n/10",
+      "kind": "char"
+     }
+    ],
+    "depth_sp": 0,
+    "glue_set": false,
+    "height_sp": 451461,
+    "kind": "hbox",
+    "shift_sp": 0,
+    "width_sp": 837385
+   },
+   "command": ":",
+   "errors": [],
+   "fonts": {
+    "T1/lmr/m/n/10": {
+     "at_sp": null,
+     "tfm": "ec-lmr10"
+    }
+   },
+   "id": "kern-med",
+   "input": "a\\:b",
+   "kind": "kern",
+   "linewidth_sp": 22609920,
+   "size": "10pt",
+   "text_font": {
+    "at_sp": null,
+    "tfm": "ec-lmr10"
+   },
+   "textwidth_sp": 22609920,
+   "variant": "t1-lm"
+  },
+  {
+   "box": {
+    "children": [
+     {
+      "code": 97,
+      "font_id": "T1/lmr/m/n/10",
+      "kind": "char"
+     },
+     {
+      "accent": false,
+      "explicit": true,
+      "kind": "kern",
+      "width_sp": 145620
+     },
+     {
+      "code": 98,
+      "font_id": "T1/lmr/m/n/10",
+      "kind": "char"
+     }
+    ],
+    "depth_sp": 0,
+    "glue_set": false,
+    "height_sp": 451461,
+    "kind": "hbox",
+    "shift_sp": 0,
+    "width_sp": 837385
+   },
+   "command": ">",
+   "errors": [],
+   "fonts": {
+    "T1/lmr/m/n/10": {
+     "at_sp": null,
+     "tfm": "ec-lmr10"
+    }
+   },
+   "id": "kern-med-gt",
+   "input": "a\\>b",
+   "kind": "kern",
+   "linewidth_sp": 22609920,
+   "size": "10pt",
+   "text_font": {
+    "at_sp": null,
+    "tfm": "ec-lmr10"
+   },
+   "textwidth_sp": 22609920,
+   "variant": "t1-lm"
+  },
+  {
+   "box": {
+    "children": [
+     {
+      "code": 97,
+      "font_id": "T1/lmr/m/n/10",
+      "kind": "char"
+     },
+     {
+      "accent": false,
+      "explicit": true,
+      "kind": "kern",
+      "width_sp": 181990
+     },
+     {
+      "code": 98,
+      "font_id": "T1/lmr/m/n/10",
+      "kind": "char"
+     }
+    ],
+    "depth_sp": 0,
+    "glue_set": false,
+    "height_sp": 451461,
+    "kind": "hbox",
+    "shift_sp": 0,
+    "width_sp": 873755
+   },
+   "command": ";",
+   "errors": [],
+   "fonts": {
+    "T1/lmr/m/n/10": {
+     "at_sp": null,
+     "tfm": "ec-lmr10"
+    }
+   },
+   "id": "kern-thick",
+   "input": "a\\;b",
+   "kind": "kern",
+   "linewidth_sp": 22609920,
+   "size": "10pt",
+   "text_font": {
+    "at_sp": null,
+    "tfm": "ec-lmr10"
+   },
+   "textwidth_sp": 22609920,
+   "variant": "t1-lm"
+  },
+  {
+   "box": {
+    "children": [
+     {
+      "code": 97,
+      "font_id": "T1/lmr/m/n/12",
+      "kind": "char"
+     },
+     {
+      "accent": false,
+      "explicit": true,
+      "kind": "kern",
+      "width_sp": 128343
+     },
+     {
+      "code": 98,
+      "font_id": "T1/lmr/m/n/12",
+      "kind": "char"
+     }
+    ],
+    "depth_sp": 0,
+    "glue_set": false,
+    "height_sp": 541752,
+    "kind": "hbox",
+    "shift_sp": 0,
+    "width_sp": 941184
+   },
+   "command": "thinspace",
+   "errors": [],
+   "fonts": {
+    "T1/lmr/m/n/12": {
+     "at_sp": null,
+     "tfm": "ec-lmr12"
+    }
+   },
+   "id": "kern-thinspace",
+   "input": "a\\thinspace b",
+   "kind": "kern",
+   "linewidth_sp": 25559040,
+   "size": "12pt",
+   "text_font": {
+    "at_sp": null,
+    "tfm": "ec-lmr12"
+   },
+   "textwidth_sp": 25559040,
+   "variant": "t1-lm"
+  },
+  {
+   "box": {
+    "children": [
+     {
+      "code": 97,
+      "font_id": "T1/lmr/m/n/10",
+      "kind": "char"
+     },
+     {
+      "accent": false,
+      "explicit": true,
+      "kind": "kern",
+      "width_sp": -109230
+     },
+     {
+      "code": 98,
+      "font_id": "T1/lmr/m/n/10",
+      "kind": "char"
+     }
+    ],
+    "depth_sp": 0,
+    "glue_set": false,
+    "height_sp": 451461,
+    "kind": "hbox",
+    "shift_sp": 0,
+    "width_sp": 582535
+   },
+   "command": "negthinspace",
+   "errors": [],
+   "fonts": {
+    "T1/lmr/m/n/10": {
+     "at_sp": null,
+     "tfm": "ec-lmr10"
+    }
+   },
+   "id": "kern-negthinspace",
+   "input": "a\\negthinspace b",
+   "kind": "kern",
+   "linewidth_sp": 22609920,
+   "size": "10pt",
+   "text_font": {
+    "at_sp": null,
+    "tfm": "ec-lmr10"
+   },
+   "textwidth_sp": 22609920,
+   "variant": "t1-lm"
+  },
+  {
+   "box": {
+    "children": [
+     {
+      "code": 97,
+      "font_id": "T1/lmr/m/n/10",
+      "kind": "char"
+     },
+     {
+      "accent": false,
+      "explicit": true,
+      "kind": "kern",
+      "width_sp": -145620
+     },
+     {
+      "code": 98,
+      "font_id": "T1/lmr/m/n/10",
+      "kind": "char"
+     }
+    ],
+    "depth_sp": 0,
+    "glue_set": false,
+    "height_sp": 451461,
+    "kind": "hbox",
+    "shift_sp": 0,
+    "width_sp": 546145
+   },
+   "command": "negmedspace",
+   "errors": [],
+   "fonts": {
+    "T1/lmr/m/n/10": {
+     "at_sp": null,
+     "tfm": "ec-lmr10"
+    }
+   },
+   "id": "kern-negmedspace",
+   "input": "a\\negmedspace b",
+   "kind": "kern",
+   "linewidth_sp": 22609920,
+   "size": "10pt",
+   "text_font": {
+    "at_sp": null,
+    "tfm": "ec-lmr10"
+   },
+   "textwidth_sp": 22609920,
+   "variant": "t1-lm"
+  },
+  {
+   "box": {
+    "children": [
+     {
+      "code": 97,
+      "font_id": "T1/lmr/m/n/10",
+      "kind": "char"
+     },
+     {
+      "accent": false,
+      "explicit": true,
+      "kind": "kern",
+      "width_sp": -181990
+     },
+     {
+      "code": 98,
+      "font_id": "T1/lmr/m/n/10",
+      "kind": "char"
+     }
+    ],
+    "depth_sp": 0,
+    "glue_set": false,
+    "height_sp": 451461,
+    "kind": "hbox",
+    "shift_sp": 0,
+    "width_sp": 509775
+   },
+   "command": "negthickspace",
+   "errors": [],
+   "fonts": {
+    "T1/lmr/m/n/10": {
+     "at_sp": null,
+     "tfm": "ec-lmr10"
+    }
+   },
+   "id": "kern-negthickspace",
+   "input": "a\\negthickspace b",
+   "kind": "kern",
+   "linewidth_sp": 22609920,
+   "size": "10pt",
+   "text_font": {
+    "at_sp": null,
+    "tfm": "ec-lmr10"
+   },
+   "textwidth_sp": 22609920,
+   "variant": "t1-lm"
+  },
+  {
+   "box": {
+    "children": [
+     {
+      "code": 97,
+      "font_id": "T1/lmr/m/n/10.95",
+      "kind": "char"
+     },
+     {
+      "accent": false,
+      "explicit": true,
+      "kind": "kern",
+      "width_sp": 358809
+     },
+     {
+      "code": 98,
+      "font_id": "T1/lmr/m/n/10.95",
+      "kind": "char"
+     }
+    ],
+    "depth_sp": 0,
+    "glue_set": false,
+    "height_sp": 494349,
+    "kind": "hbox",
+    "shift_sp": 0,
+    "width_sp": 1116290
+   },
+   "command": "enspace",
+   "errors": [],
+   "fonts": {
+    "T1/lmr/m/n/10.95": {
+     "at_sp": 717619,
+     "tfm": "ec-lmr10"
+    }
+   },
+   "id": "kern-enspace",
+   "input": "a\\enspace b",
+   "kind": "kern",
+   "linewidth_sp": 23592960,
+   "size": "11pt",
+   "text_font": {
+    "at_sp": 717619,
+    "tfm": "ec-lmr10"
+   },
+   "textwidth_sp": 23592960,
+   "variant": "t1-lm"
+  },
+  {
+   "box": {
+    "children": [
+     {
+      "code": 50,
+      "font_id": "OT1/cmr/m/n/10",
+      "kind": "char"
+     },
+     {
+      "code": 53,
+      "font_id": "OT1/cmr/m/n/10",
+      "kind": "char"
+     },
+     {
+      "accent": false,
+      "explicit": true,
+      "kind": "kern",
+      "width_sp": 109230
+     },
+     {
+      "code": 37,
+      "font_id": "OT1/cmr/m/n/10",
+      "kind": "char"
+     }
+    ],
+    "depth_sp": 36408,
+    "glue_set": false,
+    "height_sp": 491520,
+    "kind": "hbox",
+    "shift_sp": 0,
+    "width_sp": 1310727
+   },
+   "command": ",",
+   "errors": [],
+   "fonts": {
+    "OT1/cmr/m/n/10": {
+     "at_sp": null,
+     "tfm": "cmr10"
+    }
+   },
+   "id": "kern-thin-ot1",
+   "input": "25\\,\\%",
+   "kind": "kern",
+   "linewidth_sp": 22609920,
+   "size": "10pt",
+   "text_font": {
+    "at_sp": null,
+    "tfm": "cmr10"
+   },
+   "textwidth_sp": 22609920,
+   "variant": "ot1-cm"
+  },
+  {
+   "box": {
+    "children": [
+     {
+      "code": 97,
+      "font_id": "T1/lmr/m/n/10",
+      "kind": "char"
+     },
+     {
+      "kind": "glue",
+      "spec": "\\glue 10.0",
+      "width_sp": 655360
+     },
+     {
+      "code": 98,
+      "font_id": "T1/lmr/m/n/10",
+      "kind": "char"
+     }
+    ],
+    "depth_sp": 0,
+    "glue_set": false,
+    "height_sp": 451461,
+    "kind": "hbox",
+    "shift_sp": 0,
+    "width_sp": 1347125
+   },
+   "command": "quad",
+   "errors": [],
+   "fonts": {
+    "T1/lmr/m/n/10": {
+     "at_sp": null,
+     "tfm": "ec-lmr10"
+    }
+   },
+   "id": "glue-quad",
+   "input": "a\\quad b",
+   "kind": "glue",
+   "linewidth_sp": 22609920,
+   "size": "10pt",
+   "text_font": {
+    "at_sp": null,
+    "tfm": "ec-lmr10"
+   },
+   "textwidth_sp": 22609920,
+   "variant": "t1-lm"
+  },
+  {
+   "box": {
+    "children": [
+     {
+      "code": 97,
+      "font_id": "T1/lmr/m/n/10",
+      "kind": "char"
+     },
+     {
+      "kind": "glue",
+      "spec": "\\glue 20.0",
+      "width_sp": 1310720
+     },
+     {
+      "code": 98,
+      "font_id": "T1/lmr/m/n/10",
+      "kind": "char"
+     }
+    ],
+    "depth_sp": 0,
+    "glue_set": false,
+    "height_sp": 451461,
+    "kind": "hbox",
+    "shift_sp": 0,
+    "width_sp": 2002485
+   },
+   "command": "qquad",
+   "errors": [],
+   "fonts": {
+    "T1/lmr/m/n/10": {
+     "at_sp": null,
+     "tfm": "ec-lmr10"
+    }
+   },
+   "id": "glue-qquad",
+   "input": "a\\qquad b",
+   "kind": "glue",
+   "linewidth_sp": 22609920,
+   "size": "10pt",
+   "text_font": {
+    "at_sp": null,
+    "tfm": "ec-lmr10"
+   },
+   "textwidth_sp": 22609920,
+   "variant": "t1-lm"
+  },
+  {
+   "box": {
+    "children": [
+     {
+      "code": 97,
+      "font_id": "T1/lmr/m/n/10",
+      "kind": "char"
+     },
+     {
+      "kind": "glue",
+      "spec": "\\glue 5.0",
+      "width_sp": 327680
+     },
+     {
+      "code": 98,
+      "font_id": "T1/lmr/m/n/10",
+      "kind": "char"
+     }
+    ],
+    "depth_sp": 0,
+    "glue_set": false,
+    "height_sp": 451461,
+    "kind": "hbox",
+    "shift_sp": 0,
+    "width_sp": 1019445
+   },
+   "command": "enskip",
+   "errors": [],
+   "fonts": {
+    "T1/lmr/m/n/10": {
+     "at_sp": null,
+     "tfm": "ec-lmr10"
+    }
+   },
+   "id": "glue-enskip",
+   "input": "a\\enskip b",
+   "kind": "glue",
+   "linewidth_sp": 22609920,
+   "size": "10pt",
+   "text_font": {
+    "at_sp": null,
+    "tfm": "ec-lmr10"
+   },
+   "textwidth_sp": 22609920,
+   "variant": "t1-lm"
+  },
+  {
+   "box": {
+    "children": [
+     {
+      "code": 97,
+      "font_id": "T1/lmr/m/n/10",
+      "kind": "char"
+     },
+     {
+      "code": 46,
+      "font_id": "T1/lmr/m/n/10",
+      "kind": "char"
+     },
+     {
+      "kind": "glue",
+      "spec": "\\glue 3.33333 plus 1.66666 minus 1.11111",
+      "width_sp": 218453
+     },
+     {
+      "code": 98,
+      "font_id": "T1/lmr/m/n/10",
+      "kind": "char"
+     }
+    ],
+    "depth_sp": 0,
+    "glue_set": false,
+    "height_sp": 451461,
+    "kind": "hbox",
+    "shift_sp": 0,
+    "width_sp": 1092261
+   },
+   "command": " ",
+   "errors": [],
+   "fonts": {
+    "T1/lmr/m/n/10": {
+     "at_sp": null,
+     "tfm": "ec-lmr10"
+    }
+   },
+   "id": "glue-control-space",
+   "input": "a.\\ b",
+   "kind": "glue",
+   "linewidth_sp": 22609920,
+   "size": "10pt",
+   "text_font": {
+    "at_sp": null,
+    "tfm": "ec-lmr10"
+   },
+   "textwidth_sp": 22609920,
+   "variant": "t1-lm"
+  },
+  {
+   "box": {
+    "children": [
+     {
+      "code": 97,
+      "font_id": "T1/lmr/m/n/10",
+      "kind": "char"
+     },
+     {
+      "kind": "penalty",
+      "value": 10000
+     },
+     {
+      "kind": "glue",
+      "spec": "\\glue 3.33333 plus 1.66666 minus 1.11111",
+      "width_sp": 218453
+     },
+     {
+      "code": 98,
+      "font_id": "T1/lmr/m/n/10",
+      "kind": "char"
+     }
+    ],
+    "depth_sp": 0,
+    "glue_set": false,
+    "height_sp": 451461,
+    "kind": "hbox",
+    "shift_sp": 0,
+    "width_sp": 910218
+   },
+   "command": "~",
+   "errors": [],
+   "fonts": {
+    "T1/lmr/m/n/10": {
+     "at_sp": null,
+     "tfm": "ec-lmr10"
+    }
+   },
+   "id": "glue-tie",
+   "input": "a~b",
+   "kind": "glue",
+   "linewidth_sp": 22609920,
+   "size": "10pt",
+   "text_font": {
+    "at_sp": null,
+    "tfm": "ec-lmr10"
+   },
+   "textwidth_sp": 22609920,
+   "variant": "t1-lm"
+  },
+  {
+   "box": {
+    "children": [
+     {
+      "code": 197,
+      "font_id": "T1/lmr/m/n/10",
+      "kind": "char"
+     }
+    ],
+    "depth_sp": 0,
+    "glue_set": false,
+    "height_sp": 575406,
+    "kind": "hbox",
+    "shift_sp": 0,
+    "width_sp": 491520
+   },
+   "char_box": {
+    "children": [
+     {
+      "code": 197,
+      "font_id": "T1/lmr/m/n/10",
+      "kind": "char"
+     }
+    ],
+    "depth_sp": 0,
+    "glue_set": false,
+    "height_sp": 575406,
+    "kind": "hbox",
+    "shift_sp": 0,
+    "width_sp": 491520
+   },
+   "errors": [],
+   "fonts": {
+    "T1/lmr/m/n/10": {
+     "at_sp": null,
+     "tfm": "ec-lmr10"
+    }
+   },
+   "id": "sym-t1-lm-AA",
+   "input": "\\AA",
+   "kind": "symbol",
+   "linewidth_sp": 22609920,
+   "size": "10pt",
+   "symbol": {
+    "char_input": "Å",
+    "code_point": 197,
+    "command": "\\AA",
+    "name": "AA"
+   },
+   "text_font": {
+    "at_sp": null,
+    "tfm": "ec-lmr10"
+   },
+   "textwidth_sp": 22609920,
+   "variant": "t1-lm"
+  },
+  {
+   "box": {
+    "children": [
+     {
+      "code": 229,
+      "font_id": "T1/lmr/m/n/10",
+      "kind": "char"
+     }
+    ],
+    "depth_sp": 0,
+    "glue_set": false,
+    "height_sp": 451461,
+    "kind": "hbox",
+    "shift_sp": 0,
+    "width_sp": 327680
+   },
+   "char_box": {
+    "children": [
+     {
+      "code": 229,
+      "font_id": "T1/lmr/m/n/10",
+      "kind": "char"
+     }
+    ],
+    "depth_sp": 0,
+    "glue_set": false,
+    "height_sp": 451461,
+    "kind": "hbox",
+    "shift_sp": 0,
+    "width_sp": 327680
+   },
+   "errors": [],
+   "fonts": {
+    "T1/lmr/m/n/10": {
+     "at_sp": null,
+     "tfm": "ec-lmr10"
+    }
+   },
+   "id": "sym-t1-lm-aa",
+   "input": "\\aa",
+   "kind": "symbol",
+   "linewidth_sp": 22609920,
+   "size": "10pt",
+   "symbol": {
+    "char_input": "å",
+    "code_point": 229,
+    "command": "\\aa",
+    "name": "aa"
+   },
+   "text_font": {
+    "at_sp": null,
+    "tfm": "ec-lmr10"
+   },
+   "textwidth_sp": 22609920,
+   "variant": "t1-lm"
+  },
+  {
+   "box": {
+    "children": [
+     {
+      "code": 198,
+      "font_id": "T1/lmr/m/n/10",
+      "kind": "char"
+     }
+    ],
+    "depth_sp": 0,
+    "glue_set": false,
+    "height_sp": 451461,
+    "kind": "hbox",
+    "shift_sp": 0,
+    "width_sp": 591658
+   },
+   "char_box": {
+    "children": [
+     {
+      "code": 198,
+      "font_id": "T1/lmr/m/n/10",
+      "kind": "char"
+     }
+    ],
+    "depth_sp": 0,
+    "glue_set": false,
+    "height_sp": 451461,
+    "kind": "hbox",
+    "shift_sp": 0,
+    "width_sp": 591658
+   },
+   "errors": [],
+   "fonts": {
+    "T1/lmr/m/n/10": {
+     "at_sp": null,
+     "tfm": "ec-lmr10"
+    }
+   },
+   "id": "sym-t1-lm-AE",
+   "input": "\\AE",
+   "kind": "symbol",
+   "linewidth_sp": 22609920,
+   "size": "10pt",
+   "symbol": {
+    "char_input": "Æ",
+    "code_point": 198,
+    "command": "\\AE",
+    "name": "AE"
+   },
+   "text_font": {
+    "at_sp": null,
+    "tfm": "ec-lmr10"
+   },
+   "textwidth_sp": 22609920,
+   "variant": "t1-lm"
+  },
+  {
+   "box": {
+    "children": [
+     {
+      "code": 230,
+      "font_id": "T1/lmr/m/n/10",
+      "kind": "char"
+     }
+    ],
+    "depth_sp": 0,
+    "glue_set": false,
+    "height_sp": 282165,
+    "kind": "hbox",
+    "shift_sp": 0,
+    "width_sp": 473301
+   },
+   "char_box": {
+    "children": [
+     {
+      "code": 230,
+      "font_id": "T1/lmr/m/n/10",
+      "kind": "char"
+     }
+    ],
+    "depth_sp": 0,
+    "glue_set": false,
+    "height_sp": 282165,
+    "kind": "hbox",
+    "shift_sp": 0,
+    "width_sp": 473301
+   },
+   "errors": [],
+   "fonts": {
+    "T1/lmr/m/n/10": {
+     "at_sp": null,
+     "tfm": "ec-lmr10"
+    }
+   },
+   "id": "sym-t1-lm-ae",
+   "input": "\\ae",
+   "kind": "symbol",
+   "linewidth_sp": 22609920,
+   "size": "10pt",
+   "symbol": {
+    "char_input": "æ",
+    "code_point": 230,
+    "command": "\\ae",
+    "name": "ae"
+   },
+   "text_font": {
+    "at_sp": null,
+    "tfm": "ec-lmr10"
+   },
+   "textwidth_sp": 22609920,
+   "variant": "t1-lm"
+  },
+  {
+   "box": {
+    "children": [
+     {
+      "code": 215,
+      "font_id": "T1/lmr/m/n/10",
+      "kind": "char"
+     }
+    ],
+    "depth_sp": 0,
+    "glue_set": false,
+    "height_sp": 451461,
+    "kind": "hbox",
+    "shift_sp": 0,
+    "width_sp": 664470
+   },
+   "char_box": {
+    "children": [
+     {
+      "code": 215,
+      "font_id": "T1/lmr/m/n/10",
+      "kind": "char"
+     }
+    ],
+    "depth_sp": 0,
+    "glue_set": false,
+    "height_sp": 451461,
+    "kind": "hbox",
+    "shift_sp": 0,
+    "width_sp": 664470
+   },
+   "errors": [],
+   "fonts": {
+    "T1/lmr/m/n/10": {
+     "at_sp": null,
+     "tfm": "ec-lmr10"
+    }
+   },
+   "id": "sym-t1-lm-OE",
+   "input": "\\OE",
+   "kind": "symbol",
+   "linewidth_sp": 22609920,
+   "size": "10pt",
+   "symbol": {
+    "char_input": "Œ",
+    "code_point": 338,
+    "command": "\\OE",
+    "name": "OE"
+   },
+   "text_font": {
+    "at_sp": null,
+    "tfm": "ec-lmr10"
+   },
+   "textwidth_sp": 22609920,
+   "variant": "t1-lm"
+  },
+  {
+   "box": {
+    "children": [
+     {
+      "code": 247,
+      "font_id": "T1/lmr/m/n/10",
+      "kind": "char"
+     }
+    ],
+    "depth_sp": 0,
+    "glue_set": false,
+    "height_sp": 282165,
+    "kind": "hbox",
+    "shift_sp": 0,
+    "width_sp": 509738
+   },
+   "char_box": {
+    "children": [
+     {
+      "code": 247,
+      "font_id": "T1/lmr/m/n/10",
+      "kind": "char"
+     }
+    ],
+    "depth_sp": 0,
+    "glue_set": false,
+    "height_sp": 282165,
+    "kind": "hbox",
+    "shift_sp": 0,
+    "width_sp": 509738
+   },
+   "errors": [],
+   "fonts": {
+    "T1/lmr/m/n/10": {
+     "at_sp": null,
+     "tfm": "ec-lmr10"
+    }
+   },
+   "id": "sym-t1-lm-oe",
+   "input": "\\oe",
+   "kind": "symbol",
+   "linewidth_sp": 22609920,
+   "size": "10pt",
+   "symbol": {
+    "char_input": "œ",
+    "code_point": 339,
+    "command": "\\oe",
+    "name": "oe"
+   },
+   "text_font": {
+    "at_sp": null,
+    "tfm": "ec-lmr10"
+   },
+   "textwidth_sp": 22609920,
+   "variant": "t1-lm"
+  },
+  {
+   "box": {
+    "children": [
+     {
+      "code": 216,
+      "font_id": "T1/lmr/m/n/10",
+      "kind": "char"
+     }
+    ],
+    "depth_sp": 36700,
+    "glue_set": false,
+    "height_sp": 491520,
+    "kind": "hbox",
+    "shift_sp": 0,
+    "width_sp": 509738
+   },
+   "char_box": {
+    "children": [
+     {
+      "code": 216,
+      "font_id": "T1/lmr/m/n/10",
+      "kind": "char"
+     }
+    ],
+    "depth_sp": 36700,
+    "glue_set": false,
+    "height_sp": 491520,
+    "kind": "hbox",
+    "shift_sp": 0,
+    "width_sp": 509738
+   },
+   "errors": [],
+   "fonts": {
+    "T1/lmr/m/n/10": {
+     "at_sp": null,
+     "tfm": "ec-lmr10"
+    }
+   },
+   "id": "sym-t1-lm-O",
+   "input": "\\O",
+   "kind": "symbol",
+   "linewidth_sp": 22609920,
+   "size": "10pt",
+   "symbol": {
+    "char_input": "Ø",
+    "code_point": 216,
+    "command": "\\O",
+    "name": "O"
+   },
+   "text_font": {
+    "at_sp": null,
+    "tfm": "ec-lmr10"
+   },
+   "textwidth_sp": 22609920,
+   "variant": "t1-lm"
+  },
+  {
+   "box": {
+    "children": [
+     {
+      "code": 248,
+      "font_id": "T1/lmr/m/n/10",
+      "kind": "char"
+     }
+    ],
+    "depth_sp": 66846,
+    "glue_set": false,
+    "height_sp": 351928,
+    "kind": "hbox",
+    "shift_sp": 0,
+    "width_sp": 327680
+   },
+   "char_box": {
+    "children": [
+     {
+      "code": 248,
+      "font_id": "T1/lmr/m/n/10",
+      "kind": "char"
+     }
+    ],
+    "depth_sp": 66846,
+    "glue_set": false,
+    "height_sp": 351928,
+    "kind": "hbox",
+    "shift_sp": 0,
+    "width_sp": 327680
+   },
+   "errors": [],
+   "fonts": {
+    "T1/lmr/m/n/10": {
+     "at_sp": null,
+     "tfm": "ec-lmr10"
+    }
+   },
+   "id": "sym-t1-lm-o",
+   "input": "\\o",
+   "kind": "symbol",
+   "linewidth_sp": 22609920,
+   "size": "10pt",
+   "symbol": {
+    "char_input": "ø",
+    "code_point": 248,
+    "command": "\\o",
+    "name": "o"
+   },
+   "text_font": {
+    "at_sp": null,
+    "tfm": "ec-lmr10"
+   },
+   "textwidth_sp": 22609920,
+   "variant": "t1-lm"
+  },
+  {
+   "box": {
+    "children": [
+     {
+      "code": 138,
+      "font_id": "T1/lmr/m/n/10",
+      "kind": "char"
+     }
+    ],
+    "depth_sp": 0,
+    "glue_set": false,
+    "height_sp": 451461,
+    "kind": "hbox",
+    "shift_sp": 0,
+    "width_sp": 409600
+   },
+   "char_box": {
+    "children": [
+     {
+      "code": 138,
+      "font_id": "T1/lmr/m/n/10",
+      "kind": "char"
+     }
+    ],
+    "depth_sp": 0,
+    "glue_set": false,
+    "height_sp": 451461,
+    "kind": "hbox",
+    "shift_sp": 0,
+    "width_sp": 409600
+   },
+   "errors": [],
+   "fonts": {
+    "T1/lmr/m/n/10": {
+     "at_sp": null,
+     "tfm": "ec-lmr10"
+    }
+   },
+   "id": "sym-t1-lm-L",
+   "input": "\\L",
+   "kind": "symbol",
+   "linewidth_sp": 22609920,
+   "size": "10pt",
+   "symbol": {
+    "char_input": "Ł",
+    "code_point": 321,
+    "command": "\\L",
+    "name": "L"
+   },
+   "text_font": {
+    "at_sp": null,
+    "tfm": "ec-lmr10"
+   },
+   "textwidth_sp": 22609920,
+   "variant": "t1-lm"
+  },
+  {
+   "box": {
+    "children": [
+     {
+      "code": 170,
+      "font_id": "T1/lmr/m/n/10",
+      "kind": "char"
+     }
+    ],
+    "depth_sp": 0,
+    "glue_set": false,
+    "height_sp": 451461,
+    "kind": "hbox",
+    "shift_sp": 0,
+    "width_sp": 220266
+   },
+   "char_box": {
+    "children": [
+     {
+      "code": 170,
+      "font_id": "T1/lmr/m/n/10",
+      "kind": "char"
+     }
+    ],
+    "depth_sp": 0,
+    "glue_set": false,
+    "height_sp": 451461,
+    "kind": "hbox",
+    "shift_sp": 0,
+    "width_sp": 220266
+   },
+   "errors": [],
+   "fonts": {
+    "T1/lmr/m/n/10": {
+     "at_sp": null,
+     "tfm": "ec-lmr10"
+    }
+   },
+   "id": "sym-t1-lm-l",
+   "input": "\\l",
+   "kind": "symbol",
+   "linewidth_sp": 22609920,
+   "size": "10pt",
+   "symbol": {
+    "char_input": "ł",
+    "code_point": 322,
+    "command": "\\l",
+    "name": "l"
+   },
+   "text_font": {
+    "at_sp": null,
+    "tfm": "ec-lmr10"
+   },
+   "textwidth_sp": 22609920,
+   "variant": "t1-lm"
+  },
+  {
+   "box": {
+    "children": [
+     {
+      "code": 255,
+      "font_id": "T1/lmr/m/n/10",
+      "kind": "char"
+     }
+    ],
+    "depth_sp": 0,
+    "glue_set": false,
+    "height_sp": 451461,
+    "kind": "hbox",
+    "shift_sp": 0,
+    "width_sp": 327680
+   },
+   "char_box": {
+    "children": [
+     {
+      "code": 255,
+      "font_id": "T1/lmr/m/n/10",
+      "kind": "char"
+     }
+    ],
+    "depth_sp": 0,
+    "glue_set": false,
+    "height_sp": 451461,
+    "kind": "hbox",
+    "shift_sp": 0,
+    "width_sp": 327680
+   },
+   "errors": [],
+   "fonts": {
+    "T1/lmr/m/n/10": {
+     "at_sp": null,
+     "tfm": "ec-lmr10"
+    }
+   },
+   "id": "sym-t1-lm-ss",
+   "input": "\\ss",
+   "kind": "symbol",
+   "linewidth_sp": 22609920,
+   "size": "10pt",
+   "symbol": {
+    "char_input": "ß",
+    "code_point": 223,
+    "command": "\\ss",
+    "name": "ss"
+   },
+   "text_font": {
+    "at_sp": null,
+    "tfm": "ec-lmr10"
+   },
+   "textwidth_sp": 22609920,
+   "variant": "t1-lm"
+  },
+  {
+   "box": {
+    "children": [
+     {
+      "code": 223,
+      "font_id": "T1/lmr/m/n/10",
+      "kind": "char"
+     }
+    ],
+    "depth_sp": 0,
+    "glue_set": false,
+    "height_sp": 451461,
+    "kind": "hbox",
+    "shift_sp": 0,
+    "width_sp": 728170
+   },
+   "char_box": {
+    "children": [
+     {
+      "code": 223,
+      "font_id": "T1/lmr/m/n/10",
+      "kind": "char"
+     }
+    ],
+    "depth_sp": 0,
+    "glue_set": false,
+    "height_sp": 451461,
+    "kind": "hbox",
+    "shift_sp": 0,
+    "width_sp": 728170
+   },
+   "errors": [],
+   "fonts": {
+    "T1/lmr/m/n/10": {
+     "at_sp": null,
+     "tfm": "ec-lmr10"
+    }
+   },
+   "id": "sym-t1-lm-SS",
+   "input": "\\SS",
+   "kind": "symbol",
+   "linewidth_sp": 22609920,
+   "size": "10pt",
+   "symbol": {
+    "char_input": "ẞ",
+    "code_point": 7838,
+    "command": "\\SS",
+    "name": "SS"
+   },
+   "text_font": {
+    "at_sp": null,
+    "tfm": "ec-lmr10"
+   },
+   "textwidth_sp": 22609920,
+   "variant": "t1-lm"
+  },
+  {
+   "box": {
+    "children": [
+     {
+      "code": 222,
+      "font_id": "T1/lmr/m/n/10",
+      "kind": "char"
+     }
+    ],
+    "depth_sp": 0,
+    "glue_set": false,
+    "height_sp": 451461,
+    "kind": "hbox",
+    "shift_sp": 0,
+    "width_sp": 409600
+   },
+   "char_box": {
+    "children": [
+     {
+      "code": 222,
+      "font_id": "T1/lmr/m/n/10",
+      "kind": "char"
+     }
+    ],
+    "depth_sp": 0,
+    "glue_set": false,
+    "height_sp": 451461,
+    "kind": "hbox",
+    "shift_sp": 0,
+    "width_sp": 409600
+   },
+   "errors": [],
+   "fonts": {
+    "T1/lmr/m/n/10": {
+     "at_sp": null,
+     "tfm": "ec-lmr10"
+    }
+   },
+   "id": "sym-t1-lm-TH",
+   "input": "\\TH",
+   "kind": "symbol",
+   "linewidth_sp": 22609920,
+   "size": "10pt",
+   "symbol": {
+    "char_input": "Þ",
+    "code_point": 222,
+    "command": "\\TH",
+    "name": "TH"
+   },
+   "text_font": {
+    "at_sp": null,
+    "tfm": "ec-lmr10"
+   },
+   "textwidth_sp": 22609920,
+   "variant": "t1-lm"
+  },
+  {
+   "box": {
+    "children": [
+     {
+      "code": 254,
+      "font_id": "T1/lmr/m/n/10",
+      "kind": "char"
+     }
+    ],
+    "depth_sp": 127430,
+    "glue_set": false,
+    "height_sp": 451461,
+    "kind": "hbox",
+    "shift_sp": 0,
+    "width_sp": 364085
+   },
+   "char_box": {
+    "children": [
+     {
+      "code": 254,
+      "font_id": "T1/lmr/m/n/10",
+      "kind": "char"
+     }
+    ],
+    "depth_sp": 127430,
+    "glue_set": false,
+    "height_sp": 451461,
+    "kind": "hbox",
+    "shift_sp": 0,
+    "width_sp": 364085
+   },
+   "errors": [],
+   "fonts": {
+    "T1/lmr/m/n/10": {
+     "at_sp": null,
+     "tfm": "ec-lmr10"
+    }
+   },
+   "id": "sym-t1-lm-th",
+   "input": "\\th",
+   "kind": "symbol",
+   "linewidth_sp": 22609920,
+   "size": "10pt",
+   "symbol": {
+    "char_input": "þ",
+    "code_point": 254,
+    "command": "\\th",
+    "name": "th"
+   },
+   "text_font": {
+    "at_sp": null,
+    "tfm": "ec-lmr10"
+   },
+   "textwidth_sp": 22609920,
+   "variant": "t1-lm"
+  },
+  {
+   "box": {
+    "children": [
+     {
+      "code": 208,
+      "font_id": "T1/lmr/m/n/10",
+      "kind": "char"
+     }
+    ],
+    "depth_sp": 0,
+    "glue_set": false,
+    "height_sp": 451461,
+    "kind": "hbox",
+    "shift_sp": 0,
+    "width_sp": 500630
+   },
+   "char_box": {
+    "children": [
+     {
+      "code": 208,
+      "font_id": "T1/lmr/m/n/10",
+      "kind": "char"
+     }
+    ],
+    "depth_sp": 0,
+    "glue_set": false,
+    "height_sp": 451461,
+    "kind": "hbox",
+    "shift_sp": 0,
+    "width_sp": 500630
+   },
+   "errors": [],
+   "fonts": {
+    "T1/lmr/m/n/10": {
+     "at_sp": null,
+     "tfm": "ec-lmr10"
+    }
+   },
+   "id": "sym-t1-lm-DH",
+   "input": "\\DH",
+   "kind": "symbol",
+   "linewidth_sp": 22609920,
+   "size": "10pt",
+   "symbol": {
+    "char_input": "Ð",
+    "code_point": 208,
+    "command": "\\DH",
+    "name": "DH"
+   },
+   "text_font": {
+    "at_sp": null,
+    "tfm": "ec-lmr10"
+   },
+   "textwidth_sp": 22609920,
+   "variant": "t1-lm"
+  },
+  {
+   "box": {
+    "children": [
+     {
+      "code": 240,
+      "font_id": "T1/lmr/m/n/10",
+      "kind": "char"
+     }
+    ],
+    "depth_sp": 0,
+    "glue_set": false,
+    "height_sp": 451461,
+    "kind": "hbox",
+    "shift_sp": 0,
+    "width_sp": 327680
+   },
+   "char_box": {
+    "children": [
+     {
+      "code": 240,
+      "font_id": "T1/lmr/m/n/10",
+      "kind": "char"
+     }
+    ],
+    "depth_sp": 0,
+    "glue_set": false,
+    "height_sp": 451461,
+    "kind": "hbox",
+    "shift_sp": 0,
+    "width_sp": 327680
+   },
+   "errors": [],
+   "fonts": {
+    "T1/lmr/m/n/10": {
+     "at_sp": null,
+     "tfm": "ec-lmr10"
+    }
+   },
+   "id": "sym-t1-lm-dh",
+   "input": "\\dh",
+   "kind": "symbol",
+   "linewidth_sp": 22609920,
+   "size": "10pt",
+   "symbol": {
+    "char_input": "ð",
+    "code_point": 240,
+    "command": "\\dh",
+    "name": "dh"
+   },
+   "text_font": {
+    "at_sp": null,
+    "tfm": "ec-lmr10"
+   },
+   "textwidth_sp": 22609920,
+   "variant": "t1-lm"
+  },
+  {
+   "box": {
+    "children": [
+     {
+      "code": 208,
+      "font_id": "T1/lmr/m/n/10",
+      "kind": "char"
+     }
+    ],
+    "depth_sp": 0,
+    "glue_set": false,
+    "height_sp": 451461,
+    "kind": "hbox",
+    "shift_sp": 0,
+    "width_sp": 500630
+   },
+   "char_box": {
+    "children": [
+     {
+      "code": 208,
+      "font_id": "T1/lmr/m/n/10",
+      "kind": "char"
+     }
+    ],
+    "depth_sp": 0,
+    "glue_set": false,
+    "height_sp": 451461,
+    "kind": "hbox",
+    "shift_sp": 0,
+    "width_sp": 500630
+   },
+   "errors": [],
+   "fonts": {
+    "T1/lmr/m/n/10": {
+     "at_sp": null,
+     "tfm": "ec-lmr10"
+    }
+   },
+   "id": "sym-t1-lm-DJ",
+   "input": "\\DJ",
+   "kind": "symbol",
+   "linewidth_sp": 22609920,
+   "size": "10pt",
+   "symbol": {
+    "char_input": "Đ",
+    "code_point": 272,
+    "command": "\\DJ",
+    "name": "DJ"
+   },
+   "text_font": {
+    "at_sp": null,
+    "tfm": "ec-lmr10"
+   },
+   "textwidth_sp": 22609920,
+   "variant": "t1-lm"
+  },
+  {
+   "box": {
+    "children": [
+     {
+      "code": 158,
+      "font_id": "T1/lmr/m/n/10",
+      "kind": "char"
+     }
+    ],
+    "depth_sp": 0,
+    "glue_set": false,
+    "height_sp": 451461,
+    "kind": "hbox",
+    "shift_sp": 0,
+    "width_sp": 364085
+   },
+   "char_box": {
+    "children": [
+     {
+      "code": 158,
+      "font_id": "T1/lmr/m/n/10",
+      "kind": "char"
+     }
+    ],
+    "depth_sp": 0,
+    "glue_set": false,
+    "height_sp": 451461,
+    "kind": "hbox",
+    "shift_sp": 0,
+    "width_sp": 364085
+   },
+   "errors": [],
+   "fonts": {
+    "T1/lmr/m/n/10": {
+     "at_sp": null,
+     "tfm": "ec-lmr10"
+    }
+   },
+   "id": "sym-t1-lm-dj",
+   "input": "\\dj",
+   "kind": "symbol",
+   "linewidth_sp": 22609920,
+   "size": "10pt",
+   "symbol": {
+    "char_input": "đ",
+    "code_point": 273,
+    "command": "\\dj",
+    "name": "dj"
+   },
+   "text_font": {
+    "at_sp": null,
+    "tfm": "ec-lmr10"
+   },
+   "textwidth_sp": 22609920,
+   "variant": "t1-lm"
+  },
+  {
+   "box": {
+    "children": [
+     {
+      "code": 141,
+      "font_id": "T1/lmr/m/n/10",
+      "kind": "char"
+     }
+    ],
+    "depth_sp": 0,
+    "glue_set": false,
+    "height_sp": 451461,
+    "kind": "hbox",
+    "shift_sp": 0,
+    "width_sp": 491520
+   },
+   "char_box": {
+    "children": [
+     {
+      "code": 141,
+      "font_id": "T1/lmr/m/n/10",
+      "kind": "char"
+     }
+    ],
+    "depth_sp": 0,
+    "glue_set": false,
+    "height_sp": 451461,
+    "kind": "hbox",
+    "shift_sp": 0,
+    "width_sp": 491520
+   },
+   "errors": [],
+   "fonts": {
+    "T1/lmr/m/n/10": {
+     "at_sp": null,
+     "tfm": "ec-lmr10"
+    }
+   },
+   "id": "sym-t1-lm-NG",
+   "input": "\\NG",
+   "kind": "symbol",
+   "linewidth_sp": 22609920,
+   "size": "10pt",
+   "symbol": {
+    "char_input": "Ŋ",
+    "code_point": 330,
+    "command": "\\NG",
+    "name": "NG"
+   },
+   "text_font": {
+    "at_sp": null,
+    "tfm": "ec-lmr10"
+   },
+   "textwidth_sp": 22609920,
+   "variant": "t1-lm"
+  },
+  {
+   "box": {
+    "children": [
+     {
+      "code": 173,
+      "font_id": "T1/lmr/m/n/10",
+      "kind": "char"
+     }
+    ],
+    "depth_sp": 127430,
+    "glue_set": false,
+    "height_sp": 282165,
+    "kind": "hbox",
+    "shift_sp": 0,
+    "width_sp": 331808
+   },
+   "char_box": {
+    "children": [
+     {
+      "code": 173,
+      "font_id": "T1/lmr/m/n/10",
+      "kind": "char"
+     }
+    ],
+    "depth_sp": 127430,
+    "glue_set": false,
+    "height_sp": 282165,
+    "kind": "hbox",
+    "shift_sp": 0,
+    "width_sp": 331808
+   },
+   "errors": [],
+   "fonts": {
+    "T1/lmr/m/n/10": {
+     "at_sp": null,
+     "tfm": "ec-lmr10"
+    }
+   },
+   "id": "sym-t1-lm-ng",
+   "input": "\\ng",
+   "kind": "symbol",
+   "linewidth_sp": 22609920,
+   "size": "10pt",
+   "symbol": {
+    "char_input": "ŋ",
+    "code_point": 331,
+    "command": "\\ng",
+    "name": "ng"
+   },
+   "text_font": {
+    "at_sp": null,
+    "tfm": "ec-lmr10"
+   },
+   "textwidth_sp": 22609920,
+   "variant": "t1-lm"
+  },
+  {
+   "box": {
+    "children": [
+     {
+      "code": 156,
+      "font_id": "T1/lmr/m/n/10",
+      "kind": "char"
+     }
+    ],
+    "depth_sp": 0,
+    "glue_set": false,
+    "height_sp": 451461,
+    "kind": "hbox",
+    "shift_sp": 0,
+    "width_sp": 549781
+   },
+   "char_box": {
+    "children": [
+     {
+      "code": 156,
+      "font_id": "T1/lmr/m/n/10",
+      "kind": "char"
+     }
+    ],
+    "depth_sp": 0,
+    "glue_set": false,
+    "height_sp": 451461,
+    "kind": "hbox",
+    "shift_sp": 0,
+    "width_sp": 549781
+   },
+   "errors": [],
+   "fonts": {
+    "T1/lmr/m/n/10": {
+     "at_sp": null,
+     "tfm": "ec-lmr10"
+    }
+   },
+   "id": "sym-t1-lm-IJ",
+   "input": "\\IJ",
+   "kind": "symbol",
+   "linewidth_sp": 22609920,
+   "size": "10pt",
+   "symbol": {
+    "char_input": "Ĳ",
+    "code_point": 306,
+    "command": "\\IJ",
+    "name": "IJ"
+   },
+   "text_font": {
+    "at_sp": null,
+    "tfm": "ec-lmr10"
+   },
+   "textwidth_sp": 22609920,
+   "variant": "t1-lm"
+  },
+  {
+   "box": {
+    "children": [
+     {
+      "code": 188,
+      "font_id": "T1/lmr/m/n/10",
+      "kind": "char"
+     }
+    ],
+    "depth_sp": 127430,
+    "glue_set": false,
+    "height_sp": 412696,
+    "kind": "hbox",
+    "shift_sp": 0,
+    "width_sp": 364085
+   },
+   "char_box": {
+    "children": [
+     {
+      "code": 188,
+      "font_id": "T1/lmr/m/n/10",
+      "kind": "char"
+     }
+    ],
+    "depth_sp": 127430,
+    "glue_set": false,
+    "height_sp": 412696,
+    "kind": "hbox",
+    "shift_sp": 0,
+    "width_sp": 364085
+   },
+   "errors": [],
+   "fonts": {
+    "T1/lmr/m/n/10": {
+     "at_sp": null,
+     "tfm": "ec-lmr10"
+    }
+   },
+   "id": "sym-t1-lm-ij",
+   "input": "\\ij",
+   "kind": "symbol",
+   "linewidth_sp": 22609920,
+   "size": "10pt",
+   "symbol": {
+    "char_input": "ĳ",
+    "code_point": 307,
+    "command": "\\ij",
+    "name": "ij"
+   },
+   "text_font": {
+    "at_sp": null,
+    "tfm": "ec-lmr10"
+   },
+   "textwidth_sp": 22609920,
+   "variant": "t1-lm"
+  },
+  {
+   "box": {
+    "children": [
+     {
+      "code": 25,
+      "font_id": "T1/lmr/m/n/10",
+      "kind": "char"
+     }
+    ],
+    "depth_sp": 0,
+    "glue_set": false,
+    "height_sp": 282165,
+    "kind": "hbox",
+    "shift_sp": 0,
+    "width_sp": 182043
+   },
+   "char_box": {
+    "children": [
+     {
+      "code": 25,
+      "font_id": "T1/lmr/m/n/10",
+      "kind": "char"
+     }
+    ],
+    "depth_sp": 0,
+    "glue_set": false,
+    "height_sp": 282165,
+    "kind": "hbox",
+    "shift_sp": 0,
+    "width_sp": 182043
+   },
+   "errors": [],
+   "fonts": {
+    "T1/lmr/m/n/10": {
+     "at_sp": null,
+     "tfm": "ec-lmr10"
+    }
+   },
+   "id": "sym-t1-lm-i",
+   "input": "\\i",
+   "kind": "symbol",
+   "linewidth_sp": 22609920,
+   "size": "10pt",
+   "symbol": {
+    "char_input": "ı",
+    "code_point": 305,
+    "command": "\\i",
+    "name": "i"
+   },
+   "text_font": {
+    "at_sp": null,
+    "tfm": "ec-lmr10"
+   },
+   "textwidth_sp": 22609920,
+   "variant": "t1-lm"
+  },
+  {
+   "box": {
+    "children": [
+     {
+      "code": 26,
+      "font_id": "T1/lmr/m/n/10",
+      "kind": "char"
+     }
+    ],
+    "depth_sp": 127430,
+    "glue_set": false,
+    "height_sp": 282165,
+    "kind": "hbox",
+    "shift_sp": 0,
+    "width_sp": 200245
+   },
+   "char_box": {
+    "children": [
+     {
+      "code": 26,
+      "font_id": "T1/lmr/m/n/10",
+      "kind": "char"
+     }
+    ],
+    "depth_sp": 127430,
+    "glue_set": false,
+    "height_sp": 282165,
+    "kind": "hbox",
+    "shift_sp": 0,
+    "width_sp": 200245
+   },
+   "errors": [],
+   "fonts": {
+    "T1/lmr/m/n/10": {
+     "at_sp": null,
+     "tfm": "ec-lmr10"
+    }
+   },
+   "id": "sym-t1-lm-j",
+   "input": "\\j",
+   "kind": "symbol",
+   "linewidth_sp": 22609920,
+   "size": "10pt",
+   "symbol": {
+    "char_input": "ȷ",
+    "code_point": 567,
+    "command": "\\j",
+    "name": "j"
+   },
+   "text_font": {
+    "at_sp": null,
+    "tfm": "ec-lmr10"
+   },
+   "textwidth_sp": 22609920,
+   "variant": "t1-lm"
+  },
+  {
+   "box": {
+    "children": [
+     {
+      "code": 159,
+      "font_id": "T1/lmr/m/n/10",
+      "kind": "char"
+     }
+    ],
+    "depth_sp": 127430,
+    "glue_set": false,
+    "height_sp": 451461,
+    "kind": "hbox",
+    "shift_sp": 0,
+    "width_sp": 317193
+   },
+   "char_box": {
+    "children": [
+     {
+      "code": 159,
+      "font_id": "T1/lmr/m/n/10",
+      "kind": "char"
+     }
+    ],
+    "depth_sp": 127430,
+    "glue_set": false,
+    "height_sp": 451461,
+    "kind": "hbox",
+    "shift_sp": 0,
+    "width_sp": 317193
+   },
+   "errors": [],
+   "fonts": {
+    "T1/lmr/m/n/10": {
+     "at_sp": null,
+     "tfm": "ec-lmr10"
+    }
+   },
+   "id": "sym-t1-lm-S",
+   "input": "\\S",
+   "kind": "symbol",
+   "linewidth_sp": 22609920,
+   "size": "10pt",
+   "symbol": {
+    "char_input": "§",
+    "code_point": 167,
+    "command": "\\textsection",
+    "name": "S"
+   },
+   "text_font": {
+    "at_sp": null,
+    "tfm": "ec-lmr10"
+   },
+   "textwidth_sp": 22609920,
+   "variant": "t1-lm"
+  },
+  {
+   "box": {
+    "children": [
+     {
+      "code": 182,
+      "font_id": "TS1/lmr/m/n/10",
+      "kind": "char"
+     }
+    ],
+    "depth_sp": 127430,
+    "glue_set": false,
+    "height_sp": 455115,
+    "kind": "hbox",
+    "shift_sp": 0,
+    "width_sp": 400490
+   },
+   "char_box": {
+    "children": [
+     {
+      "code": 182,
+      "font_id": "TS1/lmr/m/n/10",
+      "kind": "char"
+     }
+    ],
+    "depth_sp": 127430,
+    "glue_set": false,
+    "height_sp": 455115,
+    "kind": "hbox",
+    "shift_sp": 0,
+    "width_sp": 400490
+   },
+   "errors": [],
+   "fonts": {
+    "TS1/lmr/m/n/10": {
+     "at_sp": null,
+     "tfm": "ts1-lmr10"
+    }
+   },
+   "id": "sym-t1-lm-P",
+   "input": "\\P",
+   "kind": "symbol",
+   "linewidth_sp": 22609920,
+   "size": "10pt",
+   "symbol": {
+    "char_input": "¶",
+    "code_point": 182,
+    "command": "\\textparagraph",
+    "name": "P"
+   },
+   "text_font": {
+    "at_sp": null,
+    "tfm": "ec-lmr10"
+   },
+   "textwidth_sp": 22609920,
+   "variant": "t1-lm"
+  },
+  {
+   "box": {
+    "children": [
+     {
+      "code": 132,
+      "font_id": "TS1/lmr/m/n/10",
+      "kind": "char"
+     }
+    ],
+    "depth_sp": 127430,
+    "glue_set": false,
+    "height_sp": 455115,
+    "kind": "hbox",
+    "shift_sp": 0,
+    "width_sp": 291275
+   },
+   "char_box": {
+    "children": [
+     {
+      "code": 132,
+      "font_id": "TS1/lmr/m/n/10",
+      "kind": "char"
+     }
+    ],
+    "depth_sp": 127430,
+    "glue_set": false,
+    "height_sp": 455115,
+    "kind": "hbox",
+    "shift_sp": 0,
+    "width_sp": 291275
+   },
+   "errors": [],
+   "fonts": {
+    "TS1/lmr/m/n/10": {
+     "at_sp": null,
+     "tfm": "ts1-lmr10"
+    }
+   },
+   "id": "sym-t1-lm-dag",
+   "input": "\\dag",
+   "kind": "symbol",
+   "linewidth_sp": 22609920,
+   "size": "10pt",
+   "symbol": {
+    "char_input": "†",
+    "code_point": 8224,
+    "command": "\\textdagger",
+    "name": "dag"
+   },
+   "text_font": {
+    "at_sp": null,
+    "tfm": "ec-lmr10"
+   },
+   "textwidth_sp": 22609920,
+   "variant": "t1-lm"
+  },
+  {
+   "box": {
+    "children": [
+     {
+      "kind": "other",
+      "text": "\\TS1/lmr/m/n/10 "
+     }
+    ],
+    "depth_sp": 127430,
+    "glue_set": false,
+    "height_sp": 455115,
+    "kind": "hbox",
+    "shift_sp": 0,
+    "width_sp": 291275
+   },
+   "char_box": {
+    "children": [
+     {
+      "kind": "other",
+      "text": "\\TS1/lmr/m/n/10 "
+     }
+    ],
+    "depth_sp": 127430,
+    "glue_set": false,
+    "height_sp": 455115,
+    "kind": "hbox",
+    "shift_sp": 0,
+    "width_sp": 291275
+   },
+   "errors": [],
+   "fonts": {},
+   "id": "sym-t1-lm-ddag",
+   "input": "\\ddag",
+   "kind": "symbol",
+   "linewidth_sp": 22609920,
+   "size": "10pt",
+   "symbol": {
+    "char_input": "‡",
+    "code_point": 8225,
+    "command": "\\textdaggerdbl",
+    "name": "ddag"
+   },
+   "text_font": {
+    "at_sp": null,
+    "tfm": "ec-lmr10"
+   },
+   "textwidth_sp": 22609920,
+   "variant": "t1-lm"
+  },
+  {
+   "box": {
+    "children": [
+     {
+      "code": 169,
+      "font_id": "TS1/lmr/m/n/10",
+      "kind": "char"
+     }
+    ],
+    "depth_sp": 0,
+    "glue_set": false,
+    "height_sp": 455115,
+    "kind": "hbox",
+    "shift_sp": 0,
+    "width_sp": 447806
+   },
+   "char_box": {
+    "children": [
+     {
+      "code": 169,
+      "font_id": "TS1/lmr/m/n/10",
+      "kind": "char"
+     }
+    ],
+    "depth_sp": 0,
+    "glue_set": false,
+    "height_sp": 455115,
+    "kind": "hbox",
+    "shift_sp": 0,
+    "width_sp": 447806
+   },
+   "errors": [],
+   "fonts": {
+    "TS1/lmr/m/n/10": {
+     "at_sp": null,
+     "tfm": "ts1-lmr10"
+    }
+   },
+   "id": "sym-t1-lm-copyright",
+   "input": "\\copyright",
+   "kind": "symbol",
+   "linewidth_sp": 22609920,
+   "size": "10pt",
+   "symbol": {
+    "char_input": "©",
+    "code_point": 169,
+    "command": "\\textcopyright",
+    "name": "copyright"
+   },
+   "text_font": {
+    "at_sp": null,
+    "tfm": "ec-lmr10"
+   },
+   "textwidth_sp": 22609920,
+   "variant": "t1-lm"
+  },
+  {
+   "box": {
+    "children": [
+     {
+      "code": 191,
+      "font_id": "T1/lmr/m/n/10",
+      "kind": "char"
+     }
+    ],
+    "depth_sp": 22938,
+    "glue_set": false,
+    "height_sp": 451461,
+    "kind": "hbox",
+    "shift_sp": 0,
+    "width_sp": 491520
+   },
+   "char_box": {
+    "children": [
+     {
+      "code": 191,
+      "font_id": "T1/lmr/m/n/10",
+      "kind": "char"
+     }
+    ],
+    "depth_sp": 22938,
+    "glue_set": false,
+    "height_sp": 451461,
+    "kind": "hbox",
+    "shift_sp": 0,
+    "width_sp": 491520
+   },
+   "errors": [],
+   "fonts": {
+    "T1/lmr/m/n/10": {
+     "at_sp": null,
+     "tfm": "ec-lmr10"
+    }
+   },
+   "id": "sym-t1-lm-pounds",
+   "input": "\\pounds",
+   "kind": "symbol",
+   "linewidth_sp": 22609920,
+   "size": "10pt",
+   "symbol": {
+    "char_input": "£",
+    "code_point": 163,
+    "command": "\\textsterling",
+    "name": "pounds"
+   },
+   "text_font": {
+    "at_sp": null,
+    "tfm": "ec-lmr10"
+   },
+   "textwidth_sp": 22609920,
+   "variant": "t1-lm"
+  },
+  {
+   "box": {
+    "children": [
+     {
+      "code": 46,
+      "font_id": "T1/lmr/m/n/10",
+      "kind": "char"
+     },
+     {
+      "accent": false,
+      "explicit": true,
+      "kind": "kern",
+      "width_sp": 109226
+     },
+     {
+      "code": 46,
+      "font_id": "T1/lmr/m/n/10",
+      "kind": "char"
+     },
+     {
+      "accent": false,
+      "explicit": true,
+      "kind": "kern",
+      "width_sp": 109226
+     },
+     {
+      "code": 46,
+      "font_id": "T1/lmr/m/n/10",
+      "kind": "char"
+     },
+     {
+      "accent": false,
+      "explicit": true,
+      "kind": "kern",
+      "width_sp": 109226
+     }
+    ],
+    "depth_sp": 0,
+    "glue_set": false,
+    "height_sp": 69176,
+    "kind": "hbox",
+    "shift_sp": 0,
+    "width_sp": 873807
+   },
+   "char_box": {
+    "children": [
+     {
+      "code": 46,
+      "font_id": "T1/lmr/m/n/10",
+      "kind": "char"
+     },
+     {
+      "accent": false,
+      "explicit": true,
+      "kind": "kern",
+      "width_sp": 109226
+     },
+     {
+      "code": 46,
+      "font_id": "T1/lmr/m/n/10",
+      "kind": "char"
+     },
+     {
+      "accent": false,
+      "explicit": true,
+      "kind": "kern",
+      "width_sp": 109226
+     },
+     {
+      "code": 46,
+      "font_id": "T1/lmr/m/n/10",
+      "kind": "char"
+     },
+     {
+      "accent": false,
+      "explicit": true,
+      "kind": "kern",
+      "width_sp": 109226
+     }
+    ],
+    "depth_sp": 0,
+    "glue_set": false,
+    "height_sp": 69176,
+    "kind": "hbox",
+    "shift_sp": 0,
+    "width_sp": 873807
+   },
+   "errors": [],
+   "fonts": {
+    "T1/lmr/m/n/10": {
+     "at_sp": null,
+     "tfm": "ec-lmr10"
+    }
+   },
+   "id": "sym-t1-lm-dots",
+   "input": "\\dots",
+   "kind": "symbol",
+   "linewidth_sp": 22609920,
+   "size": "10pt",
+   "symbol": {
+    "char_input": "…",
+    "code_point": 8230,
+    "command": "\\textellipsis",
+    "name": "dots"
+   },
+   "text_font": {
+    "at_sp": null,
+    "tfm": "ec-lmr10"
+   },
+   "textwidth_sp": 22609920,
+   "variant": "t1-lm"
+  },
+  {
+   "box": {
+    "children": [
+     {
+      "code": 46,
+      "font_id": "T1/lmr/m/n/10",
+      "kind": "char"
+     },
+     {
+      "accent": false,
+      "explicit": true,
+      "kind": "kern",
+      "width_sp": 109226
+     },
+     {
+      "code": 46,
+      "font_id": "T1/lmr/m/n/10",
+      "kind": "char"
+     },
+     {
+      "accent": false,
+      "explicit": true,
+      "kind": "kern",
+      "width_sp": 109226
+     },
+     {
+      "code": 46,
+      "font_id": "T1/lmr/m/n/10",
+      "kind": "char"
+     },
+     {
+      "accent": false,
+      "explicit": true,
+      "kind": "kern",
+      "width_sp": 109226
+     }
+    ],
+    "depth_sp": 0,
+    "glue_set": false,
+    "height_sp": 69176,
+    "kind": "hbox",
+    "shift_sp": 0,
+    "width_sp": 873807
+   },
+   "char_box": {
+    "children": [
+     {
+      "code": 46,
+      "font_id": "T1/lmr/m/n/10",
+      "kind": "char"
+     },
+     {
+      "accent": false,
+      "explicit": true,
+      "kind": "kern",
+      "width_sp": 109226
+     },
+     {
+      "code": 46,
+      "font_id": "T1/lmr/m/n/10",
+      "kind": "char"
+     },
+     {
+      "accent": false,
+      "explicit": true,
+      "kind": "kern",
+      "width_sp": 109226
+     },
+     {
+      "code": 46,
+      "font_id": "T1/lmr/m/n/10",
+      "kind": "char"
+     },
+     {
+      "accent": false,
+      "explicit": true,
+      "kind": "kern",
+      "width_sp": 109226
+     }
+    ],
+    "depth_sp": 0,
+    "glue_set": false,
+    "height_sp": 69176,
+    "kind": "hbox",
+    "shift_sp": 0,
+    "width_sp": 873807
+   },
+   "errors": [],
+   "fonts": {
+    "T1/lmr/m/n/10": {
+     "at_sp": null,
+     "tfm": "ec-lmr10"
+    }
+   },
+   "id": "sym-t1-lm-ldots",
+   "input": "\\ldots",
+   "kind": "symbol",
+   "linewidth_sp": 22609920,
+   "size": "10pt",
+   "symbol": {
+    "char_input": "…",
+    "code_point": 8230,
+    "command": "\\textellipsis",
+    "name": "ldots"
+   },
+   "text_font": {
+    "at_sp": null,
+    "tfm": "ec-lmr10"
+   },
+   "textwidth_sp": 22609920,
+   "variant": "t1-lm"
+  },
+  {
+   "box": {
+    "children": [
+     {
+      "code": 159,
+      "font_id": "T1/lmr/m/n/10",
+      "kind": "char"
+     }
+    ],
+    "depth_sp": 127430,
+    "glue_set": false,
+    "height_sp": 451461,
+    "kind": "hbox",
+    "shift_sp": 0,
+    "width_sp": 317193
+   },
+   "char_box": {
+    "children": [
+     {
+      "code": 159,
+      "font_id": "T1/lmr/m/n/10",
+      "kind": "char"
+     }
+    ],
+    "depth_sp": 127430,
+    "glue_set": false,
+    "height_sp": 451461,
+    "kind": "hbox",
+    "shift_sp": 0,
+    "width_sp": 317193
+   },
+   "errors": [],
+   "fonts": {
+    "T1/lmr/m/n/10": {
+     "at_sp": null,
+     "tfm": "ec-lmr10"
+    }
+   },
+   "id": "sym-t1-lm-textsection",
+   "input": "\\textsection",
+   "kind": "symbol",
+   "linewidth_sp": 22609920,
+   "size": "10pt",
+   "symbol": {
+    "char_input": "§",
+    "code_point": 167,
+    "command": "\\textsection",
+    "name": "textsection"
+   },
+   "text_font": {
+    "at_sp": null,
+    "tfm": "ec-lmr10"
+   },
+   "textwidth_sp": 22609920,
+   "variant": "t1-lm"
+  },
+  {
+   "box": {
+    "children": [
+     {
+      "code": 182,
+      "font_id": "TS1/lmr/m/n/10",
+      "kind": "char"
+     }
+    ],
+    "depth_sp": 127430,
+    "glue_set": false,
+    "height_sp": 455115,
+    "kind": "hbox",
+    "shift_sp": 0,
+    "width_sp": 400490
+   },
+   "char_box": {
+    "children": [
+     {
+      "code": 182,
+      "font_id": "TS1/lmr/m/n/10",
+      "kind": "char"
+     }
+    ],
+    "depth_sp": 127430,
+    "glue_set": false,
+    "height_sp": 455115,
+    "kind": "hbox",
+    "shift_sp": 0,
+    "width_sp": 400490
+   },
+   "errors": [],
+   "fonts": {
+    "TS1/lmr/m/n/10": {
+     "at_sp": null,
+     "tfm": "ts1-lmr10"
+    }
+   },
+   "id": "sym-t1-lm-textparagraph",
+   "input": "\\textparagraph",
+   "kind": "symbol",
+   "linewidth_sp": 22609920,
+   "size": "10pt",
+   "symbol": {
+    "char_input": "¶",
+    "code_point": 182,
+    "command": "\\textparagraph",
+    "name": "textparagraph"
+   },
+   "text_font": {
+    "at_sp": null,
+    "tfm": "ec-lmr10"
+   },
+   "textwidth_sp": 22609920,
+   "variant": "t1-lm"
+  },
+  {
+   "box": {
+    "children": [
+     {
+      "code": 132,
+      "font_id": "TS1/lmr/m/n/10",
+      "kind": "char"
+     }
+    ],
+    "depth_sp": 127430,
+    "glue_set": false,
+    "height_sp": 455115,
+    "kind": "hbox",
+    "shift_sp": 0,
+    "width_sp": 291275
+   },
+   "char_box": {
+    "children": [
+     {
+      "code": 132,
+      "font_id": "TS1/lmr/m/n/10",
+      "kind": "char"
+     }
+    ],
+    "depth_sp": 127430,
+    "glue_set": false,
+    "height_sp": 455115,
+    "kind": "hbox",
+    "shift_sp": 0,
+    "width_sp": 291275
+   },
+   "errors": [],
+   "fonts": {
+    "TS1/lmr/m/n/10": {
+     "at_sp": null,
+     "tfm": "ts1-lmr10"
+    }
+   },
+   "id": "sym-t1-lm-textdagger",
+   "input": "\\textdagger",
+   "kind": "symbol",
+   "linewidth_sp": 22609920,
+   "size": "10pt",
+   "symbol": {
+    "char_input": "†",
+    "code_point": 8224,
+    "command": "\\textdagger",
+    "name": "textdagger"
+   },
+   "text_font": {
+    "at_sp": null,
+    "tfm": "ec-lmr10"
+   },
+   "textwidth_sp": 22609920,
+   "variant": "t1-lm"
+  },
+  {
+   "box": {
+    "children": [
+     {
+      "kind": "other",
+      "text": "\\TS1/lmr/m/n/10 "
+     }
+    ],
+    "depth_sp": 127430,
+    "glue_set": false,
+    "height_sp": 455115,
+    "kind": "hbox",
+    "shift_sp": 0,
+    "width_sp": 291275
+   },
+   "char_box": {
+    "children": [
+     {
+      "kind": "other",
+      "text": "\\TS1/lmr/m/n/10 "
+     }
+    ],
+    "depth_sp": 127430,
+    "glue_set": false,
+    "height_sp": 455115,
+    "kind": "hbox",
+    "shift_sp": 0,
+    "width_sp": 291275
+   },
+   "errors": [],
+   "fonts": {},
+   "id": "sym-t1-lm-textdaggerdbl",
+   "input": "\\textdaggerdbl",
+   "kind": "symbol",
+   "linewidth_sp": 22609920,
+   "size": "10pt",
+   "symbol": {
+    "char_input": "‡",
+    "code_point": 8225,
+    "command": "\\textdaggerdbl",
+    "name": "textdaggerdbl"
+   },
+   "text_font": {
+    "at_sp": null,
+    "tfm": "ec-lmr10"
+   },
+   "textwidth_sp": 22609920,
+   "variant": "t1-lm"
+  },
+  {
+   "box": {
+    "children": [
+     {
+      "code": 169,
+      "font_id": "TS1/lmr/m/n/10",
+      "kind": "char"
+     }
+    ],
+    "depth_sp": 0,
+    "glue_set": false,
+    "height_sp": 455115,
+    "kind": "hbox",
+    "shift_sp": 0,
+    "width_sp": 447806
+   },
+   "char_box": {
+    "children": [
+     {
+      "code": 169,
+      "font_id": "TS1/lmr/m/n/10",
+      "kind": "char"
+     }
+    ],
+    "depth_sp": 0,
+    "glue_set": false,
+    "height_sp": 455115,
+    "kind": "hbox",
+    "shift_sp": 0,
+    "width_sp": 447806
+   },
+   "errors": [],
+   "fonts": {
+    "TS1/lmr/m/n/10": {
+     "at_sp": null,
+     "tfm": "ts1-lmr10"
+    }
+   },
+   "id": "sym-t1-lm-textcopyright",
+   "input": "\\textcopyright",
+   "kind": "symbol",
+   "linewidth_sp": 22609920,
+   "size": "10pt",
+   "symbol": {
+    "char_input": "©",
+    "code_point": 169,
+    "command": "\\textcopyright",
+    "name": "textcopyright"
+   },
+   "text_font": {
+    "at_sp": null,
+    "tfm": "ec-lmr10"
+   },
+   "textwidth_sp": 22609920,
+   "variant": "t1-lm"
+  },
+  {
+   "box": {
+    "children": [
+     {
+      "code": 191,
+      "font_id": "T1/lmr/m/n/10",
+      "kind": "char"
+     }
+    ],
+    "depth_sp": 22938,
+    "glue_set": false,
+    "height_sp": 451461,
+    "kind": "hbox",
+    "shift_sp": 0,
+    "width_sp": 491520
+   },
+   "char_box": {
+    "children": [
+     {
+      "code": 191,
+      "font_id": "T1/lmr/m/n/10",
+      "kind": "char"
+     }
+    ],
+    "depth_sp": 22938,
+    "glue_set": false,
+    "height_sp": 451461,
+    "kind": "hbox",
+    "shift_sp": 0,
+    "width_sp": 491520
+   },
+   "errors": [],
+   "fonts": {
+    "T1/lmr/m/n/10": {
+     "at_sp": null,
+     "tfm": "ec-lmr10"
+    }
+   },
+   "id": "sym-t1-lm-textsterling",
+   "input": "\\textsterling",
+   "kind": "symbol",
+   "linewidth_sp": 22609920,
+   "size": "10pt",
+   "symbol": {
+    "char_input": "£",
+    "code_point": 163,
+    "command": "\\textsterling",
+    "name": "textsterling"
+   },
+   "text_font": {
+    "at_sp": null,
+    "tfm": "ec-lmr10"
+   },
+   "textwidth_sp": 22609920,
+   "variant": "t1-lm"
+  },
+  {
+   "box": {
+    "children": [
+     {
+      "code": 46,
+      "font_id": "T1/lmr/m/n/10",
+      "kind": "char"
+     },
+     {
+      "accent": false,
+      "explicit": true,
+      "kind": "kern",
+      "width_sp": 109226
+     },
+     {
+      "code": 46,
+      "font_id": "T1/lmr/m/n/10",
+      "kind": "char"
+     },
+     {
+      "accent": false,
+      "explicit": true,
+      "kind": "kern",
+      "width_sp": 109226
+     },
+     {
+      "code": 46,
+      "font_id": "T1/lmr/m/n/10",
+      "kind": "char"
+     },
+     {
+      "accent": false,
+      "explicit": true,
+      "kind": "kern",
+      "width_sp": 109226
+     }
+    ],
+    "depth_sp": 0,
+    "glue_set": false,
+    "height_sp": 69176,
+    "kind": "hbox",
+    "shift_sp": 0,
+    "width_sp": 873807
+   },
+   "char_box": {
+    "children": [
+     {
+      "code": 46,
+      "font_id": "T1/lmr/m/n/10",
+      "kind": "char"
+     },
+     {
+      "accent": false,
+      "explicit": true,
+      "kind": "kern",
+      "width_sp": 109226
+     },
+     {
+      "code": 46,
+      "font_id": "T1/lmr/m/n/10",
+      "kind": "char"
+     },
+     {
+      "accent": false,
+      "explicit": true,
+      "kind": "kern",
+      "width_sp": 109226
+     },
+     {
+      "code": 46,
+      "font_id": "T1/lmr/m/n/10",
+      "kind": "char"
+     },
+     {
+      "accent": false,
+      "explicit": true,
+      "kind": "kern",
+      "width_sp": 109226
+     }
+    ],
+    "depth_sp": 0,
+    "glue_set": false,
+    "height_sp": 69176,
+    "kind": "hbox",
+    "shift_sp": 0,
+    "width_sp": 873807
+   },
+   "errors": [],
+   "fonts": {
+    "T1/lmr/m/n/10": {
+     "at_sp": null,
+     "tfm": "ec-lmr10"
+    }
+   },
+   "id": "sym-t1-lm-textellipsis",
+   "input": "\\textellipsis",
+   "kind": "symbol",
+   "linewidth_sp": 22609920,
+   "size": "10pt",
+   "symbol": {
+    "char_input": "…",
+    "code_point": 8230,
+    "command": "\\textellipsis",
+    "name": "textellipsis"
+   },
+   "text_font": {
+    "at_sp": null,
+    "tfm": "ec-lmr10"
+   },
+   "textwidth_sp": 22609920,
+   "variant": "t1-lm"
+  },
+  {
+   "box": {
+    "children": [
+     {
+      "code": 92,
+      "font_id": "T1/lmr/m/n/10",
+      "kind": "char"
+     }
+    ],
+    "depth_sp": 163840,
+    "glue_set": false,
+    "height_sp": 491520,
+    "kind": "hbox",
+    "shift_sp": 0,
+    "width_sp": 327680
+   },
+   "char_box": {
+    "children": [
+     {
+      "code": 92,
+      "font_id": "T1/lmr/m/n/10",
+      "kind": "char"
+     }
+    ],
+    "depth_sp": 163840,
+    "glue_set": false,
+    "height_sp": 491520,
+    "kind": "hbox",
+    "shift_sp": 0,
+    "width_sp": 327680
+   },
+   "errors": [],
+   "fonts": {
+    "T1/lmr/m/n/10": {
+     "at_sp": null,
+     "tfm": "ec-lmr10"
+    }
+   },
+   "id": "sym-t1-lm-textbackslash",
+   "input": "\\textbackslash",
+   "kind": "symbol",
+   "linewidth_sp": 22609920,
+   "size": "10pt",
+   "symbol": {
+    "char_input": "\\symbol{92}",
+    "code_point": 92,
+    "command": "\\textbackslash",
+    "name": "textbackslash"
+   },
+   "text_font": {
+    "at_sp": null,
+    "tfm": "ec-lmr10"
+   },
+   "textwidth_sp": 22609920,
+   "variant": "t1-lm"
+  },
+  {
+   "box": {
+    "children": [
+     {
+      "code": 126,
+      "font_id": "T1/lmr/m/n/10",
+      "kind": "char"
+     }
+    ],
+    "depth_sp": 0,
+    "glue_set": false,
+    "height_sp": 201196,
+    "kind": "hbox",
+    "shift_sp": 0,
+    "width_sp": 364085
+   },
+   "char_box": {
+    "children": [
+     {
+      "code": 126,
+      "font_id": "T1/lmr/m/n/10",
+      "kind": "char"
+     }
+    ],
+    "depth_sp": 0,
+    "glue_set": false,
+    "height_sp": 201196,
+    "kind": "hbox",
+    "shift_sp": 0,
+    "width_sp": 364085
+   },
+   "errors": [],
+   "fonts": {
+    "T1/lmr/m/n/10": {
+     "at_sp": null,
+     "tfm": "ec-lmr10"
+    }
+   },
+   "id": "sym-t1-lm-textasciitilde",
+   "input": "\\textasciitilde",
+   "kind": "symbol",
+   "linewidth_sp": 22609920,
+   "size": "10pt",
+   "symbol": {
+    "char_input": "\\symbol{126}",
+    "code_point": 126,
+    "command": "\\textasciitilde",
+    "name": "textasciitilde"
+   },
+   "text_font": {
+    "at_sp": null,
+    "tfm": "ec-lmr10"
+   },
+   "textwidth_sp": 22609920,
+   "variant": "t1-lm"
+  },
+  {
+   "box": {
+    "children": [
+     {
+      "code": 94,
+      "font_id": "T1/lmr/m/n/10",
+      "kind": "char"
+     }
+    ],
+    "depth_sp": 0,
+    "glue_set": false,
+    "height_sp": 491520,
+    "kind": "hbox",
+    "shift_sp": 0,
+    "width_sp": 364085
+   },
+   "char_box": {
+    "children": [
+     {
+      "code": 94,
+      "font_id": "T1/lmr/m/n/10",
+      "kind": "char"
+     }
+    ],
+    "depth_sp": 0,
+    "glue_set": false,
+    "height_sp": 491520,
+    "kind": "hbox",
+    "shift_sp": 0,
+    "width_sp": 364085
+   },
+   "errors": [],
+   "fonts": {
+    "T1/lmr/m/n/10": {
+     "at_sp": null,
+     "tfm": "ec-lmr10"
+    }
+   },
+   "id": "sym-t1-lm-textasciicircum",
+   "input": "\\textasciicircum",
+   "kind": "symbol",
+   "linewidth_sp": 22609920,
+   "size": "10pt",
+   "symbol": {
+    "char_input": "\\symbol{94}",
+    "code_point": 94,
+    "command": "\\textasciicircum",
+    "name": "textasciicircum"
+   },
+   "text_font": {
+    "at_sp": null,
+    "tfm": "ec-lmr10"
+   },
+   "textwidth_sp": 22609920,
+   "variant": "t1-lm"
+  },
+  {
+   "box": {
+    "children": [
+     {
+      "code": 95,
+      "font_id": "T1/lmr/m/n/10",
+      "kind": "char"
+     }
+    ],
+    "depth_sp": 90440,
+    "glue_set": false,
+    "height_sp": 0,
+    "kind": "hbox",
+    "shift_sp": 0,
+    "width_sp": 491520
+   },
+   "char_box": {
+    "children": [
+     {
+      "code": 95,
+      "font_id": "T1/lmr/m/n/10",
+      "kind": "char"
+     }
+    ],
+    "depth_sp": 90440,
+    "glue_set": false,
+    "height_sp": 0,
+    "kind": "hbox",
+    "shift_sp": 0,
+    "width_sp": 491520
+   },
+   "errors": [],
+   "fonts": {
+    "T1/lmr/m/n/10": {
+     "at_sp": null,
+     "tfm": "ec-lmr10"
+    }
+   },
+   "id": "sym-t1-lm-textunderscore",
+   "input": "\\textunderscore",
+   "kind": "symbol",
+   "linewidth_sp": 22609920,
+   "size": "10pt",
+   "symbol": {
+    "char_input": "\\symbol{95}",
+    "code_point": 95,
+    "command": "\\textunderscore",
+    "name": "textunderscore"
+   },
+   "text_font": {
+    "at_sp": null,
+    "tfm": "ec-lmr10"
+   },
+   "textwidth_sp": 22609920,
+   "variant": "t1-lm"
+  },
+  {
+   "box": {
+    "children": [
+     {
+      "code": 124,
+      "font_id": "T1/lmr/m/n/10",
+      "kind": "char"
+     }
+    ],
+    "depth_sp": 163840,
+    "glue_set": false,
+    "height_sp": 491520,
+    "kind": "hbox",
+    "shift_sp": 0,
+    "width_sp": 182043
+   },
+   "char_box": {
+    "children": [
+     {
+      "code": 124,
+      "font_id": "T1/lmr/m/n/10",
+      "kind": "char"
+     }
+    ],
+    "depth_sp": 163840,
+    "glue_set": false,
+    "height_sp": 491520,
+    "kind": "hbox",
+    "shift_sp": 0,
+    "width_sp": 182043
+   },
+   "errors": [],
+   "fonts": {
+    "T1/lmr/m/n/10": {
+     "at_sp": null,
+     "tfm": "ec-lmr10"
+    }
+   },
+   "id": "sym-t1-lm-textbar",
+   "input": "\\textbar",
+   "kind": "symbol",
+   "linewidth_sp": 22609920,
+   "size": "10pt",
+   "symbol": {
+    "char_input": "\\symbol{124}",
+    "code_point": 124,
+    "command": "\\textbar",
+    "name": "textbar"
+   },
+   "text_font": {
+    "at_sp": null,
+    "tfm": "ec-lmr10"
+   },
+   "textwidth_sp": 22609920,
+   "variant": "t1-lm"
+  },
+  {
+   "box": {
+    "children": [
+     {
+      "code": 60,
+      "font_id": "T1/lmr/m/n/10",
+      "kind": "char"
+     }
+    ],
+    "depth_sp": 26213,
+    "glue_set": false,
+    "height_sp": 351928,
+    "kind": "hbox",
+    "shift_sp": 0,
+    "width_sp": 509738
+   },
+   "char_box": {
+    "children": [
+     {
+      "code": 60,
+      "font_id": "T1/lmr/m/n/10",
+      "kind": "char"
+     }
+    ],
+    "depth_sp": 26213,
+    "glue_set": false,
+    "height_sp": 351928,
+    "kind": "hbox",
+    "shift_sp": 0,
+    "width_sp": 509738
+   },
+   "errors": [],
+   "fonts": {
+    "T1/lmr/m/n/10": {
+     "at_sp": null,
+     "tfm": "ec-lmr10"
+    }
+   },
+   "id": "sym-t1-lm-textless",
+   "input": "\\textless",
+   "kind": "symbol",
+   "linewidth_sp": 22609920,
+   "size": "10pt",
+   "symbol": {
+    "char_input": "\\symbol{60}",
+    "code_point": 60,
+    "command": "\\textless",
+    "name": "textless"
+   },
+   "text_font": {
+    "at_sp": null,
+    "tfm": "ec-lmr10"
+   },
+   "textwidth_sp": 22609920,
+   "variant": "t1-lm"
+  },
+  {
+   "box": {
+    "children": [
+     {
+      "code": 62,
+      "font_id": "T1/lmr/m/n/10",
+      "kind": "char"
+     }
+    ],
+    "depth_sp": 26213,
+    "glue_set": false,
+    "height_sp": 351928,
+    "kind": "hbox",
+    "shift_sp": 0,
+    "width_sp": 509738
+   },
+   "char_box": {
+    "children": [
+     {
+      "code": 62,
+      "font_id": "T1/lmr/m/n/10",
+      "kind": "char"
+     }
+    ],
+    "depth_sp": 26213,
+    "glue_set": false,
+    "height_sp": 351928,
+    "kind": "hbox",
+    "shift_sp": 0,
+    "width_sp": 509738
+   },
+   "errors": [],
+   "fonts": {
+    "T1/lmr/m/n/10": {
+     "at_sp": null,
+     "tfm": "ec-lmr10"
+    }
+   },
+   "id": "sym-t1-lm-textgreater",
+   "input": "\\textgreater",
+   "kind": "symbol",
+   "linewidth_sp": 22609920,
+   "size": "10pt",
+   "symbol": {
+    "char_input": "\\symbol{62}",
+    "code_point": 62,
+    "command": "\\textgreater",
+    "name": "textgreater"
+   },
+   "text_font": {
+    "at_sp": null,
+    "tfm": "ec-lmr10"
+   },
+   "textwidth_sp": 22609920,
+   "variant": "t1-lm"
+  },
+  {
+   "box": {
+    "children": [
+     {
+      "code": 123,
+      "font_id": "T1/lmr/m/n/10",
+      "kind": "char"
+     }
+    ],
+    "depth_sp": 163840,
+    "glue_set": false,
+    "height_sp": 491520,
+    "kind": "hbox",
+    "shift_sp": 0,
+    "width_sp": 327680
+   },
+   "char_box": {
+    "children": [
+     {
+      "code": 123,
+      "font_id": "T1/lmr/m/n/10",
+      "kind": "char"
+     }
+    ],
+    "depth_sp": 163840,
+    "glue_set": false,
+    "height_sp": 491520,
+    "kind": "hbox",
+    "shift_sp": 0,
+    "width_sp": 327680
+   },
+   "errors": [],
+   "fonts": {
+    "T1/lmr/m/n/10": {
+     "at_sp": null,
+     "tfm": "ec-lmr10"
+    }
+   },
+   "id": "sym-t1-lm-textbraceleft",
+   "input": "\\textbraceleft",
+   "kind": "symbol",
+   "linewidth_sp": 22609920,
+   "size": "10pt",
+   "symbol": {
+    "char_input": "\\symbol{123}",
+    "code_point": 123,
+    "command": "\\textbraceleft",
+    "name": "textbraceleft"
+   },
+   "text_font": {
+    "at_sp": null,
+    "tfm": "ec-lmr10"
+   },
+   "textwidth_sp": 22609920,
+   "variant": "t1-lm"
+  },
+  {
+   "box": {
+    "children": [
+     {
+      "code": 125,
+      "font_id": "T1/lmr/m/n/10",
+      "kind": "char"
+     }
+    ],
+    "depth_sp": 163840,
+    "glue_set": false,
+    "height_sp": 491520,
+    "kind": "hbox",
+    "shift_sp": 0,
+    "width_sp": 327680
+   },
+   "char_box": {
+    "children": [
+     {
+      "code": 125,
+      "font_id": "T1/lmr/m/n/10",
+      "kind": "char"
+     }
+    ],
+    "depth_sp": 163840,
+    "glue_set": false,
+    "height_sp": 491520,
+    "kind": "hbox",
+    "shift_sp": 0,
+    "width_sp": 327680
+   },
+   "errors": [],
+   "fonts": {
+    "T1/lmr/m/n/10": {
+     "at_sp": null,
+     "tfm": "ec-lmr10"
+    }
+   },
+   "id": "sym-t1-lm-textbraceright",
+   "input": "\\textbraceright",
+   "kind": "symbol",
+   "linewidth_sp": 22609920,
+   "size": "10pt",
+   "symbol": {
+    "char_input": "\\symbol{125}",
+    "code_point": 125,
+    "command": "\\textbraceright",
+    "name": "textbraceright"
+   },
+   "text_font": {
+    "at_sp": null,
+    "tfm": "ec-lmr10"
+   },
+   "textwidth_sp": 22609920,
+   "variant": "t1-lm"
+  },
+  {
+   "box": {
+    "children": [
+     {
+      "children": [
+       {
+        "children": [
+         {
+          "code": 23,
+          "font_id": "OT1/cmr/m/n/10",
+          "kind": "char"
+         }
+        ],
+        "depth_sp": 0,
+        "glue_set": false,
+        "height_sp": 455111,
+        "kind": "hbox",
+        "shift_sp": -115871,
+        "width_sp": 491521
+       },
+       {
+        "kind": "glue",
+        "spec": "\\glue 0.0 plus 1.0fil minus 1.0fil",
+        "width_sp": 0
+       }
+      ],
+      "depth_sp": 0,
+      "glue_set": true,
+      "height_sp": 570982,
+      "kind": "hbox",
+      "shift_sp": 0,
+      "width_sp": 0
+     },
+     {
+      "code": 65,
+      "font_id": "OT1/cmr/m/n/10",
+      "kind": "char"
+     }
+    ],
+    "depth_sp": 0,
+    "glue_set": false,
+    "height_sp": 570982,
+    "kind": "hbox",
+    "shift_sp": 0,
+    "width_sp": 491521
+   },
+   "char_box": {
+    "children": [
+     {
+      "children": [
+       {
+        "children": [
+         {
+          "code": 23,
+          "font_id": "OT1/cmr/m/n/10",
+          "kind": "char"
+         }
+        ],
+        "depth_sp": 0,
+        "glue_set": false,
+        "height_sp": 455111,
+        "kind": "hbox",
+        "shift_sp": -115871,
+        "width_sp": 491521
+       },
+       {
+        "kind": "glue",
+        "spec": "\\glue 0.0 plus 1.0fil minus 1.0fil",
+        "width_sp": 0
+       }
+      ],
+      "depth_sp": 0,
+      "glue_set": true,
+      "height_sp": 570982,
+      "kind": "hbox",
+      "shift_sp": 0,
+      "width_sp": 0
+     },
+     {
+      "code": 65,
+      "font_id": "OT1/cmr/m/n/10",
+      "kind": "char"
+     }
+    ],
+    "depth_sp": 0,
+    "glue_set": false,
+    "height_sp": 570982,
+    "kind": "hbox",
+    "shift_sp": 0,
+    "width_sp": 491521
+   },
+   "errors": [],
+   "fonts": {
+    "OT1/cmr/m/n/10": {
+     "at_sp": null,
+     "tfm": "cmr10"
+    }
+   },
+   "id": "sym-ot1-cm-AA",
+   "input": "\\AA",
+   "kind": "symbol",
+   "linewidth_sp": 22609920,
+   "size": "10pt",
+   "symbol": {
+    "char_input": "Å",
+    "code_point": 197,
+    "command": "\\AA",
+    "name": "AA"
+   },
+   "text_font": {
+    "at_sp": null,
+    "tfm": "cmr10"
+   },
+   "textwidth_sp": 22609920,
+   "variant": "ot1-cm"
+  },
+  {
+   "box": {
+    "children": [
+     {
+      "accent": true,
+      "explicit": false,
+      "kind": "kern",
+      "width_sp": -81920
+     },
+     {
+      "code": 23,
+      "font_id": "OT1/cmr/m/n/10",
+      "kind": "char"
+     },
+     {
+      "accent": true,
+      "explicit": false,
+      "kind": "kern",
+      "width_sp": -409601
+     },
+     {
+      "code": 97,
+      "font_id": "OT1/cmr/m/n/10",
+      "kind": "char"
+     }
+    ],
+    "depth_sp": 0,
+    "glue_set": false,
+    "height_sp": 455111,
+    "kind": "hbox",
+    "shift_sp": 0,
+    "width_sp": 327681
+   },
+   "char_box": {
+    "children": [
+     {
+      "accent": true,
+      "explicit": false,
+      "kind": "kern",
+      "width_sp": -81920
+     },
+     {
+      "code": 23,
+      "font_id": "OT1/cmr/m/n/10",
+      "kind": "char"
+     },
+     {
+      "accent": true,
+      "explicit": false,
+      "kind": "kern",
+      "width_sp": -409601
+     },
+     {
+      "code": 97,
+      "font_id": "OT1/cmr/m/n/10",
+      "kind": "char"
+     }
+    ],
+    "depth_sp": 0,
+    "glue_set": false,
+    "height_sp": 455111,
+    "kind": "hbox",
+    "shift_sp": 0,
+    "width_sp": 327681
+   },
+   "errors": [],
+   "fonts": {
+    "OT1/cmr/m/n/10": {
+     "at_sp": null,
+     "tfm": "cmr10"
+    }
+   },
+   "id": "sym-ot1-cm-aa",
+   "input": "\\aa",
+   "kind": "symbol",
+   "linewidth_sp": 22609920,
+   "size": "10pt",
+   "symbol": {
+    "char_input": "å",
+    "code_point": 229,
+    "command": "\\aa",
+    "name": "aa"
+   },
+   "text_font": {
+    "at_sp": null,
+    "tfm": "cmr10"
+   },
+   "textwidth_sp": 22609920,
+   "variant": "ot1-cm"
+  },
+  {
+   "box": {
+    "children": [
+     {
+      "code": 29,
+      "font_id": "OT1/cmr/m/n/10",
+      "kind": "char"
+     }
+    ],
+    "depth_sp": 0,
+    "glue_set": false,
+    "height_sp": 447828,
+    "kind": "hbox",
+    "shift_sp": 0,
+    "width_sp": 591646
+   },
+   "char_box": {
+    "children": [
+     {
+      "code": 29,
+      "font_id": "OT1/cmr/m/n/10",
+      "kind": "char"
+     }
+    ],
+    "depth_sp": 0,
+    "glue_set": false,
+    "height_sp": 447828,
+    "kind": "hbox",
+    "shift_sp": 0,
+    "width_sp": 591646
+   },
+   "errors": [],
+   "fonts": {
+    "OT1/cmr/m/n/10": {
+     "at_sp": null,
+     "tfm": "cmr10"
+    }
+   },
+   "id": "sym-ot1-cm-AE",
+   "input": "\\AE",
+   "kind": "symbol",
+   "linewidth_sp": 22609920,
+   "size": "10pt",
+   "symbol": {
+    "char_input": "Æ",
+    "code_point": 198,
+    "command": "\\AE",
+    "name": "AE"
+   },
+   "text_font": {
+    "at_sp": null,
+    "tfm": "cmr10"
+   },
+   "textwidth_sp": 22609920,
+   "variant": "ot1-cm"
+  },
+  {
+   "box": {
+    "children": [
+     {
+      "code": 26,
+      "font_id": "OT1/cmr/m/n/10",
+      "kind": "char"
+     }
+    ],
+    "depth_sp": 0,
+    "glue_set": false,
+    "height_sp": 282168,
+    "kind": "hbox",
+    "shift_sp": 0,
+    "width_sp": 473316
+   },
+   "char_box": {
+    "children": [
+     {
+      "code": 26,
+      "font_id": "OT1/cmr/m/n/10",
+      "kind": "char"
+     }
+    ],
+    "depth_sp": 0,
+    "glue_set": false,
+    "height_sp": 282168,
+    "kind": "hbox",
+    "shift_sp": 0,
+    "width_sp": 473316
+   },
+   "errors": [],
+   "fonts": {
+    "OT1/cmr/m/n/10": {
+     "at_sp": null,
+     "tfm": "cmr10"
+    }
+   },
+   "id": "sym-ot1-cm-ae",
+   "input": "\\ae",
+   "kind": "symbol",
+   "linewidth_sp": 22609920,
+   "size": "10pt",
+   "symbol": {
+    "char_input": "æ",
+    "code_point": 230,
+    "command": "\\ae",
+    "name": "ae"
+   },
+   "text_font": {
+    "at_sp": null,
+    "tfm": "cmr10"
+   },
+   "textwidth_sp": 22609920,
+   "variant": "ot1-cm"
+  },
+  {
+   "box": {
+    "children": [
+     {
+      "code": 30,
+      "font_id": "OT1/cmr/m/n/10",
+      "kind": "char"
+     }
+    ],
+    "depth_sp": 0,
+    "glue_set": false,
+    "height_sp": 447828,
+    "kind": "hbox",
+    "shift_sp": 0,
+    "width_sp": 664463
+   },
+   "char_box": {
+    "children": [
+     {
+      "code": 30,
+      "font_id": "OT1/cmr/m/n/10",
+      "kind": "char"
+     }
+    ],
+    "depth_sp": 0,
+    "glue_set": false,
+    "height_sp": 447828,
+    "kind": "hbox",
+    "shift_sp": 0,
+    "width_sp": 664463
+   },
+   "errors": [],
+   "fonts": {
+    "OT1/cmr/m/n/10": {
+     "at_sp": null,
+     "tfm": "cmr10"
+    }
+   },
+   "id": "sym-ot1-cm-OE",
+   "input": "\\OE",
+   "kind": "symbol",
+   "linewidth_sp": 22609920,
+   "size": "10pt",
+   "symbol": {
+    "char_input": "Œ",
+    "code_point": 338,
+    "command": "\\OE",
+    "name": "OE"
+   },
+   "text_font": {
+    "at_sp": null,
+    "tfm": "cmr10"
+   },
+   "textwidth_sp": 22609920,
+   "variant": "ot1-cm"
+  },
+  {
+   "box": {
+    "children": [
+     {
+      "code": 27,
+      "font_id": "OT1/cmr/m/n/10",
+      "kind": "char"
+     }
+    ],
+    "depth_sp": 0,
+    "glue_set": false,
+    "height_sp": 282168,
+    "kind": "hbox",
+    "shift_sp": 0,
+    "width_sp": 509726
+   },
+   "char_box": {
+    "children": [
+     {
+      "code": 27,
+      "font_id": "OT1/cmr/m/n/10",
+      "kind": "char"
+     }
+    ],
+    "depth_sp": 0,
+    "glue_set": false,
+    "height_sp": 282168,
+    "kind": "hbox",
+    "shift_sp": 0,
+    "width_sp": 509726
+   },
+   "errors": [],
+   "fonts": {
+    "OT1/cmr/m/n/10": {
+     "at_sp": null,
+     "tfm": "cmr10"
+    }
+   },
+   "id": "sym-ot1-cm-oe",
+   "input": "\\oe",
+   "kind": "symbol",
+   "linewidth_sp": 22609920,
+   "size": "10pt",
+   "symbol": {
+    "char_input": "œ",
+    "code_point": 339,
+    "command": "\\oe",
+    "name": "oe"
+   },
+   "text_font": {
+    "at_sp": null,
+    "tfm": "cmr10"
+   },
+   "textwidth_sp": 22609920,
+   "variant": "ot1-cm"
+  },
+  {
+   "box": {
+    "children": [
+     {
+      "code": 31,
+      "font_id": "OT1/cmr/m/n/10",
+      "kind": "char"
+     }
+    ],
+    "depth_sp": 31858,
+    "glue_set": false,
+    "height_sp": 479686,
+    "kind": "hbox",
+    "shift_sp": 0,
+    "width_sp": 509726
+   },
+   "char_box": {
+    "children": [
+     {
+      "code": 31,
+      "font_id": "OT1/cmr/m/n/10",
+      "kind": "char"
+     }
+    ],
+    "depth_sp": 31858,
+    "glue_set": false,
+    "height_sp": 479686,
+    "kind": "hbox",
+    "shift_sp": 0,
+    "width_sp": 509726
+   },
+   "errors": [],
+   "fonts": {
+    "OT1/cmr/m/n/10": {
+     "at_sp": null,
+     "tfm": "cmr10"
+    }
+   },
+   "id": "sym-ot1-cm-O",
+   "input": "\\O",
+   "kind": "symbol",
+   "linewidth_sp": 22609920,
+   "size": "10pt",
+   "symbol": {
+    "char_input": "Ø",
+    "code_point": 216,
+    "command": "\\O",
+    "name": "O"
+   },
+   "text_font": {
+    "at_sp": null,
+    "tfm": "cmr10"
+   },
+   "textwidth_sp": 22609920,
+   "variant": "ot1-cm"
+  },
+  {
+   "box": {
+    "children": [
+     {
+      "code": 28,
+      "font_id": "OT1/cmr/m/n/10",
+      "kind": "char"
+     }
+    ],
+    "depth_sp": 63716,
+    "glue_set": false,
+    "height_sp": 345885,
+    "kind": "hbox",
+    "shift_sp": 0,
+    "width_sp": 327681
+   },
+   "char_box": {
+    "children": [
+     {
+      "code": 28,
+      "font_id": "OT1/cmr/m/n/10",
+      "kind": "char"
+     }
+    ],
+    "depth_sp": 63716,
+    "glue_set": false,
+    "height_sp": 345885,
+    "kind": "hbox",
+    "shift_sp": 0,
+    "width_sp": 327681
+   },
+   "errors": [],
+   "fonts": {
+    "OT1/cmr/m/n/10": {
+     "at_sp": null,
+     "tfm": "cmr10"
+    }
+   },
+   "id": "sym-ot1-cm-o",
+   "input": "\\o",
+   "kind": "symbol",
+   "linewidth_sp": 22609920,
+   "size": "10pt",
+   "symbol": {
+    "char_input": "ø",
+    "code_point": 248,
+    "command": "\\o",
+    "name": "o"
+   },
+   "text_font": {
+    "at_sp": null,
+    "tfm": "cmr10"
+   },
+   "textwidth_sp": 22609920,
+   "variant": "ot1-cm"
+  },
+  {
+   "box": {
+    "children": [
+     {
+      "children": [
+       {
+        "kind": "glue",
+        "spec": "\\glue 0.0 plus 1.0fil minus 1.0fil",
+        "width_sp": 0
+       },
+       {
+        "code": 32,
+        "font_id": "OT1/cmr/m/n/10",
+        "kind": "char"
+       },
+       {
+        "accent": false,
+        "explicit": false,
+        "kind": "kern",
+        "width_sp": -209352
+       },
+       {
+        "code": 76,
+        "font_id": "OT1/cmr/m/n/10",
+        "kind": "char"
+       }
+      ],
+      "depth_sp": 0,
+      "glue_set": true,
+      "height_sp": 447828,
+      "kind": "hbox",
+      "shift_sp": 0,
+      "width_sp": 409601
+     }
+    ],
+    "depth_sp": 0,
+    "glue_set": false,
+    "height_sp": 447828,
+    "kind": "hbox",
+    "shift_sp": 0,
+    "width_sp": 409601
+   },
+   "char_box": {
+    "children": [
+     {
+      "children": [
+       {
+        "kind": "glue",
+        "spec": "\\glue 0.0 plus 1.0fil minus 1.0fil",
+        "width_sp": 0
+       },
+       {
+        "code": 32,
+        "font_id": "OT1/cmr/m/n/10",
+        "kind": "char"
+       },
+       {
+        "accent": false,
+        "explicit": false,
+        "kind": "kern",
+        "width_sp": -209352
+       },
+       {
+        "code": 76,
+        "font_id": "OT1/cmr/m/n/10",
+        "kind": "char"
+       }
+      ],
+      "depth_sp": 0,
+      "glue_set": true,
+      "height_sp": 447828,
+      "kind": "hbox",
+      "shift_sp": 0,
+      "width_sp": 409601
+     }
+    ],
+    "depth_sp": 0,
+    "glue_set": false,
+    "height_sp": 447828,
+    "kind": "hbox",
+    "shift_sp": 0,
+    "width_sp": 409601
+   },
+   "errors": [],
+   "fonts": {
+    "OT1/cmr/m/n/10": {
+     "at_sp": null,
+     "tfm": "cmr10"
+    }
+   },
+   "id": "sym-ot1-cm-L",
+   "input": "\\L",
+   "kind": "symbol",
+   "linewidth_sp": 22609920,
+   "size": "10pt",
+   "symbol": {
+    "char_input": "Ł",
+    "code_point": 321,
+    "command": "\\L",
+    "name": "L"
+   },
+   "text_font": {
+    "at_sp": null,
+    "tfm": "cmr10"
+   },
+   "textwidth_sp": 22609920,
+   "variant": "ot1-cm"
+  },
+  {
+   "box": {
+    "children": [
+     {
+      "code": 32,
+      "font_id": "OT1/cmr/m/n/10",
+      "kind": "char"
+     },
+     {
+      "accent": false,
+      "explicit": false,
+      "kind": "kern",
+      "width_sp": -182045
+     },
+     {
+      "code": 108,
+      "font_id": "OT1/cmr/m/n/10",
+      "kind": "char"
+     }
+    ],
+    "depth_sp": 0,
+    "glue_set": false,
+    "height_sp": 455111,
+    "kind": "hbox",
+    "shift_sp": 0,
+    "width_sp": 182045
+   },
+   "char_box": {
+    "children": [
+     {
+      "code": 32,
+      "font_id": "OT1/cmr/m/n/10",
+      "kind": "char"
+     },
+     {
+      "accent": false,
+      "explicit": false,
+      "kind": "kern",
+      "width_sp": -182045
+     },
+     {
+      "code": 108,
+      "font_id": "OT1/cmr/m/n/10",
+      "kind": "char"
+     }
+    ],
+    "depth_sp": 0,
+    "glue_set": false,
+    "height_sp": 455111,
+    "kind": "hbox",
+    "shift_sp": 0,
+    "width_sp": 182045
+   },
+   "errors": [],
+   "fonts": {
+    "OT1/cmr/m/n/10": {
+     "at_sp": null,
+     "tfm": "cmr10"
+    }
+   },
+   "id": "sym-ot1-cm-l",
+   "input": "\\l",
+   "kind": "symbol",
+   "linewidth_sp": 22609920,
+   "size": "10pt",
+   "symbol": {
+    "char_input": "ł",
+    "code_point": 322,
+    "command": "\\l",
+    "name": "l"
+   },
+   "text_font": {
+    "at_sp": null,
+    "tfm": "cmr10"
+   },
+   "textwidth_sp": 22609920,
+   "variant": "ot1-cm"
+  },
+  {
+   "box": {
+    "children": [
+     {
+      "code": 25,
+      "font_id": "OT1/cmr/m/n/10",
+      "kind": "char"
+     }
+    ],
+    "depth_sp": 0,
+    "glue_set": false,
+    "height_sp": 455111,
+    "kind": "hbox",
+    "shift_sp": 0,
+    "width_sp": 327681
+   },
+   "char_box": {
+    "children": [
+     {
+      "code": 25,
+      "font_id": "OT1/cmr/m/n/10",
+      "kind": "char"
+     }
+    ],
+    "depth_sp": 0,
+    "glue_set": false,
+    "height_sp": 455111,
+    "kind": "hbox",
+    "shift_sp": 0,
+    "width_sp": 327681
+   },
+   "errors": [],
+   "fonts": {
+    "OT1/cmr/m/n/10": {
+     "at_sp": null,
+     "tfm": "cmr10"
+    }
+   },
+   "id": "sym-ot1-cm-ss",
+   "input": "\\ss",
+   "kind": "symbol",
+   "linewidth_sp": 22609920,
+   "size": "10pt",
+   "symbol": {
+    "char_input": "ß",
+    "code_point": 223,
+    "command": "\\ss",
+    "name": "ss"
+   },
+   "text_font": {
+    "at_sp": null,
+    "tfm": "cmr10"
+   },
+   "textwidth_sp": 22609920,
+   "variant": "ot1-cm"
+  },
+  {
+   "box": {
+    "children": [
+     {
+      "code": 83,
+      "font_id": "OT1/cmr/m/n/10",
+      "kind": "char"
+     },
+     {
+      "code": 83,
+      "font_id": "OT1/cmr/m/n/10",
+      "kind": "char"
+     }
+    ],
+    "depth_sp": 0,
+    "glue_set": false,
+    "height_sp": 447828,
+    "kind": "hbox",
+    "shift_sp": 0,
+    "width_sp": 728180
+   },
+   "char_box": {
+    "children": [
+     {
+      "code": 83,
+      "font_id": "OT1/cmr/m/n/10",
+      "kind": "char"
+     },
+     {
+      "code": 83,
+      "font_id": "OT1/cmr/m/n/10",
+      "kind": "char"
+     }
+    ],
+    "depth_sp": 0,
+    "glue_set": false,
+    "height_sp": 447828,
+    "kind": "hbox",
+    "shift_sp": 0,
+    "width_sp": 728180
+   },
+   "errors": [],
+   "fonts": {
+    "OT1/cmr/m/n/10": {
+     "at_sp": null,
+     "tfm": "cmr10"
+    }
+   },
+   "id": "sym-ot1-cm-SS",
+   "input": "\\SS",
+   "kind": "symbol",
+   "linewidth_sp": 22609920,
+   "size": "10pt",
+   "symbol": {
+    "char_input": "ẞ",
+    "code_point": 7838,
+    "command": "\\SS",
+    "name": "SS"
+   },
+   "text_font": {
+    "at_sp": null,
+    "tfm": "cmr10"
+   },
+   "textwidth_sp": 22609920,
+   "variant": "ot1-cm"
+  },
+  {
+   "box": {
+    "children": [],
+    "depth_sp": 0,
+    "glue_set": false,
+    "height_sp": 0,
+    "kind": "hbox",
+    "shift_sp": 0,
+    "width_sp": 0
+   },
+   "char_box": {
+    "children": [],
+    "depth_sp": 0,
+    "glue_set": false,
+    "height_sp": 0,
+    "kind": "hbox",
+    "shift_sp": 0,
+    "width_sp": 0
+   },
+   "errors": [
+    "LaTeX Error: Command \\TH unavailable in encoding OT1.",
+    "LaTeX Error: Command \\TH unavailable in encoding OT1."
+   ],
+   "fonts": {},
+   "id": "sym-ot1-cm-TH",
+   "input": "\\TH",
+   "kind": "symbol",
+   "linewidth_sp": 22609920,
+   "size": "10pt",
+   "symbol": {
+    "char_input": "Þ",
+    "code_point": 222,
+    "command": "\\TH",
+    "name": "TH"
+   },
+   "text_font": {
+    "at_sp": null,
+    "tfm": "cmr10"
+   },
+   "textwidth_sp": 22609920,
+   "variant": "ot1-cm"
+  },
+  {
+   "box": {
+    "children": [],
+    "depth_sp": 0,
+    "glue_set": false,
+    "height_sp": 0,
+    "kind": "hbox",
+    "shift_sp": 0,
+    "width_sp": 0
+   },
+   "char_box": {
+    "children": [],
+    "depth_sp": 0,
+    "glue_set": false,
+    "height_sp": 0,
+    "kind": "hbox",
+    "shift_sp": 0,
+    "width_sp": 0
+   },
+   "errors": [
+    "LaTeX Error: Command \\th unavailable in encoding OT1.",
+    "LaTeX Error: Command \\th unavailable in encoding OT1."
+   ],
+   "fonts": {},
+   "id": "sym-ot1-cm-th",
+   "input": "\\th",
+   "kind": "symbol",
+   "linewidth_sp": 22609920,
+   "size": "10pt",
+   "symbol": {
+    "char_input": "þ",
+    "code_point": 254,
+    "command": "\\th",
+    "name": "th"
+   },
+   "text_font": {
+    "at_sp": null,
+    "tfm": "cmr10"
+   },
+   "textwidth_sp": 22609920,
+   "variant": "ot1-cm"
+  },
+  {
+   "box": {
+    "children": [],
+    "depth_sp": 0,
+    "glue_set": false,
+    "height_sp": 0,
+    "kind": "hbox",
+    "shift_sp": 0,
+    "width_sp": 0
+   },
+   "char_box": {
+    "children": [],
+    "depth_sp": 0,
+    "glue_set": false,
+    "height_sp": 0,
+    "kind": "hbox",
+    "shift_sp": 0,
+    "width_sp": 0
+   },
+   "errors": [
+    "LaTeX Error: Command \\DH unavailable in encoding OT1.",
+    "LaTeX Error: Command \\DH unavailable in encoding OT1."
+   ],
+   "fonts": {},
+   "id": "sym-ot1-cm-DH",
+   "input": "\\DH",
+   "kind": "symbol",
+   "linewidth_sp": 22609920,
+   "size": "10pt",
+   "symbol": {
+    "char_input": "Ð",
+    "code_point": 208,
+    "command": "\\DH",
+    "name": "DH"
+   },
+   "text_font": {
+    "at_sp": null,
+    "tfm": "cmr10"
+   },
+   "textwidth_sp": 22609920,
+   "variant": "ot1-cm"
+  },
+  {
+   "box": {
+    "children": [],
+    "depth_sp": 0,
+    "glue_set": false,
+    "height_sp": 0,
+    "kind": "hbox",
+    "shift_sp": 0,
+    "width_sp": 0
+   },
+   "char_box": {
+    "children": [],
+    "depth_sp": 0,
+    "glue_set": false,
+    "height_sp": 0,
+    "kind": "hbox",
+    "shift_sp": 0,
+    "width_sp": 0
+   },
+   "errors": [
+    "LaTeX Error: Command \\dh unavailable in encoding OT1.",
+    "LaTeX Error: Command \\dh unavailable in encoding OT1."
+   ],
+   "fonts": {},
+   "id": "sym-ot1-cm-dh",
+   "input": "\\dh",
+   "kind": "symbol",
+   "linewidth_sp": 22609920,
+   "size": "10pt",
+   "symbol": {
+    "char_input": "ð",
+    "code_point": 240,
+    "command": "\\dh",
+    "name": "dh"
+   },
+   "text_font": {
+    "at_sp": null,
+    "tfm": "cmr10"
+   },
+   "textwidth_sp": 22609920,
+   "variant": "ot1-cm"
+  },
+  {
+   "box": {
+    "children": [],
+    "depth_sp": 0,
+    "glue_set": false,
+    "height_sp": 0,
+    "kind": "hbox",
+    "shift_sp": 0,
+    "width_sp": 0
+   },
+   "char_box": {
+    "children": [],
+    "depth_sp": 0,
+    "glue_set": false,
+    "height_sp": 0,
+    "kind": "hbox",
+    "shift_sp": 0,
+    "width_sp": 0
+   },
+   "errors": [
+    "LaTeX Error: Command \\DJ unavailable in encoding OT1.",
+    "LaTeX Error: Command \\DJ unavailable in encoding OT1."
+   ],
+   "fonts": {},
+   "id": "sym-ot1-cm-DJ",
+   "input": "\\DJ",
+   "kind": "symbol",
+   "linewidth_sp": 22609920,
+   "size": "10pt",
+   "symbol": {
+    "char_input": "Đ",
+    "code_point": 272,
+    "command": "\\DJ",
+    "name": "DJ"
+   },
+   "text_font": {
+    "at_sp": null,
+    "tfm": "cmr10"
+   },
+   "textwidth_sp": 22609920,
+   "variant": "ot1-cm"
+  },
+  {
+   "box": {
+    "children": [],
+    "depth_sp": 0,
+    "glue_set": false,
+    "height_sp": 0,
+    "kind": "hbox",
+    "shift_sp": 0,
+    "width_sp": 0
+   },
+   "char_box": {
+    "children": [],
+    "depth_sp": 0,
+    "glue_set": false,
+    "height_sp": 0,
+    "kind": "hbox",
+    "shift_sp": 0,
+    "width_sp": 0
+   },
+   "errors": [
+    "LaTeX Error: Command \\dj unavailable in encoding OT1.",
+    "LaTeX Error: Command \\dj unavailable in encoding OT1."
+   ],
+   "fonts": {},
+   "id": "sym-ot1-cm-dj",
+   "input": "\\dj",
+   "kind": "symbol",
+   "linewidth_sp": 22609920,
+   "size": "10pt",
+   "symbol": {
+    "char_input": "đ",
+    "code_point": 273,
+    "command": "\\dj",
+    "name": "dj"
+   },
+   "text_font": {
+    "at_sp": null,
+    "tfm": "cmr10"
+   },
+   "textwidth_sp": 22609920,
+   "variant": "ot1-cm"
+  },
+  {
+   "box": {
+    "children": [],
+    "depth_sp": 0,
+    "glue_set": false,
+    "height_sp": 0,
+    "kind": "hbox",
+    "shift_sp": 0,
+    "width_sp": 0
+   },
+   "char_box": {
+    "children": [],
+    "depth_sp": 0,
+    "glue_set": false,
+    "height_sp": 0,
+    "kind": "hbox",
+    "shift_sp": 0,
+    "width_sp": 0
+   },
+   "errors": [
+    "LaTeX Error: Command \\NG unavailable in encoding OT1.",
+    "LaTeX Error: Command \\NG unavailable in encoding OT1."
+   ],
+   "fonts": {},
+   "id": "sym-ot1-cm-NG",
+   "input": "\\NG",
+   "kind": "symbol",
+   "linewidth_sp": 22609920,
+   "size": "10pt",
+   "symbol": {
+    "char_input": "Ŋ",
+    "code_point": 330,
+    "command": "\\NG",
+    "name": "NG"
+   },
+   "text_font": {
+    "at_sp": null,
+    "tfm": "cmr10"
+   },
+   "textwidth_sp": 22609920,
+   "variant": "ot1-cm"
+  },
+  {
+   "box": {
+    "children": [],
+    "depth_sp": 0,
+    "glue_set": false,
+    "height_sp": 0,
+    "kind": "hbox",
+    "shift_sp": 0,
+    "width_sp": 0
+   },
+   "char_box": {
+    "children": [],
+    "depth_sp": 0,
+    "glue_set": false,
+    "height_sp": 0,
+    "kind": "hbox",
+    "shift_sp": 0,
+    "width_sp": 0
+   },
+   "errors": [
+    "LaTeX Error: Command \\ng unavailable in encoding OT1.",
+    "LaTeX Error: Command \\ng unavailable in encoding OT1."
+   ],
+   "fonts": {},
+   "id": "sym-ot1-cm-ng",
+   "input": "\\ng",
+   "kind": "symbol",
+   "linewidth_sp": 22609920,
+   "size": "10pt",
+   "symbol": {
+    "char_input": "ŋ",
+    "code_point": 331,
+    "command": "\\ng",
+    "name": "ng"
+   },
+   "text_font": {
+    "at_sp": null,
+    "tfm": "cmr10"
+   },
+   "textwidth_sp": 22609920,
+   "variant": "ot1-cm"
+  },
+  {
+   "box": {
+    "children": [
+     {
+      "kind": "penalty",
+      "value": 10000
+     },
+     {
+      "kind": "glue",
+      "spec": "\\glue 0.0",
+      "width_sp": 0
+     },
+     {
+      "code": 73,
+      "font_id": "OT1/cmr/m/n/10",
+      "kind": "char"
+     },
+     {
+      "accent": false,
+      "explicit": true,
+      "kind": "kern",
+      "width_sp": -13110
+     },
+     {
+      "kind": "penalty",
+      "value": 10000
+     },
+     {
+      "kind": "glue",
+      "spec": "\\glue 0.0",
+      "width_sp": 0
+     },
+     {
+      "code": 74,
+      "font_id": "OT1/cmr/m/n/10",
+      "kind": "char"
+     }
+    ],
+    "depth_sp": 0,
+    "glue_set": false,
+    "height_sp": 447828,
+    "kind": "hbox",
+    "shift_sp": 0,
+    "width_sp": 560331
+   },
+   "char_box": {
+    "children": [
+     {
+      "kind": "penalty",
+      "value": 10000
+     },
+     {
+      "kind": "glue",
+      "spec": "\\glue 0.0",
+      "width_sp": 0
+     },
+     {
+      "code": 73,
+      "font_id": "OT1/cmr/m/n/10",
+      "kind": "char"
+     },
+     {
+      "accent": false,
+      "explicit": true,
+      "kind": "kern",
+      "width_sp": -13110
+     },
+     {
+      "kind": "penalty",
+      "value": 10000
+     },
+     {
+      "kind": "glue",
+      "spec": "\\glue 0.0",
+      "width_sp": 0
+     },
+     {
+      "code": 74,
+      "font_id": "OT1/cmr/m/n/10",
+      "kind": "char"
+     }
+    ],
+    "depth_sp": 0,
+    "glue_set": false,
+    "height_sp": 447828,
+    "kind": "hbox",
+    "shift_sp": 0,
+    "width_sp": 560331
+   },
+   "errors": [],
+   "fonts": {
+    "OT1/cmr/m/n/10": {
+     "at_sp": null,
+     "tfm": "cmr10"
+    }
+   },
+   "id": "sym-ot1-cm-IJ",
+   "input": "\\IJ",
+   "kind": "symbol",
+   "linewidth_sp": 22609920,
+   "size": "10pt",
+   "symbol": {
+    "char_input": "Ĳ",
+    "code_point": 306,
+    "command": "\\IJ",
+    "name": "IJ"
+   },
+   "text_font": {
+    "at_sp": null,
+    "tfm": "cmr10"
+   },
+   "textwidth_sp": 22609920,
+   "variant": "ot1-cm"
+  },
+  {
+   "box": {
+    "children": [
+     {
+      "kind": "penalty",
+      "value": 10000
+     },
+     {
+      "kind": "glue",
+      "spec": "\\glue 0.0",
+      "width_sp": 0
+     },
+     {
+      "code": 105,
+      "font_id": "OT1/cmr/m/n/10",
+      "kind": "char"
+     },
+     {
+      "accent": false,
+      "explicit": true,
+      "kind": "kern",
+      "width_sp": -13110
+     },
+     {
+      "kind": "penalty",
+      "value": 10000
+     },
+     {
+      "kind": "glue",
+      "spec": "\\glue 0.0",
+      "width_sp": 0
+     },
+     {
+      "code": 106,
+      "font_id": "OT1/cmr/m/n/10",
+      "kind": "char"
+     }
+    ],
+    "depth_sp": 127431,
+    "glue_set": false,
+    "height_sp": 437688,
+    "kind": "hbox",
+    "shift_sp": 0,
+    "width_sp": 369185
+   },
+   "char_box": {
+    "children": [
+     {
+      "kind": "penalty",
+      "value": 10000
+     },
+     {
+      "kind": "glue",
+      "spec": "\\glue 0.0",
+      "width_sp": 0
+     },
+     {
+      "code": 105,
+      "font_id": "OT1/cmr/m/n/10",
+      "kind": "char"
+     },
+     {
+      "accent": false,
+      "explicit": true,
+      "kind": "kern",
+      "width_sp": -13110
+     },
+     {
+      "kind": "penalty",
+      "value": 10000
+     },
+     {
+      "kind": "glue",
+      "spec": "\\glue 0.0",
+      "width_sp": 0
+     },
+     {
+      "code": 106,
+      "font_id": "OT1/cmr/m/n/10",
+      "kind": "char"
+     }
+    ],
+    "depth_sp": 127431,
+    "glue_set": false,
+    "height_sp": 437688,
+    "kind": "hbox",
+    "shift_sp": 0,
+    "width_sp": 369185
+   },
+   "errors": [],
+   "fonts": {
+    "OT1/cmr/m/n/10": {
+     "at_sp": null,
+     "tfm": "cmr10"
+    }
+   },
+   "id": "sym-ot1-cm-ij",
+   "input": "\\ij",
+   "kind": "symbol",
+   "linewidth_sp": 22609920,
+   "size": "10pt",
+   "symbol": {
+    "char_input": "ĳ",
+    "code_point": 307,
+    "command": "\\ij",
+    "name": "ij"
+   },
+   "text_font": {
+    "at_sp": null,
+    "tfm": "cmr10"
+   },
+   "textwidth_sp": 22609920,
+   "variant": "ot1-cm"
+  },
+  {
+   "box": {
+    "children": [
+     {
+      "code": 16,
+      "font_id": "OT1/cmr/m/n/10",
+      "kind": "char"
+     }
+    ],
+    "depth_sp": 0,
+    "glue_set": false,
+    "height_sp": 282168,
+    "kind": "hbox",
+    "shift_sp": 0,
+    "width_sp": 182045
+   },
+   "char_box": {
+    "children": [
+     {
+      "code": 16,
+      "font_id": "OT1/cmr/m/n/10",
+      "kind": "char"
+     }
+    ],
+    "depth_sp": 0,
+    "glue_set": false,
+    "height_sp": 282168,
+    "kind": "hbox",
+    "shift_sp": 0,
+    "width_sp": 182045
+   },
+   "errors": [],
+   "fonts": {
+    "OT1/cmr/m/n/10": {
+     "at_sp": null,
+     "tfm": "cmr10"
+    }
+   },
+   "id": "sym-ot1-cm-i",
+   "input": "\\i",
+   "kind": "symbol",
+   "linewidth_sp": 22609920,
+   "size": "10pt",
+   "symbol": {
+    "char_input": "ı",
+    "code_point": 305,
+    "command": "\\i",
+    "name": "i"
+   },
+   "text_font": {
+    "at_sp": null,
+    "tfm": "cmr10"
+   },
+   "textwidth_sp": 22609920,
+   "variant": "ot1-cm"
+  },
+  {
+   "box": {
+    "children": [
+     {
+      "code": 17,
+      "font_id": "OT1/cmr/m/n/10",
+      "kind": "char"
+     }
+    ],
+    "depth_sp": 127431,
+    "glue_set": false,
+    "height_sp": 282168,
+    "kind": "hbox",
+    "shift_sp": 0,
+    "width_sp": 200250
+   },
+   "char_box": {
+    "children": [
+     {
+      "code": 17,
+      "font_id": "OT1/cmr/m/n/10",
+      "kind": "char"
+     }
+    ],
+    "depth_sp": 127431,
+    "glue_set": false,
+    "height_sp": 282168,
+    "kind": "hbox",
+    "shift_sp": 0,
+    "width_sp": 200250
+   },
+   "errors": [],
+   "fonts": {
+    "OT1/cmr/m/n/10": {
+     "at_sp": null,
+     "tfm": "cmr10"
+    }
+   },
+   "id": "sym-ot1-cm-j",
+   "input": "\\j",
+   "kind": "symbol",
+   "linewidth_sp": 22609920,
+   "size": "10pt",
+   "symbol": {
+    "char_input": "ȷ",
+    "code_point": 567,
+    "command": "\\j",
+    "name": "j"
+   },
+   "text_font": {
+    "at_sp": null,
+    "tfm": "cmr10"
+   },
+   "textwidth_sp": 22609920,
+   "variant": "ot1-cm"
+  },
+  {
+   "box": {
+    "children": [
+     {
+      "code": 167,
+      "font_id": "TS1/cmr/m/n/10",
+      "kind": "char"
+     }
+    ],
+    "depth_sp": 127400,
+    "glue_set": false,
+    "height_sp": 451360,
+    "kind": "hbox",
+    "shift_sp": 0,
+    "width_sp": 291200
+   },
+   "char_box": {
+    "children": [
+     {
+      "code": 167,
+      "font_id": "TS1/cmr/m/n/10",
+      "kind": "char"
+     }
+    ],
+    "depth_sp": 127400,
+    "glue_set": false,
+    "height_sp": 451360,
+    "kind": "hbox",
+    "shift_sp": 0,
+    "width_sp": 291200
+   },
+   "errors": [],
+   "fonts": {
+    "TS1/cmr/m/n/10": {
+     "at_sp": null,
+     "tfm": "tcrm1000"
+    }
+   },
+   "id": "sym-ot1-cm-S",
+   "input": "\\S",
+   "kind": "symbol",
+   "linewidth_sp": 22609920,
+   "size": "10pt",
+   "symbol": {
+    "char_input": "§",
+    "code_point": 167,
+    "command": "\\textsection",
+    "name": "S"
+   },
+   "text_font": {
+    "at_sp": null,
+    "tfm": "cmr10"
+   },
+   "textwidth_sp": 22609920,
+   "variant": "ot1-cm"
+  },
+  {
+   "box": {
+    "children": [
+     {
+      "code": 182,
+      "font_id": "TS1/cmr/m/n/10",
+      "kind": "char"
+     }
+    ],
+    "depth_sp": 127400,
+    "glue_set": false,
+    "height_sp": 451360,
+    "kind": "hbox",
+    "shift_sp": 0,
+    "width_sp": 400400
+   },
+   "char_box": {
+    "children": [
+     {
+      "code": 182,
+      "font_id": "TS1/cmr/m/n/10",
+      "kind": "char"
+     }
+    ],
+    "depth_sp": 127400,
+    "glue_set": false,
+    "height_sp": 451360,
+    "kind": "hbox",
+    "shift_sp": 0,
+    "width_sp": 400400
+   },
+   "errors": [],
+   "fonts": {
+    "TS1/cmr/m/n/10": {
+     "at_sp": null,
+     "tfm": "tcrm1000"
+    }
+   },
+   "id": "sym-ot1-cm-P",
+   "input": "\\P",
+   "kind": "symbol",
+   "linewidth_sp": 22609920,
+   "size": "10pt",
+   "symbol": {
+    "char_input": "¶",
+    "code_point": 182,
+    "command": "\\textparagraph",
+    "name": "P"
+   },
+   "text_font": {
+    "at_sp": null,
+    "tfm": "cmr10"
+   },
+   "textwidth_sp": 22609920,
+   "variant": "ot1-cm"
+  },
+  {
+   "box": {
+    "children": [
+     {
+      "code": 132,
+      "font_id": "TS1/cmr/m/n/10",
+      "kind": "char"
+     }
+    ],
+    "depth_sp": 127400,
+    "glue_set": false,
+    "height_sp": 451360,
+    "kind": "hbox",
+    "shift_sp": 0,
+    "width_sp": 291200
+   },
+   "char_box": {
+    "children": [
+     {
+      "code": 132,
+      "font_id": "TS1/cmr/m/n/10",
+      "kind": "char"
+     }
+    ],
+    "depth_sp": 127400,
+    "glue_set": false,
+    "height_sp": 451360,
+    "kind": "hbox",
+    "shift_sp": 0,
+    "width_sp": 291200
+   },
+   "errors": [],
+   "fonts": {
+    "TS1/cmr/m/n/10": {
+     "at_sp": null,
+     "tfm": "tcrm1000"
+    }
+   },
+   "id": "sym-ot1-cm-dag",
+   "input": "\\dag",
+   "kind": "symbol",
+   "linewidth_sp": 22609920,
+   "size": "10pt",
+   "symbol": {
+    "char_input": "†",
+    "code_point": 8224,
+    "command": "\\textdagger",
+    "name": "dag"
+   },
+   "text_font": {
+    "at_sp": null,
+    "tfm": "cmr10"
+   },
+   "textwidth_sp": 22609920,
+   "variant": "ot1-cm"
+  },
+  {
+   "box": {
+    "children": [
+     {
+      "kind": "other",
+      "text": "\\TS1/cmr/m/n/10 "
+     }
+    ],
+    "depth_sp": 127400,
+    "glue_set": false,
+    "height_sp": 451360,
+    "kind": "hbox",
+    "shift_sp": 0,
+    "width_sp": 291200
+   },
+   "char_box": {
+    "children": [
+     {
+      "kind": "other",
+      "text": "\\TS1/cmr/m/n/10 "
+     }
+    ],
+    "depth_sp": 127400,
+    "glue_set": false,
+    "height_sp": 451360,
+    "kind": "hbox",
+    "shift_sp": 0,
+    "width_sp": 291200
+   },
+   "errors": [],
+   "fonts": {},
+   "id": "sym-ot1-cm-ddag",
+   "input": "\\ddag",
+   "kind": "symbol",
+   "linewidth_sp": 22609920,
+   "size": "10pt",
+   "symbol": {
+    "char_input": "‡",
+    "code_point": 8225,
+    "command": "\\textdaggerdbl",
+    "name": "ddag"
+   },
+   "text_font": {
+    "at_sp": null,
+    "tfm": "cmr10"
+   },
+   "textwidth_sp": 22609920,
+   "variant": "ot1-cm"
+  },
+  {
+   "box": {
+    "children": [
+     {
+      "code": 169,
+      "font_id": "TS1/cmr/m/n/10",
+      "kind": "char"
+     }
+    ],
+    "depth_sp": 163800,
+    "glue_set": false,
+    "height_sp": 491400,
+    "kind": "hbox",
+    "shift_sp": 0,
+    "width_sp": 728000
+   },
+   "char_box": {
+    "children": [
+     {
+      "code": 169,
+      "font_id": "TS1/cmr/m/n/10",
+      "kind": "char"
+     }
+    ],
+    "depth_sp": 163800,
+    "glue_set": false,
+    "height_sp": 491400,
+    "kind": "hbox",
+    "shift_sp": 0,
+    "width_sp": 728000
+   },
+   "errors": [],
+   "fonts": {
+    "TS1/cmr/m/n/10": {
+     "at_sp": null,
+     "tfm": "tcrm1000"
+    }
+   },
+   "id": "sym-ot1-cm-copyright",
+   "input": "\\copyright",
+   "kind": "symbol",
+   "linewidth_sp": 22609920,
+   "size": "10pt",
+   "symbol": {
+    "char_input": "©",
+    "code_point": 169,
+    "command": "\\textcopyright",
+    "name": "copyright"
+   },
+   "text_font": {
+    "at_sp": null,
+    "tfm": "cmr10"
+   },
+   "textwidth_sp": 22609920,
+   "variant": "ot1-cm"
+  },
+  {
+   "box": {
+    "children": [
+     {
+      "code": 163,
+      "font_id": "TS1/cmr/m/n/10",
+      "kind": "char"
+     }
+    ],
+    "depth_sp": 0,
+    "glue_set": false,
+    "height_sp": 451360,
+    "kind": "hbox",
+    "shift_sp": 0,
+    "width_sp": 418600
+   },
+   "char_box": {
+    "children": [
+     {
+      "code": 163,
+      "font_id": "TS1/cmr/m/n/10",
+      "kind": "char"
+     }
+    ],
+    "depth_sp": 0,
+    "glue_set": false,
+    "height_sp": 451360,
+    "kind": "hbox",
+    "shift_sp": 0,
+    "width_sp": 418600
+   },
+   "errors": [],
+   "fonts": {
+    "TS1/cmr/m/n/10": {
+     "at_sp": null,
+     "tfm": "tcrm1000"
+    }
+   },
+   "id": "sym-ot1-cm-pounds",
+   "input": "\\pounds",
+   "kind": "symbol",
+   "linewidth_sp": 22609920,
+   "size": "10pt",
+   "symbol": {
+    "char_input": "£",
+    "code_point": 163,
+    "command": "\\textsterling",
+    "name": "pounds"
+   },
+   "text_font": {
+    "at_sp": null,
+    "tfm": "cmr10"
+   },
+   "textwidth_sp": 22609920,
+   "variant": "ot1-cm"
+  },
+  {
+   "box": {
+    "children": [
+     {
+      "code": 46,
+      "font_id": "OT1/cmr/m/n/10",
+      "kind": "char"
+     },
+     {
+      "accent": false,
+      "explicit": true,
+      "kind": "kern",
+      "width_sp": 109226
+     },
+     {
+      "code": 46,
+      "font_id": "OT1/cmr/m/n/10",
+      "kind": "char"
+     },
+     {
+      "accent": false,
+      "explicit": true,
+      "kind": "kern",
+      "width_sp": 109226
+     },
+     {
+      "code": 46,
+      "font_id": "OT1/cmr/m/n/10",
+      "kind": "char"
+     },
+     {
+      "accent": false,
+      "explicit": true,
+      "kind": "kern",
+      "width_sp": 109226
+     }
+    ],
+    "depth_sp": 0,
+    "glue_set": false,
+    "height_sp": 69176,
+    "kind": "hbox",
+    "shift_sp": 0,
+    "width_sp": 873813
+   },
+   "char_box": {
+    "children": [
+     {
+      "code": 46,
+      "font_id": "OT1/cmr/m/n/10",
+      "kind": "char"
+     },
+     {
+      "accent": false,
+      "explicit": true,
+      "kind": "kern",
+      "width_sp": 109226
+     },
+     {
+      "code": 46,
+      "font_id": "OT1/cmr/m/n/10",
+      "kind": "char"
+     },
+     {
+      "accent": false,
+      "explicit": true,
+      "kind": "kern",
+      "width_sp": 109226
+     },
+     {
+      "code": 46,
+      "font_id": "OT1/cmr/m/n/10",
+      "kind": "char"
+     },
+     {
+      "accent": false,
+      "explicit": true,
+      "kind": "kern",
+      "width_sp": 109226
+     }
+    ],
+    "depth_sp": 0,
+    "glue_set": false,
+    "height_sp": 69176,
+    "kind": "hbox",
+    "shift_sp": 0,
+    "width_sp": 873813
+   },
+   "errors": [],
+   "fonts": {
+    "OT1/cmr/m/n/10": {
+     "at_sp": null,
+     "tfm": "cmr10"
+    }
+   },
+   "id": "sym-ot1-cm-dots",
+   "input": "\\dots",
+   "kind": "symbol",
+   "linewidth_sp": 22609920,
+   "size": "10pt",
+   "symbol": {
+    "char_input": "…",
+    "code_point": 8230,
+    "command": "\\textellipsis",
+    "name": "dots"
+   },
+   "text_font": {
+    "at_sp": null,
+    "tfm": "cmr10"
+   },
+   "textwidth_sp": 22609920,
+   "variant": "ot1-cm"
+  },
+  {
+   "box": {
+    "children": [
+     {
+      "code": 46,
+      "font_id": "OT1/cmr/m/n/10",
+      "kind": "char"
+     },
+     {
+      "accent": false,
+      "explicit": true,
+      "kind": "kern",
+      "width_sp": 109226
+     },
+     {
+      "code": 46,
+      "font_id": "OT1/cmr/m/n/10",
+      "kind": "char"
+     },
+     {
+      "accent": false,
+      "explicit": true,
+      "kind": "kern",
+      "width_sp": 109226
+     },
+     {
+      "code": 46,
+      "font_id": "OT1/cmr/m/n/10",
+      "kind": "char"
+     },
+     {
+      "accent": false,
+      "explicit": true,
+      "kind": "kern",
+      "width_sp": 109226
+     }
+    ],
+    "depth_sp": 0,
+    "glue_set": false,
+    "height_sp": 69176,
+    "kind": "hbox",
+    "shift_sp": 0,
+    "width_sp": 873813
+   },
+   "char_box": {
+    "children": [
+     {
+      "code": 46,
+      "font_id": "OT1/cmr/m/n/10",
+      "kind": "char"
+     },
+     {
+      "accent": false,
+      "explicit": true,
+      "kind": "kern",
+      "width_sp": 109226
+     },
+     {
+      "code": 46,
+      "font_id": "OT1/cmr/m/n/10",
+      "kind": "char"
+     },
+     {
+      "accent": false,
+      "explicit": true,
+      "kind": "kern",
+      "width_sp": 109226
+     },
+     {
+      "code": 46,
+      "font_id": "OT1/cmr/m/n/10",
+      "kind": "char"
+     },
+     {
+      "accent": false,
+      "explicit": true,
+      "kind": "kern",
+      "width_sp": 109226
+     }
+    ],
+    "depth_sp": 0,
+    "glue_set": false,
+    "height_sp": 69176,
+    "kind": "hbox",
+    "shift_sp": 0,
+    "width_sp": 873813
+   },
+   "errors": [],
+   "fonts": {
+    "OT1/cmr/m/n/10": {
+     "at_sp": null,
+     "tfm": "cmr10"
+    }
+   },
+   "id": "sym-ot1-cm-ldots",
+   "input": "\\ldots",
+   "kind": "symbol",
+   "linewidth_sp": 22609920,
+   "size": "10pt",
+   "symbol": {
+    "char_input": "…",
+    "code_point": 8230,
+    "command": "\\textellipsis",
+    "name": "ldots"
+   },
+   "text_font": {
+    "at_sp": null,
+    "tfm": "cmr10"
+   },
+   "textwidth_sp": 22609920,
+   "variant": "ot1-cm"
+  },
+  {
+   "box": {
+    "children": [
+     {
+      "code": 167,
+      "font_id": "TS1/cmr/m/n/10",
+      "kind": "char"
+     }
+    ],
+    "depth_sp": 127400,
+    "glue_set": false,
+    "height_sp": 451360,
+    "kind": "hbox",
+    "shift_sp": 0,
+    "width_sp": 291200
+   },
+   "char_box": {
+    "children": [
+     {
+      "code": 167,
+      "font_id": "TS1/cmr/m/n/10",
+      "kind": "char"
+     }
+    ],
+    "depth_sp": 127400,
+    "glue_set": false,
+    "height_sp": 451360,
+    "kind": "hbox",
+    "shift_sp": 0,
+    "width_sp": 291200
+   },
+   "errors": [],
+   "fonts": {
+    "TS1/cmr/m/n/10": {
+     "at_sp": null,
+     "tfm": "tcrm1000"
+    }
+   },
+   "id": "sym-ot1-cm-textsection",
+   "input": "\\textsection",
+   "kind": "symbol",
+   "linewidth_sp": 22609920,
+   "size": "10pt",
+   "symbol": {
+    "char_input": "§",
+    "code_point": 167,
+    "command": "\\textsection",
+    "name": "textsection"
+   },
+   "text_font": {
+    "at_sp": null,
+    "tfm": "cmr10"
+   },
+   "textwidth_sp": 22609920,
+   "variant": "ot1-cm"
+  },
+  {
+   "box": {
+    "children": [
+     {
+      "code": 182,
+      "font_id": "TS1/cmr/m/n/10",
+      "kind": "char"
+     }
+    ],
+    "depth_sp": 127400,
+    "glue_set": false,
+    "height_sp": 451360,
+    "kind": "hbox",
+    "shift_sp": 0,
+    "width_sp": 400400
+   },
+   "char_box": {
+    "children": [
+     {
+      "code": 182,
+      "font_id": "TS1/cmr/m/n/10",
+      "kind": "char"
+     }
+    ],
+    "depth_sp": 127400,
+    "glue_set": false,
+    "height_sp": 451360,
+    "kind": "hbox",
+    "shift_sp": 0,
+    "width_sp": 400400
+   },
+   "errors": [],
+   "fonts": {
+    "TS1/cmr/m/n/10": {
+     "at_sp": null,
+     "tfm": "tcrm1000"
+    }
+   },
+   "id": "sym-ot1-cm-textparagraph",
+   "input": "\\textparagraph",
+   "kind": "symbol",
+   "linewidth_sp": 22609920,
+   "size": "10pt",
+   "symbol": {
+    "char_input": "¶",
+    "code_point": 182,
+    "command": "\\textparagraph",
+    "name": "textparagraph"
+   },
+   "text_font": {
+    "at_sp": null,
+    "tfm": "cmr10"
+   },
+   "textwidth_sp": 22609920,
+   "variant": "ot1-cm"
+  },
+  {
+   "box": {
+    "children": [
+     {
+      "code": 132,
+      "font_id": "TS1/cmr/m/n/10",
+      "kind": "char"
+     }
+    ],
+    "depth_sp": 127400,
+    "glue_set": false,
+    "height_sp": 451360,
+    "kind": "hbox",
+    "shift_sp": 0,
+    "width_sp": 291200
+   },
+   "char_box": {
+    "children": [
+     {
+      "code": 132,
+      "font_id": "TS1/cmr/m/n/10",
+      "kind": "char"
+     }
+    ],
+    "depth_sp": 127400,
+    "glue_set": false,
+    "height_sp": 451360,
+    "kind": "hbox",
+    "shift_sp": 0,
+    "width_sp": 291200
+   },
+   "errors": [],
+   "fonts": {
+    "TS1/cmr/m/n/10": {
+     "at_sp": null,
+     "tfm": "tcrm1000"
+    }
+   },
+   "id": "sym-ot1-cm-textdagger",
+   "input": "\\textdagger",
+   "kind": "symbol",
+   "linewidth_sp": 22609920,
+   "size": "10pt",
+   "symbol": {
+    "char_input": "†",
+    "code_point": 8224,
+    "command": "\\textdagger",
+    "name": "textdagger"
+   },
+   "text_font": {
+    "at_sp": null,
+    "tfm": "cmr10"
+   },
+   "textwidth_sp": 22609920,
+   "variant": "ot1-cm"
+  },
+  {
+   "box": {
+    "children": [
+     {
+      "kind": "other",
+      "text": "\\TS1/cmr/m/n/10 "
+     }
+    ],
+    "depth_sp": 127400,
+    "glue_set": false,
+    "height_sp": 451360,
+    "kind": "hbox",
+    "shift_sp": 0,
+    "width_sp": 291200
+   },
+   "char_box": {
+    "children": [
+     {
+      "kind": "other",
+      "text": "\\TS1/cmr/m/n/10 "
+     }
+    ],
+    "depth_sp": 127400,
+    "glue_set": false,
+    "height_sp": 451360,
+    "kind": "hbox",
+    "shift_sp": 0,
+    "width_sp": 291200
+   },
+   "errors": [],
+   "fonts": {},
+   "id": "sym-ot1-cm-textdaggerdbl",
+   "input": "\\textdaggerdbl",
+   "kind": "symbol",
+   "linewidth_sp": 22609920,
+   "size": "10pt",
+   "symbol": {
+    "char_input": "‡",
+    "code_point": 8225,
+    "command": "\\textdaggerdbl",
+    "name": "textdaggerdbl"
+   },
+   "text_font": {
+    "at_sp": null,
+    "tfm": "cmr10"
+   },
+   "textwidth_sp": 22609920,
+   "variant": "ot1-cm"
+  },
+  {
+   "box": {
+    "children": [
+     {
+      "code": 169,
+      "font_id": "TS1/cmr/m/n/10",
+      "kind": "char"
+     }
+    ],
+    "depth_sp": 163800,
+    "glue_set": false,
+    "height_sp": 491400,
+    "kind": "hbox",
+    "shift_sp": 0,
+    "width_sp": 728000
+   },
+   "char_box": {
+    "children": [
+     {
+      "code": 169,
+      "font_id": "TS1/cmr/m/n/10",
+      "kind": "char"
+     }
+    ],
+    "depth_sp": 163800,
+    "glue_set": false,
+    "height_sp": 491400,
+    "kind": "hbox",
+    "shift_sp": 0,
+    "width_sp": 728000
+   },
+   "errors": [],
+   "fonts": {
+    "TS1/cmr/m/n/10": {
+     "at_sp": null,
+     "tfm": "tcrm1000"
+    }
+   },
+   "id": "sym-ot1-cm-textcopyright",
+   "input": "\\textcopyright",
+   "kind": "symbol",
+   "linewidth_sp": 22609920,
+   "size": "10pt",
+   "symbol": {
+    "char_input": "©",
+    "code_point": 169,
+    "command": "\\textcopyright",
+    "name": "textcopyright"
+   },
+   "text_font": {
+    "at_sp": null,
+    "tfm": "cmr10"
+   },
+   "textwidth_sp": 22609920,
+   "variant": "ot1-cm"
+  },
+  {
+   "box": {
+    "children": [
+     {
+      "code": 163,
+      "font_id": "TS1/cmr/m/n/10",
+      "kind": "char"
+     }
+    ],
+    "depth_sp": 0,
+    "glue_set": false,
+    "height_sp": 451360,
+    "kind": "hbox",
+    "shift_sp": 0,
+    "width_sp": 418600
+   },
+   "char_box": {
+    "children": [
+     {
+      "code": 163,
+      "font_id": "TS1/cmr/m/n/10",
+      "kind": "char"
+     }
+    ],
+    "depth_sp": 0,
+    "glue_set": false,
+    "height_sp": 451360,
+    "kind": "hbox",
+    "shift_sp": 0,
+    "width_sp": 418600
+   },
+   "errors": [],
+   "fonts": {
+    "TS1/cmr/m/n/10": {
+     "at_sp": null,
+     "tfm": "tcrm1000"
+    }
+   },
+   "id": "sym-ot1-cm-textsterling",
+   "input": "\\textsterling",
+   "kind": "symbol",
+   "linewidth_sp": 22609920,
+   "size": "10pt",
+   "symbol": {
+    "char_input": "£",
+    "code_point": 163,
+    "command": "\\textsterling",
+    "name": "textsterling"
+   },
+   "text_font": {
+    "at_sp": null,
+    "tfm": "cmr10"
+   },
+   "textwidth_sp": 22609920,
+   "variant": "ot1-cm"
+  },
+  {
+   "box": {
+    "children": [
+     {
+      "code": 46,
+      "font_id": "OT1/cmr/m/n/10",
+      "kind": "char"
+     },
+     {
+      "accent": false,
+      "explicit": true,
+      "kind": "kern",
+      "width_sp": 109226
+     },
+     {
+      "code": 46,
+      "font_id": "OT1/cmr/m/n/10",
+      "kind": "char"
+     },
+     {
+      "accent": false,
+      "explicit": true,
+      "kind": "kern",
+      "width_sp": 109226
+     },
+     {
+      "code": 46,
+      "font_id": "OT1/cmr/m/n/10",
+      "kind": "char"
+     },
+     {
+      "accent": false,
+      "explicit": true,
+      "kind": "kern",
+      "width_sp": 109226
+     }
+    ],
+    "depth_sp": 0,
+    "glue_set": false,
+    "height_sp": 69176,
+    "kind": "hbox",
+    "shift_sp": 0,
+    "width_sp": 873813
+   },
+   "char_box": {
+    "children": [
+     {
+      "code": 46,
+      "font_id": "OT1/cmr/m/n/10",
+      "kind": "char"
+     },
+     {
+      "accent": false,
+      "explicit": true,
+      "kind": "kern",
+      "width_sp": 109226
+     },
+     {
+      "code": 46,
+      "font_id": "OT1/cmr/m/n/10",
+      "kind": "char"
+     },
+     {
+      "accent": false,
+      "explicit": true,
+      "kind": "kern",
+      "width_sp": 109226
+     },
+     {
+      "code": 46,
+      "font_id": "OT1/cmr/m/n/10",
+      "kind": "char"
+     },
+     {
+      "accent": false,
+      "explicit": true,
+      "kind": "kern",
+      "width_sp": 109226
+     }
+    ],
+    "depth_sp": 0,
+    "glue_set": false,
+    "height_sp": 69176,
+    "kind": "hbox",
+    "shift_sp": 0,
+    "width_sp": 873813
+   },
+   "errors": [],
+   "fonts": {
+    "OT1/cmr/m/n/10": {
+     "at_sp": null,
+     "tfm": "cmr10"
+    }
+   },
+   "id": "sym-ot1-cm-textellipsis",
+   "input": "\\textellipsis",
+   "kind": "symbol",
+   "linewidth_sp": 22609920,
+   "size": "10pt",
+   "symbol": {
+    "char_input": "…",
+    "code_point": 8230,
+    "command": "\\textellipsis",
+    "name": "textellipsis"
+   },
+   "text_font": {
+    "at_sp": null,
+    "tfm": "cmr10"
+   },
+   "textwidth_sp": 22609920,
+   "variant": "ot1-cm"
+  },
+  {
+   "box": {
+    "children": [
+     {
+      "code": 110,
+      "font_id": "OMS/cmsy/m/n/10",
+      "kind": "char"
+     }
+    ],
+    "depth_sp": 163840,
+    "glue_set": false,
+    "height_sp": 491520,
+    "kind": "hbox",
+    "shift_sp": 0,
+    "width_sp": 327681
+   },
+   "char_box": {
+    "children": [
+     {
+      "code": 92,
+      "font_id": "OT1/cmr/m/n/10",
+      "kind": "char"
+     }
+    ],
+    "depth_sp": 0,
+    "glue_set": false,
+    "height_sp": 455111,
+    "kind": "hbox",
+    "shift_sp": 0,
+    "width_sp": 327681
+   },
+   "errors": [],
+   "fonts": {
+    "OMS/cmsy/m/n/10": {
+     "at_sp": null,
+     "tfm": "cmsy10"
+    },
+    "OT1/cmr/m/n/10": {
+     "at_sp": null,
+     "tfm": "cmr10"
+    }
+   },
+   "id": "sym-ot1-cm-textbackslash",
+   "input": "\\textbackslash",
+   "kind": "symbol",
+   "linewidth_sp": 22609920,
+   "size": "10pt",
+   "symbol": {
+    "char_input": "\\symbol{92}",
+    "code_point": 92,
+    "command": "\\textbackslash",
+    "name": "textbackslash"
+   },
+   "text_font": {
+    "at_sp": null,
+    "tfm": "cmr10"
+   },
+   "textwidth_sp": 22609920,
+   "variant": "ot1-cm"
+  },
+  {
+   "box": {
+    "children": [
+     {
+      "code": 126,
+      "font_id": "OT1/cmr/m/n/10",
+      "kind": "char"
+     }
+    ],
+    "depth_sp": 0,
+    "glue_set": false,
+    "height_sp": 437688,
+    "kind": "hbox",
+    "shift_sp": 0,
+    "width_sp": 327681
+   },
+   "char_box": {
+    "children": [
+     {
+      "code": 126,
+      "font_id": "OT1/cmr/m/n/10",
+      "kind": "char"
+     }
+    ],
+    "depth_sp": 0,
+    "glue_set": false,
+    "height_sp": 437688,
+    "kind": "hbox",
+    "shift_sp": 0,
+    "width_sp": 327681
+   },
+   "errors": [],
+   "fonts": {
+    "OT1/cmr/m/n/10": {
+     "at_sp": null,
+     "tfm": "cmr10"
+    }
+   },
+   "id": "sym-ot1-cm-textasciitilde",
+   "input": "\\textasciitilde",
+   "kind": "symbol",
+   "linewidth_sp": 22609920,
+   "size": "10pt",
+   "symbol": {
+    "char_input": "\\symbol{126}",
+    "code_point": 126,
+    "command": "\\textasciitilde",
+    "name": "textasciitilde"
+   },
+   "text_font": {
+    "at_sp": null,
+    "tfm": "cmr10"
+   },
+   "textwidth_sp": 22609920,
+   "variant": "ot1-cm"
+  },
+  {
+   "box": {
+    "children": [
+     {
+      "code": 94,
+      "font_id": "OT1/cmr/m/n/10",
+      "kind": "char"
+     }
+    ],
+    "depth_sp": 0,
+    "glue_set": false,
+    "height_sp": 455111,
+    "kind": "hbox",
+    "shift_sp": 0,
+    "width_sp": 327681
+   },
+   "char_box": {
+    "children": [
+     {
+      "code": 94,
+      "font_id": "OT1/cmr/m/n/10",
+      "kind": "char"
+     }
+    ],
+    "depth_sp": 0,
+    "glue_set": false,
+    "height_sp": 455111,
+    "kind": "hbox",
+    "shift_sp": 0,
+    "width_sp": 327681
+   },
+   "errors": [],
+   "fonts": {
+    "OT1/cmr/m/n/10": {
+     "at_sp": null,
+     "tfm": "cmr10"
+    }
+   },
+   "id": "sym-ot1-cm-textasciicircum",
+   "input": "\\textasciicircum",
+   "kind": "symbol",
+   "linewidth_sp": 22609920,
+   "size": "10pt",
+   "symbol": {
+    "char_input": "\\symbol{94}",
+    "code_point": 94,
+    "command": "\\textasciicircum",
+    "name": "textasciicircum"
+   },
+   "text_font": {
+    "at_sp": null,
+    "tfm": "cmr10"
+   },
+   "textwidth_sp": 22609920,
+   "variant": "ot1-cm"
+  },
+  {
+   "box": {
+    "children": [
+     {
+      "accent": false,
+      "explicit": true,
+      "kind": "kern",
+      "width_sp": 39320
+     },
+     {
+      "children": [
+       {
+        "depth_sp": 0,
+        "height_sp": 26214,
+        "kind": "rule",
+        "width_sp": 196610
+       }
+      ],
+      "depth_sp": 0,
+      "glue_set": false,
+      "height_sp": 26214,
+      "kind": "vbox",
+      "shift_sp": 0,
+      "width_sp": 196610
+     }
+    ],
+    "depth_sp": 0,
+    "glue_set": false,
+    "height_sp": 26214,
+    "kind": "hbox",
+    "shift_sp": 0,
+    "width_sp": 235930
+   },
+   "char_box": {
+    "children": [
+     {
+      "code": 95,
+      "font_id": "OT1/cmr/m/n/10",
+      "kind": "char"
+     }
+    ],
+    "depth_sp": 0,
+    "glue_set": false,
+    "height_sp": 437688,
+    "kind": "hbox",
+    "shift_sp": 0,
+    "width_sp": 182045
+   },
+   "errors": [],
+   "fonts": {
+    "OT1/cmr/m/n/10": {
+     "at_sp": null,
+     "tfm": "cmr10"
+    }
+   },
+   "id": "sym-ot1-cm-textunderscore",
+   "input": "\\textunderscore",
+   "kind": "symbol",
+   "linewidth_sp": 22609920,
+   "size": "10pt",
+   "symbol": {
+    "char_input": "\\symbol{95}",
+    "code_point": 95,
+    "command": "\\textunderscore",
+    "name": "textunderscore"
+   },
+   "text_font": {
+    "at_sp": null,
+    "tfm": "cmr10"
+   },
+   "textwidth_sp": 22609920,
+   "variant": "ot1-cm"
+  },
+  {
+   "box": {
+    "children": [
+     {
+      "code": 106,
+      "font_id": "OMS/cmsy/m/n/10",
+      "kind": "char"
+     }
+    ],
+    "depth_sp": 163840,
+    "glue_set": false,
+    "height_sp": 491520,
+    "kind": "hbox",
+    "shift_sp": 0,
+    "width_sp": 182045
+   },
+   "char_box": {
+    "children": [
+     {
+      "code": 124,
+      "font_id": "OT1/cmr/m/n/10",
+      "kind": "char"
+     }
+    ],
+    "depth_sp": 0,
+    "glue_set": false,
+    "height_sp": 282168,
+    "kind": "hbox",
+    "shift_sp": 0,
+    "width_sp": 655361
+   },
+   "errors": [],
+   "fonts": {
+    "OMS/cmsy/m/n/10": {
+     "at_sp": null,
+     "tfm": "cmsy10"
+    },
+    "OT1/cmr/m/n/10": {
+     "at_sp": null,
+     "tfm": "cmr10"
+    }
+   },
+   "id": "sym-ot1-cm-textbar",
+   "input": "\\textbar",
+   "kind": "symbol",
+   "linewidth_sp": 22609920,
+   "size": "10pt",
+   "symbol": {
+    "char_input": "\\symbol{124}",
+    "code_point": 124,
+    "command": "\\textbar",
+    "name": "textbar"
+   },
+   "text_font": {
+    "at_sp": null,
+    "tfm": "cmr10"
+   },
+   "textwidth_sp": 22609920,
+   "variant": "ot1-cm"
+  },
+  {
+   "box": {
+    "children": [
+     {
+      "code": 60,
+      "font_id": "OML/cmm/m/it/10",
+      "kind": "char"
+     }
+    ],
+    "depth_sp": 25623,
+    "glue_set": false,
+    "height_sp": 353303,
+    "kind": "hbox",
+    "shift_sp": 0,
+    "width_sp": 509726
+   },
+   "char_box": {
+    "children": [
+     {
+      "code": 60,
+      "font_id": "OT1/cmr/m/n/10",
+      "kind": "char"
+     }
+    ],
+    "depth_sp": 127431,
+    "glue_set": false,
+    "height_sp": 327680,
+    "kind": "hbox",
+    "shift_sp": 0,
+    "width_sp": 182045
+   },
+   "errors": [],
+   "fonts": {
+    "OML/cmm/m/it/10": {
+     "at_sp": null,
+     "tfm": "cmmi10"
+    },
+    "OT1/cmr/m/n/10": {
+     "at_sp": null,
+     "tfm": "cmr10"
+    }
+   },
+   "id": "sym-ot1-cm-textless",
+   "input": "\\textless",
+   "kind": "symbol",
+   "linewidth_sp": 22609920,
+   "size": "10pt",
+   "symbol": {
+    "char_input": "\\symbol{60}",
+    "code_point": 60,
+    "command": "\\textless",
+    "name": "textless"
+   },
+   "text_font": {
+    "at_sp": null,
+    "tfm": "cmr10"
+   },
+   "textwidth_sp": 22609920,
+   "variant": "ot1-cm"
+  },
+  {
+   "box": {
+    "children": [
+     {
+      "code": 62,
+      "font_id": "OML/cmm/m/it/10",
+      "kind": "char"
+     }
+    ],
+    "depth_sp": 25623,
+    "glue_set": false,
+    "height_sp": 353303,
+    "kind": "hbox",
+    "shift_sp": 0,
+    "width_sp": 509726
+   },
+   "char_box": {
+    "children": [
+     {
+      "code": 62,
+      "font_id": "OT1/cmr/m/n/10",
+      "kind": "char"
+     }
+    ],
+    "depth_sp": 127431,
+    "glue_set": false,
+    "height_sp": 327680,
+    "kind": "hbox",
+    "shift_sp": 0,
+    "width_sp": 309476
+   },
+   "errors": [],
+   "fonts": {
+    "OML/cmm/m/it/10": {
+     "at_sp": null,
+     "tfm": "cmmi10"
+    },
+    "OT1/cmr/m/n/10": {
+     "at_sp": null,
+     "tfm": "cmr10"
+    }
+   },
+   "id": "sym-ot1-cm-textgreater",
+   "input": "\\textgreater",
+   "kind": "symbol",
+   "linewidth_sp": 22609920,
+   "size": "10pt",
+   "symbol": {
+    "char_input": "\\symbol{62}",
+    "code_point": 62,
+    "command": "\\textgreater",
+    "name": "textgreater"
+   },
+   "text_font": {
+    "at_sp": null,
+    "tfm": "cmr10"
+   },
+   "textwidth_sp": 22609920,
+   "variant": "ot1-cm"
+  },
+  {
+   "box": {
+    "children": [
+     {
+      "code": 102,
+      "font_id": "OMS/cmsy/m/n/10",
+      "kind": "char"
+     }
+    ],
+    "depth_sp": 163840,
+    "glue_set": false,
+    "height_sp": 491520,
+    "kind": "hbox",
+    "shift_sp": 0,
+    "width_sp": 327681
+   },
+   "char_box": {
+    "children": [
+     {
+      "code": 123,
+      "font_id": "OT1/cmr/m/n/10",
+      "kind": "char"
+     }
+    ],
+    "depth_sp": 0,
+    "glue_set": false,
+    "height_sp": 282168,
+    "kind": "hbox",
+    "shift_sp": 0,
+    "width_sp": 327681
+   },
+   "errors": [],
+   "fonts": {
+    "OMS/cmsy/m/n/10": {
+     "at_sp": null,
+     "tfm": "cmsy10"
+    },
+    "OT1/cmr/m/n/10": {
+     "at_sp": null,
+     "tfm": "cmr10"
+    }
+   },
+   "id": "sym-ot1-cm-textbraceleft",
+   "input": "\\textbraceleft",
+   "kind": "symbol",
+   "linewidth_sp": 22609920,
+   "size": "10pt",
+   "symbol": {
+    "char_input": "\\symbol{123}",
+    "code_point": 123,
+    "command": "\\textbraceleft",
+    "name": "textbraceleft"
+   },
+   "text_font": {
+    "at_sp": null,
+    "tfm": "cmr10"
+   },
+   "textwidth_sp": 22609920,
+   "variant": "ot1-cm"
+  },
+  {
+   "box": {
+    "children": [
+     {
+      "code": 103,
+      "font_id": "OMS/cmsy/m/n/10",
+      "kind": "char"
+     }
+    ],
+    "depth_sp": 163840,
+    "glue_set": false,
+    "height_sp": 491520,
+    "kind": "hbox",
+    "shift_sp": 0,
+    "width_sp": 327681
+   },
+   "char_box": {
+    "children": [
+     {
+      "code": 125,
+      "font_id": "OT1/cmr/m/n/10",
+      "kind": "char"
+     }
+    ],
+    "depth_sp": 0,
+    "glue_set": false,
+    "height_sp": 455111,
+    "kind": "hbox",
+    "shift_sp": 0,
+    "width_sp": 327681
+   },
+   "errors": [],
+   "fonts": {
+    "OMS/cmsy/m/n/10": {
+     "at_sp": null,
+     "tfm": "cmsy10"
+    },
+    "OT1/cmr/m/n/10": {
+     "at_sp": null,
+     "tfm": "cmr10"
+    }
+   },
+   "id": "sym-ot1-cm-textbraceright",
+   "input": "\\textbraceright",
+   "kind": "symbol",
+   "linewidth_sp": 22609920,
+   "size": "10pt",
+   "symbol": {
+    "char_input": "\\symbol{125}",
+    "code_point": 125,
+    "command": "\\textbraceright",
+    "name": "textbraceright"
+   },
+   "text_font": {
+    "at_sp": null,
+    "tfm": "cmr10"
+   },
+   "textwidth_sp": 22609920,
+   "variant": "ot1-cm"
+  }
+ ],
+ "generator": "crates/compiler/tests/oracle/text_builtins/generate.py",
+ "tex": "pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026)"
+}

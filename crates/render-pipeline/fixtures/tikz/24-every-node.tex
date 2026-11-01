@@ -1,0 +1,11 @@
+\documentclass[tikz,border=5pt]{standalone}
+\usepackage[T1]{fontenc}
+\usepackage{lmodern}
+\tikzstyle{hl}=[red, very thick]
+\begin{document}
+\begin{tikzpicture}[every node/.style={draw, circle}]
+\node at (0,0) {1};
+\node at (1.5,0) {2};
+\draw[hl] (0,-1) -- (1.5,-1);
+\end{tikzpicture}
+\end{document}

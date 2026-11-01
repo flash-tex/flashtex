@@ -1,0 +1,63 @@
+{
+ "fixture": "01-short-line-bracket.tex",
+ "reference_engine": "pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026)",
+ "invocation": "pdflatex -interaction=batchmode, two passes, SOURCE_DATE_EPOCH=0 FORCE_SOURCE_DATE=1",
+ "unit": "bp, y from page top",
+ "pages": [
+  [
+   {
+    "text": "Short",
+    "x": 148.712,
+    "y_top": 134.765
+   },
+   {
+    "text": "line:",
+    "x": 175.8581,
+    "y_top": 134.765
+   },
+   {
+    "text": "a",
+    "x": 285.967,
+    "y_top": 146.72
+   },
+   {
+    "text": "+",
+    "x": 293.4449,
+    "y_top": 146.72
+   },
+   {
+    "text": "b",
+    "x": 303.4055,
+    "y_top": 146.72
+   },
+   {
+    "text": "=",
+    "x": 310.4511,
+    "y_top": 146.72
+   },
+   {
+    "text": "c",
+    "x": 320.9696,
+    "y_top": 146.72
+   },
+   {
+    "text": "after",
+    "x": 133.768,
+    "y_top": 164.653
+   },
+   {
+    "text": "the",
+    "x": 157.3166,
+    "y_top": 164.653
+   },
+   {
+    "text": "display.",
+    "x": 174.4722,
+    "y_top": 164.653
+   }
+  ]
+ ],
+ "extension_columns": [
+  []
+ ]
+}

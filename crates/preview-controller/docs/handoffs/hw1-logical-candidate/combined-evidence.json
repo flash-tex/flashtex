@@ -1,0 +1,27 @@
+{
+  "base": "1c02a2bc50874770d15a4decbaa5c3a376ee3ae9",
+  "binary_path": "/home/natkarri/flashtex-captures/hw1-logical-1c02a2bc/combined-compiler-preserved",
+  "binary_sha256": "a10dc5d17848b24f3c548c1998d331861795c26bf03c6f42a18706b83b46b135",
+  "source_sha256": "f725e23897df3c9645bde1ceaab0876d78ea6ef4a44fd0e80d60a5161fac9d9e",
+  "tests_passed": 97,
+  "diagnostics": 77,
+  "tested_source_hashes": {
+    "crates/compiler/src/parser.rs": "54df39c92470ad78980962b39218a09d3db629ac0c3761c4d0fc52be01e65ae4",
+    "crates/compiler/src/layout.rs": "2677255ed1d98f72682dd07554c59461366bcb9fe00f9d50d1e0f7fc543f1421",
+    "crates/compiler/src/math.rs": "345fdfa1188f46e84be7e340970cb811c24c7bb4ae8445a58588eaa5a3a0e87b",
+    "crates/compiler/src/export.rs": "1bcff1801c37ed3dcebd99a939486e5afe7551133e86981c834463fe3282232f",
+    "crates/compiler/tests/starred_sections.rs": "bb7afbd5923a5a8c580842460c9bc080d3a469c288b3a148b6ba75f53b94017b",
+    "crates/compiler/tests/membership.rs": "7f5b656956e6a4b81eed2599081d5ae38aac8fc938fc503bd9cb3b750bdc9e7e",
+    "crates/compiler/tests/quantifiers.rs": "b690ad4cac506670378b0ba8f2fb01826c2d2733ab87667043bd02c7c0106fe5",
+    "crates/compiler/tests/logical_symbols.rs": "3b6172dd88ca242912fac9a75fdeb8b595e87ae19e256eda4f7e1f1fb5411871"
+  },
+  "files": {
+    "combined-request.jsonl": "c447639abc4deb888756625062554d3728988e53bc8a951d854afe71d5002418",
+    "combined-response.jsonl": "1e2f560c4a2262b6527f1ac820c49e9479464feb9d80665e7216127142d24be7",
+    "combined-stderr.txt": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "combined-candidate.patch": "a4829c5b7d6cf94932ee18c5586989f2f8314b5c237a4f892553d6c0a1f317f1",
+    "combined-tests.log": "7def496f7543719c526ee78e8979fe5a2342351efdb3fc3c2948dec18b16c425",
+    "combined-clippy.log": "49cb9b275591c8f807e0474fcfecfe223efa14587b5ef7edf88fe3c6d290bac9",
+    "combined-apply-check.json": "3aa2de4ad96bf2cf8d8ed81e7079c0739f76c90d877553bc58baffc13d58a8e4"
+  }
+}

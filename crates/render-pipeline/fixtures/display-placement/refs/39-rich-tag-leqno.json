@@ -1,0 +1,93 @@
+{
+ "fixture": "39-rich-tag-leqno.tex",
+ "reference_engine": "pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026)",
+ "invocation": "pdflatex -interaction=batchmode, two passes, SOURCE_DATE_EPOCH=0 FORCE_SOURCE_DATE=1",
+ "unit": "bp, y from page top",
+ "pages": [
+  [
+   {
+    "text": "Before.",
+    "x": 148.712,
+    "y_top": 134.765
+   },
+   {
+    "text": "2",
+    "x": 154.96,
+    "y_top": 153.067
+   },
+   {
+    "text": "(hi",
+    "x": 133.768,
+    "y_top": 156.682
+   },
+   {
+    "text": "x",
+    "x": 149.2628,
+    "y_top": 156.682
+   },
+   {
+    "text": ")",
+    "x": 159.429,
+    "y_top": 156.682
+   },
+   {
+    "text": "a",
+    "x": 285.963,
+    "y_top": 156.682
+   },
+   {
+    "text": "+",
+    "x": 293.4509,
+    "y_top": 156.682
+   },
+   {
+    "text": "b",
+    "x": 303.4115,
+    "y_top": 156.682
+   },
+   {
+    "text": "=",
+    "x": 310.457,
+    "y_top": 156.682
+   },
+   {
+    "text": "c",
+    "x": 320.9656,
+    "y_top": 156.682
+   },
+   {
+    "text": "middle",
+    "x": 133.768,
+    "y_top": 178.6
+   },
+   {
+    "text": "\u2217",
+    "x": 133.768,
+    "y_top": 200.518
+   },
+   {
+    "text": "d",
+    "x": 294.0662,
+    "y_top": 200.518
+   },
+   {
+    "text": "=",
+    "x": 302.0214,
+    "y_top": 200.518
+   },
+   {
+    "text": "e",
+    "x": 312.5399,
+    "y_top": 200.518
+   },
+   {
+    "text": "end.",
+    "x": 133.768,
+    "y_top": 222.436
+   }
+  ]
+ ],
+ "extension_columns": [
+  []
+ ]
+}

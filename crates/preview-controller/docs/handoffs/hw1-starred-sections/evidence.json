@@ -1,0 +1,24 @@
+{
+  "base": "467538c77e84e4c3febc5308d49b53e1ca7f3d65",
+  "focused_pass": 12,
+  "full_suite": "41 library + 1 scaling pass; initial integration setup failure resolved; all49 integration pass,3 ignored",
+  "files": {
+    "candidate.patch": "32d96a63b0d84f902c80df6eddc2e942bee9dcfb94570f2d4bfb665068f3481b",
+    "README.md": "8ac931434713708c7c1851803c8138bc4c3e7782c203442c316c867cb2e7dd0c",
+    "red.log": "c589aadfccb13e874c23e0a0c0fe9f184936b8f1d2b8b17eb7c6aea0459b1be4",
+    "focused.log": "a84aeced90a61fcdf5e0a1009015cd3fd007c155c833398d9969ffa17a56879c",
+    "green.log": "78f2149f8604d434847902f80a4f185e1a07aab5fa956a17466b0063a3881f9b",
+    "integration.log": "6ac2f370a04f7f5831b64a059bff9413731f46a73bdeea416d5c58fcee7e1bb7",
+    "clippy.log": "ac6a8a94d20d1c4c0d0e4e4f87e267d18ef3a55a0d7a2b783bc3b18bf89516c1",
+    "heading-diagnostics.log": "cf095a9fac3beb8b9be38378924e7b1d1912bd25f2bf386a0dc993791dcf6166",
+    "request.jsonl.gz": "a008e1fe4d84abb229d0a21147bd97dc62d80d54a08890466514d16e46778320",
+    "base.jsonl.gz": "96f965da03adebbdc9db270355bcf6b18fc822d9276d22c5df65ab41290c5ecd",
+    "candidate.jsonl.gz": "85d2086777b2aaeb4c53aaebd10b9b86bf030c9c702d24224dcdfa59fb715c04",
+    "corrected.jsonl.gz": "6227774a2925edfafbd86ed1219982415ab9800f7cde51d0eb7a74dc7d5f2112",
+    "hw1-comparison.json": "1df4928c44755f4bfa876eddb5d401338a1d290ca4a0702b238953e41401dff1",
+    "corrected-integration.log": "480ac11e26188a5cfddabb837cf56c5d832a1eeaf27a3e2121878baa24f910f4",
+    "corrected-clippy.log": "8ed3a218e8100cc328ebb5185ec770471c96490fa1293862206033b6584a78ea"
+  },
+  "clippy": "all-targets -D warnings pass",
+  "latest_correction": "GH38:41 library +50 integration pass,3 existing ignored; strict Clippy pass; reverse apply pass"
+}

@@ -1,0 +1,36 @@
+{
+ "pages": 3,
+ "captions": [
+  {
+   "label": "Figure 1.1",
+   "page": 1,
+   "x": 235.639,
+   "baseline": 354.022
+  },
+  {
+   "label": "Table 2.1",
+   "page": 2,
+   "x": 231.682,
+   "baseline": 312.93
+  },
+  {
+   "label": "Figure 2.1",
+   "page": 2,
+   "x": 235.362,
+   "baseline": 410.2
+  },
+  {
+   "label": "Figure 2.2",
+   "page": 3,
+   "x": 220.861,
+   "baseline": 177.683
+  },
+  {
+   "label": "Table 2.2",
+   "page": 3,
+   "x": 218.453,
+   "baseline": 220.356
+  }
+ ],
+ "refs": "Refs 1.1, 2.1, 2.1, 2.2 and 2.2."
+}

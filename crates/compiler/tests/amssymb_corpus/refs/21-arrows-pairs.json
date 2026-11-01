@@ -1,0 +1,91 @@
+{
+ "fixture": "21-arrows-pairs.tex",
+ "reference_engine": "pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026)",
+ "invocation": "pdflatex -interaction=batchmode, two passes, SOURCE_DATE_EPOCH=0 FORCE_SOURCE_DATE=1",
+ "unit": "bp, y from page top",
+ "pages": [
+  [
+   {
+    "text": "Pairs",
+    "x": 72.0,
+    "y_top": 83.955
+   },
+   {
+    "text": "a",
+    "x": 101.8139,
+    "y_top": 83.955
+   },
+   {
+    "text": "⇇",
+    "x": 111.2824,
+    "y_top": 83.955
+   },
+   {
+    "text": "b",
+    "x": 126.5611,
+    "y_top": 83.955
+   },
+   {
+    "text": "⇉",
+    "x": 134.8497,
+    "y_top": 83.955
+   },
+   {
+    "text": "c",
+    "x": 150.1284,
+    "y_top": 83.955
+   },
+   {
+    "text": "⇆",
+    "x": 158.4899,
+    "y_top": 83.955
+   },
+   {
+    "text": "d",
+    "x": 173.7686,
+    "y_top": 83.955
+   },
+   {
+    "text": "⇄",
+    "x": 183.175,
+    "y_top": 83.955
+   },
+   {
+    "text": "e",
+    "x": 198.4418,
+    "y_top": 83.955
+   },
+   {
+    "text": "⇚",
+    "x": 207.1906,
+    "y_top": 83.955
+   },
+   {
+    "text": "f",
+    "x": 222.4693,
+    "y_top": 83.955
+   },
+   {
+    "text": "⇛",
+    "x": 232.8297,
+    "y_top": 83.955
+   },
+   {
+    "text": "g",
+    "x": 248.1085,
+    "y_top": 83.955
+   },
+   {
+    "text": "end.",
+    "x": 258.042,
+    "y_top": 83.955
+   }
+  ]
+ ],
+ "extension_columns": [
+  []
+ ],
+ "brace_extents": [
+  []
+ ]
+}

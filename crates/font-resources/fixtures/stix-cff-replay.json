@@ -1,0 +1,31 @@
+{
+  "schema_version": 1,
+  "kind": "measured_unhinted_geometry_and_cache_replay_not_raster_oracle",
+  "platform": "Linux x86_64",
+  "build_profile": "release",
+  "command": "cargo test --offline --release --manifest-path crates/font-resources/Cargo.toml --test cff_regression -- --ignored --nocapture",
+  "fixture_manifest_sha256": "e7d79844b53d57886301412cf017156992b96ad3c4ef6320b46355c5b9bd370b",
+  "implementation_source_sha256": {
+    "src/cff/cache.rs": "ed66146dfb406b02d99e7226bb09cc2d57bcd42e54d9f44f56b8a901af79dbcd",
+    "src/cff/matrix.rs": "bf7816033d7f3c1752465a1fb2decddc24766b1eb4d66cf18584c1f9c63b18e4",
+    "src/cff/mod.rs": "94193cfef8998c85d81a94867e529c404a7d0b207449babbfd0c0c4190d335f1",
+    "src/cff/type2.rs": "6625eb7ceaba4998a376d366afa7a95febf72176fc5ef01e4cb8cf8dfa866a16",
+    "tests/cff_regression.rs": "a3d7c994890745d2c261ef670ae6c8b8bf07c9b989efac2e4c403da2f1c9cd3e"
+  },
+  "glyphs": 2221,
+  "commands": 55206,
+  "geometry_sha256": "208426d17e11ddf2ffd5c074563d8b3e45729f3558f31ac8649fbf4df195fd2f",
+  "accepted": 2221,
+  "unsupported": 0,
+  "invalid": 0,
+  "direct_decode_ms": 103.106338,
+  "cache_cold_ms": 108.646525,
+  "full_warm_replay_ms": 0.250717,
+  "full_replay_hits": 2221,
+  "retained_cache_bytes": 20641359,
+  "cache_max_bytes": 33554432,
+  "cache_max_entries": 4096,
+  "typing_visible_latency": "unmeasured",
+  "hinted_raster_parity": "unverified",
+  "visual_oracle_parity": "unverified"
+}

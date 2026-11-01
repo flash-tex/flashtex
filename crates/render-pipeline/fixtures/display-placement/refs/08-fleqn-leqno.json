@@ -1,0 +1,73 @@
+{
+ "fixture": "08-fleqn-leqno.tex",
+ "reference_engine": "pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026)",
+ "invocation": "pdflatex -interaction=batchmode, two passes, SOURCE_DATE_EPOCH=0 FORCE_SOURCE_DATE=1",
+ "unit": "bp, y from page top",
+ "pages": [
+  [
+   {
+    "text": "Short",
+    "x": 148.712,
+    "y_top": 134.765
+   },
+   {
+    "text": "line:",
+    "x": 175.8581,
+    "y_top": 134.765
+   },
+   {
+    "text": "2",
+    "x": 164.369,
+    "y_top": 152.569
+   },
+   {
+    "text": "2",
+    "x": 186.257,
+    "y_top": 152.569
+   },
+   {
+    "text": "2",
+    "x": 209.081,
+    "y_top": 152.569
+   },
+   {
+    "text": "(1)",
+    "x": 133.768,
+    "y_top": 156.682
+   },
+   {
+    "text": "x",
+    "x": 158.6725,
+    "y_top": 156.682
+   },
+   {
+    "text": "+",
+    "x": 171.052,
+    "y_top": 156.682
+   },
+   {
+    "text": "y",
+    "x": 181.0126,
+    "y_top": 156.682
+   },
+   {
+    "text": "=",
+    "x": 193.493,
+    "y_top": 156.682
+   },
+   {
+    "text": "z",
+    "x": 204.0115,
+    "y_top": 156.682
+   },
+   {
+    "text": "after.",
+    "x": 133.768,
+    "y_top": 178.6
+   }
+  ]
+ ],
+ "extension_columns": [
+  []
+ ]
+}

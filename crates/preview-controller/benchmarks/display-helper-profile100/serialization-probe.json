@@ -1,0 +1,68 @@
+{
+  "source_base": "35dc8648",
+  "bytes": 1150821,
+  "buffer_capacity": 8192,
+  "all_bytes_equal": true,
+  "exact_limit_and_overflow_checked": true,
+  "alternating_order": true,
+  "observations": [
+    {
+      "pair": 0,
+      "direct_ms": 4.032786,
+      "buffered_ms": 1.941621
+    },
+    {
+      "pair": 1,
+      "direct_ms": 3.952714,
+      "buffered_ms": 1.9132
+    },
+    {
+      "pair": 2,
+      "direct_ms": 4.177652,
+      "buffered_ms": 2.496476
+    },
+    {
+      "pair": 3,
+      "direct_ms": 3.997767,
+      "buffered_ms": 2.03869
+    },
+    {
+      "pair": 4,
+      "direct_ms": 4.053981,
+      "buffered_ms": 1.91377
+    },
+    {
+      "pair": 5,
+      "direct_ms": 4.063186,
+      "buffered_ms": 1.830647
+    },
+    {
+      "pair": 6,
+      "direct_ms": 5.50655,
+      "buffered_ms": 2.22344
+    },
+    {
+      "pair": 7,
+      "direct_ms": 4.422808,
+      "buffered_ms": 2.086527
+    },
+    {
+      "pair": 8,
+      "direct_ms": 5.495325,
+      "buffered_ms": 2.853208
+    },
+    {
+      "pair": 9,
+      "direct_ms": 4.492826,
+      "buffered_ms": 2.494248
+    }
+  ],
+  "input": "step-2.json.gz events entry whose payload.kind is display_candidate, compact Python json.dumps separators",
+  "sha256": {
+    "/tmp/flashtex-helper-profile100-candidate.json": "57a63b23b2d255586ce2196fc38fe7715dc1d612c957f737ca0aaa3736ae2b0e",
+    "crates/preview-controller/examples/output_serialization_probe.rs": "9f666afc63a3a725b1555d262bfd194d72ea1a26883eb94bbb87f27612645ec4",
+    "crates/preview-controller/src/output_buffer.rs": "e5d24b67573af86f5c15b8782702533489ff3d8dac97716a5b97a612c2339a1c"
+  },
+  "scope": "same-process serialization only, not native or end-to-end latency",
+  "probe_note": "Probe source formatting normalized after execution; behavior unchanged."
+}

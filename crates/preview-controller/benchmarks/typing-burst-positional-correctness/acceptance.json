@@ -1,0 +1,19 @@
+{
+  "process": 77486,
+  "exit_code": 0,
+  "harness_source": "e2072fe3",
+  "purpose": "one corrected correctness gate, not latency comparison",
+  "correctness": "passed20edits, current21, historical bindings, permanent receipts/conflict, exact durable reopen and clean final compile",
+  "producer_processes_absent": true,
+  "trace_review": "refused_incomplete_writer_trace",
+  "trace_error": "received frame lacks complete writer trace",
+  "diagnostic_status": {
+    "captured": true,
+    "truncated": false,
+    "partial_tail": true,
+    "non_json": false,
+    "scope": "live positional snapshot; later stderr may be absent"
+  },
+  "rerun": false,
+  "qualification": "Current acceptance passes; original58242 and68918 failures remain archived and their causes unproven. Partial diagnostic snapshot cannot establish complete writer/receiver attribution or native performance."
+}

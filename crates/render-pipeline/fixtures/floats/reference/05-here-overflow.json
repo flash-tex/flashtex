@@ -1,0 +1,36 @@
+{
+ "fixture": "05-here-overflow.tex",
+ "engine": "pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026)",
+ "pages": 2,
+ "images": [
+  {
+   "page": 2,
+   "x": 193.5,
+   "top": 72.0,
+   "width": 224.999,
+   "height": 150.0
+  }
+ ],
+ "captions": [
+  {
+   "page": 2,
+   "label": "Figure 1",
+   "x": 238.854,
+   "baseline": 246.408
+  }
+ ],
+ "paragraphs": [
+  {
+   "page": 1,
+   "x": 72.0,
+   "baseline": 83.955,
+   "source_byte": 196
+  },
+  {
+   "page": 1,
+   "x": 72.0,
+   "baseline": 618.451,
+   "source_byte": 3635
+  }
+ ]
+}

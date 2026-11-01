@@ -1,0 +1,12 @@
+{
+  "base_helper_source": "2093cd9",
+  "change": "MAX_COMPILER_FRAME 12MiB to15MiB with default8MiB unchanged and full16MiB envelope guard",
+  "explicit_compiler_frame_bytes": 15728640,
+  "driver_sha256": "57ab3c5e9ab7fdafa9c50a76d0817619f4ef340aaf5268ad012ba582ff1e4aec",
+  "order": [
+    "500000-fixed-on",
+    "500000-fixed-off"
+  ],
+  "native_paint_measured": false,
+  "performance_variance_explained": false
+}

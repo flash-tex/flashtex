@@ -1,0 +1,17 @@
+{
+  "base": "1c02a2bc50874770d15a4decbaa5c3a376ee3ae9",
+  "files": {
+    "candidate.patch": "a329e8fc631f60be52c918ad875381721d1110164cbebd67a2fa96756f4fd2ca",
+    "tests.log": "0dfa7229a03e33921b7126b90fce585ad4046886965ade2c5928fe35f3de46ca",
+    "hw1.jsonl": "d01fdc2d11c738c825129e10677edfedd6075d504d1f4f1174752dd0859dc01d",
+    "README.md": "358e4b3528ba69876109b935190127f016b868db9fb915499760de25cf8f3d61",
+    "combined-tests.log": "64ef27c56230dd3d8a2336769f1b428bb6e34bfa59cead5670f317e835fa39e0",
+    "combined-clippy.log": "da0e8f455273f77ba7ed5518e4d21090df4151f6d7a31d1ca59ad45aeb231fd3",
+    "hw1-combined.jsonl": "7370d9fdecedd1025c19ab55bde071c62ce4e2974796dc81cc50b45b9f59a03e",
+    "combined-evidence.json": "2eca9f3a608e40938c3a9625eba7160f89cdc2dfa5ea177a3cd1731f6d8c73ee",
+    "membership-review-tests.log": "f68ce17eda4cd7d32a66a239d8283a50465487bfcafe723ef72071991b4b0560"
+  },
+  "combined_tests_passed": 93,
+  "standalone_input_archived": false,
+  "standalone_binary_sha256": null
+}

@@ -1,0 +1,187 @@
+{
+  "request": {
+    "protocol_version": 1,
+    "type": "compile",
+    "id": "preview-2",
+    "payload": {
+      "project_id": "p",
+      "revision": 2,
+      "entry_path": "main.tex",
+      "documents": [
+        {
+          "path": "main.tex",
+          "text": "\\documentclass[12pt]{article}\n\\begin{document}\nOffice AV fi.\n\\end{document}\n"
+        }
+      ],
+      "layout_capabilities": [
+        "display-list-v2"
+      ]
+    }
+  },
+  "events": [
+    {
+      "id": "enable",
+      "payload": {
+        "capability": "display-candidates-v1",
+        "enabled": true,
+        "preview_error": null
+      },
+      "protocol_version": 1,
+      "session_id": "benchmark",
+      "type": "result"
+    },
+    {
+      "id": null,
+      "payload": {
+        "compile_revision": 2,
+        "controller_total_ms": 2.090806,
+        "kind": "preview",
+        "missing_layout_capabilities": [
+          "display-list-v2"
+        ],
+        "request_id": "preview-2",
+        "result": {
+          "id": "preview-2",
+          "payload": {
+            "diagnostics": [
+              {
+                "code": "display_list_declined",
+                "message": "display-list-v2 declined: the display_list line would be 4436 bytes for 1 pages, over the 1500-byte line limit",
+                "recovery": null,
+                "severity": "warning",
+                "source": null
+              }
+            ],
+            "layout_capabilities": [],
+            "pages": [
+              {
+                "height_pt": 792,
+                "items": [
+                  {
+                    "baseline_y_pt": 137.753,
+                    "font_size_pt": 11.955,
+                    "kind": "text",
+                    "source": {
+                      "end_byte": 53,
+                      "path": "main.tex",
+                      "start_byte": 47
+                    },
+                    "text": "Office",
+                    "x_pt": 128.413
+                  },
+                  {
+                    "baseline_y_pt": 137.753,
+                    "font_size_pt": 11.955,
+                    "kind": "text",
+                    "source": {
+                      "end_byte": 56,
+                      "path": "main.tex",
+                      "start_byte": 54
+                    },
+                    "text": "AV",
+                    "x_pt": 161.581
+                  },
+                  {
+                    "baseline_y_pt": 137.753,
+                    "font_size_pt": 11.955,
+                    "kind": "text",
+                    "source": {
+                      "end_byte": 60,
+                      "path": "main.tex",
+                      "start_byte": 57
+                    },
+                    "text": "fi.",
+                    "x_pt": 181.732
+                  }
+                ],
+                "number": 1,
+                "width_pt": 612
+              }
+            ],
+            "pdf_path": null,
+            "project_id": "p",
+            "revision": 2,
+            "status": "recovered"
+          },
+          "protocol_version": 1,
+          "type": "compile_result"
+        },
+        "runtime_total_ms": 2.075679,
+        "source_versions": {
+          "main.tex": 1
+        }
+      },
+      "protocol_version": 1,
+      "session_id": "benchmark",
+      "type": "update"
+    }
+  ],
+  "direct": [
+    {
+      "id": "preview-2",
+      "payload": {
+        "diagnostics": [
+          {
+            "code": "display_list_declined",
+            "message": "display-list-v2 declined: the display_list line would be 4436 bytes for 1 pages, over the 1500-byte line limit",
+            "recovery": null,
+            "severity": "warning",
+            "source": null
+          }
+        ],
+        "layout_capabilities": [],
+        "pages": [
+          {
+            "height_pt": 792,
+            "items": [
+              {
+                "baseline_y_pt": 137.753,
+                "font_size_pt": 11.955,
+                "kind": "text",
+                "source": {
+                  "end_byte": 53,
+                  "path": "main.tex",
+                  "start_byte": 47
+                },
+                "text": "Office",
+                "x_pt": 128.413
+              },
+              {
+                "baseline_y_pt": 137.753,
+                "font_size_pt": 11.955,
+                "kind": "text",
+                "source": {
+                  "end_byte": 56,
+                  "path": "main.tex",
+                  "start_byte": 54
+                },
+                "text": "AV",
+                "x_pt": 161.581
+              },
+              {
+                "baseline_y_pt": 137.753,
+                "font_size_pt": 11.955,
+                "kind": "text",
+                "source": {
+                  "end_byte": 60,
+                  "path": "main.tex",
+                  "start_byte": 57
+                },
+                "text": "fi.",
+                "x_pt": 181.732
+              }
+            ],
+            "number": 1,
+            "width_pt": 612
+          }
+        ],
+        "pdf_path": null,
+        "project_id": "p",
+        "revision": 2,
+        "status": "recovered"
+      },
+      "protocol_version": 1,
+      "type": "compile_result"
+    }
+  ]
+}

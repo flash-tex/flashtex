@@ -1,0 +1,113 @@
+{
+ "fixture": "06-vrule-double.tex",
+ "reference_engine": "pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026)",
+ "invocation": "pdflatex -interaction=batchmode, two passes, SOURCE_DATE_EPOCH=0 FORCE_SOURCE_DATE=1",
+ "unit": "bp, y from page top; rules [x, top, width, height]",
+ "pages": [
+  [
+   {
+    "text": "Text",
+    "x": 72.0,
+    "y_top": 83.955
+   },
+   {
+    "text": "before",
+    "x": 99.3176,
+    "y_top": 83.955
+   },
+   {
+    "text": "the",
+    "x": 134.4301,
+    "y_top": 83.955
+   },
+   {
+    "text": "table.",
+    "x": 154.5865,
+    "y_top": 83.955
+   },
+   {
+    "text": "One",
+    "x": 79.97,
+    "y_top": 95.063
+   },
+   {
+    "text": "Two",
+    "x": 119.931,
+    "y_top": 95.063
+   },
+   {
+    "text": "three",
+    "x": 79.97,
+    "y_top": 109.509
+   },
+   {
+    "text": "four",
+    "x": 120.906,
+    "y_top": 109.509
+   },
+   {
+    "text": "Text",
+    "x": 72.0,
+    "y_top": 123.075
+   },
+   {
+    "text": "after",
+    "x": 99.3176,
+    "y_top": 123.075
+   },
+   {
+    "text": "the",
+    "x": 126.9533,
+    "y_top": 123.075
+   },
+   {
+    "text": "table.",
+    "x": 147.1097,
+    "y_top": 123.075
+   }
+  ]
+ ],
+ "extension_columns": [
+  []
+ ],
+ "rules": [
+  [
+   [
+    71.801,
+    84.951,
+    0.398,
+    28.892
+   ],
+   [
+    73.794,
+    84.951,
+    0.398,
+    28.892
+   ],
+   [
+    111.762,
+    84.951,
+    0.398,
+    28.892
+   ],
+   [
+    113.754,
+    84.951,
+    0.398,
+    28.892
+   ],
+   [
+    147.17,
+    84.951,
+    0.398,
+    28.892
+   ],
+   [
+    149.163,
+    84.951,
+    0.398,
+    28.892
+   ]
+  ]
+ ]
+}

@@ -1,0 +1,155 @@
+{
+  "schema_version": 1,
+  "scope": "Independent TeX node-list oracle pending; shared interpreter expectations are hypotheses, not measured TeX parity. Input intervals are shared API provenance and must be reviewed separately from TeX node output.",
+  "cases": [
+    {
+      "id": "both-kerns",
+      "tfm_hex": "0014000200410042000200010001000100040001000000001234567800a0000001000101010000000000000000080000000000000000000000000000fffa000080fa800080418000ff000002fffe0000",
+      "tfm_sha256": "3a4d84b297baf3e596af1d5f617584d98b7a43c3f731af30ebf9d8d248d9a1a1",
+      "input_codes": [
+        65
+      ],
+      "boundaries": {
+        "left": true,
+        "right": true
+      },
+      "expected_shared_actions": [
+        {
+          "kern_fixword": -131072
+        },
+        {
+          "glyph_code": 65,
+          "input_interval": [
+            0,
+            1
+          ]
+        },
+        {
+          "kern_fixword": -131072
+        }
+      ],
+      "oracle_status": "pending_not_run",
+      "origin": "original synthetic minimal TFM; not Latin Modern",
+      "design_size_fixword": 10485760,
+      "glyph_width_fixword": 524288
+    },
+    {
+      "id": "left-ligature",
+      "tfm_hex": "0012000200410042000200010001000100020001000000001234567800a000000100010001000000000000000008000000000000000000000000000080410042ff000000fffe0000",
+      "tfm_sha256": "ecde3c5a17af80ff0c3598ee4ba338c6056ec37cf3e5a0111036dabb2d5d331f",
+      "input_codes": [
+        65
+      ],
+      "boundaries": {
+        "left": true,
+        "right": true
+      },
+      "expected_shared_actions": [
+        {
+          "glyph_code": 66,
+          "input_interval": [
+            0,
+            1
+          ]
+        }
+      ],
+      "oracle_status": "pending_not_run",
+      "origin": "original synthetic minimal TFM; not Latin Modern",
+      "design_size_fixword": 10485760,
+      "glyph_width_fixword": 524288
+    },
+    {
+      "id": "right-ligature",
+      "tfm_hex": "0012000200410042000200010001000100020001000000001234567800a0000001000101010000000000000000080000000000000000000000000000fffa000080fa0042fffe0000",
+      "tfm_sha256": "17f7b642422871a1bb1c4921b464271dd43628990d18001aefdf04d8ff795ce6",
+      "input_codes": [
+        65
+      ],
+      "boundaries": {
+        "left": true,
+        "right": true
+      },
+      "expected_shared_actions": [
+        {
+          "glyph_code": 66,
+          "input_interval": [
+            0,
+            1
+          ]
+        }
+      ],
+      "oracle_status": "pending_not_run",
+      "origin": "original synthetic minimal TFM; not Latin Modern",
+      "design_size_fixword": 10485760,
+      "glyph_width_fixword": 524288
+    },
+    {
+      "id": "retained-right-ligature",
+      "tfm_hex": "0012000200410042000200010001000100020001000000001234567800a0000001000101010000000000000000080000000000000000000000000000fffa000080fa0642fffe0000",
+      "tfm_sha256": "5b811a5267fb7f48d878d4a5b9881c458f50fcd1b5bc0724c88fc398d58e3e85",
+      "input_codes": [
+        65
+      ],
+      "boundaries": {
+        "left": true,
+        "right": true
+      },
+      "expected_shared_actions": [
+        {
+          "glyph_code": 65,
+          "input_interval": [
+            0,
+            1
+          ]
+        },
+        {
+          "glyph_code": 66,
+          "input_interval": [
+            0,
+            1
+          ]
+        }
+      ],
+      "oracle_status": "pending_not_run",
+      "origin": "original synthetic minimal TFM; not Latin Modern",
+      "design_size_fixword": 10485760,
+      "glyph_width_fixword": 524288
+    },
+    {
+      "id": "real-boundary-code",
+      "tfm_hex": "0012000200410042000200010001000100020001000000001234567800a0000001000101010000000000000000080000000000000000000000000000ff42000080428000fffe0000",
+      "tfm_sha256": "4722a88f79ee61e8ccd8026db45170f2010d99f219b99334f4f700dcc10c4180",
+      "input_codes": [
+        65,
+        66
+      ],
+      "boundaries": {
+        "left": true,
+        "right": true
+      },
+      "expected_shared_actions": [
+        {
+          "glyph_code": 65,
+          "input_interval": [
+            0,
+            1
+          ]
+        },
+        {
+          "kern_fixword": -131072
+        },
+        {
+          "glyph_code": 66,
+          "input_interval": [
+            1,
+            2
+          ]
+        }
+      ],
+      "oracle_status": "pending_not_run",
+      "origin": "original synthetic minimal TFM; not Latin Modern",
+      "design_size_fixword": 10485760,
+      "glyph_width_fixword": 524288
+    }
+  ]
+}

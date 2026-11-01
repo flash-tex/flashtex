@@ -1,0 +1,35 @@
+{
+  "schema_version": 1,
+  "implementation_base_commit": "d26d412",
+  "source_sha256": {
+    "tests/rooted_lm_encoding.rs": "a9c89e6601fc70d8c3a4e2513d7b6b4732713ca339b8859e384960e5b9528da2",
+    "src/enc_file.rs": "ca4a1ae81ece2fc4b2e2287a08bac6c3c412b79069de6468779eb589910e79c8",
+    "src/registry/vf_project.rs": "57e508f68158efcfb755c45926a52316aef0d9a127dd424d9a79e11bbd900864",
+    "src/tfm.rs": "7bb327a55e9fc916c597d9f77df93c45eb71f039532ad10be163a839b9a18871",
+    "src/encoding.rs": "22dc49d5ca2ab701b7047931f9d6554cd7a4fa7a7ddaf71a42b4702238949824",
+    "src/cff/names.rs": "bb500096c1bd016da7f3882aafd9c537a0cd7730356672667a0178b20a80c50e",
+    "fixtures/rooted-lm-replay.json": "eadde679e950a4a2b922f27522bfe164351058c9cd3ed51203fca80ee90f6e76"
+  },
+  "verification_command": "FLASHTEX_LM_FONT=/path/to/exact/lmroman10-regular.otf cargo test --offline --manifest-path crates/font-resources/Cargo.toml --test rooted_lm_encoding -- --ignored",
+  "regeneration": "Set FLASHTEX_LM_REPLAY_OUTPUT to a temporary JSON path; compare against committed artifact before accepting changes. Never rewrite expected evidence automatically.",
+  "observations": {
+    "ligature_inputs": [
+      "fi",
+      "ff",
+      "fl",
+      "ffi",
+      "ffl"
+    ],
+    "negative_kern_fixwords": {
+      "AV": -116509,
+      "To": -87381,
+      "WA": -116509
+    },
+    "unavailable_slots": [
+      156,
+      188,
+      223
+    ]
+  },
+  "scope": "Real matching Latin Modern metric/encoding replay, not a visual reference or independent TeX-engine comparison."
+}

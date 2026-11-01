@@ -1,0 +1,6 @@
+    Checking flashtex-math-layout v0.1.0 (/home/natkarri/flashtex-captures/hw1-starred-467538c7/crates/math-layout)
+    Checking flashtex-pdf v0.1.0 (/home/natkarri/flashtex-captures/hw1-starred-467538c7/crates/pdf)
+    Checking flashtex-paragraph-layout v0.1.0 (/home/natkarri/flashtex-captures/hw1-starred-467538c7/crates/paragraph-layout)
+    Checking flashtex-font-engine v0.1.0 (/home/natkarri/flashtex-captures/hw1-starred-467538c7/crates/font-engine)
+    Checking flashtex-compiler v0.1.0 (/home/natkarri/flashtex-captures/hw1-starred-467538c7/crates/compiler)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 1.73s

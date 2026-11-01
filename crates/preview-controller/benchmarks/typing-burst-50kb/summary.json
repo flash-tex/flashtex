@@ -1,0 +1,24 @@
+{
+  "initial": {
+    "ack_count": 20,
+    "preview_count": 1,
+    "preview_revisions": [
+      21
+    ],
+    "post_last_send_preview_ms": 130.94471499789506,
+    "max_send_lateness_ms": 0.2241750044049695,
+    "max_ack_ms": 5.837842007167637,
+    "harness_sha256": "8919421f558c67f3cf2f446b50a381871784a10e9ff3eec425ecee37f5e2e7fc"
+  },
+  "checked": {
+    "ack_count": 20,
+    "preview_count": 1,
+    "preview_revisions": [
+      21
+    ],
+    "post_last_send_preview_ms": 98.03143399767578,
+    "max_send_lateness_ms": 0.22205800632946193,
+    "max_ack_ms": 3.097897002589889,
+    "harness_sha256": "a7edff97cab76b2cf49f098f2e4f11456395c028bc226b1fc79b5ef61cccd6dc"
+  }
+}

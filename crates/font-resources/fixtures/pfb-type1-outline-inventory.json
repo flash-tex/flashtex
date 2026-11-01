@@ -1,0 +1,62 @@
+{
+  "schema_version": 1,
+  "font_sha256": "84eb01245abb17c0530ca3909427256d73df8bed2d7243b9f2717ca08c010ac8",
+  "glyph_count": 822,
+  "outcomes": {
+    "Unsupported(1)": 353,
+    "Unsupported(258)": 4,
+    "Unsupported(268)": 455,
+    "Unsupported(3)": 4,
+    "accepted": 6
+  },
+  "opcodes": {
+    "1": "hstem",
+    "3": "vstem",
+    "258": "escaped2 hstem3",
+    "268": "escaped12 div"
+  },
+  "accepted": [
+    [
+      ".notdef",
+      0
+    ],
+    [
+      "cwm",
+      0
+    ],
+    [
+      "cwmascender",
+      0
+    ],
+    [
+      "cwmcapital",
+      0
+    ],
+    [
+      "fraction.alt",
+      10
+    ],
+    [
+      "nbspace",
+      0
+    ]
+  ],
+  "scope": "First unsupported opcode per glyph, not complete feature inventory. Exact raw character-space subset; no FontMatrix/PaintType/hint/raster/visual parity.",
+  "explicit_unhinted_exact_division": {
+    "outcomes": {
+      "UnrepresentableDivision": 455,
+      "Unsupported(272)": 196,
+      "accepted": 171
+    },
+    "accepted_retained_stems": 455,
+    "scope": "First failing operation; decimal/rational divisions outside dyadic Coordinate refused, callothersubr unsupported. No visual parity."
+  },
+  "rational_unhinted_exact_division": {
+    "outcomes": {
+      "Unsupported(272)": 502,
+      "accepted": 320
+    },
+    "exact_dyadic_pairs": 171,
+    "scope": "Raw exact rational geometry only; all remaining glyphs first refuse callothersubr. Context gate closed."
+  }
+}

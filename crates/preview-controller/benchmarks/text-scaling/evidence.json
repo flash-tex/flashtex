@@ -1,0 +1,14 @@
+{
+  "release_preserved_binary_path": "/home/natkarri/flashtex-captures/hw1-text-1c02a2bc/crates/text-release-compiler-preserved",
+  "release_binary_sha256": "d5321ee77ed36410b23688bd487dbe0c622794c0ca2e5b23501a386cd2e3f627",
+  "compiler_candidate": "f464c6d6 cumulative plus61bd63f7 comment delta",
+  "files": {
+    "debug-result.json": "59814ec0b30d61088335e687c085a90b10ce960c120f1d2144b8c259ae617728",
+    "replay.py": "b029779e7dae5d619b18219c06dde8a8f9231016d67bf21a629b17735eb5b866",
+    "release-result.json": "69f1861e5d83ca15a089d19b64a43f41db3a5f98e75c5ac3efcb10882e1cfd1f",
+    "request.jsonl.gz": "796fd67658cf21694ae468b1f7652d7cf58d24f97f82afb207b18d26d3c49675",
+    "debug-response.jsonl.gz": "c5320df7c8eb4534df7444dde3e3bc4f3e6d8b6772c200e86522922485604e09",
+    "release-response.jsonl.gz": "c5320df7c8eb4534df7444dde3e3bc4f3e6d8b6772c200e86522922485604e09",
+    "release-build.log": "8c64d9abd4865b9f66eebd0f503d21c18d7f4ec08e0c8ae03937a26177a51144"
+  }
+}

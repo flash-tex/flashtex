@@ -1,0 +1,170 @@
+{
+ "fixture": "46-t1-sans-shapes.tex",
+ "engine": "pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026)",
+ "pages": 1,
+ "segments": [
+  {
+   "page": 1,
+   "text": "Plain",
+   "font": "SFRM1000",
+   "size": 9.9626,
+   "x": 148.712,
+   "baseline": 134.765
+  },
+  {
+   "page": 1,
+   "text": "Sans",
+   "font": "SFSS1000",
+   "size": 9.9626,
+   "x": 174.636,
+   "baseline": 134.765
+  },
+  {
+   "page": 1,
+   "text": "caps",
+   "font": "SFCC1000",
+   "size": 9.9626,
+   "x": 197.017,
+   "baseline": 134.765
+  },
+  {
+   "page": 1,
+   "text": "substituted",
+   "font": "SFCC1000",
+   "size": 9.9626,
+   "x": 222.655,
+   "baseline": 134.765
+  },
+  {
+   "page": 1,
+   "text": "and",
+   "font": "SFRM1000",
+   "size": 9.9626,
+   "x": 285.307,
+   "baseline": 134.765
+  },
+  {
+   "page": 1,
+   "text": "sans",
+   "font": "SFSI1000",
+   "size": 9.9626,
+   "x": 304.452,
+   "baseline": 134.765
+  },
+  {
+   "page": 1,
+   "text": "slanted",
+   "font": "SFSI1000",
+   "size": 9.9626,
+   "x": 325.118,
+   "baseline": 134.765
+  },
+  {
+   "page": 1,
+   "text": "with",
+   "font": "SFRM1000",
+   "size": 9.9626,
+   "x": 358.519,
+   "baseline": 134.765
+  },
+  {
+   "page": 1,
+   "text": "bold",
+   "font": "SFSO1000",
+   "size": 9.9626,
+   "x": 380.984,
+   "baseline": 134.765
+  },
+  {
+   "page": 1,
+   "text": "sans",
+   "font": "SFSO1000",
+   "size": 9.9626,
+   "x": 403.892,
+   "baseline": 134.765
+  },
+  {
+   "page": 1,
+   "text": "italic",
+   "font": "SFSO1000",
+   "size": 9.9626,
+   "x": 426.518,
+   "baseline": 134.765
+  },
+  {
+   "page": 1,
+   "text": "words",
+   "font": "SFRM1000",
+   "size": 9.9626,
+   "x": 452.215,
+   "baseline": 134.765
+  },
+  {
+   "page": 1,
+   "text": "and",
+   "font": "SFRM1000",
+   "size": 9.9626,
+   "x": 133.768,
+   "baseline": 146.72
+  },
+  {
+   "page": 1,
+   "text": "slanted",
+   "font": "SFST1000",
+   "size": 9.9626,
+   "x": 153.132,
+   "baseline": 146.72
+  },
+  {
+   "page": 1,
+   "text": "typewriter",
+   "font": "SFST1000",
+   "size": 9.9626,
+   "x": 194.968,
+   "baseline": 146.72
+  },
+  {
+   "page": 1,
+   "text": "italic",
+   "font": "SFIT1000",
+   "size": 9.9626,
+   "x": 253.638,
+   "baseline": 146.72
+  },
+  {
+   "page": 1,
+   "text": "typewriter",
+   "font": "SFIT1000",
+   "size": 9.9626,
+   "x": 290.245,
+   "baseline": 146.72
+  },
+  {
+   "page": 1,
+   "text": "Typewriter",
+   "font": "SFTC1000",
+   "size": 9.9626,
+   "x": 349.492,
+   "baseline": 146.72
+  },
+  {
+   "page": 1,
+   "text": "Caps",
+   "font": "SFTC1000",
+   "size": 9.9626,
+   "x": 407.016,
+   "baseline": 146.72
+  },
+  {
+   "page": 1,
+   "text": "end.",
+   "font": "SFRM1000",
+   "size": 9.9626,
+   "x": 431.251,
+   "baseline": 146.72
+  }
+ ],
+ "warnings": [
+  "Font shape `T1/cmss/m/sc' in size <10> not available, Font shape `T1/cmr/m/sc' tried instead"
+ ]
+}

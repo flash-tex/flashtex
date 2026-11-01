@@ -1,0 +1,104 @@
+{
+ "fixture": "47-t1-math-bold.tex",
+ "engine": "pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026)",
+ "pages": 1,
+ "segments": [
+  {
+   "page": 1,
+   "text": "Vectors",
+   "font": "SFRM1000",
+   "size": 9.9626,
+   "x": 148.712,
+   "baseline": 134.765
+  },
+  {
+   "page": 1,
+   "text": "v",
+   "font": "CMBX10",
+   "size": 9.9626,
+   "x": 184.209,
+   "baseline": 134.765
+  },
+  {
+   "page": 1,
+   "text": "+",
+   "font": "CMR10",
+   "size": 9.9626,
+   "x": 192.626,
+   "baseline": 134.765
+  },
+  {
+   "page": 1,
+   "text": "Ab",
+   "font": "CMBX10",
+   "size": 9.9626,
+   "x": 202.587,
+   "baseline": 134.765
+  },
+  {
+   "page": 1,
+   "text": "2",
+   "font": "CMR7",
+   "size": 6.9738,
+   "x": 217.619,
+   "baseline": 136.259
+  },
+  {
+   "page": 1,
+   "text": "=",
+   "font": "CMR10",
+   "size": 9.9626,
+   "x": 224.855,
+   "baseline": 134.765
+  },
+  {
+   "page": 1,
+   "text": "x",
+   "font": "CMMI10",
+   "size": 9.9626,
+   "x": 235.374,
+   "baseline": 134.765
+  },
+  {
+   "page": 1,
+   "text": "and",
+   "font": "SFRM1000",
+   "size": 9.9626,
+   "x": 244.385,
+   "baseline": 134.765
+  },
+  {
+   "page": 1,
+   "text": "F",
+   "font": "CMBX10",
+   "size": 9.9626,
+   "x": 263.749,
+   "baseline": 134.765
+  },
+  {
+   "page": 1,
+   "text": "2",
+   "font": "CMR7",
+   "size": 6.9738,
+   "x": 270.962,
+   "baseline": 131.149
+  },
+  {
+   "page": 1,
+   "text": "in",
+   "font": "SFRM1000",
+   "size": 9.9626,
+   "x": 278.751,
+   "baseline": 134.765
+  },
+  {
+   "page": 1,
+   "text": "bold.",
+   "font": "SFRM1000",
+   "size": 9.9626,
+   "x": 290.368,
+   "baseline": 134.765
+  }
+ ],
+ "warnings": []
+}

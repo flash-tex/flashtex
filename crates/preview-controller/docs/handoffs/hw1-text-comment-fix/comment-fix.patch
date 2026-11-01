@@ -1,0 +1,31 @@
+--- a/crates/compiler/src/math.rs
++++ b/crates/compiler/src/math.rs
+@@ -291,7 +291,7 @@
+     fn text_atom(&mut self, command_span: Span) -> MathAtom {
+         while matches!(
+             self.tokens.get(self.i).map(|t| &t.kind),
+-            Some(TokenKind::Space)
++            Some(TokenKind::Space | TokenKind::Comment)
+         ) {
+             self.i += 1;
+         }
+--- a/crates/compiler/tests/math_text.rs
++++ b/crates/compiler/tests/math_text.rs
+@@ -167,3 +167,17 @@
+         );
+     }
+ }
++
++#[test]
++fn comments_before_text_argument_do_not_hide_the_group() {
++    let source = "\\text% note\n {and}";
++    let mut diagnostics = Vec::new();
++    let list = math::parse_tokens(&lexer::tokenize(source), &mut diagnostics);
++    assert!(diagnostics.is_empty(), "{diagnostics:?}");
++    assert_eq!(list.atoms.len(), 1);
++    assert_eq!(list.atoms[0].nucleus, Nucleus::Text("and".into()));
++    assert_eq!(
++        &source[list.atoms[0].span.start..list.atoms[0].span.end],
++        source
++    );
++}

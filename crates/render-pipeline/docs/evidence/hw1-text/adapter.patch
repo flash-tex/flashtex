@@ -1,0 +1,32 @@
+--- a/src/incremental.rs
++++ b/src/incremental.rs
+@@ -242,6 +242,10 @@
+                 0u8.hash(h);
+                 s.hash(h);
+             }
++            Nucleus::Text(text) => {
++                3u8.hash(h);
++                text.hash(h);
++            }
+             Nucleus::Fraction { numerator, denominator } => {
+                 1u8.hash(h);
+                 hash_math(numerator, h);
+@@ -386,7 +390,7 @@
+     for a in &mut list.atoms {
+         shift_span(&mut a.span, delta);
+         match &mut a.nucleus {
+-            Nucleus::Symbol(_) => {}
++            Nucleus::Symbol(_) | Nucleus::Text(_) => {}
+             Nucleus::Fraction { numerator, denominator } => {
+                 shift_math(numerator, delta);
+                 shift_math(denominator, delta);
+--- a/src/typeset.rs
++++ b/src/typeset.rs
+@@ -1112,6 +1112,7 @@
+                     (None, _) => vec![ml::Atom::new(ml::AtomClass::Ord, ml::Nucleus::Empty)],
+                 }
+             }
++            N::Text(text) => vec![ml::Atom::new(ml::AtomClass::Ord, ml::Nucleus::Text(text.clone()))],
+             N::Fraction { numerator, denominator } => vec![ml::Atom::frac(convert_math(numerator), convert_math(denominator))],
+             N::Radical(r) => vec![ml::Atom::sqrt(convert_math(r))],
+         };

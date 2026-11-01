@@ -1,0 +1,74 @@
+   Compiling flashtex-compiler v0.1.0 (/home/natkarri/flashtex-captures/hw1-starred-467538c7/crates/compiler)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 1.46s
+     Running unittests src/lib.rs (crates/compiler/target/debug/deps/flashtex_compiler-c61e27a195a03b58)
+
+running 41 tests
+test export::tests::every_math_symbol_has_a_decided_export_outcome ... ok
+test export::tests::ordinary_text_and_latin1_encode_as_text ... ok
+test export::tests::the_fraction_rule_is_reported_not_substituted ... ok
+test export::winansi_tests::characters_with_genuinely_no_base14_glyph_still_report ... ok
+test export::tests::unrepresentable_lists_each_offender_once ... ok
+test export::winansi_tests::typographic_punctuation_is_exportable ... ok
+test incremental::tests::adding_usepackage_forces_full_recompile ... ok
+test incremental::tests::layout_constraint_change_forces_full_recompile ... ok
+test incremental::tests::malformed_edit_has_partial_output_and_source_diagnostics ... ok
+test incremental::tests::edit_inside_one_paragraph_matches_clean_build ... ok
+test incremental::tests::edit_spanning_paragraph_boundary_matches_clean_build ... ok
+test incremental::tests::edits_at_start_and_end_match_clean_build ... ok
+test incremental::tests::redefining_macro_invalidates_untouched_reader ... ok
+test incremental::tests::multibyte_insertion_shifts_later_spans_by_byte_delta ... ok
+test incremental::tests::heading_and_math_use_the_same_cursor_as_clean_layout ... ok
+test layout::tests::core14_shaping_applies_kerning_and_keeps_document_byte_identity ... ok
+test layout::tests::body_and_heading_faces_do_not_depend_on_numeric_font_size ... ok
+test layout::tests::fraction_stacks_smaller_children_and_advances_as_one_unit ... ok
+test layout::tests::shaping_missing_glyph_diagnostic_uses_document_not_relative_offset ... ok
+test layout::tests::scripts_attach_to_atoms_and_nested_scripts_decrease_in_size ... ok
+test layout::tests::inline_and_display_math_both_produce_positioned_items ... ok
+test layout::tests::unknown_command_and_unclosed_shift_recover_without_losing_content ... ok
+test layout::tests::tall_math_increases_the_distance_to_the_next_line ... ok
+test layout::tests::every_math_item_span_is_a_valid_source_slice ... ok
+test lexer::tests::command_and_linebreak_are_distinguished ... ok
+test layout::tests::unsupported_shaping_is_an_explicit_source_mapped_error ... ok
+test lexer::tests::paragraph_break_needs_a_blank_line ... ok
+test lexer::tests::spans_are_utf8_bytes_not_char_counts ... ok
+test math::shift_tests::shifting_reaches_nested_spans ... ok
+test parser::tests::invalid_newcommand_and_renewcommand_relationships_are_diagnostic ... ok
+test parser::tests::group_local_macro_is_restored_when_the_group_closes ... ok
+test parser::tests::macro_argument_keeps_argument_source_span ... ok
+test parser::tests::macros_expand_inside_supported_command_arguments ... ok
+test parser::tests::macro_expansion_in_math_does_not_fabricate_per_glyph_spans ... ok
+test parser::tests::preamble_is_recorded_and_only_document_body_is_typeset ... ok
+test parser::tests::nested_macros_expand_and_renewcommand_replaces_an_existing_macro ... ok
+test incremental::tests::scoped_macro_change_does_not_invalidate_global_reader ... ok
+test parser::tests::zero_argument_macro_maps_literal_output_to_invocation ... ok
+test protocol::font_literal_tests::every_font_literal_matches_its_serialised_value ... ok
+test parser::tests::self_referential_macro_hits_explicit_recursion_limit ... ok
+test incremental::tests::changed_line_count_repositions_later_blocks ... ok
+
+test result: ok. 41 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running tests/references_and_figures.rs (crates/compiler/target/debug/deps/references_and_figures-a38f97b8ed5e0016)
+
+running 9 tests
+test includegraphics_is_explicitly_unsupported ... ok
+test undefined_reference_is_visible_and_warns_with_key ... ok
+test sections_and_subsections_number_and_reset ... ok
+test equation_label_round_trip_and_right_margin_number ... ok
+test duplicate_label_warns_and_second_definition_wins ... ok
+test backward_and_forward_references_resolve ... ok
+test figure_caption_label_and_lists_render ... ok
+test inserting_top_section_recomputes_and_matches_full_build ... ok
+test forward_pageref_converges_to_the_labels_page ... ok
+
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+
+     Running tests/starred_sections.rs (crates/compiler/target/debug/deps/starred_sections-33e835b4330b3a18)
+
+running 4 tests
+test starred_problem_macro_preserves_utf8_argument_spans ... ok
+test unsupported_heading_commands_remain_explicit ... ok
+test starred_sections_preserve_counters_and_previous_label_value ... ok
+test toggling_stars_matches_clean_compilation ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+

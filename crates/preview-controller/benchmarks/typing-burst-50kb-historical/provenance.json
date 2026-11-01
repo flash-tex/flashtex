@@ -1,0 +1,785 @@
+{
+  "helper_sha256": "8d661be71685e469c7c572a5503ec1f6d26c2857ce6ef9bfcf9d61c72869c834",
+  "producer_sha256": "1587245d9d68f426678176e45c0e0a4a971cd252c64d3a288147861ec16d62dd",
+  "assets": [
+    {
+      "path": "/tmp/flashtex-render-reference-stage/fonts/lmmono10-italic.otf",
+      "sha256": "14e6328a5383d2b927c47051093ce0aff60deea07e6df71b8b99ee8d9c2ff8f2",
+      "bytes": 63584
+    },
+    {
+      "path": "/tmp/flashtex-render-reference-stage/fonts/lmmono10-regular.otf",
+      "sha256": "22deb6d3be3ffcb40b33f0e010afb256c677d97c2a2bdee1f5740cdc97751558",
+      "bytes": 64684
+    },
+    {
+      "path": "/tmp/flashtex-render-reference-stage/fonts/lmmono12-regular.otf",
+      "sha256": "b826e490fa671f254840abe88afea0975b606f57fb4a8b93f53787c26d8ac319",
+      "bytes": 63012
+    },
+    {
+      "path": "/tmp/flashtex-render-reference-stage/fonts/lmmono8-regular.otf",
+      "sha256": "17319490d20f24e192bd7e7999484b95111a4654ac2620e7aa215591142ae997",
+      "bytes": 66268
+    },
+    {
+      "path": "/tmp/flashtex-render-reference-stage/fonts/lmmono9-regular.otf",
+      "sha256": "cdd53c7dc01a1d25f21eaf7cae44bfb8a9665e4cbd60e5f8da14287aca819bb9",
+      "bytes": 63076
+    },
+    {
+      "path": "/tmp/flashtex-render-reference-stage/fonts/lmmonocaps10-oblique.otf",
+      "sha256": "6bb7315ab000361195457b6c5efc75ed4bc24d278c6026d0aa8e0e4847394384",
+      "bytes": 71232
+    },
+    {
+      "path": "/tmp/flashtex-render-reference-stage/fonts/lmmonocaps10-regular.otf",
+      "sha256": "9fb93a8f39f8e55682d09edb93c4c07d976c13bb92253b875b5b6a19e9af9e0a",
+      "bytes": 63228
+    },
+    {
+      "path": "/tmp/flashtex-render-reference-stage/fonts/lmmonolt10-bold.otf",
+      "sha256": "2f4ae1bd30d4203a1c74c61d61dddbd5e2c2d5a7001d456b1b98e08b7c47ffb9",
+      "bytes": 66332
+    },
+    {
+      "path": "/tmp/flashtex-render-reference-stage/fonts/lmmonolt10-boldoblique.otf",
+      "sha256": "a739b6deaafe0b9e8ae1eec9db1f425c52e1f6f483ca8e07e359bdd118310bba",
+      "bytes": 75300
+    },
+    {
+      "path": "/tmp/flashtex-render-reference-stage/fonts/lmmonolt10-oblique.otf",
+      "sha256": "f19451a27c178d48b99921e72ff6acf568f670bf58c71c6dd506b1f96a2d9c9e",
+      "bytes": 73144
+    },
+    {
+      "path": "/tmp/flashtex-render-reference-stage/fonts/lmmonolt10-regular.otf",
+      "sha256": "176f2e3745e3d97eb7b96b25be919ed0e198f491dc363ad28971be1d5707ace7",
+      "bytes": 63628
+    },
+    {
+      "path": "/tmp/flashtex-render-reference-stage/fonts/lmmonoltcond10-oblique.otf",
+      "sha256": "2af9fab2c4d4c7a98aaebb9d66ffe1b55b3319e48c5d84add7ef27c2890747d2",
+      "bytes": 75908
+    },
+    {
+      "path": "/tmp/flashtex-render-reference-stage/fonts/lmmonoltcond10-regular.otf",
+      "sha256": "fd2e0afd73a6029887d222f1e379f9e977ed57f9471d48ba44fb42c52a650274",
+      "bytes": 64160
+    },
+    {
+      "path": "/tmp/flashtex-render-reference-stage/fonts/lmmonoprop10-oblique.otf",
+      "sha256": "7306b49832153fb387be1c741962a72d36127a2176f855d11c9903e6a15bfaca",
+      "bytes": 116764
+    },
+    {
+      "path": "/tmp/flashtex-render-reference-stage/fonts/lmmonoprop10-regular.otf",
+      "sha256": "59036dd0b599f3e90c41dc4b063849bb36ba29058f94d386718fb9ce523d8657",
+      "bytes": 109500
+    },
+    {
+      "path": "/tmp/flashtex-render-reference-stage/fonts/lmmonoproplt10-bold.otf",
+      "sha256": "c30d83cb4cdd879ea251243590e135e012e5d43e889a0d0990d196b1083715d2",
+      "bytes": 110276
+    },
+    {
+      "path": "/tmp/flashtex-render-reference-stage/fonts/lmmonoproplt10-boldoblique.otf",
+      "sha256": "4d1193e06d6042695f8caf9cde48785867bee8de8460a7a9c99504074d280f57",
+      "bytes": 120732
+    },
+    {
+      "path": "/tmp/flashtex-render-reference-stage/fonts/lmmonoproplt10-oblique.otf",
+      "sha256": "2d57934e1ae5f71cbcbed7b7ea6fa597f9212ebfd8d0cc91e9fabbb9622cab7f",
+      "bytes": 118244
+    },
+    {
+      "path": "/tmp/flashtex-render-reference-stage/fonts/lmmonoproplt10-regular.otf",
+      "sha256": "dedec8ee86f7448949cb695ace72f2e0de3ccc380ff92dfbc6c45c20209e3349",
+      "bytes": 110784
+    },
+    {
+      "path": "/tmp/flashtex-render-reference-stage/fonts/lmmonoslant10-regular.otf",
+      "sha256": "4b4a3e600db7f6ec434f8b48b31f22e12faced90e1681c93eeba5e23a6e55fde",
+      "bytes": 72212
+    },
+    {
+      "path": "/tmp/flashtex-render-reference-stage/fonts/lmroman10-bold.otf",
+      "sha256": "102fe06c430a8b681b2bf6876b7cd967ae4d47b4b6b41d915eb7913b726d9fb1",
+      "bytes": 111240
+    },
+    {
+      "path": "/tmp/flashtex-render-reference-stage/fonts/lmroman10-bolditalic.otf",
+      "sha256": "c37a28eed7a6e03f792b98b5e5f637b2fcda378bb4855f99284f1a88fe35f124",
+      "bytes": 118204
+    },
+    {
+      "path": "/tmp/flashtex-render-reference-stage/fonts/lmroman10-italic.otf",
+      "sha256": "c1fce25075567bb8dbf2151658c3b442690041db17a2d49fc9e55905ea5b7169",
+      "bytes": 118828
+    },
+    {
+      "path": "/tmp/flashtex-render-reference-stage/fonts/lmroman10-regular.otf",
+      "sha256": "1aa18cfefa58132c52ce5de70db1fd1154201c19cd2b2cdaffba4906a33e6852",
+      "bytes": 111536
+    },
+    {
+      "path": "/tmp/flashtex-render-reference-stage/fonts/lmroman12-bold.otf",
+      "sha256": "28c8782ac2b6486958b5dc7610ada7800c53546ff7f36bc65909a876e1cd338e",
+      "bytes": 110496
+    },
+    {
+      "path": "/tmp/flashtex-render-reference-stage/fonts/lmroman12-italic.otf",
+      "sha256": "ada6b3f451238784e5a5ea75d43efa1eb4329cd75ce65bf047ed2f31b7b5e2f3",
+      "bytes": 117732
+    },
+    {
+      "path": "/tmp/flashtex-render-reference-stage/fonts/lmroman12-regular.otf",
+      "sha256": "e6be218ae83e61aa8a29990d3cdc401c678c1962188cb9a4a8b6359e4f5e5870",
+      "bytes": 110400
+    },
+    {
+      "path": "/tmp/flashtex-render-reference-stage/fonts/lmroman17-regular.otf",
+      "sha256": "ed048c80fb4b67663b80899b89fe5fba17d7442e1286d61fd08fe5689c6b7c3c",
+      "bytes": 110248
+    },
+    {
+      "path": "/tmp/flashtex-render-reference-stage/fonts/lmroman5-bold.otf",
+      "sha256": "6326fb955d07bedcc8f73684e6b6bfa76706d38f3a85bd89c0659504ace366a1",
+      "bytes": 109564
+    },
+    {
+      "path": "/tmp/flashtex-render-reference-stage/fonts/lmroman5-regular.otf",
+      "sha256": "954bd9c376597c7043e7b616430163e0158155edf7434fd70082cf8460c08533",
+      "bytes": 111872
+    },
+    {
+      "path": "/tmp/flashtex-render-reference-stage/fonts/lmroman6-bold.otf",
+      "sha256": "f1ebd52916182bfc2e3f9d4b5ba847ad6acc6c7761354c0dc052fb01ec14f73c",
+      "bytes": 112452
+    },
+    {
+      "path": "/tmp/flashtex-render-reference-stage/fonts/lmroman6-regular.otf",
+      "sha256": "501396c437f76c260b8724265b8495f318a640ee5a4674852ecbb20daf256696",
+      "bytes": 112212
+    },
+    {
+      "path": "/tmp/flashtex-render-reference-stage/fonts/lmroman7-bold.otf",
+      "sha256": "063ea9e378b4fca4fd59771cf522faa21eb7c8516c89464745c79725b384fb9a",
+      "bytes": 110212
+    },
+    {
+      "path": "/tmp/flashtex-render-reference-stage/fonts/lmroman7-italic.otf",
+      "sha256": "19d20f2bb00fbffe5d3d66e9b6a54f0108289068029e9d88649d981d53613ddf",
+      "bytes": 117960
+    },
+    {
+      "path": "/tmp/flashtex-render-reference-stage/fonts/lmroman7-regular.otf",
+      "sha256": "48c4b46ab255eec96588fb992fba1ed6102e53d051da480738a61cc6cdb328c3",
+      "bytes": 110792
+    },
+    {
+      "path": "/tmp/flashtex-render-reference-stage/fonts/lmroman8-bold.otf",
+      "sha256": "04d4f633c3da31a169f4c54a7fe8c7e63925b39d030381f8d3eab955f16be7b2",
+      "bytes": 112404
+    },
+    {
+      "path": "/tmp/flashtex-render-reference-stage/fonts/lmroman8-italic.otf",
+      "sha256": "fb0536b5c3eee5b5622cd827ceb410e6514e36512ebdc51d2cf98a96c06d44e8",
+      "bytes": 117248
+    },
+    {
+      "path": "/tmp/flashtex-render-reference-stage/fonts/lmroman8-regular.otf",
+      "sha256": "f73015c3827596586faa380c398501caf9b5bcbb6f40b46af6a51277ca97c9fc",
+      "bytes": 111948
+    },
+    {
+      "path": "/tmp/flashtex-render-reference-stage/fonts/lmroman9-bold.otf",
+      "sha256": "f72feac9ea12eb858d8093d6c0ee710a6c25f59b61278c88ec41c0a680838415",
+      "bytes": 113040
+    },
+    {
+      "path": "/tmp/flashtex-render-reference-stage/fonts/lmroman9-italic.otf",
+      "sha256": "2106cffcdc9f9cb411d7c3441e34d77a168b998a58b40e727ab5b815437d1975",
+      "bytes": 118380
+    },
+    {
+      "path": "/tmp/flashtex-render-reference-stage/fonts/lmroman9-regular.otf",
+      "sha256": "8ab7b017fc67ea0e30cbf9e7ebd940010442ea67b40cf65f87d73f3ca11b0e6f",
+      "bytes": 112680
+    },
+    {
+      "path": "/tmp/flashtex-render-reference-stage/fonts/lmromancaps10-oblique.otf",
+      "sha256": "603e6bb88c206f3252d2ca1a061d0faf252dd6c87501f2efa32ce2f70793b1ad",
+      "bytes": 116564
+    },
+    {
+      "path": "/tmp/flashtex-render-reference-stage/fonts/lmromancaps10-regular.otf",
+      "sha256": "1ab40332a969892c7ed6cb010193b5276ccef1da6798bcbd1a465fee23d29334",
+      "bytes": 108740
+    },
+    {
+      "path": "/tmp/flashtex-render-reference-stage/fonts/lmromandemi10-oblique.otf",
+      "sha256": "430d9237cfeb1b7ef25a36002adac0524a11a07f4a31b16ce5a0eb3330163217",
+      "bytes": 119632
+    },
+    {
+      "path": "/tmp/flashtex-render-reference-stage/fonts/lmromandemi10-regular.otf",
+      "sha256": "63b6f9528e6117c5b0c0b1992517696ae09d05e7ca3711df0e0409d9db6df32c",
+      "bytes": 111892
+    },
+    {
+      "path": "/tmp/flashtex-render-reference-stage/fonts/lmromandunh10-oblique.otf",
+      "sha256": "5f7b9361353271246ac66a2681399052cc261a943c8a03c754ee212fdfb4a64c",
+      "bytes": 122840
+    },
+    {
+      "path": "/tmp/flashtex-render-reference-stage/fonts/lmromandunh10-regular.otf",
+      "sha256": "6c298b3680cc111c6e20eb2489bab9637ac316a686740fc1f8396230215e1161",
+      "bytes": 113276
+    },
+    {
+      "path": "/tmp/flashtex-render-reference-stage/fonts/lmromanslant10-bold.otf",
+      "sha256": "5f6689646a5e88b402d2e60085c813fca3a4d60707b0383c65cb023107a8bddc",
+      "bytes": 117984
+    },
+    {
+      "path": "/tmp/flashtex-render-reference-stage/fonts/lmromanslant10-regular.otf",
+      "sha256": "056ad4d08d2eb58d6b7fd0ac5de3f1fb799f2bb0c16b66c7e6b5bc5b6aef6481",
+      "bytes": 118508
+    },
+    {
+      "path": "/tmp/flashtex-render-reference-stage/fonts/lmromanslant12-regular.otf",
+      "sha256": "25f2ecfb860f2e45e6ebe69d11bc6305f5bfbef8f13476638ba291f47d1f130c",
+      "bytes": 117116
+    },
+    {
+      "path": "/tmp/flashtex-render-reference-stage/fonts/lmromanslant17-regular.otf",
+      "sha256": "4f30eda1d4674a1f4eea513b3baf85e3ba3fb17b2e4cf09bf627aee91dc0a4cc",
+      "bytes": 118092
+    },
+    {
+      "path": "/tmp/flashtex-render-reference-stage/fonts/lmromanslant8-regular.otf",
+      "sha256": "a88ecd1a6b4d5aa1c9d537b98d0de8e19d63b292918fabf0cc36158ed770ca63",
+      "bytes": 118720
+    },
+    {
+      "path": "/tmp/flashtex-render-reference-stage/fonts/lmromanslant9-regular.otf",
+      "sha256": "7441aee0c9dfbca16118fc7fe339c2e6c79ecc966a51ac1f76860351b6a8f02e",
+      "bytes": 119932
+    },
+    {
+      "path": "/tmp/flashtex-render-reference-stage/fonts/lmromanunsl10-regular.otf",
+      "sha256": "21bbbe167e824b93a956327bcc1efda99c1bb472e761834da40cef33cab46194",
+      "bytes": 124048
+    },
+    {
+      "path": "/tmp/flashtex-render-reference-stage/fonts/lmsans10-bold.otf",
+      "sha256": "a597b710326c1a8a2c7238d808e5d38711638a72a32383478db4829d63afd687",
+      "bytes": 107448
+    },
+    {
+      "path": "/tmp/flashtex-render-reference-stage/fonts/lmsans10-boldoblique.otf",
+      "sha256": "e45673d84754a94f2f053bd4c15950b4b320144fbb622c630a26fd7b68cfabc5",
+      "bytes": 114984
+    },
+    {
+      "path": "/tmp/flashtex-render-reference-stage/fonts/lmsans10-oblique.otf",
+      "sha256": "1b38b36efc21f9d3f34edf6a13f9d71f59c41f824e790f5d3ee5ba5b4936f377",
+      "bytes": 101412
+    },
+    {
+      "path": "/tmp/flashtex-render-reference-stage/fonts/lmsans10-regular.otf",
+      "sha256": "d431b786b9b603662718e79cfe9b441f47a8b0b3e854dde89d5acb3ed7cfd682",
+      "bytes": 95128
+    },
+    {
+      "path": "/tmp/flashtex-render-reference-stage/fonts/lmsans12-oblique.otf",
+      "sha256": "1f138e6203f7092f9a01f6193ed97d971b5045b99969f3a62c7e43a7faabc1c0",
+      "bytes": 102056
+    },
+    {
+      "path": "/tmp/flashtex-render-reference-stage/fonts/lmsans12-regular.otf",
+      "sha256": "f87ebdea035a96e8787e2c663cfcc78ce73205d37800eafe7948278e2cc7666a",
+      "bytes": 95160
+    },
+    {
+      "path": "/tmp/flashtex-render-reference-stage/fonts/lmsans17-oblique.otf",
+      "sha256": "0f6a4450c5fc9afd3650f24ad9003684fff3252691bbf2a33be94b383db8a77c",
+      "bytes": 100500
+    },
+    {
+      "path": "/tmp/flashtex-render-reference-stage/fonts/lmsans17-regular.otf",
+      "sha256": "f6c395a436e4fa7e88bbf1445e64b9c78ce4effba3668b13cc433077fc71a984",
+      "bytes": 94828
+    },
+    {
+      "path": "/tmp/flashtex-render-reference-stage/fonts/lmsans8-oblique.otf",
+      "sha256": "7f4227513bfd47b7077bedd125caa4c0a223a2cdad17a1470145cdea83353c88",
+      "bytes": 100084
+    },
+    {
+      "path": "/tmp/flashtex-render-reference-stage/fonts/lmsans8-regular.otf",
+      "sha256": "04f0d25ca474494cb707e752170f6c22cdcb8ae2b5fb80872143e18d5cc463f8",
+      "bytes": 94256
+    },
+    {
+      "path": "/tmp/flashtex-render-reference-stage/fonts/lmsans9-oblique.otf",
+      "sha256": "ac0535d7d4a8eb1b531c5faeb9060a4b9bac397d72cf54191ef53eea6f66b617",
+      "bytes": 101068
+    },
+    {
+      "path": "/tmp/flashtex-render-reference-stage/fonts/lmsans9-regular.otf",
+      "sha256": "80ef596460b7b402621780f7cd73a348efedc4cd2c6deca37da58f07ee61b85d",
+      "bytes": 94552
+    },
+    {
+      "path": "/tmp/flashtex-render-reference-stage/fonts/lmsansdemicond10-oblique.otf",
+      "sha256": "f98ed7d9cc5e10fd5c8e01f6ea708fddff5bbbf6f4503998c92b3c1f26d68d33",
+      "bytes": 114848
+    },
+    {
+      "path": "/tmp/flashtex-render-reference-stage/fonts/lmsansdemicond10-regular.otf",
+      "sha256": "3a8cc8f72acaf6d4cc9200a838e5e118bf6f265233aa078e105559f6db6c2948",
+      "bytes": 106836
+    },
+    {
+      "path": "/tmp/flashtex-render-reference-stage/fonts/lmsansquot8-bold.otf",
+      "sha256": "44cd928f556c68c3a6ce5938f6968c3da7b3d9d14d3c8add54005f0cc5e39a53",
+      "bytes": 106232
+    },
+    {
+      "path": "/tmp/flashtex-render-reference-stage/fonts/lmsansquot8-boldoblique.otf",
+      "sha256": "0cac0a6909c1cb33df8d3aeda2817ef2671d7f466cc352d826551bf92ca5f877",
+      "bytes": 112456
+    },
+    {
+      "path": "/tmp/flashtex-render-reference-stage/fonts/lmsansquot8-oblique.otf",
+      "sha256": "d858d237a69d432ca0ff67b930dabf5a60bfde69ca39bc555fab78ecbb5f4e4d",
+      "bytes": 112648
+    },
+    {
+      "path": "/tmp/flashtex-render-reference-stage/fonts/lmsansquot8-regular.otf",
+      "sha256": "5da041def6d17825bb9b2d1d4fef66099a1e871005c08fc8f0d29976a923f4c9",
+      "bytes": 105172
+    },
+    {
+      "path": "/tmp/flashtex-official-lm-root/fonts/tfm/public/lm/ec-lmr12.tfm",
+      "sha256": "299021120f0a29ef61278a2363903bd8defbb8faaade458eb79067342aecb56f",
+      "bytes": 12092
+    },
+    {
+      "path": "/tmp/flashtex-official-lm-root/fonts/tfm/public/lm/rm-lmr12.tfm",
+      "sha256": "9d4e3d8e39a41b93d91f79c1c47d2297efb7b1af220b94860693c08361f227aa",
+      "bytes": 11888
+    },
+    {
+      "path": "/tmp/flashtex-official-lm-root/fonts/tfm/public/lm/rm-lmr6.tfm",
+      "sha256": "eb0bfdf8db3ae1409639fac9c88f84923872500d882d9ff8dc37aff445c723fe",
+      "bytes": 11836
+    },
+    {
+      "path": "/tmp/flashtex-official-lm-root/fonts/tfm/public/lm/rm-lmr8.tfm",
+      "sha256": "80bcbfd844d2310ac1d3bead45aee25e91b1a4a0a60ff1771959b9a1e90ec1a2",
+      "bytes": 11864
+    },
+    {
+      "path": "/tmp/flashtex-official-lm-root/doc/fonts/lm/GUST-FONT-LICENSE.TXT",
+      "sha256": "49ea6cb9257bbee0a3979c48a774cd221550ac1c20c95549efe45fc99cc18050",
+      "bytes": 1377
+    },
+    {
+      "path": "/tmp/ft048-verified-10pt-resource/ec-lmr10.tfm",
+      "sha256": "cd13479f463b9a575d053dd7bf0884daa46bfdeffe4b7f537c193861652ac9e5"
+    }
+  ],
+  "historical_opt_in": true,
+  "historical": [
+    {
+      "received_ms": 86.36269099952187,
+      "revision": 2,
+      "request_id": "preview-2",
+      "compile_revision": 2,
+      "latest_ack_revision": 4
+    },
+    {
+      "received_ms": 172.0212139916839,
+      "revision": 4,
+      "request_id": "preview-4",
+      "compile_revision": 4,
+      "latest_ack_revision": 7
+    },
+    {
+      "received_ms": 254.34518099064007,
+      "revision": 7,
+      "request_id": "preview-7",
+      "compile_revision": 7,
+      "latest_ack_revision": 10
+    },
+    {
+      "received_ms": 338.45022799505387,
+      "revision": 10,
+      "request_id": "preview-10",
+      "compile_revision": 10,
+      "latest_ack_revision": 12
+    },
+    {
+      "received_ms": 423.286201999872,
+      "revision": 12,
+      "request_id": "preview-12",
+      "compile_revision": 12,
+      "latest_ack_revision": 15
+    },
+    {
+      "received_ms": 508.57817399082705,
+      "revision": 15,
+      "request_id": "preview-15",
+      "compile_revision": 15,
+      "latest_ack_revision": 18
+    },
+    {
+      "received_ms": 594.8644140007673,
+      "revision": 18,
+      "request_id": "preview-18",
+      "compile_revision": 18,
+      "latest_ack_revision": 21
+    }
+  ],
+  "sends": [
+    {
+      "id": "edit-0",
+      "target_ms": 0,
+      "sent_ms": 0.2509019977878779,
+      "flush_ms": 0.2578149869805202
+    },
+    {
+      "id": "edit-1",
+      "target_ms": 30,
+      "sent_ms": 30.018663994269446,
+      "flush_ms": 30.046170999412425
+    },
+    {
+      "id": "edit-2",
+      "target_ms": 60,
+      "sent_ms": 60.026469989679754,
+      "flush_ms": 60.05030099186115
+    },
+    {
+      "id": "edit-3",
+      "target_ms": 90,
+      "sent_ms": 111.45123199094087,
+      "flush_ms": 111.52155099262018
+    },
+    {
+      "id": "edit-4",
+      "target_ms": 120,
+      "sent_ms": 120.04158599302173,
+      "flush_ms": 120.05053900065832
+    },
+    {
+      "id": "edit-5",
+      "target_ms": 150,
+      "sent_ms": 150.04035498714074,
+      "flush_ms": 150.05620299780276
+    },
+    {
+      "id": "edit-6",
+      "target_ms": 180,
+      "sent_ms": 197.5910670007579,
+      "flush_ms": 197.63191998936236
+    },
+    {
+      "id": "edit-7",
+      "target_ms": 210,
+      "sent_ms": 210.03079299407545,
+      "flush_ms": 210.0792329874821
+    },
+    {
+      "id": "edit-8",
+      "target_ms": 240,
+      "sent_ms": 240.02141199889593,
+      "flush_ms": 240.04454399982933
+    },
+    {
+      "id": "edit-9",
+      "target_ms": 270,
+      "sent_ms": 283.6721539933933,
+      "flush_ms": 283.70194099261425
+    },
+    {
+      "id": "edit-10",
+      "target_ms": 300,
+      "sent_ms": 300.03251098969486,
+      "flush_ms": 300.04613198980223
+    },
+    {
+      "id": "edit-11",
+      "target_ms": 330,
+      "sent_ms": 330.0258399976883,
+      "flush_ms": 330.0563309894642
+    },
+    {
+      "id": "edit-12",
+      "target_ms": 360,
+      "sent_ms": 365.3866659878986,
+      "flush_ms": 365.4618569999002
+    },
+    {
+      "id": "edit-13",
+      "target_ms": 390,
+      "sent_ms": 390.0491639942629,
+      "flush_ms": 390.07103799667675
+    },
+    {
+      "id": "edit-14",
+      "target_ms": 420,
+      "sent_ms": 420.1736019895179,
+      "flush_ms": 420.3450619970681
+    },
+    {
+      "id": "edit-15",
+      "target_ms": 450,
+      "sent_ms": 452.25208599003963,
+      "flush_ms": 452.2730869939551
+    },
+    {
+      "id": "edit-16",
+      "target_ms": 480,
+      "sent_ms": 480.1076689909678,
+      "flush_ms": 480.12642699177377
+    },
+    {
+      "id": "edit-17",
+      "target_ms": 510,
+      "sent_ms": 533.9086079911795,
+      "flush_ms": 533.9612709940411
+    },
+    {
+      "id": "edit-18",
+      "target_ms": 540,
+      "sent_ms": 540.0449339940678,
+      "flush_ms": 540.0785969977733
+    },
+    {
+      "id": "edit-19",
+      "target_ms": 570,
+      "sent_ms": 570.0475749908946,
+      "flush_ms": 570.0686259951908
+    }
+  ],
+  "acks": {
+    "edit-0": {
+      "received_ms": 1.0682879947125912,
+      "revision": 2,
+      "bytes": 433
+    },
+    "edit-1": {
+      "received_ms": 31.030631987960078,
+      "revision": 3,
+      "bytes": 423
+    },
+    "edit-2": {
+      "received_ms": 61.65339199651498,
+      "revision": 4,
+      "bytes": 433
+    },
+    "edit-3": {
+      "received_ms": 113.00431199197192,
+      "revision": 5,
+      "bytes": 423
+    },
+    "edit-4": {
+      "received_ms": 120.97118599922396,
+      "revision": 6,
+      "bytes": 433
+    },
+    "edit-5": {
+      "received_ms": 151.1188729928108,
+      "revision": 7,
+      "bytes": 423
+    },
+    "edit-6": {
+      "received_ms": 198.99347599130124,
+      "revision": 8,
+      "bytes": 423
+    },
+    "edit-7": {
+      "received_ms": 211.58522299083415,
+      "revision": 9,
+      "bytes": 423
+    },
+    "edit-8": {
+      "received_ms": 241.60146499343682,
+      "revision": 10,
+      "bytes": 435
+    },
+    "edit-9": {
+      "received_ms": 285.2993470005458,
+      "revision": 11,
+      "bytes": 425
+    },
+    "edit-10": {
+      "received_ms": 301.2804949976271,
+      "revision": 12,
+      "bytes": 426
+    },
+    "edit-11": {
+      "received_ms": 366.5859109896701,
+      "revision": 13,
+      "bytes": 426
+    },
+    "edit-12": {
+      "received_ms": 369.6652609942248,
+      "revision": 14,
+      "bytes": 426
+    },
+    "edit-13": {
+      "received_ms": 392.68742100102827,
+      "revision": 15,
+      "bytes": 426
+    },
+    "edit-14": {
+      "received_ms": 449.7947479976574,
+      "revision": 16,
+      "bytes": 426
+    },
+    "edit-15": {
+      "received_ms": 455.59972399496473,
+      "revision": 17,
+      "bytes": 426
+    },
+    "edit-16": {
+      "received_ms": 481.8078429962043,
+      "revision": 18,
+      "bytes": 426
+    },
+    "edit-17": {
+      "received_ms": 536.5559779893374,
+      "revision": 19,
+      "bytes": 426
+    },
+    "edit-18": {
+      "received_ms": 542.7930219884729,
+      "revision": 20,
+      "bytes": 425
+    },
+    "edit-19": {
+      "received_ms": 573.2719609950436,
+      "revision": 21,
+      "bytes": 426
+    }
+  },
+  "previews": [
+    {
+      "received_ms": 668.9695639943238,
+      "revision": 21,
+      "latest_ack_revision": 21
+    }
+  ],
+  "final_revision": 21,
+  "source_sha256": "ba4cad7c1a05cc74d1fd28933642dd6a0756b7b756d6faab7ce40b8add7585f0",
+  "post_last_send_preview_ms": 98.92198900342919,
+  "measured_until_ms": 693.9628819964128,
+  "target_interval_ms": 30,
+  "scope": "one20edit burst with observed send schedule, release components and transparent captureproxy; later receipts/conflict/reopen/cleancompile excluded from measured burst; no native or worstcase bound",
+  "scripts": {
+    "typing_burst.py": "a511be9a0264562ff02be223ebe288b01d09b0472631f611c6f4d4b3da452544",
+    "helper_replay.py": "a6f4b6e209d7b06cce057400b6017cf1226c54647aaaca4c6363395780c0e812",
+    "producer_capture_proxy.py": "5b97d3695b99b16bc4b4efbcf90d5ca684817952d89131c685cf9f306ffd2262"
+  },
+  "artifacts": {
+    "clean.output.jsonl": "adf23b4946e055518f487c6ac3644aa52f4eaed36083df1799aef5492975d7e5",
+    "clean.input.jsonl": "f9e6363de1d4111c8f1e6acb4f62659e26b97fe7810e8f6583a3be58868bf8cd",
+    "diagnostics.json": "3108f7a90085ba5733de705865cd2bf0893aa3d9fd64aaab0a47f0a9eaf4473d",
+    "final-preview.json": "0f3fdb04cf5c68a093919d4c89ad321f9d6e6ffb3694be9d69e40faf4fd2ed81",
+    "events.jsonl": "503adc6e1b85884545bc8caa9d824018e3b349f53295247cd672803cb31a9c4d",
+    "final.tex": "ba4cad7c1a05cc74d1fd28933642dd6a0756b7b756d6faab7ce40b8add7585f0",
+    "initial.tex": "b617b309ad1c83675cecf48b73af28a9b4c0692e4c411ee54ede9c83790a31c0",
+    "requests.jsonl": "221ca60bdba01fa19bc8e6fcff31abdfcd70fc3a42d9ce674a84004070fa0607",
+    "producer/producer-1682655.input.jsonl": "ced2791e6417221df91acecee6ddddc15484030fca3437339991e2a0543ddfcb",
+    "producer/producer-1682655.output.jsonl": "595fdbef9d8bdd446e80a56fd9f83eac6eb31a18418e54d2972dbba6c6ab04c0",
+    "producer/producer-1682655.pid": "c20043d4196931e79575341cb2a95b7faf90e3567135f0cb658a8c3b18e120f8",
+    "producer/producer-1682642.input.jsonl": "055a545078ee2b78907972d6d175ed0139a11dcab064a679e285e05f634700f3",
+    "producer/producer-1682642.output.jsonl": "2f274fddf2e586bc01fc345a93040095c4b958661799c1e19a7b39508881cfb7",
+    "producer/producer-1682642.pid": "dc25d25c895680bc1805ad7ff21e8cf8bd4d8b5fb719ff7e575716dbf664b016"
+  },
+  "compressed_artifacts": {
+    "clean.output.jsonl": {
+      "path": "clean.output.jsonl.gz",
+      "sha256": "07faef167e9124b6fb59c162a748be6088834fd5ccf395e54b7f179d0cc208b2",
+      "uncompressed_sha256": "adf23b4946e055518f487c6ac3644aa52f4eaed36083df1799aef5492975d7e5"
+    },
+    "clean.input.jsonl": {
+      "path": "clean.input.jsonl.gz",
+      "sha256": "bffb248cd9b74d07f755db83a4ab4b7fac6322e28c9667c3ff64f88ab1a58f1d",
+      "uncompressed_sha256": "f9e6363de1d4111c8f1e6acb4f62659e26b97fe7810e8f6583a3be58868bf8cd"
+    },
+    "diagnostics.json": {
+      "path": "diagnostics.json.gz",
+      "sha256": "8d0ddc0afa68b736ed7e3d976d31fff9bc4ca7e5461c2fd093d9974d942257ba",
+      "uncompressed_sha256": "3108f7a90085ba5733de705865cd2bf0893aa3d9fd64aaab0a47f0a9eaf4473d"
+    },
+    "final-preview.json": {
+      "path": "final-preview.json.gz",
+      "sha256": "bd631b4803c1bcd668aef23ce9d08c90d02205d3c6a66903dcea7b7b5195068a",
+      "uncompressed_sha256": "0f3fdb04cf5c68a093919d4c89ad321f9d6e6ffb3694be9d69e40faf4fd2ed81"
+    },
+    "events.jsonl": {
+      "path": "events.jsonl.gz",
+      "sha256": "c6f05494f12b363fb5736b8af417326000baf6e56356a1bb763337214e6a613b",
+      "uncompressed_sha256": "503adc6e1b85884545bc8caa9d824018e3b349f53295247cd672803cb31a9c4d"
+    },
+    "final.tex": {
+      "path": "final.tex.gz",
+      "sha256": "c14fded9bd615095791535f7e25c4f2e48915aaf35e6a2df526707506670323e",
+      "uncompressed_sha256": "ba4cad7c1a05cc74d1fd28933642dd6a0756b7b756d6faab7ce40b8add7585f0"
+    },
+    "initial.tex": {
+      "path": "initial.tex.gz",
+      "sha256": "ead5c0224ab5d3a238fc2feabbf6af9bc1ea44097040c765a3df019efd616a3e",
+      "uncompressed_sha256": "b617b309ad1c83675cecf48b73af28a9b4c0692e4c411ee54ede9c83790a31c0"
+    },
+    "requests.jsonl": {
+      "path": "requests.jsonl.gz",
+      "sha256": "5c1cc891060dab2513ad5c0ea097534d6fcb732bbc87af8a40d47b6deecbbb44",
+      "uncompressed_sha256": "221ca60bdba01fa19bc8e6fcff31abdfcd70fc3a42d9ce674a84004070fa0607"
+    },
+    "producer/producer-1682655.input.jsonl": {
+      "path": "producer/producer-1682655.input.jsonl.gz",
+      "sha256": "4cd245f5a56a5be277d151243b7a76822244295a55d4552be91518677c432559",
+      "uncompressed_sha256": "ced2791e6417221df91acecee6ddddc15484030fca3437339991e2a0543ddfcb"
+    },
+    "producer/producer-1682655.output.jsonl": {
+      "path": "producer/producer-1682655.output.jsonl.gz",
+      "sha256": "d1bf6774d1da53776bf65973d2f02af351e528c1cb020cd85f4e98233d020169",
+      "uncompressed_sha256": "595fdbef9d8bdd446e80a56fd9f83eac6eb31a18418e54d2972dbba6c6ab04c0"
+    },
+    "producer/producer-1682655.pid": {
+      "path": "producer/producer-1682655.pid.gz",
+      "sha256": "abf9f1800f1db02e28eccd28f51a8bf79bb79462f19cfa0c8843434e06ebfb64",
+      "uncompressed_sha256": "c20043d4196931e79575341cb2a95b7faf90e3567135f0cb658a8c3b18e120f8"
+    },
+    "producer/producer-1682642.input.jsonl": {
+      "path": "producer/producer-1682642.input.jsonl.gz",
+      "sha256": "103e355409de3ee68778d8dcf3a1f7d23448c41ce2d4c90bb6e6c6e709300feb",
+      "uncompressed_sha256": "055a545078ee2b78907972d6d175ed0139a11dcab064a679e285e05f634700f3"
+    },
+    "producer/producer-1682642.output.jsonl": {
+      "path": "producer/producer-1682642.output.jsonl.gz",
+      "sha256": "6d9d70e496e1ce6514df381b4414f9b7a14fee09ae41e64f121e4c05802efb71",
+      "uncompressed_sha256": "2f274fddf2e586bc01fc345a93040095c4b958661799c1e19a7b39508881cfb7"
+    },
+    "producer/producer-1682642.pid": {
+      "path": "producer/producer-1682642.pid.gz",
+      "sha256": "04a42db203d98a4709a8f2fef2b4c17c604ae82f09ec3dfdaea14d422ab5e379",
+      "uncompressed_sha256": "dc25d25c895680bc1805ad7ff21e8cf8bd4d8b5fb719ff7e575716dbf664b016"
+    }
+  },
+  "helper_source_sha": "58d27314",
+  "producer_source_sha": "65dbe7da7a182e99322070e2c9763cc3b69a342b",
+  "same_baseline_commands_except_binding_token": true,
+  "producer_processes_gone": true,
+  "max_send_lateness_ms": 23.90860799117945,
+  "max_ack_ms": 36.560070991981775,
+  "historical_during_send_window": 6,
+  "qualification": "one explicit historical opt-in observation; Python sender-thread cadence differs by up to23.91ms; not matched-cadence or native/current-preview comparison"
+}

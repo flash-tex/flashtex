@@ -1,0 +1,18 @@
+\documentclass[tikz,border=5pt]{standalone}
+\usepackage[T1]{fontenc}
+\usepackage{lmodern}
+\begin{document}
+\begin{tikzpicture}
+\draw (0,0) rectangle (1,1);
+\begin{scope}[xshift=2cm]
+  \draw[red] (0,0) rectangle (1,1);
+\end{scope}
+\begin{scope}[shift={(4,0)}, rotate=30]
+  \draw[blue] (0,0) rectangle (1,1);
+\end{scope}
+\begin{scope}[xshift=6cm, scale=0.5]
+  \draw[thick] (0,0) rectangle (2,2);
+\end{scope}
+\draw[xscale=2, green!50!black] (4,1.5) circle (0.3);
+\end{tikzpicture}
+\end{document}

@@ -1,0 +1,18 @@
+{
+  "process": 58242,
+  "exit_code": 1,
+  "status": "failed_diagnostic_snapshot_before_reopen",
+  "helper_sha256": "29810763137daf83156e800ffa06491baa95d5d04fda524afc530fd448ea7763",
+  "producer_sha256": "1587245d9d68f426678176e45c0e0a4a971cd252c64d3a288147861ec16d62dd",
+  "harness_source": "77c8cab1",
+  "failure": "Client.diagnostics JSONDecodeError Expecting value line1 column1",
+  "missing": [
+    "raw stderr from failed snapshot (temporary file closed before preservation)",
+    "reopened preview and durable snapshot",
+    "clean-final comparison",
+    "normal successful-run provenance"
+  ],
+  "producer_processes_absent": true,
+  "rerun": false,
+  "qualification": "Shared file-offset bug established independently by deterministic test, not proven cause of this or earlier68918 failure. No complete-run or performance comparison claim."
+}

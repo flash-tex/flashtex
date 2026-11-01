@@ -1,0 +1,36 @@
+{
+ "fixture": "04-default-tbp.tex",
+ "engine": "pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026)",
+ "pages": 1,
+ "images": [
+  {
+   "page": 1,
+   "x": 198.0,
+   "top": 72.0,
+   "width": 215.999,
+   "height": 108.0
+  }
+ ],
+ "captions": [
+  {
+   "page": 1,
+   "label": "Figure 1",
+   "x": 232.026,
+   "baseline": 204.408
+  }
+ ],
+ "paragraphs": [
+  {
+   "page": 1,
+   "x": 72.0,
+   "baseline": 238.614,
+   "source_byte": 196
+  },
+  {
+   "page": 1,
+   "x": 72.0,
+   "baseline": 368.626,
+   "source_byte": 1066
+  }
+ ]
+}

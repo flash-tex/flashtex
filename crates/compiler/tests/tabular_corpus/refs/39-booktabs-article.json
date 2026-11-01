@@ -1,0 +1,150 @@
+{
+ "fixture": "39-booktabs-article.tex",
+ "reference_engine": "pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026)",
+ "invocation": "pdflatex -interaction=batchmode, two passes, SOURCE_DATE_EPOCH=0 FORCE_SOURCE_DATE=1",
+ "unit": "bp, y from page top; rules [x, top, width, height]",
+ "pages": [
+  [
+   {
+    "text": "Text",
+    "x": 72.0,
+    "y_top": 83.955
+   },
+   {
+    "text": "before",
+    "x": 99.3176,
+    "y_top": 83.955
+   },
+   {
+    "text": "the",
+    "x": 134.4301,
+    "y_top": 83.955
+   },
+   {
+    "text": "table.",
+    "x": 154.5865,
+    "y_top": 83.955
+   },
+   {
+    "text": "Corpus",
+    "x": 77.978,
+    "y_top": 99.345
+   },
+   {
+    "text": "Keystrokes",
+    "x": 159.0916,
+    "y_top": 99.345
+   },
+   {
+    "text": "Moved",
+    "x": 226.7796,
+    "y_top": 99.345
+   },
+   {
+    "text": "Rate",
+    "x": 278.8899,
+    "y_top": 99.345
+   },
+   {
+    "text": "Homework",
+    "x": 77.978,
+    "y_top": 119.779
+   },
+   {
+    "text": "12",
+    "x": 183.6046,
+    "y_top": 119.779
+   },
+   {
+    "text": "480",
+    "x": 197.2598,
+    "y_top": 119.779
+   },
+   {
+    "text": "41",
+    "x": 248.88,
+    "y_top": 119.779
+   },
+   {
+    "text": "0.33%",
+    "x": 272.5417,
+    "y_top": 119.779
+   },
+   {
+    "text": "Lecture",
+    "x": 77.978,
+    "y_top": 134.225
+   },
+   {
+    "text": "notes",
+    "x": 120.407,
+    "y_top": 134.225
+   },
+   {
+    "text": "30",
+    "x": 183.6118,
+    "y_top": 134.225
+   },
+   {
+    "text": "112",
+    "x": 197.267,
+    "y_top": 134.225
+   },
+   {
+    "text": "208",
+    "x": 243.0291,
+    "y_top": 134.225
+   },
+   {
+    "text": "0.69%",
+    "x": 272.5441,
+    "y_top": 134.225
+   },
+   {
+    "text": "Text",
+    "x": 72.0,
+    "y_top": 150.785
+   },
+   {
+    "text": "after",
+    "x": 99.3176,
+    "y_top": 150.785
+   },
+   {
+    "text": "the",
+    "x": 126.9533,
+    "y_top": 150.785
+   },
+   {
+    "text": "table.",
+    "x": 147.1097,
+    "y_top": 150.785
+   }
+  ]
+ ],
+ "extension_columns": [
+  []
+ ],
+ "rules": [
+  [
+   [
+    72.0,
+    84.952,
+    237.091,
+    0.936
+   ],
+   [
+    72.0,
+    105.7365,
+    237.091,
+    0.585
+   ],
+   [
+    72.0,
+    140.617,
+    237.091,
+    0.936
+   ]
+  ]
+ ]
+}

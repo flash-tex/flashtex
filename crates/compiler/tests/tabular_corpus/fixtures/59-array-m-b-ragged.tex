@@ -1,0 +1,14 @@
+\documentclass[12pt]{article}
+\usepackage[T1]{fontenc}
+\usepackage{lmodern}
+\usepackage[margin=1in]{geometry}
+\usepackage{array}
+\setlength{\parindent}{0pt}
+\pagestyle{empty}
+\begin{document}
+Text before the table.
+
+\begin{tabular}{|>{\raggedright\arraybackslash}m{3cm}|l|>{\raggedright\arraybackslash}b{2.5cm}|}\hline A middle entry set ragged right & X & Bottom entry, ragged\\\hline Short & Y & Z\\\hline\end{tabular}
+
+Text after the table.
+\end{document}

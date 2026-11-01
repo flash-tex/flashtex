@@ -1,0 +1,101 @@
+{
+ "fixture": "36-overarrows.tex",
+ "reference_engine": "pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026)",
+ "invocation": "pdflatex -interaction=batchmode, two passes, SOURCE_DATE_EPOCH=0 FORCE_SOURCE_DATE=1",
+ "unit": "bp, y from page top",
+ "pages": [
+  [
+   {
+    "text": "-→",
+    "x": 112.381,
+    "y_top": 76.386
+   },
+   {
+    "text": "←--",
+    "x": 145.071,
+    "y_top": 76.386
+   },
+   {
+    "text": "←---→",
+    "x": 178.767,
+    "y_top": 76.386
+   },
+   {
+    "text": "Arrows",
+    "x": 72.0,
+    "y_top": 84.555
+   },
+   {
+    "text": "AB",
+    "x": 112.381,
+    "y_top": 84.555
+   },
+   {
+    "text": "+",
+    "x": 133.3134,
+    "y_top": 84.555
+   },
+   {
+    "text": "CD",
+    "x": 145.071,
+    "y_top": 84.555
+   },
+   {
+    "text": "+",
+    "x": 167.0028,
+    "y_top": 84.555
+   },
+   {
+    "text": "EFGH",
+    "x": 178.767,
+    "y_top": 84.555
+   },
+   {
+    "text": "+",
+    "x": 219.8487,
+    "y_top": 84.555
+   },
+   {
+    "text": "xy",
+    "x": 231.6078,
+    "y_top": 84.555
+   },
+   {
+    "text": "+",
+    "x": 247.057,
+    "y_top": 84.555
+   },
+   {
+    "text": "abc",
+    "x": 258.8161,
+    "y_top": 84.555
+   },
+   {
+    "text": "end.",
+    "x": 278.88,
+    "y_top": 84.555
+   },
+   {
+    "text": "←-",
+    "x": 258.818,
+    "y_top": 90.385
+   },
+   {
+    "text": "-",
+    "x": 231.611,
+    "y_top": 92.71
+   },
+   {
+    "text": "→",
+    "x": 232.4455,
+    "y_top": 92.71
+   }
+  ]
+ ],
+ "extension_columns": [
+  []
+ ],
+ "brace_extents": [
+  []
+ ]
+}

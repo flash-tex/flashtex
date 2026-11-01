@@ -1,0 +1,9 @@
+{
+  "schema_version": 1,
+  "manifest_sha256": "1c09466c55e0440101c4c5d7c7369aac029b13d791a8cb6d57fa82cadbea4d74",
+  "engine": null,
+  "tftopl": null,
+  "status": "pending",
+  "cases": [],
+  "reason": "Existing tex/pdftex and tftopl executables required; no installation attempted."
+}

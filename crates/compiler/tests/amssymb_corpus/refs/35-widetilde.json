@@ -1,0 +1,85 @@
+{
+ "fixture": "35-widetilde.tex",
+ "reference_engine": "pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026)",
+ "invocation": "pdflatex -interaction=batchmode, two passes, SOURCE_DATE_EPOCH=0 FORCE_SOURCE_DATE=1",
+ "unit": "bp, y from page top",
+ "pages": [
+  [
+   {
+    "text": "̃",
+    "x": 210.855,
+    "y_top": 82.76
+   },
+   {
+    "text": "Tildes",
+    "x": 72.0,
+    "y_top": 85.527
+   },
+   {
+    "text": "a",
+    "x": 107.1865,
+    "y_top": 85.527
+   },
+   {
+    "text": "˜",
+    "x": 107.3348,
+    "y_top": 85.527
+   },
+   {
+    "text": "+",
+    "x": 115.9856,
+    "y_top": 85.527
+   },
+   {
+    "text": "a",
+    "x": 127.746,
+    "y_top": 85.527
+   },
+   {
+    "text": "+",
+    "x": 136.545,
+    "y_top": 85.527
+   },
+   {
+    "text": "ab",
+    "x": 148.31,
+    "y_top": 85.527
+   },
+   {
+    "text": "+",
+    "x": 162.086,
+    "y_top": 85.527
+   },
+   {
+    "text": "abc",
+    "x": 173.85,
+    "y_top": 85.527
+   },
+   {
+    "text": "+",
+    "x": 192.6639,
+    "y_top": 85.527
+   },
+   {
+    "text": "abcdefg",
+    "x": 204.428,
+    "y_top": 85.527
+   },
+   {
+    "text": "end.",
+    "x": 249.0783,
+    "y_top": 85.527
+   }
+  ]
+ ],
+ "extension_columns": [
+  [
+   128.051,
+   148.889,
+   174.735
+  ]
+ ],
+ "brace_extents": [
+  []
+ ]
+}

@@ -1,0 +1,10 @@
+   Compiling flashtex-compiler v0.1.0 (/home/natkarri/flashtex-captures/hw1-membership-1c02a2bc/crates/compiler)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 1.54s
+     Running tests/membership.rs (crates/compiler/target/debug/deps/membership-85d47c8e9e03f9f4)
+
+running 2 tests
+test membership_symbol_and_export_are_explicit ... ok
+test membership_edits_match_clean_outputs ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+

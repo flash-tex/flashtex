@@ -1,0 +1,97 @@
+{
+ "fixture": "50-small-font.tex",
+ "reference_engine": "pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026)",
+ "invocation": "pdflatex -interaction=batchmode, two passes, SOURCE_DATE_EPOCH=0 FORCE_SOURCE_DATE=1",
+ "unit": "bp, y from page top; rules [x, top, width, height]",
+ "pages": [
+  [
+   {
+    "text": "Text",
+    "x": 72.0,
+    "y_top": 83.955
+   },
+   {
+    "text": "before",
+    "x": 99.3176,
+    "y_top": 83.955
+   },
+   {
+    "text": "the",
+    "x": 134.4301,
+    "y_top": 83.955
+   },
+   {
+    "text": "table.",
+    "x": 154.5865,
+    "y_top": 83.955
+   },
+   {
+    "text": "small",
+    "x": 77.978,
+    "y_top": 98.384
+   },
+   {
+    "text": "1",
+    "x": 114.841,
+    "y_top": 98.384
+   },
+   {
+    "text": "Text",
+    "x": 72.0,
+    "y_top": 112.847
+   },
+   {
+    "text": "after",
+    "x": 99.3176,
+    "y_top": 112.847
+   },
+   {
+    "text": "the",
+    "x": 126.9533,
+    "y_top": 112.847
+   },
+   {
+    "text": "table.",
+    "x": 147.1097,
+    "y_top": 112.847
+   }
+  ]
+ ],
+ "extension_columns": [
+  []
+ ],
+ "rules": [
+  [
+   [
+    72.0,
+    88.501,
+    54.274,
+    0.398
+   ],
+   [
+    71.801,
+    88.899,
+    0.398,
+    13.549
+   ],
+   [
+    108.665,
+    88.899,
+    0.398,
+    13.549
+   ],
+   [
+    126.075,
+    88.899,
+    0.398,
+    13.549
+   ],
+   [
+    72.0,
+    102.449,
+    54.274,
+    0.398
+   ]
+  ]
+ ]
+}

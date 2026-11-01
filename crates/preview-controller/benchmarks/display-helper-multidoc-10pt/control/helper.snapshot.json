@@ -1,0 +1,14 @@
+{
+  "document_kinds": {
+    "chapter.tex": "latex",
+    "main.tex": "latex",
+    "refs.bib": "bibliography"
+  },
+  "membership_generation": 4,
+  "project_id": "p",
+  "source_versions": {
+    "chapter.tex": 19,
+    "main.tex": 7,
+    "refs.bib": 23
+  }
+}

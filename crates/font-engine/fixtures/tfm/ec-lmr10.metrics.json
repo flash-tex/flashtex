@@ -1,0 +1,130 @@
+{
+  "design_size_fix_word": 10485760,
+  "design_size_pt": 10.0,
+  "checksum": 2927696391,
+  "slots": {
+    "A": {
+      "code": 65,
+      "glyph_id": 27,
+      "width": 786432,
+      "height": 722338,
+      "depth": 0,
+      "italic": 0,
+      "width_pt": 7.5,
+      "height_pt": 6.888751983642578,
+      "depth_pt": 0.0
+    },
+    "V": {
+      "code": 86,
+      "glyph_id": 111,
+      "width": 786432,
+      "height": 722338,
+      "depth": 0,
+      "italic": 8155,
+      "width_pt": 7.5,
+      "height_pt": 6.888751983642578,
+      "depth_pt": 0.0
+    },
+    "a": {
+      "code": 97,
+      "glyph_id": 28,
+      "width": 524288,
+      "height": 451464,
+      "depth": 0,
+      "italic": 11301,
+      "width_pt": 5.0,
+      "height_pt": 4.3054962158203125,
+      "depth_pt": 0.0
+    },
+    "eacute": {
+      "code": 233,
+      "glyph_id": 251,
+      "width": 466040,
+      "height": 722338,
+      "depth": 0,
+      "italic": 0,
+      "width_pt": 4.4445037841796875,
+      "height_pt": 6.888751983642578,
+      "depth_pt": 0.0
+    },
+    "f": {
+      "code": 102,
+      "glyph_id": 55,
+      "width": 320392,
+      "height": 722338,
+      "depth": 0,
+      "italic": 83070,
+      "width_pt": 3.0554962158203125,
+      "height_pt": 6.888751983642578,
+      "depth_pt": 0.0
+    },
+    "i": {
+      "code": 105,
+      "glyph_id": 66,
+      "width": 291269,
+      "height": 660314,
+      "depth": 0,
+      "italic": 0,
+      "width_pt": 2.7777576446533203,
+      "height_pt": 6.297245025634766,
+      "depth_pt": 0.0
+    },
+    "fi": {
+      "code": 28,
+      "glyph_id": 125,
+      "width": 582536,
+      "height": 722338,
+      "depth": 0,
+      "italic": 0,
+      "width_pt": 5.5554962158203125,
+      "height_pt": 6.888751983642578,
+      "depth_pt": 0.0
+    }
+  },
+  "ligature_f_i": [
+    "lig",
+    0,
+    28
+  ],
+  "kern_A_V": [
+    "kern",
+    -116509
+  ],
+  "kern_A_V_pt": -1.1111164093017578,
+  "cross_checked_names": 250,
+  "charset_name_aliases": {
+    "ff": "f_f",
+    "ffi": "f_f_i",
+    "ffl": "f_f_l",
+    "fi": "f_i",
+    "fl": "f_l"
+  },
+  "names_absent_from_font": [
+    "Germandbls",
+    "IJ",
+    "ij"
+  ],
+  "params": [
+    0,
+    349525,
+    174763,
+    116509,
+    451464,
+    1048576,
+    116509,
+    716491,
+    728184,
+    0,
+    203888,
+    977274,
+    304086,
+    524288,
+    93206,
+    1258291,
+    72818,
+    58254,
+    23302,
+    26214,
+    32040
+  ]
+}

@@ -1,0 +1,58 @@
+{
+ "cmmi10.tfm": {
+  "sha256": "e442c5487f84df70218ff37f775c87060856f5b6e04c011b6cadbbadfcf46645",
+  "source": "TL2026:texmf-dist/fonts/tfm/public/cm/cmmi10.tfm"
+ },
+ "cmr10.tfm": {
+  "sha256": "87f2d8981927644cbecaf3d639e96e348ea4e7be49d8804468bd8ba9ff3f5244",
+  "source": "TL2026:texmf-dist/fonts/tfm/public/cm/cmr10.tfm"
+ },
+ "cmr5.tfm": {
+  "sha256": "581be818f67bd11a1792d05e129abe3ea30c5cbdfce3bed8da7c5fb50f5ba95b",
+  "source": "TL2026:texmf-dist/fonts/tfm/public/cm/cmr5.tfm"
+ },
+ "cmsy10.tfm": {
+  "sha256": "0ca13d421ac7133271aed7c935099ecf3d1d08ac9e15f81acb34a16564ab8a46",
+  "source": "TL2026:texmf-dist/fonts/tfm/public/cm/cmsy10.tfm"
+ },
+ "ec-lmr10.tfm": {
+  "sha256": "cd13479f463b9a575d053dd7bf0884daa46bfdeffe4b7f537c193861652ac9e5",
+  "source": "TL2026:texmf-dist/fonts/tfm/public/lm/ec-lmr10.tfm"
+ },
+ "ec-lmr5.tfm": {
+  "sha256": "4f75f4f48232bcc51274bdfc7c04a44324f028345517d7f07c21dfde4ca9b804",
+  "source": "TL2026:texmf-dist/fonts/tfm/public/lm/ec-lmr5.tfm"
+ },
+ "ecrm0500.tfm": {
+  "sha256": "41717c7a6ec80a839b5e6153d29bd409484f348cafae621683b174f3a8f7c472",
+  "source": "TL2026:texmf-dist/fonts/tfm/jknappen/ec/ecrm0500.tfm"
+ },
+ "ecrm1000.tfm": {
+  "sha256": "6538d396bf70b360a36c6af2ba424f1f25ecb1700fda4a22462a3044e1bce5b4",
+  "source": "TL2026:texmf-dist/fonts/tfm/jknappen/ec/ecrm1000.tfm"
+ },
+ "lmmi10.tfm": {
+  "sha256": "d9fce8963e8cb075bf31a5715a8f4a54688f7026b3a06e882ff2eb9c0d110320",
+  "source": "TL2026:texmf-dist/fonts/tfm/public/lm/lmmi10.tfm"
+ },
+ "lmsy10.tfm": {
+  "sha256": "11f429b2c08f944627faa5942277297d7f8fef40edae2bae46cb238b838400ba",
+  "source": "TL2026:texmf-dist/fonts/tfm/public/lm/lmsy10.tfm"
+ },
+ "rm-lmr10.tfm": {
+  "sha256": "50dc8240a67003c1ec5bcd55f703c87189aeab0d199c42b4dc3e141a02488998",
+  "source": "TL2026:texmf-dist/fonts/tfm/public/lm/rm-lmr10.tfm"
+ },
+ "rm-lmr5.tfm": {
+  "sha256": "420a4fc1563b171e5a791bb71211d85e6bf62fd2f2ed2a7f34f742049d6e5071",
+  "source": "TL2026:texmf-dist/fonts/tfm/public/lm/rm-lmr5.tfm"
+ },
+ "tcrm1000.tfm": {
+  "sha256": "748a696710f9bc67a3dbb825d863dc73a0fe802ec3473b28b11f222011028387",
+  "source": "TL2026:texmf-dist/fonts/tfm/jknappen/ec/tcrm1000.tfm"
+ },
+ "ts1-lmr10.tfm": {
+  "sha256": "080be3dc1bf1bac9eb612e44718ea630d2bd2ebf4d8e8e00333a78b5332ca6b3",
+  "source": "TL2026:texmf-dist/fonts/tfm/public/lm/ts1-lmr10.tfm"
+ }
+}

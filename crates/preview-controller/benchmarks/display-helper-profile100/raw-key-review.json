@@ -1,0 +1,18 @@
+{
+  "scope": "Read-only copied runtime Syntax visitor; no runtime owner edits or raw activation",
+  "scratch_sha256": "ba9b9d09f5837a42e6940f27398ecf3cfec5d3cd45160e5e59add8c0b1b13555",
+  "serde_json": "1.0.151",
+  "observations": [
+    {
+      "input": "{\"geometry\":{\"\\uD800\":0}}",
+      "prototype_syntax_accepts": false,
+      "value_accepts": false
+    },
+    {
+      "input": "{\"geometry\":{\"\\uD83D\\uDE00\":0}}",
+      "prototype_syntax_accepts": true,
+      "value_accepts": true
+    }
+  ],
+  "conclusion": "Suspected IgnoredAny key escape validation gap did not reproduce; no fix warranted by this probe."
+}

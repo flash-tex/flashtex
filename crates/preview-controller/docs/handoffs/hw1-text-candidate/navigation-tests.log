@@ -1,0 +1,14 @@
+   Compiling flashtex-compiler v0.1.0 (/home/natkarri/flashtex-captures/hw1-text-1c02a2bc/crates/compiler)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.28s
+     Running tests/math_text.rs (flashtex-captures/hw1-text-1c02a2bc/crates/compiler/target/debug/deps/math_text-a052e83339d761ae)
+
+running 6 tests
+test whitespace_comments_and_nested_literal_braces ... ok
+test macro_text_points_to_invocation_not_definition ... ok
+test literal_groups_are_distinct_roman_text_with_group_spans ... ok
+test scripts_macros_and_incremental_source_shifts_match_clean ... ok
+test malformed_and_unsupported_text_stays_diagnosed ... ok
+test multi_document_text_navigation_tracks_edits_and_document_order ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+

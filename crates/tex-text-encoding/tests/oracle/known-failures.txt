@@ -1,0 +1,1 @@
+# Oracle cases (variant/id) that are known not to replay yet, with the reason.

@@ -1,0 +1,14 @@
+\documentclass[tikz,border=5pt]{standalone}
+\usepackage[T1]{fontenc}
+\usepackage{lmodern}
+\begin{document}
+\begin{tikzpicture}
+\node[draw] (a) at (0,0) {A};
+\node[draw, circle] (b) at (3,1) {B};
+\node[draw] (c) at (3,-1) {C};
+\draw[->] (a) -- (b);
+\draw[->] (a) -- (c);
+\draw (b) -- (c);
+\draw[->, red] (a.north) -- (b.west);
+\end{tikzpicture}
+\end{document}

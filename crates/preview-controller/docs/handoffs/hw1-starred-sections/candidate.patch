@@ -1,0 +1,137 @@
+--- a/crates/compiler/src/parser.rs
++++ b/crates/compiler/src/parser.rs
+@@ -373,9 +373,16 @@
+             _ if self.has_document && !self.in_body => self.unsupported_preamble(name, span),
+             "section" | "subsection" => {
+                 let level = if name == "section" { 1 } else { 2 };
++                self.skip_spaces();
++                let starred = matches!(self.peek().map(|token| &token.kind), Some(TokenKind::Word(word)) if word == "*");
++                if starred {
++                    self.i += 1;
++                }
+                 let (tokens, _) = self.required_group(name, span);
+                 self.flush_paragraph(blocks, para);
+-                let number = if level == 1 {
++                let number = if starred {
++                    String::new()
++                } else if level == 1 {
+                     self.section_counter += 1;
+                     self.subsection_counter = 0;
+                     self.section_counter.to_string()
+@@ -383,7 +390,9 @@
+                     self.subsection_counter += 1;
+                     format!("{}.{}", self.section_counter, self.subsection_counter)
+                 };
+-                self.current_counter = Some(number.clone());
++                if !starred {
++                    self.current_counter = Some(number.clone());
++                }
+                 let content = self.inlines_from_tokens(tokens);
+                 if content.is_empty() {
+                     // A missing/empty heading is already diagnosed where
+@@ -1253,6 +1262,11 @@
+                 TokenKind::LineBreak => content.push(Inline::LineBreak {
+                     span: input.token.span,
+                 }),
++                TokenKind::Command(name) => self.diags.push(Diagnostic::error(
++                    format!("\\{name} is not supported in this inline argument"),
++                    Some(input.token.span),
++                    Some("skipped the command; retained supported argument text".into()),
++                )),
+                 _ => {}
+             }
+         }
+--- a/crates/compiler/src/layout.rs
++++ b/crates/compiler/src/layout.rs
+@@ -461,7 +461,7 @@
+                 number_span,
+                 content,
+             } => {
+-                if self.emit_heading_numbers {
++                if self.emit_heading_numbers && !number.is_empty() {
+                     self.place(
+                         number.clone(),
+                         heading_size(*level, body_size),
+--- /dev/null
++++ b/crates/compiler/tests/starred_sections.rs
+@@ -0,0 +1,80 @@
++use flashtex_compiler::incremental::{compile_full, LayoutConstraints, Session};
++
++#[test]
++fn starred_sections_preserve_counters_and_previous_label_value() {
++    let source = r"\section{One}\subsection{A}\section*{Interlude}\label{same}\subsection*{Aside}\subsection{B}\ref{same}\section{Two}";
++    let result = compile_full(source, LayoutConstraints::default());
++    assert!(result.diagnostics.is_empty(), "{:?}", result.diagnostics);
++    let texts: Vec<_> = result
++        .pages
++        .iter()
++        .flat_map(|p| &p.items)
++        .map(|i| i.text.as_str())
++        .collect();
++    assert_eq!(
++        texts,
++        [
++            "1",
++            "One",
++            "1.1",
++            "A",
++            "Interlude",
++            "Aside",
++            "1.2",
++            "B",
++            "1.1",
++            "2",
++            "Two"
++        ]
++    );
++}
++
++#[test]
++fn starred_problem_macro_preserves_utf8_argument_spans() {
++    let source = "\\newcommand{\\problem}[2]{\\subsection*{#1 #2}}\\problem{épreuve}{café}";
++    let result = compile_full(source, LayoutConstraints::default());
++    assert!(result.diagnostics.is_empty(), "{:?}", result.diagnostics);
++    let items: Vec<_> = result.pages.iter().flat_map(|p| &p.items).collect();
++    assert_eq!(items.len(), 2);
++    for (item, word) in items.iter().zip(["épreuve", "café"]) {
++        assert_eq!(item.text, word);
++        assert_eq!(&source[item.span.start..item.span.end], word);
++    }
++}
++
++#[test]
++fn toggling_stars_matches_clean_compilation() {
++    let constraints = LayoutConstraints::default();
++    let mut session = Session::new();
++    for source in [
++        r"\section{One}\subsection{A}\label{x}\ref{x}",
++        r"\section{One}\subsection*{A}\label{x}\ref{x}",
++        r"\section*{One}\subsection*{A}\label{x}\ref{x}",
++        r"\section{One}\subsection{A}\label{x}\ref{x}",
++    ] {
++        let incremental = session.compile(source, constraints);
++        let clean = compile_full(source, constraints);
++        assert_eq!(incremental.output.pages, clean.pages);
++        assert_eq!(incremental.output.diagnostics, clean.diagnostics);
++    }
++}
++
++#[test]
++fn unsupported_heading_commands_remain_explicit() {
++    let source = r"\newcommand{\problem}[2]{\subsection*{Problem #1 \hfill \normalfont[#2 points]}}\problem{1}{10}";
++    let result = compile_full(source, LayoutConstraints::default());
++    assert_eq!(result.diagnostics.len(), 2, "{:?}", result.diagnostics);
++    for command in ["hfill", "normalfont"] {
++        let diagnostic = result
++            .diagnostics
++            .iter()
++            .find(|d| d.message.contains(command))
++            .unwrap();
++        let span = diagnostic.span.unwrap();
++        assert_eq!(&source[span.start..span.end], r"\problem");
++    }
++    assert!(!result
++        .diagnostics
++        .iter()
++        .any(|d| d.message.contains("requires a braced argument")));
++}

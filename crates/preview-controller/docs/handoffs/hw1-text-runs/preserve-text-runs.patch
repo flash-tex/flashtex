@@ -1,0 +1,39 @@
+--- a/crates/compiler/src/math.rs
++++ b/crates/compiler/src/math.rs
+@@ -645,7 +645,36 @@
+ /// Split lexer word runs into one token per Unicode scalar for atom attachment.
+ fn split_word_tokens(tokens: &[Token]) -> Vec<Token> {
+     let mut out = Vec::new();
++    // Text consumes literal word runs as a whole. Preserve ASCII runs there;
++    // non-ASCII remains scalar-split to retain existing diagnostic granularity.
++    let mut text_depth = 0usize;
++    let mut awaiting_text_group = false;
+     for token in tokens {
++        if text_depth > 0 {
++            match &token.kind {
++                TokenKind::LBrace => text_depth += 1,
++                TokenKind::RBrace => text_depth -= 1,
++                TokenKind::Word(word) if word.is_ascii() => {
++                    out.push(token.clone());
++                    continue;
++                }
++                _ => {}
++            }
++        } else {
++            if awaiting_text_group {
++                match token.kind {
++                    TokenKind::Space | TokenKind::Comment => {}
++                    TokenKind::LBrace => {
++                        text_depth = 1;
++                        awaiting_text_group = false;
++                    }
++                    _ => awaiting_text_group = false,
++                }
++            }
++            if matches!(&token.kind, TokenKind::Command(name) if name == "text") {
++                awaiting_text_group = true;
++            }
++        }
+         if let TokenKind::Word(word) = &token.kind {
+             let source_matches_word = token.span.end - token.span.start == word.len();
+             for (offset, ch) in word.char_indices() {

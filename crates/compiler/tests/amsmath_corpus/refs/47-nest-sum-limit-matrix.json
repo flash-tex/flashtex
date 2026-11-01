@@ -1,0 +1,100 @@
+{
+ "fixture": "47-nest-sum-limit-matrix.tex",
+ "reference_engine": "pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026)",
+ "invocation": "pdflatex -interaction=batchmode, two passes, SOURCE_DATE_EPOCH=0 FORCE_SOURCE_DATE=1",
+ "unit": "bp, y from page top",
+ "pages": [
+  [
+   {
+    "text": "Some",
+    "x": 72.0,
+    "y_top": 83.955
+   },
+   {
+    "text": "text",
+    "x": 103.2126,
+    "y_top": 83.955
+   },
+   {
+    "text": "before",
+    "x": 127.6084,
+    "y_top": 83.955
+   },
+   {
+    "text": "the",
+    "x": 162.7208,
+    "y_top": 83.955
+   },
+   {
+    "text": "display.",
+    "x": 182.8773,
+    "y_top": 83.955
+   },
+   {
+    "text": "a",
+    "x": 311.856,
+    "y_top": 98.401
+   },
+   {
+    "text": "ijk",
+    "x": 318.001,
+    "y_top": 100.194
+   },
+   {
+    "text": "i",
+    "x": 283.36,
+    "y_top": 115.155
+   },
+   {
+    "text": "<",
+    "x": 290.6766,
+    "y_top": 115.155
+   },
+   {
+    "text": "j",
+    "x": 303.1052,
+    "y_top": 115.155
+   },
+   {
+    "text": "j",
+    "x": 282.112,
+    "y_top": 129.601
+   },
+   {
+    "text": "<",
+    "x": 290.9481,
+    "y_top": 129.601
+   },
+   {
+    "text": "k",
+    "x": 303.3767,
+    "y_top": 129.601
+   },
+   {
+    "text": "Text",
+    "x": 72.0,
+    "y_top": 150.638
+   },
+   {
+    "text": "after",
+    "x": 99.3176,
+    "y_top": 150.638
+   },
+   {
+    "text": "the",
+    "x": 126.9533,
+    "y_top": 150.638
+   },
+   {
+    "text": "display.",
+    "x": 147.1097,
+    "y_top": 150.638
+   }
+  ]
+ ],
+ "extension_columns": [
+  [
+   288.793
+  ]
+ ]
+}

@@ -1,0 +1,71 @@
+{
+ "fixture": "10-unit-derived-a.tex",
+ "engine": "pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026)",
+ "pages": 1,
+ "segments": [
+  {
+   "page": 1,
+   "text": "Hz",
+   "font": "CMR10",
+   "size": 9.9626,
+   "x": 148.712,
+   "baseline": 134.765,
+   "end": 160.611
+  },
+  {
+   "page": 1,
+   "text": "N",
+   "font": "CMR10",
+   "size": 9.9626,
+   "x": 163.929,
+   "baseline": 134.765,
+   "end": 171.401
+  },
+  {
+   "page": 1,
+   "text": "Pa",
+   "font": "CMR10",
+   "size": 9.9626,
+   "x": 174.728,
+   "baseline": 134.765,
+   "end": 186.211
+  },
+  {
+   "page": 1,
+   "text": "J",
+   "font": "CMR10",
+   "size": 9.9626,
+   "x": 189.529,
+   "baseline": 134.765,
+   "end": 194.649
+  },
+  {
+   "page": 1,
+   "text": "W",
+   "font": "CMR10",
+   "size": 9.9626,
+   "x": 197.976,
+   "baseline": 134.765,
+   "end": 208.216
+  },
+  {
+   "page": 1,
+   "text": "C",
+   "font": "CMR10",
+   "size": 9.9626,
+   "x": 211.673,
+   "baseline": 134.765,
+   "end": 218.868
+  },
+  {
+   "page": 1,
+   "text": "V",
+   "font": "CMR10",
+   "size": 9.9626,
+   "x": 222.185,
+   "baseline": 134.765,
+   "end": 229.657
+  }
+ ],
+ "warnings": []
+}

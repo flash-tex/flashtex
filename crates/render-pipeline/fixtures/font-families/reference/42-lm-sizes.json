@@ -1,0 +1,120 @@
+{
+ "fixture": "42-lm-sizes.tex",
+ "engine": "pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026)",
+ "pages": 1,
+ "segments": [
+  {
+   "page": 1,
+   "text": "Plain",
+   "font": "LMRoman10-Regular",
+   "size": 9.9626,
+   "x": 148.712,
+   "baseline": 134.765
+  },
+  {
+   "page": 1,
+   "text": "small",
+   "font": "LMSans9-Regular",
+   "size": 8.9664,
+   "x": 175.561,
+   "baseline": 134.765
+  },
+  {
+   "page": 1,
+   "text": "sans",
+   "font": "LMSans9-Regular",
+   "size": 8.9664,
+   "x": 198.882,
+   "baseline": 134.765
+  },
+  {
+   "page": 1,
+   "text": "words",
+   "font": "LMSans9-Regular",
+   "size": 8.9664,
+   "x": 218.784,
+   "baseline": 134.765
+  },
+  {
+   "page": 1,
+   "text": "and",
+   "font": "LMRoman10-Regular",
+   "size": 9.9626,
+   "x": 244.592,
+   "baseline": 134.765
+  },
+  {
+   "page": 1,
+   "text": "Large",
+   "font": "LMRomanCaps10-Regular",
+   "size": 14.3462,
+   "x": 264.589,
+   "baseline": 134.765
+  },
+  {
+   "page": 1,
+   "text": "Caps",
+   "font": "LMRomanCaps10-Regular",
+   "size": 14.3462,
+   "x": 315.069,
+   "baseline": 134.765
+  },
+  {
+   "page": 1,
+   "text": "then",
+   "font": "LMRoman10-Regular",
+   "size": 9.9626,
+   "x": 353.65,
+   "baseline": 134.765
+  },
+  {
+   "page": 1,
+   "text": "footnote",
+   "font": "LMMono8-Regular",
+   "size": 7.9701,
+   "x": 377.04,
+   "baseline": 134.765
+  },
+  {
+   "page": 1,
+   "text": "typewriter",
+   "font": "LMMono8-Regular",
+   "size": 7.9701,
+   "x": 415.149,
+   "baseline": 134.765
+  },
+  {
+   "page": 1,
+   "text": "and",
+   "font": "LMRoman10-Regular",
+   "size": 9.9626,
+   "x": 461.431,
+   "baseline": 134.765
+  },
+  {
+   "page": 1,
+   "text": "large",
+   "font": "LMRomanSlant12-Regular",
+   "size": 11.9552,
+   "x": 133.768,
+   "baseline": 146.72
+  },
+  {
+   "page": 1,
+   "text": "slanted",
+   "font": "LMRomanSlant12-Regular",
+   "size": 11.9552,
+   "x": 162.379,
+   "baseline": 146.72
+  },
+  {
+   "page": 1,
+   "text": "words.",
+   "font": "LMRoman10-Regular",
+   "size": 9.9626,
+   "x": 202.337,
+   "baseline": 146.72
+  }
+ ],
+ "warnings": []
+}

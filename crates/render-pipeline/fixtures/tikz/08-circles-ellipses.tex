@@ -1,0 +1,12 @@
+\documentclass[tikz,border=5pt]{standalone}
+\usepackage[T1]{fontenc}
+\usepackage{lmodern}
+\begin{document}
+\begin{tikzpicture}
+\draw (0,0) circle (1);
+\fill[red!40] (2.5,0) circle (0.5);
+\draw[thick] (5,0) ellipse (1.2 and 0.6);
+\filldraw[fill=green!20] (1,2) circle [radius=0.4];
+\draw (3,2) ellipse [x radius=1, y radius=0.3];
+\end{tikzpicture}
+\end{document}

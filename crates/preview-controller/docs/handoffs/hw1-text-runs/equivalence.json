@@ -1,0 +1,9 @@
+{
+  "seed": 1042,
+  "cases": 207,
+  "whole_replies_equal": true,
+  "before_binary": "/home/natkarri/flashtex-captures/hw1-text-1c02a2bc/crates/text-release-compiler-preserved",
+  "before_sha256": "d5321ee77ed36410b23688bd487dbe0c622794c0ca2e5b23501a386cd2e3f627",
+  "after_binary": "/home/natkarri/flashtex-captures/hw1-text-runs/optimized-compiler-preserved",
+  "after_sha256": "1d393dd19c4d814a3e79f0c4cfe20f488c28b98b4ef731aba0ac82a7b8fa4631"
+}

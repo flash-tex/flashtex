@@ -1,0 +1,22 @@
+   Compiling flashtex-compiler v0.1.0 (/home/natkarri/flashtex-captures/hw1-text-1c02a2bc/crates/compiler)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.21s
+     Running tests/math_text.rs (flashtex-captures/hw1-text-1c02a2bc/crates/compiler/target/debug/deps/math_text-a052e83339d761ae)
+
+running 1 test
+test comments_before_text_argument_do_not_hide_the_group ... FAILED
+
+failures:
+
+---- comments_before_text_argument_do_not_hide_the_group stdout ----
+
+thread 'comments_before_text_argument_do_not_hide_the_group' (1915466) panicked at tests/math_text.rs:177:5:
+[Diagnostic { severity: Error, message: "\\text requires a braced text argument", span: Some(Span { document: DocumentId(0), start: 0, end: 5 }), recovery: Some("used an empty text argument without consuming the next atom") }]
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    comments_before_text_argument_do_not_hide_the_group
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 6 filtered out; finished in 0.00s
+
+error: test failed, to rerun pass `--test math_text`

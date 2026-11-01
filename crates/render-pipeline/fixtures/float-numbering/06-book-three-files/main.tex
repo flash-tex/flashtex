@@ -1,0 +1,46 @@
+\documentclass{book}
+\usepackage[T1]{fontenc}
+\usepackage{lmodern}
+\usepackage[margin=1in]{geometry}
+\usepackage{graphicx}
+\setlength{\parindent}{0pt}
+\pagestyle{empty}
+\begin{document}
+\frontmatter
+\chapter{Preface}
+Alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima mike november oscar papa quebec romeo sierra tango uniform victor whiskey xray yankee zulu alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima.
+
+\begin{figure}[h]
+\centering
+\includegraphics[width=1in]{images/wide-72.png}
+\caption{In the front matter.}\label{fp}
+\end{figure}
+
+\mainmatter
+\include{intro}
+\input{methods}
+
+Entry text resumes after the input.
+
+\begin{table}[h]
+\centering
+\caption{Entry table after the input.}\label{te}
+\begin{tabular}{ll}
+a & b\\
+\end{tabular}
+\end{table}
+
+\appendix
+\include{appendix}
+
+Alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima mike november oscar papa quebec romeo sierra tango uniform victor whiskey xray yankee zulu alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima.
+
+\begin{figure}[h]
+\centering
+\includegraphics[width=1in]{images/wide-72.png}
+\caption{Entry file after the appendix.}\label{fa2}
+\end{figure}
+
+Refs \ref{fp}, \ref{fi}, \ref{fm}, \ref{tm}, \ref{te}, \ref{ta} and \ref{fa2}.
+
+\end{document}

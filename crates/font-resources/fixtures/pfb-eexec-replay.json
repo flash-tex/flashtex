@@ -1,0 +1,33 @@
+{
+  "schema_version": 1,
+  "font_sha256": "84eb01245abb17c0530ca3909427256d73df8bed2d7243b9f2717ca08c010ac8",
+  "archive_sha256": "97a725ea012d41367bf44fec1a2f4ccf4fe134c016715522133594e347115a7c",
+  "license_provenance": "lm-required-metrics-provenance.json",
+  "ciphertext_ranges": [
+    [
+      5730,
+      118683
+    ]
+  ],
+  "ciphertext_sha256": "02262ab31d397263650f1ec77c7bef04d0720419f69aa9e6562a52b2ddc85c62",
+  "seed": 55665,
+  "discarded_prefix_hex": "00000000",
+  "plaintext_bytes": 112949,
+  "plaintext_sha256": "bd88b12233faf829fbf86770638e4aec367847bcdb06e285b75e2381787af9a4",
+  "status": "actual pinned resource byte inspection passed; no PostScript evaluation or outline support",
+  "record_extraction": {
+    "glyphs": 822,
+    "subroutine_slots": 882,
+    "lenIV": 4,
+    "opaque_other_subrs": true,
+    "A": {
+      "bytes": 8,
+      "sha256": "13883a7a5915c1d3874a112f50a9e269e7663daf1587f4edbd504e381e16cdec"
+    },
+    ".notdef": {
+      "bytes": 5,
+      "sha256": "eaa5a748d6652e8857daddbbb79acaa6359e20d1eb90a1b1f0c843b3538a00d8"
+    },
+    "scope": "passive literal records and decryption only; no outline interpretation"
+  }
+}

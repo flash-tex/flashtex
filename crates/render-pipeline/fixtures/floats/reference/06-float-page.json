@@ -1,0 +1,36 @@
+{
+ "fixture": "06-float-page.tex",
+ "engine": "pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026)",
+ "pages": 3,
+ "images": [
+  {
+   "page": 2,
+   "x": 246.0,
+   "top": 122.634,
+   "width": 120.0,
+   "height": 519.999
+  }
+ ],
+ "captions": [
+  {
+   "page": 2,
+   "label": "Figure 1",
+   "x": 247.392,
+   "baseline": 667.041
+  }
+ ],
+ "paragraphs": [
+  {
+   "page": 1,
+   "x": 72.0,
+   "baseline": 83.955,
+   "source_byte": 196
+  },
+  {
+   "page": 1,
+   "x": 72.0,
+   "baseline": 242.859,
+   "source_byte": 1267
+  }
+ ]
+}

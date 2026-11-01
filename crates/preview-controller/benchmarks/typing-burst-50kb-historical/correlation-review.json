@@ -1,0 +1,9 @@
+{
+  "historical_results_checked": 7,
+  "same_stream_unique_request_and_output": true,
+  "result_id_and_compile_revision_bound": true,
+  "wrong_result_id_rejected": true,
+  "wrong_result_revision_rejected": true,
+  "measurement_rerun": false,
+  "verifier_sha256": "195d6a9db2e91c834d11aa0f658fec161db8d9d7b5b6e2e62c7eb741e30317c7"
+}

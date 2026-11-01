@@ -1,0 +1,62 @@
+{
+ "fixture": "11-unit-derived-b.tex",
+ "engine": "pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026)",
+ "pages": 1,
+ "segments": [
+  {
+   "page": 1,
+   "text": "F",
+   "font": "CMR10",
+   "size": 9.9626,
+   "x": 148.712,
+   "baseline": 134.765,
+   "end": 155.216
+  },
+  {
+   "page": 1,
+   "text": "Ω",
+   "font": "CMR10",
+   "size": 9.9626,
+   "x": 158.533,
+   "baseline": 134.765,
+   "end": 165.728
+  },
+  {
+   "page": 1,
+   "text": "S",
+   "font": "CMR10",
+   "size": 9.9626,
+   "x": 169.056,
+   "baseline": 134.765,
+   "end": 174.591
+  },
+  {
+   "page": 1,
+   "text": "Wb",
+   "font": "CMR10",
+   "size": 9.9626,
+   "x": 177.908,
+   "baseline": 134.765,
+   "end": 193.683
+  },
+  {
+   "page": 1,
+   "text": "T",
+   "font": "CMR10",
+   "size": 9.9626,
+   "x": 197.001,
+   "baseline": 134.765,
+   "end": 204.196
+  },
+  {
+   "page": 1,
+   "text": "H",
+   "font": "CMR10",
+   "size": 9.9626,
+   "x": 207.523,
+   "baseline": 134.765,
+   "end": 214.995
+  }
+ ],
+ "warnings": []
+}

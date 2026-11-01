@@ -1,0 +1,49 @@
+\documentclass{book}
+\usepackage[T1]{fontenc}
+\usepackage{lmodern}
+\usepackage[margin=1in]{geometry}
+\usepackage{graphicx}
+\setlength{\parindent}{0pt}
+\pagestyle{empty}
+\begin{document}
+\frontmatter
+\chapter{Preface}
+Alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima mike november oscar papa quebec romeo sierra tango uniform victor whiskey xray yankee zulu alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima.
+
+\begin{figure}[h]
+\centering
+\includegraphics[width=1in]{images/wide-72.png}
+\caption{In the front matter.}\label{fp}
+\end{figure}
+
+\mainmatter
+\chapter{One}
+Alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima mike november oscar papa quebec romeo sierra tango uniform victor whiskey xray yankee zulu alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima.
+
+\begin{figure}[h]
+\centering
+\includegraphics[width=1in]{images/wide-72.png}
+\caption{Main matter.}\label{f11}
+\end{figure}
+
+\begin{table}[h]
+\centering
+\begin{tabular}{ll}
+a & b\\
+\end{tabular}
+\caption{Main matter table.}\label{t11}
+\end{table}
+
+\backmatter
+\chapter{Notes}
+Alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima mike november oscar papa quebec romeo sierra tango uniform victor whiskey xray yankee zulu alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima.
+
+\begin{figure}[h]
+\centering
+\includegraphics[width=1in]{images/wide-72.png}
+\caption{In the back matter.}\label{fn}
+\end{figure}
+
+Refs \ref{fp}, \ref{f11}, \ref{t11} and \ref{fn}.
+
+\end{document}

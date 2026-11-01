@@ -1,0 +1,14 @@
+{
+  "base": "1c02a2bc50874770d15a4decbaa5c3a376ee3ae9",
+  "patch_sha256": "94d5bc23f160370b42e20f43ee42c2d03ec52b7212aae43c7465c06fbf85aee3",
+  "result": "clean exact-base apply matches all seven tested source files byte-for-byte",
+  "files": {
+    "crates/compiler/src/parser.rs": "54df39c92470ad78980962b39218a09d3db629ac0c3761c4d0fc52be01e65ae4",
+    "crates/compiler/src/layout.rs": "2677255ed1d98f72682dd07554c59461366bcb9fe00f9d50d1e0f7fc543f1421",
+    "crates/compiler/src/math.rs": "7974f9ce241133a647b6d747e8af1e2bc28750462a87b95bc37be6b0466300ed",
+    "crates/compiler/src/export.rs": "ac2eee876b48e6c64ac5a64c6e44204fb02977652093df6f5a7464d655dba95d",
+    "crates/compiler/tests/starred_sections.rs": "bb7afbd5923a5a8c580842460c9bc080d3a469c288b3a148b6ba75f53b94017b",
+    "crates/compiler/tests/membership.rs": "7f5b656956e6a4b81eed2599081d5ae38aac8fc938fc503bd9cb3b750bdc9e7e",
+    "crates/compiler/tests/quantifiers.rs": "b690ad4cac506670378b0ba8f2fb01826c2d2733ab87667043bd02c7c0106fe5"
+  }
+}

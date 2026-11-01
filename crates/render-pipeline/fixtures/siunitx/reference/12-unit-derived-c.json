@@ -1,0 +1,80 @@
+{
+ "fixture": "12-unit-derived-c.tex",
+ "engine": "pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026)",
+ "pages": 1,
+ "segments": [
+  {
+   "page": 1,
+   "text": "Bq",
+   "font": "CMR10",
+   "size": 9.9626,
+   "x": 148.712,
+   "baseline": 134.765,
+   "end": 161.027
+  },
+  {
+   "page": 1,
+   "text": "Gy",
+   "font": "CMR10",
+   "size": 9.9626,
+   "x": 164.344,
+   "baseline": 134.765,
+   "end": 177.42
+  },
+  {
+   "page": 1,
+   "text": "Sv",
+   "font": "CMR10",
+   "size": 9.9626,
+   "x": 180.887,
+   "baseline": 134.765,
+   "end": 191.681
+  },
+  {
+   "page": 1,
+   "text": "lm",
+   "font": "CMR10",
+   "size": 9.9626,
+   "x": 195.138,
+   "baseline": 134.765,
+   "end": 206.207
+  },
+  {
+   "page": 1,
+   "text": "lx",
+   "font": "CMR10",
+   "size": 9.9626,
+   "x": 209.525,
+   "baseline": 134.765,
+   "end": 217.551
+  },
+  {
+   "page": 1,
+   "text": "kat",
+   "font": "CMR10",
+   "size": 9.9626,
+   "x": 220.868,
+   "baseline": 134.765,
+   "end": 234.434
+  },
+  {
+   "page": 1,
+   "text": "◦",
+   "font": "CMSY7",
+   "size": 6.9738,
+   "x": 237.754,
+   "baseline": 131.149,
+   "end": 241.836
+  },
+  {
+   "page": 1,
+   "text": "C",
+   "font": "CMR10",
+   "size": 9.9626,
+   "x": 242.334,
+   "baseline": 134.765,
+   "end": 249.529
+  }
+ ],
+ "warnings": []
+}

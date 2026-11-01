@@ -1,0 +1,93 @@
+{
+ "fixture": "11-float-h.tex",
+ "engine": "pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026)",
+ "pages": 2,
+ "images": [
+  {
+   "page": 1,
+   "x": 231.0,
+   "top": 72.0,
+   "width": 150.0,
+   "height": 100.0
+  },
+  {
+   "page": 1,
+   "x": 234.0,
+   "top": 300.046,
+   "width": 144.0,
+   "height": 72.0
+  },
+  {
+   "page": 1,
+   "x": 263.482,
+   "top": 520.449,
+   "width": 85.037,
+   "height": 28.346
+  },
+  {
+   "page": 2,
+   "x": 281.077,
+   "top": 202.345,
+   "width": 49.847,
+   "height": 216.0
+  }
+ ],
+ "captions": [
+  {
+   "page": 1,
+   "label": "Figure 2",
+   "x": 221.866,
+   "baseline": 196.408
+  },
+  {
+   "page": 1,
+   "label": "Figure 1",
+   "x": 246.496,
+   "baseline": 396.454
+  },
+  {
+   "page": 1,
+   "label": "Table 1",
+   "x": 224.71,
+   "baseline": 517.128
+  },
+  {
+   "page": 2,
+   "label": "Figure 3",
+   "x": 218.905,
+   "baseline": 442.753
+  }
+ ],
+ "paragraphs": [
+  {
+   "page": 1,
+   "x": 72.0,
+   "baseline": 228.966,
+   "source_byte": 215
+  },
+  {
+   "page": 1,
+   "x": 72.0,
+   "baseline": 425.525,
+   "source_byte": 692
+  },
+  {
+   "page": 1,
+   "x": 72.0,
+   "baseline": 575.542,
+   "source_byte": 1219
+  },
+  {
+   "page": 1,
+   "x": 72.0,
+   "baseline": 705.554,
+   "source_byte": 2102
+  },
+  {
+   "page": 2,
+   "x": 72.0,
+   "baseline": 473.471,
+   "source_byte": 3148
+  }
+ ]
+}

@@ -1,0 +1,351 @@
+{
+  "dependency_manifest": {
+    "nodes": [
+      {
+        "binding": {
+          "family": "Explicit LM",
+          "style": "upright",
+          "weight": 400
+        },
+        "declarations": {
+          "aliases": [
+            {
+              "font_name": "f_f",
+              "literal_name": "ff",
+              "original_gid": 122
+            },
+            {
+              "font_name": "f_i",
+              "literal_name": "fi",
+              "original_gid": 125
+            },
+            {
+              "font_name": "f_l",
+              "literal_name": "fl",
+              "original_gid": 126
+            },
+            {
+              "font_name": "f_f_i",
+              "literal_name": "ffi",
+              "original_gid": 123
+            },
+            {
+              "font_name": "f_f_l",
+              "literal_name": "ffl",
+              "original_gid": 124
+            }
+          ],
+          "cff_sha256": "c4c98cd5b62b042ff54fc3615d0468277b4316ec930c840c11baa0b754ba02ef",
+          "encoding_file_sha256": "7f9932c402d22a937b853406cfdf4166b80260e3ff21a03fe9a4c05105a2918c",
+          "face_index": 0,
+          "font_sha256": "1aa18cfefa58132c52ce5de70db1fd1154201c19cd2b2cdaffba4906a33e6852",
+          "unavailable_slots": [
+            {
+              "code": 156,
+              "literal_name": "IJ"
+            },
+            {
+              "code": 188,
+              "literal_name": "ij"
+            },
+            {
+              "code": 223,
+              "literal_name": "Germandbls"
+            }
+          ]
+        },
+        "encoding_asset": {
+          "license": {
+            "copyright": "see pinned license",
+            "embedding_permission": "allowed",
+            "identifier": "LicenseRef-GUST-Font-License",
+            "source": "published Latin Modern fixture",
+            "text_path": "LICENSE",
+            "text_sha256": "49ea6cb9257bbee0a3979c48a774cd221550ac1c20c95549efe45fc99cc18050"
+          },
+          "path": "font.enc",
+          "sha256": "7f9932c402d22a937b853406cfdf4166b80260e3ff21a03fe9a4c05105a2918c"
+        },
+        "id": "lm",
+        "kind": "cff_physical_encoding_asset",
+        "tfm": {
+          "license": {
+            "copyright": "see pinned license",
+            "embedding_permission": "allowed",
+            "identifier": "LicenseRef-GUST-Font-License",
+            "source": "published Latin Modern fixture",
+            "text_path": "LICENSE",
+            "text_sha256": "49ea6cb9257bbee0a3979c48a774cd221550ac1c20c95549efe45fc99cc18050"
+          },
+          "path": "font.tfm",
+          "sha256": "cd13479f463b9a575d053dd7bf0884daa46bfdeffe4b7f537c193861652ac9e5"
+        }
+      }
+    ],
+    "registry_generation": "671f5a948ad4269c480561ef132cf3ca9e8eac0e1c18179c2e32515fcfa1d08f",
+    "root": "lm",
+    "schema_version": 2
+  },
+  "encoding_sha256": "7f9932c402d22a937b853406cfdf4166b80260e3ff21a03fe9a4c05105a2918c",
+  "face_index": 0,
+  "font_sha256": "1aa18cfefa58132c52ce5de70db1fd1154201c19cd2b2cdaffba4906a33e6852",
+  "license_sha256": "49ea6cb9257bbee0a3979c48a774cd221550ac1c20c95549efe45fc99cc18050",
+  "peer_mapping_sha256": "8fa54b686141ffeab9ac9e9d1182ac30337df7a03c34ff1df809e35543572995",
+  "project_generation": "db7026b6565debc37a126aa0b14789e0eddf211941b8522db53f2b480008dfb6",
+  "registry_generation": "671f5a948ad4269c480561ef132cf3ca9e8eac0e1c18179c2e32515fcfa1d08f",
+  "repeat_run": "identical",
+  "runs": [
+    {
+      "input_bytes": [
+        102,
+        105
+      ],
+      "input_sha256": "b4bdc848109722a383d0a972c6eb859f2abd29565b8c4cc7199e7c9eb708f1b7",
+      "items": [
+        {
+          "depth_fixword": 0,
+          "height_fixword": 722338,
+          "input_range": [
+            0,
+            2
+          ],
+          "italic_fixword": 0,
+          "kind": "glyph",
+          "original_gid": 125,
+          "tfm_code": 28,
+          "width_fixword": 582536
+        }
+      ]
+    },
+    {
+      "input_bytes": [
+        102,
+        102
+      ],
+      "input_sha256": "05a9bf223fedf80a9d0da5f73f5c191a665bf4a0a4a3e608f2f9e7d5ff23959c",
+      "items": [
+        {
+          "depth_fixword": 0,
+          "height_fixword": 722338,
+          "input_range": [
+            0,
+            2
+          ],
+          "italic_fixword": 75963,
+          "kind": "glyph",
+          "original_gid": 122,
+          "tfm_code": 27,
+          "width_fixword": 611634
+        }
+      ]
+    },
+    {
+      "input_bytes": [
+        102,
+        108
+      ],
+      "input_sha256": "593f2d04aab251f60c9e4b8bbc1e05a34e920980ec08351a18459b2bc7dbf2f6",
+      "items": [
+        {
+          "depth_fixword": 0,
+          "height_fixword": 722338,
+          "input_range": [
+            0,
+            2
+          ],
+          "italic_fixword": 0,
+          "kind": "glyph",
+          "original_gid": 126,
+          "tfm_code": 29,
+          "width_fixword": 582536
+        }
+      ]
+    },
+    {
+      "input_bytes": [
+        102,
+        102,
+        105
+      ],
+      "input_sha256": "10c825a38cbf050c85d7a19982b1755e1fe93936cf696be5d7b73c98b934a9ca",
+      "items": [
+        {
+          "depth_fixword": 0,
+          "height_fixword": 722338,
+          "input_range": [
+            0,
+            3
+          ],
+          "italic_fixword": 0,
+          "kind": "glyph",
+          "original_gid": 123,
+          "tfm_code": 30,
+          "width_fixword": 873778
+        }
+      ]
+    },
+    {
+      "input_bytes": [
+        102,
+        102,
+        108
+      ],
+      "input_sha256": "e06899227dd02ac95d94ce380ebc4702f9392e7b01f8cbdb76fd7fa2c6b049f8",
+      "items": [
+        {
+          "depth_fixword": 0,
+          "height_fixword": 722338,
+          "input_range": [
+            0,
+            3
+          ],
+          "italic_fixword": 0,
+          "kind": "glyph",
+          "original_gid": 124,
+          "tfm_code": 31,
+          "width_fixword": 873778
+        }
+      ]
+    },
+    {
+      "input_bytes": [
+        65,
+        86
+      ],
+      "input_sha256": "10203ae4fc14a963f9d30ab2a1d0e52f2d824b30911118a9cc5089e1e0e6c969",
+      "items": [
+        {
+          "depth_fixword": 0,
+          "height_fixword": 722338,
+          "input_range": [
+            0,
+            1
+          ],
+          "italic_fixword": 0,
+          "kind": "glyph",
+          "original_gid": 27,
+          "tfm_code": 65,
+          "width_fixword": 786432
+        },
+        {
+          "fixword": -116509,
+          "kind": "kern"
+        },
+        {
+          "depth_fixword": 0,
+          "height_fixword": 722338,
+          "input_range": [
+            1,
+            2
+          ],
+          "italic_fixword": 8155,
+          "kind": "glyph",
+          "original_gid": 111,
+          "tfm_code": 86,
+          "width_fixword": 786432
+        }
+      ]
+    },
+    {
+      "input_bytes": [
+        84,
+        111
+      ],
+      "input_sha256": "f4b06ef6d3c81436f60a318c81c42f8f7e2d774d45a22f3b9b5f3b6980d28146",
+      "items": [
+        {
+          "depth_fixword": 0,
+          "height_fixword": 722338,
+          "input_range": [
+            0,
+            1
+          ],
+          "italic_fixword": 0,
+          "kind": "glyph",
+          "original_gid": 104,
+          "tfm_code": 84,
+          "width_fixword": 757282
+        },
+        {
+          "fixword": -87381,
+          "kind": "kern"
+        },
+        {
+          "depth_fixword": 0,
+          "height_fixword": 451464,
+          "input_range": [
+            1,
+            2
+          ],
+          "italic_fixword": 0,
+          "kind": "glyph",
+          "original_gid": 81,
+          "tfm_code": 111,
+          "width_fixword": 524288
+        }
+      ]
+    },
+    {
+      "input_bytes": [
+        87,
+        65
+      ],
+      "input_sha256": "d8689b62711dced3f13e45048ffff01759c9f65cc55206b3e95c054826f7f596",
+      "items": [
+        {
+          "depth_fixword": 0,
+          "height_fixword": 722338,
+          "input_range": [
+            0,
+            1
+          ],
+          "italic_fixword": 9437,
+          "kind": "glyph",
+          "original_gid": 113,
+          "tfm_code": 87,
+          "width_fixword": 1077726
+        },
+        {
+          "fixword": -116509,
+          "kind": "kern"
+        },
+        {
+          "depth_fixword": 0,
+          "height_fixword": 722338,
+          "input_range": [
+            1,
+            2
+          ],
+          "italic_fixword": 0,
+          "kind": "glyph",
+          "original_gid": 27,
+          "tfm_code": 65,
+          "width_fixword": 786432
+        }
+      ]
+    }
+  ],
+  "schema_version": 1,
+  "scope": "exact TFM metrics and explicit encoding mapping; no visual or PDF claim",
+  "stale_registry": "rejected",
+  "strict_undeclared_binding": "rejected",
+  "tfm_sha256": "cd13479f463b9a575d053dd7bf0884daa46bfdeffe4b7f537c193861652ac9e5",
+  "unavailable": [
+    {
+      "error": "ResourceMismatch { path: \"lm\", error: InvalidFont(\"TFM code missing from explicit CFF encoding\") }",
+      "outcome": "rejected",
+      "slot": 156
+    },
+    {
+      "error": "ResourceMismatch { path: \"lm\", error: InvalidFont(\"TFM code missing from explicit CFF encoding\") }",
+      "outcome": "rejected",
+      "slot": 188
+    },
+    {
+      "error": "ResourceMismatch { path: \"lm\", error: InvalidFont(\"TFM code missing from explicit CFF encoding\") }",
+      "outcome": "rejected",
+      "slot": 223
+    }
+  ],
+  "units": "signed TFM fix_word integers, denominator 1048576; input ranges are 8-bit code intervals"
+}

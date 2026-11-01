@@ -1,0 +1,15 @@
+\documentclass{article}
+\usepackage{siunitx}
+\pagestyle{empty}
+\begin{document}
+Default \num{12345.678} and \unit{\metre\per\second}.
+
+\sisetup{output-decimal-marker={,}}
+Comma \num{12345.678} and \unit{\metre\per\second}.
+
+\sisetup{group-digits=none}
+Ungrouped \num{12345.678} and \unit{\metre\per\second}.
+
+\sisetup{per-mode=symbol}
+Symbol \num{12345.678} and \unit{\metre\per\second}.
+\end{document}

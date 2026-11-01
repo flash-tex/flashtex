@@ -1,0 +1,100 @@
+{
+ "fixture": "36-booktabs-cmidrule.tex",
+ "reference_engine": "pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026)",
+ "invocation": "pdflatex -interaction=batchmode, two passes, SOURCE_DATE_EPOCH=0 FORCE_SOURCE_DATE=1",
+ "unit": "bp, y from page top; rules [x, top, width, height]",
+ "pages": [
+  [
+   {
+    "text": "Text",
+    "x": 72.0,
+    "y_top": 83.955
+   },
+   {
+    "text": "before",
+    "x": 99.3176,
+    "y_top": 83.955
+   },
+   {
+    "text": "the",
+    "x": 134.4301,
+    "y_top": 83.955
+   },
+   {
+    "text": "table.",
+    "x": 154.5865,
+    "y_top": 83.955
+   },
+   {
+    "text": "Group",
+    "x": 77.978,
+    "y_top": 99.345
+   },
+   {
+    "text": "Z",
+    "x": 122.5302,
+    "y_top": 99.345
+   },
+   {
+    "text": "a",
+    "x": 77.978,
+    "y_top": 119.545
+   },
+   {
+    "text": "b",
+    "x": 95.7865,
+    "y_top": 119.545
+   },
+   {
+    "text": "c",
+    "x": 122.5302,
+    "y_top": 119.545
+   },
+   {
+    "text": "Text",
+    "x": 72.0,
+    "y_top": 136.105
+   },
+   {
+    "text": "after",
+    "x": 99.3176,
+    "y_top": 136.105
+   },
+   {
+    "text": "the",
+    "x": 126.9533,
+    "y_top": 136.105
+   },
+   {
+    "text": "table.",
+    "x": 147.1097,
+    "y_top": 136.105
+   }
+  ]
+ ],
+ "extension_columns": [
+  []
+ ],
+ "rules": [
+  [
+   [
+    72.0,
+    84.952,
+    63.661,
+    0.936
+   ],
+   [
+    72.0,
+    105.7365,
+    44.552,
+    0.351
+   ],
+   [
+    72.0,
+    125.937,
+    63.661,
+    0.936
+   ]
+  ]
+ ]
+}

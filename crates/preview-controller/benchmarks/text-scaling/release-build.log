@@ -1,0 +1,6 @@
+   Compiling flashtex-paragraph-layout v0.1.0 (/home/natkarri/flashtex-captures/hw1-text-1c02a2bc/crates/paragraph-layout)
+   Compiling flashtex-math-layout v0.1.0 (/home/natkarri/flashtex-captures/hw1-text-1c02a2bc/crates/math-layout)
+   Compiling flashtex-pdf v0.1.0 (/home/natkarri/flashtex-captures/hw1-text-1c02a2bc/crates/pdf)
+   Compiling flashtex-font-engine v0.1.0 (/home/natkarri/flashtex-captures/hw1-text-1c02a2bc/crates/font-engine)
+   Compiling flashtex-compiler v0.1.0 (/home/natkarri/flashtex-captures/hw1-text-1c02a2bc/crates/compiler)
+    Finished `release` profile [optimized] target(s) in 29.24s

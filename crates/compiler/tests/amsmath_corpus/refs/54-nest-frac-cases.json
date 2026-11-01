@@ -1,0 +1,105 @@
+{
+ "fixture": "54-nest-frac-cases.tex",
+ "reference_engine": "pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026)",
+ "invocation": "pdflatex -interaction=batchmode, two passes, SOURCE_DATE_EPOCH=0 FORCE_SOURCE_DATE=1",
+ "unit": "bp, y from page top",
+ "pages": [
+  [
+   {
+    "text": "Some",
+    "x": 72.0,
+    "y_top": 83.955
+   },
+   {
+    "text": "text",
+    "x": 103.2126,
+    "y_top": 83.955
+   },
+   {
+    "text": "before",
+    "x": 127.6084,
+    "y_top": 83.955
+   },
+   {
+    "text": "the",
+    "x": 162.7208,
+    "y_top": 83.955
+   },
+   {
+    "text": "display.",
+    "x": 182.8773,
+    "y_top": 83.955
+   },
+   {
+    "text": "1",
+    "x": 286.828,
+    "y_top": 100.008
+   },
+   {
+    "text": "x",
+    "x": 304.3854,
+    "y_top": 100.008
+   },
+   {
+    "text": ">",
+    "x": 314.3608,
+    "y_top": 100.008
+   },
+   {
+    "text": "0",
+    "x": 326.7895,
+    "y_top": 100.008
+   },
+   {
+    "text": "0",
+    "x": 286.828,
+    "y_top": 117.343
+   },
+   {
+    "text": "x",
+    "x": 304.3854,
+    "y_top": 117.343
+   },
+   {
+    "text": "\u2264",
+    "x": 314.3608,
+    "y_top": 117.343
+   },
+   {
+    "text": "0",
+    "x": 326.9831,
+    "y_top": 117.343
+   },
+   {
+    "text": "2",
+    "x": 303.073,
+    "y_top": 135.726
+   },
+   {
+    "text": "Text",
+    "x": 72.0,
+    "y_top": 151.434
+   },
+   {
+    "text": "after",
+    "x": 99.3176,
+    "y_top": 151.434
+   },
+   {
+    "text": "the",
+    "x": 126.9533,
+    "y_top": 151.434
+   },
+   {
+    "text": "display.",
+    "x": 147.1097,
+    "y_top": 151.434
+   }
+  ]
+ ],
+ "extension_columns": [
+  [
+   277.972
+  ]
+ ]
+}

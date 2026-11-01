@@ -1,0 +1,80 @@
+{
+ "fixture": "41-t1-sans-latex.tex",
+ "engine": "pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026)",
+ "pages": 1,
+ "segments": [
+  {
+   "page": 1,
+   "text": "The",
+   "font": "SFRM1000",
+   "size": 9.9626,
+   "x": 148.712,
+   "baseline": 134.765
+  },
+  {
+   "page": 1,
+   "text": "L",
+   "font": "SFSS1000",
+   "size": 9.9626,
+   "x": 169.182,
+   "baseline": 134.765
+  },
+  {
+   "page": 1,
+   "text": "A",
+   "font": "SFSS0800",
+   "size": 6.9738,
+   "x": 170.996,
+   "baseline": 132.69
+  },
+  {
+   "page": 1,
+   "text": "T",
+   "font": "SFSS1000",
+   "size": 9.9626,
+   "x": 174.44,
+   "baseline": 134.765
+  },
+  {
+   "page": 1,
+   "text": "E",
+   "font": "SFSS1000",
+   "size": 9.9626,
+   "x": 179.558,
+   "baseline": 136.978
+  },
+  {
+   "page": 1,
+   "text": "X",
+   "font": "SFSS1000",
+   "size": 9.9626,
+   "x": 184.262,
+   "baseline": 134.765
+  },
+  {
+   "page": 1,
+   "text": "logo",
+   "font": "SFRM1000",
+   "size": 9.9626,
+   "x": 194.22,
+   "baseline": 134.765
+  },
+  {
+   "page": 1,
+   "text": "in",
+   "font": "SFRM1000",
+   "size": 9.9626,
+   "x": 215.245,
+   "baseline": 134.765
+  },
+  {
+   "page": 1,
+   "text": "sans.",
+   "font": "SFRM1000",
+   "size": 9.9626,
+   "x": 226.872,
+   "baseline": 134.765
+  }
+ ],
+ "warnings": []
+}

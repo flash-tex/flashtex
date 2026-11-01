@@ -1,0 +1,115 @@
+   Compiling flashtex-compiler v0.1.0 (/home/natkarri/flashtex-captures/hw1-starred-467538c7/crates/compiler)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.62s
+     Running tests/acceptance.rs (crates/compiler/target/debug/deps/acceptance-60c120bff6237fbd)
+
+running 11 tests
+test malformed_input_recovers_with_diagnostics_and_still_produces_output ... ok
+test math_and_unsupported_commands_are_reported_never_silent ... ok
+test unknown_protocol_version_and_type_produce_error_envelopes ... ok
+test unsafe_paths_are_rejected ... ok
+test realistic_preamble_is_informational_and_only_body_is_positioned ... ok
+test stray_closing_brace_is_reported_not_swallowed ... ok
+test repository_fixture_roundtrips ... ok
+test unicode_spans_are_utf8_bytes_that_slice_back_exactly ... ok
+test a_minimal_document_and_a_second_edited_revision_both_lay_out ... ok
+test warm_session_cache_is_bounded_and_stays_correct_after_eviction ... ok
+test bounded_reader_rejects_an_oversized_line_and_recovers_for_the_next_request ... ok
+
+test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.06s
+
+     Running tests/corpus_gate.rs (crates/compiler/target/debug/deps/corpus_gate-9f397470855da9d4)
+
+running 2 tests
+test every_corpus_case_matches_its_pinned_result ... ok
+test every_corpus_case_span_slices_its_own_document ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/layout_capabilities.rs (crates/compiler/target/debug/deps/layout_capabilities-2df96b1034208f12)
+
+running 8 tests
+test malformed_capability_fields_each_produce_an_explicit_diagnostic ... ok
+test omitted_capabilities_preserve_the_legacy_fraction_route ... ok
+test font_hints_report_the_faces_selected_by_layout ... ok
+test typed_rules_remove_only_the_fraction_export_warning ... ok
+test capability_switching_on_one_session_cannot_leak_typed_rules ... ok
+test rules_v1_emits_a_sourced_top_left_rectangle_without_the_legacy_glyph ... ok
+test unknown_and_unrequested_capabilities_never_change_shapes ... ok
+test incremental_and_clean_protocol_output_match_for_the_same_capability_set ... ok
+
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/pinned_fixtures.rs (crates/compiler/target/debug/deps/pinned_fixtures-62b7641b673d669c)
+
+running 2 tests
+test regenerate_pinned_fixtures ... ignored, regenerates committed raw compile-result evidence
+test pinned_compile_results_are_byte_exact_without_normalization ... ok
+
+test result: ok. 1 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/recovery.rs (crates/compiler/target/debug/deps/recovery-04d0922efe7e51d3)
+
+running 6 tests
+test generate_recovery_evidence ... ignored, regenerates the committed recovery evidence
+test broken_and_fixed_edits_remain_byte_identical_in_both_directions ... ok
+test every_wire_failure_replies_with_exact_status_and_explicit_diagnostics ... ok
+test every_source_recovery_class_replies_with_positioned_output_and_mapped_diagnostics ... ok
+test every_source_recovery_is_byte_identical_incrementally ... ok
+test recovery_evidence_is_current ... ok
+
+test result: ok. 5 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.02s
+
+     Running tests/references_and_figures.rs (crates/compiler/target/debug/deps/references_and_figures-a38f97b8ed5e0016)
+
+running 9 tests
+test includegraphics_is_explicitly_unsupported ... ok
+test undefined_reference_is_visible_and_warns_with_key ... ok
+test equation_label_round_trip_and_right_margin_number ... ok
+test sections_and_subsections_number_and_reset ... ok
+test backward_and_forward_references_resolve ... ok
+test duplicate_label_warns_and_second_definition_wins ... ok
+test figure_caption_label_and_lists_render ... ok
+test inserting_top_section_recomputes_and_matches_full_build ... ok
+test forward_pageref_converges_to_the_labels_page ... ok
+
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running tests/restart.rs (crates/compiler/target/debug/deps/restart-f752bd15a9474c96)
+
+running 4 tests
+test diagnostics_are_deterministic_across_restarts ... ok
+test repairing_a_document_returns_it_to_its_pre_breakage_output ... ok
+test a_restart_at_any_point_produces_identical_output ... ok
+test a_long_editing_session_never_drifts_from_a_clean_build ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.74s
+
+     Running tests/robustness.rs (crates/compiler/target/debug/deps/robustness-af4194741c0cfd2a)
+
+running 5 tests
+test deeply_nested_input_does_not_blow_the_stack ... ok
+test no_malformed_request_line_panics_the_transport ... ok
+test no_generated_source_panics_incremental_reuse ... ok
+test no_generated_source_panics_the_parser_or_layout ... ok
+test a_request_is_answered_even_when_the_document_is_pathological ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.30s
+
+     Running tests/starred_sections.rs (crates/compiler/target/debug/deps/starred_sections-33e835b4330b3a18)
+
+running 4 tests
+test starred_problem_macro_preserves_utf8_argument_spans ... ok
+test unsupported_heading_commands_remain_explicit ... ok
+test starred_sections_preserve_counters_and_previous_label_value ... ok
+test toggling_stars_matches_clean_compilation ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/unsupported_inventory.rs (crates/compiler/target/debug/deps/unsupported_inventory-0ff55375d48c7cbe)
+
+running 2 tests
+test generate_unsupported_inventory ... ignored, regenerates the committed unsupported-feature inventory
+test every_unsupported_feature_is_reported_explicitly ... ok
+
+test result: ok. 1 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.00s
+

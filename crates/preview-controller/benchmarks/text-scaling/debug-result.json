@@ -1,0 +1,46 @@
+{
+  "binary_path": "/home/natkarri/flashtex-captures/hw1-text-1c02a2bc/comment-fixed-compiler-preserved",
+  "binary_sha256": "0810b9fb6b68cbef3dbb210413489f2f9a5cf1b6ca5226827026d3327598c7a3",
+  "build": "debug candidate",
+  "measurement": "wall clock write request through readline complete JSON reply; one persistent process, one math text box, 4 compiles per size; not native paint or representative general documents",
+  "rows": [
+    {
+      "text_body_bytes": 5000,
+      "first_compile_ms": 57.293976002256386,
+      "changed_compile_ms": [
+        70.79562300350517,
+        62.79913199250586,
+        57.84237399348058
+      ],
+      "request_bytes": 5188,
+      "reply_bytes": 5361
+    },
+    {
+      "text_body_bytes": 50000,
+      "first_compile_ms": 422.7183760085609,
+      "changed_compile_ms": [
+        218.23678600776475,
+        181.93213699851185,
+        169.22921700461302
+      ],
+      "request_bytes": 50190,
+      "reply_bytes": 50364
+    },
+    {
+      "text_body_bytes": 500000,
+      "first_compile_ms": 1553.9883460005512,
+      "changed_compile_ms": [
+        1400.9776290040463,
+        1331.7210509994766,
+        1115.223822009284
+      ],
+      "request_bytes": 500192,
+      "reply_bytes": 500367
+    }
+  ],
+  "files": {
+    "stderr.txt": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "request.jsonl": "9b552b15b0d94b908a3651e2c684d2edb2479285297950c864bb922d9227f39a",
+    "response.jsonl": "4c9b17fe8be1b16cde3ce6dd9798d92da5ebbe2ca0ef819a32428aa0d3e803da"
+  }
+}

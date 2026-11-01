@@ -1,0 +1,7 @@
+# Producer reply-cap acceptance
+
+Unchanged producer9aaec57a (binary347429f4) through debug helper built from71049ffa, value transport, explicit runtime frame limit6000 bytes. The launcher sets producer JSON budget5999, reserving newline. No inherited cap was set. Each capture verifies all78 producer assets and records exact binary/script hashes.
+
+The existing growing three-state fixture accepts the first sibling and explicitly declines the next two oversized siblings, preserving complete direct-equal v1 output and subsequent edits. The second bounded sequence specifically checks reacceptance: original source → longer source → original source; v2 accepted → declined → accepted in one helper session. All three v1 outputs equal a fresh direct producer call at the same effective budget. No source truncation, restart or runtime cap increase is used to pass the transition. Exact reopened document is now archived and hashed, alongside the owner-harness equality assertion.
+
+Both observations are retained; the second addresses the missing post-decline v2 reacceptance gate. One-page small fixtures at a reduced cap exercise the failure boundary; this does not prove native large-document responsiveness, arbitrary document compatibility or pixel parity. No latency comparison is claimed. Direct requests remain harness-reconstructed rather than captured helper stdin. Diagnostics remain live snapshots, not guaranteed complete shutdown traces.

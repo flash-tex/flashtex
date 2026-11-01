@@ -1,0 +1,13 @@
+\documentclass[tikz,border=5pt]{standalone}
+\usepackage[T1]{fontenc}
+\usepackage{lmodern}
+\begin{document}
+\begin{tikzpicture}
+\draw (0,0) to[bend left] (3,0);
+\draw[red] (0,0) to[bend right=45] (3,0);
+\draw[->, blue] (4,0) to[out=90, in=180] (6,1);
+\node[draw] (x) at (0,2) {x};
+\node[draw] (y) at (3,2) {y};
+\draw[->] (x) to[bend left] (y);
+\end{tikzpicture}
+\end{document}

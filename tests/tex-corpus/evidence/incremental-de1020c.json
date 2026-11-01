@@ -1,0 +1,933 @@
+{
+  "schema_version": 1,
+  "compiler_sha": "de1020cd0be7cede11be2691e00e7f5b15cb2224",
+  "command": [
+    "/tmp/flashtex-compiler-de1020c/crates/compiler/target/debug/flashtex-compiler"
+  ],
+  "build_command": "/home/natkarri/.cargo/bin/cargo build --offline --manifest-path /tmp/flashtex-compiler-de1020c/crates/compiler/Cargo.toml",
+  "created_utc": "2026-09-12T04:52:19.612950+00:00",
+  "limitations": "Sequential worker equivalence only: not proof of semantic correctness, cache reuse, native stale-preview suppression, or sub-200ms UI latency. Only revision-specific transport/source integrity checks are used; baseline semantic witnesses are not reused after edits.",
+  "results": [
+    {
+      "scenario_id": "unicode-byte-shift",
+      "case_id": "literal-source-map",
+      "purpose": "An insertion before navigation anchors changes later UTF-8 byte offsets.",
+      "steps": [
+        {
+          "phase": "cold",
+          "request": {
+            "protocol_version": 1,
+            "id": "unicode-byte-shift-1",
+            "type": "compile",
+            "payload": {
+              "project_id": "edit-unicode-byte-shift",
+              "revision": 1,
+              "entry_path": "main.tex",
+              "documents": [
+                {
+                  "path": "main.tex",
+                  "text": "\\documentclass{article}\n\\begin{document}\néé\nUniqueAnchor\n尾\n\\end{document}\n"
+                }
+              ]
+            }
+          },
+          "persistent_raw": "{\"id\":\"unicode-byte-shift-1\",\"payload\":{\"diagnostics\":[{\"message\":\"\\\\documentclass is not supported by this compiler version; unrestricted TeX math mode is not implemented\",\"recovery\":\"skipped the command; any braced argument was typeset as plain text\",\"severity\":\"error\",\"source\":{\"end_byte\":14,\"path\":\"main.tex\",\"start_byte\":0}}],\"pages\":[{\"height_pt\":792,\"items\":[{\"baseline_y_pt\":84,\"font_size_pt\":12,\"kind\":\"text\",\"source\":{\"end_byte\":22,\"path\":\"main.tex\",\"start_byte\":15},\"text\":\"article\",\"x_pt\":72},{\"baseline_y_pt\":84,\"font_size_pt\":12,\"kind\":\"text\",\"source\":{\"end_byte\":45,\"path\":\"main.tex\",\"start_byte\":41},\"text\":\"éé\",\"x_pt\":104.99},{\"baseline_y_pt\":84,\"font_size_pt\":12,\"kind\":\"text\",\"source\":{\"end_byte\":58,\"path\":\"main.tex\",\"start_byte\":46},\"text\":\"UniqueAnchor\",\"x_pt\":118.64},{\"baseline_y_pt\":84,\"font_size_pt\":12,\"kind\":\"text\",\"source\":{\"end_byte\":62,\"path\":\"main.tex\",\"start_byte\":59},\"text\":\"尾\",\"x_pt\":192.96}],\"number\":1,\"width_pt\":612}],\"pdf_path\":null,\"project_id\":\"edit-unicode-byte-shift\",\"revision\":1,\"status\":\"recovered\"},\"protocol_version\":1,\"type\":\"compile_result\"}",
+          "persistent_seconds": 0.0010232509957859293,
+          "clean_raw": "{\"id\":\"unicode-byte-shift-1\",\"payload\":{\"diagnostics\":[{\"message\":\"\\\\documentclass is not supported by this compiler version; unrestricted TeX math mode is not implemented\",\"recovery\":\"skipped the command; any braced argument was typeset as plain text\",\"severity\":\"error\",\"source\":{\"end_byte\":14,\"path\":\"main.tex\",\"start_byte\":0}}],\"pages\":[{\"height_pt\":792,\"items\":[{\"baseline_y_pt\":84,\"font_size_pt\":12,\"kind\":\"text\",\"source\":{\"end_byte\":22,\"path\":\"main.tex\",\"start_byte\":15},\"text\":\"article\",\"x_pt\":72},{\"baseline_y_pt\":84,\"font_size_pt\":12,\"kind\":\"text\",\"source\":{\"end_byte\":45,\"path\":\"main.tex\",\"start_byte\":41},\"text\":\"éé\",\"x_pt\":104.99},{\"baseline_y_pt\":84,\"font_size_pt\":12,\"kind\":\"text\",\"source\":{\"end_byte\":58,\"path\":\"main.tex\",\"start_byte\":46},\"text\":\"UniqueAnchor\",\"x_pt\":118.64},{\"baseline_y_pt\":84,\"font_size_pt\":12,\"kind\":\"text\",\"source\":{\"end_byte\":62,\"path\":\"main.tex\",\"start_byte\":59},\"text\":\"尾\",\"x_pt\":192.96}],\"number\":1,\"width_pt\":612}],\"pdf_path\":null,\"project_id\":\"edit-unicode-byte-shift\",\"revision\":1,\"status\":\"recovered\"},\"protocol_version\":1,\"type\":\"compile_result\"}",
+          "clean_seconds": 0.0008268829988082871,
+          "equivalent": true,
+          "compiler_integrity_checks": [
+            {
+              "check": "result_envelope",
+              "status": "pass",
+              "detail": "One correlated runtime-v1 compile_result is required."
+            },
+            {
+              "check": "project_revision",
+              "status": "pass",
+              "detail": "Result must describe the exact submitted revision."
+            },
+            {
+              "check": "result_structure",
+              "status": "pass",
+              "detail": "Status, pages and diagnostics must follow runtime-v1."
+            },
+            {
+              "check": "display_items_and_sources",
+              "status": "pass",
+              "detail": "v1 text positions must be finite and source spans valid UTF-8 ranges into submitted files."
+            },
+            {
+              "check": "diagnostic_sources",
+              "status": "pass",
+              "detail": "Diagnostic source ranges must refer to this input revision."
+            }
+          ],
+          "integrity_ok": true,
+          "status": "pass",
+          "clean_stderr": ""
+        },
+        {
+          "phase": "warm_unchanged",
+          "request": {
+            "protocol_version": 1,
+            "id": "unicode-byte-shift-2",
+            "type": "compile",
+            "payload": {
+              "project_id": "edit-unicode-byte-shift",
+              "revision": 2,
+              "entry_path": "main.tex",
+              "documents": [
+                {
+                  "path": "main.tex",
+                  "text": "\\documentclass{article}\n\\begin{document}\néé\nUniqueAnchor\n尾\n\\end{document}\n"
+                }
+              ]
+            }
+          },
+          "persistent_raw": "{\"id\":\"unicode-byte-shift-2\",\"payload\":{\"diagnostics\":[{\"message\":\"\\\\documentclass is not supported by this compiler version; unrestricted TeX math mode is not implemented\",\"recovery\":\"skipped the command; any braced argument was typeset as plain text\",\"severity\":\"error\",\"source\":{\"end_byte\":14,\"path\":\"main.tex\",\"start_byte\":0}}],\"pages\":[{\"height_pt\":792,\"items\":[{\"baseline_y_pt\":84,\"font_size_pt\":12,\"kind\":\"text\",\"source\":{\"end_byte\":22,\"path\":\"main.tex\",\"start_byte\":15},\"text\":\"article\",\"x_pt\":72},{\"baseline_y_pt\":84,\"font_size_pt\":12,\"kind\":\"text\",\"source\":{\"end_byte\":45,\"path\":\"main.tex\",\"start_byte\":41},\"text\":\"éé\",\"x_pt\":104.99},{\"baseline_y_pt\":84,\"font_size_pt\":12,\"kind\":\"text\",\"source\":{\"end_byte\":58,\"path\":\"main.tex\",\"start_byte\":46},\"text\":\"UniqueAnchor\",\"x_pt\":118.64},{\"baseline_y_pt\":84,\"font_size_pt\":12,\"kind\":\"text\",\"source\":{\"end_byte\":62,\"path\":\"main.tex\",\"start_byte\":59},\"text\":\"尾\",\"x_pt\":192.96}],\"number\":1,\"width_pt\":612}],\"pdf_path\":null,\"project_id\":\"edit-unicode-byte-shift\",\"revision\":2,\"status\":\"recovered\"},\"protocol_version\":1,\"type\":\"compile_result\"}",
+          "persistent_seconds": 0.00018822799029294401,
+          "clean_raw": "{\"id\":\"unicode-byte-shift-2\",\"payload\":{\"diagnostics\":[{\"message\":\"\\\\documentclass is not supported by this compiler version; unrestricted TeX math mode is not implemented\",\"recovery\":\"skipped the command; any braced argument was typeset as plain text\",\"severity\":\"error\",\"source\":{\"end_byte\":14,\"path\":\"main.tex\",\"start_byte\":0}}],\"pages\":[{\"height_pt\":792,\"items\":[{\"baseline_y_pt\":84,\"font_size_pt\":12,\"kind\":\"text\",\"source\":{\"end_byte\":22,\"path\":\"main.tex\",\"start_byte\":15},\"text\":\"article\",\"x_pt\":72},{\"baseline_y_pt\":84,\"font_size_pt\":12,\"kind\":\"text\",\"source\":{\"end_byte\":45,\"path\":\"main.tex\",\"start_byte\":41},\"text\":\"éé\",\"x_pt\":104.99},{\"baseline_y_pt\":84,\"font_size_pt\":12,\"kind\":\"text\",\"source\":{\"end_byte\":58,\"path\":\"main.tex\",\"start_byte\":46},\"text\":\"UniqueAnchor\",\"x_pt\":118.64},{\"baseline_y_pt\":84,\"font_size_pt\":12,\"kind\":\"text\",\"source\":{\"end_byte\":62,\"path\":\"main.tex\",\"start_byte\":59},\"text\":\"尾\",\"x_pt\":192.96}],\"number\":1,\"width_pt\":612}],\"pdf_path\":null,\"project_id\":\"edit-unicode-byte-shift\",\"revision\":2,\"status\":\"recovered\"},\"protocol_version\":1,\"type\":\"compile_result\"}",
+          "clean_seconds": 0.0006565980002051219,
+          "equivalent": true,
+          "compiler_integrity_checks": [
+            {
+              "check": "result_envelope",
+              "status": "pass",
+              "detail": "One correlated runtime-v1 compile_result is required."
+            },
+            {
+              "check": "project_revision",
+              "status": "pass",
+              "detail": "Result must describe the exact submitted revision."
+            },
+            {
+              "check": "result_structure",
+              "status": "pass",
+              "detail": "Status, pages and diagnostics must follow runtime-v1."
+            },
+            {
+              "check": "display_items_and_sources",
+              "status": "pass",
+              "detail": "v1 text positions must be finite and source spans valid UTF-8 ranges into submitted files."
+            },
+            {
+              "check": "diagnostic_sources",
+              "status": "pass",
+              "detail": "Diagnostic source ranges must refer to this input revision."
+            }
+          ],
+          "integrity_ok": true,
+          "status": "pass",
+          "clean_stderr": ""
+        },
+        {
+          "phase": "edit",
+          "request": {
+            "protocol_version": 1,
+            "id": "unicode-byte-shift-3",
+            "type": "compile",
+            "payload": {
+              "project_id": "edit-unicode-byte-shift",
+              "revision": 3,
+              "entry_path": "main.tex",
+              "documents": [
+                {
+                  "path": "main.tex",
+                  "text": "\\documentclass{article}\n\\begin{document}\néé東京\nUniqueAnchor\n尾\n\\end{document}\n"
+                }
+              ]
+            }
+          },
+          "persistent_raw": "{\"id\":\"unicode-byte-shift-3\",\"payload\":{\"diagnostics\":[{\"message\":\"\\\\documentclass is not supported by this compiler version; unrestricted TeX math mode is not implemented\",\"recovery\":\"skipped the command; any braced argument was typeset as plain text\",\"severity\":\"error\",\"source\":{\"end_byte\":14,\"path\":\"main.tex\",\"start_byte\":0}}],\"pages\":[{\"height_pt\":792,\"items\":[{\"baseline_y_pt\":84,\"font_size_pt\":12,\"kind\":\"text\",\"source\":{\"end_byte\":22,\"path\":\"main.tex\",\"start_byte\":15},\"text\":\"article\",\"x_pt\":72},{\"baseline_y_pt\":84,\"font_size_pt\":12,\"kind\":\"text\",\"source\":{\"end_byte\":51,\"path\":\"main.tex\",\"start_byte\":41},\"text\":\"éé東京\",\"x_pt\":104.99},{\"baseline_y_pt\":84,\"font_size_pt\":12,\"kind\":\"text\",\"source\":{\"end_byte\":64,\"path\":\"main.tex\",\"start_byte\":52},\"text\":\"UniqueAnchor\",\"x_pt\":130.64},{\"baseline_y_pt\":84,\"font_size_pt\":12,\"kind\":\"text\",\"source\":{\"end_byte\":68,\"path\":\"main.tex\",\"start_byte\":65},\"text\":\"尾\",\"x_pt\":204.96}],\"number\":1,\"width_pt\":612}],\"pdf_path\":null,\"project_id\":\"edit-unicode-byte-shift\",\"revision\":3,\"status\":\"recovered\"},\"protocol_version\":1,\"type\":\"compile_result\"}",
+          "persistent_seconds": 0.00016270499327220023,
+          "clean_raw": "{\"id\":\"unicode-byte-shift-3\",\"payload\":{\"diagnostics\":[{\"message\":\"\\\\documentclass is not supported by this compiler version; unrestricted TeX math mode is not implemented\",\"recovery\":\"skipped the command; any braced argument was typeset as plain text\",\"severity\":\"error\",\"source\":{\"end_byte\":14,\"path\":\"main.tex\",\"start_byte\":0}}],\"pages\":[{\"height_pt\":792,\"items\":[{\"baseline_y_pt\":84,\"font_size_pt\":12,\"kind\":\"text\",\"source\":{\"end_byte\":22,\"path\":\"main.tex\",\"start_byte\":15},\"text\":\"article\",\"x_pt\":72},{\"baseline_y_pt\":84,\"font_size_pt\":12,\"kind\":\"text\",\"source\":{\"end_byte\":51,\"path\":\"main.tex\",\"start_byte\":41},\"text\":\"éé東京\",\"x_pt\":104.99},{\"baseline_y_pt\":84,\"font_size_pt\":12,\"kind\":\"text\",\"source\":{\"end_byte\":64,\"path\":\"main.tex\",\"start_byte\":52},\"text\":\"UniqueAnchor\",\"x_pt\":130.64},{\"baseline_y_pt\":84,\"font_size_pt\":12,\"kind\":\"text\",\"source\":{\"end_byte\":68,\"path\":\"main.tex\",\"start_byte\":65},\"text\":\"尾\",\"x_pt\":204.96}],\"number\":1,\"width_pt\":612}],\"pdf_path\":null,\"project_id\":\"edit-unicode-byte-shift\",\"revision\":3,\"status\":\"recovered\"},\"protocol_version\":1,\"type\":\"compile_result\"}",
+          "clean_seconds": 0.0005902439879719168,
+          "equivalent": true,
+          "compiler_integrity_checks": [
+            {
+              "check": "result_envelope",
+              "status": "pass",
+              "detail": "One correlated runtime-v1 compile_result is required."
+            },
+            {
+              "check": "project_revision",
+              "status": "pass",
+              "detail": "Result must describe the exact submitted revision."
+            },
+            {
+              "check": "result_structure",
+              "status": "pass",
+              "detail": "Status, pages and diagnostics must follow runtime-v1."
+            },
+            {
+              "check": "display_items_and_sources",
+              "status": "pass",
+              "detail": "v1 text positions must be finite and source spans valid UTF-8 ranges into submitted files."
+            },
+            {
+              "check": "diagnostic_sources",
+              "status": "pass",
+              "detail": "Diagnostic source ranges must refer to this input revision."
+            }
+          ],
+          "integrity_ok": true,
+          "status": "pass",
+          "clean_stderr": ""
+        }
+      ],
+      "status": "pass",
+      "persistent_stderr": ""
+    },
+    {
+      "scenario_id": "macro-definition-change",
+      "case_id": "macro-scope",
+      "purpose": "A macro definition edit invalidates downstream expansion while preserving local scope.",
+      "steps": [
+        {
+          "phase": "cold",
+          "request": {
+            "protocol_version": 1,
+            "id": "macro-definition-change-1",
+            "type": "compile",
+            "payload": {
+              "project_id": "edit-macro-definition-change",
+              "revision": 1,
+              "entry_path": "main.tex",
+              "documents": [
+                {
+                  "path": "main.tex",
+                  "text": "\\documentclass{article}\n\\newcommand{\\word}{outer}\n\\begin{document}\n\\word{} {\\renewcommand{\\word}{inner}\\word{}} \\word{}\n\\end{document}\n"
+                }
+              ]
+            }
+          },
+          "persistent_raw": "{\"id\":\"macro-definition-change-1\",\"payload\":{\"diagnostics\":[{\"message\":\"\\\\documentclass is not supported by this compiler version; unrestricted TeX math mode is not implemented\",\"recovery\":\"skipped the command; any braced argument was typeset as plain text\",\"severity\":\"error\",\"source\":{\"end_byte\":14,\"path\":\"main.tex\",\"start_byte\":0}},{\"message\":\"\\\\newcommand is not supported by this compiler version; unrestricted TeX math mode is not implemented\",\"recovery\":\"skipped the command; any braced argument was typeset as plain text\",\"severity\":\"error\",\"source\":{\"end_byte\":35,\"path\":\"main.tex\",\"start_byte\":24}},{\"message\":\"\\\\word is not supported by this compiler version; unrestricted TeX math mode is not implemented\",\"recovery\":\"skipped the command; any braced argument was typeset as plain text\",\"severity\":\"error\",\"source\":{\"end_byte\":41,\"path\":\"main.tex\",\"start_byte\":36}},{\"message\":\"\\\\word is not supported by this compiler version; unrestricted TeX math mode is not implemented\",\"recovery\":\"skipped the command; any braced argument was typeset as plain text\",\"severity\":\"error\",\"source\":{\"end_byte\":72,\"path\":\"main.tex\",\"start_byte\":67}},{\"message\":\"\\\\renewcommand is not supported by this compiler version; unrestricted TeX math mode is not implemented\",\"recovery\":\"skipped the command; any braced argument was typeset as plain text\",\"severity\":\"error\",\"source\":{\"end_byte\":89,\"path\":\"main.tex\",\"start_byte\":76}},{\"message\":\"\\\\word is not supported by this compiler version; unrestricted TeX math mode is not implemented\",\"recovery\":\"skipped the command; any braced argument was typeset as plain text\",\"severity\":\"error\",\"source\":{\"end_byte\":95,\"path\":\"main.tex\",\"start_byte\":90}},{\"message\":\"\\\\word is not supported by this compiler version; unrestricted TeX math mode is not implemented\",\"recovery\":\"skipped the command; any braced argument was typeset as plain text\",\"severity\":\"error\",\"source\":{\"end_byte\":108,\"path\":\"main.tex\",\"start_byte\":103}},{\"message\":\"\\\\word is not supported by this compiler version; unrestricted TeX math mode is not implemented\",\"recovery\":\"skipped the command; any braced argument was typeset as plain text\",\"severity\":\"error\",\"source\":{\"end_byte\":117,\"path\":\"main.tex\",\"start_byte\":112}}],\"pages\":[{\"height_pt\":792,\"items\":[{\"baseline_y_pt\":84,\"font_size_pt\":12,\"kind\":\"text\",\"source\":{\"end_byte\":22,\"path\":\"main.tex\",\"start_byte\":15},\"text\":\"article\",\"x_pt\":72},{\"baseline_y_pt\":84,\"font_size_pt\":12,\"kind\":\"text\",\"source\":{\"end_byte\":48,\"path\":\"main.tex\",\"start_byte\":43},\"text\":\"outer\",\"x_pt\":104.99},{\"baseline_y_pt\":84,\"font_size_pt\":12,\"kind\":\"text\",\"source\":{\"end_byte\":102,\"path\":\"main.tex\",\"start_byte\":97},\"text\":\"inner\",\"x_pt\":132.65}],\"number\":1,\"width_pt\":612}],\"pdf_path\":null,\"project_id\":\"edit-macro-definition-change\",\"revision\":1,\"status\":\"recovered\"},\"protocol_version\":1,\"type\":\"compile_result\"}",
+          "persistent_seconds": 0.0005551549984375015,
+          "clean_raw": "{\"id\":\"macro-definition-change-1\",\"payload\":{\"diagnostics\":[{\"message\":\"\\\\documentclass is not supported by this compiler version; unrestricted TeX math mode is not implemented\",\"recovery\":\"skipped the command; any braced argument was typeset as plain text\",\"severity\":\"error\",\"source\":{\"end_byte\":14,\"path\":\"main.tex\",\"start_byte\":0}},{\"message\":\"\\\\newcommand is not supported by this compiler version; unrestricted TeX math mode is not implemented\",\"recovery\":\"skipped the command; any braced argument was typeset as plain text\",\"severity\":\"error\",\"source\":{\"end_byte\":35,\"path\":\"main.tex\",\"start_byte\":24}},{\"message\":\"\\\\word is not supported by this compiler version; unrestricted TeX math mode is not implemented\",\"recovery\":\"skipped the command; any braced argument was typeset as plain text\",\"severity\":\"error\",\"source\":{\"end_byte\":41,\"path\":\"main.tex\",\"start_byte\":36}},{\"message\":\"\\\\word is not supported by this compiler version; unrestricted TeX math mode is not implemented\",\"recovery\":\"skipped the command; any braced argument was typeset as plain text\",\"severity\":\"error\",\"source\":{\"end_byte\":72,\"path\":\"main.tex\",\"start_byte\":67}},{\"message\":\"\\\\renewcommand is not supported by this compiler version; unrestricted TeX math mode is not implemented\",\"recovery\":\"skipped the command; any braced argument was typeset as plain text\",\"severity\":\"error\",\"source\":{\"end_byte\":89,\"path\":\"main.tex\",\"start_byte\":76}},{\"message\":\"\\\\word is not supported by this compiler version; unrestricted TeX math mode is not implemented\",\"recovery\":\"skipped the command; any braced argument was typeset as plain text\",\"severity\":\"error\",\"source\":{\"end_byte\":95,\"path\":\"main.tex\",\"start_byte\":90}},{\"message\":\"\\\\word is not supported by this compiler version; unrestricted TeX math mode is not implemented\",\"recovery\":\"skipped the command; any braced argument was typeset as plain text\",\"severity\":\"error\",\"source\":{\"end_byte\":108,\"path\":\"main.tex\",\"start_byte\":103}},{\"message\":\"\\\\word is not supported by this compiler version; unrestricted TeX math mode is not implemented\",\"recovery\":\"skipped the command; any braced argument was typeset as plain text\",\"severity\":\"error\",\"source\":{\"end_byte\":117,\"path\":\"main.tex\",\"start_byte\":112}}],\"pages\":[{\"height_pt\":792,\"items\":[{\"baseline_y_pt\":84,\"font_size_pt\":12,\"kind\":\"text\",\"source\":{\"end_byte\":22,\"path\":\"main.tex\",\"start_byte\":15},\"text\":\"article\",\"x_pt\":72},{\"baseline_y_pt\":84,\"font_size_pt\":12,\"kind\":\"text\",\"source\":{\"end_byte\":48,\"path\":\"main.tex\",\"start_byte\":43},\"text\":\"outer\",\"x_pt\":104.99},{\"baseline_y_pt\":84,\"font_size_pt\":12,\"kind\":\"text\",\"source\":{\"end_byte\":102,\"path\":\"main.tex\",\"start_byte\":97},\"text\":\"inner\",\"x_pt\":132.65}],\"number\":1,\"width_pt\":612}],\"pdf_path\":null,\"project_id\":\"edit-macro-definition-change\",\"revision\":1,\"status\":\"recovered\"},\"protocol_version\":1,\"type\":\"compile_result\"}",
+          "clean_seconds": 0.0014526750019285828,
+          "equivalent": true,
+          "compiler_integrity_checks": [
+            {
+              "check": "result_envelope",
+              "status": "pass",
+              "detail": "One correlated runtime-v1 compile_result is required."
+            },
+            {
+              "check": "project_revision",
+              "status": "pass",
+              "detail": "Result must describe the exact submitted revision."
+            },
+            {
+              "check": "result_structure",
+              "status": "pass",
+              "detail": "Status, pages and diagnostics must follow runtime-v1."
+            },
+            {
+              "check": "display_items_and_sources",
+              "status": "pass",
+              "detail": "v1 text positions must be finite and source spans valid UTF-8 ranges into submitted files."
+            },
+            {
+              "check": "diagnostic_sources",
+              "status": "pass",
+              "detail": "Diagnostic source ranges must refer to this input revision."
+            }
+          ],
+          "integrity_ok": true,
+          "status": "pass",
+          "clean_stderr": ""
+        },
+        {
+          "phase": "warm_unchanged",
+          "request": {
+            "protocol_version": 1,
+            "id": "macro-definition-change-2",
+            "type": "compile",
+            "payload": {
+              "project_id": "edit-macro-definition-change",
+              "revision": 2,
+              "entry_path": "main.tex",
+              "documents": [
+                {
+                  "path": "main.tex",
+                  "text": "\\documentclass{article}\n\\newcommand{\\word}{outer}\n\\begin{document}\n\\word{} {\\renewcommand{\\word}{inner}\\word{}} \\word{}\n\\end{document}\n"
+                }
+              ]
+            }
+          },
+          "persistent_raw": "{\"id\":\"macro-definition-change-2\",\"payload\":{\"diagnostics\":[{\"message\":\"\\\\documentclass is not supported by this compiler version; unrestricted TeX math mode is not implemented\",\"recovery\":\"skipped the command; any braced argument was typeset as plain text\",\"severity\":\"error\",\"source\":{\"end_byte\":14,\"path\":\"main.tex\",\"start_byte\":0}},{\"message\":\"\\\\newcommand is not supported by this compiler version; unrestricted TeX math mode is not implemented\",\"recovery\":\"skipped the command; any braced argument was typeset as plain text\",\"severity\":\"error\",\"source\":{\"end_byte\":35,\"path\":\"main.tex\",\"start_byte\":24}},{\"message\":\"\\\\word is not supported by this compiler version; unrestricted TeX math mode is not implemented\",\"recovery\":\"skipped the command; any braced argument was typeset as plain text\",\"severity\":\"error\",\"source\":{\"end_byte\":41,\"path\":\"main.tex\",\"start_byte\":36}},{\"message\":\"\\\\word is not supported by this compiler version; unrestricted TeX math mode is not implemented\",\"recovery\":\"skipped the command; any braced argument was typeset as plain text\",\"severity\":\"error\",\"source\":{\"end_byte\":72,\"path\":\"main.tex\",\"start_byte\":67}},{\"message\":\"\\\\renewcommand is not supported by this compiler version; unrestricted TeX math mode is not implemented\",\"recovery\":\"skipped the command; any braced argument was typeset as plain text\",\"severity\":\"error\",\"source\":{\"end_byte\":89,\"path\":\"main.tex\",\"start_byte\":76}},{\"message\":\"\\\\word is not supported by this compiler version; unrestricted TeX math mode is not implemented\",\"recovery\":\"skipped the command; any braced argument was typeset as plain text\",\"severity\":\"error\",\"source\":{\"end_byte\":95,\"path\":\"main.tex\",\"start_byte\":90}},{\"message\":\"\\\\word is not supported by this compiler version; unrestricted TeX math mode is not implemented\",\"recovery\":\"skipped the command; any braced argument was typeset as plain text\",\"severity\":\"error\",\"source\":{\"end_byte\":108,\"path\":\"main.tex\",\"start_byte\":103}},{\"message\":\"\\\\word is not supported by this compiler version; unrestricted TeX math mode is not implemented\",\"recovery\":\"skipped the command; any braced argument was typeset as plain text\",\"severity\":\"error\",\"source\":{\"end_byte\":117,\"path\":\"main.tex\",\"start_byte\":112}}],\"pages\":[{\"height_pt\":792,\"items\":[{\"baseline_y_pt\":84,\"font_size_pt\":12,\"kind\":\"text\",\"source\":{\"end_byte\":22,\"path\":\"main.tex\",\"start_byte\":15},\"text\":\"article\",\"x_pt\":72},{\"baseline_y_pt\":84,\"font_size_pt\":12,\"kind\":\"text\",\"source\":{\"end_byte\":48,\"path\":\"main.tex\",\"start_byte\":43},\"text\":\"outer\",\"x_pt\":104.99},{\"baseline_y_pt\":84,\"font_size_pt\":12,\"kind\":\"text\",\"source\":{\"end_byte\":102,\"path\":\"main.tex\",\"start_byte\":97},\"text\":\"inner\",\"x_pt\":132.65}],\"number\":1,\"width_pt\":612}],\"pdf_path\":null,\"project_id\":\"edit-macro-definition-change\",\"revision\":2,\"status\":\"recovered\"},\"protocol_version\":1,\"type\":\"compile_result\"}",
+          "persistent_seconds": 0.0002128530031768605,
+          "clean_raw": "{\"id\":\"macro-definition-change-2\",\"payload\":{\"diagnostics\":[{\"message\":\"\\\\documentclass is not supported by this compiler version; unrestricted TeX math mode is not implemented\",\"recovery\":\"skipped the command; any braced argument was typeset as plain text\",\"severity\":\"error\",\"source\":{\"end_byte\":14,\"path\":\"main.tex\",\"start_byte\":0}},{\"message\":\"\\\\newcommand is not supported by this compiler version; unrestricted TeX math mode is not implemented\",\"recovery\":\"skipped the command; any braced argument was typeset as plain text\",\"severity\":\"error\",\"source\":{\"end_byte\":35,\"path\":\"main.tex\",\"start_byte\":24}},{\"message\":\"\\\\word is not supported by this compiler version; unrestricted TeX math mode is not implemented\",\"recovery\":\"skipped the command; any braced argument was typeset as plain text\",\"severity\":\"error\",\"source\":{\"end_byte\":41,\"path\":\"main.tex\",\"start_byte\":36}},{\"message\":\"\\\\word is not supported by this compiler version; unrestricted TeX math mode is not implemented\",\"recovery\":\"skipped the command; any braced argument was typeset as plain text\",\"severity\":\"error\",\"source\":{\"end_byte\":72,\"path\":\"main.tex\",\"start_byte\":67}},{\"message\":\"\\\\renewcommand is not supported by this compiler version; unrestricted TeX math mode is not implemented\",\"recovery\":\"skipped the command; any braced argument was typeset as plain text\",\"severity\":\"error\",\"source\":{\"end_byte\":89,\"path\":\"main.tex\",\"start_byte\":76}},{\"message\":\"\\\\word is not supported by this compiler version; unrestricted TeX math mode is not implemented\",\"recovery\":\"skipped the command; any braced argument was typeset as plain text\",\"severity\":\"error\",\"source\":{\"end_byte\":95,\"path\":\"main.tex\",\"start_byte\":90}},{\"message\":\"\\\\word is not supported by this compiler version; unrestricted TeX math mode is not implemented\",\"recovery\":\"skipped the command; any braced argument was typeset as plain text\",\"severity\":\"error\",\"source\":{\"end_byte\":108,\"path\":\"main.tex\",\"start_byte\":103}},{\"message\":\"\\\\word is not supported by this compiler version; unrestricted TeX math mode is not implemented\",\"recovery\":\"skipped the command; any braced argument was typeset as plain text\",\"severity\":\"error\",\"source\":{\"end_byte\":117,\"path\":\"main.tex\",\"start_byte\":112}}],\"pages\":[{\"height_pt\":792,\"items\":[{\"baseline_y_pt\":84,\"font_size_pt\":12,\"kind\":\"text\",\"source\":{\"end_byte\":22,\"path\":\"main.tex\",\"start_byte\":15},\"text\":\"article\",\"x_pt\":72},{\"baseline_y_pt\":84,\"font_size_pt\":12,\"kind\":\"text\",\"source\":{\"end_byte\":48,\"path\":\"main.tex\",\"start_byte\":43},\"text\":\"outer\",\"x_pt\":104.99},{\"baseline_y_pt\":84,\"font_size_pt\":12,\"kind\":\"text\",\"source\":{\"end_byte\":102,\"path\":\"main.tex\",\"start_byte\":97},\"text\":\"inner\",\"x_pt\":132.65}],\"number\":1,\"width_pt\":612}],\"pdf_path\":null,\"project_id\":\"edit-macro-definition-change\",\"revision\":2,\"status\":\"recovered\"},\"protocol_version\":1,\"type\":\"compile_result\"}",
+          "clean_seconds": 0.0006657029880443588,
+          "equivalent": true,
+          "compiler_integrity_checks": [
+            {
+              "check": "result_envelope",
+              "status": "pass",
+              "detail": "One correlated runtime-v1 compile_result is required."
+            },
+            {
+              "check": "project_revision",
+              "status": "pass",
+              "detail": "Result must describe the exact submitted revision."
+            },
+            {
+              "check": "result_structure",
+              "status": "pass",
+              "detail": "Status, pages and diagnostics must follow runtime-v1."
+            },
+            {
+              "check": "display_items_and_sources",
+              "status": "pass",
+              "detail": "v1 text positions must be finite and source spans valid UTF-8 ranges into submitted files."
+            },
+            {
+              "check": "diagnostic_sources",
+              "status": "pass",
+              "detail": "Diagnostic source ranges must refer to this input revision."
+            }
+          ],
+          "integrity_ok": true,
+          "status": "pass",
+          "clean_stderr": ""
+        },
+        {
+          "phase": "edit",
+          "request": {
+            "protocol_version": 1,
+            "id": "macro-definition-change-3",
+            "type": "compile",
+            "payload": {
+              "project_id": "edit-macro-definition-change",
+              "revision": 3,
+              "entry_path": "main.tex",
+              "documents": [
+                {
+                  "path": "main.tex",
+                  "text": "\\documentclass{article}\n\\newcommand{\\word}{changed}\n\\begin{document}\n\\word{} {\\renewcommand{\\word}{inner}\\word{}} \\word{}\n\\end{document}\n"
+                }
+              ]
+            }
+          },
+          "persistent_raw": "{\"id\":\"macro-definition-change-3\",\"payload\":{\"diagnostics\":[{\"message\":\"\\\\documentclass is not supported by this compiler version; unrestricted TeX math mode is not implemented\",\"recovery\":\"skipped the command; any braced argument was typeset as plain text\",\"severity\":\"error\",\"source\":{\"end_byte\":14,\"path\":\"main.tex\",\"start_byte\":0}},{\"message\":\"\\\\newcommand is not supported by this compiler version; unrestricted TeX math mode is not implemented\",\"recovery\":\"skipped the command; any braced argument was typeset as plain text\",\"severity\":\"error\",\"source\":{\"end_byte\":35,\"path\":\"main.tex\",\"start_byte\":24}},{\"message\":\"\\\\word is not supported by this compiler version; unrestricted TeX math mode is not implemented\",\"recovery\":\"skipped the command; any braced argument was typeset as plain text\",\"severity\":\"error\",\"source\":{\"end_byte\":41,\"path\":\"main.tex\",\"start_byte\":36}},{\"message\":\"\\\\word is not supported by this compiler version; unrestricted TeX math mode is not implemented\",\"recovery\":\"skipped the command; any braced argument was typeset as plain text\",\"severity\":\"error\",\"source\":{\"end_byte\":74,\"path\":\"main.tex\",\"start_byte\":69}},{\"message\":\"\\\\renewcommand is not supported by this compiler version; unrestricted TeX math mode is not implemented\",\"recovery\":\"skipped the command; any braced argument was typeset as plain text\",\"severity\":\"error\",\"source\":{\"end_byte\":91,\"path\":\"main.tex\",\"start_byte\":78}},{\"message\":\"\\\\word is not supported by this compiler version; unrestricted TeX math mode is not implemented\",\"recovery\":\"skipped the command; any braced argument was typeset as plain text\",\"severity\":\"error\",\"source\":{\"end_byte\":97,\"path\":\"main.tex\",\"start_byte\":92}},{\"message\":\"\\\\word is not supported by this compiler version; unrestricted TeX math mode is not implemented\",\"recovery\":\"skipped the command; any braced argument was typeset as plain text\",\"severity\":\"error\",\"source\":{\"end_byte\":110,\"path\":\"main.tex\",\"start_byte\":105}},{\"message\":\"\\\\word is not supported by this compiler version; unrestricted TeX math mode is not implemented\",\"recovery\":\"skipped the command; any braced argument was typeset as plain text\",\"severity\":\"error\",\"source\":{\"end_byte\":119,\"path\":\"main.tex\",\"start_byte\":114}}],\"pages\":[{\"height_pt\":792,\"items\":[{\"baseline_y_pt\":84,\"font_size_pt\":12,\"kind\":\"text\",\"source\":{\"end_byte\":22,\"path\":\"main.tex\",\"start_byte\":15},\"text\":\"article\",\"x_pt\":72},{\"baseline_y_pt\":84,\"font_size_pt\":12,\"kind\":\"text\",\"source\":{\"end_byte\":50,\"path\":\"main.tex\",\"start_byte\":43},\"text\":\"changed\",\"x_pt\":104.99},{\"baseline_y_pt\":84,\"font_size_pt\":12,\"kind\":\"text\",\"source\":{\"end_byte\":104,\"path\":\"main.tex\",\"start_byte\":99},\"text\":\"inner\",\"x_pt\":147.97}],\"number\":1,\"width_pt\":612}],\"pdf_path\":null,\"project_id\":\"edit-macro-definition-change\",\"revision\":3,\"status\":\"recovered\"},\"protocol_version\":1,\"type\":\"compile_result\"}",
+          "persistent_seconds": 0.00018584300414659083,
+          "clean_raw": "{\"id\":\"macro-definition-change-3\",\"payload\":{\"diagnostics\":[{\"message\":\"\\\\documentclass is not supported by this compiler version; unrestricted TeX math mode is not implemented\",\"recovery\":\"skipped the command; any braced argument was typeset as plain text\",\"severity\":\"error\",\"source\":{\"end_byte\":14,\"path\":\"main.tex\",\"start_byte\":0}},{\"message\":\"\\\\newcommand is not supported by this compiler version; unrestricted TeX math mode is not implemented\",\"recovery\":\"skipped the command; any braced argument was typeset as plain text\",\"severity\":\"error\",\"source\":{\"end_byte\":35,\"path\":\"main.tex\",\"start_byte\":24}},{\"message\":\"\\\\word is not supported by this compiler version; unrestricted TeX math mode is not implemented\",\"recovery\":\"skipped the command; any braced argument was typeset as plain text\",\"severity\":\"error\",\"source\":{\"end_byte\":41,\"path\":\"main.tex\",\"start_byte\":36}},{\"message\":\"\\\\word is not supported by this compiler version; unrestricted TeX math mode is not implemented\",\"recovery\":\"skipped the command; any braced argument was typeset as plain text\",\"severity\":\"error\",\"source\":{\"end_byte\":74,\"path\":\"main.tex\",\"start_byte\":69}},{\"message\":\"\\\\renewcommand is not supported by this compiler version; unrestricted TeX math mode is not implemented\",\"recovery\":\"skipped the command; any braced argument was typeset as plain text\",\"severity\":\"error\",\"source\":{\"end_byte\":91,\"path\":\"main.tex\",\"start_byte\":78}},{\"message\":\"\\\\word is not supported by this compiler version; unrestricted TeX math mode is not implemented\",\"recovery\":\"skipped the command; any braced argument was typeset as plain text\",\"severity\":\"error\",\"source\":{\"end_byte\":97,\"path\":\"main.tex\",\"start_byte\":92}},{\"message\":\"\\\\word is not supported by this compiler version; unrestricted TeX math mode is not implemented\",\"recovery\":\"skipped the command; any braced argument was typeset as plain text\",\"severity\":\"error\",\"source\":{\"end_byte\":110,\"path\":\"main.tex\",\"start_byte\":105}},{\"message\":\"\\\\word is not supported by this compiler version; unrestricted TeX math mode is not implemented\",\"recovery\":\"skipped the command; any braced argument was typeset as plain text\",\"severity\":\"error\",\"source\":{\"end_byte\":119,\"path\":\"main.tex\",\"start_byte\":114}}],\"pages\":[{\"height_pt\":792,\"items\":[{\"baseline_y_pt\":84,\"font_size_pt\":12,\"kind\":\"text\",\"source\":{\"end_byte\":22,\"path\":\"main.tex\",\"start_byte\":15},\"text\":\"article\",\"x_pt\":72},{\"baseline_y_pt\":84,\"font_size_pt\":12,\"kind\":\"text\",\"source\":{\"end_byte\":50,\"path\":\"main.tex\",\"start_byte\":43},\"text\":\"changed\",\"x_pt\":104.99},{\"baseline_y_pt\":84,\"font_size_pt\":12,\"kind\":\"text\",\"source\":{\"end_byte\":104,\"path\":\"main.tex\",\"start_byte\":99},\"text\":\"inner\",\"x_pt\":147.97}],\"number\":1,\"width_pt\":612}],\"pdf_path\":null,\"project_id\":\"edit-macro-definition-change\",\"revision\":3,\"status\":\"recovered\"},\"protocol_version\":1,\"type\":\"compile_result\"}",
+          "clean_seconds": 0.0006640329957008362,
+          "equivalent": true,
+          "compiler_integrity_checks": [
+            {
+              "check": "result_envelope",
+              "status": "pass",
+              "detail": "One correlated runtime-v1 compile_result is required."
+            },
+            {
+              "check": "project_revision",
+              "status": "pass",
+              "detail": "Result must describe the exact submitted revision."
+            },
+            {
+              "check": "result_structure",
+              "status": "pass",
+              "detail": "Status, pages and diagnostics must follow runtime-v1."
+            },
+            {
+              "check": "display_items_and_sources",
+              "status": "pass",
+              "detail": "v1 text positions must be finite and source spans valid UTF-8 ranges into submitted files."
+            },
+            {
+              "check": "diagnostic_sources",
+              "status": "pass",
+              "detail": "Diagnostic source ranges must refer to this input revision."
+            }
+          ],
+          "integrity_ok": true,
+          "status": "pass",
+          "clean_stderr": ""
+        }
+      ],
+      "status": "pass",
+      "persistent_stderr": ""
+    },
+    {
+      "scenario_id": "included-source-change",
+      "case_id": "included-file",
+      "purpose": "An included file change must invalidate its callers and source provenance.",
+      "steps": [
+        {
+          "phase": "cold",
+          "request": {
+            "protocol_version": 1,
+            "id": "included-source-change-1",
+            "type": "compile",
+            "payload": {
+              "project_id": "edit-included-source-change",
+              "revision": 1,
+              "entry_path": "main.tex",
+              "documents": [
+                {
+                  "path": "main.tex",
+                  "text": "\\documentclass{article}\n\\begin{document}\nBefore.\n\\input{parts/section}\nAfter.\n\\end{document}\n"
+                },
+                {
+                  "path": "parts/section.tex",
+                  "text": "Included café.\n"
+                }
+              ]
+            }
+          },
+          "persistent_raw": "{\"id\":\"included-source-change-1\",\"payload\":{\"diagnostics\":[{\"message\":\"\\\\documentclass is not supported by this compiler version; unrestricted TeX math mode is not implemented\",\"recovery\":\"skipped the command; any braced argument was typeset as plain text\",\"severity\":\"error\",\"source\":{\"end_byte\":14,\"path\":\"main.tex\",\"start_byte\":0}},{\"message\":\"\\\\input is not supported by this compiler version; unrestricted TeX math mode is not implemented\",\"recovery\":\"skipped the command; any braced argument was typeset as plain text\",\"severity\":\"error\",\"source\":{\"end_byte\":55,\"path\":\"main.tex\",\"start_byte\":49}},{\"message\":\"2 documents were supplied; this version compiles only the entry document\",\"recovery\":\"compiled the entry document alone\",\"severity\":\"warning\",\"source\":null}],\"pages\":[{\"height_pt\":792,\"items\":[{\"baseline_y_pt\":84,\"font_size_pt\":12,\"kind\":\"text\",\"source\":{\"end_byte\":22,\"path\":\"main.tex\",\"start_byte\":15},\"text\":\"article\",\"x_pt\":72},{\"baseline_y_pt\":84,\"font_size_pt\":12,\"kind\":\"text\",\"source\":{\"end_byte\":48,\"path\":\"main.tex\",\"start_byte\":41},\"text\":\"Before.\",\"x_pt\":104.99},{\"baseline_y_pt\":84,\"font_size_pt\":12,\"kind\":\"text\",\"source\":{\"end_byte\":69,\"path\":\"main.tex\",\"start_byte\":56},\"text\":\"parts/section\",\"x_pt\":143.64},{\"baseline_y_pt\":84,\"font_size_pt\":12,\"kind\":\"text\",\"source\":{\"end_byte\":77,\"path\":\"main.tex\",\"start_byte\":71},\"text\":\"After.\",\"x_pt\":207.3}],\"number\":1,\"width_pt\":612}],\"pdf_path\":null,\"project_id\":\"edit-included-source-change\",\"revision\":1,\"status\":\"recovered\"},\"protocol_version\":1,\"type\":\"compile_result\"}",
+          "persistent_seconds": 0.0009111410035984591,
+          "clean_raw": "{\"id\":\"included-source-change-1\",\"payload\":{\"diagnostics\":[{\"message\":\"\\\\documentclass is not supported by this compiler version; unrestricted TeX math mode is not implemented\",\"recovery\":\"skipped the command; any braced argument was typeset as plain text\",\"severity\":\"error\",\"source\":{\"end_byte\":14,\"path\":\"main.tex\",\"start_byte\":0}},{\"message\":\"\\\\input is not supported by this compiler version; unrestricted TeX math mode is not implemented\",\"recovery\":\"skipped the command; any braced argument was typeset as plain text\",\"severity\":\"error\",\"source\":{\"end_byte\":55,\"path\":\"main.tex\",\"start_byte\":49}},{\"message\":\"2 documents were supplied; this version compiles only the entry document\",\"recovery\":\"compiled the entry document alone\",\"severity\":\"warning\",\"source\":null}],\"pages\":[{\"height_pt\":792,\"items\":[{\"baseline_y_pt\":84,\"font_size_pt\":12,\"kind\":\"text\",\"source\":{\"end_byte\":22,\"path\":\"main.tex\",\"start_byte\":15},\"text\":\"article\",\"x_pt\":72},{\"baseline_y_pt\":84,\"font_size_pt\":12,\"kind\":\"text\",\"source\":{\"end_byte\":48,\"path\":\"main.tex\",\"start_byte\":41},\"text\":\"Before.\",\"x_pt\":104.99},{\"baseline_y_pt\":84,\"font_size_pt\":12,\"kind\":\"text\",\"source\":{\"end_byte\":69,\"path\":\"main.tex\",\"start_byte\":56},\"text\":\"parts/section\",\"x_pt\":143.64},{\"baseline_y_pt\":84,\"font_size_pt\":12,\"kind\":\"text\",\"source\":{\"end_byte\":77,\"path\":\"main.tex\",\"start_byte\":71},\"text\":\"After.\",\"x_pt\":207.3}],\"number\":1,\"width_pt\":612}],\"pdf_path\":null,\"project_id\":\"edit-included-source-change\",\"revision\":1,\"status\":\"recovered\"},\"protocol_version\":1,\"type\":\"compile_result\"}",
+          "clean_seconds": 0.0005915969959460199,
+          "equivalent": true,
+          "compiler_integrity_checks": [
+            {
+              "check": "result_envelope",
+              "status": "pass",
+              "detail": "One correlated runtime-v1 compile_result is required."
+            },
+            {
+              "check": "project_revision",
+              "status": "pass",
+              "detail": "Result must describe the exact submitted revision."
+            },
+            {
+              "check": "result_structure",
+              "status": "pass",
+              "detail": "Status, pages and diagnostics must follow runtime-v1."
+            },
+            {
+              "check": "display_items_and_sources",
+              "status": "pass",
+              "detail": "v1 text positions must be finite and source spans valid UTF-8 ranges into submitted files."
+            },
+            {
+              "check": "diagnostic_sources",
+              "status": "pass",
+              "detail": "Diagnostic source ranges must refer to this input revision."
+            }
+          ],
+          "integrity_ok": true,
+          "status": "pass",
+          "clean_stderr": ""
+        },
+        {
+          "phase": "warm_unchanged",
+          "request": {
+            "protocol_version": 1,
+            "id": "included-source-change-2",
+            "type": "compile",
+            "payload": {
+              "project_id": "edit-included-source-change",
+              "revision": 2,
+              "entry_path": "main.tex",
+              "documents": [
+                {
+                  "path": "main.tex",
+                  "text": "\\documentclass{article}\n\\begin{document}\nBefore.\n\\input{parts/section}\nAfter.\n\\end{document}\n"
+                },
+                {
+                  "path": "parts/section.tex",
+                  "text": "Included café.\n"
+                }
+              ]
+            }
+          },
+          "persistent_raw": "{\"id\":\"included-source-change-2\",\"payload\":{\"diagnostics\":[{\"message\":\"\\\\documentclass is not supported by this compiler version; unrestricted TeX math mode is not implemented\",\"recovery\":\"skipped the command; any braced argument was typeset as plain text\",\"severity\":\"error\",\"source\":{\"end_byte\":14,\"path\":\"main.tex\",\"start_byte\":0}},{\"message\":\"\\\\input is not supported by this compiler version; unrestricted TeX math mode is not implemented\",\"recovery\":\"skipped the command; any braced argument was typeset as plain text\",\"severity\":\"error\",\"source\":{\"end_byte\":55,\"path\":\"main.tex\",\"start_byte\":49}},{\"message\":\"2 documents were supplied; this version compiles only the entry document\",\"recovery\":\"compiled the entry document alone\",\"severity\":\"warning\",\"source\":null}],\"pages\":[{\"height_pt\":792,\"items\":[{\"baseline_y_pt\":84,\"font_size_pt\":12,\"kind\":\"text\",\"source\":{\"end_byte\":22,\"path\":\"main.tex\",\"start_byte\":15},\"text\":\"article\",\"x_pt\":72},{\"baseline_y_pt\":84,\"font_size_pt\":12,\"kind\":\"text\",\"source\":{\"end_byte\":48,\"path\":\"main.tex\",\"start_byte\":41},\"text\":\"Before.\",\"x_pt\":104.99},{\"baseline_y_pt\":84,\"font_size_pt\":12,\"kind\":\"text\",\"source\":{\"end_byte\":69,\"path\":\"main.tex\",\"start_byte\":56},\"text\":\"parts/section\",\"x_pt\":143.64},{\"baseline_y_pt\":84,\"font_size_pt\":12,\"kind\":\"text\",\"source\":{\"end_byte\":77,\"path\":\"main.tex\",\"start_byte\":71},\"text\":\"After.\",\"x_pt\":207.3}],\"number\":1,\"width_pt\":612}],\"pdf_path\":null,\"project_id\":\"edit-included-source-change\",\"revision\":2,\"status\":\"recovered\"},\"protocol_version\":1,\"type\":\"compile_result\"}",
+          "persistent_seconds": 0.00017755600856617093,
+          "clean_raw": "{\"id\":\"included-source-change-2\",\"payload\":{\"diagnostics\":[{\"message\":\"\\\\documentclass is not supported by this compiler version; unrestricted TeX math mode is not implemented\",\"recovery\":\"skipped the command; any braced argument was typeset as plain text\",\"severity\":\"error\",\"source\":{\"end_byte\":14,\"path\":\"main.tex\",\"start_byte\":0}},{\"message\":\"\\\\input is not supported by this compiler version; unrestricted TeX math mode is not implemented\",\"recovery\":\"skipped the command; any braced argument was typeset as plain text\",\"severity\":\"error\",\"source\":{\"end_byte\":55,\"path\":\"main.tex\",\"start_byte\":49}},{\"message\":\"2 documents were supplied; this version compiles only the entry document\",\"recovery\":\"compiled the entry document alone\",\"severity\":\"warning\",\"source\":null}],\"pages\":[{\"height_pt\":792,\"items\":[{\"baseline_y_pt\":84,\"font_size_pt\":12,\"kind\":\"text\",\"source\":{\"end_byte\":22,\"path\":\"main.tex\",\"start_byte\":15},\"text\":\"article\",\"x_pt\":72},{\"baseline_y_pt\":84,\"font_size_pt\":12,\"kind\":\"text\",\"source\":{\"end_byte\":48,\"path\":\"main.tex\",\"start_byte\":41},\"text\":\"Before.\",\"x_pt\":104.99},{\"baseline_y_pt\":84,\"font_size_pt\":12,\"kind\":\"text\",\"source\":{\"end_byte\":69,\"path\":\"main.tex\",\"start_byte\":56},\"text\":\"parts/section\",\"x_pt\":143.64},{\"baseline_y_pt\":84,\"font_size_pt\":12,\"kind\":\"text\",\"source\":{\"end_byte\":77,\"path\":\"main.tex\",\"start_byte\":71},\"text\":\"After.\",\"x_pt\":207.3}],\"number\":1,\"width_pt\":612}],\"pdf_path\":null,\"project_id\":\"edit-included-source-change\",\"revision\":2,\"status\":\"recovered\"},\"protocol_version\":1,\"type\":\"compile_result\"}",
+          "clean_seconds": 0.0006439319986384362,
+          "equivalent": true,
+          "compiler_integrity_checks": [
+            {
+              "check": "result_envelope",
+              "status": "pass",
+              "detail": "One correlated runtime-v1 compile_result is required."
+            },
+            {
+              "check": "project_revision",
+              "status": "pass",
+              "detail": "Result must describe the exact submitted revision."
+            },
+            {
+              "check": "result_structure",
+              "status": "pass",
+              "detail": "Status, pages and diagnostics must follow runtime-v1."
+            },
+            {
+              "check": "display_items_and_sources",
+              "status": "pass",
+              "detail": "v1 text positions must be finite and source spans valid UTF-8 ranges into submitted files."
+            },
+            {
+              "check": "diagnostic_sources",
+              "status": "pass",
+              "detail": "Diagnostic source ranges must refer to this input revision."
+            }
+          ],
+          "integrity_ok": true,
+          "status": "pass",
+          "clean_stderr": ""
+        },
+        {
+          "phase": "edit",
+          "request": {
+            "protocol_version": 1,
+            "id": "included-source-change-3",
+            "type": "compile",
+            "payload": {
+              "project_id": "edit-included-source-change",
+              "revision": 3,
+              "entry_path": "main.tex",
+              "documents": [
+                {
+                  "path": "main.tex",
+                  "text": "\\documentclass{article}\n\\begin{document}\nBefore.\n\\input{parts/section}\nAfter.\n\\end{document}\n"
+                },
+                {
+                  "path": "parts/section.tex",
+                  "text": "Revised café 東京.\n"
+                }
+              ]
+            }
+          },
+          "persistent_raw": "{\"id\":\"included-source-change-3\",\"payload\":{\"diagnostics\":[{\"message\":\"\\\\documentclass is not supported by this compiler version; unrestricted TeX math mode is not implemented\",\"recovery\":\"skipped the command; any braced argument was typeset as plain text\",\"severity\":\"error\",\"source\":{\"end_byte\":14,\"path\":\"main.tex\",\"start_byte\":0}},{\"message\":\"\\\\input is not supported by this compiler version; unrestricted TeX math mode is not implemented\",\"recovery\":\"skipped the command; any braced argument was typeset as plain text\",\"severity\":\"error\",\"source\":{\"end_byte\":55,\"path\":\"main.tex\",\"start_byte\":49}},{\"message\":\"2 documents were supplied; this version compiles only the entry document\",\"recovery\":\"compiled the entry document alone\",\"severity\":\"warning\",\"source\":null}],\"pages\":[{\"height_pt\":792,\"items\":[{\"baseline_y_pt\":84,\"font_size_pt\":12,\"kind\":\"text\",\"source\":{\"end_byte\":22,\"path\":\"main.tex\",\"start_byte\":15},\"text\":\"article\",\"x_pt\":72},{\"baseline_y_pt\":84,\"font_size_pt\":12,\"kind\":\"text\",\"source\":{\"end_byte\":48,\"path\":\"main.tex\",\"start_byte\":41},\"text\":\"Before.\",\"x_pt\":104.99},{\"baseline_y_pt\":84,\"font_size_pt\":12,\"kind\":\"text\",\"source\":{\"end_byte\":69,\"path\":\"main.tex\",\"start_byte\":56},\"text\":\"parts/section\",\"x_pt\":143.64},{\"baseline_y_pt\":84,\"font_size_pt\":12,\"kind\":\"text\",\"source\":{\"end_byte\":77,\"path\":\"main.tex\",\"start_byte\":71},\"text\":\"After.\",\"x_pt\":207.3}],\"number\":1,\"width_pt\":612}],\"pdf_path\":null,\"project_id\":\"edit-included-source-change\",\"revision\":3,\"status\":\"recovered\"},\"protocol_version\":1,\"type\":\"compile_result\"}",
+          "persistent_seconds": 0.00015479300054721534,
+          "clean_raw": "{\"id\":\"included-source-change-3\",\"payload\":{\"diagnostics\":[{\"message\":\"\\\\documentclass is not supported by this compiler version; unrestricted TeX math mode is not implemented\",\"recovery\":\"skipped the command; any braced argument was typeset as plain text\",\"severity\":\"error\",\"source\":{\"end_byte\":14,\"path\":\"main.tex\",\"start_byte\":0}},{\"message\":\"\\\\input is not supported by this compiler version; unrestricted TeX math mode is not implemented\",\"recovery\":\"skipped the command; any braced argument was typeset as plain text\",\"severity\":\"error\",\"source\":{\"end_byte\":55,\"path\":\"main.tex\",\"start_byte\":49}},{\"message\":\"2 documents were supplied; this version compiles only the entry document\",\"recovery\":\"compiled the entry document alone\",\"severity\":\"warning\",\"source\":null}],\"pages\":[{\"height_pt\":792,\"items\":[{\"baseline_y_pt\":84,\"font_size_pt\":12,\"kind\":\"text\",\"source\":{\"end_byte\":22,\"path\":\"main.tex\",\"start_byte\":15},\"text\":\"article\",\"x_pt\":72},{\"baseline_y_pt\":84,\"font_size_pt\":12,\"kind\":\"text\",\"source\":{\"end_byte\":48,\"path\":\"main.tex\",\"start_byte\":41},\"text\":\"Before.\",\"x_pt\":104.99},{\"baseline_y_pt\":84,\"font_size_pt\":12,\"kind\":\"text\",\"source\":{\"end_byte\":69,\"path\":\"main.tex\",\"start_byte\":56},\"text\":\"parts/section\",\"x_pt\":143.64},{\"baseline_y_pt\":84,\"font_size_pt\":12,\"kind\":\"text\",\"source\":{\"end_byte\":77,\"path\":\"main.tex\",\"start_byte\":71},\"text\":\"After.\",\"x_pt\":207.3}],\"number\":1,\"width_pt\":612}],\"pdf_path\":null,\"project_id\":\"edit-included-source-change\",\"revision\":3,\"status\":\"recovered\"},\"protocol_version\":1,\"type\":\"compile_result\"}",
+          "clean_seconds": 0.0006232690066099167,
+          "equivalent": true,
+          "compiler_integrity_checks": [
+            {
+              "check": "result_envelope",
+              "status": "pass",
+              "detail": "One correlated runtime-v1 compile_result is required."
+            },
+            {
+              "check": "project_revision",
+              "status": "pass",
+              "detail": "Result must describe the exact submitted revision."
+            },
+            {
+              "check": "result_structure",
+              "status": "pass",
+              "detail": "Status, pages and diagnostics must follow runtime-v1."
+            },
+            {
+              "check": "display_items_and_sources",
+              "status": "pass",
+              "detail": "v1 text positions must be finite and source spans valid UTF-8 ranges into submitted files."
+            },
+            {
+              "check": "diagnostic_sources",
+              "status": "pass",
+              "detail": "Diagnostic source ranges must refer to this input revision."
+            }
+          ],
+          "integrity_ok": true,
+          "status": "pass",
+          "clean_stderr": ""
+        }
+      ],
+      "status": "pass",
+      "persistent_stderr": ""
+    },
+    {
+      "scenario_id": "recovery-then-repair",
+      "case_id": "unclosed-group",
+      "purpose": "A malformed document is compiled first, then its group is repaired; obsolete diagnostics must disappear if the clean compiler removes them.",
+      "steps": [
+        {
+          "phase": "cold",
+          "request": {
+            "protocol_version": 1,
+            "id": "recovery-then-repair-1",
+            "type": "compile",
+            "payload": {
+              "project_id": "edit-recovery-then-repair",
+              "revision": 1,
+              "entry_path": "main.tex",
+              "documents": [
+                {
+                  "path": "main.tex",
+                  "text": "\\documentclass{article}\n\\begin{document}\nBefore. {inside\nStill inside.\n\\end{document}\n"
+                }
+              ]
+            }
+          },
+          "persistent_raw": "{\"id\":\"recovery-then-repair-1\",\"payload\":{\"diagnostics\":[{\"message\":\"\\\\documentclass is not supported by this compiler version; unrestricted TeX math mode is not implemented\",\"recovery\":\"skipped the command; any braced argument was typeset as plain text\",\"severity\":\"error\",\"source\":{\"end_byte\":14,\"path\":\"main.tex\",\"start_byte\":0}},{\"message\":\"unmatched '{' — group never closed\",\"recovery\":\"treated the rest of the document as part of the group\",\"severity\":\"error\",\"source\":{\"end_byte\":50,\"path\":\"main.tex\",\"start_byte\":49}}],\"pages\":[{\"height_pt\":792,\"items\":[{\"baseline_y_pt\":84,\"font_size_pt\":12,\"kind\":\"text\",\"source\":{\"end_byte\":22,\"path\":\"main.tex\",\"start_byte\":15},\"text\":\"article\",\"x_pt\":72},{\"baseline_y_pt\":84,\"font_size_pt\":12,\"kind\":\"text\",\"source\":{\"end_byte\":48,\"path\":\"main.tex\",\"start_byte\":41},\"text\":\"Before.\",\"x_pt\":104.99},{\"baseline_y_pt\":84,\"font_size_pt\":12,\"kind\":\"text\",\"source\":{\"end_byte\":56,\"path\":\"main.tex\",\"start_byte\":50},\"text\":\"inside\",\"x_pt\":143.64},{\"baseline_y_pt\":84,\"font_size_pt\":12,\"kind\":\"text\",\"source\":{\"end_byte\":62,\"path\":\"main.tex\",\"start_byte\":57},\"text\":\"Still\",\"x_pt\":175.31},{\"baseline_y_pt\":84,\"font_size_pt\":12,\"kind\":\"text\",\"source\":{\"end_byte\":70,\"path\":\"main.tex\",\"start_byte\":63},\"text\":\"inside.\",\"x_pt\":198.32}],\"number\":1,\"width_pt\":612}],\"pdf_path\":null,\"project_id\":\"edit-recovery-then-repair\",\"revision\":1,\"status\":\"recovered\"},\"protocol_version\":1,\"type\":\"compile_result\"}",
+          "persistent_seconds": 0.0005722200003219768,
+          "clean_raw": "{\"id\":\"recovery-then-repair-1\",\"payload\":{\"diagnostics\":[{\"message\":\"\\\\documentclass is not supported by this compiler version; unrestricted TeX math mode is not implemented\",\"recovery\":\"skipped the command; any braced argument was typeset as plain text\",\"severity\":\"error\",\"source\":{\"end_byte\":14,\"path\":\"main.tex\",\"start_byte\":0}},{\"message\":\"unmatched '{' — group never closed\",\"recovery\":\"treated the rest of the document as part of the group\",\"severity\":\"error\",\"source\":{\"end_byte\":50,\"path\":\"main.tex\",\"start_byte\":49}}],\"pages\":[{\"height_pt\":792,\"items\":[{\"baseline_y_pt\":84,\"font_size_pt\":12,\"kind\":\"text\",\"source\":{\"end_byte\":22,\"path\":\"main.tex\",\"start_byte\":15},\"text\":\"article\",\"x_pt\":72},{\"baseline_y_pt\":84,\"font_size_pt\":12,\"kind\":\"text\",\"source\":{\"end_byte\":48,\"path\":\"main.tex\",\"start_byte\":41},\"text\":\"Before.\",\"x_pt\":104.99},{\"baseline_y_pt\":84,\"font_size_pt\":12,\"kind\":\"text\",\"source\":{\"end_byte\":56,\"path\":\"main.tex\",\"start_byte\":50},\"text\":\"inside\",\"x_pt\":143.64},{\"baseline_y_pt\":84,\"font_size_pt\":12,\"kind\":\"text\",\"source\":{\"end_byte\":62,\"path\":\"main.tex\",\"start_byte\":57},\"text\":\"Still\",\"x_pt\":175.31},{\"baseline_y_pt\":84,\"font_size_pt\":12,\"kind\":\"text\",\"source\":{\"end_byte\":70,\"path\":\"main.tex\",\"start_byte\":63},\"text\":\"inside.\",\"x_pt\":198.32}],\"number\":1,\"width_pt\":612}],\"pdf_path\":null,\"project_id\":\"edit-recovery-then-repair\",\"revision\":1,\"status\":\"recovered\"},\"protocol_version\":1,\"type\":\"compile_result\"}",
+          "clean_seconds": 0.0006273290055105463,
+          "equivalent": true,
+          "compiler_integrity_checks": [
+            {
+              "check": "result_envelope",
+              "status": "pass",
+              "detail": "One correlated runtime-v1 compile_result is required."
+            },
+            {
+              "check": "project_revision",
+              "status": "pass",
+              "detail": "Result must describe the exact submitted revision."
+            },
+            {
+              "check": "result_structure",
+              "status": "pass",
+              "detail": "Status, pages and diagnostics must follow runtime-v1."
+            },
+            {
+              "check": "display_items_and_sources",
+              "status": "pass",
+              "detail": "v1 text positions must be finite and source spans valid UTF-8 ranges into submitted files."
+            },
+            {
+              "check": "diagnostic_sources",
+              "status": "pass",
+              "detail": "Diagnostic source ranges must refer to this input revision."
+            }
+          ],
+          "integrity_ok": true,
+          "status": "pass",
+          "clean_stderr": ""
+        },
+        {
+          "phase": "warm_unchanged",
+          "request": {
+            "protocol_version": 1,
+            "id": "recovery-then-repair-2",
+            "type": "compile",
+            "payload": {
+              "project_id": "edit-recovery-then-repair",
+              "revision": 2,
+              "entry_path": "main.tex",
+              "documents": [
+                {
+                  "path": "main.tex",
+                  "text": "\\documentclass{article}\n\\begin{document}\nBefore. {inside\nStill inside.\n\\end{document}\n"
+                }
+              ]
+            }
+          },
+          "persistent_raw": "{\"id\":\"recovery-then-repair-2\",\"payload\":{\"diagnostics\":[{\"message\":\"\\\\documentclass is not supported by this compiler version; unrestricted TeX math mode is not implemented\",\"recovery\":\"skipped the command; any braced argument was typeset as plain text\",\"severity\":\"error\",\"source\":{\"end_byte\":14,\"path\":\"main.tex\",\"start_byte\":0}},{\"message\":\"unmatched '{' — group never closed\",\"recovery\":\"treated the rest of the document as part of the group\",\"severity\":\"error\",\"source\":{\"end_byte\":50,\"path\":\"main.tex\",\"start_byte\":49}}],\"pages\":[{\"height_pt\":792,\"items\":[{\"baseline_y_pt\":84,\"font_size_pt\":12,\"kind\":\"text\",\"source\":{\"end_byte\":22,\"path\":\"main.tex\",\"start_byte\":15},\"text\":\"article\",\"x_pt\":72},{\"baseline_y_pt\":84,\"font_size_pt\":12,\"kind\":\"text\",\"source\":{\"end_byte\":48,\"path\":\"main.tex\",\"start_byte\":41},\"text\":\"Before.\",\"x_pt\":104.99},{\"baseline_y_pt\":84,\"font_size_pt\":12,\"kind\":\"text\",\"source\":{\"end_byte\":56,\"path\":\"main.tex\",\"start_byte\":50},\"text\":\"inside\",\"x_pt\":143.64},{\"baseline_y_pt\":84,\"font_size_pt\":12,\"kind\":\"text\",\"source\":{\"end_byte\":62,\"path\":\"main.tex\",\"start_byte\":57},\"text\":\"Still\",\"x_pt\":175.31},{\"baseline_y_pt\":84,\"font_size_pt\":12,\"kind\":\"text\",\"source\":{\"end_byte\":70,\"path\":\"main.tex\",\"start_byte\":63},\"text\":\"inside.\",\"x_pt\":198.32}],\"number\":1,\"width_pt\":612}],\"pdf_path\":null,\"project_id\":\"edit-recovery-then-repair\",\"revision\":2,\"status\":\"recovered\"},\"protocol_version\":1,\"type\":\"compile_result\"}",
+          "persistent_seconds": 0.00018510498921386898,
+          "clean_raw": "{\"id\":\"recovery-then-repair-2\",\"payload\":{\"diagnostics\":[{\"message\":\"\\\\documentclass is not supported by this compiler version; unrestricted TeX math mode is not implemented\",\"recovery\":\"skipped the command; any braced argument was typeset as plain text\",\"severity\":\"error\",\"source\":{\"end_byte\":14,\"path\":\"main.tex\",\"start_byte\":0}},{\"message\":\"unmatched '{' — group never closed\",\"recovery\":\"treated the rest of the document as part of the group\",\"severity\":\"error\",\"source\":{\"end_byte\":50,\"path\":\"main.tex\",\"start_byte\":49}}],\"pages\":[{\"height_pt\":792,\"items\":[{\"baseline_y_pt\":84,\"font_size_pt\":12,\"kind\":\"text\",\"source\":{\"end_byte\":22,\"path\":\"main.tex\",\"start_byte\":15},\"text\":\"article\",\"x_pt\":72},{\"baseline_y_pt\":84,\"font_size_pt\":12,\"kind\":\"text\",\"source\":{\"end_byte\":48,\"path\":\"main.tex\",\"start_byte\":41},\"text\":\"Before.\",\"x_pt\":104.99},{\"baseline_y_pt\":84,\"font_size_pt\":12,\"kind\":\"text\",\"source\":{\"end_byte\":56,\"path\":\"main.tex\",\"start_byte\":50},\"text\":\"inside\",\"x_pt\":143.64},{\"baseline_y_pt\":84,\"font_size_pt\":12,\"kind\":\"text\",\"source\":{\"end_byte\":62,\"path\":\"main.tex\",\"start_byte\":57},\"text\":\"Still\",\"x_pt\":175.31},{\"baseline_y_pt\":84,\"font_size_pt\":12,\"kind\":\"text\",\"source\":{\"end_byte\":70,\"path\":\"main.tex\",\"start_byte\":63},\"text\":\"inside.\",\"x_pt\":198.32}],\"number\":1,\"width_pt\":612}],\"pdf_path\":null,\"project_id\":\"edit-recovery-then-repair\",\"revision\":2,\"status\":\"recovered\"},\"protocol_version\":1,\"type\":\"compile_result\"}",
+          "clean_seconds": 0.0006765440048184246,
+          "equivalent": true,
+          "compiler_integrity_checks": [
+            {
+              "check": "result_envelope",
+              "status": "pass",
+              "detail": "One correlated runtime-v1 compile_result is required."
+            },
+            {
+              "check": "project_revision",
+              "status": "pass",
+              "detail": "Result must describe the exact submitted revision."
+            },
+            {
+              "check": "result_structure",
+              "status": "pass",
+              "detail": "Status, pages and diagnostics must follow runtime-v1."
+            },
+            {
+              "check": "display_items_and_sources",
+              "status": "pass",
+              "detail": "v1 text positions must be finite and source spans valid UTF-8 ranges into submitted files."
+            },
+            {
+              "check": "diagnostic_sources",
+              "status": "pass",
+              "detail": "Diagnostic source ranges must refer to this input revision."
+            }
+          ],
+          "integrity_ok": true,
+          "status": "pass",
+          "clean_stderr": ""
+        },
+        {
+          "phase": "edit",
+          "request": {
+            "protocol_version": 1,
+            "id": "recovery-then-repair-3",
+            "type": "compile",
+            "payload": {
+              "project_id": "edit-recovery-then-repair",
+              "revision": 3,
+              "entry_path": "main.tex",
+              "documents": [
+                {
+                  "path": "main.tex",
+                  "text": "\\documentclass{article}\n\\begin{document}\nBefore. {inside}\nStill inside.\n\\end{document}\n"
+                }
+              ]
+            }
+          },
+          "persistent_raw": "{\"id\":\"recovery-then-repair-3\",\"payload\":{\"diagnostics\":[{\"message\":\"\\\\documentclass is not supported by this compiler version; unrestricted TeX math mode is not implemented\",\"recovery\":\"skipped the command; any braced argument was typeset as plain text\",\"severity\":\"error\",\"source\":{\"end_byte\":14,\"path\":\"main.tex\",\"start_byte\":0}}],\"pages\":[{\"height_pt\":792,\"items\":[{\"baseline_y_pt\":84,\"font_size_pt\":12,\"kind\":\"text\",\"source\":{\"end_byte\":22,\"path\":\"main.tex\",\"start_byte\":15},\"text\":\"article\",\"x_pt\":72},{\"baseline_y_pt\":84,\"font_size_pt\":12,\"kind\":\"text\",\"source\":{\"end_byte\":48,\"path\":\"main.tex\",\"start_byte\":41},\"text\":\"Before.\",\"x_pt\":104.99},{\"baseline_y_pt\":84,\"font_size_pt\":12,\"kind\":\"text\",\"source\":{\"end_byte\":56,\"path\":\"main.tex\",\"start_byte\":50},\"text\":\"inside\",\"x_pt\":143.64},{\"baseline_y_pt\":84,\"font_size_pt\":12,\"kind\":\"text\",\"source\":{\"end_byte\":63,\"path\":\"main.tex\",\"start_byte\":58},\"text\":\"Still\",\"x_pt\":175.31},{\"baseline_y_pt\":84,\"font_size_pt\":12,\"kind\":\"text\",\"source\":{\"end_byte\":71,\"path\":\"main.tex\",\"start_byte\":64},\"text\":\"inside.\",\"x_pt\":198.32}],\"number\":1,\"width_pt\":612}],\"pdf_path\":null,\"project_id\":\"edit-recovery-then-repair\",\"revision\":3,\"status\":\"recovered\"},\"protocol_version\":1,\"type\":\"compile_result\"}",
+          "persistent_seconds": 0.00019780600268859416,
+          "clean_raw": "{\"id\":\"recovery-then-repair-3\",\"payload\":{\"diagnostics\":[{\"message\":\"\\\\documentclass is not supported by this compiler version; unrestricted TeX math mode is not implemented\",\"recovery\":\"skipped the command; any braced argument was typeset as plain text\",\"severity\":\"error\",\"source\":{\"end_byte\":14,\"path\":\"main.tex\",\"start_byte\":0}}],\"pages\":[{\"height_pt\":792,\"items\":[{\"baseline_y_pt\":84,\"font_size_pt\":12,\"kind\":\"text\",\"source\":{\"end_byte\":22,\"path\":\"main.tex\",\"start_byte\":15},\"text\":\"article\",\"x_pt\":72},{\"baseline_y_pt\":84,\"font_size_pt\":12,\"kind\":\"text\",\"source\":{\"end_byte\":48,\"path\":\"main.tex\",\"start_byte\":41},\"text\":\"Before.\",\"x_pt\":104.99},{\"baseline_y_pt\":84,\"font_size_pt\":12,\"kind\":\"text\",\"source\":{\"end_byte\":56,\"path\":\"main.tex\",\"start_byte\":50},\"text\":\"inside\",\"x_pt\":143.64},{\"baseline_y_pt\":84,\"font_size_pt\":12,\"kind\":\"text\",\"source\":{\"end_byte\":63,\"path\":\"main.tex\",\"start_byte\":58},\"text\":\"Still\",\"x_pt\":175.31},{\"baseline_y_pt\":84,\"font_size_pt\":12,\"kind\":\"text\",\"source\":{\"end_byte\":71,\"path\":\"main.tex\",\"start_byte\":64},\"text\":\"inside.\",\"x_pt\":198.32}],\"number\":1,\"width_pt\":612}],\"pdf_path\":null,\"project_id\":\"edit-recovery-then-repair\",\"revision\":3,\"status\":\"recovered\"},\"protocol_version\":1,\"type\":\"compile_result\"}",
+          "clean_seconds": 0.0005909730098210275,
+          "equivalent": true,
+          "compiler_integrity_checks": [
+            {
+              "check": "result_envelope",
+              "status": "pass",
+              "detail": "One correlated runtime-v1 compile_result is required."
+            },
+            {
+              "check": "project_revision",
+              "status": "pass",
+              "detail": "Result must describe the exact submitted revision."
+            },
+            {
+              "check": "result_structure",
+              "status": "pass",
+              "detail": "Status, pages and diagnostics must follow runtime-v1."
+            },
+            {
+              "check": "display_items_and_sources",
+              "status": "pass",
+              "detail": "v1 text positions must be finite and source spans valid UTF-8 ranges into submitted files."
+            },
+            {
+              "check": "diagnostic_sources",
+              "status": "pass",
+              "detail": "Diagnostic source ranges must refer to this input revision."
+            }
+          ],
+          "integrity_ok": true,
+          "status": "pass",
+          "clean_stderr": ""
+        }
+      ],
+      "status": "pass",
+      "persistent_stderr": ""
+    },
+    {
+      "scenario_id": "introduce-error-then-repair",
+      "case_id": "plain-paragraphs",
+      "purpose": "A valid source becomes malformed and is repaired in the same process, preventing cached diagnostics from leaking across revisions.",
+      "steps": [
+        {
+          "phase": "cold",
+          "request": {
+            "protocol_version": 1,
+            "id": "introduce-error-then-repair-1",
+            "type": "compile",
+            "payload": {
+              "project_id": "edit-introduce-error-then-repair",
+              "revision": 1,
+              "entry_path": "main.tex",
+              "documents": [
+                {
+                  "path": "main.tex",
+                  "text": "\\documentclass{article}\n\\begin{document}\nFirst paragraph.\n\nSecond paragraph.\n\\end{document}\n"
+                }
+              ]
+            }
+          },
+          "persistent_raw": "{\"id\":\"introduce-error-then-repair-1\",\"payload\":{\"diagnostics\":[{\"message\":\"\\\\documentclass is not supported by this compiler version; unrestricted TeX math mode is not implemented\",\"recovery\":\"skipped the command; any braced argument was typeset as plain text\",\"severity\":\"error\",\"source\":{\"end_byte\":14,\"path\":\"main.tex\",\"start_byte\":0}}],\"pages\":[{\"height_pt\":792,\"items\":[{\"baseline_y_pt\":84,\"font_size_pt\":12,\"kind\":\"text\",\"source\":{\"end_byte\":22,\"path\":\"main.tex\",\"start_byte\":15},\"text\":\"article\",\"x_pt\":72},{\"baseline_y_pt\":84,\"font_size_pt\":12,\"kind\":\"text\",\"source\":{\"end_byte\":46,\"path\":\"main.tex\",\"start_byte\":41},\"text\":\"First\",\"x_pt\":104.99},{\"baseline_y_pt\":84,\"font_size_pt\":12,\"kind\":\"text\",\"source\":{\"end_byte\":57,\"path\":\"main.tex\",\"start_byte\":47},\"text\":\"paragraph.\",\"x_pt\":130},{\"baseline_y_pt\":104.4,\"font_size_pt\":12,\"kind\":\"text\",\"source\":{\"end_byte\":65,\"path\":\"main.tex\",\"start_byte\":59},\"text\":\"Second\",\"x_pt\":72},{\"baseline_y_pt\":104.4,\"font_size_pt\":12,\"kind\":\"text\",\"source\":{\"end_byte\":76,\"path\":\"main.tex\",\"start_byte\":66},\"text\":\"paragraph.\",\"x_pt\":110.33}],\"number\":1,\"width_pt\":612}],\"pdf_path\":null,\"project_id\":\"edit-introduce-error-then-repair\",\"revision\":1,\"status\":\"recovered\"},\"protocol_version\":1,\"type\":\"compile_result\"}",
+          "persistent_seconds": 0.0006067729991627857,
+          "clean_raw": "{\"id\":\"introduce-error-then-repair-1\",\"payload\":{\"diagnostics\":[{\"message\":\"\\\\documentclass is not supported by this compiler version; unrestricted TeX math mode is not implemented\",\"recovery\":\"skipped the command; any braced argument was typeset as plain text\",\"severity\":\"error\",\"source\":{\"end_byte\":14,\"path\":\"main.tex\",\"start_byte\":0}}],\"pages\":[{\"height_pt\":792,\"items\":[{\"baseline_y_pt\":84,\"font_size_pt\":12,\"kind\":\"text\",\"source\":{\"end_byte\":22,\"path\":\"main.tex\",\"start_byte\":15},\"text\":\"article\",\"x_pt\":72},{\"baseline_y_pt\":84,\"font_size_pt\":12,\"kind\":\"text\",\"source\":{\"end_byte\":46,\"path\":\"main.tex\",\"start_byte\":41},\"text\":\"First\",\"x_pt\":104.99},{\"baseline_y_pt\":84,\"font_size_pt\":12,\"kind\":\"text\",\"source\":{\"end_byte\":57,\"path\":\"main.tex\",\"start_byte\":47},\"text\":\"paragraph.\",\"x_pt\":130},{\"baseline_y_pt\":104.4,\"font_size_pt\":12,\"kind\":\"text\",\"source\":{\"end_byte\":65,\"path\":\"main.tex\",\"start_byte\":59},\"text\":\"Second\",\"x_pt\":72},{\"baseline_y_pt\":104.4,\"font_size_pt\":12,\"kind\":\"text\",\"source\":{\"end_byte\":76,\"path\":\"main.tex\",\"start_byte\":66},\"text\":\"paragraph.\",\"x_pt\":110.33}],\"number\":1,\"width_pt\":612}],\"pdf_path\":null,\"project_id\":\"edit-introduce-error-then-repair\",\"revision\":1,\"status\":\"recovered\"},\"protocol_version\":1,\"type\":\"compile_result\"}",
+          "clean_seconds": 0.0005278169992379844,
+          "equivalent": true,
+          "compiler_integrity_checks": [
+            {
+              "check": "result_envelope",
+              "status": "pass",
+              "detail": "One correlated runtime-v1 compile_result is required."
+            },
+            {
+              "check": "project_revision",
+              "status": "pass",
+              "detail": "Result must describe the exact submitted revision."
+            },
+            {
+              "check": "result_structure",
+              "status": "pass",
+              "detail": "Status, pages and diagnostics must follow runtime-v1."
+            },
+            {
+              "check": "display_items_and_sources",
+              "status": "pass",
+              "detail": "v1 text positions must be finite and source spans valid UTF-8 ranges into submitted files."
+            },
+            {
+              "check": "diagnostic_sources",
+              "status": "pass",
+              "detail": "Diagnostic source ranges must refer to this input revision."
+            }
+          ],
+          "integrity_ok": true,
+          "status": "pass",
+          "clean_stderr": ""
+        },
+        {
+          "phase": "warm_unchanged",
+          "request": {
+            "protocol_version": 1,
+            "id": "introduce-error-then-repair-2",
+            "type": "compile",
+            "payload": {
+              "project_id": "edit-introduce-error-then-repair",
+              "revision": 2,
+              "entry_path": "main.tex",
+              "documents": [
+                {
+                  "path": "main.tex",
+                  "text": "\\documentclass{article}\n\\begin{document}\nFirst paragraph.\n\nSecond paragraph.\n\\end{document}\n"
+                }
+              ]
+            }
+          },
+          "persistent_raw": "{\"id\":\"introduce-error-then-repair-2\",\"payload\":{\"diagnostics\":[{\"message\":\"\\\\documentclass is not supported by this compiler version; unrestricted TeX math mode is not implemented\",\"recovery\":\"skipped the command; any braced argument was typeset as plain text\",\"severity\":\"error\",\"source\":{\"end_byte\":14,\"path\":\"main.tex\",\"start_byte\":0}}],\"pages\":[{\"height_pt\":792,\"items\":[{\"baseline_y_pt\":84,\"font_size_pt\":12,\"kind\":\"text\",\"source\":{\"end_byte\":22,\"path\":\"main.tex\",\"start_byte\":15},\"text\":\"article\",\"x_pt\":72},{\"baseline_y_pt\":84,\"font_size_pt\":12,\"kind\":\"text\",\"source\":{\"end_byte\":46,\"path\":\"main.tex\",\"start_byte\":41},\"text\":\"First\",\"x_pt\":104.99},{\"baseline_y_pt\":84,\"font_size_pt\":12,\"kind\":\"text\",\"source\":{\"end_byte\":57,\"path\":\"main.tex\",\"start_byte\":47},\"text\":\"paragraph.\",\"x_pt\":130},{\"baseline_y_pt\":104.4,\"font_size_pt\":12,\"kind\":\"text\",\"source\":{\"end_byte\":65,\"path\":\"main.tex\",\"start_byte\":59},\"text\":\"Second\",\"x_pt\":72},{\"baseline_y_pt\":104.4,\"font_size_pt\":12,\"kind\":\"text\",\"source\":{\"end_byte\":76,\"path\":\"main.tex\",\"start_byte\":66},\"text\":\"paragraph.\",\"x_pt\":110.33}],\"number\":1,\"width_pt\":612}],\"pdf_path\":null,\"project_id\":\"edit-introduce-error-then-repair\",\"revision\":2,\"status\":\"recovered\"},\"protocol_version\":1,\"type\":\"compile_result\"}",
+          "persistent_seconds": 0.00014317799650598317,
+          "clean_raw": "{\"id\":\"introduce-error-then-repair-2\",\"payload\":{\"diagnostics\":[{\"message\":\"\\\\documentclass is not supported by this compiler version; unrestricted TeX math mode is not implemented\",\"recovery\":\"skipped the command; any braced argument was typeset as plain text\",\"severity\":\"error\",\"source\":{\"end_byte\":14,\"path\":\"main.tex\",\"start_byte\":0}}],\"pages\":[{\"height_pt\":792,\"items\":[{\"baseline_y_pt\":84,\"font_size_pt\":12,\"kind\":\"text\",\"source\":{\"end_byte\":22,\"path\":\"main.tex\",\"start_byte\":15},\"text\":\"article\",\"x_pt\":72},{\"baseline_y_pt\":84,\"font_size_pt\":12,\"kind\":\"text\",\"source\":{\"end_byte\":46,\"path\":\"main.tex\",\"start_byte\":41},\"text\":\"First\",\"x_pt\":104.99},{\"baseline_y_pt\":84,\"font_size_pt\":12,\"kind\":\"text\",\"source\":{\"end_byte\":57,\"path\":\"main.tex\",\"start_byte\":47},\"text\":\"paragraph.\",\"x_pt\":130},{\"baseline_y_pt\":104.4,\"font_size_pt\":12,\"kind\":\"text\",\"source\":{\"end_byte\":65,\"path\":\"main.tex\",\"start_byte\":59},\"text\":\"Second\",\"x_pt\":72},{\"baseline_y_pt\":104.4,\"font_size_pt\":12,\"kind\":\"text\",\"source\":{\"end_byte\":76,\"path\":\"main.tex\",\"start_byte\":66},\"text\":\"paragraph.\",\"x_pt\":110.33}],\"number\":1,\"width_pt\":612}],\"pdf_path\":null,\"project_id\":\"edit-introduce-error-then-repair\",\"revision\":2,\"status\":\"recovered\"},\"protocol_version\":1,\"type\":\"compile_result\"}",
+          "clean_seconds": 0.0005582420126302168,
+          "equivalent": true,
+          "compiler_integrity_checks": [
+            {
+              "check": "result_envelope",
+              "status": "pass",
+              "detail": "One correlated runtime-v1 compile_result is required."
+            },
+            {
+              "check": "project_revision",
+              "status": "pass",
+              "detail": "Result must describe the exact submitted revision."
+            },
+            {
+              "check": "result_structure",
+              "status": "pass",
+              "detail": "Status, pages and diagnostics must follow runtime-v1."
+            },
+            {
+              "check": "display_items_and_sources",
+              "status": "pass",
+              "detail": "v1 text positions must be finite and source spans valid UTF-8 ranges into submitted files."
+            },
+            {
+              "check": "diagnostic_sources",
+              "status": "pass",
+              "detail": "Diagnostic source ranges must refer to this input revision."
+            }
+          ],
+          "integrity_ok": true,
+          "status": "pass",
+          "clean_stderr": ""
+        },
+        {
+          "phase": "edit",
+          "request": {
+            "protocol_version": 1,
+            "id": "introduce-error-then-repair-3",
+            "type": "compile",
+            "payload": {
+              "project_id": "edit-introduce-error-then-repair",
+              "revision": 3,
+              "entry_path": "main.tex",
+              "documents": [
+                {
+                  "path": "main.tex",
+                  "text": "\\documentclass{article}\n\\begin{document}\nFirst } paragraph.\n\nSecond paragraph.\n\\end{document}\n"
+                }
+              ]
+            }
+          },
+          "persistent_raw": "{\"id\":\"introduce-error-then-repair-3\",\"payload\":{\"diagnostics\":[{\"message\":\"\\\\documentclass is not supported by this compiler version; unrestricted TeX math mode is not implemented\",\"recovery\":\"skipped the command; any braced argument was typeset as plain text\",\"severity\":\"error\",\"source\":{\"end_byte\":14,\"path\":\"main.tex\",\"start_byte\":0}},{\"message\":\"unmatched '}' — no group is open here\",\"recovery\":\"ignored the stray brace and continued\",\"severity\":\"error\",\"source\":{\"end_byte\":48,\"path\":\"main.tex\",\"start_byte\":47}}],\"pages\":[{\"height_pt\":792,\"items\":[{\"baseline_y_pt\":84,\"font_size_pt\":12,\"kind\":\"text\",\"source\":{\"end_byte\":22,\"path\":\"main.tex\",\"start_byte\":15},\"text\":\"article\",\"x_pt\":72},{\"baseline_y_pt\":84,\"font_size_pt\":12,\"kind\":\"text\",\"source\":{\"end_byte\":46,\"path\":\"main.tex\",\"start_byte\":41},\"text\":\"First\",\"x_pt\":104.99},{\"baseline_y_pt\":84,\"font_size_pt\":12,\"kind\":\"text\",\"source\":{\"end_byte\":59,\"path\":\"main.tex\",\"start_byte\":49},\"text\":\"paragraph.\",\"x_pt\":130},{\"baseline_y_pt\":104.4,\"font_size_pt\":12,\"kind\":\"text\",\"source\":{\"end_byte\":67,\"path\":\"main.tex\",\"start_byte\":61},\"text\":\"Second\",\"x_pt\":72},{\"baseline_y_pt\":104.4,\"font_size_pt\":12,\"kind\":\"text\",\"source\":{\"end_byte\":78,\"path\":\"main.tex\",\"start_byte\":68},\"text\":\"paragraph.\",\"x_pt\":110.33}],\"number\":1,\"width_pt\":612}],\"pdf_path\":null,\"project_id\":\"edit-introduce-error-then-repair\",\"revision\":3,\"status\":\"recovered\"},\"protocol_version\":1,\"type\":\"compile_result\"}",
+          "persistent_seconds": 0.0001539450022391975,
+          "clean_raw": "{\"id\":\"introduce-error-then-repair-3\",\"payload\":{\"diagnostics\":[{\"message\":\"\\\\documentclass is not supported by this compiler version; unrestricted TeX math mode is not implemented\",\"recovery\":\"skipped the command; any braced argument was typeset as plain text\",\"severity\":\"error\",\"source\":{\"end_byte\":14,\"path\":\"main.tex\",\"start_byte\":0}},{\"message\":\"unmatched '}' — no group is open here\",\"recovery\":\"ignored the stray brace and continued\",\"severity\":\"error\",\"source\":{\"end_byte\":48,\"path\":\"main.tex\",\"start_byte\":47}}],\"pages\":[{\"height_pt\":792,\"items\":[{\"baseline_y_pt\":84,\"font_size_pt\":12,\"kind\":\"text\",\"source\":{\"end_byte\":22,\"path\":\"main.tex\",\"start_byte\":15},\"text\":\"article\",\"x_pt\":72},{\"baseline_y_pt\":84,\"font_size_pt\":12,\"kind\":\"text\",\"source\":{\"end_byte\":46,\"path\":\"main.tex\",\"start_byte\":41},\"text\":\"First\",\"x_pt\":104.99},{\"baseline_y_pt\":84,\"font_size_pt\":12,\"kind\":\"text\",\"source\":{\"end_byte\":59,\"path\":\"main.tex\",\"start_byte\":49},\"text\":\"paragraph.\",\"x_pt\":130},{\"baseline_y_pt\":104.4,\"font_size_pt\":12,\"kind\":\"text\",\"source\":{\"end_byte\":67,\"path\":\"main.tex\",\"start_byte\":61},\"text\":\"Second\",\"x_pt\":72},{\"baseline_y_pt\":104.4,\"font_size_pt\":12,\"kind\":\"text\",\"source\":{\"end_byte\":78,\"path\":\"main.tex\",\"start_byte\":68},\"text\":\"paragraph.\",\"x_pt\":110.33}],\"number\":1,\"width_pt\":612}],\"pdf_path\":null,\"project_id\":\"edit-introduce-error-then-repair\",\"revision\":3,\"status\":\"recovered\"},\"protocol_version\":1,\"type\":\"compile_result\"}",
+          "clean_seconds": 0.0006067630019970238,
+          "equivalent": true,
+          "compiler_integrity_checks": [
+            {
+              "check": "result_envelope",
+              "status": "pass",
+              "detail": "One correlated runtime-v1 compile_result is required."
+            },
+            {
+              "check": "project_revision",
+              "status": "pass",
+              "detail": "Result must describe the exact submitted revision."
+            },
+            {
+              "check": "result_structure",
+              "status": "pass",
+              "detail": "Status, pages and diagnostics must follow runtime-v1."
+            },
+            {
+              "check": "display_items_and_sources",
+              "status": "pass",
+              "detail": "v1 text positions must be finite and source spans valid UTF-8 ranges into submitted files."
+            },
+            {
+              "check": "diagnostic_sources",
+              "status": "pass",
+              "detail": "Diagnostic source ranges must refer to this input revision."
+            }
+          ],
+          "integrity_ok": true,
+          "status": "pass",
+          "clean_stderr": ""
+        },
+        {
+          "phase": "edit",
+          "request": {
+            "protocol_version": 1,
+            "id": "introduce-error-then-repair-4",
+            "type": "compile",
+            "payload": {
+              "project_id": "edit-introduce-error-then-repair",
+              "revision": 4,
+              "entry_path": "main.tex",
+              "documents": [
+                {
+                  "path": "main.tex",
+                  "text": "\\documentclass{article}\n\\begin{document}\nFirst paragraph.\n\nSecond paragraph.\n\\end{document}\n"
+                }
+              ]
+            }
+          },
+          "persistent_raw": "{\"id\":\"introduce-error-then-repair-4\",\"payload\":{\"diagnostics\":[{\"message\":\"\\\\documentclass is not supported by this compiler version; unrestricted TeX math mode is not implemented\",\"recovery\":\"skipped the command; any braced argument was typeset as plain text\",\"severity\":\"error\",\"source\":{\"end_byte\":14,\"path\":\"main.tex\",\"start_byte\":0}}],\"pages\":[{\"height_pt\":792,\"items\":[{\"baseline_y_pt\":84,\"font_size_pt\":12,\"kind\":\"text\",\"source\":{\"end_byte\":22,\"path\":\"main.tex\",\"start_byte\":15},\"text\":\"article\",\"x_pt\":72},{\"baseline_y_pt\":84,\"font_size_pt\":12,\"kind\":\"text\",\"source\":{\"end_byte\":46,\"path\":\"main.tex\",\"start_byte\":41},\"text\":\"First\",\"x_pt\":104.99},{\"baseline_y_pt\":84,\"font_size_pt\":12,\"kind\":\"text\",\"source\":{\"end_byte\":57,\"path\":\"main.tex\",\"start_byte\":47},\"text\":\"paragraph.\",\"x_pt\":130},{\"baseline_y_pt\":104.4,\"font_size_pt\":12,\"kind\":\"text\",\"source\":{\"end_byte\":65,\"path\":\"main.tex\",\"start_byte\":59},\"text\":\"Second\",\"x_pt\":72},{\"baseline_y_pt\":104.4,\"font_size_pt\":12,\"kind\":\"text\",\"source\":{\"end_byte\":76,\"path\":\"main.tex\",\"start_byte\":66},\"text\":\"paragraph.\",\"x_pt\":110.33}],\"number\":1,\"width_pt\":612}],\"pdf_path\":null,\"project_id\":\"edit-introduce-error-then-repair\",\"revision\":4,\"status\":\"recovered\"},\"protocol_version\":1,\"type\":\"compile_result\"}",
+          "persistent_seconds": 0.00017224000475835055,
+          "clean_raw": "{\"id\":\"introduce-error-then-repair-4\",\"payload\":{\"diagnostics\":[{\"message\":\"\\\\documentclass is not supported by this compiler version; unrestricted TeX math mode is not implemented\",\"recovery\":\"skipped the command; any braced argument was typeset as plain text\",\"severity\":\"error\",\"source\":{\"end_byte\":14,\"path\":\"main.tex\",\"start_byte\":0}}],\"pages\":[{\"height_pt\":792,\"items\":[{\"baseline_y_pt\":84,\"font_size_pt\":12,\"kind\":\"text\",\"source\":{\"end_byte\":22,\"path\":\"main.tex\",\"start_byte\":15},\"text\":\"article\",\"x_pt\":72},{\"baseline_y_pt\":84,\"font_size_pt\":12,\"kind\":\"text\",\"source\":{\"end_byte\":46,\"path\":\"main.tex\",\"start_byte\":41},\"text\":\"First\",\"x_pt\":104.99},{\"baseline_y_pt\":84,\"font_size_pt\":12,\"kind\":\"text\",\"source\":{\"end_byte\":57,\"path\":\"main.tex\",\"start_byte\":47},\"text\":\"paragraph.\",\"x_pt\":130},{\"baseline_y_pt\":104.4,\"font_size_pt\":12,\"kind\":\"text\",\"source\":{\"end_byte\":65,\"path\":\"main.tex\",\"start_byte\":59},\"text\":\"Second\",\"x_pt\":72},{\"baseline_y_pt\":104.4,\"font_size_pt\":12,\"kind\":\"text\",\"source\":{\"end_byte\":76,\"path\":\"main.tex\",\"start_byte\":66},\"text\":\"paragraph.\",\"x_pt\":110.33}],\"number\":1,\"width_pt\":612}],\"pdf_path\":null,\"project_id\":\"edit-introduce-error-then-repair\",\"revision\":4,\"status\":\"recovered\"},\"protocol_version\":1,\"type\":\"compile_result\"}",
+          "clean_seconds": 0.0005470809992402792,
+          "equivalent": true,
+          "compiler_integrity_checks": [
+            {
+              "check": "result_envelope",
+              "status": "pass",
+              "detail": "One correlated runtime-v1 compile_result is required."
+            },
+            {
+              "check": "project_revision",
+              "status": "pass",
+              "detail": "Result must describe the exact submitted revision."
+            },
+            {
+              "check": "result_structure",
+              "status": "pass",
+              "detail": "Status, pages and diagnostics must follow runtime-v1."
+            },
+            {
+              "check": "display_items_and_sources",
+              "status": "pass",
+              "detail": "v1 text positions must be finite and source spans valid UTF-8 ranges into submitted files."
+            },
+            {
+              "check": "diagnostic_sources",
+              "status": "pass",
+              "detail": "Diagnostic source ranges must refer to this input revision."
+            }
+          ],
+          "integrity_ok": true,
+          "status": "pass",
+          "clean_stderr": ""
+        }
+      ],
+      "status": "pass",
+      "persistent_stderr": ""
+    }
+  ]
+}

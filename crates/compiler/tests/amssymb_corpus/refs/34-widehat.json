@@ -1,0 +1,80 @@
+{
+ "fixture": "34-widehat.tex",
+ "reference_engine": "pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026)",
+ "invocation": "pdflatex -interaction=batchmode, two passes, SOURCE_DATE_EPOCH=0 FORCE_SOURCE_DATE=1",
+ "unit": "bp, y from page top",
+ "pages": [
+  [
+   {
+    "text": "̂",
+    "x": 205.634,
+    "y_top": 81.863
+   },
+   {
+    "text": "Hats",
+    "x": 72.0,
+    "y_top": 84.63
+   },
+   {
+    "text": "xˆ",
+    "x": 99.7026,
+    "y_top": 84.63
+   },
+   {
+    "text": "+",
+    "x": 109.0085,
+    "y_top": 84.63
+   },
+   {
+    "text": "x",
+    "x": 120.77,
+    "y_top": 84.63
+   },
+   {
+    "text": "+",
+    "x": 130.0759,
+    "y_top": 84.63
+   },
+   {
+    "text": "xy",
+    "x": 141.84,
+    "y_top": 84.63
+   },
+   {
+    "text": "+",
+    "x": 157.2837,
+    "y_top": 84.63
+   },
+   {
+    "text": "xyz",
+    "x": 169.047,
+    "y_top": 84.63
+   },
+   {
+    "text": "+",
+    "x": 190.4671,
+    "y_top": 84.63
+   },
+   {
+    "text": "abcdef",
+    "x": 202.225,
+    "y_top": 84.63
+   },
+   {
+    "text": "end.",
+    "x": 240.8391,
+    "y_top": 84.63
+   }
+  ]
+ ],
+ "extension_columns": [
+  [
+   121.654,
+   143.253,
+   171.232
+  ]
+ ],
+ "brace_extents": [
+  []
+ ]
+}

@@ -1,0 +1,30 @@
+{
+  "schema_version": 1,
+  "reviewed_peer_sha": "f418238899d1218b17cff9a33601790a3057949a",
+  "compiled_peer_source_sha256": "51fa10b13d95bc3b513eef21e74152949f488e80de62a603d022351a56bc9b8f",
+  "adapter_source_sha256": "543fe845c7d210b55e23ea010a2a4dae48d4d9331255b6ce2b87cfde8dc0a9f6",
+  "command": "cargo test --offline --release --manifest-path crates/font-resources/Cargo.toml --test engine_adapter -- --ignored --nocapture",
+  "cases": [
+    {
+      "font": "STIXTwoText-Regular",
+      "font_sha256": "c4864ca6ec071c2d31d0d8309001faa1ee3517fffb53a31a405a697b71f52ca1",
+      "profile": "PLAIN",
+      "clusters": 18,
+      "glyphs": 18,
+      "advance_units": 7704,
+      "direct_peer_equivalent": true,
+      "default_profile": "unsupported GSUB liga lookup14 type6"
+    },
+    {
+      "font": "LiberationSans-Regular",
+      "font_sha256": "76d04c18ea243f426b7de1f3ad208e927008f961dc5945e5aad352d0dfde8ee8",
+      "profile": "default",
+      "clusters": 10,
+      "glyphs": 10,
+      "ligatures": 1,
+      "advance_units": 9752,
+      "direct_peer_equivalent": true
+    }
+  ],
+  "visual_reference_parity": "unverified"
+}

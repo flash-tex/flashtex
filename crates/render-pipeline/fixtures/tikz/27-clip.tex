@@ -1,0 +1,13 @@
+\documentclass[tikz,border=5pt]{standalone}
+\usepackage[T1]{fontenc}
+\usepackage{lmodern}
+\begin{document}
+\begin{tikzpicture}
+\begin{scope}
+\clip (0,0) circle (1);
+\fill[blue!30] (-1,-1) rectangle (0,1);
+\draw[step=0.25] (-1,-1) grid (1,1);
+\end{scope}
+\draw (0,0) circle (1);
+\end{tikzpicture}
+\end{document}

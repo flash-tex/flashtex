@@ -1,0 +1,19 @@
+{
+  "schema_version": 1,
+  "font_path": "/usr/share/fonts/liberation-sans-fonts/LiberationSans-Regular.ttf",
+  "font_sha256": "76d04c18ea243f426b7de1f3ad208e927008f961dc5945e5aad352d0dfde8ee8",
+  "source_sha256": "366a82c58bb71d8844a11115c50621d0ed999f7a1a489d5fb42a6f7d9a586e9f",
+  "glyphs": 2620,
+  "default_accepted": 1679,
+  "default_unsupported_grid_context": 941,
+  "device_accepted": 2620,
+  "device_errors": 0,
+  "grid": {
+    "ppem_x": 16,
+    "ppem_y": 16,
+    "tie_rule": "AwayFromZero"
+  },
+  "command": "FLASHTEX_SMOKE_FONT=/usr/share/fonts/liberation-sans-fonts/LiberationSans-Regular.ttf cargo test --offline --release --manifest-path crates/font-resources/Cargo.toml installed_expansion_smoke -- --ignored --nocapture",
+  "visual_and_hinted_parity": "unverified",
+  "font_bytes_vendored": false
+}

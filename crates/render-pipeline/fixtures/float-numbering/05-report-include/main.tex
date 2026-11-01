@@ -1,0 +1,38 @@
+\documentclass{report}
+\usepackage[T1]{fontenc}
+\usepackage{lmodern}
+\usepackage[margin=1in]{geometry}
+\usepackage{graphicx}
+\setlength{\parindent}{0pt}
+\pagestyle{empty}
+\begin{document}
+\chapter{One}
+Alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima mike november oscar papa quebec romeo sierra tango uniform victor whiskey xray yankee zulu alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima.
+
+\begin{figure}[h]
+\centering
+\includegraphics[width=1in]{images/wide-72.png}
+\caption{First in chapter one.}\label{f11}
+\end{figure}
+
+\include{two}
+
+Alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima mike november oscar papa quebec romeo sierra tango uniform victor whiskey xray yankee zulu alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima.
+
+\begin{figure}[h]
+\centering
+\includegraphics[width=1in]{images/wide-72.png}
+\caption{Entry file after the include.}\label{f22}
+\end{figure}
+
+\begin{table}[h]
+\centering
+\caption{Entry table after the include.}\label{t22}
+\begin{tabular}{ll}
+a & b\\
+\end{tabular}
+\end{table}
+
+Refs \ref{f11}, \ref{t21}, \ref{f21}, \ref{f22} and \ref{t22}.
+
+\end{document}

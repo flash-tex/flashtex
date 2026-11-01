@@ -1,0 +1,61 @@
+{
+  "schema_version": 1,
+  "scope": "MATH constants and STIX glyph italic/top-accent/corner-kern device inventory; explicit ppem12 replay",
+  "device_formats": [
+    1,
+    2,
+    3
+  ],
+  "variation_index": "typed unsupported",
+  "fonts": [
+    {
+      "path": "/usr/share/fonts/stix-fonts/STIXTwoMath-Regular.otf",
+      "font_sha256": "3a5f3f26f40d5698b3c62dd085d48d6663696a3f80825aab8b553d5097518e8c",
+      "math_sha256": "0af4bf095e9d3a968b460b83d589b5c0a6dc58762fe1f3cb3dece03fd5344c4a",
+      "license_path": "/usr/share/licenses/stix-fonts/OFL.txt",
+      "license_sha256": "0c8825913b60d858aacdb33c4ca6660a7d64b0d6464702efbb19313f5765861a",
+      "constant_records": 51,
+      "constant_device_records": 0,
+      "glyph_device_records": [
+        {
+          "gid": 3309,
+          "kind": "top_accent",
+          "offset": 15872,
+          "sha256": "ab2eb9ea308cd688fdf24e8195634163507dd7f547f36fb1f98956f83811d741",
+          "delta_pixels_at_12": 0
+        },
+        {
+          "gid": 3316,
+          "kind": "top_accent",
+          "offset": 15886,
+          "sha256": "c447e66453f3bd7a9d32f0913d4961fb205bd25ad46ebcef056f26609709b583",
+          "delta_pixels_at_12": 0
+        },
+        {
+          "gid": 3326,
+          "kind": "top_accent",
+          "offset": 15894,
+          "sha256": "cd26325e3c7a478bc246d4a9019d275d88037e830e9a581cdc79d1ea5b1c175e",
+          "delta_pixels_at_12": 1
+        },
+        {
+          "gid": 4010,
+          "kind": "italic",
+          "offset": 5044,
+          "sha256": "5d892fad4a022dfec134f4da2a1f75a9bba80c4f35bbf439bffbb0fb62fcbaf1",
+          "delta_pixels_at_12": 0
+        }
+      ],
+      "kern_device_records": 0
+    },
+    {
+      "path": "/usr/share/fonts/google-noto/NotoSansMath-Regular.ttf",
+      "font_sha256": "d51afd5739c7ba6c44fcab35a88160e25dfb69a2d4ad0bd99533f8d894af1f96",
+      "math_sha256": "e6ba971107625ed4c384230b1a84191c745e9a97b1b39ce12692d0d987126909",
+      "license_path": "/usr/share/licenses/google-noto-fonts-common/LICENSE",
+      "license_sha256": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4",
+      "constant_records": 51,
+      "constant_device_records": 0
+    }
+  ]
+}

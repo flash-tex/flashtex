@@ -1,0 +1,24 @@
+{
+  "parent_candidate_commit": "f464c6d6",
+  "parent_candidate_patch_sha256": "af8fd219e1cb9cbce0e69273e057e2889f7b3d776af55684aa4e5eb8f7d530a0",
+  "apply_after_parent_only": true,
+  "source_hashes": {
+    "crates/compiler/src/math.rs": "244bc1481282d55db66554451a85a8bfb14fdc8483f09f40fb771f8264330589",
+    "crates/compiler/tests/math_text.rs": "4f3ebad24a19076fb983600caf7ea9f0004e5da373f3fc05883ac3c92d7d0fdd"
+  },
+  "before_regression_exit": 101,
+  "after_tests_passed": 48,
+  "strict_clippy_exit": 0,
+  "hw1_payload_identical": true,
+  "binary_path": "/home/natkarri/flashtex-captures/hw1-text-1c02a2bc/comment-fixed-compiler-preserved",
+  "binary_sha256": "0810b9fb6b68cbef3dbb210413489f2f9a5cf1b6ca5226827026d3327598c7a3",
+  "files": {
+    "comment-fix.patch": "51dbbd0dadfcc71e42c32199d548f6c91feb88da96470e70a805e1d290d45130",
+    "comment-before.log": "cb21cee009595f8cf785cffe92c16ebd5e7333618c09a52f565cc7e324c6da9b",
+    "comment-after.log": "161b43e9c55b91c61466619511a7c894e41a58b10b0c3b11d608a21036497e92",
+    "comment-clippy.log": "8eed9cd29a70bde8df46192382faa028a960b50ba5baf3f092d0510cba80f4fe",
+    "request.jsonl": "ea6ba8d872929cb541c89d8048b457460c3b7dc1554cf66832a70b4d0fa4a433",
+    "response.jsonl": "a5944743b052cb036456f5ff0662cb8d93aa683847dea3def0886361f3de70a5",
+    "stderr.txt": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  }
+}

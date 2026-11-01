@@ -1,0 +1,182 @@
+{
+ "fixture": "28-colorbox-math.tex",
+ "reference_engine": "pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026)",
+ "invocation": "pdflatex -interaction=batchmode, two passes, SOURCE_DATE_EPOCH=0 FORCE_SOURCE_DATE=1",
+ "unit": "bp, y from page top; glyphs [text, x, y_top, fill]; rules [x, top, width, height, fill]",
+ "pages": [
+  {
+   "glyphs": [
+    [
+     "B",
+     89.559,
+     84.463,
+     "0 g",
+     "LMRoman12-Regular"
+    ],
+    [
+     "o",
+     97.8487,
+     84.463,
+     "0 g",
+     "LMRoman12-Regular"
+    ],
+    [
+     "x",
+     103.3792,
+     84.463,
+     "0 g",
+     "LMRoman12-Regular"
+    ],
+    [
+     "e",
+     109.5577,
+     84.463,
+     "0 g",
+     "LMRoman12-Regular"
+    ],
+    [
+     "d",
+     114.7606,
+     84.463,
+     "0 g",
+     "LMRoman12-Regular"
+    ],
+    [
+     "x",
+     128.152,
+     84.463,
+     "0 g",
+     "LMMathItalic12-Regular"
+    ],
+    [
+     "2",
+     134.804,
+     80.125,
+     "0 g",
+     "LMRoman8-Regular"
+    ],
+    [
+     "+",
+     142.193,
+     84.463,
+     "0 g",
+     "LMRoman12-Regular"
+    ],
+    [
+     "1",
+     153.9521,
+     84.463,
+     "0 g",
+     "LMRoman12-Regular"
+    ],
+    [
+     "a",
+     166.7036,
+     84.463,
+     "0 g",
+     "LMRoman12-Regular"
+    ],
+    [
+     "n",
+     172.5568,
+     84.463,
+     "0 g",
+     "LMRoman12-Regular"
+    ],
+    [
+     "d",
+     179.0604,
+     84.463,
+     "0 g",
+     "LMRoman12-Regular"
+    ],
+    [
+     "y",
+     192.848,
+     84.463,
+     "0 g",
+     "LMMathItalic12-Regular"
+    ],
+    [
+     "m",
+     206.274,
+     84.463,
+     "0 g",
+     "LMRoman12-Regular"
+    ],
+    [
+     "a",
+     216.0294,
+     84.463,
+     "0 g",
+     "LMRoman12-Regular"
+    ],
+    [
+     "t",
+     221.8827,
+     84.463,
+     "0 g",
+     "LMRoman12-Regular"
+    ],
+    [
+     "h",
+     226.4352,
+     84.463,
+     "0 g",
+     "LMRoman12-Regular"
+    ],
+    [
+     ".",
+     232.9389,
+     84.463,
+     "0 g",
+     "LMRoman12-Regular"
+    ]
+   ],
+   "rules": [
+    [
+     125.163,
+     72.0,
+     37.633,
+     16.373,
+     "0 0 1 0 k"
+    ],
+    [
+     189.859,
+     76.327,
+     12.114,
+     13.45,
+     "1 g"
+    ],
+    [
+     189.46,
+     75.929,
+     12.911,
+     0.398,
+     "1 0 0 rg"
+    ],
+    [
+     189.461,
+     76.128,
+     0.398,
+     13.848,
+     "1 0 0 rg"
+    ],
+    [
+     201.973,
+     76.128,
+     0.398,
+     13.848,
+     "1 0 0 rg"
+    ],
+    [
+     189.46,
+     89.777,
+     12.911,
+     0.398,
+     "1 0 0 rg"
+    ]
+   ]
+  }
+ ]
+}

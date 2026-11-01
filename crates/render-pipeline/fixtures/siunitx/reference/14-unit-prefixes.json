@@ -1,0 +1,80 @@
+{
+ "fixture": "14-unit-prefixes.tex",
+ "engine": "pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026)",
+ "pages": 1,
+ "segments": [
+  {
+   "page": 1,
+   "text": "km",
+   "font": "CMR10",
+   "size": 9.9626,
+   "x": 148.712,
+   "baseline": 134.765,
+   "end": 162.272
+  },
+  {
+   "page": 1,
+   "text": "ms",
+   "font": "CMR10",
+   "size": 9.9626,
+   "x": 165.59,
+   "baseline": 134.765,
+   "end": 177.821
+  },
+  {
+   "page": 1,
+   "text": "µ",
+   "font": "SFRM1000",
+   "size": 9.9626,
+   "x": 181.148,
+   "baseline": 134.765,
+   "end": 186.681
+  },
+  {
+   "page": 1,
+   "text": "m",
+   "font": "CMR10",
+   "size": 9.9626,
+   "x": 186.681,
+   "baseline": 134.765,
+   "end": 194.983
+  },
+  {
+   "page": 1,
+   "text": "MHz",
+   "font": "CMR10",
+   "size": 9.9626,
+   "x": 198.301,
+   "baseline": 134.765,
+   "end": 219.333
+  },
+  {
+   "page": 1,
+   "text": "GW",
+   "font": "CMR10",
+   "size": 9.9626,
+   "x": 222.66,
+   "baseline": 134.765,
+   "end": 240.718
+  },
+  {
+   "page": 1,
+   "text": "nm",
+   "font": "CMR10",
+   "size": 9.9626,
+   "x": 244.175,
+   "baseline": 134.765,
+   "end": 258.012
+  },
+  {
+   "page": 1,
+   "text": "cm",
+   "font": "CMR10",
+   "size": 9.9626,
+   "x": 261.329,
+   "baseline": 134.765,
+   "end": 274.058
+  }
+ ],
+ "warnings": []
+}

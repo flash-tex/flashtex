@@ -1,0 +1,36 @@
+{
+ "fixture": "01-here.tex",
+ "engine": "pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026)",
+ "pages": 1,
+ "images": [
+  {
+   "page": 1,
+   "x": 234.0,
+   "top": 155.686,
+   "width": 144.0,
+   "height": 72.0
+  }
+ ],
+ "captions": [
+  {
+   "page": 1,
+   "label": "Figure 1",
+   "x": 222.191,
+   "baseline": 252.094
+  }
+ ],
+ "paragraphs": [
+  {
+   "page": 1,
+   "x": 72.0,
+   "baseline": 83.955,
+   "source_byte": 196
+  },
+  {
+   "page": 1,
+   "x": 72.0,
+   "baseline": 282.813,
+   "source_byte": 692
+  }
+ ]
+}

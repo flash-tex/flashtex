@@ -1,0 +1,174 @@
+{
+ "fixture": "11-target-gray.tex",
+ "reference_engine": "pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026)",
+ "invocation": "pdflatex -interaction=batchmode, two passes, SOURCE_DATE_EPOCH=0 FORCE_SOURCE_DATE=1",
+ "unit": "bp, y from page top; glyphs [text, x, y_top, fill]; rules [x, top, width, height, fill]",
+ "pages": [
+  {
+   "glyphs": [
+    [
+     "T",
+     89.559,
+     83.955,
+     "0 g",
+     "LMRoman12-Regular"
+    ],
+    [
+     "a",
+     97.0334,
+     83.955,
+     "0 g",
+     "LMRoman12-Regular"
+    ],
+    [
+     "r",
+     102.8867,
+     83.955,
+     "0 g",
+     "LMRoman12-Regular"
+    ],
+    [
+     "g",
+     107.4392,
+     83.955,
+     "0 g",
+     "LMRoman12-Regular"
+    ],
+    [
+     "e",
+     113.2925,
+     83.955,
+     "0 g",
+     "LMRoman12-Regular"
+    ],
+    [
+     "t",
+     118.4954,
+     83.955,
+     "0 g",
+     "LMRoman12-Regular"
+    ],
+    [
+     "r",
+     126.9573,
+     83.955,
+     "0.3 g",
+     "LMRoman12-Regular"
+    ],
+    [
+     "e",
+     131.5098,
+     83.955,
+     "0.3 g",
+     "LMRoman12-Regular"
+    ],
+    [
+     "d",
+     136.7127,
+     83.955,
+     "0.3 g",
+     "LMRoman12-Regular"
+    ],
+    [
+     "d",
+     147.1137,
+     83.955,
+     "0.022 g",
+     "LMRoman12-Regular"
+    ],
+    [
+     "a",
+     153.6174,
+     83.955,
+     "0.022 g",
+     "LMRoman12-Regular"
+    ],
+    [
+     "r",
+     159.4706,
+     83.955,
+     "0.022 g",
+     "LMRoman12-Regular"
+    ],
+    [
+     "k",
+     164.0232,
+     83.955,
+     "0.022 g",
+     "LMRoman12-Regular"
+    ],
+    [
+     "c",
+     174.099,
+     83.955,
+     "0.7 g",
+     "LMRoman12-Regular"
+    ],
+    [
+     "y",
+     179.3019,
+     83.955,
+     "0.7 g",
+     "LMRoman12-Regular"
+    ],
+    [
+     "a",
+     185.1576,
+     83.955,
+     "0.7 g",
+     "LMRoman12-Regular"
+    ],
+    [
+     "n",
+     191.0108,
+     83.955,
+     "0.7 g",
+     "LMRoman12-Regular"
+    ],
+    [
+     "l",
+     201.4119,
+     83.955,
+     "0.89874 g",
+     "LMRoman12-Regular"
+    ],
+    [
+     "i",
+     204.6637,
+     83.955,
+     "0.89874 g",
+     "LMRoman12-Regular"
+    ],
+    [
+     "g",
+     207.9155,
+     83.955,
+     "0.89874 g",
+     "LMRoman12-Regular"
+    ],
+    [
+     "h",
+     213.7687,
+     83.955,
+     "0.89874 g",
+     "LMRoman12-Regular"
+    ],
+    [
+     "t",
+     219.9496,
+     83.955,
+     "0.89874 g",
+     "LMRoman12-Regular"
+    ],
+    [
+     ".",
+     224.5021,
+     83.955,
+     "0 g",
+     "LMRoman12-Regular"
+    ]
+   ],
+   "rules": []
+  }
+ ]
+}

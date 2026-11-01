@@ -1,0 +1,87 @@
+{
+  "provenance.json": {
+    "path": "provenance.json.gz",
+    "sha256": "d4e914c2f0b68d8040fde3fdfc2ad4ce4f8683557ed143e2e54c9f0fec770249",
+    "uncompressed_sha256": "8c47bd33c8e1154f155ab39bf41b553badb7222d02ed0e8db21df853c8ab2c61"
+  },
+  "clean.output.jsonl": {
+    "path": "clean.output.jsonl.gz",
+    "sha256": "07faef167e9124b6fb59c162a748be6088834fd5ccf395e54b7f179d0cc208b2",
+    "uncompressed_sha256": "adf23b4946e055518f487c6ac3644aa52f4eaed36083df1799aef5492975d7e5"
+  },
+  "clean.input.jsonl": {
+    "path": "clean.input.jsonl.gz",
+    "sha256": "bffb248cd9b74d07f755db83a4ab4b7fac6322e28c9667c3ff64f88ab1a58f1d",
+    "uncompressed_sha256": "f9e6363de1d4111c8f1e6acb4f62659e26b97fe7810e8f6583a3be58868bf8cd"
+  },
+  "diagnostics.json": {
+    "path": "diagnostics.json.gz",
+    "sha256": "c01970e087ca9d748473514d0c7e91cac99e42ba15a4545ebd6c577ebb437eda",
+    "uncompressed_sha256": "a249547fd5ad087f357b960e4a48c1bd9d71f7ad7590ab93102760cb816604a6"
+  },
+  "final-preview.json": {
+    "path": "final-preview.json.gz",
+    "sha256": "5e7fb86617eadd55bc2ed84462ddc63eb0e479651c13d24844ddde7d5381330b",
+    "uncompressed_sha256": "465d74f08ed7840a8a3d87eabf3f0aa36e9222327ecae4792f361c0ca0ac10c6"
+  },
+  "events.jsonl": {
+    "path": "events.jsonl.gz",
+    "sha256": "3c0916c60d0bfec6213f39f62a98b969b3d7540412e1d0dc364fe1c365be54f6",
+    "uncompressed_sha256": "ddd5e8dc0c6431a9efafd427718b3b1cdd56d7fa3c4f5f8da408f49834303550"
+  },
+  "final.tex": {
+    "path": "final.tex.gz",
+    "sha256": "c14fded9bd615095791535f7e25c4f2e48915aaf35e6a2df526707506670323e",
+    "uncompressed_sha256": "ba4cad7c1a05cc74d1fd28933642dd6a0756b7b756d6faab7ce40b8add7585f0"
+  },
+  "initial.tex": {
+    "path": "initial.tex.gz",
+    "sha256": "ead5c0224ab5d3a238fc2feabbf6af9bc1ea44097040c765a3df019efd616a3e",
+    "uncompressed_sha256": "b617b309ad1c83675cecf48b73af28a9b4c0692e4c411ee54ede9c83790a31c0"
+  },
+  "requests.jsonl": {
+    "path": "requests.jsonl.gz",
+    "sha256": "33b219413df7bf8b7653b788a03a42e16bd42c9c1307a3e57618f5e39f01f429",
+    "uncompressed_sha256": "892d4a55fd28f6a50136d7dd2192e2aed6e80570c912d307319ed09b41812fab"
+  },
+  "sender/sender-result.json": {
+    "path": "sender/sender-result.json.gz",
+    "sha256": "07d83c7cca10e74783035817bdc259fdf374fff7f243655a0f9ca48c69229b4c",
+    "uncompressed_sha256": "5cad397d263eda734c34870dd70faf4f1497ee60fc974681e6365fc5e9498ff5"
+  },
+  "sender/sender-config.json": {
+    "path": "sender/sender-config.json.gz",
+    "sha256": "b64e08c6180f410a46367d8893c85b973c7fd2f518705148e782c5c124668db4",
+    "uncompressed_sha256": "d443107209e4a8b7c857a70428a2c408545b0655fcb6725f51a94b097e3fe92f"
+  },
+  "producer/producer-1703634.input.jsonl": {
+    "path": "producer/producer-1703634.input.jsonl.gz",
+    "sha256": "4cd245f5a56a5be277d151243b7a76822244295a55d4552be91518677c432559",
+    "uncompressed_sha256": "ced2791e6417221df91acecee6ddddc15484030fca3437339991e2a0543ddfcb"
+  },
+  "producer/producer-1703634.output.jsonl": {
+    "path": "producer/producer-1703634.output.jsonl.gz",
+    "sha256": "d1bf6774d1da53776bf65973d2f02af351e528c1cb020cd85f4e98233d020169",
+    "uncompressed_sha256": "595fdbef9d8bdd446e80a56fd9f83eac6eb31a18418e54d2972dbba6c6ab04c0"
+  },
+  "producer/producer-1703634.pid": {
+    "path": "producer/producer-1703634.pid.gz",
+    "sha256": "8687ea5f4550109bf0459f20cfe6fc83bc6c97c6e2a5e323b818f173ab2beb10",
+    "uncompressed_sha256": "bfc56ac5050779558040cbc5629020dcf97b6a6887c6696b138a1954aa94dab6"
+  },
+  "producer/producer-1703621.input.jsonl": {
+    "path": "producer/producer-1703621.input.jsonl.gz",
+    "sha256": "41740e6dff35dca5194959ee6276c9c83c7008109da7cee80bb218d2b9222c8b",
+    "uncompressed_sha256": "828dfa7d4efb9d021634e3d133d6ba146d6acffc17ca1f06a4712ba7511abc30"
+  },
+  "producer/producer-1703621.output.jsonl": {
+    "path": "producer/producer-1703621.output.jsonl.gz",
+    "sha256": "e01fa249903f0258b89d37bd4b4d1b98bd73b2195ae6845f4a3b35c90138c694",
+    "uncompressed_sha256": "ee2e20f774eda12e0bc604603a123599011a04bd3eb656386422506aa45292c5"
+  },
+  "producer/producer-1703621.pid": {
+    "path": "producer/producer-1703621.pid.gz",
+    "sha256": "7bd67c0674261b5f910be277efce2b110281d8d26ff982788f3a665142b952ca",
+    "uncompressed_sha256": "ccdba99a5fb1f5d35a58b4abb81cc372bac7588ac42174d487fe553a733a9605"
+  }
+}

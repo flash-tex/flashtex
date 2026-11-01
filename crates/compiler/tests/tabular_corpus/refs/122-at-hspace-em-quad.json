@@ -1,0 +1,86 @@
+{
+ "fixture": "122-at-hspace-em-quad.tex",
+ "reference_engine": "pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026)",
+ "invocation": "pdflatex -interaction=batchmode, two passes, SOURCE_DATE_EPOCH=0 FORCE_SOURCE_DATE=1",
+ "unit": "bp, y from page top; rules [x, top, width, height]",
+ "pages": [
+  [
+   {
+    "text": "Text",
+    "x": 72.0,
+    "y_top": 81.963
+   },
+   {
+    "text": "before",
+    "x": 95.2467,
+    "y_top": 81.963
+   },
+   {
+    "text": "the",
+    "x": 125.1634,
+    "y_top": 81.963
+   },
+   {
+    "text": "table.",
+    "x": 142.319,
+    "y_top": 81.963
+   },
+   {
+    "text": "a",
+    "x": 77.978,
+    "y_top": 91.327
+   },
+   {
+    "text": "b",
+    "x": 99.009,
+    "y_top": 91.327
+   },
+   {
+    "text": "c",
+    "x": 117.8244,
+    "y_top": 91.327
+   },
+   {
+    "text": "dd",
+    "x": 77.978,
+    "y_top": 103.283
+   },
+   {
+    "text": "ee",
+    "x": 99.011,
+    "y_top": 103.283
+   },
+   {
+    "text": "ff",
+    "x": 117.8304,
+    "y_top": 103.283
+   },
+   {
+    "text": "Text",
+    "x": 72.0,
+    "y_top": 114.729
+   },
+   {
+    "text": "after",
+    "x": 95.2467,
+    "y_top": 114.729
+   },
+   {
+    "text": "the",
+    "x": 118.7953,
+    "y_top": 114.729
+   },
+   {
+    "text": "table.",
+    "x": 135.9509,
+    "y_top": 114.729
+   }
+  ]
+ ],
+ "extension_columns": [
+  []
+ ],
+ "rules": [
+  []
+ ]
+}

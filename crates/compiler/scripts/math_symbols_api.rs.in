@@ -1,0 +1,120 @@
+
+impl SymbolClass {
+    /// The TeXbook Chapter 17 spacing class the declaration gives the atom
+    /// (`\mathalpha` symbols are ordinary).
+    pub fn atom_class(self) -> crate::math::AtomClass {
+        use crate::math::AtomClass as A;
+        match self {
+            SymbolClass::Ord | SymbolClass::Alpha => A::Ord,
+            SymbolClass::Op => A::Op,
+            SymbolClass::Bin => A::Bin,
+            SymbolClass::Rel => A::Rel,
+            SymbolClass::Open => A::Open,
+            SymbolClass::Close => A::Close,
+            SymbolClass::Punct => A::Punct,
+        }
+    }
+}
+
+impl MathSymbol {
+    /// The command with its backslash, or the character itself.
+    pub fn spelling(&self) -> String {
+        if self.character {
+            self.name.to_string()
+        } else {
+            format!("\\{}", self.name)
+        }
+    }
+}
+
+/// The declarations of a control sequence, in source order (a kernel command
+/// a package re-declares appears once per provider). `None` for the `@`
+/// pieces and for single characters (see [`by_char`]).
+pub fn declarations(name: &str) -> impl Iterator<Item = &'static MathSymbol> + '_ {
+    SYMBOLS
+        .iter()
+        .filter(move |s| !s.character && !s.name.contains('@') && s.name == name)
+}
+
+/// The `\let` targets of a command, with the provider that makes each alias
+/// (`\Box` is `\square` under amsfonts, but lasy "32 under latexsym).
+pub fn aliases_of(name: &str) -> impl Iterator<Item = (&'static str, Provider)> + '_ {
+    ALIASES
+        .iter()
+        .filter(move |(alias, ..)| *alias == name)
+        .map(|(_, target, provider, _)| (*target, *provider))
+}
+
+/// The kernel (`fontmath.ltx`) declaration of a control sequence, if any.
+pub fn kernel(name: &str) -> Option<&'static MathSymbol> {
+    declarations(name).find(|s| s.provider == Provider::Kernel)
+}
+
+/// The `\mathcode` declaration of a single character.
+pub fn by_char(c: char) -> Option<&'static MathSymbol> {
+    SYMBOLS
+        .iter()
+        .find(|s| s.character && s.name.chars().next() == Some(c))
+}
+
+/// Every symbol a font slot is declared under.
+pub fn by_slot(font: SymbolFont, slot: u8) -> impl Iterator<Item = &'static MathSymbol> {
+    SYMBOLS.iter().filter(move |s| s.font == font && s.slot == slot)
+}
+
+/// A composite's definition body, if the declaring files define `name` as
+/// a macro rather than a symbol.
+pub fn composite(name: &str) -> Option<&'static str> {
+    COMPOSITES
+        .iter()
+        .find(|(n, ..)| *n == name)
+        .map(|(_, body, ..)| *body)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn slots_are_within_their_fonts_and_names_are_declared_once_per_provider() {
+        for (i, s) in SYMBOLS.iter().enumerate() {
+            assert!(
+                SYMBOLS[..i]
+                    .iter()
+                    .all(|t| (t.provider, t.name, t.character, t.kind) != (s.provider, s.name, s.character, s.kind)),
+                "{} declared twice by {:?}",
+                s.spelling(),
+                s.provider
+            );
+            assert!(
+                s.text.chars().count() <= 2,
+                "{} text {:?} is not one character plus an optional negation",
+                s.spelling(),
+                s.text
+            );
+            assert_eq!(s.text.is_empty(), s.face == Face::None && s.text.is_empty(), "{}", s.spelling());
+            assert!(s.width_em >= 0.0 && s.width_em < 3.0, "{} width {}", s.spelling(), s.width_em);
+            match s.kind {
+                Kind::Delimiter | Kind::Radical => assert!(s.large.is_some(), "{}", s.spelling()),
+                Kind::Symbol | Kind::Accent => assert!(s.large.is_none(), "{}", s.spelling()),
+            }
+        }
+    }
+
+    #[test]
+    fn aliases_and_lookups_resolve() {
+        for (alias, target, ..) in ALIASES {
+            assert!(
+                declarations(target).next().is_some() || composite(target).is_some(),
+                "\\{alias} -> \\{target} has no declaration"
+            );
+        }
+        assert_eq!(kernel("alpha").map(|s| (s.font, s.slot)), Some((SymbolFont::Letters, 0x0B)));
+        assert_eq!(kernel("sum").map(|s| s.class), Some(SymbolClass::Op));
+        assert_eq!(by_char('+').map(|s| (s.class, s.font, s.slot)), Some((SymbolClass::Bin, SymbolFont::Operators, 0x2B)));
+        assert!(kernel("P").is_none(), "`\\P` is a latex.ltx command, not the letter");
+        assert!(composite("cong").is_some());
+        assert_eq!(declarations("Box").count(), 1, "latexsym declares \\Box; amsfonts only `\\let`s it");
+        assert_eq!(aliases_of("Box").next(), Some(("square", Provider::Amsfonts)));
+    }
+}

@@ -1,0 +1,13 @@
+\documentclass[tikz,border=5pt]{standalone}
+\usepackage[T1]{fontenc}
+\usepackage{lmodern}
+\begin{document}
+\begin{tikzpicture}
+\coordinate (a) at (0,0);
+\coordinate (b) at (3,2);
+\draw (a) -| (b);
+\draw[red] (a) |- (b);
+\fill (a) circle (2pt) (b) circle (2pt);
+\draw[blue] (4,0) -| (5,1) -| (6,2);
+\end{tikzpicture}
+\end{document}

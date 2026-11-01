@@ -1,0 +1,142 @@
+# pdfTeX 3.141592653-2.6-1.40.27 (TeX Live 2025/nixos.org)
+# source fixtures/float-body/10-table-p-column.tex (tools/float-body-oracle/generate.py)
+# pdflatex overfull boxes: 0
+page 1 595.2760 841.8900
+word 1 148.7120 134.7650 LMRoman10-Regular 9.9626 Every
+word 1 176.7209 134.7650 LMRoman10-Regular 9.9626 float
+word 1 198.7432 134.7650 LMRoman10-Regular 9.9626 in
+word 1 209.7060 134.7650 LMRoman10-Regular 9.9626 this
+word 1 228.4736 134.7650 LMRoman10-Regular 9.9626 document
+word 1 273.7436 134.7650 LMRoman10-Regular 9.9626 carries
+word 1 304.7343 134.7650 LMRoman10-Regular 9.9626 body
+word 1 329.2622 134.7650 LMRoman10-Regular 9.9626 material
+word 1 367.9171 134.7650 LMRoman10-Regular 9.9626 that
+word 1 388.8425 134.7650 LMRoman10-Regular 9.9626 is
+word 1 398.1904 134.7650 LMRoman10-Regular 9.9626 not
+word 1 415.2414 134.7650 LMRoman10-Regular 9.9626 a
+word 1 422.8828 134.7650 LMRoman10-Regular 9.9626 picture.
+word 1 460.3262 134.7650 LMRoman10-Regular 9.9626 The
+word 1 133.7680 146.7200 LMRoman10-Regular 9.9626 paragraph
+word 1 182.1882 146.7200 LMRoman10-Regular 9.9626 around
+word 1 216.7435 146.7200 LMRoman10-Regular 9.9626 it
+word 1 227.4802 146.7200 LMRoman10-Regular 9.9626 is
+word 1 238.2627 146.7200 LMRoman10-Regular 9.9626 here
+word 1 260.6417 146.7200 LMRoman10-Regular 9.9626 so
+word 1 273.6479 146.7200 LMRoman10-Regular 9.9626 the
+word 1 291.5706 146.7200 LMRoman10-Regular 9.9626 float
+word 1 315.0275 146.7200 LMRoman10-Regular 9.9626 has
+word 1 333.5590 146.7200 LMRoman10-Regular 9.9626 text
+word 1 355.0892 146.7200 LMRoman10-Regular 9.9626 to
+word 1 368.0296 146.7200 LMRoman10-Regular 9.9626 displace
+word 1 406.4882 146.7200 LMRoman10-Regular 9.9626 and
+word 1 426.6246 146.7200 LMRoman10-Regular 9.9626 so
+word 1 439.6308 146.7200 LMRoman10-Regular 9.9626 the
+word 1 457.5535 146.7200 LMRoman10-Regular 9.9626 page
+word 1 133.7680 158.6750 LMRoman10-Regular 9.9626 builder
+word 1 167.8062 158.6750 LMRoman10-Regular 9.9626 has
+word 1 185.8196 158.6750 LMRoman10-Regular 9.9626 a
+word 1 194.3775 158.6750 LMRoman10-Regular 9.9626 column
+word 1 229.4936 158.6750 LMRoman10-Regular 9.9626 to
+word 1 241.9160 158.6750 LMRoman10-Regular 9.9626 break,
+word 1 272.4155 158.6750 LMRoman10-Regular 9.9626 and
+word 1 292.0438 158.6750 LMRoman10-Regular 9.9626 it
+word 1 302.2525 158.6750 LMRoman10-Regular 9.9626 runs
+word 1 324.7222 158.6750 LMRoman10-Regular 9.9626 to
+word 1 337.1445 158.6750 LMRoman10-Regular 9.9626 several
+word 1 370.1387 158.6750 LMRoman10-Regular 9.9626 lines
+word 1 393.1343 158.6750 LMRoman10-Regular 9.9626 so
+word 1 405.6125 158.6750 LMRoman10-Regular 9.9626 that
+word 1 427.4445 158.6750 LMRoman10-Regular 9.9626 a
+word 1 435.9924 158.6750 LMRoman10-Regular 9.9626 change
+word 1 469.1799 158.6750 LMRoman10-Regular 9.9626 in
+word 1 133.7680 170.6300 LMRoman10-Regular 9.9626 the
+word 1 150.9236 170.6300 LMRoman10-Regular 9.9626 height
+word 1 181.0943 170.6300 LMRoman10-Regular 9.9626 of
+word 1 192.4378 170.6300 LMRoman10-Regular 9.9626 the
+word 1 209.5933 170.6300 LMRoman10-Regular 9.9626 float
+word 1 232.2832 170.6300 LMRoman10-Regular 9.9626 moves
+word 1 261.9528 170.6300 LMRoman10-Regular 9.9626 something
+word 1 309.6059 170.6300 LMRoman10-Regular 9.9626 measurable.
+word 1 211.3460 193.2900 LMRoman10-Regular 9.9626 Term
+word 1 258.1700 193.2900 LMRoman10-Regular 9.9626 Meaning
+word 1 211.3460 205.6430 LMRoman10-Regular 9.9626 Float
+word 1 258.1700 205.6430 LMRoman10-Regular 9.9626 A
+word 1 269.2883 205.6430 LMRoman10-Regular 9.9626 box
+word 1 288.7094 205.6430 LMRoman10-Regular 9.9626 the
+word 1 306.1838 205.6430 LMRoman10-Regular 9.9626 output
+word 1 339.1659 205.6430 LMRoman10-Regular 9.9626 routine
+word 1 373.8368 205.6430 LMRoman10-Regular 9.9626 places
+word 1 258.1700 217.5990 LMRoman10-Regular 9.9626 on
+word 1 270.9381 217.5990 LMRoman10-Regular 9.9626 a
+word 1 278.1709 217.5990 LMRoman10-Regular 9.9626 page
+word 1 300.3487 217.5990 LMRoman10-Regular 9.9626 of
+word 1 310.6261 217.5990 LMRoman10-Regular 9.9626 its
+word 1 323.4499 217.5990 LMRoman10-Regular 9.9626 own
+word 1 343.1440 217.5990 LMRoman10-Regular 9.9626 choosing,
+word 1 385.5129 217.5990 LMRoman10-Regular 9.9626 not
+word 1 258.1700 229.5540 LMRoman10-Regular 9.9626 where
+word 1 286.9769 229.5540 LMRoman10-Regular 9.9626 it
+word 1 296.9365 229.5540 LMRoman10-Regular 9.9626 stands
+word 1 328.0507 229.5540 LMRoman10-Regular 9.9626 in
+word 1 339.6710 229.5540 LMRoman10-Regular 9.9626 the
+word 1 356.8266 229.5540 LMRoman10-Regular 9.9626 source.
+word 1 211.3460 241.5090 LMRoman10-Regular 9.9626 Caption
+word 1 258.1700 241.5090 LMRoman10-Regular 9.9626 A
+word 1 268.1027 241.5090 LMRoman10-Regular 9.9626 numbered
+word 1 313.4863 241.5090 LMRoman10-Regular 9.9626 paragraph
+word 1 360.2727 241.5090 LMRoman10-Regular 9.9626 set
+word 1 374.9665 241.5090 LMRoman10-Regular 9.9626 under
+word 1 258.1700 253.4640 LMRoman10-Regular 9.9626 or
+word 1 270.3712 253.4640 LMRoman10-Regular 9.9626 over
+word 1 291.7111 253.4640 LMRoman10-Regular 9.9626 the
+word 1 308.8667 253.4640 LMRoman10-Regular 9.9626 body
+word 1 334.0521 253.4640 LMRoman10-Regular 9.9626 of
+word 1 345.3956 253.4640 LMRoman10-Regular 9.9626 the
+word 1 362.5611 253.4640 LMRoman10-Regular 9.9626 float.
+word 1 232.0660 275.2710 LMRoman10-Regular 9.9626 Table
+word 1 259.4641 275.2710 LMRoman10-Regular 9.9626 1:
+word 1 271.6365 275.2710 LMRoman10-Regular 9.9626 Nested
+word 1 304.6226 275.2710 LMRoman10-Regular 9.9626 paragraph
+word 1 352.2857 275.2710 LMRoman10-Regular 9.9626 boxes.
+word 1 148.7120 299.1810 LMRoman10-Regular 9.9626 The
+word 1 169.8556 299.1810 LMRoman10-Regular 9.9626 second
+word 1 202.6694 299.1810 LMRoman10-Regular 9.9626 paragraph
+word 1 250.9900 299.1810 LMRoman10-Regular 9.9626 follows
+word 1 284.3638 299.1810 LMRoman10-Regular 9.9626 the
+word 1 302.1769 299.1810 LMRoman10-Regular 9.9626 float
+word 1 325.5342 299.1810 LMRoman10-Regular 9.9626 and
+word 1 345.5610 299.1810 LMRoman10-Regular 9.9626 continues
+word 1 390.0042 299.1810 LMRoman10-Regular 9.9626 the
+word 1 407.8273 299.1810 LMRoman10-Regular 9.9626 same
+word 1 433.4541 299.1810 LMRoman10-Regular 9.9626 argument,
+word 1 133.7680 311.1370 LMRoman10-Regular 9.9626 which
+word 1 162.4872 311.1370 LMRoman10-Regular 9.9626 gives
+word 1 187.1107 311.1370 LMRoman10-Regular 9.9626 the
+word 1 204.4756 311.1370 LMRoman10-Regular 9.9626 oracle
+word 1 233.5016 311.1370 LMRoman10-Regular 9.9626 a
+word 1 242.0196 311.1370 LMRoman10-Regular 9.9626 baseline
+word 1 279.9203 311.1370 LMRoman10-Regular 9.9626 below
+word 1 308.3646 311.1370 LMRoman10-Regular 9.9626 the
+word 1 325.7393 311.1370 LMRoman10-Regular 9.9626 float
+word 1 348.6384 311.1370 LMRoman10-Regular 9.9626 to
+word 1 361.0308 311.1370 LMRoman10-Regular 9.9626 compare
+word 1 401.1263 311.1370 LMRoman10-Regular 9.9626 against
+word 1 435.7045 311.1370 LMRoman10-Regular 9.9626 as
+word 1 448.1528 311.1370 LMRoman10-Regular 9.9626 well
+word 1 468.5691 311.1370 LMRoman10-Regular 9.9626 as
+word 1 133.7680 323.0920 LMRoman10-Regular 9.9626 one
+word 1 152.0304 323.0920 LMRoman10-Regular 9.9626 above
+word 1 180.2635 323.0920 LMRoman10-Regular 9.9626 it.
+word 1 303.1330 702.6350 LMRoman10-Regular 9.9626 1
+rule 1 205.1690 184.9210 0.3980 11.9550
+rule 1 251.9930 184.9210 0.3980 11.9550
+rule 1 405.6810 184.9210 0.3980 11.9550
+rule 1 205.1690 197.2740 0.3980 35.8660
+rule 1 251.9930 197.2740 0.3980 35.8660
+rule 1 405.6810 197.2740 0.3980 35.8660
+rule 1 205.1690 233.1410 0.3980 23.9100
+rule 1 251.9930 233.1410 0.3980 23.9100
+rule 1 405.6810 233.1410 0.3980 23.9100
+rule 1 205.3680 184.5230 200.5120 0.3980
+rule 1 205.3680 196.8770 200.5120 0.3980
+rule 1 205.3680 257.0510 200.5120 0.3980

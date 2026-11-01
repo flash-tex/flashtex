@@ -1,0 +1,125 @@
+{
+ "fixture": "18-per-symbol.tex",
+ "engine": "pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026)",
+ "pages": 1,
+ "segments": [
+  {
+   "page": 1,
+   "text": "m",
+   "font": "CMR10",
+   "size": 9.9626,
+   "x": 148.712,
+   "baseline": 134.765,
+   "end": 157.014
+  },
+  {
+   "page": 1,
+   "text": "/",
+   "font": "CMMI10",
+   "size": 9.9626,
+   "x": 157.014,
+   "baseline": 134.765,
+   "end": 161.995
+  },
+  {
+   "page": 1,
+   "text": "s",
+   "font": "CMR10",
+   "size": 9.9626,
+   "x": 161.995,
+   "baseline": 134.765,
+   "end": 165.924
+  },
+  {
+   "page": 1,
+   "text": "and",
+   "font": "CMR10",
+   "size": 9.9626,
+   "x": 169.242,
+   "baseline": 134.765,
+   "end": 185.294
+  },
+  {
+   "page": 1,
+   "text": "kg",
+   "font": "CMR10",
+   "size": 9.9626,
+   "x": 188.621,
+   "baseline": 134.765,
+   "end": 198.861
+  },
+  {
+   "page": 1,
+   "text": "/",
+   "font": "CMMI10",
+   "size": 9.9626,
+   "x": 199.0,
+   "baseline": 134.765,
+   "end": 203.982
+  },
+  {
+   "page": 1,
+   "text": "m",
+   "font": "CMR10",
+   "size": 9.9626,
+   "x": 203.982,
+   "baseline": 134.765,
+   "end": 212.283
+  },
+  {
+   "page": 1,
+   "text": "3",
+   "font": "CMR7",
+   "size": 6.9738,
+   "x": 212.28,
+   "baseline": 131.149,
+   "end": 216.252
+  },
+  {
+   "page": 1,
+   "text": "and",
+   "font": "CMR10",
+   "size": 9.9626,
+   "x": 220.07,
+   "baseline": 134.765,
+   "end": 236.122
+  },
+  {
+   "page": 1,
+   "text": "J",
+   "font": "CMR10",
+   "size": 9.9626,
+   "x": 239.439,
+   "baseline": 134.765,
+   "end": 244.559
+  },
+  {
+   "page": 1,
+   "text": "/",
+   "font": "CMMI10",
+   "size": 9.9626,
+   "x": 244.559,
+   "baseline": 134.765,
+   "end": 249.54
+  },
+  {
+   "page": 1,
+   "text": "(mol",
+   "font": "CMR10",
+   "size": 9.9626,
+   "x": 249.54,
+   "baseline": 134.765,
+   "end": 269.466
+  },
+  {
+   "page": 1,
+   "text": "K)",
+   "font": "CMR10",
+   "size": 9.9626,
+   "x": 271.129,
+   "baseline": 134.765,
+   "end": 282.753
+  }
+ ],
+ "warnings": []
+}

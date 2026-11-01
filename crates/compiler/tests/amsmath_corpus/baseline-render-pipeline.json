@@ -1,0 +1,879 @@
+{
+ "passed": 4,
+ "total": 42,
+ "tolerance_bp": 0.5,
+ "fixtures": [
+  {
+   "fixture": "01-align",
+   "pass": false,
+   "pages": [
+    1,
+    1
+   ],
+   "aligned": 21,
+   "within_tol": 9,
+   "unaligned": 0,
+   "worst_bp": 9.896,
+   "diagnostics": [
+    [
+     "compiler",
+     "\\pagestyle is not supported in the document preamble"
+    ],
+    [
+     "math_limitation",
+     "align: 2 row(s) set as separate centred displays; `&` alignment points ignored (no multi-row display block yet)"
+    ]
+   ]
+  },
+  {
+   "fixture": "02-align-star",
+   "pass": false,
+   "pages": [
+    1,
+    1
+   ],
+   "aligned": 19,
+   "within_tol": 9,
+   "unaligned": 0,
+   "worst_bp": 9.896,
+   "diagnostics": [
+    [
+     "compiler",
+     "\\pagestyle is not supported in the document preamble"
+    ],
+    [
+     "math_limitation",
+     "align: 2 row(s) set as separate centred displays; `&` alignment points ignored (no multi-row display block yet)"
+    ]
+   ]
+  },
+  {
+   "fixture": "03-align-two-pairs",
+   "pass": false,
+   "pages": [
+    1,
+    1
+   ],
+   "aligned": 19,
+   "within_tol": 9,
+   "unaligned": 6,
+   "worst_bp": 69.393,
+   "diagnostics": [
+    [
+     "compiler",
+     "\\pagestyle is not supported in the document preamble"
+    ],
+    [
+     "math_limitation",
+     "align: 2 row(s) set as separate centred displays; `&` alignment points ignored (no multi-row display block yet)"
+    ]
+   ]
+  },
+  {
+   "fixture": "04-alignat",
+   "pass": false,
+   "pages": [
+    1,
+    1
+   ],
+   "aligned": 21,
+   "within_tol": 9,
+   "unaligned": 3,
+   "worst_bp": 5.977,
+   "diagnostics": [
+    [
+     "compiler",
+     "\\pagestyle is not supported in the document preamble"
+    ],
+    [
+     "math_limitation",
+     "align: 2 row(s) set as separate centred displays; `&` alignment points ignored (no multi-row display block yet)"
+    ]
+   ]
+  },
+  {
+   "fixture": "05-flalign",
+   "pass": false,
+   "pages": [
+    1,
+    1
+   ],
+   "aligned": 14,
+   "within_tol": 5,
+   "unaligned": 3,
+   "worst_bp": 207.132,
+   "diagnostics": [
+    [
+     "compiler",
+     "\\pagestyle is not supported in the document preamble"
+    ],
+    [
+     "math_limitation",
+     "align: 1 row(s) set as separate centred displays; `&` alignment points ignored (no multi-row display block yet)"
+    ]
+   ]
+  },
+  {
+   "fixture": "06-gather",
+   "pass": false,
+   "pages": [
+    1,
+    1
+   ],
+   "aligned": 19,
+   "within_tol": 9,
+   "unaligned": 0,
+   "worst_bp": 5.977,
+   "diagnostics": [
+    [
+     "compiler",
+     "\\pagestyle is not supported in the document preamble"
+    ],
+    [
+     "math_limitation",
+     "gather: 2 row(s) set as separate centred displays; `&` alignment points ignored (no multi-row display block yet)"
+    ]
+   ]
+  },
+  {
+   "fixture": "07-gather-star",
+   "pass": false,
+   "pages": [
+    1,
+    1
+   ],
+   "aligned": 17,
+   "within_tol": 9,
+   "unaligned": 0,
+   "worst_bp": 5.977,
+   "diagnostics": [
+    [
+     "compiler",
+     "\\pagestyle is not supported in the document preamble"
+    ],
+    [
+     "math_limitation",
+     "gather: 2 row(s) set as separate centred displays; `&` alignment points ignored (no multi-row display block yet)"
+    ]
+   ]
+  },
+  {
+   "fixture": "08-multline",
+   "pass": false,
+   "pages": [
+    1,
+    1
+   ],
+   "aligned": 21,
+   "within_tol": 5,
+   "unaligned": 2,
+   "worst_bp": 201.544,
+   "diagnostics": [
+    [
+     "compiler",
+     "\\pagestyle is not supported in the document preamble"
+    ],
+    [
+     "math_limitation",
+     "gather: 3 row(s) set as separate centred displays; `&` alignment points ignored (no multi-row display block yet)"
+    ]
+   ]
+  },
+  {
+   "fixture": "09-multline-star",
+   "pass": false,
+   "pages": [
+    1,
+    1
+   ],
+   "aligned": 19,
+   "within_tol": 5,
+   "unaligned": 1,
+   "worst_bp": 204.734,
+   "diagnostics": [
+    [
+     "compiler",
+     "\\pagestyle is not supported in the document preamble"
+    ],
+    [
+     "math_limitation",
+     "gather: 2 row(s) set as separate centred displays; `&` alignment points ignored (no multi-row display block yet)"
+    ]
+   ]
+  },
+  {
+   "fixture": "10-split",
+   "pass": false,
+   "pages": [
+    1,
+    1
+   ],
+   "aligned": 16,
+   "within_tol": 6,
+   "unaligned": 1,
+   "worst_bp": 5.314,
+   "diagnostics": [
+    [
+     "compiler",
+     "\\pagestyle is not supported in the document preamble"
+    ]
+   ]
+  },
+  {
+   "fixture": "11-aligned",
+   "pass": false,
+   "pages": [
+    1,
+    1
+   ],
+   "aligned": 15,
+   "within_tol": 9,
+   "unaligned": 2,
+   "worst_bp": 1.666,
+   "diagnostics": [
+    [
+     "compiler",
+     "\\pagestyle is not supported in the document preamble"
+    ]
+   ]
+  },
+  {
+   "fixture": "12-gathered",
+   "pass": true,
+   "pages": [
+    1,
+    1
+   ],
+   "aligned": 13,
+   "within_tol": 13,
+   "unaligned": 0,
+   "worst_bp": 0.005,
+   "diagnostics": [
+    [
+     "compiler",
+     "\\pagestyle is not supported in the document preamble"
+    ]
+   ]
+  },
+  {
+   "fixture": "13-cases",
+   "pass": false,
+   "pages": [
+    1,
+    1
+   ],
+   "aligned": 18,
+   "within_tol": 18,
+   "unaligned": 6,
+   "worst_bp": 0.13,
+   "diagnostics": [
+    [
+     "compiler",
+     "\\pagestyle is not supported in the document preamble"
+    ]
+   ]
+  },
+  {
+   "fixture": "14-dcases",
+   "pass": false,
+   "pages": [
+    1,
+    1
+   ],
+   "aligned": 16,
+   "within_tol": 5,
+   "unaligned": 4,
+   "worst_bp": 37.071,
+   "diagnostics": [
+    [
+     "compiler",
+     "\\pagestyle is not supported in the document preamble"
+    ],
+    [
+     "compiler",
+     "\\begin{dcases} is not supported in math mode"
+    ],
+    [
+     "compiler",
+     "misplaced alignment tab character &"
+    ],
+    [
+     "compiler",
+     "misplaced alignment tab character &"
+    ],
+    [
+     "compiler",
+     "\\end is not supported in math mode"
+    ]
+   ]
+  },
+  {
+   "fixture": "15-matrix",
+   "pass": true,
+   "pages": [
+    1,
+    1
+   ],
+   "aligned": 13,
+   "within_tol": 13,
+   "unaligned": 0,
+   "worst_bp": 0.005,
+   "diagnostics": [
+    [
+     "compiler",
+     "\\pagestyle is not supported in the document preamble"
+    ]
+   ]
+  },
+  {
+   "fixture": "16-pmatrix",
+   "pass": false,
+   "pages": [
+    1,
+    1
+   ],
+   "aligned": 15,
+   "within_tol": 15,
+   "unaligned": 4,
+   "worst_bp": 0.005,
+   "diagnostics": [
+    [
+     "compiler",
+     "\\pagestyle is not supported in the document preamble"
+    ]
+   ]
+  },
+  {
+   "fixture": "17-bmatrix",
+   "pass": false,
+   "pages": [
+    1,
+    1
+   ],
+   "aligned": 17,
+   "within_tol": 17,
+   "unaligned": 4,
+   "worst_bp": 0.005,
+   "diagnostics": [
+    [
+     "compiler",
+     "\\pagestyle is not supported in the document preamble"
+    ]
+   ]
+  },
+  {
+   "fixture": "18-Bmatrix",
+   "pass": false,
+   "pages": [
+    1,
+    1
+   ],
+   "aligned": 15,
+   "within_tol": 15,
+   "unaligned": 4,
+   "worst_bp": 0.005,
+   "diagnostics": [
+    [
+     "compiler",
+     "\\pagestyle is not supported in the document preamble"
+    ]
+   ]
+  },
+  {
+   "fixture": "19-vmatrix",
+   "pass": false,
+   "pages": [
+    1,
+    1
+   ],
+   "aligned": 17,
+   "within_tol": 17,
+   "unaligned": 20,
+   "worst_bp": 0.005,
+   "diagnostics": [
+    [
+     "compiler",
+     "\\pagestyle is not supported in the document preamble"
+    ]
+   ]
+  },
+  {
+   "fixture": "20-Vmatrix",
+   "pass": false,
+   "pages": [
+    1,
+    1
+   ],
+   "aligned": 13,
+   "within_tol": 13,
+   "unaligned": 20,
+   "worst_bp": 0.005,
+   "diagnostics": [
+    [
+     "compiler",
+     "\\pagestyle is not supported in the document preamble"
+    ]
+   ]
+  },
+  {
+   "fixture": "21-smallmatrix",
+   "pass": false,
+   "pages": [
+    1,
+    1
+   ],
+   "aligned": 17,
+   "within_tol": 0,
+   "unaligned": 0,
+   "worst_bp": 9.224,
+   "diagnostics": [
+    [
+     "compiler",
+     "\\pagestyle is not supported in the document preamble"
+    ]
+   ]
+  },
+  {
+   "fixture": "22-tag",
+   "pass": false,
+   "pages": [
+    1,
+    1
+   ],
+   "aligned": 13,
+   "within_tol": 5,
+   "unaligned": 1,
+   "worst_bp": 199.667,
+   "diagnostics": [
+    [
+     "compiler",
+     "\\pagestyle is not supported in the document preamble"
+    ]
+   ]
+  },
+  {
+   "fixture": "23-notag",
+   "pass": false,
+   "pages": [
+    1,
+    1
+   ],
+   "aligned": 16,
+   "within_tol": 9,
+   "unaligned": 0,
+   "worst_bp": 5.977,
+   "diagnostics": [
+    [
+     "compiler",
+     "\\pagestyle is not supported in the document preamble"
+    ],
+    [
+     "math_limitation",
+     "align: 2 row(s) set as separate centred displays; `&` alignment points ignored (no multi-row display block yet)"
+    ]
+   ]
+  },
+  {
+   "fixture": "24-nonumber",
+   "pass": false,
+   "pages": [
+    1,
+    1
+   ],
+   "aligned": 16,
+   "within_tol": 9,
+   "unaligned": 0,
+   "worst_bp": 5.977,
+   "diagnostics": [
+    [
+     "compiler",
+     "\\pagestyle is not supported in the document preamble"
+    ],
+    [
+     "math_limitation",
+     "align: 2 row(s) set as separate centred displays; `&` alignment points ignored (no multi-row display block yet)"
+    ]
+   ]
+  },
+  {
+   "fixture": "25-intertext",
+   "pass": false,
+   "pages": [
+    1,
+    1
+   ],
+   "aligned": 16,
+   "within_tol": 5,
+   "unaligned": 4,
+   "worst_bp": 42.055,
+   "diagnostics": [
+    [
+     "compiler",
+     "\\pagestyle is not supported in the document preamble"
+    ],
+    [
+     "compiler",
+     "\\intertext is not supported in math mode"
+    ],
+    [
+     "math_limitation",
+     "align: 2 row(s) set as separate centred displays; `&` alignment points ignored (no multi-row display block yet)"
+    ]
+   ]
+  },
+  {
+   "fixture": "26-substack",
+   "pass": false,
+   "pages": [
+    1,
+    1
+   ],
+   "aligned": 11,
+   "within_tol": 5,
+   "unaligned": 5,
+   "worst_bp": 35.668,
+   "diagnostics": [
+    [
+     "compiler",
+     "\\pagestyle is not supported in the document preamble"
+    ],
+    [
+     "compiler",
+     "\\substack is not supported in math mode"
+    ]
+   ]
+  },
+  {
+   "fixture": "27-overset-underset",
+   "pass": false,
+   "pages": [
+    1,
+    1
+   ],
+   "aligned": 15,
+   "within_tol": 15,
+   "unaligned": 2,
+   "worst_bp": 0.005,
+   "diagnostics": [
+    [
+     "compiler",
+     "\\pagestyle is not supported in the document preamble"
+    ]
+   ]
+  },
+  {
+   "fixture": "28-xrightarrow",
+   "pass": false,
+   "pages": [
+    1,
+    1
+   ],
+   "aligned": 9,
+   "within_tol": 5,
+   "unaligned": 11,
+   "worst_bp": 11.676,
+   "diagnostics": [
+    [
+     "compiler",
+     "\\pagestyle is not supported in the document preamble"
+    ],
+    [
+     "compiler",
+     "\\xrightarrow is not supported in math mode"
+    ],
+    [
+     "compiler",
+     "\\xleftarrow is not supported in math mode"
+    ]
+   ]
+  },
+  {
+   "fixture": "29-operatorname",
+   "pass": false,
+   "pages": [
+    1,
+    1
+   ],
+   "aligned": 12,
+   "within_tol": 5,
+   "unaligned": 6,
+   "worst_bp": 20.334,
+   "diagnostics": [
+    [
+     "compiler",
+     "\\pagestyle is not supported in the document preamble"
+    ]
+   ]
+  },
+  {
+   "fixture": "30-declaremathoperator",
+   "pass": false,
+   "pages": [
+    1,
+    1
+   ],
+   "aligned": 10,
+   "within_tol": 10,
+   "unaligned": 6,
+   "worst_bp": 0.005,
+   "diagnostics": [
+    [
+     "compiler",
+     "\\DeclareMathOperator is not supported in the document preamble"
+    ],
+    [
+     "compiler",
+     "\\tr is not supported in the document preamble"
+    ],
+    [
+     "compiler",
+     "\\pagestyle is not supported in the document preamble"
+    ],
+    [
+     "compiler",
+     "\\tr is not supported in math mode"
+    ],
+    [
+     "compiler",
+     "\\tr is not supported in math mode"
+    ]
+   ]
+  },
+  {
+   "fixture": "31-text-subscript",
+   "pass": true,
+   "pages": [
+    1,
+    1
+   ],
+   "aligned": 14,
+   "within_tol": 14,
+   "unaligned": 0,
+   "worst_bp": 0.005,
+   "diagnostics": [
+    [
+     "compiler",
+     "\\pagestyle is not supported in the document preamble"
+    ]
+   ]
+  },
+  {
+   "fixture": "32-dfrac-tfrac",
+   "pass": false,
+   "pages": [
+    1,
+    1
+   ],
+   "aligned": 19,
+   "within_tol": 0,
+   "unaligned": 2,
+   "worst_bp": 21.853,
+   "diagnostics": [
+    [
+     "compiler",
+     "\\pagestyle is not supported in the document preamble"
+    ]
+   ]
+  },
+  {
+   "fixture": "33-binom",
+   "pass": false,
+   "pages": [
+    1,
+    1
+   ],
+   "aligned": 17,
+   "within_tol": 5,
+   "unaligned": 12,
+   "worst_bp": 85.256,
+   "diagnostics": [
+    [
+     "compiler",
+     "\\pagestyle is not supported in the document preamble"
+    ]
+   ]
+  },
+  {
+   "fixture": "34-left-middle-right",
+   "pass": false,
+   "pages": [
+    1,
+    1
+   ],
+   "aligned": 11,
+   "within_tol": 9,
+   "unaligned": 4,
+   "worst_bp": 3.32,
+   "diagnostics": [
+    [
+     "compiler",
+     "\\pagestyle is not supported in the document preamble"
+    ],
+    [
+     "math_limitation",
+     "\\quad/\\qquad glue (0.5555555555555556 em in this formula) inside \\left...\\right or a sub-formula dropped: math-layout ha"
+    ]
+   ]
+  },
+  {
+   "fixture": "35-big-family",
+   "pass": false,
+   "pages": [
+    1,
+    1
+   ],
+   "aligned": 10,
+   "within_tol": 5,
+   "unaligned": 10,
+   "worst_bp": 19.526,
+   "diagnostics": [
+    [
+     "compiler",
+     "\\pagestyle is not supported in the document preamble"
+    ]
+   ]
+  },
+  {
+   "fixture": "36-bigl-bigr",
+   "pass": false,
+   "pages": [
+    1,
+    1
+   ],
+   "aligned": 9,
+   "within_tol": 5,
+   "unaligned": 10,
+   "worst_bp": 13.55,
+   "diagnostics": [
+    [
+     "compiler",
+     "\\pagestyle is not supported in the document preamble"
+    ]
+   ]
+  },
+  {
+   "fixture": "37-spacing-thin",
+   "pass": false,
+   "pages": [
+    1,
+    1
+   ],
+   "aligned": 14,
+   "within_tol": 14,
+   "unaligned": 3,
+   "worst_bp": 0.376,
+   "diagnostics": [
+    [
+     "compiler",
+     "\\pagestyle is not supported in the document preamble"
+    ]
+   ]
+  },
+  {
+   "fixture": "38-quad-qquad",
+   "pass": true,
+   "pages": [
+    1,
+    1
+   ],
+   "aligned": 12,
+   "within_tol": 12,
+   "unaligned": 0,
+   "worst_bp": 0.38,
+   "diagnostics": [
+    [
+     "compiler",
+     "\\pagestyle is not supported in the document preamble"
+    ]
+   ]
+  },
+  {
+   "fixture": "39-phantom",
+   "pass": false,
+   "pages": [
+    1,
+    1
+   ],
+   "aligned": 13,
+   "within_tol": 9,
+   "unaligned": 1,
+   "worst_bp": 25.909,
+   "diagnostics": [
+    [
+     "compiler",
+     "\\pagestyle is not supported in the document preamble"
+    ],
+    [
+     "compiler",
+     "\\phantom is not supported in math mode"
+    ]
+   ]
+  },
+  {
+   "fixture": "40-hphantom-vphantom",
+   "pass": false,
+   "pages": [
+    1,
+    1
+   ],
+   "aligned": 13,
+   "within_tol": 5,
+   "unaligned": 5,
+   "worst_bp": 64.345,
+   "diagnostics": [
+    [
+     "compiler",
+     "\\pagestyle is not supported in the document preamble"
+    ],
+    [
+     "compiler",
+     "\\hphantom is not supported in math mode"
+    ],
+    [
+     "compiler",
+     "\\vphantom is not supported in math mode"
+    ]
+   ]
+  },
+  {
+   "fixture": "41-equation-star",
+   "pass": false,
+   "pages": [
+    1,
+    1
+   ],
+   "aligned": 17,
+   "within_tol": 5,
+   "unaligned": 0,
+   "worst_bp": 14.446,
+   "diagnostics": [
+    [
+     "compiler",
+     "\\pagestyle is not supported in the document preamble"
+    ]
+   ]
+  },
+  {
+   "fixture": "42-align-label-ref",
+   "pass": false,
+   "pages": [
+    1,
+    1
+   ],
+   "aligned": 15,
+   "within_tol": 5,
+   "unaligned": 0,
+   "worst_bp": 2.989,
+   "diagnostics": [
+    [
+     "compiler",
+     "\\pagestyle is not supported in the document preamble"
+    ],
+    [
+     "math_limitation",
+     "align: 1 row(s) set as separate centred displays; `&` alignment points ignored (no multi-row display block yet)"
+    ]
+   ]
+  }
+ ]
+}

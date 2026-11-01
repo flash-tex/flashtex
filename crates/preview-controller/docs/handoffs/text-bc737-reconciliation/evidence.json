@@ -1,0 +1,33 @@
+{
+  "base": "bc73712632345dea800267561e7fec7135cfe465",
+  "source_candidate": "be426cb85f16e88d145c2c0295a33c76e6b9bf1c",
+  "scratch": "/home/natkarri/flashtex-text-reconcile-p7awipya",
+  "apply_check_exit": 0,
+  "builds_run": false,
+  "hashes": {
+    "crates/compiler/src/layout.rs": {
+      "base_sha256": "70ae92144bfbfef5454b9c8b69b978b27559fd4e7d5091d0f5020235f335a489",
+      "candidate_sha256": "2fb61802f90f08b711cd51360ea1cef3f5c21cd735b8557868ffaaa9891f2d91"
+    },
+    "crates/compiler/src/math.rs": {
+      "base_sha256": "aad9865d29f47976883a56f70b1ad14cfac6e4073ed273f5eb7d1ae0f1b2e363",
+      "candidate_sha256": "627d82a37557d7a3b2b6addad37be63135d0ad55d6870dc52e89911dc826cf5b"
+    },
+    "crates/compiler/src/incremental.rs": {
+      "base_sha256": "237fc8afd3d4194834c5cb832496a4d7629a81b3eb06745d447444a14b36d445",
+      "candidate_sha256": "6192b6f676b5589b5bf04fe51f56000f2ea75764ef07340f38f5b70d5ca175cf"
+    },
+    "crates/compiler/tests/math_text.rs": {
+      "base_sha256": null,
+      "candidate_sha256": "4f3ebad24a19076fb983600caf7ea9f0004e5da373f3fc05883ac3c92d7d0fdd"
+    }
+  },
+  "normalized_reverse_check_exit": 0,
+  "normalized_forward_check_exit": 0,
+  "normalized_apply_hashes_match": true,
+  "preserved_sections": {
+    "symbol_table": true,
+    "delimiter_reader": true
+  },
+  "final_check_scratch": "/home/natkarri/flashtex-text-finalcheck-qpu2p8k9"
+}

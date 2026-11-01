@@ -1,0 +1,115 @@
+{
+  "ack_kind": "apply_group",
+  "full_frame_bytes": 500379,
+  "metadata_frame_bytes": 417,
+  "observations": [
+    {
+      "encoding_ms": 2.232885,
+      "metadata_only": false,
+      "pair": 0
+    },
+    {
+      "encoding_ms": 0.002317,
+      "metadata_only": true,
+      "pair": 0
+    },
+    {
+      "encoding_ms": 0.000781,
+      "metadata_only": true,
+      "pair": 1
+    },
+    {
+      "encoding_ms": 0.233651,
+      "metadata_only": false,
+      "pair": 1
+    },
+    {
+      "encoding_ms": 0.23486700000000002,
+      "metadata_only": false,
+      "pair": 2
+    },
+    {
+      "encoding_ms": 0.0006670000000000001,
+      "metadata_only": true,
+      "pair": 2
+    },
+    {
+      "encoding_ms": 0.00048800000000000004,
+      "metadata_only": true,
+      "pair": 3
+    },
+    {
+      "encoding_ms": 0.22658899999999998,
+      "metadata_only": false,
+      "pair": 3
+    },
+    {
+      "encoding_ms": 0.22884000000000002,
+      "metadata_only": false,
+      "pair": 4
+    },
+    {
+      "encoding_ms": 0.000661,
+      "metadata_only": true,
+      "pair": 4
+    },
+    {
+      "encoding_ms": 0.000532,
+      "metadata_only": true,
+      "pair": 5
+    },
+    {
+      "encoding_ms": 0.226601,
+      "metadata_only": false,
+      "pair": 5
+    },
+    {
+      "encoding_ms": 0.226315,
+      "metadata_only": false,
+      "pair": 6
+    },
+    {
+      "encoding_ms": 0.000613,
+      "metadata_only": true,
+      "pair": 6
+    },
+    {
+      "encoding_ms": 0.00047999999999999996,
+      "metadata_only": true,
+      "pair": 7
+    },
+    {
+      "encoding_ms": 0.240534,
+      "metadata_only": false,
+      "pair": 7
+    },
+    {
+      "encoding_ms": 0.226159,
+      "metadata_only": false,
+      "pair": 8
+    },
+    {
+      "encoding_ms": 0.000548,
+      "metadata_only": true,
+      "pair": 8
+    },
+    {
+      "encoding_ms": 0.00045,
+      "metadata_only": true,
+      "pair": 9
+    },
+    {
+      "encoding_ms": 0.23565,
+      "metadata_only": false,
+      "pair": 9
+    }
+  ],
+  "scope": "synthetic wire encoding with same500KB Unicode source; no ledger/native timing",
+  "source_bytes": 500000,
+  "source_sha256": "1d8b3b5f7f320d8d090623ce6876f53391e83a365d6b87c3e3838b4078fd9567",
+  "source_base": "fc262c46",
+  "sha256": {
+    "crates/preview-controller/examples/edit_ack_probe.rs": "e292a5d39b34e3a90f6cc9c4d3091a10655f39aa9e74fddb200989da66912d96",
+    "crates/preview-controller/target/release/examples/edit_ack_probe": "b3f251b557648d55fa668099ae72c7b6b70e35fa9ed9788e364bf159080fb6e9"
+  }
+}

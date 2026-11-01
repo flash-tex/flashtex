@@ -1,0 +1,63 @@
+{
+  "current": {
+    "ack_count": 20,
+    "current_revisions": [
+      21
+    ],
+    "historical_revisions": [],
+    "historical_received_ms": [],
+    "historical_during_send_window": 0,
+    "max_send_lateness_ms": 0.10534500703215599,
+    "max_ack_latency_ms": 2.9396049940260127,
+    "post_last_send_preview_ms": 80.34064799721818,
+    "helper_sha256": "8d661be71685e469c7c572a5503ec1f6d26c2857ce6ef9bfcf9d61c72869c834",
+    "producer_sha256": "1587245d9d68f426678176e45c0e0a4a971cd252c64d3a288147861ec16d62dd",
+    "scripts": {
+      "typing_burst.py": "f9db4732ffbd4134c178c60a8ab1f8a4f6aff0d526da0245881e07cc3726a78f",
+      "helper_replay.py": "a6f4b6e209d7b06cce057400b6017cf1226c54647aaaca4c6363395780c0e812",
+      "producer_capture_proxy.py": "5b97d3695b99b16bc4b4efbcf90d5ca684817952d89131c685cf9f306ffd2262",
+      "scheduled_sender.py": "5c2b4385b9b719cc7e20aa84c0ad2a832b24483abf511624cf45f6a28538dbb7"
+    },
+    "source_sha256": "ba4cad7c1a05cc74d1fd28933642dd6a0756b7b756d6faab7ce40b8add7585f0",
+    "producer_processes_gone": true
+  },
+  "historical": {
+    "ack_count": 20,
+    "current_revisions": [
+      21
+    ],
+    "historical_revisions": [
+      2,
+      5,
+      9,
+      12,
+      18,
+      20
+    ],
+    "historical_received_ms": [
+      131.05955500213895,
+      235.03917799098417,
+      324.21923299261834,
+      412.9886720038485,
+      561.4883889938938,
+      644.4603419949999
+    ],
+    "historical_during_send_window": 5,
+    "max_send_lateness_ms": 0.09208499162923545,
+    "max_ack_latency_ms": 39.267881991690956,
+    "post_last_send_preview_ms": 141.4035240013618,
+    "helper_sha256": "8d661be71685e469c7c572a5503ec1f6d26c2857ce6ef9bfcf9d61c72869c834",
+    "producer_sha256": "1587245d9d68f426678176e45c0e0a4a971cd252c64d3a288147861ec16d62dd",
+    "scripts": {
+      "typing_burst.py": "f9db4732ffbd4134c178c60a8ab1f8a4f6aff0d526da0245881e07cc3726a78f",
+      "helper_replay.py": "a6f4b6e209d7b06cce057400b6017cf1226c54647aaaca4c6363395780c0e812",
+      "producer_capture_proxy.py": "5b97d3695b99b16bc4b4efbcf90d5ca684817952d89131c685cf9f306ffd2262",
+      "scheduled_sender.py": "5c2b4385b9b719cc7e20aa84c0ad2a832b24483abf511624cf45f6a28538dbb7"
+    },
+    "source_sha256": "ba4cad7c1a05cc74d1fd28933642dd6a0756b7b756d6faab7ce40b8add7585f0",
+    "producer_processes_gone": true
+  },
+  "qualification": "One sequential pair, same source/binaries/harness, exact payloads apart from opt-in binding tokens; actual cadence reported. No native paint, worst-case, arbitrary-document or causal overhead claim. Default historical mode remains off.",
+  "harness_commit": "f240daec",
+  "same_source_commands_and_final_result": true
+}

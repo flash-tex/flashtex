@@ -1,0 +1,24 @@
+\documentclass{article}
+\usepackage[T1]{fontenc}
+\usepackage{lmodern}
+\usepackage[margin=1in]{geometry}
+\setlength{\parindent}{0pt}
+\pagestyle{empty}
+\newcommand{\tight}{\setlength{\tabcolsep}{0pt}}
+\newcommand{\widen}[1]{\addtolength{\tabcolsep}{#1}}
+\newcommand{\heavy}{\setlength\arrayrulewidth{2pt}\tight}
+\newcommand{\scoped}{{\setlength{\tabcolsep}{20pt}}}
+\begin{document}
+Text before.
+
+{\tight
+\begin{tabular}{|l|r|}\hline a & b\\\hline\end{tabular}}
+
+\begin{tabular}{|l|r|}\hline cc & dd\\\hline\end{tabular}
+
+{\widen{4pt}\begin{tabular}{|l|r|}\hline ee & ff\\\hline\end{tabular}}
+
+{\heavy\begin{tabular}{|l|r|}\hline g & h\\\hline\end{tabular}}
+
+\scoped\begin{tabular}{|l|r|}\hline ii & jj\\\hline\end{tabular}
+\end{document}

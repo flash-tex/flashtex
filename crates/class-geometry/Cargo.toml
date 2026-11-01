@@ -1,0 +1,12 @@
+[package]
+name = "flashtex-class-geometry"
+version = "0.1.0"
+edition = "2021"
+description = "Original FlashTeX model of the LaTeX2e standard classes (article/report/book) and the geometry package: exact page frame, sectioning and page-style specs in TeX scaled points."
+publish = false
+
+[lib]
+name = "flashtex_class_geometry"
+path = "src/lib.rs"
+
+[dependencies]

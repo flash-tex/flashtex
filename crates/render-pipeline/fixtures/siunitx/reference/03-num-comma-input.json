@@ -1,0 +1,116 @@
+{
+ "fixture": "03-num-comma-input.tex",
+ "engine": "pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026)",
+ "pages": 1,
+ "segments": [
+  {
+   "page": 1,
+   "text": "1",
+   "font": "CMR10",
+   "size": 9.9626,
+   "x": 148.712,
+   "baseline": 134.765,
+   "end": 153.693
+  },
+  {
+   "page": 1,
+   "text": ".",
+   "font": "CMMI10",
+   "size": 9.9626,
+   "x": 153.693,
+   "baseline": 134.765,
+   "end": 156.461
+  },
+  {
+   "page": 1,
+   "text": "5",
+   "font": "CMR10",
+   "size": 9.9626,
+   "x": 156.461,
+   "baseline": 134.765,
+   "end": 161.442
+  },
+  {
+   "page": 1,
+   "text": "and",
+   "font": "CMR10",
+   "size": 9.9626,
+   "x": 164.76,
+   "baseline": 134.765,
+   "end": 180.811
+  },
+  {
+   "page": 1,
+   "text": "12",
+   "font": "CMR10",
+   "size": 9.9626,
+   "x": 184.139,
+   "baseline": 134.765,
+   "end": 194.102
+  },
+  {
+   "page": 1,
+   "text": "345",
+   "font": "CMR10",
+   "size": 9.9626,
+   "x": 195.755,
+   "baseline": 134.765,
+   "end": 210.699
+  },
+  {
+   "page": 1,
+   "text": ".",
+   "font": "CMMI10",
+   "size": 9.9626,
+   "x": 210.699,
+   "baseline": 134.765,
+   "end": 213.467
+  },
+  {
+   "page": 1,
+   "text": "678",
+   "font": "CMR10",
+   "size": 9.9626,
+   "x": 213.467,
+   "baseline": 134.765,
+   "end": 228.411
+  },
+  {
+   "page": 1,
+   "text": "and",
+   "font": "CMR10",
+   "size": 9.9626,
+   "x": 231.738,
+   "baseline": 134.765,
+   "end": 247.79
+  },
+  {
+   "page": 1,
+   "text": "0",
+   "font": "CMR10",
+   "size": 9.9626,
+   "x": 251.108,
+   "baseline": 134.765,
+   "end": 256.089
+  },
+  {
+   "page": 1,
+   "text": ".",
+   "font": "CMMI10",
+   "size": 9.9626,
+   "x": 256.089,
+   "baseline": 134.765,
+   "end": 258.857
+  },
+  {
+   "page": 1,
+   "text": "25",
+   "font": "CMR10",
+   "size": 9.9626,
+   "x": 258.857,
+   "baseline": 134.765,
+   "end": 268.819
+  }
+ ],
+ "warnings": []
+}

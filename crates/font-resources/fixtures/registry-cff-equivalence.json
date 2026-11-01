@@ -1,0 +1,16 @@
+{
+  "schema_version": 1,
+  "scope": "pinned installed fonts in disposable project; immutable resource equivalence, not visual oracle",
+  "font_sha256": [
+    "c4864ca6ec071c2d31d0d8309001faa1ee3517fffb53a31a405a697b71f52ca1",
+    "76d04c18ea243f426b7de1f3ad208e927008f961dc5945e5aad352d0dfde8ee8"
+  ],
+  "registry_source_sha256": "974ca07c865f615ffc7155e402f4ec20ed10a1877c4c0bdc8ca29030fbde46c9",
+  "command": "cargo test --offline --release --manifest-path crates/font-resources/Cargo.toml --test registry_cff -- --ignored --nocapture",
+  "files_read": 5,
+  "total_bytes_read": 713013,
+  "initial_generation": "f3bbffec076efc0aa417bc6ca74437d039ff064bb4010677d482b7a3a1b3419a",
+  "changed_license_provenance_generation": "b29a3decf3b2fd218dd6eef6a850a913213efba5b4a2df6e93d281eaedf86cad",
+  "held_cff_glyph3_unchanged_after_external_edit": true,
+  "font_bytes_vendored": false
+}

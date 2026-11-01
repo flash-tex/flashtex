@@ -1,0 +1,29 @@
+\documentclass[12pt]{article}
+\usepackage[T1]{fontenc}
+\usepackage{lmodern}
+\usepackage[margin=1in]{geometry}
+\usepackage{longtable}
+\setlength{\parindent}{0pt}
+\begin{document}
+Text before the tables.
+
+\begin{longtable}{lc}
+\caption{First table.}\\
+\hline
+\endlastfoot
+r1 & a\\
+r2 & b\\
+\end{longtable}
+
+Between the tables.
+
+\begin{longtable}{lc}
+\caption{Second table.}\\
+\hline
+\endlastfoot
+r1 & a\\
+r2 & b\\
+\end{longtable}
+
+Text after the tables.
+\end{document}

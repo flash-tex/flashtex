@@ -1,0 +1,28 @@
+{
+  "schema_version": 1,
+  "scope": "Linux debug-build same-input metric-query replay; no native rendering latency claim",
+  "font_sha256": "3a5f3f26f40d5698b3c62dd085d48d6663696a3f80825aab8b553d5097518e8c",
+  "math_sha256": "0af4bf095e9d3a968b460b83d589b5c0a6dc58762fe1f3cb3dece03fd5344c4a",
+  "cache_source_sha256": "482726bdf9453554165a345f35f003100ee7efb805e8ec1558f6cb4c3a9fcb29",
+  "command": "cargo test --offline --manifest-path crates/font-resources/Cargo.toml --test math_adapter pinned_math -- --ignored --nocapture",
+  "query": {
+    "gid": 3,
+    "corner": "TopRight",
+    "height": [
+      0,
+      1
+    ],
+    "horizontal_ppem": 12,
+    "vertical_ppem": 12
+  },
+  "iterations": 100,
+  "uncached_elapsed_ns": 56269722,
+  "cached_elapsed_ns": 617674,
+  "cached_computations": 1,
+  "cache_hits": 99,
+  "cached_kern_parses": 1,
+  "uncached_kern_parses": 100,
+  "retained_query_charge": 10976,
+  "retained_parsed_charge": 74408,
+  "caveat": "Timing is load-sensitive; a prior paired run observed1071660125ns versus7539167ns. Exact output equality and parse-count reduction are asserted; no timing threshold."
+}

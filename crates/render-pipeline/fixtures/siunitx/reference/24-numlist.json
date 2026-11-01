@@ -1,0 +1,170 @@
+{
+ "fixture": "24-numlist.tex",
+ "engine": "pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026)",
+ "pages": 1,
+ "segments": [
+  {
+   "page": 1,
+   "text": "1,",
+   "font": "CMR10",
+   "size": 9.9626,
+   "x": 148.712,
+   "baseline": 134.765,
+   "end": 156.461
+  },
+  {
+   "page": 1,
+   "text": "2",
+   "font": "CMR10",
+   "size": 9.9626,
+   "x": 159.778,
+   "baseline": 134.765,
+   "end": 164.76
+  },
+  {
+   "page": 1,
+   "text": "and",
+   "font": "CMR10",
+   "size": 9.9626,
+   "x": 168.087,
+   "baseline": 134.765,
+   "end": 184.139
+  },
+  {
+   "page": 1,
+   "text": "3",
+   "font": "CMR10",
+   "size": 9.9626,
+   "x": 187.457,
+   "baseline": 134.765,
+   "end": 192.438
+  },
+  {
+   "page": 1,
+   "text": "and",
+   "font": "CMR10",
+   "size": 9.9626,
+   "x": 195.755,
+   "baseline": 134.765,
+   "end": 211.807
+  },
+  {
+   "page": 1,
+   "text": "then",
+   "font": "CMR10",
+   "size": 9.9626,
+   "x": 215.135,
+   "baseline": 134.765,
+   "end": 234.507
+  },
+  {
+   "page": 1,
+   "text": "1",
+   "font": "CMR10",
+   "size": 9.9626,
+   "x": 237.824,
+   "baseline": 134.765,
+   "end": 242.806
+  },
+  {
+   "page": 1,
+   "text": "and",
+   "font": "CMR10",
+   "size": 9.9626,
+   "x": 246.123,
+   "baseline": 134.765,
+   "end": 262.175
+  },
+  {
+   "page": 1,
+   "text": "2",
+   "font": "CMR10",
+   "size": 9.9626,
+   "x": 265.493,
+   "baseline": 134.765,
+   "end": 270.474
+  },
+  {
+   "page": 1,
+   "text": "and",
+   "font": "CMR10",
+   "size": 9.9626,
+   "x": 273.801,
+   "baseline": 134.765,
+   "end": 289.853
+  },
+  {
+   "page": 1,
+   "text": "then",
+   "font": "CMR10",
+   "size": 9.9626,
+   "x": 293.171,
+   "baseline": 134.765,
+   "end": 312.543
+  },
+  {
+   "page": 1,
+   "text": "10,",
+   "font": "CMR10",
+   "size": 9.9626,
+   "x": 315.861,
+   "baseline": 134.765,
+   "end": 328.591
+  },
+  {
+   "page": 1,
+   "text": "20,",
+   "font": "CMR10",
+   "size": 9.9626,
+   "x": 331.918,
+   "baseline": 134.765,
+   "end": 344.648
+  },
+  {
+   "page": 1,
+   "text": "30",
+   "font": "CMR10",
+   "size": 9.9626,
+   "x": 347.966,
+   "baseline": 134.765,
+   "end": 357.929
+  },
+  {
+   "page": 1,
+   "text": "and",
+   "font": "CMR10",
+   "size": 9.9626,
+   "x": 361.246,
+   "baseline": 134.765,
+   "end": 377.298
+  },
+  {
+   "page": 1,
+   "text": "40",
+   "font": "CMR10",
+   "size": 9.9626,
+   "x": 380.625,
+   "baseline": 134.765,
+   "end": 390.588
+  },
+  {
+   "page": 1,
+   "text": "and",
+   "font": "CMR10",
+   "size": 9.9626,
+   "x": 393.906,
+   "baseline": 134.765,
+   "end": 409.957
+  },
+  {
+   "page": 1,
+   "text": "7",
+   "font": "CMR10",
+   "size": 9.9626,
+   "x": 413.275,
+   "baseline": 134.765,
+   "end": 418.256
+  }
+ ],
+ "warnings": []
+}

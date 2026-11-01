@@ -1,0 +1,104 @@
+{
+ "fixture": "57-array-w-itshape.tex",
+ "reference_engine": "pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026)",
+ "invocation": "pdflatex -interaction=batchmode, two passes, SOURCE_DATE_EPOCH=0 FORCE_SOURCE_DATE=1",
+ "unit": "bp, y from page top; rules [x, top, width, height]",
+ "pages": [
+  [
+   {
+    "text": "Text",
+    "x": 72.0,
+    "y_top": 83.955
+   },
+   {
+    "text": "before",
+    "x": 99.3176,
+    "y_top": 83.955
+   },
+   {
+    "text": "the",
+    "x": 134.4301,
+    "y_top": 83.955
+   },
+   {
+    "text": "table.",
+    "x": 154.5865,
+    "y_top": 83.955
+   },
+   {
+    "text": "Right",
+    "x": 106.22,
+    "y_top": 95.063
+   },
+   {
+    "text": "Mid",
+    "x": 158.043,
+    "y_top": 95.063
+   },
+   {
+    "text": "Slanted",
+    "x": 201.898,
+    "y_top": 95.063
+   },
+   {
+    "text": "words",
+    "x": 242.8446,
+    "y_top": 95.063
+   },
+   {
+    "text": "R",
+    "x": 126.056,
+    "y_top": 109.509
+   },
+   {
+    "text": "M",
+    "x": 162.921,
+    "y_top": 109.509
+   },
+   {
+    "text": "it",
+    "x": 201.898,
+    "y_top": 109.509
+   },
+   {
+    "text": "Text",
+    "x": 72.0,
+    "y_top": 123.075
+   },
+   {
+    "text": "after",
+    "x": 99.3176,
+    "y_top": 123.075
+   },
+   {
+    "text": "the",
+    "x": 126.9533,
+    "y_top": 123.075
+   },
+   {
+    "text": "table.",
+    "x": 147.1097,
+    "y_top": 123.075
+   }
+  ]
+ ],
+ "extension_columns": [
+  []
+ ],
+ "rules": [
+  [
+   [
+    140.648,
+    84.951,
+    0.398,
+    28.892
+   ],
+   [
+    195.522,
+    84.951,
+    0.398,
+    28.892
+   ]
+  ]
+ ]
+}

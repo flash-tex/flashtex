@@ -1,0 +1,143 @@
+{
+ "fixture": "19-itemize-display.tex",
+ "reference_engine": "pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026)",
+ "invocation": "pdflatex -interaction=batchmode, two passes, SOURCE_DATE_EPOCH=0 FORCE_SOURCE_DATE=1",
+ "unit": "bp, y from page top",
+ "pages": [
+  [
+   {
+    "text": "?",
+    "x": 145.945,
+    "y_top": 134.765
+   },
+   {
+    "text": "First",
+    "x": 158.6752,
+    "y_top": 134.765
+   },
+   {
+    "text": "item",
+    "x": 182.971,
+    "y_top": 134.765
+   },
+   {
+    "text": "with",
+    "x": 205.6608,
+    "y_top": 134.765
+   },
+   {
+    "text": "a",
+    "x": 228.3606,
+    "y_top": 134.765
+   },
+   {
+    "text": "display:",
+    "x": 236.6595,
+    "y_top": 134.765
+   },
+   {
+    "text": "a",
+    "x": 298.421,
+    "y_top": 146.72
+   },
+   {
+    "text": "+",
+    "x": 305.8989,
+    "y_top": 146.72
+   },
+   {
+    "text": "b",
+    "x": 315.8595,
+    "y_top": 146.72
+   },
+   {
+    "text": "=",
+    "x": 322.9051,
+    "y_top": 146.72
+   },
+   {
+    "text": "c",
+    "x": 333.4236,
+    "y_top": 146.72
+   },
+   {
+    "text": "and",
+    "x": 158.675,
+    "y_top": 164.653
+   },
+   {
+    "text": "more",
+    "x": 178.0443,
+    "y_top": 164.653
+   },
+   {
+    "text": "text.",
+    "x": 202.9757,
+    "y_top": 164.653
+   },
+   {
+    "text": "?",
+    "x": 145.945,
+    "y_top": 184.578
+   },
+   {
+    "text": "Second",
+    "x": 158.6752,
+    "y_top": 184.578
+   },
+   {
+    "text": "item",
+    "x": 192.4365,
+    "y_top": 184.578
+   },
+   {
+    "text": "with",
+    "x": 215.1263,
+    "y_top": 184.578
+   },
+   {
+    "text": "a",
+    "x": 237.8261,
+    "y_top": 184.578
+   },
+   {
+    "text": "numbered",
+    "x": 246.1249,
+    "y_top": 184.578
+   },
+   {
+    "text": "one",
+    "x": 292.3653,
+    "y_top": 184.578
+   },
+   {
+    "text": "x",
+    "x": 305.968,
+    "y_top": 206.496
+   },
+   {
+    "text": "=",
+    "x": 314.4312,
+    "y_top": 206.496
+   },
+   {
+    "text": "y",
+    "x": 324.9497,
+    "y_top": 206.496
+   },
+   {
+    "text": "(1)",
+    "x": 464.7479,
+    "y_top": 206.496
+   },
+   {
+    "text": "end.",
+    "x": 158.675,
+    "y_top": 228.414
+   }
+  ]
+ ],
+ "extension_columns": [
+  []
+ ]
+}

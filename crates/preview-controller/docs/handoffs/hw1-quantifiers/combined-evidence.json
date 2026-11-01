@@ -1,0 +1,21 @@
+{
+  "base": "1c02a2bc50874770d15a4decbaa5c3a376ee3ae9",
+  "binary_path": "/home/natkarri/flashtex-captures/hw1-quantifiers-1c02a2bc/combined-compiler-preserved",
+  "binary_sha256": "284ba9ff9179e12a7ebc6b0635bb0b657e24fe5c2d91f552dae76a6c11060cc5",
+  "source_sha256": "f725e23897df3c9645bde1ceaab0876d78ea6ef4a44fd0e80d60a5161fac9d9e",
+  "tests_passed": 95,
+  "diagnostics": 84,
+  "counts": {
+    "in": 12,
+    "forall": 10,
+    "exists": 6
+  },
+  "files": {
+    "combined-request.jsonl": "5443fa6b7aa66bf2e7564cf0b8cc2204f505f045f19ccd5917d54cc69e4bb930",
+    "combined-response.jsonl": "fcb8661a528b5b8bafb78a68917741a17bfec4ca1e9345198fd4c4bf4de902ec",
+    "combined-stderr.txt": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "combined-candidate.patch": "94d5bc23f160370b42e20f43ee42c2d03ec52b7212aae43c7465c06fbf85aee3",
+    "combined-tests.log": "a9a29cae058fa06ac6f44e784f99df020e7583120968ee8ded5845a01abf1b08",
+    "combined-clippy.log": "cd5d4deacc1695ba5390f01793dbb393eead249f4e50814c116db8d5106c7033"
+  }
+}

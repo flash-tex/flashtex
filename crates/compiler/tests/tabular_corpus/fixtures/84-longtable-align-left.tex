@@ -1,0 +1,25 @@
+\documentclass[12pt]{article}
+\usepackage[T1]{fontenc}
+\usepackage{lmodern}
+\usepackage[margin=1in]{geometry}
+\usepackage{longtable}
+\setlength{\parindent}{0pt}
+\begin{document}
+Text before the table.
+
+\begin{longtable}[l]{lc}
+\hline First & Head\\\hline
+\endfirsthead
+\hline Cont & Head\\\hline
+\endhead
+\hline
+\endfoot
+\hline\hline
+\endlastfoot
+r1 & a\\
+r2 & b\\
+r3 & c\\
+\end{longtable}
+
+Text after the table.
+\end{document}

@@ -1,0 +1,171 @@
+{
+  "helper_source_sha": "e09e1f40",
+  "ledger_source_base": "d53c5073",
+  "producer_source_sha": "65dbe7da7a182e99322070e2c9763cc3b69a342b",
+  "same_binaries_and_requests": true,
+  "producer_processes_gone": true,
+  "additional_resource": {
+    "url": "https://www.gust.org.pl/projects/e-foundry/latin-modern/download/lm2.004bas.zip",
+    "archive_sha256": "97a725ea012d41367bf44fec1a2f4ccf4fe134c016715522133594e347115a7c",
+    "member": "fonts/tfm/public/lm/ec-lmr10.tfm",
+    "verified_member_equals_asset": true,
+    "asset_sha256": "cd13479f463b9a575d053dd7bf0884daa46bfdeffe4b7f537c193861652ac9e5",
+    "license_member": "doc/fonts/lm/GUST-FONT-LICENSE.TXT",
+    "license_sha256": "49ea6cb9257bbee0a3979c48a774cd221550ac1c20c95549efe45fc99cc18050",
+    "license_checked_after_capture": true
+  },
+  "statuses": {
+    "control": {
+      "preview-3": {
+        "status": "recovered",
+        "diagnostics": [
+          {
+            "code": "tfm_missing",
+            "message": "lmroman10-regular: ec-lmr10.tfm not found in /tmp/flashtex-official-lm-root/fonts/tfm/public/lm, /tmp/flashtex-render-reference-stage/fonts, /tmp/flashtex-pipeline-65dbe7d/crates/render-pipeline/target/debug/Fonts, /tmp/flashtex-pipeline-65dbe7d/crates/render-pipeline/target/debug/../Resources/Fonts, /usr/local/texlive/2026/texmf-dist/fonts/tfm/public/lm, /usr/local/texlive/2026/texmf-dist/fonts/opentype/public/lm, /usr/local/texlive/2026/texmf-dist/fonts/tfm/public/lm-math, /usr/local/texlive/2026/texmf-dist/fonts/opentype/public/lm-math, /usr/local/texlive/2026basic/texmf-dist/fonts/tfm/public/lm, /usr/local/texlive/2026basic/texmf-dist/fonts/opentype/public/lm, /usr/local/texlive/2026basic/texmf-dist/fonts/tfm/public/lm-math, /usr/local/texlive/2026basic/texmf-dist/fonts/opentype/public/lm-math, /usr/local/texlive/2025/texmf-dist/fonts/tfm/public/lm, /usr/local/texlive/2025/texmf-dist/fonts/opentype/public/lm, /usr/local/texlive/2025/texmf-dist/fonts/tfm/public/lm-math, /usr/local/texlive/2025/texmf-dist/fonts/opentype/public/lm-math, /usr/local/texlive/2025basic/texmf-dist/fonts/tfm/public/lm, /usr/local/texlive/2025basic/texmf-dist/fonts/opentype/public/lm, /usr/local/texlive/2025basic/texmf-dist/fonts/tfm/public/lm-math, /usr/local/texlive/2025basic/texmf-dist/fonts/opentype/public/lm-math, /usr/share/texmf/fonts/tfm/public/lm, /usr/share/texmf/fonts/opentype/public/lm, /usr/share/texmf/fonts/tfm/public/lm-math, /usr/share/texmf/fonts/opentype/public/lm-math, /usr/share/texlive/texmf-dist/fonts/tfm/public/lm, /usr/share/texlive/texmf-dist/fonts/opentype/public/lm, /usr/share/texlive/texmf-dist/fonts/tfm/public/lm-math, /usr/share/texlive/texmf-dist/fonts/opentype/public/lm-math; OpenType advances are used instead of TeX's metrics",
+            "recovery": null,
+            "severity": "warning",
+            "source": {
+              "end_byte": 47,
+              "path": "main.tex",
+              "start_byte": 41
+            }
+          }
+        ]
+      },
+      "preview-4": {
+        "status": "recovered",
+        "diagnostics": [
+          {
+            "code": "tfm_missing",
+            "message": "lmroman10-regular: ec-lmr10.tfm not found in /tmp/flashtex-official-lm-root/fonts/tfm/public/lm, /tmp/flashtex-render-reference-stage/fonts, /tmp/flashtex-pipeline-65dbe7d/crates/render-pipeline/target/debug/Fonts, /tmp/flashtex-pipeline-65dbe7d/crates/render-pipeline/target/debug/../Resources/Fonts, /usr/local/texlive/2026/texmf-dist/fonts/tfm/public/lm, /usr/local/texlive/2026/texmf-dist/fonts/opentype/public/lm, /usr/local/texlive/2026/texmf-dist/fonts/tfm/public/lm-math, /usr/local/texlive/2026/texmf-dist/fonts/opentype/public/lm-math, /usr/local/texlive/2026basic/texmf-dist/fonts/tfm/public/lm, /usr/local/texlive/2026basic/texmf-dist/fonts/opentype/public/lm, /usr/local/texlive/2026basic/texmf-dist/fonts/tfm/public/lm-math, /usr/local/texlive/2026basic/texmf-dist/fonts/opentype/public/lm-math, /usr/local/texlive/2025/texmf-dist/fonts/tfm/public/lm, /usr/local/texlive/2025/texmf-dist/fonts/opentype/public/lm, /usr/local/texlive/2025/texmf-dist/fonts/tfm/public/lm-math, /usr/local/texlive/2025/texmf-dist/fonts/opentype/public/lm-math, /usr/local/texlive/2025basic/texmf-dist/fonts/tfm/public/lm, /usr/local/texlive/2025basic/texmf-dist/fonts/opentype/public/lm, /usr/local/texlive/2025basic/texmf-dist/fonts/tfm/public/lm-math, /usr/local/texlive/2025basic/texmf-dist/fonts/opentype/public/lm-math, /usr/share/texmf/fonts/tfm/public/lm, /usr/share/texmf/fonts/opentype/public/lm, /usr/share/texmf/fonts/tfm/public/lm-math, /usr/share/texmf/fonts/opentype/public/lm-math, /usr/share/texlive/texmf-dist/fonts/tfm/public/lm, /usr/share/texlive/texmf-dist/fonts/opentype/public/lm, /usr/share/texlive/texmf-dist/fonts/tfm/public/lm-math, /usr/share/texlive/texmf-dist/fonts/opentype/public/lm-math; OpenType advances are used instead of TeX's metrics",
+            "recovery": null,
+            "severity": "warning",
+            "source": {
+              "end_byte": 47,
+              "path": "main.tex",
+              "start_byte": 41
+            }
+          }
+        ]
+      },
+      "preview-5": {
+        "status": "recovered",
+        "diagnostics": [
+          {
+            "code": "tfm_missing",
+            "message": "lmroman10-regular: ec-lmr10.tfm not found in /tmp/flashtex-official-lm-root/fonts/tfm/public/lm, /tmp/flashtex-render-reference-stage/fonts, /tmp/flashtex-pipeline-65dbe7d/crates/render-pipeline/target/debug/Fonts, /tmp/flashtex-pipeline-65dbe7d/crates/render-pipeline/target/debug/../Resources/Fonts, /usr/local/texlive/2026/texmf-dist/fonts/tfm/public/lm, /usr/local/texlive/2026/texmf-dist/fonts/opentype/public/lm, /usr/local/texlive/2026/texmf-dist/fonts/tfm/public/lm-math, /usr/local/texlive/2026/texmf-dist/fonts/opentype/public/lm-math, /usr/local/texlive/2026basic/texmf-dist/fonts/tfm/public/lm, /usr/local/texlive/2026basic/texmf-dist/fonts/opentype/public/lm, /usr/local/texlive/2026basic/texmf-dist/fonts/tfm/public/lm-math, /usr/local/texlive/2026basic/texmf-dist/fonts/opentype/public/lm-math, /usr/local/texlive/2025/texmf-dist/fonts/tfm/public/lm, /usr/local/texlive/2025/texmf-dist/fonts/opentype/public/lm, /usr/local/texlive/2025/texmf-dist/fonts/tfm/public/lm-math, /usr/local/texlive/2025/texmf-dist/fonts/opentype/public/lm-math, /usr/local/texlive/2025basic/texmf-dist/fonts/tfm/public/lm, /usr/local/texlive/2025basic/texmf-dist/fonts/opentype/public/lm, /usr/local/texlive/2025basic/texmf-dist/fonts/tfm/public/lm-math, /usr/local/texlive/2025basic/texmf-dist/fonts/opentype/public/lm-math, /usr/share/texmf/fonts/tfm/public/lm, /usr/share/texmf/fonts/opentype/public/lm, /usr/share/texmf/fonts/tfm/public/lm-math, /usr/share/texmf/fonts/opentype/public/lm-math, /usr/share/texlive/texmf-dist/fonts/tfm/public/lm, /usr/share/texlive/texmf-dist/fonts/opentype/public/lm, /usr/share/texlive/texmf-dist/fonts/tfm/public/lm-math, /usr/share/texlive/texmf-dist/fonts/opentype/public/lm-math; OpenType advances are used instead of TeX's metrics",
+            "recovery": null,
+            "severity": "warning",
+            "source": {
+              "end_byte": 47,
+              "path": "main.tex",
+              "start_byte": 41
+            }
+          }
+        ]
+      },
+      "preview-6": {
+        "status": "recovered",
+        "diagnostics": [
+          {
+            "code": "tfm_missing",
+            "message": "lmroman10-regular: ec-lmr10.tfm not found in /tmp/flashtex-official-lm-root/fonts/tfm/public/lm, /tmp/flashtex-render-reference-stage/fonts, /tmp/flashtex-pipeline-65dbe7d/crates/render-pipeline/target/debug/Fonts, /tmp/flashtex-pipeline-65dbe7d/crates/render-pipeline/target/debug/../Resources/Fonts, /usr/local/texlive/2026/texmf-dist/fonts/tfm/public/lm, /usr/local/texlive/2026/texmf-dist/fonts/opentype/public/lm, /usr/local/texlive/2026/texmf-dist/fonts/tfm/public/lm-math, /usr/local/texlive/2026/texmf-dist/fonts/opentype/public/lm-math, /usr/local/texlive/2026basic/texmf-dist/fonts/tfm/public/lm, /usr/local/texlive/2026basic/texmf-dist/fonts/opentype/public/lm, /usr/local/texlive/2026basic/texmf-dist/fonts/tfm/public/lm-math, /usr/local/texlive/2026basic/texmf-dist/fonts/opentype/public/lm-math, /usr/local/texlive/2025/texmf-dist/fonts/tfm/public/lm, /usr/local/texlive/2025/texmf-dist/fonts/opentype/public/lm, /usr/local/texlive/2025/texmf-dist/fonts/tfm/public/lm-math, /usr/local/texlive/2025/texmf-dist/fonts/opentype/public/lm-math, /usr/local/texlive/2025basic/texmf-dist/fonts/tfm/public/lm, /usr/local/texlive/2025basic/texmf-dist/fonts/opentype/public/lm, /usr/local/texlive/2025basic/texmf-dist/fonts/tfm/public/lm-math, /usr/local/texlive/2025basic/texmf-dist/fonts/opentype/public/lm-math, /usr/share/texmf/fonts/tfm/public/lm, /usr/share/texmf/fonts/opentype/public/lm, /usr/share/texmf/fonts/tfm/public/lm-math, /usr/share/texmf/fonts/opentype/public/lm-math, /usr/share/texlive/texmf-dist/fonts/tfm/public/lm, /usr/share/texlive/texmf-dist/fonts/opentype/public/lm, /usr/share/texlive/texmf-dist/fonts/tfm/public/lm-math, /usr/share/texlive/texmf-dist/fonts/opentype/public/lm-math; OpenType advances are used instead of TeX's metrics",
+            "recovery": null,
+            "severity": "warning",
+            "source": {
+              "end_byte": 47,
+              "path": "main.tex",
+              "start_byte": 41
+            }
+          }
+        ]
+      },
+      "preview-1": {
+        "status": "recovered",
+        "diagnostics": [
+          {
+            "code": "tfm_missing",
+            "message": "lmroman10-regular: ec-lmr10.tfm not found in /tmp/flashtex-official-lm-root/fonts/tfm/public/lm, /tmp/flashtex-render-reference-stage/fonts, /tmp/flashtex-pipeline-65dbe7d/crates/render-pipeline/target/debug/Fonts, /tmp/flashtex-pipeline-65dbe7d/crates/render-pipeline/target/debug/../Resources/Fonts, /usr/local/texlive/2026/texmf-dist/fonts/tfm/public/lm, /usr/local/texlive/2026/texmf-dist/fonts/opentype/public/lm, /usr/local/texlive/2026/texmf-dist/fonts/tfm/public/lm-math, /usr/local/texlive/2026/texmf-dist/fonts/opentype/public/lm-math, /usr/local/texlive/2026basic/texmf-dist/fonts/tfm/public/lm, /usr/local/texlive/2026basic/texmf-dist/fonts/opentype/public/lm, /usr/local/texlive/2026basic/texmf-dist/fonts/tfm/public/lm-math, /usr/local/texlive/2026basic/texmf-dist/fonts/opentype/public/lm-math, /usr/local/texlive/2025/texmf-dist/fonts/tfm/public/lm, /usr/local/texlive/2025/texmf-dist/fonts/opentype/public/lm, /usr/local/texlive/2025/texmf-dist/fonts/tfm/public/lm-math, /usr/local/texlive/2025/texmf-dist/fonts/opentype/public/lm-math, /usr/local/texlive/2025basic/texmf-dist/fonts/tfm/public/lm, /usr/local/texlive/2025basic/texmf-dist/fonts/opentype/public/lm, /usr/local/texlive/2025basic/texmf-dist/fonts/tfm/public/lm-math, /usr/local/texlive/2025basic/texmf-dist/fonts/opentype/public/lm-math, /usr/share/texmf/fonts/tfm/public/lm, /usr/share/texmf/fonts/opentype/public/lm, /usr/share/texmf/fonts/tfm/public/lm-math, /usr/share/texmf/fonts/opentype/public/lm-math, /usr/share/texlive/texmf-dist/fonts/tfm/public/lm, /usr/share/texlive/texmf-dist/fonts/opentype/public/lm, /usr/share/texlive/texmf-dist/fonts/tfm/public/lm-math, /usr/share/texlive/texmf-dist/fonts/opentype/public/lm-math; OpenType advances are used instead of TeX's metrics",
+            "recovery": null,
+            "severity": "warning",
+            "source": {
+              "end_byte": 47,
+              "path": "main.tex",
+              "start_byte": 41
+            }
+          }
+        ]
+      },
+      "preview-2": {
+        "status": "recovered",
+        "diagnostics": [
+          {
+            "code": "tfm_missing",
+            "message": "lmroman10-regular: ec-lmr10.tfm not found in /tmp/flashtex-official-lm-root/fonts/tfm/public/lm, /tmp/flashtex-render-reference-stage/fonts, /tmp/flashtex-pipeline-65dbe7d/crates/render-pipeline/target/debug/Fonts, /tmp/flashtex-pipeline-65dbe7d/crates/render-pipeline/target/debug/../Resources/Fonts, /usr/local/texlive/2026/texmf-dist/fonts/tfm/public/lm, /usr/local/texlive/2026/texmf-dist/fonts/opentype/public/lm, /usr/local/texlive/2026/texmf-dist/fonts/tfm/public/lm-math, /usr/local/texlive/2026/texmf-dist/fonts/opentype/public/lm-math, /usr/local/texlive/2026basic/texmf-dist/fonts/tfm/public/lm, /usr/local/texlive/2026basic/texmf-dist/fonts/opentype/public/lm, /usr/local/texlive/2026basic/texmf-dist/fonts/tfm/public/lm-math, /usr/local/texlive/2026basic/texmf-dist/fonts/opentype/public/lm-math, /usr/local/texlive/2025/texmf-dist/fonts/tfm/public/lm, /usr/local/texlive/2025/texmf-dist/fonts/opentype/public/lm, /usr/local/texlive/2025/texmf-dist/fonts/tfm/public/lm-math, /usr/local/texlive/2025/texmf-dist/fonts/opentype/public/lm-math, /usr/local/texlive/2025basic/texmf-dist/fonts/tfm/public/lm, /usr/local/texlive/2025basic/texmf-dist/fonts/opentype/public/lm, /usr/local/texlive/2025basic/texmf-dist/fonts/tfm/public/lm-math, /usr/local/texlive/2025basic/texmf-dist/fonts/opentype/public/lm-math, /usr/share/texmf/fonts/tfm/public/lm, /usr/share/texmf/fonts/opentype/public/lm, /usr/share/texmf/fonts/tfm/public/lm-math, /usr/share/texmf/fonts/opentype/public/lm-math, /usr/share/texlive/texmf-dist/fonts/tfm/public/lm, /usr/share/texlive/texmf-dist/fonts/opentype/public/lm, /usr/share/texlive/texmf-dist/fonts/tfm/public/lm-math, /usr/share/texlive/texmf-dist/fonts/opentype/public/lm-math; OpenType advances are used instead of TeX's metrics",
+            "recovery": null,
+            "severity": "warning",
+            "source": {
+              "end_byte": 47,
+              "path": "main.tex",
+              "start_byte": 41
+            }
+          }
+        ]
+      }
+    },
+    "verified": {
+      "preview-3": {
+        "status": "ok",
+        "diagnostics": []
+      },
+      "preview-4": {
+        "status": "ok",
+        "diagnostics": []
+      },
+      "preview-5": {
+        "status": "ok",
+        "diagnostics": []
+      },
+      "preview-6": {
+        "status": "ok",
+        "diagnostics": []
+      },
+      "preview-1": {
+        "status": "ok",
+        "diagnostics": []
+      },
+      "preview-2": {
+        "status": "ok",
+        "diagnostics": []
+      }
+    }
+  },
+  "scope": "isolated explicit10pt resource-root repair for exact fixture; default app packaging and general pixel parity unverified",
+  "artifacts": {
+    "GUST-FONT-LICENSE.txt": "49ea6cb9257bbee0a3979c48a774cd221550ac1c20c95549efe45fc99cc18050",
+    "control/provenance.json": "cd45898e9c3947c7c981831ff3ac58f2b3c11123f0dbdda16396d97bf26b4d4c",
+    "control/ledger.reopened.json": "f7af22ffaa7f6bf4ca2acf1a02722b90dadcc516c309f6cd2cae76540fcedbbf",
+    "control/diagnostics.json": "7a247109054eb89998ba96448cf7caad4dc4be86cb9dcc3039e20eb85e589b0e",
+    "control/output-held": "651d72c64a93789242788bc3ff10c944d344a27731dbfdfc3db63dcfca975b40",
+    "control/producer-1636065.input.jsonl": "b816308016fe409d8cb164af21990495dcb92042b4221a2491be1600f4db737c",
+    "control/producer-1636065.output.jsonl": "df26862f398510578f0e08cf0ed5febb7a91e6403636eff4aa6b0059c2bed404",
+    "control/producer-1636065.pid": "7c777f2b865ca1772adbee934d12259eb5ec73ce82d8ff718e1ea5696b7ed955",
+    "control/helper.snapshot.json": "1eae1742c9f5eddf1e8e4eae8ad34014b70f590d5ca8a71c2e1f74a537327f63",
+    "control/producer-1636056.input.jsonl": "ae67a80a5e05b66ab7272915db683ef671c28f020448beddb5c2b44fe833c76a",
+    "control/producer-1636056.output.jsonl": "cec71f721dbb788080b32a7635226188004b1f911da5bd40636f93d82fd72876",
+    "control/producer-1636056.pid": "f0843e8f51c57f3387af18ff0ead2215235817bdbd952cf38398173da9840be4",
+    "control/helper.output.jsonl": "f285fef3ed438194fd5f68c88c7c819f0aa3cd457fe29fc9a15b73b589ffc7f9",
+    "verified/provenance.json": "f8742435455d768116e66dffe9972ad9883a42d88466c85a540cf301274d39b8",
+    "verified/ledger.reopened.json": "f7af22ffaa7f6bf4ca2acf1a02722b90dadcc516c309f6cd2cae76540fcedbbf",
+    "verified/diagnostics.json": "d24020e8e3d2d3a84a7b596834441a458902d15caca6e798f4d83aeed0b93682",
+    "verified/output-held": "fa129d0bfc27fde3c275a6de8006060de505719cbf2e9d4a5a4df8d93c3c4781",
+    "verified/producer-1636276.input.jsonl": "b816308016fe409d8cb164af21990495dcb92042b4221a2491be1600f4db737c",
+    "verified/producer-1636276.output.jsonl": "0f3da87745d219aa13b21357d91edfef27b1358b9caf308ac1357c23d83e3e9e",
+    "verified/producer-1636276.pid": "e08933e4ae47db33c0fcfb43033aa85759fa4416557a8c2b46647c6611f7a799",
+    "verified/helper.snapshot.json": "1eae1742c9f5eddf1e8e4eae8ad34014b70f590d5ca8a71c2e1f74a537327f63",
+    "verified/producer-1636267.input.jsonl": "ae67a80a5e05b66ab7272915db683ef671c28f020448beddb5c2b44fe833c76a",
+    "verified/producer-1636267.output.jsonl": "c388fdc909845db41eb7b8d0f264b761fc1d16632365e912fe72e2c993bd026d",
+    "verified/producer-1636267.pid": "e5a16d21f033930f1dd404ebb3464455034a687dc524ae197e9e423f3efe5a48",
+    "verified/helper.output.jsonl": "92a1d9fbe2b86c59f41e5de5c68056c2cb7eba2cf5960eb4b417a4fe05e048b5"
+  }
+}

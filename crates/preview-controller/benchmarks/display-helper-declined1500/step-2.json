@@ -1,0 +1,103 @@
+{
+  "request": {
+    "protocol_version": 1,
+    "type": "compile",
+    "id": "preview-4",
+    "payload": {
+      "project_id": "p",
+      "revision": 4,
+      "entry_path": "main.tex",
+      "documents": [
+        {
+          "path": "main.tex",
+          "text": "\\documentclass[12pt]{article}\n\\begin{document}\nOffice AV fi. More text. Final edit.\n\\end{document}\n"
+        }
+      ],
+      "layout_capabilities": [
+        "display-list-v2"
+      ]
+    }
+  },
+  "events": [
+    {
+      "id": "edit-2",
+      "payload": {
+        "document": {
+          "path": "main.tex",
+          "project_id": "p",
+          "revision": 3,
+          "source_sha256": "0d11312e9883c01f01dfd5d4fdaaa582c59ad7a6d3a532e75dc6478d4f48f35b",
+          "text": "\\documentclass[12pt]{article}\n\\begin{document}\nOffice AV fi. More text. Final edit.\n\\end{document}\n"
+        },
+        "preview_error": null,
+        "save_and_submit_ms": 0.112802
+      },
+      "protocol_version": 1,
+      "session_id": "benchmark",
+      "type": "result"
+    },
+    {
+      "id": null,
+      "payload": {
+        "compile_revision": 4,
+        "controller_total_ms": 2.170192,
+        "kind": "preview",
+        "missing_layout_capabilities": [
+          "display-list-v2"
+        ],
+        "request_id": "preview-4",
+        "result": {
+          "id": "preview-4",
+          "payload": {
+            "diagnostics": [
+              {
+                "message": "compile_result would be 1506 bytes for 1 pages, over the 1500-byte reply limit; split the project or compile fewer pages",
+                "recovery": null,
+                "severity": "error",
+                "source": null
+              }
+            ],
+            "layout_capabilities": [],
+            "pages": [],
+            "pdf_path": null,
+            "project_id": "p",
+            "revision": 4,
+            "status": "failed"
+          },
+          "protocol_version": 1,
+          "type": "compile_result"
+        },
+        "runtime_total_ms": 2.049632,
+        "source_versions": {
+          "main.tex": 3
+        }
+      },
+      "protocol_version": 1,
+      "session_id": "benchmark",
+      "type": "update"
+    }
+  ],
+  "direct": [
+    {
+      "id": "preview-4",
+      "payload": {
+        "diagnostics": [
+          {
+            "message": "compile_result would be 1506 bytes for 1 pages, over the 1500-byte reply limit; split the project or compile fewer pages",
+            "recovery": null,
+            "severity": "error",
+            "source": null
+          }
+        ],
+        "layout_capabilities": [],
+        "pages": [],
+        "pdf_path": null,
+        "project_id": "p",
+        "revision": 4,
+        "status": "failed"
+      },
+      "protocol_version": 1,
+      "type": "compile_result"
+    }
+  ]
+}

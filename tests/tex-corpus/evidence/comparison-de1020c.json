@@ -1,0 +1,34 @@
+{
+  "baseline_artifact_sha256": "301042571d40b7fce3f4d3f6c8232f2fcffd1c796fa0d56e380f591af5818718",
+  "baseline_sha": "9f1033ba75176236bc5fc66b5e64b8ebbfc15a37",
+  "candidate_artifact_sha256": "1f751bfa154c696892e1f54b2410a709b31104ad351aea0abf11247597857d70",
+  "candidate_sha": "de1020cd0be7cede11be2691e00e7f5b15cb2224",
+  "check_regressions": [],
+  "gate": "pass",
+  "groups": {
+    "changed_incomplete": [],
+    "newly_passing": [],
+    "regressed": [],
+    "still_failing": [
+      "comments-escapes",
+      "include-scope",
+      "included-file",
+      "macro-arguments",
+      "macro-scope"
+    ],
+    "still_passing": [],
+    "still_unsupported": [
+      "extra-closing-group",
+      "literal-source-map",
+      "math-inline-display",
+      "missing-include",
+      "plain-paragraphs",
+      "tikz-required",
+      "unclosed-group",
+      "unicode-literals",
+      "unknown-command"
+    ],
+    "still_unverified": []
+  },
+  "limitations": "A non-regression gate is not project completion. Incomplete cases remain outstanding; improvements never cancel regressions."
+}

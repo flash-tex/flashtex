@@ -1,0 +1,130 @@
+{
+ "fixture": "44-t1-substitutions.tex",
+ "engine": "pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026)",
+ "pages": 1,
+ "segments": [
+  {
+   "page": 1,
+   "text": "Words",
+   "font": "SFRM1000",
+   "size": 9.9626,
+   "x": 148.712,
+   "baseline": 134.765
+  },
+  {
+   "page": 1,
+   "text": "bold",
+   "font": "SFSO1000",
+   "size": 9.9626,
+   "x": 178.677,
+   "baseline": 134.765
+  },
+  {
+   "page": 1,
+   "text": "sans",
+   "font": "SFSO1000",
+   "size": 9.9626,
+   "x": 200.618,
+   "baseline": 134.765
+  },
+  {
+   "page": 1,
+   "text": "italic",
+   "font": "SFSO1000",
+   "size": 9.9626,
+   "x": 222.268,
+   "baseline": 134.765
+  },
+  {
+   "page": 1,
+   "text": "and",
+   "font": "SFRM1000",
+   "size": 9.9626,
+   "x": 247.088,
+   "baseline": 134.765
+  },
+  {
+   "page": 1,
+   "text": "Bold",
+   "font": "SFXC1000",
+   "size": 9.9626,
+   "x": 265.346,
+   "baseline": 134.765
+  },
+  {
+   "page": 1,
+   "text": "Caps",
+   "font": "SFXC1000",
+   "size": 9.9626,
+   "x": 296.509,
+   "baseline": 134.765
+  },
+  {
+   "page": 1,
+   "text": "then",
+   "font": "SFRM1000",
+   "size": 9.9626,
+   "x": 326.087,
+   "baseline": 134.765
+  },
+  {
+   "page": 1,
+   "text": "Sans",
+   "font": "SFCC1000",
+   "size": 9.9626,
+   "x": 347.675,
+   "baseline": 134.765
+  },
+  {
+   "page": 1,
+   "text": "Caps",
+   "font": "SFCC1000",
+   "size": 9.9626,
+   "x": 373.131,
+   "baseline": 134.765
+  },
+  {
+   "page": 1,
+   "text": "and",
+   "font": "SFRM1000",
+   "size": 9.9626,
+   "x": 399.406,
+   "baseline": 134.765
+  },
+  {
+   "page": 1,
+   "text": "bold",
+   "font": "SFTT1000",
+   "size": 9.9626,
+   "x": 417.664,
+   "baseline": 134.765
+  },
+  {
+   "page": 1,
+   "text": "typewriter",
+   "font": "SFTT1000",
+   "size": 9.9626,
+   "x": 443.812,
+   "baseline": 134.765
+  },
+  {
+   "page": 1,
+   "text": "to",
+   "font": "SFRM1000",
+   "size": 9.9626,
+   "x": 133.768,
+   "baseline": 146.72
+  },
+  {
+   "page": 1,
+   "text": "finish.",
+   "font": "SFRM1000",
+   "size": 9.9626,
+   "x": 145.939,
+   "baseline": 146.72
+  }
+ ],
+ "warnings": [
+  "Font shape `T1/cmss/m/sc' in size <10> not available, Font shape `T1/cmr/m/sc' tried instead"
+ ]
+}

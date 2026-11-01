@@ -1,0 +1,55 @@
+{
+ "fixture": "08-table-ref.tex",
+ "engine": "pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026)",
+ "pages": 1,
+ "images": [
+  {
+   "page": 1,
+   "x": 263.482,
+   "top": 165.084,
+   "width": 85.037,
+   "height": 28.346
+  },
+  {
+   "page": 1,
+   "x": 256.0,
+   "top": 279.109,
+   "width": 100.0,
+   "height": 50.0
+  }
+ ],
+ "captions": [
+  {
+   "page": 1,
+   "label": "Table 1",
+   "x": 239.342,
+   "baseline": 161.763
+  },
+  {
+   "page": 1,
+   "label": "Figure 1",
+   "x": 230.372,
+   "baseline": 353.517
+  }
+ ],
+ "paragraphs": [
+  {
+   "page": 1,
+   "x": 72.0,
+   "baseline": 83.955,
+   "source_byte": 196
+  },
+  {
+   "page": 1,
+   "x": 72.0,
+   "baseline": 219.499,
+   "source_byte": 698
+  },
+  {
+   "page": 1,
+   "x": 72.0,
+   "baseline": 381.911,
+   "source_byte": 1157
+  }
+ ]
+}

@@ -1,0 +1,186 @@
+{
+ "fixture": "52-p-long-hline.tex",
+ "reference_engine": "pdfTeX 3.141592653-2.6-1.40.29 (TeX Live 2026)",
+ "invocation": "pdflatex -interaction=batchmode, two passes, SOURCE_DATE_EPOCH=0 FORCE_SOURCE_DATE=1",
+ "unit": "bp, y from page top; rules [x, top, width, height]",
+ "pages": [
+  [
+   {
+    "text": "Text",
+    "x": 72.0,
+    "y_top": 83.955
+   },
+   {
+    "text": "before",
+    "x": 99.3176,
+    "y_top": 83.955
+   },
+   {
+    "text": "the",
+    "x": 134.4301,
+    "y_top": 83.955
+   },
+   {
+    "text": "table.",
+    "x": 154.5865,
+    "y_top": 83.955
+   },
+   {
+    "text": "Lorem",
+    "x": 77.978,
+    "y_top": 95.462
+   },
+   {
+    "text": "ipsum",
+    "x": 114.2907,
+    "y_top": 95.462
+   },
+   {
+    "text": "dolor",
+    "x": 148.5687,
+    "y_top": 95.462
+   },
+   {
+    "text": "sit",
+    "x": 178.2295,
+    "y_top": 95.462
+   },
+   {
+    "text": "amet,",
+    "x": 194.2854,
+    "y_top": 95.462
+   },
+   {
+    "text": "con-",
+    "x": 226.5955,
+    "y_top": 95.462
+   },
+   {
+    "text": "sectetur",
+    "x": 77.978,
+    "y_top": 109.908
+   },
+   {
+    "text": "adipiscing",
+    "x": 125.8131,
+    "y_top": 109.908
+   },
+   {
+    "text": "elit,",
+    "x": 184.0661,
+    "y_top": 109.908
+   },
+   {
+    "text": "sed",
+    "x": 211.9217,
+    "y_top": 109.908
+   },
+   {
+    "text": "do",
+    "x": 235.7053,
+    "y_top": 109.908
+   },
+   {
+    "text": "eiusmod",
+    "x": 77.978,
+    "y_top": 124.354
+   },
+   {
+    "text": "tempor",
+    "x": 123.874,
+    "y_top": 124.354
+   },
+   {
+    "text": "incididunt",
+    "x": 164.5145,
+    "y_top": 124.354
+   },
+   {
+    "text": "ut",
+    "x": 220.1062,
+    "y_top": 124.354
+   },
+   {
+    "text": "la-",
+    "x": 235.0478,
+    "y_top": 124.354
+   },
+   {
+    "text": "bore",
+    "x": 77.978,
+    "y_top": 138.799
+   },
+   {
+    "text": "et",
+    "x": 104.3105,
+    "y_top": 138.799
+   },
+   {
+    "text": "dolore",
+    "x": 117.9753,
+    "y_top": 138.799
+   },
+   {
+    "text": "magna",
+    "x": 153.0901,
+    "y_top": 138.799
+   },
+   {
+    "text": "aliqua.",
+    "x": 190.8064,
+    "y_top": 138.799
+   },
+   {
+    "text": "Text",
+    "x": 72.0,
+    "y_top": 152.764
+   },
+   {
+    "text": "after",
+    "x": 99.3176,
+    "y_top": 152.764
+   },
+   {
+    "text": "the",
+    "x": 126.9533,
+    "y_top": 152.764
+   },
+   {
+    "text": "table.",
+    "x": 147.1097,
+    "y_top": 152.764
+   }
+  ]
+ ],
+ "extension_columns": [
+  []
+ ],
+ "rules": [
+  [
+   [
+    72.0,
+    84.952,
+    182.034,
+    0.398
+   ],
+   [
+    71.801,
+    85.35,
+    0.398,
+    57.783
+   ],
+   [
+    253.835,
+    85.35,
+    0.398,
+    57.783
+   ],
+   [
+    72.0,
+    143.133,
+    182.034,
+    0.398
+   ]
+  ]
+ ]
+}

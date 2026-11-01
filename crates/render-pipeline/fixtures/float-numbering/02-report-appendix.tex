@@ -1,0 +1,63 @@
+\documentclass{report}
+\usepackage[T1]{fontenc}
+\usepackage{lmodern}
+\usepackage[margin=1in]{geometry}
+\usepackage{graphicx}
+\setlength{\parindent}{0pt}
+\pagestyle{empty}
+\begin{document}
+\chapter{One}
+Alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima mike november oscar papa quebec romeo sierra tango uniform victor whiskey xray yankee zulu alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima.
+
+\begin{figure}[h]
+\centering
+\includegraphics[width=1in]{images/wide-72.png}
+\caption{Chapter one.}\label{f11}
+\end{figure}
+
+\begin{table}[h]
+\centering
+\begin{tabular}{ll}
+a & b\\
+\end{tabular}
+\caption{Chapter one table.}\label{t11}
+\end{table}
+
+\appendix
+Alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima mike november oscar papa quebec romeo sierra tango uniform victor whiskey xray yankee zulu alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima.
+
+\begin{figure}[h]
+\centering
+\includegraphics[width=1in]{images/wide-72.png}
+\caption{After appendix, before its chapter.}\label{fa0}
+\end{figure}
+
+\chapter{Extra}
+Alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima mike november oscar papa quebec romeo sierra tango uniform victor whiskey xray yankee zulu alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima.
+
+\begin{figure}[h]
+\centering
+\includegraphics[width=1in]{images/wide-72.png}
+\caption{First appendix figure.}\label{fa1}
+\end{figure}
+
+\begin{table}[h]
+\centering
+\begin{tabular}{ll}
+a & b\\
+\end{tabular}
+\caption{First appendix table.}\label{ta1}
+\end{table}
+
+\chapter{More}
+Alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima mike november oscar papa quebec romeo sierra tango uniform victor whiskey xray yankee zulu alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima.
+
+\begin{figure}[h]
+\centering
+\includegraphics[width=1in]{images/wide-72.png}
+\caption{Second appendix figure.}\label{fb1}
+\end{figure}
+
+Refs \ref{f11}, \ref{t11}, \ref{fa0}, \ref{fa1}, \ref{ta1} and \ref{fb1}.
+
+\end{document}

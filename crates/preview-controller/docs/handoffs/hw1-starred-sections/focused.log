@@ -1,0 +1,25 @@
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.01s
+     Running tests/references_and_figures.rs (crates/compiler/target/debug/deps/references_and_figures-a38f97b8ed5e0016)
+
+running 9 tests
+test includegraphics_is_explicitly_unsupported ... ok
+test undefined_reference_is_visible_and_warns_with_key ... ok
+test sections_and_subsections_number_and_reset ... ok
+test duplicate_label_warns_and_second_definition_wins ... ok
+test equation_label_round_trip_and_right_margin_number ... ok
+test backward_and_forward_references_resolve ... ok
+test figure_caption_label_and_lists_render ... ok
+test inserting_top_section_recomputes_and_matches_full_build ... ok
+test forward_pageref_converges_to_the_labels_page ... ok
+
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+     Running tests/starred_sections.rs (crates/compiler/target/debug/deps/starred_sections-33e835b4330b3a18)
+
+running 3 tests
+test starred_problem_macro_preserves_utf8_argument_spans ... ok
+test starred_sections_preserve_counters_and_previous_label_value ... ok
+test toggling_stars_matches_clean_compilation ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+

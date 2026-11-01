@@ -1,0 +1,10 @@
+{
+  "schema_version": 1,
+  "scenarios": [
+    {"id": "unicode-byte-shift", "case_id": "literal-source-map", "edits": [{"path": "main.tex", "old": "éé", "new": "éé東京"}], "purpose": "An insertion before navigation anchors changes later UTF-8 byte offsets."},
+    {"id": "macro-definition-change", "case_id": "macro-scope", "edits": [{"path": "main.tex", "old": "{outer}", "new": "{changed}"}], "purpose": "A macro definition edit invalidates downstream expansion while preserving local scope."},
+    {"id": "included-source-change", "case_id": "included-file", "edits": [{"path": "parts/section.tex", "old": "Included café.", "new": "Revised café 東京."}], "purpose": "An included file change must invalidate its callers and source provenance."},
+    {"id": "recovery-then-repair", "case_id": "unclosed-group", "edits": [{"path": "main.tex", "old": "{inside", "new": "{inside}"}], "purpose": "A malformed document is compiled first, then its group is repaired; obsolete diagnostics must disappear if the clean compiler removes them."},
+    {"id": "introduce-error-then-repair", "case_id": "plain-paragraphs", "edits": [{"path": "main.tex", "old": "First paragraph.", "new": "First } paragraph."}, {"path": "main.tex", "old": "First } paragraph.", "new": "First paragraph."}], "purpose": "A valid source becomes malformed and is repaired in the same process, preventing cached diagnostics from leaking across revisions."}
+  ]
+}
