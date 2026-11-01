@@ -23,6 +23,10 @@ impl Globals {
         let mut p: halfword = 0; // §1683
         let mut q: halfword = 0; // §1683
         let mut unbalance: halfword = 0; // §1683
+        let mut tt: halfword = 0; // §1683
+        let mut c: i32 = 0; // §1683
+        #[allow(unused_mut)]
+        let mut __av_eqtb = self.eqtb.view();
         #[allow(unused_mut)]
         let mut __av_mem = self.mem.view();
         'l_found_f: {
@@ -38,6 +42,62 @@ impl Globals {
             unbalance = 1i32;
             while true {
                 {
+                    'l_done_f: {
+                        if (!self.intr_rec_on) {
+                            if (!self.bm_rec_on) {
+                                while true {
+                                    {
+                                        if (self.cur_input.state_field != token_list) {
+                                            break 'l_done_f;
+                                        }
+                                        if (self.cur_input.loc_field == null) {
+                                            break 'l_done_f;
+                                        }
+                                        tt = __av_mem[crate::ix::U((self.cur_input.loc_field) as usize)].hh().lh();
+                                        if (tt >= cs_token_flag) {
+                                            {
+                                                c = __av_eqtb[crate::ix::U((((tt).wrapping_sub(4095i32)) - 1) as usize)].hh().b0();
+                                                if (c >= outer_call) {
+                                                    break 'l_done_f;
+                                                }
+                                                if (((c <= car_ret) && (c >= tab_mark)) && (self.align_state == 0i32)) {
+                                                    break 'l_done_f;
+                                                }
+                                                self.cur_input.loc_field = __av_mem[crate::ix::U((self.cur_input.loc_field) as usize)].hh().rh();
+                                                if self.rs_on {
+                                                    if (!self.rs_seen[crate::ix::U(((tt).wrapping_sub(4095i32)) as usize)]) {
+                                                        self.flashtex_cs_read((tt).wrapping_sub(4095i32));
+                                                    }
+                                                }
+                                            }
+                                        } else {
+                                            {
+                                                c = (tt / 256i32);
+                                                if (c == out_param) {
+                                                    break 'l_done_f;
+                                                }
+                                                if ((c == tab_mark) && (self.align_state == 0i32)) {
+                                                    break 'l_done_f;
+                                                }
+                                                if (tt < right_brace_limit) {
+                                                    break 'l_done_f;
+                                                }
+                                                self.cur_input.loc_field = __av_mem[crate::ix::U((self.cur_input.loc_field) as usize)].hh().rh();
+                                            }
+                                        }
+                                        {
+                                            self.dl_list_token_begin();
+                                            q = self.get_avail();
+                                            self.dl_token_end();
+                                            __av_mem[crate::ix::U((p) as usize)].set_hh_rh(q);
+                                            __av_mem[crate::ix::U((q) as usize)].set_hh_lh(tt);
+                                            p = q;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
                     self.get_token();
                     if (self.cur_tok < right_brace_limit) {
                         if (self.cur_cmd < right_brace) {
