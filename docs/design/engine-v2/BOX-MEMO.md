@@ -808,9 +808,16 @@ in the misses.
 They did so whenever D9 was not recording, so a BOX-MEMO recording never saw those control
 sequences. A body's `\x` that became a `#` between calls was therefore replayed past:
 `tests/boxmemo.rs`'s `a_token_that_turns_into_a_parameter_is_a_miss` gives a different log with
-BOX-MEMO on when the loops are left as they were. While a recording is in progress they now read
-through `get_next` (`not(intr_rec_on or bm_rec_on)`), as they do for D9, and those tokens join K3
-as token reads.
+BOX-MEMO on when the loops are left as they were.
+
+Each loop now tells a recording of every control sequence it reads in place
+(`if bm_rec_on then flashtex_bm_token(q)`, beside the read-set's hook). That is a read only as a
+token, keyed as above. The loops read in place only from the current token list, and only
+`get_next` leaves a level, so these reads are never below the body's level.
+
+The first fix, sending the loops through `get_next` during a recording as D9 does, made a
+recording about 36 % dearer. E3's fit put it at 0.80 M → 1.09 M instructions a recording (run
+41355152102).
 
 **Tests** (`tests/boxmemo.rs`, each off, on and verify identical):
 - a `\def` of `\reserved@a` first, which hits whatever the document left there;
