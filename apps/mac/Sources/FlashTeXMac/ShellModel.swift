@@ -917,7 +917,10 @@ final class ShellModel {
         // Cheap bail-out before `caretByte`, whose UTF-16 → UTF-8 conversion is
         // linear in the document: this is read on every keystroke, and most
         // documents carry no mechanical fix at all.
-        guard fixCompiledRevision == editorRevision, engineV3Problems.hasFixes else { return nil }
+        guard fixCompiledRevision == editorRevision,
+              engineV3Enabled ? engineV3Problems.hasFixes
+                  : diagnostics.contains(where: { $0.help?.replacement != nil || $0.suggestion != nil })
+        else { return nil }
         guard let caretByte, let fix = EditorDiagnostics.fixOffered(
             at: caretByte, in: diagnostics, path: activePath,
             currentText: activeText, compiledRevision: fixCompiledRevision,
