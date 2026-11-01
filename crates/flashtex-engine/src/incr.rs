@@ -654,6 +654,9 @@ struct Obs {
     /// The client cancelled this compile (`Session::set_cancel`): stops the
     /// run like newer work, protected or not (`protecting`).
     cancel: Option<Preempt>,
+    /// The client was sent a page it did not hold (`Session::set_painted`):
+    /// the protection is over.
+    painted: Option<Painted>,
     /// The client's heartbeat (`Session::set_progress`): told at every page
     /// and segment checkpoint of every run, cold or incremental.
     progress: Option<Progress>,
@@ -709,6 +712,10 @@ const PROTECT_PAGES: usize = 3;
 
 /// Whether newer work waits: (pass, pages the run shipped) -> stop now.
 pub type Preempt = std::rc::Rc<dyn Fn(usize, usize) -> bool>;
+
+/// Whether this compile has sent the client a page it did not hold
+/// (`Session::set_painted`).
+pub type Painted = std::rc::Rc<dyn Fn() -> bool>;
 
 /// A heartbeat: (pass, pages the run shipped, the engine's state to read
 /// the file it is in from), at every page and segment checkpoint (the
@@ -3489,6 +3496,7 @@ impl Obs {
         self.protect_edit
             && self.edited.is_none()
             && self.new_pages.len() < PROTECT_PAGES
+            && !self.painted.as_ref().is_some_and(|p| p())
             && !self
                 .cancel
                 .as_ref()
@@ -3619,6 +3627,8 @@ pub struct Session {
     preempt: Option<Preempt>,
     /// `set_cancel`.
     cancel: Option<Preempt>,
+    /// `set_painted`.
+    painted: Option<Painted>,
     /// `set_protect_edit` (default on).
     protect_edit: bool,
     /// `set_on_continue`.
@@ -3806,6 +3816,7 @@ impl Session {
             defpatch: HashMap::new(),
             preempt: None,
             cancel: None,
+            painted: None,
             protect_edit: true,
             on_continue: None,
             progress: None,
@@ -4108,6 +4119,7 @@ impl Session {
         let mut obs = self.observer(t0, base, stop_at);
         obs.preempt = self.preempt.clone();
         obs.cancel = self.cancel.clone();
+        obs.painted = self.painted.clone();
         let g = self.g.as_mut().unwrap();
         g.checkpoint_every_shipout(true);
         g.layer().timed_s = self.opts.timed_s;
@@ -4480,6 +4492,18 @@ impl Session {
     /// runs anywhere, before the edited page too, which a cancel still does.
     pub fn set_protect_edit(&mut self, on: bool) {
         self.protect_edit = on;
+    }
+
+    /// The client has been sent a page it did not hold (`p()` says so):
+    /// the protection to the first changed page (`Obs::protect_edit`) is
+    /// over. The first changed page is the one that differs from the last
+    /// complete run; the client may hold another (typing a letter and
+    /// deleting it again returns to the complete run's text, and then no
+    /// page differs from it, and the run was held for [`PROTECT_PAGES`]
+    /// pages after the page the client lacked had gone out: 190 ms on the
+    /// hosted M1 at Infinite Descent x2's late page, lane TYPING-50MS).
+    pub fn set_painted(&mut self, p: Option<Painted>) {
+        self.painted = p;
     }
 
     /// The client cancelled the compile (`c(pass, pages)` says so): a run
@@ -6670,6 +6694,7 @@ impl Session {
             patched: self.defpatch.keys().copied().collect(),
             preempt: None,
             cancel: None,
+            painted: None,
             progress: self.progress.clone(),
             pass: self.pass,
             preempted: false,
@@ -6767,6 +6792,7 @@ impl Session {
         // S₀ and the checkpoints it took with it.
         obs.preempt = self.preempt.clone();
         obs.cancel = self.cancel.clone();
+        obs.painted = self.painted.clone();
         obs.preempt_after_s0 = true;
         g.layer().observer = Some(Box::new(obs));
         let status = g.run_to_end();
@@ -7079,6 +7105,7 @@ impl Session {
         obs.keep_r = Some(r);
         obs.preempt = self.preempt.clone();
         obs.cancel = self.cancel.clone();
+        obs.painted = self.painted.clone();
         obs.first_incremental = self.pass == 1;
         obs.protect_edit = self.pass == 1 && self.protect_edit;
         g.checkpoint_every_shipout(true);
@@ -7520,6 +7547,7 @@ impl Session {
         {
             o.preempt = self.preempt.clone();
             o.cancel = self.cancel.clone();
+            o.painted = self.painted.clone();
             // (a stop the stopped run took the news for is not this one's)
             o.held_stop = false;
             match &again {
