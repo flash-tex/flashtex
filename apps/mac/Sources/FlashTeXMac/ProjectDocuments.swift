@@ -462,7 +462,8 @@ final class ProjectDocuments {
             // `ShellModel.isDirty` compares the saved text with the *active*
             // buffer; compare it with the entry buffer whichever document is active.
             if let saved = model.savedText { return !saved.sameBytes(as: doc.text) }
-            return model.documentURL == nil && model.editorRevision > 1 && !doc.text.isEmpty
+            // A file URL with no saved text: no file holds it (`ShellModel.isDirty`).
+            return (model.documentURL != nil || model.editorRevision > 1) && !doc.text.isEmpty
         }
         guard let baseline = baselines[path] else { return false }
         return !baseline.sameBytes(as: doc.text)
