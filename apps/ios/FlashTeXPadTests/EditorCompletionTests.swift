@@ -262,3 +262,131 @@ final class EditorCompletionTests: XCTestCase {
         XCTAssertTrue(model.diagnosticsPanelVisible)
     }
 }
+
+/// iPad edits reach the file they were opened from (autosave), guarded by
+/// the hash of the version the buffer was made from, and unsaved text
+/// survives a crash as a draft offered on relaunch.
+@MainActor
+final class AutosaveTests: XCTestCase {
+    var dir: URL!
+    var file: URL!
+    let base = "\\documentclass{article}\n"
+
+    override func setUp() async throws {
+        dir = FileManager.default.temporaryDirectory.appendingPathComponent("autosave-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        file = dir.appendingPathComponent("main.tex")
+        try Data(base.utf8).write(to: file)
+    }
+
+    override func tearDown() async throws { try? FileManager.default.removeItem(at: dir) }
+
+    private func onDisk() throws -> String { try String(contentsOf: file, encoding: .utf8) }
+
+    /// Only existing API: open, type, wait. Before: the buffer never reached
+    /// the file (the editor had no save at all).
+    func testEditsReachTheFileWithoutAnyAction() async throws {
+        let m = PadModel(link: MacLink(store: nil))
+        m.open(url: file)
+        XCTAssertNil(m.openError)
+        m.textChanged(base + "Hello.\n", caret: (base as NSString).length + 7)
+        let end = Date().addingTimeInterval(5)
+        while (try? onDisk()) != base + "Hello.\n", Date() < end { try await Task.sleep(nanoseconds: 50_000_000) }
+        XCTAssertEqual(try onDisk(), base + "Hello.\n")
+        XCTAssertEqual(m.saveState, .saved)
+    }
+
+    private func model(drafts: PadDraftStore? = nil) -> PadModel {
+        let m = PadModel(link: MacLink(store: nil), draftStore: drafts)
+        m.autosaveDelay = 0.05
+        m.draftDelay = 0.01
+        return m
+    }
+
+    func testAnExternalChangeIsSurfacedAndNeverOverwritten() async throws {
+        let m = model()
+        m.open(url: file)
+        try Data("changed on the Mac\n".utf8).write(to: file)
+        m.textChanged(base + "mine\n")
+        await m.settleSave()
+        guard case .conflict(let disk?) = m.saveState else { return XCTFail("\(m.saveState)") }
+        XCTAssertEqual(disk.text, "changed on the Mac\n")
+        XCTAssertEqual(try onDisk(), "changed on the Mac\n", "the other version is not overwritten")
+        m.textChanged(base + "mine, more\n")
+        await m.settleSave()
+        XCTAssertEqual(try onDisk(), "changed on the Mac\n", "later edits wait for the choice too")
+        m.keepBufferOverDisk()
+        await m.settleSave()
+        XCTAssertEqual(try onDisk(), base + "mine, more\n")
+        XCTAssertEqual(m.saveState, .saved)
+    }
+
+    func testUsingTheFilesVersionReplacesTheBuffer() async throws {
+        let m = model()
+        m.open(url: file)
+        try Data("theirs\n".utf8).write(to: file)
+        m.textChanged(base + "mine\n")
+        await m.settleSave()
+        m.reloadFromDisk()
+        XCTAssertEqual(m.document?.text, "theirs\n")
+        XCTAssertEqual(m.saveState, .saved)
+        m.textChanged("theirs\nthen mine\n")
+        await m.settleSave()
+        XCTAssertEqual(try onDisk(), "theirs\nthen mine\n", "saves against the reloaded version")
+    }
+
+    /// The app dies before its autosave: the unsaved text is on disk as a
+    /// draft, offered on relaunch, and restoring it saves it to the file.
+    func testUnsavedTextSurvivesACrashAndIsOfferedOnRelaunch() async throws {
+        let drafts = PadDraftStore(url: dir.appendingPathComponent("support/unsaved-draft.json"))
+        let m = model(drafts: drafts)
+        m.autosaveDelay = 3600
+        m.open(url: file)
+        m.textChanged(base + "not saved yet\n")
+        await m.settleDraft()
+        XCTAssertEqual(try onDisk(), base, "the autosave never ran")
+
+        let again = model(drafts: drafts) // relaunch
+        let offered = try XCTUnwrap(again.recoverableDraft)
+        XCTAssertEqual(offered.text, base + "not saved yet\n")
+        XCTAssertEqual(offered.title, "main.tex")
+        again.restoreDraft()
+        XCTAssertNil(again.openError)
+        XCTAssertEqual(again.document?.text, base + "not saved yet\n")
+        await again.settleSave()
+        XCTAssertEqual(try onDisk(), base + "not saved yet\n")
+        await drafts.flush()
+        XCTAssertNil(drafts.load(), "a saved draft is removed")
+    }
+
+    /// A draft restored over a file that changed since it was written is a
+    /// conflict, not a silent overwrite of the other version.
+    func testARestoredDraftOverAChangedFileIsAConflict() async throws {
+        let drafts = PadDraftStore(url: dir.appendingPathComponent("support/unsaved-draft.json"))
+        let m = model(drafts: drafts)
+        m.autosaveDelay = 3600
+        m.open(url: file)
+        m.textChanged(base + "draft\n")
+        await m.settleDraft()
+        try Data("edited on the Mac meanwhile\n".utf8).write(to: file)
+        let again = model(drafts: drafts)
+        again.restoreDraft()
+        await again.settleSave()
+        guard case .conflict(let disk?) = again.saveState else { return XCTFail("\(again.saveState)") }
+        XCTAssertEqual(disk.text, "edited on the Mac meanwhile\n")
+        XCTAssertEqual(try onDisk(), "edited on the Mac meanwhile\n")
+        XCTAssertEqual(again.document?.text, base + "draft\n", "the draft text is in the editor to keep or drop")
+    }
+
+    func testDiscardingTheOfferedDraftRemovesIt() async throws {
+        let drafts = PadDraftStore(url: dir.appendingPathComponent("support/unsaved-draft.json"))
+        drafts.save(PadUnsavedDraft(source: .bundledSample, title: "demo.tex", text: "x", diskSha256: nil))
+        await drafts.flush()
+        let m = model(drafts: drafts)
+        XCTAssertNotNil(m.recoverableDraft)
+        m.discardDraft()
+        await drafts.flush()
+        XCTAssertNil(m.recoverableDraft)
+        XCTAssertNil(drafts.load())
+    }
+}

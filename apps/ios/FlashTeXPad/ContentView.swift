@@ -136,11 +136,38 @@ struct EditorPanel: View {
 
     var body: some View {
         VStack(spacing: 0) {
+            if let draft = model.recoverableDraft {
+                HStack {
+                    Label("Unsaved edits to \(draft.title) from \(draft.savedAt.formatted(date: .abbreviated, time: .shortened)) were kept.",
+                          systemImage: "clock.arrow.circlepath")
+                        .font(.footnote)
+                    Spacer()
+                    Button("Restore") { model.restoreDraft() }.buttonStyle(.borderedProminent).controlSize(.small)
+                        .accessibilityIdentifier("editor.restoreDraft")
+                    Button("Discard", role: .destructive) { model.discardDraft() }.buttonStyle(.bordered).controlSize(.small)
+                        .accessibilityIdentifier("editor.discardDraft")
+                }
+                .padding(.horizontal).padding(.vertical, 6).background(.yellow.opacity(0.15))
+            }
             if let d = model.document {
                 HStack {
                     Text("\(d.path) · revision \(d.revision) · \(d.utf8Count) UTF-8 bytes · caret UTF-16 \(model.caretUTF16)")
                         .font(.footnote.monospaced()).foregroundStyle(.secondary)
                         .accessibilityIdentifier("editor.status")
+                    if model.saveState != .none {
+                        Text(model.saveState.label).font(.footnote).foregroundStyle(.secondary).lineLimit(2)
+                            .accessibilityIdentifier("editor.saveState")
+                    }
+                    if case .conflict(let disk) = model.saveState {
+                        Button("Keep mine") { model.keepBufferOverDisk() }.buttonStyle(.borderedProminent).controlSize(.small)
+                            .accessibilityHint("Saves this text over the file's current version")
+                            .accessibilityIdentifier("editor.keepMine")
+                        if disk != nil {
+                            Button("Use the file's version") { model.reloadFromDisk() }.buttonStyle(.bordered).controlSize(.small)
+                                .accessibilityHint("Replaces this text, and its unsaved edits, with the file's current text")
+                                .accessibilityIdentifier("editor.useDisk")
+                        }
+                    }
                     if let note = model.editorStatus {
                         Text(note).font(.footnote).foregroundStyle(.secondary).lineLimit(2)
                             .accessibilityIdentifier("editor.note")
