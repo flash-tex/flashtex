@@ -55,6 +55,7 @@ jobs:
                @crates/flashtex-engine/web2rust-default.args \
                --out-dir crates/flashtex-engine/src/generated --pool crates/flashtex-engine/pdftex.pool &&
              git diff --stat | tail -1 &&
+             mkdir -p "$W/out" && git diff --binary > "$W/out/regen-$name.patch" &&
              CARGO_TARGET_DIR="$W/target-$name" nice -n 5 cargo build --release --locked -q -p flashtex-engine --bin flashtex-initex)
             d="$W/bin-$name"; mkdir -p "$d/fmt"
             cp "$W/target-$name/release/flashtex-initex" "$src/crates/flashtex-engine/pdftex.pool" "$d/"
