@@ -1,0 +1,12 @@
+{
+  "comment": "lane CONTIG-TOKENS follow-up (PR #2016): what contig-pc.yml builds and measures. builds: name -> git ref (src/generated/ is regenerated before the build, a drift check: the patch must be empty); engines: name (no '-') -> build + extra environment",
+  "builds": {
+    "main": "c5763d9b800b625e6cf8d2452b2878b25e6bf615",
+    "lazy": "254f27869094488b3e2be440185abeb8d2857a05"
+  },
+  "engines": {
+    "main": {"build": "main", "env": {}},
+    "lazy": {"build": "lazy", "env": {}}
+  },
+  "parts": []
+}
