@@ -9,7 +9,7 @@ from `crates/`, so that what ships and what only checks are apart.
 |---|---|---|
 | `tex-expansion` | TeX/e-TeX/LaTeX macro expansion (a T6 expander oracle) | `tests/oracle/expected/`, `manifest.json`: `tests/oracle/gen/cases.py` (run from this crate) |
 | `tex-boxes` | hpack/vpack, glue setting, shipout rounding (a T6 box-builder oracle) | `tests/oracle/expected.txt`: `tests/oracle/generate.py` |
-| `paragraph-layout` | Knuth–Plass line breaking, hyphenation | `tests/oracle/emergency/expected/`: `tests/oracle/emergency/generate.py`; `tests/oracle/showhyphens.txt`: `tests/oracle/gen_hyphenation_oracle.py` |
+| `paragraph-layout` | Knuth–Plass line breaking, hyphenation | `tests/oracle/emergency/expected/`: `tests/oracle/emergency/generate.py`; `tests/oracle/hyphenation_corpus.txt`: `tests/oracle/gen_hyphenation_oracle.py` (`tests/oracle/showhyphens.txt` is a recorded `\showhyphens` log) |
 | `microtype` | pdfTeX protrusion and expansion as microtype configures them | `tests/oracle/expected/`: `tests/oracle/generate.py` |
 | `document-style` | (a normal dependency of paragraph-layout, kept only for it) | — |
 | `math-layout` | TeXbook Appendix G math layout; its `src/tfm.rs` is the TFM reader the T6 TFM fuzzer compares with the engine's | `src/cm_tfm.rs`, `src/ams_tfm.rs`: `tools/gen_cm_tfm.py` (`scripts/check-generated.py` tracks both) |

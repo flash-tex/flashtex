@@ -920,7 +920,7 @@
     },
     "S8": {
       "landed": true,
-      "pr": "S8 (#1236 stage table, row 12)",
+      "pr": 1902,
       "note": "S8 moved the oracle crates DESIGN.md §10 keeps (plan §2, RQ4) from crates/ to tests/oracles/; their package names stay, so only the old directories are names here.",
       "names": [
         "crates/document-style",
