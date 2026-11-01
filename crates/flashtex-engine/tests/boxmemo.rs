@@ -358,3 +358,71 @@ fn font_parameters_are_part_of_the_key() {
     assert!(stat(&s, "hits") >= 3, "{s}");
     assert!(stat(&s, "recordings") >= 3, "{s}");
 }
+
+#[test]
+fn boxes_set_at_the_calls_level_replay() {
+    // (lane FANCYHDR) fancyhdr's head and foot run `\normalsize` at the
+    // call's own level, whose `\size@update` sets `\strutbox` there: a box
+    // that outlives the call. Taken by value at the end of the call (after
+    // its own changes to it: `\wd`, an inner `\setbox` undone, a second
+    // `\setbox`), it is made again by the replay, and what reads it after
+    // the call -- in the same box and after it, `\showbox` -- sees the
+    // normal path's box
+    let s = check(
+        "outer-box",
+        "\\catcode`\\{=1 \\catcode`\\}=2 \\catcode`\\#=6 \\scrollmode\n\
+         \\showboxdepth=100 \\showboxbreadth=100 \\tracingonline=0\n\
+         \\setbox8\\hbox{\\vrule width 9pt}\n\
+         \\def\\measure#1{\\setbox8\\hbox{\\vrule height 7pt depth 3pt width 0pt}\\wd8=#1\
+         \\begingroup\\setbox8\\hbox{\\kern1pt}\\endgroup\\vrule width\\wd8\\copy8\
+         \\setbox7\\hbox{\\kern 2pt\\vrule}\\setbox7\\hbox{\\kern 3pt\\vrule\\penalty5}\\unhcopy7 }\n\
+         \\def\\one#1{\\setbox1\\hbox{\\measure{#1}\\vrule height\\ht8 depth\\dp8\\showbox8 \\showbox7 }\\showbox1 \\showbox8 \\showbox7 }\n\
+         \\one{1pt}\\one{1pt}\\one{1pt}\\one{2pt}\\one{2pt}\\one{1pt}\\end\n",
+    );
+    assert!(stat(&s, "hits") >= 3, "{s}");
+}
+
+#[test]
+fn boxes_at_the_calls_level_not_its_own_never_replay() {
+    // a box left at the call's level that is not the call's alone: one
+    // moved out of a register it did not make (`\\box9`, a hole), one whose
+    // glue is a register's (`\\hskip\\skip3` shares the specification),
+    // and one the call moved out again (`\\box8` voids the register behind
+    // `eq_define`'s back). Each is abandoned, and nothing replays
+    let s = check(
+        "outer-box-shared",
+        "\\catcode`\\{=1 \\catcode`\\}=2 \\catcode`\\#=6 \\scrollmode\n\
+         \\showboxdepth=100 \\showboxbreadth=100 \\tracingonline=0 \\skip3=4pt plus 1pt\n\
+         \\def\\measure#1{\\setbox8\\box9 \\kern#1\\relax}\n\
+         \\def\\one{\\setbox9\\hbox{\\vrule width 2pt}\\setbox1\\hbox{\\measure{1pt}\\showbox8 }\\showbox1 }\n\
+         \\one\\one\\one\n\
+         \\def\\measure#1{\\setbox8\\hbox{\\hskip\\skip3 \\kern#1}}\n\
+         \\def\\one{\\setbox1\\hbox{\\measure{1pt}\\showbox8 }\\showbox1 }\n\
+         \\one\\one\\one\n\
+         \\def\\measure#1{\\setbox8\\hbox{\\kern#1}\\box8 }\n\
+         \\one\\one\\one\\end\n",
+    );
+    assert_eq!(stat(&s, "hits"), 0, "{s}");
+}
+
+#[test]
+fn a_box_made_in_a_group_is_not_the_calls_after_it() {
+    // (lane FANCYHDR, a hole found on the way) a box register the call sets
+    // inside a group gets back its old box when the group ends; read after
+    // that (`\\wd0`), it is the box of before the call, an input of the
+    // call, which must be keyed as one: the later keys' box 0 is wider,
+    // and the call must not replay the first width. Nested groups and
+    // e-TeX's sparse registers (above 255) alike
+    let s = check(
+        "group-box",
+        "\\catcode`\\{=1 \\catcode`\\}=2 \\catcode`\\#=6 \\scrollmode\n\
+         \\def\\measure#1{\\begingroup{\\setbox0\\hbox{\\kern1pt}}\\global\\dimen1=\\wd0\
+         \\setbox300\\hbox{\\kern2pt}{\\setbox300\\hbox{\\kern3pt}{\\setbox300\\hbox{}}}\\global\\dimen2=\\wd300\
+         {\\setbox301\\hbox{\\kern2pt}}\\global\\dimen3=\\wd301 \\endgroup}\n\
+         \\def\\show{\\message{[\\the\\dimen1|\\the\\dimen2|\\the\\dimen3]}}\n\
+         \\setbox0\\hbox{\\vrule width 1pt}\\setbox301\\hbox{\\vrule width 7pt}\\measure{a}\\show\\measure{a}\\show\\measure{a}\\show\n\
+         \\setbox0\\hbox{\\vrule width 5pt}\\measure{a}\\show\\measure{a}\\show\n\
+         \\setbox301\\hbox{\\vrule width 8pt}\\measure{a}\\show\\measure{a}\\show\\end\n",
+    );
+    assert!(stat(&s, "hits") >= 3, "{s}");
+}

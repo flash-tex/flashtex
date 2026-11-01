@@ -127,6 +127,12 @@ pub const DEFAULT_NAMES: &[&str] = &[
     // instructions a call): recorded anywhere and taken from the intrinsics
     // (`RECORD_ANYWHERE`, §12.2)
     "pdfstringdefPreHook",
+    // (lane FANCYHDR) fancyhdr's head and foot: LaTeX's `\@thehead` is
+    // `\let` to `\@oddhead` or `\@evenhead`, which fancyhdr makes call
+    // these (a draw call each, whose `\normalsize` leaves `\strutbox` set
+    // at the call's level, §16)
+    "f@nch@head",
+    "f@nch@foot",
 ];
 
 /// Whether BOX-MEMO is on when `FLASHTEX_BOXMEMO` does not say: in the
@@ -197,6 +203,15 @@ enum Val {
     /// interword glue as `(0, f)` (beamer's `\beamer@lastskip=\lastskip`
     /// after an interword space).
     GlueFrom(i32, i32),
+    /// A box a local `\setbox` at the call's own level put in a register
+    /// (fancyhdr's `\normalsize`: `\size@update` sets `\strutbox`), by value:
+    /// the box the register holds when the call ends, which nothing outside
+    /// the call made or shares (§16). A replay makes it fresh, as the
+    /// normal path's `box_end` made it.
+    Box(std::rc::Rc<crate::boxfrag::Frag>),
+    /// While recording, such a box by its node; `bm_finish` takes it by
+    /// value ([`Val::Box`]) or abandons the recording. Never in an entry.
+    BoxNode(i32),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -570,7 +585,13 @@ struct Rec {
     /// after that, they hold what the call put there.
     gwritten: HashSet<RegId>,
     line_read: bool,
+    /// The box registers that hold a box the call put there (or made void
+    /// by moving its box out): read, they are the call's own, not inputs.
     boxes: HashSet<i32>,
+    /// `boxes` as it was where each open group of the call began: the
+    /// group's `unsave` puts back every register it saved, and with it
+    /// whether the register is the call's (`flashtex_bm_unsave`).
+    box_stack: Vec<HashSet<i32>>,
     /// Box registers assigned globally: each must be void when the call
     /// ends, and the replay makes it so (`\global\setbox` to void, at the
     /// end of the log).
@@ -960,6 +981,28 @@ impl Scratch {
         g.base_ptr = self.base_ptr;
         g.intr_at_switch = self.intr_at_switch;
         g.bm_at_switch = self.bm_at_switch;
+    }
+}
+
+/// Whether two logged operations are the same: a box by value (§16) in
+/// the bits the program reads (`boxfrag::frag_diff`), the rest exactly.
+fn same_op(a: &Op, b: &Op) -> bool {
+    match (a, b) {
+        (
+            Op::Def {
+                p,
+                t,
+                v: Val::Box(x),
+                kind,
+            },
+            Op::Def {
+                p: q,
+                t: u,
+                v: Val::Box(y),
+                kind: l,
+            },
+        ) => p == q && t == u && kind == l && crate::boxfrag::frag_diff(x, y).is_none(),
+        _ => a == b,
     }
 }
 
@@ -2594,6 +2637,7 @@ impl Globals {
             gwritten: HashSet::new(),
             line_read: false,
             boxes: HashSet::new(),
+            box_stack: vec![],
             gboxes: vec![],
             pending_box: None,
             kb: vec![],
@@ -2860,7 +2904,45 @@ impl Globals {
     #[cold]
     #[inline(never)]
     pub fn flashtex_bm_group(&mut self, c: i32) {
-        self.bm_with_rec(|r| r.ops.push(Op::Begin(c)));
+        self.bm_with_rec(|r| {
+            r.box_stack.push(r.boxes.clone());
+            r.ops.push(Op::Begin(c));
+        });
+    }
+
+    /// The box registers the `unsave` about to run puts back (tex.web §282,
+    /// e-TeX's `sa_restore`): those the group saved, unless their value is
+    /// now a global one ("retaining").
+    fn bm_restored_boxes(&self) -> Vec<i32> {
+        let mut v = vec![];
+        let mut j = self.save_ptr - 1;
+        while j >= 0 {
+            let w = self.save_stack[j as usize].hh();
+            let t = w.b0();
+            if t == k::level_boundary {
+                break;
+            }
+            let p = w.rh();
+            if (t == k::restore_old_value || t == k::restore_zero)
+                && (BOX_BASE..BOX_BASE + 256).contains(&p)
+                && self.bm_eq(p).hh().b1() != k::level_one
+            {
+                v.push(p - BOX_BASE);
+            }
+            j -= if t == k::restore_old_value { 2 } else { 1 };
+        }
+        if self.sa_level == self.cur_level {
+            let mut c = self.sa_chain;
+            while c != 0 {
+                let q = self.mem[(c + 1) as usize].hh().lh();
+                let h = self.mem[q as usize].hh();
+                if h.b0() / 16 == BOX_VAL && h.b1() != k::level_one {
+                    v.push(self.bm_sa_number(q));
+                }
+                c = self.bm_link(c);
+            }
+        }
+        v
     }
 
     #[cold]
@@ -2870,7 +2952,23 @@ impl Globals {
         if self.cur_level <= level {
             return self.bm_abort("Group");
         }
-        self.bm_with_rec(|r| r.ops.push(Op::End));
+        // A register the group saved gets back the box it held where the
+        // group began, which is the call's own only if it was then: a box
+        // the call made in the group and read after it would otherwise be
+        // taken for the call's, and the register's box of before the call
+        // read unkeyed.
+        let restored = self.bm_restored_boxes();
+        self.bm_with_rec(|r| {
+            let before = r.box_stack.pop().unwrap_or_default();
+            for n in restored {
+                if before.contains(&n) {
+                    r.boxes.insert(n);
+                } else {
+                    r.boxes.remove(&n);
+                }
+            }
+            r.ops.push(Op::End)
+        });
     }
 
     #[cold]
@@ -3026,11 +3124,24 @@ impl Globals {
         // the end of the group it was called in): an effect like a global
         // one, which the replay's `eq_define` at the same level makes again
         // with the same save-stack entry (LaTeX's `\begin` defines
-        // `\reserved@a` before its `\begingroup`). Box registers are not
-        // logged, so a box assigned there is refused.
+        // `\reserved@a` before its `\begingroup`). A box assigned there is
+        // logged by its node, taken by value when the call ends (§16).
         let outer = !global && self.cur_level == level;
         if outer && (BOX_BASE..BOX_BASE + 256).contains(&p) {
-            return self.bm_abort("OuterBox");
+            if t != BOX_REF {
+                return self.bm_abort("OuterBox");
+            }
+            self.bm_with_rec(|r| r.boxes.insert(p - BOX_BASE));
+            if !self.bm_rec_on {
+                return;
+            }
+            let v = if e == 0 {
+                Val::Plain(0)
+            } else {
+                Val::BoxNode(e)
+            };
+            self.bm_with_rec(|r| r.ops.push(Op::Def { p, t, v, kind }));
+            return;
         }
         if (BOX_BASE..BOX_BASE + 256).contains(&p) {
             // A box made inside the call stays inside it (its local
@@ -3529,6 +3640,12 @@ impl Globals {
                 });
             }
         }
+        if let Err(w) = self.bm_outer_boxes(
+            &mut rec.ops,
+            rec.holes.is_empty() && rec.new_objs.is_empty(),
+        ) {
+            return self.bm_abort_taken(rec, w);
+        }
         // a draw call's output, with its holes
         let mut frag = None;
         if end.tail != start.tail || !rec.holes.is_empty() {
@@ -3551,6 +3668,67 @@ impl Globals {
             return self.bm_verify_full(cs, i, scanner);
         }
         self.bm_commit(rec, last_badness, frag, aux, trailer);
+    }
+
+    /// The boxes the call left in registers at its own level
+    /// (`Val::BoxNode`, §16), taken by value. Each such register's last
+    /// assignment must be the box it holds now (nothing moved it out or
+    /// replaced it since), and the box must be the call's alone: no hole
+    /// (`alone`: the call moved no foreign box and made no object), and
+    /// nothing in it shared with the state ([`crate::boxfrag::self_contained`]),
+    /// so that it can be rebuilt where its assignment is replayed. Every
+    /// earlier assignment of the register at that level is replayed with the
+    /// same box: the next one at the level destroys it (`eq_destroy`) on both
+    /// paths, and a fresh box is never "reassigning".
+    fn bm_outer_boxes(&self, ops: &mut [Op], alone: bool) -> Result<(), &'static str> {
+        let mut regs: Vec<i32> = ops
+            .iter()
+            .filter_map(|o| match o {
+                Op::Def {
+                    p,
+                    v: Val::BoxNode(_),
+                    ..
+                } => Some(*p),
+                _ => None,
+            })
+            .collect();
+        if regs.is_empty() {
+            return Ok(());
+        }
+        if !alone {
+            return Err("OuterBox");
+        }
+        regs.sort_unstable();
+        regs.dedup();
+        for p in regs {
+            let last = ops
+                .iter()
+                .rposition(|o| matches!(o, Op::Def { p: q, .. } if *q == p))
+                .expect("a box assignment");
+            let Op::Def {
+                v: Val::BoxNode(e), ..
+            } = &ops[last]
+            else {
+                return Err("OuterBox");
+            };
+            let e = *e;
+            if self.bm_eq(p).hh().rh() != e {
+                return Err("OuterBox");
+            }
+            let f = self.frag_take(e, self.bm_link(e), &[], &[])?;
+            if f.nodes.len() != 1 || !crate::boxfrag::self_contained(&f) {
+                return Err("OuterBoxShared");
+            }
+            let f = std::rc::Rc::new(f);
+            for o in ops.iter_mut() {
+                if let Op::Def { p: q, v, .. } = o {
+                    if *q == p && matches!(v, Val::BoxNode(_)) {
+                        *v = Val::Box(f.clone());
+                    }
+                }
+            }
+        }
+        Ok(())
     }
 
     /// Abandon a recording already taken out of the state (its end check).
@@ -3590,6 +3768,9 @@ impl Globals {
                     } => 32 + 4 * l.len(),
                     // (and once more in `Entry::new_cs`)
                     Op::NewCs { name, .. } => 2 * (32 + 4 * name.len()),
+                    Op::Def {
+                        v: Val::Box(f), ..
+                    } => 32 + f.bytes(),
                     _ => 32,
                 })
                 .sum::<usize>();
@@ -3752,7 +3933,7 @@ impl Globals {
                 ));
             }
             for (j, (a, b)) in e.ops.iter().zip(&rec.ops).enumerate() {
-                if a != b {
+                if !same_op(a, b) {
                     diffs.push(format!("op {j}: recorded {a:?} normal path {b:?}"));
                     break;
                 }
@@ -3993,6 +4174,17 @@ impl Globals {
                 }
                 (None, q)
             }
+            Val::Box(f) => {
+                // (as the draw calls' fragments are made: SyncTeX's and the
+                // display list's fields are `get_node`'s, at the call's
+                // place, which the normal path's nodes have too)
+                let save = self.scanner_status;
+                self.scanner_status = 0;
+                let (b, _) = self.frag_make(f, &[], &[]);
+                self.scanner_status = save;
+                (None, b)
+            }
+            Val::BoxNode(_) => unreachable!("boxmemo: a box by its node in an entry"),
         }
     }
 

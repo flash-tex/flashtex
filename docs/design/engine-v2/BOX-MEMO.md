@@ -798,3 +798,63 @@ What is left, by the profile:
   own level (`\size@update`);
 - framed's `\MakeFramed`, which puts its pre-penalties and skips on the main vertical list;
 - the text.
+
+## 16. Revision 7: boxes left at the call's level, and box registers after a group (lane FANCYHDR, 2026-11-01)
+
+**The problem (measured).** After §15, fancyhdr's head and foot (`\f@nch@head`, `\f@nch@foot`,
+which `\@thehead` and `\@thefoot` reach through `\@oddhead`) were about 12 % of the edited page's
+window on *Infinite Descent* x2's late page. Offered, each recording was abandoned with `OuterBox`:
+`\f@nch@reset` runs `\normalsize` at the call's own level, and its `\size@update` sets `\strutbox`
+there. The box outlives the call (to the end of the group the call is in), and a recording kept no
+box value. The marks the head reads are not a refusal: LaTeX's `\rightmark` and `\leftmark` are
+`\mark_use_first:nn` and kin, which read token-list variables the output routine filled
+(`\g__mark_page_first_2e-right_tl`), so they are K3 meanings like any macro; `\topmark` and its kind
+are never read.
+
+**The rule.** A local `\setbox` at the call's own level is logged as an assignment like any other
+(`Op::Def` of the box register, kind 0), with the box by its node (`Val::BoxNode`). When the call
+ends (`bm_finish`, `bm_outer_boxes`), each such register is taken by value or the recording is
+abandoned:
+- its last assignment in the log must be the box the register holds now: nothing moved it out
+  (`\box`, which voids the register behind `eq_define`'s back) or replaced it since (`OuterBox`);
+- the call moved no box out of a register it did not make and made no object (no hole, no link:
+  `OuterBox`);
+- the box refers to nothing outside itself but the static glue specifications
+  (`boxfrag::self_contained`: no glue an `eqtb` entry, a sparse register or a font holds, no
+  hole, no new object; `OuterBoxShared`), and its lists and specifications are its own
+  (`frag_take`'s reference counts).
+
+The box is then kept by value (`Val::Box`, a `boxfrag::Frag` of the one box node, taken at the end:
+the call's own `\wd`, `\ht` and `\dp` changes to it are in it). A replay makes it fresh where the
+assignment is replayed (`frag_make`) and `eq_define`s it as the normal path's `box_end` did, so the
+save stack gets the same entry (or the same `eq_destroy` of the old box). An earlier assignment of
+the same register at that level is replayed with the same box: the next one at the level destroys
+it on both paths, and a fresh box is never e-TeX's "reassigning". The verifier compares such boxes
+in the bits the program reads (`same_op`, `boxfrag::frag_diff`). Sparse box registers (above 255)
+at the call's level are still refused.
+
+**Why it is sound.** The register's old box is not an input: the assignment overwrites it, and
+`eq_define` saves or destroys whatever is there on both paths. What the call reads of the new box
+it made itself (it is one of `Rec::boxes`). The box a replay makes is the box the normal path left,
+node for node, and refers to no state that the rest of the replay could change before it is made.
+
+**A hole found on the way (fixed).** A box register the call set inside a group gets back, when
+the group ends, the box it held where the group began. `Rec::boxes` kept such a register as the
+call's own after the group, so a read after it (`{\setbox0\hbox{...}}\wd0`) was the register's box
+of before the call, read unkeyed: with BOX-MEMO on, a later call replayed the first call's width
+where the box had changed (reproduced on a 6-line file: off `[1.0pt] [5.0pt]`, on
+`[1.0pt] [1.0pt]`). Now each group of the recording keeps `boxes` as it was where it began
+(`box_stack`), and its `unsave` (`flashtex_bm_unsave`, before `unsave` runs) gives every register
+it puts back (`bm_restored_boxes`: its save-stack entries, and e-TeX's `sa_chain` for sparse ones,
+less those whose value is global, "retaining") the status it had then.
+
+**Tests** (`tests/boxmemo.rs`, off, on and verify, the full-state verifier included):
+- `boxes_set_at_the_calls_level_replay`: a draw call that sets a box register at its level,
+  changes its width, sets it in a group, and sets another register twice; read in the same box
+  after the call and shown after it. Replays, with logs identical.
+- `boxes_at_the_calls_level_not_its_own_never_replay`: a hole (`OuterBox`), a register's glue
+  (`OuterBoxShared`), a box moved out again (`OuterBox`). Nothing replays.
+- `a_box_made_in_a_group_is_not_the_calls_after_it`: the hole above, nested groups and sparse
+  registers. Replays only where the box of before the call is the same.
+
+`DEFAULT_NAMES` adds `f@nch@head` and `f@nch@foot`.
