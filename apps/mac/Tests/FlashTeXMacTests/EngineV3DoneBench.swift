@@ -71,6 +71,9 @@ final class EngineV3DoneBench: XCTestCase {
             let done = s.doneCount
             if k > 0 { model.updateActiveText(Self.document(pages: n, word: "Part\(k)")) } // every page changes: all fall back again
             if k > 0 { try await waitDone(after: done) }
+            // (the PDF is read off main after the DONE: `loadFallbacks`)
+            let fallbackStart = Date()
+            while s.pdfFallbackCount != n, Date().timeIntervalSince(fallbackStart) < 60 { try await Task.sleep(nanoseconds: 50_000_000) }
             XCTAssertEqual(s.pdfFallbackCount, n, "every page is drawn from the PDF")
             rows.append(String(format: "DONE %.1f ms on main, fallback load %.1f ms", s.lastDoneMainMs, s.lastFallbackLoadMs))
         }
