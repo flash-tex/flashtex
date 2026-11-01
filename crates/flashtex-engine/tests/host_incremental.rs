@@ -1979,6 +1979,166 @@ fn a_package_outside_the_document_that_changes_is_seen() {
     let _ = std::fs::remove_dir_all(&base);
 }
 
+/// Lane FIND-PHASE: the document's own files, read relative to its
+/// directory (`\input{chap/sec/body}`), are watched like TeX Live's
+/// (`fswatch`), so that a keystroke does not `stat` and open each of them
+/// again. A file under one of the document's directories that changes
+/// between two compiles -- rewritten in place to the same length with its
+/// time put back, another file renamed over it, its directory replaced, a
+/// file looked for and missing made -- is still seen by the next compile,
+/// with entries made in the document's directory meanwhile; with the
+/// output directory apart, inside the document's directory, and with the
+/// watcher off (`FLASHTEX_FSWATCH=off`: where there is none). No signature
+/// is racy (`FLASHTEX_RACY_MS=0`), so a change is seen only if a check
+/// looks at the file again: a stale signature served would miss it.
+#[test]
+fn a_file_under_the_documents_directory_that_changes_is_seen() {
+    if find_texlive_bin().is_none() {
+        common::no_texlive();
+        return;
+    }
+    let scratch = start_host("dds");
+    for (variant, off, out_in_proj) in [
+        ("watched", false, false),
+        ("output in the document's directory", false, true),
+        ("watcher off", true, false),
+    ] {
+        let base = common::fresh_dir("flashtex-host-docdir");
+        let _ = std::fs::remove_dir_all(&base);
+        let proj = base.join("proj");
+        let out = if out_in_proj {
+            proj.clone()
+        } else {
+            base.join("out")
+        };
+        for d in [&proj, &out, &proj.join("chap/sec"), &proj.join("sty")] {
+            std::fs::create_dir_all(d).unwrap();
+        }
+        let main = "main.tex";
+        let (pre, body) = (proj.join("sty/pre.tex"), proj.join("chap/sec/body.tex"));
+        let maybe = proj.join("chap/sec/maybe.tex");
+        std::fs::write(&pre, "\\def\\pre{AAAA}\n").unwrap();
+        std::fs::write(&body, "Body: BBBB.\n").unwrap();
+        std::fs::write(
+            proj.join(main),
+            "\\documentclass{article}\n\\input{sty/pre}\n\\begin{document}\nPreamble: \\pre.\n\n\
+             \\input{chap/sec/body}\n\n\\IfFileExists{chap/sec/maybe.tex}{\\input{chap/sec/maybe}}{No maybe.}\n\
+             \\end{document}\n",
+        )
+        .unwrap();
+        let mut env = vec![("FLASHTEX_RACY_MS", "0")];
+        if off {
+            env.push(("FLASHTEX_FSWATCH", "off"));
+        }
+        let host = start_host_env("dd", &env);
+        let mut c = Client::connect(&host.1).unwrap();
+        let mut view = View::default();
+        let mut id = 0;
+        let settle = |c: &mut Client, view: &mut View, id: &mut i64| {
+            for _ in 0..4 {
+                *id += 1;
+                let o = compile(c, view, &req(*id, &proj, &out, main));
+                if o.done.str_field("mode") == Some("unchanged") {
+                    return;
+                }
+            }
+        };
+        settle(&mut c, &mut view, &mut id);
+        // (the document's files are served by the watches: an unchanged
+        // compile `stat`s fewer paths in its checks than it is served)
+        let counts = |o: &Outcome| -> Option<(i64, i64)> {
+            let a = o.done.get("stages")?.get("fswatch")?.as_array()?;
+            Some((a.first()?.as_i64()?, a.get(1)?.as_i64()?))
+        };
+        if !off && cfg!(any(target_os = "linux", target_os = "macos")) {
+            id += 1;
+            let a = counts(&compile(&mut c, &mut view, &req(id, &proj, &out, main)));
+            id += 1;
+            let b = counts(&compile(&mut c, &mut view, &req(id, &proj, &out, main)));
+            let (Some(a), Some(b)) = (a, b) else {
+                panic!("{variant}: no fswatch counts");
+            };
+            let (served, statted) = (b.0 - a.0, b.1 - a.1);
+            assert!(
+                served > 0 && statted < served,
+                "{variant}: an unchanged compile served {served} and made {statted} stats"
+            );
+        }
+        let rewrite = |f: &Path, from: &str, to: &str| {
+            let mtime = std::fs::metadata(f).unwrap().modified().unwrap();
+            let t = std::fs::read_to_string(f).unwrap().replace(from, to);
+            use std::io::Write;
+            let mut h = std::fs::File::options().write(true).open(f).unwrap();
+            h.write_all(t.as_bytes()).unwrap();
+            h.set_modified(mtime).unwrap();
+        };
+        let steps: [(&str, &dyn Fn()); 5] = [
+            ("the body's file rewritten in place", &|| {
+                rewrite(&body, "BBBB", "CCCC")
+            }),
+            ("the preamble's file rewritten in place", &|| {
+                rewrite(&pre, "AAAA", "DDDD")
+            }),
+            ("another file renamed over the body's", &|| {
+                std::fs::write(proj.join("chap/sec/new.tex"), "Body: renamed over.\n").unwrap();
+                std::fs::rename(proj.join("chap/sec/new.tex"), &body).unwrap();
+            }),
+            ("the body's directory replaced", &|| {
+                std::fs::rename(proj.join("chap"), proj.join("chap-old")).unwrap();
+                std::fs::create_dir_all(proj.join("chap/sec")).unwrap();
+                std::fs::write(&body, "Body: EEEE.\n").unwrap();
+            }),
+            ("a file looked for made", &|| {
+                std::fs::write(&maybe, "Maybe: FFFF.\n").unwrap();
+            }),
+        ];
+        for (k, (what, change)) in steps.iter().enumerate() {
+            // (entries made and removed in the document's directory, as
+            // editors and the external tools make them)
+            let junk = proj.join(format!("junk{k}.tmp"));
+            std::fs::write(&junk, "j").unwrap();
+            std::fs::remove_file(&junk).unwrap();
+            change();
+            id += 1;
+            let o = compile(&mut c, &mut view, &req(id, &proj, &out, main));
+            assert_ne!(
+                o.done.str_field("mode"),
+                Some("unchanged"),
+                "{variant}: {what}: not seen: {}",
+                o.done
+            );
+            let tag = format!("d{k}");
+            let (p2, o2) = if out_in_proj {
+                // (the scratch compile's output apart: its pages are the
+                // same, the copied `.aux` read in either place)
+                let (p2, o2) = (
+                    base.join(format!("proj{tag}")),
+                    base.join(format!("out{tag}")),
+                );
+                copy_dir(&proj, &p2);
+                std::fs::create_dir_all(&o2).unwrap();
+                (p2, o2)
+            } else {
+                snapshot(&base, &proj, &out, &tag)
+            };
+            compare_with_scratch(
+                &scratch.1,
+                &view,
+                &proj,
+                &out,
+                &p2,
+                &o2,
+                main,
+                &format!("{variant}: {what}"),
+            );
+            settle(&mut c, &mut view, &mut id);
+        }
+        let _ = c.bye();
+        drop(host);
+        let _ = std::fs::remove_dir_all(&base);
+    }
+}
+
 /// BOX-MEMO revision 3 (BOX-MEMO.md §12.3): a call that enters control
 /// sequences (`\csname` of names never made before) is recorded in an edit's
 /// window and replayed at the next keystroke, which restored to before the

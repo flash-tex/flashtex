@@ -6035,9 +6035,15 @@ impl Session {
             return Ok(());
         };
         let n = g.record_of(s0.id)?.reads.2.min(j.outputs.len());
+        if n == 0 {
+            return Ok(());
+        }
+        // (each read's key once: a book's journal lists thousands of reads,
+        // and the preamble writes a few dozen files, lane FIND-PHASE)
+        let read: std::collections::HashSet<String> =
+            j.files.iter().map(|f| system::out_key(&f.path)).collect();
         for o in &j.outputs[..n] {
-            let k = system::out_key(o);
-            if j.files.iter().any(|f| system::out_key(&f.path) == k) {
+            if read.contains(&system::out_key(o)) {
                 if let Some(why) = system::outside_change(o) {
                     return Err(why);
                 }
