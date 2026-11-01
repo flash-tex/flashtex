@@ -1121,12 +1121,13 @@ def build(sources, shas=None, sample_note=None, stages=None, host_label=None, na
                     if prev is not None and prev["status"] == "measured" and c["status"] == "measured":
                         c = dict(c, invalid="two %s results for %s %s" % (lab, tier, metric))
                     cells[lab][tier][metric] = c
-    # the v1 CLI cannot run harnesses that need a TeX binary.
+    # the v1 CLI cannot run harnesses that need a TeX binary. Since S7 it is deleted and
+    # nothing measures it (no old run at all): those rows stay n/a.
     old_kinds = {i.get("engine_kind") for i in idents["old"] if i.get("engine_kind")}
     for tier, metric in (("latex-suites", "tests"), ("package-smoke", "documents"),
                          ("fonts", "fonts")):
         if tier in cells["new"] and metric not in cells["old"].get(tier, {}) \
-                and old_kinds == {"flashtex-cli"}:
+                and old_kinds <= {"flashtex-cli"}:
             cells["old"].setdefault(tier, {})[metric] = cell("n/a", note=NA_TEX_ONLY)
     # T4 runs the new engine only; its old column is the decision-1 one-off v1 baseline.
     for tier in T4_TIERS:

@@ -34,9 +34,8 @@ Everything is a **TeX point** (`pt`, 72.27/in) because that is what the class
 files compute in; `letterpaper` is 614.295 x 794.97 pt. PDF user space is big
 points (`bp`, 72/in): 612 x 792. Convert at the adapter boundary with
 `Pt::to_bp`, `PageLayout::text_area_bp`, or `PageLayout::paper_bp`. The
-compiler's current constants (`crates/compiler/src/layout.rs`: 612 x 792,
-72 pt margins) are bp values; they correspond to `geometry` `margin=1in`,
-not to the article defaults.
+retired old compiler's constants (612 x 792, 72 pt margins) were bp values;
+they correspond to `geometry` `margin=1in`, not to the article defaults.
 
 ## Provenance of every default
 
@@ -291,29 +290,8 @@ adapter negotiation and is **not** part of `docs/contracts/runtime-v1.md`.
   arithmetic is still CM-based, exactly as pdflatex with `times` behaves
   (`\parindent` etc. are fixed at class load time).
 
-## Proposed adapter integration (for the compiler lead and PDF/preview owners)
+## Adoption
 
-Nothing here touches `crates/compiler`, `crates/pdf`, or runtime-v1. A
-proposed, negotiable shape:
-
-1. **Compiler (`crates/compiler/src/layout.rs`)**: replace the constants
-   `PAGE_WIDTH_PT/PAGE_HEIGHT_PT/MARGIN_PT/BODY_SIZE_PT/LINE_SPACING/
-   PARAGRAPH_GAP_PT` and the `17.0`/`14.0` heading sizes with a
-   `Stylesheet` built from the parsed `\documentclass` options (and
-   `\usepackage[..]{geometry}` when the parser exposes it). The cursor keeps
-   a block path; `resolve` gives `font_size`, `baselineskip`, `parindent`,
-   `first_line_indent`, `space_before/after`, `left_margin`. Vertical
-   advance uses the combining rules above. Positions stay in the compiler's
-   bp convention via `Pt::to_bp`; for the `rendering-v2-proposal` wire
-   (`coordinate_unit: "bp_2pow20"`, page top-left origin) multiply the bp
-   value by 2^20 and round once, at emission.
-2. **PDF (`crates/pdf`)**: `PageLayout::paper_bp()` is the MediaBox;
-   `text_area_bp()` the body; `first_baseline_y` the first line.
-3. **Preview / Mac UI**: `export.page` and `export.styles` in the JSON let the
-   preview draw margins and estimate layout without the compiler.
-4. **Validation**: `tools/native-validation/oracle_compare` can diff
-   `export.heading_baseline_gaps` against PDFKit-extracted baselines.
-
-Dependency direction: `flashtex-document-style` depends on nothing;
-`flashtex-compiler` would depend on it. Whether to add a Cargo workspace is
-the integration owner's call (each crate currently builds standalone).
+The adapter integration proposed here targeted the old engine's
+compiler and PDF route, which were deleted in old-engine retirement S7 (`git show f16430793:crates/document-style/README.md`
+has it). The crate is kept as an oracle dependency (retirement plan §2).

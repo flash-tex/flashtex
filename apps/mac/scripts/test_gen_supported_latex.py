@@ -155,20 +155,69 @@ class Classify(unittest.TestCase):
         self.assertTrue(all(r["renders"] for r in rows))
 
 
+class Annotate(unittest.TestCase):
+    OLD = {"schema": gen.SCHEMA, "generator": "flashtex-compiler --supported json", "compiler_version": "0.1.0",
+           "commands": [
+               {"name": "section", "mode": "text", "origin": "text_dispatch", "arguments": "{...}",
+                "description": "numbered section heading", "renders": True},
+               {"name": "alpha", "mode": "math", "origin": "math_symbol", "arguments": "", "description": "symbol",
+                "glyph": "α", "renders": True},
+               {"name": "check", "mode": "math", "origin": "math_structure", "arguments": "{x}",
+                "description": "parsed, not rendered", "renders": False},
+               {"name": "frame", "mode": "text", "origin": "text_dispatch", "arguments": "<overlay>{...}",
+                "description": "beamer frame", "renders": True, "requires_class": "beamer"},
+               {"name": "section", "mode": "text", "origin": "text_dispatch", "arguments": "{x}",
+                "description": "a repeat", "renders": True},
+           ],
+           "environments": [{"name": "align", "mode": "text", "description": "rows aligned at &"},
+                            {"name": "block", "mode": "text", "description": "beamer", "requires_class": "beamer"}]}
+
+    def test_presentation_only_in_the_old_order(self):
+        a = gen.annotations_from_inventory(self.OLD, "old")
+        self.assertEqual(a["commands"], [
+            {"name": "section", "mode": "text", "origin": "text_dispatch", "arguments": "{...}"},
+            {"name": "alpha", "mode": "math", "origin": "math_symbol", "arguments": "", "glyph": "α"},
+        ])  # no description, nothing unrendered, nothing class-scoped, a (name, mode) once
+        self.assertEqual(a["environments"], [{"name": "align", "mode": "text"}])
+        self.assertEqual(a["from"], "old")
+        text = gen.dumps_annotations(a)
+        self.assertEqual(json.loads(text), a)
+        self.assertIn('\n    {"name": "alpha", "mode": "math"', text)
+
+    def test_a_foreign_file_is_refused(self):
+        with self.assertRaises(gen.Usage):
+            gen.annotations_from_inventory(dict(self.OLD, schema="other/1"), "old")
+
+
 class Render(unittest.TestCase):
     MEASURED = {"engine_commit": "b" * 40, "source": "run", "oracle": {"version": gen.ORACLE_VERSION},
                 "documents": {"amsmath": "equal", "tabu": "excluded: no reference"}}
     DOCS = {"amsmath": {"package": "amsmath", "file": "amsmath.tex"}, "tabu": {"package": "tabu", "file": "tabu.tex"}}
     PROBE = {"oracle": {"version": gen.ORACLE_VERSION},
-             "kernel": {"commands": {"textbf": {"d": "macro:->\\protect \\textbf  ", "s": "\\long macro:#1->x"}},
+             "kernel": {"commands": {"textbf": {"d": "macro:->\\protect \\textbf  ", "s": "\\long macro:#1->x"},
+                                     "section": {"d": "macro:->\\@startsection {section}1"},
+                                     "alpha": {"d": '\\mathchar"10B'},
+                                     "secdef": {"d": "macro:#1#2->x"}},
                         "environments": ["center"]},
              "packages": {"amsmath": {"load": "\\usepackage{amsmath}",
                                       "commands": {"dfrac": {"d": "macro:->\\genfrac {}{}{}0"},
-                                                   "textbf": {"d": "macro:#1->y"}},
-                                      "environments": ["align", "center"]}}}
+                                                   "textbf": {"d": "macro:#1->y"},
+                                                   "boxed": {"d": "macro:#1->\\leavevmode \\hbox {#1}"},
+                                                   "align": {"d": "macro:->\\start@align"},
+                                                   "endalign": {"d": "macro:->\\endalign@"}},
+                                      "environments": ["align", "multline"]}}}
+    ANNOTATIONS = {"from": "test", "commands": [
+        {"name": "num", "mode": "text", "origin": "text_dispatch", "arguments": "{number}"},
+        {"name": "section", "mode": "text", "origin": "text_dispatch", "arguments": "{...}"},
+        {"name": "textbf", "mode": "text", "origin": "text_style", "arguments": "{...}"},
+        {"name": "textbf", "mode": "math", "origin": "math_structure", "arguments": "{text}"},
+        {"name": "alpha", "mode": "math", "origin": "math_symbol", "arguments": "", "glyph": "α"},
+        {"name": "dfrac", "mode": "math", "origin": "math_structure", "arguments": "{num}{den}"},
+    ], "environments": [{"name": "letter", "mode": "text"}, {"name": "align", "mode": "text"}]}
 
     def data(self):
-        return gen.render_data(self.MEASURED, self.PROBE, self.DOCS, {"amsmath": 346, "tabu": 30}, 400)
+        return gen.render_data(self.MEASURED, self.PROBE, self.DOCS, {"amsmath": 346, "tabu": 30}, 400,
+                               self.ANNOTATIONS)
 
     def test_the_editors_decode_it(self):
         d = json.loads(gen.dumps_supported(self.data()))
@@ -180,16 +229,28 @@ class Render(unittest.TestCase):
                               ("description", str), ("renders", bool)):
                 self.assertIsInstance(c[key], kind)
             self.assertIn(c["mode"], ("text", "math"))
-            self.assertIn(c["origin"], ("text_dispatch", "math_structure", "math_symbol", "expansion"))
+            self.assertIn(c["origin"], gen.ANNOTATION_ORIGINS)
+            self.assertIs(c.get("annotated", False), False)  # absent (annotated) or false
         for e in d["environments"]:
             self.assertEqual(set(e) >= {"name", "mode", "description"}, True)
 
-    def test_the_kernel_comes_first_and_a_name_once_per_mode(self):
+    def test_measured_annotations_in_their_order_then_the_packages_unannotated_commands(self):
         d = self.data()
-        self.assertEqual([(c["name"], c["mode"], c["source"]) for c in d["commands"]],
-                         [("textbf", "text", "latex"), ("textbf", "math", "latex"),
-                          ("dfrac", "text", "amsmath"), ("dfrac", "math", "amsmath")])
-        self.assertEqual([e["name"] for e in d["environments"]], ["center", "align"])
+        got = [(c["name"], c["mode"], c["origin"], c["arguments"], c["description"], c["source"], c.get("annotated", True))
+               for c in d["commands"]]
+        self.assertEqual(got, [
+            # \num is not measured; \secdef is the kernel's but not annotated
+            ("section", "text", "text_dispatch", "{...}", "LaTeX kernel", "latex", True),
+            ("textbf", "text", "text_style", "{...}", "LaTeX kernel", "latex", True),
+            ("textbf", "math", "math_structure", "{text}", "accepted", "latex", True),
+            ("alpha", "math", "math_symbol", "", "LaTeX kernel", "latex", True),
+            ("dfrac", "math", "math_structure", "{num}{den}", "\\usepackage{amsmath}", "amsmath", True),
+            # amsmath's own; \align and \endalign are its environment's begin and end
+            ("boxed", "text", "text_dispatch", "{#1}", "\\usepackage{amsmath}", "amsmath", False),
+            ("boxed", "math", "math_structure", "{#1}", "accepted", "amsmath", False),
+        ])
+        self.assertEqual(d["commands"][3]["glyph"], "α")
+        self.assertEqual([(e["name"], e["source"]) for e in d["environments"]], [("align", "amsmath"), ("multline", "amsmath")])
 
     def test_every_measured_package_is_listed_with_its_verdict(self):
         pk = {p["name"]: p for p in self.data()["packages"]}
@@ -201,7 +262,7 @@ class Render(unittest.TestCase):
     def test_one_row_per_line_and_deterministic(self):
         a, b = gen.dumps_supported(self.data()), gen.dumps_supported(self.data())
         self.assertEqual(a, b)
-        self.assertIn('\n    {"name": "dfrac", "mode": "text"', a)
+        self.assertIn('\n    {"name": "dfrac", "mode": "math"', a)
 
 
 class Committed(unittest.TestCase):

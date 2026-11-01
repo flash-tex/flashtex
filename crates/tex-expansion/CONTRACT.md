@@ -1,9 +1,8 @@
 # `crates/tex-expansion` — adoption contract
 
-**Owner:** kabir-claude (task KC-101, rounds 1-2). **Status:** standalone;
-adoption into `crates/compiler` is being done by another agent on
-`agent/kabir-claude/compiler-tex-expansion`. This document is the contract
-that adoption can rely on.
+**Owner:** kabir-claude (task KC-101, rounds 1-2). **Status:** standalone. It
+was adopted by the old compiler, which was deleted in old-engine retirement
+S7; the crate is kept as an oracle (retirement plan §2).
 
 ## What this crate is
 
@@ -67,22 +66,10 @@ definitions, register assignments or conditionals. It contains:
   in front (e.g. `\global\setbox`). An unmodelled control sequence is not
   an error: the crate does not know the whole LaTeX universe.
 
-## Proposed adoption path for `crates/compiler`
+## Adoption
 
-1. Depend on the crate; run `Engine` (or `IncrementalExpander`) before the
-   compiler's parser, feeding it the token stream instead of raw text.
-2. Delete the parser's own bounded `\newcommand` substitution; macro calls
-   are gone by the time the parser sees tokens.
-3. Map `Diagnostic { severity, message, span }` 1:1; spans share the
-   source's byte offsets. Messages are TeX's/LaTeX's own texts (oracle-
-   checked), last line being the `! ...` line.
-4. Wire `set_font_metrics` (`em`/`ex`) and `set_box_measurer`
-   (`\settowidth`) to the font engine; the defaults are 10pt-CM placeholders
-   and a zero-width measurer.
-5. `set_file_reader` makes `\input` read files (spans get their own
-   `source_id`); without it `\input` passes through as today.
-6. `\ifvmode`/`\ifhmode`/`\ifmmode`/`\ifinner` read `Engine::set_mode`; a
-   real feed needs expansion interleaved with layout.
+The adoption path into the old compiler is history: that compiler was
+deleted in old-engine retirement S7 (`git show f16430793:crates/tex-expansion/CONTRACT.md` has it).
 
 ## Incremental expansion (IDE)
 
@@ -164,7 +151,7 @@ Unicode, matching what pdfLaTeX's text-mode symbols extract to (oracle
 
 All 44 `.tex` files under `fixtures/` and `tests/` on origin/main
 (dbf6ec78): **42 clean, 2 with errors**, both legitimate:
-`tests/tex-corpus/cases/extra-closing-group` ("Too many }'s", the case's
+`tests/tex-corpus/cases/extra-closing-group` (deleted in S7; see `f16430793`) ("Too many }'s", the case's
 point) and `include-scope/local.tex` (a fragment that `\renewcommand`s a
 macro its includer defines). Each expands in < 1 ms. Unmodelled primitives
 passed through, by documents: `\parindent` 12, `\parskip` 11, `\hfill` 4,
@@ -240,7 +227,7 @@ equivalence tests, the 415-case oracle. Helpers: `examples/probe.rs`
 
 ## Host integration additions (compiler adoption, kabir-claude)
 
-Added on top of round 2 (e476dbab) for `crates/compiler/src/expansion.rs`; all
+Added on top of round 2 (e476dbab) for the old compiler's `src/expansion.rs`; all
 additive, default behaviour unchanged, oracle/unit/incremental suites green:
 
 - `Engine::next_content_token_with_origin` -> `(Token, Option<Span>)`: the span of

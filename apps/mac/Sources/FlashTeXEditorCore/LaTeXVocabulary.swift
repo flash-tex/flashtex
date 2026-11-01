@@ -1,13 +1,16 @@
 import Foundation
 
-/// The compiler's command inventory (`crates/compiler/supported/
-/// supported-latex.json`, schema `flashtex-supported-latex/1`) as a
-/// completion vocabulary. Both apps bundle a byte-identical copy of that
-/// file (`apps/mac/scripts/sync-supported-latex.sh` writes both and CI
-/// checks them); this decoder is both apps' (the Mac's
+/// The generated completion vocabulary (`apps/mac/supported-latex/
+/// supported-latex.json`, schema `flashtex-supported-latex/1`, from the new
+/// engine's measured package support with pdflatex as the oracle). Both apps
+/// bundle a byte-identical copy of that file
+/// (`apps/mac/scripts/gen-supported-latex.py render --install` writes both
+/// and `check --installed` checks them); this decoder is both apps' (the Mac's
 /// `Completion.Vocabulary.entries` are built from it): every rendered
 /// command once, in offer order — text commands in file order, then math
-/// structures, operators and symbols — and the environments in file order.
+/// structures, operators and symbols, first for the annotated rows and then
+/// for the measured package commands appended unannotated — and the
+/// environments in file order.
 public struct LaTeXVocabulary: Sendable, Equatable {
     public enum Mode: String, Decodable, Sendable { case text, math }
 
@@ -27,11 +30,19 @@ public struct LaTeXVocabulary: Sendable, Equatable {
         public let mathDescription: String?
         /// The one document class that defines the command, or nil for all.
         public let requiresClass: String?
+        /// False for a measured package command the vocabulary's annotations
+        /// do not present (`"annotated": false`): it comes after every
+        /// annotated command in offer order, and both editors offer it only
+        /// when no annotated command matches the prefix, so a package's many
+        /// short names (babel's `\frq`, xy's `\frm`) never push `\frac` down.
+        public let annotated: Bool
 
         public init(name: String, arguments: String, description: String, mode: Mode, origin: String,
-                    glyph: String? = nil, mathDescription: String? = nil, requiresClass: String? = nil) {
+                    glyph: String? = nil, mathDescription: String? = nil, requiresClass: String? = nil,
+                    annotated: Bool = true) {
             self.name = name; self.arguments = arguments; self.description = description; self.mode = mode
             self.origin = origin; self.glyph = glyph; self.mathDescription = mathDescription; self.requiresClass = requiresClass
+            self.annotated = annotated
         }
 
         /// One documentation line for a completion row.
@@ -87,7 +98,10 @@ public struct LaTeXVocabulary: Sendable, Equatable {
             var glyph: String? = nil
             let renders: Bool
             var requiresClass: String? = nil
-            enum CodingKeys: String, CodingKey { case name, mode, origin, arguments, description, glyph, renders, requiresClass = "requires_class" }
+            var annotated: Bool? = nil
+            enum CodingKeys: String, CodingKey {
+                case name, mode, origin, arguments, description, glyph, renders, annotated, requiresClass = "requires_class"
+            }
         }
         struct Environment: Decodable {
             let name: String
@@ -114,12 +128,18 @@ public struct LaTeXVocabulary: Sendable, Equatable {
         func add(_ c: Inventory.Command, mathDescription: String? = nil) {
             guard seen.insert(c.name).inserted else { return }
             out.append(Command(name: c.name, arguments: c.arguments, description: c.description, mode: c.mode, origin: c.origin,
-                               glyph: c.glyph, mathDescription: mathDescription, requiresClass: c.requiresClass))
+                               glyph: c.glyph, mathDescription: mathDescription, requiresClass: c.requiresClass,
+                               annotated: c.annotated ?? true))
         }
-        for c in rendered where c.mode == .text && c.origin != "control_symbol" { add(c, mathDescription: mathDescriptions[c.name]) }
-        for c in rendered where c.origin == "control_symbol" && c.name == "\\" { add(c) }
-        for origin in ["math_structure", "math_operator", "math_symbol"] {
-            for c in rendered where c.origin == origin { add(c) }
+        // The annotated rows, then the measured package commands the generator
+        // appends unannotated, each in the same order.
+        for annotated in [true, false] {
+            let tier = rendered.filter { ($0.annotated ?? true) == annotated }
+            for c in tier where c.mode == .text && c.origin != "control_symbol" { add(c, mathDescription: mathDescriptions[c.name]) }
+            for c in tier where c.origin == "control_symbol" && c.name == "\\" { add(c) }
+            for origin in ["math_structure", "math_operator", "math_symbol"] {
+                for c in tier where c.origin == origin { add(c) }
+            }
         }
         self.init(commands: out,
                   environments: inventory.environments.map { Environment(name: $0.name, description: $0.description, mode: $0.mode, requiresClass: $0.requiresClass) },

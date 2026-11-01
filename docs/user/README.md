@@ -11,7 +11,7 @@ Pencil sketches and photos into reviewed LaTeX/TikZ insertions.
 | [The Mac app](gui.md) | Workspace, projects and multi-file documents, editing and IntelliSense, compiling, the preview, the Problems panel and quick fixes, PDF export, capture conversion, the Nearby companion, Preferences, all keyboard shortcuts |
 | [FlashTeXPad for iPad](ipad.md) | What the capture companion does, building it on a device, pairing, sending a capture, limits |
 | [The project manifest](project-manifest.md) | `flashtex.toml`: opening a folder, `texinputs` directories of `.sty`/`.cls` files, the output directory, fonts and package policy; every key, every default, and the promise that no manifest changes nothing |
-| [Command-line tools](compiler.md) | The command-line engine (`flashtex-render`, `flashtex-compiler`, `flashtex-pdf`/`flashtex-pdf-exact`; not used by the Mac app), fonts and metrics, building from source, **supported LaTeX** of that engine, diagnostic codes |
+| [The `flashtex` command line](compiler.md) | `flashtex build`, `check` and `watch` on the pdfTeX-compatible engine, Unicode mode, the engine host, building from source |
 
 ## Requirements
 

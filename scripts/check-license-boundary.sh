@@ -106,10 +106,11 @@ if [[ -z "$ENGINE_PKG" ]]; then
 else
   # Any crate that keeps its own Cargo.lock is its own workspace, and its graph
   # must be resolved separately or the check has a blind spot exactly where the
-  # CLI lives. Since lane P0-RETIRE-VENDOR retired
-  # crates/render-pipeline/vendor/ and folded those three lockfiles into the root
-  # one, there are none -- the root workspace globs all 38 crates. The loop stays
-  # so the check keeps covering any that reappear.
+  # CLI lives. Since lane P0-RETIRE-VENDOR retired the old engine's vendored
+  # copies and folded their lockfiles into the root one, there are none -- the
+  # root workspace globs every crate under crates/ (crates/flashtex-xetex is
+  # excluded and has its own lockfile, so the loop below covers it). The loop
+  # stays so the check keeps covering any that reappear.
   WORKSPACES="."
   for c in crates/*/; do
     [[ -f "${c}Cargo.lock" ]] || continue

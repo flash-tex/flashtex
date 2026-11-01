@@ -10,8 +10,8 @@ A case whose naive form fails and whose normalised form compiles is a rule that
 earns its keep; the report names them. Cases where both compile are
 no-regression checks: the rule must not break LaTeX that was already fine.
 
-With --flashtex (default: `flashtex-v3` on PATH, the new engine's CLI,
-crates/flashtex-build) each form is also checked with `flashtex-v3 check`.
+With --flashtex (default: `flashtex` on PATH, the new engine's CLI,
+crates/flashtex-build) each form is also checked with `flashtex check`.
 
 Usage: scripts/caret_context_oracle.py [--fixture PATH] [--flashtex BIN]
 Exit status is non-zero if any normalised insertion fails to compile.
@@ -34,20 +34,20 @@ def compile_with(engine, body, preamble, workdir):
             if line.startswith("!"):
                 return False, line.strip()[:90]
         return False, "pdflatex failed"
-    # `flashtex-v3 check`: exit 0 with no error diagnostic, 1 when TeX reports one.
+    # `flashtex check`: exit 0 with no error diagnostic, 1 when TeX reports one.
     r = subprocess.run([engine, "check", str(d / "main.tex"), "--no-tools", "-q"],
                        capture_output=True, text=True)
     if r.returncode == 0:
         return True, ""
     errs = [l for l in r.stdout.splitlines() if ": error: " in l]
     return False, ("; ".join(e.split(": error: ", 1)[1][:80] for e in errs[:2])
-                   or (r.stderr.strip().splitlines() or ["flashtex-v3 check failed"])[-1][:90])
+                   or (r.stderr.strip().splitlines() or ["flashtex check failed"])[-1][:90])
 
 
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--fixture", type=pathlib.Path, default=DEFAULT_FIXTURE)
-    ap.add_argument("--flashtex", default=shutil.which("flashtex-v3"))
+    ap.add_argument("--flashtex", default=shutil.which("flashtex"))
     args = ap.parse_args()
     data = json.loads(args.fixture.read_text())
     default_preamble = data["preamble"]

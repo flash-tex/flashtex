@@ -1,5 +1,5 @@
 //! The generated kernel slot table (`cm_slots`, from `fontmath.ltx` via
-//! `crates/compiler/scripts/gen_math_symbols.py`) against the hand-written
+//! the retired old compiler's `gen_math_symbols.py`) against the hand-written
 //! `cm::symbol_slot` / `cm::delimiter_slot` matches. TeX never runs here.
 //!
 //! A character the hand table maps to a different (family, slot) than the

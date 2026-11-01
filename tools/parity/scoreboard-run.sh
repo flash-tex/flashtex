@@ -1,14 +1,17 @@
 #!/usr/bin/env bash
-# The P5 scoreboard, end to end (DESIGN §12 P5, §8): build both engines from
-# this checkout, run every tier's existing harness for each engine against the
-# oracle, then aggregate with tools/parity/scoreboard.py. The nightly workflow
+# The P5 scoreboard, end to end (DESIGN §12 P5, §8): build the engine from
+# this checkout, run every tier's existing harness against the oracle, then
+# aggregate with tools/parity/scoreboard.py. The nightly workflow
 # runs exactly this; so can anyone with TeX Live 2026.
 #
 #   engines   new = crates/flashtex-engine's flashtex-initex (with its own
 #             pdflatex.fmt / pdftex.fmt, built as fmtutil does, like
-#             scripts/engine-parity.sh); old = v1, the flashtex CLI
+#             scripts/engine-parity.sh). The old engine (v1) was deleted in
+#             retirement stage S7, so nothing measures it any more: its parity
+#             cells read "missing", and T4's old column stays the committed
+#             one-off baseline (tools/parity/baselines/t4-v1-oneoff.json)
 #   parity    tools/parity/parity.py on --tiers (default: fixtures arxiv
-#             templates, plus packages when its manifest exists), both engines
+#             templates, plus packages when its manifest exists)
 #   t2        tools/latex-suites/run.py through this host's pdfTeX (the
 #             baseline) and through the new engine
 #   smoke     tools/package-smoke/run.py, new engine
@@ -19,24 +22,23 @@
 #             engine binaries and this host's oracle (texlive.tlpdb and pdftex
 #             sha256, OUT/oracle.json): any other run reads INVALID
 #
-# v1 cannot run t2, smoke, fonts or P-T1 (they need a pdfTeX-compatible
+# v1 could not run t2, smoke, fonts or P-T1 (they need a pdfTeX-compatible
 # binary); the board says "old n/a" for those, with the reason.
 #
 # Usage: tools/parity/scoreboard-run.sh --out DIR [--work DIR] [--keep-work] [--jobs N]
 #          [--tiers "fixtures arxiv ..."] [--limit N] [--skip "t2 fonts ..."]
 #          [--t4-new DIR] [--t4-old DIR] [--sample-note TEXT] [--corpus-texmf DIR]
-#          [--build-engine] [--engine-dir DIR] [--v1 BIN] [--collect] [--no-board]
+#          [--build-engine] [--engine-dir DIR] [--collect] [--no-board]
 #          [--] [scoreboard.py args...]
 # The new engine is the T4 run's own binary (and formats) when --t4-new names one that is on
 # this host with the sha256 its summary records; --build-engine (or no such run) builds it.
 # --engine-dir DIR: the new engine prebuilt (DIR/flashtex-initex, pdftex.pool, pdflatex.fmt,
-# pdftex.fmt), used as it is; --v1 BIN: v1 (the flashtex CLI) prebuilt. With neither, they are
-# built here (v1 only when the parity stage runs). A board split over several hosts (the
+# pdftex.fmt), used as it is; without it, it is built here. A board split over several hosts (the
 # hosted route of p5-scoreboard.yml) passes one build to every part, so every run is of one
 # binary: scoreboard.py checks each run's engine sha256 against the parity run's.
 # --skip takes stage names: parity, t2 (or only one side of it: t2-ref, t2-new), smoke, fonts.
 # --collect: a skipped stage's outputs already in OUT (made by other runs of this script
-# at this commit, with the same engines: OUT/parity-new*/, OUT/parity-old*/, t2-*.txt,
+# at this commit, with the same engine: OUT/parity-new*/, t2-*.txt,
 # smoke-new.txt, fonts-new/) go on the board, as if this run had made them.
 # --no-board: run the stages only, without the board (a part of a split board).
 # --corpus-texmf DIR: where the TeX Live tiers' documents (templates, packages) are
@@ -69,7 +71,7 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT"
 
 OUT="" WORK="" KEEP_WORK=0 JOBS=2 TIERS="" LIMIT=0 SKIP="" T4NEW="" T4OLD="" NOTE="" CORPUS_TEXMF="" BUILD_ENGINE=0
-ENGINE_DIR="" V1_BIN="" COLLECT=0 NO_BOARD=0
+ENGINE_DIR="" COLLECT=0 NO_BOARD=0
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --out) OUT="${2:?}"; shift 2 ;;
@@ -85,7 +87,6 @@ while [[ $# -gt 0 ]]; do
     --corpus-texmf) CORPUS_TEXMF="${2:?}"; shift 2 ;;
     --build-engine) BUILD_ENGINE=1; shift ;;
     --engine-dir) ENGINE_DIR="${2:?}"; shift 2 ;;
-    --v1) V1_BIN="${2:?}"; shift 2 ;;
     --collect) COLLECT=1; shift ;;
     --no-board) NO_BOARD=1; shift ;;
     -h|--help) awk 'NR == 1 { next } /^#/ { sub(/^# ?/, ""); print; next } { exit }' "${BASH_SOURCE[0]}"; exit 0 ;;
@@ -213,9 +214,6 @@ elif [[ $BUILD_ENGINE == 0 ]] && T4ENG="$(t4_engine_dir)"; then
   POOL="$ENG/pdftex.pool" INITEX="$ENG/flashtex-initex"
 else
   [[ -n "$T4NEW" ]] && echo "::notice::scoreboard-run: the T4 run's engine is not on this host (or --build-engine): building it; a T4 measured with another binary reads INVALID" >&2
-  # Built together with flashtex-cli in one cargo invocation, shared dependencies get
-  # unified features and the binary differs (mac-m5pro-dq222, 296c90197): alone, and
-  # copied out before the v1 build runs.
   cargo build --release --locked -p flashtex-engine --bin flashtex-initex
   cp "$TARGET/release/flashtex-initex" "$ENG/"
   cp crates/flashtex-engine/pdftex.pool "$ENG/pdftex.pool"
@@ -227,13 +225,6 @@ else
       { tail -n 40 "$FMT/$f.out" >&2; echo "::error::the engine did not build $f.fmt" >&2; exit 1; }
   done
 fi
-if [[ -n $V1_BIN ]]; then
-  cp "$V1_BIN" "$ENG/flashtex"
-elif ! skip parity; then
-  cargo build --release --locked -p flashtex-cli --bin flashtex
-  cp "$TARGET/release/flashtex" "$ENG/"
-fi
-V1="$ENG/flashtex"
 # The full commit: nightly.py records it too, and scoreboard.py marks a T4 run at any
 # other commit INVALID (a stale or foreign run).
 SHA="$(git rev-parse HEAD)"
@@ -255,7 +246,7 @@ note_fail() {
 export TMPDIR="$WORK/tmp"
 mkdir -p "$TMPDIR"
 
-# ---- parity tiers, both engines ------------------------------------------------
+# ---- parity tiers --------------------------------------------------------------
 if ! skip parity; then
   margs=()
   for t in $TIERS; do
@@ -281,16 +272,12 @@ if ! skip parity; then
     --out "$OUT/parity-new" --work "$WORK/parity-new" >"$OUT/parity-new.log" 2>&1 || rc=$?
   [[ $rc -eq 0 ]] || note_fail "parity (new)" $rc
   [[ -f "$OUT/parity-new/scoreboard.json" ]] && ARGS+=(--parity "new=$OUT/parity-new")
-  rc=0; guard "parity (old)" python3 tools/parity/parity.py "${targs[@]}" "${common[@]}" --engine "$V1" \
-    --out "$OUT/parity-old" --work "$WORK/parity-old" >"$OUT/parity-old.log" 2>&1 || rc=$?
-  [[ $rc -eq 0 ]] || note_fail "parity (old)" $rc
-  [[ -f "$OUT/parity-old/scoreboard.json" ]] && ARGS+=(--parity "old=$OUT/parity-old")
 elif [[ $COLLECT == 1 ]]; then
-  for d in "$OUT"/parity-new*/ "$OUT"/parity-old*/; do
+  for d in "$OUT"/parity-new*/; do
     [[ -f $d/scoreboard.json ]] || continue
-    d=${d%/} lab=new; [[ ${d##*/} == parity-old* ]] && lab=old
-    echo "scoreboard-run: collected ${d##*/} ($lab)"
-    ARGS+=(--parity "$lab=$d")
+    d=${d%/}
+    echo "scoreboard-run: collected ${d##*/}"
+    ARGS+=(--parity "new=$d")
   done
 fi
 
