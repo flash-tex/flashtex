@@ -1423,9 +1423,11 @@ struct SourceEditorView: NSViewRepresentable {
             guard lineText.contains("\\begin{") || lineText.contains("\\end{") || lineText.contains("\\begin {") || lineText.contains("\\end {") else { return nil }
             if pairCache?.edits.isEmpty != true {
                 if storage.length <= Self.pairScanOffMainUTF16 {
-                    // The storage itself (UTF-16, copied out in one `getCharacters`).
+                    // The storage's string (UTF-16, copied out in one `getCharacters`).
+                    // Not `mutableString`: the scan's per-argument substrings through
+                    // that proxy cost twice as much (125 vs 66 ms at 3 MB, debug).
                     environmentPairScansOnMain += 1
-                    pairCache = EnvironmentPairCache(pairs: EditorNavigation.environmentPairs(in: storage.mutableString))
+                    pairCache = EnvironmentPairCache(pairs: EditorNavigation.environmentPairs(in: storage.string as NSString))
                 } else {
                     scanEnvironmentPairsOffMain(tv)
                 }
