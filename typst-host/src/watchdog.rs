@@ -104,7 +104,7 @@ pub fn uid() -> u32 {
     unsafe { libc::getuid() }
 }
 
-static TEMP: OnceLock<PathBuf> = OnceLock::new();
+static TEMP: OnceLock<Result<PathBuf, String>> = OnceLock::new();
 
 /// Where the host's private temporary directory lives: `$XDG_RUNTIME_DIR`
 /// on Linux when set (per user, mode 0700), else the OS temporary directory
@@ -123,8 +123,9 @@ fn temp_base() -> PathBuf {
 /// The host process's own private temporary directory (`DONE.pdf` when the
 /// client names no output directory), created mode 0700 on first use
 /// (never an existing one: a name that exists gets a suffix), removed when
-/// the watchdog stops the host.
-pub fn temp_dir() -> PathBuf {
+/// the watchdog stops the host. When it cannot be created this is an
+/// error, never a fallback to a predictable shared name.
+pub fn temp_dir() -> Result<PathBuf, String> {
     TEMP.get_or_init(|| {
         use std::os::unix::fs::DirBuilderExt;
         let base = temp_base();
@@ -137,18 +138,33 @@ pub fn temp_dir() -> PathBuf {
             };
             let p = base.join(name);
             match std::fs::DirBuilder::new().mode(0o700).create(&p) {
-                Ok(()) => return p,
+                Ok(()) => return Ok(p),
                 Err(e) if e.kind() == io::ErrorKind::AlreadyExists => continue,
-                Err(_) => break,
+                Err(e) => {
+                    return Err(format!(
+                        "cannot create a private temporary directory in {}: {e}",
+                        base.display()
+                    ))
+                }
             }
         }
-        base.join(format!("flashtex-typst-host-{pid}"))
+        Err(format!(
+            "cannot create a private temporary directory in {}: 1,000 names taken",
+            base.display()
+        ))
     })
     .clone()
 }
 
 /// Remove the temporary directories of this user's hosts that no longer run
 /// (a host killed from outside cannot remove its own). Called at start.
+///
+/// "No longer runs" is judged by the pid on this machine, in this pid
+/// namespace: the sweeps assume a local directory that no host on another
+/// machine or in another container shares (a temporary directory, the
+/// package cache, a local project). On NFS, a synced folder (Dropbox, iCloud)
+/// or a directory shared between containers, another host's live files can
+/// look dead and be removed.
 pub fn sweep_stale_temp_dirs() -> usize {
     use std::os::unix::fs::MetadataExt;
     let mut removed = 0;
@@ -192,13 +208,18 @@ fn stop(why: &str) -> ! {
             libc::fcntl(2, libc::F_SETFL, fl | libc::O_NONBLOCK);
         }
         libc::write(2, line.as_ptr().cast(), line.len());
+        // fd 2 may be shared with the parent (the same open file
+        // description): put its flags back.
+        if fl >= 0 {
+            libc::fcntl(2, libc::F_SETFL, fl);
+        }
     }
     let held = children();
     for &pid in held.iter() {
         // SAFETY: a pid this process started; SIGKILL needs nothing else.
         unsafe { libc::kill(pid as i32, libc::SIGKILL) };
     }
-    if let Some(d) = TEMP.get() {
+    if let Some(Ok(d)) = TEMP.get() {
         let _ = std::fs::remove_dir_all(d);
     }
     // SAFETY: _exit ends the process at once; nothing here needs unwinding.
