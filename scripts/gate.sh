@@ -324,13 +324,17 @@ TRIP_PATHS='^(tools/web2rust/|third_party/(knuth|pdftex)/|crates/flashtex-engine
 # divergences were files of a crate then outside the root workspace, which
 # `cargo fmt --all` never visits).
 gate_fmt() {
-  local dirty_new=() dirty_old=() f ed crate rc=0
+  local dirty_new=() dirty_old=() f ed crate rc=0 was renames
   local list
   list="$(printf '%s\n' "$CHANGED_RS" | grep -v '^$' || true)"
   if [[ -z "$list" ]]; then
     echo "no .rs files changed against $BASE"
     return 0
   fi
+  # A renamed file's base is its old path: a crate moved as it was (S8 moved
+  # the oracle crates to tests/oracles/) keeps its rustfmt debt as debt, not
+  # as new. "R<score>\t<old>\t<new>" lines, merge base to the working tree.
+  renames="$(git diff -M --name-status --diff-filter=R "$(git merge-base "$BASE" HEAD)" -- '*.rs' 2>/dev/null || true)"
   while IFS= read -r f; do
     [[ -f "$f" ]] || continue
     # tools/web2rust's output (the engines' src/generated/) is never edited
@@ -354,9 +358,11 @@ gate_fmt() {
       continue
     fi
     # Unformatted now. Was it unformatted at the base too?
-    if git cat-file -e "$BASE:$f" 2>/dev/null &&
-       ! git show "$BASE:$f" | rustfmt --edition "$ed" --emit stdout --quiet 2>/dev/null \
-         | diff -q - <(git show "$BASE:$f") >/dev/null 2>&1; then
+    was="$(awk -F'\t' -v f="$f" '$3 == f { print $2; exit }' <<< "$renames")"
+    was="${was:-$f}"
+    if git cat-file -e "$BASE:$was" 2>/dev/null &&
+       ! git show "$BASE:$was" | rustfmt --edition "$ed" --emit stdout --quiet 2>/dev/null \
+         | diff -q - <(git show "$BASE:$was") >/dev/null 2>&1; then
       dirty_old+=("$f")
     else
       dirty_new+=("$f")
