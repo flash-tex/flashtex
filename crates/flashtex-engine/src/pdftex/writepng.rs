@@ -238,8 +238,7 @@ fn colour_len<const P: usize, const C: usize>(len: usize) -> usize {
 /// exactly [`colour_len`] of them, the others pushed onto `smask`, each in
 /// order.
 fn split_alpha<const P: usize, const C: usize>(chunk: &[u8], dst: &mut [i32], smask: &mut Vec<u8>) {
-    let groups = chunk.chunks_exact(P);
-    let rem = groups.remainder();
+    let (groups, rem) = chunk.as_chunks::<P>();
     let tail = rem.len().min(C);
     smask.reserve(chunk.len() - dst.len());
     let mut w = 0;
