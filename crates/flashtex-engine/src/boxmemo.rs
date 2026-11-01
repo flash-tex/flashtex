@@ -1267,10 +1267,24 @@ type IntHash = std::hash::BuildHasherDefault<crate::iso::FastHasher>;
 /// tokens are still that body and the walk is not made again. Emptied at
 /// every restore of the word space (`after_restore`), at a format load, and
 /// when another engine on this thread notes one (`owner`).
+/// One location's entry: its type, its list, the kept body.
+#[derive(Default, Clone)]
+struct Slot {
+    t: i32,
+    e: i32,
+    body: Option<std::rc::Rc<[i32]>>,
+    /// (in `Seen::used`)
+    listed: bool,
+}
+
 #[derive(Default)]
 struct Seen {
     owner: usize,
-    at: HashMap<i32, (i32, i32, std::rc::Rc<[i32]>), IntHash>,
+    /// The entries, by location (`eqtb` and the hash's extra locations: a
+    /// look-up is an index, not a hash; BOX-MEMO.md §15.4).
+    at: Vec<Slot>,
+    /// The locations that have an entry (what `clear` empties).
+    used: Vec<i32>,
     /// The locations whose entry names list `e`.
     by_list: HashMap<i32, Vec<i32>, IntHash>,
     /// The lists some entry names, a bit each by `mem` index: the free
@@ -1289,7 +1303,10 @@ impl Seen {
                 *w = 0;
             }
         }
-        self.at.clear();
+        for &p in &self.used {
+            self.at[p as usize] = Slot::default();
+        }
+        self.used.clear();
         self.by_list.clear();
     }
 
@@ -1301,7 +1318,9 @@ impl Seen {
 
     /// `p`'s entry, which names list `e`, goes.
     fn forget_at(&mut self, p: i32, e: i32) {
-        self.at.remove(&p);
+        if let Some(slot) = self.at.get_mut(p as usize) {
+            slot.body = None;
+        }
         if let Some(l) = self.by_list.get_mut(&e) {
             l.retain(|&q| q != p);
             if l.is_empty() {
@@ -1311,6 +1330,47 @@ impl Seen {
                 }
             }
         }
+    }
+
+    /// Whether `p` holding `t` and `e` was found equal to `toks` since.
+    #[inline]
+    fn is(&mut self, p: i32, t: i32, e: i32, toks: &std::rc::Rc<[i32]>) -> bool {
+        let ok = self.at.get(p as usize).is_some_and(|s| {
+            s.e == e && s.t == t && s.body.as_ref().is_some_and(|b| std::rc::Rc::ptr_eq(b, toks))
+        });
+        if ok {
+            self.hits += 1;
+        }
+        ok
+    }
+
+    /// `p` holding `t` and `e` was just found equal to `toks` (`mem_len`:
+    /// the size of `mem`, for the bits).
+    fn note(&mut self, p: i32, t: i32, e: i32, toks: &std::rc::Rc<[i32]>, mem_len: usize) {
+        let i = p as usize;
+        if self.at.len() <= i {
+            self.at.resize(i + 1, Slot::default());
+        }
+        if self.at[i].body.is_some() {
+            let e0 = self.at[i].e;
+            self.forget_at(p, e0);
+        }
+        if !self.at[i].listed {
+            self.used.push(p);
+        }
+        let w = e as usize / 64;
+        if self.bits.len() <= w {
+            let n = (w + 1).max(mem_len / 64 + 1);
+            self.bits.resize(n, 0);
+        }
+        self.bits[w] |= 1u64 << (e as usize % 64);
+        self.by_list.entry(e).or_default().push(p);
+        self.at[i] = Slot {
+            t,
+            e,
+            body: Some(toks.clone()),
+            listed: true,
+        };
     }
 }
 
@@ -1324,47 +1384,16 @@ fn owner_of(g: &Globals) -> usize {
     g as *const Globals as usize
 }
 
-/// Whether `p` holding `t` and `e` was found equal to `toks` since.
-fn seen_is(g: &Globals, p: i32, t: i32, e: i32, toks: &std::rc::Rc<[i32]>) -> bool {
-    if !SEEN_ANY.with(|a| a.get()) {
-        return false;
-    }
-    SEEN.with(|s| {
-        let mut s = s.borrow_mut();
-        if s.owner != owner_of(g) {
-            return false;
-        }
-        let ok =
-            s.at.get(&p)
-                .is_some_and(|(t0, e0, b)| *t0 == t && *e0 == e && std::rc::Rc::ptr_eq(b, toks));
-        if ok {
-            s.hits += 1;
-        }
-        ok
-    })
-}
-
-/// `p` holding `t` and `e` was just found equal to `toks`.
-fn seen_note(g: &Globals, p: i32, t: i32, e: i32, toks: &std::rc::Rc<[i32]>) {
+/// `f` with the entries, emptied first when another engine noted them.
+fn with_seen<R>(g: &Globals, f: impl FnOnce(&mut Seen) -> R) -> R {
     SEEN.with(|s| {
         let mut s = s.borrow_mut();
         if s.owner != owner_of(g) {
             s.clear();
             s.owner = owner_of(g);
         }
-        if let Some(&(_, e0, _)) = s.at.get(&p) {
-            s.forget_at(p, e0);
-        }
-        let w = e as usize / 64;
-        if s.bits.len() <= w {
-            let n = (w + 1).max(g.mem.len() / 64 + 1);
-            s.bits.resize(n, 0);
-        }
-        s.bits[w] |= 1u64 << (e as usize % 64);
-        s.by_list.entry(e).or_default().push(p);
-        s.at.insert(p, (t, e, toks.clone()));
-    });
-    SEEN_ANY.with(|a| a.set(true));
+        f(&mut s)
+    })
 }
 
 /// Every entry goes (a restore, a format load).
@@ -2004,6 +2033,16 @@ impl Globals {
     /// Whether the meaning of `p` is `m` ([`bm_meaning`](Self::bm_meaning)
     /// compared in place, without copying a macro's tokens).
     fn bm_meaning_is(&self, p: i32, m: &Meaning) -> bool {
+        with_seen(self, |s| self.bm_meaning_is_in(s, p, m))
+    }
+
+    /// K3: every kept meaning holds now (one borrow of the entries for all).
+    fn bm_k3_holds(&self, k3: &[(i32, Meaning)]) -> bool {
+        with_seen(self, |s| k3.iter().all(|(p, m)| self.bm_meaning_is_in(s, *p, m)))
+    }
+
+    /// [`bm_meaning_is`](Self::bm_meaning_is) with the entries borrowed.
+    fn bm_meaning_is_in(&self, seen: &mut Seen, p: i32, m: &Meaning) -> bool {
         if let Meaning::Name(n) = m {
             // A location of the hash's chains holds the name `id_lookup`
             // finds there: it enters a name only where it found none, in
@@ -2034,10 +2073,10 @@ impl Globals {
             if *mt != t {
                 return false;
             }
-            if seen_is(self, p, t, e, toks) {
+            if seen.is(p, t, e, toks) {
                 return true;
             }
-            SEEN.with(|s| s.borrow_mut().walks += 1);
+            seen.walks += 1;
             let mut q = self.bm_link(e);
             for &x in toks.iter() {
                 if q == 0 || self.bm_info(q) != x {
@@ -2046,7 +2085,8 @@ impl Globals {
                 q = self.bm_link(q);
             }
             if q == 0 {
-                seen_note(self, p, t, e, toks);
+                seen.note(p, t, e, toks, self.mem.len());
+                SEEN_ANY.with(|a| a.set(true));
             }
             return q == 0;
         }
@@ -2617,7 +2657,7 @@ impl Globals {
                         .iter()
                         .chain(&e.holes)
                         .all(|(n, v)| self.bm_box_key(self.bm_box_value(*n)) == *v)
-                    && e.k3.iter().all(|(p, m)| self.bm_meaning_is(*p, m))
+                    && self.bm_k3_holds(&e.k3)
                     && e.obj_refs
                         .iter()
                         .all(|r| self.bm_obj_is(r.t, r.n) && self.bm_obj_dims(r.n) == r.dims)
@@ -4410,6 +4450,35 @@ mod tests {
             compress_groups(&ops),
             vec![def(1, 10, 1), def(3, 31, 3), def(4, 40, 3), def(6, 60, 1)]
         );
+    }
+
+    #[test]
+    fn meanings_found_equal_are_kept_by_location_until_their_list_goes() {
+        let body: std::rc::Rc<[i32]> = vec![1, 2, 3].into();
+        let other: std::rc::Rc<[i32]> = vec![1, 2, 3].into();
+        let mut s = Seen::default();
+        assert!(!s.is(70000, 111, 500, &body));
+        s.note(70000, 111, 500, &body, 1 << 12);
+        s.note(600, 111, 500, &body, 1 << 12);
+        assert!(s.is(70000, 111, 500, &body) && s.is(600, 111, 500, &body));
+        // another type, list or body (the same tokens, another kept body)
+        assert!(!s.is(70000, 112, 500, &body) && !s.is(70000, 111, 501, &body));
+        assert!(!s.is(70000, 111, 500, &other));
+        // the list freed: both entries naming it go
+        assert!(s.has_bit(500));
+        for q in s.by_list.get(&500).cloned().unwrap_or_default() {
+            s.forget_at(q, 500);
+        }
+        assert!(!s.has_bit(500) && !s.is(70000, 111, 500, &body) && !s.is(600, 111, 500, &body));
+        // a location noted again, then everything cleared
+        s.note(600, 111, 502, &body, 1 << 12);
+        s.note(600, 111, 503, &body, 1 << 12);
+        assert!(!s.has_bit(502) && s.has_bit(503) && s.is(600, 111, 503, &body));
+        assert_eq!(s.used, vec![70000, 600]);
+        s.clear();
+        assert!(!s.is(600, 111, 503, &body) && !s.has_bit(503) && s.used.is_empty());
+        s.note(600, 111, 503, &body, 1 << 12);
+        assert_eq!(s.used, vec![600]);
     }
 
     fn list(p: i32, tok: i32) -> Op {
