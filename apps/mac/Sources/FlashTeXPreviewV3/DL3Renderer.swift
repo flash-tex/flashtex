@@ -398,15 +398,34 @@ func deviceSamples(_ img: CGImage) -> CGImage {
 /// A page (or form) with its resource ids resolved as they stood when it
 /// arrived (spec §5: a later rebinding never changes a page already held).
 public struct DL3PreparedPage: @unchecked Sendable {
-    public var page: DL3Page { didSet { formIDs = Self.formIDs(page) } }
+    public var page: DL3Page { didSet { (formIDs, glyphSpans) = Self.summary(page) } }
     /// The forms the page draws (`needsPDFFallback(forms:)` runs over every
     /// page at each DONE: it walked every item, ~107 ms on main for 592
     /// pages of text in a debug build).
     public private(set) var formIDs: [UInt32] = []
-    static func formIDs(_ page: DL3Page) -> [UInt32] {
+    /// The span ids the page's GLYPH items carry, sorted and unique: forward
+    /// search's page summary (the app's EngineV3GlyphIndexes). Made with the
+    /// page, where it is prepared (the reader thread): made on main, the
+    /// caret follow after a whole compile summarized every page before the
+    /// caret's, 100 ms for page 887 of 1,152.
+    public private(set) var glyphSpans: [UInt32] = []
+    static func formIDs(_ page: DL3Page) -> [UInt32] { summary(page).forms }
+    /// One pass over the items: the form ids, and the glyphs' spans.
+    static func summary(_ page: DL3Page) -> (forms: [UInt32], spans: [UInt32]) {
         var ids: [UInt32] = []
-        for it in page.items { if case .form(let id, _) = it, !ids.contains(id) { ids.append(id) } }
-        return ids
+        var set = Set<UInt32>()
+        var span: UInt32 = 0, added: UInt32? = nil
+        for it in page.items {
+            switch it {
+            case .span(let s): span = s
+            case .glyph:
+                if added != span { set.insert(span); added = span }
+            case .form(let id, _):
+                if !ids.contains(id) { ids.append(id) }
+            default: break
+            }
+        }
+        return (ids, set.sorted())
     }
     public var fonts: [UInt16: DL3RenderFont]
     public var images: [UInt32: DL3RenderImage]
@@ -416,7 +435,7 @@ public struct DL3PreparedPage: @unchecked Sendable {
 
     public init(page: DL3Page, fonts: [UInt16: DL3RenderFont], images: [UInt32: DL3RenderImage], problems: [String] = []) {
         self.page = page; self.fonts = fonts; self.images = images; self.problems = problems
-        formIDs = Self.formIDs(page)
+        (formIDs, glyphSpans) = Self.summary(page)
     }
 
     public var widthPt: Double { page.boxWidth }

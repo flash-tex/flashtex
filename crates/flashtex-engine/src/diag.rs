@@ -784,10 +784,17 @@ impl Globals {
                 // the string may have been freed and remade since
                 let b = &st.files[id as usize];
                 let (a, e) = (self.str_start[s as usize], self.str_start[s as usize + 1]);
-                ((e - a) as usize == b.len()
-                    && (a..e)
+                ((e - a) as usize == b.len() && {
+                    // Every character is compared, with no early exit, so
+                    // the loop vectorises: this runs at each `\def`, and a
+                    // path is tens of characters (COLD-FIRST: the compare
+                    // was 1.6 % of a cold open of infdesc-x2).
+                    let pool = &self.str_pool[a as usize..e as usize];
+                    pool.iter()
                         .zip(b.iter())
-                        .all(|(i, &c)| self.str_pool[i as usize] as u8 == c))
+                        .fold(0u8, |d, (&x, &c)| d | (x as u8 ^ c))
+                        == 0
+                })
                 .then_some(id)
             }
             _ => None,
@@ -1217,9 +1224,11 @@ impl Globals {
     /// `\def` made token list `p` the macro's meaning.
     pub fn dg_def(&mut self, p: i32) {
         if enabled() {
-            if let Some((file, line, col)) = with(|s| s.def_at.take()) {
-                let print = fingerprint(self, p);
-                with(|s| {
+            // (the fingerprint first, so that the thread-local is entered
+            // once; `def_at` is set but for a `\def` read from the terminal)
+            let print = fingerprint(self, p);
+            with(|s| {
+                if let Some((file, line, col)) = s.def_at.take() {
                     let gen = s.gen;
                     s.defs.insert(
                         p,
@@ -1231,8 +1240,8 @@ impl Globals {
                             gen,
                         },
                     );
-                });
-            }
+                }
+            });
         }
     }
 

@@ -1263,6 +1263,8 @@ pub struct Globals {
     // §1920
     pub ls_taints: i32,
     // §1920
+    pub ls_taint_bits: i32,
+    // §1920
     pub ls_the_def: bool,
     // §1920
     pub ls_def_reads: bool,
@@ -1789,6 +1791,7 @@ pub const SCALAR_BYTES: usize = 0
     + crate::arena::slot::<bool>()
     + crate::arena::slot::<bool>()
     + crate::arena::slot::<bool>()
+    + crate::arena::slot::<i32>()
     + crate::arena::slot::<i32>()
     + crate::arena::slot::<i32>()
     + crate::arena::slot::<bool>()
@@ -2606,6 +2609,7 @@ impl Globals {
             ls_cond_tag: __arena.arr(__r_ls_cond_tag, 1001),
             ls_cond_depth: 0,
             ls_taints: 0,
+            ls_taint_bits: 0,
             ls_the_def: false,
             ls_def_reads: false,
             ls_tag_file: __arena.arr(__r_ls_tag_file, 65536),
@@ -3127,6 +3131,7 @@ impl Globals {
         v.pod(&mut self.intr_weak);
         v.pod(&mut self.ls_cond_depth);
         v.pod(&mut self.ls_taints);
+        v.pod(&mut self.ls_taint_bits);
         v.pod(&mut self.ls_the_def);
         v.pod(&mut self.ls_def_reads);
         v.pod(&mut self.bm_on);
