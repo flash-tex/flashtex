@@ -4778,6 +4778,29 @@ impl Session {
         self.paused.is_some()
     }
 
+    /// The client shows page `page` (0-based; `VIEWPORT`, lane MEMORY): if
+    /// retention kept no page checkpoint right before it (far from the last
+    /// edit, one in `Options::far`), run again from the kept one before it,
+    /// with nothing changed, so that the checkpoints near it are taken (the
+    /// cursor goes there) and a key there restarts close by. The run
+    /// converges at the old run's next kept checkpoint and jumps to its end,
+    /// as an edit's run does; its pages are the old ones. `None`: nothing to
+    /// do. The caller's `set_preempt` stops it for newer work, and the next
+    /// compile keeps what it typeset.
+    pub fn redensify(&mut self, page: usize) -> Result<Option<Report>, String> {
+        if self.paused.is_some() || self.g.is_none() || page == 0 || page > self.pages.len() {
+            return Ok(None);
+        }
+        if self.pages[page - 1].ckpt.is_some() {
+            return Ok(None);
+        }
+        let Some(ck) = self.pages[..page - 1].iter().rev().find_map(|p| p.ckpt) else {
+            return Ok(None);
+        };
+        self.reemit_from = Some(ck);
+        self.compile(None).map(Some)
+    }
+
     /// Compile the document as it is now. With `stop_at`, stop once that
     /// page has been shipped (L4); `finish` continues. A run that changed a
     /// file it read (the `.aux` its `\end{document}` rewrote, the `.toc`)
