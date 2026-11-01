@@ -143,6 +143,12 @@ pub fn note_unset_read() {
     }
 }
 
+/// Whether a read `note_unset_read` flagged is pending (`take_garbage_read`
+/// has not taken it).
+pub fn garbage_read_pending() -> bool {
+    GARBAGE_READ.with(|c| c.get())
+}
+
 /// Whether a read `note_unset_read` flagged happened since the last call.
 pub fn take_garbage_read() -> bool {
     GARBAGE_READ.with(|c| c.replace(false))

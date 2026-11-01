@@ -4219,6 +4219,10 @@ impl Session {
             ..Report::default()
         };
         self.after_run(t0, status, &mut rep)?;
+        // (from S₁, whose record may carry the mark: lane REVIEW)
+        if !rep.paused && crate::pdftex::take_garbage_read() {
+            return self.garbage_redo(t0, stop_at);
+        }
         Ok(rep)
     }
 
@@ -4921,7 +4925,15 @@ impl Session {
                     rep.paused_flt = paused_flt;
                     return Ok(rep);
                 }
-                // it typeset pages before the change: they stay
+                // it typeset pages before the change: they stay, unless
+                // it read a destination's unset words in memory not a
+                // scratch run's (`garbage_redo`; lane REVIEW): then back to
+                // the complete run it was replacing
+                Some(true) if crate::pdftex::garbage_read_pending() => {
+                    crate::pdftex::take_garbage_read();
+                    self.abandon_paused(true)?;
+                    paused_how = "abandoned";
+                }
                 Some(true) => {
                     self.settle_paused()?;
                     paused_how = "settled";
