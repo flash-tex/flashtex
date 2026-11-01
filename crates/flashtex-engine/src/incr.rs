@@ -4225,13 +4225,20 @@ impl Session {
         // `\end{document}`'s re-read of the `.aux` may follow)
         let aux = g.layer().aux_done.and_then(pos);
         let mut why = "no page checkpoint before the viewport".to_string();
+        // (each candidate skipped says why, the last one tried wins: what
+        // DONE's `s1_save` shows)
+        let mut kept = 0;
         for k in (S1_MIN_PAGES..=want.min(self.pages.len().saturating_sub(1))).rev() {
             let Some(id) = self.pages[k - 1].ckpt else {
                 continue;
             };
-            if pos(id).is_none_or(|p| aux.is_some_and(|a| p <= a))
-                || self.ck_pages.get(&id) != Some(&k)
-            {
+            kept += 1;
+            if pos(id).is_none_or(|p| aux.is_some_and(|a| p <= a)) {
+                why = format!("page {k}'s checkpoint is before the end of the .aux read");
+                continue;
+            }
+            if self.ck_pages.get(&id) != Some(&k) {
+                why = format!("page {k}'s checkpoint has another page count");
                 continue;
             }
             let reading_aux = g.record_of(id).is_ok_and(|r| {
@@ -4243,7 +4250,15 @@ impl Session {
                 why = "an .aux is being read there".into();
                 continue;
             }
-            if self.stale_midline.contains(&id) || !g.restorable(id) {
+            if self.stale_midline.contains(&id) {
+                why = format!("page {k}'s checkpoint holds a line read again");
+                continue;
+            }
+            if !g.restorable(id) {
+                why = format!(
+                    "page {k}'s checkpoint is not restorable ({})",
+                    g.unrestorable_why(id).unwrap_or_default()
+                );
                 continue;
             }
             // (L5: a state that lacks meanings its restores patch in)
@@ -4284,6 +4299,12 @@ impl Session {
             };
             // (a refusal holds for every earlier checkpoint too)
             return host::s1::prepare(g, input).map(|img| (k, img));
+        }
+        if kept == 0 {
+            why = format!(
+                "no page checkpoint of pages {S1_MIN_PAGES}..={want} is retained ({} pages)",
+                self.pages.len()
+            );
         }
         Err(why)
     }
