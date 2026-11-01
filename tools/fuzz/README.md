@@ -247,14 +247,26 @@ New findings are triaged as engine-diff issues.
 
 ## Findings so far
 
-- **Type 1 self-recursive subroutine (both engines crash).** A charstring
-  subroutine that calls itself (`callsubr` to its own index) overflows the
-  stack: pdfTeX 1.40.29 dies with SIGSEGV (exit 139) and the candidate aborts
+All three are fixed on main, so `known-findings.json` no longer lists them:
+a known finding is ignored every night, and a fixed bug coming back must fail
+the run, not pass it. Re-checked 2026-10-03 against main `c41a7b56a`.
+
+- **Type 1 self-recursive subroutine (both engines crashed).** A charstring
+  subroutine that calls itself (`callsubr` to its own index) overflowed the
+  stack: pdfTeX 1.40.29 dies with SIGSEGV (exit 139) and the candidate aborted
   with `fatal runtime error: stack overflow` (SIGABRT, exit 134). Found by
   `parsers/type1.py` (mutation `cs-recursion`, 12 of 2000 iterations, seed 202
-  against a `cmr10.pfb` seed). pdfTeX's own crash, so this is listed apart from
-  the engine-diff issues; DESIGN §4.5 (no panics) still wants the candidate to
-  fail gracefully. The seed font is a TeX Live file and is not committed.
-- **Header `\hbox{ }` with microtype `spacing`** (candidate panics, pdfTeX
-  exits 0) is #1219; `docgen.py` rediscovers it in about 7% of documents,
-  including the `\oddfoot` variant.
+  against a `cmr10.pfb` seed). Fixed by #1281 (#1237: `cs_mark` keeps its own
+  stack and gives a font error where pdfTeX never returns;
+  `crates/flashtex-engine/tests/type1_subr_nesting.rs`). Re-run: seed 202,
+  2000 iterations, no crash.
+- **Header `\hbox{ }` with microtype `spacing`** (candidate panicked at
+  `body_0.rs:1033`, pdfTeX exits 0) was #1219; `docgen.py` rediscovered it in
+  about 7% of documents, including the `\oddfoot` variant. Fixed by #1279
+  (`crates/flashtex-engine/tests/list_head_space.rs`, lockstep cases
+  2010-2015). Re-run: the header and footer variant exits 0 with no panic,
+  and `docgen.py` (seed 7, 150 documents) found no candidate crash.
+- **Font-count differences with font expansion** (`fontcount-diff:*`, #1220):
+  `\font` reused an expandable font. Fixed by #1280 (lockstep case
+  `2006-fontexpand-font-reuse.tex`). Re-run: the same 150 `docgen.py`
+  documents, no `fontcount-diff`.
