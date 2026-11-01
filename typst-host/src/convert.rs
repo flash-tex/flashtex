@@ -25,15 +25,15 @@ use flashtex_display_list::json::Json;
 use flashtex_display_list::page::{
     self, Color, Item, Link, LinkKind, Page, Path, Seg, StreamKind, Stroke,
 };
-use flashtex_display_list::resource::{Font as FontRes, Sources};
-use flashtex_display_list::sha256::sha256;
+use flashtex_display_list::resource::{Font as FontRes, ImageData, Sources};
+use flashtex_display_list::sha256::{hex, sha256};
 use typst::layout::{Abs, Frame, FrameItem, GroupItem, Point, Size, Transform};
 use typst::model::Destination;
 use typst::syntax::{FileId, Span};
 use typst::text::{FontInstance, TextItem};
 use typst::visualize::{
-    Color as TColor, Curve, CurveItem, FillRule, FixedStroke, Geometry, LineCap, LineJoin, Paint,
-    ProcessColorSpace, Shape,
+    Color as TColor, Curve, CurveItem, FillRule, FixedStroke, Geometry, ImageKind, LineCap,
+    LineJoin, Paint, ProcessColorSpace, RasterImage, Shape,
 };
 use typst::{World, WorldExt};
 use typst_layout::PagedDocument;
@@ -69,6 +69,14 @@ pub struct ClientCaps {
     pub color_spaces: bool,
     /// `accept` lists `line-state` (spec §11.4): stroked glyphs are drawn.
     pub line_state: bool,
+    /// `accept` lists `image-data` (spec §11.5): IMAGE with `"data": true`
+    /// and its IMAGE_DATA.
+    pub image_data: bool,
+    /// At most this many IMAGE_DATA bytes per compile (`--image-budget`;
+    /// `None`: [`DEFAULT_IMAGE_BUDGET`]). An image past it, or one whose
+    /// frame would pass the protocol's frame limit, makes its page
+    /// INCOMPLETE instead of ending the connection.
+    pub image_budget: Option<u64>,
     /// Draw what has no 2×/3× pixel gate row yet (DESIGN.md §15.5) as
     /// complete: ICC and Separation colours, alpha, stroked glyphs (the
     /// host's `--draw-ungated`, for measuring those rows). Off: the items
@@ -82,10 +90,15 @@ pub struct Accept {
     pub program_refs: bool,
     pub color_spaces: bool,
     pub line_state: bool,
+    pub image_data: bool,
 }
 
 /// The 3.3 `accept` token for `program_from` (spec §11.1, §11.7).
 pub const PROGRAM_REFS: &str = flashtex_display_list::accept::FONT_PROGRAM_REFS;
+
+/// Default per-compile budget of image bytes sent to a client (the host's
+/// `--image-budget`).
+pub const DEFAULT_IMAGE_BUDGET: u64 = 128 << 20;
 
 /// Default per-compile budget of font-program bytes sent to a client
 /// (the host's `--font-program-budget`).
@@ -135,6 +148,11 @@ pub struct Tables {
     span_lines: Vec<Option<(u32, u32)>>,
     /// Per-span resolution cache for this compile.
     span_cache: HashMap<Span, Option<SpanPos>>,
+    /// Image ids by key (spec §5.2, §11.5); id - 1 → key.
+    images: HashMap<[u8; 32], u32>,
+    image_keys: Vec<[u8; 32]>,
+    /// IMAGE_DATA bytes sent in the current compile (the budget).
+    image_bytes: u64,
 }
 
 #[derive(Clone, Copy)]
@@ -169,6 +187,7 @@ impl Tables {
     pub fn begin_compile(&mut self) {
         self.span_cache.clear();
         self.program_bytes = 0;
+        self.image_bytes = 0;
     }
 }
 
@@ -176,6 +195,8 @@ impl Tables {
 pub struct PageOut {
     /// FONT frames this page needs first (bodies).
     pub fonts: Vec<Vec<u8>>,
+    /// IMAGE and IMAGE_DATA frames this page needs first (bodies).
+    pub images: Vec<(Vec<u8>, Vec<u8>)>,
     /// A SOURCES frame this page needs first, if any.
     pub sources: Option<Json>,
     /// The PAGE body.
@@ -227,6 +248,11 @@ struct Walker<'a, 'w> {
     path_misaligned: usize,
     /// Runs not found where the PDF should show them.
     misaligned: usize,
+    /// The PDF's XObjects (`Do`) consumed, and an allowance after an SVG or
+    /// PDF image (whose own raster images the PDF draws inline).
+    image_at: usize,
+    image_op_gap: bool,
+    images_out: Vec<(Vec<u8>, Vec<u8>)>,
     page: Page,
     matrices: HashMap<[u64; 6], u32>,
     unsupported: HashMap<String, u32>,
@@ -295,6 +321,9 @@ pub fn page(
         unsupported: HashMap::new(),
         origins: Vec::new(),
         fonts_out: Vec::new(),
+        image_at: 0,
+        image_op_gap: false,
+        images_out: Vec::new(),
         sources_out: Sources::default(),
         fill: None,
         stroke: None,
@@ -374,9 +403,15 @@ pub fn page(
         page.meta = Some(meta.to_string());
     }
     let font_list = &wk.tables.font_list;
+    let image_keys = &wk.tables.image_keys;
     page.hash = page.content_hash(
         &|id| font_list.get(id as usize).map(|f| f.key).unwrap_or([0; 32]),
-        &|_| [0; 32],
+        &|id| {
+            image_keys
+                .get((id as usize).wrapping_sub(1))
+                .copied()
+                .unwrap_or([0; 32])
+        },
     );
     let body = page.encode();
     let sources = if wk.sources_out.files.is_empty() && wk.sources_out.spans.is_empty() {
@@ -389,6 +424,7 @@ pub fn page(
     }
     Ok(PageOut {
         fonts: wk.fonts_out,
+        images: wk.images_out,
         sources,
         body,
         glyphs,
@@ -404,13 +440,23 @@ impl<'a> Walker<'a, '_> {
                 FrameItem::Group(g) => self.group(g, ts),
                 FrameItem::Text(t) => self.text(t, ts),
                 FrameItem::Shape(s, span) => self.shape(s, *span, ts),
-                FrameItem::Image(_, _, span) => {
+                FrameItem::Image(image, size, span) => {
                     // An SVG image's text is drawn inline in the PDF: the
                     // next run may start after glyphs of the image's own.
                     self.image_gap = true;
                     self.path_gap = true;
                     self.set_span(*span, None);
-                    self.unsupported("image (display-list-v3.3 E6)");
+                    match image.kind() {
+                        ImageKind::Raster(r) => self.raster(r, *size, ts),
+                        ImageKind::Svg(_) => {
+                            self.image_op_gap = true;
+                            self.unsupported("SVG image (display-list-v3.3 E5 island)");
+                        }
+                        ImageKind::Pdf(_) => {
+                            self.image_op_gap = true;
+                            self.unsupported("PDF image (display-list-v3.3 E5 island)");
+                        }
+                    }
                 }
                 FrameItem::Link(dest, size) => self.link(dest, *size, ts),
                 FrameItem::Tag(_) => {}
@@ -449,6 +495,169 @@ impl<'a> Walker<'a, '_> {
         } else {
             self.frame(&g.frame, ts);
         }
+    }
+
+    /// A raster image (spec §5.2, §11.5): the PDF's image XObject and the
+    /// CTM it is drawn with, found where the frame puts the image (the unit
+    /// square's corners within [`ALIGN_BP`]); the pixels are the PDF's
+    /// (`raw` samples after typst-pdf's conversion, or the JPEG it passes
+    /// through), sent once per connection.
+    fn raster(&mut self, raster: &RasterImage, size: Size, ts: Transform) {
+        // typst-pdf draws a JPEG with its EXIF orientation as a transform,
+        // and nothing for an image krilla's size cannot hold (zero, say).
+        let (exif, size) = exif_transform(raster, size);
+        let ts = ts.pre_concat(exif);
+        let (wf, hf) = (size.x.to_pt() as f32, size.y.to_pt() as f32);
+        if !(wf.is_finite() && hf.is_finite() && wf > 0.0 && hf > 0.0) {
+            return;
+        }
+        if self.caps.minor < 3 || !self.caps.image_data {
+            self.unsupported("image (display-list-v3.3 E6: accept image-data)");
+            return;
+        }
+        let Some(pp) = self.pdf else {
+            self.unsupported("image without the PDF's positions");
+            return;
+        };
+        let m = self.ctm6(ts);
+        let pt = |x: f64, y: f64| [x * m[0] + y * m[2] + m[4], x * m[1] + y * m[3] + m[5]];
+        let (w, h) = (size.x.to_pt(), size.y.to_pt());
+        // The unit square's (0,0), (1,0), (0,1): the image's bottom-left,
+        // bottom-right and top-left corners.
+        let want = [pt(0.0, h), pt(w, h), pt(0.0, 0.0)];
+        let fits = |op: &pdfpos::ImageOp| {
+            let c = op.ctm;
+            let got = [
+                [c[4], c[5]],
+                [c[0] + c[4], c[1] + c[5]],
+                [c[2] + c[4], c[3] + c[5]],
+            ];
+            !op.form
+                && got.iter().zip(&want).all(|(g, w)| {
+                    (g[0] - w[0]).abs() <= ALIGN_BP && (g[1] - w[1]).abs() <= ALIGN_BP
+                })
+        };
+        let start = self.image_at;
+        let found = if pp.images.get(start).is_some_and(fits) {
+            Some(start)
+        } else if self.image_op_gap {
+            (start + 1..pp.images.len()).find(|&k| fits(&pp.images[k]))
+        } else {
+            None
+        };
+        self.image_op_gap = false;
+        let Some(k) = found else {
+            self.image_at = start + 1;
+            self.unsupported("image: not where the PDF draws it");
+            return;
+        };
+        self.image_at = k + 1;
+        let op = &pp.images[k];
+        if let Some(st) = &op.unsupported_state {
+            let m = format!("image under {st} (not drawn by display-list v3.3)");
+            self.unsupported(&m);
+            return;
+        }
+        if op.fill_alpha != 1.0 {
+            self.unsupported("image with alpha (display-list-v3.3 E3)");
+            return;
+        }
+        let img = match &op.image {
+            Ok(i) => i.clone(),
+            Err(e) => {
+                let m = format!("image: {e}");
+                self.unsupported(&m);
+                return;
+            }
+        };
+        let Some(id) = self.image_id(&img) else {
+            return;
+        };
+        self.gate("raster image (display-list-v3.3 E6)");
+        let n = self.matrix(op.ctm);
+        self.page.items.push(Item::Image { id, matrix: n });
+    }
+
+    /// The connection's id for an image, queueing its IMAGE and IMAGE_DATA
+    /// the first time a page uses it (`None`, and the page INCOMPLETE,
+    /// when its data cannot be decoded).
+    fn image_id(&mut self, img: &pdfpos::PdfImage) -> Option<u32> {
+        let jpeg = img.encoding == pdfpos::ImageEncoding::Jpeg;
+        let mut info = vec![
+            (
+                "type".to_string(),
+                Json::Str(if jpeg { "jpeg" } else { "raw" }.into()),
+            ),
+            ("data".into(), Json::Bool(true)),
+            ("width".into(), Json::Int(img.width as i64)),
+            ("height".into(), Json::Int(img.height as i64)),
+            ("components".into(), Json::Int(img.components as i64)),
+            ("bits".into(), Json::Int(img.bits as i64)),
+            ("interpolate".into(), Json::Bool(img.interpolate)),
+            ("smask".into(), Json::Bool(img.mask.is_some())),
+            ("icc".into(), Json::Bool(img.icc.is_some())),
+        ];
+        let mut h = flashtex_display_list::sha256::Sha256::new();
+        h.update(b"display-list-v3 image\0");
+        h.update(Json::Obj(info.clone()).to_string().as_bytes());
+        for part in [
+            Some(img.data.as_slice()),
+            img.mask.as_ref().map(|m| m.1.as_slice()),
+            img.icc.as_ref().map(|p| p.as_slice()),
+        ]
+        .into_iter()
+        .flatten()
+        {
+            h.update(&sha256(part));
+        }
+        let key = h.finish();
+        if let Some(&id) = self.tables.images.get(&key) {
+            return Some(id);
+        }
+        // The budget, before anything is decoded: per compile, and below
+        // the frame limit for this one IMAGE_DATA.
+        let budget = self.caps.image_budget.unwrap_or(DEFAULT_IMAGE_BUDGET);
+        let size = img.data_len();
+        let frame_room = flashtex_display_list::frame::MAX_FRAME as u64 - 64;
+        match size {
+            Some(n) if n <= frame_room && self.tables.image_bytes.saturating_add(n) <= budget => {
+                self.tables.image_bytes += n;
+            }
+            _ => {
+                self.unsupported("image data over the per-compile budget (--image-budget)");
+                return None;
+            }
+        }
+        let parts = (|| -> Result<Vec<Vec<u8>>, String> {
+            let mut p = vec![img.data_part()?];
+            if let Some(m) = img.mask_part()? {
+                p.push(m);
+            }
+            if let Some(icc) = &img.icc {
+                p.push(icc.as_ref().clone());
+            }
+            Ok(p)
+        })();
+        let parts = match parts {
+            Ok(p) => p,
+            Err(e) => {
+                let m = format!("image: {e}");
+                self.unsupported(&m);
+                return None;
+            }
+        };
+        let id = self.tables.image_keys.len() as u32 + 1;
+        self.tables.image_keys.push(key);
+        self.tables.images.insert(key, id);
+        let mut kv = vec![
+            ("id".to_string(), Json::Int(id as i64)),
+            ("key".into(), Json::Str(hex(&key))),
+        ];
+        kv.append(&mut info);
+        let body = ImageData { id, parts }.encode();
+        self.images_out
+            .push((Json::Obj(kv).to_string().into_bytes(), body));
+        Some(id)
     }
 
     /// Frame origins of a run's glyphs, stream space (y up).
@@ -1516,6 +1725,53 @@ fn fmt(v: f64) -> String {
         "0".into()
     } else {
         s
+    }
+}
+
+/// typst-pdf's `exif_transform`: a JPEG is not re-encoded, so its EXIF
+/// orientation is drawn as a transform of the image's box, which may swap
+/// its sides.
+///
+/// Adapted from typst-pdf 0.15.1, src/image.rs, `exif_transform`
+/// (Copyright the Typst project authors; Apache License, Version 2.0).
+/// Modified: import paths and comments only. See typst-host/NOTICE.
+fn exif_transform(image: &RasterImage, size: Size) -> (Transform, Size) {
+    use typst::layout::{Angle, Ratio};
+    use typst::visualize::{ExchangeFormat, RasterFormat};
+    if image.format() != RasterFormat::Exchange(ExchangeFormat::Jpg) {
+        return (Transform::identity(), size);
+    }
+    let base = |hp: bool, vp: bool, mut base_ts: Transform, size: Size| {
+        if hp {
+            base_ts = base_ts.pre_concat(
+                Transform::scale(-Ratio::one(), Ratio::one())
+                    .pre_concat(Transform::translate(-size.x, Abs::zero())),
+            )
+        }
+        if vp {
+            base_ts = base_ts.pre_concat(
+                Transform::scale(Ratio::one(), -Ratio::one())
+                    .pre_concat(Transform::translate(Abs::zero(), -size.y)),
+            )
+        }
+        base_ts
+    };
+    let no_flipping = |hp: bool, vp: bool| (base(hp, vp, Transform::identity(), size), size);
+    let with_flipping = |hp: bool, vp: bool| {
+        let base_ts = Transform::rotate_at(Angle::deg(90.0), Abs::zero(), Abs::zero())
+            .pre_concat(Transform::scale(Ratio::one(), -Ratio::one()));
+        let inv_size = Size::new(size.y, size.x);
+        (base(hp, vp, base_ts, inv_size), inv_size)
+    };
+    match image.exif_rotation() {
+        Some(2) => no_flipping(true, false),
+        Some(3) => no_flipping(true, true),
+        Some(4) => no_flipping(false, true),
+        Some(5) => with_flipping(false, false),
+        Some(6) => with_flipping(false, true),
+        Some(7) => with_flipping(true, true),
+        Some(8) => with_flipping(true, false),
+        _ => no_flipping(false, false),
     }
 }
 

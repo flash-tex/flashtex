@@ -193,6 +193,8 @@ struct CaptureView: View {
                     .font(.footnote.weight(.medium))
                     .foregroundStyle(model.link.isConnected ? .primary : .secondary)
                     .lineLimit(1).truncationMode(.tail)
+                    .accessibilityLabel("Connection status")
+                    .accessibilityValue(model.link.isConnected ? "Connected to \(model.pairedMac?.macName ?? "Mac")" : "Not connected: \(model.linkStatus)")
                     .accessibilityIdentifier("capture.connection")
                 Group {
                     if let d = model.destination {
@@ -207,6 +209,8 @@ struct CaptureView: View {
             .frame(maxWidth: 300, alignment: .leading)
             if !model.link.isConnected, model.pairedMac != nil, !model.reconnecting {
                 Button("Reconnect") { Task { await model.autoReconnect() } }.buttonStyle(.bordered).controlSize(.small)
+                    .accessibilityLabel("Reconnect to \(model.pairedMac?.macName ?? "Mac")")
+                    .accessibilityValue("Available")
                     .accessibilityIdentifier("capture.reconnect")
             }
             if model.reconnecting { ProgressView().controlSize(.small) }
@@ -269,13 +273,16 @@ struct CaptureView: View {
     @ViewBuilder private func imageSourceButtons(inline: Bool) -> some View {
         if Self.cameraAvailable {
             Button { cameraShown = true } label: { sourceLabel("Camera", "camera", inline) }
+                .accessibilityLabel("Take photo with camera")
                 .accessibilityIdentifier("capture.camera")
         }
         PhotosPicker(selection: $photo, matching: .images) {
             sourceLabel(Self.cameraAvailable ? "Photo…" : "Photo… (no camera here)", "photo", inline)
         }
+        .accessibilityLabel("Choose photo from library")
         .accessibilityIdentifier("capture.photo")
         Button { loadSample() } label: { sourceLabel("Sample image", "photo.on.rectangle", inline) }
+            .accessibilityLabel("Load sample image")
             .accessibilityIdentifier("capture.sample")
     }
 
@@ -328,6 +335,8 @@ struct CaptureView: View {
                 }
                 .buttonStyle(.borderedProminent)
                 .disabled(sending)
+                .accessibilityLabel("Send capture")
+                .accessibilityValue(sending ? "Sending" : model.link.isConnected ? "Ready to send" : "Disabled, not connected")
                 .accessibilityIdentifier("capture.send")
             }
             if let p = problem {
