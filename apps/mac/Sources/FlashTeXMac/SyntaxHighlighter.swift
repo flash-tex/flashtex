@@ -72,6 +72,17 @@ struct SyntaxTheme: Sendable {
 final class SyntaxPainter {
     static let key = NSAttributedString.Key.foregroundColor
     static let padding = 4_000
+    /// Lines an edit re-lexes before leaving the rest to `catchUpStep`: past
+    /// the painted window (`padding` characters either side of the visible
+    /// lines) for ordinary line lengths; whatever is painted beyond is
+    /// repainted as the catch-up reaches it.
+    static let relexLineBudget = 300
+    /// Lines per idle catch-up step: one step per run-loop turn, small
+    /// enough that a keystroke arriving meanwhile waits for little.
+    static let catchUpLines = 500
+    private var catchUpScheduled = false
+    /// Idle catch-up steps run (tests).
+    private(set) var catchUpSteps = 0
 
     private(set) var highlighter = SyntaxHighlighter()
     /// Disjoint, sorted ranges whose temporary colours match the highlighter.
@@ -192,7 +203,12 @@ final class SyntaxPainter {
             return
         }
         conceal?.textEdited(range: range, replacementLength: replacementLength) // before the edit: it reads the old line table
-        let dirty = highlighter.edit(range: range, replacementLength: replacementLength, text: text)
+        // Bounded: an opened `\begin{verbatim}`/`\begin{comment}` changes every
+        // line below it, and lexing all of them here held the keystroke
+        // (55 K lines at 3 MB). The rest is caught up in idle steps.
+        let dirty = highlighter.edit(range: range, replacementLength: replacementLength, text: text,
+                                     lineBudget: Self.relexLineBudget)
+        if highlighter.staleFrom != nil { scheduleCatchUp() }
         lastEditLinesLexed = highlighter.lastEditLinesLexed
         shiftPainted(edit: range, replacementLength: replacementLength)
         // Nothing here may touch layout (`Self.window(for:)`, glyph queries):
@@ -288,10 +304,40 @@ final class SyntaxPainter {
         return result
     }
 
+    /// After a bounded edit: the stale tail is re-lexed a step per run-loop
+    /// turn (keystrokes interleave), each step's lines repainted where painted.
+    private func scheduleCatchUp() {
+        guard !catchUpScheduled else { return }
+        catchUpScheduled = true
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            self.catchUpScheduled = false
+            self.catchUpStep()
+        }
+    }
+
+    private func catchUpStep() {
+        guard !resetScheduled, let tv = textView, let storage = tv.textStorage, highlighter.staleFrom != nil else { return }
+        guard storage.editedMask.isEmpty, highlighter.length == storage.length else { scheduleCatchUp(); return }
+        catchUpSteps += 1
+        if let d = highlighter.catchUp(lines: Self.catchUpLines, text: storage.string as NSString), d.length > 0 {
+            pendingDirty = pendingDirty.map { NSUnionRange($0, d) } ?? d
+            flush()
+        }
+        if highlighter.staleFrom != nil { scheduleCatchUp() }
+    }
+
     private func extend(to window: NSRange) {
         guard let tv = textView, let lm = tv.layoutManager else { return }
         let text = tv.textStorage?.string as NSString? ?? ""
         let whole = NSRange(location: 0, length: text.length)
+        // Scrolled past a stale point: the lines through the window first.
+        if let stale = highlighter.staleFrom, highlighter.length == text.length,
+           highlighter.line(at: max(0, min(NSMaxRange(window), text.length) - 1)) > stale,
+           let d = highlighter.catchUp(through: highlighter.line(at: max(0, min(NSMaxRange(window), text.length) - 1)), text: text) {
+            pendingDirty = pendingDirty.map { NSUnionRange($0, d) } ?? d
+            if highlighter.staleFrom != nil { scheduleCatchUp() }
+        }
         var count = 0
         for gap in gaps(in: window) {
             let r = NSIntersectionRange(gap, whole)
@@ -301,6 +347,10 @@ final class SyntaxPainter {
         }
         if count > 0 { paints += 1; runsPainted += count }
         painted = Self.merged(painted + [window])
+        if pendingDirty != nil, !flushScheduled { // lines caught up above that were painted before
+            flushScheduled = true
+            DispatchQueue.main.async { [weak self] in self?.flushScheduled = false; self?.flush() }
+        }
     }
 
     @discardableResult
