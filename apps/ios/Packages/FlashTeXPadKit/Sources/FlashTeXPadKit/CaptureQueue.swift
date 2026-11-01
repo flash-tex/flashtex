@@ -175,14 +175,47 @@ public final class CaptureQueue: @unchecked Sendable {
         update(id) { if !$0.status.isTerminal { $0.status = .discarded } }
     }
 
+    /// One delivery attempt taken by `beginSend`: the record as it was when
+    /// the attempt was claimed, and the attempt number now on the row.
+    public struct SendClaim {
+        public let id: String
+        public let attempt: Int
+        let record: CaptureRecord
+    }
+
+    /// Claims `id` for one delivery attempt and flips it to `sending` in the
+    /// same locked step, so a second tap (Send / Retry pressed again while the
+    /// first attempt is out) finds `sending` and is refused here instead of
+    /// starting a second `capture_submit`. Nil when the record is terminal,
+    /// unknown, or an attempt is already in flight. Synchronous, so the caller
+    /// can publish the `sending` row before the first suspension.
+    public func beginSend(_ id: String) -> SendClaim? {
+        lock.withLock {
+            guard let i = _records.firstIndex(where: { $0.id == id }) else { return nil }
+            let attempt: Int
+            switch _records[i].status {
+            case .drafted: attempt = 1
+            case .disconnected(_, let n): attempt = n + 1
+            case .sending, .received, .refused, .discarded: return nil
+            }
+            let r = _records[i]
+            _records[i].status = .sending(attempt: attempt)
+            persistLocked()
+            return SendClaim(id: id, attempt: attempt, record: r)
+        }
+    }
+
     /// `capture_submit` → `capture_received`; any `error` reply is terminal for
     /// this payload (`refused`); a closed connection leaves the record
-    /// retryable with the same id.
+    /// retryable with the same id. A no-op while another attempt is in flight.
     public func send(_ id: String) async {
-        guard let r = record(id), !r.status.isTerminal else { return }
-        let attempt: Int
-        if case .disconnected(_, let n) = r.status { attempt = n + 1 } else { attempt = 1 }
-        update(id) { $0.status = .sending(attempt: attempt) }
+        guard let claim = beginSend(id) else { return }
+        await send(claim)
+    }
+
+    /// Delivers an attempt `beginSend` claimed.
+    public func send(_ claim: SendClaim) async {
+        let id = claim.id, r = claim.record, attempt = claim.attempt
         do {
             guard let session = link.session, let pair = link.pair else { throw NearbyError.closed("not connected to a Mac") }
             if let bound = r.pairId, bound != pair.pairId {
