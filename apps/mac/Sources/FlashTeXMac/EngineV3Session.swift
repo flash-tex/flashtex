@@ -1856,6 +1856,7 @@ final class EngineV3Session {
             }
         case .page(let p, let compileID, let timing, let image):
             let index = Int(p.page.index)
+            guard index < Self.maxPages else { log("PAGE \(index) ignored: beyond \(Self.maxPages) pages"); return }
             let changed = pages[index]?.page.hash != p.page.hash
             let sizeChanged = pages[index].map { $0.widthPt != p.widthPt || $0.heightPt != p.heightPt } ?? true
             pages[index] = p
@@ -1896,10 +1897,10 @@ final class EngineV3Session {
             if let n = j["count"]?.int { setCount(Int(n), complete: false) }
             var newStale = Set<Int>()
             for r in j["stale"]?.array ?? [] {
-                if let a = r.array, a.count == 2, let lo = a[0].int, let hi = a[1].int, lo <= hi { newStale.formUnion(Int(lo) ... Int(hi)) }
+                if let range = Self.pageRange(r) { newStale.formUnion(range) }
             }
             for r in j["current"]?.array ?? [] {
-                if let a = r.array, a.count == 2, let lo = a[0].int, let hi = a[1].int, lo <= hi { stale.subtract(Int(lo) ... Int(hi)) }
+                if let range = Self.pageRange(r) { stale = stale.filter { !range.contains($0) } } // O(stale), not O(range)
             }
             // The host's "current" is about the pages it sent, never a stored one.
             markStale(stale.union(newStale))
@@ -1934,7 +1935,7 @@ final class EngineV3Session {
                 Self.walkQueue.async { p.markComplete() }
             }
             if status != "cancelled" {
-                let made = j["pages"]?.int.map(Int.init)
+                let made = j["pages"]?.int.map { Int(min(max($0, 0), Int64(Self.maxPages))) } // (bounded: `setCount`)
                 MainThreadProbe.time("v3.done.recount") { recount() }
                 if compileFatal, let n = made, n < pageCount {
                     // TeX stopped (EngineV3ErrorPolicy): the pages it made
@@ -2469,7 +2470,21 @@ final class EngineV3Session {
 
     /// Pages on screen: a complete count is the document's (pages past it
     /// go); an incomplete one (a compile in progress) never hides pages.
+    /// More pages than any document has: a page index or count from the
+    /// host beyond it is a corrupt message, not a page (every `0 ..< pageCount`
+    /// walk on main would otherwise run for billions of steps).
+    nonisolated static let maxPages = 100_000
+
+    /// A PAGES `[lo, hi]` range clamped to `0 ..< maxPages`; nil when empty
+    /// or malformed.
+    nonisolated static func pageRange(_ r: DL3JSON) -> ClosedRange<Int>? {
+        guard let a = r.array, a.count == 2, let lo = a[0].int, let hi = a[1].int else { return nil }
+        let l = max(lo, 0), h = min(hi, Int64(maxPages - 1))
+        return l <= h ? Int(l) ... Int(h) : nil
+    }
+
     private func setCount(_ n: Int, complete: Bool) {
+        let n = min(max(n, 0), Self.maxPages) // a negative count would trap every `0 ..< pageCount`
         guard n != pageCount || complete else { return }
         guard complete || n > pageCount else { return }
         if complete, n < pageCount {
