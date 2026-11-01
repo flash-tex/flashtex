@@ -86,6 +86,10 @@ final class EngineV3Session {
     /// cycle: kept apart from the TeX run's, which a follow-up compile's
     /// STARTED resets, and shown with them.
     @ObservationIgnored private var toolDiagnostics: [DL3JSON] = []
+    /// The reads an untrusted project's confined host refused (its
+    /// `refusals()`, read at each DONE): one Problems row each, with
+    /// "Trust This Project". Empty for a trusted project and in Live Share.
+    @ObservationIgnored private(set) var blockedReads: [String] = []
     @ObservationIgnored private var toolCycleID = -1
     /// Makes the Problems rows (TeX's of the last DONE, then the tools'), off
     /// the main thread for a long document (EngineV3Problems.swift).
@@ -529,9 +533,11 @@ final class EngineV3Session {
         log("starting \(exe.path) (\(mode.mode.rawValue) mode: \(mode.source))")
         let ref = EngineV3WeakRef(self)
         do {
-            // A Live Share session (or a session copy) compiles in a host
-            // launched confined; `compile` relaunches when that changes.
-            let h = try EngineV3HostProcess(executable: exe, mode: mode.mode, format: mode.format, confineRoots: model.flatMap(Self.confineRoots)) { event in
+            // A Live Share session (or a session copy) and an untrusted
+            // project compile in a host launched confined; `compile`
+            // relaunches when that changes.
+            blockedReads = []
+            let h = try EngineV3HostProcess(executable: exe, mode: mode.mode, format: mode.format, confineRoots: model.flatMap { confineRoots(for: $0) }) { event in
                 EngineV3Session.onMain { ref.value?.hostEvent(event) }
             }
             host = h
@@ -929,6 +935,85 @@ final class EngineV3Session {
         return [model.project.projectRoot?.resolvingSymlinksInPath().path].compactMap { $0 }
     }
 
+    /// The roots the host compiling `model`'s project must be confined to:
+    /// Live Share's (`confineRoots(_:)`), else an untrusted project's
+    /// (`untrustedRoots`), else nil (pdfTeX's own rules, exactly).
+    func confineRoots(for model: ShellModel) -> [String]? {
+        if let r = Self.confineRoots(model) { return r }
+        guard let root = model.project.projectRoot else { return nil }
+        // The walk's decision applies to the project it was made for.
+        let decided: Bool? = !trustPending && project?.source == root ? projectTrusted : nil
+        let main = root.appendingPathComponent(Self.mainFile(model: model))
+        guard Self.wantsUntrustedConfinement(root: root, main: main, decided: decided) else { return nil }
+        return Self.untrustedRoots(projectRoot: root)
+    }
+
+    /// Whether a project's compiles are read-confined because it is not
+    /// trusted (Commander ruling, lane TRANSFER-AUDIT): a quarantined
+    /// download, a received project or a Live Share copy edited by a
+    /// guest, until the user trusts it (EngineV3Trust: per project,
+    /// persisted). The app compiles a project as soon as it is opened,
+    /// which pdflatex never does unasked, so a project must not read
+    /// `~/.ssh` or `~/Library` into its PDF before anyone chose to run it.
+    /// `decided`: the walk's decision for this project, nil before it: then
+    /// the records decide (a quarantined folder or main file not on record
+    /// is untrusted), so the first compile is confined too. A project made
+    /// here or cloned with git has no quarantine and is never confined.
+    nonisolated static func wantsUntrustedConfinement(root: URL, main: URL?, decided: Bool?,
+                                                      store: EngineV3Trust.Store = .current) -> Bool {
+        if let decided { return !decided }
+        return !EngineV3Trust.isTrusted(root: root, main: main, store: store)
+    }
+
+    /// What an untrusted project's compiles may read besides the job's and
+    /// output folders and files found along the TeX search paths (which the
+    /// engine allows when no link is on their path): the project folder,
+    /// the TeX Live tree, the app's own resources and the system's font
+    /// folders. Never the home folder.
+    nonisolated static func untrustedRoots(projectRoot: URL) -> [String] {
+        var roots = [projectRoot.resolvingSymlinksInPath().path]
+        if let tl = texLiveRoot() { roots.append(tl) }
+        if let res = Bundle.main.resourceURL { roots.append(res.resolvingSymlinksInPath().path) }
+        roots += ["/System/Library/Fonts", "/Library/Fonts"]
+        roots.append((NSHomeDirectory() as NSString).appendingPathComponent("Library/Fonts"))
+        var out: [String] = []
+        for r in roots where !out.contains(r) { out.append(r) }
+        return out
+    }
+
+    /// The TeX Live tree the engine uses: the year folder above the first
+    /// `kpsewhich` it would find (EngineChoice.texLiveCandidates), links
+    /// resolved (`/Library/TeX/texbin` is a link chain into it).
+    nonisolated static func texLiveRoot(environment env: [String: String] = ProcessInfo.processInfo.environment) -> String? {
+        for dir in EngineChoice.texLiveCandidates(environment: env) {
+            let k = URL(fileURLWithPath: dir).appendingPathComponent("kpsewhich")
+            guard FileManager.default.isExecutableFile(atPath: k.path) else { continue }
+            let real = k.resolvingSymlinksInPath()
+            // <root>/bin/<arch>/kpsewhich
+            let root = real.deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+            guard root.path != "/", FileManager.default.fileExists(atPath: root.appendingPathComponent("texmf-dist").path) else { return nil }
+            return root.path
+        }
+        return nil
+    }
+
+    /// The Problems rows' code for a read confinement refused (the row's
+    /// "Trust This Project" action, DiagnosticsPanel).
+    nonisolated static let untrustedReadCode = "untrusted-read"
+
+    /// One Problems row per read the confined host refused (its
+    /// `refusals()` lines: `name`, or `name<TAB>where it led`).
+    nonisolated static func blockedReadProblems(_ lines: [String]) -> [RuntimeV1.Diagnostic] {
+        lines.map { line in
+            let parts = line.split(separator: "\t", maxSplits: 1).map(String.init)
+            let name = parts.first ?? line
+            let led = parts.count > 1 ? " (it leads to \(parts[1]))" : ""
+            return RuntimeV1.Diagnostic(severity: .warning,
+                                        message: "Blocked reading \(name)\(led): this project came from another computer and is not trusted yet.",
+                                        source: nil, recovery: nil, code: untrustedReadCode)
+        }
+    }
+
     /// Relaunches the host when its confinement no longer matches the
     /// project's (a session started or ended, another project opened);
     /// leaving confinement clears the copy's output folder, so nothing a
@@ -937,11 +1022,14 @@ final class EngineV3Session {
     @discardableResult
     func relaunchIfConfinementChanged(model: ShellModel) -> Bool {
         guard let host else { return false }
-        let want = Self.confineRoots(model)
+        let want = confineRoots(for: model)
         guard host.confineRoots != want else { return false }
-        log("relaunching the host \(want == nil ? "unconfined" : "confined") (Live Share)")
+        // Live Share confines to the project alone; trust adds the TeX tree and fonts.
+        let why = Self.confineRoots(model) != nil || host.confineRoots?.count == 1 ? "Live Share" : "project trust"
+        log("relaunching the host \(want == nil ? "unconfined" : "confined") (\(why))")
         if host.confined, want == nil { clearOutputAfterSession() }
-        stopRunningCompile(statusNote: "restarting the engine for Live Share", firstError: nil)
+        blockedReads = []
+        stopRunningCompile(statusNote: "restarting the engine for \(why)", firstError: nil)
         stalledTexts = nil
         return true
     }
@@ -963,7 +1051,7 @@ final class EngineV3Session {
     /// project needs (the race of a keystroke right after a session starts).
     func fastPathAllowed(model: ShellModel) -> Bool {
         guard let host else { return false }
-        return host.confineRoots == Self.confineRoots(model)
+        return host.confineRoots == confineRoots(for: model)
     }
 
     /// The project copy's output folder (tests).
@@ -1703,7 +1791,7 @@ final class EngineV3Session {
                                  announce: Bool = false, scanPackages: Bool = false) {
         problemsOwed = false
         let job = EngineV3ProblemsPipeline.Job(
-            tex: tex, clearTeX: problemsClearTeX, tools: toolDiagnostics,
+            tex: tex, clearTeX: problemsClearTeX, tools: toolDiagnostics, blocked: Self.blockedReadProblems(blockedReads),
             documents: tex?.documents ?? model.documentTexts, roots: tex?.roots ?? Self.copyRoots(project?.root),
             texts: tex?.texts ?? model.compiledDocuments, documentOrder: model.chrome.listing.map(\.path),
             announce: announce, scanPackages: scanPackages)
@@ -1986,6 +2074,14 @@ final class EngineV3Session {
                     // The rows are made from the compile's own inputs, off
                     // main for a long document (`publishProblems`); VoiceOver
                     // and the package scan follow their publication.
+                    // An untrusted project's refused reads (not Live Share's:
+                    // trusting does not end a session's confinement).
+                    if let host, host.confined, Self.confineRoots(model) == nil {
+                        let r = host.refusals()
+                        if r != blockedReads { blockedReads = r }
+                    } else if !blockedReads.isEmpty {
+                        blockedReads = []
+                    }
                     let tex = EngineV3ProblemsPipeline.TeXInput(
                         diags: diags, diagnostics: diags.isEmpty ? diagnostics : [], texts: texts, documents: model.documentTexts,
                         roots: Self.copyRoots(project?.root), mode: errorMode, engine: engineName)

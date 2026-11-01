@@ -347,4 +347,41 @@ final class EngineV3TrustTests: XCTestCase {
         XCTAssertEqual(EngineV3Trust.Store.current.load().map(\.path), [EngineV3Trust.canonical(file).path])
         _ = dir
     }
+
+    /// End to end through the host: an untrusted (quarantined) project's
+    /// read of a file outside its folder is refused (the document has no
+    /// second page) and listed as one Problems row with "Trust This
+    /// Project"; trusting it relaunches the host unconfined, the file is
+    /// read (a second page) and the row is gone.
+    @MainActor
+    func testUntrustedProjectReadsOnlyItsOwnFolderUntilTrusted() async throws {
+        guard EngineV3.locateHost() != nil else { throw EngineV3TestHost.unavailable("no flashtex-host built") }
+        let outside = FileManager.default.temporaryDirectory.appendingPathComponent("engine-v3-outside-\(UUID().uuidString).tex")
+        try "secret".write(to: outside, atomically: true, encoding: .utf8)
+        made.append(outside)
+        let (dir, file) = try project("\\documentclass{article}\n\\begin{document}\nOne.\n\\IfFileExists{\(outside.path)}{\\newpage Two.}{}\n\\end{document}\n")
+        quarantine(dir)
+        quarantine(file, value: try XCTUnwrap(EngineV3Trust.quarantineValue(dir)))
+        func wait(_ cond: @escaping () -> Bool) async throws {
+            let start = Date()
+            while !cond() { if Date().timeIntervalSince(start) > 60 { XCTFail("timeout"); return }; try await Task.sleep(nanoseconds: 50_000_000) }
+        }
+        let m = ShellModel()
+        XCTAssertEqual(m.openTex(at: file, dirty: .discard), .opened)
+        m.engineV3Enabled = true
+        m.engineV3.start(model: m)
+        defer { m.engineV3.stop() }
+        try await wait { m.engineV3.statusNote.hasPrefix("ok") && !m.engineV3.blockedReads.isEmpty }
+        XCTAssertFalse(m.engineV3.projectTrusted)
+        XCTAssertEqual(m.engineV3.pageCount, 1, "the outside file was not read")
+        XCTAssertNotNil(m.engineV3.hostConfineRoots ?? nil, "an untrusted project's host is confined")
+        XCTAssertEqual(m.engineV3.blockedReads.first?.split(separator: "\t").first.map(String.init), outside.path)
+        try await wait { m.problemsList.contains { $0.code == EngineV3Session.untrustedReadCode } }
+
+        m.engineV3.trustProject()
+        try await wait { m.engineV3.projectTrusted && m.engineV3.statusNote.hasPrefix("ok") && m.engineV3.pageCount == 2 }
+        XCTAssertNil(m.engineV3.hostConfineRoots ?? nil, "trusted: pdfTeX's own rules")
+        XCTAssertEqual(m.engineV3.blockedReads, [])
+        try await wait { !m.problemsList.contains { $0.code == EngineV3Session.untrustedReadCode } }
+    }
 }

@@ -5,7 +5,11 @@ import Foundation
 /// (its main file or its folder carries the `com.apple.quarantine` extended
 /// attribute: downloaded, unpacked from a downloaded archive, received) and
 /// that the user has not trusted compiles with shell escape OFF (`\write18`
-/// does nothing) and the preview shows "Trust this project?". Once trusted,
+/// does nothing), its reads confined to its own folder, the TeX tree, the
+/// app's resources and the system fonts (`EngineV3Session.wantsUntrustedConfinement`:
+/// the app compiles a project as soon as it is opened, which pdflatex never
+/// does unasked), and the preview shows "Trust this project?"; each refused
+/// read is a Problems row with the same action. Once trusted,
 /// it compiles with restricted `\write18`, as pdflatex does by default
 /// (texmf.cnf's `shell_escape = p`). A project made on this Mac (no
 /// quarantine) is trusted.

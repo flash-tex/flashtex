@@ -1856,7 +1856,8 @@ pub fn setup_bound_var(name: &str, default: i32) -> i32 {
 
 /// With `FLASHTEX_CONFINE_READS=1` in the environment (the app sets it for a
 /// host that compiles other people's text: a Live Share session, see
-/// docs/design/live-collab/PROPOSAL.md §6.2), every file the engine looks up
+/// docs/design/live-collab/PROPOSAL.md §6.2, or a project not yet trusted,
+/// DESIGN.md §13 2026-11-01; refusals go to `note_refused`), every file the engine looks up
 /// or opens for the job is confined, at the two places all of them go
 /// through: the resolver's lookups (`resolve`, `resolve_ex`: `\input`,
 /// `\openin`, `\font` and its TFM/VF/map/encoding/font files, `\pdfmapfile`,
@@ -1879,7 +1880,43 @@ pub fn setup_bound_var(name: &str, default: i32) -> i32 {
 /// with it set). Without the variable nothing changes, so pdfTeX parity is
 /// untouched.
 pub fn input_name_confined_ok(name: &str) -> bool {
-    !reads_confined() || confined_name_ok(name)
+    if !reads_confined() || confined_name_ok(name) {
+        return true;
+    }
+    note_refused(name, None);
+    false
+}
+
+/// Names confinement refused this process, each once.
+static REFUSED: Mutex<Vec<String>> = Mutex::new(Vec::new());
+
+/// A read confinement refused: `name` as the document asked for it, and,
+/// when it was refused for resolving outside the allowed roots, where it
+/// led. With `FLASHTEX_CONFINE_REFUSED=<file>` each new one is appended
+/// there as one line, `name` or `name<TAB>resolved`, for the app, which
+/// lists them in the Problems panel with a way to trust the project.
+/// Nothing is printed: the run's output is the run's.
+fn note_refused(name: &str, resolved: Option<&Path>) {
+    let name = name.trim_matches('"');
+    let line = match resolved {
+        Some(r) => format!("{name}\t{}", r.display()),
+        None => name.to_string(),
+    };
+    let mut seen = REFUSED.lock().unwrap();
+    if seen.contains(&line) {
+        return;
+    }
+    seen.push(line.clone());
+    drop(seen);
+    if let Some(p) = std::env::var_os("FLASHTEX_CONFINE_REFUSED") {
+        if let Ok(mut f) = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(p)
+        {
+            let _ = f.write_all(format!("{line}\n").as_bytes());
+        }
+    }
 }
 
 fn reads_confined() -> bool {
@@ -1910,6 +1947,7 @@ pub fn confined_found_ok(name: &str, found: &str, format: Format, searched: bool
         return true;
     }
     if !confined_name_ok(name) {
+        note_refused(name, None);
         return false;
     }
     let mut roots: Vec<std::path::PathBuf> = confine_roots().to_vec();
@@ -1921,7 +1959,12 @@ pub fn confined_found_ok(name: &str, found: &str, format: Format, searched: bool
             roots.push(d);
         }
     }
-    confined_path_ok(Path::new(found), &roots, searched)
+    let ok = confined_path_ok(Path::new(found), &roots, searched);
+    if !ok {
+        let real = std::fs::canonicalize(found).unwrap_or_else(|_| Path::new(found).to_path_buf());
+        note_refused(name, Some(&real));
+    }
+    ok
 }
 
 /// The confinement rules for a file a tool the engine runs in-process

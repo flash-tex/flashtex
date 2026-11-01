@@ -207,7 +207,10 @@ final class EngineV3HostProcess: @unchecked Sendable {
             process.arguments! += ["--profile", PerformanceMode.current.hostProfile]
             if let t = ProcessInfo.processInfo.environment["FLASHTEX_V3_TIMED"], Double(t) != nil { process.arguments! += ["--timed", t] }
         }
-        process.environment = confineRoots.map { Self.confinedEnvironment(Self.environment(host: executable), roots: $0) }
+        refusalsPath = socketPath + ".refused"
+        unlink(refusalsPath)
+        let refusals = refusalsPath
+        process.environment = confineRoots.map { Self.confinedEnvironment(Self.environment(host: executable), roots: $0, refusals: refusals) }
             ?? Self.environment(host: executable)
         let out = Pipe(), err = Pipe()
         process.standardOutput = out
@@ -314,6 +317,28 @@ final class EngineV3HostProcess: @unchecked Sendable {
     /// Launched with `confinedEnvironment` and these roots (nil: not).
     let confineRoots: [String]?
     var confined: Bool { confineRoots != nil }
+    /// Where a confined host's engines list the reads they refused
+    /// (`FLASHTEX_CONFINE_REFUSED`, one line each: `name` or
+    /// `name<TAB>where it led`); beside the socket, removed with it.
+    private(set) var refusalsPath = ""
+
+    /// The reads this host refused so far, each once, in order (empty
+    /// when it is not confined or refused nothing).
+    func refusals() -> [String] { confined ? Self.readRefusals(at: refusalsPath) : [] }
+
+    /// `refusals()` of the file at `path`: at most 64 KiB and 50 names are read.
+    static func readRefusals(at path: String) -> [String] {
+        guard let h = FileHandle(forReadingAtPath: path) else { return [] }
+        defer { try? h.close() }
+        let data = (try? h.read(upToCount: 64 * 1024)) ?? Data()
+        var seen = Set<String>(), out: [String] = []
+        for line in String(decoding: data, as: UTF8.self).split(separator: "\n") where !line.isEmpty {
+            let l = String(line)
+            if seen.insert(l).inserted { out.append(l) }
+            if out.count == 50 { break }
+        }
+        return out
+    }
 
     /// The environment of a host that compiles other people's text (a Live
     /// Share session, proposal §6.2): reads confined to names relative to
@@ -326,10 +351,15 @@ final class EngineV3HostProcess: @unchecked Sendable {
     /// file the engine opens must also resolve, through links, into `roots`
     /// (the real project folder), the job's folder, the output folder or a
     /// TeX tree (`FLASHTEX_CONFINE_ROOTS`). No mktex script runs (a `\font`
-    /// name must never start METAFONT).
-    static func confinedEnvironment(_ base: [String: String], roots: [String]) -> [String: String] {
+    /// name must never start METAFONT). `refusals`: the file the engines
+    /// list refused reads in (`FLASHTEX_CONFINE_REFUSED`). The same
+    /// environment confines an untrusted project's host
+    /// (`EngineV3Session.wantsUntrustedConfinement`).
+    static func confinedEnvironment(_ base: [String: String], roots: [String], refusals: String? = nil) -> [String: String] {
         var env = base
         env["FLASHTEX_CONFINE_READS"] = "1"
+        env.removeValue(forKey: "FLASHTEX_CONFINE_REFUSED")
+        if let refusals { env["FLASHTEX_CONFINE_REFUSED"] = refusals }
         env["FLASHTEX_CONFINE_ROOTS"] = roots.joined(separator: ":")
         for k in ["MKTEXTFM", "MKTEXPK", "MKTEXMF", "MKTEXTEX", "MKOCP", "MKOFM"] { env[k] = "0" }
         env["openin_any"] = "p"
@@ -358,6 +388,7 @@ final class EngineV3HostProcess: @unchecked Sendable {
             }
         }
         unlink(socketPath) // the host removes it itself when it exits normally
+        if !refusalsPath.isEmpty { unlink(refusalsPath) }
     }
 
     deinit { terminate() }
