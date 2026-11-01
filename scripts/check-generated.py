@@ -39,13 +39,13 @@ MANIFEST = os.path.join(ROOT, "scripts", "generated-manifest.json")
 # name -> (generator, outputs, --check command). Commands run from ROOT.
 GENERATORS = {
     "math-layout cm": (
-        "tests/oracles/math-layout/tools/gen_cm_tfm.py",
-        ["tests/oracles/math-layout/src/cm_tfm.rs"],
-        lambda: ["tests/oracles/math-layout/tools/gen_cm_tfm.py", "--check"]),
+        "crates/math-layout/tools/gen_cm_tfm.py",
+        ["crates/math-layout/src/cm_tfm.rs"],
+        lambda: ["crates/math-layout/tools/gen_cm_tfm.py", "--check"]),
     "math-layout ams": (
-        "tests/oracles/math-layout/tools/gen_cm_tfm.py",
-        ["tests/oracles/math-layout/src/ams_tfm.rs"],
-        lambda: ["tests/oracles/math-layout/tools/gen_cm_tfm.py", "--ams", "--check"]),
+        "crates/math-layout/tools/gen_cm_tfm.py",
+        ["crates/math-layout/src/ams_tfm.rs"],
+        lambda: ["crates/math-layout/tools/gen_cm_tfm.py", "--ams", "--check"]),
     # RQ5: the editors' completion vocabulary; its oracle half (probe.json) is
     # checked by the supported-latex workflow, this is the TeX-free render.
     # annotations.json is the one-off `annotate` step's (its input, the retired

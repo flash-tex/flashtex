@@ -276,9 +276,9 @@ SUPPORTED_LATEX_JSON="$MAC_DIR/Sources/FlashTeXMac/Resources/supported-latex.jso
 python3 "$SUPPORTED_LATEX_GEN" check --installed || die "bundled supported-latex.json is stale; run python3 apps/mac/scripts/gen-supported-latex.py render --install and commit"
 
 # --- Pre-flight: pinned rooted TFM metrics must verify before the build -------
-# GH36: the bundle's rooted texmf tree of Latin Modern metrics (first staged
-# for the old engine's renderer, which S7 retired; the bundle still carries and
-# verifies it); a flat Fonts directory or the build machine's TeX cannot stand in.
+# GH36: the bundle's rooted texmf tree of Latin Modern metrics (staged for the
+# old engine's flashtex-render; S7 decides whether it stays, retirement plan
+# §1.4); a flat Fonts directory or the build machine's TeX cannot stand in.
 BUNDLE_TEXMF_ROOT="${FLASHTEX_BUNDLE_TEXMF_ROOT:-$MAC_DIR/Fonts/texmf}"
 BUNDLE_TEXMF_TOOL="$SCRIPT_DIR/bundle-texmf.py"
 [[ -f "$BUNDLE_TEXMF_TOOL" ]] || die "missing $BUNDLE_TEXMF_TOOL"

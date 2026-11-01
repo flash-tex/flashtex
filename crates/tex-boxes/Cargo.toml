@@ -1,0 +1,12 @@
+[package]
+name = "flashtex-tex-boxes"
+version = "0.1.0"
+edition = "2024"
+description = "Faithful TeX box machinery (hpack/vpack, glue setting, shipout rounding) and LaTeX box commands."
+publish = false
+
+[lib]
+name = "flashtex_tex_boxes"
+path = "src/lib.rs"
+
+[dependencies]

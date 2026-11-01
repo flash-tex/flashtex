@@ -1,0 +1,15 @@
+[package]
+name = "flashtex-tex-expansion"
+version = "0.1.0"
+edition = "2021"
+description = "A faithful TeX/e-TeX/LaTeX macro-expansion processor (catcodes, \\def/\\let, conditionals, registers, \\newcommand/\\newenvironment/counters) for FlashTeX, with per-token source-span provenance."
+publish = false
+
+[lib]
+name = "flashtex_tex_expansion"
+path = "src/lib.rs"
+
+[dependencies]
+
+[dev-dependencies]
+serde_json = "1"

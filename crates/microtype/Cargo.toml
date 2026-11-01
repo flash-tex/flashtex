@@ -1,0 +1,12 @@
+[package]
+name = "flashtex-microtype"
+version = "0.1.0"
+edition = "2024"
+description = "Original FlashTeX model of pdfTeX character protrusion and font expansion as configured by the LaTeX microtype package: config parsing/resolution, pdfTeX integer arithmetic, and line-breaking/packing hooks. No external crates, no TeX engine involved."
+publish = false
+
+[lib]
+name = "flashtex_microtype"
+path = "src/lib.rs"
+
+[dependencies]

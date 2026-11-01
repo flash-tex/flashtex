@@ -1,0 +1,12 @@
+[package]
+name = "flashtex-page-builder"
+version = "0.1.0"
+edition = "2021"
+description = "Original implementation of TeX's vertical-list machinery (append_to_vlist, \\vsplit, the page builder and insertions; tex.web parts 44-45) plus a LaTeX output-routine model, checked against pdflatex."
+publish = false
+
+[lib]
+name = "flashtex_page_builder"
+path = "src/lib.rs"
+
+[dependencies]

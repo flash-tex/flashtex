@@ -1,0 +1,12 @@
+[package]
+name = "flashtex-math-layout"
+version = "0.1.0"
+edition = "2024"
+description = "Original TeX-style math layout (TeXbook Appendix G) producing explicit glyph and rule boxes."
+publish = false
+
+[lib]
+name = "flashtex_math_layout"
+path = "src/lib.rs"
+
+[dependencies]
