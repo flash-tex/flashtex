@@ -222,7 +222,7 @@ same bytes. Besides the scenario fixtures there are `hostile-paths`, `rejected-o
 suites restated in collab-v1 (`legacy-*`: `adversarial.rs`, `interrupted_delivery.rs`,
 `id_reuse_divergence.rs`).
 
-`tests/fixtures/collab-v1-bulk/bulk-200.json` (format `collab-v1-bulk/1`, `{scenarios: [fixture…]}`)
+`crates/collaboration-core/tests/fixtures/collab-v1-bulk/bulk-200.json` (format `collab-v1-bulk/1`, `{scenarios: [fixture…]}`)
 is the bulk differential: 200 random simulation scenarios (two to five peers, edits, undo and redo,
 file and blob operations, refused attacks, partitions) that the Swift suite replays in all three
 orders. The oracle's test fails if the committed file differs from what it generates. A larger run on
