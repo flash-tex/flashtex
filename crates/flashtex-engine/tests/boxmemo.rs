@@ -215,6 +215,46 @@ fn draw_calls_replay_with_their_hole() {
     assert!(stat(&s, "hits") >= 3, "{s}");
 }
 
+#[test]
+fn calls_ending_in_expansions_replay() {
+    // (lane EDITED-PAGE) a body whose last tokens only expand -- LaTeX's
+    // `\end`: `\if@endpe ... \fi` and its hooks after the last
+    // `\endgroup` -- is used up inside `big_switch`'s `get_x_token`, which
+    // then reads the token after the call: the recording ends where the
+    // last level is popped (`flashtex_bm_popped`), a draw call (a frame
+    // around a box it moves, followed by `\hss`) and a measure call alike,
+    // and replays
+    let s = check(
+        "tail",
+        "\\catcode`\\{=1 \\catcode`\\}=2 \\catcode`\\#=6 \\scrollmode\n\
+         \\showboxdepth=100 \\showboxbreadth=100 \\tracingonline=0 \\let\\ifendpe\\iffalse\n\
+         \\def\\measure#1{\\begingroup\\vrule width#1\\vbox{\\hrule\\kern 2pt\\box9\\kern2pt\\hrule}\\endgroup\\ifendpe\\relax\\fi\\ifx aa\\fi}\n\
+         \\def\\one#1{\\setbox9\\hbox{\\vrule width #1 height 2pt}\\setbox1\\hbox{\\hss\\measure{1pt}\\hss}\\showbox1 }\n\
+         \\one{3pt}\\one{3pt}\\one{3pt}\\one{4pt}\\one{3pt}\n\
+         \\def\\measure#1{\\begingroup\\setbox0\\hbox{\\vrule width#1}\\global\\dimen1=\\wd0 \\endgroup\\ifx aa\\fi}\n\
+         \\measure{2pt}\\measure{2pt}\\measure{2pt}\\message{[\\the\\dimen1]}\\end\n",
+    );
+    assert!(stat(&s, "hits") >= 4, "{s}");
+}
+
+#[test]
+fn a_tail_that_reads_past_the_call_never_replays() {
+    // the same bodies, but their last expansion takes the token after the
+    // call as a parameter (`\gobble`) or a primitive reads past it
+    // (`\number` looking for more digits): the read abandons the recording
+    // (`Level`), as before, and nothing replays
+    let s = check(
+        "tail-reads",
+        "\\catcode`\\{=1 \\catcode`\\}=2 \\catcode`\\#=6 \\scrollmode\n\
+         \\def\\gobble#1{}\n\
+         \\def\\measure#1{\\begingroup\\setbox0\\hbox{\\vrule width#1}\\global\\dimen1=\\wd0 \\endgroup\\gobble}\n\
+         \\measure{2pt}x\\measure{2pt}x\\measure{2pt}x\\message{[\\the\\dimen1]}\n\
+         \\def\\measure#1{\\begingroup\\setbox0\\hbox{\\vrule width#1}\\global\\dimen1=\\wd0 \\endgroup\\count1=\\number 1}\n\
+         \\measure{2pt}2\\measure{2pt}2\\measure{2pt}2\\message{[\\the\\dimen1|\\the\\count1]}\\end\n",
+    );
+    assert_eq!(stat(&s, "hits"), 0, "{s}");
+}
+
 /// pdfTeX's output in INITEX: pages of rules, a link's object, a form.
 const PDF_PRELUDE: &str = "\\catcode`\\{=1 \\catcode`\\}=2 \\catcode`\\#=6 \\scrollmode\n\
     \\pdfoutput=1 \\pdfpagewidth=100pt \\pdfpageheight=100pt \\pdfcompresslevel=0\n";
