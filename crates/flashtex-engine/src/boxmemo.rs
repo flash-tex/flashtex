@@ -687,8 +687,8 @@ pub fn mode() -> Mode {
 pub const RECORD_ANYWHERE: &[&str] = &["pdfstringdefPreHook", "pgf@parsefunc", "XC@col@rlet"];
 
 /// A [`BUDGETED`] name's recordings outside an edit's window, and the hits
-/// they bought (lane L6, E3). Once `min` recordings are made, a name whose
-/// hits fall below `ratio` per recording is neither recorded nor offered
+/// they bought (lane L6, E3). Once it has been offered `min` times, a name
+/// whose hit rate is below `rate` is neither recorded nor offered
 /// outside a window for the rest of the session (`State`'s lifetime, as
 /// `aborts`): an offer that misses costs its key comparisons as well as the
 /// call, and a recording more. In a window it is offered and recorded as
@@ -698,13 +698,14 @@ pub const RECORD_ANYWHERE: &[&str] = &["pdfstringdefPreHook", "pgf@parsefunc", "
 /// only how fast.
 #[derive(Default, Debug, Clone, Copy)]
 struct Budget {
-    recordings: u32,
+    offers: u32,
     hits: u32,
+    recordings: u32,
     stopped: bool,
 }
 
-/// `FLASHTEX_BOXMEMO_BUDGET`: `MIN:RATIO` (recordings before the test,
-/// hits per recording below which a name stops), or `off`.
+/// `FLASHTEX_BOXMEMO_BUDGET`: `OFFERS:RATE` (offers before the test, the
+/// hit rate below which a name stops), or `off`.
 fn budget_config() -> Option<(u32, f64)> {
     static B: std::sync::OnceLock<Option<(u32, f64)>> = std::sync::OnceLock::new();
     *B.get_or_init(
@@ -719,6 +720,33 @@ fn budget_config() -> Option<(u32, f64)> {
     )
 }
 
+/// `FLASHTEX_BOXMEMO_BUDGET_TRACE=FILE`: every 64th offer of a budgeted
+/// name outside a window appends `cs offers hits recordings stopped` to
+/// FILE (measuring the budget; nothing else reads it).
+fn budget_trace(cs: i32) {
+    static T: std::sync::OnceLock<Option<String>> = std::sync::OnceLock::new();
+    let Some(path) = T.get_or_init(|| std::env::var("FLASHTEX_BOXMEMO_BUDGET_TRACE").ok()) else {
+        return;
+    };
+    let Some(b) = ST.with(|s| s.borrow().budget.get(&cs).copied()) else {
+        return;
+    };
+    if b.offers % 64 == 0 {
+        use std::io::Write;
+        if let Ok(mut f) = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(path)
+        {
+            let _ = writeln!(
+                f,
+                "{cs} {} {} {} {}",
+                b.offers, b.hits, b.recordings, b.stopped as u8
+            );
+        }
+    }
+}
+
 /// The [`RECORD_ANYWHERE`] names under a [`Budget`]. Not
 /// `\pdfstringdefPreHook`: a call costs about 25 M instructions and a
 /// recording a fraction of one, so any hit pays for it.
@@ -730,7 +758,7 @@ fn budgeted() -> &'static [Vec<u8>] {
 }
 
 /// The default budget (see [`Budget`]).
-const BUDGET: Option<(u32, f64)> = Some((64, 3.0));
+const BUDGET: Option<(u32, f64)> = Some((2048, 0.75));
 
 fn record_anywhere() -> &'static [Vec<u8>] {
     static R: std::sync::OnceLock<Vec<Vec<u8>>> = std::sync::OnceLock::new();
@@ -2531,8 +2559,10 @@ impl Globals {
                 ST.with(|s| {
                     if let Some(b) = s.borrow_mut().budget.get_mut(&cs) {
                         b.hits = b.hits.saturating_add(1);
+                        b.offers = b.offers.saturating_add(1);
                     }
                 });
+                budget_trace(cs);
             }
             if m == Mode::Verify {
                 // the full verifier, on the command line only. Its
@@ -2634,23 +2664,25 @@ impl Globals {
     /// Whether a [`RECORD_ANYWHERE`] name may be recorded outside an edit's
     /// window now ([`Budget`]); counts the recording when it may.
     fn bm_budget_allows(cs: i32) -> bool {
-        let Some((min, ratio)) = budget_config() else {
-            return true;
-        };
-        ST.with(|s| {
+        let allowed = ST.with(|s| {
             let mut s = s.borrow_mut();
             let b = s.budget.entry(cs).or_default();
             if b.stopped {
                 return false;
             }
-            if b.recordings >= min && (b.hits as f64) < ratio * b.recordings as f64 {
-                b.stopped = true;
-                s.stats.budget_stopped += 1;
-                return false;
+            b.offers = b.offers.saturating_add(1);
+            if let Some((min, rate)) = budget_config() {
+                if b.offers >= min && (b.hits as f64) < rate * b.offers as f64 {
+                    b.stopped = true;
+                    s.stats.budget_stopped += 1;
+                    return false;
+                }
             }
             b.recordings += 1;
             true
-        })
+        });
+        budget_trace(cs);
+        allowed
     }
 
     fn bm_miss(&mut self, why: &str) {
@@ -4198,27 +4230,28 @@ mod tests {
     use super::*;
 
     #[test]
-    fn the_budget_stops_a_name_whose_recordings_buy_too_few_hits() {
+    fn the_budget_stops_a_name_whose_offers_hit_too_rarely() {
         // (the default budget unless the environment says otherwise)
-        let Some((min, ratio)) = budget_config() else {
+        let Some((min, rate)) = budget_config() else {
             return;
         };
-        // a name that never hits: `min` recordings, then none
+        // a name that never hits: offered `min` times, then not recorded
         let lone = -7;
-        for _ in 0..min {
-            assert!(Globals::bm_budget_allows(lone));
+        for i in 1..min {
+            assert!(Globals::bm_budget_allows(lone), "offer {i}");
         }
         assert!(!Globals::bm_budget_allows(lone));
         // stopped for good, whatever it hits later
         ST.with(|s| s.borrow_mut().budget.get_mut(&lone).unwrap().hits = u32::MAX);
         assert!(!Globals::bm_budget_allows(lone));
-        // a name whose recordings buy `ratio` hits each records on
+        // a name that hits at the rate goes on being recorded
         let good = -8;
         for i in 0..4 * min {
-            assert!(Globals::bm_budget_allows(good), "recording {i}");
+            assert!(Globals::bm_budget_allows(good), "offer {i}");
             ST.with(|s| {
-                s.borrow_mut().budget.get_mut(&good).unwrap().hits =
-                    (ratio * (i + 1) as f64).ceil() as u32;
+                let mut s = s.borrow_mut();
+                let b = s.budget.get_mut(&good).unwrap();
+                b.hits = (rate * (b.offers + 1) as f64).ceil() as u32;
             });
         }
         ST.with(|s| {
