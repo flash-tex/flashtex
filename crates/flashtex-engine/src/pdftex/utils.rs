@@ -222,17 +222,63 @@ fn now_secs() -> i64 {
     }
 }
 
-/// `init_start_time` (texmfmp.c): `SOURCE_DATE_EPOCH`, else the clock.
+/// The C library's `errno`, which [`c_strtoull`] clears and reads.
+fn errno_ptr() -> *mut std::ffi::c_int {
+    #[cfg(windows)]
+    extern "C" {
+        fn _errno() -> *mut std::ffi::c_int;
+    }
+    // SAFETY: each returns the calling thread's errno, valid for its life.
+    #[cfg(any(target_os = "macos", target_os = "ios", target_os = "freebsd"))]
+    return unsafe { libc::__error() };
+    #[cfg(windows)]
+    return unsafe { _errno() };
+    #[cfg(not(any(target_os = "macos", target_os = "ios", target_os = "freebsd", windows)))]
+    return unsafe { libc::__errno_location() };
+}
+
+/// texmfmp.c's reading of `SOURCE_DATE_EPOCH`: `strtoull(s, &end, 10)`
+/// from the C library itself, taken only if `*end == '\0'` and `errno` is
+/// 0. Which values pass is the C library's: leading white space and a sign
+/// are accepted, a trailing space or an overflow is not, and an empty value
+/// is rejected by macOS's (`EINVAL`) but read as 0 by glibc's.
+fn c_strtoull(s: &[u8]) -> Option<u64> {
+    let c = std::ffi::CString::new(s).ok()?;
+    let mut end: *mut std::ffi::c_char = std::ptr::null_mut();
+    // SAFETY: `c` is NUL-terminated and outlives the call; `strtoull` sets
+    // `end` to a position inside it.
+    unsafe {
+        *errno_ptr() = 0;
+        let v = libc::strtoull(c.as_ptr(), &mut end, 10);
+        (*end == 0 && *errno_ptr() == 0).then_some(v)
+    }
+}
+
+/// `init_start_time` (texmfmp.c): `SOURCE_DATE_EPOCH`, else the clock. A
+/// value `strtoull` does not take all of is kpathsea's `FATAL1`, as in
+/// pdfTeX: the message on stderr and exit status 1, before any log.
 fn start_time(st: &mut State) -> i64 {
     if let Some(t) = st.start_time {
         return t;
     }
-    let t = match std::env::var("SOURCE_DATE_EPOCH") {
-        Ok(v) => {
+    let t = match std::env::var_os("SOURCE_DATE_EPOCH") {
+        Some(v) => {
             st.source_date_epoch = true;
-            v.trim().parse::<i64>().unwrap_or(0)
+            match c_strtoull(v.as_encoded_bytes()) {
+                // `start_time = epoch`: a `time_t`, so the value wraps
+                Some(e) => e as i64,
+                None => {
+                    eprintln!(
+                        "{}: fatal: invalid epoch-seconds-timezone value for \
+                         environment variable $SOURCE_DATE_EPOCH: {}.",
+                        crate::system::invocation_name(),
+                        v.to_string_lossy()
+                    );
+                    std::process::exit(1)
+                }
+            }
         }
-        Err(_) => now_secs(),
+        None => now_secs(),
     };
     st.start_time = Some(t);
     st.start_time_str = make_pdf_time(t, st.source_date_epoch);
@@ -305,11 +351,29 @@ impl Globals {
     /// time in UTC of `SOURCE_DATE_EPOCH` (or of now) if
     /// `FORCE_SOURCE_DATE=1`, else the local time now.
     pub fn date_and_time(&mut self, t: &mut i32, d: &mut i32, m: &mut i32, y: &mut i32) {
-        let forced = std::env::var("FORCE_SOURCE_DATE").map(|v| v == "1") == Ok(true);
-        let tm = if forced {
+        let sde = std::env::var_os("FORCE_SOURCE_DATE");
+        let sde = sde.as_ref().map(|v| v.as_encoded_bytes());
+        let tm = if sde == Some(b"1") {
             let st = with_state(|s| start_time(&mut s.utils));
             broken_down(st, true)
         } else {
+            // kpathsea's WARNING1 for a value other than "", "0" or "1".
+            // §1332's INITEX block calls fix_date_and_time before
+            // `ready_already` is set; tex.ch runs that block only in
+            // INITEX, this engine in every run (the format replaces what
+            // it sets), so there a production run stays silent, as
+            // TeX Live's warns once.
+            let initex_block = self.ready_already != 314159;
+            if let Some(v) = sde
+                .filter(|v| !v.is_empty() && *v != b"0")
+                .filter(|_| !initex_block || self.ini_version())
+            {
+                eprintln!(
+                    "warning: invalid value (expected 0 or 1) for environment \
+                     variable $FORCE_SOURCE_DATE: {}.",
+                    String::from_utf8_lossy(v)
+                );
+            }
             broken_down(now_secs(), false)
         };
         *t = tm.tm_hour * 60 + tm.tm_min;
