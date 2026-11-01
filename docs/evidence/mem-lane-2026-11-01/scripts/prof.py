@@ -186,14 +186,14 @@ def du(p):
     return n
 
 
+EDITS = [e for e in a.edit.split(',') if e]
+page_i = [0]
 rec = {'name': a.name, 'engine': a.engine, 'profile': a.profile or 'balanced'}
 t0 = time.time()
 rec['open'], _ = keys(0, 0)
 rec['open_s'] = round(time.time() - t0, 2)
 rec['open_proc'] = status(pid)
 ms_all = []
-EDITS = [e for e in a.edit.split(',') if e]
-page_i = [0]
 INSTR = []
 last = rec['open']
 for p in (int(x) for x in a.pages.split(',')):
