@@ -39,6 +39,10 @@ fn main() {
     if std::env::var_os("FLASHTEX_DIAGNOSTICS").is_some_and(|v| v == "1") {
         flashtex_engine::diag::set_enabled(true);
     }
+    // FLASHTEX_LAZY_FLUSH=1: `flush_list` without walking the list it frees
+    // (src/lazyflush.rs, changes/lazyflush.ch; the command line only).
+    #[cfg(not(feature = "tex82"))]
+    flashtex_engine::lazyflush::enable_from_env();
     let mut g = flashtex_engine::Globals::new();
     // FLASHTEX_MACRO_PROFILE=FILE: the macro-level profiler (src/macroprof.rs).
     #[cfg(not(feature = "tex82"))]
