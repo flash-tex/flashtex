@@ -1,11 +1,11 @@
 {
   "actor": "kabir-claude-contig",
   "branch": "agent/kabir-claude-contig/design",
-  "gh_ref": null,
+  "gh_ref": "#2008",
   "machine": "mac-m5pro-kabir",
   "note": null,
   "started_utc": "2026-11-01T18:04:59Z",
-  "state": "claimed",
+  "state": "closed",
   "task_id": "CONTIG-TOKENS",
-  "updated_utc": "2026-11-01T18:04:59Z"
+  "updated_utc": "2026-11-01T20:13:02Z"
 }
