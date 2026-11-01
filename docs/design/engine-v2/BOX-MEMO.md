@@ -1,7 +1,7 @@
 # BOX-MEMO: guarded replay of macro calls that typeset only what they throw away
 
 Lane **P6-INFDESC-PAGE** (Commander, 2026-10-06: "attributes Infinite Descent's 800 M-instruction
-page and builds picture/box memoisation"). Status: **revision 2 (T7-BEAMER, 2026-10-20): on in the engine host** (§11): it records in an
+page and builds picture/box memoisation"). Status: **revision 2 (T7-BEAMER, 2026-10-20): on in the engine host** (§11; revision 6, BEAMER-FRAME, is §15): it records in an
 edit's window and replays; the command-line engine keeps it off unless `FLASHTEX_BOXMEMO=on`.
 Revision 1 (the framed.sty prototype, off by default) is §2-§10.
 
@@ -745,3 +745,75 @@ Measured (NixOS PC, T7 beamer-30, two rounds of 19 keys, instructions to the edi
 key 1 143 M → 93 M (the steady keys 92 M); the open's preamble row (a run from the format) 24.5 G →
 24.1 G instructions for the whole compile, 5.29 G → 5.24 G to its first page, wall unchanged.
 Evidence: `docs/evidence/t7-margin-2026-10-21/`.
+
+## 15. Revision 6: xkeyval's `\setkeys`, `\usebeamercolor`, and cheaper replays (lane BEAMER-FRAME, 2026-11-01)
+
+After #1907 the metropolis demo deck (T7's real document `beamer-metropolis`, PR #1889) still spent
+about 275 M instructions typesetting its Blocks frame, the letter@middle site, per keystroke
+(`typeset_instr_k`, from the engine's resumption to the edited page's shipout). A sampling profile
+of those windows alone (samply on the host, its samples cut to the `FLASHTEX_PERF_MARKS` intervals)
+and the macro profile showed where:
+
+- **xkeyval's `\setkeys`.** `\beamercolorbox` (metropolis's block titles and bodies, the frame
+  title) calls it twice for its defaults and options, and `\usebeamercolor` & co. more: 39 calls a
+  frame, 46 % of the window. Nothing offered it.
+- **BOX-MEMO's own hits**, once it was offered: 30 % of the window. The replays made every
+  operation of `\setkeys`' log (24 k a keystroke) and the offers' K3 checks went through a hash
+  map per meaning.
+- **`\usebeamercolor`** (eight `\colorlet`s and a `\color`) was refused: `\color` ends in
+  `\ignorespaces` after the call's own `\fi`, and saves `\aftergroup\reset@color` at the call's
+  level.
+
+### 15.1 A run of fresh local values at the call's level is made as one
+
+A replay at the call's own level made every assignment the call made. xkeyval defines its scratch
+macros (`\XKV@tempa`, `\XKV@resa`, the key's name and family, ...) again for every key it sets.
+`compress_call_level` (after §12.5's `compress_groups`) makes each run of local assignments of
+*fresh* values (a token list, a glue specification or a `\parshape` made for the assignment) to one
+location as its first assignment, with the value of the last. The first `eq_define` of the run
+decides the location's save-stack entry (`eq_save` when it was last assigned at another level, else
+`eq_destroy`); a fresh value is never e-TeX's "reassigning", so every later one finds the location at
+the call's level and only destroys the run's previous value. The run thus leaves the save entry of
+its first assignment, in its place among the others, and the value of its last; the values between
+are made and freed again, which changes only the free lists and the usage statistics, as §11.2's
+elision does. A run ends at anything else that touches or reads the location: an assignment of a
+word or of a value from the state (either may be "reassigning"), a global one, a `\let` of it or a
+glue it holds, a kept group that assigns it, a control sequence entered there, and an `End` or
+`Begin` of the caller's group. Unit test: `a_run_of_fresh_local_values_is_its_first_assignment_with_its_last_value`.
+
+### 15.2 `\fi`s before a trailing `\ignorespaces`
+
+§11's trailer ends a recording at an `\ignorespaces` that would read past the body. When the
+body's only tokens left are control sequences meaning `\fi` (`\else\color{#1}\fi`), the hook
+expands them first, as `\ignorespaces`' own `get_x_token` would (each a `get_next` and an `expand`,
+in the same order, with the recording's observers on), and then ends the recording; `main_control`
+goes on with the `\ignorespaces`. Anything else left is the normal path, as before.
+
+### 15.3 `\aftergroup` at the call's level
+
+`save_for_after` reports to the recording (`flashtex_bm_after`, changes/boxmemo.ch). A token saved
+at the call's own level outlives the call (xcolor's `\set@color` saves `\reset@color`): it is
+`Op::AfterGroup(t)`, made again by the replay's `save_for_after` in its place among the save-stack
+entries, which `bm_saves_only` now accepts (`insert_token`). One saved in a group of the call is
+inserted at that group's end, inside the call, as before.
+
+### 15.4 Offers
+
+- K3 takes the entries of §12.4 once per variant, not once per meaning, and finds a location's
+  entry by index (`Seen::at`, a slot per location) instead of a hash map. Unit test:
+  `meanings_found_equal_are_kept_by_location_until_their_list_goes`.
+- KR is compared in place (`bm_reg_is`, a `\toks` register's tokens walked against the kept ones),
+  not by making each register's value. Debug builds check it against the old comparison.
+
+### 15.5 Names
+
+`XKV@setkeys` and `\beamer@usebeamercolor` (the macro `\usebeamercolor` calls after its optional
+argument) join `DEFAULT_NAMES`. Tried on the Blocks frame and left out (no gain, or refused):
+`\ifbeamercolorempty` and `hook_use:n` (their last tokens read past the body), `beamer@masterdecode`
+(a box register set at the call's level), `XC@mcolor`, `XC@display`, `colorlet`, `XC@colorlet`,
+`pgfsys@transformcm`, `color@b@x`, `beamer@decodefind`, `IfHookEmptyTF`, `selectfont`,
+`beamer@spacingcover`, `beamer@parsedactionenv`, `beamer@smuggle`, `pgf@sys@bp`, `beamer@colclose`,
+`metropolis@block` (`\prevdepth`); `pgfkeys@@set` and `beamer@setbeamercolor` gain under 2 %.
+Recording after the edited page as well (the pages re-typeset until convergence) was tried and
+left out: the next keystroke's window cost more (49 → 65 M at the start site) and its recordings
+did not settle.
