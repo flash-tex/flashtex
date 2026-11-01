@@ -209,7 +209,8 @@ the test process (unit tests) or in the XCUITest runner (UI tests).
   leaves; retry after a dropped connection reconnects with the stored
   `pair_psk` and re-sends the same `capture_id` (Mac sees it once); local
   refusal of a bad image / oversized instruction; no pinned destination →
-  refused, nothing sent.
+  nothing sent, the capture stays retryable with the same id (Retry after
+  pinning on the Mac sends it).
 - `AcceptanceSliceTests` / `FlashTeXPadUITests` — the first-iteration `.tex`
   reference flow (open sample, pair, capture receipt, cancel inserts nothing,
   approve inserts exactly once with the receipt echoed).
