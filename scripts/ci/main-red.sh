@@ -3,7 +3,7 @@
 #
 # The merge queue runs only the gate (docs/ci-cd.md, "The merge-queue gate"):
 # the Mac app, the iPad companion, the Rust workspace on Linux and macOS,
-# render-pipeline, flashtex-cli, flashtex-xetex and every macOS leg run AFTER
+# flashtex-xetex and every macOS leg run AFTER
 # the merge, on the push to main (ci.yml), and nightly (nightly.yml). They are
 # fixed forward, and this script is how a failure there is seen:
 #

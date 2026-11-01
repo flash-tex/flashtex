@@ -11,8 +11,8 @@
 //!   per-glyph expansion it implies).
 //! * [`arith`] is pdfTeX's integer arithmetic (to the scaled point).
 //!
-//! See `CONTRACT.md` for the proposed hooks into `crates/paragraph-layout`
-//! and `crates/render-pipeline`. The crate has no dependencies and never runs
+//! See `CONTRACT.md` for the proposed hooks into `crates/paragraph-layout`.
+//! The crate has no dependencies and never runs
 //! TeX; `tests/oracle/` holds pdflatex-generated expectations.
 
 // Clippy debt in frozen old-engine code (D13): allowed, not refactored.

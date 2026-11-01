@@ -32,7 +32,7 @@ This project actually consists of two things:
 **An incremental pdfTeX-compatible engine with a command line, and a native
 macOS IDE built on it.**
 
-FlashTeX's engine is pdfTeX, ported to Rust: `flashtex-v3 build main.tex`
+FlashTeX's engine is pdfTeX, ported to Rust: `flashtex build main.tex`
 compiles as latexmk would (bibtex, biber and makeindex included) and writes
 the PDF pdflatex writes, using your TeX Live 2026 for packages and fonts. The
 engine runs as its own process, `flashtex-host`. It keeps the document's
@@ -46,27 +46,25 @@ sketches and photos into reviewed LaTeX/TikZ insertions. The engine, the
 editor and the companions are separate processes with versioned contracts,
 so each can be replaced or scripted on its own.
 
-The old engine's `flashtex` command, a hand-written LaTeX subset with its own
-fonts and PDF writer, still ships. It is frozen (fixes only) and will be
-retired; `flashtex-v3` is its successor. See
+The old engine (a hand-written LaTeX subset with its own fonts and PDF
+writer) was retired in October 2026; `flashtex` now runs the pdfTeX port. See
 [The `flashtex` command line](docs/user/compiler.md).
 
 ## Features
 
-- **The `flashtex-v3` CLI** — `build` (as latexmk would: bibtex, biber and
+- **The `flashtex` CLI** — `build` (as latexmk would: bibtex, biber and
   makeindex when the document needs them; the PDF pdflatex writes), `check
   [--json]` (TeX's diagnostics as `file:line:col`), `watch` (one warm engine
   for the session) and `--mode unicode` for fontspec documents. It needs TeX
-  Live 2026. The old engine's `flashtex` CLI (`build`, `check`, `watch`,
-  `supported`, `fonts`, `worker`) still ships, frozen, until it is retired.
+  Live 2026.
 - **Workspace and multi-file projects** — a `.tex` file and its folder are the
   project; `\input`/`\include` targets appear in the sidebar with an outline of
   sections, environments and labels.
 - **Editor** — LaTeX syntax highlighting, completion for commands, environments
   and labels (⌃Space), a command palette (⌘⇧P).
 - **Per-keystroke incremental compile** — every edit is compiled by the bundled
-  engine; only the paragraphs you touched are re-typeset.
-- **Live preview** — an exact display list painted with Latin Modern glyphs,
+  engine; it re-typesets from the page the edit is on.
+- **Live preview** — an exact display list of the PDF pdflatex writes,
   zoom (⌘= / ⌘- / fit width ⌘9 / actual size ⌘0), click-to-source, caret sync
   (⌘⇧J), dark preview.
 - **Diagnostics** — errors, warnings and "not implemented" notes in a Problems
@@ -127,10 +125,10 @@ up (p50 969 ms); that is a finding for the incremental lanes.
 Hosted M1 VM. Each run is a fresh copy of the document, with no `.aux`, and the times are p50 /
 p95. **engine** is the new engine itself (`flashtex-initex`, run as pdflatex), for one pass and as
 latexmk's pdflatex. **Output:** for all 11 documents, the engine's PDF is **byte-identical** to
-pdflatex's, and `flashtex-v3 build`'s differs only in the trailer `/ID`, which hashes the output
+pdflatex's, and `flashtex build`'s differs only in the trailer `/ID`, which hashes the output
 file's name.
 
-| document | pdflatex, one pass | engine, one pass | latexmk | latexmk with the engine | `flashtex-v3 build` |
+| document | pdflatex, one pass | engine, one pass | latexmk | latexmk with the engine | `flashtex build` |
 |---|---:|---:|---:|---:|---:|
 | `HW1.tex` (3 pages) | 657 ms | **208 ms (3.2×)** | 1.60 s | **663 ms (2.4×)** | 791 ms (2.0×) |
 | `HW2.tex` (3 pages) | 539 ms | **162 ms (3.3×)** | 1.20 s | **536 ms (2.2×)** | 641 ms (1.9×) |
@@ -146,7 +144,7 @@ Medians. The factors in brackets are against pdflatex for one pass, and against 
 The engine is faster than pdflatex on every document, by 1.2× to 3.3× per pass, and its latexmk
 build is faster on 10 of the 11.
 
-**Known issue: `flashtex-v3 build` is slower than latexmk on a cold build of anything over about
+**Known issue: `flashtex build` is slower than latexmk on a cold build of anything over about
 100 pages.** It is 0.34× on plain-1000 and 0.61× on *Infinite Descent*. It runs the live preview's
 resident compile, which keeps checkpoints, before the export compile; a one-shot build does not need
 those checkpoints. The lane CLI-COLD is fixing it. On both books it also exits 1 with
@@ -158,11 +156,11 @@ queueing.
 
 ### Unicode mode against xelatex
 
-Hosted M1 VM, `flashtex-v3 build --mode unicode` against xelatex, p50. The output is structurally
+Hosted M1 VM, `flashtex build --mode unicode` against xelatex, p50. The output is structurally
 identical to xelatex's, by the M3 export gate's check (`tools/xetex-pdfparity/compare.py`). It found
 0 differences on all four documents, and every glyph was within 0.051 bp of xelatex's position.
 
-| document | xelatex, one pass | latexmk -xelatex | `flashtex-v3 build --mode unicode` | keystroke → updated page |
+| document | xelatex, one pass | latexmk -xelatex | `flashtex build --mode unicode` | keystroke → updated page |
 |---|---:|---:|---:|---:|
 | b01 article | 954 ms | 1.50 s | **608 ms (2.5×)** | 8.9 ms |
 | b02 Georgia | 1.19 s | 1.92 s | **1.21 s (1.6×)** | 6.4 ms |
@@ -221,9 +219,10 @@ app built on it — and they install separately.
 
 Each release ships `flashtex-cli-<version>-<platform>.tar.gz`: macOS arm64
 always, Linux x86_64 best-effort (see [CI/CD](docs/ci-cd.md)). The tarball has
-`bin/flashtex` plus the `flashtex-render`, `flashtex-compiler`,
-`flashtex-pdf` and `flashtex-pdf-exact` helpers, with the fonts and metrics
-they need in `share/flashtex/`.
+`bin/flashtex`, the command line (MIT), and `bin/flashtex-host`, the
+pdfTeX-compatible engine it starts as a separate process (GPL-2.0-or-later; its
+source is this repository). The CLI needs a TeX Live installation for the
+packages and fonts a document loads.
 
 ```sh
 curl -fsSL https://flash-tex.github.io/flashtex/install-cli.sh | sh
@@ -239,8 +238,8 @@ extract the tarball yourself and run `bin/flashtex build main.tex` directly;
 ### B. Engine + native GUI (macOS only, for now)
 
 Requirements: **macOS 14 Sonoma or later on Apple Silicon** (arm64). No TeX
-installation needed — the app bundles the engine, Latin Modern fonts and TeX
-metrics, plus this same CLI at `Contents/MacOS/flashtex-cli`.
+installation needed — the app bundles the engine host `flashtex-host` and uses
+your TeX Live when there is one, else offers to download the TeX bundle.
 
 ```sh
 curl -fsSL https://flash-tex.github.io/flashtex/install.sh | sh
@@ -259,13 +258,12 @@ or CI can drive the engine over the documented JSON Lines `worker` protocol
 (see [Extending FlashTeX](docs/extensibility.md)).
 
 **From source** (either path; Xcode Command Line Tools with Swift 6, stable
-Rust from rustup — there is no root Cargo workspace, each crate builds on its
-own):
+Rust from rustup; one root Cargo workspace, binaries in `target/`):
 
 ```sh
 git clone https://github.com/flash-tex/flashtex.git && cd flashtex
-cargo build --release --manifest-path crates/flashtex-cli/Cargo.toml   # A: the engine + CLI
-scripts/ci/build-helpers.sh                 # release-builds the CLI and every helper crate
+cargo build --release -p flashtex-build -p flashtex-engine   # A: the CLI (flashtex) and the engine host (flashtex-host)
+scripts/ci/build-helpers.sh                 # release-builds the app's helper crates
 apps/mac/scripts/make-app.sh --install      # B: packages FlashTeX.app into ~/Applications
 apps/mac/scripts/make-app.sh --dmg          # or: build a disk image
 ```
@@ -276,33 +274,17 @@ Full details: [Getting started](docs/user/README.md) and
 ## Quick start — CLI
 
 ```sh
-flashtex-v3 build main.tex                 # main.pdf next to it: the PDF pdflatex writes (bibtex/makeindex run as needed)
-flashtex-v3 build main.tex --mode unicode  # Unicode mode (XeTeX): fontspec, unicode-math, system fonts
-flashtex-v3 check main.tex --json          # TeX's diagnostics; exit 1 on an error
-flashtex-v3 watch main.tex                 # rebuild on every change, one warm engine; Ctrl-C stops
+flashtex build main.tex                 # main.pdf next to it: the PDF pdflatex writes (bibtex/makeindex run as needed)
+flashtex build main.tex --mode unicode  # Unicode mode (XeTeX): fontspec, unicode-math, system fonts
+flashtex check main.tex --json          # TeX's diagnostics; exit 1 on an error
+flashtex watch main.tex                 # rebuild on every change, one warm engine; Ctrl-C stops
 ```
 
-The old engine's CLI, frozen until it is retired:
-
-```sh
-flashtex build main.tex                       # main.pdf next to it; \input/\include resolved from its folder
-flashtex build main.tex -o out.pdf --timing   # exact-route PDF; render / pdf / total on stderr
-flashtex check main.tex --json                # diagnostics only, flashtex-check/1 on stdout
-flashtex watch main.tex                       # rebuild on every change in the project; Ctrl-C stops
-flashtex supported                            # implemented LaTeX + coverage (--json, --md)
-flashtex fonts                                # which fonts and TeX metrics this binary resolves
-```
-
-Diagnostics are `file:line:col: severity[code] message` lines on stderr with
-a summary line; exit `0` when the document rendered (`ok`, or `recovered`
-with diagnostics — `--strict` makes recovered errors exit `1`), `1` when it
-`failed`, `2` for a usage error. The app bundle and the tarball find their
-fonts next to the binary; a source build adds `--font-dir apps/mac/Fonts`.
-`flashtex worker` is the long-running JSON Lines worker the IDE drives (one
-`compile` request per stdin line, one `compile_result` per stdout line), so
-any editor or CI can embed the engine. Every flag, the JSON schema, the font
-search order and the helper binaries are documented in
-[The `flashtex` command line](docs/user/compiler.md).
+Diagnostics are `file:line:col: severity: message` lines (one JSON object a
+line with `--json`); the exit status is 1 when there is an error. The CLI
+never links the engine: it starts `flashtex-host` (beside it, on `PATH`, or
+`--host`) and speaks display-list-v3 over its socket, as the Mac app does.
+Every flag is documented in [The `flashtex` command line](docs/user/compiler.md).
 
 ## Quick start — IDE
 
@@ -322,28 +304,28 @@ companion is in [FlashTeXPad for iPad](docs/user/ipad.md).
 
 ## Architecture
 
-The engine is a library (`crates/render-pipeline`) with one front end,
-`flashtex` (`crates/flashtex-cli`). The Mac app never links it: it launches
-`flashtex worker` (or the bare `flashtex-render`) and talks to it over
-stdin/stdout with versioned JSON Lines contracts
-([runtime-v1](docs/contracts/runtime-v1.md), the rendering-v2 display list in
-[`protocol/`](protocol/)); a crashed helper is relaunched and the last good
-preview stays on screen. The same contracts make the engine usable from other
-editors and CI.
+The engine is a faithful port of pdfTeX (`crates/flashtex-engine`, translated
+from `tex.web` and pdfTeX's change files by `tools/web2rust`; see the
+[engine-v2 design](docs/design/engine-v2/DESIGN.md)) with a resident,
+incremental host, `flashtex-host`. Unicode mode is the XeTeX port
+(`crates/flashtex-xetex`, `flashtex-host-unicode`). The Mac app and the
+`flashtex` CLI never link either: they start the host as a separate process
+and read pages over the [display-list-v3](docs/protocol/display-list-v3.md)
+socket protocol; a crashed host is relaunched and the last good preview stays
+on screen.
 
 ```
 crates/
-  flashtex-cli/      the `flashtex` command line: build / check / watch / supported / worker / fonts
-  compiler/          lexer, LaTeX subset, runtime-v1 JSON Lines worker (flashtex-compiler)
-  render-pipeline/   the engine: parse tree → styled blocks → shaping → Knuth-Plass →
-                     Appendix G math → pages → display list (flashtex-render)
-  font-engine/, font-resources/, math-layout/, paragraph-layout/, document-style/, …
-  pdf/               PDF writer (flashtex-pdf, flashtex-pdf-exact)
+  flashtex-engine/   the pdfTeX port and its host (flashtex-host); GPL-2.0-or-later
+  flashtex-xetex/    the XeTeX port, Unicode mode (flashtex-host-unicode); GPL-2.0-or-later
+  flashtex-build/    the `flashtex` command line: build / check / watch
+  display-list-v3/   the page protocol the hosts speak (MIT)
   bridge/            iPad capture receipt, conversion, reviewed edits (flashtex-bridge)
-  project-files/, edit-ledger/, project-index/, preview-controller/, …
+  math-layout/, paragraph-layout/, page-builder/, tex-expansion/, tex-boxes/, …   kept as test oracles
+  project-files/, edit-ledger/, project-index/, …
 apps/mac/            the SwiftUI/AppKit IDE, bundled fonts and TeX metrics, packaging scripts
 apps/ios/            FlashTeXPad, the iPad capture companion
-protocol/            rendering-v2 schema and wire fixtures
+protocol/            wire fixtures and protocol proposals
 fixtures/            real-world documents with pdfLaTeX reference PDFs
 docs/                user guides, contracts, evidence reports
 ```

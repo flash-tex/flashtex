@@ -315,7 +315,7 @@ jobs:
             gh run download "$id" --repo "$GITHUB_REPOSITORY" -n "$old" -D "$RUNNER_TEMP/t4-old" ||
               echo "::notice::run $id has no $old artifact: T4 (old) is the v1 one-off baseline (decision 1)"
           fi
-      - name: every tier, both engines, then the board (no token in this step)
+      - name: every tier, then the board (no token in this step)
         # scoreboard-run.sh passes the oracle.json written above to scoreboard.py
         # --oracle: a T4 run measured against any other oracle reads INVALID
         run: |
@@ -372,7 +372,7 @@ jobs:
   # caches, so the board is split like sweeps.yml's sweeps (one job each).
   #   hosted-build  one build per commit (kept in the Actions cache by SHA and image): the
   #                 new engine alone (as scoreboard-run.sh builds it), its formats
-  #                 (nightly.py make-formats, as T4's) and v1; every other job unpacks it
+  #                 (nightly.py make-formats, as T4's); every other job unpacks it
   #                 at the same path and checks its sha256;
   #   hosted-t4     T4 (nightly-5k), its 50 shards packed into `t4_jobs` jobs
   #                 (scripts/ci/p5-hosted-t4.sh score);
@@ -417,20 +417,17 @@ jobs:
         if: steps.cache.outputs.cache-hit != 'true'
         with:
           toolchain: "1.99.0"
-      - name: the new engine alone, its formats, then v1
+      - name: the new engine and its formats
+        # v1 (the old engine) was deleted in retirement stage S7: nothing builds it
         if: steps.cache.outputs.cache-hit != 'true'
         run: |
           set -euo pipefail
-          # alone, then copied out before the v1 build (scoreboard-run.sh: built with
-          # flashtex-cli, shared dependencies unify features and the binary differs)
           cargo build --release --locked -p flashtex-engine --bin flashtex-initex
-          e="$RUNNER_TEMP/p5-engine" v="$RUNNER_TEMP/p5-v1"
-          mkdir -p "$e" "$v"
+          e="$RUNNER_TEMP/p5-engine"
+          mkdir -p "$e"
           cp target/release/flashtex-initex crates/flashtex-engine/pdftex.pool "$e/"
           python3 tools/parity/nightly.py make-formats --engine "$e/flashtex-initex" --pool "$e/pdftex.pool" --out "$e"
-          cargo build --release --locked -p flashtex-cli --bin flashtex
-          cp target/release/flashtex "$v/"
-          tar -C "$RUNNER_TEMP" -cf "$RUNNER_TEMP/p5-engines.tar" p5-engine p5-v1
+          tar -C "$RUNNER_TEMP" -cf "$RUNNER_TEMP/p5-engines.tar" p5-engine
       - name: the build's sha256, the hosted host id, the T4 jobs
         id: pack
         env:
@@ -585,12 +582,12 @@ jobs:
           eval "part=($ARGS)"
           rc=0
           tools/parity/scoreboard-run.sh --out "$RUNNER_TEMP/p5" --jobs "$(nproc)" --no-board \
-            --engine-dir "$RUNNER_TEMP/p5-engine" --v1 "$RUNNER_TEMP/p5-v1/flashtex" \
+            --engine-dir "$RUNNER_TEMP/p5-engine" \
             "${part[@]}" ${extra[@]+"${extra[@]}"} || rc=$?
           # one name per part, so the board job can put every part in one directory
           cd "$RUNNER_TEMP/p5"
           rm -rf work oracle.json
-          for f in parity-new parity-old parity-new.log parity-old.log corpus-fetch.log t2-fetch.log; do
+          for f in parity-new parity-new.log corpus-fetch.log t2-fetch.log; do
             [ -e "$f" ] || continue
             case "$f" in *.log) mv "$f" "${f%.log}-$ID.log" ;; *) mv "$f" "$f-$ID" ;; esac
           done
@@ -682,7 +679,7 @@ jobs:
           [ -z "$T4_RANGE" ] || note="${note:+$note; }T4 shards $T4_RANGE only"
           [ -z "$note" ] || extra+=(--sample-note "$note")
           tools/parity/scoreboard-run.sh --out "$RUNNER_TEMP/p5" --collect --skip "parity t2 smoke fonts" \
-            --engine-dir "$RUNNER_TEMP/p5-engine" --v1 "$RUNNER_TEMP/p5-v1/flashtex" \
+            --engine-dir "$RUNNER_TEMP/p5-engine" \
             --t4-new "$RUNNER_TEMP/t4-new" ${extra[@]+"${extra[@]}"} -- \
             --host-label "GitHub-hosted $ImageOS (hosted; $ORACLE_ID; tools ${GITHUB_SHA::9})" \
             --run-url "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" \

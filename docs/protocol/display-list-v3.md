@@ -34,9 +34,8 @@ The host keeps one **resident, incremental engine** per document (DESIGN.md
 re-typesets from the last page before the edit, so the edited page arrives
 first, and stops once the document is the same as before from there on.
 
-`display-list-v3` extends `display-list-v2`
-([rendering-v2 proposal](../contracts/rendering-v2-proposal.md),
-`apps/mac/Sources/FlashTeXProtocol/RenderingV2.swift`): v2's glyph runs with
+`display-list-v3` succeeds `display-list-v2`, the old engine's display list
+(retired with it; its proposal is in the history before the S7 retirement): v2's glyph runs with
 absolute origins, rules, paths with clips, images and links remain, now
 produced by the pdfTeX-compatible engine and exact to the PDF. What changes:
 
@@ -1152,7 +1151,7 @@ client adds `"progress-v1"` to its `HELLO.accept`.
 **Message** (`0x70`, JSON): `{"id", "pass", "page", "file"?}`. `id` is the compile;
 `pass` is the run's pass (1, then 2, ... for further `.aux` passes); `page`
 is the number of pages that run has shipped; `file` (added 2026-10-06, for
-`flashtex-v3`'s progress line; absent at the terminal level) is the
+`flashtex`'s progress line; absent at the terminal level) is the
 innermost file TeX is reading, as TeX opened it (`./chapters/a.tex`, a
 TeX Live path), the name `-file-line-error` gives. A client that does not
 know a key ignores it. The host sends one at the

@@ -1,8 +1,8 @@
 //! rendering-v2 display list → exact export (`flashtex_pdf::v2`).
 //!
 //! `tests/fixtures/v2-plain-paragraph.json` is the unmodified `display_list`
-//! envelope `flashtex-render --v2 --secnumdepth 0` (branch
-//! `agent/mac-render-pipeline/unified` at `d556519`) wrote for the visual-corpus
+//! envelope the retired old engine's renderer wrote with `--v2 --secnumdepth 0`
+//! (at `d556519`) for the visual-corpus
 //! fixture `01-plain-paragraph` (body only). It references Latin Modern
 //! `lmroman12-regular.otf` by content hash; tests that need the bytes skip
 //! loudly when the font is not installed.
@@ -52,7 +52,7 @@ fn real_pipeline_envelope_exports_glyphs_by_original_gid_at_exact_positions() {
     assert_eq!(
         f.hash_form,
         HashForm::Bytes,
-        "flashtex-render d556519 emits SHA-256 of the raw font bytes"
+        "the old engine at d556519 emits SHA-256 of the raw font bytes"
     );
     // The producer's advances are TFM widths; where they differ from hmtx
     // the /W entry follows the producer (word boundaries in text extraction).
@@ -483,7 +483,7 @@ fn content_hash_with_face_index_is_still_accepted_and_reported() {
         report
             .notes
             .iter()
-            .any(|n| n.contains("render-pipeline deviation")),
+            .any(|n| n.contains("producer deviation")),
         "{:?}",
         report.notes
     );
@@ -493,7 +493,7 @@ fn content_hash_with_face_index_is_still_accepted_and_reported() {
 /// word boundaries are the producer's own inter-glyph gaps, replayed exactly
 /// (pen after the written `/W` width → next origin), and the report counts
 /// them. `v2-text-a-b.json` is the published `\text{a b}` display list from
-/// GH48 (rendering-core handoff 647c50c5: two one-glyph runs with glue
+/// GH48 (handoff 647c50c5: two one-glyph runs with glue
 /// between them and no space cluster); `v2-searchable-mixed.json` is the
 /// bundled producer's list for `The AV office fixed a b: $\forall x\, f(x)$
 /// and ffi.` (kerned `AV`, `ffi`/`fi` ligatures, math italic corrections).
@@ -1116,7 +1116,7 @@ struct Member {
 
 /// The producer's identity for a collection member: face 0 is
 /// SHA-256(bytes), every other member SHA-256(bytes ‖ face_index)
-/// (`crates/render-pipeline/src/fonts.rs`).
+/// (the retired old engine's `fonts.rs`).
 fn member_sha(bytes: &[u8], face_index: u32) -> String {
     if face_index == 0 {
         return sha256::hex(bytes);

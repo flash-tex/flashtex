@@ -9,7 +9,7 @@
 //! `name`, weight/width/slant from `OS/2`, and whether a `MATH` table is
 //! present (the math half of the font system, `docs/proposals/
 //! font-system-math.md`, selects its faces from [`FontIndex::math_fonts`]).
-//! Loading, shaping and embedding a selected face stay in font-engine.
+//! Loading, shaping and embedding a selected face are the caller's job.
 //!
 //! **Platform-free by construction.** Nothing here calls a platform font
 //! API (Core Text, fontconfig, DirectWrite); the only OS-specific code is

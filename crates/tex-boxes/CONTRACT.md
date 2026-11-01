@@ -1,4 +1,4 @@
-# flashtex-tex-boxes: contract and adoption proposal (KC-107)
+# flashtex-tex-boxes: contract (KC-107)
 
 TeX's box machinery from *TeX: The Program*, with section numbers cited in the
 code: scaled arithmetic, the node model, `hpack`/`vpackage` with TeX's
@@ -73,32 +73,11 @@ Findings worth knowing (all confirmed by the oracle):
 | `engine` | §§211–283, 1055–1110, 1167–1196 | `BoxEngine`: the nest, save stack, registers, box contexts, `\lastbox`, un-box, `\vadjust`, `\vcenter`, paragraphs |
 | `latex` | latex.ltx (ltboxes, ltspace) | the box commands listed above, `setup_article_10pt` |
 
-## Adoption: `crates/compiler` and `crates/render-pipeline`
+## Adoption
 
-Today `crates/compiler/src/layout.rs` places words greedily in points.
-`crates/render-pipeline` carries its own float page builder
-(`pagebuild.rs`) and a styled block model (`adapter.rs`). Neither has TeX's
-box semantics. The proposed path, in order:
-
-1. **Dependency.** `flashtex-tex-boxes = { path = "../tex-boxes" }` in the
-   crate that owns typesetting (render-pipeline today).
-2. **Metrics.** Implement `CharMetrics` over font-resources' TFM data. It needs
-   `char_dims(font, ch)` and `font_identifier(font)`, the latter e.g.
-   `\OT1/cmr/m/n/10`, which `\showbox` and the overfull reports print.
-3. **Boxes as the layout IR.** Replace ad-hoc float boxes with `node::Node`
-   and `BoxNode` lists: characters via `BoxEngine::append_char`, glue via
-   `hskip`/`vskip` using TeX's param-glue identities, and LaTeX constructs via
-   `latex::*`. Nothing changes for callers that only want pixels.
-4. **Output.** `shipout::ship_out(&page_box, h0, v0, metrics)` yields
-   positions in sp, identical to pdfTeX. Convert them to PDF user space once,
-   at the end, as `bp = sp / 65781.76`, instead of accumulating floats.
-   `Whatsit` events carry tags for source-span mapping: the IDE's
-   click-to-source can attach a span id to a whatsit, the way the oracle uses
-   `\pdfsavepos`.
-5. **Diagnostics.** `BoxEngine::log()` and `reports()` give pdflatex's exact
-   Overfull/Underfull text, so the IDE problem list can show the same messages
-   as pdflatex. Set `line` from the expansion span as boxes open (TeX reports
-   `pack_begin_line`).
+The adoption path targeted the old engine's compiler and typesetting
+pipeline, which were deleted in old-engine retirement S7 (`git show f16430793:crates/tex-boxes/CONTRACT.md`
+has it). The crate is kept as an oracle (retirement plan §2).
 
 ## Plug-in points for sibling crates
 

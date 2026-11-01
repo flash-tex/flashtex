@@ -47,8 +47,6 @@ import time
 HERE = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.dirname(os.path.dirname(HERE))
 sys.path.insert(0, os.path.join(REPO, "tools", "parity"))
-sys.path.insert(0, os.path.join(REPO, "tools", "visual-oracle"))
-sys.path.insert(0, os.path.join(REPO, "tools", "real-world-corpus"))
 
 K_HELLO, K_COMPILE, K_CANCEL, K_BYE = 0x01, 0x02, 0x03, 0x04
 NAMES = {0x41: "hello", 0x42: "started", 0x43: "font", 0x44: "image", 0x45: "page", 0x46: "form",

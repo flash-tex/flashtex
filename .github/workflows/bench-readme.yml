@@ -10,7 +10,7 @@
 # dispatched before it is on the default branch); bench-readme/only-A+B runs shards A and B.
 #
 # Jobs: `build` builds the release binaries once per SHA (flashtex-host, flashtex-initex, the dl3
-# clients, flashtex-v3, flashtex-host-unicode) and keeps them in the Actions cache by SHA; each
+# clients, flashtex, flashtex-host-unicode) and keeps them in the Actions cache by SHA; each
 # `bench` shard downloads them, installs TeX Live 2026 (MacTeX 2026 through Homebrew's
 # mactex-no-gui cask, which pins the package's SHA-256; the hosted image has no TeX), makes the
 # documents (mkdocs.py, mkbook.py), runs its part and uploads its JSONL and tables as the
@@ -90,7 +90,7 @@ jobs:
           cargo build --release --locked -p flashtex-engine -p flashtex-display-list -p flashtex-build
           (cd crates/flashtex-xetex && cargo build --release --locked --bin flashtex-host-unicode)
           mkdir -p "$RUNNER_TEMP/bin"
-          for b in flashtex-host flashtex-initex dl3-keys dl3-client dl3-dump dl3-coldopen flashtex-v3; do
+          for b in flashtex-host flashtex-initex dl3-keys dl3-client dl3-dump dl3-coldopen flashtex; do
             cp "target/release/$b" "$RUNNER_TEMP/bin/"
           done
           cp crates/flashtex-xetex/target/release/flashtex-host-unicode "$RUNNER_TEMP/bin/"
@@ -178,7 +178,7 @@ jobs:
           tools/incr-bench/mkeng.sh ref
           python3 tools/incr-bench/mkdocs.py >/dev/null
           python3 tools/incr-bench/mkbook.py infdesc infdesc-x2
-          echo "FLASHTEX_V3=$PWD/target/release/flashtex-v3" >> "$GITHUB_ENV"
+          echo "FLASHTEX_V3=$PWD/target/release/flashtex" >> "$GITHUB_ENV"
           echo "FLASHTEX_HOST_UNICODE=$PWD/target/release/flashtex-host-unicode" >> "$GITHUB_ENV"
           echo "BENCH_WORK=/tmp/ib/bench-readme" >> "$GITHUB_ENV"
       - name: run

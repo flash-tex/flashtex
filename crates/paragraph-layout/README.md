@@ -149,12 +149,12 @@ does. Overfull lines are set at maximum shrink and kept; nothing is dropped.
 optional `ligature(l, r)`. All in font units; the builder scales to points.
 
 `core14::Core14Times` (Roman/Bold/Italic) is the shipped adapter: Adobe Core 14
-AFM widths (copied from de1020c's `crates/compiler/src/metrics.rs`), the AFMs'
+AFM widths (copied from the old compiler's `src/metrics.rs` at de1020c), the AFMs'
 272 ASCII kern pairs per face, `fi`/`fl` ligatures, and the psnfss `ptm*8t`
 space glue (250 / 150 / 60 / extra 60 units), with provenance in the file
 header.
 
-**FT-018 (`crates/font-engine`, branch `agent/mac-font-engine/tex-fonts`)**
+**FT-018 (the retired old font engine, branch `agent/mac-font-engine/tex-fonts`)**
 maps directly: its `FontId.content_sha256: [u8; 32]` is our `FontId(..)`;
 `Face::advance(gid)`, `Face::kerning(l, r)`, `Face::glyph_id(ch)`,
 `Face::vertical_metrics()` implement the trait one-to-one; and its

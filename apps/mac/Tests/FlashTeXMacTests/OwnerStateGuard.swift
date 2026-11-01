@@ -19,7 +19,7 @@ import XCTest
 ///
 /// The format cache (`formats/*`) is not compared: other processes on the
 /// machine write it while the suite runs (seen: the self-hosted Actions
-/// runner's `flashtex-v3` end-to-end tests, the owner's app, engine test
+/// runner's `flashtex` CLI end-to-end tests, the owner's app, engine test
 /// runs), and a change there cannot be told apart from the suite's. That
 /// the suite's hosts use their own format cache is checked where it is
 /// decided (`EngineV3HostProcess.environment`,
