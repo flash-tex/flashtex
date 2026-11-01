@@ -409,6 +409,212 @@ impl Delta {
     }
 }
 
+/// A sealed log's deltas, sorted by chunk, held compactly (lane MEMORY: a
+/// `Delta` is 24 bytes, a fifth of a log; here 3–8 on average). Each
+/// [`DELTA_BLOCK`]-th delta starts a block, indexed by its chunk, header
+/// offset and packed-bytes offset (`idx`); every other delta's header is:
+///
+/// - the gap from the previous delta's chunk, a varint (at least 1);
+/// - its `at` less the previous one's, a zigzag varint (a seal or a merge
+///   packs the deltas in order, so this is the previous one's packed length);
+/// - its mask: a byte `r` in 1..=7 and `r` runs of set bits, each a start
+///   and a length less one (a byte each), or [`RAW_MASK`] and the 16 bytes.
+///
+/// The block's first delta has only the mask. Decoding is exact: a delta
+/// reads back as the `Delta` encoded.
+#[derive(Default)]
+struct Deltas {
+    n: usize,
+    hdr: Vec<u8>,
+    idx: Vec<(u32, u32, u32)>,
+}
+
+/// Deltas per block of [`Deltas`] (a lookup decodes at most this many).
+const DELTA_BLOCK: usize = 16;
+/// A mask of more runs than fit in 15 bytes: kept as it is.
+const RAW_MASK: u8 = 0xFF;
+
+fn put_varint(out: &mut Vec<u8>, mut v: u64) {
+    while v >= 0x80 {
+        out.push(v as u8 | 0x80);
+        v >>= 7;
+    }
+    out.push(v as u8);
+}
+
+#[inline]
+fn get_varint(b: &[u8], p: &mut usize) -> u64 {
+    let mut v = 0u64;
+    let mut s = 0;
+    loop {
+        let x = b[*p];
+        *p += 1;
+        v |= ((x & 0x7F) as u64) << s;
+        if x < 0x80 {
+            return v;
+        }
+        s += 7;
+    }
+}
+
+fn put_mask(out: &mut Vec<u8>, mask: &[u64; MASK_WORDS]) {
+    const _: () = assert!(MASK_WORDS == 2, "a mask is a u128");
+    let mut runs: [(u8, u8); 7] = [(0, 0); 7];
+    let mut r = 0usize;
+    let mut x = mask[0] as u128 | (mask[1] as u128) << 64;
+    while x != 0 {
+        let s = x.trailing_zeros();
+        let l = (x >> s).trailing_ones();
+        if r == runs.len() {
+            out.push(RAW_MASK);
+            for m in mask {
+                out.extend_from_slice(&m.to_le_bytes());
+            }
+            return;
+        }
+        runs[r] = (s as u8, (l - 1) as u8);
+        r += 1;
+        // (s + l ≤ 128; a run of all 128 bits ends the mask)
+        x = x.checked_shr(s + l).map_or(0, |y| y << (s + l));
+    }
+    out.push(r as u8);
+    for &(s, l) in &runs[..r] {
+        out.push(s);
+        out.push(l);
+    }
+}
+
+#[inline]
+fn get_mask(b: &[u8], p: &mut usize) -> [u64; MASK_WORDS] {
+    let r = b[*p];
+    *p += 1;
+    if r == RAW_MASK {
+        let mut mask = [0u64; MASK_WORDS];
+        for (k, m) in mask.iter_mut().enumerate() {
+            let at = *p + k * 8;
+            *m = u64::from_le_bytes(b[at..at + 8].try_into().expect("8 bytes"));
+        }
+        *p += 8 * MASK_WORDS;
+        return mask;
+    }
+    let mut x = 0u128;
+    for _ in 0..r {
+        let (s, l) = (b[*p] as u32, b[*p + 1] as u32 + 1);
+        *p += 2;
+        x |= u128::MAX.checked_shr(128 - l).unwrap_or(0) << s;
+    }
+    [x as u64, (x >> 64) as u64]
+}
+
+impl Deltas {
+    fn from_slice(v: &[Delta]) -> Deltas {
+        let mut d = Deltas {
+            n: v.len(),
+            hdr: Vec::with_capacity(v.len() * 6),
+            idx: Vec::with_capacity(v.len().div_ceil(DELTA_BLOCK)),
+        };
+        for (k, x) in v.iter().enumerate() {
+            if k.is_multiple_of(DELTA_BLOCK) {
+                d.idx.push((x.c, d.hdr.len() as u32, x.at));
+            } else {
+                let prev = &v[k - 1];
+                debug_assert!(x.c > prev.c, "deltas sorted by chunk, distinct");
+                put_varint(&mut d.hdr, (x.c - prev.c) as u64);
+                let gap = x.at as i64 - prev.at as i64;
+                put_varint(&mut d.hdr, ((gap << 1) ^ (gap >> 63)) as u64);
+            }
+            put_mask(&mut d.hdr, &x.mask);
+        }
+        d.hdr.shrink_to_fit();
+        d.idx.shrink_to_fit();
+        d
+    }
+
+    fn len(&self) -> usize {
+        self.n
+    }
+
+    fn is_empty(&self) -> bool {
+        self.n == 0
+    }
+
+    /// Heap bytes.
+    fn heap_bytes(&self) -> usize {
+        self.hdr.capacity() + self.idx.capacity() * std::mem::size_of::<(u32, u32, u32)>()
+    }
+
+    fn iter(&self) -> DeltaIter<'_> {
+        self.iter_block(0)
+    }
+
+    /// From the first delta of block `b`.
+    fn iter_block(&self, b: usize) -> DeltaIter<'_> {
+        DeltaIter {
+            d: self,
+            k: b * DELTA_BLOCK,
+            p: self.idx.get(b).map_or(0, |e| e.1 as usize),
+            prev: Delta {
+                c: 0,
+                at: 0,
+                mask: [0; MASK_WORDS],
+            },
+        }
+    }
+
+    /// From the first delta whose chunk is at least `lo`.
+    fn iter_from(&self, lo: u32) -> impl Iterator<Item = Delta> + '_ {
+        let b = self.idx.partition_point(|e| e.0 <= lo).saturating_sub(1);
+        self.iter_block(b).skip_while(move |d| d.c < lo)
+    }
+
+    /// The delta of chunk `c`, if any.
+    fn find(&self, c: u32) -> Option<Delta> {
+        self.iter_from(c).next().filter(|d| d.c == c)
+    }
+
+    fn to_vec(&self) -> Vec<Delta> {
+        self.iter().collect()
+    }
+}
+
+struct DeltaIter<'a> {
+    d: &'a Deltas,
+    k: usize,
+    p: usize,
+    prev: Delta,
+}
+
+impl Iterator for DeltaIter<'_> {
+    type Item = Delta;
+
+    #[inline]
+    fn next(&mut self) -> Option<Delta> {
+        if self.k >= self.d.n {
+            return None;
+        }
+        let b = &self.d.hdr;
+        let (c, at) = if self.k.is_multiple_of(DELTA_BLOCK) {
+            let e = self.d.idx[self.k / DELTA_BLOCK];
+            debug_assert_eq!(e.1 as usize, self.p);
+            (e.0, e.2)
+        } else {
+            let c = self.prev.c + get_varint(b, &mut self.p) as u32;
+            let z = get_varint(b, &mut self.p);
+            let gap = (z >> 1) as i64 ^ -((z & 1) as i64);
+            (c, (self.prev.at as i64 + gap) as u32)
+        };
+        let mask = get_mask(b, &mut self.p);
+        self.prev = Delta { c, at, mask };
+        self.k += 1;
+        Some(self.prev)
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        let n = self.d.n - self.k.min(self.d.n);
+        (n, Some(n))
+    }
+}
+
 /// A hint to bring the chunk at address `a` into the cache (a no-op where
 /// there is no prefetch instruction to hand).
 #[inline(always)]
@@ -462,7 +668,7 @@ unsafe fn apply_whole_under(src: *const u64, dst: *mut u64, done: &mut [u64; MAS
 #[derive(Default)]
 struct Log {
     entries: Vec<(u32, ChunkPtr)>,
-    deltas: Vec<Delta>,
+    deltas: Deltas,
     /// The deltas' words, packed (`pack_words`).
     bytes: Vec<u8>,
 }
@@ -478,7 +684,7 @@ impl Log {
 
     /// Heap bytes of the sealed part.
     fn sealed_bytes(&self) -> usize {
-        self.deltas.capacity() * std::mem::size_of::<Delta>() + self.bytes.capacity()
+        self.deltas.heap_bytes() + self.bytes.capacity()
     }
 
     /// The words the deltas hold.
@@ -493,10 +699,13 @@ impl Log {
     /// an edit costs the delta, not the log. For the rare edits of a sealed
     /// log (`Arena::or_from`, `Arena::set_from`), not for restores.
     fn edit_chunk(&mut self, c: u32, f: impl FnOnce(&mut [u64; MASK_WORDS], &mut Vec<u64>)) {
-        let at = self.deltas.partition_point(|d| d.c < c);
-        let found = self.deltas.get(at).is_some_and(|d| d.c == c);
+        // (the headers decoded, edited and coded again: a rare edit costs the
+        // log's headers, a few bytes a delta)
+        let mut deltas = self.deltas.to_vec();
+        let at = deltas.partition_point(|d| d.c < c);
+        let found = deltas.get(at).is_some_and(|d| d.c == c);
         let (mut mask, mut vals, old) = if found {
-            let d = self.deltas[at];
+            let d = deltas[at];
             let mut buf = [0u64; CHUNK_WORDS];
             d.unpack(&self.bytes, &mut buf);
             let n = d.len();
@@ -525,25 +734,26 @@ impl Log {
                 }
                 let shift = if empty { -(old_len as i64) } else { grow };
                 if shift != 0 {
-                    for d in self.deltas.iter_mut() {
+                    for d in deltas.iter_mut() {
                         if d.at as usize > from {
                             d.at = (d.at as i64 + shift) as u32;
                         }
                     }
                 }
                 if empty {
-                    self.deltas.remove(at);
+                    deltas.remove(at);
                 } else {
-                    self.deltas[at].mask = mask;
+                    deltas[at].mask = mask;
                 }
             }
-            None if empty => {}
+            None if empty => return,
             None => {
                 let pos = self.bytes.len() as u32;
                 self.bytes.extend_from_slice(&packed);
-                self.deltas.insert(at, Delta { c, at: pos, mask });
+                deltas.insert(at, Delta { c, at: pos, mask });
             }
         }
+        self.deltas = Deltas::from_slice(&deltas);
     }
 }
 
@@ -602,7 +812,7 @@ fn rewound_until(
                 };
             }
         }
-        for d in &log.deltas {
+        for d in log.deltas.iter() {
             if bit(&want, d.c as usize) {
                 let i = slot[d.c as usize] as usize;
                 // SAFETY: a chunk of `buf`.
@@ -655,7 +865,7 @@ fn merge_sealed(older: &Log, newer: &Log) -> Log {
     let (mut xv, mut yv) = ([0u64; CHUNK_WORDS], [0u64; CHUNK_WORDS]);
     let mut vals: Vec<u64> = Vec::with_capacity(CHUNK_WORDS);
     let (mut i, mut j) = (0, 0);
-    let (a, b) = (&older.deltas, &newer.deltas);
+    let (a, b) = (&older.deltas.to_vec(), &newer.deltas.to_vec());
     while i < a.len() || j < b.len() {
         if j == b.len() || (i < a.len() && a[i].c < b[j].c) {
             deltas.push(copy(&a[i], &older.bytes, &mut bytes));
@@ -701,11 +911,10 @@ fn merge_sealed(older: &Log, newer: &Log) -> Log {
             j += 1;
         }
     }
-    deltas.shrink_to_fit();
     bytes.shrink_to_fit();
     Log {
         entries: Vec::new(),
-        deltas,
+        deltas: Deltas::from_slice(&deltas),
         bytes,
     }
 }
@@ -1002,10 +1211,9 @@ impl Core {
             }
             self.slab.give(p);
         }
-        deltas.shrink_to_fit();
         bytes.shrink_to_fit();
         let log = &mut self.logs[i];
-        log.deltas = deltas;
+        log.deltas = Deltas::from_slice(&deltas);
         log.bytes = bytes;
         self.sealed_bytes += log.sealed_bytes();
     }
@@ -1124,8 +1332,7 @@ impl Core {
                     // `p` is a whole slab chunk.
                     unsafe { apply_whole_under(p, live, dn) };
                 }
-                let from = log.deltas.partition_point(|d| d.c < lo);
-                for d in &log.deltas[from..] {
+                for d in log.deltas.iter_from(lo) {
                     if d.c >= hi {
                         break;
                     }
@@ -1291,7 +1498,7 @@ impl Core {
                     };
                 }
             }
-            for d in &log.deltas {
+            for d in log.deltas.iter() {
                 if bit(&p.seen, d.c as usize) {
                     let i = p.cs.binary_search(&d.c).unwrap();
                     // SAFETY: a chunk of `buf`.
@@ -2632,7 +2839,7 @@ impl Arena {
             }
             let missing: Vec<(u32, usize, u64)> = pos
                 .iter()
-                .filter(|&&(c, w)| !prev.deltas.iter().any(|d| held_in(d, c, w)))
+                .filter(|&&(c, w)| !prev.deltas.iter().any(|d| held_in(&d, c, w)))
                 .map(|&(c, w)| {
                     let ci = cs.binary_search(&c).expect("a chunk of the words");
                     (c, w, at[ci * CHUNK_WORDS + w])
@@ -2667,11 +2874,10 @@ impl Arena {
             let before = log.sealed_bytes();
             let mut edited = false;
             for &c in &cs {
-                let at = log.deltas.partition_point(|d| d.c < c);
-                let Some(d) = log.deltas.get(at).filter(|d| d.c == c) else {
+                let Some(d) = log.deltas.find(c) else {
                     continue;
                 };
-                if !pos.iter().any(|&(pc, w)| held_in(d, pc, w)) {
+                if !pos.iter().any(|&(pc, w)| held_in(&d, pc, w)) {
                     continue;
                 }
                 log.edit_chunk(c, |mask, vals| {
@@ -4019,6 +4225,84 @@ mod tests {
             }
         };
         half(x) as u64 | (half(x.rotate_left(29)) as u64) << 32
+    }
+
+    /// `Deltas` reads back every delta as coded: masks of every shape (one
+    /// bit, all 128, the runs at the limit of seven and past it, runs over
+    /// the middle), chunk gaps of every varint width, offsets out of order
+    /// (as `edit_chunk` leaves them), and lookups from every chunk.
+    #[test]
+    fn delta_headers_round_trip() {
+        let mut x = 11u64;
+        let mut next = || {
+            x ^= x << 13;
+            x ^= x >> 7;
+            x ^= x << 17;
+            x
+        };
+        let mut masks: Vec<[u64; MASK_WORDS]> = vec![
+            [1, 0],
+            [0, 1 << 63],
+            [u64::MAX, u64::MAX],
+            [u64::MAX, 0],
+            [1 << 63, 1],
+            [0x5555, 0],
+            [0x0005_5555, 0],
+            [0x1555_5555_5555_5555, 0x5555_5555_5555_5555],
+            [0xF0F0_F0F0_F0F0_F0F0, 0x0F],
+        ];
+        for _ in 0..3000 {
+            let r = next();
+            masks.push(match r % 4 {
+                0 => [next() & next() & next(), next() & next() & next()],
+                1 => [next(), next()],
+                2 => [(next() >> (r % 64)) | 1, 0],
+                _ => [0, (u64::MAX >> (r % 63)) << (r % 7)],
+            });
+        }
+        let mut c = 0u32;
+        let mut at = 0u32;
+        let v: Vec<Delta> = masks
+            .iter()
+            .map(|&mask| {
+                let r = next();
+                c += 1 + match r % 5 {
+                    0 => 0,
+                    1 => (r >> 8) as u32 % 100,
+                    2 => (r >> 8) as u32 % 20_000,
+                    3 => (r >> 8) as u32 % 3_000_000,
+                    _ => 1,
+                };
+                at = if r % 9 == 0 {
+                    (r >> 20) as u32 % 1_000_000
+                } else {
+                    at + (r >> 30) as u32 % 900
+                };
+                Delta { c, at, mask }
+            })
+            .collect();
+        let d = Deltas::from_slice(&v);
+        assert_eq!(d.len(), v.len());
+        let back = d.to_vec();
+        assert_eq!(back.len(), v.len());
+        for (a, b) in v.iter().zip(&back) {
+            assert_eq!((a.c, a.at, a.mask), (b.c, b.at, b.mask));
+        }
+        assert!(d.heap_bytes() < v.len() * std::mem::size_of::<Delta>());
+        for (k, x) in v.iter().enumerate() {
+            let f = d.find(x.c).expect("found");
+            assert_eq!((f.c, f.at, f.mask), (x.c, x.at, x.mask));
+            assert!(d
+                .find(x.c + 1)
+                .is_none_or(|f| v.get(k + 1).is_some_and(|y| y.c == f.c)));
+            let from: Vec<u32> = d.iter_from(x.c).map(|e| e.c).take(3).collect();
+            let want: Vec<u32> = v[k..].iter().map(|e| e.c).take(3).collect();
+            assert_eq!(from, want);
+        }
+        assert!(d.find(0).is_none());
+        assert_eq!(d.iter_from(c + 1).count(), 0);
+        let e = Deltas::from_slice(&[]);
+        assert!(e.is_empty() && e.iter().next().is_none() && e.find(5).is_none());
     }
 
     #[test]
